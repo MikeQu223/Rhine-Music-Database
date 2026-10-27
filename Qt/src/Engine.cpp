@@ -346,7 +346,10 @@ void Engine::tick() {
     }
     m_paceEnterNs = enterNs;
     const auto now = clock.elapsed();
-    m_animationTime += qMin<qint64>(now - m_lastTick, 50) / 1000.;
+    // 排障/回归：冻结动画时钟，让两次抓图处于完全相同的动画相位。
+    if (!qEnvironmentVariableIsSet("RHINE_FREEZE_TIME")) {
+        m_animationTime += qMin<qint64>(now - m_lastTick, 50) / 1000.;
+    }
     m_lastTick = now;
     flushPointer();
     // 鼠标滚轮一格的连续距离按帧衰减送出；列表行数仍按格立即推进。
@@ -770,7 +773,13 @@ void Engine::snapshot(QString path) {
         return;
     }
     QDir().mkpath(path);
-    const QSize size(1920, 1080);
+    // 排障：允许按窗口尺寸生成参考图，便于与 GPU 输出（qt-window.png）同尺寸逐像素对比。
+    QSize size(1920, 1080);
+    // 排障：按指定尺寸生成参考图，便于与 GPU 输出（qt-window.png）同尺寸对比。
+    if (qEnvironmentVariableIsSet("RHINE_REFERENCE_W") && qEnvironmentVariableIsSet("RHINE_REFERENCE_H")) {
+        size = QSize(qEnvironmentVariableIntValue("RHINE_REFERENCE_W"),
+                     qEnvironmentVariableIntValue("RHINE_REFERENCE_H"));
+    }
 #ifdef Q_OS_MACOS
     const auto settings = renderConfiguration.snapshot();
     auto metal =

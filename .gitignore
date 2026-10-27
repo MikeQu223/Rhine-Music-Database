@@ -13,8 +13,8 @@ node-*
 
 # 本地会话和临时工作文件
 /.codex/
-/.agents/
-/.mnemon/
+# /.agents/
+# /.mnemon/
 
 # 本地凭据和机器配置
 .env
@@ -43,16 +43,16 @@ Thumbs.db
 # 本地开发笔记和发布暂存
 [Aa][Gg][Ee][Nn][Tt][Ss].[Mm][Dd]
 [Rr][Ee][Aa][Dd][Aa][Bb][Ii][Ll][Ii][Tt][Yy]-[Pp][Ll][Aa][Nn].[Mm][Dd]
-/docs/
+# /docs/
 /verification/
 /prototypes/
 /design/
-/notes/
+# /notes/
 /sessions/
-/memories/
+# /memories/
 /.claude/
 /.workbuddy/
-/.mnemon/
+# /.mnemon/
 
 # FSR 着色器预编译产物：只保留 .h 头文件（供无 dxc/glslang 的环境直接构建），
 # 依赖文件 .d 与临时编译脚本 .cmake 每次构建都会重写，不入库。
@@ -62,3 +62,8 @@ Thumbs.db
 /generated/dxc/
 # 本地临时补丁快照
 .uncommitted.diff
+
+# Filament SDK：官方发布包与稀疏源码，体积大且可按文档重新获取。
+/third_party/filament-dist/
+/third_party/filament-src/
+/third_party/filament-*.tgz

@@ -923,6 +923,8 @@ const QStringList &preferenceKeys() {
         "search-history", "play-history", "local-cover-cache", "theme", "motion", "startup-animation",
         "detail-autoplay", "single-play-mode", "disc-rotation", "scene-enhancement", "archive-mask-strength",
         "graphics-backend",
+        // Filament 适配开关与最近一次失败原因（格式 "<code>: <detail>"）。
+        "filament", "filament-last-error",
         // Linux 显卡选择：存的是 /sys/class/drm 里 cardN 的序号（0 基），不是型号。
         // 换卡后序号可能指向另一张卡或不存在，启动时由 initializeLinuxGraphics 校验并回退。
         "gpu-index", "vsync", "supersample", "render-scale", "aa-mode", "aa-scale", "msaa", "fsr-quality",

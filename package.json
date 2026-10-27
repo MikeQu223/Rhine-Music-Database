@@ -17,7 +17,9 @@
         "preview": "node scripts/preview-qt.cjs",
         "format:check": "node scripts/format.cjs --check",
         "lint": "eslint .",
-        "test:fg": "node scripts/test-fg.cjs"
+        "test:fg": "node scripts/test-fg.cjs",
+        "fetch:filament": "node scripts/fetch-filament.cjs",
+        "filament:diff": "python3 scripts/filament-diff.py"
     },
     "devDependencies": {
         "esbuild": "0.28.2",

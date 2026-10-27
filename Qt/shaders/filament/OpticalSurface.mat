@@ -1,0 +1,376 @@
+// OpticalSurface — Filament port of Qt/shaders/enhancement/opticalGeometry.vert +
+// opticalSurface.frag + opticalCommon.glsl (see README.md for the interface contract).
+//
+// matc has no #include support, so the shared GLSL helpers are duplicated into the
+// vertex/fragment blocks below (names are suffixed _v / _f so they cannot collide).
+
+material {
+    name : OpticalSurface,
+    shadingModel : unlit,
+
+    // The original vertex shader reads the object-space NORMAL and UV0 attributes.
+    // Filament has no standalone NORMAL attribute, so the NORMAL slot of the existing
+    // stride-32 interleaved buffer is bound as CUSTOM0 (FLOAT3, offset 12).
+    requires : [ "custom0", "uv0" ],
+
+    // The original vertex shader passes UV0 through untouched.
+    flipUV : false,
+
+    // Variant defaults; override with matc -Pblending=... -PdepthWrite=... -PdoubleSided=...
+    blending : opaque,
+    depthWrite : true,
+    doubleSided : true,
+    culling : none,
+
+    parameters : [
+        { type : float, name : gain },
+        // --- Surface block (8 vec4, mirrors Qt/src/RhiScene.cpp:53 struct Surface) ---
+        { type : float4, precision : high, name : surfaceColor },
+        { type : float4, precision : high, name : surfacePhysical },
+        { type : float4, precision : high, name : surfaceOptics },
+        { type : float4, precision : high, name : surfaceAttenuation },
+        { type : float4, precision : high, name : surfaceExtra },
+        { type : float4, precision : high, name : surfaceFlags },
+        { type : float4, precision : high, name : surfaceDarkColor },
+        { type : float4, precision : high, name : surfaceEmission },
+
+        // --- Atlases ---
+        { type : sampler2d, name : surfaceAtlas },
+        { type : sampler2d, name : lightAtlas },
+        { type : sampler2d, name : normalAtlas },
+        { type : sampler2d, name : label },
+        { type : sampler2d, name : cover },
+
+        // --- Globals (mirrors Qt/src/RhiScene.cpp:43 struct Globals) ---
+        { type : float4, precision : high, name : eye },
+        { type : float4, precision : high, name : fogColor },
+        { type : float4, precision : high, name : fog },
+        { type : float4, precision : high, name : viewport },
+        { type : float4, precision : high, name : clip },
+        { type : float4, precision : high, name : opticalLight },
+        { type : float4, precision : high, name : emissionColor },
+        { type : mat4, precision : high, name : emitterInverse },
+        { type : mat4, precision : high, name : emitterWorld },
+
+        // --- Per-instance Instance.state.xyzw (Qt/src/RhiScene.cpp:56) ---
+        { type : float, precision : high, name : stateQuality },
+        { type : float, precision : high, name : stateClarity },
+        { type : float, precision : high, name : stateTheme },
+        { type : float, precision : high, name : stateMode }
+    ],
+
+    // 12 varyings (21 floats) do not fit in Filament's 5 x float4 custom variables.
+    // These four free quantities are recomputed instead of carried:
+    //   v_world -> getWorldPosition(), v_uv -> getUV0()
+    // Packing:
+    //   v0 = (surfaceUv.x, surfaceUv.y, theme, viewZ)
+    //   v1 = (lightUv.x,   lightUv.y,   lightUv.z, lightMask)
+    //   v2 = (normalUv.x,  normalUv.y,  quality,  clarity)
+    //   v3 = (worldNormal.xyz, mode)
+    // CUSTOM4 is deliberately left free (a future host may add vertex colour).
+    variables : [
+        { name : "v0", type : float4, precision : high },
+        { name : "v1", type : float4, precision : high },
+        { name : "v2", type : float4, precision : high },
+        { name : "v3", type : float4, precision : high }
+    ],
+}
+
+vertex {
+    #define SATURATE_V(x) clamp(x, 0.0, 1.0)
+
+    // opticalCommon.glsl:59 getFace(), verbatim.
+    highp float getFaceV(highp vec3 d) {
+        highp vec3 a = abs(d);
+        if (a.x > a.z) {
+            return a.x > a.y ? (d.x > 0.0 ? 0.0 : 3.0) : (d.y > 0.0 ? 1.0 : 4.0);
+        }
+        return a.z > a.y ? (d.z > 0.0 ? 2.0 : 5.0) : (d.y > 0.0 ? 1.0 : 4.0);
+    }
+
+    void materialVertex(inout MaterialVertexInputs material) {
+        // NORMAL attribute, read from the CUSTOM0 slot (layout unchanged: stride 32).
+        highp vec3 normalAttr = getCustom0().xyz;
+        highp vec4 positionAttr = getPosition();
+        highp mat4 model = getWorldFromModelMatrix();
+        // original: vec4 world = model * vec4(position, 1); vec4 eye = g.view * world;
+        highp vec4 world = getWorldPosition(material);
+        highp vec4 eyeView = getViewFromWorldMatrix() * world;
+
+        highp float face = getFaceV(normalAttr);
+        highp vec2 surfaceUv = vec2((positionAttr.x + 2.5) / 5.0, positionAttr.y / 3.7);
+        if (face == 0.0 || face == 3.0) {
+            surfaceUv.x = (positionAttr.z + 0.25) / 0.5;
+        } else if (face == 1.0 || face == 4.0) {
+            surfaceUv.y = (positionAttr.z + 0.25) / 0.5;
+        }
+        // 每块图集留半个纹素边界，避免相邻朝向与昼夜行发生串色。
+        surfaceUv = (SATURATE_V(surfaceUv) * 383.0 + 0.5) / 384.0;
+        highp vec2 surfaceUvAtlas = vec2((face + surfaceUv.x) / 6.0, surfaceUv.y / 2.0);
+
+        highp vec3 local = (materialParams.emitterInverse * world).xyz;
+        highp vec3 localNormal =
+            normalize((materialParams.emitterInverse * model * vec4(normalAttr, 0.0)).xyz);
+        highp float lightFace = getFaceV(localNormal);
+        highp vec2 fieldUv = SATURATE_V(vec2((local.x + 9.0) / 18.0, (local.z + 7.0) / 14.0));
+        fieldUv = (fieldUv * 127.0 + 0.5) / 128.0;
+        highp vec3 lightUv = vec3((lightFace + fieldUv.x) / 6.0, fieldUv.y,
+                                  SATURATE_V((local.y + 0.4) / 5.2) * 7.0);
+        highp float lightMask = step(abs(local.x), 9.0) * step(abs(local.z), 7.0);
+
+        highp vec3 worldNormal = normalize((model * vec4(normalAttr, 0.0)).xyz);
+
+        highp vec3 direction = normalize(normalAttr);
+        highp vec2 encoded =
+            direction.xy / (abs(direction.x) + abs(direction.y) + abs(direction.z));
+        if (direction.z < 0.0) {
+            encoded = (1.0 - abs(encoded.yx)) * step(vec2(0.0), encoded) * 2.0 -
+                      (1.0 - abs(encoded.yx));
+        }
+        highp vec2 normalUv = ((encoded * 0.5 + 0.5) * 127.0 + 0.5) / 128.0;
+        normalUv.y *= 0.5;
+
+        material.v0 = vec4(surfaceUvAtlas, materialParams.stateTheme, -eyeView.z);
+        material.v1 = vec4(lightUv, lightMask);
+        material.v2 = vec4(normalUv, materialParams.stateQuality, materialParams.stateClarity);
+        material.v3 = vec4(worldNormal, materialParams.stateMode);
+    }
+}
+
+fragment {
+    // 原 shader 末尾的色彩编码（opticalCommon.glsl 的 outputColor + aces）位于
+    // opticalFinalFragment.frag 的全屏合成通道。此端口默认把它折进材质（=1），
+    // 以 material.baseColor 输出"最终颜色"；若宿主仍保留合成通道，用
+    // matc -DOPTICAL_OUTPUT_ENCODE=0 关闭，避免二次编码。
+    #if !defined(OPTICAL_OUTPUT_ENCODE)
+    #define OPTICAL_OUTPUT_ENCODE 1
+    #endif
+
+    #define SATURATE_F(x) clamp(x, 0.0, 1.0)
+
+    // ---- opticalCommon.glsl:39-65, verbatim ----
+    highp float srgb(highp float v) {
+        return v <= .04045 ? v / 12.92 : pow((v + .055) / 1.055, 2.4);
+    }
+    highp vec3 linearColor(highp vec3 v) {
+        return vec3(srgb(v.x), srgb(v.y), srgb(v.z));
+    }
+    highp vec3 outputColor(highp vec3 x) {
+        return mix(1.055 * pow(max(x, 0.0), vec3(1.0 / 2.4)) - .055, 12.92 * x,
+                   lessThanEqual(x, vec3(.0031308)));
+    }
+    highp vec3 aces(highp vec3 c, highp float exposure) {
+        c *= exposure / .6;
+        mat3 acesInput =
+            mat3(vec3(.59719, .076, .02840), vec3(.35458, .90834, .13383),
+                 vec3(.04823, .01566, .83777));
+        mat3 acesOutput = mat3(vec3(1.60475, -.10208, -.00327), vec3(-.53108, 1.10813, -.07276),
+                               vec3(-.07367, -.00605, 1.07602));
+        c = acesInput * c;
+        highp vec3 a = c * (c + .0245786) - .000090537;
+        highp vec3 b = c * (.983729 * c + .4329510) + .238081;
+        return SATURATE_F(acesOutput * (a / b));
+    }
+    highp float getFaceF(highp vec3 d) {
+        highp vec3 a = abs(d);
+        if (a.x > a.z) {
+            return a.x > a.y ? (d.x > 0.0 ? 0.0 : 3.0) : (d.y > 0.0 ? 1.0 : 4.0);
+        }
+        return a.z > a.y ? (d.z > 0.0 ? 2.0 : 5.0) : (d.y > 0.0 ? 1.0 : 4.0);
+    }
+
+    /** 只插值烘焙光场的相邻高度切片；没有实时光源求值、光线追踪或折射背景采样。 */
+    highp vec3 bakedIllumination(highp vec4 v1) {
+        highp float lower = floor(v1.z);
+        highp float upper = min(lower + 1.0, 7.0);
+        highp vec3 first =
+            texture(materialParams_lightAtlas, vec2(v1.x, (v1.y + lower) / 8.0)).rgb;
+        highp vec3 second =
+            texture(materialParams_lightAtlas, vec2(v1.x, (v1.y + upper) / 8.0)).rgb;
+        return mix(first, second, fract(v1.z)) * v1.w * materialParams.opticalLight.x *
+               materialParams.opticalLight.y;
+    }
+
+    /** 正上方一束主光：漫反射 + 玻璃高光。 */
+    const highp vec3 KEY_LIGHT = normalize(vec3(0.0, 0.55, 0.84));
+    highp vec3 keyLight(highp vec3 base, highp float gloss, highp vec4 v3, highp vec3 worldPos) {
+        if (v3.w < 0.5) {
+            return base;
+        }
+        highp vec3 n = normalize(v3.xyz);
+        highp vec3 l = KEY_LIGHT;
+        highp vec3 v = normalize(materialParams.eye.xyz - worldPos);
+        highp float ndl = max(dot(n, l), 0.0);
+        highp float spec = pow(max(dot(n, normalize(l + v)), 0.0), mix(20.0, 90.0, gloss)) *
+                           mix(0.18, 0.85, gloss);
+        return base * (0.55 + 0.45 * ndl) + vec3(spec);
+    }
+
+    /** opticalSurface.frag:50-196 body, every early return preserved. Returns linear RGB + alpha. */
+    highp vec4 shade(highp vec4 v0, highp vec4 v1, highp vec4 v2, highp vec4 v3) {
+        highp float vTheme = v0.z;
+        highp float vViewZ = v0.w;
+        highp vec2 vNormalUv = v2.xy;
+        highp float vQuality = v2.z;
+        highp float vClarity = v2.w;
+        highp vec3 vNormal = v3.xyz;
+        highp float vMode = v3.w;
+        highp vec2 vUv = getUV0();
+        highp vec3 vWorld = getWorldPosition();
+        highp vec4 mColor = materialParams.surfaceColor;
+        highp vec4 mDark = materialParams.surfaceDarkColor;
+        highp vec4 mFlags = materialParams.surfaceFlags;
+        highp vec4 mEmission = materialParams.surfaceEmission;
+        highp vec4 mExtra = materialParams.surfaceExtra;
+        highp vec4 gFogColor = materialParams.fogColor;
+        highp vec4 gFog = materialParams.fog;
+        highp vec4 gViewport = materialParams.viewport;
+        highp vec4 gEye = materialParams.eye;
+
+        if (mFlags.x == 1.0) {
+            if (!gl_FrontFacing && vMode > 0.5) {
+                // 素面封底：封面纸背不承载印刷内容，给一层哑光纸背底色。
+                highp vec3 paperBack = mix(vec3(.82, .80, .76), vec3(.15, .16, .17), vTheme);
+                return vec4(linearColor(paperBack), vQuality);
+            }
+            highp vec4 ink = texture(materialParams_label, vec2(vUv.x, 1.0 - vUv.y));
+            highp vec3 rgb = linearColor(ink.rgb);
+            highp float amount =
+                1.0 - smoothstep(.12, .65, dot(rgb, vec3(.2126, .7152, .0722)));
+            rgb = mix(rgb, mix(vec3(.023, .032, .037), vec3(.78, .78, .71), amount), vTheme);
+            return vec4(rgb, ink.a * vQuality);
+        }
+        if (!gl_FrontFacing && vMode > 0.5) {
+            // 素面封底：表面图集与烘焙光场只对应正面，背面一律给哑光底色。
+            highp vec3 back = mix(mColor.rgb, mDark.rgb, vTheme);
+            back = mix(back, gFogColor.xyz, smoothstep(gFog.x, gFog.y, vViewZ));
+            return vec4(back, mColor.a);
+        }
+        if (mFlags.x == 7.0) {
+            // 卡片上独立的装饰文字：只做线性化后直接叠加。
+            highp vec4 ink = texture(materialParams_label, vec2(vUv.x, 1.0 - vUv.y));
+            return vec4(linearColor(ink.rgb), ink.a);
+        }
+        if (mFlags.x == 9.0 && vMode > 0.5) {
+            // 唱片上的光学薄膜：本体几乎全透，只留下正上方主光的镜面高光与边缘菲涅耳。
+            highp vec3 n = normalize(vNormal);
+            highp vec3 l = KEY_LIGHT;
+            highp vec3 v = normalize(gEye.xyz - vWorld);
+            highp float ndl = max(dot(n, l), 0.0);
+            highp float spec = pow(max(dot(n, normalize(l + v)), 0.0), 160.0) * 1.8;
+            highp float rim = pow(1.0 - max(dot(n, v), 0.0), 3.0) * 0.30;
+            highp vec3 tint = mix(mColor.rgb, mDark.rgb, vTheme);
+            return vec4(tint * (0.12 + 0.30 * ndl) + vec3(spec + rim), mColor.a);
+        }
+        if (mFlags.x == 2.0) {
+            highp float coverage =
+                fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(.06711056, .00583715))));
+            if (vQuality <= coverage) {
+                discard;
+            }
+        }
+        if (mFlags.x == 4.0 && vMode > 0.5) {
+            // 象牙壳体是整块平整面板：只用材料色加烘焙光场。
+            highp vec3 ivory = mix(mColor.rgb, mDark.rgb, vTheme) + bakedIllumination(v1);
+            ivory = keyLight(ivory, 0.35, v3, vWorld);
+            ivory = mix(ivory, gFogColor.xyz, smoothstep(gFog.x, gFog.y, vViewZ));
+            return vec4(ivory, mColor.a);
+        }
+        bool shell = mFlags.x == 3.0 || mFlags.x == 4.0 || mFlags.x == 5.0;
+        highp vec2 vSurfaceUv = v0.xy;
+        highp vec4 baked = texture(materialParams_surfaceAtlas, vSurfaceUv);
+        highp vec4 normalResponse = texture(materialParams_normalAtlas, vNormalUv);
+        if (vTheme > 0.0) {
+            highp vec4 night =
+                texture(materialParams_surfaceAtlas, vSurfaceUv + vec2(0.0, 0.5));
+            baked = mix(baked, night, vTheme);
+            normalResponse = mix(normalResponse,
+                                 texture(materialParams_normalAtlas, vNormalUv + vec2(0.0, 0.5)),
+                                 vTheme);
+        }
+        highp vec3 color = baked.rgb * normalResponse.rgb + vec3(normalResponse.a);
+        if (mFlags.x == 3.0 && vMode > 0.5) {
+            // 玻璃壳：菲涅耳近似 + 主光镜面高光。
+            highp vec3 n = normalize(vNormal);
+            highp vec3 v = normalize(gEye.xyz - vWorld);
+            highp float ndv = clamp(dot(n, v), 0.0, 1.0);
+            highp float fresnel = pow(1.0 - ndv, 5.0);
+            highp float rim = pow(1.0 - ndv, 2.2);
+            highp float edge = smoothstep(0.55, 0.98, rim);
+            highp vec3 tint = mix(mColor.rgb, mDark.rgb, vTheme);
+            highp float frost =
+                (gViewport.w > 0.5) ? (1.0 - clamp(vClarity, 0.0, 1.0)) : 0.0;
+            highp float spec = pow(max(dot(n, normalize(KEY_LIGHT + v)), 0.0),
+                                   mix(90.0, 6.0, frost)) * mix(1.2, 0.30, frost);
+            highp vec3 sheen = mix(tint, vec3(1.0), 0.30) * (0.10 + 1.15 * rim);
+            highp vec3 clearGlass = tint * 0.06 + gFogColor.xyz * (0.04 + 0.95 * fresnel) +
+                                    vec3(spec) + sheen * 0.85 + vec3(edge * 0.55);
+            highp vec3 milkyGlass = gFogColor.xyz * 0.55 + tint * 0.45 + vec3(spec * 0.5);
+            highp vec3 glass = mix(clearGlass, milkyGlass, frost * 0.35);
+            highp float alpha =
+                clamp(0.06 + rim * 1.30 + fresnel * 0.35 + frost * 0.06, 0.0, 0.92);
+            return vec4(glass, alpha);
+        }
+        if (shell) {
+            if (mFlags.x == 3.0 && gViewport.w > 0.5) {
+                highp float frost = 1.0 - clamp(vClarity, 0.0, 1.0);
+                highp float luma = dot(color, vec3(.2126, .7152, .0722));
+                color = mix(color, vec3(luma) * 1.18 + vec3(.015), frost * 0.7);
+            }
+            color += bakedIllumination(v1);
+            color += materialParams.emissionColor.rgb * baked.a * mEmission.x *
+                     materialParams.opticalLight.x * materialParams.opticalLight.y;
+        } else {
+            color = mix(mColor.rgb, mDark.rgb, vTheme) * 0.8 + baked.rgb * 0.08;
+        }
+        if (mFlags.x == 6.0) {
+            highp vec2 discUv = vec2(vUv.x, 1.0 - vUv.y);
+            highp vec2 centered = discUv - vec2(.5);
+            discUv = mat2(mExtra.z, -mExtra.w, mExtra.w, mExtra.z) * centered + vec2(.5);
+            highp float blur =
+                (gViewport.w > 0.5) ? (1.0 - clamp(vClarity, 0.0, 1.0)) : 0.0;
+            highp vec3 art = texture(materialParams_cover, discUv).rgb * 4.0;
+            highp float total = 4.0;
+            for (int ring = 1; ring <= 2; ++ring) {
+                highp vec2 delta = vec2(blur * 0.009 * float(ring));
+                art += texture(materialParams_cover, discUv + vec2(delta.x, 0.0)).rgb;
+                art += texture(materialParams_cover, discUv - vec2(delta.x, 0.0)).rgb;
+                art += texture(materialParams_cover, discUv + vec2(0.0, delta.y)).rgb;
+                art += texture(materialParams_cover, discUv - vec2(0.0, delta.y)).rgb;
+                art += texture(materialParams_cover, discUv + delta).rgb;
+                art += texture(materialParams_cover, discUv - delta).rgb;
+                art += texture(materialParams_cover, discUv + vec2(delta.x, -delta.y)).rgb;
+                art += texture(materialParams_cover, discUv + vec2(-delta.x, delta.y)).rgb;
+                total += 8.0;
+            }
+            color = linearColor(art / total) * 0.8;
+            color = keyLight(color, 1.0, v3, vWorld);
+        } else if (mFlags.x == 8.0) {
+            highp float blur =
+                (gViewport.w > 0.5) ? (1.0 - clamp(vClarity, 0.0, 1.0)) : 0.0;
+            highp float luma = dot(color, vec3(.2126, .7152, .0722));
+            color = mix(color, vec3(luma) * 1.06 + vec3(.02), blur * 0.55);
+            color = keyLight(color, 0.6, v3, vWorld);
+        } else {
+            color = keyLight(color, shell ? 0.6 : 0.15, v3, vWorld);
+        }
+        color = mix(color, gFogColor.xyz, smoothstep(gFog.x, gFog.y, vViewZ));
+        return vec4(color, mColor.a);
+    }
+
+    void material(inout MaterialInputs material) {
+        prepareMaterial(material);
+        highp vec4 result = shade(variable_v0, variable_v1, variable_v2, variable_v3);
+#if OPTICAL_OUTPUT_ENCODE
+        // opticalFinalFragment.frag:24 — outputColor(aces(hdr, mix(0.76, 0.98, theme)))
+        // exposure 的 theme 取自 frame 级 viewport.z（合成通道的 g.viewport.z），
+        // 与逐实例的 stateTheme（v_theme）不是同一个量。
+#ifdef OPTICAL_SKIP_ACES
+        result.rgb = outputColor(result.rgb);
+#else
+        result.rgb = clamp(outputColor(aces(result.rgb, mix(0.76, 0.98, materialParams.viewport.z))) * materialParams.gain, 0.0, 1.0);
+#endif
+#endif
+        material.baseColor = result;
+    }
+}

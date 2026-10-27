@@ -560,24 +560,37 @@ int main(int argc, char **argv) {
         }
         auto poll = new QTimer(&backend);
         poll->setInterval(200);
-        bool *reviewed = new bool(false);
-        QObject::connect(poll, &QTimer::timeout, &backend, [&, path, captureMode, poll, reviewed] {
+        // 抓图分三步：先切到目标场景，再退出设置页（否则截到的是设置界面），最后出图。
+        int *stage = new int(0);
+        QObject::connect(poll, &QTimer::timeout, &backend, [&, path, captureMode, poll, stage] {
             if (!backend.ready()) {
                 return;
             }
-            if (!*reviewed) {
-                *reviewed = true;
+            if (*stage == 0) {
+                *stage = 1;
                 backend.scene.review(captureMode.isEmpty() || captureMode.startsWith("--")
                                          ? QStringLiteral("archive")
                                          : captureMode);
                 return;
             }
-            backend.step(50);
+            if (*stage == 1) {
+                *stage = 2;
+                // 只有明细视图需要在抓图前退出设置页；archive 模式保持原有抓图时序不变，
+                // 否则多一个 tick 会改变动画相位，让与基线的逐像素对比失去意义。
+                if (captureMode == QLatin1String("detail")) {
+                    backend.keyEvent(Qt::Key_Escape, 0, QString());
+                    return;
+                }
+            }
+            // 抓图前的推进帧数可配：Filament 初始化更慢，固定 50 帧会让两次运行的
+            // 相机推轨相位不同，逐像素对比失去意义；给足帧数让动画收敛后再抓。
+            const int steps = qEnvironmentVariableIntValue("RHINE_CAPTURE_STEPS");
+            backend.step(steps > 0 ? steps : 50);
             if (backend.frame().isEmpty()) {
                 return;
             }
             poll->stop();
-            delete reviewed;
+            delete stage;
             backend.snapshot(path);
             auto window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
             if (window) {

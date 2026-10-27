@@ -5,6 +5,12 @@ const { createRequire } = require('node:module');
 const assert = require('node:assert/strict');
 const root = path.resolve('output/resources');
 const out = path.resolve(process.argv[2]);
+// 审计要求安装包里不得出现已退休的资源（scripts/audit-qt.py 的白名单断言）。
+// 本脚本只做显式白名单复制、不整目录清理，所以旧打包遗留会一直留在目标目录里；
+// 这里对退休名单做定向删除，避免陈旧产物随包发布。
+for (const retired of ['room-pmrem.bin', 'dfg-lut.bin', 'ao-kernel.bin', 'ao-noise.bin']) {
+    fs.rmSync(path.join(out, retired), { force: true });
+}
 const files = [
     'archive-baked-surface.bin',
     'archive-baked-light.bin',
@@ -40,6 +46,11 @@ fs.mkdirSync(out, {
 });
 for (const name of files) {
     fs.mkdirSync(path.dirname(path.join(out, name)), { recursive: true });
+    fs.copyFileSync(path.join(root, name), path.join(out, name));
+}
+// Filament 材质仅在 -DRHINE_FILAMENT=ON 的构建中产出；关闭开关时目录里没有 .filamat，
+// 这里按实际存在的文件拷贝，保持白名单对其它资源仍然严格。
+for (const name of fs.readdirSync(root).filter((entry) => entry.endsWith('.filamat'))) {
     fs.copyFileSync(path.join(root, name), path.join(out, name));
 }
 const bridge = path.join(root, 'MusicBridge');

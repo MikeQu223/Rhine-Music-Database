@@ -620,6 +620,11 @@ void NativeHud::action(QString value) {
     } else if (value == "detail-autoplay") {
         const bool enabled = m_host->preference("detail-autoplay") == "on";
         m_host->setPreference("detail-autoplay", enabled ? "off" : "on");
+    // 【功能暂未完成】Filament 开关已从设置界面移除，此处一并停用。
+    // } else if (value == "filament") {
+    //     与后端切换一致：只写配置，由下次启动的 resolveConfig 应用；失败码另行记录。
+    //     const auto current = m_host->preference("filament");
+    //     m_host->setPreference("filament", current == "on" ? QString() : QStringLiteral("on"));
     } else if (value == "graphics-backend") {
         // 后端切换需要重启生效：仅写入配置，由下次启动的 selectGraphicsBackend 应用。
         // 顺序：默认（自动探测）→ Vulkan → OpenGL → 默认

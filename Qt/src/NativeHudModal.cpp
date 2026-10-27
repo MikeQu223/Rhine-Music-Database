@@ -1,6 +1,7 @@
 #include "NativeHud.h"
 #include "GraphicsBackend.h"
 #include "fg/FgCapability.h"
+#include "scene/FilamentConfig.h"
 #include "MusicData.h"
 #include <algorithm>
 
@@ -503,6 +504,17 @@ void NativeHud::settings(double x, double y, double width) {
         }
     }
     rows.append({"GRAPHICS BACKEND / 图形后端 · 重启生效", backendLabel, "graphics-backend"});
+    // 【功能暂未完成】Filament 渲染后端暂不对外开放：V3/V4 画面保真度未达标，
+    // resolveConfig() 已无条件回退到 legacy 链路，因此设置里不再暴露该条目。
+    // 功能完成并验收通过后取消下面的注释、并删除 FilamentConfig.cpp 里的无条件 return。
+    // 原实现：
+    // {
+    //     const auto config = RhineFilament::resolveConfig(m_host->preference("filament"), false);
+    //     const auto state = !RhineFilament::compiledIn()
+    //                            ? QStringLiteral("未编入")
+    //                            : (config.requested ? QStringLiteral("开启") : QStringLiteral("关闭"));
+    //     rows.append({"FILAMENT / Filament 渲染 · 重启生效", state, "filament"});
+    // }
     // 显卡选择的选项表：非 Linux 恒为空，这一行也就不出现（Windows 由 DXGI 直接取适配器，
     // macOS 固定 Metal，两边都没有可选项）。表在这里一次建好，绘制与展开高度共用同一份。
     // 只显示序号（0 基，与 /sys/class/drm 的 cardN 顺序一致）：换过卡之后型号必定变化，

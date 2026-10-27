@@ -199,6 +199,9 @@ set(RHINE_APP_SOURCES
     Qt/src/render/PresentationShell.h
     Qt/src/Glyphs.cpp
     Qt/src/Glyphs.h
+    Qt/src/scene/FilamentContract.h
+    Qt/src/scene/FilamentConfig.cpp
+    Qt/src/scene/FilamentConfig.h
     vendor/qrcodegen/qrcodegen.cpp)
 list(TRANSFORM RHINE_APP_SOURCES PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
 if(APPLE)
@@ -210,7 +213,7 @@ endif()
 # Core/Gui/Network/Concurrent/Multimedia。
 set(RHINE_CORE_SOURCES ${RHINE_APP_SOURCES})
 list(FILTER RHINE_CORE_SOURCES EXCLUDE REGEX
-     "/(main|Engine|Icon|RhiScene|Hud|FrameProfiler)\\.(cpp|h)$|/tests/|/fsr/|/fg/|/render/")
+     "/(main|Engine|Icon|RhiScene|Hud|FrameProfiler)\\.(cpp|h)$|/tests/|/fsr/|/fg/|/render/|/scene/Filament(Bridge|Assets|Scene|Platform)\.")
 list(REMOVE_ITEM RHINE_APP_SOURCES ${RHINE_CORE_SOURCES})
 add_library(RhineCore STATIC ${RHINE_CORE_SOURCES})
 target_include_directories(
@@ -228,7 +231,119 @@ target_link_libraries(
 add_subdirectory(Qt)
 target_sources(RhineMusicDatabase PRIVATE Qt/tests/PresentationChecks.cpp)
 target_link_libraries(RhineMusicDatabase PRIVATE RhineCore)
-# FSR 只挂在应用目标上：设置页要按编译期能力置灰，所以把可用性也传成宏。 FSR1 是纯着色器（EASU+RCAS），任何后端都能用；FSR3 需要 Vulkan 或 D3D12。
+
+# ---------------------------------------------------------------------------
+# Filament 渲染适配（默认关闭）。关闭时不编译任何 Filament 代码，也不定义
+# RHINE_FILAMENT_AVAILABLE，链路与改动前逐像素一致（验收 V1）。
+# ---------------------------------------------------------------------------
+option(RHINE_FILAMENT "Build the optional Filament rendering backend" OFF)
+set(RHINE_FILAMENT_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/filament-dist"
+    CACHE PATH "Filament SDK 根目录（官方 linux 发布包解压位置）")
+set(RHINE_FILAMENT_SRC "${CMAKE_CURRENT_SOURCE_DIR}/third_party/filament-src"
+    CACHE PATH "Filament 源码头（稀疏检出 filament/backend 与 libs/bluevk）")
+set(RHINE_FILAMENT_ENABLED OFF)
+if(RHINE_FILAMENT)
+    if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        # 计划把 macOS/Windows 排在 P5：其它平台明确回退旧链路，不静默半工作。
+        message(STATUS "Filament 适配目前只在 Linux/Vulkan 上验证，当前平台保持旧链路")
+    elseif(NOT EXISTS "${RHINE_FILAMENT_ROOT}/lib/x86_64/libfilament.a")
+        message(WARNING "RHINE_FILAMENT=ON 但未找到 Filament SDK：${RHINE_FILAMENT_ROOT}")
+    elseif(NOT EXISTS "${RHINE_FILAMENT_SRC}/filament/backend/include/backend/platforms/VulkanPlatform.h")
+        message(WARNING "RHINE_FILAMENT=ON 但缺少 Filament 源码头：${RHINE_FILAMENT_SRC}")
+    else()
+        set(RHINE_FILAMENT_ENABLED ON)
+    endif()
+endif()
+
+if(RHINE_FILAMENT_ENABLED)
+    # 预编译 SDK 是 libc++ ABI，必须用 clang 的 -stdlib=libc++ -fno-rtti 编译；而工程主编译器是 GCC。
+    # 因此 Filament 侧源码用外部命令单独编译成静态库再导入，不必让整个工程换编译器。
+    find_program(RHINE_CLANGXX NAMES clang++ clang++-23 clang++-22 clang++-21 clang++-20 clang++-19)
+    if(NOT RHINE_CLANGXX)
+        message(WARNING "RHINE_FILAMENT=ON 但未找到 clang++，无法编译 libc++ ABI 的 Filament 侧代码")
+        set(RHINE_FILAMENT_ENABLED OFF)
+    endif()
+endif()
+
+if(RHINE_FILAMENT_ENABLED)
+    set(RHINE_FILAMENT_OBJDIR "${CMAKE_CURRENT_BINARY_DIR}/filament-obj")
+    set(RHINE_FILAMENT_ARCHIVE "${RHINE_FILAMENT_OBJDIR}/libRhineFilament.a")
+    set(RHINE_FILAMENT_TUS FilamentBridge FilamentAssets FilamentScene FilamentPlatform)
+    set(RHINE_FILAMENT_OBJS "")
+    foreach(tu ${RHINE_FILAMENT_TUS})
+        set(obj "${RHINE_FILAMENT_OBJDIR}/${tu}.o")
+        set(src "${CMAKE_CURRENT_SOURCE_DIR}/Qt/src/scene/${tu}.cpp")
+        add_custom_command(
+            OUTPUT "${obj}"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${RHINE_FILAMENT_OBJDIR}"
+            COMMAND ${RHINE_CLANGXX} -std=c++20 -O2 -fno-rtti -stdlib=libc++ -fPIC -w
+                    -I${CMAKE_CURRENT_SOURCE_DIR}/Qt/src -I${CMAKE_CURRENT_SOURCE_DIR}/Qt/src/scene
+                    -I${RHINE_FILAMENT_ROOT}/include
+                    -I${RHINE_FILAMENT_SRC}/filament/backend/include
+                    -idirafter "${RHINE_FILAMENT_SRC}/libs/bluevk/include"
+                    -c "${src}" -o "${obj}"
+            DEPENDS "${src}" "${CMAKE_CURRENT_SOURCE_DIR}/Qt/src/scene/FilamentContract.h"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/Qt/src/scene/FilamentAssets.h"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/Qt/src/scene/FilamentScene.h"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/Qt/src/scene/FilamentPlatform.h"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/Qt/src/scene/FilamentBridge.h"
+            COMMENT "clang++ (libc++) ${tu}.cpp"
+            VERBATIM)
+        list(APPEND RHINE_FILAMENT_OBJS "${obj}")
+    endforeach()
+    add_custom_command(
+        OUTPUT "${RHINE_FILAMENT_ARCHIVE}"
+        COMMAND ${CMAKE_COMMAND} -E remove -f "${RHINE_FILAMENT_ARCHIVE}"
+        COMMAND ar rcs "${RHINE_FILAMENT_ARCHIVE}" ${RHINE_FILAMENT_OBJS}
+        DEPENDS ${RHINE_FILAMENT_OBJS}
+        COMMENT "archiving libRhineFilament.a"
+        VERBATIM)
+    add_custom_target(RhineFilamentBuild ALL DEPENDS "${RHINE_FILAMENT_ARCHIVE}")
+
+    add_library(RhineFilament STATIC IMPORTED GLOBAL)
+    set_target_properties(RhineFilament PROPERTIES IMPORTED_LOCATION "${RHINE_FILAMENT_ARCHIVE}")
+
+    set(RHINE_FILAMENT_LIBS "")
+    foreach(lib filament backend bluevk bluegl filabridge filaflat geometry utils shaders smol-v image
+                zstd webgpu_dawn)
+        set(candidate "${RHINE_FILAMENT_ROOT}/lib/x86_64/lib${lib}.a")
+        if(EXISTS "${candidate}")
+            list(APPEND RHINE_FILAMENT_LIBS "${candidate}")
+        endif()
+    endforeach()
+    set_property(
+        TARGET RhineFilament
+        PROPERTY INTERFACE_LINK_LIBRARIES
+                 "-Wl,--start-group;${RHINE_FILAMENT_LIBS};-Wl,--end-group;vulkan;X11;c++;c++abi;unwind;pthread;dl;m")
+
+    # 材质：matc 在构建期把 .mat 编成 .filamat，与其它烘焙资源一起落到 output/resources。
+    # 光学材质有 6 个状态变体，编译规则由 OpticalSurface.cmake 提供；其余单文件材质走下面的通用规则。
+    set(RHINE_FILAMENT_MATERIAL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/output/resources")
+    include("${CMAKE_CURRENT_SOURCE_DIR}/Qt/shaders/filament/OpticalSurface.cmake")
+    optical_add_surface_materials("${RHINE_FILAMENT_MATERIAL_ROOT}")
+    file(GLOB RHINE_FILAMENT_MATERIAL_SOURCES CONFIGURE_DEPENDS Qt/shaders/filament/*.mat)
+    list(FILTER RHINE_FILAMENT_MATERIAL_SOURCES EXCLUDE REGEX "OpticalSurface\.mat$")
+    set(RHINE_FILAMENT_MATERIAL_OUTPUTS "")
+    foreach(source ${RHINE_FILAMENT_MATERIAL_SOURCES})
+        get_filename_component(name "${source}" NAME_WE)
+        set(output "${CMAKE_CURRENT_SOURCE_DIR}/output/resources/${name}.filamat")
+        add_custom_command(
+            OUTPUT "${output}"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_CURRENT_SOURCE_DIR}/output/resources"
+            COMMAND "${RHINE_FILAMENT_ROOT}/bin/matc" -a vulkan -p desktop -o "${output}" "${source}"
+            DEPENDS "${source}" "${RHINE_FILAMENT_ROOT}/bin/matc"
+            COMMENT "matc ${name}.mat -> ${name}.filamat"
+            VERBATIM)
+        list(APPEND RHINE_FILAMENT_MATERIAL_OUTPUTS "${output}")
+    endforeach()
+    add_custom_target(RhineFilamentMaterials ALL DEPENDS ${RHINE_FILAMENT_MATERIAL_OUTPUTS})
+    add_dependencies(RhineFilamentMaterials optical_surface_materials)
+
+    add_dependencies(RhineMusicDatabase RhineFilamentBuild RhineFilamentMaterials)
+    target_link_libraries(RhineMusicDatabase PRIVATE RhineFilament)
+    target_compile_definitions(RhineMusicDatabase PRIVATE RHINE_FILAMENT_AVAILABLE=1)
+    target_compile_definitions(RhineCore PRIVATE RHINE_FILAMENT_AVAILABLE=1)
+endif()# FSR 只挂在应用目标上：设置页要按编译期能力置灰，所以把可用性也传成宏。 FSR1 是纯着色器（EASU+RCAS），任何后端都能用；FSR3 需要 Vulkan 或 D3D12。
 if(TARGET FidelityFX::SDK)
     target_link_libraries(RhineMusicDatabase PRIVATE FidelityFX::SDK)
 endif()
@@ -383,7 +498,7 @@ elseif(UNIX)
     # 之前完成，所以单独成文件、只挂主程序。
     target_sources(RhineMusicDatabase PRIVATE Qt/src/LinuxGraphics.cpp)
     # 安装后的程序按 AppImage 前缀查找同级 Qt 运行时；构建树仍用 CMake 生成的 kit 路径， 否则 CI 中装在独立目录的 Qt 会在运行测试时找不到。
-    set_target_properties(RhineMusicDatabase PROPERTIES INSTALL_RPATH "\$ORIGIN/../lib")
+    set_target_properties(RhineMusicDatabase PROPERTIES INSTALL_RPATH "\${ORIGIN}/../lib")
     install(TARGETS RhineMusicDatabase RUNTIME DESTINATION bin)
 else()
     message(FATAL_ERROR "Supported desktop platforms are macOS, Linux and Windows")
@@ -592,4 +707,22 @@ if(RHINE_FFX_VK_AVAILABLE AND TARGET Qt6::GuiPrivate)
         target_compile_options(RhineFgGateProbe PRIVATE -g)
         target_link_options(RhineFgGateProbe PRIVATE -g)
     endif()
+endif()
+
+# Filament 适配的检查程序：只经 POD 接口，GPU 组在无设备时自动 SKIP。
+if(RHINE_FILAMENT_ENABLED)
+    qt_add_executable(RhineFilamentChecks Qt/tests/FilamentChecks.cpp Qt/src/scene/FilamentConfig.cpp)
+    target_include_directories(RhineFilamentChecks PRIVATE Qt/src Qt/src/scene)
+    target_link_libraries(RhineFilamentChecks PRIVATE Qt6::Core RhineFilament ${CMAKE_DL_LIBS})
+    target_compile_definitions(RhineFilamentChecks PRIVATE RHINE_FILAMENT_AVAILABLE=1)
+    add_test(NAME qt_filament_checks COMMAND RhineFilamentChecks
+                                          "${CMAKE_CURRENT_SOURCE_DIR}/output/resources")
+    set_tests_properties(qt_filament_checks PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+endif()
+
+
+# Filament 未编入时补上同名空实现，保证 RhiScene 只有一条代码路径。
+if(NOT RHINE_FILAMENT_ENABLED)
+    target_sources(RhineMusicDatabase PRIVATE Qt/src/scene/FilamentBridgeStub.cpp)
+    target_include_directories(RhineMusicDatabase PRIVATE Qt/src/scene)
 endif()

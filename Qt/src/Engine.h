@@ -47,6 +47,10 @@ class Engine : public QObject {
     QString root() const {
         return host.root;
     }
+    /** 只读的偏好访问：渲染侧据此解析 Filament 开关（离线/自检时 Host 会返回空）。 */
+    QString preference(const QString &key) const {
+        return host.preference(key);
+    }
     Q_INVOKABLE void importLocal(QList<QUrl> urls);
     Q_INVOKABLE void resize(double width, double height);
     Q_INVOKABLE void action(QString action);

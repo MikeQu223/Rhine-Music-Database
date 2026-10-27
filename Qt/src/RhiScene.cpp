@@ -9,6 +9,9 @@
 #include "DiscGeometry.h"
 #include "Engine.h"
 #include "Glyphs.h"
+#include "scene/FilamentBridge.h"
+#include "scene/FilamentConfig.h"
+#include <QCoreApplication>
 #include <QFile>
 #include <QJsonDocument>
 #include <QMatrix4x4>
@@ -169,8 +172,26 @@ class Renderer {
     quint64 bindingCreations = 0;
     quint64 coverUploads = 0;
     quint64 drawCalls = 0;
+    // --- Filament 适配状态 -------------------------------------------------
+    // 关闭时这些成员全为空，几何通道与合成路径与改动前完全一致（验收 V1）。
+    RhineFilament::Bridge *filament = nullptr;
+    QRhiTexture *filamentTexture = nullptr;
+    QRhiTexture *sceneColorOverride = nullptr;
+    QHash<QRhiBuffer *, QByteArray> cpuBuffers;
+    QString filamentState = QStringLiteral("off");
+    QString filamentError;
+    quint32 filamentEntities = 0;
+    quint32 filamentDraws = 0;
+    float filamentSyncMs = 0.f;
+    bool filamentEnabled = false;
+    bool filamentReady = false;
+    QSize filamentSize;
+    QRhiReadbackResult *pendingReadback = nullptr;
+    QRhiResourceUpdateBatch *readbackBatch = nullptr;
     QHash<QString, QRhiTexture *> labels, covers;
     QHash<qint64, QRhiTexture *> coverTextures;
+    // Filament 需要 CPU 侧像素：贴图创建时顺手留一份（与 cpuBuffers 同一思路）。
+    QHash<QRhiTexture *, QImage> textureImages;
     QRhiTexture *labelTexture = nullptr, *coverTexture = nullptr;
     QStringList textureOrder;
     QSet<QString> activeTextureKeys;
@@ -204,6 +225,8 @@ class Renderer {
         } else {
             updates->uploadStaticBuffer(b, data.constData());
         }
+        // Filament 需要 CPU 侧顶点/索引数据（QRhiBuffer 不可回读），这里顺手留一份副本。
+        cpuBuffers.insert(b, data);
         return b;
     }
     QRhiTexture *texture(QSize s, QRhiTexture::Format format, QRhiTexture::Flags flags = {},
@@ -350,6 +373,14 @@ class Renderer {
         if (updates) {
             updates->release();
         }
+        // 引擎必须先于宿主 VkDevice 销毁（计划陷阱 T5）：QRhi 变更时本对象会先被销毁。
+        if (filament != nullptr) {
+            RhineFilament::Bridge::destroy(filament);
+            filament = nullptr;
+        }
+        delete filamentTexture;
+        filamentTexture = nullptr;
+        sceneColorOverride = nullptr;
     }
     QRhiBuffer *plane(float x0, float y0, float x1, float y1, float z, float ux, float uy, float uw,
                       float uh) {
@@ -669,6 +700,7 @@ class Renderer {
                 glyphs->label(value).scaled(512, 220, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
             labels[key] = texture(label.size(), QRhiTexture::RGBA8, QRhiTexture::MipMapped);
             uploadMipped(labels[key], label);
+            textureImages.insert(labels[key], label);
             labelRevisions[key] = labelRevision;
         }
         if (!covers.contains(key) || (!image.isNull() && coverRevisions.value(key) != coverRevision)) {
@@ -695,6 +727,7 @@ class Renderer {
                 painter.end();
                 const auto cover = texture(pixels.size(), QRhiTexture::RGBA8, QRhiTexture::MipMapped);
                 uploadMipped(cover, pixels);
+                textureImages.insert(cover, pixels);
                 coverTextures[coverRevision] = cover;
                 ++coverUploads;
             }
@@ -1072,14 +1105,17 @@ class Renderer {
         }
     }
     void composite(QRhiCommandBuffer *cb, QRhiRenderTarget *destination) {
+        // 场景色来源：Filament 接管时就是宿主镜像，否则仍是 legacy 颜色目标。
+        QRhiTexture *sceneColor = sceneColorOverride != nullptr ? sceneColorOverride : color.texture;
 #ifndef Q_OS_MACOS
         auto finalDestination = destination;
+        // Filament 接管时后处理链照样生效：composite 把 Filament 输出写进后处理的输入目标，
+        // 之后由 resolve() 做 FXAA/FSR/TAA——这正是 P3 的接线点。
         if (postProcess->active()) {
             destination = postProcess->inputTarget();
         }
 #endif
 #ifdef Q_OS_MACOS
-        QRhiTexture *sceneColor = color.texture;
         implementation = QStringLiteral("off");
         if (settings.temporal()) {
             if (!metalFx) {
@@ -1102,23 +1138,14 @@ class Renderer {
             postColor = sceneColor;
         }
 #endif
-#ifdef Q_OS_MACOS
         auto &binding = postBindings["final/" + QString::number(quintptr(sceneColor))];
-#else
-        auto &binding = postBindings["final"];
-#endif
         if (!binding) {
             const auto stages =
                 QRhiShaderResourceBinding::VertexStage | QRhiShaderResourceBinding::FragmentStage;
             binding = bindings(
                 {QRhiShaderResourceBinding::uniformBuffer(0, stages, globalBuffer),
                  QRhiShaderResourceBinding::sampledTexture(2, QRhiShaderResourceBinding::FragmentStage,
-#ifdef Q_OS_MACOS
-                                                           sceneColor,
-#else
-                                                           color.texture,
-#endif
-                                                           linear)});
+                                                           sceneColor, linear)});
         }
         cb->beginPass(destination, Qt::black, {1, 0});
         cb->setGraphicsPipeline(pipeline("finalFragment", binding, destination->renderPassDescriptor()));
@@ -1170,6 +1197,279 @@ class Renderer {
         RhineFg::publish(motionInputs);
 #endif
     }
+    /** 是否被自检/离线参数强制回旧链路（对应计划约束 C4）。 */
+    static bool legacyForced() {
+        static const bool forced = [] {
+            const auto arguments = QCoreApplication::arguments();
+            return arguments.contains(QStringLiteral("--self-test")) ||
+                   arguments.contains(QStringLiteral("--visual-fixtures")) ||
+                   arguments.contains(QStringLiteral("--ui-self-test")) ||
+                   arguments.contains(QStringLiteral("--offline"));
+        }();
+        return forced;
+    }
+    /** 建桥接：共享 QRhi 的 VkInstance/VkDevice 与图形队列（Filament 不自己建设备）。 */
+    /** TAA 依赖运动矢量，Filament 链路暂不提供，回退到 FXAA 而不是崩溃（契约 C3）。 */
+    static void guardFilamentAaMode() {
+        const auto mode = qEnvironmentVariable("RHINE_AA_MODE");
+        // Filament 交给宿主的是单采样镜像：TAA 缺运动矢量、MSAA/SSAA 需要多采样目标，
+        // 这三种在这里都拿不到，统一回退到 FXAA，避免"看起来开了其实没效果"。
+        if (mode == QLatin1String("taa") || mode == QLatin1String("msaa") ||
+            mode == QLatin1String("ssaa")) {
+            qputenv("RHINE_AA_MODE", QByteArrayLiteral("fxaa"));
+            std::fprintf(stderr,
+                         "[filament] RHINE_AA_MODE=%s is not available on the Filament path "
+                         "(needs motion vectors / multisampled targets); falling back to FXAA\n",
+                         qPrintable(mode));
+            std::fflush(stderr);
+        } else if (mode == QLatin1String("fsr3")) {
+            std::fprintf(stderr,
+                         "[filament] RHINE_AA_MODE=fsr3 shares the FSR1 upscale path here\n");
+            std::fflush(stderr);
+        }
+    }
+    bool filamentStart(QSize dimensions) {
+        guardFilamentAaMode();
+        if (!filamentEnabled || rhi == nullptr || !RhineFilament::compiledIn()) {
+            filamentEnabled = false;
+            return false;
+        }
+        if (rhi->backend() != QRhi::Vulkan) {
+            // 计划把 GL 回退排在后面：非 Vulkan 后端直接保持旧链路（E_BACKEND_UNSUPPORTED）。
+            filamentEnabled = false;
+            filamentState = QStringLiteral("degraded");
+            filamentError = QStringLiteral("E_BACKEND_UNSUPPORTED: backend=%1").arg(int(rhi->backend()));
+            return false;
+        }
+        const auto *handles = static_cast<const QRhiVulkanNativeHandles *>(rhi->nativeHandles());
+        if (handles == nullptr || handles->inst == nullptr || handles->dev == VK_NULL_HANDLE ||
+            handles->physDev == VK_NULL_HANDLE) {
+            filamentEnabled = false;
+            filamentState = QStringLiteral("degraded");
+            filamentError = QStringLiteral("E_SHARED_CONTEXT: native handles unavailable");
+            return false;
+        }
+        RhineFilament::SharedContext context;
+        context.instance = quint64(handles->inst->vkInstance());
+        context.physicalDevice = quint64(handles->physDev);
+        context.device = quint64(handles->dev);
+        context.graphicsFamily = handles->gfxQueueFamilyIdx;
+        context.graphicsIndex = handles->gfxQueueIdx;
+        filament = RhineFilament::Bridge::create();
+        if (!filament) {
+            filamentEnabled = false;
+            filamentState = QStringLiteral("degraded");
+            filamentError = QStringLiteral("E_ENGINE_CREATE: bridge allocation failed");
+            return false;
+        }
+        char detail[512] = {};
+        const QByteArray assetRoot = root.toUtf8();
+        if (!filament->initialize(context, assetRoot.constData(), detail, sizeof(detail))) {
+            filamentError = QString::fromUtf8(detail);
+            filamentState = QStringLiteral("degraded");
+            RhineFilament::Bridge::destroy(filament);
+            filament = nullptr;
+            filamentEnabled = false;
+            qWarning("Filament 初始化失败，回退旧链路：%s", qPrintable(filamentError));
+            return false;
+        }
+        filament->resize(quint32(dimensions.width()), quint32(dimensions.height()));
+        filamentReady = true;
+        filamentState = QStringLiteral("active");
+        filamentError.clear();
+        return true;
+    }
+    /**
+     * 把本帧批次交给 Filament 渲进宿主镜像。
+     * 返回 true 表示本帧场景颜色由 Filament 产出，legacy 几何通道必须跳过（同帧互斥）。
+     */
+    bool filamentFrame(const QList<Draw> &opaque, const QList<Draw> &transparent, const Globals &g,
+                       const QVector3D &background, QSize dimensions) {
+        if (!filamentEnabled) {
+            return false;
+        }
+        if (!filamentReady && !filamentStart(dimensions)) {
+            return false;
+        }
+        if (filamentSize != dimensions) {
+            if (!filament->resize(quint32(dimensions.width()), quint32(dimensions.height()))) {
+                filamentEnabled = false;
+                filamentState = QStringLiteral("degraded");
+                filamentError = QStringLiteral("E_SIZE_INVALID: %1x%2")
+                                    .arg(dimensions.width())
+                                    .arg(dimensions.height());
+                qWarning("Filament 尺寸无效，回退旧链路：%s", qPrintable(filamentError));
+                return false;
+            }
+            filamentSize = dimensions;
+        }
+
+        std::vector<RhineFilament::DrawBatch> batches;
+        const int total = int(opaque.size() + transparent.size());
+        batches.reserve(size_t(total));
+        QVector<float> surfaces;
+        surfaces.reserve(total * 32);
+        const auto append = [&](const Draw &draw, bool transparentDraw) {
+            const auto &data = draw.data;
+            if (data["shadowOnly"].toBool()) {
+                return;
+            }
+            const QByteArray vertexBytes = cpuBuffers.value(draw.vertices);
+            const QByteArray indexBytes = cpuBuffers.value(draw.indices);
+            if (vertexBytes.isEmpty() || indexBytes.isEmpty()) {
+                return;
+            }
+            const QByteArray instanceBytes = instances.value(data["id"].toInt()).bytes;
+            const int instanceCount = data["count"].toInt();
+            if (instanceBytes.isEmpty() || instanceCount <= 0) {
+                return;
+            }
+            if (instanceBytes.size() < qsizetype(instanceCount) * 80) {
+                return;
+            }
+            RhineFilament::DrawBatch batch{};
+            batch.vertices = vertexBytes.constData();
+            batch.vertexCount = quint32(vertexBytes.size() / 32);
+            batch.indices = indexBytes.constData();
+            batch.indexCount = quint32(draw.count);
+            batch.indexStart = quint32(draw.start);
+            batch.indexTotal = quint32(indexBytes.size() / 4);
+            batch.instances = reinterpret_cast<const float *>(instanceBytes.constData());
+            batch.instanceCount = quint32(instanceCount);
+            const auto s = surface(data);
+            const int offset = int(surfaces.size());
+            for (const auto &v :
+                 {s.color, s.physical, s.optics, s.attenuation, s.extra, s.flags, s.darkColor, s.emission}) {
+                surfaces.append(v.x());
+                surfaces.append(v.y());
+                surfaces.append(v.z());
+                surfaces.append(v.w());
+            }
+            batch.surface = surfaces.constData() + offset;
+            batch.surfaceWords = 32;
+            const auto *instanceFloats = reinterpret_cast<const float *>(instanceBytes.constData());
+            for (int i = 0; i < 4; ++i) {
+                batch.state[i] = instanceFloats[16 + i];
+            }
+            batch.priority = std::clamp(data["order"].toInt(), 0, 7);
+            batch.transparent = transparentDraw;
+            batch.depthWrite = data["depthWrite"].toBool();
+            batch.doubleSided = data["side"].toInt() == 2;
+            if (const QImage coverImage = textureImages.value(draw.cover); !coverImage.isNull()) {
+                batch.coverPixels = coverImage.constBits();
+                batch.coverWidth = quint32(coverImage.width());
+                batch.coverHeight = quint32(coverImage.height());
+                batch.coverRevision = quint64(coverImage.cacheKey());
+            }
+            if (const QImage labelImage = textureImages.value(draw.label); !labelImage.isNull()) {
+                batch.labelPixels = labelImage.constBits();
+                batch.labelWidth = quint32(labelImage.width());
+                batch.labelHeight = quint32(labelImage.height());
+                batch.labelRevision = quint64(labelImage.cacheKey());
+            }
+            batch.meshId = int(qHash(reinterpret_cast<quintptr>(draw.vertices)) ^
+                               (qHash(reinterpret_cast<quintptr>(draw.indices)) << 1));
+            batches.push_back(batch);
+        };
+        for (const auto &draw : opaque) {
+            append(draw, false);
+        }
+        for (const auto &draw : transparent) {
+            append(draw, true);
+        }
+
+        RhineFilament::FrameGlobals globals{};
+        std::copy_n(g.view.elements, 16, globals.view);
+        std::copy_n(g.projection.elements, 16, globals.projection);
+        std::copy_n(g.correction.elements, 16, globals.correction);
+        std::copy_n(g.emitterInverse.elements, 16, globals.emitterInverse);
+        std::copy_n(g.emitterWorld.elements, 16, globals.emitterWorld);
+        const auto copy4 = [](const QVector4D &value, float *out) {
+            out[0] = value.x();
+            out[1] = value.y();
+            out[2] = value.z();
+            out[3] = value.w();
+        };
+        copy4(g.eye, globals.eye);
+        copy4(g.fogColor, globals.fogColor);
+        copy4(g.fog, globals.fog);
+        copy4(g.viewport, globals.viewport);
+        copy4(g.clip, globals.clip);
+        copy4(g.opticalLight, globals.opticalLight);
+        copy4(g.emissionColor, globals.emissionColor);
+        globals.background[0] = background.x();
+        globals.background[1] = background.y();
+        globals.background[2] = background.z();
+
+        RhineFilament::FrameStats stats{};
+        if (!filament->renderFrame(globals, batches.data(), quint32(batches.size()), &stats)) {
+            filamentEnabled = false;
+            filamentState = QStringLiteral("degraded");
+            filamentError = QString::fromUtf8(filament->detail());
+            qWarning("Filament 帧失败，回退旧链路：%s", qPrintable(filamentError));
+            return false;
+        }
+        filamentEntities = stats.entities;
+        filamentDraws = stats.draws;
+        filamentSyncMs = stats.syncMs;
+
+        const auto handoff = filament->handoff();
+        if (!handoff.valid()) {
+            filamentEnabled = false;
+            filamentState = QStringLiteral("degraded");
+            filamentError = QStringLiteral("E_IMAGE_HANDOFF: invalid host image");
+            qWarning("Filament 交接无效，回退旧链路：%s", qPrintable(filamentError));
+            return false;
+        }
+        const QSize handoffSize(int(handoff.width), int(handoff.height));
+        if (filamentTexture == nullptr || filamentTexture->pixelSize() != handoffSize) {
+            delete filamentTexture;
+            filamentTexture = rhi->newTexture(QRhiTexture::RGBA16F, handoffSize, 1, {});
+            const QRhiTexture::NativeTexture native{quint64(handoff.image), int(handoff.sampledLayout)};
+            if (filamentTexture == nullptr || !filamentTexture->createFrom(native)) {
+                delete filamentTexture;
+                filamentTexture = nullptr;
+                sceneColorOverride = nullptr;
+                filamentEnabled = false;
+                filamentState = QStringLiteral("degraded");
+                filamentError = QStringLiteral("E_IMAGE_HANDOFF: QRhiTexture::createFrom failed");
+                qWarning("Filament 纹理认领失败，回退旧链路：%s", qPrintable(filamentError));
+                return false;
+            }
+            postBindings.remove(QStringLiteral("final"));
+        }
+        static bool reported = false;
+        if (!reported && qEnvironmentVariableIsSet("RHINE_FILAMENT_DEBUG")) {
+            reported = true;
+            qWarning("[filament] active: entities=%u draws=%u syncMs=%.2f handoff=%ux%u format=%u",
+                     filamentEntities, stats.draws, double(filamentSyncMs), handoff.width,
+                     handoff.height, handoff.format);
+        }
+        static bool dumped = false;
+        if (!dumped && qEnvironmentVariableIsSet("RHINE_FILAMENT_DUMP")) {
+            dumped = true;
+            // 排障：把 Filament 产出的宿主镜像读回 CPU，直接判断它是不是黑的。
+            auto *result = new QRhiReadbackResult;
+            result->completed = [result] {
+                QFile file(QStringLiteral("/tmp/filament_readback.bin"));
+                if (file.open(QIODevice::WriteOnly)) {
+                    file.write(result->data);
+                }
+                delete result;
+            };
+            auto *batch = rhi->nextResourceUpdateBatch();
+            batch->readBackTexture(filamentTexture, result);
+            pendingReadback = result;
+            readbackBatch = batch;
+        }
+        if (sceneColorOverride != filamentTexture) {
+            // 场景色来源变了：最终合成缓存的旧的纹理绑定必须失效（计划陷阱 T1）。
+            sceneColorOverride = filamentTexture;
+            postBindings.remove(QStringLiteral("final"));
+        }
+        return true;
+    }
+
     /**
      * 仅提交一遍几何和一次最终合成；表面与邻壳柔光只读取构建时烘焙的共享贴图。
      * 帧数据和原生矩阵只读；临时绑定与实例缓冲区必须活到本帧命令提交结束。
@@ -1270,10 +1570,52 @@ class Renderer {
         cb->resourceUpdate(updates);
         updates = nullptr;
         const auto background = vector(frame["background"]);
+        // 按内部渲染尺寸（postProcess->renderSize）渲染，而不是窗口尺寸 dimensions：
+        // legacy 的颜色目标就是这个尺寸，合成阶段也以它作为后处理输入；若 Filament 按窗口
+        // 尺寸出图，合成时会被降采样再交由 FSR 升采样，形成一次往返损失（实测 PSNR 低 1.78 dB）。
+        if (filamentEnabled && filamentFrame(opaque, transparent, g, background, size)) {
+            // 同帧互斥：Filament 已经渲完并切到可采样布局，这里不再提交 legacy 几何。
+            if (readbackBatch != nullptr) {
+                cb->resourceUpdate(readbackBatch);
+                readbackBatch = nullptr;
+            }
+            static bool filamentReported = false;
+            if (!filamentReported && qEnvironmentVariableIsSet("RHINE_FILAMENT_DEBUG")) {
+                filamentReported = true;
+                std::fprintf(stderr,
+                             "[filament] frame ok: state=%s entities=%u draws=%u syncMs=%.2f size=%dx%d handoff=%ux%u\n",
+                             qPrintable(filamentState), filamentEntities, filamentDraws, double(filamentSyncMs),
+                             dimensions.width(), dimensions.height(), filamentTexture ? filamentTexture->pixelSize().width() : 0, filamentTexture ? filamentTexture->pixelSize().height() : 0);
+                std::fflush(stderr);
+            }
+            composite(cb, finalTarget ? finalTarget : target.rt);
+            return;
+        }
         cb->beginPass(color.rt, QColor::fromRgbF(background.x(), background.y(), background.z()), {1, 0});
         geometry(cb, opaque);
         geometry(cb, transparent);
         cb->endPass();
+        // 对照实验：对 legacy 颜色目标做同样的回读，用来验证回读本身是否有效。
+        static bool legacyDumped = false;
+        if (!legacyDumped && qEnvironmentVariableIsSet("RHINE_FILAMENT_DUMP_LEGACY")) {
+            legacyDumped = true;
+            auto *control = new QRhiReadbackResult;
+            control->completed = [control] {
+                QFile file(QStringLiteral("/tmp/legacy_readback.bin"));
+                if (file.open(QIODevice::WriteOnly)) {
+                    file.write(control->data);
+                }
+                delete control;
+            };
+            auto *batch = rhi->nextResourceUpdateBatch();
+            batch->readBackTexture(color.texture, control);
+            pendingReadback = control;
+            readbackBatch = batch;
+        }
+        if (readbackBatch != nullptr) {
+            cb->resourceUpdate(readbackBatch);
+            readbackBatch = nullptr;
+        }
         velocityPass(cb, data, frame);
         composite(cb, finalTarget ? finalTarget : target.rt);
     }
@@ -1281,6 +1623,8 @@ class Renderer {
 class ItemRenderer : public QQuickRhiItemRenderer {
     Engine *backend = nullptr;
     std::unique_ptr<Renderer> renderer;
+    bool filamentResolved = false;
+    bool filamentRequested = false;
     QJsonObject frame, item;
     SceneDrawBuffers buffers;
     Engine::MusicTextures musicTextures;
@@ -1331,6 +1675,15 @@ class ItemRenderer : public QQuickRhiItemRenderer {
         if (!renderer) {
             renderer = std::make_unique<Renderer>(root, rhi());
         }
+        if (!filamentResolved) {
+            // 三层开关只解析一次：设置页改完要重启生效，与 graphics-backend 一致。
+            filamentRequested = RhineFilament::resolveConfig(
+                                    backend ? backend->preference(QStringLiteral("filament")) : QString(),
+                                    Renderer::legacyForced())
+                                    .requested;
+            filamentResolved = true;
+        }
+        renderer->filamentEnabled = filamentRequested;
 #ifdef Q_OS_MACOS
         renderer->settings = backend->renderConfiguration.snapshot();
         renderer->frameInputs = &backend->metalFxInputs;
