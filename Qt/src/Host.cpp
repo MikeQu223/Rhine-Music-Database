@@ -1042,7 +1042,18 @@ QString Host::preference(QString key) const {
 void Host::setPreference(QString key, QString value) {
     if (remote) {
         remote->call("host.setPreference", {{"key", key}, {"value", value}});
+        if (!remote->error().isEmpty()) {
+            return;
+        }
         remotePreferences.remove(key);
+        // 后台服务只负责持久化；GUI 进程仍要应用渲染配置的热切换，否则设置页读到了新值，
+        // 性能面板与渲染器却还停留在旧状态。
+        if (key == QLatin1String("fg")) {
+            RhineFg::applyInterpolationPreference(value);
+        }
+#ifdef Q_OS_DARWIN
+        emit preferenceChanged(key, value);
+#endif
         return;
     }
     if (!offline && value.size() < 262144 && preferenceKeys().contains(key)) {
