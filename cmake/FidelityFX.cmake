@@ -134,6 +134,28 @@ function(_rhine_ffx_compat_copy source_rel output_path)
         if(NOT contents MATCHES "FFX_ALIGN_UP\\(\\(uintptr_t\\)pMem, 32\\)")
             message(FATAL_ERROR "FidelityFX: ffx_vk.cpp EffectContext alignment patch did not apply")
         endif()
+        # RHINE：给 FFX 的计算管线挂进程级 VkPipelineCache。上游 SDK 全程没有管线缓存，
+        # 而 FSR3 上下文在 resize 时会被整体重建、每个 pass 重新编译；核显上这批编译正好
+        # 落在用户拖窗口的那一刻。代码块放在 cmake/ffx_vk_pipeline_cache.inc，这里注入到
+        # CreatePipelineVK 的入口处，并把建管线时的 pipelineCache 参数从 nullptr 换过去。
+        file(READ "${CMAKE_CURRENT_LIST_DIR}/ffx_vk_pipeline_cache.inc" rhine_pipeline_cache_block)
+        string(FIND "${contents}" "    // start by fetching the shader blob" rhine_cache_anchor)
+        if(rhine_cache_anchor EQUAL -1)
+            message(FATAL_ERROR "FidelityFX: ffx_vk.cpp pipeline-cache anchor not found")
+        endif()
+        string(REPLACE "    // start by fetching the shader blob"
+                       "${rhine_pipeline_cache_block}    // start by fetching the shader blob"
+                       contents "${contents}")
+        file(READ "${CMAKE_CURRENT_LIST_DIR}/ffx_vk_pipeline_cache_create.inc" rhine_pipeline_create_block)
+        string(REPLACE "    if (backendContext->vkFunctionTable.vkCreateComputePipelines(backendContext->device, nullptr, 1, &pipelineCreateInfo, nullptr, &computePipeline) != VK_SUCCESS) {"
+                       "${rhine_pipeline_create_block}"
+                       contents "${contents}")
+        string(REPLACE "#include <vulkan/vulkan.h>"
+                       "#include <vulkan/vulkan.h>\n#include <cstdio>\n#include <cstdlib>\n#include <ctime>"
+                       contents "${contents}")
+        if(NOT contents MATCHES "rhinePipelineResult != VK_SUCCESS")
+            message(FATAL_ERROR "FidelityFX: ffx_vk.cpp pipeline-cache patch did not apply")
+        endif()
     endif()
     if(EXISTS "${output_path}")
         file(READ "${output_path}" previous)

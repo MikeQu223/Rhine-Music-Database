@@ -1,4 +1,5 @@
 #include "NativeScene.h"
+#include "SceneLifetimePolicy.h"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -8,6 +9,13 @@
 namespace {
 double lerp(double from, double to, double amount) {
     return (1 - amount) * from + amount * to;
+}
+
+// 实例身份取网格坐标而不是列表下标：按距离重排、可见集合增删都不会改变"这块卡片是谁"。
+// lane 与 row 各自落在 int16 内（只有超过 2048 才会 rebase 平移坐标系），
+// 因此 16+16 位编码在同一帧内不碰撞，跨帧也只跟格子本身绑定。
+quint32 cellInstanceId(SceneMotion::Cell cell) {
+    return quint32(quint16(cell.lane)) << 16 | quint16(cell.row);
 }
 }
 
@@ -185,6 +193,7 @@ void NativeScene::update(double time, std::optional<Cinema> cinema) {
     const auto entryZ = cinema ? -23 * std::pow(1 - entranceTime, 2) : -28 * (1 - entry);
     for (int index = m_returning.size() - 1; index >= 0; --index) {
         auto &actor = m_returning[index];
+        actor.age += seconds;
         const auto position = cellPosition(actor.cell);
         const auto baseY = position.y + field(actor.cell.row, actor.cell.lane);
         actor.rotation.y = SceneMotion::returnStep(actor.rotation.y, seconds, m_reduced);
@@ -194,7 +203,10 @@ void NativeScene::update(double time, std::optional<Cinema> cinema) {
                 actor.returnY.reset();
             }
         } else {
-            actor.lift.damp(0, m_reduced ? 35 : 4.5, seconds);
+            // E04：改用与帧率无关的指数衰减；`Spring::damp` 的每步乘子会让 60 fps 下
+            // 的实际时间常数落到约 6 秒，归位卡片因此滞留近一分钟。
+            actor.lift.value = SceneLifetime::returningLiftStep(actor.lift.value, seconds, m_reduced);
+            actor.lift.velocity = 0;
         }
         actor.position = {position.x - trackX, baseY + actor.lift.value + hoverLift(actor.cell),
                           position.z + entryZ + m_rail.value};
@@ -225,10 +237,10 @@ void NativeScene::update(double time, std::optional<Cinema> cinema) {
         m_cells = visibleCells(trackX, entryZ + m_rail.value);
     }
     const SceneMath::Frustum coverage(m_projection * m_view);
-    const auto shadowId = 3;
     QByteArray visibleMatrices;
-    QByteArray shadowMatrices;
     QByteArray themes;
+    // 与 visibleMatrices 同步增长的逐实例 id，条数必须严格对齐，运动矢量才敢按下标配对。
+    QVector<quint32> instanceIds;
     m_drawnCells.clear();
     m_drawnMatrices.clear();
     auto candidateProjection =
@@ -250,13 +262,13 @@ void NativeScene::update(double time, std::optional<Cinema> cinema) {
         }
         const auto slope = field(cell.row + 0.5, cell.lane) - field(cell.row - 0.5, cell.lane);
         const auto matrix = Matrix::compose(position, {slope * 0.024 * (1 - m_detail), 0, 0});
-        shadowMatrices.append(matrix.bytes());
         if (!intersectsCard(coverage, position)) {
             continue;
         }
         m_drawnCells.append(cell);
         m_drawnMatrices.append(matrix);
         visibleMatrices.append(matrix.bytes());
+        instanceIds.append(cellInstanceId(cell));
         const auto theme = float(m_theme.sample(cell, time));
         themes.append(reinterpret_cast<const char *>(&theme), sizeof(theme));
     }
@@ -287,30 +299,27 @@ void NativeScene::update(double time, std::optional<Cinema> cinema) {
             QVector<Matrix> matrices;
             QByteArray sortedMatrices;
             QByteArray sortedThemes;
+            QVector<quint32> sortedIds;
             cells.reserve(m_drawnCells.size());
             matrices.reserve(m_drawnMatrices.size());
             sortedMatrices.reserve(visibleMatrices.size());
             sortedThemes.reserve(themes.size());
+            sortedIds.reserve(instanceIds.size());
             for (const auto index : order) {
                 cells.append(m_drawnCells[index]);
                 matrices.append(m_drawnMatrices[index]);
                 sortedMatrices.append(m_drawnMatrices[index].bytes());
                 sortedThemes.append(themes.constData() + index * int(sizeof(float)), sizeof(float));
+                sortedIds.append(instanceIds[index]);
             }
             m_drawnCells = cells;
             m_drawnMatrices = matrices;
             visibleMatrices = sortedMatrices;
             themes = sortedThemes;
+            instanceIds = sortedIds;
         }
     }
-    if (themes.size() > m_themeStorage.size()) {
-        m_instanceCapacity = std::max(int(themes.size() / 4), m_instanceCapacity * 2);
-        m_themeStorage.append(QByteArray(m_instanceCapacity * 4 - m_themeStorage.size(), '\0'));
-    }
-    m_themeStorage.replace(0, themes.size(), themes);
-    drawBuffers[10] = {visibleMatrices, themes};
-    drawBuffers[shadowId] = {
-        shadowMatrices, m_themeStorage.left(std::min(shadowMatrices.size() / 64 * 4, m_themeStorage.size()))};
+    drawBuffers[10] = {visibleMatrices, themes, instanceIds};
     double neighborTop = -1e100;
     for (int row = selectedRow - 5; row <= selectedRow + 5; ++row) {
         if (row != selectedRow) {

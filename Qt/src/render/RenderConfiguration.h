@@ -65,8 +65,11 @@ class RenderConfiguration {
                                                   {"vsync", "RHINE_VSYNC"}};
         for (const auto &entry : keys) {
             const auto environment = qgetenv(entry.second.toUtf8().constData());
-            const auto value =
-                environment.isEmpty() ? preference(entry.first) : QString::fromUtf8(environment);
+            // FSR 插帧已从设置界面下线：配置文件里残留的 panel/fg=on 一律按"关"处理，
+            // 只有显式环境变量（排障用）才能打开。
+            const auto configured = entry.first == QLatin1String("fg") ? QStringLiteral("off")
+                                                                       : preference(entry.first);
+            const auto value = environment.isEmpty() ? configured : QString::fromUtf8(environment);
             if (!value.isEmpty()) {
                 applyPreference(entry.first, value);
             }

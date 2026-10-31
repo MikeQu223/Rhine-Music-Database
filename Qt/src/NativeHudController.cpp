@@ -829,10 +829,13 @@ void NativeHud::action(QString value) {
         // 所以这个开关是设置页里唯一不需要重启的偏好。转换规则与 Host::setPreference
         // 共用同一个函数，免得两处对"什么才算 on"产生分歧。
 #endif
-        const auto enabled = m_host->preference("fg") == "on";
-        const auto next = enabled ? QStringLiteral("off") : QStringLiteral("on");
-        m_host->setPreference("fg", next);
-        RhineFg::applyInterpolationPreference(next);
+        // FSR 插帧开关已从设置界面下线：设置页不再产生 "fg" 动作，旧版本残留的点击或
+        // 外部动作一律忽略（不写偏好、不改 RHINE_FG），避免"界面里没有开关、进程里却开着插帧"。
+        // 恢复开关时把下面四行取消注释即可。
+        // const auto enabled = m_host->preference("fg") == "on";
+        // const auto next = enabled ? QStringLiteral("off") : QStringLiteral("on");
+        // m_host->setPreference("fg", next);
+        // RhineFg::applyInterpolationPreference(next);
     } else if (value == "single-play-mode") {
         const bool append = m_host->preference("single-play-mode") == "append";
         m_host->setPreference("single-play-mode", append ? "replace" : "append");

@@ -1,0 +1,26 @@
+{
+  "version": 4,
+  "services": {
+    "holographic": {}
+  },
+  "enabled": {
+    "holographic": true
+  },
+  "bodies": [
+    {
+      "id": "holographic-6fa8d77ee9d8541d22873bd0",
+      "externalId": "/home/aibeto/code/Rhine-Music-Database/.mnemon/state/holographic/store.json",
+      "name": "Holographic",
+      "description": "Holographic fact store at /home/aibeto/code/Rhine-Music-Database/.mnemon/state/holographic/store.json",
+      "metadataSource": "provider",
+      "active": true,
+      "providerId": "holographic",
+      "connection": {
+        "defaultTrust": 0.5,
+        "minTrust": 0.3
+      },
+      "createdAt": "2026-10-30T16:16:02.970Z",
+      "updatedAt": "2026-10-30T16:16:44.664Z"
+    }
+  ]
+}

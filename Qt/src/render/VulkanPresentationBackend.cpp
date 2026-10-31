@@ -1,17 +1,39 @@
 #include "PresentationBackend.h"
 #include "PresentationWindow.h"
+#include "RenderPolicy.h"
 #include "../fg/VulkanPresenter.h"
+#include "../AppStorage.h"
 #include <QCoreApplication>
+#include <QDir>
 #include <QElapsedTimer>
 #include <QEventLoop>
+#include <QFile>
+#include <QFileInfo>
+#include <QSaveFile>
 #include <QVulkanFunctions>
 #include <QVulkanInstance>
 #include <QWindow>
+#include <cstring>
 #include <rhi/qrhi_platform.h>
 #include <vector>
 
 namespace RhineRender {
 namespace {
+// 管线缓存是「驱动版本 + 设备 ID + pipelineCacheUUID」的函数：换驱动或换卡后旧数据
+// 不仅无用，还可能被驱动判为非法。文件头做一次自校验，不匹配就直接丢弃。
+struct PipelineCacheHeader {
+    quint32 magic = 0;
+    quint32 vendorId = 0;
+    quint32 deviceId = 0;
+    quint32 driverVersion = 0;
+    quint32 apiVersion = 0;
+    quint8 uuid[VK_UUID_SIZE] = {};
+};
+constexpr quint32 kPipelineCacheMagic = 0x52484E31u; // "RHN1"
+QString qrhiPipelineCachePath() {
+    return AppStorage::cacheDirectory() + QStringLiteral("/shaders/qrhi-pipeline.cache");
+}
+
 /** Vulkan 专属句柄、图像布局与提交信号量只在本适配器中出现。 */
 class VulkanPresentationBackend final : public PresentationBackend {
   public:
@@ -73,12 +95,27 @@ class VulkanPresentationBackend final : public PresentationBackend {
         return m_instance.get();
     }
     bool resize(QSize size, bool force) override {
+        // 尺寸没变时必须只做判断、不碰 GPU：每重建一次都要 m_rhi->finish()（等设备空闲）
+        // 并重扫全部交换链包装目标，而 VulkanPresenter::resize 内部的"同尺寸就返回"是在
+        // finish() 之后才被调用，省不掉那次硬同步。呈现层在没有尺寸变化时也会一路把尺寸
+        // 同步下来，所以这层去重必须放在 finish() 之前，否则去重形同虚设（A10）。
+        if (!force && m_presenter && !m_swapTargets.empty() && size == m_size &&
+            m_swapSize == m_presenter->extent()) {
+            ++m_resizeSkips;
+            return true;
+        }
         m_rhi->finish();
+        // 只统计重建路径上的等待：release() 里那次 finish 是退出清理，混进来会让
+        // "每重建一次就等一次"的比例失真。
+        ++m_deviceIdleWaits;
         releaseTargets();
         if (!m_presenter->resize(size, force)) {
             m_error = m_presenter->lastError();
             return false;
         }
+        // 记下真正生效的尺寸（presenter 会按 surface 能力裁剪），下一次同尺寸判断才对得上。
+        m_size = m_presenter->extent();
+        ++m_swapchainRecreates;
         return ensureTargets();
     }
     AcquireResult acquire(Frame *frame) override {
@@ -98,7 +135,18 @@ class VulkanPresentationBackend final : public PresentationBackend {
         }
     }
     QRhi::FrameOpResult beginFrame(const Frame &, QRhiCommandBuffer **commands) override {
-        return m_rhi->beginOffscreenFrame(commands);
+        // A02：帧槽等待只在这里量。beginOffscreenFrame 内部要等上一帧的命令缓冲/围栏
+        // 归还，以前这段时间被算进 beginMs 却没人说清它在等什么。计时只读时钟，
+        // 不插入额外同步，也不改变提交顺序或队列/信号量逻辑。
+        QElapsedTimer slotTimer;
+        slotTimer.start();
+        const QRhi::FrameOpResult result = m_rhi->beginOffscreenFrame(commands);
+        m_lastSlotWaitMs = double(slotTimer.nsecsElapsed()) / 1e6;
+        if (result == QRhi::FrameOpSuccess) {
+            // 只统计真正进入的离屏帧；失败时调用方不会走 endFrame，不该记成一次提交。
+            ++m_offscreenSubmitCount;
+        }
+        return result;
     }
     QRhiRenderTarget *target(const Frame &frame) const override {
         if (frame.imageIndex >= m_swapTargets.size()) {
@@ -150,6 +198,10 @@ class VulkanPresentationBackend final : public PresentationBackend {
         const bool presented = m_presenter->present(m_nativeFrame, nullptr);
         if (!presented) {
             m_error = m_presenter->lastError();
+        } else if (++m_framesSubmitted == 240) {
+            // 管线在启动阶段就编译完了，之后只有切分辨率/换格式才会新增。
+            // 提前落盘一次，被强杀（开发时常用 Ctrl-C / kill）也不会丢掉这批编译成果。
+            savePipelineCache();
         }
         return presented;
     }
@@ -196,6 +248,24 @@ class VulkanPresentationBackend final : public PresentationBackend {
     QString presentModeName() const override {
         return m_presenter->presentModeName();
     }
+    double imageReuseMs() const override {
+        return m_presenter ? m_presenter->imageReuseMs() : 0.0;
+    }
+    quint64 swapchainRecreates() const override {
+        return m_swapchainRecreates;
+    }
+    quint64 deviceIdleWaits() const override {
+        return m_deviceIdleWaits;
+    }
+    quint64 resizeSkips() const override {
+        return m_resizeSkips;
+    }
+    quint64 offscreenSubmits() const override {
+        return m_offscreenSubmitCount;
+    }
+    double slotWaitMs() const override {
+        return m_lastSlotWaitMs;
+    }
     QString backendName() const override {
         return QStringLiteral("Vulkan");
     }
@@ -204,22 +274,102 @@ class VulkanPresentationBackend final : public PresentationBackend {
     }
 
   private:
+    /// 把上一进程存下的管线缓存灌回 QRhi；设备或驱动换了就整块丢弃。
+    void restorePipelineCache(VkPhysicalDevice physDev) {
+        if (!m_rhi || physDev == VK_NULL_HANDLE ||
+            !m_rhi->isFeatureSupported(QRhi::PipelineCacheDataLoadSave)) {
+            return;
+        }
+        QFile file(qrhiPipelineCachePath());
+        if (!file.open(QIODevice::ReadOnly)) {
+            return;
+        }
+        const QByteArray blob = file.readAll();
+        if (blob.size() <= int(sizeof(PipelineCacheHeader))) {
+            return;
+        }
+        PipelineCacheHeader header;
+        std::memcpy(&header, blob.constData(), sizeof(header));
+        VkPhysicalDeviceProperties props{};
+        m_instance->functions()->vkGetPhysicalDeviceProperties(physDev, &props);
+        const bool sameDevice = header.magic == kPipelineCacheMagic &&
+                                header.vendorId == props.vendorID &&
+                                header.deviceId == props.deviceID &&
+                                header.driverVersion == props.driverVersion &&
+                                header.apiVersion == props.apiVersion &&
+                                std::memcmp(header.uuid, props.pipelineCacheUUID, VK_UUID_SIZE) == 0;
+        if (!sameDevice) {
+            // 静默丢弃：不同机器/驱动之间共享缓存目录是常态，不值得警告。
+            return;
+        }
+        const QByteArray payload = blob.mid(int(sizeof(header)));
+        m_rhi->setPipelineCacheData(payload);
+        qInfo().noquote() << "QRhi 管线缓存: 已恢复" << payload.size() << "字节 ←"
+                          << QDir::toNativeSeparators(qrhiPipelineCachePath());
+    }
+    /// 退出前落盘；管线缓存只对「下次启动的同一驱动」有用。
+    void savePipelineCache() {
+        if (!m_rhi || m_physDev == VK_NULL_HANDLE ||
+            !m_rhi->isFeatureSupported(QRhi::PipelineCacheDataLoadSave)) {
+            return;
+        }
+        const QByteArray data = m_rhi->pipelineCacheData();
+        if (data.isEmpty()) {
+            return;
+        }
+        VkPhysicalDeviceProperties props{};
+        m_instance->functions()->vkGetPhysicalDeviceProperties(m_physDev, &props);
+        PipelineCacheHeader header;
+        header.magic = kPipelineCacheMagic;
+        header.vendorId = props.vendorID;
+        header.deviceId = props.deviceID;
+        header.driverVersion = props.driverVersion;
+        header.apiVersion = props.apiVersion;
+        std::memcpy(header.uuid, props.pipelineCacheUUID, VK_UUID_SIZE);
+        const QString path = qrhiPipelineCachePath();
+        QDir().mkpath(QFileInfo(path).absolutePath());
+        QSaveFile file(path);
+        if (!file.open(QIODevice::WriteOnly)) {
+            return;
+        }
+        file.write(reinterpret_cast<const char *>(&header), sizeof(header));
+        file.write(data);
+        file.commit();
+    }
+    /// 提交过多少帧；用来在启动阶段结束后提前落盘一次管线缓存。
+    int m_framesSubmitted = 0;
+
     bool createDevice() {
         QRhiVulkanInitParams params;
         params.inst = m_instance.get();
         // 自建交换链需要设备支持该扩展；QRhi 默认不请求它。
         params.deviceExtensions = {QByteArrayLiteral("VK_KHR_swapchain")};
-        m_rhi.reset(QRhi::create(QRhi::Vulkan, &params, {}));
+        // EnablePipelineCacheDataSave：让 QRhi 暴露 pipelineCacheData()/setPipelineCacheData()，
+        // 否则每次启动都要重新编译全部场景管线（核显上单次编译可达数百毫秒）。
+        // EnableTimestamps：不请求的话 isFeatureSupported(QRhi::Timestamps) 直接是 false，
+        // 渲染器只能在"设备不支持"和"没开"之间瞎猜，面板永远给不出可信的 GPU 耗时（A01）。
+        m_rhi.reset(QRhi::create(QRhi::Vulkan, &params,
+                                 QRhi::EnablePipelineCacheDataSave | QRhi::EnableTimestamps));
         if (!m_rhi) {
             m_error = QStringLiteral("QRhi(Vulkan) 创建失败");
             return false;
         }
+        // 登记"时间戳已经请求过"。离屏层通过 QQuickGraphicsDevice::fromRhi 共用这台
+        // 设备，所以这一处登记同时覆盖 FG 路径；漏登记会让 classifyGpuTiming() 把
+        // "已请求但本帧没样本"误判成"没请求"，把配置缺口说成驱动延迟。
+        if (m_rhi->isFeatureSupported(QRhi::Timestamps)) {
+            RhineRender::requestTimestamps();
+        }
 
-        m_device = static_cast<const QRhiVulkanNativeHandles *>(m_rhi->nativeHandles())->dev;
+        const auto *native = static_cast<const QRhiVulkanNativeHandles *>(m_rhi->nativeHandles());
+        m_device = native->dev;
+        m_physDev = native->physDev;
         if (m_device == VK_NULL_HANDLE) {
             m_error = QStringLiteral("拿不到 QRhi 的 VkDevice");
             return false;
         }
+        // 必须在任何管线创建之前灌入，否则缓存只对之后创建的管线生效。
+        restorePipelineCache(m_physDev);
 
         const VkSurfaceKHR surface = QVulkanInstance::surfaceForWindow(m_window.get());
         if (surface == VK_NULL_HANDLE) {
@@ -240,14 +390,22 @@ class VulkanPresentationBackend final : public PresentationBackend {
             m_error = QStringLiteral("交换链创建失败：%1").arg(m_presenter->lastError());
             return false;
         }
-        return ensureTargets();
+        const bool targetsReady = ensureTargets();
+        // 上面那次赋值是窗口逻辑尺寸，只用于推导 swapchainSize。从这里起 m_size 表示
+        // "已生效的交换链尺寸"（像素），与 resize() 的入参同一口径——高 DPI 下逻辑像素
+        // 和物理像素永远不相等，混用会让同尺寸判断永远失败、每帧都重建。
+        m_size = m_presenter->extent();
+        return targetsReady;
     }
 
     void destroyDevice() {
         release();
+        // 交换链与 render target 先拆，管线缓存数据在 QRhi 还活着时导出。
         m_presenter.reset();
+        savePipelineCache();
         m_rhi.reset();
         m_device = VK_NULL_HANDLE;
+        m_physDev = VK_NULL_HANDLE;
         m_nativeFrame = {};
     }
 
@@ -323,8 +481,16 @@ class VulkanPresentationBackend final : public PresentationBackend {
     std::vector<std::unique_ptr<QRhiRenderPassDescriptor>> m_swapPasses;
     VulkanPresenter::Frame m_nativeFrame;
     VkDevice m_device = VK_NULL_HANDLE;
+    VkPhysicalDevice m_physDev = VK_NULL_HANDLE;
     QSize m_size;
     QSize m_swapSize;
+    quint64 m_swapchainRecreates = 0;
+    quint64 m_deviceIdleWaits = 0;
+    quint64 m_resizeSkips = 0;
+    // A02：只做观测。m_offscreenSubmitCount 在 beginFrame 成功后 +1；m_lastSlotWaitMs 是
+    // 最近一次 beginFrame 的原始耗时（帧槽等待），两者都不参与任何提交/同步决策。
+    quint64 m_offscreenSubmitCount = 0;
+    double m_lastSlotWaitMs = 0.0;
     QString m_error;
 };
 } // namespace

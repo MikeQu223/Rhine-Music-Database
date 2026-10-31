@@ -2,7 +2,11 @@
 
 #include <QDebug>
 #include <QSize>
+#include <QStringList>
+#include <QVulkanFunctions>
 #include <QVulkanInstance>
+
+#include <chrono>
 
 #include <rhi/qrhi.h>
 #include <rhi/qrhi_platform.h>
@@ -121,6 +125,19 @@ struct VulkanPresenter::Private
     PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR getSurfaceCapabilities = nullptr;
     PFN_vkGetPhysicalDeviceSurfaceFormatsKHR getSurfaceFormats = nullptr;
     PFN_vkGetPhysicalDeviceSurfacePresentModesKHR getSurfacePresentModes = nullptr;
+
+    // —— 启动期能力快照：一次填好，供启动报告与排障使用 ——
+    QStringList supportedPresentModes;
+    bool extPresentId = false;
+    bool extPresentWait = false;
+    bool extFifoLatestReady = false;
+    bool extSwapchainMaintenance1 = false;
+    bool extPresentTiming = false;
+
+    /// 同一张交换链图像两次 present 的间隔（指数滑动平均）。
+    /// 它贴着刷新周期就说明合成器在压节奏，而不是 GPU 算不过来。
+    double imageReuseMs = 0.0;
+    QVector<quint64> lastPresentNs;
 };
 
 namespace {
@@ -221,6 +238,120 @@ bool loadProcedures(VulkanPresenter::Private *d, QVulkanInstance *instance)
         return false;
     }
     return true;
+}
+
+quint64 monotonicNs()
+{
+    return quint64(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                       std::chrono::steady_clock::now().time_since_epoch())
+                       .count());
+}
+
+const char *presentModeLabel(VkPresentModeKHR mode)
+{
+    switch (mode)
+    {
+    case VK_PRESENT_MODE_IMMEDIATE_KHR:
+        return "IMMEDIATE";
+    case VK_PRESENT_MODE_MAILBOX_KHR:
+        return "MAILBOX";
+    case VK_PRESENT_MODE_FIFO_KHR:
+        return "FIFO";
+    case VK_PRESENT_MODE_FIFO_RELAXED_KHR:
+        return "FIFO_RELAXED";
+#ifdef VK_PRESENT_MODE_FIFO_LATEST_READY_KHR
+    case VK_PRESENT_MODE_FIFO_LATEST_READY_KHR:
+        return "FIFO_LATEST_READY";
+#endif
+    default:
+        return "OTHER";
+    }
+}
+
+/// 记录一次成功上屏，更新"同图像复用间隔"。
+///
+/// 这个数是区分「GPU 渲染来不及」和「合成器不取图」最便宜的信号：前者会让间隔
+/// 大小不一，后者会把间隔钉在刷新周期上（60Hz → 16.7ms）。
+void notePresentedImage(VulkanPresenter::Private *d, quint32 imageIndex)
+{
+    if (int(imageIndex) >= d->lastPresentNs.size())
+        return;
+    const quint64 now = monotonicNs();
+    const quint64 previous = d->lastPresentNs[int(imageIndex)];
+    d->lastPresentNs[int(imageIndex)] = now;
+    if (previous == 0)
+        return;
+    const double intervalMs = double(now - previous) / 1e6;
+    d->imageReuseMs = d->imageReuseMs == 0.0 ? intervalMs
+                                             : d->imageReuseMs * 0.85 + intervalMs * 0.15;
+}
+
+/// 设备扩展支持探测。必须在设备创建之后查：VkPhysicalDevice 有效即可，
+/// 是否已在 VkDevice 上启用由调用方另行判断（这里只做"驱动有没有"）。
+void queryPresentExtensionSupport(VulkanPresenter::Private *d, QVulkanInstance *instance)
+{
+    quint32 count = 0;
+    if (instance->functions()->vkEnumerateDeviceExtensionProperties(
+            d->physicalDevice, nullptr, &count, nullptr)
+        != VK_SUCCESS
+        || count == 0)
+    {
+        return;
+    }
+    QVector<VkExtensionProperties> extensions(static_cast<int>(count));
+    if (instance->functions()->vkEnumerateDeviceExtensionProperties(
+            d->physicalDevice, nullptr, &count, extensions.data())
+        != VK_SUCCESS)
+    {
+        return;
+    }
+    extensions.resize(static_cast<int>(count));
+    for (const VkExtensionProperties &extension : extensions)
+    {
+        const auto name = QByteArray(extension.extensionName);
+        if (name == "VK_KHR_present_id")
+            d->extPresentId = true;
+        else if (name == "VK_KHR_present_wait")
+            d->extPresentWait = true;
+        else if (name == "VK_KHR_present_mode_fifo_latest_ready"
+                 || name == "VK_EXT_present_mode_fifo_latest_ready")
+            d->extFifoLatestReady = true;
+        else if (name == "VK_KHR_swapchain_maintenance1"
+                 || name == "VK_EXT_swapchain_maintenance1")
+            d->extSwapchainMaintenance1 = true;
+        else if (name == "VK_EXT_present_timing")
+            d->extPresentTiming = true;
+    }
+}
+
+/// 一行覆盖"这个交换链到底是什么状态"的全部事实。
+/// 现场排障最常缺的就是这些数字：呈现模式、图像数、格式与颜色空间、扩展可用性。
+QString describePresentSetup(VulkanPresenter::Private *d, QVulkanInstance *instance)
+{
+    VkPhysicalDeviceProperties props{};
+    instance->functions()->vkGetPhysicalDeviceProperties(d->physicalDevice, &props);
+    const QStringList modes = d->supportedPresentModes;
+    return QStringLiteral("设备 %1 · API %2.%3.%4 · driver 0x%5 · 交换链 %6x%7 %8 张"
+                          " · 格式 %9 · 颜色空间 %10 · 呈现 %11（可选 %12）"
+                          " · 扩展 present_id=%13 present_wait=%14 fifo_latest_ready=%15"
+                          " maintenance1=%16 present_timing=%17")
+        .arg(QString::fromUtf8(props.deviceName))
+        .arg(VK_API_VERSION_MAJOR(props.apiVersion))
+        .arg(VK_API_VERSION_MINOR(props.apiVersion))
+        .arg(VK_API_VERSION_PATCH(props.apiVersion))
+        .arg(props.driverVersion, 0, 16)
+        .arg(d->extent.width())
+        .arg(d->extent.height())
+        .arg(d->images.size())
+        .arg(int(d->format))
+        .arg(int(d->colorSpace))
+        .arg(QString::fromLatin1(presentModeLabel(d->presentMode)))
+        .arg(modes.join(QLatin1Char('/')))
+        .arg(d->extPresentId ? 1 : 0)
+        .arg(d->extPresentWait ? 1 : 0)
+        .arg(d->extFifoLatestReady ? 1 : 0)
+        .arg(d->extSwapchainMaintenance1 ? 1 : 0)
+        .arg(d->extPresentTiming ? 1 : 0);
 }
 
 bool createSwapchain(VulkanPresenter::Private *d)
@@ -390,6 +521,9 @@ bool createSwapchain(VulkanPresenter::Private *d)
     d->renderDone = d->pendingSemaphores;
     d->pendingViews.clear();
     d->pendingSemaphores.clear();
+    // 新交换链的图像句柄全变了，复用间隔必须重新起算，否则第一次会算出天文数字。
+    d->lastPresentNs.assign(d->images.size(), 0);
+    d->imageReuseMs = 0.0;
 
     d->extent = QSize(int(extent.width), int(extent.height));
     d->needsRecreate = false;
@@ -509,6 +643,10 @@ bool VulkanPresenter::init(QRhi *rhi, VkSurfaceKHR surface, QSize extent, bool v
         d->getSurfacePresentModes(d->physicalDevice, d->surface, &modeCount, modes.data());
         modes.resize(int(modeCount));
 
+        d->supportedPresentModes.clear();
+        for (VkPresentModeKHR mode : modes)
+            d->supportedPresentModes << QString::fromLatin1(presentModeLabel(mode));
+
         d->presentMode = VK_PRESENT_MODE_FIFO_KHR;
         if (!vsync)
         {
@@ -567,6 +705,10 @@ bool VulkanPresenter::init(QRhi *rhi, VkSurfaceKHR surface, QSize extent, bool v
     d->lastSlot = -1;
     qInfo().noquote() << "FG present: 已建立" << d->extent << "的交换链，格式"
                       << int(d->format) << "，共" << d->images.size() << "张图像";
+    // 启动报告：一次把"这条 Vulkan 呈现链路处在什么配置"讲清楚。
+    // 只在初始化/重建时打，正常运行时不会刷屏。
+    queryPresentExtensionSupport(d.get(), handles->inst);
+    qInfo().noquote() << "FG present 配置:" << describePresentSetup(d.get(), handles->inst);
     return true;
 }
 
@@ -889,6 +1031,7 @@ bool VulkanPresenter::present(const Frame &frame, bool *needsRecreate)
             d->warnedSuboptimal = true;
             qWarning().noquote() << "FG present: 交换链 suboptimal（继续使用，等 OutOfDate 或窗口事件再重建）";
         }
+        notePresentedImage(d.get(), frame.imageIndex);
         return true;
     }
     if (result != VK_SUCCESS)
@@ -896,6 +1039,7 @@ bool VulkanPresenter::present(const Frame &frame, bool *needsRecreate)
         d->error = QStringLiteral("FG present: vkQueuePresentKHR 失败（%1）").arg(int(result));
         return false;
     }
+    notePresentedImage(d.get(), frame.imageIndex);
     return true;
 }
 
@@ -949,11 +1093,20 @@ QString VulkanPresenter::presentModeName() const
         return QStringLiteral("IMMEDIATE");
     case VK_PRESENT_MODE_FIFO_RELAXED_KHR:
         return QStringLiteral("FIFO_RELAXED");
+#ifdef VK_PRESENT_MODE_FIFO_LATEST_READY_KHR
+    case VK_PRESENT_MODE_FIFO_LATEST_READY_KHR:
+        return QStringLiteral("FIFO_LATEST_READY");
+#endif
     case VK_PRESENT_MODE_FIFO_KHR:
         return QStringLiteral("FIFO");
     default:
         return QStringLiteral("UNKNOWN");
     }
+}
+
+double VulkanPresenter::imageReuseMs() const
+{
+    return d->imageReuseMs;
 }
 
 VkImage VulkanPresenter::imageAt(quint32 index) const

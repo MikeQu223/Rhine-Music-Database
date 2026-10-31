@@ -97,9 +97,12 @@ public:
     QSize extent() const;
     VkFormat colorFormat() const;
     quint32 imageCount() const;
-    /// 当前真正生效的呈现模式（FIFO / MAILBOX / IMMEDIATE）。
+    /// 当前真正生效的呈现模式（FIFO / MAILBOX / IMMEDIATE / FIFO_LATEST_READY）。
     /// 帧率上限几乎完全由它决定，所以性能面板要把它写出来。
     QString presentModeName() const;
+    /// 同一张交换链图像两次上屏的平均间隔（毫秒）。
+    /// 贴着刷新周期 = 合成器在限速；远大于刷新周期且忽大忽小 = GPU 或 CPU 提交跟不上。
+    double imageReuseMs() const;
 
     /// 第 index 张交换链图像的裸句柄。FG 宿主需要把它们包成 QRhi 纹理才能当
     /// 渲染目标用；句柄在 resize()/release() 之后失效。

@@ -1,4 +1,5 @@
 #include "SceneMotion.h"
+#include "SceneLifetimePolicy.h"
 #include <QJsonArray>
 #include <algorithm>
 #include <cmath>
@@ -106,8 +107,8 @@ double cinematicField(double row, double lane, double time, double center, doubl
     return archiveWave(row, lane, time) * (1 - handoff) + settlingWave(row - center, shoulderTime) * strength;
 }
 double returnStep(double angle, double seconds, bool reduced) {
-    const auto next = angle * std::exp(-seconds * (reduced ? 35 : 7));
-    return std::abs(next) <= 0.001 ? 0 : next;
+    // E04：与离线用例共用同一实现，阈值只在 SceneLifetimePolicy.h 里出现一次。
+    return SceneLifetime::returnAngleStep(angle, seconds, reduced);
 }
 void Spring::damp(double target, double rate, double seconds) {
     const auto delta = value - target;

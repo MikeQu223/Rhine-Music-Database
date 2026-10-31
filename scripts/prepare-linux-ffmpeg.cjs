@@ -126,9 +126,10 @@ const bsfs = [
 
 // 构建参数：shared 便于随包替换；关闭一切与音频解码无关的部分。
 // --enable-small 把默认的 -O3 换成 -Os：音频解码的算力冗余很大，换来的结果是 avcodec 小一截。
-// --enable-lto 让 CFLAGS 带上 -flto，链接期再做跨编译单元的死代码消除；不启用任何 GPL 组件，
+// --enable-lto=auto 让 CFLAGS 带上 -flto=auto，链接期并行执行跨编译单元优化；不启用任何 GPL 组件，
 //   许可断言不受影响。
-// --extra-ldflags=-flto 是补 FFmpeg 自己的漏洞：它用 `check_ldflags -flto $cpuflags` 决定链接期
+// --extra-ldflags=-flto=auto 在链接期启用自动并行 LTO，避免裸 -flto 导致 LTRANS 串行编译。
+// 显式传入也补 FFmpeg 自己的漏洞：它用 `check_ldflags $lto $cpuflags` 决定链接期
 //   是否带 -flto，而 $cpuflags 默认是 -march=generic；GCC 16 起 generic 只允许出现在 -mtune 上，
 //   该探测因此失败，-flto 被静默从 LDFLAGS 拿掉。此时对象是胖 LTO 对象（同时含 IR 与机器码），
 //   链接器若没加载到插件就会直接跳到机器码，LTO 白开。显式写进 ldflags 后不依赖这个探测，也不
@@ -144,7 +145,7 @@ const configureArguments = [
     '--disable-debug',
     '--disable-autodetect',
     '--enable-small',
-    ...(lto ? ['--enable-lto', '--extra-ldflags=-flto'] : []),
+    ...(lto ? ['--enable-lto=auto', '--extra-ldflags=-flto=auto'] : []),
     '--disable-encoders',
     '--disable-muxers',
     '--disable-avdevice',

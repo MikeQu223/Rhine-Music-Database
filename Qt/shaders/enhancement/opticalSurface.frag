@@ -17,7 +17,7 @@ layout(std140, binding = 1) uniform SurfaceBlock {
     Surface m;
 };
 layout(binding = 2) uniform sampler2D surfaceAtlas;
-layout(binding = 3) uniform sampler2D lightAtlas;
+layout(binding = 3) uniform sampler3D lightAtlas;
 layout(binding = 4) uniform sampler2D label;
 layout(binding = 5) uniform sampler2D cover;
 layout(binding = 6) uniform sampler2D normalAtlas;
@@ -29,11 +29,8 @@ layout(location = 12) in vec2 v_velocity;
 #endif
 /** 只插值烘焙光场的相邻高度切片；没有实时光源求值、光线追踪或折射背景采样。 */
 vec3 bakedIllumination() {
-    float lower = floor(v_lightUv.z);
-    float upper = min(lower + 1.0, 7.0);
-    vec3 first = texture(lightAtlas, vec2(v_lightUv.x, (v_lightUv.y + lower) / 8.0)).rgb;
-    vec3 second = texture(lightAtlas, vec2(v_lightUv.x, (v_lightUv.y + upper) / 8.0)).rgb;
-    return mix(first, second, fract(v_lightUv.z)) * v_lightMask * opticalLight.x * opticalLight.y;
+    // 三维光场由硬件三线性采样；RGB 按 sRGB8(线性/4) 存放，这里手工解码后乘回 4.0。
+    return linearColor(texture(lightAtlas, v_lightUv).rgb) * 4.0 * v_lightMask * opticalLight.x * opticalLight.y;
 }
 /** 正上方一束主光：漫反射 + 玻璃高光。
  *  场景没有实时阴影，这束光只负责给唱片与壳体一个明确的高光方向，
@@ -116,9 +113,12 @@ void main() {
     }
     bool shell = m.flags.x == 3.0 || m.flags.x == 4.0 || m.flags.x == 5.0;
     vec4 baked = texture(surfaceAtlas, v_surfaceUv);
+    // 表面图集以 sRGB8 存放线性辐亮度/4；这里手工解码后乘回 4.0。
+    baked.rgb = linearColor(baked.rgb) * 4.0;
     vec4 normalResponse = texture(normalAtlas, v_normalUv);
     if (v_theme > 0.0) {
         vec4 night = texture(surfaceAtlas, v_surfaceUv + vec2(0.0, 0.5));
+        night.rgb = linearColor(night.rgb) * 4.0;
         baked = mix(baked, night, v_theme);
         normalResponse = mix(normalResponse, texture(normalAtlas, v_normalUv + vec2(0.0, 0.5)), v_theme);
     }
@@ -175,21 +175,30 @@ void main() {
         discUv = mat2(m.extra.z, -m.extra.w, m.extra.w, m.extra.z) * centered + vec2(.5);
         // 磨砂：隔着霜层看盘面，封面必须真的糊掉，而不只是蒙一层乳白。
         float blur = (g.viewport.w > 0.5) ? (1.0 - clamp(v_clarity, 0.0, 1.0)) : 0.0;
-        vec3 art = texture(cover, discUv).rgb * 4.0;
-        float total = 4.0;
-        for (int ring = 1; ring <= 2; ++ring) {
-            vec2 delta = vec2(blur * 0.009 * float(ring));
-            art += texture(cover, discUv + vec2(delta.x, 0.0)).rgb;
-            art += texture(cover, discUv - vec2(delta.x, 0.0)).rgb;
-            art += texture(cover, discUv + vec2(0.0, delta.y)).rgb;
-            art += texture(cover, discUv - vec2(0.0, delta.y)).rgb;
-            art += texture(cover, discUv + delta).rgb;
-            art += texture(cover, discUv - delta).rgb;
-            art += texture(cover, discUv + vec2(delta.x, -delta.y)).rgb;
-            art += texture(cover, discUv + vec2(-delta.x, delta.y)).rgb;
-            total += 8.0;
+        // 清晰档（blur == 0：不在查看封面页，或 clarity 已到 1.0，也就是默认状态）下，
+        // 下面 17 次采样用的全是同一个 discUv —— 中心 1 次权重 4.0，两个环各 8 次权重 1.0，
+        // 权重和 20.0，(4S + 16S) / 20 恒等于 S，画面与"只采一次"逐像素相同，只差浮点舍入。
+        // 所以这里短路成 1 次纹理采样：省掉 16 次采样指令及其纹理带宽。
+        // blur > 0 的磨砂档仍走原来的双环模糊，观感不变。
+        if (blur <= 1e-6) {
+            color = linearColor(texture(cover, discUv).rgb) * 0.8;
+        } else {
+            vec3 art = texture(cover, discUv).rgb * 4.0;
+            float total = 4.0;
+            for (int ring = 1; ring <= 2; ++ring) {
+                vec2 delta = vec2(blur * 0.009 * float(ring));
+                art += texture(cover, discUv + vec2(delta.x, 0.0)).rgb;
+                art += texture(cover, discUv - vec2(delta.x, 0.0)).rgb;
+                art += texture(cover, discUv + vec2(0.0, delta.y)).rgb;
+                art += texture(cover, discUv - vec2(0.0, delta.y)).rgb;
+                art += texture(cover, discUv + delta).rgb;
+                art += texture(cover, discUv - delta).rgb;
+                art += texture(cover, discUv + vec2(delta.x, -delta.y)).rgb;
+                art += texture(cover, discUv + vec2(-delta.x, delta.y)).rgb;
+                total += 8.0;
+            }
+            color = linearColor(art / total) * 0.8;
         }
-        color = linearColor(art / total) * 0.8;
         // 盘面是上光玻璃：给足高光，出射方向明确。
         color = keyLight(color, 1.0);
     } else if (m.flags.x == 8.0) {

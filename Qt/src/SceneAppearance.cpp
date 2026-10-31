@@ -1,5 +1,6 @@
 #include "SceneAppearance.h"
 #include <QColor>
+#include <atomic>
 #include <cmath>
 #include <numbers>
 
@@ -52,6 +53,9 @@ QJsonObject SceneAppearance::material(const QJsonObject &source) {
 
 /** 从 glTF 参数建立一次共享材质模板；实例与抽出卡片共用几何索引，不创建部件对象树。 */
 SceneAppearance::SceneAppearance(const QJsonObject &asset) {
+    // 每次重建模板都取一个新代号（进程内单调），避免不同实例的模板共用一份解码缓存。
+    static std::atomic<quint64> nextRevision{1};
+    revision = nextRevision.fetch_add(1);
     const auto meshes = asset["meshes"].toArray();
     int partIndex = 0;
     SceneMath::Vector minimum{1e100, 1e100, 1e100};

@@ -96,6 +96,27 @@ class SceneLayerHost {
     void requestOverlayContent();
 
 #endif
+    /**
+     * 引擎内容版本（A03）：把"引擎侧内容变化"归纳成两个单调计数器，每帧推一次。
+     *
+     * 为什么需要它：requestSceneContent()/requestOverlayContent() 是按信号触发的，一次内容
+     * 变化往往伴随多个信号（场景帧 + HUD + 异步资源到达），重复置脏不会多画一帧，但拿不到
+     * "这一帧到底有没有新内容"的可比较结论，探针里也分不清哪些重渲是引擎真的推进了内容、
+     * 哪些是 Qt 的噪音信号。版本前进 = 确实有新内容；重复推同一个值就是两次整数比较后返回，
+     * 不分配、不加锁。
+     *
+     * 两路必须分开：HUD 在播放/滚动时几乎每帧都变，若与 3D 共用一个版本，
+     * 就等于每帧把 3D 层也一起拖去重渲，省下来的 6~9ms 又赔回去。
+     *   sceneRevision：3D 侧（视觉变化 + GPU 资源到达 + 目标重建）
+     *   hudRevision  ：HUD 侧（命令流内容变化 + 引用的图片到达/失效）
+     */
+    void setResourceRevision(quint64 sceneRevision, quint64 hudRevision);
+    quint64 resourceRevision() const {
+        return m_resourceRevision;
+    }
+    quint64 hudResourceRevision() const {
+        return m_hudResourceRevision;
+    }
     bool contentDirty() const {
         return m_scene.dirty || m_overlay.dirty;
     }
@@ -183,7 +204,14 @@ class SceneLayerHost {
     QWindow *m_visibleWindow = nullptr;
     quint64 m_sceneRenders = 0;
     quint64 m_overlayRenders = 0;
+    /// A03：最近一次被消费的内容版本。只有版本前进才置脏一次；重复推同一个值直接返回。
+    /// 跨平台保留（非 Linux 分支只记录、不改变置脏策略），这样上层代码不必再套 ifdef。
+    quint64 m_resourceRevision = 0;
+    quint64 m_hudResourceRevision = 0;
 #ifdef Q_OS_LINUX
+    /// RHINE_LAYER_REVISION=1 时才把"版本前进"当作置脏依据；默认仍走信号 + 兜底，
+    /// 保证默认行为与优化前逐帧一致（出事只用换环境变量就能回到旧路径）。
+    bool m_revisionMode = false;
     /// 兜底置脏间隔（帧）：异步资源加载不一定发更新信号，靠它兜住可见性；
     /// <=0 时恢复旧行为（每帧强制置脏）。默认 20 帧 ≈ 0.3s。
     int m_safetyFrames = 20;
@@ -193,6 +221,8 @@ class SceneLayerHost {
     quint64 m_dirtyScene = 0;
     quint64 m_dirtyOverlay = 0;
     quint64 m_dirtySafety = 0;
+    /// A03：版本推进驱动的置脏次数（与信号驱动的分列，才看得出谁在主导）
+    quint64 m_dirtyRevision = 0;
     quint64 m_probeFrames = 0;
     bool m_layerProbe = false;
     double m_sceneLayerMs = 0.0;

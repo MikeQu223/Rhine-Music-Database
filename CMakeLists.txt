@@ -399,6 +399,9 @@ set(RHINE_OPTICAL_SHADER_DEFINES)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     list(APPEND RHINE_OPTICAL_SHADER_DEFINES RHINE_SINGLE_PASS_MOTION=1)
 endif()
+# E05a：紧凑实例（80 字节）的第二套着色器烘焙放在独立子目录：
+# qt_add_shaders 把 .qsb 写到当前二进制目录的 .qsb/ 下，同一目录对同一份源码烘两次会撞规则。
+add_subdirectory(Qt/shaders/compact)
 qt_add_shaders(
     RhineMusicDatabase
     "rhine_enhancement_shaders"
@@ -636,6 +639,52 @@ if(MSVC)
     target_compile_options(RhineFgCapabilityRegression PRIVATE /utf-8)
 endif()
 add_test(NAME qt_fg_capability_regression COMMAND RhineFgCapabilityRegression)
+
+# 渲染策略里能离线判定的那一半（GPU 计时四态、时间戳登记、AA 模式是否需要运动矢量）是 header-only 纯逻辑，
+# 不碰 QRhi/窗口，所以三平台都编、都跑：真值表写错不会崩，只会让面板把"没请求"说成"没样本"，只有用例拦得住。
+qt_add_executable(RhineRenderPolicyRegression Qt/tests/RenderChecks.cpp)
+target_include_directories(RhineRenderPolicyRegression PRIVATE Qt/src)
+target_link_libraries(RhineRenderPolicyRegression PRIVATE Qt6::Core)
+if(MSVC)
+    target_compile_options(RhineRenderPolicyRegression PRIVATE /utf-8)
+endif()
+add_test(NAME qt_render_policy_regression COMMAND RhineRenderPolicyRegression)
+
+# 快速滚动的冷纹理准入（B01）与封面需求账本（B03）是 header-only 纯逻辑，不碰 QRhi/窗口：
+# 边界差 1ms、逻辑取消提前归还名额都不会崩，只会让界面变慢或并发慢慢失控，只能靠用例拦。
+# 计时器用例需要事件循环，所以在 main 里建 QCoreApplication（不建 GUI）。
+qt_add_executable(RhineMusicTextureAdmissionRegression Qt/tests/MusicTextureAdmissionChecks.cpp)
+target_include_directories(RhineMusicTextureAdmissionRegression PRIVATE Qt/src)
+target_link_libraries(RhineMusicTextureAdmissionRegression PRIVATE Qt6::Core)
+if(MSVC)
+    target_compile_options(RhineMusicTextureAdmissionRegression PRIVATE /utf-8)
+endif()
+add_test(NAME qt_music_texture_admission_regression COMMAND RhineMusicTextureAdmissionRegression)
+
+# C04：用"发布／消费"序号合并过量完整 step 是 header-only 纯策略，不读时钟、不接事件循环。
+# 写错的后果不是崩溃：要么白白多算一份会被覆盖的中间状态，要么动画停在半路，只能靠用例拦。
+qt_add_executable(RhineFramePacingRegression Qt/tests/FramePacingChecks.cpp)
+target_include_directories(RhineFramePacingRegression PRIVATE Qt/src)
+target_link_libraries(RhineFramePacingRegression PRIVATE Qt6::Core)
+if(MSVC)
+    target_compile_options(RhineFramePacingRegression PRIVATE /utf-8)
+endif()
+add_test(NAME qt_frame_pacing_regression COMMAND RhineFramePacingRegression)
+
+# D06：Vulkan 资源策略的纯用例（arena 步长/动态偏移/实例池/深度消费者/缓存代号）。
+# 只依赖 Qt6::Core，不建 QGuiApplication，也不碰 VkDevice——离线就能跑。
+qt_add_executable(RhineVulkanResourceRegression Qt/tests/VulkanResourceChecks.cpp)
+target_include_directories(RhineVulkanResourceRegression PRIVATE Qt/src)
+target_link_libraries(RhineVulkanResourceRegression PRIVATE Qt6::Core)
+if(MSVC)
+    target_compile_options(RhineVulkanResourceRegression PRIVATE /utf-8)
+endif()
+add_test(NAME qt_vulkan_resource_regression COMMAND RhineVulkanResourceRegression)
+
+qt_add_executable(RhineSceneLifetimeRegression Qt/tests/SceneLifetimeChecks.cpp)
+target_include_directories(RhineSceneLifetimeRegression PRIVATE Qt/src)
+target_link_libraries(RhineSceneLifetimeRegression PRIVATE Qt6::Core)
+add_test(NAME qt_scene_lifetime_regression COMMAND RhineSceneLifetimeRegression)
 
 # Linux 显卡选择里能离线验证的部分：PCI 地址解析、序号 → 环境变量的映射、序号失效时的回退。 写错的后果是"选错卡"或"配置失效后仍注入变量"，只能靠用例拦。三平台都编， sysfs
 # 相关用例在源码里按平台裁剪。

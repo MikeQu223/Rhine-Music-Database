@@ -1,6 +1,7 @@
 #include <QtGlobal>
 #include "Hud.h"
 #include "Engine.h"
+#include "render/HotPathProbe.h"
 #include <QDebug>
 #include <QElapsedTimer>
 #include <QPainter>
@@ -27,6 +28,10 @@ void Hud::paint(QPainter *painter) {
     if (!m_engine) {
         return;
     }
+    // F01：HUD 绘制成本与命令条数，和卡片展开、实例打包一起看才分得清谁是真瓶颈。
+    RhineRender::HotPathTimer hudTimer(RhineRender::hotPathWindow().hudNs);
+    RhineRender::hotPathWindow().hudPaints.fetch_add(1);
+    RhineRender::hotPathWindow().hudCommands.fetch_add(quint64(m_engine->commands().size()));
     // 探针（RHINE_HUD_PROBE=1）：这条覆盖层的真实尺寸与 DPR 决定 HUD 的绘制缩放，
     // 与 NativeHud 记录的舞台宽度必须自洽（舞台宽 = item 宽 / (item 高/1080)）。
     if (qEnvironmentVariableIntValue("RHINE_HUD_PROBE") == 1) {

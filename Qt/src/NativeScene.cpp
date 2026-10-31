@@ -1,4 +1,5 @@
 #include "NativeScene.h"
+#include "SceneLifetimePolicy.h"
 #include "NativeViewer.h"
 #include <QFile>
 #include <QJsonArray>
@@ -120,6 +121,14 @@ void NativeScene::select(int index, QJsonObject navigation) {
         old.quality = SceneMotion::smooth(old.lift.value / 0.4);
         old.clarity = m_reduced ? m_targetDetail : m_decryption.clarity;
         old.theme = m_theme.sample(old.cell, m_clock);
+        old.age = 0;
+        // E04：同一格只留一份归位。快速来回时同一张卡会被复制多次，它们位置完全重合，
+        // 却各自建标签/封面、各自展开部件——这是"活跃资源"被放大的直接来源。
+        for (int index = m_returning.size() - 1; index >= 0; --index) {
+            if (m_returning[index].cell == old.cell) {
+                m_returning.removeAt(index);
+            }
+        }
         m_returning.append(old);
         m_actor.lift = {};
     }
@@ -245,8 +254,6 @@ bool NativeScene::review(QString mode) {
     m_actor.position = cellPosition(m_actor.cell);
     m_returning.clear();
     m_pulses.clear();
-    m_instanceCapacity = 288;
-    m_themeStorage = QByteArray(288 * 4, '\0');
     m_rail = {};
     m_shoulder = {12, 0};
     m_laneFocus = {2, 0};

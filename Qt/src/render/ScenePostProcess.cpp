@@ -1,5 +1,7 @@
 #include "ScenePostProcess.h"
+#include "RenderPolicy.h"
 #include "../fsr/FsrSharpness.h"
+#include <QDebug>
 #include <QFile>
 #include <QJsonArray>
 #include <cmath>
@@ -23,7 +25,37 @@ QShader shader(const QString &name) {
     }
     return QShader::fromSerialized(file.readAll());
 }
+/**
+ * RHINE_POST_PROBE：只读一次环境变量，之后每帧只多一次静态布尔判断。
+ * 用来回答“这一帧全屏 pass 走了哪条链、分别几条”，避免靠猜。
+ */
+bool postProbe() {
+    static const bool enabled = qEnvironmentVariableIsSet("RHINE_POST_PROBE");
+    return enabled;
+}
+/**
+ * A07 的回滚开关，默认开启。本轮唯一的运行时行为变化是“RHINE_FSR_ENGINE 只在值变化时写”，
+ * 设 RHINE_POST_REUSE=0 即恢复原来的每帧无条件 qputenv，便于 A/B 对比或出事时一键回到旧路径。
+ * 两条全屏拷贝（taa→history→destination、m_output→destination）已证明在允许改动的文件内无法
+ * 等价合并，所以这里没有对应的“新路径”需要开关。
+ */
+bool postReuse() {
+    static const bool enabled = qEnvironmentVariable("RHINE_POST_REUSE").trimmed() != "0";
+    return enabled;
+}
 } // namespace
+
+void ScenePostProcess::probe(const char *path, const char *detail) {
+    if (!postProbe() || m_probePath == QLatin1String(path)) {
+        return;
+    }
+    m_probePath = QString::fromLatin1(path);
+    // 计数仍用 quad() 维护的 drawCalls/bindingCreations，不自造第二套：一次全屏 pass 记一个
+    // drawCall，所以“每帧增量”直接反映这条链还剩几次全屏绘制（含无法合并的拷贝）。注意计数在
+    // 路径决定处采样，taa-init 那条链会在它之后还有一次 copyColor→destination，故少算 1 个 pass。
+    qInfo().noquote() << "post-probe:" << path << "|" << detail << "| 累计 drawCalls" << drawCalls
+                      << "bindingCreations" << bindingCreations;
+}
 
 QSize ScenePostProcess::renderSize(QSize display) const {
     const auto mode = qEnvironmentVariable("RHINE_AA_MODE");
@@ -68,6 +100,14 @@ bool ScenePostProcess::temporal() const {
 }
 bool ScenePostProcess::needsMotion() const {
     return temporal() || RhineFg::isEnabled();
+}
+/**
+ * 目标分配口径：只看配置。AA 模式给出"是不是时域"（taa/fsr/fsr3），FG 宿主开关给出
+ * "插帧要不要读矢量"。运行期能力一律不参与，理由见头文件注释。
+ */
+bool ScenePostProcess::motionConfigured() const {
+    return RhineRender::modeNeedsMotion(qEnvironmentVariable("RHINE_AA_MODE")) ||
+           RhineFg::isEnabled();
 }
 bool ScenePostProcess::active() const {
     return m_mode == "fxaa" || m_mode == "taa" || isFsr(m_mode);
@@ -217,14 +257,25 @@ void ScenePostProcess::resolve(QRhiCommandBuffer *commands, QRhiRenderTarget *de
     commands->resourceUpdate(batch);
     if (m_mode == "fxaa") {
         quad(commands, "aaFragment", destination, {m_input.texture});
+        probe("fxaa", "aaFragment→destination，1 次全屏 pass，没有多余拷贝");
     } else if (m_mode == "taa") {
+        // A07 复查结论：这两次全屏 pass（taa→history、copyColor→destination）没法合并成
+        // “taa 直接写 destination”，三点原因缺一不可：
+        //   1) m_history[next] 要留下**尚未呈现**的 16F 结果当下一帧的重投影历史，而 destination
+        //      是调用方（RhiScene::composite）交进来的呈现目标，跨帧内容不保证保留，当不了历史；
+        //   2) destination 是 8 位目标，拿它当历史会把 TAA 的多帧累积精度压回 8 位；
+        //   3) taa 这个 pass 读 m_input、写 m_history[next]，两者不能别名。
+        // 真要把这次拷贝收掉，只能让下游（呈现侧）直接采 m_history，那是 RhiScene 的接线，
+        // 不在 A07 允许改动的文件里。第一帧多出来的那次 copyColor 同样必要：它就是历史初始化。
         if (!m_historyValid) {
             quad(commands, "copyColor", m_history[m_historyIndex].target, {m_input.texture});
+            probe("taa-init", "首帧：copyColor→history 初始化 + copyColor→destination，2 次全屏 pass");
         } else {
             const int next = 1 - m_historyIndex;
             quad(commands, "taa", m_history[next].target,
                  {m_input.texture, m_history[m_historyIndex].texture, motion.motionVectors});
             m_historyIndex = next;
+            probe("taa-steady", "taa→history(16F) + copyColor→destination，2 次全屏 pass（第二次数不了）");
         }
         quad(commands, "copyColor", destination, {m_history[m_historyIndex].texture});
         m_historyValid = true;
@@ -237,9 +288,26 @@ void ScenePostProcess::resolve(QRhiCommandBuffer *commands, QRhiRenderTarget *de
                                        m_output.texture);
             commands->endExternal();
         }
-        qputenv("RHINE_FSR_ENGINE", resolved ? "fsr3" : "shader");
+        // A07：这个环境变量是 Engine/FrameProfiler 读的进程级开关，值只由 resolved 决定，而
+        // resolved 在稳态下每帧都一样。原来每帧 qputenv 一次（QByteArray 堆分配 + 环境变量锁），
+        // 现在只在值变化时写：跳过写入与重复写同一个值对读方完全等价，只在“能力翻转”时有一次
+        // 额外写入，反而少了跨线程改环境的机会。回滚：RHINE_POST_REUSE=0 恢复每帧无条件写。
+        const QByteArray engine = resolved ? QByteArrayLiteral("fsr3") : QByteArrayLiteral("shader");
+        const bool changed = engine != m_fsrEngine;
+        if (changed || !postReuse()) {
+            qputenv("RHINE_FSR_ENGINE", engine);
+        }
+        if (changed) {
+            m_fsrEngine = engine;
+        }
         if (resolved) {
+            // A07 复查结论：这次 copyColor 也省不掉。FSR3 的 compute 派发必须写进带
+            // UsedWithLoadStore 的 16F 纹理（m_output），而 destination 是 8 位呈现目标：Vulkan 下
+            // copyImage 跨格式是未定义数据（copyColor.frag 头注释记着实测整屏粉红），所以必须有一次
+            // 采样式格式转换；m_output 也不能和 dispatch 的输出别名。让下游直接采 m_output 同样要改
+            // RhiScene 的呈现接线，不在本轮范围。
             quad(commands, "copyColor", destination, {m_output.texture});
+            probe("fsr3", "dispatch→m_output(16F) + copyColor→destination，2 次全屏 pass（含 16F→8 位转换）");
         } else {
             fsrQuad(commands, "fsr1_easu", m_output.target, m_input.texture,
                     Fsr1Constants::easu(m_renderSize, m_displaySize));
@@ -247,6 +315,7 @@ void ScenePostProcess::resolve(QRhiCommandBuffer *commands, QRhiRenderTarget *de
                 RhineFsr::effectiveSharpnessPercent(sharpness(), m_renderSize, m_displaySize);
             fsrQuad(commands, "fsr1_rcas", destination, m_output.texture,
                     Fsr1Constants::rcas(m_displaySize, float(100 - effective) / 100.f * 2.f));
+            probe("fsr1", "easu→m_output + rcas→destination，2 次全屏 pass，没有额外拷贝");
         }
     }
 }

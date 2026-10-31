@@ -141,6 +141,10 @@ class PresentationShell : public QObject {
     /// 记一次呈现间隔，并按需重算分位（呈现层的帧率统计全靠它，FG 路径没有 frameSwapped）。
     void recordGap(double gapMs);
     void refreshGapStats();
+    /// A02：记一对 beginFrame/endFrame 原始耗时样本，并按需重算滚动分位。
+    /// EMA 会把一次 20ms 的槽等待摊平，p95/p99 必须用原始样本算。
+    void recordWaitSample(double beginMs, double endMs);
+    void refreshWaitStats();
     /// 把 m_stats 的最新内容发给性能面板。
     void publishStats(bool interpolatedThisStep);
 
@@ -198,6 +202,9 @@ class PresentationShell : public QObject {
     // 复用同一个计时器串行测量，避免每帧构造 QElapsedTimer；
     // 面板要的是分项趋势，不是单帧精度，所以一律走滑动平均。
     QElapsedTimer m_probe;
+    // 整帧计时：presentOne 里三段耗时会各自 restart m_probe，只有单独的计时器
+    // 才能给出"这一帧从开始到上屏一共多久"（含 begin/end 离屏帧的隐式等待）。
+    QElapsedTimer m_frameProbe;
     RhineFg::Stats m_stats;
     // 呈现间隔环形缓冲：FG 路径不经过 QQuickWindow，拿不到 frameSwapped 事件，
     // 所以分位与卡顿计数自己算。600 个样本在 60Hz 下约 10 秒。
@@ -205,6 +212,24 @@ class PresentationShell : public QObject {
     std::array<double, kGapCapacity> m_gapRing{};
     int m_gapCursor = 0;
     int m_gapFilled = 0;
+    // A02：beginFrame/endFrame 的原始耗时环，120 个样本（60Hz 下约 2 秒）。
+    // 窗口不取 600：这两个数要能快速反映"换了驱动/开了读回之后槽等待有没有变"，
+    // 10 秒窗口太钝；120 帧足够算 p99（约 1~2 个尾部样本），也够快跟上变化。
+    static constexpr int kWaitCapacity = 120;
+    std::array<double, kWaitCapacity> m_beginRing{};
+    std::array<double, kWaitCapacity> m_endRing{};
+    int m_waitCursor = 0;
+    int m_waitFilled = 0;
+    quint64 m_waitSamples = 0;
+    // A02：离屏提交计数。呈现层取后端累计数（在真正提交处 +1）；QML 场景层/UI 层没有
+    // 计数接口可改（不在本次范围），只能对 SceneLayerHost 的两个公开计数取差分。
+    quint64 m_layerSubmits = 0;
+    // 呈现层自己也数一遍 beginFrame 成功次数：RhiPresentationBackend 没有后端计数器
+    // （offscreenSubmits() 默认 0），只用后端数字会把呈现层这一次凭空漏掉。
+    quint64 m_presenterSubmits = 0;
+    // 上次 publishStats 时的快照，用来算"自上次发布以来"发生了多少次提交。
+    quint64 m_lastPresenterSubmits = 0;
+    quint64 m_lastLayerSubmits = 0;
     QElapsedTimer m_presentClock;
     // 两步之间的空档（定时器等待 + 事件循环排队）单独计时：它和 endOffscreenFrame
     // 是仅有的两个"没被分项计时覆盖"的时间块，排障时要能把它们和渲染成本分开看。

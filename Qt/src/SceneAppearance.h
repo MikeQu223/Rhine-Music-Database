@@ -7,6 +7,9 @@ class SceneAppearance {
   public:
     explicit SceneAppearance(const QJsonObject &asset);
     QJsonArray actorTemplate;
+    /// F02：模板代号。actorTemplate 只在构造期构建，每次 new SceneAppearance 取一个新代号，
+    /// 下游（NativeCards）据此判断要不要重新预解码部件模板。
+    quint64 revision = 0;
     QJsonArray instances;
     QVector<int> pickingMeshes;
     SceneMath::Vector boundsCenter{0, 1.85, 0};

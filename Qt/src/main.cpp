@@ -7,6 +7,7 @@
 #include "fg/FgConfig.h"
 #endif
 #include "render/PresentationShell.h"
+#include "render/RenderPolicy.h"
 #include "FrameProfiler.h"
 #include "GraphicsBackend.h"
 #include "Hud.h"
@@ -282,8 +283,10 @@ static void applyAntialiasingSetting() {
  * 所以单独持久化、单独下发，切换时不需要重启。
  */
 static void applyFrameGenerationSetting() {
+    // FSR 插帧（帧生成）已从设置界面下线：启动时不再读取配置里的 panel/fg，恒按"关"下发。
+    // 显式 RHINE_FG=on 仍保留为排障对照（呈现层据此决定要不要接管窗口并插帧）。
     if (qEnvironmentVariableIsEmpty("RHINE_FG")) {
-        qputenv("RHINE_FG", graphicsSettings().value("panel/fg", "off").toString().toUtf8());
+        qputenv("RHINE_FG", "off");
     }
 #ifdef Q_OS_DARWIN
     // Apple 的窗口合成器始终按刷新率回收 drawable，垂直同步开关没有实际效果。
@@ -672,15 +675,23 @@ int main(int argc, char **argv) {
         return 1;
     }
     auto window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
-#ifdef Q_OS_WIN
     QQuickGraphicsConfiguration graphics;
+#ifdef Q_OS_WIN
     graphics.setAutomaticPipelineCache(false);
     const auto pipelineCache = AppStorage::cacheDirectory() + "/shaders/pipeline.cache";
     if (QFileInfo::exists(pipelineCache)) {
         graphics.setPipelineCacheLoadFile(pipelineCache);
     }
     graphics.setPipelineCacheSaveFile(pipelineCache);
+#endif
+    // 让 Qt Quick 的 RHI 开启时间戳查询；渲染器在每帧结束时读取
+    // lastCompletedGpuTime() 并发布到性能面板。后端不支持时该值保持为空。
+    graphics.setTimestamps(true);
+    // 登记"已经请求过时间戳"：渲染器据此把"支持但没请求"和"请求了但没样本"分开报。
+    // 这里和 VulkanPresentationBackend 各登记一次，因为存在只走其中一条路径的启动方式。
+    RhineRender::requestTimestamps();
     window->setGraphicsConfiguration(graphics);
+#ifdef Q_OS_WIN
     taskbar.bindWindow(window);
     window->show();
 #endif

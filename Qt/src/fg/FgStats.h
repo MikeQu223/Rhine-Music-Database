@@ -38,11 +38,46 @@ struct Stats {
     double prepareMs = 0.0;
     double dispatchMs = 0.0;
     double compositeMs = 0.0;
+    /// 一次 presentOne 的全程（beginFrame 之前 → present 之后），含离屏帧收尾的隐式等待。
+    /// 以前这里另有一个"上屏"耗时：它在 endFrame 之后重新起表，实际只量到记账语句自己，
+    /// 恒≈0；而真正能回答"这一帧到底多久"的只有全程计时，所以合并成一个数。
+    double frameMs = 0.0;
+    /// 每成功上屏一帧 +1。只靠帧率无法把一次卡顿/重建对上具体帧，这个 id 是 CSV 里
+    /// 把 fg_frame_ms 与 fg_swapchain_recreates 关联起来的锚点。
+    quint64 frameId = 0;
+    /// 交换链真正重建 / 重建时等待设备空闲 / 尺寸没变被跳过的次数。
+    /// 三个数一起看才能证明"resize 去重"生效：跳过数应该远多于重建数（A10）。
+    quint64 swapchainRecreates = 0;
+    quint64 deviceIdleWaits = 0;
+    quint64 resizeSkips = 0;
+    /// 已弃用，呈现层不再写它（量的是 endFrame 之后那几条记账语句，恒≈0）。
+    /// 字段暂时保留是因为 Qt/tests/FgCapabilityChecks.cpp 直接给它赋值；删掉会连带
+    /// 打断不在本次改动范围内的 RhineFgCapabilityRegression，等测试那行清掉后可移除。
     double presentMs = 0.0;
     /// QRhi 的离屏帧边界：这两处会隐式等 GPU 完成，之前的计时刚好把它们漏掉了，
     /// 于是出现"各项耗时都 <1ms、帧间隔却 30ms+"的怪现象。
+    /// A02 起语义写死（两者都是 EMA，alpha=0.15）：
+    ///   beginMs = **帧槽等待**：beginFrame 要等上一帧的命令缓冲/围栏归还，可能包含
+    ///             上一帧 endFrame 提交后的隐式同步；它衡量的是"帧槽什么时候空出来"。
+    ///   endMs   = **离屏收尾**：endFrame 只做提交与呈现；没有读回时这里不应该出现
+    ///             同步等待，一旦 p95 明显抬升，说明存在回读或队列被塞满。
     double beginMs = 0.0;
     double endMs = 0.0;
+    /// 最近一次 beginFrame 的原始耗时（ms），即本次"帧槽等待"，未做 EMA。
+    /// beginMs 只能看趋势，这个样本才能对上具体帧；配合 beginP95Ms/beginP99Ms
+    /// 判断是不是偶发的槽复用等待。
+    double slotWaitMs = 0.0;
+    /// beginMs / endMs 的滚动分位（最近 120 个**原始样本**，不是 EMA 值）。
+    /// 均值和 EMA 会把一次 20ms 的等待摊平到看不见，p95/p99 才能证明"偶发但致命"
+    /// 的槽等待/收尾等待确实存在（A02 的证据要求）。
+    double beginP95Ms = 0.0;
+    double beginP99Ms = 0.0;
+    double endP95Ms = 0.0;
+    double endP99Ms = 0.0;
+    /// 本帧（自上次 publishStats 以来）实际发生的离屏 beginFrame/endFrame 对数：
+    /// 呈现层 1 次 + QML 场景层/UI 层各 0~1 次（只有 dirty 才提交）。正常一帧是 3 次，
+    /// 空闲跳帧是 0 次；它是"每帧到底提交了几次离屏帧"的直接证据（A02）。
+    int submitsPerFrame = 0;
     /// 两步之间（定时器等待 + 事件循环排队）花掉的时间。
     double idleGapMs = 0.0;
 
@@ -62,6 +97,9 @@ struct Stats {
     /// 真正生效的呈现模式（FIFO / MAILBOX / IMMEDIATE）。帧率上限几乎全由它决定，
     /// 性能面板要显示出来，否则用户没法判断"这次跑得快是因为换对了呈现模式"。
     QString presentMode;
+    /// 同一张交换链图像两次上屏的平均间隔（ms）。与 presentMode 配合判断瓶颈：
+    /// 贴着刷新周期=合成器限速，忽大忽小且远大于刷新周期=渲染/提交跟不上。
+    double imageReuseMs = 0.0;
     QString adapterName;
     QString backendName;
 

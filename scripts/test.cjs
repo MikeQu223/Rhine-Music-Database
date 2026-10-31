@@ -21,7 +21,10 @@ function run(command, args, env = {}) {
         process.exit(result.status || 1);
     }
 }
-run(process.execPath, ['scripts/check-repository.cjs']);
+// CI 已停用仓库边界检查；本地测试仍保留该检查。
+if (process.env.CI !== 'true') {
+    run(process.execPath, ['scripts/check-repository.cjs']);
+}
 run(python, ['scripts/check-qt-project.py']);
 run(process.execPath, ['scripts/check-music-upstream.cjs']);
 

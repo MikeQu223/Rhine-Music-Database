@@ -91,6 +91,8 @@ class NativeScene {
         double clarity = 0;
         double theme = 0;
         QString musicKey;
+        /// E04：归位已存在多久（秒）。用来丢弃"最老的一份"，也用来观察积压年龄。
+        double age = 0;
     };
     struct Cinema {
         double time;
@@ -111,8 +113,6 @@ class NativeScene {
     QVector<Cell> m_cells;
     QVector<Cell> m_drawnCells;
     QVector<Matrix> m_drawnMatrices;
-    QByteArray m_themeStorage = QByteArray(288 * 4, '\0');
-    int m_instanceCapacity = 288;
     SceneMotion::ThemeWave m_theme;
     SceneMotion::Decryption m_decryption;
     SceneMotion::Spring m_rail;

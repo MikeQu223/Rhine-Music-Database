@@ -7,6 +7,7 @@ const root = path.resolve('output/resources');
 const out = path.resolve(process.argv[2]);
 const files = [
     'archive-baked-surface.bin',
+    'archive-baked-surface-bc7.bin',
     'archive-baked-light.bin',
     'archive-baked-normal.bin',
     'archive-cassette.bin',

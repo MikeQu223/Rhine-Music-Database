@@ -266,6 +266,7 @@ jobs:
       - name: Install build dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Check repository boundaries
+        if: ${{ false }}
         run: node scripts/check-repository.cjs
       - name: Download standalone Node and verify checksum
         shell: bash

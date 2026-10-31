@@ -1,5 +1,6 @@
 #include <QtGlobal>
 #include "NativeApplication.h"
+#include "render/HotPathProbe.h"
 #include "AppStorage.h"
 #include <QFile>
 #include <QJsonDocument>
@@ -66,7 +67,8 @@ void NativeApplication::initialize() {
 }
 #ifdef Q_OS_LINUX
 // RHINE_STEP_PROBE=1：拆开 app->step 内部（场景采样 / HUD 绘制 / 观察与返回对象构建）。
-static double nacSampleSum = 0, nacDrawSum = 0, nacRestSum = 0;
+static double nacSampleSum = 0, nacObserveSum = 0, nacDrawSum = 0, nacRestSum = 0;
+static double nacSampleMax = 0, nacObserveMax = 0, nacDrawMax = 0, nacRestMax = 0;
 static int nacFrames = 0;
 
 #endif
@@ -86,13 +88,29 @@ QJsonObject NativeApplication::step(double time, double width, bool reuseScene) 
         return {};
     }
     music.frame = frame;
+#ifdef Q_OS_LINUX
+    QElapsedTimer nacObserveClock;
+    if (nacProbe) {
+        nacObserveClock.start();
+    }
+#endif
     music.observe(frame["selected"].toInt());
     if (hud.tab != "overview" && music.wantsSongDetails && frame["mode"] == "detail") {
         music.sameAlbum();
     }
+#ifdef Q_OS_LINUX
+    const double nacObserveEnd = nacProbe ? double(nacTimer.nsecsElapsed()) / 1e6 : 0.0;
+    QElapsedTimer nacDrawClock;
+    if (nacProbe) {
+        nacDrawClock.start();
+    }
+#endif
     hud.draw(frame, width, time);
 #ifdef Q_OS_LINUX
+    const double nacDrawMs = nacProbe ? double(nacDrawClock.nsecsElapsed()) / 1e6 : 0.0;
     const double nacDrawEnd = nacProbe ? double(nacTimer.nsecsElapsed()) / 1e6 : 0.0;
+    RhineRender::hotPathWindow().frames.fetch_add(1);
+
     // 返回对象的构建会把 hud.commands 等大对象整份拷进新 QJsonObject，单独计时。
     QJsonObject nacResult{{"commands", hud.commands},
                           {"hits", hud.hits},
@@ -101,18 +119,34 @@ QJsonObject NativeApplication::step(double time, double width, bool reuseScene) 
                           {"cover", music.coverImage}};
     if (nacProbe) {
         const double nacTotal = double(nacTimer.nsecsElapsed()) / 1e6;
+        const double nacObserveMs = nacObserveEnd - nacSampleMs;
         nacSampleSum += nacSampleMs;
-        nacDrawSum += nacDrawEnd - nacSampleMs;
+        nacObserveSum += nacObserveMs;
+        nacDrawSum += nacDrawMs;
         nacRestSum += nacTotal - nacDrawEnd;
+        nacSampleMax = std::max(nacSampleMax, nacSampleMs);
+        nacObserveMax = std::max(nacObserveMax, nacObserveMs);
+        nacDrawMax = std::max(nacDrawMax, nacDrawMs);
+        nacRestMax = std::max(nacRestMax, nacTotal - nacDrawEnd);
         if (++nacFrames >= 60) {
             const double n = nacFrames;
+            // F01（S1）：观察/专辑切换与 HUD 绘制分开计时——前者是音乐状态推进，后者才是绘制命令生成；
+            // 末尾的「返回拷贝」是 QJsonObject 组装（commands/hits 的隐式共享赋值本身不深拷贝，
+            // 这里量的是整体组装成本，不把赋值单独算成复制）。
             qInfo().noquote()
-                << QStringLiteral(
-                       "app->step 内部: 场景采样 %1 ms | HUD 绘制 %2 ms | 其余(观察+返回拷贝) %3 ms")
+                << QStringLiteral("app->step 内部: 场景采样 %1/峰%2 ms | 观察+专辑 %3/峰%4 ms | "
+                                  "HUD 绘制 %5/峰%6 ms | 返回拷贝 %7/峰%8 ms")
                        .arg(nacSampleSum / n, 0, 'f', 2)
+                       .arg(nacSampleMax, 0, 'f', 2)
+                       .arg(nacObserveSum / n, 0, 'f', 2)
+                       .arg(nacObserveMax, 0, 'f', 2)
                        .arg(nacDrawSum / n, 0, 'f', 2)
-                       .arg(nacRestSum / n, 0, 'f', 2);
-            nacSampleSum = nacDrawSum = nacRestSum = 0;
+                       .arg(nacDrawMax, 0, 'f', 2)
+                       .arg(nacRestSum / n, 0, 'f', 2)
+                       .arg(nacRestMax, 0, 'f', 2);
+            qInfo().noquote() << RhineRender::formatHotPathLine(RhineRender::takeHotPathSample());
+            nacSampleSum = nacObserveSum = nacDrawSum = nacRestSum = 0;
+            nacSampleMax = nacObserveMax = nacDrawMax = nacRestMax = 0;
             nacFrames = 0;
         }
     }
