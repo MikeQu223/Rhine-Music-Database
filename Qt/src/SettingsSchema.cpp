@@ -136,6 +136,8 @@ bool aaEnabled(const SettingsContext &) {
 #endif
 }
 
+// 关闭帧生成
+#if 0
 RhineFg::FrameGenerationUi frameGenerationState(const SettingsContext &context) {
     const bool preferenceOn = context.host && context.host->preference("fg") == On;
     const auto &capability = RhineFg::capability();
@@ -155,6 +157,7 @@ RhineFg::FrameGenerationUi frameGenerationState(const SettingsContext &context) 
 bool fgEnabled(const SettingsContext &context) {
     return frameGenerationState(context).clickable;
 }
+#endif
 
 QVector<SettingChoice> qualityChoices(const SettingsContext &context) {
     QVector<SettingChoice> values;
@@ -282,9 +285,12 @@ QString aaModeLabel(const SettingsContext &context, const SettingsValue &value) 
     return value.canonical;
 }
 
+// 关闭帧生成
+#if 0
 QString fgLabel(const SettingsContext &context, const SettingsValue &) {
     return frameGenerationState(context).value;
 }
+#endif
 
 QString choiceLabel(const SettingDescriptor &descriptor, const SettingsContext &context,
                     const SettingsValue &value) {
@@ -611,6 +617,9 @@ const QVector<SettingDescriptor> &descriptors() {
              .step = 10,
              .visible = fsrVisible,
              .label = percentLabel});
+
+// 关闭帧生成
+#if 0
         add({.id = "fg",
              .section = SectionId::Preferences,
              .kind = SettingKind::Choice,
@@ -620,20 +629,13 @@ const QVector<SettingDescriptor> &descriptors() {
                          .actionPrefix = "setting:fg:"},
              .storage = StorageType::OnOff,
              .order = 310,
-#if defined(Q_OS_DARWIN)
              .titleEn = "METALFX",
              .titleZh = "帧生成",
-#else
-             .titleEn = "FRAME GENERATION",
-             .titleZh = "帧生成",
-#endif
-#if defined(Q_OS_LINUX)
-             .restartHint = QStringLiteral("重启生效"),
-#endif
              .defaultValue = Off,
              .choices = onOffChoices(),
              .enabled = fgEnabled,
              .label = fgLabel});
+#endif
 
         const struct {
             const char *id;

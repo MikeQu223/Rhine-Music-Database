@@ -819,16 +819,16 @@ void NativeHud::action(QString value) {
             qputenv("RHINE_RENDER_SCALE", QByteArray::number(clamped));
         }
     } else if (value == "fg") {
-#ifdef Q_OS_LINUX
+// #ifdef Q_OS_LINUX
         // 帧生成与抗锯齿模式互不影响。**需要重启才生效**：呈现层是否接管窗口在启动时
         // 按 RHINE_FG 决定（fg=off 走 Qt 默认路径，内容帧实测高 35%）。这里仍然写入
         // 环境变量，保证设置页显示与持久化偏好一致。转换规则与 Host::setPreference
         // 共用同一个函数，免得两处对"什么才算 on"产生分歧。
-#else
+// #else
         // 帧生成与抗锯齿模式互不影响；呈现层每帧读取 RHINE_FG，切换后下一帧生效，
         // 所以这个开关是设置页里唯一不需要重启的偏好。转换规则与 Host::setPreference
         // 共用同一个函数，免得两处对"什么才算 on"产生分歧。
-#endif
+// #endif
         // FSR 插帧开关已从设置界面下线：设置页不再产生 "fg" 动作，旧版本残留的点击或
         // 外部动作一律忽略（不写偏好、不改 RHINE_FG），避免"界面里没有开关、进程里却开着插帧"。
         // 恢复开关时把下面四行取消注释即可。

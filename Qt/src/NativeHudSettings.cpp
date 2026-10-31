@@ -438,10 +438,13 @@ void NativeHud::applySettingValue(const QString &id, const QString &value) {
         action("music:activate");
         return;
     }
+    // 关闭帧生成
+#if 0
     if (id == "fg") {
         action("fg");
         return;
     }
+#endif
     if (id == "archive-mask") {
         action("archive-mask:" + target);
         return;
