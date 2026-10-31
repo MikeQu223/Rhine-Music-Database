@@ -347,6 +347,7 @@ class Renderer {
     // 配对探针（RHINE_MOTION_PROBE=1）：本帧按 id 命中 / 按平移列回退命中 / 完全没配上的实例数。
     quint64 motionByIdHits = 0, motionFallbackHits = 0, motionMisses = 0;
     int motionProbeFrames = 0;
+#endif
     QRhiTexture *motionVectors = nullptr;
     /// E05a：`RHINE_VK_COMPACT_INSTANCES=1` 且本帧确实没有运动矢量消费者时才用 80 字节实例。
     const bool compactInstanceRequested = qEnvironmentVariableIntValue("RHINE_VK_COMPACT_INSTANCES") == 1;
@@ -362,6 +363,7 @@ class Renderer {
         static const bool warpProbe = qEnvironmentVariableIsSet("RHINE_WARP_PROBE");
         return compactInstanceRequested && motionVectors == nullptr && !warpProbe;
     }
+#ifdef Q_OS_LINUX
     // 重投影插帧探针（RHINE_WARP_PROBE=1）：把当前场景颜色按运动矢量前推到 t 相位。
     // 与 FFX 插值不同，相位 t 可任意取（FFX 硬编码 0.5），且不需要第二趟几何。
     Target warp;
@@ -1931,7 +1933,12 @@ class Renderer {
         config.aaMode = qEnvironmentVariable("RHINE_AA_MODE");
         config.host = qEnvironmentVariableIsSet("RHINE_FG_LAYER") ? QStringLiteral("FG 覆盖层")
                                                                   : QStringLiteral("QQuickRhiItem");
+#ifndef Q_OS_DARWIN
         config.motionConfigured = postProcess ? postProcess->motionConfigured() : false;
+#else
+        // Metal 路径没有 ScenePostProcess，运动矢量由 MetalFX 自行管理。
+        config.motionConfigured = false;
+#endif
         config.motionTarget = motionTarget;
         config.samples = sampleCount;
         return config;
@@ -2359,10 +2366,9 @@ class Renderer {
         bool dynamicOffset = false;
         /// D03：实例池里的身份（"d<drawId>" 或批次的 key），池化写用它做内容比对。
         RhineRender::PoolKey poolKey;
-#ifdef Q_OS_LINUX
         // arena 内偏移；instances 为 nullptr 时生效（0 也合法，表示 arena 起点）。
+        // 池化路径全平台共用
         int instanceOffset = 0;
-#endif
     };
     QList<Draw> prepare(const QList<QJsonObject> &draws, bool decorationHigh) {
         QList<Draw> result;
@@ -3351,10 +3357,9 @@ class ItemRenderer : public QQuickRhiItemRenderer {
         }
     }
     void synchronize(QQuickRhiItem *value) override {
-#ifdef Q_OS_LINUX
+        // 同步耗时在所有平台都上报
         QElapsedTimer syncTimer;
         syncTimer.start();
-#endif
         auto scene = static_cast<RhiScene *>(value);
         auto engine = scene->engine();
         backend = engine;
