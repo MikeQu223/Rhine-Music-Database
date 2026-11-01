@@ -178,6 +178,26 @@ elif linux:
         missing = [line.split("=>")[0].strip() for line in output.splitlines() if "not found" in line]
         assert not missing, f"{binary.relative_to(app)} has unresolved libraries: {', '.join(missing)}"
     assert (app / "usr/plugins/platforms/libqxcb.so").is_file(), "Missing X11 platform plugin"
+    # 有意不打包 libX11 / libxcb 本体：它们归 Xorg 自己提供，包内再带一份容易和驱动、输入法、
+    # 系统主题的 ABI 打架（上面按依赖解析的做法已经能发现"插件缺库"）。xcb-util 系列则相反，
+    # 精简系统上常常没有，必须随包——缺了就是 "could not load the Qt platform plugin xcb"。
+    for name in ("libxkbcommon-x11.so.0", "libxcb-cursor.so.0", "libxcb-icccm.so.4"):
+        assert (bundled / name).is_file(), "Missing X11 helper library: " + name
+    # ldd 只查静态依赖：符号缺失、GLX/EGL 集成装错版本都要等运行时才炸。
+    # 用包内 LD_LIBRARY_PATH 真的 dlopen 一次平台插件，把这类问题留在构建机上。
+    xcb_probe = dict(plugin_probe, QT_QPA_PLATFORM="offscreen")
+    loaded = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import ctypes,sys; ctypes.CDLL(sys.argv[1], mode=ctypes.RTLD_GLOBAL)",
+            str(app / "usr/plugins/platforms/libqxcb.so"),
+        ],
+        text=True,
+        capture_output=True,
+        env=xcb_probe,
+    )
+    assert loaded.returncode == 0, "X11 platform plugin cannot be loaded: " + loaded.stderr.strip()
     # X11 平台插件不自带 OpenGL 上下文；GLX/EGL 集成缺失时会在初始化 RHI 时直接退出。
     xcb_gl = app / "usr/plugins/xcbglintegrations"
     assert any(

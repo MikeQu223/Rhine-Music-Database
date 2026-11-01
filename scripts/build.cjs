@@ -521,6 +521,17 @@ function deployLinuxRuntime(qt, app, binary, ffmpegLibraries = new Map()) {
     // 仍能运行但行为不原生。官方 Qt 包把它放在 linux_gcc_64 的附属归档里，
     // 由 aqt 的 --autodesktop 安装，因此这里只提示，不阻断构建。
     const platforms = fs.readdirSync(path.join(plugins, 'platforms'));
+    // X11 是 Linux 包的底线：纯 Xorg 会话与 XWayland 都靠它，缺了用户连窗口都没有，
+    // 所以这里直接失败，而不是像 Wayland 那样只提示。
+    if (!platforms.includes('libqxcb.so')) {
+        throw Error('Qt X11 platform plugin missing (platforms/libqxcb.so); the Linux build cannot start');
+    }
+    // xcb 平台插件不自带 OpenGL 上下文，GLX/EGL 集成缺失时会在初始化 RHI 时退出。
+    const xcbGl = path.join(plugins, 'xcbglintegrations');
+    const xcbGlPlugins = fs.existsSync(xcbGl) ? fs.readdirSync(xcbGl) : [];
+    if (!xcbGlPlugins.some((name) => /^libqxcb-(?:glx|egl)-integration\.so$/.test(name))) {
+        console.warn('Qt X11 OpenGL integration missing; X11 sessions will fail to create an RHI context');
+    }
     if (!platforms.some((name) => name.startsWith('libqwayland'))) {
         console.warn('Qt Wayland platform plugin missing; Wayland sessions will fall back to XWayland');
     }
@@ -1044,6 +1055,12 @@ function prepareLinuxAppDir(app) {
             'export QT_PLUGIN_PATH="$here/usr/plugins"',
             'export QML_IMPORT_PATH="$here/usr/qml"',
             'export QT_QPA_PLATFORM_PLUGIN_PATH="$here/usr/plugins/platforms"',
+            '# 没有显示服务器时提前说清楚：否则 Qt 只会甩一句 could not load the Qt platform plugin。',
+            'if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then',
+            '    echo "Rhine: 未检测到 DISPLAY 或 WAYLAND_DISPLAY：当前没有可用的显示服务器。" >&2',
+            '    echo "Rhine: 纯 Xorg 会话请确认 DISPLAY 已导出；无头环境请用 --self-test。" >&2',
+            'fi',
+            '# 平台插件在启动时固定：纯 X11 / XWayland 用 RHINE_QPA_PLATFORM=xcb 强制走 X11。',
             'exit_code=0',
             '"$here/usr/bin/RhineMusicDatabase" "$@" || exit_code=$?',
             'exit "$exit_code"',
