@@ -291,13 +291,102 @@ Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-Windows Defender/Oper
 - 若要长期定位，建议在 Host 记录退出码和最后若干 KB stderr，并在性能面板或错误文案中展示
   平台、操作与上游码。
 
-## 9. 速查表
+## 9. Linux 显示与图形后端（X11 / Wayland）
+
+Linux 上「起不来」绝大多数不是应用逻辑，而是三层里的某一层没接上：显示服务器 →
+Qt 平台插件 → RHI 后端。启动日志里那一行 `Display: <平台插件> backend: <后端>`
+就是这三层的落脚点，先看它。
+
+### 9.1 启动即中止，stderr 有 `No DRI3 support detected`
+
+```text
+MESA: info: vulkan: No DRI3 support detected - required for presentation
+QMessageLogger::fatal: ...
+AppRun: 第 10 行：... 已中止（核心已转储）
+```
+
+Mesa 的 Vulkan 呈现依赖 X11 的 DRI3 扩展；缺了它交换链创建失败，而 Qt 拿不到交换链会
+直接 `abort()` 而不是回退，所以表现为启动瞬间带核心转储退出。
+
+现在启动时会先问 X 服务器要 DRI3，缺了自动走 OpenGL，并打一条：
+
+```text
+Vulkan: 当前 X11 连接没有 DRI3 扩展，Vulkan 无法呈现到屏幕……已回退 OpenGL。
+Display: xcb backend: opengl
+```
+
+- 看到这条就说明回退生效了，能正常用，只是没用 Vulkan。
+- 想根治：让 Xorg 侧启用 DRI3（现代 Xorg 默认开启；`/var/log/Xorg.0.log` 里搜 `DRI3`，
+  或 `xdpyinfo | grep -i dri3` 看扩展列表）。
+- `RHINE_X11_ALLOW_VULKAN=1` 会跳过这条判断，用于确认驱动另有呈现路径的场合；
+  跳过之后仍然 abort 就说明这条判断是对的。
+
+### 9.2 `could not load the Qt platform plugin "xcb"`
+
+平台插件加载失败，基本都是缺 X11 运行库（`libxcb-cursor.so.0`、`libxkbcommon-x11.so.0`、
+`libxcb-icccm.so.4` 之类）。AppImage 已经把这些随包提供，所以发布版出现这句通常是：
+
+- 直接跑了解包目录里的 `usr/bin/RhineMusicDatabase`，绕过了设置 `LD_LIBRARY_PATH` 的 `AppRun`；
+- 或者外层脚本自己设了 `LD_LIBRARY_PATH`，把包内库挤掉了。
+
+用 `./应用.AppImage` 启动即可；需要手动拆包时先 `--appimage-extract`，再跑 `squashfs-root/AppRun`。
+
+### 9.3 Wayland 会话下的退出崩溃
+
+日志里出现 `QWaylandTextInputv3::disableSurface ... 0x0 is focused` 之后接段错误，
+说明崩在 Qt Wayland 插件的退出路径（输入法 / 窗口销毁），不是应用自己的对象析构。
+先做对照，确认是不是 Wayland 插件的问题：
+
+```sh
+RHINE_QPA_PLATFORM=xcb ./应用.AppImage          # 走 XWayland
+```
+
+X11 下不再崩，就可以确定问题在 Wayland 插件侧；继续定位需要拿到栈：
+
+```sh
+coredumpctl list --no-pager | tail -5
+coredumpctl info <PID> | sed -n '1,40p'
+```
+
+### 9.4 不崩但画面空白
+
+按顺序排：
+
+1. `Display:` 行有没有出现——没有说明还没走到后端选择，先看 9.2。
+2. `backend:` 是 `vulkan` 但窗口空白：换 `RHINE_GRAPHICS=opengl` 对照。
+3. 混合显卡机器（NVIDIA + 核显）：`RHINE_GPU_INDEX=N` 逐块试，日志会打印枚举到的
+   `GPU N: pci=... driver=...`。
+4. 无头环境用 `QT_QPA_PLATFORM=offscreen RHINE_SOFTWARE_GPU=1 ./应用.AppImage --self-test`，
+   它不依赖显示服务器，能区分“渲染坏了”和“显示接不上”。
+
+### 9.5 常用命令
+
+```sh
+# 平台插件 + 后端 + 回退原因
+./应用.AppImage 2>&1 | grep -E 'Display:|backend|DRI3|Vulkan'
+
+# 强制 X11 / 强制 Wayland
+RHINE_QPA_PLATFORM=xcb ./应用.AppImage
+RHINE_QPA_PLATFORM=wayland ./应用.AppImage
+
+# 换个后端对照
+RHINE_GRAPHICS=opengl ./应用.AppImage
+
+# 无头冒烟（不需要显示器）
+QT_QPA_PLATFORM=offscreen RHINE_SOFTWARE_GPU=1 ./应用.AppImage --self-test
+```
+
+## 10. 速查表
 
 | 现象 | 所属层 | 下一步 |
 | --- | --- | --- |
 | 网易云扫码时“音乐服务已退出” | Host 子进程 | 第 8.2、8.3 节 |
 | “音乐服务组件缺失” | 安装包 | 确认 `resources/MusicBridge/node(.exe)` 存在 |
 | “音乐请求超时” | 网络/上游 | 检查网络、代理、该平台其他请求 |
+| Linux 启动即中止、有 `No DRI3 support detected` | 图形后端 | 第 9.1 节（已自动回退 OpenGL） |
+| `could not load the Qt platform plugin "xcb"` | 包/环境 | 第 9.2 节，用 AppRun 启动 |
+| Wayland 下退出时段错误 | Qt 平台插件 | 第 9.3 节，先用 `RHINE_QPA_PLATFORM=xcb` 对照 |
+| 不崩但窗口空白 | 图形后端/显卡选择 | 第 9.4 节 |
 | “网易云音乐返回 301 / 401” | 账号 | 重新登录 |
 | “网易云音乐返回 429”或含“频繁” | 风控 | 等待 2 分钟以上，避免连续操作 |
 | 二维码已过期（三平台） | 扫码会话 | 重新生成二维码 |

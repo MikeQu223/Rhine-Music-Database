@@ -107,7 +107,11 @@ Engine::Engine(QString path, bool offline, QObject *parent, PlaybackConnection *
                   "hudAnimating=%d pendingAnim=%d stableFrames=%d "
                   "stableReset/s=%llu(输入 %llu/场景 %llu) | "
                   "间隔均=%.2fms 最大=%.2fms step均=%.2fms 最大=%.2fms",
-                  qulonglong(m_steps) - lastSteps, qulonglong(m_pacing.skipped()) - lastSkipped,
+                  // 格式串有 36 个转换符，实参也必须 36 个：这里少给过 tick/s 一项，
+                  // 导致从第 2 项起整串错位（req/s 打印成被当 %llu 读的 double，
+                  // gpu=%.2f 收到的是 const char*），读数全部作废。
+                  qulonglong(m_paceTicks), qulonglong(m_steps) - lastSteps,
+                  qulonglong(m_pacing.skipped()) - lastSkipped,
                   qulonglong(m_sceneUpdates) - lastScene, qulonglong(m_hudUpdates) - lastHud,
                   qulonglong(render) - lastRender, qulonglong(m_changedSteps) - lastChanged,
                   qulonglong(m_wakes) - lastWakes, qulonglong(m_wakesInput), qulonglong(m_wakesHost),

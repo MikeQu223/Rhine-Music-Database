@@ -12,6 +12,9 @@
 #include "GraphicsBackend.h"
 #include "Hud.h"
 #include "LinuxGraphics.h"
+#ifdef Q_OS_LINUX
+#include "LinuxX11.h"
+#endif
 #include "RhiScene.h"
 #ifndef Q_OS_IOS
 #include "PlaybackConnection.h"
@@ -120,10 +123,38 @@ static bool vulkanDeviceAvailable() {
 static QSettings graphicsSettings() {
     return AppStorage::settings();
 }
+#ifdef Q_OS_LINUX
+/**
+ * 当前显示服务器上 Vulkan 能不能呈现。设备枚举判不出这件事：Mesa 在创建交换链时才查 DRI3，
+ * 缺了就 abort 而不是返回错误（详见 LinuxX11.h）。结果只探一次，日志同样只打一次。
+ */
+static bool vulkanPresentationAvailable() {
+    static const bool verdict = [] {
+        const auto platform = QGuiApplication::platformName();
+        const bool overrideRequested = qEnvironmentVariableIntValue("RHINE_X11_ALLOW_VULKAN") > 0;
+        const auto dri3 = platform == QLatin1String("xcb") ? RhineLinux::probeDri3()
+                                                           : RhineLinux::Dri3::Unknown;
+        const bool allowed = RhineLinux::vulkanAllowedOn(platform, dri3, overrideRequested);
+        if (!allowed) {
+            qWarning().noquote() << "Vulkan:" << RhineLinux::describeVulkanBlock(platform, dri3);
+        }
+        return allowed;
+    }();
+    return verdict;
+}
+#endif
 /** 应用命名后端；Vulkan 先探测物理设备，不可用时返回 false 由调用方回退。
  *  仅在非 macOS 下编译：macOS 只提供 Metal，本函数的两个调用点都在 #else 分支里，
  *  而 vulkanDeviceAvailable() 同样只在非 macOS 下定义。 */
 #if !defined(Q_OS_DARWIN)
+/** Vulkan 既要有设备、也要能呈现到当前显示服务器（macOS 无此路径，故在本块内定义）。 */
+static bool vulkanUsable() {
+#ifdef Q_OS_LINUX
+    return vulkanDeviceAvailable() && vulkanPresentationAvailable();
+#else
+    return vulkanDeviceAvailable();
+#endif
+}
 static bool applyNamedBackend(const QString &requested) {
 #if defined(Q_OS_WIN) && RHINE_ENABLE_D3D12_BACKEND
     if (requested == "d3d12") {
@@ -138,7 +169,7 @@ static bool applyNamedBackend(const QString &requested) {
         return true;
     }
     if (requested == "vulkan") {
-        if (!vulkanDeviceAvailable()) {
+        if (!vulkanUsable()) {
             qWarning() << "Vulkan is unavailable; falling back to Vulkan/OpenGL selection.";
             return false;
         }
@@ -196,7 +227,7 @@ static void selectGraphicsBackend() {
         qWarning() << "Saved graphics backend" << saved << "is unavailable; using the default backend.";
     }
     // Windows 与 Linux 共用 Vulkan 优先、OpenGL 回退；不能交给 Qt 的平台默认选择。
-    if (vulkanDeviceAvailable()) {
+    if (vulkanUsable()) {
         QQuickWindow::setGraphicsApi(QSGRendererInterface::Vulkan);
         RhineGraphics::setActiveBackend(QStringLiteral("vulkan"));
         qInfo() << "No backend configured; Vulkan detected and selected as default.";
@@ -346,6 +377,12 @@ int main(int argc, char **argv) {
     if (qEnvironmentVariableIsEmpty("QT_MEDIA_BACKEND")) {
         qputenv("QT_MEDIA_BACKEND", "ffmpeg");
     }
+    // 平台插件必须在 QGuiApplication 构造时定下，晚一步就只能重启进程。
+    // RHINE_QPA_PLATFORM 是给用户与打包脚本的稳定入口（等价于 QT_QPA_PLATFORM，但不受
+    // 用户原有环境变量冲突影响）；纯 Xorg / XWayland 上写 xcb，Wayland 上写 wayland。
+    if (!qEnvironmentVariableIsEmpty("RHINE_QPA_PLATFORM")) {
+        qputenv("QT_QPA_PLATFORM", qgetenv("RHINE_QPA_PLATFORM"));
+    }
     // Windows GUI 子系统默认可能将 Qt 日志送到调试器；测试必须写入 CTest 的标准错误管道。
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--self-test") == 0 || std::strcmp(argv[i], "--playback-gui-test") == 0 ||
@@ -401,6 +438,8 @@ int main(int argc, char **argv) {
 #endif
     // 必须在创建任何 QQuickWindow 之前确定后端；组织名先落位，配置路径才能落到应用数据目录。
     selectGraphicsBackend();
+    qInfo().noquote() << "Display:" << QGuiApplication::platformName() << "backend:"
+                         << RhineGraphics::activeBackend();
     applyVSyncSetting();
     applySupersampleSetting();
     applyRenderScaleSetting();
