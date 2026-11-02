@@ -557,6 +557,8 @@ elseif(UNIX)
     # 显卡选择：Windows 那条直路是 DXGI + QT_D3D_ADAPTER_INDEX，Linux 只能把序号翻译成 驱动认识的环境变量，且必须在 QGuiApplication
     # 之前完成，所以单独成文件、只挂主程序。
     target_sources(RhineMusicDatabase PRIVATE Qt/src/LinuxGraphics.cpp)
+    # Vulkan 呈现能力探测（DRI3）：只挂主程序，X11 相关逻辑不进入播放服务。
+    target_sources(RhineMusicDatabase PRIVATE Qt/src/LinuxX11.cpp Qt/src/LinuxX11.h)
     # 安装后的程序按 AppImage 前缀查找同级 Qt 运行时；构建树仍用 CMake 生成的 kit 路径， 否则 CI 中装在独立目录的 Qt 会在运行测试时找不到。
     set_target_properties(RhineMusicDatabase PROPERTIES INSTALL_RPATH "\$ORIGIN/../lib")
     install(TARGETS RhineMusicDatabase RUNTIME DESTINATION bin)
@@ -709,6 +711,16 @@ if(MSVC)
     target_compile_options(RhineGpuChoiceRegression PRIVATE /utf-8)
 endif()
 add_test(NAME qt_gpu_choice_regression COMMAND RhineGpuChoiceRegression)
+
+# X11 呈现能力判定：缺 DRI3 时不能上 Vulkan（否则 Qt 创建交换链失败后直接 abort）。
+# 纯函数 + 无 DISPLAY 的探测冒烟，不需要 X 服务器，三平台都编。
+qt_add_executable(RhineLinuxDisplayRegression Qt/tests/LinuxDisplayChecks.cpp Qt/src/LinuxX11.cpp)
+target_include_directories(RhineLinuxDisplayRegression PRIVATE Qt/src)
+target_link_libraries(RhineLinuxDisplayRegression PRIVATE Qt6::Core)
+if(MSVC)
+    target_compile_options(RhineLinuxDisplayRegression PRIVATE /utf-8)
+endif()
+add_test(NAME qt_linux_display_regression COMMAND RhineLinuxDisplayRegression)
 
 qt_add_executable(RhineAudioStreamRegression Qt/tests/AudioStreamChecks.cpp Qt/src/AudioPlayer.cpp
                   Qt/src/HttpAudioStream.cpp)

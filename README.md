@@ -58,6 +58,16 @@ macOS、Linux 和 Windows 默认使用 FFmpeg 音频后端。Windows 设置 `QT_
 
 图形后端在 Windows 与 Linux 上优先使用 Vulkan，不可用时回退 OpenGL；macOS 固定使用 Metal。
 `RHINE_GRAPHICS=vulkan|opengl|auto` 可手动指定，`QSG_RHI_BACKEND` 的优先级更高。
+Linux 上「不可用」包含两种：没有 Vulkan 物理设备，和当前 X11 连接没有 DRI3 扩展。
+后者在没有 DRI3 的 Xorg 上会让 Mesa 在创建交换链时失败，而 Qt 拿不到交换链会直接 abort，
+所以启动时先问 X 服务器要 DRI3，缺了就自动走 OpenGL 并打一条说明；确认自己的驱动另有呈现路径
+可以设 `RHINE_X11_ALLOW_VULKAN=1` 跳过这条判断。启动日志里新增一行
+`Display: <平台插件> backend: <后端>`，排障时先看它。
+
+Linux 会话分 X11 与 Wayland 两条路，平台插件在启动时就固定了：
+`RHINE_QPA_PLATFORM=xcb` 强制走 X11（Xorg 或 XWayland），`RHINE_QPA_PLATFORM=wayland` 强制走 Wayland，
+不设则跟随 `QT_QPA_PLATFORM` 与系统默认。纯 Xorg 会话、以及 Wayland 下有兼容问题（比如输入法、
+窗口装饰相关的崩溃）时可以先用 `xcb` 对照。
 
 Linux 的「设置 → GPU / 显卡」可以指定用哪一块显卡，重启生效。列表只显示序号（0 基，与 `/sys/class/drm` 的 `cardN` 顺序一致），保存的也是序号——型号会随驱动更新和换卡变化，序号才是稳定的东西。序号在下次启动时不存在（换卡、拔掉 eGPU 或配置被改坏）就自动回退到默认行为：不注入任何厂商变量，完全等同于此前的版本，设置页会注明「序号 N 不存在」。
 实现上按驱动分流：Mesa 系（i915 / xe / amdgpu / nouveau）用 `DRI_PRIME=pci-0000_01_00_0` 把目标卡排到物理设备列表首位，NVIDIA 专有驱动用 `__NV_PRIME_RENDER_OFFLOAD=1` 加 `__VK_LAYER_NV_optimus=NVIDIA_only`（选非 NVIDIA 卡时为 `non_NVIDIA_only`），Qt 取枚举到的第一块卡即等于选中。`RHINE_GPU_INDEX=N` 只对本次启动生效，不改配置，便于对照；`RHINE_SOFTWARE_GPU=1` 时不做任何选择。两张同型号 NVIDIA 显卡之间无法区分（NVIDIA 图层只能表达「要 / 不要 NVIDIA」），此时会打一条警告。
