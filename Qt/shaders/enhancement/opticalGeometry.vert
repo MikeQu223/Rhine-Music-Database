@@ -29,7 +29,12 @@ layout(location = 10) out vec3 v_normal;
 layout(location = 11) out float v_mode;
 #ifdef RHINE_SINGLE_PASS_MOTION
 // 运动矢量与颜色同一趟输出：省掉整趟几何的第二次栅格化。
+#ifdef RHINE_METAL_MOTION
+layout(location = 12) out vec4 v_currentClip;
+layout(location = 13) out vec4 v_previousClip;
+#else
 layout(location = 12) out vec2 v_velocity;
+#endif
 #endif
 void main() {
     mat4 model = mat4(model0, model1, model2, model3);
@@ -39,11 +44,17 @@ void main() {
 #ifdef RHINE_SINGLE_PASS_MOTION
     // 速度用未抖动的当前/上一帧 VP，避免把采样抖动误当几何运动（与 motion.vert 同口径）。
     mat4 previousModel = mat4(previousModel0, previousModel1, previousModel2, previousModel3);
+#ifdef RHINE_METAL_MOTION
+    // 先插值齐次坐标，再在片元阶段透视除法；提前插值速度会扭曲倾斜平面的运动。
+    v_currentClip = currentViewProjection * world;
+    v_previousClip = previousViewProjection * previousModel * vec4(position, 1);
+#else
     vec4 currentClip = correction * currentViewProjection * world;
     vec4 previousClip = correction * previousViewProjection * previousModel * vec4(position, 1);
     vec2 ndc = currentClip.xy / currentClip.w;
     vec2 previousNdc = previousClip.xy / previousClip.w;
     v_velocity = vec2(previousNdc.x - ndc.x, ndc.y - previousNdc.y) * 0.5;
+#endif
 #endif
     float face = getFace(normal);
     vec2 surfaceUv = vec2((position.x + 2.5) / 5.0, position.y / 3.7);

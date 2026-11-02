@@ -14,6 +14,11 @@ class Hud : public QQuickPaintedItem {
   signals:
     void engineChanged();
 
+#ifdef Q_OS_DARWIN
+  protected:
+    QSGNode *updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *updateData) override;
+#endif
+
   private:
     Engine *m_engine = nullptr;
 };

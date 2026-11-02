@@ -28,6 +28,13 @@ id<MTLCommandBuffer> commandBuffer(QRhiCommandBuffer *commands) {
 bool hasUsage(id<MTLTexture> value, MTLTextureUsage required) {
     return value && (value.usage & required) == required;
 }
+/** Qt 使用非保留式命令缓冲；原生 MetalFX 资源必须活到这次 GPU 提交完成。 */
+void retainUntilCompleted(id resource, id<MTLCommandBuffer> buffer) {
+    __block id retainedResource = resource;
+    [buffer addCompletedHandler:^(id<MTLCommandBuffer>) {
+        retainedResource = nil;
+    }];
+}
 QRhiTexture *outputTexture(QRhi *rhi, QSize size, QRhiTexture::Format format) {
     auto output =
         rhi->newTexture(format, size, 1, QRhiTexture::RenderTarget | QRhiTexture::UsedWithLoadStore);
@@ -52,7 +59,9 @@ struct MetalFxTemporal::Private {
     explicit Private(QRhi *value) : rhi(value) {
     }
     ~Private() {
-        delete output;
+        if (output) {
+            output->deleteLater();
+        }
     }
 };
 
@@ -138,6 +147,8 @@ QRhiTexture *MetalFxTemporal::resolve(QRhiCommandBuffer *commands, QRhiTexture *
         commands->beginExternal();
         auto buffer = commandBuffer(commands);
         if (buffer) {
+            // resize 或关闭 AA 可以立即更换上下文，但不能提前销毁在飞帧的原生管线。
+            retainUntilCompleted(scaler, buffer);
             [scaler encodeToCommandBuffer:buffer];
             d->encoded = true;
             d->firstFrame = false;

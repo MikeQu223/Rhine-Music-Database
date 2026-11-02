@@ -3,11 +3,15 @@
 #include "RhiScene.h"
 #ifdef Q_OS_DARWIN
 #include "render/MetalFxBackend.h"
+#include "render/MetalTemporalResolve.h"
 #endif
 #include "render/CoverPrepBudget.h"
 #include "render/HotPathProbe.h"
 #include "render/MaterialSlotKey.h"
 #include "render/SceneSyncCache.h"
+#ifdef Q_OS_DARWIN
+#include "render/SceneTransformHistory.h"
+#endif
 #include "render/MotionPass.h"
 #include "render/RenderPolicy.h"
 #include "render/ScenePostProcess.h"
@@ -66,7 +70,7 @@ struct Globals {
     PackedMatrix emitterInverse;
     QVector4D opticalLight;
     QVector4D emissionColor;
-#ifdef Q_OS_LINUX
+#if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
     PackedMatrix previousViewProjection;
     PackedMatrix currentViewProjection;
 #endif
@@ -77,18 +81,18 @@ struct Surface {
 struct Instance {
     PackedMatrix model;
     QVector4D state;
-#ifdef Q_OS_LINUX
+#if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
     // 上一帧模型矩阵：运动矢量随主渲染同一趟输出，不再需要第二趟几何。
     PackedMatrix previousModel;
 #endif
 };
-#ifdef Q_OS_LINUX
+#if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
 static_assert(sizeof(Globals) == 832);
 #else
 static_assert(sizeof(Globals) == 704);
 #endif
 static_assert(sizeof(Surface) == 128);
-#ifdef Q_OS_LINUX
+#if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
 static_assert(sizeof(Instance) == 144);
 #else
 static_assert(sizeof(Instance) == 80);
@@ -269,8 +273,10 @@ class Renderer {
 #ifdef Q_OS_DARWIN
     RhineRender::Settings settings;
     QJsonObject temporalFrame;
+    QJsonObject motionSelectedCell;
     RhineFg::FrameInputs *frameInputs = nullptr;
     std::unique_ptr<RhineRender::MetalFxTemporal> metalFx;
+    std::unique_ptr<RhineRender::MetalTemporalResolve> lightTemporal;
     QString implementation = QStringLiteral("off");
     QRhiTexture *postColor = nullptr;
 #endif
@@ -348,9 +354,18 @@ class Renderer {
     quint64 motionByIdHits = 0, motionFallbackHits = 0, motionMisses = 0;
     int motionProbeFrames = 0;
 #endif
+#ifdef Q_OS_DARWIN
+    RhineRender::SceneTransformHistory metalHistory;
+    QElapsedTimer frameClock;
+#endif
     QRhiTexture *motionVectors = nullptr;
     /// E05a：`RHINE_VK_COMPACT_INSTANCES=1` 且本帧确实没有运动矢量消费者时才用 80 字节实例。
+#ifdef Q_OS_DARWIN
+    // Metal 的非时域路径沿用 80 字节实例；只有消费者需要时才扩展历史矩阵。
+    const bool compactInstanceRequested = true;
+#else
     const bool compactInstanceRequested = qEnvironmentVariableIntValue("RHINE_VK_COMPACT_INSTANCES") == 1;
+#endif
     /// E05b：布局与 buffer 身份分离。启用后用占位 SRB 建 pipeline，arena 换 buffer 不再清管线。
     const bool layoutOnlyPipelines = qEnvironmentVariableIntValue("RHINE_VK_LAYOUT_ONLY_PIPELINES") == 1;
     /// surface 管线当前持有的布局身份；与 `pipelineLayoutSignature()` 不一致才重建。
@@ -361,7 +376,11 @@ class Renderer {
     /// 与 depthStoreRequired 同一套消费者口径：有 motion／TAA／warp／MetalFX 就不能裁。
     bool compactInstancesAllowed() const {
         static const bool warpProbe = qEnvironmentVariableIsSet("RHINE_WARP_PROBE");
+#ifdef Q_OS_DARWIN
+        return compactInstanceRequested && !motionTarget && !warpProbe;
+#else
         return compactInstanceRequested && motionVectors == nullptr && !warpProbe;
+#endif
     }
 #ifdef Q_OS_LINUX
     // 重投影插帧探针（RHINE_WARP_PROBE=1）：把当前场景颜色按运动矢量前推到 t 相位。
@@ -800,7 +819,7 @@ class Renderer {
         return buffer(QByteArray(reinterpret_cast<const char *>(vertices.data()), vertices.size() * 4),
                       QRhiBuffer::VertexBuffer);
     }
-#ifdef Q_OS_LINUX
+#if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
     Target makeTarget(QRhiTexture *texture, QRhiTexture *depth = nullptr, QRhiTexture *resolve = nullptr,
                       QRhiTexture *vectors = nullptr, bool discardDepth = false) {
 #else
@@ -813,7 +832,7 @@ class Renderer {
             if (resolve) {
                 attachment.setResolveTexture(resolve);
             }
-#ifdef Q_OS_LINUX
+#if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
             if (vectors) {
                 // 第二颜色附件：运动矢量与颜色同一趟栅格化输出。
                 desc.setColorAttachments({attachment, QRhiColorAttachment(vectors)});
@@ -837,12 +856,21 @@ class Renderer {
         return {resolve ? resolve : texture, rt, rp};
     }
     bool ensureInstancePool(quint64 needBytes) {
+#ifdef Q_OS_DARWIN
+        if (instancePoolEnabled && rhi->backend() != QRhi::Vulkan && rhi->backend() != QRhi::Metal) {
+            // Vulkan 与 Metal 的动态缓冲由 QRhi 维护帧槽；其他后端保留逐 draw buffer。
+            instancePoolEnabled = false;
+            poolFallback = QStringLiteral("当前后端未启用实例池");
+            return false;
+        }
+#else
         if (instancePoolEnabled && rhi->backend() != QRhi::Vulkan) {
             // 池化的收益来自 Vulkan 的 staging 行为；其他后端保留原来的逐 draw buffer。
             instancePoolEnabled = false;
             poolFallback = QStringLiteral("非 Vulkan 后端");
             return false;
         }
+#endif
         const quint64 bytes = RhineRender::instancePoolBytes(needBytes, instancePool.capacity);
         if (!bytes) {
             instancePoolEnabled = false;
@@ -1133,9 +1161,14 @@ class Renderer {
     void resize(QSize value, bool needsReadbackTarget) {
 #ifdef Q_OS_DARWIN
         const auto nextSize = settings.renderSize(value);
-        if (viewSize == value && size == nextSize) {
+        const bool wantMotion =
+            settings.temporal() || (settings.interpolation && RhineFg::capability().interpolationAvailable);
+        const bool wantDepthStore = wantMotion;
+        if (viewSize == value && size == nextSize && motionTarget == wantMotion) {
             return;
         }
+        motionTarget = wantMotion;
+        sizedDepthStore = wantDepthStore;
 #else
         const auto nextSize = postProcess->renderSize(value);
         const int nextSamples = postProcess->samples();
@@ -1169,7 +1202,9 @@ class Renderer {
         motionTarget = wantMotion;
         sizedDepthStore = wantDepthStore;
 #endif
-#ifdef Q_OS_LINUX
+#ifdef Q_OS_DARWIN
+        metalHistory.reset();
+#elif defined(Q_OS_LINUX)
         // 走到这里说明颜色目标真的要重建（尺寸/采样数/AA 模式变了）：上一帧的 VP 与实例矩阵
         // 都对应旧目标，继续拿它们算重投影会在新目标的第一帧里得到完全错误的方向。
         // 早退分支在上面，所以静止画面不会每帧清表。
@@ -1189,7 +1224,7 @@ class Renderer {
         auto attachment =
             create(own(rhi->newTexture(QRhiTexture::RGBA16F, size, sampleCount, rtFlags), true));
         auto resolved = sampleCount > 1 ? texture(size, QRhiTexture::RGBA16F, rtFlags, true) : nullptr;
-#ifdef Q_OS_LINUX
+#if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
         // 运动矢量只在 wantMotion 时分配：off/fxaa/msaa 或 FG 关闭时少一张 RGBA16F，
         // 也少一遍第二附件的写出带宽。是否带第二个颜色附件由 motionVectors 指针表达：
         // 为空时 makeTarget 走单附件，pipeline() 据此选 surfaceNoMrt 变体（GL 只有一个
@@ -2054,7 +2089,7 @@ class Renderer {
         }
         auto p = own(rhi->newGraphicsPipeline(), true);
         ++pipelinesLive;
-#ifdef Q_OS_LINUX
+#if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
         // OpenGL 后端：场景目标只有一个 draw buffer，片元着色器不能声明 location=1 的第二个输出，
         // 否则驱动会丢弃整块 fragment 结果（实测 3D 层全黑）。Vulkan 走 MRT 单趟。
         const bool surfaceMrt = geo && motionVectors != nullptr &&
@@ -2062,17 +2097,20 @@ class Renderer {
         const QString fragmentName =
             (geo && !surfaceMrt) ? QStringLiteral("surfaceNoMrt") : kind;
 #endif
-        p->setShaderStages({{QRhiShaderStage::Vertex,
-                             shader(geo ? "geometry.vert" : "quad.vert", compact)},
-#ifdef Q_OS_LINUX
+        p->setShaderStages({{QRhiShaderStage::Vertex, shader(geo ? "geometry.vert" : "quad.vert", compact)},
+#if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
                             {QRhiShaderStage::Fragment, shader(fragmentName + ".frag", compact)}});
 #else
                             {QRhiShaderStage::Fragment, shader(kind + ".frag")}});
 #endif
         if (geo) {
             QRhiVertexInputLayout layout;
-#ifdef Q_OS_LINUX
+#if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
+#ifdef Q_OS_DARWIN
+            layout.setBindings({{32}, {compact ? 80u : 144u, QRhiVertexInputBinding::PerInstance}});
+#else
             layout.setBindings({{32}, {compact ? 80 : 144, QRhiVertexInputBinding::PerInstance}});
+#endif
 #else
             layout.setBindings({{32}, {80, QRhiVertexInputBinding::PerInstance}});
 #endif
@@ -2085,7 +2123,7 @@ class Renderer {
                 {1, 5, QRhiVertexInputAttribute::Float4, 32},
                 {1, 6, QRhiVertexInputAttribute::Float4, 48},
                 {1, 7, QRhiVertexInputAttribute::Float4, 64}};
-#ifdef Q_OS_LINUX
+#if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
             // E05a：紧凑变体只声明到 state（location 7），previousModel 整段没有。
             if (!compact) {
                 attributes.append({{1, 8, QRhiVertexInputAttribute::Float4, 80},
@@ -2114,7 +2152,7 @@ class Renderer {
             b.srcAlpha = QRhiGraphicsPipeline::One;
             b.dstAlpha = QRhiGraphicsPipeline::OneMinusSrcAlpha;
         }
-#ifdef Q_OS_LINUX
+#if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
         // MRT：场景目标除颜色外还挂着运动矢量附件，必须为**每个**颜色附件声明 blend。
         // 只声明一个时 location=1 的写出会被静默丢弃（表现为运动矢量恒为 0）。
         if (surfaceMrt) {
@@ -2178,7 +2216,12 @@ class Renderer {
         }
         return layoutBuffer;
     }
+    /** 保留独立的共享字节快照；调用方可传入 state.bytes，扩容清空镜像不能连同输入一起清空。 */
+#ifdef Q_OS_DARWIN
+    QRhiBuffer *dynamicBuffer(BufferState &state, const QByteArray bytes, QRhiBuffer::UsageFlags usage) {
+#else
     QRhiBuffer *dynamicBuffer(BufferState &state, const QByteArray &bytes, QRhiBuffer::UsageFlags usage) {
+#endif
         if (!state.buffer || state.buffer->size() < bytes.size()) {
             retire(state.buffer);
             const int capacity = qMax(256, int(bytes.size()) * 2);
@@ -2228,7 +2271,74 @@ class Renderer {
         }
         return result;
     }
+#ifdef Q_OS_DARWIN
+    /** Apple 的实例历史按实际步长打包；不改变原有平台的配对与上传。 */
+    QRhiBuffer *instanceMetal(QJsonObject draw) {
+        RhineRender::HotPathTimer packTimer(RhineRender::hotPathWindow().packNs);
+        auto &state = instances[draw["id"].toInt()];
+        if (state.used == generation) {
+            return state.buffer;
+        }
+        const int drawId = draw["id"].toInt();
+        const int count = draw["count"].toInt();
+        const auto matrices = matrixBytes(draw);
+        // 取引用而不是 QHash::value()：后者会把整块实例矩阵按值拷一遍，循环里每实例再查一次
+        // 就是几百次整块拷贝。none 只用来顶住"本帧没有这个 draw"的空绑定。
+        static const SceneDrawData none;
+        const auto nativeFound = nativeBuffers.constFind(drawId);
+        const SceneDrawData &native = nativeFound != nativeBuffers.constEnd() ? *nativeFound : none;
+        const auto themes = draw["themes"].toArray();
+        const float baseTheme = n(draw, "theme");
+        const float quality = n(draw, "quality");
+        const float clarity = n(draw, "clarity");
+        const bool hero = isFocusedSceneCard(draw, detailMode, viewerMode);
+        const auto motionIds = motionTarget
+                                   ? RhineRender::motionInstanceIds(draw, native.ids, motionSelectedCell)
+                                   : QVector<quint32>();
+        // 按实际顶点步长直接打包，避免紧凑实例先生成 144 字节数组再逐条复制。
+        const qsizetype stride = compactInstances ? 80 : sizeof(Instance);
+        QByteArray bytes;
+        bytes.resize(qsizetype(count) * stride);
+        for (int i = 0; i < count; ++i) {
+            Instance value;
+            if ((i + 1) * 64 <= matrices.size()) {
+                memcpy(value.model.elements, matrices.constData() + i * 64, 64);
+            }
+            float theme = baseTheme;
+            if ((i + 1) * 4 <= native.themes.size()) {
+                memcpy(&theme, native.themes.constData() + i * 4, 4);
+            } else if (i < themes.size()) {
+                theme = float(themes[i].toDouble());
+            }
+            // state.w 标记"被聚焦的主体"：详情页与查看封面页只有焦点唱片用玻璃壳与主光。
+            // 判断依据是 draw 的 id 与当前曲目 key 对应的装配体 id 是否匹配。
+            value.state = {quality, clarity, theme, hero ? 1.f : 0.f};
+            if (motionTarget) {
+                const auto previous = metalHistory.previousMatrix(drawId, i, motionIds);
+                if (previous) {
+                    memcpy(value.previousModel.elements, previous, 64);
+                } else {
+                    value.previousModel = value.model;
+                }
+
+            }
+            memcpy(bytes.data() + qsizetype(i) * stride, &value, std::size_t(stride));
+        }
+        RhineRender::hotPathWindow().packBytes.fetch_add(quint64(bytes.size()));
+        if (instancePoolEnabled) {
+            // 池化：CPU 侧只留本帧字节，GPU buffer 由 poolInstances() 统一分配与上传。
+            state.bytes = bytes;
+            state.used = generation;
+            return nullptr;
+        }
+        return dynamicBuffer(state, bytes, QRhiBuffer::VertexBuffer);
+    }
+#endif
+
     QRhiBuffer *instance(QJsonObject draw) {
+#ifdef Q_OS_DARWIN
+        return instanceMetal(std::move(draw));
+#else
         RhineRender::HotPathTimer packTimer(RhineRender::hotPathWindow().packNs);
         auto &state = instances[draw["id"].toInt()];
         if (state.used == generation) {
@@ -2349,6 +2459,7 @@ class Renderer {
             return nullptr;
         }
         return dynamicBuffer(state, bytes, QRhiBuffer::VertexBuffer);
+    #endif
     }
     struct Draw {
         QJsonObject data;
@@ -2704,6 +2815,9 @@ class Renderer {
             const Draw *draw;
             QRhiGraphicsPipeline *pass;
             bool transparent;
+#ifdef Q_OS_DARWIN
+            quint8 stateKey;
+#endif
         };
         QList<Item> items;
         items.reserve(draws.size());
@@ -2715,9 +2829,16 @@ class Renderer {
             const bool hashed = draw.material.flags.x() == 2;
             const bool blend = hashed || data["transparent"].toBool();
             const bool depthWrite = hashed || !blend || data["depthWrite"].toBool();
+#ifdef Q_OS_DARWIN
+            const bool doubleSided = data["side"].toInt() == 2;
+            auto *pass = pipeline("surface", draw.bindings, color.rp, false, doubleSided, depthWrite, blend);
+            const auto stateKey = quint8(int(doubleSided) | (int(depthWrite) << 1) | (int(blend) << 2));
+            items.append({&draw, pass, data["transparent"].toBool(), stateKey});
+#else
             auto *pass = pipeline("surface", draw.bindings, color.rp, false,
                                   data["side"].toInt() == 2, depthWrite, blend);
             items.append({&draw, pass, data["transparent"].toBool()});
+#endif
         }
         // 不透明段按 pipeline 稳定排序（同 pipeline 内保持原顺序）；透明段原样接在后面。
         // 两段分段处理保证透明物体的混合顺序与改动前完全一致。
@@ -2728,7 +2849,12 @@ class Renderer {
             if (a.transparent) {
                 return false;  // 透明段保持原序（stable_sort 下相等即不改顺序）
             }
+#ifdef Q_OS_MACOS
+            // 地址受分配顺序影响，会改变等深度表面的覆盖顺序；按真实管线状态确定顺序。
+            return a.stateKey < b.stateKey;
+#else
             return reinterpret_cast<quintptr>(a.pass) < reinterpret_cast<quintptr>(b.pass);
+#endif
         });
         const QRhiViewport viewport{0, 0, float(size.width()), float(size.height())};
         bool viewportSet = false;
@@ -2868,22 +2994,37 @@ class Renderer {
         QRhiTexture *sceneColor = color.texture;
         implementation = QStringLiteral("off");
         if (settings.temporal()) {
-            if (!metalFx) {
-                metalFx = std::make_unique<RhineRender::MetalFxTemporal>(rhi);
-            }
             const auto offset = temporalFrame["jitter"].toArray();
             const QPointF jitter =
                 offset.size() == 2 ? QPointF(offset[0].toDouble(), offset[1].toDouble()) : QPointF();
-            sceneColor = metalFx->resolve(cb, color.texture, motion ? motion->depth() : nullptr,
-                                          motion ? motion->vectors() : nullptr, viewSize, jitter,
-                                          temporalFrame["temporalReset"].toBool());
-            implementation = metalFx->active() ? QStringLiteral("metalfx-temporal")
-                                               : QStringLiteral("metalfx-unavailable");
-        } else if (metalFx) {
+            // 诊断组保留相同的运动输入与抖动，只旁路 MetalFX 本体；不能冒充正常抗锯齿。
+            static const bool inputsOnly = qEnvironmentVariableIntValue("RHINE_METALFX_INPUTS_ONLY") == 1;
+            static const bool useLightTemporal = qEnvironmentVariable("RHINE_METAL_TEMPORAL") == "light";
+            if (inputsOnly) {
+                implementation = QStringLiteral("metalfx-inputs-only");
+            } else if (useLightTemporal) {
+                if (!lightTemporal) {
+                    lightTemporal = std::make_unique<RhineRender::MetalTemporalResolve>(rhi);
+                }
+                sceneColor = lightTemporal->resolve(cb, color.texture, depth, motionVectors, viewSize,
+                                                    jitter, matrix(temporalFrame["projection"].toArray()),
+                                                    temporalFrame["temporalReset"].toBool());
+                implementation = QStringLiteral("metal-tsr-experimental");
+            } else {
+                if (!metalFx) {
+                    metalFx = std::make_unique<RhineRender::MetalFxTemporal>(rhi);
+                }
+                sceneColor = metalFx->resolve(cb, color.texture, depth, motionVectors, viewSize, jitter,
+                                              temporalFrame["temporalReset"].toBool());
+                implementation = metalFx->active() ? QStringLiteral("metalfx-temporal")
+                                                   : QStringLiteral("metalfx-unavailable");
+            }
+        } else if (metalFx || lightTemporal) {
             clearPostBindings();
             metalFx.reset();
+            lightTemporal.reset();
         }
-        if (postColor != sceneColor) {
+        if (postColor != sceneColor && !lightTemporal) {
             clearPostBindings();
             postColor = sceneColor;
         }
@@ -2946,7 +3087,7 @@ class Renderer {
             postProcess->resolve(cb, finalDestination, motionInputs);
         }
 #endif
-#ifdef Q_OS_LINUX
+#if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
     }
     /** 主渲染已经输出运动矢量，这里只把本帧输入交给 FG 宿主（不再有第二趟几何）。 */
     void publishMotionInputs(const QJsonObject &frame) {
@@ -2969,7 +3110,14 @@ class Renderer {
             inputs.farPlane = translation / (c + 1.f);
         }
         inputs.fovYRadians = 2.f * std::atan(1.f / projection(1, 1));
+#ifdef Q_OS_DARWIN
+        if (frameInputs) {
+            inputs.serial = frameInputs->serial + 1;
+            *frameInputs = inputs;
+        }
+#else
         RhineFg::publish(inputs);
+#endif
 #endif
     }
     /** 同一份几何生成深度和运动矢量，供时域处理与呈现层使用。 */
@@ -3017,6 +3165,7 @@ class Renderer {
         transient.clear();
 #ifdef Q_OS_DARWIN
         temporalFrame = frame;
+        motionSelectedCell = frame["stats"].toObject()["selectedCell"].toObject();
 #endif
         if (qEnvironmentVariableIsSet("RHINE_DEBUG_DRAWS")) {
             qWarning("scene render mode=%s size=%dx%d", qPrintable(frame["mode"].toString()),
@@ -3038,12 +3187,24 @@ class Renderer {
         dbgPre.restart();
 #endif
         auto g = globals(frame);
-#ifdef Q_OS_LINUX
+#if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
         // 速度用未抖动 VP（光栅位置仍带抖动），口径与 motion.vert 一致。
+#ifdef Q_OS_DARWIN
+        if (frame["temporalReset"].toBool()) {
+            metalHistory.reset();
+        }
+        const auto unjitteredVp = matrix(frame["projection"].toArray()) * matrix(frame["view"].toArray());
+#else
         const auto unjitteredVp = matrix(frame["view"].toArray()) * matrix(frame["projection"].toArray());
+#endif
         g.currentViewProjection = PackedMatrix(unjitteredVp);
+#ifdef Q_OS_DARWIN
+        g.previousViewProjection = PackedMatrix(metalHistory.valid() ? metalHistory.viewProjection()
+                                                                      : unjitteredVp);
+#else
         g.previousViewProjection =
             motionHistoryValid ? PackedMatrix(previousViewProjection) : PackedMatrix(unjitteredVp);
+#endif
 #endif
         updates->updateDynamicBuffer(globalBuffer, 0, sizeof(g), &g);
         ++generation;
@@ -3165,7 +3326,7 @@ class Renderer {
             }
         }
         const auto sort = [](auto &draws) {
-#ifdef Q_OS_LINUX
+#if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
             if (draws.size() < 2) {
                 return;
             }
@@ -3188,7 +3349,7 @@ class Renderer {
                 return first.data["order"].toInt() < second.data["order"].toInt();
 #endif
             });
-#ifdef Q_OS_LINUX
+#if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
             QList<Draw> sorted;
             sorted.reserve(draws.size());
             for (int index : order) {
@@ -3279,7 +3440,26 @@ class Renderer {
                 vkFrames = 0;
             }
         }
-#ifdef Q_OS_LINUX
+#ifdef Q_OS_DARWIN
+        publishMotionInputs(frame);
+        if (motionTarget) {
+            SceneDrawBuffers currentTransforms;
+            currentTransforms.reserve(data.size());
+            for (const auto &draw : data) {
+                const int drawId = draw.data["id"].toInt();
+                SceneDrawData transforms;
+                transforms.matrices = matrixBytes(draw.data);
+                const auto native = nativeBuffers.constFind(drawId);
+                const QVector<quint32> nativeIds = native != nativeBuffers.constEnd()
+                                                       ? native->ids
+                                                       : QVector<quint32>();
+                transforms.ids = RhineRender::motionInstanceIds(draw.data, nativeIds, motionSelectedCell);
+                currentTransforms.insert(drawId, std::move(transforms));
+            }
+            metalHistory.commit(currentTransforms, matrix(frame["view"].toArray()),
+                                matrix(frame["projection"].toArray()));
+        }
+#elif defined(Q_OS_LINUX)
         // 运动矢量已随主渲染输出（MRT），这里只发布输入并保存上一帧状态。
         publishMotionInputs(frame);
         previousViewProjection = unjitteredVp;
@@ -3419,6 +3599,8 @@ class ItemRenderer : public QQuickRhiItemRenderer {
 #ifdef Q_OS_DARWIN
         renderer->settings = backend->renderConfiguration.snapshot();
         renderer->frameInputs = &backend->metalFxInputs;
+        const auto previousTemporalBindings = renderer->lightTemporal ? renderer->lightTemporal->bindingCreations : 0;
+        const auto previousTemporalDraws = renderer->lightTemporal ? renderer->lightTemporal->drawCalls : 0;
 #endif
         renderer->nativeBuffers = buffers;
         const auto previousBindings = renderer->bindingCreations;
@@ -3429,6 +3611,9 @@ class ItemRenderer : public QQuickRhiItemRenderer {
         const auto previousPostDraws = renderer->postProcess->drawCalls;
 #endif
         renderer->render(cb, frame, renderTarget()->pixelSize(), item, cover, renderTarget(), musicTextures);
+#ifdef Q_OS_DARWIN
+        backend->recordGeometryFrame(cachedSync.geometryRevision);
+#endif
         // 引擎静止时会休眠、不再出帧；封面预处理回来的成品必须有人把它取走并上传，
         // 所以只要还有活儿在路上就主动再要一帧（update() 是渲染线程的安全入口）。
         if (renderer->coverWorkPending()) {
@@ -3436,7 +3621,17 @@ class ItemRenderer : public QQuickRhiItemRenderer {
         }
 #ifdef Q_OS_DARWIN
         backend->renderTelemetry.publish(renderer->size, renderer->viewSize, 1, renderer->implementation,
-                                         true);
+                                         true,
+                                         {{"motionSource", renderer->motionTarget ? "main-mrt" : "none"},
+                                          {"instancePool", renderer->instancePoolEnabled},
+                                          {"uniformArena", renderer->uniformArena},
+                                          {"layoutOnlyPipelines", renderer->layoutOnlyPipelines},
+                                          {"directWrite", renderer->directWrite && renderer->uniformArena},
+                                          {"instancePoolFallback", renderer->poolFallback},
+                                          {"uniformArenaFallback", renderer->arenaFallback},
+                                          {"directWriteFallback", renderer->directWriteFallback},
+                                          { "compactInstances",
+                                            renderer->compactInstances }});
 #endif
         if (backend) {
             quint64 resources =
@@ -3446,6 +3641,13 @@ class ItemRenderer : public QQuickRhiItemRenderer {
             if (renderer->motion) {
                 resources += renderer->motion->resources.size();
             }
+#ifdef Q_OS_DARWIN
+            if (renderer->lightTemporal) {
+                resources += renderer->lightTemporal->resources.size() + renderer->lightTemporal->sized.size();
+                bindings += renderer->lightTemporal->bindingCreations - previousTemporalBindings;
+                draws += renderer->lightTemporal->drawCalls - previousTemporalDraws;
+            }
+#endif
 #ifndef Q_OS_DARWIN
             resources += renderer->postProcess->resources.size();
             bindings += renderer->postProcess->bindingCreations - previousPostBindings;

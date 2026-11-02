@@ -33,8 +33,13 @@ struct Settings {
 
 class RenderTelemetry {
   public:
+#ifdef Q_OS_DARWIN
+    void publish(QSize renderSize, QSize displaySize, int samples, const QString &implementation,
+                 bool enhanced, const QVariantMap &details = {}) {
+#else
     void publish(QSize renderSize, QSize displaySize, int samples, const QString &implementation,
                  bool enhanced) {
+#endif
         QMutexLocker lock(&m_mutex);
         m_value = {{"renderWidth", renderSize.width()},
                    {"renderHeight", renderSize.height()},
@@ -43,6 +48,9 @@ class RenderTelemetry {
                    {"samples", samples},
                    {"implementation", implementation},
                    {"enhanced", enhanced}};
+#ifdef Q_OS_DARWIN
+        m_value.insert(QStringLiteral("details"), details);
+#endif
     }
     QVariantMap snapshot() const {
         QMutexLocker lock(&m_mutex);

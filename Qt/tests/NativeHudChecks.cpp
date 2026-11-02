@@ -1,5 +1,8 @@
 #include "NativeHud.h"
+#include "fg/FgConfig.h"
 #include "NativeApplication.h"
+#include "NativeCards.h"
+#include <cstring>
 #include "MusicData.h"
 #include "MusicDiscover.h"
 #include "PlayerBar.h"
@@ -545,10 +548,87 @@ bool checkPlayerInput(const QString &root, Glyphs &glyphs, const QJsonObject &co
 }
 }
 
+#ifdef Q_OS_DARWIN
+/** 缓存命中仍须更新矩阵；身份、材质和模板变化不能串用上一代描述。 */
+static bool checkCardMaterialCache() {
+    NativeCards cached;
+    const QJsonObject material{{"color", QJsonArray{.1, .2, .3}},
+                               {"attenuation", QJsonArray{.8, .7, .6}},
+                               {"transmission", .5},
+                               {"thickness", .02}};
+    QJsonArray local;
+    for (int i = 0; i < 16; ++i) {
+        local.append(i % 5 == 0 ? 1. : 0.);
+    }
+    local[12] = 2.;
+    const QJsonObject part{{"base", material},     {"high", material},          {"low", material},
+                           {"localMatrix", local}, {"name", "Frosted_Polymer"}, {"partIndex", 1},
+                           {"castShadow", true}};
+    QJsonObject card{{"id", 2}, {"musicKey", "first"}, {"selected", true}};
+    double state[20]{};
+    for (int i = 0; i < 16; ++i) {
+        state[i] = i % 5 == 0 ? 1. : 0.;
+    }
+    state[16] = 1;
+    state[17] = .7;
+    for (int phase = 0; phase < 12; ++phase) {
+        state[12] += 3;
+        if (phase == 2) {
+            state[16] = .25;
+        } else if (phase == 3) {
+            state[17] = .2;
+        } else if (phase == 4) {
+            state[18] = 1;
+        } else if (phase == 5) {
+            state[19] = .8;
+        } else if (phase == 6) {
+            card["musicKey"] = "second";
+            card["selected"] = false;
+        } else if (phase == 7) {
+            card["shadowOnly"] = true;
+        }
+        const auto revision = phase < 8 ? 1 : 2;
+        QJsonObject nextPart = part;
+        if (revision == 2) {
+            nextPart["name"] = "Changed";
+            nextPart["high"] = QJsonObject();
+        }
+        const QJsonObject input{{"appearanceRevision", revision},
+                                {"actorTemplate", QJsonArray{nextPart}},
+                                {"actors", phase == 10 ? QJsonArray() : QJsonArray{card}},
+                                {"globalSubdued", phase < 9 ? .1 : .9}};
+        const QByteArray bytes =
+            phase == 10 ? QByteArray() : QByteArray(reinterpret_cast<const char *>(state), sizeof(state));
+        auto result = input;
+        auto reference = input;
+        NativeCards fresh;
+        SceneDrawBuffers buffers;
+        SceneDrawBuffers expected;
+        if (!cached.expand(result, bytes, buffers).isEmpty() ||
+            !fresh.expand(reference, bytes, expected).isEmpty() || result != reference ||
+            buffers.keys() != expected.keys()) {
+            qCritical() << "Card cache retained stale draw state" << phase;
+            return false;
+        }
+        for (auto it = buffers.cbegin(); it != buffers.cend(); ++it) {
+            if (it->matrices != expected[it.key()].matrices || it->ids != expected[it.key()].ids) {
+                qCritical() << "Card cache lost current transform or identity" << phase;
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+
+#endif
 bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
     Host host(root, true);
     const auto content = QJsonDocument::fromJson(host.read("slots.json").toUtf8()).object();
     bool ok = checkSorting(root, glyphs, content);
+#ifdef Q_OS_DARWIN
+    ok &= checkCardMaterialCache();
+#endif
     ok &= checkCollectionCard(root, glyphs, content);
     ok &= checkPlayerBar(glyphs);
     ok &= checkPlayerInput(root, glyphs, content);
@@ -757,8 +837,8 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
                 }
             }
 #ifdef Q_OS_DARWIN
-            // Apple 平台的呈现节奏由系统合成器固定：状态恒为关闭，设置页也不再暴露该行。
-            if (hud.vsync || visibleSettings.contains("vsync")) {
+            // Apple 默认同步呈现；设置页仍隐藏该行，诊断覆盖由启动配置负责。
+            if (hud.vsync != RhineFg::metalVSyncEnabled() || visibleSettings.contains("vsync")) {
                 qCritical() << "Apple platforms should hide the vsync setting" << provider << dark;
                 ok = false;
             }

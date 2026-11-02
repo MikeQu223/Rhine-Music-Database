@@ -74,6 +74,14 @@ inline bool parseBool(const QByteArray &raw, bool fallback)
     return fallback;
 }
 
+#ifdef Q_OS_DARWIN
+/** Metal 的普通窗口与自建宿主共用启动配置；主变量优先，未指定时默认同步。 */
+inline bool metalVSyncEnabled() {
+    return parseBool(qgetenv("RHINE_VSYNC"), parseBool(qgetenv("RHINE_FG_VSYNC"), true));
+}
+
+#endif
+
 #ifdef Q_OS_LINUX
 /**
  * 设置页写完偏好后调用：把偏好值转成 RHINE_FG。
@@ -106,6 +114,10 @@ inline FgConfig FgConfig::fromEnvironment()
     config.debugChecking = RhineFg::parseBool(qgetenv("RHINE_FG_DEBUG"), false);
     // 垂直同步必须跟着设置页走，否则呈现层永远用 FIFO：实测这台机器上 FIFO 只给到
     // 约半个刷新率（vkcube 47.4fps vs MAILBOX 125.4fps），关掉 vsync 才能拿到 MAILBOX。
+#ifdef Q_OS_DARWIN
+    config.vsync = RhineFg::metalVSyncEnabled();
+#else
     config.vsync = RhineFg::parseBool(qgetenv("RHINE_FG_VSYNC"), true);
+#endif
     return config;
 }

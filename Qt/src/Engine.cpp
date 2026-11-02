@@ -1,10 +1,11 @@
 #include <QtGlobal>
-#ifdef Q_OS_LINUX
+#if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
 #include <ctime>
 #endif
 #include "Engine.h"
 #include "DiscGeometry.h"
 #include "RhiScene.h"
+#include "fg/FgCapability.h"
 #include "render/MemoryProbe.h"
 #include <QCoreApplication>
 #include <QDir>
@@ -563,6 +564,9 @@ void Engine::trimMemory() {
     }
     host.trimMemory(retainedImages);
     scene.trimMemory();
+#ifdef Q_OS_DARWIN
+    m_glyphs.clearRasterCache();
+#endif
 }
 /** 播放栏按需重绘时保持资源库休眠；只有可见的旋转或歌词动画需要连续调度。 */
 void Engine::refreshPlayback() {
@@ -628,6 +632,16 @@ void Engine::tick() {
             return;
         }
     }
+#ifdef Q_OS_MACOS
+    // 毫秒时钟尚未前进时不重算同一动画状态；输入与时域收敛帧仍立即处理。
+    if (!inputPending && now == m_lastTick && !scene.changed() && m_temporalFramesRemaining == 0) {
+        m_pacing.noteStep(true);
+        ++m_stepsSkipped;
+        ++m_paceTicks;
+        timer.setInterval(1);
+        return;
+    }
+#endif
     m_animationTime += qMin<qint64>(now - m_lastTick, 50) / 1000.;
     m_lastTick = now;
     flushPointer();
@@ -662,7 +676,7 @@ void Engine::tick() {
     m_pacing.noteStep(false);
     m_inputPending = false;
     // 动态帧间隔：不设固定周期常数，帧率上限完全交给呈现侧（垂直同步/缓冲回收）。
-#ifdef Q_OS_LINUX
+#if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
     // 注意 blockedNs 的口径：它只覆盖 tick() 内部、step() 之外的微秒级开销（指针 flush、
     // 滚轮衰减、energyIdle），**测不到呈现阻塞**——呈现工作在 PresentationShell 的另一个
     // 定时器回调里，根本不在 tick() 的调用栈内。所以这里恒走 interval=1：渲染期间 GUI
@@ -943,7 +957,7 @@ void Engine::wheel(double x, double y, double delta, bool pixels) {
 /**
  * 按顺序同步场景、音乐和 HUD 帧数据，保持绘制与命中区域一致。
  */
-#ifdef Q_OS_LINUX
+#if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
 // RHINE_STEP_PROBE=1：拆开引擎每拍成本，并区分"干活"与"等待"。
 // 墙钟远大于线程 CPU 时间 => 这一拍是在阻塞（锁、GPU、内存回读），不是算得多。
 static double stepWallSum = 0, stepCpuSum = 0, stepAppSum = 0, stepRestSum = 0;
@@ -959,7 +973,7 @@ static double threadCpuMs() {
 void Engine::step(double time) {
     if (!ready()) {
         return;
-#ifdef Q_OS_LINUX
+#if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
     }
     const bool stepProbe = qEnvironmentVariableIntValue("RHINE_STEP_PROBE") == 1;
     const double stepT0 = stepProbe ? threadCpuMs() : 0.0;
@@ -981,13 +995,16 @@ void Engine::step(double time) {
     }
     const bool reuse = m_sceneSleeping && !scene.changed();
     const auto object = app->step(time, m_width / (m_height / 1080), reuse);
-#ifdef Q_OS_LINUX
+#if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
     const double stepAppMs = stepProbe ? double(stepAppTimer.nsecsElapsed()) / 1e6 : 0.0;
 #endif
     if (object.isEmpty()) {
         return;
     }
     const auto previousDiscAngle = m_frame.value("discAngle").toDouble();
+#ifdef Q_OS_DARWIN
+    const auto previousOrigin = m_frame.value("stats").toObject().value("coordinateOrigin");
+#endif
     m_frame = scene.frame;
     auto signature = m_frame;
     for (const auto &key : {"time", "stats", "labels", "boot", "pointerCursor", "jitter", "temporalReset"}) {
@@ -998,11 +1015,20 @@ void Engine::step(double time) {
     // 但时间性抗锯齿（FSR3/TAA）本身就是靠相位差累积历史，没有抖动它们只会反复混合
     // 同一张图、等于白做，所以这两者开启时无条件打开。AA 模式每帧读环境变量，切换免重启。
 #ifdef Q_OS_DARWIN
-    const bool metalFxTemporal = m_frame.value("mode") != "boot" && renderConfiguration.snapshot().temporal();
+    const auto renderSettings = renderConfiguration.snapshot();
+    const bool metalFxTemporal = m_frame.value("mode") != "boot" && renderSettings.temporal();
     if (!metalFxTemporal) {
         m_temporalFramesRemaining = 0;
     }
     const bool temporal = metalFxTemporal;
+    // 仅开 FG 插值时渲染器同样消费实例运动历史，原点变化必须一并重置。
+    const bool usesMotionHistory =
+        temporal || (renderSettings.interpolation && RhineFg::capability().interpolationAvailable);
+    if (usesMotionHistory && previousOrigin != m_frame.value("stats").toObject().value("coordinateOrigin")) {
+        // 原点平移会重新编码实例 ID；历史不能跨坐标系继续配对，MetalFX 也须一起重置。
+        m_jitterPhase = 0;
+        m_temporalResetPending = true;
+    }
 #else
     const auto aaMode = qEnvironmentVariable("RHINE_AA_MODE");
     // 空间 FSR 回退不累积历史，不能继续投影抖动，否则静止画面会逐帧闪动。
@@ -1150,7 +1176,7 @@ void Engine::step(double time) {
         scene.timings.engineMs = frameTimer.nsecsElapsed() / 1000000.;
     }
     emit updated();
-#ifdef Q_OS_LINUX
+#if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
     if (stepProbe) {
         const double wall = double(clock.nsecsElapsed() - stepWall0) / 1e6;
         const double cpu = threadCpuMs() - stepT0;

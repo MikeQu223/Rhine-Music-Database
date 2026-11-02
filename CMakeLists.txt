@@ -225,6 +225,9 @@ set(RHINE_APP_SOURCES
     Qt/src/Glyphs.cpp
     Qt/src/Glyphs.h
     vendor/qrcodegen/qrcodegen.cpp)
+if(APPLE)
+    list(APPEND RHINE_APP_SOURCES Qt/src/render/SceneTransformHistory.h)
+endif()
 list(TRANSFORM RHINE_APP_SOURCES PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
 if(APPLE)
     enable_language(OBJCXX)
@@ -396,12 +399,18 @@ qt_add_shaders(
     Qt/shaders/fgComposite.frag)
 # 唯一场景的烘焙材质与最终合成着色器
 set(RHINE_OPTICAL_SHADER_DEFINES)
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR APPLE)
     list(APPEND RHINE_OPTICAL_SHADER_DEFINES RHINE_SINGLE_PASS_MOTION=1)
+endif()
+if(APPLE)
+    list(APPEND RHINE_OPTICAL_SHADER_DEFINES RHINE_METAL_MOTION=1)
 endif()
 # E05a：紧凑实例（80 字节）的第二套着色器烘焙放在独立子目录：
 # qt_add_shaders 把 .qsb 写到当前二进制目录的 .qsb/ 下，同一目录对同一份源码烘两次会撞规则。
 add_subdirectory(Qt/shaders/compact)
+if(APPLE)
+    add_subdirectory(Qt/shaders/metal-temporal)
+endif()
 qt_add_shaders(
     RhineMusicDatabase
     "rhine_enhancement_shaders"
@@ -504,6 +513,8 @@ if(NOT IOS)
 endif()
 if(APPLE)
     target_sources(RhineMusicDatabase PRIVATE Qt/src/render/MetalFxBackend.mm Qt/src/render/MetalFxBackend.h
+                                              Qt/src/render/MetalTemporalResolve.cpp
+                                              Qt/src/render/MetalTemporalResolve.h
                                               Qt/src/render/FrameGenerator.h Qt/src/render/SceneResources.h)
     target_link_libraries(RhineMusicDatabase PRIVATE "-framework Metal")
     # iOS 模拟器 SDK 不带 MetalFX，仍构建共用呈现层并报告原生效果不可用。
@@ -664,6 +675,14 @@ if(MSVC)
     target_compile_options(RhineRenderPolicyRegression PRIVATE /utf-8)
 endif()
 add_test(NAME qt_render_policy_regression COMMAND RhineRenderPolicyRegression)
+
+if(APPLE)
+    # 渲染帧历史不依赖窗口，覆盖稳定 ID 重排、集合增删、矩阵截断与重置。
+    qt_add_executable(RhineSceneTransformHistoryRegression Qt/tests/SceneTransformHistoryChecks.cpp)
+    target_include_directories(RhineSceneTransformHistoryRegression PRIVATE Qt/src)
+    target_link_libraries(RhineSceneTransformHistoryRegression PRIVATE Qt6::Core Qt6::Gui)
+    add_test(NAME qt_scene_transform_history_regression COMMAND RhineSceneTransformHistoryRegression)
+endif()
 
 # 快速滚动的冷纹理准入（B01）与封面需求账本（B03）是 header-only 纯逻辑，不碰 QRhi/窗口：
 # 边界差 1ms、逻辑取消提前归还名额都不会崩，只会让界面变慢或并发慢慢失控，只能靠用例拦。

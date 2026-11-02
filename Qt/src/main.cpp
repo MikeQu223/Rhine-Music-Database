@@ -3,7 +3,7 @@
 #include "AppStorage.h"
 #include "Engine.h"
 #include "fg/FgCapability.h"
-#ifdef Q_OS_LINUX
+#if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
 #include "fg/FgConfig.h"
 #endif
 #include "render/PresentationShell.h"
@@ -251,13 +251,14 @@ static void selectGraphicsBackend() {
 /**
  * 垂直同步：关闭时把交换链的 swapInterval 设为 0，允许帧率超过屏幕刷新率。
  * 必须在创建任何 QQuickWindow 之前写入默认格式，Qt 的 RHI 交换链会据此选择呈现模式。
- * Apple 平台的 Metal 呈现由系统合成器按刷新率回收 drawable，该开关没有实际效果，
- * 因此固定按关闭写入，设置页也不再提供这一项。
+ * macOS 的 CAMetalLayer 确实受该设置影响；默认同步，诊断环境可显式关闭。
+ * 普通窗口与自建呈现层使用相同的环境优先级，避免切换宿主后同步状态变化。
  */
 static void applyVSyncSetting() {
 #ifdef Q_OS_DARWIN
+    const bool synchronized = RhineFg::metalVSyncEnabled();
     auto format = QSurfaceFormat::defaultFormat();
-    format.setSwapInterval(0);
+    format.setSwapInterval(synchronized ? 1 : 0);
     QSurfaceFormat::setDefaultFormat(format);
 #else
     if (!qEnvironmentVariableIsEmpty("RHINE_VSYNC")) {
@@ -322,11 +323,8 @@ static void applyFrameGenerationSetting() {
         qputenv("RHINE_FG", "off");
     }
 #ifdef Q_OS_DARWIN
-    // Apple 的窗口合成器始终按刷新率回收 drawable，垂直同步开关没有实际效果。
-    // 固定关闭并在设置页隐藏；显式 RHINE_FG_VSYNC 仍留给排障对照。
-    if (qEnvironmentVariableIsEmpty("RHINE_FG_VSYNC")) {
-        qputenv("RHINE_FG_VSYNC", "off");
-    }
+    // 与普通 QQuickWindow 保持相同配置，规范化后供呈现后端读取。
+    qputenv("RHINE_FG_VSYNC", RhineFg::metalVSyncEnabled() ? "on" : "off");
 #else
     // 呈现层的垂直同步也来自设置页：只有关掉 vsync，呈现层才会去选 MAILBOX。
     // 实测这台机器上 FIFO 只给到约半个刷新率（47.4fps），MAILBOX 能到 125fps。
@@ -630,9 +628,18 @@ int main(int argc, char **argv) {
     const bool interpolationWanted =
         fgForced || RhineFg::parseBool(qgetenv("RHINE_FG"), false);
 #endif
+#ifdef Q_OS_MACOS
+    // 原生时域处理已在 RhiScene 内完成，普通窗口可在同一次提交中绘制 3D 与 HUD。
+    // 自建宿主只供显式排障或帧生成使用，避免两个离屏帧逐层等待 GPU。
+    const bool metalLayerRequested =
+        qEnvironmentVariable("RHINE_FG_LAYER").compare("on", Qt::CaseInsensitive) == 0 ||
+        RhineFg::parseBool(qgetenv("RHINE_FG"), false);
+#endif
     const bool fgCandidate = !test && !args.contains("--capture") && !fgLayerDisabled &&
 #ifdef Q_OS_LINUX
                              hasNativeWindowSystem && interpolationWanted &&
+#elif defined(Q_OS_MACOS)
+                             hasNativeWindowSystem && metalLayerRequested &&
 #else
                              hasNativeWindowSystem &&
 #endif

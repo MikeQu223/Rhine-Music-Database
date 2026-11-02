@@ -6,6 +6,11 @@
 #include <QElapsedTimer>
 #include <QPainter>
 #include <QQuickWindow>
+#ifdef Q_OS_MACOS
+#include "render/HudUploadTexture.h"
+#include <QSGSimpleTextureNode>
+#include <QtMath>
+#endif
 Hud::Hud(QQuickItem *parent) : QQuickPaintedItem(parent) {
     setOpaquePainting(false);
     setAntialiasing(true);
@@ -64,6 +69,10 @@ void Hud::paint(QPainter *painter) {
         m_engine->glyphs()->commands(*painter, m_engine->commands(),
                                      [this](QString key) { return m_engine->host.image(key); });
     }
+#elif defined(Q_OS_DARWIN)
+    static const bool cacheText = qEnvironmentVariableIntValue("RHINE_HUD_TEXT_CACHE") == 1;
+    m_engine->glyphs()->commands(
+        *painter, m_engine->commands(), [this](QString key) { return m_engine->host.image(key); }, cacheText);
 #else
     m_engine->glyphs()->commands(*painter, m_engine->commands(),
                                  [this](QString key) { return m_engine->host.image(key); });
@@ -72,8 +81,45 @@ void Hud::paint(QPainter *painter) {
     if (hudTiming) {
         paintMs = paintMs * 0.8 + double(paintClock.nsecsElapsed()) / 1e6 * 0.2;
         if (++paintFrames % 30 == 0) {
-            qWarning("HUD 绘制: %d 条命令 绘制 %.2f ms (item %.0fx%.0f)",
-                     int(m_engine->commands().size()), paintMs, width(), height());
+            qWarning("HUD 绘制: %d 条命令 绘制 %.2f ms (item %.0fx%.0f)", int(m_engine->commands().size()),
+                     paintMs, width(), height());
         }
     }
 }
+
+#ifdef Q_OS_DARWIN
+/** Metal 排障候选：复用原绘制顺序和物理尺寸，只替换纹理上传策略。 */
+QSGNode *Hud::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *updateData) {
+#ifdef Q_OS_MACOS
+    static const bool partialUpload = qEnvironmentVariableIntValue("RHINE_HUD_PARTIAL_UPLOAD") == 1;
+    if (partialUpload && window() && window()->rhi() && window()->rhi()->backend() == QRhi::Metal) {
+        const QSize logical(qCeil(width()), qCeil(height()));
+        const auto pixels = logical * window()->effectiveDevicePixelRatio();
+        if (pixels.isEmpty()) {
+            delete oldNode;
+            return nullptr;
+        }
+        auto node = static_cast<QSGSimpleTextureNode *>(oldNode);
+        auto texture = node ? static_cast<RhineRender::HudUploadTexture *>(node->texture())
+                            : new RhineRender::HudUploadTexture();
+        texture->paint(pixels, [&](QPainter &painter) {
+            painter.scale(double(pixels.width()) / logical.width(),
+                          double(pixels.height()) / logical.height());
+            paint(&painter);
+        });
+        if (!node) {
+            node = new QSGSimpleTextureNode();
+            node->setTexture(texture);
+            node->setOwnsTexture(true);
+        }
+        node->setRect(0, 0, logical.width(), logical.height());
+        node->setSourceRect(QRectF(QPointF(), pixels));
+        node->setFiltering(smooth() ? QSGTexture::Linear : QSGTexture::Nearest);
+        node->markDirty(QSGNode::DirtyMaterial);
+        return node;
+    }
+#endif
+    return QQuickPaintedItem::updatePaintNode(oldNode, updateData);
+}
+
+#endif

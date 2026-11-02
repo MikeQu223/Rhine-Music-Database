@@ -115,6 +115,21 @@ class Engine : public QObject {
     RhineRender::RenderTelemetry renderTelemetry;
     RhineFg::FrameInputs metalFxInputs;
 #endif
+#ifdef Q_OS_DARWIN
+    quint64 renderedFrames() const {
+        return m_renderFrames.load(std::memory_order_relaxed);
+    }
+    quint64 renderedGeometryFrames() const {
+        return m_renderGeometryFrames.load(std::memory_order_relaxed);
+    }
+    void recordGeometryFrame(quint64 revision) {
+        const auto previous = m_lastRenderedGeometry.exchange(revision, std::memory_order_relaxed);
+        if (revision != previous) {
+            m_renderGeometryFrames.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+
+#endif
     void recordResourceRelease() {
         m_gpuResources.store(0, std::memory_order_relaxed);
         m_musicTextureBytes.store(0, std::memory_order_relaxed);
@@ -227,7 +242,11 @@ class Engine : public QObject {
     /// C04：被合并掉的完整 step。
     quint64 m_stepsSkipped = 0;
     /// C01：GPU 样本数（数值为 0 的成功采样不计数）。
+#ifdef Q_OS_DARWIN
+    std::atomic<quint64> m_gpuSamples{0};
+#else
     quint64 m_gpuSamples = 0;
+#endif
     /// 探针：唤醒次数与"场景真的变了"的拍数。空闲仍空转时，这两条决定往哪查。
     quint64 m_wakes = 0;
     quint64 m_changedSteps = 0;
@@ -235,6 +254,10 @@ class Engine : public QObject {
     std::atomic<quint64> m_sceneRevision{0};
     std::atomic<quint64> m_hudRevision{0};
     std::atomic<quint64> m_renderFrames{0}, m_gpuResources{0};
+#ifdef Q_OS_DARWIN
+    std::atomic<quint64> m_lastRenderedGeometry{0};
+    std::atomic<quint64> m_renderGeometryFrames{0};
+#endif
     std::atomic<quint64> m_bindingCreations{0};
     std::atomic<quint64> m_musicTextureBytes{0};
     std::atomic<quint64> m_coverUploads{0};

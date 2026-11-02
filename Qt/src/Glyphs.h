@@ -32,6 +32,13 @@ class Glyphs : public QObject {
     void art(QPainter &ctx, QString key, double x, double y, double size, int count, double tracking);
     QPainterPath path(const QString &svg);
     void commands(QPainter &ctx, const QJsonArray &commands, std::function<QImage(QString)> image);
+#ifdef Q_OS_DARWIN
+    void commands(QPainter &ctx, const QJsonArray &commands, std::function<QImage(QString)> image,
+                  bool cacheText);
+    void clearRasterCache();
+    int rasterCacheBytes();
+    quint64 rasterCacheHits();
+#endif
     QImage label(const QJsonObject &item);
 
   private:
@@ -49,6 +56,25 @@ class Glyphs : public QObject {
     QHash<QString, QString> layoutFamilies;
     QCache<QString, Glyph> shapedText{32 * 1024};
     QCache<QString, bool> layoutRequired{1024};
+    /// 命令分发的唯一实现；cacheText 只在 Apple 栅格缓存可用时生效，其他平台恒为 false。
+    void renderCommands(QPainter &ctx, const QJsonArray &commands, std::function<QImage(QString)> image,
+                        bool cacheText);
+#ifdef Q_OS_DARWIN
+    struct RasterText {
+        QImage image;
+        QImage background;
+        QPoint origin;
+    };
+    QCache<QByteArray, RasterText> rasterText{32 * 1024 * 1024};
+    QCache<QByteArray, bool> rasterCandidates{512 * 1024};
+    QImage rasterScratch;
+    quint64 rasterHits = 0;
+    QRect rasterCommandBounds(const QJsonArray &command, const QTransform &transform);
+    std::unique_ptr<RasterText> rasterizeCommand(QPainter &ctx, const QJsonArray &command,
+                                                 const QImage &image, int pixelBudget);
+    bool drawRasterCommand(QPainter &ctx, const QJsonArray &command);
+
+#endif
     bool needsLayout(const QString &text, const QString &weight);
     Glyph layoutText(const QString &text, const QString &weight, double spacing);
     Glyph glyph(QString ch, QString weight);

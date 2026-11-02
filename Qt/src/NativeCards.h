@@ -3,6 +3,9 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QMatrix4x4>
+#ifdef Q_OS_DARWIN
+#include <array>
+#endif
 
 // 卡片共用静态部件模板；每个活动根只携带矩阵与外观状态。
 class NativeCards {
@@ -32,6 +35,19 @@ class NativeCards {
         bool localIdentity = true;
         bool frosted = false;
     };
+    QJsonObject makeDraw(const Part &part, const QJsonObject &card, const double *state,
+                         const QJsonValue &globalSubdued);
+#ifdef Q_OS_DARWIN
+    struct CachedActor {
+        QJsonObject card;
+        std::array<double, 4> appearance{};
+        QJsonValue globalSubdued;
+        QVector<QJsonObject> draws;
+    };
+    QHash<int, CachedActor> cachedActors;
+    QString expandMetal(QJsonObject &frame, const QByteArray &bytes, SceneDrawBuffers &buffers);
+
+#endif
     const QVector<Part> &decodeParts(quint64 revision, const QJsonArray &source);
 
     QJsonArray parts;

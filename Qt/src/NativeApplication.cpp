@@ -65,7 +65,7 @@ void NativeApplication::initialize() {
     music.restoreAccount();
     music.restoreIdentityName();
 }
-#ifdef Q_OS_LINUX
+#if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
 // RHINE_STEP_PROBE=1：拆开 app->step 内部（场景采样 / HUD 绘制 / 观察与返回对象构建）。
 static double nacSampleSum = 0, nacObserveSum = 0, nacDrawSum = 0, nacRestSum = 0;
 static double nacSampleMax = 0, nacObserveMax = 0, nacDrawMax = 0, nacRestMax = 0;
@@ -73,7 +73,7 @@ static int nacFrames = 0;
 
 #endif
 QJsonObject NativeApplication::step(double time, double width, bool reuseScene) {
-#ifdef Q_OS_LINUX
+#if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
     const bool nacProbe = qEnvironmentVariableIntValue("RHINE_STEP_PROBE") == 1;
     QElapsedTimer nacTimer;
     if (nacProbe) {
@@ -81,14 +81,14 @@ QJsonObject NativeApplication::step(double time, double width, bool reuseScene) 
     }
 #endif
     const auto frame = reuseScene ? music.frame : m_scene->sample(time);
-#ifdef Q_OS_LINUX
+#if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
     const double nacSampleMs = nacProbe ? double(nacTimer.nsecsElapsed()) / 1e6 : 0.0;
 #endif
     if (frame.isEmpty()) {
         return {};
     }
     music.frame = frame;
-#ifdef Q_OS_LINUX
+#if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
     QElapsedTimer nacObserveClock;
     if (nacProbe) {
         nacObserveClock.start();
@@ -98,7 +98,7 @@ QJsonObject NativeApplication::step(double time, double width, bool reuseScene) 
     if (hud.tab != "overview" && music.wantsSongDetails && frame["mode"] == "detail") {
         music.sameAlbum();
     }
-#ifdef Q_OS_LINUX
+#if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
     const double nacObserveEnd = nacProbe ? double(nacTimer.nsecsElapsed()) / 1e6 : 0.0;
     QElapsedTimer nacDrawClock;
     if (nacProbe) {
@@ -106,7 +106,7 @@ QJsonObject NativeApplication::step(double time, double width, bool reuseScene) 
     }
 #endif
     hud.draw(frame, width, time);
-#ifdef Q_OS_LINUX
+#if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
     const double nacDrawMs = nacProbe ? double(nacDrawClock.nsecsElapsed()) / 1e6 : 0.0;
     const double nacDrawEnd = nacProbe ? double(nacTimer.nsecsElapsed()) / 1e6 : 0.0;
     RhineRender::hotPathWindow().frames.fetch_add(1);

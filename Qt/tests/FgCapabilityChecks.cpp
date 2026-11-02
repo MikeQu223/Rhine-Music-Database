@@ -69,6 +69,34 @@ bool parsesBooleans()
     return ok;
 }
 
+#ifdef Q_OS_DARWIN
+/** 覆盖 Metal 两条呈现路径共用的默认值、覆盖优先级和非法值回退。 */
+bool metalPresentationConfiguration() {
+    EnvGuard primary("RHINE_VSYNC");
+    EnvGuard legacy("RHINE_FG_VSYNC");
+    bool ok = true;
+    qunsetenv("RHINE_VSYNC");
+    qunsetenv("RHINE_FG_VSYNC");
+    ok &= check(RhineFg::metalVSyncEnabled(), "Metal 默认必须同步呈现");
+    qputenv("RHINE_FG_VSYNC", "off");
+    ok &= check(!RhineFg::metalVSyncEnabled(), "兼容已有排障覆盖值");
+    qputenv("RHINE_VSYNC", "on");
+    ok &= check(RhineFg::metalVSyncEnabled(), "主变量开启必须优先于旧变量关闭");
+    qputenv("RHINE_FG_VSYNC", "on");
+    qputenv("RHINE_VSYNC", "off");
+    ok &= check(!RhineFg::metalVSyncEnabled(), "主变量关闭必须优先于旧变量开启");
+#ifdef Q_OS_DARWIN
+    ok &= check(!FgConfig::fromEnvironment().vsync, "自建宿主必须采用相同的主变量优先级");
+#endif
+    qputenv("RHINE_FG_VSYNC", "off");
+    qputenv("RHINE_VSYNC", "invalid");
+    ok &= check(!RhineFg::metalVSyncEnabled(), "非法主变量应回退兼容变量");
+    qunsetenv("RHINE_FG_VSYNC");
+    ok &= check(RhineFg::metalVSyncEnabled(), "全部无效时应回退同步默认值");
+    return ok;
+}
+#endif
+
 /// 设置页开关 → 环境变量 → 解析结果，这条链就是"点一下立刻生效"的全部依据。
 bool preferenceReachesConfig()
 {
@@ -286,6 +314,9 @@ int main()
 {
     bool ok = true;
     ok &= parsesBooleans();
+#ifdef Q_OS_DARWIN
+    ok &= metalPresentationConfiguration();
+#endif
     ok &= keepsCameraDefaults();
     ok &= preferenceReachesConfig();
     ok &= snapshotLifecycle();

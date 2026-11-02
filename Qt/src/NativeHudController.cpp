@@ -36,8 +36,8 @@ NativeHud::NativeHud(Host *host, Glyphs *glyphs, MusicLibrary *music, HudSceneAc
     reduced = host->preference("motion") == "reduced";
     startupAnimation = host->preference("startup-animation") == "on";
 #ifdef Q_OS_DARWIN
-    // Apple 平台的呈现节奏由系统合成器固定，设置页不提供该开关，状态恒为关闭。
-    vsync = false;
+    // 设置页仍隐藏同步开关；状态与实际呈现及诊断覆盖保持一致。
+    vsync = RhineFg::metalVSyncEnabled();
     // macOS 只有 Metal 后端
     if (host->preference("graphics-backend") != "metal") {
         host->setPreference("graphics-backend", "metal");
@@ -844,7 +844,7 @@ void NativeHud::action(QString value) {
         m_host->setPreference("startup-animation", startupAnimation ? "on" : "off");
     } else if (value == "vsync") {
 #ifdef Q_OS_DARWIN
-        // Apple 平台固定关闭垂直同步，设置页不显示该行；外部动作也不改变任何状态。
+        // Apple 平台沿用启动同步配置，设置页不显示该行；外部动作也不改变任何状态。
 #else
         vsync = !vsync;
         m_host->setPreference("vsync", vsync ? "on" : "off");

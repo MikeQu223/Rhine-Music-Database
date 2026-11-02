@@ -3,6 +3,9 @@
 #include <QMatrix4x4>
 #include <algorithm>
 #include <cstring>
+#ifdef Q_OS_DARWIN
+#include <QSet>
+#endif
 
 namespace {
 double interpolate(double low, double high, double amount) {
@@ -37,6 +40,9 @@ const QVector<NativeCards::Part> &NativeCards::decodeParts(quint64 revision, con
         return decoded;
     }
     decoded.clear();
+#ifdef Q_OS_DARWIN
+    cachedActors.clear();
+#endif
     decoded.reserve(source.size());
     for (const auto &entry : source) {
         const auto part = entry.toObject();
@@ -65,7 +71,178 @@ const QVector<NativeCards::Part> &NativeCards::decodeParts(quint64 revision, con
     return decoded;
 }
 
+/** 卡片材质描述由 Apple 缓存路径与其他平台的逐帧路径共用。 */
+QJsonObject NativeCards::makeDraw(const Part &part, const QJsonObject &card, const double *state,
+                                  const QJsonValue &globalSubdued) {
+    const auto quality = state[16];
+    const auto clarity = std::clamp(state[17], 0., 1.);
+    const auto theme = state[18];
+    const auto subdued = std::clamp(state[19], 0., 1.);
+    const bool shadowOnly = card["shadowOnly"].toBool();
+    const auto id = -(card["id"].toInt() * 256 + part.partIndex + 1);
+    auto draw = part.base;
+    const auto &high = part.high;
+    const auto &low = part.low;
+    if (!high.isEmpty() && !low.isEmpty()) {
+        draw["color"] = interpolateColor(low["color"].toArray(), high["color"].toArray(), quality);
+        draw["attenuation"] =
+            interpolateColor(low["attenuation"].toArray(), high["attenuation"].toArray(), quality);
+        draw["attenuationDistance"] = part.interpolateAttenuation
+                                          ? interpolate(low["attenuationDistance"].toDouble(),
+                                                        high["attenuationDistance"].toDouble(), quality)
+                                          : high["attenuationDistance"].toDouble();
+        for (const auto &key :
+             {"roughness", "metalness", "transmission", "thickness", "clearcoat", "clearcoatRoughness"}) {
+            draw[key] = interpolate(low[key].toDouble(), high[key].toDouble(), quality);
+        }
+        if (high["transmission"].toDouble() > 0) {
+            draw["transmission"] = std::max(0.000001, draw["transmission"].toDouble());
+        }
+    } else if (high.isEmpty()) {
+        draw["opacity"] = quality;
+    }
+    if (part.frosted) {
+        for (const auto &key : {"thickness", "transmission", "attenuationDistance"}) {
+            const auto baseline = interpolate(low.isEmpty() ? high[key].toDouble() : low[key].toDouble(),
+                                              high[key].toDouble(), quality);
+            double target = 8;
+            if (std::strcmp(key, "thickness") == 0) {
+                target = .018;
+            } else if (std::strcmp(key, "transmission") == 0) {
+                target = .985;
+            }
+            draw[key] = interpolate(baseline, target, clarity);
+        }
+    }
+    draw["id"] = id;
+    draw["mesh"] = part.mesh;
+    draw["asset"] = part.asset;
+    draw["label"] = part.label;
+    draw["name"] = part.name;
+    draw["transparent"] = part.transparent;
+    draw["depthWrite"] = part.depthWrite;
+    draw["order"] = part.order;
+    draw["side"] = part.side;
+    draw["castShadow"] = part.castShadow;
+    draw["musicKey"] = card["musicKey"];
+    draw["musicSelected"] = card["selected"];
+    draw["shadowOnly"] = shadowOnly;
+    draw["instanced"] = false;
+    draw["floor"] = false;
+    draw["count"] = 1;
+    if (high.isEmpty()) {
+        draw["quality"] = part.hasMap ? 1 : 0;
+    } else {
+        draw["quality"] = quality;
+    }
+    // 没有 high 材质变体的部件也要跟随清晰/磨砂状态；
+    // 原先缺省为 0 会让这些部件永远处于磨砂，初始状态就不清晰。
+    draw["clarity"] = clarity;
+    draw["theme"] = theme;
+    draw["subdued"] = high.isEmpty() ? globalSubdued : QJsonValue(subdued);
+    draw["matrices"] = QJsonArray();
+    draw["themes"] = QJsonArray();
+    draw["matrixBuffer"] = -1;
+    draw["themeBuffer"] = -1;
+    return draw;
+}
+
+#ifdef Q_OS_DARWIN
+/** 复用 Apple 卡片材质描述，逐帧更新矩阵并清除离开可见集合的缓存。 */
+QString NativeCards::expandMetal(QJsonObject &frame, const QByteArray &bytes, SceneDrawBuffers &buffers) {
+    RhineRender::HotPathTimer cardTimer(RhineRender::hotPathWindow().cardNs);
+    if (frame.contains("actorTemplate")) {
+        parts = frame["actorTemplate"].toArray();
+    }
+    const auto cards = frame["actors"].toArray();
+    const auto partList = decodeParts(quint64(frame["appearanceRevision"].toDouble()), parts);
+    constexpr qsizetype stride = 20;
+    if (parts.isEmpty() || bytes.size() != cards.size() * stride * qsizetype(sizeof(double))) {
+        return QStringLiteral("Invalid native card packet");
+    }
+    auto draws = frame["draws"].toArray();
+    const qsizetype initialDraws = draws.size();
+    QSet<int> liveActors;
+    for (qsizetype index = 0; index < cards.size(); ++index) {
+        double state[stride];
+        memcpy(state, bytes.constData() + index * stride * sizeof(double), sizeof(state));
+        const auto card = cards[index].toObject();
+        const int actorId = card["id"].toInt();
+        liveActors.insert(actorId);
+        const std::array<double, 4> appearance{state[16], state[17], state[18], state[19]};
+        const QJsonValue globalSubdued = frame.value("globalSubdued");
+        auto &cached = cachedActors[actorId];
+        if (cached.card != card || cached.appearance != appearance || cached.globalSubdued != globalSubdued ||
+            cached.draws.size() != partList.size()) {
+            cached.card = card;
+            cached.appearance = appearance;
+            cached.globalSubdued = globalSubdued;
+            cached.draws.clear();
+            cached.draws.reserve(partList.size());
+            for (const auto &part : partList) {
+                cached.draws.append(makeDraw(part, card, state, globalSubdued));
+            }
+        }
+        float matrixValues[16];
+        for (int i = 0; i < 16; ++i) {
+            matrixValues[i] = float(state[i]);
+        }
+        const QByteArray rootBytes(reinterpret_cast<const char *>(matrixValues), sizeof(matrixValues));
+        // 卡片 draw 各自只含一个实例（count=1），但被选中的主体每帧都在移动：
+        // 补上稳定 id 之后运动矢量能按 id 取到上一帧矩阵，而不再因为平移列变了就退回当前矩阵、
+        // 把速度算成 0。同一 draw 内实例唯一，用卡片 id 即可（部件差异已经体现在 draw id 里）。
+        const QVector<quint32> ids{quint32(card["id"].toInt())};
+        for (qsizetype partOffset = 0; partOffset < partList.size(); ++partOffset) {
+            const auto &part = partList[partOffset];
+            const bool shadowOnly = card["shadowOnly"].toBool();
+            if (shadowOnly && !part.castShadow.toBool()) {
+                continue;
+            }
+            const auto id = -(actorId * 256 + part.partIndex + 1);
+            const auto &draw = cached.draws[partOffset];
+            QByteArray matrixBytes = rootBytes;
+            if (!part.localIdentity) {
+                // 使用双精度执行原脚本的矩阵乘法，再压成 GPU Float32，保持同帧数值一致。
+                const auto &values = part.localValues;
+                for (int column = 0; column < 4; ++column) {
+                    for (int row = 0; row < 4; ++row) {
+                        double value = 0;
+                        for (int k = 0; k < 4; ++k) {
+                            value += state[k * 4 + row] * values[column * 4 + k].toDouble();
+                        }
+                        matrixValues[column * 4 + row] = float(value);
+                    }
+                }
+                matrixBytes = QByteArray(reinterpret_cast<const char *>(matrixValues), sizeof(matrixValues));
+            }
+            buffers.insert(id, {matrixBytes, {}, ids});
+            draws.append(draw);
+        }
+    }
+    // 离开可见集合的角色立即释放，避免滚动后积累旧材质与封面键。
+    for (auto it = cachedActors.begin(); it != cachedActors.end();) {
+        if (!liveActors.contains(it.key())) {
+            it = cachedActors.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    auto &hotPath = RhineRender::hotPathWindow();
+    hotPath.cardCalls.fetch_add(1);
+    hotPath.cards.fetch_add(quint64(cards.size()));
+    hotPath.cardParts.fetch_add(quint64(partList.size()));
+    hotPath.cardDraws.fetch_add(quint64(draws.size() - initialDraws));
+    frame["draws"] = draws;
+    frame.remove("actorTemplate");
+    frame.remove("actors");
+    return {};
+}
+#endif
+
 QString NativeCards::expand(QJsonObject &frame, const QByteArray &bytes, SceneDrawBuffers &buffers) {
+#ifdef Q_OS_DARWIN
+    return expandMetal(frame, bytes, buffers);
+#else
     RhineRender::HotPathTimer cardTimer(RhineRender::hotPathWindow().cardNs);
     if (frame.contains("actorTemplate")) {
         parts = frame["actorTemplate"].toArray();
@@ -82,10 +259,6 @@ QString NativeCards::expand(QJsonObject &frame, const QByteArray &bytes, SceneDr
         double state[stride];
         memcpy(state, bytes.constData() + index * stride * sizeof(double), sizeof(state));
         const auto card = cards[index].toObject();
-        const auto quality = state[16];
-        const auto clarity = std::clamp(state[17], 0., 1.);
-        const auto theme = state[18];
-        const auto subdued = std::clamp(state[19], 0., 1.);
         float matrixValues[16];
         for (int i = 0; i < 16; ++i) {
             matrixValues[i] = float(state[i]);
@@ -100,73 +273,8 @@ QString NativeCards::expand(QJsonObject &frame, const QByteArray &bytes, SceneDr
             if (shadowOnly && !part.castShadow.toBool()) {
                 continue;
             }
-            auto draw = part.base;
-            const auto &high = part.high;
-            const auto &low = part.low;
-            if (!high.isEmpty() && !low.isEmpty()) {
-                draw["color"] = interpolateColor(low["color"].toArray(), high["color"].toArray(), quality);
-                draw["attenuation"] =
-                    interpolateColor(low["attenuation"].toArray(), high["attenuation"].toArray(), quality);
-                draw["attenuationDistance"] =
-                    part.interpolateAttenuation
-                        ? interpolate(low["attenuationDistance"].toDouble(),
-                                      high["attenuationDistance"].toDouble(), quality)
-                        : high["attenuationDistance"].toDouble();
-                for (const auto &key : {"roughness", "metalness", "transmission", "thickness", "clearcoat",
-                                        "clearcoatRoughness"}) {
-                    draw[key] = interpolate(low[key].toDouble(), high[key].toDouble(), quality);
-                }
-                if (high["transmission"].toDouble() > 0) {
-                    draw["transmission"] = std::max(0.000001, draw["transmission"].toDouble());
-                }
-            } else if (high.isEmpty()) {
-                draw["opacity"] = quality;
-            }
-            if (part.frosted) {
-                for (const auto &key : {"thickness", "transmission", "attenuationDistance"}) {
-                    const auto baseline =
-                        interpolate(low.isEmpty() ? high[key].toDouble() : low[key].toDouble(),
-                                    high[key].toDouble(), quality);
-                    double target = 8;
-                    if (std::strcmp(key, "thickness") == 0) {
-                        target = .018;
-                    } else if (std::strcmp(key, "transmission") == 0) {
-                        target = .985;
-                    }
-                    draw[key] = interpolate(baseline, target, clarity);
-                }
-            }
+            auto draw = makeDraw(part, card, state, frame["globalSubdued"]);
             const auto id = -(card["id"].toInt() * 256 + part.partIndex + 1);
-            draw["id"] = id;
-            draw["mesh"] = part.mesh;
-            draw["asset"] = part.asset;
-            draw["label"] = part.label;
-            draw["name"] = part.name;
-            draw["transparent"] = part.transparent;
-            draw["depthWrite"] = part.depthWrite;
-            draw["order"] = part.order;
-            draw["side"] = part.side;
-            draw["castShadow"] = part.castShadow;
-            draw["musicKey"] = card["musicKey"];
-            draw["musicSelected"] = card["selected"];
-            draw["shadowOnly"] = shadowOnly;
-            draw["instanced"] = false;
-            draw["floor"] = false;
-            draw["count"] = 1;
-            if (high.isEmpty()) {
-                draw["quality"] = part.hasMap ? 1 : 0;
-            } else {
-                draw["quality"] = quality;
-            }
-            // 没有 high 材质变体的部件也要跟随清晰/磨砂状态；
-            // 原先缺省为 0 会让这些部件永远处于磨砂，初始状态就不清晰。
-            draw["clarity"] = clarity;
-            draw["theme"] = theme;
-            draw["subdued"] = high.isEmpty() ? frame["globalSubdued"] : QJsonValue(subdued);
-            draw["matrices"] = QJsonArray();
-            draw["themes"] = QJsonArray();
-            draw["matrixBuffer"] = -1;
-            draw["themeBuffer"] = -1;
             QByteArray matrixBytes = rootBytes;
             if (!part.localIdentity) {
                 // 使用双精度执行原脚本的矩阵乘法，再压成 GPU Float32，保持同帧数值一致。
@@ -195,4 +303,5 @@ QString NativeCards::expand(QJsonObject &frame, const QByteArray &bytes, SceneDr
     frame.remove("actorTemplate");
     frame.remove("actors");
     return {};
+#endif
 }

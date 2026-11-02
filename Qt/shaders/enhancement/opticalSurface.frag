@@ -23,9 +23,14 @@ layout(binding = 5) uniform sampler2D cover;
 layout(binding = 6) uniform sampler2D normalAtlas;
 layout(location = 0) out vec4 fragColor;
 #ifdef RHINE_SINGLE_PASS_MOTION
-// 第二个颜色附件：运动矢量（RG = 屏幕 UV 位移，BA 预留给 FSR3）。
+// 第二个颜色附件：运动矢量（RG = 屏幕 UV 位移，BA 预留给 FSR3）；Metal 的 BA 供轻量时域实验读取。
 layout(location = 1) out vec4 velocityOut;
+#ifdef RHINE_METAL_MOTION
+layout(location = 12) in vec4 v_currentClip;
+layout(location = 13) in vec4 v_previousClip;
+#else
 layout(location = 12) in vec2 v_velocity;
+#endif
 #endif
 /** 只插值烘焙光场的相邻高度切片；没有实时光源求值、光线追踪或折射背景采样。 */
 vec3 bakedIllumination() {
@@ -53,7 +58,16 @@ void main() {
 #ifdef RHINE_SINGLE_PASS_MOTION
     // 先写运动矢量：本函数有多处提前 return（背板、透明、阴影专用），
     // 提前返回的像素仍保留顶点阶段算出的正确速度。
+#ifdef RHINE_METAL_MOTION
+    // current→previous 的屏幕 UV 位移；Metal 纹理 Y 向下，NDC Y 向上。
+    vec2 currentNdc = v_currentClip.xy / v_currentClip.w;
+    vec2 previousNdc = v_previousClip.xy / v_previousClip.w;
+    vec2 velocity = vec2(previousNdc.x - currentNdc.x, currentNdc.y - previousNdc.y) * 0.5;
+    // MetalFX 只消费 RG；额外保存前帧相机距离和透明材质反应度，不改变颜色结果。
+    velocityOut = vec4(velocity, max(v_previousClip.w, 0), 1 - m.color.a);
+#else
     velocityOut = vec4(v_velocity, 0.0, 1.0);
+#endif
 #endif
     if (m.flags.x == 1.0) {
         if (!gl_FrontFacing && v_mode > 0.5) {
