@@ -50,6 +50,10 @@ class Engine : public QObject {
     Glyphs *glyphs() {
         return &m_glyphs;
     }
+    // 桌面歌词等 GUI 侧功能只通过这个访问器读播放器
+    MusicPlayer &player() {
+        return app->music.player;
+    }
     QString root() const {
         return host.root;
     }

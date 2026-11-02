@@ -460,7 +460,20 @@ if(NOT IOS)
     target_link_libraries(RhinePlaybackService PRIVATE RhinePlaybackCore)
     target_include_directories(RhinePlaybackService PRIVATE Qt/src)
     if(APPLE)
-        target_sources(RhineMusicDatabase PRIVATE Qt/src/InterfaceWindowMac.mm)
+        target_sources(
+            RhineMusicDatabase
+            PRIVATE Qt/src/InterfaceWindowMac.mm
+                    Qt/src/DesktopLyricsLayout.cpp
+                    Qt/src/DesktopLyricsLayout.h
+                    Qt/src/DesktopLyricsView.cpp
+                    Qt/src/DesktopLyricsView.h
+                    Qt/src/DesktopLyricsWindow.cpp
+                    Qt/src/DesktopLyricsWindow.h
+                    Qt/src/DesktopLyricsSettings.cpp
+                    Qt/src/DesktopLyricsSettings.h
+                    Qt/src/DesktopLyricsController.cpp
+                    Qt/src/DesktopLyricsController.h
+                    Qt/src/DesktopLyricsWindowMac.mm)
         target_compile_options(RhinePlaybackService PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
         target_link_libraries(RhinePlaybackService PRIVATE "-framework AppKit")
     endif()
@@ -758,6 +771,16 @@ if(MSVC)
     target_compile_options(RhinePlaybackQueueRegression PRIVATE /utf-8)
 endif()
 add_test(NAME qt_playback_queue_regression COMMAND RhinePlaybackQueueRegression)
+
+# 悬浮歌词核心逻辑
+qt_add_executable(RhineDesktopLyricsRegression Qt/tests/DesktopLyricsChecks.cpp
+                  Qt/src/DesktopLyricsLayout.cpp)
+target_link_libraries(RhineDesktopLyricsRegression PRIVATE Qt6::Core)
+target_include_directories(RhineDesktopLyricsRegression PRIVATE Qt/src)
+if(MSVC)
+    target_compile_options(RhineDesktopLyricsRegression PRIVATE /utf-8)
+endif()
+add_test(NAME qt_desktop_lyrics_regression COMMAND RhineDesktopLyricsRegression)
 
 # FG 闸门探针：验证「setQueueSubmitParams 对离屏帧生效」与「共享 device 上能建交换链」。 需要真实 GPU + 显示服务（或 xvfb + lavapipe），CI runner 没有
 # GPU，所以**不进默认 CTest 集合**：构建后用 `output/qt-build/RhineFgGateProbe` 手动运行，用它给出 "FG 架构成不成立"的硬结论。

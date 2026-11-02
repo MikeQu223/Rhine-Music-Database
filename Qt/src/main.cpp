@@ -17,6 +17,8 @@
 #include "PlaybackConnection.h"
 #endif
 #ifdef Q_OS_MACOS
+#include "DesktopLyricsController.h"
+#include "DesktopLyricsSettings.h"
 #include "InterfaceWindowMac.h"
 #endif
 #ifdef Q_OS_IOS
@@ -566,6 +568,16 @@ int main(int argc, char **argv) {
     const auto platformName = QGuiApplication::platformName();
     const bool hasNativeWindowSystem =
         platformName != QStringLiteral("offscreen") && platformName != QStringLiteral("minimal");
+#ifdef Q_OS_MACOS
+    // 悬浮歌词只在有原生窗口系统的桌面路径创建；窗口本身延迟到首次开启。
+    std::unique_ptr<DesktopLyricsSettings> desktopLyricsSettings;
+    std::unique_ptr<DesktopLyricsController> desktopLyricsController;
+    if (!test && !playbackGuiTest && !args.contains("--capture") && hasNativeWindowSystem) {
+        desktopLyricsSettings = std::make_unique<DesktopLyricsSettings>(&backend->host);
+        desktopLyricsController =
+            std::make_unique<DesktopLyricsController>(backend.get(), desktopLyricsSettings.get());
+    }
+#endif
 #ifdef Q_OS_LINUX
     // 插帧关闭时不接管呈现层（RHINE_FG_LAYER=on 可强制接管做对照）。
     // 依据：全屏 2560x1440、主界面列表页长按 ↓ 的实测内容帧（引擎 render/s）——
@@ -662,6 +674,11 @@ int main(int argc, char **argv) {
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
             std::unique_ptr<DesktopTray> tray;
             tray = std::make_unique<DesktopTray>(shell->window(), &application);
+#ifdef Q_OS_MACOS
+            if (tray && desktopLyricsSettings) {
+                tray->attachDesktopLyrics(desktopLyricsSettings.get());
+            }
+#endif
 #endif
             QObject::connect(&application, &QCoreApplication::aboutToQuit, shell.get(),
                              [raw = shell.get()] { raw->shutdown(); });
@@ -699,6 +716,11 @@ int main(int argc, char **argv) {
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
     std::unique_ptr<DesktopTray> tray;
     tray = std::make_unique<DesktopTray>(window, &application);
+#ifdef Q_OS_MACOS
+    if (tray && desktopLyricsSettings) {
+        tray->attachDesktopLyrics(desktopLyricsSettings.get());
+    }
+#endif
 #endif
 #ifdef Q_OS_IOS
     configureIOSWindow(window, backend.get());

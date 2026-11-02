@@ -1,10 +1,14 @@
 #include "DesktopTray.h"
 #include "AppStorage.h"
 #include "TrayIcon.h"
+#ifdef Q_OS_MACOS
+#include "DesktopLyricsSettings.h"
+#endif
 #include <QAction>
 #include <QApplication>
 #include <QCloseEvent>
 #include <QCursor>
+#include <QSignalBlocker>
 #include <QWindow>
 
 namespace {
@@ -26,6 +30,7 @@ DesktopTray::DesktopTray(QWindow *window, QObject *parent) : QObject(parent), m_
     m_icon.setIcon(rhineTrayIcon());
     m_icon.setToolTip(QGuiApplication::applicationDisplayName());
     auto quit = m_menu.addAction(QStringLiteral("退出"));
+    m_quit = quit;
     connect(quit, &QAction::triggered, this, &DesktopTray::quitApplication);
 #ifdef Q_OS_WIN
     m_icon.setContextMenu(&m_menu);
@@ -65,6 +70,24 @@ bool DesktopTray::eventFilter(QObject *watched, QEvent *event) {
     }
     return QObject::eventFilter(watched, event);
 }
+
+#ifdef Q_OS_MACOS
+void DesktopTray::attachDesktopLyrics(DesktopLyricsSettings *settings) {
+    if (!settings || m_desktopLyrics) {
+        return;
+    }
+    auto *action = new QAction(QStringLiteral("桌面歌词"), this);
+    action->setCheckable(true);
+    action->setChecked(settings->enabled());
+    connect(action, &QAction::toggled, settings, &DesktopLyricsSettings::setEnabled);
+    connect(settings, &DesktopLyricsSettings::enabledChanged, action, [action](bool enabled) {
+        const QSignalBlocker blocker(action);
+        action->setChecked(enabled);
+    });
+    m_menu.insertAction(m_quit, action);
+    m_desktopLyrics = action;
+}
+#endif
 
 void DesktopTray::restoreWindow() {
     const auto restoredStates = m_window->windowStates() & ~Qt::WindowMinimized;

@@ -14,4 +14,10 @@ inline constexpr bool LocalMusic = true;
 inline constexpr bool ApplicationVolume = true;
 inline constexpr bool DesktopWindowControls = true;
 #endif
+// 桌面悬浮歌词
+#ifdef Q_OS_MACOS
+inline constexpr bool DesktopLyrics = true;
+#else
+inline constexpr bool DesktopLyrics = false;
+#endif
 }

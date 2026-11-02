@@ -1018,6 +1018,7 @@ const QStringList &preferenceKeys() {
         "fsr-sharpness", "fg", "close-behavior", "auto-update", "volume", "quality", "alternate-source",
         "provider", "lyrics-cache", "lyrics-global-offset-ms", "welcome-name-netease", "welcome-name-qq",
         "welcome-name-kugou", "account-id-netease", "account-id-qq", "account-id-kugou", "kugou-edition",
+        "desktop-lyrics",
         "welcome-name-kugou-standard", "welcome-name-kugou-lite", "account-id-kugou-standard",
         "account-id-kugou-lite"};
     return keys;

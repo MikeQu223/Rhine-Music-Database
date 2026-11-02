@@ -59,6 +59,10 @@ bool desktopWindowVisible(const SettingsContext &) {
     return PlatformFeatures::DesktopWindowControls;
 }
 
+bool desktopLyricsVisible(const SettingsContext &) {
+    return PlatformFeatures::DesktopLyrics;
+}
+
 bool closeVisible(const SettingsContext &) {
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
     return true;
@@ -464,6 +468,20 @@ const QVector<SettingDescriptor> &descriptors() {
              .titleZh = "点击播放单曲",
              .defaultValue = "replace",
              .choices = appendReplaceChoices()});
+        add({.id = "desktop-lyrics",
+             .section = SectionId::Preferences,
+             .kind = SettingKind::Choice,
+             .binding = {.kind = BindingKind::Preference,
+                         .preferenceKey = "desktop-lyrics",
+                         .action = "desktop-lyrics",
+                         .actionPrefix = "setting:desktop-lyrics:"},
+             .storage = StorageType::OnOff,
+             .order = 205,
+             .titleEn = "DESKTOP LYRICS",
+             .titleZh = "桌面歌词",
+             .defaultValue = Off,
+             .choices = onOffChoices(),
+             .visible = desktopLyricsVisible});
         add({.id = "archive-mask",
              .section = SectionId::Preferences,
              .kind = SettingKind::Stepper,
