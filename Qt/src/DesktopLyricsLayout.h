@@ -11,6 +11,14 @@
 
 namespace DesktopLyrics {
 
+// 字号与透明度的可调范围；设置页、偏好模型和排版共用。
+inline constexpr int MinimumFontSize = 20;
+inline constexpr int MaximumFontSize = 60;
+inline constexpr int DefaultFontSize = 32;
+inline constexpr int MinimumOpacity = 20;
+inline constexpr int MaximumOpacity = 100;
+inline constexpr int DefaultOpacity = 100;
+
 // 悬浮歌词显示内容
 struct Content {
     QString text;
@@ -41,6 +49,8 @@ struct Style {
     double bottomMargin = 64;
     int maximumLineRows = 4;
     int maximumTranslationRows = 2;
+    double opacity = 1.0;
+    bool operator==(const Style &) const = default;
 };
 
 struct Row {
@@ -58,6 +68,8 @@ struct Frame {
 
 Frame buildFrame(const Content &content, const TextMetrics &metrics, double availableWidth,
                  const Style &style = {});
+// 按字号等比缩放歌词、译文、行高和内边距
+Style styleForFontSize(int fontSize);
 QPoint placeBottomCenter(const QSizeF &size, const QRect &available, const Style &style = {});
 Frame emptyFrame(const Style &style = {});
 

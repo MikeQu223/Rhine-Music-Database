@@ -32,5 +32,6 @@ class DesktopLyricsController : public QObject {
     bool m_wasVisible = false;
     std::optional<DesktopLyrics::Content> m_lastContent;
     QRect m_lastAvailable;
+    DesktopLyrics::Style m_lastStyle;
     QMetaObject::Connection m_screenConnection;
 };

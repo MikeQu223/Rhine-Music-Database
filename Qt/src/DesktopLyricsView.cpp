@@ -2,6 +2,7 @@
 #include "Glyphs.h"
 #include <QPainter>
 #include <QPointF>
+#include <algorithm>
 
 namespace {
 
@@ -55,21 +56,22 @@ void DesktopLyricsView::paint(QPainter *painter) {
 
     painter->setRenderHint(QPainter::Antialiasing);
     painter->setRenderHint(QPainter::TextAntialiasing);
+    painter->save();
+    painter->setOpacity(std::clamp(frame.style.opacity, 0.0, 1.0));
     double y = frame.style.verticalPadding;
     for (const auto &row : frame.lineRows) {
         const double x = (frame.size.width() - row.width) / 2;
         paintRow(*painter, row.text, x, y, frame.style.lineSize, QStringLiteral("bold"), LineColor);
         y += frame.style.lineHeight;
     }
-    if (frame.translationRows.isEmpty()) {
-        return;
+    if (!frame.translationRows.isEmpty()) {
+        y += frame.style.translationGap;
+        for (const auto &row : frame.translationRows) {
+            const double x = (frame.size.width() - row.width) / 2;
+            paintRow(*painter, row.text, x, y, frame.style.translationSize, QStringLiteral("regular"),
+                     TranslationColor);
+            y += frame.style.translationHeight;
+        }
     }
-
-    y += frame.style.translationGap;
-    for (const auto &row : frame.translationRows) {
-        const double x = (frame.size.width() - row.width) / 2;
-        paintRow(*painter, row.text, x, y, frame.style.translationSize, QStringLiteral("regular"),
-                 TranslationColor);
-        y += frame.style.translationHeight;
-    }
+    painter->restore();
 }

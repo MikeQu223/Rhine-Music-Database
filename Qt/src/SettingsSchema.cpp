@@ -1,4 +1,5 @@
 #include "SettingsSchema.h"
+#include "DesktopLyricsLayout.h"
 #include "GraphicsBackend.h"
 #include "Host.h"
 #include "MusicLibrary.h"
@@ -228,6 +229,10 @@ QString renderScaleLabel(const SettingsContext &, const SettingsValue &value) {
 
 QString percentLabel(const SettingsContext &, const SettingsValue &value) {
     return QString::number(value.integer) + "%";
+}
+
+QString lyricsSizeLabel(const SettingsContext &, const SettingsValue &value) {
+    return QString::number(value.integer) + " px";
 }
 
 QString msaaLabel(const SettingsContext &, const SettingsValue &value) {
@@ -482,6 +487,38 @@ const QVector<SettingDescriptor> &descriptors() {
              .defaultValue = Off,
              .choices = onOffChoices(),
              .visible = desktopLyricsVisible});
+        add({.id = "desktop-lyrics-size",
+             .section = SectionId::Preferences,
+             .kind = SettingKind::Stepper,
+             .binding = {.kind = BindingKind::Preference,
+                         .preferenceKey = "desktop-lyrics-size",
+                         .actionPrefix = "setting:desktop-lyrics-size:"},
+             .storage = StorageType::Integer,
+             .order = 206,
+             .titleEn = "LYRIC SIZE",
+             .titleZh = "桌面歌词字号",
+             .defaultValue = QString::number(DesktopLyrics::DefaultFontSize),
+             .minimum = DesktopLyrics::MinimumFontSize,
+             .maximum = DesktopLyrics::MaximumFontSize,
+             .step = 2,
+             .visible = desktopLyricsVisible,
+             .label = lyricsSizeLabel});
+        add({.id = "desktop-lyrics-opacity",
+             .section = SectionId::Preferences,
+             .kind = SettingKind::Stepper,
+             .binding = {.kind = BindingKind::Preference,
+                         .preferenceKey = "desktop-lyrics-opacity",
+                         .actionPrefix = "setting:desktop-lyrics-opacity:"},
+             .storage = StorageType::Integer,
+             .order = 207,
+             .titleEn = "LYRIC OPACITY",
+             .titleZh = "桌面歌词透明度",
+             .defaultValue = QString::number(DesktopLyrics::DefaultOpacity),
+             .minimum = DesktopLyrics::MinimumOpacity,
+             .maximum = DesktopLyrics::MaximumOpacity,
+             .step = 5,
+             .visible = desktopLyricsVisible,
+             .label = percentLabel});
         add({.id = "archive-mask",
              .section = SectionId::Preferences,
              .kind = SettingKind::Stepper,

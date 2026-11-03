@@ -38,6 +38,9 @@ int main() {
     check(frame.lineRows.size() == 1 && frame.translationRows.size() == 1 && frame.size.height() == 116,
           "translation participates in height");
 
+    const auto large = DesktopLyrics::styleForFontSize(48);
+    check(large.lineSize == 48 && large.lineHeight == 66, "font size scales line metrics");
+
     const auto point = DesktopLyrics::placeBottomCenter(QSizeF(400, 100), QRect(0, 0, 1000, 800));
     check(point == QPoint(300, 636), "bottom center placement");
 

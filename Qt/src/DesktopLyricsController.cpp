@@ -32,6 +32,7 @@ DesktopLyricsController::DesktopLyricsController(Engine *engine, DesktopLyricsSe
       m_window(std::make_unique<DesktopLyricsWindow>(engine->glyphs(), createDesktopLyricsPlatform())),
       m_preview(qEnvironmentVariableIntValue("RHINE_DESKTOP_LYRICS_PREVIEW") == 1) {
     connect(m_settings, &DesktopLyricsSettings::enabledChanged, this, [this] { refresh(); });
+    connect(m_settings, &DesktopLyricsSettings::appearanceChanged, this, [this] { refresh(); });
     auto &player = m_engine->player();
     connect(&player, &MusicPlayer::changed, this, [this] { refresh(); });
     connect(&player, &MusicPlayer::trackSelected, this, [this] { refresh(); });
@@ -85,15 +86,18 @@ void DesktopLyricsController::refresh() {
         return;
     }
 
-    if (m_wasVisible && content == m_lastContent && available == m_lastAvailable) {
+    auto style = DesktopLyrics::styleForFontSize(m_settings->fontSize());
+    style.opacity = m_settings->opacity() / 100.0;
+    if (m_wasVisible && content == m_lastContent && available == m_lastAvailable && style == m_lastStyle) {
         return;
     }
 
-    const auto frame = DesktopLyrics::buildFrame(*content, m_metrics, available.width());
-    m_window->present(frame, DesktopLyrics::placeBottomCenter(frame.size, available));
+    const auto frame = DesktopLyrics::buildFrame(*content, m_metrics, available.width(), style);
+    m_window->present(frame, DesktopLyrics::placeBottomCenter(frame.size, available, style));
     m_window->show();
     m_lastContent = content;
     m_lastAvailable = available;
+    m_lastStyle = style;
     m_wasVisible = true;
 }
 

@@ -86,6 +86,20 @@ Frame buildFrame(const Content &content, const TextMetrics &metrics, double avai
     return frame;
 }
 
+Style styleForFontSize(int fontSize) {
+    Style style;
+    const double clamped = std::clamp(fontSize, MinimumFontSize, MaximumFontSize);
+    const double scale = clamped / style.lineSize;
+    style.lineSize = clamped;
+    style.translationSize *= scale;
+    style.lineHeight *= scale;
+    style.translationHeight *= scale;
+    style.horizontalPadding *= scale;
+    style.verticalPadding *= scale;
+    style.translationGap *= scale;
+    return style;
+}
+
 QPoint placeBottomCenter(const QSizeF &size, const QRect &available, const Style &style) {
     const int width = std::max(1, qRound(size.width()));
     const int height = std::max(1, qRound(size.height()));
