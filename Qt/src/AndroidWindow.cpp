@@ -65,15 +65,17 @@ void configureAndroidWindow(QWindow *window, Engine *backend) {
                          }
                      });
     QObject::connect(qGuiApp, &QGuiApplication::applicationStateChanged, backend,
-                     [backend, window](Qt::ApplicationState state) {
+                     [backend](Qt::ApplicationState state) {
                          const bool active = state == Qt::ApplicationActive;
                          backend->setVisible(active);
                          if (!active) {
                              // 切后台继续持有 GPU 设备会被系统直接杀掉；先还资源再等系统决定。
+                             // 注意不能在这里 releaseResources()：它与渲染线程的在途帧竞争
+                             // 窗口/表面，而退后台瞬间系统随时可能销毁 Surface——曾表现为
+                             // 渲染线程对已释放的 ANativeWindow queueBuffer 触发 SIGABRT。
+                             // 帧产出的停止交给 setVisible(false)（停帧定时器），表面的
+                             // 死活由呈现层的 isExposed 门控与系统生命周期对齐。
                              backend->trimMemory();
-                             if (auto *quick = qobject_cast<QQuickWindow *>(window)) {
-                                 quick->releaseResources();
-                             }
                          }
                      });
 }
