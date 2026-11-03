@@ -13,6 +13,7 @@
 #include <QEvent>
 #include <QEventLoop>
 #include <QFile>
+#include <QGuiApplication>
 #include <QJsonDocument>
 #include <QPainter>
 #include <QQuickWindow>
@@ -614,6 +615,15 @@ void Engine::refreshPlayback() {
 }
 
 void Engine::pollMedia() {
+    // 后台排障心跳：mediaTimer 由事件循环驱动，这条日志能证明（或证伪）后台事件循环
+    // 是否仍在运转——「后台不切歌、控件失灵」的定位全靠它划界。
+    if (QGuiApplication::applicationState() != Qt::ApplicationActive) {
+        static qint64 lastHeartbeat = -100000;
+        if (clock.elapsed() - lastHeartbeat >= 10000) {
+            lastHeartbeat = clock.elapsed();
+            qInfo("background media poll alive");
+        }
+    }
     app->poll(clock.elapsed() / 1000.0, true);
     const auto &player = app->music.player;
     const bool active = player.loading || player.state["playing"].toBool();

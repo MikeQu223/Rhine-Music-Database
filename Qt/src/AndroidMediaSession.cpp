@@ -75,11 +75,15 @@ extern "C" JNIEXPORT void JNICALL Java_rhine_music_database_RhineMediaService_me
                                                                                           jstring action) {
     Q_UNUSED(env)
     const QString name = QJniObject(action).toString();
+    // 后台排障锚点：确认控件动作是否到达 JNI 层（后续任何一环断了都能在日志里看到分界）。
+    qWarning().noquote() << "media action via jni:" << name;
     QMetaObject::invokeMethod(
         QCoreApplication::instance(),
         [name] {
             if (auto sink = commandSink()) {
                 sink(name);
+            } else {
+                qWarning("media action dropped: command sink not registered");
             }
         },
         Qt::QueuedConnection);

@@ -20,6 +20,9 @@ HudSceneActions NativeApplication::sceneActions(NativeScene *scene) {
             [scene](bool front) { scene->coverFront(front); }};
 }
 
+// 与 RhineMediaService.ACTION_SEEK 对应；会话回调的动作串形如 rhine.media.SEEK:<毫秒>。
+constexpr char kSeekActionPrefix[] = "rhine.media.SEEK:";
+
 /** 建立原生音乐、HUD、场景的值接口；所有异步失效统一唤醒 Qt 帧调度。 */
 NativeApplication::NativeApplication(Host *host, Glyphs *glyphs, NativeScene *scene, QJsonObject content,
                                      QObject *parent)
@@ -180,8 +183,18 @@ void NativeApplication::poll(double time, bool force) {
     music.player.tick(time, force);
 }
 void NativeApplication::mediaAction(QString action) {
+    // 系统媒体控件的动作用字节面语义直达播放器：hud.action 的场景分派依赖交互帧，
+    // 后台没有帧；且 hud 的 player:seek 是播放栏像素语义（值/20），不适用于会话回调。
     if (action == "resume" || action == "pause") {
         music.player.setPaused(action == "pause");
+    } else if (action == "next" || action == "prev") {
+        music.player.next(action == "next" ? 1 : -1);
+    } else if (action.startsWith(kSeekActionPrefix)) {
+        const auto position = action.mid(int(sizeof(kSeekActionPrefix) - 1)).toDouble();
+        const auto duration = music.player.state["duration"].toDouble();
+        if (duration > 0) {
+            music.player.seek(qBound(0.0, position / duration, 1.0));
+        }
     } else {
         hud.action("player:" + action);
     }

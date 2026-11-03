@@ -38,6 +38,7 @@ public class RhineMediaService extends Service {
     private static final String ACTION_PAUSE = "rhine.media.PAUSE";
     private static final String ACTION_NEXT = "rhine.media.NEXT";
     private static final String ACTION_PREV = "rhine.media.PREV";
+    private static final String ACTION_SEEK = "rhine.media.SEEK";
 
     /** 由 C++ 实现（AndroidMediaSession.cpp），把动作队列回 Qt 事件循环。 */
     private static native void mediaAction(String action);
@@ -139,6 +140,12 @@ public class RhineMediaService extends Service {
             public void onSkipToPrevious() {
                 mediaAction("prev");
             }
+
+            @Override
+            public void onSeekTo(long pos) {
+                // 进度条拖动（锁屏/通知栏/穿戴设备）：毫秒经动作字符串直达播放器。
+                mediaAction(ACTION_SEEK + ":" + Math.max(0, pos));
+            }
         });
         // 耳机/蓝牙按键的媒体按钮由会话接管。
         session.setFlags(MediaSession.FLAG_HANDLES_MEDIA_BUTTONS
@@ -183,6 +190,9 @@ public class RhineMediaService extends Service {
                     break;
                 case ACTION_PREV:
                     mediaAction("prev");
+                    break;
+                case ACTION_SEEK:
+                    mediaAction(ACTION_SEEK + ":" + intent.getLongExtra("position", 0));
                     break;
                 default:
                     break;
@@ -261,7 +271,7 @@ public class RhineMediaService extends Service {
 
         long actions = PlaybackState.ACTION_PLAY | PlaybackState.ACTION_PAUSE
                 | PlaybackState.ACTION_PLAY_PAUSE | PlaybackState.ACTION_SKIP_TO_NEXT
-                | PlaybackState.ACTION_SKIP_TO_PREVIOUS;
+                | PlaybackState.ACTION_SKIP_TO_PREVIOUS | PlaybackState.ACTION_SEEK_TO;
         session.setPlaybackState(new PlaybackState.Builder()
                 .setActions(actions)
                 .setState(playing ? PlaybackState.STATE_PLAYING : PlaybackState.STATE_PAUSED,

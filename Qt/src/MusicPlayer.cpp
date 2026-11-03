@@ -494,6 +494,7 @@ void MusicPlayer::tick(double time, bool force) {
     if (!current.isEmpty() && !loading && state.contains("ended") &&
         state["ended"].toInteger() != m_endSerial) {
         m_endSerial = state["ended"].toInteger();
+        qInfo().noquote() << "曲目结束，推进下一首";
         if (onEnd) {
             onEnd();
         } else {
