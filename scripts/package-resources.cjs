@@ -52,12 +52,21 @@ fs.mkdirSync(target, {
 // 发布包只放单文件桥接；上游脚本和运行时数据保持可读。
 fs.copyFileSync(path.join(bundle, 'MusicBridge/worker.cjs'), path.join(target, 'worker.cjs'));
 fs.copyFileSync(path.join(bundle, 'MusicBridge/xhr-sync-worker.js'), path.join(target, 'xhr-sync-worker.js'));
-for (const name of ['lyrics-source.json', 'LyricsKit-LICENSE', 'NODE-LICENSE']) {
+// Android 的运行时是 libnode.so：没有独立 node 可执行文件，Node 的许可证改用仓库里的那一份
+// （APK 仍然分发 libnode.so，许可证不能省）。
+const androidRuntime = process.env.RHINE_ANDROID_BUILD === '1';
+for (const name of ['lyrics-source.json', 'LyricsKit-LICENSE']) {
     fs.copyFileSync(path.join(bridge, name), path.join(target, name));
 }
-const nodeName = process.platform === 'win32' ? 'node.exe' : 'node';
-fs.copyFileSync(path.join(bridge, nodeName), path.join(target, nodeName));
-fs.chmodSync(path.join(target, nodeName), 0o755);
+fs.copyFileSync(
+    androidRuntime ? 'licenses/nodejs-mobile/LICENSE' : path.join(bridge, 'NODE-LICENSE'),
+    path.join(target, 'NODE-LICENSE'),
+);
+if (!androidRuntime) {
+    const nodeName = process.platform === 'win32' ? 'node.exe' : 'node';
+    fs.copyFileSync(path.join(bridge, nodeName), path.join(target, nodeName));
+    fs.chmodSync(path.join(target, nodeName), 0o755);
+}
 fs.cpSync(path.join(bundle, 'MusicBridge/upstream'), path.join(target, 'upstream'), {
     recursive: true,
 });

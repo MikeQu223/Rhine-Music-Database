@@ -6,9 +6,21 @@ import re
 from pathlib import Path
 
 root = Path(__file__).resolve().parent.parent
+# 这条守卫针对的是"本项目自己的源码里混进 Swift"，第三方目录不算：
+# third_party 里的 Qt 子模块自带 iOS 平台的 .swift 和 Swift 示例，node_modules / 构建产物同理。
+SKIPPED_DIRECTORIES = {
+    ".git",
+    ".workbuddy",
+    "build",
+    "generated",
+    "node_modules",
+    "output",
+    "third_party",
+    "vendor",
+}
 legacy_sources = []
 for folder, directories, files in os.walk(root):
-    directories[:] = [name for name in directories if name != ".git"]
+    directories[:] = [name for name in directories if name not in SKIPPED_DIRECTORIES]
     for name in files:
         if name.lower().endswith(".swift"):
             legacy_sources.append(str((Path(folder) / name).relative_to(root)))

@@ -10,6 +10,10 @@ const output = path.resolve(process.argv[3] || 'output/bridge-build');
 const bridgeOutput = path.join(output, 'MusicBridge');
 const neteasePackage = path.join(source, 'node_modules/@neteasecloudmusicapienhanced/api');
 const kugouPackage = path.join(source, 'node_modules/kugoumusicapi');
+// 移动端两个平台用的都是 Node 18（nodejs-mobile 18.20.4），语法目标与 API 补丁必须一起切换：
+// 只改 target 会让 esbuild 输出 node18 不认识的语法，只打补丁不降 target 又会让新语法漏进去。
+const mobileRuntime = process.env.RHINE_IOS_BUILD === '1' || process.env.RHINE_ANDROID_BUILD === '1';
+const webApisFile = process.env.RHINE_ANDROID_BUILD === '1' ? 'android-web-apis.cjs' : 'ios-web-apis.cjs';
 const unblockPackage = path.join(source, 'node_modules/@neteasecloudmusicapienhanced/unblockmusic-utils');
 
 /** 写入构建期生成文件，内容完全由已安装的上游包和分派表决定。 */
@@ -179,13 +183,13 @@ async function main() {
         bundle: true,
         platform: 'node',
         format: 'cjs',
-        target: process.env.RHINE_IOS_BUILD === '1' ? 'node18' : 'node22',
+        target: mobileRuntime ? 'node18' : 'node22',
         logLevel: 'warning',
         // jsdom 的同步 XHR worker 由下面的第二个产物提供，路径在发布包内仍然有效。
         logOverride: { 'require-resolve-not-external': 'silent' },
         plugins: [
             requestResetPlugin,
-            ...(process.env.RHINE_IOS_BUILD === '1' ? [require('./ios-bridge-plugin.cjs')] : []),
+            ...(mobileRuntime ? [require('./mobile-bridge-plugin.cjs')(webApisFile)] : []),
         ],
     });
     failOnDynamicRequires(result);
@@ -198,7 +202,7 @@ async function main() {
         bundle: true,
         platform: 'node',
         format: 'cjs',
-        target: process.env.RHINE_IOS_BUILD === '1' ? 'node18' : 'node22',
+        target: mobileRuntime ? 'node18' : 'node22',
         logLevel: 'warning',
         logOverride: { 'require-resolve-not-external': 'silent' },
     });
