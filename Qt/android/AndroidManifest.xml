@@ -102,6 +102,8 @@
           系统媒体控件的前端服务：MediaSession + MediaStyle 通知。
           前台服务必须声明 mediaPlayback 类型（Android 14 起强制校验）；
           通知按钮经 PendingIntent.getService 回到本服务，再由 JNI 送进面板。
+          stopWithTask=false（默认值，显式写出）：用户滑掉任务卡片时服务不跟随退出，
+          保持前台以保活——滑掉后仍可从通知回到面板。
         -->
         <service
             android:name="rhine.music.database.RhineMediaService"

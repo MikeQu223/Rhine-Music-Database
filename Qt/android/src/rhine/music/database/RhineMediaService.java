@@ -198,8 +198,9 @@ public class RhineMediaService extends Service {
                     break;
             }
         }
-        // 服务随界面进程存活；被杀后不自动重启（重启后也没有可播放的内容）。
-        return START_NOT_STICKY;
+        // START_STICKY：被系统/厂商管控击杀后自动复活（intent 为 null，仅恢复待机态）。
+        // 配合 START_NOT_STICKY 的旧语义变化：复活后的服务没有可播放内容，publish 待机。
+        return START_STICKY;
     }
 
     @Override
