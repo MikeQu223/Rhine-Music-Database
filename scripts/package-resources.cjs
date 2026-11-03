@@ -120,7 +120,7 @@ fs.writeFileSync(
     JSON.stringify(
         {
             api: '4.41.1',
-            qq: '3.3.1',
+            qq: '3.3.5',
             kugou: 'ba3645f2c89e6b9d4fec82ff783c15287e4c5f43',
             endpoints,
             packages: [...visited]

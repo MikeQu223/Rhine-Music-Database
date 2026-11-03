@@ -272,7 +272,7 @@ void Host::requestJson(QString route, QJsonObject values, JsonReply callback) {
     const bool cached = lifetime(route) > 0;
     const auto key =
         cached
-            ? cacheKey("enhanced-4.41.1/qq-3.3.1/kugou-ba3645f2/" + scope + QString::number(metadataRevision),
+            ? cacheKey("enhanced-4.41.1/qq-3.3.5/kugou-ba3645f2/" + scope + QString::number(metadataRevision),
                        route, values)
             : QUuid::createUuid().toString();
     const bool disk = !offline && scope == "guest" &&

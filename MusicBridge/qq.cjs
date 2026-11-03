@@ -21,19 +21,16 @@ const allowed = new Set([
     '/recommend/categories',
     '/recommend/category-playlists',
     '/recommend/new-songs',
+    '/recommend/new-albums',
+    '/recommend/toplists',
+    '/recommend/toplist',
     '/search',
-    '/getSmartbox',
+    '/search/suggest',
     '/getSongInfo',
     '/getSongListDetail',
     '/getAlbumInfo',
     '/getSingerHotsong',
     '/getSingerAlbum',
-    '/getRecommend',
-    '/getTopLists',
-    '/getRanks',
-    '/getNewDisks',
-    '/getSongListCategories',
-    '/getSongLists',
     '/getMusicPlay',
     '/getLyric',
 ]);
@@ -89,81 +86,6 @@ function safeQrDiagnostics(body, includePrevious = true) {
         result.verification = 'unconfirmed';
     }
     return result;
-}
-async function charts(route, params) {
-    // 沿用原包的 HTTP 传输与榜单操作，仅传递 GetAll 返回的真实周期。
-    // 原 getRanks 控制器把日榜周期强制转成周数，会使日榜返回空列表。
-    const common =
-        require('./node_modules/@yakult-green-tea/qq-music-api/dist/src/services/UCommon/UCommon.js').default;
-    const list = route === '/getTopLists';
-    if (
-        !list &&
-        (!/^\d+$/.test(String(params.topId)) ||
-            !/^\d{4}(?:-\d{2}-\d{2}|_\d{1,2})$/.test(String(params.period)))
-    ) {
-        throw new Error('Invalid chart');
-    }
-    const operation = {
-        module: 'musicToplist.ToplistInfoServer',
-        method: list ? 'GetAll' : 'GetDetail',
-        param: list
-            ? {}
-            : {
-                  topId: Number(params.topId),
-                  period: params.period,
-                  offset: Math.max(0, Number(params.page) || 0),
-                  num: Math.min(100, Math.max(1, Number(params.limit) || 20)),
-              },
-    };
-    const result = await common({
-        method: 'get',
-        params: {
-            format: 'json',
-            data: JSON.stringify({
-                comm: {
-                    ct: 24,
-                },
-                req_1: operation,
-            }),
-        },
-        option: {
-            timeout: 24000,
-        },
-    });
-    const module = result.data?.req_1;
-    if (result.data?.code !== 0 || module?.code !== 0) {
-        throw new Error('QQ charts unavailable');
-    }
-    if (!list) {
-        return {
-            body: {
-                response: result.data,
-            },
-            cookies: [],
-            qqSessions: sessions,
-        };
-    }
-    const topList = (module.data?.group || [])
-        .flatMap((group) => group.toplist || [])
-        .map((chart) => ({
-            id: chart.topId,
-            topTitle: chart.title,
-            period: chart.period,
-            total: chart.totalNum,
-            picUrl: String(chart.frontPicUrl || chart.headPicUrl || '').replace(/^http:/, 'https:'),
-        }));
-    return {
-        body: {
-            response: {
-                code: 0,
-                data: {
-                    topList,
-                },
-            },
-        },
-        cookies: [],
-        qqSessions: sessions,
-    };
 }
 /**
  * 建立仅回环可访问的 QQ 桥接服务。
@@ -234,9 +156,6 @@ async function dispatch(message) {
         throw error;
     });
     const { port, secret } = await ready;
-    if (route === '/getTopLists' || route === '/getRanks') {
-        return charts(route, message.params || {});
-    }
     const url = new URL(`http://127.0.0.1:${port}${route}`);
     if (!write) {
         for (const [key, value] of Object.entries(message.params || {})) {

@@ -65,11 +65,15 @@ const readRoutes = {
     '/qq/getMusicPlay': {
         data: { playUrl: { songMID: { url: 'https://sjy6.stream.qqmusic.qq.com/fixture.mp3' } } },
     },
-    '/qq/getTopLists': {
-        response: {
-            code: 0,
-            data: { topList: [{ id: 4, topTitle: '榜单', picUrl: 'cover', period: '2026-10-12' }] },
-        },
+    '/qq/recommend/toplists': {
+        code: 200,
+        groups: [
+            {
+                id: 1,
+                name: '总榜',
+                toplists: [{ id: 4, title: '榜单', cover: 'cover', period: '2026-10-12' }],
+            },
+        ],
     },
     '/qq/recommend/categories': { groups: [{ categories: [{ id: 8, name: '国风' }] }] },
     '/qq/recommend/playlists': {
@@ -82,12 +86,7 @@ const readRoutes = {
     },
     '/qq/user/guess-you-like': { songs: [song] },
     '/qq/recommend/new-songs': { songs: [song] },
-    '/qq/getRecommend': {
-        response: {
-            code: 0,
-            new_album: { code: 0, data: { albums: [album] } },
-        },
-    },
+    '/qq/recommend/new-albums': { code: 200, area: 1, albums: [album] },
 };
 
 function createQQClient(overrides = {}) {
@@ -145,7 +144,7 @@ test('账号、歌单、喜欢列表与发现结果归一化', async () => {
 
     const charts = await client.discover('charts');
     assert(charts.items[0].chart);
-    assert.equal(calls.at(-1).route, '/qq/getTopLists');
+    assert.equal(calls.at(-1).route, '/qq/recommend/toplists');
     await client.discover('daily');
     assert.equal(calls.at(-1).route, '/qq/user/daily-songs');
     for (const tab of ['daily', 'guess', 'new-songs']) {
@@ -205,21 +204,15 @@ test('歌单与榜单详情按偏移续读全部曲目', async () => {
                 },
             };
         },
-        '/qq/getRanks': (params) => {
-            chartPages.push(params.page);
+        '/qq/recommend/toplist': (params) => {
+            chartPages.push(params.offset);
             assert.equal(params.period, '2026-10-12');
             return {
                 body: {
-                    response: {
-                        code: 0,
-                        req_1: {
-                            code: 0,
-                            data: {
-                                data: { totalNum: 2 },
-                                songInfoList: [{ ...song, mid: 'chart' + params.page }],
-                            },
-                        },
-                    },
+                    code: 200,
+                    songs: [{ ...song, mid: 'chart' + params.offset }],
+                    total: 2,
+                    more: params.offset === 0,
                 },
             };
         },

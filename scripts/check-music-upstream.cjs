@@ -19,7 +19,7 @@ const pkg = lock.packages['node_modules/@neteasecloudmusicapienhanced/api'];
 assert.equal(pkg.version, '4.41.1');
 assert.equal(pkg.integrity, source.apiIntegrity);
 const qq = lock.packages['node_modules/@yakult-green-tea/qq-music-api'];
-assert.equal(qq.version, '3.3.1');
+assert.equal(qq.version, '3.3.5');
 assert.equal(qq.integrity, source.qqIntegrity);
 const kugou = lock.packages['node_modules/kugoumusicapi'];
 assert.equal(kugou.version, source.kugouVersion);

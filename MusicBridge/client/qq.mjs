@@ -249,25 +249,24 @@ export class QQAPI {
             let offset = 0;
             let total = 0;
             do {
-                const r = this.response(
+                const body = this.response(
                     await this.request(
-                        '/getRanks',
+                        '/recommend/toplist',
                         {
-                            topId: value.id,
+                            id: value.id,
+                            offset,
                             limit: 100,
-                            page: offset,
                             period: value.period,
                         },
                         [200],
                         valid,
                     ),
                 );
-                const d = this.module(r, 'req_1');
-                const next = this.rows(d.songInfoList || d.songlist);
+                const next = this.rows(body.songs);
                 songs.push(...next);
-                total = Number(d.data?.totalNum ?? d.totalNum ?? d.total_song_num ?? next.length);
+                total = Number(body.total ?? offset + next.length);
                 offset += next.length;
-                if (!next.length) {
+                if (!body.more || !next.length) {
                     break;
                 }
             } while (offset < total);
@@ -398,7 +397,7 @@ export class QQAPI {
     }
 
     /**
-     * 把共同编辑操作映射为 3.3.1 文档的 POST JSON 契约。
+     * 把共同编辑操作映射为 3.3.5 文档的 POST JSON 契约。
      */
     async mutate(route, values, valid = () => true) {
         const request = (path, body) => this.request(path, body, [200], valid);
@@ -716,14 +715,12 @@ export class QQAPI {
             };
         }
         if (tab === 'charts') {
-            const body = this.response(await this.request('/getTopLists', {}, [200], valid));
-            const raw = array(body.data?.topList);
+            const body = this.response(await this.request('/recommend/toplists', {}, [200], valid));
+            const raw = array(body.groups).flatMap((group) => array(group.toplists));
             return {
                 items: this.rows(
                     raw.map((value) => ({
                         ...value,
-                        id: value.id ?? value.topId,
-                        title: value.topTitle ?? value.title,
                         chart: true,
                     })),
                     'playlist',
@@ -733,9 +730,10 @@ export class QQAPI {
             };
         }
         if (tab === 'albums') {
-            const body = this.response(await this.request('/getRecommend', {}, [200], valid));
-            const data = this.module(body, 'new_album');
-            const raw = array(data.albums || data.albumList);
+            const body = this.response(
+                await this.request('/recommend/new-albums', { limit: 10 }, [200], valid),
+            );
+            const raw = array(body.albums);
             return { items: this.rows(raw, 'album'), rawCount: raw.length, more: false };
         }
         throw new Error('QQ 暂不支持此类别');

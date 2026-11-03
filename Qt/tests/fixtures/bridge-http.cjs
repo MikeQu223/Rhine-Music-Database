@@ -75,6 +75,53 @@ global.fetch = async (input, init) => {
                     body: { [keys[type]]: [entries[type]] },
                 },
             };
+        } else if (rpc.module === 'musicToplist.ToplistInfoServer' && rpc.method === 'GetAll') {
+            response[key] = {
+                code: 0,
+                data: {
+                    group: [
+                        {
+                            groupId: 1,
+                            groupName: '总榜',
+                            toplist: [
+                                {
+                                    topId: 4,
+                                    title: 'Fixture chart',
+                                    period: '2026-10-12',
+                                    totalNum: 1,
+                                },
+                            ],
+                        },
+                    ],
+                },
+            };
+        } else if (rpc.module === 'musicToplist.ToplistInfoServer' && rpc.method === 'GetDetail') {
+            if (rpc.param.period !== '2026-10-12') {
+                throw new Error('Chart period changed');
+            }
+            response[key] = {
+                code: 0,
+                data: {
+                    data: { topId: 4, title: 'Fixture chart', period: '2026-10-12', totalNum: 1 },
+                    songInfoList: [{ mid: 'fixtureMID', name: 'QQ fixture' }],
+                },
+            };
+        } else if (rpc.module === 'newalbum.NewAlbumServer' && rpc.method === 'get_new_album_area') {
+            response[key] = { code: 0, data: { area: [{ id: 1, name: '内地' }] } };
+        } else if (rpc.module === 'newalbum.NewAlbumServer' && rpc.method === 'get_new_album_info') {
+            response[key] = {
+                code: 0,
+                data: {
+                    albums: [
+                        {
+                            mid: 'albumMID',
+                            name: 'QQ fixture album',
+                            singers: [{ mid: 'singerMID', name: 'QQ fixture artist' }],
+                        },
+                    ],
+                    total: 1,
+                },
+            };
         } else {
             throw new Error('Unexpected QQ Fetch operation: ' + rpc.method);
         }
@@ -220,51 +267,6 @@ async function fixtureAdapter(settings) {
     }
     if (destination.includes('fcg_query_lyric_new.fcg')) {
         data = { code: 0, lyric: Buffer.from('[00:01.00]本地歌词\n[00:03.00]第二句').toString('base64') };
-    }
-    if (qq && settings.params?.data) {
-        const request = JSON.parse(settings.params.data);
-        if (request.req_1?.method === 'GetAll') {
-            data = {
-                code: 0,
-                req_1: {
-                    code: 0,
-                    data: {
-                        group: [
-                            {
-                                toplist: [
-                                    {
-                                        topId: 4,
-                                        title: 'Fixture chart',
-                                        period: '2026-10-12',
-                                    },
-                                ],
-                            },
-                        ],
-                    },
-                },
-            };
-        } else if (request.req_1?.method === 'GetDetail') {
-            if (request.req_1.param.period !== '2026-10-12') {
-                throw new Error('Chart period changed');
-            }
-            data = {
-                code: 0,
-                req_1: {
-                    code: 0,
-                    data: {
-                        data: {
-                            totalNum: 1,
-                        },
-                        songInfoList: [
-                            {
-                                mid: 'fixtureMID',
-                                name: 'QQ fixture',
-                            },
-                        ],
-                    },
-                },
-            };
-        }
     }
     if (destination.endsWith('/api/bsr/sk/get')) {
         keyRegistrations++;

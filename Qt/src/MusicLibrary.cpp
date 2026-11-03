@@ -533,18 +533,18 @@ void MusicLibrary::suggest(QString text) {
     }
     const auto qq = provider == "qq";
     api.request(
-        qq ? "/getSmartbox" : "/search/suggest",
-        qq ? QJsonObject{{"key", text}} : QJsonObject{{"keywords", text}, {"type", "mobile"}},
+        "/search/suggest",
+        qq ? QJsonObject{{"keyword", text}} : QJsonObject{{"keywords", text}, {"type", "mobile"}},
         [this, qq](MusicReply result) {
             if (!result.ok()) {
                 return;
             }
             const auto body = result.value.toObject();
+            // QQ 直接给搜索词字符串，网易云仍是带 keyword 字段的条目。
             const auto values =
-                qq ? body["response"].toObject()["data"].toObject()["song"].toObject()["itemlist"].toArray()
-                   : body["result"].toObject()["allMatch"].toArray();
+                qq ? body["suggestions"].toArray() : body["result"].toObject()["allMatch"].toArray();
             for (const auto &value : values) {
-                const auto keyword = value.toObject()[qq ? "name" : "keyword"];
+                const auto keyword = qq ? value : value.toObject()["keyword"];
                 if (keyword.isString() && suggestions.size() < 4) {
                     suggestions.append(keyword.toString());
                 }

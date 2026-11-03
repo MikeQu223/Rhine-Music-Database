@@ -153,12 +153,12 @@ Qt MusicApi::request / call
 | 文案 | 位置 | 说明 |
 | --- | --- | --- |
 | QQ 音乐返回 <code> | `client/qq.mjs:149`、`:157` | 顶层响应或模块内 code 不是 0/200 |
-| QQ 收藏状态尚未确认，请刷新后重试 | `client/qq.mjs:409` | 写前状态读取失败 |
-| QQ 歌单名称需要 1–20 字 | `client/qq.mjs:432` | 名称校验 |
-| QQ 暂不支持此编辑操作 / 此类别 | `client/qq.mjs:482`、`:741` | 路由未开放 |
-| QQ 未确认这首歌是可编辑的普通曲库歌曲 | `client/qq.mjs:488` | 写入目标不是普通曲库歌曲 |
-| QQ 歌曲资料暂不可读取 / 歌曲暂不可读取 | `client/qq.mjs:617`、`:227` | getSongInfo 为空 |
-| QQ 暂未提供可用的歌单分类 | `client/qq.mjs:669` | 分类接口为空 |
+| QQ 收藏状态尚未确认，请刷新后重试 | `client/qq.mjs:408` | 写前状态读取失败 |
+| QQ 歌单名称需要 1–20 字 | `client/qq.mjs:431` | 名称校验 |
+| QQ 暂不支持此编辑操作 / 此类别 | `client/qq.mjs:481`、`:739` | 路由未开放 |
+| QQ 未确认这首歌是可编辑的普通曲库歌曲 | `client/qq.mjs:487` | 写入目标不是普通曲库歌曲 |
+| QQ 歌曲资料暂不可读取 / 歌曲暂不可读取 | `client/qq.mjs:616`、`:227` | getSongInfo 为空 |
+| QQ 暂未提供可用的歌单分类 | `client/qq.mjs:668` | 分类接口为空 |
 | Stale operation | 适配层通用 | 请求已被新账号或新选择作废 |
 
 ### 4.5 “QQ 音乐返回 -1”是什么
@@ -168,7 +168,7 @@ Qt MusicApi::request / call
 - 本地代码从不产生 `-1`；`businessCodes.js` 里也没有 `-1` 的登记，属于“未登记的非零码”，
   不能推断成登录失效、限流或版权问题。
 - 可能出现的操作：读歌曲详情（getSongInfo）、歌手页（getSingerHotsong/getSingerAlbum）、
-  专辑信息、榜单、新歌/新专辑（getRecommend）、歌词。
+  专辑信息、榜单、新歌与新碟（recommend/new-songs、recommend/new-albums）、歌词。
 - 排查时先确认范围：
   - 只有某一首歌/某位歌手/某个榜单失败 → 该条目或参数不被 QQ 接受，换条目可复现范围。
   - 所有请求都失败 → 会话、设备或出口被 QQ 拒绝；重新登录（必要时在 QQ 音乐设备管理里

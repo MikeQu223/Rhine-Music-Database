@@ -185,15 +185,15 @@ async function main() {
         const deviceRecord = JSON.parse(fs.readFileSync(path.join(temp, 'qq-device.json')));
         assert.deepEqual(deviceRecord.device, savedDevice);
         assert.equal(deviceRecord.device.musickey, undefined);
-        const charts = await request('charts', '/qq/getTopLists');
-        assert.equal(charts.body.response.data.topList[0].id, 4);
-        const chart = await request('chart', '/qq/getRanks', {
-            topId: 4,
-            period: charts.body.response.data.topList[0].period,
+        const charts = await request('charts', '/qq/recommend/toplists');
+        assert.equal(charts.body.groups[0].toplists[0].id, 4);
+        const chart = await request('chart', '/qq/recommend/toplist', {
+            id: 4,
+            period: charts.body.groups[0].toplists[0].period,
             limit: 100,
-            page: 0,
+            offset: 0,
         });
-        assert.equal(chart.body.response.req_1.data.songInfoList[0].mid, 'fixtureMID');
+        assert.equal(chart.body.songs[0].mid, 'fixtureMID');
         const kugouKey = await request('kugou-key', '/kugou/login/qr/key');
         assert.equal(kugouKey.body.data.unikey, 'fixture-kugou-qr');
         const kugouImage = await request('kugou-image', '/kugou/login/qr/create', {
