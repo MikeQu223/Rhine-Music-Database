@@ -12,4 +12,6 @@ qt_add_shaders(
     12
     FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/resolve.vert"
-    "${CMAKE_CURRENT_SOURCE_DIR}/resolve.frag")
+    "${CMAKE_CURRENT_SOURCE_DIR}/resolve.frag"
+    "${CMAKE_CURRENT_SOURCE_DIR}/present.vert"
+    "${CMAKE_CURRENT_SOURCE_DIR}/present.frag")

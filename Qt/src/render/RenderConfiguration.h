@@ -20,6 +20,13 @@ struct Settings {
     bool vsync = true;
     quint64 revision = 0;
     bool nativeTemporalAvailable = false;
+#ifdef Q_OS_DARWIN
+    bool nativeInterpolationAvailable = false;
+
+    bool frameGeneration() const {
+        return interpolation && nativeInterpolationAvailable && supersample * renderPercent <= 100;
+    }
+#endif
 
     bool temporal() const {
         return modeName == QLatin1String("metalfx") && nativeTemporalAvailable &&
@@ -73,10 +80,15 @@ class RenderConfiguration {
                                                   {"vsync", "RHINE_VSYNC"}};
         for (const auto &entry : keys) {
             const auto environment = qgetenv(entry.second.toUtf8().constData());
+#ifdef Q_OS_DARWIN
+            // Apple 的 MetalFX 帧生成由设置页管理，偏好直接生效；显式环境变量仍优先。
+            const auto configured = preference(entry.first);
+#else
             // FSR 插帧已从设置界面下线：配置文件里残留的 panel/fg=on 一律按"关"处理，
             // 只有显式环境变量（排障用）才能打开。
-            const auto configured = entry.first == QLatin1String("fg") ? QStringLiteral("off")
-                                                                       : preference(entry.first);
+            const auto configured =
+                entry.first == QLatin1String("fg") ? QStringLiteral("off") : preference(entry.first);
+#endif
             const auto value = environment.isEmpty() ? configured : QString::fromUtf8(environment);
             if (!value.isEmpty()) {
                 applyPreference(entry.first, value);
@@ -96,6 +108,13 @@ class RenderConfiguration {
         QMutexLocker lock(&m_mutex);
         m_settings.nativeTemporalAvailable = available;
     }
+
+#ifdef Q_OS_DARWIN
+    void setNativeInterpolationAvailable(bool available) {
+        QMutexLocker lock(&m_mutex);
+        m_settings.nativeInterpolationAvailable = available;
+    }
+#endif
 
     bool applyPreference(const QString &key, const QString &value) {
         QMutexLocker lock(&m_mutex);

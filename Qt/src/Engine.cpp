@@ -6,6 +6,7 @@
 #include "DiscGeometry.h"
 #include "RhiScene.h"
 #include "fg/FgCapability.h"
+#include "fg/FgStats.h"
 #include "render/MemoryProbe.h"
 #include <QCoreApplication>
 #include <QDir>
@@ -498,6 +499,35 @@ void Engine::resetTemporalState() {
     wake(false);
     notifySceneRenderers(true);
 }
+#ifdef Q_OS_DARWIN
+void Engine::publishFrameGenerationCapability(bool available, const QString &reason) {
+    // Apple 不再接管呈现层，但默认窗口内的补帧能力对设置页而言等价于“已接管”。
+    RhineFg::publishCapability(true, true, available, reason);
+    if (qEnvironmentVariableIsSet("RHINE_METAL_FG_DIAG")) {
+        qInfo().noquote() << "MetalFX FG capability:" << (available ? "可用" : "不可用") << reason;
+    }
+    emit stateChanged();
+}
+void Engine::publishFrameGenerationStats(quint64 presented, quint64 interpolated, quint64 rendered,
+                                         bool available, bool wanted, bool active, bool depthReady,
+                                         bool motionReady, QSize renderSize, QSize displaySize) {
+    auto stats = RhineFg::stats();
+    stats.layerActive = active;
+    stats.defaultWindow = true;
+    stats.interpolationAvailable = available;
+    stats.interpolationWanted = wanted;
+    stats.interpolationActive = active;
+    stats.depthReady = depthReady;
+    stats.motionVectorsReady = motionReady;
+    stats.presented = presented;
+    stats.interpolated = interpolated;
+    stats.rendered = rendered;
+    stats.renderSize = renderSize;
+    stats.displaySize = displaySize;
+    stats.presentMode = QStringLiteral("Qt Quick 默认窗口");
+    RhineFg::publish(stats);
+}
+#endif
 /**
  * B01：把当前列表焦点交给准入状态机。每帧调用，但只有焦点 key 真的换了才会重新计时；
  * 同 key 重复帧、封面晚到、revision 变化都不重计时（见 MusicTextureAdmission::focus）。
@@ -1023,7 +1053,7 @@ void Engine::step(double time) {
     const bool temporal = metalFxTemporal;
     // 仅开 FG 插值时渲染器同样消费实例运动历史，原点变化必须一并重置。
     const bool usesMotionHistory =
-        temporal || (renderSettings.interpolation && RhineFg::capability().interpolationAvailable);
+        temporal || renderSettings.frameGeneration();
     if (usesMotionHistory && previousOrigin != m_frame.value("stats").toObject().value("coordinateOrigin")) {
         // 原点平移会重新编码实例 ID；历史不能跨坐标系继续配对，MetalFX 也须一起重置。
         m_jitterPhase = 0;

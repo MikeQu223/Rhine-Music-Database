@@ -1,4 +1,5 @@
 #include "NativeHud.h"
+#include "fg/FgCapability.h"
 #include "fg/FgConfig.h"
 #include "NativeApplication.h"
 #include "NativeCards.h"
@@ -774,6 +775,10 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
             music->current = originalItem;
 
             // === 测试 2: Settings 面板功能 ===
+#ifdef Q_OS_DARWIN
+            // Apple 的帧生成行只在 MetalFX 能力可用时出现；测试里先落一份可用快照。
+            RhineFg::publishCapability(true, true, true);
+#endif
             hud.openModal("settings");
             hud.draw(archiveFrame, 1920, 50);
             const auto settingsCloseHit = getHit(hud.hits, "close-modal");
@@ -818,6 +823,10 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
             // 关闭行为只在持有托盘入口的桌面平台出现。
             reachableSettings.append("close-behavior");
+#endif
+#ifdef Q_OS_DARWIN
+            // 帧生成开关仅 Apple 可见；能力可用时标题区应能命中切换动作。
+            reachableSettings.append("fg");
 #endif
             QSet<QString> visibleSettings;
             for (double offset = 0;; offset += 400) {

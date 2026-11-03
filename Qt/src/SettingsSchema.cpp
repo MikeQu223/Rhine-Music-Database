@@ -6,6 +6,7 @@
 #include "MusicPlayer.h"
 #include "PlatformFeatures.h"
 #include "fg/FgCapability.h"
+#include "fg/FgConfig.h"
 #include <QHash>
 #include <QSet>
 #include <algorithm>
@@ -141,10 +142,24 @@ bool aaEnabled(const SettingsContext &) {
 #endif
 }
 
-// 关闭帧生成
-#if 0
+bool fgVisible(const SettingsContext &) {
+#if defined(Q_OS_DARWIN)
+    return true;
+#else
+    return false;
+#endif
+}
+
 RhineFg::FrameGenerationUi frameGenerationState(const SettingsContext &context) {
+    // 排障用的 RHINE_FG 会覆盖偏好；开关标签必须反映真正生效的状态。
+#ifdef Q_OS_DARWIN
+    const QByteArray environment = qgetenv("RHINE_FG");
+    const bool preferenceOn = environment.isEmpty()
+                                  ? context.host && context.host->preference("fg") == On
+                                  : RhineFg::parseBool(environment, false);
+#else
     const bool preferenceOn = context.host && context.host->preference("fg") == On;
+#endif
     const auto &capability = RhineFg::capability();
     const auto active = RhineGraphics::activeBackend();
     const bool backendCapable = active.isEmpty()
@@ -162,7 +177,6 @@ RhineFg::FrameGenerationUi frameGenerationState(const SettingsContext &context) 
 bool fgEnabled(const SettingsContext &context) {
     return frameGenerationState(context).clickable;
 }
-#endif
 
 QVector<SettingChoice> qualityChoices(const SettingsContext &context) {
     QVector<SettingChoice> values;
@@ -294,12 +308,9 @@ QString aaModeLabel(const SettingsContext &context, const SettingsValue &value) 
     return value.canonical;
 }
 
-// 关闭帧生成
-#if 0
 QString fgLabel(const SettingsContext &context, const SettingsValue &) {
     return frameGenerationState(context).value;
 }
-#endif
 
 QString choiceLabel(const SettingDescriptor &descriptor, const SettingsContext &context,
                     const SettingsValue &value) {
@@ -673,8 +684,6 @@ const QVector<SettingDescriptor> &descriptors() {
              .visible = fsrVisible,
              .label = percentLabel});
 
-// 关闭帧生成
-#if 0
         add({.id = "fg",
              .section = SectionId::Preferences,
              .kind = SettingKind::Choice,
@@ -684,13 +693,13 @@ const QVector<SettingDescriptor> &descriptors() {
                          .actionPrefix = "setting:fg:"},
              .storage = StorageType::OnOff,
              .order = 310,
-             .titleEn = "METALFX",
+             .titleEn = "FRAME GENERATION",
              .titleZh = "帧生成",
              .defaultValue = Off,
              .choices = onOffChoices(),
+             .visible = fgVisible,
              .enabled = fgEnabled,
              .label = fgLabel});
-#endif
 
         const struct {
             const char *id;
@@ -825,6 +834,12 @@ SettingsValue read(const SettingDescriptor &descriptor, const SettingsContext &c
         if (context.host) {
             value.raw = context.host->preference(descriptor.binding.preferenceKey);
         }
+        // 排障用环境变量覆盖偏好时，开关的“当前值”也要跟着它，否则选“关闭”会被判成无变化。
+#ifdef Q_OS_DARWIN
+        if (descriptor.id == QLatin1String("fg") && !qEnvironmentVariableIsEmpty("RHINE_FG")) {
+            value.raw = RhineFg::parseBool(qgetenv("RHINE_FG"), false) ? On : Off;
+        }
+#endif
         break;
     case BindingKind::HudState:
         if (descriptor.storage == StorageType::Theme) {

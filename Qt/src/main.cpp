@@ -317,13 +317,16 @@ static void applyAntialiasingSetting() {
  * 所以单独持久化、单独下发，切换时不需要重启。
  */
 static void applyFrameGenerationSetting() {
-    // FSR 插帧（帧生成）已从设置界面下线：启动时不再读取配置里的 panel/fg，恒按"关"下发。
+#ifndef Q_OS_DARWIN
+    // 插帧（帧生成）已从 Windows/Linux 设置界面下线：启动时恒按"关"下发，
     // 显式 RHINE_FG=on 仍保留为排障对照（呈现层据此决定要不要接管窗口并插帧）。
     if (qEnvironmentVariableIsEmpty("RHINE_FG")) {
         qputenv("RHINE_FG", "off");
     }
+#endif
 #ifdef Q_OS_DARWIN
-    // 与普通 QQuickWindow 保持相同配置，规范化后供呈现后端读取。
+    // Apple 的 MetalFX 帧生成由设置页的 panel/fg 驱动，RenderConfiguration 启动时直接读偏好；
+    // 显式 RHINE_FG 仍然优先。这里只规范化呈现后端读取的垂直同步。
     qputenv("RHINE_FG_VSYNC", RhineFg::metalVSyncEnabled() ? "on" : "off");
 #else
     // 呈现层的垂直同步也来自设置页：只有关掉 vsync，呈现层才会去选 MAILBOX。
@@ -447,7 +450,8 @@ int main(int argc, char **argv) {
     applyFrameGenerationSetting();
     // 写给设置界面的能力快照：先按"没编进来"落盘，下面的 FG 分支真正接管后再改写。
     // 设置界面在 RhineCore 里，不能反向 include 依赖 vulkan.h 的实现，只能读这份结论。
-#if defined(RHINE_FSR3_VULKAN) && RHINE_FSR3_VULKAN
+#if (defined(RHINE_FSR3_VULKAN) && RHINE_FSR3_VULKAN) || defined(Q_OS_DARWIN)
+    // Apple 的 MetalFX 补帧不依赖 Vulkan 构建开关；真正可用性稍后由渲染线程/呈现层刷新。
     RhineFg::publishCapability(true, false, false);
 #else
     RhineFg::publishCapability(false, false, false, QStringLiteral("此构建未编入 Vulkan 帧生成"));
@@ -596,15 +600,17 @@ int main(int argc, char **argv) {
     QObject::connect(
         &engine, &QQmlApplicationEngine::objectCreationFailed, &application,
         [] { QCoreApplication::exit(1); }, Qt::QueuedConnection);
-    // Apple Metal 与桌面 Vulkan 复用受控呈现，插值能力独立于呈现路径。
+    // Apple Metal 使用默认 QQuickWindow；桌面 Vulkan 复用受控呈现。插值能力独立于呈现路径。
     // RHINE_FG_LAYER=off 可强制使用 Qt Quick 默认窗口；启动失败同样回退。
     const bool fgLayerDisabled =
         qEnvironmentVariable("RHINE_FG_LAYER").compare("off", Qt::CaseInsensitive) == 0;
     // 离屏与最小平台没有原生窗口系统，呈现层无法创建交换链；必须直接走 Qt Quick 默认路径。
     // 否则无显示环境（CI、--playback-gui-test）会在接管 Metal 窗口时崩溃。
+#if !defined(Q_OS_IOS)
     const auto platformName = QGuiApplication::platformName();
     const bool hasNativeWindowSystem =
         platformName != QStringLiteral("offscreen") && platformName != QStringLiteral("minimal");
+#endif
 #ifdef Q_OS_MACOS
     // 悬浮歌词只在有原生窗口系统的桌面路径创建；窗口本身延迟到首次开启。
     std::unique_ptr<DesktopLyricsSettings> desktopLyricsSettings;
@@ -625,25 +631,19 @@ int main(int argc, char **argv) {
     // 直接挤掉了引擎节拍。不开插帧时它没有收益，只有成本。
     // 代价：切换插帧从此需要重启应用才生效（呈现层在启动时决定是否接管）。
     const bool fgForced = qEnvironmentVariable("RHINE_FG_LAYER").compare("on", Qt::CaseInsensitive) == 0;
-    const bool interpolationWanted =
-        fgForced || RhineFg::parseBool(qgetenv("RHINE_FG"), false);
+    const bool interpolationWanted = fgForced || RhineFg::parseBool(qgetenv("RHINE_FG"), false);
 #endif
-#ifdef Q_OS_MACOS
-    // 原生时域处理已在 RhiScene 内完成，普通窗口可在同一次提交中绘制 3D 与 HUD。
-    // 自建宿主只供显式排障或帧生成使用，避免两个离屏帧逐层等待 GPU。
-    const bool metalLayerRequested =
-        qEnvironmentVariable("RHINE_FG_LAYER").compare("on", Qt::CaseInsensitive) == 0 ||
-        RhineFg::parseBool(qgetenv("RHINE_FG"), false);
-#endif
-    const bool fgCandidate = !test && !args.contains("--capture") && !fgLayerDisabled &&
-#ifdef Q_OS_LINUX
-                             hasNativeWindowSystem && interpolationWanted &&
-#elif defined(Q_OS_MACOS)
-                             hasNativeWindowSystem && metalLayerRequested &&
+    const bool fgCandidate =
+#if defined(Q_OS_DARWIN)
+        // Apple 的 MetalFX 补帧在普通 QQuickWindow 内完成，macOS/iOS 共用同一条管线。
+        false;
 #else
-                             hasNativeWindowSystem &&
+        !test && !args.contains("--capture") && !fgLayerDisabled && hasNativeWindowSystem &&
+#ifdef Q_OS_LINUX
+        interpolationWanted &&
 #endif
-                             PresentationShell::supportsBackend(RhineGraphics::activeBackend());
+        PresentationShell::supportsBackend(RhineGraphics::activeBackend());
+#endif
 #ifdef Q_OS_WIN
     // 呈现层启动会显示窗口并处理原生消息，必须提前接收 Explorer 的任务栏就绪通知。
     WindowsTaskbar taskbar(backend.get());

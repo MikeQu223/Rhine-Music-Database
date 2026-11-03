@@ -835,7 +835,15 @@ void NativeHud::action(QString value) {
         // const auto enabled = m_host->preference("fg") == "on";
         // const auto next = enabled ? QStringLiteral("off") : QStringLiteral("on");
         // m_host->setPreference("fg", next);
-        // RhineFg::applyInterpolationPreference(next);
+        // RhineFg::applyInterpolationPreference(next);        
+#ifdef Q_OS_DARWIN
+        // Apple 的 MetalFX 补帧与抗锯齿模式互不影响；写偏好后 Host 同步 RHINE_FG，
+        // 渲染线程下一次快照生效。显式环境变量排障时按真正生效的状态取反。
+        const QByteArray environment = qgetenv("RHINE_FG");
+        const bool enabled = environment.isEmpty() ? m_host->preference("fg") == "on"
+                                                    : RhineFg::parseBool(environment, false);
+        m_host->setPreference("fg", enabled ? "off" : "on");
+#endif
     } else if (value == "single-play-mode") {
         const bool append = m_host->preference("single-play-mode") == "append";
         m_host->setPreference("single-play-mode", append ? "replace" : "append");

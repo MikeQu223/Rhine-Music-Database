@@ -1,3 +1,7 @@
+#include <QtGlobal>
+#ifdef Q_OS_DARWIN
+#include "render/RenderConfiguration.h"
+#endif
 // 渲染策略里可以离线判定的那一半（GPU 计时四态、时间戳登记、AA 模式是否需要运动矢量）
 // 集中在 header-only 的 Qt/src/render/RenderPolicy.h，渲染器与用例共用同一份实现。
 // 这些判断写错不会崩溃，只会让面板/CSV 把"没请求"说成"没样本"、把配置缺口算成驱动延迟，
@@ -252,6 +256,50 @@ bool sceneSyncCache()
     return ok;
 }
 
+#ifdef Q_OS_DARWIN
+/** 验证补帧与时域 AA 独立，并守住原生输入分辨率和设备能力边界。 */
+bool metalFrameGenerationSettings() {
+    RhineRender::Settings settings;
+    settings.interpolation = true;
+    bool ok = check(!settings.frameGeneration(), QStringLiteral("无设备能力不能开启补帧"),
+                    QStringLiteral("false"), boolText(settings.frameGeneration()));
+    settings.nativeInterpolationAvailable = true;
+    ok &= check(settings.frameGeneration() && !settings.temporal(),
+                QStringLiteral("关闭 AA 仍可独立补帧并消费运动历史"), QStringLiteral("true"),
+                boolText(settings.frameGeneration() && !settings.temporal()));
+    settings.supersample = 2;
+    settings.renderPercent = 50;
+    ok &= check(settings.frameGeneration(), QStringLiteral("有效输入倍率 100% 可补帧"),
+                QStringLiteral("true"), boolText(settings.frameGeneration()));
+    settings.renderPercent = 51;
+    ok &= check(!settings.frameGeneration(), QStringLiteral("超过显示分辨率保留原超采样而旁路补帧"),
+                QStringLiteral("false"), boolText(settings.frameGeneration()));
+    settings.supersample = 1;
+    settings.modeName = "metalfx";
+    settings.nativeTemporalAvailable = true;
+    settings.interpolation = false;
+    ok &= check(settings.temporal() && !settings.frameGeneration(),
+                QStringLiteral("关闭补帧不关闭原生时域超分"), QStringLiteral("true"),
+                boolText(settings.temporal() && !settings.frameGeneration()));
+    // macOS 启动和运行期都直接读偏好；环境变量只作为排障覆盖。
+    const QByteArray savedFg = qgetenv("RHINE_FG");
+    qunsetenv("RHINE_FG");
+    RhineRender::RenderConfiguration configuration;
+    configuration.initialize([&](const QString &key) {
+        return key == QStringLiteral("fg") ? QStringLiteral("on") : QString();
+    });
+    ok &= check(configuration.snapshot().interpolation, QStringLiteral("启动时读取补帧偏好"),
+                QStringLiteral("true"), boolText(configuration.snapshot().interpolation));
+    configuration.applyPreference(QStringLiteral("fg"), QStringLiteral("off"));
+    ok &= check(!configuration.snapshot().interpolation, QStringLiteral("运行期可关闭补帧"),
+                QStringLiteral("false"), boolText(configuration.snapshot().interpolation));
+    if (!savedFg.isEmpty()) {
+        qputenv("RHINE_FG", savedFg);
+    }
+    return ok;
+}
+#endif
+
 } // namespace
 
 int main()
@@ -262,6 +310,9 @@ int main()
     ok &= motionModeTable();
     ok &= materialSlotKeys();
     ok &= sceneSyncCache();
+#ifdef Q_OS_DARWIN
+    ok &= metalFrameGenerationSettings();
+#endif
     // 放在最后：它会永久翻转进程级的时间戳登记标志。
     ok &= timestampRegistration();
     if (!ok) {

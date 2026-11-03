@@ -3,6 +3,7 @@
 #include "RhiScene.h"
 #ifdef Q_OS_DARWIN
 #include "render/MetalFxBackend.h"
+#include "render/MetalFramePresentation.h"
 #include "render/MetalTemporalResolve.h"
 #endif
 #include "render/CoverPrepBudget.h"
@@ -1162,7 +1163,7 @@ class Renderer {
 #ifdef Q_OS_DARWIN
         const auto nextSize = settings.renderSize(value);
         const bool wantMotion =
-            settings.temporal() || (settings.interpolation && RhineFg::capability().interpolationAvailable);
+            settings.temporal() || settings.frameGeneration();
         const bool wantDepthStore = wantMotion;
         if (viewSize == value && size == nextSize && motionTarget == wantMotion) {
             return;
@@ -2849,7 +2850,7 @@ class Renderer {
             if (a.transparent) {
                 return false;  // 透明段保持原序（stable_sort 下相等即不改顺序）
             }
-#ifdef Q_OS_MACOS
+#ifdef Q_OS_DARWIN
             // 地址受分配顺序影响，会改变等深度表面的覆盖顺序；按真实管线状态确定顺序。
             return a.stateKey < b.stateKey;
 #else
@@ -3124,7 +3125,7 @@ class Renderer {
     void velocityPass(QRhiCommandBuffer *cb, const QList<Draw> &draws, const QJsonObject &frame) {
 #ifdef Q_OS_DARWIN
         const bool required =
-            settings.temporal() || (settings.interpolation && RhineFg::capability().interpolationAvailable);
+            settings.temporal() || settings.frameGeneration();
 #else
         auto frameInputs = &motionInputs;
         const bool required = postProcess->needsMotion();
@@ -3519,6 +3520,16 @@ class ItemRenderer : public QQuickRhiItemRenderer {
 #ifdef Q_OS_DARWIN
     QRhi *capabilityDevice = nullptr;
     Engine *capabilityEngine = nullptr;
+    bool hasOrigin = false;
+    double lastOrigin = 0;
+    std::unique_ptr<RhineRender::MetalFramePresentation> presentation;
+    bool sourceAnimating = false;
+    bool capabilityKnown = false;
+    bool capabilityAvailable = false;
+    QString capabilityReason;
+    QElapsedTimer statsClock;
+    bool statsPublished = false;
+    bool statsActive = false;
 #endif
     std::unique_ptr<Renderer> renderer;
     QJsonObject frame, item;
@@ -3542,8 +3553,37 @@ class ItemRenderer : public QQuickRhiItemRenderer {
         syncTimer.start();
         auto scene = static_cast<RhiScene *>(value);
         auto engine = scene->engine();
+#ifdef Q_OS_DARWIN
+        if (backend != engine) {
+            presentation.reset();
+        }
+#endif
         backend = engine;
         if (engine) {
+#ifdef Q_OS_DARWIN
+            sourceAnimating = !engine->performance().value("idle").toBool();
+            // 提前探测 MetalFX 补帧能力：设置页需要知道开关是否可点，不能等到首帧场景渲染。
+            if (rhi() && !presentation) {
+                presentation = std::make_unique<RhineRender::MetalFramePresentation>(rhi());
+            }
+            if (presentation) {
+                const bool available = presentation->supported();
+                const QString reason =
+                    available ? QString() : presentation->telemetry().value("fgError").toString();
+                if (!capabilityKnown || available != capabilityAvailable || reason != capabilityReason) {
+                    capabilityKnown = true;
+                    capabilityAvailable = available;
+                    capabilityReason = reason;
+                    QMetaObject::invokeMethod(
+                        backend,
+                        [target = backend, available, reason] {
+                            target->publishFrameGenerationCapability(available, reason);
+                        },
+                        Qt::QueuedConnection);
+                }
+                engine->renderConfiguration.setNativeInterpolationAvailable(available);
+            }
+#endif
 #ifdef Q_OS_DARWIN
             if (rhi() && (capabilityDevice != rhi() || capabilityEngine != engine)) {
                 const bool temporalAvailable = RhineRender::MetalFxTemporal::supported(rhi());
@@ -3576,6 +3616,9 @@ class ItemRenderer : public QQuickRhiItemRenderer {
     void initialize(QRhiCommandBuffer *) override {
         if (renderer && renderer->rhi != rhi()) {
             renderer.reset();
+#ifdef Q_OS_DARWIN
+            presentation.reset();
+#endif
         }
     }
     void render(QRhiCommandBuffer *cb) override {
@@ -3597,9 +3640,14 @@ class ItemRenderer : public QQuickRhiItemRenderer {
             renderer = std::make_unique<Renderer>(root, rhi());
         }
 #ifdef Q_OS_DARWIN
+        backend->renderConfiguration.setNativeInterpolationAvailable(presentation &&
+                                                                     presentation->supported());
+#endif
+#ifdef Q_OS_DARWIN
         renderer->settings = backend->renderConfiguration.snapshot();
         renderer->frameInputs = &backend->metalFxInputs;
-        const auto previousTemporalBindings = renderer->lightTemporal ? renderer->lightTemporal->bindingCreations : 0;
+        const auto previousTemporalBindings =
+            renderer->lightTemporal ? renderer->lightTemporal->bindingCreations : 0;
         const auto previousTemporalDraws = renderer->lightTemporal ? renderer->lightTemporal->drawCalls : 0;
 #endif
         renderer->nativeBuffers = buffers;
@@ -3610,9 +3658,78 @@ class ItemRenderer : public QQuickRhiItemRenderer {
         const auto previousPostBindings = renderer->postProcess->bindingCreations;
         const auto previousPostDraws = renderer->postProcess->drawCalls;
 #endif
-        renderer->render(cb, frame, renderTarget()->pixelSize(), item, cover, renderTarget(), musicTextures);
 #ifdef Q_OS_DARWIN
-        backend->recordGeometryFrame(cachedSync.geometryRevision);
+        // 真实渲染只有 60Hz，可能整帧错过引擎的 temporalReset；坐标原点变化同样会让
+        // 实例 ID 重新编码，所以渲染线程再按 stats 自行复查一次，避免历史跨坐标系配对。
+        const auto origin = frame.value("stats").toObject().value("coordinateOrigin");
+        bool originReset = false;
+        if (origin.isDouble()) {
+            originReset = hasOrigin && origin.toDouble() != lastOrigin;
+            lastOrigin = origin.toDouble();
+            hasOrigin = true;
+        }
+        const bool reset = frame.value("temporalReset").toBool() || originReset;
+        QJsonObject submitted = frame;
+        if (reset && !frame.value("temporalReset").toBool()) {
+            submitted["temporalReset"] = true;
+        }
+        const bool useGeneration =
+            renderer->settings.frameGeneration() && presentation && presentation->supported();
+        bool renderedReal = true;
+        if (useGeneration && presentation->asynchronous()) {
+            if (reset) {
+                presentation->resetHistory(cachedSync.revision);
+            }
+            auto realTarget = presentation->realTarget(renderTarget(), renderer->settings.revision);
+            const int slot = presentation->reserveSource(
+                renderer->settings.renderSize(renderTarget()->pixelSize()), cachedSync.revision);
+            renderedReal = slot >= 0;
+            if (renderedReal) {
+                renderer->render(cb, submitted, renderTarget()->pixelSize(), item, cover, realTarget,
+                                 musicTextures);
+                presentation->captureSource(cb, slot, backend->metalFxInputs);
+            }
+            if (presentation->asyncAvailable()) {
+                presentation->presentAsync(cb, renderTarget());
+                if (sourceAnimating || presentation->hasWork()) {
+                    update();
+                }
+            } else {
+                renderer->render(cb, submitted, renderTarget()->pixelSize(), item, cover, renderTarget(),
+                                 musicTextures);
+                renderedReal = true;
+            }
+        } else if (useGeneration) {
+            const bool reuseReal = presentation->takeReal(renderTarget(), renderer->settings.revision, reset);
+            renderedReal = !reuseReal;
+            if (renderedReal) {
+                auto realTarget = presentation->realTarget(renderTarget(), renderer->settings.revision);
+                renderer->render(cb, submitted, renderTarget()->pixelSize(), item, cover, realTarget,
+                                 musicTextures);
+                static const bool linkScaler = qEnvironmentVariable("RHINE_METAL_FG_LINK_SCALER") == "on";
+                presentation->generate(cb, backend->metalFxInputs,
+                                       linkScaler && renderer->metalFx && renderer->metalFx->active()
+                                           ? renderer->metalFx->nativeScaler()
+                                           : nullptr);
+            }
+            presentation->present(cb, renderTarget(), !reuseReal && presentation->pendingReal);
+            // 插值帧之后还要再出一帧真实帧；动画期间必须每个 vsync 都请求绘制，
+            // 否则复用真实帧的那一步结束后循环会断掉，输出就退回引擎的 85–95Hz。
+            if (sourceAnimating || presentation->pendingReal) {
+                update();
+            }
+        } else {
+            if (presentation) {
+                presentation->suspend();
+            }
+            renderer->render(cb, submitted, renderTarget()->pixelSize(), item, cover, renderTarget(),
+                             musicTextures);
+        }
+        if (renderedReal) {
+            backend->recordGeometryFrame(cachedSync.geometryRevision);
+        }
+#else
+        renderer->render(cb, frame, renderTarget()->pixelSize(), item, cover, renderTarget(), musicTextures);
 #endif
         // 引擎静止时会休眠、不再出帧；封面预处理回来的成品必须有人把它取走并上传，
         // 所以只要还有活儿在路上就主动再要一帧（update() 是渲染线程的安全入口）。
@@ -3620,6 +3737,9 @@ class ItemRenderer : public QQuickRhiItemRenderer {
             update();
         }
 #ifdef Q_OS_DARWIN
+        QVariantMap presentationDetails;
+        presentationDetails = presentation ? presentation->telemetry() : QVariantMap{};
+        presentationDetails.insert("fgWanted", renderer->settings.interpolation);
         backend->renderTelemetry.publish(renderer->size, renderer->viewSize, 1, renderer->implementation,
                                          true,
                                          {{"motionSource", renderer->motionTarget ? "main-mrt" : "none"},
@@ -3631,7 +3751,8 @@ class ItemRenderer : public QQuickRhiItemRenderer {
                                           {"uniformArenaFallback", renderer->arenaFallback},
                                           {"directWriteFallback", renderer->directWriteFallback},
                                           { "compactInstances",
-                                            renderer->compactInstances }});
+                                            renderer->compactInstances },
+                                          {"presentation", presentationDetails}});
 #endif
         if (backend) {
             quint64 resources =
@@ -3659,11 +3780,17 @@ class ItemRenderer : public QQuickRhiItemRenderer {
             const bool gpuTimingSupported = rhi()->isFeatureSupported(QRhi::Timestamps);
             const double gpuTimeMs =
                 gpuTimingSupported ? cb->lastCompletedGpuTime() * 1000.0 : 0.0;
+#ifdef Q_OS_DARWIN
+            if (renderedReal) {
+#endif
             backend->recordRender(resources, bindings, renderer->musicTextureBytes(),
                                   renderer->coverUploads - previousUploads, draws, gpuTimeMs,
                                   RhineRender::classifyGpuTiming(gpuTimingSupported,
                                                                  RhineRender::timestampsRequested(),
                                                                  gpuTimeMs > 0));
+#ifdef Q_OS_DARWIN
+            }
+#endif
             // A03：本帧新建过 SRB，说明有新资源真的落地了（异步封面/模型上传完成，或
             // 渲染目标重建后重新绑定）。这类变化在引擎的帧字段里看不出来，主线程的
             // 帧签名比较永远判不到，只能由发现它的渲染线程回报一次；否则 3D 层要等
@@ -3682,6 +3809,33 @@ class ItemRenderer : public QQuickRhiItemRenderer {
                 }
             }
         }
+#ifdef Q_OS_DARWIN
+        // 性能面板与 FSR/原 MetalFX 共用同一组 fg 统计：呈现/真实/插值三个累计值。
+        // 渲染线程不直接写 RhineFg::Stats，交给 GUI 线程在同一个采样节奏内发布。
+        if (backend && presentation) {
+            const bool active = useGeneration;
+            const bool due = !statsPublished || active != statsActive || statsClock.elapsed() >= 250;
+            if (due) {
+                statsPublished = true;
+                statsActive = active;
+                statsClock.restart();
+                const auto &inputs = backend->metalFxInputs;
+                QMetaObject::invokeMethod(
+                    backend,
+                    [target = backend, presented = presentation->presented(),
+                     interpolated = presentation->interpolated(), rendered = presentation->rendered(),
+                     available = presentation->supported(), wanted = renderer->settings.interpolation,
+                     active, depthReady = inputs.depth != nullptr,
+                     motionVectorsReady = inputs.motionVectors != nullptr, renderSize = renderer->size,
+                     displaySize = renderer->viewSize] {
+                        target->publishFrameGenerationStats(presented, interpolated, rendered, available,
+                                                            wanted, active, depthReady, motionVectorsReady,
+                                                            renderSize, displaySize);
+                    },
+                    Qt::QueuedConnection);
+            }
+        }
+#endif
     }
 };
 } // namespace RhineRendering

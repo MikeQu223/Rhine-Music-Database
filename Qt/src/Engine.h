@@ -146,6 +146,13 @@ class Engine : public QObject {
     // FSR 重置（画质切换、设备重建、分辨率变化）时调用：抖动归零、相位回到 0，
     // 并让下一帧携带 temporalReset 键，渲染器据此丢弃上一帧运动矢量历史。
     Q_INVOKABLE void resetTemporalState();
+#ifdef Q_OS_DARWIN
+    /** 渲染线程把 Apple 默认窗口的 MetalFX 补帧能力与计数转交 GUI 线程（设置页与性能面板读取）。 */
+    void publishFrameGenerationCapability(bool available, const QString &reason);
+    void publishFrameGenerationStats(quint64 presented, quint64 interpolated, quint64 rendered, bool available,
+                                     bool wanted, bool active, bool depthReady, bool motionReady,
+                                     QSize renderSize, QSize displaySize);
+#endif
     /// 唤醒来源只影响诊断计数，不改变行为。
     enum class WakeSource { Input, Host, Media, Other };
     void wake(bool input = true);

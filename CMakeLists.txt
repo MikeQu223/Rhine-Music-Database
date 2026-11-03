@@ -226,7 +226,8 @@ set(RHINE_APP_SOURCES
     Qt/src/Glyphs.h
     vendor/qrcodegen/qrcodegen.cpp)
 if(APPLE)
-    list(APPEND RHINE_APP_SOURCES Qt/src/render/SceneTransformHistory.h)
+    list(APPEND RHINE_APP_SOURCES Qt/src/render/SceneTransformHistory.h
+         Qt/src/render/MetalFramePresentation.h Qt/src/render/MetalFrameQueue.h)
 endif()
 list(TRANSFORM RHINE_APP_SOURCES PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
 if(APPLE)

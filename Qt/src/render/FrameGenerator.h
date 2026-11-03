@@ -8,6 +8,11 @@ class FrameGenerator {
   public:
     virtual ~FrameGenerator() = default;
     virtual bool available() const = 0;
+#ifdef Q_OS_DARWIN
+    virtual void setTemporalSource(void *source) {
+        Q_UNUSED(source);
+    }
+#endif
     virtual bool resize(QRhi *rhi, QSize renderSize, QSize displaySize, QRhiTexture::Format colorFormat) = 0;
     virtual void release() = 0;
     virtual void setCamera(float nearPlane, float farPlane, float fovYRadians, float frameTimeMs) = 0;

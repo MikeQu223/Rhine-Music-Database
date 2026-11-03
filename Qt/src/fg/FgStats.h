@@ -17,6 +17,9 @@ namespace RhineFg {
 struct Stats {
     /// 呈现层是否在跑（false 时其余字段无意义）。
     bool layerActive = false;
+    /// macOS MetalFX 帧生成跑在默认 QQuickWindow 内，不是自建呈现层。
+    /// 为 true 时面板沿用 Qt 的帧间隔，不再用呈现层的交换链间隔覆盖。
+    bool defaultWindow = false;
     /// 本次启动的插值上下文是否可用。
     bool interpolationAvailable = false;
     /// 设置里的开关是否要求插值（每帧重读偏好，热切换靠它）。

@@ -16,6 +16,9 @@ class MetalFxTemporal {
     QRhiTexture *resolve(QRhiCommandBuffer *commands, QRhiTexture *color, QRhiTexture *depth,
                          QRhiTexture *motion, QSize displaySize, QPointF jitter, bool reset);
     bool active() const;
+#ifdef Q_OS_DARWIN
+    void *nativeScaler() const;
+#endif
 
   private:
     struct Private;
