@@ -73,6 +73,7 @@ bool runPlaybackServiceChecks(const QString &resources, const QString &executabl
 bool runWindowTransitionChecks();
 #endif
 #ifdef Q_OS_WIN
+#include "WindowsRoundedCorners.h"
 #include "WindowsTaskbar.h"
 bool runWindowsTaskbarChecks(Engine &engine);
 void initializeWindowsGraphics();
@@ -757,6 +758,8 @@ int main(int argc, char **argv) {
 #ifdef Q_OS_WIN
     taskbar.bindWindow(window);
     window->show();
+    // 无边框主窗口创建后补一次 DWM 圆角请求
+    applyWindowsRoundedCorners(window);
 #endif
     backend->setWindow(window);
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)

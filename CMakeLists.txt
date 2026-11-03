@@ -556,6 +556,7 @@ elseif(APPLE)
                    MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/Qt/Info.plist.in")
 elseif(WIN32)
     target_sources(RhineMusicDatabase PRIVATE Qt/src/WindowsGraphics.cpp Qt/src/WindowsTaskbar.cpp
+                                              Qt/src/WindowsRoundedCorners.cpp
                                               Qt/tests/WindowsTaskbarChecks.cpp)
     target_link_libraries(RhineMusicDatabase PRIVATE dxgi ole32 uuid gdi32 dwmapi)
     if(RHINE_ENABLE_D3D12_BACKEND)
