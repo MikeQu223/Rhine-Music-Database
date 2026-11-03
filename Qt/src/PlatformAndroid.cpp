@@ -59,12 +59,14 @@ void platformMediaCommands(std::function<void(QString)> callback) {
     AndroidMediaSession::setCommandCallback(std::move(callback));
 }
 
-void platformMediaInfo(QString title, QString artist, QString album, QVariantMap state) {
+void platformMediaInfo(QString title, QString artist, QString album, QVariantMap state,
+                       const QString &coverPath) {
     if (title.isEmpty() || state.value("duration").toLongLong() <= 0) {
+        // 转待机而非撤岗：前台服务保持运行，防止系统在无播放时回收进程（可随时续播）。
         AndroidMediaSession::stop();
         return;
     }
     AndroidMediaSession::ensureStarted();
     AndroidMediaSession::update(state.value("playing").toBool(), state.value("position").toLongLong(),
-                                state.value("duration").toLongLong(), title, artist, album);
+                                state.value("duration").toLongLong(), title, artist, album, coverPath);
 }

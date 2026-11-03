@@ -1,9 +1,12 @@
 #include <QtGlobal>
 #include "NativeApplication.h"
+#include "MobileTarget.h"
 #include "render/HotPathProbe.h"
 #include "AppStorage.h"
 #include <QFile>
+#include <QGuiApplication>
 #include <QJsonDocument>
+#include <QTimer>
 #include <cmath>
 
 HudSceneActions NativeApplication::sceneActions(NativeScene *scene) {
@@ -64,6 +67,20 @@ void NativeApplication::initialize() {
     }
     music.restoreAccount();
     music.restoreIdentityName();
+#if RHINE_MOBILE
+    // 移动端没有"干净退出"：滑掉应用是 SIGKILL，aboutToQuit 永远不触发，桌面那套
+    // 「退出时写 session.json」在这里一次都不会发生，表现为重启后不恢复上次状态。
+    // 改成周期落盘 + 退后台立即落盘，与桌面恢复逻辑共用同一个文件与格式。
+    auto *sessionSaver = new QTimer(this);
+    sessionSaver->setInterval(15 * 1000);
+    connect(sessionSaver, &QTimer::timeout, this, [this] { saveSession(); });
+    sessionSaver->start();
+    connect(qGuiApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState state) {
+        if (state == Qt::ApplicationInactive || state == Qt::ApplicationSuspended) {
+            saveSession();
+        }
+    });
+#endif
 }
 #if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
 // RHINE_STEP_PROBE=1：拆开 app->step 内部（场景采样 / HUD 绘制 / 观察与返回对象构建）。

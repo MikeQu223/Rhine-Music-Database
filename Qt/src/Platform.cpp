@@ -38,6 +38,6 @@ void platformSetActivates(bool value) {
 #if !defined(Q_OS_MACOS) && !defined(Q_OS_WIN) && !defined(Q_OS_IOS) && !defined(Q_OS_ANDROID)
 void platformMediaCommands(std::function<void(QString)>) {
 }
-void platformMediaInfo(QString, QString, QString, QVariantMap) {
+void platformMediaInfo(QString, QString, QString, QVariantMap, const QString &) {
 }
 #endif

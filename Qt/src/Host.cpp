@@ -949,11 +949,40 @@ void Host::mediaControl(QString action, double value) {
     }
     emit mediaChanged();
 }
-void Host::mediaMetadata(QString title, QString artist, QString album) {
+void Host::mediaMetadata(QString title, QString artist, QString album, const QString &coverUrl) {
     mediaTitle = title.left(256);
     mediaArtist = artist.left(256);
     mediaAlbum = album.left(256);
+    if (coverUrl != mediaCoverUrl) {
+        mediaCoverUrl = coverUrl;
+        refreshMediaCover();
+    }
     lastMediaUpdate = 0;
+}
+
+/** 把当前曲目的封面取到本地（系统媒体控件的 artwork 需要真实文件/位图，不能是远端地址）。
+ *  复用 loadCover 的下载与去重，把回调拿到的键反查回 QImage 缓存再落盘。 */
+void Host::refreshMediaCover() {
+    mediaCoverPath.clear();
+    if (mediaCoverUrl.isEmpty()) {
+        lastMediaUpdate = 0;
+        return;
+    }
+    loadCover(
+        mediaCoverUrl,
+        [this](QString key) {
+            const QImage *image = key.isEmpty() ? nullptr : images.object(key);
+            if (!image || image->isNull()) {
+                return;
+            }
+            const auto path = AppStorage::cacheDirectory() + "/media-cover.png";
+            if (image->save(path, "PNG")) {
+                mediaCoverPath = path;
+                // 下一秒的常规上报会把封面带给平台媒体控件。
+                lastMediaUpdate = 0;
+            }
+        },
+        512);
 }
 QVariantMap Host::mediaState() const {
     if (remote) {
@@ -963,7 +992,7 @@ QVariantMap Host::mediaState() const {
     auto now = QDateTime::currentMSecsSinceEpoch();
     if (!offline && now - lastMediaUpdate >= 1000) {
         lastMediaUpdate = now;
-        platformMediaInfo(mediaTitle, mediaArtist, mediaAlbum, state);
+        platformMediaInfo(mediaTitle, mediaArtist, mediaAlbum, state, mediaCoverPath);
     }
     return state;
 }

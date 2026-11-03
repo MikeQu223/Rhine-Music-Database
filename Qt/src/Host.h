@@ -41,7 +41,8 @@ class Host : public QObject {
     Q_INVOKABLE QString fromLink(QString input) const;
     Q_INVOKABLE QString qr(QString key);
     Q_INVOKABLE QString qrImage(QString data);
-    Q_INVOKABLE void mediaMetadata(QString title, QString artist, QString album);
+    Q_INVOKABLE void mediaMetadata(QString title, QString artist, QString album,
+                                   const QString &coverUrl = {});
     Q_INVOKABLE bool mediaLoad(QString url, bool alternative = false, double position = 0,
                                bool paused = false);
     Q_INVOKABLE void mediaControl(QString action, double value = 0);
@@ -129,6 +130,9 @@ class Host : public QObject {
     std::unique_ptr<QTemporaryDir> temporary;
     QByteArray buffer;
     QString mediaTitle, mediaArtist, mediaAlbum;
+    /** 系统媒体控件的封面：URL 是 QML 上报的原始地址，Path 是下载到私有缓存的落盘结果。 */
+    QString mediaCoverUrl, mediaCoverPath;
+    void refreshMediaCover();
     int metadataRevision = 0;
     mutable qint64 lastMediaUpdate = 0;
     QNetworkAccessManager network;
@@ -161,7 +165,8 @@ bool platformActivates();
 void platformSetActivates(bool value);
 
 void platformMediaCommands(std::function<void(QString)> callback);
-void platformMediaInfo(QString title, QString artist, QString album, QVariantMap state);
+void platformMediaInfo(QString title, QString artist, QString album, QVariantMap state,
+                       const QString &coverPath = {});
 #ifdef Q_OS_MACOS
 void platformInterfaceMediaCommands(std::function<void(QString)> callback);
 void platformInterfaceMediaInfo(bool hasTrack);
