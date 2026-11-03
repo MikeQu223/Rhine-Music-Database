@@ -1,9 +1,8 @@
 // Linux 随包提供自编的 FFmpeg：发行版 libavcodec 动态依赖 x265/aom/SvtAv1Enc 等
 // 编码器库（合计约 55 MB），而应用只用 Qt 的 FFmpeg 后端解码音频，不需要任何编码器。
-// 裁剪口径：只保留音频能力。编码器、复用器、avdevice、avfilter、命令行工具全部关闭，
-// 解码器按 vendor/ffmpeg/decoders-linux.json 白名单启用（视频/字幕解码器一律不编，
-// 其中 hevc/h264/vp9/av1 是 libavcodec 里体积最大的几块）；parser 与 bitstream filter
-// 同样只留音频相关的部分。不自动探测外部库，因此不会链接 x264/x265/aom/dav1d。
+// 裁剪口径：音频与关联 MV 的 H.264 / HEVC 解码。编码器、复用器、avdevice、avfilter、命令行工具全部关闭，
+// 解码器按 vendor/ffmpeg/decoders-linux.json 白名单启用；MV 额外保留 H.264 / HEVC
+// parser 与 bitstream filter。不自动探测外部库，因此不会链接 x264/x265/aom/dav1d。
 // 解复用器保持全开：容器识别是打开文件的第一步，漏一个就直接播不了，而积压只有约 2 MB。
 //
 // 许可：不启用 --enable-gpl、不启用任何非自由组件时，FFmpeg 以 LGPL-2.1-or-later 构建。
@@ -76,16 +75,20 @@ function prepareSourceTree() {
     };
 }
 
-// 解码器白名单：只有音频解码器，清单由源码的类型标注生成（见文件内 $comment）。
+// 音频清单按源码类型生成，视频清单只保留关联 MV 需要的格式。
 // RHINE_FFMPEG_EXTRA_DECODERS=a,b 可临时追加，用于上线后发现漏格式时免改脚本。
-const decoderManifest = require('../vendor/ffmpeg/decoders-linux.json').decoders;
+const decoderManifest = require('../vendor/ffmpeg/decoders-linux.json');
 const extraDecoders = (process.env.RHINE_FFMPEG_EXTRA_DECODERS || '')
     .split(',')
     .map((name) => name.trim())
     .filter(Boolean);
-const decoders = [...new Set([...decoderManifest, ...extraDecoders])];
+const decoders = [
+    ...new Set([...decoderManifest.decoders, ...decoderManifest.videoDecoders, ...extraDecoders]),
+];
 // 音频 parser：裸流（ADTS/LATM、裸 MP3 帧、FLAC、DTS 等）与网络流的分帧依赖它。
 const parsers = [
+    'h264',
+    'hevc',
     'aac',
     'aac_latm',
     'ac3',
@@ -110,10 +113,11 @@ const parsers = [
     'vorbis',
     'xma',
 ];
-// avformat 在播放路径上可能自动插入的音频 bitstream filter。
-// 不含 extract_extradata：它的 codec_ids 只有视频（AV1/H.264/HEVC/MPEG 系列/VC1/VVC），
-// 纯音频流永远走不到，留着会白白拖进整套 cbs_* 码流解析模块。
+// avformat 在音频与 MP4/HLS MV 播放路径上可能自动插入的 bitstream filter。
 const bsfs = [
+    'extract_extradata',
+    'h264_mp4toannexb',
+    'hevc_mp4toannexb',
     'null',
     'aac_adtstoasc',
     'dca_core',

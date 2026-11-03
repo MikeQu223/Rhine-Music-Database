@@ -97,6 +97,8 @@ if (!fs.existsSync(tokenPath)) {
 // 上游诊断可能包含 URL 或 Cookie，禁止混入 IPC 消息和日志。
 console.log = console.info = console.warn = console.error = console.debug = () => {};
 const routes = Object.freeze({
+    '/mv/detail': 'mv_detail',
+    '/mv/url': 'mv_url',
     '/login/qr/key': 'login_qr_key',
     '/login/qr/check': 'login_qr_check',
     '/user/account': 'user_account',

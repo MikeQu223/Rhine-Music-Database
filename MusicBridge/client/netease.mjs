@@ -12,6 +12,146 @@ export class API {
     delay(ms) {
         return new Promise((resolve) => this.host.delay(ms, resolve));
     }
+
+    /** Explicit association is automatic; search candidates require a user's selection. */
+    async mvVersions(value, valid = () => true) {
+        if (!/^[1-9][0-9]{0,19}$/.test(String(value?.id ?? ''))) {
+            throw new Error('歌曲标识无效');
+        }
+        const songs = await this.request('/song/detail', { ids: String(value.id) }, [200], valid);
+        const song = (songs.songs || []).find((entry) => String(entry.id) === String(value.id));
+        if (!song) {
+            throw new Error('未找到当前歌曲');
+        }
+        const associatedID = String(song.mv ?? song.mvid ?? '');
+        const versions = [];
+        if (/^[1-9][0-9]{0,19}$/.test(associatedID)) {
+            versions.push({
+                id: associatedID,
+                title: String(song.name || value.title || ''),
+                artist: '',
+                associated: true,
+            });
+        }
+        try {
+            const keywords = String(song.name || value.title || '').trim();
+            if (keywords) {
+                const titleKey = (title) =>
+                    String(title)
+                        .normalize('NFKC')
+                        .toLowerCase()
+                        .split(/\s*\(\s*(?:feat\.?|ft\.?|featuring)\s/i)[0]
+                        .replace(/[\s\p{P}\p{S}]/gu, '');
+                const songKey = titleKey(keywords);
+                const matchesSong = (name) => {
+                    const candidate = titleKey(name);
+                    if (candidate === songKey) {
+                        return true;
+                    }
+                    if (
+                        candidate.startsWith(songKey) &&
+                        /^(live|cover|remix|mv|pv|official|完整版|翻唱|现场|演唱会|伴奏|官方)/u.test(
+                            candidate.slice(songKey.length),
+                        )
+                    ) {
+                        return true;
+                    }
+                    const quoted = String(name).match(/[《「【]([^》」】]+)[》」】]/u);
+                    return !!quoted && titleKey(quoted[1]) === songKey;
+                };
+                const result = await this.request(
+                    '/search',
+                    { keywords, type: 1004, limit: 30, offset: 0 },
+                    [200],
+                    valid,
+                );
+                for (const entry of result.result?.mvs || []) {
+                    const id = String(entry.id ?? '');
+                    if (!/^[1-9][0-9]{0,19}$/.test(id)) {
+                        continue;
+                    }
+                    if (id !== associatedID && (!songKey || !matchesSong(entry.name || ''))) {
+                        continue;
+                    }
+                    const candidate = {
+                        id,
+                        title: String(entry.name || ''),
+                        artist: String(
+                            entry.artistName ||
+                                (entry.artists || [])
+                                    .map((a) => a.name)
+                                    .filter(Boolean)
+                                    .join(' / '),
+                        ),
+                        associated: id === associatedID,
+                    };
+                    const index = versions.findIndex((v) => v.id === id);
+                    if (index < 0) {
+                        versions.push(candidate);
+                    } else {
+                        versions[index] = candidate;
+                    }
+                }
+            }
+            return { versions, warning: '' };
+        } catch (error) {
+            if (!valid()) {
+                throw error;
+            }
+            return { versions, warning: '其他版本搜索失败，可重试' };
+        }
+    }
+
+    /** Resolve the explicit association or a manually selected MV; never autoplay search results. */
+    async mv(value, valid = () => true) {
+        if (!/^[1-9][0-9]{0,19}$/.test(String(value?.id ?? ''))) {
+            throw new Error('歌曲标识无效');
+        }
+        let id = String(value.videoID ?? '');
+        if (id && !/^[1-9][0-9]{0,19}$/.test(id)) {
+            throw new Error('视频标识无效');
+        }
+        if (!id) {
+            const songs = await this.request('/song/detail', { ids: String(value.id) }, [200], valid);
+            const song = (songs.songs || []).find((entry) => String(entry.id) === String(value.id));
+            if (!song) {
+                throw new Error('未找到当前歌曲');
+            }
+            id = String(song.mv ?? song.mvid ?? '');
+            if (!/^[1-9][0-9]{0,19}$/.test(id)) {
+                return null;
+            }
+        }
+        const detail = await this.request('/mv/detail', { mvid: id }, [200], valid);
+        const data = detail.data || {};
+        const available = Array.isArray(data.brs)
+            ? data.brs.map((entry) => Number(entry.br))
+            : Object.keys(data.brs || {}).map(Number);
+        const resolutions = [...new Set(available.filter((r) => r > 0 && r <= 1080))].sort((a, b) => b - a);
+        if (!resolutions.length) {
+            resolutions.push(1080, 720, 480);
+        }
+        for (const r of resolutions) {
+            const result = await this.request('/mv/url', { id, r }, [200], valid);
+            const source = result.data || {};
+            if (!source.url) {
+                continue;
+            }
+            const url = new URL(source.url);
+            if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) {
+                throw new Error('MV 播放地址无效');
+            }
+            return {
+                id,
+                title: String(data.name || value.title || ''),
+                cover: String(data.cover || ''),
+                duration: Number(data.duration) || 0,
+                resolution: Number(source.r) || r,
+                url: url.href,
+            };
+        }
+        throw new Error('关联 MV 暂无可用视频，请登录后重试');
+    }
     /**
      * 通过 Host 请求元数据并校验响应。
      * 先检查请求是否仍有效，再接受 Cookie，避免旧账号请求污染当前账号。

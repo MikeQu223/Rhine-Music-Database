@@ -13,6 +13,9 @@ set_source_files_properties(qml/Scene3D.qml PROPERTIES QT_RESOURCE_ALIAS Scene3D
 set_source_files_properties(qml/Overlay.qml PROPERTIES QT_RESOURCE_ALIAS Overlay.qml)
 set_source_files_properties(qml/IOSInput.qml PROPERTIES QT_RESOURCE_ALIAS IOSInput.qml)
 set_source_files_properties(qml/LocalMusicDialogs.qml PROPERTIES QT_RESOURCE_ALIAS LocalMusicDialogs.qml)
+set_source_files_properties(qml/MvWindow.qml PROPERTIES QT_RESOURCE_ALIAS MvWindow.qml)
+set_source_files_properties(qml/MvWallpaper.qml PROPERTIES QT_RESOURCE_ALIAS MvWallpaper.qml)
+set_source_files_properties(qml/MvDesktopControls.qml PROPERTIES QT_RESOURCE_ALIAS MvDesktopControls.qml)
 qt_add_qml_module(
     RhineMusicDatabase
     URI
@@ -23,6 +26,9 @@ qt_add_qml_module(
     "${CMAKE_BINARY_DIR}/RhineMusic"
     QML_FILES
     qml/Main.qml
+    qml/MvWindow.qml
+    qml/MvWallpaper.qml
+    qml/MvDesktopControls.qml
     qml/IOSInput.qml
     qml/LocalMusicDialogs.qml
     qml/PerformancePanel.qml

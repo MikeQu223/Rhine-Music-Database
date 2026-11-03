@@ -12,6 +12,7 @@
 #include <functional>
 #include <memory>
 #include "HttpAudioStream.h"
+#include "AudioSpectrum.h"
 
 // 在线模式只接收锁定上游的播放链接；本地模式只接收文件 URL
 class AudioPlayer {
@@ -24,6 +25,8 @@ class AudioPlayer {
     QVariantMap state() const;
     QJsonObject diagnosticState() const;
     void enableDiagnostics(bool enabled);
+    void enableSpectrum(bool enabled);
+    std::function<void(QJsonArray)> spectrumChanged;
     std::function<void(const QString &, const QJsonObject &)> diagnosticEvent;
 
   private:
@@ -39,6 +42,10 @@ class AudioPlayer {
     QMetaObject::Connection decoderConnection;
     quint64 decoderObservation = 0;
     void observeDecodedBuffers();
+    void clearSpectrum();
+    AudioSpectrum spectrum;
+    bool spectrumEnabled = false;
+    QElapsedTimer spectrumClock;
     int sourceSerial = 0;
     int sourceKind = 0;
     int sourceProvider = 0;

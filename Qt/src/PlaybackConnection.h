@@ -2,6 +2,7 @@
 #include <QtGlobal>
 #include <QHash>
 #include <QJsonObject>
+#include <QJsonArray>
 #include <QLocalSocket>
 #include <QObject>
 #include <functional>
@@ -33,6 +34,7 @@ class PlaybackConnection : public QObject {
 #endif
     void disconnected();
     void diagnosticEvent(QString event, QJsonObject values);
+    void spectrumChanged(QJsonArray levels);
 
   private:
     void readMessages();

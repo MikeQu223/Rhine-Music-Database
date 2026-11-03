@@ -218,6 +218,13 @@ async function fixtureAdapter(settings) {
     if (destination.includes('/song/lyric/v1')) {
         data = { code: 200, lrc: { lyric: '[00:01.00]本地歌词\n[00:03.00]第二句' } };
     }
+    if (!qq && destination.includes('/v3/song/detail')) {
+        data = { code: 200, songs: [{ id: 1, name: 'Fixture song', mv: 99 }] };
+    } else if (!qq && destination.includes('/v1/mv/detail')) {
+        data = { code: 200, data: { name: 'Fixture PV', brs: [{ br: 1080 }] } };
+    } else if (!qq && destination.includes('/song/enhance/play/mv/url')) {
+        data = { code: 200, data: { url: 'https://video.example.test/fixture.mp4', r: 1080 } };
+    }
     if (destination.includes('fcg_query_lyric_new.fcg')) {
         data = { code: 0, lyric: Buffer.from('[00:01.00]本地歌词\n[00:03.00]第二句').toString('base64') };
     }

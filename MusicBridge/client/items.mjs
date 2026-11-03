@@ -57,6 +57,10 @@ export function parse(rawItem, kind) {
         trackCount: rawItem.trackCount ?? rawItem.size ?? 0,
         description: rawItem.description ?? rawItem.briefDesc ?? '',
     });
+    if (kind === 'song' && (rawItem.mv !== undefined || rawItem.mvid !== undefined)) {
+        const mv = String(rawItem.mv ?? rawItem.mvid ?? '');
+        value.mvID = /^[1-9][0-9]{0,19}$/.test(mv) ? mv : '';
+    }
     // 5 是网易云“我喜欢的音乐”歌单标记；该歌单由账号维护，不能改名、删除或取消收藏。
     if (kind === 'playlist' && rawItem.specialType === 5) {
         value.special = true;

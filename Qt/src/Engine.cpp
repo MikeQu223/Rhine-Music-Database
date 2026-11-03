@@ -49,6 +49,7 @@ Engine::Engine(QString path, bool offline, QObject *parent, PlaybackConnection *
     app = std::make_unique<NativeApplication>(&host, &m_glyphs, &scene, content);
     connect(&app->music, &MusicLibrary::playbackInvalidated, this, &Engine::refreshPlayback);
     connect(&app->hud, &NativeHud::localImportRequested, this, &Engine::localImportRequested);
+    connect(&app->hud, &NativeHud::mvRequested, this, &Engine::mvRequested);
 #ifdef Q_OS_DARWIN
     renderConfiguration.initialize([this](const QString &key) { return host.preference(key); });
     connect(&host, &Host::preferenceChanged, this, [this](const QString &key, const QString &value) {
@@ -113,14 +114,13 @@ Engine::Engine(QString path, bool offline, QObject *parent, PlaybackConnection *
                   // 导致从第 2 项起整串错位（req/s 打印成被当 %llu 读的 double，
                   // gpu=%.2f 收到的是 const char*），读数全部作废。
                   qulonglong(m_paceTicks), qulonglong(m_steps) - lastSteps,
-                  qulonglong(m_pacing.skipped()) - lastSkipped,
-                  qulonglong(m_sceneUpdates) - lastScene, qulonglong(m_hudUpdates) - lastHud,
-                  qulonglong(render) - lastRender, qulonglong(m_changedSteps) - lastChanged,
-                  qulonglong(m_wakes) - lastWakes, qulonglong(m_wakesInput), qulonglong(m_wakesHost),
-                  qulonglong(m_wakesMedia), qulonglong(m_wakesOther),
-                  qulonglong(m_sceneRequests) - lastRequests, gpuMicros / 1000.0,
-                  RhineRender::gpuTimingStatusName(RhineRender::GpuTimingStatus(
-                      m_gpuTiming.load(std::memory_order_relaxed))),
+                  qulonglong(m_pacing.skipped()) - lastSkipped, qulonglong(m_sceneUpdates) - lastScene,
+                  qulonglong(m_hudUpdates) - lastHud, qulonglong(render) - lastRender,
+                  qulonglong(m_changedSteps) - lastChanged, qulonglong(m_wakes) - lastWakes,
+                  qulonglong(m_wakesInput), qulonglong(m_wakesHost), qulonglong(m_wakesMedia),
+                  qulonglong(m_wakesOther), qulonglong(m_sceneRequests) - lastRequests, gpuMicros / 1000.0,
+                  RhineRender::gpuTimingStatusName(
+                      RhineRender::GpuTimingStatus(m_gpuTiming.load(std::memory_order_relaxed))),
                   qulonglong(m_gpuSamples) - lastGpuSamples,
                   m_syncMicros.load(std::memory_order_relaxed) / 1000.0,
                   qulonglong(m_syncSamples.load(std::memory_order_relaxed)), qulonglong(published),
@@ -131,8 +131,8 @@ Engine::Engine(QString path, bool offline, QObject *parent, PlaybackConnection *
                   qulonglong(m_stableResetInput) + qulonglong(m_stableResetScene) - lastResetInput -
                       lastResetScene,
                   qulonglong(m_stableResetInput) - lastResetInput,
-                  qulonglong(m_stableResetScene) - lastResetScene, avgGap,
-                  double(m_paceGapMax) / 1e6, avgStep, double(m_paceStepMax) / 1e6);
+                  qulonglong(m_stableResetScene) - lastResetScene, avgGap, double(m_paceGapMax) / 1e6,
+                  avgStep, double(m_paceStepMax) / 1e6);
             lastSteps = qulonglong(m_steps);
             lastSkipped = qulonglong(m_pacing.skipped());
             lastWakes = m_wakes;
@@ -255,19 +255,20 @@ void Engine::start() {
     wake(false);
 }
 QVariantMap Engine::performance() const {
-    QVariantMap result = {{"idle", m_sleeping},
-                          {"sceneSleeping", m_sceneSleeping},
-                          {"visible", m_visible},
-                          {"steps", qulonglong(m_steps)},
-                          {"sceneUpdates", qulonglong(m_sceneUpdates)},
-                          {"hudUpdates", qulonglong(m_hudUpdates)},
-                          {"renderFrames", qulonglong(m_renderFrames.load(std::memory_order_relaxed))},
-                          {"gpuResources", qulonglong(m_gpuResources.load(std::memory_order_relaxed))},
-                          {"bindingCreations", qulonglong(m_bindingCreations.load(std::memory_order_relaxed))},
-                          {"gpuMusicTextureBytes", qulonglong(m_musicTextureBytes.load(std::memory_order_relaxed))},
-                          {"coverUploads", qulonglong(m_coverUploads.load(std::memory_order_relaxed))},
-                          {"gpuDrawCalls", qulonglong(m_lastDrawCalls.load(std::memory_order_relaxed))},
-                          {"timerActive", timer.isActive()}};
+    QVariantMap result = {
+        {"idle", m_sleeping},
+        {"sceneSleeping", m_sceneSleeping},
+        {"visible", m_visible},
+        {"steps", qulonglong(m_steps)},
+        {"sceneUpdates", qulonglong(m_sceneUpdates)},
+        {"hudUpdates", qulonglong(m_hudUpdates)},
+        {"renderFrames", qulonglong(m_renderFrames.load(std::memory_order_relaxed))},
+        {"gpuResources", qulonglong(m_gpuResources.load(std::memory_order_relaxed))},
+        {"bindingCreations", qulonglong(m_bindingCreations.load(std::memory_order_relaxed))},
+        {"gpuMusicTextureBytes", qulonglong(m_musicTextureBytes.load(std::memory_order_relaxed))},
+        {"coverUploads", qulonglong(m_coverUploads.load(std::memory_order_relaxed))},
+        {"gpuDrawCalls", qulonglong(m_lastDrawCalls.load(std::memory_order_relaxed))},
+        {"timerActive", timer.isActive()}};
     const quint64 gpuMicros = m_gpuTimeMicros.load(std::memory_order_relaxed);
     // 0 表示后端没有可用的时间戳；保留空值，避免把“未测量”显示成 0 ms。
     if (gpuMicros) {
@@ -276,8 +277,8 @@ QVariantMap Engine::performance() const {
     // 状态无条件发布：没有样本时它正是唯一能说明"为什么没有"的信息，而 gpuTimeMs 的
     // 缺省只表示"这次没测到"。两者语义不同，不能让前者被后者吞掉（A01）。
     result.insert("gpuTimingStatus",
-                  QString::fromLatin1(RhineRender::gpuTimingStatusName(RhineRender::GpuTimingStatus(
-                      m_gpuTiming.load(std::memory_order_relaxed)))));
+                  QString::fromLatin1(RhineRender::gpuTimingStatusName(
+                      RhineRender::GpuTimingStatus(m_gpuTiming.load(std::memory_order_relaxed)))));
 
     // ---- A11 整帧资源账本 ----
     // 下面这些键和上面的"当前快照"不是同一口径，命名与 CSV 列都带 ledger/peak 前缀，
@@ -285,15 +286,12 @@ QVariantMap Engine::performance() const {
     const quint64 renderFrames = m_renderFrames.load(std::memory_order_relaxed);
     const quint64 coverUploads = m_coverUploads.load(std::memory_order_relaxed);
     result.insert("gpuResourcesPeak", qulonglong(m_resourcesPeak.load(std::memory_order_relaxed)));
-    result.insert("gpuResourcesPeakFrame",
-                  qulonglong(m_resourcesPeakFrame.load(std::memory_order_relaxed)));
-    result.insert("gpuTextureBytesPeak",
-                  qulonglong(m_textureBytesPeak.load(std::memory_order_relaxed)));
+    result.insert("gpuResourcesPeakFrame", qulonglong(m_resourcesPeakFrame.load(std::memory_order_relaxed)));
+    result.insert("gpuTextureBytesPeak", qulonglong(m_textureBytesPeak.load(std::memory_order_relaxed)));
     result.insert("gpuTextureBytesPeakFrame",
                   qulonglong(m_textureBytesPeakFrame.load(std::memory_order_relaxed)));
     result.insert("frameBindings", qulonglong(m_frameBindings.load(std::memory_order_relaxed)));
-    result.insert("frameCoverUploads",
-                  qulonglong(m_frameCoverUploads.load(std::memory_order_relaxed)));
+    result.insert("frameCoverUploads", qulonglong(m_frameCoverUploads.load(std::memory_order_relaxed)));
     result.insert("coverUploadsPerFrame",
                   m_coverUploadsPerFrameMilli.load(std::memory_order_relaxed) / 1000.0);
     // 重传率：累计封面上传次数按"每千个渲染帧"归一。用千帧而不是比值，是因为正常情况
@@ -325,11 +323,9 @@ void Engine::noteFrameLedger(quint64 resources, quint64 bindings, quint64 textur
 
     // 封面上传速率用 EMA（alpha=0.05，约 20 帧窗口）：单帧样本抖动大，而"是不是每帧
     // 都在重传"恰恰要看持续水平。不用呈现层那套 0.15，是为了压住偶发的一两次上传。
-    m_coverUploadsEma = m_coverUploadsEma <= 0.0
-                            ? double(coverUploads)
-                            : m_coverUploadsEma * 0.95 + double(coverUploads) * 0.05;
-    m_coverUploadsPerFrameMilli.store(quint64(m_coverUploadsEma * 1000.0 + 0.5),
-                                      std::memory_order_relaxed);
+    m_coverUploadsEma = m_coverUploadsEma <= 0.0 ? double(coverUploads)
+                                                 : m_coverUploadsEma * 0.95 + double(coverUploads) * 0.05;
+    m_coverUploadsPerFrameMilli.store(quint64(m_coverUploadsEma * 1000.0 + 0.5), std::memory_order_relaxed);
 
     const bool full = m_ledgerFilled >= kLedgerWindow;
     const LedgerSlot expired = m_ledgerWindow[m_ledgerCursor];
@@ -356,16 +352,15 @@ void Engine::noteFrameLedger(quint64 resources, quint64 bindings, quint64 textur
         !m_budgetWarned.exchange(true, std::memory_order_relaxed)) {
         const double currentMiB = double(textureBytes) / (1024.0 * 1024.0);
         const double budgetMiB = double(budgetBytes) / (1024.0 * 1024.0);
-        qWarning().noquote()
-            << QStringLiteral("资源预算超限：整帧驻留纹理 %1 MiB 超过上限 %2 MiB"
-                              "（RHINE_RESOURCE_BUDGET_MB，第 %3 个渲染帧）。"
-                              "建议：减少同时驻留的封面数或降低封面尺寸，"
-                              "也可以把上限调到 %4 MiB 以上。本告警只打印一次，"
-                              "不改变渲染行为。")
-                   .arg(currentMiB, 0, 'f', 1)
-                   .arg(budgetMiB, 0, 'f', 1)
-                   .arg(frame)
-                   .arg(currentMiB, 0, 'f', 0);
+        qWarning().noquote() << QStringLiteral("资源预算超限：整帧驻留纹理 %1 MiB 超过上限 %2 MiB"
+                                               "（RHINE_RESOURCE_BUDGET_MB，第 %3 个渲染帧）。"
+                                               "建议：减少同时驻留的封面数或降低封面尺寸，"
+                                               "也可以把上限调到 %4 MiB 以上。本告警只打印一次，"
+                                               "不改变渲染行为。")
+                                    .arg(currentMiB, 0, 'f', 1)
+                                    .arg(budgetMiB, 0, 'f', 1)
+                                    .arg(frame)
+                                    .arg(currentMiB, 0, 'f', 0);
     }
 }
 
@@ -1052,8 +1047,7 @@ void Engine::step(double time) {
     }
     const bool temporal = metalFxTemporal;
     // 仅开 FG 插值时渲染器同样消费实例运动历史，原点变化必须一并重置。
-    const bool usesMotionHistory =
-        temporal || renderSettings.frameGeneration();
+    const bool usesMotionHistory = temporal || renderSettings.frameGeneration();
     if (usesMotionHistory && previousOrigin != m_frame.value("stats").toObject().value("coordinateOrigin")) {
         // 原点平移会重新编码实例 ID；历史不能跨坐标系继续配对，MetalFX 也须一起重置。
         m_jitterPhase = 0;
