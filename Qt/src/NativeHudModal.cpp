@@ -170,6 +170,12 @@ void NativeHud::modalDraw(double width) {
          dark ? QJsonArray{0.15, 0.15, 0.15, 1, "calibratedWhite"} : QJsonArray{0.929, 0.922, 0.894, 1});
     hits = {};
     m_modalControls = true;
+    if (modal == "player") {
+        playerPanel(x, y, usable);
+        m_modalControls = false;
+        restore();
+        return;
+    }
     if (modal == "discover") {
         // 发现页独立绘制内部外观；弹层边界、遮罩、位移动画与关闭流程仍由宿主管理。
         discoverPanel(x, y, usable);
@@ -232,8 +238,6 @@ void NativeHud::modalDraw(double width) {
         limited(music.status, x + 53, y + 775, 12, usable - 106);
     } else if (modal == "local") {
         localPanel(x, y, usable);
-    } else if (modal == "player") {
-        playerPanel(x, y, usable);
     } else if (modal == "settings") {
         settingsPanel(x, y, usable);
     } else if (modal == "login") {

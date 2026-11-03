@@ -157,6 +157,8 @@ set(RHINE_APP_SOURCES
     Qt/src/CollectionDetailCard.cpp
     Qt/src/NativeHudPlayer.cpp
     Qt/src/PlayerBar.h
+    Qt/src/PlaybackQueueCard.h
+    Qt/src/PlaybackQueueCard.cpp
     Qt/src/PlayerBar.cpp
     Qt/src/NativeHudLibrary.cpp
     Qt/src/NativeHudSearch.cpp

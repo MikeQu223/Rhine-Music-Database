@@ -82,6 +82,10 @@ void NativeHud::openModal(QString kind) {
         m_scene.pointer("pointerleave", 0, 0, 0);
     }
     modal = kind;
+    if (kind == "player") {
+        // 仅唤起时定位当前音轨；后续绘制不抢回用户手动滚动的位置。
+        queueOffset = std::max(0, m_music->player.queue.indexOf(m_music->player.current));
+    }
     closing = false;
     editingSettingId.clear();
     editingSettingText.clear();
@@ -361,7 +365,13 @@ void NativeHud::playerAction(const QStringList &parts) {
     } else if (name == "volume" || name == "volume-fraction") {
         player.volume(name == "volume" ? value / 10 : value);
     } else if (name == "mode") {
-        player.setMode(cycle({"off", "all", "one", "shuffle"}, player.mode));
+        const auto requested = parts.value(2);
+        const QStringList modes{"off", "all", "one", "shuffle"};
+        if (requested.isEmpty()) {
+            player.setMode(cycle(modes, player.mode));
+        } else if (modes.contains(requested)) {
+            player.setMode(requested);
+        }
     } else if (name == "queue") {
         if (index >= 0 && index < player.queue.size()) {
             player.play(player.queue.at(index), std::nullopt, index);

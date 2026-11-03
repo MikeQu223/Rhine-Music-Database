@@ -1,6 +1,7 @@
 #include "NativeHud.h"
 #include "MusicData.h"
 #include "PlayerBar.h"
+#include "PlaybackQueueCard.h"
 #include <algorithm>
 
 /** 适配播放业务快照；状态栏组件不感知账号、歌词页面或播放器生命周期。 */
@@ -40,42 +41,35 @@ void NativeHud::playerBar(double x, double y, double width) {
     playerVolumeRect = drawing.volume;
 }
 
+/** 队列面板 */
 void NativeHud::playerPanel(double x, double y, double width) {
     const auto &player = m_music->player;
-    const auto left = x + 53;
-    const auto usable = width - 106;
-    rule(left, y + 216, usable);
-    auto title = player.current.value("title").toString();
-    if (title.isEmpty()) {
-        title = "选择歌曲开始播放";
-    }
-    limited(title, left, y + 240, 25, usable, "bold");
-    limited(player.current.value("artist").toString(), left, y + 278, 15, usable);
-    text("QUEUE / " + QString::number(player.queue.size()) + " 首", left, y + 326, 15);
-    button("清空待播", left + usable - 140, y + 311, 140, 44, "player:clear", 16);
-    queueOffset = std::min(queueOffset, std::max(0, int(player.queue.size()) - 7));
-    for (int row = 0; row < 7 && queueOffset + row < player.queue.size(); ++row) {
-        const auto index = queueOffset + row;
-        const auto song = player.queue.at(index);
-        const auto yy = y + 371 + row * 48;
-        text(index == player.queue.index() ? "▶" : MusicData::pad(index + 1), left, yy, 15);
-        button(fit(song["title"].toString(), 18, usable - 110), left + 44, yy - 7, usable - 110, 40,
-               "player:queue:" + QString::number(index), 18);
-        if (index != player.queue.index()) {
-            button("×", left + usable - 40, yy - 7, 40, 40, "player:remove:" + QString::number(index), 20);
-        }
-        rule(left, yy + 34, usable, 0.15);
-    }
-    limited(player.status, left, y + 730, 14, usable);
-    static const QHash<QString, QString> modes{
-        {"off", "顺序播放"}, {"all", "列表循环"}, {"one", "单曲循环"}, {"shuffle", "随机播放"}};
-    button(modes.value(player.mode), left, y + 761, 140, 44, "player:mode", 16);
-    if (PlatformFeatures::OfficialPlayback && !m_music->isLocal()) {
-        button(m_music->provider != "netease" ? m_music->providerName() + " ↗" : "官方客户端 ↗", left + 165,
-               y + 761, 175, 44, "player:official", 16);
-    }
-    if (m_music->canMutate("/like")) {
-        button(m_music->provider == "qq" ? "红心 / 切换" : "♡ 喜欢此曲", left + 365, y + 761, 140, 44,
-               "music:like-current", 16);
-    }
+    queueOffset = std::clamp(queueOffset, 0, PlaybackQueueCard::maximumOffset(player.queue.size()));
+    PlaybackQueueCard::Model model;
+    model.bounds = {x, y, width, 836};
+    model.tracks = player.queue.items();
+    model.current = player.current;
+    model.cover = player.coverImage;
+    model.mode = player.mode;
+    model.status = player.status;
+    model.currentIndex = player.queue.indexOf(player.current);
+    model.offset = queueOffset;
+    model.playing = player.state["playing"].toBool();
+    model.dark = dark;
+    PlaybackQueueCard::Canvas canvas;
+    canvas.fill = [this](double left, double top, double w, double h, QJsonArray color) {
+        fill(left, top, w, h, color);
+    };
+    canvas.text = [this](QString value, double left, double top, double size, QString weight,
+                         QJsonArray color) { text(value, left, top, size, weight, 0, color); };
+    canvas.fit = [this](QString value, double size, double w, QString weight) {
+        return fit(value, size, w, weight);
+    };
+    canvas.hit = [this](double left, double top, double w, double h, QString action, QString label) {
+        hit(left, top, w, h, action, label);
+    };
+    canvas.image = [this](QString key, double left, double top, double w, double h) {
+        image(key, left, top, w, h);
+    };
+    PlaybackQueueCard::paint(model, canvas);
 }

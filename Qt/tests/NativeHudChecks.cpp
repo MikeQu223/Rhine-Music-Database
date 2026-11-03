@@ -621,7 +621,6 @@ static bool checkCardMaterialCache() {
     return true;
 }
 
-
 #endif
 bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
     Host host(root, true);
@@ -1290,6 +1289,112 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
                     qCritical() << "Discovery category pagination omitted the final entry after All";
                     ok = false;
                 }
+            }
+
+            // 队列卡片
+            ++testCount;
+            hud.openModal("player");
+            const auto queueBounds = hud.modalBounds(1920);
+            hud.draw(archiveFrame, 1920, 50);
+            if (queueBounds != QRectF(330, 122, 1260, 836)) {
+                qCritical() << "Queue card changed geometry or exposed transport controls";
+                ok = false;
+            }
+            for (const auto &mode : {QString("off"), QString("all"), QString("one"), QString("shuffle")}) {
+                const auto action = "player:mode:" + mode;
+                if (!hasAction(hud.hits, action)) {
+                    qCritical() << "Queue playback mode missing" << mode;
+                    ok = false;
+                }
+                hud.action(action);
+                if (music->player.mode != mode) {
+                    qCritical() << "Queue mode selection did not reach player" << mode;
+                    ok = false;
+                }
+            }
+            for (const auto &value : hud.hits) {
+                const auto hit = value.toObject();
+                const QRectF rect(hit["x"].toDouble(), hit["y"].toDouble(), hit["width"].toDouble(),
+                                  hit["height"].toDouble());
+                // 底部全局播放栏仍保留，不能把它误判为卡片内部控件。
+                if (rect.top() > queueBounds.bottom()) {
+                    continue;
+                }
+                if (!queueBounds.contains(rect) || hit["action"] == "player:toggle" ||
+                    hit["action"] == "player:seek") {
+                    qCritical() << "Queue action escaped the original card or exposed transport";
+                    ok = false;
+                }
+            }
+
+            const auto captureDirectory = qEnvironmentVariable("RHINE_QUEUE_CAPTURE_DIR");
+            if (provider == "netease" && !captureDirectory.isEmpty()) {
+                // 等待原弹窗入场结束，截图不能把透明首帧误当成最终界面。
+                hud.draw(archiveFrame, 1920, 1000);
+                QImage queueImage(1920, 1080, QImage::Format_ARGB32_Premultiplied);
+                queueImage.fill(Qt::transparent);
+                QPainter painter(&queueImage);
+                glyphs.commands(painter, hud.commands, [](QString) { return QImage(); });
+                painter.end();
+                queueImage.save(captureDirectory + "/queue-card-" + (dark ? "dark" : "light") + ".png");
+            }
+
+            // 尾曲也必须出现在首行，不能为了填满七行把它推回页尾。
+            QJsonArray localQueue;
+            for (const auto &value : music->player.queue.items()) {
+                auto track = value.toObject();
+                track["provider"] = "local";
+                track["url"] = "file:///rhine-queue-test-missing.wav";
+                localQueue.append(track);
+            }
+            music->provider = "local";
+            music->api.provider = "local";
+            music->player.queue.replace(localQueue);
+            const auto lastIndex = music->player.queue.size() - 1;
+            music->player.current = music->player.queue.at(lastIndex);
+            music->player.queue.select(lastIndex);
+            hud.openModal("player");
+            hud.draw(archiveFrame, 1920, 1100);
+            const auto tailHit = getHit(hud.hits, "player:queue:" + QString::number(lastIndex));
+            if (hud.queueOffset != lastIndex || tailHit["y"].toDouble() != queueBounds.y() + 358) {
+                qCritical() << "Opening queue did not put the current final track first";
+                ok = false;
+            }
+            hud.queueOffset = 3;
+            hud.draw(archiveFrame, 1920, 1150);
+            if (hud.queueOffset != 3) {
+                qCritical() << "Queue repaint stole manual scrolling";
+                ok = false;
+            }
+            const auto selectedHit = getHit(hud.hits, "player:queue:4");
+            const auto removeHit = getHit(hud.hits, "player:remove:4");
+            if (selectedHit.isEmpty() || removeHit.isEmpty() ||
+                selectedHit["x"].toDouble() + selectedHit["width"].toDouble() > removeHit["x"].toDouble()) {
+                qCritical() << "Queue selection and removal targets overlap or are missing";
+                ok = false;
+            }
+            const auto queueBeforeClick = music->player.queue.items();
+            const auto modeBeforeClick = music->player.mode;
+            // 无效本地文件只验证播放分发与索引，不发起真实音乐 API 请求。
+            hud.action("player:queue:4");
+            if (music->player.queue.index() != 4 ||
+                music->player.current != queueBeforeClick.at(4).toObject() ||
+                music->player.queue.items() != queueBeforeClick || music->player.mode != modeBeforeClick) {
+                qCritical() << "Queue click changed order or did not start the selected track";
+                ok = false;
+            }
+            hud.openModal("player");
+            if (hud.queueOffset != 4) {
+                qCritical() << "Reopening queue did not follow the new current track";
+                ok = false;
+            }
+            music->player.queue.clear();
+            music->player.current = {};
+            hud.openModal("player");
+            hud.draw(archiveFrame, 1920, 1200);
+            if (hud.queueOffset != 0 || hasAction(hud.hits, "player:queue:0")) {
+                qCritical() << "Empty queue retained a song target or invalid scroll offset";
+                ok = false;
             }
 
             delete music;

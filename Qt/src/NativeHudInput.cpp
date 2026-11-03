@@ -1,4 +1,5 @@
 #include "NativeHud.h"
+#include "PlaybackQueueCard.h"
 #include "MusicDiscover.h"
 #include "DiscoverMusicCard.h"
 #include <algorithm>
@@ -61,7 +62,8 @@ void NativeHud::wheel(double x, double y, double delta, std::optional<int> steps
             return;
         }
         if (modal == "player") {
-            queueOffset = std::clamp(queueOffset + step, 0, std::max(0, int(music.player.queue.size()) - 7));
+            queueOffset = std::clamp(queueOffset + step, 0,
+                                     PlaybackQueueCard::maximumOffset(music.player.queue.size()));
             return;
         }
         if (modal == "search") {
