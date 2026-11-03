@@ -565,6 +565,8 @@ elseif(ANDROID)
     # 放在 APPLE/WIN32/UNIX 之前：Android 同时满足 UNIX，走错分支会把 PlatformLinux.cpp
     # 编进来（它按桌面目录查找 orpheus:// 处理器）。
     include(Qt/Android.cmake)
+    # 段错误诊断链的 logd 通道：liblog 的写路径无内存分配，崩溃处理器内可用。
+    target_link_libraries(RhineMusicDatabase PRIVATE log)
 elseif(APPLE)
     target_sources(${RHINE_SYSTEM_CORE} PRIVATE Qt/src/Platform.mm)
     target_link_libraries(${RHINE_SYSTEM_CORE} PRIVATE "-framework Security" "-framework AppKit"

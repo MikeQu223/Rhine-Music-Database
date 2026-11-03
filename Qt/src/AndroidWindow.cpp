@@ -71,7 +71,13 @@ void configureAndroidWindow(QWindow *window, Engine *backend) {
     QObject::connect(qGuiApp, &QGuiApplication::applicationStateChanged, backend,
                      [backend, window](Qt::ApplicationState state) {
                          const bool active = state == Qt::ApplicationActive;
+                         // 面包屑：后台死亡固定发生在切后台 ~200ms 内。这几行把
+                         // "死在哪一步之后"钉死，与 main.cpp 的 RHINE-SIGNAL 互补——
+                         // 若死亡发生在信号处理器都来不及跑的路径上，最后一个
+                         // 消失的面包屑就是现场。
+                         qInfo().noquote() << "AW: state=" << int(state) << "active=" << active;
                          backend->setVisible(active);
+                         qInfo().noquote() << "AW: backend.setVisible done";
                          if (auto *quick = qobject_cast<QQuickWindow *>(window)) {
                              // 退后台时系统销毁 Surface 的时机在 onStop，若 QML 场景图的
                              // 渲染线程那时还在 present 自己的交换链，就是对已释放
@@ -80,11 +86,13 @@ void configureAndroidWindow(QWindow *window, Engine *backend) {
                              // 在 onPause 时机主动停摆 QQuickWindow：Qt 按自己的受控路径
                              // 停渲染线程并释放表面，赶在系统销毁之前，竞态关闭。
                              quick->setVisible(active);
+                             qInfo().noquote() << "AW: quick.setVisible done";
                          }
                          if (!active) {
                              // 切后台继续持有 GPU 设备会被系统直接杀掉；先还资源再等系统决定。
                              // 不能在这里 releaseResources()：主线程调用会与渲染线程的在途帧竞争。
                              backend->trimMemory();
+                             qInfo().noquote() << "AW: trimMemory done";
                          }
                      });
 }
