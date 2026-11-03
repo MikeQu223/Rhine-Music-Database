@@ -10,13 +10,17 @@
 
 ![面板总览](Assets/previews/panel.png)
 
-![曲目纵列（暗色）](Assets/previews/tabmode_dark.png)
+![歌曲详情](Assets/previews/detail.png)
 
-![歌曲详情与光盘盒（暗色）](Assets/previews/detail_dark.png)
+![同步歌词](Assets/previews/lyrics.png)
+
+![探索](Assets/previews/discover.png)
 
 ![歌手页与曲目列表](Assets/previews/list.png)
 
-![同步歌词](Assets/previews/lyrics.png)
+![曲目纵列（暗色）](Assets/previews/tabmode_dark.png)
+
+![歌曲详情（暗色）](Assets/previews/detail_dark.png)
 
 ![播放队列](Assets/previews/queue.png)
 
