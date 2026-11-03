@@ -57,3 +57,51 @@
 	url = https://github.com/FFmpeg/FFmpeg.git
 	branch = n9.0.1
 	pinned-commit = bf1b838f2ab88b4f8fd83443325c782ea0e0f7fa
+# Qt 6.12.0 源码（Core/Gui/Qml/Quick/Network/Multimedia 所需的最小集合）。
+#
+# 为什么入库：Qt 6.12 没有公开的 Android 预编译包（download.qt.io 的 Android 组件只到
+# 6.6.3），Android kit 只能拿源码自己交叉编译，见 scripts/build-qt-android.cjs。
+# 桌面包仍用系统 Qt，不受这些子模块影响。
+#
+# 构建会在子模块内产生 build/、.gradle/、jar 产物，所以每条都设了 ignore = untracked：
+# 这些是构建垃圾，不该让 superproject 的 git status 变脏。
+#
+# 克隆：浅克隆 + 直接按标签取一份（比 submodule add 少拉一遍默认分支）：
+#   git submodule update --init --depth 1 third_party/qt
+# 若某个模块卡住，单独重来：
+#   git clone --quiet --depth 1 --branch v6.12.0 https://github.com/qt/qtdeclarative.git third_party/qt/qtdeclarative
+[submodule "third_party/qt/qtbase"]
+	path = third_party/qt/qtbase
+	url = https://github.com/qt/qtbase.git
+	branch = v6.12.0
+	pinned-commit = 025bdad181de241e81bf853c8a2d7bf3d19261a9
+	shallow = true
+	ignore = untracked
+[submodule "third_party/qt/qtdeclarative"]
+	path = third_party/qt/qtdeclarative
+	url = https://github.com/qt/qtdeclarative.git
+	branch = v6.12.0
+	pinned-commit = 4332fbbb4c340463dc8cee36dda0c85d932122d8
+	shallow = true
+	ignore = untracked
+[submodule "third_party/qt/qtshadertools"]
+	path = third_party/qt/qtshadertools
+	url = https://github.com/qt/qtshadertools.git
+	branch = v6.12.0
+	pinned-commit = bccd516b990a6396900051470ac86cc27a7042ea
+	shallow = true
+	ignore = untracked
+[submodule "third_party/qt/qtsvg"]
+	path = third_party/qt/qtsvg
+	url = https://github.com/qt/qtsvg.git
+	branch = v6.12.0
+	pinned-commit = 883a58532078d003cefef0a549bfe9f885ce41f5
+	shallow = true
+	ignore = untracked
+[submodule "third_party/qt/qtmultimedia"]
+	path = third_party/qt/qtmultimedia
+	url = https://github.com/qt/qtmultimedia.git
+	branch = v6.12.0
+	pinned-commit = 6ca885f084a3984749d53bb50a0e08bdc60e86cc
+	shallow = true
+	ignore = untracked

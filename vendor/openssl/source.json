@@ -1,0 +1,9 @@
+{
+    "name": "OpenSSL",
+    "version": "3.5.9",
+    "repository": "https://github.com/openssl/openssl",
+    "download": "https://github.com/openssl/openssl/releases/download/openssl-3.5.9/openssl-3.5.9.tar.gz",
+    "sha256": "603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a",
+    "license": "Apache-2.0",
+    "purpose": "Qt Network 的 TLS 后端（Android 静态链接，见 scripts/build-qt-android.cjs）"
+}
