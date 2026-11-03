@@ -56,12 +56,13 @@ void AndroidMediaSession::ensureStarted() {
 }
 
 void AndroidMediaSession::update(bool playing, qint64 positionMs, qint64 durationMs, const QString &title,
-                                 const QString &artist, const QString &album) {
+                                 const QString &artist, const QString &album, const QString &coverPath) {
     QJniObject::callStaticMethod<void>(
-        kServiceClass, "update", "(ZJJLjava/lang/String;Ljava/lang/String;Ljava/lang/String;)V",
+        kServiceClass, "update",
+        "(ZJJLjava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V",
         playing ? JNI_TRUE : JNI_FALSE, static_cast<jlong>(positionMs), static_cast<jlong>(durationMs),
         QJniObject::fromString(title).object<jstring>(), QJniObject::fromString(artist).object<jstring>(),
-        QJniObject::fromString(album).object<jstring>());
+        QJniObject::fromString(album).object<jstring>(), QJniObject::fromString(coverPath).object<jstring>());
 }
 
 void AndroidMediaSession::stop() {
@@ -90,7 +91,8 @@ void AndroidMediaSession::setCommandCallback(std::function<void(QString)> callba
 }
 void AndroidMediaSession::ensureStarted() {
 }
-void AndroidMediaSession::update(bool, qint64, qint64, const QString &, const QString &, const QString &) {
+void AndroidMediaSession::update(bool, qint64, qint64, const QString &, const QString &, const QString &,
+                                 const QString &) {
 }
 void AndroidMediaSession::stop() {
 }

@@ -53,6 +53,9 @@ public class RhineMediaService extends Service {
     private static String album = "";
     private static long positionMs;
     private static long durationMs;
+    /** 封面由 C++ 下载到应用私有目录后传路径过来；路径变化才重新解码位图。 */
+    private static String coverPath = "";
+    private static android.graphics.Bitmap coverBitmap;
     /** 通知内容只在变化时重建；进度走 PlaybackState，锁屏/手环会自己读，不必每秒 notify。 */
     private static String notifiedKey = "";
 
@@ -65,15 +68,26 @@ public class RhineMediaService extends Service {
         context.startForegroundService(intent);
     }
 
-    /** C++ 侧入口：上报播放状态与元数据。title 为空或时长为 0 表示播放已清空。 */
+    /** C++ 侧入口：上报播放状态与元数据。title 为空或时长为 0 表示播放已清空（转待机）。 */
     public static void update(boolean playingNow, long position, long duration, String mediaTitle,
-            String mediaArtist, String mediaAlbum) {
+            String mediaArtist, String mediaAlbum, String mediaCoverPath) {
         playing = playingNow;
         positionMs = position;
         durationMs = duration;
         title = mediaTitle == null ? "" : mediaTitle;
         artist = mediaArtist == null ? "" : mediaArtist;
         album = mediaAlbum == null ? "" : mediaAlbum;
+        // 只在路径变化时重新解码；文件由 C++ 侧保证先落盘，可能比元数据晚一拍（缺失则无封面）。
+        String nextCover = mediaCoverPath == null ? "" : mediaCoverPath;
+        if (!nextCover.equals(coverPath)) {
+            coverPath = nextCover;
+            android.graphics.Bitmap decoded =
+                    coverPath.isEmpty() ? null : android.graphics.BitmapFactory.decodeFile(coverPath);
+            if (coverBitmap != null && coverBitmap != decoded) {
+                coverBitmap.recycle();
+            }
+            coverBitmap = decoded;
+        }
         if (playing) {
             acquireFocus();
         }
@@ -83,14 +97,18 @@ public class RhineMediaService extends Service {
         }
     }
 
-    /** C++ 侧入口：播放被清空（切页/停止），撤下通知但保留会话以备下次播放。 */
+    /**
+     * C++ 侧入口：播放被清空（切页/停止）。服务与通知保持前台待机——这是应用保活的根：
+     * 前台服务 + mediaPlayback 类型让系统在无播放时也不回收进程，下次打开立即可续播。
+     * 只释放音频焦点（暂停/空闲时占着焦点会拦住其它应用出声）。
+     */
     public static void stop() {
         playing = false;
+        positionMs = 0;
         releaseFocus();
         RhineMediaService service = instance;
         if (service != null) {
-            service.stopForeground(STOP_FOREGROUND_REMOVE);
-            service.stopSelf();
+            service.publish();
         }
     }
 
@@ -229,12 +247,17 @@ public class RhineMediaService extends Service {
         if (session == null) {
             return;
         }
-        session.setMetadata(new android.media.MediaMetadata.Builder()
-                .putString(android.media.MediaMetadata.METADATA_KEY_TITLE, title)
+        android.media.MediaMetadata.Builder metadata = new android.media.MediaMetadata.Builder()
+                .putString(android.media.MediaMetadata.METADATA_KEY_TITLE,
+                        title.isEmpty() ? "未在播放" : title)
                 .putString(android.media.MediaMetadata.METADATA_KEY_ARTIST, artist)
                 .putString(android.media.MediaMetadata.METADATA_KEY_ALBUM, album)
-                .putLong(android.media.MediaMetadata.METADATA_KEY_DURATION, durationMs)
-                .build());
+                .putLong(android.media.MediaMetadata.METADATA_KEY_DURATION, durationMs);
+        if (coverBitmap != null && !coverBitmap.isRecycled()) {
+            // MediaStyle 通知与锁屏的大图都从会话元数据里取，这里给位图即可。
+            metadata.putBitmap(android.media.MediaMetadata.METADATA_KEY_ALBUM_ART, coverBitmap);
+        }
+        session.setMetadata(metadata.build());
 
         long actions = PlaybackState.ACTION_PLAY | PlaybackState.ACTION_PAUSE
                 | PlaybackState.ACTION_PLAY_PAUSE | PlaybackState.ACTION_SKIP_TO_NEXT
@@ -245,8 +268,9 @@ public class RhineMediaService extends Service {
                         positionMs, playing ? 1f : 0f)
                 .build());
 
-        // 通知内容（标题/歌手/播放态）变化才重建；进度刷新由 PlaybackState 承载。
-        String key = (playing ? "1" : "0") + "|" + title + "|" + artist + "|" + album;
+        // 通知内容（标题/歌手/封面/播放态）变化才重建；进度刷新由 PlaybackState 承载。
+        String key = (playing ? "1" : "0") + "|" + title + "|" + artist + "|" + album + "|"
+                + coverPath;
         if (!key.equals(notifiedKey)) {
             notifiedKey = key;
             ((NotificationManager) getSystemService(NOTIFICATION_SERVICE))
@@ -260,13 +284,17 @@ public class RhineMediaService extends Service {
         PendingIntent contentPending = PendingIntent.getActivity(this, 0, contentIntent,
                 PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
 
+        // 待机（title 空）时保持前台通知，ongoing 恒为 true：可滑掉的通知会被系统视为
+        // 用户不再需要前台服务，随即将进程降级回收——与保活目标相反。
         Notification.Builder builder = new Notification.Builder(this, CHANNEL_ID)
                 .setSmallIcon(getApplicationInfo().icon)
-                .setContentTitle(title)
-                .setContentText(artist.isEmpty() ? album : artist
-                        + (album.isEmpty() ? "" : " · " + album))
+                .setContentTitle(title.isEmpty() ? "未在播放" : title)
+                .setContentText(title.isEmpty()
+                        ? "点按回到面板"
+                        : (artist.isEmpty() ? album
+                                            : artist + (album.isEmpty() ? "" : " · " + album)))
                 .setContentIntent(contentPending)
-                .setOngoing(playing)
+                .setOngoing(true)
                 .setOnlyAlertOnce(true)
                 .addAction(actionNotification(ACTION_PREV, "上一曲", android.R.drawable.ic_media_previous))
                 .addAction(playing
