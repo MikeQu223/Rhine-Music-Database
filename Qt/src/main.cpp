@@ -7,6 +7,94 @@
 #if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
 #include "fg/FgConfig.h"
 #endif
+#ifdef Q_OS_ANDROID
+// 段错误诊断链：真机上的后台死亡只留下 ApplicationExitInfo 的 SIGNALED/11，
+// tombstone 与 "Fatal signal" 全部缺席（debuggerd 未产出）。这里抢在一切之前
+// 安装最小的异步信号安全处理器，把信号号、出错地址与 PC 写进 stderr（Qt 已把
+// stderr 重定向到 logcat），随后把处理权交回先前的处理器（通常为 debuggerd，
+// 照常收尾）；若先前是 SIG_DFL 则以默认处置自杀，绝不能返回到出错指令。
+#include <csignal>
+#include <cstring>
+#include <ucontext.h>
+#include <unistd.h>
+namespace {
+
+struct RhineSignalPrevious {
+    struct sigaction action;
+    bool valid;
+};
+RhineSignalPrevious rhineSignalPrevious[3]; // SIGSEGV / SIGBUS / SIGABRT 的旧处置
+
+void rhineSignalDiag(int signal, siginfo_t *info, void *context) {
+    static const char kHead[] = "RHINE-SIGNAL: sig=";
+    static const char kAddr[] = " addr=0x";
+    static const char kPc[] = " pc=0x";
+    static const char kTid[] = " tid=";
+    static const char kTail[] = "\n";
+    char buffer[160];
+    char *cursor = buffer;
+    const auto emitText = [&cursor](const char *text, size_t length) {
+        memcpy(cursor, text, length);
+        cursor += length;
+    };
+    const auto emitUnsigned = [&cursor](unsigned long value) {
+        // 递减式十六进制转换：信号处理器内只允许异步信号安全的操作。
+        char digits[16];
+        int length = 0;
+        do {
+            digits[length++] = static_cast<char>("0123456789abcdef"[value & 0xF]);
+            value >>= 4;
+        } while (value != 0);
+        while (length > 0) {
+            *cursor++ = digits[--length];
+        }
+    };
+    emitText(kHead, sizeof(kHead) - 1);
+    emitUnsigned(static_cast<unsigned long>(signal));
+    emitText(kAddr, sizeof(kAddr) - 1);
+    emitUnsigned(info ? reinterpret_cast<unsigned long>(info->si_addr) : 0UL);
+    emitText(kPc, sizeof(kPc) - 1);
+#if defined(__aarch64__)
+    emitUnsigned(static_cast<ucontext_t *>(context)->uc_mcontext.pc);
+#endif
+    emitText(kTid, sizeof(kTid) - 1);
+    emitUnsigned(static_cast<unsigned long>(gettid()));
+    emitText(kTail, sizeof(kTail) - 1);
+    ssize_t ignored = ::write(2, buffer, static_cast<size_t>(cursor - buffer));
+    Q_UNUSED(ignored)
+
+    const auto slot = signal == SIGSEGV ? 0 : signal == SIGBUS ? 1 : 2;
+    if (rhineSignalPrevious[slot].valid) {
+        const auto previous = rhineSignalPrevious[slot].action;
+        if (previous.sa_flags & SA_SIGINFO) {
+            previous.sa_sigaction(signal, info, context);
+            return;
+        }
+        if (previous.sa_handler != SIG_DFL && previous.sa_handler != SIG_IGN) {
+            previous.sa_handler(signal);
+            return;
+        }
+    }
+    struct sigaction reset;
+    memset(&reset, 0, sizeof(reset));
+    reset.sa_handler = SIG_DFL;
+    sigaction(signal, &reset, nullptr);
+    raise(signal);
+}
+
+void rhineInstallSignalDiag() {
+    struct sigaction handler;
+    memset(&handler, 0, sizeof(handler));
+    handler.sa_sigaction = rhineSignalDiag;
+    handler.sa_flags = SA_SIGINFO | SA_ONSTACK | SA_NODEFER;
+    const int watchedSignals[] = {SIGSEGV, SIGBUS, SIGABRT};
+    for (int index = 0; index < 3; ++index) {
+        auto &previous = rhineSignalPrevious[index];
+        previous.valid = sigaction(watchedSignals[index], &handler, &previous.action) == 0;
+    }
+}
+} // namespace
+#endif
 #include "render/PresentationShell.h"
 #include "render/RenderPolicy.h"
 #include "FrameProfiler.h"
@@ -376,6 +464,10 @@ static void activateWindow(QWindow *window) {
  * 离线测试与正式播放沿用同一入口，资源只从独立应用读取。
  */
 int main(int argc, char **argv) {
+#ifdef Q_OS_ANDROID
+    // 段错误诊断链必须抢在一切组件（Qt 插件、Node、GPU 驱动）可能安装的处理之前。
+    rhineInstallSignalDiag();
+#endif
 #ifdef Q_OS_WIN
     const auto storageError = AppStorage::initializePortable(AppStorage::executableDirectory());
     if (!storageError.isEmpty()) {
