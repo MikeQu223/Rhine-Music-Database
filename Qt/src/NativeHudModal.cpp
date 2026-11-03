@@ -26,6 +26,7 @@ const QVector<Provider> providers = [] {
 QString modalTitle(const QString &modal, const MusicLibrary &music) {
     static const QHash<QString, QString> titles{{"provider", "MUSIC PLATFORM"},
                                                 {"settings", "SYSTEM SETTINGS"},
+                                                {"desktop-lyrics", "DESKTOP LYRICS"},
                                                 {"quality", "AUDIO QUALITY"},
                                                 {"disc-rotation-warning", "DISC ROTATION"},
                                                 {"saved", "MY MUSIC"},
@@ -51,6 +52,7 @@ QString modalTitle(const QString &modal, const MusicLibrary &music) {
 QString modalSubtitle(const QString &modal, const MusicLibrary &music) {
     static const QHash<QString, QString> subtitles{{"provider", "直接选择音乐平台 / 各平台账号独立保存"},
                                                    {"settings", "终端偏好设置"},
+                                                   {"desktop-lyrics", "桌面歌词 / 样式与同步"},
                                                    {"quality", "声音档案 / 播放音质"},
                                                    {"disc-rotation-warning", "开启前请确认资源与功耗风险"},
                                                    {"player", "播放队列 / QUEUE"},
@@ -186,13 +188,16 @@ void NativeHud::modalDraw(double width) {
     QString category = "MUSIC DIRECTORY";
     if (modal == "settings") {
         category = "SYSTEM PREFERENCES";
+    } else if (modal == "desktop-lyrics") {
+        category = "DESKTOP LYRICS";
     } else if (modal == "player") {
         category = "AUDIO TERMINAL";
     } else if (modal == "quality") {
         category = "AUDIO SPECIFICATION";
     }
     text("RHINE LAB / MUSIC DATABASE / " + category, x + 53, y + 37, modal == "settings" ? 14 : 11);
-    button("← 返回", x + usable - 220, y + 18, 167, 54, "close-modal", 20, "demibold");
+    button("← 返回", x + usable - 220, y + 18, 167, 54,
+           modal == "desktop-lyrics" ? "desktop-lyrics:back" : "close-modal", 20, "demibold");
     text(modalTitle(modal, music), x + 53, y + 91, 38, "demibold");
     text(modalSubtitle(modal, music), x + 53, y + 147, modal == "settings" ? 18 : 15);
     if (modal == "disc-rotation-warning") {
@@ -240,6 +245,8 @@ void NativeHud::modalDraw(double width) {
         localPanel(x, y, usable);
     } else if (modal == "settings") {
         settingsPanel(x, y, usable);
+    } else if (modal == "desktop-lyrics") {
+        desktopLyricsPanel(x, y, usable);
     } else if (modal == "login") {
         loginPanel(x, y, usable);
     } else {

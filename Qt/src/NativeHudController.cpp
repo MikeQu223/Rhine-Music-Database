@@ -121,6 +121,12 @@ void NativeHud::openModal(QString kind) {
         // 首次绘制前也先测量内容高度，会话恢复才能按真实上限钳制滚动位置。
         refreshSettingsLayout();
     }
+    if (kind == "desktop-lyrics") {
+        // 进入页面时重新读取偏好，页面内的修改随后走独立动作。
+        desktopLyricsAppearanceLoaded = false;
+        desktopLyricsScroll = 0;
+        refreshDesktopLyricsLayout();
+    }
 }
 
 void NativeHud::closeModal() {
@@ -440,6 +446,10 @@ void NativeHud::action(QString value) {
     }
     if (value == "settings:restore-defaults") {
         restoreSettingsDefaults();
+        return;
+    }
+    if (value.startsWith("desktop-lyrics:")) {
+        applyDesktopLyricsAction(value);
         return;
     }
     if (value.startsWith("setting:")) {
@@ -885,6 +895,13 @@ void NativeHud::key(QString value, bool command) {
                                    SettingsViewportBottom - SettingsViewportTop);
         return;
     }
+    if (modal == "desktop-lyrics" && !closing && (value == "ArrowDown" || value == "ArrowUp")) {
+        const auto movement = value == "ArrowDown" ? 66. : -66.;
+        desktopLyricsScroll = HudScroll::clampOffset(desktopLyricsScroll + movement,
+                                                     desktopLyricsContentBottom - DesktopLyricsViewportTop,
+                                                     DesktopLyricsViewportBottom - DesktopLyricsViewportTop);
+        return;
+    }
     if (value == "Enter" && command) {
         m_music->play();
         return;
@@ -894,7 +911,13 @@ void NativeHud::key(QString value, bool command) {
         return;
     }
     if (value == "Escape") {
-        action(modal.isEmpty() ? "back" : "close-modal");
+        if (modal == "desktop-lyrics") {
+            action("desktop-lyrics:back");
+        } else if (modal.isEmpty()) {
+            action("back");
+        } else {
+            action("close-modal");
+        }
         return;
     }
     if (!modal.isEmpty()) {

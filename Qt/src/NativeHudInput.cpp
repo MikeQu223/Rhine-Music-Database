@@ -34,6 +34,18 @@ void NativeHud::wheel(double x, double y, double delta, std::optional<int> steps
         }
         return;
     }
+    if (modal == "desktop-lyrics") {
+        const auto bounds = modalBounds(width);
+        const auto localY = y - motion.offset;
+        if (!closing && x >= bounds.x() + 53 && x <= bounds.right() - 53 &&
+            localY >= bounds.top() + DesktopLyricsViewportTop &&
+            localY <= bounds.top() + DesktopLyricsViewportBottom) {
+            desktopLyricsScroll = HudScroll::applyWheel(
+                desktopLyricsScroll, desktopLyricsContentBottom - DesktopLyricsViewportTop,
+                DesktopLyricsViewportBottom - DesktopLyricsViewportTop, distance, step, 66.);
+        }
+        return;
+    }
     if (frame["viewer"].toBool()) {
         if (delta != 0) {
             m_scene.pointer("wheel", x, y, -delta * 8);

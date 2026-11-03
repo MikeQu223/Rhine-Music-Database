@@ -1,8 +1,10 @@
 #include "NativeHud.h"
 #include "AppUpdater.h"
+#include "DesktopLyricsAppearance.h"
 #include "Host.h"
 #include "MusicLibrary.h"
 #include "MusicPlayer.h"
+#include "PlatformFeatures.h"
 #include "SettingsCard.h"
 #include "SettingsSchema.h"
 #include <QHash>
@@ -510,6 +512,12 @@ void NativeHud::restoreSettingsDefaults() {
         action("disc-rotation");
     }
     m_host->setPreference("auto-update", QString());
+    // 桌面歌词的样式行不在主表中，整组恢复到新的默认值并关闭悬浮层。
+    if (PlatformFeatures::DesktopLyrics) {
+        m_host->setPreference(QString::fromLatin1(DesktopLyrics::EnabledKey), QStringLiteral("off"));
+        DesktopLyrics::resetAppearance(m_host);
+        desktopLyricsAppearanceLoaded = false;
+    }
     settingsScroll = 0;
     refreshSettingsLayout();
     m_music->status = QStringLiteral("已恢复默认设置");

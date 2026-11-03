@@ -86,8 +86,7 @@ void DesktopLyricsController::refresh() {
         return;
     }
 
-    auto style = DesktopLyrics::styleForFontSize(m_settings->fontSize());
-    style.opacity = m_settings->opacity() / 100.0;
+    const auto style = m_settings->style();
     if (m_wasVisible && content == m_lastContent && available == m_lastAvailable && style == m_lastStyle) {
         return;
     }

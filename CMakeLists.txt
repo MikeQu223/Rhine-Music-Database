@@ -168,6 +168,13 @@ set(RHINE_APP_SOURCES
     Qt/src/SettingsCard.cpp
     Qt/src/SettingsCard.h
     Qt/src/NativeHudSettings.cpp
+    Qt/src/NativeHudDesktopLyrics.cpp
+    Qt/src/DesktopLyricsLayout.cpp
+    Qt/src/DesktopLyricsLayout.h
+    Qt/src/DesktopLyricsAppearance.cpp
+    Qt/src/DesktopLyricsAppearance.h
+    Qt/src/DesktopLyricsSettingsPage.cpp
+    Qt/src/DesktopLyricsSettingsPage.h
     Qt/src/HudScroll.h
     Qt/src/DiscoverMusicCard.cpp
     Qt/src/DiscoverArtwork.cpp
@@ -474,9 +481,7 @@ if(NOT IOS)
     if(APPLE OR WIN32)
         target_sources(
             RhineMusicDatabase
-            PRIVATE Qt/src/DesktopLyricsLayout.cpp
-                    Qt/src/DesktopLyricsLayout.h
-                    Qt/src/DesktopLyricsView.cpp
+            PRIVATE Qt/src/DesktopLyricsView.cpp
                     Qt/src/DesktopLyricsView.h
                     Qt/src/DesktopLyricsWindow.cpp
                     Qt/src/DesktopLyricsWindow.h

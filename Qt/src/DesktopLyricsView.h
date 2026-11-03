@@ -16,7 +16,7 @@ class DesktopLyricsView final : public QQuickPaintedItem {
 
   private:
     void paintRow(QPainter &painter, const QString &text, double x, double y, double size,
-                  const QString &weight, const QColor &color);
+                  const QString &weight, const QColor &color, double outline, const QColor &outlineColor);
 
     Glyphs *m_glyphs;
     mutable QMutex m_mutex;

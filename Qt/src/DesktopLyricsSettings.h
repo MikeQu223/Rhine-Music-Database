@@ -1,17 +1,17 @@
 #pragma once
+#include "DesktopLyricsLayout.h"
 #include <QObject>
 #include <QString>
 
 class Host;
 
-// 桌面歌词开关
+// 桌面歌词开关与外观
 class DesktopLyricsSettings : public QObject {
     Q_OBJECT
   public:
     explicit DesktopLyricsSettings(Host *host, QObject *parent = nullptr);
     bool enabled() const;
-    int fontSize() const;
-    int opacity() const;
+    DesktopLyrics::Style style() const;
     void setEnabled(bool enabled);
 
   signals:
@@ -23,6 +23,5 @@ class DesktopLyricsSettings : public QObject {
 
     Host *m_host;
     bool m_enabled = false;
-    int m_fontSize = 32;
-    int m_opacity = 100;
+    DesktopLyrics::Appearance m_appearance;
 };

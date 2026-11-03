@@ -2,11 +2,9 @@
 #include <QJsonArray>
 #include <QtGlobal>
 #include <algorithm>
+#include <cmath>
 
 namespace {
-
-constexpr const char *LineWeight = "bold";
-constexpr const char *TranslationWeight = "regular";
 
 QString ellipsisRow(const QString &row, const DesktopLyrics::TextMetrics &metrics, double limit, double size,
                     const QString &weight) {
@@ -65,19 +63,21 @@ Frame buildFrame(const Content &content, const TextMetrics &metrics, double avai
                  const Style &style) {
     const double width = std::max(1.0, std::min(style.maximumWidth, availableWidth - style.horizontalMargin));
     const double textWidth = std::max(1.0, width - style.horizontalPadding * 2);
-    const auto lineRows = fitRows(metrics.wrap(content.text, textWidth, style.lineSize, LineWeight),
-                                  style.maximumLineRows, metrics, textWidth, style.lineSize, LineWeight);
+    const auto lineRows =
+        fitRows(metrics.wrap(content.text, textWidth, style.lineSize, style.lineWeight),
+                style.maximumLineRows, metrics, textWidth, style.lineSize, style.lineWeight);
     QStringList translationRows;
     if (!content.translation.isEmpty()) {
         translationRows = fitRows(
-            metrics.wrap(content.translation, textWidth, style.translationSize, TranslationWeight),
-            style.maximumTranslationRows, metrics, textWidth, style.translationSize, TranslationWeight);
+            metrics.wrap(content.translation, textWidth, style.translationSize, style.translationWeight),
+            style.maximumTranslationRows, metrics, textWidth, style.translationSize, style.translationWeight);
     }
 
     Frame frame;
     frame.style = style;
-    frame.lineRows = measureRows(lineRows, metrics, style.lineSize, LineWeight);
-    frame.translationRows = measureRows(translationRows, metrics, style.translationSize, TranslationWeight);
+    frame.lineRows = measureRows(lineRows, metrics, style.lineSize, style.lineWeight);
+    frame.translationRows =
+        measureRows(translationRows, metrics, style.translationSize, style.translationWeight);
     double height = style.verticalPadding * 2 + frame.lineRows.size() * style.lineHeight;
     if (!frame.translationRows.isEmpty()) {
         height += style.translationGap + frame.translationRows.size() * style.translationHeight;
@@ -86,17 +86,26 @@ Frame buildFrame(const Content &content, const TextMetrics &metrics, double avai
     return frame;
 }
 
-Style styleForFontSize(int fontSize) {
+Style styleFor(const Appearance &appearance) {
     Style style;
-    const double clamped = std::clamp(fontSize, MinimumFontSize, MaximumFontSize);
-    const double scale = clamped / style.lineSize;
-    style.lineSize = clamped;
-    style.translationSize *= scale;
-    style.lineHeight *= scale;
-    style.translationHeight *= scale;
+    style.lineSize = std::clamp(appearance.lineSize, MinimumLineSize, MaximumLineSize);
+    style.translationSize =
+        std::clamp(appearance.translationSize, MinimumTranslationSize, MaximumTranslationSize);
+    const double scale = style.lineSize / double(DefaultLineSize);
+    style.lineHeight = std::round(style.lineSize * 1.375);
+    style.translationHeight = std::round(style.translationSize * 1.45);
     style.horizontalPadding *= scale;
     style.verticalPadding *= scale;
     style.translationGap *= scale;
+    style.lineColor = appearance.lineColor;
+    style.translationColor = appearance.translationColor;
+    style.lineWeight = appearance.lineWeight;
+    style.translationWeight = appearance.translationWeight;
+    style.lineOutline = std::clamp(appearance.lineOutline, 0.0, MaximumOutline);
+    style.translationOutline = std::clamp(appearance.translationOutline, 0.0, MaximumOutline);
+    style.lineOutlineColor = appearance.lineOutlineColor;
+    style.translationOutlineColor = appearance.translationOutlineColor;
+    style.opacity = std::clamp(appearance.opacity, MinimumOpacity, MaximumOpacity) / 100.0;
     return style;
 }
 

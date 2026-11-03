@@ -1,4 +1,5 @@
 #pragma once
+#include "DesktopLyricsLayout.h"
 #include "Glyphs.h"
 #include "HudScroll.h"
 #include "MusicLibrary.h"
@@ -114,13 +115,26 @@ class NativeHud : public QObject {
     static constexpr double SettingsViewportBottom = 836;
     double settingsContentBottom = 1600;
     double settingsScroll = 0;
-    // 设置页下拉块：非空时该偏好行展开成选项列表（目前只有抗锯齿使用）。
+    // 设置页下拉块：非空时该偏好行展开成选项列表。
     QString expandedPreference;
     // 清除缓存后的结果提示；重新打开设置页时清空。
     QString cacheMessage;
+    // 从主设置页进入桌面歌词页时保留原滚动位置。
+    double settingsReturnScroll = 0;
+    // 桌面歌词样式页使用独立滚动区。
+    static constexpr double DesktopLyricsViewportTop = 200;
+    static constexpr double DesktopLyricsViewportBottom = 820;
+    double desktopLyricsContentBottom = 1600;
+    double desktopLyricsScroll = 0;
+    DesktopLyrics::Appearance desktopLyricsAppearance;
+    bool desktopLyricsAppearanceLoaded = false;
     double settingsScrollMaximum() const {
         return HudScroll::maximum(settingsContentBottom - SettingsViewportTop,
                                   SettingsViewportBottom - SettingsViewportTop);
+    }
+    double desktopLyricsScrollMaximum() const {
+        return HudScroll::maximum(desktopLyricsContentBottom - DesktopLyricsViewportTop,
+                                  DesktopLyricsViewportBottom - DesktopLyricsViewportTop);
     }
     bool dark = false;
     bool reduced = false;
@@ -298,6 +312,10 @@ class NativeHud : public QObject {
     SettingsSchema::SettingsContext settingsContext() const;
     void applySettingValue(const QString &id, const QString &value);
     void restoreSettingsDefaults();
+    void refreshDesktopLyricsLayout();
+    void refreshDesktopLyricsAppearance();
+    void desktopLyricsPanel(double x, double y, double width);
+    void applyDesktopLyricsAction(const QString &value);
     void qualityPanel(double x, double y, double width);
     void qualityChoice(const QString &id, int number, double x, double y, double width, bool featured);
     void logo(double x, double y, double width);
