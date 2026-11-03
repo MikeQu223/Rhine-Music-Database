@@ -63,10 +63,9 @@
  * 只判 QT_CONFIG(vulkan) 会在装了 Qt 但没装 Vulkan SDK 的机器上
  * （如 Windows runner：Qt 自带 Vulkan 特性、系统无 vulkan.h）编译出使用未声明类型的代码，
  * 表现为 QVulkanInstance 不完整类型与 VK_SUCCESS 未定义。守卫必须同时覆盖两半。
- * Android 也排除在外：NDK 自带 vulkan.h，但本项目的着色器只烘了 GLSL ES 300
- * （见根 CMakeLists 的 qt_add_shaders），没有 SPIR-V 可喂给 Vulkan，探测它只会白费一次实例创建。 */
-#if QT_CONFIG(vulkan) && __has_include(<vulkan/vulkan.h>) && !defined(Q_OS_DARWIN) && \
-    !defined(Q_OS_ANDROID)
+ * Android 与桌面同路径：NDK 自带 vulkan.h，自编 Qt 的 QT_CONFIG(vulkan)=1，
+ * .qsb 里本来就含 SPIR-V（GLSL 130,150,300es 只是附加的翻译产物），Vulkan 可直接消费。 */
+#if QT_CONFIG(vulkan) && __has_include(<vulkan/vulkan.h>) && !defined(Q_OS_DARWIN)
 #include <QVulkanFunctions>
 #include <QVulkanInstance>
 #define RHINE_HAVE_VULKAN_TYPES 1
@@ -93,31 +92,28 @@ static bool vulkanDeviceAvailable() {
     QVulkanInstance probe;
     probe.setApiVersion(QVersionNumber(1, 0));
     if (!probe.create()) {
-#ifdef Q_OS_LINUX
+#if RHINE_LINUX_DESKTOP
         qWarning() << "Vulkan: 无法创建探测实例（loader 缺失或驱动不可用）";
 #endif
         return false;
     }
     // QVulkanInstance 不公开设备列表，直接按 Vulkan API 枚举，避免依赖 QVulkanWindow。
     quint32 devices = 0;
-#ifdef Q_OS_LINUX
-    const auto result =
-        probe.functions()->vkEnumeratePhysicalDevices(probe.vkInstance(), &devices, nullptr);
+    const auto result = probe.functions()->vkEnumeratePhysicalDevices(probe.vkInstance(), &devices, nullptr);
     if (result != VK_SUCCESS) {
+#if RHINE_LINUX_DESKTOP
         // 只报"Vulkan 不可用"会把排障推回用户：这里必须区分驱动/loader 报错与根本没有设备。
         qWarning() << "Vulkan: vkEnumeratePhysicalDevices 失败，VkResult" << int(result);
+#endif
         return false;
     }
     if (devices == 0) {
+#if RHINE_LINUX_DESKTOP
         qWarning() << "Vulkan: 物理设备数为 0（缺 /dev/dri、ICD 未安装或驱动被禁用）";
+#endif
         return false;
     }
     return true;
-#else
-    return probe.functions()->vkEnumeratePhysicalDevices(probe.vkInstance(), &devices, nullptr) ==
-               VK_SUCCESS &&
-           devices > 0;
-#endif
 #else
     return false;
 #endif
@@ -142,8 +138,8 @@ static bool vulkanPresentationAvailable() {
     static const bool verdict = [] {
         const auto platform = QGuiApplication::platformName();
         const bool overrideRequested = qEnvironmentVariableIntValue("RHINE_X11_ALLOW_VULKAN") > 0;
-        const auto dri3 = platform == QLatin1String("xcb") ? RhineLinux::probeDri3()
-                                                           : RhineLinux::Dri3::Unknown;
+        const auto dri3 =
+            platform == QLatin1String("xcb") ? RhineLinux::probeDri3() : RhineLinux::Dri3::Unknown;
         const bool allowed = RhineLinux::vulkanAllowedOn(platform, dri3, overrideRequested);
         if (!allowed) {
             qWarning().noquote() << "Vulkan:" << RhineLinux::describeVulkanBlock(platform, dri3);
@@ -157,7 +153,8 @@ static bool vulkanPresentationAvailable() {
  *  仅在非 macOS 下编译：macOS 只提供 Metal，本函数的两个调用点都在 #else 分支里，
  *  而 vulkanDeviceAvailable() 同样只在非 macOS 下定义。 */
 #if !defined(Q_OS_DARWIN)
-/** Vulkan 既要有设备、也要能呈现到当前显示服务器（macOS 无此路径，故在本块内定义）。 */
+/** Vulkan 既要有设备、也要能呈现到当前显示服务器。
+ *  Linux 桌面要额外过 DRI3 探测；Windows 与 Android 只要设备存在即可。 */
 static bool vulkanUsable() {
 #if RHINE_LINUX_DESKTOP
     return vulkanDeviceAvailable() && vulkanPresentationAvailable();
@@ -191,18 +188,9 @@ static bool applyNamedBackend(const QString &requested) {
 }
 #endif
 static void selectGraphicsBackend() {
-#ifdef Q_OS_ANDROID
-    // Android 只走 OpenGL ES。自绘场景的着色器只烘了 GLSL ES 300，没有 SPIR-V，
-    // Vulkan 上无管线可用；而 QSG_RHI_BACKEND 与上次保存的偏好可能来自桌面版本，
-    // 交给"平台默认 + 配置"去选就会黑屏。这里直接钉死后端，只留一条告警说明为什么忽略。
-    if (!qEnvironmentVariableIsEmpty("QSG_RHI_BACKEND")) {
-        qWarning() << "Android 只提供 OpenGL ES 后端，忽略 QSG_RHI_BACKEND ="
-                   << qEnvironmentVariable("QSG_RHI_BACKEND");
-    }
-    QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
-    RhineGraphics::setActiveBackend(QStringLiteral("opengl"));
-    return;
-#endif
+    // Android 与桌面 Linux 走同一条链：显式环境变量 → 设置页偏好 → Vulkan 优先、GLES 回退。
+    // .qsb 里自带 SPIR-V（GLSL 130,150,300es 只是附加翻译产物），两个后端都有管线可用；
+    // 老版本构建里保存的 opengl 偏好在 Vulkan 可用的设备上仍然生效，这是用户自己的选择。
     // 停用的 D3D 后端
     if (!qEnvironmentVariableIsEmpty("QSG_RHI_BACKEND")) {
         const auto overrideBackend = qEnvironmentVariable("QSG_RHI_BACKEND").trimmed().toLower();
@@ -465,8 +453,8 @@ int main(int argc, char **argv) {
 #endif
     // 必须在创建任何 QQuickWindow 之前确定后端；组织名先落位，配置路径才能落到应用数据目录。
     selectGraphicsBackend();
-    qInfo().noquote() << "Display:" << QGuiApplication::platformName() << "backend:"
-                         << RhineGraphics::activeBackend();
+    qInfo().noquote() << "Display:" << QGuiApplication::platformName()
+                      << "backend:" << RhineGraphics::activeBackend();
     applyVSyncSetting();
     applySupersampleSetting();
     applyRenderScaleSetting();
@@ -566,9 +554,8 @@ int main(int argc, char **argv) {
         }
 #ifdef Q_OS_LINUX
         // 带上本次已经解析出的后端：后台服务据此判断在跑的界面进程是否还符合当前配置。
-        const auto attached =
-            playback->call("attach", {{"pid", double(application.applicationPid())},
-                                      {"backend", RhineGraphics::activeBackend()}});
+        const auto attached = playback->call("attach", {{"pid", double(application.applicationPid())},
+                                                        {"backend", RhineGraphics::activeBackend()}});
         if (attached["existing"].toBool()) {
             // 这两条分支都只让本进程退出；不打日志的话，"点了没有窗口"与启动失败无法区分。
             if (attached["restarted"].toBool()) {
@@ -639,7 +626,13 @@ int main(int argc, char **argv) {
         qEnvironmentVariable("RHINE_FG_LAYER").compare("off", Qt::CaseInsensitive) == 0;
     // 离屏与最小平台没有原生窗口系统，呈现层无法创建交换链；必须直接走 Qt Quick 默认路径。
     // 否则无显示环境（CI、--playback-gui-test）会在接管 Metal 窗口时崩溃。
-#if !defined(Q_OS_IOS)
+    // Android 的"窗口"就是全屏 Activity：没有第二窗口、没有悬浮歌词、没有呈现层接管，
+    // 桌面歌词与 FG 的入口必须整体排除，而不是等到创建窗口时才报错。
+#if defined(Q_OS_ANDROID)
+    // Android 的"窗口"就是全屏 Activity：没有第二窗口、没有悬浮歌词、没有呈现层接管，
+    // 桌面歌词与 FG 的入口必须整体置为不可用，而不是等到创建窗口时才报错。
+    const bool hasNativeWindowSystem = false;
+#elif !defined(Q_OS_IOS)
     const auto platformName = QGuiApplication::platformName();
     const bool hasNativeWindowSystem =
         platformName != QStringLiteral("offscreen") && platformName != QStringLiteral("minimal");
