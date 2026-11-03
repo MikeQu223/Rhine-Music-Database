@@ -349,7 +349,9 @@ void Host::send(QString key) {
             finish(key, {}, "无法创建音乐服务临时目录");
             return;
         }
-#ifdef Q_OS_IOS
+#if RHINE_MOBILE
+        // 移动端由进程内的 Node 运行时执行同一个 worker，路径必须是真实文件系统路径
+        // （Android 侧已把内嵌资源解包到应用私有目录，root 指向解包结果）。
         pending.insert(work.id, key);
         child.start(root, temporary->path(), kugouEdition);
         return;

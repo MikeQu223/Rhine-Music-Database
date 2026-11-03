@@ -2107,11 +2107,10 @@ class Renderer {
         if (geo) {
             QRhiVertexInputLayout layout;
 #if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
-#ifdef Q_OS_DARWIN
+            // stride 是 quint32，三目表达式里写 int 会被 clang 的 -Wc++11-narrowing 当错误
+            // （AppleClang 和 Android 的 clang 都是；GCC 只警告）。Android 同样定义
+            // Q_OS_LINUX，所以这里不能再按 Darwin 分开写。
             layout.setBindings({{32}, {compact ? 80u : 144u, QRhiVertexInputBinding::PerInstance}});
-#else
-            layout.setBindings({{32}, {compact ? 80 : 144, QRhiVertexInputBinding::PerInstance}});
-#endif
 #else
             layout.setBindings({{32}, {80, QRhiVertexInputBinding::PerInstance}});
 #endif
@@ -3919,10 +3918,16 @@ QImage renderReference(const QString &root, const QJsonObject &frame, const QJso
 #else
     if (!rhi) {
         // 着色器按 GLSL 150 打包（GL 3.2 核心档）；默认格式会退到 2.1 并找不到可用版本。
+        // Android 只有 GLES：请求桌面 GL 3.3 核心档会创建失败，改要 ES 3.0（对应 300 es 那一档）。
         QSurfaceFormat format;
+#ifdef Q_OS_ANDROID
+        format.setRenderableType(QSurfaceFormat::OpenGLES);
+        format.setVersion(3, 0);
+#else
         format.setRenderableType(QSurfaceFormat::OpenGL);
         format.setVersion(3, 3);
         format.setProfile(QSurfaceFormat::CoreProfile);
+#endif
         format.setDepthBufferSize(24);
         format.setStencilBufferSize(8);
         surface.reset(QRhiGles2InitParams::newFallbackSurface(format));

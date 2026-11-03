@@ -1,9 +1,11 @@
 #pragma once
 #include <QtGlobal>
+#include "MobileTarget.h"
 
 // 平台特性宏
 namespace PlatformFeatures {
-#ifdef Q_OS_IOS
+#if RHINE_MOBILE
+// 移动端没有独立的官方客户端可交付，也没有可枚举的本地音乐目录与逐应用音量。
 inline constexpr bool OfficialPlayback = false;
 inline constexpr bool LocalMusic = false;
 inline constexpr bool ApplicationVolume = false;

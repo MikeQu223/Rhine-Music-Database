@@ -1,5 +1,6 @@
 #include <QtGlobal>
 #include "AppIdentity.h"
+#include "MobileTarget.h"
 #include "AppStorage.h"
 #include "Engine.h"
 #include "fg/FgCapability.h"
@@ -11,12 +12,12 @@
 #include "FrameProfiler.h"
 #include "GraphicsBackend.h"
 #include "Hud.h"
+#if RHINE_LINUX_DESKTOP
 #include "LinuxGraphics.h"
-#ifdef Q_OS_LINUX
 #include "LinuxX11.h"
 #endif
 #include "RhiScene.h"
-#ifndef Q_OS_IOS
+#if !RHINE_MOBILE
 #include "PlaybackConnection.h"
 #endif
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
@@ -28,6 +29,10 @@
 #endif
 #ifdef Q_OS_IOS
 #include "IOSWindow.h"
+#endif
+#ifdef Q_OS_ANDROID
+#include "AndroidAssets.h"
+#include "AndroidWindow.h"
 #endif
 #include <QDir>
 #include <QFileInfo>
@@ -50,17 +55,18 @@
 #include <QTimer>
 #include <cstdio>
 #include <cstring>
-#ifndef Q_OS_IOS
 #include <memory>
-#endif
 /* Qt 的 Vulkan 类型只在「Qt 带 Vulkan 特性」且「应用侧能看到 vulkan.h」时声明：
  *   qvulkaninstance.h:  #if QT_CONFIG(vulkan) || defined(Q_QDOC)
  *                      #if __has_include(<vulkan/vulkan.h>) || defined(Q_QDOC)
  *   qrhi_platform.h:    #if (QT_CONFIG(vulkan) && __has_include(<vulkan/vulkan.h>)) || defined(Q_QDOC)
  * 只判 QT_CONFIG(vulkan) 会在装了 Qt 但没装 Vulkan SDK 的机器上
  * （如 Windows runner：Qt 自带 Vulkan 特性、系统无 vulkan.h）编译出使用未声明类型的代码，
- * 表现为 QVulkanInstance 不完整类型与 VK_SUCCESS 未定义。守卫必须同时覆盖两半。 */
-#if QT_CONFIG(vulkan) && __has_include(<vulkan/vulkan.h>) && !defined(Q_OS_DARWIN)
+ * 表现为 QVulkanInstance 不完整类型与 VK_SUCCESS 未定义。守卫必须同时覆盖两半。
+ * Android 也排除在外：NDK 自带 vulkan.h，但本项目的着色器只烘了 GLSL ES 300
+ * （见根 CMakeLists 的 qt_add_shaders），没有 SPIR-V 可喂给 Vulkan，探测它只会白费一次实例创建。 */
+#if QT_CONFIG(vulkan) && __has_include(<vulkan/vulkan.h>) && !defined(Q_OS_DARWIN) && \
+    !defined(Q_OS_ANDROID)
 #include <QVulkanFunctions>
 #include <QVulkanInstance>
 #define RHINE_HAVE_VULKAN_TYPES 1
@@ -68,7 +74,7 @@
 #define RHINE_HAVE_VULKAN_TYPES 0
 #endif
 int makeIcon(const QString &directory);
-#ifndef Q_OS_IOS
+#if !RHINE_MOBILE
 bool runPlaybackServiceChecks(const QString &resources, const QString &executable, const QString &gui);
 bool runWindowTransitionChecks();
 #endif
@@ -127,7 +133,7 @@ static bool vulkanDeviceAvailable() {
 static QSettings graphicsSettings() {
     return AppStorage::settings();
 }
-#ifdef Q_OS_LINUX
+#if RHINE_LINUX_DESKTOP
 /**
  * 当前显示服务器上 Vulkan 能不能呈现。设备枚举判不出这件事：Mesa 在创建交换链时才查 DRI3，
  * 缺了就 abort 而不是返回错误（详见 LinuxX11.h）。结果只探一次，日志同样只打一次。
@@ -153,7 +159,7 @@ static bool vulkanPresentationAvailable() {
 #if !defined(Q_OS_DARWIN)
 /** Vulkan 既要有设备、也要能呈现到当前显示服务器（macOS 无此路径，故在本块内定义）。 */
 static bool vulkanUsable() {
-#ifdef Q_OS_LINUX
+#if RHINE_LINUX_DESKTOP
     return vulkanDeviceAvailable() && vulkanPresentationAvailable();
 #else
     return vulkanDeviceAvailable();
@@ -185,6 +191,18 @@ static bool applyNamedBackend(const QString &requested) {
 }
 #endif
 static void selectGraphicsBackend() {
+#ifdef Q_OS_ANDROID
+    // Android 只走 OpenGL ES。自绘场景的着色器只烘了 GLSL ES 300，没有 SPIR-V，
+    // Vulkan 上无管线可用；而 QSG_RHI_BACKEND 与上次保存的偏好可能来自桌面版本，
+    // 交给"平台默认 + 配置"去选就会黑屏。这里直接钉死后端，只留一条告警说明为什么忽略。
+    if (!qEnvironmentVariableIsEmpty("QSG_RHI_BACKEND")) {
+        qWarning() << "Android 只提供 OpenGL ES 后端，忽略 QSG_RHI_BACKEND ="
+                   << qEnvironmentVariable("QSG_RHI_BACKEND");
+    }
+    QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
+    RhineGraphics::setActiveBackend(QStringLiteral("opengl"));
+    return;
+#endif
     // 停用的 D3D 后端
     if (!qEnvironmentVariableIsEmpty("QSG_RHI_BACKEND")) {
         const auto overrideBackend = qEnvironmentVariable("QSG_RHI_BACKEND").trimmed().toLower();
@@ -379,9 +397,13 @@ int main(int argc, char **argv) {
 #endif
     // 两个平台都明确使用 FFmpeg，设备切换和重连由播放器独立处理。
     // 必须在 Qt 初始化多媒体前选择后端，显式环境变量仍可用于兼容性对照。
+    // Android 例外：随包的 Android 插件是系统 MediaPlayer 后端，强制 ffmpeg 会找不到插件，
+    // 表现为"点了播放没反应"。
+#if !defined(Q_OS_ANDROID)
     if (qEnvironmentVariableIsEmpty("QT_MEDIA_BACKEND")) {
         qputenv("QT_MEDIA_BACKEND", "ffmpeg");
     }
+#endif
     // 平台插件必须在 QGuiApplication 构造时定下，晚一步就只能重启进程。
     // RHINE_QPA_PLATFORM 是给用户与打包脚本的稳定入口（等价于 QT_QPA_PLATFORM，但不受
     // 用户原有环境变量冲突影响）；纯 Xorg / XWayland 上写 xcb，Wayland 上写 wayland。
@@ -417,7 +439,7 @@ int main(int argc, char **argv) {
 #ifdef Q_OS_WIN
     initializeWindowsGraphics();
 #endif
-#ifdef Q_OS_LINUX
+#if RHINE_LINUX_DESKTOP
     // Linux 没有 QT_D3D_ADAPTER_INDEX 那样的单一入口，选择只能落成厂商环境变量，
     // 所以同样要早于任何 QQuickWindow——RHI 在创建窗口时就定下了用哪块卡。
     initializeLinuxGraphics();
@@ -431,7 +453,7 @@ int main(int argc, char **argv) {
     QCoreApplication::setApplicationVersion(AppUpdater::currentVersion());
     QGuiApplication::setApplicationDisplayName(AppIdentity::DisplayName);
     const auto args = application.arguments();
-#ifndef Q_OS_IOS
+#if !RHINE_MOBILE
     // 界面回归使用隔离的用户目录；必须在读取任何偏好之前建立。
     const bool playbackGuiTest = args.contains("--playback-gui-test");
     if (playbackGuiTest) {
@@ -463,6 +485,11 @@ int main(int argc, char **argv) {
     }
     QString root = qEnvironmentVariable("RHINE_RESOURCES");
     if (root.isEmpty()) {
+#if defined(Q_OS_ANDROID)
+        // 随包资源要先从二进制里解出来：Node 与 QFontDatabase 都需要真实路径，
+        // APK 内路径只有 Qt 的 qrc 引擎认得。
+        const QStringList candidates{androidResourceRoot()};
+#else
         // iOS 使用专用资源目录
         const auto base = QCoreApplication::applicationDirPath();
 #ifdef Q_OS_MACOS
@@ -472,6 +499,7 @@ int main(int argc, char **argv) {
 #else
         const QStringList candidates{base + "/resources", base + "/../resources"};
 #endif
+#endif
         for (const auto &candidate : candidates) {
             if (QFileInfo(candidate + "/slots.json").exists()) {
                 root = QDir(candidate).absolutePath();
@@ -479,6 +507,9 @@ int main(int argc, char **argv) {
             }
         }
         if (root.isEmpty()) {
+            // 走到这里说明随包资源没找到：Android 上通常是解包失败（私有目录不可写或
+            // 二进制里没有内嵌资源），打一行明确日志，别让它表现为"界面全黑"。
+            qWarning().noquote() << "找不到随包资源，回退到" << QDir::currentPath() + "/output/resources";
             root = QDir::currentPath() + "/output/resources";
         }
     }
@@ -492,7 +523,7 @@ int main(int argc, char **argv) {
     }
 #endif
     if (test) {
-#ifndef Q_OS_IOS
+#if !RHINE_MOBILE
 #ifdef Q_OS_MACOS
         if (QGuiApplication::platformName() == "cocoa") {
             // 无窗口的测试控制器不能占据第二个 Dock 身份或参与被测的调度组。
@@ -521,7 +552,7 @@ int main(int argc, char **argv) {
     // 桌面版：音频、账号与播放队列由独立后台服务持有，界面进程只负责渲染。
     // 服务随界面启动并与其生命周期绑定：界面退出或崩溃都会停止播放并结束服务。
     std::unique_ptr<PlaybackConnection> playback;
-#ifndef Q_OS_IOS
+#if !RHINE_MOBILE
     if (!offline) {
         playback = std::make_unique<PlaybackConnection>();
         QString error;
@@ -695,7 +726,7 @@ int main(int argc, char **argv) {
                 },
                 Qt::QueuedConnection);
 #endif
-#ifndef Q_OS_IOS
+#if !RHINE_MOBILE
             if (playbackGuiTest) {
                 qInfo("PLAYBACK_GUI_READY");
                 if (args.contains("--playback-test-quit")) {
@@ -768,10 +799,12 @@ int main(int argc, char **argv) {
 #endif
 #ifdef Q_OS_IOS
     configureIOSWindow(window, backend.get());
+#elif defined(Q_OS_ANDROID)
+    configureAndroidWindow(window, backend.get());
 #endif
     window->installEventFilter(backend.get());
     profiler->attach(window);
-#ifndef Q_OS_IOS
+#if !RHINE_MOBILE
     if (playbackGuiTest) {
         qInfo("PLAYBACK_GUI_READY");
         if (args.contains("--playback-test-quit")) {
