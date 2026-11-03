@@ -1,7 +1,7 @@
 #include "DesktopTray.h"
 #include "AppStorage.h"
 #include "TrayIcon.h"
-#ifdef Q_OS_MACOS
+#if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
 #include "DesktopLyricsSettings.h"
 #endif
 #include <QAction>
@@ -71,7 +71,7 @@ bool DesktopTray::eventFilter(QObject *watched, QEvent *event) {
     return QObject::eventFilter(watched, event);
 }
 
-#ifdef Q_OS_MACOS
+#if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
 void DesktopTray::attachDesktopLyrics(DesktopLyricsSettings *settings) {
     if (!settings || m_desktopLyrics) {
         return;

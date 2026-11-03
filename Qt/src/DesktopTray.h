@@ -5,7 +5,7 @@
 
 class QAction;
 class QWindow;
-#ifdef Q_OS_MACOS
+#if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
 class DesktopLyricsSettings;
 #endif
 
@@ -13,7 +13,7 @@ class DesktopLyricsSettings;
 class DesktopTray : public QObject {
   public:
     explicit DesktopTray(QWindow *window, QObject *parent = nullptr);
-#ifdef Q_OS_MACOS
+#if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
     void attachDesktopLyrics(DesktopLyricsSettings *settings);
 #endif
 
@@ -27,7 +27,7 @@ class DesktopTray : public QObject {
     QMenu m_menu;
     QSystemTrayIcon m_icon;
     QAction *m_quit = nullptr;
-#ifdef Q_OS_MACOS
+#if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
     QAction *m_desktopLyrics = nullptr;
 #endif
     bool m_quitting = false;

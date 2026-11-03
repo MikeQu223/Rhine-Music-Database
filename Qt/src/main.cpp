@@ -19,9 +19,11 @@
 #ifndef Q_OS_IOS
 #include "PlaybackConnection.h"
 #endif
-#ifdef Q_OS_MACOS
+#if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
 #include "DesktopLyricsController.h"
 #include "DesktopLyricsSettings.h"
+#endif
+#ifdef Q_OS_MACOS
 #include "InterfaceWindowMac.h"
 #endif
 #ifdef Q_OS_IOS
@@ -611,7 +613,7 @@ int main(int argc, char **argv) {
     const bool hasNativeWindowSystem =
         platformName != QStringLiteral("offscreen") && platformName != QStringLiteral("minimal");
 #endif
-#ifdef Q_OS_MACOS
+#if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
     // 悬浮歌词只在有原生窗口系统的桌面路径创建；窗口本身延迟到首次开启。
     std::unique_ptr<DesktopLyricsSettings> desktopLyricsSettings;
     std::unique_ptr<DesktopLyricsController> desktopLyricsController;
@@ -720,11 +722,9 @@ int main(int argc, char **argv) {
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
             std::unique_ptr<DesktopTray> tray;
             tray = std::make_unique<DesktopTray>(shell->window(), &application);
-#ifdef Q_OS_MACOS
             if (tray && desktopLyricsSettings) {
                 tray->attachDesktopLyrics(desktopLyricsSettings.get());
             }
-#endif
 #endif
             QObject::connect(&application, &QCoreApplication::aboutToQuit, shell.get(),
                              [raw = shell.get()] { raw->shutdown(); });
@@ -762,11 +762,9 @@ int main(int argc, char **argv) {
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
     std::unique_ptr<DesktopTray> tray;
     tray = std::make_unique<DesktopTray>(window, &application);
-#ifdef Q_OS_MACOS
     if (tray && desktopLyricsSettings) {
         tray->attachDesktopLyrics(desktopLyricsSettings.get());
     }
-#endif
 #endif
 #ifdef Q_OS_IOS
     configureIOSWindow(window, backend.get());
