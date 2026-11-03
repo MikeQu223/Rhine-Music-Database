@@ -1,8 +1,11 @@
+#include "AndroidMediaSession.h"
 #include "AppStorage.h"
 #include "Host.h"
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QVariantMap>
+#include <functional>
 
 namespace {
 /** 凭据落在应用私有目录。Android 的 per-app 沙箱已经隔离了其它应用，
@@ -47,18 +50,21 @@ void platformPlay(const QString &, bool, std::function<void(QString)> done) {
 }
 
 /**
- * 系统媒体会话（通知栏/锁屏控制）需要一层 Java 侧 MediaSession，
- * 当前构建没有随包 Java 源码，因此这里保持空实现：
- * 面板内的播放、暂停、上下曲不受影响，只是不会出现在系统媒体控件里。
- * 这条限制在 docs/ANDROID.md 里对用户明示，不要让它变成"看起来支持、实际没反应"。
+ * 系统媒体控件（通知栏/锁屏/耳机按键）由 AndroidMediaSession 驱动：
+ * Host 注册动作回调，mediaState 每秒上报一次状态，Java 侧的 MediaSession
+ * 把耳机/通知栏的命令经同一条通路送回 Host::mediaAction。
+ * 动作字符串与 iOS 的 MPRemoteCommandCenter 完全一致（resume/pause/toggle/next/prev）。
  */
 void platformMediaCommands(std::function<void(QString)> callback) {
-    Q_UNUSED(callback)
+    AndroidMediaSession::setCommandCallback(std::move(callback));
 }
 
 void platformMediaInfo(QString title, QString artist, QString album, QVariantMap state) {
-    Q_UNUSED(title)
-    Q_UNUSED(artist)
-    Q_UNUSED(album)
-    Q_UNUSED(state)
+    if (title.isEmpty() || state.value("duration").toLongLong() <= 0) {
+        AndroidMediaSession::stop();
+        return;
+    }
+    AndroidMediaSession::ensureStarted();
+    AndroidMediaSession::update(state.value("playing").toBool(), state.value("position").toLongLong(),
+                                state.value("duration").toLongLong(), title, artist, album);
 }

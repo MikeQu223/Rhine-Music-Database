@@ -1,9 +1,12 @@
 #include "BridgeProcess.h"
 #include "AppStorage.h"
+#include <QDebug>
 #include <QCoreApplication>
+#include <QDir>
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QPointer>
+#include <QStandardPaths>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QTimer>
@@ -83,6 +86,7 @@ class NodeRuntime : public QObject {
                 }
                 authenticated = true;
                 server.close();
+                qInfo().noquote() << "node runtime connected over loopback";
                 socket->write(queued);
                 queued.clear();
             } else if (owner) {
@@ -144,8 +148,10 @@ void *nodeThreadMain(void *context) {
         cursor += std::strlen(cursor) + 1;
     }
     auto *runtime = start->runtime;
-    node::Start(4, values);
+    // 退出码与脚本路径是设备上唯一的失败线索：没有控制台，node 的报错只能靠 logcat。
+    const auto code = node::Start(4, values);
     runtime->exited = true;
+    qWarning().noquote() << "node runtime exited, code" << code << "script" << QByteArray(values[1]);
     QMetaObject::invokeMethod(runtime, [runtime] {
         if (runtime->owner) {
             runtime->owner->accept({{"type", "runtime-error"}});
@@ -171,6 +177,9 @@ BridgeProcess::~BridgeProcess() {
     }
 }
 void BridgeProcess::start(const QString &root, const QString &temporary, const QString &edition) {
+    // temporary 是宿主的会话临时目录（内部缓存）；worker 的 TMPDIR 改用外部缓存目录
+    // （见下），这个参数只作为外部存储不可用时的回退锚点之一，不再直接使用。
+    Q_UNUSED(temporary)
     m_state = Starting;
     m_session = QUuid::createUuid().toString(QUuid::WithoutBraces);
     runtime().owner = this;
@@ -178,14 +187,27 @@ void BridgeProcess::start(const QString &root, const QString &temporary, const Q
         QTimer::singleShot(0, this, [this] { accept({{"type", "runtime-error"}}); });
         return;
     }
+    // 临时目录用系统分配的外部缓存目录（getExternalCacheDir，即
+    // /storage/emulated/0/Android/data/<包名>/cache——包名由系统填充，这里不写死；
+    // Qt 的 CacheLocation 在 Android 上映射到它）。Android 没有 /tmp；外部缓存
+    // 无需运行时权限，用户也能在系统设置里清理。外部存储不可用时退回内部缓存。
+    const QString tmpRoot = [] {
+        auto external = QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
+        if (external.isEmpty()) {
+            external = AppStorage::temporaryDirectory();
+        }
+        return external;
+    }();
+    QDir().mkpath(tmpRoot);
     QJsonObject environment{
-        {"TMPDIR", temporary},
+        {"TMPDIR", tmpRoot},
         {"RHINE_QQ_DEVICE_STATE_PATH", AppStorage::dataDirectory() + "/qq-device.json"},
         {"RHINE_KUGOU_DEVICE_STATE_PATH", AppStorage::dataDirectory() + "/kugou-device.json"},
         {"RHINE_KUGOU_EDITION", edition}};
     runtime().send({{"type", "start"},
                     {"session", m_session},
                     {"script", root + "/MusicBridge/worker.cjs"},
+                    {"stderrLog", true},
                     {"env", environment}});
     const auto session = m_session;
     QTimer::singleShot(30000, this, [this, session] {
@@ -223,6 +245,12 @@ bool BridgeProcess::waitForFinished(int) {
 }
 void BridgeProcess::accept(const QJsonObject &message) {
     const auto type = message["type"].toString();
+    if (type == "stderr") {
+        // worker 的 stderr：设备上没有控制台，这里落进 logcat 才能定位崩溃。
+        qWarning().noquote() << "node worker:"
+                             << QByteArray::fromBase64(message["data"].toString().toLatin1()).trimmed();
+        return;
+    }
     if (type == "runtime-error") {
         m_error = FailedToStart;
         m_state = NotRunning;
@@ -240,6 +268,12 @@ void BridgeProcess::accept(const QJsonObject &message) {
         m_output += QByteArray::fromBase64(message["data"].toString().toLatin1());
         emit readyReadStandardOutput();
     } else if (type == "error" || type == "finished") {
+        // 运行时脚本会把 worker 的错误栈（detail）与退出码（exitCode）带上：设备上唯一的现场。
+        if (message.contains("detail")) {
+            qWarning().noquote() << "node worker error:" << message["detail"].toString();
+        } else if (message.contains("exitCode")) {
+            qWarning().noquote() << "node worker finished, exitCode" << message["exitCode"].toInt();
+        }
         m_error = Crashed;
         m_state = NotRunning;
         emit finished();

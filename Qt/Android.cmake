@@ -45,9 +45,14 @@ set_target_properties(RhineNodeMobile PROPERTIES IMPORTED_LOCATION "${rhineNodeL
 target_sources(RhineCore PRIVATE "${CMAKE_SOURCE_DIR}/Qt/src/PlatformAndroid.cpp"
                                  "${CMAKE_SOURCE_DIR}/Qt/src/BridgeProcessAndroid.cpp"
                                  "${CMAKE_SOURCE_DIR}/Qt/src/BridgeProcess.h"
+                                 "${CMAKE_SOURCE_DIR}/Qt/src/AndroidMediaSession.cpp"
+                                 "${CMAKE_SOURCE_DIR}/Qt/src/AndroidMediaSession.h"
                                  "${CMAKE_SOURCE_DIR}/Qt/src/AndroidAssets.cpp"
                                  "${CMAKE_SOURCE_DIR}/Qt/src/AndroidAssets.h")
 target_link_libraries(RhineCore PRIVATE RhineNodeMobile)
+# AndroidMediaSession 用 QtCore 的私有 Android 扩展（POST_NOTIFICATIONS 权限申请）；
+# 私有头在 include/QtCore/6.12.0 下，CorePrivate 目标带来这条包含路径。
+target_link_libraries(RhineCore PRIVATE Qt6::CorePrivate)
 target_sources(RhineMusicDatabase PRIVATE "${CMAKE_SOURCE_DIR}/Qt/src/AndroidWindow.cpp"
                                           "${CMAKE_SOURCE_DIR}/Qt/src/AndroidWindow.h")
 

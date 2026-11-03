@@ -20,24 +20,31 @@ constexpr jint kImmersiveSticky = 0x00000002 | 0x00000004 | 0x00000100 | 0x00000
 
 /** 把横屏与全屏请求落到 Activity 上；任何一步失败都只降级、不中断启动。 */
 void applyWindowShape() {
-    // context() 返回 QtJniTypes::Context（QJniObject 的派生类型）。显式构造成 QJniObject，
-    // 不依赖那个类型在各 Qt 版本里的具体形态。
-    const QJniObject activity(QNativeInterface::QAndroidApplication::context());
-    if (!activity.isValid()) {
-        qWarning("Android: 取不到 Activity，横屏与沉浸式设置未下发");
-        return;
-    }
-    activity.callMethod<void>("setRequestedOrientation", "(I)V", kSensorLandscape);
-    const QJniObject window = activity.callObjectMethod("getWindow", "()Landroid/view/Window;");
-    if (!window.isValid()) {
-        qWarning("Android: 取不到 Window，全屏标志未下发");
-        return;
-    }
-    window.callMethod<void>("addFlags", "(I)V", kWindowFlags);
-    const QJniObject decor = window.callObjectMethod("getDecorView", "()Landroid/view/View;");
-    if (decor.isValid()) {
-        decor.callMethod<void>("setSystemUiVisibility", "(I)V", kImmersiveSticky);
-    }
+    // View/Window 的标志与方向只能由 Android UI 线程改：Qt 主线程直接调 JNI 会抛
+    // CalledFromWrongThreadException（logcat 实测：Window.setFlags 与
+    // View.setSystemUiVisibility 都在 checkThread 处拒绝）。runOnAndroidMainThread 把
+    // 整段投递到 UI 线程，异步即可——失败也只是丢一次沉浸式设置。
+    QNativeInterface::QAndroidApplication::runOnAndroidMainThread([]() -> QVariant {
+        // context() 返回 QtJniTypes::Context（QJniObject 的派生类型）。显式构造成
+        // QJniObject，不依赖那个类型在各 Qt 版本里的具体形态。
+        const QJniObject activity(QNativeInterface::QAndroidApplication::context());
+        if (!activity.isValid()) {
+            qWarning("Android: 取不到 Activity，横屏与沉浸式设置未下发");
+            return {};
+        }
+        activity.callMethod<void>("setRequestedOrientation", "(I)V", kSensorLandscape);
+        const QJniObject window = activity.callObjectMethod("getWindow", "()Landroid/view/Window;");
+        if (!window.isValid()) {
+            qWarning("Android: 取不到 Window，全屏标志未下发");
+            return {};
+        }
+        window.callMethod<void>("addFlags", "(I)V", kWindowFlags);
+        const QJniObject decor = window.callObjectMethod("getDecorView", "()Landroid/view/View;");
+        if (decor.isValid()) {
+            decor.callMethod<void>("setSystemUiVisibility", "(I)V", kImmersiveSticky);
+        }
+        return {};
+    });
 }
 }
 

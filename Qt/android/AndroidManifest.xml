@@ -17,6 +17,15 @@
     <!-- 面板的所有内容都来自远端接口：没有网络时应用只剩一个空壳。 -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!--
+      系统媒体控件（前台服务 + 通知）：FOREGROUND_SERVICE 是 API 28 起调用
+      startForeground() 的硬性要求；targetSdk 34 起还需按类型配套
+      FOREGROUND_SERVICE_MEDIA_PLAYBACK。两者都是 normal 级，安装即授予。
+      POST_NOTIFICATIONS 是 Android 13 起的运行时权限，首次播放时向用户申请。
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!--
       自绘场景的着色器只烘了 GLSL ES 300（见根 CMakeLists 的 qt_add_shaders），
@@ -88,5 +97,15 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/qtprovider_paths" />
         </provider>
+
+        <!--
+          系统媒体控件的前端服务：MediaSession + MediaStyle 通知。
+          前台服务必须声明 mediaPlayback 类型（Android 14 起强制校验）；
+          通知按钮经 PendingIntent.getService 回到本服务，再由 JNI 送进面板。
+        -->
+        <service
+            android:name="rhine.music.database.RhineMediaService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
     </application>
 </manifest>

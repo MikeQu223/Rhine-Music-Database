@@ -23,16 +23,27 @@ QString resourceTarget() {
     return AppStorage::dataDirectory() + "/resources";
 }
 
-QString expectedStamp() {
-    return QStringLiteral(RHINE_VERSION "|" RHINE_COMMIT_SHA);
+/** 解包标记：版本 + 提交 + 条目数 + 总字节数。
+ *  只用版本和提交在开发期不够——未提交的迭代里两者不变，升级安装会跳过解包，
+ *  设备上跑的一直是第一次安装时的旧脚本。把资源规模带进来，内容一变就触发重建。 */
+QString expectedStamp(const QStringList &entries) {
+    qint64 total = 0;
+    for (const auto &entry : entries) {
+        const QFile file(QString::fromLatin1(kResourcePrefix) + "/" + entry);
+        total += file.size();
+    }
+    return QStringLiteral("%1|%2|%3|%4")
+        .arg(QString::fromLatin1(RHINE_VERSION), QString::fromLatin1(RHINE_COMMIT_SHA))
+        .arg(entries.size())
+        .arg(total);
 }
 
-bool stampMatches(const QString &target) {
+bool stampMatches(const QString &target, const QStringList &entries) {
     QFile marker(target + "/" + kStamp);
     if (!marker.open(QIODevice::ReadOnly | QIODevice::Text)) {
         return false;
     }
-    return QString::fromUtf8(marker.readAll()).trimmed() == expectedStamp();
+    return QString::fromUtf8(marker.readAll()).trimmed() == expectedStamp(entries);
 }
 
 QStringList resourceEntries() {
@@ -80,7 +91,8 @@ bool copyEntry(const QString &relative) {
 
 QString extract() {
     const auto target = resourceTarget();
-    if (stampMatches(target) && QFileInfo::exists(target + "/slots.json")) {
+    const auto entries = resourceEntries();
+    if (stampMatches(target, entries) && QFileInfo::exists(target + "/slots.json")) {
         return target;
     }
     // 旧目录必须先清空：资源切片变化时，增量覆盖会把已删除的文件留在解包结果里。
@@ -89,7 +101,6 @@ QString extract() {
         qWarning().noquote() << "Android: 无法创建解包目录" << target;
         return {};
     }
-    const auto entries = resourceEntries();
     if (entries.isEmpty()) {
         qWarning() << "Android: 二进制里没有内嵌资源";
         return {};
@@ -101,7 +112,7 @@ QString extract() {
     }
     QFile marker(target + "/" + kStamp);
     if (marker.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
-        marker.write(expectedStamp().toUtf8());
+        marker.write(expectedStamp(entries).toUtf8());
     }
     qInfo().noquote() << "Android: 已解包" << entries.size() << "个资源到" << target;
     return target;

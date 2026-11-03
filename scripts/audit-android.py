@@ -81,12 +81,19 @@ check("targetSdkVersion:'36'" in badging, "targetSdk is not 36")
 permissions = set(re.findall(r"uses-permission: name='([^']+)'", badging))
 for required in ["android.permission.INTERNET", "android.permission.ACCESS_NETWORK_STATE"]:
     check(required in permissions, f"missing permission: {required}")
-# 申请的权限越少越好：除下面三条外不应再要任何权限。
-# 第三条是 AGP 在清单合并时自己注入的 signature 级权限（androidx.core 的
-# registerReceiver(RECEIVER_NOT_EXPORTED) 需要它），不是我们主动申请的，也不授予任何能力。
+# 申请的权限越少越好：除下面几条外不应再要任何危险权限。
+# DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION 是 AGP 在清单合并时自己注入的 signature 级
+# 权限（androidx.core 的 registerReceiver(RECEIVER_NOT_EXPORTED) 需要它），不是我们
+# 主动申请的，也不授予任何能力。
 allowed = {
     "android.permission.INTERNET",
     "android.permission.ACCESS_NETWORK_STATE",
+    # 系统媒体控件：前台服务（API 28 起 startForeground 的硬性要求）+ Android 14 起
+    # mediaPlayback 类型的配套权限（都是 normal 级，安装即授予）。
+    "android.permission.FOREGROUND_SERVICE",
+    "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
+    # Android 13+ 运行时权限，拒绝时只是通知不显示。
+    "android.permission.POST_NOTIFICATIONS",
     "rhine.music.database.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION",
 }
 check(permissions <= allowed, f"unexpected permissions: {sorted(permissions - allowed)}")
