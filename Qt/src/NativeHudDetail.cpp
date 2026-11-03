@@ -175,7 +175,7 @@ void NativeHud::detail(double width, double opacity) {
                     usable - 115);
             text(MusicData::time(song), x + usable - 65, yy, 12);
             rule(x, yy + 36, usable, 0.2);
-            hit(x, yy - 4, usable, 42, "music:track:" + QString::number(trackOffset + index),
+            hit(x, yy - 4, usable, 42, "music:album-track:" + QString::number(trackOffset + index),
                 song["title"].toString());
         }
         if (music.tracks.size() > AlbumTrackRowCount) {

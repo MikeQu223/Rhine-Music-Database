@@ -95,6 +95,15 @@ void NativeHud::musicAction(const QStringList &parts, const QString &value) {
         trackOffset = 0;
         bodyOffset = 0;
         closeModal();
+    } else if (name == "album-track") {
+        // 同专辑列表
+        if (last >= 0 && last < music.tracks.size()) {
+            music.playContext = music.tracks;
+            music.choose(music.tracks.at(last).toObject());
+        }
+        tab = "overview";
+        trackOffset = 0;
+        bodyOffset = 0;
     } else if (name == "track") {
         if (music.directory && last >= 0 && last < music.directory->songs.size()) {
             music.selectDirectory(last, "detail");

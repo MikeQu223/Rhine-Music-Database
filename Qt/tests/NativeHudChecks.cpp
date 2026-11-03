@@ -415,6 +415,44 @@ bool checkCollectionCard(const QString &root, Glyphs &glyphs, const QJsonObject 
     }
     return true;
 }
+
+/** 歌曲详情里的同专辑曲目测试 */
+bool checkAlbumTrackSelection(const QString &root, Glyphs &glyphs, const QJsonObject &content) {
+    Host host(root, true);
+    MusicLibrary music(&host, content);
+    music.provider = "netease";
+    music.api.provider = "netease";
+    music.uid = "42";
+    music.directory = std::make_shared<MusicDirectory>();
+    music.directory->item = MusicData::item("playlist", "9", "目录");
+    QJsonArray directorySongs;
+    for (int index = 1; index <= 4; ++index) {
+        directorySongs.append(song(index));
+    }
+    music.directory->songs = directorySongs;
+    music.current = song(5);
+    QJsonArray albumTracks;
+    for (int index = 6; index <= 9; ++index) {
+        albumTracks.append(song(index));
+    }
+    music.tracks = albumTracks;
+    HudSceneActions scene;
+    scene.mode = [](QString) {};
+    NativeHud hud(&host, &glyphs, &music, scene);
+    hud.tab = "history";
+    const QJsonObject frame{{"mode", "detail"}, {"detail", 1}};
+    hud.draw(frame, 1920, 50);
+    if (!hasAction(hud.hits, "music:album-track:2") || hasAction(hud.hits, "music:track:2")) {
+        qCritical() << "Album track rows do not use their own selection route";
+        return false;
+    }
+    hud.action("music:album-track:2");
+    if (music.current["id"] != "8") {
+        qCritical() << "Album track row selected the directory song at the same index";
+        return false;
+    }
+    return true;
+}
 }
 
 namespace {
@@ -630,6 +668,7 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
     ok &= checkCardMaterialCache();
 #endif
     ok &= checkCollectionCard(root, glyphs, content);
+    ok &= checkAlbumTrackSelection(root, glyphs, content);
     ok &= checkPlayerBar(glyphs);
     ok &= checkPlayerInput(root, glyphs, content);
     {
@@ -995,7 +1034,7 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
                             ok = false;
                         }
                     }
-                    if (hud.tab == "history" && !hasAction(hud.hits, "music:track:0")) {
+                    if (hud.tab == "history" && !hasAction(hud.hits, "music:album-track:0")) {
                         qCritical() << "Song card lost same-album navigation";
                         ok = false;
                     }
