@@ -104,6 +104,12 @@ THE SOFTWARE.
 
 发行包包含独立 Node.js 运行时，需随包包含对应官方 LICENSE。Node 仅负责 API 网络请求，不负责界面渲染。
 
+iOS 与 Android 不允许应用拉起独立的可执行文件（拒绝执行应用目录下的二进制），因此两个移动端包把运行时
+编进进程：iOS 为 nodejs-mobile 18.20.4 的 `NodeMobile.framework`，Android 为同一版本的 `libnode.so`，
+由 `node::Start` 在独立线程上启动，Worker 仍按会话创建与销毁。运行时源码未做修改，来源、版本与 SHA-256
+记录在 `vendor/nodejs-mobile/source.json`（iOS）与 `vendor/nodejs-mobile/android-source.json`（Android），
+许可证全文随包保留在 `MusicBridge/NODE-LICENSE`。
+
 ## 原界面与场景代码
 
 来源：https://github.com/LBEILC/RhineLabUI 。独立项目保留当前音乐面板所需代码与美术，不再依赖原仓库构建。原项目 MIT 许可全文：
@@ -140,7 +146,11 @@ SOFTWARE.
 
 ## Qt
 
-Qt 6 Core / Gui / Qml / Quick / Network 通过官方 Qt 安装包动态链接。来源：https://code.qt.io/ 。许可及再分发义务：https://www.qt.io/licensing/open-source-lgpl-obligations 。部署包随附所使用 Qt 安装目录中的许可证。Qt 的独立许可不改变本项目与其他组件的许可。
+Qt 6 Core / Gui / Qml / Quick / Network / Multimedia 通过官方 Qt 安装包动态链接。来源：https://code.qt.io/ 。许可及再分发义务：https://www.qt.io/licensing/open-source-lgpl-obligations 。部署包随附所使用 Qt 安装目录中的许可证。Qt 的独立许可不改变本项目与其他组件的许可。
+
+Android 包把同一批 Qt 共享库随 APK 的 `lib/arm64-v8a/` 分发（LGPL v3 要求的可替换形式：用户可自行替换
+这些 `.so` 后重签安装），多媒体后端使用系统 `MediaPlayer` 而非 FFmpeg；APK 内的 Qt 许可证文本由打包脚本
+从 `licenses/Qt` 复制。
 
 原场景和素材的来源路径与输入哈希保留在 licenses/source-manifest.json；YesPlayMusic 与二维码实现的固定版本及来源分别见 MusicBridge/upstream/source.json 和 vendor/qrcodegen/source.json。
 
