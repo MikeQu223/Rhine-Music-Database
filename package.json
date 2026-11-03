@@ -6,6 +6,8 @@
     "license": "MIT",
     "scripts": {
         "build": "node scripts/build.cjs",
+        "build:android": "node scripts/build-android.cjs",
+        "build:qt:android": "node scripts/build-qt-android.cjs",
         "build:ios": "node scripts/build-ios.cjs",
         "build:ios:simulator": "node scripts/build-ios.cjs --simulator",
         "bundle:bridge": "node scripts/bundle-bridge.cjs",
