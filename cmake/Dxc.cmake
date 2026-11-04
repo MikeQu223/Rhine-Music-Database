@@ -102,14 +102,26 @@ function(rhine_dxc_build out_exe out_dxcompiler)
         return()
     endif()
 
-    # DXC 的 CMake 在 configure 阶段就要 Python3（LLVM 用它生成各种表），缺了会在一堆 报错之后才失败，这里先给出可读的提示。
-    find_package(
-        Python3
-        COMPONENTS Interpreter
-        QUIET)
-    if(NOT Python3_Interpreter_FOUND)
+    # Keep the host interpreter independent of Python3 selected by Qt/glslang. setup-python exports
+    # pythonLocation; prefer it in both Bash and PowerShell. Otherwise search PATH consistently, without
+    # application package prefixes.
+    find_program(
+        RHINE_DXC_PYTHON_EXECUTABLE
+        NAMES python3.exe python.exe python3 python NAMES_PER_DIR
+        HINTS "$ENV{pythonLocation}" ENV PATH
+        NO_DEFAULT_PATH
+        DOC "Host Python 3 interpreter used only to build DXC")
+    if(NOT RHINE_DXC_PYTHON_EXECUTABLE)
         message(FATAL_ERROR "Dxc.cmake: 从源码构建 DXC 需要 Python 3（LLVM 的 TableGen 脚本依赖它），"
-                            "请安装 Python 3 并确保 CMake 能找到，或显式传 -DPython3_EXECUTABLE=<path>")
+                            "请将 Python 3 加入 PATH，或显式传 -DRHINE_DXC_PYTHON_EXECUTABLE=<path>")
+    endif()
+    execute_process(
+        COMMAND "${RHINE_DXC_PYTHON_EXECUTABLE}" -c
+                "import sys; sys.exit(0 if sys.version_info.major == 3 else 1)"
+        RESULT_VARIABLE _rhine_dxc_python_status
+        OUTPUT_QUIET ERROR_QUIET)
+    if(NOT _rhine_dxc_python_status EQUAL 0)
+        message(FATAL_ERROR "RHINE_DXC_PYTHON_EXECUTABLE must be a working Python 3 interpreter")
     endif()
 
     # DXC 的 dxc target 在 MSVC 下 find_package(DiaSDK REQUIRED)，DIA SDK 随 Visual Studio 的“C++
@@ -177,7 +189,7 @@ function(rhine_dxc_build out_exe out_dxcompiler)
         "-DCMAKE_PROJECT_INCLUDE=${_rhine_dxc_repo_root}/cmake/DxcBuildOptions.cmake"
         "-DCMAKE_JOB_POOLS=rhine_dxc_link=1"
         "-DCMAKE_JOB_POOL_LINK=rhine_dxc_link"
-        "-DPython3_EXECUTABLE=${Python3_EXECUTABLE}"
+        "-DPython3_EXECUTABLE=${RHINE_DXC_PYTHON_EXECUTABLE}"
         # DXC 官方 cache（cmake/caches/PredefinedParams.cmake）里的核心三项， docs/BuildingAndTestingDXC.rst 明确 Windows
         # 也用同一套参数。
         "-DLLVM_DEFAULT_TARGET_TRIPLE=dxil-ms-dx"

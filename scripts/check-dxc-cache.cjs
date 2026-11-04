@@ -11,8 +11,22 @@ if (!/^RHINE_ENABLE_D3D12_BACKEND:BOOL=ON$/m.test(cache)) {
 }
 const source = /^RHINE_DXC_SOURCE_DIR:PATH=(.*)$/m.exec(cache)?.[1].trim();
 assert(source, 'DXC source path is missing from the application configuration');
+const hostPython = /^RHINE_DXC_PYTHON_EXECUTABLE:FILEPATH=(.*)$/m.exec(cache)?.[1].trim();
 const staged = path.join(root, 'generated/dxc');
 const signature = fs.readFileSync(path.join(staged, 'dxc-source-revision.txt'), 'utf8');
+assert.equal(
+    fs.readFileSync(path.join(root, 'output/qt-build/rhine-dxc-signature.txt'), 'utf8'),
+    signature,
+    'Application and staged DXC signatures differ',
+);
+const bootstrapSignature = path.join(root, 'output/dxc-bootstrap/rhine-dxc-signature.txt');
+if (fs.existsSync(bootstrapSignature)) {
+    assert.equal(
+        fs.readFileSync(bootstrapSignature, 'utf8'),
+        signature,
+        'Bootstrap and application must reuse the same DXC recipe',
+    );
+}
 for (const file of ['dxc.exe', 'dxcompiler.dll', 'dxil.dll']) {
     assert(fs.statSync(path.join(staged, 'bin', file)).size > 0, `Staged tool is empty: ${file}`);
 }
@@ -34,6 +48,7 @@ function configure(name, extra = []) {
         'Ninja',
         '-DCMAKE_BUILD_TYPE=Debug',
         `-DRHINE_DXC_SOURCE_DIR=${source}`,
+        ...(hostPython ? [`-DRHINE_DXC_PYTHON_EXECUTABLE=${hostPython}`] : []),
         ...extra,
     ]);
 }
@@ -46,6 +61,15 @@ try {
     console.log(
         `DXC cache reused in a new Debug consumer: ${((performance.now() - started) / 1000).toFixed(2)}s`,
     );
+    const foreignPython = configure('foreign-python', [
+        `-DPython3_EXECUTABLE=${path.join(temp, 'application-python-do-not-use.exe')}`,
+    ]);
+    assert.match(foreignPython, /DXC: 复用/);
+    assert.match(
+        run(['--build', path.join(temp, 'foreign-python'), '--target', 'rhine_dxc']),
+        /no work to do/,
+    );
+    console.log('DXC cache reused with an unrelated application Python selection');
     for (const scenario of ['missing-dll', 'wrong-signature']) {
         const fixture = path.join(temp, scenario, 'staged');
         fs.mkdirSync(path.join(fixture, 'bin'), { recursive: true });

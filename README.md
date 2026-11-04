@@ -244,6 +244,8 @@ cmake --build output/dxc-bootstrap --target rhine_dxc
 npm run build
 ```
 
+构建用 DXC 使用独立的 `RHINE_DXC_PYTHON_EXECUTABLE`，优先选择 CI `setup-python` 的解释器，其次从 PATH 查找，避免 Qt/glslang 选择其他 Python 后改变工具链签名。需要时可用同名 CMake 参数显式指定。
+
 构建用 DXC 默认固定为 Release，与应用 Debug/Release 配置分开；Release 不生成无用的调试信息和 PDB，保持优化等级。嵌套构建默认最多使用 8 个并行任务，可用 `-DRHINE_DXC_BUILD_JOBS=N` 调整；DX12 每个着色器编译进程默认 2 个线程，可用 `-DRHINE_FFX_DX12_SHADER_THREADS=N` 调整，避免多个编译进程各自占满所有核心。FSR3、插帧及所有着色器置换仍保留。
 
 高级构建可用 `-DRHINE_ENABLE_D3D12_BACKEND=OFF` 显式排除 D3D12。缓存只复用本项目从源码构建的工具，不使用 SDK 中附带的预编译编译器；源码、配方或编译器等签名变化时会重新构建。Linux/macOS 不会构建 DXC。
