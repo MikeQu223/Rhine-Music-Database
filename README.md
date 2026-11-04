@@ -60,7 +60,7 @@ macOS、Linux 和 Windows 默认使用 FFmpeg 音频后端。Windows 设置 `QT_
 桌面播放由独立后台服务管理音频、队列与账号；服务生命周期与界面进程绑定，
 界面正常退出或崩溃都会停止播放并结束服务。渲染、窗口与托盘始终由界面进程负责。
 
-图形后端在 Windows 与 Linux 上优先使用 Vulkan，不可用时回退 OpenGL；macOS 固定使用 Metal。
+图形后端在 Windows 与 Linux 上优先使用 Vulkan；Windows 不可用时回退 Direct3D 12，Linux 回退 OpenGL；macOS 固定使用 Metal。
 `RHINE_GRAPHICS=vulkan|opengl|auto` 可手动指定，`QSG_RHI_BACKEND` 的优先级更高。
 Linux 上「不可用」包含两种：没有 Vulkan 物理设备，和当前 X11 连接没有 DRI3 扩展。
 后者在没有 DRI3 的 Xorg 上会让 Mesa 在创建交换链时失败，而 Qt 拿不到交换链会直接 abort，
@@ -161,7 +161,7 @@ Linux 的「设置 → GPU / 显卡」可以指定用哪一块显卡，重启生
 
 | Platform | Vulkan | Direct3D 12 | OpenGL | Metal |
 | -------- | ------ | ----------- | ------ | ----- |
-| Windows  | ✅     | 已停用      | ✅     | -     |
+| Windows  | ✅     | ✅          | ✅     | -     |
 | macOS    | -      | -           | -      | ✅    |
 | iOS / iPadOS | - | - | - | ✅ |
 | Linux    | ✅     | -           | ✅     | -     |
@@ -169,7 +169,7 @@ Linux 的「设置 → GPU / 显卡」可以指定用哪一块显卡，重启生
 | API         | FXAA   | SSAA   | MSAA   | TAA     | Upscaling        | Frame Generation |
 | ----------- | ------ | ------ | ------ | ------- | ---------------- | ---------------- |
 | Vulkan      | ✅     | 2x MAX | 8x MAX | ✅      | EASU + RCAS      | ✅               |
-| Direct3D 12 | 已停用 | -      | -      | -       | -                | -                |
+| Direct3D 12 | ✅     | 2x MAX | 8x MAX | ✅      | EASU + RCAS / FSR3 | ✅               |
 | OpenGL      | ✅     | 2x MAX | 8x MAX | ✅      | EASU + RCAS      | -                |
 | Metal       | -      | -      | -      | MetalFX | MetalFX Temporal | MetalFX          |
 
@@ -233,6 +233,20 @@ Windows 的 `npm run share` 使用 [Inno Setup 6.3+ 或 7](https://jrsoftware.or
 只生成 `output/RhineMusicDatabase-<构建标识>-Windows-x64-Setup.exe` 安装程序。
 安装器默认安装到 `%LOCALAPPDATA%\Programs\RhineMusicDatabase`，无需管理员权限，提供开始菜单快捷方式、可选桌面快捷方式和卸载入口。
 应用在安装目录的 `data` 中保存账号、设置和缓存，请选择当前用户可写的目录。安装包排除构建机上的运行数据，覆盖安装和卸载保留用户的 `data`；彻底清理时可手动删除。
+
+Windows 默认编入完整 D3D12 / FidelityFX DX12，`RHINE_GRAPHICS=d3d12` 可指定该后端。首次构建仍需从锁定源码编译 DXC；CI 会在应用构建前独立构建并保存 `generated/dxc`，后续按源码提交、构建配方及工具链签名复用，即使后续应用构建失败也不会丢掉已完成的 DXC 缓存。
+
+本机也可先单独准备工具链（无需 Qt），再运行通常的构建：
+
+```powershell
+cmake -S cmake/dxc-bootstrap -B output/dxc-bootstrap -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build output/dxc-bootstrap --target rhine_dxc
+npm run build
+```
+
+构建用 DXC 默认固定为 Release，与应用 Debug/Release 配置分开；Release 不生成无用的调试信息和 PDB，保持优化等级。嵌套构建默认最多使用 8 个并行任务，可用 `-DRHINE_DXC_BUILD_JOBS=N` 调整；DX12 每个着色器编译进程默认 2 个线程，可用 `-DRHINE_FFX_DX12_SHADER_THREADS=N` 调整，避免多个编译进程各自占满所有核心。FSR3、插帧及所有着色器置换仍保留。
+
+高级构建可用 `-DRHINE_ENABLE_D3D12_BACKEND=OFF` 显式排除 D3D12。缓存只复用本项目从源码构建的工具，不使用 SDK 中附带的预编译编译器；源码、配方或编译器等签名变化时会重新构建。Linux/macOS 不会构建 DXC。
 
 ### Linux x86_64（AppImage）
 

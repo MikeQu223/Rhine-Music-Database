@@ -76,6 +76,10 @@ jobs:
       - name: Check out enabled graphics dependencies
         shell: bash
         run: git submodule update --init --recursive FidelityFX-SDK third_party/glslang
+      - name: Check out pinned DXC source
+        if: runner.os == 'Windows'
+        shell: bash
+        run: git submodule update --init --depth 1 -- third_party/dxc
       - name: Check out glslang vendored dependencies
         # 只有 Vulkan 分支会解析 glslang，但不在 macOS 上跳过：万一 runner 带了
         # MoltenVK 让 find_package(Vulkan) 成立，跳过就等于把 FSR3 静默关掉，
@@ -153,18 +157,22 @@ jobs:
         # 因此 key 要同时带上 rev 和工具链标识：rev 换版本、镜像换工具链都会得到新 key，
         # 缓存自然失效并重新保存。若只按 rev 取 key，actions/cache 不会覆盖已存在的
         # key，镜像升级后就会永久命中旧缓存，而签名校验每次都判不等，退化成每次全量重建。
-        if: false && runner.os == 'Windows'
+        if: runner.os == 'Windows'
         id: dxc
         shell: bash
         run: |
           set -euo pipefail
+          cmake -S cmake/dxc-bootstrap -B output/dxc-bootstrap -G Ninja -DCMAKE_BUILD_TYPE=Release
           rev=$(git -C third_party/dxc rev-parse HEAD)
+          signature=$(sha256sum output/dxc-bootstrap/rhine-dxc-signature.txt | cut -d' ' -f1)
           {
             cl 2>&1 | head -1 || true
             ninja --version 2>/dev/null || echo "ninja: 未找到"
+            cmake --version | head -1
             python -c 'import sys; print(sys.executable)' 2>/dev/null || echo "python: 未找到"
           } > "$RUNNER_TEMP/dxc-tools.txt"
           echo "rev=${rev}" >> "$GITHUB_OUTPUT"
+          echo "signature=${signature}" >> "$GITHUB_OUTPUT"
           echo "tools=$(sha256sum "$RUNNER_TEMP/dxc-tools.txt" | cut -c1-16)" >> "$GITHUB_OUTPUT"
       - name: Restore DXC build
         # generated/dxc 被 .gitignore 排除，干净检出后 RHINE_DXC_REUSE_BUILT 找不到
@@ -179,12 +187,12 @@ jobs:
         #
         # 拆成 restore/save 两步而不是单个 actions/cache：后者的保存在 post 步骤，
         # job 被 timeout 掐掉时不执行，会出现“编完了但没存上、下次再编一遍”的死循环。
-        if: false && runner.os == 'Windows'
+        if: runner.os == 'Windows'
         id: dxc-cache
         uses: actions/cache/restore@v4
         with:
           path: generated/dxc
-          key: dxc-win-${{ steps.dxc.outputs.rev }}-${{ steps.dxc.outputs.tools }}-${{ hashFiles('cmake/Dxc.cmake') }}
+          key: dxc-win-${{ steps.dxc.outputs.rev }}-${{ steps.dxc.outputs.tools }}-${{ steps.dxc.outputs.signature }}
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
         run: |
@@ -298,23 +306,27 @@ jobs:
           fi
       # Linux 打包用的 mkdwarfs 与 uruntime 由构建脚本按锁定版本自动下载并校验 SHA256，
       # 无需预装；设置 RHINE_APPIMAGE_FS=squashfs 时改用 appimagetool，同样按锁定版本下载。
-      - name: Build and deploy
-        run: npm run build
-        env:
-          QT_ROOT: ${{ env.QT_ROOT_DIR }}
+      - name: Build DXC toolchain
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          cmake -S cmake/dxc-bootstrap -B output/dxc-bootstrap -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build output/dxc-bootstrap --target rhine_dxc
       - name: Check DXC build completeness
         # actions/cache 不会覆盖已存在的 key：一旦把半成品存进去，之后每次都会命中
         # 这份坏缓存、签名校验失败、重新全量构建，而保存又被 cache-hit 挡住，就永远
         # 修不好。dxc-source-revision.txt 由 ExternalProject 的 INSTALL 步骤最后写入，
         # 它和两个 DLL 同时存在才代表 dxc/dxcompiler/dxildll 三个目标都编完了。
-        if: false && always() && runner.os == 'Windows'
+        if: always() && runner.os == 'Windows'
         id: dxc-artifacts
         shell: bash
         run: |
           set -euo pipefail
           if [ -f generated/dxc/dxc-source-revision.txt ] \
+             && [ -f generated/dxc/bin/dxc.exe ] \
              && [ -f generated/dxc/bin/dxcompiler.dll ] \
-             && [ -f generated/dxc/bin/dxil.dll ]; then
+             && [ -f generated/dxc/bin/dxil.dll ] \
+             && cmp -s generated/dxc/dxc-source-revision.txt output/dxc-bootstrap/rhine-dxc-signature.txt; then
             echo "complete=true" >> "$GITHUB_OUTPUT"
           else
             echo "complete=false" >> "$GITHUB_OUTPUT"
@@ -326,12 +338,16 @@ jobs:
         #
         # continue-on-error：来自 fork 的 PR 只有缓存读权限，保存会 403；配额或网络
         # 出问题也一样。缓存只是加速手段，存不进去不该把构建判失败。
-        if: false && always() && runner.os == 'Windows' && steps.dxc-cache.outputs.cache-hit != 'true' && steps.dxc-artifacts.outputs.complete == 'true'
+        if: always() && runner.os == 'Windows' && steps.dxc-cache.outputs.cache-hit != 'true' && steps.dxc-artifacts.outputs.complete == 'true'
         continue-on-error: true
         uses: actions/cache/save@v4
         with:
           path: generated/dxc
-          key: dxc-win-${{ steps.dxc.outputs.rev }}-${{ steps.dxc.outputs.tools }}-${{ hashFiles('cmake/Dxc.cmake') }}
+          key: dxc-win-${{ steps.dxc.outputs.rev }}-${{ steps.dxc.outputs.tools }}-${{ steps.dxc.outputs.signature }}
+      - name: Build and deploy
+        run: npm run build
+        env:
+          QT_ROOT: ${{ env.QT_ROOT_DIR }}
       # 离线测试
       - name: Run offline regressions
         run: npm test

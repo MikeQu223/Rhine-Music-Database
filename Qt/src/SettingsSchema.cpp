@@ -153,9 +153,8 @@ RhineFg::FrameGenerationUi frameGenerationState(const SettingsContext &context) 
     // 排障用的 RHINE_FG 会覆盖偏好；开关标签必须反映真正生效的状态。
 #ifdef Q_OS_DARWIN
     const QByteArray environment = qgetenv("RHINE_FG");
-    const bool preferenceOn = environment.isEmpty()
-                                  ? context.host && context.host->preference("fg") == On
-                                  : RhineFg::parseBool(environment, false);
+    const bool preferenceOn = environment.isEmpty() ? context.host && context.host->preference("fg") == On
+                                                    : RhineFg::parseBool(environment, false);
 #else
     const bool preferenceOn = context.host && context.host->preference("fg") == On;
 #endif
@@ -196,7 +195,7 @@ QVector<SettingChoice> graphicsChoices(const SettingsContext &) {
     QVector<SettingChoice> values{
         {"", QStringLiteral("默认 / 自动探测")}, {"vulkan", "Vulkan"}, {"opengl", "OpenGL"}};
 #if RHINE_ENABLE_D3D12_BACKEND
-    values.append({"d3d12", "Direct3D 12"});
+    values.append(SettingChoice{"d3d12", "Direct3D 12"});
 #endif
     return values;
 #endif
