@@ -70,6 +70,10 @@ QJsonObject parse(const QJsonObject &raw, const QString &kind) {
     value["album"] = album["name"].toString();
     value["cover"] = raw["picUrl"].toString(raw["coverImgUrl"].toString(album["picUrl"].toString()));
     value["duration"] = raw["dt"].toDouble(raw["duration"].toDouble());
+    if (kind == "song" && (raw.contains("mv") || raw.contains("mvid"))) {
+        const auto mv = identifier(raw.contains("mv") ? raw["mv"] : raw["mvid"]);
+        value["mvID"] = mv == "0" ? QString() : mv;
+    }
     value["trackCount"] = raw["trackCount"].toDouble(raw["size"].toDouble());
     value["description"] = raw["description"].toString(raw["briefDesc"].toString());
     if (raw["publishTime"].toDouble() > 0) {

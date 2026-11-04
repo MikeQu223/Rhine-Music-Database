@@ -153,9 +153,8 @@ RhineFg::FrameGenerationUi frameGenerationState(const SettingsContext &context) 
     // 排障用的 RHINE_FG 会覆盖偏好；开关标签必须反映真正生效的状态。
 #ifdef Q_OS_DARWIN
     const QByteArray environment = qgetenv("RHINE_FG");
-    const bool preferenceOn = environment.isEmpty()
-                                  ? context.host && context.host->preference("fg") == On
-                                  : RhineFg::parseBool(environment, false);
+    const bool preferenceOn = environment.isEmpty() ? context.host && context.host->preference("fg") == On
+                                                    : RhineFg::parseBool(environment, false);
 #else
     const bool preferenceOn = context.host && context.host->preference("fg") == On;
 #endif
@@ -416,6 +415,21 @@ const QVector<SettingDescriptor> &descriptors() {
              .titleEn = "INITIALIZATION",
              .titleZh = "手动显示初始化页面",
              .actionLabel = "Reinitialize"});
+        add({.id = "mv-auto",
+             .section = SectionId::Preferences,
+             .kind = SettingKind::Choice,
+             .binding = {.kind = BindingKind::Preference,
+                         .preferenceKey = "mv-auto",
+                         .action = "mv-auto",
+                         .actionPrefix = "setting:mv-auto:"},
+             .storage = StorageType::OnOff,
+             .order = 155,
+             .titleEn = "MUSIC VIDEO",
+             .titleZh = "自动播放关联 MV（网易云）",
+             .description = "静音跟随音乐，支持独立窗口、全屏与透明度；Windows 可设为桌面壁纸。",
+             .defaultValue = Off,
+             .choices = onOffChoices(),
+             .visible = desktopWindowVisible});
         add({.id = "quality",
              .section = SectionId::Preferences,
              .kind = SettingKind::Choice,

@@ -7,6 +7,7 @@ import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { API } from '../../MusicBridge/client/netease.mjs';
+import { parse } from '../../MusicBridge/client/items.mjs';
 import { dispatch } from '../../MusicBridge/client/dispatch.mjs';
 import format from '../../MusicBridge/lyrics-format.cjs';
 import { createClientHarness } from './fixtures/client-harness.mjs';
@@ -21,6 +22,135 @@ const message = (operation, args, cookies = {}) => ({
     route: '/native/netease/' + operation,
     params: { args },
     cookies,
+});
+
+test('歌曲关联 MV 使用明确关联、清晰度回退和可播放地址', async () => {
+    assert.equal(parse({ id: 42, name: 'Song', mv: 99 }, 'song').mvID, '99');
+    assert.equal(parse({ id: 42, name: 'Song', mvid: 0 }, 'song').mvID, '');
+    const harness = createClientHarness({
+        responses: {
+            '/song/detail': { code: 200, songs: [{ id: 42, mv: 99 }] },
+            '/mv/detail': {
+                code: 200,
+                data: {
+                    name: 'Original PV',
+                    duration: 180000,
+                    brs: [{ br: 480 }, { br: 1080 }, { br: 720 }],
+                },
+            },
+            '/mv/url': ({ r }) => ({
+                code: 200,
+                data: { r, url: r === 1080 ? null : 'https://video.example.test/pv.mp4' },
+            }),
+        },
+    });
+    const result = await harness.api.mv({ id: '42', title: 'Song' });
+    assert.equal(result.id, '99');
+    assert.equal(result.title, 'Original PV');
+    assert.equal(result.resolution, 720);
+    assert.deepEqual(
+        harness.callsTo('/mv/url').map((v) => v.params.r),
+        [1080, 720],
+    );
+    assert.equal(harness.lastCall('/mv/detail').params.mvid, '99');
+});
+
+test('未关联 MV 不搜索猜测；受限、无效与过期请求明确失败', async () => {
+    const harness = createClientHarness({
+        responses: {
+            '/song/detail': { code: 200, songs: [{ id: 42, mv: 0 }] },
+        },
+    });
+    assert.equal(await harness.api.mv({ id: '42' }), null);
+    assert.equal(harness.calls.length, 1);
+    harness.respond('/song/detail', { code: 200, songs: [{ id: 42, mv: 99 }] });
+    harness.respond('/mv/detail', { code: 200, data: { brs: { 720: 1234 } } });
+    harness.respond('/mv/url', { code: 200, data: { url: 'file:///private/video.mp4' } });
+    await assert.rejects(harness.api.mv({ id: '42' }), /地址无效/);
+    harness.respond('/mv/url', { code: 403, message: '权限不足' });
+    await assert.rejects(harness.api.mv({ id: '42' }), /403/);
+    await assert.rejects(
+        harness.api.mv({ id: '42' }, () => false),
+        /Stale operation/,
+    );
+    await assert.rejects(harness.api.mv({ id: 'not-a-song' }), /标识无效/);
+});
+
+test('视频版本区分明确关联与搜索结果，去重且不自动播放搜索结果', async () => {
+    const harness = createClientHarness({
+        responses: {
+            '/song/detail': { code: 200, songs: [{ id: 42, name: 'Song', mv: 99 }] },
+            '/search': {
+                code: 200,
+                result: {
+                    mvs: [
+                        { id: 99, name: 'Original', artistName: 'Artist' },
+                        { id: 100, name: 'Song Live', artists: [{ name: 'Band' }] },
+                        { id: 100, name: 'Song Live', artistName: 'Band' },
+                        { id: 'bad', name: 'Invalid' },
+                        { id: 101, name: 'Unrelated recommendation' },
+                    ],
+                },
+            },
+        },
+    });
+    const result = await harness.api.mvVersions({ id: '42' });
+    assert.deepEqual(
+        result.versions.map((v) => [v.id, v.associated]),
+        [
+            ['99', true],
+            ['100', false],
+        ],
+    );
+    assert.equal(result.versions[1].artist, 'Band');
+    assert.equal(harness.lastCall('/search').params.type, 1004);
+    assert.equal(harness.callsTo('/mv/url').length, 0);
+    harness.respond('/search', { code: 503 });
+    const partial = await harness.api.mvVersions({ id: '42' });
+    assert.equal(partial.versions[0].id, '99');
+    assert.match(partial.warning, /搜索失败/);
+    harness.respond('/song/detail', { code: 200, songs: [{ id: 42, name: 'Song', mv: 0 }] });
+    harness.respond('/search', { code: 200, result: { mvs: [{ id: 100, name: 'Song Live' }] } });
+    assert.equal((await harness.api.mvVersions({ id: '42' })).versions[0].associated, false);
+    assert.equal(await harness.api.mv({ id: '42' }), null);
+});
+
+test('手动选定版本直接解析对应 MV，每次取新地址并校验标识', async () => {
+    const harness = createClientHarness({
+        responses: {
+            '/mv/detail': { code: 200, data: { name: 'Live', brs: { 720: 1 } } },
+            '/mv/url': { code: 200, data: { url: 'https://video.example.test/live.mp4', r: 720 } },
+        },
+    });
+    const selected = await harness.api.mv({ id: '42', videoID: '100' });
+    assert.equal(selected.id, '100');
+    assert.equal(harness.callsTo('/song/detail').length, 0);
+    assert.equal(harness.lastCall('/mv/detail').params.mvid, '100');
+    await assert.rejects(harness.api.mv({ id: '42', videoID: 'invalid' }), /视频标识无效/);
+});
+
+test('MV 操作可通过原生调度且不缓存旧 URL', async () => {
+    const calls = [];
+    const request = async ({ route }) => {
+        calls.push(route);
+        let body;
+        if (route === '/song/detail') {
+            body = { code: 200, songs: [{ id: 42, mv: 99 }] };
+        } else if (route === '/mv/detail') {
+            body = { code: 200, data: { brs: [{ br: 720 }] } };
+        } else {
+            body = {
+                code: 200,
+                data: { url: 'https://video.example.test/' + calls.length + '.mp4', r: 720 },
+            };
+        }
+        return { body, cookies: [] };
+    };
+    const first = await dispatch(message('mv', [{ id: '42' }]), request);
+    const second = await dispatch(message('mv', [{ id: '42' }]), request);
+    assert.equal(first.body.code, 200);
+    assert.notEqual(first.body.value.url, second.body.value.url);
+    assert.equal(calls.filter((v) => v === '/mv/url').length, 2);
 });
 
 /** 为每条消息建立真实桥接进程，验证完成后立即清理临时目录和子进程。 */
