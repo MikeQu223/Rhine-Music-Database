@@ -33,24 +33,29 @@ for (const file of ['dxc.exe', 'dxcompiler.dll', 'dxil.dll']) {
 const output = path.join(root, 'output');
 const temp = fs.mkdtempSync(path.join(output, 'dxc-cache-check-'));
 assert.equal(path.dirname(temp), output);
-function run(args) {
-    const result = spawnSync('cmake', args, { cwd: root, encoding: 'utf8' });
+function run(args, env = process.env) {
+    const result = spawnSync('cmake', args, { cwd: root, encoding: 'utf8', env });
     assert.equal(result.status, 0, result.stdout + result.stderr);
     return result.stdout;
 }
-function configure(name, extra = []) {
-    return run([
-        '-S',
-        'cmake/dxc-bootstrap',
-        '-B',
-        path.join(temp, name),
-        '-G',
-        'Ninja',
-        '-DCMAKE_BUILD_TYPE=Debug',
-        `-DRHINE_DXC_SOURCE_DIR=${source}`,
-        ...(hostPython ? [`-DRHINE_DXC_PYTHON_EXECUTABLE=${hostPython}`] : []),
-        ...extra,
-    ]);
+function configure(name, extra = [], env = process.env) {
+    return run(
+        [
+            '-S',
+            'cmake/dxc-bootstrap',
+            '-B',
+            path.join(temp, name),
+            '-G',
+            'Ninja',
+            '-DCMAKE_BUILD_TYPE=Debug',
+            `-DRHINE_DXC_SOURCE_DIR=${source}`,
+            ...(hostPython && !env.RHINE_DXC_PYTHON_EXECUTABLE
+                ? [`-DRHINE_DXC_PYTHON_EXECUTABLE=${hostPython}`]
+                : []),
+            ...extra,
+        ],
+        env,
+    );
 }
 try {
     const started = performance.now();
@@ -61,9 +66,16 @@ try {
     console.log(
         `DXC cache reused in a new Debug consumer: ${((performance.now() - started) / 1000).toFixed(2)}s`,
     );
-    const foreignPython = configure('foreign-python', [
-        `-DPython3_EXECUTABLE=${path.join(temp, 'application-python-do-not-use.exe')}`,
-    ]);
+    assert(hostPython, 'DXC host interpreter must be recorded in the application cache');
+    const foreignPython = configure(
+        'foreign-python',
+        [`-DPython3_EXECUTABLE=${path.join(temp, 'application-python-do-not-use.exe')}`],
+        {
+            ...process.env,
+            RHINE_DXC_PYTHON_EXECUTABLE: hostPython,
+            pythonLocation: path.join(temp, 'qt-installed-another-python'),
+        },
+    );
     assert.match(foreignPython, /DXC: 复用/);
     assert.match(
         run(['--build', path.join(temp, 'foreign-python'), '--target', 'rhine_dxc']),

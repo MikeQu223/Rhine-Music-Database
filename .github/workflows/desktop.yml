@@ -163,6 +163,11 @@ jobs:
         run: |
           set -euo pipefail
           cmake -S cmake/dxc-bootstrap -B output/dxc-bootstrap -G Ninja -DCMAKE_BUILD_TYPE=Release
+          # install-qt-action runs setup-python again. Keep this interpreter even if
+          # that action replaces pythonLocation and PATH before the application configure.
+          host_python=$(sed -n 's/^RHINE_DXC_PYTHON_EXECUTABLE:FILEPATH=//p' output/dxc-bootstrap/CMakeCache.txt | tr -d '\r')
+          test -n "$host_python"
+          echo "RHINE_DXC_PYTHON_EXECUTABLE=$host_python" >> "$GITHUB_ENV"
           rev=$(git -C third_party/dxc rev-parse HEAD)
           signature=$(sha256sum output/dxc-bootstrap/rhine-dxc-signature.txt | cut -d' ' -f1)
           {

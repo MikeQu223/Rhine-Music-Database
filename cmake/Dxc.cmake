@@ -104,7 +104,13 @@ function(rhine_dxc_build out_exe out_dxcompiler)
 
     # Keep the host interpreter independent of Python3 selected by Qt/glslang. setup-python exports
     # pythonLocation; prefer it in both Bash and PowerShell. Otherwise search PATH consistently, without
-    # application package prefixes.
+    # application package prefixes. CI preserves the resolved bootstrap interpreter across actions that run
+    # setup-python again.
+    if(NOT RHINE_DXC_PYTHON_EXECUTABLE AND DEFINED ENV{RHINE_DXC_PYTHON_EXECUTABLE})
+        set(RHINE_DXC_PYTHON_EXECUTABLE
+            "$ENV{RHINE_DXC_PYTHON_EXECUTABLE}"
+            CACHE FILEPATH "Host Python 3 interpreter used only to build DXC" FORCE)
+    endif()
     find_program(
         RHINE_DXC_PYTHON_EXECUTABLE
         NAMES python3.exe python.exe python3 python NAMES_PER_DIR
