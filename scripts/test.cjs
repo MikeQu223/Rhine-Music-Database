@@ -27,6 +27,9 @@ run(process.execPath, ['scripts/check-music-upstream.cjs']);
 run(process.execPath, ['--test', 'scripts/test-ffmpeg-decoders.cjs']);
 
 run('ctest', ['--test-dir', 'output/qt-build', '--output-on-failure']);
+if (win) {
+    run(process.execPath, ['scripts/check-dxc-cache.cjs']);
+}
 // 验证最终应用包
 const resources = path.join(app, resourceDirectory);
 const bridgeTests = [

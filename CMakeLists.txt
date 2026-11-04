@@ -16,8 +16,8 @@ project(
     # C is required by the vendored glslang/SPIRV-Tools that compiles the FidelityFX shader permutations at
     # build time.
     LANGUAGES CXX C)
-# 停用D3D12入口
-set(RHINE_ENABLE_D3D12_BACKEND OFF)
+# Windows 默认包含完整 D3D12 / FidelityFX DX12；其他平台不启用。
+option(RHINE_ENABLE_D3D12_BACKEND "Build the Windows D3D12 backend and FidelityFX DX12" ${WIN32})
 add_compile_definitions(RHINE_ENABLE_D3D12_BACKEND=$<BOOL:${RHINE_ENABLE_D3D12_BACKEND}>)
 set(RHINE_APPLICATION_ID "rhine.music.database")
 find_package(Git QUIET)
