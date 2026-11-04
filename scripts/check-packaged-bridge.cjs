@@ -89,6 +89,22 @@ async function main() {
         assert.equal(nativeSearch.body.code, 200);
         assert.deepEqual(nativeSearch.body.value.items, []);
         assert.equal(nativeSearch.body.value.total, 0);
+        const nativeMv = await request('native-mv', '/native/netease/mv', { args: [{ id: '1' }] });
+        assert.equal(nativeMv.body.code, 200);
+        assert.equal(nativeMv.body.value.id, '99');
+        assert.equal(nativeMv.body.value.resolution, 1080);
+        assert.equal(nativeMv.body.value.url, 'https://video.example.test/fixture.mp4');
+        const versions = await request('native-mv-versions', '/native/netease/mvVersions', {
+            args: [{ id: '1' }],
+        });
+        assert.equal(versions.body.code, 200);
+        assert.equal(versions.body.value.versions[0].id, '99');
+        assert.equal(versions.body.value.versions[0].associated, true);
+        const selectedMv = await request('native-mv-selected', '/native/netease/mv', {
+            args: [{ id: '1', videoID: '100' }],
+        });
+        assert.equal(selectedMv.body.code, 200);
+        assert.equal(selectedMv.body.value.id, '100');
         // 塞壬唱片使用独立 fetch 目录
         const sirenSearch = await request('native-siren', '/native/siren/search', {
             args: ['', 'album', 0],
@@ -255,7 +271,7 @@ async function main() {
         assert.equal(backedOff.body.lastFailure.failureStage, 'device-bootstrap');
         for (const route of [
             '/cloud',
-            '/mv/url',
+            '/mv/download',
             '/personal_fm',
             '/qq/getComments',
             '/kugou/user/cloud',

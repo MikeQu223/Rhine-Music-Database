@@ -100,6 +100,8 @@ set(RHINE_APP_SOURCES
     Qt/src/AppUpdater.h
     Qt/src/AudioPlayer.cpp
     Qt/src/AudioPlayer.h
+    Qt/src/AudioSpectrum.cpp
+    Qt/src/AudioSpectrum.h
     Qt/src/HttpAudioStream.cpp
     Qt/src/HttpAudioStream.h
     Qt/src/PlaybackDiagnostics.cpp
@@ -259,7 +261,7 @@ if(NOT IOS)
         RHINE_PLAYBACK_SOURCES
         INCLUDE
         REGEX
-        "/(AppUpdater|AppStorage|AudioPlayer|HttpAudioStream|PlaybackDiagnostics|PlaybackConnection|Host|MusicApi|MusicPlayer|PlaybackQueue|LyricsController|Platform)\\.(cpp|h)$|/qrcodegen\\.cpp$"
+        "/(AppUpdater|AppStorage|AudioPlayer|AudioSpectrum|HttpAudioStream|PlaybackDiagnostics|PlaybackConnection|Host|MusicApi|MusicPlayer|PlaybackQueue|LyricsController|Platform)\\.(cpp|h)$|/qrcodegen\\.cpp$"
     )
     list(REMOVE_ITEM RHINE_CORE_SOURCES ${RHINE_PLAYBACK_SOURCES})
     add_library(RhinePlaybackCore STATIC ${RHINE_PLAYBACK_SOURCES})
@@ -354,6 +356,8 @@ endif()
 set_source_files_properties(Qt/qml/Main.qml TARGET_DIRECTORY RhineMusicDatabase PROPERTIES QT_RESOURCE_ALIAS
                                                                                            Main.qml)
 target_include_directories(RhineMusicDatabase PRIVATE vendor/qrcodegen Qt/src)
+target_sources(RhineMusicDatabase PRIVATE Qt/src/MvController.cpp Qt/src/MvController.h
+                                          Qt/src/DesktopWallpaper.cpp Qt/src/DesktopWallpaper.h)
 qt_add_resources(
     RhineMusicDatabase
     "rhine_animation"
@@ -626,8 +630,14 @@ if(IOS)
     return()
 endif()
 enable_testing()
-qt_add_executable(RhinePlatformRegression Qt/tests/PlatformRegression.cpp Qt/src/AppStorage.cpp
-                  Qt/src/AudioPlayer.cpp Qt/src/HttpAudioStream.cpp Qt/src/ProcessMetrics.cpp)
+qt_add_executable(
+    RhinePlatformRegression
+    Qt/tests/PlatformRegression.cpp
+    Qt/src/AppStorage.cpp
+    Qt/src/AudioPlayer.cpp
+    Qt/src/AudioSpectrum.cpp
+    Qt/src/HttpAudioStream.cpp
+    Qt/src/ProcessMetrics.cpp)
 target_include_directories(RhinePlatformRegression PRIVATE Qt/src)
 target_link_libraries(RhinePlatformRegression PRIVATE Qt6::Core Qt6::Gui Qt6::Multimedia Qt6::Network
                                                       Qt6::MultimediaPrivate)
@@ -749,7 +759,7 @@ endif()
 add_test(NAME qt_linux_display_regression COMMAND RhineLinuxDisplayRegression)
 
 qt_add_executable(RhineAudioStreamRegression Qt/tests/AudioStreamChecks.cpp Qt/src/AudioPlayer.cpp
-                  Qt/src/HttpAudioStream.cpp)
+                  Qt/src/AudioSpectrum.cpp Qt/src/HttpAudioStream.cpp)
 target_include_directories(RhineAudioStreamRegression PRIVATE Qt/src)
 target_link_libraries(RhineAudioStreamRegression PRIVATE Qt6::Core Qt6::Multimedia Qt6::Network)
 if(MSVC)
@@ -809,6 +819,33 @@ if(MSVC)
     target_compile_options(RhinePlaybackQueueRegression PRIVATE /utf-8)
 endif()
 add_test(NAME qt_playback_queue_regression COMMAND RhinePlaybackQueueRegression)
+
+qt_add_executable(RhineMvRegression Qt/tests/MvChecks.cpp Qt/src/MvController.cpp Qt/src/MvController.h
+                  Qt/src/DesktopWallpaper.cpp Qt/src/DesktopWallpaper.h)
+target_include_directories(RhineMvRegression PRIVATE Qt/src)
+target_link_libraries(RhineMvRegression PRIVATE RhineCore)
+if(MSVC)
+    target_compile_options(RhineMvRegression PRIVATE /utf-8)
+endif()
+add_test(NAME qt_mv_regression COMMAND RhineMvRegression "${CMAKE_CURRENT_SOURCE_DIR}/output/resources"
+                                       "${CMAKE_CURRENT_SOURCE_DIR}/Qt/tests/fixtures/mv-sample.json")
+set_tests_properties(qt_mv_regression
+                     PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_FORCE_STDERR_LOGGING=1" TIMEOUT 45)
+qt_add_executable(RhineSpectrumRegression Qt/tests/SpectrumChecks.cpp)
+target_include_directories(RhineSpectrumRegression PRIVATE Qt/src)
+target_link_libraries(RhineSpectrumRegression PRIVATE RhineCore)
+add_test(NAME qt_spectrum_regression COMMAND RhineSpectrumRegression)
+if(WIN32)
+    # Explicit desktop integration probe; default CTest must never alter the user's desktop.
+    qt_add_executable(RhineWallpaperProbe Qt/tests/WallpaperChecks.cpp Qt/src/DesktopWallpaper.cpp
+                      Qt/src/DesktopWallpaper.h)
+    set_target_properties(RhineWallpaperProbe PROPERTIES EXCLUDE_FROM_ALL TRUE)
+    target_include_directories(RhineWallpaperProbe PRIVATE Qt/src)
+    target_link_libraries(RhineWallpaperProbe PRIVATE Qt6::Quick Qt6::Multimedia user32)
+    if(MSVC)
+        target_compile_options(RhineWallpaperProbe PRIVATE /utf-8)
+    endif()
+endif()
 
 # FG 闸门探针：验证「setQueueSubmitParams 对离屏帧生效」与「共享 device 上能建交换链」。 需要真实 GPU + 显示服务（或 xvfb + lavapipe），CI runner 没有
 # GPU，所以**不进默认 CTest 集合**：构建后用 `output/qt-build/RhineFgGateProbe` 手动运行，用它给出 "FG 架构成不成立"的硬结论。

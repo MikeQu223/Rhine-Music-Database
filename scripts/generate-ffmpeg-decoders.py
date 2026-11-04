@@ -18,93 +18,96 @@ import os
 import re
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SRC = os.path.join(ROOT, 'third_party/ffmpeg/libavcodec')
-OUT = os.path.join(ROOT, 'vendor/ffmpeg/decoders-linux.json')
+SRC = os.path.join(ROOT, "third_party/ffmpeg/libavcodec")
+OUT = os.path.join(ROOT, "vendor/ffmpeg/decoders-linux.json")
 
-DECLARE = re.compile(r'const\s+FFCodec\s+ff_([A-Za-z0-9_]+)_decoder\s*=\s*\{')
-EXTERN = re.compile(r'extern\s+const\s+FFCodec\s+ff_([A-Za-z0-9_]+)_decoder;')
+DECLARE = re.compile(r"const\s+FFCodec\s+ff_([A-Za-z0-9_]+)_decoder\s*=\s*\{")
+EXTERN = re.compile(r"extern\s+const\s+FFCodec\s+ff_([A-Za-z0-9_]+)_decoder;")
 # configure 里的条件解码器：<name>_decoder_deps="lgpl_gpl" 之类
 WITH_DEPS = re.compile(r'^(\w+)_decoder_deps="([^"]*)"', re.MULTILINE)
 # deps 只由这些库组成的解码器可以安全启用；其余（lgpl_gpl、audiotoolbox、videotoolbox 等）
 # 要么会把构建拖成 GPL，要么依赖平台专有框架。
-SAFE_DEPS = {'avcodec', 'avutil', 'swresample', 'swscale'}
+SAFE_DEPS = {"avcodec", "avutil", "swresample", "swscale"}
 
 # 宏声明、源码里不含 .p.type 的音频解码器
-MACRO_AUDIO_PREFIX = ('adpcm_', 'pcm_', 'dsd_')
+MACRO_AUDIO_PREFIX = ("adpcm_", "pcm_", "dsd_")
 MACRO_AUDIO_EXACT = {
-    'aac_latm',
-    'cbd2_dpcm', 'derf_dpcm', 'gremlin_dpcm', 'interplay_dpcm', 'roq_dpcm',
-    'sdx2_dpcm', 'sol_dpcm', 'wady_dpcm', 'xan_dpcm',
+    "aac_latm",
+    "cbd2_dpcm",
+    "derf_dpcm",
+    "gremlin_dpcm",
+    "interplay_dpcm",
+    "roq_dpcm",
+    "sdx2_dpcm",
+    "sol_dpcm",
+    "wady_dpcm",
+    "xan_dpcm",
 }
 # 测试/合成音源，播放器用不到
-EXCLUDE = {'anull', 'comfortnoise', 'ffwavesynth'}
+EXCLUDE = {"anull", "comfortnoise", "ffwavesynth"}
 
 
 def block_after(text, start):
     depth = 0
     for i in range(start, len(text)):
-        if text[i] == '{':
+        if text[i] == "{":
             depth += 1
-        elif text[i] == '}':
+        elif text[i] == "}":
             depth -= 1
             if depth == 0:
-                return text[start:i + 1]
-    return text[start:start + 4000]
+                return text[start : i + 1]
+    return text[start : start + 4000]
 
 
 def collect():
     audio = set()
     for dirpath, _dirs, files in os.walk(SRC):
         for name in files:
-            if not name.endswith('.c'):
+            if not name.endswith(".c"):
                 continue
-            text = open(os.path.join(dirpath, name), encoding='utf-8', errors='replace').read()
+            text = open(os.path.join(dirpath, name), encoding="utf-8", errors="replace").read()
             for m in DECLARE.finditer(text):
-                block = block_after(text, text.index('{', m.end() - 1))
-                if 'AVMEDIA_TYPE_AUDIO' in block:
+                block = block_after(text, text.index("{", m.end() - 1))
+                if "AVMEDIA_TYPE_AUDIO" in block:
                     audio.add(m.group(1))
 
-    externs = set(EXTERN.findall(
-        open(os.path.join(SRC, 'allcodecs.c'), encoding='utf-8').read()))
+    externs = set(EXTERN.findall(open(os.path.join(SRC, "allcodecs.c"), encoding="utf-8").read()))
     for name in externs:
         if name.startswith(MACRO_AUDIO_PREFIX) or name in MACRO_AUDIO_EXACT:
             audio.add(name)
 
-    configure = open(os.path.join(ROOT, 'third_party/ffmpeg/configure'), encoding='utf-8').read()
+    configure = open(os.path.join(ROOT, "third_party/ffmpeg/configure"), encoding="utf-8").read()
     unsafe = {
-        name
-        for name, deps in WITH_DEPS.findall(configure)
-        if not set(deps.split()).issubset(SAFE_DEPS)
+        name for name, deps in WITH_DEPS.findall(configure) if not set(deps.split()).issubset(SAFE_DEPS)
     }
 
     return sorted(
-        name for name in audio
-        if name in externs
-        and not name.startswith('lib')
-        and name not in EXCLUDE
-        and name not in unsafe
+        name
+        for name in audio
+        if name in externs and not name.startswith("lib") and name not in EXCLUDE and name not in unsafe
     )
 
 
 def main():
     decoders = collect()
-    with open(OUT, 'w', encoding='utf-8') as f:
+    with open(OUT, "w", encoding="utf-8") as f:
         json.dump(
             {
-                '$comment': (
-                    'Linux 随包 FFmpeg 的解码器白名单：仅保留音频解码器，视频/字幕解码器全部关闭。'
-                    '由 scripts/prepare-linux-ffmpeg.cjs 读取后拼成 --enable-decoder 参数；'
-                    '新增格式时在此追加，或用 RHINE_FFMPEG_EXTRA_DECODERS 临时覆盖。'
-                    '本文件由 scripts/generate-ffmpeg-decoders.py 生成。'
+                "$comment": (
+                    "Linux 随包 FFmpeg 的解码器白名单：音频与关联 MV 的 H.264 / HEVC 解码。"
+                    "由 scripts/prepare-linux-ffmpeg.cjs 读取后拼成 --enable-decoder 参数；"
+                    "新增格式时在此追加，或用 RHINE_FFMPEG_EXTRA_DECODERS 临时覆盖。"
+                    "本文件由 scripts/generate-ffmpeg-decoders.py 生成。"
                 ),
-                'decoders': decoders,
+                "decoders": decoders,
+                "videoDecoders": ["h264", "hevc"],
             },
             f,
             indent=4,
             ensure_ascii=False,
         )
-        f.write('\n')
-    print(f'{OUT}: {len(decoders)} 个音频解码器')
+        f.write("\n")
+    print(f"{OUT}: {len(decoders)} 个音频解码器")
 
 
 main()

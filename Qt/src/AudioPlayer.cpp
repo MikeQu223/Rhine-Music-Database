@@ -77,10 +77,10 @@ void AudioPlayer::createPlayer() {
         QObject::connect(player.get(), &QMediaPlayer::durationChanged, player.get(),
                          [changed] { changed(); });
     }
-    if (diagnosticsEnabled) {
+    if (diagnosticsEnabled || spectrumEnabled) {
         observeDecodedBuffers();
     }
-    player->setAudioBufferOutput(diagnosticsEnabled ? decodedOutput.get() : nullptr);
+    player->setAudioBufferOutput(diagnosticsEnabled || spectrumEnabled ? decodedOutput.get() : nullptr);
     QObject::connect(player.get(), &QMediaPlayer::metaDataChanged, player.get(),
                      [this] { diagnose("metadata"); });
     QObject::connect(player.get(), &QMediaPlayer::bufferProgressChanged, player.get(),
@@ -334,10 +334,11 @@ bool AudioPlayer::load(QString input, bool offline, bool alternative, QString pr
     lastDecodedElapsedMs = -1;
     lastDecodedEndMs = -1;
     decodedFormat = {};
+    clearSpectrum();
     decodeClock.restart();
     // 每次加载隔离旧媒体会话，防止旧解码器的迟到错误污染新曲目。
     createPlayer();
-    if (diagnosticsEnabled) {
+    if (diagnosticsEnabled || spectrumEnabled) {
         observeDecodedBuffers();
     }
     playbackRequested = false;
@@ -380,6 +381,7 @@ void AudioPlayer::control(QString action, double value) {
         diagnosticEvent("control", values);
     }
     if (action == "pause") {
+        clearSpectrum();
         playbackRequested = false;
         playbackWatchdog.stop();
         player->pause();
@@ -395,6 +397,7 @@ void AudioPlayer::control(QString action, double value) {
             player->play();
         }
     } else if (action == "stop") {
+        clearSpectrum();
         playbackRequested = false;
         playbackWatchdog.stop();
         // 先唤醒可能等待网络的解码线程，再释放媒体会话与临时缓存。
@@ -407,6 +410,7 @@ void AudioPlayer::control(QString action, double value) {
         failureRecoverable = false;
         progressClock.invalidate();
     } else if (action == "seek" && player->isSeekable()) {
+        clearSpectrum();
         progressClock.restart();
         lastPosition = qint64(std::clamp(value, 0., double(player->duration())));
         if (recoveryPosition >= 0) {
@@ -439,13 +443,36 @@ void AudioPlayer::enableDiagnostics(bool enabled) {
         return;
     }
     diagnosticsEnabled = enabled;
-    if (enabled) {
+    if (enabled || spectrumEnabled) {
         observeDecodedBuffers();
     } else {
         ++decoderObservation;
         QObject::disconnect(decoderConnection);
     }
-    player->setAudioBufferOutput(enabled ? decodedOutput.get() : nullptr);
+    player->setAudioBufferOutput(enabled || spectrumEnabled ? decodedOutput.get() : nullptr);
+}
+
+void AudioPlayer::clearSpectrum() {
+    spectrum.reset();
+    spectrumClock.invalidate();
+    if (spectrumEnabled && spectrumChanged) {
+        spectrumChanged(spectrum.levels());
+    }
+}
+
+void AudioPlayer::enableSpectrum(bool enabled) {
+    if (spectrumEnabled == enabled) {
+        return;
+    }
+    spectrumEnabled = enabled;
+    clearSpectrum();
+    if (enabled || diagnosticsEnabled) {
+        observeDecodedBuffers();
+    } else {
+        ++decoderObservation;
+        QObject::disconnect(decoderConnection);
+    }
+    player->setAudioBufferOutput(enabled || diagnosticsEnabled ? decodedOutput.get() : nullptr);
 }
 
 void AudioPlayer::diagnose(const QString &event) {
@@ -550,8 +577,17 @@ void AudioPlayer::observeDecodedBuffers() {
     decoderConnection = QObject::connect(
         decodedOutput.get(), &QAudioBufferOutput::audioBufferReceived, decodedOutput.get(),
         [this, observation = decoderObservation, generation = sourceSerial](const QAudioBuffer &buffer) {
-            if (!diagnosticsEnabled || observation != decoderObservation || generation != sourceSerial ||
-                !buffer.isValid()) {
+            if (observation != decoderObservation || generation != sourceSerial || !buffer.isValid()) {
+                return;
+            }
+            if (spectrumEnabled && player->isPlaying() && spectrum.consume(buffer) &&
+                (!spectrumClock.isValid() || spectrumClock.elapsed() >= 50)) {
+                spectrumClock.restart();
+                if (spectrumChanged) {
+                    spectrumChanged(spectrum.levels());
+                }
+            }
+            if (!diagnosticsEnabled) {
                 return;
             }
             ++decodedBuffers;

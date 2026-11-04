@@ -244,7 +244,12 @@ Drawing render(const State &state, const QRectF &bounds, bool dark, Glyphs &glyp
     const auto centerY = y + RowHeight / 2;
     favorite(paint, state, favoriteX, centerY);
     paint.controls(state, center, centerY);
-    lyrics(paint, state, bounds.right() - 470, centerY);
+    lyrics(paint, state, bounds.right() - (state.musicVideo ? 490 : 470), centerY);
+    if (state.musicVideo) {
+        const auto mvX = bounds.right() - 435;
+        paint.centeredLabel("MV", {mvX, centerY}, 15, "regular");
+        paint.hit({mvX - 24, centerY - 24, 48, 48}, "player:mv", "打开 MV 播放窗口");
+    }
     playbackMode(paint, state, bounds.right() - 380, centerY);
     timeline(paint, state, row);
     output(paint, state, outputX, y, bounds.right());

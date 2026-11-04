@@ -2,6 +2,8 @@
 #include "AppIdentity.h"
 #include "AppStorage.h"
 #include "Engine.h"
+#include "MvController.h"
+#include <QQmlComponent>
 #include "fg/FgCapability.h"
 #if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
 #include "fg/FgConfig.h"
@@ -96,8 +98,7 @@ static bool vulkanDeviceAvailable() {
     // QVulkanInstance 不公开设备列表，直接按 Vulkan API 枚举，避免依赖 QVulkanWindow。
     quint32 devices = 0;
 #ifdef Q_OS_LINUX
-    const auto result =
-        probe.functions()->vkEnumeratePhysicalDevices(probe.vkInstance(), &devices, nullptr);
+    const auto result = probe.functions()->vkEnumeratePhysicalDevices(probe.vkInstance(), &devices, nullptr);
     if (result != VK_SUCCESS) {
         // 只报"Vulkan 不可用"会把排障推回用户：这里必须区分驱动/loader 报错与根本没有设备。
         qWarning() << "Vulkan: vkEnumeratePhysicalDevices 失败，VkResult" << int(result);
@@ -137,8 +138,8 @@ static bool vulkanPresentationAvailable() {
     static const bool verdict = [] {
         const auto platform = QGuiApplication::platformName();
         const bool overrideRequested = qEnvironmentVariableIntValue("RHINE_X11_ALLOW_VULKAN") > 0;
-        const auto dri3 = platform == QLatin1String("xcb") ? RhineLinux::probeDri3()
-                                                           : RhineLinux::Dri3::Unknown;
+        const auto dri3 =
+            platform == QLatin1String("xcb") ? RhineLinux::probeDri3() : RhineLinux::Dri3::Unknown;
         const bool allowed = RhineLinux::vulkanAllowedOn(platform, dri3, overrideRequested);
         if (!allowed) {
             qWarning().noquote() << "Vulkan:" << RhineLinux::describeVulkanBlock(platform, dri3);
@@ -444,8 +445,8 @@ int main(int argc, char **argv) {
 #endif
     // 必须在创建任何 QQuickWindow 之前确定后端；组织名先落位，配置路径才能落到应用数据目录。
     selectGraphicsBackend();
-    qInfo().noquote() << "Display:" << QGuiApplication::platformName() << "backend:"
-                         << RhineGraphics::activeBackend();
+    qInfo().noquote() << "Display:" << QGuiApplication::platformName()
+                      << "backend:" << RhineGraphics::activeBackend();
     applyVSyncSetting();
     applySupersampleSetting();
     applyRenderScaleSetting();
@@ -536,9 +537,8 @@ int main(int argc, char **argv) {
         }
 #ifdef Q_OS_LINUX
         // 带上本次已经解析出的后端：后台服务据此判断在跑的界面进程是否还符合当前配置。
-        const auto attached =
-            playback->call("attach", {{"pid", double(application.applicationPid())},
-                                      {"backend", RhineGraphics::activeBackend()}});
+        const auto attached = playback->call("attach", {{"pid", double(application.applicationPid())},
+                                                        {"backend", RhineGraphics::activeBackend()}});
         if (attached["existing"].toBool()) {
             // 这两条分支都只让本进程退出；不打日志的话，"点了没有窗口"与启动失败无法区分。
             if (attached["restarted"].toBool()) {
@@ -592,6 +592,35 @@ int main(int argc, char **argv) {
                                              families.isEmpty() ? QString("sans-serif") : families.first());
     engine.rootContext()->setContextProperty("rhine", backend.get());
     engine.rootContext()->setContextProperty("profiler", profiler.get());
+#ifndef Q_OS_IOS
+    MvController mv(&backend->host, &backend->app->music.player);
+    engine.rootContext()->setContextProperty("rhineMv", &mv);
+    QObject::connect(backend.get(), &Engine::mvRequested, &mv, &MvController::openWindow);
+    std::unique_ptr<QObject> mvWindow;
+    std::unique_ptr<QObject> mvWallpaper;
+    if (!offline) {
+        QQmlComponent component(&engine, QUrl(QStringLiteral("qrc:/qt/qml/RhineMusic/MvWindow.qml")));
+        mvWindow.reset(component.create());
+        if (auto window = qobject_cast<QWindow *>(mvWindow.get())) {
+            QQmlEngine::setObjectOwnership(window, QQmlEngine::CppOwnership);
+            mv.setWindow(window);
+        } else {
+            qWarning() << "MV window:" << component.errors();
+        }
+        if (mv.wallpaperSupported()) {
+            QQmlComponent wallpaperComponent(&engine,
+                                             QUrl(QStringLiteral("qrc:/qt/qml/RhineMusic/MvWallpaper.qml")));
+            mvWallpaper.reset(wallpaperComponent.create());
+            if (auto window = qobject_cast<QWindow *>(mvWallpaper.get())) {
+                QQmlEngine::setObjectOwnership(window, QQmlEngine::CppOwnership);
+                mv.setWallpaperWindow(window);
+            } else {
+                qWarning() << "MV wallpaper:" << wallpaperComponent.errors();
+                mv.setWallpaper(false);
+            }
+        }
+    }
+#endif
     if (!offline && RHINE_RELEASE_BUILD) {
         QTimer::singleShot(8000, backend.get(), [raw = backend.get()] {
             if (raw->host.preference("auto-update") != "off") {

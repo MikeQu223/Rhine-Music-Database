@@ -45,6 +45,11 @@ PlaybackService::PlaybackService(QString root, QString guiExecutable, bool offli
             send(socket, {{"event", "diagnostic"}, {"name", event}, {"values", values}});
         }
     });
+    connect(&m_host, &Host::audioSpectrumChanged, this, [this](QJsonArray levels) {
+        if (m_gui) {
+            send(m_gui, {{"event", "spectrum"}, {"levels", levels}});
+        }
+    });
     connect(&m_player, &MusicPlayer::trackSelected, this, [this](QJsonObject track) {
         ++m_selectionSerial;
         m_selectedTrack = track;

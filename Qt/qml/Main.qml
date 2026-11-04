@@ -18,6 +18,13 @@ Window {
     flags: (windowsFrameless ? Qt.FramelessWindowHint : 0) | Qt.Window | Qt.WindowTitleHint | Qt.WindowSystemMenuHint | Qt.WindowMinMaxButtonsHint | Qt.WindowCloseButtonHint | Qt.WindowFullscreenButtonHint
     title: "RHINE MUSIC DATABASE"
     color: "#e7e7e1"
+    // Tray-close events are intercepted before QML. On an accepted primary-window close,
+    // hide the companion so it cannot keep Qt's last-window quit behavior alive.
+    onClosing: {
+        if (!root.ios) {
+            rhineMv.hideForQuit();
+        }
+    }
     // 原生对话框挂在真实窗口；iOS 使用独立的导入入口。
     Loader {
         active: !root.ios
