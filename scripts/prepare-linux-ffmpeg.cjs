@@ -1,5 +1,5 @@
 // Linux 随包提供自编的 FFmpeg：发行版 libavcodec 动态依赖 x265/aom/SvtAv1Enc 等
-// 编码器库（合计约 55 MB），而应用只用 Qt 的 FFmpeg 后端解码音频，不需要任何编码器。
+// 编码器库（合计约 55 MB），而应用只用 Qt 的 FFmpeg 后端解码音频与 MV，不需要任何编码器。
 // 裁剪口径：音频与关联 MV 的 H.264 / HEVC 解码。编码器、复用器、avdevice、avfilter、命令行工具全部关闭，
 // 解码器按 vendor/ffmpeg/decoders-linux.json 白名单启用；MV 额外保留 H.264 / HEVC
 // parser 与 bitstream filter。不自动探测外部库，因此不会链接 x264/x265/aom/dav1d。
@@ -85,7 +85,7 @@ const extraDecoders = (process.env.RHINE_FFMPEG_EXTRA_DECODERS || '')
 const decoders = [
     ...new Set([...decoderManifest.decoders, ...decoderManifest.videoDecoders, ...extraDecoders]),
 ];
-// 音频 parser：裸流（ADTS/LATM、裸 MP3 帧、FLAC、DTS 等）与网络流的分帧依赖它。
+// 音频与 MV parser：裸流与网络流的分帧依赖它。
 const parsers = [
     'h264',
     'hevc',
@@ -128,7 +128,7 @@ const bsfs = [
     'dts2pts',
 ];
 
-// 构建参数：shared 便于随包替换；关闭一切与音频解码无关的部分。
+// 构建参数：shared 便于随包替换；只保留音频与 MV 解码所需的部分。
 // --enable-small 把默认的 -O3 换成 -Os：音频解码的算力冗余很大，换来的结果是 avcodec 小一截。
 // --enable-lto=auto 让 CFLAGS 带上 -flto=auto，链接期并行执行跨编译单元优化；不启用任何 GPL 组件，
 //   许可断言不受影响。
@@ -193,32 +193,38 @@ function assertLgpl() {
 }
 
 /**
- * 断言构建结果只含音频解码能力
- * 白名单写错（或 configure 依赖把视频解码器带进来）会让体积悄悄回到 14 MB 量级，
- * 在构建期拦住比事后看包体积更可靠。
+ * 校验 configure 实际启用的解码器：允许音频白名单、MV 编码及显式追加的解码器，
+ * 拒绝依赖间接带入的其他解码器，并确保常用音频与 MV 格式没有被静默禁用。
  */
-function assertAudioOnly() {
-    const file = path.join(build, 'config_components.h');
-    if (!fs.existsSync(file)) {
-        console.warn('Cannot confirm the decoder selection; check configure output');
-        return;
-    }
-    const content = fs.readFileSync(file, 'utf8');
+function assertDecoderSelection(content) {
     const enabled = new Set(
         [...content.matchAll(/#define CONFIG_([A-Z0-9_]+)_DECODER 1/g)].map((m) => m[1].toLowerCase()),
     );
-    const leftovers = ['hevc', 'h264', 'vp9', 'av1', 'vvc', 'mpeg4', 'mpeg2video', 'vc1'].filter((name) =>
-        enabled.has(name),
-    );
-    if (leftovers.length > 0) {
-        throw new Error(`video decoders are still enabled: ${leftovers.join(', ')}`);
+    const allowed = new Set(decoders);
+    const unexpected = [...enabled].filter((name) => !allowed.has(name));
+    if (unexpected.length > 0) {
+        throw new Error(`unexpected decoders are enabled: ${unexpected.join(', ')}`);
     }
     const required = ['mp3', 'aac', 'alac', 'flac', 'vorbis', 'opus', 'ape', 'wavpack', 'pcm_s16le'];
     const missing = required.filter((name) => !enabled.has(name));
     if (missing.length > 0) {
         throw new Error(`audio decoders are missing: ${missing.join(', ')}`);
     }
-    console.log(`FFmpeg decoders: ${enabled.size} enabled, video decoders disabled`);
+    const missingVideo = decoderManifest.videoDecoders.filter((name) => !enabled.has(name));
+    if (missingVideo.length > 0) {
+        throw new Error(`MV decoders are missing: ${missingVideo.join(', ')}`);
+    }
+    return enabled.size;
+}
+
+function verifyDecoderSelection() {
+    const file = path.join(build, 'config_components.h');
+    if (!fs.existsSync(file)) {
+        console.warn('Cannot confirm the decoder selection; check configure output');
+        return;
+    }
+    const count = assertDecoderSelection(fs.readFileSync(file, 'utf8'));
+    console.log(`FFmpeg decoders: ${count} enabled, MV codecs: ${decoderManifest.videoDecoders.join(', ')}`);
 }
 
 /**
@@ -266,7 +272,7 @@ function main() {
     fs.mkdirSync(build, { recursive: true });
     run(path.join(tree, 'configure'), [`--prefix=${install}`, ...configureArguments], build);
     assertLgpl();
-    assertAudioOnly();
+    verifyDecoderSelection();
     assertLto();
     run('make', ['-j', process.env.RHINE_BUILD_JOBS || String(os.cpus().length)], build);
     run('make', ['install'], build);
@@ -289,4 +295,7 @@ function main() {
     );
     fs.copyFileSync(stamp, path.join(install, 'build.json'));
 }
-main();
+if (require.main === module) {
+    main();
+}
+module.exports = { assertDecoderSelection };
