@@ -59,7 +59,31 @@ function prepareSourceTree() {
     const archive = path.join(directory, `ffmpeg-${source.version}.tar.xz`);
     fs.mkdirSync(directory, { recursive: true });
     if (!fs.existsSync(archive)) {
-        run('curl', ['-L', '--fail', '--retry', '3', source.download, '-o', archive]);
+        // TLS 连接重置（curl 35）不在默认重试范围内；校验成功后才发布缓存文件。
+        const partial = archive + '.part';
+        try {
+            run('curl', [
+                '-L',
+                '--fail',
+                '--retry',
+                '3',
+                '--retry-all-errors',
+                '--connect-timeout',
+                '30',
+                '--max-time',
+                '300',
+                source.download,
+                '-o',
+                partial,
+            ]);
+            const downloadedHash = createHash('sha256').update(fs.readFileSync(partial)).digest('hex');
+            if (downloadedHash !== source.sha256) {
+                throw new Error('FFmpeg source checksum mismatch');
+            }
+            fs.renameSync(partial, archive);
+        } finally {
+            fs.rmSync(partial, { force: true });
+        }
     }
     const hash = createHash('sha256').update(fs.readFileSync(archive)).digest('hex');
     if (hash !== source.sha256) {
