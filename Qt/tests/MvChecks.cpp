@@ -306,6 +306,48 @@ int main(int argc, char **argv) {
     check(video.source().isEmpty() && music.state["playing"].toBool(),
           "closing video releases its source and leaves audio playing");
     music.state = {{"playing", false}, {"position", 0}};
+    // Exercise both ends of QJsonObject's key ordering when the saved-offset limit is reached.
+    host.offline = false;
+    for (const auto &id : {QString("100"), QString("9000")}) {
+        QJsonObject savedOffsets;
+        for (int i = 0; i < 256; ++i) {
+            savedOffsets[QString::number(2000 + i)] = 1000;
+        }
+        host.setPreference("mv-offsets",
+                           QString::fromUtf8(QJsonDocument(savedOffsets).toJson(QJsonDocument::Compact)));
+        const auto saved = [&] {
+            return QJsonDocument::fromJson(host.preference("mv-offsets").toUtf8()).object();
+        };
+        const auto offsetResolver = [&](const QJsonObject &, MusicApi::Reply reply) {
+            reply({QJsonObject{{"id", id},
+                               {"url", QString("http://127.0.0.1:%1/sample.mp4").arg(server.serverPort())}},
+                   {},
+                   {}});
+        };
+        {
+            MvController offsets(&host, &music, nullptr, offsetResolver);
+            offsets.setEnabled(true);
+            offsets.adjustOffset(500);
+            check(offsets.offset() == 500 && saved().size() == 256 && saved().value(id).toInt() == 500,
+                  "full offset storage preserves and persists the active MV while evicting another entry");
+            offsets.adjustOffset(500);
+            check(offsets.offset() == 1000 && saved().value(id).toInt() == 1000 && saved().size() == 256,
+                  "repeated adjustments accumulate after offset storage reaches its limit");
+            offsets.setEnabled(false);
+        }
+        {
+            MvController restored(&host, &music, nullptr, offsetResolver);
+            restored.setEnabled(true);
+            check(restored.offset() == 1000, "active MV offset is restored from full persisted storage");
+            restored.resetOffset();
+            check(restored.offset() == 0 && saved().contains(id) && saved().value(id).toInt() == 0 &&
+                      saved().size() == 256,
+                  "resetting an offset keeps the current entry within the storage limit");
+            restored.setEnabled(false);
+        }
+    }
+    host.setPreference("mv-offsets", "{}");
+    host.offline = true;
     QVideoSink pausedSink;
     MvController paused(&host, &music, nullptr, [&](const QJsonObject &, MusicApi::Reply reply) {
         reply({QJsonObject{{"id", "paused"},

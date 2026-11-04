@@ -526,7 +526,11 @@ void MvController::saveOffset(int value) {
     }
     m_offsets[m_mvID] = std::clamp(value, -60000, 60000);
     while (m_offsets.size() > 256) {
-        m_offsets.remove(m_offsets.begin().key());
+        auto candidate = m_offsets.begin();
+        if (candidate.key() == m_mvID) {
+            ++candidate;
+        }
+        m_offsets.erase(candidate);
     }
     m_host->setPreference("mv-offsets",
                           QString::fromUtf8(QJsonDocument(m_offsets).toJson(QJsonDocument::Compact)));
