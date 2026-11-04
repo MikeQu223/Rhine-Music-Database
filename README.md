@@ -287,6 +287,8 @@ RHINE_RESOURCES=$PWD/output/resources RHINE_AA_MODE=off ./output/qt-build/RhineM
 
 Linux 包随附自编的 FFmpeg：发行版 `libavcodec` 动态依赖 x265/aom/SvtAv1Enc 等编码器库（合计约 55 MB），而这里只用 Qt 的 FFmpeg 后端解码音频与关联 MV。`scripts/prepare-linux-ffmpeg.cjs` 构建一份保留音频及 H.264 / HEVC 视频解码能力的版本：编码器、复用器、avdevice、avfilter 全部关闭，解码器按 `vendor/ffmpeg/decoders-linux.json` 的音频白名单与 `videoDecoders` 启用（H.264、HEVC；VP9、AV1 不编译），parser 与 bitstream filter 保留音频及这两种 MV 编码需要的部分，解复用器保持全开（源码优先取 `third_party/ffmpeg` 子模块，锁定标签 `n9.0.1` 且保持上游原样；子模块缺失或提交与 `vendor/ffmpeg/source.json` 的 `pinned-commit` 不一致时，回退到锁定校验和的发布包）（LGPL-2.1-or-later，不启用任何 GPL 或非自由组件），构建时自动替换进包。发现漏掉的音频格式时，用 `RHINE_FFMPEG_EXTRA_DECODERS=aac_latm,xxx` 临时追加解码器，确认后再补进白名单文件。设置 `RHINE_FFMPEG=system` 可回退发行版库；Qt 后端要求的 SONAME 与自编版本不一致时也会自动回退并告警。许可与来源见 `NOTICE` 及包内 `third-party/FFmpeg/`。构建用 `--enable-small`（`-O3` 换 `-Os`）与 `--enable-lto` 压缩体积；`-flto` 同时显式写进 `--extra-ldflags`，因为 FFmpeg 自己那套 `check_ldflags -flto $cpuflags` 探测在 GCC 16 上会因 `-march=generic` 失败并把 `-flto` 静默丢掉。脚本在 configure 后复核 `CFLAGS` 与 `LDFLAGS` 都带 `-flto`，缺任一即失败；工具链不支持 LTO 时可用 `RHINE_FFMPEG_LTO=0` 退回普通构建。
 
+Linux CI 从 GitHub 浅检出已锁定提交的 `third_party/ffmpeg`，直接使用经过版本与工作区校验的源码，避免依赖 runner 无法稳定连接的 `ffmpeg.org`。本机构建也优先使用该子模块；未检出时仍可使用锁定 SHA256 的官方发布包。
+
 打包前会删掉 AppDir 里的开发期文件（`usr/include`、`usr/lib/cmake`、`usr/lib/pkgconfig`、man/doc 与 `*.a`、`*.la`、`*.prl`），这些是发行版 Qt 的安装规则带进来的，运行时用不到。
 
 #### DwarFS 镜像

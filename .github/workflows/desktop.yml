@@ -70,12 +70,15 @@ jobs:
       - name: Select Xcode with MetalFX frame interpolation
         if: runner.os == 'macOS'
         run: bash scripts/select-xcode.sh
-      # third_party/ffmpeg 不在 CI 检出：它只服务本机开发（快速克隆、离线构建），
-      # CI 直接用 vendor/ffmpeg/source.json 锁定的发布包，浅克隆一个上百 MB 的仓库
-      # 并不比下载 15 MB 源码包快。构建脚本会校验子模块提交，缺失时自动回退发布包。
       - name: Check out enabled graphics dependencies
         shell: bash
         run: git submodule update --init --recursive FidelityFX-SDK third_party/glslang
+      # ffmpeg.org 在 GitHub runner 上反复连接超时；Linux 直接从 GitHub 浅检出 gitlink
+      # 锁定的源码。构建脚本仍校验提交与工作区，并记录源码来源，不依赖浮动分支或标签。
+      - name: Check out pinned FFmpeg source
+        if: runner.os == 'Linux'
+        shell: bash
+        run: git submodule update --init --depth 1 -- third_party/ffmpeg
       - name: Check out glslang vendored dependencies
         # 只有 Vulkan 分支会解析 glslang，但不在 macOS 上跳过：万一 runner 带了
         # MoltenVK 让 find_package(Vulkan) 成立，跳过就等于把 FSR3 静默关掉，
