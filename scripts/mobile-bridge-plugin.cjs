@@ -15,8 +15,10 @@ const tmpdirReplacement = '(globalThis.__rhineTmpdir || require("os").tmpdir())'
 //   2. node:buffer 的 isUtf8 —— 上游用 TextDecoder 自己实现了一遍，这里换成原生实现，
 //      因为移动端的 TextDecoder 在 fatal 模式下的行为与上游假设不一致。
 //
-// 参数是注入到 worker.cjs 头部的 web API 补丁文件名。
-module.exports = (webApis = 'ios-web-apis.cjs') => ({
+// 参数是注入到 worker.cjs 头部的 web API 补丁文件名。第二个参数是 request.js
+// 末尾要追加的密钥缓存重置钩子：移动端由本插件接管 request.js（见下），
+// bundle-bridge 的 netease-request-reset 插件在移动模式下会让位。
+module.exports = (webApis = 'ios-web-apis.cjs', requestResetHook = '') => ({
     name: 'mobile-web-apis',
     setup(build) {
         build.onLoad({ filter: /\/MusicBridge\/worker\.cjs$/ }, (args) => {
@@ -30,12 +32,20 @@ module.exports = (webApis = 'ios-web-apis.cjs') => ({
         });
         // 上游库把临时目录解析提升到模块顶层（anonymous_token、xeapi_public_key、neapi_key
         // 都落在那里），worker 主体还没跑就先崩；这些调用点必须一并改写。
+        // request.js 还兼着 netease-request-reset 的职责：esbuild 对同一文件只跑第一个
+        // 命中的 onLoad，本插件必须在这里补上同一段钩子，否则密钥刷新会退化成重新 require。
         build.onLoad(
             { filter: /@neteasecloudmusicapienhanced\/api\/(util\/(neapiKey|request)|app|generateConfig|main|server)\.js$/ },
-            (args) => ({
-                contents: fs.readFileSync(args.path, 'utf8').replace(tmpdirCall, tmpdirReplacement),
-                loader: 'js',
-            }),
+            (args) => {
+                let contents = fs.readFileSync(args.path, 'utf8').replace(tmpdirCall, tmpdirReplacement);
+                if (/util[\\/]request\.js$/.test(args.path)) {
+                    contents += requestResetHook;
+                }
+                return {
+                    contents,
+                    loader: 'js',
+                };
+            },
         );
         build.onLoad({ filter: /@neteasecloudmusicapienhanced\/api\/util\/crypto\.js$/ }, (args) => {
             const contents = fs.readFileSync(args.path, 'utf8');
