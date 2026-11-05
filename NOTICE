@@ -7,6 +7,7 @@
 
 - @kitlangton/rolling-number 0.4.1，MIT：`Qt/src/UiMotion.cpp` 保留其运动曲线算法。以下保留两个 MIT 组件的完整许可；构建包随附本文件。
 - Microsoft Clarity 3.10.0（Android SDK），MIT：仅 Android 包引入的会话分析，完整许可见下文「Microsoft Clarity（Android SDK）」。
+- Bugly SDK 4.1.9.7（`com.tencent.bugly:crashreport`），The Bugly Software License, Version 1.0：仅 Android 包引入的崩溃与 ANR 上报，只在中国大陆用户同意数据传输许可后初始化；来源与许可见下文「Bugly（Android SDK）」。
 
 ## MIT notices
 
@@ -114,8 +115,8 @@ iOS 与 Android 不允许应用拉起独立的可执行文件（拒绝执行应�
 ### Microsoft Clarity（Android SDK）
 
 Android 包引入 `com.microsoft.clarity:clarity:3.10.0`（会话行为分析，MIT），由
-`Qt/android/build.gradle` 声明、`Qt/android/src/rhine/music/database/RhineApplication.java`
-初始化。传递依赖：`org.jetbrains.kotlin:kotlin-stdlib`（Apache-2.0）、
+`Qt/android/build.gradle` 声明、`Qt/android/src/rhine/music/database/ConsentStore.java`
+在启动许可闸门放行后初始化（`RhineApplication` 只在已同意时调用它）。传递依赖：`org.jetbrains.kotlin:kotlin-stdlib`（Apache-2.0）、
 `com.google.protobuf:protobuf-javalite`（BSD-3-Clause）、
 `com.android.installreferrer:installreferrer`（Apache-2.0），许可证文件随各自 AAR 分发。
 对外发布前需按发行地区确认会话采集的用户同意流程。
@@ -143,6 +144,27 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
+
+## Bugly（Android SDK）
+
+Android 包引入 `com.tencent.bugly:crashreport:4.1.9.7`（Java 崩溃与 ANR 上报），由
+`Qt/android/build.gradle` 声明、`Qt/android/src/rhine/music/database/ConsentStore.java`
+在**中国大陆用户同意数据传输许可后**初始化；欧盟地区与其他地区不启动该 SDK。
+来源：Maven Central `https://repo1.maven.org/maven2/com/tencent/bugly/crashreport/`；
+项目主页：https://github.com/BuglyDevTeam/Bugly-Android-Demo；
+个人信息保护规则（应用内许可文案所引）：
+https://privacy.qq.com/document/preview/fc748b3d96224fdb825ea79e132c1a56 。
+
+POM 未声明传递依赖，AAR 的清单只带 `uses-sdk`（不带权限），proguard 规则为空；
+AAR 内含 5 个 ABI 的 `libBugly_Native.so`，打包时按 `qtTargetAbiList` 只保留目标 ABI。
+native 崩溃由 Bugly 接管（注册 SIGSEGV/SIGBUS/SIGABRT handler）；为避免两套 handler
+抢同一组信号，`Qt/src/main.cpp` 的 RHINE-SIGNAL 诊断链默认不编译
+（`RHINE_ANDROID_SIGNAL_DIAG=0`），只保留作离线排障的回退手段。
+
+许可证：**The Bugly Software License, Version 1.0**（见该版本 POM 的 `<licenses>`，
+`http://bugly.qq.com/licenses/LICENSE-1.0.txt`）。该地址目前拒绝直连，完整文本随
+官方 SDK 包分发；正式发布前需按 SDK 包内许可证文本核对署名与再分发条款，
+不要以本 NOTICE 的摘要替代许可证全文。
 
 ## 原界面与场景代码
 

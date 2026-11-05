@@ -43,8 +43,8 @@
         android:xlargeScreens="true" />
 
     <!--
-      android:name 换成我们自己的 Application：它在 super.onCreate() 之后初始化
-      Microsoft Clarity（Qt 的启动 Activity 在 Qt 自己的 jar 里，插不了代码）。
+      android:name 换成我们自己的 Application：它在 super.onCreate() 之后按许可记录
+      启动 Clarity 与 Bugly（Qt 的启动 Activity 在 Qt 自己的 jar 里，插不了代码）。
       RhineApplication 继承 org.qtproject.qt.android.bindings.QtApplication，
       Qt 的启动逻辑（加载原生库、绑定 Qt 线程）仍由父类原样执行。
     -->

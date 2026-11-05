@@ -62,13 +62,36 @@ with zipfile.ZipFile(apk) as archive:
         if magic in (b"RHIP", b"RH6P"):
             region_tables.add(magic)
 
+    # 2a) Bugly：许可文案里写着它，依赖被悄悄去掉时光看界面发现不了。dex 的字符串池
+    # 一定含类描述符与 AppID 常量（ConsentStore 直接引用 CrashReport、写死了 AppID）。
+    bugly_class = b"Lcom/tencent/bugly/crashreport/CrashReport;"
+    bugly_app_id = b"22c01c69b9"
+    dex_markers = set()
+    for name in names:
+        if not name.endswith(".dex"):
+            continue
+        payload = archive.read(name)
+        if bugly_class in payload:
+            dex_markers.add("class")
+        if bugly_app_id in payload:
+            dex_markers.add("appid")
+    check("class" in dex_markers, "Bugly SDK missing from the APK dex")
+    check("appid" in dex_markers, "Bugly AppID missing from the APK dex")
+
 # 1) 只允许 arm64-v8a：多 ABI 会让包体积翻倍，而这个包只承诺 arm64-v8a。
+# Bugly 的 AAR 自带 5 个 ABI 的 libBugly_Native.so，靠 build.gradle 追加段的
+# jniLibs.excludes 排掉其余 4 个；真混进来了，下面这条会直接失败。
 abis = sorted({name.split("/")[1] for name in names if name.startswith("lib/")})
 check(abis == ["arm64-v8a"], f"unexpected ABIs: {abis}")
 
 # 2) Node 运行时与主库必须在同一个 ABI 目录里，缺一个就是启动即崩。
 libraries = {pathlib.PurePosixPath(name).name for name in names if name.startswith("lib/")}
 check("libnode.so" in libraries, "libnode.so missing from the APK")
+# Bugly 现在接管 native 崩溃：so 不在包里就等于没有任何 native 上报。
+check(
+    "libBugly_Native.so" in libraries,
+    "libBugly_Native.so missing (Bugly cannot capture native crashes)",
+)
 check(
     any(name.startswith("libRhineMusicDatabase") for name in libraries),
     f"application library missing; found {sorted(libraries)}",
@@ -115,6 +138,9 @@ allowed = {
     # 按 signature 级授予，非 Play 分发的设备上等于没有；我们没有主动申请它，
     # 也无法在应用内取得。这条是清单合并带进来的，不是新增能力。
     "com.google.android.finsky.permission.BIND_GET_INSTALL_REFERRER_SERVICE",
+    # 这里不需要为 Bugly 加白名单：4.1.9.7 的 AAR 清单只声明 uses-sdk，不带权限。
+    # 官方示例里的 ACCESS_WIFI_STATE 不是硬性要求，网络类型用已有的
+    # ACCESS_NETWORK_STATE 即可，刻意不额外申请。
 }
 check(permissions <= allowed, f"unexpected permissions: {sorted(permissions - allowed)}")
 

@@ -128,22 +128,25 @@ Android 构建在独立工作流 `.github/workflows/android.yml` 里，与其他
 `android:glEsVersion="0x00030000"` 让低于 OpenGL ES 3.0 的设备在安装期就被过滤掉——
 自绘场景的着色器只烘了 GLSL ES 300，装上去也只会黑屏。
 
-## 第三方依赖与 Clarity
+## 第三方 SDK 与 Gradle
 
 Gradle 工程由 androiddeployqt 按 kit 里的模板（`<kit>/src/android/templates/build.gradle`）现场生成，
 包源目录里的同名文件会**整份覆盖**它——这是 Qt 应用添加第三方依赖的唯一入口。
 `Qt/android/build.gradle` 因此是「模板逐字节副本 + 末尾追加段」：
 
 - 上半部分来自当前 Qt 模板，不要手改；
-- `// ===== RHINE additions below` 之后才是我们的内容（目前只有 Microsoft Clarity）；
+- `// ===== RHINE additions below` 之后才是我们的内容（Clarity、Bugly 与 ABI 过滤）；
 - `scripts/build-android.cjs` 在构建前校验前缀，模板对不上就直接失败，不会静默沿用旧配置；
   升级 Qt 后跑一次 `node scripts/android-gradle-sync.cjs` 重新生成（追加段原样保留）。
 
-Clarity（会话行为分析，项目 ID `z8vbz4b078`）在 `RhineApplication.onCreate()` 里初始化：
-Qt 的启动 Activity 在 Qt 自己的 jar 里、插不了代码，所以清单的 `android:name` 从
-`org.qtproject.qt.android.bindings.QtApplication` 换成继承它的
-`rhine.music.database.RhineApplication`。初始化整段用 `try/catch` 包住——分析 SDK 出问题
-不该拖垮面板本身。日志级别取 `LogLevel.None`，排查初始化问题时可临时改 `Verbose`。
+Clarity（会话行为分析，项目 ID `z8vbz4b078`）与 Bugly（崩溃上报，AppID `22c01c69b9`）
+都不在 `RhineApplication.onCreate()` 里无条件初始化：统一入口是
+`ConsentStore.startSdks()`，只有启动许可闸门放行后才调用（见下节）。
+清单的 `android:name` 仍要从 `org.qtproject.qt.android.bindings.QtApplication` 换成继承它的
+`rhine.music.database.RhineApplication`——Qt 的启动 Activity 在 Qt 自己的 jar 里、插不了代码，
+而 Application 还能覆盖「后台任务唤醒进程」这条路径。初始化整段用 `try/catch` 包住：
+分析/上报 SDK 出问题不该拖垮面板本身。Clarity 日志级别取 `LogLevel.None`，
+排查初始化问题时可临时改 `Verbose`。
 
 依赖链：`com.microsoft.clarity:clarity:3.10.0` → `kotlin-stdlib`、`protobuf-javalite`
 （Maven Central）、`com.android.installreferrer`（Google Maven）。两个仓库 Qt 模板都已声明，
@@ -180,6 +183,47 @@ Qt 的界面由 GPU 直接画到 Surface 上，不属于任何 View 的绘制内
 > 历史：曾尝试 TextureView、按时间 `Clarity.pause()/resume()`、登录失败事件化上报等手段
 > 绕开限制，均无法让 Clarity 产出画面，相关改动已撤回。Clarity 现在只承担会话与事件统计。
 
+### Bugly：地区限定与 native 接管
+
+依赖 `com.tencent.bugly:crashreport:4.1.9.7`（Maven Central），初始化在
+`ConsentStore.startSdks()`：
+
+```java
+CrashReport.UserStrategy strategy = new CrashReport.UserStrategy(application);
+strategy.setEnableNativeCrashMonitor(BUGLY_NATIVE_MONITOR);
+CrashReport.initCrashReport(application, BUGLY_APP_ID, BUGLY_DEBUG, strategy);
+```
+
+官方要求「务必在用户授权隐私政策后再初始化」，且不要放到异步线程；调用点是
+`RhineApplication.onCreate()` 与 `ConsentActivity`，都在主线程，且都在许可闸门之后。
+AppID `22c01c69b9` 写在 `ConsentStore.BUGLY_APP_ID`；提供的 **AppKey 不参与客户端
+初始化**——它用于 Bugly 后台开放接口与符号表上传，本项目当前不上传符号表，
+因此没有写进仓库。若日后在 CI 里配置符号表上传，请放进 CI secret，不要提交到源码。
+
+**只在 CN 放行时启动。** 欧盟地区许可文案只写 Clarity、其他地区没有许可流程，所以
+`startSdks(context, region)` 只在 `region == REGION_CN` 时拉起 Bugly；后台任务唤醒进程
+时，地区从 `grantedRegion()` 读取。Clarity 则在所有放行的情况下启动（沿用既有行为）。
+两个 SDK 各自记幂等标志，避免「先按其他地区启动 Clarity」挡掉随后 CN 同意下的 Bugly。
+
+**native 崩溃由 Bugly 接管**（`BUGLY_NATIVE_MONITOR = true`）。AAR 里的
+`libBugly_Native.so` 会注册自己的 SIGSEGV/SIGBUS/SIGABRT handler 并上报 tombstone 现场。
+为避免两套 handler 抢同一组信号，`Qt/src/main.cpp` 的 RHINE-SIGNAL 诊断链默认
+**整段不编译**（文件顶部 `RHINE_ANDROID_SIGNAL_DIAG = 0`），两处调用点
+`rhineInstallSignalDiag()` / `rhineOpenSignalDiagFile()` 一并关闭；Android 的 include
+仍保留在宏外，文件后面的代码不受影响。需要离线抓自有链现场时，把宏改成 `1`，
+并同时把 `BUGLY_NATIVE_MONITOR` 改回 `false`——两者永远只开一个。
+`scripts/audit-android.py` 会断言 `lib/arm64-v8a/libBugly_Native.so` 确实在包里。
+
+native 堆栈要可读，还得按 Bugly 官方《符号表配置》上传带调试信息的 `.so`；
+本项目当前没有配置这一步（AppKey 也因此没进仓库），后台看到的 native 栈可能只有地址。
+
+依赖本身：POM 无传递依赖，AAR 的清单只声明 `uses-sdk`、**不带任何权限**，所以
+`scripts/audit-android.py` 的权限白名单没有变化；官方建议的 `ACCESS_WIFI_STATE`
+不是必须的，网络类型用已有的 `ACCESS_NETWORK_STATE` 即可，不额外申请权限。
+AAR 自带 5 个 ABI 的 so，追加段按 `qtTargetAbiList` 排除其余 ABI，保证 APK 里只有
+`lib/arm64-v8a/`。工程未启用 `minifyEnabled`，官方的 `-keep com.tencent.bugly.**`
+混淆规则暂时用不上；将来开启混淆时再补。
+
 ## 启动许可闸门
 
 清单里唯一的 LAUNCHER 是 `ConsentActivity`，`QtActivity` 改为 `exported=false`：
@@ -200,45 +244,48 @@ Qt 的界面由 GPU 直接画到 Surface 上，不属于任何 View 的绘制内
       （`GeoIp.TOTAL_TIMEOUT_MS`，不是每个端点各 3 秒）。另有一层硬闸门
       （`Future.get(3s)`）——`connectTimeout` 管不住 DNS 解析，这样启动页最多等 3 秒。
 3. 中国大陆 → 中文许可（Clarity 跨境数据传输 + Bugly 隐私政策与信息类型）；
-   欧洲（EU + EEA + 英国 + 瑞士）→ 英文许可（只写 Clarity）。
+   欧盟地区（EU 27 国）→ 英文许可（只写 Clarity，也不启动 Bugly）。
+   EEA 的挪威/冰岛/列支敦士登、英国、瑞士不再属于需要确认的地区。
    同意写入 `granted` 并启动 SDK；拒绝则 `finishAffinity()` 退出。
    **每个地区只确认一次**：点过同意就永久记住，此后既不弹窗也不再请求地区。
-4. 其他地区 → 不弹窗，正常启动。
+4. 其他地区 → 不弹窗，正常启动，只启动 Clarity。
 5. 3 秒内取不到地址（超时、断网、解析失败）→ **按其他地区处理**：不弹窗、
-   照常启动界面与 SDK（仅本次运行；下次启动重新判定）。这是有意的取舍——地区判定是
+   照常启动界面与 Clarity（仅本次运行；下次启动重新判定）。这是有意的取舍——地区判定是
    "该不该弹许可"的依据，不是采集开关。
 
 许可对话框只有两个按钮：**同意** / **退出**。空白区域与返回键都不生效
 （`setCancelable(false)` + `setCanceledOnTouchOutside(false)` + 拦截 `KEYCODE_BACK`），
 不存在"点一下就等于默认同意"的路径；未同意时 Activity 的返回键也被吞掉，只能点"退出"。
 
-SDK 启动集中在 `ConsentStore.startSdks()`（幂等）。`RhineApplication` 只在已同意时调用，
-`ConsentActivity` 在用户点同意后调用；Clarity 不再在 Application 里无条件初始化。
+SDK 启动集中在 `ConsentStore.startSdks(context, region)`（Clarity / Bugly 各自幂等）。
+`RhineApplication` 只在已同意时调用无参重载（地区取自许可记录），`ConsentActivity`
+把本次判定的地区一路传进来：Clarity 放行即启动，**Bugly 仅 `REGION_CN` 启动**——
+欧盟地区许可文案没写它，其他地区没有许可流程。
 
 ### 内置地区表（IPv4 + IPv6）
 
 由 `python3 scripts/gen-region-tables.py [--refresh]` 一次生成两张表，数据取 RIPE Stat 的
-country-resource-list（按国家汇总各 RIR 分配），把中国大陆与欧洲的前缀转成闭区间、
-合并相邻段后写入二进制：
+country-resource-list（按国家汇总各 RIR 分配），把中国大陆与**欧盟地区（EU 27 国）**的前缀
+转成闭区间、合并相邻段后写入二进制。EEA 三国、英国、瑞士不收，它们的用户不再需要确认许可。
 
 | 文件                       | 规模               | 格式（大端）                                                                                 |
 | -------------------------- | ------------------ | -------------------------------------------------------------------------------------------- |
-| `res/raw/ipv4_regions.bin` | 24,264 段 / 213 KB | `"RHIP"` + 版本 + 条数 + `(start u32, end u32, region u8)`×N                                 |
-| `res/raw/ipv6_regions.bin` | 19,986 段 / 644 KB | `"RH6P"` + 版本 + 条数 + `(start_hi u64, start_lo u64, end_hi u64, end_lo u64, region u8)`×N |
+| `res/raw/ipv4_regions.bin` | 25,995 段 / 228 KB | `"RHIP"` + 版本 + 条数 + `(start u32, end u32, region u8)`×N                                 |
+| `res/raw/ipv6_regions.bin` | 16,755 段 / 540 KB | `"RH6P"` + 版本 + 条数 + `(start_hi u64, start_lo u64, end_hi u64, end_lo u64, region u8)`×N |
 
-`region`：1 = 中国大陆，2 = 欧洲。IPv6 在 Java 侧拆成两个 64 位整数，用
+`region`：1 = 中国大陆，2 = 欧盟地区（EU 27 国）。IPv6 在 Java 侧拆成两个 64 位整数，用
 `Long.compareUnsigned` 比较（128 位地址没有原生整数类型）。
 
 **为什么要 IPv6 表**：手机流量和多数家用宽带的 IPv6 是公网地址。没有这张表时，
 纯 IPv6 网络（或 Wi-Fi 下只有私有 IPv4、靠 IPv6 上网）只能走公网回显，一旦回显超时
-就按"其他地区"放行——中国大陆/欧洲用户会漏掉许可弹窗。有了本机 IPv6 直查，这类网络
+就按"其他地区"放行——中国大陆/欧盟地区用户会漏掉许可弹窗。有了本机 IPv6 直查，这类网络
 连请求都不需要发。
 
 抓取缓存在 `.workbuddy/tmp/geo/`，删掉它并加 `--refresh` 即可更新。表只用于
 "是否需要弹隐私许可"，不追求精确到城市。
 
-> Bugly 尚未接入：国内许可文案里那段是按你给的隐私政策预写的。接入 Bugly 后不用改文案，
-> 只需在 `ConsentStore.startSdks()` 里补初始化；若最终不接入，必须把该段删掉。
+> 国内许可文案里的 Bugly 段落对应 `ConsentStore.startSdks()` 里的实际初始化（见上节）。
+> 若日后移除 Bugly，必须同步删掉这段文案、Gradle 依赖和审计脚本里的 dex 断言。
 
 ## 架构：三个和桌面不同的决定
 
@@ -313,6 +360,10 @@ FidelityFX/FSR3 在 Android 仍默认关闭（`RHINE_ENABLE_FIDELITYFX=OFF`，�
 | `Qt/android/build.gradle 的前缀不再等于…`        | Qt 升级换了 Gradle 模板；跑 `node scripts/android-gradle-sync.cjs` 重新生成（末尾追加的依赖会保留）                                          |
 | Clarity 后台没有会话                             | 清单 `android:name` 被改回 `QtApplication`；`scripts/audit-android.py` 会报 `RhineApplication (Clarity entry point) missing`                 |
 | Clarity 回放只有点击、没有画面                   | 已知限制：Clarity 只重画 View 树，拍不到 GL 内容，换容器或后端都没用（见「已知限制：Clarity 无法获取录制画面」）                             |
+| Bugly 后台没有崩溃数据                           | 只有中国大陆用户同意后才初始化；欧盟地区、其他地区、地区判定超时都没有 Bugly。看 `logcat` 的 `RhineConsent`，初始化失败会打 `Bugly initialization failed` |
+| 崩溃列表里 native 栈只有地址、没有符号           | 需按 Bugly 官方《符号表配置》上传带调试信息的 `.so`；AppKey 放 CI secret，不要写进仓库                                                          |
+| logcat 里找不到 `RHINE-SIGNAL`                   | 预期行为：native 已交给 Bugly，自有诊断链默认不编译（`RHINE_ANDROID_SIGNAL_DIAG=0`）；要抓自有现场把宏改 `1` 且把 `BUGLY_NATIVE_MONITOR` 改 `false` |
+| 审计报 `unexpected ABIs`                         | Bugly AAR 的 5 个 `libBugly_Native.so` 没被排掉；检查 `Qt/android/build.gradle` 标记行之后的 `jniLibs.excludes` 是否还在                        |
 | 首次启动黑屏最多 3 秒                            | 未同意、且本机只有私有地址时才会取公网出口地址（`GeoIp.TOTAL_TIMEOUT_MS`）；本机有公网 IPv4/IPv6 时直接查表、不等待。已同意后不再请求        |
 | 点「退出」后应用直接关闭                         | 预期行为：未同意数据传输许可时 `finishAffinity()` 结束进程                                                                                   |
-| 国内用户没看到许可弹窗                           | IP 判定失败（断网、纯 IPv6 或表未命中）；此时照常启动界面，但不会启动任何数据 SDK，下次联网会再判定                                          |
+| 国内用户没看到许可弹窗                           | IP 判定失败（断网、端点超时或表未命中）→ 按其他地区放行：照常启动界面与 Clarity，不弹窗、不启动 Bugly，下次启动会重新判定                     |

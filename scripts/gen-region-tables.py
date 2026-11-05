@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""生成 Android 内置的地区表（仅中国大陆 / 欧洲），IPv4 与 IPv6 各一张。
+"""生成 Android 内置的地区表（仅中国大陆 / 欧盟地区），IPv4 与 IPv6 各一张。
 
 数据来源：RIPE Stat 的 country-resource-list（合并各 RIR 的国家分配），按国家取前缀。
 输出：
@@ -21,7 +21,7 @@ IPv6 格式（大端）：
   records[count]：start_hi uint64, start_lo uint64, end_hi uint64, end_lo uint64, region uint8
     （128 位地址拆成两个 64 位大端整数，Java 侧用无符号比较）
 
-region: 1 = 中国大陆，2 = 欧洲（EU + EEA + 英国 + 瑞士）
+region: 1 = 中国大陆，2 = 欧盟地区（EU 27 国，不含 EEA 三国 / 英国 / 瑞士）
 
 两种前缀写法都要处理：CIDR（a.b.c.d/len、2001:db8::/32）与闭区间（a.b.c.d-e.f.g.h）。
 区间已排序并合并相邻段，Java 侧做二分查找。表只用于"是否需要弹隐私许可"，
@@ -49,14 +49,14 @@ OUTPUT_V6 = RAW / "ipv6_regions.bin"
 REGION_CN = 1
 REGION_EU = 2
 
-# 欧洲：欧盟 27 国 + EEA（挪威/冰岛/列支敦士登）+ 英国 + 瑞士。
-EUROPE = [
+# 欧盟地区：只收 EU 27 国。EEA 的挪威/冰岛/列支敦士登、英国、瑞士都不在范围内，
+# 这些地区的用户不会被要求确认数据传输许可（Clarity 仍照常启动）。
+EU = [
     "AT", "BE", "BG", "HR", "CY", "CZ", "DK", "EE", "FI", "FR",
     "DE", "GR", "HU", "IE", "IT", "LV", "LT", "LU", "MT", "NL",
     "PL", "PT", "RO", "SK", "SI", "ES", "SE",
-    "NO", "IS", "LI", "GB", "CH",
 ]
-COUNTRIES = {"CN": REGION_CN, **{code: REGION_EU for code in EUROPE}}
+COUNTRIES = {"CN": REGION_CN, **{code: REGION_EU for code in EU}}
 
 
 def fetch(code: str, refresh: bool) -> dict:

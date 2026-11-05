@@ -1,4 +1,11 @@
 #include <QtGlobal>
+
+// Android 的 native 崩溃捕获已交给 Bugly（ConsentStore 的 BUGLY_NATIVE_MONITOR）。
+// 下面这套 RHINE-SIGNAL 诊断链也会接管 SIGSEGV/SIGBUS/SIGABRT，两套 handler 不能并存；
+// 默认整体不编译。需要在不装 Bugly 的环境里抓崩溃现场时改成 1，并同时把
+// BUGLY_NATIVE_MONITOR 改回 false。
+#define RHINE_ANDROID_SIGNAL_DIAG 0
+
 #include "AppIdentity.h"
 #include "MobileTarget.h"
 #include "AppStorage.h"
@@ -8,6 +15,9 @@
 #include "fg/FgConfig.h"
 #endif
 #ifdef Q_OS_ANDROID
+// 注意：当前默认禁用（RHINE_ANDROID_SIGNAL_DIAG=0），native 崩溃由 Bugly 接管；
+// 下面这套链只保留作离线排障的回退手段。include 保持不变，供文件后面的代码使用。
+//
 // 段错误诊断链 v2：真机后台死亡只留下 ApplicationExitInfo 的 SIGNALED/11，
 // "Fatal signal" 与 tombstone 全部缺席。v1 的教训是只写 stderr——Android 应用
 // 进程的 fd 2 通向 /dev/null（Qt 转发进 logcat 的是 qWarning 这类日志 API，
@@ -43,6 +53,9 @@
 #include <thread>
 #include <unistd.h>
 #include <ucontext.h>
+
+// Bugly 接管 native 时整段不编译；include 留在外面给文件后面的代码用。
+#if RHINE_ANDROID_SIGNAL_DIAG
 namespace {
 
 struct RhineSignalPrevious {
@@ -440,7 +453,8 @@ void rhineOpenSignalDiagFile() {
     rhineSignalLogFd = fd;
 }
 } // namespace
-#endif
+#endif // RHINE_ANDROID_SIGNAL_DIAG
+#endif // Q_OS_ANDROID
 #include "render/PresentationShell.h"
 #include "render/RenderPolicy.h"
 #include "FrameProfiler.h"
@@ -810,7 +824,7 @@ static void activateWindow(QWindow *window) {
  * 离线测试与正式播放沿用同一入口，资源只从独立应用读取。
  */
 int main(int argc, char **argv) {
-#ifdef Q_OS_ANDROID
+#if defined(Q_OS_ANDROID) && RHINE_ANDROID_SIGNAL_DIAG
     // 段错误诊断链必须抢在一切组件（Qt 插件、Node、GPU 驱动）可能安装的处理之前。
     rhineInstallSignalDiag();
 #endif
@@ -875,7 +889,7 @@ int main(int argc, char **argv) {
 #else
     QGuiApplication application(argc, argv);
 #endif
-#ifdef Q_OS_ANDROID
+#if defined(Q_OS_ANDROID) && RHINE_ANDROID_SIGNAL_DIAG
     // 现场日志此刻才能定位（AppDataLocation 依赖 JNI 上下文）；上次崩溃的记录
     // 也在这里回读转发到 logcat，之后清空文件等待新现场。
     rhineOpenSignalDiagFile();

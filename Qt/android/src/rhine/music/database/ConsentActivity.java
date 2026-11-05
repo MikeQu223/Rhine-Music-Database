@@ -24,10 +24,10 @@ import java.util.concurrent.TimeoutException;
  *
  * 判定顺序：
  *   1. 已同意（SharedPreferences）→ 直接启动界面（Application 已负责启动 SDK）。
- *   2. 未同意 → 每次都实时取一次 IPv4（**不缓存**）查内置表，请求总预算 3 秒：
- *        · 中国大陆 / 欧洲 → 弹系统 AlertDialog，同意后启动界面；
- *        · 其他地区、或 3 秒内取不到地址（超时、断网、纯 IPv6）→ 按其他地区处理，
- *          不弹窗，直接启动界面与 SDK。
+ *   2. 未同意 → 每次都实时取一次公网地址（IPv4 / IPv6，**不缓存**）查内置表，总预算 3 秒：
+ *        · 中国大陆 / 欧盟地区 → 弹系统 AlertDialog，同意后启动界面；
+ *        · 其他地区、或 3 秒内取不到地址（超时、断网）→ 按其他地区处理，
+ *          不弹窗，直接启动界面与 Clarity（不启动 Bugly）。
  *   3. 拒绝 → 退出应用。
  */
 public class ConsentActivity extends Activity {
@@ -36,12 +36,12 @@ public class ConsentActivity extends Activity {
     private static final String CN_MESSAGE = """
             以下第三方 SDK 会处理必要的信息：
 
-            · Microsoft Clarity
+            1.Microsoft Clarity
               服务提供：Microsoft
               可能收集：界面点击与浏览路径、设备型号、系统版本、屏幕尺寸、应用版本。
               上述数据可能会传输至中国境外的服务器，使用这些服务即代表授予数据跨境传输许可。
 
-            · Bugly SDK
+            2.Bugly SDK
               服务提供：腾讯
               可能收集：手机型号、品牌、Android 系统版本与 API 等级、厂商系统版本、CPU 架构、是否 Root、磁盘/内存/存储占用、网络类型、应用进程名与 PID。
               收集的数据用于排查质量问题、提升应用运行质量。
@@ -55,7 +55,7 @@ public class ConsentActivity extends Activity {
 
             With your consent, Microsoft Clarity (session analytics) collects de-identified
             interaction data — taps and navigation, device model, OS version, screen size and
-            app version — and transfers it to servers outside the European Economic Area.
+            app version — and transfers it to servers outside the European Union.
 
             You may decline; the app will then close and no data will be uploaded.
             You can use the app without connect to the internet.
@@ -67,10 +67,10 @@ public class ConsentActivity extends Activity {
     protected void onCreate(Bundle state) {
         super.onCreate(state);
         if (ConsentStore.isGranted(this)) {
-            proceed();
+            proceed(ConsentStore.grantedRegion(this));
             return;
         }
-        // 地区判定要取一次公网 IPv4。HttpURLConnection 的 connectTimeout 管不住 DNS 解析，
+        // 地区判定要取一次公网地址。HttpURLConnection 的 connectTimeout 管不住 DNS 解析，
         // 所以判定整体再套一层硬闸门：超过 GeoIp.TOTAL_TIMEOUT_MS 就按其他地区放行，
         // 绝不让启动页卡在网络上。
         new Thread(() -> {
@@ -101,7 +101,7 @@ public class ConsentActivity extends Activity {
                     // 其他地区（含 3 秒内没取到地址的超时情况）：不需要弹许可，本次运行直接放行。
                     // 不写持久标记——下次启动会重新判定，这正是"不缓存地区"的含义。
                     Log.i(TAG, "region " + region + " (outside CN/EU or undetermined); start without prompt");
-                    proceed();
+                    proceed(region);
                 }
             });
         }, "rhine-consent-gate").start();
@@ -121,7 +121,7 @@ public class ConsentActivity extends Activity {
                 .setCancelable(false)
                 .setPositiveButton(mainland ? "同意" : "Agree", (ignored, which) -> {
                     ConsentStore.grant(this, region);
-                    proceed();
+                    proceed(region);
                 })
                 .setNegativeButton(mainland ? "退出" : "Exit", (ignored, which) -> finishAffinity())
                 .create();
@@ -140,9 +140,13 @@ public class ConsentActivity extends Activity {
         }
     }
 
-    /** 启动 SDK 并进入 Qt 界面。走到这里说明要么已同意，要么本次运行判定无需许可。 */
-    private void proceed() {
-        ConsentStore.startSdks(this);
+    /**
+     * 启动 SDK 并进入 Qt 界面。走到这里说明要么已同意，要么本次运行判定无需许可。
+     * region 会一路带到 {@link ConsentStore#startSdks}：只有中国大陆
+     * 放行时才启动 Bugly，欧盟地区与其他地区只启动 Clarity。
+     */
+    private void proceed(int region) {
+        ConsentStore.startSdks(this, region);
         // CLEAR_TOP + SINGLE_TOP：应用已在后台时再次点图标，不会叠出第二个 QtActivity
         // （Qt 的运行时是进程级的，多实例会互相踩）。
         final Intent intent = new Intent(this, QtActivity.class);
