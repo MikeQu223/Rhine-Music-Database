@@ -159,6 +159,7 @@ class NativeHud : public QObject {
 
   signals:
     void localImportRequested(bool folder);
+    void mvRequested();
 
   private:
     struct LyricRow {

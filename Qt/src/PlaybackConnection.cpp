@@ -179,6 +179,9 @@ void PlaybackConnection::readMessages() {
 #endif
         } else if (message["event"] == "diagnostic") {
             emit diagnosticEvent(message["name"].toString(), message["values"].toObject());
+        } else if (message["event"] == "spectrum" && message["levels"].isArray() &&
+                   message["levels"].toArray().size() == 40) {
+            emit spectrumChanged(message["levels"].toArray());
         }
         const auto id = message["id"].toString();
         if (m_pending.contains(id)) {

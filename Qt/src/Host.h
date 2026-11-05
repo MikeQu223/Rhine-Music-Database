@@ -90,11 +90,10 @@ class Host : public QObject {
     }
 
   signals:
-#if defined(Q_OS_DARWIN) || defined(Q_OS_WIN)
     void preferenceChanged(QString key, QString value);
-#endif
     void mediaAction(QString action);
     void mediaChanged();
+    void audioSpectrumChanged(QJsonArray levels);
     void playbackDiagnostic(QString event, QJsonObject values);
     void invalidated();
 
@@ -141,6 +140,7 @@ class Host : public QObject {
     QString active;
     bool stopped = false;
     bool audioDiagnosticsEnabled = false;
+    bool audioSpectrumEnabled = false;
     PlaybackConnection *remote = nullptr;
     mutable QHash<QString, QString> remotePreferences;
     bool playbackOnly = false;

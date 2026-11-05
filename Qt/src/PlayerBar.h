@@ -26,6 +26,7 @@ struct State {
     bool liked = false;
     bool likeKnown = false;
     bool canLike = false;
+    bool musicVideo = false;
 };
 
 enum class Surface { Embedded, Floating };

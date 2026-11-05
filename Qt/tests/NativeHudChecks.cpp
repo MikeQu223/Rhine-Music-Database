@@ -468,6 +468,7 @@ bool checkPlayerBar(Glyphs &glyphs) {
     state.album = "孤星";
     state.hasTrack = true;
     state.canLike = true;
+    state.musicVideo = true;
     state.likeKnown = true;
     state.seekable = true;
     state.durationMs = 195000;
@@ -477,7 +478,7 @@ bool checkPlayerBar(Glyphs &glyphs) {
         const auto drawing = PlayerBar::render(state, row, false, glyphs);
         if (!drawing.seek || !drawing.volume || !drawing.inputBounds.contains(*drawing.seek) ||
             !row.contains(*drawing.volume) || !hasAction(drawing.hits, "player:lyrics") ||
-            !hasAction(drawing.hits, "player:open")) {
+            !hasAction(drawing.hits, "player:open") || !hasAction(drawing.hits, "player:mv")) {
             qCritical() << "Player bar lost seeking, volume, lyrics or queue";
             return false;
         }
@@ -491,6 +492,10 @@ bool checkPlayerBar(Glyphs &glyphs) {
             }
         }
         const auto lyrics = getHit(drawing.hits, "player:lyrics");
+        const auto mv = getHit(drawing.hits, "player:mv");
+        if (mv["x"].toDouble() + mv["width"].toDouble() / 2 != row.right() - 435) {
+            return false;
+        }
         const auto toggle = getHit(drawing.hits, "player:toggle");
         const QRectF toggleRect(toggle["x"].toDouble(), toggle["y"].toDouble(), toggle["width"].toDouble(),
                                 toggle["height"].toDouble());

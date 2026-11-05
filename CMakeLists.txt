@@ -16,8 +16,8 @@ project(
     # C is required by the vendored glslang/SPIRV-Tools that compiles the FidelityFX shader permutations at
     # build time.
     LANGUAGES CXX C)
-# 停用D3D12入口
-set(RHINE_ENABLE_D3D12_BACKEND OFF)
+# Windows 默认包含完整 D3D12 / FidelityFX DX12；其他平台不启用。
+option(RHINE_ENABLE_D3D12_BACKEND "Build the Windows D3D12 backend and FidelityFX DX12" ${WIN32})
 add_compile_definitions(RHINE_ENABLE_D3D12_BACKEND=$<BOOL:${RHINE_ENABLE_D3D12_BACKEND}>)
 set(RHINE_APPLICATION_ID "rhine.music.database")
 find_package(Git QUIET)
@@ -100,6 +100,8 @@ set(RHINE_APP_SOURCES
     Qt/src/AppUpdater.h
     Qt/src/AudioPlayer.cpp
     Qt/src/AudioPlayer.h
+    Qt/src/AudioSpectrum.cpp
+    Qt/src/AudioSpectrum.h
     Qt/src/HttpAudioStream.cpp
     Qt/src/HttpAudioStream.h
     Qt/src/PlaybackDiagnostics.cpp
@@ -267,7 +269,7 @@ if(NOT IOS)
         RHINE_PLAYBACK_SOURCES
         INCLUDE
         REGEX
-        "/(AppUpdater|AppStorage|AudioPlayer|HttpAudioStream|PlaybackDiagnostics|PlaybackConnection|Host|MusicApi|MusicPlayer|PlaybackQueue|LyricsController|Platform)\\.(cpp|h)$|/qrcodegen\\.cpp$"
+        "/(AppUpdater|AppStorage|AudioPlayer|AudioSpectrum|HttpAudioStream|PlaybackDiagnostics|PlaybackConnection|Host|MusicApi|MusicPlayer|PlaybackQueue|LyricsController|Platform)\\.(cpp|h)$|/qrcodegen\\.cpp$"
     )
     list(REMOVE_ITEM RHINE_CORE_SOURCES ${RHINE_PLAYBACK_SOURCES})
     add_library(RhinePlaybackCore STATIC ${RHINE_PLAYBACK_SOURCES})
@@ -306,26 +308,24 @@ if(NOT IOS)
 endif()
 add_subdirectory(Qt)
 target_link_libraries(RhineMusicDatabase PRIVATE RhineCore)
-# 体积优化：随包的 97 个库都是 Qt 与发行版的 strip 二进制，编译参数无从下手，能自定义的只有这两个
-# 目标。Release 开 LTO，让链接期做跨翻译单元内联与死代码消除。
-# 刻意不加 -fvisibility=hidden：可执行文件本来就不导出符号，省不到 50 KB，却可能挡住 dlsym
-# 一类的自省路径，收益与风险倒挂。
+# 体积优化：随包的 97 个库都是 Qt 与发行版的 strip 二进制，编译参数无从下手，能自定义的只有这两个 目标。Release 开 LTO，让链接期做跨翻译单元内联与死代码消除。 刻意不加
+# -fvisibility=hidden：可执行文件本来就不导出符号，省不到 50 KB，却可能挡住 dlsym 一类的自省路径，收益与风险倒挂。
 #
-# LTO 要三样东西同时在位：编译器插件（GCC 的 liblto_plugin.so）、带插件的归档器
-# （gcc-ar/gcc-ranlib——RhineCore 是静态库，CMake 建库时会强制换成这两个），以及能加载插件的
-# 链接器。缺任一项 check_ipo_supported 只返回 NO，产物悄悄大 1.5 MB 而构建照常成功，因此这里
+# LTO 要三样东西同时在位：编译器插件（GCC 的 liblto_plugin.so）、带插件的归档器 （gcc-ar/gcc-ranlib——RhineCore 是静态库，CMake
+# 建库时会强制换成这两个），以及能加载插件的 链接器。缺任一项 check_ipo_supported 只返回 NO，产物悄悄大 1.5 MB 而构建照常成功，因此这里
 # 默认打警告把降级暴露出来；RHINE_REQUIRE_LTO=1 把它升级为配置期错误，CI 的 Linux 任务用这个开关。
 set(RHINE_REQUIRE_LTO OFF)
-if(DEFINED ENV{RHINE_REQUIRE_LTO} AND "$ENV{RHINE_REQUIRE_LTO}" MATCHES "^(1|[Oo][Nn]|[Tt][Rr][Uu][Ee]|[Yy][Ee][Ss])$")
+if(DEFINED ENV{RHINE_REQUIRE_LTO} AND "$ENV{RHINE_REQUIRE_LTO}" MATCHES
+                                      "^(1|[Oo][Nn]|[Tt][Rr][Uu][Ee]|[Yy][Ee][Ss])$")
     set(RHINE_REQUIRE_LTO ON)
 endif()
 include(CheckIPOSupported)
-check_ipo_supported(RESULT RHINE_IPO_SUPPORTED OUTPUT RHINE_IPO_ERROR LANGUAGES CXX)
+check_ipo_supported(
+    RESULT RHINE_IPO_SUPPORTED
+    OUTPUT RHINE_IPO_ERROR
+    LANGUAGES CXX)
 if(RHINE_IPO_SUPPORTED)
-    set_target_properties(
-        RhineCore
-        RhineMusicDatabase
-        PROPERTIES INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
+    set_target_properties(RhineCore RhineMusicDatabase PROPERTIES INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
     message(STATUS "IPO/LTO enabled for Release (${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION})")
 elseif(RHINE_REQUIRE_LTO)
     message(
@@ -334,10 +334,8 @@ elseif(RHINE_REQUIRE_LTO)
             "Install a plugin-capable toolchain (GCC: gcc/g++/binutils provide liblto_plugin.so and"
             " gcc-ar), or unset RHINE_REQUIRE_LTO to accept a larger Release binary.\n${RHINE_IPO_ERROR}")
 else()
-    message(
-        WARNING
-            "IPO/LTO unavailable, Release builds are not optimized across translation units"
-            " (expect ~1.5 MB larger binaries).\n${RHINE_IPO_ERROR}")
+    message(WARNING "IPO/LTO unavailable, Release builds are not optimized across translation units"
+                    " (expect ~1.5 MB larger binaries).\n${RHINE_IPO_ERROR}")
 endif()
 # Linux 再按函数/数据切段，配合 --gc-sections 回收主程序里真正到不了的部分。
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -366,6 +364,8 @@ endif()
 set_source_files_properties(Qt/qml/Main.qml TARGET_DIRECTORY RhineMusicDatabase PROPERTIES QT_RESOURCE_ALIAS
                                                                                            Main.qml)
 target_include_directories(RhineMusicDatabase PRIVATE vendor/qrcodegen Qt/src)
+target_sources(RhineMusicDatabase PRIVATE Qt/src/MvController.cpp Qt/src/MvController.h
+                                          Qt/src/DesktopWallpaper.cpp Qt/src/DesktopWallpaper.h)
 qt_add_resources(
     RhineMusicDatabase
     "rhine_animation"
@@ -423,8 +423,7 @@ endif()
 if(APPLE)
     list(APPEND RHINE_OPTICAL_SHADER_DEFINES RHINE_METAL_MOTION=1)
 endif()
-# E05a：紧凑实例（80 字节）的第二套着色器烘焙放在独立子目录：
-# qt_add_shaders 把 .qsb 写到当前二进制目录的 .qsb/ 下，同一目录对同一份源码烘两次会撞规则。
+# E05a：紧凑实例（80 字节）的第二套着色器烘焙放在独立子目录： qt_add_shaders 把 .qsb 写到当前二进制目录的 .qsb/ 下，同一目录对同一份源码烘两次会撞规则。
 add_subdirectory(Qt/shaders/compact)
 if(APPLE)
     add_subdirectory(Qt/shaders/metal-temporal)
@@ -546,10 +545,11 @@ if(NOT IOS)
     add_dependencies(RhineMusicDatabase RhinePlaybackService)
 endif()
 if(APPLE)
-    target_sources(RhineMusicDatabase PRIVATE Qt/src/render/MetalFxBackend.mm Qt/src/render/MetalFxBackend.h
-                                              Qt/src/render/MetalTemporalResolve.cpp
-                                              Qt/src/render/MetalTemporalResolve.h
-                                              Qt/src/render/FrameGenerator.h Qt/src/render/SceneResources.h)
+    target_sources(
+        RhineMusicDatabase
+        PRIVATE Qt/src/render/MetalFxBackend.mm Qt/src/render/MetalFxBackend.h
+                Qt/src/render/MetalTemporalResolve.cpp Qt/src/render/MetalTemporalResolve.h
+                Qt/src/render/FrameGenerator.h Qt/src/render/SceneResources.h)
     target_link_libraries(RhineMusicDatabase PRIVATE "-framework Metal")
     # iOS 模拟器 SDK 不带 MetalFX，仍构建共用呈现层并报告原生效果不可用。
     find_library(RHINE_METALFX_FRAMEWORK MetalFX)
@@ -575,9 +575,9 @@ elseif(APPLE)
                    MACOSX_BUNDLE_BUNDLE_NAME "RHINE MUSIC DATABASE"
                    MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/Qt/Info.plist.in")
 elseif(WIN32)
-    target_sources(RhineMusicDatabase PRIVATE Qt/src/WindowsGraphics.cpp Qt/src/WindowsTaskbar.cpp
-                                              Qt/src/WindowsRoundedCorners.cpp
-                                              Qt/tests/WindowsTaskbarChecks.cpp)
+    target_sources(
+        RhineMusicDatabase PRIVATE Qt/src/WindowsGraphics.cpp Qt/src/WindowsTaskbar.cpp
+                                   Qt/src/WindowsRoundedCorners.cpp Qt/tests/WindowsTaskbarChecks.cpp)
     target_link_libraries(RhineMusicDatabase PRIVATE dxgi ole32 uuid gdi32 dwmapi)
     if(RHINE_ENABLE_D3D12_BACKEND)
         target_link_libraries(RhineMusicDatabase PRIVATE d3d12)
@@ -650,8 +650,14 @@ if(IOS)
     return()
 endif()
 enable_testing()
-qt_add_executable(RhinePlatformRegression Qt/tests/PlatformRegression.cpp Qt/src/AppStorage.cpp
-                  Qt/src/AudioPlayer.cpp Qt/src/HttpAudioStream.cpp Qt/src/ProcessMetrics.cpp)
+qt_add_executable(
+    RhinePlatformRegression
+    Qt/tests/PlatformRegression.cpp
+    Qt/src/AppStorage.cpp
+    Qt/src/AudioPlayer.cpp
+    Qt/src/AudioSpectrum.cpp
+    Qt/src/HttpAudioStream.cpp
+    Qt/src/ProcessMetrics.cpp)
 target_include_directories(RhinePlatformRegression PRIVATE Qt/src)
 target_link_libraries(RhinePlatformRegression PRIVATE Qt6::Core Qt6::Gui Qt6::Multimedia Qt6::Network
                                                       Qt6::MultimediaPrivate)
@@ -701,8 +707,8 @@ if(MSVC)
 endif()
 add_test(NAME qt_fg_capability_regression COMMAND RhineFgCapabilityRegression)
 
-# 渲染策略里能离线判定的那一半（GPU 计时四态、时间戳登记、AA 模式是否需要运动矢量）是 header-only 纯逻辑，
-# 不碰 QRhi/窗口，所以三平台都编、都跑：真值表写错不会崩，只会让面板把"没请求"说成"没样本"，只有用例拦得住。
+# 渲染策略里能离线判定的那一半（GPU 计时四态、时间戳登记、AA 模式是否需要运动矢量）是 header-only 纯逻辑， 不碰
+# QRhi/窗口，所以三平台都编、都跑：真值表写错不会崩，只会让面板把"没请求"说成"没样本"，只有用例拦得住。
 qt_add_executable(RhineRenderPolicyRegression Qt/tests/RenderChecks.cpp)
 target_include_directories(RhineRenderPolicyRegression PRIVATE Qt/src)
 target_link_libraries(RhineRenderPolicyRegression PRIVATE Qt6::Core)
@@ -719,8 +725,7 @@ if(APPLE)
     add_test(NAME qt_scene_transform_history_regression COMMAND RhineSceneTransformHistoryRegression)
 endif()
 
-# 快速滚动的冷纹理准入（B01）与封面需求账本（B03）是 header-only 纯逻辑，不碰 QRhi/窗口：
-# 边界差 1ms、逻辑取消提前归还名额都不会崩，只会让界面变慢或并发慢慢失控，只能靠用例拦。
+# 快速滚动的冷纹理准入（B01）与封面需求账本（B03）是 header-only 纯逻辑，不碰 QRhi/窗口： 边界差 1ms、逻辑取消提前归还名额都不会崩，只会让界面变慢或并发慢慢失控，只能靠用例拦。
 # 计时器用例需要事件循环，所以在 main 里建 QCoreApplication（不建 GUI）。
 qt_add_executable(RhineMusicTextureAdmissionRegression Qt/tests/MusicTextureAdmissionChecks.cpp)
 target_include_directories(RhineMusicTextureAdmissionRegression PRIVATE Qt/src)
@@ -730,8 +735,7 @@ if(MSVC)
 endif()
 add_test(NAME qt_music_texture_admission_regression COMMAND RhineMusicTextureAdmissionRegression)
 
-# C04：用"发布／消费"序号合并过量完整 step 是 header-only 纯策略，不读时钟、不接事件循环。
-# 写错的后果不是崩溃：要么白白多算一份会被覆盖的中间状态，要么动画停在半路，只能靠用例拦。
+# C04：用"发布／消费"序号合并过量完整 step 是 header-only 纯策略，不读时钟、不接事件循环。 写错的后果不是崩溃：要么白白多算一份会被覆盖的中间状态，要么动画停在半路，只能靠用例拦。
 qt_add_executable(RhineFramePacingRegression Qt/tests/FramePacingChecks.cpp)
 target_include_directories(RhineFramePacingRegression PRIVATE Qt/src)
 target_link_libraries(RhineFramePacingRegression PRIVATE Qt6::Core)
@@ -740,8 +744,7 @@ if(MSVC)
 endif()
 add_test(NAME qt_frame_pacing_regression COMMAND RhineFramePacingRegression)
 
-# D06：Vulkan 资源策略的纯用例（arena 步长/动态偏移/实例池/深度消费者/缓存代号）。
-# 只依赖 Qt6::Core，不建 QGuiApplication，也不碰 VkDevice——离线就能跑。
+# D06：Vulkan 资源策略的纯用例（arena 步长/动态偏移/实例池/深度消费者/缓存代号）。 只依赖 Qt6::Core，不建 QGuiApplication，也不碰 VkDevice——离线就能跑。
 qt_add_executable(RhineVulkanResourceRegression Qt/tests/VulkanResourceChecks.cpp)
 target_include_directories(RhineVulkanResourceRegression PRIVATE Qt/src)
 target_link_libraries(RhineVulkanResourceRegression PRIVATE Qt6::Core)
@@ -766,8 +769,7 @@ if(MSVC)
 endif()
 add_test(NAME qt_gpu_choice_regression COMMAND RhineGpuChoiceRegression)
 
-# X11 呈现能力判定：缺 DRI3 时不能上 Vulkan（否则 Qt 创建交换链失败后直接 abort）。
-# 纯函数 + 无 DISPLAY 的探测冒烟，不需要 X 服务器，三平台都编。
+# X11 呈现能力判定：缺 DRI3 时不能上 Vulkan（否则 Qt 创建交换链失败后直接 abort）。 纯函数 + 无 DISPLAY 的探测冒烟，不需要 X 服务器，三平台都编。
 qt_add_executable(RhineLinuxDisplayRegression Qt/tests/LinuxDisplayChecks.cpp Qt/src/LinuxX11.cpp)
 target_include_directories(RhineLinuxDisplayRegression PRIVATE Qt/src)
 target_link_libraries(RhineLinuxDisplayRegression PRIVATE Qt6::Core)
@@ -777,7 +779,7 @@ endif()
 add_test(NAME qt_linux_display_regression COMMAND RhineLinuxDisplayRegression)
 
 qt_add_executable(RhineAudioStreamRegression Qt/tests/AudioStreamChecks.cpp Qt/src/AudioPlayer.cpp
-                  Qt/src/HttpAudioStream.cpp)
+                  Qt/src/AudioSpectrum.cpp Qt/src/HttpAudioStream.cpp)
 target_include_directories(RhineAudioStreamRegression PRIVATE Qt/src)
 target_link_libraries(RhineAudioStreamRegression PRIVATE Qt6::Core Qt6::Multimedia Qt6::Network)
 if(MSVC)
@@ -837,6 +839,33 @@ if(MSVC)
     target_compile_options(RhinePlaybackQueueRegression PRIVATE /utf-8)
 endif()
 add_test(NAME qt_playback_queue_regression COMMAND RhinePlaybackQueueRegression)
+
+qt_add_executable(RhineMvRegression Qt/tests/MvChecks.cpp Qt/src/MvController.cpp Qt/src/MvController.h
+                  Qt/src/DesktopWallpaper.cpp Qt/src/DesktopWallpaper.h)
+target_include_directories(RhineMvRegression PRIVATE Qt/src)
+target_link_libraries(RhineMvRegression PRIVATE RhineCore)
+if(MSVC)
+    target_compile_options(RhineMvRegression PRIVATE /utf-8)
+endif()
+add_test(NAME qt_mv_regression COMMAND RhineMvRegression "${CMAKE_CURRENT_SOURCE_DIR}/output/resources"
+                                       "${CMAKE_CURRENT_SOURCE_DIR}/Qt/tests/fixtures/mv-sample.json")
+set_tests_properties(qt_mv_regression
+                     PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_FORCE_STDERR_LOGGING=1" TIMEOUT 45)
+qt_add_executable(RhineSpectrumRegression Qt/tests/SpectrumChecks.cpp)
+target_include_directories(RhineSpectrumRegression PRIVATE Qt/src)
+target_link_libraries(RhineSpectrumRegression PRIVATE RhineCore)
+add_test(NAME qt_spectrum_regression COMMAND RhineSpectrumRegression)
+if(WIN32)
+    # Explicit desktop integration probe; default CTest must never alter the user's desktop.
+    qt_add_executable(RhineWallpaperProbe Qt/tests/WallpaperChecks.cpp Qt/src/DesktopWallpaper.cpp
+                      Qt/src/DesktopWallpaper.h)
+    set_target_properties(RhineWallpaperProbe PROPERTIES EXCLUDE_FROM_ALL TRUE)
+    target_include_directories(RhineWallpaperProbe PRIVATE Qt/src)
+    target_link_libraries(RhineWallpaperProbe PRIVATE Qt6::Quick Qt6::Multimedia user32)
+    if(MSVC)
+        target_compile_options(RhineWallpaperProbe PRIVATE /utf-8)
+    endif()
+endif()
 
 # FG 闸门探针：验证「setQueueSubmitParams 对离屏帧生效」与「共享 device 上能建交换链」。 需要真实 GPU + 显示服务（或 xvfb + lavapipe），CI runner 没有
 # GPU，所以**不进默认 CTest 集合**：构建后用 `output/qt-build/RhineFgGateProbe` 手动运行，用它给出 "FG 架构成不成立"的硬结论。

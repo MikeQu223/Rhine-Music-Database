@@ -24,8 +24,12 @@ function run(command, args, env = {}) {
 // 仓库边界检查已停用，需要时手动运行 node scripts/check-repository.cjs。
 run(python, ['scripts/check-qt-project.py']);
 run(process.execPath, ['scripts/check-music-upstream.cjs']);
+run(process.execPath, ['--test', 'scripts/test-ffmpeg-decoders.cjs']);
 
 run('ctest', ['--test-dir', 'output/qt-build', '--output-on-failure']);
+if (win) {
+    run(process.execPath, ['scripts/check-dxc-cache.cjs']);
+}
 // 验证最终应用包
 const resources = path.join(app, resourceDirectory);
 const bridgeTests = [

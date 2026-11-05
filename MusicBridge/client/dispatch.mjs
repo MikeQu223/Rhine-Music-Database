@@ -5,6 +5,8 @@ import { safeLoginDetails } from './failure.mjs';
 import { fetchLyrics } from './lyrics.mjs';
 
 const OPERATIONS = new Set([
+    'mv',
+    'mvVersions',
     'request',
     'search',
     'songs',

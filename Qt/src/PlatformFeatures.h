@@ -3,6 +3,16 @@
 
 // 平台特性宏
 namespace PlatformFeatures {
+#if defined(Q_OS_WIN) || defined(Q_OS_LINUX) || defined(Q_OS_MACOS)
+inline constexpr bool MusicVideo = true;
+#else
+inline constexpr bool MusicVideo = false;
+#endif
+#ifdef Q_OS_WIN
+inline constexpr bool DesktopWallpaper = true;
+#else
+inline constexpr bool DesktopWallpaper = false;
+#endif
 #ifdef Q_OS_IOS
 inline constexpr bool OfficialPlayback = false;
 inline constexpr bool LocalMusic = false;

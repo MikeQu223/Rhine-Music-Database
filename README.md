@@ -60,7 +60,7 @@ macOS、Linux 和 Windows 默认使用 FFmpeg 音频后端。Windows 设置 `QT_
 桌面播放由独立后台服务管理音频、队列与账号；服务生命周期与界面进程绑定，
 界面正常退出或崩溃都会停止播放并结束服务。渲染、窗口与托盘始终由界面进程负责。
 
-图形后端在 Windows 与 Linux 上优先使用 Vulkan，不可用时回退 OpenGL；macOS 固定使用 Metal。
+图形后端在 Windows 与 Linux 上优先使用 Vulkan；Windows 不可用时回退 Direct3D 12，Linux 回退 OpenGL；macOS 固定使用 Metal。
 `RHINE_GRAPHICS=vulkan|opengl|auto` 可手动指定，`QSG_RHI_BACKEND` 的优先级更高。
 Linux 上「不可用」包含两种：没有 Vulkan 物理设备，和当前 X11 连接没有 DRI3 扩展。
 后者在没有 DRI3 的 Xorg 上会让 Mesa 在创建交换链时失败，而 Qt 拿不到交换链会直接 abort，
@@ -93,7 +93,9 @@ Linux 的「设置 → GPU / 显卡」可以指定用哪一块显卡，重启生
 - [x] 每日推荐、推荐歌单、排行榜、新专辑、分类歌单
 - [x] 面板内播放与网易云官方客户端入口
 - [x] 同步歌词与逐句滚动
-- [ ] MV、评论社交、云盘、电台
+- [x] 关联 MV 自动静音播放、独立窗口、视频版本选择、全屏与透明度调节
+- [x] Windows 桌面壁纸模式、显示器选择、桌面进度控制与音乐频谱波浪
+- [ ] 评论社交、云盘、电台
 - [ ] 音乐下载
 
 ### QQ 音乐
@@ -153,7 +155,29 @@ Linux 的「设置 → GPU / 显卡」可以指定用哪一块显卡，重启生
 - [x] 音质选择、试听提示与可选替代音源
 - [x] macOS 系统媒体按钮
 - [x] macOS Apple Silicon、Linux x86_64 与 Windows x64 构建和打包
-- [ ] MV 播放
+- [x] 网易云歌曲关联 MV 自动播放（桌面端）
+
+### 关联 MV 窗口
+
+在「设置 → 终端偏好」开启「自动播放关联 MV（网易云）」。播放网易云歌曲后，
+独立窗口会读取平台提供的关联 MV；没有关联时默认匹配搜索首项，无结果或加载失败时显示提示，音乐继续播放。
+视频始终静音，跟随主播放器切歌、暂停、恢复和跳转，不改变音频音质或播放队列。
+
+窗口底部可选择视频版本和 20%–100% 的透明度，支持 F11 全屏、Esc 退出全屏。独立窗口可直接拖到副屏。
+优先播放为歌曲记住的手动版本，其次播放歌曲明确关联的 MV；没有明确关联时自动选择搜索首项。版本列表提供按歌名筛选的 MV 搜索结果（包括现场、翻唱等），标明来源与歌手，手动选择后按歌曲记住。
+播放器底栏歌词按钮旁的「MV」可直接调出独立播放窗口。窗口图钉用于置顶，「锁定」会使视频和其他控件穿透鼠标点击，仅原位置的「解锁」按钮可操作；再次点击即可恢复。
+全屏时鼠标静止约 2.5 秒后自动隐藏上下控制栏，移动鼠标即可恢复；展开菜单或拖动滑块时保持显示。
+MV 与音频存在片头或剪辑时间差时，可用「画面偏移」以 0.5 秒为单位校准；正值让画面提前，
+偏移按 MV 保存，透明度也会记住；拔下显示器后窗口自动回到可用屏幕。
+关闭 MV 窗口会同时关闭自动播放，可在设置中重新开启。
+
+搜索结果不保证是同一首歌，选择前请核对标题与歌手。视频可用性仍取决于平台收录、地区与账号权限。
+Windows 下可在 MV 窗口点击「桌面壁纸」，再选择「壁纸显示器」。视频嵌入桌面图标下方，跟随音乐暂停、跳转与切歌，模式和显示器选择会记住；显示器断开时回到主屏。
+独立 MV 窗口支持 Linux、Windows 和 macOS；桌面壁纸目前仅在 Windows 提供，由 `Qt/src/PlatformFeatures.h` 统一声明能力，其他平台保留窗口播放。
+壁纸底部常驻金色发光进度条、播放／暂停和「退出壁纸」，控件直接叠加在 MV 画面内，并带弱阴影。
+壁纸模式下关闭 MV 设置窗口不会停止桌面播放，可从桌面控制条的「设置」重新打开。
+进度条上的波浪来自主播放器实际解码音频的频谱，暂停后收平；拖动进度会调整歌曲与 MV 的同步位置。「退出壁纸」只关闭 MV 自动播放，音乐继续。
+点击「返回窗口」可恢复独立窗口播放；没有可用 MV 或视频加载失败时保留原桌面背景。壁纸模式不会修改系统保存的壁纸文件，退出应用后恢复原背景。
 
 **音质和完整播放取决于账号权限与音源可用性；返回试听时会明确提示。替代音源默认关闭，开启时使用锁定上游的匹配实现，音质由匹配来源决定，失败时可使用官方入口。本项目不提供音乐下载。**
 
@@ -161,7 +185,7 @@ Linux 的「设置 → GPU / 显卡」可以指定用哪一块显卡，重启生
 
 | Platform | Vulkan | Direct3D 12 | OpenGL | Metal |
 | -------- | ------ | ----------- | ------ | ----- |
-| Windows  | ✅     | 已停用      | ✅     | -     |
+| Windows  | ✅     | ✅          | ✅     | -     |
 | macOS    | -      | -           | -      | ✅    |
 | iOS / iPadOS | - | - | - | ✅ |
 | Linux    | ✅     | -           | ✅     | -     |
@@ -169,7 +193,7 @@ Linux 的「设置 → GPU / 显卡」可以指定用哪一块显卡，重启生
 | API         | FXAA   | SSAA   | MSAA   | TAA     | Upscaling        | Frame Generation |
 | ----------- | ------ | ------ | ------ | ------- | ---------------- | ---------------- |
 | Vulkan      | ✅     | 2x MAX | 8x MAX | ✅      | EASU + RCAS      | ✅               |
-| Direct3D 12 | 已停用 | -      | -      | -       | -                | -                |
+| Direct3D 12 | ✅     | 2x MAX | 8x MAX | ✅      | EASU + RCAS / FSR3 | ✅               |
 | OpenGL      | ✅     | 2x MAX | 8x MAX | ✅      | EASU + RCAS      | -                |
 | Metal       | -      | -      | -      | MetalFX | MetalFX Temporal | MetalFX          |
 
@@ -234,6 +258,22 @@ Windows 的 `npm run share` 使用 [Inno Setup 6.3+ 或 7](https://jrsoftware.or
 安装器默认安装到 `%LOCALAPPDATA%\Programs\RhineMusicDatabase`，无需管理员权限，提供开始菜单快捷方式、可选桌面快捷方式和卸载入口。
 应用在安装目录的 `data` 中保存账号、设置和缓存，请选择当前用户可写的目录。安装包排除构建机上的运行数据，覆盖安装和卸载保留用户的 `data`；彻底清理时可手动删除。
 
+Windows 默认编入完整 D3D12 / FidelityFX DX12，`RHINE_GRAPHICS=d3d12` 可指定该后端。首次构建仍需从锁定源码编译 DXC；CI 会在应用构建前独立构建并保存 `generated/dxc`，后续按源码提交、构建配方及工具链签名复用，即使后续应用构建失败也不会丢掉已完成的 DXC 缓存。
+
+本机也可先单独准备工具链（无需 Qt），再运行通常的构建：
+
+```powershell
+cmake -S cmake/dxc-bootstrap -B output/dxc-bootstrap -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build output/dxc-bootstrap --target rhine_dxc
+npm run build
+```
+
+构建用 DXC 使用独立的 `RHINE_DXC_PYTHON_EXECUTABLE`，优先选择 CI `setup-python` 的解释器，其次从 PATH 查找，避免 Qt/glslang 选择其他 Python 后改变工具链签名。需要时可用同名 CMake 参数显式指定。
+
+构建用 DXC 默认固定为 Release，与应用 Debug/Release 配置分开；Release 不生成无用的调试信息和 PDB，保持优化等级。嵌套构建默认最多使用 8 个并行任务，可用 `-DRHINE_DXC_BUILD_JOBS=N` 调整；DX12 每个着色器编译进程默认 2 个线程，可用 `-DRHINE_FFX_DX12_SHADER_THREADS=N` 调整，避免多个编译进程各自占满所有核心。FSR3、插帧及所有着色器置换仍保留。
+
+高级构建可用 `-DRHINE_ENABLE_D3D12_BACKEND=OFF` 显式排除 D3D12。缓存只复用本项目从源码构建的工具，不使用 SDK 中附带的预编译编译器；源码、配方或编译器等签名变化时会重新构建。Linux/macOS 不会构建 DXC。
+
 ### Linux x86_64（AppImage）
 
 安装 Qt 6.12.0 开发包（含 Shader Tools、Multimedia 与私有头文件）、CMake、Ninja、GCC、Python 3 和 Node.js 26.11.1；若发行版尚未提供此版本，使用官方 desktop kit 并设置 `QT_ROOT`。Qt 由系统提供时 `QT_ROOT` 保持默认的 `/usr` 即可：
@@ -261,7 +301,9 @@ RHINE_RESOURCES=$PWD/output/resources RHINE_AA_MODE=off ./output/qt-build/RhineM
 
 随包的 Node 必须是官方独立分发包：构建脚本会检查 `ldd` 结果，只依赖 glibc 运行库的构建才会被打进 AppImage，发行版自己的 `/usr/bin/node` 动态链接了系统 ICU 等库，会被拒绝。
 
-Linux 包随附自编的 FFmpeg：发行版 `libavcodec` 动态依赖 x265/aom/SvtAv1Enc 等编码器库（合计约 55 MB），而这里只用 Qt 的 FFmpeg 后端解码音频。`scripts/prepare-linux-ffmpeg.cjs` 构建一份只保留音频能力的版本：编码器、复用器、avdevice、avfilter 全部关闭，解码器按 `vendor/ffmpeg/decoders-linux.json` 的音频白名单启用（视频解码器如 HEVC、H.264、VP9、AV1 不编译），parser 与 bitstream filter 也只留音频相关的部分，解复用器保持全开（源码优先取 `third_party/ffmpeg` 子模块，锁定标签 `n9.0.1` 且保持上游原样；子模块缺失或提交与 `vendor/ffmpeg/source.json` 的 `pinned-commit` 不一致时，回退到锁定校验和的发布包）（LGPL-2.1-or-later，不启用任何 GPL 或非自由组件），构建时自动替换进包。发现漏掉的音频格式时，用 `RHINE_FFMPEG_EXTRA_DECODERS=aac_latm,xxx` 临时追加解码器，确认后再补进白名单文件。设置 `RHINE_FFMPEG=system` 可回退发行版库；Qt 后端要求的 SONAME 与自编版本不一致时也会自动回退并告警。许可与来源见 `NOTICE` 及包内 `third-party/FFmpeg/`。构建用 `--enable-small`（`-O3` 换 `-Os`）与 `--enable-lto` 压缩体积；`-flto` 同时显式写进 `--extra-ldflags`，因为 FFmpeg 自己那套 `check_ldflags -flto $cpuflags` 探测在 GCC 16 上会因 `-march=generic` 失败并把 `-flto` 静默丢掉。脚本在 configure 后复核 `CFLAGS` 与 `LDFLAGS` 都带 `-flto`，缺任一即失败；工具链不支持 LTO 时可用 `RHINE_FFMPEG_LTO=0` 退回普通构建。
+Linux 包随附自编的 FFmpeg：发行版 `libavcodec` 动态依赖 x265/aom/SvtAv1Enc 等编码器库（合计约 55 MB），而这里只用 Qt 的 FFmpeg 后端解码音频与关联 MV。`scripts/prepare-linux-ffmpeg.cjs` 构建一份保留音频及 H.264 / HEVC 视频解码能力的版本：编码器、复用器、avdevice、avfilter 全部关闭，解码器按 `vendor/ffmpeg/decoders-linux.json` 的音频白名单与 `videoDecoders` 启用（H.264、HEVC；VP9、AV1 不编译），parser 与 bitstream filter 保留音频及这两种 MV 编码需要的部分，解复用器保持全开（源码优先取 `third_party/ffmpeg` 子模块，锁定标签 `n9.0.1` 且保持上游原样；子模块缺失或提交与 `vendor/ffmpeg/source.json` 的 `pinned-commit` 不一致时，回退到锁定校验和的发布包）（LGPL-2.1-or-later，不启用任何 GPL 或非自由组件），构建时自动替换进包。发现漏掉的音频格式时，用 `RHINE_FFMPEG_EXTRA_DECODERS=aac_latm,xxx` 临时追加解码器，确认后再补进白名单文件。设置 `RHINE_FFMPEG=system` 可回退发行版库；Qt 后端要求的 SONAME 与自编版本不一致时也会自动回退并告警。许可与来源见 `NOTICE` 及包内 `third-party/FFmpeg/`。构建用 `--enable-small`（`-O3` 换 `-Os`）与 `--enable-lto` 压缩体积；`-flto` 同时显式写进 `--extra-ldflags`，因为 FFmpeg 自己那套 `check_ldflags -flto $cpuflags` 探测在 GCC 16 上会因 `-march=generic` 失败并把 `-flto` 静默丢掉。脚本在 configure 后复核 `CFLAGS` 与 `LDFLAGS` 都带 `-flto`，缺任一即失败；工具链不支持 LTO 时可用 `RHINE_FFMPEG_LTO=0` 退回普通构建。
+
+Linux CI 从 GitHub 浅检出已锁定提交的 `third_party/ffmpeg`，直接使用经过版本与工作区校验的源码，避免依赖 runner 无法稳定连接的 `ffmpeg.org`。本机构建也优先使用该子模块；未检出时仍可使用锁定 SHA256 的官方发布包。
 
 打包前会删掉 AppDir 里的开发期文件（`usr/include`、`usr/lib/cmake`、`usr/lib/pkgconfig`、man/doc 与 `*.a`、`*.la`、`*.prl`），这些是发行版 Qt 的安装规则带进来的，运行时用不到。
 

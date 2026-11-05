@@ -29,6 +29,7 @@ void NativeHud::playerBar(double x, double y, double width) {
                     player.current.value("provider").toString(m_music->provider) == m_music->provider;
     state.seekable = player.state["seekable"].toBool();
     state.applicationVolume = PlatformFeatures::ApplicationVolume;
+    state.musicVideo = PlatformFeatures::MusicVideo;
     if (m_responsive.compact()) {
         m_responsive.setPlayer(state);
         return;

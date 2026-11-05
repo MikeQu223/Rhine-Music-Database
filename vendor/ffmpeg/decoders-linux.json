@@ -1,5 +1,5 @@
 {
-    "$comment": "Linux 随包 FFmpeg 的解码器白名单：仅保留音频解码器，视频/字幕解码器全部关闭。由 scripts/prepare-linux-ffmpeg.cjs 读取后拼成 --enable-decoder 参数；新增格式时在此追加，或用 RHINE_FFMPEG_EXTRA_DECODERS 临时覆盖。本文件由 scripts/generate-ffmpeg-decoders.py 生成。",
+    "$comment": "Linux 随包 FFmpeg 的解码器白名单：音频与关联 MV 的 H.264 / HEVC 解码。由 scripts/prepare-linux-ffmpeg.cjs 读取后拼成 --enable-decoder 参数；新增格式时在此追加，或用 RHINE_FFMPEG_EXTRA_DECODERS 临时覆盖。本文件由 scripts/generate-ffmpeg-decoders.py 生成。",
     "decoders": [
         "aac",
         "aac_fixed",
@@ -208,5 +208,6 @@
         "xan_dpcm",
         "xma1",
         "xma2"
-    ]
+    ],
+    "videoDecoders": ["h264", "hevc"]
 }
