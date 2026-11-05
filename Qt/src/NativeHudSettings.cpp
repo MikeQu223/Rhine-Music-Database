@@ -1,3 +1,4 @@
+#include <QScopedValueRollback>
 #include "NativeHud.h"
 #include "AppUpdater.h"
 #include "DesktopLyricsAppearance.h"
@@ -164,6 +165,20 @@ void NativeHud::settingsPanel(double x, double y, double width) {
     const QRectF viewport(x + 40, y + SettingsViewportTop, width - 80,
                           SettingsViewportBottom - SettingsViewportTop);
     auto model = buildSettingsModel(settingsContext(), viewport, settingsScroll, expandedPreference);
+    if (m_responsive.compact()) {
+        m_responsive.setSettings(model);
+        for (const auto &section : model.sections) {
+            const auto renderer = section.meta->customRenderer;
+            if (renderer.isEmpty() || renderer == "provider-card") {
+                continue;
+            }
+            ResponsiveHudContent::Model content;
+            QScopedValueRollback<ResponsiveHudContent::Model *> sink(m_contentSink, &content);
+            paintSettingsCustomSection(renderer, {0, 0, width, section.meta->customHeight}, 0);
+            m_responsive.setSettingsCustom(renderer, content.items);
+        }
+        return;
+    }
     const auto layout = SettingsCard::layout(model);
     settingsContentBottom = SettingsViewportTop + layout.contentHeight;
     settingsScroll = HudScroll::clampOffset(settingsScroll, layout.contentHeight, viewport.height());
@@ -205,26 +220,6 @@ void NativeHud::settingsPanel(double x, double y, double width) {
     const auto firstHit = hits.size();
     save();
     clip(viewport.x(), viewport.y(), viewport.width(), viewport.height());
-    if (m_responsive.compact()) {
-        m_responsive.setSettings(model);
-        const auto parentCommands = commands;
-        const auto parentHits = hits;
-        for (const auto &section : model.sections) {
-            const auto renderer = section.meta->customRenderer;
-            if (renderer.isEmpty() || renderer == "provider-card") {
-                continue;
-            }
-            commands = {};
-            hits = {};
-            paintSettingsCustomSection(renderer, {x + 53, 220, width - 106, section.meta->customHeight}, 0);
-            m_responsive.setSettingsCustom(renderer,
-                                           ResponsiveHudContent::legacy(commands, hits, sourceState()));
-        }
-        commands = parentCommands;
-        hits = parentHits;
-        restore();
-        return;
-    }
     SettingsCard::paint(model, layout, colors, canvas);
     restore();
     HudScroll::clipHits(hits, int(firstHit), viewport);
@@ -262,6 +257,10 @@ void NativeHud::paintSettingsCustomSection(const QString &renderer, const QRectF
     auto actionBlock = [this, &stroke, &soft, &line, &baseInk](const QRectF &rect, const QString &label,
                                                                const QString &action, const QString &hitLabel,
                                                                bool centeredLabel = false) {
+        if (m_contentSink) {
+            m_contentSink->action(hitLabel + " / " + label, action);
+            return;
+        }
         fill(rect.left(), rect.top(), rect.width(), rect.height(), soft);
         stroke(rect, line);
         const auto shown = fit(label, 14, rect.width() - 26, "regular");

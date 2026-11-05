@@ -88,13 +88,15 @@ void NativeHud::discoverPanel(double x, double y, double width) {
         discoverScroll = 0;
         m_discoverScrollScope = scrollScope;
     }
-    discoverScrollMaximum = DiscoverMusicCard::layout(model.bounds, model.loadedCount).maximumScroll;
-    discoverScroll = std::clamp(discoverScroll, 0., discoverScrollMaximum);
-    model.scroll = discoverScroll;
+    if (!m_responsive.compact()) {
+        discoverScrollMaximum = DiscoverMusicCard::layout(model.bounds, model.loadedCount).maximumScroll;
+        discoverScroll = std::clamp(discoverScroll, 0., discoverScrollMaximum);
+        model.scroll = discoverScroll;
+    }
     const auto indices =
         model.categoryPicker ? QVector<int>{}
         : m_responsive.compact()
-            ? m_responsive.discoverVisibleIndices(model.loadedCount, model.tabs.size(), model.tab)
+            ? m_responsive.discoverVisibleIndices(model)
             : DiscoverMusicCard::visibleIndices(model.bounds, model.loadedCount, model.scroll);
     QStringList urls;
     for (const auto index : indices) {
@@ -106,14 +108,7 @@ void NativeHud::discoverPanel(double x, double y, double width) {
     const auto scope = music.provider + ":" + QString::number(music.accountGeneration()) + ":" +
                        QString::number(discover.generation);
     m_discoverArtwork->show(scope, urls);
-    QVector<int> entryIndices = indices;
-    if (m_responsive.compact() && !model.categoryPicker) {
-        entryIndices.clear();
-        for (int index = 0; index < discover.items.size(); ++index) {
-            entryIndices.append(index);
-        }
-    }
-    for (const auto index : entryIndices) {
+    for (const auto index : indices) {
         const auto item = discover.items.at(index).toObject();
         DiscoverMusicCard::Entry entry;
         entry.index = index;

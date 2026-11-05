@@ -187,11 +187,11 @@ QVector<NativeHud::Row> NativeHud::rows(int lane) {
         return {};
     }
     const auto filter = modal == "saved" ? query.toLower() : QString();
-    const auto key =
-        QString::fromUtf8(QJsonDocument(QJsonArray{lane, double(m_music->revision),
-                                                   m_music->lists[lane].size(), filter, groupBy, activeGroup})
-                              .toJson(QJsonDocument::Compact));
-    if (key == m_rowsKey) {
+    const auto key = QString::fromUtf8(
+        QJsonDocument(QJsonArray{lane, m_music->provider, double(m_music->accountGeneration()),
+                                 m_music->lists[lane].size(), filter, groupBy, activeGroup})
+            .toJson(QJsonDocument::Compact));
+    if (key == m_rowsKey && m_rowsSource == m_music->lists[lane]) {
         return m_rows;
     }
     QVector<Row> values;
@@ -267,6 +267,7 @@ QVector<NativeHud::Row> NativeHud::rows(int lane) {
         }
     }
     m_rowsKey = key;
+    m_rowsSource = m_music->lists[lane];
     m_rows = values;
     return values;
 }

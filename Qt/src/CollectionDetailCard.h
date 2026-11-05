@@ -57,6 +57,8 @@ struct Model {
     int totalCount = 0;
     int loadedCount = 0;
     QVector<Row> rows;
+    // 移动端按可见窗口惰性读取；闭包持有只读的 Qt 隐式共享数据。
+    std::function<Row(int)> rowAt;
     QString emptyMessage;
     QString hint;
     double scrollFraction = -1;

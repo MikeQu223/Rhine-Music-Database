@@ -313,6 +313,11 @@ void NativeHud::loginPanel(double x, double y, double width) {
             text(label, x + 53, y + 636, 15);
         }
     } else {
+        if (m_contentSink) {
+            m_contentSink->field("account", "手机号码（中国大陆）");
+            m_contentSink->field("captcha", "短信验证码");
+            m_contentSink->field("submit", "登录");
+        }
         text("手机号码（中国大陆）", x + 53, y + 278, 14);
         text("短信验证码", x + 53, y + 391, 14);
         text("按 ENTER 登录", x + 53, y + 532, 12);

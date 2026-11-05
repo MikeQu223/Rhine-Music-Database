@@ -20,6 +20,7 @@ class ResponsiveHudCanvas {
     QJsonArray surface;
     QJsonArray raised;
     QJsonArray amber;
+    QPair<int, int> visibleRows(double top, double stride, int count) const;
     void fill(QRectF rect, QJsonArray color);
     void border(QRectF rect, QJsonArray color);
     void text(QString value, double x, double y, double size = 14, double width = 353,

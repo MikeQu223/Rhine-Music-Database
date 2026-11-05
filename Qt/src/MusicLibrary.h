@@ -254,6 +254,17 @@ class MusicLibrary : public QObject {
     void completePersonal(int lane, QString error = {});
     int m_pendingLane = -1;
     bool m_playLiked = false;
+    struct SourcePlayback {
+        int lane = 0;
+        quint64 account = 0;
+        quint64 search = 0;
+        quint64 selection = 0;
+        int cursor = 0;
+        bool awaitingPage = false;
+    };
+    std::optional<SourcePlayback> m_sourcePlayback;
+    bool m_sourcePlaybackScheduled = false;
+    void continueSourcePlayback();
     QString m_accountError;
     std::array<QString, 5> m_sourceErrors;
     void restoreCachedAccount();

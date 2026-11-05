@@ -1,5 +1,6 @@
 #include "ResponsiveHudCanvas.h"
 #include <algorithm>
+#include <cmath>
 
 ResponsiveHudCanvas::ResponsiveHudCanvas(Glyphs &glyphs, double scale, double h, bool dark)
     : height(h), unit(scale), m_glyphs(glyphs) {
@@ -13,7 +14,15 @@ ResponsiveHudCanvas::ResponsiveHudCanvas(Glyphs &glyphs, double scale, double h,
     commands.append(QJsonArray{"save"});
     commands.append(QJsonArray{"scale", unit, unit});
 }
+QPair<int, int> ResponsiveHudCanvas::visibleRows(double top, double stride, int count) const {
+    const int first = std::clamp(int(std::floor((m_clipTop - top) / stride)), 0, count);
+    const int last = std::clamp(int(std::ceil((contentBottom - top) / stride)), first, count);
+    return {first, last};
+}
 void ResponsiveHudCanvas::fill(QRectF r, QJsonArray c) {
+    if (m_content && (r.bottom() <= m_clipTop || r.top() >= contentBottom)) {
+        return;
+    }
     commands.append(QJsonArray{"fill", c, r.x(), r.y(), r.width(), r.height()});
 }
 void ResponsiveHudCanvas::border(QRectF r, QJsonArray c) {
@@ -111,12 +120,15 @@ void ResponsiveHudCanvas::icon(QString name, double x, double y, double size, QJ
     commands.append(QJsonArray{"restore"});
 }
 void ResponsiveHudCanvas::image(QString key, QRectF r) {
-    if (!key.isEmpty()) {
+    if (!key.isEmpty() && (!m_content || (r.bottom() > m_clipTop && r.top() < contentBottom))) {
         commands.append(QJsonArray{"image", key, r.x(), r.y(), r.width(), r.height()});
     }
 }
 void ResponsiveHudCanvas::hit(QRectF r, QString action, QString label) {
-    if (action.isEmpty() || (m_content && (r.top() < m_clipTop || r.bottom() > contentBottom))) {
+    if (m_content) {
+        r = r.intersected(QRectF(0, m_clipTop, 393, std::max(0., contentBottom - m_clipTop)));
+    }
+    if (action.isEmpty() || r.isEmpty()) {
         return;
     }
     hits.append(QJsonObject{{"x", r.x() * unit},
@@ -128,7 +140,10 @@ void ResponsiveHudCanvas::hit(QRectF r, QString action, QString label) {
                             {"fixed", true}});
 }
 void ResponsiveHudCanvas::field(QString name, QRectF r) {
-    if (m_content && (r.top() < m_clipTop || r.bottom() > contentBottom)) {
+    if (m_content) {
+        r = r.intersected(QRectF(0, m_clipTop, 393, std::max(0., contentBottom - m_clipTop)));
+    }
+    if (r.isEmpty()) {
         return;
     }
     fields[name] = QJsonObject{

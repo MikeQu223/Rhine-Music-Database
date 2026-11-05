@@ -1136,7 +1136,7 @@ static bool checkResponsiveTransitions() {
     transition.apply(commands, hits, "archive", 10, 1080, false);
     commands = QJsonArray{QJsonArray{"text", "detail"}};
     transition.apply(commands, hits, "detail", 10.1, 1080, false);
-    if (transition.active(10.2) || hits.isEmpty() || commands.size() != 5) {
+    if (transition.active(10.2) || hits.isEmpty() || commands.size() != 1) {
         return false;
     }
     commands = QJsonArray{QJsonArray{"text", "detail"}};

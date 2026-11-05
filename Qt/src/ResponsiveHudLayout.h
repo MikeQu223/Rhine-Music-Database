@@ -40,13 +40,15 @@ class ResponsiveHudLayout {
     void setSettings(const SettingsCard::Model &v) {
         m_settings = v;
     }
-    bool visible(double top, double height) const {
-        return top + height >= m_scroll + 158 && top <= m_scroll + m_height - 152;
+    QPair<int, int> resultWindow(int count, bool search, bool gallery, bool liked) const;
+    QVector<int> discoverVisibleIndices(const DiscoverMusicCard::Model &model) const;
+    void setAuxiliary(QVector<ResponsiveHudContent::Item> items) {
+        m_auxiliary = std::move(items);
     }
-    QVector<int> discoverVisibleIndices(int count, int tabCount, const QString &tab) const;
     void setSettingsCustom(QString key, QVector<ResponsiveHudContent::Item> items) {
         m_settingsCustom[key] = std::move(items);
     }
+    void prepare(const QString &scope, bool home);
     void arrange(QJsonArray &commands, QJsonArray &hits, const QJsonObject &source, const QString &scope,
                  Glyphs &glyphs);
     QJsonObject state(QJsonObject source) const;
@@ -98,6 +100,7 @@ class ResponsiveHudLayout {
     double m_scroll = 0;
     double m_maximum = 0;
     QString m_scope;
+    bool m_scopeChanged = false;
     QJsonObject m_fields;
     // 歌词排版缓存：文档或可用宽度变化时才重新换行。
     struct LyricRow {
@@ -120,6 +123,7 @@ class ResponsiveHudLayout {
     std::optional<CollectionDetailCard::Model> m_collection;
     std::optional<DiscoverMusicCard::Model> m_discover;
     std::optional<SettingsCard::Model> m_settings;
+    QVector<ResponsiveHudContent::Item> m_auxiliary;
     QHash<QString, QVector<ResponsiveHudContent::Item>> m_settingsCustom;
     void player(ResponsiveHudCanvas &c, bool immersive, const QString &active);
     void progressRow(ResponsiveHudCanvas &c, double y, bool current, const QJsonObject &source,

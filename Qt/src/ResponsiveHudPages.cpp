@@ -132,7 +132,9 @@ double ResponsiveHudLayout::archive(ResponsiveHudCanvas &c, const QJsonObject &s
         c.fill({20, slotY + 2, 353, ArchiveRowHeight - 4}, highlight);
         c.fill({20, slotY + 2, 2, ArchiveRowHeight - 4}, c.amber);
     }
-    for (int row = 0; row < rows.size(); ++row) {
+    const auto [first, last] =
+        c.visibleRows(slotY - offsetRows * ArchiveRowHeight, ArchiveRowHeight, int(rows.size()));
+    for (int row = first; row < last; ++row) {
         const double y = slotY + (row - offsetRows) * ArchiveRowHeight;
         if (y + ArchiveRowHeight <= listTop || y >= c.contentBottom) {
             continue;
@@ -316,11 +318,14 @@ double ResponsiveHudLayout::collection(ResponsiveHudCanvas &c) {
     y += ((tools.size() + 2) / 3) * 44 + 10;
     c.section(y, m.kind == "artist" ? "热门曲目" : "曲目目录", "TRACK INDEX");
     y += 38;
-    for (const auto &row : m.rows) {
-        c.row(y, row.title, row.artist, row.stamp, row.action, row.number, row.current);
-        y += 68;
+    const int count = m.rowAt ? m.loadedCount : int(m.rows.size());
+    const auto [first, last] = c.visibleRows(y, 68, count);
+    for (int index = first; index < last; ++index) {
+        const auto row = m.rowAt ? m.rowAt(index) : m.rows[index];
+        c.row(y + index * 68., row.title, row.artist, row.stamp, row.action, row.number, row.current);
     }
-    if (m.rows.isEmpty()) {
+    y += count * 68.;
+    if (count == 0) {
         y = c.paragraph(m.emptyMessage, 20, y, 14, 353, c.muted) + 20;
     }
     if (!m.more.action.isEmpty()) {
@@ -350,25 +355,34 @@ double ResponsiveHudLayout::discover(ResponsiveHudCanvas &c) {
                    m.categories[i].action, m.categories[i].selected);
         }
         y += ((m.categories.size() + 2) / 3) * 44;
-    } else if (m.tab == "playlists" && !m.entries.isEmpty()) {
-        const auto &entry = m.entries[0];
-        c.fill({20, y, 353, 116}, c.surface);
-        c.fill({20, y, 2, 116}, c.amber);
-        c.text("FEATURED / 今日档案", 33, y + 12, 8, 225, "regular", c.muted);
-        c.paragraph(entry.title, 33, y + 34, 18, 162, {}, "demibold", 2, 1.25);
-        c.text(entry.artist, 33, y + 92, 10, 225, "regular", c.muted);
-        cover(c, entry.image, {279, y + 16, 80, 80});
-        c.hit({20, y, 353, 116}, "discover:item:" + QString::number(entry.index), entry.title);
-        if (entry.kind == "playlist") {
-            c.text("▶ 全部", 205, y + 45, 10, 62);
-            c.hit({199, y + 30, 70, 44}, "mobile:play-discover:" + QString::number(entry.index), "播放全部");
+    } else if (m.tab == "playlists" && m.loadedCount > 0) {
+        const auto hero = std::find_if(m.entries.cbegin(), m.entries.cend(),
+                                       [](const auto &entry) { return entry.index == 0; });
+        if (hero != m.entries.cend()) {
+            const auto &entry = *hero;
+            c.fill({20, y, 353, 116}, c.surface);
+            c.fill({20, y, 2, 116}, c.amber);
+            c.text("FEATURED / 今日档案", 33, y + 12, 8, 225, "regular", c.muted);
+            c.paragraph(entry.title, 33, y + 34, 18, 162, {}, "demibold", 2, 1.25);
+            c.text(entry.artist, 33, y + 92, 10, 225, "regular", c.muted);
+            cover(c, entry.image, {279, y + 16, 80, 80});
+            c.hit({20, y, 353, 116}, "discover:item:" + QString::number(entry.index), entry.title);
+            if (entry.kind == "playlist") {
+                c.text("▶ 全部", 205, y + 45, 10, 62);
+                c.hit({199, y + 30, 70, 44}, "mobile:play-discover:" + QString::number(entry.index),
+                      "播放全部");
+            }
         }
         y += 132;
-        terminalSection(c, y, "01", "音乐档案", "SELECTED / " + QString::number(m.entries.size()));
+        terminalSection(c, y, "01", "音乐档案", "SELECTED / " + QString::number(m.loadedCount));
         y += 25;
-        for (int i = 1; i < m.entries.size(); ++i) {
-            const int col = (i - 1) % 2, row = (i - 1) / 2;
-            const auto &tile = m.entries[i];
+        for (const auto &tile : m.entries) {
+            if (tile.index == 0) {
+                continue;
+            }
+            const int i = tile.index;
+            const int col = (i - 1) % 2;
+            const int row = (i - 1) / 2;
             const double x = 20 + col * 184.;
             const double top = y + row * 196.;
             c.fill({x, top, 169, 144}, c.surface);
@@ -388,7 +402,7 @@ double ResponsiveHudLayout::discover(ResponsiveHudCanvas &c) {
                 }
             }
         }
-        y += ((m.entries.size() - 1 + 1) / 2) * 196;
+        y += (m.loadedCount / 2) * 196;
     } else {
         for (int i = 0; i < m.tools.size(); ++i) {
             c.chip({20 + (i % 2) * 181., y + (i / 2) * 44., 172, 36}, m.tools[i].label, m.tools[i].action,
@@ -396,14 +410,14 @@ double ResponsiveHudLayout::discover(ResponsiveHudCanvas &c) {
         }
         y += ((m.tools.size() + 1) / 2) * 44 + 12;
         for (const auto &entry : m.entries) {
-            c.row(y, entry.title, entry.artist, {}, "discover:item:" + QString::number(entry.index),
-                  MusicData::pad(entry.index + 1), false, {},
+            c.row(y + entry.index * 68., entry.title, entry.artist, {},
+                  "discover:item:" + QString::number(entry.index), MusicData::pad(entry.index + 1), false, {},
                   entry.kind == "playlist" ? "mobile:play-discover:" + QString::number(entry.index)
                                            : QString());
-            y += 68;
         }
+        y += m.loadedCount * 68.;
     }
-    if (m.entries.isEmpty() && !m.categoryPicker) {
+    if (m.loadedCount == 0 && !m.categoryPicker) {
         y = c.paragraph(m.status, 20, y + 15, 14, 353, c.muted) + 20;
     }
     if (m.more) {
@@ -441,14 +455,15 @@ double ResponsiveHudLayout::queue(ResponsiveHudCanvas &c, bool newScope, const Q
     c.text("清空队列", 310, y + 4, 12, 63, "regular", c.muted);
     c.hit({291, y - 5, 82, 44}, "player:clear", "清空队列");
     y += 45;
-    for (int index = 0; index < m_queue.tracks.size(); ++index) {
+    const auto [first, last] = c.visibleRows(y, 68, int(m_queue.tracks.size()));
+    for (int index = first; index < last; ++index) {
         const auto track = m_queue.tracks[index].toObject();
-        c.row(y, track["title"].toString(), track["artist"].toString(), MusicData::time(track),
+        c.row(y + index * 68., track["title"].toString(), track["artist"].toString(), MusicData::time(track),
               "player:queue:" + QString::number(index),
               index == m_queue.currentIndex ? "●" : MusicData::pad(index + 1), index == m_queue.currentIndex,
               index == m_queue.currentIndex ? QString() : "player:remove:" + QString::number(index));
-        y += 68;
     }
+    y += m_queue.tracks.size() * 68.;
     if (m_queue.tracks.isEmpty()) {
         c.text("播放队列为空", 20, y + 20, 17, 353);
         y += 70;
@@ -577,8 +592,9 @@ double ResponsiveHudLayout::library(ResponsiveHudCanvas &c, const QJsonObject &s
         return y + m_scroll + 20;
     }
     const auto entries = s["resultRows"].toArray();
+    const int resultCount = s["resultTotalCount"].toInt(int(entries.size()));
     if (!search && s["musicCollection"].toInt() == 1) {
-        c.text("PERSONAL ARCHIVE / " + QString::number(entries.size()) + " TRACKS", 20, y, 9, 353, "regular",
+        c.text("PERSONAL ARCHIVE / " + QString::number(resultCount) + " TRACKS", 20, y, 9, 353, "regular",
                c.muted);
         y += 25;
         c.border({20, y, 353, 150}, c.line);
@@ -590,11 +606,12 @@ double ResponsiveHudLayout::library(ResponsiveHudCanvas &c, const QJsonObject &s
         y += 63;
         for (int index = 0; index < entries.size(); ++index) {
             auto entry = entries[index].toObject();
+            const int row = entry["index"].toInt(index);
             auto value = entry["value"].toObject();
-            c.row(y, value["title"].toString(), value["artist"].toString(), MusicData::time(value),
-                  entry["action"].toString(), MusicData::pad(index + 1));
-            y += 68;
+            c.row(y + row * 68., value["title"].toString(), value["artist"].toString(),
+                  MusicData::time(value), entry["action"].toString(), MusicData::pad(row + 1));
         }
+        y += resultCount * 68.;
         return y + m_scroll + 20;
     }
     const bool gallery =
@@ -608,8 +625,9 @@ double ResponsiveHudLayout::library(ResponsiveHudCanvas &c, const QJsonObject &s
         for (int index = 0; index < entries.size(); ++index) {
             auto entry = entries[index].toObject();
             auto value = entry["value"].toObject();
-            const double x = 20 + (index % 2) * 184.;
-            const double top = y + (index / 2) * 224.;
+            const int row = entry["index"].toInt(index);
+            const double x = 20 + (row % 2) * 184.;
+            const double top = y + (row / 2) * 224.;
             cover(c, value["image"].toString(), {x, top, 169, 169});
             c.text(value["title"].toString(), x, top + 179, 13, 104, "demibold");
             c.text(value["artist"].toString(), x, top + 201, 10, 169, "regular", c.muted);
@@ -619,7 +637,7 @@ double ResponsiveHudLayout::library(ResponsiveHudCanvas &c, const QJsonObject &s
                 c.hit({x + 110, top + 169, 59, 44}, collectionPlayRoute(value), "播放全部");
             }
         }
-        return y + m_scroll + ((entries.size() + 1) / 2) * 224 + 20;
+        return y + m_scroll + ((resultCount + 1) / 2) * 224 + 20;
     }
     c.fill({20, y, 353, 47}, c.surface);
     c.border({20, y, 353, 47}, c.line);
@@ -648,17 +666,17 @@ double ResponsiveHudLayout::library(ResponsiveHudCanvas &c, const QJsonObject &s
     c.fill({tabIndicator(search ? "search" : "collections", 20 + selectedType * 90.), y + 39, 76, 2},
            c.amber);
     y += 53;
-    terminalSection(c, y, "01", search ? "检索结果" : "音乐档案",
-                    "INDEX / " + QString::number(entries.size()));
+    terminalSection(c, y, "01", search ? "检索结果" : "音乐档案", "INDEX / " + QString::number(resultCount));
     y += 29;
     for (int i = 0; i < entries.size(); ++i) {
         auto entry = entries[i].toObject();
         auto value = entry["value"].toObject();
-        c.row(y, value["title"].toString(), value["artist"].toString(), MusicData::time(value),
-              entry["action"].toString(), MusicData::pad(i + 1));
-        y += 68;
+        const int row = entry["index"].toInt(i);
+        c.row(y + row * 68., value["title"].toString(), value["artist"].toString(), MusicData::time(value),
+              entry["action"].toString(), MusicData::pad(row + 1));
     }
-    if (entries.isEmpty()) {
+    y += resultCount * 68.;
+    if (resultCount == 0) {
         c.fill({20, y + 8, 353, .6}, c.line);
         c.icon("search", 20, y + 30, 24, c.muted);
         const bool emptyQuery = s["query"].toString().trimmed().isEmpty();

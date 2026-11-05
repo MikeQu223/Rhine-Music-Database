@@ -218,12 +218,17 @@ class NativeHud : public QObject {
     QString m_sortField;
     QVector<int> m_trackOrder;
     QString m_rowsKey;
+    QJsonArray m_rowsSource;
     QVector<Row> m_rows;
     QString m_resultSignature;
     double m_resultStart = 0;
     ResponsiveHudLayout m_responsive;
     ResponsiveHudTransition m_mobileTransition;
     QJsonObject sourceState() const;
+    void drawMobile(double time, const QString &scope);
+    ResponsiveHudContent::Model *m_contentSink = nullptr;
+    QVector<ResponsiveHudContent::Item> auxiliaryContent();
+    void modalBody(double x, double y, double usable);
     bool m_modalControls = false;
     QJsonObject m_lyricsDocument;
     double m_lyricsWidth = 0;

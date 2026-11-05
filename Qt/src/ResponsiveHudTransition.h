@@ -81,6 +81,11 @@ class ResponsiveHudTransition {
             }
         }
         m_sceneRunning = m_followScene && progress < 1;
+        if (progress >= 1 && m_drag == 0) {
+            // 稳态保留原数组的隐式共享，不逐条复制或添加无效变换。
+            m_old = {};
+            return;
+        }
         const double eased = 1 - std::pow(1 - progress, 3);
         QJsonArray result;
         const auto layer = [&](const QJsonArray &content, double opacity, double offset) {

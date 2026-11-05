@@ -1,3 +1,4 @@
+#include <QScopedValueRollback>
 #include <QtGlobal>
 #include "NativeHud.h"
 #include <algorithm>
@@ -200,6 +201,14 @@ void NativeHud::modalDraw(double width) {
            modal == "desktop-lyrics" ? "desktop-lyrics:back" : "close-modal", 20, "demibold");
     text(modalTitle(modal, music), x + 53, y + 91, 38, "demibold");
     text(modalSubtitle(modal, music), x + 53, y + 147, modal == "settings" ? 18 : 15);
+    modalBody(x, y, usable);
+    m_modalControls = false;
+    restore();
+}
+
+/** 主副布局复用相同业务文案和动作，移动端通过语义端口接收，不依赖桌面坐标。 */
+void NativeHud::modalBody(double x, double y, double usable) {
+    auto &music = *m_music;
     if (modal == "disc-rotation-warning") {
         text("唱片旋转需要持续刷新画面。", x + 53, y + 250, 22, "demibold");
         text("开启后会增加 CPU / GPU 占用、耗电和发热，可能缩短电池续航。", x + 53, y + 310, 16);
@@ -238,6 +247,10 @@ void NativeHud::modalDraw(double width) {
         button("下一页 ↓", x + usable - 190, y + 758, 120, 32, "music:picker-next", 12);
         limited(music.status, x + 53, y + 775, 12, usable - 420);
     } else if (modal == "playlist-form") {
+        if (m_contentSink) {
+            m_contentSink->field("account", formKind == "create" ? "歌单名称" : "新歌单名称");
+            m_contentSink->field("submit", "提交歌单");
+        }
         text(formKind == "create" ? "歌单名称" : "新歌单名称", x + 53, y + 240, 15);
         text(music.provider == "qq" ? "1–20 字 / 按 ENTER 提交" : "按 ENTER 提交", x + 53, y + 420, 12);
         limited(music.status, x + 53, y + 775, 12, usable - 106);
@@ -252,8 +265,17 @@ void NativeHud::modalDraw(double width) {
     } else {
         libraryPanel(x, y, usable);
     }
-    m_modalControls = false;
-    restore();
+}
+
+QVector<ResponsiveHudContent::Item> NativeHud::auxiliaryContent() {
+    ResponsiveHudContent::Model content;
+    QScopedValueRollback<ResponsiveHudContent::Model *> sink(m_contentSink, &content);
+    if (QStringList{"lyrics-offset", "lyrics-source", "detail-sort"}.contains(modal)) {
+        modalDraw(width);
+    } else {
+        modalBody(0, 0, width);
+    }
+    return content.items;
 }
 
 void NativeHud::platformChoices(double x, double y, double width, bool expanded) {
@@ -263,6 +285,11 @@ void NativeHud::platformChoices(double x, double y, double width, bool expanded)
         const auto &provider = providers.at(index);
         const auto left = x + index * (cardWidth + gap);
         const bool selected = m_music->provider == provider.id;
+        if (m_contentSink) {
+            m_contentSink->action(provider.name + (selected ? " / 当前平台" : ""), "provider:" + provider.id);
+            m_contentSink->text(provider.detail);
+            continue;
+        }
         const auto height = expanded ? 190 : 66;
         const auto tint = dark ? QJsonArray{0.55, 0.59, 0.46, selected ? 0.3 : 0.12}
                                : QJsonArray{0.44, 0.49, 0.36, selected ? 0.23 : 0.09};
@@ -330,6 +357,11 @@ void NativeHud::qualityChoice(const QString &id, int number, double x, double y,
             ? QualityDescription{"官网原始音源", "ORIGINAL SOURCE", "直接使用塞壬唱片官网提供的音源文件", ""}
             : qualityDescriptions.value(id);
     const bool selected = m_music->isSiren() ? id == "lossless" : m_music->player.quality == id;
+    if (m_contentSink) {
+        m_contentSink->action(description.title + (selected ? " / 已选择" : ""), "quality:set:" + id);
+        m_contentSink->text(description.detail);
+        return;
+    }
     const auto height = featured ? 174. : 57.;
     const auto accent = dark ? QJsonArray{0.69, 0.74, 0.53, 1} : QJsonArray{0.43, 0.48, 0.34, 1};
     auto tint = accent;

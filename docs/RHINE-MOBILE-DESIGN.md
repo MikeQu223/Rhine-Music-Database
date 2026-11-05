@@ -31,9 +31,9 @@ QML 点击 / 拖动 / 原生输入
 | `Qt/src/ResponsiveHudPages.cpp` | 主界面、歌曲、集合详情、发现、队列、设置、检索的明确版式 |
 | `Qt/src/ResponsiveLyrics.cpp` | 歌词换行缓存、跟随曲线、歌词页控制区、更多操作面板 |
 | `Qt/src/ResponsiveHudCanvas.h/.cpp` | 颜色、字形、图标、裁剪、按钮、列表行与命中矩形；不请求数据、不改变播放状态 |
-| `Qt/src/ResponsiveHudContent.h/.cpp` | 登录、确认等辅助弹层及设置自定义区的旧命令适配；不可代替主要页面的明确布局 |
+| `Qt/src/ResponsiveHudContent.h/.cpp` | 登录、确认等辅助弹层及设置自定义区的语义端口，直接接收文字、动作、图片、字段，禁止反向解析桌面绘图命令 |
 | `Qt/src/ResponsiveHudTransition.h` | 歌词整页滑入滑出、拖动回弹、资料库与歌曲页的场景同步过渡 |
-| `Qt/src/NativeHudDetail.cpp` | 生成歌曲与集合卡片模型；移动集合提供全部已加载行，横屏仍提供原分页窗口 |
+| `Qt/src/NativeHudDetail.cpp` | 生成歌曲与集合卡片模型；移动集合以只读 rowAt 闭包按可见窗口生成行，横屏仍提供原分页窗口 |
 | `Qt/src/NativeHudDiscover.cpp` | 共用发现数据和封面缓存；移动端独立计算可见封面索引 |
 | `Qt/src/NativeHudSettings.cpp` | 共用设置 Schema、可用性与自定义区动作 |
 | `Qt/src/NativeHudPlayer.cpp` | 共用 `PlayerBar::State` 与 `PlaybackQueueCard::Model` |
@@ -98,14 +98,14 @@ QML 点击 / 拖动 / 原生输入
 - 歌曲页区分浏览歌曲和正在播放歌曲：只有身份一致且可定位时才导出 seek 字段；不能拖动另一首歌曲的播放进度。
 - 发现、搜索、设置使用不透明纸色背景；顶部中央为灵动岛留白，不添加横贯顶部的黑色装饰条。
 - 导航第四项为设置，`saved` 路由仍保留用于既有收藏入口，不另建一套收藏业务。
-- 集合详情输出全部已加载曲目，末尾通过原 `music:directory-more` / `music:artist-more` 加载后续数据；不能把桌面的一屏模型当完整数据。资料库、搜索、发现和收藏页接近末尾时，由 `NativeHudInput` 调用原分页接口，不能在布局层另存加载标志。
+- 集合详情保留全部已加载曲目的可浏览范围，但只调用 `rowAt` 构建可见行，末尾通过原 `music:directory-more` / `music:artist-more` 加载后续数据；不能把桌面的一屏模型当完整数据。资料库、搜索、发现和收藏页接近末尾时，由 `NativeHudInput` 调用原分页接口，不能在布局层另存加载标志。
 - 歌词换行缓存比较整个文档，防止同曲重查得到相同行数但文字变化时继续显示旧内容。跟随滚动使用原 `UiMotion::ReelCurve`。
 
 ## 7. 业务动作边界
 
 - `selectLibraryIndex` 只负责把序号映射到原物理槽位，再走统一选择流程；不要更改来源排序。
 - `followPlaybackDetails` 由当前布局更新。移动端切歌不强制从主界面打开详情，横屏默认行为保持。显式点击迷你栏仍走 `player:detail`。
-- `playDirectory(includeAllSongSources = false)`：默认参数保留原横屏来源限制；只有移动标题播放入口传 `true`，允许当前纯歌曲来源播放全部。
+- `playDirectory(includeAllSongSources = false)`：默认参数保留原横屏来源限制；只有移动标题播放入口传 `true`，允许当前纯歌曲来源播放全部。无完整 ID 清单且仍有分页时，先补齐全部搜索结果，再建立队列；查询、账号或选择变化立即作废旧意图，空页或失败不得退化为播放当前页。
 - `playCollection` 复用现有 `detail/songs` API 与队列补齐。独立的播放请求代数隔离重复点击，并检查原选择代数；不能通过增加选择代数来取消仍在运行的详情加载，否则其 loading 状态可能悬挂。
 - 本地、塞壬、网络来源继续用原适配层；账号切换、过期响应、收藏权限和官方客户端交付不得在布局层重新实现。
 
@@ -144,3 +144,15 @@ npm run build:ios
 - 应用 `--capture <目录> archive|detail` 可检查真实场景和 HUD 合成；设备、窗口尺寸和 GPU 应明确记录。
 
 涉及横屏共享入口时，应将同一套原横屏固定输入在 Git 基线和当前版本分别运行，对比绘制命令及命中矩形。静态检查、离线截图和 macOS 构建均不能证明 iPhone 手感、GPU 残影或所有设备像素一致；这些仍需对应设备人工确认。
+
+## 10. 必须守住的回归边界
+
+- 分组列表序号先通过 `groupIndices` 转为原始序号，再复用 `selectResult`；目录任意跳转使用空 axis，不能发送固定的 `row +1`。
+- 移动主路径先 `prepare` 页面作用域，再构建可见模型，不能调用整套桌面 brand/navigation/footer/archive 后丢弃输出。
+- 集合 `rowAt` 闭包持有隐式共享的只读数组，不持有悬空业务对象；队列和网格用可见范围保留原始索引。2000 条数据的命令量仍须受视口限制。
+- `hit` 和 `field` 与裁剪区求交，不得整块丢弃部分可见的控件。
+- `ResponsiveHudContent::Model` 是文字、动作、图片、字段的语义接口。`modalBody` 和设置扩展区向该端口交付；添加输入字段必须显式声明，不能按桌面行坐标猜测。
+- 启动 HUD 保持原 1920 × 1080 动画，但必须完整缩放居中到实际窄舞台；稳态过渡不复制命令数组。
+- `Engine::action` 两种布局均使用 Input 唤醒，不能用布局布尔值把横屏降级为 Other。
+
+`NativeHudChecks.cpp` 包含分组/目录映射、完整分页播放与取消、部分裁剪、2000 条长列表、手机登录与歌单表单、确认动作和启动画布回归。

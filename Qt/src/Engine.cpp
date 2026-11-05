@@ -766,8 +766,8 @@ void Engine::action(QString value) {
     if (!gesture) {
         pollMedia();
     }
-    // 移动 HUD 的拖动与翻页必须立即出帧，暂停音乐、场景休眠时也不能吞掉输入。
-    wake(app->hud.compactLayout());
+    // 所有 HUD 动作保留输入唤醒语义，横屏和移动布局都要退出场景休眠。
+    wake();
 }
 /**
  * 将输入控件的原始数据转换为原生业务操作

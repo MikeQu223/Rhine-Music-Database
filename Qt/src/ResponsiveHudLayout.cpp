@@ -10,6 +10,7 @@ void ResponsiveHudLayout::resize(double stageWidth) {
     m_discover.reset();
     m_settings.reset();
     m_settingsCustom.clear();
+    m_auxiliary.clear();
     if (!std::isfinite(stageWidth) || stageWidth <= 0) {
         return;
     }
@@ -22,6 +23,20 @@ void ResponsiveHudLayout::resize(double stageWidth) {
     m_unit = stageWidth / 393;
     m_height = 1080 / m_unit;
 }
+/** 先复位页面滚动，再构建可见模型，避免新页按上一页的偏移取错窗口。 */
+void ResponsiveHudLayout::prepare(const QString &scope, bool home) {
+    if (scope == m_scope) {
+        return;
+    }
+    m_scope = scope;
+    m_scopeChanged = true;
+    if (!home) {
+        m_scroll = 0;
+    }
+    m_queueModesExpanded = false;
+    m_songOptionsExpanded = false;
+}
+
 void ResponsiveHudLayout::arrange(QJsonArray &commands, QJsonArray &hits, const QJsonObject &source,
                                   const QString &scope, Glyphs &glyphs) {
     if (!m_compact) {
@@ -30,16 +45,9 @@ void ResponsiveHudLayout::arrange(QJsonArray &commands, QJsonArray &hits, const 
     const auto modal = source["modal"].toString();
     const bool lyric = source["lyricsMode"].toBool() && modal.isEmpty();
     const bool home = modal.isEmpty() && source["mode"] == "archive" && !lyric;
-    const bool newScope = scope != m_scope;
-    if (newScope) {
-        m_scope = scope;
-        // 主界面 tab 列表的滚动位置跨选曲保留，其他页面进入时回到顶部。
-        if (!home) {
-            m_scroll = 0;
-        }
-        m_queueModesExpanded = false;
-        m_songOptionsExpanded = false;
-    }
+    prepare(scope, home);
+    const bool newScope = m_scopeChanged;
+    m_scopeChanged = false;
     ResponsiveHudCanvas c(glyphs, m_unit, m_height, source["dark"].toBool());
     if (source["viewer"].toBool()) {
         c.header("封面查看", true);
@@ -221,7 +229,7 @@ void ResponsiveHudLayout::arrange(QJsonArray &commands, QJsonArray &hits, const 
         } else {
             // 登录、确认、音质等辅助弹层沿用其现有动作；主页面均有明确的设计版式。
             double y = 158 - m_scroll;
-            for (const auto &entry : ResponsiveHudContent::legacy(commands, hits, source)) {
+            for (const auto &entry : m_auxiliary) {
                 if (!entry.field.isEmpty()) {
                     c.fill({20, y, 353, 50}, c.surface);
                     c.border({20, y, 353, 50}, c.line);
@@ -476,15 +484,43 @@ bool ResponsiveHudLayout::handleAction(const QString &action) {
     return false;
 }
 
-QVector<int> ResponsiveHudLayout::discoverVisibleIndices(int count, int tabCount, const QString &tab) const {
+QPair<int, int> ResponsiveHudLayout::resultWindow(int count, bool search, bool gallery, bool liked) const {
+    const double top = search ? 266 : liked ? 413 : gallery ? 211 : 294;
+    const int columns = gallery ? 2 : 1;
+    const double stride = gallery ? 224 : 68;
+    const int rows = (count + columns - 1) / columns;
+    const int first = std::clamp(int(std::floor((m_scroll + (search ? 130 : 158) - top) / stride)), 0, rows);
+    const int last = std::clamp(
+        int(std::ceil((m_scroll + m_height - BottomGestureInset - 110 - top) / stride)), first, rows);
+    return {first * columns, std::min(count, last * columns)};
+}
+
+QVector<int> ResponsiveHudLayout::discoverVisibleIndices(const DiscoverMusicCard::Model &model) const {
     QVector<int> result;
-    const double start = 130 + ((tabCount + 3) / 4) * 44 + 12;
+    const double start = 130 + ((model.tabs.size() + 3) / 4) * 44 + 12;
     const double bottom = m_height - BottomGestureInset - 110;
-    for (int index = 0; index < count; ++index) {
-        const double top = tab == "playlists" ? (index == 0 ? start : start + 157 + ((index - 1) / 2) * 196)
-                                              : start + 52 + index * 68;
-        const double h = tab == "playlists" ? (index == 0 ? 116 : 186) : 68;
-        if (top + h >= m_scroll + 130 && top <= m_scroll + bottom) {
+    const auto range = [&](double top, double stride, int count) {
+        const int first = std::clamp(int(std::floor((m_scroll + 130 - top) / stride)), 0, count);
+        const int last = std::clamp(int(std::ceil((m_scroll + bottom - top) / stride)), first, count);
+        return QPair<int, int>{first, last};
+    };
+    if (model.tab == "playlists") {
+        if (model.loadedCount > 0 && start + 116 >= m_scroll + 130 && start <= m_scroll + bottom) {
+            result.append(0);
+        }
+        const auto [first, last] = range(start + 157, 196, model.loadedCount / 2);
+        for (int row = first; row < last; ++row) {
+            for (int column = 0; column < 2; ++column) {
+                const int index = 1 + row * 2 + column;
+                if (index < model.loadedCount) {
+                    result.append(index);
+                }
+            }
+        }
+    } else {
+        const auto [first, last] =
+            range(start + ((model.tools.size() + 1) / 2) * 44 + 12, 68, model.loadedCount);
+        for (int index = first; index < last; ++index) {
             result.append(index);
         }
     }

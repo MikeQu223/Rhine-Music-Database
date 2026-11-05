@@ -3,6 +3,7 @@
 #include "MusicDiscover.h"
 #include <QJsonDocument>
 #include <QPointer>
+#include <QTimer>
 #include <QUrl>
 #include <algorithm>
 
@@ -80,6 +81,16 @@ MusicLibrary::MusicLibrary(Host *host, const QJsonObject &content, QObject *pare
     });
     connect(&player, &MusicPlayer::trackSelected, this,
             [this](QJsonObject track) { followPlayback(track, followPlaybackDetails); });
+    connect(this, &MusicLibrary::invalidated, this, [this] {
+        if (!m_sourcePlayback || m_sourcePlaybackScheduled) {
+            return;
+        }
+        m_sourcePlaybackScheduled = true;
+        QTimer::singleShot(0, this, [this] {
+            m_sourcePlaybackScheduled = false;
+            continueSourcePlayback();
+        });
+    });
 }
 
 MusicLibrary::~MusicLibrary() = default;
@@ -647,22 +658,18 @@ void MusicLibrary::selectResult(int index, int lane, bool open) {
 /** 选中资料库中的指定序号，并把该序号所在槽位移入场景窗口。 */
 void MusicLibrary::selectLibraryIndex(int index) {
     if (directory) {
-        selectDirectory(index);
+        // 任意距离的列表跳转使用目标槽位的就近映射，不伪造单行导航增量。
+        selectDirectory(index, "archive", {});
         return;
     }
-    const auto lane = selectedLane;
-    const int count = int(sourceItems(lane).size());
-    if (index < 0 || index >= count || physicalSlots[lane].isEmpty()) {
+    const int lane = selectedLane;
+    const auto items = sourceItems(lane);
+    if (index < 0 || index >= items.size()) {
         return;
     }
-    // 槽位窗口外的序号先在 offsets 中平移，再由统一的 observe 流程更新当前对象。
-    const int slot = std::clamp(index - offsets[lane], 0, int(physicalSlots[lane].size()) - 1);
-    offsets[lane] = index - slot;
-    selectedPhysical = -1;
-    changed();
-    const int physical = physicalSlots[lane].value(slot, -1);
-    emit selectionRequested(physical, {});
-    observe(physical);
+    // 分组视图的序号先翻译为原列表序号，再复用结果选择的物理窗口映射。
+    const int rawIndex = groupLane == lane ? groupIndices.value(index, -1) : index;
+    selectResult(rawIndex, lane, false);
 }
 
 void MusicLibrary::next(int direction) {
@@ -963,6 +970,9 @@ void MusicLibrary::loadSongWiki() {
  * 用当前单曲所在的歌曲列表替换播放队列；未加载的 ID 由队列模块补全，不会生成占位曲目。
  */
 void MusicLibrary::play(bool byUser) {
+    if (byUser) {
+        m_sourcePlayback.reset();
+    }
     if (current.value("kind") != "song") {
         status = QStringLiteral("请先选择一首歌曲");
         changed();
@@ -980,6 +990,7 @@ void MusicLibrary::play(bool byUser) {
 
 /** 从歌单标题直接播放；异步响应受选择代数隔离，队列仍按来源 ID 完整补齐。 */
 void MusicLibrary::playCollection(QJsonObject value) {
+    m_sourcePlayback.reset();
     if (value["kind"] != "playlist" && value["kind"] != "album") {
         return;
     }
@@ -1085,6 +1096,7 @@ MusicLibrary::QueueSource MusicLibrary::directorySource() const {
 
 /** 一键播放 */
 void MusicLibrary::playDirectory(bool includeAllSongSources) {
+    m_sourcePlayback.reset();
     // 原桌面入口保留来源限制；手机标题按钮可以播放任意纯歌曲来源。
     if (!directory && !includeAllSongSources && selectedLane != 1 && !(isSiren() && selectedLane == 3)) {
         return;
@@ -1101,6 +1113,13 @@ void MusicLibrary::playDirectory(bool includeAllSongSources) {
     }
     auto source = directorySource();
     if (source.items.isEmpty() && !directory && includeAllSongSources) {
+        if (selectedLane == 0 && groupLane != 0 && hasMore[0]) {
+            // 搜索来源没有完整 ID 清单，先沿原分页接口补齐，不能把当前页冒充全部。
+            m_sourcePlayback = SourcePlayback{
+                0, m_accountGeneration, m_generation, m_selectionGeneration, searchCursor, false};
+            continueSourcePlayback();
+            return;
+        }
         source.items = items;
     }
     if (source.items.isEmpty()) {
@@ -1108,6 +1127,50 @@ void MusicLibrary::playDirectory(bool includeAllSongSources) {
     }
     player.play(source.items.first().toObject(), source.items);
     player.loadQueue(source.ids, source.items);
+}
+
+/** 补齐没有完整 ID 清单的搜索来源；换查询、账号或选择后放弃旧的播放意图。 */
+void MusicLibrary::continueSourcePlayback() {
+    if (!m_sourcePlayback) {
+        return;
+    }
+    auto &pending = *m_sourcePlayback;
+    if (pending.account != m_accountGeneration || pending.search != m_generation ||
+        pending.selection != m_selectionGeneration || directory || selectedLane != pending.lane ||
+        groupLane == pending.lane) {
+        m_sourcePlayback.reset();
+        return;
+    }
+    if (sourceLoading()) {
+        return;
+    }
+    if (pending.awaitingPage && searchCursor <= pending.cursor && hasMore[pending.lane]) {
+        // 错误或空页不能反复请求同一页，也不能把不完整结果作为播放全部交付。
+        m_sourcePlayback.reset();
+        status = "无法补齐全部曲目，请稍后重试";
+        changed();
+        return;
+    }
+    if (hasMore[pending.lane]) {
+        pending.cursor = searchCursor;
+        pending.awaitingPage = true;
+        loadMoreSource(pending.lane);
+        if (m_sourcePlayback) {
+            m_sourcePlayback->search = m_generation;
+        }
+        return;
+    }
+    const auto songs = sourceItems(pending.lane);
+    m_sourcePlayback.reset();
+    if (songs.isEmpty()) {
+        return;
+    }
+    QJsonArray ids;
+    for (const auto &song : songs) {
+        ids.append(song.toObject()["id"]);
+    }
+    player.play(songs.first().toObject(), songs);
+    player.loadQueue(ids, songs);
 }
 
 void MusicLibrary::playOfficial(QJsonObject value) {
