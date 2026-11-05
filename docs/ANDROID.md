@@ -154,6 +154,32 @@ signature 级，非 Play 渠道等于没有），`scripts/audit-android.py` 的�
 kotlin.jvm.functions.Function2」这类没头没脑的错误——当前用法（`ClarityConfig(String)` +
 `setLogLevel`）不加它也编得过。`compileOnly` 不进 APK，运行期的 stdlib 由 Clarity 自己传递。
 
+### 已知限制：Clarity 无法获取录制画面
+
+Clarity 的截屏是把 **View 树重画进 Bitmap**：反编译 `classes.jar` 可见
+`Picture.beginRecording` + `Canvas` + `getDecorView`（配 `hardwareBitmapCache`），SDK 里
+**没有** `PixelCopy` / `MediaProjection` / `SurfaceControl` / `AccessibilityNodeInfo`。
+Qt 的界面由 GPU 直接画到 Surface 上，不属于任何 View 的绘制内容，因此回放里**永远没有画面**，
+只有会话与点击事件。
+
+真机验证（2026-11-05，OPD2511）：
+
+- Qt 默认的 SurfaceView 与强制 TextureView（`QT_ANDROID_SURFACE_CONTAINER_TYPE=1`）都试过：
+  `dumpsys activity top` 确认视图树里已是 `QtTextureView`、`dumpsys SurfaceFlinger --list`
+  也没有 SurfaceView 层——容器确实换了，回放依旧空白。
+- 同一时刻 `adb exec-out screencap -p` 能抓到完整界面（2880×1800，1.4 MB），说明像素存在，
+  只是 Clarity 不读。
+
+这是采集方式带来的限制，不是配置问题：元素遮罩、遮罩模式、换渲染后端都改变不了。
+若将来确实需要画面，只能换采集方式：
+
+- 基于 `PixelCopy` 的 SDK（例如 Sentry Session Replay 的 `isCaptureSurfaceViews`），
+  或自己按帧抓取（`PixelCopy.request(SurfaceView, …)`，本项目已实测可取到画面）；
+- `MediaProjection` 录屏（每次会话都需要用户授权）。
+
+> 历史：曾尝试 TextureView、按时间 `Clarity.pause()/resume()`、登录失败事件化上报等手段
+> 绕开限制，均无法让 Clarity 产出画面，相关改动已撤回。Clarity 现在只承担会话与事件统计。
+
 ## 架构：三个和桌面不同的决定
 
 **Node 运行时编进进程。** Android 不允许从应用私有目录执行可执行文件，桌面那条
@@ -226,3 +252,4 @@ FidelityFX/FSR3 在 Android 仍默认关闭（`RHINE_ENABLE_FIDELITYFX=OFF`，�
 | 画面上下颠倒                                     | 清单被模板覆盖回 `unspecified`；`scripts/audit-android.py` 会直接报 `screenOrientation is not sensorLandscape`                               |
 | `Qt/android/build.gradle 的前缀不再等于…`        | Qt 升级换了 Gradle 模板；跑 `node scripts/android-gradle-sync.cjs` 重新生成（末尾追加的依赖会保留）                                          |
 | Clarity 后台没有会话                             | 清单 `android:name` 被改回 `QtApplication`；`scripts/audit-android.py` 会报 `RhineApplication (Clarity entry point) missing`                  |
+| Clarity 回放只有点击、没有画面                   | 已知限制：Clarity 只重画 View 树，拍不到 GL 内容，换容器或后端都没用（见「已知限制：Clarity 无法获取录制画面」）                              |
