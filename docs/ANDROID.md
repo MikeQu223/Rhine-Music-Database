@@ -312,6 +312,31 @@ FidelityFX/FSR3 在 Android 仍默认关闭（`RHINE_ENABLE_FIDELITYFX=OFF`，�
 里：移动端没有独立播放服务、没有桌面窗口装饰；Android 虽然定义 `Q_OS_LINUX`，
 但桌面 Linux 专有的判断（X11/DRI3、显卡选择）都用 `RHINE_LINUX_DESKTOP` 排除。
 
+## 3D 资源：独立副本与重定向
+
+Android 的 3D 配置与模型从一套**独立副本**生成，别的平台继续用公共源。副本目前逐字节复制自
+公共资源，内容没有任何改动；这一步只把「单独调整 Android 3D」的入口留出来。
+
+- 仓库副本 `Assets/android-3d/`：两个 `glb` 模型（`archive-assembly` / `archive-cassette`）、
+  `slots.json` 与 `scene-fixture.json`（场景与槽位配置）。**不含** `boot-tracks.json`
+  （启动动画走 qrc）与 `boot-lettering-art.json`（2D 字形），这两个仍与桌面共用。
+- 构建期：`scripts/build-android.cjs` 用 `RHINE_3D_SOURCE` / `RHINE_3D_OUTPUT` 把
+  `scripts/export-assets.py` 与 `scripts/bake-archive-lighting.py` 指向副本，重新导出/烘焙到
+  `output/android-3d/`。烘焙贴图由同一套脚本按程序化参数生成，仓库里没有它的源二进制，
+  当前产物与公共目录一致；将来要单独换一套，把同名 `.bin` 放进 `Assets/android-3d/` 就会
+  被打包优先采用，或在脚本里加 Android 分支参数。
+- 打包期：`scripts/package-resources.cjs` 在 `RHINE_ANDROID_BUILD=1` 时，白名单里 12 个 3D
+  文件（模型导出 6 个、烘焙 4 个、配置 2 个）**优先取 `Assets/android-3d/` 里的同名文件**，
+  没有则取 `output/android-3d/` 里重新生成的产物；字体、质量图标、`boot-lettering-art.json`、
+  桥接与许可证仍取 `output/resources`。**文件名不变**，所以 `Qt/Android.cmake` 的 qrc 装配
+  与运行时的 `root + 文件名` 读取都不需要改。
+- 桌面 / iOS 不设置这两个环境变量：两个 Python 脚本的默认路径仍逐值是
+  `Assets/models`、`Resources/`、`output/resources`，`package-resources.cjs` 的 Android 分支
+  也不命中——源路径、生成产物、打包清单都不变。
+
+将来单独调整 Android 的 3D，改 `Assets/android-3d/` 里的文件即可；`archive-*.json` 里记着源
+glb 的 SHA-256，换模型后重新跑 `npm run build:android` 会一并更新。
+
 ## 音频与系统媒体控件
 
 - 播放走 Qt Multimedia 的 Android 后端（系统 MediaPlayer）。它的 `setMedia` 会忽略

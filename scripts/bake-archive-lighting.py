@@ -6,12 +6,15 @@
 """
 
 import math
+import os
 import pathlib
 import struct
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-OUTPUT = ROOT / "output/resources"
+# Android 的烘焙贴图输出到独立目录（scripts/build-android.cjs 设置变量）；
+# 不设置时仍是公共的 output/resources，桌面与 iOS 的产物不受影响。
+OUTPUT = pathlib.Path(os.environ.get("RHINE_3D_OUTPUT", ROOT / "output/resources"))
 # 表面图集按实际屏幕投影分配分辨率：正面/背面 448²，侧面和顶面在
 # 高频视角下也只有几十像素宽，收紧到 56 texel 即可，避免 7~24 倍过采样。
 FACE_SIZE = 448

@@ -118,6 +118,19 @@ function prepareResources() {
     run(process.execPath, ['scripts/build.cjs', '--resources-only'], {
         env: { ...process.env, RHINE_ANDROID_BUILD: '1' },
     });
+    // Android 的 3D 源是独立副本 Assets/android-3d/：用同一套导出与烘焙脚本重新生成到
+    // output/android-3d/，再由 package-resources.cjs 优先取这里的文件。副本目前与公共源
+    // 逐字节一致；将来改副本只影响 Android，桌面与 iOS 仍走 output/resources。
+    const android3dOutput = path.resolve('output/android-3d');
+    fs.rmSync(android3dOutput, { recursive: true, force: true });
+    const android3dEnv = {
+        ...process.env,
+        RHINE_3D_SOURCE: path.resolve('Assets/android-3d'),
+        RHINE_3D_OUTPUT: android3dOutput,
+    };
+    const python = process.env.PYTHON || 'python3';
+    run(python, ['scripts/export-assets.py'], { env: android3dEnv });
+    run(python, ['scripts/bake-archive-lighting.py'], { env: android3dEnv });
     // 与 iOS 同一套 Node 18 运行时，所以用同一份 bundle（fetch 补丁 + isUtf8 兼容）。
     run(process.execPath, ['scripts/bundle-bridge.cjs', 'output/resources/MusicBridge', bridgeBundle], {
         env: { ...process.env, RHINE_ANDROID_BUILD: '1' },

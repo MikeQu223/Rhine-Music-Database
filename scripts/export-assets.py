@@ -1,16 +1,23 @@
 """导出原始 Blender 网格和 glTF PBR 参数，不改变资源内容。"""
 
 import json
+import os
 import struct
 import pathlib
 import hashlib
 
 root = pathlib.Path(__file__).resolve().parents[1]
-output_directory = root / "output/resources"
+# Android 用独立的一套 3D 源与产物：两个变量由 scripts/build-android.cjs 设置。
+# 不设置时逐值等于原来的公共路径，桌面与 iOS 的产物完全一致。
+source_directory = pathlib.Path(os.environ.get("RHINE_3D_SOURCE", root / "Assets/models"))
+output_directory = pathlib.Path(os.environ.get("RHINE_3D_OUTPUT", root / "output/resources"))
+# 副本里没有的文件（2D 字形 boot-lettering-art.json）仍取公共资源：它不属于 3D，
+# 保持共享，桌面路径下三个文件本来就都从这里读。
+default_config_directory = root / "Resources"
 output_directory.mkdir(parents=True, exist_ok=True)
 # 原始模型与材质一同导出，不改变几何、变换或光学参数。
 for asset in ["archive-cassette", "archive-assembly"]:
-    source_bytes = (root / f"Assets/models/{asset}.glb").read_bytes()
+    source_bytes = (source_directory / f"{asset}.glb").read_bytes()
     length = struct.unpack_from("<I", source_bytes, 12)[0]
     gltf = json.loads(source_bytes[20 : 20 + length])
     binary = source_bytes[28 + length :]
@@ -113,8 +120,8 @@ for asset in ["archive-cassette", "archive-assembly"]:
         encoding="utf-8",
     )
 
-for path in ["Resources/slots.json", "Resources/boot-lettering-art.json", "Resources/scene-fixture.json"]:
-    (
-        output_directory / ("slots.json" if path.endswith("slots.json") else pathlib.Path(path).name)
-    ).write_bytes((root / path).read_bytes())
+for name in ["slots.json", "boot-lettering-art.json", "scene-fixture.json"]:
+    candidate = source_directory / name
+    source = candidate if candidate.is_file() else default_config_directory / name
+    (output_directory / name).write_bytes(source.read_bytes())
 print(output_directory)

@@ -1,0 +1,218 @@
+{
+  "columns": [
+    "搜索结果",
+    "喜欢的歌曲",
+    "我的歌单",
+    "收藏歌单",
+    "收藏专辑"
+  ],
+  "categories": [
+    "搜索结果",
+    "喜欢的歌曲",
+    "我的歌单",
+    "收藏歌单",
+    "收藏专辑"
+  ],
+  "records": [
+    {
+      "id": "SLOT-3-1",
+      "title": "音乐槽位",
+      "category": "我的歌单"
+    },
+    {
+      "id": "SLOT-1-1",
+      "title": "音乐槽位",
+      "category": "搜索结果"
+    },
+    {
+      "id": "SLOT-2-1",
+      "title": "音乐槽位",
+      "category": "喜欢的歌曲"
+    },
+    {
+      "id": "SLOT-4-1",
+      "title": "音乐槽位",
+      "category": "收藏歌单"
+    },
+    {
+      "id": "SLOT-2-2",
+      "title": "音乐槽位",
+      "category": "喜欢的歌曲"
+    },
+    {
+      "id": "SLOT-3-2",
+      "title": "音乐槽位",
+      "category": "我的歌单"
+    },
+    {
+      "id": "SLOT-1-2",
+      "title": "音乐槽位",
+      "category": "搜索结果"
+    },
+    {
+      "id": "SLOT-5-1",
+      "title": "音乐槽位",
+      "category": "收藏专辑"
+    },
+    {
+      "id": "SLOT-1-3",
+      "title": "音乐槽位",
+      "category": "搜索结果"
+    },
+    {
+      "id": "SLOT-2-3",
+      "title": "音乐槽位",
+      "category": "喜欢的歌曲"
+    },
+    {
+      "id": "SLOT-1-4",
+      "title": "音乐槽位",
+      "category": "搜索结果"
+    },
+    {
+      "id": "SLOT-5-2",
+      "title": "音乐槽位",
+      "category": "收藏专辑"
+    },
+    {
+      "id": "SLOT-3-3",
+      "title": "音乐槽位",
+      "category": "我的歌单"
+    },
+    {
+      "id": "SLOT-3-4",
+      "title": "音乐槽位",
+      "category": "我的歌单"
+    },
+    {
+      "id": "SLOT-3-5",
+      "title": "音乐槽位",
+      "category": "我的歌单"
+    },
+    {
+      "id": "SLOT-3-6",
+      "title": "音乐槽位",
+      "category": "我的歌单"
+    },
+    {
+      "id": "SLOT-3-7",
+      "title": "音乐槽位",
+      "category": "我的歌单"
+    },
+    {
+      "id": "SLOT-3-8",
+      "title": "音乐槽位",
+      "category": "我的歌单"
+    },
+    {
+      "id": "SLOT-1-5",
+      "title": "音乐槽位",
+      "category": "搜索结果"
+    },
+    {
+      "id": "SLOT-1-6",
+      "title": "音乐槽位",
+      "category": "搜索结果"
+    },
+    {
+      "id": "SLOT-1-7",
+      "title": "音乐槽位",
+      "category": "搜索结果"
+    },
+    {
+      "id": "SLOT-1-8",
+      "title": "音乐槽位",
+      "category": "搜索结果"
+    },
+    {
+      "id": "SLOT-2-4",
+      "title": "音乐槽位",
+      "category": "喜欢的歌曲"
+    },
+    {
+      "id": "SLOT-2-5",
+      "title": "音乐槽位",
+      "category": "喜欢的歌曲"
+    },
+    {
+      "id": "SLOT-2-6",
+      "title": "音乐槽位",
+      "category": "喜欢的歌曲"
+    },
+    {
+      "id": "SLOT-2-7",
+      "title": "音乐槽位",
+      "category": "喜欢的歌曲"
+    },
+    {
+      "id": "SLOT-2-8",
+      "title": "音乐槽位",
+      "category": "喜欢的歌曲"
+    },
+    {
+      "id": "SLOT-4-2",
+      "title": "音乐槽位",
+      "category": "收藏歌单"
+    },
+    {
+      "id": "SLOT-4-3",
+      "title": "音乐槽位",
+      "category": "收藏歌单"
+    },
+    {
+      "id": "SLOT-4-4",
+      "title": "音乐槽位",
+      "category": "收藏歌单"
+    },
+    {
+      "id": "SLOT-4-5",
+      "title": "音乐槽位",
+      "category": "收藏歌单"
+    },
+    {
+      "id": "SLOT-4-6",
+      "title": "音乐槽位",
+      "category": "收藏歌单"
+    },
+    {
+      "id": "SLOT-4-7",
+      "title": "音乐槽位",
+      "category": "收藏歌单"
+    },
+    {
+      "id": "SLOT-4-8",
+      "title": "音乐槽位",
+      "category": "收藏歌单"
+    },
+    {
+      "id": "SLOT-5-3",
+      "title": "音乐槽位",
+      "category": "收藏专辑"
+    },
+    {
+      "id": "SLOT-5-4",
+      "title": "音乐槽位",
+      "category": "收藏专辑"
+    },
+    {
+      "id": "SLOT-5-5",
+      "title": "音乐槽位",
+      "category": "收藏专辑"
+    },
+    {
+      "id": "SLOT-5-6",
+      "title": "音乐槽位",
+      "category": "收藏专辑"
+    },
+    {
+      "id": "SLOT-5-7",
+      "title": "音乐槽位",
+      "category": "收藏专辑"
+    },
+    {
+      "id": "SLOT-5-8",
+      "title": "音乐槽位",
+      "category": "收藏专辑"
+    }
+  ]
+}
