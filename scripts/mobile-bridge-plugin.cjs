@@ -62,5 +62,30 @@ module.exports = (webApis = 'ios-web-apis.cjs', requestResetHook = '') => ({
                 loader: 'js',
             };
         });
+        // QQ 音乐 API 的桌面 explorer 会把会话标记写进 os.tmpdir()。当前 bundle 里
+        // 这条分支没有任何调用点（AUTO_OPEN_EXPLORER 未开，getOpenCommand 也没有
+        // android 分支），但上游一旦接上调用就会在真机写 /tmp 失败。esbuild 的
+        // default 互操作形态是 node_os_1.default.tmpdir()，统一改写到 __rhineTmpdir；
+        // 命中次数必须恰好 1，上游改字时让构建失败而不是静默退回 /tmp。
+        build.onLoad(
+            { filter: /@yakult-green-tea\/qq-music-api\/.*util[\\/]openExplorer\.js$/ },
+            (args) => {
+                const contents = fs.readFileSync(args.path, 'utf8');
+                const tmpdirCall = /node_os_1\.default\.tmpdir\(\)/g;
+                const matches = [...contents.matchAll(tmpdirCall)];
+                if (matches.length !== 1) {
+                    throw new Error(
+                        'qq-music-api openExplorer changed; review the mobile tmpdir rewrite before building',
+                    );
+                }
+                return {
+                    contents: contents.replace(
+                        tmpdirCall,
+                        '(globalThis.__rhineTmpdir || node_os_1.default.tmpdir())',
+                    ),
+                    loader: 'js',
+                };
+            },
+        );
     },
 });
