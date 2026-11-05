@@ -455,7 +455,13 @@ jobs:
           sudo rm -rf /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL || true
           sudo rm -rf "${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}"/ndk/* || true
           df -h /
+      # 只让它把 cmdline-tools / 环境变量准备好：默认的 packages 列表是
+      # "tools platform-tools"，而新版 SDK 仓库已经删掉 legacy 的 tools 包，
+      # sdkmanager 会报 "Failed to find package 'tools'" 并以 1 退出。
+      # 真正需要的 platform/build-tools/NDK 由下一步显式安装。
       - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
       - name: Install Android platform, build-tools and NDK
         shell: bash
         # 版本必须与 scripts/audit-android.py 的断言（platform android-36）和
