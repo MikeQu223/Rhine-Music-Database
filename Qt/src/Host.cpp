@@ -924,6 +924,9 @@ bool Host::mediaLoad(QString url, bool alternative, double position, bool paused
         audio->diagnosticEvent = [this](const QString &event, const QJsonObject &values) {
             recordPlaybackDiagnostic(event, values);
         };
+        audio->setOutputPolicy(preference("audio-output-policy") == "source"
+                                   ? AudioOutputFormat::Policy::Source
+                                   : AudioOutputFormat::Policy::System);
         audio->enableDiagnostics(audioDiagnosticsEnabled);
         audio->spectrumChanged = [this](QJsonArray levels) { emit audioSpectrumChanged(levels); };
         audio->enableSpectrum(audioSpectrumEnabled);
@@ -950,6 +953,9 @@ void Host::mediaControl(QString action, double value) {
         audio->diagnosticEvent = [this](const QString &event, const QJsonObject &values) {
             recordPlaybackDiagnostic(event, values);
         };
+        audio->setOutputPolicy(preference("audio-output-policy") == "source"
+                                   ? AudioOutputFormat::Policy::Source
+                                   : AudioOutputFormat::Policy::System);
         audio->enableDiagnostics(audioDiagnosticsEnabled);
         audio->spectrumChanged = [this](QJsonArray levels) { emit audioSpectrumChanged(levels); };
         audio->enableSpectrum(audioSpectrumEnabled);
@@ -1029,11 +1035,11 @@ const QStringList &preferenceKeys() {
         // 换卡后序号可能指向另一张卡或不存在，启动时由 initializeLinuxGraphics 校验并回退。
         "gpu-index", "vsync", "supersample", "render-scale", "aa-mode", "aa-scale", "msaa", "fsr-quality",
         "fsr-sharpness", "fg", "close-behavior", "auto-update", "volume", "quality", "alternate-source",
-        "provider", "lyrics-cache", "lyrics-global-offset-ms", "welcome-name-netease", "welcome-name-qq",
-        "welcome-name-kugou", "account-id-netease", "account-id-qq", "account-id-kugou", "kugou-edition",
-        "desktop-lyrics", "desktop-lyrics-size", "desktop-lyrics-translation-size", "desktop-lyrics-opacity",
-        "desktop-lyrics-line-color", "desktop-lyrics-translation-color", "desktop-lyrics-line-weight",
-        "desktop-lyrics-translation-weight", "desktop-lyrics-line-outline",
+        "audio-output-policy", "provider", "lyrics-cache", "lyrics-global-offset-ms", "welcome-name-netease",
+        "welcome-name-qq", "welcome-name-kugou", "account-id-netease", "account-id-qq", "account-id-kugou",
+        "kugou-edition", "desktop-lyrics", "desktop-lyrics-size", "desktop-lyrics-translation-size",
+        "desktop-lyrics-opacity", "desktop-lyrics-line-color", "desktop-lyrics-translation-color",
+        "desktop-lyrics-line-weight", "desktop-lyrics-translation-weight", "desktop-lyrics-line-outline",
         "desktop-lyrics-translation-outline", "desktop-lyrics-line-outline-color",
         "desktop-lyrics-translation-outline-color", "welcome-name-kugou-standard", "welcome-name-kugou-lite",
         "account-id-kugou-standard", "account-id-kugou-lite"};
@@ -1070,6 +1076,13 @@ void Host::setPreference(QString key, QString value) {
         }
         emit preferenceChanged(key, value);
         return;
+    }
+    if (key == "audio-output-policy" && value != "system" && value != "source") {
+        return;
+    }
+    if (key == "audio-output-policy" && audio) {
+        audio->setOutputPolicy(value == "source" ? AudioOutputFormat::Policy::Source
+                                                 : AudioOutputFormat::Policy::System);
     }
     if (!offline && value.size() < 262144 && preferenceKeys().contains(key)) {
         AppStorage::settings().setValue("panel/" + key, value);

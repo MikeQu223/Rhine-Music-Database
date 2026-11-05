@@ -125,6 +125,7 @@ class AudioPlayerRegression {
     // 验证解码统计开关
     static bool diagnosticRegression() {
         AudioPlayer audio;
+        audio.pcmEnabled = false;
         QJsonArray events;
         audio.diagnosticEvent = [&](const QString &, const QJsonObject &values) { events.append(values); };
         audio.enableDiagnostics(true);
@@ -245,7 +246,7 @@ class AudioPlayerRegression {
                     "No output detaches the unavailable device");
         selected = speakers;
         notify();
-        ok &= check(!audio.outputUnavailable && audio.player->audioOutput() == &audio.output,
+        ok &= check(!audio.outputUnavailable && audio.player->audioOutput() == nullptr,
                     "Same device reconnects after disappearing");
         ok &= check(!audio.playbackRequested && !audio.player->isPlaying(),
                     "Reconnecting never cancels user pause");

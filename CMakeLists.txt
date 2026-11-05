@@ -253,6 +253,23 @@ if(APPLE)
     enable_language(OBJCXX)
     set(CMAKE_OBJCXX_STANDARD 20)
 endif()
+# PCM output is shared by the playback service and hardware-independent regressions.
+add_library(
+    RhineAudioOutput STATIC Qt/src/AudioOutputFormat.cpp Qt/src/AudioOutputFormat.h Qt/src/AudioResampler.cpp
+                            Qt/src/AudioResampler.h Qt/src/AudioPcmOutput.cpp Qt/src/AudioPcmOutput.h)
+target_include_directories(RhineAudioOutput PUBLIC Qt/src)
+target_link_libraries(RhineAudioOutput PUBLIC Qt6::Core Qt6::Multimedia)
+if(IOS)
+    target_sources(RhineAudioOutput PRIVATE Qt/src/AudioOutputFormatIOS.mm)
+    target_link_libraries(RhineAudioOutput PRIVATE "-framework AVFAudio")
+elseif(APPLE)
+    target_link_libraries(RhineAudioOutput PRIVATE "-framework CoreAudio")
+elseif(WIN32)
+    target_link_libraries(RhineAudioOutput PRIVATE ole32 uuid)
+endif()
+if(MSVC)
+    target_compile_options(RhineAudioOutput PRIVATE /utf-8)
+endif()
 # 原生业务和场景由应用与独立回归共用，测试不需要复制整套源码目标。 FSR 与 FG 后端只被渲染器使用，跟 RhiScene 一起留在应用目标里，避免把 FidelityFX 与 Vulkan
 # 链接进每个回归测试。过滤条件必须同时覆盖 /fsr/ 与 /fg/：这两处的实现依赖 Qt6::Quick 与 GuiPrivate，而 RhineCore 只链
 # Core/Gui/Network/Concurrent/Multimedia。
@@ -283,7 +300,7 @@ if(NOT IOS)
                RHINE_RELEASE_BUILD=$<BOOL:${RHINE_RELEASE_BUILD}>)
     target_link_libraries(
         RhinePlaybackCore
-        PUBLIC Qt6::Core Qt6::Gui Qt6::Network Qt6::Concurrent Qt6::Multimedia
+        PUBLIC RhineAudioOutput Qt6::Core Qt6::Gui Qt6::Network Qt6::Concurrent Qt6::Multimedia
         PRIVATE Qt6::MultimediaPrivate)
     if(MSVC)
         target_compile_options(RhinePlaybackCore PRIVATE /utf-8)
@@ -301,7 +318,7 @@ target_compile_definitions(
                      RHINE_RELEASE_BUILD=$<BOOL:${RHINE_RELEASE_BUILD}>)
 target_link_libraries(
     RhineCore
-    PUBLIC Qt6::Core Qt6::Gui Qt6::Network Qt6::Concurrent Qt6::Multimedia
+    PUBLIC RhineAudioOutput Qt6::Core Qt6::Gui Qt6::Network Qt6::Concurrent Qt6::Multimedia
     PRIVATE Qt6::MultimediaPrivate tag)
 if(NOT IOS)
     target_link_libraries(RhineCore PUBLIC RhinePlaybackCore)
@@ -659,8 +676,8 @@ qt_add_executable(
     Qt/src/HttpAudioStream.cpp
     Qt/src/ProcessMetrics.cpp)
 target_include_directories(RhinePlatformRegression PRIVATE Qt/src)
-target_link_libraries(RhinePlatformRegression PRIVATE Qt6::Core Qt6::Gui Qt6::Multimedia Qt6::Network
-                                                      Qt6::MultimediaPrivate)
+target_link_libraries(RhinePlatformRegression PRIVATE RhineAudioOutput Qt6::Core Qt6::Gui Qt6::Multimedia
+                                                      Qt6::Network Qt6::MultimediaPrivate)
 if(WIN32)
     target_sources(RhinePlatformRegression PRIVATE Qt/src/PlatformWindows.cpp)
     target_link_libraries(
@@ -781,11 +798,20 @@ add_test(NAME qt_linux_display_regression COMMAND RhineLinuxDisplayRegression)
 qt_add_executable(RhineAudioStreamRegression Qt/tests/AudioStreamChecks.cpp Qt/src/AudioPlayer.cpp
                   Qt/src/AudioSpectrum.cpp Qt/src/HttpAudioStream.cpp)
 target_include_directories(RhineAudioStreamRegression PRIVATE Qt/src)
-target_link_libraries(RhineAudioStreamRegression PRIVATE Qt6::Core Qt6::Multimedia Qt6::Network)
+target_link_libraries(RhineAudioStreamRegression PRIVATE RhineAudioOutput Qt6::Core Qt6::Multimedia
+                                                         Qt6::Network)
 if(MSVC)
     target_compile_options(RhineAudioStreamRegression PRIVATE /utf-8)
 endif()
 add_test(NAME qt_audio_stream_regression COMMAND RhineAudioStreamRegression)
+qt_add_executable(RhineAudioOutputRegression Qt/tests/AudioOutputChecks.cpp Qt/src/AudioPlayer.cpp
+                  Qt/src/AudioSpectrum.cpp Qt/src/HttpAudioStream.cpp Qt/src/PlaybackDiagnostics.cpp)
+target_link_libraries(RhineAudioOutputRegression PRIVATE RhineAudioOutput Qt6::Network)
+if(MSVC)
+    target_compile_options(RhineAudioOutputRegression PRIVATE /utf-8)
+endif()
+add_test(NAME qt_audio_output_regression COMMAND RhineAudioOutputRegression)
+
 add_test(NAME qt_offline COMMAND RhineMusicDatabase --self-test)
 set_tests_properties(
     qt_offline

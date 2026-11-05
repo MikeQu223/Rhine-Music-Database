@@ -13,6 +13,7 @@
 #include <memory>
 #include "HttpAudioStream.h"
 #include "AudioSpectrum.h"
+#include "AudioPcmOutput.h"
 
 // 在线模式只接收锁定上游的播放链接；本地模式只接收文件 URL
 class AudioPlayer {
@@ -26,6 +27,7 @@ class AudioPlayer {
     QJsonObject diagnosticState() const;
     void enableDiagnostics(bool enabled);
     void enableSpectrum(bool enabled);
+    void setOutputPolicy(AudioOutputFormat::Policy policy);
     std::function<void(QJsonArray)> spectrumChanged;
     std::function<void(const QString &, const QJsonObject &)> diagnosticEvent;
 
@@ -33,6 +35,14 @@ class AudioPlayer {
     friend class AudioPlayerRegression;
     QMediaDevices devices;
     QAudioOutput output;
+    AudioPcmOutput pcm;
+    AudioOutputFormat::Policy outputPolicy = AudioOutputFormat::Policy::System;
+    bool pcmEnabled = true; // 解码器直通回归开关；非 FFmpeg 后端也回退到原生 QAudioOutput。
+    bool decoderThrottled = false;
+    bool decoderEnded = false;
+    QAudioFormat devicePreferred;
+    void completePlayback();
+    qint64 playbackPosition() const;
     std::unique_ptr<QMediaPlayer> player;
     std::unique_ptr<QAudioBufferOutput> decodedOutput;
     std::unique_ptr<HttpAudioStream> stream;
@@ -72,9 +82,11 @@ class AudioPlayer {
     static void normalizeOutputLayout(const QAudioDevice &device);
     void restorePlaybackPosition();
     void createPlayer();
-    void followDefaultOutput();
+    void followDefaultOutput(bool refresh = false);
+    void refreshOutputFormat();
     QTimer playbackWatchdog;
     QElapsedTimer progressClock;
+    QElapsedTimer outputFormatClock;
     bool pendingFailure = false;
     bool failureRecoverable = false;
     bool sourceEnded = false;
