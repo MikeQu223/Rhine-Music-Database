@@ -338,6 +338,20 @@ FidelityFX/FSR3 在 Android 仍默认关闭（`RHINE_ENABLE_FIDELITYFX=OFF`，�
   iOS 只在弹层与详情里启用，Android 全程启用。
 - 系统返回手势/返回键由 Qt 转成 Escape 键，与桌面的 Esc 语义一致。
 
+### 命中范围与滑动步进（仅 Android）
+
+- **命中范围。** `Qt/qml/Overlay.qml` 的 `touchHitPadding`（舞台像素，Android `16`、其它平台 `0`）
+  把 `rhine.hits` 的每个热区四周外扩，`hitArea()` 同时用于 Repeater 的 MouseArea 和弹层列表的
+  手工命中判定；播放栏 seek/volume 只**竖向**外扩，横向保持原样，否则 `adjustPlayer` 用
+  `mouse.x / width` 算出的进度比例会偏。舞台坐标按 1080 高归一化，16 在常见手机上约
+  1~1.5 mm，按手感改这一个值即可。相邻热区很近时会有少量重叠（后者在上层），这是
+  手指命中率的取舍；桌面与 iOS 取 0，`hitArea()` 逐值返回原矩形，行为不变。
+- **滑动步进。** `Qt/src/Engine.cpp` 的 `WHEEL_STEP_PIXELS`：连续像素每累积 15 舞台像素算
+  1 step，资料库 archive 模式下 1 step 切一首歌，详情/队列等列表也是 1 step 一行。Android
+  编译分支把它放大 5 倍到 `75`，也就是「翻一首歌」需要约 5 倍滑动距离；列表的连续滚动
+  （`m_wheelDistance`）不受影响，不会变得拖不动。桌面、iOS 与其它平台的取值仍是 `15`，
+  滚轮的离散分支（`-delta / 15. * WHEEL_DISTANCE_PER_NOTCH`）也不在这个改动里。
+
 ## 已知限制
 
 - **TLS 用 Node 自带的根证书。** Android 没有从 Node 侧访问系统信任库的通道（iOS 走 Security.framework），

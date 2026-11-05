@@ -166,6 +166,14 @@ bool Engine::ready() const {
     return scene.ready();
 }
 namespace {
+// 连续像素累积多少舞台像素算一步（一行 / 一首歌）。Android 的手指滑动很容易误触切歌，
+// 把「翻一首歌」需要的距离放大 5 倍：15 → 75。用编译期分支隔离，其它平台仍是原来的 15；
+// 只影响 wheel() 的步进，m_wheelDistance 那条连续滚动通路不受影响。
+#if defined(Q_OS_ANDROID)
+constexpr double WHEEL_STEP_PIXELS = 75.;
+#else
+constexpr double WHEEL_STEP_PIXELS = 15.;
+#endif
 // 鼠标滚轮一格的距离按设置页与歌词的行高换算，约一行内容；触控板保留系统给出的连续像素距离。
 constexpr double WHEEL_DISTANCE_PER_NOTCH = 80;
 // 鼠标滚轮的离散事件按帧衰减送出，约 0.1 秒内收束，避免整格内容瞬间跳变。
@@ -978,12 +986,13 @@ void Engine::wheel(double x, double y, double delta, bool pixels) {
     m_wheelY = y;
     m_wheelDelta += delta;
     if (pixels) {
-        m_wheelSteps += -delta / 15.;
+        m_wheelSteps += -delta / WHEEL_STEP_PIXELS;
         // 单独保留连续舞台位移，避免触控板不足一行的输入被整数行索引吞掉。
         m_wheelDistance += -delta / (m_height / 1080.);
     } else {
         // 列表按格立即推进一行，只有设置页和歌词需要平滑的连续距离。
         m_wheelSteps += delta < 0 ? 1 : -1;
+        // 这里的 15 是「一格滚轮 = 15 个步进单位」的距离换算，和上面的舞台像素除数无关。
         const auto distance = -delta / 15. * WHEEL_DISTANCE_PER_NOTCH;
         if (app->hud.reduced) {
             m_wheelDistance += distance;

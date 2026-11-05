@@ -32,6 +32,16 @@ Item {
     readonly property bool ios: Qt.platform.os === "ios"
     readonly property bool android: Qt.platform.os === "android"
 
+    // 手指比鼠标指针粗：Android 上把每个命中矩形四周各外扩 touchHitPadding 个舞台像素。
+    // 舞台坐标按 1080 高归一化，16 在常见手机上约 1~1.5 mm；按手感调这一个值即可。
+    // 桌面/iOS 取 0，hitArea() 逐值返回原来的矩形，交互行为完全不变。
+    readonly property real touchHitPadding: android ? 16 : 0
+
+    function hitArea(hit) {
+        const pad = overlay.touchHitPadding;
+        return Qt.rect(hit.x - pad, hit.y - pad, hit.width + 2 * pad, hit.height + 2 * pad);
+    }
+
     // 原 Main.qml 直接引用组件内部的 id，拆层后改为函数调用，效果等价。
     function focusInputLayer() {
         inputLayer.forceActiveFocus();
@@ -166,10 +176,11 @@ Item {
             model: rhine.hits
             delegate: Item {
                 required property var modelData
-                x: modelData.x
-                y: modelData.y + (rhine.state.modal && !modelData.fixed ? rhine.state.modalOffset || 0 : 0)
-                width: modelData.width
-                height: modelData.height
+                property rect area: overlay.hitArea(modelData)
+                x: area.x
+                y: area.y + (rhine.state.modal && !modelData.fixed ? rhine.state.modalOffset || 0 : 0)
+                width: area.width
+                height: area.height
                 Accessible.role: Accessible.Button
                 Accessible.name: modelData.label
                 Accessible.onPressAction: rhine.action(modelData.action)
@@ -246,7 +257,8 @@ Item {
                 var py = (rhine.state.searchListY || 0) + mouse.y;
                 for (var index = 0; index < rhine.hits.length; ++index) {
                     var hit = rhine.hits[index];
-                    var inside = px >= hit.x && px <= hit.x + hit.width && py >= hit.y && py <= hit.y + hit.height;
+                    var area = overlay.hitArea(hit);
+                    var inside = px >= area.x && px <= area.x + area.width && py >= area.y && py <= area.y + area.height;
                     var scrollable = hit.action.indexOf("music:result:") === 0 || hit.action.indexOf("music:expand:") === 0;
                     if (inside && scrollable) {
                         rhine.action(hit.action);
@@ -404,10 +416,11 @@ Item {
             visible: !!region
             enabled: visible && !rhine.state.closing
             x: region ? region.x * overlay.stageScale : 0
-            // 播放栏固定在窗口下沿，不随弹窗入场偏移。
-            y: region ? region.y * overlay.stageScale : 0
+            // 播放栏固定在窗口下沿，不随弹窗入场偏移。竖向多留一点触摸余量；
+            // 横向保持原样，否则 adjustPlayer 用 mouse.x/width 算出的比例会偏。
+            y: region ? (region.y - overlay.touchHitPadding) * overlay.stageScale : 0
             width: region ? region.width * overlay.stageScale : 0
-            height: region ? region.height * overlay.stageScale : 0
+            height: region ? (region.height + 2 * overlay.touchHitPadding) * overlay.stageScale : 0
             cursorShape: Qt.PointingHandCursor
             onPressed: function (mouse) {
                 rhine.adjustPlayer(modelData, mouse.x, width);
