@@ -422,6 +422,15 @@ uniform。arena 的「一次绑定 + 动态偏移」收益在 GLES 上拿不到�
   编译分支把它放大 5 倍到 `75`，也就是「翻一首歌」需要约 5 倍滑动距离；列表的连续滚动
   （`m_wheelDistance`）不受影响，不会变得拖不动。桌面、iOS 与其它平台的取值仍是 `15`，
   滚轮的离散分支（`-delta / 15. * WHEEL_DISTANCE_PER_NOTCH`）也不在这个改动里。
+- **设置页只响应右侧控件。** `Qt/src/SettingsCard.cpp` 的 `drawChoice()` 在
+  `#if !defined(Q_OS_ANDROID)` 里注册左侧标题热区——那条热区绑定的是旧版
+  `binding.action`「点名称循环到下一个值」，手指擦过名称就会误改设置且无法撤销。Android
+  编译期不注册它，因此左侧标题区完全没有热区（但仍可拖动滚动列表）；设置项只能点右侧
+  300 宽的控件：Choice / Switch 先点 `expand:<id>` 展开下拉、再点具体选项走
+  `setting:<id>:<value>` 精确设值，Stepper 点 ± 或轨道，Action / TextInput / Link 与自定义
+  区块的按钮本来也都在右侧。所有 Choice 行都带 `actionPrefix`，所以去掉标题热区不会让
+  任何设置项变得不可修改。`touchHitPadding` 仍会把这些右侧热区外扩 16。桌面 / iOS 的
+  `drawChoice()` 逐字不变，点标题仍可循环切值。
 
 ## 已知限制
 

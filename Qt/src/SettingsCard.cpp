@@ -1,5 +1,6 @@
 #include "SettingsCard.h"
 #include "HudScroll.h"
+#include <QtGlobal>
 #include <algorithm>
 #include <cmath>
 
@@ -73,6 +74,12 @@ void drawChoice(const RowLayout &layout, const RowModel &row, const Colors &colo
     if (row.enabled) {
         canvas.hit(control.left(), control.top(), control.width(), control.height(),
                    "expand:" + row.descriptor->id, row.descriptor->titleZh);
+        // Android 不注册下面这个左侧标题热区。它绑定的是旧版 binding.action「一键循环到
+        // 下一个值」，手指在设置页点选或滚动时擦到名称就会误改设置且没有撤销；右侧控件
+        // 已经能完成全部设值：点 control 展开下拉，再点具体选项走 setting:<id>:<value>，
+        // Stepper 的 ±/轨道、Action、TextInput、Link 与自定义区块按钮也都在右侧。
+        // 桌面 / iOS 走下面的分支，代码逐字不变；想恢复旧行为去掉这对预处理指令即可。
+#if !defined(Q_OS_ANDROID)
         // 保留旧版值循环动作的可达性：点标题区仍可切换，右侧控件负责下拉。
         if (!row.descriptor->binding.action.isEmpty()) {
             const auto labelLeft = layout.bounds.left() + 30;
@@ -82,6 +89,7 @@ void drawChoice(const RowLayout &layout, const RowModel &row, const Colors &colo
                            row.descriptor->binding.action, row.descriptor->titleZh);
             }
         }
+#endif
     }
 }
 
