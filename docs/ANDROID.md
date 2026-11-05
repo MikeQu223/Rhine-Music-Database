@@ -337,6 +337,52 @@ Android 的 3D 配置与模型从一套**独立副本**生成，别的平台继�
 将来单独调整 Android 的 3D，改 `Assets/android-3d/` 里的文件即可；`archive-*.json` 里记着源
 glb 的 SHA-256，换模型后重新跑 `npm run build:android` 会一并更新。
 
+## 3D 渲染性能：Android 专属默认策略
+
+Android 的 3D 走 `RhiScene`（`QQuickRhiItem`）+ `QRhi::OpenGLES2`（GLES 3.0），**不进**
+桌面 / Apple 的 `PresentationShell` 补帧层；FidelityFX 不编入，AA 默认 `off`。也就是说
+渲染分辨率、MSAA、后处理链、模型精度、烘焙贴图规格这些**会改变观感的旋钮一个都没动**。
+这一节只做一件事：把几项「原本为 Vulkan 写的、只改 buffer 组织或 render pass 存储策略、
+不改任何像素」的优化在 Android 上默认打开。
+
+策略集中在 `Qt/src/render/AndroidRenderPolicy.h`，`Qt/src/RhiScene.cpp` 只负责取值：
+
+| 优化 | Android 默认 | 桌面 / iOS | 收益 | 为什么画面不变 |
+| --- | --- | --- | --- | --- |
+| 紧凑实例 80 B（`RHINE_VK_COMPACT_INSTANCES`） | 开 | 关 | 每实例少传 64 B，实例载荷省约 44% | `opticalGeometry.vert` 的 `previousModel` 整段包在 `RHINE_SINGLE_PASS_MOTION` 里，该宏只给桌面 Linux / Apple 定义；Android 主变体本就只读 location 0..7，与 `/opticalCompact` 在 GLES 下逐字同构。shader 读到的 80 字节完全相同 |
+| 丢弃无人读取的深度（`RHINE_VK_DISCARD_UNUSED_DEPTH`） | 开 | 关 | tile-based GPU 每帧少一次 D32F 写回主存（1080p 约 8 MB） | 只改 pass 结束后的 `storeOp`，不改深度测试与颜色；`resize()` 用保守的 `depthStoreRequired()` 兜底，motion / TAA / warp / MetalFX 任一存在就照旧 store |
+| GLES 实例池（原 `ensureInstancePool()` 只放行 Vulkan） | 放行 `OpenGLES2` | 仍只放行 Vulkan | 几十个逐 draw 小 VertexBuffer 合成一个大 buffer，配合内容差分把每帧约 165 KB 上传压到接近 0 | 只改 buffer 组织与 `VertexInput::offset`，顶点 / 材质 / 纹理内容不变；容量或对齐放不下时 `poolInstances()` 整帧回退逐 draw |
+| 材质 UBO arena（`RHINE_VK_UNIFORM_ARENA`） | **关**（保持原样） | 关 | — | 见下 |
+
+**材质 arena 为什么刻意不在 GLES 上默认开**：Qt 的 GLES2 后端把
+`QRhi::NonDynamicUniformBuffers` 报为 true——没有真正的 UBO，uniform 靠 `glUniform`
+逐次下发；SRB 一旦带动态偏移，后端就跳过「相同 SRB 不重绑」的优化、每个 draw 都重设一遍
+uniform。arena 的「一次绑定 + 动态偏移」收益在 GLES 上拿不到，甚至可能比逐材质 buffer 更慢。
+想实机 A/B 可显式设 `RHINE_VK_UNIFORM_ARENA=1`，`ensureMaterialArena()` 有能力探测，
+不满足会自动回退并在日志里给出原因。
+
+**回退与 A/B**
+
+- 单项：上面三个环境变量写 `=0` 即关（也可写 `=1` 在桌面强制开做对照）。显式设置永远优先。
+- 总开关：`RHINE_ANDROID_RENDER_TUNING=0` 把 Android 的三项默认值整体退回改动前。
+- `Renderer::vulkanConfig()` 分别上报「请求值 / 生效值 / 回退原因」，可据此确认实际命中；
+  紧凑实例还有 `compactInstancesAllowed()` 兜底——开了 TAA / FSR 或 warp 探针时存在运动矢量
+  消费者，会自动回到 144 B。
+
+验证观感不变可用 `RhiScene::renderReference()`（Android 上以 `OpenGLES 3.0` +
+`QRhi::OpenGLES2` 渲一帧并读回 `QImage`）对同一场景做逐像素 A/B；运行期看
+`Renderer` 上报的 `samples` / `renderSize` / `drawCalls` / GPU 分项，确认分辨率与
+绘制次数都没变，只有 CPU 侧上传量下降。
+
+**刻意没做的**（都会改变观感，按需求排除）：降 render scale / DPR / MSAA、砍后处理链、
+降模型顶点数或 `DiscGeometry::Segments`、降烘焙贴图规格、限帧。缩小封面纹理或下调单帧
+上传预算虽然不改最终像素，但会改变封面出现的时机，也没有动。
+
+**隔离性**：`renderFlag()` 在桌面 / iOS 恒返回 `legacyDefault`，
+`androidInstancePoolOnGles()` 恒为 false，`ensureInstancePool()` 的 `backendAllowed`
+也就退化为原来的 `rhi->backend() == QRhi::Vulkan`。新头文件在非 Android 平台只是几个
+返回常量的内联函数，不参与任何渲染路径；CMake、着色器烘焙、资源打包一行未改。
+
 ## 音频与系统媒体控件
 
 - 播放走 Qt Multimedia 的 Android 后端（系统 MediaPlayer）。它的 `setMedia` 会忽略

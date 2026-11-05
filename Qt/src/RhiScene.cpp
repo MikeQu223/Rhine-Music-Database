@@ -18,6 +18,7 @@
 #include "render/ScenePostProcess.h"
 #include "render/VulkanResourceProbe.h"
 #include "render/VulkanResourcePolicy.h"
+#include "render/AndroidRenderPolicy.h"
 #include "render/MemoryProbe.h"
 #ifdef Q_OS_LINUX
 #include "fg/FgFrameTap.h"
@@ -365,7 +366,13 @@ class Renderer {
     // Metal 的非时域路径沿用 80 字节实例；只有消费者需要时才扩展历史矩阵。
     const bool compactInstanceRequested = true;
 #else
-    const bool compactInstanceRequested = qEnvironmentVariableIntValue("RHINE_VK_COMPACT_INSTANCES") == 1;
+    // Android 默认开：opticalGeometry.vert 的 previousModel 整段包在
+    // RHINE_SINGLE_PASS_MOTION 里，而这个宏只给桌面 Linux / Apple 定义（见 CMakeLists.txt），
+    // Android 的主变体本来就只读 location 0..7；紧凑变体同样不带该宏、同样用
+    // surfaceNoMrt，两者在 GLES 下逐字同构。把 stride 从 144 改成 80 只是不再上传
+    // shader 根本不读的 64 字节，shader 读到的内容完全相同。桌面 / iOS 取值不变。
+    const bool compactInstanceRequested =
+        RhineRender::renderFlag("RHINE_VK_COMPACT_INSTANCES", true, false);
 #endif
     /// E05b：布局与 buffer 身份分离。启用后用占位 SRB 建 pipeline，arena 换 buffer 不再清管线。
     const bool layoutOnlyPipelines = qEnvironmentVariableIntValue("RHINE_VK_LAYOUT_ONLY_PIPELINES") == 1;
@@ -419,6 +426,12 @@ class Renderer {
     QList<quint32> freeSlots;
     /// D02 开关：RHINE_VK_UNIFORM_ARENA=1 才走 arena；任何一步不满足就永久退回逐材质 buffer。
     /// E01：请求值与生效值分开存——回退是永久的，日志只写"开了"会把回退读成还在走 arena。
+    ///
+    /// Android（GLES）刻意不默认开：Qt 的 GLES2 后端把 QRhi::NonDynamicUniformBuffers
+    /// 报为 true，没有真正的 UBO，uniform 靠 glUniform 逐次下发；SRB 一旦带动态偏移，
+    /// 后端就跳过「相同 SRB 不重绑」的优化、每个 draw 都重设一遍 uniform。arena 的
+    /// 「一次绑定 + 动态偏移」收益在 GLES 上拿不到，甚至可能更慢。想实机 A/B 仍可显式
+    /// RHINE_VK_UNIFORM_ARENA=1（ensureMaterialArena 有能力探测，不满足会自动回退）。
     const bool uniformArenaRequested = qEnvironmentVariableIntValue("RHINE_VK_UNIFORM_ARENA") == 1;
     bool uniformArena = uniformArenaRequested;
     QString arenaFallback;
@@ -447,8 +460,11 @@ class Renderer {
     };
     InstancePool instancePool;
     /// D04：主目标的深度在没人读时不 store（RHINE_VK_DISCARD_UNUSED_DEPTH=1 才启用）。
+    /// Android 默认开：tile-based GPU 每帧少一次 D32F 深度写回主存（1080p 约 8 MB）。
+    /// 只改 pass 结束后的 storeOp，不改深度测试与颜色；且 resize() 用保守的
+    /// depthStoreRequired() 兜底——motion / TAA / warp / MetalFX 任一存在就照旧 store。
     const bool discardUnusedDepthRequested =
-        qEnvironmentVariableIntValue("RHINE_VK_DISCARD_UNUSED_DEPTH") == 1;
+        RhineRender::renderFlag("RHINE_VK_DISCARD_UNUSED_DEPTH", true, false);
     bool discardUnusedDepth = discardUnusedDepthRequested;
     /// 本次 resize 定下的策略；它变了必须重建目标（render pass 的 storeOp 写在描述符里）。
     bool sizedDepthStore = true;
@@ -865,8 +881,14 @@ class Renderer {
             return false;
         }
 #else
-        if (instancePoolEnabled && rhi->backend() != QRhi::Vulkan) {
-            // 池化的收益来自 Vulkan 的 staging 行为；其他后端保留原来的逐 draw buffer。
+        // Android 的 GLES 后端也放行：池化只用通用 QRhi API（Dynamic VertexBuffer、
+        // 按区间的 updateDynamicBuffer、VertexInput::offset），而 D03 的注释记着 OpenGL
+        // 后端实测——非池化每帧上传约 165 KB，池化加内容差分后接近 0。容量或对齐放不下时
+        // poolInstances() 仍会整帧回退逐 draw buffer。桌面 / iOS 严格只认 Vulkan。
+        const bool backendAllowed = rhi->backend() == QRhi::Vulkan ||
+                                    (RhineRender::androidInstancePoolOnGles() &&
+                                     rhi->backend() == QRhi::OpenGLES2);
+        if (instancePoolEnabled && !backendAllowed) {
             instancePoolEnabled = false;
             poolFallback = QStringLiteral("非 Vulkan 后端");
             return false;
