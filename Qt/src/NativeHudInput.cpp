@@ -11,6 +11,51 @@ void NativeHud::wheel(double x, double y, double delta, std::optional<int> steps
     if (frame.isEmpty() || !std::isfinite(delta)) {
         return;
     }
+    if (m_responsive.compact()) {
+        const auto bounds = m_responsive.state(sourceState())["playerBounds"].toObject();
+        if (y >= bounds["y"].toDouble()) {
+            return;
+        }
+        if (delta == 0 && steps.value_or(0) == 0 && distance.value_or(0.) == 0) {
+            return;
+        }
+        const auto movement = distance.value_or(steps.value_or(delta < 0 ? 1 : -1) * 60.);
+        const auto compactState = m_responsive.state(sourceState());
+        const bool archive = modal.isEmpty() && compactState["mode"] == "archive";
+        const bool listRegion = y >= compactState["archiveListY"].toDouble();
+        if (archive && !listRegion) {
+            m_scene.pointer("wheel", x, y, -delta * 8);
+            return;
+        }
+        if (archive && listRegion) {
+            m_scene.pointer("pointercancel", 0, 0, 0);
+        }
+        // 场景滚动走原有三维输入，列表手势只移动自己的固定槽位。
+        if ((!archive || listRegion) && m_responsive.scroll(movement)) {
+            if (modal == "settings" && !editingSettingId.isEmpty()) {
+                cancelSettingEdit();
+            }
+            if (movement > 0 && m_responsive.nearEnd() && !closing) {
+                auto &music = *m_music;
+                if (modal == "discover" && !categoryPicker && !music.discover->loading &&
+                    music.discover->more) {
+                    music.discover->load(music.discover->tab, true);
+                } else if (modal == "search" && query.trimmed() == music.keyword && !music.sourceLoading() &&
+                           music.hasMore[0]) {
+                    music.loadMoreSource(0);
+                } else if (modal == "saved" && !music.sourceLoading() && music.hasMore[musicCollection]) {
+                    music.loadMoreSource(musicCollection);
+                } else if (archive && music.directory) {
+                    music.loadDirectoryPage();
+                } else if (archive && music.hasMore[music.selectedLane] &&
+                           music.groupLane != music.selectedLane && !music.sourceLoading()) {
+                    music.loadMoreSource(music.selectedLane);
+                }
+            }
+            return;
+        }
+        return;
+    }
     if (playerBounds && playerBounds->contains(x, y)) {
         return;
     }

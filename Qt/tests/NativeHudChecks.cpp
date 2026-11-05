@@ -13,6 +13,7 @@
 #include <QElapsedTimer>
 #include <QThread>
 #include <QDebug>
+#include <QDir>
 #include <QGuiApplication>
 #include <QJsonDocument>
 #include <QPainter>
@@ -145,6 +146,7 @@ bool checkSorting(const QString &root, Glyphs &glyphs, const QJsonObject &conten
     };
     HudSceneActions scene;
     scene.mode = [](QString) {};
+    scene.pointer = [](QString, double, double, double) {};
     NativeHud hud(&host, &glyphs, &music, scene);
     hud.reduced = true;
     QJsonObject frame{{"mode", "detail"}, {"selected", 0}, {"detail", 1}};
@@ -286,6 +288,7 @@ bool checkCollectionCard(const QString &root, Glyphs &glyphs, const QJsonObject 
     music.coverImage = coverKey;
     HudSceneActions scene;
     scene.mode = [](QString) {};
+    scene.pointer = [](QString, double, double, double) {};
     NativeHud hud(&host, &glyphs, &music, scene);
     hud.reduced = true;
     const QJsonObject frame{{"mode", "detail"}, {"detail", 1}};
@@ -438,6 +441,7 @@ bool checkAlbumTrackSelection(const QString &root, Glyphs &glyphs, const QJsonOb
     music.tracks = albumTracks;
     HudSceneActions scene;
     scene.mode = [](QString) {};
+    scene.pointer = [](QString, double, double, double) {};
     NativeHud hud(&host, &glyphs, &music, scene);
     hud.tab = "history";
     const QJsonObject frame{{"mode", "detail"}, {"detail", 1}};
@@ -577,6 +581,38 @@ bool checkPlayerInput(const QString &root, Glyphs &glyphs, const QJsonObject &co
         qCritical() << "Player whitespace closed or scrolled the underlying panel";
         return false;
     }
+    app.hud.draw(frame, 393. * 1080 / 852, 50);
+    app.pointer("pointerdown", 40, 400);
+    app.pointer("pointerup", 40, 400);
+    if (app.hud.closing) {
+        qCritical() << "Mobile panel whitespace closed the panel";
+        return false;
+    }
+    // 实际场景投影中，竖屏详情的左右上角应等高；横屏仍保留原有斜视角。
+    scene.resize(393, 852);
+    scene.reduced(true);
+    scene.review("detail");
+    QJsonObject settled;
+    for (int step = 0; step < 240; ++step) {
+        settled = scene.sample(100 + step / 60.);
+    }
+    const auto stats = settled["stats"].toObject();
+    const auto left = stats["topLeft"].toArray();
+    const auto right = stats["topRight"].toArray();
+    if (left.size() != 2 || right.size() != 2 || left[1] != right[1]) {
+        qCritical() << "Portrait album did not settle into a front view" << stats;
+        return false;
+    }
+    scene.resize(1920, 1080);
+    scene.setMode("detail");
+    for (int step = 0; step < 240; ++step) {
+        settled = scene.sample(110 + step / 60.);
+    }
+    const auto landscape = settled["stats"].toObject();
+    if (landscape["topLeft"].toArray()[1] == landscape["topRight"].toArray()[1]) {
+        qCritical() << "Portrait front view changed the landscape camera";
+        return false;
+    }
     app.hud.closeModal();
     app.hud.draw({{"mode", "boot"}}, 1920, 100);
     if (app.hud.playerBounds || !app.hud.state()["playerBounds"].isNull()) {
@@ -660,10 +696,501 @@ static bool checkCardMaterialCache() {
 }
 
 #endif
+namespace {
+/** 同一控制器跨比例回归：桌面快照不变，窄屏命中与输入使用一致坐标。 */
+bool checkResponsiveHud(const QString &root, Glyphs &glyphs, const QJsonObject &content) {
+    ResponsiveHudLayout policy;
+    for (const double aspect : {.54, .99, 1., 1.01, .999, 1.}) {
+        policy.resize(1080 * aspect);
+        if (policy.compact() != (aspect < 1)) {
+            qCritical() << "Responsive layout must follow width < height" << aspect;
+            return false;
+        }
+    }
+
+    Host host(root, true);
+    std::unique_ptr<MusicLibrary> music(createTestMusicLibrary(&host, "netease", content));
+    HudSceneActions scene;
+    scene.mode = [](QString) {};
+    scene.pointer = [](QString, double, double, double) {};
+    NativeHud hud(&host, &glyphs, music.get(), scene);
+    hud.reduced = true;
+    const QJsonObject frame{{"mode", "archive"}, {"detail", 1}, {"selected", 0}};
+    hud.draw(frame, 1920, 50);
+    const auto desktopCommands = hud.commands;
+    const auto desktopHits = hud.hits;
+    constexpr double width = 393. * 1080 / 852;
+    hud.draw(frame, width, 50);
+    if (!hud.state()["compactLayout"].toBool() || !hasAction(hud.hits, "open") ||
+        hasAction(hud.hits, "column-prev") || hasAction(hud.hits, "column-next") ||
+        !hasAction(hud.hits, "player:next")) {
+        return false;
+    }
+    const auto captureRoot = qEnvironmentVariable("RHINE_HUD_CAPTURE_DIR");
+    const auto capture = [&](const QString &name) {
+        if (captureRoot.isEmpty()) {
+            return;
+        }
+        QDir().mkpath(captureRoot);
+        QImage image(393, 852, QImage::Format_ARGB32_Premultiplied);
+        image.fill(QColor("#eeece4"));
+        QPainter painter(&image);
+        painter.scale(852. / 1080, 852. / 1080);
+        glyphs.commands(painter, hud.commands, [&host](QString key) { return host.image(key); });
+        painter.end();
+        image.save(captureRoot + "/" + name + ".png");
+    };
+    const auto validHits = [&] {
+        for (const auto &value : hud.hits) {
+            const auto target = value.toObject();
+            const QRectF area(target["x"].toDouble(), target["y"].toDouble(), target["width"].toDouble(),
+                              target["height"].toDouble());
+            if (!QRectF(0, 0, width + .01, 1080.01).contains(area) || area.width() <= 0 ||
+                area.height() <= 0 || !target["fixed"].toBool()) {
+                return false;
+            }
+        }
+        return true;
+    };
+    if (!validHits()) {
+        return false;
+    }
+    // 四条槽位不覆盖底栏，选中行始终位于第二条。
+    const double listTop = hud.state()["archiveListY"].toDouble();
+    const auto selectedHit = getHit(hud.hits, "open");
+    const double unit = width / 393.;
+    const double playerTop = hud.state()["playerBounds"].toObject()["y"].toDouble();
+    if (std::abs(selectedHit["y"].toDouble() - (listTop + 48 * unit)) > .01 || listTop < 540 ||
+        listTop + 4 * 48 * unit > playerTop + .01) {
+        qCritical() << "Archive slots overlap the scene or player";
+        return false;
+    }
+    capture("archive");
+    bool brand = false;
+    for (const auto &value : hud.commands) {
+        const auto op = value.toArray();
+        if (op[0] == "text" && op[1] == music->libraryName()) {
+            brand = brand || (op[3] == 123 && op[4] == 23 && op[5] == "bold");
+        }
+    }
+    const auto mini = hud.state()["playerBounds"].toObject();
+    if (!brand || std::abs(mini["height"].toDouble() - 144 * width / 393) > 0.01) {
+        return false;
+    }
+    // 底部保留 34 pt 手势区，导航命中不得进入系统的小白条区域。
+    for (const auto &value : hud.hits) {
+        const auto hit = value.toObject();
+        if (hit["y"].toDouble() + hit["height"].toDouble() > (852 - 34) * width / 393 + .01) {
+            qCritical() << "Mobile control entered the bottom gesture area" << hit;
+            return false;
+        }
+    }
+    for (const auto &route : {"player:toggle", "player:next", "player:detail"}) {
+        if (!hasAction(hud.hits, route)) {
+            return false;
+        }
+    }
+    for (const auto &route :
+         {"player:prev", "player:mode", "player:open", "music:like-current", "player:lyrics"}) {
+        if (hasAction(hud.hits, route)) {
+            qCritical() << "Mini player retained a full-page control" << route;
+            return false;
+        }
+    }
+    for (const auto &value : hud.hits) {
+        const auto hit = value.toObject();
+        const auto action = hit["action"].toString();
+        // 页头栏目 tab 是固定控件，其余控件必须在 138 pt 以下。
+        const bool headerControl = action == "mobile:play-archive" || action == "column-prev" ||
+                                   action == "column-next" || action.startsWith("mobile:source:");
+        if (hit["y"].toDouble() < 138 * width / 393 && !headerControl) {
+            qCritical() << "Unexpected control above the mobile header" << action;
+            return false;
+        }
+    }
+    for (const auto &value : hud.commands) {
+        const auto op = value.toArray();
+        if (op[0] == "text" && (op[1].toString().startsWith("FILE NUMBER") || op[1] == "REFERENCE AREA")) {
+            return false;
+        }
+        if (op[0] == "text" && op[1] == "资料库" && op[4] == 13) {
+            const auto bounds = glyphs.bounds("资料库", 13, op[5].toString());
+            const auto target = getHit(hud.hits, "home");
+            const double center = op[2].toDouble() + bounds["x"].toDouble() + bounds["width"].toDouble() / 2;
+            if (std::abs(center * width / 393 - target["x"].toDouble() - target["width"].toDouble() / 2) >
+                .01) {
+                return false;
+            }
+        }
+    }
+    hud.draw(frame, 1920, 50);
+    if (hud.commands != desktopCommands || hud.hits != desktopHits || hud.state()["compactLayout"].toBool()) {
+        qCritical() << "Responsive round trip changed desktop HUD";
+        return false;
+    }
+    music->player.state["playing"] = false;
+    hud.draw(frame, width, 50);
+    if (getHit(hud.hits, "player:toggle")["label"] != "播放") {
+        return false;
+    }
+    music->player.state["playing"] = true;
+    // 主界面 tab 列表：滚动应切换固定槽位上的选中项。
+    hud.draw(frame, width, 50);
+    const int beforeScroll = hud.state()["archiveIndex"].toInt();
+    const auto selectedTitle = music->libraryItems()[beforeScroll].toObject()["title"].toString();
+    const auto selectedRowY = [&] {
+        for (const auto &value : hud.commands) {
+            const auto op = value.toArray();
+            if (op[0] == "text" && op[1] == selectedTitle && op[4] == 18) {
+                return op[3].toDouble();
+            }
+        }
+        return -1.;
+    };
+    hud.action("mobile:archive-begin");
+    const double originalY = selectedRowY();
+    hud.wheel(width / 2, 700, -1, 0, 8);
+    hud.draw(frame, width, 50.01);
+    if (originalY < 0 || std::abs(selectedRowY() - originalY + 8 / (width / 393)) > .01) {
+        qCritical() << "Archive drag rounded away sub-row finger movement";
+        return false;
+    }
+    hud.action("mobile:archive-release");
+    hud.draw(frame, width, 50.02);
+    hud.draw(frame, width, 50.3);
+
+    hud.wheel(width / 2, 700, -120, 1, 128);
+    hud.draw(frame, width, 60);
+    if (hud.state()["archiveIndex"].toInt() == beforeScroll) {
+        qCritical() << "Mobile archive scroll did not move the fixed slot selection";
+        return false;
+    }
+    // 重绘不能重复发出旧选择；慢速小幅拖动也必须能跨行，并保持栏目不变。
+    const int movedIndex = music->libraryIndex();
+    const int selectedLane = music->selectedLane;
+    for (int repaint = 0; repaint < 6; ++repaint) {
+        hud.draw(frame, width, 61 + repaint);
+        if (music->libraryIndex() != movedIndex || music->selectedLane != selectedLane) {
+            qCritical() << "Archive repaint changed the requested selection";
+            return false;
+        }
+    }
+    int requestedPhysical = -1;
+    const auto request =
+        QObject::connect(music.get(), &MusicLibrary::selectionRequested,
+                         [&requestedPhysical](int physical, QJsonObject) { requestedPhysical = physical; });
+    music->selectLibraryIndex(beforeScroll);
+    QObject::disconnect(request);
+    if (requestedPhysical != music->selectedPhysical) {
+        qCritical() << "List selection was not committed to the scene";
+        return false;
+    }
+    hud.draw(frame, width, 69);
+    for (int drag = 0; drag < 20; ++drag) {
+        hud.wheel(width / 2, 700, -1, 0, 4);
+        hud.draw(frame, width, 70 + drag);
+    }
+    if (music->libraryIndex() == beforeScroll || music->selectedLane != selectedLane) {
+        qCritical() << "Slow list drag stalled or switched columns";
+        return false;
+    }
+    // 后续检查仍以原选中项为基准，滚动验证后恢复。
+    music->selectLibraryIndex(beforeScroll);
+    hud.draw(frame, width, 70);
+    for (const QString &page :
+         {QString("search"), QString("settings"), QString("discover"), QString("player")}) {
+        hud.openModal(page);
+        hud.draw(frame, width, 50);
+        if (!validHits()) {
+            qCritical() << "Out-of-bounds mobile target" << page;
+            return false;
+        }
+        capture(page);
+        if (page == "search" || page == "settings" || page == "discover") {
+            bool opaquePaper = false;
+            for (const auto &value : hud.commands) {
+                const auto op = value.toArray();
+                if (op[0] == "fill" && op[2] == 0 && op[3] == 0 && op[4] == 393 &&
+                    std::abs(op[5].toDouble() - 852) < .01 && op[1].toArray()[3].toDouble() == 1) {
+                    opaquePaper = true;
+                }
+            }
+            const auto settingsNav = getHit(hud.hits, "settings");
+            if (!opaquePaper || settingsNav["label"] != "设置" || hasAction(hud.hits, "saved")) {
+                qCritical() << "Terminal page lost its opaque paper or settings navigation" << page;
+                return false;
+            }
+        }
+        if (page == "discover" && !hasAction(hud.hits, "discover:item:3")) {
+            qCritical() << "Visible discovery cover lost its clipped hit target";
+            return false;
+        }
+        if (page == "search" &&
+            (!hud.state()["compactInputVisible"].toBool() || hud.state()["inputWidth"].toDouble() <= 0)) {
+            return false;
+        }
+        if (page == "player") {
+            if (!hasAction(hud.hits, "mobile:queue-modes")) {
+                return false;
+            }
+            hud.action("mobile:queue-modes");
+            hud.draw(frame, width, 50);
+            for (const QString &mode : {QString("off"), QString("all"), QString("one"), QString("shuffle")}) {
+                if (!hasAction(hud.hits, "player:mode:" + mode)) {
+                    return false;
+                }
+            }
+            if (!hasAction(hud.hits, "player:clear") || !hasAction(hud.hits, "player:queue:0") ||
+                !hasAction(hud.hits, "player:remove:1") || hasAction(hud.hits, "player:remove:0")) {
+                return false;
+            }
+            const auto seek = hud.state()["seek"].toObject();
+            if (seek["width"].toDouble() <= 0) {
+                return false;
+            }
+            const auto before = hud.commands;
+            hud.wheel(width / 2, 1040, -120);
+            hud.draw(frame, width, 50);
+            if (hud.commands != before) {
+                return false;
+            }
+            hud.wheel(width / 2, 650, -120, 1, 128);
+            hud.draw(frame, width, 50);
+            if (hud.commands == before || !validHits()) {
+                return false;
+            }
+        }
+        hud.closeModal();
+        hud.draw(frame, 1920, 100);
+    }
+    hud.draw({{"mode", "detail"}, {"detail", 1}}, width, 100);
+    capture("song");
+    const auto closeSong = getHit(hud.hits, "back");
+    const auto moreSong = getHit(hud.hits, "mobile:song-options");
+    const auto queueSong = getHit(hud.hits, "player:open");
+    if (closeSong["label"] != "关闭播放页面" || closeSong["width"].toDouble() < 56 * width / 393 ||
+        moreSong["y"] != queueSong["y"] || moreSong["x"].toDouble() <= queueSong["x"].toDouble()) {
+        qCritical() << "Song close and bottom more actions lost their requested placement";
+        return false;
+    }
+    if (!validHits()) {
+        return false;
+    }
+    for (const auto &route : {"player:prev", "player:toggle", "player:next", "player:mode", "player:open",
+                              "player:lyrics", "music:like"}) {
+        if (!hasAction(hud.hits, route)) {
+            qCritical() << "Full player dropped a control" << route;
+            return false;
+        }
+    }
+    if (hasAction(hud.hits, "home") || hud.state()["seek"].toObject().isEmpty()) {
+        return false;
+    }
+    if (!hud.state()["volume"].isNull()) {
+        qCritical() << "Song HUD retained the removed volume slider";
+        return false;
+    }
+    for (const auto &value : hud.commands) {
+        const auto op = value.toArray();
+        if (op[0] == "image") {
+            return false;
+        }
+        if (op[0] == "fill" && op[3].toDouble() < 491.99 && op[5].toDouble() > 50) {
+            qCritical() << "Full player obscured the live scene";
+            return false;
+        }
+    }
+    const auto originalPlaying = music->player.current;
+    music->player.current = song(20);
+    hud.draw({{"mode", "detail"}, {"detail", 1}}, width, 100);
+    if (!hasAction(hud.hits, "music:play") || !hud.state()["seek"].isNull()) {
+        return false;
+    }
+    music->player.current = originalPlaying;
+    music->player.lyrics.applyPlaybackSnapshot(
+        {{"document", QJsonObject{{"lines", QJsonArray{QJsonObject{{"text", "第一句测试歌词"},
+                                                                   {"translation", "第一句译文"},
+                                                                   {"startMs", 0}},
+                                                       QJsonObject{{"text", "第二句测试歌词"},
+                                                                   {"translation", "第二句译文"},
+                                                                   {"startMs", 5000}}}}}},
+         {"index", 0},
+         {"status", "ready"}});
+    hud.action("player:lyrics");
+    hud.draw({{"mode", "detail"}, {"detail", 1}}, width, 100);
+    capture("lyrics");
+    bool opaqueLyrics = false;
+    for (const auto &value : hud.commands) {
+        const auto op = value.toArray();
+        if (op[0] == "fill" && op[2] == 0 && op[3] == 0 && op[4] == 393 &&
+            std::abs(op[5].toDouble() - 852) < .01 && op[1].toArray()[3] == 1) {
+            opaqueLyrics = true;
+        }
+    }
+    for (const auto &value : hud.hits) {
+        if (value.toObject()["y"].toDouble() < 60 * width / 393 - .01) {
+            qCritical() << "Lyrics control entered the Dynamic Island area";
+            return false;
+        }
+    }
+    if (!opaqueLyrics || !hasAction(hud.hits, "player:lyrics-close") || !validHits()) {
+        return false;
+    }
+    hud.action("player:lyrics-close");
+    for (const QString &kind : {QString("album"), QString("playlist"), QString("artist")}) {
+        music->current =
+            MusicData::item(kind, "42", kind == "artist" ? "塞壬唱片-MSR" : "音乐档案", "塞壬唱片-MSR");
+        music->tracks = music->player.queue.items();
+        hud.draw({{"mode", "detail"}, {"detail", 1}}, width, 100);
+        capture(kind);
+        if (!validHits()) {
+            return false;
+        }
+        hud.wheel(width / 2, 700, -120, 1, 10000);
+        hud.draw({{"mode", "detail"}, {"detail", 1}}, width, 101);
+        if (!hasAction(hud.hits, "music:track:19")) {
+            qCritical() << "Mobile collection lost tracks beyond the desktop viewport" << kind;
+            return false;
+        }
+    }
+    music->current = song(1);
+    hud.openModal("saved");
+    hud.draw(frame, width, 100);
+    capture("mine");
+    if (!hasAction(hud.hits, "music:collection:1")) {
+        return false;
+    }
+    hud.action("music:collection:1");
+    hud.draw(frame, width, 100);
+    capture("liked");
+    if (!hasAction(hud.hits, "mobile:play-liked")) {
+        return false;
+    }
+    hud.action("mobile:mine");
+    hud.draw(frame, width, 100);
+    if (!hasAction(hud.hits, "music:collection:1")) {
+        return false;
+    }
+    hud.openModal("player");
+    music->player.current = music->player.queue.items().last().toObject();
+    hud.draw(frame, width, 100);
+    // 换页后当前尾曲也能作为第一条可见行，移除动作与播放动作保持分离。
+    hud.closeModal();
+    hud.draw(frame, width, 200);
+    hud.openModal("player");
+    hud.draw(frame, width, 200);
+    if (!hasAction(hud.hits, "player:queue:19") || hasAction(hud.hits, "player:remove:19")) {
+        return false;
+    }
+    hud.modal.clear();
+    hud.draw({{"mode", "detail"}, {"viewer", true}, {"detail", 1}}, width, 200);
+    if (!hasAction(hud.hits, "viewer:close") || !hasAction(hud.hits, "viewer:reset") || !validHits()) {
+        return false;
+    }
+    hud.draw({{"mode", "boot"}}, width, 200);
+    if (!hud.state()["playerBounds"].isNull()) {
+        return false;
+    }
+    // 竖屏播放队列切歌只同步唱片选择，不强制进入详情；显式打开仍保留详情路由。
+    music->frame = frame;
+    hud.draw(frame, width, 210);
+    QString requestedMode;
+    const auto modeConnection =
+        QObject::connect(music.get(), &MusicLibrary::modeRequested,
+                         [&requestedMode](const QString &mode) { requestedMode = mode; });
+    const auto nextTrack = music->player.queue.items().first().toObject();
+    music->current = song(999);
+    music->player.trackSelected(nextTrack);
+    QObject::disconnect(modeConnection);
+    if (music->current["id"] != nextTrack["id"] || requestedMode == "detail" ||
+        music->frame["mode"] != "archive") {
+        qCritical() << "Portrait track change unexpectedly opened song details";
+        return false;
+    }
+    // 同一目录跨过八张唱片的物理列边界，页头仍须保持目录所属栏目。
+    const int originLane = music->directory->parentLane;
+    music->selectDirectory(9, "archive");
+    hud.draw(frame, width, 220);
+    bool sourceRetained = false;
+    for (const auto &value : hud.commands) {
+        const auto op = value.toArray();
+        if (op[0] == "text" && op[3] == 76 && op[5] == "demibold") {
+            sourceRetained = op[1] == music->columns.value(originLane);
+        }
+    }
+    if (!sourceRetained || music->libraryIndex() != 9) {
+        qCritical() << "Directory physical lane changed the active source tab";
+        return false;
+    }
+    qInfo()
+        << "Responsive HUD design anchors, desktop round trip, mobile input, cards, queue and scroll passed";
+    return true;
+}
+}
+
+/** 页面快照保留到过渡结束，歌词拖动阈值与回弹不会更改正文的选择状态。 */
+static bool checkResponsiveTransitions() {
+    ResponsiveHudTransition transition;
+    QJsonArray commands{QJsonArray{"text", "archive"}};
+    QJsonArray hits{QJsonObject{{"action", "open"}}};
+    transition.apply(commands, hits, "archive", 10, 1080, false);
+    commands = QJsonArray{QJsonArray{"text", "detail"}};
+    transition.apply(commands, hits, "detail", 10.1, 1080, false);
+    if (transition.active(10.2) || hits.isEmpty() || commands.size() != 5) {
+        return false;
+    }
+    commands = QJsonArray{QJsonArray{"text", "detail"}};
+    hits = QJsonArray{QJsonObject{{"action", "back"}}};
+    transition.apply(commands, hits, "detail", 10.8, 1080, false);
+    if (transition.active(10.8) || hits.isEmpty()) {
+        return false;
+    }
+    transition.apply(commands, hits, "lyrics", 11, 1080, false);
+    transition.drag(40);
+    if (transition.release()) {
+        return false;
+    }
+    transition.drag(120);
+    if (!transition.release()) {
+        return false;
+    }
+    transition.apply(commands, hits, "detail", 12, 1080, false);
+    if (!transition.active(12.1) || !hits.isEmpty()) {
+        return false;
+    }
+    ResponsiveHudLayout indicator;
+    indicator.resize(393. * 1080 / 852);
+    indicator.setMotion(1, false);
+    indicator.tabIndicator("navigation", 0);
+    indicator.setMotion(1.1, false);
+    if (indicator.tabIndicator("navigation", 100) != 0) {
+        return false;
+    }
+    indicator.setMotion(1.2, false);
+    const double middle = indicator.tabIndicator("navigation", 100);
+    if (middle <= 0 || middle >= 100 || !indicator.animating(1.2)) {
+        return false;
+    }
+    if (std::abs(indicator.tabIndicator("navigation", 30) - middle) > .001) {
+        return false;
+    }
+    ResponsiveHudTransition synchronized;
+    synchronized.apply(commands, hits, ":archive:1", 20, 1080, false, 0);
+    synchronized.apply(commands, hits, ":detail:track", 20.1, 1080, false, 0);
+    synchronized.apply(commands, hits, ":detail:track", 21, 1080, false, .3);
+    if (!synchronized.active(21.1)) {
+        return false;
+    }
+    synchronized.apply(commands, hits, ":detail:track", 21.2, 1080, false, 1);
+    return !synchronized.active(21.7);
+}
+
 bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
     Host host(root, true);
     const auto content = QJsonDocument::fromJson(host.read("slots.json").toUtf8()).object();
-    bool ok = checkSorting(root, glyphs, content);
+    bool ok = checkResponsiveTransitions();
+    ok &= checkSorting(root, glyphs, content);
+    ok &= checkResponsiveHud(root, glyphs, content);
 #ifdef Q_OS_DARWIN
     ok &= checkCardMaterialCache();
 #endif

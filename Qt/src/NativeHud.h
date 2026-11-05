@@ -1,7 +1,9 @@
 #pragma once
+#include "ResponsiveHudTransition.h"
 #include "DesktopLyricsLayout.h"
 #include "Glyphs.h"
 #include "HudScroll.h"
+#include "ResponsiveHudLayout.h"
 #include "MusicLibrary.h"
 #include "SettingsSchema.h"
 #include "UiMotion.h"
@@ -48,6 +50,9 @@ class NativeHud : public QObject {
               QObject *parent = nullptr);
     void draw(QJsonObject frame, double width, double time);
     QJsonObject state() const;
+    bool compactLayout() const {
+        return m_responsive.compact();
+    }
     void action(QString action);
     void key(QString key, bool command);
     void wheel(double x, double y, double delta, std::optional<int> steps = std::nullopt,
@@ -202,6 +207,7 @@ class NativeHud : public QObject {
     QString m_sortNotice;
     // QObject 子对象拥有生命周期，封面回调不跨越 HUD 销毁。
     DiscoverArtwork *m_discoverArtwork = nullptr;
+    DiscoverArtwork *m_savedArtwork = nullptr;
     QString m_discoverScrollScope;
     QString m_songQueueFeedbackKey;
     QHash<QString, QString> m_songQueueFeedback;
@@ -215,6 +221,9 @@ class NativeHud : public QObject {
     QVector<Row> m_rows;
     QString m_resultSignature;
     double m_resultStart = 0;
+    ResponsiveHudLayout m_responsive;
+    ResponsiveHudTransition m_mobileTransition;
+    QJsonObject sourceState() const;
     bool m_modalControls = false;
     QJsonObject m_lyricsDocument;
     double m_lyricsWidth = 0;

@@ -11,7 +11,7 @@ Window {
     readonly property bool ios: Qt.platform.os === "ios"
     width: 1280
     height: 720
-    minimumWidth: ios ? 0 : 960
+    minimumWidth: ios ? 0 : 320
     minimumHeight: ios ? 0 : 540
     visible: true
     property bool windowsFrameless: Qt.platform.os === "windows"

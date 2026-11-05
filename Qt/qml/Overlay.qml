@@ -30,6 +30,7 @@ Item {
     readonly property var chromeHostWindow: windows && controlledHost ? rhineHostWindow : hostWindow
     property bool frameless: controlledHost && Qt.platform.os === "windows"
     readonly property bool ios: Qt.platform.os === "ios"
+    readonly property bool compactLayout: rhine.state.compactLayout === true
 
     // 原 Main.qml 直接引用组件内部的 id，拆层后改为函数调用，效果等价。
     function focusInputLayer() {
@@ -280,6 +281,15 @@ Item {
                 accountField.forceActiveFocus();
             }
         }
+        readonly property bool accountVisible: !overlay.compactLayout || !!rhine.state.compactaccount
+        readonly property bool captchaVisible: !overlay.compactLayout || !!rhine.state.compactcaptcha
+        readonly property bool submitVisible: !overlay.compactLayout || !!rhine.state.compactsubmit
+        readonly property real accountTop: overlay.compactLayout && rhine.state.compactaccount
+            ? rhine.state.compactaccount.y : 430
+        readonly property real captchaTop: overlay.compactLayout && rhine.state.compactcaptcha
+            ? rhine.state.compactcaptcha.y : 541
+        readonly property real submitTop: overlay.compactLayout && rhine.state.compactsubmit
+            ? rhine.state.compactsubmit.y : (rhine.state.modal === "login" ? 611 : 530)
         function submit() {
             if (rhine.state.modal === "login" && rhine.state.loginBusy) {
                 return;
@@ -288,8 +298,9 @@ Item {
             captchaField.text = "";
         }
         Rectangle {
+            visible: formFields.accountVisible
             x: 0
-            y: 430 * overlay.stageScale
+            y: formFields.accountTop * overlay.stageScale
             width: rhine.state.modal === "login" ? parent.width - 180 * overlay.stageScale : parent.width
             height: 55 * overlay.stageScale
             color: rhine.state.dark ? "#30312b" : "#d9d8ce"
@@ -297,8 +308,9 @@ Item {
         TextInput {
             id: accountField
             objectName: "accountField"
+            visible: formFields.accountVisible
             x: 14 * overlay.stageScale
-            y: 430 * overlay.stageScale
+            y: formFields.accountTop * overlay.stageScale
             width: parent.width - (rhine.state.modal === "login" ? 208 : 28) * overlay.stageScale
             height: 55 * overlay.stageScale
             verticalAlignment: TextInput.AlignVCenter
@@ -319,9 +331,9 @@ Item {
             Keys.onEscapePressed: rhine.action("close-modal")
         }
         Rectangle {
-            visible: rhine.state.modal === "login"
+            visible: rhine.state.modal === "login" && formFields.accountVisible
             x: parent.width - width
-            y: 430 * overlay.stageScale
+            y: formFields.accountTop * overlay.stageScale
             width: 170 * overlay.stageScale
             height: 55 * overlay.stageScale
             enabled: !rhine.state.loginBusy && rhine.state.smsRetrySeconds === 0 && accountField.text.length === 11
@@ -346,9 +358,9 @@ Item {
             }
         }
         Rectangle {
-            visible: rhine.state.modal === "login"
+            visible: rhine.state.modal === "login" && formFields.captchaVisible
             x: 0
-            y: 541 * overlay.stageScale
+            y: formFields.captchaTop * overlay.stageScale
             width: parent.width
             height: 55 * overlay.stageScale
             color: rhine.state.dark ? "#30312b" : "#d9d8ce"
@@ -356,9 +368,9 @@ Item {
         TextInput {
             id: captchaField
             objectName: "captchaField"
-            visible: rhine.state.modal === "login"
+            visible: rhine.state.modal === "login" && formFields.captchaVisible
             x: 14 * overlay.stageScale
-            y: 541 * overlay.stageScale
+            y: formFields.captchaTop * overlay.stageScale
             width: parent.width - 28 * overlay.stageScale
             height: 55 * overlay.stageScale
             verticalAlignment: TextInput.AlignVCenter
@@ -373,8 +385,9 @@ Item {
             Keys.onEscapePressed: rhine.action("close-modal")
         }
         Rectangle {
+            visible: formFields.submitVisible
             x: parent.width - width
-            y: (rhine.state.modal === "login" ? 611 : 530) * overlay.stageScale
+            y: formFields.submitTop * overlay.stageScale
             enabled: rhine.state.modal !== "login" || !rhine.state.loginBusy
             width: 170 * overlay.stageScale
             height: 36 * overlay.stageScale
@@ -432,19 +445,20 @@ Item {
         id: searchInput
         objectName: "musicSearchInput"
         verticalAlignment: TextInput.AlignVCenter
-        leftPadding: 18 * overlay.stageScale
+        leftPadding: overlay.compactLayout ? 0 : 18 * overlay.stageScale
         rightPadding: 14 * overlay.stageScale
         renderType: Text.NativeRendering
-        visible: rhine.state.modal === "search" || rhine.state.modal === "saved"
+        visible: (rhine.state.modal === "search" || rhine.state.modal === "saved")
+            && (!overlay.compactLayout || rhine.state.compactInputVisible === true)
         enabled: !rhine.state.closing
         x: (rhine.state.inputX || 0) * overlay.stageScale
         y: ((rhine.state.inputY || 302) + (rhine.state.modalOffset || 0)) * overlay.stageScale
         width: (rhine.state.inputWidth || 0) * overlay.stageScale
-        height: 54 * overlay.stageScale
+        height: (overlay.compactLayout ? (rhine.state.inputHeight || 54) : 54) * overlay.stageScale
         font.family: rhineFontFamily
-        font.pixelSize: 22 * overlay.stageScale
+        font.pixelSize: (overlay.compactLayout ? 14 * rhine.state.compactUnit : 22) * overlay.stageScale
         color: (rhine.state.modal === "search" || rhine.state.modal === "saved") ? (rhine.state.dark ? "#e9e7da" : "#222a25") : (rhine.state.dark ? "#ebebeb" : "#141613")
-        opacity: rhine.state.modalOpacity || 0
+        opacity: overlay.compactLayout ? 1 : (rhine.state.modalOpacity || 0)
         clip: true
         cursorVisible: activeFocus && !rhine.performance.idle
         selectByMouse: true

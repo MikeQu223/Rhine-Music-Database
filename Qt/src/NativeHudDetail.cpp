@@ -162,6 +162,11 @@ void NativeHud::detail(double width, double opacity) {
         [this](QString key, double x, double y, double width, double height) {
             image(key, x, y, width, height);
         }};
+    if (m_responsive.compact()) {
+        m_responsive.setSong(card);
+        restore();
+        return;
+    }
     SongDetailCard::paint(card, canvas);
     const bool albumTracks = tab == "history";
     if (albumTracks) {
@@ -457,8 +462,10 @@ void NativeHud::container(double width, double opacity) {
     } else if (!m_sortNotice.isEmpty()) {
         card.hint = m_sortNotice;
     }
-    for (int row = 0; row < layout.rowCount && trackOffset + row < songs.size(); ++row) {
-        const auto index = trackOffset + row;
+    const int firstRow = m_responsive.compact() ? 0 : trackOffset;
+    const int rowLimit = m_responsive.compact() ? int(songs.size()) : layout.rowCount;
+    for (int row = 0; row < rowLimit && firstRow + row < songs.size(); ++row) {
+        const auto index = firstRow + row;
         const auto rawIndex = m_trackOrder.at(index);
         const auto song = songs.at(rawIndex).toObject();
         CollectionDetailCard::Row entry;
@@ -503,6 +510,10 @@ void NativeHud::container(double width, double opacity) {
         [this](QString key, double x, double y, double width, double height) {
             image(key, x, y, width, height);
         }};
+    if (m_responsive.compact()) {
+        m_responsive.setCollection(card);
+        return;
+    }
     save();
     alpha(opacity);
     button("← 返回曲目资料库   ESC", layout.left + 19, 211, sideWidth, 54, "music:directory", 20, "demibold");

@@ -4,6 +4,7 @@
 #ifdef Q_OS_DARWIN
 #include "render/MetalFxBackend.h"
 #include "render/MetalFramePresentation.h"
+#include "render/FrameGenerationHistory.h"
 #include "render/MetalTemporalResolve.h"
 #endif
 #include "render/CoverPrepBudget.h"
@@ -1287,7 +1288,8 @@ class Renderer {
                 {float(size.width()), float(size.height()), theme, f["viewer"].toBool() ? 1.f : 0.f},
                 {n(f, "near"), n(f, "far"), n(f, "detail"), f["reference"].toBool() ? 1.f : 0.f},
                 rhi->clipSpaceCorrMatrix(),
-                {rhi->isYUpInFramebuffer() ? 1.f : 0.f, 0, 0, 0},
+                {rhi->isYUpInFramebuffer() ? 1.f : 0.f, n(f, "songPanelTop"), n(f, "songPanelTransition"),
+                 f["mobileHud"].toBool() ? 1.f : 0.f},
                 emitter,
                 emitter.inverted(),
                 // 查看封面页不再叠加原版像素，光照强度无需再压低，否则整页偏暗发平。
@@ -2156,7 +2158,14 @@ class Renderer {
 #if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
         // MRT：场景目标除颜色外还挂着运动矢量附件，必须为**每个**颜色附件声明 blend。
         // 只声明一个时 location=1 的写出会被静默丢弃（表现为运动矢量恒为 0）。
-        if (surfaceMrt) {
+#ifdef Q_OS_DARWIN
+        if (kind == "clearMotion") {
+            QRhiGraphicsPipeline::TargetBlend protectedColor;
+            protectedColor.colorWrite = {};
+            p->setTargetBlends({protectedColor, QRhiGraphicsPipeline::TargetBlend{}});
+        } else
+#endif
+            if (surfaceMrt) {
             p->setTargetBlends({b, QRhiGraphicsPipeline::TargetBlend{}});
         } else {
             p->setTargetBlends({b});
@@ -2194,7 +2203,7 @@ class Renderer {
                     5, QRhiShaderResourceBinding::FragmentStage, white, linear));
                 values.push_back(QRhiShaderResourceBinding::sampledTexture(
                     6, QRhiShaderResourceBinding::FragmentStage, normalAtlas, linear));
-            } else {
+            } else if (kind != "clearMotion") {
                 values.push_back(QRhiShaderResourceBinding::sampledTexture(
                     2, QRhiShaderResourceBinding::FragmentStage, color.texture, linear));
             }
@@ -2202,7 +2211,7 @@ class Renderer {
             create(layout);
             pipelineLayouts[kind] = layout;
         }
-        p->setSampleCount(geo ? sampleCount : 1);
+        p->setSampleCount(geo || kind == "clearMotion" ? sampleCount : 1);
         p->setShaderResourceBindings(pipelineLayouts[kind]);
         p->setRenderPassDescriptor(rp);
         create(p);
@@ -3390,6 +3399,24 @@ class Renderer {
             }
         }
         cb->beginPass(color.rt, QColor::fromRgbF(background.x(), background.y(), background.z()), {1, 0});
+#ifdef Q_OS_DARWIN
+        if (motionTarget && frame["mobileHud"].toBool()) {
+            // beginPass 的同一清屏色也会落到速度附件；空白背景必须是零位移。
+            // 保持主颜色和深度不变，在当前 pass 内只归零第二个颜色附件。
+            auto &clearBinding = postBindings["clearMotion"];
+            if (!clearBinding) {
+                const auto stages =
+                    QRhiShaderResourceBinding::VertexStage | QRhiShaderResourceBinding::FragmentStage;
+                clearBinding = bindings({QRhiShaderResourceBinding::uniformBuffer(0, stages, globalBuffer)});
+            }
+            cb->setGraphicsPipeline(pipeline("clearMotion", clearBinding, color.rp));
+            cb->setShaderResources(clearBinding);
+            cb->setViewport({0, 0, float(size.width()), float(size.height())});
+            cb->draw(3);
+            ++drawCalls;
+        }
+#endif
+
 #ifdef Q_OS_LINUX
         const double dbgBuildMs = double(dbgClock.nsecsElapsed()) / 1e6;
         QElapsedTimer dbgRecordClock;
@@ -3522,6 +3549,7 @@ class ItemRenderer : public QQuickRhiItemRenderer {
     Engine *capabilityEngine = nullptr;
     bool hasOrigin = false;
     double lastOrigin = 0;
+    RhineRender::FrameGenerationHistory generationHistory;
     std::unique_ptr<RhineRender::MetalFramePresentation> presentation;
     bool sourceAnimating = false;
     bool capabilityKnown = false;
@@ -3659,8 +3687,7 @@ class ItemRenderer : public QQuickRhiItemRenderer {
         const auto previousPostDraws = renderer->postProcess->drawCalls;
 #endif
 #ifdef Q_OS_DARWIN
-        // 真实渲染只有 60Hz，可能整帧错过引擎的 temporalReset；坐标原点变化同样会让
-        // 实例 ID 重新编码，所以渲染线程再按 stats 自行复查一次，避免历史跨坐标系配对。
+        // 横屏沿用原有原点检测；手机额外隔离换曲、布局和封面变更的历史。
         const auto origin = frame.value("stats").toObject().value("coordinateOrigin");
         bool originReset = false;
         if (origin.isDouble()) {
@@ -3668,9 +3695,10 @@ class ItemRenderer : public QQuickRhiItemRenderer {
             lastOrigin = origin.toDouble();
             hasOrigin = true;
         }
-        const bool reset = frame.value("temporalReset").toBool() || originReset;
+        const bool contextReset = generationHistory.update(frame, item, cover.cacheKey());
+        const bool reset = frame.value("temporalReset").toBool() || originReset || contextReset;
         QJsonObject submitted = frame;
-        if (reset && !frame.value("temporalReset").toBool()) {
+        if (reset) {
             submitted["temporalReset"] = true;
         }
         const bool useGeneration =

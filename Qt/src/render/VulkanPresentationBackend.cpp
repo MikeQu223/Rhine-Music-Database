@@ -62,7 +62,7 @@ class VulkanPresentationBackend final : public PresentationBackend {
         m_window->setVulkanInstance(m_instance.get());
 #ifdef Q_OS_WIN
         m_window->setTitle(QStringLiteral("RHINE MUSIC DATABASE"));
-        m_window->setMinimumSize(QSize(960, 540));
+        m_window->setMinimumSize(QSize(320, 540));
         // 必须在创建 HWND 和 Vulkan surface 前确定无边框属性。
         m_window->setFlags(Qt::Window | Qt::FramelessWindowHint | Qt::WindowTitleHint |
                            Qt::WindowSystemMenuHint | Qt::WindowMinMaxButtonsHint |

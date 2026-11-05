@@ -1,5 +1,8 @@
 #include "PresentationBackend.h"
 #include "PresentationWindow.h"
+#ifdef Q_OS_IOS
+#include "IOSWindow.h"
+#endif
 
 #include <QCoreApplication>
 #include <QElapsedTimer>
@@ -31,11 +34,11 @@ class RhiPresentationBackend final : public PresentationBackend {
         m_window->setSurfaceType(QSurface::MetalSurface);
         m_window->setTitle(QStringLiteral("RHINE MUSIC DATABASE"));
 #ifndef Q_OS_IOS
-        m_window->setMinimumSize(QSize(960, 540));
+        m_window->setMinimumSize(QSize(320, 540));
 #endif
         m_window->resize(logicalSize);
 #ifdef Q_OS_IOS
-        m_window->reportContentOrientationChange(Qt::LandscapeOrientation);
+        m_window->reportContentOrientationChange(iosContentOrientation());
         m_window->showFullScreen();
 #else
         m_window->show();

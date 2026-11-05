@@ -92,8 +92,9 @@ void NativeHud::discoverPanel(double x, double y, double width) {
     discoverScroll = std::clamp(discoverScroll, 0., discoverScrollMaximum);
     model.scroll = discoverScroll;
     const auto indices =
-        model.categoryPicker
-            ? QVector<int>{}
+        model.categoryPicker ? QVector<int>{}
+        : m_responsive.compact()
+            ? m_responsive.discoverVisibleIndices(model.loadedCount, model.tabs.size(), model.tab)
             : DiscoverMusicCard::visibleIndices(model.bounds, model.loadedCount, model.scroll);
     QStringList urls;
     for (const auto index : indices) {
@@ -105,14 +106,21 @@ void NativeHud::discoverPanel(double x, double y, double width) {
     const auto scope = music.provider + ":" + QString::number(music.accountGeneration()) + ":" +
                        QString::number(discover.generation);
     m_discoverArtwork->show(scope, urls);
-    for (int index = 0; index < urls.size(); ++index) {
-        const auto item = discover.items.at(indices.at(index)).toObject();
+    QVector<int> entryIndices = indices;
+    if (m_responsive.compact() && !model.categoryPicker) {
+        entryIndices.clear();
+        for (int index = 0; index < discover.items.size(); ++index) {
+            entryIndices.append(index);
+        }
+    }
+    for (const auto index : entryIndices) {
+        const auto item = discover.items.at(index).toObject();
         DiscoverMusicCard::Entry entry;
-        entry.index = indices.at(index);
+        entry.index = index;
         entry.title = item["title"].toString();
         entry.artist = item["artist"].toString();
         entry.kind = item["kind"].toString();
-        const auto key = m_discoverArtwork->image(urls.at(index));
+        const auto key = m_discoverArtwork->image(item["cover"].toString());
         const auto cover = m_host->image(key);
         if (!cover.isNull()) {
             entry.image = key;
@@ -144,5 +152,9 @@ void NativeHud::discoverPanel(double x, double y, double width) {
         },
         [this](QString value, double size, QString weight) { return m_glyphs->width(value, size, weight); },
         [this](QJsonArray command) { op(command); }};
+    if (m_responsive.compact()) {
+        m_responsive.setDiscover(model);
+        return;
+    }
     DiscoverMusicCard::paint(model, canvas);
 }

@@ -1,6 +1,9 @@
 #include "NativeHud.h"
 #include "MusicData.h"
 #include <QJsonDocument>
+#include <QUrl>
+#include "MusicDiscover.h"
+#include "DiscoverArtwork.h"
 #include <algorithm>
 #include <cmath>
 
@@ -168,6 +171,10 @@ QRectF NativeHud::detailBounds(double width) const {
     return {layout.left, layout.top, width - layout.left * 2, layout.bottom - layout.top};
 }
 QJsonObject NativeHud::state() const {
+    return m_responsive.state(sourceState());
+}
+
+QJsonObject NativeHud::sourceState() const {
     const auto bounds = modalBounds(width);
     const auto rect = [](const std::optional<QRectF> &value) -> QJsonValue {
         if (!value) {
@@ -176,7 +183,11 @@ QJsonObject NativeHud::state() const {
         return QJsonObject{
             {"x", value->x()}, {"y", value->y()}, {"width", value->width()}, {"height", value->height()}};
     };
-    return {{"inputX", bounds.x() + 53},
+    return {{"lyricsMode", lyricsMode},
+            {"archiveName", m_music->libraryName()},
+            {"archiveIndex", m_music->libraryIndex()},
+            {"archiveTotal", m_music->libraryTotal()},
+            {"inputX", bounds.x() + 53},
             {"inputY", bounds.y() + 180},
             {"inputWidth", bounds.width() - 106 - libraryToolbarActionWidth()},
             // QML 手势层与原生结果视口共用同一组舞台坐标。
@@ -231,9 +242,13 @@ void NativeHud::draw(QJsonObject next, double stageWidth, double time) {
         dark = m_host->systemDark();
         m_scene.theme(dark);
     }
+    m_responsive.resize(stageWidth);
+    m_music->followPlaybackDetails = !m_responsive.compact();
+    stageWidth = m_responsive.sourceWidth(stageWidth);
     frame = next;
     width = stageWidth;
     lastTime = time;
+    m_responsive.setMotion(time, reduced);
     commands = {};
     hits = {};
     playerBounds.reset();
@@ -269,10 +284,119 @@ void NativeHud::draw(QJsonObject next, double stageWidth, double time) {
         }
     }
     if (!modal.isEmpty()) {
+        if (m_responsive.compact()) {
+            commands = {};
+            hits = {};
+        }
         modalDraw(width);
     }
     if (frame["mode"] != "boot") {
         playerBar(0, 984, width);
+    }
+    if (frame["mode"] == "boot") {
+        return;
+    }
+    if (m_responsive.compact()) {
+        const auto scope = modal + ":" + frame["mode"].toString() + ":" +
+                           m_music->current.value("kind").toString() + ":" +
+                           m_music->current.value("id").toString() + ":" + tab;
+        auto mobile = sourceState();
+        mobile["lyricsMode"] = lyricsMode;
+        mobile["selectedSongIsCurrent"] =
+            PlaybackQueue::identity(m_music->current) == PlaybackQueue::identity(m_music->player.current);
+        const auto selectedLiked = m_music->songLiked(m_music->current);
+        mobile["selectedSongLiked"] =
+            selectedLiked ? QJsonValue(*selectedLiked) : QJsonValue(QJsonValue::Null);
+        mobile["lyricDocument"] = m_music->player.lyrics.document();
+        mobile["lyricIndex"] = m_music->player.lyrics.index;
+        mobile["lyricMessage"] = m_music->player.lyrics.message;
+        mobile["playerQuality"] = m_music->player.actualQuality;
+        mobile["playerQueueCount"] = m_music->player.queue.size();
+        mobile["providerName"] = m_music->providerName();
+        mobile["loggedIn"] = !m_music->uid.isEmpty();
+        mobile["userName"] = m_music->nickname;
+        mobile["editingSettingId"] = editingSettingId;
+        mobile["musicCollection"] = musicCollection;
+        mobile["searchKind"] = m_music->searchKind;
+        mobile["collectionLabels"] = QJsonArray::fromStringList(m_music->columns);
+        mobile["collectionTitle"] = m_music->columns.value(musicCollection);
+        mobile["provider"] = m_music->provider;
+        mobile["canCreatePlaylist"] = m_music->editable();
+        mobile["officialPlayback"] = PlatformFeatures::OfficialPlayback;
+        mobile["detailBody"] = body();
+        // 目录中的物理唱片会跨列排列，栏目始终使用最外层目录的来源。
+        int sourceLane = m_music->selectedLane;
+        for (auto directory = m_music->directory; directory; directory = directory->parent) {
+            sourceLane = directory->parentLane;
+        }
+        const int columnIndex = m_music->sourceOrder().indexOf(sourceLane) + 1;
+        QJsonArray archiveSources;
+        for (const int lane : m_music->sourceOrder()) {
+            archiveSources.append(QJsonObject{
+                {"lane", lane}, {"label", m_music->columns.value(lane)}, {"selected", lane == sourceLane}});
+        }
+        mobile["archiveSources"] = archiveSources;
+        const auto archiveItems = m_music->libraryItems();
+        mobile["archiveRows"] = archiveItems;
+        mobile["canPlayArchive"] =
+            !archiveItems.isEmpty() && archiveItems.first().toObject()["kind"] == "song";
+        mobile["archiveColumnIndex"] = columnIndex;
+        if (modal == "search" || modal == "saved") {
+            QJsonArray entries;
+            const int lane = modal == "search" ? 0 : musicCollection;
+            const auto values = rows(lane);
+            if (modal == "saved" && lane >= 2) {
+                if (!m_savedArtwork) {
+                    m_savedArtwork = new DiscoverArtwork(m_host, this);
+                }
+                QStringList urls;
+                for (int index = 0; index < values.size(); ++index) {
+                    if (m_responsive.visible(211 + (index / 2) * 224., 217)) {
+                        urls.append(values[index].value["cover"].toString());
+                    }
+                }
+                m_savedArtwork->show(m_music->provider + ":" + QString::number(m_music->accountGeneration()) +
+                                         ":" + QString::number(lane),
+                                     urls);
+            }
+            for (const auto &row : values) {
+                auto value = row.value;
+                if (modal == "saved" && lane >= 2) {
+                    value["image"] = m_savedArtwork->image(value["cover"].toString());
+                }
+                const auto route =
+                    value["kind"] == "group"
+                        ? "music:expand:" +
+                              QString::fromUtf8(QUrl::toPercentEncoding(value["key"].toString()))
+                        : "music:result:" + QString::number(lane) + ":" + QString::number(row.index);
+                entries.append(QJsonObject{{"value", value}, {"action", route}});
+            }
+            mobile["resultRows"] = entries;
+        }
+        const auto mobileScope = scope + ":" + (lyricsMode ? "lyrics" : "info") + ":" +
+                                 m_music->discover->tab + ":" + QString::number(musicCollection) + ":" +
+                                 artistTab + ":" + query;
+        m_responsive.arrange(commands, hits, mobile, mobileScope, *m_glyphs);
+        QString pageKey = modal + ":" + frame["mode"].toString();
+        if (lyricsMode && modal.isEmpty()) {
+            pageKey = "lyrics";
+        } else if (modal.isEmpty() && frame["mode"] == "detail") {
+            pageKey += ":" + m_music->current["key"].toString();
+        }
+        if (!lyricsMode && modal.isEmpty() && frame["mode"] == "archive") {
+            pageKey +=
+                ":" + QString::number(mobile["archiveColumnIndex"].toInt()) + ":" + m_music->libraryName();
+        } else if (modal == "discover") {
+            pageKey += ":" + m_music->discover->tab;
+        } else if (modal == "search") {
+            pageKey += ":" + m_music->searchKind;
+        }
+        m_mobileTransition.apply(commands, hits, pageKey, time, 1080, reduced, frame["detail"].toDouble());
+
+        // 列表滚动把固定槽位上的歌曲交给原有选择流程；下一帧再绘制新的选中状态。
+        if (const int selection = m_responsive.takeArchiveSelection(); selection >= 0) {
+            m_music->selectLibraryIndex(selection);
+        }
     }
 }
 void NativeHud::archiveMask(double width) {

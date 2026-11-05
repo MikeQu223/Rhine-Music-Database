@@ -452,7 +452,7 @@ void MusicLibrary::leaveDirectory(bool restore) {
 }
 
 /** 切歌沿用原物理选中与取出顺序，队列外曲目建立可返回的播放队列目录。 */
-void MusicLibrary::followPlayback(QJsonObject value) {
+void MusicLibrary::followPlayback(QJsonObject value, bool showDetails) {
     if (current.value("key") == value["key"] && current.value("id") == value["id"]) {
         return;
     }
@@ -496,8 +496,9 @@ void MusicLibrary::followPlayback(QJsonObject value) {
     index = MusicData::indexOfId(folder->orderedSongs(), value["id"].toString());
     const auto cell = (index + folder->anchor) % 40;
     const auto target = physicalSlots[cell / 8].value(cell % 8, -1);
-    selectDirectory(index, "detail", target == physical ? "row" : "", target == physical ? 8 : 1);
-    if (!frame.isEmpty()) {
+    const QString mode = showDetails ? QStringLiteral("detail") : frame["mode"].toString("archive");
+    selectDirectory(index, mode, target == physical ? "row" : "", target == physical ? 8 : 1);
+    if (showDetails && !frame.isEmpty()) {
         frame["mode"] = "detail";
     }
 }

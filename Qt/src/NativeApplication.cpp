@@ -171,6 +171,43 @@ void NativeApplication::mediaAction(QString action) {
 }
 
 void NativeApplication::pointer(QString type, double x, double y) {
+    // 一次按压从 HUD 开始就始终归 HUD，避免列表拖动穿透成场景的横向换列。
+    if (type == "pointerdown") {
+        m_hudPointerSequence = false;
+        if (hud.compactLayout() && !hud.frame["viewer"].toBool()) {
+            const double listTop = hud.state()["archiveListY"].toDouble();
+            m_hudPointerSequence = listTop > 0 && y >= listTop;
+            for (const auto &value : hud.hits) {
+                const auto hit = value.toObject();
+                const QRectF rect(hit["x"].toDouble(), hit["y"].toDouble(), hit["width"].toDouble(),
+                                  hit["height"].toDouble());
+                if (rect.contains(x, y)) {
+                    m_hudPointerSequence = true;
+                    break;
+                }
+            }
+        }
+    }
+    if (m_hudPointerSequence) {
+        m_dragging = false;
+        m_moved = false;
+        m_scene->pointer("pointercancel", 0, 0);
+        if (type == "pointerup" || type == "pointercancel" || type == "pointerleave") {
+            m_hudPointerSequence = false;
+        }
+        return;
+    }
+    // 窄屏阅读页面覆盖整个场景；资料库主界面仍可在列表以外拖动真实场景。
+    if (hud.compactLayout() && !hud.frame["viewer"].toBool()) {
+        const auto region = hud.state()["playerBounds"].toObject();
+        if (!hud.modal.isEmpty() || hud.frame["mode"] == "detail" ||
+            (!region.isEmpty() && y >= region["y"].toDouble())) {
+            m_dragging = false;
+            m_moved = false;
+            m_scene->pointer("pointercancel", 0, 0);
+            return;
+        }
+    }
     // 播放栏覆盖场景；在原生分发边界也隔离留白，防止后端调用穿透或残留拖动。
     if (hud.playerBounds && hud.playerBounds->contains(x, y)) {
         m_dragging = false;

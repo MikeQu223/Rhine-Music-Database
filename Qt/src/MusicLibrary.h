@@ -66,6 +66,7 @@ class MusicLibrary : public QObject {
     void suggest(QString text);
     void showSource(int lane);
     void selectResult(int index, int lane, bool open = true);
+    void selectLibraryIndex(int index);
     void next(int direction);
     void loadMoreSource(int lane);
     void refreshPersonal(int lane);
@@ -73,7 +74,8 @@ class MusicLibrary : public QObject {
     void sameAlbum();
     void loadSongWiki();
     void play(bool byUser = true);
-    void playDirectory();
+    void playDirectory(bool includeAllSongSources = false);
+    void playCollection(QJsonObject value);
     void playOfficial(QJsonObject value = {});
     struct QueueSource {
         QJsonArray ids;
@@ -132,7 +134,8 @@ class MusicLibrary : public QObject {
     void showDirectoryInfo();
     void returnToDirectory();
     void leaveDirectory(bool restore = true);
-    void followPlayback(QJsonObject track);
+    void followPlayback(QJsonObject track, bool showDetails = true);
+    bool followPlaybackDetails = true;
     Host *host;
     MusicApi api;
     MusicPlayer player;
@@ -231,6 +234,7 @@ class MusicLibrary : public QObject {
     QHash<QString, Cooldown> m_cooldowns;
     quint64 m_generation = 0;
     quint64 m_selectionGeneration = 0;
+    quint64 m_collectionPlayGeneration = 0;
     quint64 m_accountGeneration = 0;
     quint64 m_directoryGeneration = 0;
     quint64 m_wikiGeneration = 0;

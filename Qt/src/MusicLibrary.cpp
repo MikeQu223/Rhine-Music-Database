@@ -78,7 +78,8 @@ MusicLibrary::MusicLibrary(Host *host, const QJsonObject &content, QObject *pare
         ++revision;
         emit playbackInvalidated();
     });
-    connect(&player, &MusicPlayer::trackSelected, this, &MusicLibrary::followPlayback);
+    connect(&player, &MusicPlayer::trackSelected, this,
+            [this](QJsonObject track) { followPlayback(track, followPlaybackDetails); });
 }
 
 MusicLibrary::~MusicLibrary() = default;
@@ -643,6 +644,27 @@ void MusicLibrary::selectResult(int index, int lane, bool open) {
     }
 }
 
+/** 选中资料库中的指定序号，并把该序号所在槽位移入场景窗口。 */
+void MusicLibrary::selectLibraryIndex(int index) {
+    if (directory) {
+        selectDirectory(index);
+        return;
+    }
+    const auto lane = selectedLane;
+    const int count = int(sourceItems(lane).size());
+    if (index < 0 || index >= count || physicalSlots[lane].isEmpty()) {
+        return;
+    }
+    // 槽位窗口外的序号先在 offsets 中平移，再由统一的 observe 流程更新当前对象。
+    const int slot = std::clamp(index - offsets[lane], 0, int(physicalSlots[lane].size()) - 1);
+    offsets[lane] = index - slot;
+    selectedPhysical = -1;
+    changed();
+    const int physical = physicalSlots[lane].value(slot, -1);
+    emit selectionRequested(physical, {});
+    observe(physical);
+}
+
 void MusicLibrary::next(int direction) {
     if (directory) {
         navigateDirectory(direction, "row");
@@ -956,6 +978,58 @@ void MusicLibrary::play(bool byUser) {
     player.loadQueue(source.ids, source.items);
 }
 
+/** 从歌单标题直接播放；异步响应受选择代数隔离，队列仍按来源 ID 完整补齐。 */
+void MusicLibrary::playCollection(QJsonObject value) {
+    if (value["kind"] != "playlist" && value["kind"] != "album") {
+        return;
+    }
+    const auto start = [this](QJsonArray songs, QJsonArray ids) {
+        if (songs.isEmpty()) {
+            status = "歌单暂无可播放曲目";
+            changed();
+            return;
+        }
+        player.play(songs.first().toObject(), songs);
+        player.loadQueue(ids, songs);
+    };
+    // 标题播放不能作废当前详情请求，否则其 loading 状态可能无法收束。
+    const auto token = ++m_collectionPlayGeneration;
+    const auto latest = valid(token, &m_collectionPlayGeneration);
+    const auto selected = valid(m_selectionGeneration, &m_selectionGeneration);
+    const auto alive = [latest, selected] { return latest() && selected(); };
+    if (isLocal()) {
+        start(local->tracks(value), {});
+        return;
+    }
+    if (isSiren() && value["localCollection"].toBool() && collections) {
+        const auto ids = QJsonArray::fromStringList(collections->tracks(value["id"].toString()));
+        api.call(
+            "songs", {MusicData::slice(ids, 0, 1)},
+            [this, start, ids](MusicReply reply) {
+                if (reply.ok()) {
+                    start(reply.value.toArray(), ids);
+                } else {
+                    status = "读取歌单失败：" + reply.error;
+                    changed();
+                }
+            },
+            alive);
+        return;
+    }
+    api.call(
+        "detail", {value},
+        [this, start](MusicReply reply) {
+            if (!reply.ok()) {
+                status = "读取歌单失败：" + reply.error;
+                changed();
+                return;
+            }
+            const auto result = reply.value.toArray();
+            start(result.at(1).toArray(), result.at(2).toArray());
+        },
+        alive);
+}
+
 /** 当前单曲所在的歌曲列表；目录外优先使用选中上下文。 */
 MusicLibrary::QueueSource MusicLibrary::currentSource() const {
     auto source = directorySource();
@@ -1010,8 +1084,13 @@ MusicLibrary::QueueSource MusicLibrary::directorySource() const {
 }
 
 /** 一键播放 */
-void MusicLibrary::playDirectory() {
-    if (!directory && selectedLane != 1 && !(isSiren() && selectedLane == 3)) {
+void MusicLibrary::playDirectory(bool includeAllSongSources) {
+    // 原桌面入口保留来源限制；手机标题按钮可以播放任意纯歌曲来源。
+    if (!directory && !includeAllSongSources && selectedLane != 1 && !(isSiren() && selectedLane == 3)) {
+        return;
+    }
+    const auto items = includeAllSongSources ? libraryItems() : QJsonArray();
+    if (!directory && !items.isEmpty() && items.first().toObject()["kind"] != "song") {
         return;
     }
     // 补全喜欢的歌曲后再播放
@@ -1020,7 +1099,10 @@ void MusicLibrary::playDirectory() {
         loadMoreSource(1);
         return;
     }
-    const auto source = directorySource();
+    auto source = directorySource();
+    if (source.items.isEmpty() && !directory && includeAllSongSources) {
+        source.items = items;
+    }
     if (source.items.isEmpty()) {
         return;
     }

@@ -15,9 +15,12 @@ info = plistlib.loads((app / "Info.plist").read_bytes())
 assert info["CFBundleIdentifier"] == "rhine.music.database"
 assert "audio" in info["UIBackgroundModes"]
 landscape_orientations = {"UIInterfaceOrientationLandscapeLeft", "UIInterfaceOrientationLandscapeRight"}
-for key in ["UISupportedInterfaceOrientations", "UISupportedInterfaceOrientations~ipad"]:
-    assert set(info[key]) == landscape_orientations, f"Portrait orientation enabled: {key}"
+phone_orientations = info["UISupportedInterfaceOrientations"]
+assert set(phone_orientations) == {"UIInterfaceOrientationPortrait"}, "iPhone must be portrait only"
+ipad_orientations = info["UISupportedInterfaceOrientations~ipad"]
+assert set(ipad_orientations) == landscape_orientations, "iPad must be landscape only"
 assert info.get("UIRequiresFullScreen") is True
+assert "CADisableMinimumFrameDurationOnPhone" not in info, "iPhone refresh opt-in must remain disabled"
 
 
 def system_bundle_identifier(directory):

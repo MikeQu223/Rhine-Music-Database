@@ -205,6 +205,26 @@ void NativeHud::settingsPanel(double x, double y, double width) {
     const auto firstHit = hits.size();
     save();
     clip(viewport.x(), viewport.y(), viewport.width(), viewport.height());
+    if (m_responsive.compact()) {
+        m_responsive.setSettings(model);
+        const auto parentCommands = commands;
+        const auto parentHits = hits;
+        for (const auto &section : model.sections) {
+            const auto renderer = section.meta->customRenderer;
+            if (renderer.isEmpty() || renderer == "provider-card") {
+                continue;
+            }
+            commands = {};
+            hits = {};
+            paintSettingsCustomSection(renderer, {x + 53, 220, width - 106, section.meta->customHeight}, 0);
+            m_responsive.setSettingsCustom(renderer,
+                                           ResponsiveHudContent::legacy(commands, hits, sourceState()));
+        }
+        commands = parentCommands;
+        hits = parentHits;
+        restore();
+        return;
+    }
     SettingsCard::paint(model, layout, colors, canvas);
     restore();
     HudScroll::clipHits(hits, int(firstHit), viewport);

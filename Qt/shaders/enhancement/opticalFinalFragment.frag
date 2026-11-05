@@ -27,7 +27,7 @@ vec4 effect() {
     float theme = g.viewport.z;
     // 在已有合成中完成轻量边缘柔化，不增加渲染目标或单独的全屏模糊通道。
     float distanceFromFocus = smoothstep(0.05, 0.48, abs(v_uv.y - 0.52));
-    float soften = (1.0 - g.clip.z) * (1.0 - g.viewport.w);
+    float soften = (1.0 - g.clip.z) * (1.0 - g.viewport.w) * (1.0 - backend.w);
     vec2 texel = (1.0 + 6.0 * distanceFromFocus * soften) / vec2(textureSize(color, 0));
     vec3 hdr = texture(color, rtUV(v_uv)).rgb * 4.0;
     vec3 neighbors = texture(color, rtUV(v_uv + vec2(texel.x, 0.0))).rgb;
@@ -42,7 +42,7 @@ vec4 effect() {
     hdr /= 16.0;
     vec3 rgb = outputColor(aces(hdr, mix(0.76, 0.98, theme)));
     float shade = g.clip.z;
-    if (g.viewport.w < 0.5 && g.clip.w < 0.5) {
+    if (g.viewport.w < 0.5 && g.clip.w < 0.5 && backend.w < 0.5) {
         vec3 paper = mix(vec3(222, 219, 215) / 255, vec3(17, 24, 27) / 255, theme);
         float top = mix(.72 * (1 - saturate(v_uv.y / .50)), .82 * (1 - saturate(v_uv.y / .36)), theme);
         rgb = mix(rgb, mix(vec3(224, 221, 216) / 255, paper, theme), top * (1 - shade));
@@ -57,6 +57,34 @@ vec4 effect() {
                      : v_uv.x < .68 ? mix(.2, .92, (v_uv.x - .59) / .09)
                                     : mix(.92, 1.0, (v_uv.x - .68) / .32);
         rgb = mix(rgb, paper, side * shade);
+    }
+    // 手机控制面板：上缘渐变过渡到下部亚克力，场景只在面板内被磨砂。
+    // backend = (Y 翻转, 面板顶, 过渡高度, 手机布局)；桌面布局不进入本分支。
+    if (backend.w > 0.5 && backend.y > 0.0) {
+        float transition = max(backend.z, .001);
+        float fade = smoothstep(backend.y - transition, backend.y, v_uv.y);
+        if (fade > 0.0) {
+            // 采样半径随渐变带增长，上缘不会出现一条硬边的模糊起止线。
+            vec2 radius = vec2(20.0 * fade * g.viewport.x / 393.0) / vec2(textureSize(color, 0));
+            vec3 frosted = vec3(0.0);
+            float total = 0.0;
+            for (int y = -2; y <= 2; ++y) {
+                for (int x = -2; x <= 2; ++x) {
+                    float weight = exp(-float(x * x + y * y) * .45);
+                    frosted +=
+                        texture(color, rtUV(clamp(v_uv + vec2(x, y) * radius, vec2(.001), vec2(.999)))).rgb *
+                        weight;
+                    total += weight;
+                }
+            }
+            frosted = outputColor(aces(frosted / total, mix(.76, .98, theme)));
+            // 面板越往下底色越实；上缘保留更多场景颜色，形成渐变过渡层。
+            float body = smoothstep(backend.y - transition * .35, backend.y + transition, v_uv.y);
+            vec3 tint = mix(vec3(.933, .925, .894), vec3(.075, .110, .094), theme);
+            float grain = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) - .5;
+            vec3 acrylic = mix(frosted, tint, mix(.38, .8, body)) + grain * .004;
+            rgb = mix(rgb, acrylic, fade);
+        }
     }
     return vec4(rgb, 1);
 }

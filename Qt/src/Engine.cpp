@@ -759,8 +759,15 @@ void Engine::action(QString value) {
         return;
     }
     app->hud.action(value);
-    pollMedia();
-    wake();
+    // 连续拖动只更新页面位置，不反复同步查询后台播放服务。
+    const bool gesture =
+        app->hud.compactLayout() && (value.startsWith("mobile:lyrics-") || value == "mobile:archive-begin" ||
+                                     value == "mobile:archive-release");
+    if (!gesture) {
+        pollMedia();
+    }
+    // 移动 HUD 的拖动与翻页必须立即出帧，暂停音乐、场景休眠时也不能吞掉输入。
+    wake(app->hud.compactLayout());
 }
 /**
  * 将输入控件的原始数据转换为原生业务操作
@@ -1036,6 +1043,12 @@ void Engine::step(double time) {
     const auto previousOrigin = m_frame.value("stats").toObject().value("coordinateOrigin");
 #endif
     m_frame = scene.frame;
+    const auto hudState = object["state"].toObject();
+    if (hudState["compactLayout"].toBool()) {
+        m_frame["mobileHud"] = true;
+        m_frame["songPanelTop"] = hudState["songPanelTop"];
+        m_frame["songPanelTransition"] = hudState["songPanelTransition"];
+    }
     auto signature = m_frame;
     for (const auto &key : {"time", "stats", "labels", "boot", "pointerCursor", "jitter", "temporalReset"}) {
         signature.remove(key);

@@ -139,7 +139,9 @@ void NativeHud::closeModal() {
     editingSettingText.clear();
     editingSettingRect = QRectF();
     closing = true;
-    motion.set(false, lastTime, reduced);
+    const bool directNavigation =
+        m_responsive.compact() && QStringList{"search", "discover", "settings", "saved"}.contains(modal);
+    motion.set(false, lastTime, reduced || directNavigation);
 }
 
 void NativeHud::setQuery(QString value) {
@@ -307,11 +309,11 @@ void NativeHud::playerAction(const QStringList &parts) {
     const auto name = parts.value(1);
     const auto value = parts.value(2).toDouble();
     const auto index = int(value);
-    if (name == "lyrics") {
+    if (name == "lyrics" || name == "detail") {
         if (!player.current.isEmpty()) {
             modal.clear();
             closing = false;
-            lyricsMode = true;
+            lyricsMode = name == "lyrics";
             m_lyricsBrowse.reset();
             music.followPlayback(player.current);
             m_scene.mode("detail");
@@ -393,6 +395,59 @@ void NativeHud::playerAction(const QStringList &parts) {
 
 /** 动作字符串保持原有输入协议，控制器直接更新原生音乐状态和场景。 */
 void NativeHud::action(QString value) {
+    if (m_responsive.compact() && value.startsWith("mobile:play-collection:")) {
+        const auto json =
+            QUrl::fromPercentEncoding(value.mid(QString("mobile:play-collection:").size()).toUtf8());
+        m_music->playCollection(QJsonDocument::fromJson(json.toUtf8()).object());
+        return;
+    }
+    if (m_responsive.compact() && value.startsWith("mobile:play-discover:")) {
+        const int index = value.mid(QString("mobile:play-discover:").size()).toInt();
+        if (index >= 0 && index < m_music->discover->items.size()) {
+            m_music->playCollection(m_music->discover->items[index].toObject());
+        }
+        return;
+    }
+    if (m_responsive.compact() && value.startsWith("mobile:lyrics-drag:")) {
+        m_mobileTransition.drag(value.mid(19).toDouble());
+        return;
+    }
+    if (m_responsive.compact() && value == "mobile:lyrics-release") {
+        if (m_mobileTransition.release()) {
+            playerAction({"player", "lyrics-close"});
+        }
+        return;
+    }
+    if (m_responsive.compact() && value == "mobile:play-archive") {
+        m_music->playDirectory(true);
+        return;
+    }
+
+    if (m_responsive.compact() && value.startsWith("mobile:source:")) {
+        bool valid = false;
+        const int lane = value.mid(14).toInt(&valid);
+        if (valid && m_music->sourceOrder().contains(lane)) {
+            m_music->showSource(lane);
+        }
+        return;
+    }
+    if (m_responsive.handleAction(value)) {
+        return;
+    }
+    if (m_responsive.compact() && (value == "mobile:history" || value == "mobile:artists")) {
+        openModal("discover");
+        action(value == "mobile:history" ? "discover:tab:history" : "discover:tab:artists");
+        return;
+    }
+    if (m_responsive.compact() && value == "mobile:play-liked") {
+        m_music->showSource(1);
+        m_music->playDirectory(true);
+        return;
+    }
+    if (m_responsive.compact() && value == "mobile:search-submit") {
+        setQuery(query);
+        return;
+    }
     if (!editingSettingId.isEmpty() && !value.startsWith("setting-edit:")) {
         cancelSettingEdit();
     }
@@ -950,6 +1005,9 @@ bool NativeHud::supportsTrackList() const {
 bool NativeHud::animating(double time) const {
     if (reduced) {
         return !motion.finished() || closing;
+    }
+    if (m_responsive.compact() && (m_mobileTransition.active(time) || m_responsive.animating(time))) {
+        return true;
     }
     const bool lyrics = lyricsMode && modal.isEmpty() && m_lyricsCurve &&
                         time - m_lyricsCurve->start < m_lyricsCurve->duration;

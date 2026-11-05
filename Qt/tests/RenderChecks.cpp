@@ -10,6 +10,7 @@
 #include "render/MaterialSlotKey.h"
 #include "render/RenderPolicy.h"
 #include "render/SceneSyncCache.h"
+#include "render/FrameGenerationHistory.h"
 
 #include <QString>
 #include <cstdio>
@@ -256,6 +257,41 @@ bool sceneSyncCache()
     return ok;
 }
 
+/** 插帧只跨连续场景配对；坐标原点是对象，不能按数字读取而漏掉重置。 */
+bool frameGenerationHistory() {
+    RhineRender::FrameGenerationHistory history;
+    QJsonObject frame{{"mode", "archive"},
+                      {"mobileHud", true},
+                      {"stats", QJsonObject{{"coordinateOrigin", QJsonObject{{"lane", 0}, {"row", 0}}}}}};
+    QJsonObject item{{"key", "track:1"}, {"id", "1"}};
+    qint64 coverRevision = 1;
+    const auto expectReset = [&](bool expected, const QString &description) {
+        const bool actual = history.update(frame, item, coverRevision);
+        return check(actual == expected, description, boolText(expected), boolText(actual));
+    };
+    bool ok = expectReset(true, QStringLiteral("首帧重置插帧历史"));
+    ok &= expectReset(false, QStringLiteral("连续帧保留历史"));
+    frame["time"] = 2;
+    frame["discAngle"] = .1;
+    ok &= expectReset(false, QStringLiteral("动画推进不重置历史"));
+    frame["mode"] = "detail";
+    ok &= expectReset(true, QStringLiteral("进入详情丢弃资料库历史"));
+    frame["stats"] = QJsonObject{{"coordinateOrigin", QJsonObject{{"lane", 0}, {"row", 32}}}};
+    ok &= expectReset(true, QStringLiteral("对象形式的坐标原点改变"));
+    item["key"] = "track:2";
+    ok &= expectReset(true, QStringLiteral("换曲丢弃旧唱片历史"));
+    coverRevision = 2;
+    ok &= expectReset(true, QStringLiteral("封面到齐后丢弃旧纹理历史"));
+    frame["mobileHud"] = false;
+    frame.remove("songPanelTop");
+    ok &= expectReset(true, QStringLiteral("横竖屏布局隔离历史"));
+    ok &= expectReset(false, QStringLiteral("桌面不增加插帧重置"));
+    item["key"] = "track:3";
+    coverRevision = 3;
+    ok &= expectReset(false, QStringLiteral("桌面换曲仍走原有重置逻辑"));
+    return ok;
+}
+
 #ifdef Q_OS_DARWIN
 /** 验证补帧与时域 AA 独立，并守住原生输入分辨率和设备能力边界。 */
 bool metalFrameGenerationSettings() {
@@ -310,6 +346,7 @@ int main()
     ok &= motionModeTable();
     ok &= materialSlotKeys();
     ok &= sceneSyncCache();
+    ok &= frameGenerationHistory();
 #ifdef Q_OS_DARWIN
     ok &= metalFrameGenerationSettings();
 #endif

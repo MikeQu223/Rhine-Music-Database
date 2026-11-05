@@ -148,6 +148,14 @@ set(RHINE_APP_SOURCES
     Qt/src/MusicLibrary.cpp
     Qt/src/MusicLibrary.h
     Qt/src/NativeHud.h
+    Qt/src/ResponsiveHudCanvas.cpp
+    Qt/src/ResponsiveHudCanvas.h
+    Qt/src/ResponsiveLyrics.cpp
+    Qt/src/ResponsiveHudPages.cpp
+    Qt/src/ResponsiveHudContent.cpp
+    Qt/src/ResponsiveHudContent.h
+    Qt/src/ResponsiveHudLayout.cpp
+    Qt/src/ResponsiveHudLayout.h
     Qt/src/NativeHud.cpp
     Qt/src/NativeHudController.cpp
     Qt/src/NativeHudMusic.cpp
@@ -446,6 +454,18 @@ qt_add_shaders(
     Qt/shaders/enhancement/opticalWarpLate.frag
     Qt/shaders/enhancement/opticalWarpDebug.frag
     Qt/shaders/enhancement/opticalSurfaceNoMrt.frag)
+if(APPLE)
+    qt_add_shaders(
+        RhineMusicDatabase
+        "rhine_motion_clear_shader"
+        PREFIX "/optical"
+        BASE "Qt/shaders/enhancement"
+        GLSL "130,150,300es"
+        HLSL 50
+        MSL 12
+        FILES Qt/shaders/enhancement/opticalClearMotion.frag)
+endif()
+
 target_compile_definitions(RhineMusicDatabase PRIVATE RHINE_APPLICATION_ID="${RHINE_APPLICATION_ID}"
                                                       $<$<CONFIG:Debug>:QT_QML_DEBUG>)
 target_link_libraries(
