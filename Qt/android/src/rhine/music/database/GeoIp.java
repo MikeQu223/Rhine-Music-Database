@@ -18,7 +18,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * 极简 IP 地区判定：只回答"本机所在网络属于中国大陆 / 欧洲 / 其他"。
+ * 极简 IP 地区判定：只回答"本机所在网络属于中国大陆 / 欧盟地区 / 其他"。
  *
  * 判定顺序（IPv4 与 IPv6 都支持，**不缓存**，每次启动都实时判一次）：
  *   1. 本机网卡若是公网 IPv4（不是 10/8、192.168/16、100.64/10 这类私有地址），直接查表；
@@ -39,8 +39,9 @@ public final class GeoIp {
     /** 表内未命中：仅作 lookup 的内部返回值，resolveRegion 不会把它交出去。 */
     private static final int REGION_NONE = 0;
     public static final int REGION_CN = 1;
+    /** 欧盟地区（EU 27 国；EEA 三国 / 英国 / 瑞士不在表内）。 */
     public static final int REGION_EU = 2;
-    /** 既不在中国大陆也不在欧洲，或判定不出来（超时、断网、纯 IPv6）。 */
+    /** 既不在中国大陆也不在欧盟地区，或判定不出来（超时、断网、纯 IPv6）。 */
     public static final int REGION_OTHER = 3;
 
     private static final String TAG = "RhineGeoIp";
@@ -129,7 +130,7 @@ public final class GeoIp {
         return REGION_OTHER;
     }
 
-    /** IPv4 表内未命中即"其他地区"——表只收录中国大陆与欧洲。 */
+    /** IPv4 表内未命中即"其他地区"——表只收录中国大陆与欧盟地区。 */
     private static int regionOfV4(int address) {
         final int matched = lookupV4(address);
         return matched == REGION_NONE ? REGION_OTHER : matched;
