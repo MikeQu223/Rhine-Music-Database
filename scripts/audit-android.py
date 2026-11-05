@@ -49,6 +49,18 @@ if failures:
 
 with zipfile.ZipFile(apk) as archive:
     names = archive.namelist()
+    # 地区表按 magic 识别，不依赖 res/raw 下的文件名——AGP 的资源优化可能重命名路径。
+    region_tables = set()
+    for name in names:
+        if not name.startswith("res/") or name.endswith("/"):
+            continue
+        info = archive.getinfo(name)
+        if info.file_size < 12:
+            continue
+        with archive.open(name) as stream:
+            magic = stream.read(4)
+        if magic in (b"RHIP", b"RH6P"):
+            region_tables.add(magic)
 
 # 1) 只允许 arm64-v8a：多 ABI 会让包体积翻倍，而这个包只承诺 arm64-v8a。
 abis = sorted({name.split("/")[1] for name in names if name.startswith("lib/")})
@@ -65,6 +77,10 @@ check(
     any(name.startswith("libQt6Multimedia") for name in libraries),
     "Qt Multimedia backend missing from the APK",
 )
+
+# 2b) 地区表：缺任何一张，启动许可的判定就会退化（IPv6 缺失时纯 IPv6 网络直接按其他地区放行）。
+check(b"RHIP" in region_tables, "IPv4 region table missing from the APK")
+check(b"RH6P" in region_tables, "IPv6 region table missing from the APK")
 
 # 3) 清单：包名、SDK 区间、横屏、权限。默认清单里的 screenOrientation 是 unspecified，
 #    一旦有人覆盖掉我们的清单，这里就是唯一会失败的地方。
@@ -118,6 +134,11 @@ check(
 check(
     "org.qtproject.qt.android.bindings.QtActivity" in manifest,
     "QtActivity entry point missing",
+)
+# 启动闸门必须是 launcher：QtActivity 抢回 LAUNCHER 就等于跳过了许可确认。
+check(
+    "rhine.music.database.ConsentActivity" in manifest,
+    "ConsentActivity (startup consent gate) missing from manifest",
 )
 # Clarity 的初始化挂在 Application 上：清单里的 application 节点被改回 Qt 默认值时
 # 应用照样能跑，但分析会静默失效，所以在这里钉死。

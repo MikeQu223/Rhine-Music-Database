@@ -180,6 +180,66 @@ Qt 的界面由 GPU 直接画到 Surface 上，不属于任何 View 的绘制内
 > 历史：曾尝试 TextureView、按时间 `Clarity.pause()/resume()`、登录失败事件化上报等手段
 > 绕开限制，均无法让 Clarity 产出画面，相关改动已撤回。Clarity 现在只承担会话与事件统计。
 
+## 启动许可闸门
+
+清单里唯一的 LAUNCHER 是 `ConsentActivity`，`QtActivity` 改为 `exported=false`：
+**同意之前 Qt 界面、Clarity、Bugly 一个都不会启动**，不是先画界面再补一个弹窗。
+
+判定顺序（`ConsentActivity.onCreate` → 后台线程 → `GeoIp.resolveRegion`）：
+
+1. `SharedPreferences("rhine-consent")` 里 `granted=true` → 直接进入，SDK 由
+   `RhineApplication` 重新拉起（后台任务唤醒进程时也走这条路）。
+2. 否则判定地区（IPv4 / IPv6 都支持）：
+    - 本机网卡若是**公网 IPv4** → 直接查表；
+    - 否则若是**公网 IPv6**（排除 ULA `fc00::/7`、链路本地 `fe80::/10`、v4-mapped）→ 直接查 IPv6 表；
+    - 两者都是私有地址时（典型：Wi-Fi 只有 `192.168.x`）才取一次公网地址回显：
+      有 IPv4 网络先试 `myip.ipip.net` / `api-ipv4.ipify.org` / `ipv4.icanhazip.com`，
+      否则先试 `api6.ipify.org` / `ipv6.icanhazip.com` / `v6.ident.me`（纯 IPv6 网络）。
+      这是同意前唯一的网络请求，只为决定弹哪份许可，不携带设备信息。
+      **不缓存判定结果**：每次启动都重新请求一次，所有端点共享 **3 秒总预算**
+      （`GeoIp.TOTAL_TIMEOUT_MS`，不是每个端点各 3 秒）。另有一层硬闸门
+      （`Future.get(3s)`）——`connectTimeout` 管不住 DNS 解析，这样启动页最多等 3 秒。
+3. 中国大陆 → 中文许可（Clarity 跨境数据传输 + Bugly 隐私政策与信息类型）；
+   欧洲（EU + EEA + 英国 + 瑞士）→ 英文许可（只写 Clarity）。
+   同意写入 `granted` 并启动 SDK；拒绝则 `finishAffinity()` 退出。
+   **每个地区只确认一次**：点过同意就永久记住，此后既不弹窗也不再请求地区。
+4. 其他地区 → 不弹窗，正常启动。
+5. 3 秒内取不到地址（超时、断网、解析失败）→ **按其他地区处理**：不弹窗、
+   照常启动界面与 SDK（仅本次运行；下次启动重新判定）。这是有意的取舍——地区判定是
+   "该不该弹许可"的依据，不是采集开关。
+
+许可对话框只有两个按钮：**同意** / **退出**。空白区域与返回键都不生效
+（`setCancelable(false)` + `setCanceledOnTouchOutside(false)` + 拦截 `KEYCODE_BACK`），
+不存在"点一下就等于默认同意"的路径；未同意时 Activity 的返回键也被吞掉，只能点"退出"。
+
+SDK 启动集中在 `ConsentStore.startSdks()`（幂等）。`RhineApplication` 只在已同意时调用，
+`ConsentActivity` 在用户点同意后调用；Clarity 不再在 Application 里无条件初始化。
+
+### 内置地区表（IPv4 + IPv6）
+
+由 `python3 scripts/gen-region-tables.py [--refresh]` 一次生成两张表，数据取 RIPE Stat 的
+country-resource-list（按国家汇总各 RIR 分配），把中国大陆与欧洲的前缀转成闭区间、
+合并相邻段后写入二进制：
+
+| 文件                       | 规模               | 格式（大端）                                                                                 |
+| -------------------------- | ------------------ | -------------------------------------------------------------------------------------------- |
+| `res/raw/ipv4_regions.bin` | 24,264 段 / 213 KB | `"RHIP"` + 版本 + 条数 + `(start u32, end u32, region u8)`×N                                 |
+| `res/raw/ipv6_regions.bin` | 19,986 段 / 644 KB | `"RH6P"` + 版本 + 条数 + `(start_hi u64, start_lo u64, end_hi u64, end_lo u64, region u8)`×N |
+
+`region`：1 = 中国大陆，2 = 欧洲。IPv6 在 Java 侧拆成两个 64 位整数，用
+`Long.compareUnsigned` 比较（128 位地址没有原生整数类型）。
+
+**为什么要 IPv6 表**：手机流量和多数家用宽带的 IPv6 是公网地址。没有这张表时，
+纯 IPv6 网络（或 Wi-Fi 下只有私有 IPv4、靠 IPv6 上网）只能走公网回显，一旦回显超时
+就按"其他地区"放行——中国大陆/欧洲用户会漏掉许可弹窗。有了本机 IPv6 直查，这类网络
+连请求都不需要发。
+
+抓取缓存在 `.workbuddy/tmp/geo/`，删掉它并加 `--refresh` 即可更新。表只用于
+"是否需要弹隐私许可"，不追求精确到城市。
+
+> Bugly 尚未接入：国内许可文案里那段是按你给的隐私政策预写的。接入 Bugly 后不用改文案，
+> 只需在 `ConsentStore.startSdks()` 里补初始化；若最终不接入，必须把该段删掉。
+
 ## 架构：三个和桌面不同的决定
 
 **Node 运行时编进进程。** Android 不允许从应用私有目录执行可执行文件，桌面那条
@@ -251,5 +311,8 @@ FidelityFX/FSR3 在 Android 仍默认关闭（`RHINE_ENABLE_FIDELITYFX=OFF`，�
 | 界面能起但列表空白                               | Node 运行时没起来；`adb logcat` 里看 `Android:` 与 node 的 stderr 输出（本仓库不做实机调试）                                                 |
 | 画面上下颠倒                                     | 清单被模板覆盖回 `unspecified`；`scripts/audit-android.py` 会直接报 `screenOrientation is not sensorLandscape`                               |
 | `Qt/android/build.gradle 的前缀不再等于…`        | Qt 升级换了 Gradle 模板；跑 `node scripts/android-gradle-sync.cjs` 重新生成（末尾追加的依赖会保留）                                          |
-| Clarity 后台没有会话                             | 清单 `android:name` 被改回 `QtApplication`；`scripts/audit-android.py` 会报 `RhineApplication (Clarity entry point) missing`                  |
-| Clarity 回放只有点击、没有画面                   | 已知限制：Clarity 只重画 View 树，拍不到 GL 内容，换容器或后端都没用（见「已知限制：Clarity 无法获取录制画面」）                              |
+| Clarity 后台没有会话                             | 清单 `android:name` 被改回 `QtApplication`；`scripts/audit-android.py` 会报 `RhineApplication (Clarity entry point) missing`                 |
+| Clarity 回放只有点击、没有画面                   | 已知限制：Clarity 只重画 View 树，拍不到 GL 内容，换容器或后端都没用（见「已知限制：Clarity 无法获取录制画面」）                             |
+| 首次启动黑屏最多 3 秒                            | 未同意、且本机只有私有地址时才会取公网出口地址（`GeoIp.TOTAL_TIMEOUT_MS`）；本机有公网 IPv4/IPv6 时直接查表、不等待。已同意后不再请求        |
+| 点「退出」后应用直接关闭                         | 预期行为：未同意数据传输许可时 `finishAffinity()` 结束进程                                                                                   |
+| 国内用户没看到许可弹窗                           | IP 判定失败（断网、纯 IPv6 或表未命中）；此时照常启动界面，但不会启动任何数据 SDK，下次联网会再判定                                          |

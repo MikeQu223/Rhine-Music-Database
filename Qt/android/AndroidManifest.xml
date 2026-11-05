@@ -66,24 +66,38 @@
           声明不可调整大小可以让系统不要尝试上下分屏（Android 12 起大屏会忽略该标记，
           但那时由 configureAndroidWindow() 重新请求横屏兜底）。
         -->
+        <!--
+          启动闸门：先确认数据传输许可，再启动 Qt。
+
+          它是唯一的 LAUNCHER；QtActivity 因此不再对外暴露（exported=false），
+          "同意之前"Qt 界面、Clarity、Bugly 一个都不会起来。
+        -->
+        <activity
+            android:name="rhine.music.database.ConsentActivity"
+            android:configChanges="orientation|screenLayout|screenSize|smallestScreenSize|keyboardHidden|uiMode"
+            android:exported="true"
+            android:label="-- %%INSERT_APP_NAME%% --"
+            android:screenOrientation="sensorLandscape"
+            android:theme="@style/RhineConsent">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
         <activity
             android:name="org.qtproject.qt.android.bindings.QtActivity"
             android:configChanges="orientation|uiMode|screenLayout|screenSize|smallestScreenSize|layoutDirection|locale|fontScale|keyboard|keyboardHidden|navigation|mcc|mnc|density"
             android:label="-- %%INSERT_APP_NAME%% --"
             android:launchMode="singleTop"
             android:screenOrientation="sensorLandscape"
-            android:exported="true">
+            android:exported="false">
             <!--
               sensorLandscape：两个横屏方向都允许（屏幕宽度 ≥ 高度），转 180° 时内容跟着
               翻转，而不是像 landscape 那样锁死一个方向、让用户看着倒过来的画面。
               运行期 configureAndroidWindow() 会再请求一次同一个值，用于覆盖分屏、
               多窗口以及进程被回收后重建 Activity 的情况。
             -->
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-
             <meta-data
                 android:name="android.app.lib_name"
                 android:value="-- %%INSERT_APP_LIB_NAME%% --" />
