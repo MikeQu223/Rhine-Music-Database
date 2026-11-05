@@ -1,0 +1,156 @@
+name: Android build
+
+# Android 与其他平台完全隔离：独立的 workflow，不挂在 Platform build 里。
+# 它失败不会影响桌面/iOS 的构建与发布，反之亦然；共享的只有仓库代码本身。
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android:
+    name: Android arm64-v8a (APK)
+    runs-on: ubuntu-24.04
+    # 冷启动要从 vendored 源码交叉编译 Qt for Android（qtbase/qtdeclarative/
+    # qtmultimedia/qtsvg/qtshadertools + OpenSSL），4 核 runner 约 1.5–2 小时；
+    # 命中 kit 缓存后出包只要几分钟。上限按最坏情况给，不做矩阵。
+    timeout-minutes: 300
+    env:
+      RHINE_BUILD_JOBS: '4'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Check out Qt sources for the Android kit
+        shell: bash
+        # Qt 6.12 没有公开的 Android 预编译包（在线仓库只到 6.6.3），kit 只能拿
+        # 这五个子模块自己编；浅克隆命令与 .gitmodules 里记录的本地做法一致。
+        run: |
+          set -euo pipefail
+          git submodule update --init --depth 1 \
+            third_party/qt/qtbase \
+            third_party/qt/qtdeclarative \
+            third_party/qt/qtmultimedia \
+            third_party/qt/qtsvg \
+            third_party/qt/qtshadertools
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26.11.1'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            MusicBridge/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # AGP 只接受 JDK 17–21 的运行期；runner 默认的更高版本会被直接拒绝。
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      # 释放磁盘：Qt kit 的构建树 + kit 本身约 6–8 GB，而 runner 预装的 NDK 与
+      # dotnet 等工具链占了好几 GB。NDK 随后按固定版本重装，删掉预装的不会影响。
+      - name: Free disk space
+        shell: bash
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          sudo rm -rf "${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}"/ndk/* || true
+          df -h /
+      # 只让它把 cmdline-tools / 环境变量准备好：默认的 packages 列表是
+      # "tools platform-tools"，而新版 SDK 仓库已经删掉 legacy 的 tools 包，
+      # sdkmanager 会报 "Failed to find package 'tools'" 并以 1 退出。
+      # 真正需要的 platform/build-tools/NDK 由下一步显式安装。
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
+      - name: Install Android platform, build-tools and NDK
+        shell: bash
+        # 版本必须与 scripts/audit-android.py 的断言（platform android-36）和
+        # android-toolchain.cjs 的探测方式（取 $SDK/ndk 下最大版本）对齐；
+        # NDK 固定在 r30，与本地构建保持一致，避免工具链漂移带出新的告警。
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager --install "platforms;android-36" "build-tools;36.0.0" "ndk;30.0.16248370"
+      - name: Install Qt for Android build dependencies
+        run: |
+          sudo apt-get update
+          # cmake/ninja/g++/perl 是交叉编译 Qt 与 OpenSSL 的最低要求；
+          # file 供 Qt 的 configure 探测产物类型。
+          sudo apt-get install --yes --no-install-recommends \
+            cmake ninja-build g++ perl file
+      # 宿主 Qt 供交叉编译使用（moc/rcc/qmlcachegen 等）。Qt 6 的 Android 构建
+      # 要求 $RHINE_HOST_QT/lib/cmake/Qt6HostInfo 存在，所以必须装一份 6.12.0
+      # 桌面 kit，而不是依赖 runner 自带的旧 Qt。
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.12.0'
+          arch: linux_gcc_64
+          aqtsource: git+https://github.com/miurahr/aqtinstall.git@076e1659807d0b362a3ed684d54c2e9c775eb9c7
+          modules: qtshadertools qtmultimedia
+          cache: true
+      - name: Install build dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Compute Qt kit cache key
+        id: qt-kit-key
+        shell: bash
+        # 缓存签名必须覆盖一切会影响 kit 产物的输入：五个子模块的 pinned 提交、
+        # 构建/补丁脚本内容、OpenSSL 锁定版本、NDK 与宿主 Qt 版本。
+        # 漏掉任何一项都会永久命中过期 kit（actions/cache 不覆盖已存在的 key）。
+        run: |
+          set -euo pipefail
+          {
+            for module in qtbase qtdeclarative qtmultimedia qtsvg qtshadertools; do
+              echo "$module $(git -C third_party/qt/$module rev-parse HEAD)"
+            done
+            sha256sum scripts/build-qt-android.cjs scripts/qt-android-patches.cjs \
+              scripts/android-toolchain.cjs vendor/openssl/source.json
+            echo "host-qt 6.12.0 linux_gcc_64"
+            echo "ndk 30.0.16248370"
+            echo "platform android-36 build-tools 36.0.0"
+          } > "$RUNNER_TEMP/qt-kit-signature.txt"
+          echo "signature=$(sha256sum "$RUNNER_TEMP/qt-kit-signature.txt" | cut -c1-24)" >> "$GITHUB_OUTPUT"
+      - name: Restore Qt for Android kit
+        id: qt-kit-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            output/dependencies/qt-android
+            output/dependencies/openssl-android
+          key: qt-android-kit-${{ steps.qt-kit-key.outputs.signature }}
+      - name: Build Qt for Android kit
+        # 构建期补丁（scripts/qt-android-patches.cjs）也在这里生效：子模块保持干净，
+        # 补丁按内容锚点写入工作树；锚点失配会让构建直接失败而不是产出旧行为。
+        if: steps.qt-kit-cache.outputs.cache-hit != 'true'
+        env:
+          RHINE_HOST_QT: ${{ env.QT_ROOT_DIR }}
+        run: npm run build:qt:android
+      - name: Save Qt for Android kit
+        # 显式保存而不是依赖 actions/cache 的 post 步骤：job 被 timeout 掐掉时
+        # 保存不会执行，会出现"编完了没存上、下次再编一遍"的死循环。
+        # fork PR 只有缓存读权限，保存失败不该把构建判失败。
+        if: steps.qt-kit-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            output/dependencies/qt-android
+            output/dependencies/openssl-android
+          key: qt-android-kit-${{ steps.qt-kit-key.outputs.signature }}
+      - name: Build, sign and audit APK
+        # 打包脚本内部会重建桥接 bundle（移动端 tmpdir 改写与断言在这里执行）、
+        # 下载校验 libnode.so、签名并用 audit-android.py 检查权限白名单。
+        run: npm run build:android
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: RHINE-MUSIC-DATABASE-Android-arm64
+          path: output/RhineMusicDatabase-*-android-arm64-v8a.apk
+          if-no-files-found: error

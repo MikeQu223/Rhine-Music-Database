@@ -244,49 +244,6 @@ const api = Object.fromEntries(
         ];
     }),
 );
-/**
- * 只把异常自带的名称/错误码/上游 HTTP 状态写进 stderr：父进程（Android 桥接、
- * 桌面宿主）会把 worker 的 stderr 转发到日志，下一次失败能直接看到原因。
- * 不输出 headers、Cookie 或请求体——上游诊断文本可能含有 URL。
- */
-function reportBridgeFailure(route, error) {
-    try {
-        const status = error?.response?.status;
-        const parts = [
-            `[bridge] ${route} failed: ${error?.name || 'Error'}`,
-            error?.code ? `code=${error.code}` : '',
-            Number.isInteger(status) ? `http=${status}` : '',
-            error?.message ? `msg=${String(error.message).slice(0, 160)}` : '',
-        ].filter(Boolean);
-        process.stderr.write(parts.join(' ') + '\n');
-    } catch {
-        // 诊断本身绝不能影响响应路径。
-    }
-}
-/**
- * 二维码轮询的容错：上游 login_qr_check 在请求失败时的 catch 分支引用了作用域
- * 外的 result（ReferenceError: result is not defined），单次轮询失败会连带整段
- * 登录失败，并显示成"音乐请求失败，请重试"（真机实测）。轮询语义是"本轮没有
- * 结果，下一轮再问"，连续失败按 801（等待扫码）续上，给网络抖动留出恢复窗口；
- * 连续失败达到上限才如实报错，避免断网时白等五分钟。
- */
-let qrCheckFailures = 0;
-async function invokeEndpoint(moduleName, query) {
-    try {
-        const result = await api[moduleName](query);
-        if (moduleName === 'login_qr_check') {
-            qrCheckFailures = 0;
-        }
-        return result;
-    } catch (error) {
-        if (moduleName === 'login_qr_check' && qrCheckFailures < 5) {
-            ++qrCheckFailures;
-            reportBridgeFailure('login_qr_check', error);
-            return { status: 200, body: { code: 801, message: '等待扫码' }, cookie: [] };
-        }
-        throw error;
-    }
-}
 // 原样执行上游前端的认证和用户函数；加载时仅适配 ES 模块的
 // 导入导出语法，使其能使用私有传输层。
 const vm = require('node:vm');
@@ -374,7 +331,7 @@ async function dispatchRequest(message) {
                 ([key]) => !key.startsWith('__') && key !== 'qqmusic_session',
             ),
         );
-        const result = await invokeEndpoint(moduleName, query);
+        const result = await api[moduleName](query);
         responseCookies.push(...(result.cookie || []));
         return result.body;
     };
@@ -494,26 +451,11 @@ readline
                     : {}),
             });
         } catch (error) {
-            // 兜底响应保持既有文案，但带上可安全外发的诊断字段（异常名/网络错误码/
-            // 上游 HTTP 状态），并写 stderr 供父进程转发到日志——上一次真机上的
-            // "503 音乐请求失败"正是被这个兜底吞掉了原因，只能靠人复述。
-            reportBridgeFailure(message?.route || 'unknown', error);
-            const detail = {};
-            if (typeof error?.code === 'string') {
-                detail.networkError = error.code.slice(0, 40);
-            }
-            if (Number.isInteger(error?.response?.status)) {
-                detail.upstreamHttpStatus = error.response.status;
-            }
-            if (error?.name && error.name !== 'Error') {
-                detail.diagnostic = String(error.name).slice(0, 64);
-            }
             send({
                 id: message?.id,
                 body: error.body || {
                     code: 503,
                     message: '音乐请求失败，请重试',
-                    ...detail,
                 },
                 cookies: error.cookie || [],
             });

@@ -25,8 +25,7 @@ module.exports = (webApis = 'ios-web-apis.cjs', requestResetHook = '') => ({
             const contents = fs.readFileSync(args.path, 'utf8').replace(tmpdirCall, tmpdirReplacement);
             return {
                 contents:
-                    `require(${JSON.stringify(path.join(path.dirname(args.path), webApis))});\n` +
-                    contents,
+                    `require(${JSON.stringify(path.join(path.dirname(args.path), webApis))});\n` + contents,
                 loader: 'js',
             };
         });
@@ -35,7 +34,9 @@ module.exports = (webApis = 'ios-web-apis.cjs', requestResetHook = '') => ({
         // request.js 还兼着 netease-request-reset 的职责：esbuild 对同一文件只跑第一个
         // 命中的 onLoad，本插件必须在这里补上同一段钩子，否则密钥刷新会退化成重新 require。
         build.onLoad(
-            { filter: /@neteasecloudmusicapienhanced\/api\/(util\/(neapiKey|request)|app|generateConfig|main|server)\.js$/ },
+            {
+                filter: /@neteasecloudmusicapienhanced\/api\/(util\/(neapiKey|request)|app|generateConfig|main|server)\.js$/,
+            },
             (args) => {
                 let contents = fs.readFileSync(args.path, 'utf8').replace(tmpdirCall, tmpdirReplacement);
                 if (/util[\\/]request\.js$/.test(args.path)) {
@@ -67,25 +68,44 @@ module.exports = (webApis = 'ios-web-apis.cjs', requestResetHook = '') => ({
         // android 分支），但上游一旦接上调用就会在真机写 /tmp 失败。esbuild 的
         // default 互操作形态是 node_os_1.default.tmpdir()，统一改写到 __rhineTmpdir；
         // 命中次数必须恰好 1，上游改字时让构建失败而不是静默退回 /tmp。
-        build.onLoad(
-            { filter: /@yakult-green-tea\/qq-music-api\/.*util[\\/]openExplorer\.js$/ },
-            (args) => {
-                const contents = fs.readFileSync(args.path, 'utf8');
-                const tmpdirCall = /node_os_1\.default\.tmpdir\(\)/g;
-                const matches = [...contents.matchAll(tmpdirCall)];
-                if (matches.length !== 1) {
-                    throw new Error(
-                        'qq-music-api openExplorer changed; review the mobile tmpdir rewrite before building',
-                    );
-                }
-                return {
-                    contents: contents.replace(
-                        tmpdirCall,
-                        '(globalThis.__rhineTmpdir || node_os_1.default.tmpdir())',
-                    ),
-                    loader: 'js',
-                };
-            },
-        );
+        build.onLoad({ filter: /@yakult-green-tea\/qq-music-api\/.*util[\\/]openExplorer\.js$/ }, (args) => {
+            const contents = fs.readFileSync(args.path, 'utf8');
+            const tmpdirCall = /node_os_1\.default\.tmpdir\(\)/g;
+            const matches = [...contents.matchAll(tmpdirCall)];
+            if (matches.length !== 1) {
+                throw new Error(
+                    'qq-music-api openExplorer changed; review the mobile tmpdir rewrite before building',
+                );
+            }
+            return {
+                contents: contents.replace(
+                    tmpdirCall,
+                    '(globalThis.__rhineTmpdir || node_os_1.default.tmpdir())',
+                ),
+                loader: 'js',
+            };
+        });
+        // 移动 bundle 里每个 os.tmpdir() 调用点都必须是改写后的形式：少改一处就会
+        // 在真机读 /tmp（Android 没有这个目录），anonymous_token 直接 ENOENT，
+        // 所有网易云请求在模块加载时失败。断言留在移动插件内部——共享的
+        // bundle-bridge.cjs 不掺任何移动端逻辑。
+        build.onEnd((result) => {
+            if (result.errors.length > 0) {
+                return;
+            }
+            const outfile = build.initialOptions.outfile;
+            if (!outfile) {
+                return;
+            }
+            const bundle = fs.readFileSync(outfile, 'utf8');
+            const bare = bundle.match(/require\("(?:node:)?os"\)\.tmpdir\(\)/g) || [];
+            const rewritten = bundle.match(/__rhineTmpdir \|\| require\("(?:node:)?os"\)\.tmpdir\(\)/g) || [];
+            if (bare.length !== rewritten.length) {
+                throw new Error(
+                    `mobile bundle has ${bare.length - rewritten.length} unrewritten ` +
+                        'os.tmpdir() call site(s); every one must read globalThis.__rhineTmpdir',
+                );
+            }
+        });
     },
 });

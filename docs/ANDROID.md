@@ -70,9 +70,10 @@ npm run build:android -- --check
 
 ## CI
 
-`.github/workflows/desktop.yml` 的 `android` job 与本机构建走同一套脚本（`build:qt:android`
-→ `build:android`），不额外维护第二套流程：
+Android 构建在独立工作流 `.github/workflows/android.yml` 里，与其他平台完全隔离：它失败
+不会影响 `desktop.yml`（桌面/iOS）的构建与发布，反之亦然。
 
+- 与本机走同一套脚本（`build:qt:android` → `build:android`），不额外维护第二套流程。
 - Qt kit 从五个 `third_party/qt` 子模块现场交叉编译；产物（`output/dependencies/qt-android`
   与 `output/dependencies/openssl-android`）按「子模块提交 + 构建/补丁脚本内容 + NDK 与宿主
   Qt 版本」做缓存键。缓存命中后几分钟出包，冷启动约 2 小时。

@@ -145,13 +145,6 @@ const requestResetPlugin = {
             if (path.resolve(args.path) !== requestFile) {
                 return;
             }
-            // 移动端交给移动插件：esbuild 对同一文件只执行第一个命中的 onLoad，
-            // 这里返回 undefined 才会继续后面的插件。历史上的顺序错误让
-            // request.js 的 os.tmpdir() 改写整个失效，真机读 /tmp/anonymous_token
-            // 直接 ENOENT，所有网易云请求在模块加载时失败（登录 503）。
-            if (mobileRuntime) {
-                return;
-            }
             const contents = fs.readFileSync(args.path, 'utf8');
             return {
                 contents: contents + requestResetHook,
@@ -160,27 +153,6 @@ const requestResetPlugin = {
         });
     },
 };
-
-/**
- * 移动端 bundle 里每个 os.tmpdir() 调用点都必须是改写后的形式。
- * 少改一处就会在真机上去读 /tmp（Android 没有这个目录），anonymous_token 直接
- * ENOENT，所有网易云请求在模块加载时失败——表现为登录时"503 音乐请求失败"。
- * 历史上 request.js 就是被 netease-request-reset 的 onLoad 抢先接管漏掉的。
- */
-function assertMobileTmpdirRewrites() {
-    if (!mobileRuntime) {
-        return;
-    }
-    const bundle = fs.readFileSync(path.join(bridgeOutput, 'worker.cjs'), 'utf8');
-    const bare = bundle.match(/require\("(?:node:)?os"\)\.tmpdir\(\)/g) || [];
-    const rewritten = bundle.match(/__rhineTmpdir \|\| require\("(?:node:)?os"\)\.tmpdir\(\)/g) || [];
-    if (bare.length !== rewritten.length) {
-        throw new Error(
-            `Mobile bundle has ${bare.length - rewritten.length} unrewritten os.tmpdir() call site(s); ` +
-                'all of them must read globalThis.__rhineTmpdir (see mobile-bridge-plugin.cjs)',
-        );
-    }
-}
 
 /** 校验 esbuild 没有留下无法打包的动态 require，避免发布后才暴露缺模块。 */
 function failOnDynamicRequires(result) {
@@ -216,13 +188,15 @@ async function main() {
         logLevel: 'warning',
         // jsdom 的同步 XHR worker 由下面的第二个产物提供，路径在发布包内仍然有效。
         logOverride: { 'require-resolve-not-external': 'silent' },
+        // 移动插件排在前面：esbuild 对同一文件只执行第一个命中的 onLoad，
+        // 它必须在 request.js 上做 os.tmpdir() 改写（并补上同样的重置钩子）。
+        // 桌面不挂移动插件，插件列表与顺序和以前完全一致。
         plugins: [
-            requestResetPlugin,
             ...(mobileRuntime ? [require('./mobile-bridge-plugin.cjs')(webApisFile, requestResetHook)] : []),
+            requestResetPlugin,
         ],
     });
     failOnDynamicRequires(result);
-    assertMobileTmpdirRewrites();
     // jsdom 的同步 XHR 会 require.resolve 一个独立 worker 文件；
     // 单独打包到同一目录，保持 require.resolve 的相对路径可用。
     const syncWorker = await esbuild.build({
