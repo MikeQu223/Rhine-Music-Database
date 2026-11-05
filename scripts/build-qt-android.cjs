@@ -20,6 +20,7 @@ const force = process.argv.includes('--force');
 const jobs = process.env.RHINE_BUILD_JOBS || String(Math.max(4, Math.min(8, os.cpus().length)));
 
 const toolchain = require('./android-toolchain.cjs');
+const { applyQtAndroidPatches, pendingQtAndroidPatches } = require('./qt-android-patches.cjs');
 const sdk = toolchain.sdkRoot();
 const kit = process.env.RHINE_ANDROID_QT || path.resolve('output/dependencies/qt-android');
 const buildRoot = path.resolve('output/qt-android-build');
@@ -382,6 +383,23 @@ function buildModule(name) {
     console.log(`${name}: build (-j${jobs})`);
     run('cmake', ['--build', build, '--parallel', jobs], { cwd: root, env: androidEnvironment() });
     run('cmake', ['--install', build], { cwd: root, env: androidEnvironment() });
+}
+
+// 自建 kit 的源码补丁必须在编译 qtbase 之前应用：锚点是文件内容片段，不依赖
+// 行号，上游文件挪位置也不影响；重复构建幂等，锚点失配会直接失败而不是静默跳过。
+// 子模块平时保持干净，改动只存在于构建期。--check 只做干跑，不写子模块。
+if (checkOnly) {
+    const pending = pendingQtAndroidPatches(root);
+    console.log(
+        pending.length > 0
+            ? `qt-android patches pending (run the build to apply): ${pending.join(', ')}`
+            : 'qt-android patches: up to date',
+    );
+} else {
+    const patched = applyQtAndroidPatches(root);
+    if (patched.length > 0) {
+        console.log(`qt-android patches applied: ${patched.join(', ')}`);
+    }
 }
 
 buildOpenSsl();
