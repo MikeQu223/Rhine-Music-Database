@@ -68,6 +68,20 @@ npm run build:android -- --check
 `ANDROID_USER_HOME` 指向 `output/android-work`，Gradle 缓存用标准的 `~/.gradle`（见上一节的
 `RHINE_GRADLE_HOME`）。
 
+## CI
+
+`.github/workflows/desktop.yml` 的 `android` job 与本机构建走同一套脚本（`build:qt:android`
+→ `build:android`），不额外维护第二套流程：
+
+- Qt kit 从五个 `third_party/qt` 子模块现场交叉编译；产物（`output/dependencies/qt-android`
+  与 `output/dependencies/openssl-android`）按「子模块提交 + 构建/补丁脚本内容 + NDK 与宿主
+  Qt 版本」做缓存键。缓存命中后几分钟出包，冷启动约 2 小时。
+- 构建期补丁（`scripts/qt-android-patches.cjs`）在 CI 里同样按内容锚点生效，子模块保持干净。
+- 产物用 `keytool` 现场生成的调试密钥签名，密钥不入库，因此每次运行的 APK 签名不同；
+  需要可覆盖升级的发布包时应换成固定发布密钥（见上一节）。
+- 上传的 artifact 名为 `RHINE-MUSIC-DATABASE-Android-arm64`。它暂不进入桌面更新源：
+  `scripts/release-version.cjs` 的 `distributionPlatforms` 只列桌面三平台与 iOS。
+
 ## 签名
 
 调试密钥在第一次构建时由 `keytool` 生成到 `output/android-work/debug.keystore`
