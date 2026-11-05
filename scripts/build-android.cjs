@@ -161,6 +161,24 @@ function prepareResources() {
     }
 }
 
+/**
+ * 包源目录的 build.gradle 是「Qt 模板副本 + 末尾追加段」：Qt 升级换了模板就必须重新生成，
+ * 否则新模板里的字段再也进不了包，而构建会安静地沿用旧配置。这里只比对前缀，
+ * 追加段（第三方依赖）随仓库自由演进。
+ */
+function gradleTemplateInSync() {
+    const template = path.join(kit, 'src/android/templates/build.gradle');
+    const ours = path.resolve('Qt/android/build.gradle');
+    if (!fs.existsSync(template)) {
+        // 少数发行套件不带模板源码，没法比对，放行即可（构建时 androiddeployqt 仍会用它自己的）。
+        return true;
+    }
+    if (!fs.existsSync(ours)) {
+        return false;
+    }
+    return fs.readFileSync(ours, 'utf8').startsWith(fs.readFileSync(template, 'utf8'));
+}
+
 /** 调试签名用的密钥只生成一次，落在工作区里：与 AGP 自动生成到 ~/.android 的那份等价，
  *  但位置可控、可随产物一起审计。 */
 function ensureKeystore() {
@@ -239,6 +257,13 @@ function reportPrerequisites() {
     add('build-tools', buildToolsPath, fs.existsSync(buildToolsPath));
     add('NDK', ndk, fs.existsSync(path.join(ndk, 'source.properties')));
     add('JDK', jdk, fs.existsSync(path.join(jdk, 'bin', 'java')));
+    add(
+        'Qt/android/build.gradle',
+        gradleTemplateInSync()
+            ? '与 kit 的 Gradle 模板一致'
+            : '与 kit 模板不一致（跑 android-gradle-sync.cjs）',
+        gradleTemplateInSync(),
+    );
     const nodeLibrary = path.join(dependencies, 'bin', abi, 'libnode.so');
     add('libnode.so', nodeLibrary, fs.existsSync(nodeLibrary));
     console.log('Android 构建前置条件（缺失项用 MISS 标出；构建脚本会自行下载 libnode）：');
@@ -278,6 +303,16 @@ if (!fs.existsSync(path.join(jdk, 'bin', 'java'))) {
     console.warn(
         `JAVA_HOME does not look like a JDK: ${jdk}. ` +
             'Set JAVA_HOME to a JDK 17–21 installation before building.',
+    );
+}
+
+if (!gradleTemplateInSync()) {
+    throw new Error(
+        `Qt/android/build.gradle 缺失，或前缀不再等于 kit 的 Gradle 模板：\n` +
+            `  ${path.join(kit, 'src/android/templates/build.gradle')}\n` +
+            '这个文件是「Qt 模板副本 + 末尾追加段（第三方依赖）」的组合，Qt 升级后必须重新生成：\n' +
+            '  node scripts/android-gradle-sync.cjs\n' +
+            '追加段在「// ===== RHINE additions below」之后，会被原样保留。',
     );
 }
 

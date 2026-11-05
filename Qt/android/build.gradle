@@ -1,0 +1,109 @@
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+
+    dependencies {
+        //noinspection AndroidGradlePluginVersion
+        classpath 'com.android.tools.build:gradle:9.2.1'
+    }
+}
+
+repositories {
+    google()
+    mavenCentral()
+}
+
+apply plugin: qtGradlePluginType
+
+dependencies {
+    implementation fileTree(dir: 'libs', include: ['*.jar', '*.aar'])
+    //noinspection GradleDependency
+    implementation 'androidx.core:core:1.17.0'
+}
+
+android {
+    /*******************************************************
+     * The following variables:
+     * - androidBuildToolsVersion,
+     * - androidCompileSdkVersion
+     * - qtAndroidDir - holds the path to qt android files
+     *                   needed to build any Qt application
+     *                   on Android.
+     * - qtGradlePluginType - whether to build an app or a library
+     *
+     * are defined in gradle.properties file. This file is
+     * updated by QtCreator and androiddeployqt tools.
+     * Changing them manually might break the compilation!
+     *******************************************************/
+
+    namespace = androidPackageName
+    compileSdkVersion androidCompileSdkVersion
+    buildToolsVersion androidBuildToolsVersion
+    ndkVersion = androidNdkVersion
+
+    sourceSets {
+        main {
+            manifest.srcFile 'AndroidManifest.xml'
+            java.srcDirs = [qtAndroidDir + '/src', 'src', 'java']
+            kotlin.srcDirs = [qtAndroidDir + '/src', 'src', 'kotlin']
+            aidl.srcDirs = [qtAndroidDir + '/src', 'src', 'aidl']
+            res.srcDirs = [qtAndroidDir + '/res', 'res']
+            resources.srcDirs = ['resources']
+            renderscript.srcDirs = ['src']
+            assets.srcDirs = ['assets']
+            jniLibs.srcDirs = ['libs']
+       }
+    }
+
+    tasks.withType(JavaCompile) {
+        options.compilerArgs += ['-Xlint:all']
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    aaptOptions {
+        // Do not compress Qt binary resources file
+        noCompress 'rcc'
+    }
+
+    packagingOptions {
+        jniLibs {
+            useLegacyPackaging = legacyPackaging.toBoolean()
+        }
+    }
+
+    defaultConfig {
+        minSdkVersion qtMinSdkVersion
+        targetSdkVersion qtTargetSdkVersion
+        ndk.abiFilters = qtTargetAbiList.split(",")
+    }
+}
+
+// ===== RHINE additions below: everything above is Qt's template, verbatim =====
+//
+// Qt 的 Gradle 工程由 androiddeployqt 从 <kit>/src/android/templates/build.gradle 复制而来，
+// 包源目录（QT_ANDROID_PACKAGE_SOURCE_DIR = Qt/android）里的同名文件会整份覆盖它。
+// 所以本文件 = 模板的逐字节副本 + 末尾追加段：
+//   · 上半部分不要手改；升级 Qt 后跑 node scripts/android-gradle-sync.cjs 重新生成；
+//   · scripts/build-android.cjs 在构建前校验这段前缀，模板一变就直接报错，
+//     不会静默沿用上一版的 Gradle 配置。
+// 仓库：模板已声明 google() 与 mavenCentral()，Clarity 在 Maven Central，其传递依赖
+// installreferrer 在 Google Maven，两个仓库都够用，无需再补。
+
+dependencies {
+    // Microsoft Clarity（会话行为分析）。版本写死而不是 3.+：动态版本会让同一份源码
+    // 在不同时间解析出不同产物，CI 的缓存键也抓不到这种变化。
+    implementation 'com.microsoft.clarity:clarity:3.10.0'
+
+    // Clarity 是 Kotlin 写的：kotlin-stdlib 只随它的 runtime 变体传递，编译期不在
+    // classpath 上。当前只用 ClarityConfig(String) 与 Clarity.initialize，javac 不解析
+    // kotlin 类型也编得过；这条 compileOnly 是防将来调用带 kotlin.* 签名的成员时，
+    // 报出「cannot access kotlin.jvm.functions.Function2」这种没头没脑的错误。
+    // compileOnly 不进 APK，运行期的 stdlib 由 Clarity 自己传递进来。
+    compileOnly 'org.jetbrains.kotlin:kotlin-stdlib:1.8.0'
+}

@@ -6,6 +6,7 @@
 - 模型、标志与档案：原样复用本项目及其来源记录，未添加新美术。正式分发原生应用前，仍需按仓库原有署名与许可记录确认分发范围。
 
 - @kitlangton/rolling-number 0.4.1，MIT：`Qt/src/UiMotion.cpp` 保留其运动曲线算法。以下保留两个 MIT 组件的完整许可；构建包随附本文件。
+- Microsoft Clarity 3.10.0（Android SDK），MIT：仅 Android 包引入的会话分析，完整许可见下文「Microsoft Clarity（Android SDK）」。
 
 ## MIT notices
 
@@ -109,6 +110,39 @@ iOS 与 Android 不允许应用拉起独立的可执行文件（拒绝执行应�
 由 `node::Start` 在独立线程上启动，Worker 仍按会话创建与销毁。运行时源码未做修改，来源、版本与 SHA-256
 记录在 `vendor/nodejs-mobile/source.json`（iOS）与 `vendor/nodejs-mobile/android-source.json`（Android），
 许可证全文随包保留在 `MusicBridge/NODE-LICENSE`。
+
+### Microsoft Clarity（Android SDK）
+
+Android 包引入 `com.microsoft.clarity:clarity:3.10.0`（会话行为分析，MIT），由
+`Qt/android/build.gradle` 声明、`Qt/android/src/rhine/music/database/RhineApplication.java`
+初始化。传递依赖：`org.jetbrains.kotlin:kotlin-stdlib`（Apache-2.0）、
+`com.google.protobuf:protobuf-javalite`（BSD-3-Clause）、
+`com.android.installreferrer:installreferrer`（Apache-2.0），许可证文件随各自 AAR 分发。
+对外发布前需按发行地区确认会话采集的用户同意流程。
+
+```text
+The MIT License
+
+Copyright (c) Microsoft Corporation.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+```
 
 ## 原界面与场景代码
 

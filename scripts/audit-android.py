@@ -95,6 +95,10 @@ allowed = {
     # Android 13+ 运行时权限，拒绝时只是通知不显示。
     "android.permission.POST_NOTIFICATIONS",
     "rhine.music.database.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION",
+    # Clarity 的传递依赖 com.android.installreferrer 自己声明的权限。它由 Play 商店
+    # 按 signature 级授予，非 Play 分发的设备上等于没有；我们没有主动申请它，
+    # 也无法在应用内取得。这条是清单合并带进来的，不是新增能力。
+    "com.google.android.finsky.permission.BIND_GET_INSTALL_REFERRER_SERVICE",
 }
 check(permissions <= allowed, f"unexpected permissions: {sorted(permissions - allowed)}")
 
@@ -114,6 +118,12 @@ check(
 check(
     "org.qtproject.qt.android.bindings.QtActivity" in manifest,
     "QtActivity entry point missing",
+)
+# Clarity 的初始化挂在 Application 上：清单里的 application 节点被改回 Qt 默认值时
+# 应用照样能跑，但分析会静默失效，所以在这里钉死。
+check(
+    "rhine.music.database.RhineApplication" in manifest,
+    "RhineApplication (Clarity entry point) missing from manifest",
 )
 
 # 4) 签名：只要验得过就行，具体证书由打包脚本决定（默认是工作区里的调试密钥）。

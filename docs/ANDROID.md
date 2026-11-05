@@ -128,6 +128,32 @@ Android 构建在独立工作流 `.github/workflows/android.yml` 里，与其他
 `android:glEsVersion="0x00030000"` 让低于 OpenGL ES 3.0 的设备在安装期就被过滤掉——
 自绘场景的着色器只烘了 GLSL ES 300，装上去也只会黑屏。
 
+## 第三方依赖与 Clarity
+
+Gradle 工程由 androiddeployqt 按 kit 里的模板（`<kit>/src/android/templates/build.gradle`）现场生成，
+包源目录里的同名文件会**整份覆盖**它——这是 Qt 应用添加第三方依赖的唯一入口。
+`Qt/android/build.gradle` 因此是「模板逐字节副本 + 末尾追加段」：
+
+- 上半部分来自当前 Qt 模板，不要手改；
+- `// ===== RHINE additions below` 之后才是我们的内容（目前只有 Microsoft Clarity）；
+- `scripts/build-android.cjs` 在构建前校验前缀，模板对不上就直接失败，不会静默沿用旧配置；
+  升级 Qt 后跑一次 `node scripts/android-gradle-sync.cjs` 重新生成（追加段原样保留）。
+
+Clarity（会话行为分析，项目 ID `z8vbz4b078`）在 `RhineApplication.onCreate()` 里初始化：
+Qt 的启动 Activity 在 Qt 自己的 jar 里、插不了代码，所以清单的 `android:name` 从
+`org.qtproject.qt.android.bindings.QtApplication` 换成继承它的
+`rhine.music.database.RhineApplication`。初始化整段用 `try/catch` 包住——分析 SDK 出问题
+不该拖垮面板本身。日志级别取 `LogLevel.None`，排查初始化问题时可临时改 `Verbose`。
+
+依赖链：`com.microsoft.clarity:clarity:3.10.0` → `kotlin-stdlib`、`protobuf-javalite`
+（Maven Central）、`com.android.installreferrer`（Google Maven）。两个仓库 Qt 模板都已声明，
+无需补配置；最后者的清单会带进一条 `BIND_GET_INSTALL_REFERRER_SERVICE` 权限（Play 商店
+signature 级，非 Play 渠道等于没有），`scripts/audit-android.py` 的白名单里注明了来源。
+`kotlin-stdlib` 只出现在 Clarity 的 runtime 变体里，编译期并不在 classpath 上。追加段里那条
+`compileOnly` 只是防将来用到带 `kotlin.*` 签名的成员时，javac 抛出「cannot access
+kotlin.jvm.functions.Function2」这类没头没脑的错误——当前用法（`ClarityConfig(String)` +
+`setLogLevel`）不加它也编得过。`compileOnly` 不进 APK，运行期的 stdlib 由 Clarity 自己传递。
+
 ## 架构：三个和桌面不同的决定
 
 **Node 运行时编进进程。** Android 不允许从应用私有目录执行可执行文件，桌面那条
@@ -198,3 +224,5 @@ FidelityFX/FSR3 在 Android 仍默认关闭（`RHINE_ENABLE_FIDELITYFX=OFF`，�
 | 首次启动白屏十几秒                               | 正在解包资源（约 45 MB）到应用私有目录，只在版本号或提交变化后的第一次发生                                                                   |
 | 界面能起但列表空白                               | Node 运行时没起来；`adb logcat` 里看 `Android:` 与 node 的 stderr 输出（本仓库不做实机调试）                                                 |
 | 画面上下颠倒                                     | 清单被模板覆盖回 `unspecified`；`scripts/audit-android.py` 会直接报 `screenOrientation is not sensorLandscape`                               |
+| `Qt/android/build.gradle 的前缀不再等于…`        | Qt 升级换了 Gradle 模板；跑 `node scripts/android-gradle-sync.cjs` 重新生成（末尾追加的依赖会保留）                                          |
+| Clarity 后台没有会话                             | 清单 `android:name` 被改回 `QtApplication`；`scripts/audit-android.py` 会报 `RhineApplication (Clarity entry point) missing`                  |
