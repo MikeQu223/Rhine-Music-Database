@@ -91,12 +91,22 @@ Item {
         focus: true
         onPressed: function (mouse) {
             forceActiveFocus();
+            // 双指捏合期间不让第一根手指的 MouseArea 事件继续驱动单指旋转。
+            if (viewerPinch.active) {
+                return;
+            }
             rhine.pointer("pointerdown", mouse.x / overlay.stageScale, mouse.y / overlay.stageScale);
         }
         onPositionChanged: function (mouse) {
+            if (viewerPinch.active) {
+                return;
+            }
             rhine.pointer("pointermove", mouse.x / overlay.stageScale, mouse.y / overlay.stageScale);
         }
         onReleased: function (mouse) {
+            if (viewerPinch.active) {
+                return;
+            }
             rhine.pointer("pointerup", mouse.x / overlay.stageScale, mouse.y / overlay.stageScale);
         }
         onExited: rhine.pointer("pointerleave", 0, 0)
@@ -276,6 +286,33 @@ Item {
     TouchInput {
         stage: overlay
         backend: rhine
+    }
+    // 封面查看页的触控：单指拖动交给 inputLayer → NativeViewer 做球面旋转；
+    // 双指捏合走与桌面滚轮同一条通路做缩放。桌面滚轮语义不变，这里只接触摸屏。
+    PinchHandler {
+        id: viewerPinch
+        target: null
+        acceptedDevices: PointerDevice.TouchScreen
+        enabled: !!rhine.state.viewer
+        onActiveChanged: {
+            if (active) {
+                // 第二根手指落下时结束可能已开始的单指旋转，避免两个手势叠加。
+                rhine.pointer("pointercancel", 0, 0);
+            }
+        }
+        // Qt 6 的 activeScale 没有 onActiveScaleChanged：它的 NOTIFY 是
+        // scaleChanged(delta)，delta 就是这一帧捏合距离的乘法变化量。
+        onScaleChanged: function (delta) {
+            if (!active || !isFinite(delta) || delta <= 0) {
+                return;
+            }
+            // wheelInput 的正 delta 在 viewer 里缩小相机半径（放大画面）。
+            // 350 来自 NativeViewer 的 pow(0.95, 0.7*|delta|*0.01) 与 -delta*8 的换算：
+            // 让 log(捏合比例) 线性映射到与桌面滚轮同样的缩放速度。
+            const p = centroid.scenePosition;
+            rhine.wheelInput(p.x / overlay.stageScale, p.y / overlay.stageScale,
+                             Math.log(delta) * 350, 0);
+        }
     }
     // 验证码只在输入组件和单次登录请求中短暂存在，提交后立即清空。
     Item {
