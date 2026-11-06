@@ -54,9 +54,16 @@ target_link_libraries(RhineCore PRIVATE RhineNodeMobile)
 # 私有头在 include/QtCore/6.12.0 下，CorePrivate 目标带来这条包含路径。
 target_link_libraries(RhineCore PRIVATE Qt6::CorePrivate)
 # 法线响应的位宽：烘焙脚本（RHINE_BAKE_NORMAL_RGBA8=1）、着色器（CMakeLists 的
-# RHINE_NORMAL_RGBA8 宏）与这里的纹理格式必须是同一个决定。RhiScene.cpp 在 RhineCore 里，
-# 所以 C++ 侧也要拿到这个宏，否则它会按 RGBA16F 建纹理去读 8 位数据。
+# RHINE_NORMAL_RGBA8 宏）与运行时纹理格式必须是同一个决定。
+#
+# 目标必须同时挂到 RhineMusicDatabase，而不能只挂 RhineCore：CMakeLists.txt 的
+# RHINE_CORE_SOURCES 用 FILTER EXCLUDE 剔掉了 main/Engine/RhiScene/Hud/FrameProfiler
+# 与 /render/（它们链 fsr/fg，不进回归库），RhiScene.cpp 实际只编进应用目标。
+# 2026-11-06 21:28 的启动崩溃就是这么来的——宏挂在 RhineCore 上从未生效，
+# RhiScene.cpp 走 RGBA16F 分支去校验 8 位烘焙产物，直接 qFatal。
+# 两个目标都加：RhineCore 里没有消费这个宏的文件，多一份不会改变任何产物。
 if(RHINE_ANDROID_NORMAL_RGBA8)
+    target_compile_definitions(RhineMusicDatabase PRIVATE RHINE_NORMAL_RGBA8=1)
     target_compile_definitions(RhineCore PRIVATE RHINE_NORMAL_RGBA8=1)
 endif()
 target_sources(RhineMusicDatabase PRIVATE "${CMAKE_SOURCE_DIR}/Qt/src/AndroidWindow.cpp"

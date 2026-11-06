@@ -493,12 +493,30 @@ vec3(normalResponse.a)`，那个 `a` 来自 **normalAtlas**，surfaceAtlas 的 a
   （`v_normalUv` 与 `+0.5` 偏移），一次 8 B → **16 B/px**。
 - 改成 8 位 UNORM：rgb 存 `response/4`（值域 0..4）、a 存 `highlight/0.25`（0..0.18），
   着色器按同样比例乘回，逐像素带宽减半（夜间每片元省 8 B）。
-- **位宽有三处必须同源**，任何一处漏掉都会让字节数对不上、画面直接花：
+- **位宽有三处必须同源**：
     1. 烘焙：`RHINE_BAKE_NORMAL_RGBA8=1`（`scripts/build-android.cjs` 设置）；
     2. 着色器：CMake 的 `RHINE_ANDROID_NORMAL_RGBA8` → `RHINE_NORMAL_RGBA8=1` 进 qsb；
-    3. C++：`Qt/Android.cmake` 把同一个宏 `target_compile_definitions` 给 RhineCore。
-       `RhiScene.cpp` 在加载时会核对文件字节数（131072 / 262144），对不上直接 `qFatal`
-       并说明该用哪个开关重烘——**宁可启动时报错，也不要静默花屏**。
+    3. C++：`Qt/Android.cmake` 把同一个宏 `target_compile_definitions` 给
+       **RhineMusicDatabase**（也必须给 RhineCore，与 `RHINE_FSR3_VULKAN` 的写法一致）。
+
+**⚠️ 第 3 项踩过一次真崩溃（2026-11-06 21:28，启动主界面即 abort）**：
+最初的实现只把宏加给了 `RhineCore`。但 `CMakeLists.txt` 的 `RHINE_CORE_SOURCES`
+有一行 `list(FILTER ... EXCLUDE REGEX "/(main|Engine|Icon|RhiScene|Hud|FrameProfiler)\.(cpp|h)$|/tests/|/fsr/|/fg/|/render/")`
+——`RhiScene.cpp` **根本不在 RhineCore 里**，它只编进 `RhineMusicDatabase`
+（`build.ninja` 里的 object 路径是 `Qt/CMakeFiles/RhineMusicDatabase.dir/src/RhiScene.cpp.o`）。
+于是宏全程没生效，C++ 按 RGBA16F 去校验 8 位烘焙产物，直接
+`qFatal("archive-baked-normal.bin is 131072 bytes (expected 262144 for RGBA16F)")`。
+着色器和烘焙都是对的，**只有 C++ 的判断错了**；CMakeCache 里选项是 ON，
+所以「配置看起来没问题」完全掩盖了这个错。
+
+**现在的写法不再依赖宏来判断格式**：纹理格式从文件字节数反推
+（131072 → RGBA8，262144 → RGBA16F），宏与文件不一致时只 `qWarning` 提示偏色，
+**不再 `qFatal`**——启动崩溃比画面偏色严重得多。宏本身仍然保留，用来做这条一致性检查。
+
+> 一般化教训：这个项目里 `RhineCore` 与 `RhineMusicDatabase` 的源文件集合**不是包含关系**
+> （前者用 `FILTER EXCLUDE` 剔掉了 main/Engine/RhiScene/Hud/FrameProfiler 与整个
+> `/render/`、`/fsr/`、`/fg/`）。任何被 **RhiScene / Hud / Engine / render/* 消费**的宏，
+> 都必须同时挂到 `RhineMusicDatabase`，只挂 `RhineCore` 等于没挂。
 
 ### T3 · 夜间模式短路 · 已落地
 
@@ -1036,3 +1054,5 @@ BuildId 与当前 APK 里那份完全一致，补丁新增的 `destroySurfaceRes
 | 前台滑动时界面突然消失（无响应后退出）                                                  | ANR：`Input dispatching timed out`，系统按 `user request after error` 杀进程。根因是系统无障碍服务激活了 Qt 的可访问树遍历，见「前台 ANR」一节；默认已关闭该桥，`RHINE_ANDROID_ACCESSIBILITY=1` 可恢复                                                                    |
 | logcat 出现 `No response to onStartJob` / `com.microsoft.clarity.jobs.UploadSessionJob` | 不是 Clarity 崩溃，也不是本应用 native crash：`onStartJob` 跑在主线程，主线程被卡住时它的 8 秒 deadline 到期，系统据此判 ANR 并杀进程；该 job 每 ~10 秒调度一次、跨进程存活，冷启动重试时最容易撞上。见「Clarity 的准确定位」，先按上一行修无障碍桥，再看冷启动是否仍超时 |
 | logcat 又出现 `destroyed mutex` 的 SIGABRT                                              | 与前台 ANR 不同的老问题：Vulkan surface 换面竞态。`scripts/qt-android-patches.cjs` 的补丁还在，但 kit 没重编过；重跑 `npm run build:qt:android` 再重建 APK 才会生效                                                                                                       |
+| 启动到主界面立刻闪退，`crash` 缓冲区是 `SIGABRT`（`QtThread`，`Abort message: archive-baked-normal.bin is ... expected 262144`） | 宏挂错目标：`RHINE_NORMAL_RGBA8` 只加到 `RhineCore`，而 `RhiScene.cpp` 被 `RHINE_CORE_SOURCES` 的 `FILTER EXCLUDE` 排除、只编进 `RhineMusicDatabase`。现已改为按文件字节数选格式（不再 `qFatal`），并把宏同时挂到应用目标，见 T2 小节 |
+| 启动后 3D 画面颜色明显偏亮/偏暗，logcat 有「法线图集位宽与着色器宏不一致」                | 烘焙的 `RHINE_BAKE_NORMAL_RGBA8` 与 CMake 的 `RHINE_ANDROID_NORMAL_RGBA8` 不同步：两者必须同为开或同为关，改一个就要重跑 `npm run build:android`                                                                                                                        |

@@ -772,24 +772,37 @@ class Renderer {
         lightAtlas = texture3D({fieldSize * 6, fieldSize}, 24, QRhiTexture::RGBA8,
                                QRhiTexture::ThreeDimensional);
         upload3D(lightAtlas, lightBytes, 24);
-        // 法线响应的位宽由烘焙配置决定，必须与着色器的 RHINE_NORMAL_RGBA8 宏同源
-        // （CMake 同时把它定义给 C++ 和 qsb）。差一半字节会读错位，宁可直接报错。
+        // 法线响应的位宽从文件字节数反推，不依赖编译期宏。
+        //
+        // 2026-11-06 21:28 的启动崩溃就是踩了这个坑：RHINE_NORMAL_RGBA8 原先只加在
+        // RhineCore 上，而 CMakeLists.txt 的 RHINE_CORE_SOURCES 用 FILTER EXCLUDE 把
+        // RhiScene.cpp 排除了（它链 fsr/fg，不进回归库），这个文件只编进
+        // RhineMusicDatabase。于是宏从未生效，C++ 按 RGBA16F 去校验 8 位数据，
+        // 烘焙出来的 131072 字节直接 qFatal——着色器和烘焙都是对的，只有 C++ 判断错了。
+        // 文件大小是唯一不会说谎的来源：131072 = RGBA8，262144 = RGBA16F。
         const QByteArray normalBytes = read(root, "archive-baked-normal.bin");
+        const qint64 normalByteCount = normalBytes.size();
+        const bool normalRgba8 = normalByteCount == 128 * 256 * 4;
+        if (!normalRgba8 && normalByteCount != 128 * 256 * 8) {
+            qFatal("archive-baked-normal.bin is %lld bytes; expected 131072 (RGBA8) or "
+                   "262144 (RGBA16F). Re-bake with scripts/bake-archive-lighting.py.",
+                   static_cast<long long>(normalByteCount));
+        }
+        // 纹理格式跟着文件走，但着色器是按宏解码的（RGBA8 要乘回 4.0 / 0.25）。
+        // 两者不一致只会偏色、不会崩，所以用警告而不是 qFatal——崩溃比偏色更糟。
 #if defined(RHINE_NORMAL_RGBA8)
-        if (normalBytes.size() != 128 * 256 * 4) {
-            qFatal("RHINE_NORMAL_RGBA8 is on but archive-baked-normal.bin is %lld bytes "
-                   "(expected 131072); re-bake with RHINE_BAKE_NORMAL_RGBA8=1.",
-                   static_cast<long long>(normalBytes.size()));
-        }
-        normalAtlas = texture({128, 256}, QRhiTexture::RGBA8);
+        constexpr bool shaderNormalRgba8 = true;
 #else
-        if (normalBytes.size() != 128 * 256 * 8) {
-            qFatal("archive-baked-normal.bin is %lld bytes (expected 262144 for RGBA16F); "
-                   "it looks like it was baked for RHINE_NORMAL_RGBA8.",
-                   static_cast<long long>(normalBytes.size()));
-        }
-        normalAtlas = texture({128, 256}, QRhiTexture::RGBA16F);
+        constexpr bool shaderNormalRgba8 = false;
 #endif
+        if (shaderNormalRgba8 != normalRgba8) {
+            qWarning("法线图集位宽与着色器宏不一致：文件 %lld 字节（%s），着色器按 %s 解码，"
+                     "画面颜色会偏。重烘焙时把 RHINE_BAKE_NORMAL_RGBA8 与 CMake 的 "
+                     "RHINE_ANDROID_NORMAL_RGBA8 设成同一个值。",
+                     static_cast<long long>(normalByteCount), normalRgba8 ? "RGBA8" : "RGBA16F",
+                     shaderNormalRgba8 ? "RGBA8" : "RGBA16F");
+        }
+        normalAtlas = texture({128, 256}, normalRgba8 ? QRhiTexture::RGBA8 : QRhiTexture::RGBA16F);
         upload(normalAtlas, normalBytes);
         white = texture({1, 1}, QRhiTexture::RGBA8);
         upload(white, QByteArray(4, char(255)));
