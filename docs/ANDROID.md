@@ -1142,24 +1142,32 @@ BuildId 与当前 APK 里那份完全一致，补丁新增的 `destroySurfaceRes
    C++ 侧没有 `QQuickStyle::setStyle`。**刻意保留** `Qt6QuickControls2` /
    `QuickControls2Impl` / `QuickControls2Basic`（约 2.5 MB）作兜底——少一个 .so 就是启动即崩。
    `scripts/android-gradle-sync.cjs` 的 `bootstrapAdditions` 已同步，Qt 升级后不会被覆盖。
-2. **qmltooling 调试插件**（约 1 MB）与 `Qt6LabsFolderListModel`（0.1 MB）：release 不需要、
-   没有任何 QML import 后者。
-3. **Android 包不再带 `archive-baked-surface-bc7.bin`**（1.4 MB）：GLES 上
-   `isTextureFormatSupported(BC7)` 恒为 false，RhiScene 直接跳过。
-4. **ETC2 产物不再烘焙也不再打包**（699 KB + 每次省十几秒）：编码器有缺陷已默认关闭，
-   见「T1 · surfaceAtlas 换 ETC2 RGB8」。
-5. **`.so` 压缩存储**（`RHINE_ANDROID_LEGACY_PACKAGING`，默认 `1`）：Qt 模板的
-   `useLegacyPackaging=false` 把 152 MB 的 `.so` 原样塞进 APK（九成体积都在这）。
-   改成 `true`（extractNativeLibs）后 AGP 用 deflate 压缩，下载体积大约降到六成；
-   代价是安装时解压到 `/data/app/.../lib/`、首次启动多一次解压。对 sideload 分发，
-   下载体积比安装后占用重要，所以默认开；改回用 `RHINE_ANDROID_LEGACY_PACKAGING=0`。
-6. **R8 收缩**（`RHINE_ANDROID_R8`，默认 `1`）：`minifyEnabled + shrinkResources`，
-   但**不混淆**（`-dontobfuscate`）——所有 JNI 入口（QtActivity/QtNative、
-   RhineMediaService、Consent*）都是按类名与方法名字符串查找的，混淆改了名字就是
-   启动即崩。keep 规则在追加段里配置期生成到 `projectDir/rhine-r8.pro`：
-   `org.qtproject.**`、`rhine.music.database.**`、两个 SDK 全类名 + 各自 `dontwarn`、
-   以及 `keepclasseswithmembernames ... native <methods>`。效果实测
-   `classes.dex` 6.9 MB → **1.7 MB**（androidx 与 Kotlin stdlib 被大幅收缩）。
+2. **qmltooling 调试插件**（约 1 MB）：release 不需要，QML 引擎只在调试会话里用它。
+
+**排除清单的教训（2026-11-07，「致命错误」弹窗的根因）**：曾把 `Qt6LabsFolderListModel`
+（0.1 MB）一起排掉，判据是「QML 没有一处 import 它」——**这个判据是错的**。
+`QtQuick.Dialogs`（FileDialog）隐式依赖 FolderListModel（`Qt6LabsFolderListModel`
+就是它的实现库），qmlimportscanner 会顺着 qmldir 把它写进 androiddeployqt 的部署清单；
+gradle 的 `jniLibs.excludes` 只是从 APK 里删掉 .so，**清单还在**。结果 QtLoader 启动时
+按清单逐个 dlopen，缺了这个库 → `UnsatisfiedLinkError` → 弹
+「您的应用程序遇到一个致命错误导致它无法继续」→ `System.exit(-1)`。
+真机 adb 复现确认 `E/QtLoader ... dlopen failed` 是唯一缺失项，其他排除项全部安全。
+结论：**裁剪 .so 只能排除「部署清单里没有」的库**（Controls2 样式包就不在清单里，
+因为没有任何 import 链通向它们）；判断依据是 androiddeployqt 的依赖清单或真机
+QtLoader 日志，不是 QML 源码里的 import 语句。自检 `apk-size-check.py` 里有
+「不得排除 libQt6LabsFolderListModel」的防回归断言。3. **Android 包不再带 `archive-baked-surface-bc7.bin`**（1.4 MB）：GLES 上
+`isTextureFormatSupported(BC7)` 恒为 false，RhiScene 直接跳过。4. **ETC2 产物不再烘焙也不再打包**（699 KB + 每次省十几秒）：编码器有缺陷已默认关闭，
+见「T1 · surfaceAtlas 换 ETC2 RGB8」。5. **`.so` 压缩存储**（`RHINE_ANDROID_LEGACY_PACKAGING`，默认 `1`）：Qt 模板的
+`useLegacyPackaging=false` 把 152 MB 的 `.so` 原样塞进 APK（九成体积都在这）。
+改成 `true`（extractNativeLibs）后 AGP 用 deflate 压缩，下载体积大约降到六成；
+代价是安装时解压到 `/data/app/.../lib/`、首次启动多一次解压。对 sideload 分发，
+下载体积比安装后占用重要，所以默认开；改回用 `RHINE_ANDROID_LEGACY_PACKAGING=0`。6. **R8 收缩**（`RHINE_ANDROID_R8`，默认 `1`）：`minifyEnabled + shrinkResources`，
+但**不混淆**（`-dontobfuscate`）——所有 JNI 入口（QtActivity/QtNative、
+RhineMediaService、Consent*）都是按类名与方法名字符串查找的，混淆改了名字就是
+启动即崩。keep 规则在追加段里配置期生成到 `projectDir/rhine-r8.pro`：
+`org.qtproject.**`、`rhine.music.database.**`、两个 SDK 全类名 + 各自 `dontwarn`、
+以及 `keepclasseswithmembernames ... native <methods>`。效果实测
+`classes.dex` 6.9 MB → **1.7 MB**（androidx 与 Kotlin stdlib 被大幅收缩）。
 
 实际效果：`6d0c95f` 起的 APK 从 **168 MB → 69 MB**（`.so` 压缩 + 库裁剪 + R8）。
 

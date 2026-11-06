@@ -88,7 +88,7 @@ android {
                 '**/libQt6QuickControls2Universal*.so',
                 '**/libQt6QuickControls2Fusion*.so',
                 '**/libplugins_qmltooling_*.so',
-                '**/libQt6LabsFolderListModel*.so',
+                // '**/libQt6LabsFolderListModel*.so',
             ])
         }
     }
