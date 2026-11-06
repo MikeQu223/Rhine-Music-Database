@@ -1129,39 +1129,45 @@ BuildId 与当前 APK 里那份完全一致，补丁新增的 `destroySurfaceRes
 | `libnode.so`                                  | 47.2 MB     | Node 运行时，动不了（已 strip）        |
 | `libRhineMusicDatabase.so`                    | 39.7 MB     | 其中 `.rodata` ≈ 35 MB 是内嵌 qrc 资源 |
 | Qt6Core/Gui/Quick/Qml                         | 31.1 MB     | 必需                                   |
-| **QuickControls2 六套样式**                   | **15.6 MB** | **已排除**（QML 无一处 import）        |
+| QuickControls2 六套样式                        | 15.6 MB     | **必须保留**（在 QtLoader 启动清单里，见下） |
 | `classes.dex`                                 | 6.9 MB      | Clarity + Bugly + Kotlin + protobuf    |
 | QuickDialogs2QuickImpl                        | 3.0 MB      | `QtQuick.Dialogs` 在用，保留           |
 | 字体 ×4（MiSans light/regular/demibold/bold） | 28 MB       | **未动**，见下                         |
 
 ### 已做的裁剪
 
-1. **QuickControls2 样式包**（`Qt/android/build.gradle` 追加段的 `jniLibs.excludes`）：
-   FluentWinUI3 / Imagine / Material / Universal / Fusion 及其 StyleImpl，约 13 MB。
-   判据是 `Qt/qml/*.qml` 只 import `QtQuick`、`QtQuick.Window`、`QtQuick.Dialogs`，
-   C++ 侧没有 `QQuickStyle::setStyle`。**刻意保留** `Qt6QuickControls2` /
-   `QuickControls2Impl` / `QuickControls2Basic`（约 2.5 MB）作兜底——少一个 .so 就是启动即崩。
-   `scripts/android-gradle-sync.cjs` 的 `bootstrapAdditions` 已同步，Qt 升级后不会被覆盖。
-2. **qmltooling 调试插件**（约 1 MB）：release 不需要，QML 引擎只在调试会话里用它。
+1. **QuickControls2 样式包：已撤销裁剪**。曾把 FluentWinUI3 / Imagine / Material /
+   Universal / Fusion 及各自 StyleImpl（共 10 个 .so，约 13 MB）排除，判据是「QML 没有
+   import QtQuick.Controls」——判据错误，见下方教训，**已全部恢复**。
+2. **qmltooling 调试插件**（约 1 MB）：唯一还保留的 `.so` 排除项，它不在部署清单里。
 
-**排除清单的教训（2026-11-07，「致命错误」弹窗的根因）**：曾把 `Qt6LabsFolderListModel`
-（0.1 MB）一起排掉，判据是「QML 没有一处 import 它」——**这个判据是错的**。
-`QtQuick.Dialogs`（FileDialog）隐式依赖 FolderListModel（`Qt6LabsFolderListModel`
-就是它的实现库），qmlimportscanner 会顺着 qmldir 把它写进 androiddeployqt 的部署清单；
-gradle 的 `jniLibs.excludes` 只是从 APK 里删掉 .so，**清单还在**。结果 QtLoader 启动时
-按清单逐个 dlopen，缺了这个库 → `UnsatisfiedLinkError` → 弹
-「您的应用程序遇到一个致命错误导致它无法继续」→ `System.exit(-1)`。
-真机 adb 复现确认 `E/QtLoader ... dlopen failed` 是唯一缺失项，其他排除项全部安全。
-结论：**裁剪 .so 只能排除「部署清单里没有」的库**（Controls2 样式包就不在清单里，
-因为没有任何 import 链通向它们）；判断依据是 androiddeployqt 的依赖清单或真机
-QtLoader 日志，不是 QML 源码里的 import 语句。自检 `apk-size-check.py` 里有
-「不得排除 libQt6LabsFolderListModel」的防回归断言。3. **Android 包不再带 `archive-baked-surface-bc7.bin`**（1.4 MB）：GLES 上
-`isTextureFormatSupported(BC7)` 恒为 false，RhiScene 直接跳过。4. **ETC2 产物不再烘焙也不再打包**（699 KB + 每次省十几秒）：编码器有缺陷已默认关闭，
-见「T1 · surfaceAtlas 换 ETC2 RGB8」。5. **`.so` 压缩存储**（`RHINE_ANDROID_LEGACY_PACKAGING`，默认 `1`）：Qt 模板的
+**排除清单的教训（2026-11-07，连续两次启动失败）**：QtLoader 按 `array/qt_libs`
+（`aapt2 dump resources <apk>` 可读）顺序逐个 `System.load`，**遇到第一个缺失就抛
+`UnsatisfiedLinkError` 并 `System.exit(-1)`**，弹「您的应用程序遇到一个致命错误导致
+它无法继续」。所以真机日志一次只暴露一个缺失库，修好一个才轮到下一个冒出来：
+第一晚是 `Qt6LabsFolderListModel`（0.1 MB，`QtQuick.Dialogs` 的 FolderListModel 后端），
+第二晚是 `Qt6QuickControls2UniversalStyleImpl`。
+
+正确做法是离线把部署清单与 APK 内容做**完整差集**
+（`.workbuddy/tmp/crash/qt-libs-diff.py`），一次补全：清单 38 项缺 10 个，全是五套 QQC2
+样式及 StyleImpl。它们**全部在 `qt_libs` 里**——Android 部署清单是整模块收集的，
+与 QML 是否 import 具体样式无关；「QML 没 import」不能作为裁剪依据。
+
+结论：**只能排除 `qt_libs` / `bundled_libs` / `load_local_libs` 里没有的库**，
+排除前用 `.workbuddy/tmp/crash/qt-libs-verify.py` 预演，别靠真机逐个试错。
+`apk-size-check.py` 与 `gradle-additions-check.py` 都有「不得排除 qt_libs 库」的
+防回归断言。
+
+3. **Android 包不再带 `archive-baked-surface-bc7.bin`**（1.4 MB）：GLES 上
+`isTextureFormatSupported(BC7)` 恒为 false，RhiScene 直接跳过。
+4. **ETC2 产物不再烘焙也不再打包**（699 KB + 每次省十几秒）：编码器有缺陷已默认关闭，
+见「T1 · surfaceAtlas 换 ETC2 RGB8」。
+5. **`.so` 压缩存储**（`RHINE_ANDROID_LEGACY_PACKAGING`，默认 `1`）：Qt 模板的
 `useLegacyPackaging=false` 把 152 MB 的 `.so` 原样塞进 APK（九成体积都在这）。
 改成 `true`（extractNativeLibs）后 AGP 用 deflate 压缩，下载体积大约降到六成；
 代价是安装时解压到 `/data/app/.../lib/`、首次启动多一次解压。对 sideload 分发，
-下载体积比安装后占用重要，所以默认开；改回用 `RHINE_ANDROID_LEGACY_PACKAGING=0`。6. **R8 收缩**（`RHINE_ANDROID_R8`，默认 `1`）：`minifyEnabled + shrinkResources`，
+下载体积比安装后占用重要，所以默认开；改回用 `RHINE_ANDROID_LEGACY_PACKAGING=0`。
+6. **R8 收缩**（`RHINE_ANDROID_R8`，默认 `1`）：`minifyEnabled + shrinkResources`，
 但**不混淆**（`-dontobfuscate`）——所有 JNI 入口（QtActivity/QtNative、
 RhineMediaService、Consent*）都是按类名与方法名字符串查找的，混淆改了名字就是
 启动即崩。keep 规则在追加段里配置期生成到 `projectDir/rhine-r8.pro`：
@@ -1169,7 +1175,9 @@ RhineMediaService、Consent*）都是按类名与方法名字符串查找的，�
 以及 `keepclasseswithmembernames ... native <methods>`。效果实测
 `classes.dex` 6.9 MB → **1.7 MB**（androidx 与 Kotlin stdlib 被大幅收缩）。
 
-实际效果：`6d0c95f` 起的 APK 从 **168 MB → 69 MB**（`.so` 压缩 + 库裁剪 + R8）。
+实际效果：`6d0c95f` 起的 APK 从 **168 MB → 69 MB**，主要来自 `.so` 压缩与 R8
+（`classes.dex` 6.9 → 1.7 MB）。2026-11-07 恢复 10 个 QQC2 样式库后体积会回升
+若干 MB——**正确性优先**，这 10 个库在 `qt_libs` 启动清单里，删掉就起不来。
 
 ### zipalign 与 zopfli 后处理（可选）
 

@@ -81,14 +81,15 @@ android {
             // 与上面 Bugly 那段一致用 addAll：excludes 是可变 Set，用 += 会走
             // 属性读改写，AGP 版本一换就可能只在某些配置下生效。
             // 注意 android-gradle-sync.cjs 里这段在 JS 模板字符串内，注释里不能出现反引号。
+            // 只排除 QtLoader 启动清单之外的库。array/qt_libs 里的 35 个库会被
+            // QtLoader 按顺序逐个 System.load，缺任何一个都会弹「致命错误」
+            // 并 System.exit(-1)（2026-11-07 连续两次启动失败的根因）。
+            // 清单包含全部五套 QQC2 样式及 StyleImpl、Qt6LabsFolderListModel
+            // （QtQuick.Dialogs 隐式依赖），它们一个都不能排。
+            // 核对方式：aapt2 dump resources <apk> 读 array/qt_libs；
+            // 别用「QML 有没有 import」来猜，Android 部署清单是整模块收集的。
             excludes.addAll([
-                '**/libQt6QuickControls2FluentWinUI3*.so',
-                '**/libQt6QuickControls2Imagine*.so',
-                '**/libQt6QuickControls2Material*.so',
-                '**/libQt6QuickControls2Universal*.so',
-                '**/libQt6QuickControls2Fusion*.so',
                 '**/libplugins_qmltooling_*.so',
-                // '**/libQt6LabsFolderListModel*.so',
             ])
         }
     }
