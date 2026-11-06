@@ -455,6 +455,7 @@ void rhineOpenSignalDiagFile() {
 } // namespace
 #endif // RHINE_ANDROID_SIGNAL_DIAG
 #endif // Q_OS_ANDROID
+#include "render/AndroidRenderPolicy.h"
 #include "render/PresentationShell.h"
 #include "render/RenderPolicy.h"
 #include "FrameProfiler.h"
@@ -801,7 +802,10 @@ static void applyRenderScaleSetting() {
     if (!qEnvironmentVariableIsEmpty("RHINE_RENDER_SCALE")) {
         return;
     }
-    const auto percent = graphicsSettings().value("panel/render-scale", 100).toInt();
+    // 默认值与设置页描述符共用 AndroidRenderPolicy.h 里的同一个函数：Android 取 90%，
+    // 其它平台仍是 100。用户显式设过 preference / 环境变量时这两条分支都不参与。
+    const auto percent =
+        graphicsSettings().value("panel/render-scale", RhineRender::androidDefaultRenderScale()).toInt();
     if (percent > 0 && percent != 100) {
         qputenv("RHINE_RENDER_SCALE", QByteArray::number(qBound(50, percent, 100)));
     }

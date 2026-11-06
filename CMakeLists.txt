@@ -431,6 +431,17 @@ endif()
 if(APPLE)
     list(APPEND RHINE_OPTICAL_SHADER_DEFINES RHINE_METAL_MOTION=1)
 endif()
+# Android 合成层轻量化：最终合成的 3x3 二项柔化在采样半径 k==1 时折叠成四次半纹素
+# 双线性采样（9 -> 4 次纹理读取）。DEFINES 是 CMake 配置期参数，Android 与桌面/iOS 是
+# 各自独立的构建树，因此这个宏只会进入 Android 的 qsb 烘焙，其它平台的着色器产物
+# 与改动前逐字节相同，无需另起 /opticalMobile 变体、也不用在运行期切换 qrc 路径。
+# 关掉只需 -DRHINE_ANDROID_QUAD_FOLD=OFF 重新配置（不改源码、不动其它平台）。
+if(ANDROID)
+    option(RHINE_ANDROID_QUAD_FOLD "Fold the 3x3 final blur into four bilinear taps on Android" ON)
+    if(RHINE_ANDROID_QUAD_FOLD)
+        list(APPEND RHINE_OPTICAL_SHADER_DEFINES RHINE_OPTICAL_QUAD_FOLD=1)
+    endif()
+endif()
 # E05a：紧凑实例（80 字节）的第二套着色器烘焙放在独立子目录：
 # qt_add_shaders 把 .qsb 写到当前二进制目录的 .qsb/ 下，同一目录对同一份源码烘两次会撞规则。
 add_subdirectory(Qt/shaders/compact)

@@ -300,6 +300,12 @@ class Renderer {
     // A05：运动矢量附件当前是否真的分配了。它是目标形状的一部分，必须和尺寸/采样数/
     // AA 模式一起参与 resize() 的早退比较，否则切换 AA 模式后会沿用旧目标。
     bool motionTarget = false;
+#if defined(Q_OS_ANDROID)
+    // Globals 差分上传的上一帧字节快照。valid=false 时强制上传（首帧、Renderer 重建）。
+    // 用字节数组而不是 Globals 对象：只做 memcmp / memcpy，不参与任何渲染计算。
+    std::array<unsigned char, sizeof(Globals)> globalsSnapshot{};
+    bool globalsSnapshotValid = false;
+#endif
     QString root;
     std::vector<std::unique_ptr<QRhiResource>> resources, sized, transient;
     QHash<QString, Mesh> meshes;
@@ -3209,6 +3215,20 @@ class Renderer {
         dbgPre.restart();
 #endif
         auto g = globals(frame);
+#if defined(Q_OS_ANDROID)
+        // Android 同时定义 Q_OS_LINUX，下面 #if defined(Q_OS_LINUX) || ... 与渲染尾部的
+        // #elif defined(Q_OS_LINUX) 都会被它命中。但 300es 主变体没有
+        // RHINE_SINGLE_PASS_MOTION，Globals 尾部 128 字节（两个 VP 矩阵）根本没人读，
+        // FG / TAA / FSR 也默认全关。只有确实没有时域消费者时才跳过；一旦打开 TAA、FSR、
+        // FG 或重投影探针，idleMotionWork 自动翻回 false，行为与原来完全一致。
+        const bool idleMotionWork = RhineRender::androidSkipIdleMotionWork() &&
+                                    !postProcess->motionConfigured() &&
+                                    !qEnvironmentVariableIsSet("RHINE_WARP_PROBE");
+#else
+        // Windows 等平台既不编译下面的 Q_OS_LINUX/DARWIN 块、也不走渲染尾部的
+        // #elif Q_OS_LINUX，这个常量在那边完全没有引用点。
+        [[maybe_unused]] constexpr bool idleMotionWork = false;
+#endif
 #if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
         // 速度用未抖动 VP（光栅位置仍带抖动），口径与 motion.vert 一致。
 #ifdef Q_OS_DARWIN
@@ -3219,16 +3239,32 @@ class Renderer {
 #else
         const auto unjitteredVp = matrix(frame["view"].toArray()) * matrix(frame["projection"].toArray());
 #endif
-        g.currentViewProjection = PackedMatrix(unjitteredVp);
+        if (!idleMotionWork) {
+            g.currentViewProjection = PackedMatrix(unjitteredVp);
 #ifdef Q_OS_DARWIN
-        g.previousViewProjection = PackedMatrix(metalHistory.valid() ? metalHistory.viewProjection()
-                                                                      : unjitteredVp);
+            g.previousViewProjection = PackedMatrix(metalHistory.valid() ? metalHistory.viewProjection()
+                                                                          : unjitteredVp);
 #else
-        g.previousViewProjection =
-            motionHistoryValid ? PackedMatrix(previousViewProjection) : PackedMatrix(unjitteredVp);
+            g.previousViewProjection =
+                motionHistoryValid ? PackedMatrix(previousViewProjection) : PackedMatrix(unjitteredVp);
 #endif
+        }
 #endif
+#if defined(Q_OS_ANDROID)
+        // Globals 内容未变就不必再写一次镜像：GLES2 后端把 Dynamic UniformBuffer 存成
+        // QByteArray、内容跨帧保留（qrhigles2.cpp:2846），updateDynamicBuffer 只是一次
+        // memcpy；跳过它省掉拷贝与一条 resourceUpdate 记录。uniform 仍由 setShaderResources
+        // 每帧从镜像读值下发，差分不改变下发结果。Vulkan 的 per-frame ring 不在此列，
+        // 所以只在 Android / GLES 启用。首帧强制上传。
+        if (!RhineRender::androidDifferentialGlobals() || !globalsSnapshotValid ||
+            std::memcmp(globalsSnapshot.data(), &g, sizeof(g)) != 0) {
+            updates->updateDynamicBuffer(globalBuffer, 0, sizeof(g), &g);
+            std::memcpy(globalsSnapshot.data(), &g, sizeof(g));
+            globalsSnapshotValid = true;
+        }
+#else
         updates->updateDynamicBuffer(globalBuffer, 0, sizeof(g), &g);
+#endif
         ++generation;
         // 帧号先递增：updateMusic 里的"准入→换绑"样本靠它算帧差。成品回收则移到需求
         // 更新之后（见下），否则本帧会先绑一张随即被撤销的封面，下一帧再换回去。
@@ -3483,8 +3519,14 @@ class Renderer {
         }
 #elif defined(Q_OS_LINUX)
         // 运动矢量已随主渲染输出（MRT），这里只发布输入并保存上一帧状态。
-        publishMotionInputs(frame);
-        previousViewProjection = unjitteredVp;
+        // Android 也命中这条分支（Q_OS_ANDROID 蕴含 Q_OS_LINUX），但没有时域消费者时
+        // 这两行是纯开销：FgFrameTap::publish() 在 tap 未启用时只是一次原子读，300es 主变体
+        // 也不读 Globals 尾部。打开 TAA / FSR / FG / warp 探针时 idleMotionWork 为 false，
+        // 这里与桌面 Linux 完全一样。
+        if (!idleMotionWork) {
+            publishMotionInputs(frame);
+            previousViewProjection = unjitteredVp;
+        }
         previousInstanceMatrices.clear();
         previousInstanceBlocks.clear();
         previousInstanceCounts.clear();

@@ -60,4 +60,59 @@ inline bool androidInstancePoolOnGles() {
 #endif
 }
 
+/**
+ * Android 是否跳过「没有消费者的运动矢量收尾工作」。
+ *
+ * 依据：RhiScene.cpp 的 `#elif defined(Q_OS_LINUX)` 分支会被 Android 命中
+ * （Q_OS_ANDROID 蕴含 Q_OS_LINUX），于是每帧跑 publishMotionInputs() 并填写 Globals
+ * 尾部的 current/previousViewProjection。但 Android 的 FG 与 TAA/FSR 默认全关，
+ * 300es 主变体没有 RHINE_SINGLE_PASS_MOTION，shader 根本不读那 128 字节；
+ * FgFrameTap::publish() 在 tap 未启用时也只是一次原子读、无副作用。
+ *
+ * 这里只决定默认值。真正的消费者检查留在调用点（motionConfigured() / RHINE_WARP_PROBE），
+ * 将来在 Android 打开时域功能时会自动恢复，不会静默丢掉运动矢量。
+ */
+inline bool androidSkipIdleMotionWork() {
+    return renderFlag("RHINE_VK_SKIP_IDLE_MOTION", true, false);
+}
+
+/**
+ * Android 是否对 Globals 常量缓冲做差分上传：内容逐字节未变就跳过 updateDynamicBuffer。
+ * Globals 只随相机 / 选中项 / 主题变化，滚动与唱片旋转的不少帧里它是完全相同的。
+ * GLES2 后端把 Dynamic UniformBuffer 存成 QByteArray 字节镜像（qrhigles2.cpp:2846），
+ * updateDynamicBuffer 只是 memcpy 到它；内容相同就省掉这次拷贝和一条 resourceUpdate 记录。
+ * 注意 uniform 值仍由 setShaderResources 每帧从镜像读出并下发，差分不改变下发结果。
+ * 首帧强制上传，避免读到未定义内容。
+ */
+inline bool androidDifferentialGlobals() {
+    return renderFlag("RHINE_VK_DIFF_GLOBALS", true, false);
+}
+
+/**
+ * Android 的默认渲染分辨率（百分比）。
+ *
+ * 这是本文件里唯一会改变像素数的默认值：90% 让内部渲染目标与合成通道的像素数降到
+ * 约 81%，是 GLES 上最直接的 GPU 侧杠杆。桌面 / iOS 仍是 100（原生）。
+ *
+ * 两处消费点必须一致，否则设置页显示与实际生效值会打架：
+ *   · main.cpp::applyRenderScaleSetting() —— 决定 RHINE_RENDER_SCALE 的启动默认值；
+ *   · SettingsSchema.cpp 的 render-scale 描述符 —— 决定设置页的默认值与标签。
+ * 用户在设置页改过之后写进 preference，启动默认值不再参与，行为与其他平台相同。
+ *
+ * 覆盖：RHINE_ANDROID_RENDER_SCALE=50..100 显式指定；总开关
+ * RHINE_ANDROID_RENDER_TUNING=0 直接退回 100。RHINE_RENDER_SCALE 由
+ * applyRenderScaleSetting() 优先尊重，显式设置的用户值不会被动到。
+ */
+inline int androidDefaultRenderScale() {
+#if defined(Q_OS_ANDROID)
+    if (!androidRenderTuningEnabled()) {
+        return 100;
+    }
+    const int configured = qEnvironmentVariableIntValue("RHINE_ANDROID_RENDER_SCALE");
+    return configured >= 50 && configured <= 100 ? configured : 90;
+#else
+    return 100;
+#endif
+}
+
 } // namespace RhineRender

@@ -340,19 +340,34 @@ glb 的 SHA-256，换模型后重新跑 `npm run build:android` 会一并更新�
 ## 3D 渲染性能：Android 专属默认策略
 
 Android 的 3D 走 `RhiScene`（`QQuickRhiItem`）+ `QRhi::OpenGLES2`（GLES 3.0），**不进**
-桌面 / Apple 的 `PresentationShell` 补帧层；FidelityFX 不编入，AA 默认 `off`。也就是说
-渲染分辨率、MSAA、后处理链、模型精度、烘焙贴图规格这些**会改变观感的旋钮一个都没动**。
-这一节只做一件事：把几项「原本为 Vulkan 写的、只改 buffer 组织或 render pass 存储策略、
-不改任何像素」的优化在 Android 上默认打开。
+桌面 / Apple 的 `PresentationShell` 补帧层；FidelityFX 不编入，AA 默认 `off`。优化分两批：
 
-策略集中在 `Qt/src/render/AndroidRenderPolicy.h`，`Qt/src/RhiScene.cpp` 只负责取值：
+1. **严格无损**（第一轮 + 第二轮）：只改 buffer 组织、render pass 存储策略，以及
+   Android 上白跑的 CPU 侧工作，不改任何像素。
+2. **观感档位默认全开**（本轮）：按「不要考虑省电，就是限制帧数那种不要，其他全打开」，
+   把会轻微改变像素的两项 GPU 杠杆也设成 Android 默认值——渲染分辨率 90% 与
+   合成 9→4 双线性折叠。**人为限帧刻意不做**：`RHINE_TICK_MS` /
+   `Engine::frameIntervalMs()` / `FramePacingPolicy` 一行未改，仍走动态自适应节奏。
+   会明显损坏画面的手段（砍后处理链、降 MSAA / 模型顶点数等）仍不在范围内。
+
+默认值集中在 `Qt/src/render/AndroidRenderPolicy.h`，`Qt/src/RhiScene.cpp` 只负责取值；
+渲染分辨率与合成折叠另有各自的开关（见下）。
 
 | 优化 | Android 默认 | 桌面 / iOS | 收益 | 为什么画面不变 |
 | --- | --- | --- | --- | --- |
 | 紧凑实例 80 B（`RHINE_VK_COMPACT_INSTANCES`） | 开 | 关 | 每实例少传 64 B，实例载荷省约 44% | `opticalGeometry.vert` 的 `previousModel` 整段包在 `RHINE_SINGLE_PASS_MOTION` 里，该宏只给桌面 Linux / Apple 定义；Android 主变体本就只读 location 0..7，与 `/opticalCompact` 在 GLES 下逐字同构。shader 读到的 80 字节完全相同 |
 | 丢弃无人读取的深度（`RHINE_VK_DISCARD_UNUSED_DEPTH`） | 开 | 关 | tile-based GPU 每帧少一次 D32F 写回主存（1080p 约 8 MB） | 只改 pass 结束后的 `storeOp`，不改深度测试与颜色；`resize()` 用保守的 `depthStoreRequired()` 兜底，motion / TAA / warp / MetalFX 任一存在就照旧 store |
 | GLES 实例池（原 `ensureInstancePool()` 只放行 Vulkan） | 放行 `OpenGLES2` | 仍只放行 Vulkan | 几十个逐 draw 小 VertexBuffer 合成一个大 buffer，配合内容差分把每帧约 165 KB 上传压到接近 0 | 只改 buffer 组织与 `VertexInput::offset`，顶点 / 材质 / 纹理内容不变；容量或对齐放不下时 `poolInstances()` 整帧回退逐 draw |
+| 跳过无消费者的运动矢量收尾（`RHINE_VK_SKIP_IDLE_MOTION`） | 开 | 关 | 每帧省掉 `publishMotionInputs()` 的矩阵解析 / `atan` / 近远平面计算，以及 Globals 尾部 128 B 的两次矩阵填充 | `Q_OS_ANDROID` 蕴含 `Q_OS_LINUX`，这段原本会跟着桌面 Linux 分支一起跑；但 300es 主变体没有 `RHINE_SINGLE_PASS_MOTION`，shader 不读那两个矩阵，`FgFrameTap::publish()` 在 tap 未启用时也只是空操作。打开 TAA / FSR / FG / `RHINE_WARP_PROBE` 时 `idleMotionWork` 自动翻回 false，不会静默丢运动矢量 |
+| Globals 差分上传（`RHINE_VK_DIFF_GLOBALS`） | 开 | 关 | 相机 / 选中项 / 主题不变的帧里省掉一次 832 B 拷贝和一条 `resourceUpdate` 记录 | 只在内容逐字节相同时跳过上传；`qrhigles2.cpp:2846` 把 Dynamic UniformBuffer 存成 `QByteArray` 字节镜像、内容跨帧保留，uniform 仍由 `setShaderResources` 每帧从镜像读值下发，结果不变。Vulkan 的 per-frame ring 不在此列，所以只在 Android 启用 |
 | 材质 UBO arena（`RHINE_VK_UNIFORM_ARENA`） | **关**（保持原样） | 关 | — | 见下 |
+
+**收益量级要说清楚**：无损那几项清掉的是每帧白跑的 CPU 工作（一次 `QJsonObject`
+矩阵解析 / `atan` / 近远平面计算、两次矩阵填充，以及一次 832 B 拷贝），不改任何像素；
+静态分析证明不了实际帧率提升，真机上看 `RHINE_STEP_PROBE` 的 CPU 分段即可。
+GPU 侧的大头由本轮两项观感档位承接：90% 让内部渲染目标与所有全屏 pass 的像素数降到
+约 81%，折叠让唯一常驻全屏 pass 在 `k==1` 区域的纹理读取从 9 次降到 4 次。两者叠加会
+**改变像素**，所以逐像素 A/B 不能再要求「结果完全一致」，只能用来量差异与找回归。
 
 **材质 arena 为什么刻意不在 GLES 上默认开**：Qt 的 GLES2 后端把
 `QRhi::NonDynamicUniformBuffers` 报为 true——没有真正的 UBO，uniform 靠 `glUniform`
@@ -361,27 +376,82 @@ uniform。arena 的「一次绑定 + 动态偏移」收益在 GLES 上拿不到�
 想实机 A/B 可显式设 `RHINE_VK_UNIFORM_ARENA=1`，`ensureMaterialArena()` 有能力探测，
 不满足会自动回退并在日志里给出原因。
 
-**回退与 A/B**
+### 默认全开：观感档位（限帧除外）
 
-- 单项：上面三个环境变量写 `=0` 即关（也可写 `=1` 在桌面强制开做对照）。显式设置永远优先。
-- 总开关：`RHINE_ANDROID_RENDER_TUNING=0` 把 Android 的三项默认值整体退回改动前。
+| 档位 | Android 默认 | 桌面 / iOS | 收益 | 观感代价 |
+| --- | --- | --- | --- | --- |
+| 渲染分辨率 90% | **开** | 100（原生） | 内部渲染目标与全屏合成的像素数约降到 81%，GLES 上最直接的 GPU 杠杆 | 略软；合成本来就有常驻 3×3 二项柔化，90% 通常不明显 |
+| 合成 9→4 双线性折叠 | **开** | 关（宏不定义） | 唯一常驻全屏 pass 在 `k==1` 区域的纹理读取 9 → 4 次 | 原生分辨率且 `k==1` 时与九点逐项等价，最多差 1~2 ULP；叠加 90% 时属于肉眼不可见的极轻微变化 |
+| 动画期帧率上限（`RHINE_TICK_MS=16`） | **刻意不做** | 不做 | 主要省电与发热 | 高刷设备流畅度降到约 60 fps、触控多最多 16 ms 延迟；用户明确排除 |
+
+**渲染分辨率 90%** 的默认值由 `AndroidRenderPolicy.h::androidDefaultRenderScale()` 给出，
+两个消费点必须一致，否则设置页显示与实际生效值会打架：
+
+- `Qt/src/main.cpp::applyRenderScaleSetting()` 把它作为 `panel/render-scale` 的缺省值，
+  非 100 时写入 `RHINE_RENDER_SCALE`；`Qt/src/render/ScenePostProcess.cpp::renderSize()`
+  读这个环境变量并按 `qBound(.5, percent/100., 1.)` 换算内部渲染尺寸。
+- `Qt/src/SettingsSchema.cpp` 的 `render-scale` 描述符 `.defaultValue` 用同一个函数，
+  档位仍是 `{50, 60, 75, 90, 100}`。
+
+优先级：显式 `RHINE_RENDER_SCALE` 环境变量 > 用户在设置页存下的 preference > 默认 90。
+`RHINE_ANDROID_RENDER_SCALE=50..100` 可以只改默认值，`RHINE_ANDROID_RENDER_TUNING=0`
+退回 100。桌面 / iOS 恒为 100，`applyRenderScaleSetting()` 在它们身上的分支逐值不变。
+
+**合成 9→4 折叠** 由 `CMakeLists.txt` 的 `if(ANDROID)` 块控制：
+`option(RHINE_ANDROID_QUAD_FOLD ... ON)` 给 `RHINE_OPTICAL_SHADER_DEFINES` 追加
+`RHINE_OPTICAL_QUAD_FOLD=1`。`Qt/shaders/enhancement/opticalFinalFragment.frag` 在宏下新增
+一条 `k≈1` 分支，用 `v_uv ± 0.5 texel` 的四个对角双线性采样求和乘 4；线性采样器把它们
+展开后正是 `[1 2 1; 2 4 2; 1 2 1]`，末尾统一 `/16`，与原九点加权和等价。
+`k>1`（焦点外柔化半径放大）时走 `else` 的九点分支，宏未定义时则整块只有九点路径。
+
+> 更正：上一版文档说 `RHINE_OPTICAL_SHADER_DEFINES` 是全局烘给 `130,150,300es`、
+> 「不能只给 Android 加 define」，这个判断是错的。`DEFINES` 是 **CMake 配置期**参数，
+> Android 与桌面 / iOS 是各自独立 configure 出来的构建树，`if(ANDROID)` 只影响 Android
+> 的 qsb 烘焙；不需要另起 `/opticalMobile` 变体，也不用在运行期切换 qrc 路径。
+> 桌面 / iOS 不带这个宏，着色器产物与改动前逐字节相同。
+
+**限帧刻意没做**：`RHINE_TICK_MS` 只是 `Engine::frameIntervalMs()` 里的排障覆盖旋钮，
+默认返回 `-1` 交给 `tick()` 动态自适应；静止 750 ms 后 timer 本来就会停。本轮没有给它
+任何 Android 默认值，也没有改 `FramePacingPolicy`。
+
+**仍未纳入的一项**：烘焙表面图集 `archive-baked-surface-bc7.bin`（1.4 MB）在 GLES 上
+永不被读（`RhiScene.cpp:717` 回落到 5.6 MB RGBA8）。改 ETC2/ASTC 能省带宽与内存，但要
+离线重烘贴图并补一条压缩纹理加载路径，属于需要跑构建/烘焙才能验证的改动，在项目
+「不做构建验证」的前提下没有落地；它需要用户侧执行重烘后再评估。
+
+### 回退与 A/B
+
+- 无损项单项：`RHINE_VK_COMPACT_INSTANCES` / `RHINE_VK_DISCARD_UNUSED_DEPTH` /
+  `RHINE_VK_SKIP_IDLE_MOTION` / `RHINE_VK_DIFF_GLOBALS` 写 `=0` 即关（也可写 `=1`
+  在桌面强制开做对照）；`RHINE_VK_UNIFORM_ARENA` 仍默认关。显式设置永远优先。
+- 渲染分辨率：`RHINE_RENDER_SCALE=100` 或设置页改回 100 即恢复原生；
+  `RHINE_ANDROID_RENDER_SCALE=100` 只改默认值。
+- 合成折叠：`-DRHINE_ANDROID_QUAD_FOLD=OFF` 重新配置 Android 构建树即可关掉，
+  不改源码、不动其它平台。
+- 总开关：`RHINE_ANDROID_RENDER_TUNING=0` 把 Android 的全部默认值（含 GLES 实例池与
+  90% 分辨率）整体退回改动前；它管不到 CMake 的 `RHINE_ANDROID_QUAD_FOLD`，那个要用
+  上面的 `-D...=OFF`。
 - `Renderer::vulkanConfig()` 分别上报「请求值 / 生效值 / 回退原因」，可据此确认实际命中；
   紧凑实例还有 `compactInstancesAllowed()` 兜底——开了 TAA / FSR 或 warp 探针时存在运动矢量
   消费者，会自动回到 144 B。
 
-验证观感不变可用 `RhiScene::renderReference()`（Android 上以 `OpenGLES 3.0` +
-`QRhi::OpenGLES2` 渲一帧并读回 `QImage`）对同一场景做逐像素 A/B；运行期看
-`Renderer` 上报的 `samples` / `renderSize` / `drawCalls` / GPU 分项，确认分辨率与
-绘制次数都没变，只有 CPU 侧上传量下降。
+**A/B 观测入口**：`RHINE_STEP_PROBE` / `RHINE_POST_PROBE` / `RHINE_DRAW_PROBE` 分别记
+CPU 分段、全屏 pass 数、draw 数；`Renderer::vulkanConfig()` 上报请求值 / 生效值 /
+回退原因。逐像素对照可用 `RhiScene::renderReference()`（Android 上以 `OpenGLES 3.0` +
+`QRhi::OpenGLES2` 渲一帧并读回 `QImage`）：比较
+`RHINE_ANDROID_RENDER_SCALE=100` + `-DRHINE_ANDROID_QUAD_FOLD=OFF` 与默认配置，
+即可把两项观感差异单独量出来。运行期还可看 `Renderer` 上报的 `samples` /
+`renderSize` / `drawCalls` / GPU 分项，确认分辨率、采样与绘制次数的变化符合预期。
 
-**刻意没做的**（都会改变观感，按需求排除）：降 render scale / DPR / MSAA、砍后处理链、
-降模型顶点数或 `DiscGeometry::Segments`、降烘焙贴图规格、限帧。缩小封面纹理或下调单帧
-上传预算虽然不改最终像素，但会改变封面出现的时机，也没有动。
+**仍然刻意没做的**（会明显改变观感，不在授权范围）：砍后处理链、降 MSAA / 模型顶点数 /
+`DiscGeometry::Segments`、下调单帧上传预算（会改变封面出现的时机）。
 
 **隔离性**：`renderFlag()` 在桌面 / iOS 恒返回 `legacyDefault`，
 `androidInstancePoolOnGles()` 恒为 false，`ensureInstancePool()` 的 `backendAllowed`
-也就退化为原来的 `rhi->backend() == QRhi::Vulkan`。新头文件在非 Android 平台只是几个
-返回常量的内联函数，不参与任何渲染路径；CMake、着色器烘焙、资源打包一行未改。
+也就退化为原来的 `rhi->backend() == QRhi::Vulkan`；`androidDefaultRenderScale()` 恒返回
+100。CMake 的折叠开关包在 `if(ANDROID)` 里，着色器改动包在 `#ifdef` 里，
+非 Android 分支展开后与改动前逐字相同。新头文件在非 Android 平台只是几个返回常量的
+内联函数，不参与任何渲染路径；资源打包与其它平台脚本一行未改。
 
 ## 音频与系统媒体控件
 
@@ -461,3 +531,5 @@ uniform。arena 的「一次绑定 + 动态偏移」收益在 GLES 上拿不到�
 | 首次启动黑屏最多 3 秒                            | 未同意、且本机只有私有地址时才会取公网出口地址（`GeoIp.TOTAL_TIMEOUT_MS`）；本机有公网 IPv4/IPv6 时直接查表、不等待。已同意后不再请求        |
 | 点「退出」后应用直接关闭                         | 预期行为：未同意数据传输许可时 `finishAffinity()` 结束进程                                                                                   |
 | 国内用户没看到许可弹窗                           | IP 判定失败（断网、端点超时或表未命中）→ 按其他地区放行：照常启动界面与 Clarity，不弹窗、不启动 Bugly，下次启动会重新判定                     |
+| Android 画面比桌面略软                           | 预期行为：Android 默认渲染分辨率 90%（`androidDefaultRenderScale()`）。要原生清晰度用设置页改回 100、`RHINE_RENDER_SCALE=100`，或 `RHINE_ANDROID_RENDER_TUNING=0` 整体回退        |
+| Android 想关掉合成 9→4 折叠做对照               | 用 `-DRHINE_ANDROID_QUAD_FOLD=OFF` 重新配置 Android 构建树；这是 CMake 配置期开关，桌面 / iOS 本来就没有这个宏                                   |
