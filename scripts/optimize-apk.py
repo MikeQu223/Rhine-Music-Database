@@ -19,7 +19,7 @@ alias rhine-debug）。zipalign 必须在签名之前——签名后再对齐会
     或低于门槛的，字节级保留原始 DEFLATE 流（不经过 zlib 重压，避免引入随机差异）。
 
 并行：zopfli 的 C 扩展不释放 GIL（实测双线程 1.08x，等于没有），所以用
-ProcessPoolExecutor（--workers，默认核心数*2）。每个条目一个任务，主进程按 ZIP
+ProcessPoolExecutor（--workers，默认核心数*4）。每个条目一个任务，主进程按 ZIP
 顺序写回；峰值内存约 300 MB（原文 + 原 DEFLATE 流 + 结果同时在内存）。
 
 zopfli 参数（--iterations，默认 15）：
@@ -155,12 +155,23 @@ def scan(src_path: Path, min_size: int) -> None:
                 stored += info.compress_size
             else:
                 deflate += info.compress_size
-            flag = "  <- 会重压" if info.compress_type == zipfile.ZIP_DEFLATED and info.file_size >= min_size else ""
-            print(f"{info.file_size:>12,}  {info.compress_size:>12,}  [{mark}] {info.filename}{flag}")
-        print(f"\nSTORED 合计 {stored/1048576:.1f} MB，DEFLATE 合计 {deflate/1048576:.1f} MB")
+            flag = (
+                "  <- 会重压"
+                if info.compress_type == zipfile.ZIP_DEFLATED
+                and info.file_size >= min_size
+                else ""
+            )
+            print(
+                f"{info.file_size:>12,}  {info.compress_size:>12,}  [{mark}] {info.filename}{flag}"
+            )
+        print(
+            f"\nSTORED 合计 {stored / 1048576:.1f} MB，DEFLATE 合计 {deflate / 1048576:.1f} MB"
+        )
 
 
-def rewrite(src_path: Path, tmp_path: Path, iterations: int, min_size: int, workers: int) -> None:
+def rewrite(
+    src_path: Path, tmp_path: Path, iterations: int, min_size: int, workers: int
+) -> None:
     # zopfli 的 C 扩展不释放 GIL（实测双线程 1.08x ≈ 无加速），并行只能用进程池。
     # 提前把所有条目读进内存再统一提交：进程间 pickle 几 MB 数据的传输开销
     # 相对 zopfli 每秒百 KB 的计算量可以忽略。峰值内存约「原文 + 原 DEFLATE 流 +
@@ -228,24 +239,43 @@ def rewrite(src_path: Path, tmp_path: Path, iterations: int, min_size: int, work
         pool.shutdown()
     print(
         f"重写完成：zopfli 重压 {recompressed} 条、保留原流 {kept} 条、STORED {stored_n} 条；"
-        f"DEFLATE 净省 {saved/1048576:.1f} MB"
+        f"DEFLATE 净省 {saved / 1048576:.1f} MB"
     )
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("apk", type=Path, help="输入 APK（未签名或已签名均可，末尾统一重签）")
-    ap.add_argument("-o", "--output", type=Path, default=None, help="输出路径（默认 <stem>-zopfli<suffix>）")
-    ap.add_argument("--iterations", type=int, default=15, help="zopfli 迭代次数（默认 15）")
-    ap.add_argument("--min-size", type=int, default=65536, help="只重压大于该字节数的条目（默认 64 KiB）")
+    ap.add_argument(
+        "apk", type=Path, help="输入 APK（未签名或已签名均可，末尾统一重签）"
+    )
+    ap.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        default=None,
+        help="输出路径（默认 <stem>-zopfli<suffix>）",
+    )
+    ap.add_argument(
+        "--iterations", type=int, default=15, help="zopfli 迭代次数（默认 15）"
+    )
+    ap.add_argument(
+        "--min-size",
+        type=int,
+        default=65536,
+        help="只重压大于该字节数的条目（默认 64 KiB）",
+    )
     ap.add_argument(
         "--workers",
         type=int,
-        default=os.cpu_count() * 2,
-        help="并行压缩进程数（默认 核心数*2；1 = 串行）",
+        default=os.cpu_count() * 4,
+        help="并行压缩进程数（默认 核心数*4；1 = 串行）",
     )
     ap.add_argument("--scan", action="store_true", help="只列条目清单，不重压")
-    ap.add_argument("--keep-unsigned", action="store_true", help="不重新签名（保持 zipalign 后的未签名 APK）")
+    ap.add_argument(
+        "--keep-unsigned",
+        action="store_true",
+        help="不重新签名（保持 zipalign 后的未签名 APK）",
+    )
     args = ap.parse_args()
 
     if not args.apk.exists():
@@ -259,7 +289,9 @@ def main() -> None:
     apksigner = tools / "apksigner"
     print(f"build-tools: {tools.name}（zipalign / apksigner）")
 
-    out_path = args.output or args.apk.with_name(f"{args.apk.stem}-zopfli{args.apk.suffix}")
+    out_path = args.output or args.apk.with_name(
+        f"{args.apk.stem}-zopfli{args.apk.suffix}"
+    )
     tmp_zip = out_path.with_suffix(".tmp.zip")
     aligned = out_path.with_suffix(".tmp.aligned")
 
@@ -298,8 +330,10 @@ def main() -> None:
     tmp_zip.unlink(missing_ok=True)
     aligned.unlink(missing_ok=True)
     after = out_path.stat().st_size
-    print(f"{args.apk.name}: {before/1048576:.1f} MB -> {out_path.name}: {after/1048576:.1f} MB"
-          f"（Δ{(after-before)/1048576:+.1f} MB）")
+    print(
+        f"{args.apk.name}: {before / 1048576:.1f} MB -> {out_path.name}: {after / 1048576:.1f} MB"
+        f"（Δ{(after - before) / 1048576:+.1f} MB）"
+    )
 
 
 if __name__ == "__main__":

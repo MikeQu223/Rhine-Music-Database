@@ -599,7 +599,7 @@ vec3(normalResponse.a)`，那个 `a` 来自 **normalAtlas**，surfaceAtlas 的 a
 | `RHINE_DECORATION_HIGH=1`                           | 强制建 2000×1480 装饰面                                         |
 | `RHINE_SURFACE_ETC2=1`                              | 启用 ETC2 图集（**默认关**：编码器有字节序/位布局缺陷，会花屏） |
 | `RHINE_DEBUG_ATLAS=1`                               | 启动时打印实际选中的表面图集格式（ETC2 RGB8 / BC7 / RGBA8）     |
-| `-DRHINE_ANDROID_LTO=thin\|full\|off`               | 配置期；默认 thin（并行），构建时间敏感时选 off                 |
+| `-DRHINE_ANDROID_LTO=full\|thin\|off`               | 配置期；默认 full，构建时间敏感时切 thin，兜底 off              |
 | `RHINE_ANDROID_LEGACY_PACKAGING=0`                  | 打包期；关掉后 `.so` 恢复 STORED 存储（APK 变大、安装后省空间） |
 | `RHINE_ANDROID_R8=0`                                | 打包期；关掉 R8 收缩（`classes.dex` 回到 6.9 MB）               |
 
@@ -1108,18 +1108,19 @@ BuildId 与当前 APK 里那份完全一致，补丁新增的 `destroySurfaceRes
 
 `CMakeLists.txt` 给 Release 打开的 `INTERPROCEDURAL_OPTIMIZATION` 在 Clang（含 NDK）上
 展开成 `-flto=thin`。`Qt/Android.cmake` 现在关掉它，改成显式可切换的
-**`RHINE_ANDROID_LTO`**（CMake cache 变量，`-D` 可覆盖）：
+**`RHINE_ANDROID_LTO`**（CMake cache 变量，`-D` 可覆盖），默认 **`full`**：
 
-- **`thin`（默认，并行）**：`-flto=thin` 编译，链接带 `--thinlto-jobs=<nproc>`
-  （`ProcessorCount` 探测）。全核并行的跨模块优化，构建时间接近普通编译。
-- **`full`（串行合并，更彻底）**：`-flto` 编译，链接带 `--lto-partitions=<nproc>`。
-  全量 IR 合并的死代码消除最彻底，但合并阶段单线程是瓶颈；分区只是把 codegen
-  拆开并行，分区之间不再互相内联，实际效果介于 thin 与纯 full 之间。
-- **`off`**：不加 LTO 标志。
+- **`full`（默认，死代码消除最彻底）**：`-flto` 编译，链接带 `--lto-partitions=<nproc>`
+  （`ProcessorCount` 探测）。全量 IR 合并的单线程是瓶颈，分区只是把 codegen 拆开
+  并行，分区之间不再互相内联——实际效果介于 thin 与纯 full 之间，但死代码消除
+  仍是三种形态里最彻底的。
+- **`thin`（回退，并行）**：`-flto=thin` 编译，链接带 `--thinlto-jobs=<nproc>`。
+  构建时间接近普通编译，跨 TU 内联受「导入」限制；full 的链接耗时不可接受时切到它。
+- **`off`（兜底）**：不加任何 LTO 标志。
 
-三种形态都由同一个 generator expression 限制在 Release；两个标志绝不同时出现
-（先 `set_target_properties(... INTERPROCEDURAL_OPTIMIZATION_RELEASE FALSE)` 关掉 IPO，
-再手挂 flags）。桌面 / iOS 保持 CMake 默认的 thin。
+三种形态都由同一个 generator expression 限制在 Release；IPO 的关闭是**无条件**的
+（任何形态下都不能让 `-flto=thin` 与 `-flto` 出现在同一条命令行上）。
+桌面 / iOS 保持 CMake 默认的 thin。
 
 ### APK 体积构成（168 MB，`a6724e5` 那一版）
 
@@ -1174,24 +1175,24 @@ BuildId 与当前 APK 里那份完全一致，补丁新增的 `destroySurfaceRes
   条目策略：STORED 原样拷贝（resources.arsc、noCompress 的 rcc 资源）；DEFLATED
   重压后没有占到便宜、或低于 `--min-size`（默认 64 KiB）的，字节级保留原流。
   参数：`--iterations` 默认 15（官方默认，15→50 实测 <0.3%，不值得），blocksplitting
-00  保持开；`--workers` 默认核心数*2——zopfli 的 C 扩展**不释放 GIL**（实测双线程
+  00 保持开；`--workers` 默认核心数*2——zopfli 的 C 扩展**不释放 GIL**（实测双线程
   1.08x ≈ 无加速），所以并行用 `ProcessPoolExecutor`，每条目一个任务、主进程按 ZIP
-  顺序写回，峰值内存约 300 MB。iter1 的实测（`--min-size 150000 --iterations 1`）：
-  28 条重压、净省 1.9 MB、墙钟 257 s、CPU 并行 ~3.7x；全量 iter15 慢一个数量级，
-  交由构建者自行取舍。用法：
+  顺序写回，峰值内存约 300 MB；`--workers` 默认核心数*4。iter1 的实测
+  （`--min-size 150000 --iterations 1`）：28 条重压、净省 1.9 MB、墙钟 257 s、
+  CPU 并行 ~3.7x；全量 iter15 慢一个数量级，交由构建者自行取舍。用法：
 
-  ```sh
-  /home/aibeto/.workbuddy/binaries/python/envs/default/bin/python3 \
-      scripts/optimize-apk.py output/android-work/aligned.apk
-  ```
+    ```sh
+    /home/aibeto/.workbuddy/binaries/python/envs/default/bin/python3 \
+        scripts/optimize-apk.py output/android-work/aligned.apk
+    ```
 
-  实现要点：CPython 的 `zipfile` 对 DEFLATED 条目内部用 `zlib.compressobj(-15)`，
-  脚本替换 `zipfile.zlib.compressobj` 把压缩器输出换成预备好的 raw DEFLATE
-  （CRC 与 size 仍按原文计算）；zopfli 0.4.x 的 `compress()` 输出的是 zlib 容器，
-  要剥掉 2 字节头与 4 字节 Adler-32 并 round-trip 校验。**保留原流的路径同样做
-  round-trip**——第一版这里有个偏移 bug（`fp.read(n)` 的参数是读取字节数而非
-  绝对偏移），写出的 APK 里 manifest 是 0 字节压缩流，zipalign 不校验放行、
-  apksigner 才炸；round-trip 在写入前就拦住这一类结构损坏。
+    实现要点：CPython 的 `zipfile` 对 DEFLATED 条目内部用 `zlib.compressobj(-15)`，
+    脚本替换 `zipfile.zlib.compressobj` 把压缩器输出换成预备好的 raw DEFLATE
+    （CRC 与 size 仍按原文计算）；zopfli 0.4.x 的 `compress()` 输出的是 zlib 容器，
+    要剥掉 2 字节头与 4 字节 Adler-32 并 round-trip 校验。**保留原流的路径同样做
+    round-trip**——第一版这里有个偏移 bug（`fp.read(n)` 的参数是读取字节数而非
+    绝对偏移），写出的 APK 里 manifest 是 0 字节压缩流，zipalign 不校验放行、
+    apksigner 才炸；round-trip 在写入前就拦住这一类结构损坏。
 
 ### 还剩两块大的（需要单独验证）
 
