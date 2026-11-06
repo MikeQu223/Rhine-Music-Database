@@ -361,9 +361,27 @@ void FrameProfiler::sample() {
         const quint64 hudPaints = hud.paints.exchange(0, std::memory_order_relaxed);
         const quint64 hudDirty = hud.dirtyPixels.exchange(0, std::memory_order_relaxed);
         const quint64 hudCanvas = hud.canvasPixels.exchange(0, std::memory_order_relaxed);
+        const quint64 cullSeen = hud.cullConsidered.exchange(0, std::memory_order_relaxed);
+        const quint64 cullSkip = hud.cullSkipped.exchange(0, std::memory_order_relaxed);
         m_metrics.insert("hudPaints", qulonglong(hudPaints));
         m_metrics.insert("hudDirtyPercent",
                          hudCanvas > 0 ? 100. * double(hudDirty) / double(hudCanvas) : 0.);
+        // 相交预筛命中率：滑列表时静态画面一条都没动，这个数应该很高。
+        m_metrics.insert("hudCullPercent",
+                         cullSeen > 0 ? 100. * double(cullSkip) / double(cullSeen) : 0.);
+    }
+    // step 分段账：sceneSample（场景采样）/ observe（曲目观察）/ hudDraw（命令流重建）之和
+    // 加上返回对象组装，约等于 stepMeanCpuMs。切歌动画卡在哪一段，看这三个数。
+    {
+        auto &phase = RhineRender::stepPhaseStats();
+        const quint64 steps = phase.count.exchange(0, std::memory_order_relaxed);
+        const quint64 sampleNs = phase.sceneSampleNs.exchange(0, std::memory_order_relaxed);
+        const quint64 observeNs = phase.observeNs.exchange(0, std::memory_order_relaxed);
+        const quint64 drawNs = phase.hudDrawNs.exchange(0, std::memory_order_relaxed);
+        const double perStep = steps > 0 ? 1. / double(steps) : 0.;
+        m_metrics.insert("stepSceneSampleMs", double(sampleNs) * perStep / 1e6);
+        m_metrics.insert("stepObserveMs", double(observeNs) * perStep / 1e6);
+        m_metrics.insert("stepHudDrawMs", double(drawNs) * perStep / 1e6);
     }
 #endif
     m_metrics.insert("gpuTimeMs", resources.value("gpuTimeMs"));

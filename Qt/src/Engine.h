@@ -45,7 +45,9 @@ class Engine : public QObject {
         // m_coverImage 在 GUI 线程的 update() 里同步，QImage 的隐式共享保证拷贝安全。
         return m_coverImage;
     }
-    QJsonArray commands() const {
+    /// 只在 GUI 线程、且在本帧绘制期间读取；`m_commands` 要到下一帧 `update()` 才会换，
+    /// 所以返回引用是安全的。按值返回每帧要多付几次原子引用计数往返。
+    const QJsonArray &commands() const {
         return m_commands;
     }
     /// Android HUD 局部重绘：最近一次命令流变化对应的舞台矩形（1080 高度坐标系）。

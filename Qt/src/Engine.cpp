@@ -1204,16 +1204,24 @@ void Engine::step(double time) {
         m_musicTextureSnapshot.insert(it.key(), entry);
     }
     auto commands = object["commands"].toArray();
-    if (commands != m_commands) {
+    bool hudChanged = true;
 #if defined(Q_OS_ANDROID)
-        // 先算差异区域再覆盖旧快照：Hud 靠这块少栅格化、少传纹理（见 render/HudDirtyRect.h）。
-        const auto dirty =
-            RhineRender::hudDirtyRect(m_commands, commands, QSizeF(m_width / (m_height / 1080), 1080));
+    // 只比对一次：hudDirtyRect 内部的「公共前缀 + 公共后缀」顺带就能判出「逐条相同」，
+    // 不必再跑一遍 `commands != m_commands` 的深比较——那是同一条命令流的第二遍遍历。
+    const double stageWidth = m_height > 0 ? m_width / (m_height / 1080) : 1920;
+    const auto dirty = RhineRender::hudDirtyRect(m_commands, commands, QSizeF(stageWidth, 1080));
+    hudChanged = !dirty.equal;
+    if (hudChanged) {
         m_hudDirtyStage = dirty.rect;
         m_hudDirtyFull = dirty.full;
+    }
 #else
+    hudChanged = commands != m_commands;
+    if (hudChanged) {
         m_hudDirtyFull = true;
+    }
 #endif
+    if (hudChanged) {
         m_commands = commands;
         ++m_hudUpdates;
         m_hudRevision.fetch_add(1, std::memory_order_relaxed);

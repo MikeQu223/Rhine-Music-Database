@@ -2,6 +2,9 @@
 #include "NativeApplication.h"
 #include "MobileTarget.h"
 #include "render/HotPathProbe.h"
+#if defined(Q_OS_ANDROID)
+#include "render/HudPaintStats.h"
+#endif
 #include "AppStorage.h"
 #include <QFile>
 #include <QGuiApplication>
@@ -94,15 +97,19 @@ static int nacFrames = 0;
 #endif
 QJsonObject NativeApplication::step(double time, double width, bool reuseScene) {
 #if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
+#if defined(Q_OS_ANDROID)
+    // Android 上无条件计时：设备设不了 RHINE_STEP_PROBE，而切歌动画的瓶颈就落在这几段里。
+    // 三段各一次 nsecsElapsed，开销可忽略；数字走性能 JSON 的 step*Ms 字段。
+    const bool nacProbe = false;
+#else
     const bool nacProbe = qEnvironmentVariableIntValue("RHINE_STEP_PROBE") == 1;
+#endif
     QElapsedTimer nacTimer;
-    if (nacProbe) {
-        nacTimer.start();
-    }
+    nacTimer.start();
 #endif
     const auto frame = reuseScene ? music.frame : m_scene->sample(time);
 #if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
-    const double nacSampleMs = nacProbe ? double(nacTimer.nsecsElapsed()) / 1e6 : 0.0;
+    const double nacSampleMs = double(nacTimer.nsecsElapsed()) / 1e6;
 #endif
     if (frame.isEmpty()) {
         return {};
@@ -110,26 +117,31 @@ QJsonObject NativeApplication::step(double time, double width, bool reuseScene) 
     music.frame = frame;
 #if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
     QElapsedTimer nacObserveClock;
-    if (nacProbe) {
-        nacObserveClock.start();
-    }
+    nacObserveClock.start();
 #endif
     music.observe(frame["selected"].toInt());
     if (hud.tab != "overview" && music.wantsSongDetails && frame["mode"] == "detail") {
         music.sameAlbum();
     }
 #if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
-    const double nacObserveEnd = nacProbe ? double(nacTimer.nsecsElapsed()) / 1e6 : 0.0;
+    const double nacObserveEnd = double(nacTimer.nsecsElapsed()) / 1e6;
     QElapsedTimer nacDrawClock;
-    if (nacProbe) {
-        nacDrawClock.start();
-    }
+    nacDrawClock.start();
 #endif
     hud.draw(frame, width, time);
 #if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
-    const double nacDrawMs = nacProbe ? double(nacDrawClock.nsecsElapsed()) / 1e6 : 0.0;
-    const double nacDrawEnd = nacProbe ? double(nacTimer.nsecsElapsed()) / 1e6 : 0.0;
+    const double nacDrawMs = double(nacDrawClock.nsecsElapsed()) / 1e6;
+    const double nacDrawEnd = double(nacTimer.nsecsElapsed()) / 1e6;
     RhineRender::hotPathWindow().frames.fetch_add(1);
+#if defined(Q_OS_ANDROID)
+    {
+        auto &phase = RhineRender::stepPhaseStats();
+        phase.count.fetch_add(1, std::memory_order_relaxed);
+        phase.sceneSampleNs.fetch_add(quint64(nacSampleMs * 1e6), std::memory_order_relaxed);
+        phase.observeNs.fetch_add(quint64((nacObserveEnd - nacSampleMs) * 1e6), std::memory_order_relaxed);
+        phase.hudDrawNs.fetch_add(quint64(nacDrawMs * 1e6), std::memory_order_relaxed);
+    }
+#endif
 
     // 返回对象的构建会把 hud.commands 等大对象整份拷进新 QJsonObject，单独计时。
     QJsonObject nacResult{{"commands", hud.commands},

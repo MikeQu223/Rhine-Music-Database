@@ -16,6 +16,9 @@
 #include <QRadialGradient>
 #include <QRegularExpression>
 #include <cmath>
+#if defined(Q_OS_ANDROID)
+#include "render/HudPaintStats.h"
+#endif
 #ifdef Q_OS_DARWIN
 #include <QDataStream>
 #include <QColorSpace>
@@ -282,8 +285,11 @@ Glyphs::Glyph Glyphs::glyph(QString ch, QString weight) {
 }
 double Glyphs::width(QString text, double size, QString weight, double tracking) {
     QMutexLocker lock(&mutex);
-    const auto key = QString::fromUtf8(
-        QJsonDocument(QJsonArray{text, size, weight, tracking}).toJson(QJsonDocument::Compact));
+    // key 原来是「把四个参数序列化成一份 JSON」。`width()` 在每一帧的 fit / inset / 裁剪判断里
+    // 被调很多次，序列化 + UTF-8 往返比查缓存本身还贵。改成定界符拼接：'g',17 保证 double
+    // 往返精确，缓存语义与原来逐项等价。
+    const auto key = QString::number(size, 'g', 17) + QChar(0x1f) + weight + QChar(0x1f) +
+                     QString::number(tracking, 'g', 17) + QChar(0x1f) + text;
     if (const auto cached = widths.object(key)) {
         return *cached;
     }
@@ -343,8 +349,10 @@ double Glyphs::inset(QString text, double size, QString weight) {
 }
 QStringList Glyphs::wrap(QString value, double limit, double size, QString weight) {
     QMutexLocker lock(&mutex);
-    const auto key = QString::fromUtf8(
-        QJsonDocument(QJsonArray{value, limit, size, weight}).toJson(QJsonDocument::Compact));
+    // 同 width()：别再用「序列化成 JSON」当 key。歌词整段文本做 key 时，序列化本身
+    // 就比查缓存贵，而 wrap 在换行布局里是热路径。
+    const auto key = QString::number(limit, 'g', 17) + QChar(0x1f) + QString::number(size, 'g', 17) +
+                     QChar(0x1f) + weight + QChar(0x1f) + value;
     if (const auto cached = wrapped.object(key)) {
         return *cached;
     }
@@ -590,7 +598,43 @@ void Glyphs::renderCommands(QPainter &c, const QJsonArray &commands, std::functi
     static QHash<QString, double> opMs;
     static int opFrames = 0;
     QElapsedTimer opClock;
-    for (auto v : commands) {
+#ifdef Q_OS_ANDROID
+    // 相交预筛：脏区重画时整条命令流仍会被逐条执行一遍。QPainter 会把裁剪区外的像素丢掉，
+    // 但「文字排版、字形查找、路径构造、封面查找」这些跟像素无关的开销一样照付；静态画面
+    // （brand / 导航 / footer / 播放栏）在滑列表时一条都没变，却每帧重算一遍。
+    // 这里按命令的舞台包围盒先判一次相交，整体落在裁剪区外的直接跳过。
+    //
+    // 只处理包围盒能精确或保守算出的类型；`gradient` 与未知 op 一律照画。
+    // 整窗重画时裁剪区就是整屏，全部相交，行为与改动前一致。
+    static const bool cullEnabled = [] {
+        const auto value = qEnvironmentVariable("RHINE_HUD_CULL");
+        return value.isEmpty() || value != QLatin1String("0");
+    }();
+    bool cull = cullEnabled && c.hasClipping();
+    QRectF clipBox = cull ? c.clipBoundingRect() : QRectF();
+    if (clipBox.isEmpty()) {
+        // 空裁剪盒会让每一条命令都被判成"在外面"，等于整屏不画。宁可不优化。
+        cull = false;
+    }
+    QList<QRectF> clipStack;
+    quint64 culled = 0;
+    // 包围盒只做「整体在裁剪区之外」的判定；拿不准就返回 false（照画），宁可多画不漏画。
+    auto outside = [&](const QRectF &box) {
+        if (!cull || box.isEmpty()) {
+            return false;
+        }
+        return !clipBox.intersects(box);
+    };
+    // 文本宽度按「每字符 1.1 em + 字距」估：中文是全宽 1 em，拉丁约 0.55 em，
+    // 取 1.1 对拉丁是两倍保守、对中文刚好覆盖粗体溢出。纵向按基线 -1.15 / +0.45 em，
+    // 覆盖 ascent（不同字体 0.75~1.0 em）与降部。不调 width()：它每次都要拼 key 查缓存，
+    // 比这里估一次还贵，而这里只需要「不会漏」而不是精确。
+    auto textBox = [&](int length, double x, double y, double size, double tracking) {
+        const double wide = length * (size * 1.1 + qMax(0.0, tracking));
+        return QRectF(x - size * 0.2, y - size * 1.15, wide + size * 0.4, size * 1.6);
+    };
+#endif
+    for (const auto &v : commands) {
         const auto a = v.toArray();
         auto op = a[0].toString();
         auto n = [&](int i) { return a[i].toDouble(); };
@@ -599,25 +643,70 @@ void Glyphs::renderCommands(QPainter &c, const QJsonArray &commands, std::functi
         }
         if (op == "save") {
             c.save();
+#ifdef Q_OS_ANDROID
+            if (cull) {
+                clipStack.append(clipBox);
+            }
+#endif
         } else if (op == "restore") {
             c.restore();
+#ifdef Q_OS_ANDROID
+            if (cull && !clipStack.isEmpty()) {
+                clipBox = clipStack.takeLast();
+            }
+#endif
         } else if (op == "alpha") {
             c.setOpacity(c.opacity() * n(1));
         } else if (op == "translate") {
             c.translate(n(1), n(2));
+#ifdef Q_OS_ANDROID
+            // 坐标系偏离舞台空间后，包围盒与裁剪区不再同一把尺子，本帧剩下的命令一律照画。
+            cull = false;
+#endif
         } else if (op == "scale") {
             c.scale(n(1), n(2));
+#ifdef Q_OS_ANDROID
+            cull = false;
+#endif
         } else if (op == "rotate") {
             c.rotate(n(1) * 180 / 3.14159265358979323846);
+#ifdef Q_OS_ANDROID
+            cull = false;
+#endif
         } else if (op == "clip") {
-            c.setClipRect(QRectF(n(1), n(2), n(3), n(4)), Qt::IntersectClip);
+            const QRectF next(n(1), n(2), n(3), n(4));
+            c.setClipRect(next, Qt::IntersectClip);
+#ifdef Q_OS_ANDROID
+            if (cull) {
+                clipBox = clipBox.intersected(next);
+            }
+#endif
         } else if (op == "fill") {
+#ifdef Q_OS_ANDROID
+            if (outside(QRectF(n(2), n(3), n(4), n(5)))) {
+                ++culled;
+                continue;
+            }
+#endif
             c.fillRect(QRectF(n(2), n(3), n(4), n(5)), color(a[1]));
         } else if (op == "ellipse") {
+#ifdef Q_OS_ANDROID
+            if (outside(QRectF(n(2), n(3), n(4), n(5)))) {
+                ++culled;
+                continue;
+            }
+#endif
             c.setPen(Qt::NoPen);
             c.setBrush(color(a[1]));
             c.drawEllipse(QRectF(n(2), n(3), n(4), n(5)));
         } else if (op == "text") {
+#ifdef Q_OS_ANDROID
+            // 越界参数交给原路径处理：这里只判相交，不改语义。
+            if (n(4) > 0 && outside(textBox(int(a[1].toString().size()), n(2), n(3), n(4), n(6)))) {
+                ++culled;
+                continue;
+            }
+#endif
             bool rasterized = false;
 #ifdef Q_OS_DARWIN
             rasterized = cacheText && drawRasterCommand(c, a);
@@ -626,28 +715,58 @@ void Glyphs::renderCommands(QPainter &c, const QJsonArray &commands, std::functi
                 text(c, a[1].toString(), n(2), n(3), n(4), a[5].toString(), n(6), color(a[7]));
             }
         } else if (op == "art") {
+            const int letters = a[5].toInt(-1);
+#ifdef Q_OS_ANDROID
+            // count < 0 表示整串，长度未知，不筛。
+            if (letters >= 0 && outside(textBox(letters, n(2), n(3), n(4), n(6)))) {
+                ++culled;
+                continue;
+            }
+#endif
             c.setBrush(color(a[7]));
-            art(c, a[1].toString(), n(2), n(3), n(4), a[5].toInt(-1), n(6));
+            art(c, a[1].toString(), n(2), n(3), n(4), letters, n(6));
         } else if (op == "fill-path") {
             // 实心几何图标不受字体字形边距影响。
-            c.fillPath(path(a[1].toString()), color(a[2]));
+            const auto shape = path(a[1].toString());
+#ifdef Q_OS_ANDROID
+            if (outside(shape.boundingRect())) {
+                ++culled;
+                continue;
+            }
+#endif
+            c.fillPath(shape, color(a[2]));
         } else if (op == "path") {
-            QPen pen(color(a[3]), n(2), Qt::SolidLine, Qt::FlatCap, Qt::MiterJoin);
+            const auto shape = path(a[1].toString());
+            const double penWidth = n(2);
+#ifdef Q_OS_ANDROID
+            // 描边会以笔宽向两侧扩张，包围盒要按半个笔宽外扩。
+            if (outside(shape.boundingRect().adjusted(-penWidth, -penWidth, penWidth, penWidth))) {
+                ++culled;
+                continue;
+            }
+#endif
+            QPen pen(color(a[3]), penWidth, Qt::SolidLine, Qt::FlatCap, Qt::MiterJoin);
             auto dash = a[4].toArray();
             QList<qreal> d;
             for (auto x : dash) {
-                d << x.toDouble() / qMax(n(2), .0001);
+                d << x.toDouble() / qMax(penWidth, .0001);
             }
             if (!d.isEmpty()) {
                 pen.setDashPattern(d);
-                pen.setDashOffset(n(5) / qMax(n(2), .0001));
+                pen.setDashOffset(n(5) / qMax(penWidth, .0001));
             }
             c.setPen(pen);
             c.setBrush(Qt::NoBrush);
-            c.drawPath(path(a[1].toString()));
+            c.drawPath(shape);
         } else if (op == "arc") {
             QPainterPath p;
             QRectF r(n(1) - n(3), n(2) - n(3), n(3) * 2, n(3) * 2);
+#ifdef Q_OS_ANDROID
+            if (outside(r.adjusted(-n(6), -n(6), n(6), n(6)))) {
+                ++culled;
+                continue;
+            }
+#endif
             p.arcMoveTo(r, -n(4) * 180 / 3.14159265358979323846);
             p.arcTo(r, -n(4) * 180 / 3.14159265358979323846, -n(5) * 180 / 3.14159265358979323846);
             c.setPen(QPen(color(a[7]), n(6), Qt::SolidLine, Qt::RoundCap));
@@ -661,6 +780,12 @@ void Glyphs::renderCommands(QPainter &c, const QJsonArray &commands, std::functi
 #endif
 #ifdef Q_OS_DARWIN
             if (cacheText && drawRasterCommand(c, a)) {
+                continue;
+            }
+#endif
+#ifdef Q_OS_ANDROID
+            if (outside(QRectF(n(2), 0, n(4) - n(2), n(5)))) {
+                ++culled;
                 continue;
             }
 #endif
@@ -686,6 +811,13 @@ void Glyphs::renderCommands(QPainter &c, const QJsonArray &commands, std::functi
             gradient.setColorAt(1, dark ? QColor(17, 24, 27) : QColor(228, 223, 219));
             c.fillRect(QRectF(-4096, -4096, 8192, 8192), gradient);
         } else if (op == "image") {
+#ifdef Q_OS_ANDROID
+            // 顺带省掉一次封面查找：整块落在裁剪区外时连 image() 都不用调。
+            if (outside(QRectF(n(2), n(3), n(4), n(5)))) {
+                ++culled;
+                continue;
+            }
+#endif
             auto img = image(a[1].toString());
             if (!img.isNull()) {
                 c.drawImage(QRectF(n(2), n(3), n(4), n(5)), img);
@@ -695,6 +827,15 @@ void Glyphs::renderCommands(QPainter &c, const QJsonArray &commands, std::functi
             opMs[op] += double(opClock.nsecsElapsed()) / 1e6;
         }
     }
+#ifdef Q_OS_ANDROID
+    // 记进性能 JSON，下一份 RHINE Diagnostics 就能看到「这一帧筛掉了多少条命令」，
+    // 不用再靠日志猜（设备设不了环境变量，OPPO 的 logcat 配额还会把行挤掉）。
+    if (cullEnabled) {
+        auto &stats = RhineRender::hudPaintStats();
+        stats.cullConsidered.fetch_add(quint64(commands.size()), std::memory_order_relaxed);
+        stats.cullSkipped.fetch_add(culled, std::memory_order_relaxed);
+    }
+#endif
     if (opTiming && ++opFrames % 30 == 0) {
         QStringList parts;
         QList<QPair<double, QString>> sorted;

@@ -13,14 +13,15 @@ namespace RhineRender {
 struct HudDirtyResult {
     QRectF rect;
     bool full = true;
+    /// 两份命令流逐条相同。调用方可以拿它代替 `before != after` 的第二次深比较。
+    bool equal = false;
 };
 
 namespace hud_dirty {
 
-/// save/restore 作用域：裁剪区 + 作用域内的状态是否变过。
+/// save/restore 作用域：只管裁剪区，脏不脏由调用方按"中间段整体重画"决定。
 struct Scope {
     QRectF clip;
-    bool dirty = false;
 };
 
 /**
@@ -77,97 +78,124 @@ inline QRectF intersectClip(const QRectF &clip, const QJsonArray &command) {
     return rect.isNull() ? clip : clip.intersected(rect);
 }
 
+/// 从流首走到 prefix 结束，重建 save/restore 与裁剪栈。出现变换命令就放弃（无法映射坐标）。
+inline bool seedClips(const QJsonArray &commands, qsizetype end, QVector<Scope> *stack) {
+    for (qsizetype i = 0; i < end; ++i) {
+        const QJsonArray command = commands.at(i).toArray();
+        if (command.isEmpty()) {
+            return false;
+        }
+        const auto op = command.at(0).toString();
+        if (op == QLatin1String("save")) {
+            stack->append(stack->last());
+        } else if (op == QLatin1String("restore")) {
+            if (stack->size() < 2) {
+                return false;
+            }
+            stack->removeLast();
+        } else if (op == QLatin1String("clip")) {
+            stack->last().clip = intersectClip(stack->last().clip, command);
+        } else if (op == QLatin1String("translate") || op == QLatin1String("scale") ||
+                   op == QLatin1String("rotate")) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/// 把 [begin, end) 这一段所有命令的包围盒并进 rect。这一段整体当成脏的。
+inline bool collectRange(const QJsonArray &commands, qsizetype begin, qsizetype end,
+                         QVector<Scope> stack, QRectF *rect) {
+    for (qsizetype i = begin; i < end; ++i) {
+        const QJsonArray command = commands.at(i).toArray();
+        if (command.isEmpty()) {
+            return false;
+        }
+        const auto op = command.at(0).toString();
+        if (op == QLatin1String("save")) {
+            stack.append(stack.last());
+            continue;
+        }
+        if (op == QLatin1String("restore")) {
+            if (stack.size() < 2) {
+                return false;
+            }
+            stack.removeLast();
+            continue;
+        }
+        if (op == QLatin1String("alpha")) {
+            continue;
+        }
+        if (op == QLatin1String("translate") || op == QLatin1String("scale") ||
+            op == QLatin1String("rotate")) {
+            return false;
+        }
+        if (op == QLatin1String("clip")) {
+            stack.last().clip = intersectClip(stack.last().clip, command);
+            merge(rect, stack.last().clip);
+            continue;
+        }
+        QRectF box;
+        if (!bounds(command, stack.last().clip, &box)) {
+            return false;
+        }
+        merge(rect, box);
+    }
+    return true;
+}
+
 } // namespace hud_dirty
 
 /**
  * 比对前后两份 HUD 命令流，算出真正需要重画与重传纹理的舞台矩形。
  *
- * 为什么要自己算：Hud 是 QQuickPaintedItem，一条命令流画满整张画布，滑动时
- * 每帧都要重新栅格化 2880x1800 并整张上传（docs/ANDROID.md「滑动列表掉帧」）。
- * QPainter 只能靠 clip 省栅格化，纹理要省带宽就得先知道"哪块变了"。
+ * 为什么要自己算：Hud 是 QQuickPaintedItem，一条命令流画满整张画布，每帧都要重新
+ * 栅格化 2880x1800 并整张上传（docs/ANDROID.md「滑动列表掉帧」）。QPainter 只能靠
+ * clip 省栅格化，纹理要省带宽就得先知道"哪块变了"。
  *
- * 安全优先：save/restore 结构变化、出现 translate/scale/rotate、命令条数变化、
- * 或者遇到不认识的命令，一律 `full = true` 退回整块重画——宁可多画一帧，
- * 也不能留残影。正常 HUD 只有启动动画用变换，代价可以接受。
+ * 对齐方式用**公共前缀 + 公共后缀**，不再按下标一一配对：
+ * 滚动文字（`save/alpha/clip/text/restore`）与数字化滚动会在动画中增删命令，
+ * 按下标配对会从插入点开始全部错位，一路撞到 save/restore 结构变化就退回全屏重画
+ * ——切歌动画（0.64s 的 ReelCurve + 数字滚动）正好每帧都在增删命令。
+ * 前缀/后缀夹出"中间段"后，中间段整体当脏，两端各自的裁剪栈都由前缀重放得到。
+ *
+ * 安全优先：中间段里出现 translate/scale/rotate、未登记命令、或 save/restore 不平衡，
+ * 一律 `full = true` 退回整块重画——宁可多画一帧，也不能留残影。
  */
 inline HudDirtyResult hudDirtyRect(const QJsonArray &before, const QJsonArray &after, const QSizeF &stage) {
     using namespace hud_dirty;
     HudDirtyResult result;
     result.full = false;
     result.rect = QRectF();
-    const QRectF root(0, 0, stage.width() > 0 ? stage.width() : 1920, 1080);
-    QVector<Scope> oldStack{Scope{root, false}};
-    QVector<Scope> newStack{Scope{root, false}};
-    const qsizetype count = qMax(before.size(), after.size());
-    for (qsizetype i = 0; i < count; ++i) {
-        const QJsonArray a = i < before.size() ? before.at(i).toArray() : QJsonArray();
-        const QJsonArray b = i < after.size() ? after.at(i).toArray() : QJsonArray();
-        const bool changed = a != b;
-        const auto op = (b.isEmpty() ? a : b).at(0).toString();
-        if (op == QLatin1String("save")) {
-            if (changed) {
-                result.full = true;
-                return result;
-            }
-            oldStack.append(oldStack.last());
-            newStack.append(newStack.last());
-            continue;
-        }
-        if (op == QLatin1String("restore")) {
-            if (changed || oldStack.size() < 2 || newStack.size() < 2) {
-                result.full = true;
-                return result;
-            }
-            oldStack.removeLast();
-            newStack.removeLast();
-            continue;
-        }
-        if (op == QLatin1String("translate") || op == QLatin1String("scale") ||
-            op == QLatin1String("rotate")) {
-            result.full = true;
-            return result;
-        }
-        if (op == QLatin1String("clip")) {
-            oldStack.last().clip = intersectClip(oldStack.last().clip, a);
-            newStack.last().clip = intersectClip(newStack.last().clip, b);
-            if (changed) {
-                // 只并「本作用域裁剪之后」的两块：裁剪缩小要让外圈的旧像素重画，
-                // 裁剪放大要让新露出来的那块重画。
-                //
-                // 千万别把**父裁剪**并进来：滚动文字的 clip 每帧都在动，而它的父裁剪
-                // 往往就是整屏——那样每次都是全量重绘（2026-11-06 11:32 那轮实测，
-                // sync 47ms、`hudDirtyPercent` 逼近 100，就是这么来的）。
-                merge(&result.rect, oldStack.last().clip);
-                merge(&result.rect, newStack.last().clip);
-                oldStack.last().dirty = true;
-                newStack.last().dirty = true;
-            }
-            continue;
-        }
-        if (op == QLatin1String("alpha")) {
-            // 透明度作用到整个作用域，几何不变但像素会变：作用域内全部算脏。
-            if (changed) {
-                oldStack.last().dirty = true;
-                newStack.last().dirty = true;
-            }
-            continue;
-        }
-        if (a.isEmpty() || b.isEmpty()) {
-            result.full = true;
-            return result;
-        }
-        if (!changed && !oldStack.last().dirty && !newStack.last().dirty) {
-            continue;
-        }
-        QRectF oldBox;
-        QRectF newBox;
-        if (!bounds(a, oldStack.last().clip, &oldBox) || !bounds(b, newStack.last().clip, &newBox)) {
-            result.full = true;
-            return result;
-        }
-        merge(&result.rect, oldBox);
-        merge(&result.rect, newBox);
+    const qsizetype oldSize = before.size();
+    const qsizetype newSize = after.size();
+    const qsizetype shortest = qMin(oldSize, newSize);
+    qsizetype prefix = 0;
+    while (prefix < shortest && before.at(prefix) == after.at(prefix)) {
+        ++prefix;
     }
+    if (prefix == oldSize && prefix == newSize) {
+        result.equal = true;
+        return result; // 逐条相同：没有任何像素需要重画。
+    }
+    qsizetype suffix = 0;
+    while (suffix < shortest - prefix &&
+           before.at(oldSize - 1 - suffix) == after.at(newSize - 1 - suffix)) {
+        ++suffix;
+    }
+    const QRectF root(0, 0, stage.width() > 0 ? stage.width() : 1920, 1080);
+    QVector<Scope> stack{Scope{root}};
+    if (!seedClips(before, prefix, &stack)) {
+        result.full = true;
+        return result;
+    }
+    QRectF rect;
+    if (!collectRange(before, prefix, oldSize - suffix, stack, &rect) ||
+        !collectRange(after, prefix, newSize - suffix, stack, &rect)) {
+        result.full = true;
+        return result;
+    }
+    result.rect = rect;
     return result;
 }
 

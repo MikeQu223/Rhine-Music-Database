@@ -43,8 +43,10 @@ void NativeHud::aligned(QString value, double x, double y, double size, QString 
 }
 
 QString NativeHud::fit(QString value, double size, double width, QString weight) {
-    const auto key = QString::fromUtf8(
-        QJsonDocument(QJsonArray{value, size, width, weight}).toJson(QJsonDocument::Compact));
+    // 别用 JSON 序列化当缓存 key：滑动时每个滚动标题每帧都要过一次 fit()，
+    // 序列化 + UTF-8 往返比查 m_fitCache 本身还贵。定界符拼接逐项等价。
+    const auto key = QString::number(size, 'g', 17) + QChar(0x1f) + QString::number(width, 'g', 17) +
+                     QChar(0x1f) + weight + QChar(0x1f) + value;
     if (const auto cached = m_fitCache.object(key)) {
         return *cached;
     }

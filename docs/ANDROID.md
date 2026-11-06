@@ -520,13 +520,15 @@ CPU 分段、全屏 pass 数、draw 数；`Renderer::vulkanConfig()` 上报请�
 ### 做法
 
 - **差异计算**（`Qt/src/render/HudDirtyRect.h`，新文件）：`Engine::update()` 在把新命令流
-  覆盖旧快照之前，逐条比对两份 `QJsonArray`，算出真正变化的舞台矩形（1080 高度坐标系）。
-  语义与 `Glyphs::renderCommands` 对齐：`fill/ellipse/image/right-mask` 取参数矩形；
-  `text/art` 取「当前裁剪区整幅宽度 + 基线上下 1.35/1.85 em」的保守条带；
-  `fill-path/path/arc` 解析路径代价太高，直接用当前裁剪区兜底；
-  `alpha` 变化标记整个 save 作用域为脏；`clip` 变化把新旧裁剪区都算进来
-  （否则「旧画过、新不该显示」的像素会留残影）。
-  出现 `translate/scale/rotate`、`save/restore` 结构变化、命令条数变化或未登记命令，
+  覆盖旧快照之前，算出真正变化的舞台矩形（1080 高度坐标系）。
+  **对齐用公共前缀 + 公共后缀**夹出「中间段」，中间段整体当脏，不按下标一一配对：
+  滚动文字（`save/alpha/clip/text/restore`）和数字滚动会在动画中增删命令，按下标配对
+  会从插入点整段错位，一路撞到结构变化就退回全屏——切歌动画正好每帧都在增删命令。
+  两端的裁剪栈由前缀重放得到（`seedClips`），语义与 `Glyphs::renderCommands` 对齐：
+  `fill/ellipse/image/right-mask` 取参数矩形；`text/art` 取「当前裁剪区整幅宽度 +
+  基线上下 1.35/1.85 em」的保守条带；`fill-path/path/arc` 解析路径代价太高，
+  直接用当前裁剪区兜底；`alpha` 不改几何，不参与脏区；`clip` 只并「本作用域裁剪后」的矩形。
+  中间段里出现 `translate/scale/rotate`、未登记命令或 save/restore 不平衡，
   一律 `full = true` 退回整块重画——**宁可多画一帧，也不能留残影**。
 - **只重画脏区**（`Hud::scheduleUpdate()`）：脏区换算到 item 逻辑坐标、外扩 2 像素
   （抗锯齿溢出）、交给 `QQuickPaintedItem::update(rect)`，QPainter 自动只栅格化这块。
@@ -581,6 +583,51 @@ CPU 分段、全屏 pass 数、draw 数；`Renderer::vulkanConfig()` 上报请�
 **教训**：脏区算法里任何"并上一个更大的矩形求稳"的写法，都会把优化整条吃掉；
 宁可在小区域上多画几次，也不能把父容器拉进来。
 
+### 相交预筛：脏区之外还剩的那笔固定开销
+
+脏区解决了**像素**，但没解决**命令条数**：`Glyphs::renderCommands` 仍然是整条流走一遍。
+`QPainter` 会把裁剪区外的像素丢掉，可下面这些跟像素无关的成本一样照付——
+
+- 每条命令的 `QJsonArray` 取元素、`toDouble()` 换参数；
+- `text` 的字形查找 / `layoutText`，`art` 的美术字遍历；
+- `fill-path` / `path` 的 SVG 路径解析；
+- `image` 的 `host.image(key)` 封面查找。
+
+滑列表时 `brand` / `navigation` / `footer` / `playerBar` / 右侧遮罩一条都没变，却每帧重算。
+
+`Glyphs.cpp` 里因此加了一层**相交预筛**：按命令自己的舞台包围盒（1080 高度坐标系）
+先判一次与当前裁剪区是否相交，整体在外面的直接 `continue`。
+
+规则只有三条，都是"拿不准就照画"：
+
+1. **结构命令永不跳过**——`save/restore/alpha/clip` 只影响状态，跳过会让裁剪栈错位；
+2. **坐标一变就整帧放弃**——出现 `translate/scale/rotate` 后，命令坐标不再等同舞台空间，
+   `cull` 置 false，本帧剩下的命令全部照画（列表页本身不用变换，只有 boot / 弹层 / 设置页用）；
+3. **包围盒保守**——`text` 按「每字符 1.1 em + 字距」估宽（中文全宽 1 em、拉丁约 0.55 em，
+   取 1.1 对拉丁是两倍富余），基线上下取 −1.05 / +0.4 em；路径类用 `boundingRect()`
+   再按半个笔宽外扩；`gradient` 是整屏铺底、`art` 的 `count < 0` 长度不可知，一律照画。
+
+整窗重画时裁剪区就是整屏，所有命令都相交，行为与改动前逐条一致——所以这条优化
+只有好处，代价是每条命令多一次矩形相交判断。
+
+命中率进性能 JSON：**`hudCullPercent`**＝被跳过的命令数 / 参与判断的命令数。
+滑列表时静态画面一条都没动，这个数应该很高；接近 0 说明脏区几乎盖满全屏，
+预筛没有可用空间。
+
+### 顺手去掉的三处 GUI 线程白付开销
+
+`width()` / `wrap()` / `NativeHud::fit()` 原来都用「把参数序列化成一份 JSON」
+当缓存 key。这三者都在热路径上：滑动时每个滚动标题每帧都要过一遍 `fit()`，
+而序列化 + UTF-8 往返比查缓存本身还贵。已改成 `QChar(0x1f)` 定界符拼接，
+double 用 `'g', 17` 保证往返精确，缓存语义逐项等价、命中率不变。
+
+`Engine::commands()` 也从按值返回改成 `const QJsonArray &`：命令流只在下一帧
+`update()` 才换，本帧绘制期间读取是安全的，省掉每帧几次原子引用计数往返。
+
+`Engine::update()` 里那次「命令流是否变化」的 `commands != m_commands` 深比较也删了
+（仅 Android 分支）：`hudDirtyRect` 的公共前缀比对顺带就能判出「逐条相同」，
+并把结论放在 `HudDirtyResult::equal` 里，同一条流不必遍历两遍。
+
 ### 探针与回退
 
 - **`hudDirtyPercent`（性能 JSON 新字段，主通道）**：每个 500 ms 采样里
@@ -592,6 +639,8 @@ CPU 分段、全屏 pass 数、draw 数；`Renderer::vulkanConfig()` 上报请�
   脏区再小，遇到整块重画（换页、启动动画、封面到达）时这是唯一能直接砍像素数的旋钮；
   85 就是 0.72 倍像素、上传量同比例下降。纹理被缩过会自动切成线性过滤。
 - `RHINE_HUD_DIRTY_RECT=0`：一键退回 Qt 默认节点 + 整窗重绘，用于 A/B。**默认开启**。
+- `RHINE_HUD_CULL=0`：关掉相交预筛（回到"整条命令流每帧全走一遍"）。**默认开启**，
+  只在脏区重画的路径上起作用；整窗重画时本来就没有可跳过的命令。
 
 **开关默认值的坑**：`qEnvironmentVariableIntValue(name) != 0` 在变量**未设置**时返回 0，
 拿它当「默认开启」会让开关实际是关的——11:21 那轮就踩了这一下，白费一次构建。
@@ -605,6 +654,14 @@ CPU 分段、全屏 pass 数、draw 数；`Renderer::vulkanConfig()` 上报请�
 和调用；`Hud` 的脏区成员、`scheduleUpdate()` 的局部分支、`updatePaintNode()` 的
 Android 实现全部包在 `#if defined(Q_OS_ANDROID)`；`HudUploadTexture` 只是新增了
 `paintRegion()`，macOS 用的 `paint()` + `findDirtyPixels()` 逐字未动。
+
+相交预筛同样整段包在 `#if defined(Q_OS_ANDROID)`，`RHINE_HUD_CULL` 只在 Android 读；
+非 Android 连 `outside()` 都不存在，`renderCommands` 的绘制分支与改动前逐条相同。
+
+三处缓存 key 与 `commands()` 返回引用是**全平台**改动，但语义逐值不变：key 的
+唯一性由定界符 + `'g',17` 保证（同参数必同 key），`width()` / `wrap()` / `fit()`
+的返回值、缓存命中判定、过期淘汰都与原来一致；只是把"序列化 JSON"换成了字符串拼接。
+`Qt/tests/` 里与 HUD 相关的断言不涉及 key 的构造方式，无需同步。
 非 Android 仍然每帧整窗重绘、走 Qt 默认节点，展开后与改动前一致。
 
 **验证方法**：装新包后重录一份 `RHINE Diagnostics`，看三件事——
@@ -615,6 +672,28 @@ Android 实现全部包在 `#if defined(Q_OS_ANDROID)`；`HudUploadTexture` 只�
 **还没做**：把 HUD 命令流按「静态背景 / 动态条带」拆成两张纹理叠层——那样静态层
 （brand、导航、footer、播放栏、右侧遮罩）连脏区那 40% 都不用重画，
 是这条路的终点；需要先给命令流打上分区标记。
+
+## 切歌动画掉帧：先量 `step` 三段
+
+不滑动、只切歌也一样卡，说明瓶颈不在滚动路径上。切歌那 0.64 秒里每帧都在发生：
+
+- `NativeHud::draw()` 重建整条命令流（几百个 `QJsonArray`/`QJsonObject` 分配）；
+- 数字与标题的滚动文字、`ReelCurve` 的曲目条带动画——**命令条数每帧都在变**；
+- 封面解码完成后落进缓存、`coverRevision` 跳变、3D 换纹理。
+
+对应两个改动：
+
+1. **脏区对齐改为前缀 + 后缀**（见上一节）。之前按下标配对时，滚动文字一增删命令就整段
+   错位 → 撞到 save/restore 结构变化 → 退回全屏重画，等于切歌期间脏区优化完全失效。
+2. **`step` 分段进性能 JSON**：`stepSceneSampleMs`（场景采样）、`stepObserveMs`
+   （曲目观察/专辑跟随）、`stepHudDrawMs`（命令流重建）。三者之和加上返回对象组装
+   ≈ `stepMeanCpuMs`。Android 上无条件计时（设备设不了 `RHINE_STEP_PROBE`），
+   非 Android 仍然只在环境变量开启时才打印。
+
+**判断方法**：切歌录一份 `RHINE Diagnostics`（不要滑动），看四个数——
+`stepHudDrawMs` 占大头就是命令流重建贵（下一步要复用/懒构建命令数组，而不是继续抠绘制）；
+`hudDirtyPercent` 仍接近 100 就说明脏区没生效；`hudCullPercent` 很低说明脏区盖满全屏、
+相交预筛没有空间；三者都不高而帧仍然长，那就是 3D 换纹理或封面准入时机的问题。
 
 ## 冷纹理准入：Android 放宽到 500 ms
 
