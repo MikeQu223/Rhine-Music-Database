@@ -205,9 +205,15 @@ class MetalFramePresentation : public SceneResources {
         return holdColor;
     }
 
-    void generate(QRhiCommandBuffer *commands, const RhineFg::FrameInputs &inputs, void *scaler) {
+    void generate(QRhiCommandBuffer *commands, const RhineFg::FrameInputs &inputs, bool sourceAnimating,
+                  void *scaler) {
         ++realFrames;
         pendingReal = false;
+        // 休眠时直接呈现最终真实画面
+        if (!sourceAnimating) {
+            invalidate();
+            return;
+        }
         const QSize working = workSize(inputs.renderSize);
         QRhiTexture *inputColor = prepareWorking(commands, working);
         if (working != display) {

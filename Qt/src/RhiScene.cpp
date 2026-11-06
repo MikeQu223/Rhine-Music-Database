@@ -3739,7 +3739,7 @@ class ItemRenderer : public QQuickRhiItemRenderer {
                 renderer->render(cb, submitted, renderTarget()->pixelSize(), item, cover, realTarget,
                                  musicTextures);
                 static const bool linkScaler = qEnvironmentVariable("RHINE_METAL_FG_LINK_SCALER") == "on";
-                presentation->generate(cb, backend->metalFxInputs,
+                presentation->generate(cb, backend->metalFxInputs, sourceAnimating,
                                        linkScaler && renderer->metalFx && renderer->metalFx->active()
                                            ? renderer->metalFx->nativeScaler()
                                            : nullptr);
@@ -3885,6 +3885,16 @@ void RhiScene::setEngine(Engine *value) {
     m_engine = value;
     if (value) {
         connect(value, &Engine::sceneUpdated, this, [this] { update(); });
+#ifdef Q_OS_DARWIN
+        connect(value, &Engine::stateChanged, this,
+                [this, wasIdle = value->performance().value("idle").toBool()]() mutable {
+                    const bool idle = m_engine->performance().value("idle").toBool();
+                    if (idle != wasIdle) {
+                        wasIdle = idle;
+                        update();
+                    }
+                });
+#endif
     }
     emit engineChanged();
     update();
