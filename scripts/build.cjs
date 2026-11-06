@@ -1169,6 +1169,8 @@ function deployApp(qt, config, existingBundle = '') {
                     'Contents/Helpers/RhinePlaybackService.app/Contents/MacOS/RhinePlaybackService',
                 ),
             '-no-plugins',
+            // 资源尚未装入，嵌套 helper 也未封装签名；部署完成后统一由下方签名流程处理。
+            '-no-codesign',
         ]);
         fs.writeFileSync(
             path.join(resources, 'qt.conf'),
@@ -1257,7 +1259,15 @@ function deployApp(qt, config, existingBundle = '') {
     }
     if (mac) {
         run('codesign', ['--force', '--sign', '-', path.join(resources, 'MusicBridge/node')]);
+        // 先封装 helper 的资源签名，再签外层应用，避免沿用链接器留下的裸可执行文件签名。
+        run('codesign', [
+            '--force',
+            '--sign',
+            '-',
+            path.join(app, 'Contents/Helpers/RhinePlaybackService.app'),
+        ]);
         run('codesign', ['--force', '--deep', '--sign', '-', app]);
+        run('codesign', ['--verify', '--deep', '--strict', app]);
     }
     if (linux) {
         const image = packageAppImage(app);

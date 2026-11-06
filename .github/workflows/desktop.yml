@@ -275,6 +275,8 @@ jobs:
           version: '6.12.0'
           arch: ${{ matrix.qt-arch }}
           aqtsource: ${{ matrix.qt-installer }}
+          # 锁定版本满足新 aqtinstall 的最低要求，避免 action 再降级到不兼容版本。
+          py7zrversion: '==1.1.4'
           # Wayland 客户端插件 (libqwayland-*.so) 随 linux_gcc_64 基础包提供，
           # 由 aqt 的 --autodesktop 一并安装，不能写进 --modules。
           modules: qtshadertools qtmultimedia
@@ -395,6 +397,7 @@ jobs:
           version: '6.12.0'
           arch: clang_64
           aqtsource: git+https://github.com/miurahr/aqtinstall.git@076e1659807d0b362a3ed684d54c2e9c775eb9c7
+          py7zrversion: '==1.1.4'
           modules: qtshadertools qtmultimedia
           cache: true
       - uses: jurplel/install-qt-action@v4
@@ -403,6 +406,7 @@ jobs:
           target: ios
           arch: ios
           aqtsource: git+https://github.com/miurahr/aqtinstall.git@076e1659807d0b362a3ed684d54c2e9c775eb9c7
+          py7zrversion: '==1.1.4'
           modules: qtshadertools qtmultimedia
           cache: true
       - name: Install build dependencies

@@ -494,6 +494,8 @@ bool checkPlayerBar(Glyphs &glyphs) {
         const auto lyrics = getHit(drawing.hits, "player:lyrics");
         const auto mv = getHit(drawing.hits, "player:mv");
         if (mv["x"].toDouble() + mv["width"].toDouble() / 2 != row.right() - 435) {
+            qCritical() << "MV action is missing or no longer centered beside the player controls"
+                        << "row:" << row << "hit:" << mv << "expected center:" << row.right() - 435;
             return false;
         }
         const auto toggle = getHit(drawing.hits, "player:toggle");
@@ -1135,6 +1137,11 @@ bool checkResponsiveHud(const QString &root, Glyphs &glyphs, const QJsonObject &
 
 /** 页面快照保留到过渡结束，歌词拖动阈值与回弹不会更改正文的选择状态。 */
 static bool checkResponsiveTransitions() {
+    // 平台差异导致的失败必须能定位到具体断言，不能只留下总数。
+    const auto fail = [](const char *reason) {
+        qCritical() << "Responsive transition check failed:" << reason;
+        return false;
+    };
     ResponsiveHudTransition transition;
     QJsonArray commands{QJsonArray{"text", "archive"}};
     QJsonArray hits{QJsonObject{{"action", "open"}}};
@@ -1142,26 +1149,26 @@ static bool checkResponsiveTransitions() {
     commands = QJsonArray{QJsonArray{"text", "detail"}};
     transition.apply(commands, hits, "detail", 10.1, 1080, false);
     if (transition.active(10.2) || hits.isEmpty() || commands.size() != 1) {
-        return false;
+        return fail("tab switch kept a stale snapshot or cleared hits");
     }
     commands = QJsonArray{QJsonArray{"text", "detail"}};
     hits = QJsonArray{QJsonObject{{"action", "back"}}};
     transition.apply(commands, hits, "detail", 10.8, 1080, false);
     if (transition.active(10.8) || hits.isEmpty()) {
-        return false;
+        return fail("repeated page apply restarted the transition");
     }
     transition.apply(commands, hits, "lyrics", 11, 1080, false);
     transition.drag(40);
     if (transition.release()) {
-        return false;
+        return fail("short lyric drag was treated as a dismissal");
     }
     transition.drag(120);
     if (!transition.release()) {
-        return false;
+        return fail("long lyric drag did not reach the dismissal threshold");
     }
     transition.apply(commands, hits, "detail", 12, 1080, false);
     if (!transition.active(12.1) || !hits.isEmpty()) {
-        return false;
+        return fail("lyric page did not keep its entrance transition");
     }
     ResponsiveHudLayout indicator;
     indicator.resize(393. * 1080 / 852);
@@ -1169,40 +1176,50 @@ static bool checkResponsiveTransitions() {
     indicator.tabIndicator("navigation", 0);
     indicator.setMotion(1.1, false);
     if (indicator.tabIndicator("navigation", 100) != 0) {
-        return false;
+        return fail("tab indicator skipped its first frame");
     }
     indicator.setMotion(1.2, false);
     const double middle = indicator.tabIndicator("navigation", 100);
     if (middle <= 0 || middle >= 100 || !indicator.animating(1.2)) {
-        return false;
+        return fail("tab indicator did not animate between slots");
     }
     if (std::abs(indicator.tabIndicator("navigation", 30) - middle) > .001) {
-        return false;
+        return fail("tab indicator retarget changed the sampled frame");
     }
     ResponsiveHudTransition synchronized;
     synchronized.apply(commands, hits, ":archive:1", 20, 1080, false, 0);
     synchronized.apply(commands, hits, ":detail:track", 20.1, 1080, false, 0);
     synchronized.apply(commands, hits, ":detail:track", 21, 1080, false, .3);
     if (!synchronized.active(21.1)) {
-        return false;
+        return fail("scene-follow transition ended before the scene settled");
     }
     synchronized.apply(commands, hits, ":detail:track", 21.2, 1080, false, 1);
-    return !synchronized.active(21.7);
+    if (synchronized.active(21.7)) {
+        return fail("scene-follow transition outlived the scene progress");
+    }
+    return true;
 }
 
 bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
     Host host(root, true);
     const auto content = QJsonDocument::fromJson(host.read("slots.json").toUtf8()).object();
-    bool ok = checkResponsiveTransitions();
-    ok &= checkSorting(root, glyphs, content);
-    ok &= checkResponsiveHud(root, glyphs, content);
+    // 单项检查失败时输出名称，避免回归报告只剩总数而无法定位。
+    const auto record = [](const char *name, bool passed) {
+        if (!passed) {
+            qCritical() << "Native HUD check failed:" << name;
+        }
+        return passed;
+    };
+    bool ok = record("responsive transitions", checkResponsiveTransitions());
+    ok &= record("playlist sorting", checkSorting(root, glyphs, content));
+    ok &= record("responsive hud", checkResponsiveHud(root, glyphs, content));
 #ifdef Q_OS_DARWIN
-    ok &= checkCardMaterialCache();
+    ok &= record("card material cache", checkCardMaterialCache());
 #endif
-    ok &= checkCollectionCard(root, glyphs, content);
-    ok &= checkAlbumTrackSelection(root, glyphs, content);
-    ok &= checkPlayerBar(glyphs);
-    ok &= checkPlayerInput(root, glyphs, content);
+    ok &= record("collection card", checkCollectionCard(root, glyphs, content));
+    ok &= record("album track selection", checkAlbumTrackSelection(root, glyphs, content));
+    ok &= record("player bar", checkPlayerBar(glyphs));
+    ok &= record("player input", checkPlayerInput(root, glyphs, content));
     {
         // 快速切换可见页时，迟到的封面不能重新写回新页；只保留当前页的键。
         QTemporaryDir directory;
