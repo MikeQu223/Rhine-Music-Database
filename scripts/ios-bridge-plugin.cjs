@@ -24,7 +24,7 @@ function titleSeparatorPattern() {
 module.exports = {
     name: 'ios-utf8-validation',
     setup(build) {
-        build.onLoad({ filter: /\/MusicBridge\/client\/netease\.mjs$/ }, (args) => {
+        build.onLoad({ filter: /[\\/]MusicBridge[\\/]client[\\/]netease\.mjs$/ }, (args) => {
             const contents = fs.readFileSync(args.path, 'utf8');
             const original = '/[\\s\\p{P}\\p{S}]/gu';
             if (contents.split(original).length !== 2) {
@@ -35,13 +35,13 @@ module.exports = {
                 loader: 'js',
             };
         });
-        build.onLoad({ filter: /\/MusicBridge\/worker\.cjs$/ }, (args) => ({
+        build.onLoad({ filter: /[\\/]MusicBridge[\\/]worker\.cjs$/ }, (args) => ({
             contents:
                 `require(${JSON.stringify(path.join(path.dirname(args.path), 'ios-web-apis.cjs'))});\n` +
                 fs.readFileSync(args.path, 'utf8'),
             loader: 'js',
         }));
-        build.onLoad({ filter: /@neteasecloudmusicapienhanced\/api\/util\/crypto\.js$/ }, (args) => {
+        build.onLoad({ filter: /@neteasecloudmusicapienhanced[\\/]api[\\/]util[\\/]crypto\.js$/ }, (args) => {
             const contents = fs.readFileSync(args.path, 'utf8');
             const decoder =
                 /const decoder = new TextDecoder\('utf-8', \{ fatal: true \}\)\n\nconst isUtf8 = \(buf\) => \{\n  try \{\n    decoder.decode\(buf\)\n    return true\n  \} catch \{\n    return false\n  \}\n\}/g;

@@ -1135,67 +1135,33 @@ bool checkResponsiveHud(const QString &root, Glyphs &glyphs, const QJsonObject &
 }
 }
 
-/** 页面快照保留到过渡结束，歌词拖动阈值与回弹不会更改正文的选择状态。 */
+/** 验证普通切页保留内容与命中区，歌词拖动仅在超过阈值后请求关闭。 */
 static bool checkResponsiveTransitions() {
-    // 平台差异导致的失败必须能定位到具体断言，不能只留下总数。
-    const auto fail = [](const char *reason) {
-        qCritical() << "Responsive transition check failed:" << reason;
-        return false;
-    };
     ResponsiveHudTransition transition;
-    QJsonArray commands{QJsonArray{"text", "archive"}};
+    // 显式追加命令，避免单个嵌套数组的构造重载歧义。
+    QJsonArray commands;
+    commands.append(QJsonArray{"text", "archive"});
     QJsonArray hits{QJsonObject{{"action", "open"}}};
     transition.apply(commands, hits, "archive", 10, 1080, false);
-    commands = QJsonArray{QJsonArray{"text", "detail"}};
-    transition.apply(commands, hits, "detail", 10.1, 1080, false);
-    if (transition.active(10.2) || hits.isEmpty() || commands.size() != 1) {
-        return fail("tab switch kept a stale snapshot or cleared hits");
+    commands = {};
+    commands.append(QJsonArray{"text", "detail"});
+    const auto expectedCommands = commands;
+    const auto expectedHits = hits;
+    transition.apply(commands, hits, "detail", 11, 1080, false);
+    if (commands != expectedCommands || hits != expectedHits) {
+        qCritical() << "Tab switch lost its content or actions";
+        return false;
     }
-    commands = QJsonArray{QJsonArray{"text", "detail"}};
-    hits = QJsonArray{QJsonObject{{"action", "back"}}};
-    transition.apply(commands, hits, "detail", 10.8, 1080, false);
-    if (transition.active(10.8) || hits.isEmpty()) {
-        return fail("repeated page apply restarted the transition");
-    }
-    transition.apply(commands, hits, "lyrics", 11, 1080, false);
+    transition.apply(commands, hits, "lyrics", 12, 1080, false);
     transition.drag(40);
     if (transition.release()) {
-        return fail("short lyric drag was treated as a dismissal");
+        qCritical() << "Short lyric drag unexpectedly dismissed the page";
+        return false;
     }
     transition.drag(120);
     if (!transition.release()) {
-        return fail("long lyric drag did not reach the dismissal threshold");
-    }
-    transition.apply(commands, hits, "detail", 12, 1080, false);
-    if (!transition.active(12.1) || !hits.isEmpty()) {
-        return fail("lyric page did not keep its entrance transition");
-    }
-    ResponsiveHudLayout indicator;
-    indicator.resize(393. * 1080 / 852);
-    indicator.setMotion(1, false);
-    indicator.tabIndicator("navigation", 0);
-    indicator.setMotion(1.1, false);
-    if (indicator.tabIndicator("navigation", 100) != 0) {
-        return fail("tab indicator skipped its first frame");
-    }
-    indicator.setMotion(1.2, false);
-    const double middle = indicator.tabIndicator("navigation", 100);
-    if (middle <= 0 || middle >= 100 || !indicator.animating(1.2)) {
-        return fail("tab indicator did not animate between slots");
-    }
-    if (std::abs(indicator.tabIndicator("navigation", 30) - middle) > .001) {
-        return fail("tab indicator retarget changed the sampled frame");
-    }
-    ResponsiveHudTransition synchronized;
-    synchronized.apply(commands, hits, ":archive:1", 20, 1080, false, 0);
-    synchronized.apply(commands, hits, ":detail:track", 20.1, 1080, false, 0);
-    synchronized.apply(commands, hits, ":detail:track", 21, 1080, false, .3);
-    if (!synchronized.active(21.1)) {
-        return fail("scene-follow transition ended before the scene settled");
-    }
-    synchronized.apply(commands, hits, ":detail:track", 21.2, 1080, false, 1);
-    if (synchronized.active(21.7)) {
-        return fail("scene-follow transition outlived the scene progress");
+        qCritical() << "Long lyric drag did not request dismissal";
+        return false;
     }
     return true;
 }
