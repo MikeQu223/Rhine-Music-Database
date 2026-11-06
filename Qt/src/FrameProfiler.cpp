@@ -60,6 +60,15 @@ FrameProfiler::FrameProfiler(Engine *engine, const QString &path, QObject *paren
     epochMs = QDateTime::currentMSecsSinceEpoch();
     m_directory = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + "/RHINE Diagnostics";
     m_sampleTimer.setInterval(500);
+    // 详情默认 1 s 重建一次：headline（一行）保持 500 ms，长文本的布局次数减半。
+    // 设成 0 表示每次采样都重建，用于排查"数字跳得太慢"。
+    {
+        bool ok = false;
+        const int configured = qEnvironmentVariableIntValue("RHINE_PROFILER_DETAILS_MS", &ok);
+        if (ok && configured >= 0) {
+            m_detailsIntervalMs = configured;
+        }
+    }
     connect(&m_sampleTimer, &QTimer::timeout, this, &FrameProfiler::sample);
     connect(engine, &Engine::updated, this, &FrameProfiler::collectStep);
     connect(qApp, &QCoreApplication::aboutToQuit, this, [this] {
@@ -229,6 +238,7 @@ FrameProfiler::~FrameProfiler() {
 void FrameProfiler::toggleVisible() {
     m_visible = !m_visible;
     updateSampling();
+    emit visibleChanged();
     emit changed();
 }
 
@@ -272,6 +282,7 @@ void FrameProfiler::updateSampling() {
     const bool previous = m_enabled.exchange(enabled, std::memory_order_relaxed);
     if (enabled != previous) {
         if (enabled) {
+            m_detailsBuiltMs = 0; // 刚打开就补一次详情，别让用户先看 1 秒空白。
             m_previousProfiling = m_engine->scene.isProfiling();
             m_engine->scene.profileFrames(true);
             m_previousSampleNs = clock.nsecsElapsed();
@@ -492,19 +503,44 @@ void FrameProfiler::sample() {
         audio["controllerPlaying"] = player.state["playing"].toBool();
     }
     m_metrics.insert("audio", audio.toVariantMap());
-    formatMetrics();
+    // 详情按自己的节奏重建：面板收起时完全不建，展开时默认 1 s 一次。
+    // headline 仍然每次采样都刷——它只有一行，重排成本可以忽略。
+    const bool wantDetails = m_detailsEnabled && (m_detailsIntervalMs <= 0 ||
+                                                  clock.elapsed() - m_detailsBuiltMs >= m_detailsIntervalMs);
+    formatMetrics(wantDetails);
+    if (wantDetails) {
+        m_detailsBuiltMs = clock.elapsed();
+    }
     if (m_recording) {
         m_samples.append(QJsonObject::fromVariantMap(m_metrics));
+        const auto previousStatus = m_status;
         m_status =
             QStringLiteral("正在收集 %1 秒 · 最长 10 分钟").arg((clock.elapsed() - m_recordStartedMs) / 1000);
+        if (m_status != previousStatus) {
+            emit statusChanged();
+        }
         if (!m_saving && (m_samples.size() >= 1200 || clock.elapsed() - m_recordStartedMs >= 600000)) {
             saveRecording();
         }
     }
+    // 只发指标本身：QML 的 headline / details 各自绑更细的信号，不再被这条拖着重估。
+    emit metricsChanged();
     emit changed();
 }
 
-void FrameProfiler::formatMetrics() {
+void FrameProfiler::setDetailsEnabled(bool enabled) {
+    if (m_detailsEnabled == enabled) {
+        return;
+    }
+    m_detailsEnabled = enabled;
+    if (enabled) {
+        // 展开时立刻补一次，不等下一个刷新间隔。
+        m_detailsBuiltMs = 0;
+    }
+    emit detailsEnabledChanged();
+}
+
+void FrameProfiler::formatMetrics(bool withDetails) {
     const auto number = [this](const char *key, int precision = 1) {
         return QString::number(m_metrics.value(key).toDouble(), 'f', precision);
     };
@@ -550,13 +586,25 @@ void FrameProfiler::formatMetrics() {
         stateLabel = QStringLiteral("帧生成 · 插值中");
 #endif
     }
-    m_headline = QStringLiteral("%1 FPS · %2 · %3")
+    const auto headline = QStringLiteral("%1 FPS · %2 · %3")
 #ifdef Q_OS_LINUX
-                     .arg(number("headlineFps"), stateLabel,
+                              .arg(number("headlineFps"), stateLabel,
 #else
-                     .arg(number("qtFps"), stateLabel,
+                              .arg(number("qtFps"), stateLabel,
 #endif
-                          m_metrics.value("fgPresentMode").toString());
+                                   m_metrics.value("fgPresentMode").toString());
+    // 只在真的变了才通知：QML 那边重新求值一次属性、再比一次字符串，都是白付的。
+    if (headline != m_headline) {
+        m_headline = headline;
+        emit headlineChanged();
+    }
+    if (!withDetails) {
+        // 面板收起，或还没到详情刷新间隔：后面几百行拼接一个字符都不必做。
+        return;
+    }
+    // 隐式共享拷贝，只是把旧缓冲的引用计数 +1；后面 `m_details = ...` 会把引用还回去，
+    // 不会多复制一次正文。用来在末尾判断"这段文本到底变没变"。
+    const auto previousDetails = m_details;
     const auto memory = residentBytes < 0 ? QStringLiteral("不可用")
                                           : QString::number(residentBytes / 1048576., 'f', 1) + " MiB";
     // 帧生成块排在最前：接管呈现后，屏幕上真正发生的是什么只有这几行说得清。
@@ -789,6 +837,10 @@ void FrameProfiler::formatMetrics() {
     m_details.prepend(QStringLiteral("渲染后端  %1 · GPU 设备  %2\n画质模式  %3 · %4\n")
                           .arg(backend, adapter.isEmpty() ? QStringLiteral("未知") : adapter, aaLine,
                                renderLine));
+    // 文本真正变了才通知 QML。一次 memcmp 远比一次整段 Text 重排便宜。
+    if (m_details != previousDetails) {
+        emit detailsChanged();
+    }
 }
 
 QJsonObject FrameProfiler::environment() const {
@@ -815,6 +867,7 @@ bool FrameProfiler::startRecording() {
     }
     if (!QDir().mkpath(m_directory)) {
         m_status = QStringLiteral("无法创建诊断目录，请检查文稿目录权限。");
+        emit statusChanged();
         emit changed();
         return false;
     }
@@ -835,6 +888,8 @@ bool FrameProfiler::startRecording() {
     m_status = QStringLiteral("正在收集性能与音频诊断，请复现问题后停止并导出。");
     updateSampling();
     m_engine->host.playbackDiagnostics.record("snapshot", m_engine->host.playbackSnapshot());
+    emit recordingChanged();
+    emit statusChanged();
     emit changed();
     return true;
 }
@@ -891,6 +946,8 @@ bool FrameProfiler::saveRecording() {
         m_status = QStringLiteral("导出失败，记录已保留；请检查目录权限后点击“重试导出”。");
         m_saving = false;
         updateSampling();
+        emit statusChanged();
+        emit recordingChanged();
         emit changed();
         return false;
     }
@@ -904,6 +961,8 @@ bool FrameProfiler::saveRecording() {
     }
     m_status = QStringLiteral("已保存：%1").arg(QFileInfo(report.fileName()).fileName());
     updateSampling();
+    emit statusChanged();
+    emit recordingChanged();
     emit changed();
     return true;
 }

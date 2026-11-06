@@ -347,6 +347,22 @@ Engine::frame()/drawBuffers()
   “帧生成 默认窗口 · 插值 开 / 呈现 / 渲染 120 / 60 FPS · 插值 60 FPS / 输入 / 显示 …”；
   关闭时显示“帧生成 未接管 · 未开启”。统计由 `Engine::publishFrameGenerationStats()` 每 250ms
   从渲染线程转交 GUI 线程。
+- **面板自身不能拖帧**。`details` 是几百行的长文本，`Text` 每次拿到新 text 都要重新布局并
+  重建字形；原先 7 个 `Q_PROPERTY` 共用 `NOTIFY changed`，于是每 500 ms 采样一次就必然
+  重排整段详情——**观测本身成了被测对象的一部分**。现在：
+  - 每个属性各自 `NOTIFY`（`headlineChanged` / `detailsChanged` / `metricsChanged` /
+    `statusChanged` / `visibleChanged` / `recordingChanged`），`changed()` 只作 C++ 聚合出口，
+    QML 没有任何属性绑它；`headline` 与 `details` 各自只在内容真的变了才发信号。
+  - `details` 独立降频：`headline`（一行）仍是 500 ms，详情默认 **1 s** 重建一次，
+    `RHINE_PROFILER_DETAILS_MS` 可改（`0` = 每次都刷）。
+  - 面板收起（“精简”）时 QML 把 `profiler.detailsEnabled` 置 false，C++ 直接跳过整段详情
+    构建——`visible: false` 挡不住 `Text` 重新布局，只有停止重建才省得下来。
+  - 录音不受影响：`m_samples` 仍按 500 ms 采样写盘，降频的只是给人看的那段文本。
+  - 标题 Text 上原本重复写了 `Accessible.name: text`（可访问名默认就取 text），
+    每次刷新会多触发一遍无障碍更新，已去掉。
+
+  面板可见时才启用的两处采集（`scene.profileFrames(true)`、音频 `enableDiagnostics(true)`）
+  都是纳秒级或每缓冲一次的开销，不是开面板掉帧的主因；主因是上面那条刷新链路。
 
 ### 3.5 关闭与回退
 

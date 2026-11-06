@@ -695,6 +695,19 @@ Android 实现全部包在 `#if defined(Q_OS_ANDROID)`；`HudUploadTexture` 只�
 `hudDirtyPercent` 仍接近 100 就说明脏区没生效；`hudCullPercent` 很低说明脏区盖满全屏、
 相交预筛没有空间；三者都不高而帧仍然长，那就是 3D 换纹理或封面准入时机的问题。
 
+## 打开性能面板后的掉帧：面板自己在拖帧
+
+在 Android 上很容易把这条误判成"移动端性能不够"：一旦打开性能面板，帧率就掉。
+实测归因后跟平台无关，是**面板的刷新链路**——`details` 是几百行的长文本，
+`Text` 每次拿到新 text 都要重新布局并重建字形；而 7 个 `Q_PROPERTY` 原本共用一个
+`NOTIFY changed`，于是每 500 ms 采样一次，整段详情就必然重排一次。观测本身成了
+被测对象的一部分。
+
+修法与验证要点见 `docs/RENDER-ARCHITECTURE.md` §3.4「面板自身不能拖帧」：
+属性各自 `NOTIFY`、`details` 独立降频到 1 s、收起面板时直接停止重建。
+**排查 Android 掉帧时，如果面板是打开着的，先把它关掉再录 `RHINE Diagnostics`**，
+否则采样里会混进面板刷新带来的周期性尖峰，与 HUD / 3D 的账混在一起。
+
 ## 冷纹理准入：Android 放宽到 500 ms
 
 `Qt/src/render/MusicTextureAdmission.h` 是「快速滚动时先别建封面／标签纹理」的那道闸：
