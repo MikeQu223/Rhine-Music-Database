@@ -708,6 +708,8 @@ Android 实现全部包在 `#if defined(Q_OS_ANDROID)`；`HudUploadTexture` 只�
 **排查 Android 掉帧时，如果面板是打开着的，先把它关掉再录 `RHINE Diagnostics`**，
 否则采样里会混进面板刷新带来的周期性尖峰，与 HUD / 3D 的账混在一起。
 
+目前仍未解决打开性能面板后掉帧的问题
+
 ## 冷纹理准入：Android 放宽到 500 ms
 
 `Qt/src/render/MusicTextureAdmission.h` 是「快速滚动时先别建封面／标签纹理」的那道闸：
