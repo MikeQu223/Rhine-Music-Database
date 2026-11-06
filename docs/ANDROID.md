@@ -497,13 +497,74 @@ CPU 分段、全屏 pass 数、draw 数；`Renderer::vulkanConfig()` 上报请�
 **隔离性**：新成员与快路径全部包在 `#if defined(Q_OS_ANDROID)`；
 非 Android 仍然走原来的逐字形循环与实时渐变，展开后与改动前逐字相同。
 
-**验证方法**：装新包后重录一份 `RHINE Diagnostics`，看三件事——
-`latestSyncCpuMs` 是否从 ~42 ms 掉到 20 ms 以下、`presentGapMs` p50 是否接近 33 ms（30 fps）、
-`over33ms` 是否明显变少；再分别用两个开关各录一份做对照。**没有实机数据前不要下结论**。
+**为什么调渲染分辨率没用**：`RHINE_RENDER_SCALE` 只改 `ScenePostProcess::renderSize()`，
+那是 3D 场景的内部渲染目标；`Hud` 是独立的 QML item，尺寸跟窗口走（2880×1800 设备像素），
+不吃这个开关。所以「分辨率降了帧率没变」恰恰是「瓶颈不在 3D 填充率」的证据，不是反证。
 
-**还没做**（下一步候选）：按脏矩形只重绘列表视口（现在整窗 5.18M 像素全刷），
-以及滚动时把上一帧的列表区按位移 blit、只重画新露出的窄条——后者能把
-单帧栅格面积降一个数量级，但需要 HUD 命令流先按区域分层。
+## 滑动列表：HUD 局部重绘与子区域上传（Android）
+
+上一节把每帧的重复计算换成了缓存，但**每帧仍然在整张 2880×1800 画布上重来一遍**：
+`QPainter` 全量栅格（写 20.7 MB）+ `QSGDefaultPainterNode` 全量 `uploadTexture`
+（再写 20.7 MB），60 fps 下就是 **≈2.5 GB/s 的纯搬运**。这才是「带宽」那一层的账，
+但它是结果不是原因——原因是「不该重画的地方也重画了」。
+
+### 做法
+
+- **差异计算**（`Qt/src/render/HudDirtyRect.h`，新文件）：`Engine::update()` 在把新命令流
+  覆盖旧快照之前，逐条比对两份 `QJsonArray`，算出真正变化的舞台矩形（1080 高度坐标系）。
+  语义与 `Glyphs::renderCommands` 对齐：`fill/ellipse/image/right-mask` 取参数矩形；
+  `text/art` 取「当前裁剪区整幅宽度 + 基线上下 1.35/1.85 em」的保守条带；
+  `fill-path/path/arc` 解析路径代价太高，直接用当前裁剪区兜底；
+  `alpha` 变化标记整个 save 作用域为脏；`clip` 变化把新旧裁剪区都算进来
+  （否则「旧画过、新不该显示」的像素会留残影）。
+  出现 `translate/scale/rotate`、`save/restore` 结构变化、命令条数变化或未登记命令，
+  一律 `full = true` 退回整块重画——**宁可多画一帧，也不能留残影**。
+- **只重画脏区**（`Hud::scheduleUpdate()`）：脏区换算到 item 逻辑坐标、外扩 2 像素
+  （抗锯齿溢出）、交给 `QQuickPaintedItem::update(rect)`，QPainter 自动只栅格化这块。
+  脏区超过画布 92% 时直接退回整窗。
+- **只上传脏区**（`Hud::updatePaintNode()` Android 分支 + `HudUploadTexture::paintRegion()`）：
+  换掉 Qt 默认的 painter 节点——它不看脏区，每次 `commit` 都整张 `uploadTexture`。
+  现在是一张自管的 `QRhiTexture`，`paintRegion()` 只把这块清成透明、只画这块，
+  `commitTextureOperations()` 只上传这块子矩形。尺寸变化时自动退回整块。
+- **封面到达要补一帧**：`image` 命令只带 key，封面解码完成时命令流逐字相同，
+  差异比对会认为「什么都没变」。`Engine` 用 `coverRevision` 单独记一笔，强制整块重画一次。
+
+### 带宽账（1219×762 逻辑 / DPR 2.36 / 2880×1800 像素）
+
+| | 每帧 CPU 写 | 每帧纹理上传 | 60 fps 合计 |
+|---|---|---|---|
+| 改动前（整窗） | 20.7 MB 清屏 + 全量栅格 | 20.7 MB | ≈2.5 GB/s |
+| 改动后（只画曲目条带） | 约 8 MB（条带面积占比 ≈40%） | 约 8 MB | ≈1 GB/s |
+
+条带占比是估的：`archiveTrackList` 的裁剪区是 `(x-4, 219, width-x, 610)`，在舞台坐标里
+约 1274×610 / 1727×1080。真实占比看下面这条探针，不要照抄。
+
+### 探针与回退
+
+- `RHINE_HUD_PROBE=1`：每 60 次局部重绘打一行 `HUD 脏区: 平均 x% / 峰值 y% 画布`。
+  **这个数直接回答「滑列表时是不是整屏都在动」**：远小于 100% 就说明局部重绘有效；
+  如果接近 100%，那就是命令流真的整屏在变，只能退回下面的纹理分辨率档。
+- `RHINE_HUD_TEXTURE_SCALE=50..100`（默认 **100**）：HUD 纹理分辨率档。
+  脏区再小，遇到整块重画（换页、启动动画、封面到达）时这是唯一能直接砍像素数的旋钮；
+  85 就是 0.72 倍像素、上传量同比例下降。纹理被缩过会自动切成线性过滤。
+- `RHINE_HUD_DIRTY_RECT=0`：一键退回 Qt 默认节点 + 整窗重绘，用于 A/B。
+
+### 隔离性
+
+`render/HudDirtyRect.h` 只在 `Engine.cpp` 的 `#if defined(Q_OS_ANDROID)` 分支里 include
+和调用；`Hud` 的脏区成员、`scheduleUpdate()` 的局部分支、`updatePaintNode()` 的
+Android 实现全部包在 `#if defined(Q_OS_ANDROID)`；`HudUploadTexture` 只是新增了
+`paintRegion()`，macOS 用的 `paint()` + `findDirtyPixels()` 逐字未动。
+非 Android 仍然每帧整窗重绘、走 Qt 默认节点，展开后与改动前一致。
+
+**验证方法**：装新包后重录一份 `RHINE Diagnostics`，看三件事——
+`latestSyncCpuMs` 是否从 ~42 ms 掉下来、`presentGapMs` p50 是否接近 33 ms（30 fps）、
+`over33ms` 是否明显变少；同时抓一行 `HUD 脏区` 日志确认占比。
+**没有实机数据前不要下结论。**
+
+**还没做**：把 HUD 命令流按「静态背景 / 动态条带」拆成两张纹理叠层——那样静态层
+（brand、导航、footer、播放栏、右侧遮罩）连脏区那 40% 都不用重画，
+是这条路的终点；需要先给命令流打上分区标记。
 
 ## 音频与系统媒体控件
 

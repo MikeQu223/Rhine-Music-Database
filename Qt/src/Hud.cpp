@@ -6,7 +6,7 @@
 #include <QElapsedTimer>
 #include <QPainter>
 #include <QQuickWindow>
-#ifdef Q_OS_MACOS
+#if defined(Q_OS_MACOS) || defined(Q_OS_ANDROID)
 #include "render/HudUploadTexture.h"
 #include <QSGSimpleTextureNode>
 #include <QtMath>
@@ -24,9 +24,56 @@ void Hud::setEngine(Engine *engine) {
     }
     m_engine = engine;
     if (engine) {
-        connect(engine, &Engine::hudUpdated, this, [this] { update(); });
+        connect(engine, &Engine::hudUpdated, this, [this] { scheduleUpdate(); });
     }
     emit engineChanged();
+    update();
+}
+void Hud::scheduleUpdate() {
+#if defined(Q_OS_ANDROID)
+    // 局部重绘：命令流比对出改动区域，只重画这块、只上传这块（见 render/HudDirtyRect.h）。
+    // 关掉开关（RHINE_HUD_DIRTY_RECT=0）退回整窗重绘，方便 A/B。
+    static const bool partial = qEnvironmentVariableIntValue("RHINE_HUD_DIRTY_RECT") != 0;
+    if (partial && m_engine && width() > 0 && height() > 0 && !m_fullRepaint) {
+        if (!m_engine->hudDirtyFull()) {
+            const double scale = height() / 1080;
+            const auto stage = m_engine->hudDirtyStage();
+            QRectF rect(stage.x() * scale, stage.y() * scale, stage.width() * scale, stage.height() * scale);
+            // 抗锯齿会让路径与字形溢出边界约 1 像素，向外放 2 像素再取整。
+            rect = rect.adjusted(-2, -2, 2, 2).intersected(QRectF(0, 0, width(), height()));
+            if (rect.width() < 1 || rect.height() < 1) {
+                return; // 命令流变了但没有绘制内容变化（例如只改了命中区）。
+            }
+            if (rect.width() * rect.height() > width() * height() * 0.92) {
+                m_fullRepaint = true;
+                QQuickPaintedItem::update();
+                return;
+            }
+            // 探针（RHINE_HUD_PROBE=1）：脏区占比直接回答"是不是整屏都在动"。
+            // 滑列表时若这个数远小于 100%，局部重绘就是有效的。
+            static const bool probe = qEnvironmentVariableIntValue("RHINE_HUD_PROBE") == 1;
+            static int probeFrames = 0;
+            static double probeArea = 0;
+            static double probePeak = 0;
+            if (probe) {
+                const double ratio = rect.width() * rect.height() / (width() * height());
+                probeArea += ratio;
+                probePeak = qMax(probePeak, ratio);
+                if (++probeFrames % 60 == 0) {
+                    qInfo("HUD 脏区: 平均 %.1f%% / 峰值 %.1f%% 画布", probeArea / probeFrames * 100,
+                          probePeak * 100);
+                    probeArea = 0;
+                    probePeak = 0;
+                    probeFrames = 0;
+                }
+            }
+            m_pendingDirty = m_pendingDirty.isNull() ? rect : m_pendingDirty.united(rect);
+            QQuickPaintedItem::update(rect.toAlignedRect());
+            return;
+        }
+    }
+    m_fullRepaint = true;
+#endif
     update();
 }
 void Hud::paint(QPainter *painter) {
@@ -122,4 +169,66 @@ QSGNode *Hud::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *updateData)
     return QQuickPaintedItem::updatePaintNode(oldNode, updateData);
 }
 
+#endif
+
+#if defined(Q_OS_ANDROID)
+/**
+ * Android：把 HUD 画进一张自己管的纹理，只重传改动过的子矩形。
+ *
+ * 默认的 QQuickPaintedItem 节点不管脏区大小，每次 commit 都 `uploadTexture(整张)`，
+ * 2880x1800 就是每帧 20.7MB 的写带宽；叠上整张画布的透明清屏，滑动时等于每帧
+ * 白白来回搬 40MB 以上。这里换成子区域上传，块大小由命令流比对给出。
+ */
+QSGNode *Hud::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *updateData) {
+    static const bool partial = qEnvironmentVariableIntValue("RHINE_HUD_DIRTY_RECT") != 0;
+    if (!partial || !window() || !window()->rhi()) {
+        return QQuickPaintedItem::updatePaintNode(oldNode, updateData);
+    }
+    const QSize logical(qCeil(width()), qCeil(height()));
+    if (logical.isEmpty()) {
+        delete oldNode;
+        return nullptr;
+    }
+    // 纹理分辨率档（RHINE_HUD_TEXTURE_SCALE=50..100，默认 100）：脏区再小，
+    // 遇到整块重画（换页 / 启动动画）时这也是唯一能直接砍像素数的旋钮。
+    static const double texScale = [] {
+        const int percent = qEnvironmentVariableIntValue("RHINE_HUD_TEXTURE_SCALE");
+        return percent >= 50 && percent <= 100 ? percent / 100.0 : 1.0;
+    }();
+    const double dpr = window()->effectiveDevicePixelRatio();
+    const QSize pixels(qMax(1, qRound(logical.width() * dpr * texScale)),
+                       qMax(1, qRound(logical.height() * dpr * texScale)));
+    auto node = static_cast<QSGSimpleTextureNode *>(oldNode);
+    auto texture = node ? static_cast<RhineRender::HudUploadTexture *>(node->texture())
+                        : new RhineRender::HudUploadTexture();
+    QRect region(QPoint(0, 0), pixels);
+    if (node && !m_fullRepaint && !m_pendingDirty.isNull()) {
+        const double sx = double(pixels.width()) / logical.width();
+        const double sy = double(pixels.height()) / logical.height();
+        const QRect cover(qFloor(m_pendingDirty.x() * sx), qFloor(m_pendingDirty.y() * sy),
+                          qCeil(m_pendingDirty.width() * sx) + 1,
+                          qCeil(m_pendingDirty.height() * sy) + 1);
+        region = cover.intersected(QRect(QPoint(0, 0), pixels));
+    }
+    if (!region.isEmpty()) {
+        texture->paintRegion(pixels, region, [&](QPainter &painter) {
+            painter.scale(double(pixels.width()) / logical.width(),
+                          double(pixels.height()) / logical.height());
+            paint(&painter);
+        });
+    }
+    if (!node) {
+        node = new QSGSimpleTextureNode();
+        node->setTexture(texture);
+        node->setOwnsTexture(true);
+    }
+    node->setRect(0, 0, logical.width(), logical.height());
+    node->setSourceRect(QRectF(QPointF(), pixels));
+    // 纹理被缩过就必须线性过滤，否则文字边缘会出锯齿块。
+    node->setFiltering((smooth() || texScale < 1.0) ? QSGTexture::Linear : QSGTexture::Nearest);
+    node->markDirty(QSGNode::DirtyMaterial);
+    m_fullRepaint = false;
+    m_pendingDirty = QRectF();
+    return node;
+}
 #endif

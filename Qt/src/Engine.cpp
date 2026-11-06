@@ -8,6 +8,9 @@
 #include "fg/FgCapability.h"
 #include "fg/FgStats.h"
 #include "render/MemoryProbe.h"
+#if defined(Q_OS_ANDROID)
+#include "render/HudDirtyRect.h"
+#endif
 #include <QCoreApplication>
 #include <QDir>
 #include <QEvent>
@@ -583,6 +586,8 @@ void Engine::setVisible(bool value) {
         wake(false);
         notifySceneRenderers(true);
         m_hudRevision.fetch_add(1, std::memory_order_relaxed);
+        // 重新显示时纹理可能已经被丢弃，命令流没有差异也必须整块重画。
+        m_hudDirtyFull = true;
         emit hudUpdated();
     }
     emit stateChanged();
@@ -1139,6 +1144,9 @@ void Engine::step(double time) {
     const bool showDiscAngle = current["kind"] == "song" && PlaybackQueue::identity(current) == identity;
     m_frame["discAngle"] = showDiscAngle ? m_discAngle : 0;
     const bool discChanged = m_discRotating || previousDiscAngle != m_frame.value("discAngle").toDouble();
+    // 封面解码完成时命令流是逐字相同的（image 命令只带 key），单靠命令流比对
+    // 会以为"什么都没变"，HUD 上那张图就永远不刷新。这里单独记一笔。
+    [[maybe_unused]] const bool coverArrived = coverRevision != m_coverRevision;
     bool visualChanged = discChanged || !stable || current != m_current || cover != m_cover ||
                          coverRevision != m_coverRevision;
     if (!temporal) {
@@ -1197,11 +1205,27 @@ void Engine::step(double time) {
     }
     auto commands = object["commands"].toArray();
     if (commands != m_commands) {
+#if defined(Q_OS_ANDROID)
+        // 先算差异区域再覆盖旧快照：Hud 靠这块少栅格化、少传纹理（见 render/HudDirtyRect.h）。
+        const auto dirty =
+            RhineRender::hudDirtyRect(m_commands, commands, QSizeF(m_width / (m_height / 1080), 1080));
+        m_hudDirtyStage = dirty.rect;
+        m_hudDirtyFull = dirty.full;
+#else
+        m_hudDirtyFull = true;
+#endif
         m_commands = commands;
         ++m_hudUpdates;
         m_hudRevision.fetch_add(1, std::memory_order_relaxed);
         emit hudUpdated();
     }
+#if defined(Q_OS_ANDROID)
+    if (coverArrived) {
+        // 命令流没变但 HUD 上的像素变了：补一次整块重画。
+        m_hudDirtyFull = true;
+        emit hudUpdated();
+    }
+#endif
     if (visualChanged) {
         ++m_sceneUpdates;
     }

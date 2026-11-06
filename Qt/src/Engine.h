@@ -12,6 +12,7 @@
 #endif
 #include <QElapsedTimer>
 #include <QPointF>
+#include <QRectF>
 #include <QVariantMap>
 #include <QUrl>
 #include <QQuickWindow>
@@ -46,6 +47,14 @@ class Engine : public QObject {
     }
     QJsonArray commands() const {
         return m_commands;
+    }
+    /// Android HUD 局部重绘：最近一次命令流变化对应的舞台矩形（1080 高度坐标系）。
+    QRectF hudDirtyStage() const {
+        return m_hudDirtyStage;
+    }
+    /// 命令流结构性变化（换页、换模式、出现变换命令）时为真，调用方必须整块重画。
+    bool hudDirtyFull() const {
+        return m_hudDirtyFull;
     }
     Glyphs *glyphs() {
         return &m_glyphs;
@@ -370,6 +379,9 @@ class Engine : public QObject {
     QVariantList m_hits;
     QJsonObject m_frame, m_current;
     QJsonArray m_commands;
+    /// 见 render/HudDirtyRect.h：Hud 只重画这块，纹理也只上传这块。
+    QRectF m_hudDirtyStage;
+    bool m_hudDirtyFull = true;
     QPointer<QWindow> m_window;
     QWindow::Visibility m_windowedVisibility = QWindow::Windowed;
     QString m_loginMethod;
