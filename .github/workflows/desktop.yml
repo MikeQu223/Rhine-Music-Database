@@ -543,10 +543,15 @@ jobs:
       - name: Build, sign and audit APK
         # 打包脚本内部会重建桥接 bundle（移动端 tmpdir 改写与断言在这里执行）、
         # 下载校验 libnode.so、签名并用 audit-android.py 检查权限白名单。
+        # 编译优化档位（RHINE_ANDROID_LTO / R8 / legacy packaging / 烘焙变体）统一由
+        # scripts/build-android.cjs 的默认值决定，这里不要单独设 env：本机与 CI 必须
+        # 走同一份默认值，CI 单独覆盖会让两边编出不同的包。
         run: npm run build:android
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: RHINE-MUSIC-DATABASE-Android-arm64
-          path: output/RhineMusicDatabase-*-android-arm64-v8a.apk
+          # CI 不带本地发布密钥（*.key 不入库），产物默认无后缀；带 -signed 是为了
+          # 将来若把发布密钥作为 secret 提供给 CI，这个名字也能被收进来。
+          path: output/RhineMusicDatabase-*-android-arm64-v8a*.apk
           if-no-files-found: error

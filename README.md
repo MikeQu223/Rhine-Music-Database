@@ -298,7 +298,7 @@ Qt 6.12 的 Android 音频后端只用 AAudio，相关接口从 API 28 才开始
 
 `RHINE_ANDROID_QT`、`JAVA_HOME`、`ANDROID_SDK_ROOT`、`ANDROID_NDK_ROOT` 可以覆盖默认路径。
 画面固定横屏（`sensorLandscape`），随包的 Node 运行时以 `libnode.so` 形式编进进程。
-构建只出包，不安装、不连真机调试；签名用工作区内的调试密钥，上架或分发时换成自己的发布密钥。
+签名默认用工作区内的调试密钥，当工作区根目录存在 `Rhine-Music-Database.key` 和 `Rhine-Music-Database.ket.password.key` 时会使用自定义签名。
 
 ## 本机数据与隐私
 
