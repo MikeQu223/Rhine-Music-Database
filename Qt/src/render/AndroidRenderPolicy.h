@@ -109,7 +109,7 @@ inline int androidDefaultRenderScale() {
         return 100;
     }
     const int configured = qEnvironmentVariableIntValue("RHINE_ANDROID_RENDER_SCALE");
-    return configured >= 50 && configured <= 100 ? configured : 90;
+    return configured >= 50 && configured <= 100 ? configured : 75;
 #else
     return 100;
 #endif
