@@ -607,6 +607,9 @@ void Engine::trimMemory() {
         }
     }
     host.trimMemory(retainedImages);
+    // Host 把封面像素丢了，引擎这边记录的"已请求过"也必须一起忘掉，
+    // 否则回到前台后这些唱片再也不会去补图。
+    m_coverRequests.clear();
     scene.trimMemory();
 #ifdef Q_OS_DARWIN
     m_glyphs.clearRasterCache();
@@ -1180,11 +1183,50 @@ void Engine::step(double time) {
     }
     for (auto it = m_musicTextures.begin(); it != m_musicTextures.end();) {
         if (!retainedKeys.contains(it.key())) {
+            // 条目没了，"已请求过封面"的记录也一并作废：它下次回到视野时值得再试一次。
+            m_coverRequests.remove(it.key());
             it = m_musicTextures.erase(it);
         } else {
             ++it;
         }
     }
+#if defined(Q_OS_ANDROID)
+    // 归档页会同时画 7 张唱片，但每个条目的封面图只在"它成为当前曲目"的那一帧取一次
+    // （上面的 `m_musicTextures[musicKey] = {current, m_coverImage}`），切歌瞬间
+    // host.image() 往往还没解码完，条目里就留下空 QImage，之后永不回填 —— 真机上表现
+    // 就是非当前唱片的盘面全是 placeholderCover（TEXDIAG: mt=7 adm=2 gated=5 discO=6
+    // covers=2，C++ 侧补建因为 `!it->cover.isNull()` 一个都过不去）。
+    //
+    // 不能只查 host.image()：缓存键是 loadCover 里加过 `param=NyN` 的改写 URL，拿
+    // item["cover"] 的原始地址去查永远 miss。所以要主动 loadCover，回调里再按返回的键取图。
+    // 512 像素够远看，一张约 1 MB，是当前曲目 1024 封面的四分之一。
+    // 放在 prune 之后：只给真正留下来的条目请求，别为马上就丢的 key 白下载。
+    for (auto it = m_musicTextures.begin(); it != m_musicTextures.end(); ++it) {
+        if (!it->cover.isNull() || it->item.isEmpty()) {
+            continue;
+        }
+        const auto url = it->item["cover"].toString();
+        if (url.isEmpty() || m_coverRequests.contains(it.key())) {
+            continue;
+        }
+        const auto key = it.key();
+        m_coverRequests.insert(key);
+        host.loadCover(
+            url,
+            [this, key](QString loaded) {
+                if (loaded.isEmpty()) {
+                    return;
+                }
+                // 回调是异步的：期间条目可能已被 prune 掉，用 find 而不是 operator[]，
+                // 否则会给一个已经没人要的 key 重新建条目。
+                auto entry = m_musicTextures.find(key);
+                if (entry != m_musicTextures.end() && entry->cover.isNull()) {
+                    entry->cover = host.image(loaded);
+                }
+            },
+            512);
+    }
+#endif
     // 诊断：把「按曲目保留的 MusicTexture 数与其封面字节」交给渲染线程的内存探针打印。
     {
         auto &counters = RhineRender::engineMemoryCounters();

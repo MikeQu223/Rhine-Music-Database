@@ -415,9 +415,9 @@ uniform。arena 的「一次绑定 + 动态偏移」收益在 GLES 上拿不到�
 任何 Android 默认值，也没有改 `FramePacingPolicy`。
 
 **仍未纳入的一项**：烘焙表面图集 `archive-baked-surface-bc7.bin`（1.4 MB）在 GLES 上
-永不被读（`RhiScene.cpp:717` 回落到 5.6 MB RGBA8）。改 ETC2/ASTC 能省带宽与内存，但要
-离线重烘贴图并补一条压缩纹理加载路径，属于需要跑构建/烘焙才能验证的改动，在项目
-「不做构建验证」的前提下没有落地；它需要用户侧执行重烘后再评估。
+永不被读，回落到 5.6 MB 的 RGBA8。ETC2 一度实现并接入过，但**手写编码器有字节序与位布局
+两处缺陷、真机表现为花屏，已默认回退**（详见上面「T1 · surfaceAtlas 换 ETC2 RGB8」）。
+要省这 4.9 MB，得换可靠编码器并以标准解码器的 PSNR > 30 作为验收线。
 
 ### 回退与 A/B
 
@@ -465,27 +465,29 @@ CPU 分段、全屏 pass 数、draw 数；`Renderer::vulkanConfig()` 上报请�
 
 下面保留原始盘点内容以便回查，每项前面标了当前状态。
 
-### T1 · surfaceAtlas 换 ETC2 RGB8（最大一项）· 已落地
+### T1 · surfaceAtlas 换 ETC2 RGB8 · **已回退（编码器不可用）**
 
-- 现状：`RhiScene.cpp:724-737` 优先 BC7（1.4 MB），GLES 不支持 BC7 →
+- 现状：`RhiScene.cpp` 优先 BC7（1.4 MB），GLES 不支持 BC7 →
   回退 `RGBA8` 1024² 全 mip 链 **5.6 MB**，每片元 4 B/texel。
-- 关键机会：shader 只读 `baked.rgb`——`color = baked.rgb * normalResponse.rgb +
-vec3(normalResponse.a)`，那个 `a` 来自 **normalAtlas**，surfaceAtlas 的 alpha
-  **从未被读取**。所以不需要 RGBA。
-- ETC2 **RGB8 是 0.5 B/px**（4×4 块 64 bit），全 mip 链 **699 KB**：
-  体积 −87%，采样带宽是 RGBA8 的 1/8、BC7 的 1/2。GLES 3.0 强制支持 ETC2。
-- 实现：`bake-archive-lighting.py` 加了一个纯 Python 的 ETC2 编码器（只用 ETC1 兼容的
-  个体模式），`RHINE_BAKE_ETC2=1` 时额外输出 `archive-baked-surface-etc2.bin`；
-  运行时在 Android 上优先用它（`uploadMippedBytes(..., true, 8)`，块字节数 8），
-  文件缺失或格式不支持时自动回退原路径。
-- 编码器有两个必须记住的坑：
-    1. **个体模式下 `R1=G1=B1=15` 且 `diff=0` 是 T/H/planar 模式的标记位**，
-       整块会被解码器当成别的模式而花掉。编码器把这种基色的红色降一级
-       （`base1 = [14, 15, 15]`，红色对亮度权重最低）。
-    2. **修改表不必全试**：每张表的最大 modifier 递增（8, 17, 29, …, 183），
-       块内相对基色的最大偏差决定需要多大跨度，只需在"刚好够"和"再小一档"两张里挑。
-       8 张降到 2 张，1024² 全 mip 链的编码时间从 **111 s 压到 13.7 s**，
-       而量化质量由跨度覆盖决定，实测 PSNR 不变（渐变 40.5 dB / 平滑 35.7 dB）。
+- 机会确实存在：shader 只读 `baked.rgb`——`color = baked.rgb * normalResponse.rgb +
+  vec3(normalResponse.a)`，那个 `a` 来自 **normalAtlas**，surfaceAtlas 的 alpha
+  **从未被读取**。ETC2 **RGB8 是 0.5 B/px**（4×4 块 64 bit），全 mip 链 **699 KB**
+  （`1024²→1×1` 共 699064 B），体积 −87%、采样带宽是 RGBA8 的 1/8。
+- **但 `bake-archive-lighting.py` 里那套手写编码器是坏的，已默认关闭**
+  （`RHINE_SURFACE_ETC2=1` 才启用）。真机症状不是"贴图丢失"而是**花屏**：
+  磁带盒边缘一圈粉/紫/黄/青的彩色噪点。
+- 两个缺陷，用标准解码器 `texture2ddecoder` 按规范复核（1024² L0 对 RGBA8 原图）：
+    1. **字节序反了**。`_etc2_encode_block` 用 `struct.pack("<Q", value)` 写出，而 ETC2
+       规定每块 64 bit 按**大端**存储。按规范解 L0：**PSNR 5.71 dB**（纯噪声）；把每 8
+       字节翻转后再解 **PSNR 21.31 dB**，能看出材质块了。
+    2. **individual 模式的基色位偏移与规范不符**。翻转后仍不行：棕色材质
+       `(120,100,85)` 被解成蓝灰，说明 `base << 60/56/52/48/44/40` 这套偏移让 R/B 错位。
+       21 dB 远低于可用线（>30 dB）。
+- **教训**：上一版"PSNR 40.5 / 35.7 dB"是用自己写的解码器测的——编码和解码共用同一套
+  错误位定义，所以"自洽通过"。**纹理压缩必须用独立的标准解码器验证 PSNR**，
+  自写解码器只能验证逻辑自洽，验证不了规范符合性。
+- 后续要用，得换可靠实现（etcpak / etc2comp / PVRTexTool）或按规范重写位布局，
+  并以 `texture2ddecoder` 解出的 PSNR > 30 为验收线。
 
 ### T2 · normalAtlas 降到 RGBA8 · 已落地
 
@@ -595,6 +597,7 @@ vec3(normalResponse.a)`，那个 `a` 来自 **normalAtlas**，surfaceAtlas 的 a
 | `RHINE_BAKE_ETC2` / `RHINE_BAKE_LIGHT_HALF` / `RHINE_BAKE_NORMAL_RGBA8` | 烘焙期；决定产物形态，改完要重跑 `npm run build:android`    |
 | `-DRHINE_ANDROID_NORMAL_RGBA8=OFF`                                      | 配置期；必须与 `RHINE_BAKE_NORMAL_RGBA8` 同时关             |
 | `RHINE_DECORATION_HIGH=1`                                               | 强制建 2000×1480 装饰面                                     |
+| `RHINE_SURFACE_ETC2=1`                                                  | 启用 ETC2 图集（**默认关**：编码器有字节序/位布局缺陷，会花屏） |
 | `RHINE_DEBUG_ATLAS=1`                                                   | 启动时打印实际选中的表面图集格式（ETC2 RGB8 / BC7 / RGBA8） |
 
 ## 滑动列表掉帧：HUD 软件栅格（Android）
@@ -868,6 +871,82 @@ Android 实现全部包在 `#if defined(Q_OS_ANDROID)`；`HudUploadTexture` 只�
   非法值回落到平台默认（不是 0）。
 - 非 Android 逐值不变（默认仍是 100），`Qt/tests/MusicTextureAdmissionChecks.cpp` 的
   `== 100` 断言不受影响——Android 不编译 `Qt/tests/`。
+
+### 副作用修正：非当前唱片不再是白板（2026-11-06）
+
+放宽到 500 ms 之后暴露出一个一直存在的缺陷：非当前命中卡片的标签面回落
+**1×1 白色**、盘面回落 `placeholderCover`，于是「除了当前命中，其它唱片全是白板/灰块」。
+真机截图（`adb exec-out screencap -p`）里左侧归位的那只磁带盒正面是一个空白灰方块，
+右侧选中那只才有印刷。
+
+**真正的 draw 从哪来**：这次先排除了一个自己挖的坑——`scene-fixture.json` 是
+`{"frame": {...}, "rays": [...]}`，**draws 在 `frame.draws` 下面**（直接读顶层 `draws`
+会得到 0 条，上一版就是据此误判"fixture 没有 draw"）。两份 fixture 各 17 条，
+其中 `frame.draws[16]` 是唯一 `label: true` 的 `mesh=-1` 静态陈列唱片，无 `musicKey`；
+运行期的卡片则由 `SceneAppearance::actorTemplate` 的部件经 `NativeCards::makeDraw` 逐帧展开
+（模板里 `label` 恒为 `false`，每个 actor 只贡献 `mesh=-1` 一块标签 draw）。
+`TEXDIAG` 的 `label=N` = 静态唱片 1 + 本帧 actor 数。
+
+- 标签：`key == selectedKey` 才查 `labels[]`，否则 `labels.value(key, white)` → 白板；
+- 盘面：`mesh == -2` 才读 `covers[]`，`key` 不是当前曲目 → `placeholderCover`（灰绿圆环）。
+
+修法：`updateMusic()` 的 `labelOnly` 参数 + 停稳后按预算补建。`RhiScene::render()` 里
+`settled`（当前焦点已准入）才放开 `labelTopUp` / `coverTopUp`，各 2 张/帧。
+名字带 `TopUp` 是必须的：`coverBudget` 已经是成员 `RhineRender::CoverPrepBudget`（封面预处理的
+在途并发闸），同名局部变量会静默遮蔽它。
+
+- 标签先补（512×220 + mip 约 600 KB，是封面成本的十分之一，缺它的表现最刺眼）；
+- 封面要 `!it->cover.isNull()` 才补——**上一版漏了这一步**：Engine 只给当前曲目写
+  `m_musicTextures[musicKey] = {current, m_coverImage}`，非当前条目的 `cover` 是空图，
+  而旧条件又要求它非空，补建循环一行都没跑到，这就是「改了但问题依旧」的直接原因；
+- 已准入分支也要同时判 `labels` 与 `covers`：曾在"只补标签"版本里补过标签的 key，
+  `labels` 命中而 `covers` 空缺，只看 `labels` 就永远不补封面（这一段用 `#if` 包住，
+  桌面 / iOS 的判据逐字不变）。
+
+**为什么不是一次补完**：可见的归位卡片通常个位数，2 张/帧两秒内补齐；同帧全建会在
+「手指抬起」那一帧堆出十几毫秒的 GUI 尖峰，正好落在观感最敏感的节点上。
+
+**上游：非当前条目的封面图根本没有被加载（2026-11-06 第二轮）**。第一轮改完重建后
+TEXDIAG 变成 `mt=7 adm=2 gated=5 discO=6 covers=2`——标签补上了（`labels` 1→8），
+封面却只涨到 2。原因在 `Engine`：
+
+```cpp
+// Engine.cpp：只有"成为当前曲目"的那一帧取一次图
+m_musicTextures[musicKey] = {current, m_coverImage};   // m_coverImage = host.image(m_cover)
+```
+
+切歌瞬间 `host.image()` 往往还没解码完，条目里就留下空 `QImage`，之后永不回填，
+于是 `RhiScene` 的 `!it->cover.isNull()` 把这些条目全挡在门外。两点关键：
+
+- **不能只查 `host.image(url)`**：缓存键是 `Host::loadCover()` 里加过 `param=NyN` 的改写
+  URL，拿 `item["cover"]` 的原始地址去查永远 miss。必须主动 `loadCover`，回调里再按返回
+  的键取图（`Host::image()` 只读缓存，不触发加载）。
+- 回填放在 prune **之后**，只给真正留下来的条目请求；`QSet<QString> m_coverRequests`
+  记已发起的 key 防止每帧重复排队，`trimMemory()` 时清空（Host 丢像素后要允许重试）。
+- 取 512 像素（`loadCover(..., 512)`），一张约 1 MB，是当前曲目 1024 封面的四分之一；
+  `MUSIC_TEXTURE_BUDGET_BYTES` 是 64 MB，7 张 ×1.4 MB（含 mip）远没到线。
+- 全部包在 `#if defined(Q_OS_ANDROID)` 内，桌面 / iOS 不做这份回填。
+
+**仍然保留的语义**：有曲目身份、但不是当前曲目的卡片**不许借**当前曲目的文字（B02：
+否则上一首标题会跟着卡片飞）。它们只要当过焦点就会有 `m_musicTextures` 条目，
+被上面的补建逻辑填上**自己的**标签。
+
+- 只在 Android 生效：桌面 / iOS 准入延迟 100 ms，滚动中本来就能建出标签，
+  条件编译守卫让它们逐值不变（`Qt/tests/` 在 Android 也不编译）。
+- `TEXDIAG` 现在多几栏：`mt`（`musicTextures` 条数）、`adm` / `gated`（本帧准入/被闸）、
+  `curC` / `curL`（当前 key 是否已有封面/标签纹理）、`discE` / `discS` / `discO`
+  （盘面 draw 的 key 分别是空 / 当前 / 别的曲目）与 `discKey`（第一条盘面 draw 的 key 前缀）。
+  **`mt == 1` 就说明 Engine 没登记非当前条目**，补建无从下手，要往上游查；`mt >= 2` 而
+  `labels` 迟迟不涨才是本段逻辑没生效。
+
+**先分清是哪条通道**：截图里那块灰方块的实测像素是 `200,203,192`（G > R > B，偏青绿），
+与 `placeholderCover` 的底色 `94,115,112` 同色系；白标签面在暖光下是 `R > G > B`
+（同一张图卡片亮面 `177,174,170`）。颜色通道顺序就能区分"缺标签"和"缺盘面封面"，
+不必等重建——这张图属于后者。
+
+- 自检 `.workbuddy/tmp/perf/label-fallback-check.py`（19 项，含「空 key 回落」
+  「封面仍用 allowResources」「非 Android 判据逐字不变」「`!it->cover.isNull()` 必须还在」
+  「盘面 key 分三类」「`updateMusic(item, cover` 只有一处」等改这段最容易写错的点）。
 
 ## 音频与系统媒体控件
 

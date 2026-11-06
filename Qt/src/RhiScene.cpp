@@ -326,6 +326,8 @@ class Renderer {
     QRhiSampler *linear = nullptr;
     QRhiSampler *mipSampler = nullptr;
     QRhiSampler *volume = nullptr;
+    /// 实际建出来的表面图集格式（ETC2 RGB8 / BC7 / RGBA8），只用于 TEXDIAG 诊断。
+    QString surfaceAtlasFormat = QStringLiteral("RGBA8");
     Target color, target;
     QRhiResourceUpdateBatch *updates = nullptr;
     QHash<QString, QRhiGraphicsPipeline *> pipelines;
@@ -729,13 +731,19 @@ class Renderer {
                                 rhi->isTextureFormatSupported(QRhiTexture::BC7, surfaceFlags);
         bool atlasReady = false;
 #if defined(Q_OS_ANDROID)
-        // GLES 上没有 BC7，原来只能回退到 RGBA8：1024² 全 mip 链 5.6 MB、4 B/texel。
-        // ETC2 RGB8 是 0.5 B/texel —— 体积 0.7 MB、采样带宽 1/8，GLES 3.0 强制支持。
-        // 只编码 RGB 是因为 surfaceAtlas 的 alpha 在着色器里从未被读取
-        // （`color = baked.rgb * normalResponse.rgb + vec3(normalResponse.a)` 里那个 a
-        //  来自 normalAtlas），所以不需要 ETC2_RGBA8 的那第二个子块。
-        // 文件由烘焙脚本在 RHINE_BAKE_ETC2=1 时输出；缺失时自动退回原路径。
-        const QByteArray surfaceEtc2 = readOptional(root, "archive-baked-surface-etc2.bin");
+        // GLES 上没有 BC7，原先只能回退到 RGBA8：1024² 全 mip 链 5.6 MB、4 B/texel。
+        // ETC2 RGB8 本来是 0.5 B/texel（0.7 MB、采样带宽 1/8，GLES 3.0 强制支持），
+        // **但 scripts/bake-archive-lighting.py 里那套手写编码器是坏的，默认不启用**：
+        //   · 块用 `struct.pack("<Q")` 写出，而 ETC2 规定每块 64 bit 按大端存储；
+        //   · 修掉字节序后 PSNR 也只有 21 dB，且棕色材质被解成蓝灰——individual 模式的
+        //     基色位偏移（`base << 60/56/52/48/44/40`）与规范不符，R/B 通道错位。
+        // 实测（texture2ddecoder 按规范解）：现状 PSNR 5.71 dB，逐块翻转字节后 21.31 dB，
+        // 两者都是花屏，真机表现就是磁带盒边缘那圈彩色噪点。
+        // 保留产物与代码路径，等换用可靠编码器（或修好位布局并验证 PSNR > 30）再打开：
+        //   RHINE_BAKE_ETC2=1 烘焙 + RHINE_SURFACE_ETC2=1 运行。
+        static const bool wantEtc2 = qEnvironmentVariableIntValue("RHINE_SURFACE_ETC2") == 1;
+        const QByteArray surfaceEtc2 =
+            wantEtc2 ? readOptional(root, "archive-baked-surface-etc2.bin") : QByteArray();
         if (!surfaceEtc2.isEmpty() &&
             rhi->isTextureFormatSupported(QRhiTexture::ETC2_RGB8, surfaceFlags)) {
             surfaceAtlas = texture({1024, 1024}, QRhiTexture::ETC2_RGB8, surfaceFlags);
@@ -748,6 +756,9 @@ class Renderer {
                          atlasReady ? "ETC2 RGB8" : (bc7Surface ? "BC7" : "RGBA8"));
             std::fflush(stderr);
         }
+        surfaceAtlasFormat = atlasReady ? QStringLiteral("ETC2 RGB8")
+                                        : (bc7Surface ? QStringLiteral("BC7")
+                                                      : QStringLiteral("RGBA8"));
         if (!atlasReady) {
             if (bc7Surface) {
                 surfaceAtlas = texture({1024, 1024}, QRhiTexture::BC7, surfaceFlags);
@@ -1944,7 +1955,7 @@ class Renderer {
      * 身份、列表顺序、选中态照常更新（画面不能停在上一首），但标签绘制/缩放/mip 上传、
      * 封面合成与预处理全部跳过，绘制侧回落到中性占位——绝不借用上一首的纹理。
      */
-    void updateMusic(const QJsonObject &value, QImage image, bool admitted) {
+    void updateMusic(const QJsonObject &value, QImage image, bool admitted, bool labelOnly = false) {
         // 空条目不占纹理槽：启动阶段或选中项清空时，key 为空，如果照旧登记，会白占一条
         // 标签纹理与 LRU 名额（而且永远不会再被用到）。这种情况只更新条目本身。
         const auto key = value["key"].toString();
@@ -1962,12 +1973,18 @@ class Renderer {
         if (!allowResources) {
             ++gatedUpdates;
         }
+        // 标签与封面分开准入：标签是一张 512×220 的纸面（约 600 KB 含 mip），
+        // 封面是 512~1024² 的图 + 预处理 + mip，两者差一个数量级。而标签缺失的
+        // 表现是**纯白**（见 prepare 里 label 的回落），卡片正面直接变成白板，
+        // 也就是用户看到的"非当前命中的唱片模型贴图丢失"。
+        // 所以画面里看得见的条目都补标签，封面继续等 500 ms 准入。
+        const bool allowLabel = allowResources || labelOnly;
         if (hasKey && admitted && !forceSynchronousCover && !covers.contains(key)
             && !admittedFrame.contains(key)) {
             // 从准入这一刻开始等封面换绑，用于探针统计"焦点稳定→画面到位"的帧数。
             admittedFrame.insert(key, frameIndex);
         }
-        if (hasKey && allowResources
+        if (hasKey && allowLabel
             && (!labels.contains(key) || labelRevisions.value(key) != labelRevision)) {
             if (const auto previous = labels.value(key)) {
                 invalidateBindings(previous);
@@ -2619,6 +2636,62 @@ class Renderer {
         // 这两项只与当前曲目有关，和具体 draw 无关：循环外算一次。
         const auto selectedKey = musicItem["key"].toString("empty");
         const auto currentCover = covers.value(selectedKey, placeholderCover);
+#if defined(Q_OS_ANDROID)
+        // TEXDIAG：定位"非当前唱片贴图丢失"到底是缺哪一类纹理。
+        // 设备上设不了环境变量（RHINE_DEBUG_ATLAS 那套在手机上永远拿不到），OPPO 的
+        // logcat 配额又会挤掉启动日志，所以默认开、每 120 帧一行，定位完可以整段删掉。
+        {
+            static int diagTick = 0;
+            if (++diagTick % 120 == 1) {
+                int labelDraws = 0, discDraws = 0, decoDraws = 0, letterDraws = 0, modelDraws = 0;
+                // 盘面（mesh=-2）是唯一读 covers[] 的部件，它的 key 落到哪一类直接决定画面：
+                // empty→回落 currentCover、selected→查 covers[selectedKey]、other→placeholderCover。
+                // 只数总数分不清是"没建封面"还是"key 对不上"，所以三类分开记。
+                int discEmptyKey = 0, discSelectedKey = 0, discOtherKey = 0;
+                QString firstDiscKey = QStringLiteral("-");
+                for (const auto &d : draws) {
+                    const int mesh = d["mesh"].toInt();
+                    if (d["label"].toBool()) {
+                        ++labelDraws;
+                    }
+                    if (mesh == -2) {
+                        ++discDraws;
+                        const auto drawKey = d["musicSelected"].toBool() ? selectedKey
+                                                                        : d["musicKey"].toString();
+                        if (drawKey.isEmpty()) {
+                            ++discEmptyKey;
+                        } else if (drawKey == selectedKey) {
+                            ++discSelectedKey;
+                        } else {
+                            ++discOtherKey;
+                        }
+                        if (firstDiscKey == QLatin1String("-")) {
+                            firstDiscKey = drawKey.isEmpty() ? QStringLiteral("<empty>") : drawKey.left(10);
+                        }
+                    } else if (mesh == -5) {
+                        ++decoDraws;
+                    } else if (mesh == -6 || mesh == -7) {
+                        ++letterDraws;
+                    } else if (mesh >= 0) {
+                        ++modelDraws;
+                    }
+                }
+                // mt 只能用两个成员计数求和：`musicTextures` 是 render() 的形参
+                // （Engine::MusicTextures），prepare() 里不可见——直接写它会编译报
+                // "use of undeclared identifier"。admitted+gated 就是本帧快照的总条数。
+                qInfo("TEXDIAG draws=%d label=%d disc=%d deco=%d letter=%d model=%d "
+                      "labels=%d covers=%d labelTex=%d placeholder=%d atlas=%s "
+                      "mt=%d adm=%d gated=%d curC=%d curL=%d discE=%d discS=%d discO=%d discKey=%s",
+                      int(draws.size()), labelDraws, discDraws, decoDraws, letterDraws, modelDraws,
+                      int(labels.size()), int(covers.size()), labelTexture ? 1 : 0,
+                      placeholderCover ? 1 : 0, qPrintable(surfaceAtlasFormat),
+                      admittedKeysThisFrame + gatedKeysThisFrame, admittedKeysThisFrame,
+                      gatedKeysThisFrame,
+                      covers.contains(selectedKey) ? 1 : 0, labels.contains(selectedKey) ? 1 : 0,
+                      discEmptyKey, discSelectedKey, discOtherKey, qPrintable(firstDiscKey));
+            }
+        }
+#endif
         for (auto d : draws) {
             if (d["count"].toInt() <= 0) {
                 continue;
@@ -2677,8 +2750,20 @@ class Renderer {
             } else if (d["label"].toBool()) {
                 // B02：只有当前曲目可以回落到 labelTexture；归位卡片缺标签就用白色占位，
                 // 不许借别人的文字——否则快速滚动时上一首的标题会跟着卡片飞。
-                label = key == selectedKey ? labels.value(key, labelTexture ? labelTexture : white)
-                                           : labels.value(key, white);
+                //
+                // 空 key 是第三类，B02 当时漏掉了：场景里静态陈列的展示唱片
+                // （scene-fixture.json 的 mesh=-1 / cassette）没有曲目身份，既不是
+                // "当前曲目"也不是"别人的曲目"。原来它一并落到 white，整排陈列的
+                // 标签面就变成纯白卡纸，看起来就是贴图丢失。
+                // 与封面的处理对齐：封面空 key 回落 currentCover（见下面的
+                // coverFallback），标签空 key 同样回落当前曲目的 labelTexture。
+                if (key.isEmpty()) {
+                    label = labelTexture ? labelTexture : white;
+                } else if (key == selectedKey) {
+                    label = labels.value(key, labelTexture ? labelTexture : white);
+                } else {
+                    label = labels.value(key, white);
+                }
             }
             // 着色器只有盘面读取封面，只有标签读取文字；其他表面绑定稳定的占位纹理。
             // 查看封面页的绘制来自装配体，key 不是曲目 key（空），仍回落当前曲目封面；
@@ -3372,16 +3457,59 @@ class Renderer {
         // 本帧会先绑上一张即将被撤销的封面，下一帧再换回去——肉眼就是闪一下。
         // 恢复图形设备时只还原"已准入且确实缺纹理"的旧唱片：路过的条目永远不补资源。
         admittedKeysThisFrame = gatedKeysThisFrame = 0;
+#if defined(Q_OS_ANDROID)
+        // 停稳判定：当前焦点已准入，说明手指停住超过 500 ms。只有这时才给视野内的
+        // 其它唱片补纹理；滚动中一个都不补，否则又回到"边滑边建封面"。
+        //
+        // 为什么要补：一次快速翻页会把沿途十几条全部登记成"路过"，谁都没熬过 500 ms
+        // 准入。手指停下后只有最终焦点建了纹理，其余卡片的 label 回落 `white`、盘面回落
+        // placeholderCover——一整排磁带盒就是白纸板，也就是用户报的"非当前命中的唱片
+        // 模型贴图丢失"。准入只该决定"什么时候建"，不该决定"永远不建"。
+        //
+        // 标签优先：512×220 纸面 + mip 约 600 KB，是封面成本的十分之一，而缺它的表现
+        // 恰恰最刺眼（纯白）。所以标签走 labelOnly 先补，封面等有图再补——空图会退到
+        // 同步占位合成，那比继续贴 placeholderCover 更贵也不好看。
+        //
+        // 各 2 张/帧而不是一次补完：可见的归位卡片通常个位数，两秒内补齐；同一帧全建
+        // 会在"手指抬起"那一帧堆出十几毫秒的 GUI 尖峰，正好落在观感最敏感的节点上。
+        //
+        // 名字带 TopUp 是为了避开成员 `coverBudget`（RhineRender::CoverPrepBudget，
+        // 封面预处理的在途并发闸）。同名局部变量会静默遮蔽它，本函数后段再碰就编译不过，
+        // 更糟的是看起来"预算没生效"却查不出原因。
+        const bool settled = musicTextures.value(currentMusicKey).admitted;
+        int labelTopUp = settled ? 2 : 0;
+        int coverTopUp = settled ? 2 : 0;
+#endif
         for (auto it = musicTextures.begin(); it != musicTextures.end(); ++it) {
             if (it->admitted) {
                 ++admittedKeysThisFrame;
             } else {
                 ++gatedKeysThisFrame;
             }
-            if (it.key() != currentMusicKey && it->admitted && !labels.contains(it.key()) &&
-                !it->item.isEmpty()) {
+            if (it.key() == currentMusicKey || it->item.isEmpty()) {
+                continue;
+            }
+            if (it->admitted) {
+#if defined(Q_OS_ANDROID)
+                // 两个通道都要判：曾经在"只补标签"的版本里补过标签的 key，labels 命中而
+                // covers 空缺，若只看 labels 就再也不会补封面。
+                if (!labels.contains(it.key()) || !covers.contains(it.key())) {
+#else
+                if (!labels.contains(it.key())) {
+#endif
+                    updateMusic(it->item, it->cover, true);
+                }
+            }
+#if defined(Q_OS_ANDROID)
+            else if (labelTopUp > 0 && !labels.contains(it.key())) {
+                // admitted=false + labelOnly=true：只落标签，封面继续等准入。
+                --labelTopUp;
+                updateMusic(it->item, it->cover, false, true);
+            } else if (coverTopUp > 0 && !it->cover.isNull() && !covers.contains(it.key())) {
+                --coverTopUp;
                 updateMusic(it->item, it->cover, true);
             }
+#endif
         }
         updateMusic(item, cover, musicTextures.value(currentMusicKey).admitted);
         pruneCoverDemands();

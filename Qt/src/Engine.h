@@ -11,6 +11,7 @@
 #include "fg/FgFrameTap.h"
 #endif
 #include <QElapsedTimer>
+#include <QSet>
 #include <QPointF>
 #include <QRectF>
 #include <QVariantMap>
@@ -325,6 +326,10 @@ class Engine : public QObject {
     // 生命周期内不变，每帧重新 getenv 只会给渲染线程添无谓的字符串分配。
     static quint64 resourceBudgetBytes();
     MusicTextures m_musicTextures;
+    // 归档页同时画多张唱片，非当前那些的封面图要单独向 Host 要（每个条目只在"成为当前"
+    // 的那一帧取过一次图，切歌瞬间往往还没解码完）。这里记已经发起过的 key，避免每帧
+    // 重复 loadCover 把同一张图反复排队；失败也留在集合里，不重试。
+    QSet<QString> m_coverRequests;
     // B01：冷纹理准入。判定在纯逻辑类里（可离线测），定时器只负责到点喊一声。
     // 计时基准是构造时启动的单调时钟，与帧号无关——引擎休眠不出帧时定时器照样到期。
     RhineRender::MusicTextureAdmission m_admission = RhineRender::MusicTextureAdmission::fromEnvironment();
