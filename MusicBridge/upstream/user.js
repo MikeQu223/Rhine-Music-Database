@@ -1,4 +1,4 @@
-import request from "@/utils/request";
+import request from '@/utils/request';
 
 /**
  * 获取用户详情
@@ -7,14 +7,14 @@ import request from "@/utils/request";
  * @param {number} uid
  */
 export function userDetail(uid) {
-    return request({
-        url: "/user/detail",
-        method: "get",
-        params: {
-            uid,
-            timestamp: new Date().getTime(),
-        },
-    });
+  return request({
+    url: '/user/detail',
+    method: 'get',
+    params: {
+      uid,
+      timestamp: new Date().getTime(),
+    },
+  });
 }
 
 /**
@@ -22,13 +22,13 @@ export function userDetail(uid) {
  * 说明 : 登录后调用此接口 ,可获取用户账号信息
  */
 export function userAccount() {
-    return request({
-        url: "/user/account",
-        method: "get",
-        params: {
-            timestamp: new Date().getTime(),
-        },
-    });
+  return request({
+    url: '/user/account',
+    method: 'get',
+    params: {
+      timestamp: new Date().getTime(),
+    },
+  });
 }
 
 /**
@@ -43,11 +43,11 @@ export function userAccount() {
  * @param {number=} params.offset
  */
 export function userPlaylist(params) {
-    return request({
-        url: "/user/playlist",
-        method: "get",
-        params,
-    });
+  return request({
+    url: '/user/playlist',
+    method: 'get',
+    params,
+  });
 }
 
 /**
@@ -60,11 +60,11 @@ export function userPlaylist(params) {
  * @param {number} params.type
  */
 export function userPlayHistory(params) {
-    return request({
-        url: "/user/record",
-        method: "get",
-        params,
-    });
+  return request({
+    url: '/user/record',
+    method: 'get',
+    params,
+  });
 }
 
 /**
@@ -74,14 +74,14 @@ export function userPlayHistory(params) {
  * @param {number} uid
  */
 export function userLikedSongsIDs(uid) {
-    return request({
-        url: "/likelist",
-        method: "get",
-        params: {
-            uid,
-            timestamp: new Date().getTime(),
-        },
-    });
+  return request({
+    url: '/likelist',
+    method: 'get',
+    params: {
+      uid,
+      timestamp: new Date().getTime(),
+    },
+  });
 }
 
 /**
@@ -91,14 +91,14 @@ export function userLikedSongsIDs(uid) {
  * @param {number} type
  */
 export function dailySignin(type = 0) {
-    return request({
-        url: "/daily_signin",
-        method: "post",
-        params: {
-            type,
-            timestamp: new Date().getTime(),
-        },
-    });
+  return request({
+    url: '/daily_signin',
+    method: 'post',
+    params: {
+      type,
+      timestamp: new Date().getTime(),
+    },
+  });
 }
 
 /**
@@ -111,14 +111,14 @@ export function dailySignin(type = 0) {
  * @param {number=} params.offset
  */
 export function likedAlbums(params) {
-    return request({
-        url: "/album/sublist",
-        method: "get",
-        params: {
-            limit: params.limit,
-            timestamp: new Date().getTime(),
-        },
-    });
+  return request({
+    url: '/album/sublist',
+    method: 'get',
+    params: {
+      limit: params.limit,
+      timestamp: new Date().getTime(),
+    },
+  });
 }
 
 /**
@@ -126,14 +126,14 @@ export function likedAlbums(params) {
  * 说明 : 调用此接口可获取到用户收藏的歌手
  */
 export function likedArtists(params) {
-    return request({
-        url: "/artist/sublist",
-        method: "get",
-        params: {
-            limit: params.limit,
-            timestamp: new Date().getTime(),
-        },
-    });
+  return request({
+    url: '/artist/sublist',
+    method: 'get',
+    params: {
+      limit: params.limit,
+      timestamp: new Date().getTime(),
+    },
+  });
 }
 
 /**
@@ -141,36 +141,36 @@ export function likedArtists(params) {
  * 说明 : 调用此接口可获取到用户收藏的MV
  */
 export function likedMVs(params) {
-    return request({
-        url: "/mv/sublist",
-        method: "get",
-        params: {
-            limit: params.limit,
-            timestamp: new Date().getTime(),
-        },
-    });
+  return request({
+    url: '/mv/sublist',
+    method: 'get',
+    params: {
+      limit: params.limit,
+      timestamp: new Date().getTime(),
+    },
+  });
 }
 
 /**
  * 上传歌曲到云盘（需要登录）
  */
 export function uploadSong(file) {
-    let formData = new FormData();
-    formData.append("songFile", file);
-    return request({
-        url: "/cloud",
-        method: "post",
-        params: {
-            timestamp: new Date().getTime(),
-        },
-        data: formData,
-        headers: {
-            "Content-Type": "multipart/form-data",
-        },
-        timeout: 200000,
-    }).catch((error) => {
-        alert(`上传失败，Error: ${error}`);
-    });
+  let formData = new FormData();
+  formData.append('songFile', file);
+  return request({
+    url: '/cloud',
+    method: 'post',
+    params: {
+      timestamp: new Date().getTime(),
+    },
+    data: formData,
+    headers: {
+      'Content-Type': 'multipart/form-data',
+    },
+    timeout: 200000,
+  }).catch(error => {
+    alert(`上传失败，Error: ${error}`);
+  });
 }
 
 /**
@@ -183,26 +183,26 @@ export function uploadSong(file) {
  * @param {number=} params.offset
  */
 export function cloudDisk(params = {}) {
-    params.timestamp = new Date().getTime();
-    return request({
-        url: "/user/cloud",
-        method: "get",
-        params,
-    });
+  params.timestamp = new Date().getTime();
+  return request({
+    url: '/user/cloud',
+    method: 'get',
+    params,
+  });
 }
 
 /**
  * 获取云盘歌曲详情（需要登录）
  */
 export function cloudDiskTrackDetail(id) {
-    return request({
-        url: "/user/cloud/detail",
-        method: "get",
-        params: {
-            timestamp: new Date().getTime(),
-            id,
-        },
-    });
+  return request({
+    url: '/user/cloud/detail',
+    method: 'get',
+    params: {
+      timestamp: new Date().getTime(),
+      id,
+    },
+  });
 }
 
 /**
@@ -210,12 +210,12 @@ export function cloudDiskTrackDetail(id) {
  * @param {Array} id
  */
 export function cloudDiskTrackDelete(id) {
-    return request({
-        url: "/user/cloud/del",
-        method: "get",
-        params: {
-            timestamp: new Date().getTime(),
-            id,
-        },
-    });
+  return request({
+    url: '/user/cloud/del',
+    method: 'get',
+    params: {
+      timestamp: new Date().getTime(),
+      id,
+    },
+  });
 }
