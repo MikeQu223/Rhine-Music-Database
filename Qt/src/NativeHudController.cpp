@@ -798,18 +798,25 @@ void NativeHud::action(QString value) {
         // 关闭行为在点击窗口关闭按钮时读取
         const bool toTray = m_host->preference("close-behavior") == "tray";
         m_host->setPreference("close-behavior", toTray ? "quit" : "tray");
+    } else if (value == "debug-mode") {
+        const bool enabled = m_host->preference("debug-mode") == "on";
+        m_host->setPreference("debug-mode", enabled ? "off" : "on");
     } else if (value == "graphics-backend") {
         // 后端切换需要重启生效：仅写入配置，由下次启动的 selectGraphicsBackend 应用。
-        // 顺序：默认（自动探测）→ Vulkan → OpenGL → 默认
+        // 顺序：默认（自动探测）→ Vulkan → D3D12 → OpenGL → 默认。
         const auto current = m_host->preference("graphics-backend");
         QString next;
         if (current.isEmpty()) {
             next = QStringLiteral("vulkan");
         } else if (current == "vulkan") {
-            next = QStringLiteral("opengl");
 #if defined(Q_OS_WIN) && RHINE_ENABLE_D3D12_BACKEND
-        } else if (current == "opengl") {
             next = QStringLiteral("d3d12");
+#else
+            next = QStringLiteral("opengl");
+#endif
+#if defined(Q_OS_WIN) && RHINE_ENABLE_D3D12_BACKEND
+        } else if (current == "d3d12") {
+            next = QStringLiteral("opengl");
 #endif
         }
         m_host->setPreference("graphics-backend", next);

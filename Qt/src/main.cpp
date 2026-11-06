@@ -177,7 +177,7 @@ static bool applyNamedBackend(const QString &requested) {
     }
     if (requested == "vulkan") {
         if (!vulkanUsable()) {
-            qWarning() << "Vulkan is unavailable; falling back to Vulkan/OpenGL selection.";
+            qWarning() << "Vulkan is unavailable; falling back to the default backend.";
             return false;
         }
         QQuickWindow::setGraphicsApi(QSGRendererInterface::Vulkan);

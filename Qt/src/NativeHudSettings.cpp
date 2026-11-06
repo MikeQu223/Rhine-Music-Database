@@ -345,6 +345,14 @@ void NativeHud::paintSettingsCustomSection(const QString &renderer, const QRectF
             "disc-rotation", QStringLiteral("唱片旋转"));
         text(QStringLiteral("默认关闭；开启会增加持续渲染、耗电和发热。"), body.left(), body.top() + 176, 13,
              "regular", 0, muted);
+#if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
+        const bool debugMode = m_host->preference("debug-mode") == "on";
+        row(200, "DEBUG MODE", QStringLiteral("调试模式（原生崩溃诊断）"),
+            debugMode ? QStringLiteral("开启 / 点击关闭") : QStringLiteral("关闭 / 点击开启"), "debug-mode",
+            QStringLiteral("调试模式"));
+        text(QStringLiteral("仅用于排查闪退与卡死；关闭后清空诊断数据，完全停止采集需重启。"), body.left(),
+             body.top() + 276, 13, "regular", 0, muted);
+#endif
         return;
     }
 

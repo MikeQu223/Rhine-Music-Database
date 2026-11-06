@@ -200,11 +200,12 @@ QVector<SettingChoice> graphicsChoices(const SettingsContext &) {
     // macOS 只有 Metal 后端；不再暴露 Vulkan/OpenGL 等无效选项。
     return {{"metal", "Metal"}};
 #else
-    QVector<SettingChoice> values{
-        {"", QStringLiteral("默认 / 自动探测")}, {"vulkan", "Vulkan"}, {"opengl", "OpenGL"}};
-#if RHINE_ENABLE_D3D12_BACKEND
+    // Windows 为 Vulkan → Direct3D 12 → OpenGL，Linux 为 Vulkan → OpenGL。
+    QVector<SettingChoice> values{{"", QStringLiteral("默认 / 自动探测")}, {"vulkan", "Vulkan"}};
+#if defined(Q_OS_WIN) && RHINE_ENABLE_D3D12_BACKEND
     values.append(SettingChoice{"d3d12", "Direct3D 12"});
 #endif
+    values.append(SettingChoice{"opengl", "OpenGL"});
     return values;
 #endif
 }
@@ -526,7 +527,7 @@ const QVector<SettingDescriptor> &descriptors() {
              .actionLabel = "样式与同步",
              .visible = desktopLyricsVisible});
         add({.id = "debug-mode",
-             .section = SectionId::Preferences,
+             .section = SectionId::Performance,
              .kind = SettingKind::Choice,
              .binding = {.kind = BindingKind::Preference,
                          .preferenceKey = "debug-mode",
@@ -745,7 +746,11 @@ const QVector<SettingsSection> &sections() {
     static const QVector<SettingsSection> values{
         {SectionId::Provider, 1, 10, "PROVIDER ACCESS", "音乐平台", "provider-card", 160, alwaysVisible},
         {SectionId::Preferences, 2, 20, "TERMINAL PREFERENCES", "终端偏好", {}, 0, alwaysVisible},
+#if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
+        {SectionId::Performance, 3, 30, "PERFORMANCE", "性能与诊断", "performance", 316, alwaysVisible},
+#else
         {SectionId::Performance, 3, 30, "PERFORMANCE", "性能与诊断", "performance", 220, alwaysVisible},
+#endif
         {SectionId::Storage, 4, 40, "STORAGE", "存储与缓存", "storage", 105, alwaysVisible},
         {SectionId::Update, 5, 50, "SOFTWARE UPDATE", "软件更新", "update", 220, alwaysVisible},
         {SectionId::Project, 6, 60, "PROJECT", "项目与开源参考", {}, 0, alwaysVisible},
