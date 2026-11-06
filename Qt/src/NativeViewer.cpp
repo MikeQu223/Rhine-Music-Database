@@ -183,6 +183,24 @@ void NativeViewer::pointer(QString type, double x, double y, double delta) {
         interrupt();
         const auto scale = std::pow(0.95, 0.7 * std::abs(delta) * 0.01);
         m_goal.radius = std::clamp(m_goal.radius * (delta < 0 ? scale : 1 / scale), 5.0, 28.0);
+    } else if (type == "pan") {
+        // 双指拖动平移（Overlay.qml 的 PinchHandler 转发）：x/y 是舞台像素增量。
+        // 沿相机右/上向量**一次合成**移动注视点——dx 与 dy 同时生效，任意斜向
+        // 平移都是一条直线；不做轴向吸附，也不拆成两步（两步会被焦点弹簧插成折线）。
+        // 语义是「拖动内容」：手指右移（dx>0）→ 内容右移 → 注视点沿 -right；
+        // 手指下移（dy>0，屏幕 y 向下为正）→ 内容下移 → 注视点沿 +up。
+        // 焦点平面的世界尺寸 = 2*radius*tan(fov/2)，与 frame() 的 perspective(34°)
+        // 一致，保证手指位移与画面位移约 1:1 跟手；灵敏度随缩放半径自适应。
+        interrupt();
+        const auto camera = Matrix::camera(m_eye, m_focus);
+        const Vector right{camera.values[0], camera.values[1], camera.values[2]};
+        const Vector up{camera.values[4], camera.values[5], camera.values[6]};
+        const auto span = 2 * m_goal.radius * std::tan(34.0 * std::numbers::pi / 360.0);
+        const auto worldPerPixel = span / m_height;
+        m_target = m_target + right * (-x * worldPerPixel) + up * (y * worldPerPixel);
+        if (m_target.length() > 5) {
+            m_target = m_target.normalized() * 5;
+        }
     }
 }
 

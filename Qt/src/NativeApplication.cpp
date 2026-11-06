@@ -213,15 +213,19 @@ void NativeApplication::mediaAction(QString action) {
 }
 
 void NativeApplication::pointer(QString type, double x, double y) {
+    // "pan"（双指平移）的 x/y 是位移增量而不是指针位置，绝不能拿去做播放栏/弹窗
+    // 的命中判定——增量值恰好落进播放栏矩形时平移会被误判吞掉。viewer 打开时
+    // NativeScene::pointer 会把它直接转发给 NativeViewer。
+    const bool positional = type != "pan";
     // 播放栏覆盖场景；在原生分发边界也隔离留白，防止后端调用穿透或残留拖动。
-    if (hud.playerBounds && hud.playerBounds->contains(x, y)) {
+    if (positional && hud.playerBounds && hud.playerBounds->contains(x, y)) {
         m_dragging = false;
         m_moved = false;
         m_scene->pointer("pointercancel", 0, 0);
         m_scene->pointer("pointerleave", 0, 0);
         return;
     }
-    if (!hud.modal.isEmpty()) {
+    if (positional && !hud.modal.isEmpty()) {
         // 弹窗外只接受完整点击，拖动、取消和面板内部留白都不触发返回。
         if (type == "pointerdown") {
             m_dragging = true;
