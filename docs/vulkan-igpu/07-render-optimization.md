@@ -8,20 +8,20 @@
 
 ## 0. 一页结论
 
-| ID | 改动 | 状态 | 验证 | 代价 / 风险 |
-|---|---|---|---|---|
-| A01 | 受控呈现路径开启 Vulkan 时间戳查询；GPU 计时按“能力→是否请求→有无样本”四态上报；`presentMs` 与 `endMs` 的重复计量换成整帧 `frameMs` + `frameId` | 已实施 | 构建通过；`qt_render_policy_regression` 覆盖四态分类与状态名；面板与 CSV 已接线〔源码〕 | 驱动不支持时间戳时状态显示 `unsupported`，不伪造数值；`presentMs` 字段保留但标弃用（`FgCapabilityChecks.cpp` 仍在赋值） |
-| A02 | 量出“离屏提交次数”和“帧槽等待”：后端统计 `beginOffscreenFrame` 次数与耗时，呈现层算 `submitsPerFrame` 与 begin/end 的 p95/p99 | 已实施（只测不改架构） | 构建通过；CSV 新增 6 列、面板新增“FG 提交/等待”行〔源码〕 | 分位用 120 样本环，前 8 帧不出分位；`submitsPerFrame` 依赖后端计数差，后端归零时按差值为负夹到 0 |
-| A03 | 引擎内容版本 `sceneRevision`/`hudRevision`：渲染线程发现新资源落地时回报一次，图层按版本置脏去重 | 已实施（默认关闭，`RHINE_LAYER_REVISION=1` 启用） | 构建通过；探针新增“版本”栏与两路版本号〔源码〕 | 默认仍走信号 + 20 帧兜底，行为与优化前一致；启用后未实机比对（见 §7.3） |
-| A04 | `SceneDrawData` 增加逐实例稳定 ID，`previousModel` 按 `(drawId, instanceId)` 精确匹配，旧的平移列哈希降为回退 | 已实施 | 构建通过；`RHINE_MOTION_PROBE` 可量化“按 id / 回退 / 未配对”三路比例〔源码〕 | `rebase()` 那一帧全体 ID 变（速度 0 一帧）；条数变化时整块回退旧路径；需目检（见 §8.3） |
-| A05 | 运动矢量 MRT 与逐实例历史只在 `taa`/`fsr` 需要时分配，并把“是否需要”纳入 resize 早退比较 | 已实施 | 构建通过；`RHINE_AA_MODE=off/fxaa/msaa/fsr1` 不再分配目标〔源码〕 | 切换 AA 模式会触发一次资源重建（已被早退吸收，不再每帧重建）；`fsr3` 运行期不可用时仍按配置分配（空写一次 16 B/实例） |
-| A06 | 盘面片元着色器在 `blur==0` 时走单次采样快路径（两个变体同步改） | 已实施 | 数学恒等 + float32 模拟偏差 ≤5 ULP〔算术推导〕 | 仅影响“清晰档”（`clarity==1` 或非 viewer）；模糊档路径与画质不变 |
-| A07 | 九点柔化与两处全屏拷贝：**证否**“可逐像素等价省略”，只留注释、探针与一处 `qputenv` 去重 | 已实施（结论为不改画面） | 构建通过；`RHINE_POST_PROBE=1` 可逐路径核对提交数〔源码〕〔算术推导〕 | 若后续要省这 9 次采样，只能做成显式质量档（`RHINE_SOFTEN=fast`），不是等价优化 |
-| A08 | 封面合成与整条 mip 链移到工作线程预处理，渲染线程只做按预算的上传与换绑 | 已实施 | 构建通过；`RHINE_TEXTURE_PROBE=1` 输出完成/过期/溢出/顺延与首次可见帧数〔源码〕 | 换歌瞬间可能多显示一帧旧封面；线程池拒绝或预处理失败自动退回同步路径 |
-| A09 | 绘制状态去重（排序 + 只在管线/绑定变化时下发）从 Linux 专用分支推广到全部后端，并修掉 `#ifdef` 包住函数闭合括号的结构隐患 | 已实施 | 构建通过；透明段提交顺序不变〔源码〕 | 唯一画面差异：`blend=true` 但非 transparent 的 hashed 材质改为按管线分组提交，需真人目检 |
-| A10 | 后端 `resize()` 增加尺寸早退（不再每帧 `m_rhi->finish()`），并新增 `swapchainRecreates`/`deviceIdleWaits`/`resizeSkips` 三个计数器贯穿到面板与 CSV | 已实施 | 构建通过；计数器接线到 `RhineFg::Stats`/CSV/reportStats〔源码〕 | 早退依赖“已生效交换链尺寸”这一新口径；运行期收益待用 `fg_resize_skips` 与 `fg_device_idle_waits` 的比值证明〔未验证〕 |
-| A11 | 局部预算升级为整帧资源账本：240 帧滚动窗口的峰值（带峰帧号）+ 每帧新增绑定/上传 + 封面重传率 + 可选预算告警 | 已实施 | 构建通过；CSV 新增 8 列、面板新增“整帧资源”块〔源码〕 | 峰值是滚动窗口而非 lifetime；“封面字节”没有数据源，只有次数与重传率 |
-| A12 | LOD / 深度预通过 / indirect / async 专项实验 | **未实施**，只给门槛与判定矩阵（§12） | 报告本身就要求“先确认规模/overdraw/空闲引擎再决定投入”〔规范〕 | 没有前置证据就动手，等于用主路径风险换不确定收益 |
+| ID  | 改动                                                                                                                                               | 状态                                              | 验证                                                                                    | 代价 / 风险                                                                                                             |
+| --- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| A01 | 受控呈现路径开启 Vulkan 时间戳查询；GPU 计时按“能力→是否请求→有无样本”四态上报；`presentMs` 与 `endMs` 的重复计量换成整帧 `frameMs` + `frameId`    | 已实施                                            | 构建通过；`qt_render_policy_regression` 覆盖四态分类与状态名；面板与 CSV 已接线〔源码〕 | 驱动不支持时间戳时状态显示 `unsupported`，不伪造数值；`presentMs` 字段保留但标弃用（`FgCapabilityChecks.cpp` 仍在赋值） |
+| A02 | 量出“离屏提交次数”和“帧槽等待”：后端统计 `beginOffscreenFrame` 次数与耗时，呈现层算 `submitsPerFrame` 与 begin/end 的 p95/p99                      | 已实施（只测不改架构）                            | 构建通过；CSV 新增 6 列、面板新增“FG 提交/等待”行〔源码〕                               | 分位用 120 样本环，前 8 帧不出分位；`submitsPerFrame` 依赖后端计数差，后端归零时按差值为负夹到 0                        |
+| A03 | 引擎内容版本 `sceneRevision`/`hudRevision`：渲染线程发现新资源落地时回报一次，图层按版本置脏去重                                                   | 已实施（默认关闭，`RHINE_LAYER_REVISION=1` 启用） | 构建通过；探针新增“版本”栏与两路版本号〔源码〕                                          | 默认仍走信号 + 20 帧兜底，行为与优化前一致；启用后未实机比对（见 §7.3）                                                 |
+| A04 | `SceneDrawData` 增加逐实例稳定 ID，`previousModel` 按 `(drawId, instanceId)` 精确匹配，旧的平移列哈希降为回退                                      | 已实施                                            | 构建通过；`RHINE_MOTION_PROBE` 可量化“按 id / 回退 / 未配对”三路比例〔源码〕            | `rebase()` 那一帧全体 ID 变（速度 0 一帧）；条数变化时整块回退旧路径；需目检（见 §8.3）                                 |
+| A05 | 运动矢量 MRT 与逐实例历史只在 `taa`/`fsr` 需要时分配，并把“是否需要”纳入 resize 早退比较                                                           | 已实施                                            | 构建通过；`RHINE_AA_MODE=off/fxaa/msaa/fsr1` 不再分配目标〔源码〕                       | 切换 AA 模式会触发一次资源重建（已被早退吸收，不再每帧重建）；`fsr3` 运行期不可用时仍按配置分配（空写一次 16 B/实例）   |
+| A06 | 盘面片元着色器在 `blur==0` 时走单次采样快路径（两个变体同步改）                                                                                    | 已实施                                            | 数学恒等 + float32 模拟偏差 ≤5 ULP〔算术推导〕                                          | 仅影响“清晰档”（`clarity==1` 或非 viewer）；模糊档路径与画质不变                                                        |
+| A07 | 九点柔化与两处全屏拷贝：**证否**“可逐像素等价省略”，只留注释、探针与一处 `qputenv` 去重                                                            | 已实施（结论为不改画面）                          | 构建通过；`RHINE_POST_PROBE=1` 可逐路径核对提交数〔源码〕〔算术推导〕                   | 若后续要省这 9 次采样，只能做成显式质量档（`RHINE_SOFTEN=fast`），不是等价优化                                          |
+| A08 | 封面合成与整条 mip 链移到工作线程预处理，渲染线程只做按预算的上传与换绑                                                                            | 已实施                                            | 构建通过；`RHINE_TEXTURE_PROBE=1` 输出完成/过期/溢出/顺延与首次可见帧数〔源码〕         | 换歌瞬间可能多显示一帧旧封面；线程池拒绝或预处理失败自动退回同步路径                                                    |
+| A09 | 绘制状态去重（排序 + 只在管线/绑定变化时下发）从 Linux 专用分支推广到全部后端，并修掉 `#ifdef` 包住函数闭合括号的结构隐患                          | 已实施                                            | 构建通过；透明段提交顺序不变〔源码〕                                                    | 唯一画面差异：`blend=true` 但非 transparent 的 hashed 材质改为按管线分组提交，需真人目检                                |
+| A10 | 后端 `resize()` 增加尺寸早退（不再每帧 `m_rhi->finish()`），并新增 `swapchainRecreates`/`deviceIdleWaits`/`resizeSkips` 三个计数器贯穿到面板与 CSV | 已实施                                            | 构建通过；计数器接线到 `RhineFg::Stats`/CSV/reportStats〔源码〕                         | 早退依赖“已生效交换链尺寸”这一新口径；运行期收益待用 `fg_resize_skips` 与 `fg_device_idle_waits` 的比值证明〔未验证〕   |
+| A11 | 局部预算升级为整帧资源账本：240 帧滚动窗口的峰值（带峰帧号）+ 每帧新增绑定/上传 + 封面重传率 + 可选预算告警                                        | 已实施                                            | 构建通过；CSV 新增 8 列、面板新增“整帧资源”块〔源码〕                                   | 峰值是滚动窗口而非 lifetime；“封面字节”没有数据源，只有次数与重传率                                                     |
+| A12 | LOD / 深度预通过 / indirect / async 专项实验                                                                                                       | **未实施**，只给门槛与判定矩阵（§12）             | 报告本身就要求“先确认规模/overdraw/空闲引擎再决定投入”〔规范〕                          | 没有前置证据就动手，等于用主路径风险换不确定收益                                                                        |
 
 一句话：**这一轮把“看不见”变成“看得见”（A01/A02/A03/A11），把四条确定的白工从热路径上删掉（A05/A06/A08 的一部分/A10），并诚实记录了一个“看起来能省、实际不能省”的结论（A07）**；帧时间收益仍需一次真人操作把新计数器采出来。
 
@@ -40,9 +40,9 @@
 - `Qt/src/render/VulkanPresentationBackend.cpp`：`QRhi::create(..., QRhi::EnablePipelineCacheDataSave | QRhi::EnableTimestamps)`；建好后若 `isFeatureSupported(QRhi::Timestamps)` 则 `RhineRender::requestTimestamps()` 登记。离屏的两个 `QQuickWindow` 通过 `QQuickGraphicsDevice::fromRhi()` 共用同一个 QRhi（`SceneLayerHost` 里有 `m_scene.control->rhi() == rhi` 的校验），所以这一处开关同时覆盖场景与图层两条绘制路径。
 - `Qt/src/main.cpp`：默认 Qt Quick 路径同样 `RhineRender::requestTimestamps()`，与既有 `setTimestamps(true)` 对齐——否则呈现层没接管时面板会把“没请求”报成“没样本”。
 - 新增 `Qt/src/render/RenderPolicy.h`（header-only，只依赖 `QString`，可离线测）：
-  - `enum class GpuTimingStatus { Unsupported, Disabled, NoSample, Ok }`；
-  - `classifyGpuTiming(featureSupported, timestampsRequested, hasSample)`——`!supported` 优先判 `Unsupported`，其次 `!requested → Disabled`，最后 `hasSample ? Ok : NoSample`；
-  - `gpuTimingStatusName()` 给出 `"unsupported" / "disabled" / "noSample" / "ok"`。
+    - `enum class GpuTimingStatus { Unsupported, Disabled, NoSample, Ok }`；
+    - `classifyGpuTiming(featureSupported, timestampsRequested, hasSample)`——`!supported` 优先判 `Unsupported`，其次 `!requested → Disabled`，最后 `hasSample ? Ok : NoSample`；
+    - `gpuTimingStatusName()` 给出 `"unsupported" / "disabled" / "noSample" / "ok"`。
 - `Engine::recordRender()` 追加第 7 参 `RhineRender::GpuTimingStatus gpuTiming`，`performance()["gpuTimingStatus"]` **无条件**输出；`gpuTimeMs` 仍只在 `> 0` 时输出（0 继续表示“没有数值”，数值与状态分开）。
 - `Qt/src/RhiScene.cpp` 每帧：`classifyGpuTiming(rhi()->isFeatureSupported(QRhi::Timestamps), RhineRender::timestampsRequested(), gpuTimeMs > 0)`。
 - `PresentationShell`：新增 `m_frameProbe`，从 `beginFrame()` 之前起表到 `endFrame()` 返回后停表，得到**整帧** `frameMs`；`presented` 时 `++frameId`。原“上屏耗时”列改名为“整帧”，`reportStats()` 一行里可直接对照“取图/场景/光流/插值/合成/整帧”。
@@ -50,12 +50,12 @@
 
 ### 1.3 验收口径（怎么读这四态）
 
-| 状态 | 含义 | 现场该查什么 |
-|---|---|---|
-| `ok` | 有真实样本 | `gpuTimeMs` 可直接引用 |
-| `disabled` | 驱动支持，但这条路径没请求 | 呈现层 `EnableTimestamps`、`main.cpp` 的 `setTimestamps(true)` 是否被别处覆盖 |
-| `noSample` | 已请求，本帧没有已完成样本 | 首帧、刚重建资源、或提交队列长期未完成 |
-| `unsupported` | 后端/设备不支持 | 软件光栅化（`RHINE_SOFTWARE_GPU`）、部分 GL 实现 |
+| 状态          | 含义                       | 现场该查什么                                                                  |
+| ------------- | -------------------------- | ----------------------------------------------------------------------------- |
+| `ok`          | 有真实样本                 | `gpuTimeMs` 可直接引用                                                        |
+| `disabled`    | 驱动支持，但这条路径没请求 | 呈现层 `EnableTimestamps`、`main.cpp` 的 `setTimestamps(true)` 是否被别处覆盖 |
+| `noSample`    | 已请求，本帧没有已完成样本 | 首帧、刚重建资源、或提交队列长期未完成                                        |
+| `unsupported` | 后端/设备不支持            | 软件光栅化（`RHINE_SOFTWARE_GPU`）、部分 GL 实现                              |
 
 ### 1.4 未做
 
@@ -76,14 +76,14 @@
 - `ScenePostProcess` 新增 `bool motionConfigured() const` = `RhineRender::modeNeedsMotion(qEnvironmentVariable("RHINE_AA_MODE")) || RhineFg::isEnabled()`。**分配看配置，消费看运行期能力**：`needsMotion()` 语义保持不变（`temporal()` 还要看 FSR 引擎是否 `available()`），避免“配置说要、运行期拿不到”时把 MRT 删掉。
 - `RhiScene::resize()`：`const bool wantMotion = nextSamples <= 1 && (postProcess->motionConfigured() || qEnvironmentVariableIsSet("RHINE_WARP_PROBE"));`，并把 `motionTarget == wantMotion` 加进早退条件；切换时打一行 `运动矢量目标: 分配/不分配 | AA <mode> | samples <n>`。
 
-| `RHINE_AA_MODE` | 运动矢量目标 | 说明 |
-|---|---|---|
-| `off` / `fxaa` | 不分配 | 没有时域重投影 |
-| `msaa` | 不分配 | 采样数 > 1，MRT 与 resolve 冲突（既有约束） |
-| `fsr1` | 不分配 | 只有空间升采样 |
-| `taa` / `fsr3` | 分配 | 需要逐像素运动矢量 |
-| 任意 + `RHINE_FG_LAYER=on` | 分配 | 呈现层插值要 depth/motion |
-| 任意 + `RHINE_WARP_PROBE` | 分配 | 探针需要写 warp |
+| `RHINE_AA_MODE`            | 运动矢量目标 | 说明                                        |
+| -------------------------- | ------------ | ------------------------------------------- |
+| `off` / `fxaa`             | 不分配       | 没有时域重投影                              |
+| `msaa`                     | 不分配       | 采样数 > 1，MRT 与 resolve 冲突（既有约束） |
+| `fsr1`                     | 不分配       | 只有空间升采样                              |
+| `taa` / `fsr3`             | 分配         | 需要逐像素运动矢量                          |
+| 任意 + `RHINE_FG_LAYER=on` | 分配         | 呈现层插值要 depth/motion                   |
+| 任意 + `RHINE_WARP_PROBE`  | 分配         | 探针需要写 warp                             |
 
 ### 2.3 代价与风险
 
@@ -152,11 +152,11 @@
 
 ### 5.3 验收口径
 
-| 现象 | 结论 |
-|---|---|
-| `fg_resize_skips` 随帧数增长，`fg_device_idle_waits` 不增长 | 静止窗口下不再每帧等 GPU 空闲（A10 生效） |
-| 拖动/改窗口时 `fg_swapchain_recreates` 与 `fg_device_idle_waits` 同步 +1，然后停住 | 重建只发生在尺寸真的变化时 |
-| 两者都持续增长 | 早退条件没命中：查 `m_size` 与 `presenter->extent()` 的口径差（DPI 缩放、presenter 内部 clamp） |
+| 现象                                                                               | 结论                                                                                            |
+| ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `fg_resize_skips` 随帧数增长，`fg_device_idle_waits` 不增长                        | 静止窗口下不再每帧等 GPU 空闲（A10 生效）                                                       |
+| 拖动/改窗口时 `fg_swapchain_recreates` 与 `fg_device_idle_waits` 同步 +1，然后停住 | 重建只发生在尺寸真的变化时                                                                      |
+| 两者都持续增长                                                                     | 早退条件没命中：查 `m_size` 与 `presenter->extent()` 的口径差（DPI 缩放、presenter 内部 clamp） |
 
 ### 5.4 风险
 
@@ -181,12 +181,12 @@
 
 ### 6.3 验收口径
 
-| 读数 | 含义 |
-|---|---|
-| `fg_submits_per_frame` 稳定在 1–3 | 一帧里只有呈现层 + 0–2 个 QML 图层的离屏提交（与设计一致） |
-| 该值随帧漂到 6 以上 | 有额外的 `QQuickRenderControl::beginFrame` 被触发（多半是图层置脏过多，看 A03 探针） |
-| `fg_slot_wait_ms` 偶发大、`fg_begin_p95_ms` 跟着大 | 等在帧槽（合成器没释放 image） |
-| `fg_end_p95_ms` 大而 begin 小 | 等在 GPU 串行化/呈现，与帧槽无关 |
+| 读数                                               | 含义                                                                                 |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `fg_submits_per_frame` 稳定在 1–3                  | 一帧里只有呈现层 + 0–2 个 QML 图层的离屏提交（与设计一致）                           |
+| 该值随帧漂到 6 以上                                | 有额外的 `QQuickRenderControl::beginFrame` 被触发（多半是图层置脏过多，看 A03 探针） |
+| `fg_slot_wait_ms` 偶发大、`fg_begin_p95_ms` 跟着大 | 等在帧槽（合成器没释放 image）                                                       |
+| `fg_end_p95_ms` 大而 begin 小                      | 等在 GPU 串行化/呈现，与帧槽无关                                                     |
 
 ### 6.4 未验证
 
@@ -257,10 +257,10 @@ k = 1 + 6 · distanceFromFocus · soften   ∈ [1, 7]   （像素）
 
 ### 9.3 另外两处“看起来能省”的全屏拷贝，实测/推理都不能省
 
-| 位置 | 为什么不能省 |
-|---|---|
+| 位置                               | 为什么不能省                                                                                                                     |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | `taa` 的 `copyColor → destination` | 历史纹理必须是未呈现的 `RGBA16F`（下一帧还要读），而 `destination` 是 8 位呈现目标；同一个 pass 不能既当历史又当呈现目标（别名） |
-| FSR3 的 `m_output → destination` | compute 必须写 `UsedWithLoadStore` 的 16F，跨格式 `copyImage` 实测整屏粉红（格式/布局不兼容），只能走 pass 拷贝 |
+| FSR3 的 `m_output → destination`   | compute 必须写 `UsedWithLoadStore` 的 16F，跨格式 `copyImage` 实测整屏粉红（格式/布局不兼容），只能走 pass 拷贝                  |
 
 ### 9.4 本轮唯一的行为改动
 
@@ -284,12 +284,12 @@ k = 1 + 6 · distanceFromFocus · soften   ∈ [1, 7]   （像素）
 
 ### 10.3 验收口径
 
-| 读数 | 含义 |
-|---|---|
-| 首次可见帧数 ≤ 2 | 预处理与上传都在一两帧内完成（正常路径） |
-| 首次可见帧数长期 > 5 且 `顺延` 增长 | 预算太小或封面太大：调 `RHINE_TEXTURE_UPLOAD_BUDGET_MB` |
-| `过期丢弃` 远大于 `完成` | 用户在快速切歌，属正常；若静止时也这样，查 `coverWanted` 的登记/撤销 |
-| 换歌时不再出现单帧长卡 | A08 的主要目标（CPU 侧工作已移出渲染线程） |
+| 读数                                | 含义                                                                 |
+| ----------------------------------- | -------------------------------------------------------------------- |
+| 首次可见帧数 ≤ 2                    | 预处理与上传都在一两帧内完成（正常路径）                             |
+| 首次可见帧数长期 > 5 且 `顺延` 增长 | 预算太小或封面太大：调 `RHINE_TEXTURE_UPLOAD_BUDGET_MB`              |
+| `过期丢弃` 远大于 `完成`            | 用户在快速切歌，属正常；若静止时也这样，查 `coverWanted` 的登记/撤销 |
+| 换歌时不再出现单帧长卡              | A08 的主要目标（CPU 侧工作已移出渲染线程）                           |
 
 `rhine_texture_probe` 的数值同样**未实测**〔未验证〕；本轮只保证“编译通过 + 逻辑自洽 + 有回退路径”。
 
@@ -310,12 +310,12 @@ k = 1 + 6 · distanceFromFocus · soften   ∈ [1, 7]   （像素）
 
 ### 11.3 口径（不要混用）
 
-| 字段 | 单位 | 来源 |
-|---|---|---|
-| `resources` | 资源**个数** | `RhiScene` 把 `resources/sized/transient` 相加（含 postProcess 与 motion） |
-| `textureBytes` | **字节**（驻留快照） | `musicTextureBytes()`，按 `w*h*4*4/3` 估 mip 占用 |
-| `bindings` | 本帧**新建 SRB** 个数 | `bindingCreations` 差分（含 postProcess） |
-| `coverUploads` | 本帧封面**上传次数** | `RhiScene` 只提供次数，没有字节数——所以“封面字节”这一列不存在 |
+| 字段           | 单位                  | 来源                                                                       |
+| -------------- | --------------------- | -------------------------------------------------------------------------- |
+| `resources`    | 资源**个数**          | `RhiScene` 把 `resources/sized/transient` 相加（含 postProcess 与 motion） |
+| `textureBytes` | **字节**（驻留快照）  | `musicTextureBytes()`，按 `w*h*4*4/3` 估 mip 占用                          |
+| `bindings`     | 本帧**新建 SRB** 个数 | `bindingCreations` 差分（含 postProcess）                                  |
+| `coverUploads` | 本帧封面**上传次数**  | `RhiScene` 只提供次数，没有字节数——所以“封面字节”这一列不存在              |
 
 `coverRetransmitPerKFrame` = 每千帧封面重传次数，是“同一封面被重复上传”的直接指标；滚动窗口与 EMA 都是为了避免启动期一次性上传把 lifetime 峰值/均值永久抬高。
 
@@ -333,12 +333,12 @@ k = 1 + 6 · distanceFromFocus · soften   ∈ [1, 7]   （像素）
 
 ### 12.2 判定矩阵
 
-| 候选 | 前置证据 | 度量 | 通过阈值 | 不通过时的代价 |
-|---|---|---|---|---|
-| LOD（距离/尺寸分级） | `draws` 持续 > 800 且 `gpu_timing_status == ok`，`gpuTimeMs` 占帧时间 > 50% | `gpuTimeMs` p95、`draws` | p95 降低 ≥ 10% 且目检无跳变 | 多一套资产与切换逻辑，缓存命中率下降 |
-| 深度预通过 | 有 overdraw 证据：同屏透明/不透明像素比、或 `gpuTimeMs` 随分辨率超线性 | `gpuTimeMs`、带宽（A11 字节） | p95 降低 ≥ 8% 且不增加带宽 | 多一遍全屏深度写，核显上很可能净负 |
-| Indirect draw | CPU 侧提交贵：`sceneMs`/`recordMs` 占 `frameMs` > 20%，`draws` 大但 `gpuTimeMs` 小 | `recordMs`、`draws` | `recordMs` 降低 ≥ 30% | 需要 GPU 端缓冲布局，调试面大 |
-| Async compute | 队列空闲证据：`fg_slot_wait_ms` 或 `endP95` 明显 > `gpuTimeMs`（说明 GPU 没吃满） | `idleGapMs`、`gpuTimeMs` | 整帧降低 ≥ 5% 且无额外同步点 | 队列/信号量复杂度上升，本机 ANV 上收益常为 0（见 06 号文档 WP5 的结论） |
+| 候选                 | 前置证据                                                                           | 度量                          | 通过阈值                     | 不通过时的代价                                                          |
+| -------------------- | ---------------------------------------------------------------------------------- | ----------------------------- | ---------------------------- | ----------------------------------------------------------------------- |
+| LOD（距离/尺寸分级） | `draws` 持续 > 800 且 `gpu_timing_status == ok`，`gpuTimeMs` 占帧时间 > 50%        | `gpuTimeMs` p95、`draws`      | p95 降低 ≥ 10% 且目检无跳变  | 多一套资产与切换逻辑，缓存命中率下降                                    |
+| 深度预通过           | 有 overdraw 证据：同屏透明/不透明像素比、或 `gpuTimeMs` 随分辨率超线性             | `gpuTimeMs`、带宽（A11 字节） | p95 降低 ≥ 8% 且不增加带宽   | 多一遍全屏深度写，核显上很可能净负                                      |
+| Indirect draw        | CPU 侧提交贵：`sceneMs`/`recordMs` 占 `frameMs` > 20%，`draws` 大但 `gpuTimeMs` 小 | `recordMs`、`draws`           | `recordMs` 降低 ≥ 30%        | 需要 GPU 端缓冲布局，调试面大                                           |
+| Async compute        | 队列空闲证据：`fg_slot_wait_ms` 或 `endP95` 明显 > `gpuTimeMs`（说明 GPU 没吃满）  | `idleGapMs`、`gpuTimeMs`      | 整帧降低 ≥ 5% 且无额外同步点 | 队列/信号量复杂度上升，本机 ANV 上收益常为 0（见 06 号文档 WP5 的结论） |
 
 ### 12.3 顺序建议
 
@@ -348,16 +348,16 @@ k = 1 + 6 · distanceFromFocus · soften   ∈ [1, 7]   （像素）
 
 ## 13. 验证记录
 
-| 项 | 命令 / 方法 | 结果 |
-|---|---|---|
-| 增量构建 | `cmake --build output/qt-build -j$(nproc)` | 通过：首轮全量 180 步；A01/A05/A06/A09/A10 重编 10 步、零警告；A04/A07/A11 落地后 66 步；A03/A08 落地后 28 步；每轮后都还原构建噪声 |
-| 回归测试 | `ctest --test-dir output/qt-build --output-on-failure` | **12/12 通过**：A01–A10 后 40.02 s，A03/A08 后 37.99 s；含 `qt_render_policy_regression`（0.01 s）、`qt_offline`（7.01 s）、`qt_audio_stream_regression`（26.69 s） |
-| 逐提交可编译 | `git worktree add --detach /tmp/wt-a01 <sha>` + `cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/usr -DRHINE_PACKAGE_APP=OFF -DRHINE_VERSION=0.0.1` | A01/A05/A06/A09/A10 五个提交各自检出后 `cmake --build` 全部 `RC=0`（A01 为 315 步全量，其余增量） |
-| 纯策略用例 | `./output/qt-build/RhineRenderPolicyRegression` | 29 条断言：四态分类 8 格、状态名逐字、`modeNeedsMotion` 10 例、时间戳登记单调 |
-| 工程门禁 | `python3 scripts/check-qt-project.py` | `Qt source tree and build commands: no legacy language dependencies` |
-| 上游完整性 | `node scripts/check-music-upstream.cjs` | 通过（API 哈希、Enhanced/QQ 锁定与协议拷贝移除） |
-| 打包审计 | `python3 scripts/audit-qt.py output/RhineMusicDatabase.AppDir` | `{"qt_deployed": true, "swift_runtime_required": false, "locked_music_bridge": true}` |
-| 打包回归 | `node scripts/check-packaged-app.cjs output/RhineMusicDatabase.AppDir` | Session / Native music 44 项 / Qt 场景与离屏包检查全部 passed |
+| 项           | 命令 / 方法                                                                                                                                                                      | 结果                                                                                                                                                                |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 增量构建     | `cmake --build output/qt-build -j$(nproc)`                                                                                                                                       | 通过：首轮全量 180 步；A01/A05/A06/A09/A10 重编 10 步、零警告；A04/A07/A11 落地后 66 步；A03/A08 落地后 28 步；每轮后都还原构建噪声                                 |
+| 回归测试     | `ctest --test-dir output/qt-build --output-on-failure`                                                                                                                           | **12/12 通过**：A01–A10 后 40.02 s，A03/A08 后 37.99 s；含 `qt_render_policy_regression`（0.01 s）、`qt_offline`（7.01 s）、`qt_audio_stream_regression`（26.69 s） |
+| 逐提交可编译 | `git worktree add --detach /tmp/wt-a01 <sha>` + `cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/usr -DRHINE_PACKAGE_APP=OFF -DRHINE_VERSION=0.0.1` | A01/A05/A06/A09/A10 五个提交各自检出后 `cmake --build` 全部 `RC=0`（A01 为 315 步全量，其余增量）                                                                   |
+| 纯策略用例   | `./output/qt-build/RhineRenderPolicyRegression`                                                                                                                                  | 29 条断言：四态分类 8 格、状态名逐字、`modeNeedsMotion` 10 例、时间戳登记单调                                                                                       |
+| 工程门禁     | `python3 scripts/check-qt-project.py`                                                                                                                                            | `Qt source tree and build commands: no legacy language dependencies`                                                                                                |
+| 上游完整性   | `node scripts/check-music-upstream.cjs`                                                                                                                                          | 通过（API 哈希、Enhanced/QQ 锁定与协议拷贝移除）                                                                                                                    |
+| 打包审计     | `python3 scripts/audit-qt.py output/RhineMusicDatabase.AppDir`                                                                                                                   | `{"qt_deployed": true, "swift_runtime_required": false, "locked_music_bridge": true}`                                                                               |
+| 打包回归     | `node scripts/check-packaged-app.cjs output/RhineMusicDatabase.AppDir`                                                                                                           | Session / Native music 44 项 / Qt 场景与离屏包检查全部 passed                                                                                                       |
 
 **关于 `npm test`**：它在第一步 `scripts/check-repository.cjs` 就中止，报 `Unexpected public documentation`——实际文件集多出 `docs/vulkan-igpu/0{1..7}-*.md`、本报告与 `.mnemon/runtime/*.md`，而白名单只有 `README.md`、`tools/perf/README.md`。`docs/vulkan-igpu/*` 是分支上已提交的文件（`512e064 docs(vulkan-igpu): 添加实施记录文档与目录项`），白名单没同步，**属分支既有问题，与本轮改动无关**；上表把该步骤之后的门禁逐条单独跑过。桥接测试（`local-lyrics` / `ios-bridge` / `netease-client` / `qq-client` / `kugou-client`）本轮未单跑。
 

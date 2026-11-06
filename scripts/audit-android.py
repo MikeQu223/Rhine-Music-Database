@@ -31,7 +31,9 @@ def build_tools():
     base = sdk / "build-tools"
     if not base.is_dir():
         raise SystemExit(f"build-tools not found under {base}")
-    versions = [name for name in os.listdir(base) if re.fullmatch(r"\d+\.\d+\.\d+", name)]
+    versions = [
+        name for name in os.listdir(base) if re.fullmatch(r"\d+\.\d+\.\d+", name)
+    ]
 
     def key(name):
         return tuple(int(part) for part in name.split("."))
@@ -85,7 +87,9 @@ abis = sorted({name.split("/")[1] for name in names if name.startswith("lib/")})
 check(abis == ["arm64-v8a"], f"unexpected ABIs: {abis}")
 
 # 2) Node 运行时与主库必须在同一个 ABI 目录里，缺一个就是启动即崩。
-libraries = {pathlib.PurePosixPath(name).name for name in names if name.startswith("lib/")}
+libraries = {
+    pathlib.PurePosixPath(name).name for name in names if name.startswith("lib/")
+}
 check("libnode.so" in libraries, "libnode.so missing from the APK")
 # Bugly 现在接管 native 崩溃：so 不在包里就等于没有任何 native 上报。
 check(
@@ -108,7 +112,10 @@ check(b"RH6P" in region_tables, "IPv6 region table missing from the APK")
 # 3) 清单：包名、SDK 区间、横屏、权限。默认清单里的 screenOrientation 是 unspecified，
 #    一旦有人覆盖掉我们的清单，这里就是唯一会失败的地方。
 badging = subprocess.run(
-    [str(aapt2), "dump", "badging", str(apk)], capture_output=True, text=True, check=True
+    [str(aapt2), "dump", "badging", str(apk)],
+    capture_output=True,
+    text=True,
+    check=True,
 ).stdout
 # aapt2 的 badging 用单引号包值，第一行就是 package 行。
 check(
@@ -118,7 +125,10 @@ check(
 check("minSdkVersion:'28'" in badging, "minSdk is not 28")
 check("targetSdkVersion:'36'" in badging, "targetSdk is not 36")
 permissions = set(re.findall(r"uses-permission: name='([^']+)'", badging))
-for required in ["android.permission.INTERNET", "android.permission.ACCESS_NETWORK_STATE"]:
+for required in [
+    "android.permission.INTERNET",
+    "android.permission.ACCESS_NETWORK_STATE",
+]:
     check(required in permissions, f"missing permission: {required}")
 # 申请的权限越少越好：除下面几条外不应再要任何危险权限。
 # DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION 是 AGP 在清单合并时自己注入的 signature 级
@@ -142,7 +152,9 @@ allowed = {
     # 官方示例里的 ACCESS_WIFI_STATE 不是硬性要求，网络类型用已有的
     # ACCESS_NETWORK_STATE 即可，刻意不额外申请。
 }
-check(permissions <= allowed, f"unexpected permissions: {sorted(permissions - allowed)}")
+check(
+    permissions <= allowed, f"unexpected permissions: {sorted(permissions - allowed)}"
+)
 
 manifest = subprocess.run(
     [str(aapt2), "dump", "xmltree", "--file", "AndroidManifest.xml", str(apk)],
@@ -154,7 +166,8 @@ manifest = subprocess.run(
 # 枚举值也有两种打印：旧版给名字，新版给序号（screenOrientation 的 sensorLandscape = 6），
 # 所以两种形式都接受。
 check(
-    re.search(r'screenOrientation[^=]*=(?:"sensorLandscape"|6)\b', manifest) is not None,
+    re.search(r'screenOrientation[^=]*=(?:"sensorLandscape"|6)\b', manifest)
+    is not None,
     "screenOrientation is not sensorLandscape",
 )
 check(
@@ -179,7 +192,10 @@ signature = subprocess.run(
     capture_output=True,
     text=True,
 )
-check(signature.returncode == 0, f"APK signature verification failed: {signature.stderr.strip()}")
+check(
+    signature.returncode == 0,
+    f"APK signature verification failed: {signature.stderr.strip()}",
+)
 certificate = ""
 for line in signature.stdout.splitlines():
     if "certificate DN:" in line:
@@ -188,7 +204,9 @@ for line in signature.stdout.splitlines():
 check(bool(certificate), "no signing certificate found")
 
 if failures:
-    raise SystemExit("Android audit failed:\n" + "\n".join(f"  - {item}" for item in failures))
+    raise SystemExit(
+        "Android audit failed:\n" + "\n".join(f"  - {item}" for item in failures)
+    )
 
 print(f"Android audit OK: {apk.name}")
 print(f"  abi={abis[0]} libraries={len(libraries)} permissions={len(permissions)}")

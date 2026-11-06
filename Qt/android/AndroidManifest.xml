@@ -1,4 +1,4 @@
-<?xml version="1.0"?>
+<?xml version="1.0" ?>
 <!--
   Android 包声明。与 Qt 6.12 自带模板（qtbase/src/android/templates/AndroidManifest.xml）
   保持同一套占位符，androiddeployqt 打包时会把 %%INSERT_xxx%% 这类标记替换成实际值；
@@ -8,11 +8,13 @@
   注意：XML 注释里不能出现连续两个减号（规范禁止），所以上面不要写成带分隔符的形式，
   否则 androiddeployqt 解析时会报 "Expected '>', but got ' '"。
 -->
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+<manifest
+    xmlns:android="http://schemas.android.com/apk/res/android"
     package="org.qtproject.example"
     android:installLocation="auto"
     android:versionCode="-- %%INSERT_VERSION_CODE%% --"
-    android:versionName="-- %%INSERT_VERSION_NAME%% --">
+    android:versionName="-- %%INSERT_VERSION_NAME%% --"
+>
 
     <!-- 面板的所有内容都来自远端接口：没有网络时应用只剩一个空壳。 -->
     <uses-permission android:name="android.permission.INTERNET" />
@@ -24,7 +26,9 @@
       POST_NOTIFICATIONS 是 Android 13 起的运行时权限，首次播放时向用户申请。
     -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission
+        android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
+    />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!--
@@ -33,14 +37,18 @@
     -->
     <uses-feature android:glEsVersion="0x00030000" android:required="true" />
     <!-- 面板只用触摸操作，但没有触摸屏的设备（电视盒、投屏）也应该能装。 -->
-    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+    <uses-feature
+        android:name="android.hardware.touchscreen"
+        android:required="false"
+    />
 
     <supports-screens
         android:anyDensity="true"
         android:largeScreens="true"
         android:normalScreens="true"
         android:smallScreens="true"
-        android:xlargeScreens="true" />
+        android:xlargeScreens="true"
+    />
 
     <!--
       android:name 换成我们自己的 Application：它在 super.onCreate() 之后按许可记录
@@ -56,7 +64,8 @@
         android:enableOnBackInvokedCallback="true"
         android:allowBackup="false"
         android:usesCleartextTraffic="true"
-        android:resizeableActivity="false">
+        android:resizeableActivity="false"
+    >
         <!--
           usesCleartextTraffic：音乐源返回的部分试听/封面地址是 http，Android 9 起默认
           直接拒绝明文连接，表现为"封面灰块、试听无声"。允许明文是为了让这些上游地址
@@ -78,7 +87,8 @@
             android:exported="true"
             android:label="-- %%INSERT_APP_NAME%% --"
             android:screenOrientation="sensorLandscape"
-            android:theme="@style/RhineConsent">
+            android:theme="@style/RhineConsent"
+        >
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -91,7 +101,8 @@
             android:label="-- %%INSERT_APP_NAME%% --"
             android:launchMode="singleTop"
             android:screenOrientation="sensorLandscape"
-            android:exported="false">
+            android:exported="false"
+        >
             <!--
               sensorLandscape：两个横屏方向都允许（屏幕宽度 ≥ 高度），转 180° 时内容跟着
               翻转，而不是像 landscape 那样锁死一个方向、让用户看着倒过来的画面。
@@ -100,11 +111,13 @@
             -->
             <meta-data
                 android:name="android.app.lib_name"
-                android:value="-- %%INSERT_APP_LIB_NAME%% --" />
+                android:value="-- %%INSERT_APP_LIB_NAME%% --"
+            />
 
             <meta-data
                 android:name="android.app.arguments"
-                android:value="-- %%INSERT_APP_ARGUMENTS%% --" />
+                android:value="-- %%INSERT_APP_ARGUMENTS%% --"
+            />
         </activity>
 
         <!-- Qt 的打包模板依赖这个 FileProvider（分享、打开本地文件都用它）。 -->
@@ -112,10 +125,12 @@
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.qtprovider"
             android:exported="false"
-            android:grantUriPermissions="true">
+            android:grantUriPermissions="true"
+        >
             <meta-data
                 android:name="android.support.FILE_PROVIDER_PATHS"
-                android:resource="@xml/qtprovider_paths" />
+                android:resource="@xml/qtprovider_paths"
+            />
         </provider>
 
         <!--
@@ -128,6 +143,7 @@
         <service
             android:name="rhine.music.database.RhineMediaService"
             android:exported="false"
-            android:foregroundServiceType="mediaPlayback" />
+            android:foregroundServiceType="mediaPlayback"
+        />
     </application>
 </manifest>

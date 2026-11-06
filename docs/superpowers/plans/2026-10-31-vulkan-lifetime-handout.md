@@ -75,10 +75,10 @@
 - [x] 建议 E05 两项仅 opt-in（RHINE_VK_COMPACT_INSTANCES／RHINE_VK_LAYOUT_ONLY_PIPELINES）；E02/E03 是对应 D 实验路径的正确性修复，不借新的开关保留已知越界／未初始化行为。开关全关／单开／组合开都能安全回退。
 - [x] 实施后定向编译及测试，下列命令本计划未执行：
 
-~~~sh
+```sh
 cmake --build output/qt-build -j$(nproc) --target RhineVulkanResourceRegression RhineRenderPolicyRegression RhineMusicTextureAdmissionRegression RhineFramePacingRegression
 ctest --test-dir output/qt-build --output-on-failure -R '^qt_(vulkan_resource|render_policy|music_texture_admission|frame_pacing)_regression$'
-~~~
+```
 
 - [ ] 由用户按 E01 手工采样，修复前后分离比较：相同收敛画面不再随历史轮次单调涨槽／资源、D 模式不随历史无故关闭、无 GPU 验证层错误、动作／纹理不串、P95/P99不持续恶化。分别说明默认与 D opt-in 是否复现；没有样本就交“静态风险已修，用户症状因果待验”，不能宣称找到唯一根因。
 
@@ -96,37 +96,37 @@ ctest --test-dir output/qt-build --output-on-failure -R '^qt_(vulkan_resource|re
 
 **用例覆盖**（`Qt/tests/VulkanResourceChecks.cpp` 97 项、`Qt/tests/SceneLifetimeChecks.cpp` 17 项，全部 Core-only、不建 QGuiApplication）：
 
-| 要求 | 覆盖方式 |
-|---|---|
-| 槽规划／写模式／两列表 pool 规划提成共用策略 | 策略集中在 `Qt/src/render/VulkanResourcePolicy.h`，运行期与用例调同一函数 |
-| 历史 churn | `materialSlotPlanning()`：1000 轮固定活动集合，槽位水位恒 40 |
-| 真实超容量 | 300 个活动键时 `materialSlotPlanFits(300, 256)` 为 false → 运行期 `disableUniformArena` |
-| 共享所有权 | `resourceGenerationMatches`/`pruneRetireNeeded`：仅"本帧未引用或代号过期"才退休 |
-| 静态内容连续多帧初始化 | `materialWriteRequired(true, true)`：直写时内容相同也必须写 |
-| map 失败换对象 | `poolSliceFits` 全量预检失败 → 整帧回落逐 draw buffer（不半池半单独） |
-| 双列表扩容 | `poolSliceEnd` 累计两段（含空切片与 4 字节对齐） |
-| 80／144 布局选择 | `compactInstances()`：`compactInstanceAllowed`、`instanceStride`、载荷比例 64/144 |
-| 布局身份 | `pipelineLayoutIdentity()`：身份两位，buffer 换代不触发重建 |
-| 归位状态机 | `SceneLifetimeChecks.cpp`：角度／落位衰减、400 次换格积压、满积压与停止后清空 |
+| 要求                                         | 覆盖方式                                                                                |
+| -------------------------------------------- | --------------------------------------------------------------------------------------- |
+| 槽规划／写模式／两列表 pool 规划提成共用策略 | 策略集中在 `Qt/src/render/VulkanResourcePolicy.h`，运行期与用例调同一函数               |
+| 历史 churn                                   | `materialSlotPlanning()`：1000 轮固定活动集合，槽位水位恒 40                            |
+| 真实超容量                                   | 300 个活动键时 `materialSlotPlanFits(300, 256)` 为 false → 运行期 `disableUniformArena` |
+| 共享所有权                                   | `resourceGenerationMatches`/`pruneRetireNeeded`：仅"本帧未引用或代号过期"才退休         |
+| 静态内容连续多帧初始化                       | `materialWriteRequired(true, true)`：直写时内容相同也必须写                             |
+| map 失败换对象                               | `poolSliceFits` 全量预检失败 → 整帧回落逐 draw buffer（不半池半单独）                   |
+| 双列表扩容                                   | `poolSliceEnd` 累计两段（含空切片与 4 字节对齐）                                        |
+| 80／144 布局选择                             | `compactInstances()`：`compactInstanceAllowed`、`instanceStride`、载荷比例 64/144       |
+| 布局身份                                     | `pipelineLayoutIdentity()`：身份两位，buffer 换代不触发重建                             |
+| 归位状态机                                   | `SceneLifetimeChecks.cpp`：角度／落位衰减、400 次换格积压、满积压与停止后清空           |
 
 **开关**（均 opt-in，仅 Vulkan 路径；全关时与改动前一致）：
 
-| 开关 | 作用 |
-|---|---|
-| `RHINE_VK_UNIFORM_ARENA` | 材质 UBO 动态偏移 arena（E02／E03 的槽回收与写满语义始终生效） |
-| `RHINE_VK_INSTANCE_ARENA` | 实例 buffer 池化（E03 双列表统一规划始终生效）；**默认开启**，`=0` 可关回逐 draw——非池化路径每帧上传的实例字节会被 Vulkan staging 逐帧累积（实测上传 165 KB/帧 ≈ 在堆 +165 KB/帧），只有 Vulkan 后端启用 |
-| `RHINE_VK_DIRECT_WRITE` | arena 整块直写；映射失败整帧回落 |
-| `RHINE_VK_DISCARD_UNUSED_DEPTH` | 无深度消费者时不保留内容 |
-| `RHINE_VK_COMPACT_INSTANCES` | 80 字节实例 + 无 `RHINE_SINGLE_PASS_MOTION` 着色器 |
-| `RHINE_VK_LAYOUT_ONLY_PIPELINES` | 布局身份与 buffer 身份分离 |
+| 开关                             | 作用                                                                                                                                                                                                     |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `RHINE_VK_UNIFORM_ARENA`         | 材质 UBO 动态偏移 arena（E02／E03 的槽回收与写满语义始终生效）                                                                                                                                           |
+| `RHINE_VK_INSTANCE_ARENA`        | 实例 buffer 池化（E03 双列表统一规划始终生效）；**默认开启**，`=0` 可关回逐 draw——非池化路径每帧上传的实例字节会被 Vulkan staging 逐帧累积（实测上传 165 KB/帧 ≈ 在堆 +165 KB/帧），只有 Vulkan 后端启用 |
+| `RHINE_VK_DIRECT_WRITE`          | arena 整块直写；映射失败整帧回落                                                                                                                                                                         |
+| `RHINE_VK_DISCARD_UNUSED_DEPTH`  | 无深度消费者时不保留内容                                                                                                                                                                                 |
+| `RHINE_VK_COMPACT_INSTANCES`     | 80 字节实例 + 无 `RHINE_SINGLE_PASS_MOTION` 着色器                                                                                                                                                       |
+| `RHINE_VK_LAYOUT_ONLY_PIPELINES` | 布局身份与 buffer 身份分离                                                                                                                                                                               |
 
 **实际执行的验证**：
 
-~~~sh
+```sh
 cmake --build output/qt-build -j$(nproc) --target RhineVulkanResourceRegression RhineRenderPolicyRegression RhineMusicTextureAdmissionRegression RhineFramePacingRegression RhineSceneLifetimeRegression
 ctest --test-dir output/qt-build --output-on-failure -R '^qt_(vulkan_resource|render_policy|music_texture_admission|frame_pacing|scene_lifetime)_regression$'
 ctest --test-dir output/qt-build --output-on-failure
-~~~
+```
 
 结果：定向 5/5、全量 16/16（37 秒）；主程序只做编译验证，未运行。
 

@@ -44,8 +44,11 @@ FACE_RECTS = {
 # 在 5.3 MB 上必然穿到 DRAM。层数刻意不动——按上面的结论它才是误差主导项，
 # 砍层会直接看出来；光场是低频数据，空间维减半有三线性插值兜着。
 _FIELD_BASE = 96
-FIELD_SIZE = (_FIELD_BASE // 2
-              if os.environ.get("RHINE_BAKE_LIGHT_HALF", "").strip() == "1" else _FIELD_BASE)
+FIELD_SIZE = (
+    _FIELD_BASE // 2
+    if os.environ.get("RHINE_BAKE_LIGHT_HALF", "").strip() == "1"
+    else _FIELD_BASE
+)
 HEIGHT_SLICES = 24
 # RHINE_BAKE_NORMAL_RGBA8=1（Android）：法线响应用 RGBA8 UNORM 代替 RGBA16F。
 # 它存的是烘焙好的 N·L 比值（0..4）与一处柔和高光（0..0.18），不是真法线，
@@ -106,7 +109,10 @@ def face_sample(face, u, v, dark):
     elif face in (2, 5):
         center = (0.70 + 0.16 * v, 0.60 + 0.19 * v, 0.46 + 0.24 * v)
         edge = (0.94, 0.91, 0.85)
-        color = tuple(center[index] * (1 - border * 0.65) + edge[index] * border * 0.65 for index in range(3))
+        color = tuple(
+            center[index] * (1 - border * 0.65) + edge[index] * border * 0.65
+            for index in range(3)
+        )
     elif face == 1:
         color = (0.965, 0.95, 0.925)
     else:
@@ -121,23 +127,31 @@ def face_sample(face, u, v, dark):
 def srgb_byte(value):
     """把 0..1 线性值编码为 sRGB8；着色器采样后手工解码回线性。"""
     value = min(1.0, max(0.0, value))
-    encoded = value * 12.92 if value <= 0.0031308 else 1.055 * (value ** (1.0 / 2.4)) - 0.055
+    encoded = (
+        value * 12.92 if value <= 0.0031308 else 1.055 * (value ** (1.0 / 2.4)) - 0.055
+    )
     return int(round(min(1.0, max(0.0, encoded)) * 255.0))
 
 
 SRGB_DECODE = [
-    (value / 255.0) / 12.92 if value / 255.0 <= 0.04045 else (((value / 255.0) + 0.055) / 1.055) ** 2.4
+    (value / 255.0) / 12.92
+    if value / 255.0 <= 0.04045
+    else (((value / 255.0) + 0.055) / 1.055) ** 2.4
     for value in range(256)
 ]
 
 
 def store_texel(pixels, offset, color):
     """RGB 写入 sRGB8(线性/4)，alpha 直接写线性 8 位。"""
-    struct.pack_into("<4B", pixels, offset,
-                     srgb_byte(color[0] / HDR_SCALE),
-                     srgb_byte(color[1] / HDR_SCALE),
-                     srgb_byte(color[2] / HDR_SCALE),
-                     int(round(min(1.0, max(0.0, color[3])) * 255.0)))
+    struct.pack_into(
+        "<4B",
+        pixels,
+        offset,
+        srgb_byte(color[0] / HDR_SCALE),
+        srgb_byte(color[1] / HDR_SCALE),
+        srgb_byte(color[2] / HDR_SCALE),
+        int(round(min(1.0, max(0.0, color[3])) * 255.0)),
+    )
 
 
 def fill_gutters(pixels, block):
@@ -146,19 +160,25 @@ def fill_gutters(pixels, block):
     for left, top, width, height in FACE_RECTS.values():
         y0 = block + top
         for row in range(y0, y0 + height):
-            mask[row * ATLAS_SIZE + left:row * ATLAS_SIZE + left + width] = b"\x01" * width
+            mask[row * ATLAS_SIZE + left : row * ATLAS_SIZE + left + width] = (
+                b"\x01" * width
+            )
     for left, top, width, height in FACE_RECTS.values():
         y0 = block + top
-        for row in range(max(block, y0 - GUTTER), min(block + NIGHT_OFFSET, y0 + height + GUTTER)):
+        for row in range(
+            max(block, y0 - GUTTER), min(block + NIGHT_OFFSET, y0 + height + GUTTER)
+        ):
             source_y = min(max(row, y0), y0 + height - 1)
-            for column in range(max(0, left - GUTTER), min(ATLAS_SIZE, left + width + GUTTER)):
+            for column in range(
+                max(0, left - GUTTER), min(ATLAS_SIZE, left + width + GUTTER)
+            ):
                 index = row * ATLAS_SIZE + column
                 if mask[index]:
                     continue
                 source_x = min(max(column, left), left + width - 1)
                 source = (source_y * ATLAS_SIZE + source_x) * 4
                 target = index * 4
-                pixels[target:target + 4] = pixels[source:source + 4]
+                pixels[target : target + 4] = pixels[source : source + 4]
                 mask[index] = 1
 
 
@@ -173,14 +193,22 @@ def downsample(source, width, height):
         for column in range(next_width):
             left = min(width - 1, column * 2)
             right = min(width - 1, left + 1)
-            offsets = (source_row * width + left, source_row * width + right,
-                       source_row_next * width + left, source_row_next * width + right)
+            offsets = (
+                source_row * width + left,
+                source_row * width + right,
+                source_row_next * width + left,
+                source_row_next * width + right,
+            )
             target = (row * next_width + column) * 4
             for channel in range(3):
-                value = sum(SRGB_DECODE[source[offset * 4 + channel]] for offset in offsets) * 0.25
+                value = (
+                    sum(SRGB_DECODE[source[offset * 4 + channel]] for offset in offsets)
+                    * 0.25
+                )
                 pixels[target + channel] = srgb_byte(value)
-            pixels[target + 3] = int(round(
-                sum(source[offset * 4 + 3] for offset in offsets) * 0.25))
+            pixels[target + 3] = int(
+                round(sum(source[offset * 4 + 3] for offset in offsets) * 0.25)
+            )
     return pixels
 
 
@@ -227,8 +255,10 @@ def select_weights(block, endpoint0, endpoint1):
     """对每个像素暴力搜索 16 个权重，返回选择子与平方误差。"""
     base = [endpoint0[channel] * 64 + 32 for channel in range(4)]
     delta = [endpoint1[channel] - endpoint0[channel] for channel in range(4)]
-    values = [[(base[channel] + delta[channel] * weight) >> 6 for channel in range(4)]
-              for weight in BC7_WEIGHTS]
+    values = [
+        [(base[channel] + delta[channel] * weight) >> 6 for channel in range(4)]
+        for weight in BC7_WEIGHTS
+    ]
     selectors = []
     total = 0
     for pixel in block:
@@ -292,8 +322,14 @@ def bc7_encode_level(pixels, width, height):
                 for column in range(4):
                     x = min(width - 1, block_x + column)
                     offset = (y * width + x) * 4
-                    block.append((pixels[offset], pixels[offset + 1],
-                                  pixels[offset + 2], pixels[offset + 3]))
+                    block.append(
+                        (
+                            pixels[offset],
+                            pixels[offset + 1],
+                            pixels[offset + 2],
+                            pixels[offset + 3],
+                        )
+                    )
             output += encode_bc7_block(block)
     return bytes(output)
 
@@ -307,8 +343,16 @@ def bc7_encode_level(pixels, width, height):
 # 下面是一个只用 ETC1 兼容「个体模式」的编码器：每块试两种翻转划分 × 8 张修改表，
 # 取平方误差最小的组合。sRGB 字节直接在 8 位域上量化，误差落在 sRGB 空间，
 # 视觉上比在线性域量化更均匀。
-ETC2_MODIFIERS = ((2, 8), (5, 17), (9, 29), (13, 42),
-                  (18, 60), (24, 80), (33, 106), (47, 183))
+ETC2_MODIFIERS = (
+    (2, 8),
+    (5, 17),
+    (9, 29),
+    (13, 42),
+    (18, 60),
+    (24, 80),
+    (33, 106),
+    (47, 183),
+)
 
 
 def _etc2_clamp(value):
@@ -328,7 +372,9 @@ def _etc2_fit_group(colors):
     """
     count = len(colors)
     average = [sum(c[channel] for c in colors) / count for channel in range(3)]
-    base4 = [min(15, max(0, int(round(average[channel] / 17.0)))) for channel in range(3)]
+    base4 = [
+        min(15, max(0, int(round(average[channel] / 17.0)))) for channel in range(3)
+    ]
     rebuilt = (base4[0] * 17, base4[1] * 17, base4[2] * 17)
     spread = 0
     for color in colors:
@@ -349,14 +395,26 @@ def _etc2_fit_group(colors):
         small, large = ETC2_MODIFIERS[table]
         # 四个候选值一次算好：clamp 从「每像素每候选 3 次」降到「每条表 12 次」。
         values = (
-            (_etc2_clamp(rebuilt[0] - large), _etc2_clamp(rebuilt[1] - large),
-             _etc2_clamp(rebuilt[2] - large)),
-            (_etc2_clamp(rebuilt[0] - small), _etc2_clamp(rebuilt[1] - small),
-             _etc2_clamp(rebuilt[2] - small)),
-            (_etc2_clamp(rebuilt[0] + small), _etc2_clamp(rebuilt[1] + small),
-             _etc2_clamp(rebuilt[2] + small)),
-            (_etc2_clamp(rebuilt[0] + large), _etc2_clamp(rebuilt[1] + large),
-             _etc2_clamp(rebuilt[2] + large)),
+            (
+                _etc2_clamp(rebuilt[0] - large),
+                _etc2_clamp(rebuilt[1] - large),
+                _etc2_clamp(rebuilt[2] - large),
+            ),
+            (
+                _etc2_clamp(rebuilt[0] - small),
+                _etc2_clamp(rebuilt[1] - small),
+                _etc2_clamp(rebuilt[2] - small),
+            ),
+            (
+                _etc2_clamp(rebuilt[0] + small),
+                _etc2_clamp(rebuilt[1] + small),
+                _etc2_clamp(rebuilt[2] + small),
+            ),
+            (
+                _etc2_clamp(rebuilt[0] + large),
+                _etc2_clamp(rebuilt[1] + large),
+                _etc2_clamp(rebuilt[2] + large),
+            ),
         )
         error = 0
         indices = []
@@ -408,7 +466,9 @@ def _etc2_encode_block(pixels, block_x, block_y, width, height):
     for row in range(4):
         for column in range(4):
             half = (column // 2) if flip == 0 else (row // 2)
-            indices[row * 4 + column] = (first[3] if half == 0 else second[3])[cursor[half]]
+            indices[row * 4 + column] = (first[3] if half == 0 else second[3])[
+                cursor[half]
+            ]
             cursor[half] += 1
     value = 0
     for row in range(4):
@@ -457,14 +517,24 @@ def bake_surface():
     levels = build_mips(pixels)
     (OUTPUT / "archive-baked-surface.bin").write_bytes(b"".join(levels))
     (OUTPUT / "archive-baked-surface-bc7.bin").write_bytes(
-        b"".join(bc7_encode_level(level, max(1, ATLAS_SIZE >> index), max(1, ATLAS_SIZE >> index))
-                 for index, level in enumerate(levels)))
+        b"".join(
+            bc7_encode_level(
+                level, max(1, ATLAS_SIZE >> index), max(1, ATLAS_SIZE >> index)
+            )
+            for index, level in enumerate(levels)
+        )
+    )
     # Android 用：GLES 没有 BC7，ETC2 RGB8 只要 BC7 一半、RGBA8 八分之一的带宽。
     # 只在构建 Android 资源时输出，桌面 / iOS 的产物逐字节不变。
     if os.environ.get("RHINE_BAKE_ETC2", "").strip() == "1":
         (OUTPUT / "archive-baked-surface-etc2.bin").write_bytes(
-            b"".join(etc2_encode_level(level, max(1, ATLAS_SIZE >> index), max(1, ATLAS_SIZE >> index))
-                     for index, level in enumerate(levels)))
+            b"".join(
+                etc2_encode_level(
+                    level, max(1, ATLAS_SIZE >> index), max(1, ATLAS_SIZE >> index)
+                )
+                for index, level in enumerate(levels)
+            )
+        )
     return levels
 
 
@@ -478,12 +548,20 @@ def field_sample(position, normal):
         offset = [emitter[axis] - position[axis] for axis in range(3)]
         distance_squared = sum(value * value for value in offset)
         inverse_distance = 1 / math.sqrt(max(distance_squared, 0.04))
-        cosine = sum(normal[axis] * offset[axis] * inverse_distance for axis in range(3))
+        cosine = sum(
+            normal[axis] * offset[axis] * inverse_distance for axis in range(3)
+        )
         scattering = 0.82 * (0.26 + 0.74 * max(-cosine, 0) ** 0.65)
         power = 0.85 if index < 3 else 0.28
-        intensity = power * (max(cosine, 0) * 0.28 + scattering) / (0.30 + distance_squared)
-        for channel, (tint, absorption) in enumerate(zip((1.0, 0.72, 0.38), (0.32, 0.90, 2.5))):
-            result[channel] += tint * intensity * math.exp(-absorption * 0.12 / max(abs(cosine), 0.22))
+        intensity = (
+            power * (max(cosine, 0) * 0.28 + scattering) / (0.30 + distance_squared)
+        )
+        for channel, (tint, absorption) in enumerate(
+            zip((1.0, 0.72, 0.38), (0.32, 0.90, 2.5))
+        ):
+            result[channel] += (
+                tint * intensity * math.exp(-absorption * 0.12 / max(abs(cosine), 0.22))
+            )
     return (*[value * layer for value in result], 1.0)
 
 
@@ -529,20 +607,27 @@ def bake_normal_response():
                 color = face_sample(face, 0.5, 0.5, dark)
                 for channel in range(3):
                     blended[channel] += color[channel] * weight / total
-            cosine = max(0, sum(normal[axis] * (-0.48, 0.80, 0.36)[axis] for axis in range(3)))
+            cosine = max(
+                0, sum(normal[axis] * (-0.48, 0.80, 0.36)[axis] for axis in range(3))
+            )
             highlight = 0.18 * cosine**24 * (0.25 if dark else 1)
-            response = [min(4, blended[channel] / max(primary[channel], 0.0001)) for channel in range(3)]
+            response = [
+                min(4, blended[channel] / max(primary[channel], 0.0001))
+                for channel in range(3)
+            ]
             if NORMAL_RGBA8:
                 # Android：8 位 UNORM 代替 RGBA16F，逐像素带宽从 8 B 降到 4 B
                 # （夜间要采两次，等于每片元省 8 B）。rgb 存 response/4（值域 0..4），
                 # a 存 highlight/0.25（值域 0..0.18）；着色器按同样比例乘回，
                 # 见 CMake 的 RHINE_NORMAL_RGBA8。
-                pixels.extend((
-                    max(0, min(255, int(round(response[0] * 63.75)))),
-                    max(0, min(255, int(round(response[1] * 63.75)))),
-                    max(0, min(255, int(round(response[2] * 63.75)))),
-                    max(0, min(255, int(round(highlight * 1020.0)))),
-                ))
+                pixels.extend(
+                    (
+                        max(0, min(255, int(round(response[0] * 63.75)))),
+                        max(0, min(255, int(round(response[1] * 63.75)))),
+                        max(0, min(255, int(round(response[2] * 63.75)))),
+                        max(0, min(255, int(round(highlight * 1020.0)))),
+                    )
+                )
             else:
                 pixels.extend(struct.pack("<4e", *response, highlight))
     (OUTPUT / "archive-baked-normal.bin").write_bytes(pixels)

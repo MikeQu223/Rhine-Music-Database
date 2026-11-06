@@ -2,7 +2,7 @@
 
 - 项目：Rhine Music Database
 - 分析日期：2026-10-30（Asia/Shanghai）
-- 代码基线：分支 perf/lts，提交 233e067；分析时已有未跟踪目录 [filament-src](<../third_party/filament-src/>)，本报告不修改该目录。
+- 代码基线：分支 perf/lts，提交 233e067；分析时已有未跟踪目录 [filament-src](../third_party/filament-src/)，本报告不修改该目录。
 - 方法：静态源码审计、既有项目记录复核、Qt/Khronos/AMD 官方资料交叉核对。CMake 要求 Qt 6.12，本机 qmake6 报告 6.12.0，现有构建缓存为 Release；这不是运行时性能测试。
 - 交付边界：本次仅提交报告，不更改运行时代码；没有在目标 GPU 上执行新基准测试。下文“候选收益”均为待验证假设，不是已测提速。
 
@@ -21,7 +21,7 @@
 
 这里的优先级综合“阻断后续判断程度、影响范围、实现风险”，**不代表已经确认哪个模块耗时最大**。不预设显示器刷新率，不增加 FPS 上限，也不以省电为目标。
 
-**实验前提：** 当前 Vulkan 路径默认不启用 FFX compute（需 RHINE_FSR3_FFX=1 才尝试），FSR 模式可能实际走空间 EASU/RCAS。基线必须记录实际后端和回退原因，不能仅凭设置名称判定时域链路已启用：[Fsr3Backend.cpp:315–320](<../Qt/src/fsr/Fsr3Backend.cpp#L315-L320>)。
+**实验前提：** 当前 Vulkan 路径默认不启用 FFX compute（需 RHINE_FSR3_FFX=1 才尝试），FSR 模式可能实际走空间 EASU/RCAS。基线必须记录实际后端和回退原因，不能仅凭设置名称判定时域链路已启用：[Fsr3Backend.cpp:315–320](../Qt/src/fsr/Fsr3Backend.cpp#L315-L320)。
 
 ## 二、实际渲染链路与责任边界
 
@@ -34,7 +34,6 @@
 入口依据：[main.cpp:557–590](../Qt/src/main.cpp#L557-L590)、[Scene3D.qml:4–21](../Qt/qml/Scene3D.qml#L4-L21)。FG off 与 FG on 的性能差不只来自插帧算法；宿主、线程、离屏提交、图层与合成都可能改变。必须加入“FG off + 强制可控宿主”控制组。
 
 ### 2.2 3D 帧内部
-
 
 ```text
 default/controlled host
@@ -52,37 +51,37 @@ default/controlled host
 
 ### 2.3 已有优化及适用范围
 
-| 已有能力 | 源码证据 | 审计结论 |
-| --- | --- | --- |
-| 原生矩阵与实例缓冲复用 | [NativeSceneFrame.cpp:47–68](<../Qt/src/NativeSceneFrame.cpp#L47-L68>)；[RhiScene.cpp:1028–1094](<../Qt/src/RhiScene.cpp#L1028-L1094>) | 仍有小型 JSON 元数据，但不是每帧全量 JSON 矩阵传输 |
-| 主列表范围/视锥裁剪、实例前到后排序 | [NativeSceneUpdate.cpp:218–303](<../Qt/src/NativeSceneUpdate.cpp#L218-L303>) | 主实例已有范围与视锥处理；排序也已落地，不作为新增收益 |
-| 选中/归位对象视锥处理 | [NativeSceneFrame.cpp:118–142](<../Qt/src/NativeSceneFrame.cpp#L118-L142>) | 已有剔除；选中主体豁免、shadow-only 保留，不能称“完全无剔除” |
-| 动态缓冲扩容与差分上传 | [RhiScene.cpp:998–1024](<../Qt/src/RhiScene.cpp#L998-L1024>) | 容量按需增长，变化区间按 4 字节扩展；仍需量 CPU 比较成本 |
-| 不透明合批 | [RhiScene.cpp:1208](<../Qt/src/RhiScene.cpp#L1208>) 起、1691–1693 | 有材质/透明/深度条件；不能对所有 draw 无条件合批 |
-| 管线排序、重复绑定消除 | [RhiScene.cpp:1255–1340](<../Qt/src/RhiScene.cpp#L1255-L1340>) | 核心优化受 Q_OS_LINUX 保护；透明顺序保留 |
-| 主通道 MRT 运动矢量 | [RhiScene.cpp:1731–1743](<../Qt/src/RhiScene.cpp#L1731-L1743>) | Linux 已省掉单独几何速度遍历；其他平台不可直接照搬 |
-| 烘焙表面、光场、BC7 条件路径 | [RhiScene.cpp:357–379](<../Qt/src/RhiScene.cpp#L357-L379>)；[opticalSurface.frag:30–50](<../Qt/shaders/enhancement/opticalSurface.frag#L30-L50>) | 不是重型实时阴影/PBR 光源遍历，不应优先建议级联阴影裁减 |
-| Linux 图层脏标记与安全刷新 | [SceneLayerHost.cpp:447–515](<../Qt/src/render/SceneLayerHost.cpp#L447-L515>) | 已优化但有资源就绪正确性约束；其他分支不同 |
-| QRhi 与 FFX 管线缓存 | [VulkanPresentationBackend.cpp:300–321](<../Qt/src/render/VulkanPresentationBackend.cpp#L300-L321>)；[FidelityFX.cmake](<../cmake/FidelityFX.cmake>) | QRhi 与原生 FFX 管线不是同一个缓存责任域 |
+| 已有能力                            | 源码证据                                                                                                                                         | 审计结论                                                     |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------ |
+| 原生矩阵与实例缓冲复用              | [NativeSceneFrame.cpp:47–68](../Qt/src/NativeSceneFrame.cpp#L47-L68)；[RhiScene.cpp:1028–1094](../Qt/src/RhiScene.cpp#L1028-L1094)               | 仍有小型 JSON 元数据，但不是每帧全量 JSON 矩阵传输           |
+| 主列表范围/视锥裁剪、实例前到后排序 | [NativeSceneUpdate.cpp:218–303](../Qt/src/NativeSceneUpdate.cpp#L218-L303)                                                                       | 主实例已有范围与视锥处理；排序也已落地，不作为新增收益       |
+| 选中/归位对象视锥处理               | [NativeSceneFrame.cpp:118–142](../Qt/src/NativeSceneFrame.cpp#L118-L142)                                                                         | 已有剔除；选中主体豁免、shadow-only 保留，不能称“完全无剔除” |
+| 动态缓冲扩容与差分上传              | [RhiScene.cpp:998–1024](../Qt/src/RhiScene.cpp#L998-L1024)                                                                                       | 容量按需增长，变化区间按 4 字节扩展；仍需量 CPU 比较成本     |
+| 不透明合批                          | [RhiScene.cpp:1208](../Qt/src/RhiScene.cpp#L1208) 起、1691–1693                                                                                  | 有材质/透明/深度条件；不能对所有 draw 无条件合批             |
+| 管线排序、重复绑定消除              | [RhiScene.cpp:1255–1340](../Qt/src/RhiScene.cpp#L1255-L1340)                                                                                     | 核心优化受 Q_OS_LINUX 保护；透明顺序保留                     |
+| 主通道 MRT 运动矢量                 | [RhiScene.cpp:1731–1743](../Qt/src/RhiScene.cpp#L1731-L1743)                                                                                     | Linux 已省掉单独几何速度遍历；其他平台不可直接照搬           |
+| 烘焙表面、光场、BC7 条件路径        | [RhiScene.cpp:357–379](../Qt/src/RhiScene.cpp#L357-L379)；[opticalSurface.frag:30–50](../Qt/shaders/enhancement/opticalSurface.frag#L30-L50)     | 不是重型实时阴影/PBR 光源遍历，不应优先建议级联阴影裁减      |
+| Linux 图层脏标记与安全刷新          | [SceneLayerHost.cpp:447–515](../Qt/src/render/SceneLayerHost.cpp#L447-L515)                                                                      | 已优化但有资源就绪正确性约束；其他分支不同                   |
+| QRhi 与 FFX 管线缓存                | [VulkanPresentationBackend.cpp:300–321](../Qt/src/render/VulkanPresentationBackend.cpp#L300-L321)；[FidelityFX.cmake](../cmake/FidelityFX.cmake) | QRhi 与原生 FFX 管线不是同一个缓存责任域                     |
 
 ## 三、先建立可信的性能观测（P0）
 
 ### 3.1 CPU、GPU、排队和显示延迟分开
 
-| 当前字段/采样 | 实际覆盖 | 不能据此断言 |
-| --- | --- | --- |
-| scene native / metadata / buffers | NativeScene 的 CPU 构帧阶段 | 不是 GPU 几何/光栅时间 |
-| before/afterSynchronizing | Qt 同步阶段的 CPU 区间 | 不是所有业务逻辑，也不是 GPU 时间 |
-| before/afterRendering | Qt 相关 CPU 回调区间 | 不自动等于完整驱动提交成本 |
-| lastCompletedGpuTime | 启用时间戳后，最后可用的完成帧 GPU 区间 | 不保证对应当前录制帧，不代表逐通道耗时 [S2](#ref-s2) |
-| frameSwapped 间隔 | Qt 信号间隔 | 不是像素真正被用户看到的间隔 |
-| presentOne 的 presentMs | 从 endFrame 前的 restart 到返回后记账；与 endMs 重叠 | 不是独立 present-only，也不是扫描输出延迟 |
-| Vulkan acquire 等待 | 交换链图像或帧槽可用性相关等待 | 不能单独归因于 GPU 算力不足 |
-| RHINE_GPU_PROBE | 用 finish 排空后的受扰动样本 | 不能作为正常流水下的端到端 GPU 基准 |
+| 当前字段/采样                     | 实际覆盖                                             | 不能据此断言                                         |
+| --------------------------------- | ---------------------------------------------------- | ---------------------------------------------------- |
+| scene native / metadata / buffers | NativeScene 的 CPU 构帧阶段                          | 不是 GPU 几何/光栅时间                               |
+| before/afterSynchronizing         | Qt 同步阶段的 CPU 区间                               | 不是所有业务逻辑，也不是 GPU 时间                    |
+| before/afterRendering             | Qt 相关 CPU 回调区间                                 | 不自动等于完整驱动提交成本                           |
+| lastCompletedGpuTime              | 启用时间戳后，最后可用的完成帧 GPU 区间              | 不保证对应当前录制帧，不代表逐通道耗时 [S2](#ref-s2) |
+| frameSwapped 间隔                 | Qt 信号间隔                                          | 不是像素真正被用户看到的间隔                         |
+| presentOne 的 presentMs           | 从 endFrame 前的 restart 到返回后记账；与 endMs 重叠 | 不是独立 present-only，也不是扫描输出延迟            |
+| Vulkan acquire 等待               | 交换链图像或帧槽可用性相关等待                       | 不能单独归因于 GPU 算力不足                          |
+| RHINE_GPU_PROBE                   | 用 finish 排空后的受扰动样本                         | 不能作为正常流水下的端到端 GPU 基准                  |
 
 定位：[FrameProfiler.cpp:80–178](../Qt/src/FrameProfiler.cpp#L80-L178)、[RhiScene.cpp:1843–1847](../Qt/src/RhiScene.cpp#L1843-L1847)、[PresentationShell.cpp:657–696](../Qt/src/render/PresentationShell.cpp#L657-L696)、[SceneLayerHost.cpp:447–459](../Qt/src/render/SceneLayerHost.cpp#L447-L459)。
 
-**已确认的配置缺口：** [VulkanPresentationBackend.cpp:307](<../Qt/src/render/VulkanPresentationBackend.cpp#L307>) 仅传 EnablePipelineCacheDataSave；QRhi 时间戳须主动启用，硬件报告 Timestamps 支持并不充分。[S1](#ref-s1)[S2](#ref-s2) 建议仅在诊断模式附加 EnableTimestamps，并将“未启用/不支持/尚无样本”与真实 0 ms 区分。原生 Qt 路径要独立检查实际 RHI 配置，不能从此处反推。
+**已确认的配置缺口：** [VulkanPresentationBackend.cpp:307](../Qt/src/render/VulkanPresentationBackend.cpp#L307) 仅传 EnablePipelineCacheDataSave；QRhi 时间戳须主动启用，硬件报告 Timestamps 支持并不充分。[S1](#ref-s1)[S2](#ref-s2) 建议仅在诊断模式附加 EnableTimestamps，并将“未启用/不支持/尚无样本”与真实 0 ms 区分。原生 Qt 路径要独立检查实际 RHI 配置，不能从此处反推。
 
 **建议新增的观测：** CPU 构帧、元数据、实例打包、图层 polish/sync/render、提交、acquire、present-call 各自独立且有父子关系的区间；GPU 主几何、最终合成、AA/FSR、FG、UI 合成的区间；以 sceneFrameId / submitId / presentId 串联。记录每帧 draws、可见/剔除实例、上传字节、绑定/管线创建次数、纹理驻留、重建次数和 idle-fallback 次数。跨帧异步回收查询，不为读取性能结果添加每帧硬同步。
 
@@ -103,11 +102,11 @@ default/controlled host
 
 ### 4.1 区分读回同步与离屏帧槽复用（P1，先测后改）
 
-**现状：** [VulkanPresentationBackend.cpp:121–123](<../Qt/src/render/VulkanPresentationBackend.cpp#L121-L123>) 调用 beginOffscreenFrame；[164–179](<../Qt/src/render/VulkanPresentationBackend.cpp#L164-L179>) 安装信号量后 endOffscreenFrame，再 present。需要重绘的图层也各有 RenderControl begin/sync/render/end：[SceneLayerHost.cpp:358–407](<../Qt/src/render/SceneLayerHost.cpp#L358-L407>)。
+**现状：** [VulkanPresentationBackend.cpp:121–123](../Qt/src/render/VulkanPresentationBackend.cpp#L121-L123) 调用 beginOffscreenFrame；[164–179](../Qt/src/render/VulkanPresentationBackend.cpp#L164-L179) 安装信号量后 endOffscreenFrame，再 present。需要重绘的图层也各有 RenderControl begin/sync/render/end：[SceneLayerHost.cpp:358–407](../Qt/src/render/SceneLayerHost.cpp#L358-L407)。
 
 **版本核查后的结论：** Qt 6.12 文档把离屏结束的同步等待限定在活动纹理/缓冲读回；官方 6.12 Vulkan 实现只在 readbacksPending 时立即等待提交 fence，无读回时轮换帧槽。beginOffscreenFrame 则先等待即将复用槽的命令完成。[S1](#ref-s1)[S9](#ref-s9) 所以“每次离屏结束都会排空 GPU”不成立，“离屏路径完全没有主机等待”也不成立。旧源码注释不能替代版本对应的实现。
 
-应用显式读回定位于 [参考图渲染](<../Qt/src/RhiScene.cpp#L1976-L1985>) 与 [grabFrame 截图](<../Qt/src/render/PresentationShell.cpp#L1426-L1456>)，并非常规 presentOne 的每帧操作；截图/读回实验须单列。尚未验证本机 Qt 二进制的发行版补丁，官方分支源码不是本机二进制的逐字证明。
+应用显式读回定位于 [参考图渲染](../Qt/src/RhiScene.cpp#L1976-L1985) 与 [grabFrame 截图](../Qt/src/render/PresentationShell.cpp#L1426-L1456)，并非常规 presentOne 的每帧操作；截图/读回实验须单列。尚未验证本机 Qt 二进制的发行版补丁，官方分支源码不是本机二进制的逐字证明。
 
 **验证/行动：** 标记各图层与最终合成的 begin/end、QRhi 槽 fence wait、桥接空提交及 GPU 队列。一个逻辑显示帧可能包含多个离屏提交，它们消耗同一 QRhi 的帧槽，等待可能落在下一层或下一次 begin。对比原生宿主与“强制可控宿主但关闭 FG”，确认提交开销、真实 CPU/GPU 重叠与 GUI 响应。
 
@@ -117,7 +116,7 @@ default/controlled host
 
 ### 4.2 保留正确生命周期，再评估空提交（P2）
 
-[VulkanPresenter.cpp:888–908](<../Qt/src/fg/VulkanPresenter.cpp#L888-L908>) 用空提交把 acquire 信号量转成 Qt 可等待的 submitWaitSemaphore；947–956 注入 QRhi 等待/完成信号量。renderDone 按交换链图像索引分配/使用，方向符合 Vulkan 的 present wait semaphore 复用指导。[S3](#ref-s3)
+[VulkanPresenter.cpp:888–908](../Qt/src/fg/VulkanPresenter.cpp#L888-L908) 用空提交把 acquire 信号量转成 Qt 可等待的 submitWaitSemaphore；947–956 注入 QRhi 等待/完成信号量。renderDone 按交换链图像索引分配/使用，方向符合 Vulkan 的 present wait semaphore 复用指导。[S3](#ref-s3)
 
 潜在简化是让最终渲染直接等待 acquire，但**前提是能够证明 Qt 对 wait semaphore 的消费与 acquire 槽复用之间存在可靠完成信号**。目前槽 fence 只属于桥接空提交，并不等于最终渲染完成 fence。删掉空提交、只保留原槽 fence 会破坏这项证明；应把帧槽、渲染提交、present 图像生命周期分别画清。
 
@@ -125,16 +124,16 @@ default/controlled host
 
 ### 4.3 硬同步回退与重建（P1/P2）
 
-- present 的 forceIdle 或未安装提交参数路径会 vkDeviceWaitIdle（[VulkanPresenter.cpp:977–991](<../Qt/src/fg/VulkanPresenter.cpp#L977-L991>)）。这是兜底，不是正常路径优化。增加累计次数和原因，不要删掉同步来掩盖错误。
-- backend resize 先 rhi->finish（[VulkanPresentationBackend.cpp:96–103](<../Qt/src/render/VulkanPresentationBackend.cpp#L96-L103>)）；FG resize 也会等待设备空闲（[FgBackend.cpp:611–614](<../Qt/src/fg/FgBackend.cpp#L611-L614>)）。检查同一尺寸事件是否触发多次排空/重复分配。
+- present 的 forceIdle 或未安装提交参数路径会 vkDeviceWaitIdle（[VulkanPresenter.cpp:977–991](../Qt/src/fg/VulkanPresenter.cpp#L977-L991)）。这是兜底，不是正常路径优化。增加累计次数和原因，不要删掉同步来掩盖错误。
+- backend resize 先 rhi->finish（[VulkanPresentationBackend.cpp:96–103](../Qt/src/render/VulkanPresentationBackend.cpp#L96-L103)）；FG resize 也会等待设备空闲（[FgBackend.cpp:611–614](../Qt/src/fg/FgBackend.cpp#L611-L614)）。检查同一尺寸事件是否触发多次排空/重复分配。
 - 建议去重尺寸事件，零尺寸挂起，对短时间连续 resize 合并处理；以后若做旧资源延迟销毁，必须有覆盖渲染和呈现的完成依据。[S4](#ref-s4)
-- present 对 SUBOPTIMAL 当次继续，但 acquire 的 SUBOPTIMAL 会设置 needsRecreate，下一次 acquire 在入口返回 OutOfDate：[VulkanPresenter.cpp:805–808](<../Qt/src/fg/VulkanPresenter.cpp#L805-L808>)、[884–886](<../Qt/src/fg/VulkanPresenter.cpp#L884-L886>)。所以“SUBOPTIMAL 完全不触发重建”的注释不能作为依据。记录原因与频率，区分兼容但非最优与必须恢复的 OUT_OF_DATE/SURFACE_LOST，不盲删重建。
+- present 对 SUBOPTIMAL 当次继续，但 acquire 的 SUBOPTIMAL 会设置 needsRecreate，下一次 acquire 在入口返回 OutOfDate：[VulkanPresenter.cpp:805–808](../Qt/src/fg/VulkanPresenter.cpp#L805-L808)、[884–886](../Qt/src/fg/VulkanPresenter.cpp#L884-L886)。所以“SUBOPTIMAL 完全不触发重建”的注释不能作为依据。记录原因与频率，区分兼容但非最优与必须恢复的 OUT_OF_DATE/SURFACE_LOST，不盲删重建。
 
 ### 4.4 交换链深度与屏障（P2）
 
 交换链图像数、应用帧槽数和显示队列长度是不同参数。按 surface 能力与实际 present mode 做对比；更多图像可能缓解等待，也可能增加内存与排队延迟，不是越多越好。没有刷新率证据，不写死 16.67/8.33 ms 预算，不新增限帧策略。
 
-finishTarget 明确负责 COLOR_ATTACHMENT_OPTIMAL → PRESENT_SRC_KHR 的外部屏障（[VulkanPresentationBackend.cpp:131–160](<../Qt/src/render/VulkanPresentationBackend.cpp#L131-L160>)）。优化之前先核对 QRhi/native layout 约定、生产者 access/stage 和首次 acquire 等待范围；UNDEFINED 仅适合确实丢弃旧内容的场景。不要仅凭“BOTTOM_OF_PIPE 看起来旧”就判错，也不要绕开 QRhi 的资源状态追踪。
+finishTarget 明确负责 COLOR_ATTACHMENT_OPTIMAL → PRESENT_SRC_KHR 的外部屏障（[VulkanPresentationBackend.cpp:131–160](../Qt/src/render/VulkanPresentationBackend.cpp#L131-L160)）。优化之前先核对 QRhi/native layout 约定、生产者 access/stage 和首次 acquire 等待范围；UNDEFINED 仅适合确实丢弃旧内容的场景。不要仅凭“BOTTOM_OF_PIPE 看起来旧”就判错，也不要绕开 QRhi 的资源状态追踪。
 
 ## 五、CPU 构帧、可见性与 draw 提交
 
@@ -154,7 +153,7 @@ finishTarget 明确负责 COLOR_ATTACHMENT_OPTIMAL → PRESENT_SRC_KHR 的外部
 
 ### 5.3 分层剔除与合批，先看规模（P2）
 
-[NativeSceneUpdate.cpp:218–303](<../Qt/src/NativeSceneUpdate.cpp#L218-L303>) 的主列表已选择候选格位、视锥裁剪，并按相机距离稳定地前到后重排实例；[NativeSceneFrame.cpp:118–142](<../Qt/src/NativeSceneFrame.cpp#L118-L142>) 还对选中/归位 actor 做视锥球测试。主体豁免和 shadow-only 保留是语义，不应直接删除。应先量“候选 / 可见 / 被保留 / 提交实例数”、排序及缓冲重排成本，再判断更精细包围体、增量排序或屏幕尺寸 LOD 的价值。
+[NativeSceneUpdate.cpp:218–303](../Qt/src/NativeSceneUpdate.cpp#L218-L303) 的主列表已选择候选格位、视锥裁剪，并按相机距离稳定地前到后重排实例；[NativeSceneFrame.cpp:118–142](../Qt/src/NativeSceneFrame.cpp#L118-L142) 还对选中/归位 actor 做视锥球测试。主体豁免和 shadow-only 保留是语义，不应直接删除。应先量“候选 / 可见 / 被保留 / 提交实例数”、排序及缓冲重排成本，再判断更精细包围体、增量排序或屏幕尺寸 LOD 的价值。
 
 主列表已有前到后实例排序；进一步只在兼容材质与状态内调整深度桶和管线/绑定排序的关系，作为 overdraw 与 CPU 状态切换的权衡实验，不重复计功。透明对象必须保持当前层次/混合语义；不能把透明壳体按管线全局重排来追求 draw 数。预深度通道也会增加几何与带宽，只有像素成本确实占优时才值得试。
 
@@ -219,7 +218,7 @@ QRhi 缓存与 FFX 原生 compute cache 分开。[cmake/FidelityFX.cmake:139–1
 
 ### 8.1 先确认实际后端，再修契约（P1）
 
-**关键默认值：** [Fsr3Backend.cpp:315–320](<../Qt/src/fsr/Fsr3Backend.cpp#L315-L320>) 在 Vulkan 上默认禁用 FFX compute，只有 RHINE_FSR3_FFX=1 才尝试；未启用/不可用时走空间 EASU/RCAS 回退。因此选择 FSR 模式不等于实际运行时域 FSR3。日志须分列请求模式、实际后端和回退原因。下列时域契约针对实际启用且可用的 compute 路径；FG 有独立开关，不与超分后端可用性混为一谈。
+**关键默认值：** [Fsr3Backend.cpp:315–320](../Qt/src/fsr/Fsr3Backend.cpp#L315-L320) 在 Vulkan 上默认禁用 FFX compute，只有 RHINE_FSR3_FFX=1 才尝试；未启用/不可用时走空间 EASU/RCAS 回退。因此选择 FSR 模式不等于实际运行时域 FSR3。日志须分列请求模式、实际后端和回退原因。下列时域契约针对实际启用且可用的 compute 路径；FG 有独立开关，不与超分后端可用性混为一谈。
 
 1. **单位：** [opticalGeometry.vert:40–46](../Qt/shaders/enhancement/opticalGeometry.vert#L40-L46) 从未抖动 VP 求 previous-current 并乘 0.5、翻转 Y，输出 UV 范围的位移；[Fsr3Backend.cpp:567–571](../Qt/src/fsr/Fsr3Backend.cpp#L567-L571) 和 [FgBackend.cpp:990–1003](../Qt/src/fg/FgBackend.cpp#L990-L1003) 再乘 renderSize 转成像素。源码注释将其简称 NDC，但不能据此再添加一个 0.5。仍需按 framebuffer 方向、clip correction、jitter 与消费者约定做带已知像素位移的测试。[S5](#ref-s5)
 2. **身份与历史：** 前述稳定实例 ID 应先于时域质量评估。相机切换、resize、AA/FSR 模式变化、隐藏恢复和新实例必须有明确 reset；当前 FSR resize 已有尺寸/模式等值保护，不能误报成每帧重建。[Fsr3Backend.cpp:320–333](../Qt/src/fsr/Fsr3Backend.cpp#L320-L333)
@@ -244,20 +243,20 @@ QRhi 缓存与 FFX 原生 compute cache 分开。[cmake/FidelityFX.cmake:139–1
 
 以下是建议实施清单，**本次均未修改运行代码**。S/M/L 为相对复杂度，不是工期承诺；收益范围描述作用机制，不是已测百分比。
 
-| ID | 优先级 / 复杂度 | 行动 | 可能改善 | 主要风险 / 验收证据 |
-| --- | --- | --- | --- | --- |
-| A01 | P0 / S–M | 时间戳启用、计时去重、贯穿 frame ID | 避免误判、形成基线 | GPU 有效样本状态明确；end/present 不重复相加 |
-| A02 | P1 / M；改架构另评估 | 捕获多离屏提交与槽复用等待，有证据再改架构 | CPU/GPU 重叠、提交开销、GUI 响应 | 区分 readback/end 与 slot/begin 等待；队列轨迹与 p95/p99 |
-| A03 | P1 / M | 统一图层 dirty / resource revision / 时域收敛 | 无变化时减少重绘与构帧 | 资源异步到达、恢复、动画均不丢更新 |
-| A04 | P1 / M | 稳定实例 ID 维护 previous transform | 降 hash 分配、修时域输入 | 重排/移动/重叠/新生速度图正确 |
-| A05 | P1 / M | 无需求时剔除 motion MRT 和历史 | 附件/上传/顶点与像素带宽 | AA/FG/MSAA 切换、深度和格式都正确 |
-| A06 | P1 / S | blur=0 盘面单采样变体 | 局部纹理采样成本 | 编译结果、特写/远景 pass 时间与图像误差 |
-| A07 | P1/P2 / M | 复用最终颜色纹理，评估九点柔化质量档 | 全屏 pass 与像素成本 | alpha、色域、FSR 输入输出不别名 |
-| A08 | P1/P2 / M | 图片/mip 预处理与上传预算 | 换曲/浏览长帧 | 首次可见延迟、p99、缓存 miss 轨迹 |
-| A09 | P2 / S–M | 其他后端移植状态去重，缓存 draw 元数据 | CPU 驱动/构帧开销 | 同画质 draw 状态计数、CPU profile |
-| A10 | P2 / M | resize 去重、分离渲染/呈现退休证明 | 窗口交互停顿 | 重建次数、stall、验证层与恢复测试 |
-| A11 | P2 / M | 局部预算升级为整帧资源账本 | 驻留压力、抖动定位 | 峰值字节、活动豁免、重传率 |
-| A12 | P2/P3 / M–L | LOD/深度预通过/indirect/async 专项实验 | 仅对已确认瓶颈有效 | 先确认规模/overdraw/空闲引擎，再决定投入 |
+| ID  | 优先级 / 复杂度      | 行动                                          | 可能改善                         | 主要风险 / 验收证据                                      |
+| --- | -------------------- | --------------------------------------------- | -------------------------------- | -------------------------------------------------------- |
+| A01 | P0 / S–M             | 时间戳启用、计时去重、贯穿 frame ID           | 避免误判、形成基线               | GPU 有效样本状态明确；end/present 不重复相加             |
+| A02 | P1 / M；改架构另评估 | 捕获多离屏提交与槽复用等待，有证据再改架构    | CPU/GPU 重叠、提交开销、GUI 响应 | 区分 readback/end 与 slot/begin 等待；队列轨迹与 p95/p99 |
+| A03 | P1 / M               | 统一图层 dirty / resource revision / 时域收敛 | 无变化时减少重绘与构帧           | 资源异步到达、恢复、动画均不丢更新                       |
+| A04 | P1 / M               | 稳定实例 ID 维护 previous transform           | 降 hash 分配、修时域输入         | 重排/移动/重叠/新生速度图正确                            |
+| A05 | P1 / M               | 无需求时剔除 motion MRT 和历史                | 附件/上传/顶点与像素带宽         | AA/FG/MSAA 切换、深度和格式都正确                        |
+| A06 | P1 / S               | blur=0 盘面单采样变体                         | 局部纹理采样成本                 | 编译结果、特写/远景 pass 时间与图像误差                  |
+| A07 | P1/P2 / M            | 复用最终颜色纹理，评估九点柔化质量档          | 全屏 pass 与像素成本             | alpha、色域、FSR 输入输出不别名                          |
+| A08 | P1/P2 / M            | 图片/mip 预处理与上传预算                     | 换曲/浏览长帧                    | 首次可见延迟、p99、缓存 miss 轨迹                        |
+| A09 | P2 / S–M             | 其他后端移植状态去重，缓存 draw 元数据        | CPU 驱动/构帧开销                | 同画质 draw 状态计数、CPU profile                        |
+| A10 | P2 / M               | resize 去重、分离渲染/呈现退休证明            | 窗口交互停顿                     | 重建次数、stall、验证层与恢复测试                        |
+| A11 | P2 / M               | 局部预算升级为整帧资源账本                    | 驻留压力、抖动定位               | 峰值字节、活动豁免、重传率                               |
+| A12 | P2/P3 / M–L          | LOD/深度预通过/indirect/async 专项实验        | 仅对已确认瓶颈有效               | 先确认规模/overdraw/空闲引擎，再决定投入                 |
 
 推荐最小顺序：A01 → 原生/强制宿主对照 → A02 结论 → A04/A05/A06 的独立 A/B → A03/A08 长帧治理 → 其余按 profile 排序。不要将 A02 架构改造作为所有局部优化的前置阻塞。
 
@@ -265,14 +264,14 @@ QRhi 缓存与 FFX 原生 compute cache 分开。[cmake/FidelityFX.cmake:139–1
 
 ### 10.1 分组与场景
 
-| 轴 | 必需控制组 | 记录与注意 |
-| --- | --- | --- |
-| 宿主 | 原生 FG off；强制可控宿主 FG off；同宿主 FG on | 分离宿主代价与 FG 算法代价 |
-| 后处理 | off/空间 AA/TAA/实际 FSR 后端与质量 | 固定 displaySize、记录 renderSize、MSAA/DPR |
-| 内容 | 静止档案墙、连续滚动、抽取归位、盘面特写/旋转、封面切换 | 同轨迹、同音乐数据、同缓存冷热 |
-| 生命周期 | 连续 resize、最小化恢复、跨 DPR、模式切换、资源异步完成 | 检查卡顿/闪烁/黑屏/重建风暴 |
-| 设备 | 实际目标 iGPU；若支持，再加 dGPU/其他平台 | 不拿不同设备绝对 GPU query 值直接排优劣 |
-| 质量 | 同镜头截图 + 运动序列/速度图 | 色彩、模糊、透明顺序、重影、锯齿与 UI 稳定 |
+| 轴       | 必需控制组                                              | 记录与注意                                  |
+| -------- | ------------------------------------------------------- | ------------------------------------------- |
+| 宿主     | 原生 FG off；强制可控宿主 FG off；同宿主 FG on          | 分离宿主代价与 FG 算法代价                  |
+| 后处理   | off/空间 AA/TAA/实际 FSR 后端与质量                     | 固定 displaySize、记录 renderSize、MSAA/DPR |
+| 内容     | 静止档案墙、连续滚动、抽取归位、盘面特写/旋转、封面切换 | 同轨迹、同音乐数据、同缓存冷热              |
+| 生命周期 | 连续 resize、最小化恢复、跨 DPR、模式切换、资源异步完成 | 检查卡顿/闪烁/黑屏/重建风暴                 |
+| 设备     | 实际目标 iGPU；若支持，再加 dGPU/其他平台               | 不拿不同设备绝对 GPU query 值直接排优劣     |
+| 质量     | 同镜头截图 + 运动序列/速度图                            | 色彩、模糊、透明顺序、重影、锯齿与 UI 稳定  |
 
 ### 10.2 最小数据记录
 

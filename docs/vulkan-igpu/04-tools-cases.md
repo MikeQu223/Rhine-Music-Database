@@ -28,10 +28,12 @@
 ### A.0 该做什么 / 别做什么
 
 **该做**
+
 - 固定「一个计时工具 + 一个抓帧工具 + 一个系统级工具」三件套：计时用 PresentMon（Win）/ MangoHud（Linux），抓帧用 RenderDoc，系统级用 GPUView 或 Tracy。
 - 每次实验只改一个变量，并记录：`present mode`、vsync **状态**、**是否设了帧率上限（默认不设上限）**、分辨率、是否插电（仅作环境记录）。
 
 **别做**
+
 - 别用抓帧工具的 duration 列排名优化项（重放会放大/缩小不同 pass 的相对成本）。
 - 别在没有 `PresentMode` 列的情况下比较两次运行的 FPS——窗口合成路径变了，结论就作废。
 - 别把"电源模式/是否插电"写成结论依据：它只影响数据可比性，不构成"该限帧"的理由。
@@ -40,78 +42,90 @@
 
 ### A.1 总表
 
-| 工具 | 能回答 | 不能回答 | 核显上的坑 |
-|---|---|---|---|
-| RenderDoc | 这一帧的每个 draw/dispatch 参数、状态、barrier、layout transition、资源内容 | GPU 真实耗时、present/显示延迟、带宽 | 抓帧本身吃共享内存带宽；4K 大帧 capture 可能耗尽系统内存 |
-| RGP（AMD） | per-event 时间、barrier、pipeline stall、occupancy、async compute | 非 AMD、非 RDNA；<3 CU 设备 | 官方：<3 CU 不支持、GCN APU 不支持〔厂商文档〕 |
-| Intel GPA | 多帧流抓取 + 逐 draw 分析（Frame Analyzer） | 非 Intel GPU；未来版本 | 2025.1 后 EOL，2026 停分发 |
-| Arm Streamline / Mali Offline Compiler | Mali 上的系统级 trace / 离线 shader cycle 估算 | x86 核显（架构不同） | 对 Intel/AMD 核显无意义；但 tile 思维可迁移 |
-| Nsight Graphics | NVIDIA 上的 GPU Trace、逐事件、ray tracing | 非 NVIDIA GPU | 核显上完全不可用 |
-| Tracy | CPU+GPU zone 时间线、帧直方图、锁竞争 | 系统级 present/display 时间 | 需插桩，插桩本身有开销 |
-| PresentMon | CPU/GPU/显示三段耗时、present mode、input-to-photon | 单 draw 级归因、GPU 计数器 | 需 "Performance Log Users" 组权限 |
-| GPUView / ETW | DMA packet 排队、vsync 间隔、页错误、上下文切换 | 单 draw 归因；非 Windows | ETL 几百 MB；需 ADK；符号配置烦 |
-| PIX | D3D12 呈现路径、Present 事件、GPU 队列 | Vulkan | 只对 D3D 有意义，Vulkan 项目仅作「Windows 呈现机制」参考 |
-| Mesa `INTEL_DEBUG` / `AMD_DEBUG` | 驱动内部行为（perf 提示、PC flush、DCC 开关） | 端到端帧时间 | 这些开关会**改变**行为，不能用来算收益 |
-| vulkaninfo | 队列族、present mode 列表、format、limits、heap | 性能 | iGPU 的 DEVICE_LOCAL 是系统内存，别当显存看 |
-| MangoHud | 实时 FPS/frametime/GPU 负载、日志绘图 | 精确归因 | overlay 自身有开销，且可能影响 pacing |
-| apitrace | API 调用序列记录/重放、数 submit 次数 | 计时 | 大 trace 回放慢；Vulkan 支持成熟度需自行确认〔未验证〕 |
+| 工具                                   | 能回答                                                                      | 不能回答                             | 核显上的坑                                               |
+| -------------------------------------- | --------------------------------------------------------------------------- | ------------------------------------ | -------------------------------------------------------- |
+| RenderDoc                              | 这一帧的每个 draw/dispatch 参数、状态、barrier、layout transition、资源内容 | GPU 真实耗时、present/显示延迟、带宽 | 抓帧本身吃共享内存带宽；4K 大帧 capture 可能耗尽系统内存 |
+| RGP（AMD）                             | per-event 时间、barrier、pipeline stall、occupancy、async compute           | 非 AMD、非 RDNA；<3 CU 设备          | 官方：<3 CU 不支持、GCN APU 不支持〔厂商文档〕           |
+| Intel GPA                              | 多帧流抓取 + 逐 draw 分析（Frame Analyzer）                                 | 非 Intel GPU；未来版本               | 2025.1 后 EOL，2026 停分发                               |
+| Arm Streamline / Mali Offline Compiler | Mali 上的系统级 trace / 离线 shader cycle 估算                              | x86 核显（架构不同）                 | 对 Intel/AMD 核显无意义；但 tile 思维可迁移              |
+| Nsight Graphics                        | NVIDIA 上的 GPU Trace、逐事件、ray tracing                                  | 非 NVIDIA GPU                        | 核显上完全不可用                                         |
+| Tracy                                  | CPU+GPU zone 时间线、帧直方图、锁竞争                                       | 系统级 present/display 时间          | 需插桩，插桩本身有开销                                   |
+| PresentMon                             | CPU/GPU/显示三段耗时、present mode、input-to-photon                         | 单 draw 级归因、GPU 计数器           | 需 "Performance Log Users" 组权限                        |
+| GPUView / ETW                          | DMA packet 排队、vsync 间隔、页错误、上下文切换                             | 单 draw 归因；非 Windows             | ETL 几百 MB；需 ADK；符号配置烦                          |
+| PIX                                    | D3D12 呈现路径、Present 事件、GPU 队列                                      | Vulkan                               | 只对 D3D 有意义，Vulkan 项目仅作「Windows 呈现机制」参考 |
+| Mesa `INTEL_DEBUG` / `AMD_DEBUG`       | 驱动内部行为（perf 提示、PC flush、DCC 开关）                               | 端到端帧时间                         | 这些开关会**改变**行为，不能用来算收益                   |
+| vulkaninfo                             | 队列族、present mode 列表、format、limits、heap                             | 性能                                 | iGPU 的 DEVICE_LOCAL 是系统内存，别当显存看              |
+| MangoHud                               | 实时 FPS/frametime/GPU 负载、日志绘图                                       | 精确归因                             | overlay 自身有开销，且可能影响 pacing                    |
+| apitrace                               | API 调用序列记录/重放、数 submit 次数                                       | 计时                                 | 大 trace 回放慢；Vulkan 支持成熟度需自行确认〔未验证〕   |
 
 ### A.2 逐工具要点
 
 **RenderDoc** 〔社区经验〕[renderdoc.org](https://renderdoc.org/)
+
 - 定位：独立抓帧调试器，支持 Vulkan/D3D11/D3D12/GL/GLES，Windows/Linux/Android，capture 可跨平台携带，有 Python API。
 - 在链路调查里的正确用法：**数事件、看同步、看 layout**。例如「这一帧有几个 `vkQueueSubmit`」「present 前有没有多余的 `vkCmdPipelineBarrier`」「swapchain image 的 layout 转换发生在哪」。
 - 不能：给 GPU 时间。它的 duration 是重放环境的产物。
 - 核显坑：抓帧时应用会停在世界里重放，iGPU 上重放成本被放大；抓 4K + FSR FG 的帧，capture 文件可能上 GB。
 
 **AMD Radeon GPU Profiler (RGP)** 〔厂商文档〕[gpuopen.com/rgp](https://gpuopen.com/rgp/)
+
 - 能：detailed timing、per-event 时间、barrier、pipeline stall、async compute；支持 DX12/Vulkan/OpenCL/HIP。
 - APU 支持是真的：官方 release note 明确写了 "Support for additional AMD RDNA 3.5 architecture-based APUs (AMD Ryzen AI Max … with Radeon 8000S graphics)"。
 - **坑（必须记住）**：官方在 issue 里写明 "Radeon Developer Panel does not support RGP capture on devices with less than 3 CUs"，且 "only supports devices using AMD RDNA architecture"（举例 5700u 是 GCN，不支持）；CU 限制的原因是 "firmware issues on these smaller devices that could impact the data collection and accuracy"。〔厂商文档〕[rdpanel#62](https://github.com/GPUOpen-Tools/radeon_developer_panel/issues/62)
 - 推论：入门核显（2 CU 级别）上你**拿不到** RGP，只能退回 PresentMon/GPUView/ETW。
 
 **Intel GPA / Frame Analyzer** 〔厂商文档〕[Intel GPA](https://www.intel.com/content/www/us/en/developer/tools/graphics-performance-analyzers/overview.html)
+
 - 能：Graphics Frame Analyzer "Visualize multiframe stream captures and select a frame to analyze down to the draw call level"；目标 API 含 DirectX / OpenGL / Vulkan；支持到 Vulkan SDK v1.4.304.0。
 - 坑：官方公告 "Intel GPA 2025.1 is the final version… downloadable until the end of 2025 and will be discontinued in 2026"。**不要把它当长期依赖**。
 
 **Arm Performance Studio（Streamline / Mali Offline Compiler）** 〔厂商文档〕[Arm best practice 博客](https://developer.arm.com/community/arm-community-blogs/b/mobile-graphics-and-gaming-blog/posts/arm-best-practice-warnings-in-vulkan-sdk)
+
 - Streamline：系统级 CPU/GPU trace（细节本次未抓取原文，〔未验证〕）。
 - Mali Offline Compiler：离线编译 shader 出 cycle 估算，不跑应用（同上〔未验证〕）。
 - 对 x86 核显的直接价值 ≈ 0（架构不同）；**间接价值**是 tile-based/带宽受限的思维，以及下面这条：Arm 把已废弃的 PerfDoc 层并入了 Khronos 验证层，可以在桌面 PC 上预检 Mali 友好性。
 
 **NVIDIA Nsight Graphics** 〔厂商文档〕[developer.nvidia.com/nsight-graphics](https://developer.nvidia.com/nsight-graphics)
+
 - 能：D3D/Vulkan/OpenGL/OpenXR 的调试与 profile，GPU Trace，官方称 "minimal overhead for non-biased activity data"。
 - 坑：NVIDIA GPU 专属；在 Intel/AMD 核显上零覆盖。
 
 **Tracy** 〔社区经验〕[wolfpld/tracy](https://github.com/wolfpld/tracy)
+
 - 定位："real time, nanosecond resolution, remote telemetry, hybrid frame and sampling profiler"，支持 Vulkan/D3D/GL/Metal 的 GPU zone。
 - 链路调查用法：把 `acquire → submit → present` 三段打 zone，直接看哪段在墙钟上占时间；配合帧直方图看抖动。
 - 坑：需要源码插桩；插桩粒度太细会自己制造 CPU 开销。
 
 **PresentMon** 〔厂商文档〕[GameTechDev/PresentMon](https://github.com/GameTechDev/PresentMon)
+
 - 系统级 ETW 采集，不改应用；CPU、GPU、Display 三段耗时与延迟；跨 DirectX/OpenGL/Vulkan。
 - 权限坑：需要 "Performance Log Users" 组成员身份，否则报 "failed to start trace session (access denied)"。
 
 **GPUView / ETW** 〔厂商文档〕[Microsoft Learn](https://learn.microsoft.com/en-us/windows-hardware/drivers/display/using-gpuview)
+
 - 能：CPU 上下文切换 + 内核进出 + DXGK 的全部 GPU 事件（command buffer 提交、资源创建/销毁/lock/bind）+ 驱动上报的 command buffer 起止时间 + 每个 adapter 的 vsync 间隔 + 页错误。
 - 用它回答一个问题：**"GPU 队列里到底有没有活"**。队列空 → CPU 提交受限或呈现受限；队列持续非空 → GPU 受限。
 - 附带能力：每条 adapter 的 vsync 间隔是**分析侧**唯一可靠的刷新率来源。应用运行时拿不到刷新率，但调查时可以用它把"是否被节流"量化。
 - 坑：`Log.cmd` 录 30–60 秒就够，ETL 可能几百 MB；XPerf 读不了 GPU 事件；`Log m` 会跳过高频事件（trace 更小但细节少）。
 
 **PIX** 〔厂商文档〕[devblogs.microsoft.com/pix](https://devblogs.microsoft.com/pix/)
+
 - 官方定位即 "Performance tuning and debugging for DirectX 12 games on Windows"。
 - 对 Vulkan 项目只有一个用途：**理解 Windows 呈现/合成机制**（Present → DWM → 显示），以及看别人 D3D12 案例里的呈现路径问题。别指望它挂到你的 Vulkan 帧上。
 
 **Mesa：`INTEL_DEBUG` / `AMD_DEBUG`** 〔厂商文档〕[docs.mesa3d.org/envvars](https://docs.mesa3d.org/envvars.html)
+
 - `INTEL_DEBUG=perf`："emit messages about performance issues"；`pc` 输出 PIPE_CONTROL 使用；`bat` 输出 batch 信息；`nofc`/`noccs` 关 fast clear / 无损压缩（用于**隔离**压缩相关行为）。
 - `AMD_DEBUG=info` 打印驱动信息；`nodcc` 关 DCC；`nohyperz` 关 Hyper-Z；`notiling` 关 tiling。
 - **纪律**：`nodcc`/`nohyperz`/`nofc` 都是"把快路径关掉"，只能用来定位某类带宽优化是否生效，**绝不能**用它们的帧率当基线。
 
 **vulkaninfo** 〔厂商文档〕[KhronosGroup/Vulkan-Tools](https://github.com/KhronosGroup/Vulkan-Tools)
+
 - 查：队列族与 `queueFlags`、`vkGetPhysicalDeviceSurfacePresentModesKHR` 实际返回的 present mode 列表、format、limits、memory heap。
 - 核显坑：iGPU 的 `DEVICE_LOCAL` heap 其实是系统内存的一段，heap 大小不等于可用显存；`VK_EXT_memory_budget` 的值更接近真实预算。
 
 **MangoHud** 〔社区经验〕[flightlessmango/MangoHud](https://github.com/flightlessmango/MangoHud)
+
 - Vulkan/OpenGL overlay：FPS、温度、CPU/GPU 负载；有 Vsync 段（含 "Vulkan Vsync"）；支持 FPS logging + 绘图。
 - 坑：overlay 自己会画一帧，且在某些合成器下影响 present；对比实验时要么全关，要么全程开。
 
@@ -136,25 +150,26 @@
 
 ### B.1 指标定义（全部来自 PresentMon，单位 ms）
 
-| 指标 | 定义（原文） | 用途 |
-|---|---|---|
-| `MsBetweenPresents` | 相邻两次 Present 的间隔 | 应用侧帧率口径 |
-| `MsCPUBusy` | "how long the CPU spent working on this frame before presenting" | CPU 提交受限的分子 |
-| `MsCPUWait` | 提交前 CPU 等待的时间 | 等 fence/等 acquire 的直接证据 |
-| `MsGPUBusy` | "time during which at least one GPU engine is executing work from the target process" | GPU 受限的分子 |
-| `MsGPUTime` | GPU 处理该帧的总时长（含空转） | 与 Busy 的差 = GPU 空转 |
-| `MsGPULatency` | 帧开始到 GPU 开始处理 | 排队深度 |
-| `MsInPresentAPI` | "time spent inside the Present() call" | **present 阻塞的直接证据** |
-| `MsRenderPresentLatency` | Present 调用 → GPU 工作完成 | 渲染尾部 |
-| `MsUntilDisplayed` | Present 调用 → 上屏 | 呈现链路总延迟 |
-| `DisplayedTime` | 该帧在屏上停留时长（未显示为 NA） | 帧节奏是否均匀 |
-| `MsBetweenDisplayChange` | 上一次显示变化到这一次 | 观察呈现节流的**离散性**（不是与刷新率相除） |
-| `MsClickToPhotonLatency` | 最早的相关鼠标点击 → 上屏 | input-to-photon |
-| `MsAllInputToPhotonLatency` | 最早的键鼠输入 → 上屏 | 同上（更全） |
+| 指标                        | 定义（原文）                                                                          | 用途                                         |
+| --------------------------- | ------------------------------------------------------------------------------------- | -------------------------------------------- |
+| `MsBetweenPresents`         | 相邻两次 Present 的间隔                                                               | 应用侧帧率口径                               |
+| `MsCPUBusy`                 | "how long the CPU spent working on this frame before presenting"                      | CPU 提交受限的分子                           |
+| `MsCPUWait`                 | 提交前 CPU 等待的时间                                                                 | 等 fence/等 acquire 的直接证据               |
+| `MsGPUBusy`                 | "time during which at least one GPU engine is executing work from the target process" | GPU 受限的分子                               |
+| `MsGPUTime`                 | GPU 处理该帧的总时长（含空转）                                                        | 与 Busy 的差 = GPU 空转                      |
+| `MsGPULatency`              | 帧开始到 GPU 开始处理                                                                 | 排队深度                                     |
+| `MsInPresentAPI`            | "time spent inside the Present() call"                                                | **present 阻塞的直接证据**                   |
+| `MsRenderPresentLatency`    | Present 调用 → GPU 工作完成                                                           | 渲染尾部                                     |
+| `MsUntilDisplayed`          | Present 调用 → 上屏                                                                   | 呈现链路总延迟                               |
+| `DisplayedTime`             | 该帧在屏上停留时长（未显示为 NA）                                                     | 帧节奏是否均匀                               |
+| `MsBetweenDisplayChange`    | 上一次显示变化到这一次                                                                | 观察呈现节流的**离散性**（不是与刷新率相除） |
+| `MsClickToPhotonLatency`    | 最早的相关鼠标点击 → 上屏                                                             | input-to-photon                              |
+| `MsAllInputToPhotonLatency` | 最早的键鼠输入 → 上屏                                                                 | 同上（更全）                                 |
 
 〔厂商文档〕[PresentMon README-ConsoleApplication.md](https://github.com/GameTechDev/PresentMon/blob/main/README-ConsoleApplication.md)
 
 **统计口径必须写清楚**：
+
 - `avg FPS` = 总帧数 / 总时长，会被长尾和"突发高帧"同时污染。
 - `p99 帧时间` = 帧时间分布的第 99 百分位；`1% low` 有两种通行定义（最慢 1% 帧的**平均**，或第 99 百分位）。同一次实验里必须固定一种，否则两次结论不可比。〔社区经验〕
 - `frametime jitter`：帧时间标准差，或相邻帧差分的分布宽度。对 FG/自建 pacing 来说，jitter 比 avg 更能反映体感。
@@ -162,16 +177,17 @@
 
 ### B.2 四类受限的判据（刷新率未知版）
 
-| 判据 | CPU 提交受限 | GPU 受限 | 呈现受限 | 帧生成受限 |
-|---|---|---|---|---|
-| `MsCPUBusy` | 高（接近帧间隔） | 低 | 低 | 低~中 |
-| `MsGPUBusy` | 低 | ≈ 帧间隔 | 低 | ≈ 帧间隔 |
-| `MsInPresentAPI` | 低 | 低 | **高** | 中（pacing 线程在等） |
-| submit 区段耗时（Tracy zone） | >20% 帧时间 | 低 | 低 | 低 |
-| GPUView 里未完成的 DMA packet | 浅、经常空 | 持续非空且随内容增长 | 周期性清空 | 周期性清空 |
-| `DisplayedTime` 分布 | — | 连续、宽 | **单峰、离散**（被外部节流） | 长短交替（2×真实帧率） |
+| 判据                          | CPU 提交受限     | GPU 受限             | 呈现受限                     | 帧生成受限             |
+| ----------------------------- | ---------------- | -------------------- | ---------------------------- | ---------------------- |
+| `MsCPUBusy`                   | 高（接近帧间隔） | 低                   | 低                           | 低~中                  |
+| `MsGPUBusy`                   | 低               | ≈ 帧间隔             | 低                           | ≈ 帧间隔               |
+| `MsInPresentAPI`              | 低               | 低                   | **高**                       | 中（pacing 线程在等）  |
+| submit 区段耗时（Tracy zone） | >20% 帧时间      | 低                   | 低                           | 低                     |
+| GPUView 里未完成的 DMA packet | 浅、经常空       | 持续非空且随内容增长 | 周期性清空                   | 周期性清空             |
+| `DisplayedTime` 分布          | —                | 连续、宽             | **单峰、离散**（被外部节流） | 长短交替（2×真实帧率） |
 
 判读规则：
+
 - **不要**比较"fps 与刷新率"。刷新率运行时不可得，且 FIFO 在不同驱动/合成器上可能按真实刷新节流，也可能等价于 immediate（见 B.3）。
 - "被外部节流"只能从**分布形状**判断：`DisplayedTime` / `MsBetweenDisplayChange` 若在多次运行中反复落在同一组离散值上（方差极小），说明有外部时钟在决定上屏时机；此时瓶颈在呈现，不在渲染。
 - 队列深度是比"利用率"更可靠的 GPU 受限证据：持续有未完成的 packet 且 `MsGPUBusy` 贴着帧间隔 → GPU 受限。
@@ -185,13 +201,14 @@
 
 刷新率未知，所以矩阵的一方不是"刷新率"，而是**你自己设的、可复现的 cap**（例如取地板帧率的 1× 与 2×，或固定 60/120）：
 
-| | 不设上限 | cap = N | cap = 2N |
-|---|---|---|---|
-| FIFO | ① | ② | ③ |
-| MAILBOX | ④ | ⑤ | ⑥ |
-| IMMEDIATE（若能拿到） | ⑦ | ⑧ | ⑨ |
+|                       | 不设上限 | cap = N | cap = 2N |
+| --------------------- | -------- | ------- | -------- |
+| FIFO                  | ①        | ②       | ③        |
+| MAILBOX               | ④        | ⑤       | ⑥        |
+| IMMEDIATE（若能拿到） | ⑦        | ⑧       | ⑨        |
 
 读法（全部基于"排队与阻塞"，不基于刷新率）：
+
 - **⑦ vs ①**：若 ⑦ 明显快于 ①，说明 FIFO 在被节流（值多少未知，也不重要）；若两者接近，可能是内容本身已到上限，也可能是 FIFO 在此平台等价于 immediate——用 B.2 的"分布形状"再确认。
 - **① 的 `MsInPresentAPI` 高而 `MsGPUBusy` 低** → 呈现受限；此时**不要**下结论说"关掉 vsync 就会更快"，因为节流可能来自合成器/驱动而非应用选项。
 - **④ 下 GPU 常驻高但内容很轻** → mailbox 空转重绘（§D.2）。它的危害是**测量失效与队列膨胀**（你测到的不是有效工作量），处理方式是换 IMMEDIATE/FIFO 或引入显式 pacing，不是"为了省电而限帧"。
@@ -204,16 +221,18 @@
 ### B.4 测「链路开销」而不是「场景开销」
 
 **空场景法（floor test，§B.5 的通过标准以此为准）**
+
 1. 保留：swapchain 创建/重建、acquire、submit、present、FG 上下文、上采样 pass、Qt 的合成/呈现回调。
 2. 替换：内容换成 `loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR` + 无 draw，或一个全屏三角形。
 3. 记录：`MsCPUBusy`、`MsGPUBusy`、`MsInPresentAPI`、`MsBetweenPresents` 的 p50/p99，以及 `MsInPresentAPI / MsBetweenPresents` 的占比、GPUView 的队列深度。
 4. 通过标准（三条同时满足）：
-   - (a) 地板帧时间 ≤ 目标帧预算的 10%（经验阈值；例：目标 120fps 即预算 8.3ms，地板应 ≤0.8ms）；
-   - (b) 地板 p99/p50 ≤ 1.2（无周期性阻塞）；
-   - (c) `MsInPresentAPI` 占地板帧时间的比例 ≤ 10%。
-   任一条不满足 → 链路本身有问题，先修链路再谈内容。
+    - (a) 地板帧时间 ≤ 目标帧预算的 10%（经验阈值；例：目标 120fps 即预算 8.3ms，地板应 ≤0.8ms）；
+    - (b) 地板 p99/p50 ≤ 1.2（无周期性阻塞）；
+    - (c) `MsInPresentAPI` 占地板帧时间的比例 ≤ 10%。
+      任一条不满足 → 链路本身有问题，先修链路再谈内容。
 
 **逐项开关法（ablation）**
+
 - 顺序：全开 → 关 FG → 关上采样 → 关 overlay → 关 Qt 额外 pass → 只留 clear。
 - 每一步只改一项，记录 ΔCPU / ΔGPU / Δpresent 阻塞时长。
 - 判据：某开关让 `MsCPUBusy` 降而 `MsGPUBusy` 不变 → 该项在 CPU 侧（提交/同步/pacing）；反之在 GPU/带宽侧。
@@ -245,15 +264,15 @@
 
 `VK_LAYER_KHRONOS_validation` 的子功能〔厂商文档〕[Vulkan 开发工具指南](https://docs.vulkan.org/guide/latest/development_tools.html)：
 
-| 子层/功能 | 能查出 | 与性能的关系 |
-|---|---|---|
-| 核心校验（VU/VUID） | 违反 Valid Usage 的调用、未定义行为 | 间接：UB 在 iGPU 上可能"能跑但慢"（如未初始化的 layout） |
-| **Synchronization Validation** | Draw/Copy/Dispatch/Blit 之间缺失或错误的同步导致的资源访问冲突 | 直接：缺失 barrier → 数据竞争 → 驱动插入隐式同步 → 变慢 |
-| **Best Practices Warnings** | "potential performance issues, questionable usage patterns, common mistakes" | 直接：这是唯一面向性能的静态检查 |
-| GPU-Assisted Validation | shader 越界访问等（靠插桩） | 只用于调试，开销极大 |
-| Shader printf | shader 内打印 | 同上 |
-| `VK_LAYER_LUNARG_api_dump` | 完整 API 调用流 | 数 submit/barrier 次数 |
-| `VK_LAYER_LUNARG_gfxreconstruct` | 抓帧/重放 | 复现问题 |
+| 子层/功能                        | 能查出                                                                       | 与性能的关系                                             |
+| -------------------------------- | ---------------------------------------------------------------------------- | -------------------------------------------------------- |
+| 核心校验（VU/VUID）              | 违反 Valid Usage 的调用、未定义行为                                          | 间接：UB 在 iGPU 上可能"能跑但慢"（如未初始化的 layout） |
+| **Synchronization Validation**   | Draw/Copy/Dispatch/Blit 之间缺失或错误的同步导致的资源访问冲突               | 直接：缺失 barrier → 数据竞争 → 驱动插入隐式同步 → 变慢  |
+| **Best Practices Warnings**      | "potential performance issues, questionable usage patterns, common mistakes" | 直接：这是唯一面向性能的静态检查                         |
+| GPU-Assisted Validation          | shader 越界访问等（靠插桩）                                                  | 只用于调试，开销极大                                     |
+| Shader printf                    | shader 内打印                                                                | 同上                                                     |
+| `VK_LAYER_LUNARG_api_dump`       | 完整 API 调用流                                                              | 数 submit/barrier 次数                                   |
+| `VK_LAYER_LUNARG_gfxreconstruct` | 抓帧/重放                                                                    | 复现问题                                                 |
 
 Vulkan 是显式 API，驱动不做错误检查（没有 `glGetError` 等价物），所以错误的同步/用法**不会报错，只会变慢或偶发花屏**。〔规范〕[validation overview](https://docs.vulkan.org/guide/latest/validation_overview.html)
 
@@ -341,20 +360,20 @@ Vulkan 是显式 API，驱动不做错误检查（没有 `glGetError` 等价物�
 
 ## E. 「一次完整的核显 Vulkan 性能调查」流程模板
 
-| # | 步骤 | 工具 | 看什么 | 通过标准 |
-|---|---|---|---|---|
-| 0 | 冻结环境 | — | GPU/驱动版本、present mode、vsync 状态、**是否设帧率上限（默认不设）**、分辨率、是否插电（仅记录） | 记录齐全，后续每步不得变更 |
-| 1 | 能力核对 | `vulkaninfo` | present mode 列表、queue family、`VK_EXT_memory_budget`、扩展可用性 | 你假设的 present mode 真的在列表里 |
-| 2 | 链路地板 | 最小帧 + PresentMon | `MsCPUBusy/GPU/InPresent` 的 p50/p99、`MsInPresentAPI` 占比、队列深度 | 地板 ≤ 目标预算 10%，p99/p50 ≤ 1.2，present 占比 ≤ 10%；否则转 3a |
-| 3a | 若地板不合格：查呈现 | PresentMon `PresentMode` 列、GPUView 队列 | 是否 `Composed:*`、`MsInPresentAPI` 是否高、`DisplayedTime` 是否离散单峰 | 定位到合成路径或 present 阻塞 |
-| 3b | 若地板正常：加内容 | PresentMon + RenderDoc | `MsGPUBusy` 是否随内容线性上升 | 线性 → GPU/带宽侧；不线性 → CPU 侧 |
-| 4 | GPU 侧细分 | RGP（若支持）/ GPUView | per-event 时间、barrier、队列占用 | 找到 top-3 事件或"队列一直空" |
-| 5 | CPU 侧细分 | Tracy zone / `INTEL_DEBUG=perf` | acquire/submit/present 三段墙钟 | 找到占比 >20% 的一段 |
-| 6 | 静态检查 | validation + best practices + sync validation | warning 列表 | 无同步类 warning；性能类 warning 逐条判定 |
-| 7 | 对照实验 | present mode × cap 矩阵（§B.3） | 12 格的 p99、`MsInPresentAPI`、input-to-photon | 找到"排队最浅、阻塞最短"的组合并解释原因 |
-| 8 | 单项改动 | 只改一处 + A/B | Δp99、Δjitter、Δpresent 阻塞 | 改动可复现，且不以牺牲延迟换 FPS |
-| 9 | 回归 | 同环境重跑步骤 2/3b | 地板与曲线 | 地板不变差，曲线下移 |
-| 10 | 记录 | 写进 perf 日志 | 结论 + 反例 | 别人能按记录复现 |
+| #   | 步骤                 | 工具                                          | 看什么                                                                                             | 通过标准                                                          |
+| --- | -------------------- | --------------------------------------------- | -------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| 0   | 冻结环境             | —                                             | GPU/驱动版本、present mode、vsync 状态、**是否设帧率上限（默认不设）**、分辨率、是否插电（仅记录） | 记录齐全，后续每步不得变更                                        |
+| 1   | 能力核对             | `vulkaninfo`                                  | present mode 列表、queue family、`VK_EXT_memory_budget`、扩展可用性                                | 你假设的 present mode 真的在列表里                                |
+| 2   | 链路地板             | 最小帧 + PresentMon                           | `MsCPUBusy/GPU/InPresent` 的 p50/p99、`MsInPresentAPI` 占比、队列深度                              | 地板 ≤ 目标预算 10%，p99/p50 ≤ 1.2，present 占比 ≤ 10%；否则转 3a |
+| 3a  | 若地板不合格：查呈现 | PresentMon `PresentMode` 列、GPUView 队列     | 是否 `Composed:*`、`MsInPresentAPI` 是否高、`DisplayedTime` 是否离散单峰                           | 定位到合成路径或 present 阻塞                                     |
+| 3b  | 若地板正常：加内容   | PresentMon + RenderDoc                        | `MsGPUBusy` 是否随内容线性上升                                                                     | 线性 → GPU/带宽侧；不线性 → CPU 侧                                |
+| 4   | GPU 侧细分           | RGP（若支持）/ GPUView                        | per-event 时间、barrier、队列占用                                                                  | 找到 top-3 事件或"队列一直空"                                     |
+| 5   | CPU 侧细分           | Tracy zone / `INTEL_DEBUG=perf`               | acquire/submit/present 三段墙钟                                                                    | 找到占比 >20% 的一段                                              |
+| 6   | 静态检查             | validation + best practices + sync validation | warning 列表                                                                                       | 无同步类 warning；性能类 warning 逐条判定                         |
+| 7   | 对照实验             | present mode × cap 矩阵（§B.3）               | 12 格的 p99、`MsInPresentAPI`、input-to-photon                                                     | 找到"排队最浅、阻塞最短"的组合并解释原因                          |
+| 8   | 单项改动             | 只改一处 + A/B                                | Δp99、Δjitter、Δpresent 阻塞                                                                       | 改动可复现，且不以牺牲延迟换 FPS                                  |
+| 9   | 回归                 | 同环境重跑步骤 2/3b                           | 地板与曲线                                                                                         | 地板不变差，曲线下移                                              |
+| 10  | 记录                 | 写进 perf 日志                                | 结论 + 反例                                                                                        | 别人能按记录复现                                                  |
 
 **降级路径**（profiler 不可用时）：PresentMon 三段 → GPUView 队列 → RenderDoc 数事件 → 二分法拔功能。
 
@@ -384,6 +403,7 @@ Vulkan 是显式 API，驱动不做错误检查（没有 `glGetError` 等价物�
 ## 参考来源
 
 **Khronos / 规范**
+
 1. https://docs.vulkan.org/spec/latest/chapters/VK_KHR_surface/wsi.html — WSI 规范：present mode 语义、`VK_KHR_present_wait2`、合成与阻塞行为。
 2. https://docs.vulkan.org/guide/latest/development_tools.html — Khronos 官方工具指南：validation 子层（sync/GPU-AV/best practices）、api_dump、gfxreconstruct。
 3. https://docs.vulkan.org/guide/latest/validation_overview.html — 为什么显式 API 不做错误检查、VU/VUID 与未定义行为。
@@ -393,33 +413,14 @@ Vulkan 是显式 API，驱动不做错误检查（没有 `glGetError` 等价物�
 7. https://github.com/KhronosGroup/Vulkan-Tools — vulkaninfo / vkcube 所在仓库。
 8. https://www.khronos.org/events/vulkanised-2023 — Vulkanised 2023 议程与演讲者（Arm/Valve/Samsung/LunarG/NVIDIA）。
 
-**AMD**
-9. https://gpuopen.com/rgp/ — RGP 功能与版本说明（含 RDNA 3.5 APU 支持）。
-10. https://github.com/GPUOpen-Tools/radeon_developer_panel/issues/62 — 官方：少于 3 CU 的设备不支持 RGP、仅支持 RDNA。
-11. https://gpuopen.com/amd-fsr-framegeneration/ — FSR Frame Generation 概述、Driver-Assisted Frame Pacing、swapchain 独占要求。
-12. https://gpuopen.com/manuals/fsr_sdk/techniques/frame-interpolation-swap-chain/ — FSR FG (Swapchain) 的 Vulkan 集成方式、2 个内部线程、额外 surface copy。
+**AMD** 9. https://gpuopen.com/rgp/ — RGP 功能与版本说明（含 RDNA 3.5 APU 支持）。10. https://github.com/GPUOpen-Tools/radeon_developer_panel/issues/62 — 官方：少于 3 CU 的设备不支持 RGP、仅支持 RDNA。11. https://gpuopen.com/amd-fsr-framegeneration/ — FSR Frame Generation 概述、Driver-Assisted Frame Pacing、swapchain 独占要求。12. https://gpuopen.com/manuals/fsr_sdk/techniques/frame-interpolation-swap-chain/ — FSR FG (Swapchain) 的 Vulkan 集成方式、2 个内部线程、额外 surface copy。
 
-**Intel / Microsoft**
-13. https://www.intel.com/content/www/us/en/developer/tools/graphics-performance-analyzers/overview.html — GPA 能力、目标 API 与 EOL 公告。
-14. https://github.com/GameTechDev/PresentMon — PresentMon 总览与权限要求。
-15. https://github.com/GameTechDev/PresentMon/blob/main/README-ConsoleApplication.md — 全部指标定义与 PresentMode 取值表。
-16. https://learn.microsoft.com/en-us/windows-hardware/drivers/display/using-gpuview — GPUView/ETW 采集内容与工作流。
-17. https://devblogs.microsoft.com/pix/ — PIX 定位（D3D12 专用）。
+**Intel / Microsoft** 13. https://www.intel.com/content/www/us/en/developer/tools/graphics-performance-analyzers/overview.html — GPA 能力、目标 API 与 EOL 公告。14. https://github.com/GameTechDev/PresentMon — PresentMon 总览与权限要求。15. https://github.com/GameTechDev/PresentMon/blob/main/README-ConsoleApplication.md — 全部指标定义与 PresentMode 取值表。16. https://learn.microsoft.com/en-us/windows-hardware/drivers/display/using-gpuview — GPUView/ETW 采集内容与工作流。17. https://devblogs.microsoft.com/pix/ — PIX 定位（D3D12 专用）。
 
-**Arm / NVIDIA**
-18. https://developer.arm.com/community/arm-community-blogs/b/mobile-graphics-and-gaming-blog/posts/arm-best-practice-warnings-in-vulkan-sdk — PerfDoc 并入 Khronos 验证层、Arm best practice checks。
-19. https://developer.nvidia.com/nsight-graphics — Nsight Graphics 支持的 API 与 GPU Trace。
+**Arm / NVIDIA** 18. https://developer.arm.com/community/arm-community-blogs/b/mobile-graphics-and-gaming-blog/posts/arm-best-practice-warnings-in-vulkan-sdk — PerfDoc 并入 Khronos 验证层、Arm best practice checks。19. https://developer.nvidia.com/nsight-graphics — Nsight Graphics 支持的 API 与 GPU Trace。
 
-**Mesa**
-20. https://docs.mesa3d.org/envvars.html — `INTEL_DEBUG` / `AMD_DEBUG` 全部开关语义。
+**Mesa** 20. https://docs.mesa3d.org/envvars.html — `INTEL_DEBUG` / `AMD_DEBUG` 全部开关语义。
 
-**开源项目案例**
-21. https://github.com/godotengine/godot/issues/100025 — swapchain 多余等待导致 1–2 帧延迟。
-22. https://github.com/godotengine/godot/issues/89856 — MAILBOX 导致 GPU 100%。
-23. https://github.com/godotengine/godot/pull/106221 — waitable swapchain 优于 AUTO pacing，及平台支持差异。
-24. https://github.com/mpv-player/mpv/issues/7251 — queue-count 1/2/3 的帧率对比。
-25. https://github.com/wolfpld/tracy — Tracy 的能力与支持 API。
-26. https://github.com/flightlessmango/MangoHud — Linux overlay、Vsync 段与日志绘图。
-27. https://renderdoc.org/ — RenderDoc 支持的 API/平台与跨平台 capture。
+**开源项目案例** 21. https://github.com/godotengine/godot/issues/100025 — swapchain 多余等待导致 1–2 帧延迟。22. https://github.com/godotengine/godot/issues/89856 — MAILBOX 导致 GPU 100%。23. https://github.com/godotengine/godot/pull/106221 — waitable swapchain 优于 AUTO pacing，及平台支持差异。24. https://github.com/mpv-player/mpv/issues/7251 — queue-count 1/2/3 的帧率对比。25. https://github.com/wolfpld/tracy — Tracy 的能力与支持 API。26. https://github.com/flightlessmango/MangoHud — Linux overlay、Vsync 段与日志绘图。27. https://renderdoc.org/ — RenderDoc 支持的 API/平台与跨平台 capture。
 
 （apitrace、Streamline、Mali Offline Compiler、`VK_EXT_tooling_info` 在正文中已标注「未验证」，本次未取得原文。）

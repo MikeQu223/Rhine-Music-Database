@@ -7,6 +7,7 @@ KEY_DOWN=108。按下后保持 hold 秒再松开；内核自动重复会让合�
 选择 uinput 而不是合成器私有接口，是因为这台机器上没有 wtype/ydotool，
 而 niri 的 IPC 不提供按键注入。
 """
+
 import ctypes
 import fcntl
 import os
@@ -24,8 +25,13 @@ SYN_REPORT = 0
 
 
 class E(ctypes.Structure):
-    _fields_ = [("s", ctypes.c_long), ("u", ctypes.c_long),
-                ("t", ctypes.c_uint16), ("c", ctypes.c_uint16), ("v", ctypes.c_int32)]
+    _fields_ = [
+        ("s", ctypes.c_long),
+        ("u", ctypes.c_long),
+        ("t", ctypes.c_uint16),
+        ("c", ctypes.c_uint16),
+        ("v", ctypes.c_int32),
+    ]
 
 
 def write_event(fd, etype, code, value):

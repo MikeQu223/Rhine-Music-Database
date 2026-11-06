@@ -30,9 +30,9 @@
 
 - **机制**：`VkPipelineCache` 是"已创建管线状态的复用容器"。驱动在 `vkCreateGraphicsPipelines` 时查询它，命中则可跳过绝大部分创建工作（编译、部分校验、内部数据结构构建）。官方指南明确：管线创建"somewhat costly"，缓存的**最大优势**是状态可存盘跨进程复用，从而"eliminating some of the costly parts of creation"〔规范〕([guide/pipeline_cache](https://docs.vulkan.org/guide/latest/pipeline_cache.html))。
 - **API 形态**：
-  - 进程内：`vkCreatePipelineCache` 建**一个**，全进程所有 `vkCreate*Pipelines` 都传它。规范保证"the same pipeline cache object can be used in multiple threads simultaneously"，内部已同步〔规范〕([spec/pipelines](https://docs.vulkan.org/spec/latest/chapters/pipelines.html))。
-  - 落盘：`vkGetPipelineCacheData` 取 blob → 下次启动填进 `VkPipelineCacheCreateInfo::pInitialData`。规范要求该数据必须来自**之前一次** `vkGetPipelineCacheData` 调用（VUID-…-00769），即 blob 完全是不透明的，不要自己拼、不要跨实现移植〔规范〕。
-  - 多池/多线程：可 `vkMergePipelineCaches` 合并；也可设 `VK_PIPELINE_CACHE_CREATE_EXTERNALLY_SYNCHRONIZED_BIT`，此时"implementation may skip any unnecessary processing needed to support simultaneous modification from multiple threads"——代价是你自己保证外部同步〔规范〕。
+    - 进程内：`vkCreatePipelineCache` 建**一个**，全进程所有 `vkCreate*Pipelines` 都传它。规范保证"the same pipeline cache object can be used in multiple threads simultaneously"，内部已同步〔规范〕([spec/pipelines](https://docs.vulkan.org/spec/latest/chapters/pipelines.html))。
+    - 落盘：`vkGetPipelineCacheData` 取 blob → 下次启动填进 `VkPipelineCacheCreateInfo::pInitialData`。规范要求该数据必须来自**之前一次** `vkGetPipelineCacheData` 调用（VUID-…-00769），即 blob 完全是不透明的，不要自己拼、不要跨实现移植〔规范〕。
+    - 多池/多线程：可 `vkMergePipelineCaches` 合并；也可设 `VK_PIPELINE_CACHE_CREATE_EXTERNALLY_SYNCHRONIZED_BIT`，此时"implementation may skip any unnecessary processing needed to support simultaneous modification from multiple threads"——代价是你自己保证外部同步〔规范〕。
 - **代价与风险**：规范只说实现"should not internally limit"条目数与宿主内存，**缓存会无限长大**；应用侧要用 `vkGetPipelineCacheData` 的 `dataSize` 做上限与裁剪〔规范〕。裁剪不能做 LRU（blob 内部结构不透明），只能"整块保留 / 整块丢弃"——这正是 `VK_KHR_pipeline_binary` 出现的动机〔厂商文档〕([Khronos blog: pipeline binary](https://www.khronos.org/blog/bringing-explicit-pipeline-caching-control-to-vulkan))。
 - **适用条件**：任何有 PSO 的程序都适用。**不适用**：把缓存当"编译外包"——缓存只省重复工作，第一次仍然要编译。
 
@@ -95,10 +95,10 @@
 
 - **机制**：PSO 首次创建包含 shader 编译/转换，耗时在 ms~十 ms 量级（取决于 shader 与驱动），出现在渲染帧里就是一次明显掉帧。规范只保证"创建是同步的"，不保证便宜〔规范〕。
 - **该做**：
-  1. 启动后（或曲目/场景加载时）在**后台线程**用同一个 `VkPipelineCache` 批量建 PSO；线程优先级设 idle，需要时临时提高〔厂商文档〕([NVIDIA PSO](https://developer.nvidia.com/blog/advanced-api-performance-pipeline-state-objects/))。
-  2. 先用泛化 shader 快速上线，再在后台特化替换（同源）。
-  3. 有 `VK_KHR_pipeline_binary` 时，先异步创建 binary，把磁盘 I/O 移出关键路径〔厂商文档〕。
-  4. 不要把几十万个 PSO 一次性序列化到磁盘——内存会膨胀；用"miss 时再更新 library"的策略〔厂商文档〕。
+    1. 启动后（或曲目/场景加载时）在**后台线程**用同一个 `VkPipelineCache` 批量建 PSO；线程优先级设 idle，需要时临时提高〔厂商文档〕([NVIDIA PSO](https://developer.nvidia.com/blog/advanced-api-performance-pipeline-state-objects/))。
+    2. 先用泛化 shader 快速上线，再在后台特化替换（同源）。
+    3. 有 `VK_KHR_pipeline_binary` 时，先异步创建 binary，把磁盘 I/O 移出关键路径〔厂商文档〕。
+    4. 不要把几十万个 PSO 一次性序列化到磁盘——内存会膨胀；用"miss 时再更新 library"的策略〔厂商文档〕。
 - **风险**：后台建 PSO 与前台渲染共享驱动内部锁与内存分配器，可能出现"后台把前台拖慢"。缓解：限制后台并发度、按帧配额（每帧最多建 N 个）、建完统一落盘一次而不是每建一个就落盘。
 - **适用条件**：所有"第一次出现某种材质/效果会卡"的程序。**不适用**：PSO 全部在启动时同步建完且总耗时 < 100 ms 的小程序。
 
@@ -165,10 +165,10 @@
 - **反模式定义**：每帧 `vkResetDescriptorPool()` → 一串 `vkAllocateDescriptorSets()` → 一串 `vkUpdateDescriptorSets()`。这是"最直白、最灵活"的做法，但在移动/iGPU 上很低效；极端情况（每个 draw 调一次 `vkUpdateDescriptorSets`）"更新描述符的时间可能超过 draw 本身"〔规范/官方指南 + 实测/案例〕([samples/descriptor_management](https://docs.vulkan.org/samples/latest/samples/performance/descriptor_management/README.html))。
 - **量级（可查的实测）**：draw-call 密集场景、2019 年高端手机、release、无校验层：**44 ms / 23 FPS → 27 ms / 37 FPS，帧时间降 38%**；GPU 帧时间几乎不变、仍是 CPU bound——收益全在 CPU 侧〔实测/案例〕。Arm 的对应文章还给出配套结论：单个大 `VkBuffer` + dynamic offset 也能拿到类似量级，且在复杂场景里可与 set 缓存叠加〔厂商文档〕([Arm](https://community.arm.com/arm-community-blogs/b/graphics-gaming-and-vr-blog/posts/vulkan-descriptor-and-buffer-management))。
 - **做到"一帧零更新"的四步**：
-  1. **持久 set**：set 的生命周期 = 资源的生命周期，不是帧。纹理/缓冲创建时建 set，销毁时销毁。
-  2. **变化的部分搬走**：per-draw 常量 → push constant；per-object 数据 → 一个大 UBO/SSBO + `vkCmdBindDescriptorSets` 的 dynamic offset（不是新 set）。
-  3. **按内容缓存**：以 set 内容为 key 的 hashmap，或直接把 set handle 存在材质/网格对象里〔同上〕。
-  4. **环形缓冲**：同一帧内要写两次同一资源（例如 FSR3 的中间 target 在帧间复用）时用 N 个槽轮转，避免每帧重建。
+    1. **持久 set**：set 的生命周期 = 资源的生命周期，不是帧。纹理/缓冲创建时建 set，销毁时销毁。
+    2. **变化的部分搬走**：per-draw 常量 → push constant；per-object 数据 → 一个大 UBO/SSBO + `vkCmdBindDescriptorSets` 的 dynamic offset（不是新 set）。
+    3. **按内容缓存**：以 set 内容为 key 的 hashmap，或直接把 set handle 存在材质/网格对象里〔同上〕。
+    4. **环形缓冲**：同一帧内要写两次同一资源（例如 FSR3 的中间 target 在帧间复用）时用 N 个槽轮转，避免每帧重建。
 - **风险**：持久 set 意味着"资源热重载/分辨率变化"必须显式失效缓存；否则会绑到已销毁的 image（校验层会抓，发布版是黑屏/花屏）。给缓存加版本号与 `VK_EXT_debug_utils` 名字，便于定位。
 
 ### B.8 B 节检查清单
@@ -204,10 +204,10 @@
 
 - **收益**：可以把"每个物体/每个 pass 的录制"分散到多线程，然后被多个 primary 复用（同一段后处理在多个 view 里重复）。
 - **失效场景（关键，多数人踩这里）**：
-  1. **render pass 兼容性**：secondary 的 `VkCommandBufferInheritanceInfo::renderPass` 定义"它能被在哪些 render pass 里执行"——不兼容就不能 `vkCmdExecuteCommands`〔规范〕([spec/cmdbuffers](https://docs.vulkan.org/spec/latest/chapters/cmdbuffers.html))。用动态渲染时该字段被忽略（原文："renderPass, subpass, and framebuffer are ignored"）。
-  2. **framebuffer 精度影响执行期性能**：规范写明"Specifying the exact framebuffer that the secondary command buffer will be executed with may result in better performance at command buffer execution time"——传精确 framebuffer 是性能选项，不是可选装饰〔规范〕。
-  3. **动态状态不继承**：primary 上设的动态状态不会自动带到 secondary；secondary 里必须自己设（或用支持继承的扩展）。
-  4. **调用本身贵**：官方样例明确"invocations are expensive"，数量要少，太多会让应用变 CPU bound〔规范/官方指南〕。
+    1. **render pass 兼容性**：secondary 的 `VkCommandBufferInheritanceInfo::renderPass` 定义"它能被在哪些 render pass 里执行"——不兼容就不能 `vkCmdExecuteCommands`〔规范〕([spec/cmdbuffers](https://docs.vulkan.org/spec/latest/chapters/cmdbuffers.html))。用动态渲染时该字段被忽略（原文："renderPass, subpass, and framebuffer are ignored"）。
+    2. **framebuffer 精度影响执行期性能**：规范写明"Specifying the exact framebuffer that the secondary command buffer will be executed with may result in better performance at command buffer execution time"——传精确 framebuffer 是性能选项，不是可选装饰〔规范〕。
+    3. **动态状态不继承**：primary 上设的动态状态不会自动带到 secondary；secondary 里必须自己设（或用支持继承的扩展）。
+    4. **调用本身贵**：官方样例明确"invocations are expensive"，数量要少，太多会让应用变 CPU bound〔规范/官方指南〕。
 - **结论**：secondary 是"多线程录制的载体"，不是"减少 API 调用的手段"。要减少命令数，应让一个 secondary 里录更多 draw，而不是切更多 secondary。
 
 ### C.4 命令数量对驱动前端的影响
@@ -243,9 +243,9 @@
 - **机制**：Vulkan 只给"整块 `VkDeviceMemory`"，`maxMemoryAllocationCount` 限制同时活跃的分配数，而 OS/驱动级的分配/释放"likely to be really slow"；官方指南把 sub-allocation 称为 first-class 做法，并建议用 VMA 这类库〔规范/官方指南〕([memory_allocation](https://docs.vulkan.org/guide/latest/memory_allocation.html))。
 - **推荐参数形态**（VMA 官方 usage patterns）：GPU-only 资源用 `VMA_MEMORY_USAGE_AUTO`（自动选 DEVICE_LOCAL），大资源或会随分辨率重建的资源加 `VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT` + `priority = 1.0f`（配 `VK_EXT_memory_priority` 降低被 OS 换出的概率）；上传缓冲用 `VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT`（+ `MAPPED_BIT` 做持久映射）；回读缓冲用 `VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT`（保证 HOST_VISIBLE|HOST_CACHED）〔厂商文档〕([VMA usage_patterns](https://gpuopen-librariesandsdks.github.io/VulkanMemoryAllocator/html/usage_patterns.html))。
 - **mapped 计数与 flush/invalidate**：
-  - 映射是**按 allocation 计数**的：同一 allocation 调两次 `vkMapMemory` 就要 `vkUnmapMemory` 两次（VMA 帮你记账，但不要自己混着调裸 API）。
-  - 非 HOST_COHERENT 内存需要 `vkFlushMappedMemoryRanges`（写后）/ `vkInvalidateMappedMemoryRanges`（读前），VMA 对应 `vmaFlushAllocation`/`vmaInvalidateAllocation`。**按区间 flush，不要整块 flush**；写入量小于 `nonCoherentAtomSize` 时按该值向上取整，否则可能丢失部分写入〔规范〕。
-  - 判断是否需要 flush：查 memory type 的 `HOST_COHERENT` 位。iGPU 的 HOST_VISIBLE|DEVICE_LOCAL 内存**通常** coherent，但不要假设——查询后再决定走快路径还是 flush 路径。
+    - 映射是**按 allocation 计数**的：同一 allocation 调两次 `vkMapMemory` 就要 `vkUnmapMemory` 两次（VMA 帮你记账，但不要自己混着调裸 API）。
+    - 非 HOST_COHERENT 内存需要 `vkFlushMappedMemoryRanges`（写后）/ `vkInvalidateMappedMemoryRanges`（读前），VMA 对应 `vmaFlushAllocation`/`vmaInvalidateAllocation`。**按区间 flush，不要整块 flush**；写入量小于 `nonCoherentAtomSize` 时按该值向上取整，否则可能丢失部分写入〔规范〕。
+    - 判断是否需要 flush：查 memory type 的 `HOST_COHERENT` 位。iGPU 的 HOST_VISIBLE|DEVICE_LOCAL 内存**通常** coherent，但不要假设——查询后再决定走快路径还是 flush 路径。
 - **代价/风险**：VMA 的块大小与碎片策略不是万能；`vmaCalculateStatistics()` 只用于调试（很慢），运行时判断用 `vmaGetHeapBudgets()`〔厂商文档〕([staying_within_budget](https://gpuopen-librariesandsdks.github.io/VulkanMemoryAllocator/html/staying_within_budget.html))。
 
 ### D.2 内存类型选择与 UMA 上 HOST_VISIBLE|DEVICE_LOCAL 的判定
@@ -345,13 +345,13 @@
 
 ### F.1 各特性的影响量与使用策略
 
-| 特性 | 影响量级 | 什么时候开 | 依据 |
-|---|---|---|---|
-| Core validation | 明显；多线程时可能是最大项（见 F.2） | 开发构建默认 | 〔厂商文档〕 |
-| Synchronization validation | 需显式启用，覆盖 barrier / hazard 检查 | 改同步代码时开，平时关 | 〔厂商文档〕 |
-| Best practices | 中（逐调用启发式检查） | 调优阶段开一轮 | 〔厂商文档〕 |
-| GPU-AV | 很大；"完美校验可以慢到 multiple seconds a frame" | 只在怀疑越界/OOB 时开，且用 Scoped GPU-AV 限定区域 | 〔厂商文档〕 |
-| GPU-AV + Core 同时开 | "performance will be slow"（官方明确不建议） | 不要 | 〔厂商文档〕 |
+| 特性                       | 影响量级                                          | 什么时候开                                         | 依据         |
+| -------------------------- | ------------------------------------------------- | -------------------------------------------------- | ------------ |
+| Core validation            | 明显；多线程时可能是最大项（见 F.2）              | 开发构建默认                                       | 〔厂商文档〕 |
+| Synchronization validation | 需显式启用，覆盖 barrier / hazard 检查            | 改同步代码时开，平时关                             | 〔厂商文档〕 |
+| Best practices             | 中（逐调用启发式检查）                            | 调优阶段开一轮                                     | 〔厂商文档〕 |
+| GPU-AV                     | 很大；"完美校验可以慢到 multiple seconds a frame" | 只在怀疑越界/OOB 时开，且用 Scoped GPU-AV 限定区域 | 〔厂商文档〕 |
+| GPU-AV + Core 同时开       | "performance will be slow"（官方明确不建议）      | 不要                                               | 〔厂商文档〕 |
 
 - **GPU-AV 的硬成本**：需要 **1 个 descriptor set**（会让 `maxBoundDescriptorSets` 减 1），需要 `fragmentStoresAndAtomics`/`vertexPipelineStoresAndAtomics`/`timelineSemaphore`；默认关 Safe Mode（Regression Mode，追求快），"Force robustness on"可再提速，Scoped GPU-AV 只校验指定区域以提速〔厂商文档〕([LunarG](https://vulkan.lunarg.com/doc/view/latest/windows/gpu_validation.html))。
 - **同步校验**：Vulkan 的排序保证有限，缺同步是"看起来能跑"的典型 bug；LunarG 的白皮书专门讲怎么用、怎么优化它〔厂商文档〕([Khronos blog](https://www.khronos.org/blog/a-guide-to-vulkan-synchronization-validation))。
@@ -388,39 +388,39 @@
 
 ### G.1 反模式表
 
-| # | 反模式 | 机制（为什么慢） | 替代 | 验证计数 |
-|---|---|---|---|---|
-| 1 | 创建 pipeline 传 `VK_NULL_HANDLE` | 每次全量编译/构建内部状态 | 全进程单一 `VkPipelineCache` + 落盘 | PSO 创建次数、feedback duration 累计 |
-| 2 | 渲染帧内首次使用才建 PSO | 编译落在关键路径 → 掉帧 | 启动/加载期后台预热 | 抓帧中 `vkCreateGraphicsPipelines` 是否在帧中间 |
-| 3 | 每帧 reset 池 + 重建 descriptor | 分配与更新成本全在 CPU；实测 44→27 ms（-38%） | 持久 set + 缓存 + dynamic offset | `vkUpdateDescriptorSets`/`vkAllocateDescriptorSets` 次数/帧 |
-| 4 | 每 draw 调 `vkUpdateDescriptorSets` | 更新可能比 draw 还贵 | push constant / dynamic offset | 同上，按 draw 归一化 |
-| 5 | 每帧 alloc/free command buffer | 实测占 CPU 采样 28.8% | 每线程池 + `vkResetCommandPool` | `vkAllocateCommandBuffers` 次数/帧 |
-| 6 | 为逐缓冲 reset 打开 `RESET_COMMAND_BUFFER_BIT` | 每缓冲独立 allocator；实测 1.16% vs 0.45% | 整池 reset | pool flags、`vkResetCommandBuffer` 次数 |
-| 7 | 每 draw 重绑同 PSO / 重设同值动态状态 | 冗余 API 调用与命令字节 | 录制端影子状态 | 命令数/draw 比 |
-| 8 | `ALL_GRAPHICS` → 自身的宽 barrier | 破坏 binning 与 fragment 重叠 | 精确 stage/access 的 barrier | barrier 数、stage 掩码分布 |
-| 9 | `vkCmdResolveImage` 做 MSAA resolve | 强制往返主存 | attachment resolve + `storeOp=DONT_CARE` | resolve 调用次数、带宽计数器 |
-| 10 | `vkCmdClearAttachments` 代替 `loadOp=CLEAR` | 走渲染管线而非 tile 初始化 | `VK_ATTACHMENT_LOAD_OP_CLEAR` | clear 调用次数 |
-| 11 | 每帧 map/unmap 上传缓冲 | 页表/TLB 操作 | 持久映射 + 环形缓冲 | `vkMapMemory` 次数/帧 |
-| 12 | per-resource `vkAllocateMemory` | 驱动级分配很慢，逼近 `maxMemoryAllocationCount` | VMA 子分配 | 分配次数、block 数 |
-| 13 | 每 draw 一对 debug label（发布版） | 逐命令 API 成本 | 编译期宏关掉 | 命令级 label 数/帧 |
-| 14 | 性能测量时开着 validation | 多线程锁竞争（实测部分游戏 ~150%） | 测量时关 layer | 实例层列表、`VK_EXT_tooling_info` |
-| 15 | 两套 PSO 缓存（QRhi 一份、自建层一份） | 互不命中，命中率减半 | 复用同一个 `VkPipelineCache` | 缓存 blob 大小、hit 比例 |
+| #   | 反模式                                         | 机制（为什么慢）                                | 替代                                     | 验证计数                                                    |
+| --- | ---------------------------------------------- | ----------------------------------------------- | ---------------------------------------- | ----------------------------------------------------------- |
+| 1   | 创建 pipeline 传 `VK_NULL_HANDLE`              | 每次全量编译/构建内部状态                       | 全进程单一 `VkPipelineCache` + 落盘      | PSO 创建次数、feedback duration 累计                        |
+| 2   | 渲染帧内首次使用才建 PSO                       | 编译落在关键路径 → 掉帧                         | 启动/加载期后台预热                      | 抓帧中 `vkCreateGraphicsPipelines` 是否在帧中间             |
+| 3   | 每帧 reset 池 + 重建 descriptor                | 分配与更新成本全在 CPU；实测 44→27 ms（-38%）   | 持久 set + 缓存 + dynamic offset         | `vkUpdateDescriptorSets`/`vkAllocateDescriptorSets` 次数/帧 |
+| 4   | 每 draw 调 `vkUpdateDescriptorSets`            | 更新可能比 draw 还贵                            | push constant / dynamic offset           | 同上，按 draw 归一化                                        |
+| 5   | 每帧 alloc/free command buffer                 | 实测占 CPU 采样 28.8%                           | 每线程池 + `vkResetCommandPool`          | `vkAllocateCommandBuffers` 次数/帧                          |
+| 6   | 为逐缓冲 reset 打开 `RESET_COMMAND_BUFFER_BIT` | 每缓冲独立 allocator；实测 1.16% vs 0.45%       | 整池 reset                               | pool flags、`vkResetCommandBuffer` 次数                     |
+| 7   | 每 draw 重绑同 PSO / 重设同值动态状态          | 冗余 API 调用与命令字节                         | 录制端影子状态                           | 命令数/draw 比                                              |
+| 8   | `ALL_GRAPHICS` → 自身的宽 barrier              | 破坏 binning 与 fragment 重叠                   | 精确 stage/access 的 barrier             | barrier 数、stage 掩码分布                                  |
+| 9   | `vkCmdResolveImage` 做 MSAA resolve            | 强制往返主存                                    | attachment resolve + `storeOp=DONT_CARE` | resolve 调用次数、带宽计数器                                |
+| 10  | `vkCmdClearAttachments` 代替 `loadOp=CLEAR`    | 走渲染管线而非 tile 初始化                      | `VK_ATTACHMENT_LOAD_OP_CLEAR`            | clear 调用次数                                              |
+| 11  | 每帧 map/unmap 上传缓冲                        | 页表/TLB 操作                                   | 持久映射 + 环形缓冲                      | `vkMapMemory` 次数/帧                                       |
+| 12  | per-resource `vkAllocateMemory`                | 驱动级分配很慢，逼近 `maxMemoryAllocationCount` | VMA 子分配                               | 分配次数、block 数                                          |
+| 13  | 每 draw 一对 debug label（发布版）             | 逐命令 API 成本                                 | 编译期宏关掉                             | 命令级 label 数/帧                                          |
+| 14  | 性能测量时开着 validation                      | 多线程锁竞争（实测部分游戏 ~150%）              | 测量时关 layer                           | 实例层列表、`VK_EXT_tooling_info`                           |
+| 15  | 两套 PSO 缓存（QRhi 一份、自建层一份）         | 互不命中，命中率减半                            | 复用同一个 `VkPipelineCache`             | 缓存 blob 大小、hit 比例                                    |
 
 ### G.2 计数与工具矩阵
 
 - **必须自己埋的计数（每帧/每次运行）**：
-  - `vkCreate*Pipelines` 次数与 `VkPipelineCreationFeedback.duration` 总和；
-  - `vkUpdateDescriptorSets` 次数、`vkAllocateDescriptorSets` 次数；
-  - `vkAllocateCommandBuffers`/`vkResetCommandBuffer`/`vkResetCommandPool` 次数；
-  - `vkQueueSubmit` 次数、pipeline barrier 次数、`vkCmdBindPipeline` 次数（可按 draw 归一化）；
-  - `vkMapMemory`/`vkFlushMappedMemoryRanges` 次数与字节数。
-  - 实现方式：这些函数都经 driver dispatch，最省事的做法是在自己的封装层加计数器（不要 hook 驱动）。
+    - `vkCreate*Pipelines` 次数与 `VkPipelineCreationFeedback.duration` 总和；
+    - `vkUpdateDescriptorSets` 次数、`vkAllocateDescriptorSets` 次数；
+    - `vkAllocateCommandBuffers`/`vkResetCommandBuffer`/`vkResetCommandPool` 次数；
+    - `vkQueueSubmit` 次数、pipeline barrier 次数、`vkCmdBindPipeline` 次数（可按 draw 归一化）；
+    - `vkMapMemory`/`vkFlushMappedMemoryRanges` 次数与字节数。
+    - 实现方式：这些函数都经 driver dispatch，最省事的做法是在自己的封装层加计数器（不要 hook 驱动）。
 - **抓帧/剖析工具**：
-  - **RenderDoc**：看"一帧里有哪些 API 调用、PSO 绑定切换序列"，直接回答"有多少冗余"；
-  - **Intel GPA / VTune**：Intel 官方推荐用于 CPU/GPU 瓶颈定位〔厂商文档〕([Intel](https://www.intel.com/content/www/us/en/developer/articles/guide/developer-and-optimization-guide-for-intel-processor-graphics-gen11-api.html))；
-  - **AMD Radeon GPU Profiler / NVIDIA Nsight**：discrete 侧对照；
-  - **Streamline Performance Analyzer**：Khronos 样例用它确认"CPU bound 而 GPU idle"〔实测/案例〕([samples/descriptor_management](https://docs.vulkan.org/samples/latest/samples/performance/descriptor_management/README.html))；
-  - **validation 层 Best Practices**：会直接对"每帧重建 descriptor""不必要 storeOp"等给警告——最便宜的反模式检测器。
+    - **RenderDoc**：看"一帧里有哪些 API 调用、PSO 绑定切换序列"，直接回答"有多少冗余"；
+    - **Intel GPA / VTune**：Intel 官方推荐用于 CPU/GPU 瓶颈定位〔厂商文档〕([Intel](https://www.intel.com/content/www/us/en/developer/articles/guide/developer-and-optimization-guide-for-intel-processor-graphics-gen11-api.html))；
+    - **AMD Radeon GPU Profiler / NVIDIA Nsight**：discrete 侧对照；
+    - **Streamline Performance Analyzer**：Khronos 样例用它确认"CPU bound 而 GPU idle"〔实测/案例〕([samples/descriptor_management](https://docs.vulkan.org/samples/latest/samples/performance/descriptor_management/README.html))；
+    - **validation 层 Best Practices**：会直接对"每帧重建 descriptor""不必要 storeOp"等给警告——最便宜的反模式检测器。
 - **判据**：GPU 帧时间稳定但 CPU 帧时间长 → 走 §A~C；CPU 时间不长但帧率不够、GPU 在等带宽 → 走 §D~E（iGPU 尤其看 load/store 与 resolve）。两者都看 RenderDoc 的"每帧 API 调用数"，它是最直接的链路开销指标。
 
 ### G.3 本项目的落地顺序（Qt + QRhi + 自建呈现层 + FSR3）

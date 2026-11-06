@@ -7,6 +7,7 @@ Qt 的诊断行是 1s CoarseTimer 打印的，行与行之间的名义间隔并�
 
 用法：<程序> 2>&1 | python3 -u ts.py > run.log
 """
+
 import sys
 import time
 

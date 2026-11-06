@@ -39,10 +39,10 @@ grep "内存 rss=" tools/perf/memory/out/mem_baseline.log | sed 's/.*内存 //' 
 
 ## 文件
 
-| 文件 | 作用 |
-| --- | --- |
-| `mem.sh <tag>` | 连续 ↓↑ 循环 `CYCLES` 轮，末尾静止 `IDLE` 秒 |
-| `step.sh <tag>` | 每次只按一次 ↓，间隔 2 s，`STEPS` 次 |
-| `idle.sh` | 不注入任何输入，外部每 3 s 采一次 `VmRSS`，`N` 次 |
+| 文件            | 作用                                              |
+| --------------- | ------------------------------------------------- |
+| `mem.sh <tag>`  | 连续 ↓↑ 循环 `CYCLES` 轮，末尾静止 `IDLE` 秒      |
+| `step.sh <tag>` | 每次只按一次 ↓，间隔 2 s，`STEPS` 次              |
+| `idle.sh`       | 不注入任何输入，外部每 3 s 采一次 `VmRSS`，`N` 次 |
 
 日志与时间线写入 `tools/perf/memory/out/`（`OUT_DIR` 可覆盖）。

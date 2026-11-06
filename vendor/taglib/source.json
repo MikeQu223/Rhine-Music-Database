@@ -1,1 +1,8 @@
-{"project":"TagLib","version":"2.1.1","url":"https://github.com/taglib/taglib/releases/tag/v2.1.1","license":"MPL-1.1","archiveSha256":"bd57924496a272322d6f9252502da4e620b6ab9777992e8934779ebd64babd6e","modifications":false}
+{
+    "project": "TagLib",
+    "version": "2.1.1",
+    "url": "https://github.com/taglib/taglib/releases/tag/v2.1.1",
+    "license": "MPL-1.1",
+    "archiveSha256": "bd57924496a272322d6f9252502da4e620b6ab9777992e8934779ebd64babd6e",
+    "modifications": false
+}

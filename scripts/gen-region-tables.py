@@ -52,9 +52,33 @@ REGION_EU = 2
 # 欧盟地区：只收 EU 27 国。EEA 的挪威/冰岛/列支敦士登、英国、瑞士都不在范围内，
 # 这些地区的用户不会被要求确认数据传输许可（Clarity 仍照常启动）。
 EU = [
-    "AT", "BE", "BG", "HR", "CY", "CZ", "DK", "EE", "FI", "FR",
-    "DE", "GR", "HU", "IE", "IT", "LV", "LT", "LU", "MT", "NL",
-    "PL", "PT", "RO", "SK", "SI", "ES", "SE",
+    "AT",
+    "BE",
+    "BG",
+    "HR",
+    "CY",
+    "CZ",
+    "DK",
+    "EE",
+    "FI",
+    "FR",
+    "DE",
+    "GR",
+    "HU",
+    "IE",
+    "IT",
+    "LV",
+    "LT",
+    "LU",
+    "MT",
+    "NL",
+    "PL",
+    "PT",
+    "RO",
+    "SK",
+    "SI",
+    "ES",
+    "SE",
 ]
 COUNTRIES = {"CN": REGION_CN, **{code: REGION_EU for code in EU}}
 
@@ -151,7 +175,9 @@ def main() -> int:
 
     for path, records in ((OUTPUT_V4, v4), (OUTPUT_V6, v6)):
         size = path.stat().st_size
-        print(f"写入 {path.relative_to(ROOT)}：{len(records)} 段，{size} 字节（{size / 1024:.0f} KB）")
+        print(
+            f"写入 {path.relative_to(ROOT)}：{len(records)} 段，{size} 字节（{size / 1024:.0f} KB）"
+        )
     return 0
 
 

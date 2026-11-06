@@ -13,10 +13,7 @@
     },
     "qq": {
         "source": "https://y.qq.com/mediastyle/music_v17/src/css/img/mod_icon.svg",
-        "icons": [
-            "HQ",
-            "SQ"
-        ],
+        "icons": ["HQ", "SQ"],
         "copyright": "Tencent QQ Music. Official quality marks; path geometry preserved."
     },
     "kugou": {

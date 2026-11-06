@@ -1,1 +1,8 @@
-{"project":"utfcpp","version":"4.0.6","url":"https://github.com/nemtrif/utfcpp/releases/tag/v4.0.6","license":"BSL-1.0","archiveSha256":"6920a6a5d6a04b9a89b2a89af7132f8acefd46e0c2a7b190350539e9213816c0","modifications":false}
+{
+    "project": "utfcpp",
+    "version": "4.0.6",
+    "url": "https://github.com/nemtrif/utfcpp/releases/tag/v4.0.6",
+    "license": "BSL-1.0",
+    "archiveSha256": "6920a6a5d6a04b9a89b2a89af7132f8acefd46e0c2a7b190350539e9213816c0",
+    "modifications": false
+}
