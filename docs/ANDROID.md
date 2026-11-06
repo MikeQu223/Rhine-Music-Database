@@ -70,8 +70,8 @@ npm run build:android -- --check
 
 ## CI
 
-Android 构建在独立工作流 `.github/workflows/android.yml` 里，与其他平台完全隔离：它失败
-不会影响 `desktop.yml`（桌面/iOS）的构建与发布，反之亦然。
+Android 构建是 `.github/workflows/desktop.yml` 里一个独立的 `android` job，与其他平台完全隔离：
+它失败不会影响同一工作流里的桌面/iOS 构建与发布，反之亦然。
 
 - 与本机走同一套脚本（`build:qt:android` → `build:android`），不额外维护第二套流程。
 - Qt kit 从五个 `third_party/qt` 子模块现场交叉编译；产物（`output/dependencies/qt-android`
@@ -599,6 +599,9 @@ vec3(normalResponse.a)`，那个 `a` 来自 **normalAtlas**，surfaceAtlas 的 a
 | `RHINE_DECORATION_HIGH=1`                           | 强制建 2000×1480 装饰面                                         |
 | `RHINE_SURFACE_ETC2=1`                              | 启用 ETC2 图集（**默认关**：编码器有字节序/位布局缺陷，会花屏） |
 | `RHINE_DEBUG_ATLAS=1`                               | 启动时打印实际选中的表面图集格式（ETC2 RGB8 / BC7 / RGBA8）     |
+| `-DRHINE_ANDROID_LTO=thin\|full\|off`               | 配置期；默认 thin（并行），构建时间敏感时选 off                 |
+| `RHINE_ANDROID_LEGACY_PACKAGING=0`                  | 打包期；关掉后 `.so` 恢复 STORED 存储（APK 变大、安装后省空间） |
+| `RHINE_ANDROID_R8=0`                                | 打包期；关掉 R8 收缩（`classes.dex` 回到 6.9 MB）               |
 
 ## 滑动列表掉帧：HUD 软件栅格（Android）
 
@@ -1099,20 +1102,24 @@ BuildId 与当前 APK 里那份完全一致，补丁新增的 `destroySurfaceRes
 **说明它从未编译进 kit**。要让那条修复生效，需重跑 `npm run build:qt:android`
 再重建 APK；在此之前前台换面仍可能复发旧的 SIGABRT。两条线别混为一谈。
 
-## 构建优化：Full LTO 与 APK 体积（2026-11-06）
+## 构建优化：并行 LTO 与 APK 体积（2026-11-06）
 
-### Full LTO（仅 Android）
+### LTO 形态显式化（仅 Android）
 
 `CMakeLists.txt` 给 Release 打开的 `INTERPROCEDURAL_OPTIMIZATION` 在 Clang（含 NDK）上
-展开成 **`-flto=thin`**——模块级并行优化，跨静态库的内联仍然有限。
-`Qt/Android.cmake` 现在把它关掉，改成显式 **`-flto`**（full），让
-`RhineCore` + `RhineMusicDatabase` + qrc 资源符号在同一个链接单元里优化。
+展开成 `-flto=thin`。`Qt/Android.cmake` 现在关掉它，改成显式可切换的
+**`RHINE_ANDROID_LTO`**（CMake cache 变量，`-D` 可覆盖）：
 
-- **必须同时关掉 IPO**：否则 `-flto=thin` 与 `-flto` 会出现在同一条命令行上，
-  谁生效取决于编译器实现细节。
-- 代价是链接期单线程合并 IR，构建明显变慢；收益集中在 `.text`（主库约 3.8 MB），
-  资源在 `.rodata`，LTO 碰不到——所以**真正压体积要靠下面的裁剪，不是 LTO**。
-- 桌面 / iOS 保持 thin（`CMakeLists.txt` 那段不动）。
+- **`thin`（默认，并行）**：`-flto=thin` 编译，链接带 `--thinlto-jobs=<nproc>`
+  （`ProcessorCount` 探测）。全核并行的跨模块优化，构建时间接近普通编译。
+- **`full`（串行合并，更彻底）**：`-flto` 编译，链接带 `--lto-partitions=<nproc>`。
+  全量 IR 合并的死代码消除最彻底，但合并阶段单线程是瓶颈；分区只是把 codegen
+  拆开并行，分区之间不再互相内联，实际效果介于 thin 与纯 full 之间。
+- **`off`**：不加 LTO 标志。
+
+三种形态都由同一个 generator expression 限制在 Release；两个标志绝不同时出现
+（先 `set_target_properties(... INTERPROCEDURAL_OPTIMIZATION_RELEASE FALSE)` 关掉 IPO，
+再手挂 flags）。桌面 / iOS 保持 CMake 默认的 thin。
 
 ### APK 体积构成（168 MB，`a6724e5` 那一版）
 
@@ -1140,8 +1147,51 @@ BuildId 与当前 APK 里那份完全一致，补丁新增的 `destroySurfaceRes
    `isTextureFormatSupported(BC7)` 恒为 false，RhiScene 直接跳过。
 4. **ETC2 产物不再烘焙也不再打包**（699 KB + 每次省十几秒）：编码器有缺陷已默认关闭，
    见「T1 · surfaceAtlas 换 ETC2 RGB8」。
+5. **`.so` 压缩存储**（`RHINE_ANDROID_LEGACY_PACKAGING`，默认 `1`）：Qt 模板的
+   `useLegacyPackaging=false` 把 152 MB 的 `.so` 原样塞进 APK（九成体积都在这）。
+   改成 `true`（extractNativeLibs）后 AGP 用 deflate 压缩，下载体积大约降到六成；
+   代价是安装时解压到 `/data/app/.../lib/`、首次启动多一次解压。对 sideload 分发，
+   下载体积比安装后占用重要，所以默认开；改回用 `RHINE_ANDROID_LEGACY_PACKAGING=0`。
+6. **R8 收缩**（`RHINE_ANDROID_R8`，默认 `1`）：`minifyEnabled + shrinkResources`，
+   但**不混淆**（`-dontobfuscate`）——所有 JNI 入口（QtActivity/QtNative、
+   RhineMediaService、Consent*）都是按类名与方法名字符串查找的，混淆改了名字就是
+   启动即崩。keep 规则在追加段里配置期生成到 `projectDir/rhine-r8.pro`：
+   `org.qtproject.**`、`rhine.music.database.**`、两个 SDK 全类名 + 各自 `dontwarn`、
+   以及 `keepclasseswithmembernames ... native <methods>`。效果实测
+   `classes.dex` 6.9 MB → **1.7 MB**（androidx 与 Kotlin stdlib 被大幅收缩）。
 
-合计约 **16 MB**（168 → ~152 MB）。
+实际效果：`6d0c95f` 起的 APK 从 **168 MB → 69 MB**（`.so` 压缩 + 库裁剪 + R8）。
+
+### zipalign 与 zopfli 后处理（可选）
+
+- **zipalign**：构建链已经在做——`scripts/build-android.cjs` 在 apksigner 之前跑
+  `zipalign -p -f 4`。**顺序不能反**：v2/v3 签名的摘要覆盖整个 ZIP 字节流，
+  签名后再对齐会破坏签名块。
+- **zopfli**（`scripts/optimize-apk.py`，可选工具、默认不接入构建链）：
+  DEFLATE 的高强度编码器，输出仍是合法 DEFLATE 流，对 AGP 已压缩的数据通常再省
+  3~8%。脚本做完整的三步：重压 → `zipalign -p -f 4` → 用 `output/android-work/debug.keystore`
+  （`rhine-debug`）重新签名并 `verify`——重写 ZIP 一定破坏 v2/v3 签名，必须重签。
+  条目策略：STORED 原样拷贝（resources.arsc、noCompress 的 rcc 资源）；DEFLATED
+  重压后没有占到便宜、或低于 `--min-size`（默认 64 KiB）的，字节级保留原流。
+  参数：`--iterations` 默认 15（官方默认，15→50 实测 <0.3%，不值得），blocksplitting
+00  保持开；`--workers` 默认核心数*2——zopfli 的 C 扩展**不释放 GIL**（实测双线程
+  1.08x ≈ 无加速），所以并行用 `ProcessPoolExecutor`，每条目一个任务、主进程按 ZIP
+  顺序写回，峰值内存约 300 MB。iter1 的实测（`--min-size 150000 --iterations 1`）：
+  28 条重压、净省 1.9 MB、墙钟 257 s、CPU 并行 ~3.7x；全量 iter15 慢一个数量级，
+  交由构建者自行取舍。用法：
+
+  ```sh
+  /home/aibeto/.workbuddy/binaries/python/envs/default/bin/python3 \
+      scripts/optimize-apk.py output/android-work/aligned.apk
+  ```
+
+  实现要点：CPython 的 `zipfile` 对 DEFLATED 条目内部用 `zlib.compressobj(-15)`，
+  脚本替换 `zipfile.zlib.compressobj` 把压缩器输出换成预备好的 raw DEFLATE
+  （CRC 与 size 仍按原文计算）；zopfli 0.4.x 的 `compress()` 输出的是 zlib 容器，
+  要剥掉 2 字节头与 4 字节 Adler-32 并 round-trip 校验。**保留原流的路径同样做
+  round-trip**——第一版这里有个偏移 bug（`fp.read(n)` 的参数是读取字节数而非
+  绝对偏移），写出的 APK 里 manifest 是 0 字节压缩流，zipalign 不校验放行、
+  apksigner 才炸；round-trip 在写入前就拦住这一类结构损坏。
 
 ### 还剩两块大的（需要单独验证）
 

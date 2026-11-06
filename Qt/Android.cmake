@@ -67,22 +67,54 @@ if(RHINE_ANDROID_NORMAL_RGBA8)
     target_compile_definitions(RhineCore PRIVATE RHINE_NORMAL_RGBA8=1)
 endif()
 
-# Full LTO。CMakeLists.txt 给 Release 打开的 INTERPROCEDURAL_OPTIMIZATION 在 Clang（含 NDK）
-# 上展开成 `-flto=thin`——只做模块级的并行优化，跨静态库/目标的内联仍然有限。
-# 这里换成 `-flto`（full）：整个链接单元（RhineCore + RhineMusicDatabase + qrc 资源符号）
-# 一起做内联与死代码消除，代价是链接期单线程合并 IR，构建时间明显变长。
+# LTO。CMakeLists.txt 给 Release 打开的 INTERPROCEDURAL_OPTIMIZATION 由 CMake 自己决定形态
+# （Clang 上是 `-flto=thin`），这里关掉它，改成显式、可切换：RHINE_ANDROID_LTO = thin|full|off。
+#
+#   thin（默认，并行）：`-flto=thin` + `--thinlto-jobs=<N>`。每个模块独立优化再并行导入，
+#       lld 默认 `--thinlto-jobs=all` 已经用满核，这里显式写只是别让它在某些环境下退化成
+#       单线程。构建时间接近普通编译，跨 TU 内联受"导入"限制。
+#   full（串行，更彻底）：`-flto` + `--lto-partitions=<N>`。真正的全量 IR 合并，死代码消除
+#       最彻底，但**单线程**合并是瓶颈；`--lto-partitions` 能把后端拆开并行，代价是分区之间
+#       不再互相内联——所以"full + partitions"的实际效果介于 thin 与纯 full 之间。
+#   off：不加任何 LTO 标志。
 #
 # 必须先关掉 IPO：否则 `-flto=thin` 与 `-flto` 会同时出现在同一条命令行上，
 # 两个标志谁生效取决于编译器实现细节，等于把体积交给运气。
-# 只影响 Android；桌面 / iOS 保持 thin（CMakeLists.txt 的那段不动）。
+# 只影响 Android；桌面 / iOS 保持 CMake 的默认（thin）。
+include(ProcessorCount)
+ProcessorCount(RHINE_ANDROID_JOBS)
+if(RHINE_ANDROID_JOBS EQUAL 0)
+    set(RHINE_ANDROID_JOBS 4)
+endif()
+set(RHINE_ANDROID_LTO
+    "thin"
+    CACHE STRING "Android Release LTO mode: thin (parallel) | full (serial) | off")
+set_property(CACHE RHINE_ANDROID_LTO PROPERTY STRINGS thin full off)
+
 set_target_properties(
     RhineCore
     RhineMusicDatabase
     PROPERTIES INTERPROCEDURAL_OPTIMIZATION_RELEASE FALSE)
-target_compile_options(RhineCore PRIVATE $<$<CONFIG:Release>:-flto>)
-target_compile_options(RhineMusicDatabase PRIVATE $<$<CONFIG:Release>:-flto>)
-# 最终链接在主目标上：静态库里的 bitcode 由这里的 -flto 触发全量优化。
-target_link_options(RhineMusicDatabase PRIVATE $<$<CONFIG:Release>:-flto>)
+if(RHINE_ANDROID_LTO STREQUAL "thin")
+    set(RHINE_ANDROID_LTO_COMPILE -flto=thin)
+    set(RHINE_ANDROID_LTO_LINK -flto=thin -Wl,--thinlto-jobs=${RHINE_ANDROID_JOBS})
+elseif(RHINE_ANDROID_LTO STREQUAL "full")
+    set(RHINE_ANDROID_LTO_COMPILE -flto)
+    set(RHINE_ANDROID_LTO_LINK -flto -Wl,--lto-partitions=${RHINE_ANDROID_JOBS})
+else()
+    set(RHINE_ANDROID_LTO_COMPILE "")
+    set(RHINE_ANDROID_LTO_LINK "")
+endif()
+if(RHINE_ANDROID_LTO_COMPILE)
+    target_compile_options(RhineCore PRIVATE $<$<CONFIG:Release>:${RHINE_ANDROID_LTO_COMPILE}>)
+    target_compile_options(
+        RhineMusicDatabase PRIVATE $<$<CONFIG:Release>:${RHINE_ANDROID_LTO_COMPILE}>)
+    # 最终链接在主目标上：静态库里的 bitcode 由这里的标志触发全量/增量优化。
+    target_link_options(RhineMusicDatabase PRIVATE $<$<CONFIG:Release>:${RHINE_ANDROID_LTO_LINK}>)
+    message(STATUS "Android LTO: ${RHINE_ANDROID_LTO} (${RHINE_ANDROID_JOBS} jobs)")
+else()
+    message(STATUS "Android LTO: off")
+endif()
 
 target_sources(RhineMusicDatabase PRIVATE "${CMAKE_SOURCE_DIR}/Qt/src/AndroidWindow.cpp"
                                           "${CMAKE_SOURCE_DIR}/Qt/src/AndroidWindow.h")
