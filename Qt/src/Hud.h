@@ -22,6 +22,8 @@ class Hud : public QQuickPaintedItem {
 
   private:
     void scheduleUpdate();
+    /// HUD 命令流变化后显式请求窗口出帧（见 Hud.cpp：item 标脏不等于有呈现帧）。
+    void requestWindowFrame();
     Engine *m_engine = nullptr;
 #if defined(Q_OS_ANDROID)
     /// 待重绘区域（item 逻辑坐标）。为空且 m_fullRepaint 为假时表示整块都不用画。

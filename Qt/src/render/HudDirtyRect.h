@@ -124,6 +124,12 @@ inline bool collectRange(const QJsonArray &commands, qsizetype begin, qsizetype 
             continue;
         }
         if (op == QLatin1String("alpha")) {
+            // alpha 是作用域级修饰：它变化时影响当前裁剪区内其后绘制的全部像素。
+            // 绝不能静默跳过——详情淡入期间唯一逐帧变化的命令就是 alpha，跳过它
+            // 会归因出空矩形，叠加调用侧的 adjusted(-2,-2,2,2) 就变成「只重画
+            // 6x6 像素、整层 HUD 停在上一页」的真机故障。把当前裁剪区并进脏区，
+            // 保守覆盖 alpha 作用域的可视范围。
+            merge(rect, stack.last().clip);
             continue;
         }
         if (op == QLatin1String("translate") || op == QLatin1String("scale") ||
