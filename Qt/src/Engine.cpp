@@ -673,11 +673,14 @@ void Engine::tick() {
     // C04：完整 step 只在"这一份快照还有机会被看到"时跑。渲染线程还没取走上一份，
     // 现在算出来的中间状态会被直接覆盖——这部分 CPU 在任何一帧上都看不到。
     const bool inputPending = m_inputPending || m_wheelPending || m_pressed || m_pointerPending;
+    // 页面过渡期视为「有工作」：否则 pacing 会因为上一份快照还没被消费而 Skip 掉整帧，
+    // 引擎也可能直接休眠，HUD 的命令流就停在这一帧（开唱片旋转能绕过正是这个道理）。
+    const bool hudTransition = clock.elapsed() < m_hudTransitionUntilMs;
     const bool workPending = inputPending || scene.changed() || !m_sceneSleeping || m_discRotating ||
-                             app->hud.animating(m_animationTime) ||
+                             app->hud.animating(m_animationTime) || hudTransition ||
                              m_frame.value("pendingAnimations").toBool() || m_temporalFramesRemaining > 0 ||
                              m_frame.value("mode") == "boot";
-    if (!inputPending) {
+    if (!inputPending && !hudTransition) {
         const auto decision = m_pacing.decide(workPending, false, now);
         if (decision.action == RhineRender::FramePacingPolicy::Action::Skip) {
             m_pacing.noteStep(true);
@@ -758,7 +761,8 @@ void Engine::tick() {
     // presented 不再增长，那时测出来的"帧率"是没有负载的数字，A/B 对比没有意义。
     static const bool forceAnimate = qEnvironmentVariableIsSet("RHINE_DIAG_ANIMATE");
     if (!forceAnimate && now - m_lastInput >= 750 && !m_pressed && m_sceneSleeping && !scene.changed() &&
-        !app->hud.animating(m_animationTime) && !m_discRotating && m_frame["mode"] != "boot" &&
+        !app->hud.animating(m_animationTime) && !m_discRotating && !hudTransition &&
+        m_frame["mode"] != "boot" &&
         m_temporalFramesRemaining == 0 && !m_pacing.awaitingConsumption()) {
         timer.stop();
         m_sleeping = true;
@@ -1050,7 +1054,10 @@ void Engine::step(double time) {
     if (scene.changed()) {
         ++m_changedSteps;
     }
-    const bool reuse = m_sceneSleeping && !scene.changed();
+    // 页面过渡期间不能复用上一份 scene.frame：detail 过渡值逐帧变化，复用会让
+    // NativeHud::draw 拿到旧 frame、命令流冻结，hudUpdated 自然也不发。
+    const bool hudTransition = clock.elapsed() < m_hudTransitionUntilMs;
+    const bool reuse = m_sceneSleeping && !scene.changed() && !hudTransition;
     const auto object = app->step(time, m_width / (m_height / 1080), reuse);
 #if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
     const double stepAppMs = stepProbe ? double(stepAppTimer.nsecsElapsed()) / 1e6 : 0.0;
@@ -1063,6 +1070,21 @@ void Engine::step(double time) {
     const auto previousOrigin = m_frame.value("stats").toObject().value("coordinateOrigin");
 #endif
     m_frame = scene.frame;
+    // HUD 换页 / 详情过渡的判据：mode、viewer 或 detail 过渡值任一变化，就把接下来
+    // 一段窗口标成「HUD 连续刷新期」。detail 是 SceneMotion::smooth 的输出，逐帧在变；
+    // 少了这段标记，pacing Skip、引擎休眠和上面的 reuse 会把整段动画吃掉。
+    const auto pageMode = m_frame.value("mode").toString();
+    const bool pageViewer = m_frame.value("viewer").toBool();
+    const double pageDetail = m_frame.value("detail").toDouble();
+    const bool pageSwitch = pageMode != m_hudPageMode || pageViewer != m_hudPageViewer;
+    const bool detailMoving = std::abs(pageDetail - m_hudPageDetail) > 1e-4;
+    if (pageSwitch || detailMoving) {
+        m_hudPageMode = pageMode;
+        m_hudPageViewer = pageViewer;
+        m_hudPageDetail = pageDetail;
+        // 动画本身约半秒；留一点余量让最后一帧稳定值也能被整窗画出来。
+        m_hudTransitionUntilMs = clock.elapsed() + 600;
+    }
     auto signature = m_frame;
     for (const auto &key : {"time", "stats", "labels", "boot", "pointerCursor", "jitter", "temporalReset"}) {
         signature.remove(key);
@@ -1263,10 +1285,20 @@ void Engine::step(double time) {
         m_hudDirtyFull = true;
     }
 #endif
+    if (pageSwitch) {
+        // 整页换内容：局部重绘会留下上一页的残影，强制整窗且必须发一次更新。
+        hudChanged = true;
+        m_hudDirtyFull = true;
+    }
+    const bool transitionNow = clock.elapsed() < m_hudTransitionUntilMs;
     if (hudChanged) {
         m_commands = commands;
         ++m_hudUpdates;
         m_hudRevision.fetch_add(1, std::memory_order_relaxed);
+    }
+    // 过渡期即便命令流逐条相同也要发一次：Hud 的重绘只由这个信号驱动，
+    // 停在这里就是「进详情时 HUD 整层不显示」。
+    if (hudChanged || transitionNow) {
         emit hudUpdated();
     }
 #if defined(Q_OS_ANDROID)

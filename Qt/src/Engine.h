@@ -389,6 +389,14 @@ class Engine : public QObject {
     /// 见 render/HudDirtyRect.h：Hud 只重画这块，纹理也只上传这块。
     QRectF m_hudDirtyStage;
     bool m_hudDirtyFull = true;
+    /// 页面切换 / 详情过渡期间 HUD 必须连续刷新：pacing 的 Skip、引擎休眠与
+    /// step() 的 reuse 都会把这段动画整段吃掉（表现为「进详情时 HUD 不显示」）。
+    /// 开唱片旋转能绕过，是因为 m_discRotating 让 workPending 恒真；这里把过渡本身
+    /// 也纳入判据，不依赖那个设置。
+    QString m_hudPageMode;
+    bool m_hudPageViewer = false;
+    double m_hudPageDetail = -1;
+    qint64 m_hudTransitionUntilMs = 0;
     QPointer<QWindow> m_window;
     QWindow::Visibility m_windowedVisibility = QWindow::Windowed;
     QString m_loginMethod;
