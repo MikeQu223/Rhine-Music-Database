@@ -1,12 +1,14 @@
 #include "AndroidWindow.h"
 #include "AndroidMediaSession.h"
 #include "Engine.h"
+#include <QAccessible>
 #include <QCoreApplication>
 #include <QDebug>
 #include <QGuiApplication>
 #include <QJniObject>
 #include <QQuickWindow>
 #include <QWindow>
+#include <QtGlobal>
 
 namespace {
 // android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE。
@@ -47,6 +49,25 @@ void applyWindowShape() {
         return {};
     });
 }
+
+/**
+ * QAccessible::updateAccessibility() 会优先调用这个 handler 并直接 return，
+ * 不再把事件交给 QAndroidPlatformAccessibility::notifyAccessibilityUpdate()。
+ * 这是最终闸门：Java 侧 QtNativeAccessibility.setActive(true) 随时可能把
+ * QPlatformAccessibility 的 m_active 改回 true，但它碰不到这个全局函数指针。
+ */
+void swallowAccessibilityUpdate(QAccessibleEvent *) {}
+}
+
+/** 见 AndroidWindow.h：关掉无障碍桥，避免前台滑动被可访问树遍历拖成 ANR。 */
+void configureAndroidAccessibility() {
+    if (qEnvironmentVariableIntValue("RHINE_ANDROID_ACCESSIBILITY") == 1) {
+        qInfo("Android: Qt accessibility bridge kept (RHINE_ANDROID_ACCESSIBILITY=1)");
+        return;
+    }
+    QAccessible::installUpdateHandler(&swallowAccessibilityUpdate);
+    QAccessible::setActive(false);
+    qInfo("Android: Qt accessibility bridge disabled (foreground ANR safeguard)");
 }
 
 void configureAndroidWindow(QWindow *window, Engine *backend) {

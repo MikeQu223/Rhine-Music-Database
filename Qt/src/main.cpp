@@ -893,6 +893,11 @@ int main(int argc, char **argv) {
 #else
     QGuiApplication application(argc, argv);
 #endif
+#if defined(Q_OS_ANDROID)
+    // 必须早于任何 QML 场景：系统无障碍服务一旦激活，Qt 会把每次对象显示/隐藏
+    // 同步回主线程递归遍历可访问树，滑动时能把主线程打满并触发前台 ANR。
+    configureAndroidAccessibility();
+#endif
 #if defined(Q_OS_ANDROID) && RHINE_ANDROID_SIGNAL_DIAG
     // 现场日志此刻才能定位（AppDataLocation 依赖 JNI 上下文）；上次崩溃的记录
     // 也在这里回读转发到 logcat，之后清空文件等待新现场。

@@ -502,6 +502,108 @@ CPU 分段、全屏 pass 数、draw 数；`Renderer::vulkanConfig()` 上报请�
   任何设置项变得不可修改。`touchHitPadding` 仍会把这些右侧热区外扩 16。桌面 / iOS 的
   `drawChoice()` 逐字不变，点标题仍可循环切值。
 
+## 前台 ANR：系统无障碍服务把 Qt 主线程拖死
+
+**现象**：前台滑动时界面突然消失。它**不是**后台被杀、不是 OEM 管控，也不是 native 崩溃——
+是 `Input dispatching timed out` 触发的 ANR，系统随后按 `user request after error` 杀掉进程，
+`ApplicationExitInfo reason=6 (ANR)`。所以「无后台限制」「自启动白名单」都帮不上。
+
+**证据**（2026-11-06 17:12:33 / 17:13:30 / 17:56:09 / 17:56:34，OPD2511）：
+
+- `am_anr`：两次 `Input dispatching timed out`（17:12:33 / PID 23323、17:56:09 /
+  PID 14494，`Waited 5000ms for MotionEvent(... action=MOVE ...)`），两次
+  `No response to onStartJob`（17:13:30 / PID 26327、17:56:34 / PID 20840，
+  超时的是 Clarity 的 `UploadSessionJob`）。后两次**没有应用栈**，不是「Clarity 自己
+  卡住」的证据：17:13:30 是
+  `libdebuggerd_client: failed to read status response from tombstoned: timeout reached?`
+  且随即 `No such process`；17:56:34 是 OPPO 主动跳过抓栈
+  （`WatchdogExtImpl: Skip the stacktraces of ANR because anr too frquency`）。
+- 两次有栈的 ANR，Java 主线程都停在
+  `QtNativeAccessibility.childIdListForAccessibleObject` /
+  `descriptionForAccessibleObject`，调用链为
+  `QtAccessibilityDelegate.getEventForVirtualViewId` ← `invalidateVirtualViewId`
+  ← `notifyObjectShow` / `notifyObjectHide`。
+- Qt 主线程（`qtMainLoopThread`，`state=R`）一次栈顶是
+  `QInternal::activateCallbacks` + `sendPostedEvents`，另一次是
+  `QAccessibleQuickWindow::child` 的四层递归 + `sendPostedEvents`——正是 Java 侧
+  `runInObjectContext()` 用 `Qt::BlockingQueuedConnection` 同步投递过来的调用。
+- `QtThread`（渲染线程）在 `pthread_cond_wait`，与渲染无关；两次 ANR 的调用链同类
+  （栈顶帧不同，但都落在可访问树遍历 / `sendPostedEvents`）。
+- 设备上 `accessibility_enabled=1`，唯一启用的是系统常驻服务
+  `com.itos.metric.monitor/...RealtimeNotificationAccessibilityService`（"Metric 实时通知"）。
+  **不是 Clarity 注册的**：Clarity 重画 View 树，本身不读 `QAccessible` 节点。
+- 11-06 没有任何属于本应用的 native crash tombstone（当天两份是系统 facehal 的 SIGBUS）。
+
+**机制**：系统有无障碍服务 → `QtNativeAccessibility.setActive(true)` →
+`QAndroidPlatformAccessibility::notifyAccessibilityUpdate()` 把每次 QML 对象的显示/隐藏
+转发给 Java delegate → delegate 的 `getEventForVirtualViewId()` 经 JNI 用
+`BlockingQueuedConnection` 同步回 Qt 主线程递归遍历整棵可访问树。QML 面板对象多，
+滑动时 `ObjectShow/Hide` 高频，Qt 主线程被打满，Java UI 线程一直等，5 秒后 ANR。
+
+### Clarity 的准确定位：不是病灶，是报警器 + 放大器
+
+这里之前写「`UploadSessionJob` 被连带拖超时、**不是** Clarity 引起的」。作为**根因判断**
+这句没错；但它把「谁让主线程卡住」和「系统拿谁的超时判死」混成了一件事。按 dump 复核后补正：
+
+- **根因没变，也不是 Clarity 引起的**。两次有栈的 ANR 里，Java 主线程都在
+  `QtNativeAccessibility.*`，Qt 主线程都在可访问树遍历，主线程栈没有一帧 Clarity；
+  Clarity 自有的 `Thread-11/12/13` 全是 `Waiting` 在
+  `LinkedBlockingQueue.take` / `LinkedBlockingDeque.take`，处于空闲。Clarity 也没有
+  注册无障碍服务（它重画 View 树）。
+- **但 Clarity 是 4 次 ANR 中 2 次的判死超时点**。`No response to onStartJob` 是系统
+  `JobServiceContext` 监视 `UploadSessionJob.onStartJob()` 的超时到期；`onStartJob`
+  跑在应用主线程，主线程被 Qt 无障碍递归占住时，job 的绑定回调排在消息队列里出不来，
+  系统**不需要任何触摸输入**也能据此把进程判死。所以更准确的说法是「报警器」，
+  而不是「完全无关的旁观者」。
+- **它放大了故障**。dropbox 的 `Debug Store` 里 `SvcCreate`/`SvcBind` 成对出现，
+  `UploadSessionJob` 大致每 8.4~11.4 秒被调度一次：PID 14494 的间隔是
+  `8418 / 8934 / 10052 ms`（最后一次距 ANR 14.9 秒），PID 23323 是
+  `9317 / 11416 ms`（最后一次距 ANR 2.5 秒，中间夹一次 33 秒间隔）。任何超过
+  8 秒的主线程停顿都更容易撞上这个周期性 deadline。JobScheduler 的 job 跨进程存活，
+  上次崩溃遗留的待上传会话会在冷启动期重试——17:56:34 的 PID 20840
+  `Process-Runtime: 23541`（只活了 23 秒）、CPU 118%、201840 次 minor fault，
+  正是冷启动与重试 job 撞在一起的时刻。
+- 结论：**不要因为 `No response to onStartJob` 就去动 Clarity 本身**；但把它写成
+  「完全无关」也不对。关掉 Qt 无障碍桥之后，必须重新验证这条 job 超时是否随之消失。
+
+**修法（仅 Android）**：`Qt/src/AndroidWindow.cpp::configureAndroidAccessibility()` 在
+`QGuiApplication` 创建后、任何 QML 场景加载前，装一个空的 `QAccessible::UpdateHandler`
+并调 `QAccessible::setActive(false)`。`updateAccessibility()` 会优先调用 handler 并直接
+`return`，事件不再到达 `notifyAccessibilityUpdate()`；这一步是关键，因为 Java 侧随时可能
+把 `QPlatformAccessibility::m_active` 改回 true，但碰不到这个全局函数指针。
+
+- 本项目是 GPU 自绘面板，没有原生可访问控件，关掉这条桥不影响任何功能，
+  也不影响 Clarity 的**采集**（它重画 View 树，本来也拍不到 GL 内容）；
+  但 Clarity 的 `UploadSessionJob` 仍是 ANR 判死路径之一，见上一节。
+- `AndroidWindow.cpp` 只在 `Qt/Android.cmake` 里编入，`main.cpp` 的调用包在
+  `#if defined(Q_OS_ANDROID)`，桌面 / iOS 逐值不变。
+- 取舍：依赖 TalkBack 的用户会失去 QML 内容的可访问节点。
+  `RHINE_ANDROID_ACCESSIBILITY=1` 可保留原行为做 A/B，日志会打
+  `Qt accessibility bridge kept`。
+
+**装新包后的验证要点**（一次性 `adb logcat -d -b all`，不要常驻 logcat）：
+
+1. 启动日志出现 `Android: Qt accessibility bridge disabled (foreground ANR safeguard)`；
+2. 复现滑动、锁屏解锁、快速换面，`am_anr` 里 `Input dispatching timed out`
+   与 `No response to onStartJob` **两条都不再出现**；
+3. 若只剩 `No response to onStartJob`（尤其是冷启动 30 秒内），说明冷启动本身仍会
+   堵住主线程超过 8 秒。这时再考虑 Android-only 的启动宽限：把
+   `ConsentStore.startSdks()` 里的 Clarity 初始化推迟到 Qt 首帧之后，让
+   `UploadSessionJob` 不与约 500 MB 的资源加载抢主线程。**这是候选方案，本轮未实现**——
+   不动 SDK、不动许可闸门，也不碰其他平台；
+4. A/B 复现旧行为用 `RHINE_ANDROID_ACCESSIBILITY=1`。
+
+**和 11-04 的 Vulkan surface 崩溃是两个独立问题**。那一批是 `SIGABRT` +
+`FORTIFY: pthread_mutex_lock called on a destroyed mutex`，栈为
+`QRhi::endFrame` → `QueuePresentKHR` → `android::Surface::hook_queueBuffer`，
+由**前台 Surface 换面**（BLAST relayout）触发，`applicationStateChanged` 根本不跑。
+`scripts/qt-android-patches.cjs` 里的 qtbase 竞态补丁仍在，且按设计只改构建期源码、
+submodule 工作树保持干净；但 `output/dependencies/qt-android/plugins/platforms/
+libplugins_platforms_qtforandroid_arm64-v8a.so` 的 mtime 停在 2026-11-03 20:54、
+BuildId 与当前 APK 里那份完全一致，补丁新增的 `destroySurfaceResources` 也不在其中——
+**说明它从未编译进 kit**。要让那条修复生效，需重跑 `npm run build:qt:android`
+再重建 APK；在此之前前台换面仍可能复发旧的 SIGABRT。两条线别混为一谈。
+
 ## 已知限制
 
 - **TLS 用 Node 自带的根证书。** Android 没有从 Node 侧访问系统信任库的通道（iOS 走 Security.framework），
@@ -533,3 +635,6 @@ CPU 分段、全屏 pass 数、draw 数；`Renderer::vulkanConfig()` 上报请�
 | 国内用户没看到许可弹窗                           | IP 判定失败（断网、端点超时或表未命中）→ 按其他地区放行：照常启动界面与 Clarity，不弹窗、不启动 Bugly，下次启动会重新判定                     |
 | Android 画面比桌面略软                           | 预期行为：Android 默认渲染分辨率 90%（`androidDefaultRenderScale()`）。要原生清晰度用设置页改回 100、`RHINE_RENDER_SCALE=100`，或 `RHINE_ANDROID_RENDER_TUNING=0` 整体回退        |
 | Android 想关掉合成 9→4 折叠做对照               | 用 `-DRHINE_ANDROID_QUAD_FOLD=OFF` 重新配置 Android 构建树；这是 CMake 配置期开关，桌面 / iOS 本来就没有这个宏                                   |
+| 前台滑动时界面突然消失（无响应后退出）           | ANR：`Input dispatching timed out`，系统按 `user request after error` 杀进程。根因是系统无障碍服务激活了 Qt 的可访问树遍历，见「前台 ANR」一节；默认已关闭该桥，`RHINE_ANDROID_ACCESSIBILITY=1` 可恢复             |
+| logcat 出现 `No response to onStartJob` / `com.microsoft.clarity.jobs.UploadSessionJob` | 不是 Clarity 崩溃，也不是本应用 native crash：`onStartJob` 跑在主线程，主线程被卡住时它的 8 秒 deadline 到期，系统据此判 ANR 并杀进程；该 job 每 ~10 秒调度一次、跨进程存活，冷启动重试时最容易撞上。见「Clarity 的准确定位」，先按上一行修无障碍桥，再看冷启动是否仍超时 |
+| logcat 又出现 `destroyed mutex` 的 SIGABRT      | 与前台 ANR 不同的老问题：Vulkan surface 换面竞态。`scripts/qt-android-patches.cjs` 的补丁还在，但 kit 没重编过；重跑 `npm run build:qt:android` 再重建 APK 才会生效                              |
