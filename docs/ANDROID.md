@@ -453,6 +453,58 @@ CPU 分段、全屏 pass 数、draw 数；`Renderer::vulkanConfig()` 上报请�
 非 Android 分支展开后与改动前逐字相同。新头文件在非 Android 平台只是几个返回常量的
 内联函数，不参与任何渲染路径；资源打包与其它平台脚本一行未改。
 
+## 滑动列表掉帧：HUD 软件栅格（Android）
+
+**现场**：OPD2511（Adreno 730 / Vulkan / 120 Hz / 窗口 1219×762 逻辑、DPR 2.36），
+`RHINE Diagnostics` 里 19.2 秒、322 帧的采样（`rhine-performance-20261106-103531-133-*.json`）。
+
+| 指标 | 数值 |
+|---|---|
+| `latestSyncCpuMs` | 均值 **41.8 ms**，p50 47.5，p90 61.2，max 76.3 |
+| `latestSubmitCpuMs` | 均值 **2.4 ms**（渲染 + 提交整段） |
+| `presentGapMs` | 均值 **59.6 ms**，p50 63.1，p90 80.6 |
+| `stepMeanCpuMs` | 约 15 ms（GUI 线程每拍） |
+| `over33ms` | 每 500 ms 采样里 7~11 帧，几乎全超 |
+| `mainProcessCpuOneCorePercent` | 150~180%（≈1.5 核） |
+
+帧时间的账能对上：**GUI 15 ms + sync 42 ms + 渲染 2.4 ms ≈ 59.6 ms**，
+也就是 17 fps 左右，掉帧发生在 `sync` 段。`submit` 只有 2.4 ms、FG 层未启用、
+`gpuTimingStatus=noSample`，所以**不是 3D、不是后处理、也不是纹理上传**。
+
+`sync` 段里唯一的重活是 `Hud`：它是 `QQuickPaintedItem`，`Overlay.qml` 里
+`anchors.fill: parent`，每次 `Engine::hudUpdated` → `update()` 都是整窗重绘
+（QPainter 软件栅格，2880×1800），而 `QSGDefaultPainterNode` 在没有 `update(rect)`
+时会裁都不裁，连 20 MB 的整张纹理一起刷。列表页每帧都在动（`UiMotion::ReelCurve`），
+于是每帧全付开销。
+
+**两条 Android-only 优化**（都在 `Qt/src/Glyphs.cpp`）：
+
+- **整段文本 / 整串字形合成一条路径**：`Glyphs::text()` / `art()` 原本逐字符
+  `save + translate + scale + fillPath + restore`，一个 20 字的标题就是 20 次
+  「变换 + 抗锯齿扫描线」；现在按 `(文本, 字重, 字距)` 缓存一条 em 单位路径
+  （`runPaths`，`Qt::WindingFill` 求并集），每帧只有一次 `fillPath`。
+  `RHINE_HUD_RUN_CACHE=0` 可退回逐字形路径做 A/B。
+  注意 Qt 6.12 的 `QPainterPath::addPath` **只有单参数重载**（没有带 `QTransform` 的那个），
+  位移必须写成 `path.translate(dx, dy)` 再 `addPath`；写成两参数会直接编译失败。
+- **归档页右侧淡出遮罩烘成一行图**：`right-mask` 是 789×984 的线性渐变，
+  等于每帧对 **2.15M 设备像素**做渐变求值；现在把横向斜坡烘成 1×W 的 ARGB 图
+  （`maskGradients`），用 `SmoothPixmapTransform` 拉伸——纵向各列完全相同，
+  纵向插值没有误差。`RHINE_HUD_MASK_CACHE=0` 可退回实时渐变。
+
+两条都不改几何、不改颜色，只把「每帧重复算的东西」换成缓存命中；字形的合并在
+重叠处是并集（nonzero），比原来逐字形叠画更稳，不会挖空。
+
+**隔离性**：新成员与快路径全部包在 `#if defined(Q_OS_ANDROID)`；
+非 Android 仍然走原来的逐字形循环与实时渐变，展开后与改动前逐字相同。
+
+**验证方法**：装新包后重录一份 `RHINE Diagnostics`，看三件事——
+`latestSyncCpuMs` 是否从 ~42 ms 掉到 20 ms 以下、`presentGapMs` p50 是否接近 33 ms（30 fps）、
+`over33ms` 是否明显变少；再分别用两个开关各录一份做对照。**没有实机数据前不要下结论**。
+
+**还没做**（下一步候选）：按脏矩形只重绘列表视口（现在整窗 5.18M 像素全刷），
+以及滚动时把上一帧的列表区按位移 blit、只重画新露出的窄条——后者能把
+单帧栅格面积降一个数量级，但需要 HUD 命令流先按区域分层。
+
 ## 音频与系统媒体控件
 
 - 播放走 Qt Multimedia 的 Android 后端（系统 MediaPlayer）。它的 `setMedia` 会忽略

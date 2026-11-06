@@ -402,6 +402,113 @@ double Glyphs::artWidth(QString key, double size, double tracking, int count) {
     }
     return visible.isEmpty() ? 0 : result - tracking;
 }
+#if defined(Q_OS_ANDROID)
+bool Glyphs::runCacheEnabled() {
+    // 默认开启；RHINE_HUD_RUN_CACHE=0 回到逐字形填充，用于 A/B 对照。
+    static const bool enabled = [] {
+        const auto value = qEnvironmentVariable("RHINE_HUD_RUN_CACHE");
+        return value.isEmpty() || value != QLatin1String("0");
+    }();
+    return enabled;
+}
+/** 把一段文本的字形合成一条 em 单位路径：每帧只做一次 fillPath，而不是逐字符一次。 */
+QPainterPath Glyphs::textRunPath(const QString &value, const QString &weight, double trackingEm) {
+    const QString key = QStringLiteral("t") + value + QChar(0x1f) + weight + QChar(0x1f) +
+                        QString::number(trackingEm, 'g', 8);
+    if (const auto *cached = runPaths.object(key)) {
+        return *cached;
+    }
+    QPainterPath run;
+    // 字形轮廓是 nonzero 语义；合成后统一按 WindingFill 求并集，重叠处不会互相挖空。
+    run.setFillRule(Qt::WindingFill);
+    double penX = 0;
+    for (const auto ch : value) {
+        // Qt 6.12 的 QPainterPath::addPath 只有单参数重载，位移只能先 translate 再 add。
+        auto g = glyph(QString(ch), weight);
+        if (!g.path.isEmpty()) {
+            g.path.translate(penX, 0);
+            run.addPath(g.path);
+        }
+        // advance 以 em 为单位（绘制时乘 size），这里换算回 1000 单位的字形空间。
+        penX += g.advance * 1000 + trackingEm;
+    }
+    runPaths.insert(key, new QPainterPath(run), qMax(1, int(run.elementCount())));
+    return run;
+}
+/** 字形美术（lettering）同理：整串合成一条路径，和文本共用同一个缓存。 */
+QPainterPath Glyphs::artRunPath(const QString &key, int count, double trackingEm) {
+    const QString cacheKey = QStringLiteral("a") + key + QChar(0x1f) + QString::number(count) +
+                             QChar(0x1f) + QString::number(trackingEm, 'g', 8);
+    if (const auto *cached = runPaths.object(cacheKey)) {
+        return *cached;
+    }
+    QPainterPath run;
+    run.setFillRule(Qt::WindingFill);
+    double penX = 0;
+    const auto letters = lettering.value(key);
+    const auto visible = letters.mid(0, count < 0 ? letters.size() : count);
+    for (const auto &source : visible) {
+        auto path = source.path;
+        if (!path.isEmpty()) {
+            path.translate(penX, 0);
+            run.addPath(path);
+        }
+        penX += source.advance * 1000 + trackingEm;
+    }
+    runPaths.insert(cacheKey, new QPainterPath(run), qMax(1, int(run.elementCount())));
+    return run;
+}
+/**
+ * 归档页的右向淡出遮罩是「整块 789×984 的线性渐变」，每帧重画等于每帧对 2.15M 设备像素
+ * 做一次渐变求值。这里把它烘成一行 ARGB 图（只有横向变化），之后用 SmoothPixmapTransform
+ * 拉伸绘制：纵向所有行完全相同，所以纵向插值没有误差，横向只是把原本就平滑的斜坡放大。
+ */
+bool Glyphs::drawCachedMask(QPainter &c, const QJsonArray &a) {
+    static const bool enabled = [] {
+        const auto value = qEnvironmentVariable("RHINE_HUD_MASK_CACHE");
+        return value.isEmpty() || value != QLatin1String("0");
+    }();
+    if (!enabled || a.size() < 6) {
+        return false;
+    }
+    const auto ink = color(a[1]);
+    const double start = a[2].toDouble();
+    const double span = a[3].toDouble();
+    const double width = a[4].toDouble();
+    const double height = a[5].toDouble();
+    const double pixels = std::ceil(width - start);
+    // 只处理归档页那种「一条横带」；异常参数（负宽、超大矩形）交回原路径，别在这里赌内存。
+    if (!std::isfinite(pixels) || pixels < 2 || pixels > 4096 || width <= start || height <= 0 ||
+        span < 1) {
+        return false;
+    }
+    const QString key = ink.name(QColor::HexArgb) + QChar(0x1f) + QString::number(start, 'g', 6) +
+                        QChar(0x1f) + QString::number(span, 'g', 6) + QChar(0x1f) +
+                        QString::number(width, 'g', 6) + QChar(0x1f) + QString::number(height, 'g', 6);
+    const QRectF target(start, 0, width - start, height);
+    if (const auto *cached = maskGradients.object(key)) {
+        c.drawImage(target, *cached);
+        return true;
+    }
+    QImage line(int(pixels), 1, QImage::Format_ARGB32_Premultiplied);
+    line.fill(Qt::transparent);
+    auto *row = reinterpret_cast<QRgb *>(line.scanLine(0));
+    const int red = qRound(ink.redF() * 255);
+    const int green = qRound(ink.greenF() * 255);
+    const int blue = qRound(ink.blueF() * 255);
+    const double baseAlpha = ink.alphaF();
+    const double safeSpan = span > 0 ? span : 1;
+    for (int i = 0; i < line.width(); ++i) {
+        // 与 QRasterPaintEngine 一样按像素中心采样；16 段 smoothstep 在本尺寸上与解析式等价。
+        const double progress = std::clamp((i + 0.5) / safeSpan, 0.0, 1.0);
+        const double eased = progress * progress * (3 - 2 * progress);
+        row[i] = qPremultiply(qRgba(red, green, blue, qRound(255 * baseAlpha * eased)));
+    }
+    maskGradients.insert(key, new QImage(line), qMax(1, line.sizeInBytes() / 1024));
+    c.drawImage(target, line);
+    return true;
+}
+#endif
 void Glyphs::text(QPainter &c, QString value, double x, double y, double size, QString weight,
                   double tracking, QColor ink) {
     QMutexLocker lock(&mutex);
@@ -414,6 +521,19 @@ void Glyphs::text(QPainter &c, QString value, double x, double y, double size, Q
         c.restore();
         return;
     }
+#if defined(Q_OS_ANDROID)
+    if (size > 0 && runCacheEnabled()) {
+        const auto run = textRunPath(value, weight, tracking * 1000 / size);
+        if (!run.isEmpty()) {
+            c.save();
+            c.translate(x, y + size * 1.044);
+            c.scale(size / 1000, -size / 1000);
+            c.fillPath(run, ink);
+            c.restore();
+        }
+        return;
+    }
+#endif
     for (auto ch : value) {
         auto g = glyph(QString(ch), weight);
         c.save();
@@ -426,6 +546,19 @@ void Glyphs::text(QPainter &c, QString value, double x, double y, double size, Q
 }
 void Glyphs::art(QPainter &c, QString key, double x, double y, double size, int count, double tracking) {
     QMutexLocker lock(&mutex);
+#if defined(Q_OS_ANDROID)
+    if (size > 0 && runCacheEnabled()) {
+        const auto run = artRunPath(key, count, tracking * 1000 / size);
+        if (!run.isEmpty()) {
+            c.save();
+            c.translate(x, y);
+            c.scale(size / 1000, size / 1000);
+            c.fillPath(run, c.brush());
+            c.restore();
+        }
+        return;
+    }
+#endif
     for (auto g : lettering[key].mid(0, count < 0 ? lettering[key].size() : count)) {
         c.save();
         c.translate(x, y);
@@ -511,6 +644,11 @@ void Glyphs::renderCommands(QPainter &c, const QJsonArray &commands, std::functi
             c.setBrush(Qt::NoBrush);
             c.drawPath(p);
         } else if (op == "right-mask") {
+#ifdef Q_OS_ANDROID
+            if (drawCachedMask(c, a)) {
+                continue;
+            }
+#endif
 #ifdef Q_OS_DARWIN
             if (cacheText && drawRasterCommand(c, a)) {
                 continue;
