@@ -72,6 +72,14 @@ bool closeVisible(const SettingsContext &) {
 #endif
 }
 
+bool debugModeVisible(const SettingsContext &) {
+#if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
+    return true;
+#else
+    return false;
+#endif
+}
+
 bool qualityVisible(const SettingsContext &context) {
     return context.music && !context.music->isLocal();
 }
@@ -502,6 +510,22 @@ const QVector<SettingDescriptor> &descriptors() {
              .titleZh = "桌面歌词",
              .actionLabel = "样式与同步",
              .visible = desktopLyricsVisible});
+        add({.id = "debug-mode",
+             .section = SectionId::Preferences,
+             .kind = SettingKind::Choice,
+             .binding = {.kind = BindingKind::Preference,
+                         .preferenceKey = "debug-mode",
+                         .action = "debug-mode",
+                         .actionPrefix = "setting:debug-mode:"},
+             .storage = StorageType::OnOff,
+             .order = 215,
+             .titleEn = "DEBUG MODE",
+             .titleZh = "调试模式（原生崩溃诊断）",
+             .description = "仅用于排查闪退与卡死；关闭后清空已保存的诊断数据。",
+             .restartHint = QStringLiteral("关闭后完全停止底层采集需重启应用"),
+             .defaultValue = Off,
+             .choices = onOffChoices(),
+             .visible = debugModeVisible});
         add({.id = "archive-mask",
              .section = SectionId::Preferences,
              .kind = SettingKind::Stepper,

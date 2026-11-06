@@ -351,6 +351,17 @@ GPU 耗时/占用未采集，同步和提交的 CPU 时间不代表 GPU 执行�
 退出程序时也会保存进行中的录制。导出失败可重试。文件只包含性能数值和系统/图形后端信息，
 不包含账号、Cookie、搜索词、曲目、请求内容或截图。关闭面板且未录制时停止性能采样。
 
+Windows 与 macOS 桌面版默认不采集原生崩溃现场；在设置中打开“调试模式”后才会启用 Crashpad，
+关闭该开关会立即停止采样并清空已保存的崩溃日志与转储。
+报告保存在同一 `RHINE Diagnostics` 目录，`native-时间-标识.log` 可直接阅读，包含异常信息、
+各线程调用栈、匹配的应用源码行及最后的渲染阶段；同名前缀的 `.dmp` 保留原始现场。
+运行时只在本地处理，不上传报告。日志与转储保留最近二十组。
+日志采用 `UTC时间 LEVEL event=事件 key=value` 格式，保留 Qt fatal 原文、最近渲染警告、资源创建参数、
+设备与 AA/FSR 配置；调用栈包含 `trust`、`missing_symbols`、源码行和模块 debug ID。
+GUI 心跳或正在执行的渲染调用连续五秒未推进时，记录 `hang.gui` 或 `hang.render`；
+每次持续阻塞最多采样三次，间隔至少两秒。独立报告进程在应用退出后继续导出。
+转储可能包含内存中的业务信息，分享前请确认内容。
+
 ## 参考项目
 
 - **[NeteaseCloudMusicApiEnhanced](https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced)**: 网易云接入

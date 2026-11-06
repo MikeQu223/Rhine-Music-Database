@@ -201,6 +201,9 @@ function prepareResources() {
  * 验证 Qt kit 后串行配置和编译，返回部署所需的路径与构建类型。
  */
 function buildQt() {
+    if (win || mac) {
+        run(process.execPath, ['scripts/prepare-crash-tools.cjs']);
+    }
     // Linux 的 Qt 通常由发行版装在 /usr，其余平台从 kit 目录读取。
     const qtRoots = new Map([
         [true, path.join(os.homedir(), 'Qt/6.12.0/macos')],
@@ -212,7 +215,7 @@ function buildQt() {
     }
     const config = process.env.RHINE_BUILD_TYPE || 'Release';
     const version = buildVersion();
-    run('cmake', [
+    const configure = [
         '-S',
         '.',
         '-B',
@@ -224,8 +227,17 @@ function buildQt() {
         '-DRHINE_PACKAGE_APP=OFF',
         `-DRHINE_VERSION=${version.version}`,
         `-DRHINE_RELEASE_BUILD=${version.release ? 'ON' : 'OFF'}`,
-    ]);
+    ];
+    if (win || mac) {
+        // CMake 生成符号时使用当前运行的 Node，避免依赖 PATH 里的系统安装。
+        configure.push(`-DRHINE_CRASH_NODE=${process.execPath}`);
+    }
+    run('cmake', configure);
     run('cmake', ['--build', 'output/qt-build']);
+    if (win || mac) {
+        // 符号生成只在打包流程执行一次，避免每次增量链接都重跑 dsymutil/dump_syms。
+        run('cmake', ['--build', 'output/qt-build', '--target', 'RhineCrashSymbols']);
+    }
     return {
         qt,
         config,
@@ -1099,6 +1111,12 @@ function deployApp(qt, config, existingBundle = '') {
             'output/qt-build/RhinePlaybackService.exe',
             path.join(app, 'RhinePlaybackService.exe'),
         );
+        for (const name of ['crashpad_handler.exe', 'RhineCrashReporter.exe', 'crashpad_wer.dll']) {
+            fs.copyFileSync(path.join('output/qt-build', name), path.join(app, name));
+        }
+        for (const name of ['crash-tools', 'crash-symbols']) {
+            fs.cpSync(path.join('output/qt-build', name), path.join(app, name), { recursive: true });
+        }
     }
 
     fs.mkdirSync(resources, { recursive: true });
@@ -1256,6 +1274,16 @@ if (process.argv[2] === '--resources-only') {
     if (!mac || !bundle || !qt || !config) {
         throw new Error('CMake packaging requires a macOS bundle, Qt kit and build configuration');
     }
+    // 原地打包不会经过 buildQt，仍要生成与当前二进制匹配的采集器、解析器和符号。
+    let buildDirectory = path.dirname(path.resolve(bundle));
+    while (!fs.existsSync(path.join(buildDirectory, 'CMakeCache.txt'))) {
+        const parent = path.dirname(buildDirectory);
+        if (parent === buildDirectory) {
+            throw new Error('Cannot locate the CMake build directory for RhineCrashSymbols');
+        }
+        buildDirectory = parent;
+    }
+    run('cmake', ['--build', buildDirectory, '--target', 'RhineCrashSymbols']);
     console.log(deployApp(qt, config, path.resolve(bundle)));
 } else {
     const { qt, config } = buildQt();

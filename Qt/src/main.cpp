@@ -1,6 +1,7 @@
 #include <QtGlobal>
 #include "AppIdentity.h"
 #include "AppStorage.h"
+#include "CrashDiagnostics.h"
 #include "Engine.h"
 #include "MvController.h"
 #include <QQmlComponent>
@@ -372,6 +373,8 @@ static void activateWindow(QWindow *window) {
  * 离线测试与正式播放沿用同一入口，资源只从独立应用读取。
  */
 int main(int argc, char **argv) {
+    // 诊断对象必须比应用实例更晚析构，保留窗口与 GPU 资源销毁阶段的崩溃采集。
+    CrashDiagnostics crashDiagnostics;
 #ifdef Q_OS_WIN
     const auto storageError = AppStorage::initializePortable(AppStorage::executableDirectory());
     if (!storageError.isEmpty()) {
@@ -429,8 +432,8 @@ int main(int argc, char **argv) {
 #else
     QGuiApplication application(argc, argv);
 #endif
-    application.setWindowIcon(QIcon(":/icons/icon-256.png"));
     QCoreApplication::setApplicationVersion(AppUpdater::currentVersion());
+    application.setWindowIcon(QIcon(":/icons/icon-256.png"));
     QGuiApplication::setApplicationDisplayName(AppIdentity::DisplayName);
     const auto args = application.arguments();
 #ifndef Q_OS_IOS
@@ -443,8 +446,16 @@ int main(int argc, char **argv) {
         }
     }
 #endif
+    // 调试模式默认关闭；关闭时不注册 Crashpad，也不保留上次会话的诊断数据。
+    const bool debugMode = AppStorage::settings().value("panel/debug-mode").toString() == QLatin1String("on");
+    if (debugMode && CrashDiagnostics::supported()) {
+        crashDiagnostics.start(application);
+    } else if (!debugMode) {
+        CrashDiagnostics::clearHistory();
+    }
     // 必须在创建任何 QQuickWindow 之前确定后端；组织名先落位，配置路径才能落到应用数据目录。
     selectGraphicsBackend();
+    CrashDiagnostics::setGraphicsBackend(RhineGraphics::activeBackend());
     qInfo().noquote() << "Display:" << QGuiApplication::platformName()
                       << "backend:" << RhineGraphics::activeBackend();
     applyVSyncSetting();
@@ -573,6 +584,22 @@ int main(int argc, char **argv) {
     QObject::connect(backend.get(), &Engine::performanceRequested, profiler.get(),
                      &FrameProfiler::toggleVisible);
     backend->start();
+    // 设置页的调试模式开关直接驱动采集生命周期；关闭会同时清空已有诊断数据。
+    QObject::connect(
+        &backend->host, &Host::preferenceChanged, &application,
+        [&crashDiagnostics, &application, host = &backend->host](const QString &key, const QString &value) {
+            if (key != QLatin1String("debug-mode")) {
+                return;
+            }
+            if (value == QLatin1String("on")) {
+                // 启动失败时回写关闭，避免界面显示已开启但实际没有采集。
+                if (!crashDiagnostics.start(application)) {
+                    host->setPreference(QStringLiteral("debug-mode"), QStringLiteral("off"));
+                }
+            } else {
+                crashDiagnostics.stop();
+            }
+        });
     // 声明顺序决定析构顺序：QML 引擎必须晚于业务引擎，才能先销毁 QML 对象。
     QQmlApplicationEngine engine;
     qmlRegisterType<RhiScene>("Rhine.Native", 1, 0, "RhiScene");
@@ -768,6 +795,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     auto window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+    CrashDiagnostics::attach(window);
     QQuickGraphicsConfiguration graphics;
 #ifdef Q_OS_WIN
     graphics.setAutomaticPipelineCache(false);

@@ -1,6 +1,7 @@
 #include <QtGlobal>
 #include <QLibraryInfo>
 #include "RhiScene.h"
+#include "CrashDiagnostics.h"
 #ifdef Q_OS_DARWIN
 #include "render/MetalFxBackend.h"
 #include "render/MetalFramePresentation.h"
@@ -3576,6 +3577,7 @@ class ItemRenderer : public QQuickRhiItemRenderer {
         }
     }
     void synchronize(QQuickRhiItem *value) override {
+        CrashRenderScope diagnosticScope("scene.synchronize");
         // 同步耗时在所有平台都上报
         QElapsedTimer syncTimer;
         syncTimer.start();
@@ -3642,6 +3644,7 @@ class ItemRenderer : public QQuickRhiItemRenderer {
         }
     }
     void initialize(QRhiCommandBuffer *) override {
+        CrashRenderScope diagnosticScope("scene.initialize");
         if (renderer && renderer->rhi != rhi()) {
             renderer.reset();
 #ifdef Q_OS_DARWIN
@@ -3650,6 +3653,7 @@ class ItemRenderer : public QQuickRhiItemRenderer {
         }
     }
     void render(QRhiCommandBuffer *cb) override {
+        CrashRenderScope diagnosticScope("scene.render");
         if (qEnvironmentVariableIsSet("RHINE_DEBUG_DRAWS")) {
             std::fprintf(stderr, "scene item render empty=%d mode=%s time=%.2f\n", frame.isEmpty() ? 1 : 0,
                          qPrintable(frame["mode"].toString()), frame["time"].toDouble());

@@ -1,5 +1,6 @@
 #include <QtGlobal>
 #include "PresentationShell.h"
+#include "../CrashDiagnostics.h"
 #ifdef Q_OS_DARWIN
 #include "MetalFxBackend.h"
 #endif
@@ -724,6 +725,7 @@ bool PresentationShell::composite(QRhiCommandBuffer *cb, QRhiTexture *base, QRhi
 
 bool PresentationShell::presentOne(const RhineRender::PresentationBackend::Frame &frame,
                                    bool allowInterpolation, bool *interpolatedOut) {
+    CrashRenderScope diagnosticScope("presentation.present");
     if (interpolatedOut) {
         *interpolatedOut = false;
     }
@@ -731,7 +733,10 @@ bool PresentationShell::presentOne(const RhineRender::PresentationBackend::Frame
     QRhiCommandBuffer *cb = nullptr;
     m_probe.restart();
     m_frameProbe.restart();
-    const QRhi::FrameOpResult begun = m_presenter->beginFrame(frame, &cb);
+    const QRhi::FrameOpResult begun = [&] {
+        CrashRenderScope stage("presentation.beginFrame");
+        return m_presenter->beginFrame(frame, &cb);
+    }();
     // A02：beginMs 的语义是"帧槽等待"——beginFrame 要等上一帧的命令缓冲/围栏归还。
     // EMA 只能看趋势，原始样本单独留在 slotWaitMs/分位环里作为证据。
     const double beginSample = tookMs();
@@ -755,7 +760,10 @@ bool PresentationShell::presentOne(const RhineRender::PresentationBackend::Frame
     const bool composed = composite(cb, base, m_host->overlayTexture(), frame.imageIndex);
     m_stats.compositeMs = blend(m_stats.compositeMs, tookMs());
     m_probe.restart();
-    const bool presented = m_presenter->endFrame(frame, composed);
+    const bool presented = [&] {
+        CrashRenderScope stage("presentation.endFrame");
+        return m_presenter->endFrame(frame, composed);
+    }();
     // A02：endMs 的语义是"离屏收尾"——只做提交与呈现，没有读回时不应有同步等待。
     const double endSample = tookMs();
     m_stats.endMs = blend(m_stats.endMs, endSample);
@@ -797,6 +805,7 @@ bool PresentationShell::presentOne(const RhineRender::PresentationBackend::Frame
 }
 
 void PresentationShell::step() {
+    CrashRenderScope diagnosticScope("presentation.step");
 #ifdef Q_OS_IOS
     if (QGuiApplication::applicationState() != Qt::ApplicationActive) {
         return;

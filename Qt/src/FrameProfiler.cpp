@@ -1,5 +1,6 @@
 #include <QtGlobal>
 #include "FrameProfiler.h"
+#include "DiagnosticsDirectory.h"
 
 #include "fg/FgCapability.h"
 #include "Engine.h"
@@ -55,7 +56,7 @@ FrameProfiler::FrameProfiler(Engine *engine, const QString &path, QObject *paren
     : QObject(parent), m_engine(engine), file(path), stream(&file) {
     clock.start();
     epochMs = QDateTime::currentMSecsSinceEpoch();
-    m_directory = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + "/RHINE Diagnostics";
+    m_directory = diagnosticsDirectory();
     m_sampleTimer.setInterval(500);
     connect(&m_sampleTimer, &QTimer::timeout, this, &FrameProfiler::sample);
     connect(engine, &Engine::updated, this, &FrameProfiler::collectStep);

@@ -192,3 +192,14 @@ MusicBridge/lyrics-format.cjs 移植 LyricsKit 的 LyricsCore LRC 与 LyricsServ
 TagLib 2.1.1，按 MPL-1.1 使用，源码未修改。来源：https://github.com/taglib/taglib/tree/v2.1.1 。
 utfcpp 4.0.6，BSL-1.0，源码未修改。来源：https://github.com/nemtrif/utfcpp/tree/v4.0.6 。
 固定版本完整源码包、许可证及 SHA-256 来源记录保留在 vendor/taglib 与 vendor/utfcpp，并随应用分发。
+
+## 原生崩溃诊断（Windows / macOS）
+
+Crashpad 使用 getsentry/crashpad 的 CMake 分支，锁定提交见 scripts/crash-tools.json，
+按 Apache-2.0 分发，保留 mini_chromium、mpack、zlib 的独立许可证。
+来源：https://github.com/getsentry/crashpad 。第三方源码不作修改。
+离线栈解析使用 rust-minidump/minidump-stackwalk 0.27.0（MIT），
+构建时符号生成使用 mozilla/dump_syms 2.3.9（MIT / Apache-2.0）。
+来源：https://github.com/rust-minidump/rust-minidump 和 https://github.com/mozilla/dump_syms 。
+工具发布归档及校验值锁定于 scripts/crash-tools.json，许可证随包保留在 crash-tools/licenses
+（macOS 为 Contents/Resources/CrashDiagnostics-Licenses）。

@@ -1,4 +1,5 @@
 #include "ScenePostProcess.h"
+#include "../CrashDiagnostics.h"
 #include "RenderPolicy.h"
 #include "../fsr/FsrSharpness.h"
 #include <QDebug>
@@ -124,11 +125,16 @@ ScenePostProcess::Target ScenePostProcess::target(QSize size, QRhiTexture::Forma
 
 /** 在任何 pass 之前重建尺寸相关资源和 FSR 上下文；关闭模式立即释放历史。 */
 void ScenePostProcess::prepare(QSize render, QSize display, const QJsonObject &frame) {
+    CrashRenderScope diagnosticScope("postprocess.prepare");
     const auto mode = qEnvironmentVariable("RHINE_AA_MODE");
     if (m_mode != mode || m_renderSize != render || m_displaySize != display) {
-        m_bindings.clear();
-        m_pipelines.clear();
-        resources.clear();
+        CrashDiagnostics::setRenderContext(rhi, render, display, mode);
+        {
+            CrashRenderScope releaseScope("postprocess.release");
+            m_bindings.clear();
+            m_pipelines.clear();
+            resources.clear();
+        }
         m_input = {};
         m_output = {};
         m_history[0] = {};
@@ -164,6 +170,7 @@ void ScenePostProcess::prepare(QSize render, QSize display, const QJsonObject &f
     const bool computeFsr = isFsr(mode) && mode != "fsr1";
     if (computeFsr) {
         if (!m_fsr) {
+            CrashRenderScope initializeScope("fsr.initialize");
             m_fsr = std::make_unique<Fsr3Backend>();
         }
         const float milliseconds = m_clock.isValid() ? float(m_clock.nsecsElapsed()) / 1e6f : 16.6667f;
@@ -184,7 +191,10 @@ void ScenePostProcess::prepare(QSize render, QSize display, const QJsonObject &f
         if (frame["temporalReset"].toBool()) {
             m_fsr->requestReset();
         }
-        m_fsr->resize(rhi, render, display);
+        {
+            CrashRenderScope resizeScope("fsr.resize");
+            m_fsr->resize(rhi, render, display);
+        }
     } else if (m_fsr) {
         m_fsr.reset();
     }
@@ -247,6 +257,7 @@ void ScenePostProcess::fsrQuad(QRhiCommandBuffer *commands, const QString &kind,
 /** 对新场景的最终颜色执行互斥 AA/FSR；计算派发失败时仍输出有效场景。 */
 void ScenePostProcess::resolve(QRhiCommandBuffer *commands, QRhiRenderTarget *destination,
                                const RhineFg::FrameInputs &motion) {
+    CrashRenderScope diagnosticScope("postprocess.resolve");
     QByteArray globals(544, '\0');
     const auto correction = rhi->clipSpaceCorrMatrix();
     std::memcpy(globals.data() + 464, correction.constData(), 64);
