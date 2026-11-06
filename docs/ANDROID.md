@@ -1,7 +1,8 @@
 # Android（arm64-v8a）构建与平台说明
 
 面板的 Android 版本只承诺一个 ABI：`arm64-v8a`。目标设备是 Android 9（API 28）以上的手机与平板，
-固定横屏显示。产物用工作区内的调试密钥签名，可以直接侧载；上架或分发需要自行换一套发布密钥。
+固定横屏显示。默认用工作区内的调试密钥签名，可以直接侧载；项目根放了发布密钥时会自动改用它，
+产物加 `-signed` 后缀（见「签名」一节）。
 
 ## 前置条件
 
@@ -62,7 +63,8 @@ npm run build:android -- --check
    `RHINE_ANDROID_BUILD=1` 打一份 Node 18 语法的桥接 bundle，最后按白名单组装到
    `output/android-resources`。
 3. 用 kit 里的 `qt-cmake` 配置 `output/android-build`，再构建 `apk` 目标（走 Gradle）。
-4. `zipalign` → `apksigner` 签出 `output/RhineMusicDatabase-<版本>-android-arm64-v8a.apk`，
+4. `zipalign` → `apksigner` 签出
+   `output/RhineMusicDatabase-<版本>-android-arm64-v8a.apk`（用发布密钥时末尾多 `-signed`），
    最后跑 `scripts/audit-android.py` 校验 ABI、横屏声明、权限与签名。
 
 `ANDROID_USER_HOME` 指向 `output/android-work`，Gradle 缓存用标准的 `~/.gradle`（见上一节的
@@ -78,17 +80,47 @@ Android 构建是 `.github/workflows/desktop.yml` 里一个独立的 `android` j
   与 `output/dependencies/openssl-android`）按「子模块提交 + 构建/补丁脚本内容 + NDK 与宿主
   Qt 版本」做缓存键。缓存命中后几分钟出包，冷启动约 2 小时。
 - 构建期补丁（`scripts/qt-android-patches.cjs`）在 CI 里同样按内容锚点生效，子模块保持干净。
-- 产物用 `keytool` 现场生成的调试密钥签名，密钥不入库，因此每次运行的 APK 签名不同；
-  需要可覆盖升级的发布包时应换成固定发布密钥（见上一节）。
+- 产物默认用 `keytool` 现场生成的调试密钥签名，密钥不入库，因此每次运行的 APK 签名不同；
+  要出可覆盖升级的发布包，在项目根放发布密钥即可（见「签名」一节）——这两个文件不入库，
+  CI 里不存在。
 - 上传的 artifact 名为 `RHINE-MUSIC-DATABASE-Android-arm64`。它暂不进入桌面更新源：
   `scripts/release-version.cjs` 的 `distributionPlatforms` 只列桌面三平台与 iOS。
 
 ## 签名
 
-调试密钥在第一次构建时由 `keytool` 生成到 `output/android-work/debug.keystore`
-（`storepass`/`keypass` 均为 `android`，别名 `rhine-debug`）。换成发布密钥时不必改脚本：
-把 `apksigner` 那一步换成自己的 keystore 即可，或直接对 `output/android-build` 里的
-未签名 APK 自行处理。
+**默认（调试密钥）**：第一次构建时由 `keytool` 生成到
+`output/android-work/debug.keystore`（`storepass`/`keypass` 均为 `android`，别名
+`rhine-debug`），产物名 `RhineMusicDatabase-<版本>-android-arm64-v8a.apk`。
+干净检出会重新生成密钥，所以 CI 出的包无法覆盖安装到同一台设备。
+
+**发布密钥（自动启用）**：项目根同时存在这两个文件时：
+
+| 文件                                    | 用途                                                                          |
+| --------------------------------------- | ----------------------------------------------------------------------------- |
+| `Rhine-Music-Database.key`              | PKCS12 keystore（`.key` 后缀无法推断容器类型，脚本显式传 `--ks-type PKCS12`） |
+| `Rhine-Music-Database.key.password.key` | 密码文件，单行                                                                |
+
+`scripts/build-android.cjs` 自动检测，用它们签名，并把产物改成
+`RhineMusicDatabase-<版本>-android-arm64-v8a-signed.apk`。两个文件都被 `.gitignore`
+的 `*.key` 规则覆盖，**不入库**；只放其中一个会安静回退调试密钥（日志写明用了哪把）。
+`--unsigned` 出的是未签名包，不加 `-signed`。
+
+密码以 `--ks-pass file:<密码文件>` 传给 apksigner——不进命令行、不进日志、
+不需要转义特殊字符；脚本只读取它来数行数：
+
+- **单行**（最常见，PKCS12 的库密码与私钥密码相同）：只给 `--ks-pass`，apksigner
+  会用同一个密码解私钥。
+- **两行**（两者不同）：第一行给库、第二行给私钥，脚本同时给 `--key-pass`。
+  apksigner 对同一个 `file:` 是**按行依次读取**的，所以单行密码文件不能同时给两个
+  密码选项，否则第二个会读到空密码。
+
+可选环境变量：`RHINE_SIGN_KEY_ALIAS`（keystore 含多个 key 时指定别名，只有一个时
+apksigner 自动选）、`RHINE_SIGN_KS_TYPE`（默认 `PKCS12`）。apksigner 的 stdin 被设为
+EOF，密码不匹配会直接报错，不会挂住构建。
+
+**zopfli 后处理**（`scripts/optimize-apk.py`）用同一套判定重签——否则会把发布包改成
+debug 密钥签名，导致无法覆盖安装；它的输出名是 `<原名>-zopfli-signed.apk`，
+显式 `-o` 时以用户给的名字为准。
 
 脚本只签名、不安装，也不调用 `adb`——真机验收不在这里做。
 
@@ -1124,15 +1156,15 @@ BuildId 与当前 APK 里那份完全一致，补丁新增的 `destroySurfaceRes
 
 ### APK 体积构成（168 MB，`a6724e5` 那一版）
 
-| 项                                            | 体积        | 处理                                   |
-| --------------------------------------------- | ----------- | -------------------------------------- |
-| `libnode.so`                                  | 47.2 MB     | Node 运行时，动不了（已 strip）        |
-| `libRhineMusicDatabase.so`                    | 39.7 MB     | 其中 `.rodata` ≈ 35 MB 是内嵌 qrc 资源 |
-| Qt6Core/Gui/Quick/Qml                         | 31.1 MB     | 必需                                   |
-| QuickControls2 六套样式                        | 15.6 MB     | **必须保留**（在 QtLoader 启动清单里，见下） |
-| `classes.dex`                                 | 6.9 MB      | Clarity + Bugly + Kotlin + protobuf    |
-| QuickDialogs2QuickImpl                        | 3.0 MB      | `QtQuick.Dialogs` 在用，保留           |
-| 字体 ×4（MiSans light/regular/demibold/bold） | 28 MB       | **未动**，见下                         |
+| 项                                            | 体积    | 处理                                         |
+| --------------------------------------------- | ------- | -------------------------------------------- |
+| `libnode.so`                                  | 47.2 MB | Node 运行时，动不了（已 strip）              |
+| `libRhineMusicDatabase.so`                    | 39.7 MB | 其中 `.rodata` ≈ 35 MB 是内嵌 qrc 资源       |
+| Qt6Core/Gui/Quick/Qml                         | 31.1 MB | 必需                                         |
+| QuickControls2 六套样式                       | 15.6 MB | **必须保留**（在 QtLoader 启动清单里，见下） |
+| `classes.dex`                                 | 6.9 MB  | Clarity + Bugly + Kotlin + protobuf          |
+| QuickDialogs2QuickImpl                        | 3.0 MB  | `QtQuick.Dialogs` 在用，保留                 |
+| 字体 ×4（MiSans light/regular/demibold/bold） | 28 MB   | **未动**，见下                               |
 
 ### 已做的裁剪
 
@@ -1159,21 +1191,21 @@ BuildId 与当前 APK 里那份完全一致，补丁新增的 `destroySurfaceRes
 防回归断言。
 
 3. **Android 包不再带 `archive-baked-surface-bc7.bin`**（1.4 MB）：GLES 上
-`isTextureFormatSupported(BC7)` 恒为 false，RhiScene 直接跳过。
+   `isTextureFormatSupported(BC7)` 恒为 false，RhiScene 直接跳过。
 4. **ETC2 产物不再烘焙也不再打包**（699 KB + 每次省十几秒）：编码器有缺陷已默认关闭，
-见「T1 · surfaceAtlas 换 ETC2 RGB8」。
+   见「T1 · surfaceAtlas 换 ETC2 RGB8」。
 5. **`.so` 压缩存储**（`RHINE_ANDROID_LEGACY_PACKAGING`，默认 `1`）：Qt 模板的
-`useLegacyPackaging=false` 把 152 MB 的 `.so` 原样塞进 APK（九成体积都在这）。
-改成 `true`（extractNativeLibs）后 AGP 用 deflate 压缩，下载体积大约降到六成；
-代价是安装时解压到 `/data/app/.../lib/`、首次启动多一次解压。对 sideload 分发，
-下载体积比安装后占用重要，所以默认开；改回用 `RHINE_ANDROID_LEGACY_PACKAGING=0`。
+   `useLegacyPackaging=false` 把 152 MB 的 `.so` 原样塞进 APK（九成体积都在这）。
+   改成 `true`（extractNativeLibs）后 AGP 用 deflate 压缩，下载体积大约降到六成；
+   代价是安装时解压到 `/data/app/.../lib/`、首次启动多一次解压。对 sideload 分发，
+   下载体积比安装后占用重要，所以默认开；改回用 `RHINE_ANDROID_LEGACY_PACKAGING=0`。
 6. **R8 收缩**（`RHINE_ANDROID_R8`，默认 `1`）：`minifyEnabled + shrinkResources`，
-但**不混淆**（`-dontobfuscate`）——所有 JNI 入口（QtActivity/QtNative、
-RhineMediaService、Consent*）都是按类名与方法名字符串查找的，混淆改了名字就是
-启动即崩。keep 规则在追加段里配置期生成到 `projectDir/rhine-r8.pro`：
-`org.qtproject.**`、`rhine.music.database.**`、两个 SDK 全类名 + 各自 `dontwarn`、
-以及 `keepclasseswithmembernames ... native <methods>`。效果实测
-`classes.dex` 6.9 MB → **1.7 MB**（androidx 与 Kotlin stdlib 被大幅收缩）。
+   但**不混淆**（`-dontobfuscate`）——所有 JNI 入口（QtActivity/QtNative、
+   RhineMediaService、Consent*）都是按类名与方法名字符串查找的，混淆改了名字就是
+   启动即崩。keep 规则在追加段里配置期生成到 `projectDir/rhine-r8.pro`：
+   `org.qtproject.**`、`rhine.music.database.**`、两个 SDK 全类名 + 各自 `dontwarn`、
+   以及 `keepclasseswithmembernames ... native <methods>`。效果实测
+   `classes.dex` 6.9 MB → **1.7 MB**（androidx 与 Kotlin stdlib 被大幅收缩）。
 
 实际效果：`6d0c95f` 起的 APK 从 **168 MB → 69 MB**，主要来自 `.so` 压缩与 R8
 （`classes.dex` 6.9 → 1.7 MB）。2026-11-07 恢复 10 个 QQC2 样式库后体积会回升
@@ -1186,8 +1218,9 @@ RhineMediaService、Consent*）都是按类名与方法名字符串查找的，�
   签名后再对齐会破坏签名块。
 - **zopfli**（`scripts/optimize-apk.py`，可选工具、默认不接入构建链）：
   DEFLATE 的高强度编码器，输出仍是合法 DEFLATE 流，对 AGP 已压缩的数据通常再省
-  3~8%。脚本做完整的三步：重压 → `zipalign -p -f 4` → 用 `output/android-work/debug.keystore`
-  （`rhine-debug`）重新签名并 `verify`——重写 ZIP 一定破坏 v2/v3 签名，必须重签。
+  3~8%。脚本做完整的三步：重压 → `zipalign -p -f 4` → 用**与构建链同一把钥匙**
+  （项目根发布密钥优先，否则 `output/android-work/debug.keystore` 的 `rhine-debug`）
+  重新签名并 `verify`——重写 ZIP 一定破坏 v2/v3 签名，必须重签。
   条目策略：STORED 原样拷贝（resources.arsc、noCompress 的 rcc 资源）；DEFLATED
   重压后没有占到便宜、或低于 `--min-size`（默认 64 KiB）的，字节级保留原流。
   参数：`--iterations` 默认 15（官方默认，15→50 实测 <0.3%，不值得），blocksplitting
@@ -1219,6 +1252,47 @@ RhineMediaService、Consent*）都是按类名与方法名字符串查找的，�
   `scripts/bundle-bridge.cjs` 的 esbuild 没有开 `minify`。加
   `minifyWhitespace + minifySyntax`（**不开** `minifyIdentifiers`，jsdom 依赖函数名/类名）
   预计能砍掉四成，但需要真机验证桥接与歌词/登录链路，不是纯格式改动。
+
+### CI 与本机的一致性（2026-11-07 核对）
+
+`.github/workflows/desktop.yml` 的 `android` job 只跑 `npm run build:android`，
+**不单独设置任何优化开关**——所有档位由 `scripts/build-android.cjs` 一份默认值决定，
+这是两边一致的基础。逐项核对：
+
+| 项                                           | 本机                          | CI                     | 结论                                       |
+| -------------------------------------------- | ----------------------------- | ---------------------- | ------------------------------------------ |
+| `RHINE_ANDROID_LTO`（默认 full）             | configure 显式传              | 干净 checkout 用默认值 | **一致**（见下方缓存坑）                   |
+| R8 / legacy packaging（默认 `1`）            | 默认                          | 默认                   | 一致                                       |
+| 烘焙 `LIGHT_HALF` / `NORMAL_RGBA8` / 3D 副本 | 脚本硬编码                    | 同一脚本               | 一致                                       |
+| ETC2（已停用）                               | 不烘焙                        | 不烘焙                 | 一致                                       |
+| `RHINE_ANDROID_NORMAL_RGBA8`                 | 显式 `ON`                     | 显式 `ON`              | 一致，与烘焙产物强绑定                     |
+| `RHINE_ANDROID_QUAD_FOLD`                    | option 默认 ON，可手动关      | 默认 ON                | 一致                                       |
+| 签名                                         | 有本地发布密钥 → `-signed` 包 | 密钥不入库 → debug 包  | **规则一致、结果有意不同**                 |
+| `RHINE_BUILD_JOBS`                           | 8（默认）                     | 4（runner 资源限制）   | 只影响并行度                               |
+| build-tools                                  | 取最高版本（37.0.0）          | 固定 36.0.0            | 参数能力一致（`file:`/`--ks-type` 都支持） |
+| Node / Python                                | 26.13 / 3.13                  | 26.11.1 / 3.12         | 锁文件 + 纯标准库烘焙，无功能差异          |
+| zopfli 后处理                                | 用户手动跑                    | 不跑                   | 可选工具，不影响 CI 产物                   |
+
+**CMake 缓存漂移（这次真正修掉的不一致）**：`Qt/Android.cmake` 用
+`set(RHINE_ANDROID_LTO "full" CACHE STRING ...)`，而 CMake **不会用源码里的新默认值
+覆盖已有缓存**。本机 `output/android-build/CMakeCache.txt` 曾停在 `thin`（LTO 默认值
+改成 full 之前生成的），于是本机增量构建一直用 thin，CI 干净构建用 full。现在
+`build-android.cjs` 每次 configure 都显式传
+`-DRHINE_ANDROID_LTO=${RHINE_ANDROID_LTO || 'full'}` 和
+`-DRHINE_ANDROID_NORMAL_RGBA8=ON`（后者必须与硬编码的
+`RHINE_BAKE_NORMAL_RGBA8=1` 同步，否则法线位宽对不上会启动崩溃）。
+`QUAD_FOLD` 刻意不钉死，保留手动 `-DRHINE_ANDROID_QUAD_FOLD=OFF` 的能力。
+
+**不构成不一致的两点**：
+
+- Full LTO 的 `--lto-partitions` 由 `ProcessorCount()` 决定，CI runner 与本机核心数
+  不同 → 产物**不会逐字节相同**，但档位与语义一致；可复现构建需要另外固定分区数。
+- CI 的 `check-repository.cjs` 步骤带 `if: ${{ false }}`，本机构建链也不调用它，
+  所以两边都不跑（此前误报过「CI 会因此失败」）。
+
+自检 `.workbuddy/tmp/perf/ci-parity-check.py`（16 项）盯住「默认值只有一个真相来源」
+「CI 不单独覆盖」「上传 glob 兼容 `-signed`」；它与 `signing-check.py`（21 项）、
+`apk-size-check.py`（33 项）一起构成本次改动的静态验证。
 
 ## 已知限制
 

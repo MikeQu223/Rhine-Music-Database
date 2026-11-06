@@ -7,10 +7,11 @@ zopfli 是 DEFLATE 的高强度编码器——输出仍是合法 DEFLATE 流，�
 对已压缩数据通常再省 3~8%，.so / .dex 这类大条目收益最明显。
 
 为什么不能压完就收工：v2/v3 签名的摘要覆盖整个 ZIP 字节流，任何重写都会让签名
-失效。所以流程必须是「重压 → zipalign → 重新签名」，全部由本脚本完成，用的钥匙
-与 scripts/build-android.cjs 生成的是同一把（output/android-work/debug.keystore，
-alias rhine-debug）。zipalign 必须在签名之前——签名后再对齐会破坏 v2/v3 块，
-这也是构建脚本里的既定顺序。
+失效。所以流程必须是「重压 → zipalign → 重新签名」，全部由本脚本完成，钥匙与
+scripts/build-android.cjs 用的一把：项目根存在 Rhine-Music-Database.key 与
+Rhine-Music-Database.key.password.key 时用发布密钥，否则用工作区里的调试密钥
+（output/android-work/debug.keystore，alias rhine-debug）。zipalign 必须在签名
+之前——签名后再对齐会破坏 v2/v3 块，这也是构建脚本里的既定顺序。
 
 条目策略：
   · STORED（resources.arsc、noCompress 'rcc' 的 Qt 资源等）：字节原样拷贝，
@@ -50,6 +51,39 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 SDK = Path.home() / "Android" / "Sdk"
 KEYSTORE = ROOT / "output/android-work/debug.keystore"
+RELEASE_KEYSTORE = ROOT / "Rhine-Music-Database.key"
+RELEASE_PASSWORD = ROOT / "Rhine-Music-Database.key.password.key"
+
+
+def using_release_key() -> bool:
+    """与 build-android.cjs 的判定一致：两个文件同时存在才启用发布密钥。"""
+    return RELEASE_KEYSTORE.is_file() and RELEASE_PASSWORD.is_file()
+
+
+def signer_args() -> list[str]:
+    """apksigner sign 的密钥参数。密码只以 file: 传给 apksigner，不读进日志。"""
+    if not using_release_key():
+        return [
+            "--ks", str(KEYSTORE),
+            "--ks-key-alias", "rhine-debug",
+            "--ks-pass", "pass:android",
+            "--key-pass", "pass:android",
+        ]
+    # 同一个 file: 被多个密码选项引用时，apksigner 按行依次读取。只有一行就
+    # 只给 --ks-pass（用 store 密码解私钥），两行才让 --key-pass 读第二行。
+    lines = [ln for ln in RELEASE_PASSWORD.read_text(encoding="utf-8").splitlines() if ln]
+    pass_spec = f"file:{RELEASE_PASSWORD}"
+    args = [
+        "--ks", str(RELEASE_KEYSTORE),
+        "--ks-type", os.environ.get("RHINE_SIGN_KS_TYPE", "PKCS12"),
+        "--ks-pass", pass_spec,
+    ]
+    if len(lines) >= 2:
+        args += ["--key-pass", pass_spec]
+    alias = os.environ.get("RHINE_SIGN_KEY_ALIAS")
+    if alias:
+        args += ["--ks-key-alias", alias]
+    return args
 
 
 def newest_build_tools() -> Path:
@@ -140,7 +174,11 @@ class RawDeflateInjector:
 
 
 def run(tool: Path, args: list[str]) -> None:
-    proc = subprocess.run([str(tool), *args], capture_output=True, text=True)
+    # stdin 给 EOF：发布密钥的私钥密码与库密码不同时，apksigner 会想交互提示，
+    # 后处理脚本不能挂住；读到 EOF 会给出明确错误。
+    proc = subprocess.run(
+        [str(tool), *args], capture_output=True, text=True, stdin=subprocess.DEVNULL
+    )
     if proc.returncode != 0:
         sys.exit(f"{tool.name} 退出码 {proc.returncode}\n{proc.stdout}\n{proc.stderr}")
 
@@ -289,9 +327,11 @@ def main() -> None:
     apksigner = tools / "apksigner"
     print(f"build-tools: {tools.name}（zipalign / apksigner）")
 
-    out_path = args.output or args.apk.with_name(
-        f"{args.apk.stem}-zopfli{args.apk.suffix}"
-    )
+    # 与构建链同一规则：发布密钥签名后的产物带 -signed 后缀（显式 -o 时以用户给的为准）。
+    stem = f"{args.apk.stem}-zopfli"
+    if using_release_key() and not args.keep_unsigned:
+        stem += "-signed"
+    out_path = args.output or args.apk.with_name(f"{stem}{args.apk.suffix}")
     tmp_zip = out_path.with_suffix(".tmp.zip")
     aligned = out_path.with_suffix(".tmp.aligned")
 
@@ -302,28 +342,15 @@ def main() -> None:
     # .so 做页对齐；本工程 legacy packaging 下 .so 已压缩，这一位无害。
     run(zipalign, ["-p", "-f", "4", str(tmp_zip), str(aligned)])
 
-    if args.keep_unsigned or not KEYSTORE.exists():
+    have_key = using_release_key() or KEYSTORE.exists()
+    if args.keep_unsigned or not have_key:
         if not args.keep_unsigned:
-            print(f"警告：找不到 {KEYSTORE}，输出保持未签名（与 --keep-unsigned 等价）")
+            print("警告：找不到发布密钥或调试密钥，输出保持未签名（与 --keep-unsigned 等价）")
         aligned.replace(out_path)
     else:
-        run(
-            apksigner,
-            [
-                "sign",
-                "--ks",
-                str(KEYSTORE),
-                "--ks-key-alias",
-                "rhine-debug",
-                "--ks-pass",
-                "pass:android",
-                "--key-pass",
-                "pass:android",
-                "--out",
-                str(out_path),
-                str(aligned),
-            ],
-        )
+        if using_release_key():
+            print("使用项目根发布密钥重签（产物带 -signed 后缀）")
+        run(apksigner, ["sign", *signer_args(), "--out", str(out_path), str(aligned)])
         run(apksigner, ["verify", str(out_path)])
         print("apksigner verify 通过")
 

@@ -1,6 +1,7 @@
-// Android（arm64-v8a）打包：准备资源与 Node 运行时 → CMake 配置 → Gradle 出包 → 用工作区内的
-// 调试密钥重签。产物落在 output/，全程不写工作区以外的路径（Gradle/Android 的用户目录都改指到
-// output/android-work 下）。
+// Android（arm64-v8a）打包：准备资源与 Node 运行时 → CMake 配置 → Gradle 出包 → 签名。
+// 项目根存在 Rhine-Music-Database.key 与同名 .password.key 时改用发布密钥，产物加
+// -signed 后缀；否则沿用工作区内的调试密钥。全程不写工作区以外的路径（Gradle/Android
+// 的用户目录都改指到 output/android-work 下）。
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -32,6 +33,11 @@ const kit =
         : path.join(os.homedir(), 'Qt', '6.12.0', 'android_arm64_v8a'));
 const androidUserHome = path.join(work, 'android-user');
 const keystore = path.join(work, 'debug.keystore');
+// 发布密钥：两个文件同时存在才启用（缺密码文件时安静回退到调试密钥）。
+// 它们是 .gitignore 覆盖的本地文件，脚本绝不把密码读进日志或拼进 pass: 字面量。
+const releaseKeystore = path.resolve('Rhine-Music-Database.key');
+const releasePasswordFile = path.resolve('Rhine-Music-Database.key.password.key');
+const useReleaseKey = fs.existsSync(releaseKeystore) && fs.existsSync(releasePasswordFile);
 const nodeMobile = require('../vendor/nodejs-mobile/android-source.json');
 const version = buildVersion();
 
@@ -346,7 +352,10 @@ if (prepareOnly) {
     process.exit(0);
 }
 
-ensureKeystore();
+// 用发布密钥时不必再生成调试密钥；--unsigned 本来也不签名。
+if (!useReleaseKey && !unsigned) {
+    ensureKeystore();
+}
 const buildTools = findBuildTools();
 run(
     qtCmake,
@@ -358,6 +367,16 @@ run(
         '-G',
         'Ninja',
         `-DCMAKE_BUILD_TYPE=${buildType}`,
+        // CMake 的 set(... CACHE STRING ...) 不会覆盖已有缓存：本机 output/android-build
+        // 里一旦存过旧的 LTO 档位，源码改默认值也不会生效，而 CI 每次干净 checkout
+        // 一定拿到新默认值 —— 两边会用不同的 LTO 编出不同的包。每次 configure
+        // 都显式传值即可让增量构建与 CI 干净构建对齐。RHINE_ANDROID_LTO 可覆盖。
+        `-DRHINE_ANDROID_LTO=${process.env.RHINE_ANDROID_LTO || 'full'}`,
+        // 这一项与 prepareResources 里硬编码的烘焙产物形态必须一致
+        // （RHINE_BAKE_NORMAL_RGBA8=1）：缓存漂移会让法线位宽与 shader 解码分支
+        // 对不上，历史上直接导致过启动崩溃，所以每次 configure 都钉死。
+        // QUAD_FOLD 只影响观感、且允许手动 -DRHINE_ANDROID_QUAD_FOLD=OFF，不在这里钉。
+        '-DRHINE_ANDROID_NORMAL_RGBA8=ON',
         `-DANDROID_ABI=${abi}`,
         // 与 kit 一致用 28：Qt 6.12 自己的默认 minSdk 也是 28
         // （src/corelib/Qt6AndroidGradleHelpers.cmake 里 QT_ANDROID_MIN_SDK_VERSION 的默认值）。
@@ -383,28 +402,78 @@ if (apks.length === 0) {
 const unsignedApk = apks[0];
 console.log(`Signing ${path.relative(root, unsignedApk)}`);
 const aligned = path.join(work, 'aligned.apk');
-const signed = path.resolve(`output/RhineMusicDatabase-${packageIdentity(version)}-android-${abi}.apk`);
+// --unsigned 出来的是未签名包，不能叫 -signed；用调试密钥时保持原有文件名。
+const signSuffix = useReleaseKey && !unsigned ? '-signed' : '';
+const signed = path.resolve(
+    `output/RhineMusicDatabase-${packageIdentity(version)}-android-${abi}${signSuffix}.apk`,
+);
+
+/**
+ * 发布密钥的 apksigner 参数。
+ *
+ * 密码走 file: 而不是 pass: —— 不进命令行、不进日志、不需要转义特殊字符。
+ * apksigner 对同一个 file: 按行依次取多个密码：只给 --ks-pass 时它会用
+ * keystore 密码解私钥（PKCS12 的常规做法），不会触发交互式提示；若密码文件
+ * 有两行（第一行 store、第二行 key），才同时给 --key-pass 让它读第二行。
+ */
+function releaseSignArgs() {
+    const lines = fs
+        .readFileSync(releasePasswordFile, 'utf8')
+        .split(/\r?\n/)
+        .filter((line) => line.length > 0).length;
+    const pass = `file:${releasePasswordFile}`;
+    const args = [
+        '--ks',
+        releaseKeystore,
+        // 扩展名是 .key，apksigner 无法按后缀推断容器类型。
+        '--ks-type',
+        process.env.RHINE_SIGN_KS_TYPE || 'PKCS12',
+        '--ks-pass',
+        pass,
+    ];
+    if (lines >= 2) {
+        args.push('--key-pass', pass);
+    }
+    // keystore 只有一个 key 时 apksigner 自动选择；多个 key 用环境变量指定。
+    const alias = process.env.RHINE_SIGN_KEY_ALIAS;
+    if (alias) {
+        args.push('--ks-key-alias', alias);
+    }
+    return args;
+}
+
 if (unsigned) {
     fs.copyFileSync(unsignedApk, signed);
 } else {
     // zipalign 必须在签名之前：签名后再对齐会破坏 v2/v3 签名块。
     run(path.join(buildTools, 'zipalign'), ['-p', '-f', '4', unsignedApk, aligned]);
+    console.log(
+        useReleaseKey
+            ? '使用项目根发布密钥签名（产物带 -signed 后缀）'
+            : '使用工作区调试密钥签名',
+    );
     run(path.join(buildTools, 'apksigner'), [
         'sign',
-        '--ks',
-        keystore,
-        '--ks-key-alias',
-        'rhine-debug',
-        '--ks-pass',
-        'pass:android',
-        '--key-pass',
-        'pass:android',
+        ...(useReleaseKey
+            ? releaseSignArgs()
+            : [
+                  '--ks',
+                  keystore,
+                  '--ks-key-alias',
+                  'rhine-debug',
+                  '--ks-pass',
+                  'pass:android',
+                  '--key-pass',
+                  'pass:android',
+              ]),
         '--min-sdk-version',
         '26',
         '--out',
         signed,
         aligned,
-    ]);
+    ], { stdio: ['ignore', 'inherit', 'inherit'] });
+    // stdin 给 EOF：万一发布密钥的私钥密码与库密码不同，apksigner 会想交互提示，
+    // 构建脚本不能挂在那里等输入；它会读到 EOF 并给出明确的错误。
 }
 run(process.env.PYTHON || 'python3', ['scripts/audit-android.py', signed, '--sdk', sdk]);
 console.log(`Android APK: ${signed}`);
