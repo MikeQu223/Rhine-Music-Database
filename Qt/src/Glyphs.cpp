@@ -404,10 +404,17 @@ double Glyphs::artWidth(QString key, double size, double tracking, int count) {
 }
 #if defined(Q_OS_ANDROID)
 bool Glyphs::runCacheEnabled() {
-    // 默认开启；RHINE_HUD_RUN_CACHE=0 回到逐字形填充，用于 A/B 对照。
+    // **默认关闭**（2026-11-06 晚实测翻案）：RHINE_HUD_RUN_CACHE=1 才启用，用于 A/B。
+    //
+    // 10:35 的采样 sync 均值 41.8ms / 17.2fps；把「整段文本合成一条路径」与
+    // 「right-mask 烘图」一起默认打开后重编，11:21 的采样变成 63.0ms / 12.1fps
+    // （CPU 154%→183%），而这一轮新增的局部重绘当时因为开关默认值写反并未生效。
+    // 原因是 QRasterizer 的覆盖率按**包围盒**算，不是按墨水面积：把一行字并成一条
+    // 复合路径后，包围盒变成整行，逐字形时每个字形只有自己的紧包围盒，
+    // 合并反而把扫描线工作量放大。缓存省下的“变换次数”抵不过这个放大。
     static const bool enabled = [] {
         const auto value = qEnvironmentVariable("RHINE_HUD_RUN_CACHE");
-        return value.isEmpty() || value != QLatin1String("0");
+        return !value.isEmpty() && value != QLatin1String("0");
     }();
     return enabled;
 }
@@ -464,9 +471,12 @@ QPainterPath Glyphs::artRunPath(const QString &key, int count, double trackingEm
  * 拉伸绘制：纵向所有行完全相同，所以纵向插值没有误差，横向只是把原本就平滑的斜坡放大。
  */
 bool Glyphs::drawCachedMask(QPainter &c, const QJsonArray &a) {
+    // **默认关闭**（2026-11-06 晚实测翻案）：RHINE_HUD_MASK_CACHE=1 才启用。
+    // 789x984 = 776k 像素上，双线性拉伸一张 W×1 图（4 次采样 + 2 次插值）比
+    // QLinearGradient 的水平色表查找更贵，与「渐变求值很慢」的假设相反。
     static const bool enabled = [] {
         const auto value = qEnvironmentVariable("RHINE_HUD_MASK_CACHE");
-        return value.isEmpty() || value != QLatin1String("0");
+        return !value.isEmpty() && value != QLatin1String("0");
     }();
     if (!enabled || a.size() < 6) {
         return false;

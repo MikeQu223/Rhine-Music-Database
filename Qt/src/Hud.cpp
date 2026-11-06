@@ -32,8 +32,13 @@ void Hud::setEngine(Engine *engine) {
 void Hud::scheduleUpdate() {
 #if defined(Q_OS_ANDROID)
     // 局部重绘：命令流比对出改动区域，只重画这块、只上传这块（见 render/HudDirtyRect.h）。
-    // 关掉开关（RHINE_HUD_DIRTY_RECT=0）退回整窗重绘，方便 A/B。
-    static const bool partial = qEnvironmentVariableIntValue("RHINE_HUD_DIRTY_RECT") != 0;
+    // 默认开启；RHINE_HUD_DIRTY_RECT=0 退回整窗重绘，方便 A/B。
+    // 注意别写成 qEnvironmentVariableIntValue(...) != 0——变量未设置时它返回 0，
+    // 那个写法会让"默认开启"的开关实际是关的。
+    static const bool partial = [] {
+        const auto value = qEnvironmentVariable("RHINE_HUD_DIRTY_RECT");
+        return value.isEmpty() || value != QLatin1String("0");
+    }();
     if (partial && m_engine && width() > 0 && height() > 0 && !m_fullRepaint) {
         if (!m_engine->hudDirtyFull()) {
             const double scale = height() / 1080;
@@ -49,23 +54,20 @@ void Hud::scheduleUpdate() {
                 QQuickPaintedItem::update();
                 return;
             }
-            // 探针（RHINE_HUD_PROBE=1）：脏区占比直接回答"是不是整屏都在动"。
-            // 滑列表时若这个数远小于 100%，局部重绘就是有效的。
-            static const bool probe = qEnvironmentVariableIntValue("RHINE_HUD_PROBE") == 1;
+            // 观测：滑动时到底脏了多少。设备上设不了环境变量，所以默认开着、
+            // 只按次数限流（每 240 次局部重绘一行），定位完这段可以删。
             static int probeFrames = 0;
             static double probeArea = 0;
             static double probePeak = 0;
-            if (probe) {
-                const double ratio = rect.width() * rect.height() / (width() * height());
-                probeArea += ratio;
-                probePeak = qMax(probePeak, ratio);
-                if (++probeFrames % 60 == 0) {
-                    qInfo("HUD 脏区: 平均 %.1f%% / 峰值 %.1f%% 画布", probeArea / probeFrames * 100,
-                          probePeak * 100);
-                    probeArea = 0;
-                    probePeak = 0;
-                    probeFrames = 0;
-                }
+            const double ratio = rect.width() * rect.height() / (width() * height());
+            probeArea += ratio;
+            probePeak = qMax(probePeak, ratio);
+            if (++probeFrames >= 240) {
+                qInfo("HUD 脏区: 平均 %.1f%% / 峰值 %.1f%% 画布", probeArea / probeFrames * 100,
+                      probePeak * 100);
+                probeArea = 0;
+                probePeak = 0;
+                probeFrames = 0;
             }
             m_pendingDirty = m_pendingDirty.isNull() ? rect : m_pendingDirty.united(rect);
             QQuickPaintedItem::update(rect.toAlignedRect());
@@ -180,7 +182,10 @@ QSGNode *Hud::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *updateData)
  * 白白来回搬 40MB 以上。这里换成子区域上传，块大小由命令流比对给出。
  */
 QSGNode *Hud::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *updateData) {
-    static const bool partial = qEnvironmentVariableIntValue("RHINE_HUD_DIRTY_RECT") != 0;
+    static const bool partial = [] {
+        const auto value = qEnvironmentVariable("RHINE_HUD_DIRTY_RECT");
+        return value.isEmpty() || value != QLatin1String("0");
+    }();
     if (!partial || !window() || !window()->rhi()) {
         return QQuickPaintedItem::updatePaintNode(oldNode, updateData);
     }

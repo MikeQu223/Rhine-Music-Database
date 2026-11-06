@@ -477,22 +477,31 @@ CPU 分段、全屏 pass 数、draw 数；`Renderer::vulkanConfig()` 上报请�
 时会裁都不裁，连 20 MB 的整张纹理一起刷。列表页每帧都在动（`UiMotion::ReelCurve`），
 于是每帧全付开销。
 
-**两条 Android-only 优化**（都在 `Qt/src/Glyphs.cpp`）：
+**两条 Android-only 尝试**（在 `Qt/src/Glyphs.cpp`，**实测是负优化，默认已关闭**）：
 
-- **整段文本 / 整串字形合成一条路径**：`Glyphs::text()` / `art()` 原本逐字符
-  `save + translate + scale + fillPath + restore`，一个 20 字的标题就是 20 次
-  「变换 + 抗锯齿扫描线」；现在按 `(文本, 字重, 字距)` 缓存一条 em 单位路径
-  （`runPaths`，`Qt::WindingFill` 求并集），每帧只有一次 `fillPath`。
-  `RHINE_HUD_RUN_CACHE=0` 可退回逐字形路径做 A/B。
-  注意 Qt 6.12 的 `QPainterPath::addPath` **只有单参数重载**（没有带 `QTransform` 的那个），
-  位移必须写成 `path.translate(dx, dy)` 再 `addPath`；写成两参数会直接编译失败。
-- **归档页右侧淡出遮罩烘成一行图**：`right-mask` 是 789×984 的线性渐变，
-  等于每帧对 **2.15M 设备像素**做渐变求值；现在把横向斜坡烘成 1×W 的 ARGB 图
-  （`maskGradients`），用 `SmoothPixmapTransform` 拉伸——纵向各列完全相同，
-  纵向插值没有误差。`RHINE_HUD_MASK_CACHE=0` 可退回实时渐变。
+- **整段文本 / 整串字形合成一条路径**（`textRunPath` / `artRunPath` + `runPaths` 缓存）：
+  原本逐字符 `save + translate + scale + fillPath + restore`，改成按
+  `(文本, 字重, 字距)` 缓存一条 em 单位路径，每帧只做一次 `fillPath`。
+  `RHINE_HUD_RUN_CACHE=1` 可重新打开。
+- **归档页右侧淡出遮罩烘成一行图**（`drawCachedMask`）：
+  把 `right-mask` 的 789×984 线性渐变烘成 W×1 图再拉伸。`RHINE_HUD_MASK_CACHE=1`。
 
-两条都不改几何、不改颜色，只把「每帧重复算的东西」换成缓存命中；字形的合并在
-重叠处是并集（nonzero），比原来逐字形叠画更稳，不会挖空。
+**为什么翻案**：把这两条默认打开后重编，同机同场景再录一份，结果是
+
+| | 10:35（两条都关） | 11:21（两条都开） |
+|---|---|---|
+| `latestSyncCpuMs` 均值 | 41.8 ms | **63.0 ms** |
+| `headlineFps` | 17.2 | **12.1** |
+| `mainProcessCpuOneCorePercent` | 154% | **183%** |
+| `latestSubmitCpuMs` | 3.05 ms | 2.60 ms（没变差） |
+
+原因：`QRasterizer` 的覆盖率是按**包围盒**遍历的，不是按墨水面积。把一行字并成一条
+复合路径后，包围盒变成整行，而逐字形时每个字形只扫自己那个紧包围盒——合并把扫描线
+工作量放大了；腾出的「变换次数」根本抵不过。遮罩那条同理：776k 像素上双线性拉伸
+（4 次采样 + 2 次插值）比水平 `QLinearGradient` 的色表查找更贵。
+
+教训：**HUD 这种软件栅格的瓶颈是覆盖率面积，别用「减少 draw call 次数」的直觉去优化它。**
+两条代码保留，作为 A/B 用的负样本。
 
 **隔离性**：新成员与快路径全部包在 `#if defined(Q_OS_ANDROID)`；
 非 Android 仍然走原来的逐字形循环与实时渐变，展开后与改动前逐字相同。
@@ -541,13 +550,20 @@ CPU 分段、全屏 pass 数、draw 数；`Renderer::vulkanConfig()` 上报请�
 
 ### 探针与回退
 
-- `RHINE_HUD_PROBE=1`：每 60 次局部重绘打一行 `HUD 脏区: 平均 x% / 峰值 y% 画布`。
+- **脏区占比日志**：每 240 次局部重绘打一行 `HUD 脏区: 平均 x% / 峰值 y% 画布`。
+  只按次数限流、默认开启——设备上设不了环境变量，默认关掉就永远拿不到这个数。
   **这个数直接回答「滑列表时是不是整屏都在动」**：远小于 100% 就说明局部重绘有效；
-  如果接近 100%，那就是命令流真的整屏在变，只能退回下面的纹理分辨率档。
+  接近 100% 说明命令流真的整屏在变，只能退回下面的纹理分辨率档。定位完可以删掉这段。
 - `RHINE_HUD_TEXTURE_SCALE=50..100`（默认 **100**）：HUD 纹理分辨率档。
   脏区再小，遇到整块重画（换页、启动动画、封面到达）时这是唯一能直接砍像素数的旋钮；
   85 就是 0.72 倍像素、上传量同比例下降。纹理被缩过会自动切成线性过滤。
-- `RHINE_HUD_DIRTY_RECT=0`：一键退回 Qt 默认节点 + 整窗重绘，用于 A/B。
+- `RHINE_HUD_DIRTY_RECT=0`：一键退回 Qt 默认节点 + 整窗重绘，用于 A/B。**默认开启**。
+
+**开关默认值的坑**：`qEnvironmentVariableIntValue(name) != 0` 在变量**未设置**时返回 0，
+拿它当「默认开启」会让开关实际是关的——11:21 那轮就踩了这一下，白费一次构建。
+默认开启必须写 `qEnvironmentVariable(name).isEmpty() || value != "0"`。
+自检脚本里已加断言防回归。
+
 
 ### 隔离性
 
