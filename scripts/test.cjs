@@ -25,6 +25,7 @@ function run(command, args, env = {}) {
 run(python, ['scripts/check-qt-project.py']);
 run(process.execPath, ['scripts/check-music-upstream.cjs']);
 run(process.execPath, ['--test', 'scripts/test-ffmpeg-decoders.cjs']);
+run(process.execPath, ['--test', 'scripts/test-ios-bridge-plugin.cjs']);
 
 run('ctest', ['--test-dir', 'output/qt-build', '--output-on-failure']);
 if (win) {
