@@ -66,6 +66,24 @@ if(RHINE_ANDROID_NORMAL_RGBA8)
     target_compile_definitions(RhineMusicDatabase PRIVATE RHINE_NORMAL_RGBA8=1)
     target_compile_definitions(RhineCore PRIVATE RHINE_NORMAL_RGBA8=1)
 endif()
+
+# Full LTO。CMakeLists.txt 给 Release 打开的 INTERPROCEDURAL_OPTIMIZATION 在 Clang（含 NDK）
+# 上展开成 `-flto=thin`——只做模块级的并行优化，跨静态库/目标的内联仍然有限。
+# 这里换成 `-flto`（full）：整个链接单元（RhineCore + RhineMusicDatabase + qrc 资源符号）
+# 一起做内联与死代码消除，代价是链接期单线程合并 IR，构建时间明显变长。
+#
+# 必须先关掉 IPO：否则 `-flto=thin` 与 `-flto` 会同时出现在同一条命令行上，
+# 两个标志谁生效取决于编译器实现细节，等于把体积交给运气。
+# 只影响 Android；桌面 / iOS 保持 thin（CMakeLists.txt 的那段不动）。
+set_target_properties(
+    RhineCore
+    RhineMusicDatabase
+    PROPERTIES INTERPROCEDURAL_OPTIMIZATION_RELEASE FALSE)
+target_compile_options(RhineCore PRIVATE $<$<CONFIG:Release>:-flto>)
+target_compile_options(RhineMusicDatabase PRIVATE $<$<CONFIG:Release>:-flto>)
+# 最终链接在主目标上：静态库里的 bitcode 由这里的 -flto 触发全量优化。
+target_link_options(RhineMusicDatabase PRIVATE $<$<CONFIG:Release>:-flto>)
+
 target_sources(RhineMusicDatabase PRIVATE "${CMAKE_SOURCE_DIR}/Qt/src/AndroidWindow.cpp"
                                           "${CMAKE_SOURCE_DIR}/Qt/src/AndroidWindow.h")
 

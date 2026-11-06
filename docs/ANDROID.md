@@ -470,7 +470,7 @@ CPU 分段、全屏 pass 数、draw 数；`Renderer::vulkanConfig()` 上报请�
 - 现状：`RhiScene.cpp` 优先 BC7（1.4 MB），GLES 不支持 BC7 →
   回退 `RGBA8` 1024² 全 mip 链 **5.6 MB**，每片元 4 B/texel。
 - 机会确实存在：shader 只读 `baked.rgb`——`color = baked.rgb * normalResponse.rgb +
-  vec3(normalResponse.a)`，那个 `a` 来自 **normalAtlas**，surfaceAtlas 的 alpha
+vec3(normalResponse.a)`，那个 `a` 来自 **normalAtlas**，surfaceAtlas 的 alpha
   **从未被读取**。ETC2 **RGB8 是 0.5 B/px**（4×4 块 64 bit），全 mip 链 **699 KB**
   （`1024²→1×1` 共 699064 B），体积 −87%、采样带宽是 RGBA8 的 1/8。
 - **但 `bake-archive-lighting.py` 里那套手写编码器是坏的，已默认关闭**
@@ -517,7 +517,7 @@ CPU 分段、全屏 pass 数、draw 数；`Renderer::vulkanConfig()` 上报请�
 
 > 一般化教训：这个项目里 `RhineCore` 与 `RhineMusicDatabase` 的源文件集合**不是包含关系**
 > （前者用 `FILTER EXCLUDE` 剔掉了 main/Engine/RhiScene/Hud/FrameProfiler 与整个
-> `/render/`、`/fsr/`、`/fg/`）。任何被 **RhiScene / Hud / Engine / render/* 消费**的宏，
+> `/render/`、`/fsr/`、`/fg/`）。任何被 *_RhiScene / Hud / Engine / render/_ 消费**的宏，
 > 都必须同时挂到 `RhineMusicDatabase`，只挂 `RhineCore` 等于没挂。
 
 ### T3 · 夜间模式短路 · 已落地
@@ -591,14 +591,14 @@ CPU 分段、全屏 pass 数、draw 数；`Renderer::vulkanConfig()` 上报请�
 
 ### 回退开关汇总
 
-| 开关                                                                    | 作用                                                        |
-| ----------------------------------------------------------------------- | ----------------------------------------------------------- |
-| `RHINE_ANDROID_RENDER_TUNING=0`                                         | 总开关，退回本文件所有 Android 默认值                       |
-| `RHINE_BAKE_ETC2` / `RHINE_BAKE_LIGHT_HALF` / `RHINE_BAKE_NORMAL_RGBA8` | 烘焙期；决定产物形态，改完要重跑 `npm run build:android`    |
-| `-DRHINE_ANDROID_NORMAL_RGBA8=OFF`                                      | 配置期；必须与 `RHINE_BAKE_NORMAL_RGBA8` 同时关             |
-| `RHINE_DECORATION_HIGH=1`                                               | 强制建 2000×1480 装饰面                                     |
-| `RHINE_SURFACE_ETC2=1`                                                  | 启用 ETC2 图集（**默认关**：编码器有字节序/位布局缺陷，会花屏） |
-| `RHINE_DEBUG_ATLAS=1`                                                   | 启动时打印实际选中的表面图集格式（ETC2 RGB8 / BC7 / RGBA8） |
+| 开关                                                | 作用                                                            |
+| --------------------------------------------------- | --------------------------------------------------------------- |
+| `RHINE_ANDROID_RENDER_TUNING=0`                     | 总开关，退回本文件所有 Android 默认值                           |
+| `RHINE_BAKE_LIGHT_HALF` / `RHINE_BAKE_NORMAL_RGBA8` | 烘焙期；决定产物形态，改完要重跑 `npm run build:android`        |
+| `-DRHINE_ANDROID_NORMAL_RGBA8=OFF`                  | 配置期；必须与 `RHINE_BAKE_NORMAL_RGBA8` 同时关                 |
+| `RHINE_DECORATION_HIGH=1`                           | 强制建 2000×1480 装饰面                                         |
+| `RHINE_SURFACE_ETC2=1`                              | 启用 ETC2 图集（**默认关**：编码器有字节序/位布局缺陷，会花屏） |
+| `RHINE_DEBUG_ATLAS=1`                               | 启动时打印实际选中的表面图集格式（ETC2 RGB8 / BC7 / RGBA8）     |
 
 ## 滑动列表掉帧：HUD 软件栅格（Android）
 
@@ -1099,6 +1099,60 @@ BuildId 与当前 APK 里那份完全一致，补丁新增的 `destroySurfaceRes
 **说明它从未编译进 kit**。要让那条修复生效，需重跑 `npm run build:qt:android`
 再重建 APK；在此之前前台换面仍可能复发旧的 SIGABRT。两条线别混为一谈。
 
+## 构建优化：Full LTO 与 APK 体积（2026-11-06）
+
+### Full LTO（仅 Android）
+
+`CMakeLists.txt` 给 Release 打开的 `INTERPROCEDURAL_OPTIMIZATION` 在 Clang（含 NDK）上
+展开成 **`-flto=thin`**——模块级并行优化，跨静态库的内联仍然有限。
+`Qt/Android.cmake` 现在把它关掉，改成显式 **`-flto`**（full），让
+`RhineCore` + `RhineMusicDatabase` + qrc 资源符号在同一个链接单元里优化。
+
+- **必须同时关掉 IPO**：否则 `-flto=thin` 与 `-flto` 会出现在同一条命令行上，
+  谁生效取决于编译器实现细节。
+- 代价是链接期单线程合并 IR，构建明显变慢；收益集中在 `.text`（主库约 3.8 MB），
+  资源在 `.rodata`，LTO 碰不到——所以**真正压体积要靠下面的裁剪，不是 LTO**。
+- 桌面 / iOS 保持 thin（`CMakeLists.txt` 那段不动）。
+
+### APK 体积构成（168 MB，`a6724e5` 那一版）
+
+| 项                                            | 体积        | 处理                                   |
+| --------------------------------------------- | ----------- | -------------------------------------- |
+| `libnode.so`                                  | 47.2 MB     | Node 运行时，动不了（已 strip）        |
+| `libRhineMusicDatabase.so`                    | 39.7 MB     | 其中 `.rodata` ≈ 35 MB 是内嵌 qrc 资源 |
+| Qt6Core/Gui/Quick/Qml                         | 31.1 MB     | 必需                                   |
+| **QuickControls2 六套样式**                   | **15.6 MB** | **已排除**（QML 无一处 import）        |
+| `classes.dex`                                 | 6.9 MB      | Clarity + Bugly + Kotlin + protobuf    |
+| QuickDialogs2QuickImpl                        | 3.0 MB      | `QtQuick.Dialogs` 在用，保留           |
+| 字体 ×4（MiSans light/regular/demibold/bold） | 28 MB       | **未动**，见下                         |
+
+### 已做的裁剪
+
+1. **QuickControls2 样式包**（`Qt/android/build.gradle` 追加段的 `jniLibs.excludes`）：
+   FluentWinUI3 / Imagine / Material / Universal / Fusion 及其 StyleImpl，约 13 MB。
+   判据是 `Qt/qml/*.qml` 只 import `QtQuick`、`QtQuick.Window`、`QtQuick.Dialogs`，
+   C++ 侧没有 `QQuickStyle::setStyle`。**刻意保留** `Qt6QuickControls2` /
+   `QuickControls2Impl` / `QuickControls2Basic`（约 2.5 MB）作兜底——少一个 .so 就是启动即崩。
+   `scripts/android-gradle-sync.cjs` 的 `bootstrapAdditions` 已同步，Qt 升级后不会被覆盖。
+2. **qmltooling 调试插件**（约 1 MB）与 `Qt6LabsFolderListModel`（0.1 MB）：release 不需要、
+   没有任何 QML import 后者。
+3. **Android 包不再带 `archive-baked-surface-bc7.bin`**（1.4 MB）：GLES 上
+   `isTextureFormatSupported(BC7)` 恒为 false，RhiScene 直接跳过。
+4. **ETC2 产物不再烘焙也不再打包**（699 KB + 每次省十几秒）：编码器有缺陷已默认关闭，
+   见「T1 · surfaceAtlas 换 ETC2 RGB8」。
+
+合计约 **16 MB**（168 → ~152 MB）。
+
+### 还剩两块大的（需要单独验证）
+
+- **字体 28 MB**：4 个字重各约 7 MB，是整个 `.rodata` 的最大头。可行方向是减少字重
+  （light/demibold 交给 `QFont::setWeight` 匹配到 regular/bold）或按常用字子集化，
+  但都会改变界面观感，且中文歌名/歌手是动态文本，子集必须覆盖任意汉字。
+- **Node bundle 20 MB**（`worker.cjs` 14 MB + `xhr-sync-worker.js` 6.4 MB）：
+  `scripts/bundle-bridge.cjs` 的 esbuild 没有开 `minify`。加
+  `minifyWhitespace + minifySyntax`（**不开** `minifyIdentifiers`，jsdom 依赖函数名/类名）
+  预计能砍掉四成，但需要真机验证桥接与歌词/登录链路，不是纯格式改动。
+
 ## 已知限制
 
 - **TLS 用 Node 自带的根证书。** Android 没有从 Node 侧访问系统信任库的通道（iOS 走 Security.framework），
@@ -1110,28 +1164,28 @@ BuildId 与当前 APK 里那份完全一致，补丁新增的 `destroySurfaceRes
 
 ## 排障
 
-| 现象                                                                                    | 原因                                                                                                                                                                                                                                                                      |
-| --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Qt for Android kit not found`                                                          | 没装 Qt 的 Android 组件，或路径不是 `~/Qt/6.12.0/android_arm64_v8a`；用 `RHINE_ANDROID_QT` 指定                                                                                                                                                                           |
-| `libnode.so not found`                                                                  | nodejs-mobile 的包没解出来；删掉 `output/dependencies/node-mobile` 重新构建                                                                                                                                                                                               |
-| Gradle 报 `Unsupported class file major version`                                        | Gradle 跑在了 JDK 22 以上的 JVM 上。用 `npm run build:qt:android` 重跑（它会钉住 JDK 21），或先 `export JAVA_HOME=<JDK 21>` 再直接跑 `ninja`                                                                                                                              |
-| 首次启动白屏十几秒                                                                      | 正在解包资源（约 45 MB）到应用私有目录，只在版本号或提交变化后的第一次发生                                                                                                                                                                                                |
-| 界面能起但列表空白                                                                      | Node 运行时没起来；`adb logcat` 里看 `Android:` 与 node 的 stderr 输出（本仓库不做实机调试）                                                                                                                                                                              |
-| 画面上下颠倒                                                                            | 清单被模板覆盖回 `unspecified`；`scripts/audit-android.py` 会直接报 `screenOrientation is not sensorLandscape`                                                                                                                                                            |
-| `Qt/android/build.gradle 的前缀不再等于…`                                               | Qt 升级换了 Gradle 模板；跑 `node scripts/android-gradle-sync.cjs` 重新生成（末尾追加的依赖会保留）                                                                                                                                                                       |
-| Clarity 后台没有会话                                                                    | 清单 `android:name` 被改回 `QtApplication`；`scripts/audit-android.py` 会报 `RhineApplication (Clarity entry point) missing`                                                                                                                                              |
-| Clarity 回放只有点击、没有画面                                                          | 已知限制：Clarity 只重画 View 树，拍不到 GL 内容，换容器或后端都没用（见「已知限制：Clarity 无法获取录制画面」）                                                                                                                                                          |
-| Bugly 后台没有崩溃数据                                                                  | 只有中国大陆用户同意后才初始化；欧盟地区、其他地区、地区判定超时都没有 Bugly。看 `logcat` 的 `RhineConsent`，初始化失败会打 `Bugly initialization failed`                                                                                                                 |
-| 崩溃列表里 native 栈只有地址、没有符号                                                  | 需按 Bugly 官方《符号表配置》上传带调试信息的 `.so`；AppKey 放 CI secret，不要写进仓库                                                                                                                                                                                    |
-| logcat 里找不到 `RHINE-SIGNAL`                                                          | 预期行为：native 已交给 Bugly，自有诊断链默认不编译（`RHINE_ANDROID_SIGNAL_DIAG=0`）；要抓自有现场把宏改 `1` 且把 `BUGLY_NATIVE_MONITOR` 改 `false`                                                                                                                       |
-| 审计报 `unexpected ABIs`                                                                | Bugly AAR 的 5 个 `libBugly_Native.so` 没被排掉；检查 `Qt/android/build.gradle` 标记行之后的 `jniLibs.excludes` 是否还在                                                                                                                                                  |
-| 首次启动黑屏最多 3 秒                                                                   | 未同意、且本机只有私有地址时才会取公网出口地址（`GeoIp.TOTAL_TIMEOUT_MS`）；本机有公网 IPv4/IPv6 时直接查表、不等待。已同意后不再请求                                                                                                                                     |
-| 点「退出」后应用直接关闭                                                                | 预期行为：未同意数据传输许可时 `finishAffinity()` 结束进程                                                                                                                                                                                                                |
-| 国内用户没看到许可弹窗                                                                  | IP 判定失败（断网、端点超时或表未命中）→ 按其他地区放行：照常启动界面与 Clarity，不弹窗、不启动 Bugly，下次启动会重新判定                                                                                                                                                 |
-| Android 画面比桌面略软                                                                  | 预期行为：Android 默认渲染分辨率 90%（`androidDefaultRenderScale()`）。要原生清晰度用设置页改回 100、`RHINE_RENDER_SCALE=100`，或 `RHINE_ANDROID_RENDER_TUNING=0` 整体回退                                                                                                |
-| Android 想关掉合成 9→4 折叠做对照                                                       | 用 `-DRHINE_ANDROID_QUAD_FOLD=OFF` 重新配置 Android 构建树；这是 CMake 配置期开关，桌面 / iOS 本来就没有这个宏                                                                                                                                                            |
-| 前台滑动时界面突然消失（无响应后退出）                                                  | ANR：`Input dispatching timed out`，系统按 `user request after error` 杀进程。根因是系统无障碍服务激活了 Qt 的可访问树遍历，见「前台 ANR」一节；默认已关闭该桥，`RHINE_ANDROID_ACCESSIBILITY=1` 可恢复                                                                    |
-| logcat 出现 `No response to onStartJob` / `com.microsoft.clarity.jobs.UploadSessionJob` | 不是 Clarity 崩溃，也不是本应用 native crash：`onStartJob` 跑在主线程，主线程被卡住时它的 8 秒 deadline 到期，系统据此判 ANR 并杀进程；该 job 每 ~10 秒调度一次、跨进程存活，冷启动重试时最容易撞上。见「Clarity 的准确定位」，先按上一行修无障碍桥，再看冷启动是否仍超时 |
-| logcat 又出现 `destroyed mutex` 的 SIGABRT                                              | 与前台 ANR 不同的老问题：Vulkan surface 换面竞态。`scripts/qt-android-patches.cjs` 的补丁还在，但 kit 没重编过；重跑 `npm run build:qt:android` 再重建 APK 才会生效                                                                                                       |
-| 启动到主界面立刻闪退，`crash` 缓冲区是 `SIGABRT`（`QtThread`，`Abort message: archive-baked-normal.bin is ... expected 262144`） | 宏挂错目标：`RHINE_NORMAL_RGBA8` 只加到 `RhineCore`，而 `RhiScene.cpp` 被 `RHINE_CORE_SOURCES` 的 `FILTER EXCLUDE` 排除、只编进 `RhineMusicDatabase`。现已改为按文件字节数选格式（不再 `qFatal`），并把宏同时挂到应用目标，见 T2 小节 |
-| 启动后 3D 画面颜色明显偏亮/偏暗，logcat 有「法线图集位宽与着色器宏不一致」                | 烘焙的 `RHINE_BAKE_NORMAL_RGBA8` 与 CMake 的 `RHINE_ANDROID_NORMAL_RGBA8` 不同步：两者必须同为开或同为关，改一个就要重跑 `npm run build:android`                                                                                                                        |
+| 现象                                                                                                                             | 原因                                                                                                                                                                                                                                                                      |
+| -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Qt for Android kit not found`                                                                                                   | 没装 Qt 的 Android 组件，或路径不是 `~/Qt/6.12.0/android_arm64_v8a`；用 `RHINE_ANDROID_QT` 指定                                                                                                                                                                           |
+| `libnode.so not found`                                                                                                           | nodejs-mobile 的包没解出来；删掉 `output/dependencies/node-mobile` 重新构建                                                                                                                                                                                               |
+| Gradle 报 `Unsupported class file major version`                                                                                 | Gradle 跑在了 JDK 22 以上的 JVM 上。用 `npm run build:qt:android` 重跑（它会钉住 JDK 21），或先 `export JAVA_HOME=<JDK 21>` 再直接跑 `ninja`                                                                                                                              |
+| 首次启动白屏十几秒                                                                                                               | 正在解包资源（约 45 MB）到应用私有目录，只在版本号或提交变化后的第一次发生                                                                                                                                                                                                |
+| 界面能起但列表空白                                                                                                               | Node 运行时没起来；`adb logcat` 里看 `Android:` 与 node 的 stderr 输出（本仓库不做实机调试）                                                                                                                                                                              |
+| 画面上下颠倒                                                                                                                     | 清单被模板覆盖回 `unspecified`；`scripts/audit-android.py` 会直接报 `screenOrientation is not sensorLandscape`                                                                                                                                                            |
+| `Qt/android/build.gradle 的前缀不再等于…`                                                                                        | Qt 升级换了 Gradle 模板；跑 `node scripts/android-gradle-sync.cjs` 重新生成（末尾追加的依赖会保留）                                                                                                                                                                       |
+| Clarity 后台没有会话                                                                                                             | 清单 `android:name` 被改回 `QtApplication`；`scripts/audit-android.py` 会报 `RhineApplication (Clarity entry point) missing`                                                                                                                                              |
+| Clarity 回放只有点击、没有画面                                                                                                   | 已知限制：Clarity 只重画 View 树，拍不到 GL 内容，换容器或后端都没用（见「已知限制：Clarity 无法获取录制画面」）                                                                                                                                                          |
+| Bugly 后台没有崩溃数据                                                                                                           | 只有中国大陆用户同意后才初始化；欧盟地区、其他地区、地区判定超时都没有 Bugly。看 `logcat` 的 `RhineConsent`，初始化失败会打 `Bugly initialization failed`                                                                                                                 |
+| 崩溃列表里 native 栈只有地址、没有符号                                                                                           | 需按 Bugly 官方《符号表配置》上传带调试信息的 `.so`；AppKey 放 CI secret，不要写进仓库                                                                                                                                                                                    |
+| logcat 里找不到 `RHINE-SIGNAL`                                                                                                   | 预期行为：native 已交给 Bugly，自有诊断链默认不编译（`RHINE_ANDROID_SIGNAL_DIAG=0`）；要抓自有现场把宏改 `1` 且把 `BUGLY_NATIVE_MONITOR` 改 `false`                                                                                                                       |
+| 审计报 `unexpected ABIs`                                                                                                         | Bugly AAR 的 5 个 `libBugly_Native.so` 没被排掉；检查 `Qt/android/build.gradle` 标记行之后的 `jniLibs.excludes` 是否还在                                                                                                                                                  |
+| 首次启动黑屏最多 3 秒                                                                                                            | 未同意、且本机只有私有地址时才会取公网出口地址（`GeoIp.TOTAL_TIMEOUT_MS`）；本机有公网 IPv4/IPv6 时直接查表、不等待。已同意后不再请求                                                                                                                                     |
+| 点「退出」后应用直接关闭                                                                                                         | 预期行为：未同意数据传输许可时 `finishAffinity()` 结束进程                                                                                                                                                                                                                |
+| 国内用户没看到许可弹窗                                                                                                           | IP 判定失败（断网、端点超时或表未命中）→ 按其他地区放行：照常启动界面与 Clarity，不弹窗、不启动 Bugly，下次启动会重新判定                                                                                                                                                 |
+| Android 画面比桌面略软                                                                                                           | 预期行为：Android 默认渲染分辨率 90%（`androidDefaultRenderScale()`）。要原生清晰度用设置页改回 100、`RHINE_RENDER_SCALE=100`，或 `RHINE_ANDROID_RENDER_TUNING=0` 整体回退                                                                                                |
+| Android 想关掉合成 9→4 折叠做对照                                                                                                | 用 `-DRHINE_ANDROID_QUAD_FOLD=OFF` 重新配置 Android 构建树；这是 CMake 配置期开关，桌面 / iOS 本来就没有这个宏                                                                                                                                                            |
+| 前台滑动时界面突然消失（无响应后退出）                                                                                           | ANR：`Input dispatching timed out`，系统按 `user request after error` 杀进程。根因是系统无障碍服务激活了 Qt 的可访问树遍历，见「前台 ANR」一节；默认已关闭该桥，`RHINE_ANDROID_ACCESSIBILITY=1` 可恢复                                                                    |
+| logcat 出现 `No response to onStartJob` / `com.microsoft.clarity.jobs.UploadSessionJob`                                          | 不是 Clarity 崩溃，也不是本应用 native crash：`onStartJob` 跑在主线程，主线程被卡住时它的 8 秒 deadline 到期，系统据此判 ANR 并杀进程；该 job 每 ~10 秒调度一次、跨进程存活，冷启动重试时最容易撞上。见「Clarity 的准确定位」，先按上一行修无障碍桥，再看冷启动是否仍超时 |
+| logcat 又出现 `destroyed mutex` 的 SIGABRT                                                                                       | 与前台 ANR 不同的老问题：Vulkan surface 换面竞态。`scripts/qt-android-patches.cjs` 的补丁还在，但 kit 没重编过；重跑 `npm run build:qt:android` 再重建 APK 才会生效                                                                                                       |
+| 启动到主界面立刻闪退，`crash` 缓冲区是 `SIGABRT`（`QtThread`，`Abort message: archive-baked-normal.bin is ... expected 262144`） | 宏挂错目标：`RHINE_NORMAL_RGBA8` 只加到 `RhineCore`，而 `RhiScene.cpp` 被 `RHINE_CORE_SOURCES` 的 `FILTER EXCLUDE` 排除、只编进 `RhineMusicDatabase`。现已改为按文件字节数选格式（不再 `qFatal`），并把宏同时挂到应用目标，见 T2 小节                                     |
+| 启动后 3D 画面颜色明显偏亮/偏暗，logcat 有「法线图集位宽与着色器宏不一致」                                                       | 烘焙的 `RHINE_BAKE_NORMAL_RGBA8` 与 CMake 的 `RHINE_ANDROID_NORMAL_RGBA8` 不同步：两者必须同为开或同为关，改一个就要重跑 `npm run build:android`                                                                                                                          |

@@ -13,9 +13,8 @@ const android3dRoot = path.resolve('output/android-3d');
 const android3dSource = path.resolve('Assets/android-3d');
 const android3dFiles = new Set([
     'archive-baked-surface.bin',
-    'archive-baked-surface-bc7.bin',
-    // Android 专属：GLES 没有 BC7，ETC2 RGB8 是 0.5 B/px。桌面不烘焙也不打包它。
-    'archive-baked-surface-etc2.bin',
+    // 不再要求 archive-baked-surface-etc2.bin：那套手写编码器有字节序与位布局缺陷
+    // （标准解码器 PSNR 5.7 dB，真机花屏），运行时已默认关闭，产物也不再烘焙。
     'archive-baked-light.bin',
     'archive-baked-normal.bin',
     'archive-cassette.bin',
@@ -29,9 +28,9 @@ const android3dFiles = new Set([
 ]);
 const files = [
     'archive-baked-surface.bin',
-    'archive-baked-surface-bc7.bin',
-    // 只有 Android 烘焙这一份；桌面 `files` 里不能列它，否则 copyFileSync 会 ENOENT。
-    ...(androidRuntime ? ['archive-baked-surface-etc2.bin'] : []),
+    // BC7 只有桌面 / macOS 用：GLES 上 isTextureFormatSupported(BC7) 恒为 false，
+    // RhiScene 会直接跳过它。这一份 1.4 MB 在 Android 包里是纯死重，不带。
+    ...(androidRuntime ? [] : ['archive-baked-surface-bc7.bin']),
     'archive-baked-light.bin',
     'archive-baked-normal.bin',
     'archive-cassette.bin',

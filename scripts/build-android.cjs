@@ -128,11 +128,14 @@ function prepareResources() {
         RHINE_3D_SOURCE: path.resolve('Assets/android-3d'),
         RHINE_3D_OUTPUT: android3dOutput,
         // Android 专属的烘焙变体（桌面 / iOS 不设这些变量，产物逐字节不变）：
-        //   ETC2     —— GLES 没有 BC7，ETC2 RGB8 是 0.5 B/px，替代 5.6 MB 的 RGBA8 图集；
         //   LIGHT_HALF —— 光场空间分辨率减半（层数不动），5.3 MB → 1.33 MB，有机会留在 L2；
         //   NORMAL_RGBA8 —— 法线响应 8 位，逐像素带宽减半。
-        // 后两项必须与 CMakeLists 的 RHINE_ANDROID_NORMAL_RGBA8 保持一致，否则纹理尺寸对不上。
-        RHINE_BAKE_ETC2: '1',
+        // 后者必须与 CMakeLists 的 RHINE_ANDROID_NORMAL_RGBA8 保持一致，否则纹理尺寸对不上。
+        //
+        // ETC2 已停：那套手写编码器有字节序（ETC2 要求大端块）与 individual 模式位布局
+        // 两处缺陷，标准解码器实测 PSNR 5.7 dB、真机是花屏，运行时也默认关闭
+        // （RHINE_SURFACE_ETC2=1 才读）。留着烘焙只是每次白花十几秒再打 700 KB 死重。
+        // 换成可靠编码器（etcpak / etc2comp）后，把 RHINE_BAKE_ETC2 加回来即可。
         RHINE_BAKE_LIGHT_HALF: '1',
         RHINE_BAKE_NORMAL_RGBA8: '1',
     };

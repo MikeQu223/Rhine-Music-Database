@@ -63,6 +63,36 @@ android {
         }
     }
 }
+
+// 体积裁剪一：APK 里最大的几块里，有一批 Android 侧永远用不到的 Qt 库。
+// 判据是实际 import——Qt/qml/*.qml 只 import QtQuick、QtQuick.Window、QtQuick.Dialogs，
+// C++ 侧没有 QQuickStyle::setStyle、也没有任何 QuickControls 类型。
+//   · QuickControls2 的五套样式包（FluentWinUI3/Imagine/Material/Universal/Fusion 及其
+//     StyleImpl）共约 13 MB，是 androiddeployqt 按 QML 依赖图整包带进来的；
+//   · qmltooling 的 qmldbg_*（约 1 MB）是开发期调试器，release 不需要；
+//   · Qt.labs.folderlistmodel 没有任何 QML import 它。
+// 刻意保留 Qt6QuickControls2 / QuickControls2Impl / QuickControls2Basic（约 2.5 MB）：
+// 那是 QQC2 的默认样式兜底。万一将来某条 import 链把它拉进来，少一个 .so 就是启动即崩，
+// 省 2.5 MB 换一个必崩风险不划算。真要连它们一起删，先确认所有 QML 与 C++ 都不碰
+// QtQuick.Controls，并真机冷启动验证一次。
+android {
+    packagingOptions {
+        jniLibs {
+            // 与上面 Bugly 那段一致用 addAll：excludes 是可变 Set，用 += 会走
+            // 属性读改写，AGP 版本一换就可能只在某些配置下生效。
+            // 注意本文件是 JS 模板字符串，注释里不能出现反引号。
+            excludes.addAll([
+                '**/libQt6QuickControls2FluentWinUI3*.so',
+                '**/libQt6QuickControls2Imagine*.so',
+                '**/libQt6QuickControls2Material*.so',
+                '**/libQt6QuickControls2Universal*.so',
+                '**/libQt6QuickControls2Fusion*.so',
+                '**/libplugins_qmltooling_*.so',
+                '**/libQt6LabsFolderListModel*.so',
+            ])
+        }
+    }
+}
 `;
 
 /** kit 的查找顺序与 build-android.cjs 保持一致：显式覆盖 → 仓库自建 → Qt 安装器默认位置。 */
