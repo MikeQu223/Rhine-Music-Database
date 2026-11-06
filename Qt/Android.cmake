@@ -53,6 +53,12 @@ target_link_libraries(RhineCore PRIVATE RhineNodeMobile)
 # AndroidMediaSession 用 QtCore 的私有 Android 扩展（POST_NOTIFICATIONS 权限申请）；
 # 私有头在 include/QtCore/6.12.0 下，CorePrivate 目标带来这条包含路径。
 target_link_libraries(RhineCore PRIVATE Qt6::CorePrivate)
+# 法线响应的位宽：烘焙脚本（RHINE_BAKE_NORMAL_RGBA8=1）、着色器（CMakeLists 的
+# RHINE_NORMAL_RGBA8 宏）与这里的纹理格式必须是同一个决定。RhiScene.cpp 在 RhineCore 里，
+# 所以 C++ 侧也要拿到这个宏，否则它会按 RGBA16F 建纹理去读 8 位数据。
+if(RHINE_ANDROID_NORMAL_RGBA8)
+    target_compile_definitions(RhineCore PRIVATE RHINE_NORMAL_RGBA8=1)
+endif()
 target_sources(RhineMusicDatabase PRIVATE "${CMAKE_SOURCE_DIR}/Qt/src/AndroidWindow.cpp"
                                           "${CMAKE_SOURCE_DIR}/Qt/src/AndroidWindow.h")
 

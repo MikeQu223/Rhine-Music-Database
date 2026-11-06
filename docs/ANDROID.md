@@ -353,14 +353,14 @@ Android 的 3D 走 `RhiScene`（`QQuickRhiItem`）+ `QRhi::OpenGLES2`（GLES 3.0
 默认值集中在 `Qt/src/render/AndroidRenderPolicy.h`，`Qt/src/RhiScene.cpp` 只负责取值；
 渲染分辨率与合成折叠另有各自的开关（见下）。
 
-| 优化 | Android 默认 | 桌面 / iOS | 收益 | 为什么画面不变 |
-| --- | --- | --- | --- | --- |
-| 紧凑实例 80 B（`RHINE_VK_COMPACT_INSTANCES`） | 开 | 关 | 每实例少传 64 B，实例载荷省约 44% | `opticalGeometry.vert` 的 `previousModel` 整段包在 `RHINE_SINGLE_PASS_MOTION` 里，该宏只给桌面 Linux / Apple 定义；Android 主变体本就只读 location 0..7，与 `/opticalCompact` 在 GLES 下逐字同构。shader 读到的 80 字节完全相同 |
-| 丢弃无人读取的深度（`RHINE_VK_DISCARD_UNUSED_DEPTH`） | 开 | 关 | tile-based GPU 每帧少一次 D32F 写回主存（1080p 约 8 MB） | 只改 pass 结束后的 `storeOp`，不改深度测试与颜色；`resize()` 用保守的 `depthStoreRequired()` 兜底，motion / TAA / warp / MetalFX 任一存在就照旧 store |
-| GLES 实例池（原 `ensureInstancePool()` 只放行 Vulkan） | 放行 `OpenGLES2` | 仍只放行 Vulkan | 几十个逐 draw 小 VertexBuffer 合成一个大 buffer，配合内容差分把每帧约 165 KB 上传压到接近 0 | 只改 buffer 组织与 `VertexInput::offset`，顶点 / 材质 / 纹理内容不变；容量或对齐放不下时 `poolInstances()` 整帧回退逐 draw |
-| 跳过无消费者的运动矢量收尾（`RHINE_VK_SKIP_IDLE_MOTION`） | 开 | 关 | 每帧省掉 `publishMotionInputs()` 的矩阵解析 / `atan` / 近远平面计算，以及 Globals 尾部 128 B 的两次矩阵填充 | `Q_OS_ANDROID` 蕴含 `Q_OS_LINUX`，这段原本会跟着桌面 Linux 分支一起跑；但 300es 主变体没有 `RHINE_SINGLE_PASS_MOTION`，shader 不读那两个矩阵，`FgFrameTap::publish()` 在 tap 未启用时也只是空操作。打开 TAA / FSR / FG / `RHINE_WARP_PROBE` 时 `idleMotionWork` 自动翻回 false，不会静默丢运动矢量 |
-| Globals 差分上传（`RHINE_VK_DIFF_GLOBALS`） | 开 | 关 | 相机 / 选中项 / 主题不变的帧里省掉一次 832 B 拷贝和一条 `resourceUpdate` 记录 | 只在内容逐字节相同时跳过上传；`qrhigles2.cpp:2846` 把 Dynamic UniformBuffer 存成 `QByteArray` 字节镜像、内容跨帧保留，uniform 仍由 `setShaderResources` 每帧从镜像读值下发，结果不变。Vulkan 的 per-frame ring 不在此列，所以只在 Android 启用 |
-| 材质 UBO arena（`RHINE_VK_UNIFORM_ARENA`） | **关**（保持原样） | 关 | — | 见下 |
+| 优化                                                      | Android 默认       | 桌面 / iOS      | 收益                                                                                                        | 为什么画面不变                                                                                                                                                                                                                                                                                     |
+| --------------------------------------------------------- | ------------------ | --------------- | ----------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 紧凑实例 80 B（`RHINE_VK_COMPACT_INSTANCES`）             | 开                 | 关              | 每实例少传 64 B，实例载荷省约 44%                                                                           | `opticalGeometry.vert` 的 `previousModel` 整段包在 `RHINE_SINGLE_PASS_MOTION` 里，该宏只给桌面 Linux / Apple 定义；Android 主变体本就只读 location 0..7，与 `/opticalCompact` 在 GLES 下逐字同构。shader 读到的 80 字节完全相同                                                                    |
+| 丢弃无人读取的深度（`RHINE_VK_DISCARD_UNUSED_DEPTH`）     | 开                 | 关              | tile-based GPU 每帧少一次 D32F 写回主存（1080p 约 8 MB）                                                    | 只改 pass 结束后的 `storeOp`，不改深度测试与颜色；`resize()` 用保守的 `depthStoreRequired()` 兜底，motion / TAA / warp / MetalFX 任一存在就照旧 store                                                                                                                                              |
+| GLES 实例池（原 `ensureInstancePool()` 只放行 Vulkan）    | 放行 `OpenGLES2`   | 仍只放行 Vulkan | 几十个逐 draw 小 VertexBuffer 合成一个大 buffer，配合内容差分把每帧约 165 KB 上传压到接近 0                 | 只改 buffer 组织与 `VertexInput::offset`，顶点 / 材质 / 纹理内容不变；容量或对齐放不下时 `poolInstances()` 整帧回退逐 draw                                                                                                                                                                         |
+| 跳过无消费者的运动矢量收尾（`RHINE_VK_SKIP_IDLE_MOTION`） | 开                 | 关              | 每帧省掉 `publishMotionInputs()` 的矩阵解析 / `atan` / 近远平面计算，以及 Globals 尾部 128 B 的两次矩阵填充 | `Q_OS_ANDROID` 蕴含 `Q_OS_LINUX`，这段原本会跟着桌面 Linux 分支一起跑；但 300es 主变体没有 `RHINE_SINGLE_PASS_MOTION`，shader 不读那两个矩阵，`FgFrameTap::publish()` 在 tap 未启用时也只是空操作。打开 TAA / FSR / FG / `RHINE_WARP_PROBE` 时 `idleMotionWork` 自动翻回 false，不会静默丢运动矢量 |
+| Globals 差分上传（`RHINE_VK_DIFF_GLOBALS`）               | 开                 | 关              | 相机 / 选中项 / 主题不变的帧里省掉一次 832 B 拷贝和一条 `resourceUpdate` 记录                               | 只在内容逐字节相同时跳过上传；`qrhigles2.cpp:2846` 把 Dynamic UniformBuffer 存成 `QByteArray` 字节镜像、内容跨帧保留，uniform 仍由 `setShaderResources` 每帧从镜像读值下发，结果不变。Vulkan 的 per-frame ring 不在此列，所以只在 Android 启用                                                     |
+| 材质 UBO arena（`RHINE_VK_UNIFORM_ARENA`）                | **关**（保持原样） | 关              | —                                                                                                           | 见下                                                                                                                                                                                                                                                                                               |
 
 **收益量级要说清楚**：无损那几项清掉的是每帧白跑的 CPU 工作（一次 `QJsonObject`
 矩阵解析 / `atan` / 近远平面计算、两次矩阵填充，以及一次 832 B 拷贝），不改任何像素；
@@ -378,11 +378,11 @@ uniform。arena 的「一次绑定 + 动态偏移」收益在 GLES 上拿不到�
 
 ### 默认全开：观感档位（限帧除外）
 
-| 档位 | Android 默认 | 桌面 / iOS | 收益 | 观感代价 |
-| --- | --- | --- | --- | --- |
-| 渲染分辨率 90% | **开** | 100（原生） | 内部渲染目标与全屏合成的像素数约降到 81%，GLES 上最直接的 GPU 杠杆 | 略软；合成本来就有常驻 3×3 二项柔化，90% 通常不明显 |
-| 合成 9→4 双线性折叠 | **开** | 关（宏不定义） | 唯一常驻全屏 pass 在 `k==1` 区域的纹理读取 9 → 4 次 | 原生分辨率且 `k==1` 时与九点逐项等价，最多差 1~2 ULP；叠加 90% 时属于肉眼不可见的极轻微变化 |
-| 动画期帧率上限（`RHINE_TICK_MS=16`） | **刻意不做** | 不做 | 主要省电与发热 | 高刷设备流畅度降到约 60 fps、触控多最多 16 ms 延迟；用户明确排除 |
+| 档位                                 | Android 默认 | 桌面 / iOS     | 收益                                                               | 观感代价                                                                                    |
+| ------------------------------------ | ------------ | -------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------- |
+| 渲染分辨率 90%                       | **开**       | 100（原生）    | 内部渲染目标与全屏合成的像素数约降到 81%，GLES 上最直接的 GPU 杠杆 | 略软；合成本来就有常驻 3×3 二项柔化，90% 通常不明显                                         |
+| 合成 9→4 双线性折叠                  | **开**       | 关（宏不定义） | 唯一常驻全屏 pass 在 `k==1` 区域的纹理读取 9 → 4 次                | 原生分辨率且 `k==1` 时与九点逐项等价，最多差 1~2 ULP；叠加 90% 时属于肉眼不可见的极轻微变化 |
+| 动画期帧率上限（`RHINE_TICK_MS=16`） | **刻意不做** | 不做           | 主要省电与发热                                                     | 高刷设备流畅度降到约 60 fps、触控多最多 16 ms 延迟；用户明确排除                            |
 
 **渲染分辨率 90%** 的默认值由 `AndroidRenderPolicy.h::androidDefaultRenderScale()` 给出，
 两个消费点必须一致，否则设置页显示与实际生效值会打架：
@@ -453,19 +453,145 @@ CPU 分段、全屏 pass 数、draw 数；`Renderer::vulkanConfig()` 上报请�
 非 Android 分支展开后与改动前逐字相同。新头文件在非 Android 平台只是几个返回常量的
 内联函数，不参与任何渲染路径；资源打包与其它平台脚本一行未改。
 
+## 3D 开销削减：已落地项与不可行项
+
+> 2026-11-06 盘点后用户批准全部执行。**T1–T5、T7、T8 已落地，T6 经核实不可行**
+> （Qt 6.12 的 `QRhiTexture::Format` 没有 `R11G11B10F`，只有 `RGB10A2` 定点，
+> 装不下主目标的 HDR 浮点值——详见 T6 一节，不要再重复尝试）。
+>
+> 这一批的共同约束：所有改动只影响 Android 的烘焙产物与默认值，
+> 桌面 / iOS 的纹理格式、文件内容、着色器产物逐字节不变。
+> 判据是代码里实际声明的格式与 shader 里实际发生的采样次数，不是估算。
+
+下面保留原始盘点内容以便回查，每项前面标了当前状态。
+
+### T1 · surfaceAtlas 换 ETC2 RGB8（最大一项）· 已落地
+
+- 现状：`RhiScene.cpp:724-737` 优先 BC7（1.4 MB），GLES 不支持 BC7 →
+  回退 `RGBA8` 1024² 全 mip 链 **5.6 MB**，每片元 4 B/texel。
+- 关键机会：shader 只读 `baked.rgb`——`color = baked.rgb * normalResponse.rgb +
+vec3(normalResponse.a)`，那个 `a` 来自 **normalAtlas**，surfaceAtlas 的 alpha
+  **从未被读取**。所以不需要 RGBA。
+- ETC2 **RGB8 是 0.5 B/px**（4×4 块 64 bit），全 mip 链 **699 KB**：
+  体积 −87%，采样带宽是 RGBA8 的 1/8、BC7 的 1/2。GLES 3.0 强制支持 ETC2。
+- 实现：`bake-archive-lighting.py` 加了一个纯 Python 的 ETC2 编码器（只用 ETC1 兼容的
+  个体模式），`RHINE_BAKE_ETC2=1` 时额外输出 `archive-baked-surface-etc2.bin`；
+  运行时在 Android 上优先用它（`uploadMippedBytes(..., true, 8)`，块字节数 8），
+  文件缺失或格式不支持时自动回退原路径。
+- 编码器有两个必须记住的坑：
+    1. **个体模式下 `R1=G1=B1=15` 且 `diff=0` 是 T/H/planar 模式的标记位**，
+       整块会被解码器当成别的模式而花掉。编码器把这种基色的红色降一级
+       （`base1 = [14, 15, 15]`，红色对亮度权重最低）。
+    2. **修改表不必全试**：每张表的最大 modifier 递增（8, 17, 29, …, 183），
+       块内相对基色的最大偏差决定需要多大跨度，只需在"刚好够"和"再小一档"两张里挑。
+       8 张降到 2 张，1024² 全 mip 链的编码时间从 **111 s 压到 13.7 s**，
+       而量化质量由跨度覆盖决定，实测 PSNR 不变（渐变 40.5 dB / 平滑 35.7 dB）。
+
+### T2 · normalAtlas 降到 RGBA8 · 已落地
+
+- 原来 `RGBA16F` 128×256：显存只有 262 KB，但它是**逐像素**的——夜间采两次
+  （`v_normalUv` 与 `+0.5` 偏移），一次 8 B → **16 B/px**。
+- 改成 8 位 UNORM：rgb 存 `response/4`（值域 0..4）、a 存 `highlight/0.25`（0..0.18），
+  着色器按同样比例乘回，逐像素带宽减半（夜间每片元省 8 B）。
+- **位宽有三处必须同源**，任何一处漏掉都会让字节数对不上、画面直接花：
+    1. 烘焙：`RHINE_BAKE_NORMAL_RGBA8=1`（`scripts/build-android.cjs` 设置）；
+    2. 着色器：CMake 的 `RHINE_ANDROID_NORMAL_RGBA8` → `RHINE_NORMAL_RGBA8=1` 进 qsb；
+    3. C++：`Qt/Android.cmake` 把同一个宏 `target_compile_definitions` 给 RhineCore。
+       `RhiScene.cpp` 在加载时会核对文件字节数（131072 / 262144），对不上直接 `qFatal`
+       并说明该用哪个开关重烘——**宁可启动时报错，也不要静默花屏**。
+
+### T3 · 夜间模式短路 · 已落地
+
+- `if (v_theme > 0.0)` 时采 day 与 night 再 `mix(day, night, v_theme)`。
+  夜间固定模式下 `v_theme == 1.0`，`mix` 结果精确等于 night，**day 那两次采样纯浪费**。
+- 改成 `const bool nightOnly = v_theme >= 1.0;` 让 UV 直接取下半张，
+  `mix` 分支加 `&& !nightOnly`。白天与主题切换动画的中间态仍走原路径，结果逐位不变。
+- 与同一文件里封面那段已做的短路（`blur <= 1e-6` 时 17 次 → 1 次）是同一个套路。
+- **`opticalSurface.frag` 与 `opticalSurfaceNoMrt.frag` 逐行同构（只差 MRT 声明），
+  改一处必须同步另一处**；Android GLES 走的正是 NoMrt 变体。
+
+### T4 · lightAtlas 的 mask 早退 · 已落地
+
+- `opticalGeometry.vert:102`：`v_lightMask = step(abs(local.x), 9.0) * step(abs(local.z), 7.0)`
+  ——只有落在 ±9 × ±7 平面内的几何受光，机架、地面、远处全是 0。
+- 但 `bakedIllumination()` 无条件做一次**三维纹理三线性采样**（硬件三线性 = 8 次 texel fetch），
+  再乘这个 0。
+- 加了 `if (v_lightMask <= 0.0) return vec3(0.0);`，结果逐位相同。
+
+### T5 · lightAtlas 空间分辨率减半 · 已落地
+
+- 原 576×96×24 `RGBA8` = **5.3 MB**，远超移动 GPU 的 L2（通常 512 KB ~ 1 MB），
+  硬件三线性必然穿到 DRAM。
+- `RHINE_BAKE_LIGHT_HALF=1`（Android）把空间维减半到 **288×48×24 = 1.33 MB**，
+  有机会留在 L2。
+- **层数刻意不动**：脚本注释里写着「高度切片是光场误差的主导项」，
+  砍层会直接看出来；光场是低频数据，空间维减半有三线性插值兜着。
+- 运行时**尺寸从文件大小反推**（`sqrt(bytes / (24*6*4))`）而不是按平台硬编码：
+  `upload3D` 是按 `bytes.size()/depth` 切片的，尺寸对不上会静默切错、画面直接乱，
+  所以算出 `fieldSize` 后还要校验 `fieldSize² × 24 × 6 × 4 == bytes`，不成立就 `qFatal`。
+
+### T6 · 主颜色附件 RGBA16F → RG11B10F · 不可行
+
+- 原判断：`RGBA16F` 是 8 B/px，`RG11B10F` 是 4 B/px，75% 分辨率下每帧写 ~23 MB，
+  换掉能省一半。
+- **核实后不可行**：Qt 6.12 的 `QRhiTexture::Format`（`qrhi.h:934-980`）里**没有
+  `R11G11B10F`**，可选的四字节 HDR 格式只有 `RGB10A2`——那是 10 位**定点**归一化，
+  装不下主目标里可能 >1 的线性 HDR 值。用它就得在 3D pass 里先 tonemap 到 LDR，
+  等于改画质，不在"削减开销"的范围内。
+- 结论：这条在 RHI 抽象层做不到，除非把主目标改成 LDR + 在 3D pass 里 tonemap。
+  已记录，避免以后重复尝试。
+
+### T7 · 深度 D32F → D24S8 · 已落地
+
+- `RhiScene.cpp` 原来固定 `D32F`（4 B/px）。场景是封闭小场景、深度范围不大，
+  Android 上改用 `D24S8`（3 B/px），并用 `isTextureFormatSupported` 先问一次
+  ——`create()` 失败会 `qFatal`，不能靠"试试看"。不支持就回退 `D32F`。
+
+### T8 · decorationTextureHigh：Android 上不建 · 已落地
+
+- `RhiScene.cpp:775-791` 原本无条件创建并上传**两份**：High 2000×1480（含 mip 约 15.8 MB）
+  与 Low 1000×740（约 3.9 MB）。
+- 实际只按页面二选一（`mode == "detail" || mode == "boot"` 用 High，归档页用 Low），
+  归档页时 High 那份纯占显存。
+- Android 默认只建 Low，`RHINE_DECORATION_HIGH=1` 可建回两份；
+  `prepare()` 里 High 指针为空时回落到 Low，两份都不可用时保持白色占位
+  （宁可没有印刷面，也不给 SRB 一个空纹理）。
+
+### T9 · 一处注释与实际值不符 · 已修正
+
+`AndroidRenderPolicy.h` 的 `androidDefaultRenderScale()` 注释曾写「90%」，
+实际返回 **75**（像素 56%）。注释已改，行为不变。
+
+### 不推荐动的
+
+- **draw call 数**：全场景只有 2 个 draw（`RhiScene.cpp:2937/2939`，已实例化）
+  加 2 个全屏，压无可压。
+- **顶点量**：两套模型各 639 KB 顶点 / 279 KB 索引，80 B/vertex。draw 少、顶点不多，
+  半精度法线/UV 的收益远小于上面几项，且要改导出链。
+
+### 回退开关汇总
+
+| 开关                                                                    | 作用                                                        |
+| ----------------------------------------------------------------------- | ----------------------------------------------------------- |
+| `RHINE_ANDROID_RENDER_TUNING=0`                                         | 总开关，退回本文件所有 Android 默认值                       |
+| `RHINE_BAKE_ETC2` / `RHINE_BAKE_LIGHT_HALF` / `RHINE_BAKE_NORMAL_RGBA8` | 烘焙期；决定产物形态，改完要重跑 `npm run build:android`    |
+| `-DRHINE_ANDROID_NORMAL_RGBA8=OFF`                                      | 配置期；必须与 `RHINE_BAKE_NORMAL_RGBA8` 同时关             |
+| `RHINE_DECORATION_HIGH=1`                                               | 强制建 2000×1480 装饰面                                     |
+| `RHINE_DEBUG_ATLAS=1`                                                   | 启动时打印实际选中的表面图集格式（ETC2 RGB8 / BC7 / RGBA8） |
+
 ## 滑动列表掉帧：HUD 软件栅格（Android）
 
 **现场**：OPD2511（Adreno 730 / Vulkan / 120 Hz / 窗口 1219×762 逻辑、DPR 2.36），
 `RHINE Diagnostics` 里 19.2 秒、322 帧的采样（`rhine-performance-20261106-103531-133-*.json`）。
 
-| 指标 | 数值 |
-|---|---|
-| `latestSyncCpuMs` | 均值 **41.8 ms**，p50 47.5，p90 61.2，max 76.3 |
-| `latestSubmitCpuMs` | 均值 **2.4 ms**（渲染 + 提交整段） |
-| `presentGapMs` | 均值 **59.6 ms**，p50 63.1，p90 80.6 |
-| `stepMeanCpuMs` | 约 15 ms（GUI 线程每拍） |
-| `over33ms` | 每 500 ms 采样里 7~11 帧，几乎全超 |
-| `mainProcessCpuOneCorePercent` | 150~180%（≈1.5 核） |
+| 指标                           | 数值                                           |
+| ------------------------------ | ---------------------------------------------- |
+| `latestSyncCpuMs`              | 均值 **41.8 ms**，p50 47.5，p90 61.2，max 76.3 |
+| `latestSubmitCpuMs`            | 均值 **2.4 ms**（渲染 + 提交整段）             |
+| `presentGapMs`                 | 均值 **59.6 ms**，p50 63.1，p90 80.6           |
+| `stepMeanCpuMs`                | 约 15 ms（GUI 线程每拍）                       |
+| `over33ms`                     | 每 500 ms 采样里 7~11 帧，几乎全超             |
+| `mainProcessCpuOneCorePercent` | 150~180%（≈1.5 核）                            |
 
 帧时间的账能对上：**GUI 15 ms + sync 42 ms + 渲染 2.4 ms ≈ 59.6 ms**，
 也就是 17 fps 左右，掉帧发生在 `sync` 段。`submit` 只有 2.4 ms、FG 层未启用、
@@ -488,12 +614,12 @@ CPU 分段、全屏 pass 数、draw 数；`Renderer::vulkanConfig()` 上报请�
 
 **为什么翻案**：把这两条默认打开后重编，同机同场景再录一份，结果是
 
-| | 10:35（两条都关） | 11:21（两条都开） |
-|---|---|---|
-| `latestSyncCpuMs` 均值 | 41.8 ms | **63.0 ms** |
-| `headlineFps` | 17.2 | **12.1** |
-| `mainProcessCpuOneCorePercent` | 154% | **183%** |
-| `latestSubmitCpuMs` | 3.05 ms | 2.60 ms（没变差） |
+|                                | 10:35（两条都关） | 11:21（两条都开） |
+| ------------------------------ | ----------------- | ----------------- |
+| `latestSyncCpuMs` 均值         | 41.8 ms           | **63.0 ms**       |
+| `headlineFps`                  | 17.2              | **12.1**          |
+| `mainProcessCpuOneCorePercent` | 154%              | **183%**          |
+| `latestSubmitCpuMs`            | 3.05 ms           | 2.60 ms（没变差） |
 
 原因：`QRasterizer` 的覆盖率是按**包围盒**遍历的，不是按墨水面积。把一行字并成一条
 复合路径后，包围盒变成整行，而逐字形时每个字形只扫自己那个紧包围盒——合并把扫描线
@@ -558,21 +684,21 @@ CPU 分段、全屏 pass 数、draw 数；`Renderer::vulkanConfig()` 上报请�
 
 ### 带宽账（1219×762 逻辑 / DPR 2.36 / 2880×1800 像素）
 
-| | 每帧 CPU 写 | 每帧纹理上传 | 60 fps 合计 |
-|---|---|---|---|
-| 改动前（整窗） | 20.7 MB 清屏 + 全量栅格 | 20.7 MB | ≈2.5 GB/s |
-| 改动后（只画曲目条带） | 约 8 MB（条带面积占比 ≈40%） | 约 8 MB | ≈1 GB/s |
+|                        | 每帧 CPU 写                  | 每帧纹理上传 | 60 fps 合计 |
+| ---------------------- | ---------------------------- | ------------ | ----------- |
+| 改动前（整窗）         | 20.7 MB 清屏 + 全量栅格      | 20.7 MB      | ≈2.5 GB/s   |
+| 改动后（只画曲目条带） | 约 8 MB（条带面积占比 ≈40%） | 约 8 MB      | ≈1 GB/s     |
 
 条带占比是估的：`archiveTrackList` 的裁剪区是 `(x-4, 219, width-x, 610)`，在舞台坐标里
 约 1274×610 / 1727×1080。真实占比看下面这条探针，不要照抄。
 
 ### 三次实测与两个根因（11:21 / 11:32）
 
-| | sync 均值 | fps | submit | 说明 |
-|---|---|---|---|---|
-| 10:35 | 41.8 ms | 17.2 | 3.05 ms | 基线：整窗重绘、缓存关 |
-| 11:21 | **63.0 ms** | 12.1 | 2.60 ms | 两个 HUD 缓存打开（负优化） |
-| 11:32 | **47.5 ms** | ~18 | **5.83 ms** | 缓存关、脏区重绘生效但算成整屏 |
+|       | sync 均值   | fps  | submit      | 说明                           |
+| ----- | ----------- | ---- | ----------- | ------------------------------ |
+| 10:35 | 41.8 ms     | 17.2 | 3.05 ms     | 基线：整窗重绘、缓存关         |
+| 11:21 | **63.0 ms** | 12.1 | 2.60 ms     | 两个 HUD 缓存打开（负优化）    |
+| 11:32 | **47.5 ms** | ~18  | **5.83 ms** | 缓存关、脏区重绘生效但算成整屏 |
 
 - 11:21 的 +21 ms 来自 `runPaths` / `maskGradients` 两个缓存，机理见上一节，已默认关闭。
 - 11:32 的 +5.6 ms 落在 `submit`（不是 `sync`）：脏区算成了整屏，于是每帧多做一次
@@ -646,7 +772,6 @@ double 用 `'g', 17` 保证往返精确，缓存语义逐项等价、命中率�
 拿它当「默认开启」会让开关实际是关的——11:21 那轮就踩了这一下，白费一次构建。
 默认开启必须写 `qEnvironmentVariable(name).isEmpty() || value != "0"`。
 自检脚本里已加断言防回归。
-
 
 ### 隔离性
 
@@ -888,26 +1013,26 @@ BuildId 与当前 APK 里那份完全一致，补丁新增的 `destroySurfaceRes
 
 ## 排障
 
-| 现象                                             | 原因                                                                                                                                         |
-| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Qt for Android kit not found`                   | 没装 Qt 的 Android 组件，或路径不是 `~/Qt/6.12.0/android_arm64_v8a`；用 `RHINE_ANDROID_QT` 指定                                              |
-| `libnode.so not found`                           | nodejs-mobile 的包没解出来；删掉 `output/dependencies/node-mobile` 重新构建                                                                  |
-| Gradle 报 `Unsupported class file major version` | Gradle 跑在了 JDK 22 以上的 JVM 上。用 `npm run build:qt:android` 重跑（它会钉住 JDK 21），或先 `export JAVA_HOME=<JDK 21>` 再直接跑 `ninja` |
-| 首次启动白屏十几秒                               | 正在解包资源（约 45 MB）到应用私有目录，只在版本号或提交变化后的第一次发生                                                                   |
-| 界面能起但列表空白                               | Node 运行时没起来；`adb logcat` 里看 `Android:` 与 node 的 stderr 输出（本仓库不做实机调试）                                                 |
-| 画面上下颠倒                                     | 清单被模板覆盖回 `unspecified`；`scripts/audit-android.py` 会直接报 `screenOrientation is not sensorLandscape`                               |
-| `Qt/android/build.gradle 的前缀不再等于…`        | Qt 升级换了 Gradle 模板；跑 `node scripts/android-gradle-sync.cjs` 重新生成（末尾追加的依赖会保留）                                          |
-| Clarity 后台没有会话                             | 清单 `android:name` 被改回 `QtApplication`；`scripts/audit-android.py` 会报 `RhineApplication (Clarity entry point) missing`                 |
-| Clarity 回放只有点击、没有画面                   | 已知限制：Clarity 只重画 View 树，拍不到 GL 内容，换容器或后端都没用（见「已知限制：Clarity 无法获取录制画面」）                             |
-| Bugly 后台没有崩溃数据                           | 只有中国大陆用户同意后才初始化；欧盟地区、其他地区、地区判定超时都没有 Bugly。看 `logcat` 的 `RhineConsent`，初始化失败会打 `Bugly initialization failed` |
-| 崩溃列表里 native 栈只有地址、没有符号           | 需按 Bugly 官方《符号表配置》上传带调试信息的 `.so`；AppKey 放 CI secret，不要写进仓库                                                          |
-| logcat 里找不到 `RHINE-SIGNAL`                   | 预期行为：native 已交给 Bugly，自有诊断链默认不编译（`RHINE_ANDROID_SIGNAL_DIAG=0`）；要抓自有现场把宏改 `1` 且把 `BUGLY_NATIVE_MONITOR` 改 `false` |
-| 审计报 `unexpected ABIs`                         | Bugly AAR 的 5 个 `libBugly_Native.so` 没被排掉；检查 `Qt/android/build.gradle` 标记行之后的 `jniLibs.excludes` 是否还在                        |
-| 首次启动黑屏最多 3 秒                            | 未同意、且本机只有私有地址时才会取公网出口地址（`GeoIp.TOTAL_TIMEOUT_MS`）；本机有公网 IPv4/IPv6 时直接查表、不等待。已同意后不再请求        |
-| 点「退出」后应用直接关闭                         | 预期行为：未同意数据传输许可时 `finishAffinity()` 结束进程                                                                                   |
-| 国内用户没看到许可弹窗                           | IP 判定失败（断网、端点超时或表未命中）→ 按其他地区放行：照常启动界面与 Clarity，不弹窗、不启动 Bugly，下次启动会重新判定                     |
-| Android 画面比桌面略软                           | 预期行为：Android 默认渲染分辨率 90%（`androidDefaultRenderScale()`）。要原生清晰度用设置页改回 100、`RHINE_RENDER_SCALE=100`，或 `RHINE_ANDROID_RENDER_TUNING=0` 整体回退        |
-| Android 想关掉合成 9→4 折叠做对照               | 用 `-DRHINE_ANDROID_QUAD_FOLD=OFF` 重新配置 Android 构建树；这是 CMake 配置期开关，桌面 / iOS 本来就没有这个宏                                   |
-| 前台滑动时界面突然消失（无响应后退出）           | ANR：`Input dispatching timed out`，系统按 `user request after error` 杀进程。根因是系统无障碍服务激活了 Qt 的可访问树遍历，见「前台 ANR」一节；默认已关闭该桥，`RHINE_ANDROID_ACCESSIBILITY=1` 可恢复             |
+| 现象                                                                                    | 原因                                                                                                                                                                                                                                                                      |
+| --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Qt for Android kit not found`                                                          | 没装 Qt 的 Android 组件，或路径不是 `~/Qt/6.12.0/android_arm64_v8a`；用 `RHINE_ANDROID_QT` 指定                                                                                                                                                                           |
+| `libnode.so not found`                                                                  | nodejs-mobile 的包没解出来；删掉 `output/dependencies/node-mobile` 重新构建                                                                                                                                                                                               |
+| Gradle 报 `Unsupported class file major version`                                        | Gradle 跑在了 JDK 22 以上的 JVM 上。用 `npm run build:qt:android` 重跑（它会钉住 JDK 21），或先 `export JAVA_HOME=<JDK 21>` 再直接跑 `ninja`                                                                                                                              |
+| 首次启动白屏十几秒                                                                      | 正在解包资源（约 45 MB）到应用私有目录，只在版本号或提交变化后的第一次发生                                                                                                                                                                                                |
+| 界面能起但列表空白                                                                      | Node 运行时没起来；`adb logcat` 里看 `Android:` 与 node 的 stderr 输出（本仓库不做实机调试）                                                                                                                                                                              |
+| 画面上下颠倒                                                                            | 清单被模板覆盖回 `unspecified`；`scripts/audit-android.py` 会直接报 `screenOrientation is not sensorLandscape`                                                                                                                                                            |
+| `Qt/android/build.gradle 的前缀不再等于…`                                               | Qt 升级换了 Gradle 模板；跑 `node scripts/android-gradle-sync.cjs` 重新生成（末尾追加的依赖会保留）                                                                                                                                                                       |
+| Clarity 后台没有会话                                                                    | 清单 `android:name` 被改回 `QtApplication`；`scripts/audit-android.py` 会报 `RhineApplication (Clarity entry point) missing`                                                                                                                                              |
+| Clarity 回放只有点击、没有画面                                                          | 已知限制：Clarity 只重画 View 树，拍不到 GL 内容，换容器或后端都没用（见「已知限制：Clarity 无法获取录制画面」）                                                                                                                                                          |
+| Bugly 后台没有崩溃数据                                                                  | 只有中国大陆用户同意后才初始化；欧盟地区、其他地区、地区判定超时都没有 Bugly。看 `logcat` 的 `RhineConsent`，初始化失败会打 `Bugly initialization failed`                                                                                                                 |
+| 崩溃列表里 native 栈只有地址、没有符号                                                  | 需按 Bugly 官方《符号表配置》上传带调试信息的 `.so`；AppKey 放 CI secret，不要写进仓库                                                                                                                                                                                    |
+| logcat 里找不到 `RHINE-SIGNAL`                                                          | 预期行为：native 已交给 Bugly，自有诊断链默认不编译（`RHINE_ANDROID_SIGNAL_DIAG=0`）；要抓自有现场把宏改 `1` 且把 `BUGLY_NATIVE_MONITOR` 改 `false`                                                                                                                       |
+| 审计报 `unexpected ABIs`                                                                | Bugly AAR 的 5 个 `libBugly_Native.so` 没被排掉；检查 `Qt/android/build.gradle` 标记行之后的 `jniLibs.excludes` 是否还在                                                                                                                                                  |
+| 首次启动黑屏最多 3 秒                                                                   | 未同意、且本机只有私有地址时才会取公网出口地址（`GeoIp.TOTAL_TIMEOUT_MS`）；本机有公网 IPv4/IPv6 时直接查表、不等待。已同意后不再请求                                                                                                                                     |
+| 点「退出」后应用直接关闭                                                                | 预期行为：未同意数据传输许可时 `finishAffinity()` 结束进程                                                                                                                                                                                                                |
+| 国内用户没看到许可弹窗                                                                  | IP 判定失败（断网、端点超时或表未命中）→ 按其他地区放行：照常启动界面与 Clarity，不弹窗、不启动 Bugly，下次启动会重新判定                                                                                                                                                 |
+| Android 画面比桌面略软                                                                  | 预期行为：Android 默认渲染分辨率 90%（`androidDefaultRenderScale()`）。要原生清晰度用设置页改回 100、`RHINE_RENDER_SCALE=100`，或 `RHINE_ANDROID_RENDER_TUNING=0` 整体回退                                                                                                |
+| Android 想关掉合成 9→4 折叠做对照                                                       | 用 `-DRHINE_ANDROID_QUAD_FOLD=OFF` 重新配置 Android 构建树；这是 CMake 配置期开关，桌面 / iOS 本来就没有这个宏                                                                                                                                                            |
+| 前台滑动时界面突然消失（无响应后退出）                                                  | ANR：`Input dispatching timed out`，系统按 `user request after error` 杀进程。根因是系统无障碍服务激活了 Qt 的可访问树遍历，见「前台 ANR」一节；默认已关闭该桥，`RHINE_ANDROID_ACCESSIBILITY=1` 可恢复                                                                    |
 | logcat 出现 `No response to onStartJob` / `com.microsoft.clarity.jobs.UploadSessionJob` | 不是 Clarity 崩溃，也不是本应用 native crash：`onStartJob` 跑在主线程，主线程被卡住时它的 8 秒 deadline 到期，系统据此判 ANR 并杀进程；该 job 每 ~10 秒调度一次、跨进程存活，冷启动重试时最容易撞上。见「Clarity 的准确定位」，先按上一行修无障碍桥，再看冷启动是否仍超时 |
-| logcat 又出现 `destroyed mutex` 的 SIGABRT      | 与前台 ANR 不同的老问题：Vulkan surface 换面竞态。`scripts/qt-android-patches.cjs` 的补丁还在，但 kit 没重编过；重跑 `npm run build:qt:android` 再重建 APK 才会生效                              |
+| logcat 又出现 `destroyed mutex` 的 SIGABRT                                              | 与前台 ANR 不同的老问题：Vulkan surface 换面竞态。`scripts/qt-android-patches.cjs` 的补丁还在，但 kit 没重编过；重跑 `npm run build:qt:android` 再重建 APK 才会生效                                                                                                       |

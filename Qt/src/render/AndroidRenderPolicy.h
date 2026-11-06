@@ -91,8 +91,8 @@ inline bool androidDifferentialGlobals() {
 /**
  * Android 的默认渲染分辨率（百分比）。
  *
- * 这是本文件里唯一会改变像素数的默认值：90% 让内部渲染目标与合成通道的像素数降到
- * 约 81%，是 GLES 上最直接的 GPU 侧杠杆。桌面 / iOS 仍是 100（原生）。
+ * 这是本文件里唯一会改变像素数的默认值：75% 让内部渲染目标与合成通道的像素数降到
+ * 约 56%（0.75²），是 GLES 上最直接的 GPU 侧杠杆。桌面 / iOS 仍是 100（原生）。
  *
  * 两处消费点必须一致，否则设置页显示与实际生效值会打架：
  *   · main.cpp::applyRenderScaleSetting() —— 决定 RHINE_RENDER_SCALE 的启动默认值；

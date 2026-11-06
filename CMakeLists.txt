@@ -441,6 +441,14 @@ if(ANDROID)
     if(RHINE_ANDROID_QUAD_FOLD)
         list(APPEND RHINE_OPTICAL_SHADER_DEFINES RHINE_OPTICAL_QUAD_FOLD=1)
     endif()
+    # 法线响应在 Android 上烘焙成 8 位 UNORM（RHINE_BAKE_NORMAL_RGBA8=1），逐像素带宽
+    # 减半——夜间要采两次，等于每片元省 8 B。着色器要按同样比例乘回，所以这个宏既是
+    # shader define 也是 C++ define（见 Qt/Android.cmake），二者必须与烘焙开关一致。
+    # 关掉要同时改三处：烘焙环境变量、这里的 option、Qt/Android.cmake。
+    option(RHINE_ANDROID_NORMAL_RGBA8 "Bake the normal response atlas as RGBA8 on Android" ON)
+    if(RHINE_ANDROID_NORMAL_RGBA8)
+        list(APPEND RHINE_OPTICAL_SHADER_DEFINES RHINE_NORMAL_RGBA8=1)
+    endif()
 endif()
 # E05a：紧凑实例（80 字节）的第二套着色器烘焙放在独立子目录：
 # qt_add_shaders 把 .qsb 写到当前二进制目录的 .qsb/ 下，同一目录对同一份源码烘两次会撞规则。

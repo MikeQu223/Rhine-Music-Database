@@ -632,14 +632,17 @@ class Renderer {
      * 上传烘焙器生成的完整 mip 链。surface 的 mip 层在离线阶段按线性光平均，
      * 这里只按层切片，避免运行时再做一次 QImage 缩放破坏 sRGB/HDR 编码。
      */
-    void uploadMippedBytes(QRhiTexture *target, const QByteArray &bytes, int size, bool compressed) {
+    /// `blockBytes` 是压缩格式一个 4×4 块的字节数：BC7 是 16，ETC2 是 8。
+    /// 传错会让每层偏移错位，所以只在调用点显式写出来，不给"猜"的余地。
+    void uploadMippedBytes(QRhiTexture *target, const QByteArray &bytes, int size, bool compressed,
+                           int blockBytes = 16) {
         QVector<QRhiTextureUploadEntry> entries;
         qsizetype offset = 0;
         int width = size;
         int height = size;
         for (int level = 0;; ++level) {
             const qsizetype byteCount = compressed
-                ? qsizetype(((width + 3) / 4) * ((height + 3) / 4) * 16)
+                ? qsizetype(((width + 3) / 4) * ((height + 3) / 4) * blockBytes)
                 : qsizetype(width) * height * 4;
             if (offset + byteCount > bytes.size()) {
                 qFatal("Truncated baked mip chain: level=%d need=%lld have=%lld", level,
@@ -724,24 +727,70 @@ class Renderer {
         const QByteArray surfaceBc7 = readOptional(root, "archive-baked-surface-bc7.bin");
         const bool bc7Surface = !surfaceBc7.isEmpty() &&
                                 rhi->isTextureFormatSupported(QRhiTexture::BC7, surfaceFlags);
+        bool atlasReady = false;
+#if defined(Q_OS_ANDROID)
+        // GLES 上没有 BC7，原来只能回退到 RGBA8：1024² 全 mip 链 5.6 MB、4 B/texel。
+        // ETC2 RGB8 是 0.5 B/texel —— 体积 0.7 MB、采样带宽 1/8，GLES 3.0 强制支持。
+        // 只编码 RGB 是因为 surfaceAtlas 的 alpha 在着色器里从未被读取
+        // （`color = baked.rgb * normalResponse.rgb + vec3(normalResponse.a)` 里那个 a
+        //  来自 normalAtlas），所以不需要 ETC2_RGBA8 的那第二个子块。
+        // 文件由烘焙脚本在 RHINE_BAKE_ETC2=1 时输出；缺失时自动退回原路径。
+        const QByteArray surfaceEtc2 = readOptional(root, "archive-baked-surface-etc2.bin");
+        if (!surfaceEtc2.isEmpty() &&
+            rhi->isTextureFormatSupported(QRhiTexture::ETC2_RGB8, surfaceFlags)) {
+            surfaceAtlas = texture({1024, 1024}, QRhiTexture::ETC2_RGB8, surfaceFlags);
+            uploadMippedBytes(surfaceAtlas, surfaceEtc2, 1024, true, 8);
+            atlasReady = true;
+        }
+#endif
         if (qEnvironmentVariableIsSet("RHINE_DEBUG_ATLAS")) {
             std::fprintf(stderr, "Surface atlas: %s, 1024^2, full mip chain\n",
-                         bc7Surface ? "BC7" : "RGBA8");
+                         atlasReady ? "ETC2 RGB8" : (bc7Surface ? "BC7" : "RGBA8"));
             std::fflush(stderr);
         }
-        if (bc7Surface) {
-            surfaceAtlas = texture({1024, 1024}, QRhiTexture::BC7, surfaceFlags);
-            uploadMippedBytes(surfaceAtlas, surfaceBc7, 1024, true);
-        } else {
-            surfaceAtlas = texture({1024, 1024}, QRhiTexture::RGBA8, QRhiTexture::MipMapped);
-            uploadMippedBytes(surfaceAtlas, read(root, "archive-baked-surface.bin"), 1024, false);
+        if (!atlasReady) {
+            if (bc7Surface) {
+                surfaceAtlas = texture({1024, 1024}, QRhiTexture::BC7, surfaceFlags);
+                uploadMippedBytes(surfaceAtlas, surfaceBc7, 1024, true);
+            } else {
+                surfaceAtlas = texture({1024, 1024}, QRhiTexture::RGBA8, QRhiTexture::MipMapped);
+                uploadMippedBytes(surfaceAtlas, read(root, "archive-baked-surface.bin"), 1024, false);
+            }
         }
-        // 光场改为 576x96x24 的三维纹理，硬件三线性插值替代手工两层采样。
-        lightAtlas = texture3D({576, 96}, 24, QRhiTexture::RGBA8,
+        // 光场是 24 层、每层 6 个朝向面的三维纹理，硬件三线性插值替代手工两层采样。
+        // 尺寸从文件大小反推，不按平台硬编码：烘焙时空间维可能减半
+        // （RHINE_BAKE_LIGHT_HALF=1 → 48²，1.33 MB），而 upload3D 是按 bytes.size()/depth
+        // 切片上传的——尺寸对不上会静默切错、画面直接乱掉，所以这里显式校验。
+        const QByteArray lightBytes = read(root, "archive-baked-light.bin");
+        const double lightTexels = double(lightBytes.size()) / (24.0 * 6.0 * 4.0);
+        const int fieldSize = int(std::lround(std::sqrt(lightTexels)));
+        if (fieldSize < 8 ||
+            qint64(fieldSize) * fieldSize * 24 * 6 * 4 != qint64(lightBytes.size())) {
+            qFatal("Baked light field is %lld bytes; expected 24 slices of a square 6-face RGBA8 field.",
+                   static_cast<long long>(lightBytes.size()));
+        }
+        lightAtlas = texture3D({fieldSize * 6, fieldSize}, 24, QRhiTexture::RGBA8,
                                QRhiTexture::ThreeDimensional);
-        upload3D(lightAtlas, read(root, "archive-baked-light.bin"), 24);
+        upload3D(lightAtlas, lightBytes, 24);
+        // 法线响应的位宽由烘焙配置决定，必须与着色器的 RHINE_NORMAL_RGBA8 宏同源
+        // （CMake 同时把它定义给 C++ 和 qsb）。差一半字节会读错位，宁可直接报错。
+        const QByteArray normalBytes = read(root, "archive-baked-normal.bin");
+#if defined(RHINE_NORMAL_RGBA8)
+        if (normalBytes.size() != 128 * 256 * 4) {
+            qFatal("RHINE_NORMAL_RGBA8 is on but archive-baked-normal.bin is %lld bytes "
+                   "(expected 131072); re-bake with RHINE_BAKE_NORMAL_RGBA8=1.",
+                   static_cast<long long>(normalBytes.size()));
+        }
+        normalAtlas = texture({128, 256}, QRhiTexture::RGBA8);
+#else
+        if (normalBytes.size() != 128 * 256 * 8) {
+            qFatal("archive-baked-normal.bin is %lld bytes (expected 262144 for RGBA16F); "
+                   "it looks like it was baked for RHINE_NORMAL_RGBA8.",
+                   static_cast<long long>(normalBytes.size()));
+        }
         normalAtlas = texture({128, 256}, QRhiTexture::RGBA16F);
-        upload(normalAtlas, read(root, "archive-baked-normal.bin"));
+#endif
+        upload(normalAtlas, normalBytes);
         white = texture({1, 1}, QRhiTexture::RGBA8);
         upload(white, QByteArray(4, char(255)));
         floor = plane(-100, -100, 100, 100, 0, 0, 0, 0, 0);
@@ -772,15 +821,29 @@ class Renderer {
             painter.drawLine(875, 601, 930, 601);
             painter.fillRect(QRectF(875, 654, 25, 5), accent);
         };
-        QImage decorationHigh(2000, 1480, QImage::Format_RGBA8888_Premultiplied);
-        decorationHigh.fill(Qt::transparent);
-        {
-            QPainter painter(&decorationHigh);
-            painter.scale(2, 2);
-            paintDecoration(painter);
+        // 高分辨率装饰面只给 detail / boot 用（见 prepare 的 decorationHigh 参数），
+        // 但两份纹理是无条件创建的：High 2000×1480 含 mip 约 15.8 MB，归档页时纯占显存。
+        // Android 上默认只建 Low（1000×740）：手机屏幕宽约 2160 像素，装饰面又只占画面一角，
+        // 2000 px 的宽对它是浪费。RHINE_DECORATION_HIGH=1 可强制建回两份。
+        static const bool wantHighDecoration = [] {
+#if defined(Q_OS_ANDROID)
+            return qEnvironmentVariableIntValue("RHINE_DECORATION_HIGH") == 1;
+#else
+            return true;
+#endif
+        }();
+        if (wantHighDecoration) {
+            QImage decorationHigh(2000, 1480, QImage::Format_RGBA8888_Premultiplied);
+            decorationHigh.fill(Qt::transparent);
+            {
+                QPainter painter(&decorationHigh);
+                painter.scale(2, 2);
+                paintDecoration(painter);
+            }
+            decorationTextureHigh =
+                texture(decorationHigh.size(), QRhiTexture::RGBA8, QRhiTexture::MipMapped);
+            uploadMipped(decorationTextureHigh, decorationHigh);
         }
-        decorationTextureHigh = texture(decorationHigh.size(), QRhiTexture::RGBA8, QRhiTexture::MipMapped);
-        uploadMipped(decorationTextureHigh, decorationHigh);
         QImage decorationLow(1000, 740, QImage::Format_RGBA8888_Premultiplied);
         decorationLow.fill(Qt::transparent);
         {
@@ -1249,7 +1312,17 @@ class Renderer {
         clearPipelines();
         sized.clear();
         auto rtFlags = QRhiTexture::RenderTarget;
-        depth = create(own(rhi->newTexture(QRhiTexture::D32F, size, sampleCount, rtFlags), true));
+#if defined(Q_OS_ANDROID)
+        // 场景是封闭小场景、深度范围不大，D24S8 的 3 B/px 够用（D32F 是 4 B/px）。
+        // 后端不支持时回退 D32F，行为与改动前逐值一致。注意 create() 失败会 qFatal，
+        // 所以必须先问 isTextureFormatSupported，不能靠"试试看"。
+        const auto depthFormat = rhi->isTextureFormatSupported(QRhiTexture::D24S8, rtFlags)
+                                     ? QRhiTexture::D24S8
+                                     : QRhiTexture::D32F;
+#else
+        const auto depthFormat = QRhiTexture::D32F;
+#endif
+        depth = create(own(rhi->newTexture(depthFormat, size, sampleCount, rtFlags), true));
         auto attachment =
             create(own(rhi->newTexture(QRhiTexture::RGBA16F, size, sampleCount, rtFlags), true));
         auto resolved = sampleCount > 1 ? texture(size, QRhiTexture::RGBA16F, rtFlags, true) : nullptr;
@@ -2577,7 +2650,13 @@ class Renderer {
             const auto key = d["musicSelected"].toBool() ? selectedKey : d["musicKey"].toString();
             QRhiTexture *label = white;
             if (mesh == -5) {
-                label = decorationHigh ? decorationTextureHigh : decorationTextureLow;
+                // High 在 Android 上不创建（见初始化处），指针为空时回落到 Low。
+                // 两份都不可用时保持白色占位：宁可没有印刷面，也不能给 SRB 一个空纹理。
+                if (decorationHigh && decorationTextureHigh) {
+                    label = decorationTextureHigh;
+                } else if (decorationTextureLow) {
+                    label = decorationTextureLow;
+                }
             } else if (mesh == -6) {
                 label = letteringTextureFront;
             } else if (mesh == -7) {

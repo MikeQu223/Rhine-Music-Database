@@ -38,8 +38,19 @@ FACE_RECTS = {
 }
 # 高度切片是光场误差的主导项：24 层在 96² 空间分辨率下把误差压到接近
 # 128x16 的水平，同时 3D 纹理仍只有 5.06 MiB。
-FIELD_SIZE = 96
+#
+# RHINE_BAKE_LIGHT_HALF=1（Android）只把**空间**分辨率减半：96² → 48²，三维纹理
+# 从 5.3 MB 降到 1.33 MB。这个尺寸才有可能留在移动 GPU 的 L2 里，而硬件三线性
+# 在 5.3 MB 上必然穿到 DRAM。层数刻意不动——按上面的结论它才是误差主导项，
+# 砍层会直接看出来；光场是低频数据，空间维减半有三线性插值兜着。
+_FIELD_BASE = 96
+FIELD_SIZE = (_FIELD_BASE // 2
+              if os.environ.get("RHINE_BAKE_LIGHT_HALF", "").strip() == "1" else _FIELD_BASE)
 HEIGHT_SLICES = 24
+# RHINE_BAKE_NORMAL_RGBA8=1（Android）：法线响应用 RGBA8 UNORM 代替 RGBA16F。
+# 它存的是烘焙好的 N·L 比值（0..4）与一处柔和高光（0..0.18），不是真法线，
+# 8 位量化够用；着色器按 RHINE_NORMAL_RGBA8 宏乘回同样的比例。
+NORMAL_RGBA8 = os.environ.get("RHINE_BAKE_NORMAL_RGBA8", "").strip() == "1"
 NORMALS = [(1, 0, 0), (0, 1, 0), (0, 0, 1), (-1, 0, 0), (0, -1, 0), (0, 0, -1)]
 EMITTERS = [
     (-2.22, 0.60, 0.08),
@@ -287,6 +298,148 @@ def bc7_encode_level(pixels, width, height):
     return bytes(output)
 
 
+# ---------------------------------------------------------------- ETC2 RGB8
+# 移动端（GLES 3.0）没有 BC7，运行时原本回退到 RGBA8，1024² 全 mip 链 5.6 MB、
+# 每 texel 4 字节。而 surfaceAtlas 的 alpha 在着色器里**从未被读取**——
+# `color = baked.rgb * normalResponse.rgb + vec3(normalResponse.a)` 里那个 a 来自
+# 法线图集。所以只需要 RGB，ETC2 RGB8（4×4 块 64 bit = 0.5 B/px）就够：
+# 比 RGBA8 省 8 倍、比 BC7 还省一半，且 GLES 3.0 强制支持。
+# 下面是一个只用 ETC1 兼容「个体模式」的编码器：每块试两种翻转划分 × 8 张修改表，
+# 取平方误差最小的组合。sRGB 字节直接在 8 位域上量化，误差落在 sRGB 空间，
+# 视觉上比在线性域量化更均匀。
+ETC2_MODIFIERS = ((2, 8), (5, 17), (9, 29), (13, 42),
+                  (18, 60), (24, 80), (33, 106), (47, 183))
+
+
+def _etc2_clamp(value):
+    return 0 if value < 0 else (255 if value > 255 else value)
+
+
+def _etc2_fit_group(colors):
+    """给一组像素选基色与修改表。
+
+    返回 (error, base4, table, indices)，其中 base4 是 4 位/通道的个体模式基色。
+    个体模式的两个子块各带一个 4 位基色，重建值 = base4 * 17 + modifier。
+
+    修改表不全试：每张表的最大 modifier 是递增的（8, 17, 29, …, 183），
+    块内相对基色的最大偏差决定至少要多大跨度，所以只需在"刚好够"和"再小一档"
+    两张表里挑最优。8 张表降到 2 张，烘焙时间从近两分钟压到十几秒，
+    而 ETC1 的量化质量由跨度覆盖决定，这一点没有损失。
+    """
+    count = len(colors)
+    average = [sum(c[channel] for c in colors) / count for channel in range(3)]
+    base4 = [min(15, max(0, int(round(average[channel] / 17.0)))) for channel in range(3)]
+    rebuilt = (base4[0] * 17, base4[1] * 17, base4[2] * 17)
+    spread = 0
+    for color in colors:
+        for channel in range(3):
+            delta = color[channel] - rebuilt[channel]
+            if delta < 0:
+                delta = -delta
+            if delta > spread:
+                spread = delta
+    start = len(ETC2_MODIFIERS) - 1
+    for index, (_, large) in enumerate(ETC2_MODIFIERS):
+        if large >= spread:
+            start = index
+            break
+    tables = (start - 1, start) if start > 0 else (start,)
+    best = None
+    for table in tables:
+        small, large = ETC2_MODIFIERS[table]
+        # 四个候选值一次算好：clamp 从「每像素每候选 3 次」降到「每条表 12 次」。
+        values = (
+            (_etc2_clamp(rebuilt[0] - large), _etc2_clamp(rebuilt[1] - large),
+             _etc2_clamp(rebuilt[2] - large)),
+            (_etc2_clamp(rebuilt[0] - small), _etc2_clamp(rebuilt[1] - small),
+             _etc2_clamp(rebuilt[2] - small)),
+            (_etc2_clamp(rebuilt[0] + small), _etc2_clamp(rebuilt[1] + small),
+             _etc2_clamp(rebuilt[2] + small)),
+            (_etc2_clamp(rebuilt[0] + large), _etc2_clamp(rebuilt[1] + large),
+             _etc2_clamp(rebuilt[2] + large)),
+        )
+        error = 0
+        indices = []
+        for color in colors:
+            red, green, blue = color
+            best_index = 0
+            best_error = 1 << 30
+            for index in range(4):
+                values_at = values[index]
+                dr = red - values_at[0]
+                dg = green - values_at[1]
+                db = blue - values_at[2]
+                delta = dr * dr + dg * dg + db * db
+                if delta < best_error:
+                    best_error = delta
+                    best_index = index
+            error += best_error
+            indices.append(best_index)
+        if best is None or error < best[0]:
+            best = (error, base4, table, indices)
+    return best
+
+
+def _etc2_encode_block(pixels, block_x, block_y, width, height):
+    """把一个 4×4 块编码为 8 字节的 ETC2 RGB8；边缘块用边缘像素补齐。"""
+    block = []
+    for row in range(4):
+        y = min(height - 1, block_y + row)
+        for column in range(4):
+            x = min(width - 1, block_x + column)
+            offset = (y * width + x) * 4
+            block.append((pixels[offset], pixels[offset + 1], pixels[offset + 2]))
+    best = None
+    for flip in (0, 1):
+        groups = ([], [])
+        for row in range(4):
+            for column in range(4):
+                half = (column // 2) if flip == 0 else (row // 2)
+                groups[half].append(block[row * 4 + column])
+        first = _etc2_fit_group(groups[0])
+        second = _etc2_fit_group(groups[1])
+        total = first[0] + second[0]
+        if best is None or total < best[0]:
+            best = (total, flip, first, second)
+    _, flip, first, second = best
+    # 逐像素把索引放回 16 个位置：ETC1 的索引位序是列优先，(x * 4 + y) * 2。
+    indices = [0] * 16
+    cursor = [0, 0]
+    for row in range(4):
+        for column in range(4):
+            half = (column // 2) if flip == 0 else (row // 2)
+            indices[row * 4 + column] = (first[3] if half == 0 else second[3])[cursor[half]]
+            cursor[half] += 1
+    value = 0
+    for row in range(4):
+        for column in range(4):
+            value |= (indices[row * 4 + column] & 3) << ((column * 4 + row) * 2)
+    base1, base2 = first[1], second[1]
+    if base1 == [15, 15, 15]:
+        # 个体模式下 R1=G1=B1=15 且 diff=0 是 T/H/planar 模式的标记位，
+        # 会被解码器当成别的模式而整块花掉。红色亮度权重最低，降一级的代价最小。
+        base1 = [14, 15, 15]
+    value |= base1[0] << 60
+    value |= base2[0] << 56
+    value |= base1[1] << 52
+    value |= base2[1] << 48
+    value |= base1[2] << 44
+    value |= base2[2] << 40
+    value |= first[2] << 37
+    value |= second[2] << 34
+    value |= flip << 32  # diff = 0（个体模式）
+    return struct.pack("<Q", value)
+
+
+def etc2_encode_level(pixels, width, height):
+    """把一个 RGBA8 mip 层编码为 ETC2 RGB8；每层按 4×4 块铺满。"""
+    output = bytearray()
+    for block_y in range(0, height, 4):
+        for block_x in range(0, width, 4):
+            output += _etc2_encode_block(pixels, block_x, block_y, width, height)
+    return bytes(output)
+
+
 def bake_surface():
     """六个朝向共享一张昼夜图集；alpha 只保留柔和自发光，不烘焙白色窄光条。"""
     pixels = bytearray(ATLAS_SIZE * ATLAS_SIZE * 4)
@@ -306,6 +459,12 @@ def bake_surface():
     (OUTPUT / "archive-baked-surface-bc7.bin").write_bytes(
         b"".join(bc7_encode_level(level, max(1, ATLAS_SIZE >> index), max(1, ATLAS_SIZE >> index))
                  for index, level in enumerate(levels)))
+    # Android 用：GLES 没有 BC7，ETC2 RGB8 只要 BC7 一半、RGBA8 八分之一的带宽。
+    # 只在构建 Android 资源时输出，桌面 / iOS 的产物逐字节不变。
+    if os.environ.get("RHINE_BAKE_ETC2", "").strip() == "1":
+        (OUTPUT / "archive-baked-surface-etc2.bin").write_bytes(
+            b"".join(etc2_encode_level(level, max(1, ATLAS_SIZE >> index), max(1, ATLAS_SIZE >> index))
+                     for index, level in enumerate(levels)))
     return levels
 
 
@@ -373,7 +532,19 @@ def bake_normal_response():
             cosine = max(0, sum(normal[axis] * (-0.48, 0.80, 0.36)[axis] for axis in range(3)))
             highlight = 0.18 * cosine**24 * (0.25 if dark else 1)
             response = [min(4, blended[channel] / max(primary[channel], 0.0001)) for channel in range(3)]
-            pixels.extend(struct.pack("<4e", *response, highlight))
+            if NORMAL_RGBA8:
+                # Android：8 位 UNORM 代替 RGBA16F，逐像素带宽从 8 B 降到 4 B
+                # （夜间要采两次，等于每片元省 8 B）。rgb 存 response/4（值域 0..4），
+                # a 存 highlight/0.25（值域 0..0.18）；着色器按同样比例乘回，
+                # 见 CMake 的 RHINE_NORMAL_RGBA8。
+                pixels.extend((
+                    max(0, min(255, int(round(response[0] * 63.75)))),
+                    max(0, min(255, int(round(response[1] * 63.75)))),
+                    max(0, min(255, int(round(response[2] * 63.75)))),
+                    max(0, min(255, int(round(highlight * 1020.0)))),
+                ))
+            else:
+                pixels.extend(struct.pack("<4e", *response, highlight))
     (OUTPUT / "archive-baked-normal.bin").write_bytes(pixels)
 
 
