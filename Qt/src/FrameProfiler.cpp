@@ -4,6 +4,9 @@
 #include "fg/FgCapability.h"
 #include "Engine.h"
 #include "ProcessMetrics.h"
+#if defined(Q_OS_ANDROID)
+#include "render/HudPaintStats.h"
+#endif
 #include <QCoreApplication>
 #include <QDesktopServices>
 #include <QDir>
@@ -350,6 +353,19 @@ void FrameProfiler::sample() {
     m_metrics.insert("stepMaxCpuMs", m_stepMaxMs);
     m_metrics.insert("latestSyncCpuMs", syncNs.load(std::memory_order_relaxed) / 1000000.);
     m_metrics.insert("latestSubmitCpuMs", submitNs.load(std::memory_order_relaxed) / 1000000.);
+    // HUD 局部重绘账本：本窗口内实际重画了多少像素。`hudDirtyPercent` 接近 100
+    // 就说明命令流整屏都在变（局部重绘无效），远小于 100 才是这条优化在起作用。
+#if defined(Q_OS_ANDROID)
+    {
+        auto &hud = RhineRender::hudPaintStats();
+        const quint64 hudPaints = hud.paints.exchange(0, std::memory_order_relaxed);
+        const quint64 hudDirty = hud.dirtyPixels.exchange(0, std::memory_order_relaxed);
+        const quint64 hudCanvas = hud.canvasPixels.exchange(0, std::memory_order_relaxed);
+        m_metrics.insert("hudPaints", qulonglong(hudPaints));
+        m_metrics.insert("hudDirtyPercent",
+                         hudCanvas > 0 ? 100. * double(hudDirty) / double(hudCanvas) : 0.);
+    }
+#endif
     m_metrics.insert("gpuTimeMs", resources.value("gpuTimeMs"));
     // 状态与数值分开透传：面板要在"没有样本"时说明是没样本、没请求还是设备不支持。
     m_metrics.insert("gpuTimingStatus", resources.value("gpuTimingStatus"));

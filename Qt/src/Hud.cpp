@@ -11,6 +11,9 @@
 #include <QSGSimpleTextureNode>
 #include <QtMath>
 #endif
+#if defined(Q_OS_ANDROID)
+#include "render/HudPaintStats.h"
+#endif
 Hud::Hud(QQuickItem *parent) : QQuickPaintedItem(parent) {
     setOpaquePainting(false);
     setAntialiasing(true);
@@ -216,6 +219,12 @@ QSGNode *Hud::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *updateData)
         region = cover.intersected(QRect(QPoint(0, 0), pixels));
     }
     if (!region.isEmpty()) {
+        auto &stats = RhineRender::hudPaintStats();
+        stats.paints.fetch_add(1, std::memory_order_relaxed);
+        stats.dirtyPixels.fetch_add(quint64(region.width()) * quint64(region.height()),
+                                    std::memory_order_relaxed);
+        stats.canvasPixels.fetch_add(quint64(pixels.width()) * quint64(pixels.height()),
+                                     std::memory_order_relaxed);
         texture->paintRegion(pixels, region, [&](QPainter &painter) {
             painter.scale(double(pixels.width()) / logical.width(),
                           double(pixels.height()) / logical.height());

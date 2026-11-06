@@ -128,15 +128,15 @@ inline HudDirtyResult hudDirtyRect(const QJsonArray &before, const QJsonArray &a
             return result;
         }
         if (op == QLatin1String("clip")) {
-            const QRectF oldBefore = oldStack.last().clip;
-            const QRectF newBefore = newStack.last().clip;
-            oldStack.last().clip = intersectClip(oldBefore, a);
-            newStack.last().clip = intersectClip(newBefore, b);
+            oldStack.last().clip = intersectClip(oldStack.last().clip, a);
+            newStack.last().clip = intersectClip(newStack.last().clip, b);
             if (changed) {
-                // 裁剪变了：旧裁剪区里可能有"现在不该显示"的残留，新裁剪区里
-                // 可能有"现在才该出现"的内容。四块都算脏，交给重绘覆盖。
-                merge(&result.rect, oldBefore);
-                merge(&result.rect, newBefore);
+                // 只并「本作用域裁剪之后」的两块：裁剪缩小要让外圈的旧像素重画，
+                // 裁剪放大要让新露出来的那块重画。
+                //
+                // 千万别把**父裁剪**并进来：滚动文字的 clip 每帧都在动，而它的父裁剪
+                // 往往就是整屏——那样每次都是全量重绘（2026-11-06 11:32 那轮实测，
+                // sync 47ms、`hudDirtyPercent` 逼近 100，就是这么来的）。
                 merge(&result.rect, oldStack.last().clip);
                 merge(&result.rect, newStack.last().clip);
                 oldStack.last().dirty = true;
