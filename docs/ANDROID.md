@@ -616,6 +616,22 @@ Android 实现全部包在 `#if defined(Q_OS_ANDROID)`；`HudUploadTexture` 只�
 （brand、导航、footer、播放栏、右侧遮罩）连脏区那 40% 都不用重画，
 是这条路的终点；需要先给命令流打上分区标记。
 
+## 冷纹理准入：Android 放宽到 500 ms
+
+`Qt/src/render/MusicTextureAdmission.h` 是「快速滚动时先别建封面／标签纹理」的那道闸：
+焦点 key 在单调时钟上稳定 `delayMs` 之后才允许创建。桌面默认 100 ms，
+**Android 改成 500 ms**（`PlatformTextureAdmissionMs`）。
+
+理由：手机上一次 fling 能跨过十几条，100 ms 后焦点早已换过两轮，等于边滑边给已经
+离开视野的条目建纹理，GPU 上传和 GUI 线程都被拖住。500 ms 让手指停稳半秒才建冷纹理。
+
+- 已经准入过的 key 仍然立即命中（`MaxAdmitted = 32` 的热缓存），切歌回来不等待；
+- 隐藏窗口期间不计时，恢复后从恢复时刻重新计时；
+- `RHINE_TEXTURE_ADMISSION_MS` 仍然优先：设 `0` 关闭延迟，设 `0..60000` 内的毫秒值生效，
+  非法值回落到平台默认（不是 0）。
+- 非 Android 逐值不变（默认仍是 100），`Qt/tests/MusicTextureAdmissionChecks.cpp` 的
+  `== 100` 断言不受影响——Android 不编译 `Qt/tests/`。
+
 ## 音频与系统媒体控件
 
 - 播放走 Qt Multimedia 的 Android 后端（系统 MediaPlayer）。它的 `setMedia` 会忽略
