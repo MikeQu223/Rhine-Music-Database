@@ -33,6 +33,12 @@ layout(location = 12) in vec2 v_velocity;
 #endif
 /** 只插值烘焙光场的相邻高度切片；没有实时光源求值、光线追踪或折射背景采样。 */
 vec3 bakedIllumination() {
+    // v_lightMask 由顶点阶段按几何范围给出（±9 × ±7），落在外面的片元恒为 0。
+    // 三维纹理的硬件三线性要 8 次 texel fetch，为乘一个 0 去采它是纯浪费；
+    // 早退返回的 0 与原来乘出来的 0 逐位相同，机架 / 地面 / 远处的片元全省掉这次采样。
+    if (v_lightMask <= 0.0) {
+        return vec3(0.0);
+    }
     // 三维光场由硬件三线性采样；RGB 按 sRGB8(线性/4) 存放，这里手工解码后乘回 4.0。
     return linearColor(texture(lightAtlas, v_lightUv).rgb) * 4.0 * v_lightMask * opticalLight.x * opticalLight.y;
 }
@@ -111,11 +117,14 @@ void main() {
         return;
     }
     bool shell = m.flags.x == 3.0 || m.flags.x == 4.0 || m.flags.x == 5.0;
-    vec4 baked = texture(surfaceAtlas, v_surfaceUv);
+    // 主题只有两个端点值：纯夜晚时 mix(day, night, 1.0) 精确等于 night，先采 day 是纯浪费。
+    // 只在这一端短路；白天（v_theme == 0）与主题切换动画的中间态仍走原路径，结果逐位不变。
+    bool nightOnly = v_theme >= 1.0;
+    vec4 baked = texture(surfaceAtlas, nightOnly ? v_surfaceUv + vec2(0.0, 0.5) : v_surfaceUv);
     // 表面图集以 sRGB8 存放线性辐亮度/4；这里手工解码后乘回 4.0。
     baked.rgb = linearColor(baked.rgb) * 4.0;
-    vec4 normalResponse = texture(normalAtlas, v_normalUv);
-    if (v_theme > 0.0) {
+    vec4 normalResponse = texture(normalAtlas, nightOnly ? v_normalUv + vec2(0.0, 0.5) : v_normalUv);
+    if (v_theme > 0.0 && !nightOnly) {
         vec4 night = texture(surfaceAtlas, v_surfaceUv + vec2(0.0, 0.5));
         night.rgb = linearColor(night.rgb) * 4.0;
         baked = mix(baked, night, v_theme);
