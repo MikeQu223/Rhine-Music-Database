@@ -696,8 +696,25 @@ class Renderer {
         lightAtlas = texture3D({576, 96}, 24, QRhiTexture::RGBA8,
                                QRhiTexture::ThreeDimensional);
         upload3D(lightAtlas, read(root, "archive-baked-light.bin"), 24);
-        normalAtlas = texture({128, 256}, QRhiTexture::RGBA16F);
-        upload(normalAtlas, read(root, "archive-baked-normal.bin"));
+        // 法线响应的位宽从文件字节数反推，不依赖编译期宏。
+        // 宏只挂在某个目标上、或烘焙与构建用不同的开关时，按宏判断会读错位；
+        // 文件大小是唯一不会说谎的来源：131072 = RGBA8，262144 = RGBA16F。
+        const QByteArray normalBytes = read(root, "archive-baked-normal.bin");
+        const qint64 normalByteCount = normalBytes.size();
+        const bool normalRgba8 = normalByteCount == 128 * 256 * 4;
+        if (!normalRgba8 && normalByteCount != 128 * 256 * 8) {
+            qFatal("archive-baked-normal.bin is %lld bytes; expected 131072 (RGBA8) or "
+                   "262144 (RGBA16F). Re-bake with scripts/bake-archive-lighting.py.",
+                   static_cast<long long>(normalByteCount));
+        }
+        // 纹理格式跟着文件走；着色器按 RGBA16F 解码，8 位资源只会偏色、不会崩，
+        // 所以这里用警告而不是 qFatal。
+        if (normalRgba8) {
+            qWarning("法线图集是 8 位（131072 字节），但着色器按 RGBA16F 解码，画面颜色会偏；"
+                     "重烘焙时请关闭 RHINE_BAKE_NORMAL_RGBA8。");
+        }
+        normalAtlas = texture({128, 256}, normalRgba8 ? QRhiTexture::RGBA8 : QRhiTexture::RGBA16F);
+        upload(normalAtlas, normalBytes);
         white = texture({1, 1}, QRhiTexture::RGBA8);
         upload(white, QByteArray(4, char(255)));
         floor = plane(-100, -100, 100, 100, 0, 0, 0, 0, 0);
