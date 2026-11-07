@@ -186,7 +186,7 @@ Item {
             }
         }
     }
-    IOSInput {
+    TouchInput {
         stage: overlay
         backend: rhine
     }
