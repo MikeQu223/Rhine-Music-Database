@@ -80,12 +80,22 @@ Item {
         focus: true
         onPressed: function (mouse) {
             forceActiveFocus();
+            // 双指捏合期间不让第一根手指的事件继续驱动单指旋转。
+            if (viewerPinch.active) {
+                return;
+            }
             rhine.pointer("pointerdown", mouse.x / overlay.stageScale, mouse.y / overlay.stageScale);
         }
         onPositionChanged: function (mouse) {
+            if (viewerPinch.active) {
+                return;
+            }
             rhine.pointer("pointermove", mouse.x / overlay.stageScale, mouse.y / overlay.stageScale);
         }
         onReleased: function (mouse) {
+            if (viewerPinch.active) {
+                return;
+            }
             rhine.pointer("pointerup", mouse.x / overlay.stageScale, mouse.y / overlay.stageScale);
         }
         onExited: rhine.pointer("pointerleave", 0, 0)
@@ -179,6 +189,69 @@ Item {
     IOSInput {
         stage: overlay
         backend: rhine
+    }
+    // 封面查看页的触控：单指拖动交给 inputLayer → NativeViewer 做球面旋转；
+    // 双指捏合走与桌面滚轮同一条通路做缩放；双指拖动（质心位移）做平移。
+    // 只收触摸屏事件，桌面鼠标与滚轮语义不变。
+    PinchHandler {
+        id: viewerPinch
+        target: null
+        acceptedDevices: PointerDevice.TouchScreen
+        enabled: !!rhine.state.viewer
+        // 双指平移的差分锚点：上一次质心的场景坐标。
+        property point lastPan: Qt.point(0, 0)
+        // 把双指质心相对上次的位移转发成 pan（x/y 是舞台像素增量，与
+        // NativeViewer::pointer 的 "pan" 分支约定一致）。同时挂两个信号是
+        // 双保险：Qt 版本不同，translationChanged 与 centroidChanged 哪个存在
+        // 都能触发；都存在时第二次调用位移差为 0，天然幂等。
+        function forwardPan() {
+            if (!active) {
+                return;
+            }
+            const now = centroid.scenePosition;
+            const dx = now.x - lastPan.x;
+            const dy = now.y - lastPan.y;
+            lastPan = now;
+            // 首帧质心坐标未就绪时的异常跳变直接丢弃，防止画面甩飞。
+            if (dx === 0 && dy === 0 ||
+                Math.abs(dx) > overlay.width * 0.4 || Math.abs(dy) > overlay.height * 0.4) {
+                return;
+            }
+            rhine.pointer("pan", dx / overlay.stageScale, dy / overlay.stageScale);
+        }
+        onActiveChanged: {
+            if (active) {
+                // 第二根手指落下时结束可能已开始的单指旋转，避免两个手势叠加。
+                rhine.pointer("pointercancel", 0, 0);
+            }
+            // 手势开始/结束时重置差分锚点；active 瞬间质心可能未就绪，
+            // forwardPan 的大位移保护会兜住这种情况。
+            lastPan = active ? centroid.scenePosition : Qt.point(0, 0);
+        }
+        // Qt 6 的 activeScale 没有 onActiveScaleChanged：它的 NOTIFY 是
+        // scaleChanged(delta)，delta 就是这一帧捏合距离的乘法变化量。
+        onScaleChanged: function (delta) {
+            if (!active || !isFinite(delta) || delta <= 0) {
+                return;
+            }
+            // wheelInput 的正 delta 在 viewer 里缩小相机半径（放大画面）。
+            // 350 来自 NativeViewer 的 pow(0.95, 0.7*|delta|*0.01) 与 -delta*8 的换算：
+            // 让 log(捏合比例) 线性映射到与桌面滚轮同样的缩放速度。
+            const p = centroid.scenePosition;
+            rhine.wheelInput(p.x / overlay.stageScale, p.y / overlay.stageScale,
+                             Math.log(delta) * 350, 0);
+        }
+    }
+    // 双指质心位移 → 平移。Connections 的函数语法在信号不存在时只会静默跳过
+    // （不会像 onXxx: 属性赋值那样让整个 Overlay 加载失败）。
+    Connections {
+        target: viewerPinch
+        function onTranslationChanged() {
+            viewerPinch.forwardPan();
+        }
+        function onCentroidChanged() {
+            viewerPinch.forwardPan();
+        }
     }
     // 验证码只在输入组件和单次登录请求中短暂存在，提交后立即清空。
     Item {

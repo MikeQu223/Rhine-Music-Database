@@ -171,7 +171,10 @@ void NativeApplication::mediaAction(QString action) {
 }
 
 void NativeApplication::pointer(QString type, double x, double y) {
-    if (!hud.modal.isEmpty()) {
+    // "pan"（双指平移）的 x/y 是位移增量而不是指针位置，不能拿去做弹窗的命中与
+    // 拖动判定——增量值落进面板矩形时平移会被误判成点击。viewer 打开时
+    // NativeScene::pointer 会把它直接转发给 NativeViewer。
+    if (type != "pan" && !hud.modal.isEmpty()) {
         // 弹窗外只接受完整点击，拖动、取消和面板内部留白都不触发返回。
         if (type == "pointerdown") {
             m_dragging = true;
