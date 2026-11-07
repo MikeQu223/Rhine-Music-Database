@@ -266,40 +266,44 @@ if(NOT IOS)
 endif()
 add_subdirectory(Qt)
 target_link_libraries(RhineMusicDatabase PRIVATE RhineCore)
+# 体积与运行期优化：随包的 97 个库都是 Qt 与发行版的 strip 二进制，编译参数无从下手，能自定义的只有这两个
+# 目标。Release 开 LTO，让链接期做跨翻译单元内联与死代码消除。
+# 刻意不加 -fvisibility=hidden：可执行文件本来就不导出符号，省不到 50 KB，却可能挡住 dlsym
+# 一类的自省路径，收益与风险倒挂。
+#
+# LTO 要三样东西同时在位：编译器插件（GCC 的 liblto_plugin.so）、带插件的归档器
+# （gcc-ar/gcc-ranlib——RhineCore 是静态库，CMake 建库时会强制换成这两个），以及能加载插件的
+# 链接器。缺任一项 check_ipo_supported 只返回 NO，产物悄悄大 1.5 MB 而构建照常成功，因此这里
+# 默认打警告把降级暴露出来；RHINE_REQUIRE_LTO=1 把它升级为配置期错误，CI 的 Linux 任务用这个开关。
+#
+# 这段原先只包在 Linux 分支里：Linux 之外（Windows / macOS / iOS）Release 一直没开 LTO，
+# 同样的源码要多付跨翻译单元调用的开销。IPO 只改变代码生成与链接方式，不改变任何运行时
+# 行为、资源与着色器，因此对所有平台都安全；不可用的工具链会落进下面的警告分支。
+set(RHINE_REQUIRE_LTO OFF)
+if(DEFINED ENV{RHINE_REQUIRE_LTO} AND "$ENV{RHINE_REQUIRE_LTO}" MATCHES "^(1|[Oo][Nn]|[Tt][Rr][Uu][Ee]|[Yy][Ee][Ss])$")
+    set(RHINE_REQUIRE_LTO ON)
+endif()
+include(CheckIPOSupported)
+check_ipo_supported(RESULT RHINE_IPO_SUPPORTED OUTPUT RHINE_IPO_ERROR LANGUAGES CXX)
+if(RHINE_IPO_SUPPORTED)
+    set_target_properties(
+        RhineCore
+        RhineMusicDatabase
+        PROPERTIES INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
+    message(STATUS "IPO/LTO enabled for Release (${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION})")
+elseif(RHINE_REQUIRE_LTO)
+    message(
+        FATAL_ERROR
+            "RHINE_REQUIRE_LTO is set but IPO/LTO is unavailable.\n"
+            "Install a plugin-capable toolchain (GCC: gcc/g++/binutils provide liblto_plugin.so and"
+            " gcc-ar), or unset RHINE_REQUIRE_LTO to accept a larger Release binary.\n${RHINE_IPO_ERROR}")
+else()
+    message(
+        WARNING
+            "IPO/LTO unavailable, Release builds are not optimized across translation units"
+            " (expect ~1.5 MB larger binaries).\n${RHINE_IPO_ERROR}")
+endif()
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    # 体积优化：随包的 97 个库都是 Qt 与发行版的 strip 二进制，编译参数无从下手，能自定义的只有这两个
-    # 目标。Release 开 LTO，让链接期做跨翻译单元内联与死代码消除。
-    # 刻意不加 -fvisibility=hidden：可执行文件本来就不导出符号，省不到 50 KB，却可能挡住 dlsym
-    # 一类的自省路径，收益与风险倒挂。
-    #
-    # LTO 要三样东西同时在位：编译器插件（GCC 的 liblto_plugin.so）、带插件的归档器
-    # （gcc-ar/gcc-ranlib——RhineCore 是静态库，CMake 建库时会强制换成这两个），以及能加载插件的
-    # 链接器。缺任一项 check_ipo_supported 只返回 NO，产物悄悄大 1.5 MB 而构建照常成功，因此这里
-    # 默认打警告把降级暴露出来；RHINE_REQUIRE_LTO=1 把它升级为配置期错误，CI 的 Linux 任务用这个开关。
-    set(RHINE_REQUIRE_LTO OFF)
-    if(DEFINED ENV{RHINE_REQUIRE_LTO} AND "$ENV{RHINE_REQUIRE_LTO}" MATCHES "^(1|[Oo][Nn]|[Tt][Rr][Uu][Ee]|[Yy][Ee][Ss])$")
-        set(RHINE_REQUIRE_LTO ON)
-    endif()
-    include(CheckIPOSupported)
-    check_ipo_supported(RESULT RHINE_IPO_SUPPORTED OUTPUT RHINE_IPO_ERROR LANGUAGES CXX)
-    if(RHINE_IPO_SUPPORTED)
-        set_target_properties(
-            RhineCore
-            RhineMusicDatabase
-            PROPERTIES INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
-        message(STATUS "IPO/LTO enabled for Release (${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION})")
-    elseif(RHINE_REQUIRE_LTO)
-        message(
-            FATAL_ERROR
-                "RHINE_REQUIRE_LTO is set but IPO/LTO is unavailable.\n"
-                "Install a plugin-capable toolchain (GCC: gcc/g++/binutils provide liblto_plugin.so and"
-                " gcc-ar), or unset RHINE_REQUIRE_LTO to accept a larger Release binary.\n${RHINE_IPO_ERROR}")
-    else()
-        message(
-            WARNING
-                "IPO/LTO unavailable, Release builds are not optimized across translation units"
-                " (expect ~1.5 MB larger binaries).\n${RHINE_IPO_ERROR}")
-    endif()
     # Linux 再按函数/数据切段，配合 --gc-sections 回收主程序里真正到不了的部分。
     if(UNIX AND NOT APPLE)
         target_compile_options(RhineCore PRIVATE -ffunction-sections -fdata-sections)
