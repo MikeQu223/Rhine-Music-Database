@@ -2536,7 +2536,8 @@ class Renderer {
                 theme = float(themes[i].toDouble());
             }
             // state.w 标记"被聚焦的主体"：详情页与查看封面页只有焦点唱片用玻璃壳与主光。
-            // 判断依据是 draw 的 id 与当前曲目 key 对应的装配体 id 是否匹配。
+            // 详情页背景卡与焦点卡一样是非实例化 draw，再按 musicSelected 收一次；
+            // 查看封面页只有一张卡，viewer 打开时直接放行。
             const bool hero = isFocusedSceneCard(draw, detailMode, viewerMode);
             value.state = {n(draw, "quality"), n(draw, "clarity"), theme, hero ? 1.f : 0.f};
 #ifdef Q_OS_LINUX

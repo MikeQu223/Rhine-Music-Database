@@ -92,7 +92,7 @@ Item {
         focus: true
         onPressed: function (mouse) {
             forceActiveFocus();
-            // 双指捏合期间不让第一根手指的 MouseArea 事件继续驱动单指旋转。
+            // 双指捏合期间不让第一根手指的事件继续驱动单指旋转。
             if (viewerPinch.active) {
                 return;
             }
@@ -290,7 +290,7 @@ Item {
     }
     // 封面查看页的触控：单指拖动交给 inputLayer → NativeViewer 做球面旋转；
     // 双指捏合走与桌面滚轮同一条通路做缩放；双指拖动（质心位移）做平移。
-    // 桌面滚轮语义不变，这里只接触摸屏。
+    // 只收触摸屏事件，桌面鼠标与滚轮语义不变。
     PinchHandler {
         id: viewerPinch
         target: null
@@ -312,7 +312,7 @@ Item {
             lastPan = now;
             // 首帧质心坐标未就绪时的异常跳变直接丢弃，防止画面甩飞。
             if (dx === 0 && dy === 0 ||
-                Math.abs(dx) > overlay.stageWidth * 0.4 || Math.abs(dy) > overlay.height * 0.4) {
+                Math.abs(dx) > overlay.width * 0.4 || Math.abs(dy) > overlay.height * 0.4) {
                 return;
             }
             rhine.pointer("pan", dx / overlay.stageScale, dy / overlay.stageScale);
@@ -341,8 +341,7 @@ Item {
         }
     }
     // 双指质心位移 → 平移。Connections 的函数语法在信号不存在时只会静默跳过
-    // （不会像 onXxx: 属性赋值那样让整个 Overlay 加载失败），配合上面两路
-    // 差分幂等，跨 Qt 版本安全。
+    // （不会像 onXxx: 属性赋值那样让整个 Overlay 加载失败）。
     Connections {
         target: viewerPinch
         function onTranslationChanged() {

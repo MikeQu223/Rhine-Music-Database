@@ -1,10 +1,11 @@
 import QtQuick
 
-// 触摸拖动 → 滚轮：列表/弹层的滚动在桌面吃滚轮事件，触摸端把拖动换算成同一条通路，
-// 不给场景另开一套手势语义。iOS 只在弹层与详情里接管（主场景与系统返回手势冲突）；
-// Android 全程接管——主场景的列表在桌面同样吃滚轮，拖动就是它的滑动。
-// 封面查看页（viewer）例外：那里单指拖动是球面旋转，而滚轮是缩放，两者不能叠加，
-// 所以 viewer 打开时整个 handler 让位，缩放交给双指捏合（见 Overlay.qml）。
+// 触摸拖动 → 滚轮：列表与弹层的滚动在桌面吃滚轮事件，触摸端把拖动换算成同一条通路，
+// 不给场景另开一套手势语义。
+// iOS 只在弹层与详情里接管（主场景与系统返回手势冲突）；其余平台全程接管——主场景的
+// 列表在桌面同样吃滚轮，拖动就是它的滑动。
+// 封面查看页（viewer）例外：那里单指拖动是球面旋转、双指捏合是缩放，滚轮语义不适用，
+// 所以 viewer 打开时整个 handler 让位（缩放与平移见 Overlay.qml 的 PinchHandler）。
 Item {
     id: root
     required property var stage
@@ -18,7 +19,7 @@ Item {
         target: null
         acceptedDevices: PointerDevice.TouchScreen
         enabled: (root.stage.ios ? (!!root.backend.state.modal || root.backend.state.mode === "detail")
-                                 : root.stage.android)
+                                 : (root.stage.android || !root.stage.compactLayout))
                  && !root.backend.state.viewer
                  && !(root.stage.ios && root.stage.compactLayout)
         xAxis.enabled: false
