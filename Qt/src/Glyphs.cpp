@@ -278,8 +278,11 @@ Glyphs::Glyph Glyphs::glyph(QString ch, QString weight) {
 }
 double Glyphs::width(QString text, double size, QString weight, double tracking) {
     QMutexLocker lock(&mutex);
-    const auto key = QString::fromUtf8(
-        QJsonDocument(QJsonArray{text, size, weight, tracking}).toJson(QJsonDocument::Compact));
+    // 缓存键原来是「把四个参数序列化成一份 JSON」。width() 在每帧的 fit / inset / 裁剪判断里
+    // 被调很多次，JSON 序列化 + UTF-8 往返比查缓存本身还贵。改成定界符拼接：'g',17 保证
+    // double 往返精确，文本放最后且数字字段不含 U+001F，因此与原来逐项等价、不会碰撞。
+    const auto key = QString::number(size, 'g', 17) + QChar(0x1f) + weight + QChar(0x1f) +
+                     QString::number(tracking, 'g', 17) + QChar(0x1f) + text;
     if (const auto cached = widths.object(key)) {
         return *cached;
     }
@@ -339,8 +342,10 @@ double Glyphs::inset(QString text, double size, QString weight) {
 }
 QStringList Glyphs::wrap(QString value, double limit, double size, QString weight) {
     QMutexLocker lock(&mutex);
-    const auto key = QString::fromUtf8(
-        QJsonDocument(QJsonArray{value, limit, size, weight}).toJson(QJsonDocument::Compact));
+    // 同 width()：别再用「序列化成 JSON」当键。歌词整段文本做键时，序列化本身
+    // 就比查缓存贵，而 wrap 在换行布局里是热路径。
+    const auto key = QString::number(limit, 'g', 17) + QChar(0x1f) + QString::number(size, 'g', 17) +
+                     QChar(0x1f) + weight + QChar(0x1f) + value;
     if (const auto cached = wrapped.object(key)) {
         return *cached;
     }
