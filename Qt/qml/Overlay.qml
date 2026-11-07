@@ -31,6 +31,17 @@ Item {
     property bool frameless: controlledHost && Qt.platform.os === "windows"
     readonly property bool ios: Qt.platform.os === "ios"
     readonly property bool compactLayout: rhine.state.compactLayout === true
+    readonly property bool android: Qt.platform.os === "android"
+
+    // 手指比鼠标指针粗：Android 上把每个命中矩形四周各外扩 touchHitPadding 个舞台像素。
+    // 舞台坐标按 1080 高归一化，16 在常见手机上约 1~1.5 mm；按手感调这一个值即可。
+    // 桌面/iOS 取 0，hitArea() 逐值返回原来的矩形，交互行为完全不变。
+    readonly property real touchHitPadding: android ? 16 : 0
+
+    function hitArea(hit) {
+        const pad = overlay.touchHitPadding;
+        return Qt.rect(hit.x - pad, hit.y - pad, hit.width + 2 * pad, hit.height + 2 * pad);
+    }
 
     // 原 Main.qml 直接引用组件内部的 id，拆层后改为函数调用，效果等价。
     function focusInputLayer() {
@@ -81,12 +92,22 @@ Item {
         focus: true
         onPressed: function (mouse) {
             forceActiveFocus();
+            // 双指捏合期间不让第一根手指的 MouseArea 事件继续驱动单指旋转。
+            if (viewerPinch.active) {
+                return;
+            }
             rhine.pointer("pointerdown", mouse.x / overlay.stageScale, mouse.y / overlay.stageScale);
         }
         onPositionChanged: function (mouse) {
+            if (viewerPinch.active) {
+                return;
+            }
             rhine.pointer("pointermove", mouse.x / overlay.stageScale, mouse.y / overlay.stageScale);
         }
         onReleased: function (mouse) {
+            if (viewerPinch.active) {
+                return;
+            }
             rhine.pointer("pointerup", mouse.x / overlay.stageScale, mouse.y / overlay.stageScale);
         }
         onExited: rhine.pointer("pointerleave", 0, 0)
@@ -166,10 +187,11 @@ Item {
             model: rhine.hits
             delegate: Item {
                 required property var modelData
-                x: modelData.x
-                y: modelData.y + (rhine.state.modal && !modelData.fixed ? rhine.state.modalOffset || 0 : 0)
-                width: modelData.width
-                height: modelData.height
+                property rect area: overlay.hitArea(modelData)
+                x: area.x
+                y: area.y + (rhine.state.modal && !modelData.fixed ? rhine.state.modalOffset || 0 : 0)
+                width: area.width
+                height: area.height
                 Accessible.role: Accessible.Button
                 Accessible.name: modelData.label
                 Accessible.onPressAction: rhine.action(modelData.action)
@@ -246,7 +268,8 @@ Item {
                 var py = (rhine.state.searchListY || 0) + mouse.y;
                 for (var index = 0; index < rhine.hits.length; ++index) {
                     var hit = rhine.hits[index];
-                    var inside = px >= hit.x && px <= hit.x + hit.width && py >= hit.y && py <= hit.y + hit.height;
+                    var area = overlay.hitArea(hit);
+                    var inside = px >= area.x && px <= area.x + area.width && py >= area.y && py <= area.y + area.height;
                     var scrollable = hit.action.indexOf("music:result:") === 0 || hit.action.indexOf("music:expand:") === 0;
                     if (inside && scrollable) {
                         rhine.action(hit.action);
@@ -261,9 +284,73 @@ Item {
             }
         }
     }
-    IOSInput {
+    TouchInput {
         stage: overlay
         backend: rhine
+    }
+    // 封面查看页的触控：单指拖动交给 inputLayer → NativeViewer 做球面旋转；
+    // 双指捏合走与桌面滚轮同一条通路做缩放；双指拖动（质心位移）做平移。
+    // 桌面滚轮语义不变，这里只接触摸屏。
+    PinchHandler {
+        id: viewerPinch
+        target: null
+        acceptedDevices: PointerDevice.TouchScreen
+        enabled: !!rhine.state.viewer
+        // 双指平移的差分锚点：上一次质心的场景坐标。
+        property point lastPan: Qt.point(0, 0)
+        // 把双指质心相对上次的位移转发成 pan（x/y 是舞台像素增量，与
+        // NativeViewer::pointer 的 "pan" 分支约定一致）。同时挂两个信号是
+        // 双保险：Qt 版本不同，translationChanged 与 centroidChanged 哪个存在
+        // 都能触发；都存在时第二次调用位移差为 0，天然幂等。
+        function forwardPan() {
+            if (!active) {
+                return;
+            }
+            const now = centroid.scenePosition;
+            const dx = now.x - lastPan.x;
+            const dy = now.y - lastPan.y;
+            lastPan = now;
+            // 首帧质心坐标未就绪时的异常跳变直接丢弃，防止画面甩飞。
+            if (dx === 0 && dy === 0 ||
+                Math.abs(dx) > overlay.stageWidth * 0.4 || Math.abs(dy) > overlay.height * 0.4) {
+                return;
+            }
+            rhine.pointer("pan", dx / overlay.stageScale, dy / overlay.stageScale);
+        }
+        onActiveChanged: {
+            if (active) {
+                // 第二根手指落下时结束可能已开始的单指旋转，避免两个手势叠加。
+                rhine.pointer("pointercancel", 0, 0);
+            }
+            // 手势开始/结束时重置差分锚点；active 瞬间质心可能未就绪，
+            // forwardPan 的大位移保护会兜住这种情况。
+            lastPan = active ? centroid.scenePosition : Qt.point(0, 0);
+        }
+        // Qt 6 的 activeScale 没有 onActiveScaleChanged：它的 NOTIFY 是
+        // scaleChanged(delta)，delta 就是这一帧捏合距离的乘法变化量。
+        onScaleChanged: function (delta) {
+            if (!active || !isFinite(delta) || delta <= 0) {
+                return;
+            }
+            // wheelInput 的正 delta 在 viewer 里缩小相机半径（放大画面）。
+            // 350 来自 NativeViewer 的 pow(0.95, 0.7*|delta|*0.01) 与 -delta*8 的换算：
+            // 让 log(捏合比例) 线性映射到与桌面滚轮同样的缩放速度。
+            const p = centroid.scenePosition;
+            rhine.wheelInput(p.x / overlay.stageScale, p.y / overlay.stageScale,
+                             Math.log(delta) * 350, 0);
+        }
+    }
+    // 双指质心位移 → 平移。Connections 的函数语法在信号不存在时只会静默跳过
+    // （不会像 onXxx: 属性赋值那样让整个 Overlay 加载失败），配合上面两路
+    // 差分幂等，跨 Qt 版本安全。
+    Connections {
+        target: viewerPinch
+        function onTranslationChanged() {
+            viewerPinch.forwardPan();
+        }
+        function onCentroidChanged() {
+            viewerPinch.forwardPan();
+        }
     }
     // 验证码只在输入组件和单次登录请求中短暂存在，提交后立即清空。
     Item {
@@ -416,10 +503,11 @@ Item {
             visible: !!region
             enabled: visible && !rhine.state.closing
             x: region ? region.x * overlay.stageScale : 0
-            // 播放栏固定在窗口下沿，不随弹窗入场偏移。
-            y: region ? region.y * overlay.stageScale : 0
+            // 播放栏固定在窗口下沿，不随弹窗入场偏移。竖向多留一点触摸余量；
+            // 横向保持原样，否则 adjustPlayer 用 mouse.x/width 算出的比例会偏。
+            y: region ? (region.y - overlay.touchHitPadding) * overlay.stageScale : 0
             width: region ? region.width * overlay.stageScale : 0
-            height: region ? region.height * overlay.stageScale : 0
+            height: region ? (region.height + 2 * overlay.touchHitPadding) * overlay.stageScale : 0
             cursorShape: Qt.PointingHandCursor
             onPressed: function (mouse) {
                 rhine.adjustPlayer(modelData, mouse.x, width);

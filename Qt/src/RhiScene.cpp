@@ -20,6 +20,7 @@
 #include "render/ScenePostProcess.h"
 #include "render/VulkanResourceProbe.h"
 #include "render/VulkanResourcePolicy.h"
+#include "render/AndroidRenderPolicy.h"
 #include "render/MemoryProbe.h"
 #ifdef Q_OS_LINUX
 #include "fg/FgFrameTap.h"
@@ -301,6 +302,12 @@ class Renderer {
     // A05：运动矢量附件当前是否真的分配了。它是目标形状的一部分，必须和尺寸/采样数/
     // AA 模式一起参与 resize() 的早退比较，否则切换 AA 模式后会沿用旧目标。
     bool motionTarget = false;
+#if defined(Q_OS_ANDROID)
+    // Globals 差分上传的上一帧字节快照。valid=false 时强制上传（首帧、Renderer 重建）。
+    // 用字节数组而不是 Globals 对象：只做 memcmp / memcpy，不参与任何渲染计算。
+    std::array<unsigned char, sizeof(Globals)> globalsSnapshot{};
+    bool globalsSnapshotValid = false;
+#endif
     QString root;
     std::vector<std::unique_ptr<QRhiResource>> resources, sized, transient;
     QHash<QString, Mesh> meshes;
@@ -321,6 +328,8 @@ class Renderer {
     QRhiSampler *linear = nullptr;
     QRhiSampler *mipSampler = nullptr;
     QRhiSampler *volume = nullptr;
+    /// 实际建出来的表面图集格式（ETC2 RGB8 / BC7 / RGBA8），只用于 TEXDIAG 诊断。
+    QString surfaceAtlasFormat = QStringLiteral("RGBA8");
     Target color, target;
     QRhiResourceUpdateBatch *updates = nullptr;
     QHash<QString, QRhiGraphicsPipeline *> pipelines;
@@ -367,7 +376,13 @@ class Renderer {
     // Metal 的非时域路径沿用 80 字节实例；只有消费者需要时才扩展历史矩阵。
     const bool compactInstanceRequested = true;
 #else
-    const bool compactInstanceRequested = qEnvironmentVariableIntValue("RHINE_VK_COMPACT_INSTANCES") == 1;
+    // Android 默认开：opticalGeometry.vert 的 previousModel 整段包在
+    // RHINE_SINGLE_PASS_MOTION 里，而这个宏只给桌面 Linux / Apple 定义（见 CMakeLists.txt），
+    // Android 的主变体本来就只读 location 0..7；紧凑变体同样不带该宏、同样用
+    // surfaceNoMrt，两者在 GLES 下逐字同构。把 stride 从 144 改成 80 只是不再上传
+    // shader 根本不读的 64 字节，shader 读到的内容完全相同。桌面 / iOS 取值不变。
+    const bool compactInstanceRequested =
+        RhineRender::renderFlag("RHINE_VK_COMPACT_INSTANCES", true, false);
 #endif
     /// E05b：布局与 buffer 身份分离。启用后用占位 SRB 建 pipeline，arena 换 buffer 不再清管线。
     const bool layoutOnlyPipelines = qEnvironmentVariableIntValue("RHINE_VK_LAYOUT_ONLY_PIPELINES") == 1;
@@ -421,6 +436,12 @@ class Renderer {
     QList<quint32> freeSlots;
     /// D02 开关：RHINE_VK_UNIFORM_ARENA=1 才走 arena；任何一步不满足就永久退回逐材质 buffer。
     /// E01：请求值与生效值分开存——回退是永久的，日志只写"开了"会把回退读成还在走 arena。
+    ///
+    /// Android（GLES）刻意不默认开：Qt 的 GLES2 后端把 QRhi::NonDynamicUniformBuffers
+    /// 报为 true，没有真正的 UBO，uniform 靠 glUniform 逐次下发；SRB 一旦带动态偏移，
+    /// 后端就跳过「相同 SRB 不重绑」的优化、每个 draw 都重设一遍 uniform。arena 的
+    /// 「一次绑定 + 动态偏移」收益在 GLES 上拿不到，甚至可能更慢。想实机 A/B 仍可显式
+    /// RHINE_VK_UNIFORM_ARENA=1（ensureMaterialArena 有能力探测，不满足会自动回退）。
     const bool uniformArenaRequested = qEnvironmentVariableIntValue("RHINE_VK_UNIFORM_ARENA") == 1;
     bool uniformArena = uniformArenaRequested;
     QString arenaFallback;
@@ -449,8 +470,11 @@ class Renderer {
     };
     InstancePool instancePool;
     /// D04：主目标的深度在没人读时不 store（RHINE_VK_DISCARD_UNUSED_DEPTH=1 才启用）。
+    /// Android 默认开：tile-based GPU 每帧少一次 D32F 深度写回主存（1080p 约 8 MB）。
+    /// 只改 pass 结束后的 storeOp，不改深度测试与颜色；且 resize() 用保守的
+    /// depthStoreRequired() 兜底——motion / TAA / warp / MetalFX 任一存在就照旧 store。
     const bool discardUnusedDepthRequested =
-        qEnvironmentVariableIntValue("RHINE_VK_DISCARD_UNUSED_DEPTH") == 1;
+        RhineRender::renderFlag("RHINE_VK_DISCARD_UNUSED_DEPTH", true, false);
     bool discardUnusedDepth = discardUnusedDepthRequested;
     /// 本次 resize 定下的策略；它变了必须重建目标（render pass 的 storeOp 写在描述符里）。
     bool sizedDepthStore = true;
@@ -612,14 +636,17 @@ class Renderer {
      * 上传烘焙器生成的完整 mip 链。surface 的 mip 层在离线阶段按线性光平均，
      * 这里只按层切片，避免运行时再做一次 QImage 缩放破坏 sRGB/HDR 编码。
      */
-    void uploadMippedBytes(QRhiTexture *target, const QByteArray &bytes, int size, bool compressed) {
+    /// `blockBytes` 是压缩格式一个 4×4 块的字节数：BC7 是 16，ETC2 是 8。
+    /// 传错会让每层偏移错位，所以只在调用点显式写出来，不给"猜"的余地。
+    void uploadMippedBytes(QRhiTexture *target, const QByteArray &bytes, int size, bool compressed,
+                           int blockBytes = 16) {
         QVector<QRhiTextureUploadEntry> entries;
         qsizetype offset = 0;
         int width = size;
         int height = size;
         for (int level = 0;; ++level) {
             const qsizetype byteCount = compressed
-                ? qsizetype(((width + 3) / 4) * ((height + 3) / 4) * 16)
+                ? qsizetype(((width + 3) / 4) * ((height + 3) / 4) * blockBytes)
                 : qsizetype(width) * height * 4;
             if (offset + byteCount > bytes.size()) {
                 qFatal("Truncated baked mip chain: level=%d need=%lld have=%lld", level,
@@ -704,24 +731,92 @@ class Renderer {
         const QByteArray surfaceBc7 = readOptional(root, "archive-baked-surface-bc7.bin");
         const bool bc7Surface = !surfaceBc7.isEmpty() &&
                                 rhi->isTextureFormatSupported(QRhiTexture::BC7, surfaceFlags);
+        bool atlasReady = false;
+#if defined(Q_OS_ANDROID)
+        // GLES 上没有 BC7，原先只能回退到 RGBA8：1024² 全 mip 链 5.6 MB、4 B/texel。
+        // ETC2 RGB8 本来是 0.5 B/texel（0.7 MB、采样带宽 1/8，GLES 3.0 强制支持），
+        // **但 scripts/bake-archive-lighting.py 里那套手写编码器是坏的，默认不启用**：
+        //   · 块用 `struct.pack("<Q")` 写出，而 ETC2 规定每块 64 bit 按大端存储；
+        //   · 修掉字节序后 PSNR 也只有 21 dB，且棕色材质被解成蓝灰——individual 模式的
+        //     基色位偏移（`base << 60/56/52/48/44/40`）与规范不符，R/B 通道错位。
+        // 实测（texture2ddecoder 按规范解）：现状 PSNR 5.71 dB，逐块翻转字节后 21.31 dB，
+        // 两者都是花屏，真机表现就是磁带盒边缘那圈彩色噪点。
+        // 保留产物与代码路径，等换用可靠编码器（或修好位布局并验证 PSNR > 30）再打开：
+        //   RHINE_BAKE_ETC2=1 烘焙 + RHINE_SURFACE_ETC2=1 运行。
+        static const bool wantEtc2 = qEnvironmentVariableIntValue("RHINE_SURFACE_ETC2") == 1;
+        const QByteArray surfaceEtc2 =
+            wantEtc2 ? readOptional(root, "archive-baked-surface-etc2.bin") : QByteArray();
+        if (!surfaceEtc2.isEmpty() &&
+            rhi->isTextureFormatSupported(QRhiTexture::ETC2_RGB8, surfaceFlags)) {
+            surfaceAtlas = texture({1024, 1024}, QRhiTexture::ETC2_RGB8, surfaceFlags);
+            uploadMippedBytes(surfaceAtlas, surfaceEtc2, 1024, true, 8);
+            atlasReady = true;
+        }
+#endif
         if (qEnvironmentVariableIsSet("RHINE_DEBUG_ATLAS")) {
             std::fprintf(stderr, "Surface atlas: %s, 1024^2, full mip chain\n",
-                         bc7Surface ? "BC7" : "RGBA8");
+                         atlasReady ? "ETC2 RGB8" : (bc7Surface ? "BC7" : "RGBA8"));
             std::fflush(stderr);
         }
-        if (bc7Surface) {
-            surfaceAtlas = texture({1024, 1024}, QRhiTexture::BC7, surfaceFlags);
-            uploadMippedBytes(surfaceAtlas, surfaceBc7, 1024, true);
-        } else {
-            surfaceAtlas = texture({1024, 1024}, QRhiTexture::RGBA8, QRhiTexture::MipMapped);
-            uploadMippedBytes(surfaceAtlas, read(root, "archive-baked-surface.bin"), 1024, false);
+        surfaceAtlasFormat = atlasReady ? QStringLiteral("ETC2 RGB8")
+                                        : (bc7Surface ? QStringLiteral("BC7")
+                                                      : QStringLiteral("RGBA8"));
+        if (!atlasReady) {
+            if (bc7Surface) {
+                surfaceAtlas = texture({1024, 1024}, QRhiTexture::BC7, surfaceFlags);
+                uploadMippedBytes(surfaceAtlas, surfaceBc7, 1024, true);
+            } else {
+                surfaceAtlas = texture({1024, 1024}, QRhiTexture::RGBA8, QRhiTexture::MipMapped);
+                uploadMippedBytes(surfaceAtlas, read(root, "archive-baked-surface.bin"), 1024, false);
+            }
         }
-        // 光场改为 576x96x24 的三维纹理，硬件三线性插值替代手工两层采样。
-        lightAtlas = texture3D({576, 96}, 24, QRhiTexture::RGBA8,
+        // 光场是 24 层、每层 6 个朝向面的三维纹理，硬件三线性插值替代手工两层采样。
+        // 尺寸从文件大小反推，不按平台硬编码：烘焙时空间维可能减半
+        // （RHINE_BAKE_LIGHT_HALF=1 → 48²，1.33 MB），而 upload3D 是按 bytes.size()/depth
+        // 切片上传的——尺寸对不上会静默切错、画面直接乱掉，所以这里显式校验。
+        const QByteArray lightBytes = read(root, "archive-baked-light.bin");
+        const double lightTexels = double(lightBytes.size()) / (24.0 * 6.0 * 4.0);
+        const int fieldSize = int(std::lround(std::sqrt(lightTexels)));
+        if (fieldSize < 8 ||
+            qint64(fieldSize) * fieldSize * 24 * 6 * 4 != qint64(lightBytes.size())) {
+            qFatal("Baked light field is %lld bytes; expected 24 slices of a square 6-face RGBA8 field.",
+                   static_cast<long long>(lightBytes.size()));
+        }
+        lightAtlas = texture3D({fieldSize * 6, fieldSize}, 24, QRhiTexture::RGBA8,
                                QRhiTexture::ThreeDimensional);
-        upload3D(lightAtlas, read(root, "archive-baked-light.bin"), 24);
-        normalAtlas = texture({128, 256}, QRhiTexture::RGBA16F);
-        upload(normalAtlas, read(root, "archive-baked-normal.bin"));
+        upload3D(lightAtlas, lightBytes, 24);
+        // 法线响应的位宽从文件字节数反推，不依赖编译期宏。
+        //
+        // 2026-11-06 21:28 的启动崩溃就是踩了这个坑：RHINE_NORMAL_RGBA8 原先只加在
+        // RhineCore 上，而 CMakeLists.txt 的 RHINE_CORE_SOURCES 用 FILTER EXCLUDE 把
+        // RhiScene.cpp 排除了（它链 fsr/fg，不进回归库），这个文件只编进
+        // RhineMusicDatabase。于是宏从未生效，C++ 按 RGBA16F 去校验 8 位数据，
+        // 烘焙出来的 131072 字节直接 qFatal——着色器和烘焙都是对的，只有 C++ 判断错了。
+        // 文件大小是唯一不会说谎的来源：131072 = RGBA8，262144 = RGBA16F。
+        const QByteArray normalBytes = read(root, "archive-baked-normal.bin");
+        const qint64 normalByteCount = normalBytes.size();
+        const bool normalRgba8 = normalByteCount == 128 * 256 * 4;
+        if (!normalRgba8 && normalByteCount != 128 * 256 * 8) {
+            qFatal("archive-baked-normal.bin is %lld bytes; expected 131072 (RGBA8) or "
+                   "262144 (RGBA16F). Re-bake with scripts/bake-archive-lighting.py.",
+                   static_cast<long long>(normalByteCount));
+        }
+        // 纹理格式跟着文件走，但着色器是按宏解码的（RGBA8 要乘回 4.0 / 0.25）。
+        // 两者不一致只会偏色、不会崩，所以用警告而不是 qFatal——崩溃比偏色更糟。
+#if defined(RHINE_NORMAL_RGBA8)
+        constexpr bool shaderNormalRgba8 = true;
+#else
+        constexpr bool shaderNormalRgba8 = false;
+#endif
+        if (shaderNormalRgba8 != normalRgba8) {
+            qWarning("法线图集位宽与着色器宏不一致：文件 %lld 字节（%s），着色器按 %s 解码，"
+                     "画面颜色会偏。重烘焙时把 RHINE_BAKE_NORMAL_RGBA8 与 CMake 的 "
+                     "RHINE_ANDROID_NORMAL_RGBA8 设成同一个值。",
+                     static_cast<long long>(normalByteCount), normalRgba8 ? "RGBA8" : "RGBA16F",
+                     shaderNormalRgba8 ? "RGBA8" : "RGBA16F");
+        }
+        normalAtlas = texture({128, 256}, normalRgba8 ? QRhiTexture::RGBA8 : QRhiTexture::RGBA16F);
+        upload(normalAtlas, normalBytes);
         white = texture({1, 1}, QRhiTexture::RGBA8);
         upload(white, QByteArray(4, char(255)));
         floor = plane(-100, -100, 100, 100, 0, 0, 0, 0, 0);
@@ -752,15 +847,29 @@ class Renderer {
             painter.drawLine(875, 601, 930, 601);
             painter.fillRect(QRectF(875, 654, 25, 5), accent);
         };
-        QImage decorationHigh(2000, 1480, QImage::Format_RGBA8888_Premultiplied);
-        decorationHigh.fill(Qt::transparent);
-        {
-            QPainter painter(&decorationHigh);
-            painter.scale(2, 2);
-            paintDecoration(painter);
+        // 高分辨率装饰面只给 detail / boot 用（见 prepare 的 decorationHigh 参数），
+        // 但两份纹理是无条件创建的：High 2000×1480 含 mip 约 15.8 MB，归档页时纯占显存。
+        // Android 上默认只建 Low（1000×740）：手机屏幕宽约 2160 像素，装饰面又只占画面一角，
+        // 2000 px 的宽对它是浪费。RHINE_DECORATION_HIGH=1 可强制建回两份。
+        static const bool wantHighDecoration = [] {
+#if defined(Q_OS_ANDROID)
+            return qEnvironmentVariableIntValue("RHINE_DECORATION_HIGH") == 1;
+#else
+            return true;
+#endif
+        }();
+        if (wantHighDecoration) {
+            QImage decorationHigh(2000, 1480, QImage::Format_RGBA8888_Premultiplied);
+            decorationHigh.fill(Qt::transparent);
+            {
+                QPainter painter(&decorationHigh);
+                painter.scale(2, 2);
+                paintDecoration(painter);
+            }
+            decorationTextureHigh =
+                texture(decorationHigh.size(), QRhiTexture::RGBA8, QRhiTexture::MipMapped);
+            uploadMipped(decorationTextureHigh, decorationHigh);
         }
-        decorationTextureHigh = texture(decorationHigh.size(), QRhiTexture::RGBA8, QRhiTexture::MipMapped);
-        uploadMipped(decorationTextureHigh, decorationHigh);
         QImage decorationLow(1000, 740, QImage::Format_RGBA8888_Premultiplied);
         decorationLow.fill(Qt::transparent);
         {
@@ -867,8 +976,14 @@ class Renderer {
             return false;
         }
 #else
-        if (instancePoolEnabled && rhi->backend() != QRhi::Vulkan) {
-            // 池化的收益来自 Vulkan 的 staging 行为；其他后端保留原来的逐 draw buffer。
+        // Android 的 GLES 后端也放行：池化只用通用 QRhi API（Dynamic VertexBuffer、
+        // 按区间的 updateDynamicBuffer、VertexInput::offset），而 D03 的注释记着 OpenGL
+        // 后端实测——非池化每帧上传约 165 KB，池化加内容差分后接近 0。容量或对齐放不下时
+        // poolInstances() 仍会整帧回退逐 draw buffer。桌面 / iOS 严格只认 Vulkan。
+        const bool backendAllowed = rhi->backend() == QRhi::Vulkan ||
+                                    (RhineRender::androidInstancePoolOnGles() &&
+                                     rhi->backend() == QRhi::OpenGLES2);
+        if (instancePoolEnabled && !backendAllowed) {
             instancePoolEnabled = false;
             poolFallback = QStringLiteral("非 Vulkan 后端");
             return false;
@@ -1223,7 +1338,17 @@ class Renderer {
         clearPipelines();
         sized.clear();
         auto rtFlags = QRhiTexture::RenderTarget;
-        depth = create(own(rhi->newTexture(QRhiTexture::D32F, size, sampleCount, rtFlags), true));
+#if defined(Q_OS_ANDROID)
+        // 场景是封闭小场景、深度范围不大，D24S8 的 3 B/px 够用（D32F 是 4 B/px）。
+        // 后端不支持时回退 D32F，行为与改动前逐值一致。注意 create() 失败会 qFatal，
+        // 所以必须先问 isTextureFormatSupported，不能靠"试试看"。
+        const auto depthFormat = rhi->isTextureFormatSupported(QRhiTexture::D24S8, rtFlags)
+                                     ? QRhiTexture::D24S8
+                                     : QRhiTexture::D32F;
+#else
+        const auto depthFormat = QRhiTexture::D32F;
+#endif
+        depth = create(own(rhi->newTexture(depthFormat, size, sampleCount, rtFlags), true));
         auto attachment =
             create(own(rhi->newTexture(QRhiTexture::RGBA16F, size, sampleCount, rtFlags), true));
         auto resolved = sampleCount > 1 ? texture(size, QRhiTexture::RGBA16F, rtFlags, true) : nullptr;
@@ -1833,7 +1958,7 @@ class Renderer {
      * 身份、列表顺序、选中态照常更新（画面不能停在上一首），但标签绘制/缩放/mip 上传、
      * 封面合成与预处理全部跳过，绘制侧回落到中性占位——绝不借用上一首的纹理。
      */
-    void updateMusic(const QJsonObject &value, QImage image, bool admitted) {
+    void updateMusic(const QJsonObject &value, QImage image, bool admitted, bool labelOnly = false) {
         // 空条目不占纹理槽：启动阶段或选中项清空时，key 为空，如果照旧登记，会白占一条
         // 标签纹理与 LRU 名额（而且永远不会再被用到）。这种情况只更新条目本身。
         const auto key = value["key"].toString();
@@ -1851,12 +1976,18 @@ class Renderer {
         if (!allowResources) {
             ++gatedUpdates;
         }
+        // 标签与封面分开准入：标签是一张 512×220 的纸面（约 600 KB 含 mip），
+        // 封面是 512~1024² 的图 + 预处理 + mip，两者差一个数量级。而标签缺失的
+        // 表现是**纯白**（见 prepare 里 label 的回落），卡片正面直接变成白板，
+        // 也就是用户看到的"非当前命中的唱片模型贴图丢失"。
+        // 所以画面里看得见的条目都补标签，封面继续等 500 ms 准入。
+        const bool allowLabel = allowResources || labelOnly;
         if (hasKey && admitted && !forceSynchronousCover && !covers.contains(key)
             && !admittedFrame.contains(key)) {
             // 从准入这一刻开始等封面换绑，用于探针统计"焦点稳定→画面到位"的帧数。
             admittedFrame.insert(key, frameIndex);
         }
-        if (hasKey && allowResources
+        if (hasKey && allowLabel
             && (!labels.contains(key) || labelRevisions.value(key) != labelRevision)) {
             if (const auto previous = labels.value(key)) {
                 invalidateBindings(previous);
@@ -2110,11 +2241,10 @@ class Renderer {
         if (geo) {
             QRhiVertexInputLayout layout;
 #if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
-#ifdef Q_OS_DARWIN
+            // stride 是 quint32，三目表达式里写 int 会被 clang 的 -Wc++11-narrowing 当错误
+            // （AppleClang 和 Android 的 clang 都是；GCC 只警告）。Android 同样定义
+            // Q_OS_LINUX，所以这里不能再按 Darwin 分开写。
             layout.setBindings({{32}, {compact ? 80u : 144u, QRhiVertexInputBinding::PerInstance}});
-#else
-            layout.setBindings({{32}, {compact ? 80 : 144, QRhiVertexInputBinding::PerInstance}});
-#endif
 #else
             layout.setBindings({{32}, {80, QRhiVertexInputBinding::PerInstance}});
 #endif
@@ -2516,6 +2646,62 @@ class Renderer {
         // 这两项只与当前曲目有关，和具体 draw 无关：循环外算一次。
         const auto selectedKey = musicItem["key"].toString("empty");
         const auto currentCover = covers.value(selectedKey, placeholderCover);
+#if defined(Q_OS_ANDROID)
+        // TEXDIAG：定位"非当前唱片贴图丢失"到底是缺哪一类纹理。
+        // 设备上设不了环境变量（RHINE_DEBUG_ATLAS 那套在手机上永远拿不到），OPPO 的
+        // logcat 配额又会挤掉启动日志，所以默认开、每 120 帧一行，定位完可以整段删掉。
+        {
+            static int diagTick = 0;
+            if (++diagTick % 120 == 1) {
+                int labelDraws = 0, discDraws = 0, decoDraws = 0, letterDraws = 0, modelDraws = 0;
+                // 盘面（mesh=-2）是唯一读 covers[] 的部件，它的 key 落到哪一类直接决定画面：
+                // empty→回落 currentCover、selected→查 covers[selectedKey]、other→placeholderCover。
+                // 只数总数分不清是"没建封面"还是"key 对不上"，所以三类分开记。
+                int discEmptyKey = 0, discSelectedKey = 0, discOtherKey = 0;
+                QString firstDiscKey = QStringLiteral("-");
+                for (const auto &d : draws) {
+                    const int mesh = d["mesh"].toInt();
+                    if (d["label"].toBool()) {
+                        ++labelDraws;
+                    }
+                    if (mesh == -2) {
+                        ++discDraws;
+                        const auto drawKey = d["musicSelected"].toBool() ? selectedKey
+                                                                        : d["musicKey"].toString();
+                        if (drawKey.isEmpty()) {
+                            ++discEmptyKey;
+                        } else if (drawKey == selectedKey) {
+                            ++discSelectedKey;
+                        } else {
+                            ++discOtherKey;
+                        }
+                        if (firstDiscKey == QLatin1String("-")) {
+                            firstDiscKey = drawKey.isEmpty() ? QStringLiteral("<empty>") : drawKey.left(10);
+                        }
+                    } else if (mesh == -5) {
+                        ++decoDraws;
+                    } else if (mesh == -6 || mesh == -7) {
+                        ++letterDraws;
+                    } else if (mesh >= 0) {
+                        ++modelDraws;
+                    }
+                }
+                // mt 只能用两个成员计数求和：`musicTextures` 是 render() 的形参
+                // （Engine::MusicTextures），prepare() 里不可见——直接写它会编译报
+                // "use of undeclared identifier"。admitted+gated 就是本帧快照的总条数。
+                qInfo("TEXDIAG draws=%d label=%d disc=%d deco=%d letter=%d model=%d "
+                      "labels=%d covers=%d labelTex=%d placeholder=%d atlas=%s "
+                      "mt=%d adm=%d gated=%d curC=%d curL=%d discE=%d discS=%d discO=%d discKey=%s",
+                      int(draws.size()), labelDraws, discDraws, decoDraws, letterDraws, modelDraws,
+                      int(labels.size()), int(covers.size()), labelTexture ? 1 : 0,
+                      placeholderCover ? 1 : 0, qPrintable(surfaceAtlasFormat),
+                      admittedKeysThisFrame + gatedKeysThisFrame, admittedKeysThisFrame,
+                      gatedKeysThisFrame,
+                      covers.contains(selectedKey) ? 1 : 0, labels.contains(selectedKey) ? 1 : 0,
+                      discEmptyKey, discSelectedKey, discOtherKey, qPrintable(firstDiscKey));
+            }
+        }
+#endif
         for (auto d : draws) {
             if (d["count"].toInt() <= 0) {
                 continue;
@@ -2560,7 +2746,13 @@ class Renderer {
             const auto key = d["musicSelected"].toBool() ? selectedKey : d["musicKey"].toString();
             QRhiTexture *label = white;
             if (mesh == -5) {
-                label = decorationHigh ? decorationTextureHigh : decorationTextureLow;
+                // High 在 Android 上不创建（见初始化处），指针为空时回落到 Low。
+                // 两份都不可用时保持白色占位：宁可没有印刷面，也不能给 SRB 一个空纹理。
+                if (decorationHigh && decorationTextureHigh) {
+                    label = decorationTextureHigh;
+                } else if (decorationTextureLow) {
+                    label = decorationTextureLow;
+                }
             } else if (mesh == -6) {
                 label = letteringTextureFront;
             } else if (mesh == -7) {
@@ -2568,8 +2760,20 @@ class Renderer {
             } else if (d["label"].toBool()) {
                 // B02：只有当前曲目可以回落到 labelTexture；归位卡片缺标签就用白色占位，
                 // 不许借别人的文字——否则快速滚动时上一首的标题会跟着卡片飞。
-                label = key == selectedKey ? labels.value(key, labelTexture ? labelTexture : white)
-                                           : labels.value(key, white);
+                //
+                // 空 key 是第三类，B02 当时漏掉了：场景里静态陈列的展示唱片
+                // （scene-fixture.json 的 mesh=-1 / cassette）没有曲目身份，既不是
+                // "当前曲目"也不是"别人的曲目"。原来它一并落到 white，整排陈列的
+                // 标签面就变成纯白卡纸，看起来就是贴图丢失。
+                // 与封面的处理对齐：封面空 key 回落 currentCover（见下面的
+                // coverFallback），标签空 key 同样回落当前曲目的 labelTexture。
+                if (key.isEmpty()) {
+                    label = labelTexture ? labelTexture : white;
+                } else if (key == selectedKey) {
+                    label = labels.value(key, labelTexture ? labelTexture : white);
+                } else {
+                    label = labels.value(key, white);
+                }
             }
             // 着色器只有盘面读取封面，只有标签读取文字；其他表面绑定稳定的占位纹理。
             // 查看封面页的绘制来自装配体，key 不是曲目 key（空），仍回落当前曲目封面；
@@ -3198,6 +3402,20 @@ class Renderer {
         dbgPre.restart();
 #endif
         auto g = globals(frame);
+#if defined(Q_OS_ANDROID)
+        // Android 同时定义 Q_OS_LINUX，下面 #if defined(Q_OS_LINUX) || ... 与渲染尾部的
+        // #elif defined(Q_OS_LINUX) 都会被它命中。但 300es 主变体没有
+        // RHINE_SINGLE_PASS_MOTION，Globals 尾部 128 字节（两个 VP 矩阵）根本没人读，
+        // FG / TAA / FSR 也默认全关。只有确实没有时域消费者时才跳过；一旦打开 TAA、FSR、
+        // FG 或重投影探针，idleMotionWork 自动翻回 false，行为与原来完全一致。
+        const bool idleMotionWork = RhineRender::androidSkipIdleMotionWork() &&
+                                    !postProcess->motionConfigured() &&
+                                    !qEnvironmentVariableIsSet("RHINE_WARP_PROBE");
+#else
+        // Windows 等平台既不编译下面的 Q_OS_LINUX/DARWIN 块、也不走渲染尾部的
+        // #elif Q_OS_LINUX，这个常量在那边完全没有引用点。
+        [[maybe_unused]] constexpr bool idleMotionWork = false;
+#endif
 #if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
         // 速度用未抖动 VP（光栅位置仍带抖动），口径与 motion.vert 一致。
 #ifdef Q_OS_DARWIN
@@ -3208,16 +3426,32 @@ class Renderer {
 #else
         const auto unjitteredVp = matrix(frame["view"].toArray()) * matrix(frame["projection"].toArray());
 #endif
-        g.currentViewProjection = PackedMatrix(unjitteredVp);
+        if (!idleMotionWork) {
+            g.currentViewProjection = PackedMatrix(unjitteredVp);
 #ifdef Q_OS_DARWIN
-        g.previousViewProjection = PackedMatrix(metalHistory.valid() ? metalHistory.viewProjection()
-                                                                      : unjitteredVp);
+            g.previousViewProjection = PackedMatrix(metalHistory.valid() ? metalHistory.viewProjection()
+                                                                          : unjitteredVp);
 #else
-        g.previousViewProjection =
-            motionHistoryValid ? PackedMatrix(previousViewProjection) : PackedMatrix(unjitteredVp);
+            g.previousViewProjection =
+                motionHistoryValid ? PackedMatrix(previousViewProjection) : PackedMatrix(unjitteredVp);
 #endif
+        }
 #endif
+#if defined(Q_OS_ANDROID)
+        // Globals 内容未变就不必再写一次镜像：GLES2 后端把 Dynamic UniformBuffer 存成
+        // QByteArray、内容跨帧保留（qrhigles2.cpp:2846），updateDynamicBuffer 只是一次
+        // memcpy；跳过它省掉拷贝与一条 resourceUpdate 记录。uniform 仍由 setShaderResources
+        // 每帧从镜像读值下发，差分不改变下发结果。Vulkan 的 per-frame ring 不在此列，
+        // 所以只在 Android / GLES 启用。首帧强制上传。
+        if (!RhineRender::androidDifferentialGlobals() || !globalsSnapshotValid ||
+            std::memcmp(globalsSnapshot.data(), &g, sizeof(g)) != 0) {
+            updates->updateDynamicBuffer(globalBuffer, 0, sizeof(g), &g);
+            std::memcpy(globalsSnapshot.data(), &g, sizeof(g));
+            globalsSnapshotValid = true;
+        }
+#else
         updates->updateDynamicBuffer(globalBuffer, 0, sizeof(g), &g);
+#endif
         ++generation;
         // 帧号先递增：updateMusic 里的"准入→换绑"样本靠它算帧差。成品回收则移到需求
         // 更新之后（见下），否则本帧会先绑一张随即被撤销的封面，下一帧再换回去。
@@ -3233,16 +3467,59 @@ class Renderer {
         // 本帧会先绑上一张即将被撤销的封面，下一帧再换回去——肉眼就是闪一下。
         // 恢复图形设备时只还原"已准入且确实缺纹理"的旧唱片：路过的条目永远不补资源。
         admittedKeysThisFrame = gatedKeysThisFrame = 0;
+#if defined(Q_OS_ANDROID)
+        // 停稳判定：当前焦点已准入，说明手指停住超过 500 ms。只有这时才给视野内的
+        // 其它唱片补纹理；滚动中一个都不补，否则又回到"边滑边建封面"。
+        //
+        // 为什么要补：一次快速翻页会把沿途十几条全部登记成"路过"，谁都没熬过 500 ms
+        // 准入。手指停下后只有最终焦点建了纹理，其余卡片的 label 回落 `white`、盘面回落
+        // placeholderCover——一整排磁带盒就是白纸板，也就是用户报的"非当前命中的唱片
+        // 模型贴图丢失"。准入只该决定"什么时候建"，不该决定"永远不建"。
+        //
+        // 标签优先：512×220 纸面 + mip 约 600 KB，是封面成本的十分之一，而缺它的表现
+        // 恰恰最刺眼（纯白）。所以标签走 labelOnly 先补，封面等有图再补——空图会退到
+        // 同步占位合成，那比继续贴 placeholderCover 更贵也不好看。
+        //
+        // 各 2 张/帧而不是一次补完：可见的归位卡片通常个位数，两秒内补齐；同一帧全建
+        // 会在"手指抬起"那一帧堆出十几毫秒的 GUI 尖峰，正好落在观感最敏感的节点上。
+        //
+        // 名字带 TopUp 是为了避开成员 `coverBudget`（RhineRender::CoverPrepBudget，
+        // 封面预处理的在途并发闸）。同名局部变量会静默遮蔽它，本函数后段再碰就编译不过，
+        // 更糟的是看起来"预算没生效"却查不出原因。
+        const bool settled = musicTextures.value(currentMusicKey).admitted;
+        int labelTopUp = settled ? 2 : 0;
+        int coverTopUp = settled ? 2 : 0;
+#endif
         for (auto it = musicTextures.begin(); it != musicTextures.end(); ++it) {
             if (it->admitted) {
                 ++admittedKeysThisFrame;
             } else {
                 ++gatedKeysThisFrame;
             }
-            if (it.key() != currentMusicKey && it->admitted && !labels.contains(it.key()) &&
-                !it->item.isEmpty()) {
+            if (it.key() == currentMusicKey || it->item.isEmpty()) {
+                continue;
+            }
+            if (it->admitted) {
+#if defined(Q_OS_ANDROID)
+                // 两个通道都要判：曾经在"只补标签"的版本里补过标签的 key，labels 命中而
+                // covers 空缺，若只看 labels 就再也不会补封面。
+                if (!labels.contains(it.key()) || !covers.contains(it.key())) {
+#else
+                if (!labels.contains(it.key())) {
+#endif
+                    updateMusic(it->item, it->cover, true);
+                }
+            }
+#if defined(Q_OS_ANDROID)
+            else if (labelTopUp > 0 && !labels.contains(it.key())) {
+                // admitted=false + labelOnly=true：只落标签，封面继续等准入。
+                --labelTopUp;
+                updateMusic(it->item, it->cover, false, true);
+            } else if (coverTopUp > 0 && !it->cover.isNull() && !covers.contains(it.key())) {
+                --coverTopUp;
                 updateMusic(it->item, it->cover, true);
             }
+#endif
         }
         updateMusic(item, cover, musicTextures.value(currentMusicKey).admitted);
         pruneCoverDemands();
@@ -3490,8 +3767,14 @@ class Renderer {
         }
 #elif defined(Q_OS_LINUX)
         // 运动矢量已随主渲染输出（MRT），这里只发布输入并保存上一帧状态。
-        publishMotionInputs(frame);
-        previousViewProjection = unjitteredVp;
+        // Android 也命中这条分支（Q_OS_ANDROID 蕴含 Q_OS_LINUX），但没有时域消费者时
+        // 这两行是纯开销：FgFrameTap::publish() 在 tap 未启用时只是一次原子读，300es 主变体
+        // 也不读 Globals 尾部。打开 TAA / FSR / FG / warp 探针时 idleMotionWork 为 false，
+        // 这里与桌面 Linux 完全一样。
+        if (!idleMotionWork) {
+            publishMotionInputs(frame);
+            previousViewProjection = unjitteredVp;
+        }
         previousInstanceMatrices.clear();
         previousInstanceBlocks.clear();
         previousInstanceCounts.clear();
@@ -3961,10 +4244,16 @@ QImage renderReference(const QString &root, const QJsonObject &frame, const QJso
 #else
     if (!rhi) {
         // 着色器按 GLSL 150 打包（GL 3.2 核心档）；默认格式会退到 2.1 并找不到可用版本。
+        // Android 只有 GLES：请求桌面 GL 3.3 核心档会创建失败，改要 ES 3.0（对应 300 es 那一档）。
         QSurfaceFormat format;
+#ifdef Q_OS_ANDROID
+        format.setRenderableType(QSurfaceFormat::OpenGLES);
+        format.setVersion(3, 0);
+#else
         format.setRenderableType(QSurfaceFormat::OpenGL);
         format.setVersion(3, 3);
         format.setProfile(QSurfaceFormat::CoreProfile);
+#endif
         format.setDepthBufferSize(24);
         format.setStencilBufferSize(8);
         surface.reset(QRhiGles2InitParams::newFallbackSurface(format));

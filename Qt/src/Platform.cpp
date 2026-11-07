@@ -33,9 +33,11 @@ void platformSetActivates(bool value) {
 }
 #endif
 
-#if !defined(Q_OS_MACOS) && !defined(Q_OS_WIN) && !defined(Q_OS_IOS)
+// 空桩只留给既没有原生媒体集成、也没有专用实现的平台。Android 的凭据与播放交付
+// 在 PlatformAndroid.cpp 里，不能在这里再定义一份。
+#if !defined(Q_OS_MACOS) && !defined(Q_OS_WIN) && !defined(Q_OS_IOS) && !defined(Q_OS_ANDROID)
 void platformMediaCommands(std::function<void(QString)>) {
 }
-void platformMediaInfo(QString, QString, QString, QVariantMap) {
+void platformMediaInfo(QString, QString, QString, QVariantMap, const QString &) {
 }
 #endif

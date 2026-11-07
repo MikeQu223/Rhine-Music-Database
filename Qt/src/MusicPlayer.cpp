@@ -350,7 +350,7 @@ void MusicPlayer::prepare(QJsonObject track, quint64 generation, bool reload) {
             return;
         }
         m_host->mediaMetadata(track["title"].toString(), track["artist"].toString(),
-                              track["album"].toString());
+                              track["album"].toString(), track["cover"].toString());
         if (!m_host->mediaLoad(url.toString(), false, m_resumePosition.value_or(0),
                                m_resumePosition && m_resumePaused)) {
             fail(QStringLiteral("本地音频无法加载"));
@@ -399,7 +399,7 @@ void MusicPlayer::prepare(QJsonObject track, quint64 generation, bool reload) {
                 return;
             }
             m_host->mediaMetadata(track["title"].toString(), track["artist"].toString(),
-                                  track["album"].toString());
+                                  track["album"].toString(), track["cover"].toString());
             if (!m_host->mediaLoad(url, m_api->provider == "netease" && alternative,
                                    m_resumePosition.value_or(0), m_resumePosition && m_resumePaused)) {
                 fail(QStringLiteral("音频地址不可用"));
@@ -494,6 +494,7 @@ void MusicPlayer::tick(double time, bool force) {
     if (!current.isEmpty() && !loading && state.contains("ended") &&
         state["ended"].toInteger() != m_endSerial) {
         m_endSerial = state["ended"].toInteger();
+        qInfo().noquote() << "曲目结束，推进下一首";
         if (onEnd) {
             onEnd();
         } else {

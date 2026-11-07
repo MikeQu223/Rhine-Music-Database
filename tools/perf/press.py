@@ -7,6 +7,7 @@ KEY_ESC=1  KEY_F11=87  KEY_DOWN=108  KEY_UP=103  KEY_RIGHT=106
 与 holdkey.py 的区别：这个是"按下即抬起"，按键之间留 0.9s 让界面完成重排。
 注册了 1..255 全部 KEYBIT，所以任何键位都能发（holdkey 只注册了 KEY_DOWN）。
 """
+
 import ctypes
 import fcntl
 import os
@@ -24,8 +25,13 @@ MAXKEY = 256
 
 
 class Event(ctypes.Structure):
-    _fields_ = [("s", ctypes.c_long), ("u", ctypes.c_long),
-                ("t", ctypes.c_uint16), ("c", ctypes.c_uint16), ("v", ctypes.c_int32)]
+    _fields_ = [
+        ("s", ctypes.c_long),
+        ("u", ctypes.c_long),
+        ("t", ctypes.c_uint16),
+        ("c", ctypes.c_uint16),
+        ("v", ctypes.c_int32),
+    ]
 
 
 def emit(fd, etype, code, value):

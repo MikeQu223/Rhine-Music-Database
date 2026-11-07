@@ -25,7 +25,9 @@ assert "CADisableMinimumFrameDurationOnPhone" not in info, "iPhone refresh opt-i
 
 def system_bundle_identifier(directory):
     """通过安装服务同源的 CFBundle 识别布局，避免只解析 plist 而漏掉系统拒绝。"""
-    core = ctypes.CDLL("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")
+    core = ctypes.CDLL(
+        "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation"
+    )
     pointer = ctypes.c_void_p
     core.CFURLCreateFromFileSystemRepresentation.argtypes = [
         pointer,
@@ -38,11 +40,18 @@ def system_bundle_identifier(directory):
     core.CFBundleCreate.restype = pointer
     core.CFBundleGetIdentifier.argtypes = [pointer]
     core.CFBundleGetIdentifier.restype = pointer
-    core.CFStringGetCString.argtypes = [pointer, ctypes.c_char_p, ctypes.c_long, ctypes.c_uint32]
+    core.CFStringGetCString.argtypes = [
+        pointer,
+        ctypes.c_char_p,
+        ctypes.c_long,
+        ctypes.c_uint32,
+    ]
     core.CFStringGetCString.restype = ctypes.c_bool
     core.CFRelease.argtypes = [pointer]
     encoded = os.fsencode(directory)
-    url = core.CFURLCreateFromFileSystemRepresentation(None, encoded, len(encoded), True)
+    url = core.CFURLCreateFromFileSystemRepresentation(
+        None, encoded, len(encoded), True
+    )
     if not url:
         return ""
     bundle = core.CFBundleCreate(None, url)
@@ -51,7 +60,9 @@ def system_bundle_identifier(directory):
             return ""
         identifier = core.CFBundleGetIdentifier(bundle)
         buffer = ctypes.create_string_buffer(1024)
-        if identifier and core.CFStringGetCString(identifier, buffer, len(buffer), 0x08000100):
+        if identifier and core.CFStringGetCString(
+            identifier, buffer, len(buffer), 0x08000100
+        ):
             return buffer.value.decode("utf-8")
         return ""
     finally:
@@ -61,8 +72,12 @@ def system_bundle_identifier(directory):
 
 
 recognized_identifier = system_bundle_identifier(app)
-assert recognized_identifier == info["CFBundleIdentifier"], "Apple CFBundle cannot identify application"
-assert not any(child.name.lower() == "resources" for child in app.iterdir()), "Legacy bundle layout"
+assert recognized_identifier == info["CFBundleIdentifier"], (
+    "Apple CFBundle cannot identify application"
+)
+assert not any(child.name.lower() == "resources" for child in app.iterdir()), (
+    "Legacy bundle layout"
+)
 resources = app / "RhineAssets"
 for name in [
     "slots.json",
@@ -76,15 +91,30 @@ for name in [
     assert (resources / name).is_file(), f"Missing iOS resource: {name}"
 assert not (resources / "MusicBridge/node").exists()
 frameworks = app / "Frameworks"
-for name in ["NodeMobile", "libavcodec", "libavformat", "libavutil", "libswresample", "libswscale"]:
-    assert (frameworks / f"{name}.framework" / name).is_file(), f"Missing framework: {name}"
+for name in [
+    "NodeMobile",
+    "libavcodec",
+    "libavformat",
+    "libavutil",
+    "libswresample",
+    "libswscale",
+]:
+    assert (frameworks / f"{name}.framework" / name).is_file(), (
+        f"Missing framework: {name}"
+    )
 executables = [app / "RhineMusicDatabase"] + [
     folder / folder.stem for folder in frameworks.glob("*.framework")
 ]
 for executable in executables:
-    platform = subprocess.check_output(["xcrun", "vtool", "-show-build", executable], text=True)
-    assert f"platform {expected_platform}\n" in platform, f"Wrong platform: {executable}"
-    architectures = subprocess.check_output(["lipo", "-archs", executable], text=True).strip()
+    platform = subprocess.check_output(
+        ["xcrun", "vtool", "-show-build", executable], text=True
+    )
+    assert f"platform {expected_platform}\n" in platform, (
+        f"Wrong platform: {executable}"
+    )
+    architectures = subprocess.check_output(
+        ["lipo", "-archs", executable], text=True
+    ).strip()
     allowed_architectures = {"arm64", "x86_64"} if simulator else {"arm64"}
     assert "arm64" in architectures.split(), f"Missing arm64: {executable}"
     assert set(architectures.split()) <= allowed_architectures, executable
@@ -98,7 +128,12 @@ for executable in executables:
         if library.startswith("@rpath/"):
             assert (frameworks / library.removeprefix("@rpath/")).is_file(), library
 for file in app.rglob("*"):
-    assert file.name not in {"node_modules", "credentials.json", "cookies.json", ".DS_Store"}, file
+    assert file.name not in {
+        "node_modules",
+        "credentials.json",
+        "cookies.json",
+        ".DS_Store",
+    }, file
 report = {
     "platform": expected_platform,
     "system_bundle_identifier": recognized_identifier,

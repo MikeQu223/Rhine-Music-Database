@@ -10,6 +10,7 @@
 #include <QCache>
 #include <QPointF>
 #include <QRectF>
+#include <QtGlobal>
 #include <map>
 #include <optional>
 
@@ -152,6 +153,9 @@ class NativeHud : public QObject {
     bool trackListMode = false;
     double width = 1920;
     double lastTime = 0;
+    /// 进入 detail 的真实墙钟时刻（QDateTime 毫秒）。HUD 淡入不能只依赖
+    /// frame["detail"]：那个值来自 m_animationTime 伪时钟，引擎休眠时会永久停住。
+    qint64 m_detailEnterWallMs = -1;
     UiMotion::SurfaceMotion motion;
     std::optional<QRectF> playerBounds;
     std::optional<QRectF> playerSeekRect;

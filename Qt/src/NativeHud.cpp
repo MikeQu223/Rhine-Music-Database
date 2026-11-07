@@ -1,9 +1,12 @@
 #include "NativeHud.h"
 #include "MusicData.h"
+#include <QDateTime>
+#include <QDebug>
 #include <QJsonDocument>
 #include <QUrl>
 #include "MusicDiscover.h"
 #include "DiscoverArtwork.h"
+#include <QtGlobal>
 #include <algorithm>
 #include <cmath>
 
@@ -59,8 +62,10 @@ QString NativeHud::fit(QString value, double size, double width, QString weight)
     if (m_contentSink) {
         return value;
     }
-    const auto key = QString::fromUtf8(
-        QJsonDocument(QJsonArray{value, size, width, weight}).toJson(QJsonDocument::Compact));
+    // 别用 JSON 序列化当缓存 key：滑动时每个滚动标题每帧都要过一次 fit()，
+    // 序列化 + UTF-8 往返比查 m_fitCache 本身还贵。定界符拼接逐项等价。
+    const auto key = QString::number(size, 'g', 17) + QChar(0x1f) + QString::number(width, 'g', 17) +
+                     QChar(0x1f) + weight + QChar(0x1f) + value;
     if (const auto cached = m_fitCache.object(key)) {
         return *cached;
     }
@@ -283,6 +288,16 @@ void NativeHud::draw(QJsonObject next, double stageWidth, double time) {
     width = stageWidth;
     lastTime = time;
     m_responsive.setMotion(time, reduced);
+    // 真实墙钟记录进入详情的时刻。frame["detail"] 来自 m_detail，而 m_detail 挂在
+    // m_animationTime 这个「每帧最多 +50ms、引擎休眠即停」的伪时钟上；一旦引擎在
+    // 淡入中途休眠，alpha(opacity) 就永久停在半透明（按钮命中区照常注册，于是
+    // 「能点但看不见、点一下才出现」）。这里独立计时，不依赖场景推进。
+    const bool inDetail = frame["mode"] == "detail";
+    if (inDetail && m_detailEnterWallMs < 0) {
+        m_detailEnterWallMs = QDateTime::currentMSecsSinceEpoch();
+    } else if (!inDetail) {
+        m_detailEnterWallMs = -1;
+    }
     commands = {};
     hits = {};
     playerBounds.reset();
@@ -347,7 +362,27 @@ void NativeHud::draw(QJsonObject next, double stageWidth, double time) {
         footer(width);
         if (modal != "search") {
             if (frame["mode"] == "detail" || (lyricsMode && !m_music->player.current.isEmpty())) {
-                detail(width, lyricsMode ? 1 : frame["detail"].toDouble());
+                double opacity = lyricsMode ? 1 : frame["detail"].toDouble();
+                if (!lyricsMode && m_detailEnterWallMs >= 0) {
+                    // 500 ms 淡入，与场景曲线同形（smoothstep）。取两者较大值：
+                    // 正常路径完全由 frame["detail"] 主导，只有伪时钟被截断时
+                    // 墙钟才会接管，保证详情内容一定收敛到 alpha=1。
+                    const double wall = std::clamp(
+                        (QDateTime::currentMSecsSinceEpoch() - m_detailEnterWallMs) / 500.0, 0.0, 1.0);
+                    const double eased = wall * wall * (3 - 2 * wall);
+                    opacity = std::max(opacity, eased);
+#if defined(Q_OS_ANDROID)
+                    // 每次进入 detail 的前若干帧各打一次，用来区分「场景值没推进」
+                    // 与「场景值推进了但没画出来」。每 30 次 draw 一行，不刷屏。
+                    static int diagTick = 0;
+                    if (++diagTick % 30 == 1) {
+                        qInfo("HUD detail: scene=%.3f wall=%.3f alpha=%.3f enterMs=%lld",
+                              frame["detail"].toDouble(), eased, opacity,
+                              static_cast<long long>(m_detailEnterWallMs));
+                    }
+#endif
+                }
+                detail(width, opacity);
             } else {
                 archive(width);
             }

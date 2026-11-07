@@ -167,7 +167,9 @@ void platformMediaCommands(std::function<void(QString)> callback) {
         }
     }
 }
-void platformMediaInfo(QString title, QString artist, QString album, QVariantMap state) {
+void platformMediaInfo(QString title, QString artist, QString album, QVariantMap state,
+                       const QString &coverPath) {
+    Q_UNUSED(coverPath)
     if (!isBackgroundService) {
         platformInterfaceMediaInfo(!title.isEmpty());
     }

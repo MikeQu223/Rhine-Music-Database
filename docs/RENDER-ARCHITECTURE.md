@@ -8,12 +8,12 @@
 
 ### 0.1 当前实际存在的管线
 
-| 管线 | 宿主 | 图形后端 | 场景后处理 | 帧生成 | 最终上屏 | 高 DPI |
-| --- | --- | --- | --- | --- | --- | --- |
-| Apple（macOS / iOS）默认窗口 | `Main.qml` / `QQuickWindow` | Metal | MetalFX 时域（可选） | `MetalFramePresentation`（`panel/fg` 或 `RHINE_FG=on`） | Qt Quick 场景图 → `CAMetalLayer` | Qt Quick 内部按物理像素 |
-| Windows | `PresentationShell` | Vulkan | `ScenePostProcess`（FXAA/TAA/FSR） | `FgBackend`（仅 `RHINE_FG=on`） | `VulkanPresenter` 自持交换链 | 逻辑尺寸 + target DPR |
-| Linux（显式开 FG） | `PresentationShell` | Vulkan | `ScenePostProcess`（FXAA/TAA/FSR） | `FgBackend`（仅 `RHINE_FG=on`） | `VulkanPresenter` 自持交换链 | 物理像素离屏层 + 根条目缩放 |
-| Windows/Linux 默认窗口 | `Main.qml` / `QQuickWindow` | Vulkan 或 OpenGL | `ScenePostProcess`（FXAA/TAA/FSR） | 无（FG 只存在于呈现层） | Qt Quick 交换链 | Qt Quick 内部按物理像素 |
+| 管线                         | 宿主                        | 图形后端         | 场景后处理                         | 帧生成                                                  | 最终上屏                         | 高 DPI                      |
+| ---------------------------- | --------------------------- | ---------------- | ---------------------------------- | ------------------------------------------------------- | -------------------------------- | --------------------------- |
+| Apple（macOS / iOS）默认窗口 | `Main.qml` / `QQuickWindow` | Metal            | MetalFX 时域（可选）               | `MetalFramePresentation`（`panel/fg` 或 `RHINE_FG=on`） | Qt Quick 场景图 → `CAMetalLayer` | Qt Quick 内部按物理像素     |
+| Windows                      | `PresentationShell`         | Vulkan           | `ScenePostProcess`（FXAA/TAA/FSR） | `FgBackend`（仅 `RHINE_FG=on`）                         | `VulkanPresenter` 自持交换链     | 逻辑尺寸 + target DPR       |
+| Linux（显式开 FG）           | `PresentationShell`         | Vulkan           | `ScenePostProcess`（FXAA/TAA/FSR） | `FgBackend`（仅 `RHINE_FG=on`）                         | `VulkanPresenter` 自持交换链     | 物理像素离屏层 + 根条目缩放 |
+| Windows/Linux 默认窗口       | `Main.qml` / `QQuickWindow` | Vulkan 或 OpenGL | `ScenePostProcess`（FXAA/TAA/FSR） | 无（FG 只存在于呈现层）                                 | Qt Quick 交换链                  | Qt Quick 内部按物理像素     |
 
 D3D12 代码仍在，但 `RHINE_ENABLE_D3D12_BACKEND` 当前构建为 OFF；OpenGL 后端没有呈现层支持，
 因此也不进入帧生成。
@@ -23,12 +23,12 @@ D3D12 代码仍在，但 `RHINE_ENABLE_D3D12_BACKEND` 当前构建为 OFF；Open
 - **只有一个引擎和一个场景渲染器**：`Engine` 生成场景/HUD 快照，`RhiScene` 内的
   `RhineRendering::Renderer` 负责烘焙材质、唱片、深度/运动矢量和最终合成。所有管线共用它。
 - **差异只在“谁拥有窗口、谁做最终合成与上屏”**：
-  - 默认窗口：`QQuickWindow` 的 Qt Quick 场景图合成 `Scene3D.qml` 与 `Overlay.qml`，Qt 拥有交换链。
-  - 受控呈现层：应用自己创建 `QWindow` + `QRhi`，用两个 `QQuickRenderControl` 分别渲染 3D/UI，
-    `PresentationShell` 合成后由呈现后端上屏。
+    - 默认窗口：`QQuickWindow` 的 Qt Quick 场景图合成 `Scene3D.qml` 与 `Overlay.qml`，Qt 拥有交换链。
+    - 受控呈现层：应用自己创建 `QWindow` + `QRhi`，用两个 `QQuickRenderControl` 分别渲染 3D/UI，
+      `PresentationShell` 合成后由呈现后端上屏。
 - **运动矢量的产出方式按后端分**：
-  - Linux 与 Apple：颜色 pass 的第二颜色附件（单趟 MRT），实例带 `previousModel`；
-  - Windows：独立的 `MotionPass`（D32F + RG16F/RGBA16F），实例不带 `previousModel`。
+    - Linux 与 Apple：颜色 pass 的第二颜色附件（单趟 MRT），实例带 `previousModel`；
+    - Windows：独立的 `MotionPass`（D32F + RG16F/RGBA16F），实例不带 `previousModel`。
 - **UI 永远不参与插值**：两种宿主都只对 3D 层做 FG；UI 在合成阶段按显示帧率叠加。
 - **后处理二选一**：Apple 用 MetalFX（时域超分/MetalFX Temporal）；其他平台用 `ScenePostProcess`
   （FXAA/TAA/FSR），不会同时运行。
@@ -68,11 +68,11 @@ main.cpp
 
 `Qt/src/main.cpp` 在任何 `QQuickWindow` 创建前完成选择：
 
-| 平台 | 选择规则 | 回退 |
-| --- | --- | --- |
-| macOS / iOS | Metal；`RHINE_GRAPHICS` 只接受 `metal`/`auto`，其他值会告警并忽略 | 无（Qt 平台只提供 Metal） |
-| Windows | `QSG_RHI_BACKEND` / `RHINE_GRAPHICS` / 保存的 `panel/graphics-backend`；默认探测 Vulkan，失败则 OpenGL | OpenGL |
-| Linux | 同上；默认探测 Vulkan，失败则 OpenGL；选卡结果在启动前落成厂商环境变量 | OpenGL |
+| 平台        | 选择规则                                                                                               | 回退                      |
+| ----------- | ------------------------------------------------------------------------------------------------------ | ------------------------- |
+| macOS / iOS | Metal；`RHINE_GRAPHICS` 只接受 `metal`/`auto`，其他值会告警并忽略                                      | 无（Qt 平台只提供 Metal） |
+| Windows     | `QSG_RHI_BACKEND` / `RHINE_GRAPHICS` / 保存的 `panel/graphics-backend`；默认探测 Vulkan，失败则 OpenGL | OpenGL                    |
+| Linux       | 同上；默认探测 Vulkan，失败则 OpenGL；选卡结果在启动前落成厂商环境变量                                 | OpenGL                    |
 
 D3D12 只在 `RHINE_ENABLE_D3D12_BACKEND` 打开时参与 Windows 选择；当前构建关闭。
 
@@ -81,16 +81,16 @@ D3D12 只在 `RHINE_ENABLE_D3D12_BACKEND` 打开时参与 Windows 选择；当�
 `applyVSyncSetting()`、`applySupersampleSetting()`、`applyRenderScaleSetting()`、
 `applyAntialiasingSetting()`、`applyFrameGenerationSetting()` 在窗口创建前把持久化偏好转成环境变量：
 
-| 设置 | 偏好键 | 环境变量 | 生效方式 |
-| --- | --- | --- | --- |
-| 图形后端 | `graphics-backend` | `RHINE_GRAPHICS` / `QSG_RHI_BACKEND` | 仅启动 |
-| 垂直同步 | `vsync` | `RHINE_VSYNC`；呈现层 `RHINE_FG_VSYNC` | 仅启动 |
-| 超采样 | `supersample` | `RHINE_SUPERSAMPLE` | 下一帧重建目标 |
-| 渲染倍率 | `render-scale` | `RHINE_RENDER_SCALE` | 下一帧重建目标 |
-| 抗锯齿 | `aa-mode` | `RHINE_AA_MODE` | 每帧读取 |
-| MSAA | `msaa` | `RHINE_MSAA` | 下一帧重建目标 |
-| FSR 档位/锐化 | `fsr-quality` / `fsr-sharpness` | `RHINE_FSR_QUALITY` / `RHINE_FSR_SHARPNESS` | 下一帧 |
-| 帧生成 | `fg` | `RHINE_FG` | Apple 由设置页/偏好驱动，显式环境变量优先；Windows/Linux 仍以环境变量为排障入口 |
+| 设置          | 偏好键                          | 环境变量                                    | 生效方式                                                                        |
+| ------------- | ------------------------------- | ------------------------------------------- | ------------------------------------------------------------------------------- |
+| 图形后端      | `graphics-backend`              | `RHINE_GRAPHICS` / `QSG_RHI_BACKEND`        | 仅启动                                                                          |
+| 垂直同步      | `vsync`                         | `RHINE_VSYNC`；呈现层 `RHINE_FG_VSYNC`      | 仅启动                                                                          |
+| 超采样        | `supersample`                   | `RHINE_SUPERSAMPLE`                         | 下一帧重建目标                                                                  |
+| 渲染倍率      | `render-scale`                  | `RHINE_RENDER_SCALE`                        | 下一帧重建目标                                                                  |
+| 抗锯齿        | `aa-mode`                       | `RHINE_AA_MODE`                             | 每帧读取                                                                        |
+| MSAA          | `msaa`                          | `RHINE_MSAA`                                | 下一帧重建目标                                                                  |
+| FSR 档位/锐化 | `fsr-quality` / `fsr-sharpness` | `RHINE_FSR_QUALITY` / `RHINE_FSR_SHARPNESS` | 下一帧                                                                          |
+| 帧生成        | `fg`                            | `RHINE_FG`                                  | Apple 由设置页/偏好驱动，显式环境变量优先；Windows/Linux 仍以环境变量为排障入口 |
 
 `RHINE_FG_LAYER` 不是帧生成开关，而是“是否允许呈现层接管”的排障开关：`on` 在 Linux 强制接管，
 `off` 在 Windows/Linux 强制默认路径；Apple 上已无效果。
@@ -99,11 +99,11 @@ D3D12 只在 `RHINE_ENABLE_D3D12_BACKEND` 打开时参与 Windows 选择；当�
 
 `fgCandidate` 的当前条件（`main.cpp`）：
 
-| 平台 | 条件 |
-| --- | --- |
-| Apple（macOS/iOS） | 固定 false：默认窗口内完成 MetalFX 补帧，不接管窗口 |
-| Windows | `!test && !--capture && !RHINE_FG_LAYER=off && 原生窗口系统 && supportsBackend(Vulkan)` |
-| Linux | 在 Windows 条件上再加 `(RHINE_FG=on || RHINE_FG_LAYER=on)` |
+| 平台               | 条件                                                                                    |
+| ------------------ | --------------------------------------------------------------------------------------- |
+| Apple（macOS/iOS） | 固定 false：默认窗口内完成 MetalFX 补帧，不接管窗口                                     |
+| Windows            | `!test && !--capture && !RHINE_FG_LAYER=off && 原生窗口系统 && supportsBackend(Vulkan)` |
+| Linux              | 在 Windows 条件上再加 `(RHINE_FG=on                                                     |     | RHINE_FG_LAYER=on)` |
 
 `supportsBackend()` 只认 Metal 和 Vulkan；OpenGL/D3D12 不走呈现层，也就没有 FG。
 
@@ -145,20 +145,20 @@ displaySize = 当前渲染目标的物理像素
 `Settings::renderSize()` 的倍率是 `supersample(1–2) × renderPercent(50–100)`；Apple 的
 MetalFX 时域和补帧都要求 `supersample × renderPercent ≤ 100`（即不能超采样）。
 
-| 目标 | 尺寸 | 格式 | 用途 |
-| --- | --- | --- | --- |
-| `color` | render | RGBA16F；MSAA 时多重采样 + resolve | 唯一场景颜色 |
-| `depth` | render | D32F，与 color 同采样数 | 深度测试、时域/插帧输入 |
-| `motionVectors`（Linux/Apple） | render | RGBA16F，单采样 | 颜色 pass 第二附件，MRT 写速度 |
-| `target` | display | RGBA8 | 仅离线 `renderReference()` 的读回目标 |
-| `ScenePostProcess::m_input` | render | FSR 时 RGBA16F，否则 RGBA8 | 非 Apple 后处理输入 |
-| `ScenePostProcess::m_output` | display | RGBA16F | FSR 升采样输出 |
-| `ScenePostProcess::m_history[2]` | render | RGBA16F | TAA 历史双缓冲 |
-| `MotionPass`（Windows） | render | D32F + RGBA16F | 独立深度/运动矢量 pass |
-| MetalFX 时域输出 | display | RGBA16F | 时域超分结果 |
-| `MetalFramePresentation::realColor` | display | RGBA8 | Apple 补帧的真实帧快照 |
-| 呈现层 3D/UI 纹理 | display | RGBA8 | `SceneLayerHost` 的两层输出 |
-| 交换链图像 | display | 平台格式 | 最终上屏 |
+| 目标                                | 尺寸    | 格式                               | 用途                                  |
+| ----------------------------------- | ------- | ---------------------------------- | ------------------------------------- |
+| `color`                             | render  | RGBA16F；MSAA 时多重采样 + resolve | 唯一场景颜色                          |
+| `depth`                             | render  | D32F，与 color 同采样数            | 深度测试、时域/插帧输入               |
+| `motionVectors`（Linux/Apple）      | render  | RGBA16F，单采样                    | 颜色 pass 第二附件，MRT 写速度        |
+| `target`                            | display | RGBA8                              | 仅离线 `renderReference()` 的读回目标 |
+| `ScenePostProcess::m_input`         | render  | FSR 时 RGBA16F，否则 RGBA8         | 非 Apple 后处理输入                   |
+| `ScenePostProcess::m_output`        | display | RGBA16F                            | FSR 升采样输出                        |
+| `ScenePostProcess::m_history[2]`    | render  | RGBA16F                            | TAA 历史双缓冲                        |
+| `MotionPass`（Windows）             | render  | D32F + RGBA16F                     | 独立深度/运动矢量 pass                |
+| MetalFX 时域输出                    | display | RGBA16F                            | 时域超分结果                          |
+| `MetalFramePresentation::realColor` | display | RGBA8                              | Apple 补帧的真实帧快照                |
+| 呈现层 3D/UI 纹理                   | display | RGBA8                              | `SceneLayerHost` 的两层输出           |
+| 交换链图像                          | display | 平台格式                           | 最终上屏                              |
 
 重建条件：`viewSize`、`renderSize`、采样数、AA 模式、是否分配运动矢量、深度 store 策略任一变化。
 Linux 重建目标时还会清空上一帧 VP/实例历史；Apple 重建时清空 `metalHistory`。
@@ -186,18 +186,18 @@ attenuation, extra（clearcoat/clearcoatRoughness/disc cos/sin）,
 flags（材质类型/side/subdued/floor）, darkColor, emission
 ```
 
-| type | 含义 |
-| --- | --- |
-| 0 | 默认/实例化材质 |
-| 1 | 曲目标签/文字平面 |
-| 2 | 非实例化几何（主角/调试着色） |
-| 3 | `Frosted_Polymer` / `Optical_Film` |
-| 4 | `Ivory_Edges` |
-| 5 | `Optical_Diffuser` |
-| 6 | 唱片盘面 |
-| 7 | 盒体装饰文字/铭牌 |
-| 8 | 唱片盘体/中心环 |
-| 9 | 光学薄膜/玻璃 |
+| type | 含义                               |
+| ---- | ---------------------------------- |
+| 0    | 默认/实例化材质                    |
+| 1    | 曲目标签/文字平面                  |
+| 2    | 非实例化几何（主角/调试着色）      |
+| 3    | `Frosted_Polymer` / `Optical_Film` |
+| 4    | `Ivory_Edges`                      |
+| 5    | `Optical_Diffuser`                 |
+| 6    | 唱片盘面                           |
+| 7    | 盒体装饰文字/铭牌                  |
+| 8    | 唱片盘体/中心环                    |
+| 9    | 光学薄膜/玻璃                      |
 
 全局 UBO `Globals`：**Linux/Apple 832 字节，Windows 704 字节**；`Instance`：**Linux/Apple 144 字节，
 Windows 80 字节**。差值来自 `previousModel`（Linux/Apple 单趟 MRT 需要）。顶点 32 字节
@@ -218,14 +218,14 @@ Windows 80 字节**。差值来自 `previousModel`（Linux/Apple 单趟 MRT 需�
 
 常用优化（按后端生效）：
 
-| 策略 | 默认 | 作用 |
-| --- | --- | --- |
-| 实例池 `RHINE_VK_INSTANCE_ARENA` | 开 | Vulkan/Metal 共用一张 Dynamic VertexBuffer，按偏移切片 |
-| 材质 UBO arena `RHINE_VK_UNIFORM_ARENA` | 关 | 材质槽 + 动态偏移，复用 SRB（Vulkan 实验） |
-| 直接写 arena `RHINE_VK_DIRECT_WRITE` | 关 | `beginFullDynamicBufferUpdateForCurrentFrame()` 整块直写 |
-| 布局复用 `RHINE_VK_LAYOUT_ONLY_PIPELINES` | 关 | arena 换 buffer 不重建 pipeline |
-| 紧凑实例 `RHINE_VK_COMPACT_INSTANCES` | Apple 自动、其他关 | 无运动矢量消费者时用 80 字节实例 |
-| 深度不保留 `RHINE_VK_DISCARD_UNUSED_DEPTH` | 关 | 无消费者时 `DoNotStore` 深度 |
+| 策略                                       | 默认               | 作用                                                     |
+| ------------------------------------------ | ------------------ | -------------------------------------------------------- |
+| 实例池 `RHINE_VK_INSTANCE_ARENA`           | 开                 | Vulkan/Metal 共用一张 Dynamic VertexBuffer，按偏移切片   |
+| 材质 UBO arena `RHINE_VK_UNIFORM_ARENA`    | 关                 | 材质槽 + 动态偏移，复用 SRB（Vulkan 实验）               |
+| 直接写 arena `RHINE_VK_DIRECT_WRITE`       | 关                 | `beginFullDynamicBufferUpdateForCurrentFrame()` 整块直写 |
+| 布局复用 `RHINE_VK_LAYOUT_ONLY_PIPELINES`  | 关                 | arena 换 buffer 不重建 pipeline                          |
+| 紧凑实例 `RHINE_VK_COMPACT_INSTANCES`      | Apple 自动、其他关 | 无运动矢量消费者时用 80 字节实例                         |
+| 深度不保留 `RHINE_VK_DISCARD_UNUSED_DEPTH` | 关                 | 无消费者时 `DoNotStore` 深度                             |
 
 ### 2.5 Pass 顺序
 
@@ -250,12 +250,12 @@ resize / ScenePostProcess::prepare（非 Apple）
 
 ### 2.6 最终合成与平台分支
 
-| 平台 / 模式 | 最终合成目标 | 后续 |
-| --- | --- | --- |
-| 非 Apple，`fxaa` / `taa` / `fsr` | `ScenePostProcess::inputTarget()` | `ScenePostProcess::resolve()` → 目标 |
-| 非 Apple，`off` / `ssaa` / `msaa` | 目标 | 无 |
-| Apple，`metalfx` | MetalFX 结果 → 目标 | 无 |
-| Apple，`off` | 目标 | 无 |
+| 平台 / 模式                       | 最终合成目标                      | 后续                                 |
+| --------------------------------- | --------------------------------- | ------------------------------------ |
+| 非 Apple，`fxaa` / `taa` / `fsr`  | `ScenePostProcess::inputTarget()` | `ScenePostProcess::resolve()` → 目标 |
+| 非 Apple，`off` / `ssaa` / `msaa` | 目标                              | 无                                   |
+| Apple，`metalfx`                  | MetalFX 结果 → 目标               | 无                                   |
+| Apple，`off`                      | 目标                              | 无                                   |
 
 `finalFragment` 始终执行 ACES、九点二项核柔化（中心 4、轴向 2、对角 1，总权重 16）和纸张/暗角背景；
 它不采样旧版场景、AO 或景深。
@@ -347,6 +347,22 @@ Engine::frame()/drawBuffers()
   “帧生成 默认窗口 · 插值 开 / 呈现 / 渲染 120 / 60 FPS · 插值 60 FPS / 输入 / 显示 …”；
   关闭时显示“帧生成 未接管 · 未开启”。统计由 `Engine::publishFrameGenerationStats()` 每 250ms
   从渲染线程转交 GUI 线程。
+- **面板自身不能拖帧**。`details` 是几百行的长文本，`Text` 每次拿到新 text 都要重新布局并
+  重建字形；原先 7 个 `Q_PROPERTY` 共用 `NOTIFY changed`，于是每 500 ms 采样一次就必然
+  重排整段详情——**观测本身成了被测对象的一部分**。现在：
+    - 每个属性各自 `NOTIFY`（`headlineChanged` / `detailsChanged` / `metricsChanged` /
+      `statusChanged` / `visibleChanged` / `recordingChanged`），`changed()` 只作 C++ 聚合出口，
+      QML 没有任何属性绑它；`headline` 与 `details` 各自只在内容真的变了才发信号。
+    - `details` 独立降频：`headline`（一行）仍是 500 ms，详情默认 **1 s** 重建一次，
+      `RHINE_PROFILER_DETAILS_MS` 可改（`0` = 每次都刷）。
+    - 面板收起（“精简”）时 QML 把 `profiler.detailsEnabled` 置 false，C++ 直接跳过整段详情
+      构建——`visible: false` 挡不住 `Text` 重新布局，只有停止重建才省得下来。
+    - 录音不受影响：`m_samples` 仍按 500 ms 采样写盘，降频的只是给人看的那段文本。
+    - 标题 Text 上原本重复写了 `Accessible.name: text`（可访问名默认就取 text），
+      每次刷新会多触发一遍无障碍更新，已去掉。
+
+    面板可见时才启用的两处采集（`scene.profileFrames(true)`、音频 `enableDiagnostics(true)`）
+    都是纳秒级或每缓冲一次的开销，不是开面板掉帧的主因；主因是上面那条刷新链路。
 
 ### 3.5 关闭与回退
 
@@ -415,15 +431,15 @@ Engine::frame()/drawBuffers()
 
 ### 7.1 模式对照
 
-| 模式 | 平台 | 实现 | 渲染尺寸 | 时域 | 输入 |
-| --- | --- | --- | --- | --- | --- |
-| `off` | 全部 | 直接最终合成 | 全局倍率 | 否 | 颜色 |
-| `fxaa` | 非 Apple | `aaFragment.frag` | 全局倍率 | 否 | 颜色 |
-| `ssaa` | 非 Apple | 放大渲染尺寸，最终合成缩回 | × `AA_SCALE` | 否 | 颜色 |
-| `msaa` | 非 Apple | 多重采样颜色/深度 + resolve | 全局倍率 | 否 | 颜色、深度 |
-| `taa` | 非 Apple | `taa.frag` + 历史双缓冲 | 全局倍率 | 是 | 颜色、深度、速度、历史 |
-| `fsr` | 非 Apple | FSR3 计算（可选）；否则 FSR1 EASU+RCAS | ÷ FSR 档位 | 仅 FSR3 计算 | 颜色；FSR3 另需深度、速度 |
-| `metalfx` | Apple | `MTLFXTemporalScaler` | 全局倍率（≤100%） | 是 | 颜色、深度、速度 |
+| 模式      | 平台     | 实现                                   | 渲染尺寸          | 时域         | 输入                      |
+| --------- | -------- | -------------------------------------- | ----------------- | ------------ | ------------------------- |
+| `off`     | 全部     | 直接最终合成                           | 全局倍率          | 否           | 颜色                      |
+| `fxaa`    | 非 Apple | `aaFragment.frag`                      | 全局倍率          | 否           | 颜色                      |
+| `ssaa`    | 非 Apple | 放大渲染尺寸，最终合成缩回             | × `AA_SCALE`      | 否           | 颜色                      |
+| `msaa`    | 非 Apple | 多重采样颜色/深度 + resolve            | 全局倍率          | 否           | 颜色、深度                |
+| `taa`     | 非 Apple | `taa.frag` + 历史双缓冲                | 全局倍率          | 是           | 颜色、深度、速度、历史    |
+| `fsr`     | 非 Apple | FSR3 计算（可选）；否则 FSR1 EASU+RCAS | ÷ FSR 档位        | 仅 FSR3 计算 | 颜色；FSR3 另需深度、速度 |
+| `metalfx` | Apple    | `MTLFXTemporalScaler`                  | 全局倍率（≤100%） | 是           | 颜色、深度、速度          |
 
 ### 7.2 关键流程
 
@@ -463,11 +479,11 @@ Engine::frame()/drawBuffers()
 
 ### 8.2 平台门控与宿主
 
-| 平台 | 宿主 | 插值条件 |
-| --- | --- | --- |
-| Apple（macOS/iOS） | 默认 QQuickWindow | `panel/fg` 或 `RHINE_FG=on`，MetalFX 插帧可用，`renderscale × supersample ≤ 100%` |
-| Windows | `PresentationShell` | `RHINE_FG=on`（默认 off）；呈现层接管且 FG 上下文可用 |
-| Linux | `PresentationShell` | `RHINE_FG=on`；`RHINE_FG_LAYER=on` 只接管不插值 |
+| 平台               | 宿主                | 插值条件                                                                          |
+| ------------------ | ------------------- | --------------------------------------------------------------------------------- |
+| Apple（macOS/iOS） | 默认 QQuickWindow   | `panel/fg` 或 `RHINE_FG=on`，MetalFX 插帧可用，`renderscale × supersample ≤ 100%` |
+| Windows            | `PresentationShell` | `RHINE_FG=on`（默认 off）；呈现层接管且 FG 上下文可用                             |
+| Linux              | `PresentationShell` | `RHINE_FG=on`；`RHINE_FG_LAYER=on` 只接管不插值                                   |
 
 `RHINE_FG_LAYER=off` 在 Windows/Linux 强制默认窗口；Apple 无效果。
 
@@ -519,36 +535,36 @@ Engine::frame()/drawBuffers()
   `Engine::publishFrameGenerationStats()` 转交，呈现层由自身 `publishStats()` 写入。
 - 常用诊断：
 
-| 变量 | 用途 |
-| --- | --- |
-| `RHINE_PACE_DIAG` | 引擎 tick/step/render、唤醒来源、发布/消费差 |
-| `RHINE_STEP_PROBE` / `RHINE_LAYER_PROBE` / `RHINE_HUD_PROBE` | 拆 step/HUD/图层成本 |
-| `RHINE_FG_DIAG` | 呈现层 FG 计数、层耗时、脏标记、交换链重建/等待 |
-| `RHINE_METAL_FG_DIAG` | Apple 默认窗口每秒呈现/真实/插值计数、能力发布 |
-| `RHINE_POST_PROBE` | 后处理路径与全屏 pass 数 |
-| `RHINE_VK_RESOURCE_PROBE` / `RHINE_MEMORY_PROBE` / `RHINE_TEXTURE_PROBE` / `RHINE_MOTION_PROBE` | Vulkan 资源、内存、纹理准入、运动矢量配对 |
-| `RHINE_DEBUG_FSR` / `RHINE_DEBUG_GPU` / `RHINE_DEBUG_DRAWS` / `RHINE_DEBUG_TINT` / `RHINE_DEBUG_ATLAS` | 各专项调试 |
-| `RHINE_DRAW_PROBE` / `RHINE_GPU_PROBE` / `RHINE_KEY_PROBE` / `RHINE_HUD_SKIP_PAINT` / `RHINE_POST_REUSE` | 绘制/HUD/后处理探针 |
-| `RHINE_WARP_PROBE` / `RHINE_WARP_SHOW` | Linux 重投影探针 |
-| `RHINE_FG_DEBUG` / `RHINE_FG_SWAP_IMAGES` / `RHINE_RESOURCE_BUDGET_MB` | FG 呈现与资源预算 |
+| 变量                                                                                                     | 用途                                            |
+| -------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| `RHINE_PACE_DIAG`                                                                                        | 引擎 tick/step/render、唤醒来源、发布/消费差    |
+| `RHINE_STEP_PROBE` / `RHINE_LAYER_PROBE` / `RHINE_HUD_PROBE`                                             | 拆 step/HUD/图层成本                            |
+| `RHINE_FG_DIAG`                                                                                          | 呈现层 FG 计数、层耗时、脏标记、交换链重建/等待 |
+| `RHINE_METAL_FG_DIAG`                                                                                    | Apple 默认窗口每秒呈现/真实/插值计数、能力发布  |
+| `RHINE_POST_PROBE`                                                                                       | 后处理路径与全屏 pass 数                        |
+| `RHINE_VK_RESOURCE_PROBE` / `RHINE_MEMORY_PROBE` / `RHINE_TEXTURE_PROBE` / `RHINE_MOTION_PROBE`          | Vulkan 资源、内存、纹理准入、运动矢量配对       |
+| `RHINE_DEBUG_FSR` / `RHINE_DEBUG_GPU` / `RHINE_DEBUG_DRAWS` / `RHINE_DEBUG_TINT` / `RHINE_DEBUG_ATLAS`   | 各专项调试                                      |
+| `RHINE_DRAW_PROBE` / `RHINE_GPU_PROBE` / `RHINE_KEY_PROBE` / `RHINE_HUD_SKIP_PAINT` / `RHINE_POST_REUSE` | 绘制/HUD/后处理探针                             |
+| `RHINE_WARP_PROBE` / `RHINE_WARP_SHOW`                                                                   | Linux 重投影探针                                |
+| `RHINE_FG_DEBUG` / `RHINE_FG_SWAP_IMAGES` / `RHINE_RESOURCE_BUDGET_MB`                                   | FG 呈现与资源预算                               |
 
 ## 10. 着色器与资源清单
 
-| 类别 | 文件 | 用途 |
-| --- | --- | --- |
-| 场景几何 | `enhancement/opticalGeometry.vert` | 实例化顶点、图集 UV、三维光场坐标、Linux/Apple previousModel/速度 |
-| 场景材质 | `enhancement/opticalSurface.frag` | 烘焙表面、主光高光、玻璃/薄膜、盘面、MRT 运动矢量 |
-| 场景材质 | `enhancement/opticalSurfaceNoMrt.frag` | 无第二颜色附件时的变体 |
-| 最终合成 | `enhancement/opticalQuad.vert` / `opticalFinalFragment.frag` | 全屏三角、九点柔化、ACES、纸张背景 |
-| 运动 | `motion.vert` / `velocity.frag` | Windows 深度/运动矢量 pass |
-| 后处理 | `quad.vert` / `copyColor.frag` / `aaFragment.frag` / `taa.frag` | 拷贝、FXAA、TAA |
-| 超分 | `fsr1_easu.frag` / `fsr1_rcas.frag` | FSR1 EASU/RCAS |
-| MetalFX 时域 | `metal-temporal/resolve.vert` / `resolve.frag` | `MetalTemporalResolve` 轻量时域路径 |
-| MetalFX 呈现 | `metal-temporal/present.vert` / `present.frag` | 默认窗口补帧/真实帧拷贝到 QQuickRhiItem 目标 |
-| 呈现合成 | `fgComposite.vert` / `fgComposite.frag` | 呈现层插值帧/真实帧与 UI 的预乘 source-over |
-| 公共 | `common.glsl` / `enhancement/opticalCommon.glsl` | 全局块、ACES、sRGB、面朝向 |
-| 紧凑变体 | `Qt/shaders/compact/` | 无运动矢量消费者的 80 字节实例管线 |
-| FFX 预编译 | `generated/ffx_shaders/vk/*.h` | FSR3 超分/帧生成计算着色器 |
+| 类别         | 文件                                                            | 用途                                                              |
+| ------------ | --------------------------------------------------------------- | ----------------------------------------------------------------- |
+| 场景几何     | `enhancement/opticalGeometry.vert`                              | 实例化顶点、图集 UV、三维光场坐标、Linux/Apple previousModel/速度 |
+| 场景材质     | `enhancement/opticalSurface.frag`                               | 烘焙表面、主光高光、玻璃/薄膜、盘面、MRT 运动矢量                 |
+| 场景材质     | `enhancement/opticalSurfaceNoMrt.frag`                          | 无第二颜色附件时的变体                                            |
+| 最终合成     | `enhancement/opticalQuad.vert` / `opticalFinalFragment.frag`    | 全屏三角、九点柔化、ACES、纸张背景                                |
+| 运动         | `motion.vert` / `velocity.frag`                                 | Windows 深度/运动矢量 pass                                        |
+| 后处理       | `quad.vert` / `copyColor.frag` / `aaFragment.frag` / `taa.frag` | 拷贝、FXAA、TAA                                                   |
+| 超分         | `fsr1_easu.frag` / `fsr1_rcas.frag`                             | FSR1 EASU/RCAS                                                    |
+| MetalFX 时域 | `metal-temporal/resolve.vert` / `resolve.frag`                  | `MetalTemporalResolve` 轻量时域路径                               |
+| MetalFX 呈现 | `metal-temporal/present.vert` / `present.frag`                  | 默认窗口补帧/真实帧拷贝到 QQuickRhiItem 目标                      |
+| 呈现合成     | `fgComposite.vert` / `fgComposite.frag`                         | 呈现层插值帧/真实帧与 UI 的预乘 source-over                       |
+| 公共         | `common.glsl` / `enhancement/opticalCommon.glsl`                | 全局块、ACES、sRGB、面朝向                                        |
+| 紧凑变体     | `Qt/shaders/compact/`                                           | 无运动矢量消费者的 80 字节实例管线                                |
+| FFX 预编译   | `generated/ffx_shaders/vk/*.h`                                  | FSR3 超分/帧生成计算着色器                                        |
 
 烘焙资源由 `scripts/bake-archive-lighting.py` 生成；表面图集可输出 BC7，光场是 576×96×24 RGBA8
 三维纹理，法线响应是 128×256 RGBA16F。旧的 `room-pmrem.bin`、AO/IBL 资源和实时阴影/法线/AO/景深
@@ -589,35 +605,35 @@ Engine::frame()/drawBuffers()
 
 ### 12.2 文件索引
 
-| 路径 | 职责 |
-| --- | --- |
-| `Qt/src/main.cpp` | 后端选择、偏好下发、默认/受控路径分流、退出顺序 |
-| `Qt/src/Engine.{h,cpp}` | 场景/HUD 帧协议、抖动、内容版本、帧节拍、资源遥测、FG 能力/统计转发 |
-| `Qt/src/RhiScene.{h,cpp}` | 唯一场景渲染器（烘焙材质、唱片、AA/FSR/MetalFX、默认窗口 FG、离线参考） |
-| `Qt/src/render/ScenePostProcess.{h,cpp}` | 非 Apple 的 FXAA/TAA/FSR3/FSR1 后处理 |
-| `Qt/src/render/MotionPass.{h,cpp}` | Windows 的深度 + 运动矢量 pass |
-| `Qt/src/render/MetalFxBackend.{h,mm}` | Apple MetalFX 时域超分、FrameInterpolator 与后台插值队列 |
-| `Qt/src/render/MetalFramePresentation.h` | Apple 默认窗口的真实/插值帧编排与上屏 |
-| `Qt/src/render/MetalFrameQueue.h` | Apple 默认窗口可选的后台插值队列 |
-| `Qt/src/render/PresentationShell.{h,cpp}` | 受控呈现调度（Windows/Linux）、FG 装配、合成、统计与降级 |
-| `Qt/src/render/SceneLayerHost.{h,cpp}` | 两个离屏 QML 层、目标与高 DPI 几何 |
-| `Qt/src/render/PresentationBackend.h` | 呈现后端抽象 |
-| `Qt/src/render/RhiPresentationBackend.cpp` | Metal 的 QRhi 交换链呈现（Apple 默认窗口不经过；代码保留） |
-| `Qt/src/render/VulkanPresentationBackend.cpp` | Vulkan 呈现适配器与管线缓存 |
-| `Qt/src/fg/VulkanPresenter.{h,cpp}` | 自持 `VkSwapchainKHR`、信号量注入、present |
-| `Qt/src/fg/FgBackend.{h,cpp}` | FSR3 光流 + 帧插值算法层 |
-| `Qt/src/fg/FgConfig.h` / `FgCapability.h` / `FgFrameTap.h` / `FgStats.h` | FG 开关、能力、帧输入、统计 |
-| `Qt/src/fsr/Fsr3Backend.{h,cpp}` | FSR3 超分封装（默认 Vulkan FFX 关闭） |
-| `Qt/src/fsr/Fsr1Constants.h` / `FsrSharpness.h` | FSR1 常量与锐化换算 |
-| `Qt/src/render/RenderConfiguration.h` | Apple 每 Engine 的渲染设置、能力与遥测 |
-| `Qt/src/render/RenderPolicy.h` / `FramePacingPolicy.h` | GPU 计时、时间戳、节拍纯逻辑 |
-| `Qt/src/render/MusicTextureAdmission.h` / `CoverPrepBudget.h` | 冷纹理准入与封面预处理预算 |
-| `Qt/src/render/SceneSyncCache.h` / `MaterialSlotKey.h` | 同步签名与材质槽键 |
-| `Qt/src/render/SceneResources.h` / `VulkanResourcePolicy.h` / `VulkanResourceProbe.h` | 资源所有权、arena/池化策略与探针 |
-| `Qt/src/render/FrameGenerator.h` | 原生插帧算法契约 |
-| `Qt/src/SettingsSchema.cpp` / `NativeHudSettings.cpp` / `NativeHudController.cpp` | 设置页帧生成行、偏好写入与运行期切换 |
-| `Qt/src/FrameProfiler.cpp` | 性能面板与 CSV（含 `defaultWindow` FG 统计） |
-| `Qt/src/Glyphs.{h,cpp}` / `DiscGeometry.{h,cpp}` | 文字图集与唱片环带网格 |
-| `Qt/qml/Main.qml` / `Scene3D.qml` / `Overlay.qml` | 默认窗口与两层边界 |
-| `Qt/shaders/**` | 场景材质、最终合成、后处理、超分、运动、MetalFX 与呈现合成 |
-| `scripts/bake-archive-lighting.py` | 生成表面/光场/法线烘焙资源 |
+| 路径                                                                                  | 职责                                                                    |
+| ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `Qt/src/main.cpp`                                                                     | 后端选择、偏好下发、默认/受控路径分流、退出顺序                         |
+| `Qt/src/Engine.{h,cpp}`                                                               | 场景/HUD 帧协议、抖动、内容版本、帧节拍、资源遥测、FG 能力/统计转发     |
+| `Qt/src/RhiScene.{h,cpp}`                                                             | 唯一场景渲染器（烘焙材质、唱片、AA/FSR/MetalFX、默认窗口 FG、离线参考） |
+| `Qt/src/render/ScenePostProcess.{h,cpp}`                                              | 非 Apple 的 FXAA/TAA/FSR3/FSR1 后处理                                   |
+| `Qt/src/render/MotionPass.{h,cpp}`                                                    | Windows 的深度 + 运动矢量 pass                                          |
+| `Qt/src/render/MetalFxBackend.{h,mm}`                                                 | Apple MetalFX 时域超分、FrameInterpolator 与后台插值队列                |
+| `Qt/src/render/MetalFramePresentation.h`                                              | Apple 默认窗口的真实/插值帧编排与上屏                                   |
+| `Qt/src/render/MetalFrameQueue.h`                                                     | Apple 默认窗口可选的后台插值队列                                        |
+| `Qt/src/render/PresentationShell.{h,cpp}`                                             | 受控呈现调度（Windows/Linux）、FG 装配、合成、统计与降级                |
+| `Qt/src/render/SceneLayerHost.{h,cpp}`                                                | 两个离屏 QML 层、目标与高 DPI 几何                                      |
+| `Qt/src/render/PresentationBackend.h`                                                 | 呈现后端抽象                                                            |
+| `Qt/src/render/RhiPresentationBackend.cpp`                                            | Metal 的 QRhi 交换链呈现（Apple 默认窗口不经过；代码保留）              |
+| `Qt/src/render/VulkanPresentationBackend.cpp`                                         | Vulkan 呈现适配器与管线缓存                                             |
+| `Qt/src/fg/VulkanPresenter.{h,cpp}`                                                   | 自持 `VkSwapchainKHR`、信号量注入、present                              |
+| `Qt/src/fg/FgBackend.{h,cpp}`                                                         | FSR3 光流 + 帧插值算法层                                                |
+| `Qt/src/fg/FgConfig.h` / `FgCapability.h` / `FgFrameTap.h` / `FgStats.h`              | FG 开关、能力、帧输入、统计                                             |
+| `Qt/src/fsr/Fsr3Backend.{h,cpp}`                                                      | FSR3 超分封装（默认 Vulkan FFX 关闭）                                   |
+| `Qt/src/fsr/Fsr1Constants.h` / `FsrSharpness.h`                                       | FSR1 常量与锐化换算                                                     |
+| `Qt/src/render/RenderConfiguration.h`                                                 | Apple 每 Engine 的渲染设置、能力与遥测                                  |
+| `Qt/src/render/RenderPolicy.h` / `FramePacingPolicy.h`                                | GPU 计时、时间戳、节拍纯逻辑                                            |
+| `Qt/src/render/MusicTextureAdmission.h` / `CoverPrepBudget.h`                         | 冷纹理准入与封面预处理预算                                              |
+| `Qt/src/render/SceneSyncCache.h` / `MaterialSlotKey.h`                                | 同步签名与材质槽键                                                      |
+| `Qt/src/render/SceneResources.h` / `VulkanResourcePolicy.h` / `VulkanResourceProbe.h` | 资源所有权、arena/池化策略与探针                                        |
+| `Qt/src/render/FrameGenerator.h`                                                      | 原生插帧算法契约                                                        |
+| `Qt/src/SettingsSchema.cpp` / `NativeHudSettings.cpp` / `NativeHudController.cpp`     | 设置页帧生成行、偏好写入与运行期切换                                    |
+| `Qt/src/FrameProfiler.cpp`                                                            | 性能面板与 CSV（含 `defaultWindow` FG 统计）                            |
+| `Qt/src/Glyphs.{h,cpp}` / `DiscGeometry.{h,cpp}`                                      | 文字图集与唱片环带网格                                                  |
+| `Qt/qml/Main.qml` / `Scene3D.qml` / `Overlay.qml`                                     | 默认窗口与两层边界                                                      |
+| `Qt/shaders/**`                                                                       | 场景材质、最终合成、后处理、超分、运动、MetalFX 与呈现合成              |
+| `scripts/bake-archive-lighting.py`                                                    | 生成表面/光场/法线烘焙资源                                              |

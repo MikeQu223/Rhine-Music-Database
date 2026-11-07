@@ -4,6 +4,7 @@
 #include "MusicLibrary.h"
 #include "MusicPlayer.h"
 #include "PlatformFeatures.h"
+#include "render/AndroidRenderPolicy.h"
 #include "fg/FgCapability.h"
 #include "fg/FgConfig.h"
 #include <QHash>
@@ -615,7 +616,8 @@ const QVector<SettingDescriptor> &descriptors() {
              .order = 250,
              .titleEn = "RENDER SCALE",
              .titleZh = "渲染分辨率",
-             .defaultValue = "100",
+             // 与 applyRenderScaleSetting() 共用同一个默认值：Android 90%，其它平台 100%。
+             .defaultValue = QString::number(RhineRender::androidDefaultRenderScale()),
              .steps = {50, 60, 75, 90, 100},
              .label = renderScaleLabel});
         add({.id = "aa-mode",

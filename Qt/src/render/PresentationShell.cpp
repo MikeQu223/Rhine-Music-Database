@@ -825,6 +825,20 @@ void PresentationShell::step() {
         m_stats.idleGapMs = blend(m_stats.idleGapMs, double(m_stepClock.nsecsElapsed() - m_stepEndNs) / 1e6);
     }
     if (!m_window->isVisible() || !m_window->isExposed() || m_window->visibility() == QWindow::Minimized) {
+#if defined(Q_OS_ANDROID)
+        // 第六轮：这里原本是静默 return——呈现泵的自续循环就此断掉，画面冻结在
+        // 最后一帧，只能等下一次外部唤醒（hudUpdated / 输入转发 markContentDirty）
+        // 重新排一步。「休眠后进详情 HUD 不显示、点一下就恢复」与它同症状。
+        // Android 上 Surface 状态可能瞬时抖动（合成器回收、切台），低频轮询续命：
+        // 每 100ms 一次空转成本可忽略，可见性恢复后 ≤100ms 自动复活。
+        static int hiddenSteps = 0;
+        if (++hiddenSteps % 60 == 1) {
+            qWarning("HUDFLOW step 停摆: visible=%d exposed=%d minimized=%d（累计 %d 步）",
+                     int(m_window->isVisible()), int(m_window->isExposed()),
+                     int(m_window->visibility() == QWindow::Minimized), hiddenSteps);
+        }
+        scheduleNext(100);
+#endif
         return;
     }
     const bool idle = m_backend->performance().value(QStringLiteral("idle")).toBool();
@@ -976,6 +990,22 @@ void PresentationShell::step() {
     // 被消费的，晚一行就要等到下一帧才生效。默认（RHINE_LAYER_REVISION 未开）这里只
     // 记录版本，置脏仍由 sceneUpdated/hudUpdated 信号驱动，行为与优化前一致。
     m_host->setResourceRevision(m_backend->sceneRevision(), m_backend->hudRevision());
+#if defined(Q_OS_ANDROID)
+    // 第六轮轮询兜底：hudUpdated → requestOverlayContent → 出帧 这条事件链在
+    // 「列表按需休眠后进详情」场景被真机证实存在断点（前五轮在链路各环节修过全部无效：
+    // 数据侧判据、notifySceneRenderers、alpha 冻结、伪时钟、0/1ms 让出握手）。
+    // 改成不变量轮询：只要 HUD 纹理还落后于命令流（m_hudFramePending 未被
+    // Hud::updatePaintNode 清位），每个呈现步都强制 overlay 层置脏，逼本次
+    // renderFrame 把最新命令流画进纹理。pending 清位后这段零开销；
+    // Engine 侧 2 秒 failsafe 兜住「永远画不出来」的病态，不会无限烧 CPU。
+    if (m_backend->hudFramePending()) {
+        m_host->markOverlayDirty();
+        static int pollKicks = 0;
+        if (++pollKicks % 60 == 1) {
+            qWarning("HUDFLOW 轮询兜底: overlay 置脏（累计 %d 次）", pollKicks);
+        }
+    }
+#endif
     const auto previousSceneFrames = m_host->sceneRenderCount();
     const auto previousOverlayFrames = m_host->overlayRenderCount();
     const bool sceneRendered = m_host->renderFrame();
@@ -1020,7 +1050,13 @@ void PresentationShell::step() {
         // 空转（同一画面反复提交）不再靠限速解决，而是靠 SceneLayerHost 的脏帧剔除：
         // 没有新内容时这里会自动落进上面的跳过分支，不会再重复渲染。
         scheduleNext(idle ? 100 : 0);
-    } else if (m_pendingRealFrame || m_host->contentDirty()) {
+    } else if (m_pendingRealFrame || m_host->contentDirty()
+#if defined(Q_OS_ANDROID)
+               // GLES 回退后端没有 vulkan 的尾部自续：pending 期间必须继续排队，
+               // 否则上面轮询兜底置的脏永远轮不到 renderFrame 来消费。
+               || m_backend->hudFramePending()
+#endif
+    ) {
         scheduleNext();
     }
 }

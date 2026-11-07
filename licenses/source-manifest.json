@@ -1,467 +1,467 @@
 {
-  "sourceProject": "https://github.com/LBEILC/RhineLabUI",
-  "sourceCommit": "a336573bebdb0d8d7c93b4262a6951bd174b902b",
-  "note": "Copied working-tree sources; source hashes record input before independent path adaptation. No account data or original archives copied.",
-  "files": [
-    {
-      "source": "native/macos/Sources/MusicContainerPanel.swift",
-      "target": "Sources/MusicContainerPanel.swift",
-      "sourceSHA256": "5f81078e0a3dc46ee4db1b03ea676daf630a831569c4ded5d37ab07955de7e8f"
-    },
-    {
-      "source": "native/macos/Sources/MusicAPI.swift",
-      "target": "Sources/MusicAPI.swift",
-      "sourceSHA256": "d146bd180004059bc29fe129dbceccb73019b1412cb9627569be61f9f862c3b2"
-    },
-    {
-      "source": "native/macos/Sources/Runtime.swift",
-      "target": "Sources/Runtime.swift",
-      "sourceSHA256": "3cbd066786414b7a2bed3d5609e6016775559fd9d7e3512de40a10d17ffde9a7"
-    },
-    {
-      "source": "native/macos/Sources/MusicStore.swift",
-      "target": "Sources/MusicStore.swift",
-      "sourceSHA256": "3d517f32aadb3d312138711b1389dfc5c6ec11068ac83a12900a91b3a3205e67"
-    },
-    {
-      "source": "native/macos/Sources/MusicCache.swift",
-      "target": "Sources/MusicCache.swift",
-      "sourceSHA256": "ddb7808a2852d2700002d10bc743b05672abfe2a9d9ad47b10cfc85b942747b7"
-    },
-    {
-      "source": "native/macos/Sources/Panel.swift",
-      "target": "Sources/Panel.swift",
-      "sourceSHA256": "359c12a03b0632448eab966cf9febf4429995ff549354e6a46844efa075ada35"
-    },
-    {
-      "source": "native/macos/Sources/Accessibility.swift",
-      "target": "Sources/Accessibility.swift",
-      "sourceSHA256": "a907bac5bd69f8d81d64a0a6006d5650d3644db305a7e692fe963c121e0fa355"
-    },
-    {
-      "source": "native/macos/Sources/Transitions.swift",
-      "target": "Sources/Transitions.swift",
-      "sourceSHA256": "bc036c1def449931644878e022e5da578760f648fe7df01c1d974992208adfa5"
-    },
-    {
-      "source": "native/macos/Sources/MusicBridge.swift",
-      "target": "Sources/MusicBridge.swift",
-      "sourceSHA256": "64474fb6f80d1d1ad2e3c041b7fe50e1a7c77524ab252aa3f775d6f4e43b140e"
-    },
-    {
-      "source": "native/macos/Sources/Boot.swift",
-      "target": "Sources/Boot.swift",
-      "sourceSHA256": "dd9b260392b74fb282a4bab758960b1d3ef3866436a77c99471a78c99d79e8af"
-    },
-    {
-      "source": "native/macos/Sources/MusicPanel.swift",
-      "target": "Sources/MusicPanel.swift",
-      "sourceSHA256": "b5136cdce2213c431a1ad8409bb34451a95f282d5ddbe22a49d1b082d7835485"
-    },
-    {
-      "source": "native/macos/Sources/MusicRenderer.swift",
-      "target": "Sources/MusicRenderer.swift",
-      "sourceSHA256": "f57effd567c5ddb48c5db9c3706e37af3c20c6c05d5047f849ecd77a8f511d1c"
-    },
-    {
-      "source": "native/macos/Sources/Rolling.swift",
-      "target": "Sources/Rolling.swift",
-      "sourceSHA256": "7aa83a7242be9fb0892d7fe621ea7e39e15ae1e990c3c0a6d0ca4251e8fcce12"
-    },
-    {
-      "source": "native/macos/Sources/Glyphs.swift",
-      "target": "Sources/Glyphs.swift",
-      "sourceSHA256": "e84458c77532ca266129c0b3a5c04b190beb716728100f134acf7b8ec8edc067"
-    },
-    {
-      "source": "native/macos/Sources/main.swift",
-      "target": "Sources/main.swift",
-      "sourceSHA256": "c1423acb564ef229d059b97d351ae5233f91f1293ab1538764c2447b5766d162"
-    },
-    {
-      "source": "native/macos/Sources/Renderer.swift",
-      "target": "Sources/Renderer.swift",
-      "sourceSHA256": "abc622ebc4ff497a7d927d651b6ba9d093bebdc7037c7146a010655963201b14"
-    },
-    {
-      "source": "native/macos/MusicBridge/worker.cjs",
-      "target": "MusicBridge/worker.cjs",
-      "sourceSHA256": "de8bd0a71046b3adb94445414e5708e5170203d292297d2c4afd34143274ab06"
-    },
-    {
-      "source": "native/macos/MusicBridge/package-lock.json",
-      "target": "MusicBridge/package-lock.json",
-      "sourceSHA256": "f21ed0f51693dc67fc302dfbc780f77812a6fde3b90de67b208b3c724598a8e6"
-    },
-    {
-      "source": "native/macos/MusicBridge/package.json",
-      "target": "MusicBridge/package.json",
-      "sourceSHA256": "866461dde6a44afe610ad3bdafe357756738eab04829fa1159a4b2831f6257d9"
-    },
-    {
-      "source": "native/macos/MusicBridge/upstream/LICENSE",
-      "target": "MusicBridge/upstream/LICENSE",
-      "sourceSHA256": "c33378c6fd12e6d040cedd06dc0d1bedfca74fd66bc46cc2cf10cc10e0906be6"
-    },
-    {
-      "source": "native/macos/MusicBridge/upstream/source.json",
-      "target": "MusicBridge/upstream/source.json",
-      "sourceSHA256": "1ca6194ed976e4e5be37f1d277e3eb62c578fb5fdd8cf41789773d825f3c6ed1"
-    },
-    {
-      "source": "native/macos/MusicBridge/upstream/user.js",
-      "target": "MusicBridge/upstream/user.js",
-      "sourceSHA256": "f122789b3a8529b7b72de308e74612b488bcbf5f2202fb3def69e83b3fe0b278"
-    },
-    {
-      "source": "native/macos/MusicBridge/upstream/auth.js",
-      "target": "MusicBridge/upstream/auth.js",
-      "sourceSHA256": "b598012b381a21c2f3d4e71892192c520168f7d117da9bf6bf4756a4715893f9"
-    },
-    {
-      "source": "native/macos/.swift-format",
-      "target": ".swift-format",
-      "sourceSHA256": "30dc2b50f04daa641233ec9a6fdf1e4c07d13206cf452f712dbb4364ef5607cf"
-    },
-    {
-      "source": "native/macos/SWIFT-GUIDE.md",
-      "target": "SWIFT-GUIDE.md",
-      "sourceSHA256": "5c0f1747cf8140ddc31378f9a20deedfebe7121c1dd876f6c73a6c0b164db425"
-    },
-    {
-      "source": "native/macos/THIRD-PARTY.md",
-      "target": "THIRD-PARTY.md",
-      "sourceSHA256": "0760d24685ea76f69cb6344f077f8e944ebbed11c801fa7fdb705551aecaa250"
-    },
-    {
-      "source": "native/macos/PRIVACY.md",
-      "target": "PRIVACY.md",
-      "sourceSHA256": "e361b400e0924c7ad00fa7fba8322fc4a57f0592e00ff725839c931b06f37f7b"
-    },
-    {
-      "source": "native/macos/SHARING.md",
-      "target": "SHARING.md",
-      "sourceSHA256": "0c3b467623a47a9512c27de2c5fe8d6415fe5c14732fbf2f8093e13e8e3f72c5"
-    },
-    {
-      "source": "LICENSE",
-      "target": "LICENSE",
-      "sourceSHA256": "b42f104f4b3687773c76efbf990c1ab7b306a8c59035958c0b886dfbbcf2cd91"
-    },
-    {
-      "source": "src/appearance.ts",
-      "target": "Scene/appearance.ts",
-      "sourceSHA256": "990ed15bed5206bfd8d27fd8be71639b0fb227d9a5a643cf8e78514534b8e053"
-    },
-    {
-      "source": "src/archive-drag.ts",
-      "target": "Scene/archive-drag.ts",
-      "sourceSHA256": "83497cc279508e936b4afd11950d07be2ce552f6a4c56228dd96e523d00c006e"
-    },
-    {
-      "source": "src/archive-draw-coverage.ts",
-      "target": "Scene/archive-draw-coverage.ts",
-      "sourceSHA256": "1af5659ae1e5470adfaea7ccbdb05c3b6eac90fb2a5a812568aeb7bc7e34fcc8"
-    },
-    {
-      "source": "src/archive-loop.ts",
-      "target": "Scene/archive-loop.ts",
-      "sourceSHA256": "90fd248f1651d340b674e103f96a58031581d79ac5ec622b902eeef54cfa2760"
-    },
-    {
-      "source": "src/archive-play-motion.ts",
-      "target": "Scene/archive-play-motion.ts",
-      "sourceSHA256": "f994dca369ebfe1d0470b4905d8d3d2a3cb28c6bfcb12287c2c107405d457144"
-    },
-    {
-      "source": "src/archive-visibility.ts",
-      "target": "Scene/archive-visibility.ts",
-      "sourceSHA256": "4ad9787d6c2d626b009de71425d9a771858c83fcd85dbbf0118e4d31e31c457d"
-    },
-    {
-      "source": "src/asset-url.ts",
-      "target": "Scene/asset-url.ts",
-      "sourceSHA256": "572261e132d6b452cc08e3731d3b42704bb031d94840edd1b6ceff361d851da3"
-    },
-    {
-      "source": "src/boot-logo-tracks.ts",
-      "target": "Scene/boot-logo-tracks.ts",
-      "sourceSHA256": "dd1ea3e2162af2f88818099a5539ed092f1aaccf47d7a3f1b04ef80e2a887405"
-    },
-    {
-      "source": "src/boot-motion.ts",
-      "target": "Scene/boot-motion.ts",
-      "sourceSHA256": "047d768d1952c83abe1a8352a859fb31aac09751f176975c1174885587597bdd"
-    },
-    {
-      "source": "src/boot-orbit-tracks.ts",
-      "target": "Scene/boot-orbit-tracks.ts",
-      "sourceSHA256": "179285daf9f62ebcd4da2a33fb7b5ae6da92c900714cd91c5aafdda58927a953"
-    },
-    {
-      "source": "src/boot-tracks.ts",
-      "target": "Scene/boot-tracks.ts",
-      "sourceSHA256": "6d6fd116d22a27b96899d692656af904a9f18d7406f44ebec0417cf3acd0141e"
-    },
-    {
-      "source": "src/brand.ts",
-      "target": "Scene/brand.ts",
-      "sourceSHA256": "36f88bda7e6d92338245581613585a75c58982669a30a5751bf8f6614143525a"
-    },
-    {
-      "source": "src/data.ts",
-      "target": "Scene/data.ts",
-      "sourceSHA256": "aad8e8b1786a88255943359535a1cc26c8ddb9696bb27b055c32e917154494e3"
-    },
-    {
-      "source": "src/decryption.ts",
-      "target": "Scene/decryption.ts",
-      "sourceSHA256": "e0ad3554df74d8b0cc8ca8e84f2084e842d60824a5b6177daea9b81804684ec1"
-    },
-    {
-      "source": "src/gamepad.ts",
-      "target": "Scene/gamepad.ts",
-      "sourceSHA256": "de748091b2d952f14ebba073ecd9d457ff18484fab10c95bba5100a23cc90933"
-    },
-    {
-      "source": "src/glass-reveal.ts",
-      "target": "Scene/glass-reveal.ts",
-      "sourceSHA256": "26a16d2b4ad9447390f53e0956b8691001e12182827e68a713e9cb40598db513"
-    },
-    {
-      "source": "src/instance-updates.ts",
-      "target": "Scene/instance-updates.ts",
-      "sourceSHA256": "d14f71822b6b1bd584e4cd7fe15c9b860f83de6b27e25bbad19061fba5b4d7b7"
-    },
-    {
-      "source": "src/internal-optics.ts",
-      "target": "Scene/internal-optics.ts",
-      "sourceSHA256": "51001ae8df1a5050fb14214058ff21e7a957b0dc5e97207eb8e87c6b2ffddc21"
-    },
-    {
-      "source": "src/model-viewer.ts",
-      "target": "Scene/model-viewer.ts",
-      "sourceSHA256": "edf5346606d9cd01dcba8e3d054a86386319f89b70c77ca6e13b70d1c096c955"
-    },
-    {
-      "source": "src/motion-preferences.ts",
-      "target": "Scene/motion-preferences.ts",
-      "sourceSHA256": "ab770f511ed73ef1bc003ec1587e80c84024db4ba606b1bab2dc650669ead0ba"
-    },
-    {
-      "source": "src/motion.ts",
-      "target": "Scene/motion.ts",
-      "sourceSHA256": "65e394c0994ee3a111c54def7a72dc7f2837c1eef2ccbc8e8e09e103df36344e"
-    },
-    {
-      "source": "src/render-quality.ts",
-      "target": "Scene/render-quality.ts",
-      "sourceSHA256": "ca254f48e5e80afecd415892dcea877c398b989f9e9132a5ce56cbeb67cfc4f1"
-    },
-    {
-      "source": "src/render-state.ts",
-      "target": "Scene/render-state.ts",
-      "sourceSHA256": "119d72fa67a773ae9a063b11927b99c4692f178068e24ea66c90e343bcc1b57b"
-    },
-    {
-      "source": "src/scene.ts",
-      "target": "Scene/scene.ts",
-      "sourceSHA256": "c1e304b6d19807d8e52e4b9bf3e060383bd2eaef11b49f6de2b8948f7f1657fe"
-    },
-    {
-      "source": "src/theme-material.ts",
-      "target": "Scene/theme-material.ts",
-      "sourceSHA256": "a43f7f65442984ff453c320e592125fab300abb032773a99e120cdfb40e1c9c7"
-    },
-    {
-      "source": "src/theme-motion.ts",
-      "target": "Scene/theme-motion.ts",
-      "sourceSHA256": "62ad52a9b0465be1937c313988fbcf48dff5eb7f9fbacaa297d84794b796faa3"
-    },
-    {
-      "source": "src/three-resources.ts",
-      "target": "Scene/three-resources.ts",
-      "sourceSHA256": "ed72853f717c28647a88e3c4206dbb6f7a9efa11ee8fdf240be0795516af754f"
-    },
-    {
-      "source": "src/viewer-camera.ts",
-      "target": "Scene/viewer-camera.ts",
-      "sourceSHA256": "b64a944133caaa2aabba70def79dd532530d3b9f8ce6ae0738f11d54576f4d08"
-    },
-    {
-      "source": "src/viewport-layout.ts",
-      "target": "Scene/viewport-layout.ts",
-      "sourceSHA256": "b9d8b41f70bce728df3dc44c449f674ede90db6dc2ed5914606a725022194dcd"
-    },
-    {
-      "source": "native/macos/Resources/picking.ts",
-      "target": "Resources/picking.ts",
-      "sourceSHA256": "65fd673c6f548140d0e8087123782c555355e5fd70c60ff025fee180c2d68bc4"
-    },
-    {
-      "source": "native/macos/Resources/platform.ts",
-      "target": "Resources/platform.ts",
-      "sourceSHA256": "9df4b7ec641a97cc675817d84a67c75f96f33a426c12c8da04cdc3c2a100ce50"
-    },
-    {
-      "source": "native/macos/Resources/runtime.ts",
-      "target": "Resources/runtime.ts",
-      "sourceSHA256": "5371f5563d92929c6ab68079ffa6def02339ae01d36e063f42e026fa81a70990"
-    },
-    {
-      "source": "native/macos/Resources/Archive.metal",
-      "target": "Resources/Archive.metal",
-      "sourceSHA256": "eb062753d5b3cd9085bacfc00c77cd751828a514893ce4c4f017e6eccd90fe16"
-    },
-    {
-      "source": "native/macos/Resources/timeline.ts",
-      "target": "Resources/timeline.ts",
-      "sourceSHA256": "132c1264d3546150c0501d3b2d8f3a5b632683d1aab629001bc5c0a57565b961"
-    },
-    {
-      "source": "src/boot-lettering-art.json",
-      "target": "Resources/boot-lettering-art.json",
-      "sourceSHA256": "8748e6b2d5431e0243ef0e2d2b4075bf5282a8e2c720cb1fc9a3c5bd7d5c208c"
-    },
-    {
-      "source": "public/assets/archive-cassette.glb",
-      "target": "Assets/models/archive-cassette.glb",
-      "sourceSHA256": "dda42b9b3b471d11c69820a64084d254a64b27761287ab0e35dd8387ec0a0bed"
-    },
-    {
-      "source": "public/assets/archive-assembly.glb",
-      "target": "Assets/models/archive-assembly.glb",
-      "sourceSHA256": "d411170676f55a327c286e67e462f98b446667811c725318bab85657eaee06ec"
-    },
-    {
-      "source": "release/native-macos/resources/misans-glyphs.json",
-      "target": "Assets/fonts/misans-glyphs.json",
-      "sourceSHA256": "864f702a40bf50b9c779613c2a5c0fb30dfada9a243fb11884550c46edaaa718"
-    },
-    {
-      "source": "release/native-macos/resources/music-fonts.version",
-      "target": "Assets/fonts/music-fonts.version",
-      "sourceSHA256": "3b05e5e722287e2431901d3d060b25eb6eeba8f449eb95eaafdc7837bb748216"
-    },
-    {
-      "source": "release/native-macos/resources/RhineMiSans-light.otf",
-      "target": "Assets/fonts/RhineMiSans-light.otf",
-      "sourceSHA256": "465f4050e0430232d87ab546b86077c744d40a0c605a00e9f4809c7ddf1a5390"
-    },
-    {
-      "source": "release/native-macos/resources/RhineMiSans-regular.otf",
-      "target": "Assets/fonts/RhineMiSans-regular.otf",
-      "sourceSHA256": "0fd648712a13af8ede02892f57db2f375bb5681be4172ac6b7edb300302efee7"
-    },
-    {
-      "source": "release/native-macos/resources/RhineMiSans-demibold.otf",
-      "target": "Assets/fonts/RhineMiSans-demibold.otf",
-      "sourceSHA256": "9e6eac121a57a296af45989212a5f98f29969a6dd68fa620db9d3e696d62ec20"
-    },
-    {
-      "source": "release/native-macos/resources/RhineMiSans-bold.otf",
-      "target": "Assets/fonts/RhineMiSans-bold.otf",
-      "sourceSHA256": "9f473f5fcf17c0163f4ce4fadfc83c9a7c489763ec24945bdc6879e112bb0c1c"
-    },
-    {
-      "source": "native/macos/Assets/room-pmrem.bin",
-      "target": "Assets/room-pmrem.bin",
-      "sourceSHA256": "f3f5422d838b401dd4f003749268ee8d43b75c2381af7a37dae1fc4c9feff72c"
-    },
-    {
-      "source": "public/fonts/MiSans-license.pdf",
-      "target": "licenses/MiSans-license.pdf",
-      "sourceSHA256": "4a93a27cd2bd81b3b5ecfd0a853144a876fa26938a93a68443c67d74172fcb86"
-    },
-    {
-      "source": "node_modules/three/LICENSE",
-      "target": "licenses/Three.js-LICENSE",
-      "sourceSHA256": "8b378ebe60e2fe500158cb0ac71cb5e8b7d92953c2abcc63a0eb90499653b5bc"
-    },
-    {
-      "source": "native/macos/scripts/check-music-upstream.cjs",
-      "target": "scripts/check-music-upstream.cjs",
-      "sourceSHA256": "139f5948a999028257729857fe32843fd4bc31544533edfce76d228b1d5e45dd"
-    },
-    {
-      "source": "native/macos/scripts/package-resources.cjs",
-      "target": "scripts/package-resources.cjs",
-      "sourceSHA256": "b4a7c0eb2bfd2fd3e5af6f3af417b96b9fa590f5857794e599d185fde933bfef"
-    },
-    {
-      "source": "native/macos/scripts/package-icon.py",
-      "target": "scripts/package-icon.py",
-      "sourceSHA256": "e64f14beb63c56ff75e00274b1fe4056693ce405ef998133e03ef62e0cefa41b"
-    },
-    {
-      "source": "native/macos/scripts/make-icon.swift",
-      "target": "scripts/make-icon.swift",
-      "sourceSHA256": "3476e071af6260bc54e66f389ddbeb51733f3ad466686c4fdbb2b6cf6c12239e"
-    },
-    {
-      "source": "native/macos/scripts/audit-package.py",
-      "target": "scripts/audit-package.py",
-      "sourceSHA256": "5336c72027d849c6628368e9ddbd563e05a5f3523769e6d6fe492abb5b77a632"
-    },
-    {
-      "source": "native/macos/scripts/check-packaged-bridge.cjs",
-      "target": "scripts/check-packaged-bridge.cjs",
-      "sourceSHA256": "166e900bc59df06248c70909c5f0a67f08bdb39e60ad4990fdb99f4ff7475d36"
-    },
-    {
-      "source": "native/macos/scripts/export-assets.py",
-      "target": "scripts/export-assets.py",
-      "sourceSHA256": "e6e0e0bb01e41b98481c93c79be64ebf1455592f52e5ac9ea86d24b1937cb600"
-    },
-    {
-      "source": "native/macos/scripts/export-lighting.mjs",
-      "target": "scripts/export-lighting.mjs",
-      "sourceSHA256": "9a8ee0df439a0b8d01249e3d0fe546e518103c1f4a0cc08afa3891335a6a7632"
-    },
-    {
-      "source": "native/macos/scripts/bundle.mjs",
-      "target": "scripts/bundle.mjs",
-      "sourceSHA256": "39815045bd4c4e218b66001c91d5eac352c02e7ec30e426a4a4915483856d8b9"
-    },
-    {
-      "source": "native/macos/scripts/check-runtime.mjs",
-      "target": "scripts/check-runtime.mjs",
-      "sourceSHA256": "70cb0ee0c4aea29d5d0565a09f547fb8bdb8cda31d7e376943fd94c370e677f8"
-    },
-    {
-      "source": "native/macos/scripts/prepare-music-bridge.sh",
-      "target": "scripts/prepare-music-bridge.sh",
-      "sourceSHA256": "663794669eceaf4765ec896405381bcba3887706a7d6e780d56f6da3132f8b67"
-    },
-    {
-      "source": "native/macos/scripts/check-music-cache.swift",
-      "target": "Tests/check-music-cache.swift",
-      "sourceSHA256": "124d5d33aed3f686fab2c61b602056f220e7cad67b374e316ad884702e671226"
-    },
-    {
-      "source": "native/macos/scripts/check-music-state.swift",
-      "target": "Tests/check-music-state.swift",
-      "sourceSHA256": "33417c7b2acece7b82ddae919e4b206bdaf0c5cbbfc6875a136d6a91ca53091e"
-    },
-    {
-      "source": "native/macos/build.sh",
-      "target": "build.sh",
-      "sourceSHA256": "650970095084ded53ecc2b59e09a65103f3006e4ec1222e0dff5fac64d7f3fb7"
-    },
-    {
-      "source": "native/macos/scripts/share.sh",
-      "target": "share.sh",
-      "sourceSHA256": "e219dd861cb53489ce59a69f714ad1be84bb5a8839e4e164102beab2cc4c0603"
-    },
-    {
-      "source": "release/native-macos/resources/MusicBridge/node",
-      "target": "vendor/node-arm64/node",
-      "sourceSHA256": "9caea9deafcb0c7f22fac3206c32f0dcaf8d1f13460b0be3017fa09e7a4be4f6"
-    },
-    {
-      "source": "release/native-macos/resources/MusicBridge/NODE-LICENSE",
-      "target": "vendor/node-arm64/LICENSE",
-      "sourceSHA256": "148eacf7863ef4329224a29398623077200a27194aa075569faf4a0a85566ca5"
-    }
-  ]
+    "sourceProject": "https://github.com/LBEILC/RhineLabUI",
+    "sourceCommit": "a336573bebdb0d8d7c93b4262a6951bd174b902b",
+    "note": "Copied working-tree sources; source hashes record input before independent path adaptation. No account data or original archives copied.",
+    "files": [
+        {
+            "source": "native/macos/Sources/MusicContainerPanel.swift",
+            "target": "Sources/MusicContainerPanel.swift",
+            "sourceSHA256": "5f81078e0a3dc46ee4db1b03ea676daf630a831569c4ded5d37ab07955de7e8f"
+        },
+        {
+            "source": "native/macos/Sources/MusicAPI.swift",
+            "target": "Sources/MusicAPI.swift",
+            "sourceSHA256": "d146bd180004059bc29fe129dbceccb73019b1412cb9627569be61f9f862c3b2"
+        },
+        {
+            "source": "native/macos/Sources/Runtime.swift",
+            "target": "Sources/Runtime.swift",
+            "sourceSHA256": "3cbd066786414b7a2bed3d5609e6016775559fd9d7e3512de40a10d17ffde9a7"
+        },
+        {
+            "source": "native/macos/Sources/MusicStore.swift",
+            "target": "Sources/MusicStore.swift",
+            "sourceSHA256": "3d517f32aadb3d312138711b1389dfc5c6ec11068ac83a12900a91b3a3205e67"
+        },
+        {
+            "source": "native/macos/Sources/MusicCache.swift",
+            "target": "Sources/MusicCache.swift",
+            "sourceSHA256": "ddb7808a2852d2700002d10bc743b05672abfe2a9d9ad47b10cfc85b942747b7"
+        },
+        {
+            "source": "native/macos/Sources/Panel.swift",
+            "target": "Sources/Panel.swift",
+            "sourceSHA256": "359c12a03b0632448eab966cf9febf4429995ff549354e6a46844efa075ada35"
+        },
+        {
+            "source": "native/macos/Sources/Accessibility.swift",
+            "target": "Sources/Accessibility.swift",
+            "sourceSHA256": "a907bac5bd69f8d81d64a0a6006d5650d3644db305a7e692fe963c121e0fa355"
+        },
+        {
+            "source": "native/macos/Sources/Transitions.swift",
+            "target": "Sources/Transitions.swift",
+            "sourceSHA256": "bc036c1def449931644878e022e5da578760f648fe7df01c1d974992208adfa5"
+        },
+        {
+            "source": "native/macos/Sources/MusicBridge.swift",
+            "target": "Sources/MusicBridge.swift",
+            "sourceSHA256": "64474fb6f80d1d1ad2e3c041b7fe50e1a7c77524ab252aa3f775d6f4e43b140e"
+        },
+        {
+            "source": "native/macos/Sources/Boot.swift",
+            "target": "Sources/Boot.swift",
+            "sourceSHA256": "dd9b260392b74fb282a4bab758960b1d3ef3866436a77c99471a78c99d79e8af"
+        },
+        {
+            "source": "native/macos/Sources/MusicPanel.swift",
+            "target": "Sources/MusicPanel.swift",
+            "sourceSHA256": "b5136cdce2213c431a1ad8409bb34451a95f282d5ddbe22a49d1b082d7835485"
+        },
+        {
+            "source": "native/macos/Sources/MusicRenderer.swift",
+            "target": "Sources/MusicRenderer.swift",
+            "sourceSHA256": "f57effd567c5ddb48c5db9c3706e37af3c20c6c05d5047f849ecd77a8f511d1c"
+        },
+        {
+            "source": "native/macos/Sources/Rolling.swift",
+            "target": "Sources/Rolling.swift",
+            "sourceSHA256": "7aa83a7242be9fb0892d7fe621ea7e39e15ae1e990c3c0a6d0ca4251e8fcce12"
+        },
+        {
+            "source": "native/macos/Sources/Glyphs.swift",
+            "target": "Sources/Glyphs.swift",
+            "sourceSHA256": "e84458c77532ca266129c0b3a5c04b190beb716728100f134acf7b8ec8edc067"
+        },
+        {
+            "source": "native/macos/Sources/main.swift",
+            "target": "Sources/main.swift",
+            "sourceSHA256": "c1423acb564ef229d059b97d351ae5233f91f1293ab1538764c2447b5766d162"
+        },
+        {
+            "source": "native/macos/Sources/Renderer.swift",
+            "target": "Sources/Renderer.swift",
+            "sourceSHA256": "abc622ebc4ff497a7d927d651b6ba9d093bebdc7037c7146a010655963201b14"
+        },
+        {
+            "source": "native/macos/MusicBridge/worker.cjs",
+            "target": "MusicBridge/worker.cjs",
+            "sourceSHA256": "de8bd0a71046b3adb94445414e5708e5170203d292297d2c4afd34143274ab06"
+        },
+        {
+            "source": "native/macos/MusicBridge/package-lock.json",
+            "target": "MusicBridge/package-lock.json",
+            "sourceSHA256": "f21ed0f51693dc67fc302dfbc780f77812a6fde3b90de67b208b3c724598a8e6"
+        },
+        {
+            "source": "native/macos/MusicBridge/package.json",
+            "target": "MusicBridge/package.json",
+            "sourceSHA256": "866461dde6a44afe610ad3bdafe357756738eab04829fa1159a4b2831f6257d9"
+        },
+        {
+            "source": "native/macos/MusicBridge/upstream/LICENSE",
+            "target": "MusicBridge/upstream/LICENSE",
+            "sourceSHA256": "c33378c6fd12e6d040cedd06dc0d1bedfca74fd66bc46cc2cf10cc10e0906be6"
+        },
+        {
+            "source": "native/macos/MusicBridge/upstream/source.json",
+            "target": "MusicBridge/upstream/source.json",
+            "sourceSHA256": "1ca6194ed976e4e5be37f1d277e3eb62c578fb5fdd8cf41789773d825f3c6ed1"
+        },
+        {
+            "source": "native/macos/MusicBridge/upstream/user.js",
+            "target": "MusicBridge/upstream/user.js",
+            "sourceSHA256": "f122789b3a8529b7b72de308e74612b488bcbf5f2202fb3def69e83b3fe0b278"
+        },
+        {
+            "source": "native/macos/MusicBridge/upstream/auth.js",
+            "target": "MusicBridge/upstream/auth.js",
+            "sourceSHA256": "b598012b381a21c2f3d4e71892192c520168f7d117da9bf6bf4756a4715893f9"
+        },
+        {
+            "source": "native/macos/.swift-format",
+            "target": ".swift-format",
+            "sourceSHA256": "30dc2b50f04daa641233ec9a6fdf1e4c07d13206cf452f712dbb4364ef5607cf"
+        },
+        {
+            "source": "native/macos/SWIFT-GUIDE.md",
+            "target": "SWIFT-GUIDE.md",
+            "sourceSHA256": "5c0f1747cf8140ddc31378f9a20deedfebe7121c1dd876f6c73a6c0b164db425"
+        },
+        {
+            "source": "native/macos/THIRD-PARTY.md",
+            "target": "THIRD-PARTY.md",
+            "sourceSHA256": "0760d24685ea76f69cb6344f077f8e944ebbed11c801fa7fdb705551aecaa250"
+        },
+        {
+            "source": "native/macos/PRIVACY.md",
+            "target": "PRIVACY.md",
+            "sourceSHA256": "e361b400e0924c7ad00fa7fba8322fc4a57f0592e00ff725839c931b06f37f7b"
+        },
+        {
+            "source": "native/macos/SHARING.md",
+            "target": "SHARING.md",
+            "sourceSHA256": "0c3b467623a47a9512c27de2c5fe8d6415fe5c14732fbf2f8093e13e8e3f72c5"
+        },
+        {
+            "source": "LICENSE",
+            "target": "LICENSE",
+            "sourceSHA256": "b42f104f4b3687773c76efbf990c1ab7b306a8c59035958c0b886dfbbcf2cd91"
+        },
+        {
+            "source": "src/appearance.ts",
+            "target": "Scene/appearance.ts",
+            "sourceSHA256": "990ed15bed5206bfd8d27fd8be71639b0fb227d9a5a643cf8e78514534b8e053"
+        },
+        {
+            "source": "src/archive-drag.ts",
+            "target": "Scene/archive-drag.ts",
+            "sourceSHA256": "83497cc279508e936b4afd11950d07be2ce552f6a4c56228dd96e523d00c006e"
+        },
+        {
+            "source": "src/archive-draw-coverage.ts",
+            "target": "Scene/archive-draw-coverage.ts",
+            "sourceSHA256": "1af5659ae1e5470adfaea7ccbdb05c3b6eac90fb2a5a812568aeb7bc7e34fcc8"
+        },
+        {
+            "source": "src/archive-loop.ts",
+            "target": "Scene/archive-loop.ts",
+            "sourceSHA256": "90fd248f1651d340b674e103f96a58031581d79ac5ec622b902eeef54cfa2760"
+        },
+        {
+            "source": "src/archive-play-motion.ts",
+            "target": "Scene/archive-play-motion.ts",
+            "sourceSHA256": "f994dca369ebfe1d0470b4905d8d3d2a3cb28c6bfcb12287c2c107405d457144"
+        },
+        {
+            "source": "src/archive-visibility.ts",
+            "target": "Scene/archive-visibility.ts",
+            "sourceSHA256": "4ad9787d6c2d626b009de71425d9a771858c83fcd85dbbf0118e4d31e31c457d"
+        },
+        {
+            "source": "src/asset-url.ts",
+            "target": "Scene/asset-url.ts",
+            "sourceSHA256": "572261e132d6b452cc08e3731d3b42704bb031d94840edd1b6ceff361d851da3"
+        },
+        {
+            "source": "src/boot-logo-tracks.ts",
+            "target": "Scene/boot-logo-tracks.ts",
+            "sourceSHA256": "dd1ea3e2162af2f88818099a5539ed092f1aaccf47d7a3f1b04ef80e2a887405"
+        },
+        {
+            "source": "src/boot-motion.ts",
+            "target": "Scene/boot-motion.ts",
+            "sourceSHA256": "047d768d1952c83abe1a8352a859fb31aac09751f176975c1174885587597bdd"
+        },
+        {
+            "source": "src/boot-orbit-tracks.ts",
+            "target": "Scene/boot-orbit-tracks.ts",
+            "sourceSHA256": "179285daf9f62ebcd4da2a33fb7b5ae6da92c900714cd91c5aafdda58927a953"
+        },
+        {
+            "source": "src/boot-tracks.ts",
+            "target": "Scene/boot-tracks.ts",
+            "sourceSHA256": "6d6fd116d22a27b96899d692656af904a9f18d7406f44ebec0417cf3acd0141e"
+        },
+        {
+            "source": "src/brand.ts",
+            "target": "Scene/brand.ts",
+            "sourceSHA256": "36f88bda7e6d92338245581613585a75c58982669a30a5751bf8f6614143525a"
+        },
+        {
+            "source": "src/data.ts",
+            "target": "Scene/data.ts",
+            "sourceSHA256": "aad8e8b1786a88255943359535a1cc26c8ddb9696bb27b055c32e917154494e3"
+        },
+        {
+            "source": "src/decryption.ts",
+            "target": "Scene/decryption.ts",
+            "sourceSHA256": "e0ad3554df74d8b0cc8ca8e84f2084e842d60824a5b6177daea9b81804684ec1"
+        },
+        {
+            "source": "src/gamepad.ts",
+            "target": "Scene/gamepad.ts",
+            "sourceSHA256": "de748091b2d952f14ebba073ecd9d457ff18484fab10c95bba5100a23cc90933"
+        },
+        {
+            "source": "src/glass-reveal.ts",
+            "target": "Scene/glass-reveal.ts",
+            "sourceSHA256": "26a16d2b4ad9447390f53e0956b8691001e12182827e68a713e9cb40598db513"
+        },
+        {
+            "source": "src/instance-updates.ts",
+            "target": "Scene/instance-updates.ts",
+            "sourceSHA256": "d14f71822b6b1bd584e4cd7fe15c9b860f83de6b27e25bbad19061fba5b4d7b7"
+        },
+        {
+            "source": "src/internal-optics.ts",
+            "target": "Scene/internal-optics.ts",
+            "sourceSHA256": "51001ae8df1a5050fb14214058ff21e7a957b0dc5e97207eb8e87c6b2ffddc21"
+        },
+        {
+            "source": "src/model-viewer.ts",
+            "target": "Scene/model-viewer.ts",
+            "sourceSHA256": "edf5346606d9cd01dcba8e3d054a86386319f89b70c77ca6e13b70d1c096c955"
+        },
+        {
+            "source": "src/motion-preferences.ts",
+            "target": "Scene/motion-preferences.ts",
+            "sourceSHA256": "ab770f511ed73ef1bc003ec1587e80c84024db4ba606b1bab2dc650669ead0ba"
+        },
+        {
+            "source": "src/motion.ts",
+            "target": "Scene/motion.ts",
+            "sourceSHA256": "65e394c0994ee3a111c54def7a72dc7f2837c1eef2ccbc8e8e09e103df36344e"
+        },
+        {
+            "source": "src/render-quality.ts",
+            "target": "Scene/render-quality.ts",
+            "sourceSHA256": "ca254f48e5e80afecd415892dcea877c398b989f9e9132a5ce56cbeb67cfc4f1"
+        },
+        {
+            "source": "src/render-state.ts",
+            "target": "Scene/render-state.ts",
+            "sourceSHA256": "119d72fa67a773ae9a063b11927b99c4692f178068e24ea66c90e343bcc1b57b"
+        },
+        {
+            "source": "src/scene.ts",
+            "target": "Scene/scene.ts",
+            "sourceSHA256": "c1e304b6d19807d8e52e4b9bf3e060383bd2eaef11b49f6de2b8948f7f1657fe"
+        },
+        {
+            "source": "src/theme-material.ts",
+            "target": "Scene/theme-material.ts",
+            "sourceSHA256": "a43f7f65442984ff453c320e592125fab300abb032773a99e120cdfb40e1c9c7"
+        },
+        {
+            "source": "src/theme-motion.ts",
+            "target": "Scene/theme-motion.ts",
+            "sourceSHA256": "62ad52a9b0465be1937c313988fbcf48dff5eb7f9fbacaa297d84794b796faa3"
+        },
+        {
+            "source": "src/three-resources.ts",
+            "target": "Scene/three-resources.ts",
+            "sourceSHA256": "ed72853f717c28647a88e3c4206dbb6f7a9efa11ee8fdf240be0795516af754f"
+        },
+        {
+            "source": "src/viewer-camera.ts",
+            "target": "Scene/viewer-camera.ts",
+            "sourceSHA256": "b64a944133caaa2aabba70def79dd532530d3b9f8ce6ae0738f11d54576f4d08"
+        },
+        {
+            "source": "src/viewport-layout.ts",
+            "target": "Scene/viewport-layout.ts",
+            "sourceSHA256": "b9d8b41f70bce728df3dc44c449f674ede90db6dc2ed5914606a725022194dcd"
+        },
+        {
+            "source": "native/macos/Resources/picking.ts",
+            "target": "Resources/picking.ts",
+            "sourceSHA256": "65fd673c6f548140d0e8087123782c555355e5fd70c60ff025fee180c2d68bc4"
+        },
+        {
+            "source": "native/macos/Resources/platform.ts",
+            "target": "Resources/platform.ts",
+            "sourceSHA256": "9df4b7ec641a97cc675817d84a67c75f96f33a426c12c8da04cdc3c2a100ce50"
+        },
+        {
+            "source": "native/macos/Resources/runtime.ts",
+            "target": "Resources/runtime.ts",
+            "sourceSHA256": "5371f5563d92929c6ab68079ffa6def02339ae01d36e063f42e026fa81a70990"
+        },
+        {
+            "source": "native/macos/Resources/Archive.metal",
+            "target": "Resources/Archive.metal",
+            "sourceSHA256": "eb062753d5b3cd9085bacfc00c77cd751828a514893ce4c4f017e6eccd90fe16"
+        },
+        {
+            "source": "native/macos/Resources/timeline.ts",
+            "target": "Resources/timeline.ts",
+            "sourceSHA256": "132c1264d3546150c0501d3b2d8f3a5b632683d1aab629001bc5c0a57565b961"
+        },
+        {
+            "source": "src/boot-lettering-art.json",
+            "target": "Resources/boot-lettering-art.json",
+            "sourceSHA256": "8748e6b2d5431e0243ef0e2d2b4075bf5282a8e2c720cb1fc9a3c5bd7d5c208c"
+        },
+        {
+            "source": "public/assets/archive-cassette.glb",
+            "target": "Assets/models/archive-cassette.glb",
+            "sourceSHA256": "dda42b9b3b471d11c69820a64084d254a64b27761287ab0e35dd8387ec0a0bed"
+        },
+        {
+            "source": "public/assets/archive-assembly.glb",
+            "target": "Assets/models/archive-assembly.glb",
+            "sourceSHA256": "d411170676f55a327c286e67e462f98b446667811c725318bab85657eaee06ec"
+        },
+        {
+            "source": "release/native-macos/resources/misans-glyphs.json",
+            "target": "Assets/fonts/misans-glyphs.json",
+            "sourceSHA256": "864f702a40bf50b9c779613c2a5c0fb30dfada9a243fb11884550c46edaaa718"
+        },
+        {
+            "source": "release/native-macos/resources/music-fonts.version",
+            "target": "Assets/fonts/music-fonts.version",
+            "sourceSHA256": "3b05e5e722287e2431901d3d060b25eb6eeba8f449eb95eaafdc7837bb748216"
+        },
+        {
+            "source": "release/native-macos/resources/RhineMiSans-light.otf",
+            "target": "Assets/fonts/RhineMiSans-light.otf",
+            "sourceSHA256": "465f4050e0430232d87ab546b86077c744d40a0c605a00e9f4809c7ddf1a5390"
+        },
+        {
+            "source": "release/native-macos/resources/RhineMiSans-regular.otf",
+            "target": "Assets/fonts/RhineMiSans-regular.otf",
+            "sourceSHA256": "0fd648712a13af8ede02892f57db2f375bb5681be4172ac6b7edb300302efee7"
+        },
+        {
+            "source": "release/native-macos/resources/RhineMiSans-demibold.otf",
+            "target": "Assets/fonts/RhineMiSans-demibold.otf",
+            "sourceSHA256": "9e6eac121a57a296af45989212a5f98f29969a6dd68fa620db9d3e696d62ec20"
+        },
+        {
+            "source": "release/native-macos/resources/RhineMiSans-bold.otf",
+            "target": "Assets/fonts/RhineMiSans-bold.otf",
+            "sourceSHA256": "9f473f5fcf17c0163f4ce4fadfc83c9a7c489763ec24945bdc6879e112bb0c1c"
+        },
+        {
+            "source": "native/macos/Assets/room-pmrem.bin",
+            "target": "Assets/room-pmrem.bin",
+            "sourceSHA256": "f3f5422d838b401dd4f003749268ee8d43b75c2381af7a37dae1fc4c9feff72c"
+        },
+        {
+            "source": "public/fonts/MiSans-license.pdf",
+            "target": "licenses/MiSans-license.pdf",
+            "sourceSHA256": "4a93a27cd2bd81b3b5ecfd0a853144a876fa26938a93a68443c67d74172fcb86"
+        },
+        {
+            "source": "node_modules/three/LICENSE",
+            "target": "licenses/Three.js-LICENSE",
+            "sourceSHA256": "8b378ebe60e2fe500158cb0ac71cb5e8b7d92953c2abcc63a0eb90499653b5bc"
+        },
+        {
+            "source": "native/macos/scripts/check-music-upstream.cjs",
+            "target": "scripts/check-music-upstream.cjs",
+            "sourceSHA256": "139f5948a999028257729857fe32843fd4bc31544533edfce76d228b1d5e45dd"
+        },
+        {
+            "source": "native/macos/scripts/package-resources.cjs",
+            "target": "scripts/package-resources.cjs",
+            "sourceSHA256": "b4a7c0eb2bfd2fd3e5af6f3af417b96b9fa590f5857794e599d185fde933bfef"
+        },
+        {
+            "source": "native/macos/scripts/package-icon.py",
+            "target": "scripts/package-icon.py",
+            "sourceSHA256": "e64f14beb63c56ff75e00274b1fe4056693ce405ef998133e03ef62e0cefa41b"
+        },
+        {
+            "source": "native/macos/scripts/make-icon.swift",
+            "target": "scripts/make-icon.swift",
+            "sourceSHA256": "3476e071af6260bc54e66f389ddbeb51733f3ad466686c4fdbb2b6cf6c12239e"
+        },
+        {
+            "source": "native/macos/scripts/audit-package.py",
+            "target": "scripts/audit-package.py",
+            "sourceSHA256": "5336c72027d849c6628368e9ddbd563e05a5f3523769e6d6fe492abb5b77a632"
+        },
+        {
+            "source": "native/macos/scripts/check-packaged-bridge.cjs",
+            "target": "scripts/check-packaged-bridge.cjs",
+            "sourceSHA256": "166e900bc59df06248c70909c5f0a67f08bdb39e60ad4990fdb99f4ff7475d36"
+        },
+        {
+            "source": "native/macos/scripts/export-assets.py",
+            "target": "scripts/export-assets.py",
+            "sourceSHA256": "e6e0e0bb01e41b98481c93c79be64ebf1455592f52e5ac9ea86d24b1937cb600"
+        },
+        {
+            "source": "native/macos/scripts/export-lighting.mjs",
+            "target": "scripts/export-lighting.mjs",
+            "sourceSHA256": "9a8ee0df439a0b8d01249e3d0fe546e518103c1f4a0cc08afa3891335a6a7632"
+        },
+        {
+            "source": "native/macos/scripts/bundle.mjs",
+            "target": "scripts/bundle.mjs",
+            "sourceSHA256": "39815045bd4c4e218b66001c91d5eac352c02e7ec30e426a4a4915483856d8b9"
+        },
+        {
+            "source": "native/macos/scripts/check-runtime.mjs",
+            "target": "scripts/check-runtime.mjs",
+            "sourceSHA256": "70cb0ee0c4aea29d5d0565a09f547fb8bdb8cda31d7e376943fd94c370e677f8"
+        },
+        {
+            "source": "native/macos/scripts/prepare-music-bridge.sh",
+            "target": "scripts/prepare-music-bridge.sh",
+            "sourceSHA256": "663794669eceaf4765ec896405381bcba3887706a7d6e780d56f6da3132f8b67"
+        },
+        {
+            "source": "native/macos/scripts/check-music-cache.swift",
+            "target": "Tests/check-music-cache.swift",
+            "sourceSHA256": "124d5d33aed3f686fab2c61b602056f220e7cad67b374e316ad884702e671226"
+        },
+        {
+            "source": "native/macos/scripts/check-music-state.swift",
+            "target": "Tests/check-music-state.swift",
+            "sourceSHA256": "33417c7b2acece7b82ddae919e4b206bdaf0c5cbbfc6875a136d6a91ca53091e"
+        },
+        {
+            "source": "native/macos/build.sh",
+            "target": "build.sh",
+            "sourceSHA256": "650970095084ded53ecc2b59e09a65103f3006e4ec1222e0dff5fac64d7f3fb7"
+        },
+        {
+            "source": "native/macos/scripts/share.sh",
+            "target": "share.sh",
+            "sourceSHA256": "e219dd861cb53489ce59a69f714ad1be84bb5a8839e4e164102beab2cc4c0603"
+        },
+        {
+            "source": "release/native-macos/resources/MusicBridge/node",
+            "target": "vendor/node-arm64/node",
+            "sourceSHA256": "9caea9deafcb0c7f22fac3206c32f0dcaf8d1f13460b0be3017fa09e7a4be4f6"
+        },
+        {
+            "source": "release/native-macos/resources/MusicBridge/NODE-LICENSE",
+            "target": "vendor/node-arm64/LICENSE",
+            "sourceSHA256": "148eacf7863ef4329224a29398623077200a27194aa075569faf4a0a85566ca5"
+        }
+    ]
 }

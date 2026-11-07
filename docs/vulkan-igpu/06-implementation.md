@@ -8,14 +8,14 @@
 
 ## 0. 一页结论
 
-| # | 改动 | 状态 | 本机实测 | 代价 |
-|---|---|---|---|---|
-| WP1 | QRhi 管线缓存落盘（`pipelineCacheData()` / `setPipelineCacheData()` + `EnablePipelineCacheDataSave`） | 已实施 | 缓存文件 138 200 B；二次启动恢复 138 164 B。**启动耗时 3 次对照无显著差异**（无缓存 1.627/1.599/1.729 s，有缓存 1.633/1.667/1.661 s） | 磁盘 138 KB + 恢复 ~0.12 s |
-| WP2 | 启动一次性呈现报告 + 每帧「图像复用间隔」指标 | 已实施 | 启动即打印设备/API/驱动/交换链/格式/模式/扩展；复用间隔 2.4~9.4 ms（与刷新周期无关） | 无 |
-| WP3 | present 转场 barrier `dstStage` `BOTTOM_OF_PIPE`→`NONE` | **不做** | — | — |
-| WP4 | `FIFO_LATEST_READY` 作为 FIFO 的替代 | **不做**（本机驱动不暴露） | `fifo_latest_ready=0` | — |
-| WP5 | 去掉每帧「只等不信号」的空提交 | **不做** | 取图仅 0.03~0.1 ms/帧 | — |
-| WP6 | FFX（FSR3）计算管线补进程级 `VkPipelineCache` | 已实施 | 微基准：冷建 1.88 ms/条 → 命中 ≈0.001 ms/条（40 条：75 ms → 0.05 ms） | 缓存对象常驻（约 78 KB 量级） |
+| #   | 改动                                                                                                  | 状态                       | 本机实测                                                                                                                              | 代价                          |
+| --- | ----------------------------------------------------------------------------------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
+| WP1 | QRhi 管线缓存落盘（`pipelineCacheData()` / `setPipelineCacheData()` + `EnablePipelineCacheDataSave`） | 已实施                     | 缓存文件 138 200 B；二次启动恢复 138 164 B。**启动耗时 3 次对照无显著差异**（无缓存 1.627/1.599/1.729 s，有缓存 1.633/1.667/1.661 s） | 磁盘 138 KB + 恢复 ~0.12 s    |
+| WP2 | 启动一次性呈现报告 + 每帧「图像复用间隔」指标                                                         | 已实施                     | 启动即打印设备/API/驱动/交换链/格式/模式/扩展；复用间隔 2.4~9.4 ms（与刷新周期无关）                                                  | 无                            |
+| WP3 | present 转场 barrier `dstStage` `BOTTOM_OF_PIPE`→`NONE`                                               | **不做**                   | —                                                                                                                                     | —                             |
+| WP4 | `FIFO_LATEST_READY` 作为 FIFO 的替代                                                                  | **不做**（本机驱动不暴露） | `fifo_latest_ready=0`                                                                                                                 | —                             |
+| WP5 | 去掉每帧「只等不信号」的空提交                                                                        | **不做**                   | 取图仅 0.03~0.1 ms/帧                                                                                                                 | —                             |
+| WP6 | FFX（FSR3）计算管线补进程级 `VkPipelineCache`                                                         | 已实施                     | 微基准：冷建 1.88 ms/条 → 命中 ≈0.001 ms/条（40 条：75 ms → 0.05 ms）                                                                 | 缓存对象常驻（约 78 KB 量级） |
 
 一句话：**本机能测到的收益集中在「可观测性」和「FSR3 上下文重建」两处**；QRhi 侧管线缓存因为 Qt Quick 自己已经有 QSG 管线缓存、且本机 ANV 的着色器编译本就不贵，落盘收益落在噪声里——但代价≈0，保留。
 
@@ -26,21 +26,23 @@
 **问题**：`VulkanPresentationBackend` 里 `QRhi::create(QRhi::Vulkan, &params, {})` 的第三个参数（flags）是空的，即 `QRhi::EnablePipelineCacheDataSave` 没开，自建呈现层的管线缓存每次启动都要重新编译。〔实测〕
 
 **改法**：
+
 - 建 QRhi 时带上 `QRhi::EnablePipelineCacheDataSave`；
 - 设备建好后 `setPipelineCacheData(读到的 blob)`，路径是 `AppStorage::cacheDirectory()/shaders/qrhi-pipeline.cache`；
 - 前 240 帧上屏成功后写回一次（不是退出时写）：管线在启动阶段就编译完，被 SIGINT/kill 强杀也不至于丢掉这 138 KB 编译成果；
 - 恢复成功打一行 `QRhi 管线缓存: 已恢复 <n> 字节 ← <path>`。
 
 **实测**：
+
 - 首次运行（8 s 后 `timeout -s INT` 杀）生成 `~/.cache/RhineMusicDatabase/rhine.music.database/shaders/qrhi-pipeline.cache`，138 200 B；
 - 二次运行日志：`QRhi 管线缓存: 已恢复 138164 字节 ← …/qrhi-pipeline.cache`；
 - 启动到「呈现层已启动」的 3 组对照（各交替跑，消除单次噪声）：
 
-| 轮次 | 无缓存 | 有缓存 |
-|---|---|---|
-| 1 | 1.627 s | 1.633 s |
-| 2 | 1.599 s | 1.667 s |
-| 3 | 1.729 s | 1.661 s |
+| 轮次 | 无缓存  | 有缓存  |
+| ---- | ------- | ------- |
+| 1    | 1.627 s | 1.633 s |
+| 2    | 1.599 s | 1.667 s |
+| 3    | 1.729 s | 1.661 s |
 
 **结论**：本机**没有可测收益**，差异在噪声内。原因有两条：① Qt Quick 的场景图着色器本来就走 `QSG_RHI` 自己的管线缓存（`main.cpp` 里的 `setPipelineCacheLoadFile/SaveFile`），大头早被它吃掉了；② Mesa ANV 在这个规模上编译不贵。保留的理由：代价只有 138 KB 磁盘与一次读盘，而 Windows 驱动与部分闭源驱动上着色器编译是数百毫秒级，这类平台收益会显现；同时它把「管线缓存」这条路径打通，后续接 `VK_KHR_pipeline_binary` 时不用再改结构。**不建议**把它当成「启动优化」写进发布说明。
 
@@ -58,11 +60,11 @@ FG present 配置: 设备 Intel(R) Iris(R) Xe Graphics (ADL GT2) · API 1.4.354 
 
 **每帧指标**新增 `imageReuseMs`（同一张交换链图像两次上屏的平均间隔）。它的用途是把三种情况分开：
 
-| 观察 | 含义 |
-|---|---|
-| 复用间隔 ≈ 刷新周期 | 合成器/vsync 在限速 |
+| 观察                         | 含义                         |
+| ---------------------------- | ---------------------------- |
+| 复用间隔 ≈ 刷新周期          | 合成器/vsync 在限速          |
 | 复用间隔远大于刷新周期且稳定 | 渲染或提交跟不上（GPU busy） |
-| 复用间隔忽大忽小 | 队列深度不足或存在阻塞点 |
+| 复用间隔忽大忽小             | 队列深度不足或存在阻塞点     |
 
 本机静止内容、MAILBOX、6 张图：10 s 上屏 2 700 帧（≈270 fps），复用间隔 2.4~9.4 ms，**与「刷新周期」无关**，说明是 GPU/提交在推进而不是被合成器节流——这正是本项目「刷新率未知」前提下需要的判据。〔实测〕
 
@@ -78,6 +80,7 @@ FG present 配置: 设备 Intel(R) Iris(R) Xe Graphics (ADL GT2) · API 1.4.354 
 **关键工程约束**：FidelityFX-SDK 是 gitlink 子模块（pin `c6efa6bf…`），直接改子模块工作树不进父仓库 diff，`git submodule update` 就会丢。而构建**根本不编译子模块里的 `ffx_vk.cpp`**，编译的是配置期生成的改写副本 `output/qt-build/fidelityfx-compat/ffx_vk.cpp`（`build.ninja:230`），生成器是 `cmake/FidelityFX.cmake` 的 `_rhine_ffx_compat_copy()`。〔实测〕——第一次改子模块后 `cmake --build` 返回 `ninja: no work to do`，就是「改的地方没被编译」的实证。
 
 **改法**（沿用仓库既有的 compat 改写模式）：
+
 1. 新增 `cmake/ffx_vk_pipeline_cache.inc`：在 `CreatePipelineVK` 入口注入一段 C++，按 `VkDevice` 复用一个 `static VkPipelineCache`，用函数表里已有的 `vkGetDeviceProcAddr` 现取 `vkCreatePipelineCache`；失败即退回 `VK_NULL_HANDLE`（= 上游原行为）。
 2. 新增 `cmake/ffx_vk_pipeline_cache_create.inc`：把建管线那行换成带缓存、并可选计时的版本。
 3. `cmake/FidelityFX.cmake`：`file(READ)` 两个 inc，`string(REPLACE)` 注入到锚点，并在注入后 `if(NOT contents MATCHES …) message(FATAL_ERROR …)` 兜底；顺带补 `<cstdio>/<cstdlib>/<ctime>`。
@@ -87,7 +90,7 @@ FG present 配置: 设备 Intel(R) Iris(R) Xe Graphics (ADL GT2) · API 1.4.354 
 
 **微基准**（`/tmp/vk_pipe_probe.cpp`，独立程序：同一 `VkShaderModule` + 40 组 specialization constant，模拟 FFX 一轮上下文重建要建的 N 条管线）：
 
-```
+````
 device: Intel(R) Iris(R) Xe Graphics (ADL GT2) (api 1.4.354)
 variant count: 40
 A cold (cache=null): 75.15 ms total, 1.88 ms/pipeline
@@ -147,7 +150,7 @@ QT_FORCE_STDERR_LOGGING=1 RHINE_FG=1 RHINE_GRAPHICS=vulkan RHINE_FG_DIAG=1 \
 
 # FFX 管线缓存 A/B 与探针
 RHINE_FFX_PIPELINE_CACHE=0 RHINE_FFX_CACHE_PROBE=1 …   # 关缓存 + 打印每管线耗时
-```
+````
 
 ---
 

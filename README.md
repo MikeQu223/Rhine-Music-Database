@@ -183,12 +183,12 @@ Windows 下可在 MV 窗口点击「桌面壁纸」，再选择「壁纸显示�
 
 ## 图形后端与功能
 
-| Platform | Vulkan | Direct3D 12 | OpenGL | Metal |
-| -------- | ------ | ----------- | ------ | ----- |
-| Windows  | ✅     | ✅          | ✅     | -     |
-| macOS    | -      | -           | -      | ✅    |
-| iOS / iPadOS | - | - | - | ✅ |
-| Linux    | ✅     | -           | ✅     | -     |
+| Platform     | Vulkan | Direct3D 12 | OpenGL | Metal |
+| ------------ | ------ | ----------- | ------ | ----- |
+| Windows      | ✅     | ✅          | ✅     | -     |
+| macOS        | -      | -           | -      | ✅    |
+| iOS / iPadOS | -      | -           | -      | ✅    |
+| Linux        | ✅     | -           | ✅     | -     |
 
 | API         | FXAA   | SSAA   | MSAA   | TAA     | Upscaling        | Frame Generation |
 | ----------- | ------ | ------ | ------ | ------- | ---------------- | ---------------- |
@@ -328,6 +328,19 @@ Qt RHI 使用私有头文件，升级 Qt 后需重新编译并验证。
 需要 macOS、完整 Xcode、Qt 6.12.0 的 `ios_device` kit，以及已安装的桌面构建依赖。
 执行 `npm run build:ios`，生成 `output/RhineMusicDatabase-ios-unsigned.ipa`；该文件需自行签名后安装。
 `RHINE_IOS_QT` 可以指定其他同版本 kit 路径。构建自动校验 NodeMobile 下载哈希，并检查包内架构、资源和动态依赖。
+
+## Android 构建（arm64-v8a）
+
+需要 Android SDK（`platforms/android-36` 与 build-tools）、NDK r27 以上、JDK 17–25，
+以及 Qt 6.12.0 的 `android_arm64_v8a` kit——Qt 没有公开这个版本的 Android 预编译包，
+可以用仓库内 `third_party/qt` 的固定提交自行构建（`npm run build:qt:android`）。
+执行 `npm run build:android`，生成 `output/RhineMusicDatabase-<构建标识>-android-arm64-v8a.apk`；
+APK 用工作区内的调试密钥签名，可直接侧载。最低系统版本是 Android 9（API 28）：
+Qt 6.12 的 Android 音频后端只用 AAudio，相关接口从 API 28 才开始提供。
+
+`RHINE_ANDROID_QT`、`JAVA_HOME`、`ANDROID_SDK_ROOT`、`ANDROID_NDK_ROOT` 可以覆盖默认路径。
+画面固定横屏（`sensorLandscape`），随包的 Node 运行时以 `libnode.so` 形式编进进程。
+签名默认用工作区内的调试密钥，当工作区根目录存在 `Rhine-Music-Database.key` 和 `Rhine-Music-Database.ket.password.key` 时会使用自定义签名。
 
 ## 本机数据与隐私
 

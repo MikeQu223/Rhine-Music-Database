@@ -55,6 +55,36 @@ class HudUploadTexture final : public QSGTexture {
         painter.end();
         findDirtyPixels(resized);
     }
+    /**
+     * 只重画 region 这一块：省掉整张画布的透明填充与逐像素比对。
+     * Android 用——脏区由命令流比对算出（见 render/HudDirtyRect.h），
+     * 滑列表时只有曲目条带在动，整块 2880x1800 的填充与上传都是白付的。
+     */
+    void paintRegion(QSize pixels, QRect region, const std::function<void(QPainter &)> &draw) {
+        if (canvas.size() != pixels) {
+            canvas = QImage(pixels, QImage::Format_RGBA8888_Premultiplied);
+            canvas.fill(Qt::transparent);
+            dirty = canvas.rect();
+            region = canvas.rect();
+        }
+        const QRect area = region.intersected(canvas.rect());
+        if (area.isEmpty()) {
+            return;
+        }
+        {
+            // CompositionMode_Source + 透明 = 把这块直接写成全零，不与旧内容混。
+            QPainter cleaner(&canvas);
+            cleaner.setCompositionMode(QPainter::CompositionMode_Source);
+            cleaner.fillRect(area, Qt::transparent);
+        }
+        QPainter painter(&canvas);
+        painter.setClipRect(area);
+        painter.setRenderHints(QPainter::Antialiasing | QPainter::TextAntialiasing |
+                               QPainter::SmoothPixmapTransform);
+        draw(painter);
+        painter.end();
+        dirty = dirty.united(area);
+    }
     /** 上传批次持有独立小图，下一次绘制不会触发整张画布的隐式共享分离。 */
     void commitTextureOperations(QRhi *rhi, QRhiResourceUpdateBatch *updates) override {
         if (!texture || texture->pixelSize() != canvas.size()) {

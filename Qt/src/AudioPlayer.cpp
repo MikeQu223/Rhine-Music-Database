@@ -200,6 +200,16 @@ void AudioPlayer::checkPlaybackHealth() {
 
 /** 在线音源使用可续传的字节流 */
 void AudioPlayer::startMediaSource(const QUrl &url) {
+#ifdef Q_OS_ANDROID
+    // Android 后端的 setMedia 会忽略 QIODevice、直接把 URL 交给系统播放器流式播放
+    // （qandroidmediaplayer.cpp 的 setMedia 只取 URL）；若仍启动 HttpAudioStream 预下载，
+    // 只会产生一份用不上的流量。Range 续传与 seek 由系统播放器自己处理。
+    player->setSource(url);
+    if (playbackRequested && recoveryPosition < 0) {
+        player->play();
+    }
+    return;
+#endif
     if (url.isLocalFile()) {
         player->setSource(url);
         if (playbackRequested && recoveryPosition < 0) {

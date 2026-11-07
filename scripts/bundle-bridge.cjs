@@ -10,6 +10,10 @@ const output = path.resolve(process.argv[3] || 'output/bridge-build');
 const bridgeOutput = path.join(output, 'MusicBridge');
 const neteasePackage = path.join(source, 'node_modules/@neteasecloudmusicapienhanced/api');
 const kugouPackage = path.join(source, 'node_modules/kugoumusicapi');
+// 移动端两个平台用的都是 Node 18（nodejs-mobile 18.20.4），语法目标与 API 补丁必须一起切换：
+// 只改 target 会让 esbuild 输出 node18 不认识的语法，只打补丁不降 target 又会让新语法漏进去。
+const mobileRuntime = process.env.RHINE_IOS_BUILD === '1' || process.env.RHINE_ANDROID_BUILD === '1';
+const webApisFile = process.env.RHINE_ANDROID_BUILD === '1' ? 'android-web-apis.cjs' : 'ios-web-apis.cjs';
 const unblockPackage = path.join(source, 'node_modules/@neteasecloudmusicapienhanced/unblockmusic-utils');
 
 /** 写入构建期生成文件，内容完全由已安装的上游包和分派表决定。 */
@@ -123,6 +127,16 @@ function copyRuntimeFiles() {
 }
 
 /** 让打包后的请求模块可以丢弃密钥缓存，效果等同原来的缓存删除。 */
+// 移动端由 mobile-bridge-plugin 接管 request.js（它还要改写 os.tmpdir()），
+// 两边必须写入同一段钩子，这里保持唯一来源。
+const requestResetHook = [
+    '',
+    '// 打包后模块常驻，提供只清空密钥缓存的构建钩子。',
+    'module.exports.__rhineResetXeapiKeyCache = () => {',
+    '    xeapi_public_key = null;',
+    '};',
+    '',
+].join('\n');
 const requestResetPlugin = {
     name: 'netease-request-reset',
     setup(build) {
@@ -133,16 +147,7 @@ const requestResetPlugin = {
             }
             const contents = fs.readFileSync(args.path, 'utf8');
             return {
-                contents:
-                    contents +
-                    [
-                        '',
-                        '// 打包后模块常驻，提供只清空密钥缓存的构建钩子。',
-                        'module.exports.__rhineResetXeapiKeyCache = () => {',
-                        '    xeapi_public_key = null;',
-                        '};',
-                        '',
-                    ].join('\n'),
+                contents: contents + requestResetHook,
                 loader: 'js',
             };
         });
@@ -179,13 +184,16 @@ async function main() {
         bundle: true,
         platform: 'node',
         format: 'cjs',
-        target: process.env.RHINE_IOS_BUILD === '1' ? 'node18' : 'node22',
+        target: mobileRuntime ? 'node18' : 'node22',
         logLevel: 'warning',
         // jsdom 的同步 XHR worker 由下面的第二个产物提供，路径在发布包内仍然有效。
         logOverride: { 'require-resolve-not-external': 'silent' },
+        // 移动插件排在前面：esbuild 对同一文件只执行第一个命中的 onLoad，
+        // 它必须在 request.js 上做 os.tmpdir() 改写（并补上同样的重置钩子）。
+        // 桌面不挂移动插件，插件列表与顺序和以前完全一致。
         plugins: [
+            ...(mobileRuntime ? [require('./mobile-bridge-plugin.cjs')(webApisFile, requestResetHook)] : []),
             requestResetPlugin,
-            ...(process.env.RHINE_IOS_BUILD === '1' ? [require('./ios-bridge-plugin.cjs')] : []),
         ],
     });
     failOnDynamicRequires(result);
@@ -198,7 +206,7 @@ async function main() {
         bundle: true,
         platform: 'node',
         format: 'cjs',
-        target: process.env.RHINE_IOS_BUILD === '1' ? 'node18' : 'node22',
+        target: mobileRuntime ? 'node18' : 'node22',
         logLevel: 'warning',
         logOverride: { 'require-resolve-not-external': 'silent' },
     });

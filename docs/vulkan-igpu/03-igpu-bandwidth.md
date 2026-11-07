@@ -14,6 +14,7 @@
 6. **不设帧率上限，跑满即目标**：功耗与降频只作为硬件风险提示记录，不作为限帧或降负载的理由；pacing 的目标是**最小化排队与阻塞**，而不是对齐某个刷新周期。
 
 > 前提修订：本项目不关心功耗；刷新率未知，按无穷刷新假设（m00232–m00233）。
+
 ---
 
 ## A. 内存模型：UMA、`DEVICE_LOCAL` 与 `HOST_VISIBLE`
@@ -88,12 +89,12 @@
 
 峰值带宽 = 传输速率 × 位宽 / 8。双通道 = 128 bit = 16 B/时钟：
 
-| 内存配置 | 位宽 | 峰值带宽（算术） | 依据 |
-|---|---|---|---|
-| DDR5-5600 双通道 | 128 bit | 5600 × 16 B ≈ **89.6 GB/s** | Intel ARK（Core Ultra 7 155H：2 通道，Up to DDR5 5600）〔厂商文档〕 |
-| LPDDR5X-7467 双通道 | 128 bit | 7467 × 16 B ≈ **119.5 GB/s** | 同上（Up to LPDDR5/X 7467）〔厂商文档〕 |
-| LPDDR5X-7500 双通道 | 128 bit | 7500 × 16 B ≈ **120.0 GB/s** | AMD Ryzen 7 7840U 规格页〔厂商文档〕 |
-| Apple M2 统一内存 | — | **100 GB/s**（厂商标称） | Apple Newsroom〔厂商文档〕 |
+| 内存配置            | 位宽    | 峰值带宽（算术）             | 依据                                                                |
+| ------------------- | ------- | ---------------------------- | ------------------------------------------------------------------- |
+| DDR5-5600 双通道    | 128 bit | 5600 × 16 B ≈ **89.6 GB/s**  | Intel ARK（Core Ultra 7 155H：2 通道，Up to DDR5 5600）〔厂商文档〕 |
+| LPDDR5X-7467 双通道 | 128 bit | 7467 × 16 B ≈ **119.5 GB/s** | 同上（Up to LPDDR5/X 7467）〔厂商文档〕                             |
+| LPDDR5X-7500 双通道 | 128 bit | 7500 × 16 B ≈ **120.0 GB/s** | AMD Ryzen 7 7840U 规格页〔厂商文档〕                                |
+| Apple M2 统一内存   | —       | **100 GB/s**（厂商标称）     | Apple Newsroom〔厂商文档〕                                          |
 
 - **机制**：这是**理论峰值**。真实可持续带宽要扣除刷新、读写转向（read/write turnaround）、行冲突、以及 CPU 侧并发访问。工程上按峰值的 **60%–80%** 做预算比较稳妥〔经验〕，并在目标机上用实测校正。
 - **Vulkan**：把上表当成常数写进代码注释与预算脚本；用 `VK_EXT_memory_budget` 的 `heapUsage` 差分做粗粒度观测（见 B8）。
@@ -103,11 +104,11 @@
 
 ### B2 · 每帧像素预算表（RGBA8）
 
-| 分辨率 | 一帧 RGBA8 | 一次全屏「读 + 写」 | @60 fps | @120 fps |
-|---|---|---|---|---|
-| 1920×1080 | 8.29 MB | 16.6 MB | 0.99 GB/s | 1.99 GB/s |
-| 2560×1440 | 14.75 MB | 29.5 MB | 1.77 GB/s | 3.54 GB/s |
-| 3840×2160 | 33.18 MB | 66.4 MB | 3.98 GB/s | 7.96 GB/s |
+| 分辨率    | 一帧 RGBA8 | 一次全屏「读 + 写」 | @60 fps   | @120 fps  |
+| --------- | ---------- | ------------------- | --------- | --------- |
+| 1920×1080 | 8.29 MB    | 16.6 MB             | 0.99 GB/s | 1.99 GB/s |
+| 2560×1440 | 14.75 MB   | 29.5 MB             | 1.77 GB/s | 3.54 GB/s |
+| 3840×2160 | 33.18 MB   | 66.4 MB             | 3.98 GB/s | 7.96 GB/s |
 
 - **机制**：一次「采样上一 pass 的结果 + 写入本 pass」= 一读一写。**pass 数 × 分辨率 × 实际帧率** 直接决定带宽（帧率按实测计，不假设刷新率）。
 - **换算示例（算术推导）**：4K@120 下 10 个全屏 pass ≈ 79.6 GB/s，已经吃掉 DDR5-5600 双通道（89.6 GB/s）的 **89%**；同样的 10 个 pass 在 1440p@120 只有 35.4 GB/s（约 40%）。RGBA16F 全部翻倍。
@@ -117,16 +118,16 @@
 
 ### B3 · 偷带宽的操作清单（按危害排序）
 
-| 操作 | 典型代价 | 对策 |
-|---|---|---|
-| 不必要的 `LOAD_OP_LOAD` | 每个 attachment 每帧一次全屏读 | 改 `CLEAR` 或 `DONT_CARE`（C2） |
-| 不必要的 `STORE_OP_STORE` | 一次全屏写 | `DONT_CARE` / `NONE`（C3） |
-| MSAA resolve / `vkCmdResolveImage` | 4×color 读 + 1× 写 | 片上 resolve + `MULTISAMPLED_RENDER_TO_SINGLE_SAMPLED`（D7） |
-| `vkCmdCopyImage` / `vkCmdBlitImage` | 一次全屏读 + 一次全屏写 | 直接在目标布局渲染，或用 render pass 的 resolve |
-| 回读（`vkCmdCopyImageToBuffer` + map） | 一次全屏写 + 一次 CPU 映射 + 阻塞 | 真需要才做；降低回读频率、分帧、异步（B6） |
-| `VK_IMAGE_TILING_LINEAR` | 失去压缩 + 失去 fast clear | 一律 `OPTIMAL`（D6） |
-| `RGBA16F` / `RGBA32F` 中间缓冲 | 2× / 4× 带宽 | `A2B10G10R10`、`R11G11B10`、`R8`（B5） |
-| 过度 MSAA（8×/16×） | 8×/16× 存储 | 上限 4×，或直接放弃 MSAA 用后处理 |
+| 操作                                   | 典型代价                          | 对策                                                         |
+| -------------------------------------- | --------------------------------- | ------------------------------------------------------------ |
+| 不必要的 `LOAD_OP_LOAD`                | 每个 attachment 每帧一次全屏读    | 改 `CLEAR` 或 `DONT_CARE`（C2）                              |
+| 不必要的 `STORE_OP_STORE`              | 一次全屏写                        | `DONT_CARE` / `NONE`（C3）                                   |
+| MSAA resolve / `vkCmdResolveImage`     | 4×color 读 + 1× 写                | 片上 resolve + `MULTISAMPLED_RENDER_TO_SINGLE_SAMPLED`（D7） |
+| `vkCmdCopyImage` / `vkCmdBlitImage`    | 一次全屏读 + 一次全屏写           | 直接在目标布局渲染，或用 render pass 的 resolve              |
+| 回读（`vkCmdCopyImageToBuffer` + map） | 一次全屏写 + 一次 CPU 映射 + 阻塞 | 真需要才做；降低回读频率、分帧、异步（B6）                   |
+| `VK_IMAGE_TILING_LINEAR`               | 失去压缩 + 失去 fast clear        | 一律 `OPTIMAL`（D6）                                         |
+| `RGBA16F` / `RGBA32F` 中间缓冲         | 2× / 4× 带宽                      | `A2B10G10R10`、`R11G11B10`、`R8`（B5）                       |
+| 过度 MSAA（8×/16×）                    | 8×/16× 存储                       | 上限 4×，或直接放弃 MSAA 用后处理                            |
 
 ### B4 · `loadOp`/`storeOp`：最便宜的带宽开关
 
@@ -429,33 +430,33 @@
 **该做**：从上往下做，前 5 条通常就能拿回大部分可回收带宽；每完成一条单独测一次帧时间与 1% low。
 **别做**：一次性全上——每条都要能独立回滚，否则无法定位回归。
 
-| # | 动作 | 章节 | 收益 | 成本/风险 |
-|---|---|---|---|---|
-| 1 | 所有不需要旧内容的 attachment 改 `LOAD_OP_CLEAR` / `DONT_CARE` | B4 | 高（省一次全屏读） | 极低 |
-| 2 | 不需要跨 pass 使用的 attachment 改 `STORE_OP_DONT_CARE`/`NONE` | B5 | 高（省一次全屏写） | 极低 |
-| 3 | 删除所有非必要 `vkCmdCopyImage`/`vkCmdBlitImage`/`vkCmdResolveImage` | B3 | 高 | 低（要改渲染路径） |
-| 4 | 中间缓冲从 RGBA16F 降到 `A2B10G10R10`/`R11G11B10` | B7 | 高（2×） | 中（精度风险） |
-| 5 | 图像一律 `TILING_OPTIMAL`，禁用 `LINEAR` | D6 | 高 | 低 |
-| 6 | 每帧 pass 数减半（合并到同一 render pass / 半分辨率后处理） | B2 | 高 | 中 |
-| 7 | 启动时做 UMA 判定，去掉 staging 中转 | A1/A2 | 中高 | 低 |
-| 8 | 限未上屏帧数 ≤1–2 形成背压（**不设 fps 上限**） | E5 | 中高（降低排队抖动） | 低 |
-| 9 | `vkCmdClearAttachments` 全部替换为 `loadOp=CLEAR` | B4 | 中 | 低 |
-| 10 | 4× MSAA 降级或改用 `MULTISAMPLED_RENDER_TO_SINGLE_SAMPLED` | D8/B3 | 中高 | 中 |
-| 11 | 清理 usage/flags：只声明真正需要的位 | D7 | 中 | 低 |
-| 12 | `CLEAR` 的 `clearValue` 统一用 0/1（触发快速清屏） | D2 | 中 | 极低 |
-| 13 | 移除 render target 上不必要的 `SAMPLED` | D2/D7 | 中 | 中（要改依赖） |
-| 14 | 回读延后 1–2 帧 + 用 `HOST_CACHED` 目标 | B6/A3 | 中 | 中 |
-| 15 | 每帧/每几秒查 `heapBudget`，超预算先降分辨率/关帧生成 | A4 | 中 | 低 |
-| 16 | 精度：barrier 收窄 + `BY_REGION` | C6 | 中（tiler 更高） | 中（同步 bug 风险） |
-| 17 | 混合显卡机器上强制在显示适配器渲染 | F6 | 中高（笔记本） | 低 |
-| 18 | 开启 `VK_EXT_subpass_merge_feedback` 确认合并是否发生 | C3 | 低中 | 低 |
-| 19 | 需要「写完立刻读」的地方用 dynamic rendering local read | C3 | 中（tiler） | 高（实现复杂度） |
-| 20 | 试 `VK_EXT_image_compression_control` fixed-rate（仅中间缓冲） | D4 | 中（带宽） | 中（有损） |
-| 21 | 建立 present/队列度量（`present_wait` + timestamp query），不用 fps 判瓶颈 | E2 | 中（可观测性） | 中 |
-| 22 | 帧生成做成可热切换，按队列深度/带宽余量切换 | E6 | 中 | 中 |
-| 23 | 内存池化：大分配 + 自行 sub-allocation | A6 | 低中 | 中 |
-| 24 | `VK_EXT_memory_priority` 给 RT/swapchain 更高优先级 | A4 | 低中 | 低 |
-| 25 | 启动日志打印 10 项能力事实 | F7 | 低（排障价值高） | 极低 |
+| #   | 动作                                                                       | 章节  | 收益                 | 成本/风险           |
+| --- | -------------------------------------------------------------------------- | ----- | -------------------- | ------------------- |
+| 1   | 所有不需要旧内容的 attachment 改 `LOAD_OP_CLEAR` / `DONT_CARE`             | B4    | 高（省一次全屏读）   | 极低                |
+| 2   | 不需要跨 pass 使用的 attachment 改 `STORE_OP_DONT_CARE`/`NONE`             | B5    | 高（省一次全屏写）   | 极低                |
+| 3   | 删除所有非必要 `vkCmdCopyImage`/`vkCmdBlitImage`/`vkCmdResolveImage`       | B3    | 高                   | 低（要改渲染路径）  |
+| 4   | 中间缓冲从 RGBA16F 降到 `A2B10G10R10`/`R11G11B10`                          | B7    | 高（2×）             | 中（精度风险）      |
+| 5   | 图像一律 `TILING_OPTIMAL`，禁用 `LINEAR`                                   | D6    | 高                   | 低                  |
+| 6   | 每帧 pass 数减半（合并到同一 render pass / 半分辨率后处理）                | B2    | 高                   | 中                  |
+| 7   | 启动时做 UMA 判定，去掉 staging 中转                                       | A1/A2 | 中高                 | 低                  |
+| 8   | 限未上屏帧数 ≤1–2 形成背压（**不设 fps 上限**）                            | E5    | 中高（降低排队抖动） | 低                  |
+| 9   | `vkCmdClearAttachments` 全部替换为 `loadOp=CLEAR`                          | B4    | 中                   | 低                  |
+| 10  | 4× MSAA 降级或改用 `MULTISAMPLED_RENDER_TO_SINGLE_SAMPLED`                 | D8/B3 | 中高                 | 中                  |
+| 11  | 清理 usage/flags：只声明真正需要的位                                       | D7    | 中                   | 低                  |
+| 12  | `CLEAR` 的 `clearValue` 统一用 0/1（触发快速清屏）                         | D2    | 中                   | 极低                |
+| 13  | 移除 render target 上不必要的 `SAMPLED`                                    | D2/D7 | 中                   | 中（要改依赖）      |
+| 14  | 回读延后 1–2 帧 + 用 `HOST_CACHED` 目标                                    | B6/A3 | 中                   | 中                  |
+| 15  | 每帧/每几秒查 `heapBudget`，超预算先降分辨率/关帧生成                      | A4    | 中                   | 低                  |
+| 16  | 精度：barrier 收窄 + `BY_REGION`                                           | C6    | 中（tiler 更高）     | 中（同步 bug 风险） |
+| 17  | 混合显卡机器上强制在显示适配器渲染                                         | F6    | 中高（笔记本）       | 低                  |
+| 18  | 开启 `VK_EXT_subpass_merge_feedback` 确认合并是否发生                      | C3    | 低中                 | 低                  |
+| 19  | 需要「写完立刻读」的地方用 dynamic rendering local read                    | C3    | 中（tiler）          | 高（实现复杂度）    |
+| 20  | 试 `VK_EXT_image_compression_control` fixed-rate（仅中间缓冲）             | D4    | 中（带宽）           | 中（有损）          |
+| 21  | 建立 present/队列度量（`present_wait` + timestamp query），不用 fps 判瓶颈 | E2    | 中（可观测性）       | 中                  |
+| 22  | 帧生成做成可热切换，按队列深度/带宽余量切换                                | E6    | 中                   | 中                  |
+| 23  | 内存池化：大分配 + 自行 sub-allocation                                     | A6    | 低中                 | 中                  |
+| 24  | `VK_EXT_memory_priority` 给 RT/swapchain 更高优先级                        | A4    | 低中                 | 低                  |
+| 25  | 启动日志打印 10 项能力事实                                                 | F7    | 低（排障价值高）     | 极低                |
 
 > 前提修订：本项目不关心功耗；刷新率未知，按无穷刷新假设（m00232–m00233）。
 

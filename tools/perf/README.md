@@ -87,22 +87,22 @@ cp /tmp/session.orig.json ~/.local/share/RhineMusicDatabase/rhine.music.database
 
 ## 子目录
 
-| 目录 | 用途 |
-| --- | --- |
+| 目录                 | 用途                                                                                           |
+| -------------------- | ---------------------------------------------------------------------------------------------- |
 | `tools/perf/scroll/` | 滚动路径 A/B（纹理准入延迟、节拍策略）：固定「首次滚 → 原路返回 → 停下」三段动作，按段聚合探针 |
-| `tools/perf/memory/` | 常驻内存观测：`RHINE_MEMORY_PROBE=1` 配连续翻动/单步/纯空闲三种输入，判定逐帧增长与缓存阶梯 |
+| `tools/perf/memory/` | 常驻内存观测：`RHINE_MEMORY_PROBE=1` 配连续翻动/单步/纯空闲三种输入，判定逐帧增长与缓存阶梯    |
 
 两者的结论与数据分别见 `docs/vulkan-igpu/07-render-optimization.md` 与
 `docs/vulkan-igpu/08-memory-growth.md`。
 
 ## 相关探针
 
-| 探针                  | 输出                                                                                                       |
-| --------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `RHINE_PACE_DIAG=1`   | `节拍诊断: tick/s=… sceneUpd/s=… hudUpd/s=… render/s=… 间隔均=…ms step均=…ms`                              |
-| `RHINE_FG_DIAG=1`     | `FG diag: presented … rendered … skipped … gapP50 … \| 3D层 X ms (打磨/起帧/同步/录制/提交等待) UI层 Y ms` |
-| `RHINE_KEY_PROBE=1`   | `按键到达输入层: 键 <code> 接受 <bool>`                                                                    |
-| `RHINE_DRAW_PROBE=1`  | `绘制探针: draw N \| pipeline 绑定 … \| srb 绑定 … \| viewport 设置 …`                                     |
-| `RHINE_LAYER_PROBE=1` | 每 60 帧打印图层重渲次数与置脏来源                                                                         |
-| `RHINE_STEP_PROBE=1`  | 每拍成本分段（app->step / 其余 / 等待）                                                                    |
-| `RHINE_MEMORY_PROBE=1` | 每 20 帧一行：RSS、glibc 在用堆、标签/封面/纹理字节/材质/SRB/存活资源/曲目缓存 |
+| 探针                   | 输出                                                                                                       |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `RHINE_PACE_DIAG=1`    | `节拍诊断: tick/s=… sceneUpd/s=… hudUpd/s=… render/s=… 间隔均=…ms step均=…ms`                              |
+| `RHINE_FG_DIAG=1`      | `FG diag: presented … rendered … skipped … gapP50 … \| 3D层 X ms (打磨/起帧/同步/录制/提交等待) UI层 Y ms` |
+| `RHINE_KEY_PROBE=1`    | `按键到达输入层: 键 <code> 接受 <bool>`                                                                    |
+| `RHINE_DRAW_PROBE=1`   | `绘制探针: draw N \| pipeline 绑定 … \| srb 绑定 … \| viewport 设置 …`                                     |
+| `RHINE_LAYER_PROBE=1`  | 每 60 帧打印图层重渲次数与置脏来源                                                                         |
+| `RHINE_STEP_PROBE=1`   | 每拍成本分段（app->step / 其余 / 等待）                                                                    |
+| `RHINE_MEMORY_PROBE=1` | 每 20 帧一行：RSS、glibc 在用堆、标签/封面/纹理字节/材质/SRB/存活资源/曲目缓存                             |

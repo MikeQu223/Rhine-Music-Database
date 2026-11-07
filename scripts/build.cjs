@@ -100,6 +100,7 @@ function prepareResources() {
         'ios-runtime.cjs',
         'ios-web-apis.cjs',
         'ios-system-trust.cjs',
+        'android-web-apis.cjs',
         'qq.cjs',
         'kugou.cjs',
         'lyrics-format.cjs',
@@ -127,6 +128,11 @@ function prepareResources() {
     if (installedHash !== dependencyHash) {
         npmCi(bridge);
         fs.writeFileSync(stamp, dependencyHash);
+    }
+    // Android 随包的是 libnode.so（进程内运行时），没有独立 node 可执行文件，
+    // 也就不需要满足"必须是官方独立分发包"的约束；桥接 bundle 由 build-android.cjs 自己打。
+    if (process.env.RHINE_ANDROID_BUILD === '1') {
+        return;
     }
     const binary =
         process.env.RHINE_NODE_BINARY ||

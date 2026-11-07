@@ -20,6 +20,13 @@ project(
 option(RHINE_ENABLE_D3D12_BACKEND "Build the Windows D3D12 backend and FidelityFX DX12" ${WIN32})
 add_compile_definitions(RHINE_ENABLE_D3D12_BACKEND=$<BOOL:${RHINE_ENABLE_D3D12_BACKEND}>)
 set(RHINE_APPLICATION_ID "rhine.music.database")
+# 移动端（iOS / Android）共用一个判定：两者都没有独立的播放服务进程、都不构建桌面回归。
+# 平台专有的差异（框架、包格式、入口）仍在下面对应分支里单独处理。
+if(ANDROID OR IOS)
+    set(RHINE_MOBILE_PLATFORM TRUE)
+else()
+    set(RHINE_MOBILE_PLATFORM FALSE)
+endif()
 find_package(Git QUIET)
 set(RHINE_COMMIT_SHA "unknown")
 set(RHINE_COMMIT_TITLE "未知提交")
@@ -93,6 +100,15 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(taglib)
 # AMD FidelityFX（FSR3 组件 + Vulkan 后端，DX12 仅在 Windows 下接入）。 SDK 目标由 RhineMusicDatabase 链接，见文件末尾的
 # FidelityFX::SDK 段。
+if(ANDROID)
+    # FSR3 与帧生成都依赖 Vulkan/D3D12 呈现路径，而 Android 侧只烘了 GLSL ES 300
+    # （见 qt_add_shaders），没有任何 SPIR-V 产物可以喂给 Vulkan。这里默认关闭，
+    # 免得把 glslang/SPIRV-Tools 与整棵 FidelityFX 源码编进 APK 却永远走不到。
+    # 显式 -DRHINE_ENABLE_FIDELITYFX=ON 仍然可以覆盖（给将来的 Vulkan 端口留门）。
+    set(RHINE_ENABLE_FIDELITYFX
+        OFF
+        CACHE BOOL "Build the vendored FidelityFX SDK (FSR3 host components and backends)")
+endif()
 include(cmake/FidelityFX.cmake)
 # 自维护源码和锁定的二维码库构成独立应用目标。
 set(RHINE_APP_SOURCES
@@ -279,7 +295,7 @@ list(FILTER RHINE_CORE_SOURCES EXCLUDE REGEX
 list(REMOVE_ITEM RHINE_APP_SOURCES ${RHINE_CORE_SOURCES})
 # 桌面后台只链接播放源码；场景、字形、资料库与 HUD 不进入服务二进制。
 set(RHINE_SYSTEM_CORE RhineCore)
-if(NOT IOS)
+if(NOT RHINE_MOBILE_PLATFORM)
     set(RHINE_PLAYBACK_SOURCES ${RHINE_CORE_SOURCES})
     list(
         FILTER
@@ -320,7 +336,7 @@ target_link_libraries(
     RhineCore
     PUBLIC RhineAudioOutput Qt6::Core Qt6::Gui Qt6::Network Qt6::Concurrent Qt6::Multimedia
     PRIVATE Qt6::MultimediaPrivate tag)
-if(NOT IOS)
+if(NOT RHINE_MOBILE_PLATFORM)
     target_link_libraries(RhineCore PUBLIC RhinePlaybackCore)
 endif()
 add_subdirectory(Qt)
@@ -440,6 +456,25 @@ endif()
 if(APPLE)
     list(APPEND RHINE_OPTICAL_SHADER_DEFINES RHINE_METAL_MOTION=1)
 endif()
+# Android 合成层轻量化：最终合成的 3x3 二项柔化在采样半径 k==1 时折叠成四次半纹素
+# 双线性采样（9 -> 4 次纹理读取）。DEFINES 是 CMake 配置期参数，Android 与桌面/iOS 是
+# 各自独立的构建树，因此这个宏只会进入 Android 的 qsb 烘焙，其它平台的着色器产物
+# 与改动前逐字节相同，无需另起 /opticalMobile 变体、也不用在运行期切换 qrc 路径。
+# 关掉只需 -DRHINE_ANDROID_QUAD_FOLD=OFF 重新配置（不改源码、不动其它平台）。
+if(ANDROID)
+    option(RHINE_ANDROID_QUAD_FOLD "Fold the 3x3 final blur into four bilinear taps on Android" ON)
+    if(RHINE_ANDROID_QUAD_FOLD)
+        list(APPEND RHINE_OPTICAL_SHADER_DEFINES RHINE_OPTICAL_QUAD_FOLD=1)
+    endif()
+    # 法线响应在 Android 上烘焙成 8 位 UNORM（RHINE_BAKE_NORMAL_RGBA8=1），逐像素带宽
+    # 减半——夜间要采两次，等于每片元省 8 B。着色器要按同样比例乘回，所以这个宏既是
+    # shader define 也是 C++ define（见 Qt/Android.cmake），二者必须与烘焙开关一致。
+    # 关掉要同时改三处：烘焙环境变量、这里的 option、Qt/Android.cmake。
+    option(RHINE_ANDROID_NORMAL_RGBA8 "Bake the normal response atlas as RGBA8 on Android" ON)
+    if(RHINE_ANDROID_NORMAL_RGBA8)
+        list(APPEND RHINE_OPTICAL_SHADER_DEFINES RHINE_NORMAL_RGBA8=1)
+    endif()
+endif()
 # E05a：紧凑实例（80 字节）的第二套着色器烘焙放在独立子目录： qt_add_shaders 把 .qsb 写到当前二进制目录的 .qsb/ 下，同一目录对同一份源码烘两次会撞规则。
 add_subdirectory(Qt/shaders/compact)
 if(APPLE)
@@ -495,7 +530,7 @@ target_link_libraries(
             Qt6::Concurrent
             Qt6::Multimedia)
 # 平台分支只处理原生能力、部署身份及链接依赖。
-if(NOT IOS)
+if(NOT RHINE_MOBILE_PLATFORM)
     target_sources(RhineMusicDatabase PRIVATE Qt/tests/PlaybackServiceChecks.cpp
                                               Qt/tests/WindowTransitionChecks.cpp)
     if(WIN32 OR (APPLE AND NOT IOS))
@@ -581,6 +616,13 @@ if(IOS)
                                             "-framework MediaPlayer")
     target_compile_options(RhineCore PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
     include(Qt/IOS.cmake)
+elseif(ANDROID)
+    # 平台源码、Node 运行时、包元数据与内嵌资源都在 Qt/Android.cmake 里装配。
+    # 放在 APPLE/WIN32/UNIX 之前：Android 同时满足 UNIX，走错分支会把 PlatformLinux.cpp
+    # 编进来（它按桌面目录查找 orpheus:// 处理器）。
+    include(Qt/Android.cmake)
+    # 段错误诊断链的 logd 通道：liblog 的写路径无内存分配，崩溃处理器内可用。
+    target_link_libraries(RhineMusicDatabase PRIVATE log)
 elseif(APPLE)
     target_sources(${RHINE_SYSTEM_CORE} PRIVATE Qt/src/Platform.mm)
     target_link_libraries(${RHINE_SYSTEM_CORE} PRIVATE "-framework Security" "-framework AppKit"
@@ -662,8 +704,8 @@ if(APPLE
         VERBATIM)
 endif()
 qt_finalize_executable(RhineMusicDatabase)
-# 桌面回归包含子进程和桌面路径，iOS 只构建正式应用。
-if(IOS)
+# 桌面回归包含子进程和桌面路径，移动端只构建正式应用。
+if(RHINE_MOBILE_PLATFORM)
     return()
 endif()
 enable_testing()

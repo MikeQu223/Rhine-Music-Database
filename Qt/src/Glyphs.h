@@ -55,6 +55,17 @@ class Glyphs : public QObject {
     QList<int> applicationFonts;
     QHash<QString, QString> layoutFamilies;
     QCache<QString, Glyph> shapedText{32 * 1024};
+#if defined(Q_OS_ANDROID)
+    /// 整段文本 / 整串字形合并成一条路径后的缓存（em 单位，与字号无关）。
+    /// 见 docs/ANDROID.md「滑动列表掉帧」：Android 上 QPainter 是软件栅格，逐字形
+    /// fillPath 每次都要重做「变换 + 抗锯齿扫描线」，实测 HUD 重绘占单帧 sync 的绝大部分。
+    QPainterPath textRunPath(const QString &value, const QString &weight, double trackingEm);
+    QPainterPath artRunPath(const QString &key, int count, double trackingEm);
+    bool drawCachedMask(QPainter &ctx, const QJsonArray &command);
+    static bool runCacheEnabled();
+    QCache<QString, QPainterPath> runPaths{512 * 1024};
+    QCache<QString, QImage> maskGradients{8 * 1024};
+#endif
     QCache<QString, bool> layoutRequired{1024};
     /// 命令分发的唯一实现；cacheText 只在 Apple 栅格缓存可用时生效，其他平台恒为 false。
     void renderCommands(QPainter &ctx, const QJsonArray &commands, std::function<QImage(QString)> image,
