@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { test } = require('node:test');
-const plugin = require('./ios-bridge-plugin.cjs');
+const plugin = require('./mobile-bridge-plugin.cjs')();
 
 test('iOS MV 标题正则不依赖 ICU，并正确处理常见分隔符', () => {
     const source = path.resolve('MusicBridge/client/netease.mjs');
@@ -12,6 +12,7 @@ test('iOS MV 标题正则不依赖 ICU，并正确处理常见分隔符', () => 
                 transformed = load({ path: source }).contents;
             }
         },
+        onEnd() {},
     });
     assert.equal(typeof transformed, 'string');
     assert.equal(transformed.includes('\\p{'), false);
@@ -31,6 +32,7 @@ test('iOS 插件在 Windows 和 POSIX 路径下都能匹配目标模块', () => 
         onLoad(options) {
             filters.push(options.filter);
         },
+        onEnd() {},
     });
     for (const relativePath of [
         'MusicBridge/client/netease.mjs',

@@ -8,6 +8,25 @@ const path = require('node:path');
 const tmpdirCall = /require\((['"])(?:node:)?os\1\)\.tmpdir\(\)/g;
 const tmpdirReplacement = '(globalThis.__rhineTmpdir || require("os").tmpdir())';
 
+/** 在构建机展开 Unicode 类别，避免无 ICU 的 NodeMobile 在解析 Worker 时退出。 */
+function titleSeparatorPattern() {
+    const ranges = ['\\s'];
+    let start = -1;
+    for (let codePoint = 0; codePoint <= 0x110000; ++codePoint) {
+        const matches = codePoint < 0x110000 && /[\p{P}\p{S}]/u.test(String.fromCodePoint(codePoint));
+        if (matches && start < 0) {
+            start = codePoint;
+        }
+        if (!matches && start >= 0) {
+            const first = `\\u{${start.toString(16)}}`;
+            const last = codePoint - 1;
+            ranges.push(start === last ? first : `${first}-\\u{${last.toString(16)}}`);
+            start = -1;
+        }
+    }
+    return `/[${ranges.join('')}]/gu`;
+}
+
 // Node 18 的移动端运行时（iOS 的 NodeMobile.framework、Android 的 libnode.so）缺两样桌面
 // Node 22 自带的东西：
 //   1. 全局 fetch —— 由 webApis 文件补上。两个平台的补丁不同：iOS 把 TLS 校验交回系统，
@@ -21,7 +40,18 @@ const tmpdirReplacement = '(globalThis.__rhineTmpdir || require("os").tmpdir())'
 module.exports = (webApis = 'ios-web-apis.cjs', requestResetHook = '') => ({
     name: 'mobile-web-apis',
     setup(build) {
-        build.onLoad({ filter: /\/MusicBridge\/worker\.cjs$/ }, (args) => {
+        build.onLoad({ filter: /[\\/]MusicBridge[\\/]client[\\/]netease\.mjs$/ }, (args) => {
+            const contents = fs.readFileSync(args.path, 'utf8');
+            const original = '/[\\s\\p{P}\\p{S}]/gu';
+            if (contents.split(original).length !== 2) {
+                throw new Error('MV title separators changed; review iOS Unicode compatibility');
+            }
+            return {
+                contents: contents.replace(original, () => titleSeparatorPattern()),
+                loader: 'js',
+            };
+        });
+        build.onLoad({ filter: /[\\/]MusicBridge[\\/]worker\.cjs$/ }, (args) => {
             const contents = fs.readFileSync(args.path, 'utf8').replace(tmpdirCall, tmpdirReplacement);
             return {
                 contents:
@@ -48,7 +78,7 @@ module.exports = (webApis = 'ios-web-apis.cjs', requestResetHook = '') => ({
                 };
             },
         );
-        build.onLoad({ filter: /@neteasecloudmusicapienhanced\/api\/util\/crypto\.js$/ }, (args) => {
+        build.onLoad({ filter: /@neteasecloudmusicapienhanced[\\/]api[\\/]util[\\/]crypto\.js$/ }, (args) => {
             const contents = fs.readFileSync(args.path, 'utf8');
             const decoder =
                 /const decoder = new TextDecoder\('utf-8', \{ fatal: true \}\)\n\nconst isUtf8 = \(buf\) => \{\n  try \{\n    decoder.decode\(buf\)\n    return true\n  \} catch \{\n    return false\n  \}\n\}/g;
