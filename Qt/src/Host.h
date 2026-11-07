@@ -26,7 +26,7 @@ class Host : public QObject {
     ~Host() override;
     void requestJson(QString route, QJsonObject params, JsonReply callback);
     void schedule(int ms, std::function<void()> callback);
-    void loadCover(QString url, TextReply callback, int maximumDimension = 1024);
+    void loadCover(QString url, TextReply callback, int maximumDimension = 1024, bool allowPlaybackOnly = false);
     void playOfficial(QString id, TextReply callback);
     Q_INVOKABLE void invalidate() {
         emit invalidated();

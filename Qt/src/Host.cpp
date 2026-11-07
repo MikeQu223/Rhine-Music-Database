@@ -681,9 +681,9 @@ QString Host::fromLink(QString input) const {
     }
     return kind + ":" + id;
 }
-void Host::loadCover(QString input, TextReply callback, int maximumDimension) {
-    // 后台仅保留封面地址；像素解码与纹理由可退出的 GUI 独占。
-    if (playbackOnly) {
+void Host::loadCover(QString input, TextReply callback, int maximumDimension, bool allowPlaybackOnly) {
+    // 后台默认只保留封面地址；系统媒体控件需要封面文件时显式放行解码。
+    if (playbackOnly && !allowPlaybackOnly) {
         schedule(0, [input, callback] { callback(input); });
         return;
     }
@@ -1000,7 +1000,7 @@ void Host::refreshMediaCover() {
                 lastMediaUpdate = 0;
             }
         },
-        512);
+        512, true);
 }
 QVariantMap Host::mediaState() const {
     if (remote) {

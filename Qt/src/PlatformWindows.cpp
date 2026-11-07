@@ -107,7 +107,9 @@ void platformMediaCommands(std::function<void(QString)> callback) {
         transportWindow = nullptr;
     }
 }
-void platformMediaInfo(QString title, QString artist, QString album, QVariantMap state) {
+void platformMediaInfo(QString title, QString artist, QString album, QVariantMap state,
+                       const QString &coverPath) {
+    Q_UNUSED(coverPath)
     // SMTC 要求本进程的顶层 HWND；后台使用不显示的原生窗口，不创建 Qt 场景或交换链。
     try {
         if (!transport) {

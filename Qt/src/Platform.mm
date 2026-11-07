@@ -5,6 +5,7 @@
 #include <QCoreApplication>
 #include <QMetaObject>
 #import <Security/Security.h>
+#include <QFileInfo>
 
 static NSDictionary *credentialQuery() {
     return @{
@@ -167,9 +168,37 @@ void platformMediaCommands(std::function<void(QString)> callback) {
         }
     }
 }
+// 系统媒体控件封面
+static MPMediaItemArtwork *mediaArtwork(const QString &coverPath) {
+    static QString cachedPath;
+    static QDateTime cachedModified;
+    static MPMediaItemArtwork *cachedArtwork = nil;
+    if (coverPath.isEmpty()) {
+        cachedPath.clear();
+        cachedArtwork = nil;
+        return nil;
+    }
+    const QFileInfo info(coverPath);
+    if (!info.exists()) {
+        return nil;
+    }
+    if (coverPath == cachedPath && info.lastModified() == cachedModified) {
+        return cachedArtwork;
+    }
+    NSImage *image = [[NSImage alloc] initWithContentsOfFile:coverPath.toNSString()];
+    if (!image) {
+        return nil;
+    }
+    cachedArtwork = [[MPMediaItemArtwork alloc] initWithBoundsSize:image.size
+                                                    requestHandler:^NSImage *(CGSize size) {
+                                                        return image;
+                                                    }];
+    cachedPath = coverPath;
+    cachedModified = info.lastModified();
+    return cachedArtwork;
+}
 void platformMediaInfo(QString title, QString artist, QString album, QVariantMap state,
                        const QString &coverPath) {
-    Q_UNUSED(coverPath)
     if (!isBackgroundService) {
         platformInterfaceMediaInfo(!title.isEmpty());
     }
@@ -180,14 +209,18 @@ void platformMediaInfo(QString title, QString artist, QString album, QVariantMap
         return;
     }
     const bool playing = state.value("playing").toBool();
-    center.nowPlayingInfo = @{
+    NSMutableDictionary *info = [@{
         MPMediaItemPropertyTitle : title.toNSString(),
         MPMediaItemPropertyArtist : artist.toNSString(),
         MPMediaItemPropertyAlbumTitle : album.toNSString(),
         MPMediaItemPropertyPlaybackDuration : @(state.value("duration").toDouble() / 1000.),
         MPNowPlayingInfoPropertyElapsedPlaybackTime : @(state.value("position").toDouble() / 1000.),
         MPNowPlayingInfoPropertyPlaybackRate : @(playing ? 1. : 0.)
-    };
+    } mutableCopy];
+    if (MPMediaItemArtwork *artwork = mediaArtwork(coverPath)) {
+        info[MPMediaItemPropertyArtwork] = artwork;
+    }
+    center.nowPlayingInfo = info;
     center.playbackState = playing ? MPNowPlayingPlaybackStatePlaying : MPNowPlayingPlaybackStatePaused;
 }
 

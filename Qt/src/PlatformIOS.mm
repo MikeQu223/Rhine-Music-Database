@@ -1,5 +1,6 @@
 #include "AppIdentity.h"
 #include "Host.h"
+#include <QFileInfo>
 #import <AVFAudio/AVFAudio.h>
 #import <MediaPlayer/MediaPlayer.h>
 #import <Security/Security.h>
@@ -15,6 +16,36 @@ NSDictionary *credentialQuery() {
 }
 NSMutableArray *mediaTargets;
 NSMutableArray *audioObservers;
+
+// 系统媒体控件封面
+MPMediaItemArtwork *mediaArtwork(const QString &coverPath) {
+    static QString cachedPath;
+    static QDateTime cachedModified;
+    static MPMediaItemArtwork *cachedArtwork = nil;
+    if (coverPath.isEmpty()) {
+        cachedPath.clear();
+        cachedArtwork = nil;
+        return nil;
+    }
+    const QFileInfo info(coverPath);
+    if (!info.exists()) {
+        return nil;
+    }
+    if (coverPath == cachedPath && info.lastModified() == cachedModified) {
+        return cachedArtwork;
+    }
+    UIImage *image = [UIImage imageWithContentsOfFile:coverPath.toNSString()];
+    if (!image) {
+        return nil;
+    }
+    cachedArtwork = [[MPMediaItemArtwork alloc] initWithBoundsSize:image.size
+                                                    requestHandler:^UIImage *(CGSize size) {
+                                                        return image;
+                                                    }];
+    cachedPath = coverPath;
+    cachedModified = info.lastModified();
+    return cachedArtwork;
+}
 }
 
 QByteArray platformCredential() {
@@ -112,7 +143,8 @@ void platformMediaCommands(std::function<void(QString)> callback) {
                 }];
     [audioObservers addObject:route];
 }
-void platformMediaInfo(QString title, QString artist, QString album, QVariantMap state) {
+void platformMediaInfo(QString title, QString artist, QString album, QVariantMap state,
+                       const QString &coverPath) {
     auto center = [MPNowPlayingInfoCenter defaultCenter];
     if (title.isEmpty() || state.value("duration").toLongLong() <= 0) {
         center.nowPlayingInfo = nil;
@@ -126,12 +158,16 @@ void platformMediaInfo(QString title, QString artist, QString album, QVariantMap
             qWarning("Unable to activate iOS audio session: %ld", long(error.code));
         }
     }
-    center.nowPlayingInfo = @{
+    NSMutableDictionary *info = [@{
         MPMediaItemPropertyTitle : title.toNSString(),
         MPMediaItemPropertyArtist : artist.toNSString(),
         MPMediaItemPropertyAlbumTitle : album.toNSString(),
         MPMediaItemPropertyPlaybackDuration : @(state.value("duration").toDouble() / 1000.),
         MPNowPlayingInfoPropertyElapsedPlaybackTime : @(state.value("position").toDouble() / 1000.),
         MPNowPlayingInfoPropertyPlaybackRate : @(playing ? 1. : 0.)
-    };
+    } mutableCopy];
+    if (MPMediaItemArtwork *artwork = mediaArtwork(coverPath)) {
+        info[MPMediaItemPropertyArtwork] = artwork;
+    }
+    center.nowPlayingInfo = info;
 }
