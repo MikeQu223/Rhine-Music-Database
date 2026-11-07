@@ -119,6 +119,8 @@ void NativeHud::detail(double width, double opacity) {
         card.quality = quality == "standard" ? "标准" : "高品质";
     }
     card.primaryActions = {{"▶ 播放歌曲", "music:play"}, {}, {}};
+    const auto playlist = openedPlaylistContext();
+    const bool hasPlaylistFeedback = m_playlistFeedbackKey == music.uid + ":" + PlaybackQueue::identity(item);
     if (music.canMutate("/like") && (!music.isSiren() || item["kind"] == "song")) {
         bool liked = (music.likedIDs && MusicData::indexOf(*music.likedIDs, item["id"]) >= 0) ||
                      MusicData::indexOfId(music.lists[1], item["id"].toString()) >= 0;
@@ -132,7 +134,11 @@ void NativeHud::detail(double width, double opacity) {
             }
         }
         card.primaryActions[1] = {label, "music:like"};
-        card.primaryActions[2] = {"＋ 加入歌单", "music:add-to-playlist"};
+        QString addLabel = playlist && playlist->contained ? "＋ 加入其他歌单" : "＋ 加入歌单";
+        if (hasPlaylistFeedback) {
+            addLabel = m_playlistFeedback.value("add", addLabel);
+        }
+        card.primaryActions[2] = {addLabel, "music:add-to-playlist"};
     }
     card.secondaryActions = {{"＋ 加入队列", "music:enqueue"}, {"▷ 下一首播放", "music:play-next"}, {}};
     if (m_songQueueFeedbackKey == music.uid + ":" + PlaybackQueue::identity(item)) {
@@ -217,8 +223,13 @@ void NativeHud::detail(double width, double opacity) {
     if (music.provider == "qq") {
         button("试听片段", x + buttonWidth + gap, 910, buttonWidth, 44, "music:preview", 13);
     }
-    if (music.directory && music.canEditPlaylist(music.directory->item)) {
-        button("从歌单移除", x + (buttonWidth + gap) * 2, 910, buttonWidth, 44, "music:remove-track", 13);
+    if (playlist && playlist->contained) {
+        auto label = QStringLiteral("从歌单移除");
+        if (hasPlaylistFeedback) {
+            label = m_playlistFeedback.value("remove", label);
+        }
+        button(fit(label, 13, buttonWidth - 12), x + (buttonWidth + gap) * 2, 910, buttonWidth, 44,
+               "music:remove-track", 13);
     }
     restore();
 }

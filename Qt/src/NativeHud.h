@@ -218,6 +218,16 @@ class NativeHud : public QObject {
     QHash<QString, QString> m_songQueueFeedback;
     // 每个按钮独立计时，重复点击重启计时器；HUD 销毁时自动取消回调。
     QHash<QString, QTimer *> m_songQueueFeedbackTimers;
+    struct PlaylistContext {
+        QString id;
+        bool contained = false;
+    };
+    // 只有从可编辑歌单打开的歌曲才返回上下文；搜索结果不参与歌单增删。
+    std::optional<PlaylistContext> openedPlaylistContext() const;
+    void showPlaylistFeedback(const QString &action, const QString &text, int holdMs);
+    QString m_playlistFeedbackKey;
+    QHash<QString, QString> m_playlistFeedback;
+    QHash<QString, QTimer *> m_playlistFeedbackTimers;
     QString m_sortContainerKey;
     QJsonArray m_sortTracks;
     QString m_sortField;
