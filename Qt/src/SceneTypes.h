@@ -1,6 +1,7 @@
 #pragma once
 #include <QByteArray>
 #include <QHash>
+#include <QJsonObject>
 #include <QVector>
 #include <QtGlobal>
 
@@ -14,3 +15,15 @@ struct SceneDrawData {
     QVector<quint32> ids;
 };
 using SceneDrawBuffers = QHash<int, SceneDrawData>;
+
+/**
+ * 被聚焦的主体：详情页与查看封面页只有焦点唱片用玻璃壳与主光。
+ *
+ * 详情页背景仍是同一批卡片，它们与焦点卡片一样是逐卡的非实例化 draw（每张
+ * count=1、instanced=false），所以不能只靠"非实例化"来判定——那样背景卡也会
+ * 被一起加上玻璃壳和主光，表现为归位过程里整片卡片发亮。这里再按
+ * musicSelected 收一次：查看封面页只有一张卡，直接全放行。
+ */
+inline bool isFocusedSceneCard(const QJsonObject &draw, bool detailMode, bool viewer) {
+    return detailMode && !draw["instanced"].toBool() && (viewer || draw["musicSelected"].toBool());
+}

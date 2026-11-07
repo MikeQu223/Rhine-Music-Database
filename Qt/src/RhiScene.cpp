@@ -2225,6 +2225,7 @@ class Renderer {
         return state.buffer;
     }
     bool detailMode = false;
+    bool viewerMode = false;
     QByteArray matrixBytes(const QJsonObject &draw) const {
         const auto native = nativeBuffers.constFind(draw["id"].toInt());
         if (native != nativeBuffers.constEnd()) {
@@ -2295,7 +2296,7 @@ class Renderer {
             }
             // state.w 标记"被聚焦的主体"：详情页与查看封面页只有焦点唱片用玻璃壳与主光。
             // 详情页背景仍是实例化的唱片墙，若按整帧置位会把这些卡片一起改掉。
-            const bool hero = detailMode && !draw["instanced"].toBool();
+            const bool hero = isFocusedSceneCard(draw, detailMode, viewerMode);
             value.state = {n(draw, "quality"), n(draw, "clarity"), theme, hero ? 1.f : 0.f};
 #ifdef Q_OS_LINUX
             value.previousModel = PackedMatrix();
@@ -3091,7 +3092,8 @@ class Renderer {
 #endif
         // 开场抽出的就是详情主体，跨模式时保持同一套玻璃、主光和实例状态。
         const auto mode = frame["mode"].toString();
-        detailMode = mode == "detail" || mode == "boot" || frame["viewer"].toBool();
+        viewerMode = frame["viewer"].toBool();
+        detailMode = mode == "detail" || mode == "boot" || viewerMode;
         auto draws = musicDraws(frame);
 #ifdef Q_OS_LINUX
         // C01：把"改写 draw 对象（musicDraws）"和"装配成 Draw（prepare）"分开计时。
