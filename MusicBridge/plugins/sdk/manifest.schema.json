@@ -1,0 +1,412 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://rhine.local/schemas/plugin-manifest-v1.json",
+    "title": "Rhine Plugin Manifest v1",
+    "type": "object",
+    "required": ["schemaVersion", "apiVersion", "id", "version", "entry"],
+    "additionalProperties": true,
+    "properties": {
+        "schemaVersion": { "const": 1 },
+        "apiVersion": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+$" },
+        "id": { "$ref": "#/$defs/providerId" },
+        "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+([+-][0-9A-Za-z.-]+)?$" },
+        "kind": { "enum": ["official", "third-party", "builtin"] },
+        "publisher": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "keyId": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "requiresHost": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "entry": { "$ref": "#/$defs/file" },
+        "files": { "type": "array", "items": { "$ref": "#/$defs/file" } },
+        "license": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "attribution": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "sbom": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "runtime": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+                "hosting": {
+                    "type": "array",
+                    "items": { "enum": ["module", "worker", "process"] },
+                    "uniqueItems": true
+                },
+                "mobileBundled": { "type": "boolean" }
+            }
+        },
+        "routes": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+                "prefixes": {
+                    "type": "array",
+                    "items": { "type": "string", "pattern": "^/[a-zA-Z0-9_-]+$" },
+                    "uniqueItems": true
+                },
+                "rawRoutes": {
+                    "type": "array",
+                    "items": { "type": "string", "pattern": "^/[^\\s]*$" },
+                    "uniqueItems": true
+                },
+                "legacyRoutes": {
+                    "type": "array",
+                    "items": { "type": "string", "pattern": "^/[^\\s]*$" },
+                    "uniqueItems": true
+                }
+            }
+        },
+        "operations": {
+            "type": "object",
+            "additionalProperties": { "type": "boolean" },
+            "propertyNames": { "pattern": "^[a-zA-Z][a-zA-Z0-9]*$" }
+        },
+        "credentials": {
+            "type": "object",
+            "required": ["namespace", "shape"],
+            "additionalProperties": true,
+            "properties": {
+                "namespace": { "$ref": "#/$defs/providerId" },
+                "shape": { "const": "opaque" },
+                "secretState": { "type": "boolean" },
+                "deviceState": { "type": "boolean" },
+                "variants": {
+                    "type": "array",
+                    "items": { "type": "string", "maxLength": 40 },
+                    "uniqueItems": true
+                }
+            }
+        },
+        "display": { "$ref": "#/$defs/display" },
+        "library": { "$ref": "#/$defs/library" },
+        "search": { "$ref": "#/$defs/search" },
+        "quality": { "$ref": "#/$defs/quality" },
+        "login": { "$ref": "#/$defs/login" },
+        "discover": { "$ref": "#/$defs/discover" },
+        "capabilities": { "$ref": "#/$defs/capabilities" },
+        "lyrics": { "$ref": "#/$defs/lyrics" },
+        "media": { "$ref": "#/$defs/media" },
+        "network": { "$ref": "#/$defs/network" },
+        "cache": { "$ref": "#/$defs/cache" },
+        "limits": { "$ref": "#/$defs/limits" },
+        "upstream": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+        "strings": { "type": "object", "additionalProperties": { "type": "string", "maxLength": 400 } },
+        "links": { "$ref": "#/$defs/links" }
+    },
+    "$defs": {
+        "providerId": { "type": "string", "pattern": "^[a-z0-9-]{1,40}$" },
+        "file": {
+            "type": "object",
+            "required": ["path", "sha256", "size"],
+            "additionalProperties": false,
+            "properties": {
+                "path": { "type": "string", "minLength": 1, "maxLength": 240 },
+                "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+                "size": { "type": "integer", "minimum": 0 }
+            }
+        },
+        "display": {
+            "type": "object",
+            "required": ["name", "label", "detail"],
+            "additionalProperties": true,
+            "properties": {
+                "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+                "nameByVariant": {
+                    "type": "object",
+                    "additionalProperties": { "type": "string", "minLength": 1, "maxLength": 80 }
+                },
+                "label": { "type": "string", "minLength": 1, "maxLength": 80 },
+                "detail": { "type": "string", "minLength": 0, "maxLength": 240 },
+                "sessionLabel": { "type": "string", "minLength": 1, "maxLength": 80 },
+                "archiveIdPrefix": { "type": "string", "minLength": 0, "maxLength": 80 },
+                "order": { "type": "integer", "minimum": 0, "maximum": 99 },
+                "default": { "type": "boolean" }
+            }
+        },
+        "library": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+                "columns": {
+                    "type": "array",
+                    "items": { "type": "string", "minLength": 1, "maxLength": 40 },
+                    "minItems": 1,
+                    "maxItems": 8
+                },
+                "sourceOrder": {
+                    "type": "array",
+                    "items": { "type": "integer", "minimum": 0, "maximum": 7 },
+                    "uniqueItems": true
+                },
+                "lanes": { "type": "integer", "minimum": 1, "maximum": 8 },
+                "visibleLanes": {
+                    "type": "array",
+                    "items": { "type": "integer", "minimum": 0, "maximum": 7 },
+                    "uniqueItems": true
+                },
+                "identityProviders": {
+                    "type": "array",
+                    "items": { "$ref": "#/$defs/providerId" },
+                    "uniqueItems": true
+                },
+                "likedModel": { "enum": ["likedIDs", "likedSongs", "local"] },
+                "playlistNameMaxLength": { "type": "integer", "minimum": 1, "maximum": 200 },
+                "playlistEditableRule": { "enum": ["all", "owned", "owned-with-dir-range", "none"] },
+                "dirIdRange": {
+                    "oneOf": [
+                        { "type": "null" },
+                        {
+                            "type": "array",
+                            "items": { "type": "integer", "minimum": 0 },
+                            "minItems": 2,
+                            "maxItems": 2
+                        }
+                    ]
+                }
+            }
+        },
+        "search": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+                "enabled": { "type": "boolean" },
+                "maxQueryLength": { "type": "integer", "minimum": 1, "maximum": 500 },
+                "suggest": { "type": "boolean" },
+                "parseLinks": { "type": "boolean" },
+                "linkPatterns": {
+                    "type": "array",
+                    "items": { "type": "string", "minLength": 1, "maxLength": 120 },
+                    "uniqueItems": true
+                }
+            }
+        },
+        "quality": {
+            "type": "object",
+            "required": ["default", "options"],
+            "additionalProperties": true,
+            "properties": {
+                "default": { "type": "string", "minLength": 1, "maxLength": 40 },
+                "options": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "object",
+                        "required": ["id", "label", "tier"],
+                        "additionalProperties": true,
+                        "properties": {
+                            "id": { "type": "string", "minLength": 1, "maxLength": 40 },
+                            "label": { "type": "string", "minLength": 1, "maxLength": 80 },
+                            "tier": {
+                                "enum": ["auto", "standard", "hq", "lossless", "hires", "master", "original"]
+                            },
+                            "badge": { "type": "string", "minLength": 1, "maxLength": 40 },
+                            "featured": { "type": "boolean" }
+                        }
+                    }
+                },
+                "aliases": {
+                    "type": "object",
+                    "additionalProperties": { "type": "string", "minLength": 1, "maxLength": 40 }
+                }
+            }
+        },
+        "login": {
+            "type": "object",
+            "required": ["methods"],
+            "additionalProperties": true,
+            "properties": {
+                "required": { "type": "boolean" },
+                "variants": {
+                    "type": "array",
+                    "items": { "type": "string", "minLength": 1, "maxLength": 40 },
+                    "uniqueItems": true
+                },
+                "methods": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "object",
+                        "required": ["id", "type", "label"],
+                        "additionalProperties": true,
+                        "properties": {
+                            "id": { "type": "string", "minLength": 1, "maxLength": 40 },
+                            "type": { "enum": ["qr", "sms", "password", "token"] },
+                            "label": { "type": "string", "minLength": 1, "maxLength": 80 },
+                            "channel": { "type": "string", "minLength": 1, "maxLength": 40 },
+                            "phonePattern": { "type": "string", "minLength": 1, "maxLength": 120 },
+                            "countryCode": { "type": "string", "minLength": 1, "maxLength": 8 },
+                            "resendCooldownMs": { "type": "integer", "minimum": 0, "maximum": 600000 }
+                        }
+                    }
+                },
+                "pollIntervalMs": { "type": "integer", "minimum": 100, "maximum": 60000 },
+                "pollTimeoutMs": { "type": "integer", "minimum": 1000, "maximum": 1800000 },
+                "failureMessages": {
+                    "type": "object",
+                    "additionalProperties": { "type": "string", "maxLength": 240 }
+                }
+            }
+        },
+        "discover": {
+            "type": "object",
+            "required": ["enabled"],
+            "additionalProperties": true,
+            "properties": {
+                "enabled": { "type": "boolean" },
+                "defaultTab": { "type": "string", "minLength": 1, "maxLength": 40 },
+                "tabs": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "required": ["id", "label"],
+                        "additionalProperties": true,
+                        "properties": {
+                            "id": { "type": "string", "minLength": 1, "maxLength": 40 },
+                            "label": { "type": "string", "minLength": 1, "maxLength": 80 }
+                        }
+                    }
+                }
+            }
+        },
+        "capabilities": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+                "search": { "type": "boolean" },
+                "suggest": { "type": "boolean" },
+                "resolveLink": { "type": "boolean" },
+                "detail": { "type": "boolean" },
+                "playback": { "type": "boolean" },
+                "preview": { "type": "boolean" },
+                "lyrics": { "type": "boolean" },
+                "account": { "type": "boolean" },
+                "login": { "type": "boolean" },
+                "vip": { "type": "boolean" },
+                "discover": { "type": "boolean" },
+                "categories": { "type": "boolean" },
+                "userPlaylists": { "type": "boolean" },
+                "likedSongs": { "type": "boolean" },
+                "likedAlbums": { "type": "boolean" },
+                "mv": { "type": "boolean" },
+                "officialPlayback": { "type": "boolean" },
+                "alternativeSource": { "type": "boolean" },
+                "mutations": { "type": "object", "additionalProperties": { "type": "boolean" } },
+                "playlistManagement": { "type": "object", "additionalProperties": { "type": "boolean" } }
+            }
+        },
+        "lyrics": {
+            "type": "object",
+            "required": ["sources"],
+            "additionalProperties": true,
+            "properties": {
+                "sources": {
+                    "type": "array",
+                    "items": { "$ref": "#/$defs/providerId" },
+                    "minItems": 1,
+                    "uniqueItems": true
+                },
+                "fallback": {
+                    "type": "array",
+                    "items": { "$ref": "#/$defs/providerId" },
+                    "uniqueItems": true
+                },
+                "matchMode": { "enum": ["strict", "fuzzy"] },
+                "rateLimitMs": { "type": "integer", "minimum": 0, "maximum": 60000 },
+                "retryDelaysMs": {
+                    "type": "array",
+                    "items": { "type": "integer", "minimum": 0, "maximum": 60000 },
+                    "maxItems": 8
+                }
+            }
+        },
+        "media": {
+            "type": "object",
+            "required": ["hosts"],
+            "additionalProperties": true,
+            "properties": {
+                "hosts": {
+                    "type": "array",
+                    "items": { "type": "string", "minLength": 1, "maxLength": 120 },
+                    "minItems": 1,
+                    "uniqueItems": true
+                },
+                "alternativeHosts": {
+                    "type": "array",
+                    "items": { "type": "string", "minLength": 1, "maxLength": 120 },
+                    "uniqueItems": true
+                },
+                "coverHosts": {
+                    "type": "array",
+                    "items": { "type": "string", "minLength": 1, "maxLength": 120 },
+                    "uniqueItems": true
+                },
+                "allowHttp": { "type": "boolean" },
+                "schemePolicy": { "enum": ["https", "http-or-https"] }
+            }
+        },
+        "network": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+                "hosts": {
+                    "type": "array",
+                    "items": { "type": "string", "minLength": 1, "maxLength": 120 },
+                    "uniqueItems": true
+                },
+                "credentialHosts": {
+                    "type": "array",
+                    "items": { "type": "string", "minLength": 1, "maxLength": 120 },
+                    "uniqueItems": true
+                },
+                "allowLoopback": { "type": "boolean" },
+                "preserveHttpHosts": {
+                    "type": "array",
+                    "items": { "type": "string", "minLength": 1, "maxLength": 120 },
+                    "uniqueItems": true
+                }
+            }
+        },
+        "cache": {
+            "type": "object",
+            "required": ["namespace"],
+            "additionalProperties": true,
+            "properties": {
+                "namespace": { "type": "string", "minLength": 1, "maxLength": 80 },
+                "ttlByOperation": {
+                    "type": "object",
+                    "additionalProperties": { "type": "integer", "minimum": 0 }
+                },
+                "diskOperations": {
+                    "type": "array",
+                    "items": { "type": "string", "minLength": 1, "maxLength": 40 },
+                    "uniqueItems": true
+                }
+            }
+        },
+        "limits": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+                "memoryMB": { "type": "integer", "minimum": 16, "maximum": 4096 },
+                "operationTimeoutMs": { "type": "integer", "minimum": 1000, "maximum": 60000 },
+                "playbackTimeoutMs": { "type": "integer", "minimum": 1000, "maximum": 120000 },
+                "maxConcurrent": { "type": "integer", "minimum": 1, "maximum": 32 },
+                "maxResponseBytes": { "type": "integer", "minimum": 1024, "maximum": 67108864 }
+            }
+        },
+        "links": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+                "parse": { "type": "boolean" },
+                "patterns": {
+                    "type": "array",
+                    "items": { "type": "string", "minLength": 1, "maxLength": 120 },
+                    "uniqueItems": true
+                },
+                "webTemplates": {
+                    "type": "object",
+                    "additionalProperties": { "type": "string", "minLength": 1, "maxLength": 240 }
+                },
+                "officialAppUrl": { "type": "string", "minLength": 1, "maxLength": 240 },
+                "officialLabel": { "type": "string", "minLength": 1, "maxLength": 80 }
+            }
+        }
+    }
+}

@@ -359,6 +359,12 @@ jobs:
         env:
           QT_ROOT: ${{ env.QT_ROOT_DIR }}
       # 离线测试
+      - name: Plugin contract checks (report-only)
+        continue-on-error: true
+        run: |
+          npm run check:contract-freeze
+          npm run check:core-boundary
+          npm run check:plugin-contracts
       - name: Run offline regressions
         run: npm test
       - name: Create distribution

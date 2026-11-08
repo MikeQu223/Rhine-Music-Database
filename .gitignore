@@ -46,6 +46,7 @@ Thumbs.db
 # 本地开发笔记和发布暂存
 [Aa][Gg][Ee][Nn][Tt][Ss].[Mm][Dd]
 [Rr][Ee][Aa][Dd][Aa][Bb][Ii][Ll][Ii][Tt][Yy]-[Pp][Ll][Aa][Nn].[Mm][Dd]
+/docs/PLUGIN/
 # /docs/
 /verification/
 /prototypes/
