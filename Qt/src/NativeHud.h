@@ -62,6 +62,8 @@ class NativeHud : public QObject {
     void openModal(QString kind);
     void closeModal();
     void setQuery(QString value);
+    // ！？ 325 ？！
+    void openHiddenVideo();
     void pageResults(int direction);
     // 重新测量设置页内容高度；会话恢复和展开下拉前必须调用。
     void refreshSettingsLayout();
@@ -199,6 +201,8 @@ class NativeHud : public QObject {
     MusicLibrary *m_music;
     HudSceneActions m_scene;
     quint64 m_searchGeneration = 0;
+    // ！？ 325 ？！
+    QString m_secretKeys;
     // 首屏不足一屏时自动补页，记录上次自动补页后的条数，避免空页循环请求。
     int m_searchAutoFillSize = -1;
     int m_savedAutoFillSize = -1;

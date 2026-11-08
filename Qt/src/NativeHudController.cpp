@@ -145,6 +145,14 @@ void NativeHud::closeModal() {
 }
 
 void NativeHud::setQuery(QString value) {
+    // ！？ 325 ？！
+    if (!m_responsive.compact() && value == QStringLiteral("325")) {
+        m_secretKeys.clear();
+        ++m_searchGeneration;
+        query.clear();
+        openHiddenVideo();
+        return;
+    }
     query = value;
     listOffset = 0;
     resetResultViews();
@@ -162,6 +170,11 @@ void NativeHud::setQuery(QString value) {
             }
         });
     }
+}
+
+// ！？ 325 ？！
+void NativeHud::openHiddenVideo() {
+    m_host->open(QStringLiteral("https://www.bilibili.com/video/BV1GkosY6EGp/"));
 }
 
 void NativeHud::form(QJsonObject fields) {
@@ -950,6 +963,20 @@ void NativeHud::action(QString value) {
 }
 
 void NativeHud::key(QString value, bool command) {
+    // ！？ 325 ？！
+    if (!m_responsive.compact() && !command && value.size() == 1 && value.at(0).isDigit()) {
+        m_secretKeys.append(value);
+        if (m_secretKeys.size() > 3) {
+            m_secretKeys.remove(0, m_secretKeys.size() - 3);
+        }
+        if (m_secretKeys == QStringLiteral("325")) {
+            m_secretKeys.clear();
+            openHiddenVideo();
+            return;
+        }
+    } else {
+        m_secretKeys.clear();
+    }
     if (frame.isEmpty()) {
         return;
     }
