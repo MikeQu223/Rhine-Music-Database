@@ -9,7 +9,7 @@
 - 移动设计宽度为 393 pt；`unit = stageWidth / 393`，可用高度为 `1080 / unit`。393 × 852 是参考画布，不是强制屏幕尺寸。
 - 横屏绘制继续走原 `NativeHud`、原卡片、原输入路径；移动排版必须在 `compact()` 分支内。新增共享接口的默认参数必须保留原行为。
 - iPhone 当前固定竖屏，iPad 保持横屏：方向同时由 `InfoIOS.plist.in`、`IOSWindow.mm` 声明。窗口最小宽度放开到 320，便于桌面窗口验证响应式布局；默认窗口尺寸不变。
-- 不设置 `CADisableMinimumFrameDurationOnPhone`，不主动申请 iPhone ProMotion 高刷。包审计检查该键缺失；不要为布局维护改动渲染节拍。
+- 设置 `CADisableMinimumFrameDurationOnPhone`，让 iPhone ProMotion 设备可以使用屏幕支持的完整帧率（最高 120Hz）；iPad Pro 不依赖该键。`IOSDisplayLink.mm` 在 `QGuiApplication` 之前给 Qt 的 `CADisplayLink` 设置 80–120Hz 请求范围。包审计检查该键存在；高刷只改变系统允许的呈现上限，不改变布局或渲染节拍。
 
 ## 2. 调用链与代码地图
 
@@ -139,7 +139,7 @@ npm run build:ios
 
 - `Qt/tests/NativeHudChecks.cpp`：严格宽高切换、横竖往返快照、命中及输入坐标、四行连续滚动、来源隔离、集合尾曲可达、歌曲/歌词/队列、场景同步过渡。
 - `Qt/tests/RenderChecks.cpp`：移动帧生成上下文隔离与桌面不额外重置。
-- `scripts/audit-ios.py`：方向、系统依赖和高刷许可缺失。
+- `scripts/audit-ios.py`：方向、系统依赖和高刷许可存在。
 - `RHINE_HUD_CAPTURE_DIR` 可让原生 HUD 回归输出 393 × 852 检查图；这是离线绘制，不是 iPhone 截图。
 - 应用 `--capture <目录> archive|detail` 可检查真实场景和 HUD 合成；设备、窗口尺寸和 GPU 应明确记录。
 

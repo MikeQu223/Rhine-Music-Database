@@ -611,9 +611,10 @@ if(APPLE)
     target_compile_options(RhineMusicDatabase PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
 endif()
 if(IOS)
-    target_sources(RhineCore PRIVATE Qt/src/PlatformIOS.mm Qt/src/BridgeProcessIOS.cpp Qt/src/BridgeProcess.h)
-    target_link_libraries(RhineCore PRIVATE "-framework Security" "-framework UIKit" "-framework AVFAudio"
-                                            "-framework MediaPlayer")
+    target_sources(RhineCore PRIVATE Qt/src/IOSDisplayLink.mm Qt/src/IOSDisplayLink.h
+                                      Qt/src/PlatformIOS.mm Qt/src/BridgeProcessIOS.cpp Qt/src/BridgeProcess.h)
+    target_link_libraries(RhineCore PRIVATE "-framework Security" "-framework UIKit" "-framework QuartzCore"
+                                            "-framework AVFAudio" "-framework MediaPlayer")
     target_compile_options(RhineCore PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
     include(Qt/IOS.cmake)
 elseif(ANDROID)

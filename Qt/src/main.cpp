@@ -480,6 +480,7 @@ void rhineOpenSignalDiagFile() {
 #include "InterfaceWindowMac.h"
 #endif
 #ifdef Q_OS_IOS
+#include "IOSDisplayLink.h"
 #include "IOSWindow.h"
 #endif
 #ifdef Q_OS_ANDROID
@@ -893,6 +894,10 @@ int main(int argc, char **argv) {
     // Linux 没有 QT_D3D_ADAPTER_INDEX 那样的单一入口，选择只能落成厂商环境变量，
     // 所以同样要早于任何 QQuickWindow——RHI 在创建窗口时就定下了用哪块卡。
     initializeLinuxGraphics();
+#endif
+#ifdef Q_OS_IOS
+    // ProMotion 的 plist 只放开上限；Qt 的 DisplayLink 还要显式请求 80–120Hz。
+    configureIOSDisplayLinkFrameRate();
 #endif
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
     QApplication application(argc, argv);

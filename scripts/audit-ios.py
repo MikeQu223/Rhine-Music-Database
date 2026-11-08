@@ -20,7 +20,7 @@ assert set(phone_orientations) == {"UIInterfaceOrientationPortrait"}, "iPhone mu
 ipad_orientations = info["UISupportedInterfaceOrientations~ipad"]
 assert set(ipad_orientations) == landscape_orientations, "iPad must be landscape only"
 assert info.get("UIRequiresFullScreen") is True
-assert "CADisableMinimumFrameDurationOnPhone" not in info, "iPhone refresh opt-in must remain disabled"
+assert info.get("CADisableMinimumFrameDurationOnPhone") is True, "iPhone ProMotion refresh must be enabled"
 
 
 def system_bundle_identifier(directory):
