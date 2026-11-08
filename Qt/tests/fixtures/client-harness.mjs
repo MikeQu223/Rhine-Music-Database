@@ -1,4 +1,4 @@
-import { API } from '../../../MusicBridge/client/netease.mjs';
+import { API } from '../../../MusicBridge/local-plugins/netease/netease.mjs';
 
 /**
  * 为平台客户端测试提供本地假 Host。

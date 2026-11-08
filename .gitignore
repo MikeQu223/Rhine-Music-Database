@@ -47,6 +47,8 @@ Thumbs.db
 [Aa][Gg][Ee][Nn][Tt][Ss].[Mm][Dd]
 [Rr][Ee][Aa][Dd][Aa][Bb][Ii][Ll][Ii][Tt][Yy]-[Pp][Ll][Aa][Nn].[Mm][Dd]
 /docs/PLUGIN/
+# 本地插件包：先在工作树验证，后续拆到独立仓库
+/MusicBridge/local-plugins/
 # /docs/
 /verification/
 /prototypes/

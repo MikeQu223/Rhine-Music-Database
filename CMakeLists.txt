@@ -689,7 +689,7 @@ if(APPLE
         "${CMAKE_CURRENT_SOURCE_DIR}/scripts/*")
     list(
         APPEND RHINE_RESOURCE_INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/package.json"
-        "${CMAKE_CURRENT_SOURCE_DIR}/MusicBridge/worker.cjs" "${CMAKE_CURRENT_SOURCE_DIR}/MusicBridge/qq.cjs"
+        "${CMAKE_CURRENT_SOURCE_DIR}/MusicBridge/worker.cjs"
         "${CMAKE_CURRENT_SOURCE_DIR}/MusicBridge/package-lock.json")
     set_property(
         TARGET RhineMusicDatabase

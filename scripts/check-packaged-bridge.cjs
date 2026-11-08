@@ -3,15 +3,14 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
-const { bridgeRuntime, bridgeSourceDirectory } = require('../Qt/tests/fixtures/bridge-runtime.cjs');
+const { bridgeRuntime } = require('../Qt/tests/fixtures/bridge-runtime.cjs');
 const { bridge, runtime } = bridgeRuntime();
 const temp = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'rhine-package-check-'));
 const hook = path.resolve(__dirname, '../Qt/tests/fixtures/bridge-http.cjs');
 
 const deviceContext = require(
-    path.join(
-        bridgeSourceDirectory(),
-        'node_modules/@yakult-green-tea/qq-music-api/dist/src/services/auth/deviceContext.js',
+    path.resolve(
+        'MusicBridge/local-plugins/qq/node_modules/@yakult-green-tea/qq-music-api/dist/src/services/auth/deviceContext.js',
     ),
 );
 async function main() {

@@ -132,18 +132,28 @@ global.fetch = async (input, init) => {
 let axios;
 let upstreamCrypto;
 let kugouConfig;
+function installFixtureAdapter(internals) {
+    if (internals.kugouConfig) {
+        kugouConfig = internals.kugouConfig;
+    }
+    if (internals.upstreamCrypto) {
+        upstreamCrypto = internals.upstreamCrypto;
+        const originalXeapi = internals.upstreamCrypto.xeapi;
+        internals.upstreamCrypto.xeapi = (uri, payload, options) => {
+            const encrypted = originalXeapi(uri, payload, options);
+            xeapiRequests.set(encrypted.C, { payload, version: options.publicKeyState.version });
+            return encrypted;
+        };
+    }
+    internals.axios.defaults.adapter = fixtureAdapter;
+}
 globalThis.__rhineBridgeTestSetup = (internals) => {
     axios = internals.axios;
     upstreamCrypto = internals.upstreamCrypto;
     kugouConfig = internals.kugouConfig;
-    const originalXeapi = upstreamCrypto.xeapi;
-    upstreamCrypto.xeapi = (uri, payload, options) => {
-        const encrypted = originalXeapi(uri, payload, options);
-        xeapiRequests.set(encrypted.C, { payload, version: options.publicKeyState.version });
-        return encrypted;
-    };
-    axios.defaults.adapter = fixtureAdapter;
+    installFixtureAdapter(internals);
 };
+globalThis.__rhinePluginTestSetup = installFixtureAdapter;
 // 本地响应使用测试密钥加密；请求仍经过上游注册校验、加密和响应解密。
 const crypto = require('node:crypto');
 const keyPair = crypto.generateKeyPairSync('x25519');

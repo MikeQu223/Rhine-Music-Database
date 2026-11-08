@@ -84,7 +84,6 @@ for name in [
     "RhineMiSans-regular.otf",
     "MusicBridge/worker.cjs",
     "MusicBridge/ios-runtime.cjs",
-    "MusicBridge/xhr-sync-worker.js",
     "MusicBridge/NODE-LICENSE",
     "third-party/nodejs-mobile/source.json",
 ]:

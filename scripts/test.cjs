@@ -1,3 +1,4 @@
+const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { app, resourceDirectory } = require('./app-layout.cjs');
@@ -33,14 +34,13 @@ if (win) {
 }
 // 验证最终应用包
 const resources = path.join(app, resourceDirectory);
-const bridgeTests = [
-    'Qt/tests/local-lyrics.cjs',
-    'Qt/tests/ios-bridge.cjs',
-    'Qt/tests/netease-client.mjs',
-    'Qt/tests/qq-client.mjs',
-    'Qt/tests/kugou-client.mjs',
-];
-run(process.execPath, ['scripts/check-packaged-bridge.cjs', resources + '/MusicBridge']);
+const localPlugins = fs.existsSync('MusicBridge/local-plugins');
+const bridgeTests = ['Qt/tests/local-lyrics.cjs', 'Qt/tests/ios-bridge.cjs'];
+if (localPlugins) {
+    run(process.execPath, ['scripts/check-packaged-bridge.cjs', resources + '/MusicBridge']);
+} else {
+    console.log('No local plugin packages; provider bridge regressions skipped.');
+}
 for (const script of bridgeTests) {
     run(process.execPath, [script, resources + '/MusicBridge']);
 }

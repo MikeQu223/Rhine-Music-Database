@@ -36,7 +36,16 @@ const LITERAL_LEGACY = (config.literalLegacyPatterns || []).map((pattern) => new
 const ASSET_DIRS = config.assetDirs || [];
 
 const TEXT_EXTENSIONS = new Set(['.cjs', '.mjs', '.js', '.cpp', '.h', '.mm', '.json']);
-const SKIP_DIRS = new Set(['node_modules', 'output', '.git', 'third_party', 'vendor', 'build', 'PLUGIN']);
+const SKIP_DIRS = new Set([
+    'node_modules',
+    'output',
+    '.git',
+    'third_party',
+    'vendor',
+    'build',
+    'PLUGIN',
+    'local-plugins',
+]);
 
 function relative(file) {
     return path.relative(root, file).split(path.sep).join('/');

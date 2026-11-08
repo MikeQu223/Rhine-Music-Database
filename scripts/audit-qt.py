@@ -80,9 +80,6 @@ for name in (
     )
 # 桥接单文件
 assert (resources / "MusicBridge" / "worker.cjs").is_file(), "Missing bridge bundle"
-assert (resources / "MusicBridge" / "xhr-sync-worker.js").is_file(), (
-    "Missing jsdom sync XHR worker"
-)
 assert not (resources / "MusicBridge" / "node_modules").exists(), (
     "node_modules must be bundled"
 )

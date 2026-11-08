@@ -166,7 +166,7 @@ function prepareResources() {
     // package-resources 在 Android 下已经不复制 node 可执行文件；这里再删一刀，
     // 防的是将来有人把那个分支改回去——APK 里的 node 既不能执行也没人调用。
     fs.rmSync(path.join(bridge, 'node'), { force: true });
-    for (const name of ['worker.cjs', 'xhr-sync-worker.js']) {
+    for (const name of ['worker.cjs']) {
         fs.copyFileSync(path.join(bridgeBundle, 'MusicBridge', name), path.join(bridge, name));
     }
     // 进程内运行时的 IPC 与 iOS 完全一致，直接复用同一份脚本（见 BridgeProcessAndroid.cpp）。

@@ -11,6 +11,7 @@
         "build:ios": "node scripts/build-ios.cjs",
         "build:ios:simulator": "node scripts/build-ios.cjs --simulator",
         "bundle:bridge": "node scripts/bundle-bridge.cjs",
+        "bundle:plugins": "node scripts/bundle-plugins.cjs",
         "package:cmake": "node scripts/build.cjs --cmake-package",
         "test": "node scripts/test.cjs",
         "check:core-boundary": "node scripts/check-core-boundary.cjs",

@@ -6,13 +6,22 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
-import { KugouAPI, kugouItem } from '../../MusicBridge/client/kugou.mjs';
-import { dispatch } from '../../MusicBridge/client/dispatch.mjs';
+import { KugouAPI, kugouItem } from '../../MusicBridge/local-plugins/kugou/kugou.mjs';
+import { create } from '../../MusicBridge/local-plugins/kugou/index.mjs';
+import { createDispatch } from '../../MusicBridge/local-plugins/test-dispatch.mjs';
+
+const dispatch = createDispatch(create, (request, message) => ({
+    dispatch({ route, params, cookies }) {
+        return Promise.resolve(
+            request({ ...message, route, params, cookies: cookies || message.cookies || {} }),
+        ).then((response) => ({ ...response, cookies: response.cookies || [] }));
+    },
+}));
 import format from '../../MusicBridge/lyrics-format.cjs';
 import { createClientHarness } from './fixtures/client-harness.mjs';
 
 const require = createRequire(import.meta.url);
-const { createBridge, ROUTES } = require('../../MusicBridge/kugou.cjs');
+const { createBridge, ROUTES } = require('../../MusicBridge/local-plugins/kugou/kugou-transport.cjs');
 const { bridgeRuntime } = require('./fixtures/bridge-runtime.cjs');
 const hook = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'fixtures/bridge-http.cjs');
 const bridgeDirectory = process.argv[2];

@@ -30,6 +30,8 @@ const CONTRACT_FILES = [
     'MusicBridge/plugins/sdk/descriptor.schema.json',
     'MusicBridge/plugins/sdk/models.schema.json',
     'MusicBridge/plugins/sdk/models.cjs',
+    'MusicBridge/plugins/sdk/base-api.mjs',
+    'MusicBridge/plugins/sdk/failure.mjs',
     'MusicBridge/plugins/sdk/fixtures/fixture.schema.json',
 ];
 

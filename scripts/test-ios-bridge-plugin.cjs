@@ -1,10 +1,12 @@
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const path = require('node:path');
 const { test } = require('node:test');
 const plugin = require('./mobile-bridge-plugin.cjs')();
+const coreNetease = path.resolve('MusicBridge/client/netease.mjs');
 
-test('iOS MV 标题正则不依赖 ICU，并正确处理常见分隔符', () => {
-    const source = path.resolve('MusicBridge/client/netease.mjs');
+test('iOS MV 标题正则不依赖 ICU，并正确处理常见分隔符', { skip: !fs.existsSync(coreNetease) }, () => {
+    const source = coreNetease;
     let transformed;
     plugin.setup({
         onLoad(options, load) {
@@ -26,7 +28,7 @@ test('iOS MV 标题正则不依赖 ICU，并正确处理常见分隔符', () => 
     }
 });
 
-test('iOS 插件在 Windows 和 POSIX 路径下都能匹配目标模块', () => {
+test('iOS 插件在 Windows 和 POSIX 路径下都能匹配目标模块', { skip: !fs.existsSync(coreNetease) }, () => {
     const filters = [];
     plugin.setup({
         onLoad(options) {

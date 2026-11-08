@@ -6,9 +6,18 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
-import { API } from '../../MusicBridge/client/netease.mjs';
-import { parse } from '../../MusicBridge/client/items.mjs';
-import { dispatch } from '../../MusicBridge/client/dispatch.mjs';
+import { API } from '../../MusicBridge/local-plugins/netease/netease.mjs';
+import { parse } from '../../MusicBridge/local-plugins/netease/items.mjs';
+import { create } from '../../MusicBridge/local-plugins/netease/index.mjs';
+import { createDispatch } from '../../MusicBridge/local-plugins/test-dispatch.mjs';
+
+const dispatch = createDispatch(create, (request, message) => ({
+    dispatch({ route, params, cookies }) {
+        return Promise.resolve(
+            request({ ...message, route, params, cookies: cookies || message.cookies || {} }),
+        ).then((response) => ({ ...response, cookies: response.cookies || [] }));
+    },
+}));
 import format from '../../MusicBridge/lyrics-format.cjs';
 import { createClientHarness } from './fixtures/client-harness.mjs';
 

@@ -5,9 +5,18 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { QQAPI, qqItem } from '../../MusicBridge/client/qq.mjs';
-import { safeLoginDetails } from '../../MusicBridge/client/failure.mjs';
-import { dispatch } from '../../MusicBridge/client/dispatch.mjs';
+import { QQAPI, qqItem } from '../../MusicBridge/local-plugins/qq/qq.mjs';
+import { safeLoginDetails } from '../../MusicBridge/plugins/sdk/failure.mjs';
+import { create } from '../../MusicBridge/local-plugins/qq/index.mjs';
+import { createDispatch } from '../../MusicBridge/local-plugins/test-dispatch.mjs';
+
+const dispatch = createDispatch(create, (request, message) => ({
+    dispatch({ route, params, cookies }) {
+        return Promise.resolve(
+            request({ ...message, route, params, cookies: cookies || message.cookies || {} }),
+        ).then((response) => ({ ...response, cookies: response.cookies || [] }));
+    },
+}));
 import { createClientHarness } from './fixtures/client-harness.mjs';
 
 const require = createRequire(import.meta.url);

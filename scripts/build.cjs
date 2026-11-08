@@ -101,8 +101,6 @@ function prepareResources() {
         'ios-web-apis.cjs',
         'ios-system-trust.cjs',
         'android-web-apis.cjs',
-        'qq.cjs',
-        'kugou.cjs',
         'lyrics-format.cjs',
         'lyrics-text.cjs',
         'lyrics-source.json',
@@ -112,12 +110,22 @@ function prepareResources() {
     ]) {
         fs.copyFileSync(path.join('MusicBridge', file), path.join(bridge, file));
     }
-    fs.cpSync('MusicBridge/upstream', path.join(bridge, 'upstream'), {
-        recursive: true,
-    });
     fs.cpSync('MusicBridge/client', path.join(bridge, 'client'), {
         recursive: true,
     });
+    fs.cpSync('MusicBridge/core', path.join(bridge, 'core'), {
+        recursive: true,
+    });
+    fs.cpSync('MusicBridge/plugins', path.join(bridge, 'plugins'), {
+        recursive: true,
+    });
+    if (fs.existsSync('MusicBridge/local-plugins')) {
+        run(process.execPath, ['scripts/bundle-plugins.cjs', 'MusicBridge/local-plugins']);
+        fs.cpSync('MusicBridge/local-plugins', path.join(bridge, 'local-plugins'), {
+            recursive: true,
+            filter: (source) => !source.split(path.sep).includes('node_modules'),
+        });
+    }
     // package lock 变更时重新安装依赖，避免旧版本残留
     const dependencyHash = createHash('sha256')
         .update(fs.readFileSync(path.join(bridge, 'package.json')))

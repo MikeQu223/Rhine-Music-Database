@@ -480,6 +480,7 @@ export interface PluginDiagnostics {
 }
 
 export interface PluginHost {
+    manifest: ProviderManifest;
     request(
         route: string,
         params?: Record<string, unknown>,
@@ -543,6 +544,6 @@ export interface ProviderAdapter {
 }
 
 export interface PluginModule {
-    manifest: ProviderManifest;
+    manifest?: ProviderManifest;
     create(host: PluginHost): ProviderAdapter | Promise<ProviderAdapter>;
 }
