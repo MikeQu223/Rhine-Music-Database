@@ -53,6 +53,18 @@ void NativeHud::detail(double width, double opacity) {
         container(width, opacity);
         return;
     }
+    if (commentsMode && (music.provider != "netease" && music.provider != "siren")) {
+        commentsMode = false;
+        if (tab == "comments") {
+            tab = "overview";
+        }
+    }
+    if (commentsMode && CommentsController::trackKey(item) != commentsTrackKey) {
+        commentsMode = false;
+        if (tab == "comments") {
+            tab = "overview";
+        }
+    }
     const auto x = width * 0.56;
     if (lyricsMode && PlaybackQueue::identity(item) != PlaybackQueue::identity(music.player.current)) {
         lyricsMode = false;
@@ -78,6 +90,11 @@ void NativeHud::detail(double width, double opacity) {
             restore();
             return;
         }
+        if (commentsMode) {
+            commentsPanel(x, usable);
+            restore();
+            return;
+        }
     }
     // 控制器只整理真实数据与可用动作，独立卡片组件只负责绘制。
     SongDetailCard::Model card;
@@ -98,6 +115,7 @@ void NativeHud::detail(double width, double opacity) {
     card.duration = MusicData::time(item);
     card.tab = tab;
     card.trackCount = music.tracks.size();
+    card.comments = music.provider == "netease" || music.provider == "siren";
     card.playback = "面板内播放";
     if (PlatformFeatures::OfficialPlayback) {
         card.playback = music.isLocal() ? "本地文件 / 面板内播放" : "面板内播放 / 官方入口";

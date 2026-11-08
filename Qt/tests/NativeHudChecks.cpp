@@ -1166,6 +1166,161 @@ static bool checkResponsiveTransitions() {
     return true;
 }
 
+namespace {
+/** 评论页只验证桌面与窄屏可绘制且有关闭入口。 */
+bool checkSongComments(const QString &root, Glyphs &glyphs, const QJsonObject &content) {
+    Host host(root, true);
+    std::unique_ptr<MusicLibrary> music(createTestMusicLibrary(&host, "netease", content));
+    auto track = music->current;
+    track["provider"] = "netease";
+    track["id"] = "186016";
+    track["kind"] = "song";
+    track["title"] = "晴天";
+    track["artist"] = "周杰伦";
+    music->current = track;
+    music->provider = "netease";
+    music->api.provider = "netease";
+    auto &comments = music->comments;
+    comments.status = "ready";
+    comments.items = {QJsonObject{{"id", "1"},
+                                  {"content", "第一段评论"},
+                                  {"nickname", "青空来信"},
+                                  {"avatarUrl", ""},
+                                  {"time", 0.0},
+                                  {"likedCount", 1},
+                                  {"replyCount", 0},
+                                  {"expanded", false},
+                                  {"replies", QJsonArray{}},
+                                  {"repliesExpanded", false},
+                                  {"repliesLoading", false},
+                                  {"inlineReplies", QJsonArray{}}}};
+    HudSceneActions scene;
+    scene.mode = [](QString) {};
+    scene.pointer = [](QString, double, double, double) {};
+    NativeHud hud(&host, &glyphs, music.get(), scene);
+    hud.reduced = true;
+    hud.tab = "comments";
+    hud.commentsReturnTab = "overview";
+    hud.commentsMode = true;
+    hud.commentsTrackKey = CommentsController::trackKey(track);
+    const QJsonObject frame{{"mode", "detail"}, {"detail", 1}, {"selected", 0}};
+    hud.draw(frame, 1920, 50);
+    const bool desktop = hud.commentsMode && hasAction(hud.hits, "comments:close");
+    hud.draw(frame, 393. * 1080 / 852, 51);
+    const bool mobile = hud.state()["compactLayout"].toBool() && hasAction(hud.hits, "music:comments-close");
+    if (!desktop || !mobile) {
+        qCritical() << "Song comments page did not render its close entry";
+    }
+    return desktop && mobile;
+}
+}
+
+namespace {
+/** 固定回包覆盖塞壬匹配、分页排序与楼层展开去重，不访问网络。 */
+bool checkCommentsController(const QString &root) {
+    Host host(root, true);
+    host.interval = 1;
+    int floors = 0;
+    int sortSeen = 0;
+    QString idSeen;
+    QString cursorSeen;
+    const auto songCandidate = [](QString id, QString artist) {
+        return QJsonObject{{"id", id}, {"title", "生魂灵"}, {"artist", artist}};
+    };
+    const QJsonArray candidates{songCandidate("3457361994", "小心绪"),
+                                songCandidate("3456704425", "塞壬唱片-MSR/Alec Justice")};
+    const auto comment = [](QString id, QString text) {
+        return QJsonObject{{"commentId", id},
+                           {"content", text},
+                           {"time", 1700000000000.0},
+                           {"user", QJsonObject{{"nickname", "用户甲"}}}};
+    };
+    host.fixture = [&](QString route, QJsonObject parameters) {
+        if (route == "/native/netease/search") {
+            return QJsonObject{
+                {"body", QJsonObject{{"code", 200}, {"value", QJsonObject{{"items", candidates}}}}}};
+        }
+        if (route == "/comment/new") {
+            sortSeen = parameters["sortType"].toInt();
+            idSeen = parameters["id"].toString();
+            cursorSeen = parameters["cursor"].toString();
+            const auto pageNo = parameters["pageNo"].toInt();
+            const QJsonArray comments{pageNo == 1 ? comment("111", "第一页评论")
+                                                  : comment("222", "第二页评论")};
+            return QJsonObject{{"body", QJsonObject{{"code", 200},
+                                                    {"data", QJsonObject{{"comments", comments},
+                                                                         {"hasMore", pageNo == 1},
+                                                                         {"cursor", "1700000000000"}}}}}};
+        }
+        if (route == "/comment/floor") {
+            ++floors;
+            const QJsonArray replies{QJsonObject{
+                {"commentId", "901"},
+                {"content", "楼层回复"},
+                {"time", 1700000000000.0},
+                {"user", QJsonObject{{"nickname", "用户乙"}}},
+                {"beReplied", QJsonArray{QJsonObject{{"user", QJsonObject{{"nickname", "用户甲"}}}}}}}};
+            return QJsonObject{{"body", QJsonObject{{"code", 200},
+                                                    {"data", QJsonObject{{"comments", replies},
+                                                                         {"hasMore", false},
+                                                                         {"time", 1700000000000.0}}}}}};
+        }
+        return QJsonObject{{"body", QJsonObject{{"code", 200}}}};
+    };
+    CommentsController comments(&host);
+    const auto wait = [](auto predicate) {
+        QElapsedTimer elapsed;
+        elapsed.start();
+        while (!predicate() && elapsed.elapsed() < 6000) {
+            QCoreApplication::processEvents();
+            QThread::msleep(1);
+        }
+        return predicate();
+    };
+    const QJsonObject track{{"provider", "siren"},
+                            {"kind", "song"},
+                            {"id", "125025"},
+                            {"title", "生魂灵"},
+                            {"artist", "塞壬唱片-MSR"}};
+    comments.load(track);
+    if (!wait([&] { return comments.status == "ready"; }) || idSeen != "3456704425" || sortSeen != 2 ||
+        comments.items.size() != 1) {
+        qCritical() << "Comment controller failed siren matching or first page";
+        return false;
+    }
+    comments.loadMore();
+    if (!wait([&] { return !comments.hasMore; }) || comments.items.size() != 2) {
+        qCritical() << "Comment controller failed hot pagination";
+        return false;
+    }
+    comments.setSort("new");
+    if (!wait([&] { return comments.status == "ready" && comments.items.size() == 1; }) || sortSeen != 3) {
+        qCritical() << "Comment controller failed newest sort";
+        return false;
+    }
+    comments.loadMore();
+    if (!wait([&] { return comments.items.size() == 2; }) || cursorSeen != "1700000000000") {
+        qCritical() << "Comment controller failed cursor pagination";
+        return false;
+    }
+    comments.toggleReplies("111");
+    if (!wait([&] { return comments.items.at(0)["repliesExpanded"].toBool(); }) ||
+        comments.items.at(0)["replies"].toArray().at(0).toObject()["replyTo"].toString() != "用户甲" ||
+        floors != 1) {
+        qCritical() << "Comment controller failed floor replies";
+        return false;
+    }
+    comments.toggleReplies("111");
+    comments.toggleReplies("111");
+    if (comments.items.at(0)["replies"].toArray().size() != 1 || floors != 1) {
+        qCritical() << "Comment controller refetched an already loaded floor";
+        return false;
+    }
+    comments.clear();
+    return comments.status == "idle" && comments.items.isEmpty();
+}
+}
+
 bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
     Host host(root, true);
     const auto content = QJsonDocument::fromJson(host.read("slots.json").toUtf8()).object();
@@ -1179,6 +1334,8 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
     bool ok = record("responsive transitions", checkResponsiveTransitions());
     ok &= record("playlist sorting", checkSorting(root, glyphs, content));
     ok &= record("responsive hud", checkResponsiveHud(root, glyphs, content));
+    ok &= record("song comments", checkSongComments(root, glyphs, content));
+    ok &= record("comments controller", checkCommentsController(root));
 #ifdef Q_OS_DARWIN
     ok &= record("card material cache", checkCardMaterialCache());
 #endif

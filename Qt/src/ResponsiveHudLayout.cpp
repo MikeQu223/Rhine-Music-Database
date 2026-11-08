@@ -44,7 +44,8 @@ void ResponsiveHudLayout::arrange(QJsonArray &commands, QJsonArray &hits, const 
     }
     const auto modal = source["modal"].toString();
     const bool lyric = source["lyricsMode"].toBool() && modal.isEmpty();
-    const bool home = modal.isEmpty() && source["mode"] == "archive" && !lyric;
+    const bool comments = source["commentsMode"].toBool() && modal.isEmpty();
+    const bool home = modal.isEmpty() && source["mode"] == "archive" && !lyric && !comments;
     prepare(scope, home);
     const bool newScope = m_scopeChanged;
     m_scopeChanged = false;
@@ -83,16 +84,16 @@ void ResponsiveHudLayout::arrange(QJsonArray &commands, QJsonArray &hits, const 
         m_lyricCurve.reset();
         m_lyricScroll = 0;
     }
-    const bool songPage = m_song.has_value() && modal.isEmpty() && !lyric;
+    const bool songPage = m_song.has_value() && modal.isEmpty() && !lyric && !comments;
     const bool immersive = modal == "player" || lyric;
-    const bool hud = home || m_song || m_collection || m_discover || lyric || modal == "saved";
+    const bool hud = home || m_song || m_collection || m_discover || lyric || comments || modal == "saved";
     c.contentBottom = songPage ? m_height
                                : m_height - BottomGestureInset -
                                      (lyric       ? 250
                                       : immersive ? 172
                                                   : 110);
     const bool terminalPage = modal == "discover" || modal == "search" || modal == "settings";
-    if (terminalPage || lyric || !hud) {
+    if (terminalPage || lyric || comments || !hud) {
         c.fill({0, 0, 393, m_height}, c.paper);
     } else if (!songPage && !home) {
         // 保留真实场景。主界面 tab 列表不加遮罩，其余页面沿用纵向阅读渐变。
@@ -117,6 +118,7 @@ void ResponsiveHudLayout::arrange(QJsonArray &commands, QJsonArray &hits, const 
                     : modal == "settings" ? "设置"
                     : modal == "discover" ? "发现音乐"
                     : lyric               ? "歌词"
+                    : comments            ? "歌曲评论"
                     : m_song              ? "歌曲档案"
                     : m_collection        ? (m_collection->kind == "album"    ? "专辑详情"
                                              : m_collection->kind == "artist" ? "歌手档案"
@@ -184,7 +186,10 @@ void ResponsiveHudLayout::arrange(QJsonArray &commands, QJsonArray &hits, const 
         }
     } else if (!home) {
         c.header(title, modal != "search" && (modal != "saved" || !m_savedOverview) && modal != "discover",
-                 m_collection.has_value());
+                 m_collection.has_value(), !comments);
+        if (comments) {
+            c.text("COMMENT ARCHIVE / 评论档案", 20, 126, 8, 353, "regular", c.muted);
+        }
     }
     if (modal == "saved" && !m_savedOverview) {
         for (int index = 0; index < c.hits.size(); ++index) {
@@ -200,7 +205,9 @@ void ResponsiveHudLayout::arrange(QJsonArray &commands, QJsonArray &hits, const 
         for (int i = 0; i < c.hits.size(); ++i) {
             auto h = c.hits[i].toObject();
             if (h["action"] == "close-modal") {
-                h["action"] = lyric ? "player:lyrics-close" : "back";
+                h["action"] = lyric ? "player:lyrics-close"
+                              : comments ? "music:comments-close"
+                                         : "back";
                 c.hits[i] = h;
             }
         }
@@ -211,7 +218,7 @@ void ResponsiveHudLayout::arrange(QJsonArray &commands, QJsonArray &hits, const 
         m_maximum = std::max(0., end - c.contentBottom);
         m_scroll = std::clamp(m_scroll, 0., m_maximum);
     } else {
-        c.beginContent(terminalPage ? 130 : lyric ? 158 : songPage ? 118 : 158);
+        c.beginContent(terminalPage ? 130 : lyric || comments ? 158 : songPage ? 118 : 158);
         if (modal == "player") {
             end = queue(c, newScope, source);
         } else if (m_settings && modal == "settings") {
@@ -220,6 +227,8 @@ void ResponsiveHudLayout::arrange(QJsonArray &commands, QJsonArray &hits, const 
             end = library(c, source);
         } else if (lyric) {
             end = lyrics(c, source);
+        } else if (comments) {
+            end = commentsPage(c, source);
         } else if (m_discover && modal == "discover") {
             end = discover(c);
         } else if (m_song && modal.isEmpty()) {

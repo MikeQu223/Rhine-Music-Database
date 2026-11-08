@@ -299,7 +299,7 @@ void Host::requestJson(QString route, QJsonObject values, JsonReply callback) {
     }
     flights.insert(
         key, {QUuid::createUuid().toString(), route, key, values, cookies, {waiter}, disk, metadataRevision});
-    if (cached || route == "/song/url" || route == "/song/url/v1") {
+    if (cached || route == "/song/url" || route == "/song/url/v1" || route.startsWith("/comment/")) {
         queue.enqueue(key);
         pump();
     } else {
@@ -444,7 +444,8 @@ void Host::finish(QString key, QJsonObject response, QString error) {
     response.remove("kugouCredentials");
     const auto body = response["body"].toObject();
     const auto code = body["code"].toInt(200);
-    if (lifetime(work.route) || work.route == "/song/url" || work.route == "/song/url/v1") {
+    if (lifetime(work.route) || work.route == "/song/url" || work.route == "/song/url/v1" ||
+        work.route.startsWith("/comment/")) {
         const auto message = body["message"].toString(body["msg"].toString());
         if (QList<int>{405, 429, 509}.contains(code) || message.contains("频繁")) {
             blockedUntil[routeProvider(work.route)] =

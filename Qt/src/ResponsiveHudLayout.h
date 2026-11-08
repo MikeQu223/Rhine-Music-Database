@@ -142,4 +142,5 @@ class ResponsiveHudLayout {
     double library(ResponsiveHudCanvas &c, const QJsonObject &source);
     void lyricsPlayer(ResponsiveHudCanvas &c, const QJsonObject &source);
     double lyrics(ResponsiveHudCanvas &c, const QJsonObject &source);
+    double commentsPage(ResponsiveHudCanvas &c, const QJsonObject &source);
 };

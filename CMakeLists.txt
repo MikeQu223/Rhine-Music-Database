@@ -147,6 +147,8 @@ set(RHINE_APP_SOURCES
     Qt/src/Host.h
     Qt/src/MusicApi.cpp
     Qt/src/MusicApi.h
+    Qt/src/CommentsController.cpp
+    Qt/src/CommentsController.h
     Qt/src/LyricsController.cpp
     Qt/src/LyricsController.h
     Qt/src/MusicSession.cpp
@@ -169,6 +171,7 @@ set(RHINE_APP_SOURCES
     Qt/src/ResponsiveHudCanvas.cpp
     Qt/src/ResponsiveHudCanvas.h
     Qt/src/ResponsiveLyrics.cpp
+    Qt/src/ResponsiveComments.cpp
     Qt/src/ResponsiveHudPages.cpp
     Qt/src/ResponsiveHudContent.cpp
     Qt/src/ResponsiveHudContent.h
@@ -179,6 +182,7 @@ set(RHINE_APP_SOURCES
     Qt/src/NativeHudMusic.cpp
     Qt/src/NativeHudInput.cpp
     Qt/src/NativeHudDetail.cpp
+    Qt/src/NativeHudComments.cpp
     Qt/src/SongDetailCard.cpp
     Qt/src/CollectionDetailCard.cpp
     Qt/src/NativeHudPlayer.cpp

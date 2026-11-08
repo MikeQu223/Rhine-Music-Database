@@ -152,6 +152,11 @@ class NativeHud : public QObject {
     int archiveMaskStrength = 50;
     bool closing = false;
     bool lyricsMode = false;
+    bool commentsMode = false;
+    QString commentsReturnTab = "overview";
+    QString commentsTrackKey;
+    double commentsScroll = 0;
+    double commentsContentBottom = 0;
     bool trackListMode = false;
     double width = 1920;
     double lastTime = 0;
@@ -306,6 +311,7 @@ class NativeHud : public QObject {
     void actionButton(QString label, double x, double y, double width, QString action, bool primary = false);
     void detail(double width, double opacity);
     void lyricsPanel(double x, double width);
+    void commentsPanel(double x, double width);
     QString body() const;
     void container(double width, double opacity);
     void viewer(double width);

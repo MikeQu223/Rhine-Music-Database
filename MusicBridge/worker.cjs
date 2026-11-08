@@ -132,6 +132,8 @@ const routes = Object.freeze({
     '/playlist/catlist': 'playlist_catlist',
     '/toplist': 'toplist',
     '/song/wiki/summary': 'song_wiki_summary',
+    '/comment/new': 'comment_new',
+    '/comment/floor': 'comment_floor',
     '/lyric/new': 'lyric_new',
     '/lyric': 'lyric',
 });

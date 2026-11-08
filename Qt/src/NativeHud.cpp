@@ -222,6 +222,7 @@ QJsonObject NativeHud::sourceState() const {
             {"x", value->x()}, {"y", value->y()}, {"width", value->width()}, {"height", value->height()}};
     };
     return {{"lyricsMode", lyricsMode},
+            {"commentsMode", commentsMode},
             {"archiveName", m_music->libraryName()},
             {"archiveIndex", m_music->libraryIndex()},
             {"archiveTotal", m_music->libraryTotal()},
@@ -317,9 +318,13 @@ void NativeHud::draw(QJsonObject next, double stageWidth, double time) {
         const auto scope = modal + ":" + frame["mode"].toString() + ":" +
                            m_music->current.value("kind").toString() + ":" +
                            m_music->current.value("id").toString() + ":" + tab + ":" +
-                           (lyricsMode ? "lyrics" : "info") + ":" + m_music->discover->tab + ":" +
-                           QString::number(musicCollection) + ":" + artistTab + ":" + query;
-        const bool home = modal.isEmpty() && frame["mode"] == "archive" && !lyricsMode;
+                           (lyricsMode ? QStringLiteral("lyrics")
+                                       : commentsMode ? QStringLiteral("comments:") + m_music->comments.sort + ":" +
+                                                            m_music->comments.status
+                                                      : QStringLiteral("info")) +
+                           ":" + m_music->discover->tab + ":" + QString::number(musicCollection) + ":" + artistTab +
+                           ":" + query;
+        const bool home = modal.isEmpty() && frame["mode"] == "archive" && !lyricsMode && !commentsMode;
         m_responsive.prepare(scope, home);
         if (!frame["viewer"].toBool()) {
             if (modal == "player") {
@@ -330,7 +335,7 @@ void NativeHud::draw(QJsonObject next, double stageWidth, double time) {
                 settingsPanel(0, 0, width);
             } else if (!modal.isEmpty() && modal != "search" && modal != "saved") {
                 m_responsive.setAuxiliary(auxiliaryContent());
-            } else if (modal.isEmpty() && frame["mode"] == "detail" && !lyricsMode &&
+            } else if (modal.isEmpty() && frame["mode"] == "detail" && !lyricsMode && !commentsMode &&
                        !m_music->current.isEmpty()) {
                 detail(width, frame["detail"].toDouble());
             }
@@ -404,8 +409,16 @@ void NativeHud::draw(QJsonObject next, double stageWidth, double time) {
 }
 /** 移动端只消费展示模型，不先生成再丢弃横屏 HUD。 */
 void NativeHud::drawMobile(double time, const QString &scope) {
+    if (commentsMode && ((m_music->provider != "netease" && m_music->provider != "siren") ||
+                         CommentsController::trackKey(m_music->current) != commentsTrackKey)) {
+        commentsMode = false;
+    }
     auto mobile = sourceState();
     mobile["lyricsMode"] = lyricsMode;
+    mobile["commentsMode"] = commentsMode;
+    if (commentsMode) {
+        mobile["comments"] = m_music->comments.state();
+    }
     mobile["selectedSongIsCurrent"] =
         PlaybackQueue::identity(m_music->current) == PlaybackQueue::identity(m_music->player.current);
     const auto selectedLiked = m_music->songLiked(m_music->current);
@@ -483,6 +496,8 @@ void NativeHud::drawMobile(double time, const QString &scope) {
     QString pageKey = modal + ":" + frame["mode"].toString();
     if (lyricsMode && modal.isEmpty()) {
         pageKey = "lyrics";
+    } else if (commentsMode && modal.isEmpty()) {
+        pageKey = "comments";
     } else if (modal.isEmpty() && frame["mode"] == "detail") {
         pageKey += ":" + m_music->current["key"].toString();
     }
