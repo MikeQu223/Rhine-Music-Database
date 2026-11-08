@@ -83,6 +83,8 @@ class NativeHud : public QObject {
     QJsonObject frame;
     QString tab = "overview";
     QString modal;
+    QString pluginManagerMessage;
+    QString pluginDetailId;
     QString query;
     QString formKind;
     QString formPID;
@@ -340,6 +342,8 @@ class NativeHud : public QObject {
     void playerPanel(double x, double y, double width);
     void platformChoices(double x, double y, double width, bool expanded = false);
     void platformPanel(double x, double y, double width);
+    void pluginsPanel(double x, double y, double width);
+    void pluginDetailPanel(double x, double y, double width);
     void settingsPanel(double x, double y, double width);
     void paintSettingsCustomSection(const QString &renderer, const QRectF &body, double scroll);
     SettingsSchema::SettingsContext settingsContext() const;

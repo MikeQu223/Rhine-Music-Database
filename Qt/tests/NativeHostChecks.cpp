@@ -1,6 +1,11 @@
 #include "Host.h"
+#include "AppStorage.h"
 #include "ProviderRegistry.h"
 #include <QCoreApplication>
+#include <QDir>
+#include <QFile>
+#include <QJsonDocument>
+#include <QUrl>
 #include <QElapsedTimer>
 #include <QJsonArray>
 #include <QThread>
@@ -51,6 +56,68 @@ bool runNativeHostChecks(const QString &root) {
     ok &= ProviderRegistry::instance().defaultId().isEmpty();
     ok &= ProviderRegistry::instance().fallbackId() == "siren";
     ProviderRegistry::instance().load(root);
+
+    // 插件市场：本地 file:// 索引、下载、安装与启用/禁用。
+    QTemporaryDir market;
+    ok &= market.isValid();
+    QDir().mkpath(market.path() + "/plugins/fixture");
+    const QJsonObject fixtureManifest{
+        {"schemaVersion", 1},
+        {"apiVersion", "1.0"},
+        {"id", "fixture"},
+        {"version", "1.0.0"},
+        {"entry", QJsonObject{{"file", "plugin.cjs"}}},
+        {"display", QJsonObject{{"name", "Fixture"}}},
+        {"capabilities", QJsonObject{{"search", true}}},
+    };
+    {
+        QFile file(market.path() + "/plugins/fixture/manifest.json");
+        file.open(QIODevice::WriteOnly);
+        file.write(QJsonDocument(fixtureManifest).toJson());
+    }
+    {
+        QFile file(market.path() + "/plugins/fixture/plugin.cjs");
+        file.open(QIODevice::WriteOnly);
+        file.write("module.exports = { create() { return {}; } };\n");
+    }
+    {
+        const QJsonObject index{
+            {"schemaVersion", 1},
+            {"plugins", QJsonArray{QJsonObject{
+                            {"id", "fixture"},
+                            {"name", "Fixture"},
+                            {"version", "1.0.0"},
+                            {"path", "plugins/fixture"},
+                            {"entry", QJsonObject{{"file", "plugin.cjs"}}},
+                            {"files", QJsonArray{"plugin.cjs"}},
+                        }}},
+        };
+        QFile file(market.path() + "/index.json");
+        file.open(QIODevice::WriteOnly);
+        file.write(QJsonDocument(index).toJson());
+    }
+    qputenv("RHINE_PLUGIN_MARKETPLACE_URL",
+            QUrl::fromLocalFile(market.path() + "/index.json").toString().toUtf8());
+    Host marketplaceHost(root, true);
+    marketplaceHost.refreshPluginMarketplace();
+    ok &= waitFor([&] {
+        const auto state = marketplaceHost.pluginMarketplaceState();
+        return !state["loading"].toBool() && state["plugins"].toArray().size() == 1;
+    });
+    ok &= marketplaceHost.installMarketplacePlugin("fixture").isEmpty();
+    ok &= waitFor(
+        [&] { return marketplaceHost.pluginMarketplaceState()["status"].toString().startsWith("已安装"); });
+    ok &= QFile::exists(AppStorage::dataDirectory() + "/plugins/fixture/plugin.cjs");
+    ok &= marketplaceHost.pluginEnabled("fixture");
+    marketplaceHost.setPluginEnabled("fixture", false);
+    ok &= !marketplaceHost.pluginEnabled("fixture");
+    ok &= !ProviderRegistry::instance().contains("fixture");
+    marketplaceHost.setPluginEnabled("fixture", true);
+    ok &= ProviderRegistry::instance().contains("fixture");
+    qunsetenv("RHINE_PLUGIN_MARKETPLACE_URL");
+    QDir(AppStorage::dataDirectory() + "/plugins/.backup-fixture").removeRecursively();
+    QDir(AppStorage::dataDirectory() + "/plugins/fixture").removeRecursively();
+    marketplaceHost.reloadPlugins();
 #ifdef Q_OS_IOS
     ok &= runIOSBridgeChecks(root);
 #endif

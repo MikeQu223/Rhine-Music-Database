@@ -34,6 +34,8 @@ QString modalTitle(const QString &modal, const MusicLibrary &music) {
                                                 {"discover", "DISCOVER MUSIC"},
                                                 {"playlist-form", "PLAYLIST EDITOR"},
                                                 {"playlist-picker", "PLAYLIST DIRECTORY"},
+                                                {"plugins", "PLUGIN MANAGER"},
+                                                {"plugin-detail", "PLUGIN DETAIL"},
                                                 {"confirm", "CONFIRM DELETE"}};
     if (modal == "local") {
         return "LOCAL MUSIC LIBRARY";
@@ -57,6 +59,8 @@ QString modalSubtitle(const QString &modal, const MusicLibrary &music) {
                                                    {"discover", "推荐 / 排行榜 / 新专辑"},
                                                    {"playlist-form", "编辑我的歌单"},
                                                    {"playlist-picker", "添加到我的歌单"},
+                                                   {"plugins", "插件市场 / 下载与启用"},
+                                                   {"plugin-detail", "插件详情 / 版本与能力"},
                                                    {"confirm", "删除确认"}};
     if (modal == "local") {
         return "文件夹管理 / 导入与索引";
@@ -192,6 +196,8 @@ void NativeHud::modalDraw(double width) {
         category = "AUDIO TERMINAL";
     } else if (modal == "quality") {
         category = "AUDIO SPECIFICATION";
+    } else if (modal == "plugins" || modal == "plugin-detail") {
+        category = "PLUGIN MANAGEMENT";
     }
     text("RHINE LAB / MUSIC DATABASE / " + category, x + 53, y + 37, modal == "settings" ? 14 : 11);
     button("← 返回", x + usable - 220, y + 18, 167, 54,
@@ -217,6 +223,10 @@ void NativeHud::modalBody(double x, double y, double usable) {
         qualityPanel(x, y, usable);
     } else if (modal == "provider") {
         platformPanel(x, y, usable);
+    } else if (modal == "plugins") {
+        pluginsPanel(x, y, usable);
+    } else if (modal == "plugin-detail") {
+        pluginDetailPanel(x, y, usable);
     } else if (modal == "confirm") {
         limited(confirmTitle, x + 53, y + 260, 24, usable - 106, "demibold");
         text(music.isLocal() ? "只移除本地索引，磁盘音乐文件保持原样。"
@@ -348,7 +358,117 @@ void NativeHud::platformPanel(double x, double y, double width) {
     } else {
         button("账号登录 / " + m_music->providerName(), x + 53, y + 660, 330, 48, "music:login", 16);
     }
+    button("插件管理 / PLUGINS", x + 53, y + 720, 330, 48, "plugins", 15);
 }
+
+/** 插件管理器：只读列出已安装包，安装与信任公钥动作交给 Host。 */
+void NativeHud::pluginsPanel(double x, double y, double width) {
+    const auto left = x + 53;
+    const auto usable = width - 106;
+    auto muted = ink();
+    muted[3] = 0.55;
+    const auto marketplace = m_host->pluginMarketplaceState();
+    const auto market = marketplace["plugins"].toArray();
+    const auto installed = m_host->pluginManagerState();
+    QHash<QString, QString> installedVersions;
+    for (const auto &value : installed) {
+        installedVersions.insert(value.toObject()["id"].toString(), value.toObject()["version"].toString());
+    }
+    text("插件市场 / MARKETPLACE", left, y + 205, 12, "demibold");
+    button("刷新", left + usable - 90, y + 195, 90, 30, "plugin:refresh", 12);
+    limited(marketplace["status"].toString("尚未读取插件市场"), left, y + 230, 11, usable - 110);
+    rule(left, y + 255, usable, 0.2);
+    if (market.isEmpty()) {
+        text("暂无可用插件", left, y + 285, 17, "demibold");
+        limited(marketplace["url"].toString().isEmpty() ? "设置 RHINE_PLUGIN_MARKETPLACE_URL 后刷新。"
+                                                        : "市场索引为空，或当前网络不可用。",
+                left, y + 320, 13, usable);
+    }
+    for (int index = 0; index < market.size() && index < 4; ++index) {
+        const auto value = market.at(index).toObject();
+        const auto id = value["id"].toString();
+        const auto version = value["version"].toString();
+        const auto current = installedVersions.value(id);
+        const auto row = y + 270 + index * 62.0;
+        text(fit(value["name"].toString(id), 17, usable * 0.5, "demibold"), left, row, 17, "demibold");
+        text(id + (version.isEmpty() ? QString() : " / " + version), left, row + 24, 11, "regular", 0, muted);
+        limited(value["description"].toString(), left + usable * 0.52, row + 2, 12, usable * 0.3);
+        const auto label = current.isEmpty()
+                               ? QStringLiteral("安装")
+                               : (current == version ? QStringLiteral("重新安装") : QStringLiteral("更新"));
+        button(label, left + usable - 136, row, 124, 36, "plugin:market:" + id, 12);
+        rule(left, row + 54, usable, 0.15);
+    }
+    text("已安装 / INSTALLED", left, y + 525, 12, "demibold");
+    rule(left, y + 550, usable, 0.2);
+    if (installed.isEmpty()) {
+        limited("尚未安装插件。", left, y + 570, 13, usable);
+    }
+    for (int index = 0; index < installed.size() && index < 4; ++index) {
+        const auto value = installed.at(index).toObject();
+        const auto id = value["id"].toString();
+        const auto row = y + 565 + index * 52.0;
+        text(fit(value["name"].toString(id), 16, usable * 0.45, "demibold"), left, row, 16, "demibold");
+        limited(id + " / " + value["version"].toString() + " / " + value["publisher"].toString(),
+                left + usable * 0.46, row + 2, 11, usable * 0.3);
+        button("详情", left + usable - 250, row, 100, 34, "plugin:detail:" + id, 12);
+        button(value["enabled"].toBool() ? "禁用" : "启用", left + usable - 140, row, 120, 34,
+               "plugin:toggle:" + id, 12);
+        rule(left, row + 45, usable, 0.12);
+    }
+    if (!pluginManagerMessage.isEmpty()) {
+        limited(pluginManagerMessage, left, y + 780, 12, usable);
+    } else {
+        limited("插件下载到应用数据目录；禁用后不会加载。", left, y + 780, 12, usable);
+    }
+}
+
+void NativeHud::pluginDetailPanel(double x, double y, double width) {
+    const auto left = x + 53;
+    const auto usable = width - 106;
+    auto muted = ink();
+    muted[3] = 0.55;
+    const auto detail = m_host->pluginDetail(pluginDetailId);
+    if (detail.isEmpty()) {
+        text("插件不可用", left, y + 250, 20, "demibold");
+        return;
+    }
+    text(fit(detail["name"].toString(detail["id"].toString()), 26, usable, "demibold"), left, y + 220, 26,
+         "demibold");
+    text(detail["id"].toString() + " / " + detail["version"].toString(), left, y + 260, 12, "regular", 0,
+         muted);
+    rule(left, y + 285, usable, 0.2);
+    const auto field = [&](const QString &label, const QString &value, double row) {
+        text(label, left, row, 11, "regular", 0, muted);
+        limited(value.isEmpty() ? QStringLiteral("—") : value, left, row + 20, 14, usable * 0.48);
+    };
+    field("PUBLISHER / 发布者", detail["publisher"].toString(), y + 310);
+    field("LICENSE / 许可证", detail["license"].toString(), y + 365);
+    field("ENTRY / 入口", detail["entry"].toObject()["file"].toString(), y + 420);
+    int capabilities = 0;
+    const auto values = detail["capabilities"].toObject();
+    for (auto it = values.begin(); it != values.end(); ++it) {
+        capabilities += it.value().toBool() ? 1 : 0;
+    }
+    field("CAPABILITIES / 能力", QString::number(capabilities), y + 475);
+    field("STATE / 状态",
+          detail["installed"].toBool() ? (detail["enabled"].toBool() ? QStringLiteral("已安装 / 已启用")
+                                                                     : QStringLiteral("已安装 / 已禁用"))
+                                       : QStringLiteral("未安装"),
+          y + 530);
+    const auto id = detail["id"].toString();
+    if (detail["installed"].toBool()) {
+        button(detail["enabled"].toBool() ? "禁用插件" : "启用插件", left, y + 620, 180, 44,
+               "plugin:toggle:" + id, 15);
+        button("回滚上一版本", left + 200, y + 620, 180, 44, "plugin:rollback:" + id, 15);
+    } else {
+        button("安装插件", left, y + 620, 180, 44, "plugin:market:" + id, 15);
+    }
+    if (!pluginManagerMessage.isEmpty()) {
+        limited(pluginManagerMessage, left, y + 700, 12, usable);
+    }
+}
+
 namespace {
 struct QualityDescription {
     QString title;

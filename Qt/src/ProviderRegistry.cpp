@@ -20,13 +20,20 @@ ProviderRegistry &ProviderRegistry::instance() {
     return registry;
 }
 
-void ProviderRegistry::load(const QString &root) {
+void ProviderRegistry::load(const QString &root, const QString &userRoot, const QStringList &disabled) {
     if (!root.isEmpty()) {
         m_root = root;
     }
     m_descriptors.clear();
+    m_manifests.clear();
+    m_disabled.clear();
+    for (const auto &id : disabled) {
+        m_disabled.insert(id);
+    }
     m_loaded = false;
-    loadDirectory(m_root + "/MusicBridge/plugins/descriptors");
+    // 已安装插件优先；构建期内置 descriptor 不覆盖用户目录中的同 id 插件。
+    loadManifestFallback(userRoot);
+    loadDirectory(m_root + "/MusicBridge/plugins/descriptors", false);
     loadManifestFallback(m_root + "/MusicBridge/local-plugins");
     // 构建产物缺失时仍保证 core 自带来源可用；插件 descriptor 存在时不会被覆盖。
     addBuiltin("siren", "塞壬唱片", "MONSTER SIREN", "官网曲库", "MONSTER SIREN", 0);
@@ -54,6 +61,10 @@ bool ProviderRegistry::contains(const QString &id) const {
 
 QJsonObject ProviderRegistry::descriptor(const QString &id) const {
     return m_descriptors.value(id);
+}
+
+QJsonObject ProviderRegistry::manifest(const QString &id) const {
+    return m_manifests.value(id);
 }
 
 QString ProviderRegistry::name(const QString &id) const {
@@ -209,7 +220,7 @@ QString ProviderRegistry::text(const QString &id, const QString &key) const {
     return stringTable(id)[key].toString();
 }
 
-void ProviderRegistry::loadDirectory(const QString &directory) {
+void ProviderRegistry::loadDirectory(const QString &directory, bool overwrite) {
     QDir dir(directory);
     if (!dir.exists()) {
         return;
@@ -224,11 +235,20 @@ void ProviderRegistry::loadDirectory(const QString &directory) {
         if (!validDescriptor(value)) {
             continue;
         }
-        m_descriptors.insert(value["id"].toString(), value);
+        const auto id = value["id"].toString();
+        if (m_disabled.contains(id)) {
+            continue;
+        }
+        if (overwrite || !m_descriptors.contains(id)) {
+            m_descriptors.insert(id, value);
+        }
     }
 }
 
 void ProviderRegistry::loadManifestFallback(const QString &directory) {
+    if (directory.isEmpty()) {
+        return;
+    }
     QDir dir(directory);
     if (!dir.exists()) {
         return;
@@ -244,8 +264,17 @@ void ProviderRegistry::loadManifestFallback(const QString &directory) {
         }
         const auto manifest = QJsonDocument::fromJson(handle.readAll()).object();
         const auto id = manifest["id"].toString();
-        if (id.isEmpty() || m_descriptors.contains(id)) {
+        if (id.isEmpty() || m_disabled.contains(id)) {
             continue;
+        }
+        if (m_descriptors.contains(id)) {
+            if (!m_manifests.contains(id)) {
+                m_manifests.insert(id, manifest);
+            }
+            continue;
+        }
+        if (!m_manifests.contains(id)) {
+            m_manifests.insert(id, manifest);
         }
         QJsonObject value;
         for (const auto &field : descriptorFields) {

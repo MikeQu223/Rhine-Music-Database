@@ -9,7 +9,12 @@ const readline = require('node:readline');
 const { PluginRegistry } = require('./core/registry.cjs');
 const { createHost } = require('./core/host.cjs');
 const { errorBody, pluginMissing, routeInvalid, routeUnknown } = require('./core/errors.cjs');
-const pluginRegistry = new PluginRegistry(path.join(__dirname, 'local-plugins'));
+const pluginRegistry = new PluginRegistry(path.join(__dirname, 'local-plugins'), {
+    userRoot: process.env.RHINE_USER_PLUGINS,
+    disabled: String(process.env.RHINE_DISABLED_PLUGINS || '')
+        .split(',')
+        .filter(Boolean),
+});
 // 上游诊断可能包含 URL 或 Cookie，禁止混入 IPC 消息和日志。
 console.log = console.info = console.warn = console.error = console.debug = () => {};
 

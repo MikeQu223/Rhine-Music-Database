@@ -13,7 +13,9 @@ const installedPlugins = fs.existsSync(pluginRoot)
           .readdirSync(pluginRoot, { withFileTypes: true })
           .filter(
               (entry) =>
-                  entry.isDirectory() && fs.existsSync(path.join(pluginRoot, entry.name, 'manifest.json')),
+                  entry.isDirectory() &&
+                  !entry.name.startsWith('.') &&
+                  fs.existsSync(path.join(pluginRoot, entry.name, 'manifest.json')),
           )
           .map((entry) => entry.name)
     : [];
@@ -42,6 +44,7 @@ run(process.execPath, ['scripts/check-music-upstream.cjs']);
 run(process.execPath, ['--test', 'scripts/test-ffmpeg-decoders.cjs']);
 run(process.execPath, ['--test', 'scripts/test-ios-bridge-plugin.cjs']);
 run(process.execPath, ['--test', 'scripts/test-plugin-registry.cjs']);
+run(process.execPath, ['--test', 'scripts/test-plugin-package.cjs']);
 
 run(
     'ctest',

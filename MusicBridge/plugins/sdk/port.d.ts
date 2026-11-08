@@ -24,7 +24,6 @@ export interface ProviderManifest {
     version: string;
     kind?: 'official' | 'third-party' | 'builtin';
     publisher?: string;
-    keyId?: string;
     requiresHost?: string;
     entry: { file: string; sha256: string; size: number };
     files?: Array<{ path: string; sha256: string; size: number }>;

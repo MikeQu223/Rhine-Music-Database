@@ -1651,6 +1651,12 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
                             << (dark ? "dark" : "light");
                 ok = false;
             }
+            hud.openModal("plugins");
+            hud.draw(archiveFrame, 1920, 50);
+            if (!hasAction(hud.hits, "plugin:refresh")) {
+                qCritical() << "Plugin marketplace refresh missing" << provider << (dark ? "dark" : "light");
+                ok = false;
+            }
             const QStringList criticalPanels = {"search", "login", "player", "confirm"};
             for (const auto &panel : criticalPanels) {
                 hud.openModal(panel);

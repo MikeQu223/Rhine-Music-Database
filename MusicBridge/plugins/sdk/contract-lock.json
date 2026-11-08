@@ -4,9 +4,9 @@
     "frozenAt": "2026-11-08",
     "note": "Any contract change must update this file and follow the version policy in docs/PLUGIN/P0-FREEZE.md.",
     "files": {
-        "MusicBridge/plugins/sdk/port.d.ts": "0c13ef6597c0ccd8daa2c6ba0bc22d7132eceb934d6e261d34a531250be1403e",
+        "MusicBridge/plugins/sdk/port.d.ts": "6bb7c73a551d666dd5d8e716d3c38ffb57e6707499c08fe7ebf2eab6986c0b33",
         "MusicBridge/plugins/sdk/registry.d.ts": "248435d3a791b44ca31704cc42d84006536ddbc747b213473782358868f4adf2",
-        "MusicBridge/plugins/sdk/manifest.schema.json": "127888dc9b27ce08d11396dd0bc94e65b2d618bc595128a2242e882e0c7f520f",
+        "MusicBridge/plugins/sdk/manifest.schema.json": "6556619b60bb8655934d927424ce2666747d3f5de56b39b62a2b40359780bc42",
         "MusicBridge/plugins/sdk/descriptor.schema.json": "4c5f575716d13533dc40653ecfaadaf9518c14abf712bc7aa5d7269aa4da06c1",
         "MusicBridge/plugins/sdk/models.schema.json": "d815798d2450d6780d4f16b0587f000bc8c4bbffae2c006a814e4d3029b20ed8",
         "MusicBridge/plugins/sdk/models.cjs": "2542009955a599b5d65e93233b45230f0e65c7fc0c9ce65c79cdf8be8aae8b70",

@@ -71,6 +71,8 @@ function findConflict(values, owners, overlap = false) {
 class PluginRegistry {
     constructor(pluginsRoot, options = {}) {
         this.pluginsRoot = pluginsRoot;
+        this.userRoot = options.userRoot || '';
+        this.disabled = new Set(options.disabled || []);
         this.apiVersion = options.apiVersion || HOST_API_VERSION;
         this.entries = new Map();
         this.modules = new Map();
@@ -115,58 +117,82 @@ class PluginRegistry {
         this.legacy.clear();
         this.prefixes.clear();
         this.problems = [];
-        if (!fs.existsSync(this.pluginsRoot)) {
-            return;
-        }
-        const directories = fs
-            .readdirSync(this.pluginsRoot, { withFileTypes: true })
-            .filter((entry) => entry.isDirectory() && entry.name !== 'sdk' && entry.name !== 'node_modules')
-            .sort((left, right) => left.name.localeCompare(right.name));
-        for (const entry of directories) {
-            const directory = path.join(this.pluginsRoot, entry.name);
-            const manifestFile = path.join(directory, 'manifest.json');
-            if (!fs.existsSync(manifestFile)) {
+        const roots = [...new Set([this.userRoot, this.pluginsRoot].filter(Boolean))];
+        const seenRoot = new Map();
+        for (const root of roots) {
+            if (!fs.existsSync(root)) {
                 continue;
             }
-            let manifest;
-            try {
-                manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8'));
-            } catch {
-                this.problem(entry.name, null, 'manifest.invalid', 'manifest 无法解析');
-                continue;
-            }
-            const invalid = this.validate(manifest);
-            if (invalid) {
-                this.problem(entry.name, manifest?.id, 'manifest.invalid', invalid);
-                continue;
-            }
-            if (
-                manifest.schemaVersion !== 1 ||
-                !compatibleVersion(parseVersion(manifest.apiVersion), parseVersion(this.apiVersion))
-            ) {
-                this.problem(entry.name, manifest.id, 'plugin.incompatible', '插件版本与当前 host 不兼容');
-                continue;
-            }
-            if (this.entries.has(manifest.id)) {
-                this.problem(entry.name, manifest.id, 'plugin.conflict', '插件 id 重复');
-                continue;
-            }
-            const legacyRoutes = manifest.routes?.legacyRoutes || [];
-            const prefixRoutes = manifest.routes?.prefixes || [];
-            const duplicate = duplicateEntry(legacyRoutes) || duplicateEntry(prefixRoutes);
-            const overlap = overlappingPrefix(prefixRoutes);
-            const conflict =
-                findConflict(legacyRoutes, this.legacy) || findConflict(prefixRoutes, this.prefixes, true);
-            if (duplicate || overlap || conflict) {
-                this.problem(entry.name, manifest.id, 'route.duplicate', '插件路由与其他插件冲突');
-                continue;
-            }
-            this.entries.set(manifest.id, { directory, manifest });
-            for (const route of legacyRoutes) {
-                this.legacy.set(route, manifest.id);
-            }
-            for (const route of prefixRoutes) {
-                this.prefixes.set(route, manifest.id);
+            const directories = fs
+                .readdirSync(root, { withFileTypes: true })
+                .filter(
+                    (entry) =>
+                        entry.isDirectory() &&
+                        !entry.name.startsWith('.') &&
+                        entry.name !== 'sdk' &&
+                        entry.name !== 'node_modules',
+                )
+                .sort((left, right) => left.name.localeCompare(right.name));
+            for (const entry of directories) {
+                const directory = path.join(root, entry.name);
+                const manifestFile = path.join(directory, 'manifest.json');
+                if (!fs.existsSync(manifestFile)) {
+                    continue;
+                }
+                let manifest;
+                try {
+                    manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8'));
+                } catch {
+                    this.problem(entry.name, null, 'manifest.invalid', 'manifest 无法解析');
+                    continue;
+                }
+                const invalid = this.validate(manifest);
+                if (invalid) {
+                    this.problem(entry.name, manifest?.id, 'manifest.invalid', invalid);
+                    continue;
+                }
+                if (
+                    manifest.schemaVersion !== 1 ||
+                    !compatibleVersion(parseVersion(manifest.apiVersion), parseVersion(this.apiVersion))
+                ) {
+                    this.problem(
+                        entry.name,
+                        manifest.id,
+                        'plugin.incompatible',
+                        '插件版本与当前 host 不兼容',
+                    );
+                    continue;
+                }
+                if (seenRoot.has(manifest.id)) {
+                    // 用户目录优先；同一目录内重复 id 仍视为冲突。
+                    if (seenRoot.get(manifest.id) === root) {
+                        this.problem(entry.name, manifest.id, 'plugin.conflict', '插件 id 重复');
+                    }
+                    continue;
+                }
+                if (this.disabled.has(manifest.id)) {
+                    seenRoot.set(manifest.id, root);
+                    continue;
+                }
+                const legacyRoutes = manifest.routes?.legacyRoutes || [];
+                const prefixRoutes = manifest.routes?.prefixes || [];
+                const duplicate = duplicateEntry(legacyRoutes) || duplicateEntry(prefixRoutes);
+                const overlap = overlappingPrefix(prefixRoutes);
+                const conflict =
+                    findConflict(legacyRoutes, this.legacy) ||
+                    findConflict(prefixRoutes, this.prefixes, true);
+                if (duplicate || overlap || conflict) {
+                    this.problem(entry.name, manifest.id, 'route.duplicate', '插件路由与其他插件冲突');
+                    continue;
+                }
+                seenRoot.set(manifest.id, root);
+                this.entries.set(manifest.id, { directory, manifest });
+                for (const route of legacyRoutes) {
+                    this.legacy.set(route, manifest.id);
+                }
+                for (const route of prefixRoutes) {
+                    this.prefixes.set(route, manifest.id);
+                }
             }
         }
     }

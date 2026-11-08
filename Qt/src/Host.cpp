@@ -10,6 +10,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QProcess>
 #include <QFutureWatcher>
 #include <QGuiApplication>
 #include <QImageReader>
@@ -127,7 +128,7 @@ QJsonObject Host::credentialCookies(const QJsonObject &credentials, const QStrin
 Host::Host(QString path, bool test, QObject *parent, bool service, PlaybackConnection *connection)
     : QObject(parent), updater(test), root(path), offline(test), remote(test ? nullptr : connection),
       playbackOnly(service) {
-    ProviderRegistry::instance().load(root);
+    ProviderRegistry::instance().load(root, AppStorage::dataDirectory() + "/plugins", disabledPlugins());
     provider = ProviderRegistry::instance().defaultId();
     if (provider.isEmpty()) {
         provider = ProviderRegistry::instance().fallbackId();
@@ -478,6 +479,8 @@ void Host::send(QString key) {
         // 设备身份独立于缓存与账号凭据，重启及切换来源后继续复用上游设备配置。
         env.insert("RHINE_QQ_DEVICE_STATE_PATH", AppStorage::dataDirectory() + "/qq-device.json");
         env.insert("RHINE_KUGOU_DEVICE_STATE_PATH", AppStorage::dataDirectory() + "/kugou-device.json");
+        env.insert("RHINE_USER_PLUGINS", AppStorage::dataDirectory() + "/plugins");
+        env.insert("RHINE_DISABLED_PLUGINS", disabledPlugins().join(','));
         env.insert("RHINE_KUGOU_EDITION", kugouEdition);
         child.setProcessEnvironment(env);
         // 子进程的工作目录改到应用自己的系统临时目录
@@ -757,6 +760,364 @@ void Host::setKugouEdition(QString edition) {
         child.kill();
         child.waitForFinished(1000);
     }
+}
+QJsonArray Host::installedPluginManifests() const {
+    QMap<QString, QJsonObject> byId;
+    const QStringList roots{AppStorage::dataDirectory() + "/plugins",
+                            QDir(root).absoluteFilePath("MusicBridge/local-plugins")};
+    for (const auto &directory : roots) {
+        QDir plugins(directory);
+        if (!plugins.exists()) {
+            continue;
+        }
+        for (const auto &entry : plugins.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name)) {
+            if (entry.fileName().startsWith('.')) {
+                continue;
+            }
+            QFile manifestFile(entry.absoluteFilePath() + "/manifest.json");
+            if (!manifestFile.open(QIODevice::ReadOnly)) {
+                continue;
+            }
+            const auto manifest = QJsonDocument::fromJson(manifestFile.readAll()).object();
+            const auto id = manifest["id"].toString();
+            if (id.isEmpty() || id == "local" || id == "siren" || byId.contains(id)) {
+                continue;
+            }
+            byId.insert(id, manifest);
+        }
+    }
+    QJsonArray values;
+    for (const auto &manifest : byId) {
+        values.append(manifest);
+    }
+    return values;
+}
+QStringList Host::disabledPlugins() const {
+    QFile file(AppStorage::dataDirectory() + "/plugins-state.json");
+    if (!file.open(QIODevice::ReadOnly)) {
+        return {};
+    }
+    QStringList values;
+    for (const auto &value : QJsonDocument::fromJson(file.readAll()).object()["disabled"].toArray()) {
+        if (value.isString()) {
+            values.append(value.toString());
+        }
+    }
+    return values;
+}
+void Host::writeDisabledPlugins(const QStringList &disabled) {
+    const auto directory = AppStorage::dataDirectory();
+    if (!QDir().mkpath(directory)) {
+        return;
+    }
+    const auto path = directory + "/plugins-state.json";
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        return;
+    }
+    file.write(QJsonDocument(QJsonObject{{"disabled", QJsonArray::fromStringList(disabled)}})
+                   .toJson(QJsonDocument::Compact));
+    file.close();
+    QFile::setPermissions(path, QFile::ReadOwner | QFile::WriteOwner);
+}
+QJsonArray Host::pluginManagerState() const {
+    const auto disabled = disabledPlugins();
+    QJsonArray values;
+    for (const auto &manifest : installedPluginManifests()) {
+        const auto value = manifest.toObject();
+        const auto id = value["id"].toString();
+        values.append(QJsonObject{
+            {"id", id},
+            {"name", value["display"].toObject()["name"].toString(id)},
+            {"version", value["version"].toString()},
+            {"publisher", value["publisher"].toString()},
+            {"license", value["license"].toString()},
+            {"enabled", !disabled.contains(id)},
+        });
+    }
+    return values;
+}
+QJsonObject Host::pluginDetail(QString id) const {
+    for (const auto &manifest : installedPluginManifests()) {
+        const auto value = manifest.toObject();
+        if (value["id"].toString() == id) {
+            auto result = value;
+            result["enabled"] = !disabledPlugins().contains(id);
+            result["installed"] = true;
+            return result;
+        }
+    }
+    for (const auto &entry : marketplacePlugins) {
+        const auto value = entry.toObject();
+        if (value["id"].toString() == id) {
+            auto result = value;
+            result["enabled"] = true;
+            result["installed"] = false;
+            return result;
+        }
+    }
+    return {};
+}
+QString Host::marketplaceUrl() const {
+    return qEnvironmentVariable("RHINE_PLUGIN_MARKETPLACE_URL");
+}
+QJsonObject Host::pluginMarketplaceState() const {
+    return {{"url", marketplaceUrl()},
+            {"loading", marketplaceLoading},
+            {"status", marketplaceStatus},
+            {"plugins", marketplacePlugins}};
+}
+void Host::refreshPluginMarketplace() {
+    const auto url = marketplaceUrl();
+    if (url.isEmpty()) {
+        marketplaceStatus = QStringLiteral("未配置插件市场地址");
+        emit invalidated();
+        return;
+    }
+    if (marketplaceLoading) {
+        return;
+    }
+    marketplaceLoading = true;
+    marketplaceStatus = QStringLiteral("正在读取插件市场…");
+    emit invalidated();
+    const auto apply = [this](const QByteArray &bytes) {
+        const auto document = QJsonDocument::fromJson(bytes).object();
+        QJsonArray plugins;
+        for (const auto &entry : document["plugins"].toArray()) {
+            const auto value = entry.toObject();
+            const auto id = value["id"].toString();
+            const auto path = value["path"].toString();
+            if (!QRegularExpression("^[a-z0-9-]{1,40}$").match(id).hasMatch() || !value["id"].isString() ||
+                !value["path"].isString() || QDir::isAbsolutePath(path) || path.contains("..") ||
+                path.contains('\\')) {
+                continue;
+            }
+            plugins.append(value);
+        }
+        marketplacePlugins = plugins;
+        marketplaceStatus =
+            QStringLiteral("已载入 ") + QString::number(plugins.size()) + QStringLiteral(" 个插件");
+        marketplaceLoading = false;
+        emit invalidated();
+    };
+    if (url.startsWith("file:")) {
+        QFile file(QUrl(url).toLocalFile());
+        if (!file.open(QIODevice::ReadOnly)) {
+            marketplaceLoading = false;
+            marketplaceStatus = QStringLiteral("插件市场读取失败");
+            emit invalidated();
+            return;
+        }
+        apply(file.readAll());
+        return;
+    }
+    QNetworkRequest request{QUrl(url)};
+    request.setTransferTimeout(20000);
+    auto reply = network.get(request);
+    QTimer::singleShot(20000, reply, [reply] {
+        if (!reply->isFinished()) {
+            reply->abort();
+        }
+    });
+    connect(reply, &QNetworkReply::finished, this, [this, reply, apply] {
+        const auto bytes = reply->readAll();
+        const auto ok = reply->error() == QNetworkReply::NoError &&
+                        reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() == 200 &&
+                        bytes.size() < 8 * 1024 * 1024;
+        reply->deleteLater();
+        marketplaceLoading = false;
+        if (!ok) {
+            marketplaceStatus = QStringLiteral("插件市场读取失败");
+            emit invalidated();
+            return;
+        }
+        apply(bytes);
+    });
+}
+void Host::downloadPluginFile(const QString &url, const QString &path, std::function<void(QString)> done) {
+    if (url.startsWith("file:")) {
+        QFile source(QUrl(url).toLocalFile());
+        if (!source.open(QIODevice::ReadOnly)) {
+            done(QStringLiteral("插件文件缺失"));
+            return;
+        }
+        const auto bytes = source.readAll();
+        QDir().mkpath(QFileInfo(path).path());
+        QSaveFile file(path);
+        if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size() || !file.commit()) {
+            done(QStringLiteral("写入插件文件失败"));
+            return;
+        }
+        done({});
+        return;
+    }
+    QNetworkRequest request{QUrl(url)};
+    request.setTransferTimeout(30000);
+    auto reply = network.get(request);
+    connect(reply, &QNetworkReply::finished, this, [reply, path, done] {
+        const auto bytes = reply->readAll();
+        const auto code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const auto ok =
+            reply->error() == QNetworkReply::NoError && code == 200 && bytes.size() < 64 * 1024 * 1024;
+        reply->deleteLater();
+        if (!ok) {
+            done(QStringLiteral("下载失败：") + QUrl(path).fileName());
+            return;
+        }
+        QDir().mkpath(QFileInfo(path).path());
+        QSaveFile file(path);
+        if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size() || !file.commit()) {
+            done(QStringLiteral("写入插件文件失败"));
+            return;
+        }
+        done({});
+    });
+}
+void Host::downloadPluginFiles(QStringList files, QString base, QString directory, QString id,
+                               std::function<void(QString)> done) {
+    auto step = std::make_shared<std::function<void(int)>>();
+    auto finish = [step, done](const QString &error) {
+        done(error);
+        QTimer::singleShot(0, [step] { *step = nullptr; });
+    };
+    *step = [this, files = std::move(files), base = std::move(base), directory = std::move(directory),
+             id = std::move(id), step, finish](int index) {
+        if (index >= files.size()) {
+            finish({});
+            return;
+        }
+        Q_UNUSED(id)
+        const auto name = files.at(index);
+        if (name.isEmpty() || QDir::isAbsolutePath(name) || name.contains("..") || name.contains('\\')) {
+            finish(QStringLiteral("插件文件路径无效"));
+            return;
+        }
+        downloadPluginFile(base + "/" + name, directory + "/" + name, [step, finish, index](QString error) {
+            if (!error.isEmpty()) {
+                finish(error);
+            } else {
+                (*step)(index + 1);
+            }
+        });
+    };
+    (*step)(0);
+}
+QString Host::installMarketplacePlugin(QString id) {
+    QJsonObject entry;
+    for (const auto &value : marketplacePlugins) {
+        if (value.toObject()["id"].toString() == id) {
+            entry = value.toObject();
+            break;
+        }
+    }
+    if (entry.isEmpty()) {
+        return QStringLiteral("插件市场中没有该插件");
+    }
+    const auto url = marketplaceUrl();
+    const auto base = url.left(url.lastIndexOf('/'));
+    const auto folder = entry["path"].toString("plugins/" + id);
+    QStringList files{QStringLiteral("manifest.json")};
+    const auto entryFile = entry["entry"].toObject()["file"].toString();
+    if (!entryFile.isEmpty()) {
+        files.append(entryFile);
+    }
+    for (const auto &value : entry["files"].toArray()) {
+        const auto name = value.isString() ? value.toString() : value.toObject()["path"].toString();
+        if (!name.isEmpty()) {
+            files.append(name);
+        }
+    }
+    files.removeDuplicates();
+    const auto userDirectory = AppStorage::dataDirectory() + "/plugins";
+    const auto staging = userDirectory + "/.staging-" + id + "-" + QUuid::createUuid().toString();
+    QDir().mkpath(staging);
+    downloadPluginFiles(files, base + "/" + folder, staging, id,
+                        [this, id, staging, userDirectory, entry](QString error) {
+                            if (!error.isEmpty()) {
+                                QDir(staging).removeRecursively();
+                                marketplaceStatus = error;
+                                emit invalidated();
+                                return;
+                            }
+                            QFile manifestFile(staging + "/manifest.json");
+                            if (!manifestFile.open(QIODevice::ReadOnly)) {
+                                QDir(staging).removeRecursively();
+                                marketplaceStatus = QStringLiteral("插件 manifest 缺失");
+                                emit invalidated();
+                                return;
+                            }
+                            const auto manifest = QJsonDocument::fromJson(manifestFile.readAll()).object();
+                            if (manifest["id"].toString() != id ||
+                                manifest["entry"].toObject()["file"].toString().isEmpty()) {
+                                QDir(staging).removeRecursively();
+                                marketplaceStatus = QStringLiteral("插件 manifest 与市场条目不一致");
+                                emit invalidated();
+                                return;
+                            }
+                            const auto target = userDirectory + "/" + id;
+                            const auto backup = userDirectory + "/.backup-" + id;
+                            QDir().mkpath(userDirectory);
+                            QDir(backup).removeRecursively();
+                            bool moved = false;
+                            if (QDir(target).exists()) {
+                                if (!QDir().rename(target, backup)) {
+                                    QDir(staging).removeRecursively();
+                                    marketplaceStatus = QStringLiteral("无法替换已安装插件");
+                                    emit invalidated();
+                                    return;
+                                }
+                                moved = true;
+                            }
+                            if (!QDir().rename(staging, target)) {
+                                if (moved) {
+                                    QDir().rename(backup, target);
+                                }
+                                QDir(staging).removeRecursively();
+                                marketplaceStatus = QStringLiteral("插件安装失败");
+                                emit invalidated();
+                                return;
+                            }
+                            marketplaceStatus = QStringLiteral("已安装 ") + entry["name"].toString(id);
+                            reloadPlugins();
+                        });
+    return {};
+}
+bool Host::pluginEnabled(QString id) const {
+    return !disabledPlugins().contains(id);
+}
+void Host::setPluginEnabled(QString id, bool enabled) {
+    auto disabled = disabledPlugins();
+    if (enabled) {
+        disabled.removeAll(id);
+    } else if (!disabled.contains(id)) {
+        disabled.append(id);
+    }
+    writeDisabledPlugins(disabled);
+    reloadPlugins();
+}
+void Host::reloadPlugins() {
+    ProviderRegistry::instance().load(root, AppStorage::dataDirectory() + "/plugins", disabledPlugins());
+    if (remote) {
+        remote->call("host.reloadPlugins");
+    } else if (child.state() != BridgeProcess::NotRunning) {
+        child.kill();
+        child.waitForFinished(1000);
+    }
+    emit invalidated();
+}
+QString Host::rollbackPlugin(QString id) {
+    const auto directory = AppStorage::dataDirectory() + "/plugins";
+    const auto target = directory + "/" + id;
+    const auto backup = directory + "/.backup-" + id;
+    if (!QDir(backup).exists()) {
+        return QStringLiteral("没有可回滚的版本");
+    }
+    QDir(target).removeRecursively();
+    if (!QDir().rename(backup, target)) {
+        return QStringLiteral("插件回滚失败");
+    }
+    reloadPlugins();
+    return {};
 }
 QString Host::saveCredential() {
     if (remote) {

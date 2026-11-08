@@ -11,7 +11,9 @@ const installed = fs.existsSync(pluginsRoot)
           .readdirSync(pluginsRoot, { withFileTypes: true })
           .filter(
               (entry) =>
-                  entry.isDirectory() && fs.existsSync(path.join(pluginsRoot, entry.name, 'manifest.json')),
+                  entry.isDirectory() &&
+                  !entry.name.startsWith('.') &&
+                  fs.existsSync(path.join(pluginsRoot, entry.name, 'manifest.json')),
           )
           .map((entry) => entry.name)
           .sort()

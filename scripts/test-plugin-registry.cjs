@@ -102,6 +102,51 @@ test('returns no default when none or several plugins claim it', (t) => {
     assert.equal(several.default(), null);
 });
 
+test('user plugin root overrides bundled plugins with the same id', (t) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rhine-registry-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const write = (directory, version) => {
+        fs.mkdirSync(directory, { recursive: true });
+        fs.writeFileSync(
+            path.join(directory, 'manifest.json'),
+            JSON.stringify(manifest('plugin', { legacyRoutes: ['/search'] }, { version })),
+        );
+        fs.writeFileSync(path.join(directory, 'entry.cjs'), DEFAULT_ENTRY);
+    };
+    const bundled = path.join(root, 'bundled');
+    const user = path.join(root, 'user');
+    write(path.join(bundled, 'plugin'), '1.0.0');
+    write(path.join(user, 'plugin'), '2.0.0');
+    const registry = new PluginRegistry(bundled, { userRoot: user });
+    assert.equal(registry.list()[0].version, '2.0.0');
+    assert.equal(registry.legacyProvider('/search'), 'plugin');
+});
+
+test('skips disabled plugins', (t) => {
+    const registry = createRegistry(
+        t,
+        { plugin: { manifest: manifest('plugin', { legacyRoutes: ['/search'] }) } },
+        { disabled: ['plugin'] },
+    );
+    assert.deepEqual(registry.list(), []);
+    assert.equal(registry.has('plugin'), false);
+    assert.equal(registry.legacyProvider('/search'), null);
+});
+
+test('ignores staging and backup directories', (t) => {
+    const registry = createRegistry(t, {
+        '.staging-plugin': { manifest: manifest('plugin', { legacyRoutes: ['/one'] }) },
+        '.backup-plugin': { manifest: manifest('plugin', { legacyRoutes: ['/two'] }) },
+        plugin: { manifest: manifest('plugin', { legacyRoutes: ['/three'] }) },
+    });
+    assert.deepEqual(
+        registry.list().map((entry) => entry.id),
+        ['plugin'],
+    );
+    assert.equal(registry.legacyProvider('/three'), 'plugin');
+    assert.deepEqual(registry.getProblems(), []);
+});
+
 test('rejects duplicate provider ids', (t) => {
     const registry = createRegistry(t, {
         first: { manifest: manifest('duplicate', { legacyRoutes: ['/one'] }) },

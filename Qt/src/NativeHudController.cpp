@@ -582,6 +582,44 @@ void NativeHud::action(QString value) {
         openModal("provider");
         return;
     }
+    if (value == "plugins") {
+        pluginManagerMessage.clear();
+        openModal("plugins");
+        if (m_host->pluginMarketplaceState()["plugins"].toArray().isEmpty()) {
+            m_host->refreshPluginMarketplace();
+        }
+        return;
+    }
+    if (value == "plugin:refresh") {
+        m_host->refreshPluginMarketplace();
+        return;
+    }
+    if (value.startsWith("plugin:market:")) {
+        const auto error = m_host->installMarketplacePlugin(value.mid(QString("plugin:market:").size()));
+        pluginManagerMessage = error.isEmpty() ? QStringLiteral("正在安装插件…") : error;
+        m_host->invalidate();
+        return;
+    }
+    if (value.startsWith("plugin:toggle:")) {
+        const auto id = value.mid(QString("plugin:toggle:").size());
+        const auto enabled = m_host->pluginEnabled(id);
+        m_host->setPluginEnabled(id, !enabled);
+        pluginManagerMessage = enabled ? QStringLiteral("已禁用插件") : QStringLiteral("已启用插件");
+        m_host->invalidate();
+        return;
+    }
+    if (value.startsWith("plugin:detail:")) {
+        pluginDetailId = value.mid(QString("plugin:detail:").size());
+        pluginManagerMessage.clear();
+        openModal("plugin-detail");
+        return;
+    }
+    if (value.startsWith("plugin:rollback:")) {
+        const auto error = m_host->rollbackPlugin(value.mid(QString("plugin:rollback:").size()));
+        pluginManagerMessage = error.isEmpty() ? QStringLiteral("插件已回滚") : error;
+        m_host->invalidate();
+        return;
+    }
     if (value.startsWith("provider:")) {
         const auto provider = value.mid(9);
         if (music.provider != provider) {

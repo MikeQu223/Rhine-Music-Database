@@ -6,6 +6,7 @@
 #include <QCache>
 #include <QImage>
 #include <QJsonObject>
+#include <QJsonArray>
 #include <QNetworkAccessManager>
 #include <QObject>
 #include "BridgeProcess.h"
@@ -41,6 +42,15 @@ class Host : public QObject {
     Q_INVOKABLE void setKugouEdition(QString edition);
     Q_INVOKABLE void acceptCookies(QString json, int responseEpoch, QString credentialKey = {},
                                    QString provider = {});
+    Q_INVOKABLE QJsonArray pluginManagerState() const;
+    Q_INVOKABLE QJsonObject pluginDetail(QString id) const;
+    Q_INVOKABLE QJsonObject pluginMarketplaceState() const;
+    Q_INVOKABLE void refreshPluginMarketplace();
+    Q_INVOKABLE QString installMarketplacePlugin(QString id);
+    Q_INVOKABLE bool pluginEnabled(QString id) const;
+    Q_INVOKABLE void setPluginEnabled(QString id, bool enabled);
+    Q_INVOKABLE QString rollbackPlugin(QString id);
+    void reloadPlugins();
     // v2 凭据封装：按 provider 隔离 cookie 与 secretState；旧扁平 jar 在加载时迁移。
     static QJsonObject migrateCredential(const QJsonObject &legacy);
     static QJsonObject credentialCookies(const QJsonObject &credentials, const QString &provider,
@@ -143,6 +153,16 @@ class Host : public QObject {
     int metadataRevision = 0;
     mutable qint64 lastMediaUpdate = 0;
     QNetworkAccessManager network;
+    QJsonArray marketplacePlugins;
+    QString marketplaceStatus;
+    bool marketplaceLoading = false;
+    QJsonArray installedPluginManifests() const;
+    QStringList disabledPlugins() const;
+    void writeDisabledPlugins(const QStringList &disabled);
+    QString marketplaceUrl() const;
+    void downloadPluginFile(const QString &url, const QString &path, std::function<void(QString)> done);
+    void downloadPluginFiles(QStringList files, QString base, QString directory, QString id,
+                             std::function<void(QString)> done);
     mutable QCache<QString, QImage> images{32 * 1024};
     qint64 lastStart = 0;
     QHash<QString, qint64> blockedUntil;

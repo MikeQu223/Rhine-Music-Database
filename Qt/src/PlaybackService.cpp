@@ -329,6 +329,8 @@ QJsonObject PlaybackService::hostCommand(const QString &method, const QJsonObjec
                              arguments["credentialKey"].toString(), arguments["provider"].toString());
     } else if (method == "bumpEpoch") {
         m_host.bumpEpoch();
+    } else if (method == "reloadPlugins") {
+        m_host.reloadPlugins();
     } else if (method == "logout") {
         m_player.stop();
         m_player.clearHistory();
