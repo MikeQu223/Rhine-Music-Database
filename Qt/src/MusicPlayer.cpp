@@ -39,11 +39,16 @@ QString MusicPlayer::localQuality(const QJsonObject &track) {
 
 /** 只识别本次可播放地址及其响应元数据；不读取偏好或歌曲可用音质列表。 */
 QString MusicPlayer::sourceQuality(const QString &provider, const QJsonObject &audio, bool trial) {
+    Q_UNUSED(provider)
     if (trial || audio["url"].toString().isEmpty()) {
         return {};
     }
+    // 插件已按实际返回的格式/码率/等级归一化 tier；旧数据再走通用兜底。
+    const auto tier = audio["tier"].toString();
+    if (!tier.isEmpty()) {
+        return tier;
+    }
     const auto url = QUrl(audio["url"].toString());
-    const auto file = url.fileName().toUpper();
     auto format = audio["type"].toString().toLower();
     if (format.isEmpty()) {
         format = audio["extName"].toString().toLower();
@@ -51,48 +56,19 @@ QString MusicPlayer::sourceQuality(const QString &provider, const QJsonObject &a
     if (format.isEmpty()) {
         format = QFileInfo(url.path()).suffix().toLower();
     }
-    if (provider == "siren") {
-        if (format == "wav" || format == "flac" || format == "ape" || format == "alac") {
-            return "sq";
-        }
-        if (format == "mp3" || format == "m4a" || format == "aac") {
-            return "hq";
-        }
-        return {};
-    }
-    if (provider == "qq") {
-        // 登录接口可能没有 quality；前缀是实际获准播放的媒体文件类型。
-        if (file.startsWith("F000") || file.startsWith("A000")) {
-            return "sq";
-        }
-        if (file.startsWith("M800")) {
-            return "hq";
-        }
-        if (file.startsWith("M500") || file.startsWith("C400")) {
-            return "standard";
-        }
-        return {};
-    }
     const auto bitrate = audio["br"].toDouble();
     const bool lossy = format == "mp3" || format == "m4a" || format == "aac";
     if (lossy && bitrate > 0) {
-        // 替代音源可能保留原等级；已返回的有损格式与码率优先于等级标签。
         return bitrate >= 192000 ? "hq" : "standard";
     }
-    if (provider == "netease") {
-        const auto level = audio["level"].toString();
-        const QHash<QString, QString> levels{
-            {"standard", "standard"}, {"higher", "hq"},         {"exhigh", "hq"}, {"lossless", "sq"},
-            {"hires", "hires"},       {"jyeffect", "jyeffect"}, {"sky", "sky"},   {"jymaster", "jymaster"}};
-        if (levels.contains(level)) {
-            const auto resolved = levels.value(level);
-            if (!lossy || resolved == "standard" || resolved == "hq") {
-                return resolved;
-            }
-        }
+    const auto level = audio["level"].toString();
+    const QHash<QString, QString> levels{
+        {"standard", "standard"}, {"higher", "hq"},         {"exhigh", "hq"}, {"lossless", "sq"},
+        {"hires", "hires"},       {"jyeffect", "jyeffect"}, {"sky", "sky"},   {"jymaster", "jymaster"}};
+    if (levels.contains(level) && (!lossy || levels[level] == "standard" || levels[level] == "hq")) {
+        return levels.value(level);
     }
-    const bool lossless = format == "flac" || format == "ape" || format == "alac";
-    if (lossless) {
+    if (format == "flac" || format == "ape" || format == "alac" || format == "wav") {
         // 无损码率高不能证明 Hi-Res；必须同时取得采样率与位深。
         if (audio["sampleRate"].toDouble() > 48000 && audio["bitDepth"].toInt() > 16) {
             return "hires";

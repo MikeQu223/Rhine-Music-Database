@@ -275,6 +275,21 @@ async function fixtureAdapter(settings) {
     if (destination.includes('/song/lyric/v1')) {
         data = { code: 200, lrc: { lyric: '[00:01.00]本地歌词\n[00:03.00]第二句' } };
     }
+    if (!qq && destination.includes('/login/qrcode/unikey')) {
+        data = { code: 200, unikey: 'fixture-netease-key' };
+    } else if (!qq && destination.includes('/login/qrcode/client/login')) {
+        data = { code: 801 };
+    }
+    if (!qq && destination.includes('/personalized')) {
+        data = { code: 200, result: [{ id: 8, name: '推荐歌单' }] };
+    } else if (!qq && destination.includes('/search/suggest')) {
+        data = { code: 200, result: { allMatch: [{ keyword: '建议' }] } };
+    } else if (
+        !qq &&
+        (destination.includes('/playlist/catlist') || destination.includes('/playlist/catalogue'))
+    ) {
+        data = { code: 200, sub: [{ name: '华语' }] };
+    }
     if (!qq && destination.includes('/v3/song/detail')) {
         data = { code: 200, songs: [{ id: 1, name: 'Fixture song', mv: 99 }] };
     } else if (!qq && destination.includes('/v1/mv/detail')) {

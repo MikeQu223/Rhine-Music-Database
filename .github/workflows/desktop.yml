@@ -4,10 +4,29 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+    inputs:
+      plugins_repository:
+        required: false
+        type: string
+      plugins_ref:
+        required: false
+        type: string
+      plugin_flavors:
+        required: false
+        type: string
   workflow_call:
     inputs:
       release_version:
         required: true
+        type: string
+      plugins_repository:
+        required: false
+        type: string
+      plugins_ref:
+        required: false
+        type: string
+      plugin_flavors:
+        required: false
         type: string
 
 permissions:
@@ -67,6 +86,13 @@ jobs:
           # 三者都以 submodule 记录，缺 SDK 时 cmake 会静默跳过 FSR 目标，
           # 因此必须显式递归检出，否则 CI 测不到 FSR 代码路径。
           submodules: false
+      - name: Check out plugin packages
+        if: inputs.plugins_repository != ''
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.plugins_repository }}
+          ref: ${{ inputs.plugins_ref || 'main' }}
+          path: MusicBridge/local-plugins
       - name: Select Xcode with MetalFX frame interpolation
         if: runner.os == 'macOS'
         run: bash scripts/select-xcode.sh
@@ -368,6 +394,31 @@ jobs:
           npm run check:provider-literals
       - name: Run offline regressions
         run: npm test
+      - name: Build core-only flavor
+        if: runner.os == 'macOS'
+        run: |
+          npm run build -- --plugins=core
+          npm test
+      - name: Build per-provider flavors
+        if: runner.os == 'macOS' && inputs.plugins_repository != '' && inputs.plugin_flavors != ''
+        shell: bash
+        env:
+          PLUGIN_FLAVORS: ${{ inputs.plugin_flavors }}
+        run: |
+          set -euo pipefail
+          for flavor in ${PLUGIN_FLAVORS//,/ }; do
+            echo "::group::Plugin flavor: $flavor"
+            npm run build -- --plugins="$flavor"
+            npm test
+            echo "::endgroup::"
+          done
+      - name: Restore full artifact
+        if: runner.os == 'macOS'
+        run: npm run build
+      - name: Verify core-only artifact
+        run: |
+          node scripts/package-core-only.cjs
+          node scripts/check-packaged-core.cjs output/core-only/MusicBridge
       - name: Create distribution
         if: runner.os != 'Linux'
         run: npm run share

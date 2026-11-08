@@ -1,6 +1,7 @@
 #include "MusicLibrary.h"
 #include "MusicData.h"
 #include "MusicDiscover.h"
+#include "ProviderRegistry.h"
 #include <QCoreApplication>
 #include <QDataStream>
 #include <QElapsedTimer>
@@ -83,7 +84,7 @@ bool checkPlaybackLikes(const QString &root) {
             ++reads;
             return QJsonObject{{"body", QJsonObject{{"code", 200}, {"value", QJsonArray{"1"}}}}};
         }
-        if (route == "/like") {
+        if (route.endsWith("/mutate")) {
             ++writes;
             return QJsonObject{{"body", QJsonObject{{"code", fail ? 500 : 200}}}};
         }
@@ -135,7 +136,10 @@ bool checkQQPlaybackLikes(const QString &root) {
     const auto second = MusicData::item("song", "2", "歌曲二", "歌手", "qq");
     host.fixture = [&](QString route, QJsonObject parameters) {
         QJsonValue value;
-        if (route.endsWith("/subscriptionStatus")) {
+        if (route.endsWith("/likedState")) {
+            const auto id = parameters["args"].toArray().at(0).toArray().at(0).toString();
+            value = QJsonObject{{id, id == "1" ? "subscribed" : "not-subscribed"}};
+        } else if (route.endsWith("/subscriptionStatus")) {
             value = parameters["args"].toArray().at(1) == "1" ? "subscribed" : "not-subscribed";
         } else if (route.endsWith("/mutate")) {
             value = QJsonObject{{"liked", true}};
@@ -169,6 +173,10 @@ bool checkQQPlaybackLikes(const QString &root) {
 bool runNativeSessionChecks(const QString &root, const QString &audioURL);
 
 bool runNativeMusicChecks(const QString &root) {
+    if (!ProviderRegistry::instance().contains("netease")) {
+        qInfo() << "Native online music checks skipped: third-party provider not installed";
+        return true;
+    }
     QFile file(root + "/slots.json");
     if (!file.open(QIODevice::ReadOnly)) {
         return false;
@@ -208,24 +216,36 @@ bool runNativeMusicChecks(const QString &root) {
             value =
                 QJsonObject{{"url", audioURL}, {"level", "exhigh"}, {"preview", route.endsWith("/preview")}};
         } else if (route.endsWith("/account")) {
-            value = QJsonArray{"42", "本地账号"};
+            value = QJsonObject{{"uid", "42"}, {"nickname", "本地账号"}};
+        } else if (route.endsWith("/likedState")) {
+            QJsonObject states;
+            for (const auto &id : args.at(0).toArray()) {
+                states[id.toString()] = "subscribed";
+            }
+            value = states;
         } else if (route.endsWith("/likedIDs")) {
             value = QJsonArray{"1", "missing", "2"};
         } else if (route.endsWith("/userPlaylists")) {
             auto owned = MusicData::item("playlist", "8", "本人歌单");
             owned["creatorID"] = "42";
             value = QJsonObject{{"items", QJsonArray{owned}}, {"rawCount", 1}, {"more", false}};
-        } else if (route == "/captcha/sent") {
+        } else if (route.endsWith("/loginSms")) {
             ++smsRequests;
-            loginParametersValid &= parameters == QJsonObject{{"phone", "13800000000"}, {"ctcode", "86"}};
+            loginParametersValid &= args == QJsonArray{"13800000000"};
             return QJsonObject{{"body", QJsonObject{{"code", 200}, {"data", true}}}};
-        } else if (route == "/login/cellphone") {
+        } else if (route.endsWith("/loginSubmit")) {
             ++captchaLogins;
-            loginParametersValid &=
-                parameters ==
-                QJsonObject{{"phone", "13800000000"}, {"captcha", "123456"}, {"countrycode", "86"}};
+            loginParametersValid &= args == QJsonArray{"13800000000", "123456"};
             return QJsonObject{{"body", QJsonObject{{"code", 200}}},
                                {"cookies", QJsonArray{"MUSIC_U=fixture-native"}}};
+        } else if (route.endsWith("/discover")) {
+            value = QJsonObject{
+                {"items", QJsonArray{MusicData::item("playlist", "8", "原生推荐")}},
+                {"rawCount", 1},
+                {"more", false},
+            };
+        } else if (route.endsWith("/suggest")) {
+            value = QJsonArray{"原生建议"};
         } else if (route == "/personalized") {
             return QJsonObject{
                 {"body", QJsonObject{{"code", 200},
@@ -247,6 +267,12 @@ bool runNativeMusicChecks(const QString &root) {
     };
 
     // === 测试 1: 基础选择 ===
+    check(MusicPlayer::sourceQuality("netease", QJsonObject{{"url", "https://x/a.mp3"}, {"tier", "hires"}}) ==
+              "hires",
+          "plugin tier wins over legacy fields");
+    check(MusicPlayer::sourceQuality("qq", QJsonObject{{"url", "https://x/a.flac"}, {"level", "lossless"}}) ==
+              "sq",
+          "legacy level fallback still resolves");
     library.choose({});
     check(library.current.isEmpty() && !library.detailLoading, "empty selection does not load metadata");
 

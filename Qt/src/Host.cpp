@@ -805,26 +805,6 @@ void Host::logout() {
         }
     }
 }
-QString Host::fromLink(QString input) const {
-    input = input.remove('\\').trimmed();
-    QUrl outer(input);
-    if (!QStringList{"music.163.com", "y.music.163.com"}.contains(outer.host()) ||
-        !QStringList{"http", "https"}.contains(outer.scheme())) {
-        return {};
-    }
-    QUrl page = outer;
-    if (outer.hasFragment()) {
-        auto part = outer.fragment();
-        page = QUrl("https://music.163.com" + (part.startsWith('/') ? part : "/" + part));
-    }
-    auto kind = page.path().split('/', Qt::SkipEmptyParts).last();
-    auto id = QUrlQuery(page).queryItemValue("id");
-    if (!QStringList{"song", "album", "playlist"}.contains(kind) ||
-        !QRegularExpression("^[0-9]{1,20}$").match(id).hasMatch()) {
-        return {};
-    }
-    return kind + ":" + id;
-}
 void Host::loadCover(QString input, TextReply callback, int maximumDimension, bool allowPlaybackOnly) {
     // 后台默认只保留封面地址；系统媒体控件需要封面文件时显式放行解码。
     if (playbackOnly && !allowPlaybackOnly) {
@@ -988,9 +968,9 @@ QString Host::qrImage(QString data) {
     images.insert(key, new QImage(value), int(value.sizeInBytes() / 1024));
     return key;
 }
-QString Host::qr(QString key) {
-    auto name = "qr:" + key;
-    images.insert(name, new QImage(platformQR("https://music.163.com/login?codekey=" + key)), 1024);
+QString Host::qr(QString text) {
+    auto name = "qr:" + hash(text.toUtf8());
+    images.insert(name, new QImage(platformQR(text)), 1024);
     return name;
 }
 QImage Host::image(const QString &key) const {

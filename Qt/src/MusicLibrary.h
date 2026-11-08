@@ -199,7 +199,7 @@ class MusicLibrary : public QObject {
     std::optional<bool> songLiked(const QJsonObject &value) const;
     QJsonObject capabilities;
     QString vipLevel = "unknown";
-    void refreshQQFeatures();
+    void refreshAccountFeatures();
     bool canEditPlaylist(const QJsonObject &value) const;
     bool canMutate(const QString &route) const;
     QStringList searchHistory;
@@ -220,6 +220,7 @@ class MusicLibrary : public QObject {
     void musicClearRequested();
 
   private:
+    void searchInternal(QString text, QString kind, bool more);
     struct Cooldown {
         qint64 deadline = 0;
         QString message;
@@ -274,5 +275,4 @@ class MusicLibrary : public QObject {
     void confirmLogin(quint64 token, bool captcha = false);
     void updateSmsCooldown();
     void failLogin(const MusicReply &result);
-    void waitCancellation(QString provider, Completion done);
 };

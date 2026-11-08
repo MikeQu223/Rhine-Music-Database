@@ -486,11 +486,19 @@ export class SirenAPI {
             throw new Error('塞壬唱片未提供可播放音源');
         }
         const format = formatOf(url);
+        const lossless = ['wav', 'flac', 'ape', 'alac'].includes(format);
+        let tier = '';
+        if (lossless) {
+            tier = 'sq';
+        } else if (['mp3', 'm4a', 'aac'].includes(format)) {
+            tier = 'hq';
+        }
         return {
             url,
             type: format,
             extName: format,
             quality: format === 'wav' ? 'flac' : '',
+            tier,
         };
     }
 

@@ -5,6 +5,20 @@ const { app, resourceDirectory } = require('./app-layout.cjs');
 process.chdir(path.resolve(__dirname, '..'));
 const mac = process.platform === 'darwin';
 const win = process.platform === 'win32';
+const resources = path.join(app, resourceDirectory);
+const bridgeRoot = path.join(resources, 'MusicBridge');
+const pluginRoot = path.join(bridgeRoot, 'local-plugins');
+const installedPlugins = fs.existsSync(pluginRoot)
+    ? fs
+          .readdirSync(pluginRoot, { withFileTypes: true })
+          .filter(
+              (entry) =>
+                  entry.isDirectory() && fs.existsSync(path.join(pluginRoot, entry.name, 'manifest.json')),
+          )
+          .map((entry) => entry.name)
+    : [];
+const fullPlugins = ['netease', 'qq', 'kugou'].every((id) => installedPlugins.includes(id));
+const coreOnly = installedPlugins.length === 0;
 // 统一使用 python3：多数发行版不再提供 python 命令。
 const python = process.env.PYTHON || (win ? 'python' : 'python3');
 function run(command, args, env = {}) {
@@ -29,21 +43,28 @@ run(process.execPath, ['--test', 'scripts/test-ffmpeg-decoders.cjs']);
 run(process.execPath, ['--test', 'scripts/test-ios-bridge-plugin.cjs']);
 run(process.execPath, ['--test', 'scripts/test-plugin-registry.cjs']);
 
-run('ctest', ['--test-dir', 'output/qt-build', '--output-on-failure']);
+run(
+    'ctest',
+    coreOnly || !fullPlugins
+        ? ['--test-dir', 'output/qt-build', '--output-on-failure', '-R', 'qt_offline']
+        : ['--test-dir', 'output/qt-build', '--output-on-failure'],
+);
 if (win) {
     run(process.execPath, ['scripts/check-dxc-cache.cjs']);
 }
 // 验证最终应用包
-const resources = path.join(app, resourceDirectory);
-const localPlugins = fs.existsSync('MusicBridge/local-plugins');
 const bridgeTests = ['Qt/tests/local-lyrics.cjs', 'Qt/tests/ios-bridge.cjs'];
-if (localPlugins) {
-    run(process.execPath, ['scripts/check-packaged-bridge.cjs', resources + '/MusicBridge']);
+if (fullPlugins) {
+    run(process.execPath, ['scripts/check-packaged-bridge.cjs', bridgeRoot]);
+} else if (installedPlugins.length) {
+    run(process.execPath, ['scripts/check-packaged-flavor.cjs', bridgeRoot]);
+    console.log('Per-provider package; full provider bridge regressions skipped.');
 } else {
-    console.log('No local plugin packages; provider bridge regressions skipped.');
+    run(process.execPath, ['scripts/check-packaged-core.cjs', bridgeRoot]);
+    console.log('Core-only package; provider bridge regressions skipped.');
 }
 for (const script of bridgeTests) {
-    run(process.execPath, [script, resources + '/MusicBridge']);
+    run(process.execPath, [script, bridgeRoot]);
 }
 if (mac) {
     run('codesign', ['--verify', '--deep', '--strict', app]);

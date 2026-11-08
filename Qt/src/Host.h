@@ -47,7 +47,6 @@ class Host : public QObject {
                                          const QString &edition = {});
     // 保存时投影旧扁平键，保证降级版本仍能恢复账号；v2 读取忽略这些键。
     static QJsonObject storageCredential(const QJsonObject &credentials);
-    Q_INVOKABLE QString fromLink(QString input) const;
     Q_INVOKABLE QString qr(QString key);
     Q_INVOKABLE QString qrImage(QString data);
     Q_INVOKABLE void mediaMetadata(QString title, QString artist, QString album,

@@ -16,6 +16,22 @@ if (!win && !mac && !linux) {
 }
 const python = process.env.PYTHON || (win ? 'python' : 'python3');
 const nodeName = win ? 'node.exe' : 'node';
+// core-only 产物不打包任何第三方平台插件；默认 full；也可只打包指定插件。
+const flavor = process.argv.slice(2).find((value) => value.startsWith('--plugins=')) || '--plugins=full';
+const flavorValue = flavor.slice('--plugins='.length);
+let pluginIds = null;
+if (flavorValue === 'core') {
+    pluginIds = [];
+} else if (flavorValue !== 'full') {
+    pluginIds = flavorValue
+        .split(',')
+        .map((value) => value.trim())
+        .filter(Boolean);
+}
+if (flavorValue !== 'full' && flavorValue !== 'core' && !pluginIds.length) {
+    throw new Error('Unknown plugin flavor: ' + flavor);
+}
+const pluginsEnabled = pluginIds === null || pluginIds.length > 0;
 /**
  * 串行执行构建或部署命令，失败立即终止。
  * 命令和参数分开传递，不经过 Shell 解释。
@@ -119,16 +135,37 @@ function prepareResources() {
     fs.cpSync('MusicBridge/plugins', path.join(bridge, 'plugins'), {
         recursive: true,
     });
-    if (fs.existsSync('MusicBridge/local-plugins')) {
-        run(process.execPath, ['scripts/bundle-plugins.cjs', 'MusicBridge/local-plugins']);
-        fs.cpSync('MusicBridge/local-plugins', path.join(bridge, 'local-plugins'), {
-            recursive: true,
-            filter: (source) => !source.split(path.sep).includes('node_modules'),
-        });
+    if (pluginsEnabled && fs.existsSync('MusicBridge/local-plugins')) {
+        const selection = pluginIds ? pluginIds.join(',') : '';
+        run(process.execPath, [
+            'scripts/bundle-plugins.cjs',
+            'MusicBridge/local-plugins',
+            ...(selection ? [selection] : []),
+        ]);
+        if (pluginIds) {
+            for (const id of [...pluginIds, 'data', 'modules']) {
+                const source = path.join('MusicBridge/local-plugins', id);
+                if (fs.existsSync(source)) {
+                    fs.cpSync(source, path.join(bridge, 'local-plugins', id), {
+                        recursive: true,
+                        filter: (file) => !file.split(path.sep).includes('node_modules'),
+                    });
+                }
+            }
+        } else {
+            fs.cpSync('MusicBridge/local-plugins', path.join(bridge, 'local-plugins'), {
+                recursive: true,
+                filter: (source) => !source.split(path.sep).includes('node_modules'),
+            });
+        }
+        // Qt 在桥启动前读取 descriptor；构建期从 manifest 提取，避免把入口/签名配置带进 UI。
+        run(process.execPath, [
+            'scripts/export-descriptors.cjs',
+            'MusicBridge/local-plugins',
+            path.join(bridge, 'plugins/descriptors'),
+            ...(selection ? [selection] : []),
+        ]);
     }
-    // Qt 在桥启动前读取 descriptor；构建期从 manifest 提取，避免把入口/签名配置带进 UI。
-    run(process.execPath, ['scripts/export-descriptors.cjs', 'MusicBridge/local-plugins',
-                           path.join(bridge, 'plugins/descriptors')]);
     // package lock 变更时重新安装依赖，避免旧版本残留
     const dependencyHash = createHash('sha256')
         .update(fs.readFileSync(path.join(bridge, 'package.json')))

@@ -100,29 +100,34 @@ bool runNativeHostChecks(const QString &root) {
           storage["__kugou"].toObject()["standard"].toObject()["token"].toString() == "kugou-token";
 
     // Cookie 按 provider 写入不同切片；旧代数的响应不能覆盖新登录。
-    Host scoped(root, true);
-    scoped.setProvider("qq");
-    scoped.acceptCookies(R"(["qqmusic_session=qq-slice; Path=/"])", scoped.epoch, {}, "qq");
-    scoped.setProvider("netease");
-    scoped.acceptCookies(R"(["MUSIC_U=netease-slice; Path=/"])", scoped.epoch, {}, "netease");
-    const auto storedQQ = Host::credentialCookies(scoped.credentials, "qq");
-    const auto storedNetease = Host::credentialCookies(scoped.credentials, "netease");
-    ok &= storedQQ["qqmusic_session"].toString() == "qq-slice" && !storedQQ.contains("MUSIC_U");
-    ok &=
-        storedNetease["MUSIC_U"].toString() == "netease-slice" && !storedNetease.contains("qqmusic_session");
-    const auto staleEpoch = scoped.epoch;
-    scoped.bumpEpoch();
-    ok &= scoped.epoch == staleEpoch + 1;
-    scoped.acceptCookies(R"(["MUSIC_U=stale; Path=/"])", staleEpoch, {}, "netease");
-    ok &= Host::credentialCookies(scoped.credentials, "netease")["MUSIC_U"].toString() == "netease-slice";
-    // 跨命名空间写入只落在当前来源，不能改写其他来源的账号。
-    scoped.acceptCookies(R"(["qqmusic_session=leak; Path=/"])", scoped.epoch, {}, "netease");
-    ok &= Host::credentialCookies(scoped.credentials, "qq")["qqmusic_session"].toString() == "qq-slice";
-    scoped.logout();
-    ok &= !scoped.hasCredential("netease") && scoped.hasCredential("qq");
-    scoped.setProvider("qq");
-    scoped.logout();
-    ok &= !scoped.hasCredential("qq");
+    const auto available = ProviderRegistry::instance().ids();
+    if (available.size() >= 2) {
+        const auto first = available.at(0);
+        const auto second = available.at(1);
+        Host scoped(root, true);
+        scoped.setProvider(first);
+        scoped.acceptCookies(R"(["alpha=one; Path=/"])", scoped.epoch, {}, first);
+        scoped.setProvider(second);
+        scoped.acceptCookies(R"(["beta=two; Path=/"])", scoped.epoch, {}, second);
+        const auto firstCookies = Host::credentialCookies(scoped.credentials, first);
+        const auto secondCookies = Host::credentialCookies(scoped.credentials, second);
+        ok &= firstCookies["alpha"].toString() == "one" && !firstCookies.contains("beta");
+        ok &= secondCookies["beta"].toString() == "two" && !secondCookies.contains("alpha");
+        const auto staleEpoch = scoped.epoch;
+        scoped.bumpEpoch();
+        ok &= scoped.epoch == staleEpoch + 1;
+        scoped.acceptCookies(R"(["beta=stale; Path=/"])", staleEpoch, {}, second);
+        ok &= Host::credentialCookies(scoped.credentials, second)["beta"].toString() == "two";
+        // 跨命名空间写入只落在当前来源，不能改写其他来源的账号。
+        scoped.acceptCookies(R"(["alpha=leak; Path=/"])", scoped.epoch, {}, second);
+        ok &= Host::credentialCookies(scoped.credentials, first)["alpha"].toString() == "one";
+        scoped.logout();
+        ok &= Host::credentialCookies(scoped.credentials, first)["alpha"].toString() == "one";
+        scoped.setProvider(first);
+        scoped.logout();
+        ok &= Host::credentialCookies(scoped.credentials, first).isEmpty();
+    }
+    qInfo() << "host check scoped" << ok;
 
     QImage image(2, 2, QImage::Format_RGBA8888);
     image.fill(Qt::red);
@@ -150,7 +155,6 @@ bool runNativeHostChecks(const QString &root) {
     host.playOfficial("42", [&](QString value) { official = value == "OFFLINE_PLAY:42"; });
 #endif
     ok &= invalidId && official;
-
     bool delayed = false;
     host.schedule(0, [&] { delayed = true; });
     ok &= !delayed && waitFor([&] { return delayed; });

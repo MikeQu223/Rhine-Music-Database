@@ -267,6 +267,34 @@ async function main() {
         }
         assert.equal(kugouLyrics.body.document.timing, 'word');
         assert.equal(kugouLyrics.body.document.lines[0].words[1].startMs, 1500);
+        const suggested = await request('plugin-suggest', '/plugin/netease/suggest', { args: ['曲'] });
+        assert.deepEqual(suggested.body.value, ['建议']);
+        const resolved = await request('plugin-link', '/plugin/netease/resolveLink', {
+            args: ['https://music.163.com/#/song?id=1'],
+        });
+        assert.deepEqual(resolved.body.value, { kind: 'song', id: '1' });
+        const discovered = await request('plugin-discover', '/plugin/netease/discover', {
+            args: ['playlists', 0, '全部'],
+        });
+        assert.equal(discovered.body.value.items[0].id, '8');
+        const categoryList = await request('plugin-categories', '/plugin/netease/categories', {
+            args: [],
+        });
+        assert.equal(categoryList.body.value[0].name, '华语');
+        const neteaseLogin = await request('plugin-netease-login', '/plugin/netease/loginBegin', {
+            args: ['qr'],
+        });
+        assert.equal(neteaseLogin.body.value.token, 'fixture-netease-key');
+        assert.match(neteaseLogin.body.value.qrText, /codekey=fixture-netease-key/);
+        const neteasePoll = await request('plugin-netease-login-poll', '/plugin/netease/loginPoll', {
+            args: ['fixture-netease-key'],
+        });
+        assert.equal(neteasePoll.body.value.status, 'waiting');
+        const kugouLoginBegin = await request('plugin-kugou-login', '/plugin/kugou/loginBegin', {
+            args: ['qr'],
+        });
+        assert(kugouLoginBegin.body.value.token);
+        assert.match(kugouLoginBegin.body.value.qrImage, /^data:image\//);
         assert(fs.existsSync(path.join(bridge, 'LyricsKit-LICENSE')));
         // 验证原服务失败诊断
         const failedLogin = await request('failed-login', '/qq/login/qr/key', { channel: 'qq' });

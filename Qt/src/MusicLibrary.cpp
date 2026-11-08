@@ -448,25 +448,42 @@ void MusicLibrary::search(QString text, QString kind, bool more) {
         searchLocal(text, kind);
         return;
     }
-    const auto link = provider == "netease" && !more ? host->fromLink(text) : QString();
-    if (!link.isEmpty()) {
-        const auto type = link.section(':', 0, 0);
-        const auto value = MusicData::item(type, link.section(':', 1));
-        ++m_generation;
-        searchLoading = false;
-        keyword = text;
-        searchKind = type;
-        lists[0] = {value};
-        totals[0] = 1;
-        offsets[0] = 0;
-        hasMore[0] = false;
-        rowMemory[0] = 0;
-        status = QStringLiteral("正在读取链接…");
-        showSource(0);
-        wantsSongDetails = type == "song";
-        emit modeRequested(type == "song" ? "detail" : "archive");
+    const bool maybeLink = !more && text.contains("://") &&
+                           ProviderRegistry::instance().capability(provider, "resolveLink", false);
+    if (maybeLink) {
+        const auto token = ++m_generation;
+        api.call(
+            "resolveLink", {text},
+            [this, text, kind, more](MusicReply result) {
+                const auto resolved = result.ok() ? result.value.toObject() : QJsonObject{};
+                const auto type = resolved["kind"].toString();
+                const auto id = resolved["id"].toString();
+                if (!id.isEmpty() && QStringList{"song", "album", "playlist", "artist"}.contains(type)) {
+                    const auto value = MusicData::item(type, id);
+                    ++m_generation;
+                    searchLoading = false;
+                    keyword = text;
+                    searchKind = type;
+                    lists[0] = {value};
+                    totals[0] = 1;
+                    offsets[0] = 0;
+                    hasMore[0] = false;
+                    rowMemory[0] = 0;
+                    status = QStringLiteral("正在读取链接…");
+                    showSource(0);
+                    wantsSongDetails = type == "song";
+                    emit modeRequested(type == "song" ? "detail" : "archive");
+                    return;
+                }
+                searchInternal(text, kind, more);
+            },
+            [this, token] { return token == m_generation; });
         return;
     }
+    searchInternal(text, kind, more);
+}
+
+void MusicLibrary::searchInternal(QString text, QString kind, bool more) {
     const auto query = text.trimmed();
     if (!more && query == keyword && (kind.isEmpty() || kind == searchKind) &&
         (!lists[0].isEmpty() || searchLoading)) {
@@ -567,22 +584,15 @@ void MusicLibrary::suggest(QString text) {
         isLocal()) {
         return;
     }
-    const auto qq = provider == "qq";
-    api.request(
-        "/search/suggest",
-        qq ? QJsonObject{{"keyword", text}} : QJsonObject{{"keywords", text}, {"type", "mobile"}},
-        [this, qq](MusicReply result) {
+    api.call(
+        "suggest", {text},
+        [this](MusicReply result) {
             if (!result.ok()) {
                 return;
             }
-            const auto body = result.value.toObject();
-            // QQ 直接给搜索词字符串，网易云仍是带 keyword 字段的条目。
-            const auto values =
-                qq ? body["suggestions"].toArray() : body["result"].toObject()["allMatch"].toArray();
-            for (const auto &value : values) {
-                const auto keyword = qq ? value : value.toObject()["keyword"];
-                if (keyword.isString() && suggestions.size() < 4) {
-                    suggestions.append(keyword.toString());
+            for (const auto &value : result.value.toArray()) {
+                if (value.isString() && suggestions.size() < 4) {
+                    suggestions.append(value.toString());
                 }
             }
         },
@@ -803,9 +813,9 @@ void MusicLibrary::loadMoreSource(int lane) {
         }
         return;
     }
-    if (provider == "kugou" && lane == 4) {
+    if (lane == 4 && !ProviderRegistry::instance().capability(provider, "likedAlbums", false)) {
         hasMore[4] = false;
-        status = QStringLiteral("酷狗 API 未提供收藏专辑，此栏目已禁用");
+        status = QStringLiteral("此来源未提供收藏专辑，此栏目已禁用");
         changed();
         return;
     }
@@ -836,7 +846,9 @@ void MusicLibrary::loadMoreSource(int lane) {
     const auto token = m_accountGeneration;
     const auto user = uid;
     changed();
-    if (lane == 1 && provider == "netease") {
+    if (lane == 1 &&
+        ProviderRegistry::instance().descriptor(provider)["library"].toObject()["likedModel"].toString() ==
+            "likedIDs") {
         loadLikedIDs(lane, token, user);
         return;
     }
@@ -1233,19 +1245,16 @@ QString MusicLibrary::sourceURL(QJsonObject value) const {
         return {};
     }
     const auto source = value["provider"].toString(provider);
-    if (source == "netease") {
-        return "https://music.163.com/#/" + value["kind"].toString() + "?id=" + value["id"].toString();
+    const auto links = ProviderRegistry::instance().descriptor(source)["links"].toObject();
+    const auto templates = links["webTemplates"].toObject();
+    auto kind = value["kind"].toString();
+    if (kind == "playlist" && value["chart"].toBool() && templates.contains("chart")) {
+        kind = "chart";
     }
-    if (source == "kugou") {
-        return QStringLiteral("https://www.kugou.com/");
+    auto target = templates[kind].toString(templates["home"].toString());
+    if (target.isEmpty()) {
+        return {};
     }
-    if (source == "siren") {
-        return QStringLiteral("https://monster-siren.hypergryph.com/music");
-    }
-    const QHash<QString, QString> paths{{"song", "songDetail"},
-                                        {"album", "albumDetail"},
-                                        {"artist", "singer"},
-                                        {"playlist", value["chart"].toBool() ? "toplist" : "playlist"}};
-    return "https://y.qq.com/n/ryqq/" + paths.value(value["kind"].toString()) + "/" +
-           QString::fromLatin1(QUrl::toPercentEncoding(value["id"].toString(), "!'()*"));
+    return target.replace("{id}",
+                          QString::fromLatin1(QUrl::toPercentEncoding(value["id"].toString(), "!'()*")));
 }

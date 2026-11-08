@@ -14,6 +14,7 @@ const esbuild = require('esbuild');
 const root = path.resolve(__dirname, '..');
 process.chdir(root);
 const pluginsRoot = path.resolve(process.argv[2] || 'MusicBridge/local-plugins');
+const selected = process.argv[3] ? new Set(process.argv[3].split(',').filter(Boolean)) : null;
 
 async function main() {
     if (!fs.existsSync(pluginsRoot)) {
@@ -23,6 +24,9 @@ async function main() {
     let count = 0;
     for (const entry of fs.readdirSync(pluginsRoot, { withFileTypes: true })) {
         if (!entry.isDirectory()) {
+            continue;
+        }
+        if (selected && !selected.has(entry.name)) {
             continue;
         }
         const directory = path.join(pluginsRoot, entry.name);
@@ -92,6 +96,9 @@ async function main() {
         console.log('plugin bundle: ' + path.relative(root, outfile));
     }
     console.log('bundled ' + count + ' plugin(s)');
+    if (selected && count !== selected.size) {
+        throw new Error('Requested plugins not found: ' + [...selected].join(','));
+    }
 }
 
 main().catch((error) => {

@@ -4,6 +4,7 @@
 #include "NativeHud.h"
 #include "MusicData.h"
 #include "MusicDiscover.h"
+#include "ProviderRegistry.h"
 #include <QJsonDocument>
 #include <QPointer>
 #include <QUrl>
@@ -165,7 +166,8 @@ void NativeHud::setQuery(QString value) {
                 return;
             }
             owner->m_music->search(value);
-            if (owner->m_music->provider == "netease" && !owner->m_host->fromLink(value).isEmpty()) {
+            if (ProviderRegistry::instance().capability(owner->m_music->provider, "resolveLink", false) &&
+                value.contains("://")) {
                 owner->closeModal();
             }
         });
