@@ -130,11 +130,11 @@ void main() {
         baked = mix(baked, night, v_theme);
         normalResponse = mix(normalResponse, texture(normalAtlas, v_normalUv + vec2(0.0, 0.5)), v_theme);
     }
-#ifdef RHINE_NORMAL_RGBA8
-    // Android 上法线响应烘焙成 8 位 UNORM：rgb 存 response/4（值域 0..4），
-    // a 存 highlight/0.25（值域 0..0.18）。这里乘回原尺度，与 RGBA16F 路径逐值一致。
-    normalResponse *= vec4(4.0, 4.0, 4.0, 0.25);
-#endif
+    // C++ 按文件字节数决定法线图集格式；这里跟随同一个运行时标志解码，
+    // 不依赖编译宏，避免桌面拿到 8 位资源时高光被放大 4 倍。
+    if (normalParams.x > 0.5) {
+        normalResponse *= vec4(4.0, 4.0, 4.0, 0.25);
+    }
     vec3 color = baked.rgb * normalResponse.rgb + vec3(normalResponse.a);
     if (m.flags.x == 3.0 && v_mode > 0.5) {
         // 玻璃壳：旧渲染器用 transmission/ior 走折射通道，把整张 CD 包在里面。
