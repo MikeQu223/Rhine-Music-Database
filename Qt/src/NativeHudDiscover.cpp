@@ -2,6 +2,7 @@
 #include "DiscoverArtwork.h"
 #include "DiscoverMusicCard.h"
 #include "MusicDiscover.h"
+#include "ProviderRegistry.h"
 #include <QUrl>
 #include <algorithm>
 
@@ -17,19 +18,17 @@ void NativeHud::discoverPanel(double x, double y, double width) {
     model.loading = discover.loading;
     model.more = discover.more;
     model.loadedCount = discover.items.size();
-    QVector<QPair<QString, QString>> tabs{{"playlists", "推荐歌单"},
-                                          {"daily", music.provider == "qq" ? "每日 30 首" : "每日推荐"},
-                                          {"charts", "排行榜"},
-                                          {"albums", "新专辑"},
-                                          {"categories", "分类歌单"}};
-    if (music.provider == "qq") {
-        tabs.insert(2, {"guess", "猜你喜欢"});
-        tabs.insert(3, {"new-songs", "新歌速递"});
+    QVector<QPair<QString, QString>> tabs;
+    for (const auto &value : ProviderRegistry::instance().discoverTabs(music.provider)) {
+        const auto tab = value.toObject();
+        if (tab["id"].isString()) {
+            tabs.append({tab["id"].toString(), tab["label"].toString(tab["id"].toString())});
+        }
     }
-    if (music.provider == "netease") {
-        tabs.append(QPair<QString, QString>{"artists", "收藏歌手"});
+    if (tabs.isEmpty()) {
+        tabs = {{"playlists", "推荐歌单"}, {"daily", "每日推荐"},      {"charts", "排行榜"},
+                {"albums", "新专辑"},      {"categories", "分类歌单"}, {"history", "历史"}};
     }
-    tabs.append(QPair<QString, QString>{"history", "历史"});
     for (const auto &[key, label] : tabs) {
         model.tabs.append(DiscoverMusicCard::Choice{label, "discover:tab:" + key, discover.tab == key});
     }

@@ -1,5 +1,6 @@
 #include "MusicLibrary.h"
 #include "MusicDiscover.h"
+#include "ProviderRegistry.h"
 #include <QDateTime>
 #include <QPointer>
 #include <QRegularExpression>
@@ -199,8 +200,8 @@ void MusicLibrary::switchProvider(QString source, QString edition, Completion do
     }
     const auto editionChanged =
         source == "kugou" && QStringList{"standard", "lite"}.contains(edition) && edition != kugouEdition;
-    if (!QStringList{"netease", "qq", "kugou", "local", "siren"}.contains(source) ||
-        (source == provider && !editionChanged)) {
+    if (!ProviderRegistry::instance().contains(source) ||
+        (source == "local" && !PlatformFeatures::LocalMusic) || (source == provider && !editionChanged)) {
         if (done) {
             done(true);
         }
@@ -352,6 +353,7 @@ void MusicLibrary::waitCancellation(QString source, Completion done) {
 void MusicLibrary::cancelLogin(Completion done) {
     const auto previousKey = qrKey;
     ++m_loginGeneration;
+    host->bumpEpoch();
     qrKey.clear();
     qr.clear();
     loginPhase = "idle";
@@ -400,11 +402,14 @@ void MusicLibrary::updateSmsCooldown() {
  * 发送短信验证码
  */
 void MusicLibrary::sendLoginCode(QString phone) {
-    if (provider != "netease" || accountLoading || smsRetrySeconds() > 0) {
+    const auto method = ProviderRegistry::instance().loginMethod(provider, "phone");
+    if (method.isEmpty() || accountLoading || smsRetrySeconds() > 0) {
         return;
     }
     phone = phone.trimmed();
-    if (!QRegularExpression("^1[0-9]{10}$").match(phone).hasMatch()) {
+    const auto pattern = method["phonePattern"].toString("^1[0-9]{10}$");
+    const auto countryCode = method["countryCode"].toString("86");
+    if (!QRegularExpression(pattern).match(phone).hasMatch()) {
         loginStatus = QStringLiteral("请输入有效的中国大陆手机号码");
         changed();
         return;
@@ -419,7 +424,7 @@ void MusicLibrary::sendLoginCode(QString phone) {
     m_smsRetryAtMs = QDateTime::currentMSecsSinceEpoch() + SMS_RESEND_INTERVAL_MS;
     updateSmsCooldown();
     api.request(
-        "/captcha/sent", {{"phone", phone}, {"ctcode", "86"}},
+        "/captcha/sent", {{"phone", phone}, {"ctcode", countryCode}},
         [this](MusicReply result) {
             accountLoading = false;
             loginStatus = result.ok() ? QStringLiteral("验证码已发送，请查看手机短信") : result.error;
@@ -430,12 +435,15 @@ void MusicLibrary::sendLoginCode(QString phone) {
 
 /** 手机号验证码登录 */
 void MusicLibrary::captchaLogin(QString phone, QString captcha) {
-    if (provider != "netease" || accountLoading) {
+    const auto method = ProviderRegistry::instance().loginMethod(provider, "phone");
+    if (method.isEmpty() || accountLoading) {
         return;
     }
     phone = phone.trimmed();
     captcha = captcha.trimmed();
-    if (!QRegularExpression("^1[0-9]{10}$").match(phone).hasMatch() ||
+    const auto pattern = method["phonePattern"].toString("^1[0-9]{10}$");
+    const auto countryCode = method["countryCode"].toString("86");
+    if (!QRegularExpression(pattern).match(phone).hasMatch() ||
         !QRegularExpression("^[0-9]{4,8}$").match(captcha).hasMatch()) {
         loginStatus = QStringLiteral("请输入中国大陆手机号码和短信验证码");
         changed();
@@ -448,7 +456,7 @@ void MusicLibrary::captchaLogin(QString phone, QString captcha) {
     accountLoading = true;
     changed();
     api.request(
-        "/login/cellphone", {{"phone", phone}, {"captcha", captcha}, {"countrycode", "86"}},
+        "/login/cellphone", {{"phone", phone}, {"captcha", captcha}, {"countrycode", countryCode}},
         [this, token](MusicReply result) {
             if (!result.ok()) {
                 loginStatus = result.error;
@@ -498,6 +506,7 @@ void MusicLibrary::confirmLogin(quint64 token, bool captcha) {
                 return;
             }
             ++m_accountGeneration;
+            host->bumpEpoch();
             restoringAccount = false;
             m_accountError.clear();
             if (uid != result.value.toArray().at(0).toString()) {

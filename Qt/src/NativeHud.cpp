@@ -1,5 +1,6 @@
 #include "NativeHud.h"
 #include "MusicData.h"
+#include "ProviderRegistry.h"
 #include <QDateTime>
 #include <QDebug>
 #include <QJsonDocument>
@@ -547,16 +548,12 @@ void NativeHud::navigation(double width) {
 }
 void NativeHud::footer(double width) {
     fill(59, 971, 5, 5, {119.0 / 255, 123.0 / 255, 96.0 / 255, 1});
-    QString session = m_music->isLocal() ? "LOCAL LIBRARY" : "GUEST SESSION";
+    QString session = m_music->isLocal() ? ProviderRegistry::instance().sessionLabel("local")
+                                         : QStringLiteral("GUEST SESSION");
     if (m_music->isSiren()) {
-        session = "SIREN RECORDS";
+        session = ProviderRegistry::instance().sessionLabel("siren");
     } else if (!m_music->uid.isEmpty()) {
-        session = "NETEASE SESSION";
-        if (m_music->provider == "qq") {
-            session = "QQ SESSION";
-        } else if (m_music->provider == "kugou") {
-            session = "KUGOU SESSION";
-        }
+        session = ProviderRegistry::instance().sessionLabel(m_music->provider);
     }
     text(session, 75, 967, 10, "regular", 0.9);
     const auto credit = QStringLiteral("POWERED BY RHINE LAB");

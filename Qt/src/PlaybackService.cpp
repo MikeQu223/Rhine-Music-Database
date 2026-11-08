@@ -1,5 +1,6 @@
 #include <QtGlobal>
 #include "PlaybackService.h"
+#include "ProviderRegistry.h"
 #include "AppStorage.h"
 #include <QCoreApplication>
 #include <QDir>
@@ -35,8 +36,14 @@ PlaybackService::PlaybackService(QString root, QString guiExecutable, bool offli
             [this] { send(m_gui, {{"event", "activate"}}); });
     connect(&m_interfaceSession, &InterfaceSession::stateChanged, this, &PlaybackService::publish);
     auto provider = m_host.preference("provider");
-    if (!QStringList{"netease", "qq", "kugou", "local", "siren"}.contains(provider)) {
-        provider = "netease";
+    if (!ProviderRegistry::instance().contains(provider)) {
+        provider = ProviderRegistry::instance().defaultId();
+    }
+    if (provider.isEmpty()) {
+        provider = ProviderRegistry::instance().fallbackId();
+    }
+    if (provider.isEmpty()) {
+        provider = "siren";
     }
     m_api.provider = provider;
     m_host.setProvider(provider);
@@ -319,15 +326,16 @@ QJsonObject PlaybackService::hostCommand(const QString &method, const QJsonObjec
         result["value"] = m_host.saveCredential();
     } else if (method == "acceptCookies") {
         m_host.acceptCookies(arguments["json"].toString(), arguments["epoch"].toInt(),
-                             arguments["credentialKey"].toString());
+                             arguments["credentialKey"].toString(), arguments["provider"].toString());
+    } else if (method == "bumpEpoch") {
+        m_host.bumpEpoch();
     } else if (method == "logout") {
         m_player.stop();
         m_player.clearHistory();
         m_host.logout();
     } else if (method == "setProvider") {
         const auto provider = arguments["provider"].toString();
-        if (QStringList{"netease", "qq", "kugou", "local", "siren"}.contains(provider) &&
-            m_api.provider != provider) {
+        if (ProviderRegistry::instance().contains(provider) && m_api.provider != provider) {
             m_player.stop();
             m_host.setProvider(provider);
             m_api.provider = provider;

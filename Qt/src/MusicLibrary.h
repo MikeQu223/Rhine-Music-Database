@@ -94,9 +94,7 @@ class MusicLibrary : public QObject {
     QString providerName() const;
     QString accountKey() const;
     QString identityName() const;
-    bool editable() const {
-        return provider == "netease" || provider == "qq" || provider == "siren";
-    }
+    bool editable() const;
     bool sourceLoading() const {
         return restoringAccount || searchLoading || personalLoading || sirenCatalogLoading;
     }

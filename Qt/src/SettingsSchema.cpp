@@ -4,6 +4,7 @@
 #include "MusicLibrary.h"
 #include "MusicPlayer.h"
 #include "PlatformFeatures.h"
+#include "ProviderRegistry.h"
 #include "render/AndroidRenderPolicy.h"
 #include "fg/FgCapability.h"
 #include "fg/FgConfig.h"
@@ -86,7 +87,8 @@ bool qualityVisible(const SettingsContext &context) {
 }
 
 bool alternativeVisible(const SettingsContext &context) {
-    return context.music && !context.music->isLocal() && context.music->provider == "netease";
+    return context.music && !context.music->isLocal() &&
+           ProviderRegistry::instance().capability(context.music->provider, "alternativeSource", false);
 }
 
 bool officialVisible(const SettingsContext &context) {
@@ -462,7 +464,8 @@ const QVector<SettingDescriptor> &descriptors() {
              .order = 165,
              .titleEn = "AUDIO OUTPUT",
              .titleZh = "输出格式",
-             .description = "跟随系统按当前输出设备的混音格式提交，通常转换最少、兼容性最好；保留源格式仅在设备直接支持时生效，否则自动回退。",
+             .description = "跟随系统按当前输出设备的混音格式提交，通常转换最少、兼容性最好；保留源格式仅在设"
+                            "备直接支持时生效，否则自动回退。",
              .defaultValue = "system",
              .choices = {{"system", QStringLiteral("跟随系统（推荐）")},
                          {"source", QStringLiteral("保留源格式")}}});

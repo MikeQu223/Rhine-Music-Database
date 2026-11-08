@@ -126,6 +126,9 @@ function prepareResources() {
             filter: (source) => !source.split(path.sep).includes('node_modules'),
         });
     }
+    // Qt 在桥启动前读取 descriptor；构建期从 manifest 提取，避免把入口/签名配置带进 UI。
+    run(process.execPath, ['scripts/export-descriptors.cjs', 'MusicBridge/local-plugins',
+                           path.join(bridge, 'plugins/descriptors')]);
     // package lock 变更时重新安装依赖，避免旧版本残留
     const dependencyHash = createHash('sha256')
         .update(fs.readFileSync(path.join(bridge, 'package.json')))

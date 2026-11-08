@@ -1,5 +1,6 @@
 #include "NativeHud.h"
 #include "HudScroll.h"
+#include "ProviderRegistry.h"
 #include <algorithm>
 #include <cmath>
 
@@ -269,37 +270,36 @@ void NativeHud::ensureSavedFilled() {
 
 void NativeHud::loginPanel(double x, double y, double width) {
     const auto &music = *m_music;
-    QStringList methods{"qr"};
-    if (music.provider == "qq") {
-        methods = {"qr", "wechat"};
-    } else if (music.provider == "netease") {
-        methods = {"qr", "phone"};
+    const auto &registry = ProviderRegistry::instance();
+    QVector<QJsonObject> methods;
+    for (const auto &value : registry.loginMethods(music.provider)) {
+        if (value.toObject()["id"].isString()) {
+            methods.append(value.toObject());
+        }
     }
     if (music.provider == "kugou") {
-        const QStringList editions{"standard", "lite"};
-        for (int index = 0; index < editions.size(); ++index) {
-            const auto edition = editions.at(index);
-            const QString label = edition == "lite" ? "酷狗概念版" : "酷狗标准版";
+        const auto variants = registry.descriptor("kugou")["login"].toObject()["variants"].toArray();
+        for (int index = 0; index < variants.size(); ++index) {
+            const auto edition = variants.at(index).toString();
+            if (edition.isEmpty()) {
+                continue;
+            }
+            const auto label = registry.nameForVariant("kugou", edition);
             button((music.kugouEdition == edition ? "✓ " : "") + label, x + 53 + index * 190, y + 207, 180,
                    35, "music:kugou-edition:" + edition, 13);
         }
         methods.clear();
     }
-    const QHash<QString, QString> labels{
-        {"qr", music.provider == "qq" ? "手机 QQ 扫码" : music.providerName() + "扫码"},
-        {"wechat", "微信扫码"},
-        {"phone", "短信验证码"}};
     for (int index = 0; index < methods.size(); ++index) {
-        const auto method = methods.at(index);
-        button(labels.value(method), x + 53 + index * 145, y + 207, 140, 35, "music:login-method:" + method,
-               13);
+        const auto method = methods.at(index)["id"].toString();
+        const auto label = methods.at(index)["label"].toString(method);
+        button(label, x + 53 + index * 145, y + 207, 140, 35, "music:login-method:" + method, 13);
     }
     if (QStringList{"qr", "wechat"}.contains(music.loginMethod)) {
         image(music.qr, x + width / 2 - 120, y + 260, 240, 240);
-        if (music.provider == "qq") {
-            const auto lines = m_glyphs->wrap(
-                "QQ 音乐账号只允许本人 7 天内在最多 5 台设备上登录，如登录失败，请在设备管理中删除无用设备。",
-                width - 106, 13);
+        const auto notice = ProviderRegistry::instance().text(music.provider, "deviceNotice");
+        if (!notice.isEmpty()) {
+            const auto lines = m_glyphs->wrap(notice, width - 106, 13);
             for (int index = 0; index < lines.size(); ++index) {
                 text(lines.at(index), x + 53, y + 520 + index * 18, 13);
             }

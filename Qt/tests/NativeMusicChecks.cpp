@@ -311,13 +311,17 @@ bool runNativeMusicChecks(const QString &root) {
     library.captchaLogin("13800000000", "invalid-code");
     check(captchaLogins == 0, "invalid captcha does not attempt login");
     library.captchaLogin("13800000000", "123456");
+    const auto cancelEpoch = host.epoch;
     library.cancelLogin();
+    check(host.epoch > cancelEpoch, "login reset bumps credential epoch");
     library.loginStatus = "cancelled-login";
     check(waitFor([&] { return captchaLogins == 1; }), "cancelled captcha request returns");
     check(library.uid.isEmpty() && library.loginStatus == "cancelled-login" && !host.authenticated(),
           "cancelled captcha response cannot log in or accept cookies");
+    const auto loginEpoch = host.epoch;
     library.captchaLogin("13800000000", "123456");
     check(waitFor([&] { return !library.accountLoading; }), "login completes");
+    check(host.epoch > loginEpoch, "login success bumps credential epoch");
     check(captchaLogins == 2 && loginParametersValid, "SMS login uses upstream parameters without password");
     check(library.uid == "42", "login sets uid");
 

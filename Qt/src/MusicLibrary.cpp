@@ -1,4 +1,5 @@
 #include "MusicLibrary.h"
+#include "ProviderRegistry.h"
 #include "MusicData.h"
 #include "MusicDiscover.h"
 #include <QJsonDocument>
@@ -17,15 +18,22 @@ int wrap(int value, int count) {
 MusicLibrary::MusicLibrary(Host *host, const QJsonObject &content, QObject *parent)
     : QObject(parent), host(host), api(host), player(host, &api), m_identityApi(host) {
     kugouEdition = host->preference("kugou-edition") == "lite" ? "lite" : "standard";
+    const auto &registry = ProviderRegistry::instance();
     provider = host->preference("provider");
-    if (!QStringList{"netease", "qq", "kugou", "local", "siren"}.contains(provider)) {
-        provider = "netease";
+    if (!registry.contains(provider) || (provider == "local" && !PlatformFeatures::LocalMusic)) {
+        provider = registry.defaultId();
+        if (provider.isEmpty() || (provider == "local" && !PlatformFeatures::LocalMusic)) {
+            provider = registry.fallbackId("local");
+        }
+        if (provider.isEmpty()) {
+            provider = "siren";
+        }
     }
-    if (provider == "local" && !PlatformFeatures::LocalMusic) {
-        provider = "netease";
+    const auto descriptorColumns = registry.columns(provider);
+    if (!descriptorColumns.isEmpty()) {
+        columns = descriptorColumns;
     }
     if (provider == "siren") {
-        columns = {"搜索结果", "喜欢的歌曲", "我的歌单", "全部歌曲", "全部专辑"};
         collections = std::make_unique<LocalCollections>(provider, QString(), this);
         reloadSirenCollections();
     }
@@ -115,11 +123,25 @@ void MusicLibrary::clearCaches() {
     changed();
 }
 
+bool MusicLibrary::editable() const {
+    const auto methods = ProviderRegistry::instance()
+                             .descriptor(provider)["capabilities"]
+                             .toObject()["playlistManagement"]
+                             .toObject();
+    for (auto it = methods.begin(); it != methods.end(); ++it) {
+        if (it.value().toBool()) {
+            return true;
+        }
+    }
+    return false;
+}
+
 QString MusicLibrary::providerName() const {
     if (provider == "kugou" && kugouEdition == "lite") {
-        return QStringLiteral("酷狗概念版");
+        return ProviderRegistry::instance().nameForVariant("kugou", "lite");
     }
-    return MusicApi::providerName(provider);
+    const auto name = ProviderRegistry::instance().name(provider);
+    return name.isEmpty() ? MusicApi::providerName(provider) : name;
 }
 
 /** 统一各渠道的账号恢复、栏目等待、失败和空库文案，供场景与列表共用。 */
@@ -195,7 +217,8 @@ QString MusicLibrary::identityName() const {
 }
 
 QVector<int> MusicLibrary::sourceOrder() const {
-    return provider == "kugou" ? QVector<int>{1, 2, 3, 0} : QVector<int>{1, 2, 3, 4, 0};
+    const auto values = ProviderRegistry::instance().sourceOrder(provider);
+    return values.isEmpty() ? QVector<int>{1, 2, 3, 4, 0} : values;
 }
 
 QString MusicLibrary::libraryName() const {
@@ -449,7 +472,7 @@ void MusicLibrary::search(QString text, QString kind, bool more) {
         (!lists[0].isEmpty() || searchLoading)) {
         return;
     }
-    const auto maximum = provider == "qq" ? 60 : 100;
+    const auto maximum = ProviderRegistry::instance().maxQueryLength(provider);
     if (query.isEmpty() || query.toUcs4().size() > maximum) {
         // 输入被清空或越界后，旧结果已与当前关键词无关，必须一并清除。
         ++m_generation;
@@ -540,7 +563,8 @@ void MusicLibrary::search(QString text, QString kind, bool more) {
 void MusicLibrary::suggest(QString text) {
     const auto token = ++m_suggestGeneration;
     suggestions.clear();
-    if (text.trimmed().isEmpty() || provider == "kugou" || isLocal() || isSiren()) {
+    if (text.trimmed().isEmpty() || !ProviderRegistry::instance().capability(provider, "suggest", false) ||
+        isLocal()) {
         return;
     }
     const auto qq = provider == "qq";

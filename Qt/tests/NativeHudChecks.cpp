@@ -1,4 +1,5 @@
 #include "NativeHud.h"
+#include "ProviderRegistry.h"
 #include "fg/FgCapability.h"
 #include "fg/FgConfig.h"
 #include "NativeApplication.h"
@@ -1641,6 +1642,15 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
             }
 
             // === 测试 6: 其他关键面板存在性检查 ===
+            hud.openModal("provider");
+            hud.draw(archiveFrame, 1920, 50);
+            if (!hasAction(hud.hits, "provider:siren") ||
+                getHit(hud.hits, "provider:" + provider)["label"].toString() !=
+                    ProviderRegistry::instance().name(provider)) {
+                qCritical() << "Provider cards are not descriptor-driven" << provider
+                            << (dark ? "dark" : "light");
+                ok = false;
+            }
             const QStringList criticalPanels = {"search", "login", "player", "confirm"};
             for (const auto &panel : criticalPanels) {
                 hud.openModal(panel);

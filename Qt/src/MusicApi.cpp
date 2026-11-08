@@ -1,4 +1,5 @@
 #include "MusicApi.h"
+#include "ProviderRegistry.h"
 #include <QJsonDocument>
 #include <QPointer>
 #include <QRegularExpression>
@@ -8,19 +9,8 @@ MusicApi::MusicApi(Host *host, QObject *parent) : QObject(parent), m_host(host) 
 }
 
 QString MusicApi::providerName(const QString &provider) {
-    if (provider == "local") {
-        return QStringLiteral("本地音乐");
-    }
-    if (provider == "qq") {
-        return QStringLiteral("QQ 音乐");
-    }
-    if (provider == "kugou") {
-        return QStringLiteral("酷狗音乐");
-    }
-    if (provider == "siren") {
-        return QStringLiteral("塞壬唱片");
-    }
-    return QStringLiteral("网易云音乐");
+    const auto name = ProviderRegistry::instance().name(provider);
+    return name.isEmpty() ? provider : name;
 }
 
 QJsonObject MusicApi::safeFailure(const QJsonObject &body, bool includePrevious) {
@@ -119,7 +109,7 @@ void MusicApi::send(QString route, QJsonObject parameters, bool adapted, Reply c
             owner->m_host->acceptCookies(
                 QString::fromUtf8(
                     QJsonDocument(response["cookies"].toArray()).toJson(QJsonDocument::Compact)),
-                response["_epoch"].toInt(), response["_credentialKey"].toString());
+                response["_epoch"].toInt(), response["_credentialKey"].toString(), source);
             callback({adapted ? body["value"] : QJsonValue(body), {}, {}});
         });
 }

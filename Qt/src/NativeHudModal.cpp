@@ -1,6 +1,7 @@
 #include <QScopedValueRollback>
 #include <QtGlobal>
 #include "NativeHud.h"
+#include "ProviderRegistry.h"
 #include <algorithm>
 
 namespace {
@@ -10,19 +11,17 @@ struct Provider {
     QString label;
     QString detail;
 };
-const QVector<Provider> providers = [] {
-    QVector<Provider> values{
-        {"siren", "塞壬唱片", "MONSTER SIREN", "官网曲库"},
-        {"netease", "网易云音乐", "NETEASE", "搜索 · 个人音乐 · 推荐 · 播放 · 歌单编辑"},
-        {"qq", "QQ 音乐", "QQ MUSIC", "全类搜索 · 每日推荐 · 个人音乐 · 歌单编辑"},
-        {"kugou", "酷狗音乐", "KUGOU", "标准版 / 概念版 · 个人歌单 · 推荐与榜单 · 播放"},
-        {"local", "本地音乐", "LOCAL", "文件夹管理 · 导入与索引 · 本地检索 · 播放"},
-    };
-    if (!PlatformFeatures::LocalMusic) {
-        values.removeLast();
+QVector<Provider> providerCards() {
+    QVector<Provider> values;
+    const auto &registry = ProviderRegistry::instance();
+    for (const auto &id : registry.ids()) {
+        if (id == "local" && !PlatformFeatures::LocalMusic) {
+            continue;
+        }
+        values.append({id, registry.name(id), registry.label(id), registry.detail(id)});
     }
     return values;
-}();
+}
 
 QString modalTitle(const QString &modal, const MusicLibrary &music) {
     static const QHash<QString, QString> titles{{"provider", "MUSIC PLATFORM"},
@@ -40,13 +39,11 @@ QString modalTitle(const QString &modal, const MusicLibrary &music) {
         return "LOCAL MUSIC LIBRARY";
     }
     if (modal == "login") {
-        if (music.provider == "qq") {
-            return "QQ MUSIC LOGIN";
+        const auto &registry = ProviderRegistry::instance();
+        if (music.provider == "kugou" && music.kugouEdition == "lite") {
+            return "KUGOU CONCEPT LOGIN";
         }
-        if (music.provider == "kugou") {
-            return music.kugouEdition == "lite" ? "KUGOU CONCEPT LOGIN" : "KUGOU LOGIN";
-        }
-        return "NETEASE LOGIN";
+        return registry.label(music.provider) + " LOGIN";
     }
     return titles.value(modal, "MUSIC INDEX");
 }
@@ -71,8 +68,8 @@ QString modalSubtitle(const QString &modal, const MusicLibrary &music) {
         return "我的音乐 / " + music.nickname;
     }
     if (modal == "login") {
-        return music.provider == "kugou" ? "使用对应版本酷狗 App 扫码；搜索与个人音乐需要登录"
-                                         : "可选登录，公开搜索不需要账号";
+        const auto hint = ProviderRegistry::instance().text(music.provider, "loginHint");
+        return hint.isEmpty() ? QStringLiteral("可选登录，公开搜索不需要账号") : hint;
     }
     return subtitles.value(modal, "音乐检索");
 }
@@ -280,9 +277,13 @@ QVector<ResponsiveHudContent::Item> NativeHud::auxiliaryContent() {
 
 void NativeHud::platformChoices(double x, double y, double width, bool expanded) {
     constexpr double gap = 12;
-    const auto cardWidth = (width - gap * (providers.size() - 1)) / providers.size();
-    for (int index = 0; index < providers.size(); ++index) {
-        const auto &provider = providers.at(index);
+    const auto items = providerCards();
+    if (items.isEmpty()) {
+        return;
+    }
+    const auto cardWidth = (width - gap * (items.size() - 1)) / items.size();
+    for (int index = 0; index < items.size(); ++index) {
+        const auto &provider = items.at(index);
         const auto left = x + index * (cardWidth + gap);
         const bool selected = m_music->provider == provider.id;
         if (m_contentSink) {
@@ -321,12 +322,29 @@ void NativeHud::platformPanel(double x, double y, double width) {
     platformChoices(x + 53, y + 258, width - 106, true);
     rule(x + 53, y + 490, width - 106, 0.2);
     text("切换平台会停止当前播放，各平台账号与个人音乐独立保存。", x + 53, y + 520, 15);
-    text("网易云与 QQ 支持歌单编辑；酷狗支持读取与播放。", x + 53, y + 558, 15);
-    text("塞壬唱片", x + 53, y + 590, 15);
+    QStringList editable;
+    const auto &registry = ProviderRegistry::instance();
+    for (const auto &id : registry.ids()) {
+        if (id == "local" || id == "siren") {
+            continue;
+        }
+        const auto methods =
+            registry.descriptor(id)["capabilities"].toObject()["playlistManagement"].toObject();
+        for (auto it = methods.begin(); it != methods.end(); ++it) {
+            if (it.value().toBool()) {
+                editable.append(registry.name(id));
+                break;
+            }
+        }
+    }
+    text(editable.isEmpty() ? QStringLiteral("平台能力由插件声明。")
+                            : QStringLiteral("支持歌单编辑：") + editable.join(QStringLiteral("、")),
+         x + 53, y + 558, 15);
+    text(registry.name("siren"), x + 53, y + 590, 15);
     if (m_music->isLocal()) {
         button("文件夹管理 ＋", x + 53, y + 660, 330, 48, "discover", 16);
     } else if (m_music->isSiren()) {
-        text("塞壬唱片官网曲库", x + 53, y + 675, 15);
+        text(registry.name("siren") + registry.detail("siren"), x + 53, y + 675, 15);
     } else {
         button("账号登录 / " + m_music->providerName(), x + 53, y + 660, 330, 48, "music:login", 16);
     }
@@ -338,7 +356,7 @@ struct QualityDescription {
     QString detail;
     QString badge;
 };
-const QHash<QString, QualityDescription> qualityDescriptions{
+const QHash<QString, QualityDescription> fallbackQualityDescriptions{
     {"standard", {"标准", "STANDARD", "日常聆听，兼顾音质与数据流量", ""}},
     {"higher", {"较高", "HIGH QUALITY", "提升声音细节，保持轻量传输", "hq"}},
     {"exhigh", {"极高", "HIGH QUALITY", "更充分保留有损编码中的声音细节", "hq"}},
@@ -347,16 +365,32 @@ const QHash<QString, QualityDescription> qualityDescriptions{
     {"hires", {"高解析无损", "HI-RES AUDIO", "还原高解析录音中的丰富层次", "hires"}},
     {"jymaster", {"超清母带", "MASTER AUDIO", "聆听母带版本中的细腻质感与动态", "jymaster"}},
     {"best", {"自动最高可用", "BEST AVAILABLE", "由平台选择当前可用的最高音质", ""}}};
+QualityDescription qualityDescriptionFor(const QString &provider, const QString &id) {
+    const auto value = ProviderRegistry::instance().qualityDescription(provider, id);
+    QualityDescription description{value["title"].toString(), value["caption"].toString(),
+                                   value["detail"].toString(), value["badge"].toString()};
+    if (description.title.isEmpty()) {
+        description = fallbackQualityDescriptions.value(id);
+    }
+    return description;
+}
+QString qualityLabelFor(const QString &provider, const QString &id) {
+    static const QHash<QString, QString> fallback{
+        {"standard", "标准"},     {"hq", "高品质 / HQ"},
+        {"sq", "无损 / SQ"},      {"hires", "高解析无损 / Hi-Res"},
+        {"jymaster", "超清母带"}, {"jyeffect", "高清臻音"},
+        {"sky", "沉浸环绕声"},
+    };
+    return ProviderRegistry::instance().qualityLabel(provider, id, fallback.value(id, id));
+}
 }
 
 /** 音质选项采用统一档案标记；重点档位展开为卡片，普通档位保持紧凑行高。 */
 void NativeHud::qualityChoice(const QString &id, int number, double x, double y, double width,
                               bool featured) {
-    const auto description =
-        m_music->provider == "siren" && id == "lossless"
-            ? QualityDescription{"官网原始音源", "ORIGINAL SOURCE", "直接使用塞壬唱片官网提供的音源文件", ""}
-            : qualityDescriptions.value(id);
-    const bool selected = m_music->isSiren() ? id == "lossless" : m_music->player.quality == id;
+    const auto description = qualityDescriptionFor(m_music->provider, id);
+    const auto selected = m_music->player.quality == id ||
+                          (m_music->isSiren() && id == ProviderRegistry::instance().defaultQuality("siren"));
     if (m_contentSink) {
         m_contentSink->action(description.title + (selected ? " / 已选择" : ""), "quality:set:" + id);
         m_contentSink->text(description.detail);
@@ -382,7 +416,7 @@ void NativeHud::qualityChoice(const QString &id, int number, double x, double y,
     if (!pixels.isNull()) {
         const auto badgeWidth = std::min(68., 21. * pixels.width() / pixels.height());
         const auto badgeHeight = badgeWidth * pixels.height() / pixels.width();
-        if (m_music->provider == "kugou") {
+        if (ProviderRegistry::instance().qualityBadgeBackground(m_music->provider)) {
             fill(badgeX - 4, badgeY - 4, badgeWidth + 8, badgeHeight + 8, {0.30, 0.33, 0.26, 1});
         }
         image(key, badgeX, badgeY, badgeWidth, badgeHeight);
@@ -414,11 +448,8 @@ void NativeHud::qualityPanel(double x, double y, double width) {
     const auto &player = music.player;
     const auto left = x + 53;
     const auto usable = width - 106;
-    const QHash<QString, QString> names{{"standard", "标准"},     {"hq", "高品质 / HQ"},
-                                        {"sq", "无损 / SQ"},      {"hires", "高解析无损 / Hi-Res"},
-                                        {"jymaster", "超清母带"}, {"jyeffect", "高清臻音"},
-                                        {"sky", "沉浸环绕声"}};
-    QString actual = names.value(player.actualQuality, "尚未确认");
+    QString actual = player.actualQuality.isEmpty() ? QStringLiteral("尚未确认")
+                                                    : qualityLabelFor(music.provider, player.actualQuality);
     if (player.failed) {
         actual = "音源不可用";
     } else if (player.loading) {
@@ -430,18 +461,10 @@ void NativeHud::qualityPanel(double x, double y, double width) {
     fill(left, y + 195, 3, 48, accent);
     text("实际音源 / SOURCE", left + 17, y + 199, 10, "demibold", 0.6);
     text(actual, left + 17, y + 219, 18, "demibold");
-    const auto preference =
-        music.isSiren() ? QStringLiteral("官网原始音源") : qualityDescriptions.value(player.quality).title;
+    const auto preference = qualityDescriptionFor(music.provider, player.quality).title;
     limited("已选偏好：" + preference, left + usable * 0.52, y + 219, 14, usable * 0.48);
     rule(left, y + 257, usable, 0.25);
-    QStringList featured{"jymaster", "hires"};
-    if (music.provider == "qq") {
-        featured = {"best", "lossless"};
-    } else if (music.provider == "kugou") {
-        featured = {"hires", "lossless"};
-    } else if (music.provider == "siren") {
-        featured = {};
-    }
+    const auto featured = ProviderRegistry::instance().qualityFeatured(music.provider);
     const auto cardWidth = (usable - 18) / 2;
     for (int index = 0; index < featured.size(); ++index) {
         qualityChoice(featured.at(index), index + 1, left + index * (cardWidth + 18), y + 278, cardWidth,
@@ -456,18 +479,22 @@ void NativeHud::qualityPanel(double x, double y, double width) {
         }
     }
     // 未开放手动选择的扩展音源仍展示官方图标名称，避免把图标当作额外可选档位。
-    if (music.provider == "netease") {
+    const auto extras = ProviderRegistry::instance().qualityExtras(music.provider);
+    if (!extras.isEmpty()) {
         text("其他音源标识", left, y + 738, 11, "demibold");
-        const QStringList extraBadges{"jyeffect", "sky"};
-        for (int index = 0; index < extraBadges.size(); ++index) {
-            const auto id = extraBadges.at(index);
+        for (int index = 0; index < extras.size(); ++index) {
+            const auto extra = extras.at(index).toObject();
+            const auto id = extra["id"].toString();
+            if (id.isEmpty()) {
+                continue;
+            }
             const auto key = "quality:" + music.provider + "-" + id;
             const auto pixels = m_host->image(key);
             const auto badgeX = left + 130 + index * 235;
             if (!pixels.isNull()) {
                 const auto badgeWidth = 18. * pixels.width() / pixels.height();
                 image(key, badgeX, y + 735, badgeWidth, 18);
-                text(names.value(id), badgeX + badgeWidth + 12, y + 737, 12);
+                text(extra["label"].toString(id), badgeX + badgeWidth + 12, y + 737, 12);
             }
         }
     }

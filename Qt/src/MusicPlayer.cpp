@@ -1,4 +1,5 @@
 #include "MusicPlayer.h"
+#include "ProviderRegistry.h"
 #include <QFileInfo>
 #include <QUrl>
 #include <QJsonDocument>
@@ -102,25 +103,11 @@ QString MusicPlayer::sourceQuality(const QString &provider, const QJsonObject &a
 }
 
 QVector<QPair<QString, QString>> MusicPlayer::qualityOptions(const QString &provider) {
-    if (provider == "qq") {
-        return {{"best", "自动最高可用"},
-                {"standard", "标准"},
-                {"exhigh", "HQ 高品质"},
-                {"lossless", "SQ 无损 / FLAC"},
-                {"ape", "SQ 无损 / APE"}};
+    const auto options = ProviderRegistry::instance().qualityOptions(provider);
+    if (!options.isEmpty()) {
+        return options;
     }
-    if (provider == "kugou") {
-        return {{"standard", "标准"},
-                {"exhigh", "HQ 高品音质"},
-                {"lossless", "SQ 无损音质"},
-                {"hires", "Hi-Res 高解析音质"}};
-    }
-    if (provider == "siren") {
-        return {{"lossless", "官网原始音源"}};
-    }
-    return {
-        {"standard", "标准"},           {"higher", "较高"},      {"exhigh", "极高"}, {"lossless", "SQ 无损"},
-        {"hires", "Hi-Res 高解析音质"}, {"jymaster", "超清母带"}};
+    return {{"standard", "标准"}};
 }
 
 /** 共享音质偏好；换源保留队列、歌词、播放位置和暂停意图，迟到响应由播放代数隔离。 */

@@ -1,0 +1,144 @@
+{
+    "schemaVersion": 1,
+    "id": "siren",
+    "display": {
+        "name": "塞壬唱片",
+        "label": "MONSTER SIREN",
+        "detail": "官网曲库",
+        "sessionLabel": "MONSTER SIREN",
+        "archiveIdPrefix": "SIREN ID / ",
+        "order": 0,
+        "default": false
+    },
+    "capabilities": {
+        "search": true,
+        "suggest": false,
+        "resolveLink": false,
+        "detail": true,
+        "playback": true,
+        "preview": false,
+        "lyrics": true,
+        "account": false,
+        "login": false,
+        "vip": false,
+        "discover": false,
+        "categories": false,
+        "userPlaylists": true,
+        "likedSongs": true,
+        "likedAlbums": false,
+        "mv": false,
+        "officialPlayback": false,
+        "alternativeSource": false,
+        "mutations": {
+            "likeSong": true
+        },
+        "playlistManagement": {
+            "createPlaylist": true,
+            "renamePlaylist": true,
+            "deletePlaylist": true,
+            "updatePlaylistTracks": true
+        }
+    },
+    "library": {
+        "columns": ["搜索结果", "喜欢的歌曲", "我的歌单", "全部歌曲", "全部专辑"],
+        "sourceOrder": [1, 2, 3, 4, 0],
+        "lanes": 5,
+        "identityProviders": [],
+        "likedModel": "local",
+        "playlistNameMaxLength": 100,
+        "playlistEditableRule": "owned",
+        "dirIdRange": null
+    },
+    "quality": {
+        "default": "lossless",
+        "options": [
+            {
+                "id": "lossless",
+                "label": "官网原始音源",
+                "tier": "original"
+            }
+        ],
+        "aliases": {},
+        "descriptions": {
+            "lossless": {
+                "title": "官网原始音源",
+                "caption": "ORIGINAL SOURCE",
+                "detail": "直接使用塞壬唱片官网提供的音源文件",
+                "badge": ""
+            }
+        },
+        "featured": [],
+        "extras": [],
+        "labels": {
+            "standard": "标准",
+            "hq": "高品质 / HQ",
+            "sq": "无损 / SQ",
+            "hires": "高解析无损 / Hi-Res",
+            "jymaster": "超清母带",
+            "jyeffect": "高清臻音",
+            "sky": "沉浸环绕声",
+            "lossless": "官网原始音源"
+        }
+    },
+    "discover": {
+        "enabled": false,
+        "defaultTab": "",
+        "tabs": []
+    },
+    "lyrics": {
+        "sources": ["siren", "netease"],
+        "fallback": ["netease"],
+        "matchMode": "fuzzy",
+        "rateLimitMs": 1500,
+        "retryDelaysMs": []
+    },
+    "media": {
+        "hosts": ["hycdn.cn", "*.hycdn.cn"],
+        "alternativeHosts": [],
+        "coverHosts": ["hycdn.cn", "*.hycdn.cn"],
+        "allowHttp": false,
+        "schemePolicy": "https"
+    },
+    "links": {
+        "parse": false,
+        "patterns": [],
+        "officialAppUrl": "https://monster-siren.hypergryph.com",
+        "officialLabel": "塞壬唱片",
+        "webTemplates": {
+            "home": "https://monster-siren.hypergryph.com/music"
+        }
+    },
+    "strings": {
+        "officialEntry": "官网曲库 ↗",
+        "loginHint": "官网曲库 / 无需登录",
+        "accountNote": "官网曲库 / 无需登录"
+    },
+    "search": {
+        "enabled": true,
+        "maxQueryLength": 100,
+        "suggest": false,
+        "parseLinks": false,
+        "linkPatterns": []
+    },
+    "operations": {
+        "request": false,
+        "search": true,
+        "songs": true,
+        "detail": true,
+        "artistAlbums": true,
+        "wiki": true,
+        "userPlaylists": true,
+        "likedIDs": true,
+        "likedSongs": true,
+        "likedAlbums": true,
+        "playback": true,
+        "trackPage": true,
+        "catalog": true,
+        "discover": true,
+        "categories": true,
+        "lyrics": true,
+        "subscriptionStatus": true,
+        "capabilities": true,
+        "vip": true
+    }
+}

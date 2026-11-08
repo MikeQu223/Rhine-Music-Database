@@ -3,45 +3,197 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
+const { PluginError } = require('./errors.cjs');
+
+// 与 plugins/sdk/contract-lock.json 的 apiVersion 保持同步。
+const HOST_API_VERSION = '1.0';
+const API_VERSION = /^(\d+)\.(\d+)$/;
+const PROVIDER_ID = /^[a-z0-9-]{1,40}$/;
+
+function parseVersion(value) {
+    const match = API_VERSION.exec(String(value || ''));
+    return match ? { major: Number(match[1]), minor: Number(match[2]) } : null;
+}
+
+/** 插件要求的 apiVersion 不能高于 host，且必须同一主版本。 */
+function compatibleVersion(required, host) {
+    return !!required && !!host && required.major === host.major && required.minor <= host.minor;
+}
+
+function isStringArray(value) {
+    return Array.isArray(value) && value.every((entry) => typeof entry === 'string' && entry.startsWith('/'));
+}
+
+function duplicateEntry(values) {
+    const seen = new Set();
+    for (const value of values) {
+        if (seen.has(value)) {
+            return value;
+        }
+        seen.add(value);
+    }
+    return null;
+}
+
+function overlappingPrefix(values) {
+    for (let index = 0; index < values.length; index++) {
+        for (let other = index + 1; other < values.length; other++) {
+            const left = values[index];
+            const right = values[other];
+            if (left.startsWith(right + '/') || right.startsWith(left + '/')) {
+                return [left, right];
+            }
+        }
+    }
+    return null;
+}
+
+function findConflict(values, owners, overlap = false) {
+    for (const value of values) {
+        if (owners.has(value)) {
+            return value;
+        }
+        if (overlap) {
+            for (const other of owners.keys()) {
+                if (value.startsWith(other + '/') || other.startsWith(value + '/')) {
+                    return value;
+                }
+            }
+        }
+    }
+    return null;
+}
 
 /**
  * 通用插件 Registry：只扫描 manifest，不包含平台语义。
- * 插件目录由构建/部署层决定；P1 使用 MusicBridge/plugins 下的本地试点包。
+ * 插件目录由构建/部署层决定；冲突或版本不兼容的包在发现阶段整体拒绝，避免静默覆盖。
  */
 class PluginRegistry {
-    constructor(pluginsRoot) {
+    constructor(pluginsRoot, options = {}) {
         this.pluginsRoot = pluginsRoot;
+        this.apiVersion = options.apiVersion || HOST_API_VERSION;
         this.entries = new Map();
         this.modules = new Map();
         this.legacy = new Map();
+        this.prefixes = new Map();
+        this.problems = [];
         this.discover();
     }
 
+    problem(directory, id, code, message) {
+        this.problems.push({ directory, id: id || null, code, message });
+    }
+
+    validate(manifest) {
+        if (!manifest || typeof manifest !== 'object') {
+            return 'manifest 不是对象';
+        }
+        if (typeof manifest.id !== 'string' || !PROVIDER_ID.test(manifest.id)) {
+            return '插件 id 无效';
+        }
+        if (typeof manifest.version !== 'string' || !manifest.version) {
+            return '插件版本无效';
+        }
+        if (typeof manifest.apiVersion !== 'string' || !API_VERSION.test(manifest.apiVersion)) {
+            return 'apiVersion 无效';
+        }
+        if (!manifest.entry || typeof manifest.entry.file !== 'string' || !manifest.entry.file) {
+            return '入口文件无效';
+        }
+        if (
+            !isStringArray(manifest.routes?.legacyRoutes || []) ||
+            !isStringArray(manifest.routes?.prefixes || [])
+        ) {
+            return '路由表无效';
+        }
+        return null;
+    }
+
     discover() {
+        this.entries.clear();
+        this.modules.clear();
+        this.legacy.clear();
+        this.prefixes.clear();
+        this.problems = [];
         if (!fs.existsSync(this.pluginsRoot)) {
             return;
         }
-        for (const entry of fs.readdirSync(this.pluginsRoot, { withFileTypes: true })) {
-            if (!entry.isDirectory() || entry.name === 'sdk' || entry.name === 'node_modules') {
-                continue;
-            }
+        const directories = fs
+            .readdirSync(this.pluginsRoot, { withFileTypes: true })
+            .filter((entry) => entry.isDirectory() && entry.name !== 'sdk' && entry.name !== 'node_modules')
+            .sort((left, right) => left.name.localeCompare(right.name));
+        for (const entry of directories) {
             const directory = path.join(this.pluginsRoot, entry.name);
             const manifestFile = path.join(directory, 'manifest.json');
             if (!fs.existsSync(manifestFile)) {
                 continue;
             }
+            let manifest;
             try {
-                const manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8'));
-                if (manifest && manifest.id) {
-                    this.entries.set(manifest.id, { directory, manifest });
-                    for (const route of manifest.routes?.legacyRoutes || []) {
-                        this.legacy.set(route, manifest.id);
-                    }
-                }
+                manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8'));
             } catch {
-                // 损坏的 manifest 不应阻塞其他插件；加载时再给出明确错误。
+                this.problem(entry.name, null, 'manifest.invalid', 'manifest 无法解析');
+                continue;
+            }
+            const invalid = this.validate(manifest);
+            if (invalid) {
+                this.problem(entry.name, manifest?.id, 'manifest.invalid', invalid);
+                continue;
+            }
+            if (
+                manifest.schemaVersion !== 1 ||
+                !compatibleVersion(parseVersion(manifest.apiVersion), parseVersion(this.apiVersion))
+            ) {
+                this.problem(entry.name, manifest.id, 'plugin.incompatible', '插件版本与当前 host 不兼容');
+                continue;
+            }
+            if (this.entries.has(manifest.id)) {
+                this.problem(entry.name, manifest.id, 'plugin.conflict', '插件 id 重复');
+                continue;
+            }
+            const legacyRoutes = manifest.routes?.legacyRoutes || [];
+            const prefixRoutes = manifest.routes?.prefixes || [];
+            const duplicate = duplicateEntry(legacyRoutes) || duplicateEntry(prefixRoutes);
+            const overlap = overlappingPrefix(prefixRoutes);
+            const conflict =
+                findConflict(legacyRoutes, this.legacy) || findConflict(prefixRoutes, this.prefixes, true);
+            if (duplicate || overlap || conflict) {
+                this.problem(entry.name, manifest.id, 'route.duplicate', '插件路由与其他插件冲突');
+                continue;
+            }
+            this.entries.set(manifest.id, { directory, manifest });
+            for (const route of legacyRoutes) {
+                this.legacy.set(route, manifest.id);
+            }
+            for (const route of prefixRoutes) {
+                this.prefixes.set(route, manifest.id);
             }
         }
+    }
+
+    getProblems() {
+        return this.problems.map((problem) => ({ ...problem }));
+    }
+
+    status(id) {
+        return this.entries.has(id) ? 'bundled' : 'missing';
+    }
+
+    /** 只有唯一一个插件声明 default 时才返回；多个默认视为配置错误，不猜。 */
+    default() {
+        const defaults = this.list().filter((manifest) => manifest.display?.default === true);
+        return defaults.length === 1 ? defaults[0].id : null;
+    }
+
+    can(id, operation) {
+        const entry = this.entries.get(id);
+        if (!entry) {
+            return false;
+        }
+        return (
+            entry.manifest.operations?.[operation] === true ||
+            entry.manifest.capabilities?.[operation] === true
+        );
     }
 
     list() {
@@ -74,29 +226,46 @@ class PluginRegistry {
         }
         let module = this.modules.get(id);
         if (!module) {
-            const entryFile = path.join(entry.directory, entry.manifest.entry.file);
-            const imported = entryFile.endsWith('.cjs')
-                ? require(entryFile)
-                : await import(pathToFileURL(entryFile).href);
-            const create = imported.create || imported.default?.create;
-            if (typeof create !== 'function') {
-                throw new Error('Plugin entry must export create(host)');
-            }
-            module = { create };
+            module = await this.importModule(entry);
             this.modules.set(id, module);
         }
         host.manifest = entry.manifest;
-        const adapter = await module.create(host, options);
+        let adapter;
+        try {
+            adapter = await module.create(host, options);
+        } catch (error) {
+            if (error instanceof PluginError) {
+                throw error;
+            }
+            throw new PluginError(503, 'plugin.load-failed', '插件初始化失败');
+        }
         if (!adapter) {
-            throw new Error('Plugin create(host) returned no adapter');
+            throw new PluginError(503, 'plugin.load-failed', '插件初始化失败');
         }
         return adapter;
+    }
+
+    async importModule(entry) {
+        const entryFile = path.join(entry.directory, entry.manifest.entry.file);
+        let imported;
+        try {
+            imported = entryFile.endsWith('.cjs')
+                ? require(entryFile)
+                : await import(pathToFileURL(entryFile).href);
+        } catch {
+            throw new PluginError(503, 'plugin.load-failed', '插件加载失败');
+        }
+        const create = imported.create || imported.default?.create;
+        if (typeof create !== 'function') {
+            throw new PluginError(503, 'plugin.load-failed', '插件入口缺少 create');
+        }
+        return { create };
     }
 
     async dispatchNative(id, operation, args, host, options) {
         const adapter = await this.load(id, host, options);
         if (!adapter) {
-            throw new Error('未知插件：' + id);
+            throw new PluginError(404, 'plugin.missing', '插件不可用');
         }
         return adapter.dispatchNative(operation, args);
     }
@@ -104,7 +273,7 @@ class PluginRegistry {
     async dispatchRoute(id, route, params, host, options) {
         const adapter = await this.load(id, host, options);
         if (!adapter) {
-            throw new Error('未知插件：' + id);
+            throw new PluginError(404, 'plugin.missing', '插件不可用');
         }
         return adapter.dispatchRoute(route, params);
     }

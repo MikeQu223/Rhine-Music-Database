@@ -17,6 +17,7 @@
         "check:core-boundary": "node scripts/check-core-boundary.cjs",
         "check:contract-freeze": "node scripts/check-contract-freeze.cjs",
         "check:plugin-contracts": "node scripts/check-plugin-contracts.cjs",
+        "check:provider-literals": "node scripts/check-provider-literals.cjs",
         "share": "node scripts/share.cjs",
         "format": "node scripts/format.cjs",
         "preview": "node scripts/preview-qt.cjs",

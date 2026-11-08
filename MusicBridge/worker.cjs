@@ -8,6 +8,7 @@ const path = require('node:path');
 const readline = require('node:readline');
 const { PluginRegistry } = require('./core/registry.cjs');
 const { createHost } = require('./core/host.cjs');
+const { errorBody, pluginMissing, routeInvalid, routeUnknown } = require('./core/errors.cjs');
 const pluginRegistry = new PluginRegistry(path.join(__dirname, 'local-plugins'));
 // 上游诊断可能包含 URL 或 Cookie，禁止混入 IPC 消息和日志。
 console.log = console.info = console.warn = console.error = console.debug = () => {};
@@ -35,21 +36,6 @@ function recordPluginDiagnostic(events, fields) {
     events.push(values);
 }
 
-function pluginFailure(error) {
-    const failure = error.body && typeof error.body === 'object' ? error.body : {};
-    let code = 503;
-    if (typeof failure.code === 'number') {
-        code = failure.code;
-    } else if (typeof error.code === 'number') {
-        code = error.code;
-    }
-    return {
-        ...failure,
-        code,
-        message: failure.message || error.message || '插件请求失败',
-    };
-}
-
 async function dispatchPluginNative(message, provider, operation, args) {
     const events = playbackDiagnosticContext.getStore();
     const host = createHost(
@@ -61,7 +47,7 @@ async function dispatchPluginNative(message, provider, operation, args) {
         const plugin = await pluginRegistry.load(provider, host);
         if (!plugin) {
             return {
-                body: { code: 404, message: '插件不可用' },
+                body: pluginMissing(),
                 cookies: host.receivedCookies(),
                 ...host.secretState(),
             };
@@ -90,7 +76,7 @@ async function dispatchPluginNative(message, provider, operation, args) {
             });
         }
         return {
-            body: pluginFailure(error),
+            body: errorBody(error),
             cookies: host.receivedCookies(),
             ...host.secretState(),
         };
@@ -107,13 +93,13 @@ async function dispatchPluginRoute(message, provider, route, params) {
     try {
         const plugin = await pluginRegistry.load(provider, host);
         if (!plugin) {
-            return { body: { code: 404, message: '插件不可用' }, cookies: host.receivedCookies() };
+            return { body: pluginMissing(), cookies: host.receivedCookies(), ...host.secretState() };
         }
         const body = await plugin.dispatchRoute(route, params || {});
         return { body, cookies: host.receivedCookies(), ...host.secretState() };
     } catch (error) {
         return {
-            body: pluginFailure(error),
+            body: errorBody(error),
             cookies: host.receivedCookies(),
             ...host.secretState(),
         };
@@ -121,19 +107,22 @@ async function dispatchPluginRoute(message, provider, route, params) {
 }
 
 async function dispatchRequest(message) {
+    if (message.route === '/plugin') {
+        return { body: routeInvalid(), cookies: [] };
+    }
     if (message.route?.startsWith('/plugin/')) {
         const parts = String(message.route).split('/');
         const provider = parts[2];
         const operation = parts[3];
         if (!provider || !operation) {
-            return { body: { code: 400, message: '插件路由无效' }, cookies: [] };
+            return { body: routeInvalid(), cookies: [] };
         }
         const host = createHost(message, dispatchRequest);
         try {
             const plugin = await pluginRegistry.load(provider, host);
             if (!plugin) {
                 return {
-                    body: { code: 404, message: '插件不可用' },
+                    body: pluginMissing(),
                     cookies: host.receivedCookies(),
                     ...host.secretState(),
                 };
@@ -141,7 +130,7 @@ async function dispatchRequest(message) {
             if (operation === 'route') {
                 const route = '/' + parts.slice(4).join('/');
                 if (route === '/') {
-                    return { body: { code: 400, message: '插件路由无效' }, cookies: host.receivedCookies() };
+                    return { body: routeInvalid(), cookies: host.receivedCookies() };
                 }
                 return dispatchPluginRoute(message, provider, route, message.params?.params || {});
             }
@@ -154,10 +143,7 @@ async function dispatchRequest(message) {
             };
         } catch (error) {
             return {
-                body: {
-                    code: typeof error.code === 'number' ? error.code : 503,
-                    message: error.message || '插件请求失败',
-                },
+                body: errorBody(error),
                 cookies: host.receivedCookies(),
                 ...host.secretState(),
             };
@@ -207,11 +193,17 @@ async function dispatchRequest(message) {
     }
     if (message.route?.startsWith('/native/')) {
         const [, , provider, operation] = String(message.route).split('/');
+        if (!provider || !operation) {
+            return { body: routeInvalid(), cookies: [] };
+        }
         if (pluginRegistry.has(provider)) {
             return dispatchPluginNative(message, provider, operation, message.params?.args || []);
         }
-        const client = await import('./client/dispatch.mjs');
-        return client.dispatch(message, dispatch);
+        if (provider === 'siren') {
+            const client = await import('./client/dispatch.mjs');
+            return client.dispatch(message, dispatch);
+        }
+        return { body: pluginMissing(), cookies: [] };
     }
     const prefix = pluginRegistry.prefixProvider(message.route);
     if (prefix) {
@@ -221,7 +213,7 @@ async function dispatchRequest(message) {
     if (legacyProvider) {
         return dispatchPluginRoute(message, legacyProvider, message.route, message.params || {});
     }
-    return { body: { code: 503, message: '音乐请求失败，请重试' }, cookies: [] };
+    return { body: routeUnknown(), cookies: [] };
 }
 
 /** 诊断期间记录音源请求的数值结果 */
@@ -310,11 +302,9 @@ readline
         } catch (error) {
             send({
                 id: message?.id,
-                body: error.body || {
-                    code: 503,
-                    message: '音乐请求失败，请重试',
-                },
-                cookies: error.cookie || [],
+                body: errorBody(error, '音乐请求失败，请重试'),
+                cookies: error.cookies || error.cookie || [],
+                ...(error.secretState || {}),
             });
         }
     })

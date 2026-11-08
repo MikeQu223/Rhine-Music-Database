@@ -26,7 +26,8 @@ class Host : public QObject {
     ~Host() override;
     void requestJson(QString route, QJsonObject params, JsonReply callback);
     void schedule(int ms, std::function<void()> callback);
-    void loadCover(QString url, TextReply callback, int maximumDimension = 1024, bool allowPlaybackOnly = false);
+    void loadCover(QString url, TextReply callback, int maximumDimension = 1024,
+                   bool allowPlaybackOnly = false);
     void playOfficial(QString id, TextReply callback);
     Q_INVOKABLE void invalidate() {
         emit invalidated();
@@ -35,9 +36,17 @@ class Host : public QObject {
     Q_INVOKABLE bool hasCredential(QString value) const;
     Q_INVOKABLE QString saveCredential();
     Q_INVOKABLE void logout();
+    Q_INVOKABLE void bumpEpoch();
     Q_INVOKABLE void setProvider(QString provider);
     Q_INVOKABLE void setKugouEdition(QString edition);
-    Q_INVOKABLE void acceptCookies(QString json, int responseEpoch, QString credentialKey = {});
+    Q_INVOKABLE void acceptCookies(QString json, int responseEpoch, QString credentialKey = {},
+                                   QString provider = {});
+    // v2 凭据封装：按 provider 隔离 cookie 与 secretState；旧扁平 jar 在加载时迁移。
+    static QJsonObject migrateCredential(const QJsonObject &legacy);
+    static QJsonObject credentialCookies(const QJsonObject &credentials, const QString &provider,
+                                         const QString &edition = {});
+    // 保存时投影旧扁平键，保证降级版本仍能恢复账号；v2 读取忽略这些键。
+    static QJsonObject storageCredential(const QJsonObject &credentials);
     Q_INVOKABLE QString fromLink(QString input) const;
     Q_INVOKABLE QString qr(QString key);
     Q_INVOKABLE QString qrImage(QString data);
@@ -76,7 +85,7 @@ class Host : public QObject {
     QString root;
     bool offline;
     std::function<QJsonObject(QString, QJsonObject)> fixture;
-    QJsonObject cookies;
+    QJsonObject credentials;
     int epoch = 0;
     int interval = 1200;
     static int lifetime(const QString &route);
@@ -139,7 +148,12 @@ class Host : public QObject {
     qint64 lastStart = 0;
     QHash<QString, qint64> blockedUntil;
     QHash<QString, QJsonObject> privateCredentials;
-    QString provider = "netease";
+    QJsonObject cookiesFor(const QString &provider) const;
+    void setCookiesFor(const QString &provider, const QJsonObject &cookies);
+    QJsonObject secretsFor(const QString &provider) const;
+    void setSecretsFor(const QString &provider, const QJsonObject &secrets);
+    QJsonObject cookieSlice(const QString &provider) const;
+    QString provider;
     QString kugouEdition = "standard";
     QString active;
     bool stopped = false;

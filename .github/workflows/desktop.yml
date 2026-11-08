@@ -365,6 +365,7 @@ jobs:
           npm run check:contract-freeze
           npm run check:core-boundary
           npm run check:plugin-contracts
+          npm run check:provider-literals
       - name: Run offline regressions
         run: npm test
       - name: Create distribution

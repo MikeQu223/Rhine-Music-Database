@@ -147,6 +147,8 @@ set(RHINE_APP_SOURCES
     Qt/src/Host.h
     Qt/src/MusicApi.cpp
     Qt/src/MusicApi.h
+    Qt/src/ProviderRegistry.cpp
+    Qt/src/ProviderRegistry.h
     Qt/src/LyricsController.cpp
     Qt/src/LyricsController.h
     Qt/src/MusicSession.cpp
@@ -302,7 +304,7 @@ if(NOT RHINE_MOBILE_PLATFORM)
         RHINE_PLAYBACK_SOURCES
         INCLUDE
         REGEX
-        "/(AppUpdater|AppStorage|AudioPlayer|AudioSpectrum|HttpAudioStream|PlaybackDiagnostics|PlaybackConnection|Host|MusicApi|MusicPlayer|PlaybackQueue|LyricsController|Platform)\\.(cpp|h)$|/qrcodegen\\.cpp$"
+        "/(AppUpdater|AppStorage|AudioPlayer|AudioSpectrum|HttpAudioStream|PlaybackDiagnostics|PlaybackConnection|Host|MusicApi|MusicPlayer|PlaybackQueue|LyricsController|Platform|ProviderRegistry)\\.(cpp|h)$|/qrcodegen\\.cpp$"
     )
     list(REMOVE_ITEM RHINE_CORE_SOURCES ${RHINE_PLAYBACK_SOURCES})
     add_library(RhinePlaybackCore STATIC ${RHINE_PLAYBACK_SOURCES})

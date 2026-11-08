@@ -36,7 +36,7 @@ function createHost(message, request, recordDiagnostic) {
                     for (const line of response.cookies || []) {
                         acceptCookies(JSON.stringify([line]));
                     }
-                    const { body, cookies: ignored, ...rest } = response;
+                    const { body, cookies: ignored, _epoch, _credentialKey, ...rest } = response;
                     Object.assign(secretState, rest);
                     callback(
                         JSON.stringify({

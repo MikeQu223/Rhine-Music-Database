@@ -232,6 +232,15 @@ async function main() {
             },
         );
         assert.equal(kugouSearch.body.data.lists[0].SongName, '本地歌曲');
+        // 失败请求仍要带回设备/令牌等私有状态，供原生侧保留。
+        const kugouFailure = await request(
+            'kugou-secret-retained',
+            '/kugou/search',
+            { keywords: 'x', type: 'song', pagesize: 30, page: 1 },
+            { __kugou: { ...kugouLogin.kugouCredentials, dfid: 'wrong-dfid' } },
+        );
+        assert.equal(kugouFailure.body.code, 502);
+        assert.equal(kugouFailure.kugouCredentials.dfid, 'wrong-dfid');
         const kugouDevice = JSON.parse(fs.readFileSync(path.join(temp, 'kugou-device.json')));
         assert.equal(kugouDevice.KUGOU_API_GUID, kugouLogin.kugouCredentials.KUGOU_API_GUID);
         assert.equal(kugouDevice.token, undefined);
@@ -268,17 +277,24 @@ async function main() {
         assert.equal(backedOff.body.code, 429);
         assert.equal(backedOff.body.failureReason, 'local-backoff');
         assert.equal(backedOff.body.lastFailure.failureStage, 'device-bootstrap');
-        for (const route of [
-            '/cloud',
-            '/mv/download',
-            '/personal_fm',
-            '/qq/getComments',
-            '/kugou/user/cloud',
-            '/kugou/song/url/new',
-        ]) {
+        for (const route of ['/cloud', '/mv/download', '/personal_fm']) {
+            const rejected = await request(route, route);
+            assert.equal(rejected.body.code, 404);
+            assert.equal(rejected.body.errorKey, 'route.unknown');
+        }
+        for (const route of ['/qq/getComments', '/kugou/user/cloud', '/kugou/song/url/new']) {
             const rejected = await request(route, route);
             assert.equal(rejected.body.code, 503);
         }
+        const missingPlugin = await request('missing-plugin', '/plugin/nope/search', { args: [] });
+        assert.equal(missingPlugin.body.code, 404);
+        assert.equal(missingPlugin.body.errorKey, 'plugin.missing');
+        const missingNative = await request('missing-native', '/native/nope/search', { args: [] });
+        assert.equal(missingNative.body.code, 404);
+        assert.equal(missingNative.body.errorKey, 'plugin.missing');
+        const invalidRoute = await request('invalid-plugin-route', '/plugin/kugou');
+        assert.equal(invalidRoute.body.code, 400);
+        assert.equal(invalidRoute.body.errorKey, 'route.invalid');
         child.stdin.end();
         const exit = await new Promise((resolve) => {
             child.once('exit', (code, signal) => resolve({ code, signal }));

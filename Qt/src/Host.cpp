@@ -1,5 +1,6 @@
 #include "fg/FgConfig.h"
 #include "Host.h"
+#include "ProviderRegistry.h"
 #include "AppStorage.h"
 #include <QBuffer>
 #include <QClipboard>
@@ -33,6 +34,9 @@ static QString routeProvider(const QString &route) {
     if (route.startsWith("/native/")) {
         return route.section('/', 2, 2);
     }
+    if (route.startsWith("/plugin/")) {
+        return route.section('/', 2, 2);
+    }
     if (route.startsWith("/qq/")) {
         return "qq";
     }
@@ -41,9 +45,96 @@ static QString routeProvider(const QString &route) {
     }
     return "netease";
 }
+/**
+ * 旧版是一个扁平 cookie jar；迁移把已知平台键放进各自切片，其余键留给默认来源。
+ * version=2 的封装原样返回，重复启动不会再次改写。
+ */
+QJsonObject Host::migrateCredential(const QJsonObject &legacy) {
+    if (legacy["version"].toInt() == 2 && legacy["providers"].isObject()) {
+        return legacy;
+    }
+    QJsonObject neteaseCookies, qqCookies, qqSecrets, kugouSecrets;
+    for (auto it = legacy.begin(); it != legacy.end(); ++it) {
+        const auto key = it.key();
+        if (key == "__qqSessions") {
+            if (it.value().isArray()) {
+                qqSecrets["sessions"] = it.value();
+            }
+        } else if (key == "__kugou") {
+            if (it.value().isObject()) {
+                kugouSecrets = it.value().toObject();
+            }
+        } else if (key == "qqmusic_session") {
+            qqCookies[key] = it.value();
+        } else if (key != "version" && key != "providers") {
+            neteaseCookies[key] = it.value();
+        }
+    }
+    QJsonObject qq{{"cookies", qqCookies}};
+    if (!qqSecrets.isEmpty()) {
+        qq["secrets"] = qqSecrets;
+    }
+    QJsonObject kugou{{"cookies", QJsonObject{}}};
+    if (!kugouSecrets.isEmpty()) {
+        kugou["secrets"] = kugouSecrets;
+    }
+    return {
+        {"version", 2},
+        {"providers",
+         QJsonObject{{"netease", QJsonObject{{"cookies", neteaseCookies}}}, {"qq", qq}, {"kugou", kugou}}}};
+}
+/** 保存时投影旧扁平键，保证降级版本仍能恢复账号。 */
+QJsonObject Host::storageCredential(const QJsonObject &credentials) {
+    auto storage = credentials;
+    const auto providers = credentials["providers"].toObject();
+    const auto merge = [&](const QString &provider) {
+        const auto entry = providers[provider].toObject();
+        const auto cookies = entry["cookies"].toObject();
+        for (auto it = cookies.begin(); it != cookies.end(); ++it) {
+            storage[it.key()] = it.value();
+        }
+    };
+    merge("netease");
+    merge("qq");
+    const auto qqSecrets = providers["qq"].toObject()["secrets"].toObject();
+    if (qqSecrets["sessions"].isArray()) {
+        storage["__qqSessions"] = qqSecrets["sessions"];
+    }
+    const auto kugouSecrets = providers["kugou"].toObject()["secrets"].toObject();
+    if (!kugouSecrets.isEmpty()) {
+        storage["__kugou"] = kugouSecrets;
+    }
+    return storage;
+}
+/** 返回单个插件可见的 cookie；私有凭据仍按旧键名注入，插件协议保持不变。 */
+QJsonObject Host::credentialCookies(const QJsonObject &credentials, const QString &provider,
+                                    const QString &edition) {
+    const auto entry = credentials["providers"].toObject()[provider].toObject();
+    auto cookies = entry["cookies"].toObject();
+    const auto secrets = entry["secrets"].toObject();
+    if (provider == "qq") {
+        if (secrets["sessions"].isArray()) {
+            cookies["__qqSessions"] = secrets["sessions"];
+        }
+    } else if (provider == "kugou") {
+        const auto value = secrets[edition.isEmpty() ? QStringLiteral("standard") : edition];
+        if (value.isObject()) {
+            cookies["__kugou"] = value;
+        }
+    }
+    return cookies;
+}
 Host::Host(QString path, bool test, QObject *parent, bool service, PlaybackConnection *connection)
     : QObject(parent), updater(test), root(path), offline(test), remote(test ? nullptr : connection),
       playbackOnly(service) {
+    ProviderRegistry::instance().load(root);
+    provider = ProviderRegistry::instance().defaultId();
+    if (provider.isEmpty()) {
+        provider = ProviderRegistry::instance().fallbackId();
+    }
+    if (provider.isEmpty()) {
+        provider = "siren";
+    }
     connect(&updater, &AppUpdater::changed, this, &Host::invalidate);
     if (remote) {
         connect(remote, &PlaybackConnection::spectrumChanged, this, &Host::audioSpectrumChanged);
@@ -61,7 +152,7 @@ Host::Host(QString path, bool test, QObject *parent, bool service, PlaybackConne
         kugouEdition = "lite";
     }
     if (!offline && !remote) {
-        cookies = QJsonDocument::fromJson(platformCredential()).object();
+        credentials = migrateCredential(QJsonDocument::fromJson(platformCredential()).object());
     } else {
         interval = 0;
     }
@@ -265,9 +356,10 @@ void Host::requestJson(QString route, QJsonObject values, JsonReply callback) {
         };
     }
     const auto service = routeProvider(route);
-    auto token = cookies[service == "qq" ? "qqmusic_session" : "MUSIC_U"].toString();
+    const auto scopedCookies = cookieSlice(service);
+    auto token = scopedCookies[service == "qq" ? "qqmusic_session" : "MUSIC_U"].toString();
     if (service == "kugou") {
-        token = cookies["__kugou"].toObject()[kugouEdition].toObject()["token"].toString();
+        token = scopedCookies["__kugou"].toObject()["token"].toString();
     }
     const auto scope = token.isEmpty() ? "guest" : hash(token.toUtf8());
     const bool cached = lifetime(route) > 0;
@@ -297,8 +389,14 @@ void Host::requestJson(QString route, QJsonObject values, JsonReply callback) {
         flights[key].waiters.append(waiter);
         return;
     }
-    flights.insert(
-        key, {QUuid::createUuid().toString(), route, key, values, cookies, {waiter}, disk, metadataRevision});
+    flights.insert(key, {QUuid::createUuid().toString(),
+                         route,
+                         key,
+                         values,
+                         scopedCookies,
+                         {waiter},
+                         disk,
+                         metadataRevision});
     if (cached || route == "/song/url" || route == "/song/url/v1") {
         queue.enqueue(key);
         pump();
@@ -404,7 +502,12 @@ void Host::send(QString key) {
     if (routeProvider(work.route) == "kugou" && !work.waiters.isEmpty() &&
         work.waiters.first().epoch == epoch) {
         // 同一账号排队期间完成设备注册或令牌刷新后，使用最新的私有凭据。
-        work.cookies["__kugou"] = cookies["__kugou"].toObject()[kugouEdition];
+        const auto secret = cookieSlice("kugou")["__kugou"];
+        if (secret.isObject()) {
+            work.cookies["__kugou"] = secret;
+        } else {
+            work.cookies.remove("__kugou");
+        }
     }
     QJsonObject envelope{
         {"id", work.id}, {"route", work.route}, {"params", work.params}, {"cookies", work.cookies}};
@@ -424,17 +527,22 @@ void Host::finish(QString key, QJsonObject response, QString error) {
         return;
     }
     const auto work = flights.take(key);
+    const auto service = routeProvider(work.route);
     // QQ 原始认证记录只经过 C++ 与子进程，禁止出现在界面回调中。
-    if (response["qqSessions"].isArray() && response["qqSessions"] != cookies["__qqSessions"] &&
-        !work.waiters.isEmpty() && work.waiters.first().epoch == epoch) {
-        cookies["__qqSessions"] = response["qqSessions"];
-        if (!cookies["qqmusic_session"].toString().isEmpty()) {
-            saveCredential();
+    if (service == "qq" && response["qqSessions"].isArray() && !work.waiters.isEmpty() &&
+        work.waiters.first().epoch == epoch) {
+        auto secrets = secretsFor("qq");
+        if (secrets["sessions"] != response["qqSessions"]) {
+            secrets["sessions"] = response["qqSessions"];
+            setSecretsFor("qq", secrets);
+            if (!cookiesFor("qq")["qqmusic_session"].toString().isEmpty()) {
+                saveCredential();
+            }
         }
     }
     response.remove("qqSessions");
     // 酷狗原始认证暂存，等待原生业务确认请求代数仍有效。
-    if (response["kugouCredentials"].isObject() && !work.waiters.isEmpty() &&
+    if (service == "kugou" && response["kugouCredentials"].isObject() && !work.waiters.isEmpty() &&
         work.waiters.first().epoch == epoch) {
         const auto credentialKey = QUuid::createUuid().toString();
         privateCredentials[credentialKey] = response["kugouCredentials"].toObject();
@@ -499,23 +607,29 @@ void Host::respond(const Waiter &waiter, QJsonObject response, QString error) {
 /**
  * 只接受当前账号代数对应的 Cookie，避免过期请求覆盖新登录。
  */
-void Host::acceptCookies(QString json, int responseEpoch, QString credentialKey) {
+void Host::acceptCookies(QString json, int responseEpoch, QString credentialKey, QString provider) {
+    const auto target = provider.isEmpty() ? this->provider : provider;
     if (remote) {
-        remote->call("host.acceptCookies",
-                     {{"json", json}, {"epoch", responseEpoch}, {"credentialKey", credentialKey}});
+        remote->call("host.acceptCookies", {{"json", json},
+                                            {"epoch", responseEpoch},
+                                            {"credentialKey", credentialKey},
+                                            {"provider", target}});
         return;
     }
     if (responseEpoch != epoch || stopped) {
         return;
     }
     bool changed = false;
-    if (privateCredentials.contains(credentialKey)) {
+    if (!credentialKey.isEmpty() && privateCredentials.contains(credentialKey)) {
         const auto credential = privateCredentials.take(credentialKey);
-        auto editions = cookies["__kugou"].toObject();
-        changed = editions[kugouEdition] != credential;
-        editions[kugouEdition] = credential;
-        cookies["__kugou"] = editions;
+        if (target == "kugou") {
+            auto secrets = secretsFor("kugou");
+            changed = secrets[kugouEdition] != credential;
+            secrets[kugouEdition] = credential;
+            setSecretsFor("kugou", secrets);
+        }
     }
+    auto cookies = cookiesFor(target);
     for (auto line : QJsonDocument::fromJson(json.toUtf8()).array()) {
         for (auto cookie : QNetworkCookie::parseCookies(line.toString().toUtf8())) {
             const auto name = QString::fromUtf8(cookie.name());
@@ -523,6 +637,9 @@ void Host::acceptCookies(QString json, int responseEpoch, QString credentialKey)
             changed |= cookies[name].toString() != value;
             cookies[name] = value;
         }
+    }
+    if (changed) {
+        setCookiesFor(target, cookies);
     }
     // 保存有效账号请求更新的 Cookie，避免重启恢复的是刷新前的凭据。
     if (changed && (hasCredential("qq") || hasCredential("netease") || hasCredential("kugou"))) {
@@ -547,16 +664,60 @@ bool Host::hasCredential(QString value) const {
         return false;
     }
     if (value == "kugou") {
-        const auto credential = cookies["__kugou"].toObject()[kugouEdition].toObject();
+        const auto credential = secretsFor("kugou")[kugouEdition].toObject();
         return !credential["token"].toString().isEmpty() && credential["userid"].toString().toULongLong() > 0;
     }
-    return !cookies[value == "qq" ? "qqmusic_session" : "MUSIC_U"].toString().isEmpty();
+    return !cookiesFor(value)[value == "qq" ? "qqmusic_session" : "MUSIC_U"].toString().isEmpty();
+}
+/**
+ * 登录成功、重置登录或切换账号后作废所有旧代数请求；
+ * GUI 与服务必须同步递增，否则后续 Cookie 会被服务端当作过期响应丢弃。
+ */
+void Host::bumpEpoch() {
+    if (remote) {
+        remote->call("host.bumpEpoch");
+    }
+    ++epoch;
+    privateCredentials.clear();
+}
+QJsonObject Host::cookiesFor(const QString &value) const {
+    return credentials["providers"].toObject()[value].toObject()["cookies"].toObject();
+}
+void Host::setCookiesFor(const QString &value, const QJsonObject &cookies) {
+    if (!credentials.contains("version")) {
+        credentials["version"] = 2;
+    }
+    auto providers = credentials["providers"].toObject();
+    auto entry = providers[value].toObject();
+    entry["cookies"] = cookies;
+    providers[value] = entry;
+    credentials["providers"] = providers;
+}
+QJsonObject Host::secretsFor(const QString &value) const {
+    return credentials["providers"].toObject()[value].toObject()["secrets"].toObject();
+}
+void Host::setSecretsFor(const QString &value, const QJsonObject &secrets) {
+    if (!credentials.contains("version")) {
+        credentials["version"] = 2;
+    }
+    auto providers = credentials["providers"].toObject();
+    auto entry = providers[value].toObject();
+    if (secrets.isEmpty()) {
+        entry.remove("secrets");
+    } else {
+        entry["secrets"] = secrets;
+    }
+    providers[value] = entry;
+    credentials["providers"] = providers;
+}
+QJsonObject Host::cookieSlice(const QString &value) const {
+    return credentialCookies(credentials, value, kugouEdition);
 }
 /**
  * 切换音乐来源，保持各来源的凭据与缓存隔离。
  */
 void Host::setProvider(QString value) {
-    if (value != "qq" && value != "netease" && value != "kugou" && value != "local" && value != "siren") {
+    if (!ProviderRegistry::instance().contains(value)) {
         return;
     }
     if (remote) {
@@ -602,7 +763,8 @@ QString Host::saveCredential() {
         return remote->call("host.saveCredential")["value"].toString();
     }
     return offline ? QString()
-                   : platformSaveCredential(QJsonDocument(cookies).toJson(QJsonDocument::Compact));
+                   : platformSaveCredential(
+                         QJsonDocument(storageCredential(credentials)).toJson(QJsonDocument::Compact));
 }
 /**
  * 作废当前来源的请求并清理凭据，另一来源的账号保持独立。
@@ -617,32 +779,9 @@ void Host::logout() {
         return;
     }
     mediaControl("stop");
-    if (provider == "qq") {
-        cookies.remove("qqmusic_session");
-        cookies.remove("__qqSessions");
-    } else if (provider == "kugou") {
-        auto editions = cookies["__kugou"].toObject();
-        editions.remove(kugouEdition);
-        if (editions.isEmpty()) {
-            cookies.remove("__kugou");
-        } else {
-            cookies["__kugou"] = editions;
-        }
-    } else {
-        const auto kugou = cookies.value("__kugou");
-        const auto token = cookies.value("qqmusic_session");
-        const auto sessions = cookies.value("__qqSessions");
-        cookies = {};
-        if (!kugou.isUndefined()) {
-            cookies["__kugou"] = kugou;
-        }
-        if (!token.isUndefined()) {
-            cookies["qqmusic_session"] = token;
-        }
-        if (!sessions.isUndefined()) {
-            cookies["__qqSessions"] = sessions;
-        }
-    }
+    auto providers = credentials["providers"].toObject();
+    providers.remove(provider);
+    credentials["providers"] = providers;
     ++epoch;
     privateCredentials.clear();
     // 结束进程同时关闭 QQ 的扫码长连接；另一平台的持久凭据仍保留。
@@ -654,10 +793,15 @@ void Host::logout() {
     images.clear();
     coverFlights.clear();
     if (!offline) {
-        if (cookies.isEmpty()) {
-            platformDeleteCredential();
-        } else {
+        bool any = false;
+        for (auto it = providers.begin(); it != providers.end(); ++it) {
+            const auto entry = it.value().toObject();
+            any |= !entry["cookies"].toObject().isEmpty() || !entry["secrets"].toObject().isEmpty();
+        }
+        if (any) {
             saveCredential();
+        } else {
+            platformDeleteCredential();
         }
     }
 }
