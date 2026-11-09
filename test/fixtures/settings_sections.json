@@ -1,0 +1,932 @@
+{
+  "$comment": "Machine-readable copy of the frozen settings/platform contract. Source of truth: Qt source at baseline 8ed3067b0812eb2612f7841ec127a6e8ca93231b. Contract prose: docs/flutter-migration/contracts/settings-platform.md. Evidence level E1 (direct source read); no device measurement, no build/test executed.",
+  "baseline": "8ed3067b0812eb2612f7841ec127a6e8ca93231b",
+  "contract": "docs/flutter-migration/contracts/settings-platform.md",
+  "sections": [
+    {
+      "number": 1,
+      "order": 10,
+      "id": "Provider",
+      "titleEn": "PROVIDER ACCESS",
+      "titleZh": "音乐平台",
+      "customRenderer": "provider-card",
+      "customHeight": 160,
+      "visible": "always"
+    },
+    {
+      "number": 2,
+      "order": 20,
+      "id": "Preferences",
+      "titleEn": "TERMINAL PREFERENCES",
+      "titleZh": "终端偏好",
+      "customRenderer": "",
+      "customHeight": 0,
+      "visible": "always"
+    },
+    {
+      "number": 3,
+      "order": 30,
+      "id": "Performance",
+      "titleEn": "PERFORMANCE",
+      "titleZh": "性能与诊断",
+      "customRenderer": "performance",
+      "customHeight": 220,
+      "visible": "always"
+    },
+    {
+      "number": 4,
+      "order": 40,
+      "id": "Storage",
+      "titleEn": "STORAGE",
+      "titleZh": "存储与缓存",
+      "customRenderer": "storage",
+      "customHeight": 105,
+      "visible": "always"
+    },
+    {
+      "number": 5,
+      "order": 50,
+      "id": "Update",
+      "titleEn": "SOFTWARE UPDATE",
+      "titleZh": "软件更新",
+      "customRenderer": "update",
+      "customHeight": 220,
+      "visible": "always"
+    },
+    {
+      "number": 6,
+      "order": 60,
+      "id": "Project",
+      "titleEn": "PROJECT",
+      "titleZh": "项目与开源参考",
+      "customRenderer": "",
+      "customHeight": 0,
+      "visible": "always"
+    },
+    {
+      "number": 7,
+      "order": 70,
+      "id": "Footer",
+      "titleEn": "CONFIG",
+      "titleZh": "配置管理",
+      "customRenderer": "defaults",
+      "customHeight": 84,
+      "visible": "always"
+    }
+  ],
+  "sectionOrder": [
+    "Provider",
+    "Preferences",
+    "Performance",
+    "Storage",
+    "Update",
+    "Project",
+    "Footer"
+  ],
+  "preferencesRows": [
+    {
+      "order": 100,
+      "id": "window",
+      "kind": "Action",
+      "bindingKind": "Action",
+      "action": "window:fullscreen",
+      "storage": "None",
+      "titleEn": "WINDOW",
+      "titleZh": "窗口显示",
+      "actionLabel": "切换全屏 / F11",
+      "visible": "PlatformFeatures::DesktopWindowControls"
+    },
+    {
+      "order": 110,
+      "id": "close-behavior",
+      "kind": "Choice",
+      "bindingKind": "Preference",
+      "preferenceKey": "close-behavior",
+      "action": "close-behavior",
+      "actionPrefix": "setting:close-behavior:",
+      "storage": "TrayQuit",
+      "defaultValue": "quit",
+      "options": [
+        {
+          "value": "quit",
+          "label": "退出播放器"
+        },
+        {
+          "value": "tray",
+          "label": "最小化到托盘"
+        }
+      ],
+      "titleEn": "CLOSE WINDOW",
+      "titleZh": "点击关闭窗口",
+      "visible": "defined(Q_OS_MACOS) || defined(Q_OS_WIN)"
+    },
+    {
+      "order": 120,
+      "id": "theme",
+      "kind": "Choice",
+      "bindingKind": "HudState",
+      "action": "theme",
+      "actionPrefix": "setting:theme:",
+      "storage": "Theme",
+      "defaultValue": "light",
+      "options": [
+        {
+          "value": "light",
+          "label": "亮色"
+        },
+        {
+          "value": "dark",
+          "label": "暗色"
+        },
+        {
+          "value": "system",
+          "label": "跟随系统"
+        }
+      ],
+      "titleEn": "COLOR THEME",
+      "titleZh": "界面配色",
+      "label": "themeLabel",
+      "visible": "true (alwaysVisible)"
+    },
+    {
+      "order": 130,
+      "id": "motion",
+      "kind": "Choice",
+      "bindingKind": "HudState",
+      "action": "motion",
+      "actionPrefix": "setting:motion:",
+      "storage": "ReducedFull",
+      "defaultValue": "full",
+      "options": [
+        {
+          "value": "full",
+          "label": "完整动效"
+        },
+        {
+          "value": "reduced",
+          "label": "减少动效"
+        }
+      ],
+      "titleEn": "REDUCED MOTION",
+      "titleZh": "动态效果",
+      "visible": "true (alwaysVisible)"
+    },
+    {
+      "order": 140,
+      "id": "startup-animation",
+      "kind": "Choice",
+      "bindingKind": "HudState",
+      "action": "startup-animation",
+      "actionPrefix": "setting:startup-animation:",
+      "storage": "OnOff",
+      "defaultValue": "off",
+      "options": [
+        {
+          "value": "off",
+          "label": "关闭"
+        },
+        {
+          "value": "on",
+          "label": "开启"
+        }
+      ],
+      "titleEn": "STARTUP ANIMATION",
+      "titleZh": "初始化动画",
+      "visible": "true (alwaysVisible)"
+    },
+    {
+      "order": 150,
+      "id": "replay",
+      "kind": "Action",
+      "bindingKind": "Action",
+      "action": "replay",
+      "storage": "None",
+      "titleEn": "INITIALIZATION",
+      "titleZh": "手动显示初始化页面",
+      "actionLabel": "Reinitialize",
+      "visible": "true (alwaysVisible)"
+    },
+    {
+      "order": 160,
+      "id": "quality",
+      "kind": "Choice",
+      "bindingKind": "Player",
+      "action": "quality",
+      "actionPrefix": "quality:set:",
+      "storage": "PlayerQuality",
+      "defaultValue": "exhigh",
+      "optionsDynamic": "MusicPlayer::qualityOptions(provider)",
+      "titleEn": "AUDIO QUALITY",
+      "titleZh": "音质",
+      "visible": "context.music && !context.music->isLocal()"
+    },
+    {
+      "order": 170,
+      "id": "alternative",
+      "kind": "Choice",
+      "bindingKind": "Player",
+      "action": "alternative",
+      "actionPrefix": "setting:alternative:",
+      "storage": "PlayerAlternative",
+      "defaultValue": "off",
+      "options": [
+        {
+          "value": "off",
+          "label": "关闭（使用平台默认音质）"
+        },
+        {
+          "value": "on",
+          "label": "开启（音质由来源决定）"
+        }
+      ],
+      "titleEn": "ALTERNATE SOURCE",
+      "titleZh": "替代音源",
+      "visible": "context.music && !context.music->isLocal() && context.music->provider == \"netease\""
+    },
+    {
+      "order": 180,
+      "id": "official-player",
+      "kind": "Choice",
+      "bindingKind": "External",
+      "action": "music:activate",
+      "actionPrefix": "setting:official-player:",
+      "storage": "ExternalBool",
+      "defaultValue": "off",
+      "options": [
+        {
+          "value": "off",
+          "label": "尽量保持后台"
+        },
+        {
+          "value": "on",
+          "label": "播放时显示"
+        }
+      ],
+      "titleEn": "OFFICIAL PLAYER",
+      "titleZh": "官方窗口",
+      "visible": "PlatformFeatures::OfficialPlayback && context.music && !context.music->isLocal()"
+    },
+    {
+      "order": 190,
+      "id": "detail-autoplay",
+      "kind": "Choice",
+      "bindingKind": "Preference",
+      "preferenceKey": "detail-autoplay",
+      "action": "detail-autoplay",
+      "actionPrefix": "setting:detail-autoplay:",
+      "storage": "OnOff",
+      "defaultValue": "off",
+      "options": [
+        {
+          "value": "off",
+          "label": "关闭"
+        },
+        {
+          "value": "on",
+          "label": "开启"
+        }
+      ],
+      "titleEn": "ENTER AUTOPLAY",
+      "titleZh": "进入详情自动播放",
+      "visible": "true (alwaysVisible)"
+    },
+    {
+      "order": 200,
+      "id": "single-play-mode",
+      "kind": "Choice",
+      "bindingKind": "Preference",
+      "preferenceKey": "single-play-mode",
+      "action": "single-play-mode",
+      "actionPrefix": "setting:single-play-mode:",
+      "storage": "AppendReplace",
+      "defaultValue": "replace",
+      "options": [
+        {
+          "value": "replace",
+          "label": "替换为所在列表"
+        },
+        {
+          "value": "append",
+          "label": "仅添加当前单曲"
+        }
+      ],
+      "titleEn": "PLAYLIST ON PLAY",
+      "titleZh": "点击播放单曲",
+      "visible": "true (alwaysVisible)"
+    },
+    {
+      "order": 205,
+      "id": "desktop-lyrics",
+      "kind": "Action",
+      "bindingKind": "Action",
+      "action": "desktop-lyrics:open",
+      "storage": "None",
+      "titleEn": "DESKTOP LYRICS",
+      "titleZh": "桌面歌词",
+      "actionLabel": "样式与同步",
+      "visible": "PlatformFeatures::DesktopLyrics"
+    },
+    {
+      "order": 210,
+      "id": "archive-mask",
+      "kind": "Stepper",
+      "bindingKind": "HudState",
+      "actionPrefix": "archive-mask:",
+      "storage": "HudCachedInt",
+      "defaultValue": "50",
+      "minimum": 0,
+      "maximum": 100,
+      "step": 10,
+      "titleEn": "RIGHT MASK",
+      "titleZh": "右侧画面遮罩",
+      "label": "archiveMaskLabel",
+      "visible": "true (alwaysVisible)"
+    },
+    {
+      "order": 220,
+      "id": "graphics-backend",
+      "kind": "Choice",
+      "bindingKind": "Preference",
+      "preferenceKey": "graphics-backend",
+      "action": "graphics-backend",
+      "actionPrefix": "setting:graphics-backend:",
+      "storage": "Enum",
+      "defaultValue": "",
+      "optionsDynamic": "graphicsChoices",
+      "titleEn": "GRAPHICS BACKEND",
+      "titleZh": "图形后端",
+      "titleEnDarwin": "METAL RENDERER",
+      "titleZhDarwin": "渲染模式",
+      "restartHint": "重启生效",
+      "restartHintDarwin": null,
+      "label": "graphicsBackendLabel",
+      "enabled": "!defined(Q_OS_DARWIN)"
+    },
+    {
+      "order": 230,
+      "id": "gpu-index",
+      "kind": "Choice",
+      "bindingKind": "Preference",
+      "preferenceKey": "gpu-index",
+      "actionPrefix": "gpu-index:",
+      "storage": "Enum",
+      "defaultValue": "",
+      "optionsDynamic": "gpuChoices",
+      "titleEn": "GPU",
+      "titleZh": "显卡",
+      "restartHint": "重启生效",
+      "label": "gpuIndexLabel",
+      "visible": "defined(Q_OS_LINUX) && RhineGraphics::gpuDeviceCount() > 1"
+    },
+    {
+      "order": 240,
+      "id": "vsync",
+      "kind": "Choice",
+      "bindingKind": "HudState",
+      "action": "vsync",
+      "actionPrefix": "setting:vsync:",
+      "storage": "HudCachedBool",
+      "defaultValue": "on",
+      "options": [
+        {
+          "value": "off",
+          "label": "关闭"
+        },
+        {
+          "value": "on",
+          "label": "开启"
+        }
+      ],
+      "titleEn": "V-SYNC",
+      "titleZh": "垂直同步",
+      "restartHint": "重启生效",
+      "visible": "!defined(Q_OS_DARWIN)"
+    },
+    {
+      "order": 250,
+      "id": "render-scale",
+      "kind": "Stepper",
+      "bindingKind": "Preference",
+      "preferenceKey": "render-scale",
+      "actionPrefix": "render-scale:",
+      "storage": "Integer",
+      "defaultValue": "androidDefaultRenderScale()",
+      "defaultValueAndroid": 75,
+      "defaultValueAndroidEnvOverride": "RHINE_ANDROID_RENDER_SCALE=50..100",
+      "defaultValueAndroidTuningOff": 100,
+      "defaultValueOther": 100,
+      "steps": [
+        50,
+        60,
+        75,
+        90,
+        100
+      ],
+      "titleEn": "RENDER SCALE",
+      "titleZh": "渲染分辨率",
+      "label": "renderScaleLabel",
+      "visible": "true (alwaysVisible)"
+    },
+    {
+      "order": 260,
+      "id": "aa-mode",
+      "kind": "Choice",
+      "bindingKind": "Preference",
+      "preferenceKey": "aa-mode",
+      "actionPrefix": "aa-mode:",
+      "storage": "Enum",
+      "defaultValue": "off",
+      "optionsDynamic": "aaChoices",
+      "titleEn": "AA & UPSCALING",
+      "titleZh": "抗锯齿与超分辨率",
+      "titleEnDarwin": "METALFX",
+      "titleZhDarwin": "时域抗锯齿与超分辨率",
+      "label": "aaModeLabel",
+      "enabled": "defined(Q_OS_DARWIN) ? RhineFg::capability().temporalAvailable : true",
+      "visible": "always"
+    },
+    {
+      "order": 270,
+      "id": "aa-scale",
+      "kind": "Stepper",
+      "bindingKind": "Preference",
+      "preferenceKey": "aa-scale",
+      "actionPrefix": "aa-scale:",
+      "storage": "Integer",
+      "defaultValue": "125",
+      "minimum": 100,
+      "maximum": 200,
+      "step": 25,
+      "titleEn": "AA SCALE",
+      "titleZh": "抗锯齿倍率",
+      "label": "percentLabel",
+      "visible": "!defined(Q_OS_DARWIN) && aaMode(context) == \"ssaa\""
+    },
+    {
+      "order": 280,
+      "id": "msaa",
+      "kind": "Stepper",
+      "bindingKind": "Preference",
+      "preferenceKey": "msaa",
+      "actionPrefix": "msaa:",
+      "storage": "Integer",
+      "defaultValue": "4",
+      "steps": [
+        2,
+        4,
+        8
+      ],
+      "wrap": true,
+      "titleEn": "MSAA SAMPLES",
+      "titleZh": "多重采样倍率",
+      "label": "msaaLabel",
+      "visible": "!defined(Q_OS_DARWIN) && aaMode(context) == \"msaa\""
+    },
+    {
+      "order": 290,
+      "id": "fsr-quality",
+      "kind": "Choice",
+      "bindingKind": "Preference",
+      "preferenceKey": "fsr-quality",
+      "actionPrefix": "fsr-quality:",
+      "storage": "Enum",
+      "defaultValue": "native",
+      "options": [
+        {
+          "value": "native",
+          "label": "原生 AA"
+        },
+        {
+          "value": "quality",
+          "label": "高质量"
+        },
+        {
+          "value": "balanced",
+          "label": "平衡"
+        },
+        {
+          "value": "performance",
+          "label": "性能"
+        },
+        {
+          "value": "super",
+          "label": "超级性能"
+        }
+      ],
+      "titleEn": "FSR QUALITY",
+      "titleZh": "FSR 档位",
+      "visible": "!defined(Q_OS_DARWIN) && (aaMode(context) == \"fsr\" || aaMode(context) == \"fsr1\" || aaMode(context) == \"fsr3\")"
+    },
+    {
+      "order": 300,
+      "id": "fsr-sharpness",
+      "kind": "Stepper",
+      "bindingKind": "Preference",
+      "preferenceKey": "fsr-sharpness",
+      "actionPrefix": "fsr-sharpness:",
+      "storage": "Integer",
+      "defaultValue": "50",
+      "minimum": 0,
+      "maximum": 100,
+      "step": 10,
+      "titleEn": "FSR SHARPNESS",
+      "titleZh": "FSR 锐化",
+      "label": "percentLabel",
+      "visible": "!defined(Q_OS_DARWIN) && (aaMode(context) == \"fsr\" || aaMode(context) == \"fsr1\" || aaMode(context) == \"fsr3\")"
+    },
+    {
+      "order": 310,
+      "id": "fg",
+      "kind": "Choice",
+      "bindingKind": "Preference",
+      "preferenceKey": "fg",
+      "action": "fg",
+      "actionPrefix": "setting:fg:",
+      "storage": "OnOff",
+      "defaultValue": "off",
+      "options": [
+        {
+          "value": "off",
+          "label": "关闭"
+        },
+        {
+          "value": "on",
+          "label": "开启"
+        }
+      ],
+      "titleEn": "FRAME GENERATION",
+      "titleZh": "帧生成",
+      "label": "fgLabel",
+      "visible": "defined(Q_OS_DARWIN)",
+      "enabled": "frameGenerationState(context).clickable"
+    }
+  ],
+  "preferencesRowIds": [
+    "window",
+    "close-behavior",
+    "theme",
+    "motion",
+    "startup-animation",
+    "replay",
+    "quality",
+    "alternative",
+    "official-player",
+    "detail-autoplay",
+    "single-play-mode",
+    "desktop-lyrics",
+    "archive-mask",
+    "graphics-backend",
+    "gpu-index",
+    "vsync",
+    "render-scale",
+    "aa-mode",
+    "aa-scale",
+    "msaa",
+    "fsr-quality",
+    "fsr-sharpness",
+    "fg"
+  ],
+  "projectLinks": [
+    {
+      "order": 10,
+      "id": "project-home",
+      "action": "music:project-home",
+      "label": "本项目 / Rhine Music Database"
+    },
+    {
+      "order": 11,
+      "id": "project-author",
+      "action": "music:project-author",
+      "label": "网易云音乐 API / api-enhanced"
+    },
+    {
+      "order": 12,
+      "id": "project-player",
+      "action": "music:project-player",
+      "label": "QQ 音乐 API / qq-music-api"
+    },
+    {
+      "order": 13,
+      "id": "project-kugou",
+      "action": "music:project-kugou",
+      "label": "酷狗音乐 API / KuGouMusicApi"
+    },
+    {
+      "order": 14,
+      "id": "project-rhine",
+      "action": "music:project-rhine",
+      "label": "界面原项目 / RhineLabUI"
+    },
+    {
+      "order": 15,
+      "id": "project-lyricsx",
+      "action": "music:project-lyricsx",
+      "label": "歌词参考 / LyricsX"
+    },
+    {
+      "order": 16,
+      "id": "project-lyricskit",
+      "action": "music:project-lyricskit",
+      "label": "格式移植 / LyricsKit"
+    },
+    {
+      "order": 17,
+      "id": "project-lyrimuse",
+      "action": "music:project-lyrimuse",
+      "label": "同步与匹配参考 / Lyrimuse"
+    }
+  ],
+  "capabilities": {
+    "OfficialPlayback": {
+      "android": false,
+      "ios": false,
+      "windows": true,
+      "macos": true,
+      "linux": true
+    },
+    "LocalMusic": {
+      "android": false,
+      "ios": false,
+      "windows": true,
+      "macos": true,
+      "linux": true
+    },
+    "ApplicationVolume": {
+      "android": false,
+      "ios": false,
+      "windows": true,
+      "macos": true,
+      "linux": true
+    },
+    "DesktopWindowControls": {
+      "android": false,
+      "ios": false,
+      "windows": true,
+      "macos": true,
+      "linux": true
+    },
+    "DesktopLyrics": {
+      "android": false,
+      "ios": false,
+      "windows": true,
+      "macos": true,
+      "linux": false
+    }
+  },
+  "guarantees": {
+    "alwaysVisibleSections": [
+      "Provider",
+      "Preferences",
+      "Performance",
+      "Storage",
+      "Update",
+      "Project",
+      "Footer"
+    ],
+    "retainedOnAndroid": [
+      "update",
+      "performance",
+      "storage",
+      "consent"
+    ],
+    "consentNotASettingsSection": true,
+    "desktopLyricsPlatforms": [
+      "windows",
+      "macos"
+    ],
+    "desktopLyricsHiddenOn": [
+      "android",
+      "ios",
+      "linux"
+    ],
+    "platformChooserRemovesLocalWhen": "!PlatformFeatures::LocalMusic",
+    "androidPlatformChooserEntries": [
+      "siren",
+      "netease",
+      "qq",
+      "kugou"
+    ],
+    "desktopPlatformChooserEntries": [
+      "siren",
+      "netease",
+      "qq",
+      "kugou",
+      "local"
+    ],
+    "updateCheckOnAndroidBaseline": true,
+    "updateArtifactMatchingSkippedOnAndroid": true,
+    "updateArtifactMatchingSkippedMechanism": "platformAsset() returns empty on Android so selectRelease skips the per-platform asset loop (Qt/src/AppUpdater.cpp:73-76, :117); check() itself has no Android branch and still performs the request, ending with the AppUpdater.cpp:135 message.",
+    "androidSkipCheckIsDeliberateDeviation": true,
+    "inAppDownloadOrInstall": false
+  },
+  "storage": {
+    "prefix": "panel/",
+    "backend": "AppStorage::settings() (QSettings)",
+    "writeConditions": [
+      "!offline",
+      "value.length < 262144",
+      "key in Host::preferenceKeys()"
+    ],
+    "preferenceKeys": [
+      "search-history",
+      "play-history",
+      "local-cover-cache",
+      "theme",
+      "motion",
+      "startup-animation",
+      "detail-autoplay",
+      "single-play-mode",
+      "disc-rotation",
+      "scene-enhancement",
+      "archive-mask-strength",
+      "graphics-backend",
+      "gpu-index",
+      "vsync",
+      "supersample",
+      "render-scale",
+      "aa-mode",
+      "aa-scale",
+      "msaa",
+      "fsr-quality",
+      "fsr-sharpness",
+      "fg",
+      "close-behavior",
+      "auto-update",
+      "volume",
+      "quality",
+      "alternate-source",
+      "provider",
+      "lyrics-cache",
+      "lyrics-global-offset-ms",
+      "welcome-name-netease",
+      "welcome-name-qq",
+      "welcome-name-kugou",
+      "account-id-netease",
+      "account-id-qq",
+      "account-id-kugou",
+      "kugou-edition",
+      "desktop-lyrics",
+      "desktop-lyrics-size",
+      "desktop-lyrics-translation-size",
+      "desktop-lyrics-opacity",
+      "desktop-lyrics-line-color",
+      "desktop-lyrics-translation-color",
+      "desktop-lyrics-line-weight",
+      "desktop-lyrics-translation-weight",
+      "desktop-lyrics-line-outline",
+      "desktop-lyrics-translation-outline",
+      "desktop-lyrics-line-outline-color",
+      "desktop-lyrics-translation-outline-color",
+      "welcome-name-kugou-standard",
+      "welcome-name-kugou-lite",
+      "account-id-kugou-standard",
+      "account-id-kugou-lite"
+    ],
+    "settingsPageKeys": [
+      "theme",
+      "motion",
+      "startup-animation",
+      "detail-autoplay",
+      "single-play-mode",
+      "disc-rotation",
+      "scene-enhancement",
+      "archive-mask-strength",
+      "graphics-backend",
+      "gpu-index",
+      "vsync",
+      "supersample",
+      "render-scale",
+      "aa-mode",
+      "aa-scale",
+      "msaa",
+      "fsr-quality",
+      "fsr-sharpness",
+      "fg",
+      "close-behavior",
+      "auto-update",
+      "quality",
+      "alternate-source",
+      "provider",
+      "volume"
+    ],
+    "writeBranch": "local branch only; the remote branch calls remote->call(\"host.setPreference\", ...) then remotePreferences.remove(key) and bypasses all three guards (Qt/src/Host.cpp:1078-1092)",
+    "preferenceChangedGate": "emitted only under #if defined(Q_OS_DARWIN) || defined(Q_OS_WIN), in both the remote and the local branch (Qt/src/Host.cpp:1089-1091, 1102-1104)"
+  },
+  "desktopLyrics": {
+    "enabledKey": "desktop-lyrics",
+    "defaults": {
+      "desktop-lyrics": "off",
+      "desktop-lyrics-size": "32",
+      "desktop-lyrics-translation-size": "24",
+      "desktop-lyrics-opacity": "100",
+      "desktop-lyrics-line-color": "#f5f6f2",
+      "desktop-lyrics-translation-color": "#f5f6f2",
+      "desktop-lyrics-line-weight": "bold",
+      "desktop-lyrics-translation-weight": "regular",
+      "desktop-lyrics-line-outline": "1.5",
+      "desktop-lyrics-translation-outline": "1",
+      "desktop-lyrics-line-outline-color": "#000000",
+      "desktop-lyrics-translation-outline-color": "#000000"
+    },
+    "ranges": {
+      "desktop-lyrics-size": [
+        20,
+        60
+      ],
+      "desktop-lyrics-translation-size": [
+        16,
+        48
+      ],
+      "desktop-lyrics-opacity": [
+        20,
+        100
+      ]
+    },
+    "outlineRange": [
+      0,
+      4
+    ],
+    "outlineStep": 0.5,
+    "weights": [
+      "light",
+      "regular",
+      "demibold",
+      "bold"
+    ],
+    "outlineStoredStringNote": "outline keys are written with QString::number(value, \"f\", 1), so the stored strings are \"1.0\" / \"1.5\" while the numeric defaults are 1 / 1.5 (Qt/src/DesktopLyricsAppearance.cpp:74-89)"
+  },
+  "update": {
+    "repository": "MikeQu223/Rhine-Music-Database",
+    "manifestUrl": "https://github.com/MikeQu223/Rhine-Music-Database/releases/latest/download/update.json",
+    "apiUrl": "https://api.github.com/repos/MikeQu223/Rhine-Music-Database/releases/latest",
+    "releasePageUrl": "https://github.com/MikeQu223/Rhine-Music-Database/releases",
+    "maxResponseBytes": 1048576,
+    "transferTimeoutMs": 30000,
+    "maxPackageBytes": 2147483648,
+    "platformAssets": {
+      "ios": "ios-unsigned.ipa",
+      "macos-arm64": "macOS-arm64.zip",
+      "windows-x64": "Windows-x64-Setup.exe",
+      "linux-x86_64": "Linux-x86_64.AppImage",
+      "android": ""
+    },
+    "assetNamePattern": "RhineMusicDatabase-<tag>-<platform>",
+    "offlineStatus": "离线模式不检查更新",
+    "checkingStatus": "正在检查更新…",
+    "noReleaseStatus": "尚无正式发布版本",
+    "invalidDataStatus": "更新服务返回了无效数据",
+    "upToDateStatus": "当前已是最新版本",
+    "updateAvailablePattern": "发现新版本 <tag>",
+    "cancelledStatus": "已取消，可重新检查",
+    "networkErrorStatus": "检查失败，请检查网络后重试",
+    "forbiddenStatus": "GitHub 拒绝访问更新服务（HTTP 403），请检查代理或查看发布页面",
+    "rateLimitStatusPattern": "当前网络出口的 GitHub 更新检查额度已用尽，请在 HH:mm:ss 后重试或查看发布页面",
+    "defaultRetrySeconds": 60,
+    "androidPlatformAssetMeans": "only skips the per-platform asset match in selectRelease; check() itself has no Android branch and still performs the request (Qt/src/AppUpdater.cpp:73-76, :117, :188-202, :135)",
+    "releaseInfoRetention": "network/HTTP/parse failures return early (Qt/src/AppUpdater.cpp:226-243) and keep the previous release; a selectRelease validation failure clears m_release because the assignment at :248 precedes the error check at :249-252",
+    "inAppDownloadOrInstall": false
+  },
+  "layout": {
+    "headerHeight": 46,
+    "sectionGap": 24,
+    "rowHeight": 66,
+    "rowStep": 76,
+    "optionHeight": 50,
+    "bottomPad": 28,
+    "contentInset": 14,
+    "controlWidth": 300,
+    "linkGap": 16,
+    "linkRowHeight": 50,
+    "linkRowStep": 60,
+    "settingsViewportTop": 176,
+    "settingsViewportBottom": 836,
+    "wheelScrollStep": 66,
+    "wheelScrollStepSource": "Qt/src/NativeHudInput.cpp:30-33 (settings modal wheel step); not a SettingsCard.cpp constant"
+  },
+  "restoreDefaults": {
+    "skipsInvisibleRows": true,
+    "gpuIndexReset": "setPreference(gpu-index, \"\")",
+    "autoUpdateCleared": true,
+    "desktopLyricsReset": "setPreference(desktop-lyrics, off) + DesktopLyrics::resetAppearance(host)",
+    "scrollReset": 0,
+    "statusMessage": "已恢复默认设置",
+    "doesNotChange": [
+      "platform",
+      "account",
+      "update state",
+      "update rate-limit state"
+    ],
+    "skipsSettingKinds": [
+      "Action",
+      "Link",
+      "Custom"
+    ],
+    "skipsBindingKinds": [
+      "CustomSection"
+    ],
+    "expandedPreferenceCleared": true,
+    "discRotationRestore": "if (discRotation) action(\"disc-rotation\")",
+    "desktopLyricsResetGuardedBy": "PlatformFeatures::DesktopLyrics",
+    "invalidate": "m_host->invalidate()"
+  }
+}
