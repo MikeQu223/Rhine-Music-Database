@@ -30,7 +30,7 @@ class _FakeTransport implements LoginTransport {
   }
 
   @override
-  Future<LoginResult> account() async {
+  Future<LoginResult> account({AccountProvider? provider}) async {
     accountCalls++;
     return _next();
   }
@@ -60,12 +60,15 @@ class _FakeScheduler implements LoginScheduler {
   }
 
   /// 只推进"调用时已登记"的回调，等价于 Qt 的一代 Host::schedule。
-  /// 回调里新登记的定时器留给下一次 flush，便于断言单步时序。
+  /// 同一批定时器共享一次墙钟推进（真实 QTimer 到点同刻触发），回调里新登记的
+  /// 定时器留给下一次 flush，便于断言单步时序。
   Future<void> flush() async {
     final List<_Scheduled> batch = List<_Scheduled>.from(pending);
     pending.clear();
+    if (batch.isNotEmpty) {
+      now += batch.first.ms;
+    }
     for (final _Scheduled next in batch) {
-      now += next.ms;
       next.callback();
       await pumpMicrotasks();
     }
@@ -617,6 +620,396 @@ void main() {
       expect(h.transport.routes, <String>['/captcha/sent']);
       expect(h.session.qrKey, '');
       expect(h.session.phase, LoginPhase.idle);
+    });
+  });
+
+  group('qq cancel completion barrier (MusicAccount.cpp:343-379)', () {
+    test('cancelLogin posts the previous key and completes the waiter only after the reply', () async {
+      final _Harness h = _Harness();
+      h.session.provider = AccountProvider.qq;
+      h.transport.queued.add(const LoginResult.ok(<String, Object?>{'unikey': 'key-q'}));
+      h.transport.queued.add(const LoginResult.ok(<String, Object?>{
+        'data': <String, Object?>{'qrimg': 'data:image/png;base64,AAAA'},
+      }));
+
+      h.session.startLogin();
+      await pumpMicrotasks();
+      expect(h.session.phase, LoginPhase.waiting);
+      expect(h.session.qrKey, 'key-q');
+
+      h.transport.queued.add(const LoginResult.ok(<String, Object?>{}));
+      bool? completed;
+      h.session.cancelLogin((bool cancelled) => completed = cancelled);
+
+      // Qt:352-358 的五个副作用同步发生，屏障要等 /login/qr/cancel 的回复。
+      expect(h.session.phase, LoginPhase.idle);
+      expect(h.session.qr, '');
+      expect(h.session.qrKey, '');
+      expect(h.session.loading, isFalse);
+      expect(h.transport.routes.last, '/login/qr/cancel');
+      expect(h.transport.parameters.last, <String, Object?>{'key': 'key-q'});
+      expect(completed, isNull);
+
+      await pumpMicrotasks();
+      expect(completed, isTrue);
+    });
+
+    test('a failed cancel reply surfaces 旧二维码取消失败 and blocks the new qr (MusicAccount.cpp:548-557)', () async {
+      final _Harness h = _Harness();
+      h.session.provider = AccountProvider.qq;
+      h.transport.queued.add(const LoginResult.ok(<String, Object?>{'unikey': 'key-q'}));
+      h.transport.queued.add(const LoginResult.ok(<String, Object?>{
+        'data': <String, Object?>{'qrimg': 'data:image/png;base64,AAAA'},
+      }));
+      h.session.startLogin();
+      await pumpMicrotasks();
+      expect(h.session.phase, LoginPhase.waiting);
+
+      h.transport.queued.add(const LoginResult.failure('cancel failed'));
+      h.session.startLogin();
+      await pumpMicrotasks();
+
+      expect(h.session.phase, LoginPhase.failed);
+      expect(h.session.status, '旧二维码取消失败，请稍后重试');
+      expect(h.session.loading, isFalse);
+      // 屏障未放行时绝不能生成第二张二维码。
+      expect(h.transport.routes.where((String route) => route == '/login/qr/key').length, 1);
+    });
+
+    test('netease never calls the qq cancel route and the waiter completes at once (MusicAccount.cpp:359-362)', () async {
+      final _Harness h = _Harness();
+      h.session.provider = AccountProvider.netease;
+      h.transport.queued.add(const LoginResult.ok(<String, Object?>{'unikey': 'key-n'}));
+      h.session.startLogin();
+      await pumpMicrotasks();
+      expect(h.session.phase, LoginPhase.waiting);
+
+      bool? completed;
+      h.session.cancelLogin((bool cancelled) => completed = cancelled);
+      await pumpMicrotasks();
+
+      expect(h.transport.routes, <String>['/login/qr/key']);
+      expect(completed, isTrue);
+      expect(h.session.phase, LoginPhase.idle);
+    });
+
+    test('cancelLogin without a qr key completes immediately and sends nothing (MusicAccount.cpp:359-362)', () async {
+      final _Harness h = _Harness();
+      h.session.provider = AccountProvider.qq;
+
+      bool? completed;
+      h.session.cancelLogin((bool cancelled) => completed = cancelled);
+      await pumpMicrotasks();
+
+      expect(h.transport.routes, isEmpty);
+      expect(completed, isTrue);
+      expect(h.session.phase, LoginPhase.idle);
+    });
+
+    test('re-entry while the cancel is in flight rotates exactly one qr (MusicAccount.cpp:525-558)', () async {
+      final _Harness h = _Harness();
+      h.session.provider = AccountProvider.qq;
+      h.transport.queued.add(const LoginResult.ok(<String, Object?>{'unikey': 'key-q'}));
+      h.transport.queued.add(const LoginResult.ok(<String, Object?>{
+        'data': <String, Object?>{'qrimg': 'data:image/png;base64,AAAA'},
+      }));
+      h.session.startLogin();
+      await pumpMicrotasks();
+      expect(h.session.qrKey, 'key-q');
+
+      // 第 2 次重入：旧二维码取消请求挂起，本代进入 preparing 等屏障。
+      // 第 3 次重入在实现里由 preparing 守卫挡回（MusicAccount.cpp:529-538）；本用例只断言这一轮
+      // 最终只旋转一次（即便守卫缺位、第二个 waiter 被登记，世代差仍让 waiter#1 失效），
+      // 多 waiter 合流另见下一个用例。
+      h.transport.queued.add(const LoginResult.ok(<String, Object?>{}));
+      h.session.startLogin();
+      h.transport.queued.add(const LoginResult.ok(<String, Object?>{'unikey': 'key-r'}));
+      h.transport.queued.add(const LoginResult.ok(<String, Object?>{
+        'data': <String, Object?>{'qrimg': 'data:image/png;base64,BBBB'},
+      }));
+      h.session.startLogin();
+      await pumpMicrotasks();
+
+      expect(h.transport.routes.where((String route) => route == '/login/qr/key').length, 2);
+      expect(h.transport.routes.where((String route) => route == '/login/qr/cancel').length, 1);
+      expect(h.session.qrKey, 'key-r');
+      expect(h.session.qr, 'qr-image-bytes');
+      expect(h.session.phase, LoginPhase.waiting);
+    });
+
+    test('two waiters merge on one cancel barrier (MusicAccount.cpp:343-349)', () async {
+      final _Harness h = _Harness();
+      h.session.provider = AccountProvider.qq;
+      h.transport.queued.add(const LoginResult.ok(<String, Object?>{'unikey': 'key-q'}));
+      h.transport.queued.add(const LoginResult.ok(<String, Object?>{
+        'data': <String, Object?>{'qrimg': 'data:image/png;base64,AAAA'},
+      }));
+      h.session.startLogin();
+      await pumpMicrotasks();
+      expect(h.session.qrKey, 'key-q');
+
+      // 取消回包先入队，第 2 次 startLogin 才会挂起在屏障上（waiter#1）。
+      h.transport.queued.add(const LoginResult.ok(<String, Object?>{}));
+      h.session.startLogin();
+      expect(h.session.phase, LoginPhase.preparing);
+
+      // 外部取消（等价 logout/switchProvider 里的 cancelLogin）把 phase 拉回 idle，
+      // 于是第 3 次 startLogin 能过 canRegenerateLogin()，在同一个屏障上登记 waiter#2。
+      h.session.cancelLogin();
+      expect(h.session.phase, LoginPhase.idle);
+      h.session.startLogin();
+      expect(h.session.phase, LoginPhase.preparing);
+
+      h.transport.queued.add(const LoginResult.ok(<String, Object?>{'unikey': 'key-r'}));
+      h.transport.queued.add(const LoginResult.ok(<String, Object?>{
+        'data': <String, Object?>{'qrimg': 'data:image/png;base64,BBBB'},
+      }));
+      await pumpMicrotasks();
+
+      // 一个 /login/qr/cancel 回包同时放行两个 waiter：两个回调都被调用，
+      // 但只有最新一代（token 与 _loginGeneration 相同）的那个真正发码，
+      // 旧一代在 _isCurrent 处被丢弃（Qt 同构：generation 屏障 + 单次旋转）。
+      expect(h.transport.routes.where((String route) => route == '/login/qr/cancel').length, 1);
+      expect(h.transport.routes.where((String route) => route == '/login/qr/key').length, 2);
+      expect(h.session.phase, LoginPhase.waiting);
+      expect(h.session.qrKey, 'key-r');
+      expect(h.session.qr, 'qr-image-bytes');
+    });
+
+    test('the previous qr poll dies on rotation (MusicAccount.cpp:631-632)', () async {
+      final _Harness h = _Harness();
+      h.session.provider = AccountProvider.qq;
+      h.transport.queued.add(const LoginResult.ok(<String, Object?>{'unikey': 'key-q'}));
+      h.transport.queued.add(const LoginResult.ok(<String, Object?>{
+        'data': <String, Object?>{'qrimg': 'data:image/png;base64,AAAA'},
+      }));
+      h.session.startLogin();
+      await pumpMicrotasks();
+
+      h.transport.queued.add(const LoginResult.ok(<String, Object?>{}));
+      h.session.startLogin();
+      h.transport.queued.add(const LoginResult.ok(<String, Object?>{'unikey': 'key-r'}));
+      h.transport.queued.add(const LoginResult.ok(<String, Object?>{
+        'data': <String, Object?>{'qrimg': 'data:image/png;base64,BBBB'},
+      }));
+      await pumpMicrotasks();
+      expect(h.session.qrKey, 'key-r');
+
+      h.transport.queued.add(const LoginResult.ok(<String, Object?>{'code': 801}));
+      await h.scheduler.flush();
+      await pumpMicrotasks();
+
+      // 旧计时器因世代过期被丢弃，只有新二维码发出一次轮询。
+      final List<int> checks = <int>[];
+      for (var i = 0; i < h.transport.routes.length; i++) {
+        if (h.transport.routes[i] == '/login/qr/check') checks.add(i);
+      }
+      expect(checks.length, 1);
+      expect(h.transport.parameters[checks.single]['key'], 'key-r');
+      expect(h.session.phase, LoginPhase.waiting);
+    });
+  });
+
+  group('retryAfterMs wall clock cooldown (MusicAccount.cpp:308-341)', () {
+    test('the failure installs a whole second countdown that ends with ，可重新生成', () async {
+      final _Harness h = _Harness();
+      h.session.provider = AccountProvider.qq;
+      h.session.reportLoginFailure(<String, Object?>{'code': 429, 'retryAfterMs': 5000});
+
+      expect(h.session.phase, LoginPhase.failed);
+      expect(h.session.status, '扫码登录暂时冷却（请等待 5 秒）');
+      expect(h.session.loginRetrySeconds(), 5);
+      expect(h.session.canRegenerateLogin(), isFalse);
+      expect(h.scheduler.delays, <int>[1000]);
+
+      await h.scheduler.flush();
+      expect(h.session.status, '扫码登录暂时冷却（请等待 4 秒）');
+      await h.scheduler.flush();
+      expect(h.session.status, '扫码登录暂时冷却（请等待 3 秒）');
+      await h.scheduler.flush();
+      await h.scheduler.flush();
+      await h.scheduler.flush();
+      expect(h.session.status, '扫码登录暂时冷却，可重新生成');
+      expect(h.session.loginRetrySeconds(), 0);
+      expect(h.session.canRegenerateLogin(), isTrue);
+    });
+
+    test('startLogin during the cooldown reports the remaining seconds without a qr (MusicAccount.cpp:525-540)', () async {
+      final _Harness h = _Harness();
+      h.session.provider = AccountProvider.qq;
+      h.session.reportLoginFailure(<String, Object?>{'code': 429, 'retryAfterMs': 3000});
+      await h.scheduler.flush();
+      // 先放一个与冷却文案不同的现状，否则空转也能通过 :529-537 的断言。
+      h.session.status = '旧文案';
+
+      h.session.startLogin();
+      await pumpMicrotasks();
+
+      expect(h.transport.routes, isEmpty);
+      expect(h.session.phase, LoginPhase.failed);
+      expect(h.session.status, '扫码登录暂时冷却（请等待 2 秒）');
+      expect(h.session.loginRetrySeconds(), 2);
+      expect(h.session.loading, isFalse);
+    });
+
+    test('a stale cooldown timer never overwrites the newer failure text (MusicAccount.cpp:322-341)', () async {
+      final _Harness h = _Harness();
+      h.session.provider = AccountProvider.qq;
+      h.session.reportLoginFailure(<String, Object?>{'code': 429, 'retryAfterMs': 3000});
+      await h.scheduler.flush();
+
+      h.session.reportLoginFailure(<String, Object?>{'code': 401, 'retryAfterMs': 5000});
+      expect(h.session.status, 'QQ 登录已失效，请重新扫码（请等待 5 秒）');
+      await h.scheduler.flush();
+
+      // 两个定时器同刻触发（一次墙钟推进 1000 ms）：旧 token 到点即被守卫丢弃、不再续订，
+      // 因此队列里只剩新冷却的下一次 tick（有守卫 1 个，无守卫会变成 2 个）。
+      expect(h.scheduler.pending.length, 1);
+      expect(h.session.status, 'QQ 登录已失效，请重新扫码（请等待 4 秒）');
+      expect(h.session.loginRetrySeconds(), 4);
+    });
+
+    test('a failure without retryAfterMs installs no cooldown timer (MusicAccount.cpp:316-318)', () async {
+      final _Harness h = _Harness();
+      h.session.provider = AccountProvider.qq;
+      h.session.reportLoginFailure(<String, Object?>{'code': 429});
+
+      expect(h.session.phase, LoginPhase.failed);
+      // 关掉 if (retry > 0) 时状态会退化成『扫码登录暂时冷却，可重新生成』，此处锁住原文案。
+      expect(h.session.status, '扫码登录暂时冷却');
+      expect(h.session.loginRetrySeconds(), 0);
+      expect(h.scheduler.delays, isEmpty);
+      expect(h.session.canRegenerateLogin(), isTrue);
+    });
+
+    test('a completed login leaves nothing that blocks the next startLogin (MusicAccount.cpp:516)', () async {
+      final _Harness h = _Harness();
+      h.session.provider = AccountProvider.qq;
+      h.session.reportLoginFailure(<String, Object?>{'code': 429, 'retryAfterMs': 1000});
+      await h.scheduler.flush();
+      expect(h.session.canRegenerateLogin(), isTrue);
+
+      h.transport.queued.add(const LoginResult.ok(<String, Object?>{'unikey': 'key-q'}));
+      h.transport.queued.add(const LoginResult.ok(<String, Object?>{
+        'data': <String, Object?>{'qrimg': 'data:image/png;base64,AAAA'},
+      }));
+      h.session.startLogin();
+      await pumpMicrotasks();
+      expect(h.session.phase, LoginPhase.waiting);
+
+      h.transport.queued.add(const LoginResult.ok(<String, Object?>{'code': 803}));
+      h.transport.queued.add(const LoginResult.ok(<Object?>['uid-1', '甲']));
+      await h.scheduler.flush();
+      await pumpMicrotasks();
+
+      expect(h.session.phase, LoginPhase.complete);
+      expect(h.session.loginRetrySeconds(), 0);
+      expect(h.session.canRegenerateLogin(), isTrue);
+
+      // Qt:516 的 m_cooldowns.remove(provider) 本身在 deadline 已过后不可观测
+      // （loginRetrySeconds 恒为 0），这里断言的是它的用户可见结果：再开一次必须真的发码。
+      h.transport.queued.add(const LoginResult.ok(<String, Object?>{'unikey': 'key-2'}));
+      h.transport.queued.add(const LoginResult.ok(<String, Object?>{
+        'data': <String, Object?>{'qrimg': 'data:image/png;base64,DDDD'},
+      }));
+      h.session.startLogin();
+      await pumpMicrotasks();
+
+      expect(h.session.phase, LoginPhase.waiting);
+      expect(h.session.qrKey, 'key-2');
+      expect(h.transport.routes.where((String route) => route == '/login/qr/key').length, 2);
+    });
+  });
+
+  group('remote qr image and scanner copy (MusicAccount.cpp:560-623, 583-592)', () {
+    test('kugou standard asks for a remote image and uses the 酷狗音乐 copy', () async {
+      final _Harness h = _Harness();
+      h.session.provider = AccountProvider.kugou;
+      h.session.edition = KugouEdition.standard;
+      h.transport.queued.add(const LoginResult.ok(<String, Object?>{'unikey': 'kg-1'}));
+      h.transport.queued.add(const LoginResult.ok(<String, Object?>{
+        'data': <String, Object?>{'qrimg': 'data:image/png;base64,BBBB'},
+      }));
+
+      h.session.startLogin();
+      await pumpMicrotasks();
+
+      expect(h.transport.routes, <String>['/login/qr/key', '/login/qr/create']);
+      expect(h.transport.parameters[1], <String, Object?>{
+        'key': 'kg-1',
+        'qrimg': true,
+        'timestamp': h.scheduler.now,
+      });
+      expect(h.qr.images, <String>['data:image/png;base64,BBBB']);
+      expect(h.session.qr, 'qr-image-bytes');
+      expect(h.session.phase, LoginPhase.waiting);
+      expect(h.session.status, '请用酷狗音乐扫描并确认登录');
+    });
+
+    test('kugou lite uses the 酷狗概念版 copy', () async {
+      final _Harness h = _Harness();
+      h.session.provider = AccountProvider.kugou;
+      h.session.edition = KugouEdition.lite;
+      h.transport.queued.add(const LoginResult.ok(<String, Object?>{'unikey': 'kg-2'}));
+      h.transport.queued.add(const LoginResult.ok(<String, Object?>{
+        'data': <String, Object?>{'qrimg': 'data:image/png;base64,BBBB'},
+      }));
+
+      h.session.startLogin();
+      await pumpMicrotasks();
+
+      expect(h.session.phase, LoginPhase.waiting);
+      expect(h.session.status, '请用酷狗概念版扫描并确认登录');
+    });
+
+    test('wechat channel scans with the 微信 copy (MusicAccount.cpp:585-587)', () async {
+      final _Harness h = _Harness();
+      h.session.provider = AccountProvider.qq;
+      h.session.method = LoginMethod.wechat;
+      h.transport.queued.add(const LoginResult.ok(<String, Object?>{'unikey': 'key-w'}));
+      h.transport.queued.add(const LoginResult.ok(<String, Object?>{
+        'data': <String, Object?>{'qrimg': 'data:image/png;base64,CCCC'},
+      }));
+
+      h.session.startLogin();
+      await pumpMicrotasks();
+
+      expect(h.transport.parameters.first['channel'], 'wechat');
+      expect(h.session.status, '请用微信扫描并确认登录');
+    });
+
+    test('an empty rendered image fails with 二维码读取失败 (MusicAccount.cpp:613-617)', () async {
+      final _Harness h = _Harness();
+      h.session.provider = AccountProvider.kugou;
+      h.qr.imageValue = '';
+      h.transport.queued.add(const LoginResult.ok(<String, Object?>{'unikey': 'kg-1'}));
+      h.transport.queued.add(const LoginResult.ok(<String, Object?>{
+        'data': <String, Object?>{'qrimg': 'data:image/png;base64,BBBB'},
+      }));
+
+      h.session.startLogin();
+      await pumpMicrotasks();
+
+      expect(h.session.phase, LoginPhase.failed);
+      expect(h.session.status, '酷狗音乐二维码读取失败');
+      expect(h.session.loading, isFalse);
+      expect(h.session.qr, '');
+    });
+
+    test('a non image payload fails with 二维码格式无效 (MusicAccount.cpp:607-612)', () async {
+      final _Harness h = _Harness();
+      h.session.provider = AccountProvider.kugou;
+      h.transport.queued.add(const LoginResult.ok(<String, Object?>{'unikey': 'kg-1'}));
+      h.transport.queued.add(const LoginResult.ok(<String, Object?>{
+        'data': <String, Object?>{'qrimg': 'https://cdn.example.com/qr.png'},
+      }));
+
+      h.session.startLogin();
+      await pumpMicrotasks();
+
+      expect(h.session.phase, LoginPhase.failed);
+      expect(h.session.status, '酷狗音乐二维码格式无效');
+      expect(h.qr.images, isEmpty);
     });
   });
 }
