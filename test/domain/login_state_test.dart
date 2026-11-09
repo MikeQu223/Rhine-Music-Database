@@ -459,4 +459,164 @@ void main() {
       expect(h.session.nickname, '未登录');
     });
   });
+
+  group('sms login (netease only)', () {
+    test('sendLoginCode refuses every non netease provider (MusicAccount.cpp:403)', () async {
+      final _Harness h = _Harness();
+      h.session.provider = AccountProvider.qq;
+      h.session.sendLoginCode('13800138000');
+      await pumpMicrotasks();
+      expect(h.transport.routes, isEmpty);
+      expect(h.session.method, LoginMethod.qr);
+    });
+
+    test('sendLoginCode rejects an invalid mainland number (MusicAccount.cpp:407-410)', () async {
+      final _Harness h = _Harness();
+      h.session.provider = AccountProvider.netease;
+      h.session.sendLoginCode(' 12345 ');
+      await pumpMicrotasks();
+      expect(h.transport.routes, isEmpty);
+      expect(h.session.status, '请输入有效的中国大陆手机号码');
+      expect(h.session.method, LoginMethod.qr);
+    });
+
+    test('sendLoginCode posts /captcha/sent with ctcode 86 and starts the 60 s window (MusicAccount.cpp:415-425)', () async {
+      final _Harness h = _Harness();
+      h.session.provider = AccountProvider.netease;
+      h.transport.queued.add(const LoginResult.ok(<String, Object?>{}));
+
+      h.session.sendLoginCode(' 13800138000 ');
+      await pumpMicrotasks();
+
+      expect(h.transport.routes, <String>['/captcha/sent']);
+      expect(h.transport.parameters.single['phone'], '13800138000');
+      expect(h.transport.parameters.single['ctcode'], '86');
+      expect(h.session.method, LoginMethod.phone);
+      expect(h.session.status, '验证码已发送，请查看手机短信');
+      expect(h.session.loading, isFalse);
+      // updateSmsCooldown（MusicAccount.cpp:386-397）在 60 s 内每秒重排一次
+      expect(h.scheduler.delays, <int>[1000]);
+      expect(h.session.smsRetrySeconds(), 60);
+    });
+
+    test('sendLoginCode surfaces the transport error and clears loading (MusicAccount.cpp:422-425)', () async {
+      final _Harness h = _Harness();
+      h.session.provider = AccountProvider.netease;
+      h.transport.queued.add(const LoginResult.failure('短信发送失败'));
+
+      h.session.sendLoginCode('13800138000');
+      await pumpMicrotasks();
+
+      expect(h.session.status, '短信发送失败');
+      expect(h.session.loading, isFalse);
+      expect(h.session.phase, LoginPhase.idle);
+    });
+
+    test('a second send inside the 60 s window is refused (MusicAccount.cpp:403)', () async {
+      final _Harness h = _Harness();
+      h.session.provider = AccountProvider.netease;
+      h.transport.queued.add(const LoginResult.ok(<String, Object?>{}));
+      h.transport.queued.add(const LoginResult.ok(<String, Object?>{}));
+
+      h.session.sendLoginCode('13800138000');
+      await pumpMicrotasks();
+      h.session.sendLoginCode('13800138000');
+      await pumpMicrotasks();
+
+      expect(h.transport.routes, <String>['/captcha/sent']);
+    });
+
+    test('smsRetrySeconds counts down on the wall clock (MusicAccount.cpp:381-384)', () async {
+      final _Harness h = _Harness();
+      h.session.provider = AccountProvider.netease;
+      h.session.sendLoginCode('13800138000');
+      await pumpMicrotasks();
+
+      expect(h.session.smsRetrySeconds(), 60);
+      h.scheduler.now += 30000;
+      expect(h.session.smsRetrySeconds(), 30);
+      h.scheduler.now += 29999;
+      expect(h.session.smsRetrySeconds(), 1);
+      h.scheduler.now += 1;
+      expect(h.session.smsRetrySeconds(), 0);
+    });
+
+    test('captchaLogin rejects a malformed phone or code (MusicAccount.cpp:437-441)', () async {
+      final _Harness h = _Harness();
+      h.session.provider = AccountProvider.netease;
+      h.session.captchaLogin('13800138000', '12');
+      await pumpMicrotasks();
+      expect(h.transport.routes, isEmpty);
+      expect(h.session.status, '请输入中国大陆手机号码和短信验证码');
+
+      h.session.captchaLogin('1380013800', '1234');
+      await pumpMicrotasks();
+      expect(h.transport.routes, isEmpty);
+      expect(h.session.status, '请输入中国大陆手机号码和短信验证码');
+    });
+
+    test('captchaLogin posts /login/cellphone and confirms with captcha (MusicAccount.cpp:443-461,475-523)', () async {
+      final _Harness h = _Harness();
+      h.session.provider = AccountProvider.netease;
+      h.transport.queued.add(const LoginResult.ok(<String, Object?>{}));
+      h.transport.queued.add(const LoginResult.ok(<Object?>['uid-9', '九号']));
+
+      h.session.captchaLogin(' 13800138000 ', ' 123456 ');
+      await pumpMicrotasks();
+
+      expect(h.transport.routes, <String>['/login/cellphone']);
+      expect(h.transport.parameters.single['phone'], '13800138000');
+      expect(h.transport.parameters.single['captcha'], '123456');
+      expect(h.transport.parameters.single['countrycode'], '86');
+      expect(h.transport.accountCalls, 1);
+      expect(h.session.uid, 'uid-9');
+      expect(h.session.nickname, '九号');
+      expect(h.session.status, '已登录：九号');
+      expect(h.session.loading, isFalse);
+      expect(h.credentials.saves, 1);
+      // captcha 路径不置 complete、不清二维码（MusicAccount.cpp:511-517 的 if(!captcha)）
+      expect(h.session.phase, LoginPhase.idle);
+    });
+
+    test('captcha failure never leaves the phase in failed (MusicAccount.cpp:446-451)', () async {
+      final _Harness h = _Harness();
+      h.session.provider = AccountProvider.netease;
+      h.transport.queued.add(const LoginResult.failure('短信验证码错误'));
+
+      h.session.captchaLogin('13800138000', '1234');
+      await pumpMicrotasks();
+
+      expect(h.session.status, '短信验证码错误');
+      expect(h.session.loading, isFalse);
+      expect(h.session.phase, LoginPhase.idle);
+      expect(h.session.uid, '');
+    });
+
+    test('captchaLogin is refused while a request is in flight (MusicAccount.cpp:433)', () async {
+      final _Harness h = _Harness();
+      h.session.provider = AccountProvider.netease;
+      h.transport.queued.add(const LoginResult.ok(<String, Object?>{}));
+      h.transport.queued.add(const LoginResult.ok(<Object?>['uid-1', 'a']));
+
+      h.session.captchaLogin('13800138000', '1234');
+      h.session.captchaLogin('13800138000', '1234');
+      await pumpMicrotasks();
+
+      expect(h.transport.routes, <String>['/login/cellphone']);
+    });
+
+    test('sendLoginCode cancels an in flight qr login first (MusicAccount.cpp:411)', () async {
+      final _Harness h = _Harness();
+      h.session.provider = AccountProvider.netease;
+      h.session.qrKey = 'key-old';
+      h.transport.queued.add(const LoginResult.ok(<String, Object?>{}));
+
+      h.session.sendLoginCode('13800138000');
+      await pumpMicrotasks();
+
+      expect(h.transport.routes, <String>['/captcha/sent']);
+      expect(h.session.qrKey, '');
+      expect(h.session.phase, LoginPhase.idle);
+    });
+  });
 }

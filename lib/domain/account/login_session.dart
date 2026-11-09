@@ -386,6 +386,12 @@ Map<String, Object?> _safeFailure(Map<String, Object?> body, bool includePreviou
 final RegExp _diagnostic = RegExp(r'^[a-z.-]{1,80}$');
 final RegExp _qrDataUrl = RegExp(r'^data:image/(png|jpeg|gif|webp);base64,');
 
+/// MusicAccount.cpp:407 的中国大陆手机号校验。
+final RegExp _phonePattern = RegExp(r'^1[0-9]{10}$');
+
+/// MusicAccount.cpp:437 的短信验证码校验。
+final RegExp _captchaPattern = RegExp(r'^[0-9]{4,8}$');
+
 String _text(Object? value) => value is String ? value : '';
 
 int? _intOrNull(Object? value) {
@@ -505,6 +511,89 @@ class LoginSession {
 
   /// MusicAccount.cpp:381-384。
   int smsRetrySeconds() => _secondsUntil(_smsRetryAtMs);
+
+  /// MusicAccount.cpp:386-397：短信冷却期间每秒刷新一次面板文案。
+  void updateSmsCooldown() {
+    if (provider == AccountProvider.netease && method == LoginMethod.phone) {
+      _notify();
+    }
+    if (smsRetrySeconds() > 0) {
+      scheduler.schedule(pollIntervalMs, updateSmsCooldown);
+    }
+  }
+
+  /// MusicAccount.cpp:402-429：仅网易云，发送短信验证码并启动 60 s 重发窗口。
+  void sendLoginCode(String phone) {
+    if (provider != AccountProvider.netease || loading || smsRetrySeconds() > 0) {
+      return;
+    }
+    final String trimmed = phone.trim();
+    if (!_phonePattern.hasMatch(trimmed)) {
+      status = '请输入有效的中国大陆手机号码';
+      _notify();
+      return;
+    }
+    cancelLogin();
+    final int token = ++_loginGeneration;
+    method = LoginMethod.phone;
+    status = '正在发送短信验证码…';
+    loading = true;
+    _smsRetryAtMs = scheduler.nowMs() + smsResendIntervalMs;
+    updateSmsCooldown();
+    unawaited(transport
+        .request('/captcha/sent', <String, Object?>{'phone': trimmed, 'ctcode': '86'},
+            allowedCodes: _okCodes)
+        .then((LoginResult result) {
+      if (!_isCurrent(token)) {
+        return;
+      }
+      loading = false;
+      status = result.ok ? '验证码已发送，请查看手机短信' : result.error;
+      _notify();
+    }));
+  }
+
+  /// MusicAccount.cpp:432-462：短信验证码登录；失败只改 loginStatus，绝不动 loginPhase。
+  void captchaLogin(String phone, String captcha) {
+    if (provider != AccountProvider.netease || loading) {
+      return;
+    }
+    final String trimmedPhone = phone.trim();
+    final String trimmedCaptcha = captcha.trim();
+    if (!_phonePattern.hasMatch(trimmedPhone) || !_captchaPattern.hasMatch(trimmedCaptcha)) {
+      status = '请输入中国大陆手机号码和短信验证码';
+      _notify();
+      return;
+    }
+    cancelLogin();
+    final int token = ++_loginGeneration;
+    method = LoginMethod.phone;
+    status = '正在登录…';
+    loading = true;
+    _notify();
+    unawaited(transport
+        .request(
+          '/login/cellphone',
+          <String, Object?>{
+            'phone': trimmedPhone,
+            'captcha': trimmedCaptcha,
+            'countrycode': '86',
+          },
+          allowedCodes: _okCodes,
+        )
+        .then((LoginResult result) {
+      if (!_isCurrent(token)) {
+        return;
+      }
+      if (!result.ok) {
+        status = result.error;
+        loading = false;
+        _notify();
+        return;
+      }
+      unawaited(_confirmLogin(token, true));
+    }));
+  }
 
   int _secondsUntil(int deadline) {
     final int remaining = deadline - scheduler.nowMs();
