@@ -408,6 +408,115 @@ void main() {
     });
   });
 
+  group('jsonInt mirrors QJsonValue::toInt (qjsonvalue.cpp:686-705, qnumeric_p.h:180-289)', () {
+    // jsonInt is called exactly once in the product code - _restoreQueue passes the
+    // fallback -1 - so the assertions below use -1 to make "refused" identical to the
+    // product's "no selection".
+
+    test('a non-integral double is refused instead of being truncated', () {
+      expect(jsonInt(1.7, -1), -1);
+      // A fallback distinct from the truncated value: `(-1.7).toInt()` is -1 in Dart,
+      // so a -1 fallback would coincide and hide the truncating behaviour.
+      expect(jsonInt(-1.7, -99), -99);
+      expect(jsonInt(0.5, -1), -1);
+      // Below the supremum but inexact: refused by the *value == v round-trip, not by
+      // the range comparison (qnumeric_p.h:281-286).
+      expect(jsonInt(2147483647.5, -1), -1);
+    });
+
+    test('whole doubles inside the int32 range convert', () {
+      expect(jsonInt(1.0, -1), 1);
+      expect(jsonInt(2.0, -1), 2);
+      expect(jsonInt(-1.0, -99), -1, reason: 'a distinct fallback proves the value was converted');
+      expect(jsonInt(2147483647.0, -1), 2147483647);
+    });
+
+    test('2147483648.0 (== 2^31, the supremum) is refused but -2147483648.0 is accepted', () {
+      // convertDoubleTo<int>: v >= supremum (-1 * Tmin) returns false, while v < Tmin
+      // returns false only strictly, so Tmin itself survives (qnumeric_p.h:264-289).
+      expect(jsonInt(2147483648.0, -1), -1);
+      expect(jsonInt(-2147483648.0, -1), -2147483648);
+      expect(jsonInt(-2147483649.0, -1), -1);
+    });
+
+    test('int values outside the 32-bit range are refused (qjsonvalue.cpp:695-700)', () {
+      expect(jsonInt(2147483647, -1), 2147483647);
+      expect(jsonInt(-2147483648, -1), -2147483648);
+      expect(jsonInt(2147483648, -1), -1);
+      expect(jsonInt(-2147483649, -1), -1);
+      expect(jsonInt(9007199254740993, -1), -1);
+    });
+
+    test('non-finite doubles are refused', () {
+      // NaN also fails both range comparisons, so it needs an explicit guard.
+      expect(jsonInt(double.nan, -1), -1);
+      expect(jsonInt(double.infinity, -1), -1);
+      expect(jsonInt(double.negativeInfinity, -1), -1);
+    });
+
+    test('non-number JSON types yield the default', () {
+      expect(jsonInt('1', -1), -1);
+      expect(jsonInt(true, -1), -1);
+      expect(jsonInt(null, -1), -1);
+      expect(jsonInt(<String, Object?>{}, -1), -1);
+      expect(jsonInt(<Object?>[], -1), -1);
+      expect(jsonInt('1'), 0, reason: 'the default fallback stays 0');
+    });
+  });
+
+  group('saved index coercion end to end (PlaybackQueue.cpp:398-418)', () {
+    // The saved index addresses the PRE-FILTER array; an index Qt refuses reads as
+    // "no selection" because _restoreQueue passes -1 as the fallback.
+    test('1.7, 2^31 and below-2^31 indexes select nothing', () {
+      final queue = <Object?>[song('a'), song('b'), song('c')];
+      expect(normalizePlayer(player(queue: queue, index: 1.7), currentProvider: 'netease')!.index, -1);
+      expect(normalizePlayer(player(queue: queue, index: 2147483648.0), currentProvider: 'netease')!.index, -1);
+      expect(normalizePlayer(player(queue: queue, index: -2147483649.0), currentProvider: 'netease')!.index, -1);
+      // Only the 1.7 row above discriminates the two implementations: the 2^31 / below-2^31
+      // rows also collapse to -1 through the savedIndex bounds guard alone
+      // (playback_store.dart:203), so they would pass against the old truncating jsonInt too.
+    });
+
+    test('a non-integral in-range index selects nothing (truncation would select row 2)', () {
+      final queue = <Object?>[song('a'), song('b'), song('c'), song('d')];
+      expect(normalizePlayer(player(queue: queue, index: 2.5), currentProvider: 'netease')!.index, -1);
+    });
+
+    test('an int-typed index beyond int32 selects nothing', () {
+      // jsonDecode hands back a Dart int for integer JSON literals, so the int branch
+      // of jsonInt is exercised by the >= 2^31 magnitude below. These rows are NOT
+      // discriminating against the old implementation: any magnitude is rejected by the
+      // savedIndex bounds guard regardless of jsonInt (playback_store.dart:203).
+      final queue = <Object?>[song('a'), song('b')];
+      expect(normalizePlayer(player(queue: queue, index: 2147483648), currentProvider: 'netease')!.index, -1);
+      expect(normalizePlayer(player(queue: queue, index: -2147483649), currentProvider: 'netease')!.index, -1);
+    });
+
+    test('1.0 and 2.0 still select the addressed rows', () {
+      final queue = <Object?>[song('a'), song('b'), song('c')];
+      final first = normalizePlayer(player(queue: queue, index: 1.0), currentProvider: 'netease')!;
+      expect(first.index, 1);
+      expect(first.queue[first.index]['id'], 'b');
+      final second = normalizePlayer(player(queue: queue, index: 2.0), currentProvider: 'netease')!;
+      expect(second.index, 2);
+      expect(second.queue[second.index]['id'], 'c');
+    });
+
+    // Exercises the array-bounds guard (playback_store.dart:203), not jsonInt: an in-range
+    // int32 index must be passed through unclamped and then rejected by the bounds check.
+    test('an in-range int index that overflows the array selects nothing', () {
+      expect(normalizePlayer(player(queue: <Object?>[song('a')], index: 5), currentProvider: 'netease')!.index, -1);
+      expect(normalizePlayer(player(queue: <Object?>[song('a')], index: 2147483647), currentProvider: 'netease')!.index, -1);
+    });
+
+    test('the surrounding coercions are unchanged', () {
+      expect(jsonDouble(1.7, -1), 1.7);
+      expect(jsonDouble('1', -1), -1);
+      expect(jsonString(1, 'x'), 'x');
+      expect(jsonBool('true'), isFalse);
+    });
+  });
+
   group('encoding contract (MusicPlayer.cpp:749-757)', () {
     test('toJson emits exactly seven keys in Qt order', () {
       const state = PlayerState(

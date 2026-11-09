@@ -72,8 +72,40 @@ String jsonString(Object? value, [String fallback = '']) => value is String ? va
 /// Mirrors QJsonValue::toDouble(default): only a JSON number converts.
 double jsonDouble(Object? value, [double fallback = 0]) => value is num ? value.toDouble() : fallback;
 
-/// Mirrors QJsonValue::toInt(default): numbers truncate toward zero.
-int jsonInt(Object? value, [int fallback = 0]) => value is num ? value.toInt() : fallback;
+/// Mirrors QJsonValue::toInt(default) exactly (Qt 6 qjsonvalue.cpp:686-705).
+///
+///  * QCborValue::Integer (Dart int) converts only when it fits the 32-bit range
+///    (qjsonvalue.cpp:695-700): qint64(int(n)) == n, i.e. -2^31 <= n <= 2^31-1.
+///  * QCborValue::Double (Dart double) goes through convertDoubleTo<int>
+///    (qnumeric_p.h:180-289): Tmin = -2147483648, supremum = -1 * Tmin = 2147483648.0.
+///    The value converts only when it is not NaN (NaN must be excluded by the caller,
+///    qnumeric_p.h:161-162), is not < -2147483648.0 (qnumeric_p.h:268-269), is not
+///    >= 2147483648.0 (qnumeric_p.h:277-278) and survives the round-trip check
+///    *value == v (qnumeric_p.h:281-286) - that is, the value must be WHOLE. A
+///    non-integral double (1.7) therefore yields the default instead of truncating.
+///  * Every other JSON type (string/bool/null/object/array) yields the default.
+///
+/// Note the asymmetry: 2147483648.0 is rejected while -2147483648.0 is accepted,
+/// because the accepted interval [Tmin, supremum) is half-open.
+int jsonInt(Object? value, [int fallback = 0]) {
+  const int intMin = -2147483648; // -2^31 == Tmin
+  const int supremum = 2147483648; // 2^31 == -Tmin; one past the int32 maximum
+  const double intMinDouble = -2147483648.0;
+  const double supremumDouble = 2147483648.0;
+  if (value is int) {
+    return value >= intMin && value < supremum ? value : fallback;
+  }
+  if (value is double) {
+    if (!value.isFinite || value < intMinDouble || value >= supremumDouble) {
+      return fallback;
+    }
+    // (int)v truncates toward zero in Qt too; *value == v then rejects anything
+    // inexact, so only whole doubles survive.
+    final truncated = value.toInt();
+    return truncated.toDouble() == value ? truncated : fallback;
+  }
+  return fallback;
+}
 
 /// Mirrors QJsonValue::toBool(): only a JSON boolean is true.
 bool jsonBool(Object? value) => value is bool ? value : false;
