@@ -2,6 +2,7 @@
 #include <QAudioDevice>
 #include <QAudioBufferOutput>
 #include <QAudioOutput>
+#include <QByteArray>
 #include <QMediaPlayer>
 #include <QMediaDevices>
 #include <QUrl>
@@ -33,6 +34,7 @@ class AudioPlayer {
 
   private:
     friend class AudioPlayerRegression;
+    class OutputFormatProbe;
     QMediaDevices devices;
     QAudioOutput output;
     AudioPcmOutput pcm;
@@ -72,6 +74,11 @@ class AudioPlayer {
     void diagnoseError(QMediaPlayer::Error code, const QString &message);
     std::function<void()> playbackChanged;
     std::function<QAudioDevice()> defaultOutput = QMediaDevices::defaultAudioOutput;
+    // 探测函数的注入点：工作线程拿到的是副本，只接收设备 id 与默认标记。
+    std::function<AudioOutputFormat::SystemFormat(const QByteArray &, bool)> readSystemOutputFormat =
+        [](const QByteArray &deviceId, bool isDefault) {
+            return AudioOutputFormat::systemFormat(deviceId, isDefault);
+        };
     bool playbackRequested = false;
     bool outputUnavailable = false;
     qint64 lastPosition = 0;
@@ -82,9 +89,12 @@ class AudioPlayer {
     static void normalizeOutputLayout(const QAudioDevice &device);
     void restorePlaybackPosition();
     void createPlayer();
-    void followDefaultOutput(bool refresh = false);
-    void refreshOutputFormat();
+    void followDefaultOutput(bool refresh = false,
+                             const AudioOutputFormat::SystemFormat *observedSystem = nullptr);
+    void requestOutputFormatProbe();
+    bool applyPendingOutputFormatObservation();
     QTimer playbackWatchdog;
+    std::unique_ptr<OutputFormatProbe> outputFormatProbe;
     QElapsedTimer progressClock;
     QElapsedTimer outputFormatClock;
     bool pendingFailure = false;

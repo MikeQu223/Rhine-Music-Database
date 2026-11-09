@@ -1,6 +1,18 @@
 #include "AudioPcmOutput.h"
 #include <algorithm>
 
+namespace {
+// 设备环形缓冲的目标时长：主线程偶发停顿由它吸收，解码队列帮不上忙。
+constexpr qint64 SINK_BUFFER_MS = 250;
+// 背压只统计尚未写进设备的应用队列，不含 sink 环形缓冲，阈值不随平台缓冲漂移。
+constexpr qint64 PRESSURE_HIGH_MS = 200;
+constexpr qint64 PRESSURE_LOW_MS = 50;
+// 未写入队列的硬上限：解码器忽略背压时显式失败，不丢样本也不无限增长。
+constexpr qint64 QUEUE_LIMIT_MS = 2000;
+// 设备连续这么久没有消费、解码时钟却仍在推进，就判定设备停滞。
+constexpr qint64 STALL_TIMEOUT_MS = 5000;
+}
+
 AudioPcmOutput::AudioPcmOutput() {
     timer.setInterval(5);
     timer.setTimerType(Qt::PreciseTimer);
@@ -11,8 +23,8 @@ AudioPcmOutput::~AudioPcmOutput() {
     reset({}, policy);
 }
 
-void AudioPcmOutput::reset(const QAudioDevice &next, AudioOutputFormat::Policy nextPolicy,
-                           qint64 positionMs) {
+void AudioPcmOutput::reset(const QAudioDevice &next, AudioOutputFormat::Policy nextPolicy, qint64 positionMs,
+                           const AudioOutputFormat::SystemFormat *observedSystem) {
     ++generation;
     timer.stop();
     if (sink) {
@@ -34,7 +46,8 @@ void AudioPcmOutput::reset(const QAudioDevice &next, AudioOutputFormat::Policy n
     pressured = false;
     device = next;
     policy = nextPolicy;
-    system = AudioOutputFormat::systemFormat(device);
+    // 后台已经观测过系统格式时直接复用，不在音频泵线程重新枚举设备。
+    system = observedSystem ? *observedSystem : AudioOutputFormat::systemFormat(device);
     input = submitted = {};
 }
 
@@ -54,15 +67,14 @@ bool AudioPcmOutput::open(const QAudioFormat &source) {
     }
     sink = std::make_unique<QAudioSink>(device, submitted);
     sink->setVolume(volume);
-    sink->setBufferSize(submitted.bytesForDuration(100000));
-    // The selected format is the actual client submission format. Hardware and
-    // system conversion remain separate, potentially unavailable observations.
+    sink->setBufferSize(submitted.bytesForDuration(SINK_BUFFER_MS * 1000));
+    // 选定格式就是实际提交给客户端的格式；硬件与系统转换是另一层观测，可能不可用。
     QObject::connect(sink.get(), &QAudioSink::stateChanged, &timer, [this](QtAudio::State state) {
         if (!sink) {
             return;
         }
         if (sink->error() != QtAudio::NoError) {
-            // Queue failure handling: never destroy a sink inside its state signal.
+            // 队列故障延后处理：绝不能在 sink 自己的状态信号里销毁它。
             QTimer::singleShot(0, &timer, [this, session = generation] {
                 if (session == generation) {
                     fail(3);
@@ -114,8 +126,7 @@ bool AudioPcmOutput::push(const QAudioBuffer &buffer) {
             return false;
         }
     }
-    // Mid-stream format changes must be handled by reopening the media session;
-    // never reinterpret old queued PCM using a new format.
+    // 流内格式变化必须重开媒体会话；绝不能用新格式解释已经排队的旧 PCM。
     if (accepted.format() != input) {
         fail(4);
         return false;
@@ -136,9 +147,8 @@ bool AudioPcmOutput::push(const QAudioBuffer &buffer) {
         pending.remove(0, offset);
         offset = 0;
     }
-    // Pause the decoder well before this hard cap. If a backend ignores pressure,
-    // fail explicitly instead of dropping PCM or growing memory without bound.
-    if (qint64(pending.size()) + converted.size() > submitted.bytesForDuration(2000000)) {
+    // 在硬上限之前很早就暂停解码；后端无视背压时显式失败，而不是丢 PCM 或无限占内存。
+    if (qint64(pending.size()) + converted.size() > submitted.bytesForDuration(QUEUE_LIMIT_MS * 1000)) {
         fail(5);
         return false;
     }
@@ -209,7 +219,7 @@ void AudioPcmOutput::fail(int code) {
     if (sink) {
         sink->suspend();
     }
-    // Deferred so push()/stateChanged never reenter a session teardown.
+    // 延后通知：push()/stateChanged 绝不能重入会话拆除流程。
     QTimer::singleShot(0, &timer, [this, code, session = generation] {
         if (session == generation && failure == code && errorOccurred) {
             errorOccurred();
@@ -221,8 +231,8 @@ void AudioPcmOutput::updatePressure() {
         return;
     }
     const auto bytes = pending.size() - offset;
-    const bool next =
-        pressured ? bytes > submitted.bytesForDuration(50000) : bytes > submitted.bytesForDuration(200000);
+    const bool next = pressured ? bytes > submitted.bytesForDuration(PRESSURE_LOW_MS * 1000)
+                                : bytes > submitted.bytesForDuration(PRESSURE_HIGH_MS * 1000);
     if (next == pressured) {
         return;
     }
@@ -260,9 +270,10 @@ void AudioPcmOutput::pump() {
         // 设备空闲时没有数据可消费，不能算停滞；否则网络缓冲后的第一帧会被误报为设备故障。
         consumptionClock.restart();
     }
-    if (sink && consumptionClock.isValid() && consumptionClock.elapsed() > 5000 &&
+    if (sink && consumptionClock.isValid() && consumptionClock.elapsed() > STALL_TIMEOUT_MS &&
         (offset < pending.size() || sink->state() == QtAudio::ActiveState)) {
-        fail(6); // Device stopped consuming even though the decoder clock advanced.
+        // 解码时钟仍在推进，设备却停止消费。
+        fail(6);
         return;
     }
     if (ending && pending.isEmpty() && (!sink || sink->state() == QtAudio::IdleState)) {
@@ -282,8 +293,10 @@ QJsonObject AudioPcmOutput::snapshot() const {
     const bool channels = input.isValid() && submitted.isValid() &&
                           (input.channelCount() != submitted.channelCount() ||
                            input.channelConfig() != submitted.channelConfig());
+    // 缓冲 = 尚未写进设备的应用队列 + 已占用的 sink 环形缓冲，统一按提交格式换算。
     const auto buffered = sink ? sink->bufferSize() - sink->bytesFree() : 0;
     const auto bytes = pending.size() - offset + buffered;
+    // outputBackend 只描述应用侧 QAudioSink 客户端，不推断平台服务选择。
     return {{"outputPolicy", int(policy)},
             {"outputClientFormatStatus", open ? 1 : 0},
             {"outputSampleRateHz", open ? submitted.sampleRate() : 0},
@@ -312,5 +325,5 @@ QJsonObject AudioPcmOutput::snapshot() const {
             {"outputProcessedMs", double(position())},
             {"outputFallback",
              policy == AudioOutputFormat::Policy::Source && input.isValid() && submitted != input},
-            {"outputBackend", 1}}; // QAudioSink client; platform service selection is not inferred.
+            {"outputBackend", 1}};
 }

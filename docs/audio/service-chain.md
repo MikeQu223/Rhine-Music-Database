@@ -256,7 +256,7 @@ MusicLibrary::play
 
 ### 6.3 各平台系统格式
 
-`systemFormat()` 只观测默认设备（`Qt/src/AudioOutputFormat.cpp:80-158`、`Qt/src/AudioOutputFormatIOS.mm`）：
+`systemFormat()` 只观测默认设备（`Qt/src/AudioOutputFormat.cpp`、`Qt/src/AudioOutputFormatIOS.mm`）。`QAudioDevice` 重载是主线程入口，只读取默认标记与设备 id；真正的平台探测在 `systemFormat(const QByteArray &deviceId, bool isDefault)`，工作线程只能调用后者（Qt 6.12 访问 `QAudioDevice` 的格式最长可阻塞数秒）：
 
 | 平台 | 来源 | 能力 |
 | --- | --- | --- |
@@ -269,9 +269,11 @@ status：0 不可用、1 完整系统流/混音观测、2 仅采样率/声道。
 
 ### 6.4 刷新
 
-- 设备列表变化（`audioOutputsChanged`）触发 `followDefaultOutput(true)`。
-- 播放中每 5000 ms 重新观测一次系统格式；status/采样率/声道/采样格式任一变化就重建输出（`Qt/src/AudioPlayer.cpp:57-68,302-314,359-372`）。
-- 暂停时看门狗停止，不轮询；恢复播放或设备事件时刷新。
+- 设备列表变化（`audioOutputsChanged`）触发 `followDefaultOutput(true)`，该路径仍在主线程现场探测并立即重建。
+- 播放中每 5000 ms 把系统格式重读交给独立探测线程；主线程在 250 ms 心跳里消费最新结果，status/采样率/声道/采样格式任一变化才重建输出。工作线程只接收设备 id 与默认标记，不持有 `QAudioDevice`，设备切换后到达的旧结果按 id 丢弃。
+- status 0（这次平台读取失败）与超过 15 s 的观测都不触发重建：前者不能证明格式变了，后者可能早于暂停期间的 seek 或输出重建。
+- 检测到变化后重建输出时直接复用这份观测，不再在主线程重读系统格式；但重建本身仍要在主线程创建 `QAudioSink` 并读取 `preferredFormat()`，所以真正的格式变化仍可能带来一次可听停顿。
+- 暂停时看门狗停止，不再提交探测；恢复播放后继续每 5000 ms 一次。
 
 ## 7. 重采样与抖动
 
@@ -308,7 +310,7 @@ reset() → push() 首个缓冲 → open() → QAudioSink::start()
 ```
 
 - `reset()` 递增会话代数、停止定时器、销毁 sink/resampler、清空队列与统计。
-- `open()` 协商格式、创建重采样器、创建 `QAudioSink`，请求 100 ms 缓冲，`start()`。
+- `open()` 协商格式、创建重采样器、创建 `QAudioSink`，请求 250 ms 缓冲（`SINK_BUFFER_MS`），`start()`。
 - 首个缓冲才真正打开 sink；`reset()` 不创建 sink。
 
 ### 8.2 队列与泵送
@@ -316,13 +318,15 @@ reset() → push() 首个缓冲 → open() → QAudioSink::start()
 | 参数 | 值 | 行为 |
 | --- | --- | --- |
 | 泵送定时器 | 5 ms `Qt::PreciseTimer` | `pump()` 写入 sink |
-| QAudioSink 请求缓冲 | 100 ms | 实际大小以 `sink->bufferSize()` 为准 |
-| 背压高水位 | 200 ms | `backpressure(true)` 暂停 QMediaPlayer |
+| QAudioSink 请求缓冲 | 250 ms | 实际大小以 `sink->bufferSize()` 为准 |
+| 背压高水位 | 200 ms | 未写入队列超过它时 `backpressure(true)` 暂停 QMediaPlayer |
 | 背压低水位 | 50 ms | `backpressure(false)` 恢复播放 |
 | 队列硬上限 | 2 s | 超出 `fail(5)`，不丢样本、不无限增长 |
 | 设备停滞 | 5000 ms | 无 `processedUSecs()` 进展且仍有待写数据/Active 时 `fail(6)` |
 
 `pump()` 只写 `sink->bytesFree()`，按帧对齐；写满后清理 `pending`。暂停时停止定时器；恢复时重启并立即泵送。
+
+背压只统计尚未写进设备的应用队列（`pending.size() - offset`），不含 sink 环形缓冲；`outputBufferMs` 是两者之和。主线程停顿时 `push()` 与 `pump()` 一起停，只有 sink 环形缓冲还被平台线程消费，所以停顿容忍度由 250 ms 环形缓冲决定，而不是应用队列。
 
 ### 8.3 时钟与 seek
 
@@ -335,6 +339,7 @@ reset() → push() 首个缓冲 → open() → QAudioSink::start()
 
 - `finish()` 置 `ending`，冲刷重采样器尾部，追加到队列。
 - 队列为空且 sink 进入 `IdleState` 时置 `drained`，只回调一次 `completed`。
+- 环形缓冲变大后，`completed()` 相对解码 EOF 最多晚约 250 ms；那是仍在播放的真实音频，不是静音。
 - 排空期间发生输出重建时，`followDefaultOutput()` 对 `decoderEnded` 补发 `completePlayback()`，避免 `ended` 不递增。
 
 ### 8.5 错误码
@@ -345,14 +350,14 @@ reset() → push() 首个缓冲 → open() → QAudioSink::start()
 | 2 | 重采样器 | `configure()`、`convert()` 或尾部冲刷失败 |
 | 3 | 设备/写入 | sink 报错、`start()` 失败、`write()` 返回负值或非帧对齐 |
 | 4 | 流内格式变化 | 后续缓冲格式与打开时不一致 |
-| 5 | 队列超限 | 待写数据超过 2 s |
+| 5 | 队列超限 | 应用队列中未写入的数据超过 2 s |
 | 6 | 设备停止消费 | 5 s 无 `processedUSecs()` 进展 |
 
 失败后 `errorOccurred` 回调把播放器置为“音频输出失败，请检查输出设备或切换输出策略”。
 
 ### 8.6 诊断字段
 
-`snapshot()` 输出策略、客户端提交格式、系统观测、硬件状态、三类转换标志、重采样/抖动状态、转换耗时、缓冲、欠载、错误、重建、背压、排空和回退标志（`Qt/src/AudioPcmOutput.cpp:277-316`）。硬件格式与实际有效位深固定为未知。
+`snapshot()` 输出策略、客户端提交格式、系统观测、硬件状态、三类转换标志、重采样/抖动状态、转换耗时、缓冲、欠载、错误、重建、背压、排空和回退标志（`Qt/src/AudioPcmOutput.cpp:287-326`）。硬件格式与实际有效位深固定为未知。
 
 ## 9. 播放状态机与控制
 
@@ -401,7 +406,7 @@ reset() → push() 首个缓冲 → open() → QAudioSink::start()
 | 播放健康 | 250 ms 检查；`pendingFailure` 4 s，否则 15 s | 无进度则锁存“音频读取失败…” |
 | 网络传输 | 3000 ms 传输超时；最多 2 次重试 | 由 `HttpAudioStream` 处理 |
 | 输出停滞 | 5 s 无 `processedUSecs()` 进展 | `fail(6)` |
-| 系统格式 | 每 5 s 重读 | 变化则重建输出 |
+| 系统格式 | 每 5 s 由后台线程重读；主线程每 250 ms 消费结果 | 变化则重建输出 |
 
 ### 9.7 播放错误恢复
 
@@ -486,7 +491,7 @@ Crashpad 只接入 GUI 进程（`RhineMusicDatabase`），由调试模式开关�
 - 真实网易云/QQ/酷狗/塞壬 CDN 的 Range、206、ETag、重定向与主机分布。
 - 系统混音器内部的转换、抖动和有效位深。
 - 独占输出、硬件采样率切换、SoXR、EQ/耳机校正均未实现。
-- 主线程长卡顿会直接影响 PCM 生产；这是当前架构的已知风险。
+- 主线程长卡顿会直接影响 PCM 生产；这是当前架构的已知风险。250 ms 环形缓冲与后台格式探测只是把常见停顿挡在可听范围之外，没有把泵送搬离主线程。
 
 ## 15. 关键文件索引
 
