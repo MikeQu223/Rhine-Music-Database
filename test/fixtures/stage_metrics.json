@@ -1,0 +1,250 @@
+{
+  "schema": "stage-metrics/v1",
+  "note": "T02 frozen layout/geometry fixture. Portrait sizes are a proposed test matrix, not a verified device baseline. Numbers are derived from Qt source formulas; see docs/flutter-migration/contracts/layout.md.",
+  "tolerance": 0.000001,
+  "stageHeight": 1080,
+  "portraitBaseline": {
+    "status": "PROPOSED_ARITHMETIC_NOT_DEVICE",
+    "insets": {
+      "top": 0,
+      "right": 0,
+      "bottom": 0,
+      "left": 0
+    },
+    "note": "stageHeight values in portrait groups are inset-0 arithmetic results, not device baselines; the portrait group densities 420/480 are proposed Android buckets for the test matrix, not device measurements"
+  },
+  "groups": [
+    {
+      "id": "android-landscape-2880x1800",
+      "kind": "landscape",
+      "physical": [
+        2880,
+        1800
+      ],
+      "density": 315,
+      "dpr": 1.96875,
+      "logical": [
+        1462.857142857143,
+        914.2857142857143
+      ],
+      "landscape": {
+        "stageScale": 0.8465608465608465,
+        "stageWidth": 1728,
+        "stageHeight": 1080,
+        "physicalPerStage": 1.6666666666666665
+      }
+    },
+    {
+      "id": "desktop-landscape-1280x720",
+      "kind": "landscape",
+      "physical": [
+        1280,
+        720
+      ],
+      "density": 160,
+      "dpr": 1,
+      "logical": [
+        1280,
+        720
+      ],
+      "landscape": {
+        "stageScale": 0.6666666666666666,
+        "stageWidth": 1920,
+        "stageHeight": 1080,
+        "physicalPerStage": 0.6666666666666666
+      }
+    },
+    {
+      "id": "android-portrait-1080x2400",
+      "kind": "portrait",
+      "physical": [
+        1080,
+        2400
+      ],
+      "density": 420,
+      "dpr": 2.625,
+      "logical": [
+        411.42857142857144,
+        914.2857142857143
+      ],
+      "portrait": {
+        "stageScale": 0.38095238095238093,
+        "stageWidth": 1080,
+        "stageHeight": 2400,
+        "baselineStatus": "PROPOSED_ARITHMETIC_NOT_DEVICE",
+        "insets": {
+          "top": 0,
+          "right": 0,
+          "bottom": 0,
+          "left": 0
+        },
+        "physicalPerStage": 1,
+        "bandHeight": 1080,
+        "bandCount": 3,
+        "topBar": 96,
+        "bottomBar": 96,
+        "contentHeight": 2208
+      }
+    },
+    {
+      "id": "android-portrait-1440x3200",
+      "kind": "portrait",
+      "physical": [
+        1440,
+        3200
+      ],
+      "density": 480,
+      "dpr": 3,
+      "logical": [
+        480,
+        1066.6666666666667
+      ],
+      "portrait": {
+        "stageScale": 0.4444444444444444,
+        "stageWidth": 1080,
+        "stageHeight": 2400,
+        "baselineStatus": "PROPOSED_ARITHMETIC_NOT_DEVICE",
+        "insets": {
+          "top": 0,
+          "right": 0,
+          "bottom": 0,
+          "left": 0
+        },
+        "physicalPerStage": 1.3333333333333333,
+        "bandHeight": 1080,
+        "bandCount": 3,
+        "topBar": 96,
+        "bottomBar": 96,
+        "contentHeight": 2208
+      }
+    }
+  ],
+  "portraitCandidates": [
+    {
+      "id": "Portrait-W",
+      "stageScale": "logicalWidth / 1080",
+      "stageWidth": 1080,
+      "stageHeight": "logicalHeight / stageScale",
+      "playerBar": "(0, stageHeight - 96, 1080, 96)",
+      "note": "top 1080 band reuses landscape commands; detail/list extend vertically"
+    },
+    {
+      "id": "Portrait-Band",
+      "stageScale": "logicalWidth / 1080",
+      "stageWidth": 1080,
+      "bandHeight": 1080,
+      "bandCount": "ceil(stageHeight / 1080)",
+      "note": "fixed 1080-wide scrolling bands"
+    },
+    {
+      "id": "Portrait-Hybrid",
+      "stageScale": "logicalWidth / 1080",
+      "stageWidth": 1080,
+      "topBar": 96,
+      "bottomBar": 96,
+      "contentHeight": "stageHeight - topBar - bottomBar",
+      "note": "top bar + content + bottom bar; single-column detail"
+    }
+  ],
+  "layout": {
+    "contentBottom": 984,
+    "playerBar": {
+      "top": 984,
+      "height": 96,
+      "inputTop": 978,
+      "inputHeight": 102,
+      "inputBottom": 1080,
+      "seekTop": 978,
+      "seekHeight": 18,
+      "volume": {
+        "width": 100,
+        "height": 28,
+        "rightInset": 300,
+        "dxFromOutput": 58,
+        "dy": 47
+      }
+    },
+    "modal": {
+      "top": 122,
+      "height": 836,
+      "defaultMaxWidth": 1260,
+      "sideInset": 50,
+      "searchMinWidth": 760,
+      "searchMaxWidth": 1000,
+      "searchRightInset": 59
+    },
+    "searchList": {
+      "topInset": 328,
+      "height": 430,
+      "rowHeight": 72,
+      "widthInset": 106
+    },
+    "input": {
+      "topInset": 180,
+      "height": 54,
+      "xInset": 53,
+      "widthInset": 106,
+      "fontSize": 22,
+      "leftPadding": 18,
+      "rightPadding": 14
+    },
+    "form": {
+      "accountTopInset": 430,
+      "accountHeight": 55,
+      "accountWidthInsetLogin": 208,
+      "accountWidthInsetForm": 28,
+      "accountTextXInset": 14,
+      "captchaTopInset": 541,
+      "captchaWidthInset": 28,
+      "captchaTextXInset": 14,
+      "captchaHeight": 55,
+      "sendWidth": 170,
+      "sendHeight": 55,
+      "submitWidth": 170,
+      "submitHeight": 36,
+      "submitLoginTopInset": 611,
+      "submitFormTopInset": 530
+    },
+    "camera": {
+      "portraitAspectThreshold": 1.05,
+      "compactWidthThreshold": 1100,
+      "perspectiveNear": 5,
+      "perspectiveFar": 300
+    },
+    "settingsViewport": {
+      "topInset": 176,
+      "bottomInset": 836
+    },
+    "touchHitPadding": 16,
+    "modalMask": {
+      "search": {
+        "dark": [
+          17,
+          24,
+          27,
+          0.15
+        ],
+        "light": [
+          227,
+          224,
+          215,
+          0.12
+        ]
+      },
+      "panel": {
+        "dark": [
+          17,
+          24,
+          27,
+          0.6
+        ],
+        "light": [
+          227,
+          224,
+          215,
+          0.45
+        ]
+      }
+    }
+  }
+}
