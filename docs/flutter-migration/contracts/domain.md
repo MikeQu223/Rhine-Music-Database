@@ -614,7 +614,9 @@ Flutter 侧必须读写同一批键名与同一 `session.json` 位置（`AppStor
 
 ### 7.1 文件（D-FIX-1）
 
-`test/fixtures/login_matrix.json`，UTF-8，`version: 1`。它是**登录路径的机读规格**，测试与实现共用；不得包含 UI 布局信息。
+`test/fixtures/login_matrix.json`（**SIREN_ONLY_SCOPE_20261110_2041 暂停项**；仅保留在源分支 `flutter/p0-t05-domain-contract` 的 `b42ac575`/`e9c28691`，当前 root 不包含），UTF-8，`version: 1`。它是**登录路径的机读规格**，测试与实现共用；不得包含 UI 布局信息。
+
+> 文件树内存在性说明：本节的字段与语义仍为冻结契约；账号登录矩阵 fixture/test 因暂停项不进入当前 root，内容不复制到本树。
 
 ### 7.2 结构（D-FIX-2）
 
@@ -639,7 +641,7 @@ Flutter 侧必须读写同一批键名与同一 `session.json` 位置（`AppStor
       "paths": [ { ... } ]
     }
 
-**夹具为字段名与取值的唯一权威**（`test/fixtures/login_matrix.json`：6 条路径、10 个 `continuesPolling` 标记、`statuses` 共 11 个键）。上文只是骨架；测试直接反序列化夹具，不复制常量。
+**夹具为字段名与取值的唯一权威**（`test/fixtures/login_matrix.json`，源分支路径；当前 root 不包含：6 条路径、10 个 `continuesPolling` 标记、`statuses` 共 11 个键）。上文只是骨架；测试直接反序列化夹具，不复制常量。
 
 每个 `paths[]` 元素：
 
@@ -690,7 +692,7 @@ Flutter 侧必须读写同一批键名与同一 `session.json` 位置（`AppStor
 
 ### 7.3 测试契约（D-FIX-4）
 
-`test/login_matrix_test.dart`（只编写，不执行；无 `flutter test` 运行记录）：
+`test/login_matrix_test.dart`（**SIREN_ONLY_SCOPE_20261110_2041 暂停项**；仅保留在源分支 `flutter/p0-t05-domain-contract` 的 `b42ac575`/`e9c28691`，当前 root 不包含；只编写，不执行；无 `flutter test` 运行记录）：
 
 | # | 断言 | 反例（Fail 条件） |
 | --- | --- | --- |
@@ -717,7 +719,7 @@ Flutter 侧必须读写同一批键名与同一 `session.json` 位置（`AppStor
 
 ### 7.4 与实现的关系（D-FIX-5）
 
-夹具是**规格**不是配置：Flutter 实现不得在运行时读取 `test/fixtures/login_matrix.json`。生产代码中的六条路径/六阶段/常量必须与夹具一致，由测试守护。
+夹具是**规格**不是配置：Flutter 实现不得在运行时读取 `test/fixtures/login_matrix.json`（源分支路径；当前 root 不包含）。生产代码中的六条路径/六阶段/常量必须与夹具一致，由测试守护。
 
 ## 8. 已复核关闭与未决（D-OPEN-*）
 
@@ -749,7 +751,7 @@ Flutter 侧必须读写同一批键名与同一 `session.json` 位置（`AppStor
 - 读域列出的 `Qt/src/MusicSearch.cpp` 在基线中**不存在**（glob 核对 `Qt/src/*.cpp`）；搜索契约改由 `MusicLibrary.cpp:440-495` 与 `NativeHudSearch.cpp:63-69` 取证，未以文件缺失为由跳过该节。
 - v1.2 追加只读核对：`Qt/src/MusicMutation.cpp`（canEditPlaylist/canMutate/写协议）、`MusicDirectory.cpp`（enterDirectory/navigateDirectory/loadDirectoryPage）、`MusicSession.cpp`（恢复夹取）、`LyricsController.cpp`（validDocument/缓存淘汰/文案）、`NativeHudController.cpp:711-884`（顶层裸词动作与数值族 clamp）、`NativeHudMusic.cpp:79-170`（music:index/hint/expand）。
 - v1.3 追加只读核对：`Host.cpp:1041-1109`（偏好白名单与读写门）、`MusicLibrary.cpp:18-45`/`:106-171`、`MusicMutation.cpp` 全文、`MusicDirectory.cpp` 全文、`PlaybackQueue.cpp`/`.h` 全文、`MusicPlayer.cpp` 关键段、`LyricsController.cpp` 全文、`MusicSiren.cpp`、`MusicLocal.cpp`、`MusicSession.cpp` 全文、`NativeHudController.cpp` 顶层与 `player` 表、`NativeHudMusic.cpp` 全文、`MusicApi.cpp`、`Engine.cpp:850-875`。
-- 按当前任务约束，**未执行** `flutter test`、`flutter analyze`、`dart format` 或任何构建命令；`test/login_matrix_test.dart` 仅为待运行代码。
+- 按当前任务约束，**未执行** `flutter test`、`flutter analyze`、`dart format` 或任何构建命令；`test/login_matrix_test.dart`（源分支路径；当前 root 不包含）仅为待运行代码。
 - 未做设备验证：APK、真机登录、扫码、IME、后台恢复一律 `DEVICE_BLOCKED`，本文不宣称其通过。
 
 
