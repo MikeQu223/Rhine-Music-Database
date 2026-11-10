@@ -260,7 +260,12 @@ abstract interface class ConsentPorts {
   /// [ConsentSdkStarter] is the Qt-faithful implementation of that contract.
   void startSdks(ConsentRegion region);
 
-  /// startActivity(QtActivity) + finish() (Qt ConsentActivity.java:150-155).
+  /// startActivity(QtActivity) + finish() (Qt ConsentActivity.java:152-155).
+  ///
+  /// The launch carries FLAG_ACTIVITY_CLEAR_TOP|SINGLE_TOP (:152-153), so a host
+  /// that is asked again — [ConsentGate.approve] may retry it after a persisted
+  /// grant — must still end on the one business screen instead of stacking a
+  /// second one.
   void enterBusiness();
 
   /// finishAffinity() (Qt ConsentActivity.java:126).
@@ -377,13 +382,29 @@ class ConsentGate {
   /// Current phase.
   ConsentPhase get phase => _phase;
 
-  /// Region this launch ran with, null before anything proceeded
-  /// (ConsentActivity.java:69-70, :149).
+  /// Region of the most recent proceed attempt, null before anything proceeded
+  /// (ConsentActivity.java:69-70, :149-150). A proceed that throws keeps the
+  /// region it was attempting, because that is the one the record was written
+  /// for and the only one a retry may run.
   ConsentRegion? get region => _region;
 
   /// Whether the record on disk carries granted=true
   /// (ConsentStore.java:53-55).
   bool get recordPersisted => _recordPersisted;
+
+  /// Region of the answer this gate is still holding for the dialog, null when
+  /// it holds none (ConsentActivity.java:122-126).
+  ///
+  /// The decision only exists while the dialog is up, so the value is read from
+  /// [ConsentPhase.awaitingConsent] and is null on every other phase: a gate that
+  /// proceeded, declined or terminated is not waiting for a button. A page that
+  /// restores the prompt after a port rejected an answer reads this instead of
+  /// probing the region again, and pairs it with [recordPersisted] to know which
+  /// question is still open — false means the write never happened and the dialog
+  /// has to be asked again (:123), true means the grant is already on disk and
+  /// re-answering only repeats the proceed (:124-:155).
+  ConsentRegion? get pendingRegion =>
+      _phase == ConsentPhase.awaitingConsent ? _pendingRegion : null;
 
   /// Region probes started (ConsentActivity.java:84-85).
   int get regionProbeCount => _regionProbeCount;
@@ -462,43 +483,69 @@ class ConsentGate {
   /// The record is written once, then the run proceeds; the order matters, the
   /// grant is on disk before any SDK starts (:123 before :124).
   ///
-  /// The answer consumes the pending decision before the port runs, so a port
-  /// that calls back into the gate finds no second answer to give — the nested
-  /// call is refused by [_beginAnswer] instead of answering over this one. A
-  /// write that throws persisted nothing, so the decision is put back before
-  /// the error is rethrown: the phase, the region and every counter are then
-  /// exactly what the dialog left behind, and both buttons keep their meaning —
-  /// Agree retries and writes once, Exit still leaves without a record (:123,
-  /// :126). Losing the decision on the way out instead would strand the gate in
+  /// The first answer consumes the pending decision before
+  /// [ConsentPorts.writeGrant] runs, so a port that calls back into the gate
+  /// finds no second answer to give — the nested call is refused by
+  /// [_beginAnswer] instead of answering over this one, and the same latch
+  /// refuses it on a retry over an already persisted grant. A write that throws
+  /// persisted nothing, so the decision is put back before the error is
+  /// rethrown: the phase, the region and every counter are then exactly what the
+  /// dialog left behind, and both buttons keep their meaning — Agree retries and
+  /// writes once, Exit still leaves without a record (:123, :126). Losing the
+  /// decision on the way out instead would strand the gate in
   /// [ConsentPhase.awaitingConsent] with nothing left to write, which is a user
   /// who did agree and can never get in.
   ///
-  /// Nothing is rolled back once [ConsentPorts.writeGrant] returned. A port that
-  /// throws afterwards — from [ConsentPorts.startSdks] or
-  /// [ConsentPorts.enterBusiness] inside [_proceed] — leaves the grant on disk,
-  /// which is the truth: the user did agree and the record is written. That
-  /// failure class is handed over as it is, never faked into a repeatable grant.
+  /// Nothing is rolled back once [ConsentPorts.writeGrant] returned, and that
+  /// record is not written a second time either. A port that throws afterwards —
+  /// from [ConsentPorts.startSdks] or [ConsentPorts.enterBusiness] inside
+  /// [_proceed] — leaves the grant on disk, which is the truth: the user did
+  /// agree and the record is written (ConsentStore.java:66-71 publishes
+  /// granted=true in the store before anything else can fail). Qt has no
+  /// recovery inside that process either; the throw escapes the click handler
+  /// (:122-125, :149-155) and the next launch reads isGranted and proceeds
+  /// without a dialog (:69-72). This gate cannot relaunch, so it keeps the same
+  /// record here: the decision is put back and [pendingRegion] still names the
+  /// region that was agreed, the phase stays [ConsentPhase.awaitingConsent], and
+  /// the retried Agree skips [ConsentPorts.writeGrant] and repeats only the
+  /// proceed — the one part a relaunched process would have run again. Every
+  /// other counter keeps counting invocations, as it does on the first attempt.
   void approve() {
     _require(ConsentPhase.awaitingConsent, 'approve');
     _beginAnswer('approve');
     try {
       final ConsentRegion region = _pendingRegion!;
-      _pendingRegion = null;
+      if (!_recordPersisted) {
+        _pendingRegion = null;
+        try {
+          _ports.writeGrant(region);
+        } catch (_) {
+          // Nothing was persisted and no SDK, no business screen and no counter
+          // ran ahead of the record, so the only state to repair is the answer
+          // itself — and only while the gate is still waiting for it, so a port
+          // that already moved the machine on is not given a stale decision back.
+          if (_phase == ConsentPhase.awaitingConsent) {
+            _pendingRegion = region;
+          }
+          rethrow;
+        }
+        _persistGrantCount += 1;
+        _recordPersisted = true;
+      }
       try {
-        _ports.writeGrant(region);
+        _proceed(region);
       } catch (_) {
-        // Nothing was persisted and no SDK, no business screen and no counter ran
-        // ahead of the record, so the only state to repair is the answer itself —
-        // and only while the gate is still waiting for it, so a port that already
-        // moved the machine on is not given a stale decision back.
+        // The record is on disk and the run did not finish, so the decision this
+        // gate owes the user is not spent: it comes back for the retry above,
+        // where the persisted grant is not written again. Only a gate still
+        // waiting for an answer is given it back, so a port that already moved
+        // the machine on keeps its own phase.
         if (_phase == ConsentPhase.awaitingConsent) {
           _pendingRegion = region;
         }
         rethrow;
       }
-      _persistGrantCount += 1;
-      _recordPersisted = true;
-      _proceed(region);
+      _pendingRegion = null;
     } finally {
       _answering = false;
     }

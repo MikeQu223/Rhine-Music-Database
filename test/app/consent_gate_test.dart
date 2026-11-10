@@ -48,6 +48,8 @@ class _FakeConsentPorts implements ConsentPorts {
     ConsentRecord record = const ConsentRecord.empty(),
     Future<ConsentRegion>? probe,
     this.grantFailures = 0,
+    this.sdkFailures = 0,
+    this.businessFailures = 0,
   }) : _record = record,
        _probe = probe;
 
@@ -59,6 +61,15 @@ class _FakeConsentPorts implements ConsentPorts {
   /// host stand-in for an unwritable preference file. Zero leaves the fake
   /// exactly as the happy-path tests expect it.
   int grantFailures;
+
+  /// How many of the next [startSdks] calls throw instead of starting; the host
+  /// stand-in for an initialization that fails after the grant was written
+  /// (ConsentStore.java:79-109 swallows such a throw inside Qt, so only the port
+  /// boundary exposes it).
+  int sdkFailures;
+
+  /// Same, for [enterBusiness] (ConsentActivity.java:152-155).
+  int businessFailures;
 
   /// Runs at the end of a successful [writeGrant] that this fake persisted, so a
   /// test can re-enter the gate from inside its own port call.
@@ -109,12 +120,24 @@ class _FakeConsentPorts implements ConsentPorts {
 
   @override
   void startSdks(ConsentRegion region) {
+    if (sdkFailures > 0) {
+      sdkFailures -= 1;
+      // Nothing reached the SDKs: no start event and no recorder entry, so the
+      // gate's invocation counter is the only thing the failure moved.
+      events.add('sdkStartFailed:${region.name}');
+      throw StateError('clarity refused to start');
+    }
     events.add('sdkStart:${region.name}');
     recorder.starter.startSdks(region);
   }
 
   @override
   void enterBusiness() {
+    if (businessFailures > 0) {
+      businessFailures -= 1;
+      events.add('businessFailed');
+      throw StateError('the business screen refused to open');
+    }
     events.add('business');
     businessLaunches += 1;
   }
@@ -729,6 +752,182 @@ void main() {
       await run;
     });
   });
+
+  group(
+    'a port that fails after the grant (ConsentStore.java:66-71, :79-109)',
+    () {
+      testWidgets(
+        'a throw from startSdks keeps the written record, and the retried Agree '
+        'proceeds without a second write',
+        (WidgetTester tester) async {
+          final _FakeConsentPorts ports = _FakeConsentPorts(
+            probe: Future<ConsentRegion>.value(ConsentRegion.cn),
+            sdkFailures: 1,
+          );
+          final ConsentGate gate = ConsentGate(ports);
+
+          final Future<void> run = gate.start();
+          await _settle(tester);
+          expect(gate.phase, ConsentPhase.awaitingConsent);
+          expect(gate.pendingRegion, ConsentRegion.cn);
+
+          expect(gate.approve, throwsStateError);
+
+          expect(
+            gate.phase,
+            ConsentPhase.awaitingConsent,
+            reason: 'the run did not finish, so the answer is still pending',
+          );
+          expect(
+            gate.recordPersisted,
+            isTrue,
+            reason: 'the grant commits before anything can fail (:66-71)',
+          );
+          expect(gate.persistGrantCount, 1);
+          expect(gate.pendingRegion, ConsentRegion.cn);
+          expect(gate.region, ConsentRegion.cn);
+          expect(gate.sdkStartCount, 1);
+          expect(gate.businessLaunchCount, 0);
+          expect(ports.grantWrites, <ConsentRegion>[ConsentRegion.cn]);
+          expect(
+            ports.events,
+            <String>['grant:cn', 'sdkStartFailed:cn'],
+            reason: 'the grant ran first (:123), the start moved nothing',
+          );
+
+          gate.approve();
+
+          expect(gate.phase, ConsentPhase.proceeded);
+          expect(gate.pendingRegion, isNull);
+          expect(gate.persistGrantCount, 1);
+          expect(
+            ports.grantWrites,
+            <ConsentRegion>[ConsentRegion.cn],
+            reason: 'the persisted grant is never written a second time',
+          );
+          expect(
+            gate.sdkStartCount,
+            2,
+            reason: 'the retry repeats the proceed, so it counts again',
+          );
+          expect(ports.recorder.clarityStarts, 1);
+          expect(ports.recorder.buglyStarts, 1);
+          expect(ports.businessLaunches, 1);
+          expect(
+            ports.events,
+            <String>[
+              'grant:cn',
+              'sdkStartFailed:cn',
+              'sdkStart:cn',
+              _clarityEvent,
+              _buglyEvent,
+              'business',
+            ],
+            reason: 'the retry runs :149-:155 over the grant it has',
+          );
+
+          await run;
+        },
+      );
+
+      testWidgets(
+        'a throw from enterBusiness repeats only the business entry',
+        (WidgetTester tester) async {
+          final _FakeConsentPorts ports = _FakeConsentPorts(
+            probe: Future<ConsentRegion>.value(ConsentRegion.cn),
+            businessFailures: 1,
+          );
+          final ConsentGate gate = ConsentGate(ports);
+
+          final Future<void> run = gate.start();
+          await _settle(tester);
+          expect(gate.approve, throwsStateError);
+
+          expect(gate.phase, ConsentPhase.awaitingConsent);
+          expect(gate.recordPersisted, isTrue);
+          expect(gate.persistGrantCount, 1);
+          expect(gate.pendingRegion, ConsentRegion.cn);
+          expect(gate.sdkStartCount, 1);
+          expect(
+            gate.businessLaunchCount,
+            1,
+            reason: 'the entry was attempted (:154) and did not complete',
+          );
+          expect(ports.businessLaunches, 0);
+          expect(ports.events, <String>[
+            'grant:cn',
+            'sdkStart:cn',
+            _clarityEvent,
+            _buglyEvent,
+            'businessFailed',
+          ]);
+
+          gate.approve();
+
+          expect(gate.phase, ConsentPhase.proceeded);
+          expect(gate.pendingRegion, isNull);
+          expect(ports.grantWrites, <ConsentRegion>[ConsentRegion.cn]);
+          expect(gate.persistGrantCount, 1);
+          expect(
+            gate.businessLaunchCount,
+            2,
+            reason: 'two attempts, one completed entry',
+          );
+          expect(ports.businessLaunches, 1);
+          expect(
+            ports.recorder.clarityStarts,
+            1,
+            reason: 'the shipped starter stays idempotent across the retry',
+          );
+          expect(ports.events, <String>[
+            'grant:cn',
+            'sdkStart:cn',
+            _clarityEvent,
+            _buglyEvent,
+            'businessFailed',
+            'sdkStart:cn',
+            'business',
+          ]);
+
+          await run;
+        },
+      );
+
+      testWidgets(
+        'Exit after a post-grant failure leaves the record and writes nothing',
+        (WidgetTester tester) async {
+          final _FakeConsentPorts ports = _FakeConsentPorts(
+            probe: Future<ConsentRegion>.value(ConsentRegion.cn),
+            sdkFailures: 1,
+          );
+          final ConsentGate gate = ConsentGate(ports);
+
+          final Future<void> run = gate.start();
+          await _settle(tester);
+          expect(gate.approve, throwsStateError);
+          expect(gate.pendingRegion, ConsentRegion.cn);
+
+          gate.decline();
+
+          expect(gate.phase, ConsentPhase.declined);
+          expect(gate.pendingRegion, isNull);
+          expect(gate.exitCount, 1);
+          expect(ports.exits, 1);
+          expect(gate.recordPersisted, isTrue);
+          expect(gate.persistGrantCount, 1);
+          expect(ports.grantWrites, <ConsentRegion>[ConsentRegion.cn]);
+          expect(
+            ports.events,
+            <String>['grant:cn', 'sdkStartFailed:cn', 'exit'],
+            reason: 'finishAffinity() writes nothing, the record stays (:126)',
+          );
+          expect(gate.businessLaunchCount, 0);
+
+          await run;
+        },
+      );
+    },
+  );
 
   group('gate idempotency', () {
     testWidgets('a second start() and a later approval add nothing', (
