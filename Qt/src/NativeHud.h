@@ -74,6 +74,8 @@ class NativeHud : public QObject {
     void cancelSettingEdit();
     bool animating(double time) const;
     bool supportsTrackList() const;
+    // 资料库中的 ENTER 是否直接播放当前曲目（由“切歌不打开详情”控制）。
+    bool enterPlaysSelection() const;
     QVector<Row> rows(int lane);
     QRectF modalBounds(double width) const;
     QRectF detailBounds(double width) const;
@@ -148,6 +150,7 @@ class NativeHud : public QObject {
     bool reduced = false;
     bool startupAnimation = false;
     bool discRotation = false;
+    bool skipDetailOnSwitch = false;
     bool vsync = true;
     int archiveMaskStrength = 50;
     bool closing = false;

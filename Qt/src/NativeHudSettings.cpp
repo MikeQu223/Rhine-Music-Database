@@ -512,6 +512,11 @@ void NativeHud::applySettingValue(const QString &id, const QString &value) {
     // 新加入的普通偏好只需 descriptor + Host key，通用路径即可持久化。
     if (descriptor->binding.kind == SettingsSchema::BindingKind::Preference) {
         m_host->setPreference(descriptor->binding.preferenceKey, target);
+        // 切歌行为即时生效，不依赖下一帧重读偏好。
+        if (id == "skip-detail-on-switch") {
+            skipDetailOnSwitch = target == "on";
+            m_music->skipDetailOnSwitch = skipDetailOnSwitch;
+        }
         m_host->invalidate();
     }
 }

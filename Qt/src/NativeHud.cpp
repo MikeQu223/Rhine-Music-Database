@@ -656,7 +656,8 @@ void NativeHud::archive(double width) {
                 label = "浏览歌手作品 →";
             }
             control(label, x, 703, 300, "open");
-            aligned("点击打开 · ENTER 键也可打开", x, 771, 14);
+            aligned(enterPlaysSelection() ? "点击打开 · ENTER 键播放" : "点击打开 · ENTER 键也可打开", x, 771,
+                    14);
         }
         text("TRACK / SELECT", 60, 865, 11);
         const auto number = MusicData::pad(music.libraryIndex() + 1);
@@ -697,8 +698,10 @@ void NativeHud::archive(double width) {
     if (supportsTrackList()) {
         archiveTabButton(width);
     }
-    text(music.directory ? "← → 浏览曲目列 / ↑ ↓ 选曲 / ENTER 查看 / ESC 上一级"
-                         : "← → 切换来源 / ↑ ↓ 选曲 / ENTER 查看 / 检索",
+    const QString enterHint =
+        enterPlaysSelection() ? QStringLiteral("ENTER 播放") : QStringLiteral("ENTER 查看");
+    text(music.directory ? "← → 浏览曲目列 / ↑ ↓ 选曲 / " + enterHint + " / ESC 上一级"
+                         : "← → 切换来源 / ↑ ↓ 选曲 / " + enterHint + " / 检索",
          nav, 850, 12);
 }
 

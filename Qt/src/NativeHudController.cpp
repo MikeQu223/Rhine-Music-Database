@@ -46,6 +46,8 @@ NativeHud::NativeHud(Host *host, Glyphs *glyphs, MusicLibrary *music, HudSceneAc
     vsync = host->preference("vsync") != "off";
 #endif
     discRotation = host->preference("disc-rotation") == "on";
+    skipDetailOnSwitch = host->preference("skip-detail-on-switch") == "on";
+    music->skipDetailOnSwitch = skipDetailOnSwitch;
     bool hasMaskStrength = false;
     const auto savedMaskStrength = host->preference("archive-mask-strength").toInt(&hasMaskStrength);
     if (hasMaskStrength) {
@@ -900,6 +902,9 @@ void NativeHud::action(QString value) {
     } else if (value == "detail-autoplay") {
         const bool enabled = m_host->preference("detail-autoplay") == "on";
         m_host->setPreference("detail-autoplay", enabled ? "off" : "on");
+    } else if (value == "skip-detail-on-switch") {
+        const bool enabled = m_host->preference("skip-detail-on-switch") == "on";
+        applySettingValue("skip-detail-on-switch", enabled ? "off" : "on");
     } else if (value == "close-behavior") {
         // 关闭行为在点击窗口关闭按钮时读取
         const bool toTray = m_host->preference("close-behavior") == "tray";
@@ -1116,6 +1121,11 @@ void NativeHud::key(QString value, bool command) {
         m_music->player.toggle();
         return;
     }
+    // “切歌不打开详情”开启后，资料库回车直接播放当前曲目。
+    if (value == "Enter" && enterPlaysSelection()) {
+        action("music:play");
+        return;
+    }
     static const QHash<QString, QString> actions{{"ArrowLeft", "column-prev"},
                                                  {"ArrowRight", "column-next"},
                                                  {"ArrowUp", "prev"},
@@ -1130,6 +1140,10 @@ void NativeHud::key(QString value, bool command) {
 bool NativeHud::supportsTrackList() const {
     return modal.isEmpty() && frame["mode"] == "archive" && !frame["viewer"].toBool() && !lyricsMode &&
            m_music->current.value("kind") == "song";
+}
+
+bool NativeHud::enterPlaysSelection() const {
+    return skipDetailOnSwitch && frame["mode"] == "archive" && m_music->current.value("kind") == "song";
 }
 
 bool NativeHud::animating(double time) const {

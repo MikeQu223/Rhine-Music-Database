@@ -462,6 +462,11 @@ void MusicLibrary::followPlayback(QJsonObject value, bool showDetails) {
                               : frame["selected"].toInt(physicalSlots[selectedLane].value(0, -1));
     auto folder = directory;
     auto index = folder ? MusicData::indexOfId(folder->orderedSongs(), value["id"].toString()) : -1;
+    // 开启“切歌不打开详情”后，只有播放队列或已打开的曲目列表包含该曲目时才继续定位；
+    // 其他视图保持用户当前选择，不跳转，也不建立播放队列目录。显式打开详情仍会定位。
+    if (skipDetailOnSwitch && !showDetails && index < 0) {
+        return;
+    }
     if (index < 0) {
         ++m_directoryGeneration;
         directoryLoading = false;

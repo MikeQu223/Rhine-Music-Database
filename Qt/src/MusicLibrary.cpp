@@ -79,8 +79,10 @@ MusicLibrary::MusicLibrary(Host *host, const QJsonObject &content, QObject *pare
         ++revision;
         emit playbackInvalidated();
     });
-    connect(&player, &MusicPlayer::trackSelected, this,
-            [this](QJsonObject track) { followPlayback(track, followPlaybackDetails); });
+    connect(&player, &MusicPlayer::trackSelected, this, [this](QJsonObject track) {
+        // 切歌默认跟随进入详情；开启“切歌不打开详情”后只同步列表选择。
+        followPlayback(track, followPlaybackDetails && !skipDetailOnSwitch);
+    });
     connect(this, &MusicLibrary::invalidated, this, [this] {
         if (!m_sourcePlayback || m_sourcePlaybackScheduled) {
             return;

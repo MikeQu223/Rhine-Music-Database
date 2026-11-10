@@ -1319,6 +1319,60 @@ bool checkCommentsController(const QString &root) {
     comments.clear();
     return comments.status == "idle" && comments.items.isEmpty();
 }
+
+/** 开启“切歌不打开详情”后不定位无关列表、回车直接播放；队列或已打开的列表仍定位。 */
+bool checkSkipDetailOnSwitch(const QString &root, Glyphs &glyphs, const QJsonObject &content) {
+    Host host(root, true);
+    std::unique_ptr<MusicLibrary> music(createTestMusicLibrary(&host, "netease", content));
+    HudSceneActions scene;
+    QString requestedMode;
+    scene.mode = [&requestedMode](QString mode) { requestedMode = mode; };
+    scene.theme = [](bool) {};
+    const auto modeConnection =
+        QObject::connect(music.get(), &MusicLibrary::modeRequested,
+                         [&requestedMode](const QString &mode) { requestedMode = mode; });
+    NativeHud hud(&host, &glyphs, music.get(), scene);
+    const QJsonObject frame{{"mode", "archive"}, {"selected", 0}, {"detail", 1}, {"viewer", false}};
+    music->frame = frame;
+    hud.draw(frame, 1920, 50);
+    hud.action("setting:skip-detail-on-switch:on");
+    if (!hud.skipDetailOnSwitch || !music->skipDetailOnSwitch || !music->followPlaybackDetails ||
+        !hud.enterPlaysSelection()) {
+        qCritical() << "Skip-detail setting did not enable ENTER playback";
+        return false;
+    }
+
+    // 没有打开曲目列表时，切歌不改变资料库选择，也不建立播放队列目录。
+    const auto initialKey = music->current["key"].toString();
+    music->player.trackSelected(music->player.queue.items().at(1).toObject());
+    if (music->current["key"] != initialKey || music->directory || requestedMode == "detail") {
+        qCritical() << "Skip-detail setting moved the library selection";
+        return false;
+    }
+
+    // 关闭设置后恢复原行为：建立播放队列目录、定位并进入详情。
+    hud.skipDetailOnSwitch = false;
+    music->skipDetailOnSwitch = false;
+    music->player.trackSelected(music->player.queue.items().at(2).toObject());
+    if (requestedMode != "detail" || music->current["id"] != "3" || !music->directory) {
+        qCritical() << "Default track change no longer located and opened song details";
+        return false;
+    }
+
+    // 在播放队列目录中切歌：重新开启后仍定位，只是不进入详情。
+    hud.skipDetailOnSwitch = true;
+    music->skipDetailOnSwitch = true;
+    music->frame["mode"] = "archive";
+    requestedMode.clear();
+    const auto queuedKey = music->player.queue.items().at(4).toObject()["key"].toString();
+    music->player.trackSelected(music->player.queue.items().at(4).toObject());
+    if (requestedMode == "detail" || music->current["key"] != queuedKey) {
+        qCritical() << "Skip-detail setting skipped locating inside the playback queue";
+        return false;
+    }
+    QObject::disconnect(modeConnection);
+    return true;
+}
 }
 
 bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
@@ -1334,6 +1388,7 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
     bool ok = record("responsive transitions", checkResponsiveTransitions());
     ok &= record("playlist sorting", checkSorting(root, glyphs, content));
     ok &= record("responsive hud", checkResponsiveHud(root, glyphs, content));
+    ok &= record("skip detail on switch", checkSkipDetailOnSwitch(root, glyphs, content));
     ok &= record("song comments", checkSongComments(root, glyphs, content));
     ok &= record("comments controller", checkCommentsController(root));
 #ifdef Q_OS_DARWIN
@@ -1522,6 +1577,7 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
                                                "motion",
                                                "startup-animation",
                                                "detail-autoplay",
+                                               "skip-detail-on-switch",
                                                "single-play-mode",
                                                "quality",
                                                "disc-rotation",
