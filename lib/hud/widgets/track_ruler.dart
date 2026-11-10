@@ -8,7 +8,8 @@
 ///   * Qt/src/UiMotion.h:12-22 and Qt/src/UiMotion.cpp:58-84 - UiMotion::ReelCurve
 ///   * Qt/src/Glyphs.cpp:312-338     - Glyphs::bounds (vertical metrics, see HudGlyphBoundsPort)
 ///
-/// Contract: chrome.dart (W1) owns HudCommand / HudHit / HudSurfaceSink / HudTextPort /
+/// Contract: chrome.dart (W1) owns HudWireCommand (wire alias) / HudHit (re-exported from
+/// protocol/hud_hit.dart) / HudSurfaceSink / HudTextPort /
 /// hudInk / hudFill / hudPath. This library only consumes them; nothing here is re-declared
 /// and no Material widget, no Flutter widget and no texture is used.
 ///
@@ -323,12 +324,12 @@ class HudTrackRuler {
       // NativeHud.cpp:586-589: hit emitted in the same pass as the row it belongs to.
       if (rowY >= titleY - 270 && rowY <= titleY + 270 && opacity > 0.5) {
         sink.hit(HudHit(
-          x,
-          rowY - 4,
-          textWidth,
-          44,
-          index == selected ? 'open' : 'music:index:$index',
-          name,
+          x: x,
+          y: rowY - 4,
+          width: textWidth,
+          height: 44,
+          action: index == selected ? 'open' : 'music:index:$index',
+          label: name,
         ));
       }
     }

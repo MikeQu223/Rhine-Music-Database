@@ -7,10 +7,10 @@ import 'package:rhine_music_database/hud/pages/chrome.dart';
 import 'package:rhine_music_database/hud/widgets/track_ruler.dart';
 
 class FakeSink implements HudSurfaceSink {
-  final List<HudCommand> ops = <HudCommand>[];
+  final List<HudWireCommand> ops = <HudWireCommand>[];
   final List<HudHit> hits = <HudHit>[];
   @override
-  void op(HudCommand command) => ops.add(command);
+  void op(HudWireCommand command) => ops.add(command);
   @override
   void hit(HudHit hit) => hits.add(hit);
 }
@@ -30,8 +30,8 @@ class FakeText implements HudTextPort {
   }
 }
 
-List<HudCommand> textsAt(List<HudCommand> ops, double y) =>
-    ops.where((HudCommand c) => c[0] == 'text' && c[3] == y).toList();
+List<HudWireCommand> textsAt(List<HudWireCommand> ops, double y) =>
+    ops.where((HudWireCommand c) => c[0] == 'text' && c[3] == y).toList();
 
 List<TrackListItem> songs(int n) => <TrackListItem>[
   for (int i = 0; i < n; i++) TrackListItem(title: 'T' + i.toString(), kind: 'song'),
@@ -217,13 +217,13 @@ void main() {
     HudTrackRuler(s, t).archiveTrackList(x: 1131, width: 1920, values: songs(40), selected: 20,
         selectedTitle: 'T20', position: 20);
     // NativeHud.cpp:575-576: the selected row shows the current title, its neighbours the list titles.
-    final HudCommand selectedRow = textsAt(s.ops, 509).single;
+    final HudWireCommand selectedRow = textsAt(s.ops, 509).single;
     expect(selectedRow[1], 'T20');
     // emphasis == 1 -> ink() is kept verbatim, calibrated marker included (NativeHud.cpp:568).
     expect(selectedRow[7], <Object?>[0.08, 0.085, 0.075, 1, 'calibratedRGB']);
     // emphasis == 0 -> the gray blend, rebuilt as a 4 element array so the calibrated marker of
     // ink() is dropped (NativeHud.cpp:570-573). distance 4 sits at 88 + 3 * 52 = 244 from the title.
-    final HudCommand farRow = textsAt(s.ops, 509 - 244).single;
+    final HudWireCommand farRow = textsAt(s.ops, 509 - 244).single;
     expect(farRow[1], 'T16');
     expect(farRow[7], <Object?>[0.49, 0.49, 0.46, 1]);
     // NativeHud.cpp:582-585: every row is save -> alpha(opacity) -> text -> restore.
@@ -240,9 +240,9 @@ void main() {
     final FakeSink s = FakeSink();
     HudTrackRuler(s, FakeText()).archiveTrackRuler(x: 1760, centerY: 523, rows: <TrackRulerRow>[]);
     expect(s.ops.first, <Object?>['fill', <Object?>[0.46, 0.48, 0.37, 0.75], 1760, 523 - 272, 1.5, 544]);
-    expect(s.ops.where((HudCommand c) => c[0] == 'path' && c[2] == 2).length, 1);
-    expect(s.ops.where((HudCommand c) => c[0] == 'fill-path').length, 1);
-    expect(s.ops.where((HudCommand c) => c[0] == 'fill' && c[4] == 16 && c[5] == 2).length, 1);
+    expect(s.ops.where((HudWireCommand c) => c[0] == 'path' && c[2] == 2).length, 1);
+    expect(s.ops.where((HudWireCommand c) => c[0] == 'fill-path').length, 1);
+    expect(s.ops.where((HudWireCommand c) => c[0] == 'fill' && c[4] == 16 && c[5] == 2).length, 1);
   });
 
   test('dark ruler palette (NativeHud.cpp:597)', () {
@@ -255,8 +255,8 @@ void main() {
     final FakeSink s = FakeSink();
     HudTrackRuler(s, FakeText()).archiveTrackRuler(x: 1760, centerY: 500,
         rows: <TrackRulerRow>[TrackRulerRow(centerY: 500, textRight: 900, emphasis: 1, opacity: 1)]);
-    expect(s.ops.where((HudCommand c) => c[0] == 'fill' && c[4] == 50 && c[5] == 1.2).length, 1);
-    final HudCommand leader = s.ops.firstWhere((HudCommand c) => c[0] == 'fill' && c[5] == 0.8);
+    expect(s.ops.where((HudWireCommand c) => c[0] == 'fill' && c[4] == 50 && c[5] == 1.2).length, 1);
+    final HudWireCommand leader = s.ops.firstWhere((HudWireCommand c) => c[0] == 'fill' && c[5] == 0.8);
     expect((leader[1] as List<Object?>)[3], closeTo(0.28, 0.0001));
     // Qt (NativeHud.cpp:604): leaderStart = min(x - length - 8, textRight + 20)
     //                          width       = max(0, x - length - leaderStart)
@@ -264,7 +264,7 @@ void main() {
     expect(leader[2], 920);
     expect(leader[4], 1760 - 50 - 920);
     expect(s.ops.first[0], 'fill');
-    expect(s.ops.where((HudCommand c) => c[0] == 'alpha').length, 1);
+    expect(s.ops.where((HudWireCommand c) => c[0] == 'alpha').length, 1);
   });
 
   test('ruler emits alpha per row then restores (NativeHud.cpp:599-608)', () {
@@ -273,8 +273,8 @@ void main() {
       TrackRulerRow(centerY: 480, textRight: 800, emphasis: 0, opacity: 0.5),
       TrackRulerRow(centerY: 500, textRight: 900, emphasis: 1, opacity: 1),
     ]);
-    expect(s.ops.where((HudCommand c) => c[0] == 'alpha').length, 2);
-    expect(s.ops.where((HudCommand c) => c[0] == 'save').length, 2);
-    expect(s.ops.where((HudCommand c) => c[0] == 'restore').length, 2);
+    expect(s.ops.where((HudWireCommand c) => c[0] == 'alpha').length, 2);
+    expect(s.ops.where((HudWireCommand c) => c[0] == 'save').length, 2);
+    expect(s.ops.where((HudWireCommand c) => c[0] == 'restore').length, 2);
   });
 }

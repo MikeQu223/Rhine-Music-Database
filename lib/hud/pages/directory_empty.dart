@@ -129,7 +129,7 @@ class HudDirectoryEmpty {
     //   hit(x, 703, 300, 32, action, label)
     //   text(label, x + 0, 703 + (32 - 14) / 2 - 4 = 708, 14, "regular")
     // 不发 fill（fill 只在 m_modalControls 为 true 时发射，NativeHud.cpp:114-117）。
-    sink.hit(HudHit(x, 703, 300, 32, action, label));
+    sink.hit(HudHit(x: x, y: 703, width: 300, height: 32, action: action, label: label));
     hudText(sink, label, x, 703 + (32 - 14) / 2 - 4, 14, weight: 'regular', dark: dark);
   }
 

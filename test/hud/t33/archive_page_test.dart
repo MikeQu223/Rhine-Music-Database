@@ -5,10 +5,10 @@ import 'package:rhine_music_database/hud/pages/archive_page.dart';
 import 'package:rhine_music_database/hud/pages/chrome.dart';
 
 class FakeSink implements HudSurfaceSink {
-  final List<HudCommand> ops = <HudCommand>[];
+  final List<HudWireCommand> ops = <HudWireCommand>[];
   final List<HudHit> hits = <HudHit>[];
   @override
-  void op(HudCommand command) => ops.add(command);
+  void op(HudWireCommand command) => ops.add(command);
   @override
   void hit(HudHit hit) => hits.add(hit);
 }
@@ -28,8 +28,8 @@ class FakeText implements HudTextPort {
   }
 }
 
-List<HudCommand> textsAt(List<HudCommand> ops, double y) =>
-    ops.where((HudCommand c) => c[0] == 'text' && c[3] == y).toList();
+List<HudWireCommand> textsAt(List<HudWireCommand> ops, double y) =>
+    ops.where((HudWireCommand c) => c[0] == 'text' && c[3] == y).toList();
 
 HudArchiveState st({
   String libraryName = 'LIB',
@@ -115,11 +115,11 @@ void main() {
     expect(third.width, 26);
     expect(third.height, 50);
     expect(hitOf(s.hits, 'music:slot:2').label, '选曲 3');
-    final List<HudCommand> bars = s.ops.where((HudCommand c) => c[0] == 'fill' && c[5] == 33).toList();
+    final List<HudWireCommand> bars = s.ops.where((HudWireCommand c) => c[0] == 'fill' && c[5] == 33).toList();
     expect(bars.length, 1);
     expect(bars.single[4], 2);
     expect((bars.single[1] as List<Object?>)[3], 1);
-    final List<HudCommand> small = s.ops.where((HudCommand c) => c[0] == 'fill' && c[5] == 12).toList();
+    final List<HudWireCommand> small = s.ops.where((HudWireCommand c) => c[0] == 'fill' && c[5] == 12).toList();
     expect(small.length, 7);
   });
 
@@ -143,7 +143,7 @@ void main() {
     HudArchivePage(s, FakeText()).archive(width: 1920, s: st(sourceOrderIndex: 0, provider: 'kugou'),
         drawTrackList: (double w, HudArchiveState x) {}, drawEmpty: (double w, HudArchiveState x) {},
         supportsTrackList: (HudArchiveState x) => false);
-    final List<HudCommand> cap = textsAt(s.ops, 904);
+    final List<HudWireCommand> cap = textsAt(s.ops, 904);
     expect(cap.single[1], 'COLLECTION 01 / 04');
     expect(cap.single[2], 1920 * 0.5234375 + 70);
   });
@@ -153,7 +153,7 @@ void main() {
     HudArchivePage(s, FakeText()).archive(width: 1920, s: st(directory: true, directoryKind: 'album', selectedLane: 2),
         drawTrackList: (double w, HudArchiveState x) {}, drawEmpty: (double w, HudArchiveState x) {},
         supportsTrackList: (HudArchiveState x) => false);
-    final List<HudCommand> cap = textsAt(s.ops, 916);
+    final List<HudWireCommand> cap = textsAt(s.ops, 916);
     expect(cap.single[1], 'TRACK COLUMN 03 / 05');
   });
 
@@ -169,7 +169,7 @@ void main() {
     expect(h.label, 'Tab Mode，按 Tab 切换');
     expect((textsAt(s.ops, 866).single)[4], 18);
     expect((textsAt(s.ops, 866).single)[5], 'bold');
-    expect(s.ops.where((HudCommand c) => c[0] == 'path').length, 2);
+    expect(s.ops.where((HudWireCommand c) => c[0] == 'path').length, 2);
   });
 
   test('Tab Mode text weight follows trackListMode (NativeHud.cpp:503)', () {
@@ -286,11 +286,11 @@ void main() {
     expect(textsAt(s.ops, 925).single[4], 32);
     expect(textsAt(s.ops, 932).single[1], '10');
     expect(textsAt(s.ops, 932).single[2], 172);
-    expect(s.ops.where((HudCommand c) => c[0] == 'fill' && c[5] == 6).single[2], x - 12);
-    final List<HudCommand> dots = s.ops.where((HudCommand c) => c[0] == 'fill' && c[4] == 6).toList();
+    expect(s.ops.where((HudWireCommand c) => c[0] == 'fill' && c[5] == 6).single[2], x - 12);
+    final List<HudWireCommand> dots = s.ops.where((HudWireCommand c) => c[0] == 'fill' && c[4] == 6).toList();
     expect(dots.length, 1);
     expect(dots.single[5], 6);
-    final List<HudCommand> rules = s.ops.where((HudCommand c) => c[0] == 'fill' && c[5] == 1).toList();
+    final List<HudWireCommand> rules = s.ops.where((HudWireCommand c) => c[0] == 'fill' && c[5] == 1).toList();
     expect(rules.single[4], 1920 - x - 59);
   });
 

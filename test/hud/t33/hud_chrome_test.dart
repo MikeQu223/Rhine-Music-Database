@@ -4,10 +4,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:rhine_music_database/hud/pages/chrome.dart';
 
 class FakeSink implements HudSurfaceSink {
-  final List<HudCommand> ops = <HudCommand>[];
+  final List<HudWireCommand> ops = <HudWireCommand>[];
   final List<HudHit> hits = <HudHit>[];
   @override
-  void op(HudCommand command) => ops.add(command);
+  void op(HudWireCommand command) => ops.add(command);
   @override
   void hit(HudHit hit) => hits.add(hit);
 }
@@ -29,8 +29,8 @@ class FakeText implements HudTextPort {
   }
 }
 
-List<HudCommand> textsAt(List<HudCommand> ops, double y) =>
-    ops.where((HudCommand c) => c[0] == 'text' && c[3] == y).toList();
+List<HudWireCommand> textsAt(List<HudWireCommand> ops, double y) =>
+    ops.where((HudWireCommand c) => c[0] == 'text' && c[3] == y).toList();
 
 void main() {
   test('hudInk returns exact Qt arrays (NativeHud.cpp:10-15)', () {
@@ -39,10 +39,10 @@ void main() {
   });
 
   test('HudHit serialises the six Qt fields in order; fixed is absent unless requested', () {
-    const HudHit plain = HudHit(1, 2, 3, 4, 'open', 'title');
+    const HudHit plain = HudHit(x: 1, y: 2, width: 3, height: 4, action: 'open', label: 'title');
     expect(plain.toJson().keys.toList(), <String>['x', 'y', 'width', 'height', 'action', 'label']);
     expect(plain.toJson().containsKey('fixed'), isFalse);
-    expect(const HudHit(0, 0, 0, 0, 'a', 'b', fixed: true).toJson()['fixed'], isTrue);
+    expect(const HudHit(x: 0, y: 0, width: 0, height: 0, action: 'a', label: 'b', fixed: true).toJson()['fixed'], isTrue);
   });
 
   test('navigationLeft is width - 789 (NativeHud.cpp:342)', () {
@@ -62,7 +62,7 @@ void main() {
     expect(s.ops.length, 4);
     expect(s.ops[0], <Object?>['save']);
     expect(s.ops[1], <Object?>['clip', 0, 0, 1920, 984]);
-    final HudCommand m = s.ops[2];
+    final HudWireCommand m = s.ops[2];
     expect(m[0], 'right-mask');
     expect(m[2], 1920 - 789 - 300);
     expect(m[3], 300);
@@ -163,14 +163,14 @@ void main() {
       final FakeSink s = FakeSink();
       HudChrome(s, FakeText()).footer(width: 1920, isLocal: row[0] as bool, isSiren: row[1] as bool, uid: row[2] as String, provider: row[3] as String);
       expect(s.ops.first, <Object?>['fill', <Object?>[119.0 / 255, 123.0 / 255, 96.0 / 255, 1], 59, 971, 5, 5]);
-      final HudCommand t = s.ops[1];
+      final HudWireCommand t = s.ops[1];
       expect(t[0], 'text');
       expect(t[1], row[4] as String);
       expect(t[2], 75);
       expect(t[3], 967);
       expect(t[4], 10);
       expect(t[6], 0.9);
-      final HudCommand credit = s.ops.last;
+      final HudWireCommand credit = s.ops.last;
       expect(credit[1], 'POWERED BY RHINE LAB');
       expect(credit[4], 10);
       // A1 review F8: NativeHud.cpp:372 places the credit at width - 59 - glyphs->width(credit, 10,
@@ -192,14 +192,14 @@ void main() {
     // A1 review F5: NativeHud.cpp:275-277 fixes the order brand -> navigation -> footer. The brand
     // line is the first text command, the four navigation controls sit at y 132 and the footer
     // credit is the last text command, so swapping any two sections fails here.
-    final List<HudCommand> texts = s.ops.where((HudCommand c) => c[0] == 'text').toList();
+    final List<HudWireCommand> texts = s.ops.where((HudWireCommand c) => c[0] == 'text').toList();
     expect(texts.first[1], 'RHINE LAB / MUSIC DATABASE');
     expect(texts.first[3], 173);
-    expect(texts.where((HudCommand c) => c[3] == 132).length, 4);
+    expect(texts.where((HudWireCommand c) => c[3] == 132).length, 4);
     expect(texts.last[1], 'POWERED BY RHINE LAB');
     expect(texts.last[3], 967);
-    final int searchAt = s.ops.indexWhere((HudCommand c) => c[1] == '音乐检索  /');
-    final int footerSwatch = s.ops.indexWhere((HudCommand c) => c[0] == 'fill' && c[4] == 5 && c[5] == 5);
+    final int searchAt = s.ops.indexWhere((HudWireCommand c) => c[1] == '音乐检索  /');
+    final int footerSwatch = s.ops.indexWhere((HudWireCommand c) => c[0] == 'fill' && c[4] == 5 && c[5] == 5);
     expect(footerSwatch, greaterThan(searchAt));
   });
 
@@ -207,19 +207,19 @@ void main() {
     final FakeSink s = FakeSink();
     HudChrome(s, FakeText()).chromeView(width: 1920, archiveMode: false, suppressMask: false, libraryName: 'LIB',
         isLocal: true, isSiren: false, uid: '', provider: 'netease', archiveMaskStrength: 50, updaterAvailable: false);
-    expect(s.ops.any((HudCommand c) => c[0] == 'right-mask'), isFalse);
+    expect(s.ops.any((HudWireCommand c) => c[0] == 'right-mask'), isFalse);
     // A1 review F6: NativeHud.cpp:272 also skips the mask when the caller reports suppression
     // (the Qt condition is !(lyricsMode && !player.current.isEmpty())). The rest of the chrome
     // band must still be emitted.
     final FakeSink t = FakeSink();
     HudChrome(t, FakeText()).chromeView(width: 1920, archiveMode: true, suppressMask: true, libraryName: 'LIB',
         isLocal: true, isSiren: false, uid: 'u1', provider: 'netease', archiveMaskStrength: 50, updaterAvailable: false);
-    expect(t.ops.any((HudCommand c) => c[0] == 'right-mask'), isFalse);
-    expect(t.ops.any((HudCommand c) => c[0] == 'save'), isFalse);
-    expect(t.ops.any((HudCommand c) => c[0] == 'clip'), isFalse);
+    expect(t.ops.any((HudWireCommand c) => c[0] == 'right-mask'), isFalse);
+    expect(t.ops.any((HudWireCommand c) => c[0] == 'save'), isFalse);
+    expect(t.ops.any((HudWireCommand c) => c[0] == 'clip'), isFalse);
     expect(t.hits.map((HudHit h) => h.action).toList(), <String>['discover', 'search', 'saved', 'settings']);
-    expect(t.ops.where((HudCommand c) => c[0] == 'text').first[1], 'RHINE LAB / MUSIC DATABASE');
-    expect(t.ops.where((HudCommand c) => c[0] == 'text').last[1], 'POWERED BY RHINE LAB');
+    expect(t.ops.where((HudWireCommand c) => c[0] == 'text').first[1], 'RHINE LAB / MUSIC DATABASE');
+    expect(t.ops.where((HudWireCommand c) => c[0] == 'text').last[1], 'POWERED BY RHINE LAB');
   });
 
   test('hudControl emits hit then aligned text at y+14 size 20 demibold (NativeHud.cpp:121-124)', () {

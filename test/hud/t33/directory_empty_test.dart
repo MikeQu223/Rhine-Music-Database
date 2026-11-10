@@ -5,10 +5,10 @@ import 'package:rhine_music_database/hud/pages/chrome.dart';
 import 'package:rhine_music_database/hud/pages/directory_empty.dart';
 
 class FakeSink implements HudSurfaceSink {
-  final List<HudCommand> ops = <HudCommand>[];
+  final List<HudWireCommand> ops = <HudWireCommand>[];
   final List<HudHit> hits = <HudHit>[];
   @override
-  void op(HudCommand command) => ops.add(command);
+  void op(HudWireCommand command) => ops.add(command);
   @override
   void hit(HudHit hit) => hits.add(hit);
 }
@@ -28,8 +28,8 @@ class FakeText implements HudTextPort {
   }
 }
 
-List<HudCommand> textsAt(List<HudCommand> ops, double y) =>
-    ops.where((HudCommand c) => c[0] == 'text' && c[3] == y).toList();
+List<HudWireCommand> textsAt(List<HudWireCommand> ops, double y) =>
+    ops.where((HudWireCommand c) => c[0] == 'text' && c[3] == y).toList();
 
 HudDirectoryEmptyState es({
   String libraryName = 'LIB',
@@ -135,7 +135,7 @@ void main() {
     expect(textsAt(s.ops, 624).single[1], 'MSG');
     expect(textsAt(s.ops, 624).single[2], x);
     expect(textsAt(s.ops, 624).single[4], 16);
-    final List<HudCommand> rules = s.ops.where((HudCommand c) => c[0] == 'fill' && c[5] == 1).toList();
+    final List<HudWireCommand> rules = s.ops.where((HudWireCommand c) => c[0] == 'fill' && c[5] == 1).toList();
     expect(rules.single[4], 1920 - x - 59);
     expect(rules.single[2], x);
     expect(rules.single[3], 601);
@@ -156,7 +156,7 @@ void main() {
     // A3 review F4: control() hit rect is x-10 / width+20 / height 54 (NativeHud.cpp:122).
     expect(h.height, 54);
     // and its label is aligned at x, y+14, size 20, demibold (:123).
-    final HudCommand label = textsAt(s.ops, 211 + 14).single;
+    final HudWireCommand label = textsAt(s.ops, 211 + 14).single;
     expect(label[1], '← 返回上一级');
     expect(label[2], 59);
     expect(label[4], 20);
@@ -168,7 +168,7 @@ void main() {
     // A3 review F4: the Qt order is a semantic, not an implementation detail. Commands and hits are
     // two separate outlets, so the command stream is six entries and the two button hits are
     // asserted on the hit outlet; control() still emits its hit before its aligned label (:122/:123).
-    expect(s.ops.map((HudCommand c) => c[0]).toList(), <String>['text', 'text', 'text', 'fill', 'text', 'text']);
+    expect(s.ops.map((HudWireCommand c) => c[0]).toList(), <String>['text', 'text', 'text', 'fill', 'text', 'text']);
     expect(s.ops[0][1], '← 返回上一级');
     expect(s.ops[1][1], 'MUSIC DATABASE / LIB');
     expect(s.ops[2][1], 'LIB');

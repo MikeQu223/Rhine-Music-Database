@@ -1,20 +1,17 @@
-typedef HudCommand = List<Object?>;
+import 'package:rhine_music_database/hud/protocol/hud_hit.dart';
 
-/// Hit region: Qt original six fields x/y/width/height/action/label; ONLY PlayerBar may set fixed:true.
-class HudHit {
-  const HudHit(this.x, this.y, this.width, this.height, this.action, this.label, {this.fixed = false});
-  final double x, y, width, height;
-  final String action, label;
-  final bool fixed;
-  Map<String, Object?> toJson() => <String, Object?>{
-        'x': x, 'y': y, 'width': width, 'height': height, 'action': action, 'label': label,
-        if (fixed) 'fixed': true,
-      };
-}
+// HudHit has a single definition in the protocol layer. Re-exporting it keeps every
+// existing `import 'chrome.dart'` call site compiling while removing the duplicate class.
+export 'package:rhine_music_database/hud/protocol/hud_hit.dart' show HudHit;
+
+/// Wire command alias: a flat JSON array appended to the sink in Qt emission order.
+/// The sealed decoded model is protocol/hud_command.dart's HudCommand; this alias is
+/// only the unparsed wire shape accepted by [HudSurfaceSink.op].
+typedef HudWireCommand = List<Object?>;
 
 /// Injection outlet for commands and hits. Commands are flat arrays appended in Qt emission order; never reorder or dedupe.
 abstract class HudSurfaceSink {
-  void op(HudCommand command);
+  void op(HudWireCommand command);
   void hit(HudHit hit);
 }
 
@@ -39,7 +36,8 @@ List<Object?> hudInk(bool dark) => dark
 //   navigation 345-356 | footer 357-373 | control 121-124 | hit 102-109 | rule 125-129
 //   fill 37-39 | text 40-43 | aligned 44-46 | roll 97-101 | op 16-18 | draw(chrome 段) 272-277
 //   默认值：Qt/src/NativeHud.h:140-150 / 145 / 254-261 / 265-270
-// 纯 Dart（零 import）；只做源码编写，不执行任何构建 / 测试 / 分析。
+// 纯 Dart（仅 import 协议层 hud_hit.dart 并 re-export HudHit；不 import 任何 UI / 渲染框架）；
+// 只做源码编写，不执行任何构建 / 测试 / 分析。
 // 契约块位于本文件顶部，由 W1 持有并逐字保留；W2/W3/W4 只 import 复用。
 // 附加说明：契约列出的 helper 中 hudText / hudAligned / hudControl / hudFill 增加了
 //   可选命名参数 dark（默认 false），用于复刻 Qt ink() 对成员 dark 的依赖
@@ -48,7 +46,7 @@ List<Object?> hudInk(bool dark) => dark
 // ===========================================================================
 
 /// Qt NativeHud::op() (NativeHud.cpp:16-18)：命令按发射顺序 append，不重排、不去重。
-void hudOp(HudSurfaceSink sink, HudCommand command) {
+void hudOp(HudSurfaceSink sink, HudWireCommand command) {
   sink.op(command);
 }
 
@@ -93,14 +91,14 @@ void hudRule(HudSurfaceSink sink, bool dark, double x, double y, double width, [
 /// 只有 PlayerBar 可置 fixed:true。
 void hudHitRegion(HudSurfaceSink sink, double x, double y, double width, double height, String action,
     [String? label]) {
-  sink.hit(HudHit(x, y, width, height, action, label ?? action)); // :103-108（label.isNull() ? action : label）
+  sink.hit(HudHit(x: x, y: y, width: width, height: height, action: action, label: label ?? action)); // :103-108（label.isNull() ? action : label）
 }
 
 /// Qt NativeHud::control() (NativeHud.cpp:121-124)：命中区 x-10 / width+20 / 高 54；
 /// 文字在 x 处左对齐、y+14、20 号 demibold。
 void hudControl(HudSurfaceSink sink, HudTextPort text, String label, double x, double y, double width,
     String action, {bool dark = false}) {
-  sink.hit(HudHit(x - 10, y, width + 20, 54, action, label));                   // :122
+  sink.hit(HudHit(x: x - 10, y: y, width: width + 20, height: 54, action: action, label: label));                   // :122
   hudAligned(sink, text, label, x, y + 14, 20, weight: 'demibold', dark: dark); // :123
 }
 
