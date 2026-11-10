@@ -161,8 +161,7 @@ class _Harness {
   }
 }
 
-Uint8List _b64(String text) =>
-    Uint8List.fromList(utf8.encode(base64Encode(utf8.encode(text))));
+String _b64(String text) => base64Encode(utf8.encode(text));
 
 /// 本地假宿主：只记录 startRuntime 的入参，绝不启动 Node（plan:527）。
 ///
