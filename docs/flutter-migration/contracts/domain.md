@@ -432,7 +432,7 @@ Flutter 侧必须读写同一批键名与同一 `session.json` 位置（`AppStor
 | `provider:<name>` | 前缀 | — | 名字不同才切源，并重置搜索/结果/偏移 | `:512` |
 | `confirm:yes` | 精确 | 存在待确认 | 执行 `m_confirm` 并关模态 | `:525` |
 | `local:<cmd>` | 前缀 | `music.isLocal()` | `folder`/`files`/`rescan`/`cancel`/`remove:<i>`/`browse`/`prev`/`next` | `:533-570` |
-| `discover:<cmd>` | 前缀 | — | `tab:<t>`/`item:<i>`/`open`/`area:<a>`/`categories`/`category-page:prev|next`/`category:<urlencoded>`/`more` | `:576-618` |
+| `discover:<cmd>` | 前缀 | — | `tab:<t>`/`item:<i>`/`open`/`area:<a>`/`categories`/`category-page:prev\|next`/`category:<urlencoded>`/`more` | `:576-618` |
 | `player:<cmd>` | 前缀 | 见 §4.3 | 播放器动作族 | `:620` |
 | `open` | 精确 | — | 三分支：①`current` 空且无 `directory` 且 `selectedLane==0` -> 开搜索模态；②`current` 非空但 `kind!=song` -> `enterDirectory(current)`；③`current` 为歌曲 -> `mode=detail` + `loadSongWiki()` +（`detail-autoplay==on` 时 `play(false)`，不替换播放列表） | `:624-640` |
 | `back` | 精确 | — | 关歌词；目录内按 `frame[mode]` 决定 `returnToDirectory` / `leaveDirectory` | `:641` |
@@ -507,7 +507,7 @@ Flutter 侧必须读写同一批键名与同一 `session.json` 位置（`AppStor
 | `player:volume:<n>` | `n/10` | `ApplicationVolume` | 同上 |
 | `player:volume-fraction:<f>` | 比例音量 | `ApplicationVolume` | 同上 |
 | `player:mode` | 循环 `off→all→one→shuffle` | — | 同上 |
-| `player:mode:<off|all|one|shuffle>` | 指定模式 | — | 同上 |
+| `player:mode:<off\|all\|one\|shuffle>` | 指定模式 | — | 同上 |
 | `player:queue:<i>` | 播放队列第 i 项 | — | 同上 |
 | `player:remove:<i>` | 移除队列第 i 项 | — | 同上 |
 | `player:clear` | `clearUpcoming()` | — | 同上 |
@@ -537,7 +537,7 @@ Flutter 侧必须读写同一批键名与同一 `session.json` 位置（`AppStor
 | `music:expand:<urlencoded>` | 展开分组键 | 同上 |
 | `music:group-back` | 退出分组 | 同上 |
 | `music:artist:<i>` | 打开歌手 | 同上 |
-| `music:artist-tab:<songs|albums>` | 歌手页签 | 同上 |
+| `music:artist-tab:<songs\|albums>` | 歌手页签 | 同上 |
 | `music:artist-album:<i>` | 歌手专辑 | 同上 |
 | `music:artist-more` | 歌手专辑翻页 | 同上 |
 | `music:collection:<0..4>` | 切列 | 同上 |
@@ -554,8 +554,8 @@ Flutter 侧必须读写同一批键名与同一 `session.json` 位置（`AppStor
 | `music:source` | 打开原始来源 URL | 同上 |
 | `music:project-home` / `-author` / `-player` / `-kugou` / `-rhine` / `-lyricsx` / `-lyricskit` / `-lyrimuse` | 打开项目链接表 | 同上 |
 | `music:login` | 打开登录模态、`loginMethod=qr`、`startLogin` | 同上 |
-| `music:kugou-edition:<standard|lite>` | 切 edition，登录模态打开时继续 `startLogin` | 同上 |
-| `music:login-method:<qr|phone|wechat>` | 切登录方式（受 D-AUTH-2 限制），`cancelLogin` 后按需 `startLogin` | 同上 |
+| `music:kugou-edition:<standard\|lite>` | 切 edition，登录模态打开时继续 `startLogin` | 同上 |
+| `music:login-method:<qr\|phone\|wechat>` | 切登录方式（受 D-AUTH-2 限制），`cancelLogin` 后按需 `startLogin` | 同上 |
 | `music:refresh-personal` | 刷新个人音乐（仅 qq 有效） | 同上 |
 | `music:like` / `music:like-current` | 喜欢/取消 | 同上 |
 | `music:subscribe` | 收藏/取消收藏（专辑/歌单/歌手） | 同上 |
