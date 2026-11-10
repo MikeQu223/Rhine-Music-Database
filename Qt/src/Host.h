@@ -39,7 +39,7 @@ class Host : public QObject {
     Q_INVOKABLE void logout();
     Q_INVOKABLE void bumpEpoch();
     Q_INVOKABLE void setProvider(QString provider);
-    Q_INVOKABLE void setKugouEdition(QString edition);
+    Q_INVOKABLE void setProviderVariant(QString variant);
     Q_INVOKABLE void acceptCookies(QString json, int responseEpoch, QString credentialKey = {},
                                    QString provider = {});
     Q_INVOKABLE QJsonArray pluginManagerState() const;
@@ -50,12 +50,14 @@ class Host : public QObject {
     Q_INVOKABLE bool pluginEnabled(QString id) const;
     Q_INVOKABLE void setPluginEnabled(QString id, bool enabled);
     Q_INVOKABLE QString rollbackPlugin(QString id);
+    Q_INVOKABLE QString uninstallPlugin(QString id);
+    QString importPlugin(QString directory);
     void reloadPlugins();
     // v2 凭据封装：按 provider 隔离 cookie 与 secretState；旧扁平 jar 在加载时迁移。
     static QJsonObject migrateCredential(const QJsonObject &legacy);
     static QJsonObject credentialCookies(const QJsonObject &credentials, const QString &provider,
                                          const QString &edition = {});
-    // 保存时投影旧扁平键，保证降级版本仍能恢复账号；v2 读取忽略这些键。
+    // v2 凭据按原样序列化；旧扁平投影降级兼容已移除。
     static QJsonObject storageCredential(const QJsonObject &credentials);
     Q_INVOKABLE QString qr(QString key);
     Q_INVOKABLE QString qrImage(QString data);
@@ -156,6 +158,19 @@ class Host : public QObject {
     QJsonArray marketplacePlugins;
     QString marketplaceStatus;
     bool marketplaceLoading = false;
+    bool marketplaceInstalling = false;
+    QString marketplaceInstallId;
+    QString marketplaceInstallFile;
+    int marketplaceInstallFilesDone = 0;
+    int marketplaceInstallFilesTotal = 0;
+    qint64 marketplaceInstallBytes = 0;
+    qint64 marketplaceInstallFileBytes = 0;
+    qint64 marketplaceInstallFileTotal = 0;
+    qint64 marketplaceInstallStartedAt = 0;
+    qint64 marketplaceInstallLastEmit = 0;
+    double marketplaceInstallSpeed = 0;
+    double marketplaceInstallProgress = 0;
+    void updateMarketplaceInstallProgress(bool force = false);
     QJsonArray installedPluginManifests() const;
     QStringList disabledPlugins() const;
     void writeDisabledPlugins(const QStringList &disabled);
@@ -166,14 +181,14 @@ class Host : public QObject {
     mutable QCache<QString, QImage> images{32 * 1024};
     qint64 lastStart = 0;
     QHash<QString, qint64> blockedUntil;
-    QHash<QString, QJsonObject> privateCredentials;
     QJsonObject cookiesFor(const QString &provider) const;
+    QString variantFor(const QString &provider) const;
     void setCookiesFor(const QString &provider, const QJsonObject &cookies);
     QJsonObject secretsFor(const QString &provider) const;
     void setSecretsFor(const QString &provider, const QJsonObject &secrets);
     QJsonObject cookieSlice(const QString &provider) const;
     QString provider;
-    QString kugouEdition = "standard";
+    QString providerVariant = "standard";
     QString active;
     bool stopped = false;
     bool audioDiagnosticsEnabled = false;
@@ -193,7 +208,8 @@ QByteArray platformCredential();
 QString platformSaveCredential(const QByteArray &data);
 void platformDeleteCredential();
 QImage platformQR(const QString &text);
-void platformPlay(const QString &id, bool activate, std::function<void(QString)> done);
+void platformPlay(const QString &id, const QJsonObject &config, bool activate,
+                  std::function<void(QString)> done);
 bool platformActivates();
 void platformSetActivates(bool value);
 

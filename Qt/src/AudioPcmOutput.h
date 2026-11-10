@@ -14,7 +14,8 @@ class AudioPcmOutput {
   public:
     AudioPcmOutput();
     ~AudioPcmOutput();
-    void reset(const QAudioDevice &device, AudioOutputFormat::Policy policy, qint64 positionMs = 0);
+    void reset(const QAudioDevice &device, AudioOutputFormat::Policy policy, qint64 positionMs = 0,
+               const AudioOutputFormat::SystemFormat *observedSystem = nullptr);
     bool push(const QAudioBuffer &buffer);
     void finish();
     void pause(bool paused);

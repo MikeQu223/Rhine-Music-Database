@@ -176,7 +176,8 @@ BridgeProcess::~BridgeProcess() {
         runtime().owner.clear();
     }
 }
-void BridgeProcess::start(const QString &root, const QString &temporary, const QString &edition) {
+void BridgeProcess::start(const QString &root, const QString &temporary,
+                          const QJsonObject &extraEnvironment) {
     // temporary 是宿主的会话临时目录（内部缓存）；worker 的 TMPDIR 改用外部缓存目录
     // （见下），这个参数只作为外部存储不可用时的回退锚点之一，不再直接使用。
     Q_UNUSED(temporary)
@@ -199,11 +200,10 @@ void BridgeProcess::start(const QString &root, const QString &temporary, const Q
         return external;
     }();
     QDir().mkpath(tmpRoot);
-    QJsonObject environment{
-        {"TMPDIR", tmpRoot},
-        {"RHINE_QQ_DEVICE_STATE_PATH", AppStorage::dataDirectory() + "/qq-device.json"},
-        {"RHINE_KUGOU_DEVICE_STATE_PATH", AppStorage::dataDirectory() + "/kugou-device.json"},
-        {"RHINE_KUGOU_EDITION", edition}};
+    QJsonObject environment{{"TMPDIR", tmpRoot}};
+    for (auto it = extraEnvironment.begin(); it != extraEnvironment.end(); ++it) {
+        environment.insert(it.key(), it.value());
+    }
     runtime().send({{"type", "start"},
                     {"session", m_session},
                     {"script", root + "/MusicBridge/worker.cjs"},

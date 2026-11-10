@@ -668,7 +668,7 @@ void NativeHud::archive(double width) {
     button("←", col, 903, 46, 46, "column-prev", 28);
     if (!music.directory) {
         text("COLLECTION " + MusicData::pad(music.sourceOrder().indexOf(music.selectedLane) + 1) + " / " +
-                 MusicData::pad(music.provider == "kugou" ? 4 : 5),
+                 MusicData::pad(std::max(1, int(music.columns.size()))),
              col + 70, 904, 10);
         roll("music-column", music.libraryName(), col + 70, 925, 15, width - col - 360);
     } else {

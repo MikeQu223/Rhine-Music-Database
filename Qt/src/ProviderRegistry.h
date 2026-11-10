@@ -32,6 +32,7 @@ class ProviderRegistry {
     bool capability(const QString &id, const QString &key, bool fallback = true) const;
     QStringList columns(const QString &id) const;
     QVector<int> sourceOrder(const QString &id) const;
+    QVector<int> visibleLanes(const QString &id) const;
     int lanes(const QString &id) const;
     QVector<QPair<QString, QString>> qualityOptions(const QString &id) const;
     QJsonObject qualityDescription(const QString &id, const QString &quality) const;
@@ -46,14 +47,29 @@ class ProviderRegistry {
     QJsonObject loginMethod(const QString &id, const QString &method) const;
     QJsonObject stringTable(const QString &id) const;
     QString text(const QString &id, const QString &key) const;
+    QString providerForRoute(const QString &route) const;
+    QJsonObject cachePolicy(const QString &id) const;
+    QJsonObject credentialPolicy(const QString &id) const;
+    QJsonObject runtimeConfig(const QString &id) const;
+    QJsonObject externalPlayback(const QString &id) const;
+    QJsonObject mediaPolicy(const QString &id) const;
+    QJsonArray variants(const QString &id) const;
+    QString variantPreference(const QString &id) const;
+    int diagnosticsOrdinal(const QString &id, int fallback = 0) const;
+    QStringList coverHosts() const;
+    QStringList playbackHosts() const;
+    QStringList alternativeHosts() const;
 
   private:
     void loadDirectory(const QString &directory, bool overwrite = true);
     void loadManifestFallback(const QString &directory);
+    void indexRoutes();
     void addBuiltin(const QString &id, const QString &name, const QString &label, const QString &detail,
                     const QString &sessionLabel, int order);
     QHash<QString, QJsonObject> m_descriptors;
     QHash<QString, QJsonObject> m_manifests;
+    QHash<QString, QString> m_legacy;
+    QHash<QString, QString> m_prefixes;
     QSet<QString> m_disabled;
     QString m_root;
     bool m_loaded = false;

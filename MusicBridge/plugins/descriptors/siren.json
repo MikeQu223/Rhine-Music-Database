@@ -1,5 +1,5 @@
 {
-    "schemaVersion": 1,
+    "schemaVersion": 2,
     "id": "siren",
     "display": {
         "name": "塞壬唱片",
@@ -40,8 +40,20 @@
         }
     },
     "library": {
-        "columns": ["搜索结果", "喜欢的歌曲", "我的歌单", "全部歌曲", "全部专辑"],
-        "sourceOrder": [1, 2, 3, 4, 0],
+        "columns": [
+            "搜索结果",
+            "喜欢的歌曲",
+            "我的歌单",
+            "全部歌曲",
+            "全部专辑"
+        ],
+        "sourceOrder": [
+            1,
+            2,
+            3,
+            4,
+            0
+        ],
         "lanes": 5,
         "identityProviders": [],
         "likedModel": "local",
@@ -72,12 +84,10 @@
         "labels": {
             "standard": "标准",
             "hq": "高品质 / HQ",
+            "lossless": "官网原始音源",
             "sq": "无损 / SQ",
             "hires": "高解析无损 / Hi-Res",
-            "jymaster": "超清母带",
-            "jyeffect": "高清臻音",
-            "sky": "沉浸环绕声",
-            "lossless": "官网原始音源"
+            "master": "母带"
         }
     },
     "discover": {
@@ -86,16 +96,25 @@
         "tabs": []
     },
     "lyrics": {
-        "sources": ["siren", "netease"],
-        "fallback": ["netease"],
+        "sources": [
+            "siren"
+        ],
+        "fallback": [],
         "matchMode": "fuzzy",
         "rateLimitMs": 1500,
-        "retryDelaysMs": []
+        "retryDelaysMs": [],
+        "fallbackRateLimitMs": 1500
     },
     "media": {
-        "hosts": ["hycdn.cn", "*.hycdn.cn"],
+        "hosts": [
+            "hycdn.cn",
+            "*.hycdn.cn"
+        ],
         "alternativeHosts": [],
-        "coverHosts": ["hycdn.cn", "*.hycdn.cn"],
+        "coverHosts": [
+            "hycdn.cn",
+            "*.hycdn.cn"
+        ],
         "allowHttp": false,
         "schemePolicy": "https"
     },
@@ -137,7 +156,6 @@
         "discover": true,
         "categories": true,
         "lyrics": true,
-        "subscriptionStatus": true,
         "capabilities": true,
         "vip": true
     }

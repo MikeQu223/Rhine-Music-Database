@@ -44,9 +44,9 @@ function hash(file) {
 
 if (write) {
     const lock = {
-        schemaVersion: 1,
-        apiVersion: '1.0',
-        frozenAt: '2026-11-08',
+        schemaVersion: 2,
+        apiVersion: '2.0',
+        frozenAt: '2026-11-09',
         note: 'Any contract change must update this file and follow the version policy in docs/PLUGIN/P0-FREEZE.md.',
         files: Object.fromEntries(CONTRACT_FILES.map((file) => [file, hash(file)])),
     };

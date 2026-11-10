@@ -17,7 +17,7 @@ QAudioFormat select(const QAudioFormat &source, const QAudioFormat &system, cons
     if (!source.isValid()) {
         return {};
     }
-    // Test complete combinations. A device's min/max ranges are not a format matrix.
+    // 逐个候选组合实测；设备的 min/max 区间不是格式矩阵。
     if (policy == Policy::Source && supported(source)) {
         return source;
     }
@@ -31,8 +31,7 @@ QAudioFormat select(const QAudioFormat &source, const QAudioFormat &system, cons
         if (!candidate.isValid()) {
             continue;
         }
-        // Keep mono/stereo semantics where the endpoint accepts them. Do not upmix music
-        // merely because the system is configured for surround sound.
+        // 端点接受原声道布局时保持单/双声道语义；不因为系统配了环绕声就把音乐上混。
         auto channels = candidate;
         channels.setChannelConfig(source.channelConfig());
         if (source.channelConfig() == QAudioFormat::ChannelConfigUnknown) {
@@ -78,12 +77,14 @@ QString describe(int rate, int channels, int sampleFormat) {
 }
 
 #ifndef Q_OS_IOS
-SystemFormat systemFormat(const QAudioDevice &device) {
+SystemFormat systemFormat(const QByteArray &deviceId, bool isDefault) {
     SystemFormat result;
-    if (device.isNull() || !device.isDefault()) {
+    if (!isDefault) {
         return result;
     }
 #ifdef Q_OS_MACOS
+    // CoreAudio 只能查询系统默认端点，设备 id 在这里用不上。
+    Q_UNUSED(deviceId);
     AudioDeviceID endpoint = kAudioObjectUnknown;
     UInt32 size = sizeof(endpoint);
     AudioObjectPropertyAddress address{kAudioHardwarePropertyDefaultOutputDevice,
@@ -109,16 +110,16 @@ SystemFormat systemFormat(const QAudioDevice &device) {
         format.setSampleFormat(QAudioFormat::Int16);
     } else if (stream.mBitsPerChannel > 16 && stream.mBitsPerChannel <= 32 &&
                stream.mBytesPerFrame >= 4 * ((stream.mFormatFlags & kAudioFormatFlagIsNonInterleaved)
-                                                  ? 1u
-                                                  : stream.mChannelsPerFrame)) {
-        // Packed 24-bit has no QAudioFormat representation. Only report Int32
-        // when the observed stream actually uses a four-byte sample container.
+                                                 ? 1u
+                                                 : stream.mChannelsPerFrame)) {
+        // 打包 24 位没有对应的 QAudioFormat，只有观测到四字节容器时才报告 Int32。
         format.setSampleFormat(QAudioFormat::Int32);
     }
-    // This is a HAL stream observation, not the QAudioSink client or DAC format.
+    // 这是 HAL 流格式观测，不是 QAudioSink 客户端格式或 DAC 格式。
     result.status = format.isValid() ? 1 : format.sampleRate() > 0 ? 2 : 0;
 #elif defined(Q_OS_WIN)
     using Microsoft::WRL::ComPtr;
+    // 工作线程自行初始化 MTA；COM 指针全部在 CoUninitialize 之前释放。
     const HRESULT initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     {
         ComPtr<IMMDeviceEnumerator> enumerator;
@@ -126,7 +127,7 @@ SystemFormat systemFormat(const QAudioDevice &device) {
         ComPtr<IAudioClient> client;
         if (SUCCEEDED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
                                        IID_PPV_ARGS(&enumerator))) &&
-            SUCCEEDED(enumerator->GetDevice(reinterpret_cast<LPCWSTR>(QString::fromUtf8(device.id()).utf16()),
+            SUCCEEDED(enumerator->GetDevice(reinterpret_cast<LPCWSTR>(QString::fromUtf8(deviceId).utf16()),
                                             &endpoint)) &&
             SUCCEEDED(endpoint->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr,
                                          reinterpret_cast<void **>(client.GetAddressOf())))) {
@@ -152,8 +153,17 @@ SystemFormat systemFormat(const QAudioDevice &device) {
     if (SUCCEEDED(initialized)) {
         CoUninitialize();
     }
+#else
+    Q_UNUSED(deviceId);
 #endif
     return result;
+}
+
+SystemFormat systemFormat(const QAudioDevice &device) {
+    if (device.isNull() || !device.isDefault()) {
+        return {};
+    }
+    return systemFormat(device.id(), true);
 }
 #endif
 } // namespace AudioOutputFormat

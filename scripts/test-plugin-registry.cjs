@@ -18,8 +18,8 @@ const DEFAULT_ENTRY = `module.exports = {
 
 function manifest(id, routes = {}, extra = {}) {
     return {
-        schemaVersion: 1,
-        apiVersion: '1.0',
+        schemaVersion: 2,
+        apiVersion: '2.0',
         id,
         version: '1.0.0',
         entry: { file: 'entry.cjs' },
@@ -89,6 +89,8 @@ test('resolves default and capability only when unambiguous', (t) => {
     assert.equal(registry.can('alpha', 'search'), true);
     assert.equal(registry.can('alpha', 'playback'), true);
     assert.equal(registry.can('alpha', 'mutate'), false);
+    assert.equal(registry.supportsOperation('alpha', 'search'), true);
+    assert.equal(registry.supportsOperation('alpha', 'playback'), false);
     assert.equal(registry.can('missing', 'search'), false);
 });
 
@@ -167,11 +169,11 @@ test('rejects duplicate provider ids', (t) => {
 test('rejects duplicate and overlapping routes', (t) => {
     const registry = createRegistry(t, {
         first: {
-            manifest: manifest('first', { legacyRoutes: ['/search'], prefixes: ['/qq'] }),
+            manifest: manifest('first', { legacyRoutes: ['/search'], prefixes: ['/shared'] }),
         },
         legacy: { manifest: manifest('legacy', { legacyRoutes: ['/search'] }) },
-        prefix: { manifest: manifest('prefix', { prefixes: ['/qq'] }) },
-        nested: { manifest: manifest('nested', { prefixes: ['/qq/extra'] }) },
+        prefix: { manifest: manifest('prefix', { prefixes: ['/shared'] }) },
+        nested: { manifest: manifest('nested', { prefixes: ['/shared/extra'] }) },
     });
     assert.deepEqual(
         registry.list().map((entry) => entry.id),
@@ -190,9 +192,9 @@ test('rejects duplicate and overlapping routes', (t) => {
 test('rejects incompatible schema and api versions', (t) => {
     const registry = createRegistry(t, {
         current: { manifest: manifest('current') },
-        'newer-minor': { manifest: manifest('newer-minor', {}, { apiVersion: '1.1' }) },
-        'newer-major': { manifest: manifest('newer-major', {}, { apiVersion: '2.0' }) },
-        'old-schema': { manifest: manifest('old-schema', {}, { schemaVersion: 2 }) },
+        'newer-minor': { manifest: manifest('newer-minor', {}, { apiVersion: '2.1' }) },
+        'newer-major': { manifest: manifest('newer-major', {}, { apiVersion: '3.0' }) },
+        'old-schema': { manifest: manifest('old-schema', {}, { schemaVersion: 1 }) },
     });
     assert.deepEqual(
         registry.list().map((entry) => entry.id),

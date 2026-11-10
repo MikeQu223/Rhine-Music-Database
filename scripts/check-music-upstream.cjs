@@ -2,6 +2,13 @@
 // 本地存在插件包时，至少确保声明了依赖的插件同时提交 lockfile。
 const fs = require('node:fs');
 const path = require('node:path');
+const corePackage = JSON.parse(fs.readFileSync(path.resolve('MusicBridge/package.json'), 'utf8'));
+const allowedCoreDependencies = new Set(['chardet', 'form-data', 'node-fetch']);
+for (const name of Object.keys(corePackage.dependencies || {})) {
+    if (!allowedCoreDependencies.has(name)) {
+        throw new Error('core MusicBridge dependency is not in the generic allowlist: ' + name);
+    }
+}
 const localPlugins = path.resolve('MusicBridge/local-plugins');
 if (!fs.existsSync(localPlugins)) {
     console.log('No local plugin packages; upstream pins are checked by plugin CI.');

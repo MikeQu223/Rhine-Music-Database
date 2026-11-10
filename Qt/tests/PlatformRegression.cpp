@@ -6,12 +6,17 @@
 #include "ProcessMetrics.h"
 #include <QCoreApplication>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QGuiApplication>
 #include <QTemporaryDir>
+#include <QThread>
 #include <QtMultimedia/private/qaudiodevice_p.h>
+#include <atomic>
 #include <cstdio>
+#include <functional>
 #include <memory>
+#include <thread>
 #include <type_traits>
 #ifdef Q_OS_LINUX
 #include <sys/stat.h>
@@ -27,6 +32,16 @@ bool check(bool result, const char *message) {
         std::fprintf(stderr, "%s\n", message);
     }
     return result;
+}
+
+bool waitFor(const std::function<bool()> &ready, int milliseconds = 5000) {
+    QElapsedTimer clock;
+    clock.start();
+    while (!ready() && clock.elapsed() < milliseconds) {
+        QCoreApplication::processEvents();
+        QThread::msleep(1);
+    }
+    return ready();
 }
 
 bool processMetricsRegression() {
@@ -162,18 +177,17 @@ class AudioPlayerRegression {
         return ok;
     }
 
-    // 没有输出设备时不会访问网络，可验证真实 load 路径是否改写了上游地址。
+    // 没有输出设备时不会访问网络，可验证真实 load 路径的本地文件与未知来源边界。
     static bool sourceRegression() {
         AudioPlayer audio;
         audio.defaultOutput = [] { return QAudioDevice(); };
         audio.followDefaultOutput();
-        const QString raw("http://fs.kugou.com/fixture.mp3?key=fixture&filename=a%20b");
-        bool ok = check(audio.load(raw, false, false, "kugou") && audio.pendingSource == QUrl(raw),
-                        "Kugou preserves upstream scheme and signed query");
+        const QString local("file:///fixture.wav");
+        bool ok = check(audio.load(local, false, false, "local") && audio.pendingSource == QUrl(local),
+                        "Local files bypass the network scheme policy");
         audio.control("stop");
-        ok &= check(audio.load("http://music.126.net/fixture.mp3", false, false, "netease") &&
-                        audio.pendingSource.scheme() == "https",
-                    "NetEase keeps existing CDN compatibility");
+        ok &= check(!audio.load("http://example.test/fixture.mp3", false, false, "unknown"),
+                    "Unknown providers cannot load remote media");
         audio.control("stop");
         return ok;
     }
@@ -214,6 +228,68 @@ class AudioPlayerRegression {
 #else
         return true;
 #endif
+    }
+
+    // 系统格式探测必须离开音频泵线程：只有设备 id 跨线程，结果回到主线程后才决定重建。
+    static bool outputFormatProbeRegression() {
+        std::atomic<int> probeCalls{0};
+        QByteArray probedId;
+        std::thread::id probeThread;
+        const auto mainThread = std::this_thread::get_id();
+        AudioOutputFormat::SystemFormat reported;
+        AudioPlayer audio;
+        const auto device = testDevice<QAudioDevicePrivate>("test-format-probe");
+        audio.defaultOutput = [device] { return device; };
+        audio.followDefaultOutput();
+        const auto baseline = audio.pcm.snapshot();
+        // 只有有效观测（status 非 0）才会触发重建；采样率与当前值不同即构成一次真实变化。
+        reported.status = 1;
+        reported.format.setSampleRate(qMax(1, baseline["outputSystemSampleRateHz"].toInt() + 1000));
+        reported.format.setChannelCount(qMax(1, baseline["outputSystemChannels"].toInt()));
+        reported.format.setSampleFormat(QAudioFormat::Float);
+        int outputEvents = 0;
+        audio.diagnosticEvent = [&](const QString &event, const QJsonObject &) {
+            if (event == "output") {
+                ++outputEvents;
+            }
+        };
+        audio.readSystemOutputFormat = [&](const QByteArray &deviceId, bool) {
+            probedId = deviceId;
+            probeThread = std::this_thread::get_id();
+            ++probeCalls;
+            return reported;
+        };
+        audio.enableDiagnostics(true);
+        // 观测值只消费一次；waitFor 结束前会再问一次谓词，不能让它把结果吃掉。
+        bool applied = false;
+        auto consume = [&] {
+            if (!applied) {
+                applied = audio.applyPendingOutputFormatObservation();
+            }
+            return applied;
+        };
+        audio.requestOutputFormatProbe();
+        bool ok = waitFor(consume);
+        ok &= check(probeCalls == 1 && probedId == device.id() && probeThread != mainThread,
+                    "Format probe runs on a worker thread and only the device id crosses threads");
+        ok &= check(outputEvents == 1, "A changed system format rebuilds the output once");
+        const auto fresh = audio.pcm.snapshot();
+        reported.status = fresh["outputSystemFormatStatus"].toInt();
+        reported.format.setSampleRate(fresh["outputSystemSampleRateHz"].toInt());
+        reported.format.setChannelCount(fresh["outputSystemChannels"].toInt());
+        reported.format.setSampleFormat(
+            QAudioFormat::SampleFormat(fresh["outputSystemSampleFormat"].toInt()));
+        applied = false;
+        audio.requestOutputFormatProbe();
+        ok &= check(waitFor(consume) && outputEvents == 1 && probeCalls == 2,
+                    "An unchanged system format produces no rebuild and no diagnostic event");
+        audio.defaultOutput = [] { return QAudioDevice{}; };
+        audio.followDefaultOutput();
+        const auto before = probeCalls.load();
+        audio.requestOutputFormatProbe();
+        ok &= check(probeCalls.load() == before, "A missing output never schedules a probe");
+        audio.enableDiagnostics(false);
+        return ok;
     }
 
     static bool run() {
@@ -305,7 +381,9 @@ int main(int argc, char **argv) {
     const bool storage = storageRegression(fixture.path());
     const bool metrics = processMetricsRegression();
     const bool audio = AudioPlayerRegression::diagnosticRegression() && AudioPlayerRegression::run() &&
-                       AudioPlayerRegression::layoutRegression() && AudioPlayerRegression::sourceRegression();
+                       AudioPlayerRegression::layoutRegression() &&
+                       AudioPlayerRegression::outputFormatProbeRegression() &&
+                       AudioPlayerRegression::sourceRegression();
     qInfo() << "Portable storage, process metrics and default audio output regressions:"
             << (storage && metrics && audio ? "PASS" : "FAIL");
     return storage && metrics && audio ? 0 : 1;

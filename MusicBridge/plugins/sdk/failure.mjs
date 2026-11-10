@@ -23,6 +23,9 @@ export function safeLoginDetails(body, includePrevious = true) {
     if (includePrevious && body?.primaryFailure) {
         result.primaryFailure = safeLoginDetails(body.primaryFailure, false);
     }
+    if (typeof body?.authExpired === 'boolean') {
+        result.authExpired = body.authExpired;
+    }
     for (const name of ['retryable', 'writeAttempted']) {
         if (typeof body?.[name] === 'boolean') {
             result[name] = body[name];

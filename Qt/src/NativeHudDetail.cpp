@@ -110,14 +110,25 @@ void NativeHud::detail(double width, double opacity) {
     if (music.isLocal()) {
         quality = MusicPlayer::localQuality(item);
     }
-    const auto badgeProvider = music.isLocal() ? QStringLiteral("netease") : music.provider;
-    card.badgeKey = "quality:" + badgeProvider + "-" + quality;
-    const auto badge = quality.isEmpty() ? QImage() : m_host->image(card.badgeKey);
+    const auto qualityInfo = ProviderRegistry::instance().qualityDescription(music.provider, quality);
+    auto badgeId = qualityInfo["badge"].toString();
+    if (badgeId.isEmpty() && (quality == "sq" || quality == "hq" || quality == "hires")) {
+        badgeId = quality;
+    }
+    card.badgeKey =
+        badgeId.isEmpty() ? QString() : "quality:" + music.provider + ":" + badgeId;
+    const auto badge = quality.isEmpty() || card.badgeKey.isEmpty() ? QImage() : m_host->image(card.badgeKey);
     if (!badge.isNull()) {
         card.badgeWidth = std::min(22.0 * badge.width() / badge.height(), (usable - gap) / 2 - 12);
     }
     if (!quality.isEmpty()) {
-        card.quality = quality == "standard" ? "标准" : "高品质";
+        auto title = qualityInfo["title"].toString();
+        if (title.isEmpty()) {
+            title = ProviderRegistry::instance().qualityLabel(
+                music.provider, quality, quality == "standard" ? QStringLiteral("标准")
+                                                               : QStringLiteral("高品质"));
+        }
+        card.quality = title;
     }
     card.primaryActions = {{"▶ 播放歌曲", "music:play"}, {}, {}};
     const auto playlist = openedPlaylistContext();
@@ -126,12 +137,14 @@ void NativeHud::detail(double width, double opacity) {
         bool liked = (music.likedIDs && MusicData::indexOf(*music.likedIDs, item["id"]) >= 0) ||
                      MusicData::indexOfId(music.lists[1], item["id"].toString()) >= 0;
         QString label = liked ? "♥ 已喜欢" : "♡ 喜欢";
-        if (music.provider == "qq") {
+        if (!music.uid.isEmpty() && music.supportsOperation("subscriptionStatus")) {
             const auto state = music.subscriptionStates.value(item["key"].toString(), "unknown");
-            liked = state == "subscribed";
-            label = liked ? "♥ 已喜欢" : "♡ 喜欢";
-            if (state == "unknown") {
-                label = "红心 / 核实后切换";
+            if (state == "subscribed") {
+                liked = true;
+                label = "♥ 已喜欢";
+            } else if (state == "not-subscribed") {
+                liked = false;
+                label = "♡ 喜欢";
             }
         }
         card.primaryActions[1] = {label, "music:like"};
@@ -443,9 +456,8 @@ void NativeHud::container(double width, double opacity) {
                                                           : QString("专辑");
         QString label = "＋ 收藏" + subject;
         bool subscribed = false;
-        if (music.provider == "qq") {
+        if (!music.uid.isEmpty() && music.supportsOperation("subscriptionStatus")) {
             const auto state = music.subscriptionStates.value(item["key"].toString(), "unknown");
-            label = "＋ 收藏 / 核实";
             if (state == "subscribed") {
                 label = "✓ 已收藏" + subject;
                 subscribed = true;

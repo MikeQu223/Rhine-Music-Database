@@ -34,7 +34,7 @@ void NativeHud::discoverPanel(double x, double y, double width) {
     }
     if (discover.tab == "categories") {
         QJsonArray categories;
-        if (music.provider != "qq" || discover.categories.isEmpty()) {
+        if (discover.categories.isEmpty()) {
             categories.append(QJsonObject{{"id", "全部"}, {"name", "全部"}});
         }
         for (const auto &category : discover.categories) {

@@ -9,16 +9,23 @@ const fields = [
     'schemaVersion',
     'id',
     'display',
+    'variants',
+    'variantPreference',
     'capabilities',
+    'operations',
     'library',
+    'search',
     'quality',
     'login',
     'discover',
     'lyrics',
     'media',
+    'externalPlayback',
+    'cache',
+    'runtime',
+    'attribution',
     'links',
     'strings',
-    'search',
 ];
 
 fs.mkdirSync(output, { recursive: true });
@@ -39,13 +46,16 @@ if (fs.existsSync(source)) {
         if (!manifest.id) {
             throw new Error('Plugin manifest is missing id: ' + manifestFile);
         }
+        if (manifest.id === 'local' || manifest.id === 'siren') {
+            continue;
+        }
         const descriptor = {};
         for (const field of fields) {
             if (manifest[field] !== undefined) {
                 descriptor[field] = manifest[field];
             }
         }
-        descriptor.schemaVersion ??= 1;
+        descriptor.schemaVersion = 2;
         fs.writeFileSync(
             path.join(output, manifest.id + '.json'),
             JSON.stringify(descriptor, null, 4) + '\n',

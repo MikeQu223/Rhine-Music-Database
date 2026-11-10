@@ -166,7 +166,8 @@ class AudioPlayerRegression {
             return true;
         }
         AudioPlayer audio;
-        audio.control("volume", 0); // Exercise the production path without audible output.
+        // 静音跑生产路径，避免测试发出可听声音。
+        audio.control("volume", 0);
         audio.enableDiagnostics(true);
         bool ok = check(audio.load(QUrl::fromLocalFile(path).toString(), true), "Production fixture loads");
         ok &= check(waitFor([&] { return audio.pcm.position() >= 200 || audio.pcm.failed(); }) &&
@@ -208,8 +209,9 @@ class AudioPlayerRegression {
         audio.control("stop");
         ok &= check(!audio.pcm.active() && audio.diagnosticState()["outputClientFormatStatus"].toInt() == 0,
                     "Stop releases the output and clears current format observations");
-        // A deliberately bursty producer exercises queue pressure independently
-        // of QMediaPlayer's ordinary pacing. PCM is never silently discarded.
+        // 故意让生产者突发：一次 1 秒推送要同时超过 sink 环形缓冲（250 ms）
+        // 和背压高水位（200 ms），才能覆盖与 QMediaPlayer 常规节奏无关的队列压力。
+        // PCM 不得被静默丢弃。
         AudioPcmOutput burst;
         burst.setVolume(0);
         burst.reset(endpoint, AudioOutputFormat::Policy::System);

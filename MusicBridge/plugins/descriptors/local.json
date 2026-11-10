@@ -1,5 +1,5 @@
 {
-    "schemaVersion": 1,
+    "schemaVersion": 2,
     "id": "local",
     "display": {
         "name": "本地音乐",
@@ -33,8 +33,20 @@
         "playlistManagement": {}
     },
     "library": {
-        "columns": ["本地检索", "全部歌曲", "文件夹", "本地专辑", "本地歌手"],
-        "sourceOrder": [0, 1, 2, 3, 4],
+        "columns": [
+            "本地检索",
+            "全部歌曲",
+            "文件夹",
+            "本地专辑",
+            "本地歌手"
+        ],
+        "sourceOrder": [
+            0,
+            1,
+            2,
+            3,
+            4
+        ],
         "lanes": 5,
         "identityProviders": [],
         "likedModel": "local",
@@ -65,12 +77,24 @@
         "labels": {
             "standard": "标准",
             "hq": "高品质 / HQ",
+            "lossless": "无损",
             "sq": "无损 / SQ",
             "hires": "高解析无损 / Hi-Res",
-            "jymaster": "超清母带",
-            "jyeffect": "高清臻音",
-            "sky": "沉浸环绕声",
+            "master": "母带",
             "original": "本地文件"
+        },
+        "localFilenameTiers": {
+            "[master]": "master",
+            "jymaster": "master",
+            "母带": "master",
+            "master quality": "master",
+            "[atmos]": "hires",
+            "[sky]": "hires",
+            "全景声": "hires",
+            "沉浸": "hires",
+            "dolby atmos": "hires",
+            "jyeffect": "hq",
+            "臻音": "hq"
         }
     },
     "discover": {
@@ -79,7 +103,9 @@
         "tabs": []
     },
     "lyrics": {
-        "sources": ["local"],
+        "sources": [
+            "local"
+        ],
         "fallback": [],
         "matchMode": "strict",
         "rateLimitMs": 0,

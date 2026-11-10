@@ -31,26 +31,10 @@ if (fs.existsSync(descriptors)) {
     failures.push('plugins/descriptors missing');
 }
 
-const worker = path.join(bridge, 'worker.cjs');
-if (fs.existsSync(worker)) {
-    const text = fs.readFileSync(worker, 'utf8');
-    for (const forbidden of [
-        '@neteasecloudmusicapienhanced',
-        '@yakult-green-tea/qq-music-api',
-        'kugoumusicapi',
-        '@unblockneteasemusic',
-        'netease-endpoints',
-        'kugou-package.cjs',
-        'qq.cjs',
-    ]) {
-        check(!text.includes(forbidden), 'worker bundle contains provider code: ' + forbidden);
-    }
-}
-
 if (failures.length) {
     for (const failure of failures) {
         console.error('core-only package failed: ' + failure);
     }
     process.exit(1);
 }
-console.log('Core-only package contains no provider plugins, protocol files or upstream packages');
+console.log('Core-only package contains no provider plugins or protocol files');

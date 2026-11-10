@@ -1,5 +1,6 @@
 #include "NativeHud.h"
 #include "MusicData.h"
+#include "ProviderRegistry.h"
 #include <QPointer>
 #include <QUrl>
 #include <QTimer>
@@ -70,13 +71,13 @@ void NativeHud::musicAction(const QStringList &parts, const QString &value) {
     const auto name = parts.value(1);
     const auto last = parts.constLast().toInt();
     // 塞壬唱片本地操作
-    if (music.isSiren() && QStringList{"login", "logout", "qr", "login-method", "kugou-edition", "subscribe",
+    if (music.isSiren() && QStringList{"login", "logout", "qr", "login-method", "variant", "subscribe",
                                        "refresh-personal", "activate"}
                                .contains(name)) {
         return;
     }
     if (music.isLocal() &&
-        QStringList{"login", "logout", "qr", "login-method", "kugou-edition", "like", "like-current",
+        QStringList{"login", "logout", "qr", "login-method", "variant", "like", "like-current",
                     "subscribe", "create-playlist", "delete-playlist", "rename-playlist", "add-to-playlist",
                     "playlist-pick", "refresh-personal", "activate", "remove-track"}
             .contains(name)) {
@@ -267,7 +268,7 @@ void NativeHud::musicAction(const QStringList &parts, const QString &value) {
         pageResults(name == "page-prev" ? -1 : 1);
     } else if (name == "play") {
         music.play();
-    } else if (name == "preview" && music.provider == "qq") {
+    } else if (name == "preview" && ProviderRegistry::instance().capability(music.provider, "preview", false)) {
         music.player.play(music.current, std::nullopt, std::nullopt, true);
     } else if (name == "play-next" || name == "enqueue") {
         const auto key = music.uid + ":" + PlaybackQueue::identity(music.current);
@@ -368,9 +369,6 @@ void NativeHud::musicAction(const QStringList &parts, const QString &value) {
     } else if (name.startsWith("project-")) {
         static const QHash<QString, QString> links{
             {"project-home", "https://github.com/MikeQu223/Rhine-Music-Database"},
-            {"project-author", "https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced"},
-            {"project-player", "https://github.com/yakult-green-tea/qq-music-api"},
-            {"project-kugou", "https://github.com/MakcRe/KuGouMusicApi"},
             {"project-rhine", "https://github.com/LBEILC/RhineLabUI"},
             {"project-lyricsx", "https://github.com/MxIris-LyricsX-Project/LyricsX"},
             {"project-lyricskit", "https://github.com/MxIris-LyricsX-Project/LyricsKit"},
@@ -380,27 +378,34 @@ void NativeHud::musicAction(const QStringList &parts, const QString &value) {
         }
     } else if (name == "login") {
         openModal("login");
-        music.loginMethod = "qr";
+        const auto methods = ProviderRegistry::instance().loginMethods(music.provider);
+        music.loginMethod = methods.isEmpty() ? QStringLiteral("qr")
+                                              : methods.first().toObject()["id"].toString("qr");
         music.startLogin();
-    } else if (name == "kugou-edition") {
+    } else if (name == "variant") {
         const QPointer<NativeHud> owner(this);
         const auto token = m_searchGeneration;
-        music.switchProvider("kugou", parts.value(2), [owner, token](bool ok) {
+        music.switchProvider(music.provider, parts.value(2), [owner, token](bool ok) {
             if (ok && owner && owner->modal == "login" && owner->m_searchGeneration == token) {
                 owner->m_music->startLogin();
             }
         });
     } else if (name == "login-method") {
         const auto method = parts.value(2);
-        const bool supported = method == "qr" || (music.provider == "netease" && method == "phone") ||
-                               (music.provider == "qq" && method == "wechat");
-        if (!supported) {
+        QJsonObject descriptor;
+        for (const auto &value : ProviderRegistry::instance().loginMethods(music.provider)) {
+            if (value.toObject()["id"].toString() == method) {
+                descriptor = value.toObject();
+                break;
+            }
+        }
+        if (descriptor.isEmpty()) {
             return;
         }
         music.cancelLogin();
         music.loginMethod = method;
         music.loginStatus.clear();
-        if (QStringList{"qr", "wechat"}.contains(music.loginMethod)) {
+        if (descriptor["type"].toString() == "qr") {
             music.startLogin();
         }
     } else if (name == "refresh-personal") {
@@ -440,6 +445,8 @@ void NativeHud::musicAction(const QStringList &parts, const QString &value) {
                 owner->leaveDirectory();
             });
         };
+        confirmMessage.clear();
+        confirmLabel.clear();
         openModal("confirm");
     } else if (name == "rename-playlist") {
         if (music.directory && music.canEditPlaylist(music.directory->item)) {

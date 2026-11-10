@@ -79,8 +79,8 @@ function readJson(file) {
 }
 
 function validateDescriptor(descriptor, file) {
-    if (descriptor.schemaVersion !== 1) {
-        problem(file, 'schemaVersion must be 1');
+    if (descriptor.schemaVersion !== 2) {
+        problem(file, 'schemaVersion must be 2');
     }
     if (!/^[a-z0-9-]{1,40}$/.test(descriptor.id || '')) {
         problem(file, 'invalid id');

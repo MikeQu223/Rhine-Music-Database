@@ -5,7 +5,7 @@
     "type": "object",
     "additionalProperties": true,
     "properties": {
-        "schemaVersion": { "const": 1 },
+        "schemaVersion": { "const": 2 },
         "item": { "$ref": "#/$defs/musicEntity" },
         "page": { "$ref": "#/$defs/page" },
         "detail": { "$ref": "#/$defs/detail" },
@@ -150,7 +150,13 @@
                 "bitrate": { "type": "number", "minimum": 0 },
                 "sampleRate": { "type": "number", "minimum": 0 },
                 "bitDepth": { "type": "integer", "minimum": 0 },
-                "tier": { "enum": ["auto", "standard", "hq", "lossless", "hires", "master", "original"] },
+                "tier": {
+                    "enum": ["auto", "standard", "hq", "lossless", "hires", "master", "original"]
+                },
+                "type": { "type": "string", "maxLength": 40 },
+                "extName": { "type": "string", "maxLength": 40 },
+                "br": { "type": "number", "minimum": 0 },
+                "size": { "type": "number", "minimum": 0 },
                 "providerTier": { "type": "string", "maxLength": 40 },
                 "qualityId": { "type": "string", "maxLength": 40 },
                 "trial": { "type": "boolean" },
@@ -194,13 +200,13 @@
             }
         },
         "account": {
-            "type": "array",
-            "minItems": 2,
-            "maxItems": 2,
-            "items": [
-                { "type": "string", "minLength": 1, "maxLength": 200 },
-                { "type": "string", "minLength": 1, "maxLength": 200 }
-            ]
+            "type": "object",
+            "required": ["uid", "nickname"],
+            "additionalProperties": true,
+            "properties": {
+                "uid": { "type": "string", "minLength": 1, "maxLength": 200 },
+                "nickname": { "type": "string", "minLength": 1, "maxLength": 200 }
+            }
         },
         "capabilities": {
             "type": "object",
@@ -244,6 +250,7 @@
             "properties": {
                 "applied": { "type": "boolean" },
                 "state": { "type": "string", "maxLength": 40 },
+                "message": { "type": "string", "maxLength": 500 },
                 "item": { "$ref": "#/$defs/musicEntity" },
                 "countDelta": { "type": "integer" }
             }

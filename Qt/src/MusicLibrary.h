@@ -89,6 +89,7 @@ class MusicLibrary : public QObject {
     QJsonArray libraryItems() const;
     QString libraryName() const;
     QVector<int> sourceOrder() const;
+    bool laneVisible(int lane) const;
     int libraryTotal() const;
     int libraryIndex() const;
     QString providerName() const;
@@ -160,7 +161,7 @@ class MusicLibrary : public QObject {
     QString keyword;
     QString status = "输入关键词检索音乐";
     QString provider;
-    QString kugouEdition;
+    QString providerVariant;
     QString uid;
     QString nickname = "未登录";
     QHash<QString, QString> identityNames;
@@ -202,6 +203,7 @@ class MusicLibrary : public QObject {
     void refreshAccountFeatures();
     bool canEditPlaylist(const QJsonObject &value) const;
     bool canMutate(const QString &route) const;
+    bool supportsOperation(const QString &operation) const;
     QStringList searchHistory;
     QStringList suggestions;
     QString groupName;

@@ -74,6 +74,9 @@ struct Globals {
     PackedMatrix emitterInverse;
     QVector4D opticalLight;
     QVector4D emissionColor;
+    // 法线图集的实际位宽（x=1 表示 RGBA8）。着色器据此决定是否乘回 4.0/0.25，
+    // 与 C++ 的纹理格式共用同一个运行时判定，不再依赖编译宏。
+    QVector4D normalParams;
 #if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
     PackedMatrix previousViewProjection;
     PackedMatrix currentViewProjection;
@@ -91,9 +94,9 @@ struct Instance {
 #endif
 };
 #if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
-static_assert(sizeof(Globals) == 832);
+static_assert(sizeof(Globals) == 848);
 #else
-static_assert(sizeof(Globals) == 704);
+static_assert(sizeof(Globals) == 720);
 #endif
 static_assert(sizeof(Surface) == 128);
 #if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
@@ -330,6 +333,8 @@ class Renderer {
     QRhiSampler *volume = nullptr;
     /// 实际建出来的表面图集格式（ETC2 RGB8 / BC7 / RGBA8），只用于 TEXDIAG 诊断。
     QString surfaceAtlasFormat = QStringLiteral("RGBA8");
+    /// 法线图集按文件字节数判定为 RGBA8；传给着色器决定是否乘回 4.0/0.25。
+    bool normalAtlasRgba8 = false;
     Target color, target;
     QRhiResourceUpdateBatch *updates = nullptr;
     QHash<QString, QRhiGraphicsPipeline *> pipelines;
@@ -801,20 +806,9 @@ class Renderer {
                    "262144 (RGBA16F). Re-bake with scripts/bake-archive-lighting.py.",
                    static_cast<long long>(normalByteCount));
         }
-        // 纹理格式跟着文件走，但着色器是按宏解码的（RGBA8 要乘回 4.0 / 0.25）。
-        // 两者不一致只会偏色、不会崩，所以用警告而不是 qFatal——崩溃比偏色更糟。
-#if defined(RHINE_NORMAL_RGBA8)
-        constexpr bool shaderNormalRgba8 = true;
-#else
-        constexpr bool shaderNormalRgba8 = false;
-#endif
-        if (shaderNormalRgba8 != normalRgba8) {
-            qWarning("法线图集位宽与着色器宏不一致：文件 %lld 字节（%s），着色器按 %s 解码，"
-                     "画面颜色会偏。重烘焙时把 RHINE_BAKE_NORMAL_RGBA8 与 CMake 的 "
-                     "RHINE_ANDROID_NORMAL_RGBA8 设成同一个值。",
-                     static_cast<long long>(normalByteCount), normalRgba8 ? "RGBA8" : "RGBA16F",
-                     shaderNormalRgba8 ? "RGBA8" : "RGBA16F");
-        }
+        // 纹理格式与着色器解码都按文件字节数走：这里建对应格式的纹理，
+        // normalParams 把同一判定传给着色器，不再依赖编译宏。
+        normalAtlasRgba8 = normalRgba8;
         normalAtlas = texture({128, 256}, normalRgba8 ? QRhiTexture::RGBA8 : QRhiTexture::RGBA16F);
         upload(normalAtlas, normalBytes);
         white = texture({1, 1}, QRhiTexture::RGBA8);
@@ -1420,7 +1414,8 @@ class Renderer {
                 emitter.inverted(),
                 // 查看封面页不再叠加原版像素，光照强度无需再压低，否则整页偏暗发平。
                 {lightPower, 1.f, 0.62f, 0.f},
-                {1.f, 0.72f, 0.38f, 1.f}};
+                {1.f, 0.72f, 0.38f, 1.f},
+                {normalAtlasRgba8 ? 1.f : 0.f, 0.f, 0.f, 0.f}};
     }
     QVector3D dark(QString name) {
         static const QHash<QString, uint32_t> colors = {

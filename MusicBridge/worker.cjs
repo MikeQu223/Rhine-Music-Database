@@ -8,7 +8,10 @@ const path = require('node:path');
 const readline = require('node:readline');
 const { PluginRegistry } = require('./core/registry.cjs');
 const { createHost } = require('./core/host.cjs');
-const { errorBody, pluginMissing, routeInvalid, routeUnknown } = require('./core/errors.cjs');
+const { assertValid } = require('./plugins/sdk/models.cjs');
+const { errorBody, pluginMissing, providerUnsupported, routeInvalid, routeUnknown } = require(
+    './core/errors.cjs',
+);
 const pluginRegistry = new PluginRegistry(path.join(__dirname, 'local-plugins'), {
     userRoot: process.env.RHINE_USER_PLUGINS,
     disabled: String(process.env.RHINE_DISABLED_PLUGINS || '')
@@ -57,7 +60,17 @@ async function dispatchPluginNative(message, provider, operation, args) {
                 ...host.secretState(),
             };
         }
+        if (!pluginRegistry.supportsOperation(provider, operation)) {
+            return {
+                body: providerUnsupported(operation),
+                cookies: host.receivedCookies(),
+                ...host.secretState(),
+            };
+        }
         const value = await plugin.dispatchNative(operation, args);
+        if (operation !== 'request') {
+            assertValid(operation, value);
+        }
         if (events && ['playback', 'preview'].includes(operation)) {
             recordPluginDiagnostic(events, {
                 operation: 4,
@@ -122,6 +135,13 @@ async function dispatchRequest(message) {
         if (!provider || !operation) {
             return { body: routeInvalid(), cookies: [] };
         }
+        if (operation === 'route') {
+            const route = '/' + parts.slice(4).join('/');
+            if (route === '/') {
+                return { body: routeInvalid(), cookies: [] };
+            }
+            return dispatchPluginRoute(message, provider, route, message.params?.params || {});
+        }
         const host = createHost(message, dispatchRequest);
         try {
             const plugin = await pluginRegistry.load(provider, host);
@@ -132,15 +152,18 @@ async function dispatchRequest(message) {
                     ...host.secretState(),
                 };
             }
-            if (operation === 'route') {
-                const route = '/' + parts.slice(4).join('/');
-                if (route === '/') {
-                    return { body: routeInvalid(), cookies: host.receivedCookies() };
-                }
-                return dispatchPluginRoute(message, provider, route, message.params?.params || {});
+            if (!pluginRegistry.supportsOperation(provider, operation)) {
+                return {
+                    body: providerUnsupported(operation),
+                    cookies: host.receivedCookies(),
+                    ...host.secretState(),
+                };
             }
             const args = Array.isArray(message.params?.args) ? message.params.args : [];
             const value = await plugin.dispatchNative(operation, args);
+            if (operation !== 'request') {
+                assertValid(operation, value);
+            }
             return {
                 body: { code: 200, value: value ?? null },
                 cookies: host.receivedCookies(),
@@ -187,7 +210,7 @@ async function dispatchRequest(message) {
         if (typeof content !== 'string' || content.length > 1000000) {
             return { body: { code: 400, message: '本地歌词内容无效' }, cookies: [] };
         }
-        const result = require('./lyrics-format.cjs').normalizeLyrics('netease', { lrc: { lyric: content } });
+        const result = require('./lyrics-format.cjs').normalizeLyrics('local', { lrc: { lyric: content } });
         if (result.document) {
             result.document.source = 'local';
             if (encoding) {

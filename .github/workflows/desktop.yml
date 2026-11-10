@@ -381,7 +381,8 @@ jobs:
           path: generated/dxc
           key: dxc-win-${{ steps.dxc.outputs.rev }}-${{ steps.dxc.outputs.tools }}-${{ steps.dxc.outputs.signature }}
       - name: Build and deploy
-        run: npm run build
+        # 发布产物默认 core-only；先显式构建 full 仅用于完整回归。
+        run: npm run build -- --plugins=full
         env:
           QT_ROOT: ${{ env.QT_ROOT_DIR }}
       # 离线测试
@@ -412,9 +413,8 @@ jobs:
             npm test
             echo "::endgroup::"
           done
-      - name: Restore full artifact
-        if: runner.os == 'macOS'
-        run: npm run build
+      - name: Restore core-only artifact
+        run: npm run build -- --plugins=core
       - name: Verify core-only artifact
         run: |
           node scripts/package-core-only.cjs

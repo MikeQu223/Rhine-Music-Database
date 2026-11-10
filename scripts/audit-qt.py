@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""验证部署后的 Qt 应用，不读取用户凭据或访问网易云。"""
+"""验证部署后的 Qt 应用，不读取用户凭据或访问音乐服务平台。"""
 
 import json
 import os

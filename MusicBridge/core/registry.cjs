@@ -6,7 +6,7 @@ const { pathToFileURL } = require('node:url');
 const { PluginError } = require('./errors.cjs');
 
 // 与 plugins/sdk/contract-lock.json 的 apiVersion 保持同步。
-const HOST_API_VERSION = '1.0';
+const HOST_API_VERSION = '2.0';
 const API_VERSION = /^(\d+)\.(\d+)$/;
 const PROVIDER_ID = /^[a-z0-9-]{1,40}$/;
 
@@ -93,6 +93,9 @@ class PluginRegistry {
         if (typeof manifest.id !== 'string' || !PROVIDER_ID.test(manifest.id)) {
             return '插件 id 无效';
         }
+        if (manifest.id === 'local' || manifest.id === 'siren') {
+            return '插件 id 为保留 id';
+        }
         if (typeof manifest.version !== 'string' || !manifest.version) {
             return '插件版本无效';
         }
@@ -152,7 +155,7 @@ class PluginRegistry {
                     continue;
                 }
                 if (
-                    manifest.schemaVersion !== 1 ||
+                    manifest.schemaVersion !== 2 ||
                     !compatibleVersion(parseVersion(manifest.apiVersion), parseVersion(this.apiVersion))
                 ) {
                     this.problem(
@@ -220,6 +223,39 @@ class PluginRegistry {
             entry.manifest.operations?.[operation] === true ||
             entry.manifest.capabilities?.[operation] === true
         );
+    }
+
+    /** Native operation dispatch is allowlisted by manifest.operations only. */
+    supportsOperation(id, operation) {
+        const entry = this.entries.get(id);
+        return !!entry && entry.manifest.operations?.[operation] === true;
+    }
+
+    providerForRoute(route) {
+        const value = String(route || '');
+        if (value.startsWith('/native/') || value.startsWith('/plugin/')) {
+            const provider = value.split('/')[2] || '';
+            return this.entries.has(provider) ? provider : '';
+        }
+        const exact = this.legacy.get(value);
+        if (exact) {
+            return exact;
+        }
+        let match = '';
+        for (const [prefix, provider] of this.prefixes) {
+            if ((value === prefix || value.startsWith(prefix + '/')) && prefix.length > match.length) {
+                match = prefix;
+            }
+        }
+        return match ? this.prefixes.get(match) : '';
+    }
+
+    cachePolicy(id) {
+        return this.entries.get(id)?.manifest.cache || {};
+    }
+
+    credentialPolicy(id) {
+        return this.entries.get(id)?.manifest.credentials || {};
     }
 
     list() {

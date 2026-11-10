@@ -437,7 +437,7 @@ const QVector<SettingDescriptor> &descriptors() {
              .storage = StorageType::OnOff,
              .order = 155,
              .titleEn = "MUSIC VIDEO",
-             .titleZh = "自动播放关联 MV（网易云）",
+             .titleZh = "自动播放关联 MV",
              .description = "静音跟随音乐，支持独立窗口、全屏与透明度；Windows 可设为桌面壁纸。",
              .defaultValue = Off,
              .choices = onOffChoices(),
@@ -723,9 +723,6 @@ const QVector<SettingDescriptor> &descriptors() {
             const char *action;
             const char *label;
         } projects[] = {{"project-home", "music:project-home", "本项目 / Rhine Music Database"},
-                        {"project-author", "music:project-author", "网易云音乐 API / api-enhanced"},
-                        {"project-player", "music:project-player", "QQ 音乐 API / qq-music-api"},
-                        {"project-kugou", "music:project-kugou", "酷狗音乐 API / KuGouMusicApi"},
                         {"project-rhine", "music:project-rhine", "界面原项目 / RhineLabUI"},
                         {"project-lyricsx", "music:project-lyricsx", "歌词参考 / LyricsX"},
                         {"project-lyricskit", "music:project-lyricskit", "格式移植 / LyricsKit"},

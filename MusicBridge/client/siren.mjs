@@ -496,9 +496,10 @@ export class SirenAPI {
         return {
             url,
             type: format,
+            format,
             extName: format,
             quality: format === 'wav' ? 'flac' : '',
-            tier,
+            tier: tier || 'auto',
         };
     }
 
@@ -512,7 +513,7 @@ export class SirenAPI {
         if (!content.trim() || content.length > MAX_LYRIC_LENGTH) {
             return null;
         }
-        const result = normalizeLyrics('netease', { lrc: { lyric: content } });
+        const result = normalizeLyrics('siren', { lrc: { lyric: content } });
         if (!result?.document) {
             return null;
         }

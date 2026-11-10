@@ -66,7 +66,7 @@ double NativeHud::libraryToolbarActionWidth() const {
     if (m_music->editable()) {
         total += LibraryCreateWidth;
     }
-    if (m_music->provider == "qq") {
+    if (!m_music->isSiren() && !m_music->isLocal()) {
         total += (total > 0 ? LibraryActionGap : 0) + LibraryRefreshWidth;
     }
     return total > 0 ? total + LibraryActionGap : 0;
@@ -111,13 +111,13 @@ void NativeHud::libraryToolbar(double x, double y, double width) {
         libraryOutlineButton(create, QStringLiteral("创建歌单"), "music:create-playlist", 12, true);
         right = create.left() - LibraryActionGap;
     }
-    if (m_music->provider == "qq") {
+    if (!m_music->isSiren() && !m_music->isLocal()) {
         const QRectF refresh(right - LibraryRefreshWidth, y + LibraryBarTop, LibraryRefreshWidth,
                              LibraryBarHeight);
         libraryOutlineButton(refresh, QStringLiteral("刷新个人库"), "music:refresh-personal", 12);
     }
 
-    const QStringList filters = m_music->columns.mid(1, m_music->provider == "kugou" ? 3 : 4);
+    const QStringList filters = m_music->columns.mid(1);
     const auto selected = musicCollection - 1;
     double cursor = left;
     for (int index = 0; index < filters.size(); ++index) {
@@ -277,16 +277,17 @@ void NativeHud::loginPanel(double x, double y, double width) {
             methods.append(value.toObject());
         }
     }
-    if (music.provider == "kugou") {
-        const auto variants = registry.descriptor("kugou")["login"].toObject()["variants"].toArray();
+    const auto variants = registry.variants(music.provider);
+    if (!variants.isEmpty()) {
         for (int index = 0; index < variants.size(); ++index) {
-            const auto edition = variants.at(index).toString();
-            if (edition.isEmpty()) {
+            const auto variant = variants.at(index).toObject()["id"].toString();
+            if (variant.isEmpty()) {
                 continue;
             }
-            const auto label = registry.nameForVariant("kugou", edition);
-            button((music.kugouEdition == edition ? "✓ " : "") + label, x + 53 + index * 190, y + 207, 180,
-                   35, "music:kugou-edition:" + edition, 13);
+            const auto label = variants.at(index).toObject()["label"].toString(
+                registry.nameForVariant(music.provider, variant));
+            button((music.providerVariant == variant ? "✓ " : "") + label, x + 53 + index * 190, y + 207,
+                   180, 35, "music:variant:" + variant, 13);
         }
         methods.clear();
     }

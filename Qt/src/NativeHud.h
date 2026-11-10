@@ -89,6 +89,8 @@ class NativeHud : public QObject {
     QString formKind;
     QString formPID;
     QString confirmTitle;
+    QString confirmMessage;
+    QString confirmLabel;
     QString detailSort = "none";
     QString groupBy = "none";
     QString activeGroup;
@@ -167,6 +169,7 @@ class NativeHud : public QObject {
 
   signals:
     void localImportRequested(bool folder);
+    void pluginImportRequested();
     void mvRequested();
 
   private:

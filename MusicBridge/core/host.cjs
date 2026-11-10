@@ -6,6 +6,7 @@
  */
 function createHost(message, request, recordDiagnostic) {
     const cookies = { ...(message.cookies || {}) };
+    const env = { ...(message.env || {}) };
     const receivedCookies = [];
     const secretState = {};
 
@@ -28,7 +29,8 @@ function createHost(message, request, recordDiagnostic) {
     return {
         cookies: () => ({ ...cookies }),
         delay: (milliseconds, callback) => setTimeout(callback, milliseconds),
-        authenticated: () => true,
+        authenticated: () => message.authenticated !== false,
+        env: () => ({ ...env }),
         acceptCookies,
         request(route, params, callback) {
             Promise.resolve(request({ ...message, route, params, cookies: { ...cookies } })).then(

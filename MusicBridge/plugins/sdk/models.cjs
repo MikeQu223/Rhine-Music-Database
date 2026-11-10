@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * 统一模型轻量校验器（v1）。
+ * 统一模型轻量校验器（v2）。
  *
  * 不引入 JSON Schema 运行时依赖；只校验 core 需要的形状、长度和枚举。
  * 插件返回的原始平台字段不在校验范围内；平台差异应放在 extensions。
@@ -254,9 +254,9 @@ function checkLyrics(value, path) {
 }
 
 function checkAccount(value, path) {
-    check(Array.isArray(value) && value.length === 2, path, 'expected [id, nickname]');
-    checkString(value[0], path + '[0]', { min: 1, max: 200 });
-    checkString(value[1], path + '[1]', { min: 1, max: 200 });
+    checkObject(value, path);
+    checkString(value.uid, path + '.uid', { min: 1, max: 200 });
+    checkString(value.nickname, path + '.nickname', { min: 1, max: 200 });
 }
 
 function checkCapabilities(value, path) {
@@ -309,6 +309,7 @@ function checkMutation(value, path) {
     checkObject(value, path);
     check(isBoolean(value.applied), path + '.applied', 'expected boolean');
     optionalString(value.state, path + '.state', { max: 40 });
+    optionalString(value.message, path + '.message', { max: 500 });
     if (value.item !== undefined) {
         checkEntity(value.item, path + '.item');
     }
@@ -350,6 +351,8 @@ function validate(operation, value) {
     const path = operation;
     switch (operation) {
         case 'search':
+            checkPage(value, path, checkEntity);
+            break;
         case 'trackPage':
         case 'likedSongs':
             checkPage(value, path, checkTrack);
@@ -367,12 +370,26 @@ function validate(operation, value) {
             value.forEach((item, index) => checkTrack(item, path + '[' + index + ']'));
             break;
         case 'userPlaylists':
-            check(Array.isArray(value), path, 'expected array');
-            value.forEach((item, index) => checkPlaylist(item, path + '[' + index + ']'));
+            checkPage(value, path, checkPlaylist);
             break;
         case 'likedIDs':
         case 'suggest':
             checkStringArray(value, path);
+            break;
+        case 'categories':
+            check(Array.isArray(value), path, 'expected array');
+            value.forEach((item, index) => {
+                const itemPath = path + '[' + index + ']';
+                checkObject(item, itemPath);
+                checkString(item.id, itemPath + '.id', { min: 1, max: 200 });
+                checkString(item.name, itemPath + '.name', { min: 1, max: 200 });
+            });
+            break;
+        case 'likedState':
+            checkObject(value, path);
+            for (const [key, state] of Object.entries(value)) {
+                check(SUBSCRIPTION.has(state), path + '.' + key, 'invalid subscription status');
+            }
             break;
         case 'detail':
             checkDetail(value, path);
@@ -419,6 +436,10 @@ function validate(operation, value) {
             checkString(value, path, { max: 20000 });
             break;
         case 'mv':
+            if (value !== null) {
+                checkObject(value, path);
+            }
+            break;
         case 'mvVersions':
             checkObject(value, path);
             break;

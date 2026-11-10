@@ -1,4 +1,5 @@
 #include "AudioPlayer.h"
+#include "ProviderRegistry.h"
 #include <QUrl>
 #include <QMediaMetaData>
 #include <QMediaFormat>
@@ -6,9 +7,121 @@
 #include <QRegularExpression>
 #include <algorithm>
 #include <cmath>
+#include <condition_variable>
+#include <mutex>
+#include <thread>
+#include <utility>
 #if defined(Q_OS_WIN) && QT_VERSION < QT_VERSION_CHECK(6, 9, 0)
 #include <QtMultimedia/private/qaudiodevice_p.h>
 #endif
+
+namespace {
+// CoreAudio/WASAPI 不会在系统采样率变化时通知 Qt，播放中仍需低频兜底重读。
+constexpr qint64 OUTPUT_FORMAT_PROBE_INTERVAL_MS = 5000;
+// 观测值超过一个探测周期加余量后不再可信：期间可能已经 seek、暂停或重建过输出。
+constexpr qint64 OUTPUT_FORMAT_OBSERVATION_MAX_AGE_MS = 15000;
+}
+
+/**
+ * 系统输出格式的后台探测线程。
+ * Windows COM 与 CoreAudio HAL 调用最长可阻塞数百毫秒，不能占用音频泵线程；
+ * 工作线程只接收设备 id 与默认标记，绝不持有 QAudioDevice。
+ * 请求与结果都只保留最新一份，探测跟不上时丢弃过期数据而不是排队。
+ */
+class AudioPlayer::OutputFormatProbe {
+  public:
+    using Probe = std::function<AudioOutputFormat::SystemFormat(const QByteArray &, bool)>;
+    struct Observation {
+        QByteArray deviceId;
+        AudioOutputFormat::SystemFormat system;
+    };
+
+    OutputFormatProbe() {
+        m_thread = std::thread([this] { run(); });
+    }
+
+    ~OutputFormatProbe() {
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_stopping = true;
+        }
+        m_wake.notify_all();
+        if (m_thread.joinable()) {
+            m_thread.join();
+        }
+    }
+
+    void request(QByteArray deviceId, bool isDefault, Probe probe) {
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            if (m_stopping) {
+                return;
+            }
+            m_requestId = std::move(deviceId);
+            m_requestIsDefault = isDefault;
+            m_requestProbe = std::move(probe);
+            m_hasRequest = true;
+        }
+        m_wake.notify_one();
+    }
+
+    bool take(Observation &observation) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (!m_hasObservation) {
+            return false;
+        }
+        observation = std::move(m_observation);
+        m_observation = {};
+        m_hasObservation = false;
+        return true;
+    }
+
+  private:
+    void run() {
+        for (;;) {
+            QByteArray deviceId;
+            bool isDefault = false;
+            Probe probe;
+            {
+                std::unique_lock<std::mutex> lock(m_mutex);
+                m_wake.wait(lock, [this] { return m_hasRequest || m_stopping; });
+                if (m_stopping) {
+                    return;
+                }
+                deviceId = std::move(m_requestId);
+                m_requestId.clear();
+                isDefault = m_requestIsDefault;
+                probe = std::move(m_requestProbe);
+                m_requestProbe = {};
+                m_hasRequest = false;
+            }
+            if (!probe) {
+                continue;
+            }
+            auto system = probe(deviceId, isDefault);
+            {
+                std::lock_guard<std::mutex> lock(m_mutex);
+                if (m_stopping) {
+                    return;
+                }
+                m_observation.deviceId = std::move(deviceId);
+                m_observation.system = std::move(system);
+                m_hasObservation = true;
+            }
+        }
+    }
+
+    std::thread m_thread;
+    std::mutex m_mutex;
+    std::condition_variable m_wake;
+    QByteArray m_requestId;
+    bool m_requestIsDefault = false;
+    bool m_hasRequest = false;
+    Probe m_requestProbe;
+    Observation m_observation;
+    bool m_hasObservation = false;
+    bool m_stopping = false;
+};
 
 /**
  * 建立播放器与默认输出设备监听；不持久化设备 ID。
@@ -53,14 +166,18 @@ AudioPlayer::AudioPlayer(std::function<void()> changed) : playbackChanged(std::m
     pcmEnabled = mediaBackend.isEmpty() || mediaBackend == "ffmpeg";
     decodeClock.start();
     outputFormatClock.start();
+    // 平台格式探测走独立线程，播放器与 PCM 泵所在线程不做任何设备枚举。
+    outputFormatProbe = std::make_unique<OutputFormatProbe>();
     createPlayer();
     playbackWatchdog.setInterval(250);
     QObject::connect(&playbackWatchdog, &QTimer::timeout, &devices, [this] {
         checkPlaybackHealth();
-        // 系统采样率变化不会触发 Qt 的设备通知，播放中定期重读，避免链路停留在旧格式。
-        if (outputFormatClock.elapsed() >= 5000) {
+        // 后台结果只在主线程比较；比较与重建顺序保持原样。
+        applyPendingOutputFormatObservation();
+        // 系统采样率变化不会触发 Qt 的设备通知，播放中定期重读；实际平台调用在工作线程。
+        if (outputFormatClock.elapsed() >= OUTPUT_FORMAT_PROBE_INTERVAL_MS) {
             outputFormatClock.restart();
-            refreshOutputFormat();
+            requestOutputFormatProbe();
         }
     });
     QObject::connect(
@@ -283,7 +400,7 @@ void AudioPlayer::restorePlaybackPosition() {
  * 跟随系统默认设备，并在全部输出暂时消失时保留用户的播放意图。
  * 重连同一设备也重新绑定播放器；用户暂停或停止后不得因重连而自动播放。
  */
-void AudioPlayer::followDefaultOutput(bool refresh) {
+void AudioPlayer::followDefaultOutput(bool refresh, const AudioOutputFormat::SystemFormat *observedSystem) {
     const auto device = defaultOutput();
     if (diagnosticsEnabled && diagnosticEvent) {
         auto values = diagnosticState();
@@ -313,7 +430,8 @@ void AudioPlayer::followDefaultOutput(bool refresh) {
         if (!refresh) {
             return;
         }
-        const auto observed = AudioOutputFormat::systemFormat(device);
+        // 后台已经观测到变化时直接复用；设备通知路径仍在主线程现场探测。
+        const auto observed = observedSystem ? *observedSystem : AudioOutputFormat::systemFormat(device);
         const auto current = pcm.snapshot();
         if (current["outputSystemFormatStatus"].toInt() == observed.status &&
             current["outputSystemSampleRateHz"].toInt() == observed.format.sampleRate() &&
@@ -338,7 +456,7 @@ void AudioPlayer::followDefaultOutput(bool refresh) {
         observeDecodedBuffers();
         player->setPosition(previousPosition);
     }
-    pcm.reset(device, outputPolicy, wasUnavailable ? position : previousPosition);
+    pcm.reset(device, outputPolicy, wasUnavailable ? position : previousPosition, observedSystem);
     decoderThrottled = false;
     pcm.pause(!playbackRequested);
     // 排空期间重建输出会清掉 drain 状态；源已经结束时补发完成事件，否则 ended 永远不会递增。
@@ -363,22 +481,50 @@ void AudioPlayer::followDefaultOutput(bool refresh) {
     }
 }
 /**
- * 重读系统输出格式；CoreAudio/WASAPI 不会在设备采样率变化时通知 Qt，需要播放中定期调用。
- * 只有观测到的格式与当前输出记录不一致时才重建，避免无谓地重置 PCM 队列。
+ * 把系统格式重读交给后台线程。
+ * CoreAudio/WASAPI 不会在设备采样率变化时通知 Qt；主线程只拷贝设备 id 与探测函数，
+ * 平台枚举本身不在这里执行。
  */
-void AudioPlayer::refreshOutputFormat() {
-    if (outputUnavailable || output.device().isNull()) {
+void AudioPlayer::requestOutputFormatProbe() {
+    if (!outputFormatProbe) {
         return;
     }
-    const auto observed = AudioOutputFormat::systemFormat(output.device());
+    const auto device = output.device();
+    if (outputUnavailable || device.isNull()) {
+        return;
+    }
+    outputFormatProbe->request(device.id(), device.isDefault(), readSystemOutputFormat);
+}
+/**
+ * 消费后台最新观测值；只有观测到的格式与当前输出记录不一致时才重建，避免无谓重置 PCM 队列。
+ * 返回 false 表示这一拍没有可消费的结果。
+ */
+bool AudioPlayer::applyPendingOutputFormatObservation() {
+    if (!outputFormatProbe) {
+        return false;
+    }
+    OutputFormatProbe::Observation observation;
+    if (!outputFormatProbe->take(observation)) {
+        return false;
+    }
+    // 设备已经切换或消失、或者结果已经过时（暂停/seek 期间攒下的）时丢弃。
+    if (outputUnavailable || output.device().isNull() || observation.deviceId != output.device().id() ||
+        outputFormatClock.elapsed() > OUTPUT_FORMAT_OBSERVATION_MAX_AGE_MS) {
+        return true;
+    }
+    // status 0 表示这次平台读取失败；不能据此重建，保留当前输出等下一轮探测。
+    if (observation.system.status == 0) {
+        return true;
+    }
     const auto current = pcm.snapshot();
-    if (observed.status == current["outputSystemFormatStatus"].toInt() &&
-        observed.format.sampleRate() == current["outputSystemSampleRateHz"].toInt() &&
-        observed.format.channelCount() == current["outputSystemChannels"].toInt() &&
-        int(observed.format.sampleFormat()) == current["outputSystemSampleFormat"].toInt()) {
-        return;
+    if (observation.system.status == current["outputSystemFormatStatus"].toInt() &&
+        observation.system.format.sampleRate() == current["outputSystemSampleRateHz"].toInt() &&
+        observation.system.format.channelCount() == current["outputSystemChannels"].toInt() &&
+        int(observation.system.format.sampleFormat()) == current["outputSystemSampleFormat"].toInt()) {
+        return true;
     }
-    followDefaultOutput(true);
+    followDefaultOutput(true, &observation.system);
+    return true;
 }
 /**
  * 校验音源并交给系统解码播放，沿用原生状态和错误反馈。
@@ -390,27 +536,27 @@ bool AudioPlayer::load(QString input, bool offline, bool alternative, QString pr
     }
     QUrl url(input);
     const auto host = url.host();
-    const bool qq = provider == "qq" && (host == "qqmusic.qq.com" || host.endsWith(".qqmusic.qq.com"));
-    const bool kugou = provider == "kugou" && (host.endsWith(".kugou.com") || host.endsWith(".kugou.net"));
-    const bool siren = provider == "siren" && (host == "hycdn.cn" || host.endsWith(".hycdn.cn"));
-    const bool trusted =
-        qq || kugou || siren ||
-        (provider == "netease" && (host == "music.126.net" || host.endsWith(".music.126.net") ||
-                                   host == "music.163.com" || host.endsWith(".music.163.com")));
-    const QStringList providers{"qq.com", "gtimg.com", "kuwo.cn", "kugou.com", "migu.cn"};
+    const auto media = ProviderRegistry::instance().mediaPolicy(provider);
+    const auto matchesHost = [&host](const QJsonArray &values) {
+        for (const auto &value : values) {
+            const auto pattern = value.toString();
+            if (pattern == host || (pattern.startsWith("*.") && host.endsWith(pattern.mid(1)))) {
+                return true;
+            }
+        }
+        return false;
+    };
+    const bool trusted = matchesHost(media["hosts"].toArray());
     const bool alternateHost =
-        alternative && std::any_of(providers.begin(), providers.end(), [&](const auto &domain) {
-            return host == domain || host.endsWith("." + domain);
-        });
-    if ((offline || provider == "local")
-            ? !url.isLocalFile()
-            : (!(trusted || alternateHost) || !QStringList{"http", "https"}.contains(url.scheme()))) {
+        alternative && matchesHost(media["alternativeHosts"].toArray());
+    const bool httpAllowed =
+        media["allowHttp"].toBool() || media["schemePolicy"].toString() == "http-or-https";
+    const bool schemeAllowed =
+        url.scheme() == "https" || (url.scheme() == "http" && httpAllowed);
+    const auto localMode = offline || provider == "local";
+    if ((localMode && !url.isLocalFile()) || (!localMode && (!(trusted || alternateHost) || !schemeAllowed))) {
         diagnose("load-rejected");
         return false;
-    }
-    // 酷狗音源沿用上游返回的协议与签名地址
-    if (url.scheme() == "http" && !kugou) {
-        url.setScheme("https");
     }
     ++sourceSerial;
     backendFailureCategory = 0;
@@ -423,8 +569,7 @@ bool AudioPlayer::load(QString input, bool offline, bool alternative, QString pr
     } else if (url.scheme() == "http") {
         sourceKind = 2;
     }
-    sourceProvider = QStringList{"other", "netease", "qq", "kugou", "local", "siren"}.indexOf(provider);
-    sourceProvider = std::max(0, sourceProvider);
+    sourceProvider = ProviderRegistry::instance().diagnosticsOrdinal(provider, 0);
     decodedBuffers = 0;
     decodedBytes = 0;
     decodedFrames = 0;
@@ -716,6 +861,8 @@ void AudioPlayer::observeDecodedBuffers() {
 
 AudioPlayer::~AudioPlayer() {
     playbackWatchdog.stop();
+    // 先停探测线程再释放播放器与 PCM：退出最多等一次在途的平台调用。
+    outputFormatProbe.reset();
     releasePlayer();
 }
 

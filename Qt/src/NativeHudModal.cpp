@@ -1,6 +1,7 @@
 #include <QScopedValueRollback>
 #include <QtGlobal>
 #include "NativeHud.h"
+#include "PlatformFeatures.h"
 #include "ProviderRegistry.h"
 #include <algorithm>
 
@@ -42,9 +43,6 @@ QString modalTitle(const QString &modal, const MusicLibrary &music) {
     }
     if (modal == "login") {
         const auto &registry = ProviderRegistry::instance();
-        if (music.provider == "kugou" && music.kugouEdition == "lite") {
-            return "KUGOU CONCEPT LOGIN";
-        }
         return registry.label(music.provider) + " LOGIN";
     }
     return titles.value(modal, "MUSIC INDEX");
@@ -148,8 +146,26 @@ void NativeHud::modalDraw(double width) {
              dark ? QJsonArray{0.15, 0.15, 0.15, 1, "calibratedWhite"} : QJsonArray{0.929, 0.922, 0.894, 1});
         hits = {};
         m_modalControls = true;
-        const QStringList sources{"auto", "local", "netease", "qq", "kugou"};
-        const QStringList labels{"自动（本地优先）", "本地歌词", "网易云音乐", "QQ 音乐", "酷狗音乐"};
+        const QStringList sources = [&] {
+            QStringList values{"auto", "local"};
+            const auto &registry = ProviderRegistry::instance();
+            for (const auto &id : registry.ids()) {
+                if (id != "local" && registry.capability(id, "lyrics", false)) {
+                    values.append(id);
+                }
+            }
+            return values;
+        }();
+        const QStringList labels = [&] {
+            QStringList values{"自动（本地优先）", "本地歌词"};
+            const auto &registry = ProviderRegistry::instance();
+            for (const auto &id : registry.ids()) {
+                if (id != "local" && registry.capability(id, "lyrics", false)) {
+                    values.append(registry.name(id));
+                }
+            }
+            return values;
+        }();
         for (int index = 0; index < sources.size(); ++index) {
             const auto label =
                 (music.player.lyrics.localSource == sources[index] ? QStringLiteral("✓ ") : QString()) +
@@ -229,22 +245,26 @@ void NativeHud::modalBody(double x, double y, double usable) {
         pluginDetailPanel(x, y, usable);
     } else if (modal == "confirm") {
         limited(confirmTitle, x + 53, y + 260, 24, usable - 106, "demibold");
-        text(music.isLocal() ? "只移除本地索引，磁盘音乐文件保持原样。"
-                             : (music.isSiren() ? "只删除本机歌单，不会同步到塞壬唱片。"
-                                                : "此操作将同步至" + music.providerName() + "。"),
-             x + 53, y + 330, 16);
-        button("确认删除", x + 53, y + 450, 180, 45, "confirm:yes", 16);
+        const auto message =
+            confirmMessage.isEmpty()
+                ? (music.isLocal() ? QStringLiteral("只移除本地索引，磁盘音乐文件保持原样。")
+                                   : (music.isSiren() ? QStringLiteral("只删除本机歌单，不会同步到塞壬唱片。")
+                                                      : QStringLiteral("此操作将同步至") +
+                                                            music.providerName() + QStringLiteral("。")))
+                : confirmMessage;
+        text(message, x + 53, y + 330, 16);
+        button(confirmLabel.isEmpty() ? QStringLiteral("确认删除") : confirmLabel, x + 53, y + 450, 180, 45,
+               "confirm:yes", 16);
         button("取消", x + 270, y + 450, 150, 45, "close-modal", 16);
     } else if (modal == "playlist-picker") {
         text("选择我的歌单", x + 53, y + 240, 18);
-        if (music.provider == "qq" &&
-            std::none_of(music.lists[2].begin(), music.lists[2].end(),
+        if (std::none_of(music.lists[2].begin(), music.lists[2].end(),
                          [&music](QJsonValue value) { return music.canEditPlaylist(value.toObject()); })) {
             text("暂无可编辑的自建普通歌单，请先创建歌单。", x + 53, y + 320, 16);
         }
         for (int index = 0; index < 7 && listOffset + index < music.lists[2].size(); ++index) {
             const auto value = music.lists[2].at(listOffset + index).toObject();
-            if (music.provider == "qq" && !music.canEditPlaylist(value)) {
+            if (!music.canEditPlaylist(value)) {
                 continue;
             }
             button(fit(value["title"].toString(), 18, usable - 106), x + 53, y + 290 + index * 60,
@@ -259,7 +279,11 @@ void NativeHud::modalBody(double x, double y, double usable) {
             m_contentSink->field("submit", "提交歌单");
         }
         text(formKind == "create" ? "歌单名称" : "新歌单名称", x + 53, y + 240, 15);
-        text(music.provider == "qq" ? "1–20 字 / 按 ENTER 提交" : "按 ENTER 提交", x + 53, y + 420, 12);
+        const auto maximum = ProviderRegistry::instance()
+                                 .descriptor(music.provider)["library"]
+                                 .toObject()["playlistNameMaxLength"]
+                                 .toInt(100);
+        text(QStringLiteral("1–%1 字 / 按 ENTER 提交").arg(maximum), x + 53, y + 420, 12);
         limited(music.status, x + 53, y + 775, 12, usable - 106);
     } else if (modal == "local") {
         localPanel(x, y, usable);
@@ -375,8 +399,26 @@ void NativeHud::pluginsPanel(double x, double y, double width) {
         installedVersions.insert(value.toObject()["id"].toString(), value.toObject()["version"].toString());
     }
     text("插件市场 / MARKETPLACE", left, y + 205, 12, "demibold");
+#if !RHINE_MOBILE
+    button("导入文件夹", left + usable - 280, y + 195, 180, 30, "plugin:import", 12);
+#endif
     button("刷新", left + usable - 90, y + 195, 90, 30, "plugin:refresh", 12);
-    limited(marketplace["status"].toString("尚未读取插件市场"), left, y + 230, 11, usable - 110);
+    const auto installing = marketplace["installing"].toBool();
+    auto status = marketplace["status"].toString("尚未读取插件市场");
+    if (installing) {
+        status += "  " + QString::number(marketplace["installFilesDone"].toInt()) + "/" +
+                  QString::number(marketplace["installFilesTotal"].toInt()) + "  " +
+                  QString::number(marketplace["installSpeed"].toDouble() / (1024.0 * 1024.0), 'f', 1) +
+                  " MB/s";
+    }
+    limited(status, left, y + 230, 11, usable - 110);
+    if (installing) {
+        auto track = ink();
+        track[3] = 0.15;
+        const auto progress = qBound(0.0, marketplace["installProgress"].toDouble(), 1.0);
+        fill(left, y + 248, usable, 4, track);
+        fill(left, y + 248, usable * progress, 4, QJsonArray{0.835, 0.639, 0.282, 1});
+    }
     rule(left, y + 255, usable, 0.2);
     if (market.isEmpty()) {
         text("暂无可用插件", left, y + 285, 17, "demibold");
@@ -411,9 +453,16 @@ void NativeHud::pluginsPanel(double x, double y, double width) {
         text(fit(value["name"].toString(id), 16, usable * 0.45, "demibold"), left, row, 16, "demibold");
         limited(id + " / " + value["version"].toString() + " / " + value["publisher"].toString(),
                 left + usable * 0.46, row + 2, 11, usable * 0.3);
-        button("详情", left + usable - 250, row, 100, 34, "plugin:detail:" + id, 12);
-        button(value["enabled"].toBool() ? "禁用" : "启用", left + usable - 140, row, 120, 34,
-               "plugin:toggle:" + id, 12);
+        if (value["userInstalled"].toBool()) {
+            button("详情", left + usable - 360, row, 90, 34, "plugin:detail:" + id, 12);
+            button("卸载", left + usable - 260, row, 100, 34, "plugin:uninstall:" + id, 12);
+            button(value["enabled"].toBool() ? "禁用" : "启用", left + usable - 150, row, 140, 34,
+                   "plugin:toggle:" + id, 12);
+        } else {
+            button("详情", left + usable - 250, row, 100, 34, "plugin:detail:" + id, 12);
+            button(value["enabled"].toBool() ? "禁用" : "启用", left + usable - 140, row, 120, 34,
+                   "plugin:toggle:" + id, 12);
+        }
         rule(left, row + 45, usable, 0.12);
     }
     if (!pluginManagerMessage.isEmpty()) {
@@ -433,8 +482,9 @@ void NativeHud::pluginDetailPanel(double x, double y, double width) {
         text("插件不可用", left, y + 250, 20, "demibold");
         return;
     }
-    text(fit(detail["name"].toString(detail["id"].toString()), 26, usable, "demibold"), left, y + 220, 26,
-         "demibold");
+    text(fit(detail["display"].toObject()["name"].toString(detail["name"].toString(detail["id"].toString())),
+             26, usable, "demibold"),
+         left, y + 220, 26, "demibold");
     text(detail["id"].toString() + " / " + detail["version"].toString(), left, y + 260, 12, "regular", 0,
          muted);
     rule(left, y + 285, usable, 0.2);
@@ -461,11 +511,14 @@ void NativeHud::pluginDetailPanel(double x, double y, double width) {
         button(detail["enabled"].toBool() ? "禁用插件" : "启用插件", left, y + 620, 180, 44,
                "plugin:toggle:" + id, 15);
         button("回滚上一版本", left + 200, y + 620, 180, 44, "plugin:rollback:" + id, 15);
+        if (detail["userInstalled"].toBool()) {
+            button("卸载插件", left, y + 675, 180, 40, "plugin:uninstall:" + id, 14);
+        }
     } else {
         button("安装插件", left, y + 620, 180, 44, "plugin:market:" + id, 15);
     }
     if (!pluginManagerMessage.isEmpty()) {
-        limited(pluginManagerMessage, left, y + 700, 12, usable);
+        limited(pluginManagerMessage, left, y + (detail["userInstalled"].toBool() ? 735 : 700), 12, usable);
     }
 }
 
@@ -477,14 +530,13 @@ struct QualityDescription {
     QString badge;
 };
 const QHash<QString, QualityDescription> fallbackQualityDescriptions{
+    {"auto", {"自动", "AUTO", "由当前来源选择可用的最高音质", ""}},
     {"standard", {"标准", "STANDARD", "日常聆听，兼顾音质与数据流量", ""}},
-    {"higher", {"较高", "HIGH QUALITY", "提升声音细节，保持轻量传输", "hq"}},
-    {"exhigh", {"极高", "HIGH QUALITY", "更充分保留有损编码中的声音细节", "hq"}},
-    {"lossless", {"无损", "LOSSLESS / SQ", "无损编码，保留更完整的录音细节", "sq"}},
-    {"ape", {"无损 / APE", "LOSSLESS / APE", "以 APE 格式提供无损音源", "sq"}},
+    {"hq", {"高品质", "HIGH QUALITY", "更充分保留有损编码中的声音细节", "hq"}},
+    {"lossless", {"无损", "LOSSLESS", "无损编码，保留更完整的录音细节", "sq"}},
     {"hires", {"高解析无损", "HI-RES AUDIO", "还原高解析录音中的丰富层次", "hires"}},
-    {"jymaster", {"超清母带", "MASTER AUDIO", "聆听母带版本中的细腻质感与动态", "jymaster"}},
-    {"best", {"自动最高可用", "BEST AVAILABLE", "由平台选择当前可用的最高音质", ""}}};
+    {"master", {"母带", "MASTER", "聆听母带版本中的细腻质感与动态", ""}},
+    {"original", {"原始文件", "ORIGINAL", "直接播放来源提供的原始文件", ""}}};
 QualityDescription qualityDescriptionFor(const QString &provider, const QString &id) {
     const auto value = ProviderRegistry::instance().qualityDescription(provider, id);
     QualityDescription description{value["title"].toString(), value["caption"].toString(),
@@ -496,11 +548,14 @@ QualityDescription qualityDescriptionFor(const QString &provider, const QString 
 }
 QString qualityLabelFor(const QString &provider, const QString &id) {
     static const QHash<QString, QString> fallback{
-        {"standard", "标准"},     {"hq", "高品质 / HQ"},
-        {"sq", "无损 / SQ"},      {"hires", "高解析无损 / Hi-Res"},
-        {"jymaster", "超清母带"}, {"jyeffect", "高清臻音"},
-        {"sky", "沉浸环绕声"},
+        {"auto", "自动"},  {"standard", "标准"}, {"hq", "高品质"},
+        {"lossless", "无损"}, {"hires", "高解析无损"}, {"master", "母带"},
+        {"original", "原始文件"},
     };
+    const auto title = ProviderRegistry::instance().qualityDescription(provider, id)["title"].toString();
+    if (!title.isEmpty()) {
+        return title;
+    }
     return ProviderRegistry::instance().qualityLabel(provider, id, fallback.value(id, id));
 }
 }
@@ -529,7 +584,7 @@ void NativeHud::qualityChoice(const QString &id, int number, double x, double y,
     }
     hit(x, y, width, height, "quality:set:" + id, description.title);
     const auto index = QString::number(number).rightJustified(2, '0');
-    const auto key = "quality:" + m_music->provider + "-" + description.badge;
+    const auto key = "quality:" + m_music->provider + ":" + description.badge;
     const auto pixels = description.badge.isEmpty() ? QImage() : m_host->image(key);
     const auto badgeX = featured ? x + width - 104 : x + 30;
     const auto badgeY = featured ? y + 19 : y + 16;
@@ -608,7 +663,7 @@ void NativeHud::qualityPanel(double x, double y, double width) {
             if (id.isEmpty()) {
                 continue;
             }
-            const auto key = "quality:" + music.provider + "-" + id;
+            const auto key = "quality:" + music.provider + ":" + id;
             const auto pixels = m_host->image(key);
             const auto badgeX = left + 130 + index * 235;
             if (!pixels.isNull()) {

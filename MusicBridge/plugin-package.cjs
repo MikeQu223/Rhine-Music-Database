@@ -142,6 +142,9 @@ function validateManifest(manifest) {
     if (!/^[a-z0-9-]{1,40}$/.test(String(manifest.id || ''))) {
         throw new Error('Invalid plugin id');
     }
+    if (manifest.id === 'local' || manifest.id === 'siren') {
+        throw new Error('Reserved plugin id');
+    }
     if (typeof manifest.version !== 'string' || !manifest.version) {
         throw new Error('Plugin version is missing');
     }
@@ -220,14 +223,30 @@ function installPackage(buffer, options) {
 }
 
 function rollbackPackage(id, plugins) {
+    if (!/^[a-z0-9-]{1,40}$/.test(String(id || ''))) {
+        throw new Error('Invalid plugin id');
+    }
     const root = path.resolve(plugins);
     const target = path.join(root, id);
     const backup = path.join(root, '.backup-' + id);
     if (!fs.existsSync(backup)) {
         throw new Error('No backup available for ' + id);
     }
-    fs.rmSync(target, { recursive: true, force: true });
-    fs.renameSync(backup, target);
+    const staging = path.join(root, '.rollback-' + id + '-' + crypto.randomUUID());
+    let moved = false;
+    if (fs.existsSync(target)) {
+        fs.renameSync(target, staging);
+        moved = true;
+    }
+    try {
+        fs.renameSync(backup, target);
+        fs.rmSync(staging, { recursive: true, force: true });
+    } catch (error) {
+        if (moved) {
+            fs.renameSync(staging, target);
+        }
+        throw error;
+    }
     return target;
 }
 

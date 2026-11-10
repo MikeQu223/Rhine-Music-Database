@@ -16,8 +16,8 @@ if (!win && !mac && !linux) {
 }
 const python = process.env.PYTHON || (win ? 'python' : 'python3');
 const nodeName = win ? 'node.exe' : 'node';
-// core-only 产物不打包任何第三方平台插件；默认 full；也可只打包指定插件。
-const flavor = process.argv.slice(2).find((value) => value.startsWith('--plugins=')) || '--plugins=full';
+// core-only 产物不打包任何第三方平台插件，干净安装默认不带插件；需要时显式 --plugins=full。
+const flavor = process.argv.slice(2).find((value) => value.startsWith('--plugins=')) || '--plugins=core';
 const flavorValue = flavor.slice('--plugins='.length);
 let pluginIds = null;
 if (flavorValue === 'core') {
@@ -63,7 +63,7 @@ function npmVersion() {
 }
 
 /**
- * npm 11.6 起默认拒绝安装 remote 类型的依赖，而锁定的酷狗 SDK 正是 codeload tarball。
+ * npm 11.6 起默认拒绝安装 remote 类型的依赖，而部分插件锁定的上游 SDK 正是 codeload tarball。
  * 只对声明在根 package.json 的远程来源放行，旧版 npm 不传该参数。
  */
 function npmRemoteArgs() {
@@ -97,8 +97,6 @@ function prepareResources() {
     for (const file of fs.readdirSync('Assets/fonts')) {
         fs.copyFileSync(path.join('Assets/fonts', file), path.join('output/resources', file));
     }
-
-    fs.cpSync('Assets/quality', 'output/resources/quality', { recursive: true });
 
     run(process.execPath, ['scripts/check-music-upstream.cjs']);
     const bridge = 'output/resources/MusicBridge';

@@ -469,9 +469,8 @@ if(ANDROID)
         list(APPEND RHINE_OPTICAL_SHADER_DEFINES RHINE_OPTICAL_QUAD_FOLD=1)
     endif()
     # 法线响应在 Android 上烘焙成 8 位 UNORM（RHINE_BAKE_NORMAL_RGBA8=1），逐像素带宽
-    # 减半——夜间要采两次，等于每片元省 8 B。着色器要按同样比例乘回，所以这个宏既是
-    # shader define 也是 C++ define（见 Qt/Android.cmake），二者必须与烘焙开关一致。
-    # 关掉要同时改三处：烘焙环境变量、这里的 option、Qt/Android.cmake。
+    # 减半——夜间要采两次，等于每片元省 8 B。着色器解码由运行时 Globals.normalParams
+    # 决定，不再依赖这个宏；option/define 保留为 Android 构建标记。
     option(RHINE_ANDROID_NORMAL_RGBA8 "Bake the normal response atlas as RGBA8 on Android" ON)
     if(RHINE_ANDROID_NORMAL_RGBA8)
         list(APPEND RHINE_OPTICAL_SHADER_DEFINES RHINE_NORMAL_RGBA8=1)
@@ -719,7 +718,8 @@ qt_add_executable(
     Qt/src/AudioPlayer.cpp
     Qt/src/AudioSpectrum.cpp
     Qt/src/HttpAudioStream.cpp
-    Qt/src/ProcessMetrics.cpp)
+    Qt/src/ProcessMetrics.cpp
+    Qt/src/ProviderRegistry.cpp)
 target_include_directories(RhinePlatformRegression PRIVATE Qt/src)
 target_link_libraries(RhinePlatformRegression PRIVATE RhineAudioOutput Qt6::Core Qt6::Gui Qt6::Multimedia
                                                       Qt6::Network Qt6::MultimediaPrivate)
@@ -841,7 +841,7 @@ endif()
 add_test(NAME qt_linux_display_regression COMMAND RhineLinuxDisplayRegression)
 
 qt_add_executable(RhineAudioStreamRegression Qt/tests/AudioStreamChecks.cpp Qt/src/AudioPlayer.cpp
-                  Qt/src/AudioSpectrum.cpp Qt/src/HttpAudioStream.cpp)
+                  Qt/src/AudioSpectrum.cpp Qt/src/HttpAudioStream.cpp Qt/src/ProviderRegistry.cpp)
 target_include_directories(RhineAudioStreamRegression PRIVATE Qt/src)
 target_link_libraries(RhineAudioStreamRegression PRIVATE RhineAudioOutput Qt6::Core Qt6::Multimedia
                                                          Qt6::Network)
@@ -850,7 +850,8 @@ if(MSVC)
 endif()
 add_test(NAME qt_audio_stream_regression COMMAND RhineAudioStreamRegression)
 qt_add_executable(RhineAudioOutputRegression Qt/tests/AudioOutputChecks.cpp Qt/src/AudioPlayer.cpp
-                  Qt/src/AudioSpectrum.cpp Qt/src/HttpAudioStream.cpp Qt/src/PlaybackDiagnostics.cpp)
+                  Qt/src/AudioSpectrum.cpp Qt/src/HttpAudioStream.cpp Qt/src/PlaybackDiagnostics.cpp
+                  Qt/src/ProviderRegistry.cpp)
 target_link_libraries(RhineAudioOutputRegression PRIVATE RhineAudioOutput Qt6::Network)
 if(MSVC)
     target_compile_options(RhineAudioOutputRegression PRIVATE /utf-8)

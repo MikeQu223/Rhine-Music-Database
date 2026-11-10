@@ -19,7 +19,7 @@ const installedPlugins = fs.existsSync(pluginRoot)
           )
           .map((entry) => entry.name)
     : [];
-const fullPlugins = ['netease', 'qq', 'kugou'].every((id) => installedPlugins.includes(id));
+const fullPlugins = installedPlugins.length > 0;
 const coreOnly = installedPlugins.length === 0;
 // 统一使用 python3：多数发行版不再提供 python 命令。
 const python = process.env.PYTHON || (win ? 'python' : 'python3');

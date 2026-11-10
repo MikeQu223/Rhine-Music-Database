@@ -1,5 +1,5 @@
 /**
- * Rhine Music Database Registry 契约 v1。
+ * Rhine Music Database Registry 契约 v2。
  *
  * Registry 是唯一知道 provider ID 的基础设施；Qt 业务层只通过 Registry
  * 获取 descriptor/能力，不得比较 provider 字符串。
@@ -13,7 +13,9 @@
  */
 
 import type {
-    ProviderAdapter,
+    ExternalPlayback,
+    PluginRuntime,
+    ProviderCache,
     ProviderCapabilities,
     ProviderDiscover,
     ProviderDisplay,
@@ -25,16 +27,13 @@ import type {
     ProviderManifest,
     ProviderMedia,
     ProviderQuality,
+    ProviderRuntimeConfig,
+    ProviderSearch,
+    ProviderVariant,
 } from './port';
 
 export type ProviderStatus =
-    | 'missing'
-    | 'bundled'
-    | 'installed'
-    | 'disabled'
-    | 'incompatible'
-    | 'quarantined'
-    | 'failed';
+    'missing' | 'bundled' | 'installed' | 'disabled' | 'incompatible' | 'quarantined' | 'failed';
 
 export type ProviderSource = 'bundled' | 'installed';
 
@@ -51,16 +50,24 @@ export interface ProviderRegistration {
  * 它不包含入口、hash、许可证等安装元数据。
  */
 export interface ProviderDescriptor {
-    schemaVersion: 1;
+    schemaVersion: 2;
     id: ProviderId;
     display: ProviderDisplay;
+    variants?: ProviderVariant[];
+    variantPreference?: string;
     capabilities: ProviderCapabilities;
+    operations?: Record<string, boolean>;
     library?: ProviderLibrary;
+    search?: ProviderSearch;
     quality?: ProviderQuality;
     login?: ProviderLogin;
     discover?: ProviderDiscover;
     lyrics?: ProviderLyrics;
     media?: ProviderMedia;
+    externalPlayback?: ExternalPlayback;
+    cache?: ProviderCache;
+    runtime?: ProviderRuntimeConfig;
+    attribution?: string;
     links?: ProviderLinks;
     strings?: Record<string, string>;
 }
@@ -73,10 +80,10 @@ export interface ProviderRegistry {
     descriptors(): ProviderDescriptor[];
 
     /** 获取已加载的适配器；未加载/不可用时返回 null。 */
-    get(id: ProviderId): ProviderAdapter | null;
+    get(id: ProviderId): PluginRuntime | null;
 
     /** 获取适配器；不可用时抛 ProviderUnavailableError。 */
-    require(id: ProviderId): ProviderAdapter;
+    require(id: ProviderId): PluginRuntime;
 
     /** 默认 provider；没有可用 provider 时返回 null，不回退到某个平台。 */
     default(): ProviderId | null;

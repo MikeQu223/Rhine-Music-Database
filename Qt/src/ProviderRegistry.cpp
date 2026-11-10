@@ -1,19 +1,59 @@
 #include "ProviderRegistry.h"
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonDocument>
+#include <QRegularExpression>
 #include <algorithm>
 
 namespace {
 const QStringList descriptorFields{
-    "schemaVersion", "id",     "display", "capabilities", "library", "quality", "login",
-    "discover",      "lyrics", "media",   "links",        "strings", "search",
+    "schemaVersion", "id",        "display",     "variants", "variantPreference",
+    "capabilities",  "operations", "library",     "quality",  "login",
+    "discover",      "lyrics",     "media",       "externalPlayback", "cache",
+    "runtime",       "attribution", "links",      "strings",   "search",
 };
 bool validDescriptor(const QJsonObject &value) {
-    return value["schemaVersion"].toInt(1) == 1 && !value["id"].toString().isEmpty() &&
+    return value["schemaVersion"].toInt(2) == 2 && !value["id"].toString().isEmpty() &&
            value["display"].isObject() && value["capabilities"].isObject();
 }
-} // namespace
+bool compatiblePluginApi(const QString &version) {
+    static const QRegularExpression pattern("^(\\d+)\\.(\\d+)$");
+    const auto match = pattern.match(version);
+    return match.hasMatch() && match.captured(1).toInt() == 2 && match.captured(2).toInt() <= 0;
+}
+bool safePluginFile(const QString &file) {
+    return !file.isEmpty() && !QDir::isAbsolutePath(file) && !file.contains("..") &&
+           !file.contains('\\');
+}
+bool validManifest(const QJsonObject &manifest) {
+    if (manifest["schemaVersion"].toInt() != 2 || manifest["version"].toString().isEmpty() ||
+        !compatiblePluginApi(manifest["apiVersion"].toString())) {
+        return false;
+    }
+    const auto entry = manifest["entry"].toObject()["file"].toString();
+    if (!safePluginFile(entry) || !manifest["display"].isObject() ||
+        !manifest["capabilities"].isObject()) {
+        return false;
+    }
+    const auto routes = manifest["routes"].toObject();
+    for (const auto *key : {"legacyRoutes", "prefixes"}) {
+        const auto values = routes[key];
+        if (values.isUndefined()) {
+            continue;
+        }
+        if (!values.isArray()) {
+            return false;
+        }
+        for (const auto &value : values.toArray()) {
+            if (!value.isString() || !value.toString().startsWith('/')) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+}
 
 ProviderRegistry &ProviderRegistry::instance() {
     static ProviderRegistry registry;
@@ -26,6 +66,8 @@ void ProviderRegistry::load(const QString &root, const QString &userRoot, const 
     }
     m_descriptors.clear();
     m_manifests.clear();
+    m_legacy.clear();
+    m_prefixes.clear();
     m_disabled.clear();
     for (const auto &id : disabled) {
         m_disabled.insert(id);
@@ -35,6 +77,7 @@ void ProviderRegistry::load(const QString &root, const QString &userRoot, const 
     loadManifestFallback(userRoot);
     loadDirectory(m_root + "/MusicBridge/plugins/descriptors", false);
     loadManifestFallback(m_root + "/MusicBridge/local-plugins");
+    indexRoutes();
     // 构建产物缺失时仍保证 core 自带来源可用；插件 descriptor 存在时不会被覆盖。
     addBuiltin("siren", "塞壬唱片", "MONSTER SIREN", "官网曲库", "MONSTER SIREN", 0);
     addBuiltin("local", "本地音乐", "LOCAL", "文件夹管理 · 导入与索引 · 本地检索 · 播放", "LOCAL LIBRARY", 4);
@@ -117,7 +160,7 @@ QString ProviderRegistry::fallbackId(const QString &exclude) const {
 }
 
 bool ProviderRegistry::capability(const QString &id, const QString &key, bool fallback) const {
-    const auto value = m_descriptors.value(id)["capabilities"].toObject()[key];
+    const auto value = m_descriptors.value(id)["capabilities"].toObject().value(key);
     return value.isBool() ? value.toBool() : fallback;
 }
 
@@ -134,6 +177,17 @@ QStringList ProviderRegistry::columns(const QString &id) const {
 QVector<int> ProviderRegistry::sourceOrder(const QString &id) const {
     QVector<int> values;
     for (const auto &value : m_descriptors.value(id)["library"].toObject()["sourceOrder"].toArray()) {
+        if (value.isDouble()) {
+            values.append(value.toInt());
+        }
+    }
+    return values;
+}
+
+QVector<int> ProviderRegistry::visibleLanes(const QString &id) const {
+    QVector<int> values;
+    const auto lanes = m_descriptors.value(id)["library"].toObject()["visibleLanes"].toArray();
+    for (const auto &value : lanes) {
         if (value.isDouble()) {
             values.append(value.toInt());
         }
@@ -181,7 +235,7 @@ QJsonArray ProviderRegistry::qualityExtras(const QString &id) const {
 }
 
 QString ProviderRegistry::qualityLabel(const QString &id, const QString &key, const QString &fallback) const {
-    const auto value = m_descriptors.value(id)["quality"].toObject()["labels"].toObject()[key];
+    const auto value = m_descriptors.value(id)["quality"].toObject()["labels"].toObject().value(key);
     return value.isString() ? value.toString() : fallback;
 }
 
@@ -190,7 +244,7 @@ bool ProviderRegistry::qualityBadgeBackground(const QString &id) const {
 }
 
 int ProviderRegistry::maxQueryLength(const QString &id, int fallback) const {
-    const auto value = m_descriptors.value(id)["search"].toObject()["maxQueryLength"];
+    const auto value = m_descriptors.value(id)["search"].toObject().value("maxQueryLength");
     return value.isDouble() ? value.toInt() : fallback;
 }
 
@@ -218,6 +272,125 @@ QJsonObject ProviderRegistry::stringTable(const QString &id) const {
 
 QString ProviderRegistry::text(const QString &id, const QString &key) const {
     return stringTable(id)[key].toString();
+}
+
+QString ProviderRegistry::providerForRoute(const QString &route) const {
+    if (route.startsWith("/native/") || route.startsWith("/plugin/")) {
+        const auto id = route.section('/', 2, 2);
+        return m_descriptors.contains(id) ? id : QString();
+    }
+    const auto legacy = m_legacy.value(route);
+    if (!legacy.isEmpty()) {
+        return legacy;
+    }
+    QString matched;
+    QString provider;
+    for (auto it = m_prefixes.begin(); it != m_prefixes.end(); ++it) {
+        if ((route == it.key() || route.startsWith(it.key() + "/")) && it.key().size() > matched.size()) {
+            matched = it.key();
+            provider = it.value();
+        }
+    }
+    return provider;
+}
+
+QJsonObject ProviderRegistry::cachePolicy(const QString &id) const {
+    return m_manifests.value(id)["cache"].toObject();
+}
+
+QJsonObject ProviderRegistry::credentialPolicy(const QString &id) const {
+    return m_manifests.value(id)["credentials"].toObject();
+}
+
+QJsonObject ProviderRegistry::runtimeConfig(const QString &id) const {
+    return m_manifests.value(id)["runtime"].toObject();
+}
+
+QJsonObject ProviderRegistry::externalPlayback(const QString &id) const {
+    const auto manifest = m_manifests.value(id);
+    return manifest["externalPlayback"].isObject() ? manifest["externalPlayback"].toObject()
+                                                    : m_descriptors.value(id)["externalPlayback"].toObject();
+}
+
+QJsonObject ProviderRegistry::mediaPolicy(const QString &id) const {
+    const auto manifest = m_manifests.value(id);
+    return manifest["media"].isObject() ? manifest["media"].toObject()
+                                         : m_descriptors.value(id)["media"].toObject();
+}
+
+QJsonArray ProviderRegistry::variants(const QString &id) const {
+    const auto manifest = m_manifests.value(id);
+    const auto credentials = manifest["credentials"].toObject();
+    if (credentials["variants"].isArray()) {
+        return credentials["variants"].toArray();
+    }
+    return m_descriptors.value(id)["variants"].toArray();
+}
+
+QString ProviderRegistry::variantPreference(const QString &id) const {
+    const auto credentials = m_manifests.value(id)["credentials"].toObject();
+    return credentials["variantPreference"].toString(
+        m_descriptors.value(id)["variantPreference"].toString());
+}
+
+int ProviderRegistry::diagnosticsOrdinal(const QString &id, int fallback) const {
+    const auto runtime = m_manifests.value(id)["runtime"].toObject();
+    return runtime["diagnosticsOrdinal"].toInt(
+        m_descriptors.value(id)["runtime"].toObject()["diagnosticsOrdinal"].toInt(fallback));
+}
+
+namespace {
+QStringList mediaHosts(const QJsonObject &media, const char *key) {
+    QStringList values;
+    for (const auto &value : media[key].toArray()) {
+        if (value.isString()) {
+            values.append(value.toString());
+        }
+    }
+    return values;
+}
+
+QStringList allMediaHosts(const QHash<QString, QJsonObject> &descriptors, const char *key) {
+    QStringList values;
+    for (const auto &descriptor : descriptors) {
+        for (const auto &host : mediaHosts(descriptor["media"].toObject(), key)) {
+            if (!values.contains(host)) {
+                values.append(host);
+            }
+        }
+    }
+    return values;
+}
+}
+
+QStringList ProviderRegistry::coverHosts() const {
+    return allMediaHosts(m_descriptors, "coverHosts");
+}
+
+QStringList ProviderRegistry::playbackHosts() const {
+    return allMediaHosts(m_descriptors, "hosts");
+}
+
+QStringList ProviderRegistry::alternativeHosts() const {
+    return allMediaHosts(m_descriptors, "alternativeHosts");
+}
+
+void ProviderRegistry::indexRoutes() {
+    m_legacy.clear();
+    m_prefixes.clear();
+    for (auto it = m_manifests.begin(); it != m_manifests.end(); ++it) {
+        const auto routes = it.value()["routes"].toObject();
+        for (const auto &route : routes["legacyRoutes"].toArray()) {
+            if (route.isString() && !m_legacy.contains(route.toString())) {
+                m_legacy.insert(route.toString(), it.key());
+            }
+        }
+        for (const auto &route : routes["prefixes"].toArray()) {
+            if (route.isString() && !m_prefixes.contains(route.toString())) {
+                m_prefixes.insert(route.toString(), it.key());
+            }
+        }
+    }
 }
 
 void ProviderRegistry::loadDirectory(const QString &directory, bool overwrite) {
@@ -255,7 +428,8 @@ void ProviderRegistry::loadManifestFallback(const QString &directory) {
     }
     const auto entries = dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
     for (const auto &entry : entries) {
-        if (entry.fileName() == "sdk" || entry.fileName() == "node_modules") {
+        if (entry.fileName().startsWith('.') || entry.fileName() == "sdk" ||
+            entry.fileName() == "node_modules") {
             continue;
         }
         QFile handle(entry.absoluteFilePath() + "/manifest.json");
@@ -264,7 +438,10 @@ void ProviderRegistry::loadManifestFallback(const QString &directory) {
         }
         const auto manifest = QJsonDocument::fromJson(handle.readAll()).object();
         const auto id = manifest["id"].toString();
-        if (id.isEmpty() || m_disabled.contains(id)) {
+        if (id.isEmpty() || id == "local" || id == "siren" || m_disabled.contains(id) ||
+            !validManifest(manifest) ||
+            !QFileInfo(entry.absoluteFilePath() + "/" + manifest["entry"].toObject()["file"].toString())
+                 .isFile()) {
             continue;
         }
         if (m_descriptors.contains(id)) {
@@ -282,7 +459,7 @@ void ProviderRegistry::loadManifestFallback(const QString &directory) {
                 value[field] = manifest[field];
             }
         }
-        value["schemaVersion"] = 1;
+        value["schemaVersion"] = 2;
         if (validDescriptor(value)) {
             m_descriptors.insert(id, value);
         }
@@ -305,7 +482,7 @@ void ProviderRegistry::addBuiltin(const QString &id, const QString &name, const 
         defaultQuality = "original";
     }
     m_descriptors.insert(
-        id, QJsonObject{{"schemaVersion", 1},
+        id, QJsonObject{{"schemaVersion", 2},
                         {"id", id},
                         {"display", QJsonObject{{"name", name},
                                                 {"label", label},

@@ -12,6 +12,47 @@ class PluginError extends Error {
     }
 }
 
+/** 只复制插件 Error 上可直接展示的诊断字段，避免认证记录或原始响应外泄。 */
+function safeDetails(source) {
+    const result = {};
+    if (!source || typeof source !== 'object') {
+        return result;
+    }
+    for (const key of ['failureStage', 'failureReason', 'errorKey', 'upstreamErrorKey']) {
+        if (typeof source[key] === 'string' && ERROR_KEY.test(source[key])) {
+            result[key] = source[key];
+        }
+    }
+    for (const key of [
+        'retryAfterMs',
+        'upstreamHttpStatus',
+        'upstreamCode',
+        'upstreamGlobalCode',
+        'upstreamSubCode',
+    ]) {
+        if (typeof source[key] === 'number' && Number.isFinite(source[key])) {
+            result[key] = source[key];
+        }
+    }
+    for (const key of ['authExpired', 'retryable', 'writeAttempted']) {
+        if (typeof source[key] === 'boolean') {
+            result[key] = source[key];
+        }
+    }
+    if (source.verification === 'unconfirmed') {
+        result.verification = 'unconfirmed';
+    }
+    for (const key of ['lastFailure', 'primaryFailure']) {
+        if (source[key] && typeof source[key] === 'object') {
+            const nested = safeDetails(source[key]);
+            if (Object.keys(nested).length) {
+                result[key] = nested;
+            }
+        }
+    }
+    return result;
+}
+
 function errorBody(error, fallbackMessage = '插件请求失败') {
     const failure = error?.body && typeof error.body === 'object' ? error.body : {};
     let code = 503;
@@ -22,11 +63,12 @@ function errorBody(error, fallbackMessage = '插件请求失败') {
     }
     const body = {
         ...failure,
+        ...safeDetails(error),
         code,
         message: failure.message || error?.message || fallbackMessage,
     };
-    if (typeof error?.errorKey === 'string' && ERROR_KEY.test(error.errorKey)) {
-        body.errorKey = error.errorKey;
+    if (typeof body.errorKey === 'string' && !ERROR_KEY.test(body.errorKey)) {
+        delete body.errorKey;
     }
     return body;
 }
@@ -43,4 +85,17 @@ function routeInvalid() {
     return errorBody(new PluginError(400, 'route.invalid', '插件路由无效'));
 }
 
-module.exports = { PluginError, errorBody, pluginMissing, routeInvalid, routeUnknown };
+function providerUnsupported(operation) {
+    return errorBody(
+        new PluginError(400, 'provider.unsupported', '插件不支持该接口：' + String(operation || '')),
+    );
+}
+
+module.exports = {
+    PluginError,
+    errorBody,
+    pluginMissing,
+    providerUnsupported,
+    routeInvalid,
+    routeUnknown,
+};

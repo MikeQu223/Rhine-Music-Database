@@ -1,31 +1,31 @@
 /**
- * Rhine Music Database 插件 Port v1。
+ * Rhine Music Database 插件 Port v2。
  *
  * 这是 core 与插件之间的唯一领域契约。Qt 业务层只依赖本文件定义的
- * Port、统一模型和 Caps；不得依赖任何平台字段或原始路由。
+ * Port、统一模型和 Capabilities；不得依赖任何平台字段或原始路由。
  *
  * 设计约束：
  * - 所有模型字段都是 core 语义；平台差异放 extensions，key 必须带插件前缀。
  * - 音质用不透明 qualityId + 归一化 tier；core 不做平台音质翻译。
- * - 喜欢状态统一为 likedState；不暴露 subscriptionStatus/likedIDs 差异。
- * - 登录统一为 login.*；不暴露二维码/短信/QQ/微信分支。
+ * - 喜欢状态统一为 likedState；不暴露平台内部状态字段。
+ * - 登录统一为 login.*；不暴露二维码/短信/平台渠道分支。
  * - 原始路由只在插件内部使用，不暴露给 Qt。
  */
 
 export type ProviderId = string;
 export type EntityKind = 'song' | 'album' | 'artist' | 'playlist' | 'mv';
-export type LikeState = 'liked' | 'not-liked' | 'unknown';
+export type LikeState = 'subscribed' | 'not-subscribed' | 'unknown';
 export type QualityTier = 'auto' | 'standard' | 'hq' | 'lossless' | 'hires' | 'master' | 'original';
 
 export interface ProviderManifest {
-    schemaVersion: 1;
+    schemaVersion: 2;
     apiVersion: string;
     id: ProviderId;
     version: string;
     kind?: 'official' | 'third-party' | 'builtin';
     publisher?: string;
     requiresHost?: string;
-    entry: { file: string; sha256: string; size: number };
+    entry: { file: string; sha256?: string; size?: number };
     files?: Array<{ path: string; sha256: string; size: number }>;
     routes?: {
         prefixes?: string[];
@@ -33,13 +33,8 @@ export interface ProviderManifest {
         legacyRoutes?: string[];
     };
     operations?: Record<string, boolean>;
-    credentials?: {
-        namespace: string;
-        shape: 'opaque';
-        secretState?: boolean;
-        deviceState?: boolean;
-        variants?: string[];
-    };
+    credentials?: ProviderCredentials;
+    runtime?: ProviderRuntimeConfig;
     display?: ProviderDisplay;
     library?: ProviderLibrary;
     search?: ProviderSearch;
@@ -49,12 +44,65 @@ export interface ProviderManifest {
     capabilities?: ProviderCapabilities;
     lyrics?: ProviderLyrics;
     media?: ProviderMedia;
+    externalPlayback?: ExternalPlayback;
     network?: ProviderNetwork;
     cache?: ProviderCache;
     limits?: ProviderLimits;
     upstream?: Array<Record<string, unknown>>;
     strings?: Record<string, string>;
     links?: ProviderLinks;
+}
+
+export interface ProviderVariant {
+    id: string;
+    label: string;
+}
+
+export type AuthPredicate =
+    | { cookie: string; nonEmpty?: boolean }
+    | { secret: string; nonEmpty?: boolean; kind?: 'string' | 'number' | 'positiveInteger' | 'object' | 'array' | 'nonEmpty' }
+    | { allOf: AuthPredicate[] }
+    | { anyOf: AuthPredicate[] };
+
+export interface ProviderCredentials {
+    namespace: string;
+    shape: 'opaque';
+    variants?: ProviderVariant[];
+    variantPreference?: string;
+    secretState?: boolean;
+    deviceState?: boolean;
+    deviceFile?: string;
+    inject?: Record<string, { secret: string; object?: boolean }>;
+    responseSecrets?: Record<string, string>;
+    auth?: {
+        anyOf?: AuthPredicate[];
+        expiredCodes?: number[];
+    };
+    legacy?: {
+        cookies?: Record<string, string>;
+        secrets?: Record<string, string>;
+        keychainAccounts?: string[];
+        default?: boolean;
+    };
+}
+
+export interface ProviderRuntimeConfig {
+    hosting?: Array<'module' | 'worker' | 'process'>;
+    mobileBundled?: boolean;
+    sourceEntry?: string;
+    bundled?: boolean;
+    diagnosticsOrdinal?: number;
+    env?: Record<string, string>;
+}
+
+export interface ExternalPlayback {
+    type: 'url-scheme';
+    scheme: string;
+    payload?: string;
+    encoding?: 'none' | 'percent' | 'base64';
+    application?: { bundleId?: string; name?: string; missingMessage?: string };
+    successMessage?: string;
+    failureMessage?: string;
 }
 
 export interface ProviderDisplay {
@@ -98,19 +146,35 @@ export interface ProviderQuality {
         featured?: boolean;
     }>;
     aliases?: Record<string, string>;
+    badges?: Record<string, string>;
+    descriptions?: Record<string, Record<string, unknown>>;
+    labels?: Record<string, string>;
+    featured?: string[];
+    extras?: Array<Record<string, unknown>>;
+    badgeBackground?: boolean;
+    localFilenameTiers?: Record<string, QualityTier>;
+}
+
+export interface ProviderLoginMethod {
+    id: string;
+    type: 'qr' | 'sms' | 'password' | 'token';
+    label: string;
+    channel?: string;
+    phonePattern?: string;
+    countryCode?: string;
+    resendCooldownMs?: number;
+    flow?: {
+        send?: string;
+        submit?: string;
+        codePattern?: string;
+        resendCooldownMs?: number;
+        captcha?: boolean;
+    };
 }
 
 export interface ProviderLogin {
     required?: boolean;
-    methods: Array<{
-        id: string;
-        type: 'qr' | 'sms' | 'password' | 'token';
-        label: string;
-        channel?: string;
-        phonePattern?: string;
-        countryCode?: string;
-        resendCooldownMs?: number;
-    }>;
+    methods: ProviderLoginMethod[];
     variants?: string[];
     pollIntervalMs?: number;
     pollTimeoutMs?: number;
@@ -160,6 +224,12 @@ export interface ProviderMedia {
     coverHosts?: string[];
     allowHttp?: boolean;
     schemePolicy?: 'https' | 'http-or-https';
+    cover?: {
+        transform?: 'none' | 'query';
+        key?: string;
+        value?: string;
+        removeKeys?: string[];
+    };
 }
 
 export interface ProviderNetwork {
@@ -170,9 +240,14 @@ export interface ProviderNetwork {
 }
 
 export interface ProviderCache {
-    namespace: string;
+    namespace?: string;
+    version?: string;
     ttlByOperation?: Record<string, number>;
+    ttlByRoute?: Record<string, number>;
     diskOperations?: string[];
+    disk?: 'none' | 'guest' | 'account';
+    maxEntries?: number;
+    invalidateOn?: Array<'login' | 'logout' | 'mutation' | 'variant'>;
 }
 
 export interface ProviderLimits {
@@ -189,6 +264,7 @@ export interface ProviderLinks {
     webTemplates?: Record<string, string>;
     officialAppUrl?: string;
     officialLabel?: string;
+    projects?: Array<{ label: string; url: string }>;
 }
 
 export interface EntityRef {
@@ -311,7 +387,11 @@ export type Detail = [MusicEntity, Track[], string[]];
 export interface PlaybackSource {
     url: string;
     format?: string;
+    type?: string;
+    extName?: string;
     bitrate?: number;
+    br?: number;
+    size?: number;
     sampleRate?: number;
     bitDepth?: number;
     tier: QualityTier;
@@ -345,7 +425,7 @@ export interface LyricsDocument {
     plainText?: string;
 }
 
-export type Account = [id: string, nickname: string];
+export type Account = { uid: string; nickname: string };
 
 export interface Capabilities extends ProviderCapabilities {
     loginMethods?: string[];
@@ -358,18 +438,12 @@ export interface VipStatus {
 
 export type SubscriptionStatus = 'subscribed' | 'not-subscribed' | 'unknown';
 
-export interface MutationAction {
-    action: string;
-    target?: EntityRef;
-    values?: Record<string, unknown>;
-    requestId?: string;
-}
-
 export interface MutationResult {
     applied: boolean;
     state?: LikeState | SubscriptionStatus | string;
     item?: MusicEntity;
     countDelta?: number;
+    message?: string;
 }
 
 export interface ProviderErrorShape {
@@ -388,40 +462,6 @@ export interface ProviderErrorShape {
     retryable?: boolean;
     writeAttempted?: boolean;
     verification?: 'unconfirmed';
-}
-
-export interface SearchQuery {
-    text: string;
-    kind: 'song' | 'album' | 'artist' | 'playlist';
-    offset?: number;
-}
-
-export interface PageQuery {
-    offset?: number;
-    category?: string;
-    area?: string;
-}
-
-export interface LoginFlow {
-    begin(options: { method: string; channel?: string }): Promise<LoginSession>;
-    poll(sessionId: string): Promise<LoginPollResult>;
-    cancel(sessionId: string): Promise<void>;
-    sms?: {
-        send(phone: string): Promise<{ retryAfterMs?: number }>;
-        verify(phone: string, code: string): Promise<LoginPollResult>;
-    };
-}
-
-export interface LoginSession {
-    sessionId: string;
-    qr?: { kind: 'content' | 'image'; value: string };
-    expiresAt?: number;
-}
-
-export interface LoginPollResult {
-    state: 'waiting' | 'scanned' | 'confirmed' | 'expired' | 'error';
-    account?: Account;
-    message?: string;
 }
 
 export interface Health {
@@ -475,45 +515,56 @@ export interface PluginStorage {
 }
 
 export interface PluginDiagnostics {
-    record(fields: Record<string, number | boolean | string>): void;
+    record(fields: Record<string, number | boolean>): void;
+}
+
+export type SearchKind = 'song' | 'album' | 'artist' | 'playlist';
+
+export interface NativeLoginSession {
+    token: string;
+    qrText?: string;
+    qrImage?: string;
+    pollIntervalMs?: number;
+}
+
+export interface NativeLoginPoll {
+    code?: number;
+    status?: 'waiting' | 'scanned' | 'confirmed' | 'expired';
+    account?: Account;
+    message?: string;
 }
 
 export interface PluginHost {
     manifest: ProviderManifest;
+    cookies(): Record<string, unknown>;
+    acceptCookies(values: string): void;
+    receivedCookies(): string[];
+    secretState(): Record<string, unknown>;
+    delay(milliseconds: number, callback: () => void): void;
+    authenticated(): boolean;
+    env(): Record<string, string>;
     request(
         route: string,
-        params?: Record<string, unknown>,
-        options?: RequestOptions,
-    ): Promise<ProviderResponse>;
-    http(request: HttpRequest): Promise<HttpResponse>;
-    credentials: CredentialStore;
-    secretState: SecretStateStore;
-    storage: PluginStorage;
-    deviceStatePath(): string;
-    tempDir(): string;
-    variant(): string | null;
-    authenticated(): boolean;
-    delay(milliseconds: number): Promise<void>;
-    log(level: 'debug' | 'info' | 'warn' | 'error', event: string, fields?: Record<string, unknown>): void;
+        params: Record<string, unknown>,
+        callback: (raw: string, error: string) => void,
+    ): void;
     diagnostics: PluginDiagnostics;
-    signal: AbortSignal;
-    registerCleanup(fn: () => void | Promise<void>): void;
-    onDispose(fn: () => void | Promise<void>): void;
 }
 
 /**
  * 插件实现的最小入口。所有 operation 都是可选的；未实现时由 host 根据
  * capabilities 返回 400/501，不静默回退到其他 provider。
+ * 原生 operation 使用位置参数，host 不会在参数末尾追加回调。
  */
 export interface ProviderAdapter {
-    search?(query: SearchQuery): Promise<Page<Track>>;
-    suggest?(query: string): Promise<string[]>;
+    search?(text: string, kind: SearchKind, offset?: number): Promise<Page<MusicEntity>>;
+    suggest?(text: string): Promise<string[]>;
     resolveLink?(text: string): Promise<EntityRef | null>;
 
     songs?(ids: string[]): Promise<Track[]>;
     detail?(ref: EntityRef): Promise<Detail>;
-    artistAlbums?(id: string, page?: PageQuery): Promise<Page<Album>>;
-    trackPage?(ref: EntityRef, page?: PageQuery): Promise<Page<Track>>;
+    artistAlbums?(id: string, offset?: number): Promise<Page<Album>>;
+    trackPage?(ref: EntityRef, offset?: number): Promise<Page<Track>>;
     catalog?(): Promise<Page<MusicEntity>>;
 
     playback?(ref: Track, qualityId: string, alternative: boolean): Promise<PlaybackSource>;
@@ -521,20 +572,24 @@ export interface ProviderAdapter {
     lyrics?(ref: Track): Promise<LyricsDocument | null>;
 
     account?(): Promise<Account | null>;
-    login?: LoginFlow;
+    loginBegin?(method?: string): Promise<NativeLoginSession>;
+    loginPoll?(token: string): Promise<NativeLoginPoll>;
+    loginCancel?(token?: string): Promise<unknown>;
+    loginSms?(phone: string): Promise<unknown>;
+    loginSubmit?(phone: string, code: string): Promise<unknown>;
     logout?(): Promise<void>;
     vip?(): Promise<VipStatus>;
 
-    userPlaylists?(uid?: string): Promise<Playlist[]>;
-    likedIDs?(): Promise<string[]>;
-    likedSongs?(page?: PageQuery): Promise<Page<Track>>;
-    likedAlbums?(page?: PageQuery): Promise<Page<Album>>;
-    likedState?(ids: string[]): Promise<Record<string, LikeState>>;
+    userPlaylists?(uid?: string): Promise<Page<Playlist>>;
+    likedIDs?(uid?: string): Promise<string[]>;
+    likedSongs?(offset?: number): Promise<Page<Track>>;
+    likedAlbums?(offset?: number): Promise<Page<Album>>;
+    likedState?(ids: string[], uid?: string): Promise<Record<string, LikeState>>;
 
-    discover?(tab: string, page?: PageQuery): Promise<Page<MusicEntity>>;
+    discover?(tab: string, offset?: number, category?: string): Promise<Page<MusicEntity>>;
     categories?(): Promise<Array<{ id: string; name: string }>>;
 
-    mutate?(action: MutationAction): Promise<MutationResult>;
+    mutate?(route: string, values: Record<string, unknown>): Promise<MutationResult>;
 
     capabilities(): Promise<Capabilities>;
     health?(): Promise<Health>;
@@ -542,7 +597,15 @@ export interface ProviderAdapter {
     dispose?(): Promise<void>;
 }
 
+/** 运行时由插件导出的分派对象；统一 operation 的参数与返回值见 ProviderAdapter。 */
+export interface PluginRuntime {
+    dispatchNative(operation: string, args: unknown[]): Promise<unknown>;
+    dispatchRoute?(route: string, params?: Record<string, unknown>): Promise<unknown>;
+    capabilities?(): Promise<ProviderCapabilities>;
+    dispose?(): Promise<void>;
+}
+
 export interface PluginModule {
     manifest?: ProviderManifest;
-    create(host: PluginHost): ProviderAdapter | Promise<ProviderAdapter>;
+    create(host: PluginHost, options?: Record<string, unknown>): PluginRuntime | Promise<PluginRuntime>;
 }

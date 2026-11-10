@@ -7,12 +7,48 @@
 #import <UIKit/UIKit.h>
 
 namespace {
+static NSString *const credentialAccount = @"credentials";
 NSDictionary *credentialQuery() {
     return @{
         (__bridge id)kSecClass : (__bridge id)kSecClassGenericPassword,
         (__bridge id)kSecAttrService : QString::fromLatin1(AppIdentity::Id).toNSString(),
-        (__bridge id)kSecAttrAccount : @"netease"
+        (__bridge id)kSecAttrAccount : credentialAccount
     };
+}
+// 旧版本按平台账户名保存；升级后枚举本应用服务下的条目，迁到统一账户并删除旧项。
+NSData *migrateLegacyCredential() {
+    NSDictionary *query = @{
+        (__bridge id)kSecClass : (__bridge id)kSecClassGenericPassword,
+        (__bridge id)kSecAttrService : QString::fromLatin1(AppIdentity::Id).toNSString(),
+        (__bridge id)kSecReturnData : @YES,
+        (__bridge id)kSecReturnAttributes : @YES,
+        (__bridge id)kSecMatchLimit : (__bridge id)kSecMatchLimitAll
+    };
+    CFTypeRef result = nullptr;
+    if (SecItemCopyMatching((__bridge CFDictionaryRef)query, &result) != errSecSuccess || !result) {
+        return nil;
+    }
+    for (NSDictionary *item in CFBridgingRelease(result)) {
+        NSString *account = item[(__bridge id)kSecAttrAccount];
+        NSData *data = item[(__bridge id)kSecValueData];
+        if (!data || [account isEqualToString:credentialAccount]) {
+            continue;
+        }
+        NSMutableDictionary *insert = [credentialQuery() mutableCopy];
+        insert[(__bridge id)kSecValueData] = data;
+        insert[(__bridge id)kSecAttrAccessible] =
+            (__bridge id)kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly;
+        if (SecItemAdd((__bridge CFDictionaryRef)insert, nullptr) == errSecSuccess) {
+            NSDictionary *remove = @{
+                (__bridge id)kSecClass : (__bridge id)kSecClassGenericPassword,
+                (__bridge id)kSecAttrService : QString::fromLatin1(AppIdentity::Id).toNSString(),
+                (__bridge id)kSecAttrAccount : account
+            };
+            SecItemDelete((__bridge CFDictionaryRef)remove);
+            return data;
+        }
+    }
+    return nil;
 }
 NSMutableArray *mediaTargets;
 NSMutableArray *audioObservers;
@@ -54,7 +90,8 @@ QByteArray platformCredential() {
     query[(__bridge id)kSecMatchLimit] = (__bridge id)kSecMatchLimitOne;
     CFTypeRef result = nullptr;
     if (SecItemCopyMatching((__bridge CFDictionaryRef)query, &result) != errSecSuccess) {
-        return {};
+        NSData *legacy = migrateLegacyCredential();
+        return legacy ? QByteArray(static_cast<const char *>(legacy.bytes), legacy.length) : QByteArray();
     }
     NSData *bytes = CFBridgingRelease(result);
     return QByteArray(static_cast<const char *>(bytes.bytes), bytes.length);
@@ -76,7 +113,7 @@ QString platformSaveCredential(const QByteArray &bytes) {
 void platformDeleteCredential() {
     SecItemDelete((__bridge CFDictionaryRef)credentialQuery());
 }
-void platformPlay(const QString &, bool, std::function<void(QString)> done) {
+void platformPlay(const QString &, const QJsonObject &, bool, std::function<void(QString)> done) {
     done(QStringLiteral("iOS 仅支持面板内播放"));
 }
 

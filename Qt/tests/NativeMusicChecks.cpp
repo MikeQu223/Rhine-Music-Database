@@ -30,8 +30,11 @@ bool waitFor(const std::function<bool()> &ready, int timeout = 3000) {
     return ready();
 }
 
+QString testProvider = "alpha";
+
 QJsonObject song(QString id, QString title = "测试歌曲") {
     auto value = MusicData::item("song", id, title, "测试歌手");
+    value["provider"] = testProvider;
     value["albumID"] = "7";
     value["album"] = "测试专辑";
     value["duration"] = 180000;
@@ -70,11 +73,12 @@ QString createTestAudio(QTemporaryDir &dir) {
 }
 
 /** 固定响应覆盖首次读取、切歌、写入失败、重复点击及退出账号的过期回包。 */
-bool checkPlaybackLikes(const QString &root) {
+bool checkPlaybackLikes(const QString &root, const QString &provider) {
     Host host(root, true);
     MusicLibrary music(&host, {});
-    music.provider = "netease";
-    music.api.provider = "netease";
+    music.provider = provider;
+    music.api.provider = provider;
+    host.setProvider(provider);
     music.uid = "42";
     int reads = 0;
     int writes = 0;
@@ -125,15 +129,16 @@ bool checkPlaybackLikes(const QString &root) {
     return true;
 }
 
-/** QQ 单曲状态必须按当前播放曲目隔离，写入结果优先于写入前的状态读取。 */
-bool checkQQPlaybackLikes(const QString &root) {
+/** 收藏状态按当前播放曲目隔离，写入结果优先于写入前的状态读取。 */
+bool checkSubscriptionPlaybackLikes(const QString &root, const QString &provider) {
     Host host(root, true);
     MusicLibrary music(&host, {});
-    music.provider = "qq";
-    music.api.provider = "qq";
+    music.provider = provider;
+    music.api.provider = provider;
+    host.setProvider(provider);
     music.uid = "42";
-    const auto first = MusicData::item("song", "1", "歌曲一", "歌手", "qq");
-    const auto second = MusicData::item("song", "2", "歌曲二", "歌手", "qq");
+    const auto first = MusicData::item("song", "1", "歌曲一", "歌手", provider);
+    const auto second = MusicData::item("song", "2", "歌曲二", "歌手", provider);
     host.fixture = [&](QString route, QJsonObject parameters) {
         QJsonValue value;
         if (route.endsWith("/likedState")) {
@@ -152,7 +157,7 @@ bool checkQQPlaybackLikes(const QString &root) {
     music.player.changed();
     if (!waitFor([&] { return music.songLiked(second).has_value(); }) ||
         music.songLiked(second).value_or(true)) {
-        qCritical() << "QQ old track response replaced current heart";
+        qCritical() << "Stale track response replaced current heart";
         return false;
     }
     music.subscriptionStates.clear();
@@ -162,7 +167,7 @@ bool checkQQPlaybackLikes(const QString &root) {
     music.player.changed();
     music.like(second);
     if (!waitFor([&] { return !music.writeLoading; }) || !music.songLiked(second).value_or(false)) {
-        qCritical() << "QQ stale status read replaced successful like";
+        qCritical() << "Stale status read replaced successful like";
         return false;
     }
     return true;
@@ -173,10 +178,17 @@ bool checkQQPlaybackLikes(const QString &root) {
 bool runNativeSessionChecks(const QString &root, const QString &audioURL);
 
 bool runNativeMusicChecks(const QString &root) {
-    if (!ProviderRegistry::instance().contains("netease")) {
-        qInfo() << "Native online music checks skipped: third-party provider not installed";
+    QStringList remoteProviders;
+    for (const auto &id : ProviderRegistry::instance().ids()) {
+        if (id != "local" && id != "siren") {
+            remoteProviders.append(id);
+        }
+    }
+    if (remoteProviders.isEmpty()) {
+        qInfo() << "Native online music checks skipped: no music source plugin installed";
         return true;
     }
+    testProvider = remoteProviders.first();
     QFile file(root + "/slots.json");
     if (!file.open(QIODevice::ReadOnly)) {
         return false;
@@ -267,11 +279,11 @@ bool runNativeMusicChecks(const QString &root) {
     };
 
     // === 测试 1: 基础选择 ===
-    check(MusicPlayer::sourceQuality("netease", QJsonObject{{"url", "https://x/a.mp3"}, {"tier", "hires"}}) ==
+    check(MusicPlayer::sourceQuality(testProvider, QJsonObject{{"url", "https://x/a.mp3"}, {"tier", "hires"}}) ==
               "hires",
           "plugin tier wins over legacy fields");
-    check(MusicPlayer::sourceQuality("qq", QJsonObject{{"url", "https://x/a.flac"}, {"level", "lossless"}}) ==
-              "sq",
+    check(MusicPlayer::sourceQuality(testProvider, QJsonObject{{"url", "https://x/a.flac"}, {"level", "lossless"}}) ==
+              "lossless",
           "legacy level fallback still resolves");
     library.choose({});
     check(library.current.isEmpty() && !library.detailLoading, "empty selection does not load metadata");
@@ -364,12 +376,14 @@ bool runNativeMusicChecks(const QString &root) {
 
     // === 测试 8: 平台切换 ===
     const QString initialProvider = library.provider;
-    library.switchProvider("qq");
-    check(library.provider == "qq", "provider switches to qq");
-    check(library.player.queue.isEmpty(), "provider switch clears queue");
-
-    library.switchProvider("kugou");
-    check(library.provider == "kugou", "provider switches to kugou");
+    for (const auto &id : remoteProviders) {
+        if (id == initialProvider) {
+            continue;
+        }
+        library.switchProvider(id);
+        check(library.provider == id, "provider switches to installed source");
+        check(library.player.queue.isEmpty(), "provider switch clears queue");
+    }
 
     library.switchProvider(initialProvider);
     check(library.provider == initialProvider, "provider restores");
@@ -405,8 +419,16 @@ bool runNativeMusicChecks(const QString &root) {
     check(normalizedSong.contains("id") && normalizedSong.contains("title"), "music data structure");
 
     library.player.stop();
-    ok &= checkPlaybackLikes(root);
-    ok &= checkQQPlaybackLikes(root);
+    ok &= checkPlaybackLikes(root, testProvider);
+    for (const auto &id : remoteProviders) {
+        if (ProviderRegistry::instance()
+                .descriptor(id)["operations"]
+                .toObject()["subscriptionStatus"]
+                .toBool()) {
+            ok &= checkSubscriptionPlaybackLikes(root, id);
+            break;
+        }
+    }
     ok &= runNativeSessionChecks(root, audioURL);
     host.shutdown();
     qInfo() << "Native music core tests:" << testCount << (ok ? "passed" : "FAILED");

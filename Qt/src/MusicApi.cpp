@@ -59,20 +59,6 @@ void MusicApi::call(QString operation, QJsonArray arguments, Reply callback, Val
          std::move(valid), {200});
 }
 
-void MusicApi::request(QString route, QJsonObject parameters, Reply callback, Valid valid,
-                       QSet<int> allowed) {
-    if (provider == "local") {
-        if (valid()) {
-            callback({{}, QStringLiteral("本地模式不提供在线平台操作"), {}});
-        }
-        return;
-    }
-    if (provider != "netease") {
-        route = "/" + provider + route;
-    }
-    send(route, parameters, false, std::move(callback), std::move(valid), allowed);
-}
-
 /**
  * 接收私有 IPC 响应，先验证业务代数与接收对象寿命，再校验状态并接收 Cookie。
  * 换账号、切歌或关闭窗口后的迟到响应不能修改原生业务状态或凭据。
@@ -103,7 +89,11 @@ void MusicApi::send(QString route, QJsonObject parameters, bool adapted, Reply c
                 if (!adapted) {
                     message = providerName(source) + "返回 " + QString::number(code) + "：" + message;
                 }
-                callback({{}, message, safeFailure(body)});
+                auto failure = safeFailure(body);
+                if (response["authExpired"].toBool()) {
+                    failure["authExpired"] = true;
+                }
+                callback({{}, message, failure});
                 return;
             }
             owner->m_host->acceptCookies(

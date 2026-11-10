@@ -17,7 +17,6 @@ int wrap(int value, int count) {
 /** 建立原生资料库和各类请求的独立代数，物理槽位保持原有五列八行映射。 */
 MusicLibrary::MusicLibrary(Host *host, const QJsonObject &content, QObject *parent)
     : QObject(parent), host(host), api(host), player(host, &api), m_identityApi(host) {
-    kugouEdition = host->preference("kugou-edition") == "lite" ? "lite" : "standard";
     const auto &registry = ProviderRegistry::instance();
     provider = host->preference("provider");
     if (!registry.contains(provider) || (provider == "local" && !PlatformFeatures::LocalMusic)) {
@@ -39,13 +38,37 @@ MusicLibrary::MusicLibrary(Host *host, const QJsonObject &content, QObject *pare
     }
     api.provider = provider;
     host->setProvider(provider);
+    player.refreshQualityPreference();
+    const auto variants = registry.variants(provider);
+    if (!variants.isEmpty()) {
+        const auto preference = registry.variantPreference(provider);
+        auto selected = preference.isEmpty() ? QString() : host->preference(preference);
+        bool valid = false;
+        for (const auto &value : variants) {
+            if (value.toObject()["id"].toString() == selected) {
+                valid = true;
+                break;
+            }
+        }
+        if (!valid) {
+            selected = variants.first().toObject()["id"].toString();
+        }
+        providerVariant = selected;
+        host->setProviderVariant(selected);
+    }
     if (isSiren()) {
         loadSirenCatalog();
     }
-    for (const auto &source : {"netease", "qq"}) {
-        identityNames[source] = host->preference("welcome-name-" + QString::fromUtf8(source));
+    for (const auto &id : registry.ids()) {
+        identityNames[id] = host->preference("welcome-name-" + id);
+        for (const auto &value : registry.variants(id)) {
+            const auto variant = value.toObject()["id"].toString();
+            if (!variant.isEmpty()) {
+                identityNames[id + "-" + variant] =
+                    host->preference("welcome-name-" + id + "-" + variant);
+            }
+        }
     }
-    identityNames["kugou"] = host->preference("welcome-name-kugou-" + kugouEdition);
     restoreCachedAccount();
     local = std::make_unique<LocalMusicLibrary>(QString(), host->offline || !PlatformFeatures::LocalMusic);
     connect(local.get(), &LocalMusicLibrary::changed, this, [this] {
@@ -137,8 +160,11 @@ bool MusicLibrary::editable() const {
 }
 
 QString MusicLibrary::providerName() const {
-    if (provider == "kugou" && kugouEdition == "lite") {
-        return ProviderRegistry::instance().nameForVariant("kugou", "lite");
+    if (!providerVariant.isEmpty()) {
+        const auto name = ProviderRegistry::instance().nameForVariant(provider, providerVariant);
+        if (!name.isEmpty()) {
+            return name;
+        }
     }
     const auto name = ProviderRegistry::instance().name(provider);
     return name.isEmpty() ? MusicApi::providerName(provider) : name;
@@ -161,7 +187,7 @@ QString MusicLibrary::sourceMessage(int lane) const {
     if (lane == 0) {
         return searchLoading ? QStringLiteral("正在检索音乐，请稍候…") : status;
     }
-    if (provider == "kugou" && lane == 4) {
+    if (!ProviderRegistry::instance().capability(provider, "likedAlbums", false) && lane == 4) {
         return QStringLiteral("此渠道暂不支持收藏专辑");
     }
     if (isSiren()) {
@@ -201,24 +227,28 @@ QString MusicLibrary::sourceMessage(int lane) const {
 }
 
 QString MusicLibrary::accountKey() const {
-    return provider == "kugou" ? "kugou-" + kugouEdition : provider;
+    return providerVariant.isEmpty() ? provider : provider + "-" + providerVariant;
 }
 
 QString MusicLibrary::identityName() const {
     if (isSiren()) {
         return {};
     }
-    for (const auto &source : {"netease", "qq", "kugou"}) {
-        if (!identityNames.value(source).isEmpty()) {
-            return identityNames.value(source);
-        }
+    const auto active = identityNames.value(accountKey());
+    if (!active.isEmpty()) {
+        return active;
     }
-    return {};
+    return identityNames.value(provider);
 }
 
 QVector<int> MusicLibrary::sourceOrder() const {
     const auto values = ProviderRegistry::instance().sourceOrder(provider);
     return values.isEmpty() ? QVector<int>{1, 2, 3, 4, 0} : values;
+}
+
+bool MusicLibrary::laneVisible(int lane) const {
+    const auto values = ProviderRegistry::instance().visibleLanes(provider);
+    return values.isEmpty() || values.contains(lane);
 }
 
 QString MusicLibrary::libraryName() const {
@@ -294,7 +324,7 @@ void MusicLibrary::observe(int selected) {
     if (lane < 0) {
         return;
     }
-    if (provider == "kugou" && lane == 4) {
+    if (!laneVisible(lane)) {
         if (!physicalSlots[selectedLane].isEmpty()) {
             emit selectionRequested(physicalSlots[selectedLane].value(rowMemory[selectedLane]), {});
         }
@@ -459,7 +489,7 @@ void MusicLibrary::search(QString text, QString kind, bool more) {
                 const auto type = resolved["kind"].toString();
                 const auto id = resolved["id"].toString();
                 if (!id.isEmpty() && QStringList{"song", "album", "playlist", "artist"}.contains(type)) {
-                    const auto value = MusicData::item(type, id);
+                    const auto value = MusicData::item(type, id, "正在读取…", "", provider);
                     ++m_generation;
                     searchLoading = false;
                     keyword = text;
@@ -603,8 +633,11 @@ void MusicLibrary::showSource(int lane) {
     if (lane < 0 || lane >= 5) {
         return;
     }
-    if (provider == "kugou" && lane == 4) {
-        status = QStringLiteral("酷狗 API 未提供收藏专辑，此栏目已禁用");
+    if (!laneVisible(lane)) {
+        status = ProviderRegistry::instance().text(provider, "laneUnavailable");
+        if (status.isEmpty()) {
+            status = QStringLiteral("此栏目暂不可用");
+        }
         changed();
         return;
     }
@@ -633,10 +666,10 @@ void MusicLibrary::showSource(int lane) {
     changed();
 }
 
-/** 串行读回当前 QQ 个人库，清理旧缓存与分页游标。 */
+/** 串行读回当前远程个人库，清理旧缓存与分页游标。 */
 void MusicLibrary::refreshPersonal(int lane) {
-    if (provider != "qq" || uid.isEmpty() || lane < 1 || lane > 4 || personalLoading || writeLoading ||
-        accountLoading) {
+    if (isLocal() || isSiren() || uid.isEmpty() || lane < 1 || lane >= 5 || personalLoading ||
+        writeLoading || accountLoading) {
         return;
     }
     host->invalidateMetadata();
@@ -1222,7 +1255,12 @@ void MusicLibrary::playOfficial(QJsonObject value) {
     if (value["kind"] != "song") {
         return;
     }
-    if (value["provider"].toString(provider) != "netease") {
+    if (value["provider"].toString(provider) != provider) {
+        host->open(sourceURL(value));
+        return;
+    }
+    const auto playback = ProviderRegistry::instance().externalPlayback(provider);
+    if (playback["type"].toString() != "url-scheme" || playback["scheme"].toString().isEmpty()) {
         host->open(sourceURL(value));
         return;
     }

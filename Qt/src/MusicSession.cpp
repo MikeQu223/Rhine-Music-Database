@@ -48,7 +48,7 @@ QJsonObject MusicLibrary::sessionState() const {
         indices.append(index);
     }
     return {{"provider", provider},
-            {"edition", kugouEdition},
+            {"variant", providerVariant},
             {"uid", uid},
             {"sources", sources},
             {"directories", folders},
@@ -86,7 +86,9 @@ QJsonObject MusicLibrary::sessionState() const {
 }
 
 bool MusicLibrary::restoreSessionState(const QJsonObject &saved) {
-    if (saved["provider"] != provider || saved["edition"] != kugouEdition || saved["uid"].toString() != uid) {
+    const auto savedVariant = saved["variant"].toString(saved["edition"].toString());
+    if (saved["provider"] != provider || savedVariant != providerVariant ||
+        saved["uid"].toString() != uid) {
         return false;
     }
     const auto sources = saved["sources"].toArray();

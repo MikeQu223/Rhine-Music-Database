@@ -1,5 +1,6 @@
 #include "ResponsiveHudLayout.h"
 #include "MusicData.h"
+#include "ProviderRegistry.h"
 #include <algorithm>
 #include <QJsonDocument>
 #include <QUrl>
@@ -204,8 +205,19 @@ double ResponsiveHudLayout::song(ResponsiveHudCanvas &c, const QJsonObject &s) {
     c.text(playbackState, 24, body + 97, 8, 180, "regular", c.muted);
     c.rightText("STEREO", 376, body + 97, 8, "regular", c.ink);
     c.rightText("/", 334, body + 97, 8, "regular", c.muted);
-    c.rightText(current ? s["playerQuality"].toString() : model.quality, 320, body + 97, 8, "regular",
-                c.amber);
+    const auto quality = [&] {
+        if (!current) {
+            return model.quality;
+        }
+        const auto id = s["playerQuality"].toString();
+        const auto provider = s["provider"].toString();
+        auto label = ProviderRegistry::instance().qualityDescription(provider, id)["title"].toString();
+        if (label.isEmpty()) {
+            label = ProviderRegistry::instance().qualityLabel(provider, id, id);
+        }
+        return label;
+    }();
+    c.rightText(quality, 320, body + 97, 8, "regular", c.amber);
     const auto time = [](double ms) {
         const int seconds = int(std::max(0., ms) / 1000);
         return MusicData::pad(seconds / 60) + ":" + MusicData::pad(seconds % 60);
@@ -577,7 +589,14 @@ double ResponsiveHudLayout::library(ResponsiveHudCanvas &c, const QJsonObject &s
                        "music:collection:" + QString::number(lane), lane == 1 ? "heart" : "folder");
             y += 68;
         }
-        if (s["provider"] == "netease") {
+        bool hasArtists = false;
+        for (const auto &tab : ProviderRegistry::instance().discoverTabs(s["provider"].toString())) {
+            if (tab.toObject()["id"].toString() == "artists") {
+                hasArtists = true;
+                break;
+            }
+        }
+        if (hasArtists) {
             c.indexRow(y, "收藏歌手", "ARTIST RECORDS", "mobile:artists", "user");
             y += 68;
         }
