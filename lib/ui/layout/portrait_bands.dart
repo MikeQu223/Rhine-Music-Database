@@ -293,8 +293,23 @@ class PortraitBands {
   double get contentTop => content.y;
   double get contentBottom => content.bottom;
 
+  /// 分带内容的总高：从第一带顶到最后一带底（舞台单位）。
+  ///
+  /// Band 候选的带高恒为 1080，1080x2400 时三带总高 3240；
+  /// 舞台本身只有 2400，所以这里会如实返回 3240，不做静默截断。
+  double get bandsContentHeight => bands.isEmpty ? 0.0 : bands.last.bottom - bands.first.y;
+
+  /// 分带视口高：就是舞台高。W/Hybrid 的分带通常恰好等于它。
+  double get bandsViewportHeight => stageHeight;
+
+  /// 分带溢出量；0 表示当前候选的全部带都能在舞台内完整看到。
+  double get bandsOverflow => math.max(0.0, bandsContentHeight - bandsViewportHeight);
+
+  /// 本次分带的视口几何；调用方据此决定滚动或拒绝不安全裁切。
+  PortraitBandViewport get bandViewport => PortraitBandViewport.forBands(this);
+
   /// compress 策略实际吃掉的高度。
-  double get imeConsumedStage => imePolicy == PortraitImePolicy.compress ? imeStage : 0;
+  double get imeConsumedStage => imePolicy == PortraitImePolicy.compress ? imeStage : 0.0;
 
   bool get isDegenerate => degeneracies.isNotEmpty;
 
@@ -370,6 +385,96 @@ class PortraitBands {
   @override
   String toString() =>
       'PortraitBands(' + mode.name + ', scale: $stageScale, stage: $stageWidth x $stageHeight, bands: $bandCount, degeneracies: $degeneracies)';
+}
+
+/// 分带视口：把「内容高 vs 舞台高」的越界变成可测的纯几何。
+///
+/// Band 候选的带高恒为 1080 舞台单位，所以 1080x2400 时三带总高 3240，
+/// 舞台只有 2400，溢出 840。本类不选赢家、不改任何带矩形，只提供：
+/// * [overflow] / [overflows]：越界量；
+/// * [clampScrollOffset]：把滚动偏移夹到 [0, overflow]；
+/// * [visibleRect] / [isBandVisible]：按偏移算出可见窗口；
+/// * [offsetToReveal]：把某一带滚进视口的建议偏移。
+///
+/// 调用方必须在「完整可见」「显式滚动」「拒绝渲染」三者中明确选一个；
+/// 本类不提供静默裁切，也不把溢出当成已经解决。
+class PortraitBandViewport {
+  const PortraitBandViewport({
+    required this.stageWidth,
+    required this.viewportHeight,
+    required this.contentHeight,
+    this.tolerance = qtGeometryTolerance,
+  })  : assert(stageWidth > 0),
+        assert(viewportHeight > 0),
+        assert(contentHeight >= 0),
+        assert(tolerance >= 0);
+
+  factory PortraitBandViewport.forBands(PortraitBands bands) => PortraitBandViewport(
+        stageWidth: bands.stageWidth,
+        viewportHeight: bands.bandsViewportHeight,
+        contentHeight: bands.bandsContentHeight,
+      );
+
+  /// 舞台宽（舞台单位）。
+  final double stageWidth;
+
+  /// 可见视口高（舞台单位），等于 stageHeight。
+  final double viewportHeight;
+
+  /// 全部分带的总高（舞台单位）。
+  final double contentHeight;
+
+  /// 浮点容差。
+  final double tolerance;
+
+  /// 内容超出席位的量；不越界时为 0。
+  double get overflow => math.max(0.0, contentHeight - viewportHeight);
+
+  /// 是否需要滚动/拒绝裁切才能看到全部分带。
+  bool get overflows => overflow > tolerance;
+
+  /// 是否可在不滚动的情况下完整显示。
+  bool get fits => !overflows;
+
+  /// 把滚动偏移夹到合法区间；NaN/Infinity 直接报错，不静默当 0。
+  double clampScrollOffset(double offset) {
+    if (!offset.isFinite) {
+      throw ArgumentError('scroll offset must be finite, got $offset');
+    }
+    if (offset <= 0) {
+      return 0;
+    }
+    if (offset >= overflow) {
+      return overflow;
+    }
+    return offset;
+  }
+
+  /// 以舞台坐标表示的可见窗口；[scrollOffset] 会先被 clamp。
+  StageRect visibleRect(double scrollOffset) => StageRect(
+        0,
+        clampScrollOffset(scrollOffset),
+        stageWidth,
+        viewportHeight,
+      );
+
+  /// 某一带是否在给定偏移下完整可见。
+  bool isBandVisible(StageRect band, double scrollOffset, {double epsilon = qtGeometryTolerance}) {
+    final double offset = clampScrollOffset(scrollOffset);
+    return band.y >= offset - epsilon && band.bottom <= offset + viewportHeight + epsilon;
+  }
+
+  /// 把某一带滚进视口所需偏移；alignment 0=顶对齐、0.5=居中、1=底对齐。
+  double offsetToReveal(StageRect band, {double alignment = 0.5}) {
+    if (!band.isPositive()) {
+      throw ArgumentError.value(band, 'band', 'must have positive width and height');
+    }
+    if (!alignment.isFinite || alignment < 0 || alignment > 1) {
+      throw ArgumentError.value(alignment, 'alignment', 'must be finite and between 0 and 1');
+    }
+    final double target = band.y + band.height * alignment - viewportHeight * alignment;
+    return clampScrollOffset(target);
+  }
 }
 
 /// 逐元素比较（本文件不依赖 Flutter，自带一份）。

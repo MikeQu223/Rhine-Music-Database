@@ -276,67 +276,1016 @@
     ]
   },
   "actionCoverage": {
-    "source": ".agents/parity-20261109/reports/T43-V4-INV-ACT.json",
-    "sourceNoteZh": "仓库根相对路径（repo root 指 Rhine-Music-Database）；从 T43 worktree 运行时等效于 ../../reports/T43-V4-INV-ACT.json。test 通过 repo root 定位后 File.existsSync 断言。",
-    "coverageStatus": "WAIT_ARCH_T33_T40",
-    "coverageStatusZh": "本卡冻结竖屏几何与样板；133 条动作的 per-face 多重集、per-entry 矩形、noHitExpected 与 A1-A7 的逐条断言属于 T33-T40 动作面集成。T33-T40 尚未集成（ARCH 依赖），此处显式登记 WAIT：不伪称已覆盖、不预造动作数据、不把本文件的 criteria 文字当成证明。",
+    "source": "test/fixtures/portrait_bands.json#actionCoverage.registry",
+    "sourceNoteZh": "受控 fixture：以下 133 条记录从 parity 报告 T43-V4-INV-ACT 的横屏源码取证逐条转录（作者时只读），测试运行时不再打开 parity 报告，也不依赖本机文件存在。clean checkout 只靠本 JSON 即可复核。",
+    "coverageStatus": "REGISTRY_SPLIT_SOURCE_DEPENDENCY_BLOCKED",
+    "coverageStatusZh": "133 条已拆成四个精确集合：proven 64 / sourceDependencyBlocked 46 / noHit 16 / platformAbsent 7。proven 只证明「源码里有动作名、Qt 源行和至少两个数字的矩形证据」；46 条缺可携带矩形（同上/内部/undefined/—/省略号等），保持 SOURCE_DEPENDENCY_BLOCKED，等 T33-T40 接口；不再用 assertedHere=false 或单个 WAIT 概括全部动作。",
+    "classificationRuleZh": "proven: verify=SOURCE_VERIFIED_LANDSCAPE 且 action 非 — 开头，rect 至少含两个数字字面量，且不含 同上/内部/…/undefined/—/card 右/actionBlock/主行/次行/SongDetailCard/control/rect/Button/Width= 占位。sourceDependencyBlocked: 同样 source-verified 但 rect 缺上述可携带几何，status=SOURCE_DEPENDENCY_BLOCKED。noHit: action 为 — 或 —（image 非 hit），按 NO_HIT / GEOMETRY_CONSTANT / NON_HIT_VISUAL 分。platformAbsent: verify 不是 SOURCE_VERIFIED_LANDSCAPE 的平台门控/Android 差异。",
     "inventory": {
       "id": "T43-V4-INV-ACT",
       "actionCount": 133,
       "faceCount": 7,
       "verification": "SOURCE_VERIFIED_LANDSCAPE",
-      "assertedHere": false,
+      "runtime": "UNVERIFIED_RUNTIME",
+      "assertedHere": "registry-integrity-only",
       "rectEpsStage": 0.000001,
-      "unblockZh": "T33-T40 集成后：把 7 面/133 条 action 多重集与 per-entry rect 落入 fixture，并在至少一个 tier 上断言 A1/A2/A3/A5/A6/A7；A4 必须用 List 严格相等比较，禁止排序/去重/子集过滤。"
+      "registryCounts": {
+        "proven": 64,
+        "sourceDependencyBlocked": 46,
+        "noHit": 16,
+        "platformAbsent": 7
+      },
+      "faceTotals": {
+        "1_home_chrome_archive": 24,
+        "2_playerbar_bottom": 12,
+        "3_detail_song_container_viewer_lyrics": 37,
+        "4_search": 7,
+        "5_settings": 32,
+        "6_queue": 8,
+        "7_login_saved": 13
+      },
+      "transcribedFromZh": "parity 根 reports/T43-V4-INV-ACT.json（只读转写；测试不读取）"
+    },
+    "registry": {
+      "proven": [
+        {
+          "face": "1_home_chrome_archive",
+          "action": "discover",
+          "rect": "x-210,118,184 (x=navigationLeft(width)+210=width-789+210)",
+          "source": "Qt/src/NativeHud.cpp:348,350"
+        },
+        {
+          "face": "1_home_chrome_archive",
+          "action": "search",
+          "rect": "x,118,184",
+          "source": "Qt/src/NativeHud.cpp:352"
+        },
+        {
+          "face": "1_home_chrome_archive",
+          "action": "saved",
+          "rect": "x+200,118,184",
+          "source": "Qt/src/NativeHud.cpp:353-354"
+        },
+        {
+          "face": "1_home_chrome_archive",
+          "action": "settings",
+          "rect": "x+400,118,120",
+          "source": "Qt/src/NativeHud.cpp:355"
+        },
+        {
+          "face": "1_home_chrome_archive",
+          "action": "music:parent",
+          "rect": "59,211,280",
+          "source": "Qt/src/NativeHud.cpp:410"
+        },
+        {
+          "face": "1_home_chrome_archive",
+          "action": "music:directory-info",
+          "rect": "59,265,310",
+          "source": "Qt/src/NativeHud.cpp:418"
+        },
+        {
+          "face": "1_home_chrome_archive",
+          "action": "music:open-all-siren",
+          "rect": "59,265,310",
+          "source": "Qt/src/NativeHud.cpp:426"
+        },
+        {
+          "face": "1_home_chrome_archive",
+          "action": "open",
+          "rect": "x,509,414,37",
+          "source": "Qt/src/NativeHud.cpp:436"
+        },
+        {
+          "face": "1_home_chrome_archive",
+          "action": "open",
+          "rect": "x,703,300",
+          "source": "Qt/src/NativeHud.cpp:452"
+        },
+        {
+          "face": "1_home_chrome_archive",
+          "action": "prev",
+          "rect": "nav,903,46,46 (nav=width*0.2625)",
+          "source": "Qt/src/NativeHud.cpp:465"
+        },
+        {
+          "face": "1_home_chrome_archive",
+          "action": "music:slot:<index>",
+          "rect": "x-6,900,26,50 (x=nav+85+index*26, index 0..7)",
+          "source": "Qt/src/NativeHud.cpp:466-477"
+        },
+        {
+          "face": "1_home_chrome_archive",
+          "action": "next",
+          "rect": "nav+320,903,46,46",
+          "source": "Qt/src/NativeHud.cpp:478"
+        },
+        {
+          "face": "1_home_chrome_archive",
+          "action": "column-prev",
+          "rect": "col,903,46,46 (col=width*0.5234375)",
+          "source": "Qt/src/NativeHud.cpp:480"
+        },
+        {
+          "face": "1_home_chrome_archive",
+          "action": "column-next",
+          "rect": "col+310,903,46,46",
+          "source": "Qt/src/NativeHud.cpp:490"
+        },
+        {
+          "face": "1_home_chrome_archive",
+          "action": "archive:tab-mode",
+          "rect": "x-8,854,186,48 (x=width-340)",
+          "source": "Qt/src/NativeHud.cpp:502"
+        },
+        {
+          "face": "1_home_chrome_archive",
+          "action": "music:index:<index>",
+          "rect": "x,rowY-4,textWidth,44",
+          "source": "Qt/src/NativeHud.cpp:587-588"
+        },
+        {
+          "face": "1_home_chrome_archive",
+          "action": "music:parent",
+          "rect": "59,211,280",
+          "source": "Qt/src/NativeHud.cpp:378"
+        },
+        {
+          "face": "1_home_chrome_archive",
+          "action": "search | music:directory-info | saved | music:login",
+          "rect": "x,703,300,32",
+          "source": "Qt/src/NativeHud.cpp:383,387,391,395 → button(...,L402)"
+        },
+        {
+          "face": "2_playerbar_bottom",
+          "action": "player:prev",
+          "rect": "x-89,y-24,44,48 fixed:true",
+          "source": "Qt/src/PlayerBar.cpp:85"
+        },
+        {
+          "face": "2_playerbar_bottom",
+          "action": "player:toggle",
+          "rect": "x-23,y-23,46,46 fixed:true",
+          "source": "Qt/src/PlayerBar.cpp:86"
+        },
+        {
+          "face": "2_playerbar_bottom",
+          "action": "player:next",
+          "rect": "x+45,y-24,44,48 fixed:true",
+          "source": "Qt/src/PlayerBar.cpp:87"
+        },
+        {
+          "face": "2_playerbar_bottom",
+          "action": "player:lyrics",
+          "rect": "x,y+14,width,74 fixed:true",
+          "source": "Qt/src/PlayerBar.cpp:136"
+        },
+        {
+          "face": "2_playerbar_bottom",
+          "action": "player:seek-fraction:0",
+          "rect": "row.x(),row.y()-6,row.width(),18 fixed:true",
+          "source": "Qt/src/PlayerBar.cpp:148-151"
+        },
+        {
+          "face": "2_playerbar_bottom",
+          "action": "music:like-current",
+          "rect": "x-24,y-24,48,48 fixed:true",
+          "source": "Qt/src/PlayerBar.cpp:170"
+        },
+        {
+          "face": "2_playerbar_bottom",
+          "action": "player:mode",
+          "rect": "x-24,y-24,48,48 fixed:true",
+          "source": "Qt/src/PlayerBar.cpp:198"
+        },
+        {
+          "face": "2_playerbar_bottom",
+          "action": "player:lyrics",
+          "rect": "x-24,y-24,48,48 fixed:true",
+          "source": "Qt/src/PlayerBar.cpp:204"
+        },
+        {
+          "face": "2_playerbar_bottom",
+          "action": "player:open",
+          "rect": "queueX-14,y+16,54,65 (queueX=right-65) fixed:true",
+          "source": "Qt/src/PlayerBar.cpp:224"
+        },
+        {
+          "face": "3_detail_song_container_viewer_lyrics",
+          "action": "back",
+          "rect": "59,211,360,54",
+          "source": "Qt/src/NativeHudDetail.cpp:70"
+        },
+        {
+          "face": "3_detail_song_container_viewer_lyrics",
+          "action": "viewer",
+          "rect": "60,944,260,35",
+          "source": "Qt/src/NativeHudDetail.cpp:74"
+        },
+        {
+          "face": "3_detail_song_container_viewer_lyrics",
+          "action": "tab:overview | tab:notes | tab:history",
+          "rect": "x,tabsY,width/3-12,38 (tabsY=albumTracks?584:720)",
+          "source": "Qt/src/SongDetailCard.cpp:105（keys L94）"
+        },
+        {
+          "face": "3_detail_song_container_viewer_lyrics",
+          "action": "quality:open",
+          "rect": "x,y+18,column,34",
+          "source": "Qt/src/SongDetailCard.cpp:90"
+        },
+        {
+          "face": "3_detail_song_container_viewer_lyrics",
+          "action": "music:album-track:<index>",
+          "rect": "x,yy-4,usable,42 (yy=630+index*48, 6 行 AlbumTrackRowCount)",
+          "source": "Qt/src/NativeHudDetail.cpp:178"
+        },
+        {
+          "face": "3_detail_song_container_viewer_lyrics",
+          "action": "detail:copy",
+          "rect": "x,786,usable,min(3,lines-bodyOffset)*31",
+          "source": "Qt/src/NativeHudDetail.cpp:200"
+        },
+        {
+          "face": "3_detail_song_container_viewer_lyrics",
+          "action": "music:preview",
+          "rect": "x+buttonWidth+gap,910,buttonWidth,44",
+          "source": "Qt/src/NativeHudDetail.cpp:209"
+        },
+        {
+          "face": "3_detail_song_container_viewer_lyrics",
+          "action": "music:remove-track",
+          "rect": "x+(buttonWidth+gap)*2,910,buttonWidth,44",
+          "source": "Qt/src/NativeHudDetail.cpp:212"
+        },
+        {
+          "face": "3_detail_song_container_viewer_lyrics",
+          "action": "player:lyrics-close",
+          "rect": "x+width-60,278,60,40",
+          "source": "Qt/src/NativeHudDetail.cpp:225"
+        },
+        {
+          "face": "3_detail_song_container_viewer_lyrics",
+          "action": "player:lyrics-sources",
+          "rect": "x+156,914,120,32",
+          "source": "Qt/src/NativeHudDetail.cpp:227"
+        },
+        {
+          "face": "3_detail_song_container_viewer_lyrics",
+          "action": "player:lyrics-retry",
+          "rect": "x,909,170,36",
+          "source": "Qt/src/NativeHudDetail.cpp:249"
+        },
+        {
+          "face": "3_detail_song_container_viewer_lyrics",
+          "action": "player:lyrics-offset",
+          "rect": "x,914,144,32",
+          "source": "Qt/src/NativeHudDetail.cpp:336"
+        },
+        {
+          "face": "3_detail_song_container_viewer_lyrics",
+          "action": "player:lyrics-follow",
+          "rect": "x+width-125,914,125,32",
+          "source": "Qt/src/NativeHudDetail.cpp:337"
+        },
+        {
+          "face": "3_detail_song_container_viewer_lyrics",
+          "action": "music:directory",
+          "rect": "layout.left+19,211,sideWidth,54",
+          "source": "Qt/src/NativeHudDetail.cpp:508"
+        },
+        {
+          "face": "3_detail_song_container_viewer_lyrics",
+          "action": "viewer:close",
+          "rect": "59,69,300,54",
+          "source": "Qt/src/NativeHudDetail.cpp:518"
+        },
+        {
+          "face": "4_search",
+          "action": "music:kind:<index>",
+          "rect": "cursor-4,y+SearchTabTop,labelWidth+8,36 (SearchTabTop=252)",
+          "source": "Qt/src/NativeHudSearch.cpp:75-76（labels L63-65, kinds={song,album,playlist,artist}, folder→index2）"
+        },
+        {
+          "face": "4_search",
+          "action": "music:group:<index>",
+          "rect": "sortX-4,y+252,widths+8,36",
+          "source": "Qt/src/NativeHudSearch.cpp:104-105（labels L89-90, keys={none,artist,album}）"
+        },
+        {
+          "face": "4_search",
+          "action": "music:group-back",
+          "rect": "actionX,y+SearchTableY-7,labelWidth,28 (SearchTableY=302)",
+          "source": "Qt/src/NativeHudSearch.cpp:126"
+        },
+        {
+          "face": "4_search",
+          "action": "music:expand:<percentEncode(key)> | music:result:<lane>:<entry.index>",
+          "rect": "left,y,usable,72 (ResultRowHeight=72)",
+          "source": "Qt/src/NativeHudSearch.cpp:206-210"
+        },
+        {
+          "face": "5_settings",
+          "action": "settings:scroll-up",
+          "rect": "railX-10,y+SettingsViewportTop,23,25 (railX=x+width-24, SettingsViewportTop=176/SettingsViewportBottom=836)",
+          "source": "Qt/src/NativeHudSettings.cpp:223"
+        },
+        {
+          "face": "5_settings",
+          "action": "settings:scroll-down",
+          "rect": "railX-10,y+SettingsViewportBottom-25,23,25",
+          "source": "Qt/src/NativeHudSettings.cpp:224"
+        },
+        {
+          "face": "5_settings",
+          "action": "expand:<descriptor.id>",
+          "rect": "left+width-300, cursor+9, 300, 48",
+          "source": "Qt/src/SettingsCard.cpp:75-76"
+        },
+        {
+          "face": "5_settings",
+          "action": "actionFor(row)+choice.value",
+          "rect": "(options.left+2, options.top+2+i*50, width-4, 46)",
+          "source": "Qt/src/SettingsCard.cpp:61-62"
+        },
+        {
+          "face": "5_settings",
+          "action": "actionFor(row)+numericValues[index]",
+          "rect": "track.left+i*segment, track.top-10, segment, 24",
+          "source": "Qt/src/SettingsCard.cpp:111-135"
+        },
+        {
+          "face": "6_queue",
+          "action": "close-modal",
+          "rect": "x+width-167,y+18,167,54 (x=bounds.x+53, y=bounds.y)",
+          "source": "Qt/src/PlaybackQueueCard.cpp:35"
+        },
+        {
+          "face": "6_queue",
+          "action": "player:clear",
+          "rect": "x+width-130,y+185,130,40",
+          "source": "Qt/src/PlaybackQueueCard.cpp:58"
+        },
+        {
+          "face": "6_queue",
+          "action": "player:mode:off | player:mode:all | player:mode:one | player:mode:shuffle",
+          "rect": "x+i*(modeWidth+8), y+269, modeWidth, 40 (modeWidth is (width-24)/4)",
+          "source": "Qt/src/PlaybackQueueCard.cpp:62-67"
+        },
+        {
+          "face": "6_queue",
+          "action": "player:queue:<index>",
+          "rect": "x+5, y+358+row*56, width-50, 55",
+          "source": "Qt/src/PlaybackQueueCard.cpp:90-91"
+        },
+        {
+          "face": "6_queue",
+          "action": "player:remove:<index>",
+          "rect": "x+width-38, top+6, 38, 42",
+          "source": "Qt/src/PlaybackQueueCard.cpp:92-93"
+        },
+        {
+          "face": "7_login_saved",
+          "action": "music:collection:<index>",
+          "rect": "cursor-4,y+252,labelWidth+8,36 (LibraryTabTop=252)",
+          "source": "Qt/src/NativeHudLibrary.cpp:126-127"
+        },
+        {
+          "face": "7_login_saved",
+          "action": "music:group:<index>",
+          "rect": "sortX-4,y+252,widths+8,36",
+          "source": "Qt/src/NativeHudLibrary.cpp:156-157"
+        },
+        {
+          "face": "7_login_saved",
+          "action": "music:group-back",
+          "rect": "actionX,y+302-7,labelWidth,28",
+          "source": "Qt/src/NativeHudLibrary.cpp:177"
+        },
+        {
+          "face": "7_login_saved",
+          "action": "music:login",
+          "rect": "left,y+ResultListTop+132,300,44",
+          "source": "Qt/src/NativeHudLibrary.cpp:197-198"
+        },
+        {
+          "face": "7_login_saved",
+          "action": "music:kugou-edition:standard | music:kugou-edition:lite",
+          "rect": "x+53+i*190, y+207, 180, 35",
+          "source": "Qt/src/NativeHudLibrary.cpp:283-284"
+        },
+        {
+          "face": "7_login_saved",
+          "action": "music:login-method:qr | :wechat | :phone",
+          "rect": "x+53+i*145, y+207, 140, 35",
+          "source": "Qt/src/NativeHudLibrary.cpp:294"
+        },
+        {
+          "face": "7_login_saved",
+          "action": "music:qr",
+          "rect": "x+53, y+626, 260, 40",
+          "source": "Qt/src/NativeHudLibrary.cpp:307-308"
+        },
+        {
+          "face": "7_login_saved",
+          "action": "close-modal",
+          "rect": "x+53, y+709, 350, 45",
+          "source": "Qt/src/NativeHudLibrary.cpp:321"
+        }
+      ],
+      "sourceDependencyBlocked": [
+        {
+          "face": "1_home_chrome_archive",
+          "action": "music:play-loaded",
+          "rect": "59,…,310",
+          "source": "Qt/src/NativeHud.cpp:423,425",
+          "blockedBy": "T33",
+          "status": "SOURCE_DEPENDENCY_BLOCKED"
+        },
+        {
+          "face": "1_home_chrome_archive",
+          "action": "actionButton(x,y,width,action,label) → hit(x,y,width,44,action,label)",
+          "rect": "x,y,width,44",
+          "source": "Qt/src/NativeHud.cpp:625-644",
+          "blockedBy": "T33",
+          "status": "SOURCE_DEPENDENCY_BLOCKED"
+        },
+        {
+          "face": "3_detail_song_container_viewer_lyrics",
+          "action": "music:play",
+          "rect": "SongDetailCard 主行 476",
+          "source": "Qt/src/NativeHudDetail.cpp:118",
+          "blockedBy": "T34",
+          "status": "SOURCE_DEPENDENCY_BLOCKED"
+        },
+        {
+          "face": "3_detail_song_container_viewer_lyrics",
+          "action": "music:like",
+          "rect": "同上",
+          "source": "Qt/src/NativeHudDetail.cpp:131",
+          "blockedBy": "T34",
+          "status": "SOURCE_DEPENDENCY_BLOCKED"
+        },
+        {
+          "face": "3_detail_song_container_viewer_lyrics",
+          "action": "music:add-to-playlist",
+          "rect": "同上",
+          "source": "Qt/src/NativeHudDetail.cpp:132",
+          "blockedBy": "T34",
+          "status": "SOURCE_DEPENDENCY_BLOCKED"
+        },
+        {
+          "face": "3_detail_song_container_viewer_lyrics",
+          "action": "music:enqueue",
+          "rect": "SongDetailCard 次行 532",
+          "source": "Qt/src/NativeHudDetail.cpp:134",
+          "blockedBy": "T34",
+          "status": "SOURCE_DEPENDENCY_BLOCKED"
+        },
+        {
+          "face": "3_detail_song_container_viewer_lyrics",
+          "action": "music:play-next",
+          "rect": "同上",
+          "source": "Qt/src/NativeHudDetail.cpp:134",
+          "blockedBy": "T34",
+          "status": "SOURCE_DEPENDENCY_BLOCKED"
+        },
+        {
+          "face": "3_detail_song_container_viewer_lyrics",
+          "action": "music:artist:0",
+          "rect": "同上",
+          "source": "Qt/src/NativeHudDetail.cpp:140",
+          "blockedBy": "T34",
+          "status": "SOURCE_DEPENDENCY_BLOCKED"
+        },
+        {
+          "face": "3_detail_song_container_viewer_lyrics",
+          "action": "player:lyric-line:<index>",
+          "rect": "x,hitY,width,…",
+          "source": "Qt/src/NativeHudDetail.cpp:328-333",
+          "blockedBy": "T34",
+          "status": "SOURCE_DEPENDENCY_BLOCKED"
+        },
+        {
+          "face": "3_detail_song_container_viewer_lyrics",
+          "action": "music:play-loaded",
+          "rect": "CollectionDetailCard 内部",
+          "source": "Qt/src/NativeHudDetail.cpp:403",
+          "blockedBy": "T34",
+          "status": "SOURCE_DEPENDENCY_BLOCKED"
+        },
+        {
+          "face": "3_detail_song_container_viewer_lyrics",
+          "action": "music:sort-menu",
+          "rect": "同上",
+          "source": "Qt/src/NativeHudDetail.cpp:406",
+          "blockedBy": "T34",
+          "status": "SOURCE_DEPENDENCY_BLOCKED"
+        },
+        {
+          "face": "3_detail_song_container_viewer_lyrics",
+          "action": "music:artist-tab:songs | music:artist-tab:albums",
+          "rect": "同上",
+          "source": "Qt/src/NativeHudDetail.cpp:409-410",
+          "blockedBy": "T34",
+          "status": "SOURCE_DEPENDENCY_BLOCKED"
+        },
+        {
+          "face": "3_detail_song_container_viewer_lyrics",
+          "action": "music:rename-playlist",
+          "rect": "同上",
+          "source": "Qt/src/NativeHudDetail.cpp:413",
+          "blockedBy": "T34",
+          "status": "SOURCE_DEPENDENCY_BLOCKED"
+        },
+        {
+          "face": "3_detail_song_container_viewer_lyrics",
+          "action": "music:delete-playlist",
+          "rect": "同上",
+          "source": "Qt/src/NativeHudDetail.cpp:414",
+          "blockedBy": "T34",
+          "status": "SOURCE_DEPENDENCY_BLOCKED"
+        },
+        {
+          "face": "3_detail_song_container_viewer_lyrics",
+          "action": "music:subscribe",
+          "rect": "同上",
+          "source": "Qt/src/NativeHudDetail.cpp:440",
+          "blockedBy": "T34",
+          "status": "SOURCE_DEPENDENCY_BLOCKED"
+        },
+        {
+          "face": "3_detail_song_container_viewer_lyrics",
+          "action": "music:source",
+          "rect": "同上",
+          "source": "Qt/src/NativeHudDetail.cpp:443",
+          "blockedBy": "T34",
+          "status": "SOURCE_DEPENDENCY_BLOCKED"
+        },
+        {
+          "face": "3_detail_song_container_viewer_lyrics",
+          "action": "music:artist-more",
+          "rect": "同上",
+          "source": "Qt/src/NativeHudDetail.cpp:446",
+          "blockedBy": "T34",
+          "status": "SOURCE_DEPENDENCY_BLOCKED"
+        },
+        {
+          "face": "3_detail_song_container_viewer_lyrics",
+          "action": "music:directory-more",
+          "rect": "同上",
+          "source": "Qt/src/NativeHudDetail.cpp:448",
+          "blockedBy": "T34",
+          "status": "SOURCE_DEPENDENCY_BLOCKED"
+        },
+        {
+          "face": "3_detail_song_container_viewer_lyrics",
+          "action": "music:artist-album:<i> | music:track:<i>",
+          "rect": "同上",
+          "source": "Qt/src/NativeHudDetail.cpp:479",
+          "blockedBy": "T34",
+          "status": "SOURCE_DEPENDENCY_BLOCKED"
+        },
+        {
+          "face": "3_detail_song_container_viewer_lyrics",
+          "action": "viewer:clear",
+          "rect": "—",
+          "source": "Qt/src/NativeHudDetail.cpp:523",
+          "blockedBy": "T34",
+          "status": "SOURCE_DEPENDENCY_BLOCKED"
+        },
+        {
+          "face": "3_detail_song_container_viewer_lyrics",
+          "action": "viewer:frosted",
+          "rect": "—",
+          "source": "Qt/src/NativeHudDetail.cpp:524",
+          "blockedBy": "T34",
+          "status": "SOURCE_DEPENDENCY_BLOCKED"
+        },
+        {
+          "face": "3_detail_song_container_viewer_lyrics",
+          "action": "viewer:reset",
+          "rect": "—",
+          "source": "Qt/src/NativeHudDetail.cpp:526,528",
+          "blockedBy": "T34",
+          "status": "SOURCE_DEPENDENCY_BLOCKED"
+        },
+        {
+          "face": "3_detail_song_container_viewer_lyrics",
+          "action": "music:cover-front",
+          "rect": "—",
+          "source": "Qt/src/NativeHudDetail.cpp:527",
+          "blockedBy": "T34",
+          "status": "SOURCE_DEPENDENCY_BLOCKED"
+        },
+        {
+          "face": "5_settings",
+          "action": "provider",
+          "rect": "card 右 126 宽 110 高 34",
+          "source": "Qt/src/NativeHudSettings.cpp:272",
+          "blockedBy": "T37",
+          "status": "SOURCE_DEPENDENCY_BLOCKED"
+        },
+        {
+          "face": "5_settings",
+          "action": "discover",
+          "rect": "actionBlock 内",
+          "source": "Qt/src/NativeHudSettings.cpp:278",
+          "blockedBy": "T37",
+          "status": "SOURCE_DEPENDENCY_BLOCKED"
+        },
+        {
+          "face": "5_settings",
+          "action": "music:login",
+          "rect": "actionBlock 内",
+          "source": "Qt/src/NativeHudSettings.cpp:284",
+          "blockedBy": "T37",
+          "status": "SOURCE_DEPENDENCY_BLOCKED"
+        },
+        {
+          "face": "5_settings",
+          "action": "music:logout",
+          "rect": "actionBlock 内",
+          "source": "Qt/src/NativeHudSettings.cpp:287",
+          "blockedBy": "T37",
+          "status": "SOURCE_DEPENDENCY_BLOCKED"
+        },
+        {
+          "face": "5_settings",
+          "action": "performance:toggle",
+          "rect": "row(4)",
+          "source": "Qt/src/NativeHudSettings.cpp:320-321",
+          "blockedBy": "T37",
+          "status": "SOURCE_DEPENDENCY_BLOCKED"
+        },
+        {
+          "face": "5_settings",
+          "action": "disc-rotation",
+          "rect": "row(102)",
+          "source": "Qt/src/NativeHudSettings.cpp:324-326",
+          "blockedBy": "T37",
+          "status": "SOURCE_DEPENDENCY_BLOCKED"
+        },
+        {
+          "face": "5_settings",
+          "action": "cache:clear",
+          "rect": "actionBlock(control)",
+          "source": "Qt/src/NativeHudSettings.cpp:336-337",
+          "blockedBy": "T37",
+          "status": "SOURCE_DEPENDENCY_BLOCKED"
+        },
+        {
+          "face": "5_settings",
+          "action": "update:auto",
+          "rect": "—",
+          "source": "Qt/src/NativeHudSettings.cpp:352-355",
+          "blockedBy": "T37",
+          "status": "SOURCE_DEPENDENCY_BLOCKED"
+        },
+        {
+          "face": "5_settings",
+          "action": "update:check | update:cancel",
+          "rect": "—",
+          "source": "Qt/src/NativeHudSettings.cpp:359-360",
+          "blockedBy": "T37",
+          "status": "SOURCE_DEPENDENCY_BLOCKED"
+        },
+        {
+          "face": "5_settings",
+          "action": "update:release",
+          "rect": "—",
+          "source": "Qt/src/NativeHudSettings.cpp:363",
+          "blockedBy": "T37",
+          "status": "SOURCE_DEPENDENCY_BLOCKED"
+        },
+        {
+          "face": "5_settings",
+          "action": "update:release",
+          "rect": "—",
+          "source": "Qt/src/NativeHudSettings.cpp:366",
+          "blockedBy": "T37",
+          "status": "SOURCE_DEPENDENCY_BLOCKED"
+        },
+        {
+          "face": "5_settings",
+          "action": "settings:restore-defaults",
+          "rect": "actionBlock(restore)",
+          "source": "Qt/src/NativeHudSettings.cpp:374-375",
+          "blockedBy": "T37",
+          "status": "SOURCE_DEPENDENCY_BLOCKED"
+        },
+        {
+          "face": "5_settings",
+          "action": "actionFor(row)+row.decrementValue | +row.incrementValue",
+          "rect": "control 内",
+          "source": "Qt/src/SettingsCard.cpp:137-144",
+          "blockedBy": "T37",
+          "status": "SOURCE_DEPENDENCY_BLOCKED"
+        },
+        {
+          "face": "5_settings",
+          "action": "binding.action",
+          "rect": "control",
+          "source": "Qt/src/SettingsCard.cpp:158-159",
+          "blockedBy": "T37",
+          "status": "SOURCE_DEPENDENCY_BLOCKED"
+        },
+        {
+          "face": "5_settings",
+          "action": "setting-edit:<descriptor.id>",
+          "rect": "control",
+          "source": "Qt/src/SettingsCard.cpp:172-173",
+          "blockedBy": "T37",
+          "status": "SOURCE_DEPENDENCY_BLOCKED"
+        },
+        {
+          "face": "5_settings",
+          "action": "binding.action",
+          "rect": "rect",
+          "source": "Qt/src/SettingsCard.cpp:184-185",
+          "blockedBy": "T37",
+          "status": "SOURCE_DEPENDENCY_BLOCKED"
+        },
+        {
+          "face": "5_settings",
+          "action": "setting:theme:<v> | setting:motion:<v> | setting:startup-animation:<v> | setting:detail-autoplay:<v> | setting:single-play-mode:<v> | setting:alternative:<v> | setting:vsync:<v> | setting:graphics-backend:<v> | setting:fg:<v>",
+          "source": "Qt/src/SettingsSchema.cpp:379,391-392,403-404,462-463,475-476,435-436,546,510-511,652-653",
+          "blockedBy": "T37",
+          "status": "SOURCE_DEPENDENCY_BLOCKED"
+        },
+        {
+          "face": "5_settings",
+          "action": "replay",
+          "source": "Qt/src/SettingsSchema.cpp:414",
+          "blockedBy": "T37",
+          "status": "SOURCE_DEPENDENCY_BLOCKED"
+        },
+        {
+          "face": "5_settings",
+          "action": "quality:set:<v> | quality",
+          "source": "Qt/src/SettingsSchema.cpp:423",
+          "blockedBy": "T37",
+          "status": "SOURCE_DEPENDENCY_BLOCKED"
+        },
+        {
+          "face": "5_settings",
+          "action": "archive-mask:<v> | render-scale:<v> | aa-mode:<v> | aa-scale:<v> | msaa:<v> | fsr-quality:<v> | fsr-sharpness:<v> | gpu-index:<v>",
+          "source": "Qt/src/SettingsSchema.cpp:495,560,574,593,607,622,635,532",
+          "blockedBy": "T37",
+          "status": "SOURCE_DEPENDENCY_BLOCKED"
+        },
+        {
+          "face": "5_settings",
+          "action": "music:project-home | music:project-author | music:project-player | music:project-kugou | music:project-rhine | music:project-lyricsx | music:project-lyricskit | music:project-lyrimuse",
+          "source": "Qt/src/SettingsSchema.cpp:668-686",
+          "blockedBy": "T37",
+          "status": "SOURCE_DEPENDENCY_BLOCKED"
+        },
+        {
+          "face": "7_login_saved",
+          "action": "music:create-playlist",
+          "rect": "libraryOutlineButton (LibraryCreateWidth=150)",
+          "source": "Qt/src/NativeHudLibrary.cpp:110",
+          "blockedBy": "T36",
+          "status": "SOURCE_DEPENDENCY_BLOCKED"
+        },
+        {
+          "face": "7_login_saved",
+          "action": "music:refresh-personal",
+          "rect": "LibraryRefreshWidth=110",
+          "source": "Qt/src/NativeHudLibrary.cpp:116",
+          "blockedBy": "T36",
+          "status": "SOURCE_DEPENDENCY_BLOCKED"
+        }
+      ],
+      "noHit": [
+        {
+          "face": "1_home_chrome_archive",
+          "region": "footer",
+          "action": "—",
+          "rect": "无 hit",
+          "source": "Qt/src/NativeHud.cpp:357-372",
+          "kind": "NO_HIT"
+        },
+        {
+          "face": "1_home_chrome_archive",
+          "region": "brand",
+          "action": "—",
+          "rect": "无 hit",
+          "source": "Qt/src/NativeHud.cpp:328-330",
+          "kind": "NO_HIT"
+        },
+        {
+          "face": "1_home_chrome_archive",
+          "region": "archiveMask",
+          "action": "—",
+          "rect": "无 hit",
+          "source": "Qt/src/NativeHud.cpp:313-326 (FadeWidth=300, clip 0,0,width,984)",
+          "kind": "NO_HIT"
+        },
+        {
+          "face": "1_home_chrome_archive",
+          "region": "archiveTrackRuler",
+          "action": "—",
+          "rect": "无 hit",
+          "source": "Qt/src/NativeHud.cpp:596-623",
+          "kind": "NO_HIT"
+        },
+        {
+          "face": "2_playerbar_bottom",
+          "region": "底栏文案",
+          "action": "—",
+          "rect": "无 hit",
+          "source": "Qt/src/PlayerBar.cpp:92,93,97,119,121,123",
+          "kind": "NO_HIT"
+        },
+        {
+          "face": "2_playerbar_bottom",
+          "region": "底栏几何常量",
+          "action": "—",
+          "rect": "—",
+          "source": "Qt/src/PlayerBar.h:42-44; Qt/src/PlayerBar.cpp:229-250",
+          "kind": "GEOMETRY_CONSTANT"
+        },
+        {
+          "face": "4_search",
+          "region": "搜索滚动",
+          "action": "—",
+          "rect": "无 hit",
+          "source": "Qt/src/NativeHudSearch.cpp:163-172",
+          "kind": "NO_HIT"
+        },
+        {
+          "face": "4_search",
+          "region": "搜索页脚",
+          "action": "—",
+          "rect": "无 hit",
+          "source": "Qt/src/NativeHudSearch.cpp:232,268",
+          "kind": "NO_HIT"
+        },
+        {
+          "face": "4_search",
+          "region": "搜索常量",
+          "action": "—",
+          "rect": "—",
+          "source": "Qt/src/NativeHudSearch.cpp:8-18,134",
+          "kind": "GEOMETRY_CONSTANT"
+        },
+        {
+          "face": "5_settings",
+          "region": "分区表",
+          "action": "—",
+          "source": "Qt/src/SettingsSchema.cpp:695-701",
+          "kind": "GEOMETRY_CONSTANT"
+        },
+        {
+          "face": "6_queue",
+          "region": "队列滚动",
+          "action": "—",
+          "rect": "无 hit",
+          "source": "Qt/src/PlaybackQueueCard.h:9-11; .cpp:6-8; Qt/src/NativeHudInput.cpp:76-80",
+          "kind": "NO_HIT"
+        },
+        {
+          "face": "6_queue",
+          "region": "队列文案",
+          "action": "—",
+          "rect": "无 hit",
+          "source": "Qt/src/PlaybackQueueCard.cpp:98-101",
+          "kind": "NO_HIT"
+        },
+        {
+          "face": "6_queue",
+          "region": "队列宿主",
+          "action": "—",
+          "source": "Qt/src/NativeHudPlayer.cpp:46; Qt/src/NativeHudController.cpp:85-88",
+          "kind": "GEOMETRY_CONSTANT"
+        },
+        {
+          "face": "7_login_saved",
+          "region": "登录面板-二维码",
+          "action": "—（image 非 hit）",
+          "rect": "x+width/2-120, y+260, 240, 240",
+          "source": "Qt/src/NativeHudLibrary.cpp:298",
+          "kind": "NON_HIT_VISUAL"
+        },
+        {
+          "face": "7_login_saved",
+          "region": "登录面板-状态",
+          "action": "—",
+          "rect": "无 hit（L320 limited）",
+          "source": "Qt/src/NativeHudLibrary.cpp:310-322",
+          "kind": "NO_HIT"
+        },
+        {
+          "face": "7_login_saved",
+          "region": "资料库滚动/页脚",
+          "action": "—",
+          "rect": "无 hit",
+          "source": "Qt/src/NativeHudLibrary.cpp:216-225, 228",
+          "kind": "NO_HIT"
+        }
+      ],
+      "platformAbsent": [
+        {
+          "face": "2_playerbar_bottom",
+          "action": "player:volume-fraction:0",
+          "rect": "x+58,y+47,100,28（drawing.volume）",
+          "source": "Qt/src/PlayerBar.cpp:214-217",
+          "reason": "PLATFORM_GATED_MOBILE_ABSENT"
+        },
+        {
+          "face": "3_detail_song_container_viewer_lyrics",
+          "action": "music:official",
+          "rect": "x,910,buttonWidth,44",
+          "source": "Qt/src/NativeHudDetail.cpp:205-206",
+          "reason": "PLATFORM_GATED_MOBILE_ABSENT"
+        },
+        {
+          "face": "5_settings",
+          "action": "binding.action",
+          "rect": "labelLeft,bounds.top+4,labelWidth,58",
+          "source": "Qt/src/SettingsCard.cpp:82-92（#if !defined(Q_OS_ANDROID)）",
+          "reason": "PLATFORM_DIFF_ANDROID_NO_LABEL_HOTZONE"
+        },
+        {
+          "face": "5_settings",
+          "action": "window:fullscreen",
+          "source": "Qt/src/SettingsSchema.cpp:355",
+          "reason": "PLATFORM_GATED_MOBILE_ABSENT"
+        },
+        {
+          "face": "5_settings",
+          "action": "setting:close-behavior:<v>",
+          "source": "Qt/src/SettingsSchema.cpp:367-368",
+          "reason": "PLATFORM_GATED_MOBILE_ABSENT"
+        },
+        {
+          "face": "5_settings",
+          "action": "music:activate | setting:official-player:<v>",
+          "source": "Qt/src/SettingsSchema.cpp:448-449",
+          "reason": "PLATFORM_GATED_MOBILE_ABSENT"
+        },
+        {
+          "face": "5_settings",
+          "action": "desktop-lyrics:open",
+          "source": "Qt/src/SettingsSchema.cpp:486",
+          "reason": "PLATFORM_GATED_MOBILE_ABSENT"
+        }
+      ]
     },
     "criteria": [
       {
         "id": "A1",
-        "textZh": "至少一个 tier 上动作多重集完整：同序、同重数，平台门控项必须缺席"
+        "textZh": "至少一个 tier 上动作多重集完整：同序、同重数，平台门控项必须缺席",
+        "state": "PENDING_T33_T40",
+        "whyZh": "本卡只登记 133 条源码记录；完整 hit 多重集要等 T33-T40 页面集成后产生。"
       },
       {
         "id": "A2",
-        "textZh": "矩形在舞台内：x>=0,y>=0,w>0,h>0,x+w<=stageW+eps,y+h<=stageH+eps，eps 必须在 fixture 显式声明"
+        "textZh": "矩形在舞台内：x>=0,y>=0,w>0,h>0,x+w<=stageW+eps,y+h<=stageH+eps，eps 必须在 fixture 显式声明",
+        "state": "PENDING_T33_T40",
+        "whyZh": "proven 只证明源码里有可携带的数字矩形；尚未在竖屏 stage 上逐个落位。"
       },
       {
         "id": "A3",
-        "textZh": "hit ∩ clip == hit，镜像 Qt HudScroll::clipHits"
+        "textZh": "hit ∩ clip == hit，镜像 Qt HudScroll::clipHits",
+        "state": "PENDING_T33_T40",
+        "whyZh": "需要页面 hit 表与滚动视口；Band 的 840 溢出已由 PortraitBandViewport 显式提供，但仍未接业务命中。"
       },
       {
         "id": "A4",
-        "textZh": "动作顺序严格相等：不排序、不去重、不做子集过滤"
+        "textZh": "动作顺序严格相等：不排序、不去重、不做子集过滤",
+        "state": "PENDING_T33_T40",
+        "whyZh": "fixture 按源码顺序登记；页面实际顺序要等 T33-T40 动作面落地后比较。"
       },
       {
         "id": "A5",
-        "textZh": "不许硬缩：九个底栏热区间距必须与 RowHeight=96 一致"
+        "textZh": "不许硬缩：九个底栏热区间距必须与 RowHeight=96 一致",
+        "state": "PENDING_T33_T40",
+        "whyZh": "底栏 nine-hit 的源码矩形已登记；未在竖屏 tier 上执行间距断言。"
       },
       {
         "id": "A6",
-        "textZh": "内容面热区不得与底栏 inputBounds 重叠（y>=984 归底栏）"
+        "textZh": "内容面热区不得与底栏 inputBounds 重叠（y>=984 归底栏）",
+        "state": "PENDING_T33_T40",
+        "whyZh": "横屏 984 锚点在竖屏需由 playerBar 重新推导，不能直接套 984。"
       },
       {
         "id": "A7",
-        "textZh": "负向清单显式登记：预期无热区的元素"
+        "textZh": "负向清单显式登记：预期无热区的元素",
+        "state": "REGISTERED_EXACT_16",
+        "whyZh": "16 条负向/常量记录逐条登记在 registry.noHit；仍未生成 hit 表。"
       }
     ],
     "noHitExpected": {
-      "status": "WAIT_ARCH_T33_T40",
-      "source": ".agents/parity-20261109/reports/T43-V4-INV-ACT.json（deliverable2 A7）",
-      "itemsZh": [
-        "footer",
-        "brand",
-        "archiveMask",
-        "archiveTrackRuler",
-        "搜索滚动轨",
-        "搜索页脚",
-        "资料库滚动轨",
-        "资料库页脚",
-        "队列滚动",
-        "队列文案",
-        "底栏文案",
-        "歌词面板与详情纯文案"
-      ],
-      "noteZh": "从 INV-ACT 的 A7 负向清单抄录为机器可读键；本卡不生成 hit 表，故只登记、不执行 A7 断言。"
+      "status": "REGISTERED_EXACT_16",
+      "counts": {
+        "NO_HIT": 11,
+        "GEOMETRY_CONSTANT": 4,
+        "NON_HIT_VISUAL": 1
+      },
+      "noteZh": "逐条见 registry.noHit；12 个语义元素中的资料库滚动轨与页脚合并在同一 Qt 源行，故源记录是 11 条 NO_HIT，不是 12 条。"
     },
     "duplicateActions": [
       {
@@ -480,8 +1429,8 @@
     "真机安全区数值未测量",
     "竖屏真机像素基线未获得（Qt 两个 Activity 都是 sensorLandscape）",
     "键盘弹出时窗口是否 resize 未知（windowSoftInputMode 全仓 0 命中）",
-    "test/golden/portrait/{home,detail,settings}_1080x2400.png 全部 WAIT：无设备/设计证据，本阶段不伪造 golden",
-    "动作面 133 条清单/per-entry rect/A1-A7 断言 WAIT：T33-T40 未集成（ARCH 依赖），本卡只登记不伪造覆盖",
-    "Band 模式滚动归属与吸附未裁决：PortraitStageBandsView 无滚动容器，1080x2400 下第 3 带尾部 840 stage 单位不可见；由 T43 冻结"
+    "test/golden/portrait/{home,detail,settings}_1080x2400.png 全部 DEVICE_BLOCKED：无设备/设计证据，本阶段不伪造 golden",
+    "动作面 133 条已拆为 registry（proven 64 / sourceDependencyBlocked 46 / noHit 16 / platformAbsent 7）；A1-A6 的运行时动作多重集仍待 T33-T40 集成，A7 已逐条登记 16 条负向/常量；proven 只证明源码行与矩形证据，不冒充运行证明",
+    "Band 840 stage 单位溢出已由 PortraitBandViewport（overflow/clampScrollOffset/offsetToReveal）与 PortraitStageBandsView(scrollable: true) 显式处理；默认拒绝渲染而不是静默裁切；滚动归属与吸附的业务语义仍待 T33-T40 集成裁决"
   ]
 }

@@ -7,6 +7,7 @@ library;
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show FlutterError;
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:rhine_music_database/ui/layout/portrait_bands.dart';
@@ -35,31 +36,42 @@ double asDouble(Object? value) {
   throw StateError('expected a number, got ' + value.toString());
 }
 
+List<Map<String, Object?>> asMapList(Object? value) {
+  if (value is! List) {
+    throw StateError('expected a list, got ' + value.toString());
+  }
+  return value.map(asMap).toList();
+}
+
+final RegExp _numberPattern = RegExp(r'-?\d+(?:\.\d+)?');
+
+const List<String> _rectPlaceholders = <String>[
+  '同上',
+  '内部',
+  '…',
+  'undefined',
+  '—',
+  'card 右',
+  'actionBlock',
+  '主行',
+  '次行',
+  'SongDetailCard',
+  'control',
+  'rect',
+  'Button',
+  'Width=',
+];
+
+int _numberCount(Object? value) => _numberPattern.allMatches(value.toString()).length;
+
+bool _hasRectPlaceholder(Object? value) => _rectPlaceholders.any((String token) => value.toString().contains(token));
+
 Map<String, Object?> loadFixture() {
   final File file = File('test/fixtures/portrait_bands.json');
   if (!file.existsSync()) {
     throw StateError('missing fixture: ' + file.path);
   }
   return asMap(jsonDecode(file.readAsStringSync()));
-}
-
-/// 仓库根：含 .agents/parity-20261109 的祖先目录。
-///
-/// T43 的 fixture 引用 parity 报告，flutter test 以 worktree 包根为 cwd，
-/// 因此需要向上定位仓库根，再用 File.existsSync 断言 INV-ACT 可解析。
-String? findRepoRoot() {
-  Directory dir = Directory.current;
-  for (int depth = 0; depth < 8; depth++) {
-    if (Directory('${dir.path}/.agents/parity-20261109').existsSync()) {
-      return dir.path;
-    }
-    final Directory parent = dir.parent;
-    if (parent.path == dir.path) {
-      break;
-    }
-    dir = parent;
-  }
-  return null;
 }
 
 Widget host({
@@ -726,29 +738,143 @@ void main() {
     });
   });
 
-  // 本组只验证 fixture 登记的判据/门控与显式 WAIT；133 条动作多重集与
-  // per-entry 矩形归 T33-T40，故不得把本组当成 C4 的证明。
-  group('action surface criteria', () {
-    test('records criteria, duplicates, gates and defers the 133-action inventory', () {
-      final Map<String, Object?> fixture = loadFixture();
-      final Map<String, Object?> coverage = asMap(fixture['actionCoverage']);
-      expect(coverage['coverageStatus'], 'WAIT_ARCH_T33_T40');
+  // 133 条动作登记拆成四个精确集合：proven 只证明源码行/矩形证据，
+  // sourceDependencyBlocked 缺可携带几何，noHit 与 platformAbsent 分别登记。
+  // 这不是运行时、golden 或设备证明；T33-T40 集成前不得把本组当 C4 证明。
+  group('action registry', () {
+    test('splits all 133 source records into four disjoint exact sets', () {
+      final Map<String, Object?> coverage = asMap(loadFixture()['actionCoverage']);
+      expect(coverage['coverageStatus'], 'REGISTRY_SPLIT_SOURCE_DEPENDENCY_BLOCKED');
+      expect(coverage['source'], 'test/fixtures/portrait_bands.json#actionCoverage.registry');
+      expect(jsonEncode(coverage), isNot(contains('.agents')));
       final Map<String, Object?> inventory = asMap(coverage['inventory']);
       expect(inventory['id'], 'T43-V4-INV-ACT');
-      expect(inventory['assertedHere'], isFalse);
       expect(inventory['actionCount'], 133);
       expect(inventory['faceCount'], 7);
       expect(inventory['verification'], 'SOURCE_VERIFIED_LANDSCAPE');
+      expect(inventory['runtime'], 'UNVERIFIED_RUNTIME');
+      expect(inventory['assertedHere'], 'registry-integrity-only');
       expect(asDouble(inventory['rectEpsStage']), kTol);
-      final String? repoRoot = findRepoRoot();
-      expect(repoRoot, isNotNull, reason: 'tests must run inside the Rhine-Music-Database worktree');
-      final File inventoryFile = File('$repoRoot/' + (coverage['source']! as String));
-      expect(inventoryFile.existsSync(), isTrue, reason: 'action inventory must resolve: ' + inventoryFile.path);
-      expect((fixture['wait']! as List<Object?>).join(' '), contains('133'));
-      final Map<String, Object?> noHit = asMap(coverage['noHitExpected']);
-      expect(noHit['status'], 'WAIT_ARCH_T33_T40');
-      expect(noHit['itemsZh']! as List<Object?>, hasLength(12));
-      expect(coverage['criteria']! as List<Object?>, hasLength(7));
+      final Map<String, Object?> registry = asMap(coverage['registry']);
+      final List<Map<String, Object?>> proven = asMapList(registry['proven']);
+      final List<Map<String, Object?>> blocked = asMapList(registry['sourceDependencyBlocked']);
+      final List<Map<String, Object?>> noHit = asMapList(registry['noHit']);
+      final List<Map<String, Object?>> absent = asMapList(registry['platformAbsent']);
+      expect(proven, hasLength(64));
+      expect(blocked, hasLength(46));
+      expect(noHit, hasLength(16));
+      expect(absent, hasLength(7));
+      expect(proven.length + blocked.length + noHit.length + absent.length, 133);
+      final Map<String, Object?> counts = asMap(inventory['registryCounts']);
+      expect(counts['proven'], 64);
+      expect(counts['sourceDependencyBlocked'], 46);
+      expect(counts['noHit'], 16);
+      expect(counts['platformAbsent'], 7);
+      final Map<String, Object?> faceTotals = asMap(inventory['faceTotals']);
+      const Map<String, int> expectedFaceTotals = <String, int>{
+        '1_home_chrome_archive': 24,
+        '2_playerbar_bottom': 12,
+        '3_detail_song_container_viewer_lyrics': 37,
+        '4_search': 7,
+        '5_settings': 32,
+        '6_queue': 8,
+        '7_login_saved': 13,
+      };
+      expect(faceTotals, expectedFaceTotals);
+      for (final MapEntry<String, int> total in expectedFaceTotals.entries) {
+        int actual = 0;
+        for (final List<Map<String, Object?>> group in <List<Map<String, Object?>>>[proven, blocked, noHit, absent]) {
+          actual += group.where((Map<String, Object?> record) => record['face'] == total.key).length;
+        }
+        expect(actual, total.value, reason: 'registry face total: ' + total.key);
+      }
+      final Set<String> keys = <String>{};
+      for (final List<Map<String, Object?>> group in <List<Map<String, Object?>>>[proven, blocked, noHit, absent]) {
+        for (final Map<String, Object?> record in group) {
+          expect(expectedFaceTotals.containsKey(record['face']), isTrue, reason: 'unknown face: ' + record['face'].toString());
+          final String key =
+              <Object?>[record['face'], record['action'], record['source'], record['region'] ?? '', record['rect'] ?? ''].join('|');
+          expect(keys.add(key), isTrue, reason: 'duplicate registry record: ' + key);
+        }
+      }
+    });
+
+    test('proven records have portable Qt sources and numeric rects', () {
+      final Map<String, Object?> registry = asMap(asMap(loadFixture()['actionCoverage'])['registry']);
+      final List<Map<String, Object?>> proven = asMapList(registry['proven']);
+      for (final Map<String, Object?> record in proven) {
+        expect(record['action'].toString(), isNotEmpty);
+        expect(record['action'].toString().startsWith('—'), isFalse, reason: 'proven must be an action: ' + record.toString());
+        expect(record['source'].toString().startsWith('Qt/'), isTrue, reason: 'source must be a Qt path: ' + record.toString());
+        expect(_numberCount(record['rect']), greaterThanOrEqualTo(2), reason: 'rect must carry two numbers: ' + record.toString());
+        expect(_hasRectPlaceholder(record['rect']), isFalse, reason: 'rect must not be a placeholder: ' + record.toString());
+      }
+      final List<Map<String, Object?>> blocked = asMapList(registry['sourceDependencyBlocked']);
+      const Set<String> owners = <String>{'T33', 'T34', 'T35', 'T36', 'T37', 'T39'};
+      for (final Map<String, Object?> record in blocked) {
+        expect(record['status'], 'SOURCE_DEPENDENCY_BLOCKED');
+        expect(owners.contains(record['blockedBy']), isTrue, reason: 'blockedBy must name a T33-T40 face owner: ' + record.toString());
+        expect(
+          _numberCount(record['rect']) < 2 || _hasRectPlaceholder(record['rect']),
+          isTrue,
+          reason: 'blocked rect must stay non-portable: ' + record.toString(),
+        );
+      }
+    });
+
+    test('negative records and platform gates are exact, not a catch-all WAIT', () {
+      final Map<String, Object?> coverage = asMap(loadFixture()['actionCoverage']);
+      final Map<String, Object?> registry = asMap(coverage['registry']);
+      final List<Map<String, Object?>> noHit = asMapList(registry['noHit']);
+      final Map<String, int> kinds = <String, int>{};
+      for (final Map<String, Object?> record in noHit) {
+        expect(record['action'].toString().startsWith('—'), isTrue);
+        expect(record['region'].toString(), isNotEmpty);
+        expect(record['source'].toString().startsWith('Qt/'), isTrue);
+        final String kind = record['kind']! as String;
+        kinds[kind] = (kinds[kind] ?? 0) + 1;
+      }
+      expect(kinds, <String, int>{'NO_HIT': 11, 'GEOMETRY_CONSTANT': 4, 'NON_HIT_VISUAL': 1});
+      final Map<String, Object?> noHitSummary = asMap(coverage['noHitExpected']);
+      expect(noHitSummary['status'], 'REGISTERED_EXACT_16');
+      expect(asMap(noHitSummary['counts']), <String, int>{'NO_HIT': 11, 'GEOMETRY_CONSTANT': 4, 'NON_HIT_VISUAL': 1});
+      final List<Map<String, Object?>> absent = asMapList(registry['platformAbsent']);
+      expect(absent, hasLength(7));
+      final Set<String> reasons = <String>{};
+      final Set<String> absentActions = <String>{};
+      for (final Map<String, Object?> record in absent) {
+        reasons.add(record['reason']! as String);
+        absentActions.add(record['action']! as String);
+        expect(record['source'].toString().startsWith('Qt/'), isTrue);
+      }
+      expect(reasons, <String>{'PLATFORM_GATED_MOBILE_ABSENT', 'PLATFORM_DIFF_ANDROID_NO_LABEL_HOTZONE'});
+      expect(
+        absentActions,
+        containsAll(<String>[
+          'player:volume-fraction:0',
+          'music:official',
+          'window:fullscreen',
+          'desktop-lyrics:open',
+          'binding.action',
+        ]),
+      );
+      final List<Object?> criteria = coverage['criteria']! as List<Object?>;
+      expect(criteria, hasLength(7));
+      final Map<String, String> states = <String, String>{
+        for (final Object? raw in criteria) asMap(raw)['id'].toString(): asMap(raw)['state'].toString(),
+      };
+      expect(states['A1'], 'PENDING_T33_T40');
+      expect(states['A2'], 'PENDING_T33_T40');
+      expect(states['A3'], 'PENDING_T33_T40');
+      expect(states['A4'], 'PENDING_T33_T40');
+      expect(states['A5'], 'PENDING_T33_T40');
+      expect(states['A6'], 'PENDING_T33_T40');
+      expect(states['A7'], 'REGISTERED_EXACT_16');
+      expect(states.values.every((String state) => !state.contains('WAIT')), isTrue);
+    });
+
+    test('keeps duplicates, capability gates and the Android label diff', () {
+      final Map<String, Object?> coverage = asMap(loadFixture()['actionCoverage']);
       expect(coverage['duplicateActions']! as List<Object?>, hasLength(5));
       final Map<String, Object?> gated = asMap(coverage['platformGatedMobileAbsent']);
       expect(gated['source'], contains('Qt/src/PlatformFeatures.h:7-24'));
@@ -779,10 +905,68 @@ void main() {
       );
       final Map<String, Object?> androidOnly = asMap(coverage['androidOnlyDifference']);
       expect(androidOnly['source'], 'Qt/src/SettingsCard.cpp:82-92');
-      final String ids = (coverage['criteria']! as List<Object?>)
-          .map((Object? raw) => asMap(raw)['id'].toString())
-          .join(',');
-      expect(ids, 'A1,A2,A3,A4,A5,A6,A7');
+    });
+  });
+
+  group('PortraitBandViewport', () {
+    test('reports the band overflow of every proposed tier', () {
+      final List<Object?> tiers = loadFixture()['tiers']! as List<Object?>;
+      expect(tiers, hasLength(3));
+      for (final Object? rawTier in tiers) {
+        final Map<String, Object?> tier = asMap(rawTier);
+        final double width = asDouble(tier['layoutWidth']);
+        final double height = asDouble(tier['layoutHeight']);
+        final PortraitBands bands = computePortraitBands(
+          PortraitInputs(layoutWidth: width, layoutHeight: height),
+          PortraitBandMode.band,
+        );
+        final PortraitBandViewport viewport = bands.bandViewport;
+        final double content = asDouble(tier['bandCountBand']) * 1080;
+        final double overflow = content > bands.stageHeight ? content - bands.stageHeight : 0.0;
+        expect(viewport.stageWidth, closeTo(1080, kTol), reason: tier['id'].toString());
+        expect(viewport.viewportHeight, closeTo(bands.stageHeight, kTol), reason: tier['id'].toString());
+        expect(viewport.contentHeight, closeTo(content, kTol), reason: tier['id'].toString());
+        expect(viewport.overflow, closeTo(overflow, kTol), reason: tier['id'].toString());
+        expect(viewport.overflows, isTrue, reason: tier['id'].toString());
+        expect(viewport.fits, isFalse, reason: tier['id'].toString());
+        expect(bands.bandsOverflow, closeTo(overflow, kTol), reason: tier['id'].toString());
+      }
+    });
+
+    test('clamps scroll offsets and reveals the tail band without clipping it', () {
+      final PortraitBands bands = computePortraitBands(const PortraitInputs(layoutWidth: 1080, layoutHeight: 2400), PortraitBandMode.band);
+      final PortraitBandViewport viewport = bands.bandViewport;
+      expect(viewport.clampScrollOffset(-5), 0);
+      expect(viewport.clampScrollOffset(0), 0);
+      expect(viewport.clampScrollOffset(900), closeTo(840, kTol));
+      expect(viewport.clampScrollOffset(1e9), closeTo(840, kTol));
+      expect(viewport.visibleRect(-10), const StageRect(0, 0, 1080, 2400));
+      expect(viewport.visibleRect(840), const StageRect(0, 840, 1080, 2400));
+      expect(viewport.isBandVisible(bands.bands[2], 0), isFalse);
+      expect(viewport.isBandVisible(bands.bands[2], 840), isTrue);
+      expect(viewport.offsetToReveal(bands.bands[2]), closeTo(840, kTol));
+      expect(viewport.offsetToReveal(bands.bands[2], alignment: 0), closeTo(840, kTol));
+    });
+
+    test('rejects non-finite offsets and invalid reveal requests', () {
+      final PortraitBands bands = computePortraitBands(const PortraitInputs(layoutWidth: 1080, layoutHeight: 2400), PortraitBandMode.band);
+      final PortraitBandViewport viewport = bands.bandViewport;
+      expect(() => viewport.clampScrollOffset(double.nan), throwsArgumentError);
+      expect(() => viewport.clampScrollOffset(double.infinity), throwsArgumentError);
+      expect(() => viewport.clampScrollOffset(double.negativeInfinity), throwsArgumentError);
+      expect(() => viewport.offsetToReveal(const StageRect(0, 0, 0, 0)), throwsArgumentError);
+      expect(() => viewport.offsetToReveal(bands.bands[0], alignment: -0.1), throwsArgumentError);
+      expect(() => viewport.offsetToReveal(bands.bands[0], alignment: 1.1), throwsArgumentError);
+      expect(() => viewport.offsetToReveal(bands.bands[0], alignment: double.nan), throwsArgumentError);
+    });
+
+    test('hybrid and w candidates fit without inventing overflow', () {
+      final PortraitBands hybrid = computePortraitBands(const PortraitInputs(layoutWidth: 1080, layoutHeight: 2400), PortraitBandMode.hybrid);
+      final PortraitBands w = computePortraitBands(const PortraitInputs(layoutWidth: 1080, layoutHeight: 2400), PortraitBandMode.w);
+      expect(hybrid.bandViewport.overflow, 0);
+      expect(hybrid.bandViewport.fits, isTrue);
+      expect(w.bandViewport.overflow, 0);
+      expect(w.bandViewport.fits, isTrue);
     });
   });
 
@@ -839,7 +1023,33 @@ void main() {
       expect(tester.getSize(find.byKey(const ValueKey<String>('player-bar'))), const Size(1080, 96));
     });
 
-    testWidgets('band view emits one slot per band', (WidgetTester tester) async {
+    testWidgets('band view emits one slot per band and scrolls the overflow', (WidgetTester tester) async {
+      await tester.binding.setSurfaceSize(const Size(1080, 2400));
+      addTearDown(() async {
+        await tester.binding.setSurfaceSize(null);
+      });
+      await tester.pumpWidget(host(
+        surface: const Size(1080, 2400),
+        child: PortraitStage(
+          mode: PortraitBandMode.band,
+          child: PortraitStageBandsView(
+            scrollable: true,
+            builder: (BuildContext context, int index, StageRect band) =>
+                SizedBox(key: ValueKey<int>(index), width: band.width, height: band.height),
+          ),
+        ),
+      ));
+      expect(find.byKey(const ValueKey<int>(0)), findsOneWidget);
+      expect(find.byKey(const ValueKey<int>(1)), findsOneWidget);
+      expect(find.byKey(const ValueKey<int>(2)), findsOneWidget);
+      expect(find.byKey(const ValueKey<int>(3)), findsNothing);
+      final ScrollableState scrollable = tester.state<ScrollableState>(
+        find.descendant(of: find.byType(SingleChildScrollView), matching: find.byType(Scrollable)),
+      );
+      expect(scrollable.position.maxScrollExtent, closeTo(840, kTol));
+    });
+
+    testWidgets('band view refuses to silently clip when scrolling is not enabled', (WidgetTester tester) async {
       await tester.binding.setSurfaceSize(const Size(1080, 2400));
       addTearDown(() async {
         await tester.binding.setSurfaceSize(null);
@@ -854,10 +1064,26 @@ void main() {
           ),
         ),
       ));
-      expect(find.byKey(const ValueKey<int>(0)), findsOneWidget);
-      expect(find.byKey(const ValueKey<int>(1)), findsOneWidget);
+      expect(tester.takeException(), isA<FlutterError>());
+    });
+
+    testWidgets('band view does not add a scroll view when every band fits', (WidgetTester tester) async {
+      await tester.binding.setSurfaceSize(const Size(1080, 2400));
+      addTearDown(() async {
+        await tester.binding.setSurfaceSize(null);
+      });
+      await tester.pumpWidget(host(
+        surface: const Size(1080, 2400),
+        child: PortraitStage(
+          mode: PortraitBandMode.hybrid,
+          child: PortraitStageBandsView(
+            builder: (BuildContext context, int index, StageRect band) =>
+                SizedBox(key: ValueKey<int>(index), width: band.width, height: band.height),
+          ),
+        ),
+      ));
+      expect(find.byType(SingleChildScrollView), findsNothing);
       expect(find.byKey(const ValueKey<int>(2)), findsOneWidget);
-      expect(find.byKey(const ValueKey<int>(3)), findsNothing);
     });
 
     testWidgets('recomputes when the available size changes', (WidgetTester tester) async {

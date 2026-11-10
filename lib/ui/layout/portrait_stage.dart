@@ -7,7 +7,7 @@
 /// * 不用 OrientationBuilder 按设备类型切换公式，只按可用尺寸判断。
 library;
 
-import 'package:flutter/foundation.dart' show FlutterError, defaultTargetPlatform;
+import 'package:flutter/foundation.dart' show FlutterError, TargetPlatform, defaultTargetPlatform;
 import 'package:flutter/widgets.dart';
 
 import 'portrait_bands.dart';
@@ -148,16 +148,48 @@ class PortraitStageSlot extends StatelessWidget {
 
 /// 按 PortraitBands.bands 铺开分带；每带一个 slot。
 ///
-/// 分带是否需要滚动（以及滚动由谁负责）尚未裁决，这里不做假设。
+/// 分带溢出（Band 候选在 1080x2400 时第三带尾部有 840 舞台单位超出舞台）
+/// 不再被 Stack 的默认 clip 静默吃掉。调用方必须显式二选一：
+/// * [scrollable] = false（默认）：只在 [PortraitBandViewport.fits] 时渲染；
+///   一旦溢出就抛 [FlutterError]，拒绝把不可达动作当成可用；
+/// * [scrollable] = true：套一个显式 [SingleChildScrollView]，由调用方/
+///   测试通过 [scrollController] 或 Scrollable 位置访问被遮住的带。
+///
+/// 本 widget 不选 Band 赢家，不改变任何 band 矩形，也不替业务决定滚动归属。
 class PortraitStageBandsView extends StatelessWidget {
-  const PortraitStageBandsView({super.key, required this.builder});
+  const PortraitStageBandsView({
+    super.key,
+    required this.builder,
+    this.scrollable = false,
+    this.scrollController,
+  });
 
   final Widget Function(BuildContext context, int index, StageRect band) builder;
+
+  /// 是否允许用显式滚动视口承载溢出分带。默认拒绝不安全裁切。
+  final bool scrollable;
+
+  /// 可选滚动控制器；与 [scrollable] 一起使用。
+  final ScrollController? scrollController;
 
   @override
   Widget build(BuildContext context) {
     final PortraitBands bands = PortraitStageScope.of(context);
-    return Stack(
+    final PortraitBandViewport viewport = bands.bandViewport;
+    if (viewport.overflows && !scrollable) {
+      throw FlutterError(
+        'PortraitStageBandsView refuses to clip ${bands.mode.name} bands: '
+        'content is ${viewport.contentHeight} stage units but the stage viewport is '
+        '${viewport.viewportHeight} (overflow ${viewport.overflow}). '
+        'Pass scrollable: true to place the bands in an explicit '
+        'SingleChildScrollView, or choose a candidate that fits. '
+        'Silent clipping would hide reachable actions.',
+      );
+    }
+    final Widget stack = Stack(
+      // 分带自身可以超出 Stack；是否可见由外层滚动视口或舞台边界明确决定，
+      // 不在这里用默认 clip 把越界内容静默裁掉。
+      clipBehavior: Clip.none,
       children: <Widget>[
         for (int index = 0; index < bands.bands.length; index++)
           PortraitStageSlot(
@@ -165,6 +197,19 @@ class PortraitStageBandsView extends StatelessWidget {
             child: builder(context, index, bands.bands[index]),
           ),
       ],
+    );
+    if (!viewport.overflows) {
+      return stack;
+    }
+    return SingleChildScrollView(
+      controller: scrollController,
+      primary: false,
+      scrollDirection: Axis.vertical,
+      child: SizedBox(
+        width: bands.stageWidth,
+        height: viewport.contentHeight,
+        child: stack,
+      ),
     );
   }
 }
