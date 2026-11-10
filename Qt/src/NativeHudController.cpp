@@ -683,9 +683,8 @@ void NativeHud::action(QString value) {
     if (value == "plugins") {
         pluginManagerMessage.clear();
         openModal("plugins");
-        if (m_host->pluginMarketplaceState()["plugins"].toArray().isEmpty()) {
-            m_host->refreshPluginMarketplace();
-        }
+        // 市场索引可能在应用运行期间更新，进入面板时总是重新读取，避免显示过期版本。
+        m_host->refreshPluginMarketplace();
         return;
     }
     if (value == "plugin:refresh") {

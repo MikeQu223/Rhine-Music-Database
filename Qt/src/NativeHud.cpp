@@ -147,6 +147,35 @@ void NativeHud::button(QString label, double x, double y, double width, double h
     text(m_modalControls ? fit(label, size, width - inset * 2) : label, x + inset,
          y + (height - size) / 2 - 4, size, weight);
 }
+
+/** 插件面板按钮：主操作用实底，其余用细线轮廓，避免整页灰色实底。 */
+void NativeHud::pluginButton(const QString &label, double x, double y, double width, double height,
+                             const QString &action, double size, bool primary, QJsonArray color) {
+    if (m_contentSink) {
+        m_contentSink->action(label, action);
+        return;
+    }
+    hit(x, y, width, height, action, label);
+    if (primary) {
+        fill(x, y, width, height, dark ? QJsonArray{0.88, 0.89, 0.84, 1} : ink());
+    } else {
+        auto tint = ink();
+        tint[3] = dark ? 0.1 : 0.05;
+        fill(x, y, width, height, tint);
+        auto line = ink();
+        line[3] = dark ? 0.45 : 0.3;
+        fill(x, y, width, 1, line);
+        fill(x, y + height - 1, width, 1, line);
+        fill(x, y, 1, height, line);
+        fill(x + width - 1, y, 1, height, line);
+    }
+    if (color.isEmpty()) {
+        color =
+            primary ? (dark ? QJsonArray{0.08, 0.085, 0.075, 1} : QJsonArray{0.96, 0.95, 0.91, 1}) : ink();
+    }
+    text(fit(label, size, width - 16, "demibold"), x + 8, y + (height - size) / 2 - 4, size, "demibold", 0,
+         color);
+}
 void NativeHud::control(QString label, double x, double y, double width, QString action) {
     if (m_contentSink) {
         m_contentSink->action(label, action);

@@ -215,11 +215,13 @@ void NativeHud::modalDraw(double width) {
     } else if (modal == "plugins" || modal == "plugin-detail") {
         category = "PLUGIN MANAGEMENT";
     }
-    text("RHINE LAB / MUSIC DATABASE / " + category, x + 53, y + 37, modal == "settings" ? 14 : 11);
+    const bool pluginPage = modal == "plugins" || modal == "plugin-detail";
+    text("RHINE LAB / MUSIC DATABASE / " + category, x + 53, y + 37,
+         pluginPage ? 12 : (modal == "settings" ? 14 : 11));
     button("← 返回", x + usable - 220, y + 18, 167, 54,
            modal == "desktop-lyrics" ? "desktop-lyrics:back" : "close-modal", 20, "demibold");
-    text(modalTitle(modal, music), x + 53, y + 91, 38, "demibold");
-    text(modalSubtitle(modal, music), x + 53, y + 147, modal == "settings" ? 18 : 15);
+    text(modalTitle(modal, music), x + 53, y + 91, pluginPage ? 44 : 38, "demibold");
+    text(modalSubtitle(modal, music), x + 53, y + 147, pluginPage ? 17 : (modal == "settings" ? 18 : 15));
     modalBody(x, y, usable);
     m_modalControls = false;
     restore();
@@ -312,10 +314,8 @@ QVector<ResponsiveHudContent::Item> NativeHud::auxiliaryContent() {
 void NativeHud::platformChoices(double x, double y, double width, bool expanded) {
     constexpr double gap = 12;
     const auto items = providerCards();
-    if (items.isEmpty()) {
-        return;
-    }
-    const auto cardWidth = (width - gap * (items.size() - 1)) / items.size();
+    const auto cardCount = items.size() + 1;
+    const auto cardWidth = (width - gap * (cardCount - 1)) / cardCount;
     for (int index = 0; index < items.size(); ++index) {
         const auto &provider = items.at(index);
         const auto left = x + index * (cardWidth + gap);
@@ -350,6 +350,24 @@ void NativeHud::platformChoices(double x, double y, double width, bool expanded)
             limited(note, left + 16, y + 150, 12, cardWidth - 32);
         }
     }
+    const auto left = x + items.size() * (cardWidth + gap);
+    if (m_contentSink) {
+        m_contentSink->action("第三方平台插件", "plugins");
+        m_contentSink->text("插件市场 / 安装与管理第三方平台插件");
+        return;
+    }
+    const auto height = expanded ? 190 : 66;
+    const auto tint = dark ? QJsonArray{0.55, 0.59, 0.46, 0.12} : QJsonArray{0.44, 0.49, 0.36, 0.09};
+    fill(left, y, cardWidth, height, tint);
+    hit(left, y, cardWidth, height, "plugins", "第三方平台插件");
+    text("THIRD-PARTY / PLUGINS", left + 16, y + 10, 10);
+    if (expanded) {
+        centeredText("+", left + cardWidth / 2, y + 84, 54, "light", true);
+        text(fit("第三方平台插件", 22, cardWidth - 32, "demibold"), left + 16, y + 118, 22, "demibold");
+        limited("插件市场 / 安装与启用", left + 16, y + 154, 12, cardWidth - 32);
+    } else {
+        text(fit("第三方平台插件", 17, cardWidth - 32, "demibold"), left + 16, y + 29, 17, "demibold");
+    }
 }
 void NativeHud::platformPanel(double x, double y, double width) {
     text("PROVIDER ACCESS / 音乐平台", x + 53, y + 222, 13, "demibold");
@@ -382,27 +400,31 @@ void NativeHud::platformPanel(double x, double y, double width) {
     } else {
         button("账号登录 / " + m_music->providerName(), x + 53, y + 660, 330, 48, "music:login", 16);
     }
-    button("插件管理 / PLUGINS", x + 53, y + 720, 330, 48, "plugins", 15);
 }
 
-/** 插件管理器：只读列出已安装包，安装与信任公钥动作交给 Host。 */
+/** 插件管理器：市场与已安装分区按档案列表组织，主操作使用实底按钮。 */
 void NativeHud::pluginsPanel(double x, double y, double width) {
     const auto left = x + 53;
     const auto usable = width - 106;
     auto muted = ink();
-    muted[3] = 0.55;
+    muted[3] = dark ? 0.7 : 0.62;
+    const auto accent = dark ? QJsonArray{0.7, 0.75, 0.53, 1} : QJsonArray{0.835, 0.639, 0.282, 1};
+    const auto accentText = dark ? QJsonArray{0.8, 0.73, 0.48, 1} : QJsonArray{0.502, 0.337, 0.0, 1};
+    auto structure = ink();
+    structure[3] = dark ? 0.55 : 0.42;
     const auto marketplace = m_host->pluginMarketplaceState();
     const auto market = marketplace["plugins"].toArray();
     const auto installed = m_host->pluginManagerState();
     QHash<QString, QString> installedVersions;
     for (const auto &value : installed) {
-        installedVersions.insert(value.toObject()["id"].toString(), value.toObject()["version"].toString());
+        const auto entry = value.toObject();
+        installedVersions.insert(entry["id"].toString(), entry["version"].toString());
     }
-    text("插件市场 / MARKETPLACE", left, y + 205, 12, "demibold");
+    text("插件市场 / MARKETPLACE", left, y + 196, 15, "demibold", 0.6);
 #if !RHINE_MOBILE
-    button("导入文件夹", left + usable - 280, y + 195, 180, 30, "plugin:import", 12);
+    pluginButton("导入文件夹", left + usable - 300, y + 188, 170, 40, "plugin:import", 13);
 #endif
-    button("刷新", left + usable - 90, y + 195, 90, 30, "plugin:refresh", 12);
+    pluginButton("刷新", left + usable - 112, y + 188, 100, 40, "plugin:refresh", 13);
     const auto installing = marketplace["installing"].toBool();
     auto status = marketplace["status"].toString("尚未读取插件市场");
     if (installing) {
@@ -411,114 +433,153 @@ void NativeHud::pluginsPanel(double x, double y, double width) {
                   QString::number(marketplace["installSpeed"].toDouble() / (1024.0 * 1024.0), 'f', 1) +
                   " MB/s";
     }
-    limited(status, left, y + 230, 11, usable - 110);
+    text(fit(status, 13, usable - 120), left, y + 234, 13, "regular", 0, muted);
     if (installing) {
         auto track = ink();
         track[3] = 0.15;
         const auto progress = qBound(0.0, marketplace["installProgress"].toDouble(), 1.0);
-        fill(left, y + 248, usable, 4, track);
-        fill(left, y + 248, usable * progress, 4, QJsonArray{0.835, 0.639, 0.282, 1});
+        fill(left, y + 254, usable, 4, track);
+        fill(left, y + 254, usable * progress, 4, accent);
     }
-    rule(left, y + 255, usable, 0.2);
+    fill(left, y + 266, usable, 2, structure);
+    constexpr double marketRow = 82;
+    const auto marketTop = y + 282;
+    const auto marketRows = std::min(4, int(market.size()));
     if (market.isEmpty()) {
-        text("暂无可用插件", left, y + 285, 17, "demibold");
-        limited(marketplace["url"].toString().isEmpty() ? "设置 RHINE_PLUGIN_MARKETPLACE_URL 后刷新。"
-                                                        : "市场索引为空，或当前网络不可用。",
-                left, y + 320, 13, usable);
+        text("暂无可用插件", left, marketTop, 19, "demibold");
+        text(fit(marketplace["url"].toString().isEmpty() ? "设置 RHINE_PLUGIN_MARKETPLACE_URL 后刷新。"
+                                                         : "市场索引为空，或当前网络不可用。",
+                 13, usable),
+             left, marketTop + 32, 13, "regular", 0, muted);
     }
-    for (int index = 0; index < market.size() && index < 4; ++index) {
+    for (int index = 0; index < marketRows; ++index) {
         const auto value = market.at(index).toObject();
         const auto id = value["id"].toString();
         const auto version = value["version"].toString();
         const auto current = installedVersions.value(id);
-        const auto row = y + 270 + index * 62.0;
-        text(fit(value["name"].toString(id), 17, usable * 0.5, "demibold"), left, row, 17, "demibold");
-        text(id + (version.isEmpty() ? QString() : " / " + version), left, row + 24, 11, "regular", 0, muted);
-        limited(value["description"].toString(), left + usable * 0.52, row + 2, 12, usable * 0.3);
+        const auto row = marketTop + index * marketRow;
+        text(fit(value["name"].toString(id), 20, usable * 0.44, "demibold"), left, row, 20, "demibold");
+        auto meta = id;
+        if (!version.isEmpty()) {
+            meta += " / 市场版本 " + version;
+        }
+        if (!current.isEmpty()) {
+            meta += " / 已安装 " + current;
+        }
+        text(fit(meta, 13, usable * 0.44), left, row + 30, 13, "regular", 0,
+             !current.isEmpty() && current != version ? accentText : muted);
+        text(fit(value["description"].toString(), 14, usable * 0.34), left + usable * 0.47, row + 10, 14,
+             "regular", 0, muted);
         const auto label = current.isEmpty()
                                ? QStringLiteral("安装")
                                : (current == version ? QStringLiteral("重新安装") : QStringLiteral("更新"));
-        button(label, left + usable - 136, row, 124, 36, "plugin:market:" + id, 12);
-        rule(left, row + 54, usable, 0.15);
+        pluginButton(label, left + usable - 142, row + 8, 142, 44, "plugin:market:" + id, 14, true);
+        rule(left, row + 74, usable, 0.14);
     }
-    text("已安装 / INSTALLED", left, y + 525, 12, "demibold");
-    rule(left, y + 550, usable, 0.2);
+    const auto marketBottom = market.isEmpty() ? marketTop + 64 : marketTop + marketRows * marketRow;
+    const auto installedHeader = marketBottom + 20;
+    text("已安装 / INSTALLED", left, installedHeader, 15, "demibold", 0.6);
+    aligned(QString::number(installed.size()) + " 个", left + usable, installedHeader + 2, 13, "regular");
+    fill(left, installedHeader + 28, usable, 1, structure);
+    const auto installedTop = installedHeader + 40;
+    const auto installedRows =
+        std::min({4, int(installed.size()), std::max(0, int((y + 786 - installedTop) / 62))});
     if (installed.isEmpty()) {
-        limited("尚未安装插件。", left, y + 570, 13, usable);
+        text("尚未安装插件", left, installedTop, 19, "demibold");
+        text(fit("从上方市场安装，或使用“导入文件夹”添加本地插件。", 13, usable), left, installedTop + 32, 13,
+             "regular", 0, muted);
     }
-    for (int index = 0; index < installed.size() && index < 4; ++index) {
+    for (int index = 0; index < installedRows; ++index) {
         const auto value = installed.at(index).toObject();
         const auto id = value["id"].toString();
-        const auto row = y + 565 + index * 52.0;
-        text(fit(value["name"].toString(id), 16, usable * 0.45, "demibold"), left, row, 16, "demibold");
-        limited(id + " / " + value["version"].toString() + " / " + value["publisher"].toString(),
-                left + usable * 0.46, row + 2, 11, usable * 0.3);
-        if (value["userInstalled"].toBool()) {
-            button("详情", left + usable - 360, row, 90, 34, "plugin:detail:" + id, 12);
-            button("卸载", left + usable - 260, row, 100, 34, "plugin:uninstall:" + id, 12);
-            button(value["enabled"].toBool() ? "禁用" : "启用", left + usable - 150, row, 140, 34,
-                   "plugin:toggle:" + id, 12);
+        const auto row = installedTop + index * 62.0;
+        const auto enabled = value["enabled"].toBool();
+        const auto userInstalled = value["userInstalled"].toBool();
+        text(fit(value["name"].toString(id), 19, usable * 0.4, "demibold"), left, row, 19, "demibold");
+        text(fit(id + " / " + value["version"].toString() + " / " + value["publisher"].toString(), 13,
+                 usable * 0.42),
+             left, row + 27, 13, "regular", 0, muted);
+        fill(left + usable * 0.44, row + 8, 7, 7, enabled ? accent : muted);
+        text(enabled ? "已启用" : "已禁用", left + usable * 0.44 + 15, row + 1, 13, "regular", 0,
+             enabled ? ink() : muted);
+        if (userInstalled) {
+            pluginButton("详情", left + usable - 300, row + 10, 86, 38, "plugin:detail:" + id, 13);
+            pluginButton("卸载", left + usable - 206, row + 10, 86, 38, "plugin:uninstall:" + id, 13, false,
+                         dark ? QJsonArray{0.82, 0.47, 0.32, 1} : QJsonArray{0.6, 0.263, 0.125, 1});
+            pluginButton(enabled ? "禁用" : "启用", left + usable - 112, row + 10, 112, 38,
+                         "plugin:toggle:" + id, 13);
         } else {
-            button("详情", left + usable - 250, row, 100, 34, "plugin:detail:" + id, 12);
-            button(value["enabled"].toBool() ? "禁用" : "启用", left + usable - 140, row, 120, 34,
-                   "plugin:toggle:" + id, 12);
+            pluginButton("详情", left + usable - 206, row + 10, 86, 38, "plugin:detail:" + id, 13);
+            pluginButton(enabled ? "禁用" : "启用", left + usable - 112, row + 10, 112, 38,
+                         "plugin:toggle:" + id, 13);
         }
-        rule(left, row + 45, usable, 0.12);
+        rule(left, row + 54, usable, 0.12);
     }
-    if (!pluginManagerMessage.isEmpty()) {
-        limited(pluginManagerMessage, left, y + 780, 12, usable);
-    } else {
-        limited("插件下载到应用数据目录；禁用后不会加载。", left, y + 780, 12, usable);
+    const auto hidden = int(installed.size()) - installedRows;
+    QString footer = pluginManagerMessage;
+    if (footer.isEmpty()) {
+        footer = QStringLiteral("插件下载到应用数据目录；禁用后不会加载。");
     }
+    if (hidden > 0) {
+        footer += "  另有 " + QString::number(hidden) + " 个已安装插件未显示。";
+    }
+    text(fit(footer, 13, usable), left, y + 802, 13, "regular", 0,
+         pluginManagerMessage.isEmpty() ? muted : ink());
 }
 
 void NativeHud::pluginDetailPanel(double x, double y, double width) {
     const auto left = x + 53;
     const auto usable = width - 106;
     auto muted = ink();
-    muted[3] = 0.55;
+    muted[3] = dark ? 0.7 : 0.62;
+    auto structure = ink();
+    structure[3] = dark ? 0.55 : 0.42;
     const auto detail = m_host->pluginDetail(pluginDetailId);
     if (detail.isEmpty()) {
-        text("插件不可用", left, y + 250, 20, "demibold");
+        text("插件不可用", left, y + 230, 22, "demibold");
         return;
     }
-    text(fit(detail["display"].toObject()["name"].toString(detail["name"].toString(detail["id"].toString())),
-             26, usable, "demibold"),
-         left, y + 220, 26, "demibold");
-    text(detail["id"].toString() + " / " + detail["version"].toString(), left, y + 260, 12, "regular", 0,
-         muted);
-    rule(left, y + 285, usable, 0.2);
-    const auto field = [&](const QString &label, const QString &value, double row) {
-        text(label, left, row, 11, "regular", 0, muted);
-        limited(value.isEmpty() ? QStringLiteral("—") : value, left, row + 20, 14, usable * 0.48);
-    };
-    field("PUBLISHER / 发布者", detail["publisher"].toString(), y + 310);
-    field("LICENSE / 许可证", detail["license"].toString(), y + 365);
-    field("ENTRY / 入口", detail["entry"].toObject()["file"].toString(), y + 420);
+    const auto id = detail["id"].toString();
+    const auto installed = detail["installed"].toBool();
+    const auto enabled = detail["enabled"].toBool();
+    const auto userInstalled = detail["userInstalled"].toBool();
+    const auto name =
+        detail["display"].toObject()["name"].toString(detail["name"].toString(detail["id"].toString()));
+    text(fit(name, 32, usable, "demibold"), left, y + 196, 32, "demibold");
+    text(id + " / " + detail["version"].toString(), left, y + 242, 14, "regular", 0, muted);
+    fill(left, y + 274, usable, 2, structure);
     int capabilities = 0;
     const auto values = detail["capabilities"].toObject();
     for (auto it = values.begin(); it != values.end(); ++it) {
         capabilities += it.value().toBool() ? 1 : 0;
     }
-    field("CAPABILITIES / 能力", QString::number(capabilities), y + 475);
+    const auto colWidth = (usable - 32) / 2;
+    const auto field = [&](const QString &label, const QString &value, double fx, double fy) {
+        text(label, fx, fy, 12, "regular", 0.5, muted);
+        text(fit(value.isEmpty() ? QStringLiteral("—") : value, 16, colWidth), fx, fy + 22, 16);
+    };
+    field("PUBLISHER / 发布者", detail["publisher"].toString(), left, y + 304);
+    field("LICENSE / 许可证", detail["license"].toString(), left + colWidth + 32, y + 304);
+    field("ENTRY / 入口", detail["entry"].toObject()["file"].toString(), left, y + 382);
+    field("CAPABILITIES / 能力", QString::number(capabilities) + " 项", left + colWidth + 32, y + 382);
     field("STATE / 状态",
-          detail["installed"].toBool() ? (detail["enabled"].toBool() ? QStringLiteral("已安装 / 已启用")
-                                                                     : QStringLiteral("已安装 / 已禁用"))
-                                       : QStringLiteral("未安装"),
-          y + 530);
-    const auto id = detail["id"].toString();
-    if (detail["installed"].toBool()) {
-        button(detail["enabled"].toBool() ? "禁用插件" : "启用插件", left, y + 620, 180, 44,
-               "plugin:toggle:" + id, 15);
-        button("回滚上一版本", left + 200, y + 620, 180, 44, "plugin:rollback:" + id, 15);
-        if (detail["userInstalled"].toBool()) {
-            button("卸载插件", left, y + 675, 180, 40, "plugin:uninstall:" + id, 14);
+          installed ? (enabled ? QStringLiteral("已安装 / 已启用") : QStringLiteral("已安装 / 已禁用"))
+                    : QStringLiteral("未安装"),
+          left, y + 460);
+    field("SOURCE / 来源", userInstalled ? QStringLiteral("用户安装") : QStringLiteral("内置"),
+          left + colWidth + 32, y + 460);
+    if (installed) {
+        pluginButton(enabled ? "禁用插件" : "启用插件", left, y + 566, 190, 48, "plugin:toggle:" + id, 15);
+        pluginButton("回滚上一版本", left + 206, y + 566, 190, 48, "plugin:rollback:" + id, 15);
+        if (userInstalled) {
+            pluginButton("卸载插件", left, y + 630, 190, 44, "plugin:uninstall:" + id, 14, false,
+                         dark ? QJsonArray{0.82, 0.47, 0.32, 1} : QJsonArray{0.6, 0.263, 0.125, 1});
         }
     } else {
-        button("安装插件", left, y + 620, 180, 44, "plugin:market:" + id, 15);
+        pluginButton("安装插件", left, y + 566, 190, 48, "plugin:market:" + id, 15, true);
     }
     if (!pluginManagerMessage.isEmpty()) {
-        limited(pluginManagerMessage, left, y + (detail["userInstalled"].toBool() ? 735 : 700), 12, usable);
+        text(fit(pluginManagerMessage, 13, usable), left, y + 730, 13, "regular");
     }
 }
 

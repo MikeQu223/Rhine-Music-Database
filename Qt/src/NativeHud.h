@@ -299,6 +299,8 @@ class NativeHud : public QObject {
     void hit(double x, double y, double width, double height, QString action, QString label = {});
     void button(QString label, double x, double y, double width, double height, QString action, double size,
                 QString weight = "regular");
+    void pluginButton(const QString &label, double x, double y, double width, double height,
+                      const QString &action, double size, bool primary = false, QJsonArray color = {});
     void control(QString label, double x, double y, double width, QString action);
     void rule(double x, double y, double width, double opacity = 0.4);
     void image(QString key, double x, double y, double width, double height);

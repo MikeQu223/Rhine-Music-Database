@@ -36,6 +36,17 @@ for (const entry of index.plugins || []) {
     if (manifest.id !== id) {
         failures.push('manifest id mismatch: ' + id);
     }
+    if (!entry.version || !manifest.version || String(entry.version) !== String(manifest.version)) {
+        failures.push(
+            'index/manifest version mismatch: ' +
+                id +
+                ' (' +
+                String(entry.version) +
+                ' != ' +
+                String(manifest.version) +
+                ')',
+        );
+    }
     if (manifest.schemaVersion !== 2) {
         failures.push('manifest schemaVersion must be 2: ' + id);
     }
