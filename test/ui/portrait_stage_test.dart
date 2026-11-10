@@ -68,9 +68,6 @@ bool _hasRectPlaceholder(Object? value) => _rectPlaceholders.any((String token) 
 
 Map<String, Object?> loadFixture() {
   final File file = File('test/fixtures/portrait_bands.json');
-  if (!file.existsSync()) {
-    throw StateError('missing fixture: ' + file.path);
-  }
   return asMap(jsonDecode(file.readAsStringSync()));
 }
 
