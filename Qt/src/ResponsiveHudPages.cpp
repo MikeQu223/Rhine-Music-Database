@@ -2,6 +2,7 @@
 #include "MusicData.h"
 #include "ProviderRegistry.h"
 #include <algorithm>
+#include <QHash>
 #include <QJsonDocument>
 #include <QUrl>
 
@@ -570,6 +571,249 @@ double ResponsiveHudLayout::settings(ResponsiveHudCanvas &c, const QJsonObject &
     }
     return y + m_scroll + 20;
 }
+/** 竖屏音乐平台页 */
+double ResponsiveHudLayout::providerPage(ResponsiveHudCanvas &c, const QJsonObject &s) {
+    double y = 158 - m_scroll;
+    auto muted = c.muted;
+    const auto providers = s["providers"].toArray();
+    terminalSection(c, y, "01", "音乐平台", "PROVIDER ACCESS");
+    y += 26;
+    if (providers.isEmpty()) {
+        y = c.paragraph("当前没有可用的音乐平台。", 20, y, 12, 353, muted) + 16;
+    }
+    for (const auto &value : providers) {
+        const auto item = value.toObject();
+        const auto id = item["id"].toString();
+        const auto name = item["name"].toString();
+        const bool selected = item["selected"].toBool();
+        constexpr double rowHeight = 64;
+        if (selected) {
+            c.fill({20, y, 353, rowHeight}, c.raised);
+            c.fill({20, y, 2, rowHeight}, c.amber);
+        }
+        c.text(name, 32, y + 10, 15, 208, "demibold");
+        c.rightText(item["label"].toString(), 361, y + 13, 8, "regular", muted);
+        c.text(item["detail"].toString(), 32, y + 34, 10, 240, "regular", muted);
+        c.rightText(selected ? "当前平台" : "切换 →", 361, y + 35, 10, selected ? "demibold" : "regular",
+                    selected ? c.amber : muted);
+        c.fill({20, y + rowHeight - .6, 353, .6}, c.line);
+        c.hit({20, y, 353, rowHeight}, "provider:" + id, "切换到 " + name);
+        y += rowHeight;
+    }
+    y += 18;
+    terminalSection(c, y, "02", "第三方平台插件", "PLUGINS");
+    y += 26;
+    c.indexRow(y, "插件市场", "安装与管理第三方平台插件", "plugins", "database");
+    y += 74;
+    terminalSection(c, y, "03", "账号与歌单", "ACCOUNT");
+    y += 26;
+    if (s["localMusic"].toBool()) {
+        c.text(s["providerName"].toString(), 20, y + 8, 15, 353, "demibold");
+        c.text("本地索引 / 无需账号，文件保留在原目录", 20, y + 30, 10, 353, "regular", muted);
+        y += 50;
+        c.button({20, y, 353, 44}, "文件夹管理 ＋", "discover");
+        y += 58;
+    } else if (s["provider"].toString() == "siren") {
+        c.text(s["providerName"].toString(), 20, y + 8, 15, 353, "demibold");
+        y = c.paragraph("官网曲库 / 无需登录", 20, y + 30, 10, 353, muted) + 14;
+    } else {
+        const bool logged = s["loggedIn"].toBool();
+        c.text(s["providerName"].toString(), 20, y + 8, 15, 240, "demibold");
+        c.rightText(logged ? "已登录" : "未登录", 373, y + 11, 10, "regular", logged ? c.ink : muted);
+        c.text(logged ? s["userName"].toString() : "登录后可同步收藏与歌单", 20, y + 30, 10, 353, "regular",
+               muted);
+        y += 50;
+        c.button({20, y, 353, 44}, "账号登录 / " + s["providerName"].toString(), "music:login");
+        y += 58;
+    }
+    const auto editors = s["providerPlaylistEditors"].toArray();
+    if (!editors.isEmpty()) {
+        QStringList names;
+        for (const auto &value : editors) {
+            names.append(value.toString());
+        }
+        y = c.paragraph("支持歌单编辑：" + names.join("、"), 20, y, 10, 353, muted) + 10;
+    } else {
+        y = c.paragraph("平台能力由插件声明。", 20, y, 10, 353, muted) + 10;
+    }
+    y = c.paragraph("切换平台会停止当前播放，各平台账号与个人音乐独立保存。", 20, y, 10, 353, muted) + 16;
+    return y + m_scroll + 20;
+}
+
+/** 竖屏插件页：市场与已安装分组排列，操作按钮保持 44 pt 触摸高度。 */
+double ResponsiveHudLayout::pluginsPage(ResponsiveHudCanvas &c, const QJsonObject &s) {
+    double y = 158 - m_scroll;
+    auto muted = c.muted;
+    const auto marketplace = s["pluginMarketplace"].toObject();
+    const auto market = marketplace["plugins"].toArray();
+    const auto installed = s["pluginInstalled"].toArray();
+    QHash<QString, QString> installedVersions;
+    for (const auto &value : installed) {
+        const auto entry = value.toObject();
+        installedVersions.insert(entry["id"].toString(), entry["version"].toString());
+    }
+    terminalSection(c, y, "01", "插件市场", "MARKETPLACE");
+    y += 26;
+    if (s["pluginImportAvailable"].toBool()) {
+        c.button({20, y, 172, 44}, "导入文件夹", "plugin:import");
+        c.button({201, y, 172, 44}, "刷新", "plugin:refresh");
+    } else {
+        c.button({20, y, 353, 44}, "刷新市场", "plugin:refresh");
+    }
+    y += 56;
+    const bool installing = marketplace["installing"].toBool();
+    auto status = marketplace["status"].toString("尚未读取插件市场");
+    if (installing) {
+        status += "  " + QString::number(marketplace["installFilesDone"].toInt()) + "/" +
+                  QString::number(marketplace["installFilesTotal"].toInt()) + "  " +
+                  QString::number(marketplace["installSpeed"].toDouble() / (1024.0 * 1024.0), 'f', 1) +
+                  " MB/s";
+    }
+    y = c.paragraph(status, 20, y, 10, 353, muted) + 8;
+    if (installing) {
+        const auto progress = std::clamp(marketplace["installProgress"].toDouble(), 0., 1.);
+        c.fill({20, y, 353, 3}, c.line);
+        c.fill({20, y, 353 * progress, 3}, c.amber);
+        y += 12;
+    }
+    if (market.isEmpty()) {
+        c.fill({20, y, 353, 92}, c.surface);
+        c.text("暂无可用插件", 33, y + 16, 14, 327, "demibold");
+        c.paragraph(marketplace["url"].toString().isEmpty() ? "设置 RHINE_PLUGIN_MARKETPLACE_URL 后刷新。"
+                                                            : "市场索引为空，或当前网络不可用。",
+                    33, y + 40, 10, 327, muted, "regular", 2);
+        y += 104;
+    }
+    for (int index = 0; index < market.size(); ++index) {
+        const auto value = market.at(index).toObject();
+        const auto id = value["id"].toString();
+        const auto version = value["version"].toString();
+        const auto current = installedVersions.value(id);
+        const bool busy = installing && marketplace["installId"].toString() == id;
+        const bool canUpdate = !current.isEmpty() && current != version;
+        if (busy) {
+            c.fill({20, y, 353, 96}, c.raised);
+        }
+        c.text(value["name"].toString(id), 20, y + 10, 14, 225, "demibold");
+        auto meta = id;
+        if (!version.isEmpty()) {
+            meta += " / 市场版本 " + version;
+        }
+        if (!current.isEmpty()) {
+            meta += " / 已安装 " + current;
+        }
+        c.text(meta, 20, y + 32, 9, 230, "regular", canUpdate ? c.ink : muted);
+        c.paragraph(value["description"].toString(), 20, y + 50, 10, 230, muted, "regular", 2);
+        const auto label =
+            busy ? QStringLiteral("安装中…")
+                 : (current.isEmpty() ? QStringLiteral("安装")
+                                      : (canUpdate ? QStringLiteral("更新") : QStringLiteral("重新安装")));
+        c.button({261, y + 10, 112, 40}, label, busy ? QString() : "plugin:market:" + id,
+                 current.isEmpty() && !busy);
+        c.fill({20, y + 94, 353, .6}, c.line);
+        y += 96;
+    }
+    y += 12;
+    terminalSection(c, y, "02", "已安装", "INSTALLED / " + QString::number(installed.size()));
+    y += 26;
+    if (installed.isEmpty()) {
+        c.text("尚未安装插件", 20, y + 4, 14, 353, "demibold");
+        c.paragraph("从上方市场安装，或使用“导入文件夹”添加本地插件。", 20, y + 28, 10, 353, muted, "regular",
+                    2);
+        y += 76;
+    }
+    for (const auto &value : installed) {
+        const auto entry = value.toObject();
+        const auto id = entry["id"].toString();
+        const bool enabled = entry["enabled"].toBool();
+        const bool userInstalled = entry["userInstalled"].toBool();
+        c.text(entry["name"].toString(id), 20, y + 10, 14, 250, "demibold");
+        c.rightText(enabled ? "已启用" : "已禁用", 373, y + 10, 9, "regular", enabled ? c.ink : muted);
+        c.fill({373 - c.measure(enabled ? "已启用" : "已禁用", 9) - 11, y + 14, 5, 5},
+               enabled ? c.amber : muted);
+        c.text(id + " / " + entry["version"].toString() + " / " + entry["publisher"].toString(), 20, y + 31,
+               9, 340, "regular", muted);
+        if (userInstalled) {
+            c.button({20, y + 50, 111, 44}, "详情", "plugin:detail:" + id);
+            c.button({131, y + 50, 111, 44}, "卸载", "plugin:uninstall:" + id);
+            c.button({242, y + 50, 131, 44}, enabled ? "禁用" : "启用", "plugin:toggle:" + id);
+        } else {
+            c.button({20, y + 50, 172, 44}, "详情", "plugin:detail:" + id);
+            c.button({201, y + 50, 172, 44}, enabled ? "禁用" : "启用", "plugin:toggle:" + id);
+        }
+        c.fill({20, y + 104, 353, .6}, c.line);
+        y += 106;
+    }
+    auto footer = s["pluginMessage"].toString();
+    if (footer.isEmpty()) {
+        footer = QStringLiteral("插件下载到应用数据目录；禁用后不会加载。");
+    }
+    y = c.paragraph(footer, 20, y + 10, 10, 353, muted) + 20;
+    return y + m_scroll + 20;
+}
+
+/** 竖屏插件详情：字段两列对齐，窄屏上仍保留完整版本、来源与操作。 */
+double ResponsiveHudLayout::pluginDetailPage(ResponsiveHudCanvas &c, const QJsonObject &s) {
+    double y = 158 - m_scroll;
+    auto muted = c.muted;
+    const auto detail = s["pluginDetail"].toObject();
+    if (detail.isEmpty()) {
+        c.text("插件不可用", 20, y, 17, 353, "demibold");
+        y = c.paragraph("该插件可能已被卸载，或市场索引已经更新。", 20, y + 30, 10, 353, muted) + 20;
+        return y + m_scroll + 20;
+    }
+    const auto id = detail["id"].toString();
+    const bool installed = detail["installed"].toBool();
+    const bool enabled = detail["enabled"].toBool();
+    const bool userInstalled = detail["userInstalled"].toBool();
+    const auto name = detail["display"].toObject()["name"].toString(detail["name"].toString(id));
+    y = c.paragraph(name, 20, y, 22, 353, {}, "demibold", 2, 1.2) + 8;
+    c.text(id + " / " + detail["version"].toString(), 20, y, 10, 353, "regular", muted);
+    y += 24;
+    c.fill({20, y, 353, 1}, c.ink);
+    y += 16;
+    int capabilities = 0;
+    const auto values = detail["capabilities"].toObject();
+    for (auto it = values.begin(); it != values.end(); ++it) {
+        capabilities += it.value().toBool() ? 1 : 0;
+    }
+    constexpr double colWidth = 169;
+    const auto field = [&](const QString &label, const QString &value, double fx, double fy, double width) {
+        c.text(label, fx, fy, 8, width, "regular", muted);
+        c.text(value.isEmpty() ? QStringLiteral("—") : value, fx, fy + 16, 12, width);
+    };
+    field("PUBLISHER / 发布者", detail["publisher"].toString(), 20, y, colWidth);
+    field("LICENSE / 许可证", detail["license"].toString(), 204, y, colWidth);
+    y += 46;
+    field("CAPABILITIES / 能力", QString::number(capabilities) + " 项", 20, y, colWidth);
+    field("SOURCE / 来源", userInstalled ? QStringLiteral("用户安装") : QStringLiteral("内置"), 204, y,
+          colWidth);
+    y += 46;
+    field("ENTRY / 入口", detail["entry"].toObject()["file"].toString(), 20, y, 353);
+    y += 46;
+    field("STATE / 状态",
+          installed ? (enabled ? QStringLiteral("已安装 / 已启用") : QStringLiteral("已安装 / 已禁用"))
+                    : QStringLiteral("未安装"),
+          20, y, 353);
+    y += 52;
+    if (installed) {
+        c.button({20, y, 172, 44}, enabled ? "禁用插件" : "启用插件", "plugin:toggle:" + id);
+        c.button({201, y, 172, 44}, "回滚上一版本", "plugin:rollback:" + id);
+        y += 56;
+        if (userInstalled) {
+            c.button({20, y, 353, 44}, "卸载插件", "plugin:uninstall:" + id);
+            y += 56;
+        }
+    } else {
+        c.button({20, y, 353, 44}, "安装插件", "plugin:market:" + id, true);
+        y += 56;
+    }
+    if (!s["pluginMessage"].toString().isEmpty()) {
+        y = c.paragraph(s["pluginMessage"].toString(), 20, y + 8, 10, 353, muted) + 20;
+    }
+    return y + m_scroll + 20;
+}
+
 double ResponsiveHudLayout::library(ResponsiveHudCanvas &c, const QJsonObject &s) {
     double y = (s["modal"] == "search" ? 130 : 158) - m_scroll;
     const bool search = s["modal"] == "search";

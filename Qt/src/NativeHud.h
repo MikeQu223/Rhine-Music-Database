@@ -354,6 +354,8 @@ class NativeHud : public QObject {
     void localPanel(double x, double y, double width);
     void playerBar(double x, double y, double width);
     void playerPanel(double x, double y, double width);
+    QJsonArray providerCardsState() const;
+    QJsonArray providerPlaylistEditors() const;
     void platformChoices(double x, double y, double width, bool expanded = false);
     void platformPanel(double x, double y, double width);
     void pluginsPanel(double x, double y, double width);

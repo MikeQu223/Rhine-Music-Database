@@ -364,7 +364,8 @@ void NativeHud::draw(QJsonObject next, double stageWidth, double time) {
                 discoverPanel(0, 0, width);
             } else if (modal == "settings") {
                 settingsPanel(0, 0, width);
-            } else if (!modal.isEmpty() && modal != "search" && modal != "saved") {
+            } else if (!modal.isEmpty() && modal != "search" && modal != "saved" && modal != "provider" &&
+                       modal != "plugins" && modal != "plugin-detail") {
                 m_responsive.setAuxiliary(auxiliaryContent());
             } else if (modal.isEmpty() && frame["mode"] == "detail" && !lyricsMode && !commentsMode &&
                        !m_music->current.isEmpty()) {
@@ -522,6 +523,19 @@ void NativeHud::drawMobile(double time, const QString &scope) {
             entries.append(QJsonObject{{"index", index}, {"value", value}, {"action", route}});
         }
         mobile["resultRows"] = entries;
+    }
+    // 竖屏布局
+    if (modal == "provider") {
+        mobile["providers"] = providerCardsState();
+        mobile["providerPlaylistEditors"] = providerPlaylistEditors();
+    } else if (modal == "plugins") {
+        mobile["pluginMarketplace"] = m_host->pluginMarketplaceState();
+        mobile["pluginInstalled"] = m_host->pluginManagerState();
+        mobile["pluginMessage"] = pluginManagerMessage;
+        mobile["pluginImportAvailable"] = !RHINE_MOBILE;
+    } else if (modal == "plugin-detail") {
+        mobile["pluginDetail"] = m_host->pluginDetail(pluginDetailId);
+        mobile["pluginMessage"] = pluginManagerMessage;
     }
     m_responsive.arrange(commands, hits, mobile, scope, *m_glyphs);
     QString pageKey = modal + ":" + frame["mode"].toString();

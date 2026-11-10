@@ -93,7 +93,10 @@ void ResponsiveHudLayout::arrange(QJsonArray &commands, QJsonArray &hits, const 
                                       : immersive ? 172
                                                   : 110);
     const bool terminalPage = modal == "discover" || modal == "search" || modal == "settings";
-    if (terminalPage || lyric || comments || !hud) {
+
+    const bool paperPage =
+        terminalPage || modal == "provider" || modal == "plugins" || modal == "plugin-detail";
+    if (paperPage || lyric || comments || !hud) {
         c.fill({0, 0, 393, m_height}, c.paper);
     } else if (!songPage && !home) {
         // 保留真实场景。主界面 tab 列表不加遮罩，其余页面沿用纵向阅读渐变。
@@ -112,18 +115,21 @@ void ResponsiveHudLayout::arrange(QJsonArray &commands, QJsonArray &hits, const 
             c.fill({0, double(y), 393, 8}, color);
         }
     }
-    QString title = modal == "player"     ? "播放队列"
-                    : modal == "search"   ? "音乐检索"
-                    : modal == "saved"    ? "我的音乐"
-                    : modal == "settings" ? "设置"
-                    : modal == "discover" ? "发现音乐"
-                    : lyric               ? "歌词"
-                    : comments            ? "歌曲评论"
-                    : m_song              ? "歌曲档案"
-                    : m_collection        ? (m_collection->kind == "album"    ? "专辑详情"
-                                             : m_collection->kind == "artist" ? "歌手档案"
-                                                                              : "歌单详情")
-                                          : "音乐档案";
+    QString title = modal == "player"          ? "播放队列"
+                    : modal == "search"        ? "音乐检索"
+                    : modal == "saved"         ? "我的音乐"
+                    : modal == "settings"      ? "设置"
+                    : modal == "discover"      ? "发现音乐"
+                    : modal == "provider"      ? "音乐平台"
+                    : modal == "plugins"       ? "插件管理"
+                    : modal == "plugin-detail" ? "插件详情"
+                    : lyric                    ? "歌词"
+                    : comments                 ? "歌曲评论"
+                    : m_song                   ? "歌曲档案"
+                    : m_collection             ? (m_collection->kind == "album"    ? "专辑详情"
+                                                  : m_collection->kind == "artist" ? "歌手档案"
+                                                                                   : "歌单详情")
+                                               : "音乐档案";
     if (modal == "discover" && m_discover) {
         if (m_discover->tab == "history") {
             title = "播放历史";
@@ -223,6 +229,12 @@ void ResponsiveHudLayout::arrange(QJsonArray &commands, QJsonArray &hits, const 
             end = queue(c, newScope, source);
         } else if (m_settings && modal == "settings") {
             end = settings(c, source);
+        } else if (modal == "provider") {
+            end = providerPage(c, source);
+        } else if (modal == "plugins") {
+            end = pluginsPage(c, source);
+        } else if (modal == "plugin-detail") {
+            end = pluginDetailPage(c, source);
         } else if (modal == "search" || modal == "saved") {
             end = library(c, source);
         } else if (lyric) {

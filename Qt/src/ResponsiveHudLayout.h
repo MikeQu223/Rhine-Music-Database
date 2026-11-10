@@ -139,6 +139,9 @@ class ResponsiveHudLayout {
     double discover(ResponsiveHudCanvas &c);
     double queue(ResponsiveHudCanvas &c, bool newScope, const QJsonObject &source);
     double settings(ResponsiveHudCanvas &c, const QJsonObject &source);
+    double providerPage(ResponsiveHudCanvas &c, const QJsonObject &source);
+    double pluginsPage(ResponsiveHudCanvas &c, const QJsonObject &source);
+    double pluginDetailPage(ResponsiveHudCanvas &c, const QJsonObject &source);
     double library(ResponsiveHudCanvas &c, const QJsonObject &source);
     void lyricsPlayer(ResponsiveHudCanvas &c, const QJsonObject &source);
     double lyrics(ResponsiveHudCanvas &c, const QJsonObject &source);

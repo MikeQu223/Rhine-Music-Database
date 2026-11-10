@@ -6,24 +6,6 @@
 #include <algorithm>
 
 namespace {
-struct Provider {
-    QString id;
-    QString name;
-    QString label;
-    QString detail;
-};
-QVector<Provider> providerCards() {
-    QVector<Provider> values;
-    const auto &registry = ProviderRegistry::instance();
-    for (const auto &id : registry.ids()) {
-        if (id == "local" && !PlatformFeatures::LocalMusic) {
-            continue;
-        }
-        values.append({id, registry.name(id), registry.label(id), registry.detail(id)});
-    }
-    return values;
-}
-
 QString modalTitle(const QString &modal, const MusicLibrary &music) {
     static const QHash<QString, QString> titles{{"provider", "MUSIC PLATFORM"},
                                                 {"settings", "SYSTEM SETTINGS"},
@@ -311,42 +293,79 @@ QVector<ResponsiveHudContent::Item> NativeHud::auxiliaryContent() {
     return content.items;
 }
 
+QJsonArray NativeHud::providerCardsState() const {
+    QJsonArray values;
+    const auto &registry = ProviderRegistry::instance();
+    for (const auto &id : registry.ids()) {
+        if (id == "local" && !PlatformFeatures::LocalMusic) {
+            continue;
+        }
+        values.append(QJsonObject{{"id", id},
+                                  {"name", registry.name(id)},
+                                  {"label", registry.label(id)},
+                                  {"detail", registry.detail(id)},
+                                  {"selected", m_music->provider == id},
+                                  {"authenticated", m_host->hasCredential(id)}});
+    }
+    return values;
+}
+
+QJsonArray NativeHud::providerPlaylistEditors() const {
+    QJsonArray names;
+    const auto &registry = ProviderRegistry::instance();
+    for (const auto &id : registry.ids()) {
+        if (id == "local" || id == "siren") {
+            continue;
+        }
+        const auto methods =
+            registry.descriptor(id)["capabilities"].toObject()["playlistManagement"].toObject();
+        for (auto it = methods.begin(); it != methods.end(); ++it) {
+            if (it.value().toBool()) {
+                names.append(registry.name(id));
+                break;
+            }
+        }
+    }
+    return names;
+}
+
 void NativeHud::platformChoices(double x, double y, double width, bool expanded) {
     constexpr double gap = 12;
-    const auto items = providerCards();
+    const auto items = providerCardsState();
     const auto cardCount = items.size() + 1;
     const auto cardWidth = (width - gap * (cardCount - 1)) / cardCount;
     for (int index = 0; index < items.size(); ++index) {
-        const auto &provider = items.at(index);
+        const auto provider = items.at(index).toObject();
+        const auto id = provider["id"].toString();
+        const auto name = provider["name"].toString();
         const auto left = x + index * (cardWidth + gap);
-        const bool selected = m_music->provider == provider.id;
+        const bool selected = provider["selected"].toBool();
         if (m_contentSink) {
-            m_contentSink->action(provider.name + (selected ? " / 当前平台" : ""), "provider:" + provider.id);
-            m_contentSink->text(provider.detail);
+            m_contentSink->action(name + (selected ? " / 当前平台" : ""), "provider:" + id);
+            m_contentSink->text(provider["detail"].toString());
             continue;
         }
         const auto height = expanded ? 190 : 66;
         const auto tint = dark ? QJsonArray{0.55, 0.59, 0.46, selected ? 0.3 : 0.12}
                                : QJsonArray{0.44, 0.49, 0.36, selected ? 0.23 : 0.09};
         fill(left, y, cardWidth, height, tint);
-        hit(left, y, cardWidth, height, "provider:" + provider.id, provider.name);
+        hit(left, y, cardWidth, height, "provider:" + id, name);
         if (selected) {
             fill(left, y, 3, height, dark ? QJsonArray{0.7, 0.75, 0.53, 1} : QJsonArray{0.44, 0.49, 0.36, 1});
         }
-        text(provider.label + (selected ? " / ACTIVE" : ""), left + 16, y + 10, 10);
-        text(provider.name, left + 16, y + 29, expanded ? 22 : 17, "demibold");
+        text(provider["label"].toString() + (selected ? " / ACTIVE" : ""), left + 16, y + 10, 10);
+        text(name, left + 16, y + 29, expanded ? 22 : 17, "demibold");
         if (expanded) {
-            const auto lines = m_glyphs->wrap(provider.detail, cardWidth - 32, 14);
+            const auto lines = m_glyphs->wrap(provider["detail"].toString(), cardWidth - 32, 14);
             for (int row = 0; row < std::min(3, int(lines.size())); ++row) {
                 text(lines.at(row), left + 16, y + 75 + row * 21, 14);
             }
-            const bool authenticated = m_host->hasCredential(provider.id);
+            const bool authenticated = provider["authenticated"].toBool();
             const auto note =
-                provider.id == "local"
-                    ? QStringLiteral("独立本地库 / 无需登录")
-                    : (provider.id == "siren" ? QStringLiteral("官网曲库 / 无需登录")
-                                              : (authenticated ? QStringLiteral("本机已保存登录")
-                                                               : QStringLiteral("未登录 / 可选择后扫码")));
+                id == "local" ? QStringLiteral("独立本地库 / 无需登录")
+                              : (id == "siren" ? QStringLiteral("官网曲库 / 无需登录")
+                                               : (authenticated ? QStringLiteral("本机已保存登录")
+                                                                : QStringLiteral("未登录 / 可选择后扫码")));
             limited(note, left + 16, y + 150, 12, cardWidth - 32);
         }
     }
@@ -374,21 +393,12 @@ void NativeHud::platformPanel(double x, double y, double width) {
     platformChoices(x + 53, y + 258, width - 106, true);
     rule(x + 53, y + 490, width - 106, 0.2);
     text("切换平台会停止当前播放，各平台账号与个人音乐独立保存。", x + 53, y + 520, 15);
+    const auto editors = providerPlaylistEditors();
     QStringList editable;
-    const auto &registry = ProviderRegistry::instance();
-    for (const auto &id : registry.ids()) {
-        if (id == "local" || id == "siren") {
-            continue;
-        }
-        const auto methods =
-            registry.descriptor(id)["capabilities"].toObject()["playlistManagement"].toObject();
-        for (auto it = methods.begin(); it != methods.end(); ++it) {
-            if (it.value().toBool()) {
-                editable.append(registry.name(id));
-                break;
-            }
-        }
+    for (const auto &value : editors) {
+        editable.append(value.toString());
     }
+    const auto &registry = ProviderRegistry::instance();
     text(editable.isEmpty() ? QStringLiteral("平台能力由插件声明。")
                             : QStringLiteral("支持歌单编辑：") + editable.join(QStringLiteral("、")),
          x + 53, y + 558, 15);
@@ -609,9 +619,8 @@ QualityDescription qualityDescriptionFor(const QString &provider, const QString 
 }
 QString qualityLabelFor(const QString &provider, const QString &id) {
     static const QHash<QString, QString> fallback{
-        {"auto", "自动"},  {"standard", "标准"}, {"hq", "高品质"},
-        {"lossless", "无损"}, {"hires", "高解析无损"}, {"master", "母带"},
-        {"original", "原始文件"},
+        {"auto", "自动"},        {"standard", "标准"}, {"hq", "高品质"},         {"lossless", "无损"},
+        {"hires", "高解析无损"}, {"master", "母带"},   {"original", "原始文件"},
     };
     const auto title = ProviderRegistry::instance().qualityDescription(provider, id)["title"].toString();
     if (!title.isEmpty()) {

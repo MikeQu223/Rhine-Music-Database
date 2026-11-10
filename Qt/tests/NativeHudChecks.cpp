@@ -1141,6 +1141,29 @@ bool checkResponsiveHud(const QString &root, Glyphs &glyphs, const QJsonObject &
         qCritical() << "Directory physical lane changed the active source tab";
         return false;
     }
+    // 平台与插件页竖屏布局
+    for (const QString &page : {QString("provider"), QString("plugins")}) {
+        hud.openModal(page);
+        hud.draw(frame, width, 50);
+        if (!validHits()) {
+            qCritical() << "Out-of-bounds mobile provider/plugin target" << page;
+            return false;
+        }
+        capture(page);
+    }
+    hud.openModal("provider");
+    hud.draw(frame, width, 50);
+    if (!hasAction(hud.hits, "provider:" + hudTestProvider()) || !hasAction(hud.hits, "plugins") ||
+        !hasAction(hud.hits, "close-modal")) {
+        qCritical() << "Portrait provider page lost provider cards or plugin entry";
+        return false;
+    }
+    hud.openModal("plugins");
+    hud.draw(frame, width, 50);
+    if (!hasAction(hud.hits, "plugin:refresh") || !hasAction(hud.hits, "close-modal")) {
+        qCritical() << "Portrait plugin page lost refresh or back";
+        return false;
+    }
     qInfo()
         << "Responsive HUD design anchors, desktop round trip, mobile input, cards, queue and scroll passed";
     return true;
