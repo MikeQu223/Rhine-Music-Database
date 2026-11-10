@@ -100,6 +100,15 @@ class _FakePorts implements ConsentPorts {
 
   final List<String> log = <String>[];
 
+  /// 每个端口被真正调用的次数（失败的那次也算：调用已经发生）。
+  int grantWrites = 0;
+  int sdkStarts = 0;
+  int businessEntries = 0;
+
+  /// 前 N 次调用抛错，用来复现 T27 approve() 在写盘/起 SDK 处失败。
+  int grantFailures = 0;
+  int sdkFailures = 0;
+
   @override
   ConsentRecord readRecord() {
     return ConsentRecord(granted: granted, region: storedRegion);
@@ -107,7 +116,12 @@ class _FakePorts implements ConsentPorts {
 
   @override
   void writeGrant(ConsentRegion region) {
+    grantWrites += 1;
     log.add('grant:${region.name}');
+    if (grantFailures > 0) {
+      grantFailures -= 1;
+      throw StateError('writeGrant failed');
+    }
     granted = true;
     storedRegion = region;
   }
@@ -117,11 +131,17 @@ class _FakePorts implements ConsentPorts {
 
   @override
   void startSdks(ConsentRegion region) {
+    sdkStarts += 1;
     log.add('startSdks:${region.name}');
+    if (sdkFailures > 0) {
+      sdkFailures -= 1;
+      throw StateError('startSdks failed');
+    }
   }
 
   @override
   void enterBusiness() {
+    businessEntries += 1;
     log.add('enterBusiness');
   }
 
@@ -147,14 +167,24 @@ class _Gate {
   List<String> get log => ports.log;
 }
 
+/// 只把待决地区读数打成 null 的 gate：复现「awaitingConsent 却没有待决地区」。
+///
+/// 真实 ConsentGate 的 pendingRegion（consent_gate.dart:406-407）在这种情况下恒非 null，
+/// 所以只能用子类（ConsentGate 是具体类）走页面的防御分支。
+class _NullRegionGate extends ConsentGate {
+  _NullRegionGate(ConsentPorts ports) : super(ports);
+
+  @override
+  ConsentRegion? get pendingRegion => null;
+}
+
 // ============================================================================
 // 辅助
 // ============================================================================
 
-/// 页面只吃 T27 的 gate 与待决地区读数。
+/// 页面只吃 T27 的 gate；待决地区由页面自己读 gate.pendingRegion（T27 b9fcffc）。
 Widget _app(
   ConsentGate gate,
-  ConsentRegion? Function() pendingRegion,
   VoidCallback? onProceed, {
   BusinessEntryOwner businessEntry = BusinessEntryOwner.host,
   void Function(String url)? onPrivacyLinkTap,
@@ -165,7 +195,6 @@ Widget _app(
       gate: gate,
       businessEntry: businessEntry,
       onProceed: onProceed,
-      regionOfPendingDecision: pendingRegion,
       onPrivacyLinkTap: onPrivacyLinkTap,
       onPresentationBroken: onPresentationBroken,
     ),
@@ -343,7 +372,7 @@ void main() {
       final _Gate g = _Gate(probe: _FixedProbe(ConsentRegion.cn));
       int proceeded = 0;
 
-      await tester.pumpWidget(_app(g.gate, () => ConsentRegion.cn, () => proceeded += 1));
+      await tester.pumpWidget(_app(g.gate, () => proceeded += 1));
       await tester.pumpAndSettle();
 
       expect(proceeded, 0);
@@ -382,7 +411,7 @@ void main() {
       final _Gate g = _Gate(probe: _FixedProbe(ConsentRegion.cn));
       int proceeded = 0;
 
-      await tester.pumpWidget(_app(g.gate, () => ConsentRegion.cn, () => proceeded += 1));
+      await tester.pumpWidget(_app(g.gate, () => proceeded += 1));
       await tester.pumpAndSettle();
       await tester.tap(find.text('同意'));
       await tester.pumpAndSettle();
@@ -396,7 +425,7 @@ void main() {
       final _Gate g = _Gate(probe: _FixedProbe(ConsentRegion.cn));
       int proceeded = 0;
 
-      await tester.pumpWidget(_app(g.gate, () => ConsentRegion.cn, () => proceeded += 1));
+      await tester.pumpWidget(_app(g.gate, () => proceeded += 1));
       await tester.pumpAndSettle();
       await tester.tap(find.text('退出'));
       await tester.pumpAndSettle();
@@ -414,7 +443,7 @@ void main() {
       final List<String> opened = <String>[];
 
       await tester.pumpWidget(
-        _app(g.gate, () => ConsentRegion.cn, () {}, onPrivacyLinkTap: opened.add),
+        _app(g.gate, () {}, onPrivacyLinkTap: opened.add),
       );
       await tester.pumpAndSettle();
 
@@ -436,7 +465,7 @@ void main() {
       final _Gate g = _Gate(probe: _FixedProbe(ConsentRegion.cn));
       int proceeded = 0;
 
-      await tester.pumpWidget(_app(g.gate, () => ConsentRegion.cn, () => proceeded += 1));
+      await tester.pumpWidget(_app(g.gate, () => proceeded += 1));
       await tester.pumpAndSettle();
 
       // 同一帧内连点两次，模拟双击。
@@ -453,7 +482,7 @@ void main() {
     testWidgets('同意后页面 PopScope 重建：canPop 由 false 变 true（M2 回归）', (WidgetTester tester) async {
       final _Gate g = _Gate(probe: _FixedProbe(ConsentRegion.cn));
 
-      await tester.pumpWidget(_app(g.gate, () => ConsentRegion.cn, () {}));
+      await tester.pumpWidget(_app(g.gate, () {}));
       await tester.pumpAndSettle();
 
       final Finder pagePop = find.byKey(const ValueKey<String>('consent-page-pop'));
@@ -470,7 +499,7 @@ void main() {
     testWidgets('黑底承载页：Scaffold 背景是纯黑（styles.xml:12-13）', (WidgetTester tester) async {
       final _Gate g = _Gate(probe: _FixedProbe(ConsentRegion.cn));
 
-      await tester.pumpWidget(_app(g.gate, () => ConsentRegion.cn, () {}));
+      await tester.pumpWidget(_app(g.gate, () {}));
       await tester.pumpAndSettle();
 
       final Scaffold scaffold =
@@ -484,7 +513,7 @@ void main() {
     testWidgets('needsDecision(eu)：英文标题/按钮，正文无链接 span', (WidgetTester tester) async {
       final _Gate g = _Gate(probe: _FixedProbe(ConsentRegion.eu));
 
-      await tester.pumpWidget(_app(g.gate, () => ConsentRegion.eu, () {}));
+      await tester.pumpWidget(_app(g.gate, () {}));
       await tester.pumpAndSettle();
 
       expect(find.byType(AlertDialog), findsOneWidget);
@@ -503,7 +532,7 @@ void main() {
       final _Gate g = _Gate(probe: _FixedProbe(ConsentRegion.eu));
       int proceeded = 0;
 
-      await tester.pumpWidget(_app(g.gate, () => ConsentRegion.eu, () => proceeded += 1));
+      await tester.pumpWidget(_app(g.gate, () => proceeded += 1));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Agree'));
       await tester.pumpAndSettle();
@@ -519,7 +548,7 @@ void main() {
       final _Gate g = _Gate(granted: true, storedRegion: ConsentRegion.eu);
       int proceeded = 0;
 
-      await tester.pumpWidget(_app(g.gate, () => null, () => proceeded += 1));
+      await tester.pumpWidget(_app(g.gate, () => proceeded += 1));
       await tester.pumpAndSettle();
 
       expect(proceeded, 1);
@@ -531,7 +560,7 @@ void main() {
       final _Gate g = _Gate(probe: _FixedProbe(ConsentRegion.other));
       int proceeded = 0;
 
-      await tester.pumpWidget(_app(g.gate, () => null, () => proceeded += 1));
+      await tester.pumpWidget(_app(g.gate, () => proceeded += 1));
       await tester.pumpAndSettle();
 
       expect(proceeded, 1);
@@ -542,17 +571,20 @@ void main() {
 
     testWidgets('待决地区读数异常：不弹空窗、不伪造放行，并上报宿主（R2-5）', (WidgetTester tester) async {
       final _Gate g = _Gate(probe: _FixedProbe(ConsentRegion.cn));
+      // 真实 gate 在 awaitingConsent 下 pendingRegion 恒非 null（consent_gate.dart:406-407），
+      // 只能用一个读数为 null 的子类复现「页面拿到 null」这条不变量破坏路径。
+      final _NullRegionGate gate = _NullRegionGate(g.ports);
       final List<String> broken = <String>[];
 
       await tester.pumpWidget(
-        _app(g.gate, () => null, () {}, onPresentationBroken: broken.add),
+        _app(gate, () {}, onPresentationBroken: broken.add),
       );
       await tester.pumpAndSettle();
 
       expect(find.byType(AlertDialog), findsNothing);
       expect(g.log, isEmpty);
       // T27 停在 awaitingConsent：本页既不猜地区也不放行，只把不变量破坏上报。
-      expect(g.gate.phase, ConsentPhase.awaitingConsent);
+      expect(gate.phase, ConsentPhase.awaitingConsent);
       expect(broken, hasLength(1));
       expect(broken.single, contains('awaitingConsent without a pending region'));
     });
@@ -565,7 +597,6 @@ void main() {
       await tester.pumpWidget(
         _app(
           g.gate,
-          () => ConsentRegion.cn,
           () => hostNavigations += 1,
           businessEntry: BusinessEntryOwner.host,
         ),
@@ -579,7 +610,7 @@ void main() {
       // ports 模式：onProceed 必须为 null（构造期断言），页面绝不第二次导航。
       final _Gate g2 = _Gate(probe: _FixedProbe(ConsentRegion.cn));
       await tester.pumpWidget(
-        _app(g2.gate, () => ConsentRegion.cn, null, businessEntry: BusinessEntryOwner.ports),
+        _app(g2.gate, null, businessEntry: BusinessEntryOwner.ports),
       );
       await tester.pumpAndSettle();
       await tester.tap(find.text('同意'));
@@ -592,7 +623,6 @@ void main() {
       expect(
         () => ConsentPage(
           gate: _Gate(probe: _FixedProbe(ConsentRegion.cn)).gate,
-          regionOfPendingDecision: () => ConsentRegion.cn,
           businessEntry: BusinessEntryOwner.ports,
           onProceed: () {},
         ),
@@ -600,7 +630,7 @@ void main() {
       );
     });
 
-    testWidgets('竖屏：对话框仍渲染，无布局异常（双倍安全边距分支）', (WidgetTester tester) async {
+    testWidgets('竖屏：对话框仍渲染，无布局异常（与横屏同一层 inset）', (WidgetTester tester) async {
       tester.view.physicalSize = const Size(400, 800);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.resetPhysicalSize);
@@ -608,12 +638,170 @@ void main() {
 
       final _Gate g = _Gate(probe: _FixedProbe(ConsentRegion.cn));
 
-      await tester.pumpWidget(_app(g.gate, () => ConsentRegion.cn, () {}));
+      await tester.pumpWidget(_app(g.gate, () {}));
       await tester.pumpAndSettle();
 
       expect(find.byType(AlertDialog), findsOneWidget);
       expect(find.text('同意'), findsOneWidget);
       expect(tester.takeException(), isNull);
+    });
+  });
+
+  // ==========================================================================
+  group('ConsentPage：弹窗几何只有一层（ConsentActivity.java:116-141 系统 AlertDialog）', () {
+    testWidgets('360dp：面板不被外层 padding 压破 minWidth，inset 与 minWidth 有据', (WidgetTester tester) async {
+      tester.view.physicalSize = const Size(360, 640);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final _Gate g = _Gate(probe: _FixedProbe(ConsentRegion.cn));
+      await tester.pumpWidget(_app(g.gate, () {}));
+      await tester.pumpAndSettle();
+
+      final AlertDialog dialog = tester.widget<AlertDialog>(find.byType(AlertDialog));
+      // dialog.dart:32 的 _defaultInsetPadding 横 40/竖 24、:274-275 的 minWidth 280：
+      // 显式写出，保证只有这一层 inset（外层再套 Padding 就会叠加）。
+      expect(dialog.insetPadding, const EdgeInsets.symmetric(horizontal: 40, vertical: 24));
+      expect(dialog.constraints?.minWidth, 280.0);
+
+      // 面板本体是 Dialog.build 里的 ConstrainedBox(boxConstraints)（dialog.dart:274-301）。
+      final Finder panel = find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.byWidgetPredicate(
+          (Widget widget) => widget is ConstrainedBox && widget.constraints.minWidth == 280.0,
+        ),
+      );
+      expect(panel, findsOneWidget);
+      expect(tester.getSize(panel).width, greaterThanOrEqualTo(280.0));
+      // 360 - 40*2 = 280：单层 inset 下 Align 居中正好把面板放在 x=40。
+      expect(tester.getTopLeft(panel).dx, closeTo(40.0, 1e-9));
+
+      // 旧实现外层 Padding(横 48) + AlertDialog 默认 inset(横 40) 会把对话框盒子压到 264。
+      expect(tester.getSize(find.byType(AlertDialog)).width, 360.0);
+      expect(tester.takeException(), isNull);
+    });
+  });
+
+  // ==========================================================================
+  group('ConsentPage：回答失败后恢复可重试（T27 approve rethrow 路径）', () {
+    testWidgets('startSdks 失败：弹窗重新出现，重试成功且已落盘 grant 不重写', (WidgetTester tester) async {
+      final _Gate g = _Gate(probe: _FixedProbe(ConsentRegion.cn));
+      g.ports.sdkFailures = 1;
+      int proceeded = 0;
+      final List<String> broken = <String>[];
+
+      await tester.pumpWidget(
+        _app(g.gate, () => proceeded += 1, onPresentationBroken: broken.add),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('同意'));
+      await tester.pumpAndSettle();
+
+      // 失败后流程机仍是 awaitingConsent 且恢复 _pendingRegion：页面必须能重来。
+      expect(g.gate.phase, ConsentPhase.awaitingConsent);
+      expect(find.byType(AlertDialog), findsOneWidget);
+      expect(find.text('同意'), findsOneWidget);
+      expect(broken, hasLength(1));
+      expect(broken.single, contains('consent decision rejected'));
+      expect(g.ports.grantWrites, 1);
+      expect(g.gate.persistGrantCount, 1);
+      expect(g.gate.sdkStartCount, 1);
+      expect(proceeded, 0);
+
+      await tester.tap(find.text('同意'));
+      await tester.pumpAndSettle();
+
+      expect(proceeded, 1);
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(g.gate.phase, ConsentPhase.proceeded);
+      expect(g.ports.grantWrites, 1); // 已落盘：不再 writeGrant
+      expect(g.gate.persistGrantCount, 1);
+      expect(g.gate.sdkStartCount, 2);
+      expect(g.gate.businessLaunchCount, 1);
+      expect(
+        g.ports.log,
+        <String>['grant:cn', 'startSdks:cn', 'startSdks:cn', 'enterBusiness'],
+      );
+    });
+
+    testWidgets('writeGrant 失败：grant 未落盘，重试才写成功且只记一次', (WidgetTester tester) async {
+      final _Gate g = _Gate(probe: _FixedProbe(ConsentRegion.cn));
+      g.ports.grantFailures = 1;
+      int proceeded = 0;
+      final List<String> broken = <String>[];
+
+      await tester.pumpWidget(
+        _app(g.gate, () => proceeded += 1, onPresentationBroken: broken.add),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('同意'));
+      await tester.pumpAndSettle();
+
+      expect(g.gate.phase, ConsentPhase.awaitingConsent);
+      expect(find.byType(AlertDialog), findsOneWidget);
+      expect(g.ports.grantWrites, 1);
+      expect(g.gate.persistGrantCount, 0);
+      expect(g.gate.recordPersisted, isFalse);
+      expect(g.gate.sdkStartCount, 0);
+      expect(broken.single, contains('consent decision rejected'));
+
+      await tester.tap(find.text('同意'));
+      await tester.pumpAndSettle();
+
+      expect(proceeded, 1);
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(g.gate.phase, ConsentPhase.proceeded);
+      expect(g.ports.grantWrites, 2); // 第一次没落盘，重试必须重写
+      expect(g.gate.persistGrantCount, 1);
+      expect(g.gate.sdkStartCount, 1);
+      expect(
+        g.ports.log,
+        <String>['grant:cn', 'grant:cn', 'startSdks:cn', 'enterBusiness'],
+      );
+    });
+
+    testWidgets('失败后流程机已 terminated：不再重弹，只上报一次', (WidgetTester tester) async {
+      final _Gate g = _Gate(probe: _FixedProbe(ConsentRegion.cn));
+      g.ports.sdkFailures = 1;
+      final List<String> broken = <String>[];
+
+      await tester.pumpWidget(
+        _app(
+          g.gate,
+          () {},
+          onPresentationBroken: (String reason) {
+            broken.add(reason);
+            g.gate.terminate();
+          },
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('同意'));
+      await tester.pumpAndSettle();
+
+      expect(g.gate.phase, ConsentPhase.terminated);
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(broken, hasLength(1));
+    });
+
+    testWidgets('成功只执行一次：对话关闭后不再重弹、onProceed 不再触发', (WidgetTester tester) async {
+      final _Gate g = _Gate(probe: _FixedProbe(ConsentRegion.cn));
+      int proceeded = 0;
+
+      await tester.pumpWidget(_app(g.gate, () => proceeded += 1));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('同意'));
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(seconds: 5));
+
+      expect(proceeded, 1);
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(g.gate.phase, ConsentPhase.proceeded);
+      expect(g.gate.persistGrantCount, 1);
+      expect(g.gate.sdkStartCount, 1);
+      expect(g.gate.businessLaunchCount, 1);
+      expect(g.ports.log, <String>['grant:cn', 'startSdks:cn', 'enterBusiness']);
     });
   });
 }

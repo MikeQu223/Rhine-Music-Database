@@ -28,11 +28,13 @@
 // 该文件由 T27 在 commit e46b08cf 引入（blob 87aecd0c4717b7e2022f173d7863ed2028407255，
 // 658 行），本 T42 基线（8ed3067）尚未包含它：T42 只写依赖与所需接口，合并时由
 // 主集成把 T27 的这一个文件带入即可，双方都不需要第二套实现。
-// 本页需要的 T27 读数中，唯一还不存在的成员是「待决地区」：ConsentGate 目前只在
-// _pendingRegion 里保存它、未公开。集成时二选一（二选一即可，勿两种都加）：
-//   (a) ConsentGate 增加 `ConsentRegion? get pendingRegion => _pendingRegion;`，页面直接读；
-//   (b) 保持 T27 不变，由 host 构造本页时传 regionOfPendingDecision（见构造参数）。
-// 本文件按 (b) 编写，因此不编译依赖任何尚不存在的成员。
+// 待决地区读数：T27 的 commit b9fcffc（"已落盘授权失败不再死锁并暴露 pendingRegion"）
+// 已交付 `ConsentRegion? get pendingRegion => _phase == ConsentPhase.awaitingConsent
+// ? _pendingRegion : null;`（consent_gate.dart:406-407）。本页直接读这个 getter：
+// 它只在 awaitingConsent 时非 null，正好就是「还有一次决定没答」的窗口；回答失败时
+// T27 在 rethrow 前恢复 _pendingRegion（consent_gate.dart:513-552），这里读到的就是
+// 恢复后的真实读数。原先「host 注入 regionOfPendingDecision」的方案已删除：那会留下
+// 第二份待决状态副本，失败重试时更容易与流程机脱节。
 
 import 'dart:async';
 
@@ -65,7 +67,6 @@ enum BusinessEntryOwner {
 class ConsentPage extends StatefulWidget {
   const ConsentPage({
     required this.gate,
-    required this.regionOfPendingDecision,
     this.businessEntry = BusinessEntryOwner.host,
     this.onProceed,
     this.onPrivacyLinkTap,
@@ -89,17 +90,13 @@ class ConsentPage extends StatefulWidget {
   /// 业务页（ConsentActivity.java:150-155 只有一处 startActivity）。
   final VoidCallback? onProceed;
 
-  /// 待决地区读数（见文件头的待集成接口 a/b 二选一）。
+  /// 视图无法呈现当前流程状态（或无法把一次回答交给流程机）时的上报口。
   ///
-  /// 集成 T27 提供 `ConsentGate.pendingRegion` 之后，宿主传 `() => gate.pendingRegion`
-  /// 即可，本页与测试都不需要改。本层不自己维护地区状态。
-  final ConsentRegion? Function() regionOfPendingDecision;
-
-  /// 视图无法呈现当前流程状态时的上报口。
-  ///
-  /// 目前只有一个触发点：T27 说 phase==awaitingConsent，但待决地区读数为 null/other。
-  /// 这是流程不变量被破坏，本层既不猜地区也不静默吞掉——交给宿主记录并决定处置
-  /// （T27 会一直停在 awaitingConsent，本页不会伪造放行）。
+  /// 触发点（全部是「不变量被破坏」，本层既不猜也不静默）：
+  /// - T27 说 phase==awaitingConsent，但 `gate.pendingRegion` 为 null/other；
+  /// - 一次回答被流程机拒绝（approve/decline 抛错）：弹窗已关、错误已上报，
+  ///   但只要流程仍停在 awaitingConsent，页面会重新弹窗让人再答（见 [_showConsentDialogLoop]）；
+  /// - 弹窗既不是同意也不是退出被关掉（外部 pop）：无法判断意图。
   final void Function(String reason)? onPresentationBroken;
 
   /// 隐私链接点击回调。本仓库没有 url_launcher 之类依赖，默认 null 表示不跳转；
@@ -117,13 +114,19 @@ class _ConsentPageState extends State<ConsentPage> {
   /// 不能在上报时再去猜（那时弹窗可能已经关了）。
   String? _privacyUrl;
 
-  /// 弹窗的两个按钮只接受第一次回答（防重复 pop / 重复 approve）。
+  /// 当前这一轮弹窗是否已经收下一次回答（防重复 pop / 重复 approve）。
   ///
   /// T27 的 approve()/decline() 只在 ConsentPhase.awaitingConsent 合法，
   /// 否则抛 StateError；视图层的重复点击必须在这里挡住，不能靠流程机兜底。
+  /// **只挡「同一轮弹窗」**：每轮展示前 [_showConsentDialogLoop] 都会复位它，
+  /// 否则一次失败的回答会把页面永久锁死（T42 原缺陷：_decisionTaken 在
+  /// gate.approve() 抛错前就置 true 且再无人复位）。
   bool _decisionTaken = false;
 
-  /// 已经通知过宿主几次 onProceed：保证每次 proceeded 只通知一次。
+  /// 弹窗循环是否已在跑：防止重复 _settleFlow 叠出两个对话框。
+  bool _dialogLoopActive = false;
+
+  /// 是否已经通知过宿主的 onProceed：保证每次 proceeded 只通知一次。
   bool _proceedNotified = false;
 
   @override
@@ -144,6 +147,11 @@ class _ConsentPageState extends State<ConsentPage> {
     if (!mounted) {
       return;
     }
+    await _settleFlow();
+  }
+
+  /// 按流程机的真实阶段决定「还要不要再展示一次」。
+  Future<void> _settleFlow() async {
     // canPop 是 build 期捕获的：phase 变化后必须重建，否则同意之后 PopScope 仍停在
     // false，返回键永远被吃掉（ConsentActivity.java:159-162 是每次按键实时读 isGranted）。
     setState(() {});
@@ -152,7 +160,7 @@ class _ConsentPageState extends State<ConsentPage> {
         _notifyProceeded();
         return;
       case ConsentPhase.awaitingConsent:
-        await _showConsentDialog();
+        await _showConsentDialogLoop();
         return;
       case ConsentPhase.idle:
       case ConsentPhase.probing:
@@ -173,65 +181,101 @@ class _ConsentPageState extends State<ConsentPage> {
     widget.onProceed?.call();
   }
 
-  Future<void> _showConsentDialog() async {
-    final ConsentRegion? region = widget.regionOfPendingDecision();
-    if (region == null || region == ConsentRegion.other) {
-      // 没有待决地区（或读数给了 other）却进了 awaitingConsent：T27 不变量被破坏。
-      // 不弹空窗、不猜地区（ConsentDialogCopy.forRegion(other) 会抛），但也不能静默：
-      // 上报宿主。T27 会停在 awaitingConsent，本页不伪造放行。
-      final String broken = region == null ? 'null' : region.name;
-      widget.onPresentationBroken?.call(
-        'awaitingConsent without a pending region: ' + broken,
-      );
+  /// 展示待决同意弹窗；一次回答失败后必须能重来。
+  ///
+  /// T27 的 approve() 在 writeGrant/startSdks/enterBusiness 抛错时会恢复 _pendingRegion
+  /// 并 rethrow（consent_gate.dart:513-552），phase 仍是 awaitingConsent：流程机还在等人
+  /// 回答，视图却已经把弹窗关掉了。所以这里按流程机的**真实阶段**循环：
+  ///
+  /// - 只要仍是 awaitingConsent，就重新读 `gate.pendingRegion`（失败时它已被恢复）再弹；
+  /// - 每轮展示前复位 [_decisionTaken]：它只挡同一轮内的重复点击/重复 pop，
+  ///   不能变成「失败一次就永久锁死」；
+  /// - proceeded 才通知宿主；declined/terminated 由 while 条件自然退出。
+  ///
+  /// 已落盘的 grant 不会被重复写：重试仍走 T27 的 approve()，它用 _recordPersisted
+  /// 判别，只有写盘失败过才会再 writeGrant（consent_gate.dart:513-552）。
+  Future<void> _showConsentDialogLoop() async {
+    if (_dialogLoopActive) {
       return;
     }
-    await showDialog<void>(
-      context: context,
-      // ConsentActivity.java:121 setCancelable(false)、:130 setCanceledOnTouchOutside(false)。
-      barrierDismissible: false,
-      builder: (BuildContext dialogContext) {
-        final ConsentDialogCopy copy = ConsentDialogCopy.forRegion(region);
-        final bool portrait =
-            MediaQuery.orientationOf(dialogContext) == Orientation.portrait;
-        // 竖屏给双倍安全边距；横屏额外限宽 560，避免长文案在大屏上拉成一行。
-        return PopScope(
-          // ConsentActivity.java:134：弹窗期间返回键被吃掉。
-          canPop: false,
-          child: Padding(
-            padding: EdgeInsets.symmetric(horizontal: portrait ? 48 : 24),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 560),
-              child: AlertDialog(
-                title: Text(copy.title),
-                scrollable: true,
-                content: Text.rich(
-                  _messageSpan(dialogContext, copy.message),
-                ),
-                actions: <Widget>[
-                  // 负向按钮在前（Android AlertDialog 的按钮顺序）。
-                  TextButton(
-                    onPressed: () => _answer(dialogContext, agreed: false),
-                    child: Text(copy.exitLabel),
-                  ),
-                  TextButton(
-                    onPressed: () => _answer(dialogContext, agreed: true),
-                    child: Text(copy.approveLabel),
-                  ),
-                ],
-              ),
-            ),
-          ),
+    _dialogLoopActive = true;
+    try {
+      while (mounted && widget.gate.phase == ConsentPhase.awaitingConsent) {
+        final ConsentRegion? region = widget.gate.pendingRegion;
+        if (region == null || region == ConsentRegion.other) {
+          // 没有待决地区（或读数给了 other）却进了 awaitingConsent：T27 不变量被破坏。
+          // 不弹空窗、不猜地区（ConsentDialogCopy.forRegion(other) 会抛），但也不能静默：
+          // 上报宿主。T27 会停在 awaitingConsent，本页不伪造放行。
+          final String broken = region == null ? 'null' : region.name;
+          widget.onPresentationBroken?.call(
+            'awaitingConsent without a pending region: ' + broken,
+          );
+          return;
+        }
+        // 新一轮展示 = 一次新的首答窗口：上一轮失败留下的锁必须在这里释放。
+        _decisionTaken = false;
+        await showDialog<void>(
+          context: context,
+          // ConsentActivity.java:121 setCancelable(false)、:130 setCanceledOnTouchOutside(false)。
+          barrierDismissible: false,
+          builder: (BuildContext dialogContext) => _consentDialog(dialogContext, region),
         );
-      },
+        if (!mounted) {
+          return;
+        }
+        // 决定之后 phase 已经不是 awaitingConsent：重建，让 PopScope 拿到新的 canPop。
+        setState(() {});
+        if (widget.gate.phase == ConsentPhase.proceeded) {
+          _notifyProceeded();
+          return;
+        }
+        if (!_decisionTaken) {
+          // 弹窗不是被两个按钮关掉的（外部 pop 等）：不猜意图，交给宿主。
+          widget.onPresentationBroken?.call('consent dialog dismissed without a decision');
+          return;
+        }
+        // 否则仍是 awaitingConsent（一次回答被流程机拒绝）：循环重弹，读恢复后的真实读数。
+      }
+    } finally {
+      _dialogLoopActive = false;
+    }
+  }
+
+  /// 弹窗本体（ConsentActivity.java:116-141）。
+  ///
+  /// 几何只留一层：Qt 用的是**系统** AlertDialog，自己没有任何 padding
+  /// （ConsentActivity.java:116-141 只 setTitle/setMessage/setButton）。Flutter 的
+  /// AlertDialog 自带 insetPadding（SDK 默认横 40/竖 24，dialog.dart:32/:267-269）与
+  /// minWidth 280（:274-275），这里显式写出同一组值并作为唯一一层，不再套外层
+  /// Padding —— 旧实现外层 Padding（竖屏横 48/侧）与默认 inset（横 40/侧）叠加，
+  /// 每侧横 88（合计 176）；360dp 竖屏下 AlertDialog 盒只剩 264dp，Material 内部
+  /// 内容宽 184dp（< 280dp minWidth）。
+  Widget _consentDialog(BuildContext dialogContext, ConsentRegion region) {
+    final ConsentDialogCopy copy = ConsentDialogCopy.forRegion(region);
+    return PopScope(
+      // ConsentActivity.java:134：弹窗期间返回键被吃掉。
+      canPop: false,
+      child: AlertDialog(
+        insetPadding: const EdgeInsets.symmetric(horizontal: 40, vertical: 24),
+        constraints: const BoxConstraints(minWidth: 280, maxWidth: 560),
+        title: Text(copy.title),
+        scrollable: true,
+        content: Text.rich(
+          _messageSpan(dialogContext, copy.message),
+        ),
+        actions: <Widget>[
+          // 负向按钮在前（Android AlertDialog 的按钮顺序）。
+          TextButton(
+            onPressed: () => _answer(dialogContext, agreed: false),
+            child: Text(copy.exitLabel),
+          ),
+          TextButton(
+            onPressed: () => _answer(dialogContext, agreed: true),
+            child: Text(copy.approveLabel),
+          ),
+        ],
+      ),
     );
-    if (!mounted) {
-      return;
-    }
-    // 决定之后 phase 已经不是 awaitingConsent：重建，让 PopScope 拿到新的 canPop。
-    setState(() {});
-    if (widget.gate.phase == ConsentPhase.proceeded) {
-      _notifyProceeded();
-    }
   }
 
   /// 回答弹窗（ConsentActivity.java:122-125 同意 / :126-128 退出）。
@@ -255,8 +299,9 @@ class _ConsentPageState extends State<ConsentPage> {
         widget.gate.decline();
       }
     } catch (error) {
-      // 流程机拒绝这次回答（阶段已被并发改掉）：弹窗必须照样关掉，否则页面
-      // 留着一个永远点不动的对话框。失败只上报，不吞掉。
+      // 流程机拒绝这次回答：可能是某次端口调用抛错（writeGrant/startSdks/
+      // enterBusiness），也可能是阶段已被并发改掉。无论哪种，弹窗必须照样
+      // 关掉，否则页面留着一个永远点不动的对话框；失败只上报，不吞掉。
       failure = error;
     } finally {
       if (dialogContext.mounted) {
