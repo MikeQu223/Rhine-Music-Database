@@ -1,0 +1,946 @@
+{
+  "schema": "parity-cases/portrait-login/v1",
+  "id": "portrait_login",
+  "task": "T51",
+  "planCard": "T51",
+  "owner": "QA-PORTRAIT",
+  "kind": "portrait-acceptance-case",
+  "portraitIsNewDesign": true,
+  "qtPortraitPixelBaseline": "NONE",
+  "note": "竖屏为新增响应式重排，不是 Qt 1:1 复刻；本 fixture 只冻结可静态断言的登录语义与几何契约引用。不提供、也不暗示任何 Qt 竖屏像素基线；本任务未执行任何验证命令，所有断言均为「已编写、未执行」。",
+  "evidence": {
+    "loginSource": "Qt/src/MusicAccount.cpp",
+    "loginPanelDraw": "Qt/src/NativeHudLibrary.cpp:270-323",
+    "loginActions": "Qt/src/NativeHudMusic.cpp:283-306,370-371",
+    "modalLifecycle": "Qt/src/NativeHudController.cpp:64-140,166-169",
+    "layoutContract": "T02 docs/flutter-migration/contracts/layout.md (冻结草案, T02 未提交)",
+    "stageMetricsFixture": "T02 test/fixtures/stage_metrics.json",
+    "planAppendix": "docs/superpowers/plans/2026-11-09-qt-to-flutter-parity-plan.md 附录 B.3"
+  },
+  "deviceProfiles": [
+    {
+      "id": "portrait-1080x2400",
+      "physical": [
+        1080,
+        2400
+      ],
+      "density": 420,
+      "dpr": 2.625,
+      "logical": [
+        411.42857142857144,
+        914.2857142857143
+      ],
+      "stageScale": 0.38095238095238093,
+      "stageWidth": 1080,
+      "stageHeight": 2400,
+      "physicalPerStage": 1,
+      "bandHeight": 1080,
+      "bandCount": 3,
+      "contentHeight": 2208,
+      "topBar": 96,
+      "bottomBar": 96,
+      "playerBarStageRect": [
+        0,
+        2304,
+        1080,
+        96
+      ],
+      "status": "proposed-test-matrix",
+      "source": "T02 test/fixtures/stage_metrics.json (android-portrait-1080x2400)"
+    },
+    {
+      "id": "portrait-1440x3200",
+      "physical": [
+        1440,
+        3200
+      ],
+      "density": 480,
+      "dpr": 3,
+      "logical": [
+        480,
+        1066.6666666666667
+      ],
+      "stageScale": 0.4444444444444444,
+      "stageWidth": 1080,
+      "stageHeight": 2400,
+      "physicalPerStage": 1.3333333333333333,
+      "bandHeight": 1080,
+      "bandCount": 3,
+      "contentHeight": 2208,
+      "topBar": 96,
+      "bottomBar": 96,
+      "playerBarStageRect": [
+        0,
+        2304,
+        1080,
+        96
+      ],
+      "status": "proposed-test-matrix",
+      "source": "T02 test/fixtures/stage_metrics.json (android-portrait-1440x3200)"
+    },
+    {
+      "id": "portrait-1200x2000",
+      "physical": [
+        1200,
+        2000
+      ],
+      "density": null,
+      "dpr": null,
+      "logical": null,
+      "stageScale": null,
+      "physicalPerStage": 1.1111111111111112,
+      "physicalPerStageFormula": "physicalWidth / 1080 = dpr * stageScale（与 density 无关）",
+      "stageWidth": 1080,
+      "stageHeight": 1800,
+      "bandHeight": 1080,
+      "bandCount": 2,
+      "contentHeight": 1608,
+      "topBar": 96,
+      "bottomBar": 96,
+      "playerBarStageRect": [
+        0,
+        1704,
+        1080,
+        96
+      ],
+      "status": "WAIT-GEOM-density-unfrozen",
+      "source": "plan T43 拟议第三档；密度未冻结，下列候选仅为推导示例",
+      "candidateDensities": [
+        {
+          "density": 320,
+          "dpr": 2,
+          "logical": [
+            600,
+            1000
+          ],
+          "stageScale": 0.5555555555555556,
+          "physicalPerStage": 1.1111111111111112
+        },
+        {
+          "density": 240,
+          "dpr": 1.5,
+          "logical": [
+            800,
+            1333.3333333333333
+          ],
+          "stageScale": 0.7407407407407408,
+          "physicalPerStage": 1.1111111111111112
+        }
+      ],
+      "invariant": "stageHeight = 1080 * physicalHeight / physicalWidth，只由物理宽高比决定，与 density 无关"
+    }
+  ],
+  "portraitInvariants": [
+    {
+      "id": "INV-1",
+      "assert": "stageWidth 恒为 1080；竖屏不复用横屏 stageScale/width 公式",
+      "evidence": "plan :361-365 (Portrait-W stageWidthP = 1080)"
+    },
+    {
+      "id": "INV-2",
+      "assert": "stageHeight = layoutHeight / stageScale = 1080 * physicalHeight / physicalWidth（只与宽高比有关）",
+      "checked": [
+        "1080x2400 -> 1080*2400/1080 = 2400",
+        "1440x3200 -> 1080*3200/1440 = 2400",
+        "1200x2000 -> 1080*2000/1200 = 1800"
+      ]
+    },
+    {
+      "id": "INV-3",
+      "assert": "bandCount = ceil(stageHeight / 1080)",
+      "checked": [
+        "2400/1080 = 2.2222 -> 3",
+        "1800/1080 = 1.6667 -> 2"
+      ]
+    },
+    {
+      "id": "INV-4",
+      "assert": "Hybrid contentHeight = stageHeight - topBar - bottomBar = stageHeight - 192",
+      "checked": [
+        "2400 - 192 = 2208",
+        "1800 - 192 = 1608"
+      ]
+    },
+    {
+      "id": "INV-5",
+      "assert": "stageScale = layoutWidth / 1080 且 逻辑坐标 = stage 坐标 * stageScale；真实输入框 rect 同源，不额外加 padding/offset",
+      "evidence": "T02 layout.md 5.1/5.4"
+    },
+    {
+      "id": "INV-6",
+      "assert": "physicalPerStage = physicalWidth / 1080 = dpr * stageScale，只由物理宽决定，与 density 无关",
+      "checked": [
+        "1080/1080 = 1",
+        "1440/1080 = 1.333333333",
+        "1200/1080 = 1.111111111"
+      ]
+    }
+  ],
+  "portraitRules": {
+    "safeArea": {
+      "vertical": "containerTop = safe.top / stageScale（stage 单位）",
+      "horizontal": "左右安全区只收窄新垂直容器内容宽度，不改变 stageWidth / stageScale",
+      "landscape": "安全区不得进入横屏公式（横屏公式与 Qt 保持一致）",
+      "status": "frozen-in-T02"
+    },
+    "ime": {
+      "mustNotScaleStage": true,
+      "imeStage": "viewInsets.bottom / stageScale",
+      "allowedEffects": [
+        "压缩新增垂直容器的可用高度",
+        "按冻结策略上移输入框（不缩放 stage）"
+      ],
+      "sources": [
+        "T02 layout.md 5.4",
+        "T02 layout.md 7.3"
+      ],
+      "landscapeBehaviour": "UNVERIFIED_DEVICE_BLOCKED",
+      "status": "WAIT-IME-LANDSCAPE"
+    },
+    "touch": {
+      "expansionStage": 16,
+      "unit": "stage 像素，四边各 16，仅命中层",
+      "writeBack": false,
+      "minTargetDp": null,
+      "assert": "不得引入 Material 48dp 规范；不得把命中层扩张写回命令流",
+      "evidence": "T02 layout.md 3 触摸扩张（Overlay.qml:38-43）"
+    },
+    "textScale": {
+      "systemTextScalerAffectsStage": false,
+      "assert": "系统字体缩放不得乘进 stage：Qt HUD 字号是绝对 stage 单位",
+      "inputs": "搜索/账号/验证码/设置编辑为真实 Flutter 输入，但 rect = stage rect * stageScale，字号随 stage",
+      "accessibilityPolicy": "WAIT-ACC（T32/T51 之外另定，本卡不冻结）",
+      "evidence": "T02 layout.md 7.3"
+    },
+    "modalWidthAtStage1080": {
+      "default": {
+        "width": 980,
+        "left": 50,
+        "rect": [
+          50,
+          122,
+          980,
+          836
+        ]
+      },
+      "search": {
+        "width": 760,
+        "left": 261,
+        "rect": [
+          261,
+          122,
+          760,
+          836
+        ]
+      },
+      "formula": "default = min(1260, width-100)；search = min(width-100, max(760, min(1000, width*0.5-59)))，left = width - modalWidth - 59",
+      "assert": "各候选只改垂直锚点，宽度公式不变",
+      "evidence": "T02 layout.md 4.1"
+    },
+    "playerBar": {
+      "pinned": true,
+      "inputBoundsStageRectLandscape": [
+        0,
+        978,
+        1080,
+        102
+      ],
+      "inputBoundsStageRectPortrait": "(0, stageHeight - 102, 1080, 102)",
+      "inputBoundsNote": "底栏命中高 96；输入层为 adjusted(0,-6) 后的 102 高，包含 seek/volume 命中；二者并存。",
+      "stageRectForStageHeight2400": [
+        0,
+        2304,
+        1080,
+        96
+      ],
+      "height": 96,
+      "fixedHitsOnly": true,
+      "assert": "仅 PlayerBar 命中带 fixed:true；打开模态时 fixed 命中不被 modalOffset 平移",
+      "evidence": "plan :211-214；T02 layout.md 3"
+    }
+  },
+  "loginPaths": [
+    {
+      "id": "netease-qr",
+      "provider": "netease",
+      "providerName": "网易云音乐",
+      "method": "qr",
+      "entry": "music:login",
+      "methodsOffered": [
+        "qr",
+        "phone"
+      ],
+      "qrSource": "host->qr(key)（不经 /login/qr/create，不校验 data URI）",
+      "qrChannel": null,
+      "scannerText": "providerName()",
+      "requiresSms": false,
+      "evidence": "MusicAccount.cpp:560-623；NativeHudLibrary.cpp:270-323"
+    },
+    {
+      "id": "netease-phone",
+      "provider": "netease",
+      "method": "phone",
+      "entry": "music:login-method:phone",
+      "endpoints": [
+        "/captcha/sent",
+        "/login/cellphone"
+      ],
+      "phoneRegex": "^1[0-9]{10}$",
+      "captchaRegex": "^[0-9]{4,8}$",
+      "resendMs": 60000,
+      "requiresSms": true,
+      "evidence": "MusicAccount.cpp:402-462"
+    },
+    {
+      "id": "qq-qr",
+      "provider": "qq",
+      "method": "qr",
+      "entry": "music:login-method:qr",
+      "methodsOffered": [
+        "qr",
+        "wechat"
+      ],
+      "qrSource": "/login/qr/create {qrimg:true}，data URI 必须匹配 ^data:image/(png|jpeg|gif|webp);base64,",
+      "qrChannel": "qq",
+      "scannerText": "手机 QQ",
+      "cancelBarrier": "/login/qr/cancel {key}",
+      "evidence": "MusicAccount.cpp:352-379,560-623"
+    },
+    {
+      "id": "qq-wechat",
+      "provider": "qq",
+      "method": "wechat",
+      "entry": "music:login-method:wechat",
+      "qrChannel": "wechat",
+      "scannerText": "微信",
+      "cancelBarrier": "/login/qr/cancel {key}",
+      "evidence": "MusicAccount.cpp:562-564（channel=wechat）,584-589（扫描器文案「微信」）,560-623"
+    },
+    {
+      "id": "kugou-standard",
+      "provider": "kugou",
+      "method": "qr",
+      "entry": "music:kugou-edition:standard",
+      "edition": "standard",
+      "editionButtons": [
+        "酷狗标准版",
+        "酷狗概念版"
+      ],
+      "credentialFile": "kugou-device.json（单一，edition 由 RHINE_KUGOU_EDITION 决定）",
+      "evidence": "NativeHudLibrary.cpp:283-291（按钮组）；Host.cpp:380-382（kugou-device.json / RHINE_KUGOU_EDITION）"
+    },
+    {
+      "id": "kugou-lite",
+      "provider": "kugou",
+      "method": "qr",
+      "entry": "music:kugou-edition:lite",
+      "edition": "lite",
+      "credentialFile": "kugou-device.json（单一）",
+      "evidence": "NativeHudLibrary.cpp:283-291（按钮组）；Host.cpp:380-382（kugou-device.json / RHINE_KUGOU_EDITION）"
+    },
+    {
+      "id": "siren-no-login",
+      "provider": "siren",
+      "method": null,
+      "isLoginPath": false,
+      "reason": "isSiren() 时 openModal(login) 直接 return；Siren 使用本地收藏/MSR，无远端登录入口",
+      "evidence": "NativeHudController.cpp:70-72"
+    }
+  ],
+  "phaseMachine": {
+    "states": [
+      "idle",
+      "preparing",
+      "waiting",
+      "confirming",
+      "complete",
+      "failed"
+    ],
+    "legal": [
+      "idle -> preparing (startLogin)",
+      "preparing -> waiting (prepareQR ready)",
+      "preparing -> failed (failLogin)",
+      "waiting -> confirming (code 802/803)",
+      "waiting -> failed (code 800 / pollCount>=300)",
+      "waiting -> idle (cancelLogin)",
+      "confirming -> complete (confirmLogin 成功)",
+      "confirming -> failed (confirmLogin 失败)",
+      "failed -> preparing (startLogin，需 retrySeconds==0)",
+      "complete -> idle (logout)"
+    ],
+    "canRegenerate": "retrySeconds == 0 && phase != preparing && phase != confirming",
+    "cancelSemantics": "generation += 1；qr/qrKey 清空；phase = idle；accountLoading = false；QQ 且有旧 key 时 POST /login/qr/cancel 并等待完成屏障，其余 provider 立即完成"
+  },
+  "assertions": [
+    {
+      "id": "L-A01",
+      "given": "phase == waiting / confirming",
+      "expect": "canRegenerateLogin == false",
+      "evidence": "MusicAccount.cpp:304-306"
+    },
+    {
+      "id": "L-A02",
+      "given": "cancelLogin 被调用（任何 provider）",
+      "expect": "generation +1，qr 与 qrKey 清空，phase == idle，且所有后到的旧代响应被丢弃",
+      "evidence": "MusicAccount.cpp:352-379"
+    },
+    {
+      "id": "L-A03",
+      "given": "provider == qq 且 qrKey 非空，cancelLogin",
+      "expect": "先 POST /login/qr/cancel 且等待完成屏障后才算取消完成",
+      "evidence": "MusicAccount.cpp:365-379"
+    },
+    {
+      "id": "L-A04",
+      "given": "provider != qq 或 qrKey 为空，cancelLogin",
+      "expect": "无需远端取消，立即完成",
+      "evidence": "MusicAccount.cpp:365-368"
+    },
+    {
+      "id": "L-A05",
+      "given": "canRegenerateLogin == false 且 retrySeconds > 0，startLogin",
+      "expect": "phase == failed，状态文案包含「请等待 N 秒」",
+      "evidence": "MusicAccount.cpp:530-538"
+    },
+    {
+      "id": "L-A06",
+      "given": "cancelLogin 返回 cancelled == true",
+      "expect": "failLogin(\"旧二维码取消失败，请稍后重试\")，不生成新二维码",
+      "evidence": "MusicAccount.cpp:545-556"
+    },
+    {
+      "id": "L-A07",
+      "given": "pollCount >= 300",
+      "expect": "failLogin(\"二维码超时，请重新生成\")",
+      "evidence": "MusicAccount.cpp:625-630"
+    },
+    {
+      "id": "L-A08",
+      "given": "poll 返回 code 800 且 provider == qq",
+      "expect": "qr 清空后走 reportLoginFailure（含 cooldown），不出现「二维码已过期」文案",
+      "evidence": "MusicAccount.cpp:645-652"
+    },
+    {
+      "id": "L-A09",
+      "given": "poll 返回 code 800 且 provider != qq",
+      "expect": "failLogin(\"二维码已过期，请重新生成\")",
+      "evidence": "MusicAccount.cpp:645-652"
+    },
+    {
+      "id": "L-A10",
+      "given": "poll 返回 code 801",
+      "expect": "继续等待，phase 不变（非 failed）",
+      "evidence": "MusicAccount.cpp:640-667"
+    },
+    {
+      "id": "L-A11",
+      "given": "poll 返回 code 802",
+      "expect": "phase == confirming 且状态文案为「已扫描，请在手机上确认」",
+      "evidence": "MusicAccount.cpp:654-658"
+    },
+    {
+      "id": "L-A12",
+      "given": "poll 返回 code 803",
+      "expect": "phase == confirming 且调用 confirmLogin（非短信路径）",
+      "evidence": "MusicAccount.cpp:659-662"
+    },
+    {
+      "id": "L-A13",
+      "given": "poll 间隔",
+      "expect": "每 1000 ms 一次",
+      "evidence": "MusicAccount.cpp:625-631"
+    },
+    {
+      "id": "L-A14",
+      "given": "provider != netease 且请求短信验证码",
+      "expect": "必须失败（短信路径仅 netease）",
+      "evidence": "MusicAccount.cpp:402-404"
+    },
+    {
+      "id": "L-A15",
+      "given": "手机号不匹配 ^1[0-9]{10}$",
+      "expect": "拒绝发送验证码",
+      "evidence": "MusicAccount.cpp:410-412"
+    },
+    {
+      "id": "L-A16",
+      "given": "验证码不匹配 ^[0-9]{4,8}$",
+      "expect": "拒绝提交",
+      "evidence": "MusicAccount.cpp:436-438"
+    },
+    {
+      "id": "L-A17",
+      "given": "短信重发间隔",
+      "expect": "60000 ms 内不可再次发送",
+      "evidence": "MusicAccount.cpp:381-397,402-429"
+    },
+    {
+      "id": "L-A18",
+      "given": "短信/验证码提交失败",
+      "expect": "只写 loginStatus，不 failLogin、不置 complete",
+      "evidence": "MusicAccount.cpp:445-462"
+    },
+    {
+      "id": "L-A19",
+      "given": "凭据保存失败（captcha 分支）",
+      "expect": "只写 loginStatus，不伪造成已登录",
+      "evidence": "MusicAccount.cpp:475-523"
+    },
+    {
+      "id": "L-A20",
+      "given": "非短信登录成功",
+      "expect": "qr/qrKey 清空、phase == complete、清除该 provider 冷却",
+      "evidence": "MusicAccount.cpp:500-515"
+    },
+    {
+      "id": "L-A21",
+      "given": "登录成功后切换 provider",
+      "expect": "不得清空收藏，不得把其他 provider 登出",
+      "evidence": "plan :274"
+    },
+    {
+      "id": "L-A22",
+      "given": "logout",
+      "expect": "仅清当前来源凭据与私有数据（订阅/vip/history/directory/liked 列表），其他 provider 不变",
+      "evidence": "MusicAccount.cpp:670-717"
+    },
+    {
+      "id": "L-A23",
+      "given": "登录模态被关闭（closeModal/cancelLogin）",
+      "expect": "phase == idle 且不丢失生成代（generation 递增），重开不复活旧二维码",
+      "evidence": "NativeHudController.cpp:135-140；MusicAccount.cpp:352-379"
+    },
+    {
+      "id": "L-A24",
+      "given": "isLocal() 或 isSiren()",
+      "expect": "openModal(\"login\") 被拒绝（本地库也拒绝 quality/playlist-picker/playlist-form）",
+      "evidence": "NativeHudController.cpp:64-77"
+    },
+    {
+      "id": "L-A25",
+      "given": "竖屏旋转/尺寸变化",
+      "expect": "登录相位、generation、pollCount、剩余冷却时长、QR 文本与二维码内容、phone/captcha 输入文本与光标均保留，不重新 startLogin",
+      "evidence": "plan :369-376"
+    },
+    {
+      "id": "L-A26",
+      "given": "IME 弹出（账号/验证码/搜索/设置编辑）",
+      "expect": "stageScale 与 stageWidth 不变；输入框逻辑 rect == stage rect * stageScale；命中与 IME 定位同源",
+      "evidence": "T02 layout.md 5.4/7.3"
+    }
+  ],
+  "actions": {
+    "loginNamespace": [
+      "music:login",
+      "music:qr",
+      "music:login-method:qr",
+      "music:login-method:wechat",
+      "music:login-method:phone",
+      "music:kugou-edition:standard",
+      "music:kugou-edition:lite",
+      "close-modal"
+    ],
+    "evidence": "NativeHudMusic.cpp:283-306,370-371；NativeHudLibrary.cpp:283-321；NativeHudController.cpp:166-169"
+  },
+  "portraitReachabilityStatusVocabulary": {
+    "ok": "PASS_STATIC",
+    "requires-T43": "WAIT-CANDIDATE",
+    "rule-frozen": "PASS_STATIC",
+    "platform-gated": "N/A_PLATFORM_GATED",
+    "note": "fixture 行内沿用紧凑状态词；与 portrait.md §5.1 状态码的映射以此为准。PASS_MEASURED 本轮禁用。"
+  },
+  "portraitReachability": [
+    {
+      "action": "music:login",
+      "entry": "个人库/收藏面板按钮「账号登录 / {providerName}」",
+      "source": "NativeHudModal.cpp:304",
+      "stageRect": "x+53, y+660, 330x48 (相对模态 x,y)",
+      "portraitExpect": "new-anchor-in-Hybrid-content",
+      "status": "requires-T43"
+    },
+    {
+      "action": "music:login",
+      "entry": "收藏库按钮「登录{providerName} →」",
+      "source": "NativeHudLibrary.cpp:197-198",
+      "stageRect": "left, y+ResultListTop+132, 300x44",
+      "portraitExpect": "reuse-same-formula-at-stageWidth1080",
+      "status": "requires-T43"
+    },
+    {
+      "action": "music:qr",
+      "entry": "「重新生成二维码」",
+      "source": "NativeHudLibrary.cpp:308",
+      "stageRect": "x+53, y+626, 260x40",
+      "portraitExpect": "same",
+      "status": "ok"
+    },
+    {
+      "action": "music:login-method:qr|wechat|phone",
+      "entry": "方法按钮组",
+      "source": "NativeHudLibrary.cpp:294",
+      "stageRect": "x+53+index*145, y+207, 140x35",
+      "portraitExpect": "same（1080 宽可用）",
+      "status": "ok"
+    },
+    {
+      "action": "music:kugou-edition:standard|lite",
+      "entry": "版本按钮组",
+      "source": "NativeHudLibrary.cpp:283",
+      "stageRect": "x+53+index*190, y+207, 180x35",
+      "portraitExpect": "same",
+      "status": "ok"
+    },
+    {
+      "action": "close-modal",
+      "entry": "「本轮跳过账号验证」",
+      "source": "NativeHudLibrary.cpp:321",
+      "stageRect": "x+53, y+709, 350x45",
+      "portraitExpect": "same",
+      "status": "ok"
+    },
+    {
+      "action": "archive:tab-mode",
+      "entry": "首页 Tab Mode",
+      "source": "NativeHud.cpp:502",
+      "stageRect": "x-8, 854, 186x48",
+      "portraitExpect": "band-1 keep",
+      "status": "ok"
+    },
+    {
+      "action": "music:slot:<i>",
+      "entry": "首页 lane 槽位",
+      "source": "NativeHud.cpp:474",
+      "stageRect": "x-6, 900, 26x50",
+      "portraitExpect": "band-1 keep (900+50=950 < 984)",
+      "status": "ok"
+    },
+    {
+      "action": "open",
+      "entry": "首页卡片",
+      "source": "NativeHud.cpp:436",
+      "stageRect": "x, 509, 414x37",
+      "portraitExpect": "band-1 keep",
+      "status": "ok"
+    },
+    {
+      "action": "column-prev|next",
+      "entry": "首页列切换",
+      "source": "NativeHud.cpp:480,490",
+      "stageRect": "col..., 903, 46x46",
+      "portraitExpect": "keep; x 由 stageWidth 1080 计算",
+      "status": "ok"
+    },
+    {
+      "action": "prev|next",
+      "entry": "首页翻页",
+      "source": "NativeHud.cpp:465,478",
+      "stageRect": "nav..., 903, 46x46",
+      "portraitExpect": "keep",
+      "status": "ok"
+    },
+    {
+      "action": "player:* (prev/toggle/next/lyrics/mode/volume/seek/open)",
+      "entry": "底栏",
+      "source": "PlayerBar.cpp:85-224",
+      "stageRect": "固定在 (0, stageHeight-96, 1080, 96)",
+      "portraitExpect": "pinned bottom bar, fixed:true hits",
+      "status": "rule-frozen"
+    },
+    {
+      "action": "music:like-current",
+      "entry": "底栏收藏",
+      "source": "PlayerBar.cpp:170",
+      "stageRect": "x-24, y-24, 48x48",
+      "portraitExpect": "keep",
+      "status": "ok"
+    },
+    {
+      "action": "player:open",
+      "entry": "「播放队列」",
+      "source": "PlayerBar.cpp:224",
+      "stageRect": "queueX-14, y+16, 54x65",
+      "portraitExpect": "keep",
+      "status": "ok"
+    },
+    {
+      "action": "viewer:close|clear|frosted|reset",
+      "entry": "3D 查看器",
+      "source": "NativeHudDetail.cpp:518-528",
+      "stageRect": "y 189 / 914",
+      "portraitExpect": "keep；竖屏 aspect<1.05 走已有 viewer 分支",
+      "status": "requires-T43"
+    },
+    {
+      "action": "music:cover-front",
+      "entry": "查看器「封面正面」",
+      "source": "NativeHudDetail.cpp:527",
+      "stageRect": "width/2+18, 914, 154x46",
+      "portraitExpect": "x 由 1080 计算",
+      "status": "ok"
+    },
+    {
+      "action": "back",
+      "entry": "详情「← 返回资料库 ESC」",
+      "source": "NativeHudDetail.cpp:70",
+      "stageRect": "59, 211, 360x54",
+      "portraitExpect": "keep",
+      "status": "ok"
+    },
+    {
+      "action": "music:directory",
+      "entry": "目录详情返回",
+      "source": "NativeHudDetail.cpp:508",
+      "stageRect": "left+19, 211, sideWidth x54",
+      "portraitExpect": "sideWidth 需按 1080 重算",
+      "status": "requires-T43"
+    },
+    {
+      "action": "detail:copy",
+      "entry": "详情文本区",
+      "source": "NativeHudDetail.cpp:200",
+      "stageRect": "x, 786, usable x(<=3*31)",
+      "portraitExpect": "keep",
+      "status": "ok"
+    },
+    {
+      "action": "player:lyrics-close|sources|retry|offset|follow|earlier|later|reset|apply-global",
+      "entry": "歌词面板与歌词偏移模态",
+      "source": "NativeHudDetail.cpp:225-337；NativeHudModal.cpp:104-114",
+      "stageRect": "见源码",
+      "portraitExpect": "keep",
+      "status": "ok"
+    },
+    {
+      "action": "settings:scroll-up|scroll-down",
+      "entry": "设置滚动轨",
+      "source": "NativeHudSettings.cpp:223-224",
+      "stageRect": "railX-10, ...",
+      "portraitExpect": "stageHeight 变大 → 滚动量口径不变（120 stage px/步）",
+      "status": "requires-T43"
+    },
+    {
+      "action": "settings:restore-defaults / cache:clear / update:check|cancel|release|auto / setting-*",
+      "entry": "设置七区块行",
+      "source": "NativeHudController.cpp:447-479,455；SettingsSchema.cpp:355-686",
+      "portraitExpect": "七个区块顺序与卡片高度不变，仅滚动容器高度变化",
+      "status": "ok"
+    },
+    {
+      "action": "local:cancel|folder|files|rescan|browse|prev|next / 移除索引",
+      "entry": "本地库扫描",
+      "source": "NativeHudLocal.cpp:11-46",
+      "portraitExpect": "keep（y+200..767 在 band-1）",
+      "status": "ok"
+    },
+    {
+      "action": "discover",
+      "entry": "「文件夹管理 ＋」",
+      "source": "NativeHudModal.cpp:300",
+      "stageRect": "x+53, y+660, 330x48",
+      "portraitExpect": "new-anchor",
+      "status": "requires-T43"
+    },
+    {
+      "action": "quality:set:<id>",
+      "entry": "音质选择项",
+      "source": "NativeHudModal.cpp:344",
+      "stageRect": "行命中",
+      "portraitExpect": "keep",
+      "status": "ok"
+    },
+    {
+      "action": "provider:<id>",
+      "entry": "平台选择卡片",
+      "source": "NativeHudModal.cpp:270",
+      "stageRect": "cardWidth",
+      "portraitExpect": "keep（宽度按 1080 重算）",
+      "status": "ok"
+    },
+    {
+      "action": "confirm:yes",
+      "entry": "确认删除",
+      "source": "NativeHudModal.cpp:220",
+      "stageRect": "x+53, y+450, 180x45",
+      "portraitExpect": "keep",
+      "status": "ok"
+    },
+    {
+      "action": "disc-rotation:enable|cancel",
+      "entry": "唱片旋转风险",
+      "source": "NativeHudModal.cpp:208-209",
+      "stageRect": "x+53/x+340, y+480",
+      "portraitExpect": "keep",
+      "status": "ok"
+    },
+    {
+      "action": "music:picker-prev|picker-next",
+      "entry": "歌单选择翻页",
+      "source": "NativeHudModal.cpp:237-238",
+      "stageRect": "x+usable-330/-190, y+758",
+      "portraitExpect": "usable 按 1080 重算",
+      "status": "ok"
+    },
+    {
+      "action": "desktop-lyrics:scroll-up|scroll-down / desktop-lyrics:open / desktop-lyrics:*",
+      "entry": "桌面歌词（桌面专用）",
+      "source": "NativeHudDesktopLyrics.cpp:117-118,130",
+      "portraitExpect": "桌面专用，Android 竖屏不出现；不得因此判定入口缺失",
+      "status": "platform-gated"
+    },
+    {
+      "action": "skip",
+      "entry": "BOOT「ENTER SYSTEM ↗」",
+      "source": "NativeHudBoot.cpp:310",
+      "stageRect": "width-261, 994, 202x40",
+      "portraitExpect": "994+40=1034 落在横屏底栏带（984-1080）；竖屏需按新容器重锚，避免与固定底栏重叠",
+      "status": "requires-T43"
+    }
+  ],
+  "completeEntrySurface": {
+    "complete": false,
+    "method": "统计 12 个 HUD 文件中 hit()/button() 的字面文本出现次数（含 3 处函数定义）；不是完备入口面",
+    "definitionOccurrences": 3,
+    "definitionLocations": [
+      "NativeHud.cpp:102",
+      "NativeHud.cpp:110",
+      "PlayerBar.cpp:46"
+    ],
+    "additionalEntryCreation": {
+      "canvasHit": 30,
+      "control": 12,
+      "note": "canvas.hit 分布在 DesktopLyricsSettingsPage/CollectionDetailCard/DiscoverMusicCard/PlaybackQueueCard/SettingsCard/SongDetailCard；control() 全在 NativeHud.cpp:348-452。二者均未计入 97。"
+    },
+    "textOccurrenceTotals": {
+      "hit": 40,
+      "button": 57
+    },
+    "totals": {
+      "NativeHud.cpp": {
+        "hit": 8,
+        "button": 6
+      },
+      "NativeHudBoot.cpp": {
+        "hit": 0,
+        "button": 1
+      },
+      "NativeHudDesktopLyrics.cpp": {
+        "hit": 1,
+        "button": 2
+      },
+      "NativeHudDetail.cpp": {
+        "hit": 5,
+        "button": 17
+      },
+      "NativeHudDiscover.cpp": {
+        "hit": 1,
+        "button": 0
+      },
+      "NativeHudLibrary.cpp": {
+        "hit": 4,
+        "button": 4
+      },
+      "NativeHudLocal.cpp": {
+        "hit": 0,
+        "button": 8
+      },
+      "NativeHudModal.cpp": {
+        "hit": 3,
+        "button": 17
+      },
+      "NativeHudPlayer.cpp": {
+        "hit": 1,
+        "button": 0
+      },
+      "NativeHudSearch.cpp": {
+        "hit": 4,
+        "button": 0
+      },
+      "NativeHudSettings.cpp": {
+        "hit": 2,
+        "button": 2
+      },
+      "PlayerBar.cpp": {
+        "hit": 11,
+        "button": 0
+      }
+    },
+    "grandTotal": 97,
+    "grandTotalMeaning": "hit/button 文本出现数（含 3 处定义），不是入口数"
+  },
+  "waitItems": [
+    {
+      "id": "WAIT-GOLDEN",
+      "item": "test/golden/portrait/full_suite_1080x2400.png",
+      "reason": "T51 计划中列出的 golden 未生成，也不在本任务写入域；样板未冻结，不得以空 PNG 冒充",
+      "owner": "T43/T51"
+    },
+    {
+      "id": "WAIT-GEOM-1200x2000",
+      "item": "1200x2000 档的 density/dpr 未冻结",
+      "reason": "密度未审定；stageHeight=1800、bandCount=2、physicalPerStage=1.111111111 由物理尺寸推出，但 dpr/logicalWidth/stageScale 依赖 density",
+      "owner": "T43"
+    },
+    {
+      "id": "WAIT-CANDIDATE",
+      "item": "Portrait-W / Band / Hybrid 三候选未裁决",
+      "reason": "需在同一 widget 上比较可达性/层级/触摸/字尺度后冻结；本卡不预设 bottom sheet、单列、48dp、52%",
+      "owner": "T43"
+    },
+    {
+      "id": "WAIT-IME-LANDSCAPE",
+      "item": "横屏键盘是否 resize 窗口",
+      "reason": "Qt AndroidManifest 无 windowSoftInputMode，无 viewInsets/安全区处理代码（DEVICE_BLOCKED）",
+      "owner": "T02/T50"
+    },
+    {
+      "id": "WAIT-SAFE-AREA",
+      "item": "真实安全区数值",
+      "reason": "Qt 无安全区代码，数值无取证；只冻结「安全区只作用于新增竖向容器」的规则",
+      "owner": "T43/T51"
+    },
+    {
+      "id": "WAIT-ACC",
+      "item": "系统字体缩放的可访问性策略",
+      "reason": "Qt HUD 字号为绝对 stage 单位；把 textScaler 乘进 stage 会破坏绝对字号语义，需要单独策略",
+      "owner": "T32/T51"
+    },
+    {
+      "id": "WAIT-DEVICE",
+      "item": "竖屏真机基线",
+      "reason": "DEVICE_BLOCKED：本阶段不运行设备/截图/性能；三档为拟议测试矩阵，不是已证实真机基线",
+      "owner": "T51/T16"
+    },
+    {
+      "id": "WAIT-VISUAL-EVIDENCE",
+      "item": "登录后/发现/播放中等页面的视觉取证",
+      "reason": "无真机帧，只能按源码语义验收（T50 标「视觉未取证」）",
+      "owner": "T50"
+    },
+    {
+      "id": "WAIT-48DP",
+      "item": "竖屏最小触摸目标尺寸",
+      "reason": "Qt 无 48dp 规范；最小目标尺寸属 T43 待冻结项",
+      "owner": "T43"
+    },
+    {
+      "id": "WAIT-3D-SHARE",
+      "item": "竖屏 3D 占比",
+      "reason": "需三候选比较后冻结，不预设 52%",
+      "owner": "T43"
+    },
+    {
+      "id": "WAIT-TEMPLATE-EXEC",
+      "item": "§5.1/§8.1 模板未填充、未执行",
+      "reason": "需真机、截图或命令流取证；模板定义本身不构成验收结论",
+      "owner": "T51/T16"
+    }
+  ],
+  "unexecutedVerification": [
+    "本任务未执行 flutter/dart 的任何 build/test/analyze/run/pub get",
+    "未执行 Gradle/gradlew、adb、APK 安装卸载、清数据",
+    "未执行 codegen/formatter/校验脚本、golden/widget/integration 测试",
+    "未执行 Qt 编译/运行、截图、性能与运行协议验证",
+    "未生成任何 golden PNG；未做真机测量",
+    "本 fixture 的所有断言状态为 written-not-executed"
+  ]
+}
