@@ -31,23 +31,23 @@
 library;
 
 /// 一条 Qt 绘制命令：QJsonArray（NativeHud::op，Qt/src/NativeHud.cpp:16-18）。
-typedef HudCommand = List<Object?>;
+typedef HudFlatCommand = List<Object?>;
 
 /// 一条 Qt 命中：六字段 x/y/width/height/action/label（NativeHud::hit，Qt/src/NativeHud.cpp:102-108）。
-typedef HudHit = Map<String, Object?>;
+typedef HudFlatHit = Map<String, Object?>;
 
 /// 一帧的绘制结果：命令与命中分两条通道回到宿主，宿主按同代规则整帧追加。
 class Drawing {
   const Drawing({
     this.commands = const <Object?>[],
-    this.hits = const <HudHit>[],
+    this.hits = const <HudFlatHit>[],
   });
 
   /// Qt flat JSON 命令数组（NativeHud.cpp:16-18）。
   final List<Object?> commands;
 
   /// Qt 命中数组（NativeHud.cpp:102-108），顺序即语义。
-  final List<HudHit> hits;
+  final List<HudFlatHit> hits;
 
   bool get isEmpty => commands.isEmpty && hits.isEmpty;
 
@@ -57,10 +57,10 @@ class Drawing {
 /// 追加式构造器；只暴露 op/hit/add，避免任何排序或去重的可能。
 class DrawingBuilder {
   final List<Object?> _commands = <Object?>[];
-  final List<HudHit> _hits = <HudHit>[];
+  final List<HudFlatHit> _hits = <HudFlatHit>[];
 
   /// Qt NativeHud::op（NativeHud.cpp:16-18）。
-  void op(HudCommand command) {
+  void op(HudFlatCommand command) {
     _commands.add(command);
   }
 
@@ -91,7 +91,7 @@ class DrawingBuilder {
 
   Drawing build() => Drawing(
         commands: List<Object?>.unmodifiable(_commands),
-        hits: List<HudHit>.unmodifiable(_hits),
+        hits: List<HudFlatHit>.unmodifiable(_hits),
       );
 }
 
@@ -165,12 +165,12 @@ List<Object?> withAlpha(List<Object?> color, double alpha) {
 }
 
 /// Qt NativeHud::fill 的命令形状：["fill", color, x, y, width, height]（NativeHud.cpp:37-39）。
-HudCommand fillCommand(double x, double y, double width, double height, List<Object?> color) =>
+HudFlatCommand fillCommand(double x, double y, double width, double height, List<Object?> color) =>
     <Object?>['fill', color, x, y, width, height];
 
 /// Qt NativeHud::text 的命令形状：["text", value, x, y, size, weight, tracking, color]
 /// （NativeHud.cpp:40-43）。卡片画布的 text 端口固定 tracking=0（NativeHudDetail.cpp:153-155）。
-HudCommand textCommand(
+HudFlatCommand textCommand(
   String value,
   double x,
   double y,
@@ -185,7 +185,7 @@ HudCommand textCommand(
 ///
 /// 键序固定 x/y/width/height/action/label；label 为 null 才回退到 action，
 /// 空字符串保持空字符串（Qt 判的是 isNull()，不是 isEmpty()）。
-HudHit hitRecord({
+HudFlatHit hitRecord({
   required double x,
   required double y,
   required double width,
@@ -203,7 +203,7 @@ HudHit hitRecord({
     };
 
 /// Qt NativeHud::rule 的命令：ink 的 alpha 换成 opacity，然后画 1px 横线（NativeHud.cpp:125-129）。
-HudCommand hudRuleCommand(double x, double y, double width, double opacity, bool dark) =>
+HudFlatCommand hudRuleCommand(double x, double y, double width, double opacity, bool dark) =>
     fillCommand(x, y, width, 1, withAlpha(hudInk(dark), opacity));
 
 /// 列间距（SongDetailCard.cpp:19 constexpr double gap = 12）。

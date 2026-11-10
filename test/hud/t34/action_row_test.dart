@@ -87,10 +87,10 @@ void main() {
       expect(actionRowCellX(rowX: 100, columnWidth: column, index: 2), 636.0);
 
       final Drawing drawing = buildActionRow(_row(items: _threeSlots));
-      final List<HudHit> hits = drawing.hits;
-      expect(hits.map((HudHit h) => h['x']).toList(), <double>[100.0, 368.0, 636.0]);
-      expect(hits.every((HudHit h) => h['width'] == 256.0), isTrue);
-      expect(hits.every((HudHit h) => h['height'] == 44.0), isTrue);
+      final List<HudFlatHit> hits = drawing.hits;
+      expect(hits.map((HudFlatHit h) => h['x']).toList(), <double>[100.0, 368.0, 636.0]);
+      expect(hits.every((HudFlatHit h) => h['width'] == 256.0), isTrue);
+      expect(hits.every((HudFlatHit h) => h['height'] == 44.0), isTrue);
     });
 
     test('小数列宽时 x 仍是小数（Qt 的 const auto width 是 double）', () {
@@ -230,21 +230,21 @@ void main() {
     test('六字段且键序固定，绝无 fixed（PlayerBar.cpp:46-53 专属）', () {
       final Drawing drawing = buildActionRow(_row(items: _threeSlots));
       expect(drawing.hits.length, 3);
-      for (final HudHit hit in drawing.hits) {
+      for (final HudFlatHit hit in drawing.hits) {
         expect(hit.keys.toList(), <String>['x', 'y', 'width', 'height', 'action', 'label']);
         expect(hit.containsKey('fixed'), isFalse);
       }
-      expect(drawing.hits.map((HudHit h) => h['action']).toList(), <Object?>[
+      expect(drawing.hits.map((HudFlatHit h) => h['action']).toList(), <Object?>[
         'music:play',
         'music:like',
         'music:add-to-playlist',
       ]);
-      expect(drawing.hits.map((HudHit h) => h['label']).toList(), <Object?>[
+      expect(drawing.hits.map((HudFlatHit h) => h['label']).toList(), <Object?>[
         '▶ 播放歌曲',
         '♡ 喜欢',
         '＋ 加入歌单',
       ]);
-      expect(drawing.hits.map((HudHit h) => h['y']).toList(), <Object?>[476.0, 476.0, 476.0]);
+      expect(drawing.hits.map((HudFlatHit h) => h['y']).toList(), <Object?>[476.0, 476.0, 476.0]);
     });
 
     test('label 为 null 才回退 action，空串保持空串（Qt 判 isNull）', () {
@@ -259,8 +259,8 @@ void main() {
         ActionRowItem('A', 'a'),
         ActionRowItem('B2', 'b'),
       ]));
-      expect(drawing.hits.map((HudHit h) => h['action']).toList(), <Object?>['b', 'a', 'b']);
-      expect(drawing.hits.map((HudHit h) => h['label']).toList(), <Object?>['B', 'A', 'B2']);
+      expect(drawing.hits.map((HudFlatHit h) => h['action']).toList(), <Object?>['b', 'a', 'b']);
+      expect(drawing.hits.map((HudFlatHit h) => h['label']).toList(), <Object?>['B', 'A', 'B2']);
     });
   });
 
@@ -400,7 +400,7 @@ void main() {
       );
       expect(drawing.commands.length, 12 + 15);
       expect(drawing.hits.length, 6);
-      expect(drawing.hits.map((HudHit h) => h['y']).toList(),
+      expect(drawing.hits.map((HudFlatHit h) => h['y']).toList(),
           <Object?>[476.0, 476.0, 476.0, 532.0, 532.0, 532.0]);
       expect(_ops(drawing)[0][3], 476.0);
       expect(_ops(drawing)[12][3], 532.0); // 第 13 条命令进入第二行（首格边框上边）
@@ -446,7 +446,7 @@ void main() {
       expect(drawing.hits[2]['x'], closeTo(x + 2 * pitch, 1e-9));
       expect(drawing.hits[0]['width'], closeTo(column, 1e-9));
       expect(drawing.hits[0]['height'], 44.0);
-      expect(drawing.hits.map((HudHit h) => h['action']).toList(), <Object?>[
+      expect(drawing.hits.map((HudFlatHit h) => h['action']).toList(), <Object?>[
         'music:official',
         'music:preview',
         'music:remove-track',
