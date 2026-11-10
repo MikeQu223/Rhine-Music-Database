@@ -59,7 +59,7 @@
 | 切片串 | 启动 → archive 全部歌曲 → 打开第 17 首详情（3D 封面）→ 返回 → 搜索输入中文并打开结果 → 加入队列/移除 → 旋转竖屏再回横屏（计划:153） |
 | 同时必须覆盖 | 3D 画面、HUD 文字、命中、IME、无障碍、媒体会话、旋转、返回键（计划:153） |
 
-结构计数来源：reports/T10-C01-M10.json 的 structure 字段（T10 独占写域产物，本树不复制；取数于该报告 time=2026-11-09T18:44:19Z / mtime 2026-11-09T18:52:35Z（stat 复核：2026-11-10 02:52:35 +0800，同一时刻），已含 F14/F15，rois=38 且 mdRoiRows=38）。切片文件摘要（只读引用，不复制；下列为 T10 报告 files 字段现值，与本轮 worktrees/T10 磁盘 sha256 实测相符，合入本树时须再重算）：
+结构计数来源：reports/T10-C01-M10.json 的 structure 字段（T10 独占写域产物，本树不复制；取数于该报告 time=2026-11-09T18:44:19Z / mtime 2026-11-09T18:52:35Z（stat 复核：2026-11-10 02:52:35 +0800，同一时刻），已含 F14/F15，rois=38 且 mdRoiRows=38）。切片文件摘要（只读引用，不复制；下列为 reports/T10-C01-M10.json 的 files 字段在 2026-11-09T18:44:19Z 的历史值；T10 草稿仍在变更，本文件不对其当前磁盘作相符声明，合入本树前必须重算）：
 - docs/flutter-migration/01-slice.md — bytes 27261，sha256 f0c126eee39876e32ddbf642efccfd1298093bdc75c91a892d4bb4b9bfcf0a32
 - test/fixtures/slice_cases.json — bytes 44957，sha256 2cd9795726950e929a49ec37a0089b1d225c28deca89451a5ddc9718f9f25e5d
 - 过期值警示：旧稿引用的 26202 B/39771fce… 与 43537 B/93d1f7e8… 是 F14/F15 之前的值（这两个数出自旧稿摘要 reports/T16-C14.json:54、:58，不是本轮磁盘值）；reports/T10-C01-M10.json 的 reviewer.resumeHashNote 已明确标注这一对 stale，而 reports/T10-C01-M10-R.json 的 reviewedHashes 仍写着这对过期值，故该复审不构成对当前磁盘内容的复核。任何消费方必须自行重算，不得引用报告里的历史摘要。

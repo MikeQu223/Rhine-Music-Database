@@ -153,7 +153,7 @@ Qt Android 是参考实现与契约来源，Flutter 是新宿主。计划要求�
 ## 7. 解锁条件（何时可以改写为“已裁决”）
 
 1. 获得一次真机窗口授权（Lead / 用户决定；review 叶不申请）。
-2. 对每个候选跑同一 docs/flutter-migration/01-slice.md 切片，产出 E0 帧与 commands / hits 导出。**前置**：该文件与 test/fixtures/slice_cases.json 属 T10 独占写域、当前位于 flutter/p1-t10-parity-slice 分支，**尚未合入本树**；消费前必须先合入并重算 sha256。reports/T10-C01-M10.json 的 files 字段现值（01-slice.md 27261 B/f0c126ee…、slice_cases.json 44957 B/2cd97957…，与 worktrees/T10 磁盘相符）只是那一刻的指纹，不是合入后的指纹；同一报告的 reviewer.resumeHashNote 已把先前 resume 用的 39771fce… / 93d1f7e8… 标注为**过期**（F14/F15 之前），而 reports/T10-C01-M10-R.json 的 reviewedHashes 仍写着这一对过期值——因此任何报告里的摘要都不能当作当前切片指纹。
+2. 对每个候选跑同一 docs/flutter-migration/01-slice.md 切片，产出 E0 帧与 commands / hits 导出。**前置**：该文件与 test/fixtures/slice_cases.json 属 T10 独占写域、当前位于 flutter/p1-t10-parity-slice 分支，**尚未合入本树**；消费前必须先合入并重算 sha256。reports/T10-C01-M10.json 的 files 字段现值（01-slice.md 27261 B/f0c126ee…、slice_cases.json 44957 B/2cd97957…）只是那一刻的历史指纹，不等于 T10 当前草稿，也不是合入后的指纹；同一报告的 reviewer.resumeHashNote 已把先前 resume 用的 39771fce… / 93d1f7e8… 标注为**过期**（F14/F15 之前），而 reports/T10-C01-M10-R.json 的 reviewedHashes 仍写着这一对过期值——因此任何报告里的摘要都不能当作当前切片指纹。
 3. 逐候选按七条硬门判定；未跑候选继续标“未评估”。
 4. 冻结拟议辅助指标所需的 Qt 同设备同场景基线。
 5. G1（APK 哈希与 Qt 源码同 commit）闭合，否则 P1 不裁决（计划:105）。
