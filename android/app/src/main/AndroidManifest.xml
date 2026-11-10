@@ -1,4 +1,18 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 面板内容全部来自远端接口：release 变体不继承 debug/profile 的 INTERNET（X20-F06），
+         必须在主 manifest 声明，否则 release APK 在 socket 层就失败。
+         ACCESS_NETWORK_STATE 与 INTERNET 在 Qt 原文成对声明（Qt/android/AndroidManifest.xml:19-21）。 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- 系统媒体会话 / 前台播放服务所需权限。
+         逐条对应 Qt/android/AndroidManifest.xml:28-32：
+         - FOREGROUND_SERVICE、FOREGROUND_SERVICE_MEDIA_PLAYBACK 是 normal 级，安装即授予；
+           targetSdk 34 起前台服务必须按类型配套声明（Qt 注释 :22-27）。
+         - POST_NOTIFICATIONS 是 API 33+ 的运行时权限，被拒不阻塞：通知不显示，
+           但 MediaSession 与耳机按键仍然可用（Qt/src/AndroidMediaSession.cpp:32-33）。 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <application
         android:label="RHINE MUSIC DATABASE"
         android:name="${applicationName}"
@@ -25,6 +39,16 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <!-- 常驻前台播放服务：锁屏 / 通知 / 耳机键的宿主。
+             对应 Qt/android/AndroidManifest.xml:143-147（RhineMediaService 条目）：
+             exported=false 只允许本应用启动；foregroundServiceType="mediaPlayback"
+             与 FOREGROUND_SERVICE_MEDIA_PLAYBACK 权限配对，满足 targetSdk 36 的类型要求。
+             stopWithTask 保持默认 false（Qt 注释 :136-142）：从最近任务滑掉界面不销毁服务，
+             媒体控件与后台播放继续存活。 -->
+        <service
+            android:name="rhine.music.database.porting.MediaPlaybackService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data
