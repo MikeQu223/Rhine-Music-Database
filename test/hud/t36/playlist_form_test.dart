@@ -560,15 +560,19 @@ void main() {
       expect(closed, 0);
     });
 
-    testWidgets('writeLoading：直接吞掉，不调端口、不置状态、不关闭（MusicMutation.cpp:188）', (
+    testWidgets('writeLoading：门在端口，层仍调用端口并回显 Qt 状态', (
       WidgetTester tester,
     ) async {
-      final _FakePort port = _FakePort();
+      final _FakePort port = _FakePort(
+        createResult: const PlaylistFormResult.rejected(
+          status: PlaylistFormSpec.statusQqFeatureClosed,
+        ),
+      );
       int closed = 0;
       await tester.pumpWidget(_harness(
         view: const PlaylistFormView(
           formKind: PlaylistFormKind.create,
-          provider: 'netease',
+          provider: 'qq',
           uid: 'u1',
           writeLoading: true,
         ),
@@ -578,8 +582,68 @@ void main() {
       await tester.enterText(find.byKey(PlaylistFormKeys.nameField), '有效名字');
       await tester.tap(find.byKey(PlaylistFormKeys.submit));
       await tester.pumpAndSettle();
-      expect(port.calls, isEmpty);
-      expect(find.byKey(PlaylistFormKeys.status), findsNothing);
+      expect(port.calls, <String>['create:有效名字']);
+      expect(find.text(PlaylistFormSpec.statusQqFeatureClosed), findsOneWidget);
+      expect(closed, 0);
+    });
+
+    testWidgets('writeLoading + siren create：siren 分支先于远端门，仍创建成功', (
+      WidgetTester tester,
+    ) async {
+      final _FakePort port = _FakePort(
+        createResult: const PlaylistFormResult.accepted(
+          row: PlaylistFormRow(id: 'l1', title: '本地歌单', creatorId: 'local', provider: 'siren'),
+        ),
+      );
+      final _FakeTable table = _FakeTable();
+      int closed = 0;
+      await tester.pumpWidget(_harness(
+        view: const PlaylistFormView(
+          formKind: PlaylistFormKind.create,
+          provider: 'siren',
+          uid: 'u1',
+          writeLoading: true,
+        ),
+        port: port,
+        table: table,
+        onCloseModal: () => closed++,
+      ));
+      await tester.enterText(find.byKey(PlaylistFormKeys.nameField), '本地歌单');
+      await tester.tap(find.byKey(PlaylistFormKeys.submit));
+      await tester.pumpAndSettle();
+      expect(port.calls, <String>['create:本地歌单']);
+      expect(table.calls, <String>['reload', 'totals']);
+      expect(closed, 1);
+    });
+
+    testWidgets('writeLoading + 非 owner rename：所有权门先于远端门，回显 Qt 文案', (
+      WidgetTester tester,
+    ) async {
+      final _FakePort port = _FakePort(
+        renameResult: const PlaylistFormResult.rejected(
+          status: PlaylistFormSpec.statusRenameNotOwned,
+        ),
+      );
+      final _FakeTable table = _FakeTable();
+      int closed = 0;
+      await tester.pumpWidget(_harness(
+        view: const PlaylistFormView(
+          formKind: PlaylistFormKind.rename,
+          provider: 'netease',
+          uid: 'u1',
+          formPid: 'p9',
+          writeLoading: true,
+        ),
+        port: port,
+        table: table,
+        onCloseModal: () => closed++,
+      ));
+      await tester.enterText(find.byKey(PlaylistFormKeys.nameField), '别人的歌单');
+      await tester.tap(find.byKey(PlaylistFormKeys.submit));
+      await tester.pumpAndSettle();
+      expect(port.calls, <String>['rename:p9:别人的歌单']);
+      expect(find.text(PlaylistFormSpec.statusRenameNotOwned), findsOneWidget);
+      expect(table.calls, isEmpty);
       expect(closed, 0);
     });
 

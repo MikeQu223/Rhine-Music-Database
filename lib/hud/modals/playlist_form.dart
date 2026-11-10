@@ -2,7 +2,9 @@
 //
 // T36 / PAGE-LIBRARY —— 个人库「创建/重命名歌单」写操作浮层（playlist-form）。
 // 计划映射：docs/superpowers/plans/2026-11-09-qt-to-flutter-parity-plan.md:630-633（T36 第 1 条
-// 「创建歌单」写操作 + 表格写路径）；本卡提交标题 "feat(hud): port Qt library modal and login panel"。
+// 「创建歌单」写操作 + 表格写路径）。
+// 本文件属于 public-only 提交 "feat(hud): port Qt library and playlist modals"；
+// login panel / login QR 不在本提交，也不被本文件 import。
 //
 // 基线 8ed3067b0812eb2612f7841ec127a6e8ca93231b 上的 Qt 源证据（逐字，只读引用）：
 //   Qt/qml/Overlay.qml:355-484        共用编辑浮层 formFields（字段/最大长度/键盘/返回/Escape/提交）
@@ -27,7 +29,9 @@
 //   Qt/src/MusicMutation.cpp:421-455   siren 本地歌单 create/rename 与状态文案
 //   Qt/src/MusicMutation.cpp:457-465   重命名所有权门「只能编辑自己创建的歌单」
 //   Qt/src/MusicMutation.cpp:466-493   写路由 /playlist/create 与 /playlist/name/update + 表格写回语义
-//   Qt/src/MusicMutation.cpp:186-200   mutate 串行化门：!canMutate || writeLoading || uid.isEmpty()
+//   Qt/src/MusicMutation.cpp:186-200   远端 mutate 串行化门（!canMutate || writeLoading || uid.isEmpty()）；
+//                                      只在 :421-455 siren 分支与 :457-465 rename 所有权门之后执行，
+//                                      不是 playlist-form 的通用入口门。
 //
 // 本文件自包含 + 可注入：只依赖 flutter/material、flutter/services、dart:math；不 import 任何
 // 本树尚不存在的跨模块（lib/hud/protocol/**、hits/input 层、library_modal）。表格刷新只暴露
@@ -270,8 +274,8 @@ class PlaylistFormView {
   bool get openable => provider != 'local';
 
   /// Overlay.qml:396 / :414 / :465 的表达式「modal !== "login" || !loginBusy」；
-  /// playlist-form 分支恒为 true。本文件不自创禁用规则：提交中 busy 语义由 writeLoading
-  /// 串行化门（MusicMutation.cpp:188）表达，而不是把控件置灰。
+  /// playlist-form 分支恒为 true。本文件不自创禁用规则：提交中 busy 语义由端口侧的
+  /// writeLoading 串行化门（MusicMutation.cpp:188）表达，而不是把控件置灰。
   bool get fieldEnabled => true;
   bool get submitEnabled => true;
 
@@ -693,7 +697,7 @@ class _PlaylistFormLayerState extends State<PlaylistFormLayer> {
   final TextEditingController _name = TextEditingController();
   final FocusNode _focus = FocusNode(debugLabel: 'playlist-form-name');
 
-  /// 已发出的提交尚未回来（本地在飞标记，配合 view.writeLoading 的串行化门）。
+  /// 层内防双击：端口调用在飞时忽略重复提交；writeLoading/uid/canMutate 门由端口承担。
   bool _submitting = false;
 
   /// 同帧回显：Qt 里这条文案由模型写进 music.status 后立即 changed()（MusicMutation.cpp:414-415
@@ -740,7 +744,7 @@ class _PlaylistFormLayerState extends State<PlaylistFormLayer> {
   Future<void> _submit() async {
     final PlaylistFormView view = widget.view;
     if (_submitting) {
-      // 在飞期间的重复提交被吞掉（对齐 writeLoading 串行化门：done(false)、状态不变、不关闭）。
+      // 在飞期间的重复提交被吞掉（层内防双击；writeLoading 门由端口承担）。
       return;
     }
     // 1) 校验（MusicMutation.cpp:411-420）——先于任何写门。
@@ -752,10 +756,9 @@ class _PlaylistFormLayerState extends State<PlaylistFormLayer> {
       _reportStatus(validation.message);
       return;
     }
-    // 2) 写门（MusicMutation.cpp:188）：writeLoading 时静默 done(false)，不置状态、不关闭。
-    if (view.writeLoading) {
-      return;
-    }
+    // 2) 写门由端口承担（MusicMutation.cpp:188-200）：siren 分支（:421-455）与 rename
+    //    所有权门（:457-465）都在远端 mutate 之前；端口必须按序执行并返回 rejected(status)。
+    //    本层不预先吞掉 writeLoading，否则会跳过端口里的这些 Qt 分支。
     setState(() => _submitting = true);
     final int generation = view.generation;
     PlaylistFormResult result;
