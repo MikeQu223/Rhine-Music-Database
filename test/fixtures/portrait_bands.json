@@ -1,0 +1,487 @@
+{
+  "schema": "portrait-bands/v1",
+  "baseline": "8ed3067b0812eb2612f7841ec127a6e8ca93231b",
+  "tolerance": 0.000001,
+  "stage": {
+    "widthConstant": 1080,
+    "heightLandscape": 1080,
+    "noteZh": "竖屏舞台宽恒 1080 舞台单位，依据 T02 docs/flutter-migration/contracts/layout.md §6 portraitStageWidth = 1080；这不是 Qt 横屏常量：Qt 的不变量是舞台高 1080（Qt/qml/Main.qml:32 stageScale = height/1080），舞台宽 = width/stageScale 随窗口变化（Qt/qml/Main.qml:33，真机横屏 1728）。竖屏的响应式方向相反：stageScale 只由逻辑窗口宽决定，IME 与安全区绝不改它。",
+    "portraitReading": "logical-window",
+    "portraitReadingNoteZh": "本 fixture 把 1080x2400 / 1440x3200 / 1200x2000 读作逻辑窗口尺寸（stageScale = 逻辑宽/1080），得到 1.0 / 1.3333333333333333 / 1.1111111111111112。T02 草案把同样数字读作物理像素（density 420/480 -> 逻辑 411.42857142857144x914.2857142857143 / 480x1066.6666666666667）。两种读法都未被裁决，实现只认传入数值、不猜 density。"
+  },
+  "geometry": {
+    "playerBar": {
+      "top": 984,
+      "rowHeight": 96,
+      "bottom": 1080,
+      "source": "Qt/src/NativeHud.cpp:310, Qt/src/PlayerBar.h:42"
+    },
+    "playerInputBounds": {
+      "top": 978,
+      "height": 102,
+      "bottom": 1080,
+      "source": "Qt/src/NativeHud.cpp:310 playerBar(0,984,width)（984 锚点）+ Qt/src/PlayerBar.cpp:241-242 row(bounds.x(), y, bounds.width(), RowHeight).adjusted(0,-6,0,0)",
+      "correctionZh": "T02 草案把底栏输入层记成 (0, 978, stageWidth, 96)、底边 1074，是错的：QRectF::adjusted 同时改 top 并保持 bottom，1080-984=96 抬顶 6 后高为 102、底边仍是 1080。Qt 源码里没有字面量 978，它由 984-6 推出。"
+    },
+    "contentClipBottom": 984,
+    "seek": {
+      "top": 978,
+      "height": 18,
+      "touchHeight": 50,
+      "touchHeightOther": 18,
+      "source": "Qt/src/PlayerBar.cpp:148-151, Qt/qml/Overlay.qml:495",
+      "noteZh": "touchHeight 是 Android 值（18+2*16）；桌面/iOS 无加宽，高仍是 18（Qt/qml/Overlay.qml:37-38 android ? 16 : 0）。"
+    },
+    "volumes": {
+      "width": 100,
+      "height": 28,
+      "touchHeight": 60,
+      "touchHeightOther": 28,
+      "rightInset": 300,
+      "xOffset": 58,
+      "source": "Qt/src/PlayerBar.cpp:213-214,238, Qt/qml/Overlay.qml:497",
+      "noteZh": "rightInset 300 是 output 列左起点距右边缘（PlayerBar.cpp:238），不是音量自身的右留白；音量 x = right-300+58（xOffset），宽 100，右边缘距右边缘 142。拿 300 直接当右留白会把热区整体左移 58。"
+    },
+    "modal": {
+      "top": 122,
+      "height": 836,
+      "defaultMaxWidth": 1260,
+      "sideInset": 100,
+      "searchMinWidth": 760,
+      "searchMaxWidth": 1000,
+      "searchRightInset": 59,
+      "source": "Qt/src/NativeHud.cpp:140-159",
+      "sourceDetailZh": "1260/100 在 153 行；760/1000/59 在 155 行；search 的 left 在 157 行；122/836 在 158 行。"
+    },
+    "resultList": {
+      "topInset": 328,
+      "bottom": 758,
+      "height": 430,
+      "derivedFrom": "758-328",
+      "rowHeight": 72,
+      "source": "Qt/src/NativeHud.h:96-98",
+      "noteZh": "430 是 ResultListBottom - ResultListTop = 758 - 328 的推导值，Qt 无 430 字面量。"
+    },
+    "input": {
+      "topInset": 180,
+      "height": 54,
+      "xInset": 53,
+      "widthInset": 106,
+      "fontSize": 22,
+      "leftPadding": 18,
+      "rightPadding": 14,
+      "source": "Qt/src/NativeHud.cpp:175-221, Qt/qml/Overlay.qml:519-536"
+    },
+    "settingsViewport": {
+      "top": 176,
+      "bottom": 836,
+      "source": "Qt/src/NativeHud.h:115-116"
+    },
+    "albumTrack": {
+      "top": 630,
+      "rowHeight": 48,
+      "rowCount": 6,
+      "source": "Qt/src/NativeHud.h:108-110"
+    },
+    "navigationRightMargin": 789,
+    "archiveMaskFadeWidth": 300,
+    "touchHitPadding": 16,
+    "touchHitPaddingOther": 0,
+    "touchHitPaddingSource": "Qt/qml/Overlay.qml:37-38 readonly property real touchHitPadding: android ? 16 : 0",
+    "container": {
+      "factor": 0.23,
+      "offset": 40,
+      "min": 250,
+      "max": 340,
+      "left": 40,
+      "gap": 36,
+      "source": "Qt/src/NativeHud.cpp:160-166, Qt/src/NativeHud.h:38"
+    }
+  },
+  "atStageWidth1080": {
+    "modalStandard": [
+      50,
+      122,
+      980,
+      836
+    ],
+    "modalSearch": [
+      261,
+      122,
+      760,
+      836
+    ],
+    "containerLayout": {
+      "sidebar": 250,
+      "x": 326,
+      "width": 714
+    },
+    "navigationLeft": 291,
+    "archiveMaskFadeStart": -9,
+    "degeneracies": [
+      {
+        "id": "sidebar-clamp",
+        "whatZh": "侧栏在宽 1080 被钳到下限 250（1080*0.23-40 = 208.4 < 250），横屏 1728 时是 357.44 -> 340 上限。竖屏整页布局不得照抄侧栏宽度。"
+      },
+      {
+        "id": "archive-mask-fade-start",
+        "whatZh": "归档遮罩渐隐起点 = navigationLeft(1080) - 300 = 291 - 300 = -9，为负，横屏 1728 时为 639。竖屏若复用遮罩必须重新给渐隐几何。"
+      }
+    ]
+  },
+  "tiers": [
+    {
+      "id": "tier-1080x2400",
+      "layoutWidth": 1080,
+      "layoutHeight": 2400,
+      "stageScale": 1,
+      "stageHeight": 2400,
+      "bandCountBand": 3,
+      "hybridContentHeight": 2208,
+      "wContentHeight": 2304,
+      "bandRatio": 2.2222222222222223,
+      "wPlayerBar": [
+        0,
+        2304,
+        1080,
+        96
+      ]
+    },
+    {
+      "id": "tier-1440x3200",
+      "layoutWidth": 1440,
+      "layoutHeight": 3200,
+      "stageScale": 1.3333333333333333,
+      "stageHeight": 2400,
+      "bandCountBand": 3,
+      "hybridContentHeight": 2208,
+      "wContentHeight": 2304,
+      "bandRatio": 2.2222222222222223,
+      "wPlayerBar": [
+        0,
+        2304,
+        1080,
+        96
+      ]
+    },
+    {
+      "id": "tier-1200x2000",
+      "layoutWidth": 1200,
+      "layoutHeight": 2000,
+      "stageScale": 1.1111111111111112,
+      "stageHeight": 1800,
+      "bandCountBand": 2,
+      "hybridContentHeight": 1608,
+      "wContentHeight": 1704,
+      "bandRatio": 1.6666666666666667,
+      "wPlayerBar": [
+        0,
+        1704,
+        1080,
+        96
+      ]
+    }
+  ],
+  "candidates": {
+    "W": {
+      "formula": "stageScale = layoutWidth/1080; stageWidth = 1080; stageHeight = layoutHeight/stageScale; playerBar = (0, stageHeight-96, 1080, 96); content = (safe.left/scale, safe.top/scale, 1080-(safe.left+safe.right)/scale, stageHeight - 96 - safe.top/scale - safe.bottom/scale - imeConsumed) — 内容止于底栏上沿",
+      "selected": false
+    },
+    "Band": {
+      "formula": "stageScale = layoutWidth/1080; bandHeight = 1080; bandCount = ceil(stageHeight/1080) with epsilon guard; bandY = k*1080; content = (safe.left/scale, safe.top/scale, 1080-(safe.left+safe.right)/scale, stageHeight - safe.top/scale - safe.bottom/scale - imeConsumed) — 底栏覆盖最后一带，不从内容里扣除",
+      "selected": false
+    },
+    "Hybrid": {
+      "formula": "stageScale = layoutWidth/1080; topBar = 96; bottomBar = 96; content = (safe.left/scale, safe.top/scale+96, 1080-(safe.left+safe.right)/scale, stageHeight-192 - safe.top/scale - safe.bottom/scale - imeConsumed)",
+      "selected": false
+    },
+    "selectionNoteZh": "三个候选都实现为参数，本阶段不裁决赢家；样板设备与设计证据不足，冻结赢家为 WAIT。"
+  },
+  "epsilonGuard": {
+    "tolerance": 0.000001,
+    "cases": [
+      {
+        "layoutWidth": 1080,
+        "layoutHeight": 3240,
+        "bandCount": 3,
+        "whyZh": "stageHeight 3240 -> 比值恰好 3.0，不得变成 4"
+      },
+      {
+        "layoutWidth": 1000,
+        "layoutHeight": 3000.0000001,
+        "bandCount": 3,
+        "whyZh": "stageHeight 3240.000000108 -> 比值 3.0000000001，超出 3 的部分远小于容差 1e-6，仍取 3"
+      },
+      {
+        "layoutWidth": 1000,
+        "layoutHeight": 3000.5,
+        "bandCount": 4,
+        "whyZh": "stageHeight 3240.54 -> 比值 3.0005，超出部分 5e-4 大于容差 1e-6，必须进位到 4"
+      }
+    ],
+    "ruleZh": "ceilWithTolerance：比值只比整数高出容差以内时取该整数；bandRatio 同时暴露未取整比值，避免守卫掩盖真实数值。"
+  },
+  "imeAndSafeArea": {
+    "invariants": [
+      "stageScale 只由 layoutWidth 决定：加安全区或 IME 后 stageScale / stageWidth 逐位不变",
+      "imeStage = imeBottom / stageScale",
+      "containerTop = safe.top / stageScale",
+      "左右安全区只收窄 content.width，stageWidth 恒 1080",
+      "compress: content 高度减 imeStage，inputShiftStage = 0",
+      "shiftUp: inputShiftStage = imeStage，content 高度不减 IME",
+      "hit 矩形与 IME 矩形共用同一份内容矩形，不各自算一次"
+    ],
+    "deviceBlocked": [
+      "Android 键盘弹出时窗口是 adjustResize 还是 adjustPan：Qt 全仓 grep windowSoftInputMode 命中 0 次，两个 Activity 都是 sensorLandscape，无证据",
+      "真机安全区数值（未测量）",
+      "竖屏真机像素基线（Qt 只有 sensorLandscape）"
+    ],
+    "mustNotZh": "绝不用 MediaQuery.viewInsets 手改 stageScale；Qt 侧不做任何 inset 处理，若平台真的缩小逻辑视口，必须用同一条公式重算。"
+  },
+  "insetMatrix": {
+    "noteZh": "拟议测试矩阵，不是真机测量，也不是 golden：这里只固定「安全区/IME 只收窄可用区、stage 量逐位不变」这条公式，五个用例的数值都不得当成设备基线。safe 是 layoutWidth x layoutHeight 区域内部的内缩量（逻辑像素），进入舞台坐标前除以 stageScale。",
+    "sourceZh": "依据本文件 imeAndSafeArea.invariants 与 T02 docs/flutter-migration/contracts/layout.md §6；数值为拟议值。",
+    "cases": [
+      {
+        "id": "zero",
+        "safe": {"top": 0, "bottom": 0, "left": 0, "right": 0},
+        "imeBottom": 0
+      },
+      {
+        "id": "status-and-gesture",
+        "safe": {"top": 72, "bottom": 48, "left": 0, "right": 0},
+        "imeBottom": 0,
+        "whyZh": "状态栏 + 手势条：只缩内容高度，stageHeight 不变"
+      },
+      {
+        "id": "gesture-left-right",
+        "safe": {"top": 72, "bottom": 48, "left": 24, "right": 24},
+        "imeBottom": 0,
+        "whyZh": "左右手势区：只缩 content.width，stageWidth 恒 1080"
+      },
+      {
+        "id": "ime-compress",
+        "safe": {"top": 72, "bottom": 48, "left": 0, "right": 0},
+        "imeBottom": 900,
+        "imePolicy": "compress",
+        "whyZh": "键盘压缩：content 高度再减 imeStage，inputShiftStage = 0"
+      },
+      {
+        "id": "ime-shift-up",
+        "safe": {"top": 72, "bottom": 48, "left": 0, "right": 0},
+        "imeBottom": 900,
+        "imePolicy": "shiftUp",
+        "whyZh": "键盘上移：content 高度不减 IME，inputShiftStage = imeStage"
+      }
+    ]
+  },
+  "actionCoverage": {
+    "source": ".agents/parity-20261109/reports/T43-V4-INV-ACT.json",
+    "sourceNoteZh": "仓库根相对路径（repo root 指 Rhine-Music-Database）；从 T43 worktree 运行时等效于 ../../reports/T43-V4-INV-ACT.json。test 通过 repo root 定位后 File.existsSync 断言。",
+    "coverageStatus": "WAIT_ARCH_T33_T40",
+    "coverageStatusZh": "本卡冻结竖屏几何与样板；133 条动作的 per-face 多重集、per-entry 矩形、noHitExpected 与 A1-A7 的逐条断言属于 T33-T40 动作面集成。T33-T40 尚未集成（ARCH 依赖），此处显式登记 WAIT：不伪称已覆盖、不预造动作数据、不把本文件的 criteria 文字当成证明。",
+    "inventory": {
+      "id": "T43-V4-INV-ACT",
+      "actionCount": 133,
+      "faceCount": 7,
+      "verification": "SOURCE_VERIFIED_LANDSCAPE",
+      "assertedHere": false,
+      "rectEpsStage": 0.000001,
+      "unblockZh": "T33-T40 集成后：把 7 面/133 条 action 多重集与 per-entry rect 落入 fixture，并在至少一个 tier 上断言 A1/A2/A3/A5/A6/A7；A4 必须用 List 严格相等比较，禁止排序/去重/子集过滤。"
+    },
+    "criteria": [
+      {
+        "id": "A1",
+        "textZh": "至少一个 tier 上动作多重集完整：同序、同重数，平台门控项必须缺席"
+      },
+      {
+        "id": "A2",
+        "textZh": "矩形在舞台内：x>=0,y>=0,w>0,h>0,x+w<=stageW+eps,y+h<=stageH+eps，eps 必须在 fixture 显式声明"
+      },
+      {
+        "id": "A3",
+        "textZh": "hit ∩ clip == hit，镜像 Qt HudScroll::clipHits"
+      },
+      {
+        "id": "A4",
+        "textZh": "动作顺序严格相等：不排序、不去重、不做子集过滤"
+      },
+      {
+        "id": "A5",
+        "textZh": "不许硬缩：九个底栏热区间距必须与 RowHeight=96 一致"
+      },
+      {
+        "id": "A6",
+        "textZh": "内容面热区不得与底栏 inputBounds 重叠（y>=984 归底栏）"
+      },
+      {
+        "id": "A7",
+        "textZh": "负向清单显式登记：预期无热区的元素"
+      }
+    ],
+    "noHitExpected": {
+      "status": "WAIT_ARCH_T33_T40",
+      "source": ".agents/parity-20261109/reports/T43-V4-INV-ACT.json（deliverable2 A7）",
+      "itemsZh": [
+        "footer",
+        "brand",
+        "archiveMask",
+        "archiveTrackRuler",
+        "搜索滚动轨",
+        "搜索页脚",
+        "资料库滚动轨",
+        "资料库页脚",
+        "队列滚动",
+        "队列文案",
+        "底栏文案",
+        "歌词面板与详情纯文案"
+      ],
+      "noteZh": "从 INV-ACT 的 A7 负向清单抄录为机器可读键；本卡不生成 hit 表，故只登记、不执行 A7 断言。"
+    },
+    "duplicateActions": [
+      {
+        "action": "viewer:reset",
+        "occurrences": [
+          "Qt/src/NativeHudDetail.cpp:526",
+          "Qt/src/NativeHudDetail.cpp:528"
+        ]
+      },
+      {
+        "action": "player:lyrics",
+        "occurrences": [
+          "Qt/src/PlayerBar.cpp:136",
+          "Qt/src/PlayerBar.cpp:204"
+        ]
+      },
+      {
+        "action": "open",
+        "occurrences": [
+          "Qt/src/NativeHud.cpp:436",
+          "Qt/src/NativeHud.cpp:452"
+        ]
+      },
+      {
+        "action": "update:release",
+        "occurrences": [
+          "Qt/src/NativeHudSettings.cpp:363",
+          "Qt/src/NativeHudSettings.cpp:366"
+        ]
+      },
+      {
+        "action": "close-modal",
+        "occurrences": [
+          "Qt/src/NativeHudModal.cpp:200",
+          "Qt/src/PlaybackQueueCard.cpp:35"
+        ]
+      }
+    ],
+    "platformGatedMobileAbsent": {
+      "source": "Qt/src/PlatformFeatures.h:7-24、Qt/src/MobileTarget.h:12-26（RHINE_MOBILE = Q_OS_IOS || Q_OS_ANDROID）",
+      "ruleZh": "移动端动作缺失的合法理由只有本表；不在表内的缺失即为隐藏入口，属 T43 Fail。反之不得为了凑动作伪造这些入口。",
+      "capabilities": [
+        {
+          "capability": "OfficialPlayback=false（Qt/src/PlatformFeatures.h:9）",
+          "kills": [
+            {
+              "action": "music:official",
+              "source": "Qt/src/NativeHudDetail.cpp:206"
+            },
+            {
+              "action": "player:official",
+              "source": "Qt/src/NativeHudController.cpp:435"
+            },
+            {
+              "action": "music:activate",
+              "source": "Qt/src/NativeHudController.cpp:435"
+            },
+            {
+              "action": "setting:official-player:*",
+              "source": "Qt/src/SettingsSchema.cpp:445-456（visible = officialVisible，84-86）"
+            }
+          ]
+        },
+        {
+          "capability": "LocalMusic=false（Qt/src/PlatformFeatures.h:10）",
+          "kills": [
+            {
+              "action": "provider:local",
+              "source": "Qt/src/NativeHudController.cpp:433；注册 Qt/src/NativeHudModal.cpp:270（hit('provider:' + provider.id)；:274 是该卡标签文字，不是注册）"
+            },
+            {
+              "action": "local:*",
+              "source": "Qt/src/NativeHudController.cpp:433；分发 :533"
+            },
+            {
+              "action": "discover→local 重定向",
+              "source": "Qt/src/NativeHudController.cpp:66-78"
+            }
+          ]
+        },
+        {
+          "capability": "ApplicationVolume=false（Qt/src/PlatformFeatures.h:11）",
+          "kills": [
+            {
+              "action": "player:volume-fraction:0",
+              "source": "Qt/src/PlayerBar.cpp:217"
+            },
+            {
+              "action": "player:volume*",
+              "source": "Qt/src/NativeHudController.cpp:436"
+            }
+          ]
+        },
+        {
+          "capability": "DesktopWindowControls=false（Qt/src/PlatformFeatures.h:12）",
+          "kills": [
+            {
+              "action": "window:fullscreen",
+              "source": "Qt/src/SettingsSchema.cpp:355,361"
+            },
+            {
+              "action": "setting:close-behavior:*",
+              "source": "Qt/src/SettingsSchema.cpp:368,375（closeVisible 68-74 仅 mac/win）"
+            }
+          ]
+        },
+        {
+          "capability": "DesktopLyrics 仅 mac/win（Qt/src/PlatformFeatures.h:20-24）",
+          "kills": [
+            {
+              "action": "desktop-lyrics:open",
+              "source": "Qt/src/SettingsSchema.cpp:486,491"
+            },
+            {
+              "action": "desktop-lyrics:*",
+              "source": "Qt/src/NativeHudController.cpp:450-452"
+            }
+          ]
+        },
+        {
+          "capability": "Qt 源文明文 Android 差异（非平台门宏）",
+          "kills": [
+            {
+              "action": "设置行左侧标题热区",
+              "source": "Qt/src/SettingsCard.cpp:82-92（仅 !Q_OS_ANDROID 注册）"
+            }
+          ]
+        }
+      ]
+    },
+    "androidOnlyDifference": {
+      "source": "Qt/src/SettingsCard.cpp:82-92",
+      "whatZh": "设置行左侧标题热区只在 #if !defined(Q_OS_ANDROID) 下注册；Android 上用整行或右侧控件承担同一动作。竖屏断言必须把它列为已知平台差异。"
+    }
+  },
+  "wait": [
+    "W / Band / Hybrid 赢家未裁决：样板设备与设计证据不足",
+    "bottom sheet 形态未裁决",
+    "48dp 触摸目标下限未裁决",
+    "52% 分屏比例未裁决（Qt 无此概念）",
+    "真机安全区数值未测量",
+    "竖屏真机像素基线未获得（Qt 两个 Activity 都是 sensorLandscape）",
+    "键盘弹出时窗口是否 resize 未知（windowSoftInputMode 全仓 0 命中）",
+    "test/golden/portrait/{home,detail,settings}_1080x2400.png 全部 WAIT：无设备/设计证据，本阶段不伪造 golden",
+    "动作面 133 条清单/per-entry rect/A1-A7 断言 WAIT：T33-T40 未集成（ARCH 依赖），本卡只登记不伪造覆盖",
+    "Band 模式滚动归属与吸附未裁决：PortraitStageBandsView 无滚动容器，1080x2400 下第 3 带尾部 840 stage 单位不可见；由 T43 冻结"
+  ]
+}
