@@ -125,6 +125,32 @@ void main() {
       expect(loaded.position, 12.5);
     });
 
+    test('an invalid current in the playback file is a mode-only partial restore, not a fallback', () async {
+      // The playback file wins, its rejected current only drops queue/current, and the
+      // mode assigned before the guard survives. A fallback to session.json would
+      // resurrect the stale "off" mode here.
+      final files = FakeFiles()
+        ..files[sessionPath] = encode(<String, Object?>{'version': 1, 'player': player(mode: 'off', position: 9.0)})
+        ..files[playbackPath] = encode(
+          player(
+            mode: 'shuffle',
+            position: 12.5,
+            current: song('a', provider: 'qq'),
+            queue: <Object?>[song('a')],
+            index: 0,
+          ),
+        );
+      final store = PlaybackStore(storage: storageWith(files));
+      final loaded = await store.load(currentProvider: 'netease');
+      expect(loaded, isNotNull);
+      expect(loaded!.mode, 'shuffle');
+      expect(loaded.position, 12.5);
+      expect(loaded.current, isEmpty);
+      expect(loaded.queue, isEmpty);
+      expect(loaded.index, -1);
+      expect(files.removedFiles, isEmpty);
+    });
+
     test('a corrupt playback file does NOT fall back to a valid session.json', () async {
       final files = FakeFiles()
         ..files[sessionPath] = encode(<String, Object?>{'version': 1, 'player': player(mode: 'one')})
@@ -344,7 +370,7 @@ void main() {
     });
   });
 
-  group('current track gates (MusicPlayer.cpp:767-779)', () {
+  group('current track gates (MusicPlayer.cpp:765-779)', () {
     test('an empty current restores only the queue', () {
       final loaded = normalizePlayer(player(queue: <Object?>[song('a')], index: 0), currentProvider: 'netease')!;
       expect(loaded.current, isEmpty);
@@ -352,19 +378,96 @@ void main() {
       expect(loaded.index, 0);
     });
 
-    test('a non-song current aborts the whole restore', () {
+    test('a non-song current keeps the restored mode and drops the queue', () {
+      // MusicPlayer.cpp:765-766 assigns the whitelisted mode before the guard at
+      // :774-776 returns; the saved queue and the rejected current are not applied.
+      final loaded = normalizePlayer(
+        player(
+          mode: 'shuffle',
+          current: <String, Object?>{'kind': 'album', 'id': 'a'},
+          queue: <Object?>[song('a')],
+          index: 0,
+        ),
+        currentProvider: 'netease',
+      );
+      expect(loaded, isNotNull);
+      expect(loaded!.mode, 'shuffle');
+      expect(loaded.queue, isEmpty);
+      expect(loaded.index, -1);
+      expect(loaded.current, isEmpty);
+    });
+
+    test('a current from another provider keeps the restored mode and drops the queue', () {
+      final loaded = normalizePlayer(
+        player(mode: 'one', current: song('a', provider: 'qq'), queue: <Object?>[song('a')], index: 0),
+        currentProvider: 'netease',
+      );
+      expect(loaded, isNotNull);
+      expect(loaded!.mode, 'one');
+      expect(loaded.queue, isEmpty);
+      expect(loaded.index, -1);
+      expect(loaded.current, isEmpty);
+    });
+
+    test('an unknown mode still falls back to all on a rejected current', () {
+      // Non-discriminating on its own: "mode assigned before the guard" and "guard hard-codes
+      // all" both yield 'all' here. Ordering is proven by the guard cases in this group
+      // (:381 shuffle, :400 one, :433 off), which require those modes to survive it.
+      final loaded = normalizePlayer(
+        player(mode: 'bogus', current: <String, Object?>{'kind': 'album', 'id': 'a'}),
+        currentProvider: 'netease',
+      )!;
+      expect(loaded.mode, 'all');
+    });
+
+    test('the position gate still aborts before a rejected current is examined', () {
       expect(
-        normalizePlayer(player(current: <String, Object?>{'kind': 'album', 'id': 'a'}),
-            currentProvider: 'netease'),
+        normalizePlayer(
+          player(mode: 'shuffle', position: -2, current: <String, Object?>{'kind': 'album', 'id': 'a'}),
+          currentProvider: 'netease',
+        ),
         isNull,
       );
     });
 
-    test('a current from another provider aborts the whole restore', () {
-      expect(
-        normalizePlayer(player(current: song('a', provider: 'qq')), currentProvider: 'netease'),
-        isNull,
-      );
+    test('a rejected current never applies the saved queue, even a valid one', () {
+      // MusicPlayer.cpp:774-776 returns before :778 queue.restore(), so a queue that
+      // would pass sanitising on its own is still NOT applied. Restoring it here would
+      // be a silent divergence: the queue would look valid while Qt keeps it empty.
+      final loaded = normalizePlayer(
+        player(
+          mode: 'off',
+          current: <String, Object?>{'kind': 'album', 'id': 'a'},
+          queue: <Object?>[song('a'), song('b'), song('c')],
+          index: 2,
+        ),
+        currentProvider: 'netease',
+      )!;
+      expect(loaded.mode, 'off');
+      expect(loaded.queue, isEmpty);
+      expect(loaded.index, -1);
+      expect(loaded.current, isEmpty);
+    });
+
+    test('a rejected current keeps the other normalised snapshot fields', () {
+      // Same normalisation as the empty-current branch: the partial state still carries
+      // position/requested/preview, which stay inert without a current. Boundary: this is
+      // a property of the value object, not of Qt's live player - after the :774-776
+      // return the live object keeps whatever it had (MusicPlayer.h:52,65): a live player's
+      // sessionState() (MusicPlayer.cpp:751-757) writes its own last values, while only a
+      // freshly constructed player (every product call site) writes 0/false/false.
+      final loaded = normalizePlayer(
+        player(
+          position: 42.5,
+          requested: true,
+          preview: true,
+          current: <String, Object?>{'kind': 'album', 'id': 'a'},
+        ),
+        currentProvider: 'netease',
+      )!;
+      expect(loaded.position, 42.5);
+      expect(loaded.requested, isTrue);
+      expect(loaded.preview, isTrue);
     });
 
     test('a current without a provider is treated as the running provider', () {

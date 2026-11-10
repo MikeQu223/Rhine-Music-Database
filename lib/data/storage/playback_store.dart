@@ -15,8 +15,9 @@
 //     FIRST and aborts the WHOLE restore (mode AND queue are then left untouched);
 //     "mode" is restricted to all|one|off|shuffle; an empty "current" restores only the
 //     queue; a non-empty "current" must be kind == "song" and its provider (defaulting
-//     to the current API provider) must equal the current provider, otherwise even the
-//     queue is not restored. The queue is always restored BEFORE the track is selected,
+//     to the current API provider) must equal the current provider, otherwise the mode
+//     assignment at :765-766 still stands while the queue and current are not applied.
+//     The queue is always restored BEFORE the track is selected,
 //     so a corrupt saved index can never make "next" jump to an unrelated position.
 //   * Qt/src/PlaybackQueue.cpp:14-30 - queue sanitising: kind must be "song", the id
 //     must be non-empty, and the FIRST occurrence of an identity wins.
@@ -129,7 +130,10 @@ class PlayerState {
     required this.preview,
   });
 
-  /// Selected track, or an empty object when only the queue is restored.
+  /// Selected track, or an empty object in the other two shapes:
+  ///  * empty current in the payload: the queue alone is restored (:769-773);
+  ///  * rejected current (bad kind/provider): only [mode], [position], [requested] and
+  ///    [preview] survive, and the queue stays empty with [index] -1 (:774-776).
   final Map<String, Object?> current;
 
   /// Complete queue after sanitising; "deferred" entries stay out of it.
@@ -220,8 +224,12 @@ _QueueRestore _restoreQueue(List<Object?> saved, Object? rawIndex) {
   return _QueueRestore(queue, index);
 }
 
-/// Normalises a persisted player object, returning null when Qt would abort the whole
-/// restore (Qt/src/MusicPlayer.cpp:760-779).
+/// Normalises a persisted player object. Returns null only when Qt aborts the whole
+/// restore at the position gate (Qt/src/MusicPlayer.cpp:760-764). A current that fails
+/// the kind/provider guard (:774-776) is not a total abort: Qt has already assigned the
+/// whitelisted mode (:765-766) and returns before queue.restore() and play(), so a
+/// partial state with the restored mode, an empty queue and index -1 is returned
+/// instead of null. The gate order below follows Qt exactly.
 ///
 /// [currentProvider] is the provider the running app currently serves; Qt compares the
 /// saved track provider against it and defaults a missing provider to that same value.
@@ -237,7 +245,8 @@ PlayerState? normalizePlayer(Object? raw, {required String currentProvider}) {
     return null;
   }
 
-  // 2. Mode whitelist.
+  // 2. Mode whitelist. Qt assigns it BEFORE the current guard (:765-766), so it
+  // survives even when the current is rejected at :774-776.
   final savedMode = jsonString(saved['mode']);
   final mode = kPlayerModes.contains(savedMode) ? savedMode : 'all';
 
@@ -246,10 +255,9 @@ PlayerState? normalizePlayer(Object? raw, {required String currentProvider}) {
   final requested = jsonBool(saved['requested']);
   final preview = jsonBool(saved['preview']);
 
-  // 3. The queue is restored in both branches, always before any selection.
-  final restored = _restoreQueue(savedQueue, saved['index']);
-
+  // 3. Empty current: restore the queue only, then return (:769-773).
   if (track.isEmpty) {
+    final restored = _restoreQueue(savedQueue, saved['index']);
     return PlayerState(
       current: const <String, Object?>{},
       queue: restored.queue,
@@ -261,11 +269,40 @@ PlayerState? normalizePlayer(Object? raw, {required String currentProvider}) {
     );
   }
 
+  // 4. Current gate: Qt returns here WITHOUT ever calling queue.restore() (:774-776).
   final provider = jsonString(track['provider'], currentProvider);
   if (jsonString(track['kind']) != kSongKind || provider != currentProvider) {
-    return null;
+    // MusicPlayer.cpp:765-766 has already assigned the whitelisted mode, then :774-776
+    // returns before :778 queue.restore() and :779 play(), so the mode survives while
+    // neither the saved queue nor the rejected current is applied. Both PRODUCT call
+    // sites run on a freshly constructed MusicPlayer - the PlaybackService member
+    // restored from its own constructor (PlaybackService.cpp:32-33,119) and
+    // NativeApplication::initialize (NativeApplication.cpp:67 -> MusicSession.cpp:264,
+    // skipped while a playback connection owns the player) - whose queue is empty and
+    // whose index is -1 (PlaybackQueue.h:78). "Leave the queue untouched" is therefore,
+    // at every product call site, exactly this empty queue with index -1. The only host
+    // that re-restores a live player is the Qt self-test (Qt/tests/SessionChecks.cpp:217,
+    // :236); its fixtures always pass the guard, so the reject branch is never observed
+    // there. This value object cannot express "keep a live queue": a product re-restore
+    // over a live player would need a structured partial-restore plan plus a caller
+    // change, which is outside this file's contract today.
+    //
+    // position/requested/preview are carried exactly as the empty-current branch
+    // carries them: they describe the normalised snapshot and stay inert without a
+    // current (Qt feeds them back only through play() at :779).
+    return PlayerState(
+      current: const <String, Object?>{},
+      queue: const <Map<String, Object?>>[],
+      index: -1,
+      mode: mode,
+      position: position,
+      requested: requested,
+      preview: preview,
+    );
   }
 
+  // 5. Valid current: restore the queue, then reseat or append (:777-779).
+  final restored = _restoreQueue(savedQueue, saved['index']);
   // selectTrack(): reseat on the existing identity, otherwise append
   // (Qt/src/PlaybackQueue.cpp:130-147). Qt appends only when the track has a
   // usable identity - kind == song and a NON-EMPTY id (:140). For a corrupt
@@ -314,8 +351,9 @@ class PlaybackStore {
   /// Loads the player object.
   ///
   /// Returns null while offline, when nothing is persisted, when the primary file
-  /// exists but is unusable, or when the payload fails the contract. No path in this
-  /// method deletes or rewrites anything.
+  /// exists but is unusable, or when the payload fails the position gate. A rejected
+  /// current yields the mode-only partial state described by [normalizePlayer]. No
+  /// path in this method deletes or rewrites anything.
   Future<PlayerState?> load({required String currentProvider}) async {
     if (storage.offline) {
       return null;
