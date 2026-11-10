@@ -325,7 +325,7 @@ Qt HUD 层的入口创建至少有四类路径：`NativeHud::hit(...)`（`Native
 | 搜索标签/排序/分组/结果行 | `search:*`（含 `music:group-back`） | `NativeHudSearch.cpp:75,104,126,210` | 模态宽 760、left 261（stageWidth 1080） |
 | 资料库标签/排序 | `music:group-back` 等 | `NativeHudLibrary.cpp:126,156,177` | 保留 |
 | 搜索结果 | `music:result` | `NativeHudMusic.cpp:92` | 保留 |
-| 详情排序 | `music:sort-menu` / `music:sort` | `NativeHudMusic.cpp:40,44`；`NativeHudModal.cpp:135,155` | 模态锚点按竖屏重锚 |
+| 详情排序 | `music:sort-menu` / `music:sort` | `NativeHudDetail.cpp:406`；`NativeHudMusic.cpp:40,44`；`NativeHudModal.cpp:122-140,136` | 模态锚点按竖屏重锚 |
 | 关闭模态 | `close-modal` | `NativeHudModal.cpp:96,221`；`NativeHudLibrary.cpp:321` | 保留 |
 | 排序菜单遮罩 | `close-modal`（整 stage 命中） | `NativeHudModal.cpp:128` | 竖屏按新 stage 高度铺满 |
 | 平台选择 | `provider:<id>` | `NativeHudModal.cpp:270`；`NativeHudController.cpp:512` | 卡片宽度按 1080 重算 |
