@@ -69,11 +69,27 @@ const String kEnterSystemLabel = 'ENTER SYSTEM ↗';
 const String kEnterSystemAction = 'skip';
 const double kEnterSystemTextSize = 14;
 
-/// 按钮文本左上角 y = 994 + (40 - 14) / 2 - 4 = 1003（Qt/src/NativeHud.cpp:118-119）。
+/// ENTER SYSTEM 文本的 Qt `text()` y 参数 = 994 + (40 - 14) / 2 - 4 = 1003（Qt/src/NativeHud.cpp:118-119）。
 ///
-/// 仅作证据常量：真实字形（advance/path/基线）由共享 HUD 层绘制，本页不据此自绘文本。
+/// 注意：Qt `text(x, y, size)` 的 y **不是**字形盒顶，而是基线前的一定位移
+/// （内部 `translate(x, y + size * 1.044)`，见 [kQtTextBaselineFactor]）。
+/// 本页的真实纵向锚点因此是 [kEnterSystemTextBaseline]，不是这个值。
 const double kEnterSystemTextTop =
     kEnterSystemTop + (kEnterSystemHeight - kEnterSystemTextSize) / 2 - 4;
+
+/// Qt 文字基线系数：Qt/src/Glyphs.cpp:530-540 `Glyphs::text` 内部
+/// `c.translate(x, y + size * 1.044)`；字形路径在 :141-190 `layoutText` 里已把基线归零
+/// （逐 glyph `path.translate(positions[i].x(), positions[i].y() - line.ascent())`，
+/// 末尾 `QTransform::fromScale(1, -1)`）⇒ `text(x, y, size)` 的 alphabetic baseline 恒为
+/// `y + size * 1.044`。Glyphs.cpp:629-634 只是保守 cull 盒（y-1.15em 到 y+0.45em），不是基线语义。
+const double kQtTextBaselineFactor = 1.044;
+
+/// ENTER SYSTEM 文本的真实 alphabetic baseline（屏幕 y）= 1003 + 14 × 1.044 = 1017.616。
+///
+/// Qt 钉的是**基线**；6980ac4 把 Flutter `Text` 的**盒顶**钉在 1003，基线于是随字体
+/// ascent 漂移（Flutter 侧字体 ascent ≠ Qt 共享字体 ascent），这是原审 NOTE-1 的确定偏差。
+const double kEnterSystemTextBaseline =
+    kEnterSystemTextTop + kEnterSystemTextSize * kQtTextBaselineFactor;
 
 /// step 阈值（秒）：Qt/src/BootTimeline.cpp:129-138（`< 9.12` access，`< 11.12` logo，`< 19.48` auth，
 /// `< 22.76` scan，否则 welcome）。
@@ -899,6 +915,12 @@ class _BootPageState extends State<BootPage> with SingleTickerProviderStateMixin
   }
 
   /// ENTER SYSTEM / skip：几何在 [resolveBootLayout]，这里只做命中与语义（无涟漪 —— Qt 无涟漪）。
+  ///
+  /// 纵向用 [Baseline] 把 alphabetic baseline 钉在 [kEnterSystemTextBaseline]（相对按钮顶
+  /// 为 1017.616 - 994 = 23.616），而不是钉盒顶：Qt 的 `translate(x, y + size * 1.044)`
+  /// 定义的是基线（Glyphs.cpp:530-540），Flutter `Text` 的盒顶由字体 ascent/descent 决定，
+  /// 钉盒顶会让基线随字体度量漂移（原审 NOTE-1）。
+  /// 横向仍是 Qt/src/NativeHud.cpp:118-119 的 inset=0：从按钮左边界起排，不居中。
   Widget _buildEnterSystemButton() {
     final bool finished = _controller.finished;
     return Semantics(
@@ -907,18 +929,16 @@ class _BootPageState extends State<BootPage> with SingleTickerProviderStateMixin
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: finished ? null : _controller.skip,
-        // Qt/src/NativeHud.cpp:118-119：文本从按钮左边界起排（inset=0），
-        // 顶边 = y + (height - size) / 2 - 4 = 1003；不是水平/垂直居中。
-        child: Padding(
-          padding: const EdgeInsets.only(top: kEnterSystemTextTop - kEnterSystemTop),
-          child: Align(
-            alignment: Alignment.topLeft,
-            child: Text(
-              kEnterSystemLabel,
-              style: TextStyle(
-                fontSize: kEnterSystemTextSize,
-                color: widget.themeDark ? kBootInkDark : kBootInkLight,
-              ),
+        child: Baseline(
+          baseline: kEnterSystemTextBaseline - kEnterSystemTop,
+          baselineType: TextBaseline.alphabetic,
+          child: Text(
+            kEnterSystemLabel,
+            // 系统字体缩放不得改变 Qt 设计稿里的字形位置（Qt 端亦不随系统字体缩放）。
+            textScaler: TextScaler.noScaling,
+            style: TextStyle(
+              fontSize: kEnterSystemTextSize,
+              color: widget.themeDark ? kBootInkDark : kBootInkLight,
             ),
           ),
         ),

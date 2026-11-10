@@ -14,7 +14,9 @@
 //   Qt/src/NativeHudBoot.cpp:161      offset = (width - 1920) / 2
 //   Qt/src/NativeHudBoot.cpp:310      button("ENTER SYSTEM ↗", width - 261, 994, 202, 40, "skip", 14)
 //                                     （位于 :292 restore() 之后 => 屏幕坐标右锚，不加 offsetX）
-//   Qt/src/NativeHud.cpp:118-119      文本 y = 994 + (40 - 14) / 2 - 4 = 1003
+//   Qt/src/NativeHud.cpp:118-119      文本 y = 994 + (40 - 14) / 2 - 4 = 1003（text() 的 y 参数）
+//   Qt/src/Glyphs.cpp:530-540         text() 内部 translate(x, y + size * 1.044) => 真实 alphabetic
+//                                     baseline = 1003 + 14 * 1.044 = 1017.616（y 不是盒顶也不是基线）
 //   Qt/src/Glyphs.cpp:806-812         boot 背景径向渐变（中心 979.2,518.4；半径 1100；三段停靠）
 //
 // 本文件只写不执行。所有期望值均按上述源行逐字推导，并用 IEEE754 双精度语义核对：
@@ -24,6 +26,7 @@
 // 绝不绘制 RHINE·LAB / POWERED BY RHINE LAB / auth / access 等真 HUD 字形文本（那属于共享 HUD 层）。
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:rhine_music_database/ui/pages/boot_page.dart';
 
@@ -71,6 +74,24 @@ Future<void> unmountBoot(WidgetTester tester) {
   return tester.pumpWidget(const SizedBox.shrink());
 }
 
+/// ENTER SYSTEM 文本的真实 alphabetic baseline 的全局 y（屏幕坐标）。
+///
+/// Qt 的锚点是基线（Glyphs.cpp:530-540 `translate(x, y + size * 1.044)`），不是盒顶：
+/// Flutter `Text` 的盒顶取决于字体 ascent，只有基线才可与 Qt 逐点对齐。
+///
+/// 取法：`RenderBox.getDistanceToActualBaseline` 是 @protected 且首行断言
+/// `_debugDoingBaseline`（box.dart:2502-2513），只有父级布局经 `getDistanceToBaseline`
+/// 调用时才成立，测试里直接调在 debug（assert 常开）下必抛 AssertionError；
+/// 故改走公共入口 `getDryBaseline`（box.dart:2117）：`RenderParagraph.computeDryBaseline`
+/// （paragraph.dart:941-953）用与真实布局同一个 TextPainter 度量，干/湿同源。
+double enterSystemBaselineY(WidgetTester tester) {
+  final RenderParagraph label =
+      tester.renderObject<RenderParagraph>(find.text(kEnterSystemLabel));
+  final double ascent =
+      label.getDryBaseline(label.constraints, TextBaseline.alphabetic)!;
+  return label.localToGlobal(Offset(0, ascent)).dy;
+}
+
 void main() {
   // -------------------------------------------------------------------------
   // 1) 数值常量（契约：全部带 Qt 证据）
@@ -93,8 +114,11 @@ void main() {
       expect(kEnterSystemLabel, 'ENTER SYSTEM ↗');
       expect(kEnterSystemAction, 'skip');
       expect(kEnterSystemTextSize, 14);
-      // y = 994 + (40 - 14) / 2 - 4
+      // Qt text() 的 y 参数 = 994 + (40 - 14) / 2 - 4 = 1003（不是盒顶）
       expect(kEnterSystemTextTop, 1003);
+      // Qt text(x, y, size) 的 alphabetic baseline = y + size * 1.044（Glyphs.cpp:530-540）
+      expect(kQtTextBaselineFactor, 1.044);
+      expect(kEnterSystemTextBaseline, closeTo(1017.616, 1e-9));
     });
 
     test('时间轴表数据（BootTimeline.cpp:162-164, :174, :153, :195）', () {
@@ -668,8 +692,20 @@ void main() {
         tester.getRect(find.byType(GestureDetector)),
         const Rect.fromLTWH(1659, 994, 202, 40),
       );
-      // Qt/src/NativeHud.cpp:118-119：文本左对齐、顶边 1003，不是居中。
-      expect(tester.getTopLeft(find.text(kEnterSystemLabel)), const Offset(1659, 1003));
+      // Qt/src/NativeHud.cpp:118-119：文本左对齐（inset=0），不是居中。
+      expect(tester.getTopLeft(find.text(kEnterSystemLabel)).dx, 1659);
+      // 纵向锚点是 alphabetic baseline（1003 + 14 * 1.044 = 1017.616），不是盒顶 1003：
+      // 钉盒顶会让基线随字体 ascent 漂移（原审 NOTE-1）。
+      expect(enterSystemBaselineY(tester), closeTo(kEnterSystemTextBaseline, 1e-9));
+      // 接线断言：Baseline 要求的就是 alphabetic 基线 23.616（相对按钮顶），不是盒顶偏移。
+      final Baseline anchor = tester.widget<Baseline>(
+        find.ancestor(
+          of: find.text(kEnterSystemLabel),
+          matching: find.byType(Baseline),
+        ),
+      );
+      expect(anchor.baseline, closeTo(kEnterSystemTextBaseline - kEnterSystemTop, 1e-9));
+      expect(anchor.baselineType, TextBaseline.alphabetic);
 
       await tester.tap(find.text(kEnterSystemLabel));
       expect(handoffs, <BootHandoff>[BootHandoff.archive]);
@@ -680,6 +716,33 @@ void main() {
       await tester.tap(find.text(kEnterSystemLabel));
       await tester.pump();
       expect(handoffs.length, 1);
+
+      await unmountBoot(tester);
+    });
+
+    testWidgets('系统字体缩放不改变设计稿字形与基线（Qt 端不随系统字体缩放）', (WidgetTester tester) async {
+      useScreen(tester, const Size(1920, 1080));
+      final BootController controller = BootController(clock: FakeBootClock());
+      Widget page(TextScaler scaler) => MediaQuery(
+        data: MediaQueryData(textScaler: scaler),
+        child: Directionality(
+          textDirection: TextDirection.ltr,
+          child: BootPage(controller: controller),
+        ),
+      );
+
+      await tester.pumpWidget(page(TextScaler.noScaling));
+      final Size base = tester.getSize(find.text(kEnterSystemLabel));
+
+      // 2x 系统字体缩放：字号/基线/按钮矩形都必须与 1x 完全一致（Qt 用设计稿字形）。
+      await tester.pumpWidget(page(TextScaler.linear(2)));
+      expect(tester.getSize(find.text(kEnterSystemLabel)), base);
+      expect(enterSystemBaselineY(tester), closeTo(kEnterSystemTextBaseline, 1e-9));
+      expect(tester.getTopLeft(find.text(kEnterSystemLabel)).dx, 1659);
+      expect(
+        tester.getRect(find.byType(GestureDetector)),
+        const Rect.fromLTWH(1659, 994, 202, 40),
+      );
 
       await unmountBoot(tester);
     });
