@@ -305,6 +305,41 @@ function checkVip(value, path) {
     optionalString(value.vipLevel, path + '.vipLevel', { max: 40 });
 }
 
+function checkComment(value, path) {
+    checkObject(value, path);
+    checkString(value.id, path + '.id', { min: 1, max: 200 });
+    checkString(value.content, path + '.content', { min: 1, max: 4000 });
+    checkString(value.nickname, path + '.nickname', { min: 1, max: 240 });
+    optionalString(value.userId, path + '.userId', { max: 200 });
+    optionalString(value.avatarUrl, path + '.avatarUrl', { max: 2000 });
+    optionalNumber(value.time, path + '.time', { min: 0 });
+    optionalNumber(value.likedCount, path + '.likedCount', { min: 0 });
+    optionalNumber(value.replyCount, path + '.replyCount', { min: 0 });
+    optionalString(value.replyTo, path + '.replyTo', { max: 240 });
+    optionalString(value.location, path + '.location', { max: 120 });
+    if (value.inlineReplies !== undefined) {
+        check(Array.isArray(value.inlineReplies), path + '.inlineReplies', 'expected array');
+        value.inlineReplies.forEach((reply, index) => checkComment(reply, path + '.inlineReplies[' + index + ']'));
+    }
+}
+
+function checkCommentsPage(value, path) {
+    checkObject(value, path);
+    check(Array.isArray(value.comments), path + '.comments', 'expected array');
+    value.comments.forEach((comment, index) => checkComment(comment, path + '.comments[' + index + ']'));
+    check(isInteger(value.totalCount) && value.totalCount >= 0, path + '.totalCount', 'expected non-negative integer');
+    check(isBoolean(value.hasMore), path + '.hasMore', 'expected boolean');
+    optionalString(value.cursor, path + '.cursor', { max: 500 });
+}
+
+function checkCommentReplies(value, path) {
+    checkObject(value, path);
+    check(Array.isArray(value.comments), path + '.comments', 'expected array');
+    value.comments.forEach((comment, index) => checkComment(comment, path + '.comments[' + index + ']'));
+    check(isBoolean(value.hasMore), path + '.hasMore', 'expected boolean');
+    optionalString(value.time, path + '.time', { max: 500 });
+}
+
 function checkMutation(value, path) {
     checkObject(value, path);
     check(isBoolean(value.applied), path + '.applied', 'expected boolean');
@@ -419,6 +454,12 @@ function validate(operation, value) {
             break;
         case 'mutate':
             checkMutation(value, path);
+            break;
+        case 'comments':
+            checkCommentsPage(value, path);
+            break;
+        case 'commentReplies':
+            checkCommentReplies(value, path);
             break;
         case 'resolveLink':
             if (value !== null) {

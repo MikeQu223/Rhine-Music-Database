@@ -267,6 +267,9 @@ void ResponsiveHudLayout::optionsSheet(ResponsiveHudCanvas &c, const QJsonObject
         if (!m.local && source["officialPlayback"].toBool()) {
             actions.append(SongDetailCard::Action{"官方客户端 ↗", "music:official"});
         }
+        if (source["commentsAvailable"].toBool()) {
+            actions.append(SongDetailCard::Action{"查看评论", "music:comments"});
+        }
     }
     double y = sheetTop + 56;
     for (int index = 0; index < actions.size(); ++index) {

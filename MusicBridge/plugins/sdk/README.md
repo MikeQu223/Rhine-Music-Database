@@ -261,6 +261,8 @@ export interface PluginRuntime {
 | `discover`      | `(tab, offset?, category?)`                               | `Page<MusicEntity>`                             |
 | `categories`    | `()`                                                      | `{id,name}[]`                                   |
 | `mutate`        | `(route, values)`                                         | `MutationResult`                                |
+| `comments`      | `(track, id, sort, page, cursor?)`                        | `CommentsPage`                                  |
+| `commentReplies`| `(track, id, parentCommentId, cursor?, limit?)`           | `CommentReplies`                                |
 | `vip`           | `()`                                                      | `VipStatus`                                     |
 | `request`       | `(route, params)`                                         | 原始上游 body（不做模型校验）                   |
 
@@ -394,6 +396,28 @@ interface LyricsDocument {
 - `LikeState`：`subscribed`、`not-subscribed`、`unknown`。
 - 错误对象至少 `{code, message}`；可选 `authExpired`、`retryable`、`writeAttempted`、`verification:'unconfirmed'`
   和上游诊断白名单字段。不要把上游原始响应或认证信息塞进 `message`。
+
+### 6.6 Comments
+
+评论是只读 operation，由插件 manifest 的 `operations.comments` / `operations.commentReplies` 声明：
+
+```ts
+comments(track, id, sort, page, cursor) -> {
+  comments: CommentItem[];
+  totalCount: number;
+  hasMore: boolean;
+  cursor?: string;
+}
+commentReplies(track, id, parentCommentId, cursor, limit) -> {
+  comments: CommentItem[];
+  hasMore: boolean;
+  time?: string;
+}
+```
+
+`CommentItem` 至少 `{id, content, nickname}`，可选 `userId`、`avatarUrl`、`time`、`likedCount`、
+`replyCount`、`replyTo`、`location`、`inlineReplies`。`sort` 为 `hot`/`new`；分页和 cursor 语义由插件
+自己解释，但必须返回 `hasMore` 和下一页 cursor。头像 URL 会经过 Host 的封面 allowlist 校验。
 
 ---
 

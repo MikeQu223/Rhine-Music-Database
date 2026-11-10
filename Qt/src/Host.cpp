@@ -579,7 +579,10 @@ void Host::requestJson(QString route, QJsonObject values, JsonReply callback) {
                          {waiter},
                          disk,
                          metadataRevision});
-    if (cached || route == "/song/url" || route == "/song/url/v1") {
+    const auto commentRequest =
+        route.startsWith("/comment/") ||
+        (route.startsWith("/native/") && QStringList{"comments", "commentReplies"}.contains(operation));
+    if (cached || route == "/song/url" || route == "/song/url/v1" || commentRequest) {
         queue.enqueue(key);
         pump();
     } else {
@@ -752,7 +755,12 @@ void Host::finish(QString key, QJsonObject response, QString error) {
     if (expiredCodes.contains(QJsonValue(code))) {
         response["authExpired"] = true;
     }
-    if (lifetime(work.route) || work.route == "/song/url" || work.route == "/song/url/v1") {
+    const auto commentRequest =
+        work.route.startsWith("/comment/") ||
+        (work.route.startsWith("/native/") &&
+         QStringList{"comments", "commentReplies"}.contains(work.route.section('/', 3, 3)));
+    if (lifetime(work.route) || work.route == "/song/url" || work.route == "/song/url/v1" ||
+        commentRequest) {
         const auto message = body["message"].toString(body["msg"].toString());
         if (QList<int>{405, 429, 509}.contains(code) || message.contains("频繁")) {
             blockedUntil[routeProvider(work.route)] =

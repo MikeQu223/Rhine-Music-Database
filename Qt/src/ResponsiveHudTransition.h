@@ -20,6 +20,9 @@ class ResponsiveHudTransition {
     }
     void apply(QJsonArray &commands, QJsonArray &hits, QString key, double time, double height, bool reduced,
                double sceneProgress = -1) {
+        const auto fullPage = [](const QString &value) {
+            return value == "lyrics" || value == "comments";
+        };
         if (reduced) {
             if (key != m_key || m_returning) {
                 m_drag = 0;
@@ -50,15 +53,15 @@ class ResponsiveHudTransition {
             m_followScene = sceneProgress >= 0 &&
                             (m_enteringScene || (m_key.startsWith(":detail:") && key.startsWith(":archive")));
             m_old = m_last;
-            m_fromLyrics = m_key == "lyrics";
-            m_toLyrics = key == "lyrics";
+            m_fromPage = fullPage(m_key);
+            m_toPage = fullPage(key);
             m_fromDrag = m_drag;
             m_drag = 0;
             m_returning = false;
             m_key = key;
             m_start = time;
             // 标签切换直接更新内容，不复用整页快照或移动整个 HUD。
-            if (!m_followScene && !m_fromLyrics && !m_toLyrics) {
+            if (!m_followScene && !m_fromPage && !m_toPage) {
                 m_start = -1;
                 m_old = {};
                 m_sceneRunning = false;
@@ -97,10 +100,10 @@ class ResponsiveHudTransition {
             }
             result.append(QJsonArray{"restore"});
         };
-        if (progress < 1 && m_fromLyrics) {
+        if (progress < 1 && m_fromPage) {
             layer(commands, 1, 0);
             layer(m_old, 1, m_fromDrag + (height - m_fromDrag) * eased);
-        } else if (progress < 1 && m_toLyrics) {
+        } else if (progress < 1 && m_toPage) {
             layer(m_old, 1, 0);
             layer(commands, 1, height * (1 - eased));
         } else if (progress < 1) {
@@ -125,8 +128,8 @@ class ResponsiveHudTransition {
     double m_drag = 0;
     double m_fromDrag = 0;
     double m_lastTime = 0;
-    bool m_fromLyrics = false;
-    bool m_toLyrics = false;
+    bool m_fromPage = false;
+    bool m_toPage = false;
     bool m_returning = false;
     bool m_followScene = false;
     bool m_enteringScene = false;

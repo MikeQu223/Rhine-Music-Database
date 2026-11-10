@@ -1,5 +1,6 @@
 #pragma once
 #include "MusicPlayer.h"
+#include "CommentsController.h"
 #include "LocalMusicLibrary.h"
 #include "LocalCollections.h"
 #include <QHash>
@@ -138,6 +139,7 @@ class MusicLibrary : public QObject {
     Host *host;
     MusicApi api;
     MusicPlayer player;
+    CommentsController comments;
     std::unique_ptr<MusicDiscover> discover;
     std::array<QJsonArray, 5> lists;
     std::array<int, 5> totals{};
@@ -204,6 +206,7 @@ class MusicLibrary : public QObject {
     bool canEditPlaylist(const QJsonObject &value) const;
     bool canMutate(const QString &route) const;
     bool supportsOperation(const QString &operation) const;
+    bool commentsAvailable() const;
     QStringList searchHistory;
     QStringList suggestions;
     QString groupName;

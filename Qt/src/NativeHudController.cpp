@@ -442,6 +442,41 @@ void NativeHud::action(QString value) {
         }
         return;
     }
+    if (m_responsive.compact() && value.startsWith("mobile:comments-drag:")) {
+        m_mobileTransition.drag(value.mid(21).toDouble());
+        return;
+    }
+    if (m_responsive.compact() && value == "mobile:comments-release") {
+        if (m_mobileTransition.release()) {
+            commentsMode = false;
+        }
+        return;
+    }
+    if (value == "music:comments") {
+        if (!m_music->commentsAvailable()) {
+            return;
+        }
+        m_responsive.handleAction(value);
+        commentsTrackKey = CommentsController::trackKey(m_music->current);
+        commentsScroll = 0;
+        commentsContentBottom = 0;
+        if (!m_responsive.compact() && tab != "comments") {
+            commentsReturnTab = tab;
+            tab = "comments";
+        }
+        commentsMode = true;
+        m_music->comments.load(m_music->current);
+        return;
+    }
+    if (value == "music:comments-close") {
+        commentsMode = false;
+        if (!m_responsive.compact()) {
+            tab = commentsReturnTab.isEmpty() || commentsReturnTab == "comments" ? "overview"
+                                                                                 : commentsReturnTab;
+        }
+        commentsScroll = 0;
+        return;
+    }
     if (m_responsive.compact() && value == "mobile:play-archive") {
         m_music->playDirectory(true);
         return;
@@ -492,6 +527,7 @@ void NativeHud::action(QString value) {
     }
     if (value == "home") {
         lyricsMode = false;
+        commentsMode = false;
         if (!modal.isEmpty()) {
             closeModal();
         }
@@ -557,6 +593,9 @@ void NativeHud::action(QString value) {
     }
     if (value == "cache:clear") {
         m_music->clearCaches();
+        if (commentsMode && !m_music->current.isEmpty()) {
+            m_music->comments.load(m_music->current);
+        }
         cacheMessage = QStringLiteral("已清除");
         return;
     }
@@ -576,12 +615,63 @@ void NativeHud::action(QString value) {
         return;
     }
     if (value.startsWith("tab:")) {
+        const auto next = value.mid(4);
+        if (next == "comments") {
+            if (!music.commentsAvailable()) {
+                return;
+            }
+            if (tab != "comments") {
+                commentsReturnTab = tab;
+            }
+            trackOffset = 0;
+            bodyOffset = 0;
+            tab = "comments";
+            commentsTrackKey = CommentsController::trackKey(music.current);
+            commentsScroll = 0;
+            commentsContentBottom = 0;
+            commentsMode = true;
+            music.comments.load(music.current);
+            return;
+        }
+        commentsMode = false;
         trackOffset = 0;
         bodyOffset = 0;
-        tab = value.mid(4);
+        tab = next;
         if (music.current.value("kind") == "song" && tab != "overview") {
             music.sameAlbum();
         }
+        return;
+    }
+    if (value == "comments:close") {
+        commentsMode = false;
+        tab = commentsReturnTab.isEmpty() || commentsReturnTab == "comments" ? "overview" : commentsReturnTab;
+        commentsScroll = 0;
+        return;
+    }
+    if (value.startsWith("comments:sort:")) {
+        music.comments.setSort(value.mid(14));
+        commentsScroll = 0;
+        return;
+    }
+    if (value == "comments:refresh" || value == "comments:retry") {
+        music.comments.refresh();
+        commentsScroll = 0;
+        return;
+    }
+    if (value == "comments:load-more") {
+        music.comments.loadMore();
+        return;
+    }
+    if (value.startsWith("comments:replies-more:")) {
+        music.comments.loadMoreReplies(value.mid(22));
+        return;
+    }
+    if (value.startsWith("comments:replies:")) {
+        music.comments.toggleReplies(value.mid(17));
+        return;
+    }
+    if (value.startsWith("comments:expand:")) {
+        music.comments.toggleExpanded(value.mid(16));
         return;
     }
     if (value == "provider") {
@@ -671,6 +761,8 @@ void NativeHud::action(QString value) {
     if (value.startsWith("provider:")) {
         const auto provider = value.mid(9);
         if (music.provider != provider) {
+            commentsMode = false;
+            music.comments.clear();
             ++m_searchGeneration;
             activeGroup.clear();
             query.clear();
@@ -808,6 +900,7 @@ void NativeHud::action(QString value) {
     }
     if (value == "back") {
         lyricsMode = false;
+        commentsMode = false;
         if (music.directory) {
             if (frame["mode"] == "detail") {
                 music.returnToDirectory();

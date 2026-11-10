@@ -5,129 +5,385 @@
     "type": "object",
     "additionalProperties": true,
     "properties": {
-        "schemaVersion": { "const": 2 },
-        "item": { "$ref": "#/$defs/musicEntity" },
-        "page": { "$ref": "#/$defs/page" },
-        "detail": { "$ref": "#/$defs/detail" },
-        "playback": { "$ref": "#/$defs/playbackSource" },
-        "lyrics": { "$ref": "#/$defs/lyricsDocument" },
-        "account": { "$ref": "#/$defs/account" },
-        "capabilities": { "$ref": "#/$defs/capabilities" },
-        "vip": { "$ref": "#/$defs/vipStatus" },
-        "mutation": { "$ref": "#/$defs/mutationResult" },
-        "error": { "$ref": "#/$defs/providerError" }
+        "schemaVersion": {
+            "const": 2
+        },
+        "item": {
+            "$ref": "#/$defs/musicEntity"
+        },
+        "page": {
+            "$ref": "#/$defs/page"
+        },
+        "detail": {
+            "$ref": "#/$defs/detail"
+        },
+        "playback": {
+            "$ref": "#/$defs/playbackSource"
+        },
+        "lyrics": {
+            "$ref": "#/$defs/lyricsDocument"
+        },
+        "account": {
+            "$ref": "#/$defs/account"
+        },
+        "capabilities": {
+            "$ref": "#/$defs/capabilities"
+        },
+        "vip": {
+            "$ref": "#/$defs/vipStatus"
+        },
+        "mutation": {
+            "$ref": "#/$defs/mutationResult"
+        },
+        "error": {
+            "$ref": "#/$defs/providerError"
+        },
+        "comments": {
+            "$ref": "#/$defs/commentsPage"
+        },
+        "commentReplies": {
+            "$ref": "#/$defs/commentReplies"
+        }
     },
     "$defs": {
-        "providerId": { "type": "string", "pattern": "^[a-z0-9-]{1,40}$" },
-        "entityKind": { "enum": ["song", "album", "artist", "playlist", "mv"] },
+        "providerId": {
+            "type": "string",
+            "pattern": "^[a-z0-9-]{1,40}$"
+        },
+        "entityKind": {
+            "enum": [
+                "song",
+                "album",
+                "artist",
+                "playlist",
+                "mv"
+            ]
+        },
         "artistRef": {
             "type": "object",
-            "required": ["id", "name"],
+            "required": [
+                "id",
+                "name"
+            ],
             "additionalProperties": true,
             "properties": {
-                "id": { "type": "string", "minLength": 0, "maxLength": 120 },
-                "name": { "type": "string", "minLength": 1, "maxLength": 240 }
+                "id": {
+                    "type": "string",
+                    "minLength": 0,
+                    "maxLength": 120
+                },
+                "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 240
+                }
             }
         },
         "entityRef": {
             "type": "object",
-            "required": ["provider", "kind", "id"],
+            "required": [
+                "provider",
+                "kind",
+                "id"
+            ],
             "additionalProperties": true,
             "properties": {
-                "provider": { "$ref": "#/$defs/providerId" },
-                "kind": { "$ref": "#/$defs/entityKind" },
-                "id": { "type": "string", "minLength": 1, "maxLength": 200 }
+                "provider": {
+                    "$ref": "#/$defs/providerId"
+                },
+                "kind": {
+                    "$ref": "#/$defs/entityKind"
+                },
+                "id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                }
             }
         },
         "entityBase": {
             "type": "object",
-            "required": ["provider", "kind", "id", "key", "title", "artist", "artists"],
+            "required": [
+                "provider",
+                "kind",
+                "id",
+                "key",
+                "title",
+                "artist",
+                "artists"
+            ],
             "additionalProperties": true,
             "properties": {
-                "provider": { "$ref": "#/$defs/providerId" },
-                "kind": { "$ref": "#/$defs/entityKind" },
-                "id": { "type": "string", "minLength": 1, "maxLength": 200 },
+                "provider": {
+                    "$ref": "#/$defs/providerId"
+                },
+                "kind": {
+                    "$ref": "#/$defs/entityKind"
+                },
+                "id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                },
                 "key": {
                     "type": "string",
                     "pattern": "^[a-z0-9-]{1,40}:(song|album|artist|playlist|mv):[^\\s]{1,200}$"
                 },
-                "title": { "type": "string", "minLength": 1, "maxLength": 500 },
-                "artist": { "type": "string", "minLength": 0, "maxLength": 500 },
-                "artists": { "type": "array", "items": { "$ref": "#/$defs/artistRef" }, "maxItems": 64 },
-                "creatorID": { "type": "string", "maxLength": 200 },
-                "albumID": { "type": "string", "maxLength": 200 },
-                "album": { "type": "string", "maxLength": 500 },
-                "albumAudioID": { "type": "string", "maxLength": 200 },
-                "mediaId": { "type": "string", "maxLength": 200 },
-                "songID": { "type": "integer", "minimum": 0 },
-                "songType": { "type": ["integer", "null"] },
-                "cover": { "type": "string", "maxLength": 2000 },
-                "description": { "type": "string", "maxLength": 20000 },
-                "wiki": { "type": "string", "maxLength": 20000 },
-                "date": { "type": "string", "maxLength": 40 },
-                "duration": { "type": "number", "minimum": 0 },
-                "trackCount": { "type": "integer", "minimum": 0 },
-                "mvID": { "type": "string", "maxLength": 40 },
-                "special": { "type": "boolean" },
-                "owned": { "type": "boolean" },
-                "dirId": { "type": "string", "maxLength": 40 },
-                "listid": { "type": "string", "maxLength": 200 },
-                "listType": { "type": "integer" },
-                "chart": { "type": "boolean" },
-                "period": { "type": "string", "maxLength": 40 },
-                "rankCid": { "type": "string", "maxLength": 200 },
-                "isDefault": { "type": "boolean" },
-                "isFavorite": { "type": "boolean" },
-                "playCount": { "type": "integer", "minimum": 0 },
-                "virtual": { "type": "boolean" },
-                "extensions": { "type": "object", "additionalProperties": true }
+                "title": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 500
+                },
+                "artist": {
+                    "type": "string",
+                    "minLength": 0,
+                    "maxLength": 500
+                },
+                "artists": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/$defs/artistRef"
+                    },
+                    "maxItems": 64
+                },
+                "creatorID": {
+                    "type": "string",
+                    "maxLength": 200
+                },
+                "albumID": {
+                    "type": "string",
+                    "maxLength": 200
+                },
+                "album": {
+                    "type": "string",
+                    "maxLength": 500
+                },
+                "albumAudioID": {
+                    "type": "string",
+                    "maxLength": 200
+                },
+                "mediaId": {
+                    "type": "string",
+                    "maxLength": 200
+                },
+                "songID": {
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "songType": {
+                    "type": [
+                        "integer",
+                        "null"
+                    ]
+                },
+                "cover": {
+                    "type": "string",
+                    "maxLength": 2000
+                },
+                "description": {
+                    "type": "string",
+                    "maxLength": 20000
+                },
+                "wiki": {
+                    "type": "string",
+                    "maxLength": 20000
+                },
+                "date": {
+                    "type": "string",
+                    "maxLength": 40
+                },
+                "duration": {
+                    "type": "number",
+                    "minimum": 0
+                },
+                "trackCount": {
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "mvID": {
+                    "type": "string",
+                    "maxLength": 40
+                },
+                "special": {
+                    "type": "boolean"
+                },
+                "owned": {
+                    "type": "boolean"
+                },
+                "dirId": {
+                    "type": "string",
+                    "maxLength": 40
+                },
+                "listid": {
+                    "type": "string",
+                    "maxLength": 200
+                },
+                "listType": {
+                    "type": "integer"
+                },
+                "chart": {
+                    "type": "boolean"
+                },
+                "period": {
+                    "type": "string",
+                    "maxLength": 40
+                },
+                "rankCid": {
+                    "type": "string",
+                    "maxLength": 200
+                },
+                "isDefault": {
+                    "type": "boolean"
+                },
+                "isFavorite": {
+                    "type": "boolean"
+                },
+                "playCount": {
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "virtual": {
+                    "type": "boolean"
+                },
+                "extensions": {
+                    "type": "object",
+                    "additionalProperties": true
+                }
             }
         },
         "track": {
-            "allOf": [{ "$ref": "#/$defs/entityBase" }, { "properties": { "kind": { "const": "song" } } }]
+            "allOf": [
+                {
+                    "$ref": "#/$defs/entityBase"
+                },
+                {
+                    "properties": {
+                        "kind": {
+                            "const": "song"
+                        }
+                    }
+                }
+            ]
         },
         "album": {
-            "allOf": [{ "$ref": "#/$defs/entityBase" }, { "properties": { "kind": { "const": "album" } } }]
+            "allOf": [
+                {
+                    "$ref": "#/$defs/entityBase"
+                },
+                {
+                    "properties": {
+                        "kind": {
+                            "const": "album"
+                        }
+                    }
+                }
+            ]
         },
         "artist": {
-            "allOf": [{ "$ref": "#/$defs/entityBase" }, { "properties": { "kind": { "const": "artist" } } }]
+            "allOf": [
+                {
+                    "$ref": "#/$defs/entityBase"
+                },
+                {
+                    "properties": {
+                        "kind": {
+                            "const": "artist"
+                        }
+                    }
+                }
+            ]
         },
         "playlist": {
-            "allOf": [{ "$ref": "#/$defs/entityBase" }, { "properties": { "kind": { "const": "playlist" } } }]
+            "allOf": [
+                {
+                    "$ref": "#/$defs/entityBase"
+                },
+                {
+                    "properties": {
+                        "kind": {
+                            "const": "playlist"
+                        }
+                    }
+                }
+            ]
         },
         "musicEntity": {
             "oneOf": [
-                { "$ref": "#/$defs/track" },
-                { "$ref": "#/$defs/album" },
-                { "$ref": "#/$defs/artist" },
-                { "$ref": "#/$defs/playlist" }
+                {
+                    "$ref": "#/$defs/track"
+                },
+                {
+                    "$ref": "#/$defs/album"
+                },
+                {
+                    "$ref": "#/$defs/artist"
+                },
+                {
+                    "$ref": "#/$defs/playlist"
+                }
             ]
         },
         "page": {
             "type": "object",
-            "required": ["items", "rawCount", "more"],
+            "required": [
+                "items",
+                "rawCount",
+                "more"
+            ],
             "additionalProperties": true,
             "properties": {
-                "items": { "type": "array", "items": { "$ref": "#/$defs/musicEntity" } },
-                "rawCount": { "type": "integer", "minimum": 0 },
-                "total": { "type": "integer", "minimum": 0 },
-                "more": { "type": "boolean" },
-                "notice": { "type": "string", "maxLength": 500 },
-                "incomplete": { "type": "boolean" },
-                "category": { "type": "string", "maxLength": 120 },
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/$defs/musicEntity"
+                    }
+                },
+                "rawCount": {
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "total": {
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "more": {
+                    "type": "boolean"
+                },
+                "notice": {
+                    "type": "string",
+                    "maxLength": 500
+                },
+                "incomplete": {
+                    "type": "boolean"
+                },
+                "category": {
+                    "type": "string",
+                    "maxLength": 120
+                },
                 "areas": {
                     "type": "array",
                     "items": {
                         "type": "object",
-                        "required": ["id", "name"],
+                        "required": [
+                            "id",
+                            "name"
+                        ],
                         "additionalProperties": true,
                         "properties": {
-                            "id": { "type": "string", "maxLength": 120 },
-                            "name": { "type": "string", "maxLength": 120 }
+                            "id": {
+                                "type": "string",
+                                "maxLength": 120
+                            },
+                            "name": {
+                                "type": "string",
+                                "maxLength": 120
+                            }
                         }
                     }
                 },
-                "area": { "type": "number" }
+                "area": {
+                    "type": "number"
+                }
             }
         },
         "detail": {
@@ -135,146 +391,517 @@
             "minItems": 3,
             "maxItems": 3,
             "items": [
-                { "$ref": "#/$defs/musicEntity" },
-                { "type": "array", "items": { "$ref": "#/$defs/track" } },
-                { "type": "array", "items": { "type": "string", "maxLength": 200 } }
+                {
+                    "$ref": "#/$defs/musicEntity"
+                },
+                {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/$defs/track"
+                    }
+                },
+                {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "maxLength": 200
+                    }
+                }
             ]
         },
         "playbackSource": {
             "type": "object",
-            "required": ["url", "tier"],
+            "required": [
+                "url",
+                "tier"
+            ],
             "additionalProperties": true,
             "properties": {
-                "url": { "type": "string", "minLength": 1, "maxLength": 4000 },
-                "format": { "type": "string", "maxLength": 40 },
-                "bitrate": { "type": "number", "minimum": 0 },
-                "sampleRate": { "type": "number", "minimum": 0 },
-                "bitDepth": { "type": "integer", "minimum": 0 },
-                "tier": {
-                    "enum": ["auto", "standard", "hq", "lossless", "hires", "master", "original"]
+                "url": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4000
                 },
-                "type": { "type": "string", "maxLength": 40 },
-                "extName": { "type": "string", "maxLength": 40 },
-                "br": { "type": "number", "minimum": 0 },
-                "size": { "type": "number", "minimum": 0 },
-                "providerTier": { "type": "string", "maxLength": 40 },
-                "qualityId": { "type": "string", "maxLength": 40 },
-                "trial": { "type": "boolean" },
-                "restriction": { "type": "string", "maxLength": 500 },
-                "qualityFallback": { "type": "string", "maxLength": 40 }
+                "format": {
+                    "type": "string",
+                    "maxLength": 40
+                },
+                "bitrate": {
+                    "type": "number",
+                    "minimum": 0
+                },
+                "sampleRate": {
+                    "type": "number",
+                    "minimum": 0
+                },
+                "bitDepth": {
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "tier": {
+                    "enum": [
+                        "auto",
+                        "standard",
+                        "hq",
+                        "lossless",
+                        "hires",
+                        "master",
+                        "original"
+                    ]
+                },
+                "type": {
+                    "type": "string",
+                    "maxLength": 40
+                },
+                "extName": {
+                    "type": "string",
+                    "maxLength": 40
+                },
+                "br": {
+                    "type": "number",
+                    "minimum": 0
+                },
+                "size": {
+                    "type": "number",
+                    "minimum": 0
+                },
+                "providerTier": {
+                    "type": "string",
+                    "maxLength": 40
+                },
+                "qualityId": {
+                    "type": "string",
+                    "maxLength": 40
+                },
+                "trial": {
+                    "type": "boolean"
+                },
+                "restriction": {
+                    "type": "string",
+                    "maxLength": 500
+                },
+                "qualityFallback": {
+                    "type": "string",
+                    "maxLength": 40
+                }
             }
         },
         "lyricWord": {
             "type": "object",
-            "required": ["startMs", "text"],
+            "required": [
+                "startMs",
+                "text"
+            ],
             "additionalProperties": true,
             "properties": {
-                "startMs": { "type": "number", "minimum": 0 },
-                "endMs": { "type": "number", "minimum": 0 },
-                "text": { "type": "string", "maxLength": 500 }
+                "startMs": {
+                    "type": "number",
+                    "minimum": 0
+                },
+                "endMs": {
+                    "type": "number",
+                    "minimum": 0
+                },
+                "text": {
+                    "type": "string",
+                    "maxLength": 500
+                }
             }
         },
         "lyricLine": {
             "type": "object",
-            "required": ["startMs", "text"],
+            "required": [
+                "startMs",
+                "text"
+            ],
             "additionalProperties": true,
             "properties": {
-                "startMs": { "type": "number", "minimum": 0 },
-                "endMs": { "type": ["number", "null"] },
-                "text": { "type": "string", "maxLength": 2000 },
-                "translation": { "type": "string", "maxLength": 2000 },
-                "words": { "type": "array", "items": { "$ref": "#/$defs/lyricWord" } }
+                "startMs": {
+                    "type": "number",
+                    "minimum": 0
+                },
+                "endMs": {
+                    "type": [
+                        "number",
+                        "null"
+                    ]
+                },
+                "text": {
+                    "type": "string",
+                    "maxLength": 2000
+                },
+                "translation": {
+                    "type": "string",
+                    "maxLength": 2000
+                },
+                "words": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/$defs/lyricWord"
+                    }
+                }
             }
         },
         "lyricsDocument": {
             "type": "object",
-            "required": ["version", "source", "timing", "offsetMs", "lines"],
+            "required": [
+                "version",
+                "source",
+                "timing",
+                "offsetMs",
+                "lines"
+            ],
             "additionalProperties": true,
             "properties": {
-                "version": { "const": 1 },
-                "source": { "type": "string", "minLength": 1, "maxLength": 80 },
-                "timing": { "enum": ["none", "line", "word"] },
-                "offsetMs": { "type": "number", "minimum": -10000, "maximum": 10000 },
-                "lines": { "type": "array", "items": { "$ref": "#/$defs/lyricLine" } },
-                "plainText": { "type": "string", "maxLength": 200000 }
+                "version": {
+                    "const": 1
+                },
+                "source": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 80
+                },
+                "timing": {
+                    "enum": [
+                        "none",
+                        "line",
+                        "word"
+                    ]
+                },
+                "offsetMs": {
+                    "type": "number",
+                    "minimum": -10000,
+                    "maximum": 10000
+                },
+                "lines": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/$defs/lyricLine"
+                    }
+                },
+                "plainText": {
+                    "type": "string",
+                    "maxLength": 200000
+                }
             }
         },
         "account": {
             "type": "object",
-            "required": ["uid", "nickname"],
+            "required": [
+                "uid",
+                "nickname"
+            ],
             "additionalProperties": true,
             "properties": {
-                "uid": { "type": "string", "minLength": 1, "maxLength": 200 },
-                "nickname": { "type": "string", "minLength": 1, "maxLength": 200 }
+                "uid": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                },
+                "nickname": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                }
             }
         },
         "capabilities": {
             "type": "object",
             "additionalProperties": true,
             "properties": {
-                "search": { "type": "boolean" },
-                "suggest": { "type": "boolean" },
-                "resolveLink": { "type": "boolean" },
-                "detail": { "type": "boolean" },
-                "playback": { "type": "boolean" },
-                "preview": { "type": "boolean" },
-                "lyrics": { "type": "boolean" },
-                "account": { "type": "boolean" },
-                "login": { "type": "boolean" },
-                "vip": { "type": "boolean" },
-                "discover": { "type": "boolean" },
-                "categories": { "type": "boolean" },
-                "userPlaylists": { "type": "boolean" },
-                "likedSongs": { "type": "boolean" },
-                "likedAlbums": { "type": "boolean" },
-                "mv": { "type": "boolean" },
-                "officialPlayback": { "type": "boolean" },
-                "alternativeSource": { "type": "boolean" },
-                "mutations": { "type": "object", "additionalProperties": { "type": "boolean" } },
-                "playlistManagement": { "type": "object", "additionalProperties": { "type": "boolean" } }
+                "search": {
+                    "type": "boolean"
+                },
+                "suggest": {
+                    "type": "boolean"
+                },
+                "resolveLink": {
+                    "type": "boolean"
+                },
+                "detail": {
+                    "type": "boolean"
+                },
+                "playback": {
+                    "type": "boolean"
+                },
+                "preview": {
+                    "type": "boolean"
+                },
+                "lyrics": {
+                    "type": "boolean"
+                },
+                "account": {
+                    "type": "boolean"
+                },
+                "login": {
+                    "type": "boolean"
+                },
+                "vip": {
+                    "type": "boolean"
+                },
+                "discover": {
+                    "type": "boolean"
+                },
+                "categories": {
+                    "type": "boolean"
+                },
+                "userPlaylists": {
+                    "type": "boolean"
+                },
+                "likedSongs": {
+                    "type": "boolean"
+                },
+                "likedAlbums": {
+                    "type": "boolean"
+                },
+                "mv": {
+                    "type": "boolean"
+                },
+                "officialPlayback": {
+                    "type": "boolean"
+                },
+                "alternativeSource": {
+                    "type": "boolean"
+                },
+                "mutations": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "boolean"
+                    }
+                },
+                "playlistManagement": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "boolean"
+                    }
+                }
             }
         },
         "vipStatus": {
             "type": "object",
             "additionalProperties": true,
             "properties": {
-                "isVip": { "type": ["boolean", "string", "number"] },
-                "vipLevel": { "type": "string", "maxLength": 40 }
+                "isVip": {
+                    "type": [
+                        "boolean",
+                        "string",
+                        "number"
+                    ]
+                },
+                "vipLevel": {
+                    "type": "string",
+                    "maxLength": 40
+                }
             }
         },
-        "subscriptionStatus": { "enum": ["subscribed", "not-subscribed", "unknown"] },
+        "subscriptionStatus": {
+            "enum": [
+                "subscribed",
+                "not-subscribed",
+                "unknown"
+            ]
+        },
         "mutationResult": {
             "type": "object",
-            "required": ["applied"],
+            "required": [
+                "applied"
+            ],
             "additionalProperties": true,
             "properties": {
-                "applied": { "type": "boolean" },
-                "state": { "type": "string", "maxLength": 40 },
-                "message": { "type": "string", "maxLength": 500 },
-                "item": { "$ref": "#/$defs/musicEntity" },
-                "countDelta": { "type": "integer" }
+                "applied": {
+                    "type": "boolean"
+                },
+                "state": {
+                    "type": "string",
+                    "maxLength": 40
+                },
+                "message": {
+                    "type": "string",
+                    "maxLength": 500
+                },
+                "item": {
+                    "$ref": "#/$defs/musicEntity"
+                },
+                "countDelta": {
+                    "type": "integer"
+                }
             }
         },
         "providerError": {
             "type": "object",
-            "required": ["code", "message"],
+            "required": [
+                "code",
+                "message"
+            ],
             "additionalProperties": true,
             "properties": {
-                "code": { "type": "integer", "minimum": 100, "maximum": 599 },
-                "message": { "type": "string", "minLength": 1, "maxLength": 500 },
-                "authExpired": { "type": "boolean" },
-                "retryAfterMs": { "type": "number", "minimum": 0 },
-                "failureStage": { "type": "string", "maxLength": 80 },
-                "failureReason": { "type": "string", "maxLength": 80 },
-                "errorKey": { "type": "string", "maxLength": 80 },
-                "upstreamErrorKey": { "type": "string", "maxLength": 80 },
-                "upstreamHttpStatus": { "type": "integer", "minimum": 100, "maximum": 599 },
-                "upstreamCode": { "type": "integer" },
-                "upstreamGlobalCode": { "type": "integer" },
-                "upstreamSubCode": { "type": "integer" },
-                "retryable": { "type": "boolean" },
-                "writeAttempted": { "type": "boolean" },
-                "verification": { "const": "unconfirmed" }
+                "code": {
+                    "type": "integer",
+                    "minimum": 100,
+                    "maximum": 599
+                },
+                "message": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 500
+                },
+                "authExpired": {
+                    "type": "boolean"
+                },
+                "retryAfterMs": {
+                    "type": "number",
+                    "minimum": 0
+                },
+                "failureStage": {
+                    "type": "string",
+                    "maxLength": 80
+                },
+                "failureReason": {
+                    "type": "string",
+                    "maxLength": 80
+                },
+                "errorKey": {
+                    "type": "string",
+                    "maxLength": 80
+                },
+                "upstreamErrorKey": {
+                    "type": "string",
+                    "maxLength": 80
+                },
+                "upstreamHttpStatus": {
+                    "type": "integer",
+                    "minimum": 100,
+                    "maximum": 599
+                },
+                "upstreamCode": {
+                    "type": "integer"
+                },
+                "upstreamGlobalCode": {
+                    "type": "integer"
+                },
+                "upstreamSubCode": {
+                    "type": "integer"
+                },
+                "retryable": {
+                    "type": "boolean"
+                },
+                "writeAttempted": {
+                    "type": "boolean"
+                },
+                "verification": {
+                    "const": "unconfirmed"
+                }
+            }
+        },
+        "comment": {
+            "type": "object",
+            "required": [
+                "id",
+                "content",
+                "nickname"
+            ],
+            "additionalProperties": true,
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                },
+                "content": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4000
+                },
+                "nickname": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 240
+                },
+                "userId": {
+                    "type": "string",
+                    "maxLength": 200
+                },
+                "avatarUrl": {
+                    "type": "string",
+                    "maxLength": 2000
+                },
+                "time": {
+                    "type": "number",
+                    "minimum": 0
+                },
+                "likedCount": {
+                    "type": "number",
+                    "minimum": 0
+                },
+                "replyCount": {
+                    "type": "number",
+                    "minimum": 0
+                },
+                "replyTo": {
+                    "type": "string",
+                    "maxLength": 240
+                },
+                "location": {
+                    "type": "string",
+                    "maxLength": 120
+                },
+                "inlineReplies": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/$defs/comment"
+                    }
+                }
+            }
+        },
+        "commentsPage": {
+            "type": "object",
+            "required": [
+                "comments",
+                "totalCount",
+                "hasMore"
+            ],
+            "additionalProperties": true,
+            "properties": {
+                "comments": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/$defs/comment"
+                    }
+                },
+                "totalCount": {
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "hasMore": {
+                    "type": "boolean"
+                },
+                "cursor": {
+                    "type": "string",
+                    "maxLength": 500
+                }
+            }
+        },
+        "commentReplies": {
+            "type": "object",
+            "required": [
+                "comments",
+                "hasMore"
+            ],
+            "additionalProperties": true,
+            "properties": {
+                "comments": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/$defs/comment"
+                    }
+                },
+                "hasMore": {
+                    "type": "boolean"
+                },
+                "time": {
+                    "type": "string",
+                    "maxLength": 500
+                }
             }
         }
     }

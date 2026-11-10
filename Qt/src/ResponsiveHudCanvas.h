@@ -44,7 +44,7 @@ class ResponsiveHudCanvas {
     void indexRow(double y, QString title, QString subtitle, QString action, QString iconName);
     void beginContent(double top = 158);
     void endContent();
-    void header(QString title, bool back, bool libraryBack = false);
+    void header(QString title, bool back, bool libraryBack = false, bool showSettings = true);
     void finish();
 
   private:

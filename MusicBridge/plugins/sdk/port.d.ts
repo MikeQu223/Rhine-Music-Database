@@ -195,6 +195,7 @@ export interface ProviderCapabilities {
     playback?: boolean;
     preview?: boolean;
     lyrics?: boolean;
+    comments?: boolean;
     account?: boolean;
     login?: boolean;
     vip?: boolean;
@@ -215,6 +216,7 @@ export interface ProviderLyrics {
     fallback?: string[];
     matchMode?: 'strict' | 'fuzzy';
     rateLimitMs?: number;
+    fallbackRateLimitMs?: number;
     retryDelaysMs?: number[];
 }
 
@@ -551,6 +553,33 @@ export interface PluginHost {
     diagnostics: PluginDiagnostics;
 }
 
+export interface CommentItem {
+    id: string;
+    content: string;
+    nickname: string;
+    userId?: string;
+    avatarUrl?: string;
+    time?: number;
+    likedCount?: number;
+    replyCount?: number;
+    replyTo?: string;
+    location?: string;
+    inlineReplies?: CommentItem[];
+}
+
+export interface CommentsPage {
+    comments: CommentItem[];
+    totalCount: number;
+    hasMore: boolean;
+    cursor?: string;
+}
+
+export interface CommentReplies {
+    comments: CommentItem[];
+    hasMore: boolean;
+    time?: string;
+}
+
 /**
  * 插件实现的最小入口。所有 operation 都是可选的；未实现时由 host 根据
  * capabilities 返回 400/501，不静默回退到其他 provider。
@@ -590,6 +619,15 @@ export interface ProviderAdapter {
     categories?(): Promise<Array<{ id: string; name: string }>>;
 
     mutate?(route: string, values: Record<string, unknown>): Promise<MutationResult>;
+
+    comments?(track: Track, id: string, sort: 'hot' | 'new', page: number, cursor?: string): Promise<CommentsPage>;
+    commentReplies?(
+        track: Track,
+        id: string,
+        parentCommentId: string,
+        cursor?: string,
+        limit?: number,
+    ): Promise<CommentReplies>;
 
     capabilities(): Promise<Capabilities>;
     health?(): Promise<Health>;

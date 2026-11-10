@@ -137,7 +137,7 @@ Item {
 
     // 歌词滚动与页头下拉各自占有手势，滚动正文不会误关闭整页。
     Item {
-        visible: !root.stage.android && root.stage.compactLayout && root.backend.state.lyricsMode && !root.backend.state.modal
+        visible: !root.stage.android && root.stage.compactLayout && (root.backend.state.lyricsMode || root.backend.state.commentsMode) && !root.backend.state.modal
         y: 158 * root.stage.stageScale * (root.backend.state.compactUnit || 1)
         width: root.width
         height: Math.max(0, ((root.backend.state.playerBounds || {}).y || 0) * root.stage.stageScale - y)
@@ -157,7 +157,7 @@ Item {
         }
     }
     MouseArea {
-        visible: !root.stage.android && root.stage.compactLayout && root.backend.state.lyricsMode && !root.backend.state.modal
+        visible: !root.stage.android && root.stage.compactLayout && (root.backend.state.lyricsMode || root.backend.state.commentsMode) && !root.backend.state.modal
         y: 60 * root.stage.stageScale * (root.backend.state.compactUnit || 1)
         width: root.width
         height: 96 * root.stage.stageScale * (root.backend.state.compactUnit || 1)
@@ -185,18 +185,19 @@ Item {
                 return;
             }
             moved = true;
-            root.backend.action("mobile:lyrics-drag:" + Math.max(0, mouse.y - originY) / root.stage.stageScale);
+            const prefix = root.backend.state.commentsMode ? "mobile:comments-drag:" : "mobile:lyrics-drag:";
+            root.backend.action(prefix + Math.max(0, mouse.y - originY) / root.stage.stageScale);
         }
         onReleased: {
             if (moved) {
-                root.backend.action("mobile:lyrics-release");
+                root.backend.action(root.backend.state.commentsMode ? "mobile:comments-release" : "mobile:lyrics-release");
             } else if (tapAction) {
                 root.backend.action(tapAction);
             }
         }
         onCanceled: {
-            root.backend.action("mobile:lyrics-drag:0");
-            root.backend.action("mobile:lyrics-release");
+            root.backend.action(root.backend.state.commentsMode ? "mobile:comments-drag:0" : "mobile:lyrics-drag:0");
+            root.backend.action(root.backend.state.commentsMode ? "mobile:comments-release" : "mobile:lyrics-release");
         }
     }
 }

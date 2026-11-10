@@ -218,7 +218,7 @@ void ResponsiveHudCanvas::endContent() {
     commands.append(QJsonArray{"restore"});
     m_content = false;
 }
-void ResponsiveHudCanvas::header(QString title, bool back, bool libraryBack) {
+void ResponsiveHudCanvas::header(QString title, bool back, bool libraryBack, bool showSettings) {
     if (back) {
         icon("back", 28, 88);
         hit({16, 76, 44, 44}, "close-modal", "返回");
@@ -233,6 +233,9 @@ void ResponsiveHudCanvas::header(QString title, bool back, bool libraryBack) {
         icon("left", 281, 71, 18);
         text("返回", 305, 71, 14, 60, "demibold");
         hit({263, 54, 116, 54}, "back", "返回资料库");
+        return;
+    }
+    if (!showSettings) {
         return;
     }
     icon(title == "设置" ? "user" : "settings", 341, 79);

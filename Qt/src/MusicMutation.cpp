@@ -20,6 +20,10 @@ bool MusicLibrary::supportsOperation(const QString &operation) const {
     return ProviderRegistry::instance().descriptor(provider)["operations"].toObject()[operation].toBool();
 }
 
+bool MusicLibrary::commentsAvailable() const {
+    return !isLocal() && !CommentsController::commentsProvider(provider).isEmpty();
+}
+
 bool MusicLibrary::canMutate(const QString &route) const {
     if (isSiren()) {
         return QStringList{"/like", "/playlist/create", "/playlist/name/update", "/playlist/delete",
