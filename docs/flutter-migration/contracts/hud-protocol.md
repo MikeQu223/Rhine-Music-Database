@@ -250,7 +250,7 @@ PlayerBar 的进度与音量以**模板**形式注册 hit：
 | `fogNear` | number | 否 | 基础 22；viewer 见 4.2 |
 | `fogFar` | number | 否 | 基础 47；viewer 见 4.2 |
 | `detail` | number | **是** | detail 过渡值 |
-| `boot` | number | 否 | boot 过渡值 |
+| `boot` | object | 否 | boot 面板负载；键含 `t`/`f`/`step`/`access`/`logo`/`logoLetters`/`auth`/`scan`/`scanOrbit`/`brand` 等（`Qt/src/BootTimeline.cpp:175-213`），由 `Qt/src/NativeHudBoot.cpp:156` 起以 `toObject()` 消费（读到 `:374`） |
 | `focus` | number | 否 | 焦点/光圈参数 |
 | `aperture` | number | 否 | 光圈参数 |
 | `actorTemplate` | array<object> | 否 | 角色模板；3D 材质/部件 |
