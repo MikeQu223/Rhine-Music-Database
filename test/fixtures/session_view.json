@@ -1,0 +1,510 @@
+{
+  "library": {
+    "albumCursor": 0,
+    "albumLoaded": true,
+    "current": {
+      "album": "夜航",
+      "albumID": "501",
+      "artist": "测试歌手",
+      "artists": [
+        {
+          "id": "9001",
+          "name": "测试歌手"
+        }
+      ],
+      "cover": "",
+      "creatorID": "",
+      "date": "2021-06-01",
+      "description": "",
+      "duration": 253000,
+      "id": "1901",
+      "key": "netease:song:1901",
+      "kind": "song",
+      "provider": "netease",
+      "title": "第一首",
+      "trackCount": 0,
+      "wiki": ""
+    },
+    "detailLoading": true,
+    "directories": [
+      {
+        "albumCursor": 0,
+        "albums": [],
+        "albumsMore": false,
+        "anchor": 0,
+        "cursor": 0,
+        "ids": [],
+        "index": 0,
+        "item": {
+          "album": "",
+          "albumID": "",
+          "artist": "测试歌手",
+          "artists": [],
+          "cover": "",
+          "creatorID": "",
+          "date": "",
+          "description": "",
+          "duration": 0,
+          "id": "701",
+          "key": "netease:playlist:701",
+          "kind": "playlist",
+          "provider": "netease",
+          "title": "我的歌单",
+          "trackCount": 2,
+          "wiki": ""
+        },
+        "page": 0,
+        "parentItem": {},
+        "parentLane": 0,
+        "parentPhysical": 0,
+        "songs": [],
+        "sortField": "none"
+      },
+      {
+        "albumCursor": 2,
+        "albums": [],
+        "albumsMore": true,
+        "anchor": 1,
+        "cursor": 1,
+        "ids": [
+          "1901",
+          "1902"
+        ],
+        "index": 1,
+        "item": {
+          "album": "夜航",
+          "albumID": "501",
+          "artist": "测试歌手",
+          "artists": [
+            {
+              "id": "901",
+              "name": "测试歌手"
+            }
+          ],
+          "cover": "",
+          "creatorID": "",
+          "date": "2021-06-01",
+          "description": "",
+          "duration": 0,
+          "id": "501",
+          "key": "netease:album:501",
+          "kind": "album",
+          "provider": "netease",
+          "title": "夜航",
+          "trackCount": 2,
+          "wiki": ""
+        },
+        "page": 0,
+        "parentItem": {
+          "album": "",
+          "albumID": "",
+          "artist": "测试歌手",
+          "artists": [],
+          "cover": "",
+          "creatorID": "",
+          "date": "",
+          "description": "",
+          "duration": 0,
+          "id": "701",
+          "key": "netease:playlist:701",
+          "kind": "playlist",
+          "provider": "netease",
+          "title": "我的歌单",
+          "trackCount": 2,
+          "wiki": ""
+        },
+        "parentLane": 0,
+        "parentPhysical": 1,
+        "songs": [
+          {
+            "album": "夜航",
+            "albumID": "501",
+            "artist": "测试歌手",
+            "artists": [
+              {
+                "id": "9001",
+                "name": "测试歌手"
+              }
+            ],
+            "cover": "",
+            "creatorID": "",
+            "date": "2021-06-01",
+            "description": "",
+            "duration": 253000,
+            "id": "1901",
+            "key": "netease:song:1901",
+            "kind": "song",
+            "provider": "netease",
+            "title": "第一首",
+            "trackCount": 0,
+            "wiki": ""
+          },
+          {
+            "album": "夜航",
+            "albumID": "501",
+            "artist": "测试歌手",
+            "artists": [
+              {
+                "id": "9002",
+                "name": "测试歌手"
+              }
+            ],
+            "cover": "",
+            "creatorID": "",
+            "date": "2021-06-01",
+            "description": "",
+            "duration": 253000,
+            "id": "1902",
+            "key": "netease:song:1902",
+            "kind": "song",
+            "provider": "netease",
+            "title": "第二首",
+            "trackCount": 0,
+            "wiki": ""
+          }
+        ],
+        "sortField": "title"
+      }
+    ],
+    "directoryInfo": false,
+    "directoryLoading": false,
+    "discover": {
+      "category": "全部",
+      "items": [
+        {
+          "album": "夜航",
+          "albumID": "501",
+          "artist": "测试歌手",
+          "artists": [
+            {
+              "id": "9001",
+              "name": "测试歌手"
+            }
+          ],
+          "cover": "",
+          "creatorID": "",
+          "date": "2021-06-01",
+          "description": "",
+          "duration": 253000,
+          "id": "1901",
+          "key": "netease:song:1901",
+          "kind": "song",
+          "provider": "netease",
+          "title": "第一首",
+          "trackCount": 0,
+          "wiki": ""
+        }
+      ],
+      "more": false,
+      "newSongArea": "5",
+      "offset": 0,
+      "tab": "playlists"
+    },
+    "edition": "standard",
+    "groupIndices": [
+      0,
+      2
+    ],
+    "groupLane": 2,
+    "groupName": "夜曲",
+    "keyword": "夜",
+    "likedCursor": 3,
+    "likedIDs": [
+      "1901",
+      "1902"
+    ],
+    "playContext": [
+      {
+        "album": "夜航",
+        "albumID": "501",
+        "artist": "测试歌手",
+        "artists": [
+          {
+            "id": "9001",
+            "name": "测试歌手"
+          }
+        ],
+        "cover": "",
+        "creatorID": "",
+        "date": "2021-06-01",
+        "description": "",
+        "duration": 253000,
+        "id": "1901",
+        "key": "netease:song:1901",
+        "kind": "song",
+        "provider": "netease",
+        "title": "第一首",
+        "trackCount": 0,
+        "wiki": ""
+      },
+      {
+        "album": "夜航",
+        "albumID": "501",
+        "artist": "测试歌手",
+        "artists": [
+          {
+            "id": "9002",
+            "name": "测试歌手"
+          }
+        ],
+        "cover": "",
+        "creatorID": "",
+        "date": "2021-06-01",
+        "description": "",
+        "duration": 253000,
+        "id": "1902",
+        "key": "netease:song:1902",
+        "kind": "song",
+        "provider": "netease",
+        "title": "第二首",
+        "trackCount": 0,
+        "wiki": ""
+      }
+    ],
+    "playlistCursor": 1,
+    "privateSelection": false,
+    "provider": "netease",
+    "searchCursor": 2,
+    "searchKind": "song",
+    "searchLoading": false,
+    "selectedLane": 0,
+    "selectedPhysical": 3,
+    "sources": [
+      {
+        "items": [
+          {
+            "album": "夜航",
+            "albumID": "501",
+            "artist": "测试歌手",
+            "artists": [
+              {
+                "id": "9001",
+                "name": "测试歌手"
+              }
+            ],
+            "cover": "",
+            "creatorID": "",
+            "date": "2021-06-01",
+            "description": "",
+            "duration": 253000,
+            "id": "1901",
+            "key": "netease:song:1901",
+            "kind": "song",
+            "provider": "netease",
+            "title": "第一首",
+            "trackCount": 0,
+            "wiki": ""
+          },
+          {
+            "album": "夜航",
+            "albumID": "501",
+            "artist": "测试歌手",
+            "artists": [
+              {
+                "id": "9002",
+                "name": "测试歌手"
+              }
+            ],
+            "cover": "",
+            "creatorID": "",
+            "date": "2021-06-01",
+            "description": "",
+            "duration": 253000,
+            "id": "1902",
+            "key": "netease:song:1902",
+            "kind": "song",
+            "provider": "netease",
+            "title": "第二首",
+            "trackCount": 0,
+            "wiki": ""
+          }
+        ],
+        "more": true,
+        "offset": 0,
+        "row": 0,
+        "total": 2
+      },
+      {
+        "items": [],
+        "more": true,
+        "offset": 0,
+        "row": 1,
+        "total": 0
+      },
+      {
+        "items": [],
+        "more": false,
+        "offset": 0,
+        "row": 2,
+        "total": 0
+      },
+      {
+        "items": [],
+        "more": false,
+        "offset": 0,
+        "row": 3,
+        "total": 0
+      },
+      {
+        "items": [],
+        "more": false,
+        "offset": 0,
+        "row": 4,
+        "total": 0
+      }
+    ],
+    "status": "已完成",
+    "trackCursor": 1,
+    "trackIDs": [
+      "1901",
+      "1902"
+    ],
+    "tracks": [
+      {
+        "album": "夜航",
+        "albumID": "501",
+        "artist": "测试歌手",
+        "artists": [
+          {
+            "id": "9001",
+            "name": "测试歌手"
+          }
+        ],
+        "cover": "",
+        "creatorID": "",
+        "date": "2021-06-01",
+        "description": "",
+        "duration": 253000,
+        "id": "1901",
+        "key": "netease:song:1901",
+        "kind": "song",
+        "provider": "netease",
+        "title": "第一首",
+        "trackCount": 0,
+        "wiki": ""
+      },
+      {
+        "album": "夜航",
+        "albumID": "501",
+        "artist": "测试歌手",
+        "artists": [
+          {
+            "id": "9002",
+            "name": "测试歌手"
+          }
+        ],
+        "cover": "",
+        "creatorID": "",
+        "date": "2021-06-01",
+        "description": "",
+        "duration": 253000,
+        "id": "1902",
+        "key": "netease:song:1902",
+        "kind": "song",
+        "provider": "netease",
+        "title": "第二首",
+        "trackCount": 0,
+        "wiki": ""
+      }
+    ],
+    "uid": "10001",
+    "wantsSongDetails": true
+  },
+  "player": {
+    "current": {
+      "album": "夜航",
+      "albumID": "501",
+      "artist": "测试歌手",
+      "artists": [
+        {
+          "id": "9001",
+          "name": "测试歌手"
+        }
+      ],
+      "cover": "",
+      "creatorID": "",
+      "date": "2021-06-01",
+      "description": "",
+      "duration": 253000,
+      "id": "1901",
+      "key": "netease:song:1901",
+      "kind": "song",
+      "provider": "netease",
+      "title": "第一首",
+      "trackCount": 0,
+      "wiki": ""
+    },
+    "index": 0,
+    "mode": "all",
+    "position": 42.5,
+    "preview": false,
+    "queue": [
+      {
+        "album": "夜航",
+        "albumID": "501",
+        "artist": "测试歌手",
+        "artists": [
+          {
+            "id": "9001",
+            "name": "测试歌手"
+          }
+        ],
+        "cover": "",
+        "creatorID": "",
+        "date": "2021-06-01",
+        "description": "",
+        "duration": 253000,
+        "id": "1901",
+        "key": "netease:song:1901",
+        "kind": "song",
+        "provider": "netease",
+        "title": "第一首",
+        "trackCount": 0,
+        "wiki": ""
+      },
+      {
+        "album": "夜航",
+        "albumID": "501",
+        "artist": "测试歌手",
+        "artists": [
+          {
+            "id": "9002",
+            "name": "测试歌手"
+          }
+        ],
+        "cover": "",
+        "creatorID": "",
+        "date": "2021-06-01",
+        "description": "",
+        "duration": 253000,
+        "id": "1902",
+        "key": "netease:song:1902",
+        "kind": "song",
+        "provider": "netease",
+        "title": "第二首",
+        "trackCount": 0,
+        "wiki": ""
+      }
+    ],
+    "requested": true
+  },
+  "version": 1,
+  "view": {
+    "activeGroup": "夜航",
+    "artistTab": "albums",
+    "bodyOffset": 16,
+    "groupBy": "album",
+    "listOffset": 40,
+    "lyricsMode": true,
+    "modal": "queue",
+    "mode": "detail",
+    "musicCollection": 2,
+    "query": "夜",
+    "queueOffset": 12,
+    "selected": 3,
+    "settingsScroll": 240.5,
+    "tab": "notes",
+    "trackListMode": true,
+    "trackOffset": 8
+  }
+}
