@@ -357,6 +357,15 @@ class ConsentGate {
   ConsentPhase _phase = ConsentPhase.idle;
   ConsentRegion? _region;
   ConsentRegion? _pendingRegion;
+
+  /// True from the moment a button is answered until its port returned.
+  ///
+  /// A host port that calls back into [approve] or [decline] would otherwise
+  /// answer the very decision the outer call is still recording — the nested
+  /// grant would count twice, or a nested exit would be overwritten by the outer
+  /// proceed. The Qt buttons cannot be pressed twice while their handler runs
+  /// (ConsentActivity.java:122-126), so the machine refuses instead of guessing.
+  bool _answering = false;
   bool _recordPersisted = false;
   int _regionProbeCount = 0;
   int _regionProbeTimeoutCount = 0;
@@ -452,25 +461,65 @@ class ConsentGate {
   ///
   /// The record is written once, then the run proceeds; the order matters, the
   /// grant is on disk before any SDK starts (:123 before :124).
+  ///
+  /// The answer consumes the pending decision before the port runs, so a port
+  /// that calls back into the gate finds no second answer to give — the nested
+  /// call is refused by [_beginAnswer] instead of answering over this one. A
+  /// write that throws persisted nothing, so the decision is put back before
+  /// the error is rethrown: the phase, the region and every counter are then
+  /// exactly what the dialog left behind, and both buttons keep their meaning —
+  /// Agree retries and writes once, Exit still leaves without a record (:123,
+  /// :126). Losing the decision on the way out instead would strand the gate in
+  /// [ConsentPhase.awaitingConsent] with nothing left to write, which is a user
+  /// who did agree and can never get in.
+  ///
+  /// Nothing is rolled back once [ConsentPorts.writeGrant] returned. A port that
+  /// throws afterwards — from [ConsentPorts.startSdks] or
+  /// [ConsentPorts.enterBusiness] inside [_proceed] — leaves the grant on disk,
+  /// which is the truth: the user did agree and the record is written. That
+  /// failure class is handed over as it is, never faked into a repeatable grant.
   void approve() {
     _require(ConsentPhase.awaitingConsent, 'approve');
-    final ConsentRegion region = _pendingRegion!;
-    _pendingRegion = null;
-    _ports.writeGrant(region);
-    _persistGrantCount += 1;
-    _recordPersisted = true;
-    _proceed(region);
+    _beginAnswer('approve');
+    try {
+      final ConsentRegion region = _pendingRegion!;
+      _pendingRegion = null;
+      try {
+        _ports.writeGrant(region);
+      } catch (_) {
+        // Nothing was persisted and no SDK, no business screen and no counter ran
+        // ahead of the record, so the only state to repair is the answer itself —
+        // and only while the gate is still waiting for it, so a port that already
+        // moved the machine on is not given a stale decision back.
+        if (_phase == ConsentPhase.awaitingConsent) {
+          _pendingRegion = region;
+        }
+        rethrow;
+      }
+      _persistGrantCount += 1;
+      _recordPersisted = true;
+      _proceed(region);
+    } finally {
+      _answering = false;
+    }
   }
 
   /// ConsentActivity.java:126 — the negative button calls finishAffinity().
   ///
   /// Nothing else happens on this path: no record is written and no business or
   /// SDK port runs.
+  ///
+  /// Like [approve] it refuses to answer a second time from inside itself, and it
+  /// drops its latch before handing over to [ConsentPorts.exitApp]: a first
+  /// press that has already decided is not re-answerable, but the finishing host
+  /// is not left holding a gate that still claims to be mid-answer either.
   void decline() {
     _require(ConsentPhase.awaitingConsent, 'decline');
+    _beginAnswer('decline');
     _pendingRegion = null;
     _phase = ConsentPhase.declined;
     _exitCount += 1;
+    _answering = false;
     _ports.exitApp();
   }
 
@@ -543,6 +592,19 @@ class ConsentGate {
     } catch (_) {
       return ConsentRegion.other;
     }
+  }
+
+  /// Takes the answer latch, refusing a call that arrives from inside another
+  /// answer's port ([approve]/[decline] release it in a finally).
+  void _beginAnswer(String event) {
+    if (_answering) {
+      throw StateError(
+        event +
+            ' is already being answered by the port it called; '
+            'the gate answers one decision at a time',
+      );
+    }
+    _answering = true;
   }
 
   void _require(ConsentPhase expected, String event) {
