@@ -215,7 +215,11 @@ abstract class LoginTransport {
       {Set<int>? allowedCodes});
 
   /// 对应 MusicApi::call("account")（MusicAccount.cpp:476）。
-  Future<LoginResult> account();
+  ///
+  /// provider 对应 Qt 的 MusicApi::provider 字段：Qt 的 m_identityApi 是**另一条** API 实例，
+  /// MusicAccount.cpp:82 只把它的 provider 指向另一个来源，:83-91 仍然 call("account", {})，
+  /// 请求体没有任何变化。传 null 表示用当前来源（主 api）。
+  Future<LoginResult> account({AccountProvider? provider});
 }
 
 /// 定时端口：对应 Host::schedule(delayMs, fn) 与 QDateTime::currentMSecsSinceEpoch()。
@@ -246,22 +250,82 @@ abstract class CredentialPort {
   void logoutSource(AccountProvider source, KugouEdition edition);
 }
 
-/// 账号域之外的双向副作用（Qt 里直接写在 MusicLibrary 内：:500-519）。
-/// 列表、播放、QQ 能力刷新属于其它卡，因此以可替换实现注入。
+/// 账号域之外的库级副作用（Qt 里直接写在 MusicLibrary 内：:146、:164、:182、:216-219、:232-278、
+/// :500-519、:675-711）。
+///
+/// Qt 的 MusicAccount 就是 MusicLibrary 本体，所以登录流程与账号流程改的是同一份库状态。
+/// Flutter 侧把这份状态放在账号域之外（列表/播放/检索/塞壬属其它卡），因此以可替换实现注入：
+/// 宿主接线时必须给 LoginSession 与 AccountManager 传**同一个**实现实例，才能保持 Qt 的调用顺序。
+/// 默认实现全部为空操作，便于只测领域状态。
 class AccountEffects {
   const AccountEffects();
 
-  /// MusicAccount.cpp:503-505 resetLikeState()。
+  /// MusicAccount.cpp:503-505 与 :164 的 resetLikeState()
+  /// （MusicMutation.cpp:91-101：writeLoading=false、++m_playbackLikeGeneration、
+  /// m_playbackLikeContext.clear()、likedIDs.reset()、lists[1]={}、totals[1]=0、
+  /// likedCursor=0、hasMore[1]=true、subscriptionStates.clear()）。
   void resetLikedState() {}
 
   /// MusicAccount.cpp:508 rememberIdentityName()。
   void rememberIdentity(AccountProvider provider, String nickname) {}
 
-  /// MusicAccount.cpp:510 refreshQQFeatures()。
+  /// MusicAccount.cpp:146、:510 refreshQQFeatures()。
   void refreshQqFeatures() {}
 
   /// MusicAccount.cpp:519 loadMoreSource(2)。
-  void loadPersonalLanes() {}
+  void loadPersonalLanes() => loadMore(2);
+
+  /// MusicAccount.cpp:182 loadMoreSource(m_pendingLane)。
+  void loadMore(int lane) {}
+
+  /// MusicAccount.cpp:216、:679 discover->cancel()。
+  void cancelDiscover() {}
+
+  /// MusicAccount.cpp:217、:680 player.stop()。
+  void stopPlayback() {}
+
+  /// MusicAccount.cpp:218 local->cancel()。
+  void cancelLocal() {}
+
+  /// MusicAccount.cpp:681 player.clearHistory()。
+  void clearPlayHistory() {}
+
+  /// MusicAccount.cpp:219、:712 emit musicClearRequested()。
+  void clearMusic() {}
+
+  /// MusicAccount.cpp:675-678 writeLoading=false、subscriptions/subscriptionStates.clear()、
+  /// vipLevel="unknown"。
+  void clearCapabilities() {}
+
+  /// MusicAccount.cpp:683-688 while(directory) leaveDirectory()、groupLane=-1、
+  /// groupName.clear()、groupIndices.clear()。
+  void leaveDirectories() {}
+
+  /// MusicAccount.cpp:238-278 的库状态大重置（switchProvider）：current/directory/group/details/
+  /// tracks/trackIDs/coverImage/coverKey/lists/totals/offsets/sirenOffsets/hasMore/rowMemory/
+  /// likedIDs/各游标/各加载标志/subscriptions/subscriptionStates/capabilities/vipLevel/searchKind/
+  /// keyword/suggestions/selectedPhysical/selectedLane/privateSelection，以及 :280-286 的 columns
+  /// 与 :210、:212-215 的库内世代推进（m_generation/m_selectionGeneration/m_directoryGeneration/
+  /// m_wikiGeneration/m_suggestGeneration）。
+  void resetLibraryState() {}
+
+  /// MusicAccount.cpp:233、:235（switchProvider）与 :693、:695（logout）：
+  /// m_playLiked=false、m_sourceErrors.fill({})。
+  void resetAccountFlags() {}
+
+  /// MusicAccount.cpp:700-705、:706-711 likedIDs.reset()、likedCursor/playlistCursor/albumCursor=0、
+  /// personalLoading=false、details.clear()、四条个人列的 lists/totals/offsets/hasMore 清空。
+  void clearLanes() {}
+
+  /// MusicAccount.cpp:674、:713-714 clearSelection = selectedLane>0 || privateSelection;
+  /// choose(clearSelection ? {} : current); privateSelection=false。
+  void resetSelection() {}
+
+  /// MusicAccount.cpp:291 reloadSirenCollections()。
+  void reloadSiren() {}
+
+  /// MusicAccount.cpp:292 loadSirenCatalog()。
+  void loadSirenCatalog() {}
 }
 
 /// 对应 MusicAccount.cpp:9-58 的失败文案表（顺序即 Qt 判定顺序）。
@@ -389,7 +453,7 @@ final RegExp _qrDataUrl = RegExp(r'^data:image/(png|jpeg|gif|webp);base64,');
 /// MusicAccount.cpp:407 的中国大陆手机号校验。
 final RegExp _phonePattern = RegExp(r'^1[0-9]{10}$');
 
-/// MusicAccount.cpp:437 的短信验证码校验。
+/// MusicAccount.cpp:438-439 的短信验证码校验（:437 只是 trim）。
 final RegExp _captchaPattern = RegExp(r'^[0-9]{4,8}$');
 
 String _text(Object? value) => value is String ? value : '';
