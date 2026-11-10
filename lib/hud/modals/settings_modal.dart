@@ -2553,8 +2553,14 @@ List<SettingsChoice> settingsAaChoices(SettingsPreferenceContext context) {
 
 /// SettingsSchema.cpp:36-94 的标签函数。choiceLabel 的统一兜底在
 /// settingsChoiceLabel() 里，这些函数只处理有专名的几条。
-String settingsThemeLabel(SettingsPreferenceContext context, SettingsPreferenceValue value) =>
-    settingsChoiceLabel(settingsDescriptorById('theme')!, context, value);
+String settingsThemeLabel(SettingsPreferenceContext context, SettingsPreferenceValue value) {
+  for (final SettingsChoice choice in settingsThemeChoices) {
+    if (choice.value == value.canonical) {
+      return choice.label;
+    }
+  }
+  return value.canonical;
+}
 
 String settingsArchiveMaskLabel(SettingsPreferenceContext context, SettingsPreferenceValue value) =>
     value.integer == 0 ? '0 · 关闭' : value.integer.toString() + '%';
@@ -2577,7 +2583,7 @@ String settingsGraphicsBackendLabel(SettingsPreferenceContext context, SettingsP
     'opengl': 'OpenGL',
     'd3d12': 'Direct3D 12',
   };
-  final String saved = value.canonical;
+  final String saved = value.raw;
   final String pending = saved.isEmpty ? '默认 / 自动探测' : (names[saved] ?? saved);
   final String applied = context.appliedGraphicsBackend;
   if (applied.isEmpty) {
@@ -2594,7 +2600,7 @@ String settingsGraphicsBackendLabel(SettingsPreferenceContext context, SettingsP
 }
 
 String settingsGpuIndexLabel(SettingsPreferenceContext context, SettingsPreferenceValue value) {
-  final String saved = value.canonical.trim();
+  final String saved = value.raw.trim();
   final int? index = int.tryParse(saved);
   if (index != null && index >= 0 && index < context.gpuDeviceCount) {
     return '显卡 ' + index.toString();
@@ -2612,7 +2618,12 @@ String settingsAaModeLabel(SettingsPreferenceContext context, SettingsPreference
   if (context.isDarwin && !context.temporalAntialiasingAvailable) {
     return '系统或设备不支持';
   }
-  return settingsChoiceLabel(settingsDescriptorById('aa-mode')!, context, value);
+  for (final SettingsChoice choice in settingsAaChoices(context)) {
+    if (choice.value == value.canonical) {
+      return choice.label;
+    }
+  }
+  return value.canonical;
 }
 
 String settingsFgLabel(SettingsPreferenceContext context, SettingsPreferenceValue value) =>

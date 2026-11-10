@@ -705,6 +705,71 @@ void main() {
     });
   });
 
+  group('偏好标签解析：终止性与 raw 读取（SettingsSchema.cpp:227-305）', () {
+    SettingsPreferenceValue value(String canonical, {String raw = ''}) =>
+        SettingsPreferenceValue(raw: raw.isEmpty ? canonical : raw, canonical: canonical);
+
+    test('settingsThemeLabel 直接遍历 theme 选项，构建七区不递归', () {
+      const SettingsPreferenceContext context = SettingsPreferenceContext();
+      const SettingsPreferenceSnapshot dark = SettingsPreferenceSnapshot(themeMode: 'dark');
+      final SettingsPreferenceValue theme =
+          settingsReadPreference(settingsDescriptorById('theme')!, context: context, snapshot: dark);
+      expect(theme.canonical, 'dark');
+      expect(settingsThemeLabel(context, theme), '暗色');
+      expect(settingsThemeLabel(context, value('neon')), 'neon');
+
+      // SettingsSchema.cpp:227-234 直接遍历 themeChoices()；回归：曾经由
+      // settingsChoiceLabel -> descriptor.label 回调自身而无限递归。
+      // 真注册表构建整卡模型必须终止。
+      final List<SettingsSectionModel> models = settingsSectionModels(context: context, snapshot: dark);
+      expect(models.length, 7);
+      final SettingsSectionModel preferences =
+          models.firstWhere((SettingsSectionModel m) => m.spec.id == SettingsSectionId.preferences);
+      expect(preferences.rows.firstWhere((SettingsRowSpec r) => r.id == 'theme').label, '暗色');
+    });
+
+    test('settingsAaModeLabel 直接遍历 aaChoices；Darwin 不支持时短路', () {
+      const SettingsPreferenceContext windows = SettingsPreferenceContext();
+      expect(settingsAaModeLabel(windows, value('taa')), 'TAA');
+      expect(settingsAaModeLabel(windows, value('fsr')), 'FSR');
+      expect(settingsAaModeLabel(windows, value('weird')), 'weird');
+
+      // SettingsSchema.cpp:293-305：Darwin 且 aaEnabled=false 时返回「系统或设备不支持」。
+      const SettingsPreferenceContext unsupported = SettingsPreferenceContext(
+        operatingSystem: SettingsOperatingSystem.macOS,
+        temporalAntialiasingAvailable: false,
+      );
+      expect(settingsAaModeLabel(unsupported, value('metalfx')), '系统或设备不支持');
+      const SettingsPreferenceContext mac = SettingsPreferenceContext(
+        operatingSystem: SettingsOperatingSystem.macOS,
+      );
+      expect(settingsAaModeLabel(mac, value('metalfx')), 'MetalFX Temporal');
+      expect(settingsAaModeLabel(mac, value('off')), '关闭');
+
+      // 回归：曾经由 settingsChoiceLabel 回调自身递归；两种 Darwin 配置的整卡模型都必须终止。
+      expect(settingsSectionModels(context: unsupported).length, 7);
+      expect(settingsSectionModels(context: mac).length, 7);
+    });
+
+    test('graphics-backend / gpu-index 标签读 raw preference 而非 normalize 后的 canonical', () {
+      const SettingsPreferenceContext context = SettingsPreferenceContext();
+      // SettingsSchema.cpp:252-274：saved 来自 host->preference("graphics-backend")，未知值原样回显。
+      expect(settingsGraphicsBackendLabel(context, value('', raw: 'foo')), 'foo');
+      expect(settingsGraphicsBackendLabel(context, value('vulkan', raw: 'vulkan')), 'Vulkan');
+      expect(
+          settingsGraphicsBackendLabel(
+              const SettingsPreferenceContext(appliedGraphicsBackend: 'vulkan'),
+              value('d3d12', raw: 'd3d12')),
+          'Vulkan（下次启动：Direct3D 12）');
+
+      // SettingsSchema.cpp:276-291：saved 来自 host->preference("gpu-index").trimmed()。
+      const SettingsPreferenceContext twoCards = SettingsPreferenceContext(gpuDeviceCount: 2);
+      expect(settingsGpuIndexLabel(twoCards, value('', raw: '5')), '默认（序号 5 不存在）');
+      expect(settingsGpuIndexLabel(twoCards, value('', raw: ' 1 ')), '显卡 1');
+      expect(settingsGpuIndexLabel(twoCards, value('', raw: '')), '默认');
+    });
+  });
+
   group('面板视口 / 滚动轨道 / 滚轮（NativeHudSettings.cpp:164-165,212-224；NativeHudInput.cpp:29-33）', () {
     test('面板视口 = (x+40, y+176, width-80, 660)', () {
       expect(SettingsPanelGeometry.viewport(x: 0, y: 0, width: 1280),
