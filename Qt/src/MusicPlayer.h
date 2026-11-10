@@ -25,6 +25,7 @@ class MusicPlayer : public QObject {
     void clearUpcoming();
     void stop();
     void setQuality(const QString &value);
+    void refreshQualityPreference();
     void setMode(const QString &value);
     void setAlternative(bool enabled);
     void clearHistory();

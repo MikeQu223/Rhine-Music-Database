@@ -23,7 +23,7 @@ double ResponsiveHudLayout::commentsPage(ResponsiveHudCanvas &c, const QJsonObje
     const auto sort = comments["sort"].toString("hot");
     double y = 158 - m_scroll;
 
-    QString sourceLine = QStringLiteral("网易云音乐");
+    QString sourceLine = comments["sourceName"].toString(source["providerName"].toString());
     if (source["provider"] == "siren") {
         const auto matched = comments["sourceLabel"].toString();
         if (!matched.isEmpty()) {

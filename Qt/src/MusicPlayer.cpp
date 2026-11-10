@@ -1,4 +1,5 @@
 #include "MusicPlayer.h"
+#include "ProviderRegistry.h"
 #include <QFileInfo>
 #include <QUrl>
 #include <QJsonDocument>
@@ -12,16 +13,14 @@ QString MusicPlayer::localQuality(const QJsonObject &track) {
     const auto name = QFileInfo(track["path"].toString()).completeBaseName().toLower();
     const auto format = track["format"].toString().toLower();
     const auto bitrateKbps = track["bitrate"].toInt();
-    if (name.contains("jymaster") || name.contains("母带") || name.contains("[master]") ||
-        name.contains("master quality")) {
-        return "jymaster";
-    }
-    if (name.contains("全景声") || name.contains("沉浸") || name.contains("dolby atmos") ||
-        name.contains("[atmos]") || name.contains("[sky]")) {
-        return "sky";
-    }
-    if (name.contains("jyeffect") || name.contains("臻音")) {
-        return "jyeffect";
+    const auto tiers = ProviderRegistry::instance()
+                           .descriptor("local")["quality"]
+                           .toObject()["localFilenameTiers"]
+                           .toObject();
+    for (auto it = tiers.begin(); it != tiers.end(); ++it) {
+        if (name.contains(it.key().toLower())) {
+            return it.value().toString();
+        }
     }
     const bool lossless =
         QStringList{"flac", "ape", "wav", "aif", "aiff", "alac", "wv", "dsf", "dff"}.contains(format) ||
@@ -31,18 +30,28 @@ QString MusicPlayer::localQuality(const QJsonObject &track) {
                                     name.contains("高解析") || name.contains("24bit") ||
                                     name.contains("24-bit") || track["sampleRate"].toInt() > 48000 ||
                                     bitrateKbps > 1600;
-        return highResolution ? "hires" : "sq";
+        return highResolution ? "hires" : "lossless";
     }
     return bitrateKbps >= 192 || name.contains("320k") || name.contains("[hq]") ? "hq" : "standard";
 }
 
 /** 只识别本次可播放地址及其响应元数据；不读取偏好或歌曲可用音质列表。 */
 QString MusicPlayer::sourceQuality(const QString &provider, const QJsonObject &audio, bool trial) {
+    Q_UNUSED(provider)
     if (trial || audio["url"].toString().isEmpty()) {
         return {};
     }
+    // 插件返回统一 tier；平台档位单独放在 providerTier，用于界面文案与徽章。
+    const auto providerTier =
+        audio["providerTier"].toString(audio["qualityId"].toString());
+    if (!providerTier.isEmpty()) {
+        return providerTier;
+    }
+    const auto tier = audio["tier"].toString();
+    if (!tier.isEmpty()) {
+        return tier;
+    }
     const auto url = QUrl(audio["url"].toString());
-    const auto file = url.fileName().toUpper();
     auto format = audio["type"].toString().toLower();
     if (format.isEmpty()) {
         format = audio["extName"].toString().toLower();
@@ -50,77 +59,32 @@ QString MusicPlayer::sourceQuality(const QString &provider, const QJsonObject &a
     if (format.isEmpty()) {
         format = QFileInfo(url.path()).suffix().toLower();
     }
-    if (provider == "siren") {
-        if (format == "wav" || format == "flac" || format == "ape" || format == "alac") {
-            return "sq";
-        }
-        if (format == "mp3" || format == "m4a" || format == "aac") {
-            return "hq";
-        }
-        return {};
-    }
-    if (provider == "qq") {
-        // 登录接口可能没有 quality；前缀是实际获准播放的媒体文件类型。
-        if (file.startsWith("F000") || file.startsWith("A000")) {
-            return "sq";
-        }
-        if (file.startsWith("M800")) {
-            return "hq";
-        }
-        if (file.startsWith("M500") || file.startsWith("C400")) {
-            return "standard";
-        }
-        return {};
-    }
     const auto bitrate = audio["br"].toDouble();
     const bool lossy = format == "mp3" || format == "m4a" || format == "aac";
     if (lossy && bitrate > 0) {
-        // 替代音源可能保留原等级；已返回的有损格式与码率优先于等级标签。
         return bitrate >= 192000 ? "hq" : "standard";
     }
-    if (provider == "netease") {
-        const auto level = audio["level"].toString();
-        const QHash<QString, QString> levels{
-            {"standard", "standard"}, {"higher", "hq"},         {"exhigh", "hq"}, {"lossless", "sq"},
-            {"hires", "hires"},       {"jyeffect", "jyeffect"}, {"sky", "sky"},   {"jymaster", "jymaster"}};
-        if (levels.contains(level)) {
-            const auto resolved = levels.value(level);
-            if (!lossy || resolved == "standard" || resolved == "hq") {
-                return resolved;
-            }
-        }
+    const auto level = audio["level"].toString();
+    const QStringList levels{"standard", "hq", "lossless", "hires", "master", "original"};
+    if (levels.contains(level) && (!lossy || level == "standard" || level == "hq")) {
+        return level;
     }
-    const bool lossless = format == "flac" || format == "ape" || format == "alac";
-    if (lossless) {
+    if (format == "flac" || format == "ape" || format == "alac" || format == "wav") {
         // 无损码率高不能证明 Hi-Res；必须同时取得采样率与位深。
         if (audio["sampleRate"].toDouble() > 48000 && audio["bitDepth"].toInt() > 16) {
             return "hires";
         }
-        return "sq";
+        return "lossless";
     }
     return {};
 }
 
 QVector<QPair<QString, QString>> MusicPlayer::qualityOptions(const QString &provider) {
-    if (provider == "qq") {
-        return {{"best", "自动最高可用"},
-                {"standard", "标准"},
-                {"exhigh", "HQ 高品质"},
-                {"lossless", "SQ 无损 / FLAC"},
-                {"ape", "SQ 无损 / APE"}};
+    const auto options = ProviderRegistry::instance().qualityOptions(provider);
+    if (!options.isEmpty()) {
+        return options;
     }
-    if (provider == "kugou") {
-        return {{"standard", "标准"},
-                {"exhigh", "HQ 高品音质"},
-                {"lossless", "SQ 无损音质"},
-                {"hires", "Hi-Res 高解析音质"}};
-    }
-    if (provider == "siren") {
-        return {{"lossless", "官网原始音源"}};
-    }
-    return {
-        {"standard", "标准"},           {"higher", "较高"},      {"exhigh", "极高"}, {"lossless", "SQ 无损"},
-        {"hires", "Hi-Res 高解析音质"}, {"jymaster", "超清母带"}};
+    return {{"standard", "标准"}};
 }
 
 /** 共享音质偏好；换源保留队列、歌词、播放位置和暂停意图，迟到响应由播放代数隔离。 */
@@ -156,6 +120,32 @@ void MusicPlayer::setQuality(const QString &value) {
     prepare(current, generation, true);
 }
 
+void MusicPlayer::refreshQualityPreference() {
+    if (m_host->playbackConnection()) {
+        return;
+    }
+    const auto saved = m_host->preference("quality");
+    const auto options = ProviderRegistry::instance().qualityOptions(m_api->provider);
+    if (m_api->provider.isEmpty()) {
+        quality = saved;
+        return;
+    }
+    const auto valid =
+        std::any_of(options.begin(), options.end(),
+                    [&saved](const auto &option) { return option.first == saved; });
+    if (valid) {
+        quality = saved;
+        return;
+    }
+    quality = ProviderRegistry::instance().defaultQuality(m_api->provider);
+    if (quality.isEmpty() && !options.isEmpty()) {
+        quality = options.first().first;
+    }
+    if (quality.isEmpty()) {
+        quality = "standard";
+    }
+}
+
 MusicPlayer::MusicPlayer(Host *host, MusicApi *api, QObject *parent)
     : QObject(parent), lyrics(host), queue(api), m_host(host), m_api(api) {
     state = {{"playing", false}, {"position", 0}, {"duration", 0}, {"volume", 0.7}, {"seekable", false}};
@@ -178,11 +168,7 @@ MusicPlayer::MusicPlayer(Host *host, MusicApi *api, QObject *parent)
         });
         return;
     }
-    quality = host->preference("quality");
-    if (!QStringList{"standard", "higher", "exhigh", "lossless", "hires", "jymaster", "best", "ape"}.contains(
-            quality)) {
-        quality = "exhigh";
-    }
+    refreshQualityPreference();
     localCovers = QJsonDocument::fromJson(host->preference("local-cover-cache").toUtf8()).object();
     alternative = host->preference("alternate-source") == "on";
     const auto saved = QJsonDocument::fromJson(host->preference("play-history").toUtf8()).array();
@@ -277,7 +263,7 @@ void MusicPlayer::play(QJsonObject track, std::optional<QJsonArray> source, std:
     m_resumePaused = resume && !resume->value("requested").toBool();
     m_restoringSession = resume.has_value();
     m_recoveryAttempts = 0;
-    previewRequested = preview && m_api->provider == "qq";
+    previewRequested = preview && ProviderRegistry::instance().capability(m_api->provider, "preview", false);
     m_host->mediaControl("stop");
     current = track;
     actualQuality.clear();
@@ -364,24 +350,19 @@ void MusicPlayer::prepare(QJsonObject track, quint64 generation, bool reload) {
         emit changed();
         return;
     }
-    // QQ 专有音质在其他平台转换为通用无损
-    const auto qqQuality = quality == "best" || quality == "ape";
-    auto effectiveQuality = qqQuality && m_api->provider != "qq" ? "lossless" : quality;
-
-    // 网易云专有音质在其他平台转换为对应档位
-    if (m_api->provider != "netease") {
-        if (quality == "jymaster" || quality == "jyeffect" || quality == "sky") {
-            effectiveQuality = "lossless";
-        } else if (quality == "higher") {
-            effectiveQuality = "standard";
+    // 插件按自己的 quality id 处理；当前 provider 不支持的 id 回退到其默认档位。
+    auto effectiveQuality = quality;
+    const auto options = ProviderRegistry::instance().qualityOptions(m_api->provider);
+    const auto supported = std::any_of(options.begin(), options.end(), [this](const auto &option) {
+        return option.first == quality;
+    });
+    if (!supported) {
+        effectiveQuality = ProviderRegistry::instance().defaultQuality(m_api->provider);
+        if (effectiveQuality.isEmpty() && !options.isEmpty()) {
+            effectiveQuality = options.first().first;
         }
     }
-
-    // 酷狗不支持 ape，转换为通用无损
-    if (m_api->provider == "kugou" && quality == "ape") {
-        effectiveQuality = "lossless";
-    }
-    if (m_api->provider == "siren") {
+    if (m_api->provider == "siren" && effectiveQuality.isEmpty()) {
         effectiveQuality = "original";
     }
 
@@ -400,8 +381,8 @@ void MusicPlayer::prepare(QJsonObject track, quint64 generation, bool reload) {
             }
             m_host->mediaMetadata(track["title"].toString(), track["artist"].toString(),
                                   track["album"].toString(), track["cover"].toString());
-            if (!m_host->mediaLoad(url, m_api->provider == "netease" && alternative,
-                                   m_resumePosition.value_or(0), m_resumePosition && m_resumePaused)) {
+            if (!m_host->mediaLoad(url, alternative, m_resumePosition.value_or(0),
+                                   m_resumePosition && m_resumePaused)) {
                 fail(QStringLiteral("音频地址不可用"));
                 return;
             }
@@ -420,18 +401,16 @@ void MusicPlayer::prepare(QJsonObject track, quint64 generation, bool reload) {
             history = recent;
             m_host->setPreference("play-history",
                                   QString::fromUtf8(QJsonDocument(history).toJson(QJsonDocument::Compact)));
-            const auto preview = audio["freeTrialInfo"];
-            trial = audio["preview"].toBool() || preview.isObject() || preview.isArray() ||
-                    (preview.isString() && !preview.toString().isEmpty() && preview.toString() != "null") ||
-                    (preview.isBool() && preview.toBool()) || (preview.isDouble() && preview.toDouble() != 0);
+            const auto freeTrial = audio["freeTrialInfo"];
+            trial = audio["trial"].toBool() || audio["preview"].toBool() || freeTrial.isObject() ||
+                    freeTrial.isArray() ||
+                    (freeTrial.isString() && !freeTrial.toString().isEmpty() &&
+                     freeTrial.toString() != "null") ||
+                    (freeTrial.isBool() && freeTrial.toBool()) ||
+                    (freeTrial.isDouble() && freeTrial.toDouble() != 0);
             actualQuality = sourceQuality(m_api->provider, audio, trial);
             status = trial ? QStringLiteral("当前音源为试听片段")
                            : QStringLiteral("正在播放：") + track["title"].toString();
-            const QHash<QString, QString> qualities{{"128", "标准"}, {"320", "高品质"}, {"flac", "无损"}};
-            if (!trial && qualities.contains(audio["quality"].toString())) {
-                status += QStringLiteral("（") + qualities.value(audio["quality"].toString()) +
-                          QStringLiteral("）");
-            }
             if (!audio["qualityFallback"].toString().isEmpty()) {
                 status += QStringLiteral("（已切换为") + audio["qualityFallback"].toString() +
                           QStringLiteral("音质）");

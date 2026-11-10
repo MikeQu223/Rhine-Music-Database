@@ -4,6 +4,7 @@
 #include "DesktopLyricsAppearance.h"
 #include "Host.h"
 #include "MusicLibrary.h"
+#include "ProviderRegistry.h"
 #include "MusicPlayer.h"
 #include "PlatformFeatures.h"
 #include "SettingsCard.h"
@@ -297,7 +298,7 @@ void NativeHud::paintSettingsCustomSection(const QString &renderer, const QRectF
             accountAction = "discover";
         } else if (m_music->isSiren()) {
             // 塞壬唱片使用官网曲库，没有账号登录入口。
-            accountLabel = QStringLiteral("塞壬唱片");
+            accountLabel = ProviderRegistry::instance().name("siren");
         } else if (m_music->uid.isEmpty()) {
             accountLabel = QStringLiteral("登录 / ") + m_music->providerName();
             accountAction = "music:login";
@@ -312,15 +313,17 @@ void NativeHud::paintSettingsCustomSection(const QString &renderer, const QRectF
         } else {
             actionBlock(account, accountLabel, accountAction, accountLabel);
         }
-        static const QHash<QString, QString> memberships{{"free", QStringLiteral("免费账号")},
-                                                         {"green", QStringLiteral("绿钻会员")},
-                                                         {"super", QStringLiteral("超级会员")},
-                                                         {"unknown", QStringLiteral("会员状态未知")}};
-        const auto note = m_music->isSiren()
-                              ? QStringLiteral("官网曲库 / 无需登录")
-                              : (m_music->provider == "qq" && !m_music->uid.isEmpty()
-                                     ? memberships.value(m_music->vipLevel, QStringLiteral("会员状态未知"))
-                                     : QStringLiteral("各平台账号独立保存"));
+        const auto &registry = ProviderRegistry::instance();
+        static const QHash<QString, QString> vipKeys{
+            {"free", "vipFree"}, {"green", "vipGreen"}, {"super", "vipSuper"}, {"unknown", "vipUnknown"}};
+        const auto vipLabel = registry.text(m_music->provider, vipKeys.value(m_music->vipLevel));
+        const auto accountNote = registry.text(m_music->provider, "accountNote");
+        const auto note =
+            m_music->isSiren()
+                ? (accountNote.isEmpty() ? registry.text("siren", "loginHint") : accountNote)
+                : (!m_music->uid.isEmpty() && !vipLabel.isEmpty()
+                       ? vipLabel
+                       : (accountNote.isEmpty() ? QStringLiteral("各平台账号独立保存") : accountNote));
         text(fit(note, 12, body.right() - account.right() - 20, "regular"), account.right() + 16,
              body.top() + 114, 12, "regular", 0, muted);
         return;

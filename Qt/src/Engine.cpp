@@ -53,6 +53,7 @@ Engine::Engine(QString path, bool offline, QObject *parent, PlaybackConnection *
     app = std::make_unique<NativeApplication>(&host, &m_glyphs, &scene, content);
     connect(&app->music, &MusicLibrary::playbackInvalidated, this, &Engine::refreshPlayback);
     connect(&app->hud, &NativeHud::localImportRequested, this, &Engine::localImportRequested);
+    connect(&app->hud, &NativeHud::pluginImportRequested, this, &Engine::pluginImportRequested);
     connect(&app->hud, &NativeHud::mvRequested, this, &Engine::mvRequested);
 #ifdef Q_OS_DARWIN
     renderConfiguration.initialize([this](const QString &key) { return host.preference(key); });
@@ -713,8 +714,7 @@ void Engine::tick() {
 #else
     const bool hudNeedsPresent = false;
 #endif
-    const bool hudTransition = clock.elapsed() < m_hudTransitionUntilMs || m_detailGrace ||
-                               hudNeedsPresent;
+    const bool hudTransition = clock.elapsed() < m_hudTransitionUntilMs || m_detailGrace || hudNeedsPresent;
     const bool workPending = inputPending || scene.changed() || !m_sceneSleeping || m_discRotating ||
                              app->hud.animating(m_animationTime) || hudTransition ||
                              m_frame.value("pendingAnimations").toBool() || m_temporalFramesRemaining > 0 ||
@@ -826,8 +826,8 @@ void Engine::tick() {
     if (!forceAnimate && now - m_lastInput >= 750 && !m_pressed && m_sceneSleeping && !scene.changed() &&
         !app->hud.animating(m_animationTime) && !m_discRotating && !hudTransition &&
         // 用实时成员而非 tick 开头的局部快照：step() 里可能刚把 m_detailGrace 置真。
-        !m_detailGrace && !hudStillPending && m_frame["mode"] != "boot" &&
-        m_temporalFramesRemaining == 0 && !m_pacing.awaitingConsumption()) {
+        !m_detailGrace && !hudStillPending && m_frame["mode"] != "boot" && m_temporalFramesRemaining == 0 &&
+        !m_pacing.awaitingConsumption()) {
         timer.stop();
         m_sleeping = true;
         emit stateChanged();
@@ -1524,5 +1524,15 @@ void Engine::importLocal(QList<QUrl> urls) {
         }
     }
     app->music.importLocal(paths);
+    wake();
+}
+
+void Engine::importPluginFolder(QUrl url) {
+    if (!url.isLocalFile()) {
+        return;
+    }
+    const auto error = host.importPlugin(url.toLocalFile());
+    app->hud.pluginManagerMessage = error.isEmpty() ? QStringLiteral("插件已导入") : error;
+    host.invalidate();
     wake();
 }

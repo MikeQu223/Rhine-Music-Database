@@ -90,14 +90,13 @@ class MusicLibrary : public QObject {
     QJsonArray libraryItems() const;
     QString libraryName() const;
     QVector<int> sourceOrder() const;
+    bool laneVisible(int lane) const;
     int libraryTotal() const;
     int libraryIndex() const;
     QString providerName() const;
     QString accountKey() const;
     QString identityName() const;
-    bool editable() const {
-        return provider == "netease" || provider == "qq" || provider == "siren";
-    }
+    bool editable() const;
     bool sourceLoading() const {
         return restoringAccount || searchLoading || personalLoading || sirenCatalogLoading;
     }
@@ -166,7 +165,7 @@ class MusicLibrary : public QObject {
     QString keyword;
     QString status = "输入关键词检索音乐";
     QString provider;
-    QString kugouEdition;
+    QString providerVariant;
     QString uid;
     QString nickname = "未登录";
     QHash<QString, QString> identityNames;
@@ -205,9 +204,11 @@ class MusicLibrary : public QObject {
     std::optional<bool> songLiked(const QJsonObject &value) const;
     QJsonObject capabilities;
     QString vipLevel = "unknown";
-    void refreshQQFeatures();
+    void refreshAccountFeatures();
     bool canEditPlaylist(const QJsonObject &value) const;
     bool canMutate(const QString &route) const;
+    bool supportsOperation(const QString &operation) const;
+    bool commentsAvailable() const;
     QStringList searchHistory;
     QStringList suggestions;
     QString groupName;
@@ -226,6 +227,7 @@ class MusicLibrary : public QObject {
     void musicClearRequested();
 
   private:
+    void searchInternal(QString text, QString kind, bool more);
     struct Cooldown {
         qint64 deadline = 0;
         QString message;
@@ -280,5 +282,4 @@ class MusicLibrary : public QObject {
     void confirmLogin(quint64 token, bool captcha = false);
     void updateSmsCooldown();
     void failLogin(const MusicReply &result);
-    void waitCancellation(QString provider, Completion done);
 };

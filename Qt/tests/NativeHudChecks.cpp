@@ -1,4 +1,6 @@
 #include "NativeHud.h"
+#include "AppStorage.h"
+#include "ProviderRegistry.h"
 #include "fg/FgCapability.h"
 #include "fg/FgConfig.h"
 #include "NativeApplication.h"
@@ -57,6 +59,16 @@ QJsonObject getHit(const QJsonArray &hits, const QString &action) {
     return QJsonObject();
 }
 
+// 测试使用已安装的第一个远程来源；core-only 时退回内置来源。
+QString hudTestProvider() {
+    for (const auto &id : ProviderRegistry::instance().ids()) {
+        if (id != "local" && id != "siren") {
+            return id;
+        }
+    }
+    return "siren";
+}
+
 // 创建测试用的 MusicLibrary
 MusicLibrary *createTestMusicLibrary(Host *host, const QString &provider, const QJsonObject &content) {
     MusicLibrary *music = new MusicLibrary(host, content);
@@ -106,8 +118,8 @@ namespace {
 bool checkSorting(const QString &root, Glyphs &glyphs, const QJsonObject &content) {
     Host host(root, true);
     MusicLibrary music(&host, content);
-    music.provider = "qq";
-    music.api.provider = "qq";
+    music.provider = hudTestProvider();
+    music.api.provider = hudTestProvider();
     music.uid = "42";
     const auto track = [](int id, QString title, QString album, QString artist) {
         auto value = song(id);
@@ -269,8 +281,8 @@ bool checkSorting(const QString &root, Glyphs &glyphs, const QJsonObject &conten
 bool checkCollectionCard(const QString &root, Glyphs &glyphs, const QJsonObject &content) {
     Host host(root, true);
     MusicLibrary music(&host, content);
-    music.provider = "netease";
-    music.api.provider = "netease";
+    music.provider = hudTestProvider();
+    music.api.provider = hudTestProvider();
     music.uid = "42";
     music.current = MusicData::item("album", "165148405", "孤星 OST", "塞壬唱片-MSR");
     music.current["date"] = "2023-05-09";
@@ -423,8 +435,8 @@ bool checkCollectionCard(const QString &root, Glyphs &glyphs, const QJsonObject 
 bool checkAlbumTrackSelection(const QString &root, Glyphs &glyphs, const QJsonObject &content) {
     Host host(root, true);
     MusicLibrary music(&host, content);
-    music.provider = "netease";
-    music.api.provider = "netease";
+    music.provider = hudTestProvider();
+    music.api.provider = hudTestProvider();
     music.uid = "42";
     music.directory = std::make_shared<MusicDirectory>();
     music.directory->item = MusicData::item("playlist", "9", "目录");
@@ -716,7 +728,7 @@ bool checkResponsiveHud(const QString &root, Glyphs &glyphs, const QJsonObject &
     }
 
     Host host(root, true);
-    std::unique_ptr<MusicLibrary> music(createTestMusicLibrary(&host, "netease", content));
+    std::unique_ptr<MusicLibrary> music(createTestMusicLibrary(&host, hudTestProvider(), content));
     HudSceneActions scene;
     scene.mode = [](QString) {};
     scene.pointer = [](QString, double, double, double) {};
@@ -1167,33 +1179,61 @@ static bool checkResponsiveTransitions() {
 }
 
 namespace {
-/** 评论页只验证桌面与窄屏可绘制且有关闭入口。 */
+/** 评论页只读模型：验证两端入口、排序、展开、楼层与续载命中，不访问网络。 */
 bool checkSongComments(const QString &root, Glyphs &glyphs, const QJsonObject &content) {
+    const auto provider = CommentsController::commentsProvider("siren");
+    if (provider.isEmpty()) {
+        return true;
+    }
     Host host(root, true);
-    std::unique_ptr<MusicLibrary> music(createTestMusicLibrary(&host, "netease", content));
+    std::unique_ptr<MusicLibrary> music(createTestMusicLibrary(&host, provider, content));
     auto track = music->current;
-    track["provider"] = "netease";
+    track["provider"] = provider;
     track["id"] = "186016";
     track["kind"] = "song";
     track["title"] = "晴天";
     track["artist"] = "周杰伦";
     music->current = track;
-    music->provider = "netease";
-    music->api.provider = "netease";
+    music->provider = provider;
+    music->api.provider = provider;
     auto &comments = music->comments;
     comments.status = "ready";
-    comments.items = {QJsonObject{{"id", "1"},
-                                  {"content", "第一段评论"},
-                                  {"nickname", "青空来信"},
-                                  {"avatarUrl", ""},
-                                  {"time", 0.0},
-                                  {"likedCount", 1},
-                                  {"replyCount", 0},
-                                  {"expanded", false},
-                                  {"replies", QJsonArray{}},
-                                  {"repliesExpanded", false},
-                                  {"repliesLoading", false},
-                                  {"inlineReplies", QJsonArray{}}}};
+    comments.sort = "hot";
+    comments.total = 42;
+    comments.hasMore = true;
+    comments.sourceLabel = "生魂灵 / 塞壬唱片-MSR";
+    const auto comment = [](QString id, QString nickname, QString text, int likes, int replyCount,
+                            QJsonArray inlineReplies = QJsonArray{}) {
+        return QJsonObject{{"id", id},
+                           {"content", text},
+                           {"nickname", nickname},
+                           {"avatarUrl", ""},
+                           {"time", double(QDateTime::currentMSecsSinceEpoch() - 2 * 86400000)},
+                           {"likedCount", likes},
+                           {"replyCount", replyCount},
+                           {"expanded", false},
+                           {"replies", QJsonArray{}},
+                           {"repliesExpanded", false},
+                           {"repliesHasMore", false},
+                           {"repliesLoading", false},
+                           {"repliesTime", ""},
+                           {"inlineReplies", inlineReplies}};
+    };
+    QString longText;
+    for (int index = 0; index < 18; ++index) {
+        longText += QStringLiteral("这是一段用于验证换行与展开的评论内容。");
+    }
+    const QJsonArray inlineReply{QJsonObject{{"id", "r1"},
+                                             {"nickname", "远航"},
+                                             {"content", "像是把夜空慢慢点亮。"},
+                                             {"time", 0.0}}};
+    comments.items = {comment("1", "青空来信", longText, 128, 0),
+                      comment("2", "夜航记录", "喜欢层层铺开的弦乐，也喜欢最后留下的那一点点余韵。", 76,
+                              3, inlineReply),
+                      comment("3", "四月的声音", "把这一首放进了夜晚的播放列表。", 23, 0),
+                      comment("4", "远方", "第二段评论。", 8, 0),
+                      comment("5", "信号", "第三段评论。", 5, 0),
+                      comment("6", "档案", "第四段评论。", 2, 0)};
     HudSceneActions scene;
     scene.mode = [](QString) {};
     scene.pointer = [](QString, double, double, double) {};
@@ -1205,65 +1245,128 @@ bool checkSongComments(const QString &root, Glyphs &glyphs, const QJsonObject &c
     hud.commentsTrackKey = CommentsController::trackKey(track);
     const QJsonObject frame{{"mode", "detail"}, {"detail", 1}, {"selected", 0}};
     hud.draw(frame, 1920, 50);
-    const bool desktop = hud.commentsMode && hasAction(hud.hits, "comments:close");
-    hud.draw(frame, 393. * 1080 / 852, 51);
-    const bool mobile = hud.state()["compactLayout"].toBool() && hasAction(hud.hits, "music:comments-close");
-    if (!desktop || !mobile) {
-        qCritical() << "Song comments page did not render its close entry";
-    }
-    return desktop && mobile;
+    bool ok = true;
+    const auto require = [&](bool passed, const char *name) {
+        if (!passed) {
+            qCritical() << "Song comments check failed:" << name;
+            ok = false;
+        }
+    };
+    require(hud.commentsMode, "desktop mode");
+    require(hasAction(hud.hits, "comments:close"), "close hit");
+    require(hasAction(hud.hits, "comments:sort:new"), "sort hit");
+    require(hasAction(hud.hits, "comments:expand:1"), "expand hit");
+    require(hasAction(hud.hits, "comments:replies:2"), "replies hit");
+    require(hasAction(hud.hits, "comments:load-more"), "more hit");
+    // 滚动只改变视口位置，不能反过来缩短内容总高度，否则续载时会反复夹回。
+    const auto stableContentHeight = hud.commentsContentBottom;
+    hud.wheel(1400, 500, 0, 2);
+    hud.draw(frame, 1920, 51);
+    require(hud.commentsScroll > 0 && hud.commentsContentBottom + 1 >= stableContentHeight,
+            "stable scroll range");
+    hud.commentsScroll = 0;
+    hud.draw(frame, 1920, 52);
+    const auto captureRoot = qEnvironmentVariable("RHINE_HUD_CAPTURE_DIR");
+    const auto capture = [&](const QString &name, int width, int height, double scale) {
+        if (captureRoot.isEmpty()) {
+            return;
+        }
+        QDir().mkpath(captureRoot);
+        QImage image(width, height, QImage::Format_ARGB32_Premultiplied);
+        image.fill(QColor("#eeece4"));
+        QPainter painter(&image);
+        if (scale != 1.) {
+            painter.scale(scale, scale);
+        }
+        glyphs.commands(painter, hud.commands, [&host](QString key) { return host.image(key); });
+        painter.end();
+        image.save(captureRoot + "/" + name + ".png");
+    };
+    capture("comments-desktop", 1920, 1080, 1.);
+    hud.draw(frame, 393. * 1080 / 852, 60);
+    require(hud.state()["compactLayout"].toBool(), "mobile layout");
+    require(hasAction(hud.hits, "music:comments-close"), "mobile close hit");
+    require(hasAction(hud.hits, "comments:sort:new"), "mobile sort hit");
+    require(hasAction(hud.hits, "comments:expand:1"), "mobile expand hit");
+    require(hasAction(hud.hits, "comments:replies:2"), "mobile replies hit");
+    capture("comments-mobile", 393, 852, 852. / 1080.);
+    // 续载入口在评论列表末尾，滚到底后才会进入可点击视口。
+    hud.wheel(196, 300, 0, std::nullopt, 4000.);
+    hud.draw(frame, 393. * 1080 / 852, 61);
+    require(hasAction(hud.hits, "comments:load-more"), "mobile more hit");
+    capture("comments-mobile-bottom", 393, 852, 852. / 1080.);
+    return ok;
 }
 }
 
 namespace {
-/** 固定回包覆盖塞壬匹配、分页排序与楼层展开去重，不访问网络。 */
+/** 固定回包覆盖塞壬匹配、热门/最新分页、楼层展开与去重，不访问网络。 */
 bool checkCommentsController(const QString &root) {
+    const auto provider = CommentsController::commentsProvider("siren");
+    if (provider.isEmpty()) {
+        return true;
+    }
     Host host(root, true);
     host.interval = 1;
+    int pages = 0;
     int floors = 0;
     int sortSeen = 0;
     QString idSeen;
     QString cursorSeen;
-    const auto songCandidate = [](QString id, QString artist) {
-        return QJsonObject{{"id", id}, {"title", "生魂灵"}, {"artist", artist}};
+    const auto songCandidate = [](QString id, QString artist, QString album, int duration) {
+        return QJsonObject{{"id", id},
+                           {"title", "生魂灵"},
+                           {"artist", artist},
+                           {"artists", QJsonArray{QJsonObject{{"id", "1"}, {"name", artist}}}},
+                           {"album", album},
+                           {"duration", duration}};
     };
-    const QJsonArray candidates{songCandidate("3457361994", "小心绪"),
-                                songCandidate("3456704425", "塞壬唱片-MSR/Alec Justice")};
+    const QJsonArray candidates{songCandidate("3457361994", "小心绪", "生魂灵", 162377),
+                                songCandidate("3456704425", "塞壬唱片-MSR/Alec Justice", "时间啊，向前！OST",
+                                              110561)};
     const auto comment = [](QString id, QString text) {
-        return QJsonObject{{"commentId", id},
+        return QJsonObject{{"id", id},
                            {"content", text},
+                           {"nickname", "用户甲"},
                            {"time", 1700000000000.0},
-                           {"user", QJsonObject{{"nickname", "用户甲"}}}};
+                           {"likedCount", 7},
+                           {"replyCount", 2},
+                           {"inlineReplies", QJsonArray{}}};
     };
     host.fixture = [&](QString route, QJsonObject parameters) {
-        if (route == "/native/netease/search") {
+        const auto args = parameters["args"].toArray();
+        if (route == "/native/" + provider + "/search") {
             return QJsonObject{
                 {"body", QJsonObject{{"code", 200}, {"value", QJsonObject{{"items", candidates}}}}}};
         }
-        if (route == "/comment/new") {
-            sortSeen = parameters["sortType"].toInt();
-            idSeen = parameters["id"].toString();
-            cursorSeen = parameters["cursor"].toString();
-            const auto pageNo = parameters["pageNo"].toInt();
+        if (route == "/native/" + provider + "/comments") {
+            ++pages;
+            idSeen = args.at(1).toString();
+            sortSeen = args.at(2).toString() == "new" ? 3 : 2;
+            cursorSeen = args.at(4).toString();
+            const auto pageNo = args.at(3).toInt() + 1;
             const QJsonArray comments{pageNo == 1 ? comment("111", "第一页评论")
                                                   : comment("222", "第二页评论")};
-            return QJsonObject{{"body", QJsonObject{{"code", 200},
-                                                    {"data", QJsonObject{{"comments", comments},
-                                                                         {"hasMore", pageNo == 1},
-                                                                         {"cursor", "1700000000000"}}}}}};
+            return QJsonObject{
+                {"body", QJsonObject{{"code", 200},
+                                     {"value", QJsonObject{{"comments", comments},
+                                                           {"totalCount", 42},
+                                                           {"hasMore", pageNo == 1},
+                                                           {"cursor", "1700000000000"}}}}}};
         }
-        if (route == "/comment/floor") {
+        if (route == "/native/" + provider + "/commentReplies") {
             ++floors;
-            const QJsonArray replies{QJsonObject{
-                {"commentId", "901"},
-                {"content", "楼层回复"},
-                {"time", 1700000000000.0},
-                {"user", QJsonObject{{"nickname", "用户乙"}}},
-                {"beReplied", QJsonArray{QJsonObject{{"user", QJsonObject{{"nickname", "用户甲"}}}}}}}};
-            return QJsonObject{{"body", QJsonObject{{"code", 200},
-                                                    {"data", QJsonObject{{"comments", replies},
-                                                                         {"hasMore", false},
-                                                                         {"time", 1700000000000.0}}}}}};
+            const QJsonArray replies{
+                QJsonObject{{"id", "901"},
+                            {"content", "楼层回复"},
+                            {"nickname", "用户乙"},
+                            {"time", 1700000000000.0},
+                            {"replyTo", "用户甲"}}};
+            return QJsonObject{
+                {"body", QJsonObject{{"code", 200},
+                                     {"value", QJsonObject{{"comments", replies},
+                                                           {"hasMore", false},
+                                                           {"time", "1700000000000"}}}}}};
         }
         return QJsonObject{{"body", QJsonObject{{"code", 200}}}};
     };
@@ -1281,20 +1384,24 @@ bool checkCommentsController(const QString &root) {
                             {"kind", "song"},
                             {"id", "125025"},
                             {"title", "生魂灵"},
-                            {"artist", "塞壬唱片-MSR"}};
+                            {"artist", "塞壬唱片-MSR"},
+                            {"album", "时间啊，向前！"},
+                            {"duration", 0}};
     comments.load(track);
-    if (!wait([&] { return comments.status == "ready"; }) || idSeen != "3456704425" || sortSeen != 2 ||
-        comments.items.size() != 1) {
+    if (!wait([&] { return comments.status != "loading"; }) || comments.status != "ready" ||
+        idSeen != "3456704425" || sortSeen != 2 || comments.items.size() != 1 || comments.total != 42 ||
+        !comments.hasMore || !comments.sourceLabel.contains(QStringLiteral("塞壬"))) {
         qCritical() << "Comment controller failed siren matching or first page";
         return false;
     }
     comments.loadMore();
-    if (!wait([&] { return !comments.hasMore; }) || comments.items.size() != 2) {
+    if (!wait([&] { return comments.items.size() == 2; }) || comments.hasMore || comments.items.size() != 2) {
         qCritical() << "Comment controller failed hot pagination";
         return false;
     }
     comments.setSort("new");
-    if (!wait([&] { return comments.status == "ready" && comments.items.size() == 1; }) || sortSeen != 3) {
+    if (!wait([&] { return comments.status == "ready" && comments.items.size() == 1; }) || sortSeen != 3 ||
+        comments.items.size() != 1) {
         qCritical() << "Comment controller failed newest sort";
         return false;
     }
@@ -1305,6 +1412,7 @@ bool checkCommentsController(const QString &root) {
     }
     comments.toggleReplies("111");
     if (!wait([&] { return comments.items.at(0)["repliesExpanded"].toBool(); }) ||
+        comments.items.at(0)["replies"].toArray().size() != 1 ||
         comments.items.at(0)["replies"].toArray().at(0).toObject()["replyTo"].toString() != "用户甲" ||
         floors != 1) {
         qCritical() << "Comment controller failed floor replies";
@@ -1312,7 +1420,8 @@ bool checkCommentsController(const QString &root) {
     }
     comments.toggleReplies("111");
     comments.toggleReplies("111");
-    if (comments.items.at(0)["replies"].toArray().size() != 1 || floors != 1) {
+    if (comments.items.at(0)["replies"].toArray().size() != 1 || floors != 1 ||
+        !comments.items.at(0)["repliesExpanded"].toBool()) {
         qCritical() << "Comment controller refetched an already loaded floor";
         return false;
     }
@@ -1323,7 +1432,7 @@ bool checkCommentsController(const QString &root) {
 /** 开启“切歌不打开详情”后不定位无关列表、回车直接播放；队列或已打开的列表仍定位。 */
 bool checkSkipDetailOnSwitch(const QString &root, Glyphs &glyphs, const QJsonObject &content) {
     Host host(root, true);
-    std::unique_ptr<MusicLibrary> music(createTestMusicLibrary(&host, "netease", content));
+    std::unique_ptr<MusicLibrary> music(createTestMusicLibrary(&host, hudTestProvider(), content));
     HudSceneActions scene;
     QString requestedMode;
     scene.mode = [&requestedMode](QString mode) { requestedMode = mode; };
@@ -1377,6 +1486,16 @@ bool checkSkipDetailOnSwitch(const QString &root, Glyphs &glyphs, const QJsonObj
 
 bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
     Host host(root, true);
+    QStringList providers;
+    for (const auto &id : ProviderRegistry::instance().ids()) {
+        if (id != "local" && id != "siren") {
+            providers.append(id);
+        }
+    }
+    if (providers.isEmpty()) {
+        qInfo() << "Native HUD checks skipped: no music source plugin installed";
+        return true;
+    }
     const auto content = QJsonDocument::fromJson(host.read("slots.json").toUtf8()).object();
     // 单项检查失败时输出名称，避免回归报告只剩总数而无法定位。
     const auto record = [](const char *name, bool passed) {
@@ -1434,8 +1553,7 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
     }
     int testCount = 0;
 
-    // 测试所有平台和主题组合
-    for (const auto &provider : {QString("netease"), QString("qq"), QString("kugou")}) {
+    for (const auto &provider : providers) {
         for (const bool dark : {false, true}) {
             testCount++;
 
@@ -1448,6 +1566,15 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
             hud.dark = dark;
             hud.themeMode = dark ? "dark" : "light";
             hud.motion.set(true, 0, true);
+            const auto discoverTabs = ProviderRegistry::instance().discoverTabs(provider);
+            const auto hasDiscoverTab = [&](const QString &id) {
+                for (const auto &value : discoverTabs) {
+                    if (value.toObject()["id"].toString() == id) {
+                        return true;
+                    }
+                }
+                return false;
+            };
 
             // === 测试 1: 基础面板渲染 ===
             QJsonObject archiveFrame{{"mode", "archive"}, {"selected", 0}, {"detail", 1}, {"viewer", false}};
@@ -1619,8 +1746,7 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
             }
 #endif
 
-            const QStringList projectActions{"project-home",      "project-author",  "project-player",
-                                             "project-kugou",     "project-rhine",   "project-lyricsx",
+            const QStringList projectActions{"project-home", "project-rhine", "project-lyricsx",
                                              "project-lyricskit", "project-lyrimuse"};
             // 链接应可滚动到达；列数、按钮高度和间距属于可调整的视觉设计。
             for (const auto &action : projectActions) {
@@ -1804,7 +1930,7 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
                 qCritical() << "Play-next did not move an existing item and confirm it";
                 ok = false;
             }
-            if (provider == "netease" && !dark) {
+            {
                 const auto waitFeedback = [](int milliseconds) {
                     QElapsedTimer elapsed;
                     elapsed.start();
@@ -1854,21 +1980,44 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
             }
 
             // === 测试 6: 其他关键面板存在性检查 ===
+            hud.openModal("provider");
+            hud.draw(archiveFrame, 1920, 50);
+            if (!hasAction(hud.hits, "provider:siren") ||
+                getHit(hud.hits, "provider:" + provider)["label"].toString() !=
+                    ProviderRegistry::instance().name(provider)) {
+                qCritical() << "Provider cards are not descriptor-driven" << provider
+                            << (dark ? "dark" : "light");
+                ok = false;
+            }
+            hud.openModal("plugins");
+            hud.draw(archiveFrame, 1920, 50);
+            if (!hasAction(hud.hits, "plugin:refresh") || !hasAction(hud.hits, "plugin:import")) {
+                qCritical() << "Plugin marketplace refresh/import missing" << provider
+                            << (dark ? "dark" : "light");
+                ok = false;
+            }
             const QStringList criticalPanels = {"search", "login", "player", "confirm"};
             for (const auto &panel : criticalPanels) {
                 hud.openModal(panel);
                 hud.draw(archiveFrame, 1920, 50);
 
-                if (panel == "login" && provider == "netease") {
-                    if (!hasAction(hud.hits, "music:login-method:phone") ||
-                        hasAction(hud.hits, "music:login-method:email")) {
-                        qCritical() << "NetEase login must offer SMS without email password";
+                QJsonObject smsMethod;
+                for (const auto &value : ProviderRegistry::instance().loginMethods(provider)) {
+                    const auto method = value.toObject();
+                    if (method["type"].toString() == "sms") {
+                        smsMethod = method;
+                        break;
+                    }
+                }
+                if (panel == "login" && !smsMethod.isEmpty()) {
+                    const auto method = smsMethod["id"].toString();
+                    if (!hasAction(hud.hits, "music:login-method:" + method)) {
+                        qCritical() << "Descriptor SMS login method is missing" << provider;
                         ok = false;
                     }
-                    hud.action("music:login-method:phone");
-                    hud.action("music:login-method:email");
-                    if (music->loginMethod != "phone") {
-                        qCritical() << "Disabled email login action was accepted";
+                    hud.action("music:login-method:" + method);
+                    if (music->loginMethod != method) {
+                        qCritical() << "SMS login action was not accepted" << provider;
                         ok = false;
                     }
                 }
@@ -2006,26 +2155,29 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
                             << squarePreserved << framedCover << centeredTab;
                 ok = false;
             }
-            music->discover->items[0] = originalFirst;
-            music->discover->items[2] = originalThird;
-            music->discover->tab = "daily";
-            hud.openModal("discover");
-            hud.draw(archiveFrame, 1920, 50);
-            if (!hasAction(hud.hits, "discover:open")) {
-                qCritical() << provider << "daily discover missing library button"
-                            << (dark ? "dark" : "light");
-                ok = false;
+            if (hasDiscoverTab("daily")) {
+                music->discover->items[0] = originalFirst;
+                music->discover->items[2] = originalThird;
+                music->discover->tab = "daily";
+                hud.openModal("discover");
+                hud.draw(archiveFrame, 1920, 50);
+                if (!hasAction(hud.hits, "discover:open")) {
+                    qCritical() << provider << "daily discover missing library button"
+                                << (dark ? "dark" : "light");
+                    ok = false;
+                }
+                hud.action("discover:open");
+                if (!music->directory || music->directory->songs.size() != music->discover->items.size()) {
+                    qCritical() << provider << "daily discover did not open as playlist directory"
+                                << (dark ? "dark" : "light");
+                    ok = false;
+                }
+                music->leaveDirectory(false);
             }
-            hud.action("discover:open");
-            if (!music->directory || music->directory->songs.size() != music->discover->items.size()) {
-                qCritical() << provider << "daily discover did not open as playlist directory"
-                            << (dark ? "dark" : "light");
-                ok = false;
-            }
-            music->leaveDirectory(false);
 
             // === 测试 8: 分类歌单列表选择 ===
-            music->discover->tab = "categories";
+            if (hasDiscoverTab("categories")) {
+                music->discover->tab = "categories";
             music->discover->category = "1";
             music->discover->categories = QJsonArray{
                 QJsonObject{{"id", "1"}, {"name", "甲"}},
@@ -2043,7 +2195,7 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
                 qCritical() << provider << "category list missing choices" << (dark ? "dark" : "light");
                 ok = false;
             }
-            if (provider == "netease") {
+            {
                 music->discover->categories = {};
                 for (int index = 0; index < NativeHud::CategoryPageSize; ++index) {
                     music->discover->categories.append(QJsonObject{{"id", "edge-" + QString::number(index)},
@@ -2056,6 +2208,7 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
                     qCritical() << "Discovery category pagination omitted the final entry after All";
                     ok = false;
                 }
+            }
             }
 
             // 队列卡片
@@ -2095,7 +2248,7 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
             }
 
             const auto captureDirectory = qEnvironmentVariable("RHINE_QUEUE_CAPTURE_DIR");
-            if (provider == "netease" && !captureDirectory.isEmpty()) {
+            if (!providers.isEmpty() && provider == providers.first() && !captureDirectory.isEmpty()) {
                 // 等待原弹窗入场结束，截图不能把透明首帧误当成最终界面。
                 hud.draw(archiveFrame, 1920, 1000);
                 QImage queueImage(1920, 1080, QImage::Format_ARGB32_Premultiplied);
@@ -2165,6 +2318,43 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
             }
 
             delete music;
+        }
+    }
+
+    {
+        // 文件夹导入与卸载走同一套用户插件目录，测试后必须恢复现场。
+        QTemporaryDir source;
+        const auto id = QStringLiteral("hud-import-fixture");
+        const auto directory = source.path() + "/plugin";
+        QDir().mkpath(directory);
+        QFile manifest(directory + "/manifest.json");
+        QFile entry(directory + "/plugin.cjs");
+        const auto manifestValue = QJsonObject{{"schemaVersion", 1},
+                                               {"apiVersion", "1.0"},
+                                               {"id", id},
+                                               {"schemaVersion", 2},
+                                               {"apiVersion", "2.0"},
+                                               {"version", "1.0.0"},
+                                               {"entry", QJsonObject{{"file", "plugin.cjs"}}},
+                                               {"display", QJsonObject{{"name", "HUD Import Fixture"}}},
+                                               {"capabilities", QJsonObject{{"search", true}}}};
+        if (!source.isValid() || !manifest.open(QIODevice::WriteOnly) || !entry.open(QIODevice::WriteOnly)) {
+            qCritical() << "Cannot prepare plugin import fixture";
+            ok = false;
+        } else {
+            manifest.write(QJsonDocument(manifestValue).toJson());
+            entry.write("module.exports = { create() { return {}; } };\n");
+            manifest.close();
+            entry.close();
+            const auto importError = host.importPlugin(directory);
+            const auto detail = host.pluginDetail(id);
+            const auto uninstallError = host.uninstallPlugin(id);
+            ok &= record("plugin folder import and uninstall",
+                         importError.isEmpty() && detail["installed"].toBool() &&
+                             detail["userInstalled"].toBool() && uninstallError.isEmpty() &&
+                             !QDir(AppStorage::dataDirectory() + "/plugins/" + id).exists());
+            QDir(AppStorage::dataDirectory() + "/plugins/.backup-" + id).removeRecursively();
+            host.reloadPlugins();
         }
     }
 

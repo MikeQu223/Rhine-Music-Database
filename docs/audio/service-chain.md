@@ -1,11 +1,11 @@
 # Rhine Music Panel 音频服务链路
 
-本文描述音频从云平台取源、经传输与解码、格式协商与重采样，到系统音频设备完成输出的完整链路。覆盖控制面、数据面、观测面以及平台差异。
+本文描述音频从插件取源、经传输与解码、格式协商与重采样，到系统音频设备完成输出的完整链路。覆盖控制面、数据面、观测面以及平台差异。插件 manifest/descriptor 与适配细节见 [MusicBridge/plugins/sdk/README.md](../../MusicBridge/plugins/sdk/README.md)。
 
 默认路径：
 
 ```
-云平台 API → MusicBridge(Node) → 可播放 URL
+插件 playback（worker/Node）→ 可播放 URL
     → HttpAudioStream / 本地文件
     → QMediaPlayer(FFmpeg)
     → QAudioBufferOutput
@@ -32,8 +32,8 @@ QMediaPlayer 在本路径中不绑定 `QAudioOutput`，只负责解码；`QAudio
 
 ```
 RhineMusicDatabase (GUI)          RhinePlaybackService (helper)             MusicBridge (Node)
-  HUD / QML / 渲染                  Host / MusicApi / MusicPlayer             worker.cjs
-  PlaybackConnection  ──IPC──▶     PlaybackQueue / AudioPlayer               client/*.mjs
+  HUD / QML / 渲染                  Host / MusicApi / MusicPlayer             worker.cjs + plugins
+  PlaybackConnection  ──IPC──▶     PlaybackQueue / AudioPlayer               plugin adapters
   只显示状态、频谱、诊断             │                                         │
                                     ├─ HttpAudioStream ──网络线程──▶ 云 CDN
                                     ├─ QMediaPlayer (FFmpeg 解码线程)
@@ -44,7 +44,7 @@ RhineMusicDatabase (GUI)          RhinePlaybackService (helper)             Musi
 | --- | --- | --- | --- |
 | `RhineMusicDatabase` | 界面、渲染、HUD、设置、歌词；不持有解码器和音频设备 | `Qt/src/main.cpp` | 用户可见窗口；第二实例 attach 后退出 |
 | `RhinePlaybackService` | 音源请求、队列、解码、PCM 输出、设备所有权、系统媒体键 | `Qt/src/playback_main.cpp` | 随 GUI 启动；GUI 断开即退出 |
-| `MusicBridge` | 在线平台的登录、搜索、详情、播放地址解析 | `MusicBridge/worker.cjs` | 懒启动；所有来源共用一个 Node 进程 |
+| `MusicBridge` | 插件加载、登录、搜索、详情、播放地址解析 | `MusicBridge/worker.cjs` + `MusicBridge/plugins` | 懒启动；所有来源共用一个 Node 进程 |
 | iOS | 单进程；GUI 直接持有播放链路 | `Qt/src/main.cpp` | 无独立 helper |
 
 桌面端由 `PlaybackService` 拥有音频设备；iOS 由应用进程直接播放（`Qt/src/PlaybackConnection.cpp:18-19`）。
@@ -66,7 +66,7 @@ RhineMusicDatabase (GUI)          RhinePlaybackService (helper)             Musi
 - 同步 `call` 默认 5 s 超时；异步 `request` 30 s，`host.request` 例外（`Qt/src/PlaybackConnection.h:18-20`、`Qt/src/PlaybackConnection.cpp:101-119`）。
 - 服务方法分四类：
   - 会话：`hello`、`attach`、`interface.ready`、`quit`、`show`、`host.request`
-  - 宿主：`host.preference`、`setPreference`、`hasCredential`、`saveCredential`、`acceptCookies`、`logout`、`setProvider`、`setEdition`、`mediaControl`、`mediaLoad`、`invalidateMetadata`、`clearCache`、`diagnostics`
+  - 宿主：`host.preference`、`setPreference`、`hasCredential`、`saveCredential`、`acceptCookies`、`logout`、`setProvider`、`setProviderVariant`、`mediaControl`、`mediaLoad`、`invalidateMetadata`、`clearCache`、`diagnostics`
   - 播放：`player.play`、`enqueue`、`loadQueue`、`toggle`、`pause`、`seek`、`volume`、`next`、`remove`、`clear`、`stop`、`quality`、`mode`、`alternative`、`clearHistory`、`clearCaches`
   - 歌词：`lyrics.*`
 - 服务每次处理完命令后执行 `m_player.tick(...)`、`publish()`，再回 `{id, result, error}`（`Qt/src/PlaybackService.cpp:304-306`）。
@@ -82,76 +82,68 @@ RhineMusicDatabase (GUI)          RhinePlaybackService (helper)             Musi
 | HTTP 网络线程 | 每个 `HttpAudioStream` 一个 `QThread` | Range 请求、缓存写入、重连 |
 | FFmpeg 解码线程 | QMediaPlayer（Qt FFmpeg 后端） | 解码并通过 `QAudioBufferOutput` 交付 PCM |
 | QAudioSink 平台渲染线程 | Qt 音频后端 | 从环形缓冲取 PCM，交给系统音频服务 |
+| OutputFormatProbe 线程 | AudioPlayer | Windows/CoreAudio 输出格式后台探测 |
+| SessionWriter 线程 | PlaybackService | 会话快照序列化与 `QSaveFile` 落盘 |
 
 `AudioPcmOutput` 由服务主线程持有；`QAudioSink` 的平台线程只消费写入的字节。解码缓冲通过排队连接回到服务主线程，再进行重采样、入队和写 sink。因此主线程的长卡顿会直接表现为输出欠载；这一点在“已知限制”中说明。
 
-## 3. 云平台音源获取
+## 3. 音源获取与来源策略
 
 ### 3.1 来源与账号
 
-支持 `netease`（默认、未知值回退）、`qq`、`kugou`、`siren` 和 `local`（`Qt/src/MusicLibrary.cpp:118-123`、`Qt/src/MusicApi.cpp:10-24`）。酷狗另有 `kugou-edition` = `standard` / `lite`。
+当前来源由 ProviderRegistry 的 descriptor 决定；`local` 与 `siren` 是 core 内置来源，第三方来源以插件形式安装。未安装的第三方来源不会出现在资料库，未知 provider id 不会回退到其他平台。
 
 登录与凭据：
 
-- 网易云：扫码 `/login/qr/key` → `/login/qr/check`（1 s 轮询，最多 300 次），或短信 `/captcha/sent` + `/login/cellphone`；凭据为 `MUSIC_U`。
-- QQ：`/qq/login/qr/key` → `/qq/login/qr/create` → `/qq/login/qr/check`；桥使用回环 HTTP + `x-rhine-bridge` secret，会话通过 `x-qq-session` 传递。
-- 酷狗：`/kugou/login/qr/key|create|check`，上游 `status` 0/1/2/4 映射为 800/801/802/803。
-- 登录成功后 `Host::saveCredential()`；`acceptCookies` 只接受当前 epoch 的 Cookie，凭据变化自动保存（`Qt/src/MusicAccount.cpp:525-667`、`Qt/src/Host.cpp:500-529`）。
+- 每个 provider 独立保存 `providers.<id>.cookies` 与 `providers.<id>.secrets`，Host 只把当前 provider 的切片交给插件。
+- 登录判定由 manifest `credentials.auth` 声明；`expiredCodes` 命中时 Host 在响应上标记 `authExpired`，Qt 收到后清理账号状态并提示重新登录。
+- `credentials.inject` 把声明的 secret 注入插件可见的 cookie；`credentials.responseSecrets` 把插件响应中的私有键写回 secret 槽。
+- 有 `variants` 的来源按 variant 分槽保存凭据；退出只清理当前 variant，切换来源会恢复已保存的 variant 偏好。
+- 二维码/短信等登录流程由 descriptor `login.methods`、`flow.send/submit`、`pollIntervalMs/pollTimeoutMs` 描述，Qt 只负责渲染和调用对应 operation。旧扁平凭据通过 manifest `credentials.legacy` 迁移一次。
 
 ### 3.2 音质与替代音源
 
-- 偏好键 `quality`，默认 `exhigh`（`Qt/src/MusicPlayer.cpp:181-185`、`Qt/src/SettingsSchema.cpp:433-443`）。
-- 音质选项按来源动态生成（`Qt/src/MusicPlayer.cpp:104-124`）：
-  - 网易云：`standard/higher/exhigh/lossless/hires/jymaster`
-  - QQ：`best/standard/exhigh/lossless/ape`
-  - 酷狗：`standard/exhigh/lossless/hires`
-  - 塞壬：`lossless`
-- 请求前归一化（`Qt/src/MusicPlayer.cpp:366-386`）：QQ 的 `best/ape` 在非 QQ 来源改为 `lossless`；非网易云的 `jymaster/jyeffect/sky` 改为 `lossless`、`higher` 改为 `standard`；酷狗 `ape` 改为 `lossless`；塞壬固定 `original`。
-- 偏好键 `alternate-source`（`on/off`，默认 `off`，仅网易云可见）；开启后作为 `unblock` 传给 `/song/url/v1`（`Qt/src/SettingsSchema.cpp:458-470`、`Qt/src/MusicPlayer.cpp:652-659`）。
+- 偏好键 `quality` 保存插件自己的 quality id；可用档位、默认档位、标签、描述和徽章来自 descriptor `quality`。
+- 插件播放结果必须返回统一 `tier`（`auto/standard/hq/lossless/hires/master/original`），平台实际档位放在 `providerTier`，界面用它查描述和徽章。
+- `aliases` 用于兼容旧档位名；未知档位按来源默认值处理。
+- 试听由 `trial`/`preview` 表示；详情页和播放栏据此显示试听状态。
+- 是否支持替代音源、预检接口和官方客户端入口由 descriptor `capabilities`、`externalPlayback` 声明；core 不再按平台名改写音质或 `unblock` 参数。
 
 ### 3.3 请求路径
 
-```
+```text
 MusicLibrary::play
   → MusicPlayer::play / prepare
     → MusicApi::call('playback' | 'preview', {track, quality, alternative})
       → Host::requestJson
-        → MusicBridge worker.cjs (JSON-line IPC)
-          → client/dispatch.mjs
-            → 各来源 SDK
+        → MusicBridge worker.cjs（JSON-line IPC）
+          → PluginRegistry
+            → plugin adapter / transport
 ```
 
-- 路由为 `/native/<provider>/<operation>`，参数封装为 `params.args`（`Qt/src/MusicApi.cpp:61-70`）。
-- 播放地址请求**不缓存**：`Host::lifetime()` 对 playback 返回 0；相同 `cache key` 的并发请求会合并为一个 flight（`Qt/src/Host.cpp:274-307`）。
-- 只有可缓存路由和 `/song/url`、`/song/url/v1` 走 1200 ms 间隔的队列；原生 playback 请求直接发送（`Qt/src/Host.cpp:302-307`）。
-- 请求超时 30 s；worker 未启动、退出、超时分别有固定错误文案（`Qt/src/Host.cpp:76-118,414-417`）。
-- 响应 code 为 405/429/509 或消息含“频繁”时，按来源封禁 `blockedUntil = now + max(120s, retryAfterMs)`（`Qt/src/Host.cpp:310-331`）。
+- 路由为 `/native/<provider>/<operation>`，参数封装为 `params.args`。
+- worker 只放行 manifest `operations` 中声明的 operation；插件原始路由使用 `/plugin/<provider>/route/<path>`，legacy/prefix 路由由 manifest 声明。
+- 播放地址请求不缓存；相同 cache key 的并发请求仍会合并为一个 flight。
+- 请求超时 30 s；worker 未启动、退出、超时分别有固定错误文案。
+- 响应 code 为 405/429/509 或消息含“频繁”时，按来源封禁 `blockedUntil = now + max(120s, retryAfterMs)`。
 
-### 3.4 各来源解析
+### 3.4 插件播放结果
 
-| 来源 | 上游调用 | 关键行为 |
-| --- | --- | --- |
-| 网易云 | `/song/url/v1`，参数 `id`、`level`、`unblock` | 响应 `data[]` 中按 `String(song.id) === value.id` 取条目；无 URL 报“此歌曲暂无可用音源…” |
-| 网易云替代音源 | 上游 `unblock === 'true'` 分支 | 返回 `type:'flac'`、`level`，消息前缀 `Warning: Customizing unblock sources...`；客户端删除 `level/type`，不把请求档位当实际音质 |
-| QQ | `/getMusicPlay`，参数 `songmid`、`mediaId`、`quality`、可选 `preview:1` | 档位映射：`standard/higher→128`、`exhigh→320`、`lossless/hires/jymaster→flac`、`best→best`、`ape→ape`；无 URL 且非 128/best/试听时回退 128 |
-| 酷狗 | `/song/url`，参数 `hash`、`album_id`、`album_audio_id`、`quality` | 先做设备注册/登录；档位映射：`standard/higher→128`、`exhigh→320`、`lossless/jymaster→flac`、`hires→high`；无 URL 回退 128 |
-| 塞壬 | `GET https://monster-siren.hypergryph.com/api/song/<cid>` | 实时请求，20 s 超时；要求 `body.code === 0`，读取 `data.sourceUrl` |
+插件返回的 `PlaybackSource` 至少包含 `url` 和统一 `tier`，可选 `providerTier`、`format`、`bitrate`、`sampleRate`、`bitDepth`、`trial`、`qualityFallback`、`restriction`。播放地址的解析、音质档位映射和上游错误全部在插件内完成；core 不读取上游平台字段。
 
-（`MusicBridge/client/netease.mjs:207-231`、`MusicBridge/client/qq.mjs:601-659`、`MusicBridge/client/kugou.mjs:329-380`、`MusicBridge/client/siren.mjs:89-111`、`MusicBridge/worker.cjs:324-339`）
+`local` 由本地索引直接提供文件 URL；`siren` 使用内置 client 获取官网音源。两者的音质档位同样通过 descriptor 描述。
 
 ### 3.5 交给播放器前的 URL 准入
 
-`AudioPlayer::load` 校验（`Qt/src/AudioPlayer.cpp:376-462`）：
+`AudioPlayer::load` 按当前 provider 的 descriptor `media` 校验：
 
-- `provider=qq`：仅 `qqmusic.qq.com` 及其子域。
-- `provider=kugou`：仅 `*.kugou.com`、`*.kugou.net`。
-- `provider=siren`：仅 `hycdn.cn` 及其子域。
-- `provider=netease`：仅 `music.126.net`、`music.163.com` 及其子域。
-- `alternative=true` 时额外允许 `qq.com`、`gtimg.com`、`kuwo.cn`、`kugou.com`、`migu.cn` 及其子域。
-- 在线模式必须 `http/https`；本地/离线必须是本地文件。除酷狗外 `http` 升级为 `https`。
+- `media.hosts`：允许的播放 host（支持 `*.example.com`）。
+- `media.alternativeHosts`：仅在插件声明替代音源时允许的额外 host。
+- `media.allowHttp` / `media.schemePolicy`：是否允许 HTTP；默认只允许 HTTPS。
+- 本地/离线模式只接受本地文件；未知来源默认拒绝远程 URL。
 - 校验失败记录 `load-rejected` 诊断并返回 false，界面显示“音频地址不可用”。
 
-注意：白名单只校验初始 URL；`HttpAudioStream` 使用 `NoLessSafeRedirectPolicy` 跟随重定向，跳转后的主机不再复核（只会阻止协议降级）。
+注意：白名单只校验初始 URL；`HttpAudioStream` 跟随重定向，跳转后的主机不再复核（只会阻止协议降级）。
 
 ## 4. 传输层
 
@@ -427,7 +419,7 @@ reset() → push() 首个缓冲 → open() → QAudioSink::start()
 
 ### 10.3 会话
 
-- 服务每 5000 ms 保存 `playback-session.json`（`QSaveFile`，≤64 MiB，离线跳过）。
+- 服务每 5000 ms 提交一次会话快照；`SessionWriter` 在后台线程序列化并用 `QSaveFile` 写 `playback-session.json`（≤64 MiB，离线跳过），只保留最新快照，不阻塞音频泵。
 - 只保存元数据、队列、索引、模式、位置、音量等；不保存在线 URL。
 - 恢复时重新走 `play`/`prepare` 解析音源，并用保存的位置与暂停意图恢复。
 
@@ -435,12 +427,12 @@ reset() → push() 首个缓冲 → open() → QAudioSink::start()
 
 | 键 | 值 | 作用 |
 | --- | --- | --- |
-| `provider` | `netease`/`qq`/`kugou`/`siren`/`local` | 当前来源 |
-| `quality` | 各来源音质档位，默认 `exhigh` | 请求音质 |
-| `alternate-source` | `on`/`off` | 网易云替代音源 |
+| `provider` | 已安装或内置的 provider id | 当前来源 |
+| `quality` | 当前来源的 quality id | 请求/偏好音质 |
+| `alternate-source` | `on`/`off` | 插件声明替代音源时启用 |
 | `audio-output-policy` | `system`/`source` | 输出格式策略 |
 | `volume` | 0..1，默认 0.7 | 应用音量 |
-| `kugou-edition` | `standard`/`lite` | 酷狗版本 |
+| `provider-variant-<id>` | 当前来源的 variant id | 插件版本/分支偏好 |
 | `play-history` | JSON | 播放历史，最多 200 条 |
 
 偏好由服务端 `QSettings` 持久化（`panel/<key>`），GUI 通过 IPC 读写并使用 `remotePreferences` 缓存（`Qt/src/Host.cpp:1028-1099`）。
@@ -488,10 +480,10 @@ Crashpad 只接入 GUI 进程（`RhineMusicDatabase`），由调试模式开关�
 未验证：
 
 - Windows/Linux/iOS 的真实工具链、驱动、蓝牙/DAC、长期漂移与用户听感。
-- 真实网易云/QQ/酷狗/塞壬 CDN 的 Range、206、ETag、重定向与主机分布。
+- 真实插件与内置来源 CDN 的 Range、206、ETag、重定向与主机分布。
 - 系统混音器内部的转换、抖动和有效位深。
 - 独占输出、硬件采样率切换、SoXR、EQ/耳机校正均未实现。
-- 主线程长卡顿会直接影响 PCM 生产；这是当前架构的已知风险。250 ms 环形缓冲与后台格式探测只是把常见停顿挡在可听范围之外，没有把泵送搬离主线程。
+- `SessionWriter` 与 `OutputFormatProbe` 已移出服务主线程；主线程长卡顿仍会直接影响 PCM 生产，250 ms 环形缓冲只是把常见停顿挡在可听范围之外，没有把泵送搬离主线程。其他主线程工作仍需避免长阻塞。
 
 ## 15. 关键文件索引
 
@@ -500,12 +492,12 @@ Crashpad 只接入 GUI 进程（`RhineMusicDatabase`），由调试模式开关�
 | `Qt/src/MusicLibrary.cpp` / `Qt/src/MusicAccount.cpp` | 来源选择、登录、搜索、账号恢复 |
 | `Qt/src/MusicPlayer.cpp` | 播放准备、音质归一化、队列驱动、会话 |
 | `Qt/src/MusicApi.cpp` / `Qt/src/Host.cpp` | 桥接路由、缓存/限流、偏好、诊断 |
-| `MusicBridge/worker.cjs` / `client/*.mjs` | 各来源 SDK 与播放地址解析 |
+| `MusicBridge/worker.cjs` / `MusicBridge/plugins` | 插件加载、Host 适配与播放地址解析 |
 | `Qt/src/HttpAudioStream.cpp` | 可续传 HTTP 字节流与临时缓存 |
 | `Qt/src/AudioPlayer.cpp` | 媒体会话、状态机、看门狗、设备恢复 |
 | `Qt/src/AudioOutputFormat.cpp` / `Qt/src/AudioOutputFormatIOS.mm` | 输出格式观测与协商 |
 | `Qt/src/AudioResampler.cpp` | libswresample 加载、重采样、抖动 |
 | `Qt/src/AudioPcmOutput.cpp` | 有界 PCM 队列与 QAudioSink |
 | `Qt/src/AudioSpectrum.cpp` | 只读 FFT 频谱 |
-| `Qt/src/PlaybackService.cpp` / `Qt/src/PlaybackConnection.cpp` | 进程模型、IPC、快照发布 |
+| `Qt/src/PlaybackService.cpp` / `Qt/src/PlaybackConnection.cpp` | 进程模型、IPC、快照发布；`SessionWriter` 异步会话落盘 |
 | `Qt/src/PlaybackDiagnostics.cpp` / `Qt/src/FrameProfiler.cpp` | 诊断白名单、报告与面板 |

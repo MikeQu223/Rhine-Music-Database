@@ -1,6 +1,7 @@
 #include "MusicLibrary.h"
 #include "MusicData.h"
 #include "MusicDiscover.h"
+#include "ProviderRegistry.h"
 #include <QRegularExpression>
 #include <algorithm>
 #include <cmath>
@@ -173,7 +174,9 @@ bool MusicLibrary::openDaily() {
         {"virtual", true},
         {"id", "daily"},
         {"key", provider + ":playlist:daily"},
-        {"title", provider == "qq" ? QStringLiteral("每日 30 首") : QStringLiteral("每日推荐")},
+        {"title", ProviderRegistry::instance().text(provider, "dailyTitle").isEmpty()
+                      ? QStringLiteral("每日推荐")
+                      : ProviderRegistry::instance().text(provider, "dailyTitle")},
         {"artist", providerName()},
         {"cover", songs.first().toObject()["cover"].toString()},
         {"description", QStringLiteral("来自发现音乐的每日推荐，打开后不会同步到账号歌单。")},

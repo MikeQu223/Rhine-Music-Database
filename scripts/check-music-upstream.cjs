@@ -1,35 +1,35 @@
+// 核心不再携带第三方平台上游包；插件包各自锁定版本与许可证。
+// 本地存在插件包时，至少确保声明了依赖的插件同时提交 lockfile。
 const fs = require('node:fs');
 const path = require('node:path');
-const crypto = require('node:crypto');
-const assert = require('node:assert/strict');
-const root = path.resolve('MusicBridge');
-const source = require(path.join(root, 'upstream/source.json'));
-for (const [name, hash] of Object.entries(source.files)) {
-    assert.equal(
-        crypto
-            .createHash('sha256')
-            .update(fs.readFileSync(path.join(root, 'upstream', name)))
-            .digest('hex'),
-        hash,
-        `${name} must remain upstream-identical`,
-    );
+const corePackage = JSON.parse(fs.readFileSync(path.resolve('MusicBridge/package.json'), 'utf8'));
+const allowedCoreDependencies = new Set(['chardet', 'form-data', 'node-fetch']);
+for (const name of Object.keys(corePackage.dependencies || {})) {
+    if (!allowedCoreDependencies.has(name)) {
+        throw new Error('core MusicBridge dependency is not in the generic allowlist: ' + name);
+    }
 }
-const lock = require(path.join(root, 'package-lock.json'));
-const pkg = lock.packages['node_modules/@neteasecloudmusicapienhanced/api'];
-assert.equal(pkg.version, '4.41.1');
-assert.equal(pkg.integrity, source.apiIntegrity);
-const qq = lock.packages['node_modules/@yakult-green-tea/qq-music-api'];
-assert.equal(qq.version, '3.3.5');
-assert.equal(qq.integrity, source.qqIntegrity);
-const kugou = lock.packages['node_modules/kugoumusicapi'];
-assert.equal(kugou.version, source.kugouVersion);
-assert.equal(kugou.integrity, source.kugouIntegrity);
-assert.equal(kugou.resolved, 'https://codeload.github.com/MakcRe/KuGouMusicApi/tar.gz/' + source.kugouCommit);
-// 状态编排和拆分后的请求层都不得复制原生协议实现。
-const api = ['Qt/src/MusicApi.cpp', 'MusicBridge/client/netease.mjs']
-    .map((file) => fs.readFileSync(file, 'utf8'))
-    .join('\n');
-assert(!/CommonCrypto|function\s+(?:aes|weapi|eapi)|RhineMusicNative/.test(api));
-console.log(
-    'Upstream auth/user source hashes, Enhanced and QQ locked API integrity and removal of native protocol copy passed',
-);
+const localPlugins = path.resolve('MusicBridge/local-plugins');
+if (!fs.existsSync(localPlugins)) {
+    console.log('No local plugin packages; upstream pins are checked by plugin CI.');
+    process.exit(0);
+}
+let checked = 0;
+for (const entry of fs.readdirSync(localPlugins, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.name === 'node_modules') {
+        continue;
+    }
+    const directory = path.join(localPlugins, entry.name);
+    const packageFile = path.join(directory, 'package.json');
+    if (!fs.existsSync(packageFile)) {
+        continue;
+    }
+    const manifest = JSON.parse(fs.readFileSync(packageFile, 'utf8'));
+    if (manifest.dependencies && Object.keys(manifest.dependencies).length) {
+        if (!fs.existsSync(path.join(directory, 'package-lock.json'))) {
+            throw new Error(entry.name + ' declares dependencies but has no package-lock.json');
+        }
+        checked += 1;
+    }
+}
+console.log('Local plugin dependency locks checked: ' + checked + ' package(s)');

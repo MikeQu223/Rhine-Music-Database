@@ -33,14 +33,14 @@ void MusicDiscover::load(QString nextTab, bool append) {
         accept({{}, QStringLiteral("登录后查看每日推荐"), {}}, tab, start, append);
         return;
     }
-    if (tab == "artists" && (m_store->uid.isEmpty() || m_store->provider != "netease")) {
-        accept({{}, QStringLiteral("登录网易云后查看收藏歌手"), {}}, tab, start, append);
+    if (tab == "artists" && m_store->uid.isEmpty()) {
+        accept({{}, QStringLiteral("登录后查看收藏歌手"), {}}, tab, start, append);
         return;
     }
     if (tab == "history") {
         QJsonArray history;
         for (const auto &value : m_store->player.history) {
-            if (value.toObject()["provider"].toString("netease") == m_store->provider) {
+            if (value.toObject()["provider"].toString(m_store->provider) == m_store->provider) {
                 history.append(value);
             }
         }
@@ -49,75 +49,9 @@ void MusicDiscover::load(QString nextTab, bool append) {
         return;
     }
     const auto currentTab = tab;
-    if (m_store->provider != "netease") {
-        m_store->api.call(
-            "discover", {tab, start, tab == "new-songs" ? newSongArea : category},
-            [this, currentTab, start, append](MusicReply result) {
-                accept(result, currentTab, start, append);
-            },
-            alive);
-        return;
-    }
-    QString route;
-    QJsonObject parameters;
-    QString kind = "playlist";
-    QString field;
-    if (tab == "playlists") {
-        route = "/personalized";
-        parameters = {{"limit", 30}};
-        field = "result";
-    } else if (tab == "daily") {
-        route = "/recommend/songs";
-        kind = "song";
-    } else if (tab == "charts") {
-        route = "/toplist";
-        field = "list";
-    } else if (tab == "albums") {
-        route = "/album/newest";
-        field = "albums";
-        kind = "album";
-    } else if (tab == "categories") {
-        route = "/top/playlist";
-        parameters = {{"cat", category}, {"limit", 30}, {"offset", start}};
-        field = "playlists";
-    } else if (tab == "artists") {
-        route = "/artist/sublist";
-        parameters = {{"limit", 30}, {"offset", start}};
-        field = "data";
-        kind = "artist";
-    } else {
-        accept({{}, QStringLiteral("不支持的发现类别"), {}}, tab, start, append);
-        return;
-    }
-    m_store->api.request(
-        route, parameters,
-        [this, currentTab, start, append, kind, field](MusicReply result) {
-            if (!result.ok()) {
-                accept(result, currentTab, start, append);
-                return;
-            }
-            const auto body = result.value.toObject();
-            auto data = body[field].toArray();
-            if (currentTab == "daily") {
-                const auto daily = body["data"].toObject()["dailySongs"];
-                data = daily.isArray() ? daily.toArray() : body["recommend"].toArray();
-            }
-            QJsonArray values;
-            for (const auto &value : data) {
-                const auto entry = MusicData::parse(value.toObject(), kind);
-                if (!entry.isEmpty()) {
-                    values.append(entry);
-                }
-            }
-            bool more = false;
-            if (currentTab == "categories") {
-                more = body["more"].toBool();
-            } else if (currentTab == "artists") {
-                more = body["hasMore"].toBool();
-            }
-            accept({QJsonObject{{"items", values}, {"rawCount", data.size()}, {"more", more}}, {}, {}},
-                   currentTab, start, append);
-        },
+    m_store->api.call(
+        "discover", {tab, start, tab == "new-songs" ? newSongArea : category},
+        [this, currentTab, start, append](MusicReply result) { accept(result, currentTab, start, append); },
         alive);
 }
 
@@ -126,7 +60,7 @@ void MusicDiscover::accept(MusicReply result, QString currentTab, int start, boo
         status = result.error;
     } else {
         const auto page = result.value.toObject();
-        if (currentTab == "categories" && m_store->provider == "qq" && page["category"].isString()) {
+        if (currentTab == "categories" && page["category"].isString()) {
             category = page["category"].toString();
         }
         if (currentTab == "new-songs") {
@@ -159,25 +93,7 @@ void MusicDiscover::loadCategories() {
             status = result.error;
         }
     };
-    if (m_store->provider != "netease") {
-        m_store->api.call("categories", {}, accept, alive);
-    } else {
-        m_store->api.request(
-            "/playlist/catlist", {},
-            [accept](MusicReply result) {
-                if (!result.ok()) {
-                    accept(result);
-                    return;
-                }
-                QJsonArray values;
-                for (const auto &value : result.value.toObject()["sub"].toArray()) {
-                    const auto name = value.toObject()["name"];
-                    values.append(QJsonObject{{"id", name}, {"name", name}});
-                }
-                accept({values, {}, {}});
-            },
-            alive);
-    }
+    m_store->api.call("categories", {}, accept, alive);
 }
 
 void MusicDiscover::cancel() {

@@ -18,6 +18,21 @@ QString qualityLabel(const QString &value) {
     if (value == "exhigh" || value == "higher" || value == "hq") {
         return "高品质";
     }
+    if (value == "master" || value == "jymaster") {
+        return "母带";
+    }
+    if (value == "jyeffect") {
+        return "高品质";
+    }
+    if (value == "sky") {
+        return "Hi-Res";
+    }
+    if (value == "auto" || value == "best") {
+        return "自动";
+    }
+    if (value == "original") {
+        return "原始";
+    }
     if (value == "sq") {
         return "SQ 无损";
     }
@@ -252,7 +267,7 @@ void ResponsiveHudLayout::optionsSheet(ResponsiveHudCanvas &c, const QJsonObject
         if (!m.local && source["officialPlayback"].toBool()) {
             actions.append(SongDetailCard::Action{"官方客户端 ↗", "music:official"});
         }
-        if (source["provider"] == "netease" || source["provider"] == "siren") {
+        if (source["commentsAvailable"].toBool()) {
             actions.append(SongDetailCard::Action{"查看评论", "music:comments"});
         }
     }

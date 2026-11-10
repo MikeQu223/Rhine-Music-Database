@@ -1,5 +1,6 @@
 #include "NativeHud.h"
 #include "MusicData.h"
+#include "ProviderRegistry.h"
 #include <QDateTime>
 #include <QDebug>
 #include <QJsonDocument>
@@ -223,6 +224,7 @@ QJsonObject NativeHud::sourceState() const {
     };
     return {{"lyricsMode", lyricsMode},
             {"commentsMode", commentsMode},
+            {"commentsAvailable", m_music->commentsAvailable()},
             {"archiveName", m_music->libraryName()},
             {"archiveIndex", m_music->libraryIndex()},
             {"archiveTotal", m_music->libraryTotal()},
@@ -409,7 +411,7 @@ void NativeHud::draw(QJsonObject next, double stageWidth, double time) {
 }
 /** 移动端只消费展示模型，不先生成再丢弃横屏 HUD。 */
 void NativeHud::drawMobile(double time, const QString &scope) {
-    if (commentsMode && ((m_music->provider != "netease" && m_music->provider != "siren") ||
+    if (commentsMode && ((!m_music->commentsAvailable()) ||
                          CommentsController::trackKey(m_music->current) != commentsTrackKey)) {
         commentsMode = false;
     }
@@ -562,16 +564,12 @@ void NativeHud::navigation(double width) {
 }
 void NativeHud::footer(double width) {
     fill(59, 971, 5, 5, {119.0 / 255, 123.0 / 255, 96.0 / 255, 1});
-    QString session = m_music->isLocal() ? "LOCAL LIBRARY" : "GUEST SESSION";
+    QString session = m_music->isLocal() ? ProviderRegistry::instance().sessionLabel("local")
+                                         : QStringLiteral("GUEST SESSION");
     if (m_music->isSiren()) {
-        session = "SIREN RECORDS";
+        session = ProviderRegistry::instance().sessionLabel("siren");
     } else if (!m_music->uid.isEmpty()) {
-        session = "NETEASE SESSION";
-        if (m_music->provider == "qq") {
-            session = "QQ SESSION";
-        } else if (m_music->provider == "kugou") {
-            session = "KUGOU SESSION";
-        }
+        session = ProviderRegistry::instance().sessionLabel(m_music->provider);
     }
     text(session, 75, 967, 10, "regular", 0.9);
     const auto credit = QStringLiteral("POWERED BY RHINE LAB");
@@ -687,7 +685,7 @@ void NativeHud::archive(double width) {
     button("←", col, 903, 46, 46, "column-prev", 28);
     if (!music.directory) {
         text("COLLECTION " + MusicData::pad(music.sourceOrder().indexOf(music.selectedLane) + 1) + " / " +
-                 MusicData::pad(music.provider == "kugou" ? 4 : 5),
+                 MusicData::pad(std::max(1, int(music.columns.size()))),
              col + 70, 904, 10);
         roll("music-column", music.libraryName(), col + 70, 925, 15, width - col - 360);
     } else {

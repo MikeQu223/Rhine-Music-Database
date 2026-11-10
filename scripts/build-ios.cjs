@@ -66,7 +66,7 @@ function prepareResources() {
     run(process.execPath, ['scripts/package-resources.cjs', resources]);
     const bridge = path.join(resources, 'MusicBridge');
     fs.rmSync(path.join(bridge, 'node'), { force: true });
-    for (const name of ['worker.cjs', 'xhr-sync-worker.js']) {
+    for (const name of ['worker.cjs']) {
         fs.copyFileSync(path.join(bundle, 'MusicBridge', name), path.join(bridge, name));
     }
     fs.copyFileSync('MusicBridge/ios-runtime.cjs', path.join(bridge, 'ios-runtime.cjs'));

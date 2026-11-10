@@ -177,18 +177,17 @@ class AudioPlayerRegression {
         return ok;
     }
 
-    // 没有输出设备时不会访问网络，可验证真实 load 路径是否改写了上游地址。
+    // 没有输出设备时不会访问网络，可验证真实 load 路径的本地文件与未知来源边界。
     static bool sourceRegression() {
         AudioPlayer audio;
         audio.defaultOutput = [] { return QAudioDevice(); };
         audio.followDefaultOutput();
-        const QString raw("http://fs.kugou.com/fixture.mp3?key=fixture&filename=a%20b");
-        bool ok = check(audio.load(raw, false, false, "kugou") && audio.pendingSource == QUrl(raw),
-                        "Kugou preserves upstream scheme and signed query");
+        const QString local("file:///fixture.wav");
+        bool ok = check(audio.load(local, false, false, "local") && audio.pendingSource == QUrl(local),
+                        "Local files bypass the network scheme policy");
         audio.control("stop");
-        ok &= check(audio.load("http://music.126.net/fixture.mp3", false, false, "netease") &&
-                        audio.pendingSource.scheme() == "https",
-                    "NetEase keeps existing CDN compatibility");
+        ok &= check(!audio.load("http://example.test/fixture.mp3", false, false, "unknown"),
+                    "Unknown providers cannot load remote media");
         audio.control("stop");
         return ok;
     }

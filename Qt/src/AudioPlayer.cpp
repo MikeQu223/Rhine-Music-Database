@@ -1,4 +1,5 @@
 #include "AudioPlayer.h"
+#include "ProviderRegistry.h"
 #include <QUrl>
 #include <QMediaMetaData>
 #include <QMediaFormat>
@@ -535,27 +536,27 @@ bool AudioPlayer::load(QString input, bool offline, bool alternative, QString pr
     }
     QUrl url(input);
     const auto host = url.host();
-    const bool qq = provider == "qq" && (host == "qqmusic.qq.com" || host.endsWith(".qqmusic.qq.com"));
-    const bool kugou = provider == "kugou" && (host.endsWith(".kugou.com") || host.endsWith(".kugou.net"));
-    const bool siren = provider == "siren" && (host == "hycdn.cn" || host.endsWith(".hycdn.cn"));
-    const bool trusted =
-        qq || kugou || siren ||
-        (provider == "netease" && (host == "music.126.net" || host.endsWith(".music.126.net") ||
-                                   host == "music.163.com" || host.endsWith(".music.163.com")));
-    const QStringList providers{"qq.com", "gtimg.com", "kuwo.cn", "kugou.com", "migu.cn"};
+    const auto media = ProviderRegistry::instance().mediaPolicy(provider);
+    const auto matchesHost = [&host](const QJsonArray &values) {
+        for (const auto &value : values) {
+            const auto pattern = value.toString();
+            if (pattern == host || (pattern.startsWith("*.") && host.endsWith(pattern.mid(1)))) {
+                return true;
+            }
+        }
+        return false;
+    };
+    const bool trusted = matchesHost(media["hosts"].toArray());
     const bool alternateHost =
-        alternative && std::any_of(providers.begin(), providers.end(), [&](const auto &domain) {
-            return host == domain || host.endsWith("." + domain);
-        });
-    if ((offline || provider == "local")
-            ? !url.isLocalFile()
-            : (!(trusted || alternateHost) || !QStringList{"http", "https"}.contains(url.scheme()))) {
+        alternative && matchesHost(media["alternativeHosts"].toArray());
+    const bool httpAllowed =
+        media["allowHttp"].toBool() || media["schemePolicy"].toString() == "http-or-https";
+    const bool schemeAllowed =
+        url.scheme() == "https" || (url.scheme() == "http" && httpAllowed);
+    const auto localMode = offline || provider == "local";
+    if ((localMode && !url.isLocalFile()) || (!localMode && (!(trusted || alternateHost) || !schemeAllowed))) {
         diagnose("load-rejected");
         return false;
-    }
-    // 酷狗音源沿用上游返回的协议与签名地址
-    if (url.scheme() == "http" && !kugou) {
-        url.setScheme("https");
     }
     ++sourceSerial;
     backendFailureCategory = 0;
@@ -568,8 +569,7 @@ bool AudioPlayer::load(QString input, bool offline, bool alternative, QString pr
     } else if (url.scheme() == "http") {
         sourceKind = 2;
     }
-    sourceProvider = QStringList{"other", "netease", "qq", "kugou", "local", "siren"}.indexOf(provider);
-    sourceProvider = std::max(0, sourceProvider);
+    sourceProvider = ProviderRegistry::instance().diagnosticsOrdinal(provider, 0);
     decodedBuffers = 0;
     decodedBytes = 0;
     decodedFrames = 0;

@@ -6,7 +6,7 @@
 
 音乐账号、歌单、搜索、播放状态、音频解码、歌词和场景都继续使用原来的公共实现。
 没有新增 iOS 专用的 MusicLibrary、MusicPlayer、MusicApi、AudioPlayer 或协议分发器。
-`MusicBridge/worker.cjs`、`qq.cjs`、`kugou.cjs` 和上游协议源码没有为 iOS 复制一份。
+`MusicBridge/worker.cjs` 与平台插件、上游协议源码没有为 iOS 复制一份。
 
 ```text
 公共 QML / NativeHud / Engine / MusicLibrary / MusicPlayer
@@ -94,7 +94,7 @@
 | `Qt/qml/LocalMusicDialogs.qml`     | 将原来的文件/文件夹选择器及信号连接整体移到共享组件。                                  | 桌面仍使用原交互；iOS 不实例化不需要的本地音乐对话框。                                         |
 | `Qt/qml/Main.qml`                  | 按平台加载组件；iOS 放开桌面最小窗口限制，轻触在点击完成时触发动作，并移除音量输入区。 | 适配触屏拖动与全屏尺寸，保留一个主界面。                                                       |
 | `Qt/src/MusicAccount.cpp`          | 通过能力开关拒绝切换到本地来源。                                                       | 即使从动作字符串进入，也不能绕过 iOS 限制。登录和换账号逻辑不分叉。                            |
-| `Qt/src/MusicLibrary.cpp`          | iOS 恢复本地来源时回退网易云，本地库使用离线实例，并拦截官方客户端播放。               | 不读取或维护 iOS 本地音乐索引，不建立第二套资料库。                                            |
+| `Qt/src/MusicLibrary.cpp`          | iOS 恢复本地来源时回退默认来源，本地库使用离线实例，并拦截官方客户端播放。               | 不读取或维护 iOS 本地音乐索引，不建立第二套资料库。                                            |
 | `Qt/src/MusicPlayer.cpp`           | 不支持应用音量的平台把面板增益固定为 1。                                               | 使用系统音量，避免继承桌面保存的低音量偏好；播放核心仍为同一份。                               |
 | `Qt/src/NativeHudController.cpp`   | 入口处统一拦截被平台禁用的动作。                                                       | UI 隐藏之外也保证动作分发边界一致，不改变正常桌面动作顺序。                                    |
 | `Qt/src/NativeHudPlayer.cpp`       | 根据能力隐藏音量区和官方客户端按钮。                                                   | 不显示 iOS 无法使用的入口，其他播放条实现不分叉。                                              |
@@ -112,7 +112,7 @@
 | `Qt/tests/publish-release.cjs`  | 原发布测试增加 IPA 夹具，校验五项资产（四个平台包及 update.json）。                                                     | 沿用现有模拟 API 验证发布原子性，不新增另一套发布测试。                                    |
 | `Qt/tests/IOSBridgeChecks.cpp`  | 在 iOS 现有 self-test 中通过真实 NodeMobile 加载真实协议包，执行离线请求和会话重建。                                    | 桌面 Node 测试不能证明 iOS 的运行时可加载。                                                |
 | `Qt/tests/NativeHostChecks.cpp` | 仅 iOS 调用上述测试，并验证被禁用的官方播放和面板音量边界。                                                             | 接入已有核心测试，不为平台复制完整 Host 测试。                                             |
-| `Qt/tests/ios-bridge.cjs`       | 只验证认证传输、一次离线请求及两次会话的退出/启动顺序；macOS 下执行 TLS 门控核心检查。                                  | 移除重复的网易云/QQ/酷狗搜索与登录用例及专用 HTTP 夹具。三家业务只由既有公共测试验证一次。 |
+| `Qt/tests/ios-bridge.cjs`       | 只验证认证传输、一次离线请求及两次会话的退出/启动顺序；macOS 下执行 TLS 门控核心检查。                                  | 移除重复的平台插件搜索与登录用例及专用 HTTP 夹具。三家业务只由既有公共测试验证一次。 |
 | `Qt/tests/ios-system-trust.cjs` | 用一个临时 TLS 服务验证批准前不发数据、拒绝、域名错误及验证器失效；简化异步等待并使用兼容 OpenSSL/LibreSSL 的配置文件。 | 保留必要的安全行为回归，不给其他平台增加 OpenSSL 要求，不重复建立业务测试。                |
 
 ## 日后修改该去哪里

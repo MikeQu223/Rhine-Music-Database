@@ -163,10 +163,8 @@ void favorite(Painter &paint, const State &state, double x, double y) {
                state.likeKnown ? paint.ink : paint.muted, state.liked);
     paint.drawing.commands.append(QJsonArray{"restore"});
     if (state.canLike) {
-        auto label = state.liked ? QStringLiteral("取消喜欢当前歌曲") : QStringLiteral("喜欢当前歌曲");
-        if (!state.likeKnown) {
-            label = "核实并切换当前歌曲喜欢状态";
-        }
+        const auto label = state.liked ? QStringLiteral("取消喜欢当前歌曲")
+                                       : QStringLiteral("喜欢当前歌曲");
         paint.hit({x - 24, y - 24, 48, 48}, "music:like-current", label);
     }
 }

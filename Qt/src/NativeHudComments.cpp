@@ -48,7 +48,7 @@ void NativeHud::commentsPanel(double x, double width) {
     text("Comments", x + titleWidth + 14, 314, 20, "regular", 0, secondary);
     button("关闭", x + width - 80, 276, 80, 48, "comments:close", 18);
 
-    QString sourceHead = QStringLiteral("网易云音乐");
+    const auto sourceHead = comments.sourceName.isEmpty() ? m_music->providerName() : comments.sourceName;
     QString sourceRest;
     if (m_music->provider == "siren") {
         if (!comments.sourceLabel.isEmpty()) {

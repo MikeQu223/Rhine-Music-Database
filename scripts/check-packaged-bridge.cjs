@@ -1,39 +1,78 @@
-// 发布包内执行真实协议模块，只替换上游 HTTP 响应；不访问实际音乐 API。
+// 发布包内验证通用插件契约：manifest、入口哈希、worker 路由与操作白名单。
+// 不访问实际音乐 API；协议级回归由各插件仓库自己的测试负责。
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
-const { bridgeRuntime, bridgeSourceDirectory } = require('../Qt/tests/fixtures/bridge-runtime.cjs');
+const { bridgeRuntime } = require('../Qt/tests/fixtures/bridge-runtime.cjs');
 const { bridge, runtime } = bridgeRuntime();
 const temp = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'rhine-package-check-'));
-const hook = path.resolve(__dirname, '../Qt/tests/fixtures/bridge-http.cjs');
 
-const deviceContext = require(
-    path.join(
-        bridgeSourceDirectory(),
-        'node_modules/@yakult-green-tea/qq-music-api/dist/src/services/auth/deviceContext.js',
-    ),
-);
+function installedPlugins() {
+    const directory = path.join(bridge, 'local-plugins');
+    if (!fs.existsSync(directory)) {
+        return [];
+    }
+    return fs
+        .readdirSync(directory, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
+        .map((entry) => {
+            const root = path.join(directory, entry.name);
+            const manifestFile = path.join(root, 'manifest.json');
+            if (!fs.existsSync(manifestFile)) {
+                return null;
+            }
+            return { root, manifest: JSON.parse(fs.readFileSync(manifestFile, 'utf8')) };
+        })
+        .filter(Boolean);
+}
+
+function verifyManifest({ root, manifest }) {
+    assert.equal(manifest.schemaVersion, 2, manifest.id + ': schemaVersion');
+    assert.match(manifest.apiVersion, /^2\.\d+$/, manifest.id + ': apiVersion');
+    const entry = path.join(root, manifest.entry.file);
+    assert(fs.existsSync(entry), manifest.id + ': entry missing');
+    if (manifest.entry.sha256) {
+        const data = fs.readFileSync(entry);
+        assert.equal(
+            crypto.createHash('sha256').update(data).digest('hex'),
+            manifest.entry.sha256,
+            manifest.id + ': entry hash',
+        );
+        assert.equal(data.length, manifest.entry.size, manifest.id + ': entry size');
+    }
+    const badges = manifest.quality?.badges || {};
+    for (const [badge, relative] of Object.entries(badges)) {
+        assert(
+            fs.existsSync(path.join(root, relative)),
+            manifest.id + ': badge asset missing: ' + badge,
+        );
+    }
+}
+
 async function main() {
+    const plugins = installedPlugins();
+    assert(plugins.length > 0, 'packaged bridge has no plugins');
+    for (const plugin of plugins) {
+        verifyManifest(plugin);
+    }
     let child;
     try {
-        child = spawn(runtime, ['--require', hook, path.join(bridge, 'worker.cjs')], {
+        child = spawn(runtime, [path.join(bridge, 'worker.cjs')], {
             cwd: bridge,
             env: {
                 ...process.env,
                 TMPDIR: temp,
                 TEMP: temp,
                 LANG: 'en_US.UTF-8',
-                RHINE_TEST_BRIDGE: bridge,
-                RHINE_QQ_DEVICE_STATE_PATH: path.join(temp, 'qq-device.json'),
-                RHINE_KUGOU_DEVICE_STATE_PATH: path.join(temp, 'kugou-device.json'),
             },
             stdio: ['pipe', 'pipe', 'pipe'],
         });
         let errors = '';
         let buffer = '';
         const pending = new Map();
-        child.stderr.on('data', (d) => (errors += d));
+        child.stderr.on('data', (data) => (errors += data));
         child.stdout.on('data', (data) => {
             buffer += data;
             let end;
@@ -44,242 +83,53 @@ async function main() {
                 try {
                     result = JSON.parse(line);
                 } catch (error) {
-                    for (const p of pending.values()) {
-                        p.reject(error);
+                    for (const entry of pending.values()) {
+                        entry.reject(error);
                     }
                     return;
                 }
-                const p = pending.get(result.id);
-                if (p) {
-                    clearTimeout(p.timer);
+                const entry = pending.get(result.id);
+                if (entry) {
+                    clearTimeout(entry.timer);
                     pending.delete(result.id);
-                    p.resolve(result);
+                    entry.resolve(result);
                 }
             }
         });
-        function request(id, route, params = {}, cookies = {}) {
+        function request(id, route, params = {}, cookies = {}, env = {}) {
             return new Promise((resolve, reject) => {
                 const timer = setTimeout(() => {
                     pending.delete(id);
                     reject(new Error('IPC timeout (' + id + '): ' + errors));
                 }, 15000);
-                pending.set(id, {
-                    resolve,
-                    reject,
-                    timer,
-                });
-                child.stdin.write(
-                    JSON.stringify({
-                        id,
-                        route,
-                        params,
-                        cookies,
-                    }) + '\n',
-                );
+                pending.set(id, { resolve, reject, timer });
+                child.stdin.write(JSON.stringify({ id, route, params, cookies, env }) + '\n');
             });
         }
-        const search = await request('search', '/search', {
-            keywords: 'fixture',
-            type: 1,
-        });
-        assert.equal(search.body.code, 200);
-        const nativeSearch = await request('native-search', '/native/netease/search', {
-            args: ['fixture', 'song', 0],
-        });
-        assert.equal(nativeSearch.body.code, 200);
-        assert.deepEqual(nativeSearch.body.value.items, []);
-        assert.equal(nativeSearch.body.value.total, 0);
-        const nativeMv = await request('native-mv', '/native/netease/mv', { args: [{ id: '1' }] });
-        assert.equal(nativeMv.body.code, 200);
-        assert.equal(nativeMv.body.value.id, '99');
-        assert.equal(nativeMv.body.value.resolution, 1080);
-        assert.equal(nativeMv.body.value.url, 'https://video.example.test/fixture.mp4');
-        const versions = await request('native-mv-versions', '/native/netease/mvVersions', {
-            args: [{ id: '1' }],
-        });
-        assert.equal(versions.body.code, 200);
-        assert.equal(versions.body.value.versions[0].id, '99');
-        assert.equal(versions.body.value.versions[0].associated, true);
-        const selectedMv = await request('native-mv-selected', '/native/netease/mv', {
-            args: [{ id: '1', videoID: '100' }],
-        });
-        assert.equal(selectedMv.body.code, 200);
-        assert.equal(selectedMv.body.value.id, '100');
-        // 塞壬唱片使用独立 fetch 目录
-        const sirenSearch = await request('native-siren', '/native/siren/search', {
-            args: ['', 'album', 0],
-        });
-        assert.equal(sirenSearch.body.code, 200, JSON.stringify(sirenSearch.body));
-        assert.equal(sirenSearch.body.value.items[0].title, '本地专辑');
-        const audio = await request('audio', '/song/url/v1', {
-            id: '1',
-            level: 'lossless',
-            unblock: false,
-        });
-        assert.equal(audio.body.code, 200);
-        assert(audio.body.data[0].url);
-        const standard = await request('standard', '/song/url/v1', {
-            id: '1',
-            level: 'standard',
-            unblock: false,
-        });
-        assert.equal(standard.body.code, 200);
-        assert(standard.body.data[0].url);
-        assert.equal(audio.body.data[0].level, 'lossless');
-        assert.equal(audio.body.data[0].keyRegistrations, 1);
-        assert.equal(standard.body.data[0].level, 'standard');
-        const authenticated = await request(
-            'authenticated',
-            '/song/url/v1',
-            {
-                id: '1',
-                level: 'exhigh',
-                unblock: false,
-            },
-            {
-                MUSIC_U: 'fixture-account',
-            },
-        );
-        assert.equal(authenticated.body.data[0].authenticated, true);
-        assert.equal(authenticated.body.data[0].level, 'exhigh');
-        const master = await request('master', '/song/url/v1', { id: '1', level: 'jymaster' });
-        assert.equal(master.body.data[0].level, 'jymaster');
-        assert.equal(master.body.data[0].keyRegistrations, 1);
-        const denied = await request('denied', '/song/url/v1', {
-            id: '2',
-            level: 'standard',
-            unblock: false,
-        });
-        assert.equal(denied.body.code, 403);
-        // 替代音源模块按目录动态加载，验证单文件包仍能走到真实模块。
-        const unblocked = await request('unblock', '/song/url/v1', {
-            id: '1',
-            level: 'standard',
-            unblock: true,
-        });
-        assert.equal(unblocked.body.code, 200, JSON.stringify(unblocked.body));
-        assert.equal(unblocked.body.data[0].url, 'https://example.test/unblock.flac');
-        const savedDevice = deviceContext.createAndroidDevice();
-        const qq = await request(
-            'qq',
-            '/qq/search',
-            { keyword: 'fixture', type: 'song', page: 1, limit: 20 },
-            {
-                qqmusic_session: 'fixture-session',
-                __qqSessions: [
-                    null,
-                    {
-                        token: 'fixture-session',
-                        credential: { musicid: '42', musickey: 'fixture-key', loginType: 6 },
-                        device: savedDevice,
-                        expiresAt: Date.now() + 72 * 3600000,
-                    },
-                ],
-            },
-        );
-        assert.equal(qq.body.code, 200, JSON.stringify(qq.body));
-        assert.equal(qq.body.items[0].mid, 'fixtureMID');
-        for (const [type, field, id] of [
-            ['album', 'albummid', 'albumMID'],
-            ['playlist', 'dissid', '70001'],
-            ['singer', 'singerMID', 'singerMID'],
-        ]) {
-            const result = await request('qq-search-' + type, '/qq/search', { keyword: 'fixture', type });
-            assert.equal(result.body.items[0][field], id);
-        }
-        const features = await request('qq-capabilities', '/qq/login/channels');
-        assert.equal(features.body.data.features.mutations.likeSong, true);
-        assert.equal(features.body.data.features.mutations.subscribeAlbum, true);
-        // 缺少必填正文应由 POST 的 schema 拒绝，而不是被错误地作为 GET 返回 405。
-        const invalidWrite = await request(
-            'qq-post',
-            '/qq/user/song/like',
-            { song: {} },
-            { qqmusic_session: 'fixture-session' },
-        );
-        assert.equal(invalidWrite.body.code, 400);
-        const deviceRecord = JSON.parse(fs.readFileSync(path.join(temp, 'qq-device.json')));
-        assert.deepEqual(deviceRecord.device, savedDevice);
-        assert.equal(deviceRecord.device.musickey, undefined);
-        const charts = await request('charts', '/qq/recommend/toplists');
-        assert.equal(charts.body.groups[0].toplists[0].id, 4);
-        const chart = await request('chart', '/qq/recommend/toplist', {
-            id: 4,
-            period: charts.body.groups[0].toplists[0].period,
-            limit: 100,
-            offset: 0,
-        });
-        assert.equal(chart.body.songs[0].mid, 'fixtureMID');
-        const kugouKey = await request('kugou-key', '/kugou/login/qr/key');
-        assert.equal(kugouKey.body.data.unikey, 'fixture-kugou-qr');
-        const kugouImage = await request('kugou-image', '/kugou/login/qr/create', {
-            key: kugouKey.body.data.unikey,
-            qrimg: true,
-            timestamp: Date.now(),
-        });
-        assert.match(kugouImage.body.data.qrimg, /^data:image\/png;base64,/);
-        const kugouLogin = await request('kugou-login', '/kugou/login/qr/check', {
-            key: kugouKey.body.data.unikey,
-        });
-        assert.equal(kugouLogin.body.code, 803);
-        assert.equal(kugouLogin.kugouCredentials.token, 'fixture-kugou-token');
-        assert.equal(JSON.stringify(kugouLogin.body).includes('fixture-kugou-token'), false);
-        const kugouSearch = await request(
-            'kugou-search',
-            '/kugou/search',
-            { keywords: '本地歌曲', type: 'song' },
-            {
-                __kugou: { ...kugouLogin.kugouCredentials, dfid: 'fixture-dfid' },
-            },
-        );
-        assert.equal(kugouSearch.body.data.lists[0].SongName, '本地歌曲');
-        const kugouDevice = JSON.parse(fs.readFileSync(path.join(temp, 'kugou-device.json')));
-        assert.equal(kugouDevice.KUGOU_API_GUID, kugouLogin.kugouCredentials.KUGOU_API_GUID);
-        assert.equal(kugouDevice.token, undefined);
-        // 发布包通过真实锁定协议和解码器读取三种形态，再交付相同毫秒模型。
-        const neteaseLyrics = await request('lyrics-netease', '/lyric/new', { id: '1' });
-        const qqLyrics = await request('lyrics-qq', '/qq/getLyric', { songmid: 'fixtureMID' });
-        const lyricSearch = await request('lyrics-kugou-search', '/kugou/search/lyric', {
-            hash: 'A'.repeat(32),
-        });
-        assert.equal(lyricSearch.body.candidates[0].id, '42');
-        const kugouLyrics = await request('lyrics-kugou', '/kugou/lyric', {
-            id: '42',
-            accesskey: 'fixture-key',
-            fmt: 'krc',
-            decode: true,
-        });
-        for (const response of [neteaseLyrics, qqLyrics, kugouLyrics]) {
-            assert.equal(response.body.code, 200);
-            assert.deepEqual(
-                response.body.document.lines.map((line) => line.startMs),
-                [1000, 3000],
+        for (const { manifest } of plugins) {
+            const unsupported = await request(
+                'unsupported-' + manifest.id,
+                '/native/' + manifest.id + '/__contract_probe',
+                { args: [] },
             );
-            assert.equal(response.body.document.lines[0].text, '本地歌词');
+            assert.equal(unsupported.body.errorKey, 'provider.unsupported', manifest.id);
+            const invalid = await request('invalid-' + manifest.id, '/plugin/' + manifest.id);
+            assert.equal(invalid.body.errorKey, 'route.invalid', manifest.id);
         }
-        assert.equal(kugouLyrics.body.document.timing, 'word');
-        assert.equal(kugouLyrics.body.document.lines[0].words[1].startMs, 1500);
-        assert(fs.existsSync(path.join(bridge, 'LyricsKit-LICENSE')));
-        // 验证原服务失败诊断
-        const failedLogin = await request('failed-login', '/qq/login/qr/key', { channel: 'qq' });
-        assert.equal(failedLogin.body.code, 502);
-        assert.equal(failedLogin.body.failureStage, 'device-bootstrap');
-        assert(failedLogin.body.retryAfterMs > 0);
-        const backedOff = await request('backed-off-login', '/qq/login/qr/key', { channel: 'qq' });
-        assert.equal(backedOff.body.code, 429);
-        assert.equal(backedOff.body.failureReason, 'local-backoff');
-        assert.equal(backedOff.body.lastFailure.failureStage, 'device-bootstrap');
-        for (const route of [
-            '/cloud',
-            '/mv/download',
-            '/personal_fm',
-            '/qq/getComments',
-            '/kugou/user/cloud',
-            '/kugou/song/url/new',
-        ]) {
-            const rejected = await request(route, route);
-            assert.equal(rejected.body.code, 503);
-        }
+        const missingPlugin = await request('missing-plugin', '/plugin/nope/search', { args: [] });
+        assert.equal(missingPlugin.body.code, 404);
+        assert.equal(missingPlugin.body.errorKey, 'plugin.missing');
+        const missingNative = await request('missing-native', '/native/nope/search', { args: [] });
+        assert.equal(missingNative.body.code, 404);
+        assert.equal(missingNative.body.errorKey, 'plugin.missing');
+        const lyrics = await request('local-lyrics', '/local/lyrics', {
+            content: '[00:01.00]本地歌词\n[00:03.00]第二行\n',
+        });
+        assert.equal(lyrics.body.code, 200, JSON.stringify(lyrics.body));
+        assert.deepEqual(
+            lyrics.body.document.lines.map((line) => line.startMs),
+            [1000, 3000],
+        );
         child.stdin.end();
         const exit = await new Promise((resolve) => {
             child.once('exit', (code, signal) => resolve({ code, signal }));
@@ -288,18 +138,16 @@ async function main() {
         assert.equal(exit.signal, null);
         assert.equal(errors, '');
         console.log(
-            'Packaged NetEase Enhanced and QQ IPC, real dependency loading, local responses and core route allowlists passed',
+            'Packaged plugin manifests, entry hashes, worker route allowlists and local lyrics passed',
         );
     } finally {
         if (child && child.exitCode === null) {
             child.kill();
         }
-        fs.rmSync(temp, {
-            recursive: true,
-            force: true,
-        });
+        fs.rmSync(temp, { recursive: true, force: true });
     }
 }
+
 main().catch((error) => {
     console.error(error);
     process.exitCode = 1;

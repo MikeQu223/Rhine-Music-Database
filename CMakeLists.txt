@@ -147,6 +147,8 @@ set(RHINE_APP_SOURCES
     Qt/src/Host.h
     Qt/src/MusicApi.cpp
     Qt/src/MusicApi.h
+    Qt/src/ProviderRegistry.cpp
+    Qt/src/ProviderRegistry.h
     Qt/src/CommentsController.cpp
     Qt/src/CommentsController.h
     Qt/src/LyricsController.cpp
@@ -306,7 +308,7 @@ if(NOT RHINE_MOBILE_PLATFORM)
         RHINE_PLAYBACK_SOURCES
         INCLUDE
         REGEX
-        "/(AppUpdater|AppStorage|AudioPlayer|AudioSpectrum|HttpAudioStream|PlaybackDiagnostics|PlaybackConnection|Host|MusicApi|MusicPlayer|PlaybackQueue|LyricsController|Platform)\\.(cpp|h)$|/qrcodegen\\.cpp$"
+        "/(AppUpdater|AppStorage|AudioPlayer|AudioSpectrum|HttpAudioStream|PlaybackDiagnostics|PlaybackConnection|Host|MusicApi|MusicPlayer|PlaybackQueue|LyricsController|Platform|ProviderRegistry)\\.(cpp|h)$|/qrcodegen\\.cpp$"
     )
     list(REMOVE_ITEM RHINE_CORE_SOURCES ${RHINE_PLAYBACK_SOURCES})
     add_library(RhinePlaybackCore STATIC ${RHINE_PLAYBACK_SOURCES})
@@ -692,7 +694,7 @@ if(APPLE
         "${CMAKE_CURRENT_SOURCE_DIR}/scripts/*")
     list(
         APPEND RHINE_RESOURCE_INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/package.json"
-        "${CMAKE_CURRENT_SOURCE_DIR}/MusicBridge/worker.cjs" "${CMAKE_CURRENT_SOURCE_DIR}/MusicBridge/qq.cjs"
+        "${CMAKE_CURRENT_SOURCE_DIR}/MusicBridge/worker.cjs"
         "${CMAKE_CURRENT_SOURCE_DIR}/MusicBridge/package-lock.json")
     set_property(
         TARGET RhineMusicDatabase
@@ -720,7 +722,8 @@ qt_add_executable(
     Qt/src/AudioPlayer.cpp
     Qt/src/AudioSpectrum.cpp
     Qt/src/HttpAudioStream.cpp
-    Qt/src/ProcessMetrics.cpp)
+    Qt/src/ProcessMetrics.cpp
+    Qt/src/ProviderRegistry.cpp)
 target_include_directories(RhinePlatformRegression PRIVATE Qt/src)
 target_link_libraries(RhinePlatformRegression PRIVATE RhineAudioOutput Qt6::Core Qt6::Gui Qt6::Multimedia
                                                       Qt6::Network Qt6::MultimediaPrivate)
@@ -842,7 +845,7 @@ endif()
 add_test(NAME qt_linux_display_regression COMMAND RhineLinuxDisplayRegression)
 
 qt_add_executable(RhineAudioStreamRegression Qt/tests/AudioStreamChecks.cpp Qt/src/AudioPlayer.cpp
-                  Qt/src/AudioSpectrum.cpp Qt/src/HttpAudioStream.cpp)
+                  Qt/src/AudioSpectrum.cpp Qt/src/HttpAudioStream.cpp Qt/src/ProviderRegistry.cpp)
 target_include_directories(RhineAudioStreamRegression PRIVATE Qt/src)
 target_link_libraries(RhineAudioStreamRegression PRIVATE RhineAudioOutput Qt6::Core Qt6::Multimedia
                                                          Qt6::Network)
@@ -851,7 +854,8 @@ if(MSVC)
 endif()
 add_test(NAME qt_audio_stream_regression COMMAND RhineAudioStreamRegression)
 qt_add_executable(RhineAudioOutputRegression Qt/tests/AudioOutputChecks.cpp Qt/src/AudioPlayer.cpp
-                  Qt/src/AudioSpectrum.cpp Qt/src/HttpAudioStream.cpp Qt/src/PlaybackDiagnostics.cpp)
+                  Qt/src/AudioSpectrum.cpp Qt/src/HttpAudioStream.cpp Qt/src/PlaybackDiagnostics.cpp
+                  Qt/src/ProviderRegistry.cpp)
 target_link_libraries(RhineAudioOutputRegression PRIVATE RhineAudioOutput Qt6::Network)
 if(MSVC)
     target_compile_options(RhineAudioOutputRegression PRIVATE /utf-8)

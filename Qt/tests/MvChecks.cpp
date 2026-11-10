@@ -1,5 +1,6 @@
 #include "MvController.h"
 #include "MusicPlayer.h"
+#include "ProviderRegistry.h"
 #include "AppStorage.h"
 #include <QGuiApplication>
 #include <QDebug>
@@ -30,6 +31,20 @@ int main(int argc, char **argv) {
         pending.append(std::move(reply));
     };
     bool passed = true;
+    QString mvProvider;
+    for (const auto &id : ProviderRegistry::instance().ids()) {
+        if (ProviderRegistry::instance()
+                .descriptor(id)["operations"]
+                .toObject()["mv"]
+                .toBool()) {
+            mvProvider = id;
+            break;
+        }
+    }
+    if (mvProvider.isEmpty()) {
+        qInfo() << "MV checks skipped: no installed source declares MV support";
+        return 0;
+    }
     const auto check = [&](bool ok, const char *description) {
         if (!ok) {
             qCritical() << "MV regression:" << description;
@@ -37,8 +52,11 @@ int main(int argc, char **argv) {
             passed = false;
         }
     };
-    auto song = [](const QString &id, const QString &provider = "netease") {
-        return QJsonObject{{"id", id}, {"kind", "song"}, {"provider", provider}, {"title", id}};
+    auto song = [&mvProvider](const QString &id, const QString &provider = {}) {
+        return QJsonObject{{"id", id},
+                           {"kind", "song"},
+                           {"provider", provider.isEmpty() ? mvProvider : provider},
+                           {"title", id}};
     };
     MvController mv(&host, &music, nullptr, resolve);
     music.current = song("1");
@@ -62,12 +80,12 @@ int main(int argc, char **argv) {
     const auto disabled = mv.status();
     pending[2]({{}, "late request", {}});
     check(mv.status() == disabled && mv.source().isEmpty(), "disabling invalidates outstanding work");
-    music.current = song("3", "qq");
+    music.current = song("3", "siren");
     mv.setEnabled(true);
-    check(requests == 3 && mv.source().isEmpty(), "other providers cannot play a stale NetEase video");
+    check(requests == 3 && mv.source().isEmpty(), "sources without MV support cannot reuse a stale video");
     music.current = song("4");
     emit music.changed();
-    check(requests == 4, "returning to NetEase starts a fresh request");
+    check(requests == 4, "returning to an MV source starts a fresh request");
     ++host.epoch;
     pending[3]({{}, "old account", {}});
     check(!mv.status().contains("old account"), "old-account response is discarded");
@@ -360,6 +378,25 @@ int main(int argc, char **argv) {
     check(waitFor([&] { return pausedSink.videoFrame().isValid(); }),
           "opening MV while music is paused displays its first frame");
     paused.setEnabled(false);
+
+    // Default resolver must bind the controller's MusicApi to the current track's provider.
+    if (!mvProvider.isEmpty()) {
+        Host routeHost(host.root, true);
+        MusicApi routeApi(&routeHost);
+        MusicPlayer routeMusic(&routeHost, &routeApi);
+        routeMusic.current = song("route", mvProvider);
+        QStringList routes;
+        routeHost.fixture = [&](QString route, QJsonObject) {
+            routes.append(route);
+            return QJsonObject{{"body", QJsonObject{{"code", 200}, {"value", QJsonValue::Null}}}};
+        };
+        MvController routed(&routeHost, &routeMusic);
+        routed.setEnabled(true);
+        check(waitFor([&] { return routes.contains("/native/" + mvProvider + "/mv"); }),
+              "default MV resolver reaches the current provider");
+        routed.setEnabled(false);
+        routeHost.shutdown();
+    }
     host.shutdown();
     return passed ? 0 : 1;
 }

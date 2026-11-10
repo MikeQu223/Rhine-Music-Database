@@ -195,7 +195,7 @@ QJsonObject PlaybackDiagnostics::report() const {
              {"bridgeState", "QProcess::ProcessState"},
              {"bridgeError", "QProcess::ProcessError; may reflect the last error"},
              {"stale", "credential epoch mismatch; playback request validity is managed separately"},
-             {"provider", "0=other,1=netease,2=qq,3=kugou,4=local,5=siren"},
+             {"provider", "manifest runtime.diagnosticsOrdinal; 0=other"},
              {"sourceKind", "0=other,1=https,2=http,3=local-file"},
              {"action", "0=other,1=pause,2=resume,3=stop,4=seek,5=volume"},
              {"operation", "1=playback,2=preview,3=media-url,4=other-playback-upstream,5=upstream-http"},

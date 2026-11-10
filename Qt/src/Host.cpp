@@ -1,5 +1,6 @@
 #include "fg/FgConfig.h"
 #include "Host.h"
+#include "ProviderRegistry.h"
 #include "AppStorage.h"
 #include <QBuffer>
 #include <QClipboard>
@@ -9,6 +10,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QProcess>
 #include <QFutureWatcher>
 #include <QGuiApplication>
 #include <QImageReader>
@@ -24,26 +26,306 @@
 #include <QUrlQuery>
 #include <QUuid>
 #include <QtConcurrentRun>
+#include <cmath>
 
 static QString hash(QByteArray value) {
     return QCryptographicHash::hash(value, QCryptographicHash::Sha256).toHex();
 }
-// 按路由隔离平台的缓存、限流和账号范围。
+// 按路由隔离插件的缓存、限流和账号范围；provider 由 Registry/路由段解析。
 static QString routeProvider(const QString &route) {
-    if (route.startsWith("/native/")) {
-        return route.section('/', 2, 2);
+    if (route.startsWith("/native/") || route.startsWith("/plugin/")) {
+        const auto id = route.section('/', 2, 2);
+        return id.isEmpty() ? QStringLiteral("other") : id;
     }
-    if (route.startsWith("/qq/")) {
-        return "qq";
+    const auto id = ProviderRegistry::instance().providerForRoute(route);
+    return id.isEmpty() ? QStringLiteral("other") : id;
+}
+static bool reservedPluginId(const QString &id) {
+    return id == "local" || id == "siren";
+}
+static bool validPluginId(const QString &id) {
+    static const QRegularExpression pattern("^[a-z0-9-]{1,40}$");
+    return pattern.match(id).hasMatch() && !reservedPluginId(id);
+}
+static bool pluginRelativeFile(const QString &file) {
+    return !file.isEmpty() && !QDir::isAbsolutePath(file) && !file.contains("..") && !file.contains('\\');
+}
+static bool compatiblePluginApi(const QString &version) {
+    static const QRegularExpression pattern("^(\\d+)\\.(\\d+)$");
+    const auto match = pattern.match(version);
+    return match.hasMatch() && match.captured(1).toInt() == 2 && match.captured(2).toInt() <= 0;
+}
+/** 市场安装前按 worker Registry 的同一组硬性条件校验 manifest。 */
+static bool validPluginManifest(const QJsonObject &manifest) {
+    if (manifest["schemaVersion"].toInt() != 2) {
+        return false;
     }
-    if (route.startsWith("/kugou/")) {
-        return "kugou";
+    if (!validPluginId(manifest["id"].toString()) || manifest["version"].toString().isEmpty() ||
+        !compatiblePluginApi(manifest["apiVersion"].toString())) {
+        return false;
     }
-    return "netease";
+    const auto display = manifest["display"].toObject();
+    if (display["name"].toString().isEmpty() || !manifest["capabilities"].isObject()) {
+        return false;
+    }
+    if (!pluginRelativeFile(manifest["entry"].toObject()["file"].toString())) {
+        return false;
+    }
+    const auto routes = manifest["routes"].toObject();
+    for (const auto *key : {"legacyRoutes", "prefixes"}) {
+        const auto values = routes[key];
+        if (values.isUndefined()) {
+            continue;
+        }
+        if (!values.isArray()) {
+            return false;
+        }
+        for (const auto &value : values.toArray()) {
+            if (!value.isString() || !value.toString().startsWith('/')) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+static bool copyPluginDirectory(const QString &source, const QString &destination) {
+    QDir sourceDirectory(source);
+    if (!QDir().mkpath(destination)) {
+        return false;
+    }
+    const auto entries = sourceDirectory.entryInfoList(
+        QDir::Dirs | QDir::Files | QDir::Hidden | QDir::NoDotAndDotDot, QDir::Name);
+    for (const auto &entry : entries) {
+        if (entry.fileName() == ".git") {
+            continue;
+        }
+        const auto target = destination + "/" + entry.fileName();
+        if (entry.isDir()) {
+            if (!copyPluginDirectory(entry.absoluteFilePath(), target)) {
+                return false;
+            }
+        } else if (entry.isFile() && !QFile::copy(entry.absoluteFilePath(), target)) {
+            return false;
+        }
+    }
+    return true;
+}
+namespace {
+QJsonValue jsonValueAt(const QJsonObject &root, const QString &path) {
+    QJsonValue value(root);
+    for (const auto &part : path.split('.', Qt::SkipEmptyParts)) {
+        if (!value.isObject()) {
+            return {};
+        }
+        value = value.toObject().value(part);
+    }
+    return value;
+}
+
+void setJsonPath(QJsonObject &root, const QStringList &parts, int index, const QJsonValue &value) {
+    if (index >= parts.size()) {
+        return;
+    }
+    if (index == parts.size() - 1) {
+        root[parts[index]] = value;
+        return;
+    }
+    auto child = root[parts[index]].toObject();
+    setJsonPath(child, parts, index + 1, value);
+    root[parts[index]] = child;
+}
+
+bool nonEmptyJson(const QJsonValue &value) {
+    if (value.isString()) {
+        return !value.toString().isEmpty();
+    }
+    if (value.isArray()) {
+        return !value.toArray().isEmpty();
+    }
+    if (value.isObject()) {
+        return !value.toObject().isEmpty();
+    }
+    return !value.isUndefined() && !value.isNull();
+}
+
+bool authPredicateMatches(const QJsonObject &predicate, const QJsonObject &cookies,
+                          const QJsonObject &secrets, const QString &variant) {
+    if (predicate["allOf"].isArray()) {
+        for (const auto &value : predicate["allOf"].toArray()) {
+            if (!value.isObject() || !authPredicateMatches(value.toObject(), cookies, secrets, variant)) {
+                return false;
+            }
+        }
+        return !predicate["allOf"].toArray().isEmpty();
+    }
+    if (predicate["anyOf"].isArray()) {
+        for (const auto &value : predicate["anyOf"].toArray()) {
+            if (value.isObject() && authPredicateMatches(value.toObject(), cookies, secrets, variant)) {
+                return true;
+            }
+        }
+        return false;
+    }
+    if (predicate["cookie"].isString()) {
+        const auto value = cookies.value(predicate["cookie"].toString());
+        return predicate["nonEmpty"].toBool(true) ? nonEmptyJson(value) : value.isString();
+    }
+    if (predicate["secret"].isString()) {
+        auto path = predicate["secret"].toString();
+        path.replace("$variant", variant);
+        const auto value = jsonValueAt(secrets, path);
+        const auto kind = predicate["kind"].toString();
+        if (kind == "string") {
+            return value.isString();
+        }
+        if (kind == "number") {
+            return value.isDouble();
+        }
+        if (kind == "positiveInteger") {
+            return value.isDouble() && value.toDouble() > 0 &&
+                   std::floor(value.toDouble()) == value.toDouble();
+        }
+        if (kind == "object") {
+            return value.isObject();
+        }
+        if (kind == "array") {
+            return value.isArray();
+        }
+        return predicate["nonEmpty"].toBool(true) ? nonEmptyJson(value) : !value.isUndefined();
+    }
+    return false;
+}
+
+bool authMatches(const QString &provider, const QJsonObject &cookies, const QJsonObject &secrets,
+                 const QString &variant) {
+    const auto policy = ProviderRegistry::instance().credentialPolicy(provider);
+    const auto anyOf = policy["auth"].toObject()["anyOf"].toArray();
+    for (const auto &value : anyOf) {
+        if (value.isObject() && authPredicateMatches(value.toObject(), cookies, secrets, variant)) {
+            return true;
+        }
+    }
+    return false;
+}
+}
+
+/**
+ * 旧版扁平 cookie jar 按插件 manifest 的 credentials.legacy 映射迁移一次。
+ * 未匹配的键保留在 credentials.legacy，插件随后安装时仍可继续迁移。
+ */
+QJsonObject Host::migrateCredential(const QJsonObject &legacy) {
+    QJsonObject providers;
+    QJsonObject pending;
+    if (legacy["version"].toInt() == 2 && legacy["providers"].isObject()) {
+        providers = legacy["providers"].toObject();
+        pending = legacy["legacy"].toObject();
+    } else {
+        for (auto it = legacy.begin(); it != legacy.end(); ++it) {
+            if (it.key() != "version" && it.key() != "providers") {
+                pending.insert(it.key(), it.value());
+            }
+        }
+    }
+    const auto apply = [&](const QString &id, bool defaults) {
+        const auto policy = ProviderRegistry::instance().credentialPolicy(id)["legacy"].toObject();
+        if (policy["default"].toBool() != defaults) {
+            return;
+        }
+        const auto cookieMap = policy["cookies"].toObject();
+        const auto secretMap = policy["secrets"].toObject();
+        auto entry = providers.value(id).toObject();
+        auto cookies = entry["cookies"].toObject();
+        auto secrets = entry["secrets"].toObject();
+        bool changed = false;
+        if (!defaults) {
+            for (auto it = cookieMap.begin(); it != cookieMap.end(); ++it) {
+                if (pending.contains(it.key())) {
+                    cookies.insert(it.value().toString(), pending.take(it.key()));
+                    changed = true;
+                }
+            }
+            for (auto it = secretMap.begin(); it != secretMap.end(); ++it) {
+                if (pending.contains(it.key())) {
+                    const auto value = pending.take(it.key());
+                    if (it.value().toString() == "$root" && value.isObject()) {
+                        const auto object = value.toObject();
+                        for (auto inner = object.begin(); inner != object.end(); ++inner) {
+                            secrets.insert(inner.key(), inner.value());
+                        }
+                    } else if (!it.value().toString().isEmpty()) {
+                        secrets.insert(it.value().toString(), value);
+                    }
+                    changed = true;
+                }
+            }
+        } else {
+            for (auto it = pending.begin(); it != pending.end();) {
+                if (it.key().startsWith("__")) {
+                    ++it;
+                    continue;
+                }
+                cookies.insert(it.key(), it.value());
+                it = pending.erase(it);
+                changed = true;
+            }
+        }
+        if (changed) {
+            entry["cookies"] = cookies;
+            if (!secrets.isEmpty()) {
+                entry["secrets"] = secrets;
+            }
+            providers[id] = entry;
+        }
+    };
+    // 显式映射优先，默认来源最后接收剩余扁平键，避免抢走其他来源的 cookie。
+    for (const auto &id : ProviderRegistry::instance().ids()) {
+        apply(id, false);
+    }
+    for (const auto &id : ProviderRegistry::instance().ids()) {
+        apply(id, true);
+    }
+    QJsonObject result{{"version", 2}, {"providers", providers}};
+    if (!pending.isEmpty()) {
+        result["legacy"] = pending;
+    }
+    return result;
+}
+
+/** v2 结构原样保存；旧版降级投影已移除。 */
+QJsonObject Host::storageCredential(const QJsonObject &credentials) {
+    return credentials;
+}
+
+/** 返回单个插件可见的 cookie；secret 注入由 manifest credentials.inject 声明。 */
+QJsonObject Host::credentialCookies(const QJsonObject &credentials, const QString &provider,
+                                    const QString &variant) {
+    const auto entry = credentials["providers"].toObject()[provider].toObject();
+    auto cookies = entry["cookies"].toObject();
+    const auto secrets = entry["secrets"].toObject();
+    const auto inject = ProviderRegistry::instance().credentialPolicy(provider)["inject"].toObject();
+    for (auto it = inject.begin(); it != inject.end(); ++it) {
+        const auto rule = it.value().toObject();
+        auto path = rule["secret"].toString();
+        path.replace("$variant", variant);
+        const auto value = jsonValueAt(secrets, path);
+        if (value.isUndefined()) {
+            continue;
+        }
+        cookies[it.key()] = rule["object"].toBool() ? QJsonValue(value.toObject()) : value;
+    }
+    return cookies;
 }
 Host::Host(QString path, bool test, QObject *parent, bool service, PlaybackConnection *connection)
     : QObject(parent), updater(test), root(path), offline(test), remote(test ? nullptr : connection),
       playbackOnly(service) {
+    ProviderRegistry::instance().load(root, AppStorage::dataDirectory() + "/plugins", disabledPlugins());
+    provider = ProviderRegistry::instance().defaultId();
+    if (provider.isEmpty()) {
+        provider = ProviderRegistry::instance().fallbackId();
+    }
+    if (provider.isEmpty()) {
+        provider = "siren";
+    }
     connect(&updater, &AppUpdater::changed, this, &Host::invalidate);
     if (remote) {
         connect(remote, &PlaybackConnection::spectrumChanged, this, &Host::audioSpectrumChanged);
@@ -57,11 +339,21 @@ Host::Host(QString path, bool test, QObject *parent, bool service, PlaybackConne
             Qt::QueuedConnection);
 #endif
     }
-    if (preference("kugou-edition") == "lite") {
-        kugouEdition = "lite";
+    const auto variants = ProviderRegistry::instance().variants(provider);
+    if (!variants.isEmpty()) {
+        const auto preferenceKey = ProviderRegistry::instance().variantPreference(provider);
+        const auto saved = preferenceKey.isEmpty() ? QString() : preference(preferenceKey);
+        bool valid = false;
+        for (const auto &value : variants) {
+            if (value.toObject()["id"].toString() == saved) {
+                valid = true;
+                break;
+            }
+        }
+        providerVariant = valid ? saved : variants.first().toObject()["id"].toString("standard");
     }
     if (!offline && !remote) {
-        cookies = QJsonDocument::fromJson(platformCredential()).object();
+        credentials = migrateCredential(QJsonDocument::fromJson(platformCredential()).object());
     } else {
         interval = 0;
     }
@@ -121,63 +413,30 @@ Host::~Host() {
     shutdown();
 }
 int Host::lifetime(const QString &route) {
-    if (route.startsWith("/native/")) {
-        const auto operation = route.section('/', 3, 3);
-        if (operation == "songs" || operation == "wiki") {
-            return 86400;
-        }
-        if (operation == "detail" || operation == "artistAlbums") {
-            return 21600;
-        }
-        if (QStringList{"userPlaylists", "likedIDs", "likedSongs", "likedAlbums"}.contains(operation)) {
-            return 60;
-        }
-        if (operation == "search" || operation == "categories") {
-            return 900;
-        }
+    const auto service = routeProvider(route);
+    if (service.isEmpty() || service == "other") {
         return 0;
     }
-    if (route.startsWith("/kugou/")) {
-        if (route.startsWith("/kugou/login/") || route == "/kugou/song/url" ||
-            route == "/kugou/register/dev") {
+    const auto cache = ProviderRegistry::instance().cachePolicy(service);
+    const auto ttlByRoute = cache["ttlByRoute"].toObject();
+    if (route.startsWith("/native/") || route.startsWith("/plugin/")) {
+        const auto operation = route.section('/', 3, 3);
+        const auto ttl = cache["ttlByOperation"].toObject();
+        if (operation == "route") {
+            const auto suffix = "/" + route.section('/', 4);
+            for (auto it = ttlByRoute.begin(); it != ttlByRoute.end(); ++it) {
+                if (suffix == it.key() || suffix.startsWith(it.key() + "/")) {
+                    return it.value().toInt();
+                }
+            }
             return 0;
         }
-        return route.startsWith("/kugou/user/") ? 60 : 900;
+        return ttl.value(operation).toInt();
     }
-    if (route.startsWith("/qq/")) {
-        if (QStringList{"/qq/user/song/like", "/qq/user/album/subscribe", "/qq/user/playlist/subscribe",
-                        "/qq/user/playlist/tracks", "/qq/user/playlist/create", "/qq/user/playlist/rename",
-                        "/qq/user/playlist/delete", "/qq/user/subscription-status"}
-                .contains(route)) {
-            return 0;
+    for (auto it = ttlByRoute.begin(); it != ttlByRoute.end(); ++it) {
+        if (route == it.key() || route.startsWith(it.key() + "/")) {
+            return it.value().toInt();
         }
-        if (route.startsWith("/qq/login/") || route == "/qq/logout" || route == "/qq/getMusicPlay") {
-            return 0;
-        }
-        return route.startsWith("/qq/user/") ? 60 : 900;
-    }
-    if (route == "/song/detail" || route == "/song/wiki/summary") {
-        return 86400;
-    }
-    if (route == "/album" || route == "/artists" || route == "/artist/album") {
-        return 21600;
-    }
-    if (QStringList{"/playlist/detail", "/user/playlist", "/likelist", "/album/sublist", "/artist/sublist"}
-            .contains(route)) {
-        return 600;
-    }
-    if (route == "/user/account") {
-        return 1800;
-    }
-    if (QStringList{"/personalized", "/toplist", "/album/newest", "/top/playlist", "/playlist/catlist"}
-            .contains(route)) {
-        return 900;
-    }
-    if (route == "/recommend/songs") {
-        return 60;
-    }
-    if (route == "/search" || route == "/search/suggest") {
-        return 900;
     }
     return 0;
 }
@@ -224,9 +483,8 @@ void Host::requestJson(QString route, QJsonObject values, JsonReply callback) {
         if (route.startsWith("/native/")) {
             operationCode = operation == "preview" ? 2 : 1;
         }
-        const int requestProvider = int(std::max<qsizetype>(
-            0,
-            QStringList{"other", "netease", "qq", "kugou", "local", "siren"}.indexOf(routeProvider(route))));
+        const int requestProvider =
+            ProviderRegistry::instance().diagnosticsOrdinal(routeProvider(route), 0);
         recordPlaybackDiagnostic(
             "request-start",
             {{"requestSerial", serial}, {"operation", operationCode}, {"provider", requestProvider}});
@@ -265,21 +523,37 @@ void Host::requestJson(QString route, QJsonObject values, JsonReply callback) {
         };
     }
     const auto service = routeProvider(route);
-    auto token = cookies[service == "qq" ? "qqmusic_session" : "MUSIC_U"].toString();
-    if (service == "kugou") {
-        token = cookies["__kugou"].toObject()[kugouEdition].toObject()["token"].toString();
-    }
-    const auto scope = token.isEmpty() ? "guest" : hash(token.toUtf8());
-    const bool cached = lifetime(route) > 0;
+    const auto scopedCookies = cookieSlice(service);
+    const auto scopedSecrets = secretsFor(service);
+    const auto scope =
+        (scopedCookies.isEmpty() && scopedSecrets.isEmpty())
+            ? QStringLiteral("guest")
+            : hash(QJsonDocument(scopedCookies).toJson(QJsonDocument::Compact) +
+                   QJsonDocument(scopedSecrets).toJson(QJsonDocument::Compact));
+    const auto cached = lifetime(route) > 0;
+    const auto manifest = ProviderRegistry::instance().manifest(service);
+    const auto cachePolicy = ProviderRegistry::instance().cachePolicy(service);
+    const auto cacheVersion =
+        cachePolicy["version"].toString(manifest["version"].toString(QStringLiteral("0")));
+    const auto cacheOperation = route.section('/', 3, 3);
     const auto key =
         cached
-            ? cacheKey("enhanced-4.41.1/qq-3.3.5/kugou-ba3645f2/" + scope + QString::number(metadataRevision),
+            ? cacheKey(service + ":" + cacheVersion + ":" + scope + QString::number(metadataRevision),
                        route, values)
             : QUuid::createUuid().toString();
-    const bool disk = !offline && scope == "guest" &&
-                      QStringList{"/song/detail",  "/song/wiki/summary", "/album", "/artists",
-                                  "/artist/album", "/playlist/detail",   "/search"}
-                          .contains(route);
+    const auto diskOperations = cachePolicy["diskOperations"].toArray();
+    bool diskOperation = false;
+    for (const auto &value : diskOperations) {
+        if (value.isString() &&
+            (value.toString() == cacheOperation || value.toString() == route ||
+             route.startsWith(value.toString() + "/"))) {
+            diskOperation = true;
+            break;
+        }
+    }
+    const bool disk = !offline && scope == QStringLiteral("guest") &&
+                      cachePolicy["disk"].toString(QStringLiteral("none")) == QStringLiteral("guest") &&
+                      diskOperation;
     Waiter waiter{std::move(callback), epoch};
     if (disk && !cache.contains(key)) {
         QFile f(diskPath(key));
@@ -297,9 +571,18 @@ void Host::requestJson(QString route, QJsonObject values, JsonReply callback) {
         flights[key].waiters.append(waiter);
         return;
     }
-    flights.insert(
-        key, {QUuid::createUuid().toString(), route, key, values, cookies, {waiter}, disk, metadataRevision});
-    if (cached || route == "/song/url" || route == "/song/url/v1" || route.startsWith("/comment/")) {
+    flights.insert(key, {QUuid::createUuid().toString(),
+                         route,
+                         key,
+                         values,
+                         scopedCookies,
+                         {waiter},
+                         disk,
+                         metadataRevision});
+    const auto commentRequest =
+        route.startsWith("/comment/") ||
+        (route.startsWith("/native/") && QStringList{"comments", "commentReplies"}.contains(operation));
+    if (cached || route == "/song/url" || route == "/song/url/v1" || commentRequest) {
         queue.enqueue(key);
         pump();
     } else {
@@ -354,7 +637,9 @@ void Host::send(QString key) {
         // 移动端由进程内的 Node 运行时执行同一个 worker，路径必须是真实文件系统路径
         // （Android 侧已把内嵌资源解包到应用私有目录，root 指向解包结果）。
         pending.insert(work.id, key);
-        child.start(root, temporary->path(), kugouEdition);
+        child.start(root, temporary->path(),
+                    {{"RHINE_USER_PLUGINS", AppStorage::dataDirectory() + "/plugins"},
+                     {"RHINE_DISABLED_PLUGINS", disabledPlugins().join(',')}});
         return;
 #else
         QProcessEnvironment env;
@@ -377,10 +662,8 @@ void Host::send(QString key) {
 #endif
         env.insert("TMPDIR", temporary->path());
         env.insert("LANG", "en_US.UTF-8");
-        // 设备身份独立于缓存与账号凭据，重启及切换来源后继续复用上游设备配置。
-        env.insert("RHINE_QQ_DEVICE_STATE_PATH", AppStorage::dataDirectory() + "/qq-device.json");
-        env.insert("RHINE_KUGOU_DEVICE_STATE_PATH", AppStorage::dataDirectory() + "/kugou-device.json");
-        env.insert("RHINE_KUGOU_EDITION", kugouEdition);
+        env.insert("RHINE_USER_PLUGINS", AppStorage::dataDirectory() + "/plugins");
+        env.insert("RHINE_DISABLED_PLUGINS", disabledPlugins().join(','));
         child.setProcessEnvironment(env);
         // 子进程的工作目录改到应用自己的系统临时目录
         child.setWorkingDirectory(temporary->path());
@@ -401,13 +684,27 @@ void Host::send(QString key) {
         return;
     }
     pending.insert(work.id, key);
-    if (routeProvider(work.route) == "kugou" && !work.waiters.isEmpty() &&
-        work.waiters.first().epoch == epoch) {
-        // 同一账号排队期间完成设备注册或令牌刷新后，使用最新的私有凭据。
-        work.cookies["__kugou"] = cookies["__kugou"].toObject()[kugouEdition];
+    const auto service = routeProvider(work.route);
+    const auto serviceVariant = variantFor(service);
+    // 排队期间可能完成登录/设备注册；发送前重新读取最新凭据切片。
+    work.cookies = cookieSlice(service);
+    const auto dataDir = AppStorage::dataDirectory() + "/plugin-data/" + service;
+    QDir().mkpath(dataDir);
+    QJsonObject env;
+    const auto runtimeEnv = ProviderRegistry::instance().runtimeConfig(service)["env"].toObject();
+    for (auto it = runtimeEnv.begin(); it != runtimeEnv.end(); ++it) {
+        auto value = it.value().toString();
+        value.replace("$variant", serviceVariant);
+        value.replace("$dataDir", dataDir);
+        env.insert(it.key(), value);
     }
-    QJsonObject envelope{
-        {"id", work.id}, {"route", work.route}, {"params", work.params}, {"cookies", work.cookies}};
+    QJsonObject envelope{{"id", work.id},
+                         {"route", work.route},
+                         {"params", work.params},
+                         {"cookies", work.cookies},
+                         {"env", env},
+                         {"authenticated",
+                          authMatches(service, work.cookies, secretsFor(service), serviceVariant)}};
     if (audioDiagnosticsEnabled && work.route.startsWith("/native/") &&
         QStringList{"playback", "preview"}.contains(work.route.section('/', 3, 3))) {
         envelope["_collectPlaybackDiagnostics"] = true;
@@ -424,28 +721,46 @@ void Host::finish(QString key, QJsonObject response, QString error) {
         return;
     }
     const auto work = flights.take(key);
-    // QQ 原始认证记录只经过 C++ 与子进程，禁止出现在界面回调中。
-    if (response["qqSessions"].isArray() && response["qqSessions"] != cookies["__qqSessions"] &&
-        !work.waiters.isEmpty() && work.waiters.first().epoch == epoch) {
-        cookies["__qqSessions"] = response["qqSessions"];
-        if (!cookies["qqmusic_session"].toString().isEmpty()) {
+    const auto service = routeProvider(work.route);
+    // 插件私有 secret 由 manifest 声明，只持久化到当前 provider 切片，不进入 UI 回调。
+    const auto responseSecrets =
+        ProviderRegistry::instance().credentialPolicy(service)["responseSecrets"].toObject();
+    bool secretsChanged = false;
+    if (!responseSecrets.isEmpty() && !work.waiters.isEmpty() && work.waiters.first().epoch == epoch) {
+        auto secrets = secretsFor(service);
+        for (auto it = responseSecrets.begin(); it != responseSecrets.end(); ++it) {
+            if (!response.contains(it.key())) {
+                continue;
+            }
+            auto path = it.value().toString();
+            path.replace("$variant", variantFor(service));
+            setJsonPath(secrets, path.split('.', Qt::SkipEmptyParts), 0, response[it.key()]);
+            secretsChanged = true;
+        }
+        if (secretsChanged) {
+            setSecretsFor(service, secrets);
             saveCredential();
         }
     }
-    response.remove("qqSessions");
-    // 酷狗原始认证暂存，等待原生业务确认请求代数仍有效。
-    if (response["kugouCredentials"].isObject() && !work.waiters.isEmpty() &&
-        work.waiters.first().epoch == epoch) {
-        const auto credentialKey = QUuid::createUuid().toString();
-        privateCredentials[credentialKey] = response["kugouCredentials"].toObject();
-        response["_credentialKey"] = credentialKey;
-        QTimer::singleShot(30000, this, [this, credentialKey] { privateCredentials.remove(credentialKey); });
+    for (auto it = responseSecrets.begin(); it != responseSecrets.end(); ++it) {
+        response.remove(it.key());
     }
-    response.remove("kugouCredentials");
+    response.remove("_credentialKey");
     const auto body = response["body"].toObject();
     const auto code = body["code"].toInt(200);
+    const auto expiredCodes = ProviderRegistry::instance()
+                                  .credentialPolicy(service)["auth"]
+                                  .toObject()["expiredCodes"]
+                                  .toArray();
+    if (expiredCodes.contains(QJsonValue(code))) {
+        response["authExpired"] = true;
+    }
+    const auto commentRequest =
+        work.route.startsWith("/comment/") ||
+        (work.route.startsWith("/native/") &&
+         QStringList{"comments", "commentReplies"}.contains(work.route.section('/', 3, 3)));
     if (lifetime(work.route) || work.route == "/song/url" || work.route == "/song/url/v1" ||
-        work.route.startsWith("/comment/")) {
+        commentRequest) {
         const auto message = body["message"].toString(body["msg"].toString());
         if (QList<int>{405, 429, 509}.contains(code) || message.contains("频繁")) {
             blockedUntil[routeProvider(work.route)] =
@@ -455,7 +770,9 @@ void Host::finish(QString key, QJsonObject response, QString error) {
             response["body"].isObject() && code == 200) {
             Entry entry{QDateTime::currentMSecsSinceEpoch() + lifetime(work.route) * 1000LL, body};
             cache.insert(key, entry);
-            if (cache.size() > 256) {
+            const int maxEntries =
+                qMax(1, ProviderRegistry::instance().cachePolicy(service)["maxEntries"].toInt(256));
+            if (cache.size() > maxEntries) {
                 for (auto it = cache.begin(); it != cache.end();) {
                     if (it->expiry <= QDateTime::currentMSecsSinceEpoch()) {
                         it = cache.erase(it);
@@ -463,7 +780,7 @@ void Host::finish(QString key, QJsonObject response, QString error) {
                         ++it;
                     }
                 }
-                if (cache.size() > 256) {
+                if (cache.size() > maxEntries) {
                     cache.erase(cache.begin());
                 }
             }
@@ -500,23 +817,21 @@ void Host::respond(const Waiter &waiter, QJsonObject response, QString error) {
 /**
  * 只接受当前账号代数对应的 Cookie，避免过期请求覆盖新登录。
  */
-void Host::acceptCookies(QString json, int responseEpoch, QString credentialKey) {
+void Host::acceptCookies(QString json, int responseEpoch, QString credentialKey, QString provider) {
+    const auto target = provider.isEmpty() ? this->provider : provider;
     if (remote) {
-        remote->call("host.acceptCookies",
-                     {{"json", json}, {"epoch", responseEpoch}, {"credentialKey", credentialKey}});
+        remote->call("host.acceptCookies", {{"json", json},
+                                            {"epoch", responseEpoch},
+                                            {"credentialKey", credentialKey},
+                                            {"provider", target}});
         return;
     }
     if (responseEpoch != epoch || stopped) {
         return;
     }
+    Q_UNUSED(credentialKey)
     bool changed = false;
-    if (privateCredentials.contains(credentialKey)) {
-        const auto credential = privateCredentials.take(credentialKey);
-        auto editions = cookies["__kugou"].toObject();
-        changed = editions[kugouEdition] != credential;
-        editions[kugouEdition] = credential;
-        cookies["__kugou"] = editions;
-    }
+    auto cookies = cookiesFor(target);
     for (auto line : QJsonDocument::fromJson(json.toUtf8()).array()) {
         for (auto cookie : QNetworkCookie::parseCookies(line.toString().toUtf8())) {
             const auto name = QString::fromUtf8(cookie.name());
@@ -525,8 +840,11 @@ void Host::acceptCookies(QString json, int responseEpoch, QString credentialKey)
             cookies[name] = value;
         }
     }
-    // 保存有效账号请求更新的 Cookie，避免重启恢复的是刷新前的凭据。
-    if (changed && (hasCredential("qq") || hasCredential("netease") || hasCredential("kugou"))) {
+    if (changed) {
+        setCookiesFor(target, cookies);
+    }
+    // 登录/刷新后的 cookie 或 secret 更新才落盘；guest cookie 不污染账号存储。
+    if (changed && authMatches(target, cookies, secretsFor(target), variantFor(target))) {
         saveCredential();
     }
 }
@@ -544,20 +862,76 @@ bool Host::hasCredential(QString value) const {
     if (remote) {
         return remote->snapshot()["credentials"].toObject()[value].toBool();
     }
-    if (value != "qq" && value != "netease" && value != "kugou") {
+    if (!ProviderRegistry::instance().contains(value)) {
         return false;
     }
-    if (value == "kugou") {
-        const auto credential = cookies["__kugou"].toObject()[kugouEdition].toObject();
-        return !credential["token"].toString().isEmpty() && credential["userid"].toString().toULongLong() > 0;
+    return authMatches(value, cookiesFor(value), secretsFor(value), variantFor(value));
+}
+/**
+ * 登录成功、重置登录或切换账号后作废所有旧代数请求；
+ * GUI 与服务必须同步递增，否则后续 Cookie 会被服务端当作过期响应丢弃。
+ */
+void Host::bumpEpoch() {
+    if (remote) {
+        remote->call("host.bumpEpoch");
     }
-    return !cookies[value == "qq" ? "qqmusic_session" : "MUSIC_U"].toString().isEmpty();
+    ++epoch;
+}
+QJsonObject Host::cookiesFor(const QString &value) const {
+    return credentials["providers"].toObject()[value].toObject()["cookies"].toObject();
+}
+void Host::setCookiesFor(const QString &value, const QJsonObject &cookies) {
+    if (!credentials.contains("version")) {
+        credentials["version"] = 2;
+    }
+    auto providers = credentials["providers"].toObject();
+    auto entry = providers[value].toObject();
+    entry["cookies"] = cookies;
+    providers[value] = entry;
+    credentials["providers"] = providers;
+}
+QJsonObject Host::secretsFor(const QString &value) const {
+    return credentials["providers"].toObject()[value].toObject()["secrets"].toObject();
+}
+void Host::setSecretsFor(const QString &value, const QJsonObject &secrets) {
+    if (!credentials.contains("version")) {
+        credentials["version"] = 2;
+    }
+    auto providers = credentials["providers"].toObject();
+    auto entry = providers[value].toObject();
+    if (secrets.isEmpty()) {
+        entry.remove("secrets");
+    } else {
+        entry["secrets"] = secrets;
+    }
+    providers[value] = entry;
+    credentials["providers"] = providers;
+}
+QJsonObject Host::cookieSlice(const QString &value) const {
+    return credentialCookies(credentials, value, variantFor(value));
+}
+QString Host::variantFor(const QString &value) const {
+    if (value == provider) {
+        return providerVariant;
+    }
+    const auto variants = ProviderRegistry::instance().variants(value);
+    const auto preferenceKey = ProviderRegistry::instance().variantPreference(value);
+    if (!preferenceKey.isEmpty()) {
+        const auto saved = preference(preferenceKey);
+        for (const auto &variant : variants) {
+            if (variant.toObject()["id"].toString() == saved) {
+                return saved;
+            }
+        }
+    }
+    return variants.isEmpty() ? QString()
+                              : variants.first().toObject()["id"].toString("standard");
 }
 /**
  * 切换音乐来源，保持各来源的凭据与缓存隔离。
  */
 void Host::setProvider(QString value) {
-    if (value != "qq" && value != "netease" && value != "kugou" && value != "local" && value != "siren") {
+    if (!ProviderRegistry::instance().contains(value)) {
         return;
     }
     if (remote) {
@@ -567,29 +941,55 @@ void Host::setProvider(QString value) {
         return;
     }
     provider = value;
+    const auto variants = ProviderRegistry::instance().variants(provider);
+    if (!variants.isEmpty()) {
+        const auto preferenceKey = ProviderRegistry::instance().variantPreference(provider);
+        const auto saved = preferenceKey.isEmpty() ? QString() : preference(preferenceKey);
+        bool valid = false;
+        for (const auto &item : variants) {
+            if (item.toObject()["id"].toString() == saved) {
+                valid = true;
+                break;
+            }
+        }
+        providerVariant = valid ? saved : variants.first().toObject()["id"].toString("standard");
+    }
     ++epoch;
-    privateCredentials.clear();
     ++metadataRevision;
     cache.clear();
     images.clear();
     coverFlights.clear();
 }
 /**
- * 切换酷狗标准版与概念版，按上游要求重启协议模块，隔离两个版本的令牌。
- * 设备身份保持不变；已取消或旧版本的请求不能保存认证记录。
+ * 切换插件变体；具体变体语义由插件 manifest/凭据槽决定，core 只负责隔离请求代数。
  */
-void Host::setKugouEdition(QString edition) {
-    if (!QStringList{"standard", "lite"}.contains(edition) || edition == kugouEdition) {
+void Host::setProviderVariant(QString variant) {
+    const auto variants = ProviderRegistry::instance().variants(provider);
+    if (!variants.isEmpty()) {
+        bool valid = false;
+        for (const auto &value : variants) {
+            if (value.toObject()["id"].toString() == variant) {
+                valid = true;
+                break;
+            }
+        }
+        if (!valid) {
+            return;
+        }
+    }
+    if (variant == providerVariant) {
         return;
     }
     if (remote) {
-        remote->call("host.setEdition", {{"edition", edition}});
+        remote->call("host.setProviderVariant", {{"variant", variant}});
     }
-    kugouEdition = edition;
-    setPreference("kugou-edition", edition);
+    providerVariant = variant;
+    const auto preference = ProviderRegistry::instance().variantPreference(provider);
+    if (!preference.isEmpty()) {
+        setPreference(preference, variant);
+    }
     ++epoch;
     ++metadataRevision;
-    privateCredentials.clear();
     cache.clear();
     images.clear();
     coverFlights.clear();
@@ -598,12 +998,575 @@ void Host::setKugouEdition(QString edition) {
         child.waitForFinished(1000);
     }
 }
+QJsonArray Host::installedPluginManifests() const {
+    QMap<QString, QJsonObject> byId;
+    const QStringList roots{AppStorage::dataDirectory() + "/plugins",
+                            QDir(root).absoluteFilePath("MusicBridge/local-plugins")};
+    for (const auto &directory : roots) {
+        QDir plugins(directory);
+        if (!plugins.exists()) {
+            continue;
+        }
+        for (const auto &entry : plugins.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name)) {
+            if (entry.fileName().startsWith('.')) {
+                continue;
+            }
+            QFile manifestFile(entry.absoluteFilePath() + "/manifest.json");
+            if (!manifestFile.open(QIODevice::ReadOnly)) {
+                continue;
+            }
+            const auto manifest = QJsonDocument::fromJson(manifestFile.readAll()).object();
+            const auto id = manifest["id"].toString();
+            if (id.isEmpty() || id == "local" || id == "siren" || byId.contains(id)) {
+                continue;
+            }
+            byId.insert(id, manifest);
+        }
+    }
+    QJsonArray values;
+    for (const auto &manifest : byId) {
+        values.append(manifest);
+    }
+    return values;
+}
+QStringList Host::disabledPlugins() const {
+    QFile file(AppStorage::dataDirectory() + "/plugins-state.json");
+    if (!file.open(QIODevice::ReadOnly)) {
+        return {};
+    }
+    const auto document = QJsonDocument::fromJson(file.readAll()).object();
+    const auto disabled = document["disabled"].toArray();
+    QStringList values;
+    for (const auto &value : disabled) {
+        if (value.isString()) {
+            values.append(value.toString());
+        }
+    }
+    return values;
+}
+void Host::writeDisabledPlugins(const QStringList &disabled) {
+    const auto directory = AppStorage::dataDirectory();
+    if (!QDir().mkpath(directory)) {
+        return;
+    }
+    const auto path = directory + "/plugins-state.json";
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        return;
+    }
+    file.write(QJsonDocument(QJsonObject{{"disabled", QJsonArray::fromStringList(disabled)}})
+                   .toJson(QJsonDocument::Compact));
+    file.close();
+    QFile::setPermissions(path, QFile::ReadOwner | QFile::WriteOwner);
+}
+QJsonArray Host::pluginManagerState() const {
+    const auto disabled = disabledPlugins();
+    QJsonArray values;
+    for (const auto &manifest : installedPluginManifests()) {
+        const auto value = manifest.toObject();
+        const auto id = value["id"].toString();
+        values.append(QJsonObject{
+            {"id", id},
+            {"name", value["display"].toObject()["name"].toString(id)},
+            {"version", value["version"].toString()},
+            {"publisher", value["publisher"].toString()},
+            {"license", value["license"].toString()},
+            {"enabled", !disabled.contains(id)},
+            {"userInstalled", QDir(AppStorage::dataDirectory() + "/plugins/" + id).exists()},
+        });
+    }
+    return values;
+}
+QJsonObject Host::pluginDetail(QString id) const {
+    for (const auto &manifest : installedPluginManifests()) {
+        const auto value = manifest.toObject();
+        if (value["id"].toString() == id) {
+            auto result = value;
+            result["enabled"] = !disabledPlugins().contains(id);
+            result["installed"] = true;
+            result["userInstalled"] = QDir(AppStorage::dataDirectory() + "/plugins/" + id).exists();
+            return result;
+        }
+    }
+    for (const auto &entry : marketplacePlugins) {
+        const auto value = entry.toObject();
+        if (value["id"].toString() == id) {
+            auto result = value;
+            result["enabled"] = true;
+            result["installed"] = false;
+            return result;
+        }
+    }
+    return {};
+}
+QString Host::marketplaceUrl() const {
+    static const QString fallback =
+        QStringLiteral("https://raw.githubusercontent.com/MikeQu223/Rhine-Plugin-Market/main/index.json");
+    const auto configured = qEnvironmentVariable("RHINE_PLUGIN_MARKETPLACE_URL");
+    return configured.isEmpty() ? fallback : configured;
+}
+QJsonObject Host::pluginMarketplaceState() const {
+    return {{"url", marketplaceUrl()},
+            {"loading", marketplaceLoading},
+            {"installing", marketplaceInstalling},
+            {"installId", marketplaceInstallId},
+            {"installFile", marketplaceInstallFile},
+            {"installFilesDone", marketplaceInstallFilesDone},
+            {"installFilesTotal", marketplaceInstallFilesTotal},
+            {"installBytes", double(marketplaceInstallBytes)},
+            {"installSpeed", marketplaceInstallSpeed},
+            {"installProgress", marketplaceInstallProgress},
+            {"status", marketplaceStatus},
+            {"plugins", marketplacePlugins}};
+}
+void Host::updateMarketplaceInstallProgress(bool force) {
+    if (!marketplaceInstalling) {
+        return;
+    }
+    const auto now = QDateTime::currentMSecsSinceEpoch();
+    const auto elapsed = qMax<qint64>(1, now - marketplaceInstallStartedAt);
+    marketplaceInstallSpeed = marketplaceInstallBytes * 1000.0 / elapsed;
+    const double current =
+        marketplaceInstallFileTotal > 0
+            ? qBound(0.0, double(marketplaceInstallFileBytes) / marketplaceInstallFileTotal, 1.0)
+            : 0.0;
+    marketplaceInstallProgress =
+        marketplaceInstallFilesTotal > 0
+            ? qBound(0.0, (marketplaceInstallFilesDone + current) / marketplaceInstallFilesTotal, 1.0)
+            : 0.0;
+    if (force || now - marketplaceInstallLastEmit >= 200) {
+        marketplaceInstallLastEmit = now;
+        emit invalidated();
+    }
+}
+void Host::refreshPluginMarketplace() {
+    const auto url = marketplaceUrl();
+    if (url.isEmpty()) {
+        marketplaceStatus = QStringLiteral("未配置插件市场地址");
+        emit invalidated();
+        return;
+    }
+    if (marketplaceLoading) {
+        return;
+    }
+    marketplaceLoading = true;
+    marketplaceStatus = QStringLiteral("正在读取插件市场…");
+    emit invalidated();
+    const auto apply = [this](const QByteArray &bytes) {
+        const auto document = QJsonDocument::fromJson(bytes).object();
+        QJsonArray plugins;
+        for (const auto &entry : document["plugins"].toArray()) {
+            const auto value = entry.toObject();
+            const auto id = value["id"].toString();
+            const auto path = value["path"].toString();
+            if (!value["id"].isString() || !validPluginId(id) || !value["path"].isString() ||
+                !pluginRelativeFile(path)) {
+                continue;
+            }
+            plugins.append(value);
+        }
+        marketplacePlugins = plugins;
+        marketplaceStatus =
+            QStringLiteral("已载入 ") + QString::number(plugins.size()) + QStringLiteral(" 个插件");
+        marketplaceLoading = false;
+        emit invalidated();
+    };
+    if (url.startsWith("file:")) {
+        QFile file(QUrl(url).toLocalFile());
+        if (!file.open(QIODevice::ReadOnly)) {
+            marketplaceLoading = false;
+            marketplaceStatus = QStringLiteral("插件市场读取失败");
+            emit invalidated();
+            return;
+        }
+        apply(file.readAll());
+        return;
+    }
+    QNetworkRequest request{QUrl(url)};
+    request.setTransferTimeout(20000);
+    auto reply = network.get(request);
+    QTimer::singleShot(20000, reply, [reply] {
+        if (!reply->isFinished()) {
+            reply->abort();
+        }
+    });
+    connect(reply, &QNetworkReply::finished, this, [this, reply, apply] {
+        const auto bytes = reply->readAll();
+        const auto ok = reply->error() == QNetworkReply::NoError &&
+                        reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() == 200 &&
+                        bytes.size() < 8 * 1024 * 1024;
+        reply->deleteLater();
+        marketplaceLoading = false;
+        if (!ok) {
+            marketplaceStatus = QStringLiteral("插件市场读取失败");
+            emit invalidated();
+            return;
+        }
+        apply(bytes);
+    });
+}
+void Host::downloadPluginFile(const QString &url, const QString &path, std::function<void(QString)> done) {
+    if (url.startsWith("file:")) {
+        QFile source(QUrl(url).toLocalFile());
+        if (!source.open(QIODevice::ReadOnly)) {
+            done(QStringLiteral("插件文件缺失"));
+            return;
+        }
+        const auto bytes = source.readAll();
+        QDir().mkpath(QFileInfo(path).path());
+        QSaveFile file(path);
+        if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size() || !file.commit()) {
+            done(QStringLiteral("写入插件文件失败"));
+            return;
+        }
+        marketplaceInstallFileBytes = bytes.size();
+        marketplaceInstallFileTotal = bytes.size();
+        marketplaceInstallBytes += bytes.size();
+        updateMarketplaceInstallProgress(true);
+        done({});
+        return;
+    }
+    QNetworkRequest request{QUrl(url)};
+    request.setTransferTimeout(30000);
+    auto reply = network.get(request);
+    connect(reply, &QNetworkReply::downloadProgress, this, [this](qint64 received, qint64 total) {
+        if (!marketplaceInstalling) {
+            return;
+        }
+        if (total > 0) {
+            marketplaceInstallFileTotal = total;
+        }
+        if (received > marketplaceInstallFileBytes) {
+            marketplaceInstallBytes += received - marketplaceInstallFileBytes;
+            marketplaceInstallFileBytes = received;
+        }
+        updateMarketplaceInstallProgress();
+    });
+    connect(reply, &QNetworkReply::finished, this, [this, reply, path, done] {
+        const auto bytes = reply->readAll();
+        const auto code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const auto ok =
+            reply->error() == QNetworkReply::NoError && code == 200 && bytes.size() < 64 * 1024 * 1024;
+        reply->deleteLater();
+        if (!ok) {
+            done(QStringLiteral("下载失败：") + QUrl(path).fileName());
+            return;
+        }
+        if (bytes.size() > marketplaceInstallFileBytes) {
+            marketplaceInstallBytes += bytes.size() - marketplaceInstallFileBytes;
+            marketplaceInstallFileBytes = bytes.size();
+        }
+        updateMarketplaceInstallProgress(true);
+        QDir().mkpath(QFileInfo(path).path());
+        QSaveFile file(path);
+        if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size() || !file.commit()) {
+            done(QStringLiteral("写入插件文件失败"));
+            return;
+        }
+        done({});
+    });
+}
+void Host::downloadPluginFiles(QStringList files, QString base, QString directory, QString id,
+                               std::function<void(QString)> done) {
+    auto step = std::make_shared<std::function<void(int)>>();
+    auto finish = [step, done](const QString &error) {
+        done(error);
+        QTimer::singleShot(0, [step] { *step = nullptr; });
+    };
+    *step = [this, files = std::move(files), base = std::move(base), directory = std::move(directory),
+             id = std::move(id), step, finish](int index) {
+        if (index >= files.size()) {
+            finish({});
+            return;
+        }
+        Q_UNUSED(id)
+        const auto name = files.at(index);
+        if (name.isEmpty() || QDir::isAbsolutePath(name) || name.contains("..") || name.contains('\\')) {
+            finish(QStringLiteral("插件文件路径无效"));
+            return;
+        }
+        marketplaceInstallFile = name;
+        marketplaceInstallFileBytes = 0;
+        marketplaceInstallFileTotal = 0;
+        updateMarketplaceInstallProgress(true);
+        downloadPluginFile(base + "/" + name, directory + "/" + name,
+                           [this, step, finish, index](QString error) {
+                               if (!error.isEmpty()) {
+                                   finish(error);
+                               } else {
+                                   marketplaceInstallFileBytes = 0;
+                                   marketplaceInstallFileTotal = 0;
+                                   ++marketplaceInstallFilesDone;
+                                   updateMarketplaceInstallProgress(true);
+                                   (*step)(index + 1);
+                               }
+                           });
+    };
+    (*step)(0);
+}
+QString Host::installMarketplacePlugin(QString id) {
+    QJsonObject entry;
+    for (const auto &value : marketplacePlugins) {
+        if (value.toObject()["id"].toString() == id) {
+            entry = value.toObject();
+            break;
+        }
+    }
+    if (entry.isEmpty()) {
+        return QStringLiteral("插件市场中没有该插件");
+    }
+    if (marketplaceInstalling) {
+        return QStringLiteral("正在安装插件，请稍候");
+    }
+    const auto url = marketplaceUrl();
+    const auto base = url.left(url.lastIndexOf('/'));
+    const auto folder = entry["path"].toString("plugins/" + id);
+    QStringList files{QStringLiteral("manifest.json")};
+    const auto entryFile = entry["entry"].toObject()["file"].toString();
+    if (!entryFile.isEmpty()) {
+        files.append(entryFile);
+    }
+    for (const auto &value : entry["files"].toArray()) {
+        const auto name = value.isString() ? value.toString() : value.toObject()["path"].toString();
+        if (!name.isEmpty()) {
+            files.append(name);
+        }
+    }
+    files.removeDuplicates();
+    const auto userDirectory = AppStorage::dataDirectory() + "/plugins";
+    const auto staging = userDirectory + "/.staging-" + id + "-" + QUuid::createUuid().toString();
+    QDir().mkpath(staging);
+    marketplaceInstalling = true;
+    marketplaceInstallId = id;
+    marketplaceInstallFile.clear();
+    marketplaceInstallFilesDone = 0;
+    marketplaceInstallFilesTotal = files.size();
+    marketplaceInstallBytes = 0;
+    marketplaceInstallFileBytes = 0;
+    marketplaceInstallFileTotal = 0;
+    marketplaceInstallStartedAt = QDateTime::currentMSecsSinceEpoch();
+    marketplaceInstallLastEmit = 0;
+    marketplaceInstallSpeed = 0;
+    marketplaceInstallProgress = 0;
+    marketplaceStatus = QStringLiteral("正在安装 ");
+    marketplaceStatus += entry["name"].toString(id);
+    updateMarketplaceInstallProgress(true);
+    downloadPluginFiles(files, base + "/" + folder, staging, id,
+                        [this, id, staging, userDirectory, entry](QString error) {
+                            if (!error.isEmpty()) {
+                                marketplaceInstalling = false;
+                                QDir(staging).removeRecursively();
+                                marketplaceStatus = error;
+                                emit invalidated();
+                                return;
+                            }
+                            QFile manifestFile(staging + "/manifest.json");
+                            if (!manifestFile.open(QIODevice::ReadOnly)) {
+                                marketplaceInstalling = false;
+                                QDir(staging).removeRecursively();
+                                marketplaceStatus = QStringLiteral("插件 manifest 缺失");
+                                emit invalidated();
+                                return;
+                            }
+                            const auto manifest = QJsonDocument::fromJson(manifestFile.readAll()).object();
+                            const auto manifestEntry = manifest["entry"].toObject()["file"].toString();
+                            const auto indexEntry = entry["entry"].toObject()["file"].toString();
+                            if (manifest["id"].toString() != id || !validPluginManifest(manifest) ||
+                                (!indexEntry.isEmpty() && indexEntry != manifestEntry) ||
+                                !QFile::exists(staging + "/" + manifestEntry)) {
+                                marketplaceInstalling = false;
+                                QDir(staging).removeRecursively();
+                                marketplaceStatus = QStringLiteral("插件 manifest 与市场条目不一致");
+                                emit invalidated();
+                                return;
+                            }
+                            const auto target = userDirectory + "/" + id;
+                            const auto backup = userDirectory + "/.backup-" + id;
+                            QDir().mkpath(userDirectory);
+                            QDir(backup).removeRecursively();
+                            bool moved = false;
+                            if (QDir(target).exists()) {
+                                if (!QDir().rename(target, backup)) {
+                                    marketplaceInstalling = false;
+                                    QDir(staging).removeRecursively();
+                                    marketplaceStatus = QStringLiteral("无法替换已安装插件");
+                                    emit invalidated();
+                                    return;
+                                }
+                                moved = true;
+                            }
+                            if (!QDir().rename(staging, target)) {
+                                if (moved) {
+                                    QDir().rename(backup, target);
+                                }
+                                marketplaceInstalling = false;
+                                QDir(staging).removeRecursively();
+                                marketplaceStatus = QStringLiteral("插件安装失败");
+                                emit invalidated();
+                                return;
+                            }
+                            marketplaceInstallProgress = 1;
+                            marketplaceInstallSpeed = 0;
+                            marketplaceInstalling = false;
+                            marketplaceStatus = QStringLiteral("已安装 ") + entry["name"].toString(id);
+                            reloadPlugins();
+                        });
+    return {};
+}
+bool Host::pluginEnabled(QString id) const {
+    return !disabledPlugins().contains(id);
+}
+void Host::setPluginEnabled(QString id, bool enabled) {
+    auto disabled = disabledPlugins();
+    if (enabled) {
+        disabled.removeAll(id);
+    } else if (!disabled.contains(id)) {
+        disabled.append(id);
+    }
+    writeDisabledPlugins(disabled);
+    reloadPlugins();
+}
+void Host::reloadPlugins() {
+    ProviderRegistry::instance().load(root, AppStorage::dataDirectory() + "/plugins", disabledPlugins());
+    if (remote) {
+        remote->call("host.reloadPlugins");
+    } else if (child.state() != BridgeProcess::NotRunning) {
+        child.kill();
+        child.waitForFinished(1000);
+    }
+    emit invalidated();
+}
+QString Host::rollbackPlugin(QString id) {
+    if (!validPluginId(id)) {
+        return QStringLiteral("插件 id 无效");
+    }
+    const auto directory = AppStorage::dataDirectory() + "/plugins";
+    const auto target = directory + "/" + id;
+    const auto backup = directory + "/.backup-" + id;
+    const auto staging = directory + "/.rollback-" + id + "-" + QUuid::createUuid().toString();
+    if (!QDir(backup).exists()) {
+        return QStringLiteral("没有可回滚的版本");
+    }
+    const bool moved = QDir(target).exists() && QDir().rename(target, staging);
+    if (QDir(target).exists() && !moved) {
+        return QStringLiteral("插件回滚失败");
+    }
+    if (!QDir().rename(backup, target)) {
+        if (moved) {
+            QDir().rename(staging, target);
+        }
+        return QStringLiteral("插件回滚失败");
+    }
+    QDir(staging).removeRecursively();
+    reloadPlugins();
+    return {};
+}
+QString Host::uninstallPlugin(QString id) {
+    if (marketplaceInstalling) {
+        return QStringLiteral("正在安装插件，请稍候");
+    }
+    if (!validPluginId(id)) {
+        return QStringLiteral("插件 id 无效");
+    }
+    if (id == provider) {
+        return QStringLiteral("请先切换到其他来源后再卸载插件");
+    }
+    const auto directory = AppStorage::dataDirectory() + "/plugins";
+    const auto target = directory + "/" + id;
+    if (!QDir(target).exists()) {
+        return QStringLiteral("内置插件不能卸载");
+    }
+    if (!QDir(target).removeRecursively()) {
+        return QStringLiteral("插件卸载失败");
+    }
+    QDir(directory + "/.backup-" + id).removeRecursively();
+    const auto staging = QDir(directory).entryInfoList({QStringLiteral(".staging-") + id + "-*"},
+                                                       QDir::Dirs | QDir::Hidden, QDir::Name);
+    for (const auto &entry : staging) {
+        QDir(entry.absoluteFilePath()).removeRecursively();
+    }
+    auto disabled = disabledPlugins();
+    disabled.removeAll(id);
+    writeDisabledPlugins(disabled);
+    marketplaceStatus = QStringLiteral("已卸载 ") + id;
+    reloadPlugins();
+    return {};
+}
+QString Host::importPlugin(QString directory) {
+    if (marketplaceInstalling) {
+        return QStringLiteral("正在安装插件，请稍候");
+    }
+    if (directory.isEmpty()) {
+        return QStringLiteral("插件目录无效");
+    }
+    const QFileInfo sourceInfo(directory);
+    if (!sourceInfo.isDir()) {
+        return QStringLiteral("插件目录无效");
+    }
+    const auto source = sourceInfo.canonicalFilePath();
+    if (source.isEmpty()) {
+        return QStringLiteral("插件目录无效");
+    }
+    QFile manifestFile(source + "/manifest.json");
+    if (!manifestFile.open(QIODevice::ReadOnly)) {
+        return QStringLiteral("插件 manifest 缺失");
+    }
+    const auto manifest = QJsonDocument::fromJson(manifestFile.readAll()).object();
+    if (!validPluginManifest(manifest)) {
+        return QStringLiteral("插件 manifest 无效");
+    }
+    const auto id = manifest["id"].toString();
+    const auto entry = manifest["entry"].toObject()["file"].toString();
+    if (!QFileInfo(source + "/" + entry).isFile()) {
+        return QStringLiteral("插件入口文件缺失");
+    }
+    const auto userDirectory = AppStorage::dataDirectory() + "/plugins";
+    const auto target = userDirectory + "/" + id;
+    const auto targetInfo = QFileInfo(target);
+    if (targetInfo.exists()) {
+        const auto targetPath = targetInfo.canonicalFilePath();
+        if (source == targetPath || source.startsWith(targetPath + "/") ||
+            targetPath.startsWith(source + "/")) {
+            return QStringLiteral("不能从当前安装目录导入插件");
+        }
+    }
+    const auto staging = userDirectory + "/.staging-" + id + "-" + QUuid::createUuid().toString();
+    if (!copyPluginDirectory(source, staging)) {
+        QDir(staging).removeRecursively();
+        return QStringLiteral("复制插件文件失败");
+    }
+    QDir().mkpath(userDirectory);
+    const auto backup = userDirectory + "/.backup-" + id;
+    QDir(backup).removeRecursively();
+    bool moved = false;
+    if (QDir(target).exists()) {
+        if (!QDir().rename(target, backup)) {
+            QDir(staging).removeRecursively();
+            return QStringLiteral("无法替换已安装插件");
+        }
+        moved = true;
+    }
+    if (!QDir().rename(staging, target)) {
+        if (moved) {
+            QDir().rename(backup, target);
+        }
+        QDir(staging).removeRecursively();
+        return QStringLiteral("插件导入失败");
+    }
+    auto disabled = disabledPlugins();
+    disabled.removeAll(id);
+    writeDisabledPlugins(disabled);
+    marketplaceStatus = QStringLiteral("已导入 ") + manifest["display"].toObject()["name"].toString(id);
+    reloadPlugins();
+    return {};
+}
 QString Host::saveCredential() {
     if (remote) {
         return remote->call("host.saveCredential")["value"].toString();
     }
     return offline ? QString()
-                   : platformSaveCredential(QJsonDocument(cookies).toJson(QJsonDocument::Compact));
+                   : platformSaveCredential(
+                         QJsonDocument(storageCredential(credentials)).toJson(QJsonDocument::Compact));
 }
 /**
  * 作废当前来源的请求并清理凭据，另一来源的账号保持独立。
@@ -618,35 +1581,26 @@ void Host::logout() {
         return;
     }
     mediaControl("stop");
-    if (provider == "qq") {
-        cookies.remove("qqmusic_session");
-        cookies.remove("__qqSessions");
-    } else if (provider == "kugou") {
-        auto editions = cookies["__kugou"].toObject();
-        editions.remove(kugouEdition);
-        if (editions.isEmpty()) {
-            cookies.remove("__kugou");
-        } else {
-            cookies["__kugou"] = editions;
-        }
+    auto providers = credentials["providers"].toObject();
+    const auto variants = ProviderRegistry::instance().variants(provider);
+    if (variants.isEmpty()) {
+        providers.remove(provider);
     } else {
-        const auto kugou = cookies.value("__kugou");
-        const auto token = cookies.value("qqmusic_session");
-        const auto sessions = cookies.value("__qqSessions");
-        cookies = {};
-        if (!kugou.isUndefined()) {
-            cookies["__kugou"] = kugou;
-        }
-        if (!token.isUndefined()) {
-            cookies["qqmusic_session"] = token;
-        }
-        if (!sessions.isUndefined()) {
-            cookies["__qqSessions"] = sessions;
+        // 变体凭据按 variant 分槽；退出当前变体不能清除同来源的其他变体登录态。
+        auto entry = providers.value(provider).toObject();
+        auto secrets = entry["secrets"].toObject();
+        secrets.remove(providerVariant);
+        entry["cookies"] = QJsonObject{};
+        if (secrets.isEmpty()) {
+            providers.remove(provider);
+        } else {
+            entry["secrets"] = secrets;
+            providers[provider] = entry;
         }
     }
+    credentials["providers"] = providers;
     ++epoch;
-    privateCredentials.clear();
-    // 结束进程同时关闭 QQ 的扫码长连接；另一平台的持久凭据仍保留。
+    // 结束进程同时关闭插件的长连接；其他来源的持久凭据仍保留。
     if (child.state() != BridgeProcess::NotRunning) {
         child.kill();
         child.waitForFinished(1000);
@@ -655,34 +1609,20 @@ void Host::logout() {
     images.clear();
     coverFlights.clear();
     if (!offline) {
-        if (cookies.isEmpty()) {
-            platformDeleteCredential();
-        } else {
+        bool any = false;
+        for (auto it = providers.begin(); it != providers.end(); ++it) {
+            const auto entry = it.value().toObject();
+            any |= !entry["cookies"].toObject().isEmpty() || !entry["secrets"].toObject().isEmpty();
+        }
+        if (any) {
             saveCredential();
+        } else {
+            platformDeleteCredential();
         }
     }
 }
-QString Host::fromLink(QString input) const {
-    input = input.remove('\\').trimmed();
-    QUrl outer(input);
-    if (!QStringList{"music.163.com", "y.music.163.com"}.contains(outer.host()) ||
-        !QStringList{"http", "https"}.contains(outer.scheme())) {
-        return {};
-    }
-    QUrl page = outer;
-    if (outer.hasFragment()) {
-        auto part = outer.fragment();
-        page = QUrl("https://music.163.com" + (part.startsWith('/') ? part : "/" + part));
-    }
-    auto kind = page.path().split('/', Qt::SkipEmptyParts).last();
-    auto id = QUrlQuery(page).queryItemValue("id");
-    if (!QStringList{"song", "album", "playlist"}.contains(kind) ||
-        !QRegularExpression("^[0-9]{1,20}$").match(id).hasMatch()) {
-        return {};
-    }
-    return kind + ":" + id;
-}
 void Host::loadCover(QString input, TextReply callback, int maximumDimension, bool allowPlaybackOnly) {
+    const auto dimension = std::clamp(maximumDimension, 128, 1024);
     // 后台默认只保留封面地址；系统媒体控件需要封面文件时显式放行解码。
     if (playbackOnly && !allowPlaybackOnly) {
         schedule(0, [input, callback] { callback(input); });
@@ -711,14 +1651,14 @@ void Host::loadCover(QString input, TextReply callback, int maximumDimension, bo
                 callback(image.isNull() ? QString() : key);
             }
         });
-        watcher->setFuture(QtConcurrent::run([path = local.toLocalFile()] {
+        watcher->setFuture(QtConcurrent::run([path = local.toLocalFile(), dimension] {
             QImageReader reader(path);
             const auto size = reader.size();
             if (!size.isValid() || size.width() > 8192 || size.height() > 8192) {
                 return QImage();
             }
-            if (size.width() > 1024 || size.height() > 1024) {
-                reader.setScaledSize(size.scaled(1024, 1024, Qt::KeepAspectRatio));
+            if (size.width() > dimension || size.height() > dimension) {
+                reader.setScaledSize(size.scaled(dimension, dimension, Qt::KeepAspectRatio));
             }
             return reader.read();
         }));
@@ -726,19 +1666,23 @@ void Host::loadCover(QString input, TextReply callback, int maximumDimension, bo
     }
     QUrl url(input.replace("http://", "https://"));
     const auto domain = url.host();
-    if (!(domain == "music.126.net" || domain.endsWith(".music.126.net") || domain == "music.163.com" ||
-          domain.endsWith(".music.163.com") || domain == "y.gtimg.cn" || domain == "qpic.y.qq.com" ||
-          domain == "y.qq.com" || domain.endsWith(".kugou.com") || domain.endsWith(".kgimg.com") ||
-          domain == "hycdn.cn" || domain.endsWith(".hycdn.cn"))) {
+    const auto patterns = ProviderRegistry::instance().coverHosts();
+    const auto allowed = [&domain, &patterns] {
+        for (const auto &pattern : patterns) {
+            if (pattern == domain) {
+                return true;
+            }
+            if (pattern.startsWith("*.") && domain.endsWith(pattern.mid(1))) {
+                return true;
+            }
+        }
+        return false;
+    }();
+    if (!allowed) {
         callback({});
         return;
     }
-    // 档案缩略图使用较小解码预算；未指定尺寸的现有调用仍保留 1024 像素封面。
-    const auto dimension = std::clamp(maximumDimension, 128, 1024);
-    QUrlQuery query(url);
-    query.removeAllQueryItems("param");
-    query.addQueryItem("param", QString::number(dimension) + "y" + QString::number(dimension));
-    url.setQuery(query);
+    // 封面尺寸由插件返回最终 URL；core 不再追加平台专用查询参数。
     auto key = url.toString();
     if (images.contains(key)) {
         callback(key);
@@ -841,27 +1785,48 @@ QString Host::qrImage(QString data) {
     if (value.isNull() || value.width() > 4096 || value.height() > 4096) {
         return {};
     }
-    const auto key = "qq-qr:" + hash(bytes);
+    const auto key = "login-qr:" + hash(bytes);
     images.insert(key, new QImage(value), int(value.sizeInBytes() / 1024));
     return key;
 }
-QString Host::qr(QString key) {
-    auto name = "qr:" + key;
-    images.insert(name, new QImage(platformQR("https://music.163.com/login?codekey=" + key)), 1024);
+QString Host::qr(QString text) {
+    auto name = "qr:" + hash(text.toUtf8());
+    images.insert(name, new QImage(platformQR(text)), 1024);
     return name;
 }
 QImage Host::image(const QString &key) const {
-    // 官方音质标识随包离线交付；限定文件名，防止图片键访问资源目录之外。
-    static const QRegularExpression qualityKey(
-        "^quality:(netease|qq|kugou)-(sq|hq|hires|jymaster|jyeffect|sky)$");
-    if (key.startsWith("quality:") && qualityKey.match(key).hasMatch()) {
+    // 质量徽章由插件 manifest quality.badges 指向插件内相对资产；core 不写平台文件名。
+    static const QRegularExpression qualityKey("^quality:([a-z0-9-]{1,40}):([A-Za-z0-9_-]{1,40})$");
+    const auto match = qualityKey.match(key);
+    if (match.hasMatch()) {
         static QCache<QString, QImage> badges(32);
         if (auto cached = badges.object(key)) {
             return *cached;
         }
-        const QImage badge(root + "/quality/" + key.mid(8) + ".png");
-        badges.insert(key, new QImage(badge));
-        return badge;
+        const auto provider = match.captured(1);
+        const auto badge = match.captured(2);
+        const auto quality = ProviderRegistry::instance().descriptor(provider)["quality"].toObject();
+        auto relative = quality["badges"].toObject()[badge].toString();
+        if (relative.isEmpty()) {
+            relative = "assets/quality/" + badge + ".png";
+        }
+        if (!pluginRelativeFile(relative)) {
+            return {};
+        }
+        const QStringList roots{AppStorage::dataDirectory() + "/plugins/" + provider,
+                                root + "/MusicBridge/local-plugins/" + provider};
+        QImage image;
+        for (const auto &base : roots) {
+            image = QImage(base + "/" + relative);
+            if (!image.isNull()) {
+                break;
+            }
+        }
+        if (image.isNull()) {
+            image = QImage(root + "/quality/" + provider + "-" + badge + ".png");
+        }
+        badges.insert(key, new QImage(image), 32);
+        return image;
     }
     auto p = images.object(key);
     return p ? *p : QImage();
@@ -906,8 +1871,13 @@ void Host::playOfficial(QString id, TextReply callback) {
         callback("OFFLINE_PLAY:" + id);
         return;
     }
+    const auto config = ProviderRegistry::instance().externalPlayback(provider);
+    if (config["type"].toString() != "url-scheme" || config["scheme"].toString().isEmpty()) {
+        callback(QStringLiteral("当前来源不支持官方客户端"));
+        return;
+    }
     QPointer<Host> guarded(this);
-    platformPlay(id, activates(), [guarded, callback](QString message) mutable {
+    platformPlay(id, config, activates(), [guarded, callback](QString message) mutable {
         if (guarded && !guarded->stopped) {
             callback(message);
         }
@@ -1067,17 +2037,15 @@ const QStringList &preferenceKeys() {
         // 换卡后序号可能指向另一张卡或不存在，启动时由 initializeLinuxGraphics 校验并回退。
         "gpu-index", "vsync", "supersample", "render-scale", "aa-mode", "aa-scale", "msaa", "fsr-quality",
         "fsr-sharpness", "fg", "close-behavior", "auto-update", "volume", "quality", "alternate-source",
-        "audio-output-policy", "provider", "lyrics-cache", "lyrics-global-offset-ms", "welcome-name-netease",
-        "welcome-name-qq", "welcome-name-kugou", "account-id-netease", "account-id-qq", "account-id-kugou",
-        "kugou-edition", "desktop-lyrics", "desktop-lyrics-size", "desktop-lyrics-translation-size",
-        "desktop-lyrics-opacity", "desktop-lyrics-line-color", "desktop-lyrics-translation-color",
-        "desktop-lyrics-line-weight", "desktop-lyrics-translation-weight", "desktop-lyrics-line-outline",
+        "audio-output-policy", "provider", "lyrics-cache", "lyrics-global-offset-ms", "desktop-lyrics",
+        "desktop-lyrics-size", "desktop-lyrics-translation-size", "desktop-lyrics-opacity",
+        "desktop-lyrics-line-color", "desktop-lyrics-translation-color", "desktop-lyrics-line-weight",
+        "desktop-lyrics-translation-weight", "desktop-lyrics-line-outline",
         "desktop-lyrics-translation-outline", "desktop-lyrics-line-outline-color",
-        "desktop-lyrics-translation-outline-color", "welcome-name-kugou-standard", "welcome-name-kugou-lite",
-        "account-id-kugou-standard", "account-id-kugou-lite"};
+        "desktop-lyrics-translation-outline-color"};
     return keys;
 }
-} // namespace
+}
 QString Host::preference(QString key) const {
     if (remote) {
         if (!remotePreferences.contains(key)) {
@@ -1089,7 +2057,7 @@ QString Host::preference(QString key) const {
         }
         return remotePreferences.value(key);
     }
-    if (offline || !preferenceKeys().contains(key)) {
+    if (offline || !isPreferenceKey(key)) {
         return {};
     }
     return AppStorage::settings().value("panel/" + key).toString();
@@ -1116,7 +2084,7 @@ void Host::setPreference(QString key, QString value) {
         audio->setOutputPolicy(value == "source" ? AudioOutputFormat::Policy::Source
                                                  : AudioOutputFormat::Policy::System);
     }
-    if (!offline && value.size() < 262144 && preferenceKeys().contains(key)) {
+    if (!offline && value.size() < 262144 && isPreferenceKey(key)) {
         AppStorage::settings().setValue("panel/" + key, value);
         // 帧生成开关是唯一"不必重启也能生效"的偏好：呈现层每帧解析 RHINE_FG，
         // 所以这里写完磁盘再同步一次环境变量，设置页点一下就切换插值。
@@ -1128,7 +2096,22 @@ void Host::setPreference(QString key, QString value) {
     }
 }
 bool Host::isPreferenceKey(const QString &key) {
-    return preferenceKeys().contains(key);
+    if (preferenceKeys().contains(key)) {
+        return true;
+    }
+    for (const auto *prefix : {"welcome-name-", "account-id-", "provider-variant-", "provider-option-"}) {
+        const QString head = QString::fromLatin1(prefix);
+        if (!key.startsWith(head)) {
+            continue;
+        }
+        const auto suffix = key.mid(head.size());
+        for (const auto &id : ProviderRegistry::instance().ids()) {
+            if (suffix == id || suffix.startsWith(id + "-")) {
+                return true;
+            }
+        }
+    }
+    return false;
 }
 bool Host::activates() const {
     return offline ? false : platformActivates();

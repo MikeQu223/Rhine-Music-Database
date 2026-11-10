@@ -9,10 +9,10 @@
 
 /**
  * 歌曲评论的只读数据源。
- * 网易云使用原生歌曲 ID；塞壬唱片复用歌词的搜索与录音校验，再读取对应网易云评论。
+ * 评论 operation 由插件声明；塞壬没有评论接口时，复用已安装评论插件的搜索与录音校验。
  */
 class CommentsController : public QObject {
-    Q_OBJECT
+  Q_OBJECT
   public:
     explicit CommentsController(Host *host, QObject *parent = nullptr);
     void clear();
@@ -28,6 +28,7 @@ class CommentsController : public QObject {
     QJsonObject state() const;
 
     static QString trackKey(const QJsonObject &track);
+    static QString commentsProvider(const QString &provider);
     static QString relativeTime(double milliseconds);
     static QString compactCount(int value);
 
@@ -35,6 +36,7 @@ class CommentsController : public QObject {
     QString message;
     QString sort = "hot";
     QString sourceLabel;
+    QString sourceName;
     QString trackName;
     int total = 0;
     bool hasMore = false;
@@ -49,6 +51,7 @@ class CommentsController : public QObject {
     MusicApi m_api;
     QString m_trackKey;
     QString m_trackProvider;
+    QString m_commentProvider;
     QString m_targetID;
     QString m_cursor;
     int m_pages = 0;

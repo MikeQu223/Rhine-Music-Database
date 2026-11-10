@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""验证部署后的 Qt 应用，不读取用户凭据或访问网易云。"""
+"""验证部署后的 Qt 应用，不读取用户凭据或访问音乐服务平台。"""
 
 import json
 import os
@@ -80,9 +80,6 @@ for name in (
     )
 # 桥接单文件
 assert (resources / "MusicBridge" / "worker.cjs").is_file(), "Missing bridge bundle"
-assert (resources / "MusicBridge" / "xhr-sync-worker.js").is_file(), (
-    "Missing jsdom sync XHR worker"
-)
 assert not (resources / "MusicBridge" / "node_modules").exists(), (
     "node_modules must be bundled"
 )

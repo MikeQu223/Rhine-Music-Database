@@ -1,5 +1,6 @@
 #include "PlaybackQueue.h"
 #include "MusicApi.h"
+#include "ProviderRegistry.h"
 #include <QPointer>
 #include <QRandomGenerator>
 #include <QSet>
@@ -34,7 +35,7 @@ PlaybackQueue::PlaybackQueue(MusicApi *api, QObject *parent) : QObject(parent), 
 }
 
 QString PlaybackQueue::identity(const QJsonObject &track) {
-    return track["provider"].toString("netease") + ":" + track["id"].toString();
+    return track["provider"].toString() + ":" + track["id"].toString();
 }
 
 const QJsonArray &PlaybackQueue::items() const {
@@ -284,7 +285,9 @@ int PlaybackQueue::navigate(int direction, const QString &mode) {
 
 void PlaybackQueue::load(const QJsonArray &ids, const QJsonArray &known) {
     cancelLoad();
-    m_provider = m_api && !m_api->provider.isEmpty() ? m_api->provider : QStringLiteral("netease");
+    m_provider = m_api && !m_api->provider.isEmpty()
+                     ? m_api->provider
+                     : ProviderRegistry::instance().fallbackId();
     if (m_index >= 0 && m_index < m_items.size()) {
         m_selectedKey = identity(m_items.at(m_index).toObject());
     }

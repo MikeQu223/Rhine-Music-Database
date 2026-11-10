@@ -4,6 +4,7 @@
 #include "NativeHud.h"
 #include "MusicData.h"
 #include "MusicDiscover.h"
+#include "ProviderRegistry.h"
 #include <QJsonDocument>
 #include <QPointer>
 #include <QUrl>
@@ -107,8 +108,14 @@ void NativeHud::openModal(QString kind) {
     categoryPage = 0;
     if (kind == "saved") {
         musicCollection = std::max(1, m_music->selectedLane);
-        if (m_music->provider == "kugou" && musicCollection == 4) {
-            musicCollection = 2;
+        if (!m_music->laneVisible(musicCollection)) {
+            musicCollection = 1;
+            for (int lane = 1; lane < m_music->columns.size(); ++lane) {
+                if (m_music->laneVisible(lane)) {
+                    musicCollection = lane;
+                    break;
+                }
+            }
         }
         if (m_music->lists[musicCollection].isEmpty()) {
             m_music->loadMoreSource(musicCollection);
@@ -167,7 +174,8 @@ void NativeHud::setQuery(QString value) {
                 return;
             }
             owner->m_music->search(value);
-            if (owner->m_music->provider == "netease" && !owner->m_host->fromLink(value).isEmpty()) {
+            if (ProviderRegistry::instance().capability(owner->m_music->provider, "resolveLink", false) &&
+                value.contains("://")) {
                 owner->closeModal();
             }
         });
@@ -447,7 +455,7 @@ void NativeHud::action(QString value) {
         return;
     }
     if (value == "music:comments") {
-        if (m_music->provider != "netease" && m_music->provider != "siren") {
+        if (!m_music->commentsAvailable()) {
             return;
         }
         m_responsive.handleAction(value);
@@ -611,7 +619,7 @@ void NativeHud::action(QString value) {
     if (value.startsWith("tab:")) {
         const auto next = value.mid(4);
         if (next == "comments") {
-            if (music.provider != "netease" && music.provider != "siren") {
+            if (!music.commentsAvailable()) {
                 return;
             }
             if (tab != "comments") {
@@ -672,6 +680,86 @@ void NativeHud::action(QString value) {
         openModal("provider");
         return;
     }
+    if (value == "plugins") {
+        pluginManagerMessage.clear();
+        openModal("plugins");
+        if (m_host->pluginMarketplaceState()["plugins"].toArray().isEmpty()) {
+            m_host->refreshPluginMarketplace();
+        }
+        return;
+    }
+    if (value == "plugin:refresh") {
+        m_host->refreshPluginMarketplace();
+        return;
+    }
+    if (value == "plugin:import") {
+        emit pluginImportRequested();
+        return;
+    }
+    if (value.startsWith("plugin:market:")) {
+        const auto error = m_host->installMarketplacePlugin(value.mid(QString("plugin:market:").size()));
+        pluginManagerMessage = error;
+        if (error.isEmpty()) {
+            openModal("plugins");
+        }
+        m_host->invalidate();
+        return;
+    }
+    if (value.startsWith("plugin:toggle:")) {
+        const auto id = value.mid(QString("plugin:toggle:").size());
+        const auto enabled = m_host->pluginEnabled(id);
+        if (enabled && m_music && id == m_music->provider) {
+            pluginManagerMessage = QStringLiteral("请先切换到其他来源后再禁用插件");
+            m_host->invalidate();
+            return;
+        }
+        m_host->setPluginEnabled(id, !enabled);
+        pluginManagerMessage = enabled ? QStringLiteral("已禁用插件") : QStringLiteral("已启用插件");
+        m_host->invalidate();
+        return;
+    }
+    if (value.startsWith("plugin:detail:")) {
+        pluginDetailId = value.mid(QString("plugin:detail:").size());
+        pluginManagerMessage.clear();
+        openModal("plugin-detail");
+        return;
+    }
+    if (value.startsWith("plugin:rollback:")) {
+        const auto error = m_host->rollbackPlugin(value.mid(QString("plugin:rollback:").size()));
+        pluginManagerMessage = error.isEmpty() ? QStringLiteral("插件已回滚") : error;
+        m_host->invalidate();
+        return;
+    }
+    if (value.startsWith("plugin:uninstall:")) {
+        const auto id = value.mid(QString("plugin:uninstall:").size());
+        if (m_music && id == m_music->provider) {
+            pluginManagerMessage = QStringLiteral("请先切换到其他来源后再卸载插件");
+            m_host->invalidate();
+            return;
+        }
+        const auto detail = m_host->pluginDetail(id);
+        if (!detail["userInstalled"].toBool()) {
+            pluginManagerMessage = QStringLiteral("内置插件不能卸载");
+            m_host->invalidate();
+            return;
+        }
+        confirmTitle = QStringLiteral("卸载插件：") + detail["display"].toObject()["name"].toString(id);
+        confirmMessage = QStringLiteral("只删除应用数据目录中的插件文件，不删除账号数据。");
+        confirmLabel = QStringLiteral("确认卸载");
+        const QPointer<Host> host(m_host);
+        const QPointer<NativeHud> owner(this);
+        m_confirm = [host, owner, id] {
+            if (!host || !owner) {
+                return;
+            }
+            const auto error = host->uninstallPlugin(id);
+            owner->pluginManagerMessage = error.isEmpty() ? QStringLiteral("插件已卸载") : error;
+            host->invalidate();
+            owner->openModal("plugins");
+        };
+        openModal("confirm");
+        return;
+    }
     if (value.startsWith("provider:")) {
         const auto provider = value.mid(9);
         if (music.provider != provider) {
@@ -723,6 +811,8 @@ void NativeHud::action(QString value) {
                         }
                     }
                 };
+                confirmMessage.clear();
+                confirmLabel.clear();
                 openModal("confirm");
             }
         } else if (name == "browse") {
@@ -756,7 +846,7 @@ void NativeHud::action(QString value) {
             if (music.openDaily()) {
                 closeModal();
             }
-        } else if (name == "area" && music.provider == "qq") {
+        } else if (name == "area") {
             discoverScroll = 0;
             discover.newSongArea = parts.value(2);
             discover.load("new-songs");
@@ -767,7 +857,14 @@ void NativeHud::action(QString value) {
                 discover.loadCategories();
             }
         } else if (name == "category-page") {
-            const int allCategory = music.provider != "qq" || discover.categories.isEmpty() ? 1 : 0;
+            const bool hasAllCategory =
+                std::any_of(discover.categories.begin(), discover.categories.end(),
+                            [](const QJsonValue &value) {
+                                const auto category = value.toObject();
+                                return category["id"].toString() == "全部" ||
+                                       category["name"].toString() == "全部";
+                            });
+            const int allCategory = discover.categories.isEmpty() || hasAllCategory ? 1 : 0;
             const auto pages = std::max(
                 1, (int(discover.categories.size()) + allCategory + CategoryPageSize - 1) / CategoryPageSize);
             const auto step = parts.value(2) == "prev" ? -1 : 1;

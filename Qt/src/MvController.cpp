@@ -1,5 +1,6 @@
 #include "MvController.h"
 #include "MusicPlayer.h"
+#include "ProviderRegistry.h"
 #include <QGuiApplication>
 #include <QJsonDocument>
 #include <QScreen>
@@ -14,10 +15,12 @@ MvController::MvController(Host *host, MusicPlayer *music, QObject *parent, Reso
     if (!m_resolve) {
         if (!m_versionsResolve) {
             m_versionsResolve = [this](const QJsonObject &track, MusicApi::Reply reply) {
+                m_api.provider = track["provider"].toString();
                 m_api.call("mvVersions", {track}, std::move(reply));
             };
         }
         m_resolve = [this](const QJsonObject &track, MusicApi::Reply reply) {
+            m_api.provider = track["provider"].toString();
             m_api.call("mv", {track}, std::move(reply));
         };
     }
@@ -573,9 +576,15 @@ void MvController::refresh(bool force) {
     m_audioPosition = -1;
     m_audioPlaying = false;
     m_title = track["title"].toString();
-    m_status = track.isEmpty() ? QStringLiteral("播放网易云歌曲后，将自动查找关联 MV")
-                               : QStringLiteral("当前仅支持网易云歌曲的关联 MV");
-    if (!m_enabled || track.isEmpty() || track["provider"] != "netease") {
+    const auto provider = track["provider"].toString();
+    const auto descriptor = ProviderRegistry::instance().descriptor(provider);
+    const auto operations = descriptor["operations"].toObject();
+    const bool supported = descriptor["capabilities"].toObject()["mv"].toBool() &&
+                           operations["mv"].toBool();
+    m_status = track.isEmpty() ? QStringLiteral("播放歌曲后，将自动查找关联 MV")
+                               : (supported ? QStringLiteral("正在查找关联 MV…")
+                                            : QStringLiteral("当前来源不支持关联 MV"));
+    if (!m_enabled || track.isEmpty() || !supported) {
         emit changed();
         return;
     }

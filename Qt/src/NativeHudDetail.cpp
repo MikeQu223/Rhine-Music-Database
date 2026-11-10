@@ -1,6 +1,7 @@
 #include "NativeHud.h"
 #include "CollectionDetailCard.h"
 #include "MusicData.h"
+#include "ProviderRegistry.h"
 #include "SongDetailCard.h"
 #include <algorithm>
 #include <cmath>
@@ -53,7 +54,7 @@ void NativeHud::detail(double width, double opacity) {
         container(width, opacity);
         return;
     }
-    if (commentsMode && (music.provider != "netease" && music.provider != "siren")) {
+    if (commentsMode && (!music.commentsAvailable())) {
         commentsMode = false;
         if (tab == "comments") {
             tab = "overview";
@@ -115,7 +116,7 @@ void NativeHud::detail(double width, double opacity) {
     card.duration = MusicData::time(item);
     card.tab = tab;
     card.trackCount = music.tracks.size();
-    card.comments = music.provider == "netease" || music.provider == "siren";
+    card.comments = item["kind"] == "song" && music.commentsAvailable();
     card.playback = "面板内播放";
     if (PlatformFeatures::OfficialPlayback) {
         card.playback = music.isLocal() ? "本地文件 / 面板内播放" : "面板内播放 / 官方入口";
@@ -127,14 +128,25 @@ void NativeHud::detail(double width, double opacity) {
     if (music.isLocal()) {
         quality = MusicPlayer::localQuality(item);
     }
-    const auto badgeProvider = music.isLocal() ? QStringLiteral("netease") : music.provider;
-    card.badgeKey = "quality:" + badgeProvider + "-" + quality;
-    const auto badge = quality.isEmpty() ? QImage() : m_host->image(card.badgeKey);
+    const auto qualityInfo = ProviderRegistry::instance().qualityDescription(music.provider, quality);
+    auto badgeId = qualityInfo["badge"].toString();
+    if (badgeId.isEmpty() && (quality == "sq" || quality == "hq" || quality == "hires")) {
+        badgeId = quality;
+    }
+    card.badgeKey =
+        badgeId.isEmpty() ? QString() : "quality:" + music.provider + ":" + badgeId;
+    const auto badge = quality.isEmpty() || card.badgeKey.isEmpty() ? QImage() : m_host->image(card.badgeKey);
     if (!badge.isNull()) {
         card.badgeWidth = std::min(22.0 * badge.width() / badge.height(), (usable - gap) / 2 - 12);
     }
     if (!quality.isEmpty()) {
-        card.quality = quality == "standard" ? "标准" : "高品质";
+        auto title = qualityInfo["title"].toString();
+        if (title.isEmpty()) {
+            title = ProviderRegistry::instance().qualityLabel(
+                music.provider, quality, quality == "standard" ? QStringLiteral("标准")
+                                                               : QStringLiteral("高品质"));
+        }
+        card.quality = title;
     }
     card.primaryActions = {{"▶ 播放歌曲", "music:play"}, {}, {}};
     const auto playlist = openedPlaylistContext();
@@ -143,12 +155,14 @@ void NativeHud::detail(double width, double opacity) {
         bool liked = (music.likedIDs && MusicData::indexOf(*music.likedIDs, item["id"]) >= 0) ||
                      MusicData::indexOfId(music.lists[1], item["id"].toString()) >= 0;
         QString label = liked ? "♥ 已喜欢" : "♡ 喜欢";
-        if (music.provider == "qq") {
+        if (!music.uid.isEmpty() && music.supportsOperation("subscriptionStatus")) {
             const auto state = music.subscriptionStates.value(item["key"].toString(), "unknown");
-            liked = state == "subscribed";
-            label = liked ? "♥ 已喜欢" : "♡ 喜欢";
-            if (state == "unknown") {
-                label = "红心 / 核实后切换";
+            if (state == "subscribed") {
+                liked = true;
+                label = "♥ 已喜欢";
+            } else if (state == "not-subscribed") {
+                liked = false;
+                label = "♡ 喜欢";
             }
         }
         card.primaryActions[1] = {label, "music:like"};
@@ -235,10 +249,11 @@ void NativeHud::detail(double width, double opacity) {
     }
     rule(x, 898, usable, 0.18);
     if (PlatformFeatures::OfficialPlayback && !music.isLocal()) {
-        button(music.provider != "netease" ? music.providerName() + " ↗" : "官方客户端 ↗", x, 910,
-               buttonWidth, 44, "music:official", 13);
+        const auto official = ProviderRegistry::instance().text(music.provider, "officialEntry");
+        button(official.isEmpty() ? music.providerName() + " ↗" : official, x, 910, buttonWidth, 44,
+               "music:official", 13);
     }
-    if (music.provider == "qq") {
+    if (ProviderRegistry::instance().capability(music.provider, "preview", false)) {
         button("试听片段", x + buttonWidth + gap, 910, buttonWidth, 44, "music:preview", 13);
     }
     if (playlist && playlist->contained) {
@@ -422,12 +437,12 @@ void NativeHud::container(double width, double opacity) {
     card.artist = item["artist"].toString();
     card.coverKey = music.coverImage;
     card.coverSize = coverSize;
-    const QHash<QString, QString> prefixes{
-        {"qq", "QQ MID / "}, {"kugou", "KUGOU ID / "}, {"netease", "NETEASE ID / "}};
+    const auto prefix = ProviderRegistry::instance().archivePrefix(music.provider);
     if (item["virtual"].toBool()) {
         card.archiveId = music.providerName() + " / " + item["title"].toString();
     } else {
-        card.archiveId = prefixes.value(music.provider) + item["id"].toString();
+        card.archiveId =
+            (prefix.isEmpty() ? music.provider.toUpper() + " ID / " : prefix) + item["id"].toString();
     }
     const auto ids = music.directory ? music.directory->ids.size() : 0;
     card.totalCount = std::max({item["trackCount"].toInt(), int(ids), int(songs.size())});
@@ -459,9 +474,8 @@ void NativeHud::container(double width, double opacity) {
                                                           : QString("专辑");
         QString label = "＋ 收藏" + subject;
         bool subscribed = false;
-        if (music.provider == "qq") {
+        if (!music.uid.isEmpty() && music.supportsOperation("subscriptionStatus")) {
             const auto state = music.subscriptionStates.value(item["key"].toString(), "unknown");
-            label = "＋ 收藏 / 核实";
             if (state == "subscribed") {
                 label = "✓ 已收藏" + subject;
                 subscribed = true;

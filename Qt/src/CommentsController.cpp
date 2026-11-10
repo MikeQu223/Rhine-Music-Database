@@ -1,5 +1,6 @@
 #include "CommentsController.h"
 #include "LyricsController.h"
+#include "ProviderRegistry.h"
 #include <QDateTime>
 #include <QJsonArray>
 #include <QPointer>
@@ -8,7 +9,6 @@
 #include <cmath>
 
 namespace {
-constexpr int PageSize = 20;
 constexpr int FloorSize = 20;
 constexpr int MaximumContent = 4000;
 
@@ -47,7 +47,7 @@ bool sirenArtist(const QJsonObject &candidate) {
 
 QString normalizedNickname(const QJsonObject &user) {
     const auto nickname = user["nickname"].toString().trimmed();
-    return nickname.isEmpty() ? QStringLiteral("网易云用户") : nickname;
+    return nickname.isEmpty() ? QStringLiteral("用户") : nickname;
 }
 }
 
@@ -55,7 +55,26 @@ QString CommentsController::trackKey(const QJsonObject &track) {
     if (track.isEmpty()) {
         return {};
     }
-    return track["provider"].toString("netease") + ":" + track["id"].toString();
+    return track["provider"].toString() + ":" + track["id"].toString();
+}
+
+QString CommentsController::commentsProvider(const QString &provider) {
+    const auto &registry = ProviderRegistry::instance();
+    const auto supported = [&](const QString &id) {
+        return registry.descriptor(id)["operations"].toObject()["comments"].toBool();
+    };
+    if (provider != "siren" && supported(provider)) {
+        return provider;
+    }
+    if (provider != "siren") {
+        return {};
+    }
+    for (const auto &id : registry.ids()) {
+        if (id != "local" && id != "siren" && supported(id)) {
+            return id;
+        }
+    }
+    return {};
 }
 
 QString CommentsController::relativeTime(double milliseconds) {
@@ -92,7 +111,6 @@ QString CommentsController::compactCount(int value) {
 
 CommentsController::CommentsController(Host *host, QObject *parent)
     : QObject(parent), m_host(host), m_api(host) {
-    m_api.provider = "netease";
 }
 
 MusicApi::Valid CommentsController::valid(quint64 generation) {
@@ -117,6 +135,7 @@ void CommentsController::clear() {
     status = "idle";
     message.clear();
     sourceLabel.clear();
+    sourceName.clear();
     trackName.clear();
     total = 0;
     hasMore = false;
@@ -143,22 +162,27 @@ QJsonObject CommentsController::normalizeReply(const QJsonObject &raw, bool nest
     if (content.isEmpty()) {
         return {};
     }
-    QJsonObject reply{{"id", scalar(raw["commentId"])},
+    const auto id = raw["id"].toString().isEmpty() ? scalar(raw["commentId"]) : scalar(raw["id"]);
+    QJsonObject reply{{"id", id},
                       {"content", content},
-                      {"nickname", normalizedNickname(user)},
-                      {"userId", scalar(user["userId"])},
+                      {"nickname", raw["nickname"].toString().isEmpty()
+                                       ? normalizedNickname(user)
+                                       : raw["nickname"].toString().trimmed()},
+                      {"userId", raw["userId"].toString().isEmpty() ? scalar(user["userId"])
+                                                                   : scalar(raw["userId"])},
                       {"time", raw["time"].toDouble()}};
     if (reply["id"].toString().isEmpty()) {
         return {};
     }
-    if (nested) {
+    auto replyTo = raw["replyTo"].toString().trimmed();
+    if (replyTo.isEmpty() && nested) {
         const auto replied = raw["beReplied"].toArray();
         if (!replied.isEmpty()) {
-            const auto nickname = replied.first().toObject()["user"].toObject()["nickname"].toString().trimmed();
-            if (!nickname.isEmpty()) {
-                reply["replyTo"] = nickname;
-            }
+            replyTo = replied.first().toObject()["user"].toObject()["nickname"].toString().trimmed();
         }
+    }
+    if (!replyTo.isEmpty()) {
+        reply["replyTo"] = replyTo;
     }
     return reply;
 }
@@ -174,15 +198,19 @@ QJsonObject CommentsController::normalizeComment(const QJsonObject &raw) const {
         }
         content = QStringLiteral("图片评论");
     }
-    const auto id = scalar(raw["commentId"]);
+    const auto id = raw["id"].toString().isEmpty() ? scalar(raw["commentId"]) : scalar(raw["id"]);
     if (id.isEmpty()) {
         return {};
     }
     QJsonObject item{{"id", id},
                      {"content", content},
-                     {"nickname", normalizedNickname(user)},
-                     {"userId", scalar(user["userId"])},
-                     {"avatarUrl", user["avatarUrl"].toString()},
+                     {"nickname", raw["nickname"].toString().isEmpty()
+                                      ? normalizedNickname(user)
+                                      : raw["nickname"].toString().trimmed()},
+                     {"userId", raw["userId"].toString().isEmpty() ? scalar(user["userId"])
+                                                                  : scalar(raw["userId"])},
+                     {"avatarUrl", raw["avatarUrl"].toString().isEmpty() ? user["avatarUrl"].toString()
+                                                                        : raw["avatarUrl"].toString()},
                      {"time", raw["time"].toDouble()},
                      {"likedCount", raw["likedCount"].toInt()},
                      {"replyCount", raw["replyCount"].toInt()},
@@ -193,14 +221,19 @@ QJsonObject CommentsController::normalizeComment(const QJsonObject &raw) const {
                      {"repliesLoading", false},
                      {"repliesTime", QString()}};
     QJsonArray inlineReplies;
-    for (const auto &value : raw["beReplied"].toArray()) {
+    const auto inlineValues = raw["inlineReplies"].isArray() ? raw["inlineReplies"].toArray()
+                                                             : raw["beReplied"].toArray();
+    for (const auto &value : inlineValues) {
         const auto reply = normalizeReply(value.toObject(), false);
         if (!reply.isEmpty() && inlineReplies.size() < 2) {
             inlineReplies.append(reply);
         }
     }
     item["inlineReplies"] = inlineReplies;
-    const auto location = raw["ipLocation"].toObject()["location"].toString().trimmed();
+    auto location = raw["location"].toString().trimmed();
+    if (location.isEmpty()) {
+        location = raw["ipLocation"].toObject()["location"].toString().trimmed();
+    }
     if (!location.isEmpty()) {
         item["location"] = location;
     }
@@ -209,20 +242,23 @@ QJsonObject CommentsController::normalizeComment(const QJsonObject &raw) const {
 
 void CommentsController::load(const QJsonObject &track, bool retry) {
     const auto key = trackKey(track);
-    if (key.isEmpty()) {
+    if (key.isEmpty() || track["kind"] != "song") {
         return;
     }
     if (key == m_trackKey && !retry && status != "error" && status != "empty" && status != "idle") {
         return;
     }
     const bool sameTrack = key == m_trackKey;
-    const auto provider = track["provider"].toString("netease");
-    if (provider != "netease" && provider != "siren") {
+    const auto provider = track["provider"].toString();
+    const auto commentProvider = commentsProvider(provider);
+    if (commentProvider.isEmpty()) {
         ++m_generation;
         m_trackKey = key;
         m_trackProvider = provider;
+        m_commentProvider.clear();
         m_track = track;
         trackName = track["title"].toString();
+        sourceName = ProviderRegistry::instance().name(provider);
         resetItems();
         m_targetID.clear();
         m_pages = 0;
@@ -238,8 +274,11 @@ void CommentsController::load(const QJsonObject &track, bool retry) {
     ++m_generation;
     m_trackKey = key;
     m_trackProvider = provider;
+    m_commentProvider = commentProvider;
     m_track = track;
     trackName = track["title"].toString();
+    sourceName = ProviderRegistry::instance().name(commentProvider);
+    m_api.provider = commentProvider;
     if (!sameTrack) {
         sourceLabel.clear();
         m_avatarRequests.clear();
@@ -268,13 +307,13 @@ void CommentsController::load(const QJsonObject &track, bool retry) {
             fetchPage(m_generation, true);
             return;
         }
-        message = QStringLiteral("正在匹配网易云歌曲…");
+        message = QStringLiteral("正在匹配评论来源…");
         emit changed();
         resolveSiren(m_generation);
         return;
     }
     m_targetID = track["id"].toString();
-    if (!QRegularExpression(QStringLiteral("^[1-9][0-9]{0,19}$")).match(m_targetID).hasMatch()) {
+    if (m_targetID.isEmpty()) {
         status = "error";
         message = QStringLiteral("歌曲标识无效");
         emit changed();
@@ -292,7 +331,7 @@ void CommentsController::resolveSiren(quint64 generation) {
     queries.removeDuplicates();
     if (queries.isEmpty()) {
         status = "empty";
-        message = QStringLiteral("未找到网易云对应歌曲");
+        message = QStringLiteral("未找到可用的评论来源");
         emit changed();
         return;
     }
@@ -305,7 +344,7 @@ void CommentsController::searchSiren(quint64 generation, const QStringList &quer
     }
     if (query >= queries.size()) {
         status = "empty";
-        message = QStringLiteral("未找到网易云对应歌曲");
+        message = QStringLiteral("未找到可用的评论来源");
         emit changed();
         return;
     }
@@ -317,7 +356,7 @@ void CommentsController::searchSiren(quint64 generation, const QStringList &quer
             }
             if (!reply.ok()) {
                 status = "error";
-                message = QStringLiteral("匹配网易云歌曲失败，请重试");
+                message = QStringLiteral("匹配评论来源失败，请重试");
                 emit changed();
                 return;
             }
@@ -367,16 +406,10 @@ void CommentsController::fetchPage(quint64 generation, bool first) {
         message = m_trackProvider == "siren" ? QStringLiteral("正在读取评论…") : message;
         emit changed();
     }
-    QJsonObject parameters{{"id", m_targetID},
-                           {"type", 0},
-                           {"pageNo", m_pages + 1},
-                           {"pageSize", PageSize},
-                           {"sortType", sort == "new" ? 3 : 2}};
-    if (!first && sort == "new" && !m_cursor.isEmpty()) {
-        parameters["cursor"] = m_cursor;
-    }
-    m_api.request(
-        "/comment/new", parameters,
+    const QJsonArray arguments{QJsonValue(m_track), QJsonValue(m_targetID), QJsonValue(sort),
+                               QJsonValue(m_pages), QJsonValue(m_cursor)};
+    m_api.call(
+        "comments", arguments,
         [this, generation, first](MusicReply reply) {
             if (!valid(generation)()) {
                 return;
@@ -399,6 +432,8 @@ void CommentsController::fetchPage(quint64 generation, bool first) {
 
 void CommentsController::applyPage(const QJsonObject &body, bool first) {
     const auto data = body["data"].toObject();
+    const auto values = body["comments"].isArray() ? body["comments"].toArray()
+                                                  : data["comments"].toArray();
     if (first) {
         resetItems();
     }
@@ -406,7 +441,7 @@ void CommentsController::applyPage(const QJsonObject &body, bool first) {
     for (const auto &item : items) {
         seen.insert(item["id"].toString());
     }
-    for (const auto &value : data["comments"].toArray()) {
+    for (const auto &value : values) {
         const auto item = normalizeComment(value.toObject());
         const auto id = item["id"].toString();
         if (id.isEmpty() || seen.contains(id)) {
@@ -417,10 +452,15 @@ void CommentsController::applyPage(const QJsonObject &body, bool first) {
         ensureAvatar(item["avatarUrl"].toString());
     }
     ++m_pages;
-    const auto reportedTotal = data.contains("totalCount") ? data["totalCount"].toInt() : body["total"].toInt(total);
+    const auto reportedTotal =
+        body.contains("totalCount") ? body["totalCount"].toInt()
+                                    : (data.contains("totalCount") ? data["totalCount"].toInt()
+                                                                   : body["total"].toInt(total));
     total = std::max(total, reportedTotal);
-    hasMore = data.contains("hasMore") ? data["hasMore"].toBool() : data["more"].toBool(false);
-    m_cursor = scalar(data["cursor"]);
+    hasMore = body.contains("hasMore") ? body["hasMore"].toBool()
+                                       : (data.contains("hasMore") ? data["hasMore"].toBool()
+                                                                   : data["more"].toBool(false));
+    m_cursor = body["cursor"].toString(scalar(data["cursor"]));
     loadingMore = false;
     status = items.isEmpty() ? "empty" : "ready";
     message.clear();
@@ -534,13 +574,11 @@ void CommentsController::fetchFloor(quint64 generation, const QString &commentId
     }
     const auto item = items.at(index);
     const auto time = first ? QStringLiteral("-1") : item["repliesTime"].toString();
-    QJsonObject parameters{{"id", m_targetID},
-                           {"type", 0},
-                           {"parentCommentId", commentId},
-                           {"limit", FloorSize},
-                           {"time", time.isEmpty() ? QStringLiteral("-1") : time}};
-    m_api.request(
-        "/comment/floor", parameters,
+    const QJsonArray arguments{QJsonValue(m_track), QJsonValue(m_targetID), QJsonValue(commentId),
+                               QJsonValue(time.isEmpty() ? QStringLiteral("-1") : time),
+                               QJsonValue(FloorSize)};
+    m_api.call(
+        "commentReplies", arguments,
         [this, generation, commentId, first](MusicReply reply) {
             if (!valid(generation)()) {
                 return;
@@ -569,12 +607,14 @@ void CommentsController::applyFloor(const QString &commentId, const QJsonObject 
     }
     auto item = items.at(index);
     const auto data = body["data"].toObject();
+    const auto values = body["comments"].isArray() ? body["comments"].toArray()
+                                                  : data["comments"].toArray();
     QJsonArray replies = first ? QJsonArray{} : item["replies"].toArray();
     QSet<QString> seen;
     for (const auto &value : replies) {
         seen.insert(value.toObject()["id"].toString());
     }
-    for (const auto &value : data["comments"].toArray()) {
+    for (const auto &value : values) {
         const auto reply = normalizeReply(value.toObject(), true);
         const auto id = reply["id"].toString();
         if (id.isEmpty() || seen.contains(id)) {
@@ -587,8 +627,8 @@ void CommentsController::applyFloor(const QString &commentId, const QJsonObject 
     item["repliesExpanded"] = true;
     item["repliesLoading"] = false;
     item["repliesError"] = QString();
-    item["repliesHasMore"] = data["hasMore"].toBool(false);
-    item["repliesTime"] = scalar(data["time"]);
+    item["repliesHasMore"] = body["hasMore"].toBool(data["hasMore"].toBool(false));
+    item["repliesTime"] = body["time"].toString(scalar(data["time"]));
     items[index] = item;
     emit changed();
 }
@@ -634,6 +674,7 @@ QJsonObject CommentsController::state() const {
             {"hasMore", hasMore},
             {"loadingMore", loadingMore},
             {"sourceLabel", sourceLabel},
+            {"sourceName", sourceName},
             {"trackName", trackName},
             {"items", list}};
 }

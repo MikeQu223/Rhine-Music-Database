@@ -17,7 +17,8 @@ class BridgeProcess : public QObject {
     enum ProcessError { FailedToStart, Crashed, UnknownError };
     explicit BridgeProcess(QObject *parent = nullptr);
     ~BridgeProcess() override;
-    void start(const QString &root, const QString &temporary, const QString &edition);
+    void start(const QString &root, const QString &temporary,
+               const QJsonObject &environment = QJsonObject{});
     void write(const QByteArray &bytes);
     QByteArray readAllStandardOutput();
     void kill();

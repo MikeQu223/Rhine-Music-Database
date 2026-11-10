@@ -1,5 +1,6 @@
 #include <QtGlobal>
 #include "PlaybackService.h"
+#include "ProviderRegistry.h"
 #include "AppStorage.h"
 #include <QCoreApplication>
 #include <QDir>
@@ -125,11 +126,18 @@ PlaybackService::PlaybackService(QString root, QString guiExecutable, bool offli
             [this] { send(m_gui, {{"event", "activate"}}); });
     connect(&m_interfaceSession, &InterfaceSession::stateChanged, this, &PlaybackService::publish);
     auto provider = m_host.preference("provider");
-    if (!QStringList{"netease", "qq", "kugou", "local", "siren"}.contains(provider)) {
-        provider = "netease";
+    if (!ProviderRegistry::instance().contains(provider)) {
+        provider = ProviderRegistry::instance().defaultId();
+    }
+    if (provider.isEmpty()) {
+        provider = ProviderRegistry::instance().fallbackId();
+    }
+    if (provider.isEmpty()) {
+        provider = "siren";
     }
     m_api.provider = provider;
     m_host.setProvider(provider);
+    m_player.refreshQualityPreference();
     connect(&m_host, &Host::playbackDiagnostic, this, [this](QString event, QJsonObject values) {
         for (auto socket : m_clients.keys()) {
             send(socket, {{"event", "diagnostic"}, {"name", event}, {"values", values}});
@@ -283,9 +291,11 @@ void PlaybackService::publish() {
     snapshot["interfaceWanted"] = interface.wanted;
     snapshot["interfacePid"] = double(interface.processId);
     snapshot["interfaceReady"] = interface.ready;
-    snapshot["credentials"] = QJsonObject{{"netease", m_host.hasCredential("netease")},
-                                          {"qq", m_host.hasCredential("qq")},
-                                          {"kugou", m_host.hasCredential("kugou")}};
+    QJsonObject credentialState;
+    for (const auto &id : ProviderRegistry::instance().ids()) {
+        credentialState.insert(id, m_host.hasCredential(id));
+    }
+    snapshot["credentials"] = credentialState;
     snapshot["diagnostics"] = m_host.playbackSnapshot();
     const auto clients = m_clients.keys();
     for (auto socket : clients) {
@@ -410,21 +420,25 @@ QJsonObject PlaybackService::hostCommand(const QString &method, const QJsonObjec
         result["value"] = m_host.saveCredential();
     } else if (method == "acceptCookies") {
         m_host.acceptCookies(arguments["json"].toString(), arguments["epoch"].toInt(),
-                             arguments["credentialKey"].toString());
+                             arguments["credentialKey"].toString(), arguments["provider"].toString());
+    } else if (method == "bumpEpoch") {
+        m_host.bumpEpoch();
+    } else if (method == "reloadPlugins") {
+        m_host.reloadPlugins();
     } else if (method == "logout") {
         m_player.stop();
         m_player.clearHistory();
         m_host.logout();
     } else if (method == "setProvider") {
         const auto provider = arguments["provider"].toString();
-        if (QStringList{"netease", "qq", "kugou", "local", "siren"}.contains(provider) &&
-            m_api.provider != provider) {
+        if (ProviderRegistry::instance().contains(provider) && m_api.provider != provider) {
             m_player.stop();
             m_host.setProvider(provider);
             m_api.provider = provider;
+            m_player.refreshQualityPreference();
         }
-    } else if (method == "setEdition") {
-        m_host.setKugouEdition(arguments["edition"].toString());
+    } else if (method == "setProviderVariant" || method == "setEdition") {
+        m_host.setProviderVariant(arguments["variant"].toString(arguments["edition"].toString()));
     } else if (method == "mediaControl") {
         m_host.mediaControl(arguments["action"].toString(), arguments["value"].toDouble());
     } else if (method == "mediaLoad") {

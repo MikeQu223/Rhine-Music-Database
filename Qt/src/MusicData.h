@@ -5,7 +5,7 @@
 
 namespace MusicData {
 QJsonObject item(QString kind, QString id, QString title = "正在读取…", QString artist = "",
-                 QString provider = "netease");
+                 QString provider = {});
 QJsonObject parse(const QJsonObject &raw, const QString &kind);
 QJsonArray unique(const QJsonArray &existing, const QJsonArray &values);
 QJsonArray ordered(const QJsonArray &ids, const QJsonArray &songs);

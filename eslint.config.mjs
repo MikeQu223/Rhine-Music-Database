@@ -9,6 +9,8 @@ export default [
             'third_party/**',
             'FidelityFX-SDK/**',
             'MusicBridge/upstream/**',
+            // 本地插件包及其单文件 bundle 是独立发布物，不参与 core lint。
+            'MusicBridge/local-plugins/**',
         ],
     },
     {
@@ -16,6 +18,8 @@ export default [
             'Qt/tests/**/*.{mjs,cjs}',
             'MusicBridge/*.cjs',
             'MusicBridge/client/**/*.mjs',
+            'MusicBridge/core/**/*.cjs',
+            'MusicBridge/plugins/sdk/**/*.mjs',
             'scripts/*.{cjs,mjs}',
             'eslint.config.mjs',
         ],
@@ -28,7 +32,8 @@ export default [
             'one-var': ['error', 'never'],
             'no-nested-ternary': 'error',
             'no-sequences': ['error', { allowInParentheses: false }],
-            'no-empty': 'error',
+            // 能力探测和可选回调允许空 catch，其他空块仍然报错。
+            'no-empty': ['error', { allowEmptyCatch: true }],
         },
     },
 ];
