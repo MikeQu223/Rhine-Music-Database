@@ -12,6 +12,7 @@
 #include <QFileInfo>
 #include <QProcess>
 #include <QFutureWatcher>
+#include <QThread>
 #include <QGuiApplication>
 #include <QImageReader>
 #include <QJsonArray>
@@ -109,6 +110,41 @@ static bool copyPluginDirectory(const QString &source, const QString &destinatio
         }
     }
     return true;
+}
+
+/** 插件目录改名；Windows 上杀毒或索引服务可能短暂持有刚写入的文件，失败时重试。 */
+static bool movePluginDirectory(const QString &source, const QString &target) {
+    if (QDir().rename(source, target)) {
+        return true;
+    }
+    for (int attempt = 0; attempt < 20; ++attempt) {
+        QThread::msleep(100);
+        if (QDir().rename(source, target)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/** 提交 staging 目录；改名持续被占用时退化为逐文件复制，避免 Windows 上安装直接失败。 */
+static bool commitPluginDirectory(const QString &staging, const QString &target) {
+    if (movePluginDirectory(staging, target)) {
+        return true;
+    }
+    // 目录已存在时不能覆盖，交给上层保留原安装。
+    if (QDir(target).exists()) {
+        return false;
+    }
+    for (int attempt = 0; attempt < 5; ++attempt) {
+        QDir(target).removeRecursively();
+        if (copyPluginDirectory(staging, target)) {
+            QDir(staging).removeRecursively();
+            return true;
+        }
+        QThread::msleep(200);
+    }
+    QDir(target).removeRecursively();
+    return false;
 }
 namespace {
 QJsonValue jsonValueAt(const QJsonObject &root, const QString &path) {
@@ -1390,7 +1426,7 @@ QString Host::installMarketplacePlugin(QString id) {
                             QDir(backup).removeRecursively();
                             bool moved = false;
                             if (QDir(target).exists()) {
-                                if (!QDir().rename(target, backup)) {
+                                if (!movePluginDirectory(target, backup)) {
                                     marketplaceInstalling = false;
                                     QDir(staging).removeRecursively();
                                     marketplaceStatus = QStringLiteral("无法替换已安装插件");
@@ -1399,9 +1435,9 @@ QString Host::installMarketplacePlugin(QString id) {
                                 }
                                 moved = true;
                             }
-                            if (!QDir().rename(staging, target)) {
+                            if (!commitPluginDirectory(staging, target)) {
                                 if (moved) {
-                                    QDir().rename(backup, target);
+                                    movePluginDirectory(backup, target);
                                 }
                                 marketplaceInstalling = false;
                                 QDir(staging).removeRecursively();
@@ -1451,13 +1487,13 @@ QString Host::rollbackPlugin(QString id) {
     if (!QDir(backup).exists()) {
         return QStringLiteral("没有可回滚的版本");
     }
-    const bool moved = QDir(target).exists() && QDir().rename(target, staging);
+    const bool moved = QDir(target).exists() && movePluginDirectory(target, staging);
     if (QDir(target).exists() && !moved) {
         return QStringLiteral("插件回滚失败");
     }
-    if (!QDir().rename(backup, target)) {
+    if (!commitPluginDirectory(backup, target)) {
         if (moved) {
-            QDir().rename(staging, target);
+            movePluginDirectory(staging, target);
         }
         return QStringLiteral("插件回滚失败");
     }
@@ -1544,15 +1580,15 @@ QString Host::importPlugin(QString directory) {
     QDir(backup).removeRecursively();
     bool moved = false;
     if (QDir(target).exists()) {
-        if (!QDir().rename(target, backup)) {
+        if (!movePluginDirectory(target, backup)) {
             QDir(staging).removeRecursively();
             return QStringLiteral("无法替换已安装插件");
         }
         moved = true;
     }
-    if (!QDir().rename(staging, target)) {
+    if (!commitPluginDirectory(staging, target)) {
         if (moved) {
-            QDir().rename(backup, target);
+            movePluginDirectory(backup, target);
         }
         QDir(staging).removeRecursively();
         return QStringLiteral("插件导入失败");
