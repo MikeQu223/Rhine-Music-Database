@@ -563,9 +563,9 @@ void _paintCard(_Painter p, _CardModel model) {
   _cardRule(p, model.x, model.width, model.dark, 314, 0.18);
   p.limited(model.album.isEmpty ? 'AUDIO ARCHIVE / 音频档案' : model.album, model.x, 332, 15, model.width);
   for (int index = 0; index < model.titleLines.length; index++) {
-    p.limited(model.titleLines[index], model.x, 366 + index * 40, 32, model.width, 'bold');
+    p.limited(model.titleLines[index], model.x, 366.0 + index * 40.0, 32, model.width, 'bold');
   }
-  final double artistY = model.titleLines.length > 1 ? 450 : 416;
+  final double artistY = model.titleLines.length > 1 ? 450.0 : 416.0;
   p.limited(model.artist, model.x, artistY, 18, model.width);
   _cardActions(p, model, model.primaryActions, 476, true);
   _cardActions(p, model, model.secondaryActions, 532, false);
@@ -582,7 +582,7 @@ void _paintCard(_Painter p, _CardModel model) {
     ];
     for (int index = 0; index < fields.length; index++) {
       final double x = model.x + (index % 2) * (column + 12);
-      final double y = 609 + (index ~/ 2) * 57;
+      final double y = 609.0 + (index ~/ 2) * 57.0;
       p.text(fields[index][0], x, y, 10, 'regular', 0, muted);
       if (index == 1 && model.badgeWidth > 0) {
         p.image(model.badgeKey, x, y + 24, model.badgeWidth, 22);
@@ -604,7 +604,7 @@ void _paintCard(_Painter p, _CardModel model) {
   if (albumTracks && model.trackCount > 0) {
     labels[2] = labels[2] + ' · ' + model.trackCount.toString() + ' 首';
   }
-  final double tabsY = albumTracks ? 584 : 720;
+  final double tabsY = albumTracks ? 584.0 : 720.0;
   _cardRule(p, model.x, model.width, model.dark, tabsY + 42, 0.18);
   for (int index = 0; index < songDetailTabKeys.length; index++) {
     final double x = model.x + index * model.width / 3;
@@ -862,9 +862,9 @@ SongDetailDrawing renderSongDetail(
     effectiveBodyOffset = bodyOffset;
     final int count = math.min(3, lines.length - bodyOffset);
     for (int index = 0; index < count; index++) {
-      p.text(lines[bodyOffset + index], x, 790 + index * 31, 16, 'regular');
+      p.text(lines[bodyOffset + index], x, 790.0 + index * 31.0, 16, 'regular');
     }
-    p.hit(x, 786, usable, count * 31, 'detail:copy', '点击复制完整内容');
+    p.hit(x, 786, usable, count * 31.0, 'detail:copy', '点击复制完整内容');
   }
 
   // NativeHudDetail.cpp:203-214：底部分隔线与三格状态按钮。

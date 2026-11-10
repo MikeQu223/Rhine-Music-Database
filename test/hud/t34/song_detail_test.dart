@@ -366,7 +366,7 @@ void main() {
     List<SongDetailTrack> tracks(int count) => List<SongDetailTrack>.generate(
         count,
         (int index) => SongDetailTrack(
-            id: 't$index', title: '曲目$index', artist: '歌手$index', durationMs: 60000 + index * 1000));
+            id: 't$index', title: '曲目$index', artist: '歌手$index', durationMs: 60000.0 + index * 1000));
 
     test('六行上限、0 基 action、行分隔线与滚动条', () {
       final List<Object?> commands = _commands(_state(tab: 'history', tracks: tracks(10)));

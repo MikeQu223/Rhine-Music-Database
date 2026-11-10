@@ -498,8 +498,8 @@ Drawing buildFooterActionRow(FooterActionRowModel model) {
       label: slot.label,
     ); // NativeHud.cpp:112
     final double inset = model.modalControls
-        ? (columnWidth / 8 < 10 ? columnWidth / 8 : 10)
-        : 0; // NativeHud.cpp:113 std::min(10.0, width/8)，非模态为 0
+        ? (columnWidth / 8 < 10 ? columnWidth / 8 : 10.0)
+        : 0.0; // NativeHud.cpp:113 std::min(10.0, width/8)，非模态为 0
     if (model.modalControls) {
       builder.op(fillCommand(
         x,
