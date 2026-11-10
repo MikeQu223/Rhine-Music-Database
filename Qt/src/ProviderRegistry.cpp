@@ -295,7 +295,8 @@ QString ProviderRegistry::providerForRoute(const QString &route) const {
 }
 
 QJsonObject ProviderRegistry::cachePolicy(const QString &id) const {
-    return m_manifests.value(id)["cache"].toObject();
+    const auto manifest = m_manifests.value(id)["cache"].toObject();
+    return manifest.isEmpty() ? m_descriptors.value(id)["cache"].toObject() : manifest;
 }
 
 QJsonObject ProviderRegistry::credentialPolicy(const QString &id) const {

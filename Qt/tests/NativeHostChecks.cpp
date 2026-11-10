@@ -127,10 +127,10 @@ bool runNativeHostChecks(const QString &root) {
         ok &= error.isEmpty() && response["body"].toObject()["query"] == "native" &&
               response["_epoch"].toInt() == host.epoch;
     };
-    host.requestJson("/search", {{"keywords", "native"}}, receive);
-    host.requestJson("/search", {{"keywords", "native"}}, receive);
+    host.requestJson("/native/siren/search", {{"keywords", "native"}}, receive);
+    host.requestJson("/native/siren/search", {{"keywords", "native"}}, receive);
     ok &= waitFor([&] { return replies == 2; }) && requests == 1;
-    host.requestJson("/search", {{"keywords", "native"}}, receive);
+    host.requestJson("/native/siren/search", {{"keywords", "native"}}, receive);
     ok &= waitFor([&] { return replies == 3; }) && requests == 1;
 
     const auto originalEpoch = host.epoch;
@@ -183,7 +183,7 @@ bool runNativeHostChecks(const QString &root) {
 
     QImage image(2, 2, QImage::Format_RGBA8888);
     image.fill(Qt::red);
-    const QString cover = "https://music.126.net/native-fixture.jpg?param=1024y1024";
+    const QString cover = "https://hycdn.cn/native-fixture.jpg";
     host.fixtureImage(cover, image);
     bool coverReady = false;
     host.loadCover(cover, [&](QString key) { coverReady = key == cover && host.image(key) == image; });

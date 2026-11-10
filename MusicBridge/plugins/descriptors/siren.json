@@ -118,6 +118,29 @@
         "allowHttp": false,
         "schemePolicy": "https"
     },
+    "cache": {
+        "version": "siren-1",
+        "ttlByOperation": {
+            "search": 900,
+            "songs": 86400,
+            "detail": 21600,
+            "artistAlbums": 21600,
+            "userPlaylists": 60,
+            "likedIDs": 60,
+            "likedSongs": 60,
+            "likedAlbums": 60,
+            "discover": 900,
+            "categories": 900
+        },
+        "ttlByRoute": {
+            "/search": 900,
+            "/song/detail": 86400,
+            "/album": 21600,
+            "/artists": 21600,
+            "/artist/album": 21600
+        },
+        "maxEntries": 256
+    },
     "links": {
         "parse": false,
         "patterns": [],

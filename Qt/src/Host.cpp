@@ -321,6 +321,10 @@ Host::Host(QString path, bool test, QObject *parent, bool service, PlaybackConne
     ProviderRegistry::instance().load(root, AppStorage::dataDirectory() + "/plugins", disabledPlugins());
     provider = ProviderRegistry::instance().defaultId();
     if (provider.isEmpty()) {
+        // core-only 时 local 也可能在 ids() 中排在最前；默认来源应优先非本地来源。
+        provider = ProviderRegistry::instance().fallbackId("local");
+    }
+    if (provider.isEmpty()) {
         provider = ProviderRegistry::instance().fallbackId();
     }
     if (provider.isEmpty()) {
