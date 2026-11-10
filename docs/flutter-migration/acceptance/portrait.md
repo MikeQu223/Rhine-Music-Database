@@ -495,7 +495,7 @@ music:login | 1-12 | 411x914@2.625 | 480x1066@3 | unexecuted x7 | unexecuted | c
 | --- | --- |
 | T02 | 提供全部竖屏几何公式与横屏常量（本卡只引用，不重定义） |
 | T05 | 拥有通用六路径登录矩阵 fixture（`test/fixtures/login_matrix.json`）；本卡 fixture 是竖屏验收用例，避免与其重复 |
-| T43 | 已实现 `worktrees/T43/lib/ui/layout/portrait_bands.dart`：W/Band/Hybrid 三候选与 compress/shiftUp 两策略均为**参数、未裁决**；本卡只引用其公式，不选型。引用快照：T43 工作树 @ `8ed3067b0812eb2612f7841ec127a6e8ca93231b`（该文件未跟踪草稿，744 行，sha256 `ad9f0144332a58741798d9c23e22b7063b5fcedd9f984d0bc0eb90e57721c1fa`）；正文行号只对该快照有效，符号名为准。三档 golden 与候选裁决仍以 T43 冻结为准 |
+| T43 | 已实现 `worktrees/T43/lib/ui/layout/portrait_bands.dart`：W/Band/Hybrid 三候选与 compress/shiftUp 两策略均为**参数、未裁决**；本卡只引用其公式，不选型。引用快照：T43 工作树 @ `8ed3067b0812eb2612f7841ec127a6e8ca93231b`（该文件为未跟踪草稿，非 Git 对象，HEAD 不固定其内容；2026-11-10T10:29+08:00 实测 744 行 / 28463 bytes，sha256 `49454a547c5732fd6b31b18df092f96f18b5ec4c5260d5524d8e678c747647b9`，mtime 2026-11-10T05:13:04+08:00；旧审 2026-11-10T10:11–10:18 实测同值，草稿再变则此 sha 失效，仅作当次溯源，不作像素验证依据）；正文行号只对该快照有效，符号名为准。三档 golden 与候选裁决仍以 T43 冻结为准 |
 | T50 | 横屏验收与视觉未取证清单；竖屏同口径标「视觉未取证」 |
 | T33–T40 | 各页面动作实现；本卡 6.2–6.7 的清单是其竖屏回归基线 |
 | T52 | 性能基线依赖 T50/T51 |
