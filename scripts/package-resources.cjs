@@ -1,4 +1,5 @@
 // 按显式白名单组装干净的应用，禁止整目录复制暂存区。
+const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const root = path.resolve('output/resources');
