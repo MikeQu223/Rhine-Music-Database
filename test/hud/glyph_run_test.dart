@@ -9,10 +9,11 @@
 // because Qt always has QTextLayout available:
 //   * a full GlyphText takes the decision (gate) and the shaper (port) as a
 //     pair, so half-wired configurations no longer compile;
-//   * a resource-only GlyphText refuses (StateError, also in release) the two
-//     code-point classes it can recognise without Unicode data -- outside the
-//     BMP and U+200D -- instead of painting one unpaired surrogate per code
-//     unit;
+//   * a resource-only GlyphText refuses (StateError, also in release) every
+//     class it can recognise without an injected table -- outside the BMP,
+//     an unpaired surrogate, U+200D, a combining mark, a Hangul Jamo and a
+//     non-whitelisted script -- and every code point the resource table
+//     cannot outline, instead of painting default 1 em glyphs;
 //   * the shaped branch measures with advanceEm/boundsEm and paints the port's
 //     outline, never Skia's control-point hull.
 //
@@ -40,12 +41,24 @@ const String _letteringJson = r'{"access":{"text":"AB","weight":"Normal",'
 ///      Path.getBounds() hull are distinguishable on the resource branch;
 ///   D: 0.5 em advance, box 120..400 x 0..500, so a non-zero left side
 ///      bearing makes "first code unit only" observable.
+///   E: U+0301 combining acute (zero advance), F: U+0416 Cyrillic,
+///   G: U+1100 Hangul Jamo, H: U+4E00 Han, I: U+3042 Hiragana,
+///   J: U+30A2 Katakana, K: U+AC00 Hangul syllable, L: '!' Common. All eight
+///   are in the table so a property refusal cannot be satisfied by term (7).
 const String _glyphJson = r'{"regular":{"units":1000,"ascent":1044,'
     r'"descent":-282,"glyphs":{'
     r'"A":{"advance":0.5,"path":"M0 0L1000 0L1000 700L0 700Z"},'
     r'"B":{"advance":0.25,"path":"M0 0L10 0L10 10Z"},'
     r'"C":{"advance":0.4,"path":"M0 0C0 500 500 500 500 0Z"},'
-    r'"D":{"advance":0.5,"path":"M120 0L400 0L400 500L120 500Z"}}}}';
+    r'"D":{"advance":0.5,"path":"M120 0L400 0L400 500L120 500Z"},'
+    r'"\u0301":{"advance":0.0,"path":"M0 0L10 0L10 10Z"},'
+    r'"\u0416":{"advance":1.0,"path":"M0 0L1000 0L1000 1000L0 1000Z"},'
+    r'"\u1100":{"advance":1.0,"path":"M0 0L1000 0L1000 1000L0 1000Z"},'
+    r'"\u4E00":{"advance":1.0,"path":"M0 0L1000 0L1000 1000L0 1000Z"},'
+    r'"\u3042":{"advance":1.0,"path":"M0 0L1000 0L1000 1000L0 1000Z"},'
+    r'"\u30A2":{"advance":1.0,"path":"M0 0L1000 0L1000 1000L0 1000Z"},'
+    r'"\uAC00":{"advance":1.0,"path":"M0 0L1000 0L1000 1000L0 1000Z"},'
+    r'"!":{"advance":1.0,"path":"M0 0L1000 0L1000 1000L0 1000Z"}}}}';
 
 GlyphFontSet _fonts() => parseGlyphResources(
       glyphJson: _glyphJson,
@@ -169,6 +182,107 @@ void main() {
       );
     });
 
+    test('throws for a lone high surrogate instead of painting it', () {
+      // Qt's toUcs4() replaces an invalid sequence with U+FFFD
+      // (qstring.cpp:5811-5814); neither shipped face maps U+FFFD, so Qt's
+      // term (7) routes the string to QTextLayout. The resource path would
+      // paint the lone code unit as the default 1 em glyph, and text.runes
+      // cannot see it.
+      final String lone = String.fromCharCode(0xd800);
+      expect(
+        () => text.requiresComplexLayout(lone, 'regular'),
+        throwsA(
+          isA<StateError>().having(
+            (StateError e) => e.message,
+            'message',
+            contains('U+D800'),
+          ),
+        ),
+      );
+    });
+
+    test('throws for a lone low surrogate instead of painting it', () {
+      final String lone = String.fromCharCode(0xdc00);
+      expect(
+        () => text.requiresComplexLayout(lone, 'regular'),
+        throwsA(
+          isA<StateError>().having(
+            (StateError e) => e.message,
+            'message',
+            contains('U+DC00'),
+          ),
+        ),
+      );
+    });
+
+    test('throws for a combining mark the table carries', () {
+      // Qt term (2): Mark_NonSpacing. The fixture has U+0301, so term (7)
+      // alone would not refuse it.
+      expect(
+        () => text.requiresComplexLayout('A\u0301', 'regular'),
+        throwsA(
+          isA<StateError>().having(
+            (StateError e) => e.message,
+            'message',
+            contains('U+0301'),
+          ),
+        ),
+      );
+    });
+
+    test('throws for a non-whitelisted script the table carries', () {
+      // Qt term (4): U+0416 is Script_Cyrillic; the fixture has its outline.
+      expect(
+        () => text.requiresComplexLayout('\u0416', 'regular'),
+        throwsA(
+          isA<StateError>().having(
+            (StateError e) => e.message,
+            'message',
+            contains('U+0416'),
+          ),
+        ),
+      );
+    });
+
+    test('throws for a Hangul Jamo the table carries', () {
+      // Qt term (3): Script_Hangul outside U+AC00..U+D7A3.
+      expect(
+        () => text.requiresComplexLayout('\u1100', 'regular'),
+        throwsA(
+          isA<StateError>().having(
+            (StateError e) => e.message,
+            'message',
+            contains('U+1100'),
+          ),
+        ),
+      );
+    });
+
+    test('throws for a whitelisted code point the table lacks', () {
+      // Qt term (7) is a coverage question: Q is Script_Latin, not a mark,
+      // not a Jamo, but the fixture has no outline for it.
+      expect(
+        () => text.requiresComplexLayout('Q', 'regular'),
+        throwsA(
+          isA<StateError>().having(
+            (StateError e) => e.message,
+            'message',
+            contains('U+0051'),
+          ),
+        ),
+      );
+    });
+
+    test('accepts whitelisted scripts the table carries', () {
+      // A false positive in the property patterns would throw here; all five
+      // code points are in the fixture table, so term (7) stays silent.
+      expect(text.requiresComplexLayout('!', 'regular'), isFalse);
+      expect(text.requiresComplexLayout('\u4E00', 'regular'), isFalse);
+      expect(text.requiresComplexLayout('\u3042', 'regular'), isFalse);
+      expect(text.requiresComplexLayout('\u30A2', 'regular'), isFalse);
+      expect(text.requiresComplexLayout('\uAC00', 'regular'), isFalse);
+    });
+
     test('measures plain text on the Qt per-code-unit path', () {
       // (0.5 * 100 + 2) + (0.25 * 100 + 2) - 2 == 77 (Glyphs.cpp:301-310).
       expect(text.width('AB', 100, tracking: 2), 77);
@@ -246,6 +360,24 @@ void main() {
       expect(canvas.op(1), <Object?>['translate', 5.0, 7.0 + 1000.0 * 1.044]);
       expect(canvas.op(2), <Object?>['scale', 1.0, -1.0]);
       expect(identical(canvas.op(3)[1], outline), isTrue);
+    });
+
+    test('a real port with a null gate fails before shaping', () {
+      // The constructor pair contract is not enforced by a release assert:
+      // requiresComplexLayout must refuse before it silently ignores the port.
+      final text = GlyphText(fonts, complex: port, gate: null);
+      expect(text.isResourceOnly, isTrue);
+      expect(
+        () => text.requiresComplexLayout('A', 'regular'),
+        throwsA(
+          isA<StateError>().having(
+            (StateError e) => e.message,
+            'message',
+            contains('null gate'),
+          ),
+        ),
+      );
+      expect(port.calls, isEmpty);
     });
 
     test('a false answer keeps even a surrogate pair on the resource path', () {

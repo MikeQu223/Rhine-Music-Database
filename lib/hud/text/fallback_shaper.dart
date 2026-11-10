@@ -40,27 +40,36 @@
 // UTF-16 units, package:characters gives grapheme clusters. RegExp does
 // support Unicode property escapes in unicode mode -- the SDK documents
 // RegExp(r'^\p{L}$', unicode: true) (dart-sdk/lib/core/regexp.dart:393-396) --
-// and ECMAScript property escapes cover General_Category and Script. They do
-// not cover Bidi_Class, and each test compiles a pattern and scans the
-// subject, so RegExp cannot answer QChar::direction at all. Rather than pay
-// per-code-point regexp cost and still miss one of the three queries, the
-// table is a port: [UnicodeClassifier]. RegExp stays a legitimate stopgap for
-// a caller that cannot ship a table: \p{Mn}, \p{Mc}, \p{Me} answer Qt's
-// combining categories and \p{Script=...} answers the whitelist check; bidi
-// still needs table data because no escape exposes Bidi_Class.
+// and ECMAScript property escapes cover General_Category and Script. The SDK
+// shows only a General_Category example, but the dart:core contract is
+// explicit: RegExp has "the same syntax and semantics as JavaScript regular
+// expressions" (regexp.dart:17-20) and implements the ECMAScript RegExp
+// specification (:91-92), which includes the Script= property. No in-tree
+// pattern used it before this fix, and this phase forbids executing tests, so
+// that support is contract-backed rather than demonstrated here; the
+// resource-only path in glyph_run.dart uses \p{M} for Qt's combining
+// categories and \p{Script=...} for the script whitelist, and the resource
+// table for term (7) coverage. Property escapes do not cover Bidi_Class,
+// and each test compiles a pattern and scans the subject, so RegExp cannot
+// answer QChar::direction at all. Rather than pay per-code-point regexp cost and
+// still miss one of the three queries, the table is a port:
+// [UnicodeClassifier]. The resource-only path in glyph_run.dart uses RegExp
+// directly for the combining and script checks, but this predicate cannot:
+// its term (6) needs Bidi_Class, which no property escape exposes, so a
+// caller with no table must not call this predicate at all.
 //
-// The default port reports kCategoryOther / kScriptUnknown /
-// kDirectionLeftToRight for every code point, and this file is written so
-// that a missing table never fabricates a positive answer.
-//
-// Consequence of the default port, stated explicitly so callers cannot be
-// surprised: with UnicodeClassifier.none only these terms can fire --
-//   (1) codePoint > 0xFFFF,
-//   (5) codePoint == 0x200D,
-//   (7) no outline in the resource table and no symbol coverage.
-// Terms (2), (3) and (4) need real data and stay silent until a real port is
-// injected. A shipping caller must inject a table; the default port is for
-// "no data available, be conservative about what we cannot see" only.
+// The classifier is REQUIRED and must carry real data. This file refuses to
+// answer against [UnicodeClassifier.none]: [requiresFallback] throws a
+// StateError for a port whose [UnicodeClassifier.hasScriptData] is false.
+// The reason is that terms (2) combining marks, (3) Hangul jamo,
+// (4) non-whitelisted scripts and (6) RTL would all stay silent, so a
+// combining mark, a Hebrew or an Arabic string would be reported as plain text
+// and painted as raw code points exactly where Qt runs QTextLayout. "No
+// fallback" from a port that cannot tell is a wrong answer, not a conservative
+// one, so an unusable port is a build/wiring error instead of a silent default.
+// A caller that has no table yet must not call this predicate; the
+// resource-only path in glyph_run.dart fails fast on the structural and
+// Unicode-property cases it can decide and documents the rest.
 //
 // ---------------------------------------------------------------------------
 // What [GlyphFontSet.hasOutline] really means (term 7)
@@ -75,8 +84,9 @@
 //      Extended, 136 Cyrillic, 112 box drawing, 100 ASCII, 100 fullwidth,
 //      80 Greek, 54 General Punctuation, ...)
 //   misans-glyphs.json, per weight ................ 1007 code points
-//     (a strict subset of the cmap above; verified: 0 resource entries are
-//      missing from the OTF)
+//     (a strict subset of the cmap above, with 0 resource entries missing from
+//      the OTF, as measured offline by A1/T31-V4; this phase forbids running
+//      anything, so that measurement is not reproducible here)
 //   NotoSansSymbols2-Regular.ttf cmap ............ 2955 code points
 //     (813 emoji-range, 145 dingbats, 121 misc symbols, 96 geometric shapes,
 //      102 Latin Extended, 98 ASCII, ...)
@@ -91,18 +101,20 @@
 // answer, never the permissive one.
 //
 // ---------------------------------------------------------------------------
-// Script_Unknown: the one place where "no data" and "Unknown" must differ
+// Script_Unknown is contextual, literally like Qt
 // ---------------------------------------------------------------------------
 // Qt applies term (4) to QChar::Script_Unknown too, because Script_Unknown is
 // outside the whitelist of {Common, Inherited, Latin, Han, Hiragana, Katakana,
-// Hangul}. Private-use and unassigned code points therefore count as
-// "contextual" in Qt. The port must keep that literal reading for a real
-// table, yet must never let the no-data port report true for every string, so
-// [UnicodeClassifier] separates the two readings: [UnicodeClassifier.hasScriptData]
-// is true by default (a real classifier means "Unknown really is Unknown") and
-// false for [UnicodeClassifier.none] ("this port has no data").
-// _isContextualScript treats kScriptUnknown as contextual only when the
-// classifier reports script data.
+// Hangul}. Private-use, noncharacter and unassigned code points therefore count
+// as "contextual" in Qt, and this port keeps that literal reading:
+// kScriptUnknown is contextual unconditionally.
+//
+// An earlier draft softened this for a data-free port through
+// [UnicodeClassifier.hasScriptData], which made "no table" indistinguishable
+// from "table says Unknown" and silently suppressed terms (2), (3), (4) and
+// (6). That reading is gone: a port without data is rejected up front, so the
+// flag now only tells the guard that this port really answers all three
+// queries. There is no mode in which a missing table is treated as plain text.
 
 import 'glyph_font.dart';
 
@@ -190,20 +202,22 @@ abstract class UnicodeClassifier {
   /// Qt: QChar::direction (Glyphs.cpp:119).
   int direction(int codePoint);
 
-  /// Whether [script] carries real Unicode data, i.e. kScriptUnknown really
-  /// means Script_Unknown (Glyphs.cpp:124-127 counts it as contextual).
+  /// Capability flag: this port answers [category], [script] and [direction]
+  /// from real Unicode tables, so kScriptUnknown really means Script_Unknown
+  /// (which Glyphs.cpp:124-127 counts as contextual).
   ///
-  /// Defaults to true because a real table is the expected implementation.
-  /// [UnicodeClassifier.none] reports false so that "no data" does not turn
-  /// every string into a fallback; see _isContextualScript.
+  /// Defaults to true because a table-backed classifier is the only usable
+  /// implementation. [UnicodeClassifier.none] reports false, and
+  /// [requiresFallback] / [requiresFallbackGate] reject any port that reports
+  /// false instead of answering with four of the seven terms suppressed.
   bool get hasScriptData => true;
 
-  /// Default port: no Unicode data at all.
+  /// The no-data port, present only so the rejection is diagnosable.
   ///
   /// Reports kCategoryOther / kScriptUnknown / kDirectionLeftToRight for every
   /// code point, which means "unknown", never "known to be simple", and
-  /// reports [hasScriptData] false. Terms (2), (3) and (4) of
-  /// [requiresFallback] cannot fire under this port.
+  /// reports [hasScriptData] false. [requiresFallback] throws a StateError for
+  /// it, so it can never turn a string Qt would shape into a plain-text answer.
   static const UnicodeClassifier none = _UnknownUnicodeClassifier();
 }
 
@@ -229,7 +243,9 @@ class _UnknownUnicodeClassifier extends UnicodeClassifier {
 ///
 /// Returns true on the first code point that satisfies any of the seven terms
 /// below; false when every code point is plain. Empty text never needs layout
-/// (Qt's loop body never runs, Glyphs.cpp:117).
+/// (Qt's loop body never runs, Glyphs.cpp:117), so it is answered before the
+/// port is validated: with no code point there is no term for a data-less port
+/// to suppress, and refusing the empty string would reject a correct answer.
 ///
 /// Terms, in Qt order (Glyphs.cpp:128-130):
 ///   1. codePoint > 0xFFFF -- anything outside the BMP, i.e. surrogate pairs.
@@ -249,6 +265,10 @@ class _UnknownUnicodeClassifier extends UnicodeClassifier {
 /// [weight] follows the Qt default ("regular", Glyphs.h:25) through
 /// [kDefaultGlyphWeight]; [fonts] is the same resource set A1 loads.
 ///
+/// [classifier] is required and must carry real data:
+/// [UnicodeClassifier.hasScriptData] false throws a StateError, because terms
+/// (2), (3), (4) and (6) would otherwise report "plain" for text Qt shapes.
+///
 /// The predicate takes no paragraph-level direction argument, because Qt's
 /// needsLayout has none either (Glyphs.cpp:108-139): direction is consulted
 /// per code point only, through term (6). A caller that has resolved a
@@ -258,11 +278,12 @@ bool requiresFallback(
   String text, {
   String weight = kDefaultGlyphWeight,
   required GlyphFontSet fonts,
-  UnicodeClassifier classifier = UnicodeClassifier.none,
+  required UnicodeClassifier classifier,
 }) {
   if (text.isEmpty) {
     return false;
   }
+  _requireUnicodeData(classifier, 'requiresFallback');
   for (final int codePoint in text.runes) {
     // (1) Outside the BMP. Qt: point > 0xffff (Glyphs.cpp:128).
     if (codePoint > 0xffff) {
@@ -283,9 +304,9 @@ bool requiresFallback(
       return true;
     }
     // (4) Script outside the plain-text whitelist. Qt: contextual
-    // (Glyphs.cpp:124-127). kScriptUnknown is contextual for a real table and
-    // silent for the no-data port; see the note in the file header.
-    if (_isContextualScript(script, hasScriptData: classifier.hasScriptData)) {
+    // (Glyphs.cpp:124-127). kScriptUnknown counts as contextual, literally like
+    // Qt; see the note in the file header.
+    if (_isContextualScript(script)) {
       return true;
     }
     // (5) ZERO WIDTH JOINER. Qt: point == 0x200d (Glyphs.cpp:128).
@@ -310,17 +331,58 @@ bool requiresFallback(
   return false;
 }
 
+/// Builds the per-string decision for a GlyphText full configuration.
+///
+/// The returned function is structurally glyph_run.dart's ComplexTextGate
+/// ("bool Function(String text, String weight)"), so it can be passed to the
+/// GlyphText constructor without this file importing the measurement layer
+/// (which would make the two files cyclically dependent). [fonts] is captured
+/// here on purpose: term (7) must ask the SAME resource table the painter
+/// draws from, otherwise the gate can decide "resource path" for a string
+/// whose outlines only exist in another set.
+///
+/// Throws at wiring time when [classifier] carries no data, so a misconfigured
+/// app fails while constructing its text stack instead of on the first Arabic
+/// or combining string.
+bool Function(String text, String weight) requiresFallbackGate({
+  required GlyphFontSet fonts,
+  required UnicodeClassifier classifier,
+}) {
+  _requireUnicodeData(classifier, 'requiresFallbackGate');
+  return (String text, String weight) => requiresFallback(
+        text,
+        weight: weight,
+        fonts: fonts,
+        classifier: classifier,
+      );
+}
+
+/// Rejects a classifier that cannot answer all three Unicode queries.
+///
+/// See [UnicodeClassifier.hasScriptData]; the message names the affected terms
+/// so a wiring failure explains itself.
+void _requireUnicodeData(UnicodeClassifier classifier, String api) {
+  if (classifier.hasScriptData) {
+    return;
+  }
+  throw StateError(
+    '$api needs a UnicodeClassifier with real category, script and bidi '
+    'data: with UnicodeClassifier.none terms (2) combining marks, (3) Hangul '
+    'jamo, (4) non-whitelisted scripts and (6) RTL never fire, so text that Qt '
+    'shapes (Glyphs.cpp:121-129) is reported as plain and painted as raw code '
+    'points. Inject a table-backed classifier.',
+  );
+}
+
 /// True when [script] is outside {Common, Inherited, Latin, Han, Hiragana,
 /// Katakana, Hangul}, exactly like Qt's contextual term (Glyphs.cpp:124-127).
 ///
-/// kScriptUnknown has two readings and [hasScriptData] picks one: with real
-/// data it is Qt's Script_Unknown, which Qt counts as contextual; without
-/// data it only means "the port has no table", and treating it as contextual
-/// would make [UnicodeClassifier.none] report true for every string.
-bool _isContextualScript(int script, {required bool hasScriptData}) {
+/// kScriptUnknown IS contextual: Qt treats Script_Unknown as outside the
+/// whitelist (Glyphs.cpp:124-127), and private-use, noncharacter or unassigned
+/// code points really are outside it. A port without data is rejected before
+/// this function runs, so "Unknown" here always means the real Unicode value.
+bool _isContextualScript(int script) {
   switch (script) {
-    case kScriptUnknown:
-      return hasScriptData;
     case kScriptCommon:
     case kScriptInherited:
     case kScriptLatin:
@@ -330,6 +392,8 @@ bool _isContextualScript(int script, {required bool hasScriptData}) {
     case kScriptHangul:
       return false;
     default:
+      // Every other script is contextual, kScriptUnknown included: Qt's
+      // whitelist check (Glyphs.cpp:124-127) makes no exception for it.
       return true;
   }
 }
