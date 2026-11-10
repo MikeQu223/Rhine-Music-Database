@@ -92,6 +92,13 @@ for (const entry of index.plugins || []) {
     if (!entryFile || !fs.existsSync(path.join(directory, entryFile))) {
         failures.push('missing entry file: ' + id);
     }
+    // 移动端 libnode 未编译完整 ICU：Unicode 属性转义会让整个插件在加载阶段抛 SyntaxError。
+    if (manifest.runtime?.mobileBundled && entryFile && fs.existsSync(path.join(directory, entryFile))) {
+        const source = fs.readFileSync(path.join(directory, entryFile), 'utf8');
+        if (/\\[pP]\{[A-Za-z_]+\}/.test(source)) {
+            failures.push('mobileBundled entry uses Unicode property escapes: ' + id + '/' + entryFile);
+        }
+    }
     const listed = new Set(['manifest.json', entryFile]);
     for (const file of entry.files || []) {
         const name = typeof file === 'string' ? file : file.path;

@@ -314,8 +314,17 @@ class PluginRegistry {
             imported = entryFile.endsWith('.cjs')
                 ? require(entryFile)
                 : await import(pathToFileURL(entryFile).href);
-        } catch {
-            throw new PluginError(503, 'plugin.load-failed', '插件加载失败');
+        } catch (error) {
+            // 设备上没有控制台：附上安全的错误类型，便于区分缺依赖、语法不受支持和权限问题。
+            const name = error?.name === 'Error' ? '' : String(error?.name || '');
+            const reason = String(error?.code || name)
+                .replace(/[^A-Za-z_]/g, '')
+                .slice(0, 40);
+            throw new PluginError(
+                503,
+                'plugin.load-failed',
+                reason ? '插件加载失败（' + reason + '）' : '插件加载失败',
+            );
         }
         const create = imported.create || imported.default?.create;
         if (typeof create !== 'function') {
