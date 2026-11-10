@@ -806,6 +806,22 @@ class _QtPlatformViewBody extends StatelessWidget {
       animation: controller,
       builder: (BuildContext context, Widget? child) {
         final QtHostStatus status = controller.status;
+        if (qtCompositionMismatch(compositionMode, status)) {
+          // probe=ready 只说明宿主前置条件齐了，不代表当前合成模式画得出 Qt 画面：
+          // QtSurface 是 SurfaceView（QtWindow.java:303-325 / QtSurface.java:14），
+          // textureLayer 走 initAndroidView 的 TLHC/纹理（platform_views.dart:131-133），
+          // 拿不到 SurfaceView 的像素。这里必须显式不可用，不能静默走 AndroidView
+          // 把一块空白当成 Qt 画面（MF-D14-1）。
+          return QtPlatformViewUnavailablePanel(
+            title: 'Qt 组合模式不匹配',
+            verdict: status.verdict,
+            detail: status.reason,
+            missing: status.missing,
+            archNotes: _archNotesFor(status),
+            compositionMode: compositionMode,
+            platformStatus: status,
+          );
+        }
         if (!status.isReady && controller.platformViewId >= 0) {
           // 平台侧明确拒绝：不渲染 AndroidView / PlatformViewLink（那会把一个空白
           // View 当成 Qt 贴上来），渲染诊断面板。
@@ -918,6 +934,19 @@ class _QtPlatformViewBody extends StatelessWidget {
     }
     return notes;
   }
+}
+
+/// 纯决策：宿主已 ready 且观测到需要 View Composition，但当前仍是纹理路径。
+///
+/// 这是 MF-D14-1 的最小判定面：不看 widget 树、不看平台，只由状态与模式决定，
+/// 因此可以在纯 Dart 测试里直接锁定（不需要 Linux/Android 面板路径）。
+bool qtCompositionMismatch(
+  QtPlatformCompositionMode mode,
+  QtHostStatus status,
+) {
+  return status.isReady &&
+      status.viewCompositionRequired &&
+      mode != QtPlatformCompositionMode.viewComposition;
 }
 
 /// 组合模式约束的唯一判据（冻结契约 v2 第 (2)(3)(9) 条）。

@@ -18,6 +18,77 @@ import io.flutter.plugin.platform.PlatformView
 import io.flutter.plugin.platform.PlatformViewFactory
 
 /**
+ * 进程单例所有权的纯 Kotlin 登记表（无 Android 依赖，便于 JVM 合同自检）。
+ *
+ * Qt 的嵌入路径在进程内只有一个 Qt 线程/一个 ApplicationState
+ * （QtView.java:140-161 第一次构造时 loadQtLibraries + startQtApplication），
+ * 所以第二个宿主视图必须被拒绝，而不是再加载一遍。
+ */
+internal class QtHostOwnershipRegistry {
+    private var owner: Any? = null
+
+    fun claim(candidate: Any): Boolean = synchronized(this) {
+        if (owner != null && owner !== candidate) return false
+        owner = candidate
+        true
+    }
+
+    fun release(candidate: Any) {
+        synchronized(this) {
+            if (owner === candidate) owner = null
+        }
+    }
+
+    fun current(): Any? = synchronized(this) { owner }
+}
+
+/**
+ * 构造期的纯决策：这次实例是否应该去抢进程单例。
+ *
+ * 只对"参数合法 + probe ready + 有 Activity"的实例为真：被拒的第二个实例
+ * 绝不能碰 MethodChannel/EventChannel，否则它会把第一个实例的 handler 换掉。
+ * 通道安装另有 shouldInstallChannels() 判据（诊断实例允许在无 owner 时上报）。
+ */
+internal data class QtHostInitPlan(val claimRequested: Boolean)
+
+internal fun planHostInit(
+    probeVerdict: String?,
+    argErrors: List<String>,
+    activityPresent: Boolean,
+): QtHostInitPlan = QtHostInitPlan(
+    claimRequested = argErrors.isEmpty() && probeVerdict == "ready" && activityPresent,
+)
+
+/**
+ * 通道 handler 的唯一安装判据（纯函数，便于 JVM 合同自检）。
+ *
+ * 共享 MethodChannel/EventChannel 只能有一个 handler：
+ *  - 参数非法：不装；
+ *  - 抢单例失败（已有 owner）：不装——这是 MF-D14-2 要钉死的"第二个实例不许换掉第一个"；
+ *  - 构造失败：不装（所有权已释放，视图是死的）；
+ *  - 抢到单例并构造成功：装；
+ *  - 从未抢单例的诊断实例（probe 未 ready / 没有 Activity）：仅当进程里既没有 Qt owner、
+ *    也没有别的通道 owner 时装，否则它会覆盖 owner 的 handler（且先装者的 dispose 会把
+ *    后装者的通道拆掉）。诊断实例必须能上报，否则 archBlocked 的宿主在 Dart 侧只剩未知状态。
+ */
+internal fun shouldInstallChannels(
+    argErrorsEmpty: Boolean,
+    claimAttempted: Boolean,
+    claimGranted: Boolean,
+    constructionFailed: Boolean,
+    anotherOwnerExists: Boolean,
+    anotherChannelOwnerExists: Boolean,
+): Boolean {
+    if (!argErrorsEmpty) return false
+    if (claimAttempted && !claimGranted) return false
+    if (constructionFailed) return false
+    if (claimGranted) return true
+    // 诊断实例只在"既没有 Qt owner、也没有别的通道 owner"时上报。
+    // 否则它会把前一个诊断/宿主实例的 handler 顶掉（dispose 时还会清掉别人的通道）。
+    return !anotherOwnerExists && !anotherChannelOwnerExists
+}
+
+/**
  * T11-S01 候选 A：真实的 Qt/Flutter 平台宿主端口（Android 侧）。
  *
  * 这份代码只做两件事，且都是真的：
@@ -170,24 +241,39 @@ object QtPlatformViewHost {
      * QtNative 里只有一个 Qt 线程/一个 ApplicationState。
      * 因此第二个 PlatformView 必须被拒，而不是悄悄再加载一遍。
      */
-    @Volatile
-    private var activeView: QtPlatformView? = null
+    private val ownership = QtHostOwnershipRegistry()
 
-    internal fun claimActiveView(view: QtPlatformView): Boolean {
-        synchronized(this) {
-            if (activeView != null && activeView !== view) return false
-            activeView = view
-            return true
-        }
-    }
+    internal fun claimActiveView(view: QtPlatformView): Boolean = ownership.claim(view)
 
     internal fun releaseActiveView(view: QtPlatformView) {
+        ownership.release(view)
+    }
+
+    internal fun hasActiveView(): Boolean = ownership.current() != null
+
+    /**
+     * 通道（MethodChannel/EventChannel）是第二份共享资源，跟 Qt 单例所有权分开记：
+     *  - 合法 owner 构造成功后可以直接接管通道（把先前诊断实例的 handler 换掉）；
+     *  - 诊断实例只在没有任何通道 owner 时装 handler，避免互相顶掉；
+     *  - dispose 只允许**当前**通道 owner 清 handler，否则一个早已被接管的诊断实例
+     *    会在析构时把后来合法实例的通道拆掉（MF-D14-2 的同一类泄漏）。
+     */
+    private var channelOwner: QtPlatformView? = null
+
+    internal fun claimChannels(view: QtPlatformView) {
+        synchronized(this) { channelOwner = view }
+    }
+
+    internal fun releaseChannels(view: QtPlatformView) {
         synchronized(this) {
-            if (activeView === view) activeView = null
+            if (channelOwner === view) channelOwner = null
         }
     }
 
-    internal fun hasActiveView(): Boolean = activeView != null
+    internal fun ownsChannels(view: QtPlatformView): Boolean =
+        synchronized(this) { channelOwner === view }
+
+    internal fun hasChannelOwner(): Boolean = synchronized(this) { channelOwner != null }
 
     /**
      * 把一个 Context 剥到 Activity。
@@ -509,9 +595,9 @@ object QtPlatformViewHost {
     /**
      * 反射构造真的 QtQuickView。
      *
-     * 用反射而不是编译期依赖：Qt 的 android jar 在本 Flutter 工程里根本不在 classpath 上
-     * （树的 constraint 也不允许本 atom 改 gradle/pubspec）。反射让"缺 Qt"变成一条可读的
-     * 状态，而不是整个模块编译不过——后者会逼出"先写个占位 View 让它能编"的假实现。
+     * 用反射而不是编译期依赖：Qt 的 android jar 不在本 Flutter 工程的 classpath 上
+     * （本切片也没有把它加进 gradle）。反射让"缺 Qt"变成一条可读的状态，
+     * 而不是整个模块编译不过——后者会逼出"先写个占位 View 让它能编"的假实现。
      */
     fun instantiateQtQuickView(activity: Activity, args: QtPlatformViewArgs): Result<View> = runCatching {
         val clazz = Class.forName(QT_CLASSES.getValue(KEY_QUICK_VIEW), true, activity.classLoader)
@@ -629,14 +715,18 @@ class QtPlatformView(
 
     private var sink: EventChannel.EventSink? = null
     private var qtView: View? = null
+
     private var status: MutableMap<String, Any?> = linkedMapOf()
     private var lastFlutterLifecycle: String? = null
     private var lastQtObservedState: Int? = null
 
     init {
+        // 顺序是硬约束：先算清"这个实例该不该存在"，再产生任何副作用。
+        // 旧实现先 claim 后校验：参数非法或 QtQuickView 构造失败的实例会占着单例所有权
+        // 直到 dispose（后续合法视图全被拒），且冲突分支仍安装通道 handler，
+        // 会把第一个实例的 MethodChannel/EventChannel handler 换掉。
         val probe = QtPlatformViewHost.probe(context)
         val activity = QtPlatformViewHost.unwrapActivity(context)
-        val singleInstanceConflict = !QtPlatformViewHost.claimActiveView(this)
         val argErrors = args.validationErrors()
 
         var verdict = probe["verdict"] as? String ?: "archBlocked"
@@ -644,42 +734,59 @@ class QtPlatformView(
         @Suppress("UNCHECKED_CAST")
         val missing = (probe["missing"] as? List<String>)?.toMutableList() ?: mutableListOf()
 
+        val initPlan = planHostInit(
+            probeVerdict = verdict,
+            argErrors = argErrors,
+            activityPresent = activity != null,
+        )
+        var ownsActiveView = false
+        var constructionFailed = false
+
         if (argErrors.isNotEmpty()) {
             verdict = "archBlocked"
             reason = "invalid creation params: " + argErrors.joinToString("; ")
             missing.addAll(argErrors)
-        }
-        if (singleInstanceConflict) {
-            verdict = "archBlocked"
-            reason = "another Qt platform view is already active; Qt embedding is a " +
-                "process singleton (QtView.java:140-161 starts the Qt application once)"
-            missing.add("single Qt application instance")
-        }
-
-        if (verdict == "ready" && activity != null && !singleInstanceConflict) {
-            QtPlatformViewHost.instantiateQtQuickView(activity, args)
-                .onSuccess { view ->
-                    qtView = view
-                    root.addView(
-                        view,
-                        FrameLayout.LayoutParams(
-                            FrameLayout.LayoutParams.MATCH_PARENT,
-                            FrameLayout.LayoutParams.MATCH_PARENT,
-                        ),
-                    )
-                    verdict = "ready"
-                    reason = "QtQuickView constructed from " + args.qtAppLibraryName
-                    Log.i(TAG, "QtQuickView attached for viewId=$viewId")
-                }
-                .onFailure { error ->
-                    // 如实降级：QtLoader 内部失败通常表现为构造期异常（native 库缺失、
-                    // meta-data 解析失败、Qt 线程启动失败）。
-                    verdict = "deviceBlocked"
-                    reason = "QtQuickView instantiation failed: " +
-                        error.javaClass.name + ": " + error.message
-                    Log.w(TAG, reason, error)
-                }
+        } else if (initPlan.claimRequested && activity != null) {
+            // 只有"参数合法 + probe ready + 有 Activity"的实例才去抢进程单例。
+            ownsActiveView = QtPlatformViewHost.claimActiveView(this)
+            if (!ownsActiveView) {
+                verdict = "archBlocked"
+                reason = "another Qt platform view is already active; Qt embedding is a " +
+                    "process singleton (QtView.java:140-161 starts the Qt application once)"
+                missing.add("single Qt application instance")
+            } else {
+                // 注意：这里先不装通道 handler。onListen 会立刻 emitStatus，
+                // 而此刻 status 还没算完；handler 统一放到 init 末尾（status 组装完之后）。
+                QtPlatformViewHost.instantiateQtQuickView(activity, args)
+                    .onSuccess { view ->
+                        qtView = view
+                        root.addView(
+                            view,
+                            FrameLayout.LayoutParams(
+                                FrameLayout.LayoutParams.MATCH_PARENT,
+                                FrameLayout.LayoutParams.MATCH_PARENT,
+                            ),
+                        )
+                        verdict = "ready"
+                        reason = "QtQuickView constructed from " + args.qtAppLibraryName
+                        Log.i(TAG, "QtQuickView attached for viewId=$viewId")
+                    }
+                    .onFailure { error ->
+                        // 如实降级：QtLoader 内部失败通常表现为构造期异常（native 库缺失、
+                        // meta-data 解析失败、Qt 线程启动失败）。
+                        verdict = "deviceBlocked"
+                        reason = "QtQuickView instantiation failed: " +
+                            error.javaClass.name + ": " + error.message
+                        Log.w(TAG, reason, error)
+                        // 失败实例不再持有单例所有权，也不再装通道：否则后续合法视图
+                        // 会被永久拒绝，或者它的 handler 被这个死视图覆盖。
+                        QtPlatformViewHost.releaseActiveView(this)
+                        ownsActiveView = false
+                        constructionFailed = true
+                    }
+            }
         } else if (verdict == "ready") {
+            // probe 说 ready，但拿不到 Activity（或 plan 判定不该 claim）：如实降级。
             verdict = "archBlocked"
             reason = "probe reported ready but no Activity context was resolvable"
         }
@@ -696,24 +803,44 @@ class QtPlatformView(
         // verdict 不是 ready 时退回缺省值（没有观测面可扫，不许把"没扫到"写成"扫到了没有"）。
         mergeObservedSubtree()
 
-        control.setMethodCallHandler(this)
-        events.setStreamHandler(object : EventChannel.StreamHandler {
-            override fun onListen(arguments: Any?, eventSink: EventChannel.EventSink?) {
-                sink = eventSink
-                emitStatus()
-            }
+        // 通道 handler 放在 init 末尾：EventChannel.setStreamHandler 会同步回调
+        // onListen → emitStatus，只有此刻 status 才是完整的探针结果（否则会先发空 map）。
+        val claimAttempted = initPlan.claimRequested && activity != null
+        val canInstallChannels = shouldInstallChannels(
+            argErrorsEmpty = argErrors.isEmpty(),
+            claimAttempted = claimAttempted,
+            claimGranted = ownsActiveView,
+            constructionFailed = constructionFailed,
+            anotherOwnerExists = QtPlatformViewHost.hasActiveView(),
+            anotherChannelOwnerExists = QtPlatformViewHost.hasChannelOwner(),
+        )
+        if (canInstallChannels) {
+            // 先记通道归属，再装 handler；dispose 只允许当前归属者拆。
+            QtPlatformViewHost.claimChannels(this)
+            control.setMethodCallHandler(this)
+            events.setStreamHandler(object : EventChannel.StreamHandler {
+                override fun onListen(arguments: Any?, eventSink: EventChannel.EventSink?) {
+                    sink = eventSink
+                    emitStatus()
+                }
 
-            override fun onCancel(arguments: Any?) {
-                sink = null
-            }
-        })
+                override fun onCancel(arguments: Any?) {
+                    sink = null
+                }
+            })
+        }
     }
 
     override fun getView(): View = root
 
     override fun dispose() {
-        control.setMethodCallHandler(null)
-        events.setStreamHandler(null)
+        // 只有当前通道归属者才能拆 handler：被拒/失败的实例没装过；
+        // 被后来合法实例接管的诊断实例也不再是 owner，它的 dispose 不能拆别人的通道。
+        if (QtPlatformViewHost.ownsChannels(this)) {
+            control.setMethodCallHandler(null)
+            events.setStreamHandler(null)
+            QtPlatformViewHost.releaseChannels(this)
+        }
         sink = null
         qtView?.let { view ->
             root.removeView(view)
@@ -790,6 +917,9 @@ class QtPlatformView(
     }
 
     private fun emitSurfaceSize(width: Int, height: Int) {
+        // 不是当前通道归属者的实例（参数非法 / 未 ready / 被单例拒绝 / 构造失败 /
+        // 已被合法实例接管）不向共享通道发任何东西，否则尺寸事件会落到别人的 Dart 侧。
+        if (!QtPlatformViewHost.ownsChannels(this)) return
         val payload = linkedMapOf<String, Any?>(
             "type" to "surfaceSize",
             "width" to width,

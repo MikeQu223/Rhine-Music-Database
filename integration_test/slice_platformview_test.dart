@@ -28,13 +28,14 @@
 //   QtHostStatus/QtProbeKeys 都在），本文件只做**契约锁定**：断言 key 名、词表、verdict
 //   语义与「不发布像素」的形状，不复制实现，也不替代实现侧的静态核对。
 //   行号在实现变更后会漂移，引用给的是「函数名 + 当前行区间」，复核以函数名重查。
-//   本 atom 的写域只有 integration_test/slice_platformview_test.dart。
+//   本文件自身的改动只落在 integration_test/slice_platformview_test.dart；实现侧改动在
+//   Dart 宿主、Kotlin 宿主与 Kotlin 纯 JVM 合同测试里。
 //
 // MainActivity / 引擎注册 patch 建议（T16 接线，候选隔离；本 atom **不落地**）：
 //   1. MainActivity.configureFlutterEngine(FlutterEngine engine) 里调用
 //        QtPlatformViewHost.registerWith(engine)
 //      即 engine.platformViewsController.registry.registerViewFactory(VIEW_TYPE, factory)。
-//      该函数已存在于 QtPlatformViewHost.kt:558-564（本 atom 不调用它：MainActivity 是共享文件，
+//      该函数已存在于 QtPlatformViewHost.kt 的 registerWith()（本 atom 不调用它：MainActivity 是共享文件，
 //      不在写域）。
 //   2. Flutter 的 plugin 自动注册**不会**注册 PlatformViewFactory —— 必须显式注册，否则
 //      AndroidView/PlatformViewLink 会以 MissingPluginException 结束（那正是「假可用」的来源）。
@@ -274,6 +275,52 @@ void main() {
           QtPlatformCompositionMode.textureLayer);
     });
 
+    test('qtCompositionMismatch：ready + 需要 VC + 非 VC 才判不匹配（MF-D14-1 纯决策）',
+        () {
+      const QtHostStatus readyRequired = QtHostStatus(
+        verdict: QtHostVerdict.ready,
+        reason: 'QtQuickView constructed from appRhineMusicDatabase',
+        surfaceContainerKind: 'surface-view',
+        viewCompositionRequired: true,
+      );
+      // 宿主 ready 且观测到 SurfaceView，但默认仍是纹理路径：必须判不匹配，
+      // 让 build() 走「Qt 组合模式不匹配」面板，而不是建一个注定空白的 AndroidView。
+      expect(
+        qtCompositionMismatch(
+            QtPlatformCompositionMode.textureLayer, readyRequired),
+        isTrue,
+      );
+      expect(
+        qtCompositionMismatch(
+            QtPlatformCompositionMode.viewComposition, readyRequired),
+        isFalse,
+      );
+
+      const QtHostStatus readyTextureOnly = QtHostStatus(
+        verdict: QtHostVerdict.ready,
+        reason: 'ready without a SurfaceView container',
+        viewCompositionRequired: false,
+      );
+      expect(
+        qtCompositionMismatch(
+            QtPlatformCompositionMode.textureLayer, readyTextureOnly),
+        isFalse,
+      );
+
+      // 未 ready 时这条纯判定必须让位：宿主真正的降级理由归主面板，
+      // 不能用一个组合模式文案把 archBlocked/deviceBlocked 的原因盖掉。
+      const QtHostStatus blocked = QtHostStatus(
+        verdict: QtHostVerdict.archBlocked,
+        reason: 'missing resources array "qt_libs"',
+        viewCompositionRequired: true,
+      );
+      expect(
+        qtCompositionMismatch(
+            QtPlatformCompositionMode.textureLayer, blocked),
+        isFalse,
+      );
+    });
+
     test('新增 8 个探针 key 名逐字冻结，既有 key 一个都没改名', () {
       expect(QtProbeKeys.qtWindowAttached, 'qtWindowAttached');
       expect(QtProbeKeys.surfaceContainerKind, 'surfaceContainerKind');
@@ -484,7 +531,7 @@ void main() {
     // 断言面板文本里出现 verdict 与缺失类名。测试名与断言一一对应。
     testWidgets('archBlocked 探针 map 原样渲染，且不发布 Qt 像素', (WidgetTester tester) async {
       // 这份 map 就是 QtPlatformViewHost.probe() 在「本 Flutter 工程没有 Qt android jar」
-      // 时的真实输出形状（QtPlatformViewHost.kt:246-330）：缺类 → archBlocked 的第一因。
+      // 时的真实输出形状（QtPlatformViewHost.probe()）：缺类 → archBlocked 的第一因。
       final Map<String, Object?> probe = <String, Object?>{
         'verdict': 'archBlocked',
         'reason': 'missing Qt android classes: '
@@ -696,7 +743,7 @@ void main() {
         //
         //   1. touch：tester.dragFrom 在平台视图区域内拖动。
         //      链路证据：QtHostRootView.dispatchTouchEvent 只计数后 super 原样转发
-        //      （QtPlatformViewHost.kt:847-851，不消费、不改坐标、不 setOnTouchListener）
+        //      （QtPlatformViewHost.QtHostRootView.dispatchTouchEvent，不消费、不改坐标、不 setOnTouchListener）
         //      → QtWindow.onTouchEvent (QtWindow.java:246-266) 在首次触摸时才初始化 editText
         //      焦点，然后 windowFocusChanged(true,getId()) →
         //      QtInputDelegate.sendTouchEvent(event, getId())（QtWindow.java:262；
@@ -706,7 +753,7 @@ void main() {
         //      断言 touchEvents > 0 且 lastTouchAction 与实际手势一致，不做任何像素比对。
         //
         //   2. resize：拖动窗口/改变分屏 → 宿主 onSizeChanged 报真实尺寸
-        //      （QtPlatformViewHost.kt:853-857），Qt 侧自己按
+        //      （QtPlatformViewHost.QtHostRootView.onSizeChanged），Qt 侧自己按
         //      QtView.java:50-69 的 addOnLayoutChangeListener → resizeWindow( ... )（:42-43
         //      native 声明，:63 调用）重排。宿主只提供真实尺寸，不自算、不补偿。
         //      断言：surfaceSize 事件里的宽高 == 视图实际宽高。
