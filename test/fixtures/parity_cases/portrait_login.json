@@ -156,12 +156,13 @@
     },
     {
       "id": "INV-4",
-      "assert": "Hybrid contentHeight = stageHeight - topBar - bottomBar - safe.top/scale - safe.bottom/scale；safe=0 时等于 stageHeight - 192",
+      "assert": "Hybrid contentHeight = stageHeight - topBar - bottomBar（A36 唯一公式：上下安全区只在 stageHeight 里扣一次）；safe=0 时等于 stageHeight - 192",
       "checked": [
         "2400 - 192 = 2208 (safe=0)",
         "1800 - 192 = 1608 (safe=0)",
-        "2280 - 192 - 72 - 48 = 1968 (safe=72/48)"
-      ]
+        "2280 - 192 = 2088 (safe=72/48)"
+      ],
+      "evidence": "A36 8692451 lib/ui/layout/portrait_bands.dart hybrid content=(safe.left/scale, 96, ..., stageHeight-192)；test/ui/portrait_stage_test.dart:729-742（组名以 'safe area is deducted once' 结尾）断言 stageHeight=2280、content.height=2088"
     },
     {
       "id": "INV-5",
@@ -176,11 +177,20 @@
         "1440/1080 = 1.333333333",
         "1200/1080 = 1.111111111"
       ]
+    },
+    {
+      "id": "INV-7",
+      "assert": "竖屏舞台原点 logical y = safe.top（containerTop * stageScale）；StageGeometry.originY 是唯一平移来源：toStage 先除 stageScale 再减 originY，toLogical/rectToLogical 反向加回；hits 与无障碍语义矩形消费同一份 geometry，不得各自再加 safe.top",
+      "checked": [
+        "1080x2400 safe=(72,48) scale=1: containerTop=72；舞台顶=窗口 y 72；窗口 y 122 = 舞台 y 50；窗口 y 71 不命中",
+        "540x1200 safe.top=72 scale=0.5: stageScale=540/1080=0.5；containerTop=72/0.5=144（originY=144）；舞台顶=窗口 y 144*0.5=72；窗口 y 108 = 舞台 y 108/0.5-144 = 72"
+      ],
+      "evidence": "A36 8692451 lib/ui/layout/portrait_stage.dart Padding(top: containerTop*stageScale)；A44 lib/hud/input/hit_layer.dart StageGeometry.originY/toStage/rectToLogical"
     }
   ],
   "portraitRules": {
     "safeArea": {
-      "vertical": "containerTop = safe.top / stageScale；stageHeight = (layoutHeight - safe.top - safe.bottom) / stageScale",
+      "vertical": "containerTop = safe.top / stageScale；stageHeight = (layoutHeight - safe.top - safe.bottom) / stageScale；舞台原点 logical y = safe.top（StageGeometry.originY = containerTop），命中/语义 rect 由 StageGeometry 统一平移",
       "bottomBar": "playerBar 底边 = stageHeight，底栏抬到安全区之上，不覆盖手势区",
       "horizontal": "左右安全区只收窄新垂直容器内容宽度，不改变 stageWidth / stageScale",
       "landscape": "安全区不得进入横屏公式（横屏公式与 Qt 保持一致）",

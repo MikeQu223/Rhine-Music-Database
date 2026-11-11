@@ -169,6 +169,31 @@ hitY = hit.y + ((modal != "" && hit.fixed != true) ? modalOffset : 0)
 注：seek/volume 是条件输出——seek 仅 `state.seekable && state.durationMs > 0`（`PlayerBar.cpp:148`），
 volume 仅 `state.applicationVolume`（`PlayerBar.cpp:212`）；iOS 手势层只有 seek，没有 volume（`Overlay.qml:486`）。
 
+### 3.5 舞台原点与窗口映射（竖屏 originY）
+
+A36 把竖屏缩放舞台整体下移到安全区之下：绘制侧是 `Padding(top: containerTop * stageScale)`，
+`containerTop = safe.top / stageScale`（§6）。因此「窗口 → 舞台」不是单纯除以 scale，而是
+**先除 scale、再减原点**的一次仿射映射；横屏 `originY = 0`，退化为 `Overlay.qml:96-103` 的
+`mouse.x / stageScale`。
+
+```
+// lib/hud/input/hit_layer.dart 是唯一实现，调用方不得复制这套算术
+originY         = bands.containerTop                      // stage unit；横屏 0
+toStage(p)      = (p.dx / scale,  p.dy / scale - originY)
+toLogical(s)    = (s.dx * scale, (s.dy + originY) * scale)
+rectToLogical(r)= Rect.fromLTWH(r.left * scale, (r.top + originY) * scale,
+                                r.width * scale, r.height * scale)
+```
+
+- `StageGeometry.originY` 是竖屏舞台原点在窗口中的**唯一平移来源**：绘制（`Padding`）、
+  命中（`HitLayer`/`PointerRouter`/`WheelRouter`）、无障碍语义矩形（`SemanticsLayer` 的
+  `rectToLogical`）共用同一份 `StageGeometry`；**禁止**任何一层再各自加一次 `safe.top`。
+- 命中表本身仍是**舞台坐标**（§3.1/§3.2）：`originY` 只出现在坐标换算这一层，
+  不得写回 hits、`playerBounds` 或 `state`；`modalOffset`/触摸外扩仍在舞台坐标里相加。
+- 竖屏 1080×2400、safe.top=72、scale=1：舞台顶 = 窗口 y=72；窗口 y=122 ↔ 舞台 y=50；
+  窗口 y=71 落在安全区里、不属于舞台，命中必须落空。
+- 以上数值是由公式推导的**拟议算术**，不是真机 golden；真机必须代入同一条公式与实测 inset。
+
 ## 4. 弹层几何与遮罩（已冻结）
 
 ### 4.1 modalBounds
@@ -290,7 +315,7 @@ layoutW, layoutH                     // logical px：LayoutBuilder 可用窗口�
 safe = MediaQuery.padding              // logical px；只在 stageHeight（扣一次）与 containerTop（舞台原点）出现，content 不再扣
 portraitStageScale  = layoutW / 1080   // logical px per stage unit
 portraitStageWidth  = 1080             // stage unit
-containerTop        = safe.top / portraitStageScale   // stage unit；舞台在窗口中的原点
+containerTop        = safe.top / portraitStageScale   // stage unit；舞台在窗口中的原点 = StageGeometry.originY（唯一平移来源）
 portraitStageHeight = (layoutH - safe.top - safe.bottom) / portraitStageScale   // stage unit，不是 logical px
 ```
 
@@ -331,6 +356,10 @@ WAIT 条目只能由 T43/T51 关闭；IME resize 已按 Flutter 清单 `adjustRe
   Band `y=0, h=stageH`、Hybrid `y=96, h=stageH-192`），**不得**再出现 `safe.top/scale`、`safe.bottom/scale`，第三处不得再扣。
 - 窗口映射：stage 原点 y = `containerTop * scale = safe.top`；缩放后舞台高 = `layoutH - safe.top - safe.bottom`；
   `playerBar` 底边 = `stageHeight`，对应窗口底边 = `layoutH - safe.bottom`，底栏落在手势区之上，不覆盖底部手势区。
+- 原点也进入命中/语义换算：`StageGeometry.originY = containerTop`（stage 单位）是竖屏
+  「窗口 → 舞台」的唯一平移来源，`toStage` 先除 `stageScale` 再减 `originY`，`toLogical`/`rectToLogical`
+  反向加回（§3.5）。绘制 `Padding(top: containerTop * scale)`、命中、语义矩形共用同一份 geometry，
+  调用方不得各自再补一次 `safe.top`；横屏 `originY = 0`，公式与 Qt 一致。
 - 清单保持 `adjustResize`：平台已按键盘缩小窗口，band/stage 计算**不得再读 `viewInsets`**；
   `imeStage = imeConsumedStage = inputShiftStage = 0`。只有未来改 `adjustNothing` 时才允许用
   `viewInsets` 压容器；任何情况下 IME 不缩放 stage。

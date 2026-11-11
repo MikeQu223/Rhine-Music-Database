@@ -27,6 +27,9 @@
 /// 换算成舞台坐标再交给 Engine（Overlay.qml:96-103、Qt/src/Engine.cpp:1042-1061），
 /// NativeApplication::pointer 再用舞台坐标与 playerBounds 比较
 /// （Qt/src/NativeApplication.cpp:216-222）。本文件同名同义：几何是舞台坐标，指针入口是逻辑坐标。
+/// 窗口→舞台除了除以 scale 还有一次平移：竖屏缩放舞台整体下移 safe.top（A36 hit-origin follow-up），
+/// 所以 [StageGeometry.toStage] 先除 scale 再减 [StageGeometry.originY]，
+/// toLogical/rectToLogical 反向加回；origin 只允许来自 StageGeometry。
 /// 唯一例外是 HitLayer.firstResultHit：它的入参是**不含 modalOffset 的舞台坐标**，
 /// 理由见该方法注释（与 Qt 的 px/py 空间一致）。
 ///
@@ -42,7 +45,13 @@ import '../protocol/hud_hit.dart';
 ///
 /// DEDUP-13：竖屏全链路只允许一个 scale。挂进 PortraitStage 的缩放子树后，
 /// 命中层必须用 [StageGeometry.withScale] 注入 PortraitBands 那一组
-/// stageScale/logicalWidth/logicalHeight，不得再按逻辑高度推导一次。
+/// stageScale/logicalWidth/logicalHeight/originY，不得再按逻辑高度推导一次。
+///
+/// A36 hit-origin follow-up：窗口→舞台是「先除 scale、再减 [originY]」的一次仿射映射，两段都收在本类里。
+/// [originY] 是缩放舞台原点相对窗口顶的**舞台偏移**（stage unit）：竖屏等于
+/// PortraitBands.containerTop（= safe.top / stageScale），与 PortraitStage 里
+/// Padding(top: containerTop * stageScale) 同源；横屏恒为 0。
+/// 命中、无障碍语义矩形、滚轮/指针入口都消费同一份 geometry，调用方禁止各自再加 safe.top。
 class StageGeometry {
   /// 旧的全窗口横向构造（仅横屏；stageScale = logicalHeight / 1080）。
   ///
@@ -50,23 +59,41 @@ class StageGeometry {
   /// lib/hud/input/wheel_router.dart）。[stageScale] 是 final 字段，本构造同样显式写入，
   /// 不存在“先留空、读取时再推导”的第二来源。
   ///
+  /// [originY] 默认 0：横屏舞台原点就在窗口顶；竖屏禁止走本构造（见上面的 assert）。
+  ///
   /// assert 要求 logicalWidth >= logicalHeight：竖屏（width < height）禁止走本构造，
   /// 新代码一律使用 [StageGeometry.withScale] 注入 PortraitBands.stageScale。
-  const StageGeometry({required this.logicalWidth, required this.logicalHeight})
+  const StageGeometry({required this.logicalWidth, required this.logicalHeight, this.originY = 0.0})
       : assert(
           logicalWidth >= logicalHeight,
           'StageGeometry(...) is landscape-only; portrait must use StageGeometry.withScale',
         ),
+        // 横屏没有竖直原点偏移；显式传 originY 时必须有限且非负。
+        // const 构造的 assert 只能是常量表达式，double.isFinite 是 getter、不可用，
+        // 故写成 `>= 0 && < double.infinity`：NaN 两条都比较为 false，+∞ 过不了上界，
+        // 与 `originY.isFinite && originY >= 0` 等价。
+        assert(
+          originY >= 0 && originY < double.infinity,
+          'StageGeometry.originY must be finite and non-negative (landscape keeps 0)',
+        ),
         stageScale = logicalHeight > 0 ? logicalHeight / baseHeight : 1.0;
 
   /// 显式注入唯一 scale（DEDUP-13）；竖屏唯一合法构造。
+  ///
+  /// [originY] 必须由调用方从 PortraitBands.containerTop 注入（横屏留默认 0）：
+  /// 它和绘制侧 Padding(top: containerTop * stageScale) 是同一份平移，不接受第二份推导。
   StageGeometry.withScale({
     required this.stageScale,
     required this.logicalWidth,
     required this.logicalHeight,
+    this.originY = 0.0,
   }) {
     if (!stageScale.isFinite || stageScale <= 0) {
       throw ArgumentError.value(stageScale, 'stageScale', 'must be positive and finite');
+    }
+    // 竖屏唯一平移来源；负值/NaN/∞ 一律拒绝，静默截断会把命中整体挪回错误高度。
+    if (!originY.isFinite || originY < 0) {
+      throw ArgumentError.value(originY, 'originY', 'must be finite and non-negative');
     }
     if (!logicalWidth.isFinite ||
         !logicalHeight.isFinite ||
@@ -88,20 +115,38 @@ class StageGeometry {
   /// 唯一 scale；两个构造都直接写入，读取时不再推导。
   final double stageScale;
 
+  /// 缩放舞台原点相对窗口顶的舞台偏移（stage unit），窗口→舞台的唯一平移来源。
+  ///
+  /// 竖屏 = PortraitBands.containerTop = safe.top / stageScale（stageScale=1 时就是 safe.top）；
+  /// 横屏 = 0。与绘制侧 Padding(top: containerTop * stageScale) 同源：绘制下移多少，
+  /// 这里就平移多少，因此 [toStage]/[toLogical]/[rectToLogical] 必须成对使用它。
+  final double originY;
+
   /// Overlay.qml:22 —— 逻辑高度换算到 1080 基准舞台（仅旧横屏构造使用）。
   static const double baseHeight = 1080.0;
 
   double get stageWidth => stageScale > 0 ? logicalWidth / stageScale : logicalWidth;
 
-  /// 逻辑坐标 → 舞台坐标：QML 里 mouse.x / stageScale。
-  Offset toStage(Offset logical) => Offset(logical.dx / stageScale, logical.dy / stageScale);
+  /// 逻辑坐标 → 舞台坐标：QML 里 mouse.x / stageScale，再减掉舞台原点。
+  ///
+  /// `Offset(lx / stageScale, ly / stageScale - originY)`：竖屏窗口 y=safe.top 落在舞台 y=0，
+  /// 窗口 y=0 落在舞台 y=-originY（安全区之上那条窗口带不属于舞台）。
+  Offset toStage(Offset logical) =>
+      Offset(logical.dx / stageScale, logical.dy / stageScale - originY);
 
-  /// 舞台坐标 → 逻辑坐标：QML 里 stage 值 * stageScale。
-  Offset toLogical(Offset stage) => Offset(stage.dx * stageScale, stage.dy * stageScale);
+  /// 舞台坐标 → 逻辑坐标：QML 里 stage 值 * stageScale，先把舞台原点加回。
+  ///
+  /// `Offset(sx * stageScale, (sy + originY) * stageScale)`，是 [toStage] 的精确逆映射。
+  Offset toLogical(Offset stage) =>
+      Offset(stage.dx * stageScale, (stage.dy + originY) * stageScale);
 
-  Rect rectToLogical(Rect stage) =>
-      Rect.fromLTWH(stage.left * stageScale, stage.top * stageScale, stage.width * stageScale,
-          stage.height * stageScale);
+  /// 舞台矩形 → 逻辑矩形；top/bottom 都经过同一次 `(y + originY) * stageScale` 平移。
+  Rect rectToLogical(Rect stage) => Rect.fromLTWH(
+        stage.left * stageScale,
+        (stage.top + originY) * stageScale,
+        stage.width * stageScale,
+        stage.height * stageScale,
+      );
 }
 
 /// 触摸外扩：Qt/qml/Overlay.qml:38-43。
