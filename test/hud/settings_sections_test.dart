@@ -517,12 +517,15 @@ void main() {
           expect(settingsTitleEn(d, darwinContext), row.titleEn, reason: row.id);
         }
       }
-      // render-scale 的默认值随平台：NativeHudSettings.cpp:250 的 Android 90。
+      // render-scale 的平台默认取 Qt 的函数，不是硬编码：SettingsSchema.cpp:555-568 的
+      // .defaultValue = QString::number(RhineRender::androidDefaultRenderScale())；
+      // AndroidRenderPolicy.h:95-116 在 Android 下返回 75，其余平台 100。
+      // SettingsSchema.cpp:565 与 main.cpp:805-806 的「90%」都是过期注释，以函数为准。
       const SettingsPreferenceContext android = SettingsPreferenceContext(
         capabilities: PlatformCapabilities.android(),
         operatingSystem: SettingsOperatingSystem.android,
       );
-      expect(settingsDefaultValue(settingsDescriptorById('render-scale')!, android), '90');
+      expect(settingsDefaultValue(settingsDescriptorById('render-scale')!, android), '75');
       expect(settingsDefaultValue(settingsDescriptorById('render-scale')!, desktopContext), '100');
     });
 
@@ -702,6 +705,38 @@ void main() {
       expect(step('render-scale').action, 'render-scale:100');
       // official-player 的当前值仍是默认 off，故保持 unchanged（SettingsSchema.cpp:382-490 的顺序）。
       expect(step('official-player').outcome, SettingsCommitOutcome.unchanged);
+    });
+
+    test('恢复默认：Android 的 render-scale 回到 75、非 Android 回到 100', () {
+      // NativeHudSettings.cpp:495-509：逐 descriptor 应用 descriptor.defaultValue，
+      // 而 render-scale 的 default 就是 androidDefaultRenderScale()（Android 75）。
+      const SettingsPreferenceContext android = SettingsPreferenceContext(
+        capabilities: PlatformCapabilities.android(),
+        operatingSystem: SettingsOperatingSystem.android,
+      );
+      SettingsDefaultResetStep stepFor(SettingsDefaultsResetPlan plan) =>
+          plan.steps.firstWhere((SettingsDefaultResetStep s) => s.id == 'render-scale');
+      const SettingsPreferenceSnapshot changed = SettingsPreferenceSnapshot(
+        preferences: <String, String>{'render-scale': '50'},
+      );
+
+      final SettingsDefaultResetStep androidChanged =
+          stepFor(settingsDefaultsResetPlan(context: android, snapshot: changed));
+      expect(androidChanged.value, '75');
+      expect(androidChanged.action, 'render-scale:75');
+      expect(androidChanged.outcome, SettingsCommitOutcome.applied);
+
+      // 未改过时 Android 的默认快照本来就等于 75，恢复默认是 no-op（仍是 75，不是 90）。
+      final SettingsDefaultResetStep androidDefault =
+          stepFor(settingsDefaultsResetPlan(context: android));
+      expect(androidDefault.value, '75');
+      expect(androidDefault.outcome, SettingsCommitOutcome.unchanged);
+
+      final SettingsDefaultResetStep desktopChanged =
+          stepFor(settingsDefaultsResetPlan(snapshot: changed));
+      expect(desktopChanged.value, '100');
+      expect(desktopChanged.action, 'render-scale:100');
+      expect(desktopChanged.outcome, SettingsCommitOutcome.applied);
     });
   });
 
