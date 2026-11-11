@@ -4,6 +4,8 @@ import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.pm.PackageManager
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.view.MotionEvent
 import android.view.View
@@ -16,6 +18,13 @@ import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.StandardMessageCodec
 import io.flutter.plugin.platform.PlatformView
 import io.flutter.plugin.platform.PlatformViewFactory
+import java.util.concurrent.atomic.AtomicBoolean
+
+/**
+ * 本文件的日志标签。放在文件级而不是 object 里：QtPlatformView / QtHostRootView 是
+ * 顶层类，引用不了 object 的私有成员，而这几处日志都要用同一个标签。
+ */
+private const val TAG = "QtPlatformViewHost"
 
 /**
  * 进程单例所有权的纯 Kotlin 登记表（无 Android 依赖，便于 JVM 合同自检）。
@@ -153,13 +162,32 @@ internal fun shouldInstallChannels(
  */
 object QtPlatformViewHost {
 
-    private const val TAG = "QtPlatformViewHost"
+    /**
+     * back 询问的兜底时限（DEDUP-37）。平台通道的回复是异步的：engine 已 detach 或
+     * Dart 侧正卡在别处时可能永远不回，而返回键不能一直悬着，超时即按"未认领"回落。
+     */
+    const val BACK_VERB_TIMEOUT_MS = 250L
+
+    private val mainHandler: Handler by lazy { Handler(Looper.getMainLooper()) }
 
     /** 必须与 lib/platform/qt_platform_view.dart 的 qtPlatformViewType 逐字相同。 */
     const val VIEW_TYPE = "rhine.music.database.porting/qt_platform_view"
 
     const val CONTROL_CHANNEL = "rhine.music.database/qt_platform_view/control"
     const val EVENT_CHANNEL = "rhine.music.database/qt_platform_view/events"
+
+    /**
+     * 出站 back verb 的方法名（DEDUP-37），与 hostStatus / surfaceSize 同一套控制通道协议：
+     * 宿主 Activity 的返回路由在 IME 之后调用 [dispatchBackVerb]，把"这次返回是否属于
+     * Qt 视图"作为一次**询问**发给 Dart 侧，由 Dart 决定送进 Qt 输入层并显式回 true 认领；
+     * 只回 null/false/error 或干脆不回，都算未认领，Activity 会回落 Flutter 默认返回。
+     *
+     * 为什么不是合成 KeyEvent：Qt 的返回处理在 QtInputDelegate.onKeyDown
+     * （QtInputDelegate.java:503、:524、:544），类包内可见、宿主不可调；
+     * QtWindow.java 又不处理任何按键（无 onKeyDown/onKeyUp/dispatchKeyEvent），
+     * 合成 KEYCODE_BACK 派发进 Qt 视图树到不了 QtInputDelegate。
+     */
+    const val METHOD_BACK = "back"
 
     // —— 冻结契约 v2：8 个新探针 key（必须与 Dart QtProbeKeys 同名常量逐字相同）——
     // 前三个是**观测类**（必须由真实视图树扫描得出），后五个是**静态词表类**（答案只取决于 Qt 源）。
@@ -274,6 +302,45 @@ object QtPlatformViewHost {
         synchronized(this) { channelOwner === view }
 
     internal fun hasChannelOwner(): Boolean = synchronized(this) { channelOwner != null }
+
+    /**
+     * 宿主 Activity 的返回键入口（DEDUP-37）：向当前通道归属的宿主视图发一次"back 询问"。
+     *
+     * [onResult] 保证在主线程上**恰好被调用一次**，且 true 只代表一件事：对面明确认领了
+     * 这次返回（Dart 侧回了 Boolean true）。false 的每种来源都意味着"这次返回不属于 Qt"，
+     * Activity 必须随即回落 Flutter 默认返回，绝不能在这里吞掉返回键：
+     *  - 没有通道归属者（没有合法视图，或 dispose 已经交还通道 / engine 已 detach）；
+     *  - 归属者的 Qt 视图没建起来（被拒、构造失败），或探针 verdict 还不是 ready；
+     *  - 对面回了 null / false / error / 通道未实现；
+     *  - [BACK_VERB_TIMEOUT_MS] 内没有回复。
+     *
+     * 为什么需要认领协议：Dart 侧对没有 handler 的方法回的是"成功 + null"，平台通道不会
+     * 抛错也不会走 notImplemented，因此"调用没抛异常"不能当成"已被处理"。只有显式 true
+     * 才算消费；否则宁可回落 Flutter，也不能让返回键静默失效。
+     */
+    internal fun dispatchBackVerb(onResult: (Boolean) -> Unit) {
+        val owner = synchronized(this) { channelOwner }
+        if (owner == null) {
+            onResult(false)
+            return
+        }
+
+        // 一次性闸门：超时与回复谁先到谁生效，后到的一方被丢弃，保证 onResult 只跑一次。
+        val settled = AtomicBoolean(false)
+        val timeout = Runnable {
+            if (settled.compareAndSet(false, true)) {
+                Log.w(TAG, "back verb unclaimed after ${BACK_VERB_TIMEOUT_MS}ms")
+                onResult(false)
+            }
+        }
+        mainHandler.postDelayed(timeout, BACK_VERB_TIMEOUT_MS)
+        owner.forwardBackVerb { claimed ->
+            if (settled.compareAndSet(false, true)) {
+                mainHandler.removeCallbacks(timeout)
+                onResult(claimed)
+            }
+        }
+    }
 
     /**
      * 把一个 Context 剥到 Activity。
@@ -870,6 +937,60 @@ class QtPlatformView(
                 result.success(null)
             }
             else -> result.notImplemented()
+        }
+    }
+
+    /**
+     * 把 back 作为一次"询问"发给控制通道（DEDUP-37），并用 [onResult] 带回对面是否认领。
+     *
+     * 只有真的挂着 Qt 视图、且探针判定 ready 的实例才发问：被拒/构造失败/已被接管的诊断
+     * 实例没有可返回的 Qt 内容，必须立即回 false 让 Activity 回落 Flutter，而不是发一个
+     * 无人接收的 verb。
+     *
+     * 三条回复路径都收敛到 false，除了显式 true：
+     *  - success(null/false)：对面没有 back 分支（Dart 的 default 返回 null）或明确拒绝；
+     *  - error：对面处理抛错；
+     *  - notImplemented：通道协议层声明未实现。
+     * invokeMethod 的同步异常（通道未注册、引擎已 detach）同样按未认领处理，不丢这次返回。
+     */
+    internal fun forwardBackVerb(onResult: (Boolean) -> Unit) {
+        if (qtView == null) {
+            onResult(false)
+            return
+        }
+        if (status["verdict"] != "ready") {
+            onResult(false)
+            return
+        }
+        val payload = linkedMapOf<String, Any?>(
+            "type" to QtPlatformViewHost.METHOD_BACK,
+            "viewId" to viewId,
+            "source" to "activity-back",
+        )
+        val reply = object : MethodChannel.Result {
+            override fun success(result: Any?) {
+                val claimed = result == true
+                if (!claimed) {
+                    Log.i(TAG, "back verb unclaimed (reply=$result) viewId=$viewId")
+                }
+                onResult(claimed)
+            }
+
+            override fun error(code: String, message: String?, details: Any?) {
+                Log.w(TAG, "back verb rejected code=$code viewId=$viewId")
+                onResult(false)
+            }
+
+            override fun notImplemented() {
+                Log.i(TAG, "back verb not implemented on the Dart side viewId=$viewId")
+                onResult(false)
+            }
+        }
+        try {
+            control.invokeMethod(QtPlatformViewHost.METHOD_BACK, payload, reply)
+        } catch (error: IllegalArgumentException) {
+            Log.w(TAG, "back verb could not be dispatched viewId=$viewId", error)
+            onResult(false)
         }
     }
 
