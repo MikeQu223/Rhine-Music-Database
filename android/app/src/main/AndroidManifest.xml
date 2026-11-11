@@ -18,6 +18,10 @@
         android:label="RHINE MUSIC DATABASE"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
+        <!-- DEDUP-37：返回键交给 MainActivity 的 OnBackInvokedCallback（API 33+）与
+             onBackPressed（旧版）处理，顺序是 IME → Qt 宿主视图 → Flutter 默认返回。
+             Qt 在 <application> 上声明同一开关（Qt/android/AndroidManifest.xml:64）；
+             这里只声明在本 activity 上，不动 application 级与其它属性。 -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -25,6 +29,7 @@
             android:taskAffinity=""
             android:theme="@style/LaunchTheme"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|navigation|mcc|mnc|density|uiMode"
+            android:enableOnBackInvokedCallback="true"
             android:hardwareAccelerated="true"
             android:windowSoftInputMode="adjustResize">
             <!-- Specifies an Android theme to apply to this Activity as soon as
