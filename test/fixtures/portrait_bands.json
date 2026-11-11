@@ -184,15 +184,15 @@
   ],
   "candidates": {
     "W": {
-      "formula": "stageScale = layoutWidth/1080; stageWidth = 1080; stageHeight = (layoutHeight - safe.top - safe.bottom)/stageScale; playerBar = (0, stageHeight-96, 1080, 96); content = (safe.left/scale, safe.top/scale, 1080-(safe.left+safe.right)/scale, stageHeight - 96 - safe.top/scale - safe.bottom/scale) — 内容止于底栏上沿；adjustResize 下 ime 项恒 0",
+      "formula": "stageScale = layoutWidth/1080; stageWidth = 1080; stageHeight = (layoutHeight - safe.top - safe.bottom)/stageScale; containerTop = safe.top/scale; playerBar = (0, stageHeight-96, 1080, 96); content = (safe.left/scale, 0, 1080-(safe.left+safe.right)/scale, stageHeight - 96) — stage 本地坐标，内容止于底栏上沿，不再扣 safe.top/safe.bottom；adjustResize 下 ime 项恒 0",
       "selected": false
     },
     "Band": {
-      "formula": "stageScale = layoutWidth/1080; stageHeight = (layoutHeight - safe.top - safe.bottom)/stageScale; bandHeight = 1080; bandCount = ceil(stageHeight/1080) with epsilon guard; bandY = k*1080; content = (safe.left/scale, safe.top/scale, 1080-(safe.left+safe.right)/scale, stageHeight - safe.top/scale - safe.bottom/scale) — 底栏覆盖最后一带，不从内容里扣除；adjustResize 下 ime 项恒 0",
+      "formula": "stageScale = layoutWidth/1080; stageHeight = (layoutHeight - safe.top - safe.bottom)/stageScale; containerTop = safe.top/scale; bandHeight = 1080; bandCount = ceil(stageHeight/1080) with epsilon guard; bandY = k*1080; content = (safe.left/scale, 0, 1080-(safe.left+safe.right)/scale, stageHeight) — stage 本地坐标，不再扣 safe.top/safe.bottom；底栏覆盖最后一带，不从内容里扣除；adjustResize 下 ime 项恒 0",
       "selected": false
     },
     "Hybrid": {
-      "formula": "stageScale = layoutWidth/1080; stageHeight = (layoutHeight - safe.top - safe.bottom)/stageScale; topBar = 96; bottomBar = 96; content = (safe.left/scale, safe.top/scale+96, 1080-(safe.left+safe.right)/scale, stageHeight-192 - safe.top/scale - safe.bottom/scale)；adjustResize 下 ime 项恒 0",
+      "formula": "stageScale = layoutWidth/1080; stageHeight = (layoutHeight - safe.top - safe.bottom)/stageScale; containerTop = safe.top/scale; topBar = (0,0,1080,96); bottomBar = (0, stageHeight-96, 1080, 96); content = (safe.left/scale, 96, 1080-(safe.left+safe.right)/scale, stageHeight-192) — stage 本地坐标，不再扣 safe.top/safe.bottom；adjustResize 下 ime 项恒 0",
       "selected": false
     },
     "selectionNoteZh": "三个候选都实现为参数，本阶段不裁决赢家；样板设备与设计证据不足，冻结赢家为 WAIT。"
@@ -225,7 +225,9 @@
     "invariants": [
       "stageScale 只由 layoutWidth 决定：加安全区或 IME 后 stageScale / stageWidth 逐位不变",
       "stageHeight = (layoutHeight - safe.top - safe.bottom) / stageScale；上下安全区在舞台高度里只扣一次",
-      "containerTop = safe.top / stageScale",
+      "containerTop = safe.top / stageScale（舞台在窗口中的原点；widget 层用 containerTop * stageScale 做 Padding.top）",
+      "content 是 stage 本地坐标，不再扣 safe.top/safe.bottom；safe 只出现在 stageHeight 与 containerTop 两处（DEDUP-23）",
+      "窗口映射：stage 原点 y = containerTop * stageScale = safe.top；playerBar 底边 = stageHeight，对应窗口底边 = layoutHeight - safe.bottom",
       "左右安全区只收窄 content.width，stageWidth 恒 1080",
       "adjustResize：平台已按键盘缩小 layoutHeight，几何不读 viewInsets；imeStage = imeConsumedStage = inputShiftStage = 0",
       "playerBar 底边 = stageHeight，底栏落在安全区之上，不覆盖手势区",
@@ -239,31 +241,40 @@
     "mustNotZh": "绝不用 MediaQuery.viewInsets 手改 stageScale 或再扣一次高度；清单保持 adjustResize，平台缩窗口后只用同一条公式重算。若未来改 adjustNothing，才允许读 viewInsets 压容器。"
   },
   "insetMatrix": {
-    "noteZh": "拟议测试矩阵，不是真机测量，也不是 golden：这里固定「安全区改 stageHeight 但不改 stageScale/stageWidth；IME 在 adjustResize 下不参与几何」这条公式，五个用例的数值都不得当成设备基线。safe 是 layoutWidth x layoutHeight 区域内部的内缩量（逻辑像素），进入舞台坐标前除以 stageScale；stageHeight = (layoutHeight - safe.top - safe.bottom)/stageScale。",
+    "noteZh": "拟议测试矩阵，不是真机测量，也不是 golden：这里固定「安全区改 stageHeight 但不改 stageScale/stageWidth；content 不再扣 safe.top/safe.bottom；IME 在 adjustResize 下不参与几何」这条公式，五个用例的数值都不得当成设备基线。safe 是 layoutWidth x layoutHeight 区域内部的内缩量（逻辑像素），进入舞台坐标前除以 stageScale；stageHeight = (layoutHeight - safe.top - safe.bottom)/stageScale。expected*At1080x2400 是 1080x2400 逻辑窗口下的 stage 本地算术：stageHeight 与 Hybrid content 高都不含 safe 的二次项。",
     "sourceZh": "依据本文件 imeAndSafeArea.invariants 与 T02 docs/flutter-migration/contracts/layout.md §6；数值为拟议值。",
     "cases": [
       {
         "id": "zero",
         "safe": {"top": 0, "bottom": 0, "left": 0, "right": 0},
-        "imeBottom": 0
+        "imeBottom": 0,
+        "expectedStageHeightAt1080x2400": 2400,
+        "expectedHybridContentHeightAt1080x2400": 2208
       },
       {
         "id": "status-and-gesture",
         "safe": {"top": 72, "bottom": 48, "left": 0, "right": 0},
         "imeBottom": 0,
-        "whyZh": "状态栏 + 手势条：stageHeight = (layoutHeight-72-48)/scale，底栏随之上移；stageScale 不变"
+        "expectedStageHeightAt1080x2400": 2280,
+        "expectedHybridContentHeightAt1080x2400": 2088,
+        "whyZh": "状态栏 + 手势条：stageHeight = (layoutHeight-72-48)/scale，底栏随之上移；content 高只扣 192，不再扣 72/48；stageScale 不变"
       },
       {
         "id": "gesture-left-right",
         "safe": {"top": 72, "bottom": 48, "left": 24, "right": 24},
         "imeBottom": 0,
-        "whyZh": "左右手势区：只缩 content.width，stageWidth 恒 1080"
+        "expectedStageHeightAt1080x2400": 2280,
+        "expectedHybridContentHeightAt1080x2400": 2088,
+        "expectedContentWidthAt1080x2400": 1032,
+        "whyZh": "左右手势区：只缩 content.width 到 1080-24-24=1032，stageWidth 恒 1080；上下安全区仍只在 stageHeight 扣一次"
       },
       {
         "id": "ime-compress",
         "safe": {"top": 72, "bottom": 48, "left": 0, "right": 0},
         "imeBottom": 900,
         "imePolicy": "compress",
+        "expectedStageHeightAt1080x2400": 2280,
+        "expectedHybridContentHeightAt1080x2400": 2088,
         "whyZh": "adjustResize：窗口已由平台缩小，imeBottom 不参与几何；stageHeight/content/底栏与 imeBottom=0 时逐位相同"
       },
       {
@@ -271,6 +282,8 @@
         "safe": {"top": 72, "bottom": 48, "left": 0, "right": 0},
         "imeBottom": 900,
         "imePolicy": "shiftUp",
+        "expectedStageHeightAt1080x2400": 2280,
+        "expectedHybridContentHeightAt1080x2400": 2088,
         "whyZh": "adjustResize：shiftUp 同样不读 imeBottom，inputShiftStage 恒 0，结果与 compress 一致"
       }
     ]

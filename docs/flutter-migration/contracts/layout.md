@@ -287,9 +287,10 @@ w/h = editingSettingW/H*scale`（`Overlay.qml:564-574`）；内文 `x+12*scale`�
 
 ```
 layoutW, layoutH                     // logical px：LayoutBuilder 可用窗口宽高，未预扣任何 inset
-safe = MediaQuery.padding              // logical px；只在 stageHeight 与 content 内扣一次
+safe = MediaQuery.padding              // logical px；只在 stageHeight（扣一次）与 containerTop（舞台原点）出现，content 不再扣
 portraitStageScale  = layoutW / 1080   // logical px per stage unit
 portraitStageWidth  = 1080             // stage unit
+containerTop        = safe.top / portraitStageScale   // stage unit；舞台在窗口中的原点
 portraitStageHeight = (layoutH - safe.top - safe.bottom) / portraitStageScale   // stage unit，不是 logical px
 ```
 
@@ -316,17 +317,20 @@ WAIT 条目只能由 T43/T51 关闭；IME resize 已按 Flutter 清单 `adjustRe
 
 | 候选 | 结构 | 冻结公式 | 备注 |
 |---|---|---|---|
-| Portrait-W | 顶部 1080 带复用横屏命令，详情/列表纵向延伸，播放栏贴 stage 底 | `scale=layoutW/1080; stageW=1080; stageH=(layoutH-safe.top-safe.bottom)/scale; bar=(0, stageH-96, 1080, 96)` | 最接近横屏 1:1；W 即“宽即 1080” |
-| Portrait-Band | 固定 1080 宽分带滚动，每带 1080 高 | `stageH=(layoutH-safe.top-safe.bottom)/scale; bandHeight=1080; bandCount=ceil(stageH/1080); bandY=k*1080` | 带内命令与横屏同宽，纵向拼接 |
-| Portrait-Hybrid | 顶栏+内容+底栏三段，详情单列 | `stageH=(layoutH-safe.top-safe.bottom)/scale; topBar=96; bottomBar=96; content=(0,96,1080,stageH-192-safe.top/scale-safe.bottom/scale)` | 三段独立滚动/固定 |
+| Portrait-W | 顶部 1080 带复用横屏命令，详情/列表纵向延伸，播放栏贴 stage 底 | `scale=layoutW/1080; stageW=1080; stageH=(layoutH-safe.top-safe.bottom)/scale; containerTop=safe.top/scale; bar=(0, stageH-96, 1080, 96); content=(safe.left/scale, 0, 1080-(safe.left+safe.right)/scale, stageH-96)` | 最接近横屏 1:1；W 即“宽即 1080”；content 不扣 safe.top/safe.bottom |
+| Portrait-Band | 固定 1080 宽分带滚动，每带 1080 高 | `stageH=(layoutH-safe.top-safe.bottom)/scale; bandHeight=1080; bandCount=ceil(stageH/1080); bandY=k*1080; content=(safe.left/scale, 0, 1080-(safe.left+safe.right)/scale, stageH)` | 带内命令与横屏同宽，纵向拼接；底栏覆盖最后一带 |
+| Portrait-Hybrid | 顶栏+内容+底栏三段，详情单列 | `stageH=(layoutH-safe.top-safe.bottom)/scale; topBar=(0,0,1080,96); bottomBar=(0,stageH-96,1080,96); content=(safe.left/scale, 96, 1080-(safe.left+safe.right)/scale, stageH-192)` | 三段独立滚动/固定；content 只扣上下 bar |
 
 约束（全部候选项都适用）：
 
 - 唯一安全区公式：`stageHeight = (layoutH - safe.top - safe.bottom) / scale`，
-  上下安全区在舞台高度里**只扣一次**；`containerTop = safe.top / scale`（stage 单位），
+  上下安全区在舞台高度里**只扣一次**；`containerTop = safe.top / scale`（stage 单位）是舞台在窗口中的原点，
+  widget 层据此把缩放后的舞台下移 `containerTop * scale = safe.top`。
   左右安全区只缩内容宽，不缩 stage；不得把安全区加进横屏公式。`safe.top/safe.bottom` 只允许出现在两处：
-  `stageHeight` 公式（负责把底栏抬到手势区之上）与 content 内缩（`safe.top/scale`、`safe.bottom/scale`），第三处不得再扣。
-- `playerBar` 底边 = `stageHeight`：底栏随安全区抬升，落在手势区之上，不覆盖底部手势区。
+  `stageHeight` 公式与 `containerTop`（窗口原点）；content 是 stage 本地坐标（W `y=0, h=stageH-96`、
+  Band `y=0, h=stageH`、Hybrid `y=96, h=stageH-192`），**不得**再出现 `safe.top/scale`、`safe.bottom/scale`，第三处不得再扣。
+- 窗口映射：stage 原点 y = `containerTop * scale = safe.top`；缩放后舞台高 = `layoutH - safe.top - safe.bottom`；
+  `playerBar` 底边 = `stageHeight`，对应窗口底边 = `layoutH - safe.bottom`，底栏落在手势区之上，不覆盖底部手势区。
 - 清单保持 `adjustResize`：平台已按键盘缩小窗口，band/stage 计算**不得再读 `viewInsets`**；
   `imeStage = imeConsumedStage = inputShiftStage = 0`。只有未来改 `adjustNothing` 时才允许用
   `viewInsets` 压容器；任何情况下 IME 不缩放 stage。

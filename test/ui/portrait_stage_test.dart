@@ -538,7 +538,8 @@ void main() {
       expect(after.imeStage, 0);
       expect(after.contentX, closeTo(30, kTol));
       expect(after.contentWidth, closeTo(1020, kTol));
-      expect(after.contentHeight, closeTo(2300 - 192 - 60 - 40, kTol));
+      // DEDUP-23：content 是 stage 本地坐标，只扣上下 bar，不再扣 safe。
+      expect(after.contentHeight, closeTo(2300 - 192, kTol));
       // 底栏在舞台高度内结束，不再压住手势区。
       expect(after.playerBar.y, closeTo(2204, kTol));
       expect(after.playerBar.bottom, closeTo(2300, kTol));
@@ -550,7 +551,7 @@ void main() {
         const PortraitInputs(layoutWidth: 1080, layoutHeight: 2400, safe: safe),
         PortraitBandMode.hybrid,
       );
-      expect(before.contentHeight, closeTo(2300 - 192 - 60 - 40, kTol));
+      expect(before.contentHeight, closeTo(2300 - 192, kTol));
       final PortraitBands compress = computePortraitBands(
         const PortraitInputs(layoutWidth: 1080, layoutHeight: 2400, safe: safe, imeBottom: 800),
         PortraitBandMode.hybrid,
@@ -586,7 +587,7 @@ void main() {
       expect(bands.imeStage, 0);
       expect(
         bands.contentHeight,
-        closeTo(bands.stageHeight - 192 - bands.containerTop - 60 / (1440 / 1080), kTol),
+        closeTo(bands.stageHeight - 192, kTol),
       );
     });
 
@@ -671,11 +672,11 @@ void main() {
           expect(bands.imeConsumedStage, 0, reason: id);
           expect(
             bands.contentHeight,
-            closeTo(bands.stageHeight - 192 - (safe.top + safe.bottom) / scale, kTol),
+            closeTo(bands.stageHeight - 192, kTol),
             reason: id,
           );
           expect(bands.inputShiftStage, 0, reason: id);
-          expect(bands.content.y, closeTo(safe.top / scale + 96, kTol), reason: id);
+          expect(bands.content.y, closeTo(96, kTol), reason: id);
           expect(bands.content.bottom, lessThanOrEqualTo(bands.playerBar.y + kTol), reason: id);
           expect(bands.playerBar.bottom, closeTo(bands.stageHeight, kTol), reason: id);
           expect(
@@ -721,6 +722,160 @@ void main() {
       expect(
         asDouble(block['archiveMaskFadeStart']),
         closeTo(navigationLeft - QtStageGeometry.archiveMaskFadeWidth, kTol),
+      );
+    });
+  });
+
+  group('DEDUP-23 safe area is deducted once', () {
+    const PortraitInsets insets = PortraitInsets(top: 72, bottom: 48);
+
+    test('1080x2400 with 72/48 safe area keeps Hybrid content in stage units', () {
+      final PortraitBands bands = computePortraitBands(
+        const PortraitInputs(layoutWidth: 1080, layoutHeight: 2400, safe: insets),
+        PortraitBandMode.hybrid,
+      );
+      expect(bands.stageScale, closeTo(1.0, kTol));
+      expect(bands.stageHeight, closeTo(2280, kTol));
+      expect(bands.containerTop, closeTo(72, kTol));
+      expect(bands.content.y, closeTo(96, kTol));
+      expect(bands.content.height, closeTo(2088, kTol));
+      expect(bands.content.bottom, closeTo(2184, kTol));
+      expect(bands.contentX, closeTo(0, kTol));
+      expect(bands.contentWidth, closeTo(1080, kTol));
+      expect(bands.playerBar.y, closeTo(2184, kTol));
+      expect(bands.playerBar.bottom, closeTo(2280, kTol));
+      // 窗口坐标：舞台原点 = containerTop * stageScale = safe.top = 72。
+      final double stageTopInWindow = bands.containerTop * bands.stageScale;
+      expect(stageTopInWindow, closeTo(72, kTol));
+      expect(stageTopInWindow + bands.content.y, closeTo(168, kTol));
+      expect(stageTopInWindow + bands.content.bottom, closeTo(2256, kTol));
+      expect(stageTopInWindow + bands.playerBar.y, closeTo(2256, kTol));
+      expect(stageTopInWindow + bands.playerBar.bottom, closeTo(2352, kTol));
+      // 窗口底边 = layoutHeight - safe.bottom。
+      expect(2400 - insets.bottom, closeTo(2352, kTol));
+      expect(stageTopInWindow + bands.playerBar.bottom, closeTo(2400 - insets.bottom, kTol));
+      expect(bands.content.isWithin(StageRect(0, 0, bands.stageWidth, bands.stageHeight), epsilon: kTol), isTrue);
+    });
+
+    test('W and Band keep content at stage y=0 and never re-deduct safe', () {
+      final PortraitBands w = computePortraitBands(
+        const PortraitInputs(layoutWidth: 1080, layoutHeight: 2400, safe: insets),
+        PortraitBandMode.w,
+      );
+      expect(w.content.y, closeTo(0, kTol));
+      expect(w.content.height, closeTo(2184, kTol));
+      expect(w.content.bottom, closeTo(w.playerBar.y, kTol));
+      expect(w.playerBar.bottom, closeTo(w.stageHeight, kTol));
+
+      final PortraitBands band = computePortraitBands(
+        const PortraitInputs(layoutWidth: 1080, layoutHeight: 2400, safe: insets),
+        PortraitBandMode.band,
+      );
+      expect(band.content.y, closeTo(0, kTol));
+      expect(band.content.height, closeTo(2280, kTol));
+      expect(band.content.bottom, closeTo(band.stageHeight, kTol));
+      // Band 的底栏叠在最后一带上，允许覆盖。
+      expect(band.playerBar.y, closeTo(band.stageHeight - 96, kTol));
+      expect(band.playerBar.bottom, closeTo(band.stageHeight, kTol));
+    });
+
+    test('safe area is subtracted once, not twice', () {
+      final PortraitBands plain = computePortraitBands(
+        const PortraitInputs(layoutWidth: 1080, layoutHeight: 2400),
+        PortraitBandMode.w,
+      );
+      final PortraitBands inset = computePortraitBands(
+        const PortraitInputs(layoutWidth: 1080, layoutHeight: 2400, safe: insets),
+        PortraitBandMode.w,
+      );
+      expect(plain.content.height - inset.content.height, closeTo(72 + 48, kTol));
+      expect(plain.content.height - inset.content.height, isNot(closeTo(2 * (72 + 48), kTol)));
+      expect(inset.content.y, closeTo(0, kTol));
+    });
+
+    test('safe=0 keeps the previous numbers on the three documented tiers', () {
+      const List<List<double>> tiers = <List<double>>[
+        <double>[1080, 2400, 1, 2400, 2304, 2208],
+        <double>[1440, 3200, 4 / 3, 2400, 2304, 2208],
+        <double>[1200, 2000, 1200 / 1080, 1800, 1704, 1608],
+      ];
+      for (final List<double> tier in tiers) {
+        final double width = tier[0];
+        final double height = tier[1];
+        final PortraitBands hybrid = computePortraitBands(
+          PortraitInputs(layoutWidth: width, layoutHeight: height),
+          PortraitBandMode.hybrid,
+        );
+        final PortraitBands w = computePortraitBands(
+          PortraitInputs(layoutWidth: width, layoutHeight: height),
+          PortraitBandMode.w,
+        );
+        final String id = width.toString() + 'x' + height.toString();
+        expect(hybrid.stageScale, closeTo(tier[2], kTol), reason: id);
+        expect(hybrid.stageHeight, closeTo(tier[3], kTol), reason: id);
+        expect(w.content.height, closeTo(tier[4], kTol), reason: id);
+        expect(w.playerBar.y, closeTo(tier[4], kTol), reason: id);
+        expect(hybrid.content.height, closeTo(tier[5], kTol), reason: id);
+        expect(hybrid.content.y, closeTo(96, kTol), reason: id);
+        expect(w.content.y, closeTo(0, kTol), reason: id);
+        expect(w.playerBar.bottom, closeTo(w.stageHeight, kTol), reason: id);
+      }
+    });
+
+    testWidgets('stage origin lands at safe.top and the bar bottom at layoutHeight - safe.bottom',
+        (WidgetTester tester) async {
+      await tester.binding.setSurfaceSize(const Size(1080, 2400));
+      addTearDown(() async {
+        await tester.binding.setSurfaceSize(null);
+      });
+      await tester.pumpWidget(host(
+        surface: const Size(1080, 2400),
+        padding: const EdgeInsets.only(top: 72, bottom: 48),
+        child: PortraitStage(
+          child: Builder(builder: (BuildContext context) {
+            final PortraitBands bands = PortraitStageScope.of(context);
+            return Stack(children: <Widget>[
+              PortraitStageSlot(
+                rect: bands.content,
+                child: const SizedBox.expand(key: ValueKey<String>('dedup23-content')),
+              ),
+              PortraitStageSlot(
+                rect: bands.playerBar,
+                child: const SizedBox.expand(key: ValueKey<String>('dedup23-bar')),
+              ),
+            ]);
+          }),
+        ),
+      ));
+      // 窗口绝对坐标：舞台原点 72；content 顶 72+96=168、底 72+2184=2256；
+      // 底栏 2256..2352（= layoutHeight - safe.bottom）。
+      final Rect content = tester.getRect(find.byKey(const ValueKey<String>('dedup23-content')));
+      expect(content.left, closeTo(0, kTol));
+      expect(content.top, closeTo(168, kTol));
+      expect(content.right, closeTo(1080, kTol));
+      expect(content.bottom, closeTo(2256, kTol));
+      final Rect bar = tester.getRect(find.byKey(const ValueKey<String>('dedup23-bar')));
+      expect(bar.left, closeTo(0, kTol));
+      expect(bar.top, closeTo(2256, kTol));
+      expect(bar.right, closeTo(1080, kTol));
+      expect(bar.bottom, closeTo(2352, kTol));
+      expect(tester.getTopLeft(find.byKey(const ValueKey<String>('dedup23-content'))), const Offset(0, 168));
+    });
+
+    test('degenerate stage still throws the documented errors after the fix', () {
+      expect(
+        () => computePortraitBands(
+          const PortraitInputs(layoutWidth: 1080, layoutHeight: 60),
+          PortraitBandMode.hybrid,
+        ),
+        throwsA(isA<FlutterError>()),
+      );
+      expect(
+        () => computePortraitBands(
+          const PortraitInputs(layoutWidth: 1080, layoutHeight: 0),
+          PortraitBandMode.hybrid,
+        ),
+        throwsArgumentError,
       );
     });
   });
@@ -1189,7 +1344,8 @@ void main() {
       ));
       expect(observed!.stageScale, closeTo(1.0, kTol));
       expect(observed!.stageHeight, closeTo(2300, kTol));
-      expect(observed!.contentHeight, closeTo(2008, kTol));
+      // DEDUP-23：stage 本地 content 只扣上下 bar。
+      expect(observed!.contentHeight, closeTo(2108, kTol));
       expect(observed!.playerBar.y, closeTo(2204, kTol));
       expect(observedStage!.height, closeTo(2300, kTol));
       expect(childConstraints!.height, closeTo(2300, kTol));
