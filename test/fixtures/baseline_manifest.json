@@ -1,0 +1,252 @@
+{
+  "schemaVersion": 1,
+  "task": "T01",
+  "generatedAt": "2026-11-11",
+  "generatedBy": "OPS86-A27-T01BASE",
+  "repo": "/home/aibeto/code/Rhine-Music-Database",
+  "worktree": ".agents/parity-20261109/worktrees/OPS86-A27-T01BASE",
+  "branch": "flutter/ops86-t01-baseline",
+  "baselineCommit": "8ed3067b0812eb2612f7841ec127a6e8ca93231b",
+  "baselineCommitNote": "8ed3067b 是 00-baseline.md §2 冻结的 T01 实际执行基线（APK 构建身份的对照基线）；本 atom 的 Git worktree 起点是 worktreeBaseCommit=7086775，两者不是同一字段，不得混用。",
+  "worktreeBaseCommit": "708677579626f8eaeeef77e8588125ecadab4858",
+  "planHistoricalBaseline": "89493eb3c3d2c1e6c050891718134ac7670e4d6c",
+  "planHistoricalBaselineNote": "计划写作时的历史起点；是 HEAD 祖先，仅作历史注记，不作为 APK 构建身份，也不作为当前基线。",
+  "apk": {
+    "path": "output/RhineMusicDatabase-01ee85b96fee-android-arm64-v8a-signed.apk",
+    "sizeBytes": 73776456,
+    "mtime": "2026-11-07 21:30:29.884500248 +0800",
+    "sha256": "bd58d95a5edee4c66a9704a108fb335163dc4274239b5f32b2a0c4cb221b5a1e",
+    "package": "rhine.music.database",
+    "versionName": "0.0.0",
+    "versionCode": 1,
+    "minSdk": 28,
+    "targetSdk": 36,
+    "abi": "arm64-v8a",
+    "topLevelApkCount": 1,
+    "note": "文件名中的 01ee85b96fee 与 -signed 后缀只用于索引，不是对应性证明；identity 由下方 buildIdentity 与 nativeChain 证明。"
+  },
+  "certificate": {
+    "sha256": "39:39:6C:D0:6F:2B:79:80:30:2B:AD:22:0E:D0:71:E0:92:86:54:0B:E4:D2:24:A2:F9:B0:47:CA:65:20:5B:DF",
+    "sha256Compact": "39396cd06f2b7980302bad220ed071e09286540be4d224a2f9b047ca65205bdf",
+    "sha1": "27:D5:CA:30:9A:19:EF:15:44:48:94:12:D1:14:84:F5:49:E8:46:CA",
+    "owner": "CN=Unknown, OU=Rhine-Music-Database, O=android, L=Unknown, ST=Unknown, C=CN",
+    "issuer": "CN=Unknown, OU=Rhine-Music-Database, O=android, L=Unknown, ST=Unknown, C=CN",
+    "serialNumber": "c72f9f0bf588afa3",
+    "validFrom": "Fri Nov 06 17:49:09 CST 2026",
+    "validTo": "Sun Oct 13 17:49:09 CST 2126",
+    "signatureAlgorithm": "SHA384withRSA",
+    "publicKey": "3072-bit RSA",
+    "signatureEntries": [
+      "META-INF/MYKEY.RSA",
+      "META-INF/MYKEY.SF",
+      "META-INF/MANIFEST.MF"
+    ],
+    "source": "keytool -printcert -jarfile output/RhineMusicDatabase-01ee85b96fee-android-arm64-v8a-signed.apk（APK 内 JAR 签名块直读；未读取 keystore、别名、私钥或口令，属 G8 待核范围）"
+  },
+  "qtSource": {
+    "candidateCommit": "01ee85b96feeac875660e963ff78fbd383da0ae5",
+    "candidateCommitTitle": "feat: 新增双指平移手势处理逻辑",
+    "candidateCommitTime": "2026-11-07T05:39:43+08:00",
+    "qtTreeCandidate": "12da26f0b9163592a9f6b69a2a0df4c806c12e0b",
+    "qtTreeBaseline": "12da26f0b9163592a9f6b69a2a0df4c806c12e0b",
+    "diffStatLines": 0,
+    "isAncestorOfBaseline": true
+  },
+  "buildIdentity": {
+    "headerPath": "output/android-build/BuildIdentity.h",
+    "headerBytes": 204,
+    "commitSha": "01ee85b96fee",
+    "commitTitle": "feat: 新增双指平移手势处理逻辑",
+    "stringsInPayload": {
+      "utf8ShaOffset": 976021,
+      "utf16ShaOffset": 1002496,
+      "utf16TitleOffset": 1001900
+    },
+    "note": "偏移量是 APK 内 lib/arm64-v8a/libRhineMusicDatabase_arm64-v8a.so 条目内的字节偏移；stripped 中间产物与未 strip 库三处偏移相同（strip 只摘尾部符号/调试节）。"
+  },
+  "nativeChain": [
+    {
+      "stage": "linked-unstripped",
+      "path": "output/android-build/Qt/android-build/libs/arm64-v8a/libRhineMusicDatabase_arm64-v8a.so",
+      "sizeBytes": 149401128,
+      "sha256": "7790160fccdd004efc8efe230adce582ddbd67420d1125bcb2782322de0f9def"
+    },
+    {
+      "stage": "stripped-intermediate",
+      "path": "output/android-build/Qt/android-build/build/intermediates/stripped_native_libs/release/stripReleaseDebugSymbols/out/lib/arm64-v8a/libRhineMusicDatabase_arm64-v8a.so",
+      "sizeBytes": 41535456,
+      "sha256": "3f50afc04508fac0d01647efb307efa73c6dc978fb71d79d85dd17f8967bf0cf"
+    },
+    {
+      "stage": "apk-entry",
+      "path": "lib/arm64-v8a/libRhineMusicDatabase_arm64-v8a.so",
+      "sizeBytes": 41535456,
+      "sha256": "3f50afc04508fac0d01647efb307efa73c6dc978fb71d79d85dd17f8967bf0cf"
+    }
+  ],
+  "manifest": {
+    "sourcePath": "Qt/android/AndroidManifest.xml",
+    "mergedPath": "output/android-build/Qt/android-build/build/intermediates/merged_manifests/release/processReleaseManifest/AndroidManifest.xml",
+    "screenOrientation": "sensorLandscape",
+    "allowBackup": false,
+    "resizeableActivity": false,
+    "glesVersion": "0x00030000",
+    "glesRequired": true,
+    "note": "源清单的 package/version 是占位，APK 身份以 merged manifest 与实际值为准；Manifest 只证明声明，不证明运行时始终横屏。"
+  },
+  "device": {
+    "serial": "526f6b6d",
+    "model": "OPD2511",
+    "androidVersion": "16",
+    "apiLevel": 36,
+    "abi": "arm64-v8a",
+    "density": 315,
+    "physicalResolution": "2880×1800",
+    "fingerprint": "OPPO/OPD2511/OP6546L1:16/BP2A.250605.015/B.4a2d817-2503cdb-254d651:user/release-keys"
+  },
+  "installation": {
+    "preinstallPackageAbsent": true,
+    "command": "adb -s 526f6b6d install \"/home/aibeto/code/Rhine-Music-Database/output/RhineMusicDatabase-01ee85b96fee-android-arm64-v8a-signed.apk\"",
+    "incremental": true,
+    "success": true,
+    "durationMs": 11169,
+    "uninstallPerformed": false,
+    "clearDataPerformed": false,
+    "firstInstallTime": "2026-11-09 16:28:32",
+    "lastUpdateTime": "2026-11-09 16:28:32",
+    "packagePathAfterInstall": "package:/data/app/~~VVe9833Tp2YUQpcayb_B0w==/rhine.music.database-8FcIEsrc2Qf4r5C1wmaoZA==/base.apk"
+  },
+  "screenshots": {
+    "indexAvailable": true,
+    "entitiesAvailable": false,
+    "originalDirectory": "/tmp/rhine-qt-baseline-2026-11-09/",
+    "entityStatus": "directory_missing_no_pixel_files_found",
+    "fullHashAvailable": false,
+    "items": [
+      {
+        "id": 1,
+        "file": "01-consent.png",
+        "capturedAt": "2026-11-09 16:31:45",
+        "bytes": 326988,
+        "sha256Prefix16": "425d7c7c890ee7ab"
+      },
+      {
+        "id": 2,
+        "file": "02-consent-relaunch.png",
+        "capturedAt": "2026-11-09 16:39:11",
+        "bytes": 325005,
+        "sha256Prefix16": "7a5e6f38f8bd1de0"
+      },
+      {
+        "id": 3,
+        "file": "03-home-all-songs.png",
+        "capturedAt": "2026-11-09 17:02:12",
+        "bytes": 2308837,
+        "sha256Prefix16": "820737b3deb4824f"
+      },
+      {
+        "id": 4,
+        "file": "04-search.png",
+        "capturedAt": "2026-11-09 17:09:47",
+        "bytes": 1719597,
+        "sha256Prefix16": "deebd279a69bce6b"
+      },
+      {
+        "id": 5,
+        "file": "05-search-restored.png",
+        "capturedAt": "2026-11-09 17:19:59",
+        "bytes": 1708373,
+        "sha256Prefix16": "2b61ebdc1323bf30"
+      },
+      {
+        "id": 6,
+        "file": "06-settings.png",
+        "capturedAt": "2026-11-09 17:21:58",
+        "bytes": 805298,
+        "sha256Prefix16": "4aca0c49e9899078"
+      },
+      {
+        "id": 7,
+        "file": "07-platform.png",
+        "capturedAt": "2026-11-09 17:23:12",
+        "bytes": 838956,
+        "sha256Prefix16": "04a2e15a3716201e"
+      },
+      {
+        "id": 8,
+        "file": "08-queue.png",
+        "capturedAt": "2026-11-09 17:24:31",
+        "bytes": 765047,
+        "sha256Prefix16": "083020ab22768018"
+      },
+      {
+        "id": 9,
+        "file": "09-library.png",
+        "capturedAt": "2026-11-09 17:26:34",
+        "bytes": 2315575,
+        "sha256Prefix16": "7e0f673f85665b9a"
+      },
+      {
+        "id": 10,
+        "file": "10-library-track17.png",
+        "capturedAt": "2026-11-09 17:28:42",
+        "bytes": 2318252,
+        "sha256Prefix16": "e02fcff7ce30b8cc"
+      },
+      {
+        "id": 11,
+        "file": "11-song-detail.png",
+        "capturedAt": "2026-11-09 17:30:55",
+        "bytes": 1098093,
+        "sha256Prefix16": "4e56235b00e25a01"
+      },
+      {
+        "id": 12,
+        "file": "12-search-results.png",
+        "capturedAt": "2026-11-09 17:35:02",
+        "bytes": 1492312,
+        "sha256Prefix16": "553963e921ea19ed"
+      }
+    ],
+    "note": "只剩索引（文件名/时间/字节数/前 16 位哈希），像素实体已丢失；不得据此宣称任何像素通过，重采属 T50。"
+  },
+  "gaps": {
+    "G1": {
+      "status": "closed",
+      "scope": "artifact-level"
+    },
+    "G2": {
+      "status": "open"
+    },
+    "G3": {
+      "status": "open"
+    },
+    "G4": {
+      "status": "open"
+    },
+    "G5": {
+      "status": "open"
+    },
+    "G6": {
+      "status": "open"
+    },
+    "G7": {
+      "status": "open"
+    },
+    "G8": {
+      "status": "open"
+    }
+  },
+  "pixelBaseline": {
+    "status": "unavailable_recapture_required"
+  },
+  "testExecution": {
+    "performed": false,
+    "reason": "本 atom 只写 fixture 与测试代码，禁止 flutter test / dart analyze / 构建；测试属“已编写、未执行”，不得写成已通过。获准执行时的命令：flutter test test/baseline_manifest_test.dart"
+  },
+  "provenanceNotes": [
+    "证据等级 E2（可复核产物），不是签名级/CI 级证明；不证明构建时 Qt/ 工作树洁净（残余缺口见 00-baseline.md §5.4）。",
+    "G1 闭合不关闭 G2-G8：像素、竖屏、设置、存储、登录、Node 生命周期、签名材料仍未验收。",
+    "顶层 baselineCommit 是 T01 冻结基线 8ed3067b；本 atom worktree 的 Git 起点是 7086775，记录于 worktreeBaseCommit。"
+  ]
+}
