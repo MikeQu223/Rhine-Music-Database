@@ -1,18 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Theme applied to the Android Window while the process is starting when the OS's Dark Mode setting is off -->
-    <style name="LaunchTheme" parent="@android:style/Theme.Light.NoTitleBar">
-        <!-- Show a splash screen on the activity. Automatically removed when
-             the Flutter engine draws its first frame -->
-        <item name="android:windowBackground">@drawable/launch_background</item>
+    <!-- 启动主题（DEDUP-42）：对齐 Qt 启动闸门主题 RhineConsent（Qt/android/res/values/styles.xml:8-14）。
+         parent 取 Theme.DeviceDefault.NoActionBar（Qt:10），无 ActionBar；
+         windowBackground 取 @android:color/black（Qt:12），启动窗口本身就是纯黑，
+         不再走模板的 @drawable/launch_background（drawable/launch_background.xml:4 铺的是白色）；
+         windowDisablePreview 取 true（Qt:13），系统不插启动预览窗，切换时不会先闪一块浅色。
+         Manifest 仍以 @style/LaunchTheme 引用本主题（android/app/src/main/AndroidManifest.xml:25），未改动。 -->
+    <style name="LaunchTheme" parent="@android:style/Theme.DeviceDefault.NoActionBar">
+        <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:windowDisablePreview">true</item>
     </style>
-    <!-- Theme applied to the Android Window as soon as the process has started.
-         This theme determines the color of the Android Window while your
-         Flutter UI initializes, as well as behind your Flutter UI while its
-         running.
-
-         This Theme is only used starting with V2 of Flutter's Android embedding. -->
-    <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar">
-        <item name="android:windowBackground">?android:colorBackground</item>
+    <!-- 运行期主题（DEDUP-42）：Flutter 的 Android 嵌入在 Activity 创建时换上 NormalTheme，
+         并一直用到退出（android/app/src/main/AndroidManifest.xml:34-35 的 NormalTheme meta-data）。
+         Qt 那边只有闸门 Activity 用 RhineConsent，QtActivity 不设主题
+         （Qt/android/AndroidManifest.xml:90 对 :98-105），Qt 界面靠自绘铺满，运行期看不到窗口底色；
+         Flutter 没有"闸门之后再换一套主题"的时机，所以 NormalTheme 就是运行期唯一窗口底色。
+         模板原文的 ?android:colorBackground 在浅色模式下等于白底，首帧画出来之前会透出来，
+         因此这里取与 Qt 相同的窗口底色 @android:color/black（Qt/android/res/values/styles.xml:12）。
+         windowDisablePreview 只在系统按 Manifest 上的 Activity 主题构建启动预览窗时读取，
+         运行期主题里加了也不生效，故不重复。 -->
+    <style name="NormalTheme" parent="@android:style/Theme.DeviceDefault.NoActionBar">
+        <item name="android:windowBackground">@android:color/black</item>
     </style>
 </resources>
