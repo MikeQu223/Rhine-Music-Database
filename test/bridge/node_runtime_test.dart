@@ -1,8 +1,9 @@
 // T21-C19-W2（atom T21-C19-A2，接管 T21-C14 草稿）｜lib/bridge/node_runtime.dart 的
-// 宿主侧确定性单测（RED/GREEN 未执行）。
+// 宿主侧确定性单测（RED/GREEN 未执行）。OPS86-A8-BRIDGE 追加 DEDUP-24 的会话级去重用例。
 //
-// RED/GREEN 未执行：T21-C14 全程禁止 flutter test / dart test / flutter analyze /
-// dart analyze / 格式化 / 设备执行，本文件只写了断言，从未运行过（连一次都没有）。
+// RED/GREEN 未执行：T21-C14 与本次 OPS86-A8-BRIDGE（DEDUP-24）全程禁止 flutter test /
+// dart test / flutter analyze / dart analyze / 格式化 / 设备执行；本文件只写了断言，
+// 从未运行过（连一次都没有）。
 //
 // 计划卡：docs/superpowers/plans/2026-11-09-qt-to-flutter-parity-plan.md:524-531（T21）。
 // 权威源：Qt/src/BridgeProcessAndroid.cpp（:47 token、:55-60 单控制连接、:73 48 MiB
@@ -53,6 +54,50 @@ final class _FakeNodeRuntimeHost implements NodeRuntimeHost {
   void startRuntime(NodeRuntimeStartSpec spec) {
     starts.add(spec);
     retainedArgv.add(List<String>.unmodifiable(spec.argv));
+  }
+
+  @override
+  Future<void> dispose() async {
+    disposeCount += 1;
+  }
+}
+
+/// 启动即抛错的宿主：复现 Qt:120-125 一类「launched 已在 Qt:106 置位之后宿主侧才失败」
+/// 的路径——此时监听仍开着（node_runtime.dart 文件头差异 11），失败会话与随后的控制连接
+/// 会话必须是两个独立的去重作用域（DEDUP-24）。
+final class _ThrowingStartHost implements NodeRuntimeHost {
+  int prepareCount = 0;
+
+  @override
+  Future<NodeRuntimeHostStatus> prepare() async {
+    prepareCount += 1;
+    return const NodeRuntimeHostStatus(prepared: true, root: null, reason: null);
+  }
+
+  @override
+  void startRuntime(NodeRuntimeStartSpec spec) {
+    throw StateError('host refused to start the runtime');
+  }
+
+  @override
+  Future<void> dispose() async {}
+}
+
+/// prepare 可被外部闸门卡住的宿主：让 shutdown 与一次在途的 launch 稳定地竞争
+/// （reviewer finding #1：迟到失败不得在关机之后伪造 runtime-error）。
+final class _BlockingPrepareHost implements NodeRuntimeHost {
+  final Completer<void> gate = Completer<void>();
+  int disposeCount = 0;
+
+  @override
+  Future<NodeRuntimeHostStatus> prepare() async {
+    await gate.future;
+    return const NodeRuntimeHostStatus(prepared: false, root: null, reason: 'not_ready');
+  }
+
+  @override
+  void startRuntime(NodeRuntimeStartSpec spec) {
+    fail('关机后绝不启动 Node');
   }
 
   @override
@@ -590,9 +635,152 @@ void main() {
         returnsNormally,
         reason: 'Qt 的 socket->write() 在已断开的 socket 上静默返回 -1，绝不外抛',
       );
-      expect(failures, hasLength(1), reason: 'runtime-error 至多一次（差异 9）');
+      expect(failures, hasLength(1), reason: '同一会话内至多一次（差异 9：abort + onDone 合并）');
 
       await runtime.shutdown();
+    });
+
+    // —— DEDUP-24：runtime-error 去重的作用域必须是「单次会话」而不是进程 ——
+    test('DEDUP-24：启动失败 → 重新 launch 成功 → 断链仍回传 runtime-error（Qt:63-67）', () async {
+      final NodeRuntime runtime = NodeRuntime.createIsolatedForTest();
+      final _FakeNodeRuntimeHost host = _FakeNodeRuntimeHost();
+      final List<void> failures = <void>[];
+      final List<Map<String, Object?>> frames = <Map<String, Object?>>[];
+      runtime.runtimeFailed.listen(failures.add);
+      runtime.messages.listen(frames.add);
+
+      // 会话 1：脚本不在 → launch false + runtime-error（Qt:102-105，经 :186-189 合成）。
+      File(_rootPath + '/MusicBridge/ios-runtime.cjs').deleteSync();
+      expect(await runtime.launch(_rootPath, host), isFalse);
+      expect(runtime.launched, isFalse);
+      await _waitFor(() => failures.isNotEmpty);
+      await _waitFor(() => frames.isNotEmpty, reason: 'runtime-error 帧自身也必须出现在 messages');
+      expect(failures, hasLength(1));
+      expect(frames.single[NodeWire.type], NodeWire.runtimeError);
+
+      // 会话 2：补齐脚本后重试成功——Qt 的 launched 直到 :106 才置位，失败不是终态。
+      File(_rootPath + '/MusicBridge/ios-runtime.cjs')
+          .writeAsStringSync('// fake script: this test never starts Node');
+      expect(await runtime.launch(_rootPath, host), isTrue);
+      expect(runtime.launched, isTrue);
+      expect(host.starts, hasLength(1), reason: '成功那次才真正交给宿主启动');
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(failures, hasLength(1), reason: '成功启动本身不是失败，不得补发');
+
+      // 会话 3：成功启动之后的断链必须再上报一次（Qt:63-67 无条件 accept，不看历史）。
+      final _LoopbackClient client = await _LoopbackClient.connect(runtime.port);
+      client.sendToken(runtime.token);
+      await _waitFor(() => runtime.authenticated);
+      expect(runtime.isLive, isTrue);
+
+      await client.dispose();
+      await _waitFor(
+        () => failures.length >= 2,
+        reason: 'DEDUP-24：进程级 latch 会吞掉这里的第二次 runtimeFailed',
+      );
+      expect(failures, hasLength(2), reason: '每个失败会话恰好一次，跨会话绝不抑制');
+      await _waitFor(
+        () => frames.where((Map<String, Object?> m) => m[NodeWire.type] == NodeWire.runtimeError).length >= 2,
+        reason: '两条 runtime-error 帧都要进 messages（UI 的崩溃提示源）',
+      );
+      expect(
+        frames.where((Map<String, Object?> m) => m[NodeWire.type] == NodeWire.runtimeError),
+        hasLength(2),
+      );
+
+      await runtime.shutdown();
+    });
+
+    test('DEDUP-24：两次独立的启动失败各自上报（每次 launch 尝试是一个会话）', () async {
+      final NodeRuntime runtime = NodeRuntime.createIsolatedForTest();
+      final _FakeNodeRuntimeHost host = _FakeNodeRuntimeHost();
+      final List<void> failures = <void>[];
+      runtime.runtimeFailed.listen(failures.add);
+      File(_rootPath + '/MusicBridge/ios-runtime.cjs').deleteSync();
+
+      expect(await runtime.launch(_rootPath, host), isFalse);
+      await _waitFor(() => failures.length >= 1);
+      expect(failures, hasLength(1));
+
+      // Qt:186-189：每次失败的 start() 都会再合成一次 runtime-error，两次失败就是两条。
+      expect(await runtime.launch(_rootPath, host), isFalse);
+      await _waitFor(
+        () => failures.length >= 2,
+        reason: '第二次失败被上一次的 latch 吞掉了（DEDUP-24）',
+      );
+      expect(failures, hasLength(2));
+      expect(host.prepareCount, 2, reason: '失败路径允许重试：launched 从未置位');
+      expect(host.starts, isEmpty);
+      expect(runtime.port, 0);
+
+      await runtime.shutdown();
+    });
+
+    test('DEDUP-24：同一会话内的重复断链回调只上报一次（abort + onDone 合并）', () async {
+      final NodeRuntime runtime = NodeRuntime.createIsolatedForTest();
+      final _FakeNodeRuntimeHost host = _FakeNodeRuntimeHost();
+      final List<void> failures = <void>[];
+      runtime.runtimeFailed.listen(failures.add);
+      expect(await runtime.launch(_rootPath, host), isTrue);
+
+      final _LoopbackClient client = await _LoopbackClient.connect(runtime.port);
+      // 首帧令牌不匹配：_abortConnection 先显式走一遍失败路径，socket 的 onDone 随后还会
+      // 回调同一个失败——两次通知属于同一会话，必须合并成一次。
+      client.sendToken('00000000-0000-4000-8000-000000000000');
+      await _waitFor(() => failures.isNotEmpty);
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      expect(failures, hasLength(1), reason: '同一失败不重复刷屏（差异 9 保留的部分）');
+      expect(runtime.authenticated, isFalse);
+
+      await client.dispose();
+      await runtime.shutdown();
+    });
+
+    test('DEDUP-24：launch 置位后宿主启动抛错，随后控制连接的断链仍独立上报', () async {
+      final NodeRuntime runtime = NodeRuntime.createIsolatedForTest();
+      final _ThrowingStartHost host = _ThrowingStartHost();
+      final List<void> failures = <void>[];
+      runtime.runtimeFailed.listen(failures.add);
+
+      // 会话 1：_launched 已在 Qt:106 置位之后宿主才失败（Qt:120-125 一类路径）。
+      expect(await runtime.launch(_rootPath, host), isFalse);
+      expect(runtime.launched, isTrue, reason: 'Qt:106 之后不再回收监听（差异 11）');
+      expect(host.prepareCount, 1);
+      await _waitFor(() => failures.isNotEmpty);
+      expect(failures, hasLength(1));
+
+      // 会话 2：监听仍在，控制连接可以建立；它的断开是独立的失败会话，必须再上报。
+      final _LoopbackClient client = await _LoopbackClient.connect(runtime.port);
+      client.sendToken(runtime.token);
+      await _waitFor(() => runtime.authenticated);
+      await client.dispose();
+      await _waitFor(
+        () => failures.length >= 2,
+        reason: '连接会话的断链被上一次失败吞掉了（DEDUP-24）',
+      );
+      expect(failures, hasLength(2));
+
+      await runtime.shutdown();
+    });
+
+    test('DEDUP-24 finding#1：shutdown 与在途 prepare 竞争，迟到失败不伪造 runtime-error', () async {
+      final NodeRuntime runtime = NodeRuntime.createIsolatedForTest();
+      final _BlockingPrepareHost host = _BlockingPrepareHost();
+      final List<void> failures = <void>[];
+      final List<Map<String, Object?>> frames = <Map<String, Object?>>[];
+      runtime.runtimeFailed.listen(failures.add);
+      runtime.messages.listen(frames.add);
+
+      final Future<bool> attempt = runtime.launch(_rootPath, host);
+      await runtime.shutdown();
+      expect(runtime.launched, isFalse);
+
+      // prepare 之后才返回「未就绪」：此时已经 shutdown，不得再发 runtime-error。
+      host.gate.complete();
+      expect(await attempt, isFalse);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(failures, isEmpty, reason: '正常关闭后的迟到失败不是崩溃');
+      expect(frames, isEmpty);
     });
 
     test('NodeRuntimeEngineLink：转发 send / messages / isLive 给进程级运行时', () async {
