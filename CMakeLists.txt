@@ -98,6 +98,7 @@ set(RHINE_APP_SOURCES
     Qt/src/AppUpdater.cpp
     Qt/src/AppUpdater.h
     Qt/src/AudioPlayer.cpp
+    Qt/src/WindowsAudioOutput.cpp
     Qt/src/AudioPlayer.h
     Qt/src/AudioSpectrum.cpp
     Qt/src/AudioSpectrum.h
@@ -260,7 +261,7 @@ if(NOT IOS)
         RHINE_PLAYBACK_SOURCES
         INCLUDE
         REGEX
-        "/(AppUpdater|AppStorage|AudioPlayer|AudioSpectrum|HttpAudioStream|PlaybackDiagnostics|PlaybackConnection|Host|MusicApi|MusicPlayer|PlaybackQueue|LyricsController|Platform)\\.(cpp|h)$|/qrcodegen\\.cpp$"
+        "/(AppUpdater|AppStorage|AudioPlayer|WindowsAudioOutput|AudioSpectrum|HttpAudioStream|PlaybackDiagnostics|PlaybackConnection|Host|MusicApi|MusicPlayer|PlaybackQueue|LyricsController|Platform)\\.(cpp|h)$|/qrcodegen\\.cpp$"
     )
     list(REMOVE_ITEM RHINE_CORE_SOURCES ${RHINE_PLAYBACK_SOURCES})
     add_library(RhinePlaybackCore STATIC ${RHINE_PLAYBACK_SOURCES})
@@ -634,6 +635,7 @@ qt_add_executable(
     Qt/tests/PlatformRegression.cpp
     Qt/src/AppStorage.cpp
     Qt/src/AudioPlayer.cpp
+    Qt/src/WindowsAudioOutput.cpp
     Qt/src/AudioSpectrum.cpp
     Qt/src/HttpAudioStream.cpp
     Qt/src/ProcessMetrics.cpp)
@@ -758,7 +760,7 @@ endif()
 add_test(NAME qt_linux_display_regression COMMAND RhineLinuxDisplayRegression)
 
 qt_add_executable(RhineAudioStreamRegression Qt/tests/AudioStreamChecks.cpp Qt/src/AudioPlayer.cpp
-                  Qt/src/AudioSpectrum.cpp Qt/src/HttpAudioStream.cpp)
+                  Qt/src/WindowsAudioOutput.cpp Qt/src/AudioSpectrum.cpp Qt/src/HttpAudioStream.cpp)
 target_include_directories(RhineAudioStreamRegression PRIVATE Qt/src)
 target_link_libraries(RhineAudioStreamRegression PRIVATE Qt6::Core Qt6::Multimedia Qt6::Network)
 if(MSVC)
@@ -864,6 +866,16 @@ if(RHINE_FFX_VK_AVAILABLE AND TARGET Qt6::GuiPrivate)
         target_compile_options(RhineFgGateProbe PRIVATE -g)
         target_link_options(RhineFgGateProbe PRIVATE -g)
     endif()
+endif()
+
+if(WIN32)
+    target_sources(RhineAudioStreamRegression PRIVATE Qt/src/AppStorage.cpp)
+    target_sources(RhineAudioPlaybackRegression PRIVATE Qt/src/WindowsAudioOutput.cpp)
+    target_include_directories(RhineAudioPlaybackRegression PRIVATE Qt/src)
+    foreach(audioTarget ${RHINE_SYSTEM_CORE} RhinePlatformRegression RhineAudioStreamRegression
+                        RhineAudioPlaybackRegression)
+        target_link_libraries(${audioTarget} PRIVATE ole32 uuid avrt)
+    endforeach()
 endif()
 
 if(WIN32 AND RHINE_ENABLE_D3D12_BACKEND)

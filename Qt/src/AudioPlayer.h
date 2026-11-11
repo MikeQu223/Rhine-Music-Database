@@ -12,6 +12,7 @@
 #include <functional>
 #include <memory>
 #include "HttpAudioStream.h"
+#include "WindowsAudioOutput.h"
 #include "AudioSpectrum.h"
 
 // 在线模式只接收锁定上游的播放链接；本地模式只接收文件 URL
@@ -36,6 +37,11 @@ class AudioPlayer {
     std::unique_ptr<QMediaPlayer> player;
     std::unique_ptr<QAudioBufferOutput> decodedOutput;
     std::unique_ptr<HttpAudioStream> stream;
+#ifdef Q_OS_WIN
+    std::unique_ptr<WindowsAudioOutput> nativeOutput;
+    QMetaObject::Connection nativeConnection;
+    bool prepareWindowsOutput();
+#endif
     void startMediaSource(const QUrl &url);
     void releasePlayer();
     bool diagnosticsEnabled = false;
@@ -79,4 +85,5 @@ class AudioPlayer {
     bool failureRecoverable = false;
     bool sourceEnded = false;
     void checkPlaybackHealth();
+    void finishPlayback();
 };
