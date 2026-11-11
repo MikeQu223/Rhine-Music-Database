@@ -1351,6 +1351,68 @@ void main() {
       expect(childConstraints!.height, closeTo(2300, kTol));
     });
 
+    testWidgets('drawn stage rect and hit rect share the safe.top origin',
+        (WidgetTester tester) async {
+      await tester.binding.setSurfaceSize(const Size(1080, 2400));
+      addTearDown(() async {
+        await tester.binding.setSurfaceSize(null);
+      });
+      PortraitBands? observedBands;
+      StageGeometry? observedGeometry;
+      await tester.pumpWidget(host(
+        surface: const Size(1080, 2400),
+        padding: const EdgeInsets.only(top: 72, bottom: 48),
+        child: PortraitStage(
+          child: Builder(builder: (BuildContext context) {
+            observedBands = PortraitStageScope.of(context);
+            observedGeometry = StageGeometryScope.of(context);
+            return Stack(children: <Widget>[
+              const PortraitStageSlot(
+                rect: StageRect(100, 0, 200, 100),
+                child: SizedBox.expand(key: ValueKey<String>('origin-probe')),
+              ),
+            ]);
+          }),
+        ),
+      ));
+      final PortraitBands bands = observedBands!;
+      final StageGeometry geometry = observedGeometry!;
+      // A36 hit-origin follow-up：originY 只能来自 bands.containerTop = safe.top / scale = 72。
+      expect(bands.containerTop, closeTo(72, kTol));
+      expect(geometry.originY, closeTo(72, kTol));
+      expect(geometry.originY, closeTo(bands.containerTop, kTol));
+
+      // 绘制侧：Padding(top: safe.top) 把舞台顶推到窗口 y=72，slot 实际画在 (100, 72)。
+      final Rect drawn = tester.getRect(find.byKey(const ValueKey<String>('origin-probe')));
+      // 命中/语义侧：同一份 geometry 把舞台矩形 (100,0,200,100) 映射回窗口坐标。
+      final Rect expected = geometry.rectToLogical(const Rect.fromLTWH(100, 0, 200, 100));
+      expect(drawn.left, closeTo(100, kTol));
+      expect(drawn.top, closeTo(72, kTol));
+      expect(drawn.left, closeTo(expected.left, kTol));
+      expect(drawn.top, closeTo(expected.top, kTol));
+      expect(drawn.right, closeTo(expected.right, kTol));
+      expect(drawn.bottom, closeTo(expected.bottom, kTol));
+
+      final HitLayer hitLayer = HitLayer(geometry: geometry, android: false);
+      const List<HudHit> hits = <HudHit>[
+        HudHit(x: 100, y: 0, width: 200, height: 100, action: 'music:origin-probe', label: 'probe'),
+      ];
+      // 窗口 y = 72 + 50 = 122 命中；不扣 safe.top 的实现会把它当成舞台 y=122 漏掉。
+      expect(hitLayer.hitAt(hits, const Offset(200, 122))?.action, 'music:origin-probe');
+      // 差 1 就在安全区里：71 不命中；旧缺陷高度 50 也不得命中。
+      expect(hitLayer.hitAt(hits, const Offset(200, 71)), isNull);
+      expect(hitLayer.hitAt(hits, const Offset(200, 50)), isNull);
+      // 对照组：不注入 originY 的旧实现会在同一坐标误判（这是修复前的行为），
+      // 证明差异确实来自 originY，而不是别的换算。
+      final HitLayer legacy = HitLayer(
+        geometry: StageGeometry.withScale(
+            stageScale: 1, logicalWidth: 1080, logicalHeight: 2400),
+        android: false,
+      );
+      expect(legacy.hitAt(hits, const Offset(200, 50))?.action, 'music:origin-probe');
+      expect(legacy.hitAt(hits, const Offset(200, 122)), isNull);
+    });
+
     testWidgets('positions slots in stage units', (WidgetTester tester) async {
       await tester.binding.setSurfaceSize(const Size(1080, 2400));
       addTearDown(() async {

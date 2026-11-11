@@ -93,6 +93,94 @@ void main() {
     });
   });
 
+  group('StageGeometry.originY is the only window→stage translation (A36 follow-up)', () {
+    // 1080x2400 + safe.top=72 + stageScale=1：舞台原点在窗口 y=72，命中矩形整体比绘制高 72，
+    // 所以 toStage 必须减 originY、toLogical/rectToLogical 必须加回来。
+    final StageGeometry windowed = StageGeometry.withScale(
+        stageScale: 1, logicalWidth: 1080, logicalHeight: 2400, originY: 72);
+
+    test('logical y = safe.top is stage y = 0, window y = 0 is stage y = -72', () {
+      expect(windowed.originY, 72.0);
+      expect(windowed.toStage(const Offset(0, 72)), const Offset(0, 0));
+      expect(windowed.toStage(const Offset(0, 0)), const Offset(0, -72));
+      expect(windowed.toLogical(const Offset(0, 0)), const Offset(0, 72));
+      expect(windowed.toLogical(const Offset(0, -72)), const Offset(0, 0));
+    });
+
+    test('rectToLogical moves top and bottom by the same origin', () {
+      final Rect rect = windowed.rectToLogical(const Rect.fromLTWH(0, 0, 100, 50));
+      expect(rect.left, 0.0);
+      expect(rect.width, 100.0);
+      expect(rect.height, 50.0);
+      expect(rect.top, 72.0);
+      expect(rect.bottom, 122.0);
+    });
+
+    test('scale != 1 divides first, then subtracts originY, and inverts exactly', () {
+      // originY 在这里是纯几何量（72 舞台单位），与 safe.top 的窗口像素无关：
+      // 540 宽 ⇒ stageScale=0.5，若 safe.top=72 逻辑px，则 containerTop = 72/0.5 = 144。
+      final StageGeometry scaled = StageGeometry.withScale(
+          stageScale: 0.5, logicalWidth: 540, logicalHeight: 1200, originY: 72);
+      // x: 270 / 0.5 = 540。y: 108 / 0.5 = 216, 216 - 72 = 144（不是 216，也不是先减后除的 72）。
+      expect(scaled.toStage(const Offset(270, 108)), const Offset(540, 144));
+      // 反向：舞台 y=0 对应窗口 y = (0 + 72) * 0.5 = 36；窗口 y=108 回落到舞台 y=144。
+      expect(scaled.toLogical(const Offset(0, 0)), const Offset(0, 36));
+      expect(scaled.toLogical(const Offset(0, 144)), const Offset(0, 108));
+      // 顺序不可交换：先减 originY 再除 scale 只有 72。
+      expect(scaled.toStage(const Offset(0, 108)).dy, isNot(closeTo((108 - 72) / 0.5, 1e-9)));
+      // 窗口 y=0 落到舞台 y = 0/0.5 - 72 = -72（originY 是舞台单位，与 scale 无关），
+      // 正确表示「安全区之上那条窗口带不属于舞台」。
+      expect(scaled.toStage(const Offset(0, 0)), const Offset(0, -72));
+    });
+
+    test('toStage/toLogical round-trip is lossless within 1e-9', () {
+      final StageGeometry mixed = StageGeometry.withScale(
+          stageScale: 1.5, logicalWidth: 1620, logicalHeight: 2400, originY: 72);
+      for (final Offset stage in const <Offset>[
+        Offset(0, 0),
+        Offset(100, 0),
+        Offset(540, 1440),
+        Offset(1079.5, 2399.25),
+      ]) {
+        final Offset back = mixed.toStage(mixed.toLogical(stage));
+        expect((back - stage).distance, lessThan(1e-9), reason: 'stage ' + stage.toString());
+      }
+      for (final Offset logical in const <Offset>[
+        Offset(0, 0),
+        Offset(0, 72),
+        Offset(200, 122),
+        Offset(1619.5, 2399.5),
+      ]) {
+        final Offset back = mixed.toLogical(mixed.toStage(logical));
+        expect((back - logical).distance, lessThan(1e-9), reason: 'logical ' + logical.toString());
+      }
+      // 语义 rect 与点映射同一平移：top/bottom 都经过 (y + originY) * scale。
+      final Rect logicalRect = mixed.rectToLogical(const Rect.fromLTWH(100, 0, 200, 100));
+      expect(logicalRect.top, closeTo(72 * 1.5, 1e-9));
+      expect(logicalRect.bottom, closeTo((100 + 72) * 1.5, 1e-9));
+    });
+
+    test('negative, NaN and infinite originY are rejected; landscape keeps 0', () {
+      expect(
+          () => StageGeometry.withScale(
+              stageScale: 1, logicalWidth: 1080, logicalHeight: 2400, originY: -1),
+          throwsArgumentError);
+      expect(
+          () => StageGeometry.withScale(
+              stageScale: 1, logicalWidth: 1080, logicalHeight: 2400, originY: double.nan),
+          throwsArgumentError);
+      expect(
+          () => StageGeometry.withScale(
+              stageScale: 1, logicalWidth: 1080, logicalHeight: 2400, originY: double.infinity),
+          throwsArgumentError);
+      // 旧横屏构造走默认 0，既有调用点的换算不变（const 调用点见 t32/ime 系列）。
+      expect(const StageGeometry(logicalWidth: 1920, logicalHeight: 1080).originY, 0.0);
+      expect(unit.originY, 0.0);
+      expect(unit.toStage(const Offset(0, 0)), const Offset(0, 0));
+      expect(unit.toLogical(const Offset(540, 540)), const Offset(540, 540));
+    });
+  });
+
   group('TouchExpansion (Overlay.qml:38-43)', () {
     test('android pad is 16 stage pixels, everything else has none', () {
       expect(TouchExpansion.androidPad, 16.0);

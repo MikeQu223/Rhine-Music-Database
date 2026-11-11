@@ -25,6 +25,10 @@ import 'portrait_bands.dart';
 /// 底边会停在 layoutHeight - safe.top - safe.bottom。缩放后舞台高
 /// = layoutHeight - safe.top - safe.bottom，底边恰好在 layoutHeight - safe.bottom。
 ///
+/// 这份平移只有两个消费者，且必须同源：绘制用 Padding(top: containerTop * stageScale)
+/// 把缩放舞台下移；命中/无障碍语义用 StageGeometry.originY = containerTop 把窗口逻辑坐标
+/// 反向平移回舞台坐标。二者都由 bands.containerTop 算出，任何子树不得再自己加 safe.top。
+///
 /// mode 仍是未裁决候选：默认值只为让宿主可编译、可预览，不代表赢家。
 /// imePolicy 在 adjustResize 下不参与几何（DEDUP-20），仅为源码兼容保留。
 class PortraitStage extends StatelessWidget {
@@ -76,10 +80,13 @@ class PortraitStage extends StatelessWidget {
         // DEDUP-13：唯一一份 StageGeometry 由 PortraitStage 生成并注入。
         // 绘制（Transform.scale）与命中（HitLayer/PointerRouter）都消费这一份；
         // 子树不得再用 logicalHeight / 1080 推导第二个 scale。
+        // A36 hit-origin follow-up：originY 与下面 Padding(top: containerTop * stageScale) 同源——
+        // 绘制下移多少，命中/语义就平移多少；横屏 containerTop = 0，originY 退化为 0。
         final StageGeometry geometry = StageGeometry.withScale(
           stageScale: bands.stageScale,
           logicalWidth: layoutWidth,
           logicalHeight: layoutHeight,
+          originY: bands.containerTop,
         );
         return PortraitStageScope(
           bands: bands,
@@ -203,8 +210,10 @@ class HudStageScope extends InheritedWidget {
 /// 把唯一一份 [StageGeometry] 注入绘制/命中子树（DEDUP-13）。
 ///
 /// 与 [HudStageScope] 同源：geometry.stageScale == PortraitBands.stageScale，
-/// geometry.logicalWidth/Height == LayoutBuilder 的完整可用窗口。HitLayer、
-/// PointerRouter、TextInputStageState 只能消费这里的 scale，禁止在子树内重算。
+/// geometry.logicalWidth/Height == LayoutBuilder 的完整可用窗口，
+/// geometry.originY == PortraitBands.containerTop（A36 hit-origin follow-up 的唯一平移来源）。HitLayer、
+/// PointerRouter、TextInputStageState 只能消费这里的 scale 与 origin，禁止在子树内重算，
+/// 也禁止各自再补一次 safe.top。
 class StageGeometryScope extends InheritedWidget {
   const StageGeometryScope({super.key, required this.geometry, required super.child});
 
@@ -230,7 +239,10 @@ class StageGeometryScope extends InheritedWidget {
   bool updateShouldNotify(StageGeometryScope oldWidget) =>
       oldWidget.geometry.stageScale != geometry.stageScale ||
       oldWidget.geometry.logicalWidth != geometry.logicalWidth ||
-      oldWidget.geometry.logicalHeight != geometry.logicalHeight;
+      oldWidget.geometry.logicalHeight != geometry.logicalHeight ||
+      // A36 hit-origin follow-up：只改 originY（例如 inset 变化但 scale 不变）时也必须重发，
+      // 否则命中/语义会继续读到上一帧的平移量。
+      oldWidget.geometry.originY != geometry.originY;
 }
 
 /// 在舞台坐标系里按矩形摆放子 widget；必须放在 Stack 里。
