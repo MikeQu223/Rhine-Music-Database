@@ -2894,6 +2894,10 @@ final List<SettingsDescriptor> _settingsDescriptorTable = <SettingsDescriptor>[
     order: 250,
     titleEn: 'RENDER SCALE',
     titleZh: '渲染分辨率',
+    // Qt/src/SettingsSchema.cpp:566 的 .defaultValue 是 androidDefaultRenderScale() 的字符串：
+    // 桌面 / iOS 为 100，Android 为 75。这里保留 '100' 只是字面基线——validateRegistry()
+    // 要求默认值落在 steps 内；平台相关默认统一由 settingsDefaultValue() 覆盖，
+    // 读取、canonical 与恢复默认三条路径都经它，不会直接消费本字段。
     defaultValue: '100',
     preferenceKey: 'render-scale',
     actionPrefix: 'render-scale:',
@@ -3124,10 +3128,27 @@ String settingsTitleZh(SettingsDescriptor descriptor, SettingsPreferenceContext 
 String settingsRestartHint(SettingsDescriptor descriptor, SettingsPreferenceContext context) =>
     context.isDarwin ? descriptor.darwinRestartHint : descriptor.restartHint;
 
-/// SettingsSchema.cpp:214/219：render-scale 的默认值随平台（Android 90，其余 100）。
+/// render-scale 的默认值随平台，唯一真值在 Qt：
+///
+/// Qt/src/SettingsSchema.cpp:555-568 的 .defaultValue =
+/// QString::number(RhineRender::androidDefaultRenderScale())；
+/// Qt/src/render/AndroidRenderPolicy.h:95-116 的 androidDefaultRenderScale() 在
+/// Q_OS_ANDROID 下：总开关关闭（RHINE_ANDROID_RENDER_TUNING=0）→ 100；
+/// RHINE_ANDROID_RENDER_SCALE 落在 50..100 → 该值；否则 → 75。非 Android 恒为 100。
+/// 所以 Android 的有效默认是 75，不是 90。
+///
+/// 两处「90%」注释都是 75 之前的残留、不是取值依据：SettingsSchema.cpp:565
+/// （「Android 90%，其它平台 100%」）与 Qt/src/main.cpp:805-806
+/// （「Android 取 90%」，:807-808 取的是同一个函数）。
+///
+/// Dart 宿主目前没有 RHINE_ANDROID_RENDER_TUNING / RHINE_ANDROID_RENDER_SCALE 的注入缝，
+/// 因此这里只编码「无运行时覆盖」时的默认值，不伪造环境变量读取或平台通道。
+/// 恢复默认走 NativeHudSettings.cpp:495-509 的同一条 descriptor.defaultValue 路径
+/// （Dart 侧 settingsDefaultsResetPlan() 经 settingsNormalizeValue + 本函数），
+/// 所以 Android 的「恢复默认」同样回到 75。
 String settingsDefaultValue(SettingsDescriptor descriptor, SettingsPreferenceContext context) {
   if (descriptor.id == 'render-scale') {
-    return context.operatingSystem == SettingsOperatingSystem.android ? '90' : '100';
+    return context.operatingSystem == SettingsOperatingSystem.android ? '75' : '100';
   }
   return descriptor.defaultValue;
 }
