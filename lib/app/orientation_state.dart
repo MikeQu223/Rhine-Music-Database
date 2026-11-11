@@ -1035,20 +1035,28 @@ OrientationSnapshot captureOrientationState(OrientationViewState state, StageMet
       sourceStageHeight: metrics.stageHeight,
     );
 
-/// 旋转后还原：只用新度量做可度量性检查，返回方向无关状态。
+/// 旋转后还原：返回方向无关状态；stage 尚不可度量的那一帧沿用此前有效状态。
+///
+/// 退化尺寸的语义对齐 Qt/src/Engine.cpp:841-849：`Engine::resize` 在
+/// `height <= 0`（或尺寸未变）时直接 `return`，静默保留上一帧的
+/// `m_width`/`m_height`，从不抛错。Flutter 侧同理 —— 首帧、最小化、旋转交接都
+/// 可能出现 logicalWidth/logicalHeight 为 0 的一帧，抛错只会把「本帧没有几何」
+/// 变成崩溃/红屏，而不是让上一帧继续显示。
+///
+/// 因此 `metrics.stageScale <= 0` 不是错误，而是「本帧不应用新舞台」：返回值仍是
+/// [snapshot.state] 的净化副本，即此前已经生效的方向无关状态。调用方若需要区分
+/// 本帧是否真的应用了舞台，读 `metrics.stageScale > 0` 即可；公开签名保持
+/// [OrientationViewState]，现有调用点不需要改动，也不新增「抛错即期望」的分支。
 ///
 /// 为什么这里不按 metrics 改任何数值：状态里的每个量都在行域/文本域/舞台单位，
 /// 舞台单位在横竖屏都由同一套 1080 基准定义（Qt/qml/Main.qml:32、
 /// T43 portrait_bands.dart:32），所以没有「旧像素 -> 新像素」这一步。
 /// 绝对偏移由 [resolveScrollOffsets] 在需要绘制时按新 extent 现算（plan:371）。
 OrientationViewState restoreOrientationState(OrientationSnapshot snapshot, StageMetrics metrics) {
-  if (!(metrics.stageScale > 0)) {
-    throw ArgumentError.value(
-      metrics.stageScale,
-      'metrics.stageScale',
-      'stage 尚不可度量（logicalWidth/logicalHeight 为 0），不能在这一帧还原视图',
-    );
-  }
+  // 退化帧不抛错：Engine::resize 静默保留上一有效尺寸（Qt/src/Engine.cpp:841-843），
+  // 这里对应地静默保留上一有效状态。StageMetrics.compute 对不可度量输入给出
+  // stageScale == 0（见本文件 :297-309），上层据此判断本帧未应用舞台；
+  // 状态本身方向无关，故可度量帧与退化帧返回同一份净化状态。
   return snapshot.state.sanitized();
 }
 

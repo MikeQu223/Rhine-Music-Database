@@ -169,9 +169,13 @@ void main() {
       expect(m.stageHeight, closeTo(qtStageHeightUnits, 1e-9));
       expect(m.logicalWidth, 0);
       expect(m.logicalHeight, 0);
-      // 退化度量下不能还原视图：宁可在这一帧报错，也不静默回 0 偏移。
-      final OrientationSnapshot snap = captureOrientationState(const OrientationViewState(), m);
-      expect(() => restoreOrientationState(snap, m), throwsArgumentError);
+      // 退化度量不抛错：Qt/src/Engine.cpp:841-843 对 height <= 0 静默 return、
+      // 保留上一有效尺寸，还原路径对应地返回快照里的上一有效状态。
+      const OrientationViewState before = OrientationViewState(selected: 7, currentLane: 2);
+      final OrientationSnapshot snap = captureOrientationState(before, m);
+      final OrientationViewState restored = restoreOrientationState(snap, m);
+      expect(restored, before.sanitized(), reason: '退化帧不得改变状态、不得抛错');
+      expect(restored.selected, 7);
       expect(m.stageOf(100), 0, reason: 'stageScale 为 0 时不得产生 inf');
     });
 
@@ -751,7 +755,7 @@ void main() {
       // 纯旋转短边不变 => 舞台缩放不变，只有舞台宽高互换。
       expect(snap.rescaleFactor(portraitMetrics), closeTo(1, 1e-12));
       expect(snap.crossesOrientation(landscapeMetrics), isFalse);
-      // 还原结果只取决于快照状态，与传入的 metrics 数值无关（metrics 只做可度量性检查）。
+      // 还原结果只取决于快照状态，与传入的 metrics 数值无关（退化帧也原样返回，不抛错）。
       const StageMetrics otherPortrait = StageMetrics(
         orientation: OrientationKind.portrait,
         stageScale: 0.5,
@@ -764,6 +768,28 @@ void main() {
         cameraCompact: false,
       );
       expect(restoreOrientationState(snap, otherPortrait), restoreOrientationState(snap, portraitMetrics));
+    });
+
+    test('退化 resize 不抛错，随后有效 resize 继续沿用同一状态', () {
+      final StageMetrics degenerate = compute(0, 0);
+      final StageMetrics halfDegenerate = compute(1000, 0);
+      expect(degenerate.stageScale, 0, reason: '退化输入的可度量标记：stageScale == 0');
+      expect(halfDegenerate.stageScale, 0, reason: '任一边 <= 0 都是退化帧');
+      final OrientationSnapshot snap = captureOrientationState(full, landscapeMetrics);
+      // Qt/src/Engine.cpp:841-843：退化尺寸静默保留上一有效尺寸，从不抛错；
+      // 对应地这里静默返回快照里的上一有效状态，而不是把异常锁成期望。
+      final OrientationViewState duringDegenerate = restoreOrientationState(snap, degenerate);
+      expect(duringDegenerate, full.sanitized());
+      expect(duringDegenerate.selected, 22);
+      expect(duringDegenerate.currentLane, 3);
+      expect(restoreOrientationState(snap, halfDegenerate), duringDegenerate);
+      // 退化帧之后再拿到有效度量：状态没有被清零或锁死，旋转仍只是舞台交换。
+      final OrientationViewState afterValid = restoreOrientationState(snap, portraitMetrics);
+      expect(afterValid, duringDegenerate, reason: '退化帧不改变后续有效帧的还原结果');
+      final OrientationSnapshot recaptured = captureOrientationState(afterValid, portraitMetrics);
+      expect(recaptured.sourceStageScale, closeTo(1 / 3, 1e-12));
+      expect(recaptured.crossesOrientation(landscapeMetrics), isTrue);
+      expect(restoreOrientationState(recaptured, landscapeMetrics), duringDegenerate);
     });
   });
 
