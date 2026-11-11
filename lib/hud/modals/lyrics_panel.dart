@@ -16,6 +16,11 @@
 
 import 'dart:math' as math;
 
+/// 面板动作接收器：宿主注入后，面板把「歌词来源 / 歌词偏移」按钮的 action 串
+/// 原样转出（Qt NativeHudController.cpp:324-345 把这两串分派到 T40 弹层）。
+/// 面板不解释动作、不打开弹层、不写状态。
+typedef LyricsActionSink = void Function(String action);
+
 // ── 校准常量（Qt/src/NativeHudDetail.cpp:229-230、253、304） ────────────────
 
 /// 歌词正文视口上沿（Qt constexpr top = 360）。
@@ -468,6 +473,7 @@ class LyricsPanelModel {
     this.status = 'idle',
     this.message = '',
     this.offsetMs = 0,
+    this.globalOffsetMs = 0,
     this.seekable = false,
     this.localSource = 'auto',
     this.provider = '',
@@ -513,6 +519,11 @@ class LyricsPanelModel {
   /// 偏移毫秒。面板绘制不消费它（Qt lyricsPanel 不读 offsetMs）；随模型带入，
   /// 供宿主把同一份快照交给 T40 的 lyrics-offset 弹层，避免二次读取。
   final double offsetMs;
+
+  /// 全局偏移毫秒（LyricsController::globalOffsetMs，LyricsController.cpp:60-64）。
+  /// 面板绘制不消费它；随模型带入，供 lyrics-offset 弹层判定「全局应用」是否
+  /// 已经是当前全局值（NativeHudModal.cpp:110-116）。
+  final double globalOffsetMs;
 
   /// player.state.seekable：只有可跳转时才发歌词行命中。
   final bool seekable;
@@ -573,6 +584,7 @@ class LyricsPanelModel {
     String? status,
     String? message,
     double? offsetMs,
+    double? globalOffsetMs,
     bool? seekable,
     String? localSource,
     String? provider,
@@ -600,6 +612,7 @@ class LyricsPanelModel {
         status: status ?? this.status,
         message: message ?? this.message,
         offsetMs: offsetMs ?? this.offsetMs,
+        globalOffsetMs: globalOffsetMs ?? this.globalOffsetMs,
         seekable: seekable ?? this.seekable,
         localSource: localSource ?? this.localSource,
         provider: provider ?? this.provider,
@@ -831,10 +844,13 @@ LyricsWheelResult applyLyricsWheel(LyricsWheelInput event) {
 
 /// 单帧累加器（Qt NativeHud 的 op/hit/text/button/limited 子集）。
 class _Painter {
-  _Painter(this.glyphs, this.dark);
+  _Painter(this.glyphs, this.dark, {this.onAction});
 
   final GlyphsPort glyphs;
   final bool dark;
+
+  /// 宿主 sink：只由 [actionButton] 调用，默认 null 时行为与旧版完全一致。
+  final LyricsActionSink? onAction;
 
   final List<List<Object?>> commands = <List<Object?>>[];
   final List<Map<String, Object?>> hits = <Map<String, Object?>>[];
@@ -912,6 +928,13 @@ class _Painter {
   void button(String label, double x, double y, double width, double height, String action, double size) {
     hit(x, y, width, height, action, label);
     text(label, x, y + (height - size) / 2 - 4, size, 'regular', 0, ink);
+  }
+
+  /// 绘制与 [button] 完全一致，随后把同一条 action 串交给宿主 sink。
+  /// 只用于会打开 T40 弹层的「歌词来源 / 歌词偏移」两键，其余命中不转出。
+  void actionButton(String label, double x, double y, double width, double height, String action, double size) {
+    button(label, x, y, width, height, action, size);
+    onAction?.call(action);
   }
 }
 
@@ -1031,9 +1054,10 @@ LyricsPanelDrawing paintLyricsPanel(
   LyricsPanelModel model,
   GlyphsPort glyphs, {
   LyricsMotionPort motion = const ReelMotion(),
+  LyricsActionSink? onAction,
 }) {
   final LyricsPanelView view = resolveLyricsView(model, glyphs, motion: motion);
-  final _Painter painter = _Painter(glyphs, model.dark);
+  final _Painter painter = _Painter(glyphs, model.dark, onAction: onAction);
   final double x = model.x;
   final double width = model.width;
   final double top = model.bounds.top;
@@ -1043,7 +1067,7 @@ LyricsPanelDrawing paintLyricsPanel(
   painter.limited(model.artist, x, 310, 13, width - lyricsPanelHeaderInset, 'regular');
   painter.button('关闭', x + width - 60, 278, 60, 40, 'player:lyrics-close', 14);
   if (model.isLocal && model.provider == 'local') {
-    painter.button('歌词来源 ⌃', x + 156, 914, 120, 32, 'player:lyrics-sources', 13);
+    painter.actionButton('歌词来源 ⌃', x + 156, 914, 120, 32, 'player:lyrics-sources', 13);
   }
 
   if (!view.hasLines) {
@@ -1121,7 +1145,7 @@ LyricsPanelDrawing paintLyricsPanel(
     }
   }
   painter.restore();
-  painter.button('歌词偏移 ⌃', x, 914, 144, 32, 'player:lyrics-offset', 13);
+  painter.actionButton('歌词偏移 ⌃', x, 914, 144, 32, 'player:lyrics-offset', 13);
   painter.button('回到当前句', x + width - 125, 914, 125, 32, 'player:lyrics-follow', 13);
   return LyricsPanelDrawing(commands: painter.commands, hits: painter.hits, view: view);
 }
