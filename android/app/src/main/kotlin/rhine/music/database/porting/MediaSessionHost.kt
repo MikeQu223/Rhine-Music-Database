@@ -200,6 +200,10 @@ object MediaSessionHost {
     /**
      * Java:63-70 的 start(Context)，并合入 Qt 侧"先申请通知权限再启动"的流程
      * （AndroidMediaSession.cpp:27-56）。幂等：服务已实例化时早退。
+     *
+     * 保持 void 门面：启动被系统拒绝时不抛、不重试，只降级为"没有前台通知/无保活保障"，
+     * 播放与会话控制照常；最近一次请求的结局留在 lastStartRejected 里供排障
+     * （见 startForegroundServiceCompat 的 DEDUP-40 说明）。
      */
     fun ensureStarted(context: Context) {
         if (instance != null) {
@@ -209,13 +213,53 @@ object MediaSessionHost {
         startForegroundServiceCompat(context)
     }
 
-    /** minSdk 24 守卫①：API 26 起必须 startForegroundService，否则随后 startForeground 会抛异常。 */
-    private fun startForegroundServiceCompat(context: Context) {
+    /**
+     * 最近一次 startForegroundServiceCompat 的结局：true = 请求被系统拒绝（服务没起来），
+     * false = 请求已发出（或从未请求过）。纯诊断字段，不参与控制流，下一次请求时复位。
+     */
+    internal var lastStartRejected = false
+        private set
+
+    /**
+     * minSdk 24 守卫①：API 26 起必须 startForegroundService，否则随后 startForeground 会抛异常。
+     *
+     * DEDUP-40：Android 12（API 31）起，从非前台上下文调用 startForegroundService 会抛
+     * ForegroundServiceStartNotAllowedException。它不是"通知没显示"级别的噪音：异常穿出
+     * ensureStarted 会一路冒到调用方（Activity 启动链或媒体状态上报链），把一次保活失败
+     * 放大成启动路径崩溃。所以必须就地拦住。
+     *
+     * 只按父类 IllegalStateException 捕获：ForegroundServiceStartNotAllowedException 是它的
+     * 子类，而 API < 31 的设备上根本没有这个类——显式写子类名会把类解析/验证风险带到旧设备，
+     * 用父类等价且安全（API 31+ 的 BackgroundServiceStartNotAllowedException 同样被覆盖）。
+     * 捕获后记 W 级日志、置 lastStartRejected、返回 false；不重新抛出。
+     * 其它异常类型不捕获（SecurityException 这类真错误照常上行，失败语义不变）。
+     *
+     * 合法调用点：只允许 Activity 处于 start/resume（应用在前台）时调用。
+     *   - AndroidWindow.cpp:79 是 Qt 的主调用点（窗口/Activity 启动期）；
+     *   - PlatformAndroid.cpp:69 的每次媒体状态上报被本文件的 instance 早退吸收：服务在跑时
+     *     根本摸不到系统这道闸，只有服务已死才算真正发起启动。
+     * 后台上下文（Service、BroadcastReceiver、Application，或 Activity 已 stop/被回收）不得调用；
+     * 即使异常已被本轮 catch 兜住，也不得据此重试——拒绝只说明"当时那一刻不允许"，立刻重试
+     * 必然再次被拒，只会刷日志。恢复保活只能等下一次真正的 Activity 前台回调（onStart/onResume）。
+     * catch 是兜底，不是后台启动的许可证。
+     *
+     * @return true = 已请求启动（含 API < 26 的 startService 路径）；false = 被系统拒绝，已降级。
+     */
+    private fun startForegroundServiceCompat(context: Context): Boolean {
         val intent = Intent(context, MediaPlaybackService::class.java)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            context.startForegroundService(intent)
-        } else {
-            context.startService(intent)
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(intent)
+            } else {
+                context.startService(intent)
+            }
+            lastStartRejected = false
+            true
+        } catch (rejected: IllegalStateException) {
+            // 不重抛、不重试：只降级为无通知。异常对象进日志，便于区分"被系统拒绝"与"没调用"。
+            lastStartRejected = true
+            Log.w(TAG, "foreground service start rejected by system: degrading to no notification", rejected)
+            false
         }
     }
 
