@@ -222,6 +222,24 @@ class PointerRouter {
     this.dragThreshold = 0.0,
   });
 
+  /// 从唯一 [StageGeometry] 构造路由（DEDUP-13）。
+  ///
+  /// 与绘制层使用同一个 geometry；本工厂只把它交给 HitLayer，不再另算 scale。
+  factory PointerRouter.fromGeometry({
+    required StageGeometry geometry,
+    required PointerPorts ports,
+    required bool android,
+    bool ios = false,
+    double dragThreshold = 0.0,
+  }) {
+    return PointerRouter(
+      hitLayer: HitLayer(geometry: geometry, android: android),
+      ports: ports,
+      ios: ios,
+      dragThreshold: dragThreshold,
+    );
+  }
+
   final HitLayer hitLayer;
   final PointerPorts ports;
 
@@ -631,6 +649,8 @@ class PointerRouter {
       return PointerOutcome(
           consumed: true, layer: PointerLayer.inputLayer, forwards: flushed);
     }
+    // DEDUP-13：这里只消费唯一注入的 geometry.stageScale（PortraitStage 那一份），
+    // 不在路由层按窗口高度重新推导，也不乘第二次。
     final scale = geometry.stageScale;
     ports.pointer(PointerPhase.pan, dx / scale, dy / scale);
     return PointerOutcome(

@@ -267,14 +267,16 @@ w/h = editingSettingW/H*scale`（`Overlay.qml:564-574`）；内文 `x+12*scale`�
 
 ### 5.4 IME 规则
 
-1. 横屏：stageScale 只由当前逻辑视口高度决定；源码没有 `windowSoftInputMode` 声明
-   （`Qt/android/AndroidManifest.xml` 全文无该属性），也没有任何 `viewInsets`/`safeArea` 处理
-   （grep 0 命中）。因此**键盘弹出时窗口是否 resize 属于未取证行为**，见 §8 DEVICE_BLOCKED。
-   实现禁止用 `MediaQuery.viewInsets` 手工缩放舞台；若平台确实改变逻辑视口，就按 §1.1 重算，
-   并保证输入框矩形随之重算。
-2. 竖屏（新增设计）：IME **不得**改变 `stageScale`/`stageWidth`（计划 §6.4）；`viewInsets.bottom`
-   只允许压缩新增纵向容器的可用高度，或按冻结策略上移输入框；输入框仍以 stage 坐标描述，
-   hit 与 IME 矩形同源。
+1. 横屏：stageScale 只由当前逻辑视口高度决定（`Qt/qml/Main.qml:32`）。Qt 基线没有
+   `windowSoftInputMode` 声明（`Qt/android/AndroidManifest.xml` 全文无该属性），也没有任何
+   `viewInsets`/`safeArea` 处理（grep 0 命中）。Flutter 清单
+   `android/app/src/main/AndroidManifest.xml:28` 保持 `adjustResize`（既定事实，本卡不改清单）：
+   键盘弹出时平台缩小逻辑窗口，stageScale 按 §1.1 随新高度重算；代码禁止再用
+   `MediaQuery.viewInsets` 手工缩放舞台，输入框矩形随同一 metrics 重算。
+2. 竖屏（新增设计）：清单保持 `adjustResize`，键盘弹出时平台已经缩小逻辑窗口；
+   band/stage 计算**不得再扣 `viewInsets`**，`stageScale`/`stageWidth`/`stageHeight` 与底栏
+   均不因键盘改变，`imeStage = 0`。输入框仍以 stage 坐标描述，hit 与 IME 矩形同源。
+   若未来改 `adjustNothing`，才允许用 `viewInsets` 压新增纵向容器；任何情况下 IME 不缩放 stage。
 3. 任何情况下，真实输入组件的逻辑矩形 = stage 矩形 × stageScale；不得加第二个偏移/内边距，
    避免命中与 IME 三套坐标。
 
@@ -284,20 +286,19 @@ w/h = editingSettingW/H*scale`（`Overlay.qml:564-574`）；内文 `x+12*scale`�
 竖屏是新增设计（计划 §6.4），不得伪造 Qt 竖屏截图证据。所有候选共用：
 
 ```
-layoutW, layoutH                     // logical px：LayoutBuilder 可用窗口宽高；layoutH 已扣 safe.top/safe.bottom
-safe = MediaQuery.padding              // logical px
-ime  = MediaQuery.viewInsets.bottom    // logical px
+layoutW, layoutH                     // logical px：LayoutBuilder 可用窗口宽高，未预扣任何 inset
+safe = MediaQuery.padding              // logical px；只在 stageHeight 与 content 内扣一次
 portraitStageScale  = layoutW / 1080   // logical px per stage unit
 portraitStageWidth  = 1080             // stage unit
-portraitStageHeight = layoutH / portraitStageScale   // stage unit，不是 logical px
+portraitStageHeight = (layoutH - safe.top - safe.bottom) / portraitStageScale   // stage unit，不是 logical px
 ```
 
 单位与基线：`stageHeight/stageWidth/bandHeight/topBar/bottomBar/contentHeight` 全是 **stage 单位**，
-logical px 只出现在 `layoutW/layoutH/safe/ime`。本轮 fixture 没有设备 inset 数据：`insets` 全 0，
+logical px 只出现在 `layoutW/layoutH/safe`。本轮 fixture 没有设备 inset 数据：`insets` 全 0，
 1080×2400 组得到的 `stageHeight = 914.2857142857143 / 0.38095238095238093 = 2400`、`contentHeight = 2208`
 是 **inset=0 的拟议算术值**，不是设备实测、不是验收基线，更不得反推“竖屏舞台高 2400”。
-真机必须先扣系统栏/安全区再代入（`stageHeight = (logicalH - insets.top - insets.bottom) / scale`）；
-测试只能断言“由同一公式与同一 inset 输入推导”，不能把 2400/2208 当 golden。
+真机必须把系统栏/安全区代入同一条公式（`stageHeight = (layoutH - safe.top - safe.bottom) / scale`），
+安全区只在这里扣一次；测试只能断言“由同一公式与同一 inset 输入推导”，不能把 2400/2208 当 golden。
 
 ### 6.1 WAIT（未审定，禁止当成已冻结）
 
@@ -306,24 +307,29 @@ logical px 只出现在 `layoutW/layoutH/safe/ime`。本轮 fixture 没有设备
 | W/Band/Hybrid 赢家 | **WAIT** | T43 比较可达性/层级/触摸/字尺度后裁决；本卡不投票 |
 | 竖屏真机 inset 数值 | **WAIT** | Qt 无 safe-area 代码；fixture inset 全 0 只是算术假设 |
 | 竖屏 3D 相机面高度（1080 vs stageHeight） | **WAIT** | Qt 只有 `scene.resize(w/(h/1080),1080)`，竖屏无等价调用 |
-| IME 弹出时窗口是否 resize | **WAIT / DEVICE_BLOCKED** | Manifest 无 `windowSoftInputMode`（见 §5.4） |
+| IME 弹出时窗口是否 resize | **规则已冻结（adjustResize）** | Flutter 清单 :28 声明 `adjustResize`；Qt 基线无该声明（见 §5.4） |
 | Band 滚动/吸附与底部安全区策略 | **WAIT** | T43 冻结；不得由 fixture 数字冒充 |
 
-WAIT 条目只能由 T43/T51 关闭；本契约不得以任何 fixture 数字声称已裁决。
+WAIT 条目只能由 T43/T51 关闭；IME resize 已按 Flutter 清单 `adjustResize` 冻结（§5.4），不属待裁决项。本契约不得以任何 fixture 数字声称已裁决。
 
 三候选的差异只在纵向编排，不在横向量纲：
 
 | 候选 | 结构 | 冻结公式 | 备注 |
 |---|---|---|---|
-| Portrait-W | 顶部 1080 带复用横屏命令，详情/列表纵向延伸，播放栏贴 stage 底 | `scale=layoutW/1080; stageW=1080; stageH=layoutH/scale; bar=(0, stageH-96, 1080, 96)` | 最接近横屏 1:1；W 即“宽即 1080” |
-| Portrait-Band | 固定 1080 宽分带滚动，每带 1080 高 | `bandHeight=1080; bandCount=ceil(stageH/1080); bandY=k*1080` | 带内命令与横屏同宽，纵向拼接 |
-| Portrait-Hybrid | 顶栏+内容+底栏三段，详情单列 | `topBar=96; bottomBar=96; content=(0,96,1080,stageH-192)` | 三段独立滚动/固定 |
+| Portrait-W | 顶部 1080 带复用横屏命令，详情/列表纵向延伸，播放栏贴 stage 底 | `scale=layoutW/1080; stageW=1080; stageH=(layoutH-safe.top-safe.bottom)/scale; bar=(0, stageH-96, 1080, 96)` | 最接近横屏 1:1；W 即“宽即 1080” |
+| Portrait-Band | 固定 1080 宽分带滚动，每带 1080 高 | `stageH=(layoutH-safe.top-safe.bottom)/scale; bandHeight=1080; bandCount=ceil(stageH/1080); bandY=k*1080` | 带内命令与横屏同宽，纵向拼接 |
+| Portrait-Hybrid | 顶栏+内容+底栏三段，详情单列 | `stageH=(layoutH-safe.top-safe.bottom)/scale; topBar=96; bottomBar=96; content=(0,96,1080,stageH-192-safe.top/scale-safe.bottom/scale)` | 三段独立滚动/固定 |
 
 约束（全部候选项都适用）：
 
-- 安全区只作用于**新增的纵向容器**：`containerTop = safe.top / scale`（stage 单位），
-  左右安全区只缩内容宽，不缩 stage；不得把安全区加进横屏公式。
-- IME 不缩放 stage；`imeStage = ime / scale`，只从候选的可用内容高度中扣除或用于上移输入。
+- 唯一安全区公式：`stageHeight = (layoutH - safe.top - safe.bottom) / scale`，
+  上下安全区在舞台高度里**只扣一次**；`containerTop = safe.top / scale`（stage 单位），
+  左右安全区只缩内容宽，不缩 stage；不得把安全区加进横屏公式。`safe.top/safe.bottom` 只允许出现在两处：
+  `stageHeight` 公式（负责把底栏抬到手势区之上）与 content 内缩（`safe.top/scale`、`safe.bottom/scale`），第三处不得再扣。
+- `playerBar` 底边 = `stageHeight`：底栏随安全区抬升，落在手势区之上，不覆盖底部手势区。
+- 清单保持 `adjustResize`：平台已按键盘缩小窗口，band/stage 计算**不得再读 `viewInsets`**；
+  `imeStage = imeConsumedStage = inputShiftStage = 0`。只有未来改 `adjustNothing` 时才允许用
+  `viewInsets` 压容器；任何情况下 IME 不缩放 stage。
 - 全部入口/文字/动作/状态必须保留；列数、弹层形态、触摸尺寸、字体下限、3D 占比都要在 T43
   用同一控件的可达性/层级/触摸/字尺度比较后冻结，本契约不预设 bottom sheet、48dp、52%。
 - 任何候选都必须复用 §4.1 的 `modalBounds(1080)` 横向公式，只改纵向锚点；
@@ -334,7 +340,7 @@ WAIT 条目只能由 T43/T51 关闭；本契约不得以任何 fixture 数字声
 
 ### 7.1 触发与顺序
 
-输入：`MediaQuery.size`、`devicePixelRatio`、`padding`、`viewInsets`、`LayoutBuilder` 约束。
+输入：`MediaQuery.size`、`devicePixelRatio`、`padding`、`LayoutBuilder` 约束。`viewInsets` 不在当前输入列表：清单为 `adjustResize`，平台已缩窗口；只有未来改 `adjustNothing` 时才把它加入输入并压容器（§5.4/§6）。
 顺序固定为：
 
 ```
@@ -375,7 +381,7 @@ Flutter 必须显式保证同一语义：**尺寸变化后不得复用上一帧 
 | 竖屏真机基线 | **DEVICE_BLOCKED** | Qt 只有 sensorLandscape；1080×2400/1440×3200 是拟议矩阵 |
 | 竖屏 `stageHeight=2400`（fixture） | **拟议算术，非基线** | inset=0 代入 §6 的结果；未扣系统栏/安全区，不得当设备值 |
 | Qt 相机 `aspect<1.05` 竖屏取景 | 源码已存在，Flutter 未测 | `NativeSceneCamera.cpp:55-71`；竖屏相机面高度/单位仍 WAIT（§2.1） |
-| 键盘弹出时 Android 窗口是否 resize | **DEVICE_BLOCKED** | Manifest 无 `windowSoftInputMode`；Qt 源码无 inset 处理；不得猜测 adjustResize/Pan |
+| 键盘弹出时 Android 窗口是否 resize | **已冻结：adjustResize** | Flutter 清单 `AndroidManifest.xml:28`；Qt 基线无该声明与 inset 处理，不得用 viewInsets 手工缩放 |
 | 安全区实际数值 | **未取证** | Qt 源码无 safe-area 代码；竖屏新容器规则是设计约束，非真机测量 |
 | 1080 高度外的横屏舞台 | **不适用** | 横屏高度恒 1080；窗口比例变化只改 stageWidth |
 | 像素级 1:1（截图 ROI） | **未验证** | 本轮不执行截图/设备/性能验证 |
@@ -419,4 +425,4 @@ Flutter 必须显式保证同一语义：**尺寸变化后不得复用上一帧 
 | 播放栏输入底带 row→adjusted、label null 回退 | `Qt/src/PlayerBar.cpp:241-242`；`Qt/src/NativeHud.cpp:102-109`（:108 isNull） |
 | 相机 aspect 分支/阈值/投影、Engine 归一化 | `Qt/src/NativeSceneCamera.cpp:55-71,98,113-120`；`Qt/src/Engine.cpp:841-847` |
 | 验证码/账号宽度 28/208 乘 stageScale | `Qt/qml/Overlay.qml:380,389,449` |
-| sensorLandscape、无 windowSoftInputMode | `Qt/android/AndroidManifest.xml:89,103` |
+| sensorLandscape；Qt 基线无 windowSoftInputMode（Flutter 清单 adjustResize 见 :28） | `Qt/android/AndroidManifest.xml:89,103` |

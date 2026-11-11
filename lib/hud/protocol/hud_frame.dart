@@ -346,9 +346,20 @@ final class HudStage {
   /// Stage-space width used by the command stream.
   final double width;
 
-  /// Stage-space height; 1080 whenever the logical height is positive.
+  /// Stage-space height.
+  ///
+  /// 1080 for the full-window landscape reading of the Qt overlay. A portrait
+  /// subtree mounted by PortraitStage instead carries PortraitBands.stageHeight
+  /// with [scale] pinned to 1.0.
   final double height;
 
+  /// Full-window landscape conversion: derive scale from the logical height.
+  ///
+  /// DEDUP-13 forbids calling this inside a subtree that PortraitStage has
+  /// already scaled. Portrait must consume the single injected stage instead:
+  /// HudStage(scale: 1.0, width: 1080, height: PortraitBands.stageHeight).
+  /// Kept for the legacy HudStagePainter fallback (lib/hud/render/hud_painter.dart:221),
+  /// which runs outside PortraitStage.
   factory HudStage.fromLogicalSize({
     required double width,
     required double height,

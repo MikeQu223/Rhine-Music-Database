@@ -22,7 +22,6 @@ HudHit hitTarget(double x, double y, double width, double height, String action,
         action: action,
         label: label ?? action,
         fixed: fixed);
-
 void main() {
   const unit = StageGeometry(logicalWidth: 1080, logicalHeight: 1080);
   const half = StageGeometry(logicalWidth: 960, logicalHeight: 540);
@@ -50,6 +49,47 @@ void main() {
     test('rectToLogical scales every edge', () {
       expect(half.rectToLogical(const Rect.fromLTWH(10, 20, 30, 40)),
           const Rect.fromLTWH(5, 10, 15, 20));
+    });
+  });
+
+  group('StageGeometry.withScale is the only portrait scale (DEDUP-13)', () {
+    test('explicit scale wins over the legacy landscape derivation', () {
+      final scaled =
+          StageGeometry.withScale(stageScale: 1.0, logicalWidth: 1080, logicalHeight: 2400);
+      expect(scaled.stageScale, 1.0);
+      expect(scaled.stageWidth, 1080.0);
+      // 旧横屏构造仍可服务未迁移横向调用方，但它不能用于竖屏。
+      const legacy = StageGeometry(logicalWidth: 2160, logicalHeight: 1080);
+      expect(legacy.stageScale, 1.0);
+      expect(legacy.stageWidth, 2160.0);
+    });
+
+    test('legacy landscape constructor rejects portrait geometry', () {
+      expect(
+          () => StageGeometry(logicalWidth: 1080, logicalHeight: 2400),
+          throwsAssertionError);
+    });
+
+    test('1440x3200 injects 4/3 and still spans a 1080-wide stage', () {
+      final scaled = StageGeometry.withScale(
+          stageScale: 1440 / 1080, logicalWidth: 1440, logicalHeight: 3200);
+      expect(scaled.stageScale, closeTo(4 / 3, 1e-12));
+      expect(scaled.stageWidth, closeTo(1080.0, 1e-9));
+    });
+
+    test('non-positive scale or logical size is rejected', () {
+      expect(
+          () => StageGeometry.withScale(
+              stageScale: 0, logicalWidth: 1080, logicalHeight: 2400),
+          throwsArgumentError);
+      expect(
+          () => StageGeometry.withScale(
+              stageScale: -1, logicalWidth: 1080, logicalHeight: 2400),
+          throwsArgumentError);
+      expect(
+          () => StageGeometry.withScale(
+              stageScale: 1, logicalWidth: 0, logicalHeight: 2400),
+          throwsArgumentError);
     });
   });
 

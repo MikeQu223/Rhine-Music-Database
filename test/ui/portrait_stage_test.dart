@@ -10,6 +10,11 @@ import 'dart:io';
 import 'package:flutter/foundation.dart' show FlutterError;
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:rhine_music_database/hud/input/hit_layer.dart';
+import 'package:rhine_music_database/hud/input/pointer_router.dart';
+import 'package:rhine_music_database/hud/input/text_input_overlay.dart';
+import 'package:rhine_music_database/hud/protocol/hud_frame.dart';
+import 'package:rhine_music_database/hud/protocol/hud_hit.dart';
 import 'package:rhine_music_database/ui/layout/portrait_bands.dart';
 import 'package:rhine_music_database/ui/layout/portrait_stage.dart';
 
@@ -90,6 +95,22 @@ Widget host({
 class _NullContext implements BuildContext {
   @override
   dynamic noSuchMethod(Invocation invocation) => null;
+}
+
+class _NoopPointerPorts implements PointerPorts {
+  const _NoopPointerPorts();
+
+  @override
+  void action(String action) {}
+
+  @override
+  void pointer(String type, double x, double y) {}
+
+  @override
+  void wheel(double x, double y, double pixelDelta, double angleDelta) {}
+
+  @override
+  void focusInputLayer() {}
 }
 
 void main() {
@@ -494,7 +515,7 @@ void main() {
   });
 
   group('safe area and IME', () {
-    test('never move the stage scale or stage width', () {
+    test('safe area changes stageHeight but never the scale or stage width', () {
       final PortraitBands before = computePortraitBands(
         const PortraitInputs(layoutWidth: 1080, layoutHeight: 2400),
         PortraitBandMode.hybrid,
@@ -510,35 +531,43 @@ void main() {
       );
       expect(after.stageScale, before.stageScale);
       expect(after.stageWidth, before.stageWidth);
-      expect(after.stageHeight, before.stageHeight);
+      // DEDUP-19：上下安全区在舞台高度里只扣一次。
+      expect(before.stageHeight, closeTo(2400, kTol));
+      expect(after.stageHeight, closeTo(2300, kTol));
       expect(after.containerTop, closeTo(60, kTol));
-      expect(after.imeStage, closeTo(800, kTol));
+      expect(after.imeStage, 0);
       expect(after.contentX, closeTo(30, kTol));
       expect(after.contentWidth, closeTo(1020, kTol));
+      expect(after.contentHeight, closeTo(2300 - 192 - 60 - 40, kTol));
+      // 底栏在舞台高度内结束，不再压住手势区。
+      expect(after.playerBar.y, closeTo(2204, kTol));
+      expect(after.playerBar.bottom, closeTo(2300, kTol));
     });
 
-    test('compress shortens the content while shiftUp moves the input', () {
+    test('adjustResize ignores imeBottom under both IME policies', () {
       const PortraitInsets safe = PortraitInsets(top: 60, bottom: 40, left: 0, right: 0);
       final PortraitBands before = computePortraitBands(
         const PortraitInputs(layoutWidth: 1080, layoutHeight: 2400, safe: safe),
         PortraitBandMode.hybrid,
       );
-      expect(before.contentHeight, closeTo(2400 - 192 - 60 - 40, kTol));
+      expect(before.contentHeight, closeTo(2300 - 192 - 60 - 40, kTol));
       final PortraitBands compress = computePortraitBands(
         const PortraitInputs(layoutWidth: 1080, layoutHeight: 2400, safe: safe, imeBottom: 800),
         PortraitBandMode.hybrid,
       );
-      expect(compress.imeConsumedStage, closeTo(800, kTol));
-      expect(compress.contentHeight, closeTo(before.contentHeight - 800, kTol));
-      expect(compress.inputShiftStage, closeTo(0, kTol));
+      expect(compress.imeStage, 0);
+      expect(compress.imeConsumedStage, 0);
+      expect(compress.contentHeight, closeTo(before.contentHeight, kTol));
+      expect(compress.inputShiftStage, 0);
+      expect(compress.playerBar.y, closeTo(before.playerBar.y, kTol));
       final PortraitBands shift = computePortraitBands(
         const PortraitInputs(layoutWidth: 1080, layoutHeight: 2400, safe: safe, imeBottom: 800),
         PortraitBandMode.hybrid,
         imePolicy: PortraitImePolicy.shiftUp,
       );
       expect(shift.contentHeight, closeTo(before.contentHeight, kTol));
-      expect(shift.inputShiftStage, closeTo(800, kTol));
-      expect(shift.imeConsumedStage, closeTo(0, kTol));
+      expect(shift.inputShiftStage, 0);
+      expect(shift.imeConsumedStage, 0);
     });
 
     test('logical insets are divided by the stage scale', () {
@@ -552,14 +581,54 @@ void main() {
         PortraitBandMode.hybrid,
       );
       expect(bands.stageScale, closeTo(1440 / 1080, kTol));
+      expect(bands.stageHeight, closeTo((3200 - 120 - 60) / (1440 / 1080), kTol));
       expect(bands.containerTop, closeTo(120 / (1440 / 1080), kTol));
-      expect(bands.imeStage, closeTo(1200 / (1440 / 1080), kTol));
-      expect(bands.contentHeight, closeTo(bands.stageHeight - 192 - bands.containerTop - 60 / (1440 / 1080) - bands.imeStage, kTol));
+      expect(bands.imeStage, 0);
+      expect(
+        bands.contentHeight,
+        closeTo(bands.stageHeight - 192 - bands.containerTop - 60 / (1440 / 1080), kTol),
+      );
+    });
+
+    test('1080x60 has no room for the fixed bars and throws instead of returning a negative height', () {
+      expect(
+        () => computePortraitBands(
+          const PortraitInputs(layoutWidth: 1080, layoutHeight: 60),
+          PortraitBandMode.hybrid,
+        ),
+        throwsA(isA<FlutterError>()),
+      );
+    });
+
+    test('window already collapsed by the IME is rejected before band math', () {
+      // adjustResize 下平台负责缩窗口；若它真把可用高压到 0，几何的第一步校验
+      // 必须抛 ArgumentError，而不是继续算出一个负高。viewInsets 本身仍不参与。
+      expect(
+        () => computePortraitBands(
+          const PortraitInputs(layoutWidth: 1080, layoutHeight: 0, imeBottom: 2400),
+          PortraitBandMode.hybrid,
+        ),
+        throwsArgumentError,
+      );
+    });
+
+    test('a stale full-height viewInsets on an unchanged window is ignored', () {
+      final PortraitBands plain = computePortraitBands(
+        const PortraitInputs(layoutWidth: 1080, layoutHeight: 2400),
+        PortraitBandMode.hybrid,
+      );
+      final PortraitBands withIme = computePortraitBands(
+        const PortraitInputs(layoutWidth: 1080, layoutHeight: 2400, imeBottom: 2400),
+        PortraitBandMode.hybrid,
+      );
+      expect(withIme.stageHeight, closeTo(plain.stageHeight, kTol));
+      expect(withIme.contentHeight, closeTo(plain.contentHeight, kTol));
+      expect(withIme.playerBar.y, closeTo(plain.playerBar.y, kTol));
     });
   });
 
   group('fixture inset matrix', () {
-    test('narrows content on every tier without moving the stage', () {
+    test('safe area changes stageHeight and lifts the bar on every tier', () {
       final Map<String, Object?> fixture = loadFixture();
       final Map<String, Object?> matrix = asMap(fixture['insetMatrix']);
       final List<Object?> cases = matrix['cases']! as List<Object?>;
@@ -590,21 +659,25 @@ void main() {
           );
           expect(bands.stageScale, closeTo(base.stageScale, kTol), reason: id);
           expect(bands.stageWidth, closeTo(base.stageWidth, kTol), reason: id);
-          expect(bands.stageHeight, closeTo(base.stageHeight, kTol), reason: id);
+          final double expectedStageHeight = (height - safe.top - safe.bottom) / scale;
+          expect(bands.stageHeight, closeTo(expectedStageHeight, kTol), reason: id);
+          if (safe.top != 0 || safe.bottom != 0) {
+            expect(bands.stageHeight, lessThan(base.stageHeight), reason: id);
+          }
           expect(bands.containerTop, closeTo(safe.top / scale, kTol), reason: id);
-          expect(bands.imeStage, closeTo(ime / scale, kTol), reason: id);
+          expect(bands.imeStage, 0, reason: id);
           expect(bands.contentX, closeTo(safe.left / scale, kTol), reason: id);
           expect(bands.contentWidth, closeTo(1080 - (safe.left + safe.right) / scale, kTol), reason: id);
-          final double imeConsumed = policy == PortraitImePolicy.compress ? ime / scale : 0;
-          expect(bands.imeConsumedStage, closeTo(imeConsumed, kTol), reason: id);
+          expect(bands.imeConsumedStage, 0, reason: id);
           expect(
             bands.contentHeight,
-            closeTo(bands.stageHeight - 192 - (safe.top + safe.bottom) / scale - imeConsumed, kTol),
+            closeTo(bands.stageHeight - 192 - (safe.top + safe.bottom) / scale, kTol),
             reason: id,
           );
-          expect(bands.inputShiftStage, closeTo(ime / scale - imeConsumed, kTol), reason: id);
+          expect(bands.inputShiftStage, 0, reason: id);
           expect(bands.content.y, closeTo(safe.top / scale + 96, kTol), reason: id);
           expect(bands.content.bottom, lessThanOrEqualTo(bands.playerBar.y + kTol), reason: id);
+          expect(bands.playerBar.bottom, closeTo(bands.stageHeight, kTol), reason: id);
           expect(
             bands.content.isWithin(StageRect(0, 0, bands.stageWidth, bands.stageHeight), epsilon: kTol),
             isTrue,
@@ -665,18 +738,20 @@ void main() {
       );
       expect(bands.isDegenerate, isTrue);
       expect(bands.degeneracies.join(' '), contains('safe.top'));
+      // DEDUP-20：imeBottom 根本不参与几何，负值也不会被报告。
+      expect(bands.degeneracies.join(' '), isNot(contains('imeBottom')));
       expect(bands.containerTop, 0);
       expect(bands.imeStage, 0);
     });
 
-    test('a stage shorter than the player bar is reported, not clamped', () {
-      final PortraitBands bands = computePortraitBands(
-        const PortraitInputs(layoutWidth: 1080, layoutHeight: 60),
-        PortraitBandMode.hybrid,
+    test('a stage shorter than the fixed bars throws instead of returning a negative height', () {
+      expect(
+        () => computePortraitBands(
+          const PortraitInputs(layoutWidth: 1080, layoutHeight: 60),
+          PortraitBandMode.hybrid,
+        ),
+        throwsA(isA<FlutterError>()),
       );
-      expect(bands.playerBar.y, closeTo(60 - 96, kTol));
-      expect(bands.isDegenerate, isTrue);
-      expect(bands.degeneracies.join(' '), contains('player bar'));
     });
 
     test('safe area wider than the stage is reported', () {
@@ -978,12 +1053,14 @@ void main() {
         await tester.binding.setSurfaceSize(null);
       });
       PortraitBands? observed;
+      HudStage? observedStage;
       Size? childConstraints;
       await tester.pumpWidget(host(
         surface: const Size(1080, 2400),
         child: PortraitStage(
           child: Builder(builder: (BuildContext context) {
             observed = PortraitStageScope.of(context);
+            observedStage = HudStageScope.of(context);
             return LayoutBuilder(builder: (BuildContext context, BoxConstraints constraints) {
               childConstraints = constraints.biggest;
               return const SizedBox.expand();
@@ -996,8 +1073,126 @@ void main() {
       expect(observed!.stageWidth, closeTo(1080, kTol));
       expect(observed!.stageHeight, closeTo(2400, kTol));
       expect(observed!.contentHeight, closeTo(2208, kTol));
+      // DEDUP-13：子树只拿到这一份单位缩放舞台，不再二次推导 scale。
+      expect(observedStage, isNotNull);
+      expect(observedStage!.scale, 1.0);
+      expect(observedStage!.width, closeTo(1080, kTol));
+      expect(observedStage!.height, closeTo(2400, kTol));
       expect(childConstraints!.width, closeTo(1080, kTol));
       expect(childConstraints!.height, closeTo(2400, kTol));
+    });
+
+    testWidgets('one injected geometry drives drawing, hit testing and routing',
+        (WidgetTester tester) async {
+      addTearDown(() async {
+        await tester.binding.setSurfaceSize(null);
+      });
+      for (final Size surface in const <Size>[Size(1080, 2400), Size(1440, 3200)]) {
+        await tester.binding.setSurfaceSize(surface);
+        PortraitBands? observed;
+        StageGeometry? observedGeometry;
+        await tester.pumpWidget(host(
+          surface: surface,
+          child: PortraitStage(
+            child: Builder(builder: (BuildContext context) {
+              final PortraitBands bands = PortraitStageScope.of(context);
+              observed = bands;
+              observedGeometry = StageGeometryScope.of(context);
+              return Stack(children: <Widget>[
+                PortraitStageSlot(
+                  rect: bands.content,
+                  child: const SizedBox.expand(key: ValueKey<String>('content-box')),
+                ),
+                PortraitStageSlot(
+                  rect: bands.playerBar,
+                  child: const SizedBox.expand(key: ValueKey<String>('player-bar-box')),
+                ),
+              ]);
+            }),
+          ),
+        ));
+        final PortraitBands bands = observed!;
+        final StageGeometry geometry = observedGeometry!;
+        expect(geometry.stageScale, closeTo(bands.stageScale, kTol));
+        expect(geometry.logicalWidth, closeTo(surface.width, kTol));
+        expect(geometry.logicalHeight, closeTo(surface.height, kTol));
+
+        final HitLayer hitLayer = HitLayer(geometry: geometry, android: false);
+        void expectSlotMatches(String key, StageRect rect) {
+          final Rect logical = tester.getRect(find.byKey(ValueKey<String>(key)));
+          final Rect expected = geometry.rectToLogical(
+              Rect.fromLTWH(rect.x, rect.y, rect.width, rect.height));
+          expect(logical.left, closeTo(expected.left, kTol));
+          expect(logical.top, closeTo(expected.top, kTol));
+          expect(logical.right, closeTo(expected.right, kTol));
+          expect(logical.bottom, closeTo(expected.bottom, kTol));
+          final HudHit probe = HudHit(
+            x: rect.x,
+            y: rect.y,
+            width: rect.width,
+            height: rect.height,
+            action: 'music:' + key,
+            label: key,
+          );
+          final Rect hitRect = hitLayer.effectiveRect(probe);
+          expect(hitRect.left, closeTo(rect.x, kTol));
+          expect(hitRect.top, closeTo(rect.y, kTol));
+          expect(hitRect.right, closeTo(rect.right, kTol));
+          expect(hitRect.bottom, closeTo(rect.bottom, kTol));
+          for (final Offset point in <Offset>[
+            logical.center,
+            logical.topLeft + const Offset(1, 1),
+            logical.topRight + const Offset(-1, 1),
+            logical.bottomLeft + const Offset(1, -1),
+            logical.bottomRight + const Offset(-1, -1),
+          ]) {
+            expect(hitLayer.hitAt(<HudHit>[probe], point)?.action, 'music:' + key);
+          }
+        }
+
+        expectSlotMatches('content-box', bands.content);
+        expectSlotMatches('player-bar-box', bands.playerBar);
+
+        final PointerRouter router = PointerRouter.fromGeometry(
+          geometry: geometry,
+          ports: const _NoopPointerPorts(),
+          android: false,
+        );
+        expect(router.hitLayer.geometry.stageScale, closeTo(bands.stageScale, kTol));
+        final TextInputStageState text =
+            TextInputStageState.fromGeometry(geometry, modal: 'search');
+        expect(text.stageScale, closeTo(bands.stageScale, kTol));
+      }
+    });
+
+    testWidgets('safe area shortens the stage and the child box without changing scale', (WidgetTester tester) async {
+      await tester.binding.setSurfaceSize(const Size(1080, 2400));
+      addTearDown(() async {
+        await tester.binding.setSurfaceSize(null);
+      });
+      PortraitBands? observed;
+      HudStage? observedStage;
+      Size? childConstraints;
+      await tester.pumpWidget(host(
+        surface: const Size(1080, 2400),
+        padding: const EdgeInsets.only(top: 60, bottom: 40),
+        child: PortraitStage(
+          child: Builder(builder: (BuildContext context) {
+            observed = PortraitStageScope.of(context);
+            observedStage = HudStageScope.of(context);
+            return LayoutBuilder(builder: (BuildContext context, BoxConstraints constraints) {
+              childConstraints = constraints.biggest;
+              return const SizedBox.expand();
+            });
+          }),
+        ),
+      ));
+      expect(observed!.stageScale, closeTo(1.0, kTol));
+      expect(observed!.stageHeight, closeTo(2300, kTol));
+      expect(observed!.contentHeight, closeTo(2008, kTol));
+      expect(observed!.playerBar.y, closeTo(2204, kTol));
+      expect(observedStage!.height, closeTo(2300, kTol));
+      expect(childConstraints!.height, closeTo(2300, kTol));
     });
 
     testWidgets('positions slots in stage units', (WidgetTester tester) async {
@@ -1018,6 +1213,23 @@ void main() {
       ));
       expect(tester.getTopLeft(find.byKey(const ValueKey<String>('player-bar'))), const Offset(0, 984));
       expect(tester.getSize(find.byKey(const ValueKey<String>('player-bar'))), const Size(1080, 96));
+    });
+
+    testWidgets('refuses a non-positive slot rect instead of feeding Positioned', (WidgetTester tester) async {
+      await tester.binding.setSurfaceSize(const Size(1080, 2400));
+      addTearDown(() async {
+        await tester.binding.setSurfaceSize(null);
+      });
+      await tester.pumpWidget(host(
+        surface: const Size(1080, 2400),
+        child: const PortraitStage(
+          child: PortraitStageSlot(
+            rect: StageRect(0, 0, 1080, 0),
+            child: SizedBox(),
+          ),
+        ),
+      ));
+      expect(tester.takeException(), isA<FlutterError>());
     });
 
     testWidgets('band view emits one slot per band and scrolls the overflow', (WidgetTester tester) async {
@@ -1108,7 +1320,7 @@ void main() {
       expect(observed!.contentHeight, closeTo(1608, kTol));
     });
 
-    testWidgets('keeps the stage scale when the keyboard inset appears', (WidgetTester tester) async {
+    testWidgets('ignores the keyboard inset under adjustResize', (WidgetTester tester) async {
       await tester.binding.setSurfaceSize(const Size(1080, 2400));
       addTearDown(() async {
         await tester.binding.setSurfaceSize(null);
@@ -1126,11 +1338,17 @@ void main() {
           );
       await tester.pumpWidget(build(EdgeInsets.zero));
       expect(observed!.stageScale, closeTo(1.0, kTol));
+      expect(observed!.stageHeight, closeTo(2400, kTol));
+      expect(observed!.stageWidth, closeTo(1080, kTol));
       expect(observed!.contentHeight, closeTo(2208, kTol));
       await tester.pumpWidget(build(const EdgeInsets.only(bottom: 900)));
       expect(observed!.stageScale, closeTo(1.0, kTol));
-      expect(observed!.imeStage, closeTo(900, kTol));
-      expect(observed!.contentHeight, closeTo(2208 - 900, kTol));
+      expect(observed!.stageWidth, closeTo(1080, kTol));
+      expect(observed!.imeStage, 0);
+      expect(observed!.imeConsumedStage, 0);
+      expect(observed!.stageHeight, closeTo(2400, kTol));
+      expect(observed!.contentHeight, closeTo(2208, kTol));
+      expect(observed!.playerBar.y, closeTo(2304, kTol));
     });
   });
 }

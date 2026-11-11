@@ -2,8 +2,9 @@
 /// 1:1 迁移到 Flutter，并把「输入框几何来自 state」固化成可静态审查的契约。
 ///
 /// ## 位置契约（state → 逻辑矩形）
-/// 舞台坐标恒由 state 给出，逻辑坐标 = 舞台坐标 * stageScale（Overlay.qml:22 的
-/// stageScale = height / 1080，与本树 hit_layer.dart 的 StageGeometry 同义）。
+/// 舞台坐标恒由 state 给出，逻辑坐标 = 舞台坐标 * stageScale。
+/// DEDUP-13：这个 stageScale 由 PortraitStage 唯一注入（PortraitBands.stageScale），
+/// 本层只消费、绝不按 height / 1080 重新推导。
 /// 四类输入框的每一条边都有唯一来源，不得由 Widget 自算，也不得用 hit 反推：
 /// - search：x=(inputX||0)*s、y=((inputY||302)+(modalOffset||0))*s、w=(inputWidth||0)*s、
 ///   h=54*s（Overlay.qml:528-531）。
@@ -74,6 +75,7 @@ import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
+import 'hit_layer.dart' show StageGeometry;
 import 'key_router.dart' show HudAction;
 
 /// 四个文本输入框的身份。objectName 与 QML 逐字一致，供测试与宿主定位
@@ -106,6 +108,10 @@ enum FormButtonKind { sendCode, submit }
 /// state 的本地投影：只取本层需要的键。字段名与 Qt/src/NativeHud.cpp:175-221 的 state() 键
 /// 逐字一致，不新增真相，也不解析 wire envelope。
 class TextInputStageState {
+  /// 遗留构造：保留给未迁移测试/静态样例显式指定 scale。
+  ///
+  /// 生产竖屏路径必须使用 [TextInputStageState.fromGeometry]，让唯一
+  /// [StageGeometry.stageScale] 贯穿绘制与命中；本构造不得再新增调用方。
   const TextInputStageState({
     required this.stageScale,
     required this.modal,
@@ -131,11 +137,43 @@ class TextInputStageState {
     this.rhineFontFamily,
   });
 
+  /// 用唯一 [StageGeometry] 构造 state（DEDUP-13）。
+  ///
+  /// stageScale 只从 geometry 读一次，调用方不再自行计算 height / 1080；
+  /// 这样 TextInputStageState、HitLayer、PointerRouter 消费的是同一个 scale。
+  TextInputStageState.fromGeometry(
+    StageGeometry geometry, {
+    required this.modal,
+    this.inputX,
+    this.inputY,
+    this.inputWidth,
+    this.modalOffset = 0.0,
+    this.modalOpacity = 0.0,
+    this.closing = false,
+    this.localMusic = false,
+    this.dark = false,
+    this.query,
+    this.loginMethod = '',
+    this.loginBusy = false,
+    this.smsRetrySeconds = 0,
+    this.editingSetting = false,
+    this.editingSettingValue,
+    this.editingSettingX,
+    this.editingSettingY,
+    this.editingSettingWidth,
+    this.editingSettingHeight,
+    this.performanceIdle = false,
+    this.rhineFontFamily,
+  }) : stageScale = geometry.stageScale;
+
   /// 「上一状态」占位：所有容器都不可见。仅用于 Widget 挂载时补一次可见性迁移。
   static const TextInputStageState inactive =
       TextInputStageState(stageScale: 1, modal: '');
 
-  /// Overlay.qml:22 的 stageScale = height / 1080。
+  /// 唯一注入的 stageScale（PortraitBands.stageScale）。
+  ///
+  /// 不得在本层按 Overlay.qml:22 的 height / 1080 重新推导；命中层用同一值
+  /// 构造 StageGeometry.withScale。
   final double stageScale;
 
   /// state.modal：''、search、saved、login、playlist-form、…
