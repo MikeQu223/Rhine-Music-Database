@@ -7,6 +7,7 @@
 - 依赖：T11-T15 候选源码与 T10 切片规格“存在即可起草”；结论必须等 T16-D01 真机数据（GRAPH-V2-REVIEW.json next_wave W1b）。
 - 日期：2026-11-10
 - 本版：证据冻结（T16-D02 / T16-D03 起草）。只固定程序、契约与边界证据，不含赢家；未来裁决提交按 §7.6 另起 commit。
+- 证据口径：本文所称 `reports/<名>` 一律指控制面目录 `.agents/parity-20261109/reports/<名>`（`.gitignore:17` 的 `/.agents/` 已忽略该目录，仓库根无 `reports/`）；它们是控制面报告（非仓库内实现证据）；审计基线为冻结 SHA bf6743e8486d62964cc27a4b8573533fc00f2eb4（OPS78-FINAL-DEDUP.json:3 auditSha），但各报告自报的 baseSha/asOfSha 可不同（例：OPS78-COVERAGE.json:8/:9/:10 记 baseSha 8ed3067b…、asOfSha 2623b1c5…、rootMoving=true），以各报告自报字段为准。下文凡仅以 reports/ 为出处的计数与状态，均属控制面口径，未在仓库内验证。
 
 ## 1. 背景与问题
 
@@ -116,7 +117,7 @@ Qt Android 是参考实现与契约来源，Flutter 是新宿主。计划要求�
 | 上游运行时 | Qt/src/Host.h:128 `BridgeProcess child;`、:129 `std::unique_ptr<AudioPlayer> audio;`，运行时细节见 §4.5 | 桥的位置可变，运行时契约不变 |
 | 凭据 | Qt/src/Host.h:142 `QHash<QString, QJsonObject> privateCredentials;`；:159-161 platformCredential / platformSaveCredential / platformDeleteCredential；:162 platformQR、:163 platformPlay、:164 platformActivates、:167-169 platformMediaCommands / platformMediaInfo | 凭据只在宿主内，绝不进参数 / 环境 / 日志（Host.h:18） |
 | 渲染宿主 | Android 只有单窗口：Qt/src/main.cpp:1095-1096 注释「Android 的“窗口”就是全屏 Activity：没有第二窗口、没有悬浮歌词、没有呈现层接管」，:1097-1100 `const bool hasNativeWindowSystem = false;`，实际装配走 main.cpp:1261-1262 `configureAndroidWindow(window, backend.get());`。桌面离屏路径见 §4.9 | Android 上没有“第二个原生窗口”可借；需要离屏产帧的候选必须自己造路径 |
-| Flutter 侧现状 | lib/main.dart 122 行仍是 `flutter create` 计数器模板（:14 `title: 'Flutter Demo',`）；android/app/src/main/kotlin/rhine/music/database/MainActivity.kt 5 行 `class MainActivity : FlutterActivity()`；`Qt/porting/` 目录不存在；lib/ 与 android/ 内无 FlutterTextureRegistry / SurfaceTexture / MethodChannel 命中 | 五个候选的 Flutter 侧接线全部从零开始，没有一个是“已半成品可用” |
+| Flutter 侧现状 | lib/main.dart 122 行仍是 `flutter create` 计数器模板（:14 `title: 'Flutter Demo',`），不引用 QtPlatformView；android/app/src/main/kotlin/rhine/music/database/MainActivity.kt 5 行 `class MainActivity : FlutterActivity()`，未注册任何 PlatformView；`Qt/porting/` 目录不存在；lib/ 内无 FlutterTextureRegistry 命中，SurfaceTexture 仅 2 处注释提及（lib/platform/qt_platform_view.dart:55、android/app/src/main/kotlin/rhine/music/database/porting/QtPlatformViewHost.kt:149），无代码级用法。**但候选 A 的通道源码已在树内**：lib/platform/qt_platform_view.dart:629 `static const MethodChannel _control = MethodChannel(qtPlatformControlChannel);`（:630 EventChannel，:641-648 initState 装 handler），android/app/src/main/kotlin/rhine/music/database/porting/QtPlatformViewHost.kt:713 `private val control = MethodChannel(messenger, QtPlatformViewHost.CONTROL_CHANNEL)`，其工厂 :688-689 在 Android 侧构造 Kotlin `QtPlatformView`；Dart 侧 `QtPlatformView` widget 的构造点只在 integration_test/slice_platformview_test.dart（:493/:517/:650/:665/:710），lib/ 生产代码零构造点 | 候选 A 有落盘宿主源码（Dart 通道 + Kotlin 视图），候选 C 的 Flutter HUD/场景机制已在树内（lib/hud/ 40 文件、lib/scene/、lib/ui/），但两者的生产接线均为零（main.dart 不用、MainActivity 不注册），仍不可跑 |
 
 ### 4.9 Qt 侧既有离屏实现与缺口（**不构成任何候选胜出**）
 
@@ -126,7 +127,7 @@ Qt Android 是参考实现与契约来源，Flutter 是新宿主。计划要求�
 
 - Qt/src/render/SceneLayerHost.h:25-29 注释「场景与 UI 的离屏宿主，共享一个 QRhi……两层离屏窗口不能 show」；:30 `class SceneLayerHost`；:48-49 `start(QQmlEngine &engine, const QUrl &scene3dUrl, const QUrl &overlayUrl, QRhi *rhi, QVulkanInstance *vulkanInstance = nullptr, QWindow *visibleWindow = nullptr)`；:52 `renderFrame()`；:57 `resize(QSize)`；:59-62（:60 `QRhiTexture *sceneTexture() const;`、:62 `QRhiTexture *overlayTexture() const;`）；:64-67 注释（FG 宿主须把输入事件转发给 UI 层，3D 层只取景不交互）与 :66 overlayWindow() / :67 sceneWindow()；:80-82 注释与 `QSize pixelSize() const;`（:82，物理像素 = 逻辑尺寸 × 设备像素比）。
 - Qt/src/render/SceneLayerHost.cpp:27 注释（离屏窗口需要真实宿主窗口，供对话框定位、DPR 与输入法查询）；:28 `class LayerRenderControl final : public QQuickRenderControl`、:32 `renderWindow()` 返回 m_window；:116-122 两个场景各自一个 QQuickRenderControl 与各自 QQuickWindow（注释：一个 control 每帧换 target 会触发重建）；:124-129 两层共用 `QQuickGraphicsDevice::fromRhi(rhi)`；:131-137 Vulkan 下必须 setVulkanInstance。
-- 构建注册：该实现列在根 CMakeLists.txt:239-240 的 `RHINE_APP_SOURCES`（列表 :252 收尾），不在 Qt/CMakeLists.txt（后者仅 31 行，除 :3 显式追加 `src/Gamepad.cpp` / `src/Gamepad.h` 外不枚举 C++ 源；`SceneLayerHost` 不在其中，故注册点仍在根 CMakeLists.txt）。见 §8 的注册点错位。
+- 构建注册：该实现列在根 CMakeLists.txt:239-240 的 `RHINE_APP_SOURCES`（列表 :252 收尾），不在 Qt/CMakeLists.txt（后者仅 31 行，除 :3 显式追加 `src/Gamepad.cpp` / `src/Gamepad.h` 外不枚举 C++ 源；`SceneLayerHost` 不在其中，故该实现的注册点在根 CMakeLists.txt）。见 §8 的构建注册点。
 
 **关键限定（否则会误判候选 B 已具备条件）**：这条路径在 Android 上是关闭的。Qt/src/main.cpp:1095-1100 明确 Android 没有第二窗口、`hasNativeWindowSystem = false`；前台层的构造条件是 `fgCandidate`（main.cpp:1128-1138），其中含 `hasNativeWindowSystem`，Android 直接短路；Android 走 main.cpp:1261-1262 的单窗口装配。所以现有代码只证明「桌面 FG 能把两个 QML 场景渲染进 QRhiTexture」，**不证明** Android 上能产出 SurfaceTexture，也不证明 FlutterTextureRegistry 交接可行。
 
@@ -138,11 +139,13 @@ Qt Android 是参考实现与契约来源，Flutter 是新宿主。计划要求�
 |---|---|---|---|
 | SHARED SOURCE 可写 | 契约 / fixture / 测试（只写不跑）/ 纯 Dart 领域与数学 / 候选源码 / 隔离目录页面几何与动作 builder | 可以（受独占写域与 owner 隔离约束） | T01-T07 契约、T10 切片、T11-T15 候选源码、T22/T23/T24 纯 Dart 领域、T41-S01 投影数学 |
 | PRODUCTION WIRING → ARCH_BLOCKED | 需本 ADR 赢家或宿主 / 桥 / 域运行时真实接线 | 不可以 | T20-S01..、T21 桥、T25 平台通道、T33-T40 页面接线、T41-S02..S06、T42-T44 |
-| MEASUREMENT → DEVICE_BLOCKED | 真机像素 / 时序 / 黄金帧 / 性能取证 | 不可以 | T16-D01、全部 -G01 golden、T41-T02、T44-T02、T50-T54 |
+| MEASUREMENT → DEVICE_BLOCKED | 真机像素 / 时序 / 黄金帧 / 性能取证 | 不可以 | T16-D01、-G01 golden（13 项全 ABSENT，卡片级门见下注）、T41-T02、T44-T02、T50-T54 |
 
 图层面计数（reports/GRAPH-V2-REVIEW.json M3 / state_recut）：W=87 / W*=73 / A=25 / D=31。本卡：T16-D01 → D；T16-D02 / T16-D03 → W。
 
 关键澄清（针对 GRAPH-V2 M10）：下游 110 个“waits for accepted ADR (T16)”的**真实断点是 T16-D01（设备实测缺失），不是本 ADR 的文本**。本 ADR 的文本可以在无设备时写出；页面接线仍须等设备数据 + 赢家。不得把“ADR 已写”当作“接线解锁”。
+
+- **-G01 golden 的门归属（逐条核对控制面台账；卡片级门未在仓库内验证）**：goldenMissing=13（.agents/parity-20261109/reports/OPS78-COVERAGE.json:106），13 个 -G01 条目 status 均为 `ARTIFACT_ABSENT`、historicalState 均记 `DEVICE_BLOCKED`；但卡片级 blockReason 并非统一为 `DEVICE_BLOCKED`——仅 T33（:3869）、T42（:5213）、T51（:5703）记 `DEVICE_BLOCKED`，T30（:3308）/ T34（:3999）/ T37（:4448）/ T43（:5361）记 `ARCH_BLOCKED`，T36（:4281）/ T39（:4710）/ T40（:4869）记 `SOURCE_DEPENDENCY_BLOCKED`，T31（:3547）/ T35（:4126）/ T38（:4565）无 blockReason。故“全部 -G01 golden → DEVICE_BLOCKED”不成立：golden 产物是测量件，但所属卡片当前仍被架构 / 源依赖门挡住，两类门不得互换（见上条澄清）。
 
 ## 6. 后果（Consequences）
 
@@ -153,7 +156,7 @@ Qt Android 是参考实现与契约来源，Flutter 是新宿主。计划要求�
 ## 7. 解锁条件（何时可以改写为“已裁决”）
 
 1. 获得一次真机窗口授权（Lead / 用户决定；review 叶不申请）。
-2. 对每个候选跑同一 docs/flutter-migration/01-slice.md 切片，产出 E0 帧与 commands / hits 导出。**前置**：该文件与 test/fixtures/slice_cases.json 属 T10 独占写域、当前位于 flutter/p1-t10-parity-slice 分支，**尚未合入本树**；消费前必须先合入并重算 sha256。reports/T10-C01-M10.json 的 files 字段现值（01-slice.md 27261 B/f0c126ee…、slice_cases.json 44957 B/2cd97957…）只是那一刻的历史指纹，不等于 T10 当前草稿，也不是合入后的指纹；同一报告的 reviewer.resumeHashNote 已把先前 resume 用的 39771fce… / 93d1f7e8… 标注为**过期**（F14/F15 之前），而 reports/T10-C01-M10-R.json 的 reviewedHashes 仍写着这一对过期值——因此任何报告里的摘要都不能当作当前切片指纹。
+2. 对每个候选跑同一 docs/flutter-migration/01-slice.md 切片，产出 E0 帧与 commands / hits 导出。**前置**：该文件与 test/fixtures/slice_cases.json 属 T10 独占写域，**已由 0d329db（docs(parity): freeze forty two card parity slice）合入本树**，当前指纹为 01-slice.md 311 行 / 33817 B / sha256 897d36c7…、slice_cases.json 1459 行 / 52005 B / sha256 396cfc0f…；消费前仍应以工作树重算为准。reports/T10-C01-M10.json 的 files 字段（01-slice.md 27261 B/f0c126ee…、slice_cases.json 44957 B/2cd97957…）是合入前的历史指纹，不等于本树现值；同一报告的 reviewer.resumeHashNote 已把先前 resume 用的 39771fce… / 93d1f7e8… 标注为**过期**（F14/F15 之前），而 reports/T10-C01-M10-R.json 的 reviewedHashes 仍写着这一对过期值——因此任何报告里的摘要都不能当作当前切片指纹。
 3. 逐候选按七条硬门判定；未跑候选继续标“未评估”。
 4. 冻结拟议辅助指标所需的 Qt 同设备同场景基线。
 5. G1（APK 哈希与 Qt 源码同 commit）闭合，否则 P1 不裁决（计划:105）。
@@ -165,17 +168,17 @@ Qt Android 是参考实现与契约来源，Flutter 是新宿主。计划要求�
 - 器件级结论（像素、性能、旋转、稳定性）：DEVICE_BLOCKED，不可用模型假造。
 - Qt 无障碍基线：不存在（AndroidWindow 关闭桥），待以新增设计处理。
 - boot-lettering-art.json 契约补齐：未闭合（GRAPH-V2 M5）。
-- 切片文件在本树缺席：01-slice.md / slice_cases.json 未合入，须重算 sha256；各报告里的摘要互不一致且含已被标注 stale 的值（见 §7.2、§9），不得引用。
+- 切片文件已在本树（0d329db 合入，指纹见 §7.2）；各控制面报告里的摘要互不一致且含已被标注 stale 的值（见 §7.2、§9），不得引用。
 - Qt/CMakeLists.txt 的 owner：图中零覆盖（GRAPH-V2 M6，仅影响候选 B 的 Qt 侧注册接线）。
-- 构建注册点错位（本卡不收口）：`Qt/src/render/SceneLayerHost.cpp` / `.h` 实际列在根 CMakeLists.txt:239-240 的 `RHINE_APP_SOURCES`（列表 :252 收尾），而 Qt/CMakeLists.txt 仅 31 行、除 :3 显式追加 `src/Gamepad.cpp` / `src/Gamepad.h` 外不枚举 C++ 源。计划 T12 的 “Modify Qt/CMakeLists.txt”（计划:472）与真实注册点不符——`Qt/porting/*.cpp` 必须进根 CMakeLists.txt 才能被编译。本卡不改计划，记 GAP。
+- 构建注册点（本卡不收口）：`Qt/src/render/SceneLayerHost.cpp` / `.h` 实际列在根 CMakeLists.txt:239-240 的 `RHINE_APP_SOURCES`（列表 :252 收尾）；Qt/CMakeLists.txt 共 31 行，:2 以 `qt_add_executable(RhineMusicDatabase WIN32 MACOSX_BUNDLE MANUAL_FINALIZATION ${RHINE_APP_SOURCES})` 消费该列表，:3 用 `target_sources(RhineMusicDatabase PRIVATE src/Gamepad.cpp src/Gamepad.h)` 追加源文件。因此计划 T12 的 “Modify Qt/CMakeLists.txt”（计划:472）是可用的注册点：`Qt/porting/*.cpp` 既可由根 `RHINE_APP_SOURCES` 收录，也可在 Qt/CMakeLists.txt 追加 `target_sources`，不存在“必须进根 CMakeLists.txt”的约束。本卡不改计划，记 GAP（计划未写明两处注册的取舍）。
 - 文档与源码分歧（本卡 scope 外）：docs/ANDROID.md:528 称 Android 有两层离屏 QQuickWindow、由 PresentationShell::step() 手动驱动，与 Qt/src/main.cpp:1095-1100 冲突；以源码为准，文档待修。
 
 ## 9. 参考
 
 - docs/superpowers/plans/2026-11-09-qt-to-flutter-parity-plan.md
 - docs/flutter-migration/02-adjudication.md（本卡矩阵）
-- docs/flutter-migration/01-slice.md、test/fixtures/slice_cases.json（T10 独占写域，位于 flutter/p1-t10-parity-slice，未合入 T16；T10-C01-M10.json files 字段现值 27261 B/f0c126ee…、44957 B/2cd97957… 仅为当时指纹，sha256 以合入时重算为准）
-- reports/T10-C01-M10.json、reports/GRAPH-V2-REVIEW.json、reports/GRAPH-001.json、reports/T16-C14.json
+- docs/flutter-migration/01-slice.md、test/fixtures/slice_cases.json（T10 独占写域；已由 0d329db 合入本树：311 行 / 33817 B / sha256 897d36c7…、1459 行 / 52005 B / sha256 396cfc0f…）
+- .agents/parity-20261109/reports/T10-C01-M10.json、GRAPH-V2-REVIEW.json、GRAPH-001.json、T16-C14.json（控制面报告，非仓库内实现证据）
 - Qt 源：Qt/src/NativeHud.h、Qt/src/NativeHud.cpp、Qt/src/Glyphs.cpp、Qt/src/PlayerBar.cpp、Qt/src/AndroidWindow.cpp、Qt/src/MusicAccount.cpp、Qt/src/SettingsSchema.cpp、Qt/src/BridgeProcess.h、Qt/src/BridgeProcessAndroid.cpp、Qt/src/BridgeProcessIOS.cpp、Qt/src/Host.h、Qt/src/Host.cpp、Qt/src/main.cpp、Qt/src/render/SceneLayerHost.h、Qt/src/render/SceneLayerHost.cpp、Qt/qml/Main.qml
 - 构建：CMakeLists.txt（根，`RHINE_APP_SOURCES`）、Qt/CMakeLists.txt
 
