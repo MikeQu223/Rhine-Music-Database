@@ -1164,6 +1164,55 @@ void main() {
     });
   });
 
+  group('Qt MusicData::ordered 原始 id（DEDUP-14）', () {
+    test('数字 id 与同值字符串 id 命中同一条曲目', () {
+      // Qt/src/MusicData.cpp:10-18 identifier()：字符串原样、数值转整数字符串；
+      // :98-114 ordered 以 song["id"].toString() 建立 id→song 查表。
+      final songs = <JsonMap>[_song('7'), _song('8')];
+      final fromNumber = orderedItems(<Object?>[7], songs);
+      final fromString = orderedItems(<Object?>['7'], songs);
+      expect(fromNumber.length, 1);
+      expect(fromString.length, 1);
+      expect(identical(fromNumber.single, fromString.single), isTrue);
+      expect(itemIdOf(fromNumber.single), '7');
+      // double 有限值按 identifierOf 的 toInt 规则归一，不得丢类型。
+      expect(itemIdOf(orderedItems(<Object?>[8.0], songs).single), '8');
+      // null/bool 归一为空串；曲目侧没有空 id 条目时不得误命中。
+      expect(orderedItems(<Object?>[null, true], songs), isEmpty);
+    });
+
+    test('顺序由 ids 决定：缺失跳过、重复 id 重复输出、曲目侧先到先得', () {
+      // Qt/src/MusicData.cpp:98-114：逐 id append，缺键不补位。
+      final songs = <JsonMap>[_song('1'), _song('2'), _song('3')];
+      expect(
+        orderedItems(<Object?>['3', '1'], songs).map(itemIdOf).toList(),
+        <String>['3', '1'],
+      );
+      expect(
+        orderedItems(<Object?>['2', 'x', '2'], songs).map(itemIdOf).toList(),
+        <String>['2', '2'],
+      );
+      expect(orderedItems(<Object?>[], songs), isEmpty);
+      expect(orderedItems(<Object?>['x'], songs), isEmpty);
+      // 同 id 两条曲目：Qt entries.contains 先到先得，输出第一条。
+      final duplicated = <JsonMap>[_song('1', title: '先'), _song('1', title: '后')];
+      expect(orderedItems(<Object?>['1'], duplicated).single['title'], '先');
+    });
+
+    test('sliceValues：end=min(size,start+count)，游标越界取空、count 截断', () {
+      // Qt/src/MusicData.cpp:116-123：切片对原始 QJsonArray 生效，
+      // end 用未抬正的 start 计算，循环起点才是 max(0,start)。
+      final ids = <Object?>['a', 7, <String, Object?>{'k': 1}, null];
+      expect(sliceValues(ids, 0, 2), <Object?>['a', 7]);
+      expect(sliceValues(ids, 3, 100), <Object?>[null]);
+      expect(sliceValues(ids, 4, 100), isEmpty);
+      expect(sliceValues(ids, 9, 1), isEmpty);
+      expect(sliceValues(ids, -2, 5), <Object?>['a', 7, <String, Object?>{'k': 1}]);
+      expect(sliceValues(ids, -5, 2), isEmpty);
+      expect(sliceValues(<Object?>[], 0, 10), isEmpty);
+    });
+  });
+
   group('Qt MusicLocal：本地检索入口', () {
     test('本地渠道 sourceMessage 无曲目时提示导入', () {
       final lib = _build(

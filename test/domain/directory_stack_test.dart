@@ -904,6 +904,34 @@ void _groupsRest() {
       expect(lib.directoryLoading, false);
     });
 
+    test('数字原始 id 与同值字符串 id 命中同一条曲目（DEDUP-14）', () async {
+      // Qt/src/MusicData.cpp:98-114：ordered 以 ["id"].toString() 建表，ids 来自
+      // MusicDirectory::ids（原样 QJsonArray，可含数字）。修复前
+      // directory_stack.dart:470 把 List<Object?> 传给 List<String> 形参
+      // （argument_type_not_assignable）；本用例同时是编译闸门与语义回归。
+      final b = _build();
+      final lib = b.library;
+      final folder = DirectoryFolder(
+        item: _playlist('p1', title: '歌单'),
+        ids: <Object?>[7, '8'],
+      );
+      lib.directory = folder;
+      b.wire.handler = (route, params) async {
+        final List<Object?> requestIds =
+            (params['args'] as List<Object?>).first as List<Object?>;
+        return _ok(requestIds.map((Object? id) => _song(identifierOf(id))).toList());
+      };
+
+      await libraryLoadDirectoryPage(lib);
+
+      expect(folder.songs.map(itemIdOf).toList(), <String>['7', '8']);
+      expect(folder.cursor, 2);
+      // 请求仍带原始类型：数字 7 不得在调用点被字符串投影后发出。
+      final List<Object?> sent =
+          (b.wire.calls.single.params['args'] as List<Object?>).first as List<Object?>;
+      expect(sent, <Object?>[7, '8']);
+    });
+
     test('selectAfter 超过本页时递归补多页（Qt Directory.cpp:366-372）', () async {
       final b = _build();
       final lib = b.library;

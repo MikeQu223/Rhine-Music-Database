@@ -466,6 +466,8 @@ Future<void> libraryLoadDirectoryPage(MusicLibrary lib, [int? selectAfter]) asyn
     lib.changed();
     return;
   }
+  // ids 保持原始 JSON 类型（可能含数字 id），由 orderedItems 内部按
+  // identifierOf 归一后匹配曲目（Qt MusicData::ordered 的 id→song 查表）。
   folder.updateSongs(
     uniqueItems(folder.songs, orderedItems(ids, mapsOf(reply.value))),
     folder.sortField,
