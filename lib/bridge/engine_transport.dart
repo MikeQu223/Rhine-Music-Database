@@ -217,7 +217,8 @@ final class EngineTransport {
 
     // Qt:202-206：env 四键。TMPDIR 与两个 device-state 是 D1 近似值（Qt 真值分别是
     // CacheLocation 与 AppStorage::dataDirectory()），键名与键数才与 Qt 逐字一致。
-    // Qt 键先写入，extraEnv 只允许追加新键，绝不覆盖（文件头 D2 / 契约 rules 10）。
+    // Qt 键先写入，extraEnv 只允许追加新键，绝不覆盖（文件头 D2；契约 engine_transport.rules
+    // 只有 9 条且无 env 规则，扩展缝来自契约签名本身）。
     final Map<String, Object?> environment = <String, Object?>{
       'TMPDIR': temporary,
       'RHINE_QQ_DEVICE_STATE_PATH': '$root/qq-device.json',
