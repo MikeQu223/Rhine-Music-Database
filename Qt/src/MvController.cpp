@@ -161,6 +161,11 @@ void MvController::attachWallpaperVideo(QVideoSink *sink) {
 void MvController::hideForQuit() {
     m_quitting = true;
     ++m_generation;
+    m_timer.stop();
+    m_video.stop();
+    m_video.setSource({});
+    m_video.setVideoSink(nullptr);
+    emit videoCleared();
     m_desktopTimer.stop();
     m_controlsTimer.stop();
     m_desktop.detach();
@@ -168,8 +173,6 @@ void MvController::hideForQuit() {
     if (m_window) {
         m_window->hide();
     }
-    m_timer.stop();
-    m_video.stop();
 }
 
 int MvController::offset() const {
@@ -182,13 +185,15 @@ void MvController::setEnabled(bool enabled) {
     }
     m_enabled = enabled;
     m_host->setPreference("mv-auto", enabled ? "on" : "off");
+    // Stop decoding and detach the sink while its Quick window still owns the RHI.
+    // Hiding the last native Quick window may tear down its render thread/device.
+    refresh(true);
     if (m_window) {
         if (enabled) {
             placeWindow();
         }
-        m_window->setVisible(enabled);
+        m_window->setVisible(enabled && !m_wallpaper);
     }
-    refresh(true);
     applyPresentation();
     emit changed();
 }
@@ -349,8 +354,10 @@ void MvController::applyPresentation() {
 }
 
 void MvController::updateOutput() {
-    QVideoSink *sink =
-        m_wallpaperAttached && m_enabled && !m_quitting ? m_wallpaperSink.data() : m_previewSink.data();
+    QVideoSink *sink = nullptr;
+    if (m_enabled && !m_quitting) {
+        sink = m_wallpaperAttached ? m_wallpaperSink.data() : m_previewSink.data();
+    }
     if (m_video.videoSink() != sink) {
         const auto frame = m_video.videoSink() ? m_video.videoSink()->videoFrame() : QVideoFrame();
         m_video.setVideoSink(sink);
@@ -579,8 +586,7 @@ void MvController::refresh(bool force) {
     const auto provider = track["provider"].toString();
     const auto descriptor = ProviderRegistry::instance().descriptor(provider);
     const auto operations = descriptor["operations"].toObject();
-    const bool supported = descriptor["capabilities"].toObject()["mv"].toBool() &&
-                           operations["mv"].toBool();
+    const bool supported = descriptor["capabilities"].toObject()["mv"].toBool() && operations["mv"].toBool();
     m_status = track.isEmpty() ? QStringLiteral("播放歌曲后，将自动查找关联 MV")
                                : (supported ? QStringLiteral("正在查找关联 MV…")
                                             : QStringLiteral("当前来源不支持关联 MV"));
@@ -677,7 +683,7 @@ void MvController::sync() {
         m_audioPlaying = playing;
         m_audioClock.restart();
     }
-    if (!m_enabled || m_error || m_video.source().isEmpty()) {
+    if (!m_enabled || m_quitting || m_error || m_video.source().isEmpty()) {
         return;
     }
     const double audio = audioPosition();

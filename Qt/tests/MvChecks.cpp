@@ -14,6 +14,21 @@
 #include <QThread>
 #include <QTemporaryDir>
 #include <QVideoFrame>
+#include <QDir>
+#include <QEvent>
+
+class MvLifecycleWindow : public QWindow {
+  public:
+    std::function<void()> beforeHide;
+
+  protected:
+    bool event(QEvent *event) override {
+        if (event->type() == QEvent::Hide && beforeHide) {
+            beforeHide();
+        }
+        return QWindow::event(event);
+    }
+};
 
 int main(int argc, char **argv) {
     QGuiApplication application(argc, argv);
@@ -21,6 +36,24 @@ int main(int argc, char **argv) {
     if (!storage.isValid() || !AppStorage::initializePortable(storage.path()).isEmpty()) {
         return 1;
     }
+    // Core-only packages must exercise MV lifecycle checks without installing a real provider.
+    const auto pluginDirectory = AppStorage::dataDirectory() + "/plugins/mv-fixture";
+    if (!QDir().mkpath(pluginDirectory)) {
+        return 1;
+    }
+    QFile manifest(pluginDirectory + "/manifest.json");
+    if (!manifest.open(QIODevice::WriteOnly) ||
+        manifest.write(R"({"schemaVersion":2,"apiVersion":"2.0","id":"mv-fixture","version":"1.0.0",
+            "entry":{"file":"index.cjs"},"display":{"name":"MV fixture","default":true},
+            "capabilities":{"mv":true},"operations":{"mv":true,"mvVersions":true}})") < 0) {
+        return 1;
+    }
+    manifest.close();
+    QFile entry(pluginDirectory + "/index.cjs");
+    if (!entry.open(QIODevice::WriteOnly) || entry.write("module.exports = {};\n") < 0) {
+        return 1;
+    }
+    entry.close();
     Host host(argc > 1 ? QString::fromLocal8Bit(argv[1]) : QString(), true);
     MusicApi api(&host);
     MusicPlayer music(&host, &api);
@@ -31,19 +64,10 @@ int main(int argc, char **argv) {
         pending.append(std::move(reply));
     };
     bool passed = true;
-    QString mvProvider;
-    for (const auto &id : ProviderRegistry::instance().ids()) {
-        if (ProviderRegistry::instance()
-                .descriptor(id)["operations"]
-                .toObject()["mv"]
-                .toBool()) {
-            mvProvider = id;
-            break;
-        }
-    }
-    if (mvProvider.isEmpty()) {
-        qInfo() << "MV checks skipped: no installed source declares MV support";
-        return 0;
+    const auto mvProvider = QStringLiteral("mv-fixture");
+    if (!ProviderRegistry::instance().descriptor(mvProvider)["capabilities"].toObject()["mv"].toBool()) {
+        qCritical() << "MV fixture provider was not loaded";
+        return 1;
     }
     const auto check = [&](bool ok, const char *description) {
         if (!ok) {
@@ -58,6 +82,21 @@ int main(int argc, char **argv) {
                            {"provider", provider.isEmpty() ? mvProvider : provider},
                            {"title", id}};
     };
+    {
+        host.offline = false;
+        host.setPreference("mv-auto", "on");
+        int standbyRequests = 0;
+        MvController restored(&host, &music, nullptr,
+                              [&](const QJsonObject &, MusicApi::Reply) { ++standbyRequests; });
+        MvLifecycleWindow standbyWindow;
+        restored.setWindow(&standbyWindow);
+        check(restored.enabled() && standbyWindow.isVisible(), "saved MV preference opens a standby window");
+        restored.setEnabled(false);
+        check(!restored.enabled() && !standbyWindow.isVisible() && standbyRequests == 0 &&
+                  restored.source().isEmpty() && host.preference("mv-auto") == "off",
+              "closing a restored standby MV disables it without resolving or decoding media");
+        host.offline = true;
+    }
     MvController mv(&host, &music, nullptr, resolve);
     music.current = song("1");
     emit music.changed();
@@ -271,6 +310,8 @@ int main(int argc, char **argv) {
                {},
                {}});
     });
+    MvLifecycleWindow videoWindow;
+    video.setWindow(&videoWindow);
     video.attachVideo(&sink);
     video.setEnabled(true);
     check(waitFor([&] { return frames > 0 && video.ready(); }),
@@ -320,7 +361,17 @@ int main(int argc, char **argv) {
                   waitFor([&] { return sink.videoFrame().isValid(); }),
               "returning to window mode restores the preview sink without restarting music or the MV");
     }
+    bool hiddenAfterStop = false;
+    videoWindow.beforeHide = [&] { hiddenAfterStop = video.source().isEmpty(); };
     video.exitWallpaper();
+    check(hiddenAfterStop, "MV media is cleared before hiding its render window");
+    video.setEnabled(true);
+    check(waitFor([&] { return video.ready(); }), "MV can reopen after disabling output");
+    hiddenAfterStop = false;
+    video.hideForQuit();
+    check(hiddenAfterStop, "application shutdown clears MV media before hiding its render window");
+    video.setEnabled(false);
+    videoWindow.beforeHide = {};
     check(video.source().isEmpty() && music.state["playing"].toBool(),
           "closing video releases its source and leaves audio playing");
     music.state = {{"playing", false}, {"position", 0}};
