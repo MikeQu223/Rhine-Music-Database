@@ -314,6 +314,7 @@ void NativeHud::draw(QJsonObject next, double stageWidth, double time) {
     }
     m_responsive.resize(stageWidth);
     m_music->followPlaybackDetails = !m_responsive.compact();
+    m_music->followPlaybackForLyrics = lyricsMode;
     const double actualStageWidth = stageWidth;
     stageWidth = m_responsive.sourceWidth(stageWidth);
     frame = next;

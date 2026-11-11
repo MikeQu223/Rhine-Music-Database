@@ -136,6 +136,7 @@ class MusicLibrary : public QObject {
     void leaveDirectory(bool restore = true);
     void followPlayback(QJsonObject track, bool showDetails = true);
     bool followPlaybackDetails = true;
+    bool followPlaybackForLyrics = false;
     // 开启“切歌不打开详情”后，跟随播放只同步列表选择，不迁入详情场景。
     bool skipDetailOnSwitch = false;
     Host *host;

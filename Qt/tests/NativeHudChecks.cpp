@@ -1502,6 +1502,22 @@ bool checkSkipDetailOnSwitch(const QString &root, Glyphs &glyphs, const QJsonObj
         qCritical() << "Skip-detail setting skipped locating inside the playback queue";
         return false;
     }
+
+    const QJsonObject lyricFrame{{"mode", "detail"}, {"detail", 1}};
+    music->player.current = music->player.queue.items().at(0).toObject();
+    hud.action("player:lyrics");
+    hud.draw(lyricFrame, 1920, 60);
+    music->directory.reset();
+    const auto advanced = music->player.queue.items().at(1).toObject();
+    music->player.current = advanced;
+    music->player.changed();
+    hud.draw(lyricFrame, 1920, 61);
+    music->player.trackSelected(advanced);
+    hud.draw(lyricFrame, 1920, 62);
+    if (!hud.lyricsMode || music->current["id"] != advanced["id"]) {
+        qCritical() << "Lyrics page fell back to details when playback advanced with skip-detail enabled";
+        return false;
+    }
     QObject::disconnect(modeConnection);
     return true;
 }

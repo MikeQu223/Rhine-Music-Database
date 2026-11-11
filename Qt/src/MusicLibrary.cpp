@@ -2,6 +2,7 @@
 #include "ProviderRegistry.h"
 #include "MusicData.h"
 #include "MusicDiscover.h"
+#include "PlaybackQueue.h"
 #include <QJsonDocument>
 #include <QPointer>
 #include <QTimer>
@@ -97,6 +98,11 @@ MusicLibrary::MusicLibrary(Host *host, const QJsonObject &content, QObject *pare
     discover = std::make_unique<MusicDiscover>(this);
     // 播放进度与歌词通知只刷新可见播放界面，不作废资源库场景。
     connect(&player, &MusicPlayer::changed, this, [this] {
+        if (followPlaybackForLyrics && current.value("kind") == "song" && !player.current.isEmpty() &&
+            PlaybackQueue::identity(current) != PlaybackQueue::identity(player.current) &&
+            player.queue.indexOfId(player.current["id"].toString()) >= 0) {
+            followPlayback(player.current, true);
+        }
         if (isLocal() && current.value("key") == player.current.value("key") &&
             current.value("fingerprint") == player.current.value("fingerprint") &&
             !player.coverImage.isEmpty() && coverImage != player.coverImage) {
@@ -112,7 +118,7 @@ MusicLibrary::MusicLibrary(Host *host, const QJsonObject &content, QObject *pare
     });
     connect(&player, &MusicPlayer::trackSelected, this, [this](QJsonObject track) {
         // 切歌默认跟随进入详情；开启“切歌不打开详情”后只同步列表选择。
-        followPlayback(track, followPlaybackDetails && !skipDetailOnSwitch);
+        followPlayback(track, followPlaybackForLyrics || (followPlaybackDetails && !skipDetailOnSwitch));
     });
     connect(this, &MusicLibrary::invalidated, this, [this] {
         if (!m_sourcePlayback || m_sourcePlaybackScheduled) {
