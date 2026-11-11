@@ -430,6 +430,23 @@ const QVector<SettingDescriptor> &descriptors() {
              .defaultValue = Off,
              .choices = onOffChoices(),
              .visible = desktopWindowVisible});
+#ifdef Q_OS_WIN
+        add({.id = "audio-exclusive",
+             .section = SectionId::Preferences,
+             .kind = SettingKind::Choice,
+             .binding = {.kind = BindingKind::Preference,
+                         .preferenceKey = "audio-exclusive",
+                         .action = "audio-exclusive",
+                         .actionPrefix = "setting:audio-exclusive:"},
+             .storage = StorageType::OnOff,
+             .order = 158,
+             .titleEn = "EXCLUSIVE AUDIO",
+             .titleZh = "音频独占输出",
+             .description = "独占系统默认音频设备，其他应用可能无法发声；设备不允许独占时请关闭此选项。",
+             .restartHint = QStringLiteral("下一次播放生效"),
+             .defaultValue = Off,
+             .choices = onOffChoices()});
+#endif
         add({.id = "quality",
              .section = SectionId::Preferences,
              .kind = SettingKind::Choice,
