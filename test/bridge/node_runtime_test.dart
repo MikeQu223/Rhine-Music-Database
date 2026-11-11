@@ -1,9 +1,10 @@
 // T21-C19-W2（atom T21-C19-A2，接管 T21-C14 草稿）｜lib/bridge/node_runtime.dart 的
-// 宿主侧确定性单测（RED/GREEN 未执行）。OPS86-A8-BRIDGE 追加 DEDUP-24 的会话级去重用例。
+// 宿主侧确定性单测（RED/GREEN 未执行）。OPS86-A8-BRIDGE 追加 DEDUP-24 的会话级去重用例；
+// OPS86-A20-HOSTEXIT 追加 DEDUP-22 的宿主 runtime-exit 用例。
 //
-// RED/GREEN 未执行：T21-C14 与本次 OPS86-A8-BRIDGE（DEDUP-24）全程禁止 flutter test /
-// dart test / flutter analyze / dart analyze / 格式化 / 设备执行；本文件只写了断言，
-// 从未运行过（连一次都没有）。
+// RED/GREEN 未执行：T21-C14、OPS86-A8-BRIDGE（DEDUP-24）与本次 OPS86-A20-HOSTEXIT
+// （DEDUP-22）全程禁止 flutter test / dart test / flutter analyze / dart analyze /
+// 格式化 / 设备执行；本文件只写了断言，从未运行过（连一次都没有）。
 //
 // 计划卡：docs/superpowers/plans/2026-11-09-qt-to-flutter-parity-plan.md:524-531（T21）。
 // 权威源：Qt/src/BridgeProcessAndroid.cpp（:47 token、:55-60 单控制连接、:73 48 MiB
@@ -103,6 +104,64 @@ final class _BlockingPrepareHost implements NodeRuntimeHost {
   @override
   Future<void> dispose() async {
     disposeCount += 1;
+  }
+}
+
+/// 具备退出事件源的宿主（DEDUP-22）：NodeRuntime 通过可选接口 NodeRuntimeExitSource
+/// 订阅一次，宿主报告的退出码必须变成 runtime-error（Qt:152-159），而不是只能等断链。
+final class _ExitSourceHost implements NodeRuntimeHost, NodeRuntimeExitSource {
+  _ExitSourceHost() {
+    _exitEvents = StreamController<int>.broadcast(
+      onListen: () {
+        exitListenerCount += 1;
+      },
+      onCancel: () {
+        exitSubscriptionCancelled = true;
+      },
+    );
+  }
+
+  late final StreamController<int> _exitEvents;
+
+  final List<NodeRuntimeStartSpec> starts = <NodeRuntimeStartSpec>[];
+  int prepareCount = 0;
+  int disposeCount = 0;
+
+  /// 订阅次数：launch 幂等分支不得重复订阅（退出事件源只建立一次）。
+  int exitListenerCount = 0;
+  bool exitSubscriptionCancelled = false;
+
+  /// 终态：模拟 NodeRuntimeHostCandidate.notifyRuntimeExited 之后 prepare() 报
+  /// RUNTIME_EXITED（NodeRuntimeHost.kt:343-359）。
+  bool _terminal = false;
+
+  @override
+  Stream<int> get runtimeExited => _exitEvents.stream;
+
+  @override
+  Future<NodeRuntimeHostStatus> prepare() async {
+    prepareCount += 1;
+    return _terminal
+        ? const NodeRuntimeHostStatus(
+            prepared: false, root: null, reason: 'runtime_exited')
+        : const NodeRuntimeHostStatus(prepared: true, root: null, reason: null);
+  }
+
+  @override
+  void startRuntime(NodeRuntimeStartSpec spec) {
+    starts.add(spec);
+  }
+
+  @override
+  Future<void> dispose() async {
+    disposeCount += 1;
+  }
+
+  bool get hasExitListener => _exitEvents.hasListener;
+
+  void emitExit(int exitCode) {
+    _terminal = true;
+    _exitEvents.add(exitCode);
   }
 }
 
@@ -496,7 +555,7 @@ void main() {
       await _waitFor(() => runtime.authenticated);
       expect(runtime.isLive, isTrue);
 
-      // 运行时进程死掉 = 套接字断开（NodeHost 没有退出事件流，这是可观测的等价路径）。
+      // 运行时进程死掉 = 套接字断开（未实现 NodeRuntimeExitSource 的宿主只有这条等价路径；差异 12）。
       await client.dispose();
       await _waitFor(() => failures.isNotEmpty, reason: '断开必须回传 runtime-error');
       expect(failures, hasLength(1));
@@ -781,6 +840,117 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 50));
       expect(failures, isEmpty, reason: '正常关闭后的迟到失败不是崩溃');
       expect(frames, isEmpty);
+    });
+
+    // —— DEDUP-22：成功启动后的宿主 runtime exit 必须能被 Dart 观测 ——
+    test('DEDUP-22：宿主报告 runtime exit → runtime-error（type/session/detail/exitCode）', () async {
+      final NodeRuntime runtime = NodeRuntime.createIsolatedForTest();
+      final _ExitSourceHost host = _ExitSourceHost();
+      final List<void> failures = <void>[];
+      final List<Map<String, Object?>> frames = <Map<String, Object?>>[];
+      runtime.runtimeFailed.listen(failures.add);
+      runtime.messages.listen(frames.add);
+
+      expect(await runtime.launch(_rootPath, host), isTrue);
+      expect(host.exitListenerCount, 1, reason: '启动成功后订阅一次退出事件源');
+      // engine_transport 的 start 帧会带 session；退出帧按最近一次 start 会话回填。
+      runtime.send(<String, Object?>{
+        NodeWire.type: NodeWire.start,
+        NodeWire.session: 's9',
+      });
+      expect(host.starts, hasLength(1));
+
+      host.emitExit(7);
+      await _waitFor(
+        () => failures.isNotEmpty,
+        reason: '宿主 exit 没有变成 runtimeFailed（DEDUP-22：launch 之后的退出无观测通道）',
+      );
+      await _waitFor(() => frames.isNotEmpty, reason: 'runtime-error 帧自身也必须出现在 messages');
+      expect(runtime.exited, isTrue);
+      expect(frames, hasLength(1));
+      final Map<String, Object?> frame = frames.single;
+      expect(frame[NodeWire.type], NodeWire.runtimeError);
+      expect(frame[NodeWire.session], 's9');
+      expect(frame[NodeWire.exitCode], 7);
+      expect(frame[NodeWire.detail], contains('node runtime exited, code 7'));
+      expect(frame[NodeWire.detail], contains(host.starts.single.argv[1]));
+
+      // launch 幂等分支仍只回报状态，且绝不重复订阅（会话语义不变）。
+      expect(await runtime.launch(_rootPath, host), isFalse, reason: '已 launched：不重启、不重复询问宿主');
+      expect(host.exitListenerCount, 1, reason: '退出事件源只订阅一次');
+
+      await runtime.shutdown();
+      expect(host.exitSubscriptionCancelled, isTrue, reason: 'shutdown 必须取消订阅');
+    });
+
+    test('DEDUP-22：同一会话内重复 exit 只上报一次', () async {
+      final NodeRuntime runtime = NodeRuntime.createIsolatedForTest();
+      final _ExitSourceHost host = _ExitSourceHost();
+      final List<void> failures = <void>[];
+      final List<Map<String, Object?>> frames = <Map<String, Object?>>[];
+      runtime.runtimeFailed.listen(failures.add);
+      runtime.messages.listen(frames.add);
+      expect(await runtime.launch(_rootPath, host), isTrue);
+
+      host.emitExit(3);
+      await _waitFor(() => frames.isNotEmpty);
+      host.emitExit(4);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(failures, hasLength(1), reason: '同一个退出不得重复刷屏');
+      expect(frames, hasLength(1));
+      expect(frames.single[NodeWire.exitCode], 3, reason: '第一次的退出码胜出');
+      expect(runtime.exited, isTrue);
+
+      await runtime.shutdown();
+    });
+
+    test('DEDUP-22：shutdown 取消退出订阅，之后宿主 exit 不得伪造 runtime-error', () async {
+      final NodeRuntime runtime = NodeRuntime.createIsolatedForTest();
+      final _ExitSourceHost host = _ExitSourceHost();
+      final List<void> failures = <void>[];
+      final List<Map<String, Object?>> frames = <Map<String, Object?>>[];
+      runtime.runtimeFailed.listen(failures.add);
+      runtime.messages.listen(frames.add);
+      expect(await runtime.launch(_rootPath, host), isTrue);
+      expect(host.hasExitListener, isTrue);
+
+      await runtime.shutdown();
+      expect(host.hasExitListener, isFalse, reason: '订阅必须取消，不能泄漏');
+
+      host.emitExit(9);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(failures, isEmpty, reason: '正常关闭后的宿主退出不是崩溃');
+      expect(frames, isEmpty);
+      expect(runtime.exited, isFalse);
+    });
+
+    test('DEDUP-22：exit 之后新的 launch 由 prepare 的 runtime_exited 收口', () async {
+      final NodeRuntime runtime = NodeRuntime.createIsolatedForTest();
+      final _ExitSourceHost host = _ExitSourceHost();
+      final List<void> failures = <void>[];
+      runtime.runtimeFailed.listen(failures.add);
+      expect(await runtime.launch(_rootPath, host), isTrue);
+
+      host.emitExit(0);
+      await _waitFor(() => runtime.exited);
+      await _waitFor(() => failures.isNotEmpty, reason: '宿主 exit 必须转成 runtimeFailed');
+      expect(failures, hasLength(1));
+      await runtime.shutdown();
+
+      // 宿主侧契约不变：终态之后 prepare() 仍以 runtime_exited 报告；新的 NodeRuntime
+      // 必须把该 reason 映射成 _exited + runtime-error，而且不再 startRuntime。
+      final NodeRuntime second = NodeRuntime.createIsolatedForTest();
+      final List<void> secondFailures = <void>[];
+      second.runtimeFailed.listen(secondFailures.add);
+      expect(await second.launch(_rootPath, host), isFalse);
+      expect(second.exited, isTrue, reason: 'prepare 的 runtime_exited 必须映射到 _exited');
+      expect(host.starts, hasLength(1), reason: '终态之后绝不再启动 Node');
+      expect(host.prepareCount, 2);
+      await _waitFor(() => secondFailures.isNotEmpty);
+      expect(secondFailures, hasLength(1));
+
+      await second.shutdown();
     });
 
     test('NodeRuntimeEngineLink：转发 send / messages / isLive 给进程级运行时', () async {
