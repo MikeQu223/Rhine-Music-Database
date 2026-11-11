@@ -1329,31 +1329,66 @@ void main() {
       host.dispose();
     });
 
-    test('host pushes the Qt 1920x1080 fallback for a degenerate frame', () {
-      // 退化帧使用 StageMetrics 的 1920x1080 兜底（Engine.cpp:1353 在 Android
-      // HUD 路径上用同一个 1920）；注意 Engine::resize 根本不会把退化帧转给
-      // NativeScene —— 它早退并保留上一尺寸（Engine.cpp:841-843）。要完全复刻
-      // 该语义，调用方可在 applyViewport 前用 stageMetrics.stageScale > 0 判断；
-      // 本测试只固定宿主当前行为。
+    test('host keeps the last scene viewport on a degenerate frame', () {
+      // Qt/src/Engine.cpp:841-843: Engine::resize 对 height<=0（或尺寸未变）
+      // 直接 return，NativeScene 既不会收到 0x0，也不会收到 StageMetrics 的
+      // 1920x1080 兜底；上一有效舞台尺寸保持不变。宿主同样整帧忽略退化 resize：
+      // 场景尺寸、viewportRevision、drag/ledger 记账全部不动，且不抛异常。
       final RotationContinuityHost host = RotationContinuityHost();
-      host.applyViewport(
+      final bool first = host.applyViewport(
         const ViewportFrame(
           logicalWidth: 2400,
           logicalHeight: 1080,
           devicePixelRatio: 1,
         ),
       );
+      expect(first, isFalse);
       expect(host.scene.width, 2400);
       expect(host.scene.height, 1080);
-      host.applyViewport(
+      expect(host.viewportRevision, 1);
+      expect(host.viewport.logicalWidth, 2400);
+
+      final bool collapsed = host.applyViewport(
         const ViewportFrame(
           logicalWidth: 0,
           logicalHeight: 0,
           devicePixelRatio: 1,
         ),
       );
-      expect(host.scene.width, 1920);
+      expect(collapsed, isFalse);
+      expect(host.scene.width, 2400, reason: '不能把 1920x1080 兜底推给场景');
       expect(host.scene.height, 1080);
+      expect(host.viewportRevision, 1);
+      expect(host.viewport.logicalWidth, 2400);
+      expect(host.scene.viewportChangeCount, 1);
+      expect(host.scene.viewer.resizeCount, 1);
+
+      // 半退化帧（高度为 0）同样忽略；其后的有效 resize 仍正常应用。
+      expect(
+        host.applyViewport(
+          const ViewportFrame(
+            logicalWidth: 1000,
+            logicalHeight: 0,
+            devicePixelRatio: 1,
+          ),
+        ),
+        isFalse,
+      );
+      expect(host.scene.width, 2400);
+      expect(
+        host.applyViewport(
+          const ViewportFrame(
+            logicalWidth: 1000,
+            logicalHeight: 600,
+            devicePixelRatio: 1,
+          ),
+        ),
+        isFalse,
+      );
+      expect(host.scene.width, 1800);
+      expect(host.scene.height, 1080);
+      expect(host.viewportRevision, 2);
+      expect(host.scene.viewportChangeCount, 2);
       host.dispose();
     });
   });

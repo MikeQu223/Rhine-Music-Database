@@ -1587,13 +1587,25 @@ class RotationContinuityHost {
 
   /// The single rotation/resize entry point.
   ///
-  /// Returns true when an in-flight drag had to be cancelled. Nothing else about
-  /// the session changes: the QR generation, the playback archive and the lyrics
-  /// offset are untouched, and the media source is reused.
+  /// Degenerate frames (a collapsed window, the first frame, or a rotation hand
+  /// off where one axis is still 0) are ignored exactly like Qt's
+  /// `Engine::resize` (Qt/src/Engine.cpp:841-843): the 3D scene keeps its last
+  /// valid stage size instead of receiving the 1920x1080 fallback, the drag and
+  /// ledger bookkeeping is untouched, and false is returned. No exception is
+  /// thrown.
+  ///
+  /// For a measurable frame, returns true when an in-flight drag had to be
+  /// cancelled. Nothing else about the session changes: the QR generation, the
+  /// playback archive and the lyrics offset are untouched, and the media source
+  /// is reused.
   bool applyViewport(ViewportFrame next) {
+    final StageMetrics stage = next.stageMetrics;
+    if (!(stage.stageScale > 0)) {
+      return false;
+    }
     viewport = next;
     viewportRevision++;
-    scene.applyViewport(next.stageWidth, next.stageHeight);
+    scene.applyViewport(stage.stageWidth.round(), stage.stageHeight.round());
     final bool cancelled =
         drag.cancelForViewportChange(canBrowseNow: scene.canBrowse);
     ledger.rebind('stageListener', _stageListener);
