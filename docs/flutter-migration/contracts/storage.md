@@ -240,10 +240,10 @@ Flutter 等价要求：
 
 - `queue` 是曲目对象数组，不是 ID 数组。元素必须 `kind == "song"` 且 `id` 非空，否则丢弃；身份是 `provider(default "netease") + ":" + id`，同身份重复项只保留第一次出现（`PlaybackQueue.cpp:14-30` 的 `sanitized()`，`:36-38` 的 `identity()`）。
 - 原 `index` 指向**过滤前**的数组：`savedIndex` 在 `[0, saved.size())` 才取该元素作为选中项，因此过滤后可能无选中（`PlaybackQueue.cpp:412-414`）。
-- 兼容旧存档字段 `deferred: true`：该项不进入完整队列，但其 id 仍加入待补全列表；当前实现**只读不写**该字段（`PlaybackQueue.cpp:402-411,420-422`）。
+- 兼容旧存档字段 `deferred: true`：`restore()` 先按存档顺序把每个可用条目的 id 追加进待补全 id 列表（含重复、含随后被 `sanitized()` 剔除的条目 id），再判断该条目的 deferred 标记——标记为真的条目不进入 `complete` 队列（`PlaybackQueue.cpp:402-411`）；`hydrate` 时用这份 id 列表补全曲目（`:415-417`）。该列表是恢复产物、不是持久化字段：`toJson()` 只返回 `m_items`，不写这份列表（`:420-422`）。注意 Qt 的 `complete.append(track)`（`:408-410`）原样保留条目对象，因此手写 `deferred: false` 会被 Qt 回写；本实现把 deferred 当作只读字段，恢复时从队列行与 current 一并剥离，故 `toJson()`/save 必定不写出 `deferred` 键——这是本层的收紧，不是 Qt 的行为。
 - `current` 非空时：`kind` 必须是 `song`，且 `provider`（缺省为当前 API provider）必须等于当前 provider；否则**队列也不恢复**（`MusicPlayer.cpp:773-776`，校验在 `queue.restore` 之前）。
 - 恢复顺序固定：先 `queue.restore`，再按身份选曲/播放（`MusicPlayer.cpp:777-779`）；损坏索引不能让“下一首”跳到无关位置。
-- `queue.restore` 的第三个参数是 `!m_host->playbackConnection()`：只有 GUI 独占时才在本地补全曲目详情（`MusicPlayer.cpp:770,778`）。
+- `queue.restore` 的第三个参数是 `!m_host->playbackConnection()`：只有 GUI 独占时才在本地补全曲目详情（`MusicPlayer.cpp:770,778`）。待补全 id 列表在两种分支都必须产出：GUI 独占时 GUI 立即用；存在后台播放连接时 GUI 不恢复 player（`MusicSession.cpp:263-265`），由播放服务自己按 `hydrate=true` 用同一份列表补全——只要发生恢复，存储层就不得丢弃这份 id。
 
 ## 4. `playback-session.json`
 

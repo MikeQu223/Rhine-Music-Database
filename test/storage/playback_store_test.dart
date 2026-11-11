@@ -370,6 +370,122 @@ void main() {
     });
   });
 
+  group('deferred id retention (PlaybackQueue.cpp:402-411,415-417)', () {
+    test('every usable id is retained in archive order, deferred and duplicates included', () {
+      final deferredB = song('b');
+      deferredB['deferred'] = true;
+      final deferredC = song('c', provider: 'qq');
+      deferredC['deferred'] = true;
+      final raw = player(queue: <Object?>[
+        song('a'),
+        deferredB,
+        song('a'),
+        <String, Object?>{'kind': 'album', 'id': 'z'},
+        <String, Object?>{'kind': 'song', 'id': ''},
+        deferredC,
+      ]);
+      final loaded = normalizePlayer(raw, currentProvider: 'netease')!;
+      // PlaybackQueue.cpp:404-405 appends the id BEFORE the deferred test: both deferred
+      // entries, the surviving duplicate and the duplicate sanitised() later drops all
+      // keep their id in archive order, while only "a" enters the complete queue.
+      expect(loaded.deferredIds, <String>['a', 'b', 'a', 'c']);
+      expect(loaded.queue.map((Map<String, Object?> track) => track['id']).toList(), <Object?>['a']);
+    });
+
+    test('a deferred selection keeps its id even though nothing is selected', () {
+      final entry = song('b');
+      entry['deferred'] = true;
+      final loaded = normalizePlayer(
+        player(queue: <Object?>[entry], index: 0),
+        currentProvider: 'netease',
+      )!;
+      expect(loaded.queue, isEmpty);
+      expect(loaded.index, -1);
+      expect(loaded.deferredIds, <String>['b']);
+    });
+
+    test('a rejected current carries no id list (MusicPlayer.cpp:774-776)', () {
+      // Qt returns before queue.restore() on this branch, so no id array was ever built.
+      final loaded = normalizePlayer(
+        player(
+          current: <String, Object?>{'kind': 'album', 'id': 'x'},
+          queue: <Object?>[song('a')],
+        ),
+        currentProvider: 'netease',
+      )!;
+      expect(loaded.queue, isEmpty);
+      expect(loaded.index, -1);
+      // This pins the intended value; the constructor default would also satisfy it, so
+      // the discriminating assertions on this branch are the empty queue and index -1.
+      expect(loaded.deferredIds, isEmpty);
+    });
+
+    test('a literal deferred:false is dropped on read and never echoed', () {
+      // "deferred" is read-only: it may gate membership but must not survive into the
+      // queue or the current that toJson() persists (storage.md section 3.1,
+      // MusicPlayer.cpp:751).
+      final plain = song('a');
+      plain['deferred'] = false;
+      final loaded = normalizePlayer(
+        player(queue: <Object?>[plain]),
+        currentProvider: 'netease',
+      )!;
+      expect(loaded.queue.single.containsKey('deferred'), isFalse);
+      expect(jsonEncode(loaded.toJson()).contains('deferred'), isFalse);
+    });
+
+    test('a hand-crafted marker on the current is stripped before it is echoed back', () {
+      // toJson() writes "current" verbatim (MusicPlayer.cpp:751), so the read-only
+      // marker must be removed on the way in; otherwise restore -> save would persist a
+      // key the contract forbids and a second restore would see a deferred current.
+      final marked = song('a');
+      marked['deferred'] = true;
+      final loaded = normalizePlayer(
+        player(current: marked, queue: <Object?>[song('a')], index: 0),
+        currentProvider: 'netease',
+      )!;
+      expect(loaded.current['id'], 'a');
+      expect(loaded.current.containsKey('deferred'), isFalse);
+      expect(jsonEncode(loaded.toJson()).contains('deferred'), isFalse);
+    });
+
+    test('the id list survives save and is never written to the archive', () async {
+      final files = FakeFiles();
+      final store = PlaybackStore(storage: storageWith(files));
+      final deferred = song('a');
+      deferred['deferred'] = true;
+      final loaded = normalizePlayer(
+        player(queue: <Object?>[deferred, song('b'), song('c')]),
+        currentProvider: 'netease',
+      )!;
+      expect(loaded.deferredIds, <String>['a', 'b', 'c']);
+      expect(await store.save(loaded), isTrue);
+      final written = jsonDecode(utf8.decode(files.files[playbackPath]!)) as Map<String, Object?>;
+      expect(written.keys.toList(),
+          <String>['current', 'queue', 'index', 'mode', 'position', 'requested', 'preview']);
+      expect(utf8.decode(files.files[playbackPath]!).contains('deferred'), isFalse);
+      // The ids are restore output, not archive state: after save the deferred "a" is
+      // gone from the queue, so the reloaded list is exactly the saved queue's ids.
+      final reloaded =
+          await PlaybackStore(storage: storageWith(files)).load(currentProvider: 'netease');
+      expect(reloaded!.deferredIds, <String>['b', 'c']);
+    });
+
+    test('the legacy session.json player carries the same id list', () async {
+      final files = FakeFiles();
+      final deferred = song('a');
+      deferred['deferred'] = true;
+      files.files[sessionPath] = encode(<String, Object?>{
+        'version': 1,
+        'player': player(queue: <Object?>[deferred, song('b')]),
+      });
+      final loaded =
+          await PlaybackStore(storage: storageWith(files)).load(currentProvider: 'netease');
+      expect(loaded!.deferredIds, <String>['a', 'b']);
+      expect(loaded.queue.single['id'], 'b');
+    });
+  });
+
   group('current track gates (MusicPlayer.cpp:765-779)', () {
     test('an empty current restores only the queue', () {
       final loaded = normalizePlayer(player(queue: <Object?>[song('a')], index: 0), currentProvider: 'netease')!;

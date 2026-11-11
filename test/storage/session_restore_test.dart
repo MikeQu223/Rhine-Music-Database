@@ -476,6 +476,43 @@ void main() {
       expect(p.queue.length, 2);
       expect(p.queue.first['id'], 'a');
     });
+
+    test('deferred ids are retained through the GUI-exclusive restore', () async {
+      await writeSession(sessionJson(
+        player: playerJson(queue: <Object?>[
+          <String, Object?>{'id': 'a', 'kind': 'song', 'provider': 'netease'},
+          <String, Object?>{'id': 'b', 'kind': 'song', 'provider': 'netease', 'deferred': true},
+          <String, Object?>{'id': 'a', 'kind': 'song', 'provider': 'netease'},
+          <String, Object?>{'id': 'c', 'kind': 'song', 'provider': 'qq'},
+        ]),
+      ));
+      final SessionRestoreResult r = await load();
+      // PlaybackQueue.cpp:404-405: every usable id in archive order, before the deferred
+      // test, duplicates included; the complete queue keeps only "a" and "c".
+      expect(r.player!.deferredIds, <String>['a', 'b', 'a', 'c']);
+      expect(r.player!.queue.map((Map<String, Object?> t) => t['id']).toList(), <Object?>['a', 'c']);
+      // The id list is restore output, never archive state: a save must not add it.
+      expect(await store.save(r.library!, r.player!, r.view!), isTrue);
+      expect((await File(storage.sessionPath).readAsString()).contains('deferred'), isFalse);
+    });
+
+    test('the background-connection branch restores no player while the service load keeps the ids', () async {
+      await writeSession(sessionJson(
+        player: playerJson(queue: <Object?>[
+          <String, Object?>{'id': 'a', 'kind': 'song', 'provider': 'netease'},
+          <String, Object?>{'id': 'b', 'kind': 'song', 'provider': 'netease', 'deferred': true},
+        ]),
+      ));
+      // MusicSession.cpp:263-265: the GUI skips the player entirely while the background
+      // playback connection owns playback state, so nothing is lost here - nothing is
+      // read. The process that DOES restore is the service (Host.h:85-87: its
+      // playbackConnection() is null, so hydrate is true) and its id list survives.
+      expect((await load(playbackConnection: true)).player, isNull);
+      final PlayerState service = (await PlaybackStore(storage: storage)
+          .load(currentProvider: identity.provider))!;
+      expect(service.deferredIds, <String>['a', 'b']);
+      expect(service.queue.single['id'], 'a');
+    });
   });
 
   group('T26-S02 save, atomicity and the 64 MiB cap (Qt/src/MusicSession.cpp:269-284)', () {
