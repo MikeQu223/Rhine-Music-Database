@@ -13,18 +13,27 @@
 #   verify_signing.sh apk <apk>                    只读读出 APK 指纹/包名/versionCode 并比对 Qt 证书
 #   verify_signing.sh keystore <keystore>          用 RHINE_KEYSTORE_PASSWORD 只读列出别名与证书指纹
 #   verify_signing.sh session <old.apk> <new.apk>  校验同签名且 versionCode 单调递增
-#   verify_signing.sh gradle <build.gradle.kts>    校验 release 不再使用 debug 签名配置
+#   verify_signing.sh gradle <build.gradle.kts>    校验 release 不复用 debug 签名，且 fail-closed 断言齐全
 #
 # 退出码:
 #   0 PASS | 1 用法/IO 错误 | 2 证书未知或不匹配 | 3 缺少只读工具 | 4 两个 APK 签名不同
 #   5 缺签名材料/口令（BLOCKED） | 6 旧 Flutter 证书（不可覆盖安装） | 7 release 使用 debug 签名
-#   8 versionCode 非单调 | 9 applicationId 不是 rhine.music.database
+#   8 静态断言不成立（FAIL_CLOSED_VERIFY_GAP）或 versionCode 非单调 | 9 applicationId 不是 rhine.music.database
 set -eu
 
 EXPECTED_QT_CERT_SHA256='39396cd06f2b7980302bad220ed071e09286540be4d224a2f9b047ca65205bdf'
 OLD_FLUTTER_CERT_SHA256='7c514fe8cf95411117b6a4d1cba78768c1cda1d665c42f4828398d8587239dd4'
 EXPECTED_PACKAGE='rhine.music.database'
 QT_APK_VERSIONCODE_REF=1
+
+# gradle 模式静态断言用的 POSIX ERE（只面向 android/app/build.gradle.kts 的 Kotlin DSL 文本）。
+# 负向：只认赋值形式，不认注释或字符串里的字面量，避免假阳性/假阴性。
+RE_DEBUG_SIGNING_CONFIG='signingConfig[[:space:]]*=[[:space:]]*signingConfigs\.(getByName\([[:space:]]*"debug"[[:space:]]*\)|debug)'
+# 正向：release 签名配置、指向 release 的赋值、fail-closed 守卫必须同时在场，缺一即非零退出。
+RE_CREATE_RELEASE='create\([[:space:]]*"release"[[:space:]]*\)'
+RE_GETBYNAME_RELEASE='getByName\([[:space:]]*"release"[[:space:]]*\)'
+RE_RELEASE_SIGNING_CONFIG='signingConfig[[:space:]]*=[[:space:]]*signingConfigs\.getByName\([[:space:]]*"release"[[:space:]]*\)'
+RE_GRADLE_FAILCLOSED='GradleException'
 
 log() { printf '%s\n' "$*"; }
 die() { code=$1; shift; log "ERROR[$code] $*"; exit "$code"; }
@@ -35,7 +44,7 @@ usage: verify_signing.sh <mode> ...
   apk <apk>                     APK SHA256 + 证书指纹 + 包名 + versionCode，并比对 Qt 证书
   keystore <keystore>           只读列出 keystore 别名与证书指纹（口令从 RHINE_KEYSTORE_PASSWORD 读）
   session <old.apk> <new.apk>   同签名 + versionCode 单调递增（覆盖安装前提）
-  gradle <build.gradle.kts>     release 构建类型不得使用 debug signingConfig
+  gradle <build.gradle.kts>     release 不得复用 debug signingConfig；fail-closed 断言缺失即非零退出
 只读脚本：不联网、不下载、不安装/卸载、不改数据、不签名、不构建。
 USAGE
     exit 1
@@ -189,15 +198,96 @@ mode_session() {
     exit "$rc"
 }
 
+# 剥掉 Kotlin DSL 的块注释（/* */，Kotlin 允许嵌套）与行注释（//）；字符串字面量内的符号原样保留。
+# 逐行输出（整行注释变成空行），因此 grep -n 的行号与原文件一一对应。
+# 只服务 android/app/build.gradle.kts 的静态断言：不调用 Gradle，不做编译期判断。
+strip_kotlin_comments() {
+    awk '
+        BEGIN { depth = 0; mode = 0 }
+        {
+            line = $0
+            out = ""
+            i = 1
+            n = length(line)
+            while (i <= n) {
+                if (depth > 0) {
+                    if (substr(line, i, 2) == "*/") { depth -= 1; i += 2 }
+                    else if (substr(line, i, 2) == "/*") { depth += 1; i += 2 }
+                    else { i += 1 }
+                    continue
+                }
+                if (mode == 3) {
+                    if (substr(line, i, 3) == "\"\"\"") { mode = 0; i += 3 }
+                    else { out = out substr(line, i, 1); i += 1 }
+                    continue
+                }
+                if (mode != 0) {
+                    ch = substr(line, i, 1)
+                    out = out ch
+                    if (ch == "\\") { out = out substr(line, i + 1, 1); i += 2; continue }
+                    if (mode == 1 && ch == "\"") { mode = 0 }
+                    if (mode == 2 && ch == "\047") { mode = 0 }
+                    i += 1
+                    continue
+                }
+                if (substr(line, i, 3) == "\"\"\"") { mode = 3; out = out substr(line, i, 3); i += 3; continue }
+                ch = substr(line, i, 1)
+                if (ch == "\"") { mode = 1; out = out ch; i += 1; continue }
+                if (ch == "\047") { mode = 2; out = out ch; i += 1; continue }
+                if (substr(line, i, 2) == "//") { break }
+                if (substr(line, i, 2) == "/*") { depth = 1; i += 2; continue }
+                out = out ch
+                i += 1
+            }
+            if (mode == 1 || mode == 2) { mode = 0 }
+            print out
+        }
+        END { if (depth > 0 || mode == 3) exit 3 }
+    ' "$1"
+}
+
 mode_gradle() {
     f=$1
     [ -f "$f" ] || die 1 "文件不存在: $f"
-    if grep -q 'signingConfigs.getByName("debug")' "$f"; then
+    need_tool awk
+    stripped=$(strip_kotlin_comments "$f") || {
+        log "RELEASE_SIGNING=FAIL_CLOSED_VERIFY_GAP"
+        die 8 "无法剥离 Kotlin DSL 注释（块注释或三引号原串未闭合？）: $f"
+    }
+    if [ -z "$stripped" ]; then
+        log "RELEASE_SIGNING=FAIL_CLOSED_VERIFY_GAP"
+        die 8 "剥离注释后无可判定内容: $f"
+    fi
+
+    # 负向断言：release 构建类型不得把 signingConfig 赋成 debug 配置（注释已剥离，不会误判注释里的字面量）。
+    if hits=$(printf '%s\n' "$stripped" | grep -nE "$RE_DEBUG_SIGNING_CONFIG"); then
         log "RELEASE_SIGNING=DEBUG_KEY_BLOCKED"
-        grep -n 'signingConfigs.getByName("debug")' "$f" | sed -n 's/^/  /p'
+        printf '%s\n' "$hits" | sed -n 's/^/  /p'
         die 7 "release 构建类型仍用 debug 签名：该 APK 无法覆盖 Qt 安装，发布门未满足"
     fi
+
+    # 负向补充：同一赋值被换行拆开（signingConfig = 换行 signingConfigs.debug）时逐行匹配会漏判。
+    joined=$(printf '%s\n' "$stripped" | tr '\n' ' ')
+    if printf '%s\n' "$joined" | grep -qE "$RE_DEBUG_SIGNING_CONFIG"; then
+        log "RELEASE_SIGNING=DEBUG_KEY_BLOCKED"
+        log "  命中跨行 signingConfig 赋值：$f（无单一物理行可定位）"
+        die 7 "release 构建类型仍用 debug 签名：该 APK 无法覆盖 Qt 安装，发布门未满足"
+    fi
+
+    # 正向断言：四项缺一即 fail-closed，绝不静默放行。
+    missing=
+    printf '%s\n' "$stripped" | grep -qE "$RE_CREATE_RELEASE" || missing="$missing create-release-config"
+    printf '%s\n' "$stripped" | grep -qE "$RE_GETBYNAME_RELEASE" || missing="$missing getByName-release"
+    printf '%s\n' "$stripped" | grep -qE "$RE_GRADLE_FAILCLOSED" || missing="$missing GradleException-guard"
+    printf '%s\n' "$stripped" | grep -qE "$RE_RELEASE_SIGNING_CONFIG" || missing="$missing release-signingConfig-assignment"
+    if [ -n "$missing" ]; then
+        log "RELEASE_SIGNING=FAIL_CLOSED_VERIFY_GAP"
+        log "缺少 fail-closed 静态断言:$missing"
+        die 8 "release 签名 fail-closed 断言不成立：静态判定力缺失即视为不放行"
+    fi
+
     log "RELEASE_SIGNING=NOT_DEBUG_CONFIGURED（仍需核对实际证书指纹，见 apk/keystore 模式）"
+    return 0
 }
 
 [ $# -ge 1 ] || usage
