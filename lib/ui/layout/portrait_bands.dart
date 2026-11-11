@@ -172,7 +172,10 @@ class StageRect {
 /// * stageScale = layoutWidth / 1080，只由窗口宽决定；
 /// * stageHeight = (layoutHeight - safe.top - safe.bottom) / stageScale，
 ///   上下安全区在舞台高度里只扣这一次；
-/// * content 再把 safe.top/safe.bottom 折成 stage 单位作为内缩；
+/// * containerTop = safe.top / stageScale 是舞台在窗口中的原点，safe.top
+///   只在这里第二次出现（作为原点偏移），**不再**进入 content；
+/// * content 全部是 stage 本地坐标：W=(contentX,0,...,stageHeight-96)、
+///   Hybrid=(contentX,96,...,stageHeight-192)、Band=(contentX,0,...,stageHeight)；
 /// * 清单保持 adjustResize：键盘出现时平台已经缩小 layoutHeight，
 ///   所以几何计算**不读** imeBottom（imeStage 恒 0），绝不二次扣减。
 ///
@@ -248,7 +251,10 @@ class PortraitBands {
   /// 安全区在舞台高度里只扣这一次；playerBar 因此整体抬到手势区之上。
   final double stageHeight;
 
-  /// 安全区上边在舞台单位下的值（新竖形容器的起点）。
+  /// 舞台在窗口中的原点（stage 单位）：safe.top / stageScale。
+  ///
+  /// widget 层把它乘以 stageScale 作为 Padding.top，因此舞台缩放后的
+  /// 顶边落在逻辑窗口的 safe.top，底边落在 layoutHeight - safe.bottom。
   final double containerTop;
 
   /// IME 高度在舞台单位下的值。
@@ -265,7 +271,10 @@ class PortraitBands {
   final double contentX;
   final double contentWidth;
 
-  /// 内容可用区（扣掉安全区；adjustResize 下 IME 项恒 0，不参与扣减）。
+  /// 内容可用区，stage 本地坐标。
+  ///
+  /// 安全区只在 stageHeight 与 containerTop 出现，这里不再扣
+  /// safe.top/safe.bottom；adjustResize 下 IME 项恒 0，不参与扣减。
   final StageRect content;
 
   /// 底栏。W/Band/Hybrid 三种候选对它的定位不同，都算出来、都不冻结。
@@ -747,6 +756,9 @@ StageRect expandForTouchVertical(StageRect hit, bool android) => hit.expandVerti
 /// * 竖屏 stageScale 只由逻辑窗口宽决定，安全区与 IME 绝不改它。
 /// * stageHeight = (layoutHeight - safe.top - safe.bottom) / stageScale；
 ///   上下安全区在舞台高度里只扣一次，playerBar 随之抬到手势区之上。
+/// * containerTop = safe.top / stageScale：舞台在窗口中的原点，widget 层
+///   用它做 Padding.top，底栏底边因此落在 layoutHeight - safe.bottom。
+/// * content 是 stage 本地坐标，不再扣 safe.top/safe.bottom（DEDUP-23）。
 /// * 左右安全区只收窄内容宽，舞台始终 1080 宽。
 /// * 清单保持 adjustResize：平台已按键盘缩小窗口，本函数不读 imeBottom。
 /// * 退化情况进 degeneracies 显式暴露；content 高 <= 0 时抛 FlutterError，
@@ -790,8 +802,9 @@ PortraitBands computePortraitBands(
 
   // DEDUP-19 唯一公式：上下安全区在舞台高度里只扣一次。
   final double stageHeight = (layoutHeight - safeTop - safeBottom) / stageScale;
-  final double safeTopStage = safeTop / stageScale;
-  final double safeBottomStage = safeBottom / stageScale;
+  // DEDUP-23：safe.top 只作为舞台在窗口中的原点（乘以 stageScale 后交给
+  // widget 层做偏移），不再折成 content 的内缩。
+  final double containerTop = safeTop / stageScale;
   final double safeLeftStage = safeLeft / stageScale;
   final double safeRightStage = safeRight / stageScale;
 
@@ -805,7 +818,6 @@ PortraitBands computePortraitBands(
     degeneracies.add('left+right safe area consumes the whole stage width $stageWidth');
   }
 
-  const double imeConsumed = 0.0;
   const double inputShiftStage = 0.0;
 
   final double barHeight = QtStageGeometry.playerBarHeight;
@@ -818,19 +830,15 @@ PortraitBands computePortraitBands(
   final double bandHeight = qtStageHeightLandscape;
   int bandCount = 1;
   List<StageRect> bands = <StageRect>[];
-  StageRect content = StageRect(
-    contentX,
-    safeTopStage,
-    contentWidth,
-    stageHeight - safeTopStage - safeBottomStage - imeConsumed,
-  );
+  // DEDUP-23：content 用 stage 本地坐标；安全区不再出现在这里。
+  StageRect content = StageRect(contentX, 0, contentWidth, stageHeight - barHeight);
 
   switch (mode) {
     case PortraitBandMode.w:
       bandCount = 1;
-      final double wTop = safeTopStage;
-      final double wBottom = stageHeight - barHeight - safeBottomStage - imeConsumed;
-      content = StageRect(contentX, wTop, contentWidth, wBottom - wTop);
+      // W：舞台顶边就是窗口顶边（safe.top 由 containerTop 偏移），
+      // 底栏占满舞台底部，content 底边与 playerBar 顶边重合。
+      content = StageRect(contentX, 0, contentWidth, stageHeight - barHeight);
       bands = <StageRect>[StageRect(0, 0, stageWidth, stageHeight)];
       break;
     case PortraitBandMode.band:
@@ -840,17 +848,15 @@ PortraitBands computePortraitBands(
         (int index) => StageRect(0, index * bandHeight, stageWidth, bandHeight),
         growable: false,
       );
-      final double bandTop = safeTopStage;
-      final double bandBottom = stageHeight - safeBottomStage - imeConsumed;
-      content = StageRect(contentX, bandTop, contentWidth, bandBottom - bandTop);
+      // Band：content 覆盖整个缩放舞台；底栏叠在最后一带上，允许覆盖。
+      content = StageRect(contentX, 0, contentWidth, stageHeight);
       notes.add('band mode anchors the player bar to the stage bottom; the last band may extend past it');
       break;
     case PortraitBandMode.hybrid:
       bandCount = 1;
       final StageRect topBar = StageRect(0, 0, stageWidth, barHeight);
-      final double hybridTop = safeTopStage + barHeight;
-      final double hybridBottom = stageHeight - barHeight - safeBottomStage - imeConsumed;
-      content = StageRect(contentX, hybridTop, contentWidth, hybridBottom - hybridTop);
+      // Hybrid：上下各一条固定 bar，content 只扣 bar，不再扣安全区。
+      content = StageRect(contentX, barHeight, contentWidth, stageHeight - barHeight * 2);
       bands = <StageRect>[topBar, content, playerBar];
       break;
   }
@@ -869,7 +875,7 @@ PortraitBands computePortraitBands(
     stageScale: stageScale,
     stageWidth: stageWidth,
     stageHeight: stageHeight,
-    containerTop: safeTopStage,
+    containerTop: containerTop,
     imeStage: imeStage,
     inputShiftStage: inputShiftStage,
     contentX: contentX,

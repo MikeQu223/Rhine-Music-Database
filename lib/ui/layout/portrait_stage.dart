@@ -20,6 +20,11 @@ import 'portrait_bands.dart';
 /// 绘制时整体按 PortraitBands.stageScale 从左上角缩放
 /// （Qt/qml/Overlay.qml:179-184 transformOrigin: Item.TopLeft）。
 ///
+/// DEDUP-23：舞台在窗口中的原点是 (0, containerTop * stageScale) == (0, safe.top)。
+/// stageHeight 已经不含上下安全区，所以整个缩放舞台必须下移这一段；否则底栏
+/// 底边会停在 layoutHeight - safe.top - safe.bottom。缩放后舞台高
+/// = layoutHeight - safe.top - safe.bottom，底边恰好在 layoutHeight - safe.bottom。
+///
 /// mode 仍是未裁决候选：默认值只为让宿主可编译、可预览，不代表赢家。
 /// imePolicy 在 adjustResize 下不参与几何（DEDUP-20），仅为源码兼容保留。
 class PortraitStage extends StatelessWidget {
@@ -97,25 +102,31 @@ class PortraitStage extends StatelessWidget {
                 maxWidth: double.infinity,
                 minHeight: 0,
                 maxHeight: double.infinity,
-                child: Transform.scale(
-                  scale: bands.stageScale,
-                  alignment: Alignment.topLeft,
-                  child: SizedBox(
-                    width: bands.stageWidth,
-                    height: bands.stageHeight,
-                    // DEDUP-13：全链路只保留 PortraitStage 这一次缩放。
-                    // 子树拿到单位缩放的舞台（1080 x stageHeight），绘制与命中
-                    // 都从这一份 HudStage 读尺寸，禁止再调 HudStage.fromLogicalSize。
-                    child: StageGeometryScope(
-                      geometry: geometry,
-                      child: HudStageScope(
-                        stage: HudStage(
-                          scale: 1.0,
-                          // 恒定 1080，与 PortraitBands.stageWidth 同一常量。
-                          width: portraitStageWidthConstant,
-                          height: bands.stageHeight,
+                // DEDUP-23：舞台原点 = (0, safe.top)。stageHeight 已不含上下安全区，
+                // 这里把整个缩放舞台下移 containerTop * stageScale；OverflowBox 给的是
+                // 自由约束，Padding 不会压缩舞台，缩放仍只有 Transform 这一处。
+                child: Padding(
+                  padding: EdgeInsets.only(top: bands.containerTop * bands.stageScale),
+                  child: Transform.scale(
+                    scale: bands.stageScale,
+                    alignment: Alignment.topLeft,
+                    child: SizedBox(
+                      width: bands.stageWidth,
+                      height: bands.stageHeight,
+                      // DEDUP-13：全链路只保留 PortraitStage 这一次缩放。
+                      // 子树拿到单位缩放的舞台（1080 x stageHeight），绘制与命中
+                      // 都从这一份 HudStage 读尺寸，禁止再调 HudStage.fromLogicalSize。
+                      child: StageGeometryScope(
+                        geometry: geometry,
+                        child: HudStageScope(
+                          stage: HudStage(
+                            scale: 1.0,
+                            // 恒定 1080，与 PortraitBands.stageWidth 同一常量。
+                            width: portraitStageWidthConstant,
+                            height: bands.stageHeight,
+                          ),
+                          child: child,
                         ),
-                        child: child,
                       ),
                     ),
                   ),
