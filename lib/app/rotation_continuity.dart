@@ -5,8 +5,10 @@
 /// Scope boundary: this library owns *runtime continuity only*. It never touches
 /// geometry, never reads MediaQuery, and never imports \`package:flutter\`. The
 /// stage re-derivation belongs to A1 (\`lib/app/orientation_state.dart\`); that file
-/// is pure Dart and is imported here only for its single-source
-/// \`restorableModalNames\` constant (MF-5). Every numeric input (logical size, dpr,
+/// is pure Dart and is imported here for its single-source
+/// \`restorableModalNames\` constant (MF-5) and for the [StageMetrics] bridge that
+/// turns a [ViewportFrame] into stage units (F3) — it stays the only stage
+/// formula. Every numeric input (logical size, dpr,
 /// insets, IME inset) is injected as a plain \`double\`, so the whole file is
 /// statically testable with \`flutter_test\` (the repo has no \`package:test\`).
 ///
@@ -1435,6 +1437,22 @@ class ViewportInsets {
 
 /// A viewport sample injected from outside (MediaQuery in the real app, a
 /// fixture in tests). Plain doubles only.
+///
+/// Three coordinate spaces, kept explicitly apart (F3 of the root review):
+/// * [logicalWidth]/[logicalHeight] — MediaQuery logical pixels. This is the
+///   *input* of the stage model; Qt/qml/Main.qml:37-38 hands the same pair to
+///   `rhine.resize(width, height)`, which is Engine::resize
+///   (Qt/src/Engine.cpp:841).
+/// * [stageWidth]/[stageHeight] — stage units. This is the **only** thing
+///   `NativeScene::resize` receives: Qt/src/Engine.cpp:847 calls
+///   `scene.resize(width / (height / 1080), 1080)`, i.e. landscape keeps a
+///   constant 1080-tall stage (Qt/qml/Main.qml:32), and the portrait contract
+///   keeps a constant 1080-wide one (lib/app/orientation_state.dart:283-285).
+/// * [physicalWidth]/[physicalHeight] — device pixels. `dpr` changes these and
+///   must never change the stage box (Main.qml:32 has no dpr term). The one
+///   consumer left in this space is [StageMetrics.cameraCompact], a physical-width
+///   threshold owned by A1; Qt's 3D camera instead compares the stage width
+///   (Qt/src/NativeSceneCamera.cpp:57), which [SceneContinuity] now receives.
 class ViewportFrame {
   const ViewportFrame({
     required this.logicalWidth,
@@ -1450,15 +1468,59 @@ class ViewportFrame {
   final ViewportInsets insets;
   final double imeInset;
 
+  /// Device pixels of the render surface. **Not** what NativeScene::resize
+  /// receives — Qt/src/Engine.cpp:847 sends stage units (see [stageWidth]).
   double get physicalWidth => logicalWidth * devicePixelRatio;
 
   double get physicalHeight => logicalHeight * devicePixelRatio;
 
-  /// The width Qt would see for this frame (physical pixels), which is what
-  /// NativeScene::resize receives.
-  int get stageWidth => physicalWidth.round();
+  /// The single stage model for this frame: [StageMetrics.compute] from
+  /// `lib/app/orientation_state.dart` (A1). Bridging through it here is what
+  /// keeps one stage formula in the whole app; this file still owns its
+  /// pre-existing Qt scene/camera mirror constants ([SceneContinuity]'s
+  /// 1920x1080 defaults, the 1.05 portrait and 1100 compact comparisons), but
+  /// it derives no stage box of its own.
+  ///
+  /// The logical size is the stage input, exactly like Qt: landscape uses the
+  /// full window height (Qt/qml/Main.qml:32), portrait must be handed the
+  /// plan's `layoutH` (already net of safe.top/safe.bottom — see
+  /// [StageInputs.portraitFromWindow]). Insets are carried into the metrics,
+  /// never re-deducted here, so one inset cannot be subtracted twice.
+  StageMetrics get stageMetrics => StageMetrics.compute(
+        StageInputs(
+          logicalWidth: logicalWidth,
+          logicalHeight: logicalHeight,
+          devicePixelRatio: devicePixelRatio,
+          insets: StageInsets(
+            top: insets.top,
+            bottom: insets.bottom,
+            left: insets.left,
+            right: insets.right,
+            imeBottom: imeInset,
+          ),
+        ),
+      );
 
-  int get stageHeight => physicalHeight.round();
+  /// Stage units — the value `SceneContinuity.applyViewport` must receive, so
+  /// that [SceneContinuity.width]/[SceneContinuity.height] hold the same domain
+  /// as Qt's `m_width`/`m_height` (Qt/src/NativeScene.cpp:217-224, fed by
+  /// Qt/src/Engine.cpp:847).
+  ///
+  /// 1000x600 is 1800x1080 of stage at any dpr; the previous physical-pixel
+  /// reading sent 1000x600 and put the compact-camera branch in the wrong space.
+  /// A degenerate frame (any side <= 0) yields [StageMetrics]' 1920x1080
+  /// fallback; Qt/src/Engine.cpp:1353 uses the same 1920 for a non-measurable
+  /// stage width in the Android HUD path. `Engine::resize` never forwards such
+  /// a frame: it returns early and keeps the previous size
+  /// (Qt/src/Engine.cpp:841-843), so a caller that owns a previous frame should
+  /// keep it instead of pushing this one.
+  ///
+  /// The continuity model stores ints while Qt's `NativeScene::resize(double,
+  /// double)` is double, so the stage value is rounded here, once, at this
+  /// boundary.
+  int get stageWidth => stageMetrics.stageWidth.round();
+
+  int get stageHeight => stageMetrics.stageHeight.round();
 
   Map<String, Object?> toJson() => <String, Object?>{
         'logicalWidth': logicalWidth,

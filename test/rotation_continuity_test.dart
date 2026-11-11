@@ -1041,6 +1041,128 @@ void main() {
       expect(frame.insets.left, 0);
       expect(frame.imeInset, 0);
     });
+
+    test('landscape 1000x600 sends Qt stage units (1800x1080), not physical pixels', () {
+      // Qt 反例（root review F3）：窗口 1000x600 交给 Engine::resize 后，
+      // Qt/src/Engine.cpp:847 送 scene.resize(1000 / (600 / 1080), 1080) = 1800x1080。
+      const ViewportFrame frame = ViewportFrame(
+        logicalWidth: 1000,
+        logicalHeight: 600,
+        devicePixelRatio: 1,
+      );
+      expect(frame.physicalWidth, 1000);
+      expect(frame.physicalHeight, 600);
+      expect(frame.stageWidth, 1800);
+      expect(frame.stageHeight, 1080);
+      expect(frame.stageMetrics.stageScale, closeTo(600 / 1080, 1e-12));
+      expect(frame.stageMetrics.stageWidth, closeTo(1800, 1e-9), reason: 'stageWidth 取自唯一 StageMetrics');
+      expect(frame.stageMetrics.stageHeight, closeTo(1080, 1e-9));
+      expect(frame.stageMetrics.isLandscape, isTrue);
+    });
+
+    test('dpr changes physical pixels only; the stage box is dpr-invariant', () {
+      const ViewportFrame at1 = ViewportFrame(
+        logicalWidth: 1000,
+        logicalHeight: 600,
+        devicePixelRatio: 1,
+      );
+      const ViewportFrame at2 = ViewportFrame(
+        logicalWidth: 1000,
+        logicalHeight: 600,
+        devicePixelRatio: 2,
+      );
+      // Qt/qml/Main.qml:32 的 stageScale = height / 1080 没有 dpr 项，
+      // 所以同一个逻辑窗口在 @1 与 @2 上必须是同一个舞台盒。
+      expect(at2.physicalWidth, 2000);
+      expect(at2.physicalHeight, 1200);
+      expect(at1.stageWidth, at2.stageWidth);
+      expect(at1.stageHeight, at2.stageHeight);
+      expect(at2.stageWidth, 1800);
+      expect(at2.stageHeight, 1080);
+      // 唯一仍按物理宽判定的是 A1 的 StageMetrics.cameraCompact
+      // （orientation_state.dart:324，任务书要求保留物理宽阈值、不改成舞台单位）。
+      expect(at1.stageMetrics.cameraCompact, isTrue, reason: '1000 物理 < 1100');
+      expect(at2.stageMetrics.cameraCompact, isFalse, reason: '2000 物理 >= 1100');
+    });
+
+    test('portrait 1080x2400 sends a 1080x2400 stage', () {
+      const ViewportFrame frame = ViewportFrame(
+        logicalWidth: 1080,
+        logicalHeight: 2400,
+        devicePixelRatio: 1,
+      );
+      // 竖屏契约（orientation_state.dart:283-285）：舞台宽恒 1080，
+      // stageScale = logicalWidth / 1080，stageHeight = logicalHeight / stageScale。
+      expect(frame.stageWidth, 1080);
+      expect(frame.stageHeight, 2400);
+      expect(frame.stageMetrics.orientation, OrientationKind.portrait);
+      expect(frame.stageMetrics.stageScale, closeTo(1, 1e-12));
+      // 竖屏不得被机械锁成 1080 高：更高的窗口必须给出更高的舞台。
+      const ViewportFrame taller = ViewportFrame(
+        logicalWidth: 1080,
+        logicalHeight: 3000,
+        devicePixelRatio: 1,
+      );
+      expect(taller.stageWidth, 1080);
+      expect(taller.stageHeight, 3000);
+    });
+
+    test('degenerate frame falls back to Qt 1920x1080', () {
+      // Qt/src/Engine.cpp:1353 的 m_height > 0 ? ... : 1920 兜底。
+      const ViewportFrame zero = ViewportFrame(
+        logicalWidth: 0,
+        logicalHeight: 0,
+        devicePixelRatio: 1,
+      );
+      expect(zero.stageWidth, 1920);
+      expect(zero.stageHeight, 1080);
+      expect(zero.stageMetrics.stageScale, 0);
+      const ViewportFrame half = ViewportFrame(
+        logicalWidth: 1000,
+        logicalHeight: 0,
+        devicePixelRatio: 1,
+      );
+      expect(half.stageWidth, 1920);
+      expect(half.stageHeight, 1080);
+    });
+
+    test('stage box matches the single StageMetrics formula across sizes', () {
+      // 回归护栏：ViewportFrame 不得重新长出第二套 1080/1920/1.05 常量。
+      const List<List<double>> sizes = <List<double>>[
+        <double>[2400, 1080],
+        <double>[1000, 600],
+        <double>[1920, 1200],
+        <double>[1080, 2400],
+        <double>[360, 800],
+        <double>[800, 360],
+      ];
+      for (final List<double> size in sizes) {
+        for (final double dpr in <double>[1, 2, 2.75, 3]) {
+          final ViewportFrame frame = ViewportFrame(
+            logicalWidth: size[0],
+            logicalHeight: size[1],
+            devicePixelRatio: dpr,
+          );
+          final StageMetrics metrics = StageMetrics.compute(
+            StageInputs(
+              logicalWidth: size[0],
+              logicalHeight: size[1],
+              devicePixelRatio: dpr,
+            ),
+          );
+          expect(
+            frame.stageWidth,
+            metrics.stageWidth.round(),
+            reason: 'stageWidth 必须是 StageMetrics 的舍入值：${size[0]}x${size[1]}@$dpr',
+          );
+          expect(
+            frame.stageHeight,
+            metrics.stageHeight.round(),
+            reason: 'stageHeight 必须是 StageMetrics 的舍入值：${size[0]}x${size[1]}@$dpr',
+          );
+        }
+      }
+    });
   });
 
   group('rotation host', () {
@@ -1179,6 +1301,60 @@ void main() {
       expect(ledger.release('missing', 1), isFalse);
       expect(ledger.live('stageListener'), 0);
       expect(ledger.balanced, isTrue);
+    });
+
+    test('host hands stage units to the 3D scene (1000x600 -> 1800x1080)', () {
+      final RotationContinuityHost host = RotationContinuityHost();
+      host.applyViewport(
+        const ViewportFrame(
+          logicalWidth: 1000,
+          logicalHeight: 600,
+          devicePixelRatio: 1,
+        ),
+      );
+      // 旧缺陷：宿主把物理 1000x600 直接交给 SceneContinuity，横屏场景的
+      // cameraCompact（width < 1100）被误判为 true。Qt 的 NativeScene 收的是
+      // 舞台单位（Qt/src/Engine.cpp:847），所以这里必须是 1800x1080。
+      expect(host.scene.width, 1800);
+      expect(host.scene.height, 1080);
+      expect(host.scene.aspect, closeTo(1800 / 1080, 1e-12));
+      expect(host.scene.cameraPortrait, isFalse);
+      expect(
+        host.scene.cameraCompact,
+        isFalse,
+        reason: 'NativeSceneCamera.cpp:57 比较的是舞台宽 1800，不是物理宽 1000',
+      );
+      expect(host.scene.viewportChangeCount, 1);
+      expect(host.scene.viewer.resizeCount, 1);
+      host.dispose();
+    });
+
+    test('host pushes the Qt 1920x1080 fallback for a degenerate frame', () {
+      // 退化帧使用 StageMetrics 的 1920x1080 兜底（Engine.cpp:1353 在 Android
+      // HUD 路径上用同一个 1920）；注意 Engine::resize 根本不会把退化帧转给
+      // NativeScene —— 它早退并保留上一尺寸（Engine.cpp:841-843）。要完全复刻
+      // 该语义，调用方可在 applyViewport 前用 stageMetrics.stageScale > 0 判断；
+      // 本测试只固定宿主当前行为。
+      final RotationContinuityHost host = RotationContinuityHost();
+      host.applyViewport(
+        const ViewportFrame(
+          logicalWidth: 2400,
+          logicalHeight: 1080,
+          devicePixelRatio: 1,
+        ),
+      );
+      expect(host.scene.width, 2400);
+      expect(host.scene.height, 1080);
+      host.applyViewport(
+        const ViewportFrame(
+          logicalWidth: 0,
+          logicalHeight: 0,
+          devicePixelRatio: 1,
+        ),
+      );
+      expect(host.scene.width, 1920);
+      expect(host.scene.height, 1080);
+      host.dispose();
     });
   });
 }
