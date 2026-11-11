@@ -44,10 +44,14 @@
 ///      位移：Qt 的 QByteArray::remove(0, n) 是 memmove 语义，Dart 的
 ///      Uint8List.setRange 在源/目标同缓冲时未在语言规范里承诺重叠安全，48 MiB 级别的
 ///      位移一旦实现成前向拷贝就会静默破坏数据。游标版 consume 是 O(1) 且无重叠假设。
-///   9. runtime-error 至多上报一次（单一 _runtimeFailureEmitted 标志）。Qt 在 crash 之后
-///      的再次 start 会由 BridgeProcessAndroid.cpp:186-189 再合成一次 runtime-error；本实现的
-///      launch 在 launched 之后只回报状态、不重复上报，等价 plan:528「旋转不重复启动」，
-///      也避免 UI 收到重复崩溃通知。
+///   9. runtime-error 的去重只在**单次会话内**生效（会话 = 一次真实 launch 尝试，或一次被
+///      接受的控制连接，见 _failureSession/_failureEmittedSession）。Qt 没有一次性标志：
+///      BridgeProcessAndroid.cpp:63-67 每次 disconnected 都 accept(runtime-error)，:186-189
+///      每次 start() 失败都再合成一次。本实现只合并「同一个失败被通知两次」这种 Dart 侧特有形
+///      情形（_abortConnection 先显式走一遍失败路径，随后 socket 的 onDone 又回调一次），
+///      跨会话绝不抑制：启动失败之后重新 launch 成功的断链、以及每次独立的启动尝试，都各自
+///      上报。仍然保留的差异只有一条——launch 在 launched 之后只回报状态、不重复上报
+///      （等价 plan:528「旋转不重复启动」，避免 UI 收到重复崩溃通知）。
 ///   10. send/flush 对已 abort 的 socket 做 try/catch：Qt 的 socket->write() 在已断开的
 ///      QTcpSocket 上静默返回 -1，而 Dart 的 Socket.add 在销毁后会抛 StateError；
 ///      为保持「认证后写失败不崩溃调用方」这一 Qt 行为，这里吞掉该异常。
@@ -180,7 +184,8 @@ abstract final class NodeWire {
 /// 生命周期：宿主先 [NodeRuntimeHost.prepare]，本类再绑回环端口、把 argv 交给
 /// [NodeRuntimeHost.startRuntime]，然后等运行时用首帧 {token} 完成认证。认证前
 /// [send] 只排队，认证后一次性 flush（Qt:81-91）。任何读缓冲越界、令牌不匹配、
-/// 套接字断开或宿主报告运行时不在了，都发一次 runtime-error（Qt:63-67/:75/:84/:157）。
+/// 套接字断开或宿主报告运行时不在了，都发一次 runtime-error（Qt:63-67/:75/:84/:157）；
+/// 去重只在单次会话内（见文件头差异 9），跨会话一律重新上报。
 final class NodeRuntime {
   NodeRuntime._({int maxFrameBytes = NodeWire.maxFrameBytes})
       : assert(maxFrameBytes > 0 && maxFrameBytes <= NodeWire.maxFrameBytes),
@@ -228,9 +233,17 @@ final class NodeRuntime {
   bool _shutdown = false;
   bool _socketLive = false;
 
-  /// runtime-error 至多上报一次（文件头差异 C）：断链、读缓冲越界、令牌不匹配、
-  /// 宿主报告不可用都汇流到这一处，避免 UI 收到重复的崩溃通知。
-  bool _runtimeFailureEmitted = false;
+  /// runtime-error 去重的会话号（文件头差异 9）：断链、读缓冲越界、令牌不匹配、
+  /// 读监听错误、launch 失败都汇流到 [_reportRuntimeFailure]，同一会话内只上报一次。
+  ///
+  /// 会话推进点与 Qt 的真实状态点一一对应：真正开始一次 launch 尝试（Qt:186-189 每次
+  /// start() 失败都单独合成一次 runtime-error），以及接受一个控制连接（Qt:63-67 每次
+  /// disconnected 都单独 accept）。用会话号比较而不是进程级 bool，是为了让「启动失败 →
+  /// 重新 launch 成功 → 断链」这条路径上的后续失败不会被前一次吞掉（DEDUP-24）。
+  int _failureSession = 0;
+
+  /// 最近一次真正上报过 runtime-error 的会话号；null 表示本实例尚未上报。
+  int? _failureEmittedSession;
 
   /// 进程级随机令牌（Qt:47 QUuid::createUuid().toString(WithoutBraces)）。
   /// 小写 UUIDv4、带连字符、无花括号；不含逗号/空格/引号，因为要作为 argv 的一项
@@ -260,7 +273,8 @@ final class NodeRuntime {
   /// 运行时 → 宿主的帧流（已认证之后；含宿主合成的 runtime-error）。
   Stream<Map<String, Object?>> get messages => _messages.stream;
 
-  /// 运行时失败通知流（等价 Qt 的 accept({{"type","runtime-error"}}) 被投递一次）。
+  /// 运行时失败通知流（等价 Qt 的 accept({{"type","runtime-error"}})；
+  /// 每个失败会话投递一次，同一会话内不重复，见文件头差异 9）。
   Stream<void> get runtimeFailed => _runtimeFailed.stream;
 
   /// 首次招标 + 幂等启动。
@@ -291,6 +305,9 @@ final class NodeRuntime {
       // Qt 没有重启路径：运行时一旦终止（或宿主报告它不可用），本进程内不再启动。
       return false;
     }
+    // 每次真实尝试都是新的失败会话：Qt:186-189 对每次失败的 start() 都重新合成一次
+    // runtime-error，重试（补齐脚本、端口冲突后重来）因此不会被上一次失败吞掉。
+    _beginFailureSession();
     try {
       final NodeRuntimeHostStatus status = await host.prepare();
       if (!status.prepared) {
@@ -401,6 +418,10 @@ final class NodeRuntime {
     }
     _socket = candidate;
     _socketLive = true;
+    // 新控制连接 = 新失败会话：Qt:63-67 对每次 disconnected 都 accept(runtime-error)，
+    // 不看此前是否上报过（例如 launch 已置位后宿主 startRuntime 才抛错的那次失败，
+    // 之后该连接的断开仍必须上报）。见文件头差异 9。
+    _beginFailureSession();
     _socketSubscription = candidate.listen(
       _onSocketData,
       onError: (Object error, StackTrace stackTrace) => _onConnectionLost(),
@@ -522,8 +543,9 @@ final class NodeRuntime {
 
   void _abortConnection() {
     // Qt:84/:75/:58 的 socket->abort()。Qt 里 abort 必然触发 disconnected 信号，
-    // 所以这里先显式走一遍失败路径（保证单元测试不必等事件循环），再由
-    // _runtimeFailureEmitted 去重（至多一次，见文件头差异 C）。
+    // 所以这里先显式走一遍失败路径（保证单元测试不必等事件循环），随后 socket 的
+    // onDone 还会回调同一次失败——由 _reportRuntimeFailure 在**同一会话内**合并成一次
+    // （见文件头差异 9）。
     _onConnectionLost();
     _socket?.destroy();
   }
@@ -535,14 +557,16 @@ final class NodeRuntime {
       return;
     }
     _socketLive = false;
-    if (_runtimeFailureEmitted) {
-      return;
-    }
-    _runtimeFailureEmitted = true;
-    _emitRuntimeFailed();
+    _reportRuntimeFailure();
   }
 
   void _failLaunch() {
+    // 正常关闭之后不再发 runtimeFailed：shutdown 与一次在途的 prepare/bind 竞争时，迟到
+    // 的失败描述的是「已经被关掉的运行时」，UI 不该看到伪崩溃（与 _onConnectionLost 的
+    // _shutdown 守卫一致；Qt 没有 shutdown 路径，这是 Dart 侧的等价收口）。
+    if (_shutdown) {
+      return;
+    }
     // Qt BridgeProcess::start:186-188：launch 返回 false 时立刻上报 runtime-error。
     // 监听器只在「还没置 launched」的失败路径上收掉：Qt:102-105 的失败根本没在监听，
     // 而 Qt:120-125 的 pthread_create 失败发生在 Qt:106 launched = true 之后，Qt 并没有
@@ -550,10 +574,22 @@ final class NodeRuntime {
     if (!_launched) {
       unawaited(_closeListener());
     }
-    if (_runtimeFailureEmitted) {
+    _reportRuntimeFailure();
+  }
+
+  /// 推进失败会话：一次真实的 launch 尝试，或一个被接受的控制连接。
+  void _beginFailureSession() {
+    _failureSession += 1;
+  }
+
+  /// 上报本会话的 runtime-error；同一会话的后续通知（abort 之后 onDone 再回调一次）
+  /// 被丢弃。跨会话一定会重新上报，因此「启动失败 → 重新 launch 成功 → 断链」不会再被
+  /// 前一次失败吞掉（Qt:63-67 每次断链都 accept，:186-189 每次 start() 失败都再合成）。
+  void _reportRuntimeFailure() {
+    if (_failureEmittedSession == _failureSession) {
       return;
     }
-    _runtimeFailureEmitted = true;
+    _failureEmittedSession = _failureSession;
     _emitRuntimeFailed();
   }
 
