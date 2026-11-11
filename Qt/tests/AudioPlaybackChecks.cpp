@@ -1,4 +1,7 @@
+#include <QtGlobal>
+#ifdef Q_OS_WIN
 #include "WindowsAudioOutput.h"
+#endif
 #include <QAudioBufferOutput>
 #include <QAudioDevice>
 #include <QAudioSink>
