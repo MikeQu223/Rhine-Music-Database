@@ -18,16 +18,28 @@
 //   Qt/src/Glyphs.cpp:530-540         text() 内部 translate(x, y + size * 1.044) => 真实 alphabetic
 //                                     baseline = 1003 + 14 * 1.044 = 1017.616（y 不是盒顶也不是基线）
 //   Qt/src/Glyphs.cpp:806-812         boot 背景径向渐变（中心 979.2,518.4；半径 1100；三段停靠）
+//   Qt/src/Glyphs.cpp:761-774         boot 扫描弧 op（{"arc", cx, cy, radius, start, sweep, penWidth, color}）
+//   Qt/src/NativeHudBoot.cpp:164-171  背景 gradient（在 backgroundOpacity 的 alpha 内）+ 白闪 fill（在其外）
+//   Qt/src/NativeHudBoot.cpp:330-350  scan() 的弧段（scan.* / orbit.* 曲线，度 -> radians）
 //
 // 本文件只写不执行。所有期望值均按上述源行逐字推导，并用 IEEE754 双精度语义核对：
 // 采样以帧号入参时使用 frame / kTimelineFrameRate，floor(frame/25*25 + 1e-5) == frame 已逐帧验证。
 //
-// 不伪造原则（硬约束）：hudBuilder == null 时页面只画门槛层（背景 + 白闪 + ENTER SYSTEM 按钮），
-// 绝不绘制 RHINE·LAB / POWERED BY RHINE LAB / auth / access 等真 HUD 字形文本（那属于共享 HUD 层）。
+// 不伪造原则（硬约束）：hudBuilder == null 时页面只画门槛层（gradient/fill/arc 命令流 + ENTER SYSTEM
+// 按钮），绝不绘制 RHINE·LAB / POWERED BY RHINE LAB / auth / access 等真 HUD 字形文本
+// （那属于共享 HUD 层）。
+//
+// DEDUP-18：门槛层不再由 Flutter widget 自绘 —— 页面产出 [HudCommand]，由共享 `paintHudCommands`
+// 执行；渐变几何/色标的权威在 lib/hud/render/gradient_mask.dart，弧的字段语义在
+// lib/hud/protocol/hud_command.dart。
+
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:rhine_music_database/hud/protocol/hud_command.dart';
+import 'package:rhine_music_database/hud/render/gradient_mask.dart';
 import 'package:rhine_music_database/ui/pages/boot_page.dart';
 
 /// 可注入假时钟：测试禁止真实计时（不依赖真实秒表，也不用 pumpAndSettle）。
@@ -44,6 +56,30 @@ class FakeBootClock implements BootClock {
 
   @override
   double nowSeconds() => _seconds;
+}
+
+/// 固定曲线值的 track 源：给 boot 命令生产者喂确定的 scan.* / orbit.* 值。
+class FakeBootTrackSource implements BootTrackSource {
+  FakeBootTrackSource(this.values);
+
+  final Map<String, double> values;
+
+  @override
+  double value(String key, double frame) => values[key] ?? 0;
+}
+
+/// 记录查询键与帧的 track 源：核对曲线确实取在 measuredFrame（time * 25，BootTimeline.cpp:156）上。
+class RecordingBootTrackSource implements BootTrackSource {
+  RecordingBootTrackSource(this.values);
+
+  final Map<String, double> values;
+  final List<(String, double)> queries = <(String, double)>[];
+
+  @override
+  double value(String key, double frame) {
+    queries.add((key, frame));
+    return values[key] ?? 0;
+  }
 }
 
 /// 以时间轴秒采样（BootTimeline::sample 的入参 appTime 语义，BootTimeline.cpp:126）。
@@ -138,15 +174,30 @@ void main() {
       expect(kRingBlurGlitch, 2.2);
     });
 
-    test('背景径向渐变常量（Glyphs.cpp:806-812）', () {
-      expect(kQtBackgroundCenterX, 979.2);
-      expect(kQtBackgroundCenterY, 518.4);
-      expect(kQtBackgroundRadius, 1100);
-      expect(kBootGradientStops, <double>[0, 0.76, 1]);
-      expect(kBootGradientDark.length, 3);
-      expect(kBootGradientLight.length, 3);
+    test('门槛层命令生产者常量（NativeHudBoot.cpp:161-163, :331；BootTimeline.cpp:22, :91, :123）', () {
+      // 舞台中心就是 scan 弧心：NativeHudBoot.cpp:331 translate(960, 540)。
+      expect(kQtStageCenterX, 960);
+      expect(kQtStageCenterY, 540);
+      // 度 -> 弧度：BootTimeline.cpp:22 constexpr double radians = pi / 180。
+      expect(kDegreesToRadians, closeTo(math.pi / 180, 1e-18));
+      expect(kTrackScanPrefix, 'scan.'); // BootTimeline.cpp:91
+      expect(kOrbitSideVisibleFrame, 544); // BootTimeline.cpp:123
+    });
+
+    test('背景渐变几何/色标的唯一权威在共享命令层（Glyphs.cpp:806-812）', () {
+      // DEDUP-18：页面不再持有这些数值，它们只存在于 lib/hud/render/gradient_mask.dart。
+      expect(hudBackgroundGradientCenterX, 979.2); // :807
+      expect(hudBackgroundGradientCenterY, 518.4);
+      expect(hudBackgroundGradientRadius, 1100);
+      expect(hudBackgroundGradientStops, <double>[0, 0.76, 1]); // :809-811
       // 暗色末端 17,24,27 与场景底色 #11181b 一致（NativeSceneFrame.cpp:111）
-      expect(kBootGradientDark.last, const Color(0xFF11181B));
+      expect(hudBackgroundGradientColor(dark: true, stop: 2), const Color(0xFF11181B));
+      expect(hudBackgroundGradientColor(dark: false, stop: 0), const Color(0xFFE7E7E1));
+      // 填充矩形：Glyphs.cpp:812 c.fillRect(QRectF(-4096, -4096, 8192, 8192), gradient)
+      expect(
+        hudBackgroundGradientRect,
+        const Rect.fromLTWH(-4096, -4096, 8192, 8192),
+      );
     });
   });
 
@@ -669,7 +720,351 @@ void main() {
   });
 
   // -------------------------------------------------------------------------
-  // 8) 组件：透明叠加层、按钮命中与交割
+  // 8) 门槛层命令生产者（gradient / fill / arc —— DEDUP-18）
+  // -------------------------------------------------------------------------
+  group('门槛层命令生产者（DEDUP-18）', () {
+    test('gradient 命令：backgroundOpacity == 0 时为空流（NativeHudBoot.cpp:164-168）', () {
+      const Size size = Size(1920, 1080);
+      expect(
+        buildBootBackgroundCommands(
+          size: size,
+          layout: resolveBootLayout(size),
+          backgroundOpacity: 0,
+          dark: true,
+        ),
+        isEmpty,
+      );
+    });
+
+    test('gradient 命令字段与顺序（NativeHudBoot.cpp:161-168）', () {
+      const Size size = Size(1920, 1080);
+      final List<HudCommand> commands = buildBootBackgroundCommands(
+        size: size,
+        layout: resolveBootLayout(size),
+        backgroundOpacity: 1,
+        dark: true,
+      );
+      expect(
+        commands.map((HudCommand command) => command.index),
+        <int>[0, 1, 2, 3, 4, 5, 6],
+      );
+      expect(commands[0], isA<HudSave>()); // :162 save()
+      final HudTranslate frame = commands[1] as HudTranslate; // :163 translate(offset, 0)
+      expect(frame.x, (1920 - 1920) / 2); // :161 offset = (width - 1920) / 2
+      expect(frame.y, 0);
+      expect(commands[2], isA<HudSave>()); // :165 save()
+      expect((commands[3] as HudAlpha).value, 1); // :166 alpha(backgroundOpacity)
+      final HudGradient gradient = commands[4] as HudGradient; // :167 op({"gradient", dark})
+      expect(gradient.dark, isTrue);
+      expect(commands[5], isA<HudRestore>()); // :168 restore()
+      expect(commands[6], isA<HudRestore>()); // :163 帧的 restore()
+    });
+
+    test('gradient 命令：小尺寸横屏照旧只按 offset 平移，不缩放（NativeHudBoot.cpp:161-163）', () {
+      const Size size = Size(800, 480);
+      final List<HudCommand> commands = buildBootBackgroundCommands(
+        size: size,
+        layout: resolveBootLayout(size),
+        backgroundOpacity: 1,
+        dark: true,
+      );
+      final HudTranslate frame = commands[1] as HudTranslate;
+      expect(frame.x, (800 - 1920) / 2);
+      expect(frame.y, 0);
+    });
+
+    test('gradient 命令：竖屏把舞台中心平移到页面中心（无 Qt 竖屏像素，新增响应式语义）', () {
+      const Size size = Size(1080, 2400);
+      final List<HudCommand> commands = buildBootBackgroundCommands(
+        size: size,
+        layout: resolveBootLayout(size),
+        backgroundOpacity: 1,
+        dark: true,
+      );
+      final HudTranslate frame = commands[1] as HudTranslate;
+      expect(frame.x, size.width / 2 - kQtStageCenterX);
+      expect(frame.y, size.height / 2 - kQtStageCenterY);
+    });
+
+    test('fill 命令（白闪）字段：矩形铺满页面、RGB = dark ? 0 : 1、alpha = white（NativeHudBoot.cpp:169-170）', () {
+      const Size size = Size(1920, 1080);
+      final List<HudCommand> commands = buildBootFlashCommands(
+        size: size,
+        layout: resolveBootLayout(size),
+        white: 1,
+        dark: false,
+      );
+      expect(
+        commands.map((HudCommand command) => command.index),
+        <int>[0, 1, 2, 3],
+      );
+      expect(commands[0], isA<HudSave>()); // :162 save()
+      final HudTranslate frame = commands[1] as HudTranslate;
+      expect(frame.x, 0); // :163 translate(offset, 0)，1920 宽时 offset = 0
+      final HudFill fill = commands[2] as HudFill;
+      // :170 fill(-offset, 0, width, 1080, {flash, flash, flash, white})，在 translate(offset, 0) 之内
+      expect(fill.x, -frame.x);
+      expect(fill.y, -frame.y);
+      expect(fill.width, size.width);
+      expect(fill.height, size.height);
+      expect(fill.color.red, 1); // flash = dark ? 0 : 1
+      expect(fill.color.green, 1);
+      expect(fill.color.blue, 1);
+      expect(fill.color.alpha, 1); // white
+      expect(commands[3], isA<HudRestore>());
+    });
+
+    test('fill 命令（白闪）：dark 的 RGB = 0；白光不乘 backgroundOpacity（NativeHudBoot.cpp:169-170）', () {
+      const Size size = Size(800, 480);
+      final List<HudCommand> commands = buildBootFlashCommands(
+        size: size,
+        layout: resolveBootLayout(size),
+        white: 0.5,
+        dark: true,
+      );
+      final HudTranslate frame = commands[1] as HudTranslate;
+      expect(frame.x, (800 - 1920) / 2);
+      final HudFill fill = commands[2] as HudFill;
+      expect(fill.x, -(800 - 1920) / 2);
+      expect(fill.width, 800);
+      expect(fill.color.red, 0);
+      expect(fill.color.green, 0);
+      expect(fill.color.blue, 0);
+      expect(fill.color.alpha, 0.5);
+      // Qt 的 fill 在 :166 alpha(...) 的 save/restore 之外（:169）=> 命令流里没有 HudAlpha。
+      expect(commands.whereType<HudAlpha>(), isEmpty);
+    });
+
+    test('arc 命令：scanVisible == false 时为空流（NativeHudBoot.cpp:252-254；BootTimeline.cpp:187）', () {
+      const Size size = Size(1920, 1080);
+      final BootLayout layout = resolveBootLayout(size);
+      // time 5（scan 之前）与 time 23（22.76 之后）
+      expect(
+        buildBootScanCommands(
+          frame: atElapsed(0),
+          size: size,
+          layout: layout,
+          tracks: ZeroBootTrackSource(),
+          dark: true,
+        ),
+        isEmpty,
+      );
+      expect(
+        buildBootScanCommands(
+          frame: atElapsed(18),
+          size: size,
+          layout: layout,
+          tracks: ZeroBootTrackSource(),
+          dark: true,
+        ),
+        isEmpty,
+      );
+    });
+
+    test('arc 命令骨架：零曲线只剩 save/translate/scale/alpha/restore（NativeHudBoot.cpp:330-336, :370）', () {
+      const Size size = Size(1920, 1080);
+      final List<HudCommand> commands = buildBootScanCommands(
+        frame: atElapsed(15), // time 20 => scanVisible
+        size: size,
+        layout: resolveBootLayout(size),
+        tracks: ZeroBootTrackSource(),
+        dark: true,
+      );
+      expect(
+        commands.map((HudCommand command) => command.index),
+        <int>[0, 1, 2, 3, 4, 5, 6, 7, 8],
+      );
+      expect(commands[0], isA<HudSave>()); // :162 save()
+      expect((commands[1] as HudTranslate).x, 0); // :163 translate(offset, 0)
+      expect(commands[2], isA<HudSave>()); // :330 save()
+      final HudTranslate toCentre = commands[3] as HudTranslate; // :331 translate(960, 540)
+      expect(toCentre.x, 960);
+      expect(toCentre.y, 540);
+      final HudScale scale = commands[4] as HudScale; // :334 scale(ringScale, ringScale)
+      expect(scale.sx, 1);
+      expect(scale.sy, 1);
+      final HudTranslate back = commands[5] as HudTranslate; // :335 translate(-960, -540)
+      expect(back.x, -960);
+      expect(back.y, -540);
+      expect((commands[6] as HudAlpha).value, 0); // :336 alpha(ringOpacity)，未接线 => 0
+      expect(commands[7], isA<HudRestore>()); // :370 restore()
+      expect(commands[8], isA<HudRestore>()); // :163 帧的 restore()
+      expect(commands.whereType<HudArc>(), isEmpty); // 守卫 radius > 0 && sweep > 0（:319-324）
+    });
+
+    test('arc 命令：glitch 帧的 ringScale / ringOpacity（BootTimeline.cpp:191-193）', () {
+      const Size size = Size(1920, 1080);
+      final BootFrame frame = atElapsed(16); // time 21 => frame 525 ∈ {525, 526, 528, 529}
+      expect(frame.ringScale, kRingScaleGlitch);
+      expect(frame.ringOpacity, kRingOpacityGlitch);
+      final List<HudCommand> commands = buildBootScanCommands(
+        frame: frame,
+        size: size,
+        layout: resolveBootLayout(size),
+        tracks: ZeroBootTrackSource(),
+        dark: true,
+      );
+      expect((commands[4] as HudScale).sx, kRingScaleGlitch);
+      expect((commands[6] as HudAlpha).value, kRingOpacityGlitch);
+    });
+
+    test('arc 命令：四条主弧字段逐一来自 scan.*（NativeHudBoot.cpp:337-343；Glyphs.cpp:761-774）', () {
+      const Size size = Size(1920, 1080);
+      final RecordingBootTrackSource tracks = RecordingBootTrackSource(<String, double>{
+        'scan.radius': 300,
+        'scan.outerStart': 90,
+        'scan.outerSweep': 180,
+        'scan.whiteRadius': 280,
+        'scan.whiteStart': 180,
+        'scan.whiteSweep': 90,
+        'scan.innerRadius': 200,
+        'scan.innerStart': 30,
+        'scan.innerSweep': 45,
+      });
+      final List<HudArc> arcs = buildBootScanCommands(
+        frame: atElapsed(15), // time 20 => measured 500
+        size: size,
+        layout: resolveBootLayout(size),
+        tracks: tracks,
+        dark: true,
+      ).whereType<HudArc>().toList();
+      expect(arcs.length, 4);
+
+      // :337-338 arc(scan.radius, outerStart, outerSweep, 960, 540, 2.4)（颜色默认 ink）。
+      expect(arcs[0].cx, 960);
+      expect(arcs[0].cy, 540);
+      expect(arcs[0].radius, 300);
+      expect(arcs[0].start, closeTo(90 * kDegreesToRadians, 1e-12));
+      expect(arcs[0].sweep, closeTo(180 * kDegreesToRadians, 1e-12));
+      expect(arcs[0].penWidth, 2.4);
+      // ink() = calibratedWhite 0.92/0.92/0.92，走 Gamma1.8 -> sRGB（NativeHud.cpp:10-15、Glyphs.cpp:35-49）。
+      expect(arcs[0].color.red, closeTo(hudCalibratedChannel(0.92), 1e-12));
+      expect(arcs[0].color.green, closeTo(hudCalibratedChannel(0.92), 1e-12));
+      expect(arcs[0].color.blue, closeTo(hudCalibratedChannel(0.92), 1e-12));
+      expect(arcs[0].color.alpha, 1);
+
+      // :339-340 白环：宽 4，纸色 {17/255, 24/255, 27/255, 1}（:332，4 项 => 不做 gamma）。
+      expect(arcs[1].radius, 280);
+      expect(arcs[1].start, closeTo(180 * kDegreesToRadians, 1e-12));
+      expect(arcs[1].sweep, closeTo(90 * kDegreesToRadians, 1e-12));
+      expect(arcs[1].penWidth, 4);
+      expect(arcs[1].color.red, closeTo(17 / 255, 1e-12));
+      expect(arcs[1].color.green, closeTo(24 / 255, 1e-12));
+      expect(arcs[1].color.blue, closeTo(27 / 255, 1e-12));
+
+      // :341-343 内环两段：同一 radius / sweep，第二段起点 +pi，宽 2。
+      expect(arcs[2].radius, 200);
+      expect(arcs[2].start, closeTo(30 * kDegreesToRadians, 1e-12));
+      expect(arcs[2].sweep, closeTo(45 * kDegreesToRadians, 1e-12));
+      expect(arcs[2].penWidth, 2);
+      expect(arcs[3].start, closeTo(30 * kDegreesToRadians + math.pi, 1e-12));
+      expect(arcs[3].sweep, closeTo(45 * kDegreesToRadians, 1e-12));
+
+      // 曲线取在 measuredFrame = time * 25（未取整，BootTimeline.cpp:156）。
+      expect(
+        tracks.queries,
+        containsAll(<(String, double)>[
+          ('scan.radius', 500),
+          ('scan.innerSweep', 500),
+        ]),
+      );
+    });
+
+    test('arc 命令守卫：radius == 0 或 sweep == 0 都不发 op（NativeHudBoot.cpp:319-324）', () {
+      const Size size = Size(1920, 1080);
+      final BootLayout layout = resolveBootLayout(size);
+      // radius 有值、sweep 为 0 => 该弧整体不发。
+      expect(
+        buildBootScanCommands(
+          frame: atElapsed(15),
+          size: size,
+          layout: layout,
+          tracks: FakeBootTrackSource(<String, double>{
+            'scan.radius': 300,
+            'scan.outerStart': 0,
+            'scan.outerSweep': 0,
+          }),
+          dark: true,
+        ).whereType<HudArc>(),
+        isEmpty,
+      );
+      // sweep 有值、radius 为 0 => 同样不发。
+      expect(
+        buildBootScanCommands(
+          frame: atElapsed(15),
+          size: size,
+          layout: layout,
+          tracks: FakeBootTrackSource(<String, double>{
+            'scan.innerRadius': 0,
+            'scan.innerStart': 0,
+            'scan.innerSweep': 90,
+          }),
+          dark: true,
+        ).whereType<HudArc>(),
+        isEmpty,
+      );
+    });
+
+    test('arc 命令：orbit 侧弧在 measuredFrame >= 544 才发（BootTimeline.cpp:123, :344-350）', () {
+      const Size size = Size(1920, 1080);
+      final BootLayout layout = resolveBootLayout(size);
+      final FakeBootTrackSource tracks = FakeBootTrackSource(<String, double>{
+        'scan.radius': 300,
+        'scan.outerStart': 0,
+        'scan.outerSweep': 90,
+        'scan.whiteRadius': 0,
+        'scan.whiteStart': 0,
+        'scan.whiteSweep': 0,
+        'scan.innerRadius': 0,
+        'scan.innerStart': 0,
+        'scan.innerSweep': 0,
+        'orbit.column0': 700,
+        'orbit.column1': 200,
+        'orbit.column2': 1200,
+        'orbit.column3': 300,
+        'orbit.column4': 40,
+        'orbit.column5': 10,
+        'orbit.column6': 100,
+        'orbit.column7': 30,
+        'orbit.column8': 60,
+      });
+      // measured 525 < 544 => sideVisible == false，只剩主外弧。
+      expect(
+        buildBootScanCommands(
+          frame: atElapsed(16), // time 21
+          size: size,
+          layout: layout,
+          tracks: tracks,
+          dark: true,
+        ).whereType<HudArc>().length,
+        1,
+      );
+      // measured 550 >= 544（time 22，仍 scanVisible）=> 主外弧 + 两条侧弧。
+      final List<HudArc> arcs = buildBootScanCommands(
+        frame: atElapsed(17), // time 22
+        size: size,
+        layout: layout,
+        tracks: tracks,
+        dark: true,
+      ).whereType<HudArc>().toList();
+      expect(arcs.length, 3);
+      // :344-350 两条 side：x/y 取 orbit.column0..3，radius 取 column4，start/sweep 取 column5..8。
+      expect(arcs[1].cx, 700);
+      expect(arcs[1].cy, 200);
+      expect(arcs[1].radius, 40);
+      expect(arcs[1].start, closeTo(10 * kDegreesToRadians, 1e-12));
+      expect(arcs[1].sweep, closeTo(30 * kDegreesToRadians, 1e-12));
+      expect(arcs[1].penWidth, 2);
+      expect(arcs[2].cx, 1200);
+      expect(arcs[2].cy, 300);
+      expect(arcs[2].radius, 40);
+      expect(arcs[2].start, closeTo(100 * kDegreesToRadians, 1e-12));
+      expect(arcs[2].sweep, closeTo(60 * kDegreesToRadians, 1e-12));
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // 9) 组件：透明叠加层、按钮命中与交割
   // -------------------------------------------------------------------------
   group('BootPage 组件行为', () {
     testWidgets('1920x1080：无 Scaffold/Material；按钮矩形精确；tap => archive', (WidgetTester tester) async {
@@ -747,24 +1142,39 @@ void main() {
       await unmountBoot(tester);
     });
 
-    testWidgets('backgroundOpacity > 0 时背景层是 Qt 径向渐变（Glyphs.cpp:806-812）', (WidgetTester tester) async {
+    testWidgets('backgroundOpacity > 0 时背景层是 gradient 命令流，页面不再自绘（NativeHudBoot.cpp:164-168）', (WidgetTester tester) async {
       useScreen(tester, const Size(1920, 1080));
       final BootController controller = BootController(clock: FakeBootClock());
       await pumpBoot(tester, BootPage(controller: controller));
 
-      final DecoratedBox box = tester.widget<DecoratedBox>(
+      // DEDUP-18：图层是 CustomPaint + [HudCommand]，不是 DecoratedBox / RadialGradient。
+      expect(
         find.descendant(
           of: find.byKey(kBootBackgroundLayerKey),
           matching: find.byType(DecoratedBox),
         ),
+        findsNothing,
       );
-      final RadialGradient gradient =
-          (box.decoration as BoxDecoration).gradient! as RadialGradient;
-      expect(gradient.colors, kBootGradientDark); // 默认 themeDark = true
-      expect(gradient.stops, kBootGradientStops);
-      expect(gradient.center.x, closeTo(2 * 979.2 / 1920 - 1, 1e-12));
-      expect(gradient.center.y, closeTo(2 * 518.4 / 1080 - 1, 1e-12));
-      expect(gradient.radius, closeTo(1100 / 1080, 1e-12));
+      final BootHudCommandPainter painter = tester
+          .widget<CustomPaint>(find.byKey(kBootBackgroundLayerKey))
+          .painter! as BootHudCommandPainter;
+      final List<HudCommand> commands = painter.commands;
+      expect(
+        commands.map((HudCommand command) => command.index),
+        <int>[0, 1, 2, 3, 4, 5, 6],
+      );
+      expect(commands[0], isA<HudSave>()); // NativeHudBoot.cpp:162
+      final HudTranslate frame = commands[1] as HudTranslate; // :163
+      expect(frame.x, 0); // 1920 宽 => offset = 0（:161）
+      expect(frame.y, 0);
+      expect((commands[3] as HudAlpha).value, 1); // :166
+      expect((commands[4] as HudGradient).dark, isTrue); // :167，默认 themeDark = true
+      expect(commands[5], isA<HudRestore>()); // :168
+      expect(commands[6], isA<HudRestore>()); // :163 帧
+
+      // 整页也不再有自绘门槛层（背景/白闪都走命令流）。
+      expect(find.byType(DecoratedBox), findsNothing);
+      expect(find.byType(ColoredBox), findsNothing);
 
       await unmountBoot(tester);
     });
@@ -831,7 +1241,7 @@ void main() {
       await unmountBoot(tester);
     });
 
-    testWidgets('themeDark = false：浅色渐变 + 白色闪（NativeHudBoot.cpp:169 flash = dark ? 0 : 1）', (WidgetTester tester) async {
+    testWidgets('themeDark = false：浅色 gradient 命令 + 白色闪 fill（NativeHudBoot.cpp:167, :169-170）', (WidgetTester tester) async {
       useScreen(tester, const Size(1920, 1080));
       final FakeBootClock clock = FakeBootClock();
       final BootController controller = BootController(clock: clock, startOffsetSeconds: 0);
@@ -839,25 +1249,30 @@ void main() {
       await pumpBoot(tester, BootPage(controller: controller, themeDark: false));
       await tester.pump();
 
-      final DecoratedBox box = tester.widget<DecoratedBox>(
-        find.descendant(
-          of: find.byKey(kBootBackgroundLayerKey),
-          matching: find.byType(DecoratedBox),
-        ),
-      );
-      expect(((box.decoration as BoxDecoration).gradient! as RadialGradient).colors, kBootGradientLight);
+      final BootHudCommandPainter background = tester
+          .widget<CustomPaint>(find.byKey(kBootBackgroundLayerKey))
+          .painter! as BootHudCommandPainter;
+      expect((background.commands[4] as HudGradient).dark, isFalse); // :167 a[1].toBool()
 
       clock.setSeconds(21.88); // time 26.88 => backgroundOpacity 1, white 1
       await tester.pump();
       expect(controller.frame.backgroundOpacity, 1);
       expect(controller.frame.white, 1);
-      final ColoredBox flash = tester.widget<ColoredBox>(find.byKey(kBootFlashLayerKey));
-      expect(flash.color, const Color(0xFFFFFFFF));
+      final BootHudCommandPainter flash = tester
+          .widget<CustomPaint>(find.byKey(kBootFlashLayerKey))
+          .painter! as BootHudCommandPainter;
+      final HudFill fill = flash.commands[2] as HudFill; // :170
+      expect(fill.color.red, 1); // flash = dark ? 0 : 1 => 1
+      expect(fill.color.green, 1);
+      expect(fill.color.blue, 1);
+      expect(fill.color.alpha, 1); // white
+      expect(fill.width, 1920); // -offset .. -offset + width（:170）
+      expect(fill.height, 1080);
 
       await unmountBoot(tester);
     });
 
-    testWidgets('默认 dark 主题白闪为黑（NativeHudBoot.cpp:169-170）', (WidgetTester tester) async {
+    testWidgets('默认 dark 主题白闪为黑：fill 的 RGB = 0、alpha = white（NativeHudBoot.cpp:169-170）', (WidgetTester tester) async {
       useScreen(tester, const Size(1920, 1080));
       final FakeBootClock clock = FakeBootClock();
       final BootController controller = BootController(clock: clock, startOffsetSeconds: 0);
@@ -868,26 +1283,73 @@ void main() {
       await tester.pump();
       expect(controller.frame.backgroundOpacity, 1);
       expect(controller.frame.white, 1);
-      final ColoredBox flash = tester.widget<ColoredBox>(find.byKey(kBootFlashLayerKey));
-      expect(flash.color, const Color(0xFF000000));
+      final BootHudCommandPainter flash = tester
+          .widget<CustomPaint>(find.byKey(kBootFlashLayerKey))
+          .painter! as BootHudCommandPainter;
+      final HudFill fill = flash.commands[2] as HudFill; // :170
+      expect(fill.color.red, 0); // flash = dark ? 0 : 1 => 0
+      expect(fill.color.green, 0);
+      expect(fill.color.blue, 0);
+      expect(fill.color.alpha, 1); // white
 
       await unmountBoot(tester);
     });
 
-    testWidgets('竖屏 1080x2400：背景渐变居中（新增语义，不沿用横屏舞台锚点）', (WidgetTester tester) async {
+    testWidgets('竖屏 1080x2400：舞台中心平移到页面中心（新增响应式语义，不沿用横屏 offset）', (WidgetTester tester) async {
       useScreen(tester, const Size(1080, 2400));
       final BootController controller = BootController(clock: FakeBootClock());
       await pumpBoot(tester, BootPage(controller: controller));
 
-      final DecoratedBox box = tester.widget<DecoratedBox>(
-        find.descendant(
-          of: find.byKey(kBootBackgroundLayerKey),
-          matching: find.byType(DecoratedBox),
-        ),
+      final BootHudCommandPainter painter = tester
+          .widget<CustomPaint>(find.byKey(kBootBackgroundLayerKey))
+          .painter! as BootHudCommandPainter;
+      final HudTranslate frame = painter.commands[1] as HudTranslate;
+      expect(frame.x, 1080 / 2 - kQtStageCenterX); // 540 - 960
+      expect(frame.y, 2400 / 2 - kQtStageCenterY); // 1200 - 540
+
+      await unmountBoot(tester);
+      controller.dispose();
+    });
+
+    testWidgets('scan 图层只在 scanVisible 区间存在，且按 arc 命令流绘制（NativeHudBoot.cpp:252-254, :330-350）', (WidgetTester tester) async {
+      useScreen(tester, const Size(1920, 1080));
+      final FakeBootClock clock = FakeBootClock();
+      final BootController controller = BootController(
+        clock: clock,
+        startOffsetSeconds: 0,
+        tracks: FakeBootTrackSource(<String, double>{
+          'scan.radius': 300,
+          'scan.outerStart': 0,
+          'scan.outerSweep': 90,
+          'scan.whiteRadius': 280,
+          'scan.whiteStart': 0,
+          'scan.whiteSweep': 90,
+          'scan.innerRadius': 200,
+          'scan.innerStart': 0,
+          'scan.innerSweep': 45,
+          'orbit.column4': 40,
+          'orbit.column5': 10,
+          'orbit.column6': 100,
+          'orbit.column7': 30,
+          'orbit.column8': 60,
+        }),
       );
-      final RadialGradient gradient =
-          (box.decoration as BoxDecoration).gradient! as RadialGradient;
-      expect(gradient.center, Alignment.center);
+      await pumpBoot(tester, BootPage(controller: controller));
+      await tester.pump();
+      expect(find.byKey(kBootScanLayerKey), findsNothing); // time 5 => scanVisible false
+
+      clock.setSeconds(17); // time 22 => 19.48 <= time < 22.76
+      await tester.pump();
+      expect(find.byKey(kBootScanLayerKey), findsOneWidget);
+      final BootHudCommandPainter painter = tester
+          .widget<CustomPaint>(find.byKey(kBootScanLayerKey))
+          .painter! as BootHudCommandPainter;
+      // 四条主弧 + 两条侧弧（measured 550 >= 544，BootTimeline.cpp:123）
+      expect(painter.commands.whereType<HudArc>().length, 6);
+
+      clock.setSeconds(18); // time 23 => scanVisible false
+      await tester.pump();
+      expect(find.byKey(kBootScanLayerKey), findsNothing);
 
       await unmountBoot(tester);
       controller.dispose();
@@ -967,7 +1429,7 @@ void main() {
   });
 
   // -------------------------------------------------------------------------
-  // 9) hudBuilder seam 与「不伪造」断言
+  // 10) hudBuilder seam 与「不伪造」断言
   // -------------------------------------------------------------------------
   group('hudBuilder seam 与不伪造', () {
     testWidgets('hudBuilder 注入：收到当前 BootFrame，且页面自身只画按钮文字', (WidgetTester tester) async {

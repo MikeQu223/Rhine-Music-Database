@@ -13,6 +13,9 @@
 /// - Qt/src/NativeHudController.cpp:698      `m_scene.mode("boot")`（replay，等价 restart）
 /// - Qt/src/SceneMotion.cpp:46-49        `ease(value)` = smoothstep
 /// - Qt/src/Glyphs.cpp:806-812           `op == "gradient"`：径向渐变（中心 979.2,518.4；半径 1100）
+/// - Qt/src/Glyphs.cpp:761-774           `op == "arc"`：`{"arc", cx, cy, radius, start, sweep, penWidth, color}`
+/// - Qt/src/NativeHudBoot.cpp:164-171    门槛层：`gradient` 在 backgroundOpacity 的 alpha 内，白闪 `fill` 在其外
+/// - Qt/src/NativeHudBoot.cpp:330-350    `scan()` 的弧段（scan.* / orbit.* 曲线，度→radians）
 ///
 /// 阶段语义（务必保留，Qt 门槛行为一致）：
 /// - time < 26.92 时 backgroundOpacity = 1（不透明门槛背景）；26.92 起 backgroundOpacity = 0 且 exit 完成
@@ -23,6 +26,9 @@
 /// 不伪造声明（职责边界）：
 /// - 真实 HUD 绘制（glyph 真 advance/path、baseline 1.044、art 零偏移、Gamma1.8→sRGB）由共享 HUD 层负责，
 ///   经 [BootPage.hudBuilder] 注入；本页绝不自绘 boot glyph 文本。
+/// - 门槛层（`gradient` / `fill` / `arc`）在 DEDUP-18 后由本页的**命令生产者**产出 [HudCommand]，
+///   再交给共享 [paintHudCommands] 执行：页面不再用 `DecoratedBox`/`RadialGradient`/`ColoredBox`
+///   自绘渐变或白闪，也不再自己算渐变几何（中心/半径/色标/填充矩形归 lib/hud/render/gradient_mask.dart）。
 /// - track 驱动量（logo 描边、scan 弧、orbit 卫星、brand 行、highlightKeys、ringOpacity、permissionOpacity 尾段）
 ///   在 Qt 侧来自 Assets/animation/boot-tracks.json 实测曲线；本卡 pubspec.yaml 未声明任何 assets、且 pubspec
 ///   不在本卡写域 ⇒ 只能经 [BootTrackSource] 注入，默认 [ZeroBootTrackSource] 一律返回 0，不得编造实测值。
@@ -31,6 +37,9 @@ library;
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+
+import '../../hud/protocol/hud_command.dart';
+import '../../hud/render/paint_stack.dart';
 
 // ---------------------------------------------------------------------------
 // 1) 数值常量（全部带 Qt 证据注释；语义/数值不得改）
@@ -180,6 +189,10 @@ const double kRingBlurGlitch = 2.2;
 /// scanFont：Qt/src/BootTimeline.cpp:195。
 const double kScanFontSize = 26.5;
 
+/// orbit 侧弧起帧：Qt/src/BootTimeline.cpp:123 `"sideVisible", frame >= 544`
+/// （比较对象是未取整的 measuredFrame，:157-158）。
+const double kOrbitSideVisibleFrame = 544;
+
 /// ornament 起点：Qt/src/BootTimeline.cpp:198 `time >= 21.84`。
 const double kOrnamentSeconds = 21.84;
 
@@ -215,20 +228,26 @@ const double kPermissionTrackFromSeconds = 21.8;
 const double kPermissionFadeEndSeconds = 19.88;
 
 /// 背景径向渐变（op == "gradient"）：Qt/src/Glyphs.cpp:806-812。
-const double kQtBackgroundCenterX = 979.2;
-const double kQtBackgroundCenterY = 518.4;
-const double kQtBackgroundRadius = 1100;
-const List<double> kBootGradientStops = <double>[0, 0.76, 1];
-const List<Color> kBootGradientDark = <Color>[
-  Color(0xFF202A2F), // 32,42,47
-  Color(0xFF172125), // 23,33,37
-  Color(0xFF11181B), // 17,24,27（与 NativeSceneFrame.cpp:111 场景底色一致）
-];
-const List<Color> kBootGradientLight = <Color>[
-  Color(0xFFE7E7E1), // 231,231,225
-  Color(0xFFE3E1DC), // 227,225,220
-  Color(0xFFE4DFDB), // 228,223,219
-];
+///
+/// DEDUP-18 起本页**不再自绘**渐变：中心 979.2/518.4、半径 1100、色标 [0, .76, 1]、填充矩形
+/// -4096..4096 的唯一权威在共享命令层 —— `hudBackgroundGradientCenterX` /
+/// `hudBackgroundGradientCenterY` / `hudBackgroundGradientRadius` /
+/// `hudBackgroundGradientStops` / `hudBackgroundGradientColor` / `hudBackgroundGradientRect`
+/// （lib/hud/render/gradient_mask.dart）。
+/// 本页只产出 [HudGradient] 命令（见 [buildBootBackgroundCommands]），几何由 painter 提供。
+
+/// Qt 舞台中心 = 1920x1080 设计区中心，也是 scan 弧心：Qt/src/NativeHudBoot.cpp:331
+/// `translate(960, 540)`（:319 `arc()` 的默认 x/y 也是 960/540）。
+/// 竖屏（Qt 无竖屏舞台）用它把舞台中心平移到页面中心，见 [bootStageTranslate]。
+const double kQtStageCenterX = 960;
+const double kQtStageCenterY = 540;
+
+/// 度→弧度：Qt/src/BootTimeline.cpp:22 `constexpr double radians = std::numbers::pi / 180;`
+/// （scan.*/orbit.* 的 start/sweep 曲线是度数，取用前乘它：:89、:108-113）。
+const double kDegreesToRadians = math.pi / 180;
+
+/// scan.* track 键前缀：Qt/src/BootTimeline.cpp:91 `value("scan." + key, frame)`。
+const String kTrackScanPrefix = 'scan.';
 
 /// 文本基色：Qt/src/NativeHud.cpp:10-15 `ink()`（dark → calibratedWhite 0.92/0.92/0.92；
 /// 亮色 → calibratedRGB 0.08/0.085/0.075）。此处按 8bit 量化（0.92*255 = 234.6 → 235）。
@@ -244,9 +263,11 @@ const double kPortraitTouchMinHeight = 48;
 const String kTrackRingOpacity = 'ringOpacity';
 const String kTrackPermissionOpacity = 'permissionOpacity';
 
-/// 叠加层 key：让「backgroundOpacity == 0 后不画背景」「white == 0 时不画白闪」可被文本化核对。
+/// 叠加层 key：让「backgroundOpacity == 0 后不画背景」「white == 0 时不画白闪」
+/// 「scanVisible == false 时不画弧」可被文本化核对。
 const Key kBootBackgroundLayerKey = Key('boot.background');
 const Key kBootFlashLayerKey = Key('boot.flash');
+const Key kBootScanLayerKey = Key('boot.scan');
 
 // ---------------------------------------------------------------------------
 // 2) 纯函数（与 Qt 逐字等价，可独立测试）
@@ -688,6 +709,9 @@ class BootController extends ChangeNotifier {
   /// 当前时间轴帧（= [BootTimeline] 语义，见 [sampleBootFrame]）。
   BootFrame get frame => sampleBootFrame(elapsedSeconds, tracks: _tracks);
 
+  /// 本控制器使用的 track 曲线源（页面侧 arc 生产者必须与时间轴采样同源）。
+  BootTrackSource get tracks => _tracks;
+
   /// 已交割去向；null 表示仍在 boot。
   BootHandoff? get handoff => _handoff;
 
@@ -787,10 +811,278 @@ BootLayout resolveBootLayout(Size size, {EdgeInsets safeArea = EdgeInsets.zero})
 }
 
 // ---------------------------------------------------------------------------
-// 7) 页面（透明叠加层）
+// 7) 门槛层命令生产者（gradient / fill / arc —— DEDUP-18）
 // ---------------------------------------------------------------------------
 
-/// Boot 门槛页：透明叠加层（背景 + 白闪 + ENTER SYSTEM 按钮；真 HUD glyph 由 [hudBuilder] 注入）。
+// 门槛层命令生产者（DEDUP-18）：把 Qt `NativeHud::boot()` / `NativeHud::scan()` 里那几条
+// `gradient` / `fill` / `arc` op 在 Dart 侧等价产出，页面再交给共享 paintHudCommands 执行。
+//
+// 三条验收约束：
+// 1. 命令字段、坐标空间、颜色来源全部取自 Qt 源码，逐条标 `Qt 文件:行`，不发明字段；
+// 2. 页面不再用 Flutter widget 自绘门槛层（渐变/白闪/弧线），只按命令流画；
+// 3. 每个图层是一条独立命令流（各自从 index 0 编号）。一次 painter 就是一次
+//    paintHudCommands，canvas 状态不能跨图层传递，所以 Qt 里共享的
+//    `save()` + `translate(offset, 0)` 帧（Qt/src/NativeHudBoot.cpp:162-163）在每层各自重建。
+//
+// 颜色一律经 decodeHudColor 构造：它与 wire 解码共用同一条 Gamma1.8→sRGB 路径
+// （Qt/src/Glyphs.cpp:35-49），手写 HudColor 会漏掉 `calibrated*` 分支。
+
+/// 页面坐标 → Qt 舞台坐标的 `translate` 量（`op({"translate", x, y})`：
+/// Qt/src/NativeHud.cpp:16-43 的包装、Qt/src/Glyphs.cpp:660-661 的执行）。
+///
+/// - 横屏：Qt/src/NativeHudBoot.cpp:161 `const auto offset = (width - 1920) / 2;` 与
+///   :163 `translate(offset, 0)` —— 只平移 x，y 恒 0；offset 即 [BootLayout.offsetX]。
+/// - 竖屏：Qt 没有竖屏舞台（本页新增响应式语义，见 [resolveBootLayout]），把舞台中心
+///   ([kQtStageCenterX], [kQtStageCenterY]) 平移到页面中心；半径/色标/弧长仍是舞台单位，不缩放。
+({double dx, double dy}) bootStageTranslate(Size size, BootLayout layout) {
+  if (layout.portrait) {
+    return (
+      dx: size.width / 2 - kQtStageCenterX,
+      dy: size.height / 2 - kQtStageCenterY,
+    );
+  }
+  return (dx: layout.offsetX, dy: 0);
+}
+
+/// `NativeHud::ink()`：Qt/src/NativeHud.cpp:10-15 —— dark 走 `calibratedWhite` 的
+/// 0.92/0.92/0.92，亮色走 `calibratedRGB` 的 0.08/0.085/0.075（第 5 项字符串是 gamma 开关，
+/// Qt/src/Glyphs.cpp:35-49）。
+HudColor _bootInk(bool dark) => decodeHudColor(<Object?>[
+      dark ? 0.92 : 0.08,
+      dark ? 0.92 : 0.085,
+      dark ? 0.92 : 0.075,
+      1,
+      dark ? 'calibratedWhite' : 'calibratedRGB',
+    ]);
+
+/// scan 白环的纸色：Qt/src/NativeHudBoot.cpp:332
+/// `paper = dark ? {17/255, 24/255, 27/255, 1} : {1, 1, 1, 1}`（4 项 ⇒ 普通 RGBA，不做 gamma）。
+HudColor _bootPaper(bool dark) => decodeHudColor(
+      dark
+          ? <Object?>[17 / 255, 24 / 255, 27 / 255, 1]
+          : <Object?>[1, 1, 1, 1],
+    );
+
+/// `value("scan." + key, frame)`：Qt/src/BootTimeline.cpp:80-94（未命中 track 返回 0，:64-67）。
+double _scanTrack(BootTrackSource tracks, double frame, String key) =>
+    tracks.value(kTrackScanPrefix + key, frame);
+
+/// `gradient` 图层命令：Qt/src/NativeHudBoot.cpp:162-168。
+///
+/// save(); translate(offset, 0); if (backgroundOpacity > 0) { save(); alpha(...);
+/// gradient; restore(); }
+///
+/// - 字段：`gradient` op 只带一个参数 `dark`（Qt/src/NativeHudBoot.cpp:167、
+///   Qt/src/Glyphs.cpp:806-812）；中心 (979.2, 518.4)、半径 1100、色标 [0, .76, 1] 全部写死在
+///   Glyphs.cpp:807-811，wire 上不可配 ⇒ 由共享 painter 的 `hudBackgroundGradient` 提供。
+/// - 坐标空间：op 在 `translate(offset, 0)` 之后执行，填充矩形 -4096..4096
+///   （Qt/src/Glyphs.cpp:812）⇒ 渐变中心 = 舞台坐标 + offset。
+/// - alpha：Qt 的 `gradient` 分支没有 alpha 参数，透明度走 painter opacity（:166 `alpha(...)`）；
+///   共享 painter 用 `saveLayer` 承载（lib/hud/render/paint_stack.dart:578-604）。
+///
+/// [backgroundOpacity] <= 0 时返回空流：Qt 的 `if` 守卫（:164）⇒ 26.92s 后图层不存在（透明叠加）。
+List<HudCommand> buildBootBackgroundCommands({
+  required Size size,
+  required BootLayout layout,
+  required double backgroundOpacity,
+  required bool dark,
+}) {
+  if (backgroundOpacity <= 0) {
+    return const <HudCommand>[];
+  }
+  final ({double dx, double dy}) shift = bootStageTranslate(size, layout);
+  int index = 0;
+  return <HudCommand>[
+    HudSave(index++),
+    HudTranslate(index++, shift.dx, shift.dy),
+    HudSave(index++),
+    HudAlpha(index++, backgroundOpacity),
+    HudGradient(index++, dark),
+    HudRestore(index++),
+    HudRestore(index++),
+  ];
+}
+
+/// 白闪 `fill` 图层命令：Qt/src/NativeHudBoot.cpp:169-170。
+///
+/// const double flash = dark ? 0 : 1; fill(-offset, 0, width, 1080, {flash, flash, flash, white});
+///
+/// - 字段：`fill` op 的 wire 顺序是 `{"fill", color, x, y, w, h}`（Qt/src/NativeHud.cpp:16-43
+///   的包装、Qt/src/Glyphs.cpp:684-691 的执行）⇒ [HudFill] 也是颜色在前。
+/// - 颜色：`{flash, flash, flash, white}` 是 4 项数组，走普通 RGBA 分支（无 `calibrated` 第 5 项，
+///   Qt/src/Glyphs.cpp:35-49），alpha 取第 4 项 `white`（:170）。
+/// - 坐标空间：矩形是屏幕 `-offset .. -offset + width`、`0 .. 1080`（:170），在
+///   `translate(offset, 0)` 之内 ⇒ 平移后正好覆盖页面。本页取 `(-dx, -dy, size.width,
+///   size.height)`：1920x1080 时逐值等于 Qt（dy == 0、height == 1080）；横屏其它尺寸下
+///   Qt 的 1080 高会被视口裁掉，本式的页面高与它像素等价；竖屏无 Qt 像素，用页面高让整层
+///   真正铺满（否则白闪只盖 1080 高的带子）。⇒ 字面高度 1080 见 `kQtDesignHeight`，
+///   这里的替换已记入残余风险。
+/// - 白光**不乘 backgroundOpacity**：Qt 的 fill 在 `alpha(...)` 的 save/restore 之外（:169）。
+/// - 已知偏差（RESIDUAL_RISK）：Qt 在 height <= 1080 时那 1080 高的矩形被视口裁掉，覆盖整屏，
+///   与本节等价；height > 1080 时 Qt 只涂上 1080 高的一条，本式会多涂底部 height - 1080 的带子。
+List<HudCommand> buildBootFlashCommands({
+  required Size size,
+  required BootLayout layout,
+  required double white,
+  required bool dark,
+}) {
+  final ({double dx, double dy}) shift = bootStageTranslate(size, layout);
+  final double flash = dark ? 0.0 : 1.0; // :169 const double flash = dark ? 0 : 1;
+  final HudColor color = decodeHudColor(<Object?>[flash, flash, flash, white]); // :170
+  int index = 0;
+  return <HudCommand>[
+    HudSave(index++),
+    HudTranslate(index++, shift.dx, shift.dy),
+    HudFill(index++, color, -shift.dx, -shift.dy, size.width, size.height),
+    HudRestore(index++),
+  ];
+}
+
+/// `arc` 图层命令：Qt/src/NativeHudBoot.cpp:330-350（`scan()` 的弧段）。
+///
+/// save(); translate(960, 540); scale(ringScale); translate(-960, -540); alpha(ringOpacity);
+/// 之后 arc(radius, start, sweep, x = 960, y = 540, width = 2, color = {}) 内：
+/// if (radius > 0 && sweep > 0) op({"arc", x, y, radius, start, sweep, width,
+/// color.isEmpty() ? ink() : color});
+///
+/// - 字段（Qt/src/Glyphs.cpp:761-774）：`{"arc", cx, cy, radius, start, sweep, penWidth, color}`；
+///   `start`/`sweep` 是**弧度** —— Qt 先按 `radians = pi/180` 把度数换成弧度
+///   （Qt/src/BootTimeline.cpp:22、:89），画的时候再取负（`-n(4)*180/pi`）；
+///   共享 painter 直接按 wire 值 `arcTo`（lib/hud/render/paint_stack.dart:511-560）。
+/// - 曲线来源：三条半径键（radius / whiteRadius / innerRadius）+ 六个角度键（outerStart,
+///   outerSweep, whiteStart, whiteSweep, innerStart, innerSweep，:86-91 乘 radians）+ 侧弧的
+///   orbit.column0..8，全部在 `measuredFrame = time * 25`（未取整，Qt/src/BootTimeline.cpp:156）
+///   上取值；未接线时 [ZeroBootTrackSource] 一律 0 ⇒ 守卫全部拦掉，只留
+///   save/translate/scale/alpha/restore 骨架（与 Qt 对空曲线的行为一致，:319-324）。
+/// - 顺序即语义：:162-163 的 `translate(offset, 0)` → :330-336 的 scale/alpha →
+///   :337-343 四条主弧 → :344-350 两条侧弧 → :370 `restore()`。
+/// - 范围外（不生产）：scan() 还画 orbit 圆点与 ornament 核心（:351-369 的 `dot()` → `ellipse`
+///   op）以及 :371-377 的 permission art；它们不属于 DEDUP-18 的 `gradient`/`arc` 两个 op，
+///   本节只覆盖弧线。真正补 ellipse/art 生产者需另立原子（RESIDUAL_RISK，见报告）。
+List<HudCommand> buildBootScanCommands({
+  required BootFrame frame,
+  required Size size,
+  required BootLayout layout,
+  required BootTrackSource tracks,
+  required bool dark,
+}) {
+  // Qt/src/NativeHudBoot.cpp:252-254：if (boot["scanVisible"].toBool()) scan(boot);
+  // scanVisible = time >= 19.48 && time < 22.76（Qt/src/BootTimeline.cpp:187）。
+  if (!frame.scanVisible) {
+    return const <HudCommand>[];
+  }
+  final ({double dx, double dy}) shift = bootStageTranslate(size, layout);
+  final HudColor ink = _bootInk(dark); // :319-324 color.isEmpty() ? ink() : color
+  final HudColor paper = _bootPaper(dark); // :332
+  // :156 const auto measuredFrame = time * 25; —— scan()/orbit() 收到的就是这个未取整帧。
+  final double measured = frame.measuredFrame;
+  final List<HudCommand> commands = <HudCommand>[];
+  int index = 0;
+
+  void push(HudCommand command) {
+    commands.add(command);
+  }
+
+  // :319-324 的 arc() lambda：守卫 radius > 0 && sweep > 0，默认 x/y = 960/540、宽 2、色 = ink。
+  void arc(
+    double radius,
+    double start,
+    double sweep, {
+    double x = kQtStageCenterX,
+    double y = kQtStageCenterY,
+    double penWidth = 2,
+    HudColor? color,
+  }) {
+    if (radius > 0 && sweep > 0) {
+      push(HudArc(index++, x, y, radius, start, sweep, penWidth, color ?? ink));
+    }
+  }
+
+  // Qt/src/NativeHudBoot.cpp:162-163：boot() 帧 save(); translate(offset, 0);
+  push(HudSave(index++));
+  push(HudTranslate(index++, shift.dx, shift.dy));
+  // Qt/src/NativeHudBoot.cpp:330-336：scan() 的 save、绕弧心 (960,540) 的 scale、alpha(ringOpacity)。
+  push(HudSave(index++));
+  push(HudTranslate(index++, kQtStageCenterX, kQtStageCenterY)); // :331
+  push(HudScale(index++, frame.ringScale, frame.ringScale)); // :334
+  push(HudTranslate(index++, -kQtStageCenterX, -kQtStageCenterY)); // :335
+  push(HudAlpha(index++, frame.ringOpacity)); // :336
+  // :337-338 外环：scan.radius / outerStart / outerSweep，宽 2.4，ink。
+  arc(
+    _scanTrack(tracks, measured, 'radius'),
+    _scanTrack(tracks, measured, 'outerStart') * kDegreesToRadians,
+    _scanTrack(tracks, measured, 'outerSweep') * kDegreesToRadians,
+    penWidth: 2.4,
+  );
+  // :339-340 白环：scan.whiteRadius / whiteStart / whiteSweep，宽 4，paper。
+  arc(
+    _scanTrack(tracks, measured, 'whiteRadius'),
+    _scanTrack(tracks, measured, 'whiteStart') * kDegreesToRadians,
+    _scanTrack(tracks, measured, 'whiteSweep') * kDegreesToRadians,
+    penWidth: 4,
+    color: paper,
+  );
+  // :341-343 内环两段：同一组 scan.innerRadius/innerStart/innerSweep，第二段起点 +pi，宽 2，ink。
+  final double innerRadius = _scanTrack(tracks, measured, 'innerRadius');
+  final double innerStart =
+      _scanTrack(tracks, measured, 'innerStart') * kDegreesToRadians;
+  final double innerSweep =
+      _scanTrack(tracks, measured, 'innerSweep') * kDegreesToRadians;
+  arc(innerRadius, innerStart, innerSweep);
+  arc(innerRadius, innerStart + math.pi, innerSweep);
+  // :344-350 侧弧：if (orbit["sideVisible"])（= frame >= 544，Qt/src/BootTimeline.cpp:123）
+  // ⇒ 两条 side，几何取自 orbit.column0..8（:95-124）：x = column0/2、y = column1/3、
+  // radius = column4（两段同半径）、start/sweep = column5..8（度→弧度），宽 2，ink。
+  if (measured >= kOrbitSideVisibleFrame) {
+    final List<double> column = <double>[
+      for (int i = 0; i < 9; i++)
+        tracks.value('orbit.column' + i.toString(), measured),
+    ];
+    arc(
+      column[4],
+      column[5] * kDegreesToRadians,
+      column[7] * kDegreesToRadians,
+      x: column[0],
+      y: column[1],
+    );
+    arc(
+      column[4],
+      column[6] * kDegreesToRadians,
+      column[8] * kDegreesToRadians,
+      x: column[2],
+      y: column[3],
+    );
+  }
+  // :370 scan() 的 restore()；紧接 :162 帧的 restore()。
+  push(HudRestore(index++));
+  push(HudRestore(index++));
+  return commands;
+}
+
+/// 执行一条门槛层命令流（共享 17-op 执行器，lib/hud/render/paint_stack.dart:237-245）。
+///
+/// 只做转发：字段已按 Qt 值产出，换算（arc 取负、alpha 乘性叠加、gradient 的 saveLayer）
+/// 全部在共享层，页面不再介入几何。
+class BootHudCommandPainter extends CustomPainter {
+  const BootHudCommandPainter(this.commands);
+
+  final List<HudCommand> commands;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    paintHudCommands(canvas: canvas, commands: commands);
+  }
+
+  @override
+  bool shouldRepaint(BootHudCommandPainter oldDelegate) =>
+      oldDelegate.commands != commands;
+}
+
+// ---------------------------------------------------------------------------
+// 8) 页面（透明叠加层）
+// ---------------------------------------------------------------------------
+
+/// Boot 门槛页：透明叠加层（门槛层命令流 + ENTER SYSTEM 按钮；真 HUD glyph 由 [hudBuilder] 注入）。
 ///
 /// 约束：必须有界（全屏叠加层）；本页坐标即 Qt 的 1080 高舞台坐标，logical → stage 的缩放由 host 负责
 /// （Qt/src/Engine.cpp:1353、Qt/qml/Main.qml:32-33）。
@@ -817,11 +1109,11 @@ class BootPage extends StatefulWidget {
   /// 主题：dark 时白闪为黑、文本用 calibratedWhite（Qt/src/NativeHudBoot.cpp:169、NativeHud.cpp:10-15）。
   final bool themeDark;
 
-  /// 真 HUD 绘制 seam：null 时只画门槛层（背景 + 白闪 + ENTER SYSTEM 按钮）。
+  /// 真 HUD 绘制 seam：null 时只画门槛层（窗口渐变/白闪/扫描弧的命令流 + ENTER SYSTEM 按钮）。
   ///
   /// 这是可接受的降级（不是像素通过）：glyph 真 advance/path、baseline 1.044、art 零偏移、
-  /// Gamma1.8→sRGB 都由共享 HUD 层实现。约定：[hudBuilder] 只负责 glyph/art，不重绘背景与白闪
-  /// （二者是本页的门槛层，见 [kBootBackgroundLayerKey] / [kBootFlashLayerKey]）。
+  /// Gamma1.8→sRGB 都由共享 HUD 层实现。约定：[hudBuilder] 只负责 glyph/art，不重绘门槛层
+  /// （见 [kBootBackgroundLayerKey] / [kBootFlashLayerKey] / [kBootScanLayerKey]）。
   final Widget Function(BuildContext context, BootFrame frame)? hudBuilder;
 
   /// 交割回调（透传给控制器；35s→detail，skip→archive）。
@@ -895,25 +1187,6 @@ class _BootPageState extends State<BootPage> with SingleTickerProviderStateMixin
     setState(() {});
   }
 
-  /// 背景径向渐变：Qt/src/Glyphs.cpp:806-812（中心设计区 979.2,518.4 + offsetX；半径 1100；PadSpread）。
-  RadialGradient _bootGradient(Size size, BootLayout layout, bool dark) {
-    final double width = math.max(1.0, size.width);
-    final double height = math.max(1.0, size.height);
-    // 竖屏无 Qt 锚点：这是新增响应式语义，居中而不是沿用横屏 979.2/518.4 的舞台锚点。
-    final Alignment center = layout.portrait
-        ? Alignment.center
-        : Alignment(
-            2 * (layout.offsetX + kQtBackgroundCenterX) / width - 1,
-            2 * kQtBackgroundCenterY / height - 1,
-          );
-    return RadialGradient(
-      center: center,
-      radius: kQtBackgroundRadius / math.min(width, height),
-      colors: dark ? kBootGradientDark : kBootGradientLight,
-      stops: kBootGradientStops,
-    );
-  }
-
   /// ENTER SYSTEM / skip：几何在 [resolveBootLayout]，这里只做命中与语义（无涟漪 —— Qt 无涟漪）。
   ///
   /// 纵向用 [Baseline] 把 alphabetic baseline 钉在 [kEnterSystemTextBaseline]（相对按钮顶
@@ -955,26 +1228,41 @@ class _BootPageState extends State<BootPage> with SingleTickerProviderStateMixin
         final Size size = constraints.biggest;
         final BootLayout layout = resolveBootLayout(size, safeArea: safeArea);
         final Widget? hud = widget.hudBuilder?.call(context, frame);
+        final List<HudCommand> background = buildBootBackgroundCommands(
+          size: size,
+          layout: layout,
+          backgroundOpacity: frame.backgroundOpacity,
+          dark: widget.themeDark,
+        );
+        // 白闪：Qt/src/NativeHudBoot.cpp:169-170 发 fill（RGB = dark ? 0 : 1，alpha = white），
+        // 且仍在 `if (backgroundOpacity > 0)` 块内（:164-171）⇒ 26.92s 后即使 white = 1 也不再画。
+        // white == 0 时整层不可见 ⇒ 不建层（零像素差异，保留既有 [kBootFlashLayerKey] 语义）。
+        final List<HudCommand> flash = frame.backgroundOpacity > 0 && frame.white > 0
+            ? buildBootFlashCommands(
+                size: size,
+                layout: layout,
+                white: frame.white,
+                dark: widget.themeDark,
+              )
+            : const <HudCommand>[];
+        final List<HudCommand> scan = buildBootScanCommands(
+          frame: frame,
+          size: size,
+          layout: layout,
+          tracks: _controller.tracks,
+          dark: widget.themeDark,
+        );
         return Stack(
           fit: StackFit.expand,
           children: <Widget>[
             // 背景层：只在 backgroundOpacity > 0 时存在（26.92 起透明叠加，底下 3D 场景透出）。
-            if (frame.backgroundOpacity > 0)
-              Opacity(
-                key: kBootBackgroundLayerKey,
-                opacity: frame.backgroundOpacity,
-                child: DecoratedBox(
-                  decoration: BoxDecoration(gradient: _bootGradient(size, layout, widget.themeDark)),
-                ),
-              ),
-            // 白闪层：NativeHudBoot.cpp:164-171 —— flash 画在 `backgroundOpacity > 0` 块内，
-            // 26.92s 背景透明后即使 white=1 也不再绘制。RGB = dark ? 0 : 1，alpha = white。
-            if (frame.backgroundOpacity > 0 && frame.white > 0)
-              ColoredBox(
-                key: kBootFlashLayerKey,
-                color: (widget.themeDark ? Colors.black : Colors.white)
-                    .withValues(alpha: frame.white),
-              ),
+            if (background.isNotEmpty) _commandLayer(kBootBackgroundLayerKey, background),
+            if (flash.isNotEmpty) _commandLayer(kBootFlashLayerKey, flash),
+            // 扫描弧层：只在 scanVisible（19.48s <= time < 22.76）时存在（NativeHudBoot.cpp:252-254）。
+            if (scan.isNotEmpty) _commandLayer(kBootScanLayerKey, scan),
+            // z 序：三层都在 hud 之下。Qt 顺序是 scan(:252-254) → welcome(:255-291) → brand，
+            // 弧线压在 welcome 面板之下是对的；而 access/logo/auth 细字在 scan 之前绘制，
+            // 会被弧线覆盖 —— 跨 seam 的层间 z 序无法用一条命令流表达（RESIDUAL_RISK，见报告）。
             if (hud != null) hud,
             // 按钮：NativeHudBoot.cpp:310 在所有 opacity 之外无条件绘制 ⇒ 淡出后仍在、仍可点。
             Positioned.fromRect(rect: layout.buttonRect, child: _buildEnterSystemButton()),
@@ -983,4 +1271,11 @@ class _BootPageState extends State<BootPage> with SingleTickerProviderStateMixin
       },
     );
   }
+
+  /// 一层门槛层命令流：一个 painter 对应一次 `paintHudCommands`（不复用 canvas 状态）。
+  Widget _commandLayer(Key key, List<HudCommand> commands) => CustomPaint(
+        key: key,
+        painter: BootHudCommandPainter(commands),
+        child: const SizedBox.expand(),
+      );
 }
