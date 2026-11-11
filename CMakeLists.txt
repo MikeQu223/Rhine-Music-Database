@@ -16,8 +16,7 @@ project(
     # C is required by the vendored glslang/SPIRV-Tools that compiles the FidelityFX shader permutations at
     # build time.
     LANGUAGES CXX C)
-# 停用D3D12入口
-set(RHINE_ENABLE_D3D12_BACKEND OFF)
+option(RHINE_ENABLE_D3D12_BACKEND "Enable Direct3D 12 presentation on Windows" ${WIN32})
 add_compile_definitions(RHINE_ENABLE_D3D12_BACKEND=$<BOOL:${RHINE_ENABLE_D3D12_BACKEND}>)
 set(RHINE_APPLICATION_ID "rhine.music.database")
 find_package(Git QUIET)
@@ -865,4 +864,16 @@ if(RHINE_FFX_VK_AVAILABLE AND TARGET Qt6::GuiPrivate)
         target_compile_options(RhineFgGateProbe PRIVATE -g)
         target_link_options(RhineFgGateProbe PRIVATE -g)
     endif()
+endif()
+
+if(WIN32 AND RHINE_ENABLE_D3D12_BACKEND)
+    qt_add_executable(
+        RhinePresentationBackendRegression Qt/tests/PresentationBackendChecks.cpp
+        Qt/src/render/RhiPresentationBackend.cpp Qt/src/render/PresentationWindow.cpp
+        Qt/src/WindowsRoundedCorners.cpp)
+    set_target_properties(RhinePresentationBackendRegression PROPERTIES QT_QML_MODULE_NO_IMPORT_SCAN TRUE)
+    target_include_directories(RhinePresentationBackendRegression PRIVATE Qt/src)
+    target_link_libraries(RhinePresentationBackendRegression PRIVATE Qt6::Quick Qt6::GuiPrivate dwmapi)
+    target_compile_options(RhinePresentationBackendRegression PRIVATE /utf-8)
+    add_test(NAME qt_d3d12_presentation_regression COMMAND RhinePresentationBackendRegression)
 endif()

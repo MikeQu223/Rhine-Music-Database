@@ -195,7 +195,7 @@ QVector<SettingChoice> graphicsChoices(const SettingsContext &) {
     QVector<SettingChoice> values{
         {"", QStringLiteral("默认 / 自动探测")}, {"vulkan", "Vulkan"}, {"opengl", "OpenGL"}};
 #if RHINE_ENABLE_D3D12_BACKEND
-    values.append({"d3d12", "Direct3D 12"});
+    values.append(SettingChoice{"d3d12", "Direct3D 12"});
 #endif
     return values;
 #endif

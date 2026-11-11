@@ -166,6 +166,11 @@ bool PresentationShell::compiledIn() {
 }
 
 bool PresentationShell::supportsBackend(const QString &name) {
+#if defined(Q_OS_WIN) && RHINE_ENABLE_D3D12_BACKEND
+    if (name == QLatin1String("d3d12")) {
+        return true;
+    }
+#endif
 #if QT_CONFIG(metal)
     if (name == QLatin1String("metal")) {
         return true;
@@ -820,6 +825,9 @@ void PresentationShell::step() {
     }
     const bool idle = m_backend->performance().value(QStringLiteral("idle")).toBool();
     const bool interpolationWanted = requested();
+    // Vulkan and D3D12 both need the engine-driven render cadence, including
+    // polling for completed asynchronous model/texture uploads.
+    const bool engineDriven = m_backendName != QLatin1String("metal");
     syncSizes();
 
     if (!m_host->resumeGraphics()) {
@@ -859,7 +867,7 @@ void PresentationShell::step() {
     const bool contentAdvanced = contentOnly
                                      ? (engineHud != m_lastEngineHud || engineScene != m_lastEngineScene)
                                      : (engineSteps != m_lastEngineSteps);
-    const bool engineAdvanced = m_backendName == "vulkan" && contentAdvanced;
+    const bool engineAdvanced = engineDriven && contentAdvanced;
     // 重渲已经由内容代次剔除，但"上屏"仍然每步都做：合成一次缓存纹理很便宜，而把
     // 上屏也一起砍掉会让 presented 从 46/s 掉到 31/s（实测），用户看到的出帧反而更少。
     // RHINE_PRESENT_ALWAYS=0 可退回"没有新内容就不上屏"的省电行为。
@@ -871,12 +879,12 @@ void PresentationShell::step() {
          !m_pendingRealFrame) {
 #else
     const auto engineSteps = m_backend->performance().value(QStringLiteral("steps")).toULongLong();
-    const bool engineAdvanced = m_backendName == "vulkan" && engineSteps != m_lastEngineSteps;
+    const bool engineAdvanced = engineDriven && engineSteps != m_lastEngineSteps;
     if (!m_host->contentDirty() && !engineAdvanced && !m_forcePresent && !m_pendingRealFrame) {
 #endif
         ++m_skippedSteps;
         publishStats(false);
-        if (m_backendName == "vulkan") {
+        if (engineDriven) {
 #ifdef Q_OS_LINUX
             // 看门狗：连续跳过太久说明可能有人漏标脏，强制补渲一次把画面拉回来。
             if (++m_consecutiveSkips >= kSkipWatchdogSteps) {
@@ -926,7 +934,7 @@ void PresentationShell::step() {
         return;
     }
 
-    if (m_backendName == "vulkan") {
+    if (engineDriven) {
         armFrameGeneration();
     }
     RhineRender::PresentationBackend::Frame frame;
@@ -991,7 +999,7 @@ void PresentationShell::step() {
     // 在离屏提交结束后读取这一帧输入；UI 单独更新不能再次插值同一帧场景。
     const bool interpolationAllowed = newScene && !idle && interpolationWanted &&
                                       m_framesSinceRecreate >= 2 &&
-                                      (m_backendName == "vulkan" || armFrameGeneration());
+                                      (engineDriven || armFrameGeneration());
     if (!presentOne(frame, interpolationAllowed, &interpolated)) {
         qWarning().noquote() << "FG: present 失败" << m_presenter->lastError();
         m_needRecreate = true;
@@ -1005,7 +1013,7 @@ void PresentationShell::step() {
     m_forcePresent = false;
     reportStats();
     // 新更新和待呈现的真实帧继续排队；其余情况等待下一次内容更新。
-    if (m_backendName == "vulkan") {
+    if (engineDriven) {
         // 尾部立刻自续：关掉 vsync 时这个应用要的是"能跑多快跑多快"，限速会把帧率
         // 钉死在刷新率上，与设计意图相反。
         // 空转（同一画面反复提交）不再靠限速解决，而是靠 SceneLayerHost 的脏帧剔除：
