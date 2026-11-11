@@ -1,6 +1,7 @@
 #include "AppStorage.h"
 #include "AudioPlayer.h"
 #include <QAudioBuffer>
+#include <QDataStream>
 #include <QJsonDocument>
 #include <QJsonArray>
 #include "ProcessMetrics.h"
@@ -301,6 +302,70 @@ class AudioPlayerRegression {
         return ok;
     }
 
+    static bool nativePlaybackRegression() {
+#ifdef Q_OS_WIN
+        if (QMediaDevices::defaultAudioOutput().isNull()) {
+            qInfo() << "SKIP: native playback requires a physical audio endpoint";
+            return true;
+        }
+        QTemporaryDir directory;
+        const auto path = directory.filePath("native-playback.wav");
+        QFile file(path);
+        if (!file.open(QIODevice::WriteOnly)) {
+            return false;
+        }
+        constexpr quint32 bytes = 48000 * 4 * 2;
+        QDataStream wav(&file);
+        wav.setByteOrder(QDataStream::LittleEndian);
+        wav.writeRawData("RIFF", 4);
+        wav << quint32(36 + bytes);
+        wav.writeRawData("WAVEfmt ", 8);
+        wav << quint32(16) << quint16(1) << quint16(2) << quint32(48000) << quint32(192000) << quint16(4)
+            << quint16(16);
+        wav.writeRawData("data", 4);
+        wav << bytes;
+        wav.writeRawData(QByteArray(bytes, '\0').constData(), bytes);
+        file.close();
+        AudioPlayer audio;
+        audio.control("volume", 0);
+        audio.enableDiagnostics(true);
+        auto wait = [](const auto &condition) {
+            QElapsedTimer clock;
+            clock.start();
+            while (!condition() && clock.elapsed() < 5000) {
+                QCoreApplication::processEvents();
+                QThread::msleep(2);
+            }
+            return condition();
+        };
+        bool ok = check(audio.load(QUrl::fromLocalFile(path).toString(), true),
+                        "Local source loads into the native playback pipeline");
+        ok &= check(wait([&] { return audio.pcm.active() && audio.pcm.position() > 0; }),
+                    "QMediaPlayer decoded PCM reaches WASAPI");
+        if (!audio.pcm.active()) {
+            return false;
+        }
+        const auto before = audio.pcm.position();
+        QThread::msleep(180);
+        ok &= check(audio.pcm.position() > before, "Decoded PCM delivery survives a blocked GUI thread");
+        ok &= check(audio.pcm.snapshot()["outputUnderruns"].toInt() == 0,
+                    "A blocked GUI does not insert silence into the native stream");
+        audio.control("pause");
+        QThread::msleep(40);
+        const auto paused = audio.pcm.position();
+        QThread::msleep(80);
+        ok &= check(audio.pcm.position() == paused, "Pause stops native PCM consumption");
+        audio.control("seek", 1000);
+        audio.control("resume");
+        ok &= check(wait([&] { return audio.ended > 0 || !audio.error.isEmpty(); }) && audio.error.isEmpty(),
+                    "Seek and resume drain the native tail before end-of-media");
+        audio.control("stop");
+        ok &= check(!audio.pcm.active(), "Stop releases the WASAPI endpoint");
+        return ok;
+#else
+        return true;
+#endif
+    }
     static bool run() {
         AudioPlayer audio;
 #ifdef Q_OS_MACOS
@@ -392,10 +457,10 @@ int main(int argc, char **argv) {
     }
     const bool storage = storageRegression(fixture.path());
     const bool metrics = processMetricsRegression();
-    const bool audio = AudioPlayerRegression::diagnosticRegression() && AudioPlayerRegression::run() &&
-                       AudioPlayerRegression::layoutRegression() &&
-                       AudioPlayerRegression::outputFormatProbeRegression() &&
-                       AudioPlayerRegression::sourceRegression();
+    const bool audio =
+        AudioPlayerRegression::diagnosticRegression() && AudioPlayerRegression::run() &&
+        AudioPlayerRegression::layoutRegression() && AudioPlayerRegression::outputFormatProbeRegression() &&
+        AudioPlayerRegression::sourceRegression() && AudioPlayerRegression::nativePlaybackRegression();
     qInfo() << "Portable storage, process metrics and default audio output regressions:"
             << (storage && metrics && audio ? "PASS" : "FAIL");
     return storage && metrics && audio ? 0 : 1;

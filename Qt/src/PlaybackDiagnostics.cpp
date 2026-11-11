@@ -186,9 +186,11 @@ QJsonObject PlaybackDiagnostics::report() const {
              {"mediaNetworkError", "QNetworkReply::NetworkError"},
              {"sampleFormat", "QAudioFormat::SampleFormat; decoded PCM container, not source valid bits"},
              {"outputPolicy", "0=system-adaptive,1=source-preferred"},
-             {"outputBackend", "1=application PCM queue to QAudioSink,2=Apple AVPlayer; "
-                               "fixed/head-tracked mode not observed"},
-             {"outputClientFormatStatus", "0=unavailable or not open,1=observed client submission format"},
+             {"outputBackend", "1=application PCM queue to QAudioSink,2=Apple AVPlayer,"
+                               "3=event-driven WASAPI; fixed/head-tracked mode not observed; "
+                               "DAC format not inferred"},
+             {"outputClientFormatStatus",
+              "0=unavailable or not open,1=observed client submission format; not DAC format"},
              {"sourceCodecFourCC", "AudioStreamBasicDescription format ID; source track, not decoded PCM"},
              {"nativeErrorCode", "Numeric AVPlayer/AVPlayerItem error; 0=none"},
              {"outputSystemFormatStatus", "0=unavailable,1=system stream/mix observed,2=rate/channels only"},

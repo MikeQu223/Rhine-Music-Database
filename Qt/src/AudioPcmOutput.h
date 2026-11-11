@@ -1,6 +1,7 @@
 #pragma once
 #include "AudioOutputFormat.h"
 #include "AudioResampler.h"
+#include "WindowsAudioOutput.h"
 #include <QAudioSink>
 #include <QElapsedTimer>
 #include <QJsonObject>
@@ -22,7 +23,15 @@ class AudioPcmOutput {
     void setVolume(float volume);
     qint64 position() const;
     QJsonObject snapshot() const;
+    void setExclusive(bool enabled) {
+        exclusive = enabled;
+    }
     bool active() const {
+#ifdef Q_OS_WIN
+        if (native) {
+            return true;
+        }
+#endif
         return bool(sink);
     }
     bool complete() const {
@@ -46,6 +55,10 @@ class AudioPcmOutput {
     QAudioFormat input, submitted;
     std::unique_ptr<AudioResampler> resampler;
     std::unique_ptr<QAudioSink> sink;
+#ifdef Q_OS_WIN
+    std::unique_ptr<WindowsAudioOutput> native;
+#endif
+    bool exclusive = false;
     QIODevice *writer = nullptr;
     QTimer timer;
     QElapsedTimer consumptionClock;

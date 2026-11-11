@@ -32,6 +32,9 @@ void AudioPcmOutput::reset(const QAudioDevice &next, AudioOutputFormat::Policy n
         sink->reset();
     }
     sink.reset();
+#ifdef Q_OS_WIN
+    native.reset();
+#endif
     writer = nullptr;
     resampler.reset();
     pending.clear();
@@ -60,11 +63,27 @@ bool AudioPcmOutput::open(const QAudioFormat &source) {
         fail(1);
         return false;
     }
+#ifdef Q_OS_WIN
+    native = std::make_unique<WindowsAudioOutput>();
+    if (!native->open(device.id(), exclusive, submitted)) {
+        native.reset();
+        fail(3);
+        return false;
+    }
+    submitted = native->format();
+#endif
     resampler = std::make_unique<AudioResampler>();
     if (!resampler->configure(source, submitted)) {
         fail(2);
         return false;
     }
+#ifdef Q_OS_WIN
+    native->setVolume(volume);
+    native->setPaused(paused);
+    ++rebuilds;
+    consumptionClock.start();
+    return true;
+#endif
     sink = std::make_unique<QAudioSink>(device, submitted);
     sink->setVolume(volume);
     sink->setBufferSize(submitted.bytesForDuration(SINK_BUFFER_MS * 1000));
@@ -118,7 +137,7 @@ bool AudioPcmOutput::push(const QAudioBuffer &buffer) {
                                     buffer.format(), minimumMs * 1000);
         }
     }
-    if (!sink) {
+    if (!active()) {
         if (accepted.startTime() >= 0) {
             baseMs = accepted.startTime() / 1000;
         }
@@ -183,6 +202,11 @@ void AudioPcmOutput::pause(bool value) {
     if (!paused) {
         consumptionClock.start();
     }
+#ifdef Q_OS_WIN
+    if (native) {
+        native->setPaused(paused);
+    }
+#endif
     if (sink) {
         if (paused) {
             sink->suspend();
@@ -199,15 +223,25 @@ void AudioPcmOutput::pause(bool value) {
 }
 void AudioPcmOutput::setVolume(float value) {
     volume = std::clamp(value, 0.f, 1.f);
+#ifdef Q_OS_WIN
+    if (native) {
+        native->setVolume(volume);
+    }
+#endif
     if (sink) {
         sink->setVolume(volume);
     }
 }
 qint64 AudioPcmOutput::position() const {
-    if (!sink || !submitted.isValid()) {
+    if (!active() || !submitted.isValid()) {
         return baseMs;
     }
     const auto duration = writtenBytes * 1000000 / submitted.bytesPerFrame() / submitted.sampleRate();
+#ifdef Q_OS_WIN
+    if (native) {
+        return baseMs + std::clamp<qint64>(native->processedUSecs(), 0, duration) / 1000;
+    }
+#endif
     return baseMs + std::clamp<qint64>(sink->processedUSecs(), 0, duration) / 1000;
 }
 void AudioPcmOutput::fail(int code) {
@@ -216,6 +250,11 @@ void AudioPcmOutput::fail(int code) {
     }
     failure = code;
     timer.stop();
+#ifdef Q_OS_WIN
+    if (native) {
+        native->setPaused(true);
+    }
+#endif
     if (sink) {
         sink->suspend();
     }
@@ -230,9 +269,22 @@ void AudioPcmOutput::updatePressure() {
     if (!submitted.isValid()) {
         return;
     }
-    const auto bytes = pending.size() - offset;
-    const bool next = pressured ? bytes > submitted.bytesForDuration(PRESSURE_LOW_MS * 1000)
-                                : bytes > submitted.bytesForDuration(PRESSURE_HIGH_MS * 1000);
+    auto bytes = pending.size() - offset;
+#ifdef Q_OS_WIN
+    if (native) {
+        bytes += native->queuedBytes();
+    }
+#endif
+    qint64 reserveMs = 0;
+#ifdef Q_OS_WIN
+    // The native queue also supplies the device's prefill; do not throttle the
+    // decoder before that prefill can start the client.
+    if (native) {
+        reserveMs = SINK_BUFFER_MS;
+    }
+#endif
+    const bool next = pressured ? bytes > submitted.bytesForDuration((PRESSURE_LOW_MS + reserveMs) * 1000)
+                                : bytes > submitted.bytesForDuration((PRESSURE_HIGH_MS + reserveMs) * 1000);
     if (next == pressured) {
         return;
     }
@@ -245,6 +297,45 @@ void AudioPcmOutput::pump() {
     if (paused || failure || drained) {
         return;
     }
+#ifdef Q_OS_WIN
+    if (native) {
+        if (native->error() != 0) {
+            fail(3);
+            return;
+        }
+        auto count = std::min<qsizetype>(pending.size() - offset, native->bytesFree());
+        count -= count % submitted.bytesPerFrame();
+        if (count > 0) {
+            native->enqueue(QAudioBuffer(pending.mid(offset, count), submitted));
+            offset += count;
+            writtenBytes += count;
+        }
+        if (offset == pending.size()) {
+            pending.clear();
+            offset = 0;
+        }
+        updatePressure();
+        const auto consumed = native->processedUSecs();
+        if (consumed != consumedUs || native->queuedBytes() == 0) {
+            consumedUs = consumed;
+            consumptionClock.restart();
+        } else if (consumptionClock.isValid() && consumptionClock.elapsed() > STALL_TIMEOUT_MS) {
+            fail(6);
+            return;
+        }
+        if (ending && pending.isEmpty()) {
+            native->finish();
+            if (native->drained()) {
+                drained = true;
+                timer.stop();
+                if (completed) {
+                    completed();
+                }
+            }
+        }
+        return;
+    }
+#endif
     if (writer && offset < pending.size()) {
         auto count = std::min<qint64>(pending.size() - offset, sink->bytesFree());
         count -= count % submitted.bytesPerFrame();
@@ -286,7 +377,7 @@ void AudioPcmOutput::pump() {
 }
 
 QJsonObject AudioPcmOutput::snapshot() const {
-    const bool open = sink && writer && !failure && !drained;
+    const bool open = active() && !failure && !drained;
     const bool rate = input.isValid() && submitted.isValid() && input.sampleRate() != submitted.sampleRate();
     const bool format =
         input.isValid() && submitted.isValid() && input.sampleFormat() != submitted.sampleFormat();
@@ -294,7 +385,15 @@ QJsonObject AudioPcmOutput::snapshot() const {
                           (input.channelCount() != submitted.channelCount() ||
                            input.channelConfig() != submitted.channelConfig());
     // 缓冲 = 尚未写进设备的应用队列 + 已占用的 sink 环形缓冲，统一按提交格式换算。
-    const auto buffered = sink ? sink->bufferSize() - sink->bytesFree() : 0;
+    auto buffered = sink ? sink->bufferSize() - sink->bytesFree() : qsizetype(0);
+#ifdef Q_OS_WIN
+    if (native && submitted.isValid()) {
+        const auto submittedBytes = native->consumedFrames() * submitted.bytesPerFrame();
+        const auto playedBytes =
+            native->processedUSecs() * submitted.sampleRate() / 1000000 * submitted.bytesPerFrame();
+        buffered = native->queuedBytes() + std::max<qint64>(0, qint64(submittedBytes) - playedBytes);
+    }
+#endif
     const auto bytes = pending.size() - offset + buffered;
     // outputBackend 只描述应用侧 QAudioSink 客户端，不推断平台服务选择。
     return {{"outputPolicy", int(policy)},
@@ -317,7 +416,11 @@ QJsonObject AudioPcmOutput::snapshot() const {
             {"outputBufferMs", submitted.isValid()
                                    ? double(bytes) * 1000 / submitted.bytesPerFrame() / submitted.sampleRate()
                                    : 0},
-            {"outputUnderruns", underruns},
+            {"outputUnderruns",
+#ifdef Q_OS_WIN
+             native ? native->underrunCount() :
+#endif
+                    underruns},
             {"outputError", failure},
             {"outputRebuilds", rebuilds},
             {"outputBackpressure", pressured},
@@ -325,5 +428,9 @@ QJsonObject AudioPcmOutput::snapshot() const {
             {"outputProcessedMs", double(position())},
             {"outputFallback",
              policy == AudioOutputFormat::Policy::Source && input.isValid() && submitted != input},
-            {"outputBackend", 1}};
+            {"outputBackend",
+#ifdef Q_OS_WIN
+             native ? 2 :
+#endif
+                    1}};
 }

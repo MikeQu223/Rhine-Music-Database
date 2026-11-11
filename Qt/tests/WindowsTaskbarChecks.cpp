@@ -30,6 +30,7 @@ bool runWindowsTaskbarChecks(Engine &engine) {
     WindowsTaskbar taskbar(&engine);
     QWindow window;
     window.setTitle(QStringLiteral("Rhine taskbar regression"));
+    window.setFlags(Qt::Window | Qt::FramelessWindowHint);
     window.resize(480, 320);
     window.show();
     check(waitFor([&] { return taskbar.m_readyWindows.contains(quintptr(window.winId())); }),
@@ -37,6 +38,13 @@ bool runWindowsTaskbarChecks(Engine &engine) {
     taskbar.bindWindow(&window);
     check(waitFor([&] { return taskbar.m_taskbar && taskbar.m_buttonsAdded; }),
           "late binding registers real thumbnail buttons");
+    const auto hwnd = reinterpret_cast<HWND>(window.winId());
+    const auto style = GetWindowLongPtrW(hwnd, GWL_STYLE);
+    check((style & WS_CAPTION) == WS_CAPTION && (style & WS_THICKFRAME),
+          "frameless window retains FancyZones eligibility styles");
+    const QPoint title = window.mapToGlobal(QPoint(20, 16)) * window.devicePixelRatio();
+    check(SendMessageW(hwnd, WM_NCHITTEST, 0, MAKELPARAM(title.x(), title.y())) == HTCAPTION,
+          "custom title bar uses native window movement");
     const auto handle = window.winId();
     window.hide();
     window.show();

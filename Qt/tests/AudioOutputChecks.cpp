@@ -1,3 +1,4 @@
+#include "AppStorage.h"
 #include "AudioOutputFormat.h"
 #include "AudioResampler.h"
 #include "AudioPlayer.h"
@@ -442,6 +443,11 @@ int main(int argc, char **argv) {
     QCoreApplication app(argc, argv);
 #endif
     QTemporaryDir directory;
+#ifdef Q_OS_WIN
+    if (!AppStorage::initializePortable(directory.path()).isEmpty()) {
+        return 1;
+    }
+#endif
     bool ok = policyChecks();
     ok &= signalChecks();
     const auto path = fixture(directory.path());
@@ -449,6 +455,10 @@ int main(int argc, char **argv) {
 #ifdef Q_OS_MACOS
     ok &= AudioPlayerRegression::spatial(path);
     ok &= AudioPlayerRegression::spatialStreaming(path);
+#endif
+#ifdef Q_OS_WIN
+    AppStorage::settings().setValue("panel/audio-exclusive", "on");
+    ok &= AudioPlayerRegression::production(fixture(directory.path()));
 #endif
     return ok ? 0 : 1;
 }
