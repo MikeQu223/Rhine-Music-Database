@@ -1,3 +1,4 @@
+#include "AppStorage.h"
 #include "AudioOutputFormat.h"
 #include "AudioResampler.h"
 #include "AudioPlayer.h"
@@ -238,8 +239,17 @@ int main(int argc, char **argv) {
     qputenv("QT_MEDIA_BACKEND", "ffmpeg");
     QCoreApplication app(argc, argv);
     QTemporaryDir directory;
+#ifdef Q_OS_WIN
+    if (!AppStorage::initializePortable(directory.path()).isEmpty()) {
+        return 1;
+    }
+#endif
     bool ok = policyChecks();
     ok &= signalChecks();
     ok &= AudioPlayerRegression::production(fixture(directory.path()));
+#ifdef Q_OS_WIN
+    AppStorage::settings().setValue("panel/audio-exclusive", "on");
+    ok &= AudioPlayerRegression::production(fixture(directory.path()));
+#endif
     return ok ? 0 : 1;
 }

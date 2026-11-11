@@ -1,3 +1,7 @@
+#include <QtGlobal>
+#ifdef Q_OS_WIN
+#include "WindowsAudioOutput.h"
+#endif
 #include <QAudioBufferOutput>
 #include <QAudioDevice>
 #include <QAudioSink>
@@ -136,6 +140,44 @@ int main(int argc, char **argv) {
     QTemporaryDir directory;
     bool ok = check(directory.isValid(), "Audio fixture directory must exist");
     ok &= outputRegression();
+#ifdef Q_OS_WIN
+    const auto device = QMediaDevices::defaultAudioOutput();
+    if (!device.isNull()) {
+        for (bool exclusive : {false, true}) {
+            WindowsAudioOutput output;
+            const bool opened = output.open(device.id(), exclusive);
+            ok &= check(opened, "WASAPI shared/exclusive endpoint must open");
+            if (!opened) {
+                continue;
+            }
+            output.setVolume(0);
+            const auto format = output.format();
+            QAudioBuffer buffer(QByteArray(format.bytesForDuration(300000), '\0'), format);
+            output.enqueue(buffer);
+            // Deliberately block the GUI: native consumption must continue.
+            QThread::msleep(180);
+            ok &= check(output.consumedFrames() > 0 && output.error() == 0,
+                        "WASAPI consumes PCM while GUI event processing is blocked");
+            output.setPaused(true);
+            QThread::msleep(50);
+            const auto paused = output.consumedFrames();
+            output.enqueue(buffer);
+            QThread::msleep(50);
+            ok &= check(output.consumedFrames() == paused, "Paused output discards late PCM");
+            output.setPaused(false);
+            ok &= check(waitFor([&] { return output.consumedFrames() > paused; }),
+                        "WASAPI resumes with preserved buffered PCM");
+            output.reset();
+            const auto beforeTail = output.consumedFrames();
+            const QAudioBuffer tail(QByteArray(format.bytesForDuration(20000), '\0'), format);
+            output.enqueue(tail);
+            output.finish();
+            ok &= check(waitFor([&] { return output.drained(); }) &&
+                            output.consumedFrames() >= beforeTail + quint64(tail.frameCount()),
+                        "Sub-prefill final packets drain completely");
+        }
+    }
+#endif
     for (const int sampleRate : {44100, 48000, 96000, 192000}) {
         for (const int bitDepth : {16, 24}) {
             ok &= decodeSignal(toneFile(directory.path(), sampleRate, bitDepth));

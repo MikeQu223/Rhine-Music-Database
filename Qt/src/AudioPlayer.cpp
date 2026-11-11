@@ -1,4 +1,5 @@
 #include "AudioPlayer.h"
+#include "AppStorage.h"
 #include "ProviderRegistry.h"
 #include <QUrl>
 #include <QMediaMetaData>
@@ -152,7 +153,11 @@ AudioPlayer::AudioPlayer(std::function<void()> changed) : playbackChanged(std::m
         if (!player || outputUnavailable) {
             return;
         }
+#ifdef Q_OS_WIN
+        error = QStringLiteral("音频输出失败，请检查输出设备、切换输出策略或关闭独占输出");
+#else
         error = QStringLiteral("音频输出失败，请检查输出设备或切换输出策略");
+#endif
         failureRecoverable = player->isSeekable();
         player->pause();
         playbackWatchdog.stop();
@@ -223,6 +228,9 @@ void AudioPlayer::normalizeOutputLayout(const QAudioDevice &device) {
  */
 void AudioPlayer::createPlayer() {
     releasePlayer();
+#ifdef Q_OS_WIN
+    pcm.setExclusive(AppStorage::settings().value("panel/audio-exclusive", "off").toString() == "on");
+#endif
     player = std::make_unique<QMediaPlayer>();
     decodedOutput = std::make_unique<QAudioBufferOutput>();
     const auto changed = playbackChanged;

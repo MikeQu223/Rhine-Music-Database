@@ -11,7 +11,7 @@
     → QAudioBufferOutput
     → AudioResampler(libswresample)
     → 有界 PCM 队列
-    → QAudioSink
+    → 平台输出（Windows：WASAPI；其他：QAudioSink）
     → 系统音频服务
     → 扬声器 / 耳机 / DAC
 ```
@@ -25,7 +25,7 @@ QMediaPlayer 在本路径中不绑定 `QAudioOutput`，只负责解码；`QAudio
 | 链路 | 方向 | 主要组件 |
 | --- | --- | --- |
 | 控制面 | GUI → 服务 | `PlaybackConnection`（QLocalSocket）→ `PlaybackService` → `Host`/`MusicPlayer`/`PlaybackQueue` → `AudioPlayer` |
-| 数据面 | 云端 → 设备 | MusicBridge → `HttpAudioStream` → `QMediaPlayer`(FFmpeg) → `AudioPcmOutput` → `QAudioSink` |
+| 数据面 | 云端 → 设备 | MusicBridge → `HttpAudioStream` → `QMediaPlayer`(FFmpeg) → `AudioPcmOutput` → Windows WASAPI / 其他平台 `QAudioSink` |
 | 观测面 | 播放器 → 面板 | `AudioPlayer`/`HttpAudioStream`/`AudioPcmOutput` → `PlaybackDiagnostics` → `PlaybackConnection` → `FrameProfiler` |
 
 ### 1.2 进程拓扑
@@ -37,7 +37,7 @@ RhineMusicDatabase (GUI)          RhinePlaybackService (helper)             Musi
   只显示状态、频谱、诊断             │                                         │
                                     ├─ HttpAudioStream ──网络线程──▶ 云 CDN
                                     ├─ QMediaPlayer (FFmpeg 解码线程)
-                                    └─ QAudioSink ──▶ 系统音频服务 ──▶ 设备
+                                    └─ 平台输出（WASAPI / QAudioSink）──▶ 系统音频服务 ──▶ 设备
 ```
 
 | 进程 | 职责 | 入口 | 生命周期 |
@@ -81,11 +81,11 @@ RhineMusicDatabase (GUI)          RhinePlaybackService (helper)             Musi
 | 服务主线程 | PlaybackService | Host、队列、AudioPlayer、AudioPcmOutput、QTimer 泵送 |
 | HTTP 网络线程 | 每个 `HttpAudioStream` 一个 `QThread` | Range 请求、缓存写入、重连 |
 | FFmpeg 解码线程 | QMediaPlayer（Qt FFmpeg 后端） | 解码并通过 `QAudioBufferOutput` 交付 PCM |
-| QAudioSink 平台渲染线程 | Qt 音频后端 | 从环形缓冲取 PCM，交给系统音频服务 |
+| WASAPI / QAudioSink 平台渲染线程 | WindowsAudioOutput / Qt 音频后端 | Windows 由 MMCSS 事件线程提交设备缓冲；其他平台由 Qt 消费 PCM |
 | OutputFormatProbe 线程 | AudioPlayer | Windows/CoreAudio 输出格式后台探测 |
 | SessionWriter 线程 | PlaybackService | 会话快照序列化与 `QSaveFile` 落盘 |
 
-`AudioPcmOutput` 由服务主线程持有；`QAudioSink` 的平台线程只消费写入的字节。解码缓冲通过排队连接回到服务主线程，再进行重采样、入队和写 sink。因此主线程的长卡顿会直接表现为输出欠载；这一点在“已知限制”中说明。
+`AudioPcmOutput` 由服务主线程持有，负责重采样和有界入队。Windows 把协商后的 PCM 交给 `WindowsAudioOutput`：独立 MMCSS 线程使用 WASAPI 事件提交，预填充 250 ms，暂停保留缓冲，EOF 排空后完成。其他平台仍使用 `QAudioSink`。长期阻塞仍会耗尽缓冲，短暂停顿不能等同于无限抗卡顿保证。
 
 ## 3. 音源获取与来源策略
 
@@ -231,6 +231,8 @@ MusicLibrary::play
 | `source` | 保留源格式 | 设备完整支持源格式时原样提交；否则协商回退 |
 
 持久化值仍是 `system`/`source`（`Qt/src/SettingsSchema.cpp:452-466`、`Qt/src/Host.cpp:927-929,1080-1088`）。
+
+Windows 另有 `audio-exclusive` 开关，默认关闭、下一次播放生效。独占模式先探测上述策略选定的格式，再协商可用格式；客户端最终提交格式进入现有重采样和诊断链，设备不允许独占时明确报错。
 
 ### 6.2 选择算法
 
@@ -462,16 +464,18 @@ Crashpad 只接入 GUI 进程（`RhineMusicDatabase`），由调试模式开关�
 
 | 平台 | 输出路径 | 系统格式观测 | 打包 |
 | --- | --- | --- | --- |
-| Windows | Qt WASAPI 共享模式 → 系统混音器 | `GetMixFormat` | FFmpeg DLL 随 Qt kit；windeployqt 部署 |
+| Windows | 事件驱动 WASAPI，共享模式 / 可选独占 | `GetMixFormat` | FFmpeg DLL 随 Qt kit；windeployqt 部署 |
 | macOS | Qt CoreAudio → HAL | `kAudioDevicePropertyStreamFormat` | FFmpeg dylib 复制到 `Contents/Frameworks` |
 | iOS | AVAudioSession | 仅 rate/channels | 嵌入 FFmpeg frameworks |
 | Linux | Qt 音频后端（PulseAudio/PipeWire 由发行版） | 无（status 0） | AppImage 自编 FFmpeg 9.0.1 |
 
-共享模式仍然经过系统混音器，不是 bit-perfect；当前没有独占 WASAPI、ASIO、CoreAudio Hog、SoXR 或 EQ 链。
+共享模式仍经过系统混音器；独占输出仍可能按协商结果重采样或转换格式，因此不承诺 bit-perfect。当前没有 ASIO、CoreAudio Hog、SoXR 或 EQ 链。
 
 ## 14. 验证边界与已知限制
 
 已验证：
+
+- Windows 本机声卡：共享与独占完整播放链、两种采样策略、暂停/跳转/重连/曲尾排空；服务线程阻塞 180 ms 时未发生音频欠载。
 
 - `qt_audio_output_regression`：44.1/48/96/192 kHz → 48 kHz 的整块/分块一致性、尾部帧、1 kHz 通带误差、30 kHz 混叠抑制、Int32 逐字节旁路、格式选择与诊断过滤、真实设备静音消费/暂停/seek/策略切换/设备丢失恢复/背压/超限/EOF 排空。
 - `qt_audio_stream_regression`：本机 HTTP + 真实 FFmpeg 的完整流、截断恢复、托管重连、chunked 无长度流、seek 到未缓存区间、停止取消、暂停且无设备不误报。
@@ -479,11 +483,11 @@ Crashpad 只接入 GUI 进程（`RhineMusicDatabase`），由调试模式开关�
 
 未验证：
 
-- Windows/Linux/iOS 的真实工具链、驱动、蓝牙/DAC、长期漂移与用户听感。
+- Linux/iOS 工具链、其他 Windows 驱动、蓝牙/DAC、长期漂移与用户听感尚未全面覆盖。
 - 真实插件与内置来源 CDN 的 Range、206、ETag、重定向与主机分布。
 - 系统混音器内部的转换、抖动和有效位深。
-- 独占输出、硬件采样率切换、SoXR、EQ/耳机校正均未实现。
-- `SessionWriter` 与 `OutputFormatProbe` 已移出服务主线程；主线程长卡顿仍会直接影响 PCM 生产，250 ms 环形缓冲只是把常见停顿挡在可听范围之外，没有把泵送搬离主线程。其他主线程工作仍需避免长阻塞。
+- 主动切换硬件采样率、SoXR、EQ/耳机校正均未实现。
+- `SessionWriter`、`OutputFormatProbe` 和 Windows 设备提交均使用独立线程；服务主线程仍负责 PCM 生产和重采样，超过预填充余量的长期阻塞仍可能导致欠载。
 
 ## 15. 关键文件索引
 
