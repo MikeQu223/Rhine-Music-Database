@@ -78,15 +78,15 @@ bool runNativeSessionChecks(const QString &root, const QString &audioURL) {
         Host cacheHost(root, true);
         MusicLibrary cached(&cacheHost, {});
         cacheHost.offline = false;
-        cached.provider = "netease";
-        cached.api.provider = "netease";
+        cached.provider = "alpha";
+        cached.api.provider = "alpha";
         cached.searchHistory = {QStringLiteral("旧检索")};
         cacheHost.setPreference("search-history", QStringLiteral("[\"旧检索\"]"));
         cacheHost.setPreference("play-history", QStringLiteral("[{\"id\":\"1\"}]"));
         cacheHost.setPreference("local-cover-cache", QStringLiteral("{\"1:1\":\"cover\"}"));
-        cacheHost.setPreference("lyrics-cache", QStringLiteral("[{\"key\":\"netease:1\"}]"));
+        cacheHost.setPreference("lyrics-cache", QStringLiteral("[{\"key\":\"alpha:1\"}]"));
         cacheHost.setPreference("theme", QStringLiteral("dark"));
-        cacheHost.setPreference("account-id-netease", QStringLiteral("42"));
+        cacheHost.setPreference("account-id-alpha", QStringLiteral("42"));
         const QDir cache(AppStorage::cacheDirectory());
         const auto metadata = cache.filePath("metadata");
         const auto library = AppStorage::dataDirectory() + "/local-library";
@@ -112,7 +112,7 @@ bool runNativeSessionChecks(const QString &root, const QString &audioURL) {
                         cacheHost.preference("local-cover-cache") == "{}" && cached.searchHistory.isEmpty(),
                     "lyrics, history and cover caches cleared");
         ok &= check(cacheHost.preference("theme") == "dark" &&
-                        cacheHost.preference("account-id-netease") == "42",
+                        cacheHost.preference("account-id-alpha") == "42",
                     "settings and account preserved");
         // 清掉本用例写入的偏好，避免影响后续会话恢复检查。
         AppStorage::settings().clear();
@@ -197,7 +197,7 @@ bool runNativeSessionChecks(const QString &root, const QString &audioURL) {
                 "library panel, filter and view restored");
     auto invalid = saved;
     auto invalidLibrary = invalid["library"].toObject();
-    invalidLibrary["provider"] = "qq";
+    invalidLibrary["provider"] = "beta";
     invalid["library"] = invalidLibrary;
     ok &= check(!restored.restoreSessionState(invalid), "provider isolation");
 

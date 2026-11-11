@@ -5,13 +5,49 @@
 #include <QCoreApplication>
 #include <QMetaObject>
 #import <Security/Security.h>
+#include <QFileInfo>
 
+static NSString *const credentialAccount = @"credentials";
 static NSDictionary *credentialQuery() {
     return @{
         (__bridge id)kSecClass : (__bridge id)kSecClassGenericPassword,
         (__bridge id)kSecAttrService : QString::fromLatin1(AppIdentity::Id).toNSString(),
-        (__bridge id)kSecAttrAccount : @"netease"
+        (__bridge id)kSecAttrAccount : credentialAccount
     };
+}
+// 旧版本按平台账户名保存；升级后枚举本应用服务下的条目，迁到统一账户并删除旧项。
+static NSData *migrateLegacyCredential() {
+    NSDictionary *query = @{
+        (__bridge id)kSecClass : (__bridge id)kSecClassGenericPassword,
+        (__bridge id)kSecAttrService : QString::fromLatin1(AppIdentity::Id).toNSString(),
+        (__bridge id)kSecReturnData : @YES,
+        (__bridge id)kSecReturnAttributes : @YES,
+        (__bridge id)kSecMatchLimit : (__bridge id)kSecMatchLimitAll
+    };
+    CFTypeRef result = nullptr;
+    if (SecItemCopyMatching((__bridge CFDictionaryRef)query, &result) != errSecSuccess || !result) {
+        return nil;
+    }
+    for (NSDictionary *item in CFBridgingRelease(result)) {
+        NSString *account = item[(__bridge id)kSecAttrAccount];
+        NSData *data = item[(__bridge id)kSecValueData];
+        if (!data || [account isEqualToString:credentialAccount]) {
+            continue;
+        }
+        NSMutableDictionary *insert = [credentialQuery() mutableCopy];
+        insert[(__bridge id)kSecValueData] = data;
+        insert[(__bridge id)kSecAttrAccessible] = (__bridge id)kSecAttrAccessibleWhenUnlockedThisDeviceOnly;
+        if (SecItemAdd((__bridge CFDictionaryRef)insert, nullptr) == errSecSuccess) {
+            NSDictionary *remove = @{
+                (__bridge id)kSecClass : (__bridge id)kSecClassGenericPassword,
+                (__bridge id)kSecAttrService : QString::fromLatin1(AppIdentity::Id).toNSString(),
+                (__bridge id)kSecAttrAccount : account
+            };
+            SecItemDelete((__bridge CFDictionaryRef)remove);
+            return data;
+        }
+    }
+    return nil;
 }
 QByteArray platformCredential() {
     NSMutableDictionary *query = [credentialQuery() mutableCopy];
@@ -19,7 +55,8 @@ QByteArray platformCredential() {
     query[(__bridge id)kSecMatchLimit] = (__bridge id)kSecMatchLimitOne;
     CFTypeRef result = nullptr;
     if (SecItemCopyMatching((__bridge CFDictionaryRef)query, &result) != errSecSuccess) {
-        return {};
+        NSData *legacy = migrateLegacyCredential();
+        return legacy ? QByteArray((const char *)legacy.bytes, legacy.length) : QByteArray();
     }
     NSData *data = CFBridgingRelease(result);
     return QByteArray((const char *)data.bytes, data.length);
@@ -49,28 +86,49 @@ void platformSetActivates(bool value) {
         setBool:value
          forKey:QString::fromLatin1(AppIdentity::PlayerPreference).toNSString()];
 }
-void platformPlay(const QString &id, bool activate, std::function<void(QString)> done) {
-    NSURL *app =
-        [[NSWorkspace sharedWorkspace] URLForApplicationWithBundleIdentifier:@"com.netease.163music"];
-    if (!app) {
-        done("未安装网易云音乐，请安装官方客户端后重试");
-        return;
+void platformPlay(const QString &id, const QJsonObject &config, bool activate,
+                  std::function<void(QString)> done) {
+    const auto application = config["application"].toObject();
+    NSURL *app = nil;
+    const auto bundleId = application["bundleId"].toString();
+    if (!bundleId.isEmpty()) {
+        app = [[NSWorkspace sharedWorkspace] URLForApplicationWithBundleIdentifier:bundleId.toNSString()];
+        if (!app) {
+            done(application["missingMessage"].toString(QStringLiteral("未安装官方客户端")));
+            return;
+        }
     }
-    // 与旧版逐字一致的协议载荷；播放器始终是已安装的官方客户端。
-    auto payload = QString("{\"type\":\"song\",\"id\":\"%1\",\"cmd\":\"play\"}").arg(id).toUtf8().toBase64();
-    NSURL *url = [NSURL URLWithString:("orpheus://" + QString::fromLatin1(payload)).toNSString()];
-    NSWorkspaceOpenConfiguration *config = [NSWorkspaceOpenConfiguration configuration];
-    config.activates = activate;
-    [[NSWorkspace sharedWorkspace]
-                    openURLs:@[ url ]
-        withApplicationAtURL:app
-               configuration:config
-           completionHandler:^(NSRunningApplication *, NSError *error) {
-             const auto message = error ? "交付失败：" + QString::fromNSString(error.localizedDescription)
-                                        : QStringLiteral("已交给网易云；若冷启动未切歌，可手动重试");
-             QMetaObject::invokeMethod(
-                 QCoreApplication::instance(), [done, message] { done(message); }, Qt::QueuedConnection);
-           }];
+    auto payload = config["payload"].toString();
+    payload.replace("{id}", id);
+    const auto encoding = config["encoding"].toString();
+    QString encoded = payload;
+    if (encoding == "base64") {
+        encoded = QString::fromLatin1(payload.toUtf8().toBase64());
+    } else if (encoding == "percent") {
+        encoded = QString::fromLatin1(QUrl::toPercentEncoding(payload));
+    }
+    const auto scheme = config["scheme"].toString();
+    NSURL *url = [NSURL URLWithString:(scheme + "://" + encoded).toNSString()];
+    NSWorkspaceOpenConfiguration *openConfig = [NSWorkspaceOpenConfiguration configuration];
+    openConfig.activates = activate;
+    const auto successMessage =
+        config["successMessage"].toString(QStringLiteral("已交给官方客户端"));
+    const auto failureMessage = config["failureMessage"].toString(QStringLiteral("交付失败"));
+    void (^completion)(NSRunningApplication *, NSError *) =
+        ^(NSRunningApplication *, NSError *error) {
+          const auto message = error ? failureMessage + "：" + QString::fromNSString(error.localizedDescription)
+                                     : successMessage;
+          QMetaObject::invokeMethod(
+              QCoreApplication::instance(), [done, message] { done(message); }, Qt::QueuedConnection);
+        };
+    if (app) {
+        [[NSWorkspace sharedWorkspace] openURLs:@[ url ]
+                           withApplicationAtURL:app
+                                  configuration:openConfig
+                              completionHandler:completion];
+    } else {
+        [[NSWorkspace sharedWorkspace] openURL:url configuration:openConfig completionHandler:completion];
+    }
 }
 
 // Touch Bar 只在支持的机器上由 AppKit 呈现，普通屏幕不增加空白入口。
@@ -167,7 +225,37 @@ void platformMediaCommands(std::function<void(QString)> callback) {
         }
     }
 }
-void platformMediaInfo(QString title, QString artist, QString album, QVariantMap state) {
+// 系统媒体控件封面
+static MPMediaItemArtwork *mediaArtwork(const QString &coverPath) {
+    static QString cachedPath;
+    static QDateTime cachedModified;
+    static MPMediaItemArtwork *cachedArtwork = nil;
+    if (coverPath.isEmpty()) {
+        cachedPath.clear();
+        cachedArtwork = nil;
+        return nil;
+    }
+    const QFileInfo info(coverPath);
+    if (!info.exists()) {
+        return nil;
+    }
+    if (coverPath == cachedPath && info.lastModified() == cachedModified) {
+        return cachedArtwork;
+    }
+    NSImage *image = [[NSImage alloc] initWithContentsOfFile:coverPath.toNSString()];
+    if (!image) {
+        return nil;
+    }
+    cachedArtwork = [[MPMediaItemArtwork alloc] initWithBoundsSize:image.size
+                                                    requestHandler:^NSImage *(CGSize size) {
+                                                        return image;
+                                                    }];
+    cachedPath = coverPath;
+    cachedModified = info.lastModified();
+    return cachedArtwork;
+}
+void platformMediaInfo(QString title, QString artist, QString album, QVariantMap state,
+                       const QString &coverPath) {
     if (!isBackgroundService) {
         platformInterfaceMediaInfo(!title.isEmpty());
     }
@@ -178,14 +266,18 @@ void platformMediaInfo(QString title, QString artist, QString album, QVariantMap
         return;
     }
     const bool playing = state.value("playing").toBool();
-    center.nowPlayingInfo = @{
+    NSMutableDictionary *info = [@{
         MPMediaItemPropertyTitle : title.toNSString(),
         MPMediaItemPropertyArtist : artist.toNSString(),
         MPMediaItemPropertyAlbumTitle : album.toNSString(),
         MPMediaItemPropertyPlaybackDuration : @(state.value("duration").toDouble() / 1000.),
         MPNowPlayingInfoPropertyElapsedPlaybackTime : @(state.value("position").toDouble() / 1000.),
         MPNowPlayingInfoPropertyPlaybackRate : @(playing ? 1. : 0.)
-    };
+    } mutableCopy];
+    if (MPMediaItemArtwork *artwork = mediaArtwork(coverPath)) {
+        info[MPMediaItemPropertyArtwork] = artwork;
+    }
+    center.nowPlayingInfo = info;
     center.playbackState = playing ? MPNowPlayingPlaybackStatePlaying : MPNowPlayingPlaybackStatePaused;
 }
 

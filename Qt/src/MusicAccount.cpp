@@ -1,33 +1,31 @@
 #include "MusicLibrary.h"
 #include "MusicDiscover.h"
+#include "ProviderRegistry.h"
 #include <QDateTime>
 #include <QPointer>
 #include <QRegularExpression>
 #include <algorithm>
 
 namespace {
-QString loginFailureMessage(const QJsonObject &details) {
+QString loginFailureMessage(const QString &provider, const QJsonObject &details) {
     const auto failure = details["lastFailure"].isObject() ? details["lastFailure"].toObject() : details;
     const auto primary = failure["primaryFailure"].toObject();
-    const auto upstreamError = primary["upstreamErrorKey"].toString(failure["upstreamErrorKey"].toString());
-    if (failure["upstreamCode"].toInt() == 20279 || primary["upstreamCode"].toInt() == 20279 ||
-        upstreamError == "auth.device-limit") {
-        return QStringLiteral("登录设备数量已达上限，请在 QQ 音乐设备管理中删除无用设备");
-    }
-    if (primary["upstreamCode"].toInt() == 50006) {
-        return QStringLiteral("请使用手机 QQ 扫描手机 QQ 通道二维码，再尝试登录");
-    }
-    if (upstreamError == "auth.rate-limited" || primary["upstreamCode"].toInt() == 104604 ||
-        failure["upstreamCode"].toInt() == 104604) {
-        return QStringLiteral("QQ 登录操作过于频繁，请等待冷却后重试");
-    }
-    const QHash<QString, QString> messages{
-        {"auth.account-restricted", "账号当前受限，请在 QQ 音乐客户端检查"},
-        {"auth.account-banned", "QQ 返回账号被封禁，请在官方客户端核实"},
-        {"auth.account-binding", "账号绑定状态异常，请在 QQ 音乐客户端检查"},
+    const auto messages = ProviderRegistry::instance()
+                              .descriptor(provider)["login"]
+                              .toObject()["failureMessages"]
+                              .toObject();
+    const auto code = failure["upstreamCode"].toInt(primary["upstreamCode"].toInt());
+    const auto candidates = QStringList{
+        primary["upstreamErrorKey"].toString(failure["upstreamErrorKey"].toString()),
+        failure["failureReason"].toString(),
+        failure["failureStage"].toString(),
+        code ? "upstream:" + QString::number(code) : QString(),
+        "code:" + QString::number(details["code"].toInt()),
     };
-    if (messages.contains(upstreamError)) {
-        return messages.value(upstreamError);
+    for (const auto &key : candidates) {
+        if (!key.isEmpty() && messages.contains(key)) {
+            return messages.value(key).toString();
+        }
     }
     if (failure["failureReason"] == "qr-timeout") {
         return QStringLiteral("二维码已过期，请重新生成");
@@ -35,26 +33,23 @@ QString loginFailureMessage(const QJsonObject &details) {
     if (failure["failureReason"] == "user-canceled") {
         return QStringLiteral("已取消扫码登录");
     }
-    if (failure["failureStage"] == "credential-validation") {
-        return QStringLiteral("登录凭证验证失败，请重试或检查设备管理");
-    }
-    if (failure["failureStage"] == "credential-exchange") {
-        return QStringLiteral("扫码授权交换失败，请重试或检查设备管理");
-    }
-    if (failure["failureStage"] == "mqtt-listener") {
-        return QStringLiteral("扫码连接中断，请检查网络后重试");
-    }
-    if (failure["failureReason"] == "session-busy") {
-        return QStringLiteral("扫码授权仍在处理中，请等待");
-    }
-    if (details["code"].toInt() == 429 || details["failureReason"] == "local-backoff") {
-        return QStringLiteral("扫码登录暂时冷却");
+    if (details["failureReason"] == "local-backoff" || details["code"].toInt() == 429) {
+        return QStringLiteral("登录操作暂时冷却，请稍后重试");
     }
     if (details["code"].toInt() == 401) {
-        return QStringLiteral("QQ 登录已失效，请重新扫码");
+        return QStringLiteral("登录已失效，请重新登录");
     }
-    return details["code"].toInt() == 800 ? QStringLiteral("二维码会话已失效或登录失败，请重新生成")
-                                          : QStringLiteral("扫码登录失败，请稍后重试");
+    return QStringLiteral("登录失败，请稍后重试");
+}
+
+QJsonObject smsLoginMethod(const QString &provider) {
+    for (const auto &value : ProviderRegistry::instance().loginMethods(provider)) {
+        const auto method = value.toObject();
+        if (method["type"].toString() == "sms") {
+            return method;
+        }
+    }
+    return {};
 }
 }
 
@@ -64,7 +59,7 @@ void MusicLibrary::rememberIdentityName(QString source, QString name) {
         return;
     }
     identityNames[source] = normalized;
-    const auto key = source == "kugou" ? accountKey() : source;
+    const auto key = source == provider && !providerVariant.isEmpty() ? accountKey() : source;
     host->setPreference("welcome-name-" + key, normalized);
     if (source == provider && !uid.isEmpty()) {
         host->setPreference("account-id-" + key, uid);
@@ -75,8 +70,12 @@ void MusicLibrary::restoreIdentityName() {
     if (isLocal() || isSiren()) {
         return;
     }
-    const auto source = provider == "netease" ? "qq" : "netease";
-    if (!identityNames.value(source).isEmpty() || !host->hasCredential(source)) {
+    const auto identities = ProviderRegistry::instance()
+                                .descriptor(provider)["library"]
+                                .toObject()["identityProviders"]
+                                .toArray();
+    const auto source = identities.isEmpty() ? QString() : identities.at(0).toString();
+    if (source.isEmpty() || !identityNames.value(source).isEmpty() || !host->hasCredential(source)) {
         return;
     }
     m_identityApi.provider = source;
@@ -84,7 +83,7 @@ void MusicLibrary::restoreIdentityName() {
         "account", {},
         [this, source](MusicReply result) {
             if (result.ok()) {
-                rememberIdentityName(source, result.value.toArray().at(1).toString());
+                rememberIdentityName(source, result.value.toObject()["nickname"].toString());
                 changed();
             }
         },
@@ -110,22 +109,22 @@ void MusicLibrary::restoreCachedAccount() {
     }
 }
 
-/** 查询锁定上游公布的功能与会员信息 */
-void MusicLibrary::refreshQQFeatures() {
-    if (provider != "qq") {
-        return;
-    }
+/** 查询当前来源声明的功能与会员信息 */
+void MusicLibrary::refreshAccountFeatures() {
+    const auto operations = ProviderRegistry::instance().descriptor(provider)["operations"].toObject();
     const auto alive = valid(m_accountGeneration, &m_accountGeneration);
-    api.call(
-        "capabilities", {},
-        [this](MusicReply result) {
-            if (result.ok()) {
-                capabilities = result.value.toObject();
-                changed();
-            }
-        },
-        alive);
-    if (host->authenticated()) {
+    if (operations["capabilities"].toBool()) {
+        api.call(
+            "capabilities", {},
+            [this](MusicReply result) {
+                if (result.ok()) {
+                    capabilities = result.value.toObject();
+                    changed();
+                }
+            },
+            alive);
+    }
+    if (host->authenticated() && operations["vip"].toBool()) {
         api.call(
             "vip", {},
             [this](MusicReply result) {
@@ -143,7 +142,7 @@ void MusicLibrary::restoreAccount(Completion done) {
         }
         return;
     }
-    refreshQQFeatures();
+    refreshAccountFeatures();
     if (!host->authenticated()) {
         if (done) {
             done(true);
@@ -158,16 +157,16 @@ void MusicLibrary::restoreAccount(Completion done) {
         [this, done](MusicReply result) {
             restoringAccount = false;
             if (result.ok()) {
-                const auto values = result.value.toArray();
-                if (uid != values.at(0).toString()) {
+                const auto values = result.value.toObject();
+                const auto accountID = values["uid"].toString();
+                if (uid != accountID) {
                     ++m_accountGeneration;
                     resetLikeState();
                 }
-                uid = values.at(0).toString();
-                nickname = values.at(1).toString();
+                uid = accountID;
+                nickname = values["nickname"].toString();
                 rememberIdentityName(provider, nickname);
-            } else if (result.failure["code"].toInt() == 401 || result.failure["authExpired"].toBool() ||
-                       (provider == "netease" && result.failure["code"].toInt() == 301)) {
+            } else if (result.failure["authExpired"].toBool()) {
                 uid.clear();
                 nickname = QStringLiteral("登录已失效");
                 host->setPreference("account-id-" + accountKey(), "");
@@ -190,17 +189,39 @@ void MusicLibrary::restoreAccount(Completion done) {
 }
 
 /** 换来源先隔离旧请求并停止播放，再恢复目标来源的独立凭据和显示状态。 */
-void MusicLibrary::switchProvider(QString source, QString edition, Completion done) {
+void MusicLibrary::switchProvider(QString source, QString variant, Completion done) {
     if (source == "local" && !PlatformFeatures::LocalMusic) {
         if (done) {
             done(false);
         }
         return;
     }
-    const auto editionChanged =
-        source == "kugou" && QStringList{"standard", "lite"}.contains(edition) && edition != kugouEdition;
-    if (!QStringList{"netease", "qq", "kugou", "local", "siren"}.contains(source) ||
-        (source == provider && !editionChanged)) {
+    const auto variants = ProviderRegistry::instance().variants(source);
+    QString selected;
+    if (!variants.isEmpty()) {
+        selected = variant;
+        if (selected.isEmpty()) {
+            const auto preference = ProviderRegistry::instance().variantPreference(source);
+            if (!preference.isEmpty()) {
+                selected = host->preference(preference);
+            }
+        }
+        bool valid = false;
+        for (const auto &value : variants) {
+            if (value.toObject()["id"].toString() == selected) {
+                valid = true;
+                break;
+            }
+        }
+        if (!valid) {
+            selected = variants.first().toObject()["id"].toString();
+        }
+    }
+    const bool sourceChanged = source != provider;
+    const bool variantChanged = !selected.isEmpty() && selected != providerVariant;
+    if (!ProviderRegistry::instance().contains(source) ||
+        (source == "local" && !PlatformFeatures::LocalMusic) ||
+        (!sourceChanged && !variantChanged)) {
         if (done) {
             done(true);
         }
@@ -218,15 +239,17 @@ void MusicLibrary::switchProvider(QString source, QString edition, Completion do
     local->cancel();
     emit musicClearRequested();
     provider = source;
-    if (editionChanged) {
-        kugouEdition = edition;
-        host->setKugouEdition(edition);
-        host->setPreference("kugou-edition", edition);
-        identityNames["kugou"] = host->preference("welcome-name-" + accountKey());
+    if (sourceChanged) {
+        host->setProvider(source);
     }
-    host->setProvider(source);
+    providerVariant = selected;
+    if (!selected.isEmpty()) {
+        host->setProviderVariant(selected);
+        identityNames[accountKey()] = host->preference("welcome-name-" + accountKey());
+    }
     host->setPreference("provider", source);
     api.provider = source;
+    player.refreshQualityPreference();
     restoreCachedAccount();
     restoringAccount = false;
     m_pendingLane = -1;
@@ -276,13 +299,20 @@ void MusicLibrary::switchProvider(QString source, QString edition, Completion do
     selectedPhysical = -1;
     selectedLane = 0;
     privateSelection = false;
-    loginMethod = "qr";
+    loginMethod.clear();
+    const auto methods = ProviderRegistry::instance().loginMethods(provider);
+    if (!methods.isEmpty()) {
+        loginMethod = methods.first().toObject()["id"].toString("qr");
+    }
     if (isLocal()) {
         refreshLocal();
     } else if (isSiren()) {
         columns = {"搜索结果", "喜欢的歌曲", "我的歌单", "全部歌曲", "全部专辑"};
     } else {
-        columns = {"搜索结果", "喜欢的歌曲", "我的歌单", "收藏歌单", "收藏专辑"};
+        const auto descriptorColumns = ProviderRegistry::instance().columns(provider);
+        if (!descriptorColumns.isEmpty()) {
+            columns = descriptorColumns;
+        }
     }
     if (isSiren()) {
         if (!collections) {
@@ -307,7 +337,7 @@ bool MusicLibrary::canRegenerateLogin() const {
 
 void MusicLibrary::reportLoginFailure(const QJsonObject &details, QString fallback) {
     loginDiagnostics = MusicApi::safeFailure(details);
-    const auto message = fallback.isEmpty() ? loginFailureMessage(details) : fallback;
+    const auto message = fallback.isEmpty() ? loginFailureMessage(provider, details) : fallback;
     loginPhase = "failed";
     loginStatus = message;
     const auto retry = std::max(qint64(0), details["retryAfterMs"].toInteger());
@@ -340,25 +370,18 @@ void MusicLibrary::updateLoginCooldown(QString source, Cooldown cooldown) {
     }
 }
 
-void MusicLibrary::waitCancellation(QString source, Completion done) {
-    if (m_cancellations.contains(source)) {
-        m_cancellations[source]->waiters.append(done);
-    } else {
-        done(true);
-    }
-}
-
 /** 取消旧二维码并建立完成屏障，下一次生成必须等待真正的取消结果。 */
 void MusicLibrary::cancelLogin(Completion done) {
     const auto previousKey = qrKey;
     ++m_loginGeneration;
+    host->bumpEpoch();
     qrKey.clear();
     qr.clear();
     loginPhase = "idle";
     accountLoading = false;
-    if (provider != "qq" || previousKey.isEmpty()) {
+    if (previousKey.isEmpty()) {
         if (done) {
-            waitCancellation(provider, done);
+            done(true);
         }
         return;
     }
@@ -368,7 +391,7 @@ void MusicLibrary::cancelLogin(Completion done) {
         pending->waiters.append(done);
     }
     m_cancellations[source] = pending;
-    api.request("/login/qr/cancel", {{"key", previousKey}}, [this, source, pending](MusicReply result) {
+    api.call("loginCancel", {previousKey}, [this, source, pending](MusicReply result) {
         if (m_cancellations.value(source) == pending) {
             m_cancellations.remove(source);
         }
@@ -384,7 +407,7 @@ int MusicLibrary::smsRetrySeconds() const {
 }
 
 void MusicLibrary::updateSmsCooldown() {
-    if (provider == "netease" && loginMethod == "phone") {
+    if (!loginMethod.isEmpty()) {
         changed();
     }
     if (smsRetrySeconds() > 0) {
@@ -400,26 +423,30 @@ void MusicLibrary::updateSmsCooldown() {
  * 发送短信验证码
  */
 void MusicLibrary::sendLoginCode(QString phone) {
-    if (provider != "netease" || accountLoading || smsRetrySeconds() > 0) {
+    const auto method = smsLoginMethod(provider);
+    if (method.isEmpty() || accountLoading || smsRetrySeconds() > 0) {
         return;
     }
     phone = phone.trimmed();
-    if (!QRegularExpression("^1[0-9]{10}$").match(phone).hasMatch()) {
-        loginStatus = QStringLiteral("请输入有效的中国大陆手机号码");
+    const auto pattern = method["phonePattern"].toString("^\\d{6,15}$");
+    if (!QRegularExpression(pattern).match(phone).hasMatch()) {
+        loginStatus = QStringLiteral("请输入有效的手机号码");
         changed();
         return;
     }
     cancelLogin();
     const auto token = ++m_loginGeneration;
-    loginMethod = "phone";
+    loginMethod = method["id"].toString("sms");
     loginStatus = QStringLiteral("正在发送短信验证码…");
     accountLoading = true;
-    // 这是应用侧的 60 秒重发间隔，不改变上游参数或重试策略。
+    const auto flow = method["flow"].toObject();
     constexpr qint64 SMS_RESEND_INTERVAL_MS = 60000;
-    m_smsRetryAtMs = QDateTime::currentMSecsSinceEpoch() + SMS_RESEND_INTERVAL_MS;
+    const auto cooldown =
+        qint64(flow["resendCooldownMs"].toInt(method["resendCooldownMs"].toInt(SMS_RESEND_INTERVAL_MS)));
+    m_smsRetryAtMs = QDateTime::currentMSecsSinceEpoch() + qMax<qint64>(0, cooldown);
     updateSmsCooldown();
-    api.request(
-        "/captcha/sent", {{"phone", phone}, {"ctcode", "86"}},
+    api.call(
+        flow["send"].toString(QStringLiteral("loginSms")), {phone},
         [this](MusicReply result) {
             accountLoading = false;
             loginStatus = result.ok() ? QStringLiteral("验证码已发送，请查看手机短信") : result.error;
@@ -430,25 +457,29 @@ void MusicLibrary::sendLoginCode(QString phone) {
 
 /** 手机号验证码登录 */
 void MusicLibrary::captchaLogin(QString phone, QString captcha) {
-    if (provider != "netease" || accountLoading) {
+    const auto method = smsLoginMethod(provider);
+    if (method.isEmpty() || accountLoading) {
         return;
     }
     phone = phone.trimmed();
     captcha = captcha.trimmed();
-    if (!QRegularExpression("^1[0-9]{10}$").match(phone).hasMatch() ||
-        !QRegularExpression("^[0-9]{4,8}$").match(captcha).hasMatch()) {
-        loginStatus = QStringLiteral("请输入中国大陆手机号码和短信验证码");
+    const auto pattern = method["phonePattern"].toString("^\\d{6,15}$");
+    const auto codePattern =
+        method["flow"].toObject()["codePattern"].toString("^[0-9]{4,8}$");
+    if (!QRegularExpression(pattern).match(phone).hasMatch() ||
+        !QRegularExpression(codePattern).match(captcha).hasMatch()) {
+        loginStatus = QStringLiteral("请输入手机号码和短信验证码");
         changed();
         return;
     }
     cancelLogin();
     const auto token = ++m_loginGeneration;
-    loginMethod = "phone";
+    loginMethod = method["id"].toString("sms");
     loginStatus = QStringLiteral("正在登录…");
     accountLoading = true;
     changed();
-    api.request(
-        "/login/cellphone", {{"phone", phone}, {"captcha", captcha}, {"countrycode", "86"}},
+    api.call(
+        method["flow"].toObject()["submit"].toString(QStringLiteral("loginSubmit")), {phone, captcha},
         [this, token](MusicReply result) {
             if (!result.ok()) {
                 loginStatus = result.error;
@@ -464,7 +495,7 @@ void MusicLibrary::captchaLogin(QString phone, QString captcha) {
 void MusicLibrary::failLogin(const MusicReply &result) {
     loginPhase = "failed";
     accountLoading = false;
-    if (provider == "qq" && result.failure.contains("code")) {
+    if (!result.failure.isEmpty()) {
         reportLoginFailure(result.failure);
     } else {
         loginStatus = result.error;
@@ -498,16 +529,19 @@ void MusicLibrary::confirmLogin(quint64 token, bool captcha) {
                 return;
             }
             ++m_accountGeneration;
+            host->bumpEpoch();
             restoringAccount = false;
             m_accountError.clear();
-            if (uid != result.value.toArray().at(0).toString()) {
+            const auto values = result.value.toObject();
+            const auto accountID = values["uid"].toString();
+            if (uid != accountID) {
                 resetLikeState();
             }
-            uid = result.value.toArray().at(0).toString();
-            nickname = result.value.toArray().at(1).toString();
+            uid = accountID;
+            nickname = values["nickname"].toString();
             rememberIdentityName(provider, nickname);
             loginStatus = QStringLiteral("已登录：") + nickname;
-            refreshQQFeatures();
+            refreshAccountFeatures();
             status = captcha ? loginStatus : QStringLiteral("已登录，可读取我的音乐");
             if (!captcha) {
                 qr.clear();
@@ -536,133 +570,108 @@ void MusicLibrary::startLogin() {
         }
         return;
     }
-    cancelLogin();
-    const auto token = ++m_loginGeneration;
-    const auto alive = valid(token, &m_loginGeneration);
     loginPhase = "preparing";
     loginDiagnostics = {};
     loginStatus = QStringLiteral("准备二维码…");
     qr.clear();
     accountLoading = true;
     changed();
-    waitCancellation(provider, [this, token, alive](bool cancelled) {
-        if (!alive()) {
-            return;
-        }
+    cancelLogin([this](bool cancelled) {
         if (!cancelled) {
             failLogin({{}, QStringLiteral("旧二维码取消失败，请稍后重试"), {}});
             return;
         }
+        const auto token = ++m_loginGeneration;
         prepareQR(token);
     });
 }
 
 void MusicLibrary::prepareQR(quint64 token) {
-    QJsonObject parameters{{"timestamp", QDateTime::currentMSecsSinceEpoch()}};
-    if (provider == "qq") {
-        parameters["channel"] = loginMethod == "wechat" ? "wechat" : "qq";
-    }
     const auto alive = valid(token, &m_loginGeneration);
-    api.request(
-        "/login/qr/key", parameters,
+    api.call(
+        "loginBegin", {loginMethod},
         [this, token, alive](MusicReply result) {
             if (!result.ok()) {
                 failLogin(result);
                 return;
             }
-            const auto body = result.value.toObject();
-            auto key = body["unikey"];
-            if (key.isNull() || key.isUndefined()) {
-                key = body["data"].toObject()["unikey"];
-            }
-            if (!key.isString()) {
+            const auto page = result.value.toObject();
+            const auto key = page["token"].toString();
+            if (key.isEmpty()) {
                 failLogin({{}, QStringLiteral("二维码生成失败"), {}});
                 return;
             }
-            qrKey = key.toString();
-            const auto ready = [this, token] {
-                QString scanner = providerName();
-                if (provider == "qq") {
-                    scanner = loginMethod == "wechat" ? QStringLiteral("微信") : QStringLiteral("手机 QQ");
-                }
-                loginPhase = "waiting";
-                loginStatus = QStringLiteral("请用") + scanner + QStringLiteral("扫描并确认登录");
-                changed();
-                pollQR(token, 0);
-            };
-            if (provider == "netease") {
-                qr = host->qr(qrKey);
-                ready();
+            qrKey = key;
+            const auto text = page["qrText"].toString();
+            const auto image = page["qrImage"].toString();
+            qr = !image.isEmpty() ? host->qrImage(image) : (!text.isEmpty() ? host->qr(text) : QString());
+            if (qr.isEmpty()) {
+                failLogin({{}, providerName() + QStringLiteral("二维码读取失败"), {}});
                 return;
             }
-            api.request(
-                "/login/qr/create",
-                {{"key", qrKey}, {"qrimg", true}, {"timestamp", QDateTime::currentMSecsSinceEpoch()}},
-                [this, ready](MusicReply image) {
-                    if (!image.ok()) {
-                        failLogin(image);
-                        return;
-                    }
-                    const auto data = image.value.toObject()["data"].toObject()["qrimg"].toString();
-                    static const QRegularExpression format(
-                        QStringLiteral("^data:image/(png|jpeg|gif|webp);base64,"));
-                    if (!format.match(data).hasMatch()) {
-                        failLogin({{}, providerName() + QStringLiteral("二维码格式无效"), {}});
-                        return;
-                    }
-                    qr = host->qrImage(data);
-                    if (qr.isEmpty()) {
-                        failLogin({{}, providerName() + QStringLiteral("二维码读取失败"), {}});
-                        return;
-                    }
-                    ready();
-                },
-                alive);
+            auto hint = ProviderRegistry::instance().text(provider, "scanHint");
+            if (hint.isEmpty()) {
+                hint = QStringLiteral("请用") + providerName() + QStringLiteral("扫描并确认登录");
+            }
+            loginPhase = "waiting";
+            loginStatus = hint;
+            changed();
+            pollQR(token, 0);
         },
         alive);
 }
 
 void MusicLibrary::pollQR(quint64 token, int count) {
-    if (count >= 300) {
+    const auto login = ProviderRegistry::instance().descriptor(provider)["login"].toObject();
+    const int interval = qBound(100, login["pollIntervalMs"].toInt(1000), 60000);
+    const int timeout = qMax(interval, login["pollTimeoutMs"].toInt(300000));
+    const int attempts = qMax(1, (timeout + interval - 1) / interval);
+    if (count >= attempts) {
         failLogin({{}, QStringLiteral("二维码超时，请重新生成"), {}});
         return;
     }
     const auto alive = valid(token, &m_loginGeneration);
-    host->schedule(1000, [this, token, count, alive] {
+    host->schedule(interval, [this, token, count, alive] {
         if (!alive()) {
             return;
         }
-        api.request("/login/qr/check", {{"key", qrKey}, {"timestamp", QDateTime::currentMSecsSinceEpoch()}},
-                    [this, token, count](MusicReply result) {
-                        if (!result.ok()) {
-                            failLogin(result);
-                            return;
-                        }
-                        const auto body = result.value.toObject();
-                        const auto code = body["code"].toInt(800);
-                        if (code == 800) {
-                            qr.clear();
-                            accountLoading = false;
-                            if (provider == "qq") {
-                                reportLoginFailure(body);
-                            } else {
-                                failLogin({{}, QStringLiteral("二维码已过期，请重新生成"), {}});
-                            }
-                            return;
-                        }
-                        if (code == 802) {
-                            loginPhase = "confirming";
-                            loginStatus = QStringLiteral("已扫描，请在手机上确认");
-                            changed();
-                        }
-                        if (code == 803) {
-                            loginPhase = "confirming";
-                            confirmLogin(token);
-                            return;
-                        }
-                        pollQR(token, count + 1);
-                    },
-                    alive, {800, 801, 802, 803});
+        api.call(
+            "loginPoll", {qrKey},
+            [this, token, count](MusicReply result) {
+                if (!result.ok()) {
+                    failLogin(result);
+                    return;
+                }
+                const auto page = result.value.toObject();
+                const auto status = page["status"].toString();
+                const auto code = page["code"].toInt(800);
+                if (status == "expired" || code == 800) {
+                    qr.clear();
+                    accountLoading = false;
+                    const auto failures = ProviderRegistry::instance()
+                                              .descriptor(provider)["login"]
+                                              .toObject()["failureMessages"]
+                                              .toObject();
+                    if (!failures.isEmpty()) {
+                        reportLoginFailure(page);
+                    } else {
+                        failLogin({{}, QStringLiteral("二维码已过期，请重新生成"), {}});
+                    }
+                    return;
+                }
+                if (status == "scanned" || code == 802) {
+                    loginPhase = "confirming";
+                    loginStatus = QStringLiteral("已扫描，请在手机上确认");
+                    changed();
+                }
+                if (status == "confirmed" || code == 803) {
+                    loginPhase = "confirming";
+                    confirmLogin(token);
+                    return;
+                }
+                pollQR(token, count + 1);
+            },
+            alive);
     });
 }
 

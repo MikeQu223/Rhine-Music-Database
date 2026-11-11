@@ -16,9 +16,17 @@ project(
     # C is required by the vendored glslang/SPIRV-Tools that compiles the FidelityFX shader permutations at
     # build time.
     LANGUAGES CXX C)
-option(RHINE_ENABLE_D3D12_BACKEND "Enable Direct3D 12 presentation on Windows" ${WIN32})
+# Windows 默认包含完整 D3D12 / FidelityFX DX12；其他平台不启用。
+option(RHINE_ENABLE_D3D12_BACKEND "Build the Windows D3D12 backend and FidelityFX DX12" ${WIN32})
 add_compile_definitions(RHINE_ENABLE_D3D12_BACKEND=$<BOOL:${RHINE_ENABLE_D3D12_BACKEND}>)
 set(RHINE_APPLICATION_ID "rhine.music.database")
+# 移动端（iOS / Android）共用一个判定：两者都没有独立的播放服务进程、都不构建桌面回归。
+# 平台专有的差异（框架、包格式、入口）仍在下面对应分支里单独处理。
+if(ANDROID OR IOS)
+    set(RHINE_MOBILE_PLATFORM TRUE)
+else()
+    set(RHINE_MOBILE_PLATFORM FALSE)
+endif()
 find_package(Git QUIET)
 set(RHINE_COMMIT_SHA "unknown")
 set(RHINE_COMMIT_TITLE "未知提交")
@@ -92,13 +100,21 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(taglib)
 # AMD FidelityFX（FSR3 组件 + Vulkan 后端，DX12 仅在 Windows 下接入）。 SDK 目标由 RhineMusicDatabase 链接，见文件末尾的
 # FidelityFX::SDK 段。
+if(ANDROID)
+    # FSR3 与帧生成都依赖 Vulkan/D3D12 呈现路径，而 Android 侧只烘了 GLSL ES 300
+    # （见 qt_add_shaders），没有任何 SPIR-V 产物可以喂给 Vulkan。这里默认关闭，
+    # 免得把 glslang/SPIRV-Tools 与整棵 FidelityFX 源码编进 APK 却永远走不到。
+    # 显式 -DRHINE_ENABLE_FIDELITYFX=ON 仍然可以覆盖（给将来的 Vulkan 端口留门）。
+    set(RHINE_ENABLE_FIDELITYFX
+        OFF
+        CACHE BOOL "Build the vendored FidelityFX SDK (FSR3 host components and backends)")
+endif()
 include(cmake/FidelityFX.cmake)
 # 自维护源码和锁定的二维码库构成独立应用目标。
 set(RHINE_APP_SOURCES
     Qt/src/AppUpdater.cpp
     Qt/src/AppUpdater.h
     Qt/src/AudioPlayer.cpp
-    Qt/src/WindowsAudioOutput.cpp
     Qt/src/AudioPlayer.h
     Qt/src/AudioSpectrum.cpp
     Qt/src/AudioSpectrum.h
@@ -131,6 +147,10 @@ set(RHINE_APP_SOURCES
     Qt/src/Host.h
     Qt/src/MusicApi.cpp
     Qt/src/MusicApi.h
+    Qt/src/ProviderRegistry.cpp
+    Qt/src/ProviderRegistry.h
+    Qt/src/CommentsController.cpp
+    Qt/src/CommentsController.h
     Qt/src/LyricsController.cpp
     Qt/src/LyricsController.h
     Qt/src/MusicSession.cpp
@@ -150,11 +170,21 @@ set(RHINE_APP_SOURCES
     Qt/src/MusicLibrary.cpp
     Qt/src/MusicLibrary.h
     Qt/src/NativeHud.h
+    Qt/src/ResponsiveHudCanvas.cpp
+    Qt/src/ResponsiveHudCanvas.h
+    Qt/src/ResponsiveLyrics.cpp
+    Qt/src/ResponsiveComments.cpp
+    Qt/src/ResponsiveHudPages.cpp
+    Qt/src/ResponsiveHudContent.cpp
+    Qt/src/ResponsiveHudContent.h
+    Qt/src/ResponsiveHudLayout.cpp
+    Qt/src/ResponsiveHudLayout.h
     Qt/src/NativeHud.cpp
     Qt/src/NativeHudController.cpp
     Qt/src/NativeHudMusic.cpp
     Qt/src/NativeHudInput.cpp
     Qt/src/NativeHudDetail.cpp
+    Qt/src/NativeHudComments.cpp
     Qt/src/SongDetailCard.cpp
     Qt/src/CollectionDetailCard.cpp
     Qt/src/NativeHudPlayer.cpp
@@ -245,6 +275,24 @@ if(APPLE)
     enable_language(OBJCXX)
     set(CMAKE_OBJCXX_STANDARD 20)
 endif()
+# PCM output is shared by the playback service and hardware-independent regressions.
+add_library(
+    RhineAudioOutput STATIC Qt/src/AudioOutputFormat.cpp Qt/src/AudioOutputFormat.h Qt/src/AudioResampler.cpp
+                            Qt/src/AudioResampler.h Qt/src/AudioPcmOutput.cpp Qt/src/AudioPcmOutput.h)
+target_include_directories(RhineAudioOutput PUBLIC Qt/src)
+target_link_libraries(RhineAudioOutput PUBLIC Qt6::Core Qt6::Multimedia)
+if(IOS)
+    target_sources(RhineAudioOutput PRIVATE Qt/src/AudioOutputFormatIOS.mm)
+    target_link_libraries(RhineAudioOutput PRIVATE "-framework AVFAudio")
+elseif(APPLE)
+    target_link_libraries(RhineAudioOutput PRIVATE "-framework CoreAudio")
+elseif(WIN32)
+    target_sources(RhineAudioOutput PRIVATE Qt/src/WindowsAudioOutput.cpp)
+    target_link_libraries(RhineAudioOutput PRIVATE ole32 uuid avrt)
+endif()
+if(MSVC)
+    target_compile_options(RhineAudioOutput PRIVATE /utf-8)
+endif()
 # 原生业务和场景由应用与独立回归共用，测试不需要复制整套源码目标。 FSR 与 FG 后端只被渲染器使用，跟 RhiScene 一起留在应用目标里，避免把 FidelityFX 与 Vulkan
 # 链接进每个回归测试。过滤条件必须同时覆盖 /fsr/ 与 /fg/：这两处的实现依赖 Qt6::Quick 与 GuiPrivate，而 RhineCore 只链
 # Core/Gui/Network/Concurrent/Multimedia。
@@ -254,14 +302,14 @@ list(FILTER RHINE_CORE_SOURCES EXCLUDE REGEX
 list(REMOVE_ITEM RHINE_APP_SOURCES ${RHINE_CORE_SOURCES})
 # 桌面后台只链接播放源码；场景、字形、资料库与 HUD 不进入服务二进制。
 set(RHINE_SYSTEM_CORE RhineCore)
-if(NOT IOS)
+if(NOT RHINE_MOBILE_PLATFORM)
     set(RHINE_PLAYBACK_SOURCES ${RHINE_CORE_SOURCES})
     list(
         FILTER
         RHINE_PLAYBACK_SOURCES
         INCLUDE
         REGEX
-        "/(AppUpdater|AppStorage|AudioPlayer|WindowsAudioOutput|AudioSpectrum|HttpAudioStream|PlaybackDiagnostics|PlaybackConnection|Host|MusicApi|MusicPlayer|PlaybackQueue|LyricsController|Platform)\\.(cpp|h)$|/qrcodegen\\.cpp$"
+        "/(AppUpdater|AppStorage|AudioPlayer|AudioSpectrum|HttpAudioStream|PlaybackDiagnostics|PlaybackConnection|Host|MusicApi|MusicPlayer|PlaybackQueue|LyricsController|Platform|ProviderRegistry)\\.(cpp|h)$|/qrcodegen\\.cpp$"
     )
     list(REMOVE_ITEM RHINE_CORE_SOURCES ${RHINE_PLAYBACK_SOURCES})
     add_library(RhinePlaybackCore STATIC ${RHINE_PLAYBACK_SOURCES})
@@ -275,7 +323,7 @@ if(NOT IOS)
                RHINE_RELEASE_BUILD=$<BOOL:${RHINE_RELEASE_BUILD}>)
     target_link_libraries(
         RhinePlaybackCore
-        PUBLIC Qt6::Core Qt6::Gui Qt6::Network Qt6::Concurrent Qt6::Multimedia
+        PUBLIC RhineAudioOutput Qt6::Core Qt6::Gui Qt6::Network Qt6::Concurrent Qt6::Multimedia
         PRIVATE Qt6::MultimediaPrivate)
     if(MSVC)
         target_compile_options(RhinePlaybackCore PRIVATE /utf-8)
@@ -293,9 +341,9 @@ target_compile_definitions(
                      RHINE_RELEASE_BUILD=$<BOOL:${RHINE_RELEASE_BUILD}>)
 target_link_libraries(
     RhineCore
-    PUBLIC Qt6::Core Qt6::Gui Qt6::Network Qt6::Concurrent Qt6::Multimedia
+    PUBLIC RhineAudioOutput Qt6::Core Qt6::Gui Qt6::Network Qt6::Concurrent Qt6::Multimedia
     PRIVATE Qt6::MultimediaPrivate tag)
-if(NOT IOS)
+if(NOT RHINE_MOBILE_PLATFORM)
     target_link_libraries(RhineCore PUBLIC RhinePlaybackCore)
 endif()
 add_subdirectory(Qt)
@@ -415,6 +463,24 @@ endif()
 if(APPLE)
     list(APPEND RHINE_OPTICAL_SHADER_DEFINES RHINE_METAL_MOTION=1)
 endif()
+# Android 合成层轻量化：最终合成的 3x3 二项柔化在采样半径 k==1 时折叠成四次半纹素
+# 双线性采样（9 -> 4 次纹理读取）。DEFINES 是 CMake 配置期参数，Android 与桌面/iOS 是
+# 各自独立的构建树，因此这个宏只会进入 Android 的 qsb 烘焙，其它平台的着色器产物
+# 与改动前逐字节相同，无需另起 /opticalMobile 变体、也不用在运行期切换 qrc 路径。
+# 关掉只需 -DRHINE_ANDROID_QUAD_FOLD=OFF 重新配置（不改源码、不动其它平台）。
+if(ANDROID)
+    option(RHINE_ANDROID_QUAD_FOLD "Fold the 3x3 final blur into four bilinear taps on Android" ON)
+    if(RHINE_ANDROID_QUAD_FOLD)
+        list(APPEND RHINE_OPTICAL_SHADER_DEFINES RHINE_OPTICAL_QUAD_FOLD=1)
+    endif()
+    # 法线响应在 Android 上烘焙成 8 位 UNORM（RHINE_BAKE_NORMAL_RGBA8=1），逐像素带宽
+    # 减半——夜间要采两次，等于每片元省 8 B。着色器解码由运行时 Globals.normalParams
+    # 决定，不再依赖这个宏；option/define 保留为 Android 构建标记。
+    option(RHINE_ANDROID_NORMAL_RGBA8 "Bake the normal response atlas as RGBA8 on Android" ON)
+    if(RHINE_ANDROID_NORMAL_RGBA8)
+        list(APPEND RHINE_OPTICAL_SHADER_DEFINES RHINE_NORMAL_RGBA8=1)
+    endif()
+endif()
 # E05a：紧凑实例（80 字节）的第二套着色器烘焙放在独立子目录： qt_add_shaders 把 .qsb 写到当前二进制目录的 .qsb/ 下，同一目录对同一份源码烘两次会撞规则。
 add_subdirectory(Qt/shaders/compact)
 if(APPLE)
@@ -445,6 +511,18 @@ qt_add_shaders(
     Qt/shaders/enhancement/opticalWarpLate.frag
     Qt/shaders/enhancement/opticalWarpDebug.frag
     Qt/shaders/enhancement/opticalSurfaceNoMrt.frag)
+if(APPLE)
+    qt_add_shaders(
+        RhineMusicDatabase
+        "rhine_motion_clear_shader"
+        PREFIX "/optical"
+        BASE "Qt/shaders/enhancement"
+        GLSL "130,150,300es"
+        HLSL 50
+        MSL 12
+        FILES Qt/shaders/enhancement/opticalClearMotion.frag)
+endif()
+
 target_compile_definitions(RhineMusicDatabase PRIVATE RHINE_APPLICATION_ID="${RHINE_APPLICATION_ID}"
                                                       $<$<CONFIG:Debug>:QT_QML_DEBUG>)
 target_link_libraries(
@@ -458,7 +536,7 @@ target_link_libraries(
             Qt6::Concurrent
             Qt6::Multimedia)
 # 平台分支只处理原生能力、部署身份及链接依赖。
-if(NOT IOS)
+if(NOT RHINE_MOBILE_PLATFORM)
     target_sources(RhineMusicDatabase PRIVATE Qt/tests/PlaybackServiceChecks.cpp
                                               Qt/tests/WindowTransitionChecks.cpp)
     if(WIN32 OR (APPLE AND NOT IOS))
@@ -539,11 +617,19 @@ if(APPLE)
     target_compile_options(RhineMusicDatabase PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
 endif()
 if(IOS)
-    target_sources(RhineCore PRIVATE Qt/src/PlatformIOS.mm Qt/src/BridgeProcessIOS.cpp Qt/src/BridgeProcess.h)
-    target_link_libraries(RhineCore PRIVATE "-framework Security" "-framework UIKit" "-framework AVFAudio"
-                                            "-framework MediaPlayer")
+    target_sources(RhineCore PRIVATE Qt/src/IOSDisplayLink.mm Qt/src/IOSDisplayLink.h
+                                      Qt/src/PlatformIOS.mm Qt/src/BridgeProcessIOS.cpp Qt/src/BridgeProcess.h)
+    target_link_libraries(RhineCore PRIVATE "-framework Security" "-framework UIKit" "-framework QuartzCore"
+                                            "-framework AVFAudio" "-framework MediaPlayer")
     target_compile_options(RhineCore PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
     include(Qt/IOS.cmake)
+elseif(ANDROID)
+    # 平台源码、Node 运行时、包元数据与内嵌资源都在 Qt/Android.cmake 里装配。
+    # 放在 APPLE/WIN32/UNIX 之前：Android 同时满足 UNIX，走错分支会把 PlatformLinux.cpp
+    # 编进来（它按桌面目录查找 orpheus:// 处理器）。
+    include(Qt/Android.cmake)
+    # 段错误诊断链的 logd 通道：liblog 的写路径无内存分配，崩溃处理器内可用。
+    target_link_libraries(RhineMusicDatabase PRIVATE log)
 elseif(APPLE)
     target_sources(${RHINE_SYSTEM_CORE} PRIVATE Qt/src/Platform.mm)
     target_link_libraries(${RHINE_SYSTEM_CORE} PRIVATE "-framework Security" "-framework AppKit"
@@ -609,7 +695,7 @@ if(APPLE
         "${CMAKE_CURRENT_SOURCE_DIR}/scripts/*")
     list(
         APPEND RHINE_RESOURCE_INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/package.json"
-        "${CMAKE_CURRENT_SOURCE_DIR}/MusicBridge/worker.cjs" "${CMAKE_CURRENT_SOURCE_DIR}/MusicBridge/qq.cjs"
+        "${CMAKE_CURRENT_SOURCE_DIR}/MusicBridge/worker.cjs"
         "${CMAKE_CURRENT_SOURCE_DIR}/MusicBridge/package-lock.json")
     set_property(
         TARGET RhineMusicDatabase
@@ -625,8 +711,8 @@ if(APPLE
         VERBATIM)
 endif()
 qt_finalize_executable(RhineMusicDatabase)
-# 桌面回归包含子进程和桌面路径，iOS 只构建正式应用。
-if(IOS)
+# 桌面回归包含子进程和桌面路径，移动端只构建正式应用。
+if(RHINE_MOBILE_PLATFORM)
     return()
 endif()
 enable_testing()
@@ -635,13 +721,13 @@ qt_add_executable(
     Qt/tests/PlatformRegression.cpp
     Qt/src/AppStorage.cpp
     Qt/src/AudioPlayer.cpp
-    Qt/src/WindowsAudioOutput.cpp
     Qt/src/AudioSpectrum.cpp
     Qt/src/HttpAudioStream.cpp
-    Qt/src/ProcessMetrics.cpp)
+    Qt/src/ProcessMetrics.cpp
+    Qt/src/ProviderRegistry.cpp)
 target_include_directories(RhinePlatformRegression PRIVATE Qt/src)
-target_link_libraries(RhinePlatformRegression PRIVATE Qt6::Core Qt6::Gui Qt6::Multimedia Qt6::Network
-                                                      Qt6::MultimediaPrivate)
+target_link_libraries(RhinePlatformRegression PRIVATE RhineAudioOutput Qt6::Core Qt6::Gui Qt6::Multimedia
+                                                      Qt6::Network Qt6::MultimediaPrivate)
 if(WIN32)
     target_sources(RhinePlatformRegression PRIVATE Qt/src/PlatformWindows.cpp)
     target_link_libraries(
@@ -760,13 +846,23 @@ endif()
 add_test(NAME qt_linux_display_regression COMMAND RhineLinuxDisplayRegression)
 
 qt_add_executable(RhineAudioStreamRegression Qt/tests/AudioStreamChecks.cpp Qt/src/AudioPlayer.cpp
-                  Qt/src/WindowsAudioOutput.cpp Qt/src/AudioSpectrum.cpp Qt/src/HttpAudioStream.cpp)
+                  Qt/src/AudioSpectrum.cpp Qt/src/HttpAudioStream.cpp Qt/src/ProviderRegistry.cpp)
 target_include_directories(RhineAudioStreamRegression PRIVATE Qt/src)
-target_link_libraries(RhineAudioStreamRegression PRIVATE Qt6::Core Qt6::Multimedia Qt6::Network)
+target_link_libraries(RhineAudioStreamRegression PRIVATE RhineAudioOutput Qt6::Core Qt6::Multimedia
+                                                         Qt6::Network)
 if(MSVC)
     target_compile_options(RhineAudioStreamRegression PRIVATE /utf-8)
 endif()
 add_test(NAME qt_audio_stream_regression COMMAND RhineAudioStreamRegression)
+qt_add_executable(RhineAudioOutputRegression Qt/tests/AudioOutputChecks.cpp Qt/src/AudioPlayer.cpp
+                  Qt/src/AudioSpectrum.cpp Qt/src/HttpAudioStream.cpp Qt/src/PlaybackDiagnostics.cpp
+                  Qt/src/ProviderRegistry.cpp)
+target_link_libraries(RhineAudioOutputRegression PRIVATE RhineAudioOutput Qt6::Network)
+if(MSVC)
+    target_compile_options(RhineAudioOutputRegression PRIVATE /utf-8)
+endif()
+add_test(NAME qt_audio_output_regression COMMAND RhineAudioOutputRegression)
+
 add_test(NAME qt_offline COMMAND RhineMusicDatabase --self-test)
 set_tests_properties(
     qt_offline
@@ -870,12 +966,9 @@ endif()
 
 if(WIN32)
     target_sources(RhineAudioStreamRegression PRIVATE Qt/src/AppStorage.cpp)
-    target_sources(RhineAudioPlaybackRegression PRIVATE Qt/src/WindowsAudioOutput.cpp)
+    target_sources(RhineAudioOutputRegression PRIVATE Qt/src/AppStorage.cpp)
     target_include_directories(RhineAudioPlaybackRegression PRIVATE Qt/src)
-    foreach(audioTarget ${RHINE_SYSTEM_CORE} RhinePlatformRegression RhineAudioStreamRegression
-                        RhineAudioPlaybackRegression)
-        target_link_libraries(${audioTarget} PRIVATE ole32 uuid avrt)
-    endforeach()
+    target_link_libraries(RhineAudioPlaybackRegression PRIVATE RhineAudioOutput)
 endif()
 
 if(WIN32 AND RHINE_ENABLE_D3D12_BACKEND)

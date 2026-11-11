@@ -21,6 +21,7 @@ class NativeApplication : public QObject {
     Host *m_host;
     NativeScene *m_scene;
     bool m_dragging = false;
+    bool m_hudPointerSequence = false;
     bool m_moved = false;
     QPointF m_down;
     static HudSceneActions sceneActions(NativeScene *scene);

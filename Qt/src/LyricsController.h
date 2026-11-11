@@ -1,7 +1,7 @@
 #pragma once
 #include "MusicApi.h"
 #include <QHash>
-#include <array>
+#include <map>
 #include <memory>
 
 class LyricsController : public QObject {
@@ -59,11 +59,12 @@ class LyricsController : public QObject {
     };
     using Pending = std::shared_ptr<Load>;
     Host *m_host;
-    std::array<std::unique_ptr<MusicApi>, 4> m_apis;
+    QStringList m_providers;
+    std::map<QString, std::unique_ptr<MusicApi>> m_apis;
     quint64 m_generation = 0;
     double m_globalOffsetMs = 0;
-    qint64 m_neteaseLyricsBlockedUntil = 0;
-    qint64 m_lastNeteaseLyricRequest = 0;
+    QHash<QString, qint64> m_lyricBlockedUntil;
+    QHash<QString, qint64> m_lastLyricRequest;
     QHash<QString, qint64> m_lyricsRetryAfter;
     QJsonObject m_document;
     QVector<double> m_starts;

@@ -6,6 +6,7 @@
 #include <QLocalSocket>
 #include <QTimer>
 #include <QPointer>
+#include <memory>
 
 /** 音频与协议的唯一所有者；此对象不创建窗口、QML 引擎、场景或图形设备。 */
 class PlaybackService : public QObject {
@@ -18,6 +19,7 @@ class PlaybackService : public QObject {
     void shutdown();
 
   private:
+    class SessionWriter;
     struct Client {
         QByteArray buffer;
         QJsonObject previous;
@@ -36,6 +38,8 @@ class PlaybackService : public QObject {
     InterfaceSession m_interfaceSession;
     QTimer m_poll;
     QTimer m_save;
+    // 会话落盘可能被慢盘或病毒扫描拖到数百毫秒，不能占用音频泵所在线程。
+    std::unique_ptr<SessionWriter> m_sessionWriter;
     QElapsedTimer m_clock;
     int m_selectionSerial = 0;
     QJsonObject m_selectedTrack;

@@ -1,9 +1,15 @@
 #include <QtGlobal>
 #include "NativeApplication.h"
+#include "MobileTarget.h"
 #include "render/HotPathProbe.h"
+#if defined(Q_OS_ANDROID)
+#include "render/HudPaintStats.h"
+#endif
 #include "AppStorage.h"
 #include <QFile>
+#include <QGuiApplication>
 #include <QJsonDocument>
+#include <QTimer>
 #include <cmath>
 
 HudSceneActions NativeApplication::sceneActions(NativeScene *scene) {
@@ -16,6 +22,9 @@ HudSceneActions NativeApplication::sceneActions(NativeScene *scene) {
             [scene]() { scene->openViewer(); },
             [scene](bool front) { scene->coverFront(front); }};
 }
+
+// 与 RhineMediaService.ACTION_SEEK 对应；会话回调的动作串形如 rhine.media.SEEK:<毫秒>。
+constexpr char kSeekActionPrefix[] = "rhine.media.SEEK:";
 
 /** 建立原生音乐、HUD、场景的值接口；所有异步失效统一唤醒 Qt 帧调度。 */
 NativeApplication::NativeApplication(Host *host, Glyphs *glyphs, NativeScene *scene, QJsonObject content,
@@ -64,6 +73,20 @@ void NativeApplication::initialize() {
     }
     music.restoreAccount();
     music.restoreIdentityName();
+#if RHINE_MOBILE
+    // 移动端没有"干净退出"：滑掉应用是 SIGKILL，aboutToQuit 永远不触发，桌面那套
+    // 「退出时写 session.json」在这里一次都不会发生，表现为重启后不恢复上次状态。
+    // 改成周期落盘 + 退后台立即落盘，与桌面恢复逻辑共用同一个文件与格式。
+    auto *sessionSaver = new QTimer(this);
+    sessionSaver->setInterval(15 * 1000);
+    connect(sessionSaver, &QTimer::timeout, this, [this] { saveSession(); });
+    sessionSaver->start();
+    connect(qGuiApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState state) {
+        if (state == Qt::ApplicationInactive || state == Qt::ApplicationSuspended) {
+            saveSession();
+        }
+    });
+#endif
 }
 #if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
 // RHINE_STEP_PROBE=1：拆开 app->step 内部（场景采样 / HUD 绘制 / 观察与返回对象构建）。
@@ -74,15 +97,19 @@ static int nacFrames = 0;
 #endif
 QJsonObject NativeApplication::step(double time, double width, bool reuseScene) {
 #if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
+#if defined(Q_OS_ANDROID)
+    // Android 上无条件计时：设备设不了 RHINE_STEP_PROBE，而切歌动画的瓶颈就落在这几段里。
+    // 三段各一次 nsecsElapsed，开销可忽略；数字走性能 JSON 的 step*Ms 字段。
+    const bool nacProbe = false;
+#else
     const bool nacProbe = qEnvironmentVariableIntValue("RHINE_STEP_PROBE") == 1;
+#endif
     QElapsedTimer nacTimer;
-    if (nacProbe) {
-        nacTimer.start();
-    }
+    nacTimer.start();
 #endif
     const auto frame = reuseScene ? music.frame : m_scene->sample(time);
 #if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
-    const double nacSampleMs = nacProbe ? double(nacTimer.nsecsElapsed()) / 1e6 : 0.0;
+    const double nacSampleMs = double(nacTimer.nsecsElapsed()) / 1e6;
 #endif
     if (frame.isEmpty()) {
         return {};
@@ -90,26 +117,31 @@ QJsonObject NativeApplication::step(double time, double width, bool reuseScene) 
     music.frame = frame;
 #if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
     QElapsedTimer nacObserveClock;
-    if (nacProbe) {
-        nacObserveClock.start();
-    }
+    nacObserveClock.start();
 #endif
     music.observe(frame["selected"].toInt());
     if (hud.tab != "overview" && music.wantsSongDetails && frame["mode"] == "detail") {
         music.sameAlbum();
     }
 #if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
-    const double nacObserveEnd = nacProbe ? double(nacTimer.nsecsElapsed()) / 1e6 : 0.0;
+    const double nacObserveEnd = double(nacTimer.nsecsElapsed()) / 1e6;
     QElapsedTimer nacDrawClock;
-    if (nacProbe) {
-        nacDrawClock.start();
-    }
+    nacDrawClock.start();
 #endif
     hud.draw(frame, width, time);
 #if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
-    const double nacDrawMs = nacProbe ? double(nacDrawClock.nsecsElapsed()) / 1e6 : 0.0;
-    const double nacDrawEnd = nacProbe ? double(nacTimer.nsecsElapsed()) / 1e6 : 0.0;
+    const double nacDrawMs = double(nacDrawClock.nsecsElapsed()) / 1e6;
+    const double nacDrawEnd = double(nacTimer.nsecsElapsed()) / 1e6;
     RhineRender::hotPathWindow().frames.fetch_add(1);
+#if defined(Q_OS_ANDROID)
+    {
+        auto &phase = RhineRender::stepPhaseStats();
+        phase.count.fetch_add(1, std::memory_order_relaxed);
+        phase.sceneSampleNs.fetch_add(quint64(nacSampleMs * 1e6), std::memory_order_relaxed);
+        phase.observeNs.fetch_add(quint64((nacObserveEnd - nacSampleMs) * 1e6), std::memory_order_relaxed);
+        phase.hudDrawNs.fetch_add(quint64(nacDrawMs * 1e6), std::memory_order_relaxed);
+    }
+#endif
 
     // 返回对象的构建会把 hud.commands 等大对象整份拷进新 QJsonObject，单独计时。
     QJsonObject nacResult{{"commands", hud.commands},
@@ -163,23 +195,74 @@ void NativeApplication::poll(double time, bool force) {
     music.player.tick(time, force);
 }
 void NativeApplication::mediaAction(QString action) {
+    // 系统媒体控件的动作用字节面语义直达播放器：hud.action 的场景分派依赖交互帧，
+    // 后台没有帧；且 hud 的 player:seek 是播放栏像素语义（值/20），不适用于会话回调。
     if (action == "resume" || action == "pause") {
         music.player.setPaused(action == "pause");
+    } else if (action == "next" || action == "prev") {
+        music.player.next(action == "next" ? 1 : -1);
+    } else if (action.startsWith(kSeekActionPrefix)) {
+        const auto position = action.mid(int(sizeof(kSeekActionPrefix) - 1)).toDouble();
+        const auto duration = music.player.state["duration"].toDouble();
+        if (duration > 0) {
+            music.player.seek(qBound(0.0, position / duration, 1.0));
+        }
     } else {
         hud.action("player:" + action);
     }
 }
 
 void NativeApplication::pointer(QString type, double x, double y) {
+    // 一次按压从 HUD 开始就始终归 HUD，避免列表拖动穿透成场景的横向换列。
+    if (type == "pointerdown") {
+        m_hudPointerSequence = false;
+        if (hud.compactLayout() && !hud.frame["viewer"].toBool()) {
+            const double listTop = hud.state()["archiveListY"].toDouble();
+            m_hudPointerSequence = listTop > 0 && y >= listTop;
+            for (const auto &value : hud.hits) {
+                const auto hit = value.toObject();
+                const QRectF rect(hit["x"].toDouble(), hit["y"].toDouble(), hit["width"].toDouble(),
+                                  hit["height"].toDouble());
+                if (rect.contains(x, y)) {
+                    m_hudPointerSequence = true;
+                    break;
+                }
+            }
+        }
+    }
+    if (m_hudPointerSequence) {
+        m_dragging = false;
+        m_moved = false;
+        m_scene->pointer("pointercancel", 0, 0);
+        if (type == "pointerup" || type == "pointercancel" || type == "pointerleave") {
+            m_hudPointerSequence = false;
+        }
+        return;
+    }
+    // 窄屏阅读页面覆盖整个场景；资料库主界面仍可在列表以外拖动真实场景。
+    if (hud.compactLayout() && !hud.frame["viewer"].toBool()) {
+        const auto region = hud.state()["playerBounds"].toObject();
+        if (!hud.modal.isEmpty() || hud.frame["mode"] == "detail" ||
+            (!region.isEmpty() && y >= region["y"].toDouble())) {
+            m_dragging = false;
+            m_moved = false;
+            m_scene->pointer("pointercancel", 0, 0);
+            return;
+        }
+    }
+    // "pan"（双指平移）的 x/y 是位移增量而不是指针位置，绝不能拿去做播放栏/弹窗
+    // 的命中判定——增量值恰好落进播放栏矩形时平移会被误判吞掉。viewer 打开时
+    // NativeScene::pointer 会把它直接转发给 NativeViewer。
+    const bool positional = type != "pan";
     // 播放栏覆盖场景；在原生分发边界也隔离留白，防止后端调用穿透或残留拖动。
-    if (hud.playerBounds && hud.playerBounds->contains(x, y)) {
+    if (positional && hud.playerBounds && hud.playerBounds->contains(x, y)) {
         m_dragging = false;
         m_moved = false;
         m_scene->pointer("pointercancel", 0, 0);
         m_scene->pointer("pointerleave", 0, 0);
         return;
     }
-    if (!hud.modal.isEmpty()) {
+    if (positional && !hud.modal.isEmpty()) {
         // 弹窗外只接受完整点击，拖动、取消和面板内部留白都不触发返回。
         if (type == "pointerdown") {
             m_dragging = true;

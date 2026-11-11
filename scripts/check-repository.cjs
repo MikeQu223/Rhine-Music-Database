@@ -94,8 +94,8 @@ for (const name of [
     'LICENSE',
     'NOTICE',
     'licenses/source-manifest.json',
-    'MusicBridge/upstream/LICENSE',
-    'MusicBridge/upstream/source.json',
+    'MusicBridge/LyricsKit-LICENSE',
+    'MusicBridge/lyrics-source.json',
 ]) {
     assert(files.includes(name), `Required attribution: ${name}`);
 }

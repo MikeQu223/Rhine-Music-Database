@@ -4,6 +4,7 @@
 #include "NativeHud.h"
 #include "MusicData.h"
 #include "MusicDiscover.h"
+#include "ProviderRegistry.h"
 #include <QJsonDocument>
 #include <QPointer>
 #include <QUrl>
@@ -46,6 +47,8 @@ NativeHud::NativeHud(Host *host, Glyphs *glyphs, MusicLibrary *music, HudSceneAc
     vsync = host->preference("vsync") != "off";
 #endif
     discRotation = host->preference("disc-rotation") == "on";
+    skipDetailOnSwitch = host->preference("skip-detail-on-switch") == "on";
+    music->skipDetailOnSwitch = skipDetailOnSwitch;
     bool hasMaskStrength = false;
     const auto savedMaskStrength = host->preference("archive-mask-strength").toInt(&hasMaskStrength);
     if (hasMaskStrength) {
@@ -105,8 +108,14 @@ void NativeHud::openModal(QString kind) {
     categoryPage = 0;
     if (kind == "saved") {
         musicCollection = std::max(1, m_music->selectedLane);
-        if (m_music->provider == "kugou" && musicCollection == 4) {
-            musicCollection = 2;
+        if (!m_music->laneVisible(musicCollection)) {
+            musicCollection = 1;
+            for (int lane = 1; lane < m_music->columns.size(); ++lane) {
+                if (m_music->laneVisible(lane)) {
+                    musicCollection = lane;
+                    break;
+                }
+            }
         }
         if (m_music->lists[musicCollection].isEmpty()) {
             m_music->loadMoreSource(musicCollection);
@@ -139,10 +148,20 @@ void NativeHud::closeModal() {
     editingSettingText.clear();
     editingSettingRect = QRectF();
     closing = true;
-    motion.set(false, lastTime, reduced);
+    const bool directNavigation =
+        m_responsive.compact() && QStringList{"search", "discover", "settings", "saved"}.contains(modal);
+    motion.set(false, lastTime, reduced || directNavigation);
 }
 
 void NativeHud::setQuery(QString value) {
+    // ！？ 325 ？！
+    if (!m_responsive.compact() && value == QStringLiteral("325")) {
+        m_secretKeys.clear();
+        ++m_searchGeneration;
+        query.clear();
+        openHiddenVideo();
+        return;
+    }
     query = value;
     listOffset = 0;
     resetResultViews();
@@ -155,11 +174,17 @@ void NativeHud::setQuery(QString value) {
                 return;
             }
             owner->m_music->search(value);
-            if (owner->m_music->provider == "netease" && !owner->m_host->fromLink(value).isEmpty()) {
+            if (ProviderRegistry::instance().capability(owner->m_music->provider, "resolveLink", false) &&
+                value.contains("://")) {
                 owner->closeModal();
             }
         });
     }
+}
+
+// ！？ 325 ？！
+void NativeHud::openHiddenVideo() {
+    m_host->open(QStringLiteral("https://www.bilibili.com/video/BV1GkosY6EGp/"));
 }
 
 void NativeHud::form(QJsonObject fields) {
@@ -185,11 +210,11 @@ QVector<NativeHud::Row> NativeHud::rows(int lane) {
         return {};
     }
     const auto filter = modal == "saved" ? query.toLower() : QString();
-    const auto key =
-        QString::fromUtf8(QJsonDocument(QJsonArray{lane, double(m_music->revision),
-                                                   m_music->lists[lane].size(), filter, groupBy, activeGroup})
-                              .toJson(QJsonDocument::Compact));
-    if (key == m_rowsKey) {
+    const auto key = QString::fromUtf8(
+        QJsonDocument(QJsonArray{lane, m_music->provider, double(m_music->accountGeneration()),
+                                 m_music->lists[lane].size(), filter, groupBy, activeGroup})
+            .toJson(QJsonDocument::Compact));
+    if (key == m_rowsKey && m_rowsSource == m_music->lists[lane]) {
         return m_rows;
     }
     QVector<Row> values;
@@ -265,6 +290,7 @@ QVector<NativeHud::Row> NativeHud::rows(int lane) {
         }
     }
     m_rowsKey = key;
+    m_rowsSource = m_music->lists[lane];
     m_rows = values;
     return values;
 }
@@ -309,11 +335,11 @@ void NativeHud::playerAction(const QStringList &parts) {
     const auto index = int(value);
     if (name == "mv" && PlatformFeatures::MusicVideo) {
         emit mvRequested();
-    } else if (name == "lyrics") {
+    } else if (name == "lyrics" || name == "detail") {
         if (!player.current.isEmpty()) {
             modal.clear();
             closing = false;
-            lyricsMode = true;
+            lyricsMode = name == "lyrics";
             m_lyricsBrowse.reset();
             music.followPlayback(player.current);
             m_scene.mode("detail");
@@ -395,6 +421,94 @@ void NativeHud::playerAction(const QStringList &parts) {
 
 /** 动作字符串保持原有输入协议，控制器直接更新原生音乐状态和场景。 */
 void NativeHud::action(QString value) {
+    if (m_responsive.compact() && value.startsWith("mobile:play-collection:")) {
+        const auto json =
+            QUrl::fromPercentEncoding(value.mid(QString("mobile:play-collection:").size()).toUtf8());
+        m_music->playCollection(QJsonDocument::fromJson(json.toUtf8()).object());
+        return;
+    }
+    if (m_responsive.compact() && value.startsWith("mobile:play-discover:")) {
+        const int index = value.mid(QString("mobile:play-discover:").size()).toInt();
+        if (index >= 0 && index < m_music->discover->items.size()) {
+            m_music->playCollection(m_music->discover->items[index].toObject());
+        }
+        return;
+    }
+    if (m_responsive.compact() && value.startsWith("mobile:lyrics-drag:")) {
+        m_mobileTransition.drag(value.mid(19).toDouble());
+        return;
+    }
+    if (m_responsive.compact() && value == "mobile:lyrics-release") {
+        if (m_mobileTransition.release()) {
+            playerAction({"player", "lyrics-close"});
+        }
+        return;
+    }
+    if (m_responsive.compact() && value.startsWith("mobile:comments-drag:")) {
+        m_mobileTransition.drag(value.mid(21).toDouble());
+        return;
+    }
+    if (m_responsive.compact() && value == "mobile:comments-release") {
+        if (m_mobileTransition.release()) {
+            commentsMode = false;
+        }
+        return;
+    }
+    if (value == "music:comments") {
+        if (!m_music->commentsAvailable()) {
+            return;
+        }
+        m_responsive.handleAction(value);
+        commentsTrackKey = CommentsController::trackKey(m_music->current);
+        commentsScroll = 0;
+        commentsContentBottom = 0;
+        if (!m_responsive.compact() && tab != "comments") {
+            commentsReturnTab = tab;
+            tab = "comments";
+        }
+        commentsMode = true;
+        m_music->comments.load(m_music->current);
+        return;
+    }
+    if (value == "music:comments-close") {
+        commentsMode = false;
+        if (!m_responsive.compact()) {
+            tab = commentsReturnTab.isEmpty() || commentsReturnTab == "comments" ? "overview"
+                                                                                 : commentsReturnTab;
+        }
+        commentsScroll = 0;
+        return;
+    }
+    if (m_responsive.compact() && value == "mobile:play-archive") {
+        m_music->playDirectory(true);
+        return;
+    }
+
+    if (m_responsive.compact() && value.startsWith("mobile:source:")) {
+        bool valid = false;
+        const int lane = value.mid(14).toInt(&valid);
+        if (valid && m_music->sourceOrder().contains(lane)) {
+            m_music->showSource(lane);
+        }
+        return;
+    }
+    if (m_responsive.handleAction(value)) {
+        return;
+    }
+    if (m_responsive.compact() && (value == "mobile:history" || value == "mobile:artists")) {
+        openModal("discover");
+        action(value == "mobile:history" ? "discover:tab:history" : "discover:tab:artists");
+        return;
+    }
+    if (m_responsive.compact() && value == "mobile:play-liked") {
+        m_music->showSource(1);
+        m_music->playDirectory(true);
+        return;
+    }
+    if (m_responsive.compact() && value == "mobile:search-submit") {
+        setQuery(query);
+        return;
+    }
     if (!editingSettingId.isEmpty() && !value.startsWith("setting-edit:")) {
         cancelSettingEdit();
     }
@@ -415,6 +529,7 @@ void NativeHud::action(QString value) {
     }
     if (value == "home") {
         lyricsMode = false;
+        commentsMode = false;
         if (!modal.isEmpty()) {
             closeModal();
         }
@@ -480,6 +595,9 @@ void NativeHud::action(QString value) {
     }
     if (value == "cache:clear") {
         m_music->clearCaches();
+        if (commentsMode && !m_music->current.isEmpty()) {
+            m_music->comments.load(m_music->current);
+        }
         cacheMessage = QStringLiteral("已清除");
         return;
     }
@@ -499,21 +617,153 @@ void NativeHud::action(QString value) {
         return;
     }
     if (value.startsWith("tab:")) {
+        const auto next = value.mid(4);
+        if (next == "comments") {
+            if (!music.commentsAvailable()) {
+                return;
+            }
+            if (tab != "comments") {
+                commentsReturnTab = tab;
+            }
+            trackOffset = 0;
+            bodyOffset = 0;
+            tab = "comments";
+            commentsTrackKey = CommentsController::trackKey(music.current);
+            commentsScroll = 0;
+            commentsContentBottom = 0;
+            commentsMode = true;
+            music.comments.load(music.current);
+            return;
+        }
+        commentsMode = false;
         trackOffset = 0;
         bodyOffset = 0;
-        tab = value.mid(4);
+        tab = next;
         if (music.current.value("kind") == "song" && tab != "overview") {
             music.sameAlbum();
         }
+        return;
+    }
+    if (value == "comments:close") {
+        commentsMode = false;
+        tab = commentsReturnTab.isEmpty() || commentsReturnTab == "comments" ? "overview" : commentsReturnTab;
+        commentsScroll = 0;
+        return;
+    }
+    if (value.startsWith("comments:sort:")) {
+        music.comments.setSort(value.mid(14));
+        commentsScroll = 0;
+        return;
+    }
+    if (value == "comments:refresh" || value == "comments:retry") {
+        music.comments.refresh();
+        commentsScroll = 0;
+        return;
+    }
+    if (value == "comments:load-more") {
+        music.comments.loadMore();
+        return;
+    }
+    if (value.startsWith("comments:replies-more:")) {
+        music.comments.loadMoreReplies(value.mid(22));
+        return;
+    }
+    if (value.startsWith("comments:replies:")) {
+        music.comments.toggleReplies(value.mid(17));
+        return;
+    }
+    if (value.startsWith("comments:expand:")) {
+        music.comments.toggleExpanded(value.mid(16));
         return;
     }
     if (value == "provider") {
         openModal("provider");
         return;
     }
+    if (value == "plugins") {
+        pluginManagerMessage.clear();
+        openModal("plugins");
+        // 市场索引可能在应用运行期间更新，进入面板时总是重新读取，避免显示过期版本。
+        m_host->refreshPluginMarketplace();
+        return;
+    }
+    if (value == "plugin:refresh") {
+        m_host->refreshPluginMarketplace();
+        return;
+    }
+    if (value == "plugin:import") {
+        emit pluginImportRequested();
+        return;
+    }
+    if (value.startsWith("plugin:market:")) {
+        const auto error = m_host->installMarketplacePlugin(value.mid(QString("plugin:market:").size()));
+        pluginManagerMessage = error;
+        if (error.isEmpty()) {
+            openModal("plugins");
+        }
+        m_host->invalidate();
+        return;
+    }
+    if (value.startsWith("plugin:toggle:")) {
+        const auto id = value.mid(QString("plugin:toggle:").size());
+        const auto enabled = m_host->pluginEnabled(id);
+        if (enabled && m_music && id == m_music->provider) {
+            pluginManagerMessage = QStringLiteral("请先切换到其他来源后再禁用插件");
+            m_host->invalidate();
+            return;
+        }
+        m_host->setPluginEnabled(id, !enabled);
+        pluginManagerMessage = enabled ? QStringLiteral("已禁用插件") : QStringLiteral("已启用插件");
+        m_host->invalidate();
+        return;
+    }
+    if (value.startsWith("plugin:detail:")) {
+        pluginDetailId = value.mid(QString("plugin:detail:").size());
+        pluginManagerMessage.clear();
+        openModal("plugin-detail");
+        return;
+    }
+    if (value.startsWith("plugin:rollback:")) {
+        const auto error = m_host->rollbackPlugin(value.mid(QString("plugin:rollback:").size()));
+        pluginManagerMessage = error.isEmpty() ? QStringLiteral("插件已回滚") : error;
+        m_host->invalidate();
+        return;
+    }
+    if (value.startsWith("plugin:uninstall:")) {
+        const auto id = value.mid(QString("plugin:uninstall:").size());
+        if (m_music && id == m_music->provider) {
+            pluginManagerMessage = QStringLiteral("请先切换到其他来源后再卸载插件");
+            m_host->invalidate();
+            return;
+        }
+        const auto detail = m_host->pluginDetail(id);
+        if (!detail["userInstalled"].toBool()) {
+            pluginManagerMessage = QStringLiteral("内置插件不能卸载");
+            m_host->invalidate();
+            return;
+        }
+        confirmTitle = QStringLiteral("卸载插件：") + detail["display"].toObject()["name"].toString(id);
+        confirmMessage = QStringLiteral("只删除应用数据目录中的插件文件，不删除账号数据。");
+        confirmLabel = QStringLiteral("确认卸载");
+        const QPointer<Host> host(m_host);
+        const QPointer<NativeHud> owner(this);
+        m_confirm = [host, owner, id] {
+            if (!host || !owner) {
+                return;
+            }
+            const auto error = host->uninstallPlugin(id);
+            owner->pluginManagerMessage = error.isEmpty() ? QStringLiteral("插件已卸载") : error;
+            host->invalidate();
+            owner->openModal("plugins");
+        };
+        openModal("confirm");
+        return;
+    }
     if (value.startsWith("provider:")) {
         const auto provider = value.mid(9);
         if (music.provider != provider) {
+            commentsMode = false;
+            music.comments.clear();
             ++m_searchGeneration;
             activeGroup.clear();
             query.clear();
@@ -560,6 +810,8 @@ void NativeHud::action(QString value) {
                         }
                     }
                 };
+                confirmMessage.clear();
+                confirmLabel.clear();
                 openModal("confirm");
             }
         } else if (name == "browse") {
@@ -593,7 +845,7 @@ void NativeHud::action(QString value) {
             if (music.openDaily()) {
                 closeModal();
             }
-        } else if (name == "area" && music.provider == "qq") {
+        } else if (name == "area") {
             discoverScroll = 0;
             discover.newSongArea = parts.value(2);
             discover.load("new-songs");
@@ -604,7 +856,14 @@ void NativeHud::action(QString value) {
                 discover.loadCategories();
             }
         } else if (name == "category-page") {
-            const int allCategory = music.provider != "qq" || discover.categories.isEmpty() ? 1 : 0;
+            const bool hasAllCategory =
+                std::any_of(discover.categories.begin(), discover.categories.end(),
+                            [](const QJsonValue &value) {
+                                const auto category = value.toObject();
+                                return category["id"].toString() == "全部" ||
+                                       category["name"].toString() == "全部";
+                            });
+            const int allCategory = discover.categories.isEmpty() || hasAllCategory ? 1 : 0;
             const auto pages = std::max(
                 1, (int(discover.categories.size()) + allCategory + CategoryPageSize - 1) / CategoryPageSize);
             const auto step = parts.value(2) == "prev" ? -1 : 1;
@@ -642,6 +901,7 @@ void NativeHud::action(QString value) {
     }
     if (value == "back") {
         lyricsMode = false;
+        commentsMode = false;
         if (music.directory) {
             if (frame["mode"] == "detail") {
                 music.returnToDirectory();
@@ -738,22 +998,32 @@ void NativeHud::action(QString value) {
     } else if (value == "detail-autoplay") {
         const bool enabled = m_host->preference("detail-autoplay") == "on";
         m_host->setPreference("detail-autoplay", enabled ? "off" : "on");
+    } else if (value == "skip-detail-on-switch") {
+        const bool enabled = m_host->preference("skip-detail-on-switch") == "on";
+        applySettingValue("skip-detail-on-switch", enabled ? "off" : "on");
     } else if (value == "close-behavior") {
         // 关闭行为在点击窗口关闭按钮时读取
         const bool toTray = m_host->preference("close-behavior") == "tray";
         m_host->setPreference("close-behavior", toTray ? "quit" : "tray");
+    } else if (value == "debug-mode") {
+        const bool enabled = m_host->preference("debug-mode") == "on";
+        m_host->setPreference("debug-mode", enabled ? "off" : "on");
     } else if (value == "graphics-backend") {
         // 后端切换需要重启生效：仅写入配置，由下次启动的 selectGraphicsBackend 应用。
-        // 顺序：默认（自动探测）→ Vulkan → OpenGL → 默认
+        // 顺序：默认（自动探测）→ Vulkan → D3D12 → OpenGL → 默认。
         const auto current = m_host->preference("graphics-backend");
         QString next;
         if (current.isEmpty()) {
             next = QStringLiteral("vulkan");
         } else if (current == "vulkan") {
-            next = QStringLiteral("opengl");
 #if defined(Q_OS_WIN) && RHINE_ENABLE_D3D12_BACKEND
-        } else if (current == "opengl") {
             next = QStringLiteral("d3d12");
+#else
+            next = QStringLiteral("opengl");
+#endif
+#if defined(Q_OS_WIN) && RHINE_ENABLE_D3D12_BACKEND
+        } else if (current == "d3d12") {
+            next = QStringLiteral("opengl");
 #endif
         }
         m_host->setPreference("graphics-backend", next);
@@ -887,6 +1157,20 @@ void NativeHud::action(QString value) {
 }
 
 void NativeHud::key(QString value, bool command) {
+    // ！？ 325 ？！
+    if (!m_responsive.compact() && !command && value.size() == 1 && value.at(0).isDigit()) {
+        m_secretKeys.append(value);
+        if (m_secretKeys.size() > 3) {
+            m_secretKeys.remove(0, m_secretKeys.size() - 3);
+        }
+        if (m_secretKeys == QStringLiteral("325")) {
+            m_secretKeys.clear();
+            openHiddenVideo();
+            return;
+        }
+    } else {
+        m_secretKeys.clear();
+    }
     if (frame.isEmpty()) {
         return;
     }
@@ -933,6 +1217,11 @@ void NativeHud::key(QString value, bool command) {
         m_music->player.toggle();
         return;
     }
+    // “切歌不打开详情”开启后，资料库回车直接播放当前曲目。
+    if (value == "Enter" && enterPlaysSelection()) {
+        action("music:play");
+        return;
+    }
     static const QHash<QString, QString> actions{{"ArrowLeft", "column-prev"},
                                                  {"ArrowRight", "column-next"},
                                                  {"ArrowUp", "prev"},
@@ -949,9 +1238,16 @@ bool NativeHud::supportsTrackList() const {
            m_music->current.value("kind") == "song";
 }
 
+bool NativeHud::enterPlaysSelection() const {
+    return skipDetailOnSwitch && frame["mode"] == "archive" && m_music->current.value("kind") == "song";
+}
+
 bool NativeHud::animating(double time) const {
     if (reduced) {
         return !motion.finished() || closing;
+    }
+    if (m_responsive.compact() && (m_mobileTransition.active(time) || m_responsive.animating(time))) {
+        return true;
     }
     const bool lyrics = lyricsMode && modal.isEmpty() && m_lyricsCurve &&
                         time - m_lyricsCurve->start < m_lyricsCurve->duration;

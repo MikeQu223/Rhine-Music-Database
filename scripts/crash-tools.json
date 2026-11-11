@@ -1,0 +1,22 @@
+{
+    "crashpadRevision": "db81331bc0dd5904cbf84de59f96e87e8366f182",
+    "stackwalkVersion": "0.27.0",
+    "symbolsVersion": "2.3.9",
+    "platforms": {
+        "darwin-arm64": {
+            "target": "aarch64-apple-darwin",
+            "stackwalkSha256": "5fcd4d25a5b0bbdc8faac6f4f81629bc67483c3eb458b86a8304733a7c6a2ca9",
+            "symbolsSha256": "4945b7e5de0d7ad403822635f0fb912b69990fc412741ff2b7b512e168c40a32"
+        },
+        "darwin-x64": {
+            "target": "x86_64-apple-darwin",
+            "stackwalkSha256": "801fa500d159fe474260ef1aad80706bed822434aced7fdb21c1b2c7a06afe6f",
+            "symbolsSha256": "e255caf99e403b31613c756babcead8463f6e600c1a9e1e5531fbe27a7e29cf2"
+        },
+        "win32-x64": {
+            "target": "x86_64-pc-windows-msvc",
+            "stackwalkSha256": "f6f2d7f1665843c4a270cd13fcd1458fed3b19013ea5dd909e12bc3599b959f4",
+            "symbolsSha256": "bdf48486220708808a3e00aec78856ee1cce096189d47a1e2cb1c635f93bacc7"
+        }
+    }
+}

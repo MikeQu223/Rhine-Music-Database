@@ -1,12 +1,12 @@
 # RHINE MUSIC DATABASE
 
-**基于莱茵生命终端的第三方网易云 / QQ / 酷狗音乐面板**
+**基于莱茵生命终端的音乐面板**
 
 这是对《明日方舟》特别映像「莱茵生命：访问」终端界面的非官方复刻
 
 使用 **Qt 6 / QML / C++** 构建
 
-面板支持检索、分组浏览、账号登录与 **播放**，同时保留网易云音乐官方客户端播放入口
+面板支持检索、分组浏览、账号登录与 **播放**。具体音乐来源由插件提供，可在插件市场安装、启用或卸载；
 
 ![面板总览](Assets/previews/panel.png)
 
@@ -60,7 +60,7 @@ macOS、Linux 和 Windows 默认使用 FFmpeg 音频后端。Windows 设置 `QT_
 桌面播放由独立后台服务管理音频、队列与账号；服务生命周期与界面进程绑定，
 界面正常退出或崩溃都会停止播放并结束服务。渲染、窗口与托盘始终由界面进程负责。
 
-图形后端在 Windows 与 Linux 上优先使用 Vulkan，不可用时回退 OpenGL；macOS 固定使用 Metal。
+图形后端在 Windows 与 Linux 上优先使用 Vulkan；Windows 不可用时回退 Direct3D 12，Linux 回退 OpenGL；macOS 固定使用 Metal。
 `RHINE_GRAPHICS=vulkan|opengl|auto` 可手动指定，`QSG_RHI_BACKEND` 的优先级更高。
 Linux 上「不可用」包含两种：没有 Vulkan 物理设备，和当前 X11 连接没有 DRI3 扩展。
 后者在没有 DRI3 的 Xorg 上会让 Mesa 在创建交换链时失败，而 Qt 拿不到交换链会直接 abort，
@@ -76,13 +76,11 @@ Linux 会话分 X11 与 Wayland 两条路，平台插件在启动时就固定了
 Linux 的「设置 → GPU / 显卡」可以指定用哪一块显卡，重启生效。列表只显示序号（0 基，与 `/sys/class/drm` 的 `cardN` 顺序一致），保存的也是序号——型号会随驱动更新和换卡变化，序号才是稳定的东西。序号在下次启动时不存在（换卡、拔掉 eGPU 或配置被改坏）就自动回退到默认行为：不注入任何厂商变量，完全等同于此前的版本，设置页会注明「序号 N 不存在」。
 实现上按驱动分流：Mesa 系（i915 / xe / amdgpu / nouveau）用 `DRI_PRIME=pci-0000_01_00_0` 把目标卡排到物理设备列表首位，NVIDIA 专有驱动用 `__NV_PRIME_RENDER_OFFLOAD=1` 加 `__VK_LAYER_NV_optimus=NVIDIA_only`（选非 NVIDIA 卡时为 `non_NVIDIA_only`），Qt 取枚举到的第一块卡即等于选中。`RHINE_GPU_INDEX=N` 只对本次启动生效，不改配置，便于对照；`RHINE_SOFTWARE_GPU=1` 时不做任何选择。两张同型号 NVIDIA 显卡之间无法区分（NVIDIA 图层只能表达「要 / 不要 NVIDIA」），此时会打一条警告。
 
-**面板内播放支持网易云、QQ 和酷狗音乐返回的可用音源。网易云官方客户端入口需要安装并注册网易云音乐；QQ 提供来源网页入口，酷狗提供官方网站入口。**
-
 ## 功能列表
 
 勾选表示已实现；未勾选表示当前未实现，不代表承诺开发。
 
-### 网易云音乐
+### 音乐来源插件
 
 - [x] 歌曲、专辑、歌单、歌手搜索与分页
 - [x] 歌手热门歌曲与发行专辑
@@ -91,40 +89,14 @@ Linux 的「设置 → GPU / 显卡」可以指定用哪一块显卡，重启生
 - [x] 创建、重命名、删除自己的歌单
 - [x] 歌曲加入或移出歌单
 - [x] 每日推荐、推荐歌单、排行榜、新专辑、分类歌单
-- [x] 面板内播放与网易云官方客户端入口
+- [x] 面板内播放与插件声明的官方客户端入口
 - [x] 同步歌词与逐句滚动
+- [x] 歌曲评论浏览：由支持评论 operation 的插件读取；塞壬唱片可匹配可用评论来源
 - [x] 关联 MV 自动静音播放、独立窗口、视频版本选择、全屏与透明度调节
 - [x] Windows 桌面壁纸模式、显示器选择、桌面进度控制与音乐频谱波浪
-- [ ] 评论社交、云盘、电台
+- [ ] 评论互动、云盘、电台
 - [ ] 音乐下载
 
-### QQ 音乐
-
-- [x] 关键字搜索
-- [x] 从歌曲浏览专辑与歌手作品
-- [x] 手机 QQ、微信扫码登录
-- [x] 喜欢歌曲、自建及收藏歌单、收藏专辑
-- [x] 自建非公开歌单读取
-- [x] 每日 30 首、猜你喜欢、推荐歌单、榜单、新专辑、分类歌单、新歌速递
-- [x] 面板内播放与来源网页入口
-- [x] 歌曲、专辑、歌单、歌手独立搜索与分页
-- [x] 红心与取消红心，收藏及取消收藏歌单、专辑
-- [x] 创建、改名、删除本人普通歌单，普通曲库歌曲加歌、移除
-- [x] 同步歌词与逐句滚动
-- [ ] MV、评论社交、电台
-- [ ] 音乐下载
-
-### 酷狗音乐（标准版 / 概念版）
-
-- [x] 选择标准版或概念版 App 扫码登录，固定设备身份与两个版本独立的本机加密凭据保存
-- [x] 登录后的歌曲、专辑、歌单、歌手搜索
-- [x] 自建及收藏歌单、默认喜欢歌单读取，歌单、榜单及专辑曲目播放
-- [x] 推荐歌单、每日推荐、排行榜、新专辑与分类歌单
-- [x] 歌手单曲和发行专辑浏览
-- [x] 按文档注册设备取得 dfid，再调用 `/song/url`；高音质不可用时回退标准音质
-- [ ] 收藏专辑读取与账号内容编辑
-- [x] 同步歌词与逐句滚动
-- [ ] MV、评论社交、云盘、电台、下载
 
 ### 本地音乐
 
@@ -135,7 +107,7 @@ Linux 的「设置 → GPU / 显卡」可以指定用哪一块显卡，重启生
 - [x] 缺少歌词或封面时复用跨平台录音匹配补充，不改写音频标签或音乐文件
 - [x] 按歌曲、歌手、专辑与文件夹分组浏览，支持本地检索
 - [x] 面板内播放、播放队列与同步歌词
-- [x] 按文件名、编码格式、采样率与码率近似匹配网易云音质标识
+- [x] 按文件名、编码格式、采样率与码率近似匹配插件提供的音质档位
 - [x] `.rhineignore` 或 `.foliaignore` 排除规则，支持 `*`、`?`、`**`、目录末尾 `/`、根路径前导 `/` 与 `!` 否定
 - [x] 重新扫描、取消扫描；移除导入位置只删除索引，不删除磁盘文件
 - [x] 离线时已导入的曲目、封面与本地歌词仍可播放
@@ -145,7 +117,7 @@ Linux 的「设置 → GPU / 显卡」可以指定用哪一块显卡，重启生
 - [x] 三维光盘盒、唱片与资料库动画
 - [x] 原生全屏与窗口模式切换
 - [x] 按歌手或专辑分组浏览已载入结果
-- [x] 网易云 / QQ / 酷狗直接选择与账号、请求、缓存隔离
+- [x] 多来源插件直接选择与账号、请求、缓存隔离
 - [x] 播放、暂停、切歌、进度与音量控制
 - [x] 播放栏歌词入口、当前歌曲歌词页面、点击歌词跳转、单曲时间校准与离线歌词缓存
 
@@ -155,11 +127,11 @@ Linux 的「设置 → GPU / 显卡」可以指定用哪一块显卡，重启生
 - [x] 音质选择、试听提示与可选替代音源
 - [x] macOS 系统媒体按钮
 - [x] macOS Apple Silicon、Linux x86_64 与 Windows x64 构建和打包
-- [x] 网易云歌曲关联 MV 自动播放（桌面端）
+- [x] 歌曲关联 MV 自动播放（桌面端）
 
 ### 关联 MV 窗口
 
-在「设置 → 终端偏好」开启「自动播放关联 MV（网易云）」。播放网易云歌曲后，
+在「设置 → 终端偏好」开启「自动播放关联 MV」。
 独立窗口会读取平台提供的关联 MV；没有关联时默认匹配搜索首项，无结果或加载失败时显示提示，音乐继续播放。
 视频始终静音，跟随主播放器切歌、暂停、恢复和跳转，不改变音频音质或播放队列。
 
@@ -183,17 +155,17 @@ Windows 下可在 MV 窗口点击「桌面壁纸」，再选择「壁纸显示�
 
 ## 图形后端与功能
 
-| Platform | Vulkan | Direct3D 12 | OpenGL | Metal |
-| -------- | ------ | ----------- | ------ | ----- |
-| Windows  | ✅     | 已停用      | ✅     | -     |
-| macOS    | -      | -           | -      | ✅    |
-| iOS / iPadOS | - | - | - | ✅ |
-| Linux    | ✅     | -           | ✅     | -     |
+| Platform     | Vulkan | Direct3D 12 | OpenGL | Metal |
+| ------------ | ------ | ----------- | ------ | ----- |
+| Windows      | ✅     | ✅          | ✅     | -     |
+| macOS        | -      | -           | -      | ✅    |
+| iOS / iPadOS | -      | -           | -      | ✅    |
+| Linux        | ✅     | -           | ✅     | -     |
 
 | API         | FXAA   | SSAA   | MSAA   | TAA     | Upscaling        | Frame Generation |
 | ----------- | ------ | ------ | ------ | ------- | ---------------- | ---------------- |
 | Vulkan      | ✅     | 2x MAX | 8x MAX | ✅      | EASU + RCAS      | ✅               |
-| Direct3D 12 | 已停用 | -      | -      | -       | -                | -                |
+| Direct3D 12 | ✅     | 2x MAX | 8x MAX | ✅      | EASU + RCAS / FSR3 | ✅               |
 | OpenGL      | ✅     | 2x MAX | 8x MAX | ✅      | EASU + RCAS      | -                |
 | Metal       | -      | -      | -      | MetalFX | MetalFX Temporal | MetalFX          |
 
@@ -239,6 +211,9 @@ npm run share
 
 本机已有 `vendor/node-arm64/node` 与许可证时可作为默认运行时。`QT_ROOT` 未设置时使用 `~/Qt/6.12.0/macos`。
 
+`npm run build` 默认生成 core-only 产物，不预装第三方平台插件；需要完整开发包时使用
+`npm run build -- --plugins=full`，之后在插件管理里从市场安装。
+
 ### Windows x64
 
 安装 Visual Studio 2022 的“使用 C++ 的桌面开发”组件、Windows SDK 和 Qt MSVC 2022 64 位 kit。在 **Developer PowerShell for VS 2022** 中进入项目目录：
@@ -257,6 +232,22 @@ Windows 的 `npm run share` 使用 [Inno Setup 6.3+ 或 7](https://jrsoftware.or
 只生成 `output/RhineMusicDatabase-<构建标识>-Windows-x64-Setup.exe` 安装程序。
 安装器默认安装到 `%LOCALAPPDATA%\Programs\RhineMusicDatabase`，无需管理员权限，提供开始菜单快捷方式、可选桌面快捷方式和卸载入口。
 应用在安装目录的 `data` 中保存账号、设置和缓存，请选择当前用户可写的目录。安装包排除构建机上的运行数据，覆盖安装和卸载保留用户的 `data`；彻底清理时可手动删除。
+
+Windows 默认编入完整 D3D12 / FidelityFX DX12，`RHINE_GRAPHICS=d3d12` 可指定该后端。首次构建仍需从锁定源码编译 DXC；CI 会在应用构建前独立构建并保存 `generated/dxc`，后续按源码提交、构建配方及工具链签名复用，即使后续应用构建失败也不会丢掉已完成的 DXC 缓存。
+
+本机也可先单独准备工具链（无需 Qt），再运行通常的构建：
+
+```powershell
+cmake -S cmake/dxc-bootstrap -B output/dxc-bootstrap -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build output/dxc-bootstrap --target rhine_dxc
+npm run build
+```
+
+构建用 DXC 使用独立的 `RHINE_DXC_PYTHON_EXECUTABLE`，优先选择 CI `setup-python` 的解释器，其次从 PATH 查找，避免 Qt/glslang 选择其他 Python 后改变工具链签名。需要时可用同名 CMake 参数显式指定。
+
+构建用 DXC 默认固定为 Release，与应用 Debug/Release 配置分开；Release 不生成无用的调试信息和 PDB，保持优化等级。嵌套构建默认最多使用 8 个并行任务，可用 `-DRHINE_DXC_BUILD_JOBS=N` 调整；DX12 每个着色器编译进程默认 2 个线程，可用 `-DRHINE_FFX_DX12_SHADER_THREADS=N` 调整，避免多个编译进程各自占满所有核心。FSR3、插帧及所有着色器置换仍保留。
+
+高级构建可用 `-DRHINE_ENABLE_D3D12_BACKEND=OFF` 显式排除 D3D12。缓存只复用本项目从源码构建的工具，不使用 SDK 中附带的预编译编译器；源码、配方或编译器等签名变化时会重新构建。Linux/macOS 不会构建 DXC。
 
 ### Linux x86_64（AppImage）
 
@@ -313,9 +304,22 @@ Qt RHI 使用私有头文件，升级 Qt 后需重新编译并验证。
 执行 `npm run build:ios`，生成 `output/RhineMusicDatabase-ios-unsigned.ipa`；该文件需自行签名后安装。
 `RHINE_IOS_QT` 可以指定其他同版本 kit 路径。构建自动校验 NodeMobile 下载哈希，并检查包内架构、资源和动态依赖。
 
+## Android 构建（arm64-v8a）
+
+需要 Android SDK（`platforms/android-36` 与 build-tools）、NDK r27 以上、JDK 17–25，
+以及 Qt 6.12.0 的 `android_arm64_v8a` kit——Qt 没有公开这个版本的 Android 预编译包，
+可以用仓库内 `third_party/qt` 的固定提交自行构建（`npm run build:qt:android`）。
+执行 `npm run build:android`，生成 `output/RhineMusicDatabase-<构建标识>-android-arm64-v8a.apk`；
+APK 用工作区内的调试密钥签名，可直接侧载。最低系统版本是 Android 9（API 28）：
+Qt 6.12 的 Android 音频后端只用 AAudio，相关接口从 API 28 才开始提供。
+
+`RHINE_ANDROID_QT`、`JAVA_HOME`、`ANDROID_SDK_ROOT`、`ANDROID_NDK_ROOT` 可以覆盖默认路径。
+画面固定横屏（`sensorLandscape`），随包的 Node 运行时以 `libnode.so` 形式编进进程。
+签名默认用工作区内的调试密钥，当工作区根目录存在 `Rhine-Music-Database.key` 和 `Rhine-Music-Database.ket.password.key` 时会使用自定义签名。
+
 ## 本机数据与隐私
 
-搜索、歌曲资料、扫码与个人音乐库请求发送至所选音乐平台，封面从网易云、QQ 或酷狗音乐的图片域名加载。原始认证记录仅由 C++ 和 Node 桥处理；macOS 保存在钥匙串，Windows 通过 DPAPI 加密，Linux 保存在 `~/.local/share/RhineMusicDatabase/rhine.music.database/account.credential`（权限 `0600`）。本项目没有自建的数据收集服务器、分析 SDK 或自动上传诊断功能。
+搜索、歌曲资料、扫码与个人音乐库请求发送至已安装音乐来源插件声明的 API 与图片域名。原始认证记录仅由 C++ 和 Node 桥处理；macOS 保存在钥匙串，Windows 通过 DPAPI 加密，Linux 保存在 `~/.local/share/RhineMusicDatabase/rhine.music.database/account.credential`（权限 `0600`）。本项目没有自建的数据收集服务器、分析 SDK 或自动上传诊断功能。
 
 登录为可选功能。应用不读取浏览器或官方客户端的登录信息。
 
@@ -335,11 +339,19 @@ GPU 耗时/占用未采集，同步和提交的 CPU 时间不代表 GPU 执行�
 退出程序时也会保存进行中的录制。导出失败可重试。文件只包含性能数值和系统/图形后端信息，
 不包含账号、Cookie、搜索词、曲目、请求内容或截图。关闭面板且未录制时停止性能采样。
 
+Windows 与 macOS 桌面版默认不采集原生崩溃现场；在设置中打开“调试模式”后才会启用 Crashpad，
+关闭该开关会立即停止采样并清空已保存的崩溃日志与转储。
+报告保存在同一 `RHINE Diagnostics` 目录，`native-时间-标识.log` 可直接阅读，包含异常信息、
+各线程调用栈、匹配的应用源码行及最后的渲染阶段；同名前缀的 `.dmp` 保留原始现场。
+运行时只在本地处理，不上传报告。日志与转储保留最近二十组。
+日志采用 `UTC时间 LEVEL event=事件 key=value` 格式，保留 Qt fatal 原文、最近渲染警告、资源创建参数、
+设备与 AA/FSR 配置；调用栈包含 `trust`、`missing_symbols`、源码行和模块 debug ID。
+GUI 心跳或正在执行的渲染调用连续五秒未推进时，记录 `hang.gui` 或 `hang.render`；
+每次持续阻塞最多采样三次，间隔至少两秒。独立报告进程在应用退出后继续导出。
+转储可能包含内存中的业务信息，分享前请确认内容。
+
 ## 参考项目
 
-- **[NeteaseCloudMusicApiEnhanced](https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced)**: 网易云接入
-- **[MakcRe/KuGouMusicApi](https://github.com/MakcRe/KuGouMusicApi)**: 酷狗音乐标准版及概念版接入
-- **[yakult-green-tea/qq-music-api](https://github.com/yakult-green-tea/qq-music-api)**: QQ 音乐接入
 - **[LBEILC / RhineLabUI](https://github.com/LBEILC/RhineLabUI)**：特别感谢原界面、模型与场景作者，版权声明随项目保留。
 - **[LyricsX](https://github.com/MxIris-LyricsX-Project/LyricsX)**：歌词获取、解析与显示分层参考。
 - **[LyricsKit](https://github.com/MxIris-LyricsX-Project/LyricsKit)**：LRC、YRC、KRC 格式解析移植，

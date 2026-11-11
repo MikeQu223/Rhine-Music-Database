@@ -3,6 +3,9 @@
 #ifdef Q_OS_WIN
 #include "../WindowsRoundedCorners.h"
 #endif
+#ifdef Q_OS_IOS
+#include "IOSWindow.h"
+#endif
 
 #include <QCoreApplication>
 #include <QElapsedTimer>
@@ -41,11 +44,11 @@ class RhiPresentationBackend final : public PresentationBackend {
 #endif
         m_window->setTitle(QStringLiteral("RHINE MUSIC DATABASE"));
 #ifndef Q_OS_IOS
-        m_window->setMinimumSize(QSize(960, 540));
+        m_window->setMinimumSize(QSize(320, 540));
 #endif
         m_window->resize(logicalSize);
 #ifdef Q_OS_IOS
-        m_window->reportContentOrientationChange(Qt::LandscapeOrientation);
+        m_window->reportContentOrientationChange(iosContentOrientation());
         m_window->showFullScreen();
 #else
         m_window->show();
@@ -123,8 +126,14 @@ class RhiPresentationBackend final : public PresentationBackend {
             return false;
         }
         m_frameOpen = false;
+        // 表面可能在帧开始后被系统销毁（退后台瞬间 Activity 停止、Surface 释放）：
+        // 此时绝不能再 queueBuffer，否则命中已释放的 ANativeWindow——真机上表现为
+        // "FORTIFY: pthread_mutex_lock called on a destroyed mutex" 的 SIGABRT，
+        // 进程死亡连带前台服务消失，是全部后台症状（被杀/冻结/控件失灵）的根源。
+        // 未暴露就 SkipPresent：本帧白渲，下一帧由 acquire 的 isExposed 门控接手。
+        const auto presentable = rendered && m_window->isExposed();
         const auto result =
-            m_rhi->endFrame(m_swapchain.get(), rendered ? QRhi::EndFrameFlags{} : QRhi::SkipPresent);
+            m_rhi->endFrame(m_swapchain.get(), presentable ? QRhi::EndFrameFlags{} : QRhi::SkipPresent);
         return result == QRhi::FrameOpSuccess;
     }
     void release() override {

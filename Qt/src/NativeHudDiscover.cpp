@@ -2,6 +2,7 @@
 #include "DiscoverArtwork.h"
 #include "DiscoverMusicCard.h"
 #include "MusicDiscover.h"
+#include "ProviderRegistry.h"
 #include <QUrl>
 #include <algorithm>
 
@@ -17,25 +18,23 @@ void NativeHud::discoverPanel(double x, double y, double width) {
     model.loading = discover.loading;
     model.more = discover.more;
     model.loadedCount = discover.items.size();
-    QVector<QPair<QString, QString>> tabs{{"playlists", "推荐歌单"},
-                                          {"daily", music.provider == "qq" ? "每日 30 首" : "每日推荐"},
-                                          {"charts", "排行榜"},
-                                          {"albums", "新专辑"},
-                                          {"categories", "分类歌单"}};
-    if (music.provider == "qq") {
-        tabs.insert(2, {"guess", "猜你喜欢"});
-        tabs.insert(3, {"new-songs", "新歌速递"});
+    QVector<QPair<QString, QString>> tabs;
+    for (const auto &value : ProviderRegistry::instance().discoverTabs(music.provider)) {
+        const auto tab = value.toObject();
+        if (tab["id"].isString()) {
+            tabs.append({tab["id"].toString(), tab["label"].toString(tab["id"].toString())});
+        }
     }
-    if (music.provider == "netease") {
-        tabs.append(QPair<QString, QString>{"artists", "收藏歌手"});
+    if (tabs.isEmpty()) {
+        tabs = {{"playlists", "推荐歌单"}, {"daily", "每日推荐"},      {"charts", "排行榜"},
+                {"albums", "新专辑"},      {"categories", "分类歌单"}, {"history", "历史"}};
     }
-    tabs.append(QPair<QString, QString>{"history", "历史"});
     for (const auto &[key, label] : tabs) {
         model.tabs.append(DiscoverMusicCard::Choice{label, "discover:tab:" + key, discover.tab == key});
     }
     if (discover.tab == "categories") {
         QJsonArray categories;
-        if (music.provider != "qq" || discover.categories.isEmpty()) {
+        if (discover.categories.isEmpty()) {
             categories.append(QJsonObject{{"id", "全部"}, {"name", "全部"}});
         }
         for (const auto &category : discover.categories) {
@@ -88,12 +87,15 @@ void NativeHud::discoverPanel(double x, double y, double width) {
         discoverScroll = 0;
         m_discoverScrollScope = scrollScope;
     }
-    discoverScrollMaximum = DiscoverMusicCard::layout(model.bounds, model.loadedCount).maximumScroll;
-    discoverScroll = std::clamp(discoverScroll, 0., discoverScrollMaximum);
-    model.scroll = discoverScroll;
+    if (!m_responsive.compact()) {
+        discoverScrollMaximum = DiscoverMusicCard::layout(model.bounds, model.loadedCount).maximumScroll;
+        discoverScroll = std::clamp(discoverScroll, 0., discoverScrollMaximum);
+        model.scroll = discoverScroll;
+    }
     const auto indices =
-        model.categoryPicker
-            ? QVector<int>{}
+        model.categoryPicker ? QVector<int>{}
+        : m_responsive.compact()
+            ? m_responsive.discoverVisibleIndices(model)
             : DiscoverMusicCard::visibleIndices(model.bounds, model.loadedCount, model.scroll);
     QStringList urls;
     for (const auto index : indices) {
@@ -105,14 +107,14 @@ void NativeHud::discoverPanel(double x, double y, double width) {
     const auto scope = music.provider + ":" + QString::number(music.accountGeneration()) + ":" +
                        QString::number(discover.generation);
     m_discoverArtwork->show(scope, urls);
-    for (int index = 0; index < urls.size(); ++index) {
-        const auto item = discover.items.at(indices.at(index)).toObject();
+    for (const auto index : indices) {
+        const auto item = discover.items.at(index).toObject();
         DiscoverMusicCard::Entry entry;
-        entry.index = indices.at(index);
+        entry.index = index;
         entry.title = item["title"].toString();
         entry.artist = item["artist"].toString();
         entry.kind = item["kind"].toString();
-        const auto key = m_discoverArtwork->image(urls.at(index));
+        const auto key = m_discoverArtwork->image(item["cover"].toString());
         const auto cover = m_host->image(key);
         if (!cover.isNull()) {
             entry.image = key;
@@ -144,5 +146,9 @@ void NativeHud::discoverPanel(double x, double y, double width) {
         },
         [this](QString value, double size, QString weight) { return m_glyphs->width(value, size, weight); },
         [this](QJsonArray command) { op(command); }};
+    if (m_responsive.compact()) {
+        m_responsive.setDiscover(model);
+        return;
+    }
     DiscoverMusicCard::paint(model, canvas);
 }

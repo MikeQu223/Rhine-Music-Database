@@ -1,13 +1,15 @@
 #pragma once
 #include <QtGlobal>
-#ifndef Q_OS_IOS
+#include "MobileTarget.h"
+#if !RHINE_MOBILE
 #include <QProcess>
 using BridgeProcess = QProcess;
 #else
 #include <QJsonObject>
 #include <QObject>
 
-// iOS 使用常驻 Node 运行时和可销毁的 Worker，会话之间不共享模块和环境变量。
+// 移动端没有可执行文件可以 fork：Node 以常驻运行时（iOS 为 NodeMobile.framework，
+// Android 为 libnode.so）编进进程，Worker 按会话创建、销毁，不共享模块与环境变量。
 class BridgeProcess : public QObject {
     Q_OBJECT
   public:
@@ -15,7 +17,8 @@ class BridgeProcess : public QObject {
     enum ProcessError { FailedToStart, Crashed, UnknownError };
     explicit BridgeProcess(QObject *parent = nullptr);
     ~BridgeProcess() override;
-    void start(const QString &root, const QString &temporary, const QString &edition);
+    void start(const QString &root, const QString &temporary,
+               const QJsonObject &environment = QJsonObject{});
     void write(const QByteArray &bytes);
     QByteArray readAllStandardOutput();
     void kill();

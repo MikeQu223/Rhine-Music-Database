@@ -91,17 +91,22 @@ void paint(const Model &model, const Canvas &canvas) {
             }
         }
     }
-    const QStringList keys{"overview", "notes", "history"};
+    QStringList keys{"overview", "notes", "history"};
     QStringList labels{model.local ? "文件信息" : "歌曲百科", "专辑信息", "同专辑曲目"};
     if (albumTracks && model.trackCount > 0) {
         labels[2] += " · " + QString::number(model.trackCount) + " 首";
     }
+    if (model.comments) {
+        keys.append("comments");
+        labels.append("评论");
+    }
     // 两排按钮等高；同专辑标签留在曲目视口之前，避免与第二排命中区域重叠。
     const double tabsY = albumTracks ? 584 : 720;
     rule(model, canvas, tabsY + 42, 0.18);
+    const auto tabWidth = model.width / keys.size();
     for (int index = 0; index < keys.size(); ++index) {
-        const auto x = model.x + index * model.width / 3;
-        const auto width = model.width / 3 - 12;
+        const auto x = model.x + index * tabWidth;
+        const auto width = tabWidth - 12;
         canvas.hit(x, tabsY, width, 38, "tab:" + keys.at(index), labels.at(index));
         canvas.limited(labels.at(index), x, tabsY + 10, 14, width, "regular");
         if (model.tab == keys.at(index)) {

@@ -8,11 +8,15 @@
 #include "fg/FgCapability.h"
 #include "fg/FgStats.h"
 #include "render/MemoryProbe.h"
+#if defined(Q_OS_ANDROID)
+#include "render/HudDirtyRect.h"
+#endif
 #include <QCoreApplication>
 #include <QDir>
 #include <QEvent>
 #include <QEventLoop>
 #include <QFile>
+#include <QGuiApplication>
 #include <QJsonDocument>
 #include <QPainter>
 #include <QQuickWindow>
@@ -49,6 +53,7 @@ Engine::Engine(QString path, bool offline, QObject *parent, PlaybackConnection *
     app = std::make_unique<NativeApplication>(&host, &m_glyphs, &scene, content);
     connect(&app->music, &MusicLibrary::playbackInvalidated, this, &Engine::refreshPlayback);
     connect(&app->hud, &NativeHud::localImportRequested, this, &Engine::localImportRequested);
+    connect(&app->hud, &NativeHud::pluginImportRequested, this, &Engine::pluginImportRequested);
     connect(&app->hud, &NativeHud::mvRequested, this, &Engine::mvRequested);
 #ifdef Q_OS_DARWIN
     renderConfiguration.initialize([this](const QString &key) { return host.preference(key); });
@@ -165,6 +170,14 @@ bool Engine::ready() const {
     return scene.ready();
 }
 namespace {
+// 连续像素累积多少舞台像素算一步（一行 / 一首歌）。Android 的手指滑动很容易误触切歌，
+// 把「翻一首歌」需要的距离放大 5 倍：15 → 75。用编译期分支隔离，其它平台仍是原来的 15；
+// 只影响 wheel() 的步进，m_wheelDistance 那条连续滚动通路不受影响。
+#if defined(Q_OS_ANDROID)
+constexpr double WHEEL_STEP_PIXELS = 75.;
+#else
+constexpr double WHEEL_STEP_PIXELS = 15.;
+#endif
 // 鼠标滚轮一格的距离按设置页与歌词的行高换算，约一行内容；触控板保留系统给出的连续像素距离。
 constexpr double WHEEL_DISTANCE_PER_NOTCH = 80;
 // 鼠标滚轮的离散事件按帧衰减送出，约 0.1 秒内收束，避免整格内容瞬间跳变。
@@ -569,7 +582,9 @@ void Engine::setVisible(bool value) {
         wake(false);
         notifySceneRenderers(true);
         m_hudRevision.fetch_add(1, std::memory_order_relaxed);
-        emit hudUpdated();
+        // 重新显示时纹理可能已经被丢弃，命令流没有差异也必须整块重画。
+        m_hudDirtyFull = true;
+        publishHudFrame();
     }
     emit stateChanged();
 }
@@ -588,6 +603,9 @@ void Engine::trimMemory() {
         }
     }
     host.trimMemory(retainedImages);
+    // Host 把封面像素丢了，引擎这边记录的"已请求过"也必须一起忘掉，
+    // 否则回到前台后这些唱片再也不会去补图。
+    m_coverRequests.clear();
     scene.trimMemory();
 #ifdef Q_OS_DARWIN
     m_glyphs.clearRasterCache();
@@ -609,6 +627,15 @@ void Engine::refreshPlayback() {
 }
 
 void Engine::pollMedia() {
+    // 后台排障心跳：mediaTimer 由事件循环驱动，这条日志能证明（或证伪）后台事件循环
+    // 是否仍在运转——「后台不切歌、控件失灵」的定位全靠它划界。
+    if (QGuiApplication::applicationState() != Qt::ApplicationActive) {
+        static qint64 lastHeartbeat = -100000;
+        if (clock.elapsed() - lastHeartbeat >= 10000) {
+            lastHeartbeat = clock.elapsed();
+            qInfo("background media poll alive");
+        }
+    }
     app->poll(clock.elapsed() / 1000.0, true);
     const auto &player = app->music.player;
     const bool active = player.loading || player.state["playing"].toBool();
@@ -630,6 +657,33 @@ void Engine::flushPointer() {
  * 推进本帧动画并决定是否继续调度。
  * 状态收束后允许待机，输入和后台数据失效会重新唤醒。
  */
+void Engine::updateDetailGrace(qint64 nowMs) {
+    const bool inDetail = m_frame.value("mode").toString() == "detail";
+    if (inDetail && m_detailEnterWallMs < 0) {
+        m_detailEnterWallMs = nowMs;
+    } else if (!inDetail) {
+        m_detailEnterWallMs = -1;
+    }
+    // 覆盖完整淡入 + 余量；墙钟不受休眠/pacing 影响，稳态零开销。
+    m_detailGrace = m_detailEnterWallMs >= 0 && nowMs - m_detailEnterWallMs < 1200;
+}
+void Engine::publishHudFrame() {
+#if defined(Q_OS_ANDROID)
+    // 标脏与「允许连轴转」必须互斥。HUD 命令流变了但渲染线程还没画进纹理时，
+    // tick() 的 0/1ms QTimer 会一直抢在 Qt Quick 的 render sync 之前重新投递，
+    // GUI 事件循环里那个 update request 永远排不上队。置位后 tick() 让出时间，
+    // 直到 Hud::updatePaintNode() 真正跑过再清位。
+    m_hudFramePending.store(true, std::memory_order_relaxed);
+    m_hudFramePendingSinceMs = clock.elapsed();
+    // HUDFLOW 诊断（第六轮，默认开、限流）：命令流发布的节律与宽限状态。
+    static int publishCount = 0;
+    if (++publishCount % 120 == 1) {
+        qWarning("HUDFLOW 发布 #%d: grace=%d 过渡窗口=%d", publishCount, int(m_detailGrace),
+                 int(clock.elapsed() < m_hudTransitionUntilMs));
+    }
+#endif
+    emit hudUpdated();
+}
 void Engine::tick() {
     const qint64 enterNs = clock.nsecsElapsed();
     if (m_paceEnterNs != 0) {
@@ -639,14 +693,33 @@ void Engine::tick() {
     }
     m_paceEnterNs = enterNs;
     const auto now = clock.elapsed();
+    // 详情淡入宽限期：用真实墙钟（clock.elapsed）判定，必须在 tick() 层。
+    // 死锁成因：scene.changed() 只在 sample() 末尾更新，sample() 只在 reuse==false 时
+    // 被调用，reuse 却又依赖 scene.changed()；一旦引擎休眠就再也出不来。而 m_detail
+    // 挂在 m_animationTime 这个「每帧最多 +50ms、休眠即停」的伪时钟上，于是
+    // frame["detail"] 永远停在淡入中间值，HUD 的 alpha() 就一直是半透明。
+    // 前三轮把判据写在 step() 里全部无效——step() 被 pacing Skip / 休眠跳过时，
+    // m_hudTransitionUntilMs 连初始值都不会被设置，所有保护都不触发。
+    // 判据放在 tick() 层，并在 step() 更新 m_frame 后再重算一次（见 updateDetailGrace）。
+    updateDetailGrace(now);
     // C04：完整 step 只在"这一份快照还有机会被看到"时跑。渲染线程还没取走上一份，
     // 现在算出来的中间状态会被直接覆盖——这部分 CPU 在任何一帧上都看不到。
     const bool inputPending = m_inputPending || m_wheelPending || m_pressed || m_pointerPending;
+    // 页面过渡期视为「有工作」：否则 pacing 会因为上一份快照还没被消费而 Skip 掉整帧，
+    // 引擎也可能直接休眠，HUD 的命令流就停在这一帧（开唱片旋转能绕过正是这个道理）。
+    // hudFramePending 必须一并算进来：过渡窗口结束后若 HUD 还没被场景图画过，
+    // 这里一放行就会把最后一次纹理上传也吃掉。
+#if defined(Q_OS_ANDROID)
+    const bool hudNeedsPresent = hudFramePending();
+#else
+    const bool hudNeedsPresent = false;
+#endif
+    const bool hudTransition = clock.elapsed() < m_hudTransitionUntilMs || m_detailGrace || hudNeedsPresent;
     const bool workPending = inputPending || scene.changed() || !m_sceneSleeping || m_discRotating ||
-                             app->hud.animating(m_animationTime) ||
+                             app->hud.animating(m_animationTime) || hudTransition ||
                              m_frame.value("pendingAnimations").toBool() || m_temporalFramesRemaining > 0 ||
                              m_frame.value("mode") == "boot";
-    if (!inputPending) {
+    if (!inputPending && !hudTransition) {
         const auto decision = m_pacing.decide(workPending, false, now);
         if (decision.action == RhineRender::FramePacingPolicy::Action::Skip) {
             m_pacing.noteStep(true);
@@ -722,13 +795,39 @@ void Engine::tick() {
     if (rotationOnly) {
         intervalMs = 33;
     }
+#if defined(Q_OS_ANDROID)
+    // 根因修复：HUD 命令流已发布、但渲染线程还没调过 Hud::updatePaintNode() 时，
+    // 绝不能连轴转。0/1ms 的 QTimer 会在 GUI 事件循环里抢在 Qt Quick 的 update
+    // request 之前反复投递，render sync 永远排不上队 —— QQuickPaintedItem 标了脏，
+    // 纹理却停在上一页：顶部/底部还在，新增的右侧详情卡片整块空白，按钮能点。
+    // 真机证据：休眠后进详情时 draw() 以 1~3ms/帧连轴转、40 帧截图逐字节相同；
+    // 开唱片旋转（rotationOnly → 33ms）或点一下（打断连轴转）就正常。
+    // 这里让出 8ms（≈120Hz 一帧）给事件循环，等渲染线程消费后自动恢复 0/1ms，
+    // 稳态零开销。2 秒兜底防止窗口长期不可见时永远不让步。
+    if (m_hudFramePending.load(std::memory_order_relaxed)) {
+        if (now - m_hudFramePendingSinceMs > 2000) {
+            m_hudFramePending.store(false, std::memory_order_relaxed);
+        } else {
+            intervalMs = qMax(intervalMs, 8);
+        }
+    }
+#endif
     timer.setInterval(fixedMs > 0 ? fixedMs : intervalMs);
     // 排障专用：RHINE_DIAG_ANIMATE=1 时永不休眠。静止场景下引擎会主动休眠、
     // presented 不再增长，那时测出来的"帧率"是没有负载的数字，A/B 对比没有意义。
     static const bool forceAnimate = qEnvironmentVariableIsSet("RHINE_DIAG_ANIMATE");
+#if defined(Q_OS_ANDROID)
+    // 不能用 tick 开头的 hudTransition 快照：step() 里可能刚 publish 了一份新的 HUD
+    // 命令流，那一刻过渡窗口已过但纹理还没画。停掉 timer 会把这次呈现一起吞掉。
+    const bool hudStillPending = hudFramePending();
+#else
+    const bool hudStillPending = false;
+#endif
     if (!forceAnimate && now - m_lastInput >= 750 && !m_pressed && m_sceneSleeping && !scene.changed() &&
-        !app->hud.animating(m_animationTime) && !m_discRotating && m_frame["mode"] != "boot" &&
-        m_temporalFramesRemaining == 0 && !m_pacing.awaitingConsumption()) {
+        !app->hud.animating(m_animationTime) && !m_discRotating && !hudTransition &&
+        // 用实时成员而非 tick 开头的局部快照：step() 里可能刚把 m_detailGrace 置真。
+        !m_detailGrace && !hudStillPending && m_frame["mode"] != "boot" && m_temporalFramesRemaining == 0 &&
+        !m_pacing.awaitingConsumption()) {
         timer.stop();
         m_sleeping = true;
         emit stateChanged();
@@ -754,7 +853,14 @@ void Engine::action(QString value) {
         return;
     }
     app->hud.action(value);
-    pollMedia();
+    // 连续拖动只更新页面位置，不反复同步查询后台播放服务。
+    const bool gesture =
+        app->hud.compactLayout() && (value.startsWith("mobile:lyrics-") || value == "mobile:archive-begin" ||
+                                     value == "mobile:archive-release");
+    if (!gesture) {
+        pollMedia();
+    }
+    // 所有 HUD 动作保留输入唤醒语义，横屏和移动布局都要退出场景休眠。
     wake();
 }
 /**
@@ -963,12 +1069,13 @@ void Engine::wheel(double x, double y, double delta, bool pixels) {
     m_wheelY = y;
     m_wheelDelta += delta;
     if (pixels) {
-        m_wheelSteps += -delta / 15.;
+        m_wheelSteps += -delta / WHEEL_STEP_PIXELS;
         // 单独保留连续舞台位移，避免触控板不足一行的输入被整数行索引吞掉。
         m_wheelDistance += -delta / (m_height / 1080.);
     } else {
         // 列表按格立即推进一行，只有设置页和歌词需要平滑的连续距离。
         m_wheelSteps += delta < 0 ? 1 : -1;
+        // 这里的 15 是「一格滚轮 = 15 个步进单位」的距离换算，和上面的舞台像素除数无关。
         const auto distance = -delta / 15. * WHEEL_DISTANCE_PER_NOTCH;
         if (app->hud.reduced) {
             m_wheelDistance += distance;
@@ -1018,7 +1125,12 @@ void Engine::step(double time) {
     if (scene.changed()) {
         ++m_changedSteps;
     }
-    const bool reuse = m_sceneSleeping && !scene.changed();
+    // 页面过渡期间不能复用上一份 scene.frame：detail 过渡值逐帧变化，复用会让
+    // NativeHud::draw 拿到旧 frame、命令流冻结，hudUpdated 自然也不发。
+    const bool hudTransition = clock.elapsed() < m_hudTransitionUntilMs || m_detailGrace;
+    // 详情淡入期间绝不复用旧 scene.frame：复用会让 sample() 不被调用，
+    // m_detail / m_changed 都停住，正是那个自锁环的入口。
+    const bool reuse = m_sceneSleeping && !scene.changed() && !hudTransition;
     const auto object = app->step(time, m_width / (m_height / 1080), reuse);
 #if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
     const double stepAppMs = stepProbe ? double(stepAppTimer.nsecsElapsed()) / 1e6 : 0.0;
@@ -1031,6 +1143,34 @@ void Engine::step(double time) {
     const auto previousOrigin = m_frame.value("stats").toObject().value("coordinateOrigin");
 #endif
     m_frame = scene.frame;
+    const auto hudState = object["state"].toObject();
+    if (hudState["compactLayout"].toBool()) {
+        m_frame["mobileHud"] = true;
+        m_frame["songPanelTop"] = hudState["songPanelTop"];
+        m_frame["songPanelTransition"] = hudState["songPanelTransition"];
+    }
+    // 本帧刚切进 detail 时，tick() 开头看到的还是上一帧的 archive；不在这里重算，
+    // 帧末的休眠判定就会用 false 把 timer 停掉，再也没有下一帧。
+    updateDetailGrace(clock.elapsed());
+    // HUD 换页 / 详情过渡的判据：mode、viewer 或 detail 过渡值任一变化，就把接下来
+    // 一段窗口标成「HUD 连续刷新期」。detail 是 SceneMotion::smooth 的输出，逐帧在变；
+    // 少了这段标记，pacing Skip、引擎休眠和上面的 reuse 会把整段动画吃掉。
+    const auto pageMode = m_frame.value("mode").toString();
+    const bool pageViewer = m_frame.value("viewer").toBool();
+    const double pageDetail = m_frame.value("detail").toDouble();
+    const bool pageSwitch = pageMode != m_hudPageMode || pageViewer != m_hudPageViewer;
+    const bool detailMoving = std::abs(pageDetail - m_hudPageDetail) > 1e-4;
+    // 只看「值有没有变」是不够的：引擎休眠时 detail 会冻结在 0，永远不产生变化，
+    // 过渡窗口 600 ms 一过就又睡回去。改成「没收敛就一直续期」——
+    // frame["detail"] 是详情 HUD 的 alpha，<0.99 时整页还是透明的，必须继续出帧。
+    const bool detailPending = pageMode == "detail" && pageDetail < 0.99;
+    if (pageSwitch || detailMoving || detailPending) {
+        m_hudPageMode = pageMode;
+        m_hudPageViewer = pageViewer;
+        m_hudPageDetail = pageDetail;
+        // 动画本身约半秒；留一点余量让最后一帧稳定值也能被整窗画出来。
+        m_hudTransitionUntilMs = clock.elapsed() + 600;
+    }
     auto signature = m_frame;
     for (const auto &key : {"time", "stats", "labels", "boot", "pointerCursor", "jitter", "temporalReset"}) {
         signature.remove(key);
@@ -1114,6 +1254,9 @@ void Engine::step(double time) {
     const bool showDiscAngle = current["kind"] == "song" && PlaybackQueue::identity(current) == identity;
     m_frame["discAngle"] = showDiscAngle ? m_discAngle : 0;
     const bool discChanged = m_discRotating || previousDiscAngle != m_frame.value("discAngle").toDouble();
+    // 封面解码完成时命令流是逐字相同的（image 命令只带 key），单靠命令流比对
+    // 会以为"什么都没变"，HUD 上那张图就永远不刷新。这里单独记一笔。
+    [[maybe_unused]] const bool coverArrived = coverRevision != m_coverRevision;
     bool visualChanged = discChanged || !stable || current != m_current || cover != m_cover ||
                          coverRevision != m_coverRevision;
     if (!temporal) {
@@ -1147,11 +1290,50 @@ void Engine::step(double time) {
     }
     for (auto it = m_musicTextures.begin(); it != m_musicTextures.end();) {
         if (!retainedKeys.contains(it.key())) {
+            // 条目没了，"已请求过封面"的记录也一并作废：它下次回到视野时值得再试一次。
+            m_coverRequests.remove(it.key());
             it = m_musicTextures.erase(it);
         } else {
             ++it;
         }
     }
+#if defined(Q_OS_ANDROID)
+    // 归档页会同时画 7 张唱片，但每个条目的封面图只在"它成为当前曲目"的那一帧取一次
+    // （上面的 `m_musicTextures[musicKey] = {current, m_coverImage}`），切歌瞬间
+    // host.image() 往往还没解码完，条目里就留下空 QImage，之后永不回填 —— 真机上表现
+    // 就是非当前唱片的盘面全是 placeholderCover（TEXDIAG: mt=7 adm=2 gated=5 discO=6
+    // covers=2，C++ 侧补建因为 `!it->cover.isNull()` 一个都过不去）。
+    //
+    // 不能只查 host.image()：缓存键是 loadCover 里加过 `param=NyN` 的改写 URL，拿
+    // item["cover"] 的原始地址去查永远 miss。所以要主动 loadCover，回调里再按返回的键取图。
+    // 512 像素够远看，一张约 1 MB，是当前曲目 1024 封面的四分之一。
+    // 放在 prune 之后：只给真正留下来的条目请求，别为马上就丢的 key 白下载。
+    for (auto it = m_musicTextures.begin(); it != m_musicTextures.end(); ++it) {
+        if (!it->cover.isNull() || it->item.isEmpty()) {
+            continue;
+        }
+        const auto url = it->item["cover"].toString();
+        if (url.isEmpty() || m_coverRequests.contains(it.key())) {
+            continue;
+        }
+        const auto key = it.key();
+        m_coverRequests.insert(key);
+        host.loadCover(
+            url,
+            [this, key](QString loaded) {
+                if (loaded.isEmpty()) {
+                    return;
+                }
+                // 回调是异步的：期间条目可能已被 prune 掉，用 find 而不是 operator[]，
+                // 否则会给一个已经没人要的 key 重新建条目。
+                auto entry = m_musicTextures.find(key);
+                if (entry != m_musicTextures.end() && entry->cover.isNull()) {
+                    entry->cover = host.image(loaded);
+                }
+            },
+            512);
+    }
+#endif
     // 诊断：把「按曲目保留的 MusicTexture 数与其封面字节」交给渲染线程的内存探针打印。
     {
         auto &counters = RhineRender::engineMemoryCounters();
@@ -1171,16 +1353,59 @@ void Engine::step(double time) {
         m_musicTextureSnapshot.insert(it.key(), entry);
     }
     auto commands = object["commands"].toArray();
-    if (commands != m_commands) {
+    bool hudChanged = true;
+#if defined(Q_OS_ANDROID)
+    // 只比对一次：hudDirtyRect 内部的「公共前缀 + 公共后缀」顺带就能判出「逐条相同」，
+    // 不必再跑一遍 `commands != m_commands` 的深比较——那是同一条命令流的第二遍遍历。
+    const double stageWidth = m_height > 0 ? m_width / (m_height / 1080) : 1920;
+    const auto dirty = RhineRender::hudDirtyRect(m_commands, commands, QSizeF(stageWidth, 1080));
+    hudChanged = !dirty.equal;
+    if (hudChanged) {
+        m_hudDirtyStage = dirty.rect;
+        m_hudDirtyFull = dirty.full;
+        // 详情淡入是整页过渡（真机实证：过渡后段命令流里唯一逐帧变化的是 alpha，
+        // 任何局部归因都可能漏掉 alpha 作用域内的其它像素）。过渡窗口与宽限期内
+        // 一律整窗重绘——淡入总共约一秒，全屏成本可接受，漏画则是「HUD 停在上一页」。
+        if (clock.elapsed() < m_hudTransitionUntilMs || m_detailGrace) {
+            m_hudDirtyFull = true;
+        }
+    }
+#else
+    hudChanged = commands != m_commands;
+    if (hudChanged) {
+        m_hudDirtyFull = true;
+    }
+#endif
+    if (pageSwitch) {
+        // 整页换内容：局部重绘会留下上一页的残影，强制整窗且必须发一次更新。
+        hudChanged = true;
+        m_hudDirtyFull = true;
+    }
+    const bool transitionNow = clock.elapsed() < m_hudTransitionUntilMs || m_detailGrace;
+    if (hudChanged) {
         m_commands = commands;
         ++m_hudUpdates;
         m_hudRevision.fetch_add(1, std::memory_order_relaxed);
-        emit hudUpdated();
     }
+    // 过渡期即便命令流逐条相同也要发一次：Hud 的重绘只由这个信号驱动，
+    // 停在这里就是「进详情时 HUD 整层不显示」。
+    if (hudChanged || transitionNow) {
+        publishHudFrame();
+    }
+#if defined(Q_OS_ANDROID)
+    if (coverArrived) {
+        // 命令流没变但 HUD 上的像素变了：补一次整块重画。
+        m_hudDirtyFull = true;
+        publishHudFrame();
+    }
+#endif
     if (visualChanged) {
         ++m_sceneUpdates;
     }
-    notifySceneRenderers(visualChanged);
+    // HUD 命令流变化也必须促成一次呈现帧：RhiScene 把 sceneUpdated() 连到 update()，
+    // 只按 visualChanged（3D）通知时，3D 静止而 HUD 换页的那一帧窗口不会出帧，
+    // HudUploadTexture 的纹理就上传不了 —— 命中区已是新的、按钮能点，画面却是空的。
+    notifySceneRenderers(visualChanged || hudChanged || m_detailGrace);
     auto state = object["state"].toObject().toVariantMap();
     if (state != m_state) {
         m_state = state;
@@ -1299,5 +1524,15 @@ void Engine::importLocal(QList<QUrl> urls) {
         }
     }
     app->music.importLocal(paths);
+    wake();
+}
+
+void Engine::importPluginFolder(QUrl url) {
+    if (!url.isLocalFile()) {
+        return;
+    }
+    const auto error = host.importPlugin(url.toLocalFile());
+    app->hud.pluginManagerMessage = error.isEmpty() ? QStringLiteral("插件已导入") : error;
+    host.invalidate();
     wake();
 }

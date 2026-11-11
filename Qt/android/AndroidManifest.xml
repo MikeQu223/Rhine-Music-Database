@@ -1,0 +1,149 @@
+<?xml version="1.0" ?>
+<!--
+  Android 包声明。与 Qt 6.12 自带模板（qtbase/src/android/templates/AndroidManifest.xml）
+  保持同一套占位符，androiddeployqt 打包时会把 %%INSERT_xxx%% 这类标记替换成实际值；
+  模板目录里的其余资源（res/xml/qtprovider_paths.xml 等）仍由打包工具补齐，
+  所以这里不需要重复它们。
+
+  注意：XML 注释里不能出现连续两个减号（规范禁止），所以上面不要写成带分隔符的形式，
+  否则 androiddeployqt 解析时会报 "Expected '>', but got ' '"。
+-->
+<manifest
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    package="org.qtproject.example"
+    android:installLocation="auto"
+    android:versionCode="-- %%INSERT_VERSION_CODE%% --"
+    android:versionName="-- %%INSERT_VERSION_NAME%% --"
+>
+
+    <!-- 面板的所有内容都来自远端接口：没有网络时应用只剩一个空壳。 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!--
+      系统媒体控件（前台服务 + 通知）：FOREGROUND_SERVICE 是 API 28 起调用
+      startForeground() 的硬性要求；targetSdk 34 起还需按类型配套
+      FOREGROUND_SERVICE_MEDIA_PLAYBACK。两者都是 normal 级，安装即授予。
+      POST_NOTIFICATIONS 是 Android 13 起的运行时权限，首次播放时向用户申请。
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission
+        android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
+    />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!--
+      自绘场景的着色器只烘了 GLSL ES 300（见根 CMakeLists 的 qt_add_shaders），
+      低于 OpenGL ES 3.0 的设备装上也无法渲染，直接在安装期过滤掉。
+    -->
+    <uses-feature android:glEsVersion="0x00030000" android:required="true" />
+    <!-- 面板只用触摸操作，但没有触摸屏的设备（电视盒、投屏）也应该能装。 -->
+    <uses-feature
+        android:name="android.hardware.touchscreen"
+        android:required="false"
+    />
+
+    <supports-screens
+        android:anyDensity="true"
+        android:largeScreens="true"
+        android:normalScreens="true"
+        android:smallScreens="true"
+        android:xlargeScreens="true"
+    />
+
+    <!--
+      android:name 换成我们自己的 Application：它在 super.onCreate() 之后按许可记录
+      启动 Clarity 与 Bugly（Qt 的启动 Activity 在 Qt 自己的 jar 里，插不了代码）。
+      RhineApplication 继承 org.qtproject.qt.android.bindings.QtApplication，
+      Qt 的启动逻辑（加载原生库、绑定 Qt 线程）仍由父类原样执行。
+    -->
+    <application
+        android:name="rhine.music.database.RhineApplication"
+        android:hardwareAccelerated="true"
+        android:label="-- %%INSERT_APP_NAME%% --"
+        android:icon="@mipmap/ic_launcher"
+        android:enableOnBackInvokedCallback="true"
+        android:allowBackup="false"
+        android:usesCleartextTraffic="true"
+        android:resizeableActivity="false"
+    >
+        <!--
+          usesCleartextTraffic：音乐源返回的部分试听/封面地址是 http，Android 9 起默认
+          直接拒绝明文连接，表现为"封面灰块、试听无声"。允许明文是为了让这些上游地址
+          还能用，代价是不做协议升级——真正需要的是把上游地址统一成 https。
+
+          resizeableActivity=false：固定横屏的 3D 面板没有合理的分屏布局，
+          声明不可调整大小可以让系统不要尝试上下分屏（Android 12 起大屏会忽略该标记，
+          但那时由 configureAndroidWindow() 重新请求横屏兜底）。
+        -->
+        <!--
+          启动闸门：先确认数据传输许可，再启动 Qt。
+
+          它是唯一的 LAUNCHER；QtActivity 因此不再对外暴露（exported=false），
+          "同意之前"Qt 界面、Clarity、Bugly 一个都不会起来。
+        -->
+        <activity
+            android:name="rhine.music.database.ConsentActivity"
+            android:configChanges="orientation|screenLayout|screenSize|smallestScreenSize|keyboardHidden|uiMode"
+            android:exported="true"
+            android:label="-- %%INSERT_APP_NAME%% --"
+            android:screenOrientation="sensorLandscape"
+            android:theme="@style/RhineConsent"
+        >
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name="org.qtproject.qt.android.bindings.QtActivity"
+            android:configChanges="orientation|uiMode|screenLayout|screenSize|smallestScreenSize|layoutDirection|locale|fontScale|keyboard|keyboardHidden|navigation|mcc|mnc|density"
+            android:label="-- %%INSERT_APP_NAME%% --"
+            android:launchMode="singleTop"
+            android:screenOrientation="sensorLandscape"
+            android:exported="false"
+        >
+            <!--
+              sensorLandscape：两个横屏方向都允许（屏幕宽度 ≥ 高度），转 180° 时内容跟着
+              翻转，而不是像 landscape 那样锁死一个方向、让用户看着倒过来的画面。
+              运行期 configureAndroidWindow() 会再请求一次同一个值，用于覆盖分屏、
+              多窗口以及进程被回收后重建 Activity 的情况。
+            -->
+            <meta-data
+                android:name="android.app.lib_name"
+                android:value="-- %%INSERT_APP_LIB_NAME%% --"
+            />
+
+            <meta-data
+                android:name="android.app.arguments"
+                android:value="-- %%INSERT_APP_ARGUMENTS%% --"
+            />
+        </activity>
+
+        <!-- Qt 的打包模板依赖这个 FileProvider（分享、打开本地文件都用它）。 -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.qtprovider"
+            android:exported="false"
+            android:grantUriPermissions="true"
+        >
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/qtprovider_paths"
+            />
+        </provider>
+
+        <!--
+          系统媒体控件的前端服务：MediaSession + MediaStyle 通知。
+          前台服务必须声明 mediaPlayback 类型（Android 14 起强制校验）；
+          通知按钮经 PendingIntent.getService 回到本服务，再由 JNI 送进面板。
+          stopWithTask=false（默认值，显式写出）：用户滑掉任务卡片时服务不跟随退出，
+          保持前台以保活——滑掉后仍可从通知回到面板。
+        -->
+        <service
+            android:name="rhine.music.database.RhineMediaService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback"
+        />
+    </application>
+</manifest>

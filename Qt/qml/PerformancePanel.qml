@@ -4,6 +4,10 @@ Item {
     id: panel
     anchors.fill: parent
     property bool expanded: true
+    // 收起时告诉 C++ 别再重建详情长文本。收起只把 Flickable 的 visible 关掉，
+    // Text 仍然会为新的 text 重新布局——只有真正停掉重建才省得下来。
+    onExpandedChanged: profiler.detailsEnabled = expanded
+    Component.onCompleted: profiler.detailsEnabled = expanded
     Rectangle {
         id: card
         objectName: "performanceCard"
@@ -36,7 +40,8 @@ Item {
                 color: "#8fe3bb"
                 font.pixelSize: 21
                 font.bold: true
-                Accessible.name: text
+                // 不再写 `Accessible.name: text`：Text 的可访问名本来就取 text，
+                // 显式绑一次只是让每次刷新多触发一遍无障碍更新。
             }
             Flickable {
                 visible: panel.expanded

@@ -1,0 +1,38 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://rhine.local/schemas/plugin-fixture-v1.json",
+    "title": "Rhine Plugin Fixture v1",
+    "type": "object",
+    "required": ["schemaVersion", "provider", "operation", "args", "response"],
+    "additionalProperties": true,
+    "properties": {
+        "schemaVersion": { "const": 1 },
+        "provider": { "type": "string", "pattern": "^[a-z0-9-]{1,40}$" },
+        "operation": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "args": { "type": "array" },
+        "cookies": { "type": "object", "additionalProperties": { "type": "string" } },
+        "response": {
+            "type": "object",
+            "required": ["body"],
+            "additionalProperties": true,
+            "properties": {
+                "body": {},
+                "cookies": { "type": "array", "items": { "type": "string" } }
+            }
+        },
+        "exchanges": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["request", "response"],
+                "additionalProperties": true,
+                "properties": {
+                    "request": { "type": "object" },
+                    "response": { "type": "object" }
+                }
+            }
+        },
+        "source": { "enum": ["seed", "recorded", "manual"] },
+        "notes": { "type": "string", "maxLength": 500 }
+    }
+}

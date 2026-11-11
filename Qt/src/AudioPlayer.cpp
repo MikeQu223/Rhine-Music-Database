@@ -1,5 +1,6 @@
 #include "AudioPlayer.h"
 #include "AppStorage.h"
+#include "ProviderRegistry.h"
 #include <QUrl>
 #include <QMediaMetaData>
 #include <QMediaFormat>
@@ -7,9 +8,121 @@
 #include <QRegularExpression>
 #include <algorithm>
 #include <cmath>
+#include <condition_variable>
+#include <mutex>
+#include <thread>
+#include <utility>
 #if defined(Q_OS_WIN) && QT_VERSION < QT_VERSION_CHECK(6, 9, 0)
 #include <QtMultimedia/private/qaudiodevice_p.h>
 #endif
+
+namespace {
+// CoreAudio/WASAPI 不会在系统采样率变化时通知 Qt，播放中仍需低频兜底重读。
+constexpr qint64 OUTPUT_FORMAT_PROBE_INTERVAL_MS = 5000;
+// 观测值超过一个探测周期加余量后不再可信：期间可能已经 seek、暂停或重建过输出。
+constexpr qint64 OUTPUT_FORMAT_OBSERVATION_MAX_AGE_MS = 15000;
+}
+
+/**
+ * 系统输出格式的后台探测线程。
+ * Windows COM 与 CoreAudio HAL 调用最长可阻塞数百毫秒，不能占用音频泵线程；
+ * 工作线程只接收设备 id 与默认标记，绝不持有 QAudioDevice。
+ * 请求与结果都只保留最新一份，探测跟不上时丢弃过期数据而不是排队。
+ */
+class AudioPlayer::OutputFormatProbe {
+  public:
+    using Probe = std::function<AudioOutputFormat::SystemFormat(const QByteArray &, bool)>;
+    struct Observation {
+        QByteArray deviceId;
+        AudioOutputFormat::SystemFormat system;
+    };
+
+    OutputFormatProbe() {
+        m_thread = std::thread([this] { run(); });
+    }
+
+    ~OutputFormatProbe() {
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_stopping = true;
+        }
+        m_wake.notify_all();
+        if (m_thread.joinable()) {
+            m_thread.join();
+        }
+    }
+
+    void request(QByteArray deviceId, bool isDefault, Probe probe) {
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            if (m_stopping) {
+                return;
+            }
+            m_requestId = std::move(deviceId);
+            m_requestIsDefault = isDefault;
+            m_requestProbe = std::move(probe);
+            m_hasRequest = true;
+        }
+        m_wake.notify_one();
+    }
+
+    bool take(Observation &observation) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (!m_hasObservation) {
+            return false;
+        }
+        observation = std::move(m_observation);
+        m_observation = {};
+        m_hasObservation = false;
+        return true;
+    }
+
+  private:
+    void run() {
+        for (;;) {
+            QByteArray deviceId;
+            bool isDefault = false;
+            Probe probe;
+            {
+                std::unique_lock<std::mutex> lock(m_mutex);
+                m_wake.wait(lock, [this] { return m_hasRequest || m_stopping; });
+                if (m_stopping) {
+                    return;
+                }
+                deviceId = std::move(m_requestId);
+                m_requestId.clear();
+                isDefault = m_requestIsDefault;
+                probe = std::move(m_requestProbe);
+                m_requestProbe = {};
+                m_hasRequest = false;
+            }
+            if (!probe) {
+                continue;
+            }
+            auto system = probe(deviceId, isDefault);
+            {
+                std::lock_guard<std::mutex> lock(m_mutex);
+                if (m_stopping) {
+                    return;
+                }
+                m_observation.deviceId = std::move(deviceId);
+                m_observation.system = std::move(system);
+                m_hasObservation = true;
+            }
+        }
+    }
+
+    std::thread m_thread;
+    std::mutex m_mutex;
+    std::condition_variable m_wake;
+    QByteArray m_requestId;
+    bool m_requestIsDefault = false;
+    bool m_hasRequest = false;
+    Probe m_requestProbe;
+    Observation m_observation;
+    bool m_hasObservation = false;
+    bool m_stopping = false;
+};
 
 /**
  * 建立播放器与默认输出设备监听；不持久化设备 ID。
@@ -18,12 +131,62 @@
 AudioPlayer::AudioPlayer(std::function<void()> changed) : playbackChanged(std::move(changed)) {
     normalizeOutputLayout(defaultOutput());
     output.setVolume(.7f);
+    QObject::connect(&output, &QAudioOutput::volumeChanged, &devices,
+                     [this](float volume) { pcm.setVolume(volume); });
+    pcm.backpressure = [this](bool blocked) {
+        decoderThrottled = blocked;
+        if (!player || !playbackRequested || outputUnavailable || decoderEnded || !error.isEmpty()) {
+            return;
+        }
+        if (blocked) {
+            player->pause();
+        } else {
+            player->play();
+        }
+    };
+    pcm.completed = [this] {
+        if (decoderEnded) {
+            completePlayback();
+        }
+    };
+    pcm.errorOccurred = [this] {
+        if (!player || outputUnavailable) {
+            return;
+        }
+#ifdef Q_OS_WIN
+        error = QStringLiteral("音频输出失败，请检查输出设备、切换输出策略或关闭独占输出");
+#else
+        error = QStringLiteral("音频输出失败，请检查输出设备或切换输出策略");
+#endif
+        failureRecoverable = player->isSeekable();
+        player->pause();
+        playbackWatchdog.stop();
+        diagnose("output");
+        if (playbackChanged) {
+            playbackChanged();
+        }
+    };
+    // 非 FFmpeg 后端没有 QAudioBufferOutput，保留原生 QAudioOutput 路径用于兼容性对照。
+    const auto mediaBackend = qEnvironmentVariable("QT_MEDIA_BACKEND");
+    pcmEnabled = mediaBackend.isEmpty() || mediaBackend == "ffmpeg";
     decodeClock.start();
+    outputFormatClock.start();
+    // 平台格式探测走独立线程，播放器与 PCM 泵所在线程不做任何设备枚举。
+    outputFormatProbe = std::make_unique<OutputFormatProbe>();
     createPlayer();
     playbackWatchdog.setInterval(250);
-    QObject::connect(&playbackWatchdog, &QTimer::timeout, &devices, [this] { checkPlaybackHealth(); });
+    QObject::connect(&playbackWatchdog, &QTimer::timeout, &devices, [this] {
+        checkPlaybackHealth();
+        // 后台结果只在主线程比较；比较与重建顺序保持原样。
+        applyPendingOutputFormatObservation();
+        // 系统采样率变化不会触发 Qt 的设备通知，播放中定期重读；实际平台调用在工作线程。
+        if (outputFormatClock.elapsed() >= OUTPUT_FORMAT_PROBE_INTERVAL_MS) {
+            outputFormatClock.restart();
+            requestOutputFormatProbe();
+        }
+    });
     QObject::connect(
-        &devices, &QMediaDevices::audioOutputsChanged, &devices, [this] { followDefaultOutput(); },
+        &devices, &QMediaDevices::audioOutputsChanged, &devices, [this] { followDefaultOutput(true); },
         Qt::QueuedConnection);
     followDefaultOutput();
 }
@@ -65,6 +228,9 @@ void AudioPlayer::normalizeOutputLayout(const QAudioDevice &device) {
  */
 void AudioPlayer::createPlayer() {
     releasePlayer();
+#ifdef Q_OS_WIN
+    pcm.setExclusive(AppStorage::settings().value("panel/audio-exclusive", "off").toString() == "on");
+#endif
     player = std::make_unique<QMediaPlayer>();
     decodedOutput = std::make_unique<QAudioBufferOutput>();
     const auto changed = playbackChanged;
@@ -78,10 +244,8 @@ void AudioPlayer::createPlayer() {
         QObject::connect(player.get(), &QMediaPlayer::durationChanged, player.get(),
                          [changed] { changed(); });
     }
-    if (diagnosticsEnabled || spectrumEnabled) {
-        observeDecodedBuffers();
-    }
-    player->setAudioBufferOutput(diagnosticsEnabled || spectrumEnabled ? decodedOutput.get() : nullptr);
+    observeDecodedBuffers();
+    player->setAudioBufferOutput(decodedOutput.get());
     QObject::connect(player.get(), &QMediaPlayer::metaDataChanged, player.get(),
                      [this] { diagnose("metadata"); });
     QObject::connect(player.get(), &QMediaPlayer::bufferProgressChanged, player.get(),
@@ -93,7 +257,7 @@ void AudioPlayer::createPlayer() {
     QObject::connect(
         player.get(), &QMediaPlayer::errorOccurred, player.get(),
         [this](QMediaPlayer::Error code, const QString &message) { diagnoseError(code, message); });
-    player->setAudioOutput(&output);
+    player->setAudioOutput(pcmEnabled ? nullptr : &output);
     QObject::connect(player.get(), &QMediaPlayer::positionChanged, player.get(), [this](qint64 position) {
         // 设备失效时原生后端可能先报 0；保留最后有效进度，主动换曲与跳转另行更新。
         if (!outputUnavailable && recoveryPosition < 0 && position > 0) {
@@ -110,18 +274,13 @@ void AudioPlayer::createPlayer() {
         player.get(), &QMediaPlayer::seekableChanged, player.get(), [this] { restorePlaybackPosition(); },
         Qt::QueuedConnection);
     QObject::connect(player.get(), &QMediaPlayer::mediaStatusChanged, player.get(), [this](auto status) {
-        if (status == QMediaPlayer::EndOfMedia && !sourceEnded) {
-            sourceEnded = true;
-            pendingFailure = false;
-            failureRecoverable = false;
-            error.clear();
-            playbackRequested = false;
-            playbackWatchdog.stop();
-#ifdef Q_OS_WIN
-            if (nativeOutput)
-                nativeOutput->finish();
-#endif
-            finishPlayback();
+        if (status == QMediaPlayer::EndOfMedia && !sourceEnded && !decoderEnded) {
+            decoderEnded = true;
+            if (pcmEnabled) {
+                pcm.finish();
+            } else {
+                completePlayback();
+            }
         }
     });
     QObject::connect(player.get(), &QMediaPlayer::errorOccurred, player.get(), [this](auto, const QString &) {
@@ -132,46 +291,14 @@ void AudioPlayer::createPlayer() {
     });
 }
 
-// Let the native device consume the final buffered samples before advancing
-// the playlist. The player context cancels pending checks on source replacement.
-void AudioPlayer::finishPlayback() {
-    if (!sourceEnded) {
-        return;
-    }
-#ifdef Q_OS_WIN
-    if (nativeOutput && nativeOutput->error() == 0 && !nativeOutput->drained()) {
-        QTimer::singleShot(10, player.get(), [this] { finishPlayback(); });
-        return;
-    }
-#endif
-    ++ended;
-    if (playbackChanged) {
-        playbackChanged();
-    }
-}
-
 /**
  * 检查播放是否卡住
  */
 void AudioPlayer::checkPlaybackHealth() {
-    if (outputUnavailable || recoveryPosition >= 0 || sourceEnded || !error.isEmpty() ||
-        player->source().isEmpty()) {
+    if (outputUnavailable || recoveryPosition >= 0 || sourceEnded || decoderEnded || decoderThrottled ||
+        !error.isEmpty() || player->source().isEmpty()) {
         return;
     }
-#ifdef Q_OS_WIN
-    if (nativeOutput && nativeOutput->error() != 0) {
-        error = QStringLiteral("音频设备输出中断，请重新播放或切换系统默认输出");
-        pendingFailure = false;
-        failureRecoverable = lastPosition > 0;
-        player->pause();
-        nativeOutput->reset(true);
-        playbackWatchdog.stop();
-        if (playbackChanged) {
-            playbackChanged();
-        }
-        return;
-    }
-#endif
     const bool invalid = player->mediaStatus() == QMediaPlayer::InvalidMedia;
     if (!invalid && (!playbackRequested || !progressClock.isValid())) {
         return;
@@ -189,6 +316,7 @@ void AudioPlayer::checkPlaybackHealth() {
     playbackWatchdog.stop();
     // 暂停后端，由控制层决定是否恢复。
     player->pause();
+    pcm.pause(true);
     diagnose("stalled");
     if (playbackChanged) {
         playbackChanged();
@@ -196,45 +324,16 @@ void AudioPlayer::checkPlaybackHealth() {
 }
 
 /** 在线音源使用可续传的字节流 */
-#ifdef Q_OS_WIN
-bool AudioPlayer::prepareWindowsOutput() {
-    if (nativeOutput) {
-        return true;
-    }
-    auto sink = std::make_unique<WindowsAudioOutput>();
-    const bool exclusive = AppStorage::settings().value("panel/audio-exclusive", "off").toString() == "on";
-    if (!sink->open(output.device().id(), exclusive)) {
-        error = exclusive ? QStringLiteral("无法独占音频设备，请关闭其他独占应用或在设置中关闭独占输出")
-                          : QStringLiteral("无法打开音频设备，请检查系统默认输出");
-        playbackRequested = false;
-        playbackWatchdog.stop();
-        return false;
-    }
-    sink->setVolume(output.volume());
-    sink->reset(!playbackRequested);
-    player->setAudioOutput(nullptr);
-    player->setAudioBufferOutput(nullptr);
-    QObject::disconnect(decoderConnection);
-    decodedOutput = std::make_unique<QAudioBufferOutput>(sink->format());
-    nativeOutput = std::move(sink);
-    // Explicit DirectConnection keeps PCM delivery off the GUI event queue.
-    // Disconnect before joining/releasing the sink during source replacement.
-    nativeConnection = QObject::connect(
-        decodedOutput.get(), &QAudioBufferOutput::audioBufferReceived, decodedOutput.get(),
-        [sink = nativeOutput.get()](const QAudioBuffer &buffer) { sink->enqueue(buffer); },
-        Qt::DirectConnection);
-    if (diagnosticsEnabled || spectrumEnabled) {
-        observeDecodedBuffers();
-    }
-    player->setAudioBufferOutput(decodedOutput.get());
-    return true;
-}
-#endif
 void AudioPlayer::startMediaSource(const QUrl &url) {
-#ifdef Q_OS_WIN
-    if (!prepareWindowsOutput()) {
-        return;
+#ifdef Q_OS_ANDROID
+    // Android 后端的 setMedia 会忽略 QIODevice、直接把 URL 交给系统播放器流式播放
+    // （qandroidmediaplayer.cpp 的 setMedia 只取 URL）；若仍启动 HttpAudioStream 预下载，
+    // 只会产生一份用不上的流量。Range 续传与 seek 由系统播放器自己处理。
+    player->setSource(url);
+    if (playbackRequested && recoveryPosition < 0) {
+        player->play();
     }
+    return;
 #endif
     if (url.isLocalFile()) {
         player->setSource(url);
@@ -296,6 +395,10 @@ void AudioPlayer::restorePlaybackPosition() {
     progressClock.restart();
     if (player->isSeekable()) {
         player->setPosition(position);
+    } else {
+        // 不可 seek 只能从头播放；同步清除旧恢复位置的时间过滤，否则开头音频会被全部丢弃。
+        pcm.reset(output.device(), outputPolicy, 0);
+        pcm.pause(!playbackRequested);
     }
     if (playbackRequested) {
         player->play();
@@ -305,7 +408,7 @@ void AudioPlayer::restorePlaybackPosition() {
  * 跟随系统默认设备，并在全部输出暂时消失时保留用户的播放意图。
  * 重连同一设备也重新绑定播放器；用户暂停或停止后不得因重连而自动播放。
  */
-void AudioPlayer::followDefaultOutput() {
+void AudioPlayer::followDefaultOutput(bool refresh, const AudioOutputFormat::SystemFormat *observedSystem) {
     const auto device = defaultOutput();
     if (diagnosticsEnabled && diagnosticEvent) {
         auto values = diagnosticState();
@@ -316,25 +419,37 @@ void AudioPlayer::followDefaultOutput() {
     }
     if (device.isNull()) {
         if (!outputUnavailable) {
-            recoveryPosition = std::max(lastPosition, player->position());
+            // 尚未消费的续播位置优先；异步加载期间设备消失时不能把它覆盖成当前解码位置。
+            if (recoveryPosition < 0) {
+                recoveryPosition = playbackPosition();
+            }
             outputUnavailable = true;
+            pcm.pause(true);
+            pcm.reset({}, outputPolicy, recoveryPosition);
             playbackWatchdog.stop();
             player->pause();
-#ifdef Q_OS_WIN
-            if (nativeOutput) {
-                nativeOutput->reset(true);
-            }
-#endif
             player->setAudioOutput(nullptr);
             error.clear();
         }
         return;
     }
     normalizeOutputLayout(device);
-    if (!outputUnavailable && output.device() == device) {
-        return;
+    if (!outputUnavailable && output.device() == device && devicePreferred == device.preferredFormat()) {
+        if (!refresh) {
+            return;
+        }
+        // 后台已经观测到变化时直接复用；设备通知路径仍在主线程现场探测。
+        const auto observed = observedSystem ? *observedSystem : AudioOutputFormat::systemFormat(device);
+        const auto current = pcm.snapshot();
+        if (current["outputSystemFormatStatus"].toInt() == observed.status &&
+            current["outputSystemSampleRateHz"].toInt() == observed.format.sampleRate() &&
+            current["outputSystemChannels"].toInt() == observed.format.channelCount() &&
+            current["outputSystemSampleFormat"].toInt() == int(observed.format.sampleFormat())) {
+            return;
+        }
     }
     const bool wasUnavailable = outputUnavailable;
+    const auto previousPosition = playbackPosition();
     const auto source = pendingSource.isEmpty() ? player->source() : pendingSource;
     const auto position = std::max<qint64>(0, recoveryPosition);
     if (wasUnavailable) {
@@ -342,21 +457,19 @@ void AudioPlayer::followDefaultOutput() {
         releasePlayer();
     }
     output.setDevice(device);
+    devicePreferred = device.preferredFormat();
     if (wasUnavailable) {
         createPlayer();
-    } else {
-#ifdef Q_OS_WIN
-        // Device changes must release the old endpoint and renegotiate the PCM format.
-        if (nativeOutput && !source.isEmpty()) {
-            const auto saved = player->position();
-            createPlayer();
-            recoveryPosition = saved;
-            outputUnavailable = false;
-            startMediaSource(source);
-            return;
-        }
-#endif
-        player->setAudioOutput(&output);
+    } else if (!player->source().isEmpty() && player->isSeekable()) {
+        observeDecodedBuffers();
+        player->setPosition(previousPosition);
+    }
+    pcm.reset(device, outputPolicy, wasUnavailable ? position : previousPosition, observedSystem);
+    decoderThrottled = false;
+    pcm.pause(!playbackRequested);
+    // 排空期间重建输出会清掉 drain 状态；源已经结束时补发完成事件，否则 ended 永远不会递增。
+    if (decoderEnded) {
+        completePlayback();
     }
     outputUnavailable = false;
     if (playbackRequested) {
@@ -376,6 +489,52 @@ void AudioPlayer::followDefaultOutput() {
     }
 }
 /**
+ * 把系统格式重读交给后台线程。
+ * CoreAudio/WASAPI 不会在设备采样率变化时通知 Qt；主线程只拷贝设备 id 与探测函数，
+ * 平台枚举本身不在这里执行。
+ */
+void AudioPlayer::requestOutputFormatProbe() {
+    if (!outputFormatProbe) {
+        return;
+    }
+    const auto device = output.device();
+    if (outputUnavailable || device.isNull()) {
+        return;
+    }
+    outputFormatProbe->request(device.id(), device.isDefault(), readSystemOutputFormat);
+}
+/**
+ * 消费后台最新观测值；只有观测到的格式与当前输出记录不一致时才重建，避免无谓重置 PCM 队列。
+ * 返回 false 表示这一拍没有可消费的结果。
+ */
+bool AudioPlayer::applyPendingOutputFormatObservation() {
+    if (!outputFormatProbe) {
+        return false;
+    }
+    OutputFormatProbe::Observation observation;
+    if (!outputFormatProbe->take(observation)) {
+        return false;
+    }
+    // 设备已经切换或消失、或者结果已经过时（暂停/seek 期间攒下的）时丢弃。
+    if (outputUnavailable || output.device().isNull() || observation.deviceId != output.device().id() ||
+        outputFormatClock.elapsed() > OUTPUT_FORMAT_OBSERVATION_MAX_AGE_MS) {
+        return true;
+    }
+    // status 0 表示这次平台读取失败；不能据此重建，保留当前输出等下一轮探测。
+    if (observation.system.status == 0) {
+        return true;
+    }
+    const auto current = pcm.snapshot();
+    if (observation.system.status == current["outputSystemFormatStatus"].toInt() &&
+        observation.system.format.sampleRate() == current["outputSystemSampleRateHz"].toInt() &&
+        observation.system.format.channelCount() == current["outputSystemChannels"].toInt() &&
+        int(observation.system.format.sampleFormat()) == current["outputSystemSampleFormat"].toInt()) {
+        return true;
+    }
+    followDefaultOutput(true, &observation.system);
+    return true;
+}
+/**
  * 校验音源并交给系统解码播放，沿用原生状态和错误反馈。
  */
 bool AudioPlayer::load(QString input, bool offline, bool alternative, QString provider, double position,
@@ -385,27 +544,27 @@ bool AudioPlayer::load(QString input, bool offline, bool alternative, QString pr
     }
     QUrl url(input);
     const auto host = url.host();
-    const bool qq = provider == "qq" && (host == "qqmusic.qq.com" || host.endsWith(".qqmusic.qq.com"));
-    const bool kugou = provider == "kugou" && (host.endsWith(".kugou.com") || host.endsWith(".kugou.net"));
-    const bool siren = provider == "siren" && (host == "hycdn.cn" || host.endsWith(".hycdn.cn"));
-    const bool trusted =
-        qq || kugou || siren ||
-        (provider == "netease" && (host == "music.126.net" || host.endsWith(".music.126.net") ||
-                                   host == "music.163.com" || host.endsWith(".music.163.com")));
-    const QStringList providers{"qq.com", "gtimg.com", "kuwo.cn", "kugou.com", "migu.cn"};
+    const auto media = ProviderRegistry::instance().mediaPolicy(provider);
+    const auto matchesHost = [&host](const QJsonArray &values) {
+        for (const auto &value : values) {
+            const auto pattern = value.toString();
+            if (pattern == host || (pattern.startsWith("*.") && host.endsWith(pattern.mid(1)))) {
+                return true;
+            }
+        }
+        return false;
+    };
+    const bool trusted = matchesHost(media["hosts"].toArray());
     const bool alternateHost =
-        alternative && std::any_of(providers.begin(), providers.end(), [&](const auto &domain) {
-            return host == domain || host.endsWith("." + domain);
-        });
-    if ((offline || provider == "local")
-            ? !url.isLocalFile()
-            : (!(trusted || alternateHost) || !QStringList{"http", "https"}.contains(url.scheme()))) {
+        alternative && matchesHost(media["alternativeHosts"].toArray());
+    const bool httpAllowed =
+        media["allowHttp"].toBool() || media["schemePolicy"].toString() == "http-or-https";
+    const bool schemeAllowed =
+        url.scheme() == "https" || (url.scheme() == "http" && httpAllowed);
+    const auto localMode = offline || provider == "local";
+    if ((localMode && !url.isLocalFile()) || (!localMode && (!(trusted || alternateHost) || !schemeAllowed))) {
         diagnose("load-rejected");
         return false;
-    }
-    // 酷狗音源沿用上游返回的协议与签名地址
-    if (url.scheme() == "http" && !kugou) {
-        url.setScheme("https");
     }
     ++sourceSerial;
     backendFailureCategory = 0;
@@ -418,8 +577,7 @@ bool AudioPlayer::load(QString input, bool offline, bool alternative, QString pr
     } else if (url.scheme() == "http") {
         sourceKind = 2;
     }
-    sourceProvider = QStringList{"other", "netease", "qq", "kugou", "local", "siren"}.indexOf(provider);
-    sourceProvider = std::max(0, sourceProvider);
+    sourceProvider = ProviderRegistry::instance().diagnosticsOrdinal(provider, 0);
     decodedBuffers = 0;
     decodedBytes = 0;
     decodedFrames = 0;
@@ -440,6 +598,7 @@ bool AudioPlayer::load(QString input, bool offline, bool alternative, QString pr
     pendingFailure = false;
     failureRecoverable = false;
     sourceEnded = false;
+    decoderEnded = false;
     progressClock.restart();
     pendingSource.clear();
     followDefaultOutput();
@@ -454,6 +613,8 @@ bool AudioPlayer::load(QString input, bool offline, bool alternative, QString pr
         return true;
     }
     playbackRequested = !paused;
+    pcm.reset(output.device(), outputPolicy, qint64(position));
+    pcm.pause(paused);
     startMediaSource(url);
     if (playbackRequested) {
         playbackWatchdog.start();
@@ -477,25 +638,25 @@ void AudioPlayer::control(QString action, double value) {
         playbackRequested = false;
         playbackWatchdog.stop();
         player->pause();
-#ifdef Q_OS_WIN
-        if (nativeOutput) {
-            nativeOutput->setPaused(true);
-        }
-#endif
+        pcm.pause(true);
     } else if (action == "resume") {
-#ifdef Q_OS_WIN
-        if (nativeOutput) {
-            nativeOutput->setPaused(false);
-        }
-#endif
         playbackRequested = true;
         progressClock.restart();
         playbackWatchdog.start();
-        if (sourceEnded) {
-            sourceEnded = false;
+        // 已自然播完时按播放要重新武装解码器；只清 sourceEnded 会让界面显示在播却没有声音。
+        const bool restart = sourceEnded || (decoderEnded && pcm.complete());
+        sourceEnded = false;
+        if (restart) {
+            decoderEnded = false;
+            pcm.reset(output.device(), outputPolicy, 0);
+            observeDecodedBuffers();
+            if (player->isSeekable()) {
+                player->setPosition(0);
+            }
         }
+        pcm.pause(false);
         followDefaultOutput();
-        if (!outputUnavailable && recoveryPosition < 0) {
+        if (!outputUnavailable && recoveryPosition < 0 && !decoderThrottled && !decoderEnded) {
             player->play();
         }
     } else if (action == "stop") {
@@ -518,24 +679,25 @@ void AudioPlayer::control(QString action, double value) {
         if (recoveryPosition >= 0) {
             recoveryPosition = lastPosition;
         }
-#ifdef Q_OS_WIN
-        if (nativeOutput) {
-            nativeOutput->reset(!playbackRequested);
-        }
-#endif
+        decoderEnded = false;
+        sourceEnded = false;
+        pcm.pause(true);
+        pcm.reset(output.device(), outputPolicy, lastPosition);
+        decoderThrottled = false;
+        observeDecodedBuffers();
         player->setPosition(lastPosition);
+        pcm.pause(!playbackRequested);
+        if (playbackRequested && !outputUnavailable && recoveryPosition < 0) {
+            player->play();
+        }
     } else if (action == "volume") {
         output.setVolume(float(std::clamp(value, 0., 1.)));
-#ifdef Q_OS_WIN
-        if (nativeOutput) {
-            nativeOutput->setVolume(output.volume());
-        }
-#endif
     }
 }
 QVariantMap AudioPlayer::state() const {
-    const auto position = recoveryPosition >= 0 ? recoveryPosition : player->position();
-    return {{"playing", player->isPlaying()},
+    const auto position = recoveryPosition >= 0 ? recoveryPosition : playbackPosition();
+    return {{"playing", playbackRequested && !outputUnavailable && error.isEmpty() &&
+                            (player->isPlaying() || decoderThrottled || (decoderEnded && !sourceEnded))},
             {"position", position},
             {"duration", player->duration()},
             {"seekable", player->isSeekable()},
@@ -555,19 +717,6 @@ void AudioPlayer::enableDiagnostics(bool enabled) {
         return;
     }
     diagnosticsEnabled = enabled;
-    if (enabled || spectrumEnabled) {
-        observeDecodedBuffers();
-    } else {
-        ++decoderObservation;
-        QObject::disconnect(decoderConnection);
-    }
-    player->setAudioBufferOutput(
-#ifdef Q_OS_WIN
-        nativeOutput ||
-#endif
-                enabled || spectrumEnabled
-            ? decodedOutput.get()
-            : nullptr);
 }
 
 void AudioPlayer::clearSpectrum() {
@@ -584,19 +733,6 @@ void AudioPlayer::enableSpectrum(bool enabled) {
     }
     spectrumEnabled = enabled;
     clearSpectrum();
-    if (enabled || diagnosticsEnabled) {
-        observeDecodedBuffers();
-    } else {
-        ++decoderObservation;
-        QObject::disconnect(decoderConnection);
-    }
-    player->setAudioBufferOutput(
-#ifdef Q_OS_WIN
-        nativeOutput ||
-#endif
-                enabled || diagnosticsEnabled
-            ? decodedOutput.get()
-            : nullptr);
 }
 
 void AudioPlayer::diagnose(const QString &event) {
@@ -615,6 +751,10 @@ QJsonObject AudioPlayer::diagnosticState() const {
         codec = int(QMediaFormat::AudioCodec::Unspecified);
     }
     auto values = stream ? stream->diagnosticState() : QJsonObject{};
+    const auto outputValues = pcm.snapshot();
+    for (auto it = outputValues.begin(); it != outputValues.end(); ++it) {
+        values[it.key()] = it.value();
+    }
     const QJsonObject playback{
         {"sourceSerial", sourceSerial},
         {"sourceKind", sourceKind},
@@ -624,12 +764,12 @@ QJsonObject AudioPlayer::diagnosticState() const {
         {"errorCode", int(player->error())},
         {"backendFailureCategory", backendFailureCategory},
         {"reportedHttpStatus", reportedHttpStatus},
-        {"playing", player->isPlaying()},
+        {"playing", state()["playing"].toBool()},
         {"latchedError", !error.isEmpty()},
         {"pendingFailure", pendingFailure},
         {"recoverable", failureRecoverable},
         {"hasActiveSource", !player->source().isEmpty() || !pendingSource.isEmpty()},
-        {"positionMs", double(player->position())},
+        {"positionMs", double(playbackPosition())},
         {"durationMs", double(player->duration())},
         {"seekable", player->isSeekable()},
         {"bufferProgress", double(player->bufferProgress())},
@@ -704,7 +844,11 @@ void AudioPlayer::observeDecodedBuffers() {
             if (observation != decoderObservation || generation != sourceSerial || !buffer.isValid()) {
                 return;
             }
-            if (spectrumEnabled && player->isPlaying() && spectrum.consume(buffer) &&
+            decodedFormat = buffer.format();
+            if (pcmEnabled && !outputUnavailable && !pcm.push(buffer)) {
+                return;
+            }
+            if (spectrumEnabled && playbackRequested && spectrum.consume(buffer) &&
                 (!spectrumClock.isValid() || spectrumClock.elapsed() >= 50)) {
                 spectrumClock.restart();
                 if (spectrumChanged) {
@@ -725,6 +869,8 @@ void AudioPlayer::observeDecodedBuffers() {
 
 AudioPlayer::~AudioPlayer() {
     playbackWatchdog.stop();
+    // 先停探测线程再释放播放器与 PCM：退出最多等一次在途的平台调用。
+    outputFormatProbe.reset();
     releasePlayer();
 }
 
@@ -732,6 +878,10 @@ AudioPlayer::~AudioPlayer() {
 void AudioPlayer::releasePlayer() {
     ++decoderObservation;
     QObject::disconnect(decoderConnection);
+    pcm.pause(true);
+    pcm.reset(output.device(), outputPolicy);
+    decoderThrottled = decoderEnded = false;
+    decodedFormat = {};
     if (stream) {
         stream->cancel();
     }
@@ -739,14 +889,54 @@ void AudioPlayer::releasePlayer() {
         // 销毁旧会话期间不再发送状态快照，避免访问正在释放的成员。
         player->blockSignals(true);
     }
-    // Destroy the decoder before releasing its direct PCM callback target.
-#ifdef Q_OS_WIN
-    QObject::disconnect(nativeConnection);
-#endif
-    player.reset();
     decodedOutput.reset();
-#ifdef Q_OS_WIN
-    nativeOutput.reset();
-#endif
+    player.reset();
     stream.reset();
+}
+
+qint64 AudioPlayer::playbackPosition() const {
+    return pcmEnabled && pcm.active() ? pcm.position() : player->position();
+}
+
+void AudioPlayer::completePlayback() {
+    if (sourceEnded) {
+        return;
+    }
+    sourceEnded = true;
+    pendingFailure = failureRecoverable = false;
+    error.clear();
+    playbackRequested = false;
+    playbackWatchdog.stop();
+    ++ended;
+    if (playbackChanged) {
+        playbackChanged();
+    }
+}
+
+void AudioPlayer::setOutputPolicy(AudioOutputFormat::Policy policy) {
+    if (outputPolicy == policy) {
+        return;
+    }
+    const auto position = playbackPosition();
+    // 错误提示要求用户切换输出策略；重建输出后解除上一次输出错误，否则界面会一直停在失败状态。
+    const bool outputFailed = pcm.failed();
+    outputPolicy = policy;
+    pcm.pause(true);
+    pcm.reset(output.device(), policy, position);
+    if (outputFailed) {
+        error.clear();
+        pendingFailure = false;
+        failureRecoverable = false;
+    }
+    decoderThrottled = false;
+    if (player->isSeekable()) {
+        decoderEnded = false;
+        observeDecodedBuffers();
+        player->setPosition(position);
+    }
+    pcm.pause(!playbackRequested);
+    if (playbackRequested && !outputUnavailable && recoveryPosition < 0 && !decoderEnded) {
+        player->play();
+    }
+    diagnose("output");
 }

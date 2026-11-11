@@ -42,23 +42,23 @@ python3 tools/perf/scroll/analyze_admission.py 'd0' 'd100'
 
 ## 环境变量
 
-| 变量 | 作用 |
-| --- | --- |
-| `OUT_DIR` | 日志/截图/时间线的输出目录，默认 `tools/perf/scroll/out` |
-| `WARMUP` | 热身秒数，默认 5 |
-| `EXTRA_ENV` | 追加给被测程序的环境变量，例如 `EXTRA_ENV="QSG_RENDER_TIMING=1"` |
-| `RHINE_AB_DIR` | 分析脚本读日志的目录（默认同上 `out`） |
+| 变量           | 作用                                                             |
+| -------------- | ---------------------------------------------------------------- |
+| `OUT_DIR`      | 日志/截图/时间线的输出目录，默认 `tools/perf/scroll/out`         |
+| `WARMUP`       | 热身秒数，默认 5                                                 |
+| `EXTRA_ENV`    | 追加给被测程序的环境变量，例如 `EXTRA_ENV="QSG_RENDER_TIMING=1"` |
+| `RHINE_AB_DIR` | 分析脚本读日志的目录（默认同上 `out`）                           |
 
 ## 文件
 
-| 文件 | 作用 |
-| --- | --- |
-| `ab.sh` | 单轮三段滚动 |
-| `both.sh` | 0 与 100 两轮对照，结束还原会话 |
-| `stamp.py` | 给程序 stdout 每行打 epoch 毫秒前缀（`analyze` 依赖这个前缀） |
-| `holdkey2.py` | 按住某键若干秒（`holdkey2.py 6 108` = 按住 ↓ 6 s） |
-| `analyze_admission.py` | 按段汇总节拍/拍成本/3D 内部/纹理探针/GPU 行 |
-| `analyze_qsg.py` | 汇总 `QSG_RENDER_TIMING` 的 sync / render / swap 与 `blockedForSync` |
+| 文件                   | 作用                                                                 |
+| ---------------------- | -------------------------------------------------------------------- |
+| `ab.sh`                | 单轮三段滚动                                                         |
+| `both.sh`              | 0 与 100 两轮对照，结束还原会话                                      |
+| `stamp.py`             | 给程序 stdout 每行打 epoch 毫秒前缀（`analyze` 依赖这个前缀）        |
+| `holdkey2.py`          | 按住某键若干秒（`holdkey2.py 6 108` = 按住 ↓ 6 s）                   |
+| `analyze_admission.py` | 按段汇总节拍/拍成本/3D 内部/纹理探针/GPU 行                          |
+| `analyze_qsg.py`       | 汇总 `QSG_RENDER_TIMING` 的 sync / render / swap 与 `blockedForSync` |
 
 ## 已知坑
 

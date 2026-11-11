@@ -1,6 +1,13 @@
 #include "NativeHud.h"
 #include "MusicData.h"
+#include "ProviderRegistry.h"
+#include <QDateTime>
+#include <QDebug>
 #include <QJsonDocument>
+#include <QUrl>
+#include "MusicDiscover.h"
+#include "DiscoverArtwork.h"
+#include <QtGlobal>
 #include <algorithm>
 #include <cmath>
 
@@ -11,7 +18,9 @@ QJsonArray NativeHud::ink() const {
     return {0.08, 0.085, 0.075, 1, "calibratedRGB"};
 }
 void NativeHud::op(QJsonArray command) {
-    commands.append(command);
+    if (!m_contentSink) {
+        commands.append(command);
+    }
 }
 void NativeHud::save() {
     op({"save"});
@@ -36,15 +45,28 @@ void NativeHud::fill(double x, double y, double width, double height, QJsonArray
 }
 void NativeHud::text(QString value, double x, double y, double size, QString weight, double tracking,
                      QJsonArray color) {
+    if (m_contentSink) {
+        m_contentSink->text(value);
+        return;
+    }
     op({"text", value, x, y, size, weight, tracking, color.isEmpty() ? ink() : color});
 }
 void NativeHud::aligned(QString value, double x, double y, double size, QString weight, double tracking) {
+    if (m_contentSink) {
+        m_contentSink->text(value);
+        return;
+    }
     text(value, x - m_glyphs->inset(value, size, weight), y, size, weight, tracking);
 }
 
 QString NativeHud::fit(QString value, double size, double width, QString weight) {
-    const auto key = QString::fromUtf8(
-        QJsonDocument(QJsonArray{value, size, width, weight}).toJson(QJsonDocument::Compact));
+    if (m_contentSink) {
+        return value;
+    }
+    // 别用 JSON 序列化当缓存 key：滑动时每个滚动标题每帧都要过一次 fit()，
+    // 序列化 + UTF-8 往返比查 m_fitCache 本身还贵。定界符拼接逐项等价。
+    const auto key = QString::number(size, 'g', 17) + QChar(0x1f) + QString::number(width, 'g', 17) +
+                     QChar(0x1f) + weight + QChar(0x1f) + value;
     if (const auto cached = m_fitCache.object(key)) {
         return *cached;
     }
@@ -74,6 +96,10 @@ void NativeHud::limited(QString value, double x, double y, double size, double w
 }
 void NativeHud::centeredText(QString value, double x, double cy, double size, QString weight,
                              bool horizontal) {
+    if (m_contentSink) {
+        m_contentSink->text(value);
+        return;
+    }
     const auto bounds = m_glyphs->bounds(value, size, weight);
     text(value, x - bounds["x"].toDouble() - (horizontal ? bounds["width"].toDouble() / 2 : 0),
          cy - bounds["y"].toDouble() - bounds["height"].toDouble() / 2, size, weight);
@@ -95,6 +121,10 @@ void NativeHud::roll(QString key, QString value, double x, double y, double size
     rollingText(key, shown, x - m_glyphs->inset(shown, size, weight), y, size, weight, 0, numeric);
 }
 void NativeHud::hit(double x, double y, double width, double height, QString action, QString label) {
+    if (m_contentSink) {
+        m_contentSink->action(label.isNull() ? action : label, action);
+        return;
+    }
     hits.append(QJsonObject{{"x", x},
                             {"y", y},
                             {"width", width},
@@ -104,6 +134,10 @@ void NativeHud::hit(double x, double y, double width, double height, QString act
 }
 void NativeHud::button(QString label, double x, double y, double width, double height, QString action,
                        double size, QString weight) {
+    if (m_contentSink) {
+        m_contentSink->action(label, action);
+        return;
+    }
     hit(x, y, width, height, action, label);
     const auto inset = m_modalControls ? std::min(10.0, width / 8) : 0;
     if (m_modalControls) {
@@ -113,7 +147,40 @@ void NativeHud::button(QString label, double x, double y, double width, double h
     text(m_modalControls ? fit(label, size, width - inset * 2) : label, x + inset,
          y + (height - size) / 2 - 4, size, weight);
 }
+
+/** 插件面板按钮：主操作用实底，其余用细线轮廓，避免整页灰色实底。 */
+void NativeHud::pluginButton(const QString &label, double x, double y, double width, double height,
+                             const QString &action, double size, bool primary, QJsonArray color) {
+    if (m_contentSink) {
+        m_contentSink->action(label, action);
+        return;
+    }
+    hit(x, y, width, height, action, label);
+    if (primary) {
+        fill(x, y, width, height, dark ? QJsonArray{0.88, 0.89, 0.84, 1} : ink());
+    } else {
+        auto tint = ink();
+        tint[3] = dark ? 0.1 : 0.05;
+        fill(x, y, width, height, tint);
+        auto line = ink();
+        line[3] = dark ? 0.45 : 0.3;
+        fill(x, y, width, 1, line);
+        fill(x, y + height - 1, width, 1, line);
+        fill(x, y, 1, height, line);
+        fill(x + width - 1, y, 1, height, line);
+    }
+    if (color.isEmpty()) {
+        color =
+            primary ? (dark ? QJsonArray{0.08, 0.085, 0.075, 1} : QJsonArray{0.96, 0.95, 0.91, 1}) : ink();
+    }
+    text(fit(label, size, width - 16, "demibold"), x + 8, y + (height - size) / 2 - 4, size, "demibold", 0,
+         color);
+}
 void NativeHud::control(QString label, double x, double y, double width, QString action) {
+    if (m_contentSink) {
+        m_contentSink->action(label, action);
+        return;
+    }
     hit(x - 10, y, width + 20, 54, action, label);
     aligned(label, x, y + 14, 20, "demibold");
 }
@@ -123,6 +190,10 @@ void NativeHud::rule(double x, double y, double width, double opacity) {
     fill(x, y, width, 1, color);
 }
 void NativeHud::image(QString key, double x, double y, double width, double height) {
+    if (m_contentSink) {
+        m_contentSink->image(key);
+        return;
+    }
     if (!key.isEmpty()) {
         op({"image", key, x, y, width, height});
     }
@@ -168,6 +239,10 @@ QRectF NativeHud::detailBounds(double width) const {
     return {layout.left, layout.top, width - layout.left * 2, layout.bottom - layout.top};
 }
 QJsonObject NativeHud::state() const {
+    return m_responsive.state(sourceState());
+}
+
+QJsonObject NativeHud::sourceState() const {
     const auto bounds = modalBounds(width);
     const auto rect = [](const std::optional<QRectF> &value) -> QJsonValue {
         if (!value) {
@@ -176,7 +251,13 @@ QJsonObject NativeHud::state() const {
         return QJsonObject{
             {"x", value->x()}, {"y", value->y()}, {"width", value->width()}, {"height", value->height()}};
     };
-    return {{"inputX", bounds.x() + 53},
+    return {{"lyricsMode", lyricsMode},
+            {"commentsMode", commentsMode},
+            {"commentsAvailable", m_music->commentsAvailable()},
+            {"archiveName", m_music->libraryName()},
+            {"archiveIndex", m_music->libraryIndex()},
+            {"archiveTotal", m_music->libraryTotal()},
+            {"inputX", bounds.x() + 53},
             {"inputY", bounds.y() + 180},
             {"inputWidth", bounds.width() - 106 - libraryToolbarActionWidth()},
             // QML 手势层与原生结果视口共用同一组舞台坐标。
@@ -231,9 +312,24 @@ void NativeHud::draw(QJsonObject next, double stageWidth, double time) {
         dark = m_host->systemDark();
         m_scene.theme(dark);
     }
+    m_responsive.resize(stageWidth);
+    m_music->followPlaybackDetails = !m_responsive.compact();
+    const double actualStageWidth = stageWidth;
+    stageWidth = m_responsive.sourceWidth(stageWidth);
     frame = next;
     width = stageWidth;
     lastTime = time;
+    m_responsive.setMotion(time, reduced);
+    // 真实墙钟记录进入详情的时刻。frame["detail"] 来自 m_detail，而 m_detail 挂在
+    // m_animationTime 这个「每帧最多 +50ms、引擎休眠即停」的伪时钟上；一旦引擎在
+    // 淡入中途休眠，alpha(opacity) 就永久停在半透明（按钮命中区照常注册，于是
+    // 「能点但看不见、点一下才出现」）。这里独立计时，不依赖场景推进。
+    const bool inDetail = frame["mode"] == "detail";
+    if (inDetail && m_detailEnterWallMs < 0) {
+        m_detailEnterWallMs = QDateTime::currentMSecsSinceEpoch();
+    } else if (!inDetail) {
+        m_detailEnterWallMs = -1;
+    }
     commands = {};
     hits = {};
     playerBounds.reset();
@@ -249,10 +345,51 @@ void NativeHud::draw(QJsonObject next, double stageWidth, double time) {
         modal.clear();
         closing = false;
     }
+    if (m_responsive.compact() && frame["mode"] != "boot") {
+        const auto scope = modal + ":" + frame["mode"].toString() + ":" +
+                           m_music->current.value("kind").toString() + ":" +
+                           m_music->current.value("id").toString() + ":" + tab + ":" +
+                           (lyricsMode ? QStringLiteral("lyrics")
+                                       : commentsMode ? QStringLiteral("comments:") + m_music->comments.sort + ":" +
+                                                            m_music->comments.status
+                                                      : QStringLiteral("info")) +
+                           ":" + m_music->discover->tab + ":" + QString::number(musicCollection) + ":" + artistTab +
+                           ":" + query;
+        const bool home = modal.isEmpty() && frame["mode"] == "archive" && !lyricsMode && !commentsMode;
+        m_responsive.prepare(scope, home);
+        if (!frame["viewer"].toBool()) {
+            if (modal == "player") {
+                playerPanel(0, 0, width);
+            } else if (modal == "discover") {
+                discoverPanel(0, 0, width);
+            } else if (modal == "settings") {
+                settingsPanel(0, 0, width);
+            } else if (!modal.isEmpty() && modal != "search" && modal != "saved" && modal != "provider" &&
+                       modal != "plugins" && modal != "plugin-detail") {
+                m_responsive.setAuxiliary(auxiliaryContent());
+            } else if (modal.isEmpty() && frame["mode"] == "detail" && !lyricsMode && !commentsMode &&
+                       !m_music->current.isEmpty()) {
+                detail(width, frame["detail"].toDouble());
+            }
+        }
+        playerBar(0, 984, width);
+        drawMobile(time, scope);
+        return;
+    }
     if (frame["viewer"].toBool()) {
         viewer(width);
     } else if (frame["mode"] == "boot") {
-        boot(width);
+        if (m_responsive.compact()) {
+            // 启动 HUD 沿用原动画，只将 1920 × 1080 画布完整缩放到实际窄舞台中央。
+            const double scale = actualStageWidth / 1920.;
+            save();
+            translate(0, (1080 - 1080 * scale) / 2);
+            this->scale(scale, scale);
+            boot(1920);
+            restore();
+        } else {
+            boot(width);
+        }
     } else {
         if (frame["mode"] == "archive" && !(lyricsMode && !m_music->player.current.isEmpty())) {
             archiveMask(width);
@@ -262,19 +399,168 @@ void NativeHud::draw(QJsonObject next, double stageWidth, double time) {
         footer(width);
         if (modal != "search") {
             if (frame["mode"] == "detail" || (lyricsMode && !m_music->player.current.isEmpty())) {
-                detail(width, lyricsMode ? 1 : frame["detail"].toDouble());
+                double opacity = lyricsMode ? 1 : frame["detail"].toDouble();
+                if (!lyricsMode && m_detailEnterWallMs >= 0) {
+                    // 500 ms 淡入，与场景曲线同形（smoothstep）。取两者较大值：
+                    // 正常路径完全由 frame["detail"] 主导，只有伪时钟被截断时
+                    // 墙钟才会接管，保证详情内容一定收敛到 alpha=1。
+                    const double wall = std::clamp(
+                        (QDateTime::currentMSecsSinceEpoch() - m_detailEnterWallMs) / 500.0, 0.0, 1.0);
+                    const double eased = wall * wall * (3 - 2 * wall);
+                    opacity = std::max(opacity, eased);
+#if defined(Q_OS_ANDROID)
+                    // 每次进入 detail 的前若干帧各打一次，用来区分「场景值没推进」
+                    // 与「场景值推进了但没画出来」。每 30 次 draw 一行，不刷屏。
+                    static int diagTick = 0;
+                    if (++diagTick % 30 == 1) {
+                        qInfo("HUD detail: scene=%.3f wall=%.3f alpha=%.3f enterMs=%lld",
+                              frame["detail"].toDouble(), eased, opacity,
+                              static_cast<long long>(m_detailEnterWallMs));
+                    }
+#endif
+                }
+                detail(width, opacity);
             } else {
                 archive(width);
             }
         }
     }
     if (!modal.isEmpty()) {
+        if (m_responsive.compact()) {
+            commands = {};
+            hits = {};
+        }
         modalDraw(width);
     }
     if (frame["mode"] != "boot") {
         playerBar(0, 984, width);
     }
+    if (frame["mode"] == "boot") {
+        return;
+    }
 }
+/** 移动端只消费展示模型，不先生成再丢弃横屏 HUD。 */
+void NativeHud::drawMobile(double time, const QString &scope) {
+    if (commentsMode && ((!m_music->commentsAvailable()) ||
+                         CommentsController::trackKey(m_music->current) != commentsTrackKey)) {
+        commentsMode = false;
+    }
+    auto mobile = sourceState();
+    mobile["lyricsMode"] = lyricsMode;
+    mobile["commentsMode"] = commentsMode;
+    if (commentsMode) {
+        mobile["comments"] = m_music->comments.state();
+    }
+    mobile["selectedSongIsCurrent"] =
+        PlaybackQueue::identity(m_music->current) == PlaybackQueue::identity(m_music->player.current);
+    const auto selectedLiked = m_music->songLiked(m_music->current);
+    mobile["selectedSongLiked"] = selectedLiked ? QJsonValue(*selectedLiked) : QJsonValue(QJsonValue::Null);
+    mobile["lyricDocument"] = m_music->player.lyrics.document();
+    mobile["lyricIndex"] = m_music->player.lyrics.index;
+    mobile["lyricMessage"] = m_music->player.lyrics.message;
+    mobile["playerQuality"] = m_music->player.actualQuality;
+    mobile["playerQueueCount"] = m_music->player.queue.size();
+    mobile["providerName"] = m_music->providerName();
+    mobile["loggedIn"] = !m_music->uid.isEmpty();
+    mobile["userName"] = m_music->nickname;
+    mobile["editingSettingId"] = editingSettingId;
+    mobile["musicCollection"] = musicCollection;
+    mobile["searchKind"] = m_music->searchKind;
+    mobile["collectionLabels"] = QJsonArray::fromStringList(m_music->columns);
+    mobile["collectionTitle"] = m_music->columns.value(musicCollection);
+    mobile["provider"] = m_music->provider;
+    mobile["canCreatePlaylist"] = m_music->editable();
+    mobile["officialPlayback"] = PlatformFeatures::OfficialPlayback;
+    mobile["detailBody"] = body();
+    // 目录中的物理唱片会跨列排列，栏目始终使用最外层目录的来源。
+    int sourceLane = m_music->selectedLane;
+    for (auto directory = m_music->directory; directory; directory = directory->parent) {
+        sourceLane = directory->parentLane;
+    }
+    const int columnIndex = m_music->sourceOrder().indexOf(sourceLane) + 1;
+    QJsonArray archiveSources;
+    for (const int lane : m_music->sourceOrder()) {
+        archiveSources.append(QJsonObject{
+            {"lane", lane}, {"label", m_music->columns.value(lane)}, {"selected", lane == sourceLane}});
+    }
+    mobile["archiveSources"] = archiveSources;
+    const auto archiveItems =
+        modal.isEmpty() && frame["mode"] == "archive" && !lyricsMode ? m_music->libraryItems() : QJsonArray{};
+    mobile["archiveRows"] = archiveItems;
+    mobile["canPlayArchive"] = !archiveItems.isEmpty() && archiveItems.first().toObject()["kind"] == "song";
+    mobile["archiveColumnIndex"] = columnIndex;
+    if (modal == "search" || modal == "saved") {
+        QJsonArray entries;
+        const int lane = modal == "search" ? 0 : musicCollection;
+        const auto values = rows(lane);
+        const bool gallery =
+            modal == "saved" && lane >= 2 && !values.isEmpty() && values.first().value["kind"] != "song";
+        const auto [first, last] = m_responsive.resultWindow(int(values.size()), modal == "search", gallery,
+                                                             modal == "saved" && lane == 1);
+        mobile["resultTotalCount"] = values.size();
+        if (modal == "saved" && lane >= 2) {
+            if (!m_savedArtwork) {
+                m_savedArtwork = new DiscoverArtwork(m_host, this);
+            }
+            QStringList urls;
+            for (int index = first; index < last; ++index) {
+                urls.append(values[index].value["cover"].toString());
+            }
+            m_savedArtwork->show(m_music->provider + ":" + QString::number(m_music->accountGeneration()) +
+                                     ":" + QString::number(lane),
+                                 urls);
+        }
+        for (int index = first; index < last; ++index) {
+            const auto &row = values[index];
+            auto value = row.value;
+            if (modal == "saved" && lane >= 2) {
+                value["image"] = m_savedArtwork->image(value["cover"].toString());
+            }
+            const auto route =
+                value["kind"] == "group"
+                    ? "music:expand:" + QString::fromUtf8(QUrl::toPercentEncoding(value["key"].toString()))
+                    : "music:result:" + QString::number(lane) + ":" + QString::number(row.index);
+            entries.append(QJsonObject{{"index", index}, {"value", value}, {"action", route}});
+        }
+        mobile["resultRows"] = entries;
+    }
+    // 竖屏布局
+    if (modal == "provider") {
+        mobile["providers"] = providerCardsState();
+        mobile["providerPlaylistEditors"] = providerPlaylistEditors();
+    } else if (modal == "plugins") {
+        mobile["pluginMarketplace"] = m_host->pluginMarketplaceState();
+        mobile["pluginInstalled"] = m_host->pluginManagerState();
+        mobile["pluginMessage"] = pluginManagerMessage;
+        mobile["pluginImportAvailable"] = !RHINE_MOBILE;
+    } else if (modal == "plugin-detail") {
+        mobile["pluginDetail"] = m_host->pluginDetail(pluginDetailId);
+        mobile["pluginMessage"] = pluginManagerMessage;
+    }
+    m_responsive.arrange(commands, hits, mobile, scope, *m_glyphs);
+    QString pageKey = modal + ":" + frame["mode"].toString();
+    if (lyricsMode && modal.isEmpty()) {
+        pageKey = "lyrics";
+    } else if (commentsMode && modal.isEmpty()) {
+        pageKey = "comments";
+    } else if (modal.isEmpty() && frame["mode"] == "detail") {
+        pageKey += ":" + m_music->current["key"].toString();
+    }
+    if (!lyricsMode && modal.isEmpty() && frame["mode"] == "archive") {
+        pageKey += ":" + QString::number(mobile["archiveColumnIndex"].toInt()) + ":" + m_music->libraryName();
+    } else if (modal == "discover") {
+        pageKey += ":" + m_music->discover->tab;
+    } else if (modal == "search") {
+        pageKey += ":" + m_music->searchKind;
+    }
+    m_mobileTransition.apply(commands, hits, pageKey, time, 1080, reduced, frame["detail"].toDouble());
+
+    // 列表滚动把固定槽位上的歌曲交给原有选择流程；下一帧再绘制新的选中状态。
+    if (const int selection = m_responsive.takeArchiveSelection(); selection >= 0) {
+        m_music->selectLibraryIndex(selection);
+    }
+}
+
 void NativeHud::archiveMask(double width) {
     if (archiveMaskStrength == 0) {
         return;
@@ -321,16 +607,12 @@ void NativeHud::navigation(double width) {
 }
 void NativeHud::footer(double width) {
     fill(59, 971, 5, 5, {119.0 / 255, 123.0 / 255, 96.0 / 255, 1});
-    QString session = m_music->isLocal() ? "LOCAL LIBRARY" : "GUEST SESSION";
+    QString session = m_music->isLocal() ? ProviderRegistry::instance().sessionLabel("local")
+                                         : QStringLiteral("GUEST SESSION");
     if (m_music->isSiren()) {
-        session = "SIREN RECORDS";
+        session = ProviderRegistry::instance().sessionLabel("siren");
     } else if (!m_music->uid.isEmpty()) {
-        session = "NETEASE SESSION";
-        if (m_music->provider == "qq") {
-            session = "QQ SESSION";
-        } else if (m_music->provider == "kugou") {
-            session = "KUGOU SESSION";
-        }
+        session = ProviderRegistry::instance().sessionLabel(m_music->provider);
     }
     text(session, 75, 967, 10, "regular", 0.9);
     const auto credit = QStringLiteral("POWERED BY RHINE LAB");
@@ -415,7 +697,8 @@ void NativeHud::archive(double width) {
                 label = "浏览歌手作品 →";
             }
             control(label, x, 703, 300, "open");
-            aligned("点击打开 · ENTER 键也可打开", x, 771, 14);
+            aligned(enterPlaysSelection() ? "点击打开 · ENTER 键播放" : "点击打开 · ENTER 键也可打开", x, 771,
+                    14);
         }
         text("TRACK / SELECT", 60, 865, 11);
         const auto number = MusicData::pad(music.libraryIndex() + 1);
@@ -445,7 +728,7 @@ void NativeHud::archive(double width) {
     button("←", col, 903, 46, 46, "column-prev", 28);
     if (!music.directory) {
         text("COLLECTION " + MusicData::pad(music.sourceOrder().indexOf(music.selectedLane) + 1) + " / " +
-                 MusicData::pad(music.provider == "kugou" ? 4 : 5),
+                 MusicData::pad(std::max(1, int(music.columns.size()))),
              col + 70, 904, 10);
         roll("music-column", music.libraryName(), col + 70, 925, 15, width - col - 360);
     } else {
@@ -456,8 +739,10 @@ void NativeHud::archive(double width) {
     if (supportsTrackList()) {
         archiveTabButton(width);
     }
-    text(music.directory ? "← → 浏览曲目列 / ↑ ↓ 选曲 / ENTER 查看 / ESC 上一级"
-                         : "← → 切换来源 / ↑ ↓ 选曲 / ENTER 查看 / 检索",
+    const QString enterHint =
+        enterPlaysSelection() ? QStringLiteral("ENTER 播放") : QStringLiteral("ENTER 查看");
+    text(music.directory ? "← → 浏览曲目列 / ↑ ↓ 选曲 / " + enterHint + " / ESC 上一级"
+                         : "← → 切换来源 / ↑ ↓ 选曲 / " + enterHint + " / 检索",
          nav, 850, 12);
 }
 

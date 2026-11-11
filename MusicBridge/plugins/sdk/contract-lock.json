@@ -1,0 +1,17 @@
+{
+    "schemaVersion": 2,
+    "apiVersion": "2.0",
+    "frozenAt": "2026-11-09",
+    "note": "Any contract change must update this file and follow the version policy in docs/PLUGIN/P0-FREEZE.md.",
+    "files": {
+        "MusicBridge/plugins/sdk/port.d.ts": "19fe9190b84c80b39bfced089074245f27314ae048464a61bf3951284d199a7c",
+        "MusicBridge/plugins/sdk/registry.d.ts": "831ae08a56631a0279c0479f2163668fe33d80a494d8587cceee69edcb398f71",
+        "MusicBridge/plugins/sdk/manifest.schema.json": "4ab96497d1ae91ae1b6720f48bec4bde968f5e70321170afc46aa16a36cf8d4f",
+        "MusicBridge/plugins/sdk/descriptor.schema.json": "e17eca76c9b62c1a0df6672c981437e17280d227e79a7e8c125520322f3f01d9",
+        "MusicBridge/plugins/sdk/models.schema.json": "8efa445d75461c23b1a177b368f48be54c2c5ceab90262d7af6877f4798d0671",
+        "MusicBridge/plugins/sdk/models.cjs": "7cf2101ce633164bc8446a8471f740ea022379b8fa847f2c8ea16d977d3fc122",
+        "MusicBridge/plugins/sdk/base-api.mjs": "a88d0663c2656467f44c10b84ebe4de4cbc38812c42d8590ad03f855be340d84",
+        "MusicBridge/plugins/sdk/failure.mjs": "06c64e2da672b7a193aad24dc557cc0b16e9ef61e7f65b75e0ac70a018880ef6",
+        "MusicBridge/plugins/sdk/fixtures/fixture.schema.json": "7d608b4805f8bc1f9d91b31cd15b5b49403d39b7412acc8598d817b33faa57f0"
+    }
+}

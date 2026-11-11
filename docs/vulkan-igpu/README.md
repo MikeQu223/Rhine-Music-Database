@@ -30,13 +30,13 @@
 
 任何「Vulkan 优化」都必须能落到下面五项之一，否则大概率是在优化场景而不是链路。
 
-| # | 成本项 | 核显 vs 独显的关键差异 | 每帧量级（1080p / 1440p / 4K，BGRA8） | 主要抓手 |
-|---|---|---|---|---|
-| 1 | **像素带宽** | 核显无独立显存，带宽与 CPU 共享，且峰值只有 90–120 GB/s 量级 | 单张全屏 = 8.3 / 14.7 / 33.2 MB；60 fps 写一遍 = 0.5 / 0.9 / 2.0 GB/s | load/store op、避免多余 pass、避免 `vkCmdResolveImage`、压缩（AFBC/UBWC/DCC） |
-| 2 | **CPU 提交与驱动开销** | 核显机型常配低压 CPU，单核性能弱，驱动开销占比更高 | 每帧 submit 从几次到几十次；每次几 µs 到几十 µs | 单次 submit 合并、命令缓冲复用、管线缓存、描述符零更新 |
-| 3 | **呈现与合成** | 核显的显示引擎与合成器读同一块系统内存；多一次合成拷贝就是一次全屏带宽 | 合成一次 = 16.6 / 29.5 / 66.4 MB（读+写） | present mode、独立翻转 vs 合成、present_wait 观测、图像数 |
-| 4 | **内存所有权与分配** | UMA 下 `DEVICE_LOCAL` 可映射；但过度映射/碎片化会伤 DRAM 效率 | 交换链 3 张 1080p ≈ 24.9 MB；6 张 ≈ 49.8 MB | 大分配 + 子分配（VMA）、持久映射、按需 staging |
-| 5 | **功耗与频率**（本项目**不适用**） | 封装功耗共享；满载 → 降频 → 帧时间抖动 | — | 仅作背景；不据此限帧、不据此选 present mode |
+| #   | 成本项                             | 核显 vs 独显的关键差异                                                 | 每帧量级（1080p / 1440p / 4K，BGRA8）                                 | 主要抓手                                                                      |
+| --- | ---------------------------------- | ---------------------------------------------------------------------- | --------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| 1   | **像素带宽**                       | 核显无独立显存，带宽与 CPU 共享，且峰值只有 90–120 GB/s 量级           | 单张全屏 = 8.3 / 14.7 / 33.2 MB；60 fps 写一遍 = 0.5 / 0.9 / 2.0 GB/s | load/store op、避免多余 pass、避免 `vkCmdResolveImage`、压缩（AFBC/UBWC/DCC） |
+| 2   | **CPU 提交与驱动开销**             | 核显机型常配低压 CPU，单核性能弱，驱动开销占比更高                     | 每帧 submit 从几次到几十次；每次几 µs 到几十 µs                       | 单次 submit 合并、命令缓冲复用、管线缓存、描述符零更新                        |
+| 3   | **呈现与合成**                     | 核显的显示引擎与合成器读同一块系统内存；多一次合成拷贝就是一次全屏带宽 | 合成一次 = 16.6 / 29.5 / 66.4 MB（读+写）                             | present mode、独立翻转 vs 合成、present_wait 观测、图像数                     |
+| 4   | **内存所有权与分配**               | UMA 下 `DEVICE_LOCAL` 可映射；但过度映射/碎片化会伤 DRAM 效率          | 交换链 3 张 1080p ≈ 24.9 MB；6 张 ≈ 49.8 MB                           | 大分配 + 子分配（VMA）、持久映射、按需 staging                                |
+| 5   | **功耗与频率**（本项目**不适用**） | 封装功耗共享；满载 → 降频 → 帧时间抖动                                 | —                                                                     | 仅作背景；不据此限帧、不据此选 present mode                                   |
 
 > 换算口径：1920×1080×4 B = 8.29 MB；2560×1440×4 B = 14.75 MB；3840×2160×4 B = 33.18 MB。带宽峰值：DDR5-5600 双通道 = 89.6 GB/s，LPDDR5X-7467 双通道 = 119.5 GB/s（均为算术换算，实际可持续带宽更低）。
 
@@ -50,22 +50,22 @@
 
 ## 2. 分层优化清单（按「层」而不是按「技巧」组织）
 
-| 层 | 动作 | 预期收益 | 风险/代价 | 证据 | 详见 |
-|---|---|---|---|---|---|
-| 呈现 | 探测并记录实际 present mode + 退化原因；`vsync=false` 时 `MAILBOX` → `IMMEDIATE` → `FIFO_RELAXED` 顺序回退 | 知道「实际拿到什么、有没有在阻塞」，而不是假设关掉 vsync 就一定更快 | 低 | 〔规范/厂商文档〕 | [01](01-sync-submit-present.md) |
-| 呈现 | 上 `present_id` + `present_wait2` 采 `presentLatency` | 让「present 是否阻塞、阻塞多久」可判定 | 低（需平台支持，缺失则降级） | 〔规范〕 | [05 §C](05-rhine-audit.md) |
-| 呈现 | 交换链图像数做成可配置，**默认保留 6（吞吐优先）** | 保住 ~5% 吞吐；需要低延迟时再降 | 中（降少了丢吞吐、降多了丢延迟） | 〔实测/案例〕 | [05 §E](05-rhine-audit.md) |
-| 同步 | 用 present_wait 替代「每帧空提交」做 acquire 信号量回收 | 省一次 submit/帧 | 中（语义要改对） | 〔规范〕 | [01](01-sync-submit-present.md) |
-| 同步 | 屏障精确到 stage/access，不用 `BOTTOM_OF_PIPE` 兜底 | 减少过度同步 | 低 | 〔规范〕 | [01](01-sync-submit-present.md) |
-| 管线 | 全进程单一 `VkPipelineCache` + 落盘 + 后台预热 | 消掉建管线卡顿 | 低 | 〔规范/实测〕 | [02 §A](02-pipeline-descriptor-commandbuffer.md) |
-| 描述符 | 持久 set + push constant/dynamic offset，做到一帧零更新 | -38% CPU 帧时间（Khronos 实测） | 中（要重构绑定） | 〔实测/案例〕 | [02 §B](02-pipeline-descriptor-commandbuffer.md) |
-| 命令缓冲 | 每线程池 + 整池 reset；不 alloc/free、不开 `RESET_COMMAND_BUFFER_BIT` | CPU 采样 28.8% → 0.45% | 低 | 〔实测/案例〕 | [02 §C](02-pipeline-descriptor-commandbuffer.md) |
-| 内存 | UMA 判定 + 持久映射环形缓冲 + VMA + `VK_EXT_memory_budget` | 省一次全量 DRAM 往返 | 中 | 〔规范/厂商文档〕 | [03 §A](03-igpu-bandwidth.md) |
-| 渲染结构 | 全量审计 load/store op；中间 RT 去 `SAMPLED/STORAGE`；用 attachment resolve | 省全屏读/写，触发 fast clear | 低 | 〔规范〕 | [03 §C/§D](03-igpu-bandwidth.md) |
-| 布局 | 中间图像禁用 `TILING_LINEAR`；必要时 `TRANSIENT_ATTACHMENT|LAZILY_ALLOCATED` | 恢复带宽压缩 | 低 | 〔规范/厂商文档〕 | [03 §D](03-igpu-bandwidth.md) |
-| 帧节奏 | 观测队列深度与 present 阻塞；不设帧率上限 | 稳帧时间、减少排队 | 低 | 〔厂商文档/实测〕 | [03 §E](03-igpu-bandwidth.md) |
-| 可观测性 | 埋 5 个计数（PSO/descriptor/cmd alloc/submit/map）+ GPU 帧时间 + present 延迟 | 让所有优化可判定 | 低 | 〔方法论〕 | [04 §B](04-tools-cases.md) |
-| 工具 | 「链路地板」基线（clear-only）+ 三段分流 + 静态检查 | 避免优化错对象 | 低 | 〔方法论〕 | [04 §B/§E](04-tools-cases.md) |
+| 层       | 动作                                                                                                       | 预期收益                                                            | 风险/代价                        | 证据              | 详见                                             |
+| -------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- | -------------------------------- | ----------------- | ------------------------------------------------ |
+| 呈现     | 探测并记录实际 present mode + 退化原因；`vsync=false` 时 `MAILBOX` → `IMMEDIATE` → `FIFO_RELAXED` 顺序回退 | 知道「实际拿到什么、有没有在阻塞」，而不是假设关掉 vsync 就一定更快 | 低                               | 〔规范/厂商文档〕 | [01](01-sync-submit-present.md)                  |
+| 呈现     | 上 `present_id` + `present_wait2` 采 `presentLatency`                                                      | 让「present 是否阻塞、阻塞多久」可判定                              | 低（需平台支持，缺失则降级）     | 〔规范〕          | [05 §C](05-rhine-audit.md)                       |
+| 呈现     | 交换链图像数做成可配置，**默认保留 6（吞吐优先）**                                                         | 保住 ~5% 吞吐；需要低延迟时再降                                     | 中（降少了丢吞吐、降多了丢延迟） | 〔实测/案例〕     | [05 §E](05-rhine-audit.md)                       |
+| 同步     | 用 present_wait 替代「每帧空提交」做 acquire 信号量回收                                                    | 省一次 submit/帧                                                    | 中（语义要改对）                 | 〔规范〕          | [01](01-sync-submit-present.md)                  |
+| 同步     | 屏障精确到 stage/access，不用 `BOTTOM_OF_PIPE` 兜底                                                        | 减少过度同步                                                        | 低                               | 〔规范〕          | [01](01-sync-submit-present.md)                  |
+| 管线     | 全进程单一 `VkPipelineCache` + 落盘 + 后台预热                                                             | 消掉建管线卡顿                                                      | 低                               | 〔规范/实测〕     | [02 §A](02-pipeline-descriptor-commandbuffer.md) |
+| 描述符   | 持久 set + push constant/dynamic offset，做到一帧零更新                                                    | -38% CPU 帧时间（Khronos 实测）                                     | 中（要重构绑定）                 | 〔实测/案例〕     | [02 §B](02-pipeline-descriptor-commandbuffer.md) |
+| 命令缓冲 | 每线程池 + 整池 reset；不 alloc/free、不开 `RESET_COMMAND_BUFFER_BIT`                                      | CPU 采样 28.8% → 0.45%                                              | 低                               | 〔实测/案例〕     | [02 §C](02-pipeline-descriptor-commandbuffer.md) |
+| 内存     | UMA 判定 + 持久映射环形缓冲 + VMA + `VK_EXT_memory_budget`                                                 | 省一次全量 DRAM 往返                                                | 中                               | 〔规范/厂商文档〕 | [03 §A](03-igpu-bandwidth.md)                    |
+| 渲染结构 | 全量审计 load/store op；中间 RT 去 `SAMPLED/STORAGE`；用 attachment resolve                                | 省全屏读/写，触发 fast clear                                        | 低                               | 〔规范〕          | [03 §C/§D](03-igpu-bandwidth.md)                 |
+| 布局     | 中间图像禁用 `TILING_LINEAR`；必要时 `TRANSIENT_ATTACHMENT                                                 | LAZILY_ALLOCATED`                                                   | 恢复带宽压缩                     | 低                | 〔规范/厂商文档〕                                | [03 §D](03-igpu-bandwidth.md) |
+| 帧节奏   | 观测队列深度与 present 阻塞；不设帧率上限                                                                  | 稳帧时间、减少排队                                                  | 低                               | 〔厂商文档/实测〕 | [03 §E](03-igpu-bandwidth.md)                    |
+| 可观测性 | 埋 5 个计数（PSO/descriptor/cmd alloc/submit/map）+ GPU 帧时间 + present 延迟                              | 让所有优化可判定                                                    | 低                               | 〔方法论〕        | [04 §B](04-tools-cases.md)                       |
+| 工具     | 「链路地板」基线（clear-only）+ 三段分流 + 静态检查                                                        | 避免优化错对象                                                      | 低                               | 〔方法论〕        | [04 §B/§E](04-tools-cases.md)                    |
 
 **明确不建议做（在核显上收益为负或风险过高）**
 
@@ -82,16 +82,16 @@
 
 详细审计见 [05-rhine-audit.md](05-rhine-audit.md)，这里只给合并后的动作顺序：
 
-| 优先级 | 动作 | 为什么排这里 | 详见 |
-|---|---|---|---|
-| **P0** | 补 present 可观测性（`present_id` + `present_wait2`、GPU 帧时间、submit 耗时、实际 present mode + 退化原因） | 没有它，后面所有取舍都是猜 | 05 §C/G |
-| **P0** | 建「链路地板」基线（clear-only）+ 记录 present mode/vsync/是否被外部限帧/电源模式（仅记录） | 先分清是链路还是场景 | 04 §B.5 |
-| **P1** | 交换链图像数做成可配置，**默认保留 6**（现为硬编码抬到 6） | 你们实测 6 比 3 快 ~5%；需要低延迟时再由用户降 | 05 §E |
-| **P1** | 全进程单一 `VkPipelineCache`（含 FFX FG 的 compute 管线）+ 落盘 | resize 会全量重建 FG 上下文，无缓存时每次重建都要重编译 | 05 §D、02 §A |
-| **P3** | 手写 barrier 换成 sync2 语义（`dstStageMask = NONE`），并给「每帧全屏覆盖」前提加断言注释 | 现在 `BOTTOM_OF_PIPE`/0 功能正确、帧率收益≈0，只是整洁度；但 `UNDEFINED` 重置依赖全屏覆盖，将来做脏矩形会花屏 | 05 §F、01 |
-| **P2** | 去掉每帧空提交（改用 present_wait 语义回收 acquire 信号量） | 一次 submit 的量级，先量后动 | 05 §A |
-| **P2** | 声明并探测 `surface_maintenance1`/`swapchain_maintenance1`/`present_mode_fifo_latest_ready` | 平台能力差异大，需能力表 | 05 §H |
-| **不建议** | 自建第二套呈现/同步体系、改用 `VK_EXT_shader_object`、引入 `VK_KHR_pipeline_binary` | 与 Qt/QRhi 的所有权冲突，收益不确定 | 05 §"不建议" |
+| 优先级     | 动作                                                                                                         | 为什么排这里                                                                                                  | 详见         |
+| ---------- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- | ------------ |
+| **P0**     | 补 present 可观测性（`present_id` + `present_wait2`、GPU 帧时间、submit 耗时、实际 present mode + 退化原因） | 没有它，后面所有取舍都是猜                                                                                    | 05 §C/G      |
+| **P0**     | 建「链路地板」基线（clear-only）+ 记录 present mode/vsync/是否被外部限帧/电源模式（仅记录）                  | 先分清是链路还是场景                                                                                          | 04 §B.5      |
+| **P1**     | 交换链图像数做成可配置，**默认保留 6**（现为硬编码抬到 6）                                                   | 你们实测 6 比 3 快 ~5%；需要低延迟时再由用户降                                                                | 05 §E        |
+| **P1**     | 全进程单一 `VkPipelineCache`（含 FFX FG 的 compute 管线）+ 落盘                                              | resize 会全量重建 FG 上下文，无缓存时每次重建都要重编译                                                       | 05 §D、02 §A |
+| **P3**     | 手写 barrier 换成 sync2 语义（`dstStageMask = NONE`），并给「每帧全屏覆盖」前提加断言注释                    | 现在 `BOTTOM_OF_PIPE`/0 功能正确、帧率收益≈0，只是整洁度；但 `UNDEFINED` 重置依赖全屏覆盖，将来做脏矩形会花屏 | 05 §F、01    |
+| **P2**     | 去掉每帧空提交（改用 present_wait 语义回收 acquire 信号量）                                                  | 一次 submit 的量级，先量后动                                                                                  | 05 §A        |
+| **P2**     | 声明并探测 `surface_maintenance1`/`swapchain_maintenance1`/`present_mode_fifo_latest_ready`                  | 平台能力差异大，需能力表                                                                                      | 05 §H        |
+| **不建议** | 自建第二套呈现/同步体系、改用 `VK_EXT_shader_object`、引入 `VK_KHR_pipeline_binary`                          | 与 Qt/QRhi 的所有权冲突，收益不确定                                                                           | 05 §"不建议" |
 
 ---
 
@@ -133,22 +133,23 @@
 
 ## 6. 分册索引
 
-| 分册 | 内容 | 适合谁读 |
-|---|---|---|
-| [01 · 同步、提交与呈现](01-sync-submit-present.md) | 信号量/栅栏/屏障语义、submit 结构、present mode、present_id/wait2、帧节奏与队列 | 改呈现层的人 |
-| [02 · 管线 / 描述符 / 命令缓冲 / 内存](02-pipeline-descriptor-commandbuffer.md) | PSO 缓存、GPL/shader object、描述符零更新、命令缓冲回收、VMA、动态渲染、校验层成本 | 改 CPU 侧对象生命周期的人 |
-| [03 · 核显内存模型与带宽](03-igpu-bandwidth.md) | UMA、带宽预算、TBDR vs IMR、压缩与布局、平台差异、25 条检查表（功耗一节仅作背景） | 做架构决策的人 |
-| [04 · 工具、测量与真实案例](04-tools-cases.md) | 工具矩阵、三段分流方法论、静态检查、7 个真实案例（Godot/mpv/FSR3）、调查流程模板、10 条误判 | 要落地验证的人 |
-| [05 · 本项目现状审计](05-rhine-audit.md) | 逐项审计 A–H、已做对的 8 条、优先级表、验证计划、不建议做的 6 条 | 本项目维护者 |
-| [06 · 实施记录与实测](06-implementation.md) | WP1–WP6 落地状态、真机数字（Iris Xe/Mesa）、明确不做的三项及判据、复现命令、后续性价比排序 | 本项目维护者 / 想照做的人 |
-| [07 · 全链路优化实施](07-render-optimization.md) | 全链路报告 A01–A11 的落地方式与验收口径、A07 的证否结论、A12 的实验门槛与判定矩阵、构建噪声 | 改呈现层、渲染线程与资源上传的人 |
-| [08 · 常驻内存随翻动上涨](08-memory-growth.md) | 内存探针口径、逐帧增长与按曲目阶梯的区分、上传字节与堆增长 1:1 的证据、实例池化默认开启的修复、回归判定 | 查泄漏 / 改资源上传的人 |
+| 分册                                                                            | 内容                                                                                                    | 适合谁读                         |
+| ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- | -------------------------------- |
+| [01 · 同步、提交与呈现](01-sync-submit-present.md)                              | 信号量/栅栏/屏障语义、submit 结构、present mode、present_id/wait2、帧节奏与队列                         | 改呈现层的人                     |
+| [02 · 管线 / 描述符 / 命令缓冲 / 内存](02-pipeline-descriptor-commandbuffer.md) | PSO 缓存、GPL/shader object、描述符零更新、命令缓冲回收、VMA、动态渲染、校验层成本                      | 改 CPU 侧对象生命周期的人        |
+| [03 · 核显内存模型与带宽](03-igpu-bandwidth.md)                                 | UMA、带宽预算、TBDR vs IMR、压缩与布局、平台差异、25 条检查表（功耗一节仅作背景）                       | 做架构决策的人                   |
+| [04 · 工具、测量与真实案例](04-tools-cases.md)                                  | 工具矩阵、三段分流方法论、静态检查、7 个真实案例（Godot/mpv/FSR3）、调查流程模板、10 条误判             | 要落地验证的人                   |
+| [05 · 本项目现状审计](05-rhine-audit.md)                                        | 逐项审计 A–H、已做对的 8 条、优先级表、验证计划、不建议做的 6 条                                        | 本项目维护者                     |
+| [06 · 实施记录与实测](06-implementation.md)                                     | WP1–WP6 落地状态、真机数字（Iris Xe/Mesa）、明确不做的三项及判据、复现命令、后续性价比排序              | 本项目维护者 / 想照做的人        |
+| [07 · 全链路优化实施](07-render-optimization.md)                                | 全链路报告 A01–A11 的落地方式与验收口径、A07 的证否结论、A12 的实验门槛与判定矩阵、构建噪声             | 改呈现层、渲染线程与资源上传的人 |
+| [08 · 常驻内存随翻动上涨](08-memory-growth.md)                                  | 内存探针口径、逐帧增长与按曲目阶梯的区分、上传字节与堆增长 1:1 的证据、实例池化默认开启的修复、回归判定 | 查泄漏 / 改资源上传的人          |
 
 ---
 
 ## 7. 参考来源精选（一手优先）
 
 **Khronos / 规范**
+
 - [Vulkan Guide · Memory Allocation](https://docs.vulkan.org/guide/latest/memory_allocation.html)
 - [Vulkan Guide · Pipeline Cache](https://docs.vulkan.org/guide/latest/pipeline_cache.html)
 - [Vulkan Spec · WSI（present_wait / present_id）](https://docs.vulkan.org/spec/latest/chapters/VK_KHR_surface/wsi.html)
@@ -156,12 +157,14 @@
 - [Khronos Blog · pipeline binary](https://www.khronos.org/blog/bringing-explicit-pipeline-caching-control-to-vulkan)
 
 **厂商**
+
 - [AMD GPUOpen · FSR Frame Interpolation Swapchain](https://gpuopen.com/manuals/fsr_sdk/techniques/frame-interpolation-swap-chain/)
 - [Arm · Best Practice Warnings in Vulkan SDK](https://developer.arm.com/community/arm-community-blogs/b/mobile-graphics-and-gaming-blog/posts/arm-best-practice-warnings-in-vulkan-sdk)
 - [Intel · Graphics Performance Analyzers](https://www.intel.com/content/www/us/en/developer/tools/graphics-performance-analyzers/overview.html)
 - [Microsoft · PresentMon 指标定义](https://github.com/GameTechDev/PresentMon/blob/main/README-ConsoleApplication.md)
 
 **实测案例**
+
 - [Godot #100025 · swapchain 多余等待](https://github.com/godotengine/godot/issues/100025)
 - [Godot #89856 · MAILBOX 让 GPU 常驻 100%](https://github.com/godotengine/godot/issues/89856)
 - [Godot #106221 · waitable swapchain vs AUTO pacing](https://github.com/godotengine/godot/pull/106221)

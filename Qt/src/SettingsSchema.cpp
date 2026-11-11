@@ -4,6 +4,8 @@
 #include "MusicLibrary.h"
 #include "MusicPlayer.h"
 #include "PlatformFeatures.h"
+#include "ProviderRegistry.h"
+#include "render/AndroidRenderPolicy.h"
 #include "fg/FgCapability.h"
 #include "fg/FgConfig.h"
 #include <QHash>
@@ -72,12 +74,21 @@ bool closeVisible(const SettingsContext &) {
 #endif
 }
 
+bool debugModeVisible(const SettingsContext &) {
+#if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
+    return true;
+#else
+    return false;
+#endif
+}
+
 bool qualityVisible(const SettingsContext &context) {
     return context.music && !context.music->isLocal();
 }
 
 bool alternativeVisible(const SettingsContext &context) {
-    return context.music && !context.music->isLocal() && context.music->provider == "netease";
+    return context.music && !context.music->isLocal() &&
+           ProviderRegistry::instance().capability(context.music->provider, "alternativeSource", false);
 }
 
 bool officialVisible(const SettingsContext &context) {
@@ -192,11 +203,12 @@ QVector<SettingChoice> graphicsChoices(const SettingsContext &) {
     // macOS 只有 Metal 后端；不再暴露 Vulkan/OpenGL 等无效选项。
     return {{"metal", "Metal"}};
 #else
-    QVector<SettingChoice> values{
-        {"", QStringLiteral("默认 / 自动探测")}, {"vulkan", "Vulkan"}, {"opengl", "OpenGL"}};
-#if RHINE_ENABLE_D3D12_BACKEND
+    // Windows 为 Vulkan → Direct3D 12 → OpenGL，Linux 为 Vulkan → OpenGL。
+    QVector<SettingChoice> values{{"", QStringLiteral("默认 / 自动探测")}, {"vulkan", "Vulkan"}};
+#if defined(Q_OS_WIN) && RHINE_ENABLE_D3D12_BACKEND
     values.append(SettingChoice{"d3d12", "Direct3D 12"});
 #endif
+    values.append(SettingChoice{"opengl", "OpenGL"});
     return values;
 #endif
 }
@@ -425,7 +437,7 @@ const QVector<SettingDescriptor> &descriptors() {
              .storage = StorageType::OnOff,
              .order = 155,
              .titleEn = "MUSIC VIDEO",
-             .titleZh = "自动播放关联 MV（网易云）",
+             .titleZh = "自动播放关联 MV",
              .description = "静音跟随音乐，支持独立窗口、全屏与透明度；Windows 可设为桌面壁纸。",
              .defaultValue = Off,
              .choices = onOffChoices(),
@@ -458,6 +470,22 @@ const QVector<SettingDescriptor> &descriptors() {
              .defaultValue = "exhigh",
              .choicesFor = qualityChoices,
              .visible = qualityVisible});
+        add({.id = "audio-output-policy",
+             .section = SectionId::Preferences,
+             .kind = SettingKind::Choice,
+             .binding = {.kind = BindingKind::Preference,
+                         .preferenceKey = "audio-output-policy",
+                         .action = "audio-output-policy",
+                         .actionPrefix = "setting:audio-output-policy:"},
+             .storage = StorageType::Enum,
+             .order = 165,
+             .titleEn = "AUDIO OUTPUT",
+             .titleZh = "输出格式",
+             .description = "跟随系统按当前输出设备的混音格式提交，通常转换最少、兼容性最好；保留源格式仅在设"
+                            "备直接支持时生效，否则自动回退。",
+             .defaultValue = "system",
+             .choices = {{"system", QStringLiteral("跟随系统（推荐）")},
+                         {"source", QStringLiteral("保留源格式")}}});
         add({.id = "alternative",
              .section = SectionId::Preferences,
              .kind = SettingKind::Choice,
@@ -497,6 +525,20 @@ const QVector<SettingDescriptor> &descriptors() {
              .titleZh = "进入详情自动播放",
              .defaultValue = Off,
              .choices = onOffChoices()});
+        add({.id = "skip-detail-on-switch",
+             .section = SectionId::Preferences,
+             .kind = SettingKind::Choice,
+             .binding = {.kind = BindingKind::Preference,
+                         .preferenceKey = "skip-detail-on-switch",
+                         .action = "skip-detail-on-switch",
+                         .actionPrefix = "setting:skip-detail-on-switch:"},
+             .storage = StorageType::OnOff,
+             .order = 195,
+             .titleEn = "KEEP LIST ON SWITCH",
+             .titleZh = "切歌不打开详情",
+             .description = "上一首、下一首与自动切歌保持在当前列表；资料库按 ENTER 直接播放，不进入详情。",
+             .defaultValue = Off,
+             .choices = onOffChoices()});
         add({.id = "single-play-mode",
              .section = SectionId::Preferences,
              .kind = SettingKind::Choice,
@@ -519,6 +561,22 @@ const QVector<SettingDescriptor> &descriptors() {
              .titleZh = "桌面歌词",
              .actionLabel = "样式与同步",
              .visible = desktopLyricsVisible});
+        add({.id = "debug-mode",
+             .section = SectionId::Performance,
+             .kind = SettingKind::Choice,
+             .binding = {.kind = BindingKind::Preference,
+                         .preferenceKey = "debug-mode",
+                         .action = "debug-mode",
+                         .actionPrefix = "setting:debug-mode:"},
+             .storage = StorageType::OnOff,
+             .order = 215,
+             .titleEn = "DEBUG MODE",
+             .titleZh = "调试模式（原生崩溃诊断）",
+             .description = "仅用于排查闪退与卡死；关闭后清空已保存的诊断数据。",
+             .restartHint = QStringLiteral("关闭后完全停止底层采集需重启应用"),
+             .defaultValue = Off,
+             .choices = onOffChoices(),
+             .visible = debugModeVisible});
         add({.id = "archive-mask",
              .section = SectionId::Preferences,
              .kind = SettingKind::Stepper,
@@ -592,7 +650,8 @@ const QVector<SettingDescriptor> &descriptors() {
              .order = 250,
              .titleEn = "RENDER SCALE",
              .titleZh = "渲染分辨率",
-             .defaultValue = "100",
+             // 与 applyRenderScaleSetting() 共用同一个默认值：Android 90%，其它平台 100%。
+             .defaultValue = QString::number(RhineRender::androidDefaultRenderScale()),
              .steps = {50, 60, 75, 90, 100},
              .label = renderScaleLabel});
         add({.id = "aa-mode",
@@ -695,9 +754,6 @@ const QVector<SettingDescriptor> &descriptors() {
             const char *action;
             const char *label;
         } projects[] = {{"project-home", "music:project-home", "本项目 / Rhine Music Database"},
-                        {"project-author", "music:project-author", "网易云音乐 API / api-enhanced"},
-                        {"project-player", "music:project-player", "QQ 音乐 API / qq-music-api"},
-                        {"project-kugou", "music:project-kugou", "酷狗音乐 API / KuGouMusicApi"},
                         {"project-rhine", "music:project-rhine", "界面原项目 / RhineLabUI"},
                         {"project-lyricsx", "music:project-lyricsx", "歌词参考 / LyricsX"},
                         {"project-lyricskit", "music:project-lyricskit", "格式移植 / LyricsKit"},
@@ -723,7 +779,11 @@ const QVector<SettingsSection> &sections() {
     static const QVector<SettingsSection> values{
         {SectionId::Provider, 1, 10, "PROVIDER ACCESS", "音乐平台", "provider-card", 160, alwaysVisible},
         {SectionId::Preferences, 2, 20, "TERMINAL PREFERENCES", "终端偏好", {}, 0, alwaysVisible},
+#if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
+        {SectionId::Performance, 3, 30, "PERFORMANCE", "性能与诊断", "performance", 316, alwaysVisible},
+#else
         {SectionId::Performance, 3, 30, "PERFORMANCE", "性能与诊断", "performance", 220, alwaysVisible},
+#endif
         {SectionId::Storage, 4, 40, "STORAGE", "存储与缓存", "storage", 105, alwaysVisible},
         {SectionId::Update, 5, 50, "SOFTWARE UPDATE", "软件更新", "update", 220, alwaysVisible},
         {SectionId::Project, 6, 60, "PROJECT", "项目与开源参考", {}, 0, alwaysVisible},

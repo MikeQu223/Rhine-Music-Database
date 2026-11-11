@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """比较冻结的原版与 Qt 图像及命中矩形，不使用网络或用户状态。"""
+
 import json
 import sys
 from pathlib import Path
@@ -15,8 +16,12 @@ for descriptor in sorted(source.glob("*.json")):
     folder = target / name
     row = {"name": name}
     for layer in ["metal", "panel"]:
-        a = np.asarray(Image.open(source / f"{name}-{layer}.png").convert("RGBA")).astype(np.int16)
-        b = np.asarray(Image.open(folder / f"qt-{layer}.png").convert("RGBA")).astype(np.int16)
+        a = np.asarray(
+            Image.open(source / f"{name}-{layer}.png").convert("RGBA")
+        ).astype(np.int16)
+        b = np.asarray(Image.open(folder / f"qt-{layer}.png").convert("RGBA")).astype(
+            np.int16
+        )
         difference = np.abs(a - b)
         changed = np.any(difference > 0, axis=2)
         row[layer] = {
@@ -36,13 +41,15 @@ for descriptor in sorted(source.glob("*.json")):
     row["hits_equal"] = [{k: v[k] for k in keys} for v in actual] == expected
     if not row["hits_equal"]:
         row["hit_mismatches"] = [
-            {"expected": a, "actual": b} for a, b in zip(expected, actual) if a != {k: b[k] for k in keys}
+            {"expected": a, "actual": b}
+            for a, b in zip(expected, actual)
+            if a != {k: b[k] for k in keys}
         ]
         row["hit_counts"] = [len(expected), len(actual)]
     results.append(row)
-Path(sys.argv[3] if len(sys.argv) > 3 else "output/qt-visual-comparison.json").write_text(
-    json.dumps(results, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
-)
+Path(
+    sys.argv[3] if len(sys.argv) > 3 else "output/qt-visual-comparison.json"
+).write_text(json.dumps(results, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 for row in results:
     print(
         row["name"],

@@ -1,20 +1,87 @@
 #include "AppIdentity.h"
 #include "Host.h"
+#include <QFileInfo>
 #import <AVFAudio/AVFAudio.h>
 #import <MediaPlayer/MediaPlayer.h>
 #import <Security/Security.h>
 #import <UIKit/UIKit.h>
 
 namespace {
+static NSString *const credentialAccount = @"credentials";
 NSDictionary *credentialQuery() {
     return @{
         (__bridge id)kSecClass : (__bridge id)kSecClassGenericPassword,
         (__bridge id)kSecAttrService : QString::fromLatin1(AppIdentity::Id).toNSString(),
-        (__bridge id)kSecAttrAccount : @"netease"
+        (__bridge id)kSecAttrAccount : credentialAccount
     };
+}
+// 旧版本按平台账户名保存；升级后枚举本应用服务下的条目，迁到统一账户并删除旧项。
+NSData *migrateLegacyCredential() {
+    NSDictionary *query = @{
+        (__bridge id)kSecClass : (__bridge id)kSecClassGenericPassword,
+        (__bridge id)kSecAttrService : QString::fromLatin1(AppIdentity::Id).toNSString(),
+        (__bridge id)kSecReturnData : @YES,
+        (__bridge id)kSecReturnAttributes : @YES,
+        (__bridge id)kSecMatchLimit : (__bridge id)kSecMatchLimitAll
+    };
+    CFTypeRef result = nullptr;
+    if (SecItemCopyMatching((__bridge CFDictionaryRef)query, &result) != errSecSuccess || !result) {
+        return nil;
+    }
+    for (NSDictionary *item in CFBridgingRelease(result)) {
+        NSString *account = item[(__bridge id)kSecAttrAccount];
+        NSData *data = item[(__bridge id)kSecValueData];
+        if (!data || [account isEqualToString:credentialAccount]) {
+            continue;
+        }
+        NSMutableDictionary *insert = [credentialQuery() mutableCopy];
+        insert[(__bridge id)kSecValueData] = data;
+        insert[(__bridge id)kSecAttrAccessible] =
+            (__bridge id)kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly;
+        if (SecItemAdd((__bridge CFDictionaryRef)insert, nullptr) == errSecSuccess) {
+            NSDictionary *remove = @{
+                (__bridge id)kSecClass : (__bridge id)kSecClassGenericPassword,
+                (__bridge id)kSecAttrService : QString::fromLatin1(AppIdentity::Id).toNSString(),
+                (__bridge id)kSecAttrAccount : account
+            };
+            SecItemDelete((__bridge CFDictionaryRef)remove);
+            return data;
+        }
+    }
+    return nil;
 }
 NSMutableArray *mediaTargets;
 NSMutableArray *audioObservers;
+
+// 系统媒体控件封面
+MPMediaItemArtwork *mediaArtwork(const QString &coverPath) {
+    static QString cachedPath;
+    static QDateTime cachedModified;
+    static MPMediaItemArtwork *cachedArtwork = nil;
+    if (coverPath.isEmpty()) {
+        cachedPath.clear();
+        cachedArtwork = nil;
+        return nil;
+    }
+    const QFileInfo info(coverPath);
+    if (!info.exists()) {
+        return nil;
+    }
+    if (coverPath == cachedPath && info.lastModified() == cachedModified) {
+        return cachedArtwork;
+    }
+    UIImage *image = [UIImage imageWithContentsOfFile:coverPath.toNSString()];
+    if (!image) {
+        return nil;
+    }
+    cachedArtwork = [[MPMediaItemArtwork alloc] initWithBoundsSize:image.size
+                                                    requestHandler:^UIImage *(CGSize size) {
+                                                        return image;
+                                                    }];
+    cachedPath = coverPath;
+    cachedModified = info.lastModified();
+    return cachedArtwork;
+}
 }
 
 QByteArray platformCredential() {
@@ -23,7 +90,8 @@ QByteArray platformCredential() {
     query[(__bridge id)kSecMatchLimit] = (__bridge id)kSecMatchLimitOne;
     CFTypeRef result = nullptr;
     if (SecItemCopyMatching((__bridge CFDictionaryRef)query, &result) != errSecSuccess) {
-        return {};
+        NSData *legacy = migrateLegacyCredential();
+        return legacy ? QByteArray(static_cast<const char *>(legacy.bytes), legacy.length) : QByteArray();
     }
     NSData *bytes = CFBridgingRelease(result);
     return QByteArray(static_cast<const char *>(bytes.bytes), bytes.length);
@@ -45,7 +113,7 @@ QString platformSaveCredential(const QByteArray &bytes) {
 void platformDeleteCredential() {
     SecItemDelete((__bridge CFDictionaryRef)credentialQuery());
 }
-void platformPlay(const QString &, bool, std::function<void(QString)> done) {
+void platformPlay(const QString &, const QJsonObject &, bool, std::function<void(QString)> done) {
     done(QStringLiteral("iOS 仅支持面板内播放"));
 }
 
@@ -112,7 +180,8 @@ void platformMediaCommands(std::function<void(QString)> callback) {
                 }];
     [audioObservers addObject:route];
 }
-void platformMediaInfo(QString title, QString artist, QString album, QVariantMap state) {
+void platformMediaInfo(QString title, QString artist, QString album, QVariantMap state,
+                       const QString &coverPath) {
     auto center = [MPNowPlayingInfoCenter defaultCenter];
     if (title.isEmpty() || state.value("duration").toLongLong() <= 0) {
         center.nowPlayingInfo = nil;
@@ -126,12 +195,16 @@ void platformMediaInfo(QString title, QString artist, QString album, QVariantMap
             qWarning("Unable to activate iOS audio session: %ld", long(error.code));
         }
     }
-    center.nowPlayingInfo = @{
+    NSMutableDictionary *info = [@{
         MPMediaItemPropertyTitle : title.toNSString(),
         MPMediaItemPropertyArtist : artist.toNSString(),
         MPMediaItemPropertyAlbumTitle : album.toNSString(),
         MPMediaItemPropertyPlaybackDuration : @(state.value("duration").toDouble() / 1000.),
         MPNowPlayingInfoPropertyElapsedPlaybackTime : @(state.value("position").toDouble() / 1000.),
         MPNowPlayingInfoPropertyPlaybackRate : @(playing ? 1. : 0.)
-    };
+    } mutableCopy];
+    if (MPMediaItemArtwork *artwork = mediaArtwork(coverPath)) {
+        info[MPMediaItemPropertyArtwork] = artwork;
+    }
+    center.nowPlayingInfo = info;
 }

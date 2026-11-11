@@ -1,5 +1,6 @@
 #include <QtGlobal>
 #include "SceneLayerHost.h"
+#include "../CrashDiagnostics.h"
 
 #include <QColor>
 #include <QDebug>
@@ -360,6 +361,7 @@ void SceneLayerHost::applyLayerGeometry(Layer &layer) {
 }
 
 bool SceneLayerHost::renderLayer(Layer &layer, const char *name) {
+    CrashRenderScope diagnosticScope("qt.quick.renderControl");
     QQuickRenderControl *control = layer.control.get();
     if (!control || !layer.renderTarget) {
         return fail(QStringLiteral("%1 层尚未就绪就调用了 renderFrame()").arg(QLatin1String(name)));

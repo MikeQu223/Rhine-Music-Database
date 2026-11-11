@@ -9,10 +9,12 @@ import Rhine.Native 1.0
 Window {
     id: root
     readonly property bool ios: Qt.platform.os === "ios"
+    readonly property bool android: Qt.platform.os === "android"
     width: 1280
     height: 720
-    minimumWidth: ios ? 0 : 960
-    minimumHeight: ios ? 0 : 540
+    // 移动端是全屏 Activity，窗口尺寸跟随屏幕；给桌面保留的最小尺寸在手机上会把布局顶破。
+    minimumWidth: ios || android ? 0 : 320
+    minimumHeight: ios || android ? 0 : 540
     visible: true
     property bool windowsFrameless: Qt.platform.os === "windows"
     flags: (windowsFrameless ? Qt.FramelessWindowHint : 0) | Qt.Window | Qt.WindowTitleHint | Qt.WindowSystemMenuHint | Qt.WindowMinMaxButtonsHint | Qt.WindowCloseButtonHint | Qt.WindowFullscreenButtonHint

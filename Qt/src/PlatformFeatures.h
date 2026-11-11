@@ -1,9 +1,10 @@
 #pragma once
 #include <QtGlobal>
+#include "MobileTarget.h"
 
 // 平台特性宏
 namespace PlatformFeatures {
-#if defined(Q_OS_WIN) || defined(Q_OS_LINUX) || defined(Q_OS_MACOS)
+#if !RHINE_MOBILE && (defined(Q_OS_WIN) || defined(Q_OS_LINUX) || defined(Q_OS_MACOS))
 inline constexpr bool MusicVideo = true;
 #else
 inline constexpr bool MusicVideo = false;
@@ -13,7 +14,8 @@ inline constexpr bool DesktopWallpaper = true;
 #else
 inline constexpr bool DesktopWallpaper = false;
 #endif
-#ifdef Q_OS_IOS
+#if RHINE_MOBILE
+// 移动端没有独立的官方客户端可交付，也没有可枚举的本地音乐目录与逐应用音量。
 inline constexpr bool OfficialPlayback = false;
 inline constexpr bool LocalMusic = false;
 inline constexpr bool ApplicationVolume = false;

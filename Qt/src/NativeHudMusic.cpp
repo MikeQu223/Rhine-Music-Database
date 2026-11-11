@@ -1,5 +1,6 @@
 #include "NativeHud.h"
 #include "MusicData.h"
+#include "ProviderRegistry.h"
 #include <QPointer>
 #include <QUrl>
 #include <QTimer>
@@ -16,19 +17,67 @@ QString decode(QString value) {
 }
 }
 
+/**
+ * 判断当前歌曲是否从可编辑歌单中打开，并确认它是否仍属于该歌单。
+ * 搜索、专辑或歌手入口不满足目录条件，避免误删歌单曲目。
+ */
+auto NativeHud::openedPlaylistContext() const -> std::optional<PlaylistContext> {
+    const auto &music = *m_music;
+    const auto &folder = music.directory;
+    if (!folder || music.current["kind"] != "song" || !music.canEditPlaylist(folder->item)) {
+        return std::nullopt;
+    }
+    const auto songID = music.current["id"].toString();
+    if (songID.isEmpty()) {
+        return std::nullopt;
+    }
+    PlaylistContext context;
+    context.id = folder->item["id"].toString();
+    context.contained =
+        MusicData::indexOfId(folder->songs, songID) >= 0 || MusicData::indexOf(folder->ids, songID) >= 0;
+    return context;
+}
+
+/**
+ * 在当前歌曲的按钮上显示歌单增删结果。
+ * holdMs 后自动恢复原文案；重复调用会重启计时器，避免旧结果覆盖新操作。
+ */
+void NativeHud::showPlaylistFeedback(const QString &action, const QString &text, int holdMs) {
+    const auto key = m_music->uid + ":" + PlaybackQueue::identity(m_music->current);
+    if (m_playlistFeedbackKey != key) {
+        m_playlistFeedbackKey = key;
+        m_playlistFeedback.clear();
+    }
+    m_playlistFeedback[action] = text;
+    auto timer = m_playlistFeedbackTimers.value(action);
+    if (!timer) {
+        timer = new QTimer(this);
+        timer->setSingleShot(true);
+        timer->setTimerType(Qt::PreciseTimer);
+        connect(timer, &QTimer::timeout, this, [this, action] {
+            m_playlistFeedback.remove(action);
+            // 主动唤醒静止界面，让按钮恢复状态文案。
+            m_host->invalidate();
+        });
+        m_playlistFeedbackTimers.insert(action, timer);
+    }
+    timer->start(holdMs);
+    m_host->invalidate();
+}
+
 /** 将音乐界面动作交给原生资料库；写入确认捕获账号代数，避免切换后修改另一个账号。 */
 void NativeHud::musicAction(const QStringList &parts, const QString &value) {
     auto &music = *m_music;
     const auto name = parts.value(1);
     const auto last = parts.constLast().toInt();
     // 塞壬唱片本地操作
-    if (music.isSiren() && QStringList{"login", "logout", "qr", "login-method", "kugou-edition", "subscribe",
+    if (music.isSiren() && QStringList{"login", "logout", "qr", "login-method", "variant", "subscribe",
                                        "refresh-personal", "activate"}
                                .contains(name)) {
         return;
     }
     if (music.isLocal() &&
-        QStringList{"login", "logout", "qr", "login-method", "kugou-edition", "like", "like-current",
+        QStringList{"login", "logout", "qr", "login-method", "variant", "like", "like-current",
                     "subscribe", "create-playlist", "delete-playlist", "rename-playlist", "add-to-playlist",
                     "playlist-pick", "refresh-personal", "activate", "remove-track"}
             .contains(name)) {
@@ -219,7 +268,7 @@ void NativeHud::musicAction(const QStringList &parts, const QString &value) {
         pageResults(name == "page-prev" ? -1 : 1);
     } else if (name == "play") {
         music.play();
-    } else if (name == "preview" && music.provider == "qq") {
+    } else if (name == "preview" && ProviderRegistry::instance().capability(music.provider, "preview", false)) {
         music.player.play(music.current, std::nullopt, std::nullopt, true);
     } else if (name == "play-next" || name == "enqueue") {
         const auto key = music.uid + ":" + PlaybackQueue::identity(music.current);
@@ -249,9 +298,59 @@ void NativeHud::musicAction(const QStringList &parts, const QString &value) {
     } else if (name == "play-loaded") {
         music.playDirectory();
     } else if (name == "remove-track") {
-        if (music.directory) {
-            music.playlistTrack(music.directory->item["id"].toString(), music.current, true);
+        const auto context = openedPlaylistContext();
+        if (!context) {
+            return;
         }
+        if (!context->contained) {
+            // 同专辑等入口可能沿用歌单目录；成员关系不符时不发送删除请求。
+            showPlaylistFeedback("remove", "不在当前歌单", 2500);
+            return;
+        }
+        if (music.writeLoading) {
+            showPlaylistFeedback("remove", "正在处理…", 1200);
+            return;
+        }
+        const auto folder = music.directory;
+        const auto songID = music.current["id"].toString();
+        const auto key = music.uid + ":" + PlaybackQueue::identity(music.current);
+        const auto position = MusicData::indexOfId(folder->orderedSongs(), songID);
+        showPlaylistFeedback("remove", "正在移除…", 10000);
+        const QPointer<NativeHud> owner(this);
+        music.playlistTrack(context->id, music.current, true, [owner, key, context, position](bool ok) {
+            if (!owner) {
+                return;
+            }
+            if (!ok) {
+                owner->showPlaylistFeedback("remove", "移除失败，请重试", 2500);
+                return;
+            }
+            auto &library = *owner->m_music;
+            // 请求期间可能已经切歌或离开歌单，只处理仍停留在原歌曲上的结果。
+            if (library.uid + ":" + PlaybackQueue::identity(library.current) != key ||
+                !library.wantsSongDetails) {
+                return;
+            }
+            const auto folder = library.directory;
+            if (!folder || folder->item["id"] != context->id) {
+                return;
+            }
+            const auto songs = folder->orderedSongs();
+            // 下一首
+            owner->tab = "overview";
+            owner->trackOffset = 0;
+            owner->bodyOffset = 0;
+            if (songs.isEmpty()) {
+                // 删除最后一首后没有下一首，回到歌单详情。
+                library.showDirectoryInfo();
+                return;
+            }
+            auto next = position;
+            if (next < 0) {
+                next = folder->index;
+            }
+            library.selectDirectory(std::min(next, int(songs.size()) - 1), "detail");
+        });
     } else if (name == "picker-prev" || name == "picker-next") {
         const auto maximum = std::max(0, int(music.lists[2].size()) - 7);
         listOffset = std::clamp(listOffset + (name == "picker-prev" ? -7 : 7), 0, maximum);
@@ -270,9 +369,6 @@ void NativeHud::musicAction(const QStringList &parts, const QString &value) {
     } else if (name.startsWith("project-")) {
         static const QHash<QString, QString> links{
             {"project-home", "https://github.com/MikeQu223/Rhine-Music-Database"},
-            {"project-author", "https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced"},
-            {"project-player", "https://github.com/yakult-green-tea/qq-music-api"},
-            {"project-kugou", "https://github.com/MakcRe/KuGouMusicApi"},
             {"project-rhine", "https://github.com/LBEILC/RhineLabUI"},
             {"project-lyricsx", "https://github.com/MxIris-LyricsX-Project/LyricsX"},
             {"project-lyricskit", "https://github.com/MxIris-LyricsX-Project/LyricsKit"},
@@ -282,27 +378,34 @@ void NativeHud::musicAction(const QStringList &parts, const QString &value) {
         }
     } else if (name == "login") {
         openModal("login");
-        music.loginMethod = "qr";
+        const auto methods = ProviderRegistry::instance().loginMethods(music.provider);
+        music.loginMethod = methods.isEmpty() ? QStringLiteral("qr")
+                                              : methods.first().toObject()["id"].toString("qr");
         music.startLogin();
-    } else if (name == "kugou-edition") {
+    } else if (name == "variant") {
         const QPointer<NativeHud> owner(this);
         const auto token = m_searchGeneration;
-        music.switchProvider("kugou", parts.value(2), [owner, token](bool ok) {
+        music.switchProvider(music.provider, parts.value(2), [owner, token](bool ok) {
             if (ok && owner && owner->modal == "login" && owner->m_searchGeneration == token) {
                 owner->m_music->startLogin();
             }
         });
     } else if (name == "login-method") {
         const auto method = parts.value(2);
-        const bool supported = method == "qr" || (music.provider == "netease" && method == "phone") ||
-                               (music.provider == "qq" && method == "wechat");
-        if (!supported) {
+        QJsonObject descriptor;
+        for (const auto &value : ProviderRegistry::instance().loginMethods(music.provider)) {
+            if (value.toObject()["id"].toString() == method) {
+                descriptor = value.toObject();
+                break;
+            }
+        }
+        if (descriptor.isEmpty()) {
             return;
         }
         music.cancelLogin();
         music.loginMethod = method;
         music.loginStatus.clear();
-        if (QStringList{"qr", "wechat"}.contains(music.loginMethod)) {
+        if (descriptor["type"].toString() == "qr") {
             music.startLogin();
         }
     } else if (name == "refresh-personal") {
@@ -342,6 +445,8 @@ void NativeHud::musicAction(const QStringList &parts, const QString &value) {
                 owner->leaveDirectory();
             });
         };
+        confirmMessage.clear();
+        confirmLabel.clear();
         openModal("confirm");
     } else if (name == "rename-playlist") {
         if (music.directory && music.canEditPlaylist(music.directory->item)) {
@@ -355,10 +460,41 @@ void NativeHud::musicAction(const QStringList &parts, const QString &value) {
             music.loadMoreSource(2);
         }
     } else if (name == "playlist-pick") {
+        const auto playlistID = parts.value(2);
+        const auto songID = music.current["id"].toString();
+        const auto folder = music.directory;
+        if (folder && folder->item["id"] == playlistID &&
+            (MusicData::indexOfId(folder->songs, songID) >= 0 ||
+             MusicData::indexOf(folder->ids, songID) >= 0)) {
+            // 打开的歌单已经包含这首歌，拒绝重复写入并把状态直接显示在按钮上。
+            showPlaylistFeedback("add", "✓ 已在当前歌单", 2500);
+            music.status = QStringLiteral("这首歌已在当前歌单");
+            music.changed();
+            return;
+        }
+        if (music.writeLoading) {
+            showPlaylistFeedback("add", "正在处理…", 1200);
+            return;
+        }
         const QPointer<NativeHud> owner(this);
         const auto token = m_searchGeneration;
-        music.playlistTrack(parts.value(2), {}, false, [owner, token](bool ok) {
-            if (ok && owner && owner->m_searchGeneration == token && owner->modal == "playlist-picker") {
+        const auto key = music.uid + ":" + PlaybackQueue::identity(music.current);
+        showPlaylistFeedback("add", "正在添加…", 10000);
+        music.playlistTrack(playlistID, {}, false, [owner, token, key](bool ok) {
+            if (!owner) {
+                return;
+            }
+            auto &library = *owner->m_music;
+            // 请求期间可能已经切歌，旧歌单的结果不能显示到新歌曲的按钮上。
+            if (library.uid + ":" + PlaybackQueue::identity(library.current) != key) {
+                return;
+            }
+            if (!ok) {
+                owner->showPlaylistFeedback("add", "加入失败，请重试", 2500);
+                return;
+            }
+            owner->showPlaylistFeedback("add", "✓ 已加入歌单", 2500);
+            if (owner->m_searchGeneration == token && owner->modal == "playlist-picker") {
                 owner->closeModal();
             }
         });

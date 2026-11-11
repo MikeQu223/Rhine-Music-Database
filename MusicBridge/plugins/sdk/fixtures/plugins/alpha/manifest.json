@@ -1,0 +1,204 @@
+{
+    "schemaVersion": 2,
+    "apiVersion": "2.0",
+    "id": "alpha",
+    "version": "2.0.0",
+    "kind": "third-party",
+    "publisher": "Rhine fixtures",
+    "requiresHost": ">=2.0 <3.0",
+    "license": "MIT",
+    "entry": { "file": "index.cjs" },
+    "runtime": {
+        "hosting": ["module"],
+        "mobileBundled": true,
+        "diagnosticsOrdinal": 10,
+        "env": {
+            "RHINE_PLUGIN_VARIANT": "$variant",
+            "RHINE_ALPHA_DEVICE_STATE_PATH": "$dataDir/alpha-device.json"
+        }
+    },
+    "credentials": {
+        "namespace": "alpha",
+        "shape": "opaque",
+        "variants": [
+            { "id": "standard", "label": "标准" },
+            { "id": "lite", "label": "轻量" }
+        ],
+        "variantPreference": "alpha-variant",
+        "secretState": true,
+        "deviceState": true,
+        "deviceFile": "alpha-device.json",
+        "inject": {
+            "__alphaSessions": { "secret": "sessions" },
+            "__alphaVariant": { "secret": "$variant", "object": true }
+        },
+        "responseSecrets": {
+            "alphaSessions": "sessions",
+            "alphaVariantCredentials": "$variant"
+        },
+        "auth": {
+            "anyOf": [
+                { "cookie": "alpha_session" },
+                {
+                    "allOf": [
+                        { "secret": "$variant.token", "nonEmpty": true },
+                        { "secret": "$variant.userid", "kind": "positiveInteger" }
+                    ]
+                }
+            ],
+            "expiredCodes": [301]
+        },
+        "legacy": {
+            "cookies": { "alpha_session": "alpha_session" },
+            "secrets": { "__alphaSessions": "sessions" },
+            "default": true
+        }
+    },
+    "display": {
+        "name": "Alpha Music",
+        "nameByVariant": { "standard": "Alpha Music", "lite": "Alpha Music Lite" },
+        "label": "ALPHA",
+        "detail": "Fixture provider for contract tests",
+        "order": 10
+    },
+    "library": {
+        "columns": ["搜索结果", "喜欢的歌曲", "我的歌单"],
+        "lanes": 3,
+        "likedModel": "likedSongs",
+        "playlistNameMaxLength": 40,
+        "playlistEditableRule": "owned",
+        "dirIdRange": [1, 99]
+    },
+    "search": { "enabled": true, "maxQueryLength": 80, "suggest": true, "parseLinks": true },
+    "quality": {
+        "default": "standard",
+        "options": [
+            { "id": "standard", "label": "标准", "tier": "standard" },
+            { "id": "lossless", "label": "无损", "tier": "lossless", "badge": "sq" },
+            { "id": "hires", "label": "高解析", "tier": "hires" }
+        ],
+        "aliases": { "best": "lossless" },
+        "badges": { "sq": "assets/quality/sq.png" },
+        "localFilenameTiers": { "master": "master", "hires": "hires" }
+    },
+    "login": {
+        "required": false,
+        "methods": [
+            { "id": "qr", "type": "qr", "label": "扫码登录" },
+            {
+                "id": "phone",
+                "type": "sms",
+                "label": "手机号登录",
+                "phonePattern": "^\\d{6,15}$",
+                "countryCode": "86",
+                "flow": { "send": "loginSms", "submit": "loginSubmit", "codePattern": "^\\d{6}$", "resendCooldownMs": 60000 }
+            }
+        ],
+        "pollIntervalMs": 1000,
+        "pollTimeoutMs": 300000,
+        "failureMessages": { "expired": "二维码已过期" }
+    },
+    "discover": {
+        "enabled": true,
+        "defaultTab": "playlists",
+        "tabs": [
+            { "id": "playlists", "label": "推荐歌单" },
+            { "id": "daily", "label": "每日推荐" }
+        ]
+    },
+    "capabilities": {
+        "search": true,
+        "suggest": true,
+        "resolveLink": true,
+        "detail": true,
+        "playback": true,
+        "preview": true,
+        "lyrics": true,
+        "account": true,
+        "login": true,
+        "vip": false,
+        "discover": true,
+        "categories": true,
+        "userPlaylists": true,
+        "likedSongs": true,
+        "likedAlbums": false,
+        "mv": false,
+        "officialPlayback": true,
+        "alternativeSource": true,
+        "mutations": { "likeSong": true, "subscribePlaylist": true },
+        "playlistManagement": { "createPlaylist": true, "renamePlaylist": true, "deletePlaylist": true }
+    },
+    "operations": {
+        "request": true,
+        "search": true,
+        "suggest": true,
+        "resolveLink": true,
+        "songs": true,
+        "detail": true,
+        "artistAlbums": true,
+        "playback": true,
+        "preview": true,
+        "lyrics": true,
+        "account": true,
+        "loginBegin": true,
+        "loginPoll": true,
+        "loginCancel": true,
+        "loginSms": true,
+        "loginSubmit": true,
+        "userPlaylists": true,
+        "likedSongs": true,
+        "likedState": true,
+        "discover": true,
+        "categories": true,
+        "mutate": true,
+        "mixtape": true
+    },
+    "lyrics": {
+        "sources": ["alpha"],
+        "fallback": [],
+        "matchMode": "strict",
+        "rateLimitMs": 0,
+        "retryDelaysMs": []
+    },
+    "media": {
+        "hosts": ["media.alpha.example"],
+        "alternativeHosts": [],
+        "coverHosts": ["cover.alpha.example"],
+        "allowHttp": false,
+        "schemePolicy": "https",
+        "cover": { "transform": "query", "key": "size", "value": "{w}x{h}", "removeKeys": ["size"] }
+    },
+    "externalPlayback": {
+        "type": "url-scheme",
+        "scheme": "alphaapp",
+        "payload": "{\"type\":\"song\",\"id\":\"{id}\"}",
+        "encoding": "percent",
+        "application": { "bundleId": "com.example.alpha", "name": "Alpha Music", "missingMessage": "Alpha 未安装" },
+        "successMessage": "已发送到 Alpha",
+        "failureMessage": "无法打开 Alpha"
+    },
+    "cache": {
+        "namespace": "alpha",
+        "version": "2.0.0-1",
+        "ttlByOperation": { "search": 900, "detail": 21600, "songs": 86400 },
+        "ttlByRoute": { "/song/url": 0 },
+        "diskOperations": ["search", "detail"],
+        "disk": "guest",
+        "maxEntries": 32,
+        "invalidateOn": ["login", "logout", "mutation", "variant"]
+    },
+    "links": {
+        "parse": true,
+        "patterns": ["alpha.example"],
+        "webTemplates": { "song": "https://alpha.example/song/{id}" },
+        "officialAppUrl": "https://alpha.example",
+        "officialLabel": "Alpha",
+        "projects": [{ "label": "Alpha API", "url": "https://alpha.example/api" }]
+    },
+    "strings": {
+        "loginHint": "可选登录",
+        "scanHint": "请用 Alpha Music 扫码",
+        "accountNote": "账号独立保存",
+        "officialEntry": "Alpha 客户端 ↗"
+    }
+}

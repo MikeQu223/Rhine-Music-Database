@@ -1,8 +1,10 @@
 #include "MusicLibrary.h"
+#include "ProviderRegistry.h"
 #include "MusicData.h"
 #include "MusicDiscover.h"
 #include <QJsonDocument>
 #include <QPointer>
+#include <QTimer>
 #include <QUrl>
 #include <algorithm>
 
@@ -14,29 +16,59 @@ int wrap(int value, int count) {
 
 /** 建立原生资料库和各类请求的独立代数，物理槽位保持原有五列八行映射。 */
 MusicLibrary::MusicLibrary(Host *host, const QJsonObject &content, QObject *parent)
-    : QObject(parent), host(host), api(host), player(host, &api), m_identityApi(host) {
-    kugouEdition = host->preference("kugou-edition") == "lite" ? "lite" : "standard";
+    : QObject(parent), host(host), api(host), player(host, &api), comments(host), m_identityApi(host) {
+    const auto &registry = ProviderRegistry::instance();
     provider = host->preference("provider");
-    if (!QStringList{"netease", "qq", "kugou", "local", "siren"}.contains(provider)) {
-        provider = "netease";
+    if (!registry.contains(provider) || (provider == "local" && !PlatformFeatures::LocalMusic)) {
+        provider = registry.defaultId();
+        if (provider.isEmpty() || (provider == "local" && !PlatformFeatures::LocalMusic)) {
+            provider = registry.fallbackId("local");
+        }
+        if (provider.isEmpty()) {
+            provider = "siren";
+        }
     }
-    if (provider == "local" && !PlatformFeatures::LocalMusic) {
-        provider = "netease";
+    const auto descriptorColumns = registry.columns(provider);
+    if (!descriptorColumns.isEmpty()) {
+        columns = descriptorColumns;
     }
     if (provider == "siren") {
-        columns = {"搜索结果", "喜欢的歌曲", "我的歌单", "全部歌曲", "全部专辑"};
         collections = std::make_unique<LocalCollections>(provider, QString(), this);
         reloadSirenCollections();
     }
     api.provider = provider;
     host->setProvider(provider);
+    player.refreshQualityPreference();
+    const auto variants = registry.variants(provider);
+    if (!variants.isEmpty()) {
+        const auto preference = registry.variantPreference(provider);
+        auto selected = preference.isEmpty() ? QString() : host->preference(preference);
+        bool valid = false;
+        for (const auto &value : variants) {
+            if (value.toObject()["id"].toString() == selected) {
+                valid = true;
+                break;
+            }
+        }
+        if (!valid) {
+            selected = variants.first().toObject()["id"].toString();
+        }
+        providerVariant = selected;
+        host->setProviderVariant(selected);
+    }
     if (isSiren()) {
         loadSirenCatalog();
     }
-    for (const auto &source : {"netease", "qq"}) {
-        identityNames[source] = host->preference("welcome-name-" + QString::fromUtf8(source));
+    for (const auto &id : registry.ids()) {
+        identityNames[id] = host->preference("welcome-name-" + id);
+        for (const auto &value : registry.variants(id)) {
+            const auto variant = value.toObject()["id"].toString();
+            if (!variant.isEmpty()) {
+                identityNames[id + "-" + variant] =
+                    host->preference("welcome-name-" + id + "-" + variant);
+            }
+        }
     }
-    identityNames["kugou"] = host->preference("welcome-name-kugou-" + kugouEdition);
     restoreCachedAccount();
     local = std::make_unique<LocalMusicLibrary>(QString(), host->offline || !PlatformFeatures::LocalMusic);
     connect(local.get(), &LocalMusicLibrary::changed, this, [this] {
@@ -78,7 +110,20 @@ MusicLibrary::MusicLibrary(Host *host, const QJsonObject &content, QObject *pare
         ++revision;
         emit playbackInvalidated();
     });
-    connect(&player, &MusicPlayer::trackSelected, this, &MusicLibrary::followPlayback);
+    connect(&player, &MusicPlayer::trackSelected, this, [this](QJsonObject track) {
+        // 切歌默认跟随进入详情；开启“切歌不打开详情”后只同步列表选择。
+        followPlayback(track, followPlaybackDetails && !skipDetailOnSwitch);
+    });
+    connect(this, &MusicLibrary::invalidated, this, [this] {
+        if (!m_sourcePlayback || m_sourcePlaybackScheduled) {
+            return;
+        }
+        m_sourcePlaybackScheduled = true;
+        QTimer::singleShot(0, this, [this] {
+            m_sourcePlaybackScheduled = false;
+            continueSourcePlayback();
+        });
+    });
 }
 
 MusicLibrary::~MusicLibrary() = default;
@@ -97,17 +142,35 @@ void MusicLibrary::changed() {
 void MusicLibrary::clearCaches() {
     host->clearCache();
     player.clearCaches();
+    comments.clear();
     searchHistory.clear();
     suggestions.clear();
     host->setPreference("search-history", "[]");
     changed();
 }
 
-QString MusicLibrary::providerName() const {
-    if (provider == "kugou" && kugouEdition == "lite") {
-        return QStringLiteral("酷狗概念版");
+bool MusicLibrary::editable() const {
+    const auto methods = ProviderRegistry::instance()
+                             .descriptor(provider)["capabilities"]
+                             .toObject()["playlistManagement"]
+                             .toObject();
+    for (auto it = methods.begin(); it != methods.end(); ++it) {
+        if (it.value().toBool()) {
+            return true;
+        }
     }
-    return MusicApi::providerName(provider);
+    return false;
+}
+
+QString MusicLibrary::providerName() const {
+    if (!providerVariant.isEmpty()) {
+        const auto name = ProviderRegistry::instance().nameForVariant(provider, providerVariant);
+        if (!name.isEmpty()) {
+            return name;
+        }
+    }
+    const auto name = ProviderRegistry::instance().name(provider);
+    return name.isEmpty() ? MusicApi::providerName(provider) : name;
 }
 
 /** 统一各渠道的账号恢复、栏目等待、失败和空库文案，供场景与列表共用。 */
@@ -127,7 +190,7 @@ QString MusicLibrary::sourceMessage(int lane) const {
     if (lane == 0) {
         return searchLoading ? QStringLiteral("正在检索音乐，请稍候…") : status;
     }
-    if (provider == "kugou" && lane == 4) {
+    if (!ProviderRegistry::instance().capability(provider, "likedAlbums", false) && lane == 4) {
         return QStringLiteral("此渠道暂不支持收藏专辑");
     }
     if (isSiren()) {
@@ -167,23 +230,28 @@ QString MusicLibrary::sourceMessage(int lane) const {
 }
 
 QString MusicLibrary::accountKey() const {
-    return provider == "kugou" ? "kugou-" + kugouEdition : provider;
+    return providerVariant.isEmpty() ? provider : provider + "-" + providerVariant;
 }
 
 QString MusicLibrary::identityName() const {
     if (isSiren()) {
         return {};
     }
-    for (const auto &source : {"netease", "qq", "kugou"}) {
-        if (!identityNames.value(source).isEmpty()) {
-            return identityNames.value(source);
-        }
+    const auto active = identityNames.value(accountKey());
+    if (!active.isEmpty()) {
+        return active;
     }
-    return {};
+    return identityNames.value(provider);
 }
 
 QVector<int> MusicLibrary::sourceOrder() const {
-    return provider == "kugou" ? QVector<int>{1, 2, 3, 0} : QVector<int>{1, 2, 3, 4, 0};
+    const auto values = ProviderRegistry::instance().sourceOrder(provider);
+    return values.isEmpty() ? QVector<int>{1, 2, 3, 4, 0} : values;
+}
+
+bool MusicLibrary::laneVisible(int lane) const {
+    const auto values = ProviderRegistry::instance().visibleLanes(provider);
+    return values.isEmpty() || values.contains(lane);
 }
 
 QString MusicLibrary::libraryName() const {
@@ -259,7 +327,7 @@ void MusicLibrary::observe(int selected) {
     if (lane < 0) {
         return;
     }
-    if (provider == "kugou" && lane == 4) {
+    if (!laneVisible(lane)) {
         if (!physicalSlots[selectedLane].isEmpty()) {
             emit selectionRequested(physicalSlots[selectedLane].value(rowMemory[selectedLane]), {});
         }
@@ -413,31 +481,48 @@ void MusicLibrary::search(QString text, QString kind, bool more) {
         searchLocal(text, kind);
         return;
     }
-    const auto link = provider == "netease" && !more ? host->fromLink(text) : QString();
-    if (!link.isEmpty()) {
-        const auto type = link.section(':', 0, 0);
-        const auto value = MusicData::item(type, link.section(':', 1));
-        ++m_generation;
-        searchLoading = false;
-        keyword = text;
-        searchKind = type;
-        lists[0] = {value};
-        totals[0] = 1;
-        offsets[0] = 0;
-        hasMore[0] = false;
-        rowMemory[0] = 0;
-        status = QStringLiteral("正在读取链接…");
-        showSource(0);
-        wantsSongDetails = type == "song";
-        emit modeRequested(type == "song" ? "detail" : "archive");
+    const bool maybeLink = !more && text.contains("://") &&
+                           ProviderRegistry::instance().capability(provider, "resolveLink", false);
+    if (maybeLink) {
+        const auto token = ++m_generation;
+        api.call(
+            "resolveLink", {text},
+            [this, text, kind, more](MusicReply result) {
+                const auto resolved = result.ok() ? result.value.toObject() : QJsonObject{};
+                const auto type = resolved["kind"].toString();
+                const auto id = resolved["id"].toString();
+                if (!id.isEmpty() && QStringList{"song", "album", "playlist", "artist"}.contains(type)) {
+                    const auto value = MusicData::item(type, id, "正在读取…", "", provider);
+                    ++m_generation;
+                    searchLoading = false;
+                    keyword = text;
+                    searchKind = type;
+                    lists[0] = {value};
+                    totals[0] = 1;
+                    offsets[0] = 0;
+                    hasMore[0] = false;
+                    rowMemory[0] = 0;
+                    status = QStringLiteral("正在读取链接…");
+                    showSource(0);
+                    wantsSongDetails = type == "song";
+                    emit modeRequested(type == "song" ? "detail" : "archive");
+                    return;
+                }
+                searchInternal(text, kind, more);
+            },
+            [this, token] { return token == m_generation; });
         return;
     }
+    searchInternal(text, kind, more);
+}
+
+void MusicLibrary::searchInternal(QString text, QString kind, bool more) {
     const auto query = text.trimmed();
     if (!more && query == keyword && (kind.isEmpty() || kind == searchKind) &&
         (!lists[0].isEmpty() || searchLoading)) {
         return;
     }
-    const auto maximum = provider == "qq" ? 60 : 100;
+    const auto maximum = ProviderRegistry::instance().maxQueryLength(provider);
     if (query.isEmpty() || query.toUcs4().size() > maximum) {
         // 输入被清空或越界后，旧结果已与当前关键词无关，必须一并清除。
         ++m_generation;
@@ -528,25 +613,19 @@ void MusicLibrary::search(QString text, QString kind, bool more) {
 void MusicLibrary::suggest(QString text) {
     const auto token = ++m_suggestGeneration;
     suggestions.clear();
-    if (text.trimmed().isEmpty() || provider == "kugou" || isLocal() || isSiren()) {
+    if (text.trimmed().isEmpty() || !ProviderRegistry::instance().capability(provider, "suggest", false) ||
+        isLocal()) {
         return;
     }
-    const auto qq = provider == "qq";
-    api.request(
-        qq ? "/getSmartbox" : "/search/suggest",
-        qq ? QJsonObject{{"key", text}} : QJsonObject{{"keywords", text}, {"type", "mobile"}},
-        [this, qq](MusicReply result) {
+    api.call(
+        "suggest", {text},
+        [this](MusicReply result) {
             if (!result.ok()) {
                 return;
             }
-            const auto body = result.value.toObject();
-            const auto values =
-                qq ? body["response"].toObject()["data"].toObject()["song"].toObject()["itemlist"].toArray()
-                   : body["result"].toObject()["allMatch"].toArray();
-            for (const auto &value : values) {
-                const auto keyword = value.toObject()[qq ? "name" : "keyword"];
-                if (keyword.isString() && suggestions.size() < 4) {
-                    suggestions.append(keyword.toString());
+            for (const auto &value : result.value.toArray()) {
+                if (value.isString() && suggestions.size() < 4) {
+                    suggestions.append(value.toString());
                 }
             }
         },
@@ -557,8 +636,11 @@ void MusicLibrary::showSource(int lane) {
     if (lane < 0 || lane >= 5) {
         return;
     }
-    if (provider == "kugou" && lane == 4) {
-        status = QStringLiteral("酷狗 API 未提供收藏专辑，此栏目已禁用");
+    if (!laneVisible(lane)) {
+        status = ProviderRegistry::instance().text(provider, "laneUnavailable");
+        if (status.isEmpty()) {
+            status = QStringLiteral("此栏目暂不可用");
+        }
         changed();
         return;
     }
@@ -587,10 +669,10 @@ void MusicLibrary::showSource(int lane) {
     changed();
 }
 
-/** 串行读回当前 QQ 个人库，清理旧缓存与分页游标。 */
+/** 串行读回当前远程个人库，清理旧缓存与分页游标。 */
 void MusicLibrary::refreshPersonal(int lane) {
-    if (provider != "qq" || uid.isEmpty() || lane < 1 || lane > 4 || personalLoading || writeLoading ||
-        accountLoading) {
+    if (isLocal() || isSiren() || uid.isEmpty() || lane < 1 || lane >= 5 || personalLoading ||
+        writeLoading || accountLoading) {
         return;
     }
     host->invalidateMetadata();
@@ -641,6 +723,23 @@ void MusicLibrary::selectResult(int index, int lane, bool open) {
     if (open && current.value("kind") != "song") {
         enterDirectory(current);
     }
+}
+
+/** 选中资料库中的指定序号，并把该序号所在槽位移入场景窗口。 */
+void MusicLibrary::selectLibraryIndex(int index) {
+    if (directory) {
+        // 任意距离的列表跳转使用目标槽位的就近映射，不伪造单行导航增量。
+        selectDirectory(index, "archive", {});
+        return;
+    }
+    const int lane = selectedLane;
+    const auto items = sourceItems(lane);
+    if (index < 0 || index >= items.size()) {
+        return;
+    }
+    // 分组视图的序号先翻译为原列表序号，再复用结果选择的物理窗口映射。
+    const int rawIndex = groupLane == lane ? groupIndices.value(index, -1) : index;
+    selectResult(rawIndex, lane, false);
 }
 
 void MusicLibrary::next(int direction) {
@@ -750,9 +849,9 @@ void MusicLibrary::loadMoreSource(int lane) {
         }
         return;
     }
-    if (provider == "kugou" && lane == 4) {
+    if (lane == 4 && !ProviderRegistry::instance().capability(provider, "likedAlbums", false)) {
         hasMore[4] = false;
-        status = QStringLiteral("酷狗 API 未提供收藏专辑，此栏目已禁用");
+        status = QStringLiteral("此来源未提供收藏专辑，此栏目已禁用");
         changed();
         return;
     }
@@ -783,7 +882,9 @@ void MusicLibrary::loadMoreSource(int lane) {
     const auto token = m_accountGeneration;
     const auto user = uid;
     changed();
-    if (lane == 1 && provider == "netease") {
+    if (lane == 1 &&
+        ProviderRegistry::instance().descriptor(provider)["library"].toObject()["likedModel"].toString() ==
+            "likedIDs") {
         loadLikedIDs(lane, token, user);
         return;
     }
@@ -941,6 +1042,9 @@ void MusicLibrary::loadSongWiki() {
  * 用当前单曲所在的歌曲列表替换播放队列；未加载的 ID 由队列模块补全，不会生成占位曲目。
  */
 void MusicLibrary::play(bool byUser) {
+    if (byUser) {
+        m_sourcePlayback.reset();
+    }
     if (current.value("kind") != "song") {
         status = QStringLiteral("请先选择一首歌曲");
         changed();
@@ -954,6 +1058,59 @@ void MusicLibrary::play(bool byUser) {
     const auto source = currentSource();
     player.play(current, source.items);
     player.loadQueue(source.ids, source.items);
+}
+
+/** 从歌单标题直接播放；异步响应受选择代数隔离，队列仍按来源 ID 完整补齐。 */
+void MusicLibrary::playCollection(QJsonObject value) {
+    m_sourcePlayback.reset();
+    if (value["kind"] != "playlist" && value["kind"] != "album") {
+        return;
+    }
+    const auto start = [this](QJsonArray songs, QJsonArray ids) {
+        if (songs.isEmpty()) {
+            status = "歌单暂无可播放曲目";
+            changed();
+            return;
+        }
+        player.play(songs.first().toObject(), songs);
+        player.loadQueue(ids, songs);
+    };
+    // 标题播放不能作废当前详情请求，否则其 loading 状态可能无法收束。
+    const auto token = ++m_collectionPlayGeneration;
+    const auto latest = valid(token, &m_collectionPlayGeneration);
+    const auto selected = valid(m_selectionGeneration, &m_selectionGeneration);
+    const auto alive = [latest, selected] { return latest() && selected(); };
+    if (isLocal()) {
+        start(local->tracks(value), {});
+        return;
+    }
+    if (isSiren() && value["localCollection"].toBool() && collections) {
+        const auto ids = QJsonArray::fromStringList(collections->tracks(value["id"].toString()));
+        api.call(
+            "songs", {MusicData::slice(ids, 0, 1)},
+            [this, start, ids](MusicReply reply) {
+                if (reply.ok()) {
+                    start(reply.value.toArray(), ids);
+                } else {
+                    status = "读取歌单失败：" + reply.error;
+                    changed();
+                }
+            },
+            alive);
+        return;
+    }
+    api.call(
+        "detail", {value},
+        [this, start](MusicReply reply) {
+            if (!reply.ok()) {
+                status = "读取歌单失败：" + reply.error;
+                changed();
+                return;
+            }
+            const auto result = reply.value.toArray();
+            start(result.at(1).toArray(), result.at(2).toArray());
+        },
+        alive);
 }
 
 /** 当前单曲所在的歌曲列表；目录外优先使用选中上下文。 */
@@ -1010,8 +1167,14 @@ MusicLibrary::QueueSource MusicLibrary::directorySource() const {
 }
 
 /** 一键播放 */
-void MusicLibrary::playDirectory() {
-    if (!directory && selectedLane != 1 && !(isSiren() && selectedLane == 3)) {
+void MusicLibrary::playDirectory(bool includeAllSongSources) {
+    m_sourcePlayback.reset();
+    // 原桌面入口保留来源限制；手机标题按钮可以播放任意纯歌曲来源。
+    if (!directory && !includeAllSongSources && selectedLane != 1 && !(isSiren() && selectedLane == 3)) {
+        return;
+    }
+    const auto items = includeAllSongSources ? libraryItems() : QJsonArray();
+    if (!directory && !items.isEmpty() && items.first().toObject()["kind"] != "song") {
         return;
     }
     // 补全喜欢的歌曲后再播放
@@ -1020,12 +1183,66 @@ void MusicLibrary::playDirectory() {
         loadMoreSource(1);
         return;
     }
-    const auto source = directorySource();
+    auto source = directorySource();
+    if (source.items.isEmpty() && !directory && includeAllSongSources) {
+        if (selectedLane == 0 && groupLane != 0 && hasMore[0]) {
+            // 搜索来源没有完整 ID 清单，先沿原分页接口补齐，不能把当前页冒充全部。
+            m_sourcePlayback = SourcePlayback{
+                0, m_accountGeneration, m_generation, m_selectionGeneration, searchCursor, false};
+            continueSourcePlayback();
+            return;
+        }
+        source.items = items;
+    }
     if (source.items.isEmpty()) {
         return;
     }
     player.play(source.items.first().toObject(), source.items);
     player.loadQueue(source.ids, source.items);
+}
+
+/** 补齐没有完整 ID 清单的搜索来源；换查询、账号或选择后放弃旧的播放意图。 */
+void MusicLibrary::continueSourcePlayback() {
+    if (!m_sourcePlayback) {
+        return;
+    }
+    auto &pending = *m_sourcePlayback;
+    if (pending.account != m_accountGeneration || pending.search != m_generation ||
+        pending.selection != m_selectionGeneration || directory || selectedLane != pending.lane ||
+        groupLane == pending.lane) {
+        m_sourcePlayback.reset();
+        return;
+    }
+    if (sourceLoading()) {
+        return;
+    }
+    if (pending.awaitingPage && searchCursor <= pending.cursor && hasMore[pending.lane]) {
+        // 错误或空页不能反复请求同一页，也不能把不完整结果作为播放全部交付。
+        m_sourcePlayback.reset();
+        status = "无法补齐全部曲目，请稍后重试";
+        changed();
+        return;
+    }
+    if (hasMore[pending.lane]) {
+        pending.cursor = searchCursor;
+        pending.awaitingPage = true;
+        loadMoreSource(pending.lane);
+        if (m_sourcePlayback) {
+            m_sourcePlayback->search = m_generation;
+        }
+        return;
+    }
+    const auto songs = sourceItems(pending.lane);
+    m_sourcePlayback.reset();
+    if (songs.isEmpty()) {
+        return;
+    }
+    QJsonArray ids;
+    for (const auto &song : songs) {
+        ids.append(song.toObject()["id"]);
+    }
+    player.play(songs.first().toObject(), songs);
+    player.loadQueue(ids, songs);
 }
 
 void MusicLibrary::playOfficial(QJsonObject value) {
@@ -1041,7 +1258,12 @@ void MusicLibrary::playOfficial(QJsonObject value) {
     if (value["kind"] != "song") {
         return;
     }
-    if (value["provider"].toString(provider) != "netease") {
+    if (value["provider"].toString(provider) != provider) {
+        host->open(sourceURL(value));
+        return;
+    }
+    const auto playback = ProviderRegistry::instance().externalPlayback(provider);
+    if (playback["type"].toString() != "url-scheme" || playback["scheme"].toString().isEmpty()) {
         host->open(sourceURL(value));
         return;
     }
@@ -1064,19 +1286,16 @@ QString MusicLibrary::sourceURL(QJsonObject value) const {
         return {};
     }
     const auto source = value["provider"].toString(provider);
-    if (source == "netease") {
-        return "https://music.163.com/#/" + value["kind"].toString() + "?id=" + value["id"].toString();
+    const auto links = ProviderRegistry::instance().descriptor(source)["links"].toObject();
+    const auto templates = links["webTemplates"].toObject();
+    auto kind = value["kind"].toString();
+    if (kind == "playlist" && value["chart"].toBool() && templates.contains("chart")) {
+        kind = "chart";
     }
-    if (source == "kugou") {
-        return QStringLiteral("https://www.kugou.com/");
+    auto target = templates[kind].toString(templates["home"].toString());
+    if (target.isEmpty()) {
+        return {};
     }
-    if (source == "siren") {
-        return QStringLiteral("https://monster-siren.hypergryph.com/music");
-    }
-    const QHash<QString, QString> paths{{"song", "songDetail"},
-                                        {"album", "albumDetail"},
-                                        {"artist", "singer"},
-                                        {"playlist", value["chart"].toBool() ? "toplist" : "playlist"}};
-    return "https://y.qq.com/n/ryqq/" + paths.value(value["kind"].toString()) + "/" +
-           QString::fromLatin1(QUrl::toPercentEncoding(value["id"].toString(), "!'()*"));
+    return target.replace("{id}",
+                          QString::fromLatin1(QUrl::toPercentEncoding(value["id"].toString(), "!'()*")));
 }

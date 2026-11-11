@@ -12,14 +12,14 @@
 
 真正还剩的空间按性价比排序：
 
-| # | 事项 | 预期 | 成本 | 优先级 |
-|---|---|---|---|---|
-| 1 | 补 present 可观测性（`present_id` + `present_wait2`、GPU 帧时间、submit 耗时） | 让后面所有优化可判定 | 小 | P0 |
-| 2 | FG 上下文重建 + FFX 无管线缓存 | 消除 resize/切换时的编译卡顿（毫秒级 × N 条管线） | 中 | P1 |
-| 3 | present mode 实际拿到什么、有没有被节流（刷新率未知，无法靠 fps 判断） | 让「present 是否在阻塞」可观测，而不是假设关掉 vsync 就更快 | 小 | P1 |
-| 4 | 每帧一次「空提交」 | 每帧省一次 submit + fence | 中 | P2 |
-| 5 | 交换链图像数做成可配置，**默认保留 6**（吞吐优先） | 保住那 ~5% 吞吐（335 vs 318 fps）；代价是多 ~20MB 与数帧延迟 | 小 | P2 |
-| 6 | 屏障语义现代化（BOTTOM_OF_PIPE → NONE） | 主要是校验层干净，帧率收益接近 0 | 小 | P3 |
+| #   | 事项                                                                           | 预期                                                         | 成本 | 优先级 |
+| --- | ------------------------------------------------------------------------------ | ------------------------------------------------------------ | ---- | ------ |
+| 1   | 补 present 可观测性（`present_id` + `present_wait2`、GPU 帧时间、submit 耗时） | 让后面所有优化可判定                                         | 小   | P0     |
+| 2   | FG 上下文重建 + FFX 无管线缓存                                                 | 消除 resize/切换时的编译卡顿（毫秒级 × N 条管线）            | 中   | P1     |
+| 3   | present mode 实际拿到什么、有没有被节流（刷新率未知，无法靠 fps 判断）         | 让「present 是否在阻塞」可观测，而不是假设关掉 vsync 就更快  | 小   | P1     |
+| 4   | 每帧一次「空提交」                                                             | 每帧省一次 submit + fence                                    | 中   | P2     |
+| 5   | 交换链图像数做成可配置，**默认保留 6**（吞吐优先）                             | 保住那 ~5% 吞吐（335 vs 318 fps）；代价是多 ~20MB 与数帧延迟 | 小   | P2     |
+| 6   | 屏障语义现代化（BOTTOM_OF_PIPE → NONE）                                        | 主要是校验层干净，帧率收益接近 0                             | 小   | P3     |
 
 ---
 
@@ -47,6 +47,7 @@
 **成本**：每帧多一次 `vkQueueSubmit` + 一次 fence 等待。Linux 上每次 submit 对应一次 DRM 提交 ioctl，Mesa 前端还有命令缓冲校验/序列化开销，量级是「几十微秒/次」〔经验，需实测〕。300fps 时约 300 次/秒 ⇒ CPU 侧 1%~2% 量级。GPU 侧因为空提交没有命令，理论上只多一次调度事件。
 
 **能不能去掉**：
+
 - 用 `VK_KHR_present_id` + `VK_KHR_present_wait2`（`vkWaitForPresent2KHR`；旧的 `VK_KHR_present_wait` 已被它取代，新代码别再按旧扩展设计，见 `04-tools-cases.md` D.3）：present 完成即可证明 `acquireSemaphore` 已被消费。链变成 acquire → 渲染提交直接等 `acquireSemaphore[slot]` → present 等 `renderDone[image]` 带 presentId → 复用槽前查 presentId 是否完成。**一次 submit 都不用加**。
 - 用时间线信号量：QRhi 的 `QRhiVulkanQueueSubmitParams` 只暴露二进制信号量数组（没有 `VkTimelineSemaphoreSubmitInfo` 的 value 字段），**从 Qt 这条提交路径无法 signal 时间线信号量**，所以这条路当前不可行。
 - 直接把 `acquireSemaphore[slot]` 交给 QRhi 等：可行，但你 afterward 没有任何手段知道它何时被消费 ⇒ 复用会违反二进制信号量语义。除非同时上 present_wait。
@@ -64,6 +65,7 @@
 **问题**：Wayland 下 present mode 的支持矩阵依驱动/合成器而变，而且历史上有反复：Mesa 的 Wayland WSI 长期用 mailbox 风格实现（2018 年实测 `minImageCount` 报 4，FIFO 下只用 3 张），协议级 FIFO 直到 2024-11 的 Mesa 24.3 才通过 `wp_fifo` 补上；NVIDIA 的 Wayland 驱动则一直直接报 `present_mode=fifo`。**方向不确定，唯一可靠做法是探测**：用 `vkGetPhysicalDeviceSurfacePresentModesKHR` 决定请求谁，并记录"请求了谁 / 实际拿到谁 / 谁不可用"。现在只能看到最终模式名，看不到这条链路。
 
 **建议**：
+
 1. 退化时打一条 `qInfo`，把 `vkGetPhysicalDeviceSurfacePresentModesKHR` 的完整列表打出来（只在首次或 `RHINE_FG_DIAG` 下）。
 2. 考虑 `VK_KHR_present_mode_fifo_latest_ready`（Vulkan 1.4 核心 / 早期 `VK_EXT_present_mode_fifo_latest_ready`）：语义是"垂直同步但不排队"，延迟接近 mailbox、无撕裂，是 Wayland 这类只有 FIFO 的平台上最实用的第三选项。
 3. `vsync=false` 且只有 FIFO 时，把 `FIFO_RELAXED` 作为第二选择（允许撕裂，且不保证按固定节奏排队）。**但注意：刷新率未知时，「FIFO 会不会真的节流」也无法从 fps 反推**——必须测 present 的阻塞时长与帧间隔分布。
@@ -76,6 +78,7 @@
 ### C. 缺 present 可观测性 ⇒ 延迟与节奏无法判定
 
 现在没有 `present_id`/`present_wait2`，因此拿不到"这一帧什么时候真正上屏"。后果：
+
 - 无法测端到端延迟（input→photon），FG 的收益/代价说不清；
 - 无法判断是 GPU 慢、合成器慢、还是 present 排队；
 - 无法做自适应 pacing（例如 FG 打开后按 display 节奏限帧）。
@@ -91,6 +94,7 @@
 **位置**：`FgBackend::resize()`（`FgBackend.cpp:565-625`）——只要 `renderSize/displaySize/colorFormat` 有一个变了，就 `vkDeviceWaitIdle` + `release()` + 全量重建 FG 上下文。窗口拖拽、DPI 变化、进出全屏都会触发。
 
 **同时**：随仓库 vendor 的 FFX Vulkan 后端**没有任何 `VkPipelineCache`**：
+
 - `FidelityFX-SDK/sdk/src/backends/vk/ffx_vk.cpp` 里 `pipelineCache` 只出现在 breadcrumb 打印中；
 - 计算管线创建是 `vkCreateComputePipelines(device, nullptr, ...)`（`ffx_vk.cpp:3642`）；
 - 其余管线同样是 `VK_NULL_HANDLE`（`FrameInterpolationSwapchainVK_UiComposition.cpp:358,366`、`FrameInterpolationSwapchainVK_DebugPacing.cpp:325`）。
@@ -98,6 +102,7 @@
 ⇒ 每次 resize 重建，FG 的十几~几十条管线都会重新走一遍创建。**驱动内部缓存（Mesa 的 shader cache、Windows 驱动的磁盘缓存）能吃掉一部分**，但进程内 `VkPipelineCache` 仍是零语义风险的省法，尤其是同一进程内反复 resize。
 
 **建议顺序**：
+
 1. 先量：在 `FgBackend::resize()` 前后打点，记录重建总耗时；用 RenderDoc 抓一次 resize，看 `vkCreate*Pipelines` 累计耗时。
 2. 若无痛（<20ms），不动。
 3. 若有痛：在 FgBackend 里建一个**跨重建存活**的 `VkPipelineCache`，给 vendored FFX 打一个最小补丁，把 `ffx_vk.cpp` 里所有 `vkCreate*Pipelines` 的 cache 参数从 `nullptr`/`VK_NULL_HANDLE` 改成后端上下文里的 cache 句柄；进程退出时把 cache 数据落盘，key 用 `VkPhysicalDeviceProperties::pipelineCacheUUID` + 驱动版本，加载前校验 UUID。
@@ -132,14 +137,14 @@
 
 现在只有 `presentMs` 和帧间隔（`PresentationShell.cpp` 附近）。缺的是能区分「Vulkan 链路开销」与「场景开销」的数据：
 
-| 指标 | 怎么埋 | 用途 |
-|---|---|---|
-| `vkQueueSubmit` CPU 耗时 | 每次 submit 前后 `QElapsedTimer`，滑动平均 | 判断是否 CPU 提交受限（A 的前提） |
-| acquire 等待耗时 | `vkAcquireNextImageKHR` 前后 | 判断是否被 present/合成器卡住（B 的依据） |
-| present 返回耗时 | 同上 | 驱动/合成器是否有异常阻塞 |
-| present 完成延迟 | present_wait（C） | 端到端延迟、图像数取舍 |
-| GPU 帧时间 | timestamp query（`vkCmdWriteTimestamp2`）或 `VK_EXT_calibrated_timestamps` 对齐 CPU 时钟 | 判断 GPU 是否真的忙 |
-| `deviceWaitIdle` 次数 | 计数器 | 现在只在 fallback/resize，一旦热路径出现就是事故 |
+| 指标                     | 怎么埋                                                                                   | 用途                                             |
+| ------------------------ | ---------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| `vkQueueSubmit` CPU 耗时 | 每次 submit 前后 `QElapsedTimer`，滑动平均                                               | 判断是否 CPU 提交受限（A 的前提）                |
+| acquire 等待耗时         | `vkAcquireNextImageKHR` 前后                                                             | 判断是否被 present/合成器卡住（B 的依据）        |
+| present 返回耗时         | 同上                                                                                     | 驱动/合成器是否有异常阻塞                        |
+| present 完成延迟         | present_wait（C）                                                                        | 端到端延迟、图像数取舍                           |
+| GPU 帧时间               | timestamp query（`vkCmdWriteTimestamp2`）或 `VK_EXT_calibrated_timestamps` 对齐 CPU 时钟 | 判断 GPU 是否真的忙                              |
+| `deviceWaitIdle` 次数    | 计数器                                                                                   | 现在只在 fallback/resize，一旦热路径出现就是事故 |
 
 这些加起来不到 100 行，但决定了后面每一项优化是"有效"还是"自我感觉良好"。
 

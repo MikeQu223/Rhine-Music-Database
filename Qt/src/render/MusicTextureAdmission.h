@@ -21,19 +21,33 @@
 namespace RhineRender {
 
 /**
- * RHINE_TEXTURE_ADMISSION_MS：准入延迟毫秒数。默认 100；0 关闭延迟（全部立即准入）；
- * 非数字/负数/超范围回默认值——一个笔误把延迟设成 0 是功能回退，设成几十秒则是"界面
- * 永远不出图"，两种都不该由环境变量静默决定。
+ * 平台默认准入延迟。
+ *
+ * 非 Android 保持 100ms（历史值）。Android 用 500ms：手机上一次 fling 能跨过十几条，
+ * 100ms 之后焦点早就换过两轮，等于"边滑边给已经离开视野的条目建封面／标签纹理"，
+ * 白白吃掉 GPU 上传和 GUI 线程——而这正是滑动掉帧的成分之一。放宽到 500ms 后，
+ * 手指停稳半秒才允许建冷纹理；已经准入过的 key 仍然立即命中，不受影响。
+ */
+#if defined(Q_OS_ANDROID)
+inline constexpr int PlatformTextureAdmissionMs = 500;
+#else
+inline constexpr int PlatformTextureAdmissionMs = 100;
+#endif
+
+/**
+ * RHINE_TEXTURE_ADMISSION_MS：准入延迟毫秒数。未设置时取平台默认（Android 500／其余 100）；
+ * 0 关闭延迟（全部立即准入）；非数字/负数/超范围回平台默认值——一个笔误把延迟设成 0 是
+ * 功能回退，设成几十秒则是"界面永远不出图"，两种都不该由环境变量静默决定。
  */
 inline int musicTextureAdmissionDelayFromEnvironment()
 {
     bool ok = false;
     const int value = qEnvironmentVariableIntValue("RHINE_TEXTURE_ADMISSION_MS", &ok);
     if (!ok) {
-        return 100;
+        return PlatformTextureAdmissionMs;
     }
     if (value < 0 || value > 60000) {
-        return 100;
+        return PlatformTextureAdmissionMs;
     }
     return value;
 }
@@ -45,7 +59,7 @@ inline int musicTextureAdmissionDelayFromEnvironment()
 class MusicTextureAdmission
 {
 public:
-    static constexpr int DefaultDelayMs = 100;
+    static constexpr int DefaultDelayMs = PlatformTextureAdmissionMs;
     /// 已准入 key 的记忆条数。与纹理 LRU 同量级：超过之后最早的 key 需要重新计时，
     /// 但那时它的纹理也早被淘汰了，"重新计时"正好等于"重新预热"。
     static constexpr int MaxAdmitted = 32;

@@ -13,7 +13,7 @@ class WindowsAudioOutput {
   public:
     WindowsAudioOutput();
     ~WindowsAudioOutput();
-    bool open(const QByteArray &deviceId, bool exclusive);
+    bool open(const QByteArray &deviceId, bool exclusive, const QAudioFormat &requested = {});
     QAudioFormat format() const;
     void enqueue(const QAudioBuffer &buffer);
     void reset(bool paused = false);
@@ -23,6 +23,10 @@ class WindowsAudioOutput {
     void setVolume(float volume);
     long error() const;
     quint64 consumedFrames() const;
+    qint64 processedUSecs() const;
+    int underrunCount() const;
+    qsizetype queuedBytes() const;
+    qsizetype bytesFree() const;
 
   private:
     struct State;

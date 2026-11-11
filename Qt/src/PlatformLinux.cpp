@@ -30,7 +30,8 @@ QStringList desktopDirectories() {
 }
 
 // 只按桌面条目判断协议是否已注册，不猜测客户端安装路径，也不自行解析启动命令。
-bool orpheusRegistered() {
+bool schemeRegistered(const QString &scheme) {
+    const auto handler = QStringLiteral("x-scheme-handler/") + scheme;
     for (const auto &directory : desktopDirectories()) {
         QDirIterator iterator(directory, {"*.desktop"}, QDir::Files);
         while (iterator.hasNext()) {
@@ -38,7 +39,7 @@ bool orpheusRegistered() {
             if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
                 continue;
             }
-            if (file.readAll().contains("x-scheme-handler/orpheus")) {
+            if (file.readAll().contains(handler.toUtf8())) {
                 return true;
             }
         }
@@ -77,19 +78,28 @@ void platformDeleteCredential() {
     QFile::remove(credentialPath());
 }
 
-void platformPlay(const QString &id, bool activate, std::function<void(QString)> done) {
+void platformPlay(const QString &id, const QJsonObject &config, bool activate,
+                  std::function<void(QString)> done) {
     Q_UNUSED(activate)
-    if (!orpheusRegistered()) {
-        done(QStringLiteral("未安装或未注册网易云音乐客户端，请安装官方客户端后重试"));
+    const auto scheme = config["scheme"].toString();
+    if (!schemeRegistered(scheme)) {
+        done(config["application"]
+                 .toObject()["missingMessage"]
+                 .toString(QStringLiteral("未安装或未注册官方客户端")));
         return;
     }
-    // 与 macOS、Windows 逐字一致的协议载荷；播放器始终是已安装的官方客户端。
-    const auto payload =
-        QString("{\"type\":\"song\",\"id\":\"%1\",\"cmd\":\"play\"}").arg(id).toUtf8().toBase64();
-    const auto url = QUrl(QString("orpheus://") + QString::fromLatin1(payload));
+    auto payload = config["payload"].toString();
+    payload.replace("{id}", id);
+    const auto encoding = config["encoding"].toString();
+    if (encoding == "base64") {
+        payload = QString::fromLatin1(payload.toUtf8().toBase64());
+    } else if (encoding == "percent") {
+        payload = QString::fromLatin1(QUrl::toPercentEncoding(payload));
+    }
+    const auto url = QUrl(scheme + "://" + payload);
     if (QDesktopServices::openUrl(url)) {
-        done(QStringLiteral("已交给网易云；若冷启动未切歌，可手动重试"));
+        done(config["successMessage"].toString(QStringLiteral("已交给官方客户端")));
     } else {
-        done(QStringLiteral("交付失败：无法启动网易云客户端"));
+        done(config["failureMessage"].toString(QStringLiteral("交付失败")));
     }
 }

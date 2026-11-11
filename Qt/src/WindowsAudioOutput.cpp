@@ -6,6 +6,7 @@
 #include <windows.h>
 #include <audioclient.h>
 #include <mmdeviceapi.h>
+#include <ksmedia.h>
 #include <avrt.h>
 #include <wrl/client.h>
 #include <algorithm>
@@ -25,6 +26,8 @@ struct WindowsAudioOutput::State {
     std::atomic<long> failure{0};
     std::atomic<float> volume{.7f};
     std::atomic<quint64> consumed{0};
+    std::atomic<qint64> processed{0};
+    std::atomic<int> underruns{0};
     bool paused = false;
     bool finishing = false;
     std::chrono::steady_clock::time_point lastWrite{};
@@ -39,7 +42,7 @@ struct WindowsAudioOutput::State {
             thread.join();
         }
     }
-    void run(QByteArray deviceId, bool exclusive) {
+    void run(QByteArray deviceId, bool exclusive, QAudioFormat requested) {
         const auto com = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
         if (FAILED(com)) {
             failure = com;
@@ -49,7 +52,7 @@ struct WindowsAudioOutput::State {
             return;
         }
         // All COM references are released before CoUninitialize, on this thread.
-        const auto result = render(deviceId, exclusive);
+        const auto result = render(deviceId, exclusive, requested);
         failure = result;
         {
             std::lock_guard lock(mutex);
@@ -58,7 +61,7 @@ struct WindowsAudioOutput::State {
         }
         CoUninitialize();
     }
-    HRESULT render(const QByteArray &deviceId, bool exclusive) {
+    HRESULT render(const QByteArray &deviceId, bool exclusive, const QAudioFormat &requested) {
         ComPtr<IMMDeviceEnumerator> enumerator;
         ComPtr<IMMDevice> device;
         ComPtr<IAudioClient> client;
@@ -80,30 +83,56 @@ struct WindowsAudioOutput::State {
         if (FAILED(hr = activate())) {
             return hr;
         }
-        WAVEFORMATEX wave{};
-        wave.wFormatTag = WAVE_FORMAT_IEEE_FLOAT;
-        wave.nChannels = 2;
-        wave.wBitsPerSample = 32;
-        wave.nBlockAlign = 8;
-        wave.nSamplesPerSec = 48000;
-        wave.nAvgBytesPerSec = wave.nSamplesPerSec * wave.nBlockAlign;
+        WAVEFORMATEXTENSIBLE description{};
+        auto &wave = description.Format;
+        QAudioFormat selected = requested;
+        if (!selected.isValid()) {
+            selected.setSampleRate(48000);
+            selected.setChannelConfig(QAudioFormat::ChannelConfigStereo);
+            selected.setSampleFormat(QAudioFormat::Float);
+        }
+        auto describe = [&] {
+            wave.wFormatTag = WAVE_FORMAT_EXTENSIBLE;
+            wave.cbSize = sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX);
+            wave.nChannels = WORD(selected.channelCount());
+            wave.wBitsPerSample = WORD(selected.bytesPerSample() * 8);
+            wave.nBlockAlign = WORD(selected.bytesPerFrame());
+            wave.nSamplesPerSec = DWORD(selected.sampleRate());
+            wave.nAvgBytesPerSec = wave.nSamplesPerSec * wave.nBlockAlign;
+            description.Samples.wValidBitsPerSample = wave.wBitsPerSample;
+            description.dwChannelMask = (quint32(selected.channelConfig()) >> 1) & 0x3ffff;
+            description.SubFormat = selected.sampleFormat() == QAudioFormat::Float
+                                        ? KSDATAFORMAT_SUBTYPE_IEEE_FLOAT
+                                        : KSDATAFORMAT_SUBTYPE_PCM;
+        };
+        describe();
         const auto mode = exclusive ? AUDCLNT_SHAREMODE_EXCLUSIVE : AUDCLNT_SHAREMODE_SHARED;
-        if (exclusive) {
+        if (exclusive && client->IsFormatSupported(mode, &wave, nullptr) != S_OK) {
             bool supported = false;
-            for (WORD bits : {32, 16}) {
-                wave.wFormatTag = bits == 32 ? WAVE_FORMAT_IEEE_FLOAT : WAVE_FORMAT_PCM;
-                wave.wBitsPerSample = bits;
-                wave.nBlockAlign = wave.nChannels * bits / 8;
-                for (DWORD rate : {48000u, 44100u, 96000u, 192000u}) {
-                    wave.nSamplesPerSec = rate;
-                    wave.nAvgBytesPerSec = rate * wave.nBlockAlign;
-                    if (client->IsFormatSupported(mode, &wave, nullptr) == S_OK) {
-                        supported = true;
+            // Preserve the selected rate/layout first, then negotiate a portable stereo fallback.
+            for (auto type : {QAudioFormat::Float, QAudioFormat::Int32, QAudioFormat::Int16}) {
+                selected.setSampleFormat(type);
+                describe();
+                if (client->IsFormatSupported(mode, &wave, nullptr) == S_OK) {
+                    supported = true;
+                    break;
+                }
+            }
+            if (!supported) {
+                selected.setChannelConfig(QAudioFormat::ChannelConfigStereo);
+                for (auto type : {QAudioFormat::Float, QAudioFormat::Int32, QAudioFormat::Int16}) {
+                    selected.setSampleFormat(type);
+                    for (int rate : {48000, 44100, 96000, 192000}) {
+                        selected.setSampleRate(rate);
+                        describe();
+                        if (client->IsFormatSupported(mode, &wave, nullptr) == S_OK) {
+                            supported = true;
+                            break;
+                        }
+                    }
+                    if (supported) {
                         break;
                     }
-                }
-                if (supported) {
-                    break;
                 }
             }
             if (!supported) {
@@ -157,12 +186,15 @@ struct WindowsAudioOutput::State {
         if (FAILED(hr = client->GetService(IID_PPV_ARGS(&output)))) {
             return hr;
         }
+        ComPtr<IAudioClock> clock;
+        UINT64 frequency = 0;
+        if (FAILED(hr = client->GetService(IID_PPV_ARGS(&clock))) ||
+            FAILED(hr = clock->GetFrequency(&frequency)) || frequency == 0) {
+            return FAILED(hr) ? hr : E_FAIL;
+        }
         {
             std::lock_guard lock(mutex);
-            format.setSampleRate(wave.nSamplesPerSec);
-            format.setChannelConfig(QAudioFormat::ChannelConfigStereo);
-            format.setSampleFormat(wave.wFormatTag == WAVE_FORMAT_IEEE_FLOAT ? QAudioFormat::Float
-                                                                             : QAudioFormat::Int16);
+            format = selected;
             queue.resize(wave.nAvgBytesPerSec * 2);
             drainDelay = std::chrono::milliseconds((quint64(frames) * 1000 + wave.nSamplesPerSec - 1) /
                                                        wave.nSamplesPerSec * (exclusive ? 2 : 1) +
@@ -182,6 +214,7 @@ struct WindowsAudioOutput::State {
         } taskGuard{mmcss};
         bool started = false;
         bool suspended = false;
+        bool underrunning = false;
         quint64 observed = 0;
         while (!quit) {
             if (started) {
@@ -206,6 +239,7 @@ struct WindowsAudioOutput::State {
                 started = false;
                 suspended = false;
                 observed = generation;
+                processed = 0;
             }
             if (paused) {
                 if (started) {
@@ -226,23 +260,36 @@ struct WindowsAudioOutput::State {
                 suspended = false;
                 continue;
             }
+            UINT64 devicePosition = 0;
+            if (SUCCEEDED(clock->GetPosition(&devicePosition, nullptr))) {
+                processed = qint64(devicePosition * 1000000 / frequency);
+            }
             if ((!started &&
                  (size == 0 || (!finishing && size < std::max<qsizetype>(frames * wave.nBlockAlign,
-                                                                         wave.nAvgBytesPerSec / 10))))) {
+                                                                         wave.nAvgBytesPerSec / 4))))) {
                 continue;
             }
             UINT32 available = frames;
+            bool underrun = false;
             if (!exclusive) {
                 UINT32 padding = 0;
                 if (FAILED(hr = client->GetCurrentPadding(&padding))) {
                     return hr;
                 }
                 available -= std::min(padding, frames);
+                underrun = started && padding == 0 && size == 0 && !finishing;
                 // Shared mode allows partial packets. Leave queued device audio
                 // playing until the decoder supplies the next packet; padding
                 // every free frame with silence would insert gaps between packets.
                 available = std::min<UINT32>(available, UINT32(size / wave.nBlockAlign));
             }
+            if (exclusive) {
+                underrun = started && size < qsizetype(frames * wave.nBlockAlign) && !finishing;
+            }
+            if (underrun && !underrunning) {
+                ++underruns;
+            }
+            underrunning = underrun;
             if (!available) {
                 continue;
             }
@@ -255,7 +302,8 @@ struct WindowsAudioOutput::State {
             const auto first = std::min(copied, queue.size() - read);
             std::memcpy(destination, queue.constData() + read, size_t(first));
             std::memcpy(destination + first, queue.constData(), size_t(copied - first));
-            std::memset(destination + copied, 0, size_t(bytes - copied));
+            std::memset(destination + copied, format.sampleFormat() == QAudioFormat::UInt8 ? 128 : 0,
+                        size_t(bytes - copied));
             read = (read + copied) % queue.size();
             size -= copied;
             const float gain = volume.load();
@@ -263,6 +311,17 @@ struct WindowsAudioOutput::State {
                 auto *samples = reinterpret_cast<float *>(destination);
                 for (qsizetype i = 0; i < copied / 4; ++i) {
                     samples[i] *= gain;
+                }
+            } else if (format.sampleFormat() == QAudioFormat::Int32) {
+                auto *samples = reinterpret_cast<qint32 *>(destination);
+                if (gain != 1.f) {
+                    for (qsizetype i = 0; i < copied / 4; ++i) {
+                        samples[i] = qint32(double(samples[i]) * gain);
+                    }
+                }
+            } else if (format.sampleFormat() == QAudioFormat::UInt8) {
+                for (qsizetype i = 0; i < copied; ++i) {
+                    destination[i] = BYTE(128 + (int(destination[i]) - 128) * gain);
                 }
             } else {
                 auto *samples = reinterpret_cast<qint16 *>(destination);
@@ -293,8 +352,9 @@ struct WindowsAudioOutput::State {
 WindowsAudioOutput::WindowsAudioOutput() : state(std::make_unique<State>()) {
 }
 WindowsAudioOutput::~WindowsAudioOutput() = default;
-bool WindowsAudioOutput::open(const QByteArray &id, bool exclusive) {
-    state->thread = std::thread([s = state.get(), id, exclusive] { s->run(id, exclusive); });
+bool WindowsAudioOutput::open(const QByteArray &id, bool exclusive, const QAudioFormat &requested) {
+    state->thread =
+        std::thread([s = state.get(), id, exclusive, requested] { s->run(id, exclusive, requested); });
     std::unique_lock lock(state->mutex);
     state->initialized.wait(lock, [this] { return state->ready; });
     return state->failure == 0 && state->format.isValid();
@@ -348,5 +408,19 @@ void WindowsAudioOutput::finish() {
 bool WindowsAudioOutput::drained() const {
     std::lock_guard lock(state->mutex);
     return state->size == 0 && std::chrono::steady_clock::now() - state->lastWrite >= state->drainDelay;
+}
+int WindowsAudioOutput::underrunCount() const {
+    return state->underruns;
+}
+qint64 WindowsAudioOutput::processedUSecs() const {
+    return state->processed;
+}
+qsizetype WindowsAudioOutput::queuedBytes() const {
+    std::lock_guard lock(state->mutex);
+    return state->size;
+}
+qsizetype WindowsAudioOutput::bytesFree() const {
+    std::lock_guard lock(state->mutex);
+    return state->queue.size() - state->size;
 }
 #endif

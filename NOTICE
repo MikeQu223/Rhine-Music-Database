@@ -6,6 +6,8 @@
 - 模型、标志与档案：原样复用本项目及其来源记录，未添加新美术。正式分发原生应用前，仍需按仓库原有署名与许可记录确认分发范围。
 
 - @kitlangton/rolling-number 0.4.1，MIT：`Qt/src/UiMotion.cpp` 保留其运动曲线算法。以下保留两个 MIT 组件的完整许可；构建包随附本文件。
+- Microsoft Clarity 3.10.0（Android SDK），MIT：仅 Android 包引入的会话分析，完整许可见下文「Microsoft Clarity（Android SDK）」。
+- Bugly SDK 4.1.9.7（`com.tencent.bugly:crashreport`），The Bugly Software License, Version 1.0：仅 Android 包引入的崩溃与 ANR 上报，只在中国大陆用户同意数据传输许可后初始化；来源与许可见下文「Bugly（Android SDK）」。
 
 ## MIT notices
 
@@ -65,11 +67,11 @@ SOFTWARE.
 
 当前使用 https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced 发布的锁定原包；网易云接口、加密、账号与请求实现不作修改。缓存和限流由应用外层处理。此前使用的 @neteaseapireborn/api 4.29.7 已替换；下方保留 Binaryify 的原始版权许可，以及 YesPlayMusic 账号请求函数的来源记录。版本和完整性记录于 MusicBridge/package-lock.json 与 MusicBridge/upstream/source.json；运行依赖与许可证随分享包保留。
 
-### QQ Music API / @yakult-green-tea/qq-music-api 3.3.1
+### QQ Music API / @yakult-green-tea/qq-music-api 3.3.5
 
 来源：https://github.com/yakult-green-tea/qq-music-api ，基于 Rain120/qq-music-api 的社区维护 fork。保持锁定包的 QQ / 微信扫码、账号和播放协议原样，由本机 Node 子进程承载。仅暴露音乐核心路由，内部 HTTP 服务仅监听随机回环端口并验证随机桥接密钥。原始认证记录通过私有进程管道交由系统凭据库保存，不进入脚本界面、文件或日志。完整 MIT LICENSE 与 ATTRIBUTION.md 随该 npm 包保留。
 
-榜单适配沿用原包 UCommon HTTP 传输及 GetAll / GetDetail 操作，使用平台返回的周期参数，修正旧 getRanks 控制器把日榜周期转为周数的问题；未修改上游包文件。
+3.3.5 起榜单改走上游 `/recommend/toplists` 与 `/recommend/toplist`，周期参数由平台回包直接透传；不再通过 UCommon 自行拼装 GetAll / GetDetail，也未修改上游包文件。
 
 ```text
 The MIT License (MIT)
@@ -103,6 +105,66 @@ THE SOFTWARE.
 ### Node.js
 
 发行包包含独立 Node.js 运行时，需随包包含对应官方 LICENSE。Node 仅负责 API 网络请求，不负责界面渲染。
+
+iOS 与 Android 不允许应用拉起独立的可执行文件（拒绝执行应用目录下的二进制），因此两个移动端包把运行时
+编进进程：iOS 为 nodejs-mobile 18.20.4 的 `NodeMobile.framework`，Android 为同一版本的 `libnode.so`，
+由 `node::Start` 在独立线程上启动，Worker 仍按会话创建与销毁。运行时源码未做修改，来源、版本与 SHA-256
+记录在 `vendor/nodejs-mobile/source.json`（iOS）与 `vendor/nodejs-mobile/android-source.json`（Android），
+许可证全文随包保留在 `MusicBridge/NODE-LICENSE`。
+
+### Microsoft Clarity（Android SDK）
+
+Android 包引入 `com.microsoft.clarity:clarity:3.10.0`（会话行为分析，MIT），由
+`Qt/android/build.gradle` 声明、`Qt/android/src/rhine/music/database/ConsentStore.java`
+在启动许可闸门放行后初始化（`RhineApplication` 只在已同意时调用它）。传递依赖：`org.jetbrains.kotlin:kotlin-stdlib`（Apache-2.0）、
+`com.google.protobuf:protobuf-javalite`（BSD-3-Clause）、
+`com.android.installreferrer:installreferrer`（Apache-2.0），许可证文件随各自 AAR 分发。
+对外发布前需按发行地区确认会话采集的用户同意流程。
+
+```text
+The MIT License
+
+Copyright (c) Microsoft Corporation.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+```
+
+## Bugly（Android SDK）
+
+Android 包引入 `com.tencent.bugly:crashreport:4.1.9.7`（Java 崩溃与 ANR 上报），由
+`Qt/android/build.gradle` 声明、`Qt/android/src/rhine/music/database/ConsentStore.java`
+在**中国大陆用户同意数据传输许可后**初始化；欧盟地区与其他地区不启动该 SDK。
+来源：Maven Central `https://repo1.maven.org/maven2/com/tencent/bugly/crashreport/`；
+项目主页：https://github.com/BuglyDevTeam/Bugly-Android-Demo；
+个人信息保护规则（应用内许可文案所引）：
+https://privacy.qq.com/document/preview/fc748b3d96224fdb825ea79e132c1a56 。
+
+POM 未声明传递依赖，AAR 的清单只带 `uses-sdk`（不带权限），proguard 规则为空；
+AAR 内含 5 个 ABI 的 `libBugly_Native.so`，打包时按 `qtTargetAbiList` 只保留目标 ABI。
+native 崩溃由 Bugly 接管（注册 SIGSEGV/SIGBUS/SIGABRT handler）；为避免两套 handler
+抢同一组信号，`Qt/src/main.cpp` 的 RHINE-SIGNAL 诊断链默认不编译
+（`RHINE_ANDROID_SIGNAL_DIAG=0`），只保留作离线排障的回退手段。
+
+许可证：**The Bugly Software License, Version 1.0**（见该版本 POM 的 `<licenses>`，
+`http://bugly.qq.com/licenses/LICENSE-1.0.txt`）。该地址目前拒绝直连，完整文本随
+官方 SDK 包分发；正式发布前需按 SDK 包内许可证文本核对署名与再分发条款，
+不要以本 NOTICE 的摘要替代许可证全文。
 
 ## 原界面与场景代码
 
@@ -140,7 +202,11 @@ SOFTWARE.
 
 ## Qt
 
-Qt 6 Core / Gui / Qml / Quick / Network 通过官方 Qt 安装包动态链接。来源：https://code.qt.io/ 。许可及再分发义务：https://www.qt.io/licensing/open-source-lgpl-obligations 。部署包随附所使用 Qt 安装目录中的许可证。Qt 的独立许可不改变本项目与其他组件的许可。
+Qt 6 Core / Gui / Qml / Quick / Network / Multimedia 通过官方 Qt 安装包动态链接。来源：https://code.qt.io/ 。许可及再分发义务：https://www.qt.io/licensing/open-source-lgpl-obligations 。部署包随附所使用 Qt 安装目录中的许可证。Qt 的独立许可不改变本项目与其他组件的许可。
+
+Android 包把同一批 Qt 共享库随 APK 的 `lib/arm64-v8a/` 分发（LGPL v3 要求的可替换形式：用户可自行替换
+这些 `.so` 后重签安装），多媒体后端使用系统 `MediaPlayer` 而非 FFmpeg；APK 内的 Qt 许可证文本由打包脚本
+从 `licenses/Qt` 复制。
 
 原场景和素材的来源路径与输入哈希保留在 licenses/source-manifest.json；YesPlayMusic 与二维码实现的固定版本及来源分别见 MusicBridge/upstream/source.json 和 vendor/qrcodegen/source.json。
 
@@ -192,3 +258,14 @@ MusicBridge/lyrics-format.cjs 移植 LyricsKit 的 LyricsCore LRC 与 LyricsServ
 TagLib 2.1.1，按 MPL-1.1 使用，源码未修改。来源：https://github.com/taglib/taglib/tree/v2.1.1 。
 utfcpp 4.0.6，BSL-1.0，源码未修改。来源：https://github.com/nemtrif/utfcpp/tree/v4.0.6 。
 固定版本完整源码包、许可证及 SHA-256 来源记录保留在 vendor/taglib 与 vendor/utfcpp，并随应用分发。
+
+## 原生崩溃诊断（Windows / macOS）
+
+Crashpad 使用 getsentry/crashpad 的 CMake 分支，锁定提交见 scripts/crash-tools.json，
+按 Apache-2.0 分发，保留 mini_chromium、mpack、zlib 的独立许可证。
+来源：https://github.com/getsentry/crashpad 。第三方源码不作修改。
+离线栈解析使用 rust-minidump/minidump-stackwalk 0.27.0（MIT），
+构建时符号生成使用 mozilla/dump_syms 2.3.9（MIT / Apache-2.0）。
+来源：https://github.com/rust-minidump/rust-minidump 和 https://github.com/mozilla/dump_syms 。
+工具发布归档及校验值锁定于 scripts/crash-tools.json，许可证随包保留在 crash-tools/licenses
+（macOS 为 Contents/Resources/CrashDiagnostics-Licenses）。

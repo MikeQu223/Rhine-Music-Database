@@ -12,12 +12,12 @@
 
 本助手未采集新的 E 后吞吐数据，下列是代码确认的重复工作，不是已证实的当前主瓶颈。仓库已有 [内存增长记录](../../../docs/vulkan-igpu/08-memory-growth.md)：记载池化后增长收敛，但这不是本轮帧率收益实测；RHI 根因的精确归属仍须分配栈／最小复现证实。旧 A/B 数据不作为新基准。实例池已在 Vulkan 默认开启；材质 arena 等须记录实际生效状态，不自动开更多实验。
 
-| 候选 | 现有证据 | 本轮改变 |
-|---|---|---|
-| 活动唱片逐部件展开 | [NativeCards.cpp:60–145](../../../Qt/src/NativeCards.cpp#L60-L145) 每部件解析 base/high/low、局部矩阵、插值后写 QJsonObject | 预解码模板＋仅对活动唱片发布类型化动态参数 |
-| 多阶段实例复制 | [batchDraws](../../../Qt/src/RhiScene.cpp#L2499)、[poolInstances](../../../Qt/src/RhiScene.cpp#L2565) 先各 draw 打包，再拼批次，再写 pool | 类型化分组＋最终范围一次打包／合并更新 |
-| 可见性／排序重复工作 | [NativeSceneUpdate.cpp:251–319](../../../Qt/src/NativeSceneUpdate.cpp#L251-L319) 每候选扫描 returning、矩阵先打包再排序重打包 | 返回格位集合、距离预计算、排序后一次输出 |
-| 全窗口 HUD 更新 | [Overlay.qml:70–73](../../../Qt/qml/Overlay.qml#L70-L73) 全屏 Hud；[Hud.cpp:23](../../../Qt/src/Hud.cpp#L23) 无区域 update | 按完整绘制组的旧新包围盒局部重绘，证实收益后再保留 |
+| 候选                 | 现有证据                                                                                                                                  | 本轮改变                                           |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| 活动唱片逐部件展开   | [NativeCards.cpp:60–145](../../../Qt/src/NativeCards.cpp#L60-L145) 每部件解析 base/high/low、局部矩阵、插值后写 QJsonObject               | 预解码模板＋仅对活动唱片发布类型化动态参数         |
+| 多阶段实例复制       | [batchDraws](../../../Qt/src/RhiScene.cpp#L2499)、[poolInstances](../../../Qt/src/RhiScene.cpp#L2565) 先各 draw 打包，再拼批次，再写 pool | 类型化分组＋最终范围一次打包／合并更新             |
+| 可见性／排序重复工作 | [NativeSceneUpdate.cpp:251–319](../../../Qt/src/NativeSceneUpdate.cpp#L251-L319) 每候选扫描 returning、矩阵先打包再排序重打包             | 返回格位集合、距离预计算、排序后一次输出           |
+| 全窗口 HUD 更新      | [Overlay.qml:70–73](../../../Qt/qml/Overlay.qml#L70-L73) 全屏 Hud；[Hud.cpp:23](../../../Qt/src/Hud.cpp#L23) 无区域 update                | 按完整绘制组的旧新包围盒局部重绘，证实收益后再保留 |
 
 顺序：**F01 → F02 → F03 → F04；F05 是独立条件项，F06 收尾。** 不把所有候选捆成一次改造；每项收益超过波动才继续推广；F01 若显示当前瓶颈已不在候选阶段，就交回证据并停止该项，不先重写再找收益。
 
@@ -96,10 +96,10 @@ Files：[NativeHud.cpp](../../../Qt/src/NativeHud.cpp#L207)、[Engine.cpp](../..
 
 新增无窗口回归测试 `Qt/tests/ScrollHotPathChecks.cpp`（目标 RhineScrollHotPathRegression，测试 qt_scroll_hotpath_regression），在 `CMakeLists.txt` 注册；纯策略依赖 Qt Core，直接调用 NativeCards 新旧 parser／packer 做矩阵差分时允许链接 Qt Gui，但不创建 QGuiApplication、不加载用户会话。共享的帧内规划／BatchKey／dirty 计算抽成单一职责小头文件，必须是实际调用的策略，不复制只供用例的公式。按 F02–F05 先写失败差分用例，再最小实现并通过。
 
-~~~sh
+```sh
 cmake --build output/qt-build -j$(nproc) --target RhineScrollHotPathRegression RhineRenderPolicyRegression RhineVulkanResourceRegression RhineSceneLifetimeRegression RhineFramePacingRegression RhineMusicTextureAdmissionRegression
 ctest --test-dir output/qt-build --output-on-failure -R '^qt_(scroll_hotpath|render_policy|vulkan_resource|scene_lifetime|frame_pacing|music_texture_admission)_regression$'
-~~~
+```
 
 - [ ] 上述为实施后的命令，本轮未执行。Core-only 测策略；差分 fixture 直接运行新旧 parser／packer。若需 Qt Gui 测实际文字，定向 offscreen 且隔离数据／网络，不启动主应用自动播放。主程序只编译验证，GUI／GPU 图像检查由用户安排。
 - [ ] 以 E 后当前默认配置作基线，新开关**逐项**比较、分别回退：同机／驱动／Qt／窗口／DPR／画质／数据和轨迹，冷热缓存分组，配对 ABBA 至少三组；记录首次／返回／停止首秒／收敛后及 10/50/100 轮，报告 P50/P95/P99、GUI／渲染 CPU、有效 GPU 样本和输入延迟代理。换绑／提交不是实际上屏。

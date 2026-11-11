@@ -1,5 +1,6 @@
 #include <QtGlobal>
 #include "PlaybackService.h"
+#include "ProviderRegistry.h"
 #include "AppStorage.h"
 #include <QCoreApplication>
 #include <QDir>
@@ -7,6 +8,11 @@
 #include <QJsonDocument>
 #include <QSaveFile>
 #include <QFileInfo>
+#include <condition_variable>
+#include <memory>
+#include <mutex>
+#include <thread>
+#include <utility>
 
 namespace {
 InterfaceLaunch interfaceLaunch(const QString &root, const QString &executable, bool offline) {
@@ -25,6 +31,91 @@ InterfaceLaunch interfaceLaunch(const QString &root, const QString &executable, 
 }
 
 /**
+ * 会话快照的后台写入器。
+ * 主线程只交出共享的 JSON 值；序列化与磁盘 I/O 全部在当前线程之外完成，
+ * 避免 QSaveFile 的建文件/写入/改名阻塞音频泵和解码回调。
+ * 只保留最新一份快照，落盘跟不上时丢弃过期状态而不是堆积任务。
+ * 析构会等待线程把已提交的快照写完，最后一次播放进度不会丢。
+ */
+class PlaybackService::SessionWriter {
+  public:
+    explicit SessionWriter(QString path) : m_path(std::move(path)) {
+        m_thread = std::thread([this] { run(); });
+    }
+
+    ~SessionWriter() {
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_stopping = true;
+        }
+        m_ready.notify_all();
+        if (m_thread.joinable()) {
+            m_thread.join();
+        }
+    }
+
+    void submit(QJsonObject state) {
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_pending = std::move(state);
+            m_hasPending = true;
+        }
+        m_ready.notify_one();
+    }
+
+    /** 等到已提交的快照确实写完；退出前调用，保证最后一次状态落盘。 */
+    void flush() {
+        std::unique_lock<std::mutex> lock(m_mutex);
+        m_idle.wait(lock, [this] { return !m_hasPending && !m_writing; });
+    }
+
+  private:
+    void run() {
+        for (;;) {
+            QJsonObject state;
+            {
+                std::unique_lock<std::mutex> lock(m_mutex);
+                m_ready.wait(lock, [this] { return m_hasPending || m_stopping; });
+                if (m_stopping && !m_hasPending) {
+                    return;
+                }
+                state = std::move(m_pending);
+                m_pending = {};
+                m_hasPending = false;
+                m_writing = true;
+            }
+            write(state);
+            {
+                std::lock_guard<std::mutex> lock(m_mutex);
+                m_writing = false;
+            }
+            m_idle.notify_all();
+        }
+    }
+
+    void write(const QJsonObject &state) {
+        const auto bytes = QJsonDocument(state).toJson(QJsonDocument::Compact);
+        if (bytes.size() > 64 * 1024 * 1024) {
+            return;
+        }
+        QSaveFile file(m_path);
+        if (file.open(QIODevice::WriteOnly) && file.write(bytes) == bytes.size()) {
+            file.commit();
+        }
+    }
+
+    QString m_path;
+    std::thread m_thread;
+    std::mutex m_mutex;
+    std::condition_variable m_ready;
+    std::condition_variable m_idle;
+    QJsonObject m_pending;
+    bool m_hasPending = false;
+    bool m_writing = false;
+    bool m_stopping = false;
+};
+
+/**
  * 建立没有渲染依赖的播放循环；
  * 自动切歌、恢复和系统媒体键始终由服务驱动。
  */
@@ -35,11 +126,18 @@ PlaybackService::PlaybackService(QString root, QString guiExecutable, bool offli
             [this] { send(m_gui, {{"event", "activate"}}); });
     connect(&m_interfaceSession, &InterfaceSession::stateChanged, this, &PlaybackService::publish);
     auto provider = m_host.preference("provider");
-    if (!QStringList{"netease", "qq", "kugou", "local", "siren"}.contains(provider)) {
-        provider = "netease";
+    if (!ProviderRegistry::instance().contains(provider)) {
+        provider = ProviderRegistry::instance().defaultId();
+    }
+    if (provider.isEmpty()) {
+        provider = ProviderRegistry::instance().fallbackId();
+    }
+    if (provider.isEmpty()) {
+        provider = "siren";
     }
     m_api.provider = provider;
     m_host.setProvider(provider);
+    m_player.refreshQualityPreference();
     connect(&m_host, &Host::playbackDiagnostic, this, [this](QString event, QJsonObject values) {
         for (auto socket : m_clients.keys()) {
             send(socket, {{"event", "diagnostic"}, {"name", event}, {"values", values}});
@@ -115,6 +213,7 @@ PlaybackService::PlaybackService(QString root, QString guiExecutable, bool offli
         publish();
     });
     m_poll.start();
+    m_sessionWriter = std::make_unique<SessionWriter>(AppStorage::dataDirectory() + "/playback-session.json");
     m_save.setInterval(5000);
     connect(&m_save, &QTimer::timeout, this, &PlaybackService::saveSession);
     m_save.start();
@@ -192,9 +291,11 @@ void PlaybackService::publish() {
     snapshot["interfaceWanted"] = interface.wanted;
     snapshot["interfacePid"] = double(interface.processId);
     snapshot["interfaceReady"] = interface.ready;
-    snapshot["credentials"] = QJsonObject{{"netease", m_host.hasCredential("netease")},
-                                          {"qq", m_host.hasCredential("qq")},
-                                          {"kugou", m_host.hasCredential("kugou")}};
+    QJsonObject credentialState;
+    for (const auto &id : ProviderRegistry::instance().ids()) {
+        credentialState.insert(id, m_host.hasCredential(id));
+    }
+    snapshot["credentials"] = credentialState;
     snapshot["diagnostics"] = m_host.playbackSnapshot();
     const auto clients = m_clients.keys();
     for (auto socket : clients) {
@@ -319,21 +420,25 @@ QJsonObject PlaybackService::hostCommand(const QString &method, const QJsonObjec
         result["value"] = m_host.saveCredential();
     } else if (method == "acceptCookies") {
         m_host.acceptCookies(arguments["json"].toString(), arguments["epoch"].toInt(),
-                             arguments["credentialKey"].toString());
+                             arguments["credentialKey"].toString(), arguments["provider"].toString());
+    } else if (method == "bumpEpoch") {
+        m_host.bumpEpoch();
+    } else if (method == "reloadPlugins") {
+        m_host.reloadPlugins();
     } else if (method == "logout") {
         m_player.stop();
         m_player.clearHistory();
         m_host.logout();
     } else if (method == "setProvider") {
         const auto provider = arguments["provider"].toString();
-        if (QStringList{"netease", "qq", "kugou", "local", "siren"}.contains(provider) &&
-            m_api.provider != provider) {
+        if (ProviderRegistry::instance().contains(provider) && m_api.provider != provider) {
             m_player.stop();
             m_host.setProvider(provider);
             m_api.provider = provider;
+            m_player.refreshQualityPreference();
         }
-    } else if (method == "setEdition") {
-        m_host.setKugouEdition(arguments["edition"].toString());
+    } else if (method == "setProviderVariant" || method == "setEdition") {
+        m_host.setProviderVariant(arguments["variant"].toString(arguments["edition"].toString()));
     } else if (method == "mediaControl") {
         m_host.mediaControl(arguments["action"].toString(), arguments["value"].toDouble());
     } else if (method == "mediaLoad") {
@@ -444,12 +549,8 @@ void PlaybackService::saveSession() {
     if (m_host.offline) {
         return;
     }
-    QSaveFile file(AppStorage::dataDirectory() + "/playback-session.json");
-    const auto bytes = QJsonDocument(m_player.sessionState()).toJson(QJsonDocument::Compact);
-    if (bytes.size() <= 64 * 1024 * 1024 && file.open(QIODevice::WriteOnly) &&
-        file.write(bytes) == bytes.size()) {
-        file.commit();
-    }
+    // 主线程只读取播放状态并交出快照；序列化与写盘由 SessionWriter 完成。
+    m_sessionWriter->submit(m_player.sessionState());
 }
 
 /** 显式退出才停止播放；普通窗口关闭或 IPC 断开不会进入此路径。 */
@@ -461,7 +562,9 @@ void PlaybackService::shutdown() {
     m_poll.stop();
     m_save.stop();
     m_interfaceSession.stop();
+    // 先提交最终状态再等后台写完，退出时不会丢掉最后一次进度。
     saveSession();
+    m_sessionWriter->flush();
     for (auto socket : m_clients.keys()) {
         send(socket, {{"event", "quit"}});
         if (socket->state() == QLocalSocket::ConnectedState && socket->bytesToWrite() > 0) {

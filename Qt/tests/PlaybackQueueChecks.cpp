@@ -10,7 +10,7 @@
  */
 namespace {
 QJsonObject song(const QString &id) {
-    return QJsonObject{{"kind", "song"}, {"provider", "netease"}, {"id", id}, {"title", "测试 " + id}};
+    return QJsonObject{{"kind", "song"}, {"provider", "alpha"}, {"id", id}, {"title", "测试 " + id}};
 }
 } // namespace
 

@@ -11,7 +11,9 @@
 #include "fg/FgFrameTap.h"
 #endif
 #include <QElapsedTimer>
+#include <QSet>
 #include <QPointF>
+#include <QRectF>
 #include <QVariantMap>
 #include <QUrl>
 #include <QQuickWindow>
@@ -44,9 +46,31 @@ class Engine : public QObject {
         // m_coverImage 在 GUI 线程的 update() 里同步，QImage 的隐式共享保证拷贝安全。
         return m_coverImage;
     }
-    QJsonArray commands() const {
+    /// 只在 GUI 线程、且在本帧绘制期间读取；`m_commands` 要到下一帧 `update()` 才会换，
+    /// 所以返回引用是安全的。按值返回每帧要多付几次原子引用计数往返。
+    const QJsonArray &commands() const {
         return m_commands;
     }
+    /// Android HUD 局部重绘：最近一次命令流变化对应的舞台矩形（1080 高度坐标系）。
+    QRectF hudDirtyStage() const {
+        return m_hudDirtyStage;
+    }
+    /// 命令流结构性变化（换页、换模式、出现变换命令）时为真，调用方必须整块重画。
+    bool hudDirtyFull() const {
+        return m_hudDirtyFull;
+    }
+#if defined(Q_OS_ANDROID)
+    /// 渲染线程在 Hud::updatePaintNode() 里确认「这一份 HUD 命令流已经画进纹理」。
+    /// 只做一次原子交换，不触碰 GUI 线程的任何状态。返回交换前的值，方便调用方
+    /// 只在真正清掉待呈现位时打一行诊断。
+    bool noteHudFramePainted() {
+        return m_hudFramePending.exchange(false, std::memory_order_relaxed);
+    }
+    /// 是否还有已发布但没被场景图消费的 HUD 帧。
+    bool hudFramePending() const {
+        return m_hudFramePending.load(std::memory_order_relaxed);
+    }
+#endif
     Glyphs *glyphs() {
         return &m_glyphs;
     }
@@ -58,6 +82,7 @@ class Engine : public QObject {
         return host.root;
     }
     Q_INVOKABLE void importLocal(QList<QUrl> urls);
+    Q_INVOKABLE void importPluginFolder(QUrl url);
     Q_INVOKABLE void resize(double width, double height);
     Q_INVOKABLE void action(QString action);
     Q_INVOKABLE void submitForm(QString account, QString captcha);
@@ -222,12 +247,17 @@ class Engine : public QObject {
     void clearCredentials();
     void performanceRequested();
     void localImportRequested(bool folder);
+    void pluginImportRequested();
     void mvRequested();
 
   protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
 
   private:
+    /// 按真实墙钟刷新详情淡入宽限期；tick() 开头与 step() 更新 m_frame 后都要调用。
+    void updateDetailGrace(qint64 nowMs);
+    /// 发布一份新的 HUD 命令流：置位「待呈现」并通知 Hud 标脏。
+    void publishHudFrame();
     void notifySceneRenderers(bool visualChanged);
     void gamepadPressed(const QString &button);
     Gamepad m_gamepad;
@@ -313,6 +343,10 @@ class Engine : public QObject {
     // 生命周期内不变，每帧重新 getenv 只会给渲染线程添无谓的字符串分配。
     static quint64 resourceBudgetBytes();
     MusicTextures m_musicTextures;
+    // 归档页同时画多张唱片，非当前那些的封面图要单独向 Host 要（每个条目只在"成为当前"
+    // 的那一帧取过一次图，切歌瞬间往往还没解码完）。这里记已经发起过的 key，避免每帧
+    // 重复 loadCover 把同一张图反复排队；失败也留在集合里，不重试。
+    QSet<QString> m_coverRequests;
     // B01：冷纹理准入。判定在纯逻辑类里（可离线测），定时器只负责到点喊一声。
     // 计时基准是构造时启动的单调时钟，与帧号无关——引擎休眠不出帧时定时器照样到期。
     RhineRender::MusicTextureAdmission m_admission = RhineRender::MusicTextureAdmission::fromEnvironment();
@@ -369,6 +403,31 @@ class Engine : public QObject {
     QVariantList m_hits;
     QJsonObject m_frame, m_current;
     QJsonArray m_commands;
+    /// 见 render/HudDirtyRect.h：Hud 只重画这块，纹理也只上传这块。
+    QRectF m_hudDirtyStage;
+    bool m_hudDirtyFull = true;
+#if defined(Q_OS_ANDROID)
+    /// HUD 命令流已发布、但渲染线程还没调过 Hud::updatePaintNode()。这段时间内
+    /// 引擎节拍必须让出 GUI 事件循环：0/1ms 的 QTimer 连轴转会把 Qt Quick 的
+    /// render sync 饿死，QQuickPaintedItem 标了脏却永远等不到 updatePaintNode /
+    /// commitTextureOperations，HUD 纹理就停在上一页（右侧详情卡片整块空白、
+    /// 按钮却在）。开唱片旋转能「治好」，正因为 rotationOnly 把节拍放到 33ms。
+    std::atomic<bool> m_hudFramePending{false};
+    qint64 m_hudFramePendingSinceMs = 0;
+#endif
+    /// 页面切换 / 详情过渡期间 HUD 必须连续刷新：pacing 的 Skip、引擎休眠与
+    /// step() 的 reuse 都会把这段动画整段吃掉（表现为「进详情时 HUD 不显示」）。
+    /// 开唱片旋转能绕过，是因为 m_discRotating 让 workPending 恒真；这里把过渡本身
+    /// 也纳入判据，不依赖那个设置。
+    QString m_hudPageMode;
+    bool m_hudPageViewer = false;
+    double m_hudPageDetail = -1;
+    qint64 m_hudTransitionUntilMs = 0;
+    /// 进入详情的真实墙钟时刻（clock.elapsed，不是会被休眠截断的 m_animationTime）。
+    /// 必须在 tick() 层判定：step() 一旦被 pacing Skip / 休眠跳过，写在 step() 里的
+    /// 过渡判据就永远不会执行，形成 scene.changed() 与 reuse 的循环依赖死锁。
+    qint64 m_detailEnterWallMs = -1;
+    bool m_detailGrace = false;
     QPointer<QWindow> m_window;
     QWindow::Visibility m_windowedVisibility = QWindow::Windowed;
     QString m_loginMethod;

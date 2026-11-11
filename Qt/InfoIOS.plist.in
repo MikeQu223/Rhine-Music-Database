@@ -34,13 +34,13 @@
         </dict>
         <key>LSRequiresIPhoneOS</key><true/>
         <key>UIRequiresFullScreen</key><true/>
+        <key>CADisableMinimumFrameDurationOnPhone</key><true/>
         <key>MinimumOSVersion</key><string>18.0</string>
         <key>UILaunchScreen</key><dict/>
         <key>UIBackgroundModes</key><array><string>audio</string></array>
         <key>UISupportedInterfaceOrientations</key>
         <array>
-            <string>UIInterfaceOrientationLandscapeLeft</string>
-            <string>UIInterfaceOrientationLandscapeRight</string>
+            <string>UIInterfaceOrientationPortrait</string>
         </array>
         <key>UISupportedInterfaceOrientations~ipad</key>
         <array>

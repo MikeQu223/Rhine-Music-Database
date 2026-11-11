@@ -70,6 +70,11 @@ QString AppUpdater::commitTitle() {
     return QStringLiteral(RHINE_COMMIT_TITLE);
 }
 QString AppUpdater::platformAsset() {
+#ifdef Q_OS_ANDROID
+    // Android 由应用商店或侧载更新，面板内不做自更新；返回空让检查逻辑跳过。
+    // 单独放在最前而不是塞进下面的链里：其余分支都要按架构挑产物，这里不需要。
+    return {};
+#else
     const auto arch = QSysInfo::buildCpuArchitecture();
 #ifdef Q_OS_IOS
     return QStringLiteral("ios-unsigned.ipa");
@@ -79,6 +84,7 @@ QString AppUpdater::platformAsset() {
     return arch == "x86_64" ? "Windows-x64-Setup.exe" : QString();
 #else
     return arch == "x86_64" ? "Linux-x86_64.AppImage" : QString();
+#endif
 #endif
 }
 bool AppUpdater::isNewer(const QString &candidate, const QString &current) {

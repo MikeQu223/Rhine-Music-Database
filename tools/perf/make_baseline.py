@@ -16,18 +16,24 @@
 
 **先备份原始文件**，测完要还原（这个脚本不改原文件，但基准测试期间程序会覆盖它）。
 """
+
 import json
 import os
 import sys
 
 DEFAULT_SESSION = os.path.expanduser(
-    "~/.local/share/RhineMusicDatabase/rhine.music.database/session.json")
+    "~/.local/share/RhineMusicDatabase/rhine.music.database/session.json"
+)
 
 
 def main():
     src = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_SESSION
     out_dir = os.environ.get("BENCH_OUT", "/tmp/mb")
-    dst = sys.argv[2] if len(sys.argv) > 2 else os.path.join(out_dir, "session.baseline.json")
+    dst = (
+        sys.argv[2]
+        if len(sys.argv) > 2
+        else os.path.join(out_dir, "session.baseline.json")
+    )
 
     with open(src, encoding="utf-8") as handle:
         data = json.load(handle)

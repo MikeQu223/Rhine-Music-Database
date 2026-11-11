@@ -1,6 +1,15 @@
 #include <QtGlobal>
+
+// Android 的 native 崩溃捕获已交给 Bugly（ConsentStore 的 BUGLY_NATIVE_MONITOR）。
+// 下面这套 RHINE-SIGNAL 诊断链也会接管 SIGSEGV/SIGBUS/SIGABRT，两套 handler 不能并存；
+// 默认整体不编译。需要在不装 Bugly 的环境里抓崩溃现场时改成 1，并同时把
+// BUGLY_NATIVE_MONITOR 改回 false。
+#define RHINE_ANDROID_SIGNAL_DIAG 0
+
 #include "AppIdentity.h"
+#include "MobileTarget.h"
 #include "AppStorage.h"
+#include "CrashDiagnostics.h"
 #include "Engine.h"
 #include "MvController.h"
 #include <QQmlComponent>
@@ -8,17 +17,459 @@
 #if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
 #include "fg/FgConfig.h"
 #endif
+#ifdef Q_OS_ANDROID
+// 注意：当前默认禁用（RHINE_ANDROID_SIGNAL_DIAG=0），native 崩溃由 Bugly 接管；
+// 下面这套链只保留作离线排障的回退手段。include 保持不变，供文件后面的代码使用。
+//
+// 段错误诊断链 v2：真机后台死亡只留下 ApplicationExitInfo 的 SIGNALED/11，
+// "Fatal signal" 与 tombstone 全部缺席。v1 的教训是只写 stderr——Android 应用
+// 进程的 fd 2 通向 /dev/null（Qt 转发进 logcat 的是 qWarning 这类日志 API，
+// 不是原生 fd 2），输出全部丢失。v2 = 两条确定性通道 + 两个静默死亡形态的封堵：
+//   通道 1（logd）：__android_log_write 直接进 logcat；liblog 的写路径不做
+//     内存分配，崩溃处理器内可用。
+//   通道 2（文件）：QGuiApplication 构造后预打开 AppDataLocation/rhine-signal.log
+//     （O_APPEND），handler 只 write 已持有的句柄；下次启动回读转发后清空——
+//     logd 缓冲被无关刷屏覆盖时仍能拿回现场。
+//   封堵 A：启动时在主线程 SIG_UNBLOCK 六个致命信号，此后创建的线程继承未屏蔽
+//     掩码。同步 fault 撞上被屏蔽的信号时内核按默认处置直接强杀，任何 handler
+//     都不运行——正是"无 Fatal signal、无 tombstone"的静默形态。
+//   封堵 B：看门狗线程每 2 秒扫 /proc/self/task，点名任何屏蔽了致命信号的线程
+//     （Node/V8/驱动若长期屏蔽 SIGSEGV，这里会直接暴露）。
+// handler 本体 write-first：先落通道再收尾。收尾不再内联调用旧处理器（那会跳过
+// 正常的信号分发语义，链路一断就是静默死亡），而是恢复旧处置后 tgkill 重投递：
+// libc 的 debuggerd 照常打 "Fatal signal" 并产出 tombstone，没有旧处置就按默认
+// 方式自杀，绝不能返回出错指令。/proc/self/maps 现场扫描把 pc/lr/sp 所在映射
+// 连同文件内偏移一并写出，拿到输出即可用 llvm-symbolizer 对未 strip 的 .so
+// 定位到函数。
+#include <QDebug>
+#include <QStandardPaths>
+#include <QString>
+#include <android/log.h>
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <dirent.h>
+#include <fcntl.h>
+#include <pthread.h>
+#include <signal.h>
+#include <thread>
+#include <unistd.h>
+#include <ucontext.h>
+
+// Bugly 接管 native 时整段不编译；include 留在外面给文件后面的代码用。
+#if RHINE_ANDROID_SIGNAL_DIAG
+namespace {
+
+struct RhineSignalPrevious {
+    struct sigaction action;
+    bool valid;
+};
+RhineSignalPrevious rhineSignalPrevious[3]; // SIGSEGV / SIGBUS / SIGABRT 的旧处置
+int rhineSignalLogFd = -1; // 预打开的现场日志；-1 表示 QGuiApplication 尚未就绪
+
+// ---- 异步信号安全的小工具：手写拼装，绕开一切可能分配内存的路径。
+
+struct RhineSignalEmitter {
+    char *cursor;
+    const char *end;
+    void text(const char *value, size_t length) {
+        if (static_cast<size_t>(end - cursor) > length) {
+            memcpy(cursor, value, length);
+            cursor += length;
+        }
+    }
+    void text(const char *value) { text(value, strlen(value)); }
+    void hex(unsigned long value) { // 递减式十六进制
+        char digits[16];
+        int length = 0;
+        do {
+            digits[length++] = static_cast<char>("0123456789abcdef"[value & 0xF]);
+            value >>= 4;
+        } while (value != 0);
+        while (length > 0 && cursor < end) {
+            *cursor++ = digits[--length];
+        }
+    }
+    void dec(unsigned long value) {
+        char digits[20];
+        int length = 0;
+        do {
+            digits[length++] = static_cast<char>('0' + value % 10);
+            value /= 10;
+        } while (value != 0);
+        while (length > 0 && cursor < end) {
+            *cursor++ = digits[--length];
+        }
+    }
+};
+
+// 三条通道一起发：logd、预打开文件、stderr（调试态 attach 时可见）。
+void rhineSignalEmitLine(const char *line, size_t length) {
+    __android_log_write(ANDROID_LOG_FATAL, "RHINE-SIGNAL", line);
+    if (rhineSignalLogFd >= 0) {
+        ssize_t toFile = ::write(rhineSignalLogFd, line, length);
+        toFile = ::write(rhineSignalLogFd, "\n", 1);
+        (void)toFile;
+    }
+    ssize_t toStderr = ::write(2, line, length);
+    toStderr = ::write(2, "\n", 1);
+    (void)toStderr;
+}
+
+void rhineSignalThreadName(int tid, char *out, size_t capacity) {
+    char path[64];
+    snprintf(path, sizeof(path), "/proc/self/task/%d/comm", tid);
+    out[0] = '\0';
+    const int fd = ::open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
+        return;
+    }
+    const ssize_t got = ::read(fd, out, capacity - 1);
+    ::close(fd);
+    if (got <= 0) {
+        out[0] = '\0';
+        return;
+    }
+    size_t length = static_cast<size_t>(got);
+    while (length > 0 && (out[length - 1] == '\n' || out[length - 1] == '\r')) {
+        --length;
+    }
+    out[length] = '\0';
+}
+
+// maps 行首三个十六进制字段：起址-止址 权限 偏移，第三个就是文件内偏移。
+bool rhineParseMapsHead(const char *&cursor, unsigned long &start, unsigned long &end,
+                        unsigned long &offset) {
+    const auto parse = [&cursor](unsigned long &value) {
+        while (*cursor == ' ') {
+            ++cursor;
+        }
+        value = 0;
+        int digits = 0;
+        while (*cursor && *cursor != ' ' && *cursor != '-') {
+            const char c = *cursor;
+            unsigned digit;
+            if (c >= '0' && c <= '9') {
+                digit = static_cast<unsigned>(c - '0');
+            } else if (c >= 'a' && c <= 'f') {
+                digit = static_cast<unsigned>(c - 'a' + 10);
+            } else if (c >= 'A' && c <= 'F') {
+                digit = static_cast<unsigned>(c - 'A' + 10);
+            } else {
+                return false;
+            }
+            value = value * 16 + digit;
+            ++cursor;
+            ++digits;
+        }
+        return digits > 0;
+    };
+    if (!parse(start) || *cursor != '-') {
+        return false;
+    }
+    ++cursor;
+    return parse(end) && parse(offset);
+}
+
+// 在 /proc/self/maps 里找包含 address 的映射：文件内偏移（llvm-symbolizer 的输入）
+// 放在行首保证不被截断，映射行原样跟随（路径与权限都留着）。匿名映射也照发——
+// JIT 代码区与线程栈的边界同样是信息。
+void rhineSignalEmitMapping(unsigned long address, const char *what) {
+    char line[512];
+    char out[768];
+    size_t filled = 0;
+    bool matched = false;
+    const int fd = ::open("/proc/self/maps", O_RDONLY | O_CLOEXEC);
+    if (fd >= 0) {
+        char chunk[1024];
+        ssize_t got;
+        while (!matched && (got = ::read(fd, chunk, sizeof(chunk))) > 0) {
+            for (ssize_t index = 0; index < got && !matched; ++index) {
+                const char c = chunk[index];
+                if (c != '\n') {
+                    if (filled + 1 < sizeof(line)) {
+                        line[filled++] = c;
+                    }
+                    continue;
+                }
+                line[filled] = '\0';
+                filled = 0;
+                const char *cursor = line;
+                unsigned long start = 0, end = 0, offset = 0;
+                if (!rhineParseMapsHead(cursor, start, end, offset) || address < start ||
+                    address >= end) {
+                    continue;
+                }
+                matched = true;
+                RhineSignalEmitter emitter{out, out + sizeof(out) - 1};
+                emitter.text("RHINE-SIGNAL map-");
+                emitter.text(what);
+                emitter.text("+0x");
+                emitter.hex(address - start + offset);
+                emitter.text(" | ");
+                emitter.text(line);
+                *emitter.cursor = '\0';
+                rhineSignalEmitLine(out, static_cast<size_t>(emitter.cursor - out));
+            }
+        }
+        ::close(fd);
+    }
+    if (!matched) {
+        RhineSignalEmitter emitter{out, out + sizeof(out) - 1};
+        emitter.text("RHINE-SIGNAL map-");
+        emitter.text(what);
+        emitter.text(": 0x");
+        emitter.hex(address);
+        emitter.text(" (no mapping)");
+        *emitter.cursor = '\0';
+        rhineSignalEmitLine(out, static_cast<size_t>(emitter.cursor - out));
+    }
+}
+
+void rhineSignalDiag(int signal, siginfo_t *info, void *context) {
+    const int tid = static_cast<int>(gettid());
+    char name[32];
+    rhineSignalThreadName(tid, name, sizeof(name));
+
+    unsigned long pc = 0, lr = 0, sp = 0;
+#if defined(__aarch64__)
+    const auto *machine = &static_cast<ucontext_t *>(context)->uc_mcontext;
+    pc = static_cast<unsigned long>(machine->pc);
+    lr = static_cast<unsigned long>(machine->regs[30]);
+    sp = static_cast<unsigned long>(machine->sp);
+#endif
+
+    char line[384];
+    RhineSignalEmitter emitter{line, line + sizeof(line) - 1};
+    emitter.text("RHINE-SIGNAL sig=");
+    emitter.dec(static_cast<unsigned long>(signal));
+    emitter.text(" code=");
+    emitter.dec(info ? static_cast<unsigned long>(info->si_code) : 0UL);
+    emitter.text(" addr=0x");
+    emitter.hex(info ? reinterpret_cast<unsigned long>(info->si_addr) : 0UL);
+    emitter.text(" pc=0x");
+    emitter.hex(pc);
+    emitter.text(" lr=0x");
+    emitter.hex(lr);
+    emitter.text(" sp=0x");
+    emitter.hex(sp);
+    emitter.text(" tid=");
+    emitter.dec(static_cast<unsigned long>(tid));
+    emitter.text(" thread=");
+    emitter.text(name);
+    *emitter.cursor = '\0';
+    rhineSignalEmitLine(line, static_cast<size_t>(emitter.cursor - line));
+
+    // 栈溢出形态：出错地址落在 sp 下方 128KB 内，fault 大概率就是栈撞守卫页，
+    // 此时 pc 已不可信，栈区间本身才是重点。
+    const unsigned long address = info ? reinterpret_cast<unsigned long>(info->si_addr) : 0UL;
+    if (sp != 0 && address < sp && sp - address < (1UL << 17)) {
+        rhineSignalEmitLine("RHINE-SIGNAL stack-overflow suspected: addr below sp",
+                            sizeof("RHINE-SIGNAL stack-overflow suspected: addr below sp") - 1);
+    }
+
+    rhineSignalEmitMapping(pc, "pc");
+    if (lr != pc && lr != 0) {
+        rhineSignalEmitMapping(lr, "lr");
+    }
+    rhineSignalEmitMapping(sp, "sp");
+
+    // 收尾：恢复旧处置后由真正的信号分发重投递——libc 的 debuggerd 接手时照常
+    // 打 "Fatal signal" 并产出 tombstone；没有可用旧处置（含 SIG_IGN，同步 fault
+    // 撞上它只会无限重故障）就按默认方式自杀。末尾的死循环只为不返回出错指令。
+    const auto slot = signal == SIGSEGV ? 0 : signal == SIGBUS ? 1 : 2;
+    struct sigaction restore;
+    bool usable = (signal == SIGSEGV || signal == SIGBUS || signal == SIGABRT) &&
+                  rhineSignalPrevious[slot].valid;
+    if (usable) {
+        restore = rhineSignalPrevious[slot].action;
+        if (restore.sa_handler == SIG_IGN) {
+            usable = false;
+        }
+    }
+    if (!usable) {
+        memset(&restore, 0, sizeof(restore));
+        restore.sa_handler = SIG_DFL;
+    }
+    sigaction(signal, &restore, nullptr);
+    tgkill(getpid(), tid, signal);
+    for (;;) {
+        pause();
+    }
+}
+
+// ---- SIGBLK 看门狗：致命同步信号 ILL(4) TRAP(5) ABRT(6) BUS(7) FPE(8) SEGV(11)
+// 在掩码里对应位 3~10（信号 n 占位 n-1）。只报增量，避免刷屏。
+void rhineScanThreadMasks(bool snapshot) {
+    static unsigned long reported[64];
+    static int reportedCount = 0;
+    DIR *tasks = opendir("/proc/self/task");
+    if (!tasks) {
+        return;
+    }
+    char line[256];
+    struct dirent *entry;
+    while ((entry = readdir(tasks)) != nullptr) {
+        const unsigned long tid = strtoul(entry->d_name, nullptr, 10);
+        if (tid == 0) {
+            continue;
+        }
+        char path[64];
+        snprintf(path, sizeof(path), "/proc/self/task/%lu/status", tid);
+        FILE *status = fopen(path, "r");
+        if (!status) {
+            continue;
+        }
+        char name[64] = "?";
+        unsigned long blockedMask = 0;
+        while (fgets(line, sizeof(line), status)) {
+            if (strncmp(line, "Name:", 5) == 0) {
+                const char *cursor = line + 5;
+                while (*cursor == ' ' || *cursor == '\t') {
+                    ++cursor;
+                }
+                size_t length = 0;
+                while (cursor[length] && cursor[length] != '\n' && length < sizeof(name) - 1) {
+                    name[length] = cursor[length];
+                    ++length;
+                }
+                name[length] = '\0';
+            } else if (strncmp(line, "SigBlk:", 7) == 0) {
+                blockedMask = strtoul(line + 7, nullptr, 16);
+            }
+        }
+        fclose(status);
+        const unsigned long fatalBits = (1UL << 3) | (1UL << 4) | (1UL << 5) | (1UL << 6) |
+                                        (1UL << 7) | (1UL << 10);
+        const unsigned long blocked = blockedMask & fatalBits;
+        if (blocked == 0) {
+            continue;
+        }
+        bool isNew = true;
+        for (int index = 0; index < reportedCount; ++index) {
+            if (reported[index] == tid) {
+                isNew = false;
+                break;
+            }
+        }
+        if (!isNew && !snapshot) {
+            continue;
+        }
+        char message[192];
+        snprintf(message, sizeof(message), "RHINE-SIGBLK tid=%lu thread=%s fatal=0x%lx", tid, name,
+                 blocked);
+        __android_log_write(ANDROID_LOG_WARN, "RHINE-SIGNAL", message);
+        if (isNew && reportedCount < 64) {
+            reported[reportedCount++] = tid;
+        }
+    }
+    closedir(tasks);
+}
+
+void rhineStartSigmaskWatchdog() {
+    std::thread([] {
+        __android_log_write(ANDROID_LOG_INFO, "RHINE-SIGNAL", "RHINE-SIGBLK watchdog started");
+        rhineScanThreadMasks(true);
+        for (;;) {
+            std::this_thread::sleep_for(std::chrono::seconds(2));
+            rhineScanThreadMasks(false);
+        }
+    }).detach();
+}
+
+void rhineInstallSignalDiag() {
+    // 封堵 A：主线程解锁致命同步信号，此后创建的线程继承未屏蔽掩码。
+    sigset_t fatal;
+    sigemptyset(&fatal);
+    sigaddset(&fatal, SIGSEGV);
+    sigaddset(&fatal, SIGBUS);
+    sigaddset(&fatal, SIGABRT);
+    sigaddset(&fatal, SIGILL);
+    sigaddset(&fatal, SIGTRAP);
+    sigaddset(&fatal, SIGFPE);
+    pthread_sigmask(SIG_UNBLOCK, &fatal, nullptr);
+
+    // 备用信号栈：主线程栈溢出时 handler 仍有立足之地。子线程的 altstack 无法
+    // 代管——栈溢出若发生在库线程上，只能靠看门狗与面包屑旁证。
+    static char altStack[65536] __attribute__((aligned(16)));
+    stack_t alternate;
+    memset(&alternate, 0, sizeof(alternate));
+    alternate.ss_sp = altStack;
+    alternate.ss_size = sizeof(altStack);
+    alternate.ss_flags = 0;
+    sigaltstack(&alternate, nullptr);
+
+    struct sigaction handler;
+    memset(&handler, 0, sizeof(handler));
+    handler.sa_sigaction = rhineSignalDiag;
+    handler.sa_flags = SA_SIGINFO | SA_ONSTACK | SA_NODEFER;
+    const int watchedSignals[] = {SIGSEGV, SIGBUS, SIGABRT};
+    for (int index = 0; index < 3; ++index) {
+        auto &previous = rhineSignalPrevious[index];
+        previous.valid = sigaction(watchedSignals[index], &handler, &previous.action) == 0;
+    }
+    rhineStartSigmaskWatchdog();
+}
+
+// QGuiApplication 构造后调用：定位现场日志文件（AppDataLocation 依赖 JNI 上下文，
+// 此刻才可用），并回读上次崩溃的记录转发到 logcat，然后清空等待新现场。
+void rhineOpenSignalDiagFile() {
+    const QString path = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+                         QStringLiteral("/rhine-signal.log");
+    const int fd = ::open(path.toUtf8().constData(), O_RDWR | O_CREAT | O_APPEND | O_CLOEXEC, 0600);
+    if (fd < 0) {
+        qWarning().noquote() << "RHINE-SIGNAL: 现场日志文件不可用：" << path;
+        return;
+    }
+    char chunk[1024];
+    char line[640];
+    size_t filled = 0;
+    const auto flushLine = [&line, &filled] {
+        if (filled == 0) {
+            return;
+        }
+        line[filled] = '\0';
+        filled = 0;
+        __android_log_write(ANDROID_LOG_FATAL, "RHINE-SIGNAL-PREV", line);
+        qWarning().noquote() << "RHINE-SIGNAL-PREV:" << line;
+    };
+    if (::lseek(fd, 0, SEEK_END) > 0) {
+        ::lseek(fd, 0, SEEK_SET);
+        qWarning().noquote() << "RHINE-SIGNAL: 发现上次运行的崩溃现场，转发到 logcat";
+        ssize_t got;
+        while ((got = ::read(fd, chunk, sizeof(chunk))) > 0) {
+            for (ssize_t index = 0; index < got; ++index) {
+                if (chunk[index] == '\n' || filled + 1 >= sizeof(line)) {
+                    flushLine();
+                    if (chunk[index] != '\n') {
+                        line[filled++] = chunk[index];
+                    }
+                } else {
+                    line[filled++] = chunk[index];
+                }
+            }
+        }
+        flushLine();
+        ::ftruncate(fd, 0);
+    }
+    rhineSignalLogFd = fd;
+}
+} // namespace
+#endif // RHINE_ANDROID_SIGNAL_DIAG
+#endif // Q_OS_ANDROID
+#include "render/AndroidRenderPolicy.h"
 #include "render/PresentationShell.h"
 #include "render/RenderPolicy.h"
 #include "FrameProfiler.h"
 #include "GraphicsBackend.h"
 #include "Hud.h"
+#if RHINE_LINUX_DESKTOP
 #include "LinuxGraphics.h"
-#ifdef Q_OS_LINUX
 #include "LinuxX11.h"
 #endif
 #include "RhiScene.h"
-#ifndef Q_OS_IOS
+#if !RHINE_MOBILE
 #include "PlaybackConnection.h"
 #endif
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
@@ -29,7 +480,12 @@
 #include "InterfaceWindowMac.h"
 #endif
 #ifdef Q_OS_IOS
+#include "IOSDisplayLink.h"
 #include "IOSWindow.h"
+#endif
+#ifdef Q_OS_ANDROID
+#include "AndroidAssets.h"
+#include "AndroidWindow.h"
 #endif
 #include <QDir>
 #include <QFileInfo>
@@ -52,16 +508,16 @@
 #include <QTimer>
 #include <cstdio>
 #include <cstring>
-#ifndef Q_OS_IOS
 #include <memory>
-#endif
 /* Qt 的 Vulkan 类型只在「Qt 带 Vulkan 特性」且「应用侧能看到 vulkan.h」时声明：
  *   qvulkaninstance.h:  #if QT_CONFIG(vulkan) || defined(Q_QDOC)
  *                      #if __has_include(<vulkan/vulkan.h>) || defined(Q_QDOC)
  *   qrhi_platform.h:    #if (QT_CONFIG(vulkan) && __has_include(<vulkan/vulkan.h>)) || defined(Q_QDOC)
  * 只判 QT_CONFIG(vulkan) 会在装了 Qt 但没装 Vulkan SDK 的机器上
  * （如 Windows runner：Qt 自带 Vulkan 特性、系统无 vulkan.h）编译出使用未声明类型的代码，
- * 表现为 QVulkanInstance 不完整类型与 VK_SUCCESS 未定义。守卫必须同时覆盖两半。 */
+ * 表现为 QVulkanInstance 不完整类型与 VK_SUCCESS 未定义。守卫必须同时覆盖两半。
+ * Android 与桌面同路径：NDK 自带 vulkan.h，自编 Qt 的 QT_CONFIG(vulkan)=1，
+ * .qsb 里本来就含 SPIR-V（GLSL 130,150,300es 只是附加的翻译产物），Vulkan 可直接消费。 */
 #if QT_CONFIG(vulkan) && __has_include(<vulkan/vulkan.h>) && !defined(Q_OS_DARWIN)
 #include <QVulkanFunctions>
 #include <QVulkanInstance>
@@ -70,7 +526,7 @@
 #define RHINE_HAVE_VULKAN_TYPES 0
 #endif
 int makeIcon(const QString &directory);
-#ifndef Q_OS_IOS
+#if !RHINE_MOBILE
 bool runPlaybackServiceChecks(const QString &resources, const QString &executable, const QString &gui);
 bool runWindowTransitionChecks();
 #endif
@@ -90,30 +546,28 @@ static bool vulkanDeviceAvailable() {
     QVulkanInstance probe;
     probe.setApiVersion(QVersionNumber(1, 0));
     if (!probe.create()) {
-#ifdef Q_OS_LINUX
+#if RHINE_LINUX_DESKTOP
         qWarning() << "Vulkan: 无法创建探测实例（loader 缺失或驱动不可用）";
 #endif
         return false;
     }
     // QVulkanInstance 不公开设备列表，直接按 Vulkan API 枚举，避免依赖 QVulkanWindow。
     quint32 devices = 0;
-#ifdef Q_OS_LINUX
     const auto result = probe.functions()->vkEnumeratePhysicalDevices(probe.vkInstance(), &devices, nullptr);
     if (result != VK_SUCCESS) {
+#if RHINE_LINUX_DESKTOP
         // 只报"Vulkan 不可用"会把排障推回用户：这里必须区分驱动/loader 报错与根本没有设备。
         qWarning() << "Vulkan: vkEnumeratePhysicalDevices 失败，VkResult" << int(result);
+#endif
         return false;
     }
     if (devices == 0) {
+#if RHINE_LINUX_DESKTOP
         qWarning() << "Vulkan: 物理设备数为 0（缺 /dev/dri、ICD 未安装或驱动被禁用）";
+#endif
         return false;
     }
     return true;
-#else
-    return probe.functions()->vkEnumeratePhysicalDevices(probe.vkInstance(), &devices, nullptr) ==
-               VK_SUCCESS &&
-           devices > 0;
-#endif
 #else
     return false;
 #endif
@@ -129,7 +583,7 @@ static bool vulkanDeviceAvailable() {
 static QSettings graphicsSettings() {
     return AppStorage::settings();
 }
-#ifdef Q_OS_LINUX
+#if RHINE_LINUX_DESKTOP
 /**
  * 当前显示服务器上 Vulkan 能不能呈现。设备枚举判不出这件事：Mesa 在创建交换链时才查 DRI3，
  * 缺了就 abort 而不是返回错误（详见 LinuxX11.h）。结果只探一次，日志同样只打一次。
@@ -153,9 +607,10 @@ static bool vulkanPresentationAvailable() {
  *  仅在非 macOS 下编译：macOS 只提供 Metal，本函数的两个调用点都在 #else 分支里，
  *  而 vulkanDeviceAvailable() 同样只在非 macOS 下定义。 */
 #if !defined(Q_OS_DARWIN)
-/** Vulkan 既要有设备、也要能呈现到当前显示服务器（macOS 无此路径，故在本块内定义）。 */
+/** Vulkan 既要有设备、也要能呈现到当前显示服务器。
+ *  Linux 桌面要额外过 DRI3 探测；Windows 与 Android 只要设备存在即可。 */
 static bool vulkanUsable() {
-#ifdef Q_OS_LINUX
+#if RHINE_LINUX_DESKTOP
     return vulkanDeviceAvailable() && vulkanPresentationAvailable();
 #else
     return vulkanDeviceAvailable();
@@ -176,7 +631,7 @@ static bool applyNamedBackend(const QString &requested) {
     }
     if (requested == "vulkan") {
         if (!vulkanUsable()) {
-            qWarning() << "Vulkan is unavailable; falling back to Vulkan/OpenGL selection.";
+            qWarning() << "Vulkan is unavailable; falling back to the default backend.";
             return false;
         }
         QQuickWindow::setGraphicsApi(QSGRendererInterface::Vulkan);
@@ -187,6 +642,9 @@ static bool applyNamedBackend(const QString &requested) {
 }
 #endif
 static void selectGraphicsBackend() {
+    // Android 与桌面 Linux 走同一条链：显式环境变量 → 设置页偏好 → Vulkan 优先、GLES 回退。
+    // .qsb 里自带 SPIR-V（GLSL 130,150,300es 只是附加翻译产物），两个后端都有管线可用；
+    // 老版本构建里保存的 opengl 偏好在 Vulkan 可用的设备上仍然生效，这是用户自己的选择。
     // 停用的 D3D 后端
     if (!qEnvironmentVariableIsEmpty("QSG_RHI_BACKEND")) {
         const auto overrideBackend = qEnvironmentVariable("QSG_RHI_BACKEND").trimmed().toLower();
@@ -349,7 +807,10 @@ static void applyRenderScaleSetting() {
     if (!qEnvironmentVariableIsEmpty("RHINE_RENDER_SCALE")) {
         return;
     }
-    const auto percent = graphicsSettings().value("panel/render-scale", 100).toInt();
+    // 默认值与设置页描述符共用 AndroidRenderPolicy.h 里的同一个函数：Android 取 90%，
+    // 其它平台仍是 100。用户显式设过 preference / 环境变量时这两条分支都不参与。
+    const auto percent =
+        graphicsSettings().value("panel/render-scale", RhineRender::androidDefaultRenderScale()).toInt();
     if (percent > 0 && percent != 100) {
         qputenv("RHINE_RENDER_SCALE", QByteArray::number(qBound(50, percent, 100)));
     }
@@ -372,6 +833,12 @@ static void activateWindow(QWindow *window) {
  * 离线测试与正式播放沿用同一入口，资源只从独立应用读取。
  */
 int main(int argc, char **argv) {
+#if defined(Q_OS_ANDROID) && RHINE_ANDROID_SIGNAL_DIAG
+    // 段错误诊断链必须抢在一切组件（Qt 插件、Node、GPU 驱动）可能安装的处理之前。
+    rhineInstallSignalDiag();
+#endif
+    // 诊断对象必须比应用实例更晚析构，保留窗口与 GPU 资源销毁阶段的崩溃采集。
+    CrashDiagnostics crashDiagnostics;
 #ifdef Q_OS_WIN
     const auto storageError = AppStorage::initializePortable(AppStorage::executableDirectory());
     if (!storageError.isEmpty()) {
@@ -381,9 +848,13 @@ int main(int argc, char **argv) {
 #endif
     // 两个平台都明确使用 FFmpeg，设备切换和重连由播放器独立处理。
     // 必须在 Qt 初始化多媒体前选择后端，显式环境变量仍可用于兼容性对照。
+    // Android 例外：随包的 Android 插件是系统 MediaPlayer 后端，强制 ffmpeg 会找不到插件，
+    // 表现为"点了播放没反应"。
+#if !defined(Q_OS_ANDROID)
     if (qEnvironmentVariableIsEmpty("QT_MEDIA_BACKEND")) {
         qputenv("QT_MEDIA_BACKEND", "ffmpeg");
     }
+#endif
     // 平台插件必须在 QGuiApplication 构造时定下，晚一步就只能重启进程。
     // RHINE_QPA_PLATFORM 是给用户与打包脚本的稳定入口（等价于 QT_QPA_PLATFORM，但不受
     // 用户原有环境变量冲突影响）；纯 Xorg / XWayland 上写 xcb，Wayland 上写 wayland。
@@ -419,21 +890,35 @@ int main(int argc, char **argv) {
 #ifdef Q_OS_WIN
     initializeWindowsGraphics();
 #endif
-#ifdef Q_OS_LINUX
+#if RHINE_LINUX_DESKTOP
     // Linux 没有 QT_D3D_ADAPTER_INDEX 那样的单一入口，选择只能落成厂商环境变量，
     // 所以同样要早于任何 QQuickWindow——RHI 在创建窗口时就定下了用哪块卡。
     initializeLinuxGraphics();
+#endif
+#ifdef Q_OS_IOS
+    // ProMotion 的 plist 只放开上限；Qt 的 DisplayLink 还要显式请求 80–120Hz。
+    configureIOSDisplayLinkFrameRate();
 #endif
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
     QApplication application(argc, argv);
 #else
     QGuiApplication application(argc, argv);
 #endif
-    application.setWindowIcon(QIcon(":/icons/icon-256.png"));
+#if defined(Q_OS_ANDROID)
+    // 必须早于任何 QML 场景：系统无障碍服务一旦激活，Qt 会把每次对象显示/隐藏
+    // 同步回主线程递归遍历可访问树，滑动时能把主线程打满并触发前台 ANR。
+    configureAndroidAccessibility();
+#endif
+#if defined(Q_OS_ANDROID) && RHINE_ANDROID_SIGNAL_DIAG
+    // 现场日志此刻才能定位（AppDataLocation 依赖 JNI 上下文）；上次崩溃的记录
+    // 也在这里回读转发到 logcat，之后清空文件等待新现场。
+    rhineOpenSignalDiagFile();
+#endif
     QCoreApplication::setApplicationVersion(AppUpdater::currentVersion());
+    application.setWindowIcon(QIcon(":/icons/icon-256.png"));
     QGuiApplication::setApplicationDisplayName(AppIdentity::DisplayName);
     const auto args = application.arguments();
-#ifndef Q_OS_IOS
+#if !RHINE_MOBILE
     // 界面回归使用隔离的用户目录；必须在读取任何偏好之前建立。
     const bool playbackGuiTest = args.contains("--playback-gui-test");
     if (playbackGuiTest) {
@@ -443,8 +928,16 @@ int main(int argc, char **argv) {
         }
     }
 #endif
+    // 调试模式默认关闭；关闭时不注册 Crashpad，也不保留上次会话的诊断数据。
+    const bool debugMode = AppStorage::settings().value("panel/debug-mode").toString() == QLatin1String("on");
+    if (debugMode && CrashDiagnostics::supported()) {
+        crashDiagnostics.start(application);
+    } else if (!debugMode) {
+        CrashDiagnostics::clearHistory();
+    }
     // 必须在创建任何 QQuickWindow 之前确定后端；组织名先落位，配置路径才能落到应用数据目录。
     selectGraphicsBackend();
+    CrashDiagnostics::setGraphicsBackend(RhineGraphics::activeBackend());
     qInfo().noquote() << "Display:" << QGuiApplication::platformName()
                       << "backend:" << RhineGraphics::activeBackend();
     applyVSyncSetting();
@@ -465,6 +958,11 @@ int main(int argc, char **argv) {
     }
     QString root = qEnvironmentVariable("RHINE_RESOURCES");
     if (root.isEmpty()) {
+#if defined(Q_OS_ANDROID)
+        // 随包资源要先从二进制里解出来：Node 与 QFontDatabase 都需要真实路径，
+        // APK 内路径只有 Qt 的 qrc 引擎认得。
+        const QStringList candidates{androidResourceRoot()};
+#else
         // iOS 使用专用资源目录
         const auto base = QCoreApplication::applicationDirPath();
 #ifdef Q_OS_MACOS
@@ -474,6 +972,7 @@ int main(int argc, char **argv) {
 #else
         const QStringList candidates{base + "/resources", base + "/../resources"};
 #endif
+#endif
         for (const auto &candidate : candidates) {
             if (QFileInfo(candidate + "/slots.json").exists()) {
                 root = QDir(candidate).absolutePath();
@@ -481,6 +980,9 @@ int main(int argc, char **argv) {
             }
         }
         if (root.isEmpty()) {
+            // 走到这里说明随包资源没找到：Android 上通常是解包失败（私有目录不可写或
+            // 二进制里没有内嵌资源），打一行明确日志，别让它表现为"界面全黑"。
+            qWarning().noquote() << "找不到随包资源，回退到" << QDir::currentPath() + "/output/resources";
             root = QDir::currentPath() + "/output/resources";
         }
     }
@@ -494,7 +996,7 @@ int main(int argc, char **argv) {
     }
 #endif
     if (test) {
-#ifndef Q_OS_IOS
+#if !RHINE_MOBILE
 #ifdef Q_OS_MACOS
         if (QGuiApplication::platformName() == "cocoa") {
             // 无窗口的测试控制器不能占据第二个 Dock 身份或参与被测的调度组。
@@ -523,7 +1025,7 @@ int main(int argc, char **argv) {
     // 桌面版：音频、账号与播放队列由独立后台服务持有，界面进程只负责渲染。
     // 服务随界面启动并与其生命周期绑定：界面退出或崩溃都会停止播放并结束服务。
     std::unique_ptr<PlaybackConnection> playback;
-#ifndef Q_OS_IOS
+#if !RHINE_MOBILE
     if (!offline) {
         playback = std::make_unique<PlaybackConnection>();
         QString error;
@@ -573,6 +1075,22 @@ int main(int argc, char **argv) {
     QObject::connect(backend.get(), &Engine::performanceRequested, profiler.get(),
                      &FrameProfiler::toggleVisible);
     backend->start();
+    // 设置页的调试模式开关直接驱动采集生命周期；关闭会同时清空已有诊断数据。
+    QObject::connect(
+        &backend->host, &Host::preferenceChanged, &application,
+        [&crashDiagnostics, &application, host = &backend->host](const QString &key, const QString &value) {
+            if (key != QLatin1String("debug-mode")) {
+                return;
+            }
+            if (value == QLatin1String("on")) {
+                // 启动失败时回写关闭，避免界面显示已开启但实际没有采集。
+                if (!crashDiagnostics.start(application)) {
+                    host->setPreference(QStringLiteral("debug-mode"), QStringLiteral("off"));
+                }
+            } else {
+                crashDiagnostics.stop();
+            }
+        });
     // 声明顺序决定析构顺序：QML 引擎必须晚于业务引擎，才能先销毁 QML 对象。
     QQmlApplicationEngine engine;
     qmlRegisterType<RhiScene>("Rhine.Native", 1, 0, "RhiScene");
@@ -592,7 +1110,7 @@ int main(int argc, char **argv) {
                                              families.isEmpty() ? QString("sans-serif") : families.first());
     engine.rootContext()->setContextProperty("rhine", backend.get());
     engine.rootContext()->setContextProperty("profiler", profiler.get());
-#ifndef Q_OS_IOS
+#if !RHINE_MOBILE
     MvController mv(&backend->host, &backend->app->music.player);
     engine.rootContext()->setContextProperty("rhineMv", &mv);
     QObject::connect(backend.get(), &Engine::mvRequested, &mv, &MvController::openWindow);
@@ -638,7 +1156,13 @@ int main(int argc, char **argv) {
         qEnvironmentVariable("RHINE_FG_LAYER").compare("off", Qt::CaseInsensitive) == 0;
     // 离屏与最小平台没有原生窗口系统，呈现层无法创建交换链；必须直接走 Qt Quick 默认路径。
     // 否则无显示环境（CI、--playback-gui-test）会在接管 Metal 窗口时崩溃。
-#if !defined(Q_OS_IOS)
+    // Android 的"窗口"就是全屏 Activity：没有第二窗口、没有悬浮歌词、没有呈现层接管，
+    // 桌面歌词与 FG 的入口必须整体排除，而不是等到创建窗口时才报错。
+#if defined(Q_OS_ANDROID)
+    // Android 的"窗口"就是全屏 Activity：没有第二窗口、没有悬浮歌词、没有呈现层接管，
+    // 桌面歌词与 FG 的入口必须整体置为不可用，而不是等到创建窗口时才报错。
+    const bool hasNativeWindowSystem = false;
+#elif !defined(Q_OS_IOS)
     const auto platformName = QGuiApplication::platformName();
     const bool hasNativeWindowSystem =
         platformName != QStringLiteral("offscreen") && platformName != QStringLiteral("minimal");
@@ -725,7 +1249,7 @@ int main(int argc, char **argv) {
                 },
                 Qt::QueuedConnection);
 #endif
-#ifndef Q_OS_IOS
+#if !RHINE_MOBILE
             if (playbackGuiTest) {
                 qInfo("PLAYBACK_GUI_READY");
                 if (args.contains("--playback-test-quit")) {
@@ -768,6 +1292,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     auto window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+    CrashDiagnostics::attach(window);
     QQuickGraphicsConfiguration graphics;
 #ifdef Q_OS_WIN
     graphics.setAutomaticPipelineCache(false);
@@ -800,10 +1325,12 @@ int main(int argc, char **argv) {
 #endif
 #ifdef Q_OS_IOS
     configureIOSWindow(window, backend.get());
+#elif defined(Q_OS_ANDROID)
+    configureAndroidWindow(window, backend.get());
 #endif
     window->installEventFilter(backend.get());
     profiler->attach(window);
-#ifndef Q_OS_IOS
+#if !RHINE_MOBILE
     if (playbackGuiTest) {
         qInfo("PLAYBACK_GUI_READY");
         if (args.contains("--playback-test-quit")) {

@@ -1,0 +1,10 @@
+{
+    "name": "Node.js for Mobile Apps",
+    "version": "18.20.4",
+    "repository": "https://github.com/nodejs-mobile/nodejs-mobile",
+    "download": "https://github.com/nodejs-mobile/nodejs-mobile/releases/download/v18.20.4/nodejs-mobile-v18.20.4-android.zip",
+    "sha256": "bd7321eaa1a7602fbe0bb87302df2d79d87835cf4363fbdd17c350dbb485c2af",
+    "license": "licenses/nodejs-mobile/LICENSE",
+    "abi": "arm64-v8a",
+    "library": "bin/arm64-v8a/libnode.so"
+}

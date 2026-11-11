@@ -61,7 +61,6 @@
 
 实施结论：**暂缓，证据不足**。本轮没有拿到用户侧的 Vulkan capture（帧分析器／验证层记录都没有），而应用侧账本显示纹理上传只发生在冷加载与准入换绑时（静止段 5.33 MiB 全程一次量级），持续滚动阶段的上传与 barrier 都不构成可观测长帧来源；按计划不为了完成清单给 Qt 打补丁。D01 的 `VulkanResourceWindow` 已能区分“上传/绑定/绘制”三类计数，后续拿到 capture 再按门槛重开。
 
-
 独立 Qt 源码 worktree／补丁，不直接改系统安装；记录与当前 Qt 6.12 二进制对应的 revision 和构建参数。网页分支源码可变，不等于本机二进制。[S2](#ref-s2)
 
 - [ ] **staging 池实验门槛：** 仅当纹理上传期间的 vmaCreateBuffer／destroy、map／flush 成为明确长帧来源时，试按已完成提交安全复用的 staging slab／ring。Qt 当前上传路径有“no reuse of staging, this is intentional”注释，先查清原因、回收／flush／offset 对齐和所有 subresource 拷贝；不能仅按应用 frameIndex 重用，也不能把逻辑取消当 GPU 已完成。
@@ -72,17 +71,16 @@
 
 实施：`Qt/tests/VulkanResourceChecks.cpp` 8 组共 57 项断言，已注册 `RhineVulkanResourceRegression`／`qt_vulkan_resource_regression`（Qt6::Core，不建 QGuiApplication、不碰 VkDevice）。四个开关都是 opt-in 且只在 Vulkan 路径读：`RHINE_VK_UNIFORM_ARENA`（D02）、`RHINE_VK_INSTANCE_ARENA`／`RHINE_VK_DIRECT_WRITE`（D03，两步各自独立）、`RHINE_VK_DISCARD_UNUSED_DEPTH`（D04）；关掉即回到原来的逐材质 uniform buffer／逐 draw 实例 buffer／照旧 store 深度。定向构建与测试已跑：四个目标增量编译通过，`ctest -R '^qt_(vulkan_resource|render_policy|music_texture_admission|frame_pacing)_regression$'` 4/4 通过；主程序只做编译验证、没有运行。**功能完成，性能待验**：应用侧只有计数（创建／更新／绑定／跳过／上传字节），没有硬件时间，任何“变快了”的说法都还没有证据支撑。
 
-
 新增纯策略文件 `Qt/src/render/VulkanResourcePolicy.h` 和 `Qt/tests/VulkanResourceChecks.cpp`，注册 Core-only 目标 RhineVulkanResourceRegression／qt_vulkan_resource_regression；不要在离线测试创建 QGuiApplication 或 VkDevice。
 
 - [x] 先写失败用例：任意有效 alignment 的 packing、offset／range 溢出与扩容、相同 SRB 不同 offset 不能跳绑、资源／设备代号换代、共享 SRB 单个引用退出／最后引用退出、实例 offset／stride、深度消费者真值表、直写与 batch 互斥及跨帧必须初始化。纯测试验证策略，不冒充驱动／GPU 生命周期验收。
 - [x] 诊断开关建议 D02=RHINE_VK_UNIFORM_ARENA、D03=RHINE_VK_INSTANCE_ARENA／RHINE_VK_DIRECT_WRITE、D04=RHINE_VK_DISCARD_UNUSED_DEPTH；先 opt-in、仅 Vulkan 生效，其他后端保留原路径。一个开关只控制一个实验；四者可组合但逐项测后才测组合。
 - [x] 实施后定向编译／测试，再编译主程序但不运行；这些命令本轮已执行：
 
-~~~sh
+```sh
 cmake --build output/qt-build -j$(nproc) --target RhineVulkanResourceRegression RhineRenderPolicyRegression RhineMusicTextureAdmissionRegression RhineFramePacingRegression
 ctest --test-dir output/qt-build --output-on-failure -R '^qt_(vulkan_resource|render_policy|music_texture_admission|frame_pacing)_regression$'
-~~~
+```
 
 - [ ] 用户手工验收：固定 C 后基线，首次／返回滚动、静止、换封面、快速焦点切换、AA 模式切换、resize／DPR／隐藏恢复各检查；单开关配对 ABBA 至少三组，冷热缓存分开，记录 P50/P95/P99、CPU 录制与 GPU 有效样本、资源／绑定／更新量、输入响应和图像一致性。验证层／capture 单独跑，不混入正式性能数据。
 - [x] buffer／descriptor 变少不是提速证明；同负载端到端无收益或有回归则关闭，不追加限帧／降画质。无硬件数据写“功能完成，性能待验”。独立交回改动、测试、原始计数／样本、回退方法；D05 需另附 Qt patch 和二进制来源。

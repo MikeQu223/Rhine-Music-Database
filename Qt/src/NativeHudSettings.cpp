@@ -1,8 +1,10 @@
+#include <QScopedValueRollback>
 #include "NativeHud.h"
 #include "AppUpdater.h"
 #include "DesktopLyricsAppearance.h"
 #include "Host.h"
 #include "MusicLibrary.h"
+#include "ProviderRegistry.h"
 #include "MusicPlayer.h"
 #include "PlatformFeatures.h"
 #include "SettingsCard.h"
@@ -164,6 +166,20 @@ void NativeHud::settingsPanel(double x, double y, double width) {
     const QRectF viewport(x + 40, y + SettingsViewportTop, width - 80,
                           SettingsViewportBottom - SettingsViewportTop);
     auto model = buildSettingsModel(settingsContext(), viewport, settingsScroll, expandedPreference);
+    if (m_responsive.compact()) {
+        m_responsive.setSettings(model);
+        for (const auto &section : model.sections) {
+            const auto renderer = section.meta->customRenderer;
+            if (renderer.isEmpty() || renderer == "provider-card") {
+                continue;
+            }
+            ResponsiveHudContent::Model content;
+            QScopedValueRollback<ResponsiveHudContent::Model *> sink(m_contentSink, &content);
+            paintSettingsCustomSection(renderer, {0, 0, width, section.meta->customHeight}, 0);
+            m_responsive.setSettingsCustom(renderer, content.items);
+        }
+        return;
+    }
     const auto layout = SettingsCard::layout(model);
     settingsContentBottom = SettingsViewportTop + layout.contentHeight;
     settingsScroll = HudScroll::clampOffset(settingsScroll, layout.contentHeight, viewport.height());
@@ -242,6 +258,10 @@ void NativeHud::paintSettingsCustomSection(const QString &renderer, const QRectF
     auto actionBlock = [this, &stroke, &soft, &line, &baseInk](const QRectF &rect, const QString &label,
                                                                const QString &action, const QString &hitLabel,
                                                                bool centeredLabel = false) {
+        if (m_contentSink) {
+            m_contentSink->action(hitLabel + " / " + label, action);
+            return;
+        }
         fill(rect.left(), rect.top(), rect.width(), rect.height(), soft);
         stroke(rect, line);
         const auto shown = fit(label, 14, rect.width() - 26, "regular");
@@ -278,7 +298,7 @@ void NativeHud::paintSettingsCustomSection(const QString &renderer, const QRectF
             accountAction = "discover";
         } else if (m_music->isSiren()) {
             // 塞壬唱片使用官网曲库，没有账号登录入口。
-            accountLabel = QStringLiteral("塞壬唱片");
+            accountLabel = ProviderRegistry::instance().name("siren");
         } else if (m_music->uid.isEmpty()) {
             accountLabel = QStringLiteral("登录 / ") + m_music->providerName();
             accountAction = "music:login";
@@ -293,15 +313,17 @@ void NativeHud::paintSettingsCustomSection(const QString &renderer, const QRectF
         } else {
             actionBlock(account, accountLabel, accountAction, accountLabel);
         }
-        static const QHash<QString, QString> memberships{{"free", QStringLiteral("免费账号")},
-                                                         {"green", QStringLiteral("绿钻会员")},
-                                                         {"super", QStringLiteral("超级会员")},
-                                                         {"unknown", QStringLiteral("会员状态未知")}};
-        const auto note = m_music->isSiren()
-                              ? QStringLiteral("官网曲库 / 无需登录")
-                              : (m_music->provider == "qq" && !m_music->uid.isEmpty()
-                                     ? memberships.value(m_music->vipLevel, QStringLiteral("会员状态未知"))
-                                     : QStringLiteral("各平台账号独立保存"));
+        const auto &registry = ProviderRegistry::instance();
+        static const QHash<QString, QString> vipKeys{
+            {"free", "vipFree"}, {"green", "vipGreen"}, {"super", "vipSuper"}, {"unknown", "vipUnknown"}};
+        const auto vipLabel = registry.text(m_music->provider, vipKeys.value(m_music->vipLevel));
+        const auto accountNote = registry.text(m_music->provider, "accountNote");
+        const auto note =
+            m_music->isSiren()
+                ? (accountNote.isEmpty() ? registry.text("siren", "loginHint") : accountNote)
+                : (!m_music->uid.isEmpty() && !vipLabel.isEmpty()
+                       ? vipLabel
+                       : (accountNote.isEmpty() ? QStringLiteral("各平台账号独立保存") : accountNote));
         text(fit(note, 12, body.right() - account.right() - 20, "regular"), account.right() + 16,
              body.top() + 114, 12, "regular", 0, muted);
         return;
@@ -326,6 +348,14 @@ void NativeHud::paintSettingsCustomSection(const QString &renderer, const QRectF
             "disc-rotation", QStringLiteral("唱片旋转"));
         text(QStringLiteral("默认关闭；开启会增加持续渲染、耗电和发热。"), body.left(), body.top() + 176, 13,
              "regular", 0, muted);
+#if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
+        const bool debugMode = m_host->preference("debug-mode") == "on";
+        row(200, "DEBUG MODE", QStringLiteral("调试模式（原生崩溃诊断）"),
+            debugMode ? QStringLiteral("开启 / 点击关闭") : QStringLiteral("关闭 / 点击开启"), "debug-mode",
+            QStringLiteral("调试模式"));
+        text(QStringLiteral("仅用于排查闪退与卡死；关闭后清空诊断数据，完全停止采集需重启。"), body.left(),
+             body.top() + 276, 13, "regular", 0, muted);
+#endif
         return;
     }
 
@@ -485,6 +515,11 @@ void NativeHud::applySettingValue(const QString &id, const QString &value) {
     // 新加入的普通偏好只需 descriptor + Host key，通用路径即可持久化。
     if (descriptor->binding.kind == SettingsSchema::BindingKind::Preference) {
         m_host->setPreference(descriptor->binding.preferenceKey, target);
+        // 切歌行为即时生效，不依赖下一帧重读偏好。
+        if (id == "skip-detail-on-switch") {
+            skipDetailOnSwitch = target == "on";
+            m_music->skipDetailOnSwitch = skipDetailOnSwitch;
+        }
         m_host->invalidate();
     }
 }

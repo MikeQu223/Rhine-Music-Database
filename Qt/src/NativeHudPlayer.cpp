@@ -30,6 +30,10 @@ void NativeHud::playerBar(double x, double y, double width) {
     state.seekable = player.state["seekable"].toBool();
     state.applicationVolume = PlatformFeatures::ApplicationVolume;
     state.musicVideo = PlatformFeatures::MusicVideo;
+    if (m_responsive.compact()) {
+        m_responsive.setPlayer(state);
+        return;
+    }
     const auto drawing = PlayerBar::render(state, {x, y, width, PlayerBar::RowHeight}, dark, *m_glyphs);
     for (const auto &command : drawing.commands) {
         commands.append(command);
@@ -72,5 +76,9 @@ void NativeHud::playerPanel(double x, double y, double width) {
     canvas.image = [this](QString key, double left, double top, double w, double h) {
         image(key, left, top, w, h);
     };
+    if (m_responsive.compact()) {
+        m_responsive.setQueue(model);
+        return;
+    }
     PlaybackQueueCard::paint(model, canvas);
 }

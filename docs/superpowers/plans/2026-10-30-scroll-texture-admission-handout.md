@@ -42,10 +42,10 @@
 
 **不开 GUI、不播放。** 用既有构建目录定向跑安全测试；这些是实施后的命令，本计划未执行：
 
-~~~sh
+```sh
 cmake --build output/qt-build -j$(nproc) --target RhineMusicTextureAdmissionRegression RhineRenderPolicyRegression
 ctest --test-dir output/qt-build --output-on-failure -R '^qt_(music_texture_admission|render_policy)_regression$'
-~~~
+```
 
 - [ ] 两项通过，主程序另做编译验证但不运行。不要无筛选跑 CTest；生成头若被重写，只恢复本次噪声，不覆盖已有改动。不为绕过现有文档白名单问题删除性能文档。
 - [ ] 用户手工验收：快速扫过（不足 100ms 不生成）、停住（无需继续滚动也最终到位）、反向滚回（热缓存立即复用）、同专辑／在途切焦（不串图）、归位／隐藏／设备恢复（不悬空、不永久占位）。

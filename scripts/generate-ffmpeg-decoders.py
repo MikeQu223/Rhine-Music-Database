@@ -13,6 +13,7 @@
 
 升级 FFmpeg 后重跑本脚本即可刷新清单。用法：python3 scripts/generate-ffmpeg-decoders.py
 """
+
 import json
 import os
 import re
@@ -65,18 +66,24 @@ def collect():
         for name in files:
             if not name.endswith(".c"):
                 continue
-            text = open(os.path.join(dirpath, name), encoding="utf-8", errors="replace").read()
+            text = open(
+                os.path.join(dirpath, name), encoding="utf-8", errors="replace"
+            ).read()
             for m in DECLARE.finditer(text):
                 block = block_after(text, text.index("{", m.end() - 1))
                 if "AVMEDIA_TYPE_AUDIO" in block:
                     audio.add(m.group(1))
 
-    externs = set(EXTERN.findall(open(os.path.join(SRC, "allcodecs.c"), encoding="utf-8").read()))
+    externs = set(
+        EXTERN.findall(open(os.path.join(SRC, "allcodecs.c"), encoding="utf-8").read())
+    )
     for name in externs:
         if name.startswith(MACRO_AUDIO_PREFIX) or name in MACRO_AUDIO_EXACT:
             audio.add(name)
 
-    configure = open(os.path.join(ROOT, "third_party/ffmpeg/configure"), encoding="utf-8").read()
+    configure = open(
+        os.path.join(ROOT, "third_party/ffmpeg/configure"), encoding="utf-8"
+    ).read()
     unsafe = {
         name for name, deps in WITH_DEPS.findall(configure) if not set(deps.split()).issubset(SAFE_DEPS)
     }
@@ -84,7 +91,10 @@ def collect():
     return sorted(
         name
         for name in audio
-        if name in externs and not name.startswith("lib") and name not in EXCLUDE and name not in unsafe
+        if name in externs
+        and not name.startswith("lib")
+        and name not in EXCLUDE
+        and name not in unsafe
     )
 
 

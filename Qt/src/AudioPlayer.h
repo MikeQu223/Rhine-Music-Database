@@ -2,6 +2,7 @@
 #include <QAudioDevice>
 #include <QAudioBufferOutput>
 #include <QAudioOutput>
+#include <QByteArray>
 #include <QMediaPlayer>
 #include <QMediaDevices>
 #include <QUrl>
@@ -12,36 +13,41 @@
 #include <functional>
 #include <memory>
 #include "HttpAudioStream.h"
-#include "WindowsAudioOutput.h"
 #include "AudioSpectrum.h"
+#include "AudioPcmOutput.h"
 
 // 在线模式只接收锁定上游的播放链接；本地模式只接收文件 URL
 class AudioPlayer {
   public:
     explicit AudioPlayer(std::function<void()> changed = {});
     ~AudioPlayer();
-    bool load(QString input, bool offline, bool alternative = false, QString provider = "netease",
+    bool load(QString input, bool offline, bool alternative = false, QString provider = {},
               double position = 0, bool paused = false);
     void control(QString action, double value = 0);
     QVariantMap state() const;
     QJsonObject diagnosticState() const;
     void enableDiagnostics(bool enabled);
     void enableSpectrum(bool enabled);
+    void setOutputPolicy(AudioOutputFormat::Policy policy);
     std::function<void(QJsonArray)> spectrumChanged;
     std::function<void(const QString &, const QJsonObject &)> diagnosticEvent;
 
   private:
     friend class AudioPlayerRegression;
+    class OutputFormatProbe;
     QMediaDevices devices;
     QAudioOutput output;
+    AudioPcmOutput pcm;
+    AudioOutputFormat::Policy outputPolicy = AudioOutputFormat::Policy::System;
+    bool pcmEnabled = true; // 解码器直通回归开关；非 FFmpeg 后端也回退到原生 QAudioOutput。
+    bool decoderThrottled = false;
+    bool decoderEnded = false;
+    QAudioFormat devicePreferred;
+    void completePlayback();
+    qint64 playbackPosition() const;
     std::unique_ptr<QMediaPlayer> player;
     std::unique_ptr<QAudioBufferOutput> decodedOutput;
     std::unique_ptr<HttpAudioStream> stream;
-#ifdef Q_OS_WIN
-    std::unique_ptr<WindowsAudioOutput> nativeOutput;
-    QMetaObject::Connection nativeConnection;
-    bool prepareWindowsOutput();
-#endif
     void startMediaSource(const QUrl &url);
     void releasePlayer();
     bool diagnosticsEnabled = false;
@@ -68,6 +74,11 @@ class AudioPlayer {
     void diagnoseError(QMediaPlayer::Error code, const QString &message);
     std::function<void()> playbackChanged;
     std::function<QAudioDevice()> defaultOutput = QMediaDevices::defaultAudioOutput;
+    // 探测函数的注入点：工作线程拿到的是副本，只接收设备 id 与默认标记。
+    std::function<AudioOutputFormat::SystemFormat(const QByteArray &, bool)> readSystemOutputFormat =
+        [](const QByteArray &deviceId, bool isDefault) {
+            return AudioOutputFormat::systemFormat(deviceId, isDefault);
+        };
     bool playbackRequested = false;
     bool outputUnavailable = false;
     qint64 lastPosition = 0;
@@ -78,12 +89,16 @@ class AudioPlayer {
     static void normalizeOutputLayout(const QAudioDevice &device);
     void restorePlaybackPosition();
     void createPlayer();
-    void followDefaultOutput();
+    void followDefaultOutput(bool refresh = false,
+                             const AudioOutputFormat::SystemFormat *observedSystem = nullptr);
+    void requestOutputFormatProbe();
+    bool applyPendingOutputFormatObservation();
     QTimer playbackWatchdog;
+    std::unique_ptr<OutputFormatProbe> outputFormatProbe;
     QElapsedTimer progressClock;
+    QElapsedTimer outputFormatClock;
     bool pendingFailure = false;
     bool failureRecoverable = false;
     bool sourceEnded = false;
     void checkPlaybackHealth();
-    void finishPlayback();
 };
