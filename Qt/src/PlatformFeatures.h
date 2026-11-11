@@ -4,6 +4,12 @@
 
 // 平台特性宏
 namespace PlatformFeatures {
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+inline constexpr bool NativeAppleAudio = true;
+#else
+inline constexpr bool NativeAppleAudio = false;
+#endif
+inline constexpr bool SpatialAudio = NativeAppleAudio;
 #if !RHINE_MOBILE && (defined(Q_OS_WIN) || defined(Q_OS_LINUX) || defined(Q_OS_MACOS))
 inline constexpr bool MusicVideo = true;
 #else

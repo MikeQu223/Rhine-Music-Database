@@ -1,4 +1,5 @@
 #include "AudioPlayer.h"
+#include "PlatformFeatures.h"
 #include "ProviderRegistry.h"
 #include <QUrl>
 #include <QMediaMetaData>
@@ -11,6 +12,9 @@
 #include <mutex>
 #include <thread>
 #include <utility>
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+#include "AppleAudioPlayer.h"
+#endif
 #if defined(Q_OS_WIN) && QT_VERSION < QT_VERSION_CHECK(6, 9, 0)
 #include <QtMultimedia/private/qaudiodevice_p.h>
 #endif
@@ -129,7 +133,7 @@ class AudioPlayer::OutputFormatProbe {
  */
 AudioPlayer::AudioPlayer(std::function<void()> changed) : playbackChanged(std::move(changed)) {
     normalizeOutputLayout(defaultOutput());
-    output.setVolume(.7f);
+    output.setVolume(PlatformFeatures::NativeAppleAudio && !PlatformFeatures::ApplicationVolume ? 1.f : .7f);
     QObject::connect(&output, &QAudioOutput::volumeChanged, &devices,
                      [this](float volume) { pcm.setVolume(volume); });
     pcm.backpressure = [this](bool blocked) {
@@ -171,6 +175,21 @@ AudioPlayer::AudioPlayer(std::function<void()> changed) : playbackChanged(std::m
     createPlayer();
     playbackWatchdog.setInterval(250);
     QObject::connect(&playbackWatchdog, &QTimer::timeout, &devices, [this] {
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+        if (applePlayer) {
+#ifdef Q_OS_MACOS
+            if (diagnosticsEnabled) {
+                applyPendingOutputFormatObservation();
+                if (outputFormatClock.elapsed() >= OUTPUT_FORMAT_PROBE_INTERVAL_MS) {
+                    outputFormatClock.restart();
+                    requestOutputFormatProbe();
+                }
+            }
+#endif
+            checkApplePlayback();
+            return;
+        }
+#endif
         checkPlaybackHealth();
         // 后台结果只在主线程比较；比较与重建顺序保持原样。
         applyPendingOutputFormatObservation();
@@ -222,6 +241,13 @@ void AudioPlayer::normalizeOutputLayout(const QAudioDevice &device) {
  * 输出对象保持不变，保留用户音量与当前默认设备。
  */
 void AudioPlayer::createPlayer() {
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+    // Qt 播放器只保留空闲状态接口。换歌时复用它，AVPlayer 会话独立释放。
+    if (useApplePlayback && player) {
+        closeApplePlayback();
+        return;
+    }
+#endif
     releasePlayer();
     player = std::make_unique<QMediaPlayer>();
     decodedOutput = std::make_unique<QAudioBufferOutput>();
@@ -402,6 +428,26 @@ void AudioPlayer::restorePlaybackPosition() {
  */
 void AudioPlayer::followDefaultOutput(bool refresh, const AudioOutputFormat::SystemFormat *observedSystem) {
     const auto device = defaultOutput();
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+    if (applePlayer) {
+#ifdef Q_OS_MACOS
+        // AVPlayer 自己跟随默认路由；全部输出消失时保留当前曲目与播放意图。
+        outputUnavailable = device.isNull();
+        if (output.device() != device) {
+            output.setDevice(device);
+            appleSystemFormat = {};
+            if (diagnosticsEnabled) {
+                requestOutputFormatProbe();
+            }
+        }
+        if (outputUnavailable) {
+            applePlayer->setPaused(true);
+        }
+        progressClock.restart();
+#endif
+        return;
+    }
+#endif
     if (diagnosticsEnabled && diagnosticEvent) {
         auto values = diagnosticState();
         values["outputCount"] = QMediaDevices::audioOutputs().size();
@@ -512,6 +558,12 @@ bool AudioPlayer::applyPendingOutputFormatObservation() {
         outputFormatClock.elapsed() > OUTPUT_FORMAT_OBSERVATION_MAX_AGE_MS) {
         return true;
     }
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+    if (applePlayer) {
+        appleSystemFormat = observation.system;
+        return true;
+    }
+#endif
     // status 0 表示这次平台读取失败；不能据此重建，保留当前输出等下一轮探测。
     if (observation.system.status == 0) {
         return true;
@@ -596,6 +648,17 @@ bool AudioPlayer::load(QString input, bool offline, bool alternative, QString pr
     followDefaultOutput();
     recoveryPosition = position > 0 ? qint64(position) : -1;
     lastPosition = qint64(position);
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+    if (useApplePlayback) {
+#ifdef Q_OS_IOS
+        // 音频会话激活前，Qt 的设备列表可能为空；路由和中断由 AVAudioSession 管理。
+        outputUnavailable = false;
+#endif
+        const bool opened = startApplePlayback(url, paused);
+        diagnose(opened ? "load" : "load-rejected");
+        return opened;
+    }
+#endif
     if (outputUnavailable) {
         // 没有设备时延后创建解码拓扑，避免启动后再连接耳机被误报为音源错误。
         pendingSource = url;
@@ -625,6 +688,12 @@ void AudioPlayer::control(QString action, double value) {
             0, QStringList{"other", "pause", "resume", "stop", "seek", "volume"}.indexOf(action)));
         diagnosticEvent("control", values);
     }
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+    if (applePlayer && action != "stop") {
+        controlApplePlayback(action, value);
+        return;
+    }
+#endif
     if (action == "pause") {
         clearSpectrum();
         playbackRequested = false;
@@ -688,6 +757,24 @@ void AudioPlayer::control(QString action, double value) {
 }
 QVariantMap AudioPlayer::state() const {
     const auto position = recoveryPosition >= 0 ? recoveryPosition : playbackPosition();
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+    if (applePlayer) {
+        const auto status = applePlayer->status();
+        return {{"playing", playbackRequested && !outputUnavailable && error.isEmpty() && applePlayer->isPlaying()},
+                {"position", position},
+                {"duration", applePlayer->duration()},
+                {"seekable", applePlayer->isSeekable()},
+                {"volume", output.volume()},
+                {"ended", ended},
+                {"error", error},
+                {"recoverable", failureRecoverable},
+                {"requested", playbackRequested},
+                {"buffering", error.isEmpty() &&
+                                  (status == AppleAudioPlayer::Status::Loading || recoveryPosition >= 0 ||
+                                   applePlayer->isSeeking() ||
+                                   (playbackRequested && !outputUnavailable && !applePlayer->isPlaying()))}};
+    }
+#endif
     return {{"playing", playbackRequested && !outputUnavailable && error.isEmpty() &&
                             (player->isPlaying() || decoderThrottled || (decoderEnded && !sourceEnded))},
             {"position", position},
@@ -789,6 +876,33 @@ QJsonObject AudioPlayer::diagnosticState() const {
     for (auto it = playback.begin(); it != playback.end(); ++it) {
         values[it.key()] = it.value();
     }
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+    if (applePlayer) {
+        const auto spatialState = state();
+        const auto nativeValues = applePlayer->diagnosticState();
+        for (auto it = nativeValues.begin(); it != nativeValues.end(); ++it) {
+            values[it.key()] = it.value();
+        }
+        values["outputBackend"] = 2;
+        values["outputSystemFormatStatus"] = appleSystemFormat.status;
+        values["outputSystemSampleRateHz"] = appleSystemFormat.format.sampleRate();
+        values["outputSystemChannels"] = appleSystemFormat.format.channelCount();
+        values["outputSystemSampleFormat"] = int(appleSystemFormat.format.sampleFormat());
+        values["hasActiveSource"] = true;
+        values["durationMs"] = double(applePlayer->duration());
+        values["seekable"] = spatialState["seekable"].toBool();
+        auto mediaStatus = spatialState["buffering"].toBool() ? QMediaPlayer::LoadingMedia
+                                                             : QMediaPlayer::LoadedMedia;
+        if (!error.isEmpty()) {
+            mediaStatus = QMediaPlayer::InvalidMedia;
+        } else if (sourceEnded) {
+            mediaStatus = QMediaPlayer::EndOfMedia;
+        }
+        values["mediaStatus"] = int(mediaStatus);
+        values["playbackState"] =
+            int(spatialState["playing"].toBool() ? QMediaPlayer::PlayingState : QMediaPlayer::PausedState);
+    }
+#endif
     return values;
 }
 
@@ -868,6 +982,9 @@ AudioPlayer::~AudioPlayer() {
 
 /** 先释放解码观察对象，再释放媒体会话 */
 void AudioPlayer::releasePlayer() {
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+    closeApplePlayback();
+#endif
     ++decoderObservation;
     QObject::disconnect(decoderConnection);
     pcm.pause(true);
@@ -887,6 +1004,11 @@ void AudioPlayer::releasePlayer() {
 }
 
 qint64 AudioPlayer::playbackPosition() const {
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+    if (applePlayer) {
+        return applePlayer->position();
+    }
+#endif
     return pcmEnabled && pcm.active() ? pcm.position() : player->position();
 }
 
@@ -909,6 +1031,11 @@ void AudioPlayer::setOutputPolicy(AudioOutputFormat::Policy policy) {
     if (outputPolicy == policy) {
         return;
     }
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+    if (useApplePlayback) {
+        return;
+    }
+#endif
     const auto position = playbackPosition();
     // 错误提示要求用户切换输出策略；重建输出后解除上一次输出错误，否则界面会一直停在失败状态。
     const bool outputFailed = pcm.failed();
@@ -932,3 +1059,116 @@ void AudioPlayer::setOutputPolicy(AudioOutputFormat::Policy policy) {
     }
     diagnose("output");
 }
+
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+void AudioPlayer::closeApplePlayback() {
+    if (!applePlayer) {
+        return;
+    }
+    playbackWatchdog.stop();
+    applePlayer.reset();
+    appleSource.clear();
+    appleSystemFormat = {};
+    playbackWatchdog.setInterval(250);
+}
+
+bool AudioPlayer::startApplePlayback(const QUrl &source, bool paused) {
+    applePlayer = AppleAudioPlayer::open(source);
+    if (!applePlayer) {
+        return false;
+    }
+    appleSource = source;
+    playbackRequested = !paused;
+    applePlayer->setVolume(output.volume());
+#ifdef Q_OS_MACOS
+    if (diagnosticsEnabled) {
+        outputFormatClock.restart();
+        requestOutputFormatProbe();
+    }
+#endif
+    progressClock.restart();
+    playbackWatchdog.start(100);
+    return true;
+}
+
+/** 由服务心跳推进 AVPlayer 的加载、跳转、播放和自然结束。 */
+void AudioPlayer::checkApplePlayback() {
+    using Status = AppleAudioPlayer::Status;
+    const auto status = applePlayer->status();
+    if (status == Status::Failed) {
+        failApplePlayback();
+        return;
+    }
+    if (status == Status::Ended && recoveryPosition < 0) {
+        completePlayback();
+        return;
+    }
+    if (outputUnavailable) {
+        return;
+    }
+    if (status == Status::Loading || applePlayer->isSeeking()) {
+        if (progressClock.elapsed() >= 10000) {
+            failApplePlayback();
+        }
+        return;
+    }
+    if (recoveryPosition >= 0) {
+        const auto position = std::min(recoveryPosition, applePlayer->duration());
+        recoveryPosition = -1;
+        if (applePlayer->isSeekable() && position > 0) {
+            applePlayer->seek(position);
+            lastPosition = position;
+            progressClock.restart();
+            return;
+        }
+    }
+    const auto position = applePlayer->position();
+    if (position != lastPosition) {
+        lastPosition = position;
+        progressClock.restart();
+    }
+    if (playbackRequested && progressClock.elapsed() >= 15000) {
+        failApplePlayback();
+        return;
+    }
+    applePlayer->setPaused(!playbackRequested);
+}
+
+/** 锁存原生播放失败；远端音源交给现有有界恢复流程重新取地址。 */
+void AudioPlayer::failApplePlayback() {
+    applePlayer->setPaused(true);
+    failureRecoverable = !appleSource.isLocalFile();
+    error = QStringLiteral("AVPlayer 无法播放此音源，请检查文件格式或重试");
+    playbackWatchdog.stop();
+    diagnose("error");
+    if (playbackChanged) {
+        playbackChanged();
+    }
+}
+
+void AudioPlayer::controlApplePlayback(const QString &action, double value) {
+    if (action == "volume") {
+        output.setVolume(float(std::clamp(value, 0., 1.)));
+        applePlayer->setVolume(output.volume());
+    } else if (action == "pause") {
+        playbackRequested = false;
+        applePlayer->setPaused(true);
+    } else if (action == "resume") {
+        playbackRequested = true;
+        progressClock.restart();
+        if (sourceEnded) {
+            sourceEnded = false;
+            applePlayer->seek(0);
+            lastPosition = 0;
+        }
+        playbackWatchdog.start();
+    } else if (action == "seek" && state()["seekable"].toBool()) {
+        recoveryPosition = -1;
+        sourceEnded = false;
+        lastPosition = qint64(std::clamp(value, 0., double(applePlayer->duration())));
+        applePlayer->seek(lastPosition);
+        progressClock.restart();
+        playbackWatchdog.start();
+    }
+}
+#endif

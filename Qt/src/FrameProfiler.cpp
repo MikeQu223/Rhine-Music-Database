@@ -727,74 +727,115 @@ void FrameProfiler::formatMetrics(bool withDetails) {
     }
     m_details += QStringLiteral("\n\nGPU 时间  %1").arg(gpuTimingText);
     const auto audio = m_metrics.value("audio").toMap();
-    m_details += QStringLiteral("\n\n音频状态 / 错误码  %1 / %2\n进度 / 时长  %3 / %4 ms\n"
-                                "缓冲  %5% · 解码缓冲  %6\n解码格式  %7 Hz / %8 声道\n"
-                                "输出设备数  %9 · 系统网络状态  %10")
-                     .arg(audio.value("mediaStatus").toInt())
-                     .arg(audio.value("errorCode").toInt())
-                     .arg(audio.value("positionMs").toLongLong())
-                     .arg(audio.value("durationMs").toLongLong())
-                     .arg(audio.value("bufferProgress").toDouble() * 100, 0, 'f', 0)
-                     .arg(audio.value("decodedBuffers").toLongLong())
-                     .arg(audio.value("sampleRateHz").toInt())
-                     .arg(audio.value("channels").toInt())
-                     .arg(audio.value("outputCount").toInt())
-                     .arg(audio.contains("networkReachability")
-                              ? QString::number(audio.value("networkReachability").toInt())
-                              : QStringLiteral("未采集"));
-    const auto audioFormat = [&](const char *rate, const char *channels, const char *format) {
-        return AudioOutputFormat::describe(audio.value(rate).toInt(), audio.value(channels).toInt(),
-                                           audio.value(format).toInt());
-    };
-    const bool outputKnown = audio.value("outputClientFormatStatus").toInt() == 1;
-    QStringList conversions;
-    if (audio.value("outputSampleRateConverted").toBool()) {
-        conversions << QStringLiteral("采样率");
+    if (audio.value("outputBackend").toInt() == 2) {
+        const auto codec = quint32(audio.value("sourceCodecFourCC").toDouble());
+        const auto rate = audio.value("sourceSampleRateHz").toInt();
+        const auto channels = audio.value("sourceChannels").toInt();
+        QString trackFormat = QStringLiteral("未提供");
+        if (rate > 0 && channels > 0) {
+            trackFormat = QStringLiteral("%1 Hz / %2 声道").arg(rate).arg(channels);
+        }
+        if (codec != 0) {
+            QByteArray name;
+            for (int shift = 24; shift >= 0; shift -= 8) {
+                name.append(char((codec >> shift) & 0xff));
+            }
+            trackFormat += QStringLiteral(" · %1").arg(QString::fromLatin1(name).trimmed());
+        }
+        m_details += QStringLiteral("\n\n音频输出链路 · AVPlayer\n源音轨  %1\n进度 / 时长  %2 / %3 ms"
+                                    "\n前向缓冲  %4 ms · AVPlayer 错误码  %5")
+                         .arg(trackFormat)
+                         .arg(audio.value("positionMs").toLongLong())
+                         .arg(audio.value("durationMs").toLongLong())
+                         .arg(audio.value("nativeBufferedMs").toLongLong())
+                         .arg(audio.value("nativeErrorCode").toLongLong());
+        if (audio.value("routeSampleRateHz").toDouble() > 0) {
+            m_details += QStringLiteral("\n系统路由  %1 Hz / %2 声道")
+                             .arg(audio.value("routeSampleRateHz").toInt())
+                             .arg(audio.value("routeChannels").toInt());
+        } else if (audio.value("outputSystemFormatStatus").toInt() == 1) {
+            m_details += QStringLiteral("\n系统流格式  %1")
+                             .arg(AudioOutputFormat::describe(audio.value("outputSystemSampleRateHz").toInt(),
+                                                              audio.value("outputSystemChannels").toInt(),
+                                                              audio.value("outputSystemSampleFormat").toInt()));
+        }
+        if (audio.contains("routeSpatialAudioEnabled")) {
+            m_details += audio.value("routeSpatialAudioEnabled").toBool()
+                             ? QStringLiteral("\n系统路由空间音频  已启用")
+                             : QStringLiteral("\n系统路由空间音频  未启用");
+        }
+    } else {
+        m_details += QStringLiteral("\n\n音频状态 / 错误码  %1 / %2\n进度 / 时长  %3 / %4 ms\n"
+                                    "缓冲  %5% · 解码缓冲  %6\n解码格式  %7 Hz / %8 声道\n"
+                                    "输出设备数  %9 · 系统网络状态  %10")
+                         .arg(audio.value("mediaStatus").toInt())
+                         .arg(audio.value("errorCode").toInt())
+                         .arg(audio.value("positionMs").toLongLong())
+                         .arg(audio.value("durationMs").toLongLong())
+                         .arg(audio.value("bufferProgress").toDouble() * 100, 0, 'f', 0)
+                         .arg(audio.value("decodedBuffers").toLongLong())
+                         .arg(audio.value("sampleRateHz").toInt())
+                         .arg(audio.value("channels").toInt())
+                         .arg(audio.value("outputCount").toInt())
+                         .arg(audio.contains("networkReachability")
+                                  ? QString::number(audio.value("networkReachability").toInt())
+                                  : QStringLiteral("未采集"));
+        const auto audioFormat = [&](const char *rate, const char *channels, const char *format) {
+            return AudioOutputFormat::describe(audio.value(rate).toInt(), audio.value(channels).toInt(),
+                                               audio.value(format).toInt());
+        };
+        const bool outputKnown = audio.value("outputClientFormatStatus").toInt() == 1;
+        QStringList conversions;
+        if (audio.value("outputSampleRateConverted").toBool()) {
+            conversions << QStringLiteral("采样率");
+        }
+        if (audio.value("outputSampleFormatConverted").toBool()) {
+            conversions << QStringLiteral("采样格式");
+        }
+        if (audio.value("outputChannelLayoutConverted").toBool()) {
+            conversions << QStringLiteral("声道布局");
+        }
+        const int resampler = audio.value("outputResampler", -1).toInt();
+        const auto outputMode =
+            audio.value("outputPolicy").toInt() == 1 ? QStringLiteral("保留源格式") : QStringLiteral("跟随系统");
+        m_details +=
+            QStringLiteral("\n\n音频输出链路 · %1\n解码 PCM  %2\n应用提交  %3\n系统当前  %4\n设备首选  "
+                           "%5\n硬件格式  未获取\n")
+                .arg(outputMode)
+                .arg(audioFormat("sampleRateHz", "channels", "sampleFormat"))
+                .arg(audioFormat("outputSampleRateHz", "outputChannels", "outputSampleFormat"))
+                .arg(audioFormat("outputSystemSampleRateHz", "outputSystemChannels", "outputSystemSampleFormat"))
+                .arg(audioFormat("outputPreferredSampleRateHz", "outputPreferredChannels",
+                                 "outputPreferredSampleFormat"));
+        if (audio.value("outputSystemFormatStatus").toInt() == 2) {
+            m_details += QStringLiteral("系统路由采样率  %1 Hz / %2 声道（采样格式未知）\n")
+                             .arg(audio.value("outputSystemSampleRateHz").toInt())
+                             .arg(audio.value("outputSystemChannels").toInt());
+        }
+        m_details +=
+            QStringLiteral(
+                "输出  QAudioSink / 系统音频路径\n转换  %1 · %2%3\n重采样  %4 · 抖动 %5\n转换均值 / 峰值  %6 "
+                "/ "
+                "%7 ms\n"
+                "输出缓冲  %8 ms · 欠载 %9\n输出错误 / 重建  %10 / %11\n系统内部转换  未测量；有效位深未获取")
+                .arg(outputKnown
+                         ? (conversions.isEmpty() ? QStringLiteral("PCM 格式保持") : conversions.join(" / "))
+                         : QStringLiteral("未打开"))
+                .arg(audio.value("outputPolicy").toInt() == 1 ? QStringLiteral("优先保留音源格式")
+                                                              : QStringLiteral("匹配系统或设备首选格式"))
+                .arg(audio.value("outputFallback").toBool() ? QStringLiteral("（源格式不支持，已回退）")
+                                                            : QString())
+                .arg(resampler < 0    ? QStringLiteral("未运行")
+                     : resampler == 0 ? QStringLiteral("旁路")
+                                      : QStringLiteral("SWR / filter_size=64"))
+                .arg(audio.value("outputDither").toBool() ? QStringLiteral("TPDF") : QStringLiteral("关"))
+                .arg(audio.value("outputResampleMeanMs").toDouble(), 0, 'f', 3)
+                .arg(audio.value("outputResampleMaxMs").toDouble(), 0, 'f', 3)
+                .arg(audio.value("outputBufferMs").toDouble(), 0, 'f', 1)
+                .arg(audio.value("outputUnderruns").toInt())
+                .arg(audio.value("outputError").toInt())
+                .arg(audio.value("outputRebuilds").toInt());
     }
-    if (audio.value("outputSampleFormatConverted").toBool()) {
-        conversions << QStringLiteral("采样格式");
-    }
-    if (audio.value("outputChannelLayoutConverted").toBool()) {
-        conversions << QStringLiteral("声道布局");
-    }
-    const int resampler = audio.value("outputResampler", -1).toInt();
-    m_details +=
-        QStringLiteral("\n\n音频输出链路 · %1\n解码 PCM  %2\n应用提交  %3\n系统当前  %4\n设备首选  "
-                       "%5\n硬件格式  未获取\n")
-            .arg(audio.value("outputPolicy").toInt() == 1 ? QStringLiteral("保留源格式")
-                                                          : QStringLiteral("跟随系统"))
-            .arg(audioFormat("sampleRateHz", "channels", "sampleFormat"))
-            .arg(audioFormat("outputSampleRateHz", "outputChannels", "outputSampleFormat"))
-            .arg(audioFormat("outputSystemSampleRateHz", "outputSystemChannels", "outputSystemSampleFormat"))
-            .arg(audioFormat("outputPreferredSampleRateHz", "outputPreferredChannels",
-                             "outputPreferredSampleFormat"));
-    if (audio.value("outputSystemFormatStatus").toInt() == 2) {
-        m_details += QStringLiteral("系统路由采样率  %1 Hz / %2 声道（采样格式未知）\n")
-                         .arg(audio.value("outputSystemSampleRateHz").toInt())
-                         .arg(audio.value("outputSystemChannels").toInt());
-    }
-    m_details +=
-        QStringLiteral(
-            "输出  QAudioSink / 系统音频路径\n转换  %1 · %2%3\n重采样  %4 · 抖动 %5\n转换均值 / 峰值  %6 / "
-            "%7 ms\n"
-            "输出缓冲  %8 ms · 欠载 %9\n输出错误 / 重建  %10 / %11\n系统内部转换  未测量；有效位深未获取")
-            .arg(outputKnown
-                     ? (conversions.isEmpty() ? QStringLiteral("PCM 格式保持") : conversions.join(" / "))
-                     : QStringLiteral("未打开"))
-            .arg(audio.value("outputPolicy").toInt() == 1 ? QStringLiteral("优先保留音源格式")
-                                                          : QStringLiteral("匹配系统或设备首选格式"))
-            .arg(audio.value("outputFallback").toBool() ? QStringLiteral("（源格式不支持，已回退）")
-                                                        : QString())
-            .arg(resampler < 0    ? QStringLiteral("未运行")
-                 : resampler == 0 ? QStringLiteral("旁路")
-                                  : QStringLiteral("SWR / filter_size=64"))
-            .arg(audio.value("outputDither").toBool() ? QStringLiteral("TPDF") : QStringLiteral("关"))
-            .arg(audio.value("outputResampleMeanMs").toDouble(), 0, 'f', 3)
-            .arg(audio.value("outputResampleMaxMs").toDouble(), 0, 'f', 3)
-            .arg(audio.value("outputBufferMs").toDouble(), 0, 'f', 1)
-            .arg(audio.value("outputUnderruns").toInt())
-            .arg(audio.value("outputError").toInt())
-            .arg(audio.value("outputRebuilds").toInt());
     // 当前渲染配置：后端取自窗口实际使用的图形 API（不是启动时的选择，回退后也能看出来），
     // 其余取自运行时环境变量——RhiScene 读的是同一份值，所以这里显示的就是真正生效的配置。
     const auto adapter = m_metrics.value("gpuAdapter").toString();

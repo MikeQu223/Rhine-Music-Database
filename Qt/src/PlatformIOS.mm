@@ -164,7 +164,7 @@ void platformMediaCommands(std::function<void(QString)> callback) {
                   if (type == AVAudioSessionInterruptionTypeBegan) {
                       callback("pause");
                   }
-                  // 中断结束后的恢复由用户或 Qt 设备恢复处理，避免恢复手动暂停的歌曲。
+                  // 中断结束后的恢复由用户控制，避免恢复手动暂停的歌曲。
                 }];
     [audioObservers addObject:interruption];
     id route = [notifications
@@ -188,13 +188,6 @@ void platformMediaInfo(QString title, QString artist, QString album, QVariantMap
         return;
     }
     const auto playing = state.value("playing").toBool();
-    if (playing) {
-        NSError *error = nil;
-        [[AVAudioSession sharedInstance] setActive:YES error:&error];
-        if (error) {
-            qWarning("Unable to activate iOS audio session: %ld", long(error.code));
-        }
-    }
     NSMutableDictionary *info = [@{
         MPMediaItemPropertyTitle : title.toNSString(),
         MPMediaItemPropertyArtist : artist.toNSString(),

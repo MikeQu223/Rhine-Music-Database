@@ -16,6 +16,10 @@
 #include "AudioSpectrum.h"
 #include "AudioPcmOutput.h"
 
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+class AppleAudioPlayer;
+#endif
+
 // 在线模式只接收锁定上游的播放链接；本地模式只接收文件 URL
 class AudioPlayer {
   public:
@@ -101,4 +105,15 @@ class AudioPlayer {
     bool failureRecoverable = false;
     bool sourceEnded = false;
     void checkPlaybackHealth();
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+    bool useApplePlayback = true; // Qt 输出回归使用独立的测试路径。
+    QUrl appleSource;
+    std::unique_ptr<AppleAudioPlayer> applePlayer;
+    AudioOutputFormat::SystemFormat appleSystemFormat;
+    void closeApplePlayback();
+    bool startApplePlayback(const QUrl &source, bool paused);
+    void checkApplePlayback();
+    void failApplePlayback();
+    void controlApplePlayback(const QString &action, double value);
+#endif
 };

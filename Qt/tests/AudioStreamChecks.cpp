@@ -114,6 +114,9 @@ class AudioPlayerRegression {
             return false;
         }
         AudioPlayer audio;
+#ifdef Q_OS_MACOS
+        audio.useApplePlayback = false;
+#endif
         // 只在测试中绕过 CDN 白名单与物理输出；真实 HTTP、解码、错误与健康检查仍走生产实现。
         // CI 枚举到声卡不代表设备能推进播放，改用解码缓冲输出；硬件消费由音频输出回归覆盖。
         audio.pcmEnabled = false;
@@ -221,6 +224,9 @@ class AudioPlayerRegression {
 
     static bool pausedError() {
         AudioPlayer audio;
+#ifdef Q_OS_MACOS
+        audio.useApplePlayback = false;
+#endif
         audio.defaultOutput = [] { return QAudioDevice(); };
         audio.followDefaultOutput();
         audio.load("https://music.126.net/fixture.wav", false);

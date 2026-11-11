@@ -7,6 +7,14 @@
 #include <QFile>
 #include <QTemporaryDir>
 #include <QThread>
+#ifdef Q_OS_MACOS
+#include <QEventLoop>
+#include <QGuiApplication>
+#include <QRegularExpression>
+#include <QTcpServer>
+#include <QTcpSocket>
+#include <QTimer>
+#endif
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -35,6 +43,22 @@ bool waitFor(const std::function<bool()> &ready, int milliseconds = 5000) {
     }
     return ready();
 }
+#ifdef Q_OS_MACOS
+// AVFoundation 的异步回调依赖 macOS 主事件循环，不能只轮询 Qt 的队列。
+bool waitForSpatial(const std::function<bool()> &ready) {
+    QEventLoop loop;
+    QTimer poll;
+    QObject::connect(&poll, &QTimer::timeout, &loop, [&] {
+        if (ready()) {
+            loop.quit();
+        }
+    });
+    QTimer::singleShot(12000, &loop, &QEventLoop::quit);
+    poll.start(10);
+    loop.exec();
+    return ready();
+}
+#endif
 QByteArray tone(int rate, double frequency, int frames) {
     QByteArray bytes(frames * 2 * sizeof(float), Qt::Uninitialized);
     auto *samples = reinterpret_cast<float *>(bytes.data());
@@ -160,12 +184,188 @@ QString fixture(const QString &directory) {
 
 class AudioPlayerRegression {
   public:
+#ifdef Q_OS_MACOS
+    static bool spatial(const QString &path) {
+        if (QMediaDevices::defaultAudioOutput().isNull()) {
+            std::fprintf(stderr, "SKIP: AVPlayer playback requires a system output\n");
+            return true;
+        }
+        AudioPlayer audio;
+        audio.control("volume", 0);
+        const auto url = QUrl::fromLocalFile(path).toString();
+        const auto position = [&] { return audio.state()["position"].toLongLong(); };
+        const auto backend = [&] { return audio.diagnosticState()["outputBackend"].toInt(); };
+        bool ok = check(audio.load(url, true, false, {}, 700, true) && backend() == 2,
+                        "Apple stereo fixture selects AVPlayer by default");
+        ok &= check(waitForSpatial([&] {
+                        const auto state = audio.state();
+                        return state["seekable"].toBool() && !state["buffering"].toBool();
+                    }) &&
+                        !audio.state()["playing"].toBool() && std::abs(position() - 700) < 30,
+                    "AVPlayer restores a paused position");
+        audio.control("resume");
+        ok &= check(waitForSpatial([&] { return position() >= 900; }) && backend() == 2,
+                    "AVPlayer resumes at the saved position");
+        audio.control("pause");
+        audio.control("seek", 2300);
+        audio.control("seek", 2500);
+        ok &= check(waitForSpatial([&] { return !audio.state()["buffering"].toBool(); }) &&
+                        std::abs(position() - 2500) < 30 && !audio.state()["playing"].toBool(),
+                    "The most recent seek wins and preserves pause");
+        audio.control("resume");
+        ok &= check(waitForSpatial([&] { return audio.ended == 1; }) && backend() == 2 && position() >= 2980,
+                    "AVPlayer emits exactly one natural end at the final position");
+        audio.control("resume");
+        ok &=
+            check(waitForSpatial([&] { return position() >= 150 && position() < 1000; }) && audio.ended == 1,
+                  "Resuming at EOF starts the same item again");
+        audio.control("pause");
+        audio.control("seek", 1600);
+        ok &= check(audio.load(url, true, false, {}, 400, true) &&
+                        waitForSpatial([&] { return !audio.state()["buffering"].toBool(); }) &&
+                        backend() == 2 && std::abs(position() - 400) < 30 && audio.ended == 1,
+                    "Replacing the item isolates an in-flight seek and old EOF");
+        const auto switchPosition = position();
+        audio.setOutputPolicy(AudioOutputFormat::Policy::Source);
+        ok &= check(backend() == 2 && !audio.state()["requested"].toBool() &&
+                        std::abs(position() - switchPosition) < 50,
+                    "Legacy output preference cannot override Apple playback");
+        ok &= check(waitForSpatial([&] {
+                        return audio.diagnosticState()["sourceSampleRateHz"].toInt() == 44100;
+                    }) && audio.diagnosticState()["sourceChannels"].toInt() == 2 &&
+                        audio.diagnosticState()["outputClientFormatStatus"].toInt() == 0,
+                    "Native source metadata is distinct from a Qt PCM submission format");
+        audio.control("stop");
+        ok &= check(position() == 0 && !audio.state()["requested"].toBool(),
+                    "Stop clears the local playback session");
+        return ok;
+    }
+
+    /** 用同一个本机服务器验证网络读取、单声道和过期链接的恢复状态。 */
+    static bool spatialStreaming(const QString &path) {
+        if (QMediaDevices::defaultAudioOutput().isNull()) {
+            return true;
+        }
+        QFile file(path);
+        if (!file.open(QIODevice::ReadOnly)) {
+            return false;
+        }
+        const auto bytes = file.readAll();
+        constexpr int monoSamples = 48000;
+        const QByteArray silence(monoSamples * 2, '\0');
+        QByteArray monoBytes;
+        QDataStream monoHeader(&monoBytes, QIODevice::WriteOnly);
+        monoHeader.setByteOrder(QDataStream::LittleEndian);
+        monoHeader.writeRawData("RIFF", 4);
+        monoHeader << quint32(36 + silence.size());
+        monoHeader.writeRawData("WAVEfmt ", 8);
+        monoHeader << quint32(16) << quint16(1) << quint16(1) << quint32(48000) << quint32(96000)
+                   << quint16(2) << quint16(16);
+        monoHeader.writeRawData("data", 4);
+        monoHeader << quint32(silence.size());
+        monoHeader.writeRawData(silence.constData(), silence.size());
+        QTcpServer server;
+        int managedRequests = 0;
+        bool encodedQuerySeen = false;
+        const QRegularExpression range(QStringLiteral("Range: bytes=([0-9]+)-([0-9]*)"),
+                                       QRegularExpression::CaseInsensitiveOption);
+        QObject::connect(&server, &QTcpServer::newConnection, &server, [&] {
+            while (server.hasPendingConnections()) {
+                auto *socket = server.nextPendingConnection();
+                QObject::connect(socket, &QTcpSocket::disconnected, socket, &QObject::deleteLater);
+                QObject::connect(socket, &QTcpSocket::readyRead, socket, [&, socket] {
+                    const auto request = socket->property("request").toByteArray() + socket->readAll();
+                    socket->setProperty("request", request);
+                    if (!request.contains("\r\n\r\n") || socket->property("sent").toBool()) {
+                        return;
+                    }
+                    socket->setProperty("sent", true);
+                    encodedQuerySeen |= request.startsWith("GET /stereo.wav?ticket=a%2Bb%2Fc%3D ");
+                    const bool native = request.contains("AppleCoreMedia");
+                    if (!native) {
+                        ++managedRequests;
+                    }
+                    if (request.contains(" /expired.wav ")) {
+                        socket->write(
+                            "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                        socket->disconnectFromHost();
+                        return;
+                    }
+                    const auto &audioBytes = request.contains(" /mono.wav ") ? monoBytes : bytes;
+                    const auto match = range.match(QString::fromLatin1(request));
+                    const auto first = match.captured(1).toLongLong();
+                    const auto last =
+                        match.captured(2).isEmpty()
+                            ? audioBytes.size() - 1
+                            : std::min<qint64>(audioBytes.size() - 1, match.captured(2).toLongLong());
+                    const auto body = audioBytes.mid(first, last - first + 1);
+                    QByteArray header = "HTTP/1.1 200 OK\r\n";
+                    if (match.hasMatch()) {
+                        header = "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes " +
+                                 QByteArray::number(first) + '-' + QByteArray::number(last) + '/' +
+                                 QByteArray::number(audioBytes.size()) + "\r\n";
+                    }
+                    header += "Content-Type: audio/wav\r\nAccept-Ranges: bytes\r\nConnection: close\r\n"
+                              "Content-Length: " +
+                              QByteArray::number(body.size()) + "\r\n\r\n";
+                    socket->write(header);
+                    if (!request.startsWith("HEAD ")) {
+                        socket->write(body);
+                    }
+                    socket->disconnectFromHost();
+                });
+            }
+        });
+        if (!server.listen(QHostAddress::LocalHost)) {
+            return false;
+        }
+
+        AudioPlayer audio;
+        audio.control("volume", 0);
+        const auto source = [&](const QString &name) {
+            return QUrl(QStringLiteral("http://127.0.0.1:%1/%2.wav").arg(server.serverPort()).arg(name));
+        };
+        const auto position = [&] { return audio.state()["position"].toLongLong(); };
+        bool ok = check(!audio.load(source("stereo").toString(), false),
+                        "An unapproved URL is rejected before AVPlayer");
+        // 只在测试中绕过来源准入，使用本机 HTTP 验证 AVPlayer 与托管传输的实际请求。
+        auto stereoUrl = source("stereo");
+        stereoUrl.setQuery(QStringLiteral("ticket=a%2Bb%2Fc%3D"));
+        ok &= check(audio.startApplePlayback(stereoUrl, false) &&
+                        waitForSpatial([&] { return position() >= 200; }) &&
+                        audio.diagnosticState()["outputBackend"].toInt() == 2 && managedRequests == 0 &&
+                        encodedQuerySeen,
+                    "AVPlayer preserves the encoded query and streams stereo without a second downloader");
+        audio.control("seek", 1500);
+        ok &= check(waitForSpatial([&] { return position() > 1600; }),
+                    "AVPlayer resumes streamed audio after seeking");
+        audio.control("stop");
+
+        ok &= check(audio.startApplePlayback(source("mono"), true) &&
+                        waitForSpatial([&] { return audio.diagnosticState()["sourceChannels"].toInt() == 1; }) &&
+                        audio.diagnosticState()["outputBackend"].toInt() == 2 && !audio.playbackRequested,
+                    "Mono streams keep AVPlayer and preserve pause");
+        audio.control("stop");
+
+        audio.recoveryPosition = 700;
+        ok &= check(audio.startApplePlayback(source("expired"), false) &&
+                        waitForSpatial([&] { return !audio.error.isEmpty(); }) && audio.failureRecoverable &&
+                        audio.playbackRequested && position() == 700,
+                    "An expired URL preserves position and intent for provider refresh");
+        audio.control("stop");
+        return ok;
+    }
+#endif
+
     static bool production(const QString &path) {
         if (QMediaDevices::defaultAudioOutput().isNull()) {
             std::fprintf(stderr, "SKIP: no physical output; signal and policy checks still run\n");
             return true;
         }
         AudioPlayer audio;
+#ifdef Q_OS_MACOS
+        audio.useApplePlayback = false;
+#endif
         // 静音跑生产路径，避免测试发出可听声音。
         audio.control("volume", 0);
         audio.enableDiagnostics(true);
@@ -236,10 +436,19 @@ class AudioPlayerRegression {
 
 int main(int argc, char **argv) {
     qputenv("QT_MEDIA_BACKEND", "ffmpeg");
+#ifdef Q_OS_MACOS
+    QGuiApplication app(argc, argv);
+#else
     QCoreApplication app(argc, argv);
+#endif
     QTemporaryDir directory;
     bool ok = policyChecks();
     ok &= signalChecks();
-    ok &= AudioPlayerRegression::production(fixture(directory.path()));
+    const auto path = fixture(directory.path());
+    ok &= AudioPlayerRegression::production(path);
+#ifdef Q_OS_MACOS
+    ok &= AudioPlayerRegression::spatial(path);
+    ok &= AudioPlayerRegression::spatialStreaming(path);
+#endif
     return ok ? 0 : 1;
 }

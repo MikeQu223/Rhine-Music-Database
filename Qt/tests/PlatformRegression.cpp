@@ -140,6 +140,9 @@ class AudioPlayerRegression {
     // 验证解码统计开关
     static bool diagnosticRegression() {
         AudioPlayer audio;
+#ifdef Q_OS_MACOS
+        audio.useApplePlayback = false;
+#endif
         audio.pcmEnabled = false;
         QJsonArray events;
         audio.diagnosticEvent = [&](const QString &, const QJsonObject &values) { events.append(values); };
@@ -180,6 +183,9 @@ class AudioPlayerRegression {
     // 没有输出设备时不会访问网络，可验证真实 load 路径的本地文件与未知来源边界。
     static bool sourceRegression() {
         AudioPlayer audio;
+#ifdef Q_OS_MACOS
+        audio.useApplePlayback = false;
+#endif
         audio.defaultOutput = [] { return QAudioDevice(); };
         audio.followDefaultOutput();
         const QString local("file:///fixture.wav");
@@ -238,6 +244,9 @@ class AudioPlayerRegression {
         const auto mainThread = std::this_thread::get_id();
         AudioOutputFormat::SystemFormat reported;
         AudioPlayer audio;
+#ifdef Q_OS_MACOS
+        audio.useApplePlayback = false;
+#endif
         const auto device = testDevice<QAudioDevicePrivate>("test-format-probe");
         audio.defaultOutput = [device] { return device; };
         audio.followDefaultOutput();
@@ -294,6 +303,9 @@ class AudioPlayerRegression {
 
     static bool run() {
         AudioPlayer audio;
+#ifdef Q_OS_MACOS
+        audio.useApplePlayback = false;
+#endif
         const auto headphones = testDevice<QAudioDevicePrivate>("test-headphones");
         const auto speakers = testDevice<QAudioDevicePrivate>("test-speakers");
         auto selected = headphones;

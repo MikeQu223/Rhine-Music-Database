@@ -573,8 +573,10 @@ if(NOT RHINE_MOBILE_PLATFORM)
     if(APPLE)
         target_sources(RhineMusicDatabase PRIVATE Qt/src/InterfaceWindowMac.mm
                                                   Qt/src/DesktopLyricsWindowMac.mm)
+        target_sources(RhinePlaybackService PRIVATE Qt/src/MacSpatialAudioProbe.mm)
         target_compile_options(RhinePlaybackService PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
-        target_link_libraries(RhinePlaybackService PRIVATE "-framework AppKit")
+        target_link_libraries(RhinePlaybackService PRIVATE "-framework AppKit" "-framework AVFoundation"
+                                                           "-framework CoreMedia")
     endif()
     qt_add_resources(
         RhinePlaybackService
@@ -614,6 +616,16 @@ if(APPLE)
         target_link_libraries(RhineMusicDatabase PRIVATE "-weak_framework MetalFX")
     endif()
     target_compile_options(RhineMusicDatabase PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
+endif()
+if(APPLE)
+    add_library(RhineApplePlayback STATIC Qt/src/AppleAudioPlayer.mm)
+    target_link_libraries(RhineApplePlayback PRIVATE Qt6::Core "-framework AVFoundation"
+                                                       "-framework CoreMedia")
+    target_compile_options(RhineApplePlayback PRIVATE -fobjc-arc)
+    if(IOS)
+        target_link_libraries(RhineApplePlayback PRIVATE "-framework AVFAudio")
+    endif()
+    target_link_libraries(${RHINE_SYSTEM_CORE} PRIVATE RhineApplePlayback)
 endif()
 if(IOS)
     target_sources(RhineCore PRIVATE Qt/src/IOSDisplayLink.mm Qt/src/IOSDisplayLink.h
@@ -861,12 +873,22 @@ if(MSVC)
     target_compile_options(RhineAudioOutputRegression PRIVATE /utf-8)
 endif()
 add_test(NAME qt_audio_output_regression COMMAND RhineAudioOutputRegression)
+if(APPLE)
+    foreach(target RhinePlatformRegression RhineAudioStreamRegression RhineAudioOutputRegression)
+        target_link_libraries(${target} PRIVATE RhineApplePlayback)
+    endforeach()
+endif()
 
 add_test(NAME qt_offline COMMAND RhineMusicDatabase --self-test)
+set(RHINE_OFFLINE_QPA offscreen)
+if(APPLE)
+    # AVFoundation 的状态和跳转回调依赖 Cocoa 主事件循环。
+    set(RHINE_OFFLINE_QPA cocoa)
+endif()
 set_tests_properties(
     qt_offline
     PROPERTIES ENVIRONMENT
-               "QT_QPA_PLATFORM=offscreen;RHINE_RESOURCES=${CMAKE_CURRENT_SOURCE_DIR}/output/resources")
+               "QT_QPA_PLATFORM=${RHINE_OFFLINE_QPA};RHINE_RESOURCES=${CMAKE_CURRENT_SOURCE_DIR}/output/resources")
 
 qt_add_executable(RhineGlyphsRegression Qt/tests/GlyphsChecks.cpp)
 target_link_libraries(RhineGlyphsRegression PRIVATE RhineCore)

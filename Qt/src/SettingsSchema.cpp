@@ -453,6 +453,7 @@ const QVector<SettingDescriptor> &descriptors() {
              .defaultValue = "exhigh",
              .choicesFor = qualityChoices,
              .visible = qualityVisible});
+#if !defined(Q_OS_MACOS) && !defined(Q_OS_IOS)
         add({.id = "audio-output-policy",
              .section = SectionId::Preferences,
              .kind = SettingKind::Choice,
@@ -469,6 +470,7 @@ const QVector<SettingDescriptor> &descriptors() {
              .defaultValue = "system",
              .choices = {{"system", QStringLiteral("跟随系统（推荐）")},
                          {"source", QStringLiteral("保留源格式")}}});
+#endif
         add({.id = "alternative",
              .section = SectionId::Preferences,
              .kind = SettingKind::Choice,
