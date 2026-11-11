@@ -29,17 +29,36 @@
 //      AppStorage::dataDirectory()/qq-device.json|kugou-device.json；Qt:182 明确 Q_UNUSED(temporary)。
 //      Flutter 侧没有 AppStorage 单例，冻结签名（root/temporary/edition）也没有 data/cache 注入缝，
 //      故本层只能用 temporary 近似 TMPDIR、用 root 近似 dataDirectory。完整 gap 见报告 exactGap。
+//      同一原因，Qt:201 的 QDir().mkpath(tmpRoot)（保证 TMPDIR 存在）本层不执行：冻结 imports
+//      只有 dart:async/convert/typed_data，无 dart:io，目录创建责任留在宿主与调用方。
 //   D2 extraEnv 只能追加、不得覆盖 Qt 的四键：Qt:202-206 的四个环境变量是权威值（临时目录/设备态/版本），
-//      契约 rules 10 要求 env 恰为这四键；extraEnv 是契约签名给出的扩展缝，故采用「Qt 键优先」。
+//      契约签名也只给 extraEnv 这一条扩展缝；故 extraEnv 只追加新键、绝不覆盖 Qt 的四键（「Qt 键优先」）。
 //   D3 kill() 与 start() 会取消上一次的 30s 定时器：Qt:213-217 只依赖 m_session/m_state 自守卫、从不取消。
 //      取消不可观测——被取消的定时器在 Qt 语义下必然守卫失败（对应会话已被换掉或已 notRunning）；
 //      而 Dart 侧留下悬挂 Timer 会让 flutter_test 判 pending timer 失败。守卫条件仍逐字保留作第二道防线。
-//   D4 start() 不检查 link.isLive：Qt:186-189 只有在 runtime().launch(root) 失败时才合成 runtime-error，
-//      而 isLive 等价「未退出且已连接」，launch 成功但未连接时 Qt 照样往下走（start 帧进握手队列由
-//      node_runtime 承担）。故本层不因 isLive 提前失败，launch 失败以入站 runtime-error 帧体现。
+//   D4 launch 不在本层，且不能拿 isLive 代替：Qt:186-189 在 start() 内调 runtime().launch(root)，
+//      返回 false 才用 QTimer::singleShot(0, ...)（Qt:187，事件循环下一轮，start() 已返回）合成
+//      runtime-error；返回 true 时不要求已连接——Qt:99-100 的判据是 !exited && (!socket || 已连接)，
+//      「尚未建立控制连接」也算存活，start 帧进握手队列（Qt:130-137）。冻结的 EngineRuntimeLink 只有
+//      send/messages/isLive（契约 frozenApi.mustExport，本卡不改协议），没有 launch 能力；而
+//      isLive ≡ _launched && !_exited && !_shutdown && (_socket == null || _socketLive)
+//      （node_runtime.dart:256-258），未 launch 的健康运行时同样是 false，与 Qt 的 launch 失败不等价。
+//      故装配顺序必须由调用方保证：先 NodeRuntime.launch(root, host)，成功后再 start()；launch 失败
+//      不得 start，其失败以 NodeRuntime 合成的入站 runtime-error 帧体现（node_runtime.dart:545-565，
+//      对应 Qt:186-189 以及 :63-67、:152-159 三处合成点）。漏调 launch 时 start 帧只会留在认证前队列
+//      （node_runtime.dart:348-361），直到 30s 超时 kill，不会像 Qt 那样报 runtime-error——记
+//      RESIDUAL_RISK（见报告）。
 //   D5 stderr 日志只记正文：Qt:248-253 写 logcat 时带 "node worker:" 前缀（呈现层），本层把正文交给 log 回调。
 //   D6 stderr 的 base64 解码用严格 base64Decode，失败时回退原文：Qt 的 QByteArray::fromBase64 是宽容解码
 //      （忽略非法字符）。两者都绝不抛异常到调用方，且 stderr 只用于日志、不影响状态机。
+//   D7 入站帧没有 owner 通道：Qt:185 每次 start 把 runtime().owner 指向最新 BridgeProcess，旧对象
+//      从此收不到入站帧（Qt:64-66、:92-93 只投给 owner）。本层的 link.messages 是广播流，只能靠
+//      session 过滤，而过滤前还有两条旁路：stderr 先于会话过滤（Qt:248-253，其 session 被忽略），
+//      runtime-error 不带 session 字段（node_runtime.dart:560-565）。因此带 session 的
+//      started/output/error/finished 不会串扰（session 不匹配即丢弃），但任何存活实例都会各自处理
+//      一份 stderr 与 runtime-error（Qt 只交给 owner；stderr 由 ios-runtime.cjs:63 发出时带 session，
+//      仍走旁路）。冻结 API 无 dispose()，订阅永不取消；单实例装配下不可观测，多实例并存
+//      记 RESIDUAL_RISK。
 //
 // RED/GREEN 未执行：本卡禁止 flutter test / dart test / analyze / 设备执行（见 CONTRACT.notExecuted）。
 
@@ -50,9 +69,17 @@ import 'dart:typed_data';
 /// 原生侧（Android NodeRuntimeHost / 桌面宿主）单条回环控制连接的 Dart 侧抽象。
 ///
 /// 由 lib/bridge/node_runtime.dart 的 NodeRuntimeEngineLink 实现；本层只通过它与线路交互：
-///   * 发送 send：发出一个线路帧（实现负责 compact JSON + 0x0a 定界、握手排队、48MiB 上限）；
-///   * 订阅 messages：入站帧流；
-///   * 读取 isLive：共享传输连接是否仍可用（等价 Qt NodeRuntime 的「未退出且已连接」）。
+///   * send：写出一帧。实现负责 compact JSON + 0x0a 定界与认证前排队
+///     （node_runtime.dart:348-361，对应 Qt:130-137）；本层不碰字节层。
+///   * messages：入站帧流，含 NodeRuntime 合成的 runtime-error（node_runtime.dart:560-565）；
+///     是广播流，没有 owner 语义（见文件头 D7）。
+///   * isLive：与 Qt:99-100 的 !exited && (!socket || 已连接) 近似——Qt 只在 launch 已成功时求值
+///     该式（Qt:99 的守卫），本层把「已 launch、未退出、未 shutdown」外置为 getter 的前置门，即
+///     _launched && !_exited && !_shutdown && (_socket == null || _socketLive)
+///     （node_runtime.dart:256-258）。Qt 把「尚未连接」也算存活，故它不表示「已就绪」，
+///     也不能用来判断 launch 是否成功（见文件头 D4）。
+///
+/// 协议上限（48 MiB 读缓冲、首帧 token 握手）在实现的入站读取路径上（Qt:71-96），不在 send 上。
 abstract interface class EngineRuntimeLink {
   void send(Map<String, Object?> message);
 
@@ -97,16 +124,20 @@ abstract final class EngineWire {
   static const String systemTrust = 'system-trust';
   static const String systemTrustResult = 'system-trust-result';
 
-  /// 宿主侧合成的崩溃回传（非 ios-runtime.cjs 发出；Qt:186-189 的 launch 失败路径）。
+  /// 宿主侧合成的运行时失败回传（非 ios-runtime.cjs 发出）。Qt 有三处合成：:63-67 控制连接
+  /// 断开、:152-159 node::Start 返回、:186-189 launch 失败；本层的对端是 NodeRuntime 的同类
+  /// 上报（node_runtime.dart:545-565）。
   static const String runtimeError = 'runtime-error';
 
   /// Qt 线路定界符；本层不做字节分帧，常量仅为契约一致性与 node_runtime 复用。
   static const int delimiter = 0x0a;
 }
 
-/// Qt BridgeProcess 会话半部分的 1:1 移植（Qt/src/BridgeProcessAndroid.cpp:171-281）。
+/// Qt BridgeProcess 会话半部分的逐条移植（Qt/src/BridgeProcessAndroid.cpp:171-281），
+/// 与 Qt 的可观测差异见文件头 D1-D7。
 ///
-/// 一个实例对应 Qt 侧一个 BridgeProcess 对象：kill 后可再次 start，共享同一进程级 runtime 连接。
+/// 一个实例对应 Qt 侧一个 BridgeProcess 对象：kill 后可再次 start，共享同一进程级 runtime 连接
+/// （Qt:164-168 的单例）。start() 的前置条件见该方法文档。
 final class EngineTransport {
   /// [log] 对应 Qt 的 logcat 输出（stderr 正文与 error.detail / finished.exitCode）。
   EngineTransport({
@@ -114,8 +145,9 @@ final class EngineTransport {
     void Function(String)? log,
   })  : _link = link,
         _log = log {
-    // 订阅在构造期建立且刻意永不取消：Qt 的 BridgeProcess 跨会话复用同一 runtime 连接
-    // （Qt/src/Host.cpp:346-356），冻结 API 也没有 dispose()。
+    // 订阅在构造期建立且刻意永不取消：Qt 的 NodeRuntime 是进程级单例（Qt:164-168），连接跨会话
+    // 复用，且 Qt:185 每次 start 把 owner 换成最新 BridgeProcess；本层没有 owner 通道（D7），
+    // 冻结 API 也没有 dispose()，故订阅永久保留、靠 session 过滤隔离。
     _link.messages.listen(_handleMessage);
   }
 
@@ -146,7 +178,9 @@ final class EngineTransport {
   /// Qt/src/BridgeProcessAndroid.cpp:213-217 的 30000ms 单次定时器。
   Duration startTimeout = const Duration(seconds: 30);
 
-  /// 当前会话标识；notRunning 后为 null（等价 m_session.clear()）。
+  /// 当前会话标识。kill() 之后为 null（等价 Qt:232 m_session.clear()）；runtime-error 与
+  /// error/finished 只把 state 置 notRunning，不清会话（Qt:254-260 与 :270-280 只改 m_error/m_state；
+  /// 其间的 output 分支 :267-269 只追加 m_output）。
   String? get session => _session;
 
   EngineProcessState get state => _state;
@@ -164,7 +198,9 @@ final class EngineTransport {
 
   /// Qt/src/BridgeProcessAndroid.cpp:179-218 的会话启动半部分。
   ///
-  /// 与 Qt 的差异：link 负责 launch（见文件头 D4），本层只发 start 帧并管理状态机。
+  /// 前置条件（由调用方保证，接口无法表达）：先 NodeRuntime.launch(root, host)，返回 true 之后
+  /// 再调用本方法；launch 失败不得 start。本层只发 start 帧并管理状态机，不做 launch（文件头
+  /// D4），也不做 Qt:185 的 owner 接管与 Qt:201 的 mkpath（D7/D1）。
   void start({
     required String root,
     required String temporary,
@@ -175,13 +211,14 @@ final class EngineTransport {
     _startTimer = null;
 
     // Qt:183-184：先置 Starting、再分配新会话（不清理旧的 output/error，与 Qt 一致）。
+    _state = EngineProcessState.starting;
     final String session = _newSessionId();
     _session = session;
-    _state = EngineProcessState.starting;
 
     // Qt:202-206：env 四键。TMPDIR 与两个 device-state 是 D1 近似值（Qt 真值分别是
     // CacheLocation 与 AppStorage::dataDirectory()），键名与键数才与 Qt 逐字一致。
-    // Qt 键先写入，extraEnv 只允许追加新键，绝不覆盖（文件头 D2 / 契约 rules 10）。
+    // Qt 键先写入，extraEnv 只允许追加新键，绝不覆盖（文件头 D2；契约 engine_transport.rules
+    // 只有 9 条且无 env 规则，扩展缝来自契约签名本身）。
     final Map<String, Object?> environment = <String, Object?>{
       'TMPDIR': temporary,
       'RHINE_QQ_DEVICE_STATE_PATH': '$root/qq-device.json',
@@ -192,7 +229,7 @@ final class EngineTransport {
       environment.putIfAbsent(entry.key, () => entry.value);
     }
 
-    // Qt:207-211：{type, session, script, stderrLog, env} 五键，逐字一致。
+    // Qt:207-211：{type, session, script, stderrLog, env} 五键键集逐字一致（env 的值见 D1）。
     _link.send(<String, Object?>{
       EngineWire.type: EngineWire.start,
       EngineWire.session: session,
@@ -343,7 +380,8 @@ final class EngineTransport {
     // 其余未知 type：会话通过后同样无匹配分支 → 静默丢弃。
   }
 
-  /// 等价 QByteArray::fromBase64(...).trimmed()：非法 base64 不回抛给调用方。
+  /// 近似 QByteArray::fromBase64(...).trimmed()：Qt 宽容解码，本层严格解码并在失败时回退
+  /// 原文（D6）；两条路径都不回抛给调用方。
   static String _decodeStderr(String raw) {
     try {
       return utf8.decode(base64Decode(raw), allowMalformed: true).trim();
