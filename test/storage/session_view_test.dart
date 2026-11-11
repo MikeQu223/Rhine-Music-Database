@@ -625,7 +625,7 @@ void main() {
 
     test('selectedPhysical range and lane', () async {
       // MusicSession.cpp:92-98.
-      for (final bad in <Object?>[40, -2, null]) {
+      for (final bad in <Object?>[40, -2]) {
         final files =
             _filesWith(_session(library: _library(selectedPhysical: bad)));
         _expectKeptFailure(
@@ -643,9 +643,57 @@ void main() {
             'selected-physical',
             files);
       }
-      final ok = _filesWith(_session(library: _library(selectedPhysical: 39)));
+      // A null/missing selectedPhysical goes through _toIntOr's -1 default, and -1
+      // means "none selected" (Qt toInt(-1)), so it must load rather than fail; the
+      // out-of-int32 case elsewhere in this file pins the same default.
+      final noneValue = _filesWith(_session(library: _library(selectedPhysical: null)));
       expect(
-        (await _store(ok).loadForRestore(_identity, playbackConnection: false))
+        (await _store(noneValue).loadForRestore(_identity, playbackConnection: false))
+            .loaded,
+        isTrue,
+      );
+      // 39 passes the -1..39 range check, but a concrete slot still needs a provable
+      // layout: without an injected physicalSlots the gate fails closed instead of
+      // skipping membership (DEDUP-31, MusicSession.cpp:92-98).
+      final noLayout = _filesWith(_session(library: _library(selectedPhysical: 39)));
+      _expectKeptFailure(
+          await _store(noLayout)
+              .loadForRestore(_identity, playbackConnection: false),
+          'selected-physical',
+          noLayout);
+      // The control must name the lane whose slot list holds 39 (lane 4); the default
+      // selectedLane is 0, whose lane is empty in this layout.
+      final ok = _filesWith(
+          _session(library: _library(selectedPhysical: 39, selectedLane: 4)));
+      expect(
+        (await _store(ok, physicalSlots: <List<int>>[
+          <int>[],
+          <int>[],
+          <int>[],
+          <int>[],
+          <int>[39],
+        ]).loadForRestore(_identity, playbackConnection: false))
+            .loaded,
+        isTrue,
+      );
+    });
+
+    test('a missing physicalSlots layout fails closed', () async {
+      // Qt's library always owns physicalSlots (MusicLibrary.h:150), so storage has no
+      // "no layout" state to fall back to. An absent layout means membership cannot be
+      // proven, and the gate must reject rather than accept the -1..39 range alone
+      // (MusicSession.cpp:92-98). physical -1 ("none selected") still passes.
+      final concrete =
+          _filesWith(_session(library: _library(selectedPhysical: 0, selectedLane: 0)));
+      _expectKeptFailure(
+          await _store(concrete)
+              .loadForRestore(_identity, playbackConnection: false),
+          'selected-physical',
+          concrete);
+      final none =
+          _filesWith(_session(library: _library(selectedPhysical: -1, selectedLane: 2)));
+      expect(
+        (await _store(none).loadForRestore(_identity, playbackConnection: false))
             .loaded,
         isTrue,
       );
@@ -667,6 +715,24 @@ void main() {
               .loadForRestore(_identity, playbackConnection: false),
           'selected-physical',
           miss);
+      // Lane 2 exists but is empty: no physical index can belong to it.
+      final emptyLane = _filesWith(
+          _session(library: _library(selectedPhysical: 0, selectedLane: 2)));
+      _expectKeptFailure(
+          await _store(emptyLane, physicalSlots: slots)
+              .loadForRestore(_identity, playbackConnection: false),
+          'selected-physical',
+          emptyLane);
+      // A layout shorter than five lanes cannot prove membership for lane 4: the
+      // length guard must reject before any slots[lane] index (no out-of-range read).
+      final shortLayout = _filesWith(
+          _session(library: _library(selectedPhysical: 0, selectedLane: 4)));
+      _expectKeptFailure(
+          await _store(shortLayout,
+                  physicalSlots: <List<int>>[<int>[0], <int>[], <int>[]])
+              .loadForRestore(_identity, playbackConnection: false),
+          'selected-physical',
+          shortLayout);
       final hit = _filesWith(
           _session(library: _library(selectedPhysical: 2, selectedLane: 0)));
       expect(

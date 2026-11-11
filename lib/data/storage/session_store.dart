@@ -364,10 +364,14 @@ class SessionStore {
 
   /// Injected runtime slot layout, as built by MusicLibrary.cpp:50-58.
   ///
-  /// Qt always has one because the library owns it; when the host does not provide
-  /// it the membership half of the selectedPhysical check cannot be evaluated and
-  /// only the -1..39 range check applies. Pass the value of
-  /// [derivePhysicalSlots] over the engine content to enable the full gate.
+  /// Qt always has one: MusicLibrary owns a five-lane `std::array<QVector<int>, 5>`
+  /// (MusicLibrary.h:150), so there is no "layout absent" state to fall back to. When
+  /// the host does not provide it, the membership half of the selectedPhysical check
+  /// cannot be proven and the gate FAILS CLOSED with the frozen reason
+  /// 'selected-physical' (MusicSession.cpp:92-98); the -1..39 range check alone is
+  /// never accepted as sufficient. A selectedPhysical of -1 ("none selected") still
+  /// passes, exactly like Qt's "physical >= 0 &&" guard. Pass the value of
+  /// [derivePhysicalSlots] over the engine content to accept a concrete slot.
   final List<List<int>>? physicalSlots;
 
   /// Qt/src/MusicLibrary.cpp:50-58: physicalSlots[lane] holds the global record
@@ -554,10 +558,14 @@ class SessionStore {
     if (sourcesRaw.length != 5) {
       throw const _GateFailure('sources-length');
     }
+    // Qt evaluates membership against a layout that always exists (MusicLibrary.h:150).
+    // A null layout is therefore NOT "no constraint": membership cannot be proven, so
+    // the gate fails closed instead of skipping the check (MusicSession.cpp:92-98).
     final slots = physicalSlots;
-    final member = slots == null
-        ? true
-        : (lane >= 0 && lane < slots.length) && slots[lane].contains(physical);
+    final member = slots != null &&
+        lane >= 0 &&
+        lane < slots.length &&
+        slots[lane].contains(physical);
     if (lane < 0 ||
         lane >= 5 ||
         physical < -1 ||
