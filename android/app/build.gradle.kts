@@ -89,7 +89,11 @@ if (releaseSigningRequired && releaseSigningMessageAtConfiguration != null) {
 
 android {
     namespace = "rhine.music.database"
-    compileSdk = flutter.compileSdkVersion
+    // DEDUP-43：SDK 三轴显式 pin 到 Qt 构建真值，不随 flutter.* 工具链漂移。
+    // 真值来源：output/android-build/Qt/android-build/gradle.properties
+    // （androidCompileSdkVersion / qtMinSdkVersion / qtTargetSdkVersion）。
+    // DEDUP-43：compileSdk 对齐 Qt androidCompileSdkVersion=android-36。
+    compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -102,8 +106,10 @@ android {
         applicationId = "rhine.music.database"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = flutter.minSdkVersion
-        targetSdk = flutter.targetSdkVersion
+        // DEDUP-43：minSdk 对齐 Qt qtMinSdkVersion=28（显式 pin，不随 flutter.* 漂移）。
+        minSdk = 28
+        // DEDUP-43：targetSdk 对齐 Qt qtTargetSdkVersion=36（显式 pin，不随 flutter.* 漂移）。
+        targetSdk = 36
         // Uses the version code from pubspec.yaml. When using split APKs, 1000 * ABI_VERSION
         // is added automatically by Flutter. (https://developer.android.com/studio/build/configure-apk-splits#configure-APK-versions)
         // You can force using the value of versionCode by specifying the `-P force-version-code-ignoring-abi=true`
