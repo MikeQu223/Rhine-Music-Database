@@ -742,7 +742,16 @@ List<JsonMap> uniqueItems(List<JsonMap> existing, List<JsonMap> values) {
 }
 
 /// Qt MusicData::ordered：按 id 顺序重排，缺失的 id 跳过。
-List<JsonMap> orderedItems(List<String> ids, List<JsonMap> songs) {
+/// ids 是原样保留的 QJsonArray（DirectoryFolder.ids，可能是数字 id），
+/// 查表前按 identifierOf 归一（Qt/src/MusicData.cpp:10-18 identifier：
+/// 字符串原样、数值转整数字符串）；曲目侧沿用 itemIdOf
+/// （Qt/src/MusicData.cpp:98-114 的 song["id"].toString() 只认字符串）。
+/// 字符串 id 与 Qt 结果逐位一致；数字 id 在 Qt 的 toString() 下得空串而落空，
+/// 这里归一成整数字符串，才能命中 id 为 "7" 的规范曲目 —— 这是规范要求的
+/// 修复（OPS78 DEDUP-14），不是 Qt 的数值匹配行为。
+/// 输出顺序完全由 ids 决定：缺失 id 跳过，重复 id 重复输出，曲目侧重复 id
+/// 先到先得（Qt 的 entries.contains 守卫）。
+List<JsonMap> orderedItems(List<Object?> ids, List<JsonMap> songs) {
   final byId = <String, JsonMap>{};
   for (final song in songs) {
     final id = itemIdOf(song);
@@ -752,7 +761,7 @@ List<JsonMap> orderedItems(List<String> ids, List<JsonMap> songs) {
   }
   final out = <JsonMap>[];
   for (final id in ids) {
-    final song = byId[id];
+    final song = byId[identifierOf(id)];
     if (song != null) {
       out.add(song);
     }
