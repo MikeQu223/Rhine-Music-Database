@@ -39,17 +39,57 @@ import 'dart:ui' show Offset, Rect;
 import '../protocol/hud_hit.dart';
 
 /// 舞台几何：Qt/qml/Overlay.qml:22-23。
+///
+/// DEDUP-13：竖屏全链路只允许一个 scale。挂进 PortraitStage 的缩放子树后，
+/// 命中层必须用 [StageGeometry.withScale] 注入 PortraitBands 那一组
+/// stageScale/logicalWidth/logicalHeight，不得再按逻辑高度推导一次。
 class StageGeometry {
-  const StageGeometry({required this.logicalWidth, required this.logicalHeight});
+  /// 旧的全窗口横向构造（仅横屏；stageScale = logicalHeight / 1080）。
+  ///
+  /// 仅为未迁移调用方保留 const 兼容（test/hud/ime_test.dart、t32 系列、
+  /// lib/hud/input/wheel_router.dart）。[stageScale] 是 final 字段，本构造同样显式写入，
+  /// 不存在“先留空、读取时再推导”的第二来源。
+  ///
+  /// assert 要求 logicalWidth >= logicalHeight：竖屏（width < height）禁止走本构造，
+  /// 新代码一律使用 [StageGeometry.withScale] 注入 PortraitBands.stageScale。
+  const StageGeometry({required this.logicalWidth, required this.logicalHeight})
+      : assert(
+          logicalWidth >= logicalHeight,
+          'StageGeometry(...) is landscape-only; portrait must use StageGeometry.withScale',
+        ),
+        stageScale = logicalHeight > 0 ? logicalHeight / baseHeight : 1.0;
+
+  /// 显式注入唯一 scale（DEDUP-13）；竖屏唯一合法构造。
+  StageGeometry.withScale({
+    required this.stageScale,
+    required this.logicalWidth,
+    required this.logicalHeight,
+  }) {
+    if (!stageScale.isFinite || stageScale <= 0) {
+      throw ArgumentError.value(stageScale, 'stageScale', 'must be positive and finite');
+    }
+    if (!logicalWidth.isFinite ||
+        !logicalHeight.isFinite ||
+        logicalWidth <= 0 ||
+        logicalHeight <= 0) {
+      throw ArgumentError(
+        'StageGeometry.withScale needs positive finite logical size, got ' +
+            logicalWidth.toString() +
+            ' x ' +
+            logicalHeight.toString(),
+      );
+    }
+  }
 
   /// 逻辑（窗口）尺寸：Overlay.qml 的 width / height。
   final double logicalWidth;
   final double logicalHeight;
 
-  /// Overlay.qml:22 —— 逻辑高度换算到 1080 基准舞台。
-  static const double baseHeight = 1080.0;
+  /// 唯一 scale；两个构造都直接写入，读取时不再推导。
+  final double stageScale;
 
-  double get stageScale => logicalHeight > 0 ? logicalHeight / baseHeight : 1.0;
+  /// Overlay.qml:22 —— 逻辑高度换算到 1080 基准舞台（仅旧横屏构造使用）。
+  static const double baseHeight = 1080.0;
 
   double get stageWidth => stageScale > 0 ? logicalWidth / stageScale : logicalWidth;
 

@@ -1,4 +1,4 @@
-/// 竖屏舞台几何与 Qt 舞台常量（纯 Dart，不 import Flutter）。
+/// 竖屏舞台几何与 Qt 舞台常量（只依赖 dart:math 与 Flutter foundation）。
 ///
 /// 这一份度量是绘制与命中的唯一来源：尺寸变化后必须整份重算，
 /// 禁止跨帧复用上一帧的命中矩形（Qt 每帧 NativeHud::draw 都清表重建，
@@ -23,6 +23,8 @@
 library;
 
 import 'dart:math' as math;
+
+import 'package:flutter/foundation.dart' show FlutterError;
 
 /// 竖屏舞台宽恒定值（舞台单位）。
 ///
@@ -161,21 +163,22 @@ class StageRect {
 
 /// 计算竖屏几何的输入。
 ///
-/// layoutWidth/layoutHeight 是 LayoutBuilder 给出的逻辑窗口尺寸（整个可用窗口）；
-/// safe 是 MediaQuery.padding，imeBottom 是 MediaQuery.viewInsets.bottom，
-/// 两者都用逻辑像素，进入公式前统一除以 stageScale。
+/// layoutWidth/layoutHeight 是 LayoutBuilder 给出的逻辑可用窗口，**未**扣除安全区；
+/// safe 是 MediaQuery.padding（逻辑像素，进入公式前统一除以 stageScale）。
+/// imeBottom 只为源码兼容保留：清单是 adjustResize，几何计算**不读取**它；
+/// 只有未来改 adjustNothing 时才允许把它作为输入去压容器。
 ///
-/// inset 归属只有一种读法：safe/imeBottom 是 layoutWidth x layoutHeight 这块区域
-/// **内部**的内缩量。因此 stageScale/stageWidth/stageHeight 恒按整块窗口算，
-/// 安全区与 IME 只收窄内容可用区（containerTop/contentX/contentWidth/contentHeight），
-/// 绝不回写 stage 量。若宿主按 T02 docs/flutter-migration/contracts/layout.md §6 的写法
-/// 先自行扣掉 safe.top/safe.bottom 再传入（即 layoutH 已扣），必须同时把上下 safe 传 0，
-/// 否则同一次内缩会被扣两遍。本实现不猜「看起来像已经扣过」，也不读 devicePixelRatio。
+/// 唯一读法（DEDUP-19/20）：
+/// * stageScale = layoutWidth / 1080，只由窗口宽决定；
+/// * stageHeight = (layoutHeight - safe.top - safe.bottom) / stageScale，
+///   上下安全区在舞台高度里只扣这一次；
+/// * content 再把 safe.top/safe.bottom 折成 stage 单位作为内缩；
+/// * 清单保持 adjustResize：键盘出现时平台已经缩小 layoutHeight，
+///   所以几何计算**不读** imeBottom（imeStage 恒 0），绝不二次扣减。
 ///
-/// 读法歧义必须在调用侧写清：1080x2400 既可以读作逻辑窗口（本实现的默认读法，
-/// stageScale = 1.0），也可以读作某 density 下的物理像素（T02 草案的读法，
-/// density 420 时 stageScale = 0.380952）。两种读法都未被裁决；实现只认传入的数值，
-/// 不做 density 猜测。
+/// 1080x2400 既可以读作逻辑窗口（本实现的默认读法，stageScale = 1.0），
+/// 也可以读作某 density 下的物理像素（T02 草案的读法，density 420 时
+/// stageScale = 0.380952）。两种读法都未被裁决；实现只认传入的数值，不做 density 猜测。
 class PortraitInputs {
   const PortraitInputs({
     required this.layoutWidth,
@@ -240,22 +243,29 @@ class PortraitBands {
   /// 恒定 1080。
   final double stageWidth;
 
-  /// 逻辑窗口高 / stageScale。
+  /// (逻辑窗口高 - safe.top - safe.bottom) / stageScale。
+  ///
+  /// 安全区在舞台高度里只扣这一次；playerBar 因此整体抬到手势区之上。
   final double stageHeight;
 
   /// 安全区上边在舞台单位下的值（新竖形容器的起点）。
   final double containerTop;
 
   /// IME 高度在舞台单位下的值。
+  ///
+  /// 清单保持 adjustResize，平台已缩小窗口；DEDUP-20 之后本字段恒为 0，
+  /// 仅为旧调用方的源码兼容保留，几何计算不得再读 viewInsets。
   final double imeStage;
 
-  /// 输入框在舞台单位下需要上移的量（compress 时为 0）。
+  /// 输入框在舞台单位下需要上移的量。
+  ///
+  /// adjustResize 下恒为 0（平台负责让出键盘空间），保留字段仅为源码兼容。
   final double inputShiftStage;
 
   final double contentX;
   final double contentWidth;
 
-  /// 内容可用区（扣掉安全区与 IME 之后）。
+  /// 内容可用区（扣掉安全区；adjustResize 下 IME 项恒 0，不参与扣减）。
   final StageRect content;
 
   /// 底栏。W/Band/Hybrid 三种候选对它的定位不同，都算出来、都不冻结。
@@ -308,8 +318,10 @@ class PortraitBands {
   /// 本次分带的视口几何；调用方据此决定滚动或拒绝不安全裁切。
   PortraitBandViewport get bandViewport => PortraitBandViewport.forBands(this);
 
-  /// compress 策略实际吃掉的高度。
-  double get imeConsumedStage => imePolicy == PortraitImePolicy.compress ? imeStage : 0.0;
+  /// IME 实际吃掉的高度。
+  ///
+  /// adjustResize 下恒为 0：键盘空间由平台缩窗口完成，候选不得再扣一次。
+  double get imeConsumedStage => 0.0;
 
   bool get isDegenerate => degeneracies.isNotEmpty;
 
@@ -732,9 +744,13 @@ StageRect expandForTouchVertical(StageRect hit, bool android) => hit.expandVerti
 
 /// 算出一次竖屏度量。
 ///
-/// * 竖屏 stageScale 只由逻辑窗口宽决定，IME 与安全区绝不改它。
+/// * 竖屏 stageScale 只由逻辑窗口宽决定，安全区与 IME 绝不改它。
+/// * stageHeight = (layoutHeight - safe.top - safe.bottom) / stageScale；
+///   上下安全区在舞台高度里只扣一次，playerBar 随之抬到手势区之上。
 /// * 左右安全区只收窄内容宽，舞台始终 1080 宽。
-/// * 退化情况进 degeneracies 显式暴露；非正或非有限窗口直接 ArgumentError。
+/// * 清单保持 adjustResize：平台已按键盘缩小窗口，本函数不读 imeBottom。
+/// * 退化情况进 degeneracies 显式暴露；content 高 <= 0 时抛 FlutterError，
+///   绝不把负高度交给 Positioned（DEDUP-21）。
 PortraitBands computePortraitBands(
   PortraitInputs inputs,
   PortraitBandMode mode, {
@@ -750,7 +766,6 @@ PortraitBands computePortraitBands(
     throw ArgumentError('portrait stageScale must be positive and finite, got $stageScale');
   }
   final double stageWidth = portraitStageWidthConstant;
-  final double stageHeight = layoutHeight / stageScale;
   final double touchPadding = touchPaddingFor(inputs.android);
 
   final List<String> degeneracies = <String>[];
@@ -768,11 +783,21 @@ PortraitBands computePortraitBands(
     return value;
   }
 
-  final double safeTopStage = inset(inputs.safe.top, 'safe.top') / stageScale;
-  final double safeBottomStage = inset(inputs.safe.bottom, 'safe.bottom') / stageScale;
-  final double safeLeftStage = inset(inputs.safe.left, 'safe.left') / stageScale;
-  final double safeRightStage = inset(inputs.safe.right, 'safe.right') / stageScale;
-  final double imeStage = inset(inputs.imeBottom, 'imeBottom') / stageScale;
+  final double safeTop = inset(inputs.safe.top, 'safe.top');
+  final double safeBottom = inset(inputs.safe.bottom, 'safe.bottom');
+  final double safeLeft = inset(inputs.safe.left, 'safe.left');
+  final double safeRight = inset(inputs.safe.right, 'safe.right');
+
+  // DEDUP-19 唯一公式：上下安全区在舞台高度里只扣一次。
+  final double stageHeight = (layoutHeight - safeTop - safeBottom) / stageScale;
+  final double safeTopStage = safeTop / stageScale;
+  final double safeBottomStage = safeBottom / stageScale;
+  final double safeLeftStage = safeLeft / stageScale;
+  final double safeRightStage = safeRight / stageScale;
+
+  // DEDUP-20：清单保持 adjustResize，平台已按键盘缩小 layoutHeight；
+  // 这里不再读 inputs.imeBottom，imeStage/imeConsumed/inputShift 恒为 0。
+  const double imeStage = 0.0;
 
   final double contentX = safeLeftStage;
   final double contentWidth = stageWidth - safeLeftStage - safeRightStage;
@@ -780,8 +805,8 @@ PortraitBands computePortraitBands(
     degeneracies.add('left+right safe area consumes the whole stage width $stageWidth');
   }
 
-  final double imeConsumed = imePolicy == PortraitImePolicy.compress ? imeStage : 0;
-  final double inputShiftStage = imePolicy == PortraitImePolicy.shiftUp ? imeStage : 0;
+  const double imeConsumed = 0.0;
+  const double inputShiftStage = 0.0;
 
   final double barHeight = QtStageGeometry.playerBarHeight;
   final StageRect playerBar = StageRect(0, stageHeight - barHeight, stageWidth, barHeight);
@@ -833,11 +858,12 @@ PortraitBands computePortraitBands(
   final double finalContentHeight = content.height;
   if (finalContentHeight <= 0) {
     degeneracies.add(
-      '[' + mode.name + '] content height is not positive ($finalContentHeight); safe area and IME leave no room',
+      '[' + mode.name + '] content height is not positive (' + finalContentHeight.toString() +
+          '); the window is shorter than the fixed bars, or the safe area leaves no room',
     );
   }
 
-  return PortraitBands(
+  final PortraitBands result = PortraitBands(
     mode: mode,
     imePolicy: imePolicy,
     stageScale: stageScale,
@@ -858,4 +884,17 @@ PortraitBands computePortraitBands(
     degeneracies: degeneracies,
     notes: notes,
   );
+
+  // DEDUP-21：绝不把非正高度的 Positioned 矩形交给框架。
+  // 先构造 result，让 degeneracy note 保留在异常消息里供诊断。
+  if (result.content.height <= 0) {
+    throw FlutterError(
+      'PortraitBands refused a non-positive content rect for ' + mode.name + ': ' +
+          result.content.toString() + ' in a ' + stageWidth.toString() + ' x ' +
+          stageHeight.toString() + ' stage. DEDUP-21 forbids handing a non-positive ' +
+          'Positioned rect to the framework. Degeneracies: ' +
+          result.degeneracies.join('; '),
+    );
+  }
+  return result;
 }

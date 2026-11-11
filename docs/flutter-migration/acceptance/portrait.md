@@ -65,9 +65,9 @@
 
 | 输入 | 来源 | 允许影响 | 不得影响 |
 | --- | --- | --- | --- |
-| `layoutWidth/layoutHeight` | `LayoutBuilder` 逻辑尺寸 | `stageScale = layoutWidth/1080`、`stageHeight`、分带数 | 动作流、字号语义 |
-| `MediaQuery.padding` | 系统安全区 | 新容器 top 与左右内容宽 | `stageWidth`、`stageScale`、横屏公式 |
-| `MediaQuery.viewInsets.bottom` | 软键盘 | 新容器可用高度（compress）或输入框上移量（shiftUp） | `stageScale`、`stageWidth`、底栏位置 |
+| `layoutWidth/layoutHeight` | `LayoutBuilder` 逻辑尺寸（未预扣 inset） | `stageScale = layoutWidth/1080`、`stageHeight`、分带数 | 动作流、字号语义 |
+| `MediaQuery.padding` | 系统安全区 | `stageHeight = (layoutHeight-safe.top-safe.bottom)/stageScale`、新容器 top 与左右内容宽 | `stageWidth`、`stageScale`、横屏公式 |
+| `MediaQuery.viewInsets.bottom` | 软键盘（清单为 `adjustResize`） | **无**：平台已缩小逻辑窗口，几何不得再读 `viewInsets`；`imeStage` 恒 0 | `stageScale`、`stageWidth`、`stageHeight`、底栏位置 |
 
 横竖屏判据只按可用尺寸：`aspect = width/height < 1.05`（`Qt/src/NativeSceneCamera.cpp:56-57`；T02 §7.3）。**不得**按设备类型或 `OrientationBuilder` 分支。
 
@@ -78,14 +78,14 @@
 ```
 dpr                 = density / 160
 logicalWidth/Height = physical / dpr
-portraitStageScale  = layoutWidth / 1080        (layoutWidth = 可用窗口逻辑宽)
+portraitStageScale  = layoutWidth / 1080        (layoutWidth = 可用窗口逻辑宽，未预扣 inset)
 physicalPerStage    = physicalWidth / 1080     (= dpr × portraitStageScale，只由物理宽定)
 portraitStageWidth  = 1080                     (常量)
-portraitStageHeight = layoutHeight / portraitStageScale
-                    = 1080 * physicalHeight / physicalWidth   (只由物理宽高比决定)
+portraitStageHeight = (layoutHeight - safe.top - safe.bottom) / portraitStageScale
+                    = 1080 * physicalHeight / physicalWidth   (safe=0 时只由物理宽高比决定)
 bandHeight          = 1080 ; bandCount = ceil(stageHeight / 1080)
-Hybrid: topBar = 96 ; bottomBar = 96 ; contentHeight = stageHeight - 192
-playerBar           = (0, stageHeight - 96, 1080, 96)
+Hybrid: topBar = 96 ; bottomBar = 96 ; contentHeight = stageHeight - 192 - safe.top/scale - safe.bottom/scale
+playerBar           = (0, stageHeight - 96, 1080, 96)   (底边 = stageHeight，落在手势区之上)
 ```
 
 | 档位 | 物理 | density | dpr | 逻辑可用窗口 | stageScale | physicalPerStage | stageWidth | stageHeight | bandCount | contentHeight（Hybrid，无 inset） | 底栏 y | 状态 |
@@ -101,12 +101,12 @@ playerBar           = (0, stageHeight - 96, 1080, 96)
 | P1 dpr = 420/160 = 2.625；1080/2.625 = 411.428571；2400/2.625 = 914.285714 | 与 T02 fixture 一致 |
 | P1 stageScale = 411.428571/1080 = 0.380952381；stageHeight = 914.285714/0.380952381 = 2400 | 一致 |
 | P2 dpr = 3；480/1080 = 0.444444444；1066.666667/0.444444444 = 2400 | 一致 |
-| 不变式 stageHeight = 1080×physH/physW：1080×2400/1080 = 2400；1080×3200/1440 = 2400；1080×2000/1200 = 1800 | 三档成立 |
+| 无安全区时 stageHeight = 1080×physH/physW：1080×2400/1080 = 2400；1080×3200/1440 = 2400；1080×2000/1200 = 1800 | 三档成立（safe=0） |
 | bandCount = ceil(2400/1080) = 3；ceil(1800/1080) = 2 | 成立 |
-| contentHeight = 2400-192 = 2208；1800-192 = 1608 | 成立 |
+| contentHeight（safe=0）= 2400-192 = 2208；1800-192 = 1608 | 成立；有安全区时按 `stageHeight-192-safe.top/scale-safe.bottom/scale` 重算 |
 | 横屏交叉核对：2880×1800 / dpr 1.96875 → 逻辑 1462.857143×914.285714；stageScale = 914.285714/1080 = 0.846561；stageWidth = 1462.857143/0.846561 = 1728 | 与 T02 冻结值一致 |
 
-**要点**：`stageHeight` 与 `bandCount` 只与物理宽高比有关，与 density 无关；因此 P1/P2 虽 density 不同却同为 2400/3 带。`physicalPerStage = physicalWidth/1080 = dpr×stageScale` 也只由物理宽决定，与 density 无关：P1=1、P2=1.333333333、P3=1.111111111。依赖 density 的是 `dpr`、`logicalWidth` 与 `stageScale`；P3 正是因为 density 未冻结才整行未冻结。
+**要点**：`safe=0` 时 `stageHeight` 与 `bandCount` 只与物理宽高比有关，与 density 无关；因此 P1/P2 虽 density 不同却同为 2400/3 带。表内三档均取 `safe=0`；真机上下安全区会按 `(layoutHeight-safe.top-safe.bottom)/scale` 改 `stageHeight`。`physicalPerStage = physicalWidth/1080 = dpr×stageScale` 也只由物理宽决定，与 density 无关：P1=1、P2=1.333333333、P3=1.111111111。依赖 density 的是 `dpr`、`logicalWidth` 与 `stageScale`；P3 正是因为 density 未冻结才整行未冻结。
 
 ### 3.2 三档的语义边界（尺寸≠设备）
 
@@ -114,20 +114,20 @@ playerBar           = (0, stageHeight - 96, 1080, 96)
 | --- | --- |
 | 三档是什么 | **拟议测试矩阵**：供静态推导与后续真机取值；不是设备枚举，不是真机基线，也不是 golden 尺寸 |
 | 三档不是什么 | 不是「已测像素」；P3 的 density 未冻结（WAIT-GEOM-1200x2000），本文不得为它补一个值 |
-| 可静态断言的量 | `stageHeight = 1080×physH/physW`、`bandCount`、`physicalPerStage = physicalWidth/1080`、底栏与底栏输入层 rect、Hybrid 无 inset 时的 `contentHeight` |
+| 可静态断言的量 | `stageHeight = (layoutHeight-safe.top-safe.bottom)/scale`（safe=0 时 = 1080×physH/physW）、`bandCount`、`physicalPerStage = physicalWidth/1080`、底栏与底栏输入层 rect、Hybrid 无 inset 时的 `contentHeight` |
 | 依赖 density 的量 | `dpr`、`logicalWidth`、`stageScale`；P3 的这三项未冻结（`physicalPerStage` 不在此列） |
 | 分带取整 | 用「容差 ceil」：比值落在整数 1e-6 内不得多算一带（`ceilWithTolerance`，T43 快照 :578-587；容差常量 `qtGeometryTolerance = 1e-6`，:38）。如 3×1080=3240 时 ratio=3.0 仍为 3 带 |
-| 退化处理 | 安全区/IME 吃满可用高宽时进 `PortraitBands.degeneracies`，**不静默夹取**（写入点见快照 :644,648,663,672,718；判据 `PortraitBands.isDegenerate`，:289） |
+| 退化处理 | 安全区吃满可用高宽时进 `PortraitBands.degeneracies`，**不静默夹取**；`content.height <= 0` 时 `computePortraitBands` 抛 `FlutterError`（DEDUP-21），绝不把非正高度交给 `Positioned` |
 
 三候选（T43 已实现为参数，**未裁决赢家**；本卡不选型、不写推荐、不据此改横屏）：
 
-| 候选 | 内容区（stage 单位，safe/ime 已折算） | 分带 | 底栏 | 状态 |
+| 候选 | 内容区（stage 单位，safe 已折算；adjustResize 下无 ime 项） | 分带 | 底栏 | 状态 |
 | --- | --- | --- | --- | --- |
-| Portrait-W | `(safeL, safeT, 1080-safeL-safeR, stageHeight-96-safeT-safeB-ime)` | 1 | `(0, stageHeight-96, 1080, 96)` | 未裁决 |
-| Portrait-Band | `(safeL, safeT, 1080-safeL-safeR, stageHeight-safeT-safeB-ime)`，跨带连续 | `ceilTol(stageHeight/1080)`，第 k 带 `y=k×1080` | 贴底，可覆盖最后一带 | 未裁决 |
-| Portrait-Hybrid | `(safeL, safeT+96, 1080-safeL-safeR, stageHeight-192-safeT-safeB-ime)` | 1（`[topBar, content, playerBar]`） | `(0, stageHeight-96, 1080, 96)` | 未裁决 |
+| Portrait-W | `(safeL, safeT, 1080-safeL-safeR, stageHeight-96-safeT-safeB)` | 1 | `(0, stageHeight-96, 1080, 96)` | 未裁决 |
+| Portrait-Band | `(safeL, safeT, 1080-safeL-safeR, stageHeight-safeT-safeB)`，跨带连续 | `ceilTol(stageHeight/1080)`，第 k 带 `y=k×1080` | 贴底，可覆盖最后一带 | 未裁决 |
+| Portrait-Hybrid | `(safeL, safeT+96, 1080-safeL-safeR, stageHeight-192-safeT-safeB)` | 1（`[topBar, content, playerBar]`） | `(0, stageHeight-96, 1080, 96)` | 未裁决 |
 
-无 inset 时 Hybrid 即 §3 表中的 `contentHeight = stageHeight-192`（2400→2208，1800→1608）；上表是含安全区与 IME 的完整式。T43 的参数化只覆盖**垂直锚点与分带**；列数/弹层形态仍属 WAIT-CANDIDATE，不得据此认定水平语义已裁决。§4 的模态宽度公式（stage 1080、模态 980/760）是 T02 冻结常量，不由候选裁决改变。
+无 inset 时 Hybrid 即 §3 表中的 `contentHeight = stageHeight-192`（2400→2208，1800→1608）；上表是含安全区的完整式。清单保持 `adjustResize`，平台已缩窗口，矩形公式不再出现 `ime` 项（`imeStage = imeConsumedStage = inputShiftStage = 0`）。T43 的参数化只覆盖**垂直锚点与分带**；列数/弹层形态仍属 WAIT-CANDIDATE，不得据此认定水平语义已裁决。§4 的模态宽度公式（stage 1080、模态 980/760）是 T02 冻结常量，不由候选裁决改变。
 
 底栏输入层（不是命中层）修正：Qt `row(bounds.x(), 984, width, RowHeight=96)` 之后 `inputBounds = row.adjusted(0, -6, 0, 0)` → **(0, 978, 1080, 102)**；既不是 96 高，也不是 bottom=1074（`Qt/src/PlayerBar.cpp:241-242`；T43 快照 :399-404 已记录该修正：`QtStageGeometry.inputShieldTop=978`、`inputBoundsHeight=1080-978`）。竖屏同源换算为 `(0, stageHeight-102, 1080, 102)`，且它必须包含进度条与音量命中（`Qt/tests/NativeHudChecks.cpp:474-484`）。
 
@@ -135,26 +135,26 @@ playerBar           = (0, stageHeight - 96, 1080, 96)
 
 | 项 | 值/公式 | 证据 |
 | --- | --- | --- |
-| Portrait-W | stageScale = layoutWidth/1080；stageWidth = 1080；stageHeight = layoutHeight/scale；底栏 (0, stageHeight-96, 1080, 96) | T02 layout.md §6 |
-| Portrait-Band | bandHeight = 1080；bandCount = ceil(stageHeight/1080)；bandY = k×1080 | T02 layout.md §6 |
-| Portrait-Hybrid | topBar = 96；bottomBar = 96；content = (0, 96, 1080, stageHeight-192) | T02 layout.md §6 |
+| Portrait-W | stageScale = layoutWidth/1080；stageWidth = 1080；stageHeight = (layoutHeight-safe.top-safe.bottom)/scale；底栏 (0, stageHeight-96, 1080, 96) | T02 layout.md §6 |
+| Portrait-Band | stageHeight = (layoutHeight-safe.top-safe.bottom)/scale；bandHeight = 1080；bandCount = ceil(stageHeight/1080)；bandY = k×1080 | T02 layout.md §6 |
+| Portrait-Hybrid | stageHeight = (layoutHeight-safe.top-safe.bottom)/scale；topBar = 96；bottomBar = 96；content = (0, 96, 1080, stageHeight-192-safe.top/scale-safe.bottom/scale) | T02 layout.md §6；§3.2 完整式 |
 | 模态宽（stageWidth=1080） | 默认 min(1260, 1080-100) = 980，left = 50 → (50, 122, 980, 836)；搜索 min(1080-100, max(760, min(1000, 1080×0.5-59 = 481))) = 760，left = 1080-760-59 = 261 → (261, 122, 760, 836) | T02 layout.md §4.1；Qt `NativeHud.cpp:140-159` |
 | 候选差异 | T43 参数化各候选只改**垂直锚点**，宽度公式不变；列数/弹层形态仍属 WAIT-CANDIDATE | T02 layout.md §6；T43 快照 :686-714 |
 | 3D | 项目已有 `aspect < 1.05` 分支；竖屏缺的是 HUD 布局，不是 3D 能力；竖屏 3D 占比未裁决 | plan :361-365；WAIT-3D-SHARE |
 | 底栏命中 | 仅 PlayerBar 命中带 `fixed:true`；打开模态时 fixed 命中不被 modalOffset 平移 | plan :211-214；`PlayerBar.cpp:46-53` |
 
-> 本节是 T02 §6 的公式引述（无 inset 的基础形态）。实现侧两处收紧以 §3.2 为准：分带用容差 ceil（防浮点误差多算一带），安全区/IME 折进新容器后 Hybrid 内容高按 `stageHeight-192-safeT-safeB-ime`，不再固定 `stageHeight-192`。两处都不改变本表其余常量。
+> 本节以 §3.2 的完整式为准（T02 §6 只给无 inset 基础形态）。分带用容差 ceil（防浮点误差多算一带）；`safe.top/safe.bottom` 只出现在 `stageHeight` 公式与内容内缩两处，Hybrid 内容高按 `stageHeight-192-safeT-safeB`，不再固定 `stageHeight-192`。清单保持 `adjustResize`，几何不读 `viewInsets`，`ime` 项恒 0；只有未来改 `adjustNothing` 才重新引入 IME 压缩项。以上都不改变本表其余常量。
 
 ## 5. 安全区 / IME / 触摸 / 字尺度 验收矩阵
 
 | 规则 | 断言 | 证据 | 状态 |
 | --- | --- | --- | --- |
-| 安全区-垂直 | `containerTop = safe.top / stageScale`（stage 单位）；安全区**只作用于新增竖向容器** | T02 §6 | 规则已冻结 |
+| 安全区-垂直 | `stageHeight = (layoutHeight-safe.top-safe.bottom)/stageScale`；`containerTop = safe.top / stageScale`（stage 单位）；安全区在舞台高度里**只扣一次**，底栏底边 = `stageHeight`，抬到手势区之上 | T02 §6 | 规则已冻结 |
 | 安全区-水平 | 左右安全区只收窄新容器内容宽度，**不改变** `stageWidth`/`stageScale` | T02 §6 | 规则已冻结 |
 | 安全区-横屏 | 安全区**不得**进入横屏公式 | T02 §6 | 规则已冻结 |
 | 安全区-数值 | 真实安全区数值 | 无源码证据（Qt 无安全区代码） | WAIT-SAFE-AREA |
-| IME | `viewInsets.bottom` **不得**改变 `stageScale`/`stageWidth`；`imeStage = viewInsets.bottom / stageScale` 只允许压缩新容器可用高度或按冻结策略上移输入框 | T02 §5.4/§7.3 | 规则已冻结 |
-| IME-横屏 | 键盘弹出是否 resize 窗口 | `Qt/android/AndroidManifest.xml` 无 `windowSoftInputMode`，无 viewInsets/安全区处理；猜测 adjustResize/adjustPan 属禁止行为 | DEVICE_BLOCKED（WAIT-IME-LANDSCAPE） |
+| IME | 清单保持 `adjustResize`：平台已缩小窗口，几何**不得读** `viewInsets`；`stageScale`/`stageWidth`/`stageHeight`/底栏均不因键盘改变，`imeStage = imeConsumedStage = inputShiftStage = 0`。只有未来改 `adjustNothing` 才用 `viewInsets` 压容器 | T02 §5.4/§6 | 规则已冻结 |
+| IME-横屏 | Flutter 清单为 `adjustResize`：键盘缩窗口，`stageScale` 按新逻辑高重算；禁止再用 `viewInsets` 手工缩放 | `android/app/src/main/AndroidManifest.xml:28`；T02 §5.4 | 规则已冻结 |
 | 输入框 rect | 真实输入框逻辑 rect **恒等于** stage rect × stageScale，不额外加 offset/padding（搜索/账号/验证码/设置编辑同理） | T02 §5.1/§5.4 | 规则已冻结 |
 | 触摸 | 扩张 **16 stage px**、四边、**仅命中层**，经 stageScale 换算为逻辑坐标；**不得写回**命令流 | T02 §3（`Overlay.qml:38-43`） | 规则已冻结 |
 | 触摸下限 | 不引入 Material 48dp 规范；最小目标尺寸属于 T43 待冻结项 | plan :361-365 | WAIT-CANDIDATE / WAIT-48DP |
@@ -172,7 +172,7 @@ playerBar           = (0, stageHeight - 96, 1080, 96)
 | `drawRect` / `hitRect` | `x,y,w,h`（stage） | 必须分别记录；`hitRect` 可含四边 +16 |
 | `anchor` | `band-1` / `content` / `pinned` | 竖屏锚点类别 |
 | `safe` | `PASS_STATIC` / `WAIT-SAFE-AREA` / `N/A_NOT_IN_CONTAINER` / `N/A_PLATFORM_GATED` | 见下表断言 |
-| `ime` | `PASS_STATIC` / `WAIT-IME-LANDSCAPE` / `N/A_NOT_INPUT` / `N/A_PLATFORM_GATED` | 见下表断言 |
+| `ime` | `PASS_STATIC` / `N/A_NOT_INPUT` / `N/A_PLATFORM_GATED` | 见下表断言；`adjustResize` 规则已冻结 |
 | `rot` | `PASS_STATIC` / `BLOCKED_DEVICE` | 见 §8.1 |
 | `measure` | `unexecuted` / `device:<model>` | 本轮一律 `unexecuted` |
 
@@ -182,7 +182,7 @@ playerBar           = (0, stageHeight - 96, 1080, 96)
 | --- | --- | --- |
 | `PASS_STATIC` | 源码或公式可证该断言成立 | 规则类断言（stage 常量、rect 公式、状态机） |
 | `PASS_MEASURED` | 真机/截图/frame 取证 | **本轮一律不得使用** |
-| `WAIT-GEOM-1200x2000` / `WAIT-SAFE-AREA` / `WAIT-IME-LANDSCAPE` / `WAIT-CANDIDATE` / `WAIT-ACC` / `WAIT-48DP` / `WAIT-3D-SHARE` / `WAIT-VISUAL-EVIDENCE` / `WAIT-TEMPLATE-EXEC` / `WAIT-GOLDEN` / `WAIT-DEVICE` | 依赖未冻结值或设备 | 安全区真实值、横屏 IME、候选裁决、48dp、3D 占比、视觉取证、模板未执行等，按 §9 逐项对应 |
+| `WAIT-GEOM-1200x2000` / `WAIT-SAFE-AREA` / `WAIT-CANDIDATE` / `WAIT-ACC` / `WAIT-48DP` / `WAIT-3D-SHARE` / `WAIT-VISUAL-EVIDENCE` / `WAIT-TEMPLATE-EXEC` / `WAIT-GOLDEN` / `WAIT-DEVICE` | 依赖未冻结值或设备 | 安全区真实值、候选裁决、48dp、3D 占比、视觉取证、模板未执行等，按 §9 逐项对应 |
 | `BLOCKED_DEVICE` | 设备取证被禁 | 像素、性能、触摸手感 |
 | `FAIL` | 断言不成立 | 任意 |
 
@@ -191,7 +191,7 @@ playerBar           = (0, stageHeight - 96, 1080, 96)
 | ID | 断言 | 判据/证据 |
 | --- | --- | --- |
 | SAFE-V1 | 按候选实例化：W / Band `drawRect.y ≥ safeT`；Hybrid `drawRect.y ≥ safeT+96`（顶栏占 96） | 三模式内容顶分别在快照 :689,701,709；`PortraitBands.contentTop` 只等于内容顶，`containerTop` 只等于 `safeT`（:729），不可单独用作 Hybrid 判据 |
-| SAFE-V2 | 内容底按候选：W / Hybrid `= stageHeight - 96 - safeB - ime`；Band `= stageHeight - safeB - ime`（底栏贴底、可覆盖最后一带）。`ime` 仅 compress 时非 0；shiftUp 时输入框上移而内容高不减 | 三模式 bottom 式见快照 :690,702,710；压缩量见 `PortraitBands.imeConsumedStage`（getter :287；分派 :666-667） |
+| SAFE-V2 | 内容底按候选：W / Hybrid `= stageHeight - 96 - safeB`；Band `= stageHeight - safeB`（底栏贴底、可覆盖最后一带）。`playerBar.bottom = stageHeight`；W / Hybrid 还须 `content.bottom <= playerBar.y`，Band 不要求该不等式（允许覆盖最后一带）。`adjustResize` 下 `ime = 0` | 三模式 bottom 式见快照 :690,702,710；`PortraitBands.playerBar` 与 `content` |
 | SAFE-H1 | 新容器内 `drawRect.x ≥ safe.left/stageScale` 且 `right ≤ 1080 - safe.right/stageScale` | 只作用于新增竖向容器 |
 | SAFE-H2 | `stageWidth`、`stageScale`、模态宽（980/760）不因安全区改变 | 逐值相等（T02 §6） |
 | SAFE-L1 | 横屏分支不读 `padding` | 代码断言，禁止把安全区带进横屏 |
@@ -202,12 +202,12 @@ IME 断言（逐动作填）：
 
 | ID | 断言 | 判据/证据 |
 | --- | --- | --- |
-| IME-1 | `stageScale`、`stageWidth` 与 IME 无关 | 弹出前后逐值相等（快照 :631,635,658；`Qt/qml/Main.qml:32` 横屏同源） |
-| IME-2 | `imeStage = viewInsets.bottom / stageScale` | 唯一单位换算（快照 :658） |
-| IME-3 | compress：内容高减少 `imeStage`；shiftUp：`inputShiftStage = imeStage` 且内容高不减 | 两策略互斥且**未裁决**（`PortraitImePolicy`，快照 :44；分派 :666-667） |
+| IME-1 | `stageScale`、`stageWidth`、`stageHeight`、底栏与 IME 无关 | 弹出前后逐值相等（`Qt/qml/Main.qml:32` 横屏同源；竖屏公式见 §3） |
+| IME-2 | `adjustResize` 下 `imeStage = 0`；几何不读 `viewInsets.bottom` | 平台缩窗口；`PortraitBands.imeStage` 恒 0 |
+| IME-3 | compress / shiftUp 均不产生几何差异：`imeConsumedStage = inputShiftStage = 0` | 两策略仅为源码兼容保留，**不参与** `adjustResize` 计算 |
 | IME-4 | 输入框逻辑 rect `= stage rect × stageScale`，不额外加 offset/padding | 搜索/账号/验证码/设置编辑同源（T02 §5.1/§5.4） |
 | IME-5 | 底栏输入层仍为 `(0, stageHeight-102, 1080, 102)` 且包含进度条与音量命中 | `PlayerBar.cpp:241-242`；`NativeHudChecks.cpp:474-484` |
-| IME-6 | 键盘收起后几何回到原值（幂等） | 两次计算深相等（`PortraitBands.operator==`，快照 :314-335） |
+| IME-6 | 任意 `viewInsets` 变化几何逐值不变（幂等） | 两次计算深相等（`PortraitBands.operator==`，快照 :314-335） |
 | IME-7 | IME 开合不产生动作副作用 | 命令流零新增（不 login/cancel/play/queue/seek） |
 
 分组模板（12 组 = §6.1 的 12 个来源文件；数量是 `hit/button` 文本出现数，合计 97，含 3 处定义，不是完备入口面）：
@@ -229,7 +229,7 @@ IME 断言（逐动作填）：
 
 **本轮状态**：模板只定义、未填充、未执行（`WAIT-TEMPLATE-EXEC`）；任何一行都不构成「已验收」。
 
-WAIT 落点：`WAIT-SAFE-AREA` 用于真实安全区数值；`WAIT-IME-LANDSCAPE` 用于横屏 IME；`WAIT-CANDIDATE` 用于候选裁决；`WAIT-48DP` 用于最小触摸目标；`WAIT-3D-SHARE` 用于 3D 占比；`WAIT-VISUAL-EVIDENCE` 用于视觉取证；`WAIT-TEMPLATE-EXEC` 用于本模板未执行；`WAIT-ACC` 用于系统字体缩放策略。
+WAIT 落点：`WAIT-SAFE-AREA` 用于真实安全区数值；`WAIT-CANDIDATE` 用于候选裁决；`WAIT-48DP` 用于最小触摸目标；`WAIT-3D-SHARE` 用于 3D 占比；`WAIT-VISUAL-EVIDENCE` 用于视觉取证；`WAIT-TEMPLATE-EXEC` 用于本模板未执行；`WAIT-ACC` 用于系统字体缩放策略。
 
 ## 6. 全入口与动作清单
 
@@ -470,7 +470,7 @@ music:login | 1-12 | 411x914@2.625 | 480x1066@3 | unexecuted x7 | unexecuted | c
 | WAIT-GOLDEN | `test/golden/portrait/full_suite_1080x2400.png` | 未生成；样板未冻结；不得用空 PNG 冒充 | T43/T51 |
 | WAIT-GEOM-1200x2000 | 1200×2000 的 density/dpr/logicalWidth/stageScale | 密度未审定；`stageHeight=1800`、`bandCount=2`、`physicalPerStage=1.111111111` 由物理尺寸推出，但 `dpr`/`logicalWidth`/`stageScale` 仍依赖 density | T43 |
 | WAIT-CANDIDATE | Portrait-W / Band / Hybrid 裁决 | 需在同一 widget 比较可达性/层级/触摸/字尺度后冻结 | T43 |
-| WAIT-IME-LANDSCAPE | 横屏键盘是否 resize 窗口 | `AndroidManifest.xml` 无 `windowSoftInputMode`；猜测 adjustResize/Pan 属禁止 | T02/T50 |
+| ~~WAIT-IME-LANDSCAPE~~ | ~~横屏键盘是否 resize 窗口~~ | 已冻结：Flutter 清单 `AndroidManifest.xml:28` 为 `adjustResize`；不再等待 | T02/T50 |
 | WAIT-SAFE-AREA | 真实安全区数值 | Qt 无安全区代码 | T43/T51 |
 | WAIT-ACC | 系统字体缩放的可访问性策略 | 乘进 stage 会破坏绝对字号语义 | T32/T51 |
 | WAIT-DEVICE | 竖屏真机基线 | DEVICE_BLOCKED：本阶段不跑设备/截图/性能 | T51/T16 |
@@ -502,5 +502,5 @@ music:login | 1-12 | 411x914@2.625 | 480x1066@3 | unexecuted x7 | unexecuted | c
 
 ### 可释放依赖
 
-本卡不需要设备即可推进的部分已全部完成；对 T43 的依赖是**冻结值**依赖（1200×2000 density、候选选择、golden 样板、竖屏重锚点），不是本卡可自行决定的事项。设备相关结论（安全区真实数值、IME 横屏行为、竖屏真机像素）保持 DEVICE_BLOCKED，不阻塞源码侧清单与 fixture。
+本卡不需要设备即可推进的部分已全部完成；对 T43 的依赖是**冻结值**依赖（1200×2000 density、候选选择、golden 样板、竖屏重锚点），不是本卡可自行决定的事项。设备相关结论（安全区真实数值、竖屏真机像素）保持 DEVICE_BLOCKED，不阻塞源码侧清单与 fixture；IME 横屏已按 Flutter 清单 `adjustResize` 冻结，不再列为 WAIT。
 

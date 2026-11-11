@@ -10,6 +10,8 @@ library;
 import 'package:flutter/foundation.dart' show FlutterError, TargetPlatform, defaultTargetPlatform;
 import 'package:flutter/widgets.dart';
 
+import '../../hud/input/hit_layer.dart';
+import '../../hud/protocol/hud_frame.dart';
 import 'portrait_bands.dart';
 
 /// 竖屏舞台容器。
@@ -18,8 +20,8 @@ import 'portrait_bands.dart';
 /// 绘制时整体按 PortraitBands.stageScale 从左上角缩放
 /// （Qt/qml/Overlay.qml:179-184 transformOrigin: Item.TopLeft）。
 ///
-/// mode / imePolicy 仍是未裁决候选：默认值只为让宿主可编译、可预览，
-/// 不代表赢家；生产接线必须在裁决后显式传参（W / Band / Hybrid 见 fixture）。
+/// mode 仍是未裁决候选：默认值只为让宿主可编译、可预览，不代表赢家。
+/// imePolicy 在 adjustResize 下不参与几何（DEDUP-20），仅为源码兼容保留。
 class PortraitStage extends StatelessWidget {
   const PortraitStage({
     super.key,
@@ -35,7 +37,7 @@ class PortraitStage extends StatelessWidget {
   /// 分带候选；本阶段不冻结赢家。默认值只用于编译/预览，不是裁决。
   final PortraitBandMode mode;
 
-  /// IME 策略；本阶段不冻结赢家。默认值只用于编译/预览，不是裁决。
+  /// IME 策略；adjustResize 下恒为 no-op，仅为源码兼容保留。
   final PortraitImePolicy imePolicy;
 
   /// 只用于诊断定位，不参与几何。
@@ -59,16 +61,26 @@ class PortraitStage extends StatelessWidget {
               left: media.padding.left,
               right: media.padding.right,
             ),
-            imeBottom: media.viewInsets.bottom,
+            // DEDUP-20：清单保持 adjustResize，平台已按键盘缩小窗口；
+            // 这里不读 media.viewInsets.bottom，避免二次扣除。
             android: defaultTargetPlatform == TargetPlatform.android,
           ),
           mode,
           imePolicy: imePolicy,
         );
+        // DEDUP-13：唯一一份 StageGeometry 由 PortraitStage 生成并注入。
+        // 绘制（Transform.scale）与命中（HitLayer/PointerRouter）都消费这一份；
+        // 子树不得再用 logicalHeight / 1080 推导第二个 scale。
+        final StageGeometry geometry = StageGeometry.withScale(
+          stageScale: bands.stageScale,
+          logicalWidth: layoutWidth,
+          logicalHeight: layoutHeight,
+        );
         return PortraitStageScope(
           bands: bands,
           // ClipRect 只把缩放后的舞台裁回它自己的布局盒
-          // （stageWidth * stageScale == layoutWidth，stageHeight * stageScale == layoutHeight），
+          // （stageWidth * stageScale == layoutWidth；
+          //   stageHeight * stageScale == layoutHeight - safe.top - safe.bottom），
           // 防止亚像素溢出糊到相邻区域。它不是内容裁切：舞台内所有入口/动作矩形原样保留，
           // 这里不做隐藏、不裁切可用区、也不二次缩放。
           child: ClipRect(
@@ -91,7 +103,21 @@ class PortraitStage extends StatelessWidget {
                   child: SizedBox(
                     width: bands.stageWidth,
                     height: bands.stageHeight,
-                    child: child,
+                    // DEDUP-13：全链路只保留 PortraitStage 这一次缩放。
+                    // 子树拿到单位缩放的舞台（1080 x stageHeight），绘制与命中
+                    // 都从这一份 HudStage 读尺寸，禁止再调 HudStage.fromLogicalSize。
+                    child: StageGeometryScope(
+                      geometry: geometry,
+                      child: HudStageScope(
+                        stage: HudStage(
+                          scale: 1.0,
+                          // 恒定 1080，与 PortraitBands.stageWidth 同一常量。
+                          width: portraitStageWidthConstant,
+                          height: bands.stageHeight,
+                        ),
+                        child: child,
+                      ),
+                    ),
                   ),
                 ),
               ),
@@ -129,6 +155,73 @@ class PortraitStageScope extends InheritedWidget {
   bool updateShouldNotify(PortraitStageScope oldWidget) => oldWidget.bands != bands;
 }
 
+/// 把唯一一份单位缩放舞台交给绘制/命中子树（DEDUP-13）。
+///
+/// 必须挂在 [PortraitStage] 的缩放子树内部：stage.scale 恒为 1.0，
+/// stage.width 恒为 1080，stage.height 为 PortraitBands.stageHeight。
+/// 子树禁止再按逻辑窗口高度推导 scale；命中层用 StageGeometry.withScale
+/// 注入同一组 stageScale/logicalWidth/logicalHeight。
+class HudStageScope extends InheritedWidget {
+  const HudStageScope({super.key, required this.stage, required super.child});
+
+  final HudStage stage;
+
+  static HudStage of(BuildContext context) {
+    final HudStage? stage = maybeOf(context);
+    if (stage == null) {
+      throw FlutterError(
+        'HudStageScope.of() was called with a context that does not contain a '
+        'PortraitStage.\n'
+        'The context must be a descendant of PortraitStage; use '
+        'HudStageScope.maybeOf() when a stage is optional.',
+      );
+    }
+    return stage;
+  }
+
+  static HudStage? maybeOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<HudStageScope>()?.stage;
+
+  @override
+  bool updateShouldNotify(HudStageScope oldWidget) =>
+      oldWidget.stage.scale != stage.scale ||
+      oldWidget.stage.width != stage.width ||
+      oldWidget.stage.height != stage.height;
+}
+
+/// 把唯一一份 [StageGeometry] 注入绘制/命中子树（DEDUP-13）。
+///
+/// 与 [HudStageScope] 同源：geometry.stageScale == PortraitBands.stageScale，
+/// geometry.logicalWidth/Height == LayoutBuilder 的完整可用窗口。HitLayer、
+/// PointerRouter、TextInputStageState 只能消费这里的 scale，禁止在子树内重算。
+class StageGeometryScope extends InheritedWidget {
+  const StageGeometryScope({super.key, required this.geometry, required super.child});
+
+  final StageGeometry geometry;
+
+  static StageGeometry of(BuildContext context) {
+    final StageGeometry? geometry = maybeOf(context);
+    if (geometry == null) {
+      throw FlutterError(
+        'StageGeometryScope.of() was called with a context that does not contain '
+        'a PortraitStage.\n'
+        'The context must be a descendant of PortraitStage; use '
+        'StageGeometryScope.maybeOf() when a stage is optional.',
+      );
+    }
+    return geometry;
+  }
+
+  static StageGeometry? maybeOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<StageGeometryScope>()?.geometry;
+
+  @override
+  bool updateShouldNotify(StageGeometryScope oldWidget) =>
+      oldWidget.geometry.stageScale != geometry.stageScale ||
+      oldWidget.geometry.logicalWidth != geometry.logicalWidth ||
+      oldWidget.geometry.logicalHeight != geometry.logicalHeight;
+}
+
 /// 在舞台坐标系里按矩形摆放子 widget；必须放在 Stack 里。
 class PortraitStageSlot extends StatelessWidget {
   const PortraitStageSlot({super.key, required this.rect, required this.child});
@@ -137,13 +230,23 @@ class PortraitStageSlot extends StatelessWidget {
   final Widget child;
 
   @override
-  Widget build(BuildContext context) => Positioned(
-        left: rect.x,
-        top: rect.y,
-        width: rect.width,
-        height: rect.height,
-        child: child,
+  Widget build(BuildContext context) {
+    if (!rect.isPositive() || !rect.x.isFinite || !rect.y.isFinite) {
+      throw FlutterError(
+        'PortraitStageSlot refused a non-positive or non-finite rect: ' +
+            rect.toString() +
+            '. DEDUP-21 forbids handing it to Positioned; fix the band/content '
+            'geometry instead of clamping silently.',
       );
+    }
+    return Positioned(
+      left: rect.x,
+      top: rect.y,
+      width: rect.width,
+      height: rect.height,
+      child: child,
+    );
+  }
 }
 
 /// 按 PortraitBands.bands 铺开分带；每带一个 slot。

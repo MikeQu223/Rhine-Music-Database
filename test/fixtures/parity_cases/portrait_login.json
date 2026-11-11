@@ -138,11 +138,12 @@
     },
     {
       "id": "INV-2",
-      "assert": "stageHeight = layoutHeight / stageScale = 1080 * physicalHeight / physicalWidth（只与宽高比有关）",
+      "assert": "stageHeight = (layoutHeight - safe.top - safe.bottom) / stageScale；safe=0 时等于 1080 * physicalHeight / physicalWidth（只与宽高比有关）",
       "checked": [
-        "1080x2400 -> 1080*2400/1080 = 2400",
-        "1440x3200 -> 1080*3200/1440 = 2400",
-        "1200x2000 -> 1080*2000/1200 = 1800"
+        "1080x2400 safe=0 -> 1080*2400/1080 = 2400",
+        "1440x3200 safe=0 -> 1080*3200/1440 = 2400",
+        "1200x2000 safe=0 -> 1080*2000/1200 = 1800",
+        "1080x2400 safe=(72,48) -> (2400-120)/1 = 2280"
       ]
     },
     {
@@ -155,10 +156,11 @@
     },
     {
       "id": "INV-4",
-      "assert": "Hybrid contentHeight = stageHeight - topBar - bottomBar = stageHeight - 192",
+      "assert": "Hybrid contentHeight = stageHeight - topBar - bottomBar - safe.top/scale - safe.bottom/scale；safe=0 时等于 stageHeight - 192",
       "checked": [
-        "2400 - 192 = 2208",
-        "1800 - 192 = 1608"
+        "2400 - 192 = 2208 (safe=0)",
+        "1800 - 192 = 1608 (safe=0)",
+        "2280 - 192 - 72 - 48 = 1968 (safe=72/48)"
       ]
     },
     {
@@ -178,24 +180,23 @@
   ],
   "portraitRules": {
     "safeArea": {
-      "vertical": "containerTop = safe.top / stageScale（stage 单位）",
+      "vertical": "containerTop = safe.top / stageScale；stageHeight = (layoutHeight - safe.top - safe.bottom) / stageScale",
+      "bottomBar": "playerBar 底边 = stageHeight，底栏抬到安全区之上，不覆盖手势区",
       "horizontal": "左右安全区只收窄新垂直容器内容宽度，不改变 stageWidth / stageScale",
       "landscape": "安全区不得进入横屏公式（横屏公式与 Qt 保持一致）",
       "status": "frozen-in-T02"
     },
     "ime": {
       "mustNotScaleStage": true,
-      "imeStage": "viewInsets.bottom / stageScale",
-      "allowedEffects": [
-        "压缩新增垂直容器的可用高度",
-        "按冻结策略上移输入框（不缩放 stage）"
-      ],
+      "adjustResize": true,
+      "imeStage": "0（清单保持 adjustResize，平台已缩小窗口；几何不读 viewInsets）",
+      "allowedEffects": [],
       "sources": [
         "T02 layout.md 5.4",
-        "T02 layout.md 7.3"
+        "T02 layout.md 6"
       ],
-      "landscapeBehaviour": "UNVERIFIED_DEVICE_BLOCKED",
-      "status": "WAIT-IME-LANDSCAPE"
+      "landscapeBehaviour": "adjustResize (android/app/src/main/AndroidManifest.xml:28)：平台缩小逻辑窗口，stageScale 按新窗口重算；禁止再用 viewInsets 手工缩放",
+      "status": "FROZEN_ADJUST_RESIZE"
     },
     "touch": {
       "expansionStage": 16,
@@ -525,7 +526,7 @@
     {
       "id": "L-A26",
       "given": "IME 弹出（账号/验证码/搜索/设置编辑）",
-      "expect": "stageScale 与 stageWidth 不变；输入框逻辑 rect == stage rect * stageScale；命中与 IME 定位同源",
+      "expect": "adjustResize 下 stageScale/stageWidth/stageHeight/底栏均不因 viewInsets 改变；输入框逻辑 rect == stage rect * stageScale；绘制与命中同源",
       "evidence": "T02 layout.md 5.4/7.3"
     }
   ],
@@ -885,12 +886,6 @@
       "item": "Portrait-W / Band / Hybrid 三候选未裁决",
       "reason": "需在同一 widget 上比较可达性/层级/触摸/字尺度后冻结；本卡不预设 bottom sheet、单列、48dp、52%",
       "owner": "T43"
-    },
-    {
-      "id": "WAIT-IME-LANDSCAPE",
-      "item": "横屏键盘是否 resize 窗口",
-      "reason": "Qt AndroidManifest 无 windowSoftInputMode，无 viewInsets/安全区处理代码（DEVICE_BLOCKED）",
-      "owner": "T02/T50"
     },
     {
       "id": "WAIT-SAFE-AREA",
