@@ -12,6 +12,8 @@ import android.view.inputmethod.InputMethodManager
 import android.window.OnBackInvokedCallback
 import android.window.OnBackInvokedDispatcher
 import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.engine.FlutterEngine
+import rhine.music.database.porting.MediaSessionChannel
 import rhine.music.database.porting.QtPlatformViewHost
 
 private const val TAG = "RhineMainActivity"
@@ -63,6 +65,23 @@ class MainActivity : FlutterActivity() {
         // 窗口形态放在 super.onCreate 之后：Flutter 在 super 内会按自己的状态栏策略改一次
         // systemUiVisibility，宿主最后写才算数；与返回回调的注册顺序无关。
         applyImmersiveSticky()
+    }
+
+    /**
+     * 媒体会话通道接线（T25）。
+     *
+     * 必须在 super 之后：FlutterActivity.configureFlutterEngine 会先让 engine 完成
+     * 默认插件装配，这里再挂自己的两个通道，避免被后续装配覆盖。传给 install 的是
+     * activityProvider = { this } 而不是 this：通道层只在 ensureStarted 时现取 Activity，
+     * 不把 Activity 存成长期字段（见 MediaSessionChannel.install 的注释）。
+     */
+    override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+        super.configureFlutterEngine(flutterEngine)
+        MediaSessionChannel.install(
+            flutterEngine.dartExecutor.binaryMessenger,
+            { this },
+            applicationContext,
+        )
     }
 
     override fun onResume() {
