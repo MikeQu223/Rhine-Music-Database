@@ -18,7 +18,8 @@
 
 判定模型（每行 = candidate × step × roi）：
     PASS        该 ROI 的判据被完整测量，且落在冻结容差内
-    FAIL        已证伪：ROI 的 state 锚点与 fixture 矩形不一致，或 frame 不是自洽的真实 3D draw
+    FAIL        已证伪：layout 的 state 锚点与 fixture 矩形不一致；scene3d 非 viewer 却没有真实 draw
+                （draws 为空/非数组 = 静态图或视频帧，01-slice.md:208、:250）；conditional 成立却缺锚点
     UNMEASURED  其余一切（阈值未冻结或无值、无锚点、无载荷、采样不足、条件不成立）
 
     FAIL 优先于 UNMEASURED：已发现的缺陷不得被「还没测完」掩盖。
@@ -830,9 +831,17 @@ def measure_scene3d(roi, pairs, threshold):
     """真实 3D 场景 ROI：frame 必须是自洽的真 draw，而不是贴图/占位。
 
     判据（不是 §7 里 PROPOSED_UNFROZEN 的 SSIM/ΔE）：
-      - frame 存在且 draws 是数组；draws 为空只允许 viewer=true（HUD 无绘制时仍上报观察者）；
+      - draws 必须是数组且非空；viewer=true 时 draws=[] 是协议规定的形态（hud-protocol.md:271），
+        记 UNMEASURED；非 viewer 的空 draws / 非数组 draws 是静态图或视频帧 = FAIL（01-slice.md:208、:250）；
       - view / projection 是 16 个有限数，eye 是 3 个有限数（hud-protocol.md §4）；
       - view*(eye,1)=(0,0,0,1) 在 th.frame.matrix 容差内（列主序，SceneMath.cpp:94）。
+
+    静态自检表（本仓库禁执行，故以规则表代替运行断言；五条都由下面的 draws 分支直接实现）：
+      draws 非空 list                             -> 参与 view/projection/eye 自洽判定
+      draws == [] 且 viewer is True               -> reasons=frameDrawsEmptyViewer -> UNMEASURED
+      draws == [] 且 viewer 非 True               -> failures=staticFrame            -> FAIL
+      draws 非 list 且 viewer is True             -> reasons=frameDrawsNotArray     -> UNMEASURED
+      draws 非 list 且 viewer 非 True             -> failures=frameDrawsNotArray    -> FAIL
     """
     part = new_part()
     tolerance = float(threshold["value"])
@@ -850,15 +859,33 @@ def measure_scene3d(roi, pairs, threshold):
             continue
         checked += 1
         draws = frame.get("draws")
+        viewer_mode = frame.get("viewer") is True
         if not isinstance(draws, list):
-            part["reasons"].append("frameDrawsNotArray")
-            part["evidence"].append("frameDrawsNotArray:unit=" + label)
+            if viewer_mode:
+                # viewer 模式的合法形态是 draws=[]（hud-protocol.md:271）；非数组只说明记录不全。
+                part["reasons"].append("frameDrawsNotArray")
+                part["evidence"].append("frameDrawsNotArray:unit={} viewer=true".format(label))
+            else:
+                # 01-slice.md:208/:250：scene3d 必须是真实 3D draw，拿不出 draws 数组即不成立。
+                part["failures"].append(
+                    "frameDrawsNotArray:unit={} draws 不是数组，无法证明是真实 3D draw（01-slice.md:208）".format(label)
+                )
         else:
             draws_min = len(draws) if draws_min is None else min(draws_min, len(draws))
             if not draws:
-                # 空 draws 无法区分「没画」与「没记录」，只记证据不判 PASS，也不判 FAIL。
-                part["reasons"].append("frameDrawsEmpty")
-                part["evidence"].append("frameDrawsEmpty:unit={} viewer={}".format(label, _text(frame.get("viewer"))))
+                if viewer_mode:
+                    # viewer=true 时 draws=[] 由协议规定（hud-protocol.md:271），不是缺陷，只是无法判 PASS。
+                    part["reasons"].append("frameDrawsEmptyViewer")
+                    part["evidence"].append(
+                        "frameDrawsEmptyViewer:unit={} viewer=true（hud-protocol.md:271 规定 draws=[]）".format(label)
+                    )
+                else:
+                    # 01-slice.md:208/:250：静态图或视频帧 = FAIL，不得被「还没测完」掩盖。
+                    part["failures"].append(
+                        "staticFrame:unit={} draws=[] viewer={}（01-slice.md:208、:250：静态图或视频帧 = FAIL）".format(
+                            label, _text(frame.get("viewer"))
+                        )
+                    )
         view = frame.get("view")
         projection = frame.get("projection")
         eye = frame.get("eye")
