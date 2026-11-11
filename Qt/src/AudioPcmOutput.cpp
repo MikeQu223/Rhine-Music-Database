@@ -430,7 +430,7 @@ QJsonObject AudioPcmOutput::snapshot() const {
              policy == AudioOutputFormat::Policy::Source && input.isValid() && submitted != input},
             {"outputBackend",
 #ifdef Q_OS_WIN
-             native ? 2 :
+             native ? 3 :
 #endif
                     1}};
 }
