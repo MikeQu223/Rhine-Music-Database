@@ -88,3 +88,39 @@
 - 因此本文件不写「1:1 完成」「功能对齐」「视觉对齐」「性能达标」「可发布」。
 - 也不把 `UNCAPTURED` 写成「待验」这种听起来接近完成的词；它就是「没有证据」。
 - 唯一有产物级证据的是 G1（APK 与 Qt 源码同 commit，E2），但它不关闭任何业务门（`00-baseline.md:326`）。
+
+## 2. 发布检查清单（T54-D02）
+
+### 2.1 七项检查
+
+判定列只使用 `SOURCE_READY`、`UNCAPTURED`、`DEVICE_BLOCKED`、`PAUSED`、`EXTERNAL`。`SOURCE_READY` 只表示源码/契约存在且可读，不表示设备行为通过。
+
+| # | 检查项 | 必须成立 | 现状与证据 | 判定 | 阻塞/缺口 |
+| --- | --- | --- | --- | --- | --- |
+| R1 | consent | 首启 CN/EU 弹窗、不可 dismiss、同意写一次、其他地区不弹不写、返回键语义与 Qt 一致，并有真机记录 | `lib/app/consent_gate.dart:9-32` 记录 ConsentActivity/ConsentStore 1:1 与 3000 ms 地区探测门（:92）；`lib/ui/pages/consent_page.dart:255-257`、:375-378 复刻 PopScope 返回键语义；12 图索引只有 01/02 两张 consent 帧，实体已丢失（`device-2026-11-09.md:106-107`、:151-156） | `SOURCE_READY` + `UNCAPTURED` | 无真机 consent 帧；无 CN/EU/其他地区三态设备记录 |
+| R2 | 更新 | 检查更新、打开发布页、错误与重试分支按 Qt 行为工作；不在应用内下载或安装 | `lib/platform/update_service.dart:19-46`：repo `MikeQu223/Rhine-Music-Database`、包上限 2 GiB（:22）、响应上限 1 MiB（:25）、超时 30 s（:31）、退避 60 s（:34）、Retry-After 上限 86400 s（:37）；应用内不下载不安装 | `SOURCE_READY` + `UNCAPTURED` | 未联网、未构造更新响应、未在设备上验证打开发布页/取消/错误 |
+| R3 | 诊断 | 72 个数值键、8192 事件上限、相对 elapsedMs、固定事件白名单、无敏感字段；设备输出样本标记为不可用 | `lib/diagnostics/diagnostics_service.dart:12-13`（72 键/8192 上限）、:48-49、:65-67；`deviceOutputSamplesAvailable=false`（:179-180、:399-400）；设备像素/性能 proof 属 `DEVICE_BLOCKED`（:261-262） | `SOURCE_READY` + `UNCAPTURED` | 未导出真实诊断快照；未验证 8192 边界；无设备日志对齐 |
+| R4 | 媒体会话 | 前台服务/MediaSession/MediaStyle/音频焦点与 Qt 1:1，设备上可被系统媒体控件控制 | A45 分支 `flutter/ops86-media-session` 已交付，源码静态评审通过（仅源码，不是设备验收）：`OPS86-A45-REVIEW.json:13-50` 六文件、:51 verdict、:111-121 post_commit；base 已有 `android/app/src/main/kotlin/rhine/music/database/porting/MediaSessionHost.kt:19-21`、:60 与 `porting/MediaPlaybackService.kt:22-33`、:49；但 base 无 `lib/platform/media_session.dart`、无 `porting/MediaSessionChannel.kt`，A45 五个 commit（cc4539d..1df0be2）未并入 `712b1c5` | `SOURCE_READY`（仅 A45 分支）+ `DEVICE_BLOCKED` | **source channel ready at A45；设备未验**；且 A45 未并入 base，当前 base 不构成可发布链路 |
+| R5 | 返回键 | IME 可见先隐并消费；否则询问 Qt 宿主，仅显式 true 认领；未认领落回 Flutter；250 ms 超时降级 | `MainActivity.kt:20-40` 记录顺序与 250 ms 超时；:110-134 实现 `dispatchHostBack`/`fallBackToFlutter`；:37-40 明示 Dart 侧还没有 `METHOD_BACK` handler，Qt 认领分支在 Dart 落地前不可达，本原子不声称端到端验证过 | `UNCAPTURED` | 源码缺口：Dart handler 缺失；无设备返回键记录；不得把「宿主已实现」写成「返回键通过」 |
+| R6 | 存储 | session.json/playback-session.json/panel 键/credential/collections 的 schema、64 MiB 边界、损坏回退、迁移与 Qt 双向可读 | 契约已冻结：`contracts/storage.md:42-57`（文件表）、:61（64 MiB 边界 67,108,864 收 / 67,108,865 拒）、:63-221（session）、:248-275（playback-session）、:277-355（panel 53 键）、:361-373（credential 路径/0600/写入）、:440-463（collections）、:475-482（迁移）；Dart 实现已存在：`lib/data/storage/session_store.dart`（815 行）、`playback_store.dart`（494）、`preference_store.dart`（202）、`app_storage.dart`（385） | `SOURCE_READY` + `DEVICE_BLOCKED` | 未做 Qt↔Flutter 往返；未验证 64 MiB 边界、损坏文件、部分字段、SIGKILL 节拍 |
+| R7 | 账号迁移 | 登录六路径、凭据 0600、账号切换/登出、provider/edition/uid 身份门与 Qt 一致 | 账号域 **PAUSED_BY_USER**：DEDUP-15/16/30/32 保持暂停，不重启账号测试/制作（`addenda/2026-11-11-t16-dependency-annotations.md:27`、:72）；`lib/domain/account/account_manager.dart:11-13` 记录 AccountEffects/AccountHostPort；`credential_store.dart:4`、:24-37、:108-115 记录 PlatformAndroid 路径/0600/截断写语义；身份门见 `storage.md:80`、`domain.md:586` | `PAUSED` + `UNCAPTURED` | 用户暂停；无登录真机帧；不得用 mock 或源码补位 |
+
+### 2.2 横切状态
+
+| 轴 | 状态 | 证据 |
+| --- | --- | --- |
+| T16 宿主架构 | **未裁决** / `ARCH_BLOCKED` | `02-adjudication.md:6`、:68-80、:104-116 |
+| 设备轴 | **NOT_RUN** | E0=0（`02-adjudication.md:14`）；本树无 adb/安装/截图 |
+| 签名材料 | **EXTERNAL_BLOCKED** | `release.md:62-69`；G8 OPEN（`00-baseline.md:324`） |
+| 账号域 | **PAUSED_BY_USER** | `addenda/2026-11-11-t16-dependency-annotations.md:27`、:72 |
+| 像素/视觉 | `DEVICE_BLOCKED` | `landscape.md:4`、:19-29；`00-baseline.md:308-311` |
+| 性能 | `UNMEASURED` | `03-performance.md:172-187` |
+| 媒体会话 | A45 源码静态评审通过；base 未合并；设备未验 | A45 review :51、:111-121；base 文件缺失 |
+| 返回键 | 源码部分就绪；Dart handler 缺失 | `MainActivity.kt:37-40` |
+
+### 2.3 T54-D02 结论
+
+- 7 项发布检查：0 项达到「可发布」；4 项 `SOURCE_READY`（consent、更新、诊断、存储），1 项仅 A45 分支 `SOURCE_READY`（媒体会话），1 项源码缺口（返回键），1 项用户暂停（账号迁移）。
+- `SOURCE_READY` 不是 `PASS`；它只说明「代码/契约可读」，不说明「设备行为正确」。
+- 媒体会话的准确表述是：**source channel ready at A45；设备未验；A45 分支未并入 base**。不得写成「媒体会话已通过」。
+- 本文件不提供发布序列；发布序列仍以 `release.md:116-124` 为准，且其前置签名材料未到位。
