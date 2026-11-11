@@ -31,9 +31,10 @@
 ///   6. 读缓冲用 Uint8List 线性队列而不是 List<int>：48 MiB 的越界帧会在 List<int> 里
 ///      膨胀成数亿字节的对象图，而 Qt 的 QByteArray 是连续字节。
 ///
-/// 已知限制（冻结接口决定，已登记在 W1 报告里）：NodeRuntimeHost 没有事件流，所以
-/// 「成功启动之后」宿主才发现的运行时退出，只能经控制连接断开（Qt:63-67 的等价路径）
-/// 或下一次 launch 的 prepare() 反馈被感知。
+/// 宿主能力（冻结接口之外的可选扩展）：NodeRuntimeHost 本身仍没有事件流，但宿主若实现
+/// 可选接口 [NodeRuntimeExitSource]，成功启动之后的运行时退出就能直接上报（差异 12）；
+/// 未实现该接口的宿主保持原行为——只能经控制连接断开（Qt:63-67 的等价路径）或下一次
+/// launch 的 prepare() 反馈被感知。
 ///
 /// 契约文本 / 行为细节的其余差异（接上面 1-6 编号；供独立审查逐条核对，冲突处以 Qt 源为准）：
 ///   7. import 基线之外多一个 dart:math：令牌是回环端口上唯一的认证凭据（Qt:47
@@ -58,6 +59,10 @@
 ///   11. launch 失败收监听器只发生在「尚未置 launched」的路径上。Qt:102-105 的两种失败
 ///      本来就没有监听，而 Qt:120-125 的 pthread_create 失败在 Qt:106 launched = true
 ///      之后，Qt 并未 server.close()，QTcpServer 仍在监听；这里对齐后者。
+///   12. 成功启动后的宿主运行时退出，除 Qt:63-67 的控制连接断开外，还可经可选接口
+///      [NodeRuntimeExitSource] 上报（宿主具备该能力时）。帧体沿用 runtime-error 词表，
+///      带上最近一次出站 start 帧的 session（未知时省略）、Qt:153-154 的 detail 与 exitCode；
+///      去重仍按差异 9 的会话号：同一会话只上报一次，shutdown 之后一律丢弃。
 ///
 /// 本文件的 Qt 证据行：:47 token、:52-69 构造/单连接/断链回传、:71-96 读取与握手、
 /// :98-128 launch 幂等 + 8 MiB 栈 + argv 生命周期、:130-138 出站与握手排队、
@@ -129,6 +134,19 @@ abstract interface class NodeRuntimeHost {
 
   /// 释放宿主侧资源（不重启运行时）。
   Future<void> dispose();
+}
+
+/// 宿主运行时退出事件源（可选能力，不改变 [NodeRuntimeHost] 的冻结三方法）。
+///
+/// Qt 在 node::Start 返回后由运行时线程 accept(runtime-error)（BridgeProcessAndroid.cpp:152-159）；
+/// 实现该接口的宿主可以在同一时机把退出码推给 Dart，NodeRuntime 据此发既有 runtime-error 帧，
+/// 而不必等控制连接断开或下一次 launch 的 prepare()。未实现该接口的宿主行为完全不变。
+abstract interface class NodeRuntimeExitSource {
+  /// 运行时退出时投递退出码；实现方必须至多投递一次，且不得在 dispose 之后投递。
+  ///
+  /// NodeRuntime 在 startRuntime 之前订阅，因此宿主若在 startRuntime 内同步投递
+  /// 「启动即退出」的退出码，也不会丢事件。
+  Stream<int> get runtimeExited;
 }
 
 /// 宿主 ↔ Node 运行时之间的线格式常量。
@@ -245,6 +263,18 @@ final class NodeRuntime {
   /// 最近一次真正上报过 runtime-error 的会话号；null 表示本实例尚未上报。
   int? _failureEmittedSession;
 
+  /// 宿主退出事件订阅（仅当宿主实现 [NodeRuntimeExitSource] 时建立，见文件头差异 12）。
+  /// launch 幂等分支不会重复订阅；[shutdown] 会取消它，之后宿主事件一律被丢弃。
+  StreamSubscription<int>? _hostExitSubscription;
+
+  /// 最近一次出站 start 帧的 session（由 engine_transport 组装）。宿主退出帧若已知该会话
+  /// 就回填到 runtime-error；未知时省略，保持 Qt:157 只有 type 的帧形。
+  String? _lastStartSession;
+
+  /// 最近一次真实 launch 尝试的脚本路径：Qt:153-154 的 detail
+  /// 「node runtime exited, code <c>, script <s>」要用到它。
+  String? _runtimeScript;
+
   /// 进程级随机令牌（Qt:47 QUuid::createUuid().toString(WithoutBraces)）。
   /// 小写 UUIDv4、带连字符、无花括号；不含逗号/空格/引号，因为要作为 argv 的一项
   /// 穿过宿主（Qt:113）并在首帧里回传（ios-runtime.cjs:16）。
@@ -311,8 +341,8 @@ final class NodeRuntime {
     try {
       final NodeRuntimeHostStatus status = await host.prepare();
       if (!status.prepared) {
-        // 宿主报告运行时不可用/已退出（NodeRuntimeHost 没有事件流，这是唯一能拿到
-        // 宿主侧终态的位置；成功启动之后的退出只能靠控制连接断开感知）。
+        // 宿主报告运行时不可用/已退出（未实现可选退出事件源的宿主只能在这里拿到终态；
+        // 实现了 NodeRuntimeExitSource 的宿主在成功启动后也会直接上报，见差异 12）。
         _unavailable = true;
         if (status.reason == _hostReasonRuntimeExited) {
           _exited = true;   // 等价 Qt:153 runtime->exited = true
@@ -344,6 +374,9 @@ final class NodeRuntime {
       _serverSubscription = server.listen(_onCandidate, onError: _onServerError);
       // Qt:106：listen 成功后才置 launched（失败路径允许以后重试）。
       _launched = true;
+      _runtimeScript = scriptPath;
+      // 先订阅再启动：宿主若在 startRuntime 内同步投递「快速退出」，事件不会丢。
+      _listenForHostExit(host);
       host.startRuntime(NodeRuntimeStartSpec(
         argv: List<String>.unmodifiable(<String>[
           'node',
@@ -355,7 +388,12 @@ final class NodeRuntime {
       ));
       return true;
     } on Object {
-      // launch 是宿主/引擎的边界：任何异常都退化成「启动失败」，绝不外抛。
+      // launch 是宿主/引擎的边界：任何异常都退化成「启动失败」，绝不外抛；本次刚建立的
+      // 退出订阅随之取消，避免宿主侧留下悬挂监听（startRuntime 抛错时 launched 已为真，
+      // 本进程内不会再启动，见差异 11）。
+      final StreamSubscription<int>? hostExitSubscription = _hostExitSubscription;
+      _hostExitSubscription = null;
+      await hostExitSubscription?.cancel();
       _failLaunch();
       return false;
     }
@@ -365,6 +403,12 @@ final class NodeRuntime {
   void send(Map<String, Object?> message) {
     if (_shutdown) {
       return;
+    }
+    if (message[NodeWire.type] == NodeWire.start) {
+      final Object? session = message[NodeWire.session];
+      if (session is String) {
+        _lastStartSession = session;
+      }
     }
     final Uint8List payload = utf8.encode(jsonEncode(message));
     final Uint8List frame = Uint8List(payload.length + 1);
@@ -390,6 +434,9 @@ final class NodeRuntime {
     final StreamSubscription<Uint8List>? subscription = _socketSubscription;
     _socketSubscription = null;
     await subscription?.cancel();
+    final StreamSubscription<int>? hostExitSubscription = _hostExitSubscription;
+    _hostExitSubscription = null;
+    await hostExitSubscription?.cancel();
     _socketLive = false;
     _queued.clear();
     if (socket != null) {
@@ -585,19 +632,63 @@ final class NodeRuntime {
   /// 上报本会话的 runtime-error；同一会话的后续通知（abort 之后 onDone 再回调一次）
   /// 被丢弃。跨会话一定会重新上报，因此「启动失败 → 重新 launch 成功 → 断链」不会再被
   /// 前一次失败吞掉（Qt:63-67 每次断链都 accept，:186-189 每次 start() 失败都再合成）。
-  void _reportRuntimeFailure() {
+  void _reportRuntimeFailure({String? session, String? detail, int? exitCode}) {
     if (_failureEmittedSession == _failureSession) {
       return;
     }
     _failureEmittedSession = _failureSession;
-    _emitRuntimeFailed();
+    _emitRuntimeFailed(session: session, detail: detail, exitCode: exitCode);
   }
 
-  void _emitRuntimeFailed() {
-    // 等价 accept({{"type", "runtime-error"}})（Qt:66、:157）；宿主合成的帧没有
-    // session 字段，因此它会先于任何会话过滤被 engine_transport.dart 处理。
+  /// 宿主报告运行时退出（Qt:152-159）：node::Start 已返回，本进程内不再启动。
+  ///
+  /// 去重交给 [_reportRuntimeFailure] 的会话号（差异 9）：若控制连接先断、本会话已经报过，
+  /// 这里不会再发第二帧；但 _exited 仍然置真，因为运行时确实终止了（Qt:153 同样先置位）。
+  void _onHostRuntimeExited(int exitCode) {
+    if (_shutdown || _exited) {
+      return;
+    }
+    _exited = true;
+    _reportRuntimeFailure(
+      session: _lastStartSession,
+      detail: 'node runtime exited, code $exitCode, script ${_runtimeScript ?? '<unknown>'}',
+      exitCode: exitCode,
+    );
+  }
+
+  /// 宿主实现可选退出事件源时订阅一次（文件头差异 12）；未实现的宿主保持原行为。
+  void _listenForHostExit(NodeRuntimeHost host) {
+    if (_hostExitSubscription != null) {
+      return;
+    }
+    if (host is NodeRuntimeExitSource) {
+      _hostExitSubscription = host.runtimeExited.listen(
+        _onHostRuntimeExited,
+        // 事件源只承载退出码；流自身出错不代表运行时退出（Qt 没有对应通道），这里吞掉，
+        // 避免变成未捕获异步异常；运行时终态仍由断链或下一次 prepare 决定。
+        onError: (Object error, StackTrace stackTrace) {},
+      );
+    }
+  }
+
+  void _emitRuntimeFailed({String? session, String? detail, int? exitCode}) {
+    // 等价 accept({{"type", "runtime-error"}})（Qt:66、:157）；启动失败帧没有 session，
+    // 退出帧按已知的最近一次 start 会话回填。该帧先于任何会话过滤被
+    // engine_transport.dart:273-279 处理，附加字段不影响 FailedToStart 映射。
     if (!_messages.isClosed) {
-      _messages.add(<String, Object?>{NodeWire.type: NodeWire.runtimeError});
+      final Map<String, Object?> frame = <String, Object?>{
+        NodeWire.type: NodeWire.runtimeError,
+      };
+      if (session != null) {
+        frame[NodeWire.session] = session;
+      }
+      if (detail != null) {
+        frame[NodeWire.detail] = detail;
+      }
+      if (exitCode != null) {
+        frame[NodeWire.exitCode] = exitCode;
+      }
+      _messages.add(frame);
     }
     if (!_runtimeFailed.isClosed) {
       _runtimeFailed.add(null);
