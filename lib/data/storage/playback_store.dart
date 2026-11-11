@@ -27,14 +27,21 @@
 //     PRE-FILTER array (saved.at(savedIndex)); entries flagged "deferred" are kept out
 //     of the complete queue but their ids are retained for background hydration; the
 //     selection is dropped when the addressed entry is deferred or out of range;
-//     replace() then re-seats the selection by identity.
+//     replace() then re-seats the selection by identity. "deferred" is READ-ONLY in
+//     this layer: it decides membership, and the queue this file returns never carries
+//     the key, so toJson()/save cannot write it back.
 //   * Qt/src/PlaybackQueue.cpp:140-146 - selectTrack() appends an unseen but valid
 //     track and selects the appended row.
 //
-// BOUNDARY (reported, not invented): background hydration of "deferred" ids
-// (PlaybackQueue::load) belongs to the playback runtime, not to storage. This file
-// therefore returns the complete queue exactly as <toJson()> would persist it and does
-// not invent an ids field.
+// DEFERRED IDS (PlaybackQueue.cpp:402-411,415-417): restore() appends a usable track id
+// to a separate id array BEFORE it tests "deferred", keeps the deferred entry out of the
+// complete queue, and hands that id array to load(ids, complete) for hydration. Storage
+// therefore returns BOTH products of restore(): the complete queue (which is exactly what
+// toJson() persists) and the ordered id list, exposed as [PlayerState.deferredIds]. The
+// list is restore output, never archive state, so [PlayerState.toJson] still emits only
+// the seven MusicPlayer::sessionState() keys. Hydrating the ids stays with the playback
+// runtime; storage must not drop them on the way there. The "deferred" marker itself is
+// read-only: it gates membership of the complete queue and is never written back.
 //
 // PURE Dart on purpose: no flutter import and no file IO of its own - every byte goes
 // through the injected AppStorage/FileSystemPort so the Android directory stays an
@@ -128,15 +135,21 @@ class PlayerState {
     required this.position,
     required this.requested,
     required this.preview,
+    this.deferredIds = const <String>[],
   });
 
   /// Selected track, or an empty object in the other two shapes:
   ///  * empty current in the payload: the queue alone is restored (:769-773);
   ///  * rejected current (bad kind/provider): only [mode], [position], [requested] and
   ///    [preview] survive, and the queue stays empty with [index] -1 (:774-776).
+  ///
+  /// The legacy "deferred" marker is stripped: it is read-only here, and toJson() echoes
+  /// this map back into the archive (MusicPlayer.cpp:751), so a hand-crafted marker must
+  /// not survive a restore -> save round trip.
   final Map<String, Object?> current;
 
-  /// Complete queue after sanitising; "deferred" entries stay out of it.
+  /// Complete queue after sanitising; "deferred" entries stay out of it, and their ids
+  /// (plus the rest of Qt's id array) are carried in [deferredIds].
   final List<Map<String, Object?>> queue;
 
   /// Selected row inside [queue], or -1 when nothing is selected.
@@ -154,8 +167,23 @@ class PlayerState {
   /// Audition flag passed through on restore.
   final bool preview;
 
+  /// The ordered id list produced by PlaybackQueue::restore(), i.e. Qt's `ids`
+  /// (Qt/src/PlaybackQueue.cpp:404-405,415-417).
+  ///
+  /// Qt appends the id of EVERY usable entry (kind == "song" and a non-empty id) in
+  /// archive order BEFORE it inspects "deferred". The list therefore holds deferred
+  /// entries, duplicates, and ids whose entry sanitized() later dropped, and hydrate
+  /// consumes exactly these ids. The name follows the deferred-id vocabulary, but the
+  /// value is deliberately the full Qt id array rather than a deferred-only subset.
+  ///
+  /// NEVER serialised: [toJson] writes only the seven persisted keys, so this list
+  /// cannot reach session.json or playback-session.json. It is empty when queue.restore
+  /// never ran, which is the rejected-current path (:774-776).
+  final List<String> deferredIds;
+
   /// Exactly the seven keys and the field order of Qt's sessionState()
-  /// (Qt/src/MusicPlayer.cpp:756-757).
+  /// (Qt/src/MusicPlayer.cpp:756-757). [deferredIds] is deliberately absent: it is
+  /// restore output, not part of the archive (PlaybackQueue.cpp:420-422).
   Map<String, Object?> toJson() => <String, Object?>{
         'current': current,
         'queue': queue,
@@ -168,10 +196,13 @@ class PlayerState {
 }
 
 class _QueueRestore {
-  const _QueueRestore(this.queue, this.index);
+  const _QueueRestore(this.queue, this.index, this.deferredIds);
 
   final List<Map<String, Object?>> queue;
   final int index;
+
+  /// Qt's `ids` array: every usable id in archive order (PlaybackQueue.cpp:404-405).
+  final List<String> deferredIds;
 }
 
 /// Reproduces PlaybackQueue::restore() + replace() + sanitized()
@@ -179,17 +210,26 @@ class _QueueRestore {
 _QueueRestore _restoreQueue(List<Object?> saved, Object? rawIndex) {
   final savedIndex = jsonInt(rawIndex, -1);
 
+  final ids = <String>[];
   final complete = <Map<String, Object?>>[];
   for (final value in saved) {
     final track = asJsonObject(value);
     if (jsonString(track['kind']) != kSongKind || jsonString(track['id']).isEmpty) {
       continue;
     }
+    // PlaybackQueue.cpp:404-405 appends the id BEFORE the deferred test, so this list
+    // keeps every usable id in archive order: deferred entries, entries sanitized()
+    // later drops as duplicates, and duplicates themselves.
+    ids.add(jsonString(track['id']));
     if (jsonBool(track['deferred'])) {
-      // Kept out of the complete queue; only its id would be hydrated by the runtime.
+      // Kept out of the complete queue, but its id must survive so the runtime can
+      // hydrate it later (PlaybackQueue.cpp:406-411,415-417).
       continue;
     }
-    complete.add(track);
+    // "deferred" is a READ-ONLY legacy marker: it decided membership above and is
+    // stripped from the emitted queue, so persist()/toJson() never writes it back -
+    // not even a literal deferred:false carried by the archive (storage.md §3.1).
+    complete.add(Map<String, Object?>.of(track)..remove('deferred'));
   }
 
   // sanitized(): first occurrence of an identity wins (PlaybackQueue.cpp:14-30).
@@ -221,7 +261,9 @@ _QueueRestore _restoreQueue(List<Object?> saved, Object? rawIndex) {
       }
     }
   }
-  return _QueueRestore(queue, index);
+  // Unmodifiable so the ids cannot drift after the state was normalised; the empty
+  // default is already a const (unmodifiable) list, so both shapes behave alike.
+  return _QueueRestore(queue, index, List<String>.unmodifiable(ids));
 }
 
 /// Normalises a persisted player object. Returns null only when Qt aborts the whole
@@ -266,6 +308,9 @@ PlayerState? normalizePlayer(Object? raw, {required String currentProvider}) {
       position: position,
       requested: requested,
       preview: preview,
+      // queue.restore() DID run on this branch (MusicPlayer.cpp:770), so the hydration
+      // ids exist and are carried out (:770,778).
+      deferredIds: restored.deferredIds,
     );
   }
 
@@ -298,6 +343,9 @@ PlayerState? normalizePlayer(Object? raw, {required String currentProvider}) {
       position: position,
       requested: requested,
       preview: preview,
+      // Qt returns at :774-776 BEFORE queue.restore(), so no id list was ever built on
+      // this branch; an empty list is the faithful value, not a dropped one.
+      deferredIds: const <String>[],
     );
   }
 
@@ -309,7 +357,11 @@ PlayerState? normalizePlayer(Object? raw, {required String currentProvider}) {
   // current with an empty id the call is a no-op and the row that restore()
   // selected stays current, so the append test cannot key off index < 0.
   final queue = List<Map<String, Object?>>.of(restored.queue);
-  final key = trackIdentity(track);
+  // The current is echoed back by toJson() (MusicPlayer.cpp:751), so the read-only
+  // marker is stripped here too: a hand-crafted "deferred" on the saved current must
+  // never be written back into playback-session.json or session.json.
+  final current = Map<String, Object?>.of(track)..remove('deferred');
+  final key = trackIdentity(current);
   var index = restored.index;
   var matched = false;
   for (var row = 0; row < queue.length; row += 1) {
@@ -319,19 +371,26 @@ PlayerState? normalizePlayer(Object? raw, {required String currentProvider}) {
       break;
     }
   }
-  if (!matched && jsonString(track['id']).isNotEmpty) {
-    queue.add(track);
+  if (!matched && jsonString(current['id']).isNotEmpty) {
+    // The appended row obeys the same read-only rule: the emitted queue never carries
+    // the legacy marker, so a hand-crafted deferred inside "current" cannot leak into
+    // the persisted queue either. The second copy keeps the queue row independent of
+    // [PlayerState.current], so a caller mutating one cannot silently rewrite the other.
+    queue.add(Map<String, Object?>.of(current));
     index = queue.length - 1;
   }
 
   return PlayerState(
-    current: track,
+    current: current,
     queue: queue,
     index: index,
     mode: mode,
     position: position,
     requested: requested,
     preview: preview,
+    // queue.restore() ran at :778 before play() at :779, so the ids are produced here
+    // too; play() appending an unseen current does not change them.
+    deferredIds: restored.deferredIds,
   );
 }
 
