@@ -6,6 +6,8 @@ import android.os.Bundle
 import android.util.Log
 import android.view.View
 import android.view.WindowInsets
+import android.view.WindowInsetsController
+import android.view.WindowManager
 import android.view.inputmethod.InputMethodManager
 import android.window.OnBackInvokedCallback
 import android.window.OnBackInvokedDispatcher
@@ -58,6 +60,17 @@ class MainActivity : FlutterActivity() {
         // 宿主晚一步注册才排在 Flutter 之前，先隐 IME、再问 Qt 视图这两步才轮得到。
         // 注册本身是防御式的：失败只降级，不崩。
         hostBackDispatcher?.install()
+        // 窗口形态放在 super.onCreate 之后：Flutter 在 super 内会按自己的状态栏策略改一次
+        // systemUiVisibility，宿主最后写才算数；与返回回调的注册顺序无关。
+        applyImmersiveSticky()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // 上滑预览、通知栏下拉、锁屏或权限对话框都可能把系统栏还回来；沉浸式只在
+        // onCreate / onResume 两处重放（Qt/src/AndroidWindow.cpp:85-91 也是回到前台重放），
+        // 不额外注册监听器，避免为一个窗口形态引入生命周期噪声。
+        applyImmersiveSticky()
     }
 
     override fun onDestroy() {
@@ -162,12 +175,66 @@ class MainActivity : FlutterActivity() {
         return hostHeight - visibleFrame.bottom > hostHeight * IME_HEIGHT_FRACTION
     }
 
+    /**
+     * DEDUP-39：沉浸式全屏窗口形态。
+     *
+     * 对照 Qt/src/AndroidWindow.cpp:18 的 kWindowFlags（FLAG_FULLSCREEN |
+     * FLAG_KEEP_SCREEN_ON）、:22 的 kImmersiveSticky，以及 :44-47 的
+     * window.addFlags + decorView.setSystemUiVisibility。
+     *
+     * 与 Qt 的两点差异都是刻意的：
+     *  1. 不搬 :38 的 setRequestedOrientation(kSensorLandscape)：DEDUP-39 bindingRuling
+     *     要求竖屏响应式，方向锁会把竖屏 UI 拧成横屏。这里只有窗口形态，没有任何方向
+     *     请求，Manifest 也不写 android:screenOrientation。
+     *  2. API 30+ 走 WindowInsetsController（Qt 注释里承认这是官方推荐，只是它选了不分叉）。
+     *     本卡按 SDK 分支，两条分支都不引第三方依赖。
+     */
+    private fun applyImmersiveSticky() {
+        // Qt kWindowFlags 里的 KEEP_SCREEN_ON：播放页常亮属于窗口形态的一部分。
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            applyEdgeToEdgeImmersive()
+        } else {
+            applyLegacyImmersiveSticky()
+        }
+    }
+
+    /** API 30+：WindowInsetsController 取代 systemUiVisibility（平台能力，无新依赖）。 */
+    @Suppress("NewApi")
+    private fun applyEdgeToEdgeImmersive() {
+        window.setDecorFitsSystemWindows(false)
+        val controller = window.insetsController ?: return
+        controller.systemBarsBehavior =
+            WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        controller.hide(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
+    }
+
+    /** API 28-29：legacy systemUiVisibility 的 IMMERSIVE_STICKY 组合。 */
+    @Suppress("DEPRECATION")
+    private fun applyLegacyImmersiveSticky() {
+        window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+        window.decorView.systemUiVisibility = IMMERSIVE_STICKY_FLAGS
+    }
+
     private companion object {
         /**
          * API 29 及以下的 IME 高度启发式阈值。键盘高度在各类设备上都远大于 15%，
          * 而状态栏/导航栏的差值只有几个百分点，用比例而不是像素是为了不写死设备尺寸。
          */
         const val IME_HEIGHT_FRACTION = 0.15f
+
+        /**
+         * Qt/src/AndroidWindow.cpp:22 kImmersiveSticky 的逐位对应：
+         * IMMERSIVE_STICKY | HIDE_NAVIGATION | FULLSCREEN | LAYOUT_STABLE |
+         * LAYOUT_HIDE_NAVIGATION | LAYOUT_FULLSCREEN。
+         */
+        const val IMMERSIVE_STICKY_FLAGS: Int =
+            View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
+                View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
+                View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or
+                View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
+                View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
+                View.SYSTEM_UI_FLAG_FULLSCREEN
     }
 }
 

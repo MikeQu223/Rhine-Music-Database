@@ -22,8 +22,11 @@
 ///   is online, and a rejected document is left on disk
 ///   (Qt/src/NativeApplication.cpp:64-69, Qt/src/MusicSession.cpp:237-238).
 /// * Leaving the foreground saves the session, hides the engine and trims GPU
-///   memory; entering the foreground re-requests the landscape immersive window
+///   memory; entering the foreground re-requests the fullscreen immersive window
 ///   (Qt/src/NativeApplication.cpp:84-88, Qt/src/AndroidWindow.cpp:85-118).
+///   Only the window flags travel: Qt also forced sensorLandscape
+///   (Qt/src/AndroidWindow.cpp:16, :38), but DEDUP-39 bindingRuling requires a
+///   portrait-responsive UI, so the port never locks orientation.
 library;
 
 /// Period of the mobile session saver (Qt/src/NativeApplication.cpp:81).
@@ -203,8 +206,13 @@ abstract interface class LifecyclePorts {
   /// NativeApplication::saveSession (Qt/src/MusicSession.cpp:269-284).
   void saveSession();
 
-  /// sensorLandscape plus the fullscreen/immersive flags
-  /// (Qt/src/AndroidWindow.cpp:25-51, Qt/src/AndroidWindow.cpp:81).
+  /// Fullscreen plus immersive-sticky window flags, and no orientation lock
+  /// (Qt/src/AndroidWindow.cpp:18, :22, :25-51, :81).
+  ///
+  /// Qt's shape also pinned sensorLandscape (Qt/src/AndroidWindow.cpp:16, :38).
+  /// The port drops that half: DEDUP-39 bindingRuling keeps the UI portrait
+  /// responsive, so a host must apply the flags on create/resume and must never
+  /// call setRequestedOrientation or declare android:screenOrientation.
   void applyWindowShape();
 
   /// window->showFullScreen() (Qt/src/AndroidWindow.cpp:82).

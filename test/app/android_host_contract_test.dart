@@ -35,6 +35,16 @@ int _indexAfter(String text, String needle, {int from = 0, String? reason}) {
   return index;
 }
 
+/// 去掉 Kotlin 行注释与块注释。
+///
+/// "实现里没有方向锁"这类守卫必须只看代码：MainActivity 的 KDoc 逐字写着
+/// "不搬 :38 的 setRequestedOrientation"，lifecycle.dart 的文档也提到同一名字。
+/// 把注释算进来会把"解释为什么不用它"误判成"用了它"。
+String _stripKotlinComments(String text) {
+  final String noBlocks = text.replaceAll(RegExp(r'/\*[\s\S]*?\*/'), '');
+  return noBlocks.replaceAll(RegExp(r'//[^\n]*'), '');
+}
+
 void main() {
   final String manifest = File('android/app/src/main/AndroidManifest.xml').readAsStringSync();
   final String activityKt = File(
@@ -44,6 +54,7 @@ void main() {
     'android/app/src/main/kotlin/rhine/music/database/porting/QtPlatformViewHost.kt',
   ).readAsStringSync();
   final String manifestCode = manifest.replaceAll(RegExp(r'<!--[\s\S]*?-->'), '');
+  final String activityCode = _stripKotlinComments(activityKt);
 
   group('AndroidManifest.xml (DEDUP-37)', () {
     test('activity 打开 enableOnBackInvokedCallback，且只打开一次', () {
@@ -81,8 +92,8 @@ void main() {
     test('仍是 FlutterActivity，不引 androidx、不锁方向、不直接 finish 业务页', () {
       expect(activityKt.contains('class MainActivity : FlutterActivity()'), isTrue);
       expect(activityKt.contains('import androidx.'), isFalse);
-      expect(activityKt.contains('setRequestedOrientation'), isFalse);
-      expect(activityKt.contains('requestedOrientation'), isFalse);
+      expect(activityCode.contains('setRequestedOrientation'), isFalse);
+      expect(activityCode.contains('requestedOrientation'), isFalse);
       expect(activityKt.contains('finish('), isFalse);
     });
 
@@ -219,6 +230,101 @@ void main() {
       expect(timeoutCas < postDelayed, isTrue);
       expect(postDelayed < replyCas, isTrue);
       expect(replyCas < removeCallbacks, isTrue);
+    });
+  });
+
+
+  // ── commit 2: DEDUP-39 沉浸式窗口形态（不含方向锁）─────────────────────────
+  group('MainActivity.kt (DEDUP-39)', () {
+    test('onCreate 与 onResume 都重放沉浸式，且 onCreate 在 super 之后', () {
+      final int onCreate = _indexAfter(activityKt, 'override fun onCreate(savedInstanceState: Bundle?)');
+      final int onCreateEnd = _indexAfter(activityKt, '\n    }', from: onCreate);
+      final String onCreateBody = activityKt.substring(onCreate, onCreateEnd);
+      expect(onCreateBody.contains('super.onCreate(savedInstanceState)'), isTrue);
+      expect(onCreateBody.contains('applyImmersiveSticky()'), isTrue);
+      expect(
+        onCreateBody.indexOf('super.onCreate(savedInstanceState)') <
+            onCreateBody.indexOf('applyImmersiveSticky()'),
+        isTrue,
+      );
+
+      final int onResume = _indexAfter(activityKt, 'override fun onResume()');
+      final int onResumeEnd = _indexAfter(activityKt, '\n    }', from: onResume);
+      final String onResumeBody = activityKt.substring(onResume, onResumeEnd);
+      expect(onResumeBody.contains('super.onResume()'), isTrue);
+      expect(onResumeBody.contains('applyImmersiveSticky()'), isTrue);
+    });
+
+    test('SDK 分支：API 30+ 用 WindowInsetsController，低版本用 legacy flags', () {
+      final int apply = _indexAfter(activityKt, 'private fun applyImmersiveSticky()');
+      final int sdkGuard = _indexAfter(
+        activityKt,
+        'Build.VERSION.SDK_INT >= Build.VERSION_CODES.R',
+        from: apply,
+      );
+      final int edge = _indexAfter(activityKt, 'applyEdgeToEdgeImmersive()', from: sdkGuard);
+      final int legacy = _indexAfter(activityKt, 'applyLegacyImmersiveSticky()', from: edge);
+      expect(apply < sdkGuard, isTrue);
+      expect(sdkGuard < edge, isTrue);
+      expect(edge < legacy, isTrue);
+      expect(activityKt.contains('FLAG_KEEP_SCREEN_ON'), isTrue);
+
+      final int edgeFn = _indexAfter(activityKt, 'private fun applyEdgeToEdgeImmersive()');
+      final String edgeBody = activityKt.substring(edgeFn);
+      expect(edgeBody.contains('window.setDecorFitsSystemWindows(false)'), isTrue);
+      expect(
+        edgeBody.contains('WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE'),
+        isTrue,
+      );
+      expect(
+        edgeBody.contains(
+          'WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars()',
+        ),
+        isTrue,
+      );
+
+      final int legacyFn = _indexAfter(activityKt, 'private fun applyLegacyImmersiveSticky()');
+      final String legacyBody = activityKt.substring(legacyFn);
+      expect(
+        legacyBody.contains('window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)'),
+        isTrue,
+      );
+      expect(legacyBody.contains('systemUiVisibility = IMMERSIVE_STICKY_FLAGS'), isTrue);
+
+      final int flags = _indexAfter(activityKt, 'const val IMMERSIVE_STICKY_FLAGS: Int =');
+      final String flagsBlock = activityKt.substring(flags, flags + 400);
+      for (final String flag in <String>[
+        'SYSTEM_UI_FLAG_IMMERSIVE_STICKY',
+        'SYSTEM_UI_FLAG_LAYOUT_STABLE',
+        'SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION',
+        'SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN',
+        'SYSTEM_UI_FLAG_HIDE_NAVIGATION',
+        'SYSTEM_UI_FLAG_FULLSCREEN',
+      ]) {
+        expect(flagsBlock.contains(flag), isTrue, reason: flag);
+      }
+    });
+
+    test('不锁方向：没有 setRequestedOrientation，Manifest 没有 screenOrientation', () {
+      expect(activityCode.contains('setRequestedOrientation'), isFalse);
+      expect(activityCode.contains('requestedOrientation'), isFalse);
+      expect(manifestCode.contains('android:screenOrientation'), isFalse);
+    });
+
+    test('lifecycle.dart 文档记录与 Qt sensorLandscape 的偏离理由', () {
+      final String lifecycleDart = File('lib/app/lifecycle.dart').readAsStringSync();
+      final int shapeDoc = _indexAfter(
+        lifecycleDart,
+        'Fullscreen plus immersive-sticky window flags',
+      );
+      final int shapeDecl = _indexAfter(lifecycleDart, 'void applyWindowShape();', from: shapeDoc);
+      final String doc = lifecycleDart.substring(shapeDoc, shapeDecl);
+      expect(doc.contains('no orientation lock'), isTrue);
+      expect(doc.contains('sensorLandscape'), isTrue);
+      expect(doc.contains('must never'), isTrue);
+      expect(doc.contains('setRequestedOrientation'), isTrue);
+      expect(lifecycleDart.contains('DEDUP-39 bindingRuling'), isTrue);
+      expect(lifecycleDart.contains('portrait-responsive'), isTrue);
     });
   });
 }
