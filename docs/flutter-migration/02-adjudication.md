@@ -4,7 +4,8 @@
 - 本文件原子：T16-D01（输出 docs/flutter-migration/02-adjudication.md）
 - 姊妹文档：docs/flutter-migration/adr/0001-host-architecture.md（原子 T16-D02 / T16-D03）
 - 状态：**未裁决（PENDING_DEVICE_EVIDENCE）**。本轮禁令下无任何真机测量，**全部指标 UNMEASURED，不填赢家**。
-- 唯一切片：docs/flutter-migration/01-slice.md 与 test/fixtures/slice_cases.json（T10 独占写域，位于 worktrees/T10；本树只读引用其公开结构计数，不复制、不改写、不伪造其夹具）。
+- 唯一切片：docs/flutter-migration/01-slice.md 与 test/fixtures/slice_cases.json（T10 独占写域；已由 0d329db 合入本树，只读引用其公开结构计数，不复制、不改写、不伪造其夹具；当前指纹见 §2）。
+- 证据口径：本文件所称 `reports/<名>` 一律指控制面目录 `.agents/parity-20261109/reports/<名>`（`.gitignore:17` 的 `/.agents/` 已忽略该目录，仓库根无 `reports/`）；属控制面报告（非仓库内实现证据）；审计基线为冻结 SHA bf6743e8486d62964cc27a4b8573533fc00f2eb4（OPS78-FINAL-DEDUP.json:3 auditSha），但各报告自报的 baseSha/asOfSha 可不同（例：OPS78-COVERAGE.json:8/:9/:10 记 baseSha 8ed3067b…、asOfSha 2623b1c5…、rootMoving=true），以各报告自报字段为准；凡仅以 reports/ 为出处的计数与状态均未在仓库内验证。
 
 ## 0. 证据纪律
 
@@ -59,10 +60,10 @@
 | 切片串 | 启动 → archive 全部歌曲 → 打开第 17 首详情（3D 封面）→ 返回 → 搜索输入中文并打开结果 → 加入队列/移除 → 旋转竖屏再回横屏（计划:153） |
 | 同时必须覆盖 | 3D 画面、HUD 文字、命中、IME、无障碍、媒体会话、旋转、返回键（计划:153） |
 
-结构计数来源：reports/T10-C01-M10.json 的 structure 字段（T10 独占写域产物，本树不复制；取数于该报告 time=2026-11-09T18:44:19Z / mtime 2026-11-09T18:52:35Z（stat 复核：2026-11-10 02:52:35 +0800，同一时刻），已含 F14/F15，rois=38 且 mdRoiRows=38）。切片文件摘要（只读引用，不复制；下列为 reports/T10-C01-M10.json 的 files 字段在 2026-11-09T18:44:19Z 的历史值；T10 草稿仍在变更，本文件不对其当前磁盘作相符声明，合入本树前必须重算）：
-- docs/flutter-migration/01-slice.md — bytes 27261，sha256 f0c126eee39876e32ddbf642efccfd1298093bdc75c91a892d4bb4b9bfcf0a32
-- test/fixtures/slice_cases.json — bytes 44957，sha256 2cd9795726950e929a49ec37a0089b1d225c28deca89451a5ddc9718f9f25e5d
-- 过期值警示：旧稿引用的 26202 B/39771fce… 与 43537 B/93d1f7e8… 是 F14/F15 之前的值（这两个数出自旧稿摘要 reports/T16-C14.json:54、:58，不是本轮磁盘值）；reports/T10-C01-M10.json 的 reviewer.resumeHashNote 已明确标注这一对 stale，而 reports/T10-C01-M10-R.json 的 reviewedHashes 仍写着这对过期值，故该复审不构成对当前磁盘内容的复核。任何消费方必须自行重算，不得引用报告里的历史摘要。
+结构计数来源：本树 test/fixtures/slice_cases.json 与 docs/flutter-migration/01-slice.md（0d329db 合入；取数于冻结 SHA bf6743e8）：steps 10（S0–S9）、rois 38（01-slice.md §5 表 38 行；fixture rois 38）、checks 21（fixture checks 数组 21 个对象）、thresholds 7、unmeasured 14、candidates 5。切片文件当前指纹（只读引用，不复制；工作树重算）：
+- docs/flutter-migration/01-slice.md — 311 行，bytes 33817，sha256 897d36c76c0f607897887d8c2fa544ba094d652e775d24b32343c78e125a61e6
+- test/fixtures/slice_cases.json — 1459 行，bytes 52005，sha256 396cfc0f8a716adca8e45b9c90b7dd2d02ece22fc6ac46e74e8a9615fef279d7
+- 过期值警示：reports/T10-C01-M10.json 的 files 字段（27261 B/f0c126ee…、44957 B/2cd97957…）与旧稿引用的 26202 B/39771fce…、43537 B/93d1f7e8… 都是合入前的历史指纹（后一对出自旧稿摘要 reports/T16-C14.json:54、:58；reports/T10-C01-M10.json 的 reviewer.resumeHashNote 已标注这一对 stale，而 reports/T10-C01-M10-R.json 的 reviewedHashes 仍写着这对过期值，故该复审不构成对当前磁盘内容的复核）。任何消费方以上两条当前指纹为准，不得引用报告里的历史摘要。
 
 ## 3. 裁决矩阵（每格 UNMEASURED）
 
@@ -108,7 +109,7 @@
 |---|---|---|---|
 | SHARED SOURCE 可写 | 契约 / fixture / 测试（只写不跑）/ 纯 Dart 领域与数学 / 候选源码 / 隔离目录页面几何与动作 builder | 可以，受各自独占写域与 owner 隔离约束 | T01-T07 契约、T10 切片、T11-T15 候选源码、T22/T23/T24 纯 Dart 领域、T41-S01 投影数学 |
 | PRODUCTION WIRING → ARCH_BLOCKED | 需 ADR 赢家或宿主 / 桥 / 域运行时真实接线 | 不可以，等 T16 裁决 | T20-S01..、T21 桥（进程内 / 进程外）、T25 平台通道、T33-T40 页面接线、T41-S02..S06、T42-T44 |
-| MEASUREMENT → DEVICE_BLOCKED | 真机像素 / 时序 / 黄金帧 / 性能取证 | 不可以，等设备窗口授权 | 本卡 T16-D01、全部 -G01 golden、T41-T02、T44-T02、T50-T54 |
+| MEASUREMENT → DEVICE_BLOCKED | 真机像素 / 时序 / 黄金帧 / 性能取证 | 不可以，等设备窗口授权 | 本卡 T16-D01、-G01 golden（13 项全 ABSENT；卡片级门见 ADR §5 末注）、T41-T02、T44-T02、T50-T54 |
 
 图层面重切计数（证据：reports/GRAPH-V2-REVIEW.json 的 state_recut：W=87 / W*=73 / A=25 / D=31；同一组数字也记在 must_fixes M3 的 applied 字段，但 M3 的 required_change 里的 118/67/31 是重切前的三分类建议口径，勿与本四类混用）。本卡三原子：T16-D01 → D；T16-D02 / T16-D03 → W。**限定**：这两个 W 是 GRAPH-V2 的重切建议；reports/GRAPH-001.json 现仍记 T16-D01=DEVICE_BLOCKED、T16-D02/T16-D03=ARCH_BLOCKED（blockReason 自指“等待 ADR”，见 GRAPH-V2 M10），该重切须由 Lead 落图后方可当作调度事实。
 
@@ -148,8 +149,8 @@
 
 - docs/superpowers/plans/2026-11-09-qt-to-flutter-parity-plan.md（§0 证据纪律、§3 候选与硬门、§9 验收门）
 - docs/flutter-migration/adr/0001-host-architecture.md（本卡 ADR；§4.5 Node 运行时与桥、§4.8 Qt 宿主职责与 Flutter 侧边界、§4.9 既有离屏实现与缺口）
-- docs/flutter-migration/01-slice.md、test/fixtures/slice_cases.json（T10，别树只读引用）
-- reports/T10-C01-M10.json、reports/GRAPH-V2-REVIEW.json、reports/GRAPH-001.json（T16 三原子状态）、reports/T16-C14.json（旧稿指纹出处）
+- docs/flutter-migration/01-slice.md、test/fixtures/slice_cases.json（T10；0d329db 合入本树，只读引用，指纹见 §2）
+- .agents/parity-20261109/reports/T10-C01-M10.json、GRAPH-V2-REVIEW.json、GRAPH-001.json（T16 三原子状态）、T16-C14.json（旧稿指纹出处）（控制面报告，非仓库内实现证据）
 - Qt 源（边界与运行时候选证据）：Qt/src/Host.h、Qt/src/Host.cpp、Qt/src/BridgeProcess.h、Qt/src/BridgeProcessAndroid.cpp、Qt/src/main.cpp、Qt/src/render/SceneLayerHost.h、Qt/src/render/SceneLayerHost.cpp
 
 ---
