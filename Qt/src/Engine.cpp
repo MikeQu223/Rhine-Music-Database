@@ -86,6 +86,15 @@ Engine::Engine(QString path, bool offline, QObject *parent, PlaybackConnection *
     connect(&timer, &QTimer::timeout, this, &Engine::tick);
     mediaTimer.setInterval(1000);
     connect(&mediaTimer, &QTimer::timeout, this, &Engine::pollMedia);
+#ifdef Q_OS_IOS
+    // 恢复前台时先同步媒体状态，画面休眠期间也可能已经起播或换曲。
+    connect(qGuiApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState state) {
+        if (state == Qt::ApplicationActive && QGuiApplication::applicationState() == Qt::ApplicationActive) {
+            pollMedia();
+        }
+    }, Qt::QueuedConnection);
+    QTimer::singleShot(0, this, &Engine::pollMedia);
+#endif
     connect(&m_gamepad, &Gamepad::pressed, this, &Engine::gamepadPressed);
     // 节拍诊断（RHINE_PACE_DIAG=1）：每秒打印一次「引擎 tick 数 vs 实际渲染数」，
     // 用来判定帧率是被引擎定时器限住、还是被呈现侧限住。
@@ -554,6 +563,9 @@ void Engine::submitTextureAdmission(const QString &musicKey) {
     m_admissionScheduler.stop();
 }
 void Engine::setVisible(bool value) {
+#ifdef Q_OS_IOS
+    value = value && QGuiApplication::applicationState() == Qt::ApplicationActive;
+#endif
     if (m_visible == value) {
         return;
     }
@@ -638,7 +650,9 @@ void Engine::pollMedia() {
     }
     app->poll(clock.elapsed() / 1000.0, true);
     const auto &player = app->music.player;
-    const bool active = player.loading || player.state["playing"].toBool();
+    const bool waitingOrPlaying = player.state["requested"].toBool() || player.state["playing"].toBool() ||
+                                  player.state["buffering"].toBool();
+    const bool active = player.loading || (waitingOrPlaying && player.state["error"].toString().isEmpty());
     if (active && !mediaTimer.isActive()) {
         mediaTimer.start();
     }
