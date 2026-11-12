@@ -7,7 +7,8 @@
  *   Qt/src/SceneMath.cpp:64-95           perspective and lookAt
  *   Qt/src/SceneAppearance.cpp:10-68     hidden parts, skip list, material overrides
  *   Qt/src/SceneAppearance.cpp:225-258   floor material and transform
- *   Qt/src/RhiScene.cpp:1402-1433        optical light and dark table
+ *   Qt/src/RhiScene.cpp:1422-1433        per-name dark colour table
+ *   Qt/shaders/enhancement/opticalSurface.frag:51  KEY_LIGHT direction
  *   Qt/src/NativeScene.cpp:76-78         default actor cell position
  *
  * Explicit gaps (nothing is invented to hide them):
@@ -16,20 +17,25 @@
  *     from the GLB itself plus the three PART_OVERRIDES proven by
  *     SceneAppearance.cpp. Missing parts are reported, never faked.
  *   - Ambient 0.55 has no direct Qt value (same approximation as T15 GAP-1).
+ *   - GAP-3: Qt KEY_LIGHT (opticalSurface.frag:51-61) is a custom Lambert +
+ *     specular term applied only to hero surfaces (v_mode > 0.5). Three uses
+ *     one DirectionalLight with the exact KEY_LIGHT direction, applied
+ *     globally; the custom NDotL/spec curve is not reproduced.
+ *   - GAP-4: Qt opticalLight is a scalar multiplying the baked light atlas and
+ *     emission (RhiScene.cpp:1402,1412-1419; opticalSurface.frag:44,196). The
+ *     asset bundle has no light atlas, so this port does not invent a
+ *     positional light or per-pixel emission.
  */
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 const DEG = Math.PI / 180;
-const NEAR_PLANE = 5;                 // Qt/src/NativeScene.cpp:52
-const FAR_PLANE = 300;                // Qt/src/NativeScene.cpp:52
+const NEAR_PLANE = 5;                 // Qt/src/NativeSceneCamera.cpp:98
+const FAR_PLANE = 300;                // Qt/src/NativeSceneCamera.cpp:98
 const DEFAULT_SHOT = 29.1;            // Qt/src/NativeSceneCamera.cpp:14
 const SHOT_ORBIT_START = 22.6;        // Qt/src/NativeSceneCamera.cpp:15
 const SHOT_SETTLE_START = 24.25;      // Qt/src/NativeSceneCamera.cpp:16
 const DIRECTION_DETAIL = { x: -0.277, y: 0.238, z: 0.931 };  // Qt/src/NativeSceneCamera.cpp:34
-const SHADOW_LIGHT_POS = { x: -6, y: 14, z: -5 };            // Qt/src/NativeSceneFrame.cpp:123
-const EMISSION_COLOR = { r: 1.0, g: 0.72, b: 0.38 };         // Qt/src/RhiScene.cpp:1412-1419
-const OPTICAL_DECAY = 0.62;                                   // Qt/src/RhiScene.cpp:1405
 const BACKGROUND_DAY = 0xeae5e1;      // Qt/src/NativeSceneFrame.cpp:110-111
 const BACKGROUND_NIGHT = 0x11181b;    // Qt/src/NativeSceneFrame.cpp:110-111
 const FOG_DAY = 0xeae5e1;             // Qt/src/NativeSceneFrame.cpp:112-113
@@ -48,6 +54,24 @@ const PART_OVERRIDES = {  // Qt/src/SceneAppearance.cpp:86-103
   Ivory_Edges: { color: 0xf0e7df, roughness: 0.31, transmission: 0.65, thickness: 0.04 },
   Optical_Diffuser: { color: 0xe2dad4, transmission: 0, roughness: 0.7 }
 };
+
+// Qt RhiScene::dark(name) (RhiScene.cpp:1422-1433) is applied by the surface
+// shader as mix(dayColor, darkColor, v_theme). The values below are the exact
+// sRGB hex constants from that table; the default and "Orange" fallbacks are
+// kept as well. Every cloned/overridden material gets its own day/dark pair.
+const DARK_COLORS = {
+  Frosted_Polymer: 0x626b70,
+  Ivory_Edges: 0x687277,
+  Optical_Diffuser: 0x192226,
+  Titanium_Fasteners: 0xb1b9bb,
+  Index_Inlay: 0xc6a36b,
+  Printed_Label: 0x303a3e,
+  Subsurface_Optics: 0x939e9f,
+  Optical_Edges: 0xbbc3bc,
+  Carbon_Ink: 0xb6bdb8
+};
+const DARK_DEFAULT = 0x969f9f;
+const DARK_ORANGE = 0xbb8850;
 
 const ASSET_URLS = {
   'Assets/models/archive-assembly.glb': '/Assets/models/archive-assembly.glb',
@@ -76,6 +100,11 @@ function normalize3(v) {
   return length > 0 ? { x: v.x / length, y: v.y / length, z: v.z / length } : { x: 0, y: 0, z: 1 };
 }
 
+// Qt's KEY_LIGHT is the direction from the surface towards the light
+// (opticalSurface.frag:51). Three's DirectionalLight direction is
+// light.position - target, so place the light at normalise(0, 0.55, 0.84).
+const KEY_LIGHT_DIRECTION = normalize3({ x: 0.0, y: 0.55, z: 0.84 });
+
 function smooth(value) {
   const v = clamp01(value);
   return v * v * v * (10 + v * (-15 + 6 * v));
@@ -101,6 +130,43 @@ function hexToLinear(hex) {
 
 function blendLinear(light, dark, t) {
   return { r: lerp(light.r, dark.r, t), g: lerp(light.g, dark.g, t), b: lerp(light.b, dark.b, t) };
+}
+
+function darkHexFor(part) {
+  if (part && Object.prototype.hasOwnProperty.call(DARK_COLORS, part)) {
+    return DARK_COLORS[part];
+  }
+  if (part && part.indexOf('Orange') >= 0) return DARK_ORANGE;
+  return DARK_DEFAULT;
+}
+
+// Snapshot the GLB/override day colour once, then remember the Qt dark colour
+// for the same part. applyMaterialTheme can therefore re-blend without ever
+// accumulating previous theme values.
+function prepareMaterialTheme(material, part) {
+  if (!material || !material.color) return;
+  // Own properties, not userData: Material.copy may share the source userData
+  // object, and two clones must not overwrite each other's day/dark colours.
+  if (!material.rhineDayColor) {
+    material.rhineDayColor = material.color.clone();
+  }
+  material.rhineDarkColor = new THREE.Color().setHex(darkHexFor(part), THREE.SRGBColorSpace);
+  material.color.copy(material.rhineDayColor).lerp(material.rhineDarkColor, theme);
+}
+
+function applyMaterialTheme(themeValue) {
+  if (!modelRoot) return;
+  modelRoot.traverse(function (child) {
+    if (!child.isMesh) return;
+    const materials = Array.isArray(child.material) ? child.material : [child.material];
+    for (let i = 0; i < materials.length; i++) {
+      const material = materials[i];
+      if (!material || !material.color) continue;
+      if (material.rhineDayColor && material.rhineDarkColor) {
+        material.color.copy(material.rhineDayColor).lerp(material.rhineDarkColor, themeValue);
+      }
+    }
+  });
 }
 
 function computePose(width, height, detail, actorPosition) {
@@ -228,6 +294,7 @@ window.addEventListener('unhandledrejection', function (event) {
 
 const query = new URLSearchParams(window.location.search);
 function finiteNumber(value, fallback) {
+  if (value === null || value === undefined || value === '') return fallback;
   const number = Number(value);
   return Number.isFinite(number) ? number : fallback;
 }
@@ -243,6 +310,7 @@ let camera = null;
 let floor = null;
 let modelRoot = null;
 let basePose = null;
+let resizeObserver = null;
 let viewWidth = 1;
 let viewHeight = 1;
 let needsRender = true;
@@ -264,6 +332,7 @@ function applyThemeColors() {
   if (floor && floor.material) {
     floor.material.color.setRGB(floorColor.r, floorColor.g, floorColor.b, THREE.LinearSRGBColorSpace);
   }
+  applyMaterialTheme(theme);
   needsRender = true;
 }
 
@@ -471,10 +540,17 @@ function onModelLoaded(gltf) {
     }
     const materials = Array.isArray(child.material) ? child.material : [child.material];
     for (let i = 0; i < materials.length; i++) {
-      if (materials[i]) materials[i].name = 'basic:' + (part || 'part');
+      if (materials[i]) {
+        materials[i].name = 'basic:' + (part || 'part');
+        prepareMaterialTheme(materials[i], part);
+      }
     }
     meshes.push(child);
   });
+  if (meshes.length === 0) {
+    fail('glb', 'GLB has no visible meshes after Qt part filtering');
+    return;
+  }
   scene.add(modelRoot);
   resize();
   renderer.render(scene, camera);
@@ -631,20 +707,26 @@ function boot() {
   camera = new THREE.PerspectiveCamera(5, 16 / 9, NEAR_PLANE, FAR_PLANE);
   camera.matrixAutoUpdate = true;
 
+  // GAP-3: exact Qt KEY_LIGHT direction, but Three applies it globally rather
+  // than only to the hero/v_mode > 0.5 surfaces. No Qt shadow map is ported.
   const key = new THREE.DirectionalLight(0xffffff, 1.0);
-  key.position.set(SHADOW_LIGHT_POS.x, SHADOW_LIGHT_POS.y, SHADOW_LIGHT_POS.z);
-  key.name = 'qt-shadow-light-position';
+  key.position.set(
+    KEY_LIGHT_DIRECTION.x * 20,
+    KEY_LIGHT_DIRECTION.y * 20,
+    KEY_LIGHT_DIRECTION.z * 20
+  );
+  key.target.position.set(0, 0, 0);
+  key.target.updateMatrixWorld();
+  key.name = 'qt-key-light-direction';
   scene.add(key);
+  scene.add(key.target);
 
   const ambient = new THREE.AmbientLight(0xffffff, 0.55);  // GAP-1 approximation
   ambient.name = 'approx-ambient';
   scene.add(ambient);
 
-  const optical = new THREE.PointLight(new THREE.Color(EMISSION_COLOR.r, EMISSION_COLOR.g, EMISSION_COLOR.b), 1.0);
-  optical.decay = OPTICAL_DECAY;
-  optical.position.set(0, -1, -2.17);
-  optical.name = 'qt-optical-light';
-  scene.add(optical);
+  // GAP-4: Qt opticalLight is a scalar on the baked light atlas, not a point
+  // light. No positional light or emission is invented without that atlas.
 
   floor = new THREE.Mesh(
     new THREE.PlaneGeometry(200, 200),
@@ -659,7 +741,8 @@ function boot() {
   resize();
   window.addEventListener('resize', resize);
   if (typeof ResizeObserver !== 'undefined') {
-    new ResizeObserver(resize).observe(canvas);
+    resizeObserver = new ResizeObserver(resize);
+    resizeObserver.observe(canvas);
   }
   window.requestAnimationFrame(loop);
 
