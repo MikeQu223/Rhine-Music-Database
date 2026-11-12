@@ -612,7 +612,7 @@ class ConsentGate {
   Future<ConsentRegion> _probeRegion() {
     _regionProbeCount += 1;
     final Completer<ConsentRegion> decision = Completer<ConsentRegion>();
-    final Timer timeout = Timer(kRegionProbeTimeoutMs, () {
+    final Timer timeout = Timer(Duration(milliseconds: kRegionProbeTimeoutMs), () {
       if (decision.isCompleted) {
         return;
       }

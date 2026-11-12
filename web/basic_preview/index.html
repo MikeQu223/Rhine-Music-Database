@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' blob: data:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>Siren 3D preview</title>
+  <style>
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background: #11181b;
+    }
+    #scene-canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      touch-action: none;
+      outline: none;
+    }
+    #scene-fallback {
+      position: absolute;
+      left: 12px;
+      bottom: 12px;
+      color: #98a2a6;
+      font: 12px/1.4 sans-serif;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="scene-canvas"></canvas>
+  <div id="scene-fallback" hidden></div>
+  <noscript><div id="noscript">3D 预览需要启用 JavaScript。</div></noscript>
+  <script type="importmap">
+    {"imports":{"three":"./vendor/three/build/three.module.js","three/addons/":"./vendor/three/examples/jsm/"}}
+  </script>
+  <script type="module" src="./renderer.js"></script>
+</body>
+</html>

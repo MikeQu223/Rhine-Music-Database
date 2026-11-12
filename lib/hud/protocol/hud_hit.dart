@@ -89,7 +89,7 @@ final class HudHit {
 
   @override
   String toString() =>
-      'HudHit($action $x,$y $widthx$height label=$label fixed=$fixed)';
+      'HudHit($action $x,$y ${width}x${height} label=$label fixed=$fixed)';
 }
 
 /// The optional hit key a player-bar producer appends after the six fields.
