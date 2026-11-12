@@ -53,6 +53,8 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../input/text_input_overlay.dart';
+
 /// 逐字取自 Qt 源的常量（含行号注释，禁止改写成同义串）。
 abstract final class PlaylistFormSpec {
   /// 弹层 kind：Overlay.qml:357 / NativeHudController.cpp:67。
@@ -209,6 +211,7 @@ class PlaylistFormView {
     this.performanceIdle = false,
     this.generation = 0,
     this.formPid = '',
+    this.initialName = '',
     this.visible = true,
     this.portrait = false,
     this.viewport = Size.zero,
@@ -260,6 +263,15 @@ class PlaylistFormView {
 
   /// formPID：rename 目标歌单 id（NativeHudMusic.cpp:349）。
   final String formPid;
+
+  /// rename 目标歌单的当前名称；create 为空串。
+  /// 必须由真实 input overlay 的 controller 承接（Overlay.qml:390 text: modal ===
+  /// "playlist-form" ? editInitialText : phone），不能在层内另建 TextField。
+  final String initialName;
+
+  /// 同一次表单打开的身份：formKind + formPID。用于 overlay 在重开/切换目标时重置
+  /// controller，而不误把旧输入带到下一次表单。
+  String get formIdentity => '${formKind.wire}:$formPid';
 
   /// Overlay.qml:357 的 visible。
   final bool visible;
@@ -694,9 +706,6 @@ class PlaylistFormLayer extends StatefulWidget {
 }
 
 class _PlaylistFormLayerState extends State<PlaylistFormLayer> {
-  final TextEditingController _name = TextEditingController();
-  final FocusNode _focus = FocusNode(debugLabel: 'playlist-form-name');
-
   /// 层内防双击：端口调用在飞时忽略重复提交；writeLoading/uid/canMutate 门由端口承担。
   bool _submitting = false;
 
@@ -705,43 +714,22 @@ class _PlaylistFormLayerState extends State<PlaylistFormLayer> {
   String? _statusOverride;
 
   @override
-  void initState() {
-    super.initState();
-    if (widget.view.visible) {
-      _focus.requestFocus(); // Overlay.qml:366-368 forceActiveFocus()
-    }
-  }
-
-  @override
   void didUpdateWidget(covariant PlaylistFormLayer oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.view.visible != widget.view.visible) {
-      // Overlay.qml:363-369 onVisibleChanged：无条件清空输入，仅变为可见时抢焦点。
-      _name.clear();
-      _statusOverride = null;
-      if (widget.view.visible) {
-        _focus.requestFocus();
-      }
-    }
-    if (oldWidget.view.formKind != widget.view.formKind ||
+    if (oldWidget.view.visible != widget.view.visible ||
+        oldWidget.view.formKind != widget.view.formKind ||
         oldWidget.view.formPid != widget.view.formPid) {
-      // 重新进入 create/rename：NativeHudMusic.cpp:315 formPID.clear() 后重开浮层，输入从空开始。
-      _name.clear();
+      // 输入清空/初值/焦点由 TextInputOverlay 的 formIdentity/formInitialText 负责；
+      // 这里只丢弃上一次表单留下的同帧错误文案。
       _statusOverride = null;
     }
-  }
-
-  @override
-  void dispose() {
-    _name.dispose();
-    _focus.dispose();
-    super.dispose();
   }
 
   String get _statusLine => _statusOverride ?? widget.view.status;
 
   /// Overlay.qml:370-376 submit() + Engine.cpp:867-876 + MusicMutation.cpp:410-493 的接线。
-  Future<void> _submit() async {
+  /// 名称来自 TextInputOverlay 的真实 EditableText（经 TextInputPorts.submitForm）。
+  Future<void> _submit(String rawName) async {
     final PlaylistFormView view = widget.view;
     if (_submitting) {
       // 在飞期间的重复提交被吞掉（层内防双击；writeLoading 门由端口承担）。
@@ -749,7 +737,7 @@ class _PlaylistFormLayerState extends State<PlaylistFormLayer> {
     }
     // 1) 校验（MusicMutation.cpp:411-420）——先于任何写门。
     final PlaylistFormValidation validation = PlaylistFormValidator.validateName(
-      rawName: _name.text,
+      rawName: rawName,
       provider: view.provider,
     );
     if (!validation.accepted) {
@@ -827,11 +815,34 @@ class _PlaylistFormLayerState extends State<PlaylistFormLayer> {
           children: <Widget>[
             // 弹层框架由 chrome 层统一绘制（见文件头注释）；本层只画表单内容。
             _text(layout.fieldLabel, view.nameLabel, factor),
-            _fieldBox(layout.scaled(layout.fieldBox)),
-            _nameField(layout.scaled(layout.fieldRect), factor),
             _text(layout.hint, view.nameHint, factor),
             _statusLineWidget(layout, factor),
-            _submitButton(layout.scaled(layout.submitButton), factor),
+            // 真实输入栈：框、EditableText、提交按钮全部由 TextInputOverlay 绘制，
+            // 本层不再自建 TextField（Overlay.qml:355-484 的 formFields 单一实现）。
+            // 外层已施加 modalOffset/modalOpacity，overlay 只负责 stage 内几何。
+            Positioned.fill(
+              child: TextInputOverlay(
+                state: TextInputStageState(
+                  stageScale: factor,
+                  modal: PlaylistFormSpec.modalKind,
+                  modalOffset: 0,
+                  modalOpacity: 1,
+                  dark: view.dark,
+                  performanceIdle: view.performanceIdle,
+                  formFieldRect: layout.fieldRect,
+                  formFieldBackdropRect: layout.fieldBox,
+                  formSubmitRect: layout.submitButton,
+                  formInitialText: view.initialName,
+                  formIdentity: view.formIdentity,
+                  formInputFormatters: const <TextInputFormatter>[
+                    PlaylistFormTextInputFormatter(PlaylistFormSpec.fieldMaxLength),
+                  ],
+                ),
+                ports: _playlistPorts,
+                accountFieldKey: PlaylistFormKeys.nameField,
+                submitButtonKey: PlaylistFormKeys.submit,
+              ),
+            ),
           ],
         ),
       ),
@@ -883,94 +894,59 @@ class _PlaylistFormLayerState extends State<PlaylistFormLayer> {
     );
   }
 
-  Widget _fieldBox(Rect rect) => Positioned(
-        left: rect.left,
-        top: rect.top,
-        width: rect.width,
-        height: rect.height,
-        child: ColoredBox(
-          color: widget.view.dark ? PlaylistFormSpec.fieldFillDark : PlaylistFormSpec.fieldFillLight,
-        ),
+  TextInputPorts get _playlistPorts => _PlaylistFormTextPorts(
+        onSubmit: (String name) {
+          _submit(name);
+        },
+        onClose: () => widget.onCloseModal?.call(),
       );
+}
 
-  Widget _nameField(Rect rect, double factor) {
-    final PlaylistFormView view = widget.view;
-    return Positioned(
-      left: rect.left,
-      top: rect.top,
-      width: rect.width,
-      height: rect.height,
-      child: Semantics(
-        textField: true,
-        label: PlaylistFormSpec.fieldAccessibleName, // Overlay.qml:398
-        child: Focus(
-          onKeyEvent: (FocusNode node, KeyEvent event) {
-            if (event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.escape) {
-              widget.onCloseModal?.call(); // Overlay.qml:406 Keys.onEscapePressed
-              return KeyEventResult.handled;
-            }
-            return KeyEventResult.ignored;
-          },
-          child: TextField(
-            key: PlaylistFormKeys.nameField,
-            controller: _name,
-            focusNode: _focus,
-            enabled: view.fieldEnabled,
-            maxLines: 1,
-            showCursor: !view.performanceIdle, // Overlay.qml:394 cursorVisible && !idle
-            textAlignVertical: TextAlignVertical.center, // Overlay.qml:391 AlignVCenter
-            keyboardType: TextInputType.text, // Qt.ImhNone（Overlay.qml:397）
-            textInputAction: TextInputAction.done,
-            onSubmitted: (_) => _submit(), // Overlay.qml:399-405 Keys.onReturnPressed
-            inputFormatters: <TextInputFormatter>[
-              PlaylistFormTextInputFormatter(view.fieldMaximumLength), // Overlay.qml:395
-            ],
-            style: TextStyle(
-              fontSize: PlaylistFormSpec.fieldFontSize * factor,
-              color: view.dark ? PlaylistFormSpec.fieldTextDark : PlaylistFormSpec.fieldTextLight,
-            ),
-            decoration: const InputDecoration(
-              isDense: true,
-              border: InputBorder.none,
-              contentPadding: EdgeInsets.zero,
-            ),
-          ),
-        ),
-      ),
-    );
+/// playlist-form 的输入层端口：只有 submitForm / close-modal 有业务含义。
+///
+/// 其余端口属于 search/account/captcha/settingEdit，playlist-form 永不触发，
+/// 保持 no-op；这样 TextInputOverlay 无需为播放列表写第二套输入实现。
+class _PlaylistFormTextPorts implements TextInputPorts {
+  const _PlaylistFormTextPorts({
+    required this.onSubmit,
+    required this.onClose,
+  });
+
+  final void Function(String name) onSubmit;
+  final VoidCallback onClose;
+
+  @override
+  void action(String action) {
+    // Overlay.qml:406 Keys.onEscapePressed → rhine.action("close-modal")
+    if (action == 'close-modal') {
+      onClose();
+    }
   }
 
-  Widget _submitButton(Rect rect, double factor) {
-    final PlaylistFormView view = widget.view;
-    return Positioned(
-      left: rect.left,
-      top: rect.top,
-      width: rect.width,
-      height: rect.height,
-      child: Opacity(
-        opacity: view.submitEnabled ? 1 : 0.5, // Overlay.qml:469
-        child: Semantics(
-          button: true,
-          label: PlaylistFormSpec.submitAccessibleName, // Overlay.qml:477
-          child: GestureDetector(
-            key: PlaylistFormKeys.submit,
-            behavior: HitTestBehavior.opaque,
-            onTap: view.submitEnabled ? () => _submit() : null, // Overlay.qml:479-482 MouseArea
-            child: ColoredBox(
-              color: PlaylistFormSpec.submitFill, // Overlay.qml:468
-              child: Center(
-                child: Text(
-                  PlaylistFormSpec.submitLabel, // Overlay.qml:472
-                  style: TextStyle(
-                    fontSize: PlaylistFormSpec.submitFontSize * factor,
-                    color: PlaylistFormSpec.submitText,
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
+  @override
+  void submitForm(String account, String captcha) {
+    // Engine.cpp:870 对 playlist-form 只取 account 作歌单名；captcha 不参与。
+    onSubmit(account);
   }
+
+  @override
+  void query(String text) {}
+
+  @override
+  void searchAccepted(String text, {required bool control}) {}
+
+  @override
+  void sendLoginCode(String phone) {}
+
+  @override
+  void settingEditText(String text) {}
+
+  @override
+  void settingEditAccepted() {}
+
+  @override
+  void settingEditCancel() {}
+
+  @override
+  void focusInputLayer() {}
 }

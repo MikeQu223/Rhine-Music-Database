@@ -135,6 +135,12 @@ class TextInputStageState {
     this.editingSettingHeight,
     this.performanceIdle = false,
     this.rhineFontFamily,
+    this.formFieldRect,
+    this.formFieldBackdropRect,
+    this.formSubmitRect,
+    this.formInitialText,
+    this.formIdentity,
+    this.formInputFormatters,
   });
 
   /// 用唯一 [StageGeometry] 构造 state（DEDUP-13）。
@@ -164,6 +170,12 @@ class TextInputStageState {
     this.editingSettingHeight,
     this.performanceIdle = false,
     this.rhineFontFamily,
+    this.formFieldRect,
+    this.formFieldBackdropRect,
+    this.formSubmitRect,
+    this.formInitialText,
+    this.formIdentity,
+    this.formInputFormatters,
   }) : stageScale = geometry.stageScale;
 
   /// 「上一状态」占位：所有容器都不可见。仅用于 Widget 挂载时补一次可见性迁移。
@@ -224,6 +236,30 @@ class TextInputStageState {
   /// C++ 注入的字族（Qt/src/main.cpp:1074）。null = 宿主尚未注入（TBD）。
   final String? rhineFontFamily;
 
+  /// 可选：playlist-form 的字段矩形（stage 单位，绘制时乘 [stageScale]）。
+  ///
+  /// 非 null 时只覆盖 formFields 的 account 字段几何；可见性、键盘类型、maxLength、
+  /// 提交语义仍走本类既有分支。默认 null 保持 Overlay.qml:387-390 的登录几何不变。
+  final Rect? formFieldRect;
+
+  /// 可选：playlist-form 的字段背景矩形（stage 单位）。null 时回落到 [formFieldRect]
+  /// 或既有登录背景几何，避免调用方只给文字框时画出错位的背景。
+  final Rect? formFieldBackdropRect;
+
+  /// 可选：playlist-form 的提交按钮矩形（stage 单位）。null 时保持既有登录按钮几何。
+  final Rect? formSubmitRect;
+
+  /// 可选：playlist-form 的初始文本。null 表示不启用 playlist-form 的初值语义，
+  /// 仍按既有 onVisibleChanged 清空；非 null（含空串）时变可见/表单身份变化会写入该值。
+  final String? formInitialText;
+
+  /// 可选：playlist-form 的表单身份（formKind + formPID）。变化时重设初值并抢焦点。
+  final String? formIdentity;
+
+  /// 可选：playlist-form 的输入 formatter（如按 UTF-16 码元截断的旧实现）。
+  /// null 时沿用 [TextInputLayout] 的 LengthLimitingTextInputFormatter，保持既有四 kind 不变。
+  final List<TextInputFormatter>? formInputFormatters;
+
   bool get loginMode => modal == 'login';
 
   /// Overlay.qml:357 —— 手机号表单的可见条件。
@@ -276,6 +312,7 @@ class TextInputLayout {
     this.placeholder,
     this.placeholderColor,
     this.backdrop,
+    this.inputFormatters,
   });
 
   final TextFieldKind kind;
@@ -319,6 +356,10 @@ class TextInputLayout {
 
   /// account / captcha / settingEdit 没有 placeholder 元素，恒不绘制。
   bool get hasPlaceholder => placeholder != null;
+
+  /// 可选：覆盖 LengthLimitingTextInputFormatter 的 formatter 链。
+  /// 仅 playlist-form 使用（Qt QString 按 UTF-16 码元截断）；null 保持原行为。
+  final List<TextInputFormatter>? inputFormatters;
 }
 
 /// 表单按钮的渲染与无障碍参数（Overlay.qml:408-434、462-483）。
@@ -587,13 +628,15 @@ class TextInputOverlayLogic {
     final dark = state.dark;
     final login = state.loginMode;
     final formWidth = (state.inputWidth ?? 0) * s;
-    // Overlay.qml:387-390
-    final rect = Rect.fromLTWH(
-      ((state.inputX ?? 0) + 14) * s,
-      (state.modalOffset + 430) * s,
-      math.max(0.0, formWidth - (login ? 208 : 28) * s),
-      55 * s,
-    );
+    // Overlay.qml:387-390。playlist-form 由宿主注入真实表单矩形；登录路径保持原值。
+    final Rect rect = state.formFieldRect == null
+        ? Rect.fromLTWH(
+            ((state.inputX ?? 0) + 14) * s,
+            (state.modalOffset + 430) * s,
+            math.max(0.0, formWidth - (login ? 208 : 28) * s),
+            55 * s,
+          )
+        : _scaledRect(state.formFieldRect!, s);
     return TextInputLayout(
       kind: TextFieldKind.account,
       // Overlay.qml:357 的容器可见性
@@ -617,6 +660,8 @@ class TextInputOverlayLogic {
       cursorVisible: !state.performanceIdle,
       // Overlay.qml:395
       maxLength: login ? 11 : 100,
+      // playlist-form 可注入 Qt QString 口径的 formatter；登录路径保持 null。
+      inputFormatters: state.formInputFormatters,
       // Overlay.qml:397：login 时 Qt.ImhDigitsOnly
       digitsOnly: login,
       sensitive: false,
@@ -625,17 +670,28 @@ class TextInputOverlayLogic {
       padding: EdgeInsets.zero,
       // Overlay.qml:377-383：整行背景；登录时右让 180*s 给发送验证码按钮。
       backdrop: TextInputBackdrop(
-        rect: Rect.fromLTWH(
-          (state.inputX ?? 0) * s,
-          (state.modalOffset + 430) * s,
-          math.max(0.0, login ? formWidth - 180 * s : formWidth),
-          55 * s,
-        ),
+        rect: state.formFieldBackdropRect != null
+            ? _scaledRect(state.formFieldBackdropRect!, s)
+            : state.formFieldRect != null
+                ? rect
+                : Rect.fromLTWH(
+                    (state.inputX ?? 0) * s,
+                    (state.modalOffset + 430) * s,
+                    math.max(0.0, login ? formWidth - 180 * s : formWidth),
+                    55 * s,
+                  ),
         color: dark ? const Color(0xFF30312B) : const Color(0xFFD9D8CE),
         opacity: _clampOpacity(state.modalOpacity),
       ),
     );
   }
+
+  Rect _scaledRect(Rect rect, double s) => Rect.fromLTWH(
+        rect.left * s,
+        rect.top * s,
+        rect.width * s,
+        rect.height * s,
+      );
 
   TextInputLayout _captchaLayout(TextInputStageState state, double s) {
     final dark = state.dark;
@@ -795,13 +851,15 @@ class TextInputOverlayLogic {
           // 该 Rectangle 未声明 visible，随 formFields 容器可见性。
           visible: state.formVisible,
           enabled: enabled,
-          // Overlay.qml:463-467
-          rect: Rect.fromLTWH(
-            (state.inputX ?? 0) * s + math.max(0.0, formWidth - 170 * s),
-            (state.modalOffset + (login ? 611 : 530)) * s,
-            math.max(0.0, 170 * s),
-            math.max(0.0, 36 * s),
-          ),
+          // Overlay.qml:463-467；playlist-form 由宿主注入提交按钮矩形。
+          rect: state.formSubmitRect == null
+              ? Rect.fromLTWH(
+                  (state.inputX ?? 0) * s + math.max(0.0, formWidth - 170 * s),
+                  (state.modalOffset + (login ? 611 : 530)) * s,
+                  math.max(0.0, 170 * s),
+                  math.max(0.0, 36 * s),
+                )
+              : _scaledRect(state.formSubmitRect!, s),
           // Overlay.qml:468
           color: const Color(0xFF777B60),
           // Overlay.qml:469 的自身 opacity × 父容器 formFields 的 opacity（Overlay.qml:362）。
@@ -838,6 +896,21 @@ class TextInputOverlayLogic {
     }
     switch (container) {
       case TextInputContainer.formFields:
+        // playlist-form 与 login 共用 formFields，但初值语义不同：playlist-form 需要把
+        // rename 目标名写入 account（不能空框），login 仍按 Overlay.qml:363-369 清空。
+        // formInitialText 为 null 时完全走既有 login 分支，保证四类既有输入框不回归。
+        if (isVisible &&
+            state.modal == 'playlist-form' &&
+            state.formInitialText != null) {
+          return <TextInputEffect>[
+            TextInputEffect.setText(
+              TextFieldKind.account,
+              state.formInitialText!,
+            ),
+            const TextInputEffect.clearText(TextFieldKind.captcha),
+            const TextInputEffect.focusField(TextFieldKind.account),
+          ];
+        }
         final effects = <TextInputEffect>[
           const TextInputEffect.clearText(TextFieldKind.account),
           const TextInputEffect.clearText(TextFieldKind.captcha),
@@ -996,10 +1069,19 @@ class TextInputOverlay extends StatefulWidget {
     super.key,
     required this.state,
     required this.ports,
+    this.accountFieldKey,
+    this.submitButtonKey,
   });
 
   final TextInputStageState state;
   final TextInputPorts ports;
+
+  /// 可选：account 字段（EditableText）的稳定 Key，供宿主命中/测试定位。
+  /// 默认 null，既有调用方无需改动。
+  final Key? accountFieldKey;
+
+  /// 可选：submit 按钮的稳定 Key。默认 null，既有调用方无需改动。
+  final Key? submitButtonKey;
 
   @override
   State<TextInputOverlay> createState() => _TextInputOverlayState();
@@ -1035,6 +1117,31 @@ class _TextInputOverlayState extends State<TextInputOverlay> {
   void didUpdateWidget(TextInputOverlay oldWidget) {
     super.didUpdateWidget(oldWidget);
     _applyVisibility(oldWidget.state, widget.state);
+    // 可见性不变但表单身份变化（rename 切到另一首歌单、create/rename 互切）时，
+    // onVisibleChanged 不会触发；playlist-form 必须在这里重设初值，否则会复用上一首的文本。
+    // formInitialText 为 null 的既有调用方不受影响。
+    if (widget.state.modal == 'playlist-form' &&
+        widget.state.formInitialText != null &&
+        (oldWidget.state.formIdentity != widget.state.formIdentity ||
+            oldWidget.state.formInitialText != widget.state.formInitialText)) {
+      _apply(<TextInputEffect>[
+        TextInputEffect.setText(
+          TextFieldKind.account,
+          widget.state.formInitialText!,
+        ),
+        const TextInputEffect.focusField(TextFieldKind.account),
+      ]);
+    }
+    // playlist-form → 其他 formFields（典型是 login phone）：两者 formVisible 都为 true，
+    // visibilityEffects 不会清空；这里补一次清空，保持 login 不会继承歌单名。
+    if (oldWidget.state.modal == 'playlist-form' &&
+        widget.state.modal != 'playlist-form' &&
+        widget.state.formVisible) {
+      _apply(const <TextInputEffect>[
+        TextInputEffect.clearText(TextFieldKind.account),
+        TextInputEffect.clearText(TextFieldKind.captcha),
+      ]);
+    }
   }
 
   @override
@@ -1204,6 +1311,7 @@ class _TextInputOverlayState extends State<TextInputOverlay> {
   /// 故让它保持自然高度再由 Align 居中。
   Widget _editable(TextFieldKind kind, TextInputLayout layout) {
     return EditableText(
+      key: kind == TextFieldKind.account ? widget.accountFieldKey : null,
       controller: _controllers[kind]!,
       focusNode: _focusNodes[kind]!,
       style: layout.textStyle,
@@ -1226,11 +1334,13 @@ class _TextInputOverlayState extends State<TextInputOverlay> {
       keyboardType:
           layout.digitsOnly ? TextInputType.number : TextInputType.text,
       // maximumLength（Overlay.qml:395、455）在 Qt 是硬截断，用限长 formatter 对齐。
-      inputFormatters: layout.maxLength == null
-          ? null
-          : <TextInputFormatter>[
-              LengthLimitingTextInputFormatter(layout.maxLength!), // 公共 final 字段不做字段提升。
-            ],
+      // playlist-form 可注入按 UTF-16 码元计数的旧实现；其余 kind 仍用默认限长。
+      inputFormatters: layout.inputFormatters ??
+          (layout.maxLength == null
+              ? null
+              : <TextInputFormatter>[
+                  LengthLimitingTextInputFormatter(layout.maxLength!), // 公共 final 字段不做字段提升。
+                ]),
       // selectByMouse（Overlay.qml:538、588）字面映射到交互式选区。
       enableInteractiveSelection: layout.selectByMouse,
       // Overlay.qml:394/454/537/589：activeFocus && !performance.idle。
@@ -1390,12 +1500,15 @@ class _TextInputOverlayState extends State<TextInputOverlay> {
       ];
     }
     return <Widget>[
-      _buttonBody(
-        _logic.button(
-          FormButtonKind.submit,
-          widget.state,
-          accountLength:
-              committedText(_controllers[TextFieldKind.account]!.value).length,
+      KeyedSubtree(
+        key: widget.submitButtonKey,
+        child: _buttonBody(
+          _logic.button(
+            FormButtonKind.submit,
+            widget.state,
+            accountLength:
+                committedText(_controllers[TextFieldKind.account]!.value).length,
+          ),
         ),
       ),
     ];
