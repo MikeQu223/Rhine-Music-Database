@@ -30,16 +30,21 @@
 ///   再交给共享 [paintHudCommands] 执行：页面不再用 `DecoratedBox`/`RadialGradient`/`ColoredBox`
 ///   自绘渐变或白闪，也不再自己算渐变几何（中心/半径/色标/填充矩形归 lib/hud/render/gradient_mask.dart）。
 /// - track 驱动量（logo 描边、scan 弧、orbit 卫星、brand 行、highlightKeys、ringOpacity、permissionOpacity 尾段）
-///   在 Qt 侧来自 Assets/animation/boot-tracks.json 实测曲线；本卡 pubspec.yaml 未声明任何 assets、且 pubspec
-///   不在本卡写域 ⇒ 只能经 [BootTrackSource] 注入，默认 [ZeroBootTrackSource] 一律返回 0，不得编造实测值。
+///   在 Qt 侧来自 Assets/animation/boot-tracks.json 实测曲线（BootTimeline.cpp:26-62 载入）；pubspec.yaml:65-67
+///   已声明 `Assets/animation/`，默认由 [AssetBootTrackSource] 载入该 JSON（解析/插值见 boot_track_source.dart），
+///   载入前或资源缺失时返回 0 并把错误留在 [AssetBootTrackSource.loadError]（不伪造实测值）。
 library;
 
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
 import '../../hud/protocol/hud_command.dart';
 import '../../hud/render/paint_stack.dart';
+import 'boot_track_source.dart';
+
+export 'boot_track_source.dart';
 
 // ---------------------------------------------------------------------------
 // 1) 数值常量（全部带 Qt 证据注释；语义/数值不得改）
@@ -306,33 +311,14 @@ String bootTyped(String text, double frame, double start, double end) {
 }
 
 // ---------------------------------------------------------------------------
-// 3) seam：track 曲线注入（默认 0，不伪造实测值）
+// 3) seam：track 曲线注入（生产默认载入 Assets/animation/boot-tracks.json）
 // ---------------------------------------------------------------------------
-
-/// 实测曲线注入 seam。
-///
-/// Qt 侧这些量来自 Assets/animation/boot-tracks.json 的实测曲线（BootTimeline.cpp:26-60 载入，
-/// :192/:197/:205 等处消费）：logo 描边（logo.leftEdge / logo.movingCut / logo.drawStart / logo.drawEnd）、
-/// scan 弧与轨道（scan.* / scanTracking / orbit.*）、brand 行（brandX / brandOpacity）、
-/// highlightKeys、ringOpacity、permissionOpacity 尾段。
-///
-/// **本卡 pubspec.yaml 未声明任何 assets（assets 段整体被注释），且 pubspec 不在 T42 写域**，
-/// 因此这里只能给出一律返回 0 的默认实现：不得编造实测值，也不得读 rootBundle/AssetManifest。
-/// 真正接线由 HUD/资产层负责（记为 ARCH 依赖，不是本卡通过项）。
-abstract class BootTrackSource {
-  const BootTrackSource();
-
-  /// [key] 为 Qt 侧 track 名，[frame] 为时间轴的 `measuredFrame`（= time * 25，未取整）；未接线时返回 0。
-  double value(String key, double frame);
-}
-
-/// 未接线默认实现：任何 track 一律 0（见 [BootTrackSource] 说明）。
-class ZeroBootTrackSource extends BootTrackSource {
-  const ZeroBootTrackSource();
-
-  @override
-  double value(String key, double frame) => 0;
-}
+//
+// [BootTrackSource] / [ZeroBootTrackSource] / [AssetBootTrackSource] 定义在
+// boot_track_source.dart（本文件 re-export，既有注入点与 [BootController.tracks] 不变）：
+// - 载入/特殊键映射：Qt/src/BootTimeline.cpp:26-62；
+// - 未命中→0：Qt/src/BootTimeline.cpp:64-67；
+// - 单调 Hermite 插值：Qt/src/SceneMotion.cpp:52-95。
 
 // ---------------------------------------------------------------------------
 // 4) 时间轴采样（Qt/src/BootTimeline.cpp:126-214 的等价实现）
@@ -667,10 +653,22 @@ class BootController extends ChangeNotifier {
     this.startOffsetSeconds = kBootStartOffsetSeconds,
     this.themeDark = true,
   })  : _clock = clock,
-        _tracks = tracks ?? const ZeroBootTrackSource();
+        _tracks = tracks ?? AssetBootTrackSource(),
+        _ownsTrackSource = tracks == null {
+    final BootTrackSource source = _tracks;
+    if (source is AssetBootTrackSource) {
+      source.addListener(_onTrackSourceChanged);
+      unawaited(source.load());
+    }
+  }
 
   final BootClock _clock;
   final BootTrackSource _tracks;
+
+  /// 是否由本控制器创建了 track 源（决定 dispose 时是否释放它）。
+  final bool _ownsTrackSource;
+
+  bool _disposed = false;
 
   /// 闸门阈值（秒，比较对象是 elapsed）。
   final double gateSeconds;
@@ -710,7 +708,41 @@ class BootController extends ChangeNotifier {
   BootFrame get frame => sampleBootFrame(elapsedSeconds, tracks: _tracks);
 
   /// 本控制器使用的 track 曲线源（页面侧 arc 生产者必须与时间轴采样同源）。
+  ///
+  /// 默认是 [AssetBootTrackSource]：构造时开始异步载入 boot-tracks.json，载入完成前返回 0；
+  /// 载入成功/降级都会 notifyListeners（页面重绘），不影响 35s 锚点。
   BootTrackSource get tracks => _tracks;
+
+  /// 载入是否已完成（默认源；注入其它源时为 true）。
+  bool get trackSourceLoaded {
+    final BootTrackSource source = _tracks;
+    return source is AssetBootTrackSource ? source.loaded || source.degraded : true;
+  }
+
+  /// 载入错误（成功/注入其它源时为 null）；诊断用，不静默降级。
+  String? get trackLoadError {
+    final BootTrackSource source = _tracks;
+    return source is AssetBootTrackSource ? source.loadError : null;
+  }
+
+  void _onTrackSourceChanged() {
+    if (!_disposed) {
+      notifyListeners();
+    }
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    final BootTrackSource source = _tracks;
+    if (source is AssetBootTrackSource) {
+      source.removeListener(_onTrackSourceChanged);
+      if (_ownsTrackSource) {
+        source.dispose();
+      }
+    }
+    super.dispose();
+  }
 
   /// 已交割去向；null 表示仍在 boot。
   BootHandoff? get handoff => _handoff;
@@ -1103,7 +1135,8 @@ class BootPage extends StatefulWidget {
   /// 自建控制器时使用的时钟（不传用 [StopwatchBootClock]）。
   final BootClock? clock;
 
-  /// track 曲线源（默认 [ZeroBootTrackSource]，一律 0，不伪造实测值）。
+  /// track 曲线源（默认 [AssetBootTrackSource]：载入 Assets/animation/boot-tracks.json；
+  /// 载入前返回 0，资源缺失/解析失败时降级并暴露 [AssetBootTrackSource.loadError]）。
   final BootTrackSource? tracks;
 
   /// 主题：dark 时白闪为黑、文本用 calibratedWhite（Qt/src/NativeHudBoot.cpp:169、NativeHud.cpp:10-15）。
