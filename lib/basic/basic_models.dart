@@ -239,6 +239,109 @@ class SirenCatalog {
   final List<SirenAlbum> albums;
 }
 
+/// 一个已打开的塞壬虚拟目录（Qt/src/MusicLibrary.h:12-34 的 MusicDirectory 收窄投影）。
+///
+/// 基本版只有一个目录：Qt/src/MusicSiren.cpp:193-246 的 openSirenAllSongs 构造的
+/// “全部歌曲”（provider=siren / kind=playlist / virtual / id=siren-all /
+/// key=siren:playlist:all）。字段逐条对应 Qt 的 MusicDirectory 成员：
+/// [songs]/[ids]/[cursor] 是目录自己的曲目、完整 ID 顺序与已加载游标（Qt :220-223），
+/// [index] 是目录内的选中行（Qt MusicDirectory::index：selectDirectory 写、leaveDirectory 读回），
+/// [parent] 是上一级目录（null = 资料库根，Qt :206）。
+class BasicDirectory {
+  const BasicDirectory({
+    required this.provider,
+    required this.kind,
+    required this.id,
+    required this.key,
+    required this.title,
+    required this.artist,
+    required this.cover,
+    required this.description,
+    required this.trackCount,
+    required this.songs,
+    required this.ids,
+    required this.cursor,
+    required this.index,
+    this.virtual = true,
+    this.parent,
+  });
+
+  /// Qt item.provider（'siren'）。
+  final String provider;
+
+  /// Qt item.kind（siren 目录固定 'playlist'）。
+  final String kind;
+
+  /// Qt item.id（'siren-all'）。
+  final String id;
+
+  /// Qt item.key（'siren:playlist:all'）。
+  final String key;
+
+  /// Qt item.title（'全部歌曲'）；目录内资料库标题显示它（Qt libraryName()）。
+  final String title;
+
+  /// Qt item.artist（providerName()，siren = '塞壬唱片'）。
+  final String artist;
+
+  /// Qt item.cover（目录首曲封面；基础版没有图片管线，只带身份）。
+  final String cover;
+
+  /// Qt item.description（'塞壬唱片全部歌曲'）。
+  final String description;
+
+  /// Qt item.trackCount（目录曲目数）。
+  final int trackCount;
+
+  /// Qt item.virtual（虚拟目录标志）。
+  final bool virtual;
+
+  /// Qt directory->songs：目录曲目（顺序就是列表顺序）。
+  final List<SirenSong> songs;
+
+  /// Qt directory->ids：完整 ID 顺序（可多于 [songs]；基础版不做增量补全）。
+  final List<String> ids;
+
+  /// Qt directory->cursor：ids 中已落到 [songs] 的条数。
+  final int cursor;
+
+  /// Qt MusicDirectory::index：目录内选中行（位置真值，不是身份）。
+  final int index;
+
+  /// 上一级目录（null = 资料库根）。
+  final BasicDirectory? parent;
+
+  /// 复制并改选中行/游标/曲目（Qt 直接改 MusicDirectory 的可变字段）。
+  BasicDirectory copyWith({
+    List<SirenSong>? songs,
+    List<String>? ids,
+    int? cursor,
+    int? trackCount,
+    int? index,
+  }) {
+    return BasicDirectory(
+      provider: provider,
+      kind: kind,
+      id: id,
+      key: key,
+      title: title,
+      artist: artist,
+      cover: cover,
+      description: description,
+      trackCount: trackCount ?? this.trackCount,
+      songs: songs ?? this.songs,
+      ids: ids ?? this.ids,
+      cursor: cursor ?? this.cursor,
+      index: index ?? this.index,
+      virtual: virtual,
+      parent: parent,
+    );
+  }
+
+  @override
+  String toString() => 'BasicDirectory($id, $title, $index/${songs.length})';
+}
+
 /// 可显示的塞壬唱片错误（文案与 siren.mjs 的 Error 一致，不另起一套）。
 class SirenException implements Exception {
   const SirenException(this.message, [this.cause]);
@@ -353,6 +456,7 @@ class BasicViewState {
     this.songs = const <SirenSong>[],
     this.albums = const <SirenAlbum>[],
     this.album,
+    this.directory,
     this.song,
     this.playing = false,
     this.buffering = false,
@@ -393,6 +497,12 @@ class BasicViewState {
 
   /// 打开的专辑详情（phase == detail 且从专辑进入时非空）。
   final SirenAlbum? album;
+
+  /// 已打开的虚拟目录（null = 资料库根；Qt MusicLibrary 的 directory 同义）。
+  ///
+  /// 目录打开时列表只放目录曲目（Qt MusicLibrary.cpp:212-214 的
+  /// `directory ? directory->orderedSongs() : …`），[albums] 为空。
+  final BasicDirectory? directory;
 
   /// 当前曲目（正在播放或刚选中；歌词页与播放条都以它为准）。
   final SirenSong? song;
@@ -459,6 +569,7 @@ class BasicViewState {
     List<SirenSong>? songs,
     List<SirenAlbum>? albums,
     SirenAlbum? album,
+    BasicDirectory? directory,
     SirenSong? song,
     bool? playing,
     bool? buffering,
@@ -475,6 +586,7 @@ class BasicViewState {
     String? playerStatus,
     bool? catalogLoaded,
     bool dropAlbum = false,
+    bool dropDirectory = false,
     bool dropSong = false,
   }) {
     return BasicViewState(
@@ -486,6 +598,7 @@ class BasicViewState {
       songs: songs ?? this.songs,
       albums: albums ?? this.albums,
       album: dropAlbum ? null : (album ?? this.album),
+      directory: dropDirectory ? null : (directory ?? this.directory),
       song: dropSong ? null : (song ?? this.song),
       playing: playing ?? this.playing,
       buffering: buffering ?? this.buffering,

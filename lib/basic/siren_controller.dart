@@ -66,6 +66,23 @@ const String sirenEmptyLyricsMessage = '暂无歌词';
 /// validLyricsDocument 上限 5000；超出部分不参与时间轴）。
 const int sirenMaxLyricLines = 5000;
 
+/// 「全部歌曲」虚拟目录的 id / key / 标题（Qt/src/MusicSiren.cpp:211-218）。
+const String sirenAllSongsId = 'siren-all';
+const String sirenAllSongsKey = 'siren:playlist:all';
+const String sirenAllSongsTitle = '全部歌曲';
+
+/// 「全部歌曲」目录的描述（Qt/src/MusicSiren.cpp:218）。
+const String sirenAllSongsDescription = '塞壬唱片全部歌曲';
+
+/// 打开目录/详情后的状态文案前缀（Qt/src/MusicSiren.cpp:242、MusicDirectory.cpp:445）。
+const String sirenOpenedPrefix = '已打开：';
+
+/// 返回上一级的状态文案前缀（Qt/src/MusicDirectory.cpp:447）。
+const String sirenReturnedPrefix = '已返回：';
+
+/// provider 的显示名（Qt/src/MusicApi.cpp:16-17 的 providerName()：siren → '塞壬唱片'）。
+const String sirenProviderLabel = '塞壬唱片';
+
 /// Siren 基本版的单一 authority。
 ///
 /// 构造注入 lane B 的 [BasicAudioPort]；[repository] 可注入（测试/替换 baseUri），
@@ -117,6 +134,9 @@ class BasicController extends ChangeNotifier {
   String _status = sirenCatalogLoadingStatus;
   String _query = '';
   SirenAlbum? _album;
+
+  /// 已打开的虚拟目录（null = 资料库根；Qt MusicLibrary::directory 的收窄投影）。
+  BasicDirectory? _directory;
   SirenSong? _song;
   BasicPhase? _phaseBeforeLyrics;
   bool _catalogLoaded = false;
@@ -184,6 +204,13 @@ class BasicController extends ChangeNotifier {
     if (_disposed) {
       return;
     }
+    if (_directory != null) {
+      // Qt/src/MusicSiren.cpp:184-188：每次搜索结束都 showSource(0) → leaveDirectory(false)
+      // （Qt MusicLibrary.cpp:556-570 无条件离目录）。目录打开时先回资料库根，关键词再作用于
+      // 完整曲库（目录本身不参与过滤）；即使关键词没变也不能留在目录里——否则下面的
+      // '已加载…N 首 / M 张专辑' 文案会与仍在显示的目录列表自相矛盾。
+      _leaveDirectory(restore: false);
+    }
     _query = value;
     _error = '';
     if (!_catalogLoaded) {
@@ -249,6 +276,7 @@ class BasicController extends ChangeNotifier {
     }
     ++_songGeneration;
     _song = song;
+    _syncDirectoryIndex(song);
     _phase = BasicPhase.detail;
     _loading = false;
     _error = '';
@@ -263,7 +291,8 @@ class BasicController extends ChangeNotifier {
     );
   }
 
-  /// 返回：歌词页回上一页；详情页回曲库（正在播放的歌不中断，Qt 的 lane 回退同义）。
+  /// 返回：歌词页回上一页；详情页回曲库；目录内回上一级
+  /// （Qt/src/MusicDirectory.cpp:417-452 leaveDirectory(true)）；正在播放的歌不中断。
   Future<void> back() async {
     if (_disposed) {
       return;
@@ -279,7 +308,17 @@ class BasicController extends ChangeNotifier {
       _phase = BasicPhase.library;
       _loading = false;
       _error = '';
-      _status = _catalogLoaded ? _catalogLoadedStatus() : sirenLibraryUnloadedStatus;
+      _status = _libraryStatus();
+      _publish();
+      return;
+    }
+    if (_phase == BasicPhase.library && _directory != null) {
+      final BasicDirectory? parent = _leaveDirectory(restore: true);
+      _loading = false;
+      _error = '';
+      _status = parent != null
+          ? '$sirenReturnedPrefix${parent.title}'
+          : '$sirenReturnedPrefix$sirenProviderLabel';
       _publish();
     }
   }
@@ -297,11 +336,37 @@ class BasicController extends ChangeNotifier {
     ++_detailGeneration;
     ++_songGeneration;
     _album = null;
+    _directory = null;
     _query = '';
     _phase = BasicPhase.library;
     _loading = false;
     _error = '';
     _status = _catalogLoaded ? _catalogLoadedStatus() : sirenLibraryUnloadedStatus;
+    _publish();
+  }
+
+  /// 打开 Siren 的「全部歌曲」虚拟目录（Qt/src/MusicSiren.cpp:193-246
+  /// MusicLibrary::openSirenAllSongs 的移植）。
+  ///
+  /// 与 Qt 一致的三点：
+  ///  - 只**选中**第一首（Qt :244-245 `next->index = 0; choose(next->songs.first())`），
+  ///    不替换播放队列、不开始播放：真正播放要用户再点 '播放全部 →'
+  ///    （basic_app 的 'music:play-loaded' → 首行 openSong），Qt 的 play() 也只在
+  ///    用户按下播放时才 replaceQueue（Qt/src/MusicLibrary.cpp:943-957）。
+  ///  - 目录 item 逐字照抄 Qt :205-218：provider / kind 'playlist' / virtual /
+  ///    id 'siren-all' / key 'siren:playlist:all' / title '全部歌曲' /
+  ///    description / trackCount / songs = lists[3] / ids / cursor=ids.size() / index 0。
+  ///  - 曲库没加载成功时只上屏 '塞壬唱片曲库尚未加载'，不造空目录（Qt :194-197）。
+  Future<void> openAllSirenSongs() async {
+    if (_disposed) {
+      return;
+    }
+    if (!_catalogLoaded || _catalogSongs.isEmpty) {
+      _status = sirenLibraryUnloadedStatus;
+      _publish();
+      return;
+    }
+    _openAllSirenDirectory();
     _publish();
   }
 
@@ -450,17 +515,116 @@ class BasicController extends ChangeNotifier {
     return '$sirenCatalogLoadedPrefix${_catalogSongs.length} 首 / ${_catalogAlbums.length} 张专辑';
   }
 
+  /// 资料库层的状态文案：目录打开时是目录标题（Qt MusicLibrary::libraryName()，
+  /// Qt/src/MusicLibrary.cpp:189-194），否则是曲库加载结果。
+  String _libraryStatus() {
+    final BasicDirectory? directory = _directory;
+    if (directory != null) {
+      return '$sirenOpenedPrefix${directory.title}';
+    }
+    return _catalogLoaded ? _catalogLoadedStatus() : sirenLibraryUnloadedStatus;
+  }
+
+  /// 「全部歌曲」目录的 state 投影（Qt/src/MusicSiren.cpp:205-246）。
+  ///
+  /// Qt 用 lists[3]（全部已加载曲目）填 songs，ids 是同一份顺序；
+  /// parent 记下打开前的目录，供 leaveDirectory(true) 逐级返回（Qt :221-223）。
+  void _openAllSirenDirectory() {
+    ++_detailGeneration;
+    ++_songGeneration;
+    final List<SirenSong> songs = _catalogSongs;
+    _directory = BasicDirectory(
+      provider: sirenProvider,
+      kind: 'playlist',
+      id: sirenAllSongsId,
+      key: sirenAllSongsKey,
+      title: sirenAllSongsTitle,
+      artist: sirenProviderLabel,
+      cover: songs.first.cover,
+      description: sirenAllSongsDescription,
+      trackCount: songs.length,
+      virtual: true,
+      songs: songs,
+      ids: <String>[for (final SirenSong song in songs) song.id],
+      cursor: songs.length,
+      index: 0,
+      parent: _directory,
+    );
+    _album = null;
+    _phase = BasicPhase.library;
+    _loading = false;
+    _error = '';
+    _status = '$sirenOpenedPrefix$sirenAllSongsTitle';
+    // Qt :243-245：current 清空后 choose(lists[3].first())——只选中，不播放。
+    _song = songs.first;
+  }
+
+  /// 退出目录（Qt/src/MusicDirectory.cpp:417-452 leaveDirectory）：restore=true 回父目录并
+  /// 用父目录记录的 index 重新选中（Qt :449 selectDirectory(parent->index)），
+  /// restore=false 直接回资料库根（搜索结束时的 showSource(0)）。
+  BasicDirectory? _leaveDirectory({required bool restore}) {
+    final BasicDirectory? leaving = _directory;
+    ++_detailGeneration;
+    ++_songGeneration;
+    if (!restore) {
+      _directory = null;
+      return null;
+    }
+    final BasicDirectory? parent = leaving?.parent;
+    _directory = parent;
+    if (parent != null && parent.songs.isNotEmpty) {
+      final int index =
+          parent.index < 0 || parent.index >= parent.songs.length ? 0 : parent.index;
+      _song = parent.songs[index];
+    }
+    return parent;
+  }
+
+  /// 目录内选曲时同步高亮位置（Qt/src/MusicDirectory.cpp:302-319 selectDirectory：
+  /// 先把 directory->index 写成被点行，再 choose 该项）。
+  void _syncDirectoryIndex(SirenSong song) {
+    final BasicDirectory? directory = _directory;
+    if (directory == null) {
+      return;
+    }
+    final int index =
+        directory.songs.indexWhere((SirenSong item) => item.id == song.id);
+    if (index < 0 || index == directory.index) {
+      return;
+    }
+    _directory = directory.copyWith(index: index);
+  }
+
   List<SirenSong> _visibleSongs() {
+    final BasicDirectory? directory = _directory;
+    if (directory != null) {
+      // Qt/src/MusicLibrary.cpp:212-214：`directory ? directory->orderedSongs() : …`。
+      // sortField 默认 'none'（MusicDirectory.cpp:9-19），顺序就是 songs 原序。
+      return directory.songs;
+    }
     if (_phase == BasicPhase.detail && _album != null) {
       return _album!.songs;
     }
     return filterSirenSongs(_catalogSongs, _query);
   }
 
-  List<SirenAlbum> _visibleAlbums() => filterSirenAlbums(_catalogAlbums, _query);
+  List<SirenAlbum> _visibleAlbums() {
+    if (_directory != null) {
+      // 目录里只列曲目（Qt libraryItems() 的 directory 分支），专辑行不再出现。
+      return const <SirenAlbum>[];
+    }
+    return filterSirenAlbums(_catalogAlbums, _query);
+  }
 
   /// 选曲时构造的队列：专辑详情内用详情曲目顺序，其余用当前过滤后的曲库顺序。
   List<SirenSong> _queueFor(SirenSong song) {
+    final BasicDirectory? directory = _directory;
+    if (directory != null &&
+        directory.songs.any((SirenSong item) => item.id == song.id)) {
+      // Qt/src/MusicLibrary.cpp:975-984 directorySource()：目录内播放的队列就是目录曲目，
+      // ids 用目录自己的顺序（sortField == 'none' 分支）。
+      return directory.songs;
+    }
     final SirenAlbum? album = _album;
     if (album != null && album.id == song.albumId && album.songs.isNotEmpty) {
       return album.songs;
@@ -669,6 +833,7 @@ class BasicController extends ChangeNotifier {
       songs: _visibleSongs(),
       albums: _visibleAlbums(),
       album: _album,
+      directory: _directory,
       song: _song,
       playing: playerState['playing'] == true,
       buffering: _audio.state.buffering,

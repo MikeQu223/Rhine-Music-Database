@@ -37,6 +37,18 @@ class BasicListItem {
 
 /// 绘制与命中共用的一份列表真值。
 List<BasicListItem> basicLibraryItems(BasicViewState state) {
+  if (state.directory != null) {
+    // Qt/src/MusicLibrary.cpp:212-214 `directory ? directory->orderedSongs() : …`：
+    // 目录打开时列表只有目录曲目（不再有专辑行），行号就是目录位置。
+    return <BasicListItem>[
+      for (var index = 0; index < state.songs.length; index++)
+        BasicListItem(
+          title: state.songs[index].title.isEmpty ? sirenUnknownTitle : state.songs[index].title,
+          kind: 'song',
+          index: index,
+        ),
+    ];
+  }
   final SirenAlbum? album = state.album;
   if (state.phase == BasicPhase.detail && album != null) {
     return <BasicListItem>[
@@ -64,20 +76,56 @@ List<BasicListItem> basicLibraryItems(BasicViewState state) {
   ];
 }
 
-/// 当前高亮条目：资料库首屏固定第一行，专辑页取当前曲目序号。
+/// 当前高亮条目（Qt MusicLibrary::libraryIndex()，Qt/src/MusicLibrary.cpp:196-212）。
+///
+/// 目录内用 directory.index —— Qt MusicDirectory::index 是位置真值，selectDirectory
+/// 先写它再 choose（Qt/src/MusicDirectory.cpp:302-319）。
+///
+/// 资料库/专辑页按**身份**在 items 里找自己的行：先用当前曲目 id 匹配 kind == 'song'
+/// 行的源曲目，再用当前专辑 id 匹配 kind == 'album' 行的源专辑。items 同时含专辑与曲目时
+/// 行序与 state.songs 的下标并不相同（专辑行占前段），所以不能拿 state.songs 的下标当行号，
+/// 也没有固定偏移可加；标题可能重复，不能按标题匹配。
 int basicSelectedItemIndex(BasicViewState state, List<BasicListItem> items) {
   if (items.isEmpty) {
     return 0;
   }
-  final String? songId = state.song?.id;
-  if (songId == null || songId.isEmpty) {
-    return 0;
+  final BasicDirectory? directory = state.directory;
+  if (directory != null) {
+    final int index = directory.index;
+    return index < 0 || index >= items.length ? 0 : index;
   }
-  final int found = state.songs.indexWhere((SirenSong song) => song.id == songId);
-  if (found < 0 || found >= items.length) {
-    return 0;
+  final String songId = state.song?.id ?? '';
+  if (songId.isNotEmpty) {
+    for (var position = 0; position < items.length; position++) {
+      final BasicListItem item = items[position];
+      if (item.kind != 'song' || item.index < 0 || item.index >= state.songs.length) {
+        continue;
+      }
+      if (state.songs[item.index].id == songId) {
+        return position;
+      }
+    }
   }
-  return found;
+  final String albumId = state.album?.id ?? '';
+  if (albumId.isNotEmpty) {
+    for (var position = 0; position < items.length; position++) {
+      final BasicListItem item = items[position];
+      if (item.kind != 'album' || item.index < 0 || item.index >= state.albums.length) {
+        continue;
+      }
+      if (state.albums[item.index].id == albumId) {
+        return position;
+      }
+    }
+  }
+  return 0;
+}
+
+/// 资料库标题（Qt MusicLibrary::libraryName()，Qt/src/MusicLibrary.cpp:189-194）：
+/// 目录打开时是目录标题（'全部歌曲'），否则是 provider 名。
+String basicLibraryTitle(BasicViewState state) {
+  final String title = state.directory?.title ?? '';
+  return title.isEmpty ? basicLibraryName : title;
 }
 
 /// 一帧的扁平命令流 + 命中集合。绘制（HudStagePainter）与命中（HitLayer）
@@ -104,7 +152,7 @@ class BasicHudFrame {
       width: width,
       archiveMode: state.phase == BasicPhase.library && !portrait,
       suppressMask: true,
-      libraryName: basicLibraryName,
+      libraryName: basicLibraryTitle(state),
       isLocal: false,
       isSiren: true,
       uid: '',
@@ -160,7 +208,8 @@ class BasicHudFrame {
     final int selected = items.isEmpty ? 0 : rawSelected.clamp(0, items.length - 1).toInt();
     final String currentId = items.isEmpty ? '' : _currentId(state, items[selected]);
     final String currentTitle = items.isEmpty ? '' : items[selected].title;
-    final String currentArtist = state.song?.artist ?? state.album?.artist ?? '';
+    final String currentArtist =
+        items.isEmpty ? '' : _currentArtist(state, items[selected]);
 
     if (state.phase == BasicPhase.detail && state.album != null) {
       hudControl(sink, ports, '← 返回曲库', 59, 211, 280, 'back', dark: state.dark);
@@ -169,7 +218,7 @@ class BasicHudFrame {
     HudArchivePage(sink, ports, dark: state.dark).archive(
       width: width,
       s: HudArchiveState(
-        libraryName: basicLibraryName,
+        libraryName: basicLibraryTitle(state),
         libraryIndex: selected,
         libraryTotal: items.length,
         selectedLane: 3,
@@ -178,8 +227,8 @@ class BasicHudFrame {
         provider: sirenProvider,
         isLocal: false,
         isSiren: true,
-        directory: false,
-        directoryKind: null,
+        directory: state.directory != null,
+        directoryKind: state.directory?.kind,
         uid: '',
         restoringAccount: false,
         sourceLoading: state.loading,
@@ -241,6 +290,18 @@ class BasicHudFrame {
     if (state.error.isNotEmpty) {
       hudText(sink, state.error, 59, portrait ? 1120 : 40, 16, dark: state.dark);
     }
+  }
+
+  /// 选中行的歌手（Qt NativeHud.cpp:439-442 的 item.artist）：跟随高亮行自己的源，
+  /// 不再借用 state.song/state.album（混排时两者可能指向别的条目）。
+  static String _currentArtist(BasicViewState state, BasicListItem item) {
+    if (item.kind == 'album' && item.index >= 0 && item.index < state.albums.length) {
+      return state.albums[item.index].artist;
+    }
+    if (item.kind == 'song' && item.index >= 0 && item.index < state.songs.length) {
+      return state.songs[item.index].artist;
+    }
+    return '';
   }
 
   static String _currentId(BasicViewState state, BasicListItem item) {
