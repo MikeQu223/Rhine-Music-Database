@@ -1361,6 +1361,7 @@ int main(int argc, char **argv) {
             [window] { activateWindow(window); }, Qt::QueuedConnection);
     }
 #endif
+#ifndef Q_OS_IOS
     // 短暂切换窗口继续复用 GPU；隐藏或最小化超过两秒才释放图形设备和可重建缓存。
     auto backgroundRelease = new QTimer(window);
     backgroundRelease->setSingleShot(true);
@@ -1384,6 +1385,7 @@ int main(int argc, char **argv) {
                              window->setPersistentGraphics(true);
                          }
                      });
+#endif
     QObject::connect(
         window, &QQuickWindow::sceneGraphInvalidated, backend.get(),
         [raw = backend.get()] { raw->recordResourceRelease(); }, Qt::DirectConnection);

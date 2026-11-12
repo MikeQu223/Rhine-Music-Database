@@ -145,6 +145,7 @@ void PresentationShell::shutdown() {
     if (m_presenter) {
         m_presenter->release();
     }
+    m_rhi = nullptr;
     RhineFg::clear();
     m_backend->setWindow(nullptr);
     m_engine->rootContext()->setContextProperty(QStringLiteral("rhineHostWindow"),
@@ -1406,6 +1407,9 @@ bool PresentationShell::start() {
     // iOS 切后台时窗口可以仍是 visible；必须按应用状态停掉 GPU 提交并释放离屏资源。
     connect(qGuiApp, &QGuiApplication::applicationStateChanged, this,
             [this, releaseBackgroundGraphics](Qt::ApplicationState state) {
+                if (m_stopped) {
+                    return;
+                }
                 const bool active = state == Qt::ApplicationActive;
                 if (m_backend) {
                     m_backend->setVisible(active);
@@ -1421,7 +1425,9 @@ bool PresentationShell::start() {
                     m_startupProbe.reset();
                     m_timer->stop();
                     // 同步释放，不能依赖进入后台后可能不再执行的定时器。
-                    releaseBackgroundGraphics();
+                    if (state == Qt::ApplicationSuspended) {
+                        releaseBackgroundGraphics();
+                    }
                 }
             });
 #endif
