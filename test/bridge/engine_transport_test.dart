@@ -94,6 +94,38 @@ Map<String, Object?> _frame(String type, String session,
       ...extra,
     };
 
+/// worker.cjs:433-452 的命令帧：恰好 id / route / body 三键，经 stdin 逐行输入。
+Map<String, Object?> _workerCommand(
+  String id,
+  String route,
+  Map<String, Object?> body,
+) =>
+    <String, Object?>{
+      'id': id,
+      'route': route,
+      'body': body,
+    };
+
+/// ios-runtime.cjs:84-86 把 input.data 原样写进 worker.stdin；断行符 0x0a。
+Uint8List _commandBytes(List<Map<String, Object?>> commands) =>
+    Uint8List.fromList(utf8.encode(
+      commands.map((Map<String, Object?> command) => jsonEncode(command) + '\n').join(),
+    ));
+
+/// 按 worker.cjs:430-464 的 readline 语义切行；每行必须是一个独立 JSON 对象。
+List<Map<String, Object?>> _decodeCommandLines(Uint8List bytes) {
+  final String text = utf8.decode(bytes);
+  final List<String> lines = text.split('\n');
+  if (lines.isNotEmpty && lines.last.isEmpty) {
+    lines.removeLast();
+  }
+  return lines
+      .where((String line) => line.isNotEmpty)
+      .map((String line) => (jsonDecode(line) as Map<Object?, Object?>)
+          .cast<String, Object?>())
+      .toList();
+}
+
 void main() {
   const String root = '/data/user/0/rhine.music.database/files';
   const String temporary = '/data/user/0/rhine.music.database/cache';
@@ -341,6 +373,115 @@ void main() {
       expect(h.link.sent.last['type'], 'input');
       expect(h.link.sent.last['session'], '');
       expect(h.link.sent.last['data'], base64Encode(_bytes(<int>[4])));
+    });
+
+    test('worker.cjs 命令帧：id/route/body 三键、0x0a 分行、输入顺序保持', () {
+      h.transport.start(root: root, temporary: temporary, edition: edition);
+      final String session = h.transport.session!;
+      final Map<String, Object?> first = _workerCommand(
+        'cmd-1',
+        '/native/netease/search',
+        <String, Object?>{'keywords': 'rhine', 'limit': 30},
+      );
+      final Map<String, Object?> second = _workerCommand(
+        'cmd-2',
+        '/native/netease/song/url',
+        <String, Object?>{'id': '42', 'quality': 320},
+      );
+
+      h.transport.write(_commandBytes(<Map<String, Object?>>[first, second]));
+
+      expect(h.sentCount, 2, reason: 'start + 一个 input 帧；一次 write 不拆帧');
+      final Map<String, Object?> frame = h.link.sent.last;
+      expect(frame.keys.toSet(), <String>{'type', 'session', 'data'});
+      expect(frame['type'], EngineWire.input);
+      expect(frame['session'], session);
+      final Uint8List input = base64Decode(frame['data']! as String);
+      expect(utf8.decode(input).endsWith('\n'), isTrue,
+          reason: 'worker.cjs:430-437 readline 需要 0x0a 行尾');
+      final List<Map<String, Object?>> commands = _decodeCommandLines(input);
+      expect(commands, hasLength(2), reason: '两行必须各自保留，不得合并');
+      expect(commands[0].keys.toSet(), <String>{'id', 'route', 'body'});
+      expect(commands[1].keys.toSet(), <String>{'id', 'route', 'body'});
+      expect(commands[0]['id'], 'cmd-1');
+      expect(commands[0]['route'], '/native/netease/search');
+      expect(commands[0]['body'], first['body']);
+      expect(commands[1]['id'], 'cmd-2');
+      expect(commands[1]['route'], '/native/netease/song/url');
+      expect(commands[1]['body'], second['body']);
+      expect(<Object?>[commands[0]['id'], commands[1]['id']],
+          <Object?>['cmd-1', 'cmd-2'],
+          reason: 'worker.cjs:92-99 逐行串行，线路顺序就是执行顺序');
+    });
+
+    test('worker.cjs 不合并相同命令：重复行与重复 write 都逐条保留', () {
+      h.transport.start(root: root, temporary: temporary, edition: edition);
+      final Map<String, Object?> command = _workerCommand(
+        'same-id',
+        '/native/netease/playlist',
+        <String, Object?>{'id': 'playlist-7'},
+      );
+
+      h.transport.write(_commandBytes(<Map<String, Object?>>[command, command]));
+      final List<Map<String, Object?>> firstBatch = _decodeCommandLines(
+        base64Decode(h.link.sent.last['data']! as String),
+      );
+      expect(firstBatch, hasLength(2), reason: '同一 write 内的重复命令不得去重');
+      expect(firstBatch[0]['id'], 'same-id');
+      expect(firstBatch[1]['id'], 'same-id');
+      expect(firstBatch[0], firstBatch[1]);
+
+      h.transport.write(_commandBytes(<Map<String, Object?>>[command]));
+      final List<Map<String, Object?>> secondBatch = _decodeCommandLines(
+        base64Decode(h.link.sent.last['data']! as String),
+      );
+      expect(secondBatch, hasLength(1));
+      expect(secondBatch.single['id'], 'same-id');
+      expect(h.link.sent.where((Map<String, Object?> frame) =>
+          frame['type'] == EngineWire.input), hasLength(2),
+          reason: '两次 write 产生两个 input 帧，传输层不得合并');
+    });
+
+    test('worker.cjs 响应帧原样透传：id/body/cookies 与 503 回退都不改写', () {
+      h.transport.start(root: root, temporary: temporary, edition: edition);
+      final String session = h.transport.session!;
+      final Map<String, Object?> ok = _frame(EngineWire.output, session, <String, Object?>{
+        'data': _b64(jsonEncode(<String, Object?>{
+          'id': 'cmd-1',
+          'body': <String, Object?>{'code': 200, 'data': <String, Object?>{'ok': true}},
+          'cookies': <Object?>['a=1'],
+        }) + '\n'),
+      });
+      final Map<String, Object?> failure = _frame(EngineWire.output, session, <String, Object?>{
+        'data': _b64(jsonEncode(<String, Object?>{
+          'id': 'cmd-2',
+          'body': <String, Object?>{
+            'code': 503,
+            'message': '音乐请求失败，请重试',
+          },
+          'cookies': <Object?>[],
+        }) + '\n'),
+      });
+      h.link.emit(ok);
+      h.link.emit(failure);
+
+      expect(h.outputEvents, hasLength(2));
+      final List<Map<String, Object?>> responses = <Map<String, Object?>>[];
+      for (final Uint8List event in h.outputEvents) {
+        final List<Map<String, Object?>> lines = _decodeCommandLines(event);
+        expect(lines, hasLength(1));
+        responses.add(lines.single);
+      }
+      expect(responses[0].keys.toSet(), <String>{'id', 'body', 'cookies'});
+      expect(responses[1].keys.toSet(), <String>{'id', 'body', 'cookies'});
+      expect(responses[0]['id'], 'cmd-1');
+      expect(responses[1]['id'], 'cmd-2');
+      expect((responses[1]['body']! as Map<String, Object?>)['code'], 503);
+      expect((responses[1]['body']! as Map<String, Object?>)['message'],
+          '音乐请求失败，请重试');
+      expect(responses[1]['cookies'], <Object?>[]);
+      expect(h.transport.state, EngineProcessState.starting,
+          reason: 'output 只是数据，不改变会话状态');
     });
 
     test('closeWriteChannel 空操作、绝不关闭共享连接（:239-241）', () {
