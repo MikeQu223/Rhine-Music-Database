@@ -1,10 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:rhine_music_database/app/consent_gate.dart';
-import 'package:rhine_music_database/basic/basic_models.dart';
 import 'package:rhine_music_database/basic/basic_hud.dart';
+import 'package:rhine_music_database/basic/basic_models.dart';
 import 'package:rhine_music_database/ui/pages/consent_page.dart';
 
+/// 本文件钉住两件事：
+/// 1. 公共隐私模块（ConsentGate / ConsentPage）**没有**被删，独立调用的语义不变；
+///    只是 BasicApp 的预览不再拿它拦首屏（启动入口的测试见 runtime_startup_test.dart）。
+/// 2. 曲库列表映射（basicLibraryItems / basicSelectedItemIndex / basicNavigationLeft）
+///    与 Qt 的列表顺序、选中跟随、左侧栏宽度一致——启动之后点击能不能落到正确的
+///    专辑/单曲，取决于这几个纯函数。
 SirenSong _song(String id, String title) => SirenSong(
       id: id,
       title: title,
