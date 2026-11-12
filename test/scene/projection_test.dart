@@ -11,9 +11,31 @@
 // forbids dart test / flutter test / analyze / build here.
 
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:rhine_music_database/scene/picking.dart';
 import 'package:rhine_music_database/scene/scene_math.dart';
+
+/// 32-byte stride, little endian Float32 positions (NativePicking.cpp:119).
+Uint8List _vertexBytes(List<List<double>> positions) {
+  final ByteData data = ByteData(positions.length * 32);
+  for (int index = 0; index < positions.length; ++index) {
+    data.setFloat32(index * 32, positions[index][0], Endian.little);
+    data.setFloat32(index * 32 + 4, positions[index][1], Endian.little);
+    data.setFloat32(index * 32 + 8, positions[index][2], Endian.little);
+  }
+  return data.buffer.asUint8List();
+}
+
+/// Little endian Uint32 indices (NativePicking.cpp:125).
+Uint8List _indexBytes(List<int> indices) {
+  final ByteData data = ByteData(indices.length * 4);
+  for (int index = 0; index < indices.length; ++index) {
+    data.setUint32(index * 4, indices[index], Endian.little);
+  }
+  return data.buffer.asUint8List();
+}
 
 void main() {
   // SceneMath.cpp:26-29 — a zero-length vector is returned unchanged.
@@ -185,26 +207,31 @@ void main() {
 
   // SceneMath.cpp:184-217.
   group('Frustum matches Qt plane extraction and culling', () {
-    test('plane order is left, right, bottom, top, near, far', () {
+    test('plane order matches Qt extraction: left, right, bottom, top, far at [4], near at [5]', () {
       final Mat4 projection = Mat4.perspective(90, 1, 1, 100);
       final Frustum frustum = Frustum(projection);
       expect(frustum.planes.length, 6);
-      // For perspective(90, 1, 1, 100) the stored x/y terms are 1 and the depth
-      // terms are c = -101/99, d = -200/99, so the six planes normalize to:
-      //   [0] (-a, 0, -1, 0)      [1] (a, 0, -1, 0)
-      //   [2] (0, -a, -1, 0)      [3] (0, a, -1, 0)
-      //   [4] (0, 0, 1, 100)      [5] (0, 0, -1, -1)     with a = sqrt(1/2).
+      // For perspective(90, 1, 1, 100): x = y = 1, c = -101/99, d = -200/99.
+      // _extractPlanes normalizes each plane by its xyz length (SceneMath.cpp:184-197).
+      // Index 4 (component 2, sign -1) is the Qt z-slot holding the far plane:
+      //   (0, 0, 2/99, 200/99); _extractPlanes divides only by the xyz length
+      //   |2/99|, so this becomes (0, 0, 1, 100), i.e. z + 100 = 0 -> z = -100.
+      // Index 5 (sign +1) is the near plane:
+      //   (0, 0, -200/99, -200/99); xyz length 200/99 gives
+      //   (0, 0, -1, -1), i.e. -z - 1 = 0 -> z = -1.
+      // Do not include d in the length: a 4-vector normalization gives a
+      // non-unit normal (e.g. 0.0099995, 0.99995) and makes the test false-red.
       const double a = 0.7071067811865476;
-      expect(frustum.planes[0][0], closeTo(-a, 1e-12));
-      expect(frustum.planes[0][2], closeTo(-a, 1e-12));
-      expect(frustum.planes[1][0], closeTo(a, 1e-12));
-      expect(frustum.planes[1][2], closeTo(-a, 1e-12));
-      expect(frustum.planes[2][1], closeTo(-a, 1e-12));
-      expect(frustum.planes[3][1], closeTo(a, 1e-12));
-      expect(frustum.planes[4][2], closeTo(1, 1e-12));
-      expect(frustum.planes[4][3], closeTo(100, 1e-12));
-      expect(frustum.planes[5][2], closeTo(-1, 1e-12));
-      expect(frustum.planes[5][3], closeTo(-1, 1e-12));
+      expect(frustum.planes[0][0], closeTo(-a, 1e-9));
+      expect(frustum.planes[0][2], closeTo(-a, 1e-9));
+      expect(frustum.planes[1][0], closeTo(a, 1e-9));
+      expect(frustum.planes[1][2], closeTo(-a, 1e-9));
+      expect(frustum.planes[2][1], closeTo(-a, 1e-9));
+      expect(frustum.planes[3][1], closeTo(a, 1e-9));
+      expect(frustum.planes[4][2], closeTo(1, 1e-9));
+      expect(frustum.planes[4][3], closeTo(100, 1e-9));
+      expect(frustum.planes[5][2], closeTo(-1, 1e-9));
+      expect(frustum.planes[5][3], closeTo(-1, 1e-9));
     });
 
     test('intersects keeps the near box and rejects behind and beyond the far plane', () {
@@ -223,6 +250,90 @@ void main() {
       expect(frustum.intersectsSphere(const Vec3(0, 0, 5), 0.1), isTrue);
       expect(frustum.intersectsSphere(const Vec3(0, 0, 20), 1), isFalse);
       expect(frustum.intersectsSphere(const Vec3(0, 0, 20), 20), isTrue);
+    });
+  });
+
+  // NativePicking.cpp:196-249; T41-T01: hit error at most one card.
+  group('NativePicking matches the Qt BVH raycast', () {
+    NativePicking trianglePicker() => NativePicking.fromJson(
+          manifest: <String, Object?>{
+            'meshes': <Object?>[
+              <String, Object?>{
+                'vertexStart': 0,
+                'vertexCount': 3,
+                'start': 0,
+                'count': 3,
+              },
+            ],
+          },
+          vertices: _vertexBytes(<List<double>>[
+            <double>[0, 0, 0],
+            <double>[10, 0, 0],
+            <double>[0, 10, 0],
+          ]),
+          indexBytes: _indexBytes(<int>[0, 1, 2]),
+        );
+
+    test('raycast returns origin + direction * best on a front-facing hit', () {
+      final NativePicking picker = trianglePicker();
+      final Map<String, double> hit =
+          picker.raycast(0, <Object?>[2, 2, 5], <Object?>[0, 0, -1], 2);
+      expect(hit.keys.toSet(), <String>{'x', 'y', 'z'});
+      expect(hit['x'], closeTo(2, 1e-9));
+      expect(hit['y'], closeTo(2, 1e-9));
+      expect(hit['z'], closeTo(0, 1e-9));
+      // The atom's acceptance bound: the hit must be within one card of the
+      // requested point. The exact assertions above are stricter; these keep
+      // the card-sized error budget explicit.
+      expect((hit['x']! - 2).abs(),
+          lessThanOrEqualTo(kCardMaxX - kCardMinX));
+      expect((hit['y']! - 2).abs(),
+          lessThanOrEqualTo(kCardMaxY - kCardMinY));
+      expect((hit['z']! - 0).abs(),
+          lessThanOrEqualTo(kCardMaxZ - kCardMinZ));
+    });
+
+    test('miss, out-of-range mesh and wrong vector length return an empty map', () {
+      final NativePicking picker = trianglePicker();
+      expect(picker.raycast(0, <Object?>[20, 20, 5], <Object?>[0, 0, -1], 2),
+          isEmpty);
+      expect(picker.raycast(9, <Object?>[2, 2, 5], <Object?>[0, 0, -1], 2),
+          isEmpty);
+      expect(picker.raycast(0, <Object?>[2, 2], <Object?>[0, 0, -1], 2),
+          isEmpty);
+      expect(picker.raycast(0, <Object?>[2, 2, 5], <Object?>[0, 0], 2),
+          isEmpty);
+    });
+
+    test('side 1 flips the winding; side 2 accepts both', () {
+      final NativePicking picker = trianglePicker();
+      // NativePicking.cpp:152-154 swaps first and third when side == 1, which
+      // reverses the normal: the +z face now misses and the -z face hits.
+      expect(picker.raycast(0, <Object?>[2, 2, 5], <Object?>[0, 0, -1], 1),
+          isEmpty,
+          reason: 'side 1 swapped the winding; the original front face is culled');
+      final Map<String, double> back =
+          picker.raycast(0, <Object?>[2, 2, -5], <Object?>[0, 0, 1], 1);
+      expect(back['x'], closeTo(2, 1e-9));
+      expect(back['y'], closeTo(2, 1e-9));
+      expect(back['z'], closeTo(0, 1e-9),
+          reason: 'after the swap this is the front face');
+
+      // NativePicking.cpp:160-163: side 2 accepts a positive denominator too.
+      for (final List<Object?> ray in <List<Object?>>[
+        <Object?>[2, 2, 5, 0, 0, -1],
+        <Object?>[2, 2, -5, 0, 0, 1],
+      ]) {
+        final Map<String, double> hit = picker.raycast(
+          0,
+          ray.sublist(0, 3),
+          ray.sublist(3),
+          2,
+        );
+        expect(hit['x'], closeTo(2, 1e-9));
+        expect(hit['y'], closeTo(2, 1e-9));
+        expect(hit['z'], closeTo(0, 1e-9));
+      }
     });
   });
 
