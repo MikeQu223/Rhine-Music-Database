@@ -1,0 +1,622 @@
+/// Qt → Flutter 迁移 · BASIC-89（塞壬唱片基本版）的冻结数据契约。
+///
+/// owner：lane A。本文件是跨 lane 契约 v1 的唯一写者，改名必须先报 BASIC-89 协调者。
+/// 真值来源（只读）：
+/// - /home/aibeto/code/Rhine-Music-Database/MusicBridge/client/siren.mjs
+///   songItem :189-216、albumItem :218-255、detail :414-439、playback :482-495、lyrics :497-513
+/// - /home/aibeto/code/Rhine-Music-Database/Qt/src/MusicSiren.cpp
+///   曲库读取 :46-88、本地搜索匹配字段 :105-124、文案 :50/:63/:78-79/:181-183
+/// - /home/aibeto/code/Rhine-Music-Database/MusicBridge/lyrics-format.cjs
+///   parseLrc :35-53、normalizeLyrics :128-213（LRC 行/翻译/偏移规则）
+library;
+
+/// 塞壬唱片 provider 名（siren.mjs:199 的 provider: 'siren'）。
+const String sirenProvider = 'siren';
+
+/// 上游条目标题为空时的占位文案（siren.mjs:203、:242 的 '正在读取…'）。
+const String sirenUnknownTitle = '正在读取…';
+
+/// 上游未给出艺人时的默认艺人（siren.mjs:13 的 DEFAULT_ARTIST）。
+const String sirenDefaultArtist = '塞壬唱片-MSR';
+
+/// 歌词文本长度上限（MusicBridge/client/siren.mjs:497-513 的 1000000 字符）。
+const int sirenMaxLyricLength = 1000000;
+
+/// 塞壬唱片曲库中的一首歌（siren.mjs songItem :189-216）。
+///
+/// 曲库阶段 [sourceUrl]、[lyricUrl] 为空、[durationMs] 为 0：上游 /api/songs 不提供它们
+/// （siren.mjs:198-215 没有 sourceUrl/lyricUrl，duration 固定 0），播放前必须 fresh 请求
+/// /api/song/<id> 拿到带时效签名的直链（siren.mjs:293-296）；真实时长来自 native 回报。
+class SirenSong {
+  const SirenSong({
+    required this.id,
+    required this.title,
+    required this.artist,
+    required this.album,
+    required this.albumId,
+    required this.cover,
+    required this.sourceUrl,
+    required this.lyricUrl,
+    required this.durationMs,
+  });
+
+  /// 上游 cid（siren.mjs:190 trimmed）。
+  final String id;
+
+  /// 标题；空则上游占位文案（siren.mjs:203）。
+  final String title;
+
+  /// 艺人名以 ' / ' 连接（siren.mjs:204）。
+  final String artist;
+
+  /// 所属专辑名（siren.mjs:208 取 catalog.albumByID[albumCid].name）。
+  final String album;
+
+  /// 所属专辑 cid（siren.mjs:194）。
+  final String albumId;
+
+  /// 专辑封面地址（siren.mjs:209）。
+  final String cover;
+
+  /// 播放直链：曲库阶段为空，播放前 fresh 读取（siren.mjs:293-296）。
+  final String sourceUrl;
+
+  /// 歌词地址：曲库阶段为空，详情接口返回（siren.mjs:497-513）。
+  final String lyricUrl;
+
+  /// 时长（毫秒）：曲库阶段为 0（siren.mjs:213），播放中由 native 回报覆盖。
+  final double durationMs;
+
+  /// 曲目键（siren.mjs:202 的 'siren:song:' + id）。
+  String get key => 'siren:song:$id';
+
+  /// 有可播放直链。
+  bool get playable => sourceUrl.isNotEmpty;
+
+  SirenSong copyWith({
+    String? title,
+    String? artist,
+    String? album,
+    String? albumId,
+    String? cover,
+    String? sourceUrl,
+    String? lyricUrl,
+    double? durationMs,
+  }) {
+    return SirenSong(
+      id: id,
+      title: title ?? this.title,
+      artist: artist ?? this.artist,
+      album: album ?? this.album,
+      albumId: albumId ?? this.albumId,
+      cover: cover ?? this.cover,
+      sourceUrl: sourceUrl ?? this.sourceUrl,
+      lyricUrl: lyricUrl ?? this.lyricUrl,
+      durationMs: durationMs ?? this.durationMs,
+    );
+  }
+
+  /// MusicPlayer / PlaybackQueue 认的曲目形状（lib/domain/player/music_player.dart:350-383
+  /// 只校验 kind 与 provider；lib/domain/player/playback_queue.dart:63-85 用 provider:id 做身份）。
+  Map<String, Object?> toTrack() {
+    return <String, Object?>{
+      'provider': sirenProvider,
+      'kind': 'song',
+      'id': id,
+      'key': key,
+      'title': title,
+      'artist': artist,
+      'album': album,
+      'albumID': albumId,
+      'cover': cover,
+      'sourceUrl': sourceUrl,
+      'duration': durationMs,
+    };
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    return other is SirenSong &&
+        other.id == id &&
+        other.title == title &&
+        other.artist == artist &&
+        other.album == album &&
+        other.albumId == albumId &&
+        other.cover == cover &&
+        other.sourceUrl == sourceUrl &&
+        other.lyricUrl == lyricUrl &&
+        other.durationMs == durationMs;
+  }
+
+  @override
+  int get hashCode => Object.hash(id, title, artist, album, albumId, cover, sourceUrl, lyricUrl, durationMs);
+
+  @override
+  String toString() => 'SirenSong($id, $title)';
+}
+
+/// 塞壬唱片曲库中的一张专辑（siren.mjs albumItem :218-255）。
+class SirenAlbum {
+  const SirenAlbum({
+    required this.id,
+    required this.name,
+    required this.artist,
+    required this.cover,
+    required this.songCount,
+    required this.songs,
+  });
+
+  /// 上游 cid（siren.mjs:219 trimmed）。
+  final String id;
+
+  /// 专辑名；空则上游占位文案（siren.mjs:242）。
+  final String name;
+
+  /// 艺人名以 ' / ' 连接（siren.mjs:243）。
+  final String artist;
+
+  /// 封面地址（siren.mjs:248）。
+  final String cover;
+
+  /// 曲目数：曲库阶段 = albumSongs 数（siren.mjs:253）；专辑详情后 = detail.songs 数（:430）。
+  final int songCount;
+
+  /// 曲目列表：曲库阶段来自 /api/songs 的 albumCid 归组（siren.mjs:313 的 albumSongs），
+  /// 专辑详情后用 /api/album/<id>/detail 的 songs 覆盖（siren.mjs:426-428）。
+  final List<SirenSong> songs;
+
+  /// 专辑键（siren.mjs:241 的 'siren:album:' + id）。
+  String get key => 'siren:album:$id';
+
+  SirenAlbum copyWith({
+    String? name,
+    String? artist,
+    String? cover,
+    int? songCount,
+    List<SirenSong>? songs,
+  }) {
+    return SirenAlbum(
+      id: id,
+      name: name ?? this.name,
+      artist: artist ?? this.artist,
+      cover: cover ?? this.cover,
+      songCount: songCount ?? this.songCount,
+      songs: songs ?? this.songs,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    return other is SirenAlbum &&
+        other.id == id &&
+        other.name == name &&
+        other.artist == artist &&
+        other.cover == cover &&
+        other.songCount == songCount;
+  }
+
+  @override
+  int get hashCode => Object.hash(id, name, artist, cover, songCount);
+
+  @override
+  String toString() => 'SirenAlbum($id, $name)';
+}
+
+/// /api/song/<id> 的即时详情（siren.mjs:282-296、:482-495、:497-513）。
+///
+/// 只保留播放与歌词需要的两个带时效字段，外加标题；不做本地缓存——
+/// 直链带时效签名，必须每次播放前 fresh 读取（siren.mjs:293 的注释）。
+class SirenSongDetail {
+  const SirenSongDetail({
+    required this.id,
+    required this.title,
+    required this.sourceUrl,
+    required this.lyricUrl,
+  });
+
+  final String id;
+  final String title;
+  final String sourceUrl;
+  final String lyricUrl;
+
+  @override
+  String toString() => 'SirenSongDetail($id, playable: $playable)';
+
+  bool get playable => sourceUrl.isNotEmpty;
+}
+
+/// /api/songs + /api/albums 的一次性全量曲库（siren.mjs:310-316）。
+class SirenCatalog {
+  const SirenCatalog({required this.songs, required this.albums});
+
+  final List<SirenSong> songs;
+  final List<SirenAlbum> albums;
+}
+
+/// 可显示的塞壬唱片错误（文案与 siren.mjs 的 Error 一致，不另起一套）。
+class SirenException implements Exception {
+  const SirenException(this.message, [this.cause]);
+
+  /// 可直接上屏的中文文案（siren.mjs:68/:101/:105 的原文模板）。
+  final String message;
+
+  /// 原始异常（HttpException / FormatException 等），用于诊断，不上屏。
+  final Object? cause;
+
+  @override
+  String toString() => message;
+}
+
+/// 一句歌词（LRC 的一行；translation 来自行尾【…】）。
+class BasicLyricLine {
+  const BasicLyricLine({required this.startMs, required this.text, this.translation = ''});
+
+  /// 行起始毫秒（MusicBridge/lyrics-format.cjs:35-53 的 startMs）。
+  final double startMs;
+
+  final String text;
+
+  /// 翻译（可为空；Qt 侧同样只对【…】后缀拆分）。
+  final String translation;
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    return other is BasicLyricLine &&
+        other.startMs == startMs &&
+        other.text == text &&
+        other.translation == translation;
+  }
+
+  @override
+  int get hashCode => Object.hash(startMs, text, translation);
+
+  @override
+  String toString() => 'BasicLyricLine($startMs, $text)';
+}
+
+/// 解析后的歌词文档（对齐 lyrics-format.cjs normalizeLyrics :128-213）。
+class BasicLyricsDocument {
+  const BasicLyricsDocument({
+    required this.lines,
+    required this.offsetMs,
+    required this.plainText,
+    required this.timed,
+  });
+
+  static const BasicLyricsDocument empty = BasicLyricsDocument(
+    lines: <BasicLyricLine>[],
+    offsetMs: 0,
+    plainText: '',
+    timed: false,
+  );
+
+  final List<BasicLyricLine> lines;
+
+  /// 文档级偏移（LRC [offset:…] 标签，夹到 ±10000；lyrics-format.cjs:202-212）。
+  final double offsetMs;
+
+  /// 无时间轴时的纯文本（timing: 'none'）。
+  final String plainText;
+
+  /// 是否有时间轴（lines 非空）。
+  final bool timed;
+
+  bool get isEmpty => lines.isEmpty && plainText.trim().isEmpty;
+
+  /// 转成 LyricsController.accept 认的文档形状
+  /// （lib/domain/lyrics/lyrics_controller.dart:219-228 + lib/domain/lyrics/lyrics_timeline.dart
+  /// 的 validLyricsDocument：version 1、timing line/none、lines ≤ 5000、offsetMs 数值）。
+  Map<String, Object?> toLyricsDocument({String source = 'siren'}) {
+    return <String, Object?>{
+      'version': 1,
+      'source': source,
+      'timing': timed ? 'line' : 'none',
+      'offsetMs': offsetMs,
+      'lines': <Object?>[
+        for (final BasicLyricLine line in lines)
+          <String, Object?>{
+            'startMs': line.startMs,
+            'text': line.text,
+            'translation': line.translation,
+            'words': const <Object?>[],
+          },
+      ],
+      'plainText': plainText,
+    };
+  }
+}
+
+/// 基础版的一级页面（Qt MusicSiren 的 archive/lanes 收窄成一个库页 + 详情 + 歌词）。
+enum BasicPhase { boot, library, detail, lyrics }
+
+/// 界面只读的状态快照；唯一写者是 BasicController。
+///
+/// 冻结契约要求的 getter（phase/loading/error/status/query/songs/albums/album/song/playing/
+/// buffering/positionMs/durationMs/playbackError/lyrics/lyricIndex/dark）在这里都是 final 字段，
+/// 读取方式与 getter 完全一致；其余字段是 lane A 追加的空态/播放辅助信息。
+class BasicViewState {
+  const BasicViewState({
+    this.phase = BasicPhase.boot,
+    this.loading = false,
+    this.error = '',
+    this.status = '',
+    this.query = '',
+    this.songs = const <SirenSong>[],
+    this.albums = const <SirenAlbum>[],
+    this.album,
+    this.song,
+    this.playing = false,
+    this.buffering = false,
+    this.positionMs = 0,
+    this.durationMs = 0,
+    this.playbackError = '',
+    this.lyrics = const <BasicLyricLine>[],
+    this.lyricIndex = -1,
+    this.dark = true,
+    this.queue = const <SirenSong>[],
+    this.queueIndex = -1,
+    this.lyricStatus = 'idle',
+    this.lyricMessage = '',
+    this.playerStatus = '',
+    this.catalogLoaded = false,
+  });
+
+  /// 当前页面。
+  final BasicPhase phase;
+
+  /// 曲库/详情读取中（播放器的 loading 见 playerStatus）。
+  final bool loading;
+
+  /// 曲库或详情读取失败的可显示文案（空串 = 无错误）。
+  final String error;
+
+  /// 导航/曲库状态文案（Qt MusicSiren 的 status 同义；播放器状态见 playerStatus）。
+  final String status;
+
+  /// 搜索词（空串 = 未过滤）。
+  final String query;
+
+  /// 当前可见歌曲列表（query 非空时是过滤结果）。
+  final List<SirenSong> songs;
+
+  /// 当前可见专辑列表（query 非空时是过滤结果）。
+  final List<SirenAlbum> albums;
+
+  /// 打开的专辑详情（phase == detail 且从专辑进入时非空）。
+  final SirenAlbum? album;
+
+  /// 当前曲目（正在播放或刚选中；歌词页与播放条都以它为准）。
+  final SirenSong? song;
+
+  final bool playing;
+  final bool buffering;
+
+  /// 播放位置（毫秒，只来自 native 回报的 BasicAudioState.positionMs）。
+  final double positionMs;
+
+  /// 时长（毫秒，只来自 native 回报）。
+  final double durationMs;
+
+  /// 播放失败文案（MusicPlayer.fail 的 status；空串 = 无失败）。
+  final String playbackError;
+
+  /// 当前曲目的歌词行（无歌词/未加载为空）。
+  final List<BasicLyricLine> lyrics;
+
+  /// 活动行下标（-1 = 未到第一行或没有时间轴）。
+  final int lyricIndex;
+
+  /// 深色模式（基础版固定跟随构造参数，不做主题切换）。
+  final bool dark;
+
+  /// 播放队列（与 MusicPlayer.queue 同步的只读投影）。
+  final List<SirenSong> queue;
+
+  /// 队列中当前行（-1 = 空队列）。
+  final int queueIndex;
+
+  /// 歌词状态：'idle' / 'ready' / 'plain' / 'empty'（对齐 LyricsController.status 词表）。
+  final String lyricStatus;
+
+  /// 歌词空态/加载态文案（LyricsController.message）。
+  final String lyricMessage;
+
+  /// 播放器状态文案（MusicPlayer.status 原文，如 '正在准备：…' / '正在播放：…'）。
+  final String playerStatus;
+
+  /// 曲库是否已成功加载过（失败重试/搜索空态判断用）。
+  final bool catalogLoaded;
+
+  bool get hasCatalog => catalogLoaded;
+
+  bool get canPlay => song != null;
+
+  bool get showsLyrics => phase == BasicPhase.lyrics;
+
+  /// 播放进度比例（0..1；未知时长时为 0，不造进度）。
+  double get progressFraction {
+    if (durationMs <= 0) {
+      return 0;
+    }
+    return (positionMs / durationMs).clamp(0.0, 1.0).toDouble();
+  }
+
+  BasicViewState copyWith({
+    BasicPhase? phase,
+    bool? loading,
+    String? error,
+    String? status,
+    String? query,
+    List<SirenSong>? songs,
+    List<SirenAlbum>? albums,
+    SirenAlbum? album,
+    SirenSong? song,
+    bool? playing,
+    bool? buffering,
+    double? positionMs,
+    double? durationMs,
+    String? playbackError,
+    List<BasicLyricLine>? lyrics,
+    int? lyricIndex,
+    bool? dark,
+    List<SirenSong>? queue,
+    int? queueIndex,
+    String? lyricStatus,
+    String? lyricMessage,
+    String? playerStatus,
+    bool? catalogLoaded,
+    bool dropAlbum = false,
+    bool dropSong = false,
+  }) {
+    return BasicViewState(
+      phase: phase ?? this.phase,
+      loading: loading ?? this.loading,
+      error: error ?? this.error,
+      status: status ?? this.status,
+      query: query ?? this.query,
+      songs: songs ?? this.songs,
+      albums: albums ?? this.albums,
+      album: dropAlbum ? null : (album ?? this.album),
+      song: dropSong ? null : (song ?? this.song),
+      playing: playing ?? this.playing,
+      buffering: buffering ?? this.buffering,
+      positionMs: positionMs ?? this.positionMs,
+      durationMs: durationMs ?? this.durationMs,
+      playbackError: playbackError ?? this.playbackError,
+      lyrics: lyrics ?? this.lyrics,
+      lyricIndex: lyricIndex ?? this.lyricIndex,
+      dark: dark ?? this.dark,
+      queue: queue ?? this.queue,
+      queueIndex: queueIndex ?? this.queueIndex,
+      lyricStatus: lyricStatus ?? this.lyricStatus,
+      lyricMessage: lyricMessage ?? this.lyricMessage,
+      playerStatus: playerStatus ?? this.playerStatus,
+      catalogLoaded: catalogLoaded ?? this.catalogLoaded,
+    );
+  }
+}
+
+/// Qt MusicLibrary::searchSirenLocal 的歌曲匹配（MusicSiren.cpp:105-124）：
+/// 空词全匹配，否则 title / album / artist 任一包含即命中（大小写不敏感）。
+bool sirenSongMatches(SirenSong song, String query) {
+  final String text = query.trim().toLowerCase();
+  if (text.isEmpty) {
+    return true;
+  }
+  return song.title.toLowerCase().contains(text) ||
+      song.album.toLowerCase().contains(text) ||
+      song.artist.toLowerCase().contains(text);
+}
+
+/// 专辑匹配（MusicSiren.cpp:118-124）：title / artist 任一包含。
+bool sirenAlbumMatches(SirenAlbum album, String query) {
+  final String text = query.trim().toLowerCase();
+  if (text.isEmpty) {
+    return true;
+  }
+  return album.name.toLowerCase().contains(text) || album.artist.toLowerCase().contains(text);
+}
+
+List<SirenSong> filterSirenSongs(List<SirenSong> songs, String query) {
+  final String text = query.trim();
+  if (text.isEmpty) {
+    return songs;
+  }
+  return <SirenSong>[for (final SirenSong song in songs) if (sirenSongMatches(song, text)) song];
+}
+
+List<SirenAlbum> filterSirenAlbums(List<SirenAlbum> albums, String query) {
+  final String text = query.trim();
+  if (text.isEmpty) {
+    return albums;
+  }
+  return <SirenAlbum>[for (final SirenAlbum album in albums) if (sirenAlbumMatches(album, text)) album];
+}
+
+final RegExp _lrcRow = RegExp(r'^\s*((?:\[[-+]?\d+:\d+(?:[.:]\d+)?\])+)(.*)$');
+final RegExp _lrcStamp = RegExp(r'\[([-+]?\d+):(\d+)(?:[.:](\d+))?\]');
+final RegExp _lrcTranslation = RegExp(r'【(.*)】\s*$');
+final RegExp _lrcOffsetTag = RegExp(r'^\s*\[offset:\s*([-+]?\d+)\s*\]\s*$', caseSensitive: false);
+final RegExp _lrcMetaTag = RegExp(r'^\s*\[[a-zA-Z]+:[^\]]*\]\s*$');
+
+/// 解析 LRC 文本（对齐 MusicBridge/lyrics-format.cjs parseLrc :35-53 与
+/// normalizeLyrics :128-213）：多时间戳展开、【…】翻译、[offset:…] 偏移、按 startMs 排序。
+BasicLyricsDocument parseBasicLyrics(String raw) {
+  final String text = _cleanLyricText(raw);
+  final List<BasicLyricLine> lines = <BasicLyricLine>[];
+  final List<String> plain = <String>[];
+  double offsetMs = 0;
+  for (final String row in text.split('\n')) {
+    final RegExpMatch? tag = _lrcOffsetTag.firstMatch(row);
+    if (tag != null) {
+      offsetMs = _parseOffset(tag.group(1));
+      continue;
+    }
+    final RegExpMatch? match = _lrcRow.firstMatch(row);
+    if (match == null) {
+      final String trimmed = row.trim();
+      if (trimmed.isEmpty || _lrcMetaTag.hasMatch(trimmed)) {
+        continue;
+      }
+      plain.add(trimmed);
+      continue;
+    }
+    final String stamps = match.group(1) ?? '';
+    final String body = (match.group(2) ?? '').trim();
+    final RegExpMatch? translationMatch = _lrcTranslation.firstMatch(body);
+    final String translation = translationMatch == null ? '' : (translationMatch.group(1) ?? '').trim();
+    final String content = translationMatch == null
+        ? body
+        : body.substring(0, translationMatch.start).trim();
+    for (final RegExpMatch stamp in _lrcStamp.allMatches(stamps)) {
+      final int minutes = int.tryParse(stamp.group(1) ?? '') ?? 0;
+      final int seconds = int.tryParse(stamp.group(2) ?? '') ?? 0;
+      final String fractionText = stamp.group(3) ?? '';
+      final double fraction = fractionText.isEmpty ? 0 : (double.tryParse('0.' + fractionText) ?? 0);
+      final double startMs = ((minutes * 60) + seconds) * 1000 + (fraction * 1000);
+      lines.add(BasicLyricLine(startMs: startMs.roundToDouble(), text: content, translation: translation));
+    }
+  }
+  lines.sort((BasicLyricLine left, BasicLyricLine right) => left.startMs.compareTo(right.startMs));
+  return BasicLyricsDocument(
+    lines: List<BasicLyricLine>.unmodifiable(lines),
+    offsetMs: offsetMs,
+    plainText: lines.isEmpty ? plain.join('\n') : '',
+    timed: lines.isNotEmpty,
+  );
+}
+
+double _parseOffset(String? raw) {
+  final int value = int.tryParse((raw ?? '').trim()) ?? 0;
+  const double limit = 10000;
+  if (value.toDouble() > limit) {
+    return limit;
+  }
+  if (value.toDouble() < -limit) {
+    return -limit;
+  }
+  return value.toDouble();
+}
+
+String _cleanLyricText(String raw) {
+  String text = raw.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+  if (text.length > sirenMaxLyricLength) {
+    text = text.substring(0, sirenMaxLyricLength);
+  }
+  return text
+      .replaceAll('&nbsp;', ' ')
+      .replaceAll('&lt;', '<')
+      .replaceAll('&gt;', '>')
+      .replaceAll('&quot;', '"')
+      .replaceAll('&#39;', "'")
+      .replaceAll('&amp;', '&');
+}
