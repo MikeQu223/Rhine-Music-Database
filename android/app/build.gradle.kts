@@ -1,3 +1,9 @@
+// Gradle Kotlin DSL 会在 Project 上生成 `val Project.`java`: JavaPluginExtension` 扩展属性，
+// 因此表达式位置的 `java.util.Properties()` / `java.io.File(...)` 会被解析成对该 accessor 的
+// 成员访问（Unresolved reference 'util' / 'io'）。改为导入具体类型并使用非限定名。
+import java.io.File
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
@@ -26,7 +32,7 @@ plugins {
 // ---------------------------------------------------------------------------
 val releaseSigningKeys = listOf("storeFile", "storePassword", "keyAlias", "keyPassword")
 
-val releaseSigningPropertiesFile: java.io.File =
+val releaseSigningPropertiesFile: File =
     project.findProperty("rhineSigningProperties")?.toString()?.takeIf { it.isNotBlank() }?.let { rootProject.file(it) }
         ?: System.getenv("RHINE_ANDROID_SIGNING_PROPERTIES")?.takeIf { it.isNotBlank() }?.let { rootProject.file(it) }
         ?: rootProject.file("keystore.properties")
@@ -35,7 +41,7 @@ val releaseSigningValues: Map<String, String>? =
     if (!releaseSigningPropertiesFile.isFile) {
         null
     } else {
-        val loaded = java.util.Properties()
+        val loaded = Properties()
         releaseSigningPropertiesFile.reader().use { loaded.load(it) }
         releaseSigningKeys.associateWith { (loaded.getProperty(it) ?: "").trim() }
     }
@@ -43,10 +49,10 @@ val releaseSigningValues: Map<String, String>? =
 val releaseSigningMissingKeys: List<String> =
     releaseSigningValues?.filterValues { it.isEmpty() }?.keys?.toList() ?: releaseSigningKeys
 
-val releaseSigningKeystoreFile: java.io.File? =
+val releaseSigningKeystoreFile: File? =
     releaseSigningValues?.get("storeFile")?.takeIf { it.isNotEmpty() }?.let { declared ->
-        val candidate = java.io.File(declared)
-        if (candidate.isAbsolute) candidate else java.io.File(releaseSigningPropertiesFile.parentFile, declared)
+        val candidate = File(declared)
+        if (candidate.isAbsolute) candidate else File(releaseSigningPropertiesFile.parentFile, declared)
     }
 
 val releaseSigningKeystoreMissing: Boolean = releaseSigningKeystoreFile?.isFile != true
