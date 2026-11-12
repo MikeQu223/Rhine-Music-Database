@@ -624,6 +624,7 @@ if(APPLE)
     target_link_libraries(RhineApplePlayback PRIVATE Qt6::Core Qt6::Network "-framework AVFoundation"
                                                      "-framework CoreMedia" "-framework Foundation" "-framework AVFAudio")
     target_compile_options(RhineApplePlayback PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
+    set_target_properties(RhineApplePlayback PROPERTIES XCODE_ATTRIBUTE_CLANG_ENABLE_OBJC_ARC YES)
     if(NOT IOS)
         target_link_libraries(RhineApplePlayback PRIVATE "-framework CoreAudio")
     endif()
@@ -635,6 +636,8 @@ if(IOS)
     target_link_libraries(RhineCore PRIVATE "-framework Security" "-framework UIKit" "-framework QuartzCore"
                                             "-framework AVFAudio" "-framework MediaPlayer")
     target_compile_options(RhineCore PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
+    # Xcode 不会把混合目标的 OBJCXX 专用编译选项传给 .mm 文件。
+    set_target_properties(RhineCore RhineMusicDatabase PROPERTIES XCODE_ATTRIBUTE_CLANG_ENABLE_OBJC_ARC YES)
     include(Qt/IOS.cmake)
 elseif(ANDROID)
     # 平台源码、Node 运行时、包元数据与内嵌资源都在 Qt/Android.cmake 里装配。

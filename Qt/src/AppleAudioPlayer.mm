@@ -17,6 +17,10 @@
 #include <atomic>
 #include <cmath>
 
+#if !__has_feature(objc_arc)
+#error "AppleAudioPlayer 的异步会话必须启用 Objective-C ARC"
+#endif
+
 namespace {
 static_assert(PlatformFeatures::SpatialAudio);
 
