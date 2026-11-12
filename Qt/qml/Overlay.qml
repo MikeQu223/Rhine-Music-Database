@@ -162,6 +162,9 @@ Item {
         }
         return hostWindow === null ? Qt.ApplicationShortcut : Qt.WindowShortcut;
     }
+    // The offscreen host needs ApplicationShortcut, but auxiliary windows have their own F11.
+    // Scope window actions to the real host so Qt does not treat the two bindings as ambiguous.
+    readonly property bool hostShortcutsEnabled: !controlledHost || rhineHostWindow.active
     Shortcut {
         sequences: [StandardKey.Quit]
         context: overlay.shortcutContext
@@ -170,11 +173,13 @@ Item {
     Shortcut {
         sequences: Qt.platform.os === "osx" ? [StandardKey.FullScreen, "F11"] : ["F11"]
         context: overlay.shortcutContext
+        enabled: overlay.hostShortcutsEnabled
         onActivated: rhine.toggleFullscreen()
     }
     Shortcut {
         sequence: "F10"
         context: overlay.shortcutContext
+        enabled: overlay.hostShortcutsEnabled
         onActivated: profiler.toggleVisible()
     }
     Item {
@@ -311,8 +316,7 @@ Item {
             const dy = now.y - lastPan.y;
             lastPan = now;
             // 首帧质心坐标未就绪时的异常跳变直接丢弃，防止画面甩飞。
-            if (dx === 0 && dy === 0 ||
-                Math.abs(dx) > overlay.width * 0.4 || Math.abs(dy) > overlay.height * 0.4) {
+            if (dx === 0 && dy === 0 || Math.abs(dx) > overlay.width * 0.4 || Math.abs(dy) > overlay.height * 0.4) {
                 return;
             }
             rhine.pointer("pan", dx / overlay.stageScale, dy / overlay.stageScale);
@@ -336,8 +340,7 @@ Item {
             // 350 来自 NativeViewer 的 pow(0.95, 0.7*|delta|*0.01) 与 -delta*8 的换算：
             // 让 log(捏合比例) 线性映射到与桌面滚轮同样的缩放速度。
             const p = centroid.scenePosition;
-            rhine.wheelInput(p.x / overlay.stageScale, p.y / overlay.stageScale,
-                             Math.log(delta) * 350, 0);
+            rhine.wheelInput(p.x / overlay.stageScale, p.y / overlay.stageScale, Math.log(delta) * 350, 0);
         }
     }
     // 双指质心位移 → 平移。Connections 的函数语法在信号不存在时只会静默跳过
@@ -370,12 +373,9 @@ Item {
         readonly property bool accountVisible: !overlay.compactLayout || !!rhine.state.compactaccount
         readonly property bool captchaVisible: !overlay.compactLayout || !!rhine.state.compactcaptcha
         readonly property bool submitVisible: !overlay.compactLayout || !!rhine.state.compactsubmit
-        readonly property real accountTop: overlay.compactLayout && rhine.state.compactaccount
-            ? rhine.state.compactaccount.y : 430
-        readonly property real captchaTop: overlay.compactLayout && rhine.state.compactcaptcha
-            ? rhine.state.compactcaptcha.y : 541
-        readonly property real submitTop: overlay.compactLayout && rhine.state.compactsubmit
-            ? rhine.state.compactsubmit.y : (rhine.state.modal === "login" ? 611 : 530)
+        readonly property real accountTop: overlay.compactLayout && rhine.state.compactaccount ? rhine.state.compactaccount.y : 430
+        readonly property real captchaTop: overlay.compactLayout && rhine.state.compactcaptcha ? rhine.state.compactcaptcha.y : 541
+        readonly property real submitTop: overlay.compactLayout && rhine.state.compactsubmit ? rhine.state.compactsubmit.y : (rhine.state.modal === "login" ? 611 : 530)
         function submit() {
             if (rhine.state.modal === "login" && rhine.state.loginBusy) {
                 return;
@@ -535,8 +535,7 @@ Item {
         leftPadding: overlay.compactLayout ? 0 : 18 * overlay.stageScale
         rightPadding: 14 * overlay.stageScale
         renderType: Text.NativeRendering
-        visible: (rhine.state.modal === "search" || rhine.state.modal === "saved")
-            && (!overlay.compactLayout || rhine.state.compactInputVisible === true)
+        visible: (rhine.state.modal === "search" || rhine.state.modal === "saved") && (!overlay.compactLayout || rhine.state.compactInputVisible === true)
         enabled: !rhine.state.closing
         x: (rhine.state.inputX || 0) * overlay.stageScale
         y: ((rhine.state.inputY || 302) + (rhine.state.modalOffset || 0)) * overlay.stageScale

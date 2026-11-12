@@ -66,7 +66,7 @@ struct RhineSignalPrevious {
     bool valid;
 };
 RhineSignalPrevious rhineSignalPrevious[3]; // SIGSEGV / SIGBUS / SIGABRT 的旧处置
-int rhineSignalLogFd = -1; // 预打开的现场日志；-1 表示 QGuiApplication 尚未就绪
+int rhineSignalLogFd = -1;                  // 预打开的现场日志；-1 表示 QGuiApplication 尚未就绪
 
 // ---- 异步信号安全的小工具：手写拼装，绕开一切可能分配内存的路径。
 
@@ -79,7 +79,9 @@ struct RhineSignalEmitter {
             cursor += length;
         }
     }
-    void text(const char *value) { text(value, strlen(value)); }
+    void text(const char *value) {
+        text(value, strlen(value));
+    }
     void hex(unsigned long value) { // 递减式十六进制
         char digits[16];
         int length = 0;
@@ -197,8 +199,7 @@ void rhineSignalEmitMapping(unsigned long address, const char *what) {
                 filled = 0;
                 const char *cursor = line;
                 unsigned long start = 0, end = 0, offset = 0;
-                if (!rhineParseMapsHead(cursor, start, end, offset) || address < start ||
-                    address >= end) {
+                if (!rhineParseMapsHead(cursor, start, end, offset) || address < start || address >= end) {
                     continue;
                 }
                 matched = true;
@@ -280,8 +281,8 @@ void rhineSignalDiag(int signal, siginfo_t *info, void *context) {
     // 撞上它只会无限重故障）就按默认方式自杀。末尾的死循环只为不返回出错指令。
     const auto slot = signal == SIGSEGV ? 0 : signal == SIGBUS ? 1 : 2;
     struct sigaction restore;
-    bool usable = (signal == SIGSEGV || signal == SIGBUS || signal == SIGABRT) &&
-                  rhineSignalPrevious[slot].valid;
+    bool usable =
+        (signal == SIGSEGV || signal == SIGBUS || signal == SIGABRT) && rhineSignalPrevious[slot].valid;
     if (usable) {
         restore = rhineSignalPrevious[slot].action;
         if (restore.sa_handler == SIG_IGN) {
@@ -340,8 +341,8 @@ void rhineScanThreadMasks(bool snapshot) {
             }
         }
         fclose(status);
-        const unsigned long fatalBits = (1UL << 3) | (1UL << 4) | (1UL << 5) | (1UL << 6) |
-                                        (1UL << 7) | (1UL << 10);
+        const unsigned long fatalBits =
+            (1UL << 3) | (1UL << 4) | (1UL << 5) | (1UL << 6) | (1UL << 7) | (1UL << 10);
         const unsigned long blocked = blockedMask & fatalBits;
         if (blocked == 0) {
             continue;
@@ -357,8 +358,7 @@ void rhineScanThreadMasks(bool snapshot) {
             continue;
         }
         char message[192];
-        snprintf(message, sizeof(message), "RHINE-SIGBLK tid=%lu thread=%s fatal=0x%lx", tid, name,
-                 blocked);
+        snprintf(message, sizeof(message), "RHINE-SIGBLK tid=%lu thread=%s fatal=0x%lx", tid, name, blocked);
         __android_log_write(ANDROID_LOG_WARN, "RHINE-SIGNAL", message);
         if (isNew && reportedCount < 64) {
             reported[reportedCount++] = tid;
@@ -1116,7 +1116,10 @@ int main(int argc, char **argv) {
     QObject::connect(backend.get(), &Engine::mvRequested, &mv, &MvController::openWindow);
     std::unique_ptr<QObject> mvWindow;
     std::unique_ptr<QObject> mvWallpaper;
-    if (!offline) {
+    const auto initializeMvWindows = [&] {
+        if (offline) {
+            return;
+        }
         QQmlComponent component(&engine, QUrl(QStringLiteral("qrc:/qt/qml/RhineMusic/MvWindow.qml")));
         mvWindow.reset(component.create());
         if (auto window = qobject_cast<QWindow *>(mvWindow.get())) {
@@ -1137,7 +1140,7 @@ int main(int argc, char **argv) {
                 mv.setWallpaper(false);
             }
         }
-    }
+    };
 #endif
     if (!offline && RHINE_RELEASE_BUILD) {
         QTimer::singleShot(8000, backend.get(), [raw = backend.get()] {
@@ -1282,6 +1285,10 @@ int main(int argc, char **argv) {
 #endif
             QObject::connect(&application, &QCoreApplication::aboutToQuit, shell.get(),
                              [raw = shell.get()] { raw->shutdown(); });
+#if !RHINE_MOBILE
+            // Establish the primary presentation window before an enabled MV can show.
+            QTimer::singleShot(0, &engine, initializeMvWindows);
+#endif
             return application.exec();
         }
         qWarning().noquote() << "FG: 呈现层启动失败，回退默认路径：" << shell->lastError();
@@ -1309,6 +1316,12 @@ int main(int argc, char **argv) {
     // 这里和 VulkanPresentationBackend 各登记一次，因为存在只走其中一条路径的启动方式。
     RhineRender::requestTimestamps();
     window->setGraphicsConfiguration(graphics);
+#if !RHINE_MOBILE
+    // A saved MV preference must not make the auxiliary window the first rendered window.
+    // frameSwapped comes from the render thread; create QML windows on the GUI thread afterwards.
+    QObject::connect(window, &QQuickWindow::frameSwapped, &engine, initializeMvWindows,
+                     Qt::ConnectionType(Qt::QueuedConnection | Qt::SingleShotConnection));
+#endif
 #ifdef Q_OS_WIN
     taskbar.bindWindow(window);
     window->show();
