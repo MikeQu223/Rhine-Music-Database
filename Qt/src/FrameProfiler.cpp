@@ -323,17 +323,18 @@ void FrameProfiler::collectStep() {
            << submitNs.load(std::memory_order_relaxed) / 1000000. << ','
            << presents.load(std::memory_order_relaxed) << ',' << frame["draws"].toArray().size() << ','
            << frame["returningCards"].toInt() << ',' << frame["culledCards"].toInt() << ','
-           << frame["shadowCards"].toInt() << ','
-           << performance.value("gpuDrawCalls").toULongLong() << ','
+           << frame["shadowCards"].toInt() << ',' << performance.value("gpuDrawCalls").toULongLong()
+           << ','
            // "没测到"和"没请求"必须能分开：只写一个空的 gpu 时间，事后没法判断
            // 是驱动不给样本还是我们没开时间戳（A01 的验收就靠这一列）。
            << performance.value("gpuTimingStatus").toString() << ','
-           << performance.value("renderFrames").toULongLong() << ',' << fg.frameId << ','
-           << fg.frameMs << ',' << fg.swapchainRecreates << ',' << fg.deviceIdleWaits << ','
-           << fg.resizeSkips << ','
+           << performance.value("renderFrames").toULongLong() << ',' << fg.frameId << ',' << fg.frameMs << ','
+           << fg.swapchainRecreates << ',' << fg.deviceIdleWaits << ',' << fg.resizeSkips
+           << ','
            // A02：提交次数与两个离屏边界的等待（begin=帧槽等待，end=离屏收尾）。
-           << fg.submitsPerFrame << ',' << fg.slotWaitMs << ',' << fg.beginP95Ms << ','
-           << fg.beginP99Ms << ',' << fg.endP95Ms << ',' << fg.endP99Ms << ','
+           << fg.submitsPerFrame << ',' << fg.slotWaitMs << ',' << fg.beginP95Ms << ',' << fg.beginP99Ms
+           << ',' << fg.endP95Ms << ',' << fg.endP99Ms
+           << ','
            // A11：整帧资源账本（峰值是滚动 240 帧，帧号对得上 render_frames）。
            << performance.value("gpuResourcesPeak").toULongLong() << ','
            << performance.value("gpuResourcesPeakFrame").toULongLong() << ','
@@ -342,7 +343,8 @@ void FrameProfiler::collectStep() {
            << performance.value("frameBindings").toULongLong() << ','
            << performance.value("frameCoverUploads").toULongLong() << ','
            << performance.value("coverUploadsPerFrame").toDouble() << ','
-           << performance.value("coverRetransmitPerKFrame").toDouble() << ','
+           << performance.value("coverRetransmitPerKFrame").toDouble()
+           << ','
            // 最近一次完成的整帧 GPU 时间；FG 开关的 A/B 成本靠它与 render_frames 一起折算。
            << performance.value("gpuTimeMs").toDouble() << ',' << fg.presented << ',' << fg.interpolated
            << ',' << fg.rendered << '\n';
@@ -496,11 +498,9 @@ void FrameProfiler::sample() {
         const quint64 cullSeen = hud.cullConsidered.exchange(0, std::memory_order_relaxed);
         const quint64 cullSkip = hud.cullSkipped.exchange(0, std::memory_order_relaxed);
         m_metrics.insert("hudPaints", qulonglong(hudPaints));
-        m_metrics.insert("hudDirtyPercent",
-                         hudCanvas > 0 ? 100. * double(hudDirty) / double(hudCanvas) : 0.);
+        m_metrics.insert("hudDirtyPercent", hudCanvas > 0 ? 100. * double(hudDirty) / double(hudCanvas) : 0.);
         // 相交预筛命中率：滑列表时静态画面一条都没动，这个数应该很高。
-        m_metrics.insert("hudCullPercent",
-                         cullSeen > 0 ? 100. * double(cullSkip) / double(cullSeen) : 0.);
+        m_metrics.insert("hudCullPercent", cullSeen > 0 ? 100. * double(cullSkip) / double(cullSeen) : 0.);
     }
     // step 分段账：sceneSample（场景采样）/ observe（曲目观察）/ hudDraw（命令流重建）之和
     // 加上返回对象组装，约等于 stepMeanCpuMs。切歌动画卡在哪一段，看这三个数。
@@ -597,18 +597,20 @@ void FrameProfiler::sample() {
         m_metrics.insert("over33ms", fg.over33);
         m_metrics.insert("over50ms", fg.over50);
         m_metrics.insert("over100ms", fg.over100);
-        if (!fg.adapterName.isEmpty())
+        if (!fg.adapterName.isEmpty()) {
             m_metrics.insert("gpuAdapter", fg.adapterName);
-        if (!fg.backendName.isEmpty())
+        }
+        if (!fg.backendName.isEmpty()) {
             m_metrics.insert("gpuBackend", fg.backendName);
+        }
     }
 #ifdef Q_OS_LINUX
     // 标题帧率的口径在这里定：插帧真的在出帧时，屏幕上每秒多出来的那些画面就是插值帧，
     // 只报渲染帧会明显低于肉眼所见。取渲染+插值而不是呈现计数——呈现还含强制重渲的
     // 重复帧，用它当帧率会虚高。其余情况沿用原口径（未接管即 Qt 帧率，接管即场景渲染帧）。
     const bool interpolating = fg.layerActive && fg.interpolationAvailable && fg.interpolationWanted;
-    m_metrics.insert("headlineFps", interpolating ? fgRenderFps + fgInterpolatedFps
-                                                  : m_metrics.value("qtFps").toDouble());
+    m_metrics.insert("headlineFps",
+                     interpolating ? fgRenderFps + fgInterpolatedFps : m_metrics.value("qtFps").toDouble());
 #endif
     m_previousSampleNs = now;
     m_previousCpuNs = process.cpuNanoseconds;
@@ -667,7 +669,8 @@ void FrameProfiler::setDetailsEnabled(bool enabled) {
 /** 单独刷新短文本，避免播放速率变化触发整个性能详情重排。 */
 void FrameProfiler::updateTransitionDetails(const QJsonObject &audio) {
     QString text;
-    if (audio["outputBackend"].toInt() == 2 && m_engine->host.preference("apple-smart-transition") == "on") {
+    if ((audio["outputBackend"].toInt() == 2 || audio["outputBackend"].toInt() == 3) &&
+        m_engine->host.preference("apple-smart-transition") == "on") {
         text = playbackRateLine(audio);
         if (m_engine->app) {
             const auto &player = m_engine->app->music.player;
@@ -706,8 +709,8 @@ void FrameProfiler::formatMetrics(bool withDetails) {
 #endif
     QString stateLabel;
     if (!fgActive) {
-        stateLabel = shown ? (idle ? QStringLiteral("按需休眠") : QStringLiteral("活动"))
-                           : QStringLiteral("后台");
+        stateLabel =
+            shown ? (idle ? QStringLiteral("按需休眠") : QStringLiteral("活动")) : QStringLiteral("后台");
 #ifdef Q_OS_LINUX
     } else if (!fgAvailable) {
 #else
@@ -836,23 +839,22 @@ void FrameProfiler::formatMetrics(bool withDetails) {
     // A11：整帧资源账本（本帧 + 滚动峰值 + 重传率 + 预算）。峰值带帧号，便于回查 CSV 的
     // render_frames；预算开关只告警不降级，所以这里显示"上限"而不是"是否已降级"。
     const quint64 budgetMb = m_metrics.value("resourceBudgetMb").toULongLong();
-    m_details += QStringLiteral("\n整帧资源      本帧 资源 %1 个 · 纹理 %2 MiB\n"
-                                "              峰值（滚动 240 帧） 资源 %3 个 @帧 %4 · "
-                                "纹理 %5 MiB @帧 %6\n"
-                                "              SRB 新建 %7 个/帧 · 封面纹理上传 %8 次/帧 · "
-                                "封面重传率 %9 次/千帧\n"
-                                "              预算 %10")
-                     .arg(number("gpuResources", 0),
-                          QString::number(m_metrics.value("gpuMusicTextureBytes").toDouble() / 1048576.,
-                                          'f', 1),
-                          number("gpuResourcesPeak", 0), number("gpuResourcesPeakFrame", 0))
-                     .arg(QString::number(m_metrics.value("gpuTextureBytesPeak").toDouble() / 1048576.,
-                                          'f', 1),
-                          number("gpuTextureBytesPeakFrame", 0), number("frameBindings", 0),
-                          number("frameCoverUploads", 0))
-                     .arg(number("coverRetransmitPerKFrame", 2),
-                          budgetMb ? QStringLiteral("%1 MiB").arg(budgetMb)
-                                   : QStringLiteral("关（RHINE_RESOURCE_BUDGET_MB）"));
+    m_details +=
+        QStringLiteral("\n整帧资源      本帧 资源 %1 个 · 纹理 %2 MiB\n"
+                       "              峰值（滚动 240 帧） 资源 %3 个 @帧 %4 · "
+                       "纹理 %5 MiB @帧 %6\n"
+                       "              SRB 新建 %7 个/帧 · 封面纹理上传 %8 次/帧 · "
+                       "封面重传率 %9 次/千帧\n"
+                       "              预算 %10")
+            .arg(number("gpuResources", 0),
+                 QString::number(m_metrics.value("gpuMusicTextureBytes").toDouble() / 1048576., 'f', 1),
+                 number("gpuResourcesPeak", 0), number("gpuResourcesPeakFrame", 0))
+            .arg(QString::number(m_metrics.value("gpuTextureBytesPeak").toDouble() / 1048576., 'f', 1),
+                 number("gpuTextureBytesPeakFrame", 0), number("frameBindings", 0),
+                 number("frameCoverUploads", 0))
+            .arg(number("coverRetransmitPerKFrame", 2),
+                 budgetMb ? QStringLiteral("%1 MiB").arg(budgetMb)
+                          : QStringLiteral("关（RHINE_RESOURCE_BUDGET_MB）"));
     // GPU 计时状态必须显式写出来：状态不是 ok 时数值列是空的（或上一个可信样本），
     // 只显示数字会让读者把"没测到"当成"GPU 不花时间"——A01 要修的就是这个坑。
     const QString gpuTiming = m_metrics.value("gpuTimingStatus").toString();
@@ -898,10 +900,11 @@ void FrameProfiler::formatMetrics(bool withDetails) {
                              .arg(audio.value("routeSampleRateHz").toInt())
                              .arg(audio.value("routeChannels").toInt());
         } else if (audio.value("outputSystemFormatStatus").toInt() == 1) {
-            m_details += QStringLiteral("\n系统流格式  %1")
-                             .arg(AudioOutputFormat::describe(audio.value("outputSystemSampleRateHz").toInt(),
-                                                              audio.value("outputSystemChannels").toInt(),
-                                                              audio.value("outputSystemSampleFormat").toInt()));
+            m_details +=
+                QStringLiteral("\n系统流格式  %1")
+                    .arg(AudioOutputFormat::describe(audio.value("outputSystemSampleRateHz").toInt(),
+                                                     audio.value("outputSystemChannels").toInt(),
+                                                     audio.value("outputSystemSampleFormat").toInt()));
         }
         if (audio.contains("routeSpatialAudioEnabled")) {
             m_details += audio.value("routeSpatialAudioEnabled").toBool()
@@ -940,15 +943,16 @@ void FrameProfiler::formatMetrics(bool withDetails) {
             conversions << QStringLiteral("声道布局");
         }
         const int resampler = audio.value("outputResampler", -1).toInt();
-        const auto outputMode =
-            audio.value("outputPolicy").toInt() == 1 ? QStringLiteral("保留源格式") : QStringLiteral("跟随系统");
+        const auto outputMode = audio.value("outputPolicy").toInt() == 1 ? QStringLiteral("保留源格式")
+                                                                         : QStringLiteral("跟随系统");
         m_details +=
             QStringLiteral("\n\n音频输出链路 · %1\n解码 PCM  %2\n应用提交  %3\n系统当前  %4\n设备首选  "
                            "%5\n硬件格式  未获取\n")
                 .arg(outputMode)
                 .arg(audioFormat("sampleRateHz", "channels", "sampleFormat"))
                 .arg(audioFormat("outputSampleRateHz", "outputChannels", "outputSampleFormat"))
-                .arg(audioFormat("outputSystemSampleRateHz", "outputSystemChannels", "outputSystemSampleFormat"))
+                .arg(audioFormat("outputSystemSampleRateHz", "outputSystemChannels",
+                                 "outputSystemSampleFormat"))
                 .arg(audioFormat("outputPreferredSampleRateHz", "outputPreferredChannels",
                                  "outputPreferredSampleFormat"));
         if (audio.value("outputSystemFormatStatus").toInt() == 2) {
@@ -1033,8 +1037,7 @@ void FrameProfiler::formatMetrics(bool withDetails) {
     } else if (aaMode == "fsr" || aaMode == "fsr1" || aaMode == "fsr3") {
         // 引擎由渲染器写入：fsr3 = FFX 计算后端，shader = EASU/RCAS 片元实现。
         const auto engine = qEnvironmentVariable("RHINE_FSR_ENGINE");
-        aaLine += engine == "fsr3" ? QStringLiteral("（FSR3）")
-                                   : QStringLiteral("（FSR1 EASU/RCAS）");
+        aaLine += engine == "fsr3" ? QStringLiteral("（FSR3）") : QStringLiteral("（FSR1 EASU/RCAS）");
         // 档位和锐化都直接改变画面，放进监视窗方便和眼睛看到的对照。
         const auto quality = qEnvironmentVariable("RHINE_FSR_QUALITY");
         QString qualityName = QStringLiteral("原生 AA");
@@ -1062,21 +1065,23 @@ void FrameProfiler::formatMetrics(bool withDetails) {
     if (aaMode == "metalfx") {
         const auto actual = m_engine->renderTelemetry.snapshot().value("implementation").toString();
         aaLine = actual == "metalfx-temporal" ? QStringLiteral("MetalFX 时域抗锯齿 / 超分")
-                                             : QStringLiteral("MetalFX 未运行（系统或设备不支持）");
+                                              : QStringLiteral("MetalFX 未运行（系统或设备不支持）");
     }
 #endif
-    const int renderScale =
-        qEnvironmentVariableIsEmpty("RHINE_RENDER_SCALE") ? 100 : qEnvironmentVariableIntValue("RHINE_RENDER_SCALE");
-    const int supersample =
-        qEnvironmentVariableIsEmpty("RHINE_SUPERSAMPLE") ? 1 : qEnvironmentVariableIntValue("RHINE_SUPERSAMPLE");
+    const int renderScale = qEnvironmentVariableIsEmpty("RHINE_RENDER_SCALE")
+                                ? 100
+                                : qEnvironmentVariableIntValue("RHINE_RENDER_SCALE");
+    const int supersample = qEnvironmentVariableIsEmpty("RHINE_SUPERSAMPLE")
+                                ? 1
+                                : qEnvironmentVariableIntValue("RHINE_SUPERSAMPLE");
     QString renderLine = QStringLiteral("渲染 %1%").arg(renderScale);
     if (supersample > 1) {
         renderLine += QStringLiteral(" · 超采样 %1x").arg(supersample);
     }
     // 这一行既有抗锯齿也有 FSR 超分，所以叫"画质模式"；与上面"渲染后端"等宽以便对齐。
-    m_details.prepend(QStringLiteral("渲染后端  %1 · GPU 设备  %2\n画质模式  %3 · %4\n")
-                          .arg(backend, adapter.isEmpty() ? QStringLiteral("未知") : adapter, aaLine,
-                               renderLine));
+    m_details.prepend(
+        QStringLiteral("渲染后端  %1 · GPU 设备  %2\n画质模式  %3 · %4\n")
+            .arg(backend, adapter.isEmpty() ? QStringLiteral("未知") : adapter, aaLine, renderLine));
     // 文本真正变了才通知 QML。一次 memcmp 远比一次整段 Text 重排便宜。
     if (m_details != previousDetails) {
         emit detailsChanged();

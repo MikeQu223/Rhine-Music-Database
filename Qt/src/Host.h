@@ -15,7 +15,7 @@
 #include <QTemporaryDir>
 #include <QTimer>
 #include <functional>
-#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS) || defined(Q_OS_WIN)
 #include "AppleTransitionPlan.h"
 #endif
 
@@ -70,7 +70,7 @@ class Host : public QObject {
                                bool paused = false);
     Q_INVOKABLE void mediaControl(QString action, double value = 0);
     Q_INVOKABLE QVariantMap mediaState() const;
-#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS) || defined(Q_OS_WIN)
     void setAppleTransitionPreparation(AppleTransitionPreparation preparation);
     bool prepareAppleTransition(const QUrl &next, bool alternative);
     void cancelAppleTransition();
@@ -122,7 +122,7 @@ class Host : public QObject {
     void preferenceChanged(QString key, QString value);
     void mediaAction(QString action);
     void mediaChanged();
-#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS) || defined(Q_OS_WIN)
     void appleTransitionCommitted();
 #endif
     void audioSpectrumChanged(QJsonArray levels);
@@ -203,7 +203,7 @@ class Host : public QObject {
     QString active;
     bool stopped = false;
     bool audioDiagnosticsEnabled = false;
-#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS) || defined(Q_OS_WIN)
     AppleTransitionPreparation appleTransitionPreparation = AppleTransitionPreparation::WaitingForPlayback;
 #endif
     bool audioSpectrumEnabled = false;

@@ -10,6 +10,7 @@ QString modalTitle(const QString &modal, const MusicLibrary &music) {
     static const QHash<QString, QString> titles{{"provider", "MUSIC PLATFORM"},
                                                 {"settings", "SYSTEM SETTINGS"},
                                                 {"desktop-lyrics", "DESKTOP LYRICS"},
+                                                {"shortcuts", "GLOBAL SHORTCUTS"},
                                                 {"quality", "AUDIO QUALITY"},
                                                 {"disc-rotation-warning", "DISC ROTATION"},
                                                 {"saved", "MY MUSIC"},
@@ -33,6 +34,7 @@ QString modalSubtitle(const QString &modal, const MusicLibrary &music) {
     static const QHash<QString, QString> subtitles{{"provider", "直接选择音乐平台 / 各平台账号独立保存"},
                                                    {"settings", "终端偏好设置"},
                                                    {"desktop-lyrics", "桌面歌词 / 样式与同步"},
+                                                   {"shortcuts", "全局快捷键 / 后台播放控制"},
                                                    {"quality", "声音档案 / 播放音质"},
                                                    {"disc-rotation-warning", "开启前请确认资源与功耗风险"},
                                                    {"player", "播放队列 / QUEUE"},
@@ -190,6 +192,8 @@ void NativeHud::modalDraw(double width) {
         category = "SYSTEM PREFERENCES";
     } else if (modal == "desktop-lyrics") {
         category = "DESKTOP LYRICS";
+    } else if (modal == "shortcuts") {
+        category = "GLOBAL SHORTCUTS";
     } else if (modal == "player") {
         category = "AUDIO TERMINAL";
     } else if (modal == "quality") {
@@ -201,7 +205,10 @@ void NativeHud::modalDraw(double width) {
     text("RHINE LAB / MUSIC DATABASE / " + category, x + 53, y + 37,
          pluginPage ? 12 : (modal == "settings" ? 14 : 11));
     button("← 返回", x + usable - 220, y + 18, 167, 54,
-           modal == "desktop-lyrics" ? "desktop-lyrics:back" : "close-modal", 20, "demibold");
+           modal == "desktop-lyrics" ? "desktop-lyrics:back"
+           : modal == "shortcuts"    ? "shortcuts:back"
+                                     : "close-modal",
+           20, "demibold");
     text(modalTitle(modal, music), x + 53, y + 91, pluginPage ? 44 : 38, "demibold");
     text(modalSubtitle(modal, music), x + 53, y + 147, pluginPage ? 17 : (modal == "settings" ? 18 : 15));
     modalBody(x, y, usable);
@@ -275,6 +282,8 @@ void NativeHud::modalBody(double x, double y, double usable) {
         settingsPanel(x, y, usable);
     } else if (modal == "desktop-lyrics") {
         desktopLyricsPanel(x, y, usable);
+    } else if (modal == "shortcuts") {
+        shortcutsPanel(x, y, usable);
     } else if (modal == "login") {
         loginPanel(x, y, usable);
     } else {

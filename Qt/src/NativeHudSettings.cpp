@@ -549,6 +549,10 @@ void NativeHud::restoreSettingsDefaults() {
     m_host->setPreference("auto-update", QString());
     // 桌面歌词的样式行不在主表中，整组恢复到新的默认值并关闭悬浮层。
     if (PlatformFeatures::DesktopLyrics) {
+        if (shortcuts) {
+            shortcuts->setEnabled(false);
+            shortcuts->restoreDefaults();
+        }
         m_host->setPreference(QString::fromLatin1(DesktopLyrics::EnabledKey), QStringLiteral("off"));
         DesktopLyrics::resetAppearance(m_host);
         desktopLyricsAppearanceLoaded = false;

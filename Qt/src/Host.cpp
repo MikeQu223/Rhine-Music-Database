@@ -523,8 +523,7 @@ void Host::requestJson(QString route, QJsonObject values, JsonReply callback) {
         if (route.startsWith("/native/")) {
             operationCode = operation == "preview" ? 2 : 1;
         }
-        const int requestProvider =
-            ProviderRegistry::instance().diagnosticsOrdinal(routeProvider(route), 0);
+        const int requestProvider = ProviderRegistry::instance().diagnosticsOrdinal(routeProvider(route), 0);
         recordPlaybackDiagnostic(
             "request-start",
             {{"requestSerial", serial}, {"operation", operationCode}, {"provider", requestProvider}});
@@ -565,11 +564,10 @@ void Host::requestJson(QString route, QJsonObject values, JsonReply callback) {
     const auto service = routeProvider(route);
     const auto scopedCookies = cookieSlice(service);
     const auto scopedSecrets = secretsFor(service);
-    const auto scope =
-        (scopedCookies.isEmpty() && scopedSecrets.isEmpty())
-            ? QStringLiteral("guest")
-            : hash(QJsonDocument(scopedCookies).toJson(QJsonDocument::Compact) +
-                   QJsonDocument(scopedSecrets).toJson(QJsonDocument::Compact));
+    const auto scope = (scopedCookies.isEmpty() && scopedSecrets.isEmpty())
+                           ? QStringLiteral("guest")
+                           : hash(QJsonDocument(scopedCookies).toJson(QJsonDocument::Compact) +
+                                  QJsonDocument(scopedSecrets).toJson(QJsonDocument::Compact));
     const auto cached = lifetime(route) > 0;
     const auto manifest = ProviderRegistry::instance().manifest(service);
     const auto cachePolicy = ProviderRegistry::instance().cachePolicy(service);
@@ -577,16 +575,14 @@ void Host::requestJson(QString route, QJsonObject values, JsonReply callback) {
         cachePolicy["version"].toString(manifest["version"].toString(QStringLiteral("0")));
     const auto cacheOperation = route.section('/', 3, 3);
     const auto key =
-        cached
-            ? cacheKey(service + ":" + cacheVersion + ":" + scope + QString::number(metadataRevision),
-                       route, values)
-            : QUuid::createUuid().toString();
+        cached ? cacheKey(service + ":" + cacheVersion + ":" + scope + QString::number(metadataRevision),
+                          route, values)
+               : QUuid::createUuid().toString();
     const auto diskOperations = cachePolicy["diskOperations"].toArray();
     bool diskOperation = false;
     for (const auto &value : diskOperations) {
-        if (value.isString() &&
-            (value.toString() == cacheOperation || value.toString() == route ||
-             route.startsWith(value.toString() + "/"))) {
+        if (value.isString() && (value.toString() == cacheOperation || value.toString() == route ||
+                                 route.startsWith(value.toString() + "/"))) {
             diskOperation = true;
             break;
         }
@@ -738,13 +734,13 @@ void Host::send(QString key) {
         value.replace("$dataDir", dataDir);
         env.insert(it.key(), value);
     }
-    QJsonObject envelope{{"id", work.id},
-                         {"route", work.route},
-                         {"params", work.params},
-                         {"cookies", work.cookies},
-                         {"env", env},
-                         {"authenticated",
-                          authMatches(service, work.cookies, secretsFor(service), serviceVariant)}};
+    QJsonObject envelope{
+        {"id", work.id},
+        {"route", work.route},
+        {"params", work.params},
+        {"cookies", work.cookies},
+        {"env", env},
+        {"authenticated", authMatches(service, work.cookies, secretsFor(service), serviceVariant)}};
     if (audioDiagnosticsEnabled && work.route.startsWith("/native/") &&
         QStringList{"playback", "preview"}.contains(work.route.section('/', 3, 3))) {
         envelope["_collectPlaybackDiagnostics"] = true;
@@ -788,10 +784,8 @@ void Host::finish(QString key, QJsonObject response, QString error) {
     response.remove("_credentialKey");
     const auto body = response["body"].toObject();
     const auto code = body["code"].toInt(200);
-    const auto expiredCodes = ProviderRegistry::instance()
-                                  .credentialPolicy(service)["auth"]
-                                  .toObject()["expiredCodes"]
-                                  .toArray();
+    const auto expiredCodes =
+        ProviderRegistry::instance().credentialPolicy(service)["auth"].toObject()["expiredCodes"].toArray();
     if (expiredCodes.contains(QJsonValue(code))) {
         response["authExpired"] = true;
     }
@@ -799,8 +793,7 @@ void Host::finish(QString key, QJsonObject response, QString error) {
         work.route.startsWith("/comment/") ||
         (work.route.startsWith("/native/") &&
          QStringList{"comments", "commentReplies"}.contains(work.route.section('/', 3, 3)));
-    if (lifetime(work.route) || work.route == "/song/url" || work.route == "/song/url/v1" ||
-        commentRequest) {
+    if (lifetime(work.route) || work.route == "/song/url" || work.route == "/song/url/v1" || commentRequest) {
         const auto message = body["message"].toString(body["msg"].toString());
         if (QList<int>{405, 429, 509}.contains(code) || message.contains("频繁")) {
             blockedUntil[routeProvider(work.route)] =
@@ -916,7 +909,7 @@ void Host::bumpEpoch() {
         remote->call("host.bumpEpoch");
     }
     ++epoch;
-#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS) || defined(Q_OS_WIN)
     cancelAppleTransition();
 #endif
 }
@@ -967,8 +960,7 @@ QString Host::variantFor(const QString &value) const {
             }
         }
     }
-    return variants.isEmpty() ? QString()
-                              : variants.first().toObject()["id"].toString("standard");
+    return variants.isEmpty() ? QString() : variants.first().toObject()["id"].toString("standard");
 }
 /**
  * 切换音乐来源，保持各来源的凭据与缓存隔离。
@@ -984,7 +976,7 @@ void Host::setProvider(QString value) {
         return;
     }
     provider = value;
-#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS) || defined(Q_OS_WIN)
     cancelAppleTransition();
 #endif
     const auto variants = ProviderRegistry::instance().variants(provider);
@@ -1030,7 +1022,7 @@ void Host::setProviderVariant(QString variant) {
         remote->call("host.setProviderVariant", {{"variant", variant}});
     }
     providerVariant = variant;
-#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS) || defined(Q_OS_WIN)
     cancelAppleTransition();
 #endif
     const auto preference = ProviderRegistry::instance().variantPreference(provider);
@@ -1957,7 +1949,7 @@ bool Host::mediaLoad(QString url, bool alternative, double position, bool paused
     }
     return audio->load(url, offline, alternative, provider, position, paused);
 }
-#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS) || defined(Q_OS_WIN)
 void Host::setAppleTransitionPreparation(AppleTransitionPreparation preparation) {
     if (appleTransitionPreparation == preparation) {
         return;
@@ -2113,23 +2105,23 @@ const QStringList &preferenceKeys() {
     static const QStringList keys{
         "search-history", "play-history", "local-cover-cache", "theme", "motion", "startup-animation",
         "detail-autoplay", "skip-detail-on-switch", "single-play-mode", "disc-rotation", "scene-enhancement",
-        "archive-mask-strength", "debug-mode", "audio-exclusive", "graphics-backend", "mv-auto", "mv-opacity", "mv-screen",
-        "mv-offsets", "mv-versions", "mv-mode",
+        "archive-mask-strength", "debug-mode", "audio-exclusive", "graphics-backend", "mv-auto", "mv-opacity",
+        "mv-screen", "mv-offsets", "mv-versions", "mv-mode", "global-shortcuts", "global-shortcuts-enabled",
         // Linux 显卡选择：存的是 /sys/class/drm 里 cardN 的序号（0 基），不是型号。
         // 换卡后序号可能指向另一张卡或不存在，启动时由 initializeLinuxGraphics 校验并回退。
         "gpu-index", "vsync", "supersample", "render-scale", "aa-mode", "aa-scale", "msaa", "fsr-quality",
         "fsr-sharpness", "fg", "close-behavior", "auto-update", "volume", "quality", "alternate-source",
 #if !defined(Q_OS_MACOS) && !defined(Q_OS_IOS)
         "audio-output-policy",
-#else
+#endif
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS) || defined(Q_OS_WIN)
         "apple-smart-transition",
 #endif
-        "provider", "lyrics-cache", "lyrics-global-offset-ms", "desktop-lyrics",
-        "desktop-lyrics-size", "desktop-lyrics-translation-size", "desktop-lyrics-opacity",
-        "desktop-lyrics-line-color", "desktop-lyrics-translation-color", "desktop-lyrics-line-weight",
-        "desktop-lyrics-translation-weight", "desktop-lyrics-line-outline",
-        "desktop-lyrics-translation-outline", "desktop-lyrics-line-outline-color",
-        "desktop-lyrics-translation-outline-color"};
+        "provider", "lyrics-cache", "lyrics-global-offset-ms", "desktop-lyrics", "desktop-lyrics-size",
+        "desktop-lyrics-translation-size", "desktop-lyrics-opacity", "desktop-lyrics-line-color",
+        "desktop-lyrics-translation-color", "desktop-lyrics-line-weight", "desktop-lyrics-translation-weight",
+        "desktop-lyrics-line-outline", "desktop-lyrics-translation-outline",
+        "desktop-lyrics-line-outline-color", "desktop-lyrics-translation-outline-color"};
     return keys;
 }
 }
@@ -2276,7 +2268,7 @@ QJsonObject Host::playbackSnapshot() const {
         return remote->snapshot()["diagnostics"].toObject();
     }
     auto values = audio ? audio->diagnosticState() : QJsonObject();
-#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS) || defined(Q_OS_WIN)
     values["transitionPreparation"] = int(appleTransitionPreparation);
 #endif
     values["bridgeState"] = int(child.state());
