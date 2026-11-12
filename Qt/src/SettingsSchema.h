@@ -79,6 +79,7 @@ struct SettingDescriptor {
     QString titleEn;
     QString titleZh;
     QString description;
+    bool showDescription = false;
     QString actionLabel;
     QString restartHint;
     QString defaultValue;

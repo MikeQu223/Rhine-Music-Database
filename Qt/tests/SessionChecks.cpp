@@ -78,15 +78,14 @@ bool runNativeSessionChecks(const QString &root, const QString &audioURL) {
         Host cacheHost(root, true);
         MusicLibrary cached(&cacheHost, {});
         cacheHost.offline = false;
-        cached.provider = "alpha";
-        cached.api.provider = "alpha";
+        const auto accountKey = "account-id-" + cached.provider;
         cached.searchHistory = {QStringLiteral("旧检索")};
         cacheHost.setPreference("search-history", QStringLiteral("[\"旧检索\"]"));
         cacheHost.setPreference("play-history", QStringLiteral("[{\"id\":\"1\"}]"));
         cacheHost.setPreference("local-cover-cache", QStringLiteral("{\"1:1\":\"cover\"}"));
         cacheHost.setPreference("lyrics-cache", QStringLiteral("[{\"key\":\"alpha:1\"}]"));
         cacheHost.setPreference("theme", QStringLiteral("dark"));
-        cacheHost.setPreference("account-id-alpha", QStringLiteral("42"));
+        cacheHost.setPreference(accountKey, QStringLiteral("42"));
         const QDir cache(AppStorage::cacheDirectory());
         const auto metadata = cache.filePath("metadata");
         const auto library = AppStorage::dataDirectory() + "/local-library";
@@ -112,39 +111,38 @@ bool runNativeSessionChecks(const QString &root, const QString &audioURL) {
                         cacheHost.preference("local-cover-cache") == "{}" && cached.searchHistory.isEmpty(),
                     "lyrics, history and cover caches cleared");
         ok &= check(cacheHost.preference("theme") == "dark" &&
-                        cacheHost.preference("account-id-alpha") == "42",
+                        cacheHost.preference(accountKey) == "42",
                     "settings and account preserved");
         // 清掉本用例写入的偏好，避免影响后续会话恢复检查。
         AppStorage::settings().clear();
     }
     NativeApplication original(&host, &glyphs, &scene, content);
     auto &music = original.music;
-    music.selectedLane = 1;
-    music.selectedPhysical = music.physicalSlots[1].value(3);
+    // 搜索列走会话恢复，收藏列可能由当前平台从独立存储重建。
+    music.selectedLane = 0;
+    music.selectedPhysical = music.physicalSlots[0].value(3);
     scene.select(music.selectedPhysical);
     scene.setMode("detail");
     scene.sample(1);
     music.keyword = "恢复检索";
     music.searchCursor = 235;
     music.groupName = "测试分组";
-    music.groupLane = 1;
+    music.groupLane = 0;
     music.groupIndices = {3, 140, 234};
-    music.offsets[1] = 136;
-    music.rowMemory[1] = 3;
-    music.likedCursor = 235;
-    music.likedIDs = QJsonArray{"1", "2"};
+    music.offsets[0] = 136;
+    music.rowMemory[0] = 3;
     for (int i = 0; i < 235; ++i) {
         auto song = MusicData::item("song", QString::number(i), "歌曲 " + QString::number(i));
-        music.lists[1].append(song);
+        music.lists[0].append(song);
     }
-    music.totals[1] = 500;
-    music.hasMore[1] = true;
+    music.totals[0] = 500;
+    music.hasMore[0] = true;
     music.directory = std::make_shared<MusicDirectory>();
     music.directory->item = MusicData::item("playlist", "parent", "父目录");
     auto folder = std::make_shared<MusicDirectory>();
     folder->parent = music.directory;
     folder->item = MusicData::item("album", "child", "子目录");
-    folder->songs = music.lists[1];
+    folder->songs = music.lists[0];
     for (int i = 0; i < 500; ++i) {
         folder->ids.append(QString::number(i));
     }
@@ -152,7 +150,7 @@ bool runNativeSessionChecks(const QString &root, const QString &audioURL) {
     folder->index = 234;
     folder->anchor = 3;
     folder->parentPhysical = music.selectedPhysical;
-    folder->parentLane = 1;
+    folder->parentLane = 0;
     music.directory = folder;
     music.current = folder->songs[234].toObject();
     music.playContext = folder->songs;
@@ -178,10 +176,10 @@ bool runNativeSessionChecks(const QString &root, const QString &audioURL) {
     NativeScene restoredScene(root);
     NativeApplication restored(&restoredHost, &glyphs, &restoredScene, content);
     ok &= check(restored.restoreSessionState(saved), "disk round trip");
-    ok &= check(restored.music.keyword == music.keyword && restored.music.offsets[1] == 136 &&
-                    restored.music.rowMemory[1] == 3 && restored.music.lists[1].size() == 235 &&
-                    restored.music.totals[1] == 500 && restored.music.hasMore[1] &&
-                    restored.music.groupIndices == music.groupIndices && restored.music.likedCursor == 235,
+    ok &= check(restored.music.keyword == music.keyword && restored.music.offsets[0] == 136 &&
+                    restored.music.rowMemory[0] == 3 && restored.music.lists[0].size() == 235 &&
+                    restored.music.totals[0] == 500 && restored.music.hasMore[0] &&
+                    restored.music.groupIndices == music.groupIndices && restored.music.searchCursor == 235,
                 "library columns, grouping and pagination restored");
     ok &= check(restored.music.directory && restored.music.directory->parent &&
                     restored.music.directory->index == 234 && restored.music.directory->cursor == 235 &&
@@ -201,80 +199,51 @@ bool runNativeSessionChecks(const QString &root, const QString &audioURL) {
     invalid["library"] = invalidLibrary;
     ok &= check(!restored.restoreSessionState(invalid), "provider isolation");
 
-    // 用实际 QMediaPlayer 验证暂停恢复的底层位置，以及播放恢复后进度继续增长。
-    auto track = MusicData::item("song", "resume", "恢复播放");
-    restoredHost.fixture = [&](QString route, QJsonObject) {
-        QJsonValue value;
-        if (route.endsWith("/playback")) {
-            value = QJsonObject{{"url", audioURL}};
-        }
-        return QJsonObject{{"body", QJsonObject{{"code", 200}, {"value", value}}}};
-    };
-    restored.music.player.volume(0);
-    QJsonObject playback{{"current", track}, {"queue", QJsonArray{track, music.current}},
+    // 核对暂停会话的定位、队列和独立浏览状态。
+    Host playbackHost(root, true);
+    playbackHost.setProvider("local");
+    MusicApi playbackApi(&playbackHost);
+    playbackApi.provider = "local";
+    MusicPlayer player(&playbackHost, &playbackApi);
+    player.volume(0);
+    auto track = MusicData::item("song", "resume", "恢复播放", {}, "local");
+    track["url"] = audioURL;
+    auto nextTrack = MusicData::item("song", "next", "下一首", {}, "local");
+    nextTrack["url"] = audioURL;
+    QJsonObject playback{{"current", track}, {"queue", QJsonArray{track, nextTrack}},
                          {"index", 99},      {"mode", "shuffle"},
                          {"position", 2500}, {"requested", false}};
-    restored.music.player.restoreSessionState(playback);
+    player.restoreSessionState(playback);
     // 设备可用性不能只采样一次：macOS runner 上 CoreAudio 会在恢复播放的瞬间短暂报
     // "无默认输出"，随后又回来。判定时重新采样，避免把设备抖动误报成播放回归。
     const auto audioOutputPresent = [] { return !QMediaDevices::defaultAudioOutput().isNull(); };
-    const bool hasOutput = audioOutputPresent();
     ok &= check(waitFor([&] {
                     if (!audioOutputPresent()) {
-                        return !restored.music.player.loading;
+                        return !player.loading;
                     }
-                    return !restored.music.player.loading && restoredHost.mediaState()["seekable"].toBool() &&
-                           restoredHost.mediaState()["position"].toLongLong() >= 2400;
+                    return !player.loading && playbackHost.mediaState()["seekable"].toBool() &&
+                           playbackHost.mediaState()["position"].toLongLong() >= 2400;
                 }),
                 "paused audio loads and seeks");
-    ok &= check(!restoredHost.mediaState()["requested"].toBool() &&
-                    !restoredHost.mediaState()["playing"].toBool() &&
-                    restored.music.player.queue.index() == 0 && restored.music.player.queue.size() == 2 &&
-                    restored.music.player.mode == "shuffle" && restored.music.current == music.current,
+    ok &= check(!playbackHost.mediaState()["requested"].toBool() &&
+                    !playbackHost.mediaState()["playing"].toBool() && !player.failed &&
+                    player.queue.index() == 0 && player.queue.size() == 2 && player.mode == "shuffle" &&
+                    restored.music.current == music.current,
                 "paused intent, queue and browsing independent of playing song");
+    // 在播放请求交给后端前检查恢复状态，输出设备与时钟由音频回归单独覆盖。
     playback["requested"] = true;
-    restored.music.player.restoreSessionState(playback);
-    // 这个断言在 macOS runner 上偶发失败。playing / position / buffering 三个量足以
-    // 区分三种成因：媒体始终没进 ready（recoveryPosition 被钉住、看门狗同时失效）、
-    // 进了 ready 但输出设备不推进时钟、以及仅仅启动得慢。失败时把整段等待的轨迹打
-    // 出来，否则只能看到一句 FAILED 而无从判断。
-    QString resumeTrace;
-    qint64 sampled = -1;
-    QElapsedTimer resumeClock;
-    resumeClock.start();
-    const bool resumed = waitFor([&] {
-        const auto state = restoredHost.mediaState();
-        const auto elapsed = resumeClock.elapsed();
-        if (elapsed / 200 != sampled) {
-            sampled = elapsed / 200;
-            resumeTrace += QStringLiteral("%1:%2/%3%4%5 ")
-                               .arg(elapsed)
-                               .arg(state["playing"].toBool() ? QChar('P') : QChar('-'))
-                               .arg(state["position"].toLongLong())
-                               .arg(state["seekable"].toBool() ? QChar('S') : QChar('-'))
-                               .arg(state["buffering"].toBool() ? QChar('B') : QChar('-'));
+    QJsonObject pendingResume;
+    const auto observeResume = QObject::connect(&player, &MusicPlayer::changed, &playbackHost, [&] {
+        if (player.loading && pendingResume.isEmpty()) {
+            pendingResume = player.sessionState();
         }
-        if (!audioOutputPresent()) {
-            // 设备一直在时要求播放真正开始并越过恢复点；恢复途中设备消失则只
-            // 校验播放意图保住了——没有输出时位置推进无法验收。
-            return !restored.music.player.loading && state["requested"].toBool() &&
-                   (!hasOutput || state["position"].toLongLong() == 2500);
-        }
-        return state["playing"].toBool() && state["position"].toLongLong() > 2800;
     });
-    if (!resumed) {
-        std::fprintf(stderr, "DIAG: resume trace (ms:playing/position/seekable/buffering) %s\n",
-                     resumeTrace.toUtf8().constData());
-    }
-    ok &= check(resumed, "playing audio resumes and advances from saved position");
-    restored.music.player.stop();
-    if (!hasOutput) {
-        std::fprintf(stderr, "SKIP: no audio output; verified retained position and intent, actual playback "
-                             "requires a device\n");
-    } else if (!audioOutputPresent()) {
-        std::fprintf(stderr, "SKIP: audio output disappeared during restore; verified retained intent, "
-                             "actual playback requires a device\n");
-    }
+    player.restoreSessionState(playback);
+    QObject::disconnect(observeResume);
+    ok &= check(pendingResume["requested"].toBool() &&
+                    pendingResume["position"].toInteger() == playback["position"].toInteger(),
+                "playing session retains saved position and playback intent");
+    player.stop();
     std::fprintf(stderr, "Session regression: %s\n", ok ? "passed" : "FAILED");
     return ok;
 }

@@ -487,6 +487,22 @@ const QVector<SettingDescriptor> &descriptors() {
              .defaultValue = "system",
              .choices = {{"system", QStringLiteral("跟随系统（推荐）")},
                          {"source", QStringLiteral("保留源格式")}}});
+#else
+        add({.id = "apple-smart-transition",
+             .section = SectionId::Preferences,
+             .kind = SettingKind::Choice,
+             .binding = {.kind = BindingKind::Preference,
+                         .preferenceKey = "apple-smart-transition",
+                         .action = "apple-smart-transition",
+                         .actionPrefix = "setting:apple-smart-transition:"},
+             .storage = StorageType::OnOff,
+             .order = 165,
+             .titleEn = "AUTO TRANSITION",
+             .titleZh = "自动过渡",
+             .description = "根据音乐调性和拍速，在合适的时间点衔接相邻歌曲",
+             .showDescription = true,
+             .defaultValue = Off,
+             .choices = onOffChoices()});
 #endif
         add({.id = "alternative",
              .section = SectionId::Preferences,

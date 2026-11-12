@@ -4,12 +4,11 @@
 #include <QPointer>
 #include <QRandomGenerator>
 #include <QSet>
+#include <algorithm>
 
 namespace {
 // 与目录分页一致，避免单次请求携带过多 ID。
 constexpr int FetchBatchSize = 100;
-// 只保留最近的实际播放顺序，随机回退不无限增长。
-constexpr int ShuffleHistoryLimit = 200;
 
 /** 去重并剔除无效条目，队列只接受完整歌曲。 */
 QJsonArray sanitized(const QJsonArray &values) {
@@ -113,19 +112,17 @@ void PlaybackQueue::publish(const QJsonArray &values, const QString &selectedKey
 
 void PlaybackQueue::replace(const QJsonArray &values, const QJsonObject &selected) {
     cancelLoad();
-    resetHistory();
     publish(sanitized(values), selected.isEmpty() ? QString() : identity(selected));
 }
 
 void PlaybackQueue::syncSnapshot(const QJsonArray &values, int row) {
     cancelLoad();
-    resetHistory();
     m_items = sanitized(values);
     m_index = row >= 0 && row < m_items.size() ? row : -1;
 }
 
 void PlaybackQueue::select(int row) {
-    moveTo(row, true);
+    moveTo(row);
 }
 
 void PlaybackQueue::selectTrack(const QJsonObject &track) {
@@ -135,11 +132,10 @@ void PlaybackQueue::selectTrack(const QJsonObject &track) {
     }
     const auto found = indexOf(track);
     if (found >= 0) {
-        moveTo(found, true);
+        moveTo(found);
         return;
     }
     if (track["kind"] == "song" && !track["id"].toString().isEmpty()) {
-        rememberCurrent();
         m_items.append(track);
         m_index = int(m_items.size()) - 1;
         m_selectedKey = key;
@@ -167,6 +163,28 @@ bool PlaybackQueue::enqueue(const QJsonObject &track, bool next) {
     }
     const auto position = next ? std::max(0, m_index + 1) : int(m_items.size());
     m_items.insert(position, track);
+    const auto currentId = current()["id"].toString();
+    const auto id = track["id"].toString();
+    if (m_loading && currentId != id) {
+        // 补全尚未结束时，同步手动插入的位置，避免后续批次覆盖新队列。
+        for (qsizetype index = 0; index < m_ids.size(); ++index) {
+            if (m_ids.at(index).toString() == id) {
+                m_ids.removeAt(index);
+                break;
+            }
+        }
+        qsizetype pendingPosition = next && currentId.isEmpty() ? 0 : m_ids.size();
+        if (next && !currentId.isEmpty()) {
+            for (qsizetype index = 0; index < m_ids.size(); ++index) {
+                if (m_ids.at(index).toString() == currentId) {
+                    pendingPosition = index + 1;
+                    break;
+                }
+            }
+        }
+        m_ids.insert(pendingPosition, id);
+        m_resolved.insert(m_provider + ":" + id, track);
+    }
     emit changed();
     return true;
 }
@@ -174,6 +192,15 @@ bool PlaybackQueue::enqueue(const QJsonObject &track, bool next) {
 bool PlaybackQueue::remove(int row) {
     if (row < 0 || row >= m_items.size() || row == m_index) {
         return false;
+    }
+    if (m_loading) {
+        const auto removedId = at(row)["id"];
+        for (qsizetype index = 0; index < m_ids.size(); ++index) {
+            if (m_ids.at(index) == removedId) {
+                m_ids.removeAt(index);
+                break;
+            }
+        }
     }
     m_items.removeAt(row);
     if (row < m_index) {
@@ -193,7 +220,6 @@ void PlaybackQueue::updateCurrent(const QJsonObject &track) {
 
 void PlaybackQueue::clearUpcoming(const QJsonObject &current) {
     cancelLoad();
-    resetHistory();
     if (current.isEmpty() || current["kind"] != "song") {
         m_items = {};
         m_index = -1;
@@ -206,52 +232,84 @@ void PlaybackQueue::clearUpcoming(const QJsonObject &current) {
 
 void PlaybackQueue::clear() {
     cancelLoad();
-    resetHistory();
     m_items = {};
     m_index = -1;
     emit changed();
 }
 
-void PlaybackQueue::rememberCurrent() {
-    if (m_index < 0 || m_index >= m_items.size()) {
-        return;
-    }
-    const auto key = identity(m_items.at(m_index).toObject());
-    if (!m_history.isEmpty() && m_history.last() == key) {
-        return;
-    }
-    m_history.append(key);
-    while (m_history.size() > ShuffleHistoryLimit) {
-        m_history.removeFirst();
-    }
-}
-
-void PlaybackQueue::moveTo(int row, bool remember) {
+void PlaybackQueue::moveTo(int row) {
     if (row < 0 || row >= m_items.size() || row == m_index) {
         return;
-    }
-    if (remember) {
-        rememberCurrent();
     }
     m_index = row;
     m_selectedKey = identity(at(row));
     emit changed();
 }
 
-int PlaybackQueue::takeShuffledPrevious() {
-    while (!m_history.isEmpty()) {
-        const auto key = m_history.takeLast();
-        for (int row = 0; row < m_items.size(); ++row) {
-            if (row != m_index && identity(m_items.at(row).toObject()) == key) {
-                return row;
-            }
-        }
+void PlaybackQueue::setShuffle(bool enabled, bool reshuffle) {
+    m_shuffle = enabled;
+    if (enabled && reshuffle) {
+        shuffle();
     }
-    return -1;
 }
 
-void PlaybackQueue::resetHistory() {
-    m_history.clear();
+/** 打乱一次可见队列，当前曲目固定在本轮起点；加载中的条目沿同一顺序补全。 */
+void PlaybackQueue::shuffle() {
+    const auto playing = current();
+    const auto selected = playing.isEmpty() ? QString() : identity(playing);
+    QVector<QJsonValue> remaining;
+    for (const auto &value : m_items) {
+        if (selected.isEmpty() || identity(value.toObject()) != selected) {
+            remaining.append(value);
+        }
+    }
+    auto &random = *QRandomGenerator::global();
+    std::shuffle(remaining.begin(), remaining.end(), random);
+    QJsonArray shuffled;
+    if (!playing.isEmpty()) {
+        shuffled.append(playing);
+    }
+    for (const auto &value : remaining) {
+        shuffled.append(value);
+    }
+    if (m_loading) {
+        // 已展示的歌曲优先按打乱后的顺序保留；未补全的歌曲随机排在队尾。
+        orderShuffleIds(shuffled);
+    }
+    publish(shuffled, selected);
+}
+
+void PlaybackQueue::orderShuffleIds(const QJsonArray &known) {
+    QSet<QString> seen;
+    QJsonArray ordered;
+    for (const auto &value : known) {
+        const auto id = value.toObject()["id"].toString();
+        seen.insert(id);
+        ordered.append(id);
+    }
+    QVector<QJsonValue> missing;
+    for (const auto &value : m_ids) {
+        if (!seen.contains(value.toString())) {
+            missing.append(value);
+        }
+    }
+    std::shuffle(missing.begin(), missing.end(), *QRandomGenerator::global());
+    for (const auto &value : missing) {
+        ordered.append(value);
+    }
+    m_ids = ordered;
+}
+
+int PlaybackQueue::nextIndex(const QString &mode) const {
+    if (m_items.isEmpty()) {
+        return -1;
+    }
+    const auto count = int(m_items.size());
+    if (mode == "one") {
+        return std::max(m_index, 0);
+    }
+    const auto next = m_index + 1;
+    return mode == "off" && next >= count ? -1 : next % count;
 }
 
 int PlaybackQueue::navigate(int direction, const QString &mode) {
@@ -262,24 +320,20 @@ int PlaybackQueue::navigate(int direction, const QString &mode) {
     if (mode == "one") {
         return m_index >= 0 ? m_index : 0;
     }
-    // 随机模式下后退沿实际播放顺序回退，不能重新抽一首。
-    if (mode == "shuffle" && direction < 0) {
-        const auto previous = takeShuffledPrevious();
-        if (previous >= 0) {
-            moveTo(previous, false);
-            return previous;
+    if (direction == 1) {
+        const auto selected = nextIndex(mode);
+        if (selected >= 0) {
+            moveTo(selected);
         }
+        return selected;
     }
     const auto count = int(m_items.size());
     auto selected = m_index + direction;
-    if (mode == "shuffle" && direction > 0 && count > 1) {
-        selected = (m_index + 1 + QRandomGenerator::global()->bounded(count - 1)) % count;
-    }
     if (selected >= count && mode == "off") {
         return -1;
     }
     selected = (selected % count + count) % count;
-    moveTo(selected, true);
+    moveTo(selected);
     return selected;
 }
 
@@ -319,6 +373,9 @@ void PlaybackQueue::load(const QJsonArray &ids, const QJsonArray &known) {
     };
     absorb(m_items);
     absorb(known);
+    if (m_shuffle) {
+        orderShuffleIds(m_items);
+    }
     m_missing = {};
     for (const auto &value : m_ids) {
         if (!m_resolved.contains(m_provider + ":" + value.toString())) {

@@ -4,7 +4,6 @@
 #include <QJsonObject>
 #include <QObject>
 #include <QString>
-#include <QStringList>
 
 class MusicApi;
 
@@ -43,7 +42,11 @@ class PlaybackQueue : public QObject {
     void updateCurrent(const QJsonObject &track);
     void clearUpcoming(const QJsonObject &current);
     void clear();
-    /// 计算并应用下一首；随机模式的后退回到实际播放过的上一首。-1 表示顺序播放已经结束。
+    void setShuffle(bool enabled, bool reshuffle = true);
+    void shuffle();
+    // 预选下一首，实际切换时由调用方提交；不提前改索引或播放历史。
+    int nextIndex(const QString &mode) const;
+    /// 按可见顺序切换，随机模式使用已经打乱的队列。-1 表示顺序播放已经结束。
     int navigate(int direction, const QString &mode);
 
     /// 按 ID 顺序补全缺失元数据后发布；ids 为空时直接使用 known。
@@ -62,20 +65,18 @@ class PlaybackQueue : public QObject {
     void publishResolved();
     void fetchNext();
     QJsonArray orderedResolved() const;
-    void moveTo(int row, bool remember);
-    void rememberCurrent();
-    int takeShuffledPrevious();
-    void resetHistory();
+    void moveTo(int row);
+    void orderShuffleIds(const QJsonArray &known);
 
     MusicApi *m_api;
     QJsonArray m_items;
     QJsonArray m_ids;
     QJsonArray m_missing;
     QHash<QString, QJsonObject> m_resolved;
-    QStringList m_history;
     QString m_provider;
     QString m_selectedKey;
     int m_index = -1;
     quint64 m_generation = 0;
     bool m_loading = false;
+    bool m_shuffle = false;
 };

@@ -916,6 +916,9 @@ void Host::bumpEpoch() {
         remote->call("host.bumpEpoch");
     }
     ++epoch;
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+    cancelAppleTransition();
+#endif
 }
 QJsonObject Host::cookiesFor(const QString &value) const {
     return credentials["providers"].toObject()[value].toObject()["cookies"].toObject();
@@ -981,6 +984,9 @@ void Host::setProvider(QString value) {
         return;
     }
     provider = value;
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+    cancelAppleTransition();
+#endif
     const auto variants = ProviderRegistry::instance().variants(provider);
     if (!variants.isEmpty()) {
         const auto preferenceKey = ProviderRegistry::instance().variantPreference(provider);
@@ -1024,6 +1030,9 @@ void Host::setProviderVariant(QString variant) {
         remote->call("host.setProviderVariant", {{"variant", variant}});
     }
     providerVariant = variant;
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+    cancelAppleTransition();
+#endif
     const auto preference = ProviderRegistry::instance().variantPreference(provider);
     if (!preference.isEmpty()) {
         setPreference(preference, variant);
@@ -1948,6 +1957,35 @@ bool Host::mediaLoad(QString url, bool alternative, double position, bool paused
     }
     return audio->load(url, offline, alternative, provider, position, paused);
 }
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+void Host::setAppleTransitionPreparation(AppleTransitionPreparation preparation) {
+    if (appleTransitionPreparation == preparation) {
+        return;
+    }
+    appleTransitionPreparation = preparation;
+    if (audioDiagnosticsEnabled) {
+        recordPlaybackDiagnostic("transition-prepare", playbackSnapshot());
+    }
+}
+
+bool Host::prepareAppleTransition(const QUrl &next, bool alternative) {
+    if (!audio || !audio->prepareAppleTransition(next, offline, alternative, provider)) {
+        setAppleTransitionPreparation(AppleTransitionPreparation::PlaybackUnavailable);
+        return false;
+    }
+    setAppleTransitionPreparation(AppleTransitionPreparation::Accepted);
+    audio->appleTransitionCommitted = [this] { emit appleTransitionCommitted(); };
+    return true;
+}
+
+void Host::cancelAppleTransition() {
+    if (audio) {
+        audio->cancelAppleTransition();
+    }
+    setAppleTransitionPreparation(AppleTransitionPreparation::WaitingForPlayback);
+}
+#endif
+
 void Host::mediaControl(QString action, double value) {
     if (remote) {
         remote->call("host.mediaControl", {{"action", action}, {"value", value}});
@@ -2083,6 +2121,8 @@ const QStringList &preferenceKeys() {
         "fsr-sharpness", "fg", "close-behavior", "auto-update", "volume", "quality", "alternate-source",
 #if !defined(Q_OS_MACOS) && !defined(Q_OS_IOS)
         "audio-output-policy",
+#else
+        "apple-smart-transition",
 #endif
         "provider", "lyrics-cache", "lyrics-global-offset-ms", "desktop-lyrics",
         "desktop-lyrics-size", "desktop-lyrics-translation-size", "desktop-lyrics-opacity",
@@ -2236,6 +2276,9 @@ QJsonObject Host::playbackSnapshot() const {
         return remote->snapshot()["diagnostics"].toObject();
     }
     auto values = audio ? audio->diagnosticState() : QJsonObject();
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+    values["transitionPreparation"] = int(appleTransitionPreparation);
+#endif
     values["bridgeState"] = int(child.state());
     values["bridgeError"] = int(child.error());
     const auto *information = QNetworkInformation::instance();

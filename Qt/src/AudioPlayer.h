@@ -35,6 +35,11 @@ class AudioPlayer {
     void setOutputPolicy(AudioOutputFormat::Policy policy);
     std::function<void(QJsonArray)> spectrumChanged;
     std::function<void(const QString &, const QJsonObject &)> diagnosticEvent;
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+    bool prepareAppleTransition(const QUrl &next, bool offline, bool alternative, const QString &provider);
+    void cancelAppleTransition();
+    std::function<void()> appleTransitionCommitted;
+#endif
 
   private:
     friend class AudioPlayerRegression;
@@ -109,10 +114,20 @@ class AudioPlayer {
     bool useApplePlayback = true; // Qt 输出回归使用独立的测试路径。
     QUrl appleSource;
     std::unique_ptr<AppleAudioPlayer> applePlayer;
+    std::shared_ptr<const QString> appleAnalysisFile;
+    struct AppleTransition;
+    std::unique_ptr<AppleTransition> appleTransition;
     AudioOutputFormat::SystemFormat appleSystemFormat;
     void closeApplePlayback();
     bool startApplePlayback(const QUrl &source, bool paused);
     void checkApplePlayback();
+    bool isApplePlaybackStoppedAtEnd() const;
+    void resetAppleTransitionSchedule();
+    void advanceAppleTransition();
+    void updateAppleTransitionMix();
+    void setAppleTransitionMix(double progress);
+    void abandonAppleTransitionMix(bool outgoingEnded);
+    void commitAppleTransition();
     void failApplePlayback();
     void controlApplePlayback(const QString &action, double value);
 #endif

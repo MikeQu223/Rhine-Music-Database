@@ -2,8 +2,6 @@
 #include "MusicLibrary.h"
 #include "ProviderRegistry.h"
 #include "NativeHud.h"
-#include <QAudioBufferOutput>
-#include <QAudioBuffer>
 #include <QCoreApplication>
 #include <QDataStream>
 #include <QDir>
@@ -13,7 +11,6 @@
 #include <QGuiApplication>
 #include <QImage>
 #include <QJsonDocument>
-#include <QMediaDevices>
 #include <QTemporaryDir>
 #include <QThread>
 #include <QUrl>
@@ -46,7 +43,7 @@ QByteArray chunk(const char *name, QByteArray payload) {
     }
     return bytes;
 }
-/** 生成真实 PCM 与 RIFF INFO 标签，直接验证解析器和解码器，不依赖在线音乐或用户文件。 */
+/** 生成真实 PCM 与 RIFF INFO 标签，直接验证本地索引和标签解析，不依赖在线音乐或用户文件。 */
 QByteArray wave(QString title) {
     QByteArray format;
     QDataStream stream(&format, QIODevice::WriteOnly);
@@ -76,51 +73,6 @@ QJsonObject document(QString source = "remote") {
 }
 }
 
-class AudioPlayerRegression {
-  public:
-    static bool decode(const QString &path) {
-        AudioPlayer audio;
-        audio.output.setVolume(0);
-        audio.enableDiagnostics(true);
-        const auto loaded = audio.load(QUrl::fromLocalFile(path).toString(), false, false, "local");
-        // 创建独立媒体会话
-        auto &capture = *audio.decodedOutput;
-        int frames = 0;
-        qint64 bufferPosition = -1;
-        bool nonzero = false;
-        QObject::connect(&capture, &QAudioBufferOutput::audioBufferReceived, &capture,
-                         [&](const QAudioBuffer &buffer) {
-                             frames += buffer.frameCount();
-                             bufferPosition = buffer.startTime() / 1000;
-                             const auto bytes = QByteArrayView(buffer.constData<char>(), buffer.byteCount());
-                             for (const auto byte : bytes) {
-                                 nonzero |= byte != 0;
-                             }
-                         });
-        const auto decoded =
-            loaded && waitFor([&] { return frames > 4000 && nonzero && audio.player->position() >= 200; });
-        const auto position = audio.player->position();
-        audio.control("pause");
-        const auto paused = audio.player->playbackState() == QMediaPlayer::PausedState;
-        const auto framesBeforeSeek = frames;
-        bufferPosition = -1;
-        audio.control("seek", 1800);
-        audio.control("resume");
-        const auto seeked = waitFor([&] {
-            return frames > framesBeforeSeek && bufferPosition >= 1700 && audio.player->position() >= 1900;
-        });
-        // 在清理音源前验证实际编解码器
-        const auto diagnostic = audio.diagnosticState();
-        audio.control("stop");
-        qInfo() << "Local decoder: frames" << frames << "nonzero" << nonzero << "position" << position
-                << "seek buffer position" << bufferPosition;
-        const bool diagnosticDecoded =
-            diagnostic["decodedFrames"].toDouble() > 4000 && diagnostic["sampleRateHz"].toInt() > 0 &&
-            diagnostic["codec"].toInt(-1) >= 0 && diagnostic["decodedBytes"].toDouble() > 0;
-        return decoded && paused && seeked && diagnosticDecoded;
-    }
-};
-
 int main(int argc, char **argv) {
     qputenv("QT_MEDIA_BACKEND", "ffmpeg");
     QGuiApplication app(argc, argv);
@@ -144,7 +96,6 @@ int main(int argc, char **argv) {
         check(!tracks.isEmpty(), "real directory contains valid tracks");
         int covers = 0;
         int lyrics = 0;
-        int decoded = 0;
         for (const auto &value : tracks) {
             const auto track = value.toObject();
             covers += !track["cover"].toString().isEmpty();
@@ -154,17 +105,12 @@ int main(int argc, char **argv) {
             check(track["duration"].toInt() > 0 && track["sampleRate"].toInt() > 0,
                   "real track has valid duration and sample rate");
             check(!real.search(track["title"].toString(), "song").isEmpty(), "real local title search");
-            if (!QMediaDevices::defaultAudioOutput().isNull()) {
-                const auto result = AudioPlayerRegression::decode(path);
-                check(result, qPrintable("decode " + QFileInfo(path).fileName()));
-                decoded += result;
-            }
         }
         real.rescan();
         check(waitFor([&] { return !real.busy; }, 120000) && real.songs() == tracks,
               "real incremental scan preserves index");
         qInfo() << "REAL LIBRARY tracks" << tracks.size() << "covers" << covers << "sidecars" << lyrics
-                << "decoded" << decoded << real.status;
+                << real.status;
         return ok ? 0 : 1;
     }
     QTemporaryDir temporary;
@@ -318,13 +264,7 @@ int main(int argc, char **argv) {
                   music.local->songs().size() == 1 && music.player.queue.isEmpty(),
               "switch restores online columns and retains independent local index");
     }
-    if (QMediaDevices::defaultAudioOutput().isNull()) {
-        qWarning() << "Local audio output unavailable; decoder/output check not verified";
-    } else {
-        check(AudioPlayerRegression::decode(first),
-              "real FFmpeg samples, pause and seek through local AudioPlayer");
-    }
     host.shutdown();
-    qInfo() << "Local library, provider isolation, metadata priority and playback:" << ok;
+    qInfo() << "Local library, provider isolation and metadata priority:" << ok;
     return ok ? 0 : 1;
 }

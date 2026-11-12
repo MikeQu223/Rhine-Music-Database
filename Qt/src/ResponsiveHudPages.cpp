@@ -534,6 +534,9 @@ double ResponsiveHudLayout::settings(ResponsiveHudCanvas &c, const QJsonObject &
             const auto *d = row.descriptor;
             c.fill({20, y + 55, 353, .6}, c.line);
             c.text(d->titleZh, 20, y + 19, 12, 170);
+            if (d->showDescription) {
+                c.paragraph(d->description, 20, y + 34, 9, 165, c.muted, "regular", 2);
+            }
             if (d->kind == SettingsSchema::SettingKind::TextInput && s["editingSettingId"] == d->id) {
                 c.fill({201, y + 4, 172, 44}, c.raised);
                 c.field("setting", {201, y + 4, 172, 44});

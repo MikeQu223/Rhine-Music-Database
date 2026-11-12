@@ -15,6 +15,9 @@
 #include <QTemporaryDir>
 #include <QTimer>
 #include <functional>
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+#include "AppleTransitionPlan.h"
+#endif
 
 // 系统边界：只通过管道调用锁定的上游；凭据不进入参数、环境或日志。
 class Host : public QObject {
@@ -67,6 +70,11 @@ class Host : public QObject {
                                bool paused = false);
     Q_INVOKABLE void mediaControl(QString action, double value = 0);
     Q_INVOKABLE QVariantMap mediaState() const;
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+    void setAppleTransitionPreparation(AppleTransitionPreparation preparation);
+    bool prepareAppleTransition(const QUrl &next, bool alternative);
+    void cancelAppleTransition();
+#endif
     Q_INVOKABLE void copy(QString text);
     Q_INVOKABLE void open(QString url);
     Q_INVOKABLE QString modifierKey() const {
@@ -114,6 +122,9 @@ class Host : public QObject {
     void preferenceChanged(QString key, QString value);
     void mediaAction(QString action);
     void mediaChanged();
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+    void appleTransitionCommitted();
+#endif
     void audioSpectrumChanged(QJsonArray levels);
     void playbackDiagnostic(QString event, QJsonObject values);
     void invalidated();
@@ -192,6 +203,9 @@ class Host : public QObject {
     QString active;
     bool stopped = false;
     bool audioDiagnosticsEnabled = false;
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+    AppleTransitionPreparation appleTransitionPreparation = AppleTransitionPreparation::WaitingForPlayback;
+#endif
     bool audioSpectrumEnabled = false;
     PlaybackConnection *remote = nullptr;
     mutable QHash<QString, QString> remotePreferences;

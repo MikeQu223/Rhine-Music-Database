@@ -79,19 +79,29 @@ int main(int argc, char **argv) {
     check(queue.navigate(-1, "off") == 1 && queue.index() == 1,
           "previous in sequential mode moves one track back");
 
-    // 随机模式后退必须沿实际播放顺序，而不是重新抽一首。
+    // 随机模式只在进入时打乱；预选、实际下一首与返回后的前进沿同一顺序。
     queue.replace(QJsonArray{song("1"), song("2"), song("3"), song("4"), song("5")}, song("2"));
-    const auto firstShuffle = queue.navigate(1, "shuffle");
-    const auto secondShuffle = queue.navigate(1, "shuffle");
-    check(firstShuffle != 1 && secondShuffle != firstShuffle, "shuffle never picks the current track");
-    check(queue.navigate(-1, "shuffle") == firstShuffle,
-          "shuffle previous returns the previously played track");
-    check(queue.navigate(-1, "shuffle") == 1, "shuffle previous walks back through the shuffle history");
-    const auto thirdShuffle = queue.navigate(1, "shuffle");
-    check(thirdShuffle != 1, "shuffle next keeps random selection after going back");
-    queue.replace(QJsonArray{song("1"), song("2"), song("3")}, song("2"));
-    check(queue.navigate(-1, "shuffle") == 0,
-          "shuffle previous falls back to the preceding track without history");
+    queue.setShuffle(true);
+    const auto shuffled = queue.toJson();
+    check(queue.index() == 0 && queue.current()["id"] == "2", "shuffle preserves the playing song");
+    const auto upcoming = queue.at(queue.nextIndex("shuffle"));
+    check(queue.nextIndex("shuffle") == 1 && queue.at(queue.nextIndex("shuffle")) == upcoming &&
+              queue.toJson() == shuffled,
+          "shuffle peek is stable and does not modify the queue");
+    check(queue.navigate(1, "shuffle") == 1 && queue.current() == upcoming &&
+              queue.navigate(-1, "shuffle") == 0 && queue.navigate(1, "shuffle") == 1 &&
+              queue.current() == upcoming,
+          "shuffle previous and next follow the same permutation");
+    for (int index = 2; index < shuffled.size(); ++index) {
+        check(queue.navigate(1, "shuffle") == index && queue.current() == shuffled.at(index).toObject(),
+              "shuffle walks every song once");
+    }
+    check(queue.nextIndex("shuffle") == 0, "shuffle wraps along the same order");
+    queue.restore(shuffled, 1, true);
+    check(queue.toJson() == shuffled && queue.index() == 1, "session restore keeps shuffled order");
+    queue.enqueue(song("6"), true);
+    check(queue.at(queue.nextIndex("shuffle"))["id"] == "6", "explicit play-next precedes shuffle order");
+    queue.setShuffle(false);
 
     // 服务端快照只同步顺序与索引，不改写曲目内容。
     queue.syncSnapshot(QJsonArray{song("5"), song("6")}, 1);

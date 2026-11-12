@@ -1,5 +1,6 @@
 #include <QtGlobal>
 #include "FrameProfiler.h"
+#include "AppleTransitionPlan.h"
 #include "AudioOutputFormat.h"
 #include "DiagnosticsDirectory.h"
 
@@ -30,6 +31,124 @@
 #include <QQuickWindow>
 
 namespace {
+QString transitionTime(qint64 ms) {
+    return QStringLiteral("%1:%2.%3")
+        .arg(ms / 60000, 2, 10, QLatin1Char('0'))
+        .arg(ms / 1000 % 60, 2, 10, QLatin1Char('0'))
+        .arg(ms % 1000, 3, 10, QLatin1Char('0'));
+}
+
+QString playbackRateLine(const QJsonObject &audio) {
+    const auto rate = audio["nativeRenderedTempo"].toDouble(audio["nativePlayingRate"].toDouble());
+    QString status;
+    if (audio["playing"].toBool()) {
+        if (audio["nativeRateRestoring"].toBool()) {
+            return QStringLiteral("当前曲目  %1× → 1.000× · 回速中").arg(rate, 0, 'f', 3);
+        }
+        if (audio["nativeRateRestored"].toBool()) {
+            status = QStringLiteral("已恢复原速");
+        } else if (std::abs(rate - 1.0) <= 0.001) {
+            status = QStringLiteral("原速播放");
+        } else {
+            status = QStringLiteral("变速播放");
+        }
+    } else if (audio["latchedError"].toBool()) {
+        status = QStringLiteral("播放失败");
+    } else if (audio["requested"].toBool()) {
+        status = QStringLiteral("等待播放");
+    } else if (audio["mediaStatus"].toInt() == QMediaPlayer::EndOfMedia) {
+        status = QStringLiteral("已播完");
+    } else {
+        status = QStringLiteral("暂停");
+    }
+    const double playingRate = audio["playing"].toBool() ? rate : 0.0;
+    return QStringLiteral("当前曲目  %1 · %2×").arg(status).arg(playingRate, 0, 'f', 3);
+}
+
+QString nextTransitionLines(const QJsonObject &audio) {
+    using Phase = AppleTransitionPlan::Phase;
+    using Kind = AppleTransitionPlan::Kind;
+    if (!audio.contains("transitionPhase")) {
+        using Preparation = AppleTransitionPreparation;
+        switch (Preparation(audio["transitionPreparation"].toInt())) {
+        case Preparation::WaitingForPlayback:
+            return QStringLiteral("等待当前曲目开始播放");
+        case Preparation::ResolvingSource:
+            return QStringLiteral("正在获取下一首音源");
+        case Preparation::Accepted:
+            return QStringLiteral("转场未就绪 · 自然切换");
+        case Preparation::SourceUnavailable:
+            return QStringLiteral("下一首音源获取失败 · 自然切换");
+        case Preparation::PlaybackUnavailable:
+            return QStringLiteral("当前音源或输出无法预载 · 自然切换");
+        case Preparation::Natural:
+            return QStringLiteral("自然切换");
+        }
+        return {};
+    }
+    if (!audio.contains("transitionKind")) {
+        return QStringLiteral("正在预载音源并分析");
+    }
+
+    const auto kind = Kind(audio["transitionKind"].toInt());
+    QString text;
+    switch (kind) {
+    case Kind::Original:
+        text = QStringLiteral("自然切换");
+        break;
+    case Kind::Trim:
+        text = QStringLiteral("跳过首尾静音");
+        break;
+    case Kind::Fade:
+        text = QStringLiteral("原速淡化");
+        break;
+    case Kind::BeatMatch:
+        text = audio["transitionAlignment"].toInt() == int(AppleTransitionPlan::Alignment::Bar)
+                   ? QStringLiteral("保音高对拍 · 小节首拍对齐")
+                   : QStringLiteral("保音高对拍 · 拍点对齐");
+        break;
+    }
+    const auto phase = Phase(audio["transitionPhase"].toInt());
+    if (phase == Phase::Unavailable) {
+        text = QStringLiteral("已分析 · 本次自然切换");
+    } else if (phase == Phase::Recovering) {
+        text = QStringLiteral("转场中断 · 正在恢复当前曲目音量");
+    } else if (phase == Phase::Armed) {
+        text += audio["transitionIncomingPlaying"].toBool() ? QStringLiteral(" · 切入中")
+                                                            : QStringLiteral(" · 已调度");
+    } else if (phase == Phase::Ready) {
+        text += QStringLiteral(" · 已预卷");
+    } else if (phase == Phase::Waiting && kind != Kind::Original) {
+        text += QStringLiteral(" · 已分析，等待切入");
+    } else if (phase == Phase::Loading || phase == Phase::Seeking || phase == Phase::Prerolling) {
+        text += QStringLiteral(" · 预卷中");
+    }
+    if (kind != Kind::Original && phase != Phase::Unavailable && phase != Phase::Recovering) {
+        text += QStringLiteral("\n当前出点 %1 · 下一首入点 %2\n切入速度 %3× · 叠播 %4 ms")
+                    .arg(transitionTime(audio["transitionAtMs"].toInteger()),
+                         transitionTime(audio["transitionIncomingMs"].toInteger()))
+                    .arg(audio["transitionRate"].toDouble(), 0, 'f', 3)
+                    .arg(audio["transitionOverlapMs"].toInteger());
+    }
+    static const QStringList notes{"C", "C♯", "D", "E♭", "E", "F", "F♯", "G", "A♭", "A", "B♭", "B"};
+    const auto tonic = audio["transitionIncomingTonic"].toInt(-1);
+    const auto outgoingBpm = audio["transitionOutgoingBpm"].toDouble();
+    const auto bpm = audio["transitionIncomingBpm"].toDouble();
+    const auto barMs = audio["transitionIncomingBarMs"].toInteger(-1);
+    const auto key = tonic >= 0 && tonic < notes.size()
+                         ? notes[tonic] + (audio["transitionIncomingMinor"].toBool() ? " 小调" : " 大调")
+                         : QStringLiteral("未识别");
+    auto tempo = bpm > 0 ? QStringLiteral("%1 BPM").arg(bpm, 0, 'f', 1) : QStringLiteral("未识别");
+    if (bpm > 0 && outgoingBpm > 0) {
+        tempo.prepend(QStringLiteral("%1 → ").arg(outgoingBpm, 0, 'f', 1));
+    }
+    const auto bar = barMs >= 0 ? QStringLiteral("%1 · %2 拍/小节")
+                                      .arg(transitionTime(barMs))
+                                      .arg(audio["transitionIncomingBeatsPerBar"].toInt())
+                                : QStringLiteral("未识别");
+    return text + QStringLiteral("\n调性 %1 · 拍速 %2\n小节首拍 %3").arg(key, tempo, bar);
+}
+
 /** 当前场景图使用的图形 API 名；性能面板、设置页与环境诊断共用同一份显示文本。 */
 QString graphicsApiName(QQuickWindow *window) {
     if (!window || !window->rendererInterface()) {
@@ -505,6 +624,9 @@ void FrameProfiler::sample() {
         audio["controllerPlaying"] = player.state["playing"].toBool();
     }
     m_metrics.insert("audio", audio.toVariantMap());
+    if (m_visible && m_detailsEnabled) {
+        updateTransitionDetails(audio);
+    }
     // 详情按自己的节奏重建：面板收起时完全不建，展开时默认 1 s 一次。
     // headline 仍然每次采样都刷——它只有一行，重排成本可以忽略。
     const bool wantDetails = m_detailsEnabled && (m_detailsIntervalMs <= 0 ||
@@ -540,6 +662,28 @@ void FrameProfiler::setDetailsEnabled(bool enabled) {
         m_detailsBuiltMs = 0;
     }
     emit detailsEnabledChanged();
+}
+
+/** 单独刷新短文本，避免播放速率变化触发整个性能详情重排。 */
+void FrameProfiler::updateTransitionDetails(const QJsonObject &audio) {
+    QString text;
+    if (audio["outputBackend"].toInt() == 2 && m_engine->host.preference("apple-smart-transition") == "on") {
+        text = playbackRateLine(audio);
+        if (m_engine->app) {
+            const auto &player = m_engine->app->music.player;
+            const auto next = player.queue.at(player.queue.nextIndex(player.mode));
+            if (next.isEmpty() || PlaybackQueue::identity(next) == PlaybackQueue::identity(player.current)) {
+                text += QStringLiteral("\n下一首  无");
+            } else {
+                text += QStringLiteral("\n下一首  %1\n%2")
+                            .arg(next["title"].toString(), nextTransitionLines(audio));
+            }
+        }
+    }
+    if (text != m_transitionDetails) {
+        m_transitionDetails = text;
+        emit transitionDetailsChanged();
+    }
 }
 
 void FrameProfiler::formatMetrics(bool withDetails) {

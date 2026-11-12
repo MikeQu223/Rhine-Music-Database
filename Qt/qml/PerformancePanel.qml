@@ -46,19 +46,34 @@ Item {
             Flickable {
                 visible: panel.expanded
                 width: parent.width
-                height: Math.min(diagnosticDetails.height, Math.max(80, panel.height - 210))
-                contentHeight: diagnosticDetails.height
+                height: Math.min(diagnosticContent.height, Math.max(80, panel.height - 210))
+                contentHeight: diagnosticContent.height
                 clip: true
                 boundsBehavior: Flickable.StopAtBounds
-                Text {
-                    id: diagnosticDetails
+                Column {
+                    id: diagnosticContent
                     width: parent.width
-                    text: profiler.details
-                    color: "#e1e6eb"
-                    font.family: rhineFontFamily
-                    font.pixelSize: 12
-                    lineHeight: 1.35
-                    wrapMode: Text.Wrap
+                    spacing: 9
+                    Text {
+                        objectName: "performanceTransitionDetails"
+                        width: parent.width
+                        visible: text.length > 0
+                        text: profiler.transitionDetails
+                        color: "#8fe3bb"
+                        font.family: rhineFontFamily
+                        font.pixelSize: 12
+                        lineHeight: 1.35
+                        wrapMode: Text.Wrap
+                    }
+                    Text {
+                        width: parent.width
+                        text: profiler.details
+                        color: "#e1e6eb"
+                        font.family: rhineFontFamily
+                        font.pixelSize: 12
+                        lineHeight: 1.35
+                        wrapMode: Text.Wrap
+                    }
                 }
             }
             Row {

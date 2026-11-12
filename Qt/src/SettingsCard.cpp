@@ -198,9 +198,10 @@ void drawRow(const RowLayout &layout, const RowModel &row, int index, const Colo
     canvas.text(rowIndex(index), rect.left(), rect.top() + 25, 11, "regular", 0.04, muted);
     canvas.text(row.descriptor->titleEn, rect.left() + 30, rect.top() + 10, 11, "regular", 0.08, muted);
     canvas.text(row.descriptor->titleZh, rect.left() + 30, rect.top() + 25, 17, "demibold", -0.01, ink);
-    if (!row.descriptor->restartHint.isEmpty()) {
-        canvas.text(row.descriptor->restartHint, rect.left() + 30, rect.top() + 50, 10, "regular", 0.03,
-                    muted);
+    const auto &hint =
+        row.descriptor->showDescription ? row.descriptor->description : row.descriptor->restartHint;
+    if (!hint.isEmpty()) {
+        canvas.text(hint, rect.left() + 30, rect.top() + 50, 10, "regular", 0.03, muted);
     }
 
     switch (row.descriptor->kind) {
