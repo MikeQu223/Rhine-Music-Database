@@ -13,6 +13,8 @@ import android.window.OnBackInvokedCallback
 import android.window.OnBackInvokedDispatcher
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
+import rhine.music.database.basic.BasicAudioChannel
+import rhine.music.database.basic.BasicSceneViewFactory
 import rhine.music.database.porting.MediaSessionChannel
 import rhine.music.database.porting.QtPlatformViewHost
 
@@ -82,6 +84,13 @@ class MainActivity : FlutterActivity() {
             { this },
             applicationContext,
         )
+        // BASIC-89：两条注册都不碰上面 MediaSession 的顺序与语义。
+        //  BasicAudioChannel 是真实音频的唯一权威（android.media.MediaPlayer）；MediaSession 只做
+        //  通知/会话/焦点，不产生声音。BasicSceneViewFactory 是 3D 场景 PlatformView 的工厂
+        //  （view type "rhine/basic_scene"）。两者都只在 engine 装配完成后各装一次：重复 install
+        //  会接管旧 channel（BasicAudioChannel.install 先 detach 再替换），不会叠出第二个实例。
+        BasicAudioChannel.install(flutterEngine.dartExecutor.binaryMessenger) { this }
+        BasicSceneViewFactory.install(flutterEngine)
     }
 
     override fun onResume() {
