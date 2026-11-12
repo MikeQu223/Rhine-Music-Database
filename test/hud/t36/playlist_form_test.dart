@@ -117,8 +117,11 @@ Widget _harness({
 }
 
 String _fieldText(WidgetTester tester) {
-  final TextField field = tester.widget<TextField>(find.byKey(PlaylistFormKeys.nameField));
-  return field.controller?.text ?? '';
+  // 输入框必须由 TextInputOverlay 的 EditableText 承接；raw TextField 已删除。
+  final EditableText field = tester.widget<EditableText>(
+    find.byKey(PlaylistFormKeys.nameField),
+  );
+  return field.controller.text;
 }
 
 void main() {
@@ -456,6 +459,21 @@ void main() {
       expect(_fieldText(tester).length, 100);
     });
 
+    testWidgets('字段按 UTF-16 码元截断（Qt QString 口径，不是 grapheme）', (WidgetTester tester) async {
+      final _FakePort port = _FakePort();
+      await tester.pumpWidget(_harness(
+        view: const PlaylistFormView(formKind: PlaylistFormKind.create, provider: 'netease'),
+        port: port,
+      ));
+      await tester.enterText(
+        find.byKey(PlaylistFormKeys.nameField),
+        List<String>.filled(60, '😀').join(),
+      );
+      await tester.pump();
+      expect(_fieldText(tester).length, 100);
+      expect(_fieldText(tester).runes.length, 50);
+    });
+
     testWidgets('create 成功：端口收到 trimmed 名，表格 upsert + syncTotals，onCommitted 与关闭', (
       WidgetTester tester,
     ) async {
@@ -736,15 +754,66 @@ void main() {
       expect(port.calls, <String>['create:回车歌单']);
     });
 
-    testWidgets('可见性变化清空输入（Overlay.qml:363-369），同一 State 复用同一 controller', (
+    testWidgets('输入框由 TextInputOverlay 的真实 EditableText 承接，无 raw TextField', (
       WidgetTester tester,
     ) async {
+      final _FakePort port = _FakePort();
+      await tester.pumpWidget(_harness(
+        view: const PlaylistFormView(formKind: PlaylistFormKind.create, provider: 'netease'),
+        port: port,
+      ));
+      // 旧实现直接在 playlist_form.dart 里建 TextField；A55 后必须只有 overlay 一套。
+      expect(find.byType(TextField), findsNothing);
+      expect(find.byType(EditableText), findsOneWidget);
+      expect(find.byKey(PlaylistFormKeys.nameField), findsOneWidget);
+    });
+
+    testWidgets('rename 初值进入 overlay controller（Overlay.qml:390）', (WidgetTester tester) async {
+      final _FakePort port = _FakePort();
+      await tester.pumpWidget(_harness(
+        view: const PlaylistFormView(
+          formKind: PlaylistFormKind.rename,
+          provider: 'netease',
+          formPid: 'p1',
+          initialName: '旧歌单名',
+        ),
+        port: port,
+      ));
+      expect(_fieldText(tester), '旧歌单名');
+    });
+
+    testWidgets('同一 overlay 切换 rename 目标时用新初值重置（formIdentity）', (
+      WidgetTester tester,
+    ) async {
+      final _FakePort port = _FakePort();
+      await tester.pumpWidget(_harness(
+        view: const PlaylistFormView(
+          formKind: PlaylistFormKind.rename,
+          provider: 'netease',
+          formPid: 'p1',
+          initialName: '第一首',
+        ),
+        port: port,
+      ));
+      expect(_fieldText(tester), '第一首');
+      await tester.pumpWidget(_harness(
+        view: const PlaylistFormView(
+          formKind: PlaylistFormKind.rename,
+          provider: 'netease',
+          formPid: 'p2',
+          initialName: '第二首',
+        ),
+        port: port,
+      ));
+      await tester.pump();
+      expect(_fieldText(tester), '第二首');
+    });
+
+    testWidgets('可见性变化清空输入（Overlay.qml:363-369）', (WidgetTester tester) async {
       final _FakePort port = _FakePort();
       const PlaylistFormView shown =
           PlaylistFormView(formKind: PlaylistFormKind.create, provider: 'netease');
       await tester.pumpWidget(_harness(view: shown, port: port));
-      final TextEditingController controller =
-          tester.widget<TextField>(find.byKey(PlaylistFormKeys.nameField)).controller!;
       await tester.enterText(find.byKey(PlaylistFormKeys.nameField), '待清空');
       await tester.pump();
       expect(_fieldText(tester), '待清空');
@@ -759,9 +828,9 @@ void main() {
       await tester.pump();
       await tester.pumpWidget(_harness(view: shown, port: port));
       await tester.pump();
+      // formInitialText 为空串（create）时，onVisibleChanged 必须清空并重新聚焦；
+      // controller 由 overlay 持有，重开时不能把旧文本带回来。
       expect(_fieldText(tester), '');
-      expect(identical(tester.widget<TextField>(find.byKey(PlaylistFormKeys.nameField)).controller, controller),
-          isTrue);
     });
 
     testWidgets('视图注入的状态行原文渲染（NativeHudModal.cpp:243）', (WidgetTester tester) async {
@@ -794,8 +863,10 @@ void main() {
       ));
       expect(find.byKey(PlaylistFormKeys.layer), findsOneWidget);
       final Rect fieldRect = tester.getRect(find.byKey(PlaylistFormKeys.nameField));
-      expect(fieldRect.top, closeTo(264, 1e-6));
+      // EditableText 在 64 高字段框内垂直居中（Overlay.qml:391 AlignVCenter），
+      // 其自身 rect 的 top 不是框 top；宽度仍是整框宽（326-24）。
       expect(fieldRect.width, closeTo(326 - 24, 1e-6));
+      expect(fieldRect.center.dy, closeTo(264 + 32, 1e-6));
       expect(tester.takeException(), isNull);
     });
   });
