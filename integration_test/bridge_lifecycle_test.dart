@@ -29,6 +29,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
+import 'package:rhine_music_database/app/lifecycle.dart';
 import 'package:rhine_music_database/bridge/engine_transport.dart';
 import 'package:rhine_music_database/bridge/node_runtime.dart';
 
@@ -187,6 +188,83 @@ final class _RecordingHost implements NodeRuntimeHost {
   Future<void> dispose() async {
     disposeCount += 1;
   }
+}
+
+/// T21-S08 的 foreground 端口：只记录 AppLifecycle 的 host 调用，不碰 Node。
+///
+/// MainActivity.kt:68-74 目前只重放沉浸式窗口，尚未把 Activity.onResume/onPause
+/// 接到 AppLifecycle；这里直接驱动已落地的 real lifecycle port
+/// (lib/app/lifecycle.dart:402 hostActivityChanged)，不新建 EngineTransport。
+final class _LifecyclePortsFake implements LifecyclePorts {
+  int attachCount = 0;
+  int saveCount = 0;
+  final List<bool> visibility = <bool>[];
+
+  @override
+  bool get offline => false;
+
+  @override
+  bool get playbackConnection => false;
+
+  @override
+  String preference(String key) => '';
+
+  @override
+  void setPreference(String key, String value) {}
+
+  @override
+  EngineAttachment attachEngine() {
+    attachCount += 1;
+    return const EngineAttachment(
+      nodeRuntimeId: 'node-process-singleton',
+      loginSessionId: 'login-session',
+      playerId: 'player',
+    );
+  }
+
+  @override
+  void applyPresentationPreferences() {}
+
+  @override
+  StoredSession? loadSession() => null;
+
+  @override
+  bool restoreSession(StoredSession session, {required bool restorePlayer}) =>
+      true;
+
+  @override
+  void restoreAccount() {}
+
+  @override
+  void restoreIdentityName() {}
+
+  @override
+  void setVolume(double volume) {}
+
+  @override
+  void setSceneModeArchive() {}
+
+  @override
+  void replayStartupAnimation() {}
+
+  @override
+  void saveSession() {
+    saveCount += 1;
+  }
+
+  @override
+  void applyWindowShape() {}
+
+  @override
+  void showFullScreen() {}
+
+  @override
+  void setEngineVisible(bool visible) {
+    visibility.add(visible);
+  }
+
+  @override
+  void trimMemory() {}
 }
 
 /// 轮询等待条件成立：真实回环 socket 是内核异步投递的，pumpEventQueue 不保证已到达。
@@ -564,6 +642,38 @@ void main() {
       harness.transport.terminate();
       expect(harness.transport.waitForFinished(1), isTrue);
     });
+
+    testWidgets('30 s 超时：started 未到达时只发一次 stop 且 finished 一次', (WidgetTester tester) async {
+      harness.transport.start(
+        root: root,
+        temporary: temporary,
+        edition: edition,
+      );
+      runtime.authenticate(processToken);
+      expect(harness.transport.state, EngineProcessState.starting);
+      expect(
+        runtime.sent.where((Map<String, Object?> f) => f['type'] == EngineWire.stop),
+        isEmpty,
+      );
+
+      // BridgeProcessAndroid.cpp:213-217：30000 ms 单次定时器。
+      await tester.pump(const Duration(seconds: 29));
+      expect(harness.transport.state, EngineProcessState.starting);
+      expect(
+        runtime.sent.where((Map<String, Object?> f) => f['type'] == EngineWire.stop),
+        isEmpty,
+      );
+
+      await tester.pump(const Duration(seconds: 1));
+      expect(harness.transport.state, EngineProcessState.notRunning);
+      expect(harness.transport.session, isNull);
+      expect(
+        runtime.sent.where((Map<String, Object?> f) => f['type'] == EngineWire.stop),
+        hasLength(1),
+        reason: '超时只 kill 一次',
+      );
+      expect(harness.finishedEvents, hasLength(1));
+    });
   });
 
   // ————————————————————————————————————————————————————————————————
@@ -779,6 +889,33 @@ void main() {
       expect(runtime.port, port, reason: 'Qt:103 回环端口只绑定一次');
       expect(runtime.authenticated, isTrue);
       expect(errors, isEmpty);
+    });
+
+    test('前后台/旋转：real LifecyclePort 的 inactive→active 不重启 Node', () async {
+      expect(await runtime.launch(tempRoot.path, host), isTrue);
+      final _LifecyclePortsFake ports = _LifecyclePortsFake();
+      final AppLifecycle lifecycle = AppLifecycle(ports)..grantConsent();
+      expect(ports.attachCount, 1, reason: '进程级 EngineAttachment 只构建一次');
+
+      lifecycle.hostActivityChanged(HostActivity.active);
+      lifecycle.hostActivityChanged(HostActivity.inactive);
+      lifecycle.hostActivityChanged(HostActivity.active);
+      lifecycle.rotation();
+      lifecycle.activityReattached();
+
+      expect(lifecycle.snapshot.foregroundCount, 2);
+      expect(lifecycle.snapshot.backgroundCount, 1);
+      expect(ports.saveCount, 1, reason: 'inactive 保存一次会话');
+      expect(ports.visibility, <bool>[true, false, true],
+          reason: 'Qt AndroidWindow.cpp:100：非 active 隐藏引擎，active 恢复');
+      expect(ports.attachCount, 1);
+      expect(host.starts, hasLength(1),
+          reason: '前后台/旋转不得第二次 node::Start');
+      expect(host.prepareCount, 1);
+
+      expect(await runtime.launch(tempRoot.path, host), isTrue);
+      expect(host.starts, hasLength(1),
+          reason: 'Qt:99-100：已 launched 且连接仍活 → true，不重复启动');
     });
   });
 }
