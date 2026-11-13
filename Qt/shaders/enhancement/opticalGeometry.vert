@@ -18,7 +18,8 @@ layout(location = 11) in vec4 previousModel3;
 layout(location = 0) out vec2 v_surfaceUv;
 layout(location = 1) out vec2 v_uv;
 layout(location = 2) out vec3 v_lightUv;
-layout(location = 3) out float v_theme;
+// 主题由实例提供，同一个壳体的全部片元共用该值。
+layout(location = 3) flat out float v_theme;
 layout(location = 4) out float v_viewZ;
 layout(location = 5) out float v_quality;
 layout(location = 6) out float v_lightMask;
