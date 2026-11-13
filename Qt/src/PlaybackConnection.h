@@ -12,7 +12,7 @@
 class PlaybackConnection : public QObject {
     Q_OBJECT
   public:
-    static constexpr int ProtocolVersion = 3;
+    static constexpr int ProtocolVersion = 4;
     using Reply = std::function<void(QJsonObject, QString)>;
     explicit PlaybackConnection(QObject *parent = nullptr);
     ~PlaybackConnection() override;
@@ -34,6 +34,7 @@ class PlaybackConnection : public QObject {
     void restartRequested();
 #endif
     void disconnected();
+    void storageInvalidated();
     void diagnosticEvent(QString event, QJsonObject values);
     void spectrumChanged(QJsonArray levels);
 

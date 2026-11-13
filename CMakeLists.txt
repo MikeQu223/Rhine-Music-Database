@@ -72,6 +72,14 @@ endif()
 if(NOT TARGET Qt6::MultimediaPrivate)
     find_package(Qt6MultimediaPrivate REQUIRED)
 endif()
+option(RHINE_ENABLE_SQL_CACHE "Enable the QSQLITE disk cache when available" ON)
+if(RHINE_ENABLE_SQL_CACHE)
+    find_package(Qt6Sql 6.12 QUIET)
+endif()
+set(RHINE_SQL_CACHE OFF)
+if(RHINE_ENABLE_SQL_CACHE AND TARGET Qt6::Sql AND TARGET Qt6::QSQLiteDriverPlugin)
+    set(RHINE_SQL_CACHE ON)
+endif()
 qt_policy(SET QTP0001 NEW)
 qt_policy(SET QTP0004 NEW)
 # 标签读取
@@ -158,6 +166,14 @@ set(RHINE_APP_SOURCES
     Qt/src/MusicPlayer.h
     Qt/src/PlaybackQueue.cpp
     Qt/src/PlaybackQueue.h
+    Qt/src/storage/StorageCoordinator.cpp
+    Qt/src/storage/StorageCoordinator.h
+    Qt/src/storage/CacheManager.cpp
+    Qt/src/storage/CacheManager.h
+    Qt/src/storage/CacheDatabase.cpp
+    Qt/src/storage/CacheDatabase.h
+    Qt/src/storage/RenderCacheStorage.cpp
+    Qt/src/storage/RenderCacheStorage.h
     Qt/src/MusicData.cpp
     Qt/src/MusicData.h
     Qt/src/LocalMusicLibrary.cpp
@@ -309,7 +325,7 @@ if(NOT RHINE_MOBILE_PLATFORM)
         RHINE_PLAYBACK_SOURCES
         INCLUDE
         REGEX
-        "/(AppUpdater|AppStorage|AudioPlayer|AudioSpectrum|HttpAudioStream|PlaybackDiagnostics|PlaybackConnection|Host|MusicApi|MusicPlayer|PlaybackQueue|LyricsController|Platform|ProviderRegistry)\\.(cpp|h)$|/qrcodegen\\.cpp$"
+        "/(AppUpdater|AppStorage|AudioPlayer|AudioSpectrum|HttpAudioStream|PlaybackDiagnostics|PlaybackConnection|Host|MusicApi|MusicPlayer|PlaybackQueue|LyricsController|Platform|ProviderRegistry)\\.(cpp|h)$|/storage/(CacheDatabase|CacheManager|StorageCoordinator)\\.(cpp|h)$|/qrcodegen\\.cpp$"
     )
     list(REMOVE_ITEM RHINE_CORE_SOURCES ${RHINE_PLAYBACK_SOURCES})
     add_library(RhinePlaybackCore STATIC ${RHINE_PLAYBACK_SOURCES})
@@ -346,8 +362,15 @@ target_link_libraries(
 if(NOT RHINE_MOBILE_PLATFORM)
     target_link_libraries(RhineCore PUBLIC RhinePlaybackCore)
 endif()
+target_compile_definitions(${RHINE_SYSTEM_CORE} PUBLIC RHINE_SQL_CACHE=$<BOOL:${RHINE_SQL_CACHE}>)
+if(RHINE_SQL_CACHE)
+    target_link_libraries(${RHINE_SYSTEM_CORE} PRIVATE Qt6::Sql)
+endif()
 add_subdirectory(Qt)
 target_link_libraries(RhineMusicDatabase PRIVATE RhineCore)
+if(RHINE_SQL_CACHE AND IOS)
+    qt_import_plugins(RhineMusicDatabase INCLUDE Qt6::QSQLiteDriverPlugin)
+endif()
 # 体积优化：随包的 97 个库都是 Qt 与发行版的 strip 二进制，编译参数无从下手，能自定义的只有这两个 目标。Release 开 LTO，让链接期做跨翻译单元内联与死代码消除。 刻意不加
 # -fvisibility=hidden：可执行文件本来就不导出符号，省不到 50 KB，却可能挡住 dlsym 一类的自省路径，收益与风险倒挂。
 #
@@ -942,6 +965,15 @@ endif()
 add_test(NAME qt_local_music_regression COMMAND RhineLocalMusicRegression
                                                 "${CMAKE_CURRENT_SOURCE_DIR}/output/resources")
 set_tests_properties(qt_local_music_regression PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+qt_add_executable(RhineStorageRegression Qt/tests/StorageChecks.cpp)
+target_link_libraries(RhineStorageRegression PRIVATE RhineCore)
+if(MSVC)
+    target_compile_options(RhineStorageRegression PRIVATE /utf-8)
+endif()
+add_test(NAME qt_storage_regression COMMAND RhineStorageRegression
+                                            "${CMAKE_CURRENT_SOURCE_DIR}/output/resources")
+set_tests_properties(qt_storage_regression PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
 qt_add_executable(RhinePlaybackQueueRegression Qt/tests/PlaybackQueueChecks.cpp)
 target_link_libraries(RhinePlaybackQueueRegression PRIVATE RhineCore)

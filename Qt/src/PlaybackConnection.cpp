@@ -174,6 +174,8 @@ void PlaybackConnection::readMessages() {
             emit activateRequested();
         } else if (message["event"] == "quit") {
             emit quitRequested();
+        } else if (message["event"] == "storage.invalidated") {
+            emit storageInvalidated();
 #ifdef Q_OS_LINUX
         } else if (message["event"] == "restart") {
             emit restartRequested();

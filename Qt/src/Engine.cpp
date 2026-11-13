@@ -45,12 +45,16 @@ bool runNativeHostChecks(const QString &root);
 bool runNativeMusicChecks(const QString &root);
 
 /** 建立纯原生音乐、HUD 和场景状态；Qt 定时器只在输入或动画尚未收束时运行。 */
-Engine::Engine(QString path, bool offline, QObject *parent, PlaybackConnection *connection)
+Engine::Engine(QString path, bool offline, QObject *parent, PlaybackConnection *connection,
+               RenderCacheStorage *renderCache)
     : QObject(parent), host(path, offline, nullptr, false, connection), scene(path), m_glyphs(path) {
     // FSR3 抖动默认关闭；环境变量在进程启动时读取一次，运行期不再变化。
     m_jitterEnabled = qEnvironmentVariableIntValue("RHINE_JITTER") == 1;
     const auto content = QJsonDocument::fromJson(host.read("slots.json").toUtf8()).object();
     app = std::make_unique<NativeApplication>(&host, &m_glyphs, &scene, content);
+    if (renderCache) {
+        app->music.registerRenderCache(*renderCache);
+    }
     connect(&app->music, &MusicLibrary::playbackInvalidated, this, &Engine::refreshPlayback);
     connect(&app->hud, &NativeHud::localImportRequested, this, &Engine::localImportRequested);
     connect(&app->hud, &NativeHud::pluginImportRequested, this, &Engine::pluginImportRequested);

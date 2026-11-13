@@ -108,6 +108,10 @@ bool runPlaybackServiceChecks(const QString &sourceResources, const QString &exe
           "real helper accepts IPC handshake");
     check(connection->snapshot()["servicePid"].toInteger() == service.processId(),
           "playback owner is the separate helper process");
+    const auto storage = connection->call("storage.stats")["items"].toArray();
+    check(!storage.isEmpty(), "service provides a storage status");
+    const auto cleared = connection->call("storage.clearCaches")["items"].toArray();
+    check(cleared.size() >= 3, "service acknowledges each cache operation");
     connection->call("host.setProvider", {{"provider", "local"}});
     connection->call("player.volume", {{"value", 0}});
     connection->call("host.diagnostics", {{"enabled", true}});

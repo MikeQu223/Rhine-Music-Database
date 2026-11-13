@@ -29,7 +29,8 @@ class MusicPlayer : public QObject {
     void setMode(const QString &value);
     void setAlternative(bool enabled);
     void clearHistory();
-    void clearCaches();
+    QJsonObject clearPlayHistory();
+    void registerStorageOperations(StorageCoordinator &storage);
     QJsonObject playbackSnapshot() const;
     void applyPlaybackSnapshot();
     static QVector<QPair<QString, QString>> qualityOptions(const QString &provider);

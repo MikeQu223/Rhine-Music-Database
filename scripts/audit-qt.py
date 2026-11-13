@@ -134,9 +134,8 @@ if mac:
     assert "/Users/" not in conf and "/opt/homebrew/" not in conf, (
         "Local QML search path"
     )
-    assert not (app / "Contents/PlugIns/sqldrivers").exists(), (
-        "Unneeded database plugins"
-    )
+    if (app / "Contents/Frameworks/QtSql.framework").exists():
+        assert (app / "Contents/PlugIns/sqldrivers/libqsqlite.dylib").is_file(), "Missing QSQLITE driver"
     assert (app / "Contents/PlugIns/multimedia/libffmpegmediaplugin.dylib").is_file(), (
         "Missing FFmpeg backend"
     )
@@ -305,7 +304,8 @@ elif linux:
         app / "rhine-music-database.desktop"
     ).is_file()
     assert not list(app.rglob("*.swift"))
-    assert not list(app.rglob("sqldrivers"))
+    if list((app / "usr/lib").glob("libQt6Sql.so*")):
+        assert (app / "usr/plugins/sqldrivers/libqsqlite.so").is_file(), "Missing QSQLITE driver"
 else:
     debug = (app / "Qt6Cored.dll").is_file()
     suffix = "d.dll" if debug else ".dll"
@@ -336,7 +336,8 @@ else:
     assert (resources / "MusicBridge/node.exe").is_file()
     assert (app / "qml").is_dir()
     assert not list(app.rglob("*.swift"))
-    assert not (app / "sqldrivers").exists()
+    if (app / ("Qt6Sql" + suffix)).exists():
+        assert (app / ("sqldrivers/qsqlite" + suffix)).is_file(), "Missing QSQLITE driver"
 result = {
     "qt_deployed": True,
     "swift_runtime_required": False,

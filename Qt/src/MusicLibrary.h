@@ -9,6 +9,7 @@
 #include <memory>
 
 class MusicDiscover;
+class RenderCacheStorage;
 
 struct MusicDirectory {
     std::shared_ptr<MusicDirectory> parent;
@@ -54,7 +55,10 @@ class MusicLibrary : public QObject {
     void loadSirenCatalog();
     void searchSirenLocal(QString query, QString kind, int start, bool more);
     bool openSirenAllSongs();
-    void clearCaches();
+    void clearCaches(StorageCoordinator::Completion done);
+    void storageStats(StorageCoordinator::Completion done);
+    void registerRenderCache(RenderCacheStorage &cache);
+    void clearHistory(StorageCoordinator::Completion done);
     void searchLocal(QString text, QString kind = {});
     void importLocal(const QStringList &paths);
     std::unique_ptr<LocalMusicLibrary> local;
@@ -228,6 +232,7 @@ class MusicLibrary : public QObject {
     void musicClearRequested();
 
   private:
+    StorageCoordinator m_storage;
     void searchInternal(QString text, QString kind, bool more);
     struct Cooldown {
         qint64 deadline = 0;

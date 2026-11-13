@@ -1,4 +1,5 @@
 #include "MusicLibrary.h"
+#include "storage/RenderCacheStorage.h"
 #include "ProviderRegistry.h"
 #include "MusicData.h"
 #include "MusicDiscover.h"
@@ -17,7 +18,17 @@ int wrap(int value, int count) {
 
 /** 建立原生资料库和各类请求的独立代数，物理槽位保持原有五列八行映射。 */
 MusicLibrary::MusicLibrary(Host *host, const QJsonObject &content, QObject *parent)
-    : QObject(parent), host(host), api(host), player(host, &api), comments(host), m_identityApi(host) {
+    : QObject(parent), host(host), api(host), player(host, &api), comments(host),
+      m_storage(host->playbackConnection()), m_identityApi(host) {
+    if (host->playbackConnection()) {
+        m_storage.addCacheOperation([host](StorageCoordinator::Completion done) {
+            auto result = host->clearNetworkImages();
+            result["category"] = "gui-network-images";
+            done({result});
+        });
+    } else {
+        player.registerStorageOperations(m_storage);
+    }
     const auto &registry = ProviderRegistry::instance();
     provider = host->preference("provider");
     if (!registry.contains(provider) || (provider == "local" && !PlatformFeatures::LocalMusic)) {
@@ -144,15 +155,52 @@ void MusicLibrary::changed() {
     emit invalidated();
 }
 
-/** 清除可重建的缓存与本地记录；登录状态、账号设置和本地音乐库保持不变。 */
-void MusicLibrary::clearCaches() {
-    host->clearCache();
-    player.clearCaches();
-    comments.clear();
-    searchHistory.clear();
-    suggestions.clear();
-    host->setPreference("search-history", "[]");
-    changed();
+/** 清除可重建的缓存；历史、登录状态、账号设置和本地音乐库保持不变。 */
+void MusicLibrary::clearCaches(StorageCoordinator::Completion done) {
+    m_storage.clearCaches(std::move(done));
+}
+
+void MusicLibrary::storageStats(StorageCoordinator::Completion done) {
+    m_storage.stats(std::move(done));
+}
+
+void MusicLibrary::registerRenderCache(RenderCacheStorage &cache) {
+    m_storage.addCacheOperation([&cache](StorageCoordinator::Completion done) {
+        done(cache.scheduleClear());
+    });
+    m_storage.addStatsOperation([&cache](StorageCoordinator::Completion done) {
+        done(cache.stats());
+    });
+}
+
+void MusicLibrary::clearHistory(StorageCoordinator::Completion done) {
+    const auto complete = [owner = QPointer(this), done](QJsonArray results) {
+        if (!owner) {
+            return;
+        }
+        for (const auto &item : results) {
+            const auto result = item.toObject();
+            if (result["category"] == "search-history" && result["status"] == "cleared") {
+                owner->searchHistory.clear();
+                owner->host->forgetPreference("search-history");
+                owner->changed();
+            }
+        }
+        done(results);
+    };
+    if (auto connection = host->playbackConnection()) {
+        connection->request("storage.clearHistory", {}, [complete](QJsonObject result, QString error) {
+            if (!error.isEmpty()) {
+                complete({StorageCoordinator::result("history", "failed", error)});
+                return;
+            }
+            complete(result["items"].toArray());
+        });
+        return;
+    }
+    const auto error = host->writeStoragePreference("search-history", "[]");
+    complete({StorageCoordinator::result("search-history", error.isEmpty() ? "cleared" : "failed", error),
+              player.clearPlayHistory()});
 }
 
 bool MusicLibrary::editable() const {

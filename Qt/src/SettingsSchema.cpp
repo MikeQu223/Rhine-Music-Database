@@ -802,7 +802,7 @@ const QVector<SettingsSection> &sections() {
 #else
         {SectionId::Performance, 3, 30, "PERFORMANCE", "性能与诊断", "performance", 220, alwaysVisible},
 #endif
-        {SectionId::Storage, 4, 40, "STORAGE", "存储与缓存", "storage", 105, alwaysVisible},
+        {SectionId::Storage, 4, 40, "STORAGE", "存储与缓存", "storage", 162, alwaysVisible},
         {SectionId::Update, 5, 50, "SOFTWARE UPDATE", "软件更新", "update", 220, alwaysVisible},
         {SectionId::Project, 6, 60, "PROJECT", "项目与开源参考", {}, 0, alwaysVisible},
         {SectionId::Footer, 7, 70, "CONFIG", "配置管理", "defaults", 84, alwaysVisible}};

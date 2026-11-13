@@ -129,6 +129,7 @@ void NativeHud::openModal(QString kind) {
     if (kind == "settings") {
         // 首次绘制前也先测量内容高度，会话恢复才能按真实上限钳制滚动位置。
         refreshSettingsLayout();
+        refreshStorageUsage();
     }
     if (kind == "desktop-lyrics") {
         // 进入页面时重新读取偏好，页面内的修改随后走独立动作。
@@ -593,12 +594,50 @@ void NativeHud::action(QString value) {
         }
         return;
     }
+    if (value == "history:clear") {
+        m_music->clearHistory([owner = QPointer(this)](QJsonArray items) {
+            if (!owner) {
+                return;
+            }
+            bool success = items.size() == 2;
+            for (const auto &item : items) {
+                success &= item.toObject()["status"] == "cleared";
+            }
+            owner->cacheMessage = success ? QStringLiteral("历史已清除") : QStringLiteral("历史清理未完成");
+            owner->m_host->invalidate();
+        });
+        return;
+    }
     if (value == "cache:clear") {
-        m_music->clearCaches();
-        if (commentsMode && !m_music->current.isEmpty()) {
-            m_music->comments.load(m_music->current);
-        }
-        cacheMessage = QStringLiteral("已清除");
+        cacheMessage = QStringLiteral("正在清理…");
+        m_music->clearCaches([owner = QPointer(this)](QJsonArray items) {
+            if (!owner) {
+                return;
+            }
+            QStringList errors;
+            bool deferred = false;
+            qint64 releasedBytes = 0;
+            for (const auto &item : items) {
+                const auto result = item.toObject();
+                deferred |= result["status"] == "deferred";
+                releasedBytes += result["removedFileBytes"].toInteger() +
+                                 result["releasedFileBytes"].toInteger();
+                if (result["status"] == "failed" || result["status"] == "unavailable") {
+                    errors.append(result["error"].toString(result["category"].toString()));
+                }
+            }
+            if (!errors.isEmpty()) {
+                owner->cacheMessage = QStringLiteral("清理未完成：") + errors.join(QStringLiteral("、"));
+            } else if (deferred) {
+                owner->cacheMessage = QStringLiteral("已清理，重启后清渲染缓存");
+            } else if (releasedBytes > 0) {
+                owner->cacheMessage = QStringLiteral("已释放 %1 MiB").arg(releasedBytes / 1048576., 0, 'f', 1);
+            } else {
+                owner->cacheMessage = QStringLiteral("已清除");
+            }
+            owner->m_host->invalidate();
+            owner->refreshStorageUsage();
+        });
         return;
     }
     auto &music = *m_music;

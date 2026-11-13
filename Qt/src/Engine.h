@@ -27,7 +27,7 @@ class Engine : public QObject {
     Q_PROPERTY(QVariantMap performance READ performance NOTIFY stateChanged)
   public:
     Engine(QString root, bool offline = false, QObject *parent = nullptr,
-           PlaybackConnection *connection = nullptr);
+           PlaybackConnection *connection = nullptr, RenderCacheStorage *renderCache = nullptr);
     ~Engine() override;
     QVariantMap state() const {
         return m_state;

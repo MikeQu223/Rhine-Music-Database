@@ -809,19 +809,33 @@ void MusicPlayer::clearHistory() {
     emit changed();
 }
 
-/** 清除歌词、播放记录与本地封面缓存；登录状态、队列和播放位置保持不变。 */
-void MusicPlayer::clearCaches() {
-    if (remoteCommand("clearCaches", {})) {
-        return;
+QJsonObject MusicPlayer::clearPlayHistory() {
+    const auto error = m_host->writeStoragePreference("play-history", "[]");
+    if (error.isEmpty()) {
+        history = {};
+        emit changed();
     }
-    lyrics.clearCache();
-    clearHistory();
-    localCovers = {};
-    m_host->setPreference("local-cover-cache", "{}");
-    // 当前歌词可能来自刚清掉的缓存，按同一首歌重新读取才能看到修正后的解析结果。
-    if (!current.isEmpty()) {
-        lyrics.load(current, true);
-    }
+    return StorageCoordinator::result("play-history", error.isEmpty() ? "cleared" : "failed", error);
+}
+
+/** 清除可重建的播放缓存，继续使用当前歌词和系统媒体控件已持有的封面。 */
+void MusicPlayer::registerStorageOperations(StorageCoordinator &storage) {
+    storage.addStatsOperation([this](StorageCoordinator::Completion done) {
+        if (auto manager = m_host->cacheManager()) {
+            manager->stats(std::move(done));
+        } else {
+            done({StorageCoordinator::result("cache.sqlite", "unavailable")});
+        }
+    });
+    storage.addCacheOperation([this](StorageCoordinator::Completion done) {
+        done({m_host->clearNetworkImages()});
+    });
+    storage.addCacheOperation([this](StorageCoordinator::Completion done) {
+        m_host->clearMetadata(std::move(done));
+    });
+    storage.addCacheOperation([this](StorageCoordinator::Completion done) {
+        lyrics.clearCache(std::move(done));
+    });
 }
 
 QJsonObject MusicPlayer::playbackSnapshot() const {

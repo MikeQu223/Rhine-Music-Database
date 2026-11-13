@@ -11,6 +11,8 @@
 #include <QObject>
 #include "BridgeProcess.h"
 #include "PlaybackConnection.h"
+#include "storage/StorageCoordinator.h"
+#include "storage/CacheManager.h"
 #include <QQueue>
 #include <QTemporaryDir>
 #include <QTimer>
@@ -26,7 +28,7 @@ class Host : public QObject {
     using JsonReply = std::function<void(QJsonObject, QString)>;
     using TextReply = std::function<void(QString)>;
     explicit Host(QString root, bool offline = false, QObject *parent = nullptr, bool playbackOnly = false,
-                  PlaybackConnection *connection = nullptr);
+                  PlaybackConnection *connection = nullptr, QString isolatedCachePath = {});
     ~Host() override;
     void requestJson(QString route, QJsonObject params, JsonReply callback);
     void schedule(int ms, std::function<void()> callback);
@@ -87,8 +89,16 @@ class Host : public QObject {
     Q_INVOKABLE bool systemDark() const;
     Q_INVOKABLE void invalidateMetadata();
     Q_INVOKABLE void clearCache();
+    QJsonObject clearNetworkImages();
+    void clearMetadata(StorageCoordinator::Completion done);
     Q_INVOKABLE QString preference(QString key) const;
     Q_INVOKABLE void setPreference(QString key, QString value);
+    QString writeStoragePreference(const QString &key, const QString &value);
+    void forgetPreference(const QString &key);
+    CacheManager *cacheManager() const;
+    QString cacheAccountScope(const QString &service) const;
+    QString cacheVariant(const QString &service) const;
+    QByteArray cacheScopeIdentity(const QString &service) const;
     // 设置 Schema 与回归测试共用同一份偏好键白名单。
     static bool isPreferenceKey(const QString &key);
     Q_INVOKABLE bool activates() const;
@@ -143,7 +153,8 @@ class Host : public QObject {
         QString id, route, key;
         QJsonObject params, cookies;
         QList<Waiter> waiters;
-        bool disk = false;
+        std::optional<CacheKey> diskKey;
+        quint64 diskGeneration = 0;
         int cacheRevision = 0;
     };
     struct Entry {
@@ -164,6 +175,8 @@ class Host : public QObject {
     QString mediaCoverUrl, mediaCoverPath;
     void refreshMediaCover();
     int metadataRevision = 0;
+    std::unique_ptr<CacheManager> m_cacheManager;
+    quint64 imageCacheGeneration = 0;
     mutable qint64 lastMediaUpdate = 0;
     QNetworkAccessManager network;
     QJsonArray marketplacePlugins;
@@ -212,11 +225,12 @@ class Host : public QObject {
     bool playbackOnly = false;
     int diagnosticRequestSerial = 0;
     void pump();
+    void dispatchRequest(const QString &key);
+    void clearLegacyMetadata(StorageCoordinator::Completion done);
     void recordPlaybackDiagnostic(const QString &event, const QJsonObject &values);
     void send(QString key);
     void finish(QString key, QJsonObject response, QString error = {});
     void respond(const Waiter &waiter, QJsonObject response, QString error);
-    QString diskPath(QString key) const;
 };
 QByteArray platformCredential();
 QString platformSaveCredential(const QByteArray &data);

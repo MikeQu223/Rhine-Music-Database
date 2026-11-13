@@ -54,7 +54,7 @@ run(
               'output/qt-build',
               '--output-on-failure',
               '-R',
-              '^qt_(offline|playback_queue_regression|apple_transition_regression)$',
+              '^qt_(offline|storage_regression|playback_queue_regression|apple_transition_regression)$',
           ]
         : ['--test-dir', 'output/qt-build', '--output-on-failure'],
 );

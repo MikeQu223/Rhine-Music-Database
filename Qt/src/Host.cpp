@@ -32,6 +32,41 @@
 static QString hash(QByteArray value) {
     return QCryptographicHash::hash(value, QCryptographicHash::Sha256).toHex();
 }
+
+// 插件清单声明可落盘的操作，响应还必须通过凭据和临时地址检查。
+static bool isDiskCachePayload(const QJsonValue &value, int depth = 0) {
+    if (depth > 32) {
+        return false;
+    }
+    if (value.isObject()) {
+        const auto object = value.toObject();
+        for (auto item = object.constBegin(); item != object.constEnd(); ++item) {
+            auto name = item.key().toLower();
+            name.remove('_').remove('-');
+            static const QRegularExpression sensitive(QStringLiteral(
+                "cookie|token|password|passwd|secret|authorization|credential|sessionkey|apikey|signature"));
+            if (name.contains(sensitive) || !isDiskCachePayload(item.value(), depth + 1)) {
+                return false;
+            }
+        }
+    } else if (value.isArray()) {
+        for (const auto &item : value.toArray()) {
+            if (!isDiskCachePayload(item, depth + 1)) {
+                return false;
+            }
+        }
+    } else if (value.isString()) {
+        const auto string = value.toString();
+        if (string.startsWith("https://", Qt::CaseInsensitive) ||
+            string.startsWith("http://", Qt::CaseInsensitive)) {
+            const QUrl url(string);
+            if (!url.userInfo().isEmpty() || url.hasQuery() || url.hasFragment()) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
 // 按路由隔离插件的缓存、限流和账号范围；provider 由 Registry/路由段解析。
 static QString routeProvider(const QString &route) {
     if (route.startsWith("/native/") || route.startsWith("/plugin/")) {
@@ -351,7 +386,8 @@ QJsonObject Host::credentialCookies(const QJsonObject &credentials, const QStrin
     }
     return cookies;
 }
-Host::Host(QString path, bool test, QObject *parent, bool service, PlaybackConnection *connection)
+Host::Host(QString path, bool test, QObject *parent, bool service, PlaybackConnection *connection,
+           QString isolatedCachePath)
     : QObject(parent), updater(test), root(path), offline(test), remote(test ? nullptr : connection),
       playbackOnly(service) {
     ProviderRegistry::instance().load(root, AppStorage::dataDirectory() + "/plugins", disabledPlugins());
@@ -368,6 +404,9 @@ Host::Host(QString path, bool test, QObject *parent, bool service, PlaybackConne
     }
     connect(&updater, &AppUpdater::changed, this, &Host::invalidate);
     if (remote) {
+        connect(remote, &PlaybackConnection::storageInvalidated, this, [this] {
+            clearNetworkImages();
+        });
         connect(remote, &PlaybackConnection::spectrumChanged, this, &Host::audioSpectrumChanged);
         connect(remote, &PlaybackConnection::diagnosticEvent, this,
                 [this](QString event, QJsonObject values) { playbackDiagnostics.record(event, values); });
@@ -391,6 +430,29 @@ Host::Host(QString path, bool test, QObject *parent, bool service, PlaybackConne
             }
         }
         providerVariant = valid ? saved : variants.first().toObject()["id"].toString("standard");
+    }
+    if ((!offline && !remote) || (offline && !isolatedCachePath.isEmpty())) {
+        const auto cacheRoot = AppStorage::cacheDirectory();
+        if (!cacheRoot.isEmpty() || !isolatedCachePath.isEmpty()) {
+            const auto database = isolatedCachePath.isEmpty() ? cacheRoot + "/cache.sqlite" : isolatedCachePath;
+            m_cacheManager = std::make_unique<CacheManager>(database);
+            const auto settings = AppStorage::settings();
+            const auto quota = [&settings](const QString &name, int fallback, int maximum) {
+                bool valid = false;
+                const auto value = settings.value("storage/" + name + "-quota-mib", fallback).toInt(&valid);
+                return qint64(valid ? std::clamp(value, 0, maximum) : fallback) * 1024 * 1024;
+            };
+            m_cacheManager->registerNamespace("lyrics", quota("lyrics", 64, 128));
+            m_cacheManager->registerNamespace("metadata", quota("metadata", 256, 256));
+            if (!offline) {
+                clearLegacyMetadata([](QJsonArray items) {
+                    const auto result = items.at(0).toObject();
+                    if (result["status"] == "failed") {
+                        qWarning().noquote() << result["error"].toString();
+                    }
+                });
+            }
+        }
     }
     if (!offline && !remote) {
         credentials = migrateCredential(QJsonDocument::fromJson(platformCredential()).object());
@@ -482,10 +544,7 @@ int Host::lifetime(const QString &route) {
 }
 QString Host::cacheKey(QString scope, QString route, QJsonObject params) {
     params.remove("timestamp");
-    return hash((scope + route).toUtf8() + QJsonDocument(params).toJson(QJsonDocument::Compact));
-}
-QString Host::diskPath(QString key) const {
-    return AppStorage::cacheDirectory() + "/metadata/" + key + ".json";
+    return hash(QJsonDocument(QJsonArray{scope, route, params}).toJson(QJsonDocument::Compact));
 }
 /**
  * 接收原生业务请求，在协议外层执行缓存、合并和限流。
@@ -576,9 +635,11 @@ void Host::requestJson(QString route, QJsonObject values, JsonReply callback) {
     const auto cacheVersion =
         cachePolicy["version"].toString(manifest["version"].toString(QStringLiteral("0")));
     const auto cacheOperation = route.section('/', 3, 3);
+    const auto variant = variantFor(service);
     const auto key =
         cached
-            ? cacheKey(service + ":" + cacheVersion + ":" + scope + QString::number(metadataRevision),
+            ? cacheKey(service + ":" + cacheVersion + ":" + variant + ":" + scope + ":" +
+                           QString::number(metadataRevision),
                        route, values)
             : QUuid::createUuid().toString();
     const auto diskOperations = cachePolicy["diskOperations"].toArray();
@@ -591,17 +652,7 @@ void Host::requestJson(QString route, QJsonObject values, JsonReply callback) {
             break;
         }
     }
-    const bool disk = !offline && scope == QStringLiteral("guest") &&
-                      cachePolicy["disk"].toString(QStringLiteral("none")) == QStringLiteral("guest") &&
-                      diskOperation;
     Waiter waiter{std::move(callback), epoch};
-    if (disk && !cache.contains(key)) {
-        QFile f(diskPath(key));
-        if (f.open(QIODevice::ReadOnly)) {
-            auto obj = QJsonDocument::fromJson(f.readAll()).object();
-            cache.insert(key, {qint64(obj["expiry"].toDouble()), obj["body"].toObject()});
-        }
-    }
     if (cached && cache.contains(key) && cache[key].expiry > QDateTime::currentMSecsSinceEpoch()) {
         auto body = cache[key].body;
         QTimer::singleShot(0, this, [=, this] { respond(waiter, {{"body", body}}, {}); });
@@ -611,18 +662,44 @@ void Host::requestJson(QString route, QJsonObject values, JsonReply callback) {
         flights[key].waiters.append(waiter);
         return;
     }
-    flights.insert(key, {QUuid::createUuid().toString(),
-                         route,
-                         key,
-                         values,
-                         scopedCookies,
-                         {waiter},
-                         disk,
-                         metadataRevision});
+    std::optional<CacheKey> diskKey;
+    quint64 diskGeneration = 0;
+    if (m_cacheManager && !offline && cached && !playbackRequest && scope == "guest" &&
+        cachePolicy["disk"].toString() == "guest" && diskOperation) {
+        diskKey = CacheKey{"metadata", service, QStringLiteral("guest"), cacheVersion,
+                           QByteArray::fromHex(cacheKey(variant, route, values).toLatin1())};
+        diskGeneration = m_cacheManager->generation("metadata");
+    }
+    flights.insert(key, {QUuid::createUuid().toString(), route, key, values, scopedCookies, {waiter},
+                         diskKey, diskGeneration, metadataRevision});
+    if (diskKey) {
+        m_cacheManager->lookup(*diskKey, diskGeneration, [this, key](std::optional<QJsonObject> hit) {
+            if (stopped || !flights.contains(key)) {
+                return;
+            }
+            const auto &flight = flights[key];
+            if (hit && flight.cacheRevision == metadataRevision && !flight.waiters.isEmpty() &&
+                flight.waiters.first().epoch == epoch) {
+                const auto work = flights.take(key);
+                for (const auto &waiting : work.waiters) {
+                    respond(waiting, {{"body", *hit}}, {});
+                }
+                return;
+            }
+            dispatchRequest(key);
+        });
+        return;
+    }
+    dispatchRequest(key);
+}
+
+void Host::dispatchRequest(const QString &key) {
+    const auto route = flights.value(key).route;
+    const auto operation = route.section('/', 3, 3);
     const auto commentRequest =
         route.startsWith("/comment/") ||
         (route.startsWith("/native/") && QStringList{"comments", "commentReplies"}.contains(operation));
-    if (cached || route == "/song/url" || route == "/song/url/v1" || commentRequest) {
+    if (lifetime(route) > 0 || route == "/song/url" || route == "/song/url/v1" || commentRequest) {
         queue.enqueue(key);
         pump();
     } else {
@@ -824,18 +901,12 @@ void Host::finish(QString key, QJsonObject response, QString error) {
                     cache.erase(cache.begin());
                 }
             }
-            if (work.disk) {
-                auto path = diskPath(key);
-                QDir().mkpath(QFileInfo(path).path());
-                QFile::setPermissions(QFileInfo(path).path(),
-                                      QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
-                QSaveFile f(path);
-                if (f.open(QIODevice::WriteOnly)) {
-                    f.setPermissions(QFile::ReadOwner | QFile::WriteOwner);
-                    f.write(QJsonDocument(QJsonObject{{"expiry", double(entry.expiry)}, {"body", body}})
-                                .toJson(QJsonDocument::Compact));
-                    f.commit();
-                }
+            if (work.diskKey && !work.waiters.isEmpty() && work.waiters.first().epoch == epoch &&
+                cacheAccountScope(service) == "guest" && response["cookies"].toArray().isEmpty() &&
+                !response.contains("cookie") && !response["authExpired"].toBool() && !secretsChanged) {
+                m_cacheManager->store(*work.diskKey, work.diskGeneration, body,
+                                      lifetime(work.route) * 1000LL, {},
+                                      [](const QJsonObject &value) { return isDiskCachePayload(value); });
             }
         }
     }
@@ -1741,11 +1812,13 @@ void Host::loadCover(QString input, TextReply callback, int maximumDimension, bo
         callback({});
         return;
     }
-    if (coverFlights.contains(key)) {
-        coverFlights[key].append({callback, epoch});
+    const auto imageGeneration = imageCacheGeneration;
+    const auto flightKey = QString::number(imageGeneration) + ':' + key;
+    if (coverFlights.contains(flightKey)) {
+        coverFlights[flightKey].append({callback, epoch});
         return;
     }
-    coverFlights[key] = {{callback, epoch}};
+    coverFlights[flightKey] = {{callback, epoch}};
     const auto imageEpoch = epoch;
     QNetworkRequest request(url);
     request.setTransferTimeout(20000);
@@ -1767,7 +1840,7 @@ void Host::loadCover(QString input, TextReply callback, int maximumDimension, bo
                            bytes.size() < 8 * 1024 * 1024;
         reply->deleteLater();
         if (!valid) {
-            const auto waiters = coverFlights.take(key);
+            const auto waiters = coverFlights.take(flightKey);
             for (const auto &waiter : waiters) {
                 if (waiter.epoch == epoch) {
                     waiter.callback({});
@@ -1777,13 +1850,14 @@ void Host::loadCover(QString input, TextReply callback, int maximumDimension, bo
         }
         // 工作者只接触不可变字节和 QImage；回调与缓存仍在 Host 所在线程执行。
         auto watcher = new QFutureWatcher<QImage>(this);
-        connect(watcher, &QFutureWatcher<QImage>::finished, this, [this, watcher, key, imageEpoch] {
+        connect(watcher, &QFutureWatcher<QImage>::finished, this,
+                [this, watcher, key, flightKey, imageEpoch, imageGeneration] {
             const auto image = watcher->result();
             watcher->deleteLater();
             if (imageEpoch != epoch || stopped) {
                 return;
             }
-            const auto waiters = coverFlights.take(key);
+            const auto waiters = coverFlights.take(flightKey);
             bool current = false;
             for (const auto &waiter : waiters) {
                 current |= waiter.epoch == epoch;
@@ -1791,7 +1865,7 @@ void Host::loadCover(QString input, TextReply callback, int maximumDimension, bo
             if (stopped || !current) {
                 return;
             }
-            if (image.isNull()) {
+            if (image.isNull() || imageGeneration != imageCacheGeneration) {
                 for (const auto &waiter : waiters) {
                     if (waiter.epoch == epoch) {
                         waiter.callback({});
@@ -2083,28 +2157,89 @@ void Host::invalidateMetadata() {
         remote->call("host.invalidateMetadata");
         return;
     }
+    clearMetadata([](QJsonArray) {});
+}
+
+/** 先作废内存请求，再在后台清理旧版磁盘缓存。清理期间暂停磁盘读写。 */
+void Host::clearMetadata(StorageCoordinator::Completion done) {
     ++metadataRevision;
     cache.clear();
     if (offline) {
+        done({StorageCoordinator::result("metadata", "cleared")});
         return;
     }
-    QDir metadata(AppStorage::cacheDirectory() + "/metadata");
-    for (const auto &name : metadata.entryList({"*.json"}, QDir::Files)) {
-        metadata.remove(name);
+    if (m_cacheManager) {
+        m_cacheManager->clear("metadata", [this, done](QJsonObject database) {
+            clearLegacyMetadata([done, database](QJsonArray results) {
+                results.append(database);
+                done(results);
+            });
+        });
+        return;
     }
+    clearLegacyMetadata(std::move(done));
+}
+
+void Host::clearLegacyMetadata(StorageCoordinator::Completion done) {
+    auto *watcher = new QFutureWatcher<QJsonObject>(this);
+    connect(watcher, &QFutureWatcher<QJsonObject>::finished, this, [this, watcher, done] {
+        const auto result = watcher->result();
+        watcher->deleteLater();
+        done({result});
+    });
+    watcher->setFuture(QtConcurrent::run([path = AppStorage::cacheDirectory() + "/metadata"] {
+        const QFileInfo directory(path);
+        if (directory.isSymLink() || (directory.exists() && !directory.isReadable())) {
+            return StorageCoordinator::result("legacy-metadata", "failed", QStringLiteral("无法读取缓存目录"));
+        }
+        const QDir metadata(path);
+        const QRegularExpression key(QStringLiteral("^[0-9a-f]{64}\\.json$"));
+        qint64 releasedBytes = 0;
+        int removed = 0;
+        int failed = 0;
+        for (const auto &entry : metadata.entryInfoList(QDir::Files | QDir::NoSymLinks)) {
+            if (!key.match(entry.fileName()).hasMatch()) {
+                continue;
+            }
+            if (QFile::remove(entry.absoluteFilePath())) {
+                releasedBytes += entry.size();
+                ++removed;
+            } else if (QFileInfo::exists(entry.absoluteFilePath())) {
+                ++failed;
+            }
+        }
+        auto result = StorageCoordinator::result(
+            "legacy-metadata", failed ? "failed" : "cleared",
+            failed ? QStringLiteral("无法移除 %1 个元数据文件").arg(failed) : QString());
+        result["entries"] = removed;
+        result["removedFileBytes"] = releasedBytes;
+        return result;
+    }));
+}
+
+QJsonObject Host::clearNetworkImages() {
+    ++imageCacheGeneration;
+    const auto costBefore = images.totalCost();
+    int removed = 0;
+    for (const auto &key : images.keys()) {
+        if (key.startsWith(QLatin1String("https://")) && images.remove(key)) {
+            ++removed;
+        }
+    }
+    auto result = StorageCoordinator::result("network-images", "cleared");
+    result["entries"] = removed;
+    result["memoryBytes"] = (costBefore - images.totalCost()) * 1024LL;
+    return result;
 }
 /** 清除可重建的缓存；登录凭据、账号设置与本地音乐库保持不变。 */
 void Host::clearCache() {
+    clearNetworkImages();
     if (remote) {
-        remote->call("host.clearCache");
+        remote->request("host.clearCache", {}, [](QJsonObject, QString) {});
         return;
     }
     invalidateMetadata();
-    // QML 与渲染管线的磁盘缓存由框架按需重建；删除失败（如 Windows 文件占用）不影响本次清理。
-    const QDir cacheDirectory(AppStorage::cacheDirectory());
-    for (const auto &name : {"qml", "shaders"}) {
-        QDir(cacheDirectory.filePath(QString::fromLatin1(name))).removeRecursively();
-    }
+    // QML 与渲染管线的磁盘缓存由框架按需重建，交给持有渲染生命周期的界面处理。
 }
 namespace {
 // 可读写的偏好键。读取与写入必须共用同一份名单：两份名单一旦分叉，写入会成功但读回
@@ -2184,6 +2319,50 @@ void Host::setPreference(QString key, QString value) {
         emit preferenceChanged(key, value);
     }
 }
+QString Host::writeStoragePreference(const QString &key, const QString &value) {
+    if (offline) {
+        return {};
+    }
+    if (remote || !isPreferenceKey(key)) {
+        return QStringLiteral("当前进程无法写入此存储项");
+    }
+    auto settings = AppStorage::settings();
+    settings.setValue("panel/" + key, value);
+    settings.sync();
+    if (settings.status() != QSettings::NoError) {
+        return QStringLiteral("无法保存存储项 %1").arg(key);
+    }
+    emit preferenceChanged(key, value);
+    return {};
+}
+
+void Host::forgetPreference(const QString &key) {
+    remotePreferences.remove(key);
+}
+
+CacheManager *Host::cacheManager() const {
+    return m_cacheManager.get();
+}
+
+QString Host::cacheAccountScope(const QString &service) const {
+    const auto cookies = cookieSlice(service);
+    const auto secrets = secretsFor(service);
+    if (cookies.isEmpty() && secrets.isEmpty() && !hasCredential(service)) {
+        return QStringLiteral("guest");
+    }
+    return QStringLiteral("account");
+}
+
+QString Host::cacheVariant(const QString &service) const {
+    return variantFor(service);
+}
+
+QByteArray Host::cacheScopeIdentity(const QString &service) const {
+    const QJsonArray state{cookieSlice(service), secretsFor(service)};
+    return QCryptographicHash::hash(QJsonDocument(state).toJson(QJsonDocument::Compact),
+                                    QCryptographicHash::Sha256);
+}
+
 bool Host::isPreferenceKey(const QString &key) {
     if (preferenceKeys().contains(key)) {
         return true;

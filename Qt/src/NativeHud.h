@@ -133,6 +133,8 @@ class NativeHud : public QObject {
     QString expandedPreference;
     // 清除缓存后的结果提示；重新打开设置页时清空。
     QString cacheMessage;
+    QString storageUsage;
+    void refreshStorageUsage();
     // 从主设置页进入桌面歌词页时保留原滚动位置。
     double settingsReturnScroll = 0;
     // 桌面歌词样式页使用独立滚动区。

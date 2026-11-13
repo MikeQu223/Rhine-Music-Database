@@ -35,7 +35,7 @@ QString AppStorage::initializePortable(const QString &applicationDirectory) {
         return QStringLiteral("无法确定应用目录");
     }
     const auto directory = QDir(applicationDirectory).absoluteFilePath("data");
-    for (const auto &suffix : {"", "/cache", "/cache/qml", "/cache/shaders", "/temp"}) {
+    for (const auto &suffix : {"", "/temp"}) {
         if (!QDir().mkpath(directory + suffix)) {
             return QStringLiteral("应用目录不可写，请将完整文件夹移到可写的位置");
         }
@@ -45,6 +45,8 @@ QString AppStorage::initializePortable(const QString &applicationDirectory) {
         return QStringLiteral("应用目录不可写，请将完整文件夹移到可写的位置");
     }
     portableRoot = directory;
+    QDir().mkpath(cacheDirectory() + "/qml");
+    QDir().mkpath(cacheDirectory() + "/shaders");
     const auto temporary = QDir::toNativeSeparators(temporaryDirectory());
     if (!setPathEnvironment("TEMP", temporary) || !setPathEnvironment("TMP", temporary) ||
         !setPathEnvironment("TMPDIR", temporary) ||

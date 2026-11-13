@@ -10,6 +10,7 @@
 #include "SettingsCard.h"
 #include "SettingsSchema.h"
 #include <QHash>
+#include <QPointer>
 #include <algorithm>
 
 namespace {
@@ -363,11 +364,13 @@ void NativeHud::paintSettingsCustomSection(const QString &renderer, const QRectF
         const auto control = QRectF(body.right() - 300, body.top() + 8, 300, 48);
         text("STORAGE", body.left(), body.top() + 10, 11, "regular", 0.08, muted);
         text(QStringLiteral("存储与缓存"), body.left(), body.top() + 25, 17, "demibold", -0.01, baseInk);
-        actionBlock(control, cacheMessage.isEmpty() ? QStringLiteral("清除缓存") : cacheMessage,
-                    "cache:clear", QStringLiteral("清除缓存"));
+        actionBlock(control, QStringLiteral("清除缓存"), "cache:clear", QStringLiteral("清除缓存"));
         fill(body.left(), body.top() + 62, body.width(), 1, line);
-        text(QStringLiteral("清理元数据、歌词、封面与列表缓存，保留主题和账号。"), body.left(),
+        text(cacheMessage.isEmpty() ? storageUsage : cacheMessage, body.left(),
              body.top() + 72, 13, "regular", 0, muted);
+        const auto historyControl = QRectF(body.right() - 300, body.top() + 106, 300, 48);
+        actionBlock(historyControl, QStringLiteral("清除历史"), "history:clear", QStringLiteral("清除历史"));
+        text(QStringLiteral("搜索与播放历史"), body.left(), body.top() + 120, 15, "regular", 0, baseInk);
         return;
     }
 
@@ -557,4 +560,22 @@ void NativeHud::restoreSettingsDefaults() {
     refreshSettingsLayout();
     m_music->status = QStringLiteral("已恢复默认设置");
     m_host->invalidate();
+}
+
+void NativeHud::refreshStorageUsage() {
+    m_music->storageStats([owner = QPointer(this)](QJsonArray items) {
+        if (!owner || owner->modal != "settings") {
+            return;
+        }
+        owner->storageUsage = QStringLiteral("结构化磁盘缓存暂不可用");
+        for (const auto &item : items) {
+            const auto result = item.toObject();
+            if (result["category"] == "cache.sqlite" && result["status"] == "available") {
+                owner->storageUsage = QStringLiteral("结构化缓存占用 %1 MiB")
+                                          .arg(result["fileBytes"].toDouble() / 1048576., 0, 'f', 1);
+                break;
+            }
+        }
+        owner->m_host->invalidate();
+    });
 }

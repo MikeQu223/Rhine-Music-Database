@@ -122,6 +122,7 @@ class PlaybackService::SessionWriter {
 PlaybackService::PlaybackService(QString root, QString guiExecutable, bool offline, QObject *parent)
     : QObject(parent), m_host(root, offline, nullptr, true), m_api(&m_host), m_player(&m_host, &m_api),
       m_interfaceSession(interfaceLaunch(root, guiExecutable, offline)) {
+    m_player.registerStorageOperations(m_storage);
     connect(&m_interfaceSession, &InterfaceSession::activationRequested, this,
             [this] { send(m_gui, {{"event", "activate"}}); });
     connect(&m_interfaceSession, &InterfaceSession::stateChanged, this, &PlaybackService::publish);
@@ -376,6 +377,29 @@ void PlaybackService::dispatch(QLocalSocket *socket, const QJsonObject &request)
         QTimer::singleShot(0, this, &PlaybackService::shutdown);
     } else if (method == "show") {
         showInterface();
+    } else if (method == "storage.clearCaches" || method == "storage.stats") {
+        QPointer<QLocalSocket> target(socket);
+        const auto complete = [this, target, id](QJsonArray items) {
+            if (target) {
+                send(target, {{"id", id}, {"result", QJsonObject{{"items", items}}}});
+            }
+        };
+        if (method == "storage.stats") {
+            m_storage.stats(complete);
+        } else {
+            for (auto client : m_clients.keys()) {
+                if (client != socket) {
+                    send(client, {{"event", "storage.invalidated"}});
+                }
+            }
+            m_storage.clearCaches(complete);
+        }
+        return;
+    } else if (method == "storage.clearHistory") {
+        const auto failure = m_host.writeStoragePreference("search-history", "[]");
+        result["items"] = QJsonArray{
+            StorageCoordinator::result("search-history", failure.isEmpty() ? "cleared" : "failed", failure),
+            m_player.clearPlayHistory()};
     } else if (method == "host.request") {
         QPointer<QLocalSocket> target(socket);
         m_host.requestJson(arguments["route"].toString(), arguments["values"].toObject(),
@@ -492,8 +516,6 @@ bool PlaybackService::playerCommand(const QString &method, const QJsonObject &ar
         m_player.setAlternative(arguments["enabled"].toBool());
     } else if (method == "clearHistory") {
         m_player.clearHistory();
-    } else if (method == "clearCaches") {
-        m_player.clearCaches();
     } else {
         return false;
     }
@@ -514,8 +536,6 @@ bool PlaybackService::lyricsCommand(const QString &method, const QJsonObject &ar
         lyrics.applyGlobalOffset();
     } else if (method == "clear") {
         lyrics.clear();
-    } else if (method == "clearCache") {
-        lyrics.clearCache();
     } else {
         return false;
     }

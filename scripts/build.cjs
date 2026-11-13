@@ -543,6 +543,7 @@ function deployLinuxRuntime(qt, app, binary, ffmpegLibraries = new Map()) {
     const pluginSource = linuxQtQuery(qt, 'QT_INSTALL_PLUGINS');
     // Wayland 平台插件依赖 shell 集成与装饰插件，必须整组跟随部署。
     for (const folder of [
+        'sqldrivers',
         'platforms',
         'imageformats',
         'tls',
@@ -571,6 +572,9 @@ function deployLinuxRuntime(qt, app, binary, ffmpegLibraries = new Map()) {
                 continue;
             }
             if (folder === 'imageformats' && !linuxImageFormatPlugins.test(file)) {
+                continue;
+            }
+            if (folder === 'sqldrivers' && file !== 'libqsqlite.so') {
                 continue;
             }
             const destination = path.join(plugins, folder, file);
@@ -1201,6 +1205,12 @@ function deployApp(qt, config, existingBundle = '') {
             });
             fs.copyFileSync(path.join(qt, 'plugins', plugin), dest);
         }
+        const sqliteDriver = path.join(qt, 'plugins/sqldrivers/libqsqlite.dylib');
+        if (fs.existsSync(sqliteDriver)) {
+            const destination = path.join(app, 'Contents/PlugIns/sqldrivers/libqsqlite.dylib');
+            fs.mkdirSync(path.dirname(destination), { recursive: true });
+            fs.copyFileSync(sqliteDriver, destination);
+        }
         deployMacAudioLibraries(qt, app);
         if (config === 'Debug') {
             for (const plugin of ['local', 'server', 'preview', 'quickprofiler', 'quickeventreplay']) {
@@ -1228,10 +1238,6 @@ function deployApp(qt, config, existingBundle = '') {
             path.join(resources, 'qt.conf'),
             '[Paths]\nPrefix=.\nPlugins=PlugIns\nQmlImports=Resources/qml\n',
         );
-        fs.rmSync(path.join(app, 'Contents/PlugIns/sqldrivers'), {
-            recursive: true,
-            force: true,
-        });
     } else if (win) {
         run(path.join(qt, 'bin/windeployqt.exe'), [
             '--' + config.toLowerCase(),
@@ -1265,10 +1271,14 @@ function deployApp(qt, config, existingBundle = '') {
             path.join(app, 'platforms', offscreen),
         );
         fs.writeFileSync(path.join(app, 'qt.conf'), '[Paths]\nPlugins=.\nQmlImports=qml\n');
-        fs.rmSync(path.join(app, 'sqldrivers'), {
-            recursive: true,
-            force: true,
-        });
+        const sqlDrivers = path.join(app, 'sqldrivers');
+        if (fs.existsSync(sqlDrivers)) {
+            for (const filename of fs.readdirSync(sqlDrivers)) {
+                if (!/^qsqlited?\.dll$/i.test(filename)) {
+                    fs.rmSync(path.join(sqlDrivers, filename), { force: true });
+                }
+            }
+        }
     }
     if (linux) {
         prepareLinuxAppDir(app);

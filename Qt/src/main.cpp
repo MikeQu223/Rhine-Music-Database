@@ -9,6 +9,7 @@
 #include "AppIdentity.h"
 #include "MobileTarget.h"
 #include "AppStorage.h"
+#include "storage/RenderCacheStorage.h"
 #include "CrashDiagnostics.h"
 #include "Engine.h"
 #include "MvController.h"
@@ -1070,7 +1071,12 @@ int main(int argc, char **argv) {
         QTimer::singleShot(0, playback.get(), [raw = playback.get()] { raw->call("interface.ready"); });
     }
 #endif
-    auto backend = std::make_unique<Engine>(root, offline, nullptr, playback.get());
+    std::optional<RenderCacheStorage> renderCache;
+    if (!offline) {
+        renderCache.emplace();
+    }
+    auto backend = std::make_unique<Engine>(root, offline, nullptr, playback.get(),
+                                            renderCache ? &*renderCache : nullptr);
     auto profiler = std::make_unique<FrameProfiler>(backend.get(), profilePath);
     QObject::connect(backend.get(), &Engine::performanceRequested, profiler.get(),
                      &FrameProfiler::toggleVisible);
