@@ -42,8 +42,7 @@ QString MusicPlayer::sourceQuality(const QString &provider, const QJsonObject &a
         return {};
     }
     // 插件返回统一 tier；平台档位单独放在 providerTier，用于界面文案与徽章。
-    const auto providerTier =
-        audio["providerTier"].toString(audio["qualityId"].toString());
+    const auto providerTier = audio["providerTier"].toString(audio["qualityId"].toString());
     if (!providerTier.isEmpty()) {
         return providerTier;
     }
@@ -99,7 +98,7 @@ void MusicPlayer::setQuality(const QString &value) {
         return;
     }
     quality = value;
-#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS) || defined(Q_OS_WIN)
     invalidateAppleTransition(true);
 #endif
     m_recoveryAttempts = 0;
@@ -133,9 +132,8 @@ void MusicPlayer::refreshQualityPreference() {
         quality = saved;
         return;
     }
-    const auto valid =
-        std::any_of(options.begin(), options.end(),
-                    [&saved](const auto &option) { return option.first == saved; });
+    const auto valid = std::any_of(options.begin(), options.end(),
+                                   [&saved](const auto &option) { return option.first == saved; });
     if (valid) {
         quality = saved;
         return;
@@ -172,7 +170,7 @@ MusicPlayer::MusicPlayer(Host *host, MusicApi *api, QObject *parent)
         return;
     }
     refreshQualityPreference();
-#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS) || defined(Q_OS_WIN)
     m_appleTransitionsEnabled = host->preference("apple-smart-transition") == "on";
     connect(host, &Host::preferenceChanged, this, [this](const QString &key, const QString &value) {
         if (key == "apple-smart-transition") {
@@ -273,7 +271,7 @@ void MusicPlayer::play(QJsonObject track, std::optional<QJsonArray> source, std:
         (m_api->provider != "local" && track["provider"] == "local")) {
         return;
     }
-#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS) || defined(Q_OS_WIN)
     invalidateAppleTransition();
 #endif
     if (source) {
@@ -476,7 +474,7 @@ void MusicPlayer::fail(QString error) {
 
 /** 重新获取当前歌曲的地址并恢复位置 */
 void MusicPlayer::recoverPlayback() {
-#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS) || defined(Q_OS_WIN)
     invalidateAppleTransition(true);
 #endif
     ++m_recoveryAttempts;
@@ -492,7 +490,7 @@ void MusicPlayer::recoverPlayback() {
     prepare(current, generation, true);
 }
 
-#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS) || defined(Q_OS_WIN)
 /** 当前曲目稳定起播后立即按队列顺序准备下一首，接管前保留当前曲目。 */
 void MusicPlayer::prepareAppleTransition() {
     if (m_appleTransitionEpoch != m_host->epoch) {
@@ -636,7 +634,7 @@ void MusicPlayer::tick(double time, bool force) {
     } else if (state != previous) {
         emit changed();
     }
-#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS) || defined(Q_OS_WIN)
     prepareAppleTransition();
 #endif
 }
@@ -701,7 +699,7 @@ void MusicPlayer::next(int direction, bool ended) {
     if (queue.isEmpty()) {
         return;
     }
-#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS) || defined(Q_OS_WIN)
     invalidateAppleTransition();
 #endif
     const auto selected = queue.navigate(direction, mode);
@@ -772,7 +770,7 @@ void MusicPlayer::setMode(const QString &value) {
         return;
     }
     if (QStringList{"off", "all", "one", "shuffle"}.contains(value)) {
-#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS) || defined(Q_OS_WIN)
         if (mode != value) {
             invalidateAppleTransition();
         }
@@ -790,7 +788,7 @@ void MusicPlayer::setAlternative(bool enabled) {
     if (remoteCommand("alternative", {{"enabled", enabled}})) {
         return;
     }
-#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS) || defined(Q_OS_WIN)
     if (alternative != enabled) {
         invalidateAppleTransition();
     }

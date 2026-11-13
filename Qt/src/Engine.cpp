@@ -51,6 +51,19 @@ Engine::Engine(QString path, bool offline, QObject *parent, PlaybackConnection *
     m_jitterEnabled = qEnvironmentVariableIntValue("RHINE_JITTER") == 1;
     const auto content = QJsonDocument::fromJson(host.read("slots.json").toUtf8()).object();
     app = std::make_unique<NativeApplication>(&host, &m_glyphs, &scene, content);
+    connect(&app->shortcuts, &GlobalShortcuts::activated, this, [this](const QString &action) {
+        if (action != "window" || !m_window) {
+            return;
+        }
+        if (m_window->isVisible() && m_window->isActive()) {
+            m_window->hide();
+        } else {
+            m_window->setWindowStates(m_window->windowStates() & ~Qt::WindowMinimized);
+            m_window->show();
+            m_window->raise();
+            m_window->requestActivate();
+        }
+    });
     connect(&app->music, &MusicLibrary::playbackInvalidated, this, &Engine::refreshPlayback);
     connect(&app->hud, &NativeHud::localImportRequested, this, &Engine::localImportRequested);
     connect(&app->hud, &NativeHud::pluginImportRequested, this, &Engine::pluginImportRequested);

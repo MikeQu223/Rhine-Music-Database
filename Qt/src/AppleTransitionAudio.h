@@ -22,6 +22,9 @@ class AppleTransitionAudio {
     double tempo(double playbackMs) const;
     double rampProgress(double playbackMs) const;
     double restoredAtMs() const;
+#ifdef Q_OS_WIN
+    QUrl playbackSource() const;
+#endif
 
 #ifdef __OBJC__
     AVAsset *asset() const;

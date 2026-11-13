@@ -15,6 +15,10 @@
 #include <utility>
 #if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
 #include "AppleAudioPlayer.h"
+#elif defined(Q_OS_WIN)
+#include "WindowsTransitionPlayer.h"
+#endif
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS) || defined(Q_OS_WIN)
 #include "AppleTransitionPlan.h"
 #include "AppleTransitionMedia.h"
 #include "AppleTransitionAudio.h"
@@ -58,7 +62,7 @@ bool allowsPlaybackSource(const QUrl &url, bool offline, bool alternative, const
 }
 }
 
-#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS) || defined(Q_OS_WIN)
 namespace {
 void useUnstretchedFade(AppleTransitionPlan &plan) {
     const auto overlap = std::min<qint64>(plan.overlapMs, 1800);
@@ -86,8 +90,8 @@ struct AudioPlayer::AppleTransition {
     QUrl source;
     std::shared_ptr<Analysis> analysis = std::make_shared<Analysis>();
     AppleTransitionPlan plan;
-    std::unique_ptr<AppleAudioPlayer> incoming;
-    AppleAudioPlayer::TransitionOutput route = AppleAudioPlayer::TransitionOutput::Unsupported;
+    std::unique_ptr<NativeTransitionPlayer> incoming;
+    NativeTransitionPlayer::TransitionOutput route = NativeTransitionPlayer::TransitionOutput::Unsupported;
     QElapsedTimer routeClock;
     QElapsedTimer armedClock;
     QElapsedTimer fadeTailClock;
@@ -98,6 +102,10 @@ struct AudioPlayer::AppleTransition {
     double fadeTailDurationMs = 0;
     Phase phase = Phase::Analyzing;
     bool streaming = false;
+#ifdef Q_OS_WIN
+    QString provider;
+    bool alternative = false;
+#endif
     bool rejectedPreparedAudio = false;
     float outgoingGain = 1.0f;
     float incomingGain = 0.0f;
@@ -209,11 +217,25 @@ class AudioPlayer::OutputFormatProbe {
  * 建立播放器与默认输出设备监听；不持久化设备 ID。
  * 每次设备通知重新读取当前默认设备，避免蓝牙连接或切换后继续输出到启动时的设备。
  */
-AudioPlayer::AudioPlayer(std::function<void()> changed) : playbackChanged(std::move(changed)) {
+AudioPlayer::AudioPlayer(std::function<void()> changed, bool allowSmartPlayback)
+    : playbackChanged(std::move(changed)) {
+#ifdef Q_OS_WIN
+    allowWindowsTransitions = allowSmartPlayback;
+    useApplePlayback = false;
+#else
+    Q_UNUSED(allowSmartPlayback);
+#endif
     normalizeOutputLayout(defaultOutput());
     output.setVolume(PlatformFeatures::NativeAppleAudio && !PlatformFeatures::ApplicationVolume ? 1.f : .7f);
-    QObject::connect(&output, &QAudioOutput::volumeChanged, &devices,
-                     [this](float volume) { pcm.setVolume(volume); });
+    QObject::connect(&output, &QAudioOutput::volumeChanged, &devices, [this](float volume) {
+#ifdef Q_OS_WIN
+        if (applePlayer && applePlayer->isBorrowed() && appleTransition) {
+            pcm.setVolume(volume * appleTransition->outgoingGain);
+            return;
+        }
+#endif
+        pcm.setVolume(volume);
+    });
     pcm.backpressure = [this](bool blocked) {
         decoderThrottled = blocked;
         if (!player || !playbackRequested || outputUnavailable || decoderEnded || !error.isEmpty()) {
@@ -257,8 +279,17 @@ AudioPlayer::AudioPlayer(std::function<void()> changed) : playbackChanged(std::m
     createPlayer();
     playbackWatchdog.setInterval(250);
     QObject::connect(&playbackWatchdog, &QTimer::timeout, &devices, [this] {
-#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
-        if (applePlayer) {
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS) || defined(Q_OS_WIN)
+#ifdef Q_OS_WIN
+        if (applePlayer && applePlayer->isBorrowed()) {
+            advanceAppleTransition();
+            const bool mixing =
+                appleTransition && (appleTransition->phase == AppleTransition::Phase::Armed ||
+                                    appleTransition->phase == AppleTransition::Phase::Recovering);
+            playbackWatchdog.setInterval(mixing ? 12 : 100);
+        }
+#endif
+        if (hasNativePlayback()) {
 #ifdef Q_OS_MACOS
             if (diagnosticsEnabled) {
                 applyPendingOutputFormatObservation();
@@ -323,10 +354,13 @@ void AudioPlayer::normalizeOutputLayout(const QAudioDevice &device) {
  * 输出对象保持不变，保留用户音量与当前默认设备。
  */
 void AudioPlayer::createPlayer() {
-#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS) || defined(Q_OS_WIN)
     // Qt 播放器只保留空闲状态接口。换歌时复用它，AVPlayer 会话独立释放。
     if (useApplePlayback && player) {
         closeApplePlayback();
+#ifdef Q_OS_WIN
+        stopWindowsDecoder();
+#endif
         return;
     }
 #endif
@@ -513,8 +547,24 @@ void AudioPlayer::restorePlaybackPosition() {
  */
 void AudioPlayer::followDefaultOutput(bool refresh, const AudioOutputFormat::SystemFormat *observedSystem) {
     const auto device = defaultOutput();
-#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
-    if (applePlayer) {
+#ifdef Q_OS_WIN
+    if (appleTransition && (output.device() != device || device.isNull())) {
+        resetAppleTransitionSchedule();
+    }
+#endif
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS) || defined(Q_OS_WIN)
+    if (hasNativePlayback()) {
+#ifdef Q_OS_WIN
+        const auto unavailable = device.isNull();
+        if (output.device() != device || outputUnavailable != unavailable) {
+            resetAppleTransitionSchedule();
+            output.setDevice(device);
+        }
+        outputUnavailable = unavailable;
+        if (unavailable) {
+            applePlayer->setPaused(true);
+        }
+#endif
 #ifdef Q_OS_MACOS
         // AVPlayer 自己跟随默认路由；全部输出消失时保留当前曲目与播放意图。
         outputUnavailable = device.isNull();
@@ -644,8 +694,8 @@ bool AudioPlayer::applyPendingOutputFormatObservation() {
         outputFormatClock.elapsed() > OUTPUT_FORMAT_OBSERVATION_MAX_AGE_MS) {
         return true;
     }
-#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
-    if (applePlayer) {
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS) || defined(Q_OS_WIN)
+    if (hasNativePlayback()) {
         appleSystemFormat = observation.system;
         return true;
     }
@@ -677,6 +727,12 @@ bool AudioPlayer::load(QString input, bool offline, bool alternative, QString pr
         diagnose("load-rejected");
         return false;
     }
+#ifdef Q_OS_WIN
+    useApplePlayback = allowWindowsTransitions &&
+                       AppStorage::settings().value("panel/apple-smart-transition").toString() == "on";
+    windowsProvider = provider;
+    windowsAlternative = alternative;
+#endif
     ++sourceSerial;
     backendFailureCategory = 0;
     reportedHttpStatus = 0;
@@ -715,7 +771,7 @@ bool AudioPlayer::load(QString input, bool offline, bool alternative, QString pr
     followDefaultOutput();
     recoveryPosition = position > 0 ? qint64(position) : -1;
     lastPosition = qint64(position);
-#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS) || defined(Q_OS_WIN)
     if (useApplePlayback) {
 #ifdef Q_OS_IOS
         // 音频会话激活前，Qt 的设备列表可能为空；路由和中断由 AVAudioSession 管理。
@@ -749,14 +805,20 @@ void AudioPlayer::control(QString action, double value) {
     if (!std::isfinite(value)) {
         return;
     }
+#ifdef Q_OS_WIN
+    if (applePlayer && applePlayer->isBorrowed() &&
+        (action == "pause" || action == "seek" || action == "stop")) {
+        resetAppleTransitionSchedule();
+    }
+#endif
     if (diagnosticsEnabled && diagnosticEvent) {
         auto values = diagnosticState();
         values["action"] = int(std::max<qsizetype>(
             0, QStringList{"other", "pause", "resume", "stop", "seek", "volume"}.indexOf(action)));
         diagnosticEvent("control", values);
     }
-#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
-    if (applePlayer && action != "stop") {
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS) || defined(Q_OS_WIN)
+    if (hasNativePlayback() && action != "stop") {
         controlApplePlayback(action, value);
         return;
     }
@@ -824,12 +886,12 @@ void AudioPlayer::control(QString action, double value) {
 }
 QVariantMap AudioPlayer::state() const {
     const auto position = recoveryPosition >= 0 ? recoveryPosition : playbackPosition();
-#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
-    if (applePlayer) {
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS) || defined(Q_OS_WIN)
+    if (hasNativePlayback()) {
         const auto status = applePlayer->status();
         const auto duration = applePlayer->duration();
         return {{"playing", playbackRequested && !outputUnavailable && error.isEmpty() &&
-                                status == AppleAudioPlayer::Status::Ready && applePlayer->isPlaying()},
+                                status == NativeTransitionPlayer::Status::Ready && applePlayer->isPlaying()},
                 {"position", recoveryPosition >= 0 && duration > 0 ? std::min(position, duration) : position},
                 {"duration", duration},
                 {"seekable", applePlayer->isSeekable()},
@@ -839,8 +901,8 @@ QVariantMap AudioPlayer::state() const {
                 {"recoverable", failureRecoverable},
                 {"requested", playbackRequested},
                 {"buffering", error.isEmpty() &&
-                                  (status == AppleAudioPlayer::Status::Loading || recoveryPosition >= 0 ||
-                                   applePlayer->isSeeking() ||
+                                  (status == NativeTransitionPlayer::Status::Loading ||
+                                   recoveryPosition >= 0 || applePlayer->isSeeking() ||
                                    (playbackRequested && !outputUnavailable && !applePlayer->isPlaying()))}};
     }
 #endif
@@ -865,6 +927,14 @@ void AudioPlayer::enableDiagnostics(bool enabled) {
         return;
     }
     diagnosticsEnabled = enabled;
+#ifdef Q_OS_WIN
+    if (applePlayer) {
+        applePlayer->enableDiagnostics(enabled);
+    }
+    if (appleTransition && appleTransition->incoming) {
+        appleTransition->incoming->enableDiagnostics(enabled);
+    }
+#endif
 }
 
 void AudioPlayer::clearSpectrum() {
@@ -880,6 +950,15 @@ void AudioPlayer::enableSpectrum(bool enabled) {
         return;
     }
     spectrumEnabled = enabled;
+#ifdef Q_OS_WIN
+    if (applePlayer) {
+        applePlayer->enableSpectrum(enabled);
+    }
+    // Only the current song publishes spectrum; the preloaded session starts publishing at commit.
+    if (appleTransition && appleTransition->incoming) {
+        appleTransition->incoming->enableSpectrum(false);
+    }
+#endif
     clearSpectrum();
 }
 
@@ -945,23 +1024,28 @@ QJsonObject AudioPlayer::diagnosticState() const {
     for (auto it = playback.begin(); it != playback.end(); ++it) {
         values[it.key()] = it.value();
     }
-#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS) || defined(Q_OS_WIN)
     if (applePlayer) {
         const auto spatialState = state();
         const auto nativeValues = applePlayer->diagnosticState();
         for (auto it = nativeValues.begin(); it != nativeValues.end(); ++it) {
             values[it.key()] = it.value();
         }
+#ifndef Q_OS_WIN
         values["outputBackend"] = 2;
         values["outputSystemFormatStatus"] = appleSystemFormat.status;
         values["outputSystemSampleRateHz"] = appleSystemFormat.format.sampleRate();
         values["outputSystemChannels"] = appleSystemFormat.format.channelCount();
         values["outputSystemSampleFormat"] = int(appleSystemFormat.format.sampleFormat());
+#endif
+        values["sourceSerial"] = sourceSerial;
+        values["sourceKind"] = sourceKind;
+        values["provider"] = sourceProvider;
         values["hasActiveSource"] = true;
         values["durationMs"] = double(applePlayer->duration());
         values["seekable"] = spatialState["seekable"].toBool();
-        auto mediaStatus = spatialState["buffering"].toBool() ? QMediaPlayer::LoadingMedia
-                                                             : QMediaPlayer::LoadedMedia;
+        auto mediaStatus =
+            spatialState["buffering"].toBool() ? QMediaPlayer::LoadingMedia : QMediaPlayer::LoadedMedia;
         if (!error.isEmpty()) {
             mediaStatus = QMediaPlayer::InvalidMedia;
         } else if (sourceEnded) {
@@ -1081,7 +1165,7 @@ AudioPlayer::~AudioPlayer() {
 
 /** 先释放解码观察对象，再释放媒体会话 */
 void AudioPlayer::releasePlayer() {
-#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS) || defined(Q_OS_WIN)
     closeApplePlayback();
 #endif
     ++decoderObservation;
@@ -1103,8 +1187,8 @@ void AudioPlayer::releasePlayer() {
 }
 
 qint64 AudioPlayer::playbackPosition() const {
-#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
-    if (applePlayer) {
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS) || defined(Q_OS_WIN)
+    if (hasNativePlayback()) {
         return applePlayer->position();
     }
 #endif
@@ -1130,8 +1214,18 @@ void AudioPlayer::setOutputPolicy(AudioOutputFormat::Policy policy) {
     if (outputPolicy == policy) {
         return;
     }
-#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+#ifdef Q_OS_WIN
+    resetAppleTransitionSchedule();
+#endif
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS) || defined(Q_OS_WIN)
     if (useApplePlayback) {
+#ifdef Q_OS_WIN
+        outputPolicy = policy;
+        resetAppleTransitionSchedule();
+        if (applePlayer) {
+            applePlayer->setOutputPolicy(policy);
+        }
+#endif
         return;
     }
 #endif
@@ -1159,7 +1253,35 @@ void AudioPlayer::setOutputPolicy(AudioOutputFormat::Policy policy) {
     diagnose("output");
 }
 
-#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+#ifdef Q_OS_WIN
+void AudioPlayer::stopWindowsDecoder() {
+    ++decoderObservation;
+    QObject::disconnect(decoderConnection);
+    pcm.pause(true);
+    pcm.reset(output.device(), outputPolicy);
+    if (stream) {
+        stream->cancel();
+    }
+    if (player) {
+        player->blockSignals(true);
+        player->stop();
+        player->setSource({});
+        player->blockSignals(false);
+    }
+    stream.reset();
+    decoderEnded = decoderThrottled = false;
+}
+#endif
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS) || defined(Q_OS_WIN)
+bool AudioPlayer::hasNativePlayback() const {
+#ifdef Q_OS_WIN
+    return applePlayer && !applePlayer->isBorrowed();
+#else
+    return bool(applePlayer);
+#endif
+}
+#endif
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS) || defined(Q_OS_WIN)
 void AudioPlayer::closeApplePlayback() {
     cancelAppleTransition();
     if (!applePlayer) {
@@ -1174,10 +1296,29 @@ void AudioPlayer::closeApplePlayback() {
 }
 
 bool AudioPlayer::startApplePlayback(const QUrl &source, bool paused) {
-    applePlayer = AppleAudioPlayer::open(source);
+#ifdef Q_OS_WIN
+    applePlayer = NativeTransitionPlayer::open(source, {}, windowsProvider, windowsAlternative);
+#else
+    applePlayer = NativeTransitionPlayer::open(source);
+#endif
     if (!applePlayer) {
         return false;
     }
+#ifdef Q_OS_WIN
+    applePlayer->setOutputPolicy(outputPolicy);
+    applePlayer->enableDiagnostics(diagnosticsEnabled);
+    applePlayer->spectrumChanged = [this](QJsonArray levels) {
+        if (spectrumChanged) {
+            spectrumChanged(levels);
+        }
+    };
+    applePlayer->diagnosticEvent = [this](const QString &event, const QJsonObject &values) {
+        if (diagnosticEvent) {
+            diagnosticEvent(event, values);
+        }
+    };
+    applePlayer->enableSpectrum(spectrumEnabled);
+#endif
     appleSource = source;
     playbackRequested = !paused;
     applePlayer->setVolume(output.volume());
@@ -1196,12 +1337,21 @@ bool AudioPlayer::startApplePlayback(const QUrl &source, bool paused) {
 /** 播放开始后立即准备两首曲目的分析输入，并在输入齐备时计算过渡。 */
 bool AudioPlayer::prepareAppleTransition(const QUrl &next, bool offline, bool alternative,
                                          const QString &provider) {
+#ifdef Q_OS_WIN
+    if (!applePlayer && allowWindowsTransitions && !sourceEnded && !player->source().isEmpty() &&
+        AppStorage::settings().value("panel/apple-smart-transition").toString() == "on" &&
+        NativeTransitionPlayer::transitionOutput() != NativeTransitionPlayer::TransitionOutput::Unsupported &&
+        allowsPlaybackSource(next, offline, alternative, provider)) {
+        applePlayer = NativeTransitionPlayer::borrow(*this);
+        appleSource = player->source();
+    }
+#endif
     if (appleTransition || !applePlayer || sourceEnded || appleSource == next ||
         !allowsPlaybackSource(next, offline, alternative, provider)) {
         return false;
     }
-    const auto route = AppleAudioPlayer::transitionOutput();
-    if (route == AppleAudioPlayer::TransitionOutput::Unsupported) {
+    const auto route = NativeTransitionPlayer::transitionOutput();
+    if (route == NativeTransitionPlayer::TransitionOutput::Unsupported) {
         return false;
     }
     appleTransition = std::make_unique<AppleTransition>();
@@ -1210,6 +1360,10 @@ bool AudioPlayer::prepareAppleTransition(const QUrl &next, bool offline, bool al
     auto &transition = *appleTransition;
     const bool streaming = !appleSource.isLocalFile() || !next.isLocalFile();
     transition.streaming = streaming;
+#ifdef Q_OS_WIN
+    transition.provider = provider;
+    transition.alternative = alternative;
+#endif
     transition.routeClock.start();
     const auto durationMs = applePlayer->duration();
     const auto remainingMs = durationMs - applePlayer->position();
@@ -1262,6 +1416,7 @@ bool AudioPlayer::prepareAppleTransition(const QUrl &next, bool offline, bool al
             result->outgoingFile = cached ? cached : copy(outgoing);
             analyze();
         });
+    playbackWatchdog.setInterval(100);
     return true;
 }
 
@@ -1274,6 +1429,11 @@ void AudioPlayer::cancelAppleTransition() {
         applePlayer->setVolume(output.volume());
     }
     appleTransition.reset();
+#ifdef Q_OS_WIN
+    if (applePlayer && applePlayer->isBorrowed()) {
+        applePlayer.reset();
+    }
+#endif
     playbackWatchdog.setInterval(100);
 }
 
@@ -1302,7 +1462,7 @@ void AudioPlayer::resetAppleTransitionSchedule() {
 /** 两个播放器均由同一播放线程控制。B 未确认起播前，A 的会话仍有自然结束权。 */
 void AudioPlayer::advanceAppleTransition() {
     using Phase = AppleTransition::Phase;
-    using Status = AppleAudioPlayer::Status;
+    using Status = NativeTransitionPlayer::Status;
     using Kind = AppleTransitionPlan::Kind;
     if (!appleTransition) {
         return;
@@ -1328,13 +1488,13 @@ void AudioPlayer::advanceAppleTransition() {
     }
     if (transition.routeClock.elapsed() >= 250) {
         transition.routeClock.restart();
-        const auto route = AppleAudioPlayer::transitionOutput();
+        const auto route = NativeTransitionPlayer::transitionOutput();
         if (route != transition.route) {
             resetAppleTransitionSchedule();
             transition.route = route;
         }
     }
-    if (outputUnavailable || transition.route == AppleAudioPlayer::TransitionOutput::Unsupported) {
+    if (outputUnavailable || transition.route == NativeTransitionPlayer::TransitionOutput::Unsupported) {
         return;
     }
     auto &plan = transition.plan;
@@ -1382,8 +1542,25 @@ void AudioPlayer::advanceAppleTransition() {
         if (leadMs <= preloadLeadMs) {
             const auto &file = transition.analysis->incomingFile;
             const auto url = file ? QUrl::fromLocalFile(*file) : transition.source;
-            transition.incoming = AppleAudioPlayer::open(
-                url, transition.rejectedPreparedAudio ? nullptr : transition.analysis->preparedAudio);
+            transition.incoming = NativeTransitionPlayer::open(
+                url, transition.rejectedPreparedAudio ? nullptr : transition.analysis->preparedAudio
+#ifdef Q_OS_WIN
+                ,
+                transition.provider, transition.alternative
+#endif
+            );
+#ifdef Q_OS_WIN
+            if (transition.incoming) {
+                transition.incoming->setOutputPolicy(outputPolicy);
+                transition.incoming->enableDiagnostics(diagnosticsEnabled);
+                transition.incoming->spectrumChanged = [this](QJsonArray levels) {
+                    if (spectrumChanged) {
+                        spectrumChanged(levels);
+                    }
+                };
+                transition.incoming->enableSpectrum(false);
+            }
+#endif
             if (!transition.incoming) {
                 cancelAppleTransition();
                 return;
@@ -1485,7 +1662,7 @@ void AudioPlayer::updateAppleTransitionMix() {
     const bool incomingPlaying = transition.incoming->isPlaying() && incomingElapsed >= 12;
     const auto elapsedSinceCue = transition.armedClock.elapsed() - transition.armedLeadMs;
     const bool outgoingEnded =
-        applePlayer->status() == AppleAudioPlayer::Status::Ended || isApplePlaybackStoppedAtEnd();
+        applePlayer->status() == NativeTransitionPlayer::Status::Ended || isApplePlaybackStoppedAtEnd();
     if (incomingPlaying) {
         const auto elapsedMs = std::min(outgoingElapsed, incomingElapsed);
         auto progress = std::clamp(elapsedMs / std::max<qint64>(1, plan.overlapMs), 0.0, 1.0);
@@ -1514,8 +1691,7 @@ void AudioPlayer::updateAppleTransitionMix() {
     }
 
     const bool drifting = elapsedSinceCue > 130 && plan.kind == AppleTransitionPlan::Kind::BeatMatch &&
-                          incomingPlaying &&
-                          std::abs(incomingElapsed - outgoingElapsed) > 110;
+                          incomingPlaying && std::abs(incomingElapsed - outgoingElapsed) > 110;
     const bool syncProblem = drifting || (!incomingPlaying && transition.fadeProgress > 0);
     if (!syncProblem) {
         transition.syncProblemSinceMs = -1;
@@ -1534,7 +1710,16 @@ void AudioPlayer::updateAppleTransitionMix() {
 void AudioPlayer::commitAppleTransition() {
     auto &transition = *appleTransition;
     // 交接后仅保留 B。A 的结束观察与旧媒体会话一并销毁，不再触发队列前进。
+#ifdef Q_OS_WIN
+    if (applePlayer->isBorrowed()) {
+        stopWindowsDecoder();
+    }
+    useApplePlayback = true;
+#endif
     applePlayer = std::move(transition.incoming);
+#ifdef Q_OS_WIN
+    applePlayer->enableSpectrum(spectrumEnabled);
+#endif
     appleAnalysisFile = transition.analysis->incomingFile;
     appleSource = transition.source;
     sourceKind = appleSource.isLocalFile() ? 3 : (appleSource.scheme() == "https" ? 1 : 2);
@@ -1562,7 +1747,7 @@ bool AudioPlayer::isApplePlaybackStoppedAtEnd() const {
 
 /** 由服务心跳推进 AVPlayer 的加载、跳转、播放和自然结束。 */
 void AudioPlayer::checkApplePlayback() {
-    using Status = AppleAudioPlayer::Status;
+    using Status = NativeTransitionPlayer::Status;
     advanceAppleTransition();
     if (!applePlayer) {
         return;
@@ -1628,7 +1813,11 @@ void AudioPlayer::checkApplePlayback() {
 void AudioPlayer::failApplePlayback() {
     applePlayer->setPaused(true);
     failureRecoverable = !appleSource.isLocalFile();
+#ifdef Q_OS_WIN
+    error = QStringLiteral("Windows 音频播放失败，请检查输出设备、文件格式或重试");
+#else
     error = QStringLiteral("AVPlayer 无法播放此音源，请检查文件格式或重试");
+#endif
     playbackWatchdog.stop();
     diagnose("error");
     if (playbackChanged) {
