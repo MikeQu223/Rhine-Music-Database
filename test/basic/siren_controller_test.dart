@@ -748,4 +748,110 @@ void main() {
       expect(controller.state.loading, isFalse);
     });
   });
+
+  // Qt/src/MusicSiren.cpp:193-246（openSirenAllSongs）、MusicDirectory.cpp:302-319
+  // （selectDirectory 先写 index 再 choose）、:417-452（leaveDirectory 返回父目录）。
+  group('虚拟目录（全部歌曲）', () {
+    test('openAllSirenSongs：只选中第一首，不 prepare、不 play、不动队列', () async {
+      final _Server server = _Server();
+      final _FakeAudio audio = _FakeAudio();
+      final BasicController controller = _controller(server, audio);
+      addTearDown(controller.dispose);
+      await controller.boot();
+      await _settle();
+      audio.clearCalls();
+
+      await controller.openAllSirenSongs();
+
+      expect(controller.state.phase, BasicPhase.library);
+      expect(controller.state.status, '已打开：全部歌曲');
+      expect(controller.state.directory?.id, 'siren-all');
+      expect(controller.state.directory?.songs.length, 3);
+      expect(controller.state.directory?.index, 0);
+      expect(controller.state.song?.id, 's1');
+      expect(controller.state.albums, isEmpty);
+      expect(controller.state.queue, isEmpty);
+      expect(controller.state.playing, isFalse);
+      expect(
+        audio.calls,
+        isEmpty,
+        reason: 'Qt 这里只 choose：play() 只在用户按播放时才 replaceQueue（MusicLibrary.cpp:943-957）',
+      );
+    });
+
+    test('目录内选曲：队列取目录顺序，directory.index 跟着选中行', () async {
+      final _Server server = _Server();
+      final _FakeAudio audio = _FakeAudio();
+      final BasicController controller = _controller(server, audio);
+      addTearDown(controller.dispose);
+      await controller.boot();
+      await _settle();
+      await controller.openAllSirenSongs();
+      audio.clearCalls();
+
+      await controller.openSong(controller.state.songs[1]);
+      await _settle();
+
+      expect(controller.state.phase, BasicPhase.detail);
+      expect(
+        controller.state.queue.map((SirenSong song) => song.id).toList(),
+        <String>['s1', 's2', 's3'],
+        reason: 'Qt directorySource()：目录内播放队列就是目录曲目（MusicLibrary.cpp:975-984）',
+      );
+      expect(controller.state.queueIndex, 1);
+      expect(controller.state.directory?.index, 1, reason: 'selectDirectory 先写 index 再 choose');
+      expect(audio.calls, contains('prepare:https://file.test/s2.flac:1'));
+      expect(audio.calls, contains('play:1'));
+      expect(controller.state.playerStatus, '正在播放：Song Two');
+      expect(controller.state.playing, isFalse, reason: 'playing 只认 native 读数');
+    });
+
+    test('目录内返回上一级：回资料库根，队列不中断', () async {
+      final _Server server = _Server();
+      final _FakeAudio audio = _FakeAudio();
+      final BasicController controller = _controller(server, audio);
+      addTearDown(controller.dispose);
+      await controller.boot();
+      await _settle();
+      await controller.openAllSirenSongs();
+
+      await controller.back();
+
+      expect(controller.state.directory, isNull);
+      expect(controller.state.phase, BasicPhase.library);
+      expect(controller.state.status, '已返回：塞壬唱片');
+      expect(controller.state.songs.length, 3);
+      expect(controller.state.song?.id, 's1', reason: '返回不换当前曲目');
+    });
+
+    test('目录内搜索离开目录（Qt/src/MusicSiren.cpp:184-188）', () async {
+      final _Server server = _Server();
+      final _FakeAudio audio = _FakeAudio();
+      final BasicController controller = _controller(server, audio);
+      addTearDown(controller.dispose);
+      await controller.boot();
+      await _settle();
+      await controller.openAllSirenSongs();
+
+      await controller.setQuery('Song Two');
+
+      expect(controller.state.directory, isNull);
+      expect(controller.state.songs.single.id, 's2');
+      expect(controller.state.status, '找到 1 条结果');
+    });
+
+    test('未加载曲库时不造目录（Qt :194-197）', () async {
+      final _Server server = _Server();
+      final _FakeAudio audio = _FakeAudio();
+      final BasicController controller = _controller(server, audio);
+      addTearDown(controller.dispose);
+
+      await controller.openAllSirenSongs();
+
+      expect(controller.state.directory, isNull);
+      expect(controller.state.songs, isEmpty);
+      expect(controller.state.status, sirenLibraryUnloadedStatus);
+      expect(audio.calls, isEmpty);
+    });
+  });
 }

@@ -529,13 +529,17 @@ class _BasicShellState extends State<_BasicShell> {
     if (action == 'search') {
       return '检索输入框尚未接线：TextInputOverlay 已存在但还没铺进预览（不伪造搜索框）';
     }
-    // 'music:open-all-siren' 是 archive 页的「在资料库中打开 →」（archive_page.dart:255）。
-    // 94 已用 BasicController.openSirenLibrary() 真接线（siren_controller.dart:292：退详情/
-    // 歌词、清检索、回完整曲库，且不打断播放队列），合并必须保留；96 分支基于没有该方法的
-    // 861 controller 才只能报"尚未接入"。Qt 的"全部歌曲虚拟目录"是另一个契约（98 的
-    // openAllSirenSongs），这里不冒充。
+    // 'music:open-all-siren' 是 archive 页的「在资料库中打开 →」（archive_page.dart:255），
+    // 对应 Qt QML 的同一个动作名（Qt/src/NativeHud.cpp:426）→ NativeHudMusic.cpp:365-369 →
+    // MusicLibrary::openSirenAllSongs()（Qt/src/MusicSiren.cpp:193-246）：把**全部已加载曲目**
+    // 当成虚拟歌单 'siren-all'/'siren:playlist:all'（title「全部歌曲」）打开，仅选中第一首，
+    // 不替换播放队列、不开始播放。
+    // 94 当年没有目录 API，用 openSirenLibrary() 做近似（只回完整曲库、不开目录）；98 交付了
+    // 逐字照抄 Qt 的 openAllSirenSongs()（siren_controller.dart:360），二者在「回曲库 + 不动
+    // 播放队列」上一致，但只有后者真的开出目录，所以这里按 Qt 指向后者，94 的近似不再被调用
+    // （openSirenLibrary 仍留在 98 的 controller 里，由它的 owner 处置，不在本整合改写）。
     if (action == 'music:open-all-siren') {
-      unawaited(controller.openSirenLibrary());
+      unawaited(controller.openAllSirenSongs());
       return null;
     }
     if (action.startsWith(basicVolumeFractionActionPrefix)) {

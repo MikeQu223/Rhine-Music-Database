@@ -69,6 +69,7 @@ class _TrackingController extends BasicController {
   int toggleCalls = 0;
   int lyricsOpens = 0;
   int libraryOpens = 0;
+  int allSirenOpens = 0;
   int backCalls = 0;
 
   /// 命中动作真正落到 controller 的证据（不是“点了就算”）。
@@ -129,10 +130,17 @@ class _TrackingController extends BasicController {
     lyricsOpens += 1;
   }
 
-  /// 94 已上线的“回完整曲库”入口（archive 页 'music:open-all-siren'）。
+  /// 94 当年的近似入口：只回完整曲库、不开目录。98 交付真实目录后它不再被入口调用，
+  /// 计数留着是为了证明“没有退回近似”。
   @override
   Future<void> openSirenLibrary() async {
     libraryOpens += 1;
+  }
+
+  /// 98 的 Qt 真实虚拟目录入口（archive 页 'music:open-all-siren'，Qt/src/MusicSiren.cpp:193-246）。
+  @override
+  Future<void> openAllSirenSongs() async {
+    allSirenOpens += 1;
   }
 
   @override
@@ -502,17 +510,19 @@ void main() {
       await tester.pumpWidget(const SizedBox());
     });
 
-    testWidgets('open-all-siren returns to the full Siren library through the real controller API',
+    testWidgets('open-all-siren opens the Qt all-songs virtual directory through the reviewed API',
         (WidgetTester tester) async {
       final _TrackingController controller = await pumpShell(tester);
 
       fire(tester, 'music:open-all-siren');
       await tester.pump();
 
-      // archive 页「在资料库中打开 →」（archive_page.dart:255）在 94 已真接线到
-      // BasicController.openSirenLibrary()（siren_controller.dart:292）。合并保留了这条
-      // 真动作，所以这里必须证明它落到 controller，而不是变成一条"尚未接入"的提示。
-      expect(controller.libraryOpens, 1);
+      // archive 页「在资料库中打开 →」（archive_page.dart:255 = Qt/src/NativeHud.cpp:426）
+      // 在 Qt 里走 openSirenAllSongs()（NativeHudMusic.cpp:365-369 → MusicSiren.cpp:193-246），
+      // 98 的功能就是把这个虚拟目录做出来。所以入口必须落到 openAllSirenSongs()，
+      // 而不是 94 当年没有目录 API 时的近似 openSirenLibrary()。
+      expect(controller.allSirenOpens, 1);
+      expect(controller.libraryOpens, 0);
       expect(find.textContaining('「全部歌曲」尚未接入'), findsNothing);
       // 也不许顺带伪造打开某张专辑/某首歌。
       expect(controller.openedAlbums, isEmpty);

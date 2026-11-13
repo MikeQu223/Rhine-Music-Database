@@ -144,4 +144,107 @@ void main() {
     expect(controller.state.songs.length, 2);
     expect(controller.state.status, startsWith(sirenCatalogLoadedPrefix));
   });
+
+  group('openAllSirenSongs（Qt/src/MusicSiren.cpp:193-246）', () {
+    test('用真实曲库建「全部歌曲」目录，字段逐字对齐 Qt', () async {
+      final List<String> requested = <String>[];
+      final BasicController controller = BasicController(
+        audio: _SilentAudio(),
+        repository: _repository(requested),
+      );
+      addTearDown(controller.dispose);
+      await controller.boot();
+
+      await controller.openAllSirenSongs();
+
+      final BasicDirectory? directory = controller.state.directory;
+      expect(directory, isNotNull);
+      expect(directory!.provider, sirenProvider);
+      expect(directory.kind, 'playlist');
+      expect(directory.virtual, isTrue);
+      expect(directory.id, sirenAllSongsId);
+      expect(directory.key, sirenAllSongsKey);
+      expect(directory.title, '全部歌曲');
+      expect(directory.artist, '塞壬唱片', reason: 'Qt MusicApi::providerName(siren) 的原文');
+      expect(directory.description, '塞壬唱片全部歌曲');
+      expect(directory.cover, controller.state.songs.first.cover);
+      expect(directory.trackCount, 2);
+      expect(directory.ids, <String>['s1', 's2']);
+      expect(directory.cursor, 2);
+      expect(directory.index, 0);
+      expect(directory.parent, isNull);
+      expect(
+        directory.songs.map((SirenSong song) => song.id).toList(),
+        <String>['s1', 's2'],
+      );
+
+      expect(controller.state.phase, BasicPhase.library);
+      expect(controller.state.status, '已打开：全部歌曲');
+      expect(controller.state.songs.length, 2);
+      expect(controller.state.albums, isEmpty, reason: '目录内只列曲目');
+      // Qt :243-245：current 清空后只 choose 第一首——选中，不播放，队列保持空。
+      expect(controller.state.song?.id, 's1');
+      expect(controller.state.queue, isEmpty);
+      expect(controller.state.playing, isFalse);
+      expect(requested.length, 2, reason: '目录用已加载的曲库，不再发请求');
+    });
+
+    test('曲库未加载：只上屏未加载文案，不造空目录', () async {
+      final BasicController controller = BasicController(
+        audio: _SilentAudio(),
+        repository: _repository(<String>[]),
+      );
+      addTearDown(controller.dispose);
+
+      await controller.openAllSirenSongs();
+
+      expect(controller.state.directory, isNull);
+      expect(controller.state.songs, isEmpty);
+      expect(controller.state.status, sirenLibraryUnloadedStatus);
+    });
+
+    test('重复打开：新目录以旧目录为 parent，back 逐级返回', () async {
+      final List<String> requested = <String>[];
+      final BasicController controller = BasicController(
+        audio: _SilentAudio(),
+        repository: _repository(requested),
+      );
+      addTearDown(controller.dispose);
+      await controller.boot();
+
+      await controller.openAllSirenSongs();
+      await controller.openAllSirenSongs();
+      expect(controller.state.directory?.parent?.id, sirenAllSongsId);
+
+      await controller.back();
+      expect(controller.state.directory?.id, sirenAllSongsId);
+      expect(controller.state.status, '已返回：全部歌曲');
+
+      await controller.back();
+      expect(controller.state.directory, isNull);
+      expect(controller.state.status, '已返回：塞壬唱片');
+      expect(controller.state.phase, BasicPhase.library);
+      expect(controller.state.songs.length, 2);
+    });
+
+    test('目录内搜索先离开目录，关键词作用于完整曲库', () async {
+      final List<String> requested = <String>[];
+      final BasicController controller = BasicController(
+        audio: _SilentAudio(),
+        repository: _repository(requested),
+      );
+      addTearDown(controller.dispose);
+      await controller.boot();
+      await controller.openAllSirenSongs();
+
+      await controller.setQuery('第二');
+
+      expect(controller.state.directory, isNull);
+      expect(
+        controller.state.songs.map((SirenSong song) => song.id).toList(),
+        <String>['s2'],
+      );
+      expect(controller.state.status, '找到 1 条结果');
+    });
+  });
 }
