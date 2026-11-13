@@ -140,6 +140,9 @@ void NativeHud::openModal(QString kind) {
 }
 
 void NativeHud::closeModal() {
+    if (shortcuts && modal == "shortcuts") {
+        shortcuts->cancelRecording();
+    }
     m_sortRequest.reset();
     ++m_searchGeneration;
     if (modal == "login") {
@@ -570,6 +573,10 @@ void NativeHud::action(QString value) {
         applyDesktopLyricsAction(value);
         return;
     }
+    if (value.startsWith("shortcuts:")) {
+        applyShortcutAction(value);
+        return;
+    }
     if (value.startsWith("setting:")) {
         // Schema 控件使用 setting:<id>:<value> 写入；旧版动作字符串仍由各自分支处理。
         const auto rest = value.mid(8);
@@ -895,13 +902,11 @@ void NativeHud::action(QString value) {
                 discover.loadCategories();
             }
         } else if (name == "category-page") {
-            const bool hasAllCategory =
-                std::any_of(discover.categories.begin(), discover.categories.end(),
-                            [](const QJsonValue &value) {
-                                const auto category = value.toObject();
-                                return category["id"].toString() == "全部" ||
-                                       category["name"].toString() == "全部";
-                            });
+            const bool hasAllCategory = std::any_of(
+                discover.categories.begin(), discover.categories.end(), [](const QJsonValue &value) {
+                    const auto category = value.toObject();
+                    return category["id"].toString() == "全部" || category["name"].toString() == "全部";
+                });
             const int allCategory = discover.categories.isEmpty() || hasAllCategory ? 1 : 0;
             const auto pages = std::max(
                 1, (int(discover.categories.size()) + allCategory + CategoryPageSize - 1) / CategoryPageSize);
@@ -1236,7 +1241,9 @@ void NativeHud::key(QString value, bool command) {
         return;
     }
     if (value == "Escape") {
-        if (modal == "desktop-lyrics") {
+        if (modal == "shortcuts") {
+            action("shortcuts:back");
+        } else if (modal == "desktop-lyrics") {
             action("desktop-lyrics:back");
         } else if (modal.isEmpty()) {
             action("back");

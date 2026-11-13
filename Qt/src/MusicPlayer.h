@@ -79,7 +79,7 @@ class MusicPlayer : public QObject {
     QString effectivePlaybackQuality() const;
     void finishOnlinePlayback(const QJsonObject &track, const QJsonObject &audio);
     void fail(QString error);
-#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS) || defined(Q_OS_WIN)
     bool m_appleTransitionsEnabled = false;
     bool m_appleTransitionAttempted = false;
     int m_appleNextIndex = -1;

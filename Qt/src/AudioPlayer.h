@@ -18,12 +18,16 @@
 
 #if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
 class AppleAudioPlayer;
+using NativeTransitionPlayer = AppleAudioPlayer;
+#elif defined(Q_OS_WIN)
+class WindowsTransitionPlayer;
+using NativeTransitionPlayer = WindowsTransitionPlayer;
 #endif
 
 // 在线模式只接收锁定上游的播放链接；本地模式只接收文件 URL
 class AudioPlayer {
   public:
-    explicit AudioPlayer(std::function<void()> changed = {});
+    explicit AudioPlayer(std::function<void()> changed = {}, bool allowSmartPlayback = true);
     ~AudioPlayer();
     bool load(QString input, bool offline, bool alternative = false, QString provider = {},
               double position = 0, bool paused = false);
@@ -35,7 +39,7 @@ class AudioPlayer {
     void setOutputPolicy(AudioOutputFormat::Policy policy);
     std::function<void(QJsonArray)> spectrumChanged;
     std::function<void(const QString &, const QJsonObject &)> diagnosticEvent;
-#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS) || defined(Q_OS_WIN)
     bool prepareAppleTransition(const QUrl &next, bool offline, bool alternative, const QString &provider);
     void cancelAppleTransition();
     std::function<void()> appleTransitionCommitted;
@@ -43,6 +47,13 @@ class AudioPlayer {
 
   private:
     friend class AudioPlayerRegression;
+#ifdef Q_OS_WIN
+    friend class WindowsTransitionPlayer;
+    bool allowWindowsTransitions = true;
+    QString windowsProvider;
+    bool windowsAlternative = false;
+    void stopWindowsDecoder();
+#endif
     class OutputFormatProbe;
     QMediaDevices devices;
     QAudioOutput output;
@@ -110,10 +121,11 @@ class AudioPlayer {
     bool failureRecoverable = false;
     bool sourceEnded = false;
     void checkPlaybackHealth();
-#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS) || defined(Q_OS_WIN)
     bool useApplePlayback = true; // Qt 输出回归使用独立的测试路径。
+    bool hasNativePlayback() const;
     QUrl appleSource;
-    std::unique_ptr<AppleAudioPlayer> applePlayer;
+    std::unique_ptr<NativeTransitionPlayer> applePlayer;
     std::shared_ptr<const QString> appleAnalysisFile;
     struct AppleTransition;
     std::unique_ptr<AppleTransition> appleTransition;

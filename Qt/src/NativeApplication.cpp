@@ -10,6 +10,7 @@
 #include <QGuiApplication>
 #include <QJsonDocument>
 #include <QTimer>
+#include <algorithm>
 #include <cmath>
 
 HudSceneActions NativeApplication::sceneActions(NativeScene *scene) {
@@ -29,8 +30,26 @@ constexpr char kSeekActionPrefix[] = "rhine.media.SEEK:";
 /** 建立原生音乐、HUD、场景的值接口；所有异步失效统一唤醒 Qt 帧调度。 */
 NativeApplication::NativeApplication(Host *host, Glyphs *glyphs, NativeScene *scene, QJsonObject content,
                                      QObject *parent)
-    : QObject(parent), music(host, content), hud(host, glyphs, &music, sceneActions(scene)), m_host(host),
-      m_scene(scene) {
+    : QObject(parent), music(host, content), shortcuts(host), hud(host, glyphs, &music, sceneActions(scene)),
+      m_host(host), m_scene(scene) {
+    hud.shortcuts = &shortcuts;
+    connect(&shortcuts, &GlobalShortcuts::changed, host, &Host::invalidate);
+    connect(&shortcuts, &GlobalShortcuts::activated, this, [this](const QString &action) {
+        if (action == "toggle") {
+            music.player.toggle();
+        } else if (action == "prev" || action == "next") {
+            music.player.next(action == "next" ? 1 : -1);
+        } else if (action == "volume-up" || action == "volume-down") {
+            music.player.volume(std::clamp(
+                music.player.state["volume"].toDouble() + (action == "volume-up" ? 0.05 : -0.05), 0., 1.));
+        } else if (action == "like" && !music.player.current.isEmpty()) {
+            music.like(music.player.current);
+        } else if (action == "lyrics") {
+            m_host->setPreference("desktop-lyrics",
+                                  m_host->preference("desktop-lyrics") == "on" ? "off" : "on");
+        }
+        m_host->invalidate();
+    });
     connect(&music, &MusicLibrary::invalidated, host, &Host::invalidate);
     connect(&music, &MusicLibrary::selectionRequested, this,
             [scene](int index, QJsonObject navigation) { scene->select(index, navigation); });
@@ -165,17 +184,17 @@ QJsonObject NativeApplication::step(double time, double width, bool reuseScene) 
             // F01（S1）：观察/专辑切换与 HUD 绘制分开计时——前者是音乐状态推进，后者才是绘制命令生成；
             // 末尾的「返回拷贝」是 QJsonObject 组装（commands/hits 的隐式共享赋值本身不深拷贝，
             // 这里量的是整体组装成本，不把赋值单独算成复制）。
-            qInfo().noquote()
-                << QStringLiteral("app->step 内部: 场景采样 %1/峰%2 ms | 观察+专辑 %3/峰%4 ms | "
-                                  "HUD 绘制 %5/峰%6 ms | 返回拷贝 %7/峰%8 ms")
-                       .arg(nacSampleSum / n, 0, 'f', 2)
-                       .arg(nacSampleMax, 0, 'f', 2)
-                       .arg(nacObserveSum / n, 0, 'f', 2)
-                       .arg(nacObserveMax, 0, 'f', 2)
-                       .arg(nacDrawSum / n, 0, 'f', 2)
-                       .arg(nacDrawMax, 0, 'f', 2)
-                       .arg(nacRestSum / n, 0, 'f', 2)
-                       .arg(nacRestMax, 0, 'f', 2);
+            qInfo().noquote() << QStringLiteral(
+                                     "app->step 内部: 场景采样 %1/峰%2 ms | 观察+专辑 %3/峰%4 ms | "
+                                     "HUD 绘制 %5/峰%6 ms | 返回拷贝 %7/峰%8 ms")
+                                     .arg(nacSampleSum / n, 0, 'f', 2)
+                                     .arg(nacSampleMax, 0, 'f', 2)
+                                     .arg(nacObserveSum / n, 0, 'f', 2)
+                                     .arg(nacObserveMax, 0, 'f', 2)
+                                     .arg(nacDrawSum / n, 0, 'f', 2)
+                                     .arg(nacDrawMax, 0, 'f', 2)
+                                     .arg(nacRestSum / n, 0, 'f', 2)
+                                     .arg(nacRestMax, 0, 'f', 2);
             qInfo().noquote() << RhineRender::formatHotPathLine(RhineRender::takeHotPathSample());
             nacSampleSum = nacObserveSum = nacDrawSum = nacRestSum = 0;
             nacSampleMax = nacObserveMax = nacDrawMax = nacRestMax = 0;

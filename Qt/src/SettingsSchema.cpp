@@ -487,23 +487,24 @@ const QVector<SettingDescriptor> &descriptors() {
              .defaultValue = "system",
              .choices = {{"system", QStringLiteral("跟随系统（推荐）")},
                          {"source", QStringLiteral("保留源格式")}}});
-#else
-        add({.id = "apple-smart-transition",
-             .section = SectionId::Preferences,
-             .kind = SettingKind::Choice,
-             .binding = {.kind = BindingKind::Preference,
-                         .preferenceKey = "apple-smart-transition",
-                         .action = "apple-smart-transition",
-                         .actionPrefix = "setting:apple-smart-transition:"},
-             .storage = StorageType::OnOff,
-             .order = 165,
-             .titleEn = "AUTO TRANSITION",
-             .titleZh = "自动过渡",
-             .description = "根据音乐调性和拍速，在合适的时间点衔接相邻歌曲",
-             .showDescription = true,
-             .defaultValue = Off,
-             .choices = onOffChoices()});
 #endif
+        if constexpr (PlatformFeatures::AutomaticTransition) {
+            add({.id = "apple-smart-transition",
+                 .section = SectionId::Preferences,
+                 .kind = SettingKind::Choice,
+                 .binding = {.kind = BindingKind::Preference,
+                             .preferenceKey = "apple-smart-transition",
+                             .action = "apple-smart-transition",
+                             .actionPrefix = "setting:apple-smart-transition:"},
+                 .storage = StorageType::OnOff,
+                 .order = 166,
+                 .titleEn = "AUTO TRANSITION",
+                 .titleZh = "自动过渡",
+                 .description = "根据音乐调性和拍速，在合适的时间点衔接相邻歌曲",
+                 .showDescription = true,
+                 .defaultValue = Off,
+                 .choices = onOffChoices()});
+        }
         add({.id = "alternative",
              .section = SectionId::Preferences,
              .kind = SettingKind::Choice,
@@ -579,6 +580,17 @@ const QVector<SettingDescriptor> &descriptors() {
              .titleZh = "桌面歌词",
              .actionLabel = "样式与同步",
              .visible = desktopLyricsVisible});
+        add({.id = "global-shortcuts-settings",
+             .section = SectionId::Preferences,
+             .kind = SettingKind::Action,
+             .binding = {.kind = BindingKind::Action, .action = "shortcuts:open"},
+             .order = 175,
+             .titleEn = "GLOBAL SHORTCUTS",
+             .titleZh = "全局快捷键",
+             .description = "自定义后台播放、音量、桌面歌词与主窗口快捷键",
+             .showDescription = true,
+             .actionLabel = "设置快捷键",
+             .visible = [](const SettingsContext &) { return PlatformFeatures::GlobalShortcuts; }});
         add({.id = "debug-mode",
              .section = SectionId::Performance,
              .kind = SettingKind::Choice,

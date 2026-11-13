@@ -1,6 +1,7 @@
 #pragma once
 #include "ResponsiveHudTransition.h"
 #include "DesktopLyricsLayout.h"
+#include "GlobalShortcuts.h"
 #include "Glyphs.h"
 #include "HudScroll.h"
 #include "ResponsiveHudLayout.h"
@@ -55,6 +56,9 @@ class NativeHud : public QObject {
         return m_responsive.compact();
     }
     void action(QString action);
+    GlobalShortcuts *shortcuts = nullptr;
+    void shortcutsPanel(double x, double y, double width);
+    void applyShortcutAction(const QString &value);
     void key(QString key, bool command);
     void wheel(double x, double y, double delta, std::optional<int> steps = std::nullopt,
                std::optional<double> distance = std::nullopt);

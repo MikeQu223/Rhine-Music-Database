@@ -4,12 +4,22 @@
 
 // 平台特性宏
 namespace PlatformFeatures {
+#if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
+inline constexpr bool GlobalShortcuts = true;
+#else
+inline constexpr bool GlobalShortcuts = false;
+#endif
 #if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
 inline constexpr bool NativeAppleAudio = true;
 #else
 inline constexpr bool NativeAppleAudio = false;
 #endif
 inline constexpr bool SpatialAudio = NativeAppleAudio;
+#ifdef Q_OS_WIN
+inline constexpr bool AutomaticTransition = true;
+#else
+inline constexpr bool AutomaticTransition = NativeAppleAudio;
+#endif
 #if !RHINE_MOBILE && (defined(Q_OS_WIN) || defined(Q_OS_LINUX) || defined(Q_OS_MACOS))
 inline constexpr bool MusicVideo = true;
 #else

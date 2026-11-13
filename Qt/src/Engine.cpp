@@ -55,6 +55,19 @@ Engine::Engine(QString path, bool offline, QObject *parent, PlaybackConnection *
     if (renderCache) {
         app->music.registerRenderCache(*renderCache);
     }
+    connect(&app->shortcuts, &GlobalShortcuts::activated, this, [this](const QString &action) {
+        if (action != "window" || !m_window) {
+            return;
+        }
+        if (m_window->isVisible() && m_window->isActive()) {
+            m_window->hide();
+        } else {
+            m_window->setWindowStates(m_window->windowStates() & ~Qt::WindowMinimized);
+            m_window->show();
+            m_window->raise();
+            m_window->requestActivate();
+        }
+    });
     connect(&app->music, &MusicLibrary::playbackInvalidated, this, &Engine::refreshPlayback);
     connect(&app->hud, &NativeHud::localImportRequested, this, &Engine::localImportRequested);
     connect(&app->hud, &NativeHud::pluginImportRequested, this, &Engine::pluginImportRequested);
