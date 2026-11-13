@@ -604,11 +604,21 @@ class _BasicShellState extends State<_BasicShell> {
     unawaited(controller.openAlbum(state.albums[next < 0 ? next + state.albums.length : next]));
   }
 
-  /// 系统返回键：曲库根是唯一可退出相位，详情/歌词先退回上一相位（94 已上线的行为）。
+  /// 系统返回键：只有资料库根（未打开目录）可以退出 App，目录、详情、歌词都在
+  /// App 内退回上一相位（94 已上线的行为）。
+  ///
+  /// 判据必须同时看 [BasicViewState.directory]：在资料库里打开目录后 controller 仍是
+  /// [BasicPhase.library]（siren_controller.dart:532-560 的 _openAllSirenDirectory 只设置
+  /// _directory），只看 phase 会让系统返回键在目录里直接退出 App。Qt 侧返回键由 HUD 自己
+  /// 消费（Qt/src/NativeHudController.cpp:643-654：目录打开时走 returnToDirectory()/
+  /// leaveDirectory()，只有资料库根才冒泡到宿主退出）。
+  ///
   /// 只转成既有 controller 调用，不新造导航栈、不改 PopScope 之外的返回语义。
   Widget _popScope(BasicViewState state, Widget child) {
+    final bool libraryRoot =
+        state.phase == BasicPhase.library && state.directory == null;
     return PopScope(
-      canPop: state.phase == BasicPhase.library,
+      canPop: libraryRoot,
       onPopInvoked: (bool didPop) {
         if (didPop) {
           return;
@@ -617,7 +627,10 @@ class _BasicShellState extends State<_BasicShell> {
           unawaited(controller.closeLyrics());
           return;
         }
-        if (state.phase == BasicPhase.detail) {
+        // 详情（含目录内详情）与已打开目录都交给 controller.back()：它自己按
+        // phase/directory 分派到 closeLyrics / 离开详情 / 返回上一级目录
+        // （siren_controller.dart:294-324）。
+        if (state.phase == BasicPhase.detail || state.directory != null) {
           unawaited(controller.back());
         }
       },

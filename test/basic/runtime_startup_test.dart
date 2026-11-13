@@ -71,6 +71,7 @@ class _TrackingController extends BasicController {
   int libraryOpens = 0;
   int allSirenOpens = 0;
   int backCalls = 0;
+  int closeLyricsCalls = 0;
 
   /// 命中动作真正落到 controller 的证据（不是“点了就算”）。
   final List<String> queries = <String>[];
@@ -84,6 +85,13 @@ class _TrackingController extends BasicController {
 
   @override
   BasicViewState get state => stateOverride ?? super.state;
+
+  /// 模拟真实 controller 的一次状态发布：外壳只靠 [ListenableBuilder] 监听
+  /// [BasicController] 重绘，单纯改 [stateOverride] 不会触发重建。
+  void publish(BasicViewState value) {
+    stateOverride = value;
+    notifyListeners();
+  }
 
   @override
   Future<void> boot() async {
@@ -146,6 +154,13 @@ class _TrackingController extends BasicController {
   @override
   Future<void> back() async {
     backCalls += 1;
+  }
+
+  /// 94 的歌词返回只关面板、不经过 back()（basic_app.dart 的 _popScope）；
+  /// 单独计数才能证明系统返回键没有把这两个语义合并。
+  @override
+  Future<void> closeLyrics() async {
+    closeLyricsCalls += 1;
   }
 
   @override
@@ -268,6 +283,106 @@ SirenAlbum _album() => SirenAlbum(
       songCount: 2,
       songs: <SirenSong>[_song('s1', '第一首'), _song('s2', '第二首')],
     );
+
+/// 记录外壳向宿主发出的系统级调用（本组只关心 SystemNavigator.pop = 退出 App）。
+List<MethodCall> _watchPlatformChannel(WidgetTester tester) {
+  final List<MethodCall> calls = <MethodCall>[];
+  tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+    SystemChannels.platform,
+    (MethodCall call) async {
+      calls.add(call);
+      return null;
+    },
+  );
+  addTearDown(() {
+    tester.binding.defaultBinaryMessenger
+        .setMockMethodCallHandler(SystemChannels.platform, null);
+  });
+  return calls;
+}
+
+/// Android 系统返回键：平台侧向 'flutter/navigation' 发 popRoute，正是
+/// test/ui/consent_test.dart:204-219 用的同一手法（tester.binding.handlePopRoute()
+/// 是 @protected，测试里直接调会报 invalid_use_of_protected_member）。
+/// 这里用固定次数的 pump 而不是 pumpAndSettle：HUD 的入场动画不会自行停下。
+Future<void> _sendSystemBack(WidgetTester tester) async {
+  final ByteData message =
+      const JSONMethodCodec().encodeMethodCall(const MethodCall('popRoute'));
+  await tester.binding.defaultBinaryMessenger.handlePlatformMessage(
+    'flutter/navigation',
+    message,
+    (ByteData? _) {},
+  );
+  await tester.pump();
+  await tester.pump();
+}
+
+int _exitCalls(List<MethodCall> calls) => calls
+    .where((MethodCall call) => call.method == 'SystemNavigator.pop')
+    .length;
+
+/// HUD 外面那一层 PopScope 的 canPop：false 表示系统返回键会在 App 内被吃掉。
+bool _canPopAboveHud(WidgetTester tester) {
+  final Finder finder = find.ancestor(
+    of: find.byType(BasicHudSurface),
+    matching: find.byWidgetPredicate((Widget widget) => widget is PopScope),
+  );
+  expect(finder, findsOneWidget);
+  // 实例是 PopScope<Object?>；这里按裸类型取，与 test/ui/consent_test.dart:482-497
+  // 读 consent 那层 canPop 的写法一致（find.byType(PopScope) 会把类型参数实例化成
+  // dynamic，对不上实例的 Object?，所以用 byWidgetPredicate 而不是 byType）。
+  return tester.widget<PopScope>(finder).canPop;
+}
+
+/// 资料库根（Qt 的 music.directory == null）：唯一允许系统返回键退出 App 的相位。
+BasicViewState _libraryRootState() => const BasicViewState(
+      phase: BasicPhase.library,
+      catalogLoaded: true,
+    );
+
+/// 「在资料库中打开 →」之后的真实投影（siren_controller.dart:532-560 的
+/// _openAllSirenDirectory）：目录打开时 phase 仍是 [BasicPhase.library]，
+/// 只有 state.directory 变了 —— 只看 phase 判退出权正是本次要修的 bug。
+///
+/// [phase] 允许复刻「目录里再进详情/歌词」：Qt 的 directory 在详情里不会丢
+/// （MusicDirectory.cpp:400-415 的 returnToDirectory），98 也照此保留。
+BasicViewState _directoryState({
+  BasicPhase phase = BasicPhase.library,
+  SirenAlbum? album,
+  List<BasicLyricLine> lyrics = const <BasicLyricLine>[],
+  double durationMs = 0,
+}) {
+  final List<SirenSong> songs = <SirenSong>[
+    _song('s1', '第一首'),
+    _song('s2', '第二首'),
+  ];
+  return BasicViewState(
+    phase: phase,
+    songs: songs,
+    album: album,
+    durationMs: durationMs,
+    lyrics: lyrics,
+    directory: BasicDirectory(
+      provider: sirenProvider,
+      kind: 'playlist',
+      id: sirenAllSongsId,
+      key: sirenAllSongsKey,
+      title: sirenAllSongsTitle,
+      artist: sirenProviderLabel,
+      cover: '',
+      description: sirenAllSongsDescription,
+      trackCount: songs.length,
+      virtual: true,
+      songs: songs,
+      ids: <String>[for (final SirenSong song in songs) song.id],
+      cursor: songs.length,
+      index: 0,
+    ),
+    song: songs.first,
+    status: '$sirenOpenedPrefix$sirenAllSongsTitle',
+    catalogLoaded: true,
+  );
+}
 
 void main() {
   group('startup entry', () {
@@ -730,6 +845,169 @@ void main() {
       expect(controller.nextCalls, 1);
       expect(find.textContaining('设置页尚未接入'), findsNothing);
       expect(find.textContaining(basicResourceFailurePrefix), findsOneWidget);
+
+      await tester.pumpWidget(const SizedBox());
+    });
+  });
+
+  /// 系统返回键 = Android 的 popRoute。Qt 的返回键由 HUD 自己消费：
+  /// Qt/src/NativeHudController.cpp:643-654 —— 目录打开时走 returnToDirectory()/
+  /// leaveDirectory() 后直接 return，只有资料库根才冒泡到宿主退出。
+  /// Flutter 侧对应的判据是 PopScope.canPop（routes.dart:2034-2042 的 popDisposition：
+  /// 只要有 PopScope canPop == false 就是 doNotPop，navigator.dart 的 maybePop 会消费掉
+  /// 这次返回、不再冒泡到 SystemNavigator.pop）。
+  group('system back', () {
+    Future<_TrackingController> pumpShell(
+      WidgetTester tester, {
+      BasicViewState? initial,
+    }) async {
+      final _FakeAudio audio = _FakeAudio();
+      final _TrackingController controller = _TrackingController(audio: audio);
+      // 首帧就带真实状态：canPop 由首帧的 state 决定，晚一帧会把断言搬到
+      // “重建之后”，反而测不到首帧行为。
+      controller.stateOverride = initial;
+      await tester.pumpWidget(BasicApp(
+        controller: controller,
+        audio: audio,
+        bundle: _StubGlyphBundle(),
+      ));
+      await tester.pump();
+      await tester.pump();
+      expect(find.byType(BasicHudSurface), findsOneWidget);
+      return controller;
+    }
+
+    testWidgets('only the library root lets the system back leave the app',
+        (WidgetTester tester) async {
+      final List<MethodCall> platformCalls = _watchPlatformChannel(tester);
+      final _TrackingController controller = await pumpShell(tester);
+
+      // 启动相位（boot）不是资料库根：返回被吃掉，但既不退 App，也不假装 back()。
+      expect(_canPopAboveHud(tester), isFalse);
+      await _sendSystemBack(tester);
+      expect(_exitCalls(platformCalls), 0);
+      expect(controller.backCalls, 0);
+      expect(controller.closeLyricsCalls, 0);
+
+      // 资料库根（directory == null）是唯一能让返回键冒泡到宿主的相位。
+      controller.publish(_libraryRootState());
+      await tester.pump();
+      expect(_canPopAboveHud(tester), isTrue);
+
+      await _sendSystemBack(tester);
+      expect(_exitCalls(platformCalls), 1);
+      // 退出是宿主的事，不是 controller.back() 的近似。
+      expect(controller.backCalls, 0);
+
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    testWidgets('an open directory consumes the system back and keeps the app alive',
+        (WidgetTester tester) async {
+      final List<MethodCall> platformCalls = _watchPlatformChannel(tester);
+      final _TrackingController controller =
+          await pumpShell(tester, initial: _libraryRootState());
+      final State<BasicApp> shell =
+          tester.state<State<BasicApp>>(find.byType(BasicApp));
+
+      // 「在资料库中打开 →」后的真实投影：phase 仍是 library，只多出 directory。
+      controller.publish(_directoryState());
+      await tester.pump();
+      expect(_canPopAboveHud(tester), isFalse);
+
+      await _sendSystemBack(tester);
+
+      // 关键回归：修前 canPop 只看 phase（library == true），这里会直接
+      // SystemNavigator.pop 退出 App，用户就丢了刚打开的目录。
+      expect(_exitCalls(platformCalls), 0);
+      expect(controller.backCalls, 1);
+      expect(controller.closeLyricsCalls, 0);
+
+      // 留在 App 内：HUD 还在、State 还是同一个、注入的 controller 没有被释放重建。
+      expect(find.byType(BasicHudSurface), findsOneWidget);
+      expect(
+        identical(tester.state<State<BasicApp>>(find.byType(BasicApp)), shell),
+        isTrue,
+      );
+      expect(controller.disposeCalls, 0);
+
+      // 退回资料库根之后，退出权才回到系统。
+      controller.publish(_libraryRootState());
+      await tester.pump();
+      expect(_canPopAboveHud(tester), isTrue);
+
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    testWidgets('detail keeps its in-app back and never exits',
+        (WidgetTester tester) async {
+      final List<MethodCall> platformCalls = _watchPlatformChannel(tester);
+      final _TrackingController controller = await pumpShell(
+        tester,
+        initial: BasicViewState(
+          phase: BasicPhase.detail,
+          album: _album(),
+          songs: <SirenSong>[_song('s1', '第一首'), _song('s2', '第二首')],
+          durationMs: 180000,
+          catalogLoaded: true,
+        ),
+      );
+
+      expect(_canPopAboveHud(tester), isFalse);
+      await _sendSystemBack(tester);
+      expect(_exitCalls(platformCalls), 0);
+      // 94 已上线的详情返回：一次 controller.back()（controller 自己清 _album）。
+      expect(controller.backCalls, 1);
+      expect(controller.closeLyricsCalls, 0);
+
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    testWidgets('lyrics keeps closing the panel instead of calling back',
+        (WidgetTester tester) async {
+      final List<MethodCall> platformCalls = _watchPlatformChannel(tester);
+      final _TrackingController controller = await pumpShell(
+        tester,
+        initial: BasicViewState(
+          phase: BasicPhase.lyrics,
+          song: _song('s1', '第一首'),
+          durationMs: 180000,
+          lyrics: const <BasicLyricLine>[
+            BasicLyricLine(startMs: 0, text: '第一行'),
+          ],
+          catalogLoaded: true,
+        ),
+      );
+
+      expect(_canPopAboveHud(tester), isFalse);
+      await _sendSystemBack(tester);
+      expect(_exitCalls(platformCalls), 0);
+      // 歌词返回只关面板（_phaseBeforeLyrics 由 controller 恢复），不经过 back()。
+      expect(controller.closeLyricsCalls, 1);
+      expect(controller.backCalls, 0);
+
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    testWidgets('detail inside an open directory still dispatches exactly one back',
+        (WidgetTester tester) async {
+      final List<MethodCall> platformCalls = _watchPlatformChannel(tester);
+      final _TrackingController controller = await pumpShell(
+        tester,
+        initial: _directoryState(
+          phase: BasicPhase.detail,
+          album: _album(),
+          durationMs: 180000,
+        ),
+      );
+
+      expect(_canPopAboveHud(tester), isFalse);
+      await _sendSystemBack(tester);
+      expect(_exitCalls(platformCalls), 0);
+      // 目录 + 详情两个条件同时成立时不能重复分派：Qt 里这也是同一次 back
+      // （NativeHudController.cpp:644-652 目录分支里的 returnToDirectory）。
+      expect(controller.backCalls, 1);
+      expect(controller.closeLyricsCalls, 0);
 
       await tester.pumpWidget(const SizedBox());
     });
