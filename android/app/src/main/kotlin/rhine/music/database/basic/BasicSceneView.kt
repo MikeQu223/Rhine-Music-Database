@@ -44,6 +44,10 @@ import java.util.Locale
  *   viewType        "rhine/basic_scene"        (BasicSceneViewFactory.VIEW_TYPE)
  *   MethodChannel   "rhine.music.database/basic_scene"
  *   Dart->native    setYaw {radians}, resetView, setTheme {theme}
+ *   Dart->native v2 setScene {viewId, theme?, mode?}  (additive; mode is
+ *                   "archive" | "detail" | "boot" and drives both the Qt
+ *                   detail blend and the archive lens gate; an unknown value
+ *                   normalises to "archive" and never to "boot")
  *   native->Dart    ready, selection, yaw, error  (each payload carries viewId)
  *   JS bridge       window.RhineSceneBridge.postMessage(json)
  */
@@ -63,12 +67,26 @@ class BasicSceneView(
     private val modelAsset: String = BasicSceneAssets.normalizeModel(argsMap["model"])
     private val initialYaw: Double =
         normalizeYaw((argsMap["initialYaw"] as? Number)?.toDouble() ?: 0.0)
-    private val theme: Double =
+    private var theme: Double =
         ((argsMap["theme"] as? Number)?.toDouble() ?: 1.0).coerceIn(0.0, 1.0)
+    private var mode: String = BasicSceneAssets.normalizeMode(argsMap["mode"])
 
     private var channel: MethodChannel? = null
     private var disposed = false
     private var readyReported = false
+
+    /**
+     * True once the page reported ready.
+     *
+     * Until then the renderer's bridge may not exist yet, so setScene/setTheme
+     * only remember the newest values; they are applied in one replay as soon
+     * as the page can accept them. A reload would be the obvious alternative
+     * and is deliberately not used: it would throw away the mounted GLB and
+     * violate the one-platform-view contract.
+     */
+    @Volatile
+    private var sceneReady = false
+    private var pendingSceneReplay = false
 
     init {
         container.addView(
@@ -98,7 +116,12 @@ class BasicSceneView(
         webView.addJavascriptInterface(SceneBridge(), BRIDGE_NAME)
 
         BasicSceneMessenger.current()?.let { messenger ->
-            channel = MethodChannel(messenger, CHANNEL).also {
+            // One channel per platform view. The engine messenger keeps a single
+            // handler per channel name, so a shared name let the newest view
+            // replace every older one: an update addressed to a still-live view
+            // could only be dropped by the receiver, and two previews could
+            // never be updated independently.
+            channel = MethodChannel(messenger, BasicSceneAssets.channelName(viewId)).also {
                 it.setMethodCallHandler(::onMethodCall)
             }
         } ?: Log.e(
@@ -106,7 +129,7 @@ class BasicSceneView(
             "no BinaryMessenger; BasicSceneViewFactory.install(engine) must run in configureFlutterEngine",
         )
 
-        webView.loadUrl(BasicSceneAssets.startUrl(modelAsset, initialYaw, theme))
+        webView.loadUrl(BasicSceneAssets.startUrl(modelAsset, initialYaw, theme, mode))
     }
 
     override fun getView(): View = container
@@ -147,7 +170,41 @@ class BasicSceneView(
             }
             "setTheme" -> {
                 val value = call.doubleArg("theme").coerceIn(0.0, 1.0)
-                evaluate("window.__rhineBasicScene && window.__rhineBasicScene.setTheme(${formatNumber(value)})")
+                theme = value
+                if (sceneReady) {
+                    evaluate("window.__rhineBasicScene && window.__rhineBasicScene.setTheme(${formatNumber(value)})")
+                }
+                result.success(null)
+            }
+            "setScene" -> {
+                val next = call.arguments as? Map<*, *> ?: emptyMap<Any?, Any?>()
+                // The channel is already per view, so a view id can only be
+                // wrong when the caller addressed a different preview. That is
+                // a caller bug, not a no-op: reporting success would let a
+                // dropped update look applied.
+                val target = (next["viewId"] as? Number)?.toInt()
+                if (target != null && target != viewId) {
+                    result.error(
+                        "wrong_view",
+                        "setScene for view $target reached view $viewId",
+                        null,
+                    )
+                    return
+                }
+                val requestedTheme = (next["theme"] as? Number)?.toDouble()
+                if (requestedTheme != null && requestedTheme.isFinite()) {
+                    theme = requestedTheme.coerceIn(0.0, 1.0)
+                }
+                if (next.containsKey("mode")) {
+                    mode = BasicSceneAssets.normalizeMode(next["mode"])
+                }
+                if (sceneReady) {
+                    pushScene()
+                } else {
+                    // Latest wins: the replay reads theme/mode when it runs, so
+                    // an early update is neither lost nor queued twice.
+                    pendingSceneReplay = true
+                }
                 result.success(null)
             }
             else -> result.notImplemented()
@@ -160,6 +217,26 @@ class BasicSceneView(
     private fun evaluate(script: String) {
         if (disposed) return
         webView.evaluateJavascript(script, null)
+    }
+
+    /**
+     * Applies the current theme/mode to a page that is already running.
+     *
+     * The creation values travel in the load URL; this is the incremental path
+     * for everything after it, so a phase or theme change never reloads the
+     * page and never recreates the platform view.
+     */
+    private fun pushScene() {
+        evaluate(
+            "window.__rhineBasicScene && window.__rhineBasicScene.setScene({" +
+                "\"theme\":${formatNumber(theme)},\"mode\":\"$mode\"})",
+        )
+    }
+
+    private fun replayPendingScene() {
+        if (!pendingSceneReplay) return
+        pendingSceneReplay = false
+        pushScene()
     }
 
     // ------------------------------------------------------------------
@@ -250,11 +327,20 @@ class BasicSceneView(
         if (type == TYPE_READY) {
             if (readyReported) return
             readyReported = true
+            sceneReady = true
         }
         val outgoing = HashMap(payload)
         outgoing["viewId"] = viewId
         mainHandler.post {
             if (disposed) return@post
+            if (type == TYPE_READY) {
+                // This callback arrives on the JS bridge thread, where
+                // evaluateJavascript is illegal, so the replay hops onto the UI
+                // thread first - the same thread setScene writes its pending
+                // flag from. It runs before the ready event reaches Dart, whose
+                // ready handler then re-asserts the same values.
+                replayPendingScene()
+            }
             channel?.invokeMethod(type, outgoing)
         }
     }
@@ -390,6 +476,9 @@ internal object BasicSceneAssets {
     const val ASSET_ROOT = "web/basic_preview"
     const val FLUTTER_ASSET_PREFIX = "flutter_assets/"
     const val DEFAULT_MODEL = "Assets/models/archive-assembly.glb"
+    const val MODE_ARCHIVE = "archive"
+    const val MODE_DETAIL = "detail"
+    const val MODE_BOOT = "boot"
     private const val MODEL_DIR = "Assets/models/"
 
     val allowedModels: List<String> = listOf("archive-assembly.glb", "archive-cassette.glb")
@@ -402,15 +491,50 @@ internal object BasicSceneAssets {
             "img-src 'self' data: blob:; connect-src 'self' blob: data:; object-src 'none'; " +
             "base-uri 'none'; form-action 'none'"
 
+    /**
+     * Channel name for one platform view.
+     *
+     * The suffix is the platform view id: Dart derives the same name from the id
+     * it was handed (lib/basic/scene_preview.dart `basicSceneChannelFor`), which
+     * is what gives every mounted preview its own handler slot. Both parts must
+     * stay in sync — the transport test asserts the shared literal.
+     */
+    fun channelName(viewId: Int): String = "${BasicSceneView.CHANNEL}/$viewId"
+
     fun normalizeModel(value: Any?): String {
         val candidate = (value as? String)?.trim().orEmpty()
         return if (candidate in allowedModelAssets) candidate else DEFAULT_MODEL
     }
 
-    fun startUrl(modelAsset: String, yaw: Double, theme: Double): String {
+    /**
+     * Exactly the three strings Qt compares against (NativeSceneCamera.cpp:101
+     * `m_mode == "boot"`, NativeScene.cpp:188), with no trimming: " boot " is
+     * not boot here either, and every other spelling — including an absent
+     * mode — falls back to archive. Trimming would let a malformed value reach
+     * the renderer as an explicit boot while Dart already decoded it as
+     * archive, so the two layers would disagree about the same mount.
+     */
+    fun normalizeMode(value: Any?): String = when (value) {
+        MODE_BOOT -> MODE_BOOT
+        MODE_DETAIL -> MODE_DETAIL
+        else -> MODE_ARCHIVE
+    }
+
+    fun startUrl(
+        modelAsset: String,
+        yaw: Double,
+        theme: Double,
+        mode: String = MODE_ARCHIVE,
+    ): String {
         val model = Uri.encode(modelAsset, "/")
+        val resolved = normalizeMode(mode)
+        val detail = if (resolved == MODE_DETAIL) 1 else 0
+        // The detail flag stays the legacy creation hint; the mode itself has
+        // to travel too, because only an explicit mode can separate boot from
+        // archive (Qt/src/NativeSceneCamera.cpp:101). An unknown mode was
+        // already normalised to archive above, so the URL cannot smuggle boot.
         return "$ORIGIN/index.html?model=$model&yaw=${formatNumber(yaw)}" +
-            "&theme=${formatNumber(theme.coerceIn(0.0, 1.0))}"
+            "&theme=${formatNumber(theme.coerceIn(0.0, 1.0))}&detail=$detail&mode=$resolved"
     }
 
     fun isAllowed(uri: Uri): Boolean {

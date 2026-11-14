@@ -46,8 +46,27 @@ const FLOOR_ROUGHNESS = 0.95;         // Qt/src/SceneAppearance.cpp:225-258
 const FLOOR_Y = -4.63;                // Qt/src/NativeSceneFrame.cpp:62
 const ACTOR_POSITION = { x: 0, y: -4.6, z: -2.17 };  // Qt/src/NativeScene.cpp:76-78 + NativeScene.h:83-96
 const SELECTION_COLOR = 0xe3b15c;
+// SceneAppearance::hidden (Qt/src/SceneAppearance.cpp:8-11) is the card cull, and
+// in this port it is also the cull for the hero assembly: the desktop export
+// prunes five of these families plus Carbon_Ink out of the source model
+// (scripts/export-assets.py:84-95), so Qt never draws them; Champagne_Index and
+// Printed_Label survive the export and are dropped by the draw list (:60-66).
+// The shipped GLB still carries all seven, which is why applying the card set
+// here lands on Qt's ten visible assembly draws (22 nodes - 12 culled = 10,
+// RhiScene.cpp:1472).
 const HIDDEN_PARTS = ['Internal_Ceramic', 'Optical_Edges', 'Subsurface_Optics', 'Optical_Film_Edge', 'Amber_Optical_Inlay', 'Champagne_Index', 'Printed_Label'];  // Qt/src/SceneAppearance.cpp:10-11
 const ALWAYS_SKIP_PARTS = ['Carbon_Ink'];  // Qt/src/SceneAppearance.cpp:66-68
+
+// RhiScene::musicDraws() (RhiScene.cpp:1472-1571) subtracts only four names
+// because its input is already the pruned export: Champagne_Index and
+// Printed_Label are the two families the export keeps but the draw list drops,
+// while Optical_Edges / Subsurface_Optics / Optical_Film_Edge are gone before
+// Qt sees the mesh. The "must keep the optical wrap" comment at
+// RhiScene.cpp:1475-1476 predates that pruning. Optical_Film is kept on both
+// sides and is the one film family that must survive the cull.
+const ASSEMBLY_SHELL_PARTS = ['Frosted_Polymer', 'Ivory_Edges', 'Optical_Diffuser'];  // RhiScene.cpp:1486-1487
+const FASTENER_DAY_COLOR = { r: 0.065, g: 0.075, b: 0.08 };      // RhiScene.cpp:1488-1491
+const OPTICAL_FILM_OPACITY = 0.35;                               // RhiScene.cpp:1492-1499
 
 const PART_OVERRIDES = {  // Qt/src/SceneAppearance.cpp:86-103
   Frosted_Polymer: { color: 0xfffdfa, transmission: 0.9, thickness: 0.12, roughness: 0.21, ior: 1.46, attenuation: 0xeee6df, attenuationDistance: 2 },
@@ -138,6 +157,55 @@ function darkHexFor(part) {
   }
   if (part && part.indexOf('Orange') >= 0) return DARK_ORANGE;
   return DARK_DEFAULT;
+}
+
+// Qt keeps the shell opaque and lets the baked light atlas carry the frosted
+// look: transmission is switched off, the outer wrap goes double sided, and the
+// fasteners get a baked near-black base so they cannot read as white dots once
+// the realtime environment light is gone. Reproducing that here is what makes
+// the night pane dark instead of a grey glass box.
+//
+// These rules belong to the draw list, not to one template: RhiScene::update()
+// runs musicDraws(frame) on every frame for whichever template is loaded
+// (RhiScene.cpp:3525), so both admitted models — the assembly and the cassette —
+// take them. Gating them on the assembly left the cassette with its GLB
+// transmission (0.9 / 0.65) and an opaque Optical_Film.
+//
+// musicSelected: this preview has no selection channel, so the shell branch can
+// only reproduce Qt's unselected arm. Qt's selected arm (opacity 0.20 in detail
+// mode, 0.62 in archive, 0.14 in viewer, depthWrite off, Frosted_Polymer only)
+// depends on musicSelected (RhiScene.cpp:1501-1516) and stays with the OptionB
+// consumer work; fabricating a selection here would misreport the pane.
+function applyMusicDrawRules(material, part) {
+  if (!material || !part) return;
+  if (part === 'Titanium_Fasteners') {
+    material.color.setRGB(
+        FASTENER_DAY_COLOR.r, FASTENER_DAY_COLOR.g, FASTENER_DAY_COLOR.b, THREE.LinearSRGBColorSpace);
+  }
+  if (part.indexOf('Optical_Film') === 0 || part.indexOf('Optical_Glass') === 0 ||
+      part === 'Optical_Bridge_Glass') {
+    material.transparent = true;
+    material.depthWrite = false;
+    material.side = THREE.DoubleSide;
+    material.opacity = OPTICAL_FILM_OPACITY;
+    material.needsUpdate = true;
+    return;
+  }
+  if (ASSEMBLY_SHELL_PARTS.indexOf(part) >= 0) {
+    material.transmission = 0;
+    // Qt: side = instanced ? 0 : 2 (RhiScene.cpp:1506). Both templates here are
+    // hero draws, never instanced, so the hero value is the only one reachable.
+    material.side = THREE.DoubleSide;
+    // Unselected arm of RhiScene.cpp:1503/1507-1509: transmission 0,
+    // transparent=false, depthWrite stays on, opacity 1. The selected fork
+    // (:1510-1515: 0.20 in detail mode, 0.62 in archive, 0.14 in viewer) needs
+    // Frosted_Polymer plus musicSelected; neither is available in this preview,
+    // so nothing may write those values here.
+    material.transparent = false;
+    material.depthWrite = true;
+    material.opacity = 1;
+    material.needsUpdate = true;
+  }
 }
 
 // Snapshot the GLB/override day colour once, then remember the Qt dark colour
@@ -302,6 +370,63 @@ const requestedModel = query.get('model');
 const modelKey = Object.prototype.hasOwnProperty.call(ASSET_URLS, requestedModel) ? requestedModel : DEFAULT_MODEL;
 let theme = clamp01(finiteNumber(query.get('theme'), 1));
 let yawOffset = finiteNumber(query.get('yaw'), 0);
+// Qt NativeScene::m_detail (Qt/src/NativeSceneCamera.cpp:22,58,82,96-97) is a
+// 0..1 blend between the archive page (0) and the detail page (1); it is not a
+// boolean, so both the distance and the fog keep their Qt interpolation.
+// The launch phase is NOT library: this pane is mounted from launch by
+// lib/basic/basic_hud.dart:519-523 on every BasicPhase, and that phase starts at
+// BasicPhase.boot (lib/basic/basic_models.dart:451 `this.phase = BasicPhase.boot,`,
+// lib/basic/siren_controller.dart:131 `BasicPhase _phase = BasicPhase.boot;`).
+// Qt composes boot through the same setMode entry point as the other pages
+// (Qt/src/NativeScene.cpp:165-198): :188 gives every non-detail string detail 0,
+// and Qt/src/NativeSceneCamera.cpp:101 holds the archive lens offset at zero for
+// m_mode == "boot" while the archive page keeps it.
+//
+// Boot therefore travels as an explicit third mode, never as an absent or
+// malformed detail value. An absent ?mode= keeps the archive framing this page
+// has always composed, and an unknown string is ignored rather than guessed.
+function resolveSceneMode(value) {
+  if (value === 'boot' || value === 'archive' || value === 'detail') return value;
+  return null;
+}
+let sceneMode = resolveSceneMode(query.get('mode')) || 'archive';
+// Qt derives the detail blend from the mode alone (NativeScene.cpp:188), so boot
+// and archive both ride at 0 and detail at 1; ?detail= stays the legacy creation
+// hint it always was, clamped and finite-guarded.
+let sceneDetail = clamp01(finiteNumber(query.get('detail'), 0));
+if (sceneMode === 'boot') sceneDetail = 0;
+
+// Qt never snaps m_detail: every frame it moves a fixed fraction of the
+// remaining distance, blend = 1 - exp(-seconds * 2.8) with seconds clamped to
+// 0.05 (Qt/src/NativeSceneUpdate.cpp:62 and the clamp at :48), so a mode switch
+// settles over roughly a second. sceneDetail is the target, sceneDetailEased is
+// what the pose and the fog actually read. The loop draws only when the blend is
+// still travelling or the view was invalidated - a resize, a theme change or a
+// drag all set needsRender - while the frame callback stays armed so a later
+// setMode or setScene still moves; Qt instead stops its render loop entirely
+// once the scene is stable (Qt/src/Engine.cpp:1188-1225). Neither is an invented
+// idle spin.
+const DETAIL_BLEND_RATE = 2.8;
+const MAX_FRAME_SECONDS = 0.05;
+let sceneDetailEased = sceneDetail;
+let lastFrameTime = 0;
+
+/// Advances the eased detail by exactly one Qt frame and reports whether this
+/// frame moved the view (the blend is still travelling, or it just snapped).
+function stepDetailBlend(now) {
+  const previous = lastFrameTime > 0 ? lastFrameTime : now;
+  lastFrameTime = now;
+  const seconds = Math.min(Math.max((now - previous) / 1000, 0), MAX_FRAME_SECONDS);
+  if (seconds <= 0) return sceneDetailEased !== sceneDetail;
+  if (sceneDetailEased === sceneDetail) return false;
+  const before = sceneDetailEased;
+  const blend = 1 - Math.exp(-seconds * DETAIL_BLEND_RATE);
+  sceneDetailEased += (sceneDetail - sceneDetailEased) * blend;
+  if (Math.abs(sceneDetail - sceneDetailEased) < 1e-3) sceneDetailEased = sceneDetail;
+  // The snapping frame still moved the camera, so it has to be drawn: reporting
+  // only "still settling" left the last 1e-3 of the travel unrendered forever.
+  return sceneDetailEased !== sceneDetail || sceneDetailEased !== before;
+}
 
 const canvas = document.getElementById('scene-canvas');
 let renderer = null;
@@ -344,9 +469,27 @@ function postYaw() {
   post('yaw', { radians: round(cameraYawRadians(), 6) });
 }
 
+// Qt/src/NativeSceneCamera.cpp:100-105: the browse composition shifts the
+// projection matrix by (0.16, 0.20) and fades that shift out once the detail
+// blend passes 0.25. Qt zeroes the shift outright for cinema and for
+// m_mode == "boot" (:101); boot reaches this page as an explicit mode, so the
+// gate below is the actual camera mode rather than a comment about one. The
+// offset still travels only with the EASED detail, because m_mode is discrete
+// while m_detail moves (NativeSceneCamera.cpp:100).
+function applyArchiveLensShift(target, mode, detail) {
+  const detailProgress = smooth((detail - 0.25) / 0.55);
+  const archiveOffset = mode === 'boot' ? 0 : 1 - detailProgress;
+  target.projectionMatrix.elements[8] += 0.16 * archiveOffset;
+  target.projectionMatrix.elements[9] += 0.20 * archiveOffset;
+  target.projectionMatrixInverse.copy(target.projectionMatrix).invert();
+}
+
 function applyView() {
   if (!camera) return;
-  basePose = computePose(viewWidth, viewHeight, 1, ACTOR_POSITION);
+  // Qt reads the EASED m_detail here (NativeSceneCamera.cpp:22,58,82,96-97),
+  // never the target, which is why a mode switch travels instead of jumping.
+  const posedDetail = sceneDetailEased;
+  basePose = computePose(viewWidth, viewHeight, posedDetail, ACTOR_POSITION);
   const direction = rotateY(basePose.direction, yawOffset);
   const eye = {
     x: basePose.aim.x + direction.x * basePose.distance,
@@ -363,17 +506,21 @@ function applyView() {
   camera.near = NEAR_PLANE;
   camera.far = FAR_PLANE;
   camera.updateProjectionMatrix();
+  applyArchiveLensShift(camera, sceneMode, posedDetail);
 
-  // Qt/src/NativeSceneCamera.cpp:96-97 with m_detail = 1: lerp(...) picks the
-  // second endpoint, so fogNear = distance - 1 and fogFar = distance + 12.
+  // Qt/src/NativeSceneCamera.cpp:94-97: fog is measured from the RENDERED
+  // eye/aim distance (not from the requested one) and blended by theme AND
+  // detail, so a night archive view never fogs at the detail distance:
+  //   fogNear = renderedDistance + lerp(5 - 4 * theme, -1, detail)
+  //   fogFar  = renderedDistance + lerp(25 - 9 * theme, 12, detail)
   const renderedDistance = Math.sqrt(
     (eye.x - basePose.aim.x) * (eye.x - basePose.aim.x) +
     (eye.y - basePose.aim.y) * (eye.y - basePose.aim.y) +
     (eye.z - basePose.aim.z) * (eye.z - basePose.aim.z)
   );
   if (scene && scene.fog) {
-    scene.fog.near = renderedDistance - 1;
-    scene.fog.far = renderedDistance + 12;
+    scene.fog.near = renderedDistance + lerp(5 - 4 * theme, -1, posedDetail);
+    scene.fog.far = renderedDistance + lerp(25 - 9 * theme, 12, posedDetail);
   }
   needsRender = true;
 }
@@ -520,11 +667,15 @@ function onModelLoaded(gltf) {
   modelRoot = gltf.scene;
   modelRoot.position.set(ACTOR_POSITION.x, ACTOR_POSITION.y, ACTOR_POSITION.z);
   meshes = [];
+  // Both models are culled by SceneAppearance::hidden. The assembly's extra
+  // optical families only exist in the unpruned GLB; Qt removes them at export
+  // (scripts/export-assets.py:84-95), so the same set reproduces its ten draws.
+  const cullParts = HIDDEN_PARTS;
   modelRoot.traverse(function (child) {
     if (!child.isMesh) return;
     const part = normalizePartName(child.name);
     child.userData.rhinePart = part;
-    if (part && (HIDDEN_PARTS.indexOf(part) >= 0 || ALWAYS_SKIP_PARTS.indexOf(part) >= 0)) {
+    if (part && (cullParts.indexOf(part) >= 0 || ALWAYS_SKIP_PARTS.indexOf(part) >= 0)) {
       child.visible = false;
       return;
     }
@@ -542,6 +693,12 @@ function onModelLoaded(gltf) {
     for (let i = 0; i < materials.length; i++) {
       if (materials[i]) {
         materials[i].name = 'basic:' + (part || 'part');
+        // Rules run before the theme snapshot: Qt replaces the fastener base
+        // colour first, and the day/dark pair must snapshot that new day value.
+        // No model gate: musicDraws is applied to the loaded template every
+        // frame (RhiScene.cpp:3525), and both admitted templates use the same
+        // shell, film and fastener families.
+        applyMusicDrawRules(materials[i], part);
         prepareMaterialTheme(materials[i], part);
       }
     }
@@ -669,13 +826,55 @@ window.__rhineBasicScene = {
     if (!Number.isFinite(next)) return;
     theme = clamp01(next);
     applyThemeColors();
-    needsRender = true;
+    // Fog near/far read the theme (Qt/src/NativeSceneCamera.cpp:95-97), so the
+    // view has to be re-derived, not just the colours.
+    applyView();
+  },
+  // Qt/src/NativeScene.cpp:165-197 owns the mode string (archive/detail/boot);
+  // RhiScene.cpp:3524 is only the consumer that turns it into detailMode. All
+  // three spellings are accepted so a boot host can forward BasicPhase.boot
+  // (lib/basic/basic_models.dart:451); nothing here selects boot on its own,
+  // and an unknown string is still ignored instead of guessed.
+  // Note: Qt eases m_detail through the actor lift (NativeSceneUpdate.cpp:178-186,
+  // blend 1-exp(-seconds*2.8)), so a real page switch takes ~1 s. This only moves
+  // the target; stepDetailBlend() walks there at the same rate.
+  setMode: function (mode) {
+    const known = resolveSceneMode(mode);
+    if (known === null) return;
+    sceneMode = known;
+    sceneDetail = known === 'detail' ? 1 : 0;
+    applyView();
+  },
+  // One entry point for the live push from Dart: the platform view sends the
+  // fields that changed together, and this applies them in a single view
+  // rebuild so theme and detail can never be observed half-applied.
+  setScene: function (next) {
+    if (!next || typeof next !== 'object') return;
+    let changed = false;
+    if (next.theme !== undefined) {
+      const value = Number(next.theme);
+      if (Number.isFinite(value)) {
+        theme = clamp01(value);
+        applyThemeColors();
+        changed = true;
+      }
+    }
+    const nextMode = resolveSceneMode(next.mode);
+    if (nextMode !== null) {
+      sceneMode = nextMode;
+      sceneDetail = nextMode === 'detail' ? 1 : 0;
+      changed = true;
+    }
+    if (changed) applyView();
   }
 };
 
-function loop() {
+function loop(now) {
   window.requestAnimationFrame(loop);
-  if (!needsRender || !renderer || !scene || !camera) return;
+  const settling = stepDetailBlend(typeof now === 'number' ? now : performance.now());
+  if (!renderer || !scene || !camera) return;
+  if (!settling && !needsRender) return;
+  if (settling) applyView();
   needsRender = false;
   renderer.render(scene, camera);
 }
