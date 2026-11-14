@@ -84,19 +84,47 @@ QJsonObject cacheDocument(const QJsonObject &document) {
     return {{"version", 1}, {"source", document["source"].toString()}, {"timing", document["timing"]},
             {"offsetMs", document["offsetMs"]}, {"plainText", document["plainText"]}, {"lines", lines}};
 }
+
+QString providerVersion(const QString &id) {
+    const auto &registry = ProviderRegistry::instance();
+    return registry.manifest(id)["version"].toString(
+        registry.descriptor(id)["version"].toString(QStringLiteral("0")));
+}
 }
 
-LyricsController::LyricsController(Host *host, QObject *parent) : QObject(parent), m_host(host) {
+void LyricsController::rebuildProviders() {
+    m_providers.clear();
+    m_apis.clear();
     const auto &registry = ProviderRegistry::instance();
     for (const auto &id : registry.ids()) {
         if (id == "local" || !registry.capability(id, "lyrics", false)) {
             continue;
         }
         m_providers.append(id);
-        auto api = std::make_unique<MusicApi>(host);
+        auto api = std::make_unique<MusicApi>(m_host);
         api->provider = id;
         m_apis.emplace(id, std::move(api));
     }
+}
+
+/** 插件 Registry 换代后重建歌词来源与 API 路由，旧异步结果由代数隔离。 */
+void LyricsController::reloadProviders() {
+    ++m_generation;
+    ++m_cacheGeneration;
+    m_cache = {};
+    m_lyricBlockedUntil.clear();
+    m_lastLyricRequest.clear();
+    m_lyricsRetryAfter.clear();
+    rebuildProviders();
+    if (localSource != "auto" && localSource != "local" && !m_providers.contains(localSource)) {
+        localSource = "auto";
+    }
+    emit changed();
+}
+
+LyricsController::LyricsController(Host *host, QObject *parent) : QObject(parent), m_host(host) {
+    connect(host, &Host::pluginsReloaded, this, &LyricsController::reloadProviders);
+    rebuildProviders();
     bool validOffset = false;
     const auto savedOffset = host->preference("lyrics-global-offset-ms").toDouble(&validOffset);
     if (validOffset && std::isfinite(savedOffset)) {
@@ -207,6 +235,7 @@ MusicApi &LyricsController::api(const QString &provider) {
     if (!fallback) {
         fallback = std::make_unique<MusicApi>(m_host);
     }
+    fallback->provider = provider;
     return *fallback;
 }
 
@@ -579,13 +608,15 @@ void LyricsController::migrateLegacyCache() {
 
 CacheKey LyricsController::cacheKey(const Pending &pending, QString source, QString sourceTrack) const {
     const auto provider = pending->track["provider"].toString();
-    QJsonArray request{trackKey(pending->track), source, sourceTrack, pending->selection,
-                       pending->track["language"].toString(), pending->track["variant"].toString(),
-                       m_host->cacheVariant(provider), m_host->cacheVariant(source)};
+    QJsonArray request{trackKey(pending->track), source, sourceTrack, providerVersion(source),
+                       pending->selection, pending->track["language"].toString(),
+                       pending->track["variant"].toString(), m_host->cacheVariant(provider),
+                       m_host->cacheVariant(source)};
     if (source == "selection") {
         QJsonArray providers;
         for (const auto &candidate : m_providers) {
-            providers.append(QJsonArray{candidate, m_host->cacheVariant(candidate),
+            providers.append(QJsonArray{candidate, providerVersion(candidate),
+                                        m_host->cacheVariant(candidate),
                                         m_host->cacheAccountScope(candidate)});
         }
         request.append(providers);

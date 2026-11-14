@@ -91,6 +91,95 @@ static bool compatiblePluginApi(const QString &version) {
     const auto match = pattern.match(version);
     return match.hasMatch() && match.captured(1).toInt() == 2 && match.captured(2).toInt() <= 0;
 }
+
+struct PluginVersion {
+    QList<qint64> core;
+    QStringList prerelease;
+    bool valid = false;
+};
+
+/** 解析市场常用的语义化版本；无法解析时调用方退化为按字符串顺序比较。 */
+static PluginVersion parsePluginVersion(QString value) {
+    value = value.trimmed();
+    if (value.startsWith('v', Qt::CaseInsensitive)) {
+        value.remove(0, 1);
+    }
+    const auto buildIndex = value.indexOf('+');
+    if (buildIndex >= 0) {
+        value.truncate(buildIndex);
+    }
+    PluginVersion result;
+    const auto prereleaseIndex = value.indexOf('-');
+    const auto coreText = prereleaseIndex >= 0 ? value.left(prereleaseIndex) : value;
+    if (prereleaseIndex >= 0) {
+        result.prerelease = value.mid(prereleaseIndex + 1).split('.', Qt::KeepEmptyParts);
+    }
+    const auto parts = coreText.split('.', Qt::KeepEmptyParts);
+    for (const auto &part : parts) {
+        bool valid = false;
+        const auto number = part.toLongLong(&valid);
+        if (!valid || number < 0) {
+            return {};
+        }
+        result.core.append(number);
+    }
+    result.valid = !result.core.isEmpty() && std::all_of(result.prerelease.begin(), result.prerelease.end(),
+                                                         [](const QString &part) { return !part.isEmpty(); });
+    return result;
+}
+
+static int comparePluginPrerelease(const QStringList &left, const QStringList &right) {
+    if (left.isEmpty() || right.isEmpty()) {
+        // 正式版高于同一核心版本的预发布版。
+        if (left.isEmpty() && right.isEmpty()) {
+            return 0;
+        }
+        return left.isEmpty() ? 1 : -1;
+    }
+    const auto count = std::min(left.size(), right.size());
+    for (qsizetype index = 0; index < count; ++index) {
+        bool leftNumeric = false;
+        bool rightNumeric = false;
+        const auto leftNumber = left[index].toLongLong(&leftNumeric);
+        const auto rightNumber = right[index].toLongLong(&rightNumeric);
+        if (leftNumeric && rightNumeric && leftNumber != rightNumber) {
+            return leftNumber < rightNumber ? -1 : 1;
+        }
+        if (leftNumeric != rightNumeric) {
+            return leftNumeric ? -1 : 1;
+        }
+        const auto compared = QString::compare(left[index], right[index], Qt::CaseSensitive);
+        if (compared != 0) {
+            return compared < 0 ? -1 : 1;
+        }
+    }
+    if (left.size() == right.size()) {
+        return 0;
+    }
+    return left.size() < right.size() ? -1 : 1;
+}
+
+static int comparePluginVersion(const QString &leftText, const QString &rightText) {
+    const auto left = parsePluginVersion(leftText);
+    const auto right = parsePluginVersion(rightText);
+    if (!left.valid || !right.valid) {
+        return QString::compare(leftText.trimmed(), rightText.trimmed(), Qt::CaseSensitive);
+    }
+    const auto count = std::max(left.core.size(), right.core.size());
+    for (qsizetype index = 0; index < count; ++index) {
+        const auto leftNumber = index < left.core.size() ? left.core[index] : 0;
+        const auto rightNumber = index < right.core.size() ? right.core[index] : 0;
+        if (leftNumber != rightNumber) {
+            return leftNumber < rightNumber ? -1 : 1;
+        }
+    }
+    return comparePluginPrerelease(left.prerelease, right.prerelease);
+}
+
+static bool pluginVersionNewer(const QString &candidate, const QString &installed) {
+    return !candidate.isEmpty() && !installed.isEmpty() && comparePluginVersion(candidate, installed) > 0;
+}
+
 /** 市场安装前按 worker Registry 的同一组硬性条件校验 manifest。 */
 static bool validPluginManifest(const QJsonObject &manifest) {
     if (manifest["schemaVersion"].toInt() != 2) {
@@ -1174,14 +1263,23 @@ void Host::writeDisabledPlugins(const QStringList &disabled) {
 }
 QJsonArray Host::pluginManagerState() const {
     const auto disabled = disabledPlugins();
+    QHash<QString, QString> marketVersions;
+    for (const auto &entry : marketplacePlugins) {
+        const auto value = entry.toObject();
+        marketVersions.insert(value["id"].toString(), value["version"].toString());
+    }
     QJsonArray values;
     for (const auto &manifest : installedPluginManifests()) {
         const auto value = manifest.toObject();
         const auto id = value["id"].toString();
+        const auto version = value["version"].toString();
+        const auto marketVersion = marketVersions.value(id);
         values.append(QJsonObject{
             {"id", id},
             {"name", value["display"].toObject()["name"].toString(id)},
-            {"version", value["version"].toString()},
+            {"version", version},
+            {"marketVersion", marketVersion},
+            {"updateAvailable", pluginVersionNewer(marketVersion, version)},
             {"publisher", value["publisher"].toString()},
             {"license", value["license"].toString()},
             {"enabled", !disabled.contains(id)},
@@ -1198,6 +1296,15 @@ QJsonObject Host::pluginDetail(QString id) const {
             result["enabled"] = !disabledPlugins().contains(id);
             result["installed"] = true;
             result["userInstalled"] = QDir(AppStorage::dataDirectory() + "/plugins/" + id).exists();
+            for (const auto &entry : marketplacePlugins) {
+                const auto market = entry.toObject();
+                if (market["id"].toString() == id) {
+                    result["marketVersion"] = market["version"].toString();
+                    result["updateAvailable"] =
+                        pluginVersionNewer(market["version"].toString(), value["version"].toString());
+                    break;
+                }
+            }
             return result;
         }
     }
@@ -1207,6 +1314,7 @@ QJsonObject Host::pluginDetail(QString id) const {
             auto result = value;
             result["enabled"] = true;
             result["installed"] = false;
+            result["updateAvailable"] = false;
             return result;
         }
     }
@@ -1219,6 +1327,25 @@ QString Host::marketplaceUrl() const {
     return configured.isEmpty() ? fallback : configured;
 }
 QJsonObject Host::pluginMarketplaceState() const {
+    QHash<QString, QString> installedVersions;
+    for (const auto &manifest : installedPluginManifests()) {
+        const auto value = manifest.toObject();
+        installedVersions.insert(value["id"].toString(), value["version"].toString());
+    }
+    QJsonArray plugins;
+    int updatesAvailable = 0;
+    for (const auto &entry : marketplacePlugins) {
+        auto value = entry.toObject();
+        const auto id = value["id"].toString();
+        const auto installedVersion = installedVersions.value(id);
+        const auto updateAvailable = pluginVersionNewer(value["version"].toString(), installedVersion);
+        value["installedVersion"] = installedVersion;
+        value["updateAvailable"] = updateAvailable;
+        if (updateAvailable) {
+            ++updatesAvailable;
+        }
+        plugins.append(value);
+    }
     return {{"url", marketplaceUrl()},
             {"loading", marketplaceLoading},
             {"installing", marketplaceInstalling},
@@ -1229,8 +1356,9 @@ QJsonObject Host::pluginMarketplaceState() const {
             {"installBytes", double(marketplaceInstallBytes)},
             {"installSpeed", marketplaceInstallSpeed},
             {"installProgress", marketplaceInstallProgress},
+            {"updatesAvailable", updatesAvailable},
             {"status", marketplaceStatus},
-            {"plugins", marketplacePlugins}};
+            {"plugins", plugins}};
 }
 void Host::updateMarketplaceInstallProgress(bool force) {
     if (!marketplaceInstalling) {
@@ -1251,6 +1379,32 @@ void Host::updateMarketplaceInstallProgress(bool force) {
         marketplaceInstallLastEmit = now;
         emit invalidated();
     }
+}
+bool Host::pluginUpdateAvailable(QString id) const {
+    QString installedVersion;
+    for (const auto &manifest : installedPluginManifests()) {
+        const auto value = manifest.toObject();
+        if (value["id"].toString() == id) {
+            installedVersion = value["version"].toString();
+            break;
+        }
+    }
+    if (installedVersion.isEmpty()) {
+        return false;
+    }
+    for (const auto &entry : marketplacePlugins) {
+        const auto value = entry.toObject();
+        if (value["id"].toString() == id) {
+            return pluginVersionNewer(value["version"].toString(), installedVersion);
+        }
+    }
+    return false;
+}
+void Host::checkPluginUpdates() {
+    if (installedPluginManifests().isEmpty()) {
+        return;
+    }
+    refreshPluginMarketplace();
 }
 void Host::refreshPluginMarketplace() {
     const auto url = marketplaceUrl();
@@ -1279,8 +1433,25 @@ void Host::refreshPluginMarketplace() {
             plugins.append(value);
         }
         marketplacePlugins = plugins;
+        QHash<QString, QString> installedVersions;
+        for (const auto &manifest : installedPluginManifests()) {
+            const auto value = manifest.toObject();
+            installedVersions.insert(value["id"].toString(), value["version"].toString());
+        }
+        int updatesAvailable = 0;
+        for (const auto &entry : plugins) {
+            const auto value = entry.toObject();
+            if (pluginVersionNewer(value["version"].toString(),
+                                   installedVersions.value(value["id"].toString()))) {
+                ++updatesAvailable;
+            }
+        }
         marketplaceStatus =
             QStringLiteral("已载入 ") + QString::number(plugins.size()) + QStringLiteral(" 个插件");
+        if (updatesAvailable > 0) {
+            marketplaceStatus +=
+                QStringLiteral(" · 发现 ") + QString::number(updatesAvailable) + QStringLiteral(" 个更新");
+        }
         marketplaceLoading = false;
         emit invalidated();
     };
@@ -1547,6 +1718,39 @@ void Host::reloadPlugins() {
         child.kill();
         child.waitForFinished(1000);
     }
+    const auto variants = ProviderRegistry::instance().variants(provider);
+    if (!variants.isEmpty()) {
+        bool validVariant = false;
+        for (const auto &value : variants) {
+            if (value.toObject()["id"].toString() == providerVariant) {
+                validVariant = true;
+                break;
+            }
+        }
+        if (!validVariant) {
+            const auto preferenceKey = ProviderRegistry::instance().variantPreference(provider);
+            const auto saved = preferenceKey.isEmpty() ? QString() : preference(preferenceKey);
+            bool selectedSaved = false;
+            for (const auto &value : variants) {
+                if (value.toObject()["id"].toString() == saved) {
+                    providerVariant = saved;
+                    selectedSaved = true;
+                    break;
+                }
+            }
+            if (!selectedSaved) {
+                providerVariant = variants.first().toObject()["id"].toString("standard");
+            }
+        }
+    }
+    // 插件版本变化后旧元数据、封面和限流状态不再代表当前实现。
+    cache.clear();
+    images.clear();
+    coverFlights.clear();
+    blockedUntil.clear();
+    ++metadataRevision;
+    ++imageCacheGeneration;
+    emit pluginsReloaded();
     emit invalidated();
 }
 QString Host::rollbackPlugin(QString id) {

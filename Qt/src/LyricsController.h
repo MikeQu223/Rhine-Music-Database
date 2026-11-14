@@ -8,6 +8,7 @@ class LyricsController : public QObject {
     Q_OBJECT
   public:
     explicit LyricsController(Host *host, QObject *parent = nullptr);
+    void reloadProviders();
     void clear();
     void clearCache(StorageCoordinator::Completion done);
     void load(const QJsonObject &track, bool retry = false);
@@ -78,6 +79,7 @@ class LyricsController : public QObject {
     QJsonArray m_cache;
     QJsonObject m_localSources;
     bool remoteCommand(const QString &method, QJsonObject arguments = {});
+    void rebuildProviders();
     MusicApi &api(const QString &provider);
     MusicApi::Valid valid(const Pending &pending);
     void supplement(const Pending &pending);

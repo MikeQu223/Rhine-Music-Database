@@ -117,6 +117,14 @@ class NativeHud : public QObject {
     int searchRowCount = 0;
     double savedScroll = 0;
     int savedRowCount = 0;
+    // 插件管理器左右列表各自维护滚动位置与固定行高。
+    static constexpr double PluginListTop = 282;
+    static constexpr double PluginListBottom = 786;
+    static constexpr double PluginMarketRowHeight = 82;
+    static constexpr double PluginInstalledRowHeight = 74;
+    static constexpr double PluginColumnGap = 34;
+    double pluginMarketScroll = 0;
+    double pluginInstalledScroll = 0;
     // 通用文本设置的 QML 编辑浮层状态；清空 id 即隐藏。
     QString editingSettingId;
     QString editingSettingText;
@@ -362,6 +370,10 @@ class NativeHud : public QObject {
     void playerPanel(double x, double y, double width);
     QJsonArray providerCardsState() const;
     QJsonArray providerPlaylistEditors() const;
+    QRectF pluginMarketViewport(double width) const;
+    QRectF pluginInstalledViewport(double width) const;
+    double pluginMarketScrollMaximum() const;
+    double pluginInstalledScrollMaximum() const;
     void platformChoices(double x, double y, double width, bool expanded = false);
     void platformPanel(double x, double y, double width);
     void pluginsPanel(double x, double y, double width);

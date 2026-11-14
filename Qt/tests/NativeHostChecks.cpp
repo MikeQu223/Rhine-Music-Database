@@ -72,13 +72,13 @@ bool runNativeHostChecks(const QString &root) {
     };
     {
         QFile file(market.path() + "/plugins/fixture/manifest.json");
-        file.open(QIODevice::WriteOnly);
-        file.write(QJsonDocument(fixtureManifest).toJson());
+        ok &= file.open(QIODevice::WriteOnly | QIODevice::Truncate);
+        ok &= file.write(QJsonDocument(fixtureManifest).toJson()) > 0;
     }
     {
         QFile file(market.path() + "/plugins/fixture/plugin.cjs");
-        file.open(QIODevice::WriteOnly);
-        file.write("module.exports = { create() { return {}; } };\n");
+        ok &= file.open(QIODevice::WriteOnly | QIODevice::Truncate);
+        ok &= file.write("module.exports = { create() { return {}; } };\n") > 0;
     }
     {
         const QJsonObject index{
@@ -93,12 +93,14 @@ bool runNativeHostChecks(const QString &root) {
                         }}},
         };
         QFile file(market.path() + "/index.json");
-        file.open(QIODevice::WriteOnly);
-        file.write(QJsonDocument(index).toJson());
+        ok &= file.open(QIODevice::WriteOnly | QIODevice::Truncate);
+        ok &= file.write(QJsonDocument(index).toJson()) > 0;
     }
     qputenv("RHINE_PLUGIN_MARKETPLACE_URL",
             QUrl::fromLocalFile(market.path() + "/index.json").toString().toUtf8());
     Host marketplaceHost(root, true);
+    int pluginReloads = 0;
+    QObject::connect(&marketplaceHost, &Host::pluginsReloaded, [&] { ++pluginReloads; });
     marketplaceHost.refreshPluginMarketplace();
     ok &= waitFor([&] {
         const auto state = marketplaceHost.pluginMarketplaceState();
@@ -108,12 +110,63 @@ bool runNativeHostChecks(const QString &root) {
     ok &= waitFor(
         [&] { return marketplaceHost.pluginMarketplaceState()["status"].toString().startsWith("已安装"); });
     ok &= QFile::exists(AppStorage::dataDirectory() + "/plugins/fixture/plugin.cjs");
+    if (pluginReloads != 1) {
+        qCritical() << "Marketplace install reload count" << pluginReloads;
+        ok = false;
+    }
     ok &= marketplaceHost.pluginEnabled("fixture");
     marketplaceHost.setPluginEnabled("fixture", false);
     ok &= !marketplaceHost.pluginEnabled("fixture");
     ok &= !ProviderRegistry::instance().contains("fixture");
     marketplaceHost.setPluginEnabled("fixture", true);
     ok &= ProviderRegistry::instance().contains("fixture");
+    {
+        auto updatedManifest = fixtureManifest;
+        updatedManifest["version"] = "2.0.0";
+        QFile file(market.path() + "/plugins/fixture/manifest.json");
+        ok &= file.open(QIODevice::WriteOnly | QIODevice::Truncate);
+        ok &= file.write(QJsonDocument(updatedManifest).toJson()) > 0;
+    }
+    {
+        const QJsonObject index{
+            {"schemaVersion", 1},
+            {"plugins", QJsonArray{QJsonObject{
+                            {"id", "fixture"},
+                            {"name", "Fixture"},
+                            {"version", "2.0.0"},
+                            {"path", "plugins/fixture"},
+                            {"entry", QJsonObject{{"file", "plugin.cjs"}}},
+                            {"files", QJsonArray{"plugin.cjs"}},
+                        }}},
+        };
+        QFile file(market.path() + "/index.json");
+        ok &= file.open(QIODevice::WriteOnly | QIODevice::Truncate);
+        ok &= file.write(QJsonDocument(index).toJson()) > 0;
+    }
+    marketplaceHost.checkPluginUpdates();
+    ok &= waitFor([&] { return !marketplaceHost.pluginMarketplaceState()["loading"].toBool(); });
+    const auto beforeUpdate = marketplaceHost.pluginMarketplaceState();
+    bool managerDetectedUpdate = false;
+    for (const auto &entry : marketplaceHost.pluginManagerState()) {
+        if (entry.toObject()["id"].toString() == "fixture") {
+            managerDetectedUpdate = entry.toObject()["updateAvailable"].toBool();
+            break;
+        }
+    }
+    if (beforeUpdate["updatesAvailable"].toInt() != 1 || !managerDetectedUpdate) {
+        qCritical() << "Plugin update was not detected" << beforeUpdate["status"].toString()
+                    << beforeUpdate["updatesAvailable"].toInt();
+        ok = false;
+    }
+    ok &= marketplaceHost.installMarketplacePlugin("fixture").isEmpty();
+    ok &= waitFor([&] {
+        return marketplaceHost.pluginMarketplaceState()["status"].toString().startsWith("已安装") &&
+               ProviderRegistry::instance().manifest("fixture")["version"].toString() == "2.0.0";
+    });
+    if (pluginReloads != 4) {
+        qCritical() << "Marketplace update reload count" << pluginReloads;
+        ok = false;
+    }
     qInfo() << "market re-enabled" << ok << ProviderRegistry::instance().contains("fixture");
     qunsetenv("RHINE_PLUGIN_MARKETPLACE_URL");
     QDir(AppStorage::dataDirectory() + "/plugins/.backup-fixture").removeRecursively();

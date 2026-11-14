@@ -43,7 +43,11 @@ MusicLibrary::MusicLibrary(Host *host, const QJsonObject &content, QObject *pare
     const auto descriptorColumns = registry.columns(provider);
     if (!descriptorColumns.isEmpty()) {
         columns = descriptorColumns;
+        selectedLane = qBound(0, selectedLane, int(columns.size()) - 1);
     }
+    groupLane = -1;
+    groupName.clear();
+    groupIndices.clear();
     if (provider == "siren") {
         collections = std::make_unique<LocalCollections>(provider, QString(), this);
         reloadSirenCollections();
@@ -141,6 +145,7 @@ MusicLibrary::MusicLibrary(Host *host, const QJsonObject &content, QObject *pare
             continueSourcePlayback();
         });
     });
+    connect(host, &Host::pluginsReloaded, this, &MusicLibrary::reloadPluginState);
 }
 
 MusicLibrary::~MusicLibrary() = default;
@@ -153,6 +158,78 @@ void MusicLibrary::changed() {
     refreshPlaybackLike();
     ++revision;
     emit invalidated();
+}
+
+/** 插件安装、更新或启停后重建当前来源的 descriptor 派生状态，无需用户手动切源。 */
+void MusicLibrary::reloadPluginState() {
+    const auto &registry = ProviderRegistry::instance();
+    if (!registry.contains(provider)) {
+        auto fallback = registry.defaultId();
+        if (fallback.isEmpty() || (fallback == "local" && !PlatformFeatures::LocalMusic)) {
+            fallback = registry.fallbackId("local");
+        }
+        if (fallback.isEmpty()) {
+            fallback = registry.fallbackId();
+        }
+        switchProvider(fallback.isEmpty() ? QStringLiteral("siren") : fallback);
+        return;
+    }
+    if (isLocal() || isSiren()) {
+        player.refreshQualityPreference();
+        return;
+    }
+
+    // 旧插件的响应不能继续写入新 descriptor；播放队列与当前播放保持不动。
+    cancelLogin();
+    ++m_generation;
+    ++m_accountGeneration;
+    ++m_selectionGeneration;
+    ++m_directoryGeneration;
+    ++m_wikiGeneration;
+    ++m_suggestGeneration;
+    discover->cancel();
+    m_sourcePlayback.reset();
+    m_pendingLane = -1;
+    restoringAccount = false;
+    searchLoading = false;
+    personalLoading = false;
+    detailLoading = false;
+    directoryLoading = false;
+    trackLoad = false;
+    writeLoading = false;
+
+    const auto variants = registry.variants(provider);
+    if (!variants.isEmpty()) {
+        bool validVariant = false;
+        for (const auto &value : variants) {
+            if (value.toObject()["id"].toString() == providerVariant) {
+                validVariant = true;
+                break;
+            }
+        }
+        if (!validVariant) {
+            providerVariant = variants.first().toObject()["id"].toString("standard");
+        }
+        host->setProviderVariant(providerVariant);
+    }
+    host->setProvider(provider);
+    api.provider = provider;
+    const auto descriptorColumns = registry.columns(provider);
+    if (!descriptorColumns.isEmpty()) {
+        columns = descriptorColumns;
+    }
+    loginMethod.clear();
+    const auto methods = registry.loginMethods(provider);
+    if (!methods.isEmpty()) {
+        loginMethod = methods.first().toObject()["id"].toString("qr");
+    }
+    capabilities = {};
+    vipLevel = "unknown";
+    restoreCachedAccount();
+    player.refreshQualityPreference();
+    refreshAccountFeatures();
+    status = QStringLiteral("插件已重新载入");
+    changed();
 }
 
 /** 清除可重建的缓存；历史、登录状态、账号设置和本地音乐库保持不变。 */

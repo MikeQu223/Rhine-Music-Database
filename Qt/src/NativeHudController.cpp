@@ -102,6 +102,8 @@ void NativeHud::openModal(QString kind) {
     resetResultViews();
     settingsScroll = 0;
     discoverScroll = 0;
+    pluginMarketScroll = 0;
+    pluginInstalledScroll = 0;
     activeGroup.clear();
     artistTab = "songs";
     categoryPicker = false;

@@ -50,9 +50,11 @@ class Host : public QObject {
     Q_INVOKABLE QJsonArray pluginManagerState() const;
     Q_INVOKABLE QJsonObject pluginDetail(QString id) const;
     Q_INVOKABLE QJsonObject pluginMarketplaceState() const;
+    Q_INVOKABLE void checkPluginUpdates();
     Q_INVOKABLE void refreshPluginMarketplace();
     Q_INVOKABLE QString installMarketplacePlugin(QString id);
     Q_INVOKABLE bool pluginEnabled(QString id) const;
+    Q_INVOKABLE bool pluginUpdateAvailable(QString id) const;
     Q_INVOKABLE void setPluginEnabled(QString id, bool enabled);
     Q_INVOKABLE QString rollbackPlugin(QString id);
     Q_INVOKABLE QString uninstallPlugin(QString id);
@@ -138,6 +140,7 @@ class Host : public QObject {
     void audioSpectrumChanged(QJsonArray levels);
     void playbackDiagnostic(QString event, QJsonObject values);
     void invalidated();
+    void pluginsReloaded();
 
   private:
     friend class AudioPlayerRegression;

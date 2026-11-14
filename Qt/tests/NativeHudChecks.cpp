@@ -1672,21 +1672,105 @@ bool checkSkipDetailOnSwitch(const QString &root, Glyphs &glyphs, const QJsonObj
     QObject::disconnect(modeConnection);
     return true;
 }
+
+/** 更新当前来源后 descriptor 与歌词来源必须立即重建，且无需用户再次切换平台。 */
+bool checkPluginReload(const QString &root, const QJsonObject &content) {
+    const auto id = QStringLiteral("hud-plugin-reload-fixture");
+    QTemporaryDir source;
+    if (!source.isValid()) {
+        return false;
+    }
+    const auto directory = source.path() + "/plugin";
+    QDir().mkpath(directory);
+    const auto writeFixture = [&](const QString &version, const QString &column) {
+        const QJsonObject manifest{{"schemaVersion", 2},
+                                   {"apiVersion", "2.0"},
+                                   {"id", id},
+                                   {"version", version},
+                                   {"entry", QJsonObject{{"file", "plugin.cjs"}}},
+                                   {"display", QJsonObject{{"name", "Plugin Reload Fixture"}}},
+                                   {"capabilities", QJsonObject{{"lyrics", true}, {"search", true}}},
+                                   {"operations", QJsonObject{{"lyrics", true}, {"search", true}}},
+                                   {"library", QJsonObject{{"columns", QJsonArray{column}}, {"lanes", 1}}}};
+        QFile manifestFile(directory + "/manifest.json");
+        QFile entryFile(directory + "/plugin.cjs");
+        return manifestFile.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
+               manifestFile.write(QJsonDocument(manifest).toJson()) > 0 &&
+               entryFile.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
+               entryFile.write("module.exports = { create() { return {}; } };\n") > 0;
+    };
+    bool ok = writeFixture("1.0.0", "旧列");
+    if (!ok) {
+        qCritical() << "Cannot prepare plugin reload fixture";
+    }
+    int lyricsRequests = 0;
+    {
+        Host host(root, true);
+        host.fixture = [&](QString route, QJsonObject) {
+            if (route == "/native/" + id + "/search") {
+                ++lyricsRequests;
+            }
+            return QJsonObject{
+                {"body", QJsonObject{{"code", 200}, {"value", QJsonObject{{"items", QJsonArray{}}}}}}};
+        };
+        MusicLibrary music(&host, content);
+        const auto firstImport = host.importPlugin(directory);
+        if (!firstImport.isEmpty()) {
+            qCritical() << "Initial plugin import failed" << firstImport;
+            ok = false;
+        }
+        music.switchProvider(id);
+        if (music.provider != id || music.columns != QStringList{"旧列"}) {
+            qCritical() << "Initial plugin descriptor not active" << music.provider << music.columns;
+            ok = false;
+        }
+
+        if (!writeFixture("2.0.0", "新列")) {
+            qCritical() << "Cannot prepare plugin update fixture";
+            ok = false;
+        }
+        const auto secondImport = host.importPlugin(directory);
+        if (!secondImport.isEmpty()) {
+            qCritical() << "Plugin update import failed" << secondImport;
+            ok = false;
+        }
+        const auto version = ProviderRegistry::instance().manifest(id)["version"].toString();
+        if (version != "2.0.0") {
+            qCritical() << "Plugin registry did not reload version" << version;
+            ok = false;
+        }
+        if (music.columns != QStringList{"新列"} || music.status != QStringLiteral("插件已重新载入")) {
+            qCritical() << "Current provider descriptor did not reload" << music.columns << music.status;
+            ok = false;
+        }
+
+        const auto localTrack = MusicData::item("song", "42", "本地测试", "测试歌手", "local");
+        music.player.lyrics.selectLocalSource(localTrack, id);
+        QElapsedTimer elapsed;
+        elapsed.start();
+        while (lyricsRequests == 0 && elapsed.elapsed() < 2000) {
+            QCoreApplication::processEvents();
+            QThread::msleep(5);
+        }
+        if (lyricsRequests == 0) {
+            qCritical() << "Lyrics controller did not use the updated plugin";
+            ok = false;
+        }
+    }
+    const auto pluginRoot = AppStorage::dataDirectory() + "/plugins";
+    QDir(pluginRoot + "/.backup-" + id).removeRecursively();
+    QDir(pluginRoot + "/" + id).removeRecursively();
+    ProviderRegistry::instance().load(root, pluginRoot, {});
+    if (!ok) {
+        qCritical() << "Plugin reload did not refresh the current provider or lyrics sources";
+    }
+    return ok;
+}
 }
 
 bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
     Host host(root, true);
     const bool settingsSchemaOk = checkSettingsSchema();
-    QStringList providers;
-    for (const auto &id : ProviderRegistry::instance().ids()) {
-        if (id != "local" && id != "siren") {
-            providers.append(id);
-        }
-    }
-    if (providers.isEmpty()) {
-        qInfo() << "Native HUD checks skipped: no music source plugin installed";
-        return settingsSchemaOk;
-    }
     const auto content = QJsonDocument::fromJson(host.read("slots.json").toUtf8()).object();
     // 单项检查失败时输出名称，避免回归报告只剩总数而无法定位。
     const auto record = [](const char *name, bool passed) {
@@ -1696,6 +1780,17 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
         return passed;
     };
     bool ok = settingsSchemaOk;
+    ok &= record("plugin reload", checkPluginReload(root, content));
+    QStringList providers;
+    for (const auto &id : ProviderRegistry::instance().ids()) {
+        if (id != "local" && id != "siren") {
+            providers.append(id);
+        }
+    }
+    if (providers.isEmpty()) {
+        qInfo() << "Native HUD checks skipped: no music source plugin installed";
+        return ok;
+    }
     {
         MusicLibrary qualityMusic(&host, content);
         qualityMusic.provider = providers.first();
@@ -2202,6 +2297,38 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
                             << (dark ? "dark" : "light");
                 ok = false;
             }
+            const auto pluginBounds = hud.modalBounds(1920);
+            const auto pluginUsable = pluginBounds.width() - 106;
+            const auto pluginColumn = (pluginUsable - NativeHud::PluginColumnGap) / 2;
+            const QRectF marketViewport(pluginBounds.x() + 53, pluginBounds.y() + NativeHud::PluginListTop,
+                                        pluginColumn - 18,
+                                        NativeHud::PluginListBottom - NativeHud::PluginListTop);
+            const QRectF installedViewport(pluginBounds.x() + 53 + pluginColumn + NativeHud::PluginColumnGap,
+                                           pluginBounds.y() + NativeHud::PluginListTop, pluginColumn - 18,
+                                           NativeHud::PluginListBottom - NativeHud::PluginListTop);
+            if (marketViewport.intersects(installedViewport) ||
+                marketViewport.right() >= installedViewport.left() || hud.pluginMarketScroll != 0 ||
+                hud.pluginInstalledScroll != 0) {
+                qCritical()
+                    << "Plugin marketplace and installed lists did not split into independent columns";
+                ok = false;
+            }
+            hud.pluginMarketScroll = 0;
+            hud.pluginInstalledScroll = 0;
+            hud.wheel(installedViewport.center().x(), installedViewport.center().y() + hud.motion.offset, -1,
+                      1, std::nullopt);
+            if (hud.pluginMarketScroll != 0) {
+                qCritical() << "Installed plugin scrolling moved the marketplace list";
+                ok = false;
+            }
+            hud.pluginMarketScroll = 0;
+            hud.pluginInstalledScroll = 0;
+            hud.wheel(marketViewport.center().x(), marketViewport.center().y() + hud.motion.offset, -1, 1,
+                      std::nullopt);
+            if (hud.pluginInstalledScroll != 0) {
+                qCritical() << "Marketplace scrolling moved the installed plugin list";
+                ok = false;
+            }
             const QStringList criticalPanels = {"search", "login", "player", "confirm"};
             for (const auto &panel : criticalPanels) {
                 hud.openModal(panel);
@@ -2577,6 +2704,10 @@ int main(int argc, char **argv) {
         std::fflush(stderr);
     });
     QGuiApplication application(argc, argv);
+    QTemporaryDir storage;
+    if (!storage.isValid() || !AppStorage::initializePortable(storage.path()).isEmpty()) {
+        return 1;
+    }
     const auto root = application.arguments().value(1);
     Glyphs glyphs(root);
     return runNativeHudChecks(root, glyphs) ? 0 : 1;

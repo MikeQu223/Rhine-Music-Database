@@ -202,6 +202,13 @@ MusicPlayer::MusicPlayer(Host *host, MusicApi *api, QObject *parent)
         }
     }
     connect(&lyrics, &LyricsController::changed, this, &MusicPlayer::changed);
+    connect(m_host, &Host::pluginsReloaded, this, [this] {
+        // 桌面 GUI 只显示服务快照；播放服务内的歌词控制器负责重新读取当前曲目。
+        if (m_host->playbackConnection() || current.isEmpty()) {
+            return;
+        }
+        lyrics.load(current, true);
+    });
     connect(&lyrics, &LyricsController::coverMatched, this, [this](QString key, QString url) {
         if (current["provider"] != "local" || LyricsController::trackKey(current) != key ||
             !current["cover"].toString().isEmpty()) {

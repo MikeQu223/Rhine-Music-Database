@@ -114,6 +114,7 @@ class MusicLibrary : public QObject {
         return m_accountGeneration;
     }
     void switchProvider(QString provider, QString edition = {}, Completion done = {});
+    void reloadPluginState();
     void restoreAccount(Completion done = {});
     void restoreIdentityName();
     void startLogin();

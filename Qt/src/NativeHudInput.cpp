@@ -161,6 +161,26 @@ void NativeHud::wheel(double x, double y, double delta, std::optional<int> steps
             }
             return;
         }
+        if (modal == "plugins") {
+            if (closing) {
+                return;
+            }
+            const auto marketViewport = pluginMarketViewport(width);
+            const auto installedViewport = pluginInstalledViewport(width);
+            const auto localY = y - motion.offset;
+            if (marketViewport.contains(x, localY)) {
+                const auto contentHeight = pluginMarketScrollMaximum() + marketViewport.height();
+                pluginMarketScroll =
+                    HudScroll::applyWheel(pluginMarketScroll, contentHeight, marketViewport.height(),
+                                          distance, step, PluginMarketRowHeight);
+            } else if (installedViewport.contains(x, localY)) {
+                const auto contentHeight = pluginInstalledScrollMaximum() + installedViewport.height();
+                pluginInstalledScroll =
+                    HudScroll::applyWheel(pluginInstalledScroll, contentHeight, installedViewport.height(),
+                                          distance, step, PluginInstalledRowHeight);
+            }
+            return;
+        }
         if (modal != "saved" || closing) {
             return;
         }

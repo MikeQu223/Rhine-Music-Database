@@ -654,11 +654,6 @@ double ResponsiveHudLayout::pluginsPage(ResponsiveHudCanvas &c, const QJsonObjec
     const auto marketplace = s["pluginMarketplace"].toObject();
     const auto market = marketplace["plugins"].toArray();
     const auto installed = s["pluginInstalled"].toArray();
-    QHash<QString, QString> installedVersions;
-    for (const auto &value : installed) {
-        const auto entry = value.toObject();
-        installedVersions.insert(entry["id"].toString(), entry["version"].toString());
-    }
     terminalSection(c, y, "01", "插件市场", "MARKETPLACE");
     y += 26;
     if (s["pluginImportAvailable"].toBool()) {
@@ -695,11 +690,11 @@ double ResponsiveHudLayout::pluginsPage(ResponsiveHudCanvas &c, const QJsonObjec
         const auto value = market.at(index).toObject();
         const auto id = value["id"].toString();
         const auto version = value["version"].toString();
-        const auto current = installedVersions.value(id);
+        const auto current = value["installedVersion"].toString();
+        const auto canUpdate = value["updateAvailable"].toBool();
         const bool busy = installing && marketplace["installId"].toString() == id;
-        const bool canUpdate = !current.isEmpty() && current != version;
         if (busy) {
-            c.fill({20, y, 353, 96}, c.raised);
+            c.fill({20, y, 353, 78}, c.raised);
         }
         c.text(value["name"].toString(id), 20, y + 10, 14, 225, "demibold");
         auto meta = id;
@@ -710,15 +705,18 @@ double ResponsiveHudLayout::pluginsPage(ResponsiveHudCanvas &c, const QJsonObjec
             meta += " / 已安装 " + current;
         }
         c.text(meta, 20, y + 32, 9, 230, "regular", canUpdate ? c.ink : muted);
-        c.paragraph(value["description"].toString(), 20, y + 50, 10, 230, muted, "regular", 2);
-        const auto label =
-            busy ? QStringLiteral("安装中…")
-                 : (current.isEmpty() ? QStringLiteral("安装")
-                                      : (canUpdate ? QStringLiteral("更新") : QStringLiteral("重新安装")));
+        QString label = QStringLiteral("重新安装");
+        if (busy) {
+            label = QStringLiteral("安装中…");
+        } else if (current.isEmpty()) {
+            label = QStringLiteral("安装");
+        } else if (canUpdate) {
+            label = QStringLiteral("更新");
+        }
         c.button({261, y + 10, 112, 40}, label, busy ? QString() : "plugin:market:" + id,
-                 current.isEmpty() && !busy);
-        c.fill({20, y + 94, 353, .6}, c.line);
-        y += 96;
+                 !busy && (current.isEmpty() || canUpdate));
+        c.fill({20, y + 76, 353, .6}, c.line);
+        y += 78;
     }
     y += 12;
     terminalSection(c, y, "02", "已安装", "INSTALLED / " + QString::number(installed.size()));

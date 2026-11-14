@@ -92,6 +92,10 @@ void NativeApplication::initialize() {
     }
     music.restoreAccount();
     music.restoreIdentityName();
+    if (!m_host->offline && !QCoreApplication::arguments().contains("--self-test")) {
+        // 启动时只检测并标记更新，插件代码仍由用户在插件管理器中确认安装。
+        m_host->checkPluginUpdates();
+    }
 #if RHINE_MOBILE
     // 移动端没有"干净退出"：滑掉应用是 SIGKILL，aboutToQuit 永远不触发，桌面那套
     // 「退出时写 session.json」在这里一次都不会发生，表现为重启后不恢复上次状态。
