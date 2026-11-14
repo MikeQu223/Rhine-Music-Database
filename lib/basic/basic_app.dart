@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -6,6 +7,8 @@ import 'package:flutter/services.dart';
 import '../app/consent_gate.dart';
 import '../app/orientation_state.dart';
 import '../hud/input/hit_layer.dart';
+import '../hud/input/key_router.dart' show HudAction;
+import '../hud/input/text_input_overlay.dart';
 import '../hud/player/player_bar.dart' show playerBarHeaderHeight, playerBarRowHeight;
 import '../hud/protocol/hud_frame.dart';
 import '../ui/layout/portrait_stage.dart';
@@ -33,10 +36,10 @@ const String basicUnimplementedPrefix = '预览中尚未实现：';
 
 /// 检索动作前缀：`search:<查询词>` → [BasicController.setQuery]。
 ///
-/// 真实文本输入控件已经存在：lib/hud/input/text_input_overlay.dart:994 的
-/// `TextInputOverlay`（端口 :361 `TextInputPorts.query/searchAccepted`）。本原子只按既有
-/// `动作:参数` 契约接住检索词；把 Overlay 铺进 BasicApp（含 composing/commit 去重与
-/// 唯一 StageGeometry）是下一个原子，尚未接线，所以这里不伪造输入框。
+/// 真实的文本输入控件是 lib/hud/input/text_input_overlay.dart:994 的 `TextInputOverlay`
+/// （端口 :361 `TextInputPorts`）。裸 `search` 打开它（Qt/src/NativeHudController.cpp:684
+/// 把 `search` 交给 openModal("search")），框里输入的字走 `TextInputPorts.query` →
+/// [BasicController.setQuery]；`search:<词>` 这条动作载荷是 HUD 命中层的既有契约，两条都真实。
 const String basicSearchActionPrefix = 'search:';
 
 /// 列表为空时点“open”的可见反馈（不打开不存在的行）。
@@ -292,7 +295,7 @@ class _BasicShell extends StatefulWidget {
   State<_BasicShell> createState() => _BasicShellState();
 }
 
-class _BasicShellState extends State<_BasicShell> {
+class _BasicShellState extends State<_BasicShell> implements TextInputPorts {
   /// 未接入动作的可见反馈（null = 无）。这里绝不静默吞点击，也不假装有设置/
   /// 账号功能：真实缺口写进可见反馈，并在报告里点名缺少的 controller 契约。
   ///
@@ -305,12 +308,42 @@ class _BasicShellState extends State<_BasicShell> {
   /// （basic_hud_resources.dart:35-36 的契约），也不能被动作反馈挤掉。
   String? _resourceNotice;
 
+  /// 当前弹层（'' = 无，'search' = 检索）。Qt 的 modal 由 NativeHud 自己持有
+  /// （Qt/src/NativeHudController.cpp:64-130 openModal / :132-143 closeModal /
+  /// :145-163 setQuery），BasicViewState 没有这个字段，也不在本原子写域
+  /// （basic_models.dart 不可改），所以它落在外壳里。
+  ///
+  /// 只有 '' 与 'search'：登录表单 / 歌单表单 / 设置编辑在本预览里没有入口
+  /// （账号三平台暂停、设置页未接入），不伪造第三态。
+  String _modal = '';
+
+  /// 竖屏唯一 [StageGeometry] 的引用（横屏不用）。
+  ///
+  /// 实例由 PortraitStage 在 Transform.scale 内部造（lib/ui/layout/portrait_stage.dart:34-150），
+  /// 这里只【接管】同一实例，绝不自己调 computePortraitBands / withScale 再推一份
+  /// （DEDUP-13：scale 只允许一个来源）。接管发生在首帧后，所以竖屏首帧不铺输入层。
+  StageGeometry? _portraitGeometry;
+
+  /// HUD 输入层的焦点节点。
+  ///
+  /// Qt 的隐藏输入框把焦点交回 QML 的 inputLayer（Overlay.qml:546
+  /// inputLayer.forceActiveFocus()）；本外壳对应为 HUD 子树的这个节点，
+  /// 关框后由 [focusInputLayer] 收回，避免「没有任何节点持焦点」导致
+  /// 硬件键盘/遥控器导航断掉。
+  final FocusNode _hudFocusNode = FocusNode(debugLabel: 'basic-hud-input-layer');
+
   BasicController get controller => widget.controller;
 
   @override
   void initState() {
     super.initState();
     _resourceNotice = _resourceFailuresNotice(widget.resources);
+  }
+
+  @override
+  void dispose() {
+    _hudFocusNode.dispose();
+    super.dispose();
   }
 
   @override
@@ -361,19 +394,55 @@ class _BasicShellState extends State<_BasicShell> {
                 listenable: controller,
                 builder: (BuildContext context, Widget? child) {
                   final BasicViewState state = controller.state;
-                  if (!portrait) {
+                  // 横屏：几何体每帧现造一份，绘制 / 命中 / 输入层共用这一个实例（DEDUP-13）。
+                  final StageGeometry? landscape = portrait
+                      ? null
+                      : StageGeometry(logicalWidth: width, logicalHeight: height);
+                  final Widget surface;
+                  if (portrait) {
+                    // 竖屏由 PortraitStage 注入唯一的 StageGeometry/HudStage 作用域；
+                    // 输入层必须挂在窗口级（见 _textInput），所以这里只接管那份引用。
+                    surface = _popScope(
+                      state,
+                      PortraitStage(
+                        child: Builder(
+                          builder: (BuildContext inner) {
+                            _adoptPortraitGeometry(StageGeometryScope.of(inner));
+                            return _surface(state);
+                          },
+                        ),
+                      ),
+                    );
+                  } else {
                     // 横屏沿用 Qt 全窗口高（Main.qml:32），几何与命中读同一份。
-                    return _popScope(
+                    surface = _popScope(
                       state,
                       _surface(
                         state,
-                        geometry: StageGeometry(logicalWidth: width, logicalHeight: height),
+                        geometry: landscape,
                         stage: HudStage.fromLogicalSize(width: width, height: height),
                       ),
                     );
                   }
-                  // 竖屏由 PortraitStage 注入唯一的 StageGeometry/HudStage 作用域。
-                  return _popScope(state, PortraitStage(child: _surface(state)));
+                  final Widget? input = _textInput(
+                    state,
+                    geometry: portrait ? _portraitGeometry : landscape,
+                  );
+                  return Stack(
+                    fit: StackFit.expand,
+                    children: <Widget>[
+                      // HUD 子树持一个焦点节点：输入层收起时焦点回到这里
+                      // （Overlay.qml:546 inputLayer.forceActiveFocus 的对应物）。
+                      // 语义仍由 HUD 自己的 a11y 层产出（lib/hud/a11y），这里不加语义节点，
+                      // 免得给 HUD 根多插一层 focusable 打断既有语义树。
+                      Focus(
+                        focusNode: _hudFocusNode,
+                        includeSemantics: false,
+                        child: surface,
+                      ),
+                      if (input != null) Positioned.fill(child: input),
+                    ],
+                  );
                 },
               );
             },
@@ -411,12 +480,215 @@ class _BasicShellState extends State<_BasicShell> {
   }
 
   void _onAction(String action) {
+    // Qt/src/NativeHudController.cpp:684：'search' 走 openModal("search")；
+    // :686 'close-modal' 走 closeModal()。两者是弹层开关，不是“尚未接入”的动作。
+    if (action == HudAction.search) {
+      _setModal('search');
+      return;
+    }
+    if (action == HudAction.closeModal) {
+      _setModal('');
+      return;
+    }
     final String? notice = _route(action);
     if (!mounted) {
       return;
     }
     // 只动动作槽：资源失败横幅不受点击影响（见 _resourceNotice 的注释）。
     setState(() => _actionNotice = notice);
+  }
+
+  /// 弹层开关。Qt 打开检索弹层时把 m_music->keyword 灌进输入框且【不】发检索
+  /// （Qt/src/NativeHudController.cpp:117-119）；本外壳对应为 [_textInput] 把
+  /// state.query 交给 Overlay，同样不调 setQuery。关闭也不清 controller 的 query
+  /// （Qt closeModal 只清 editingSetting，NativeHudController.cpp:132-143，清理在
+  /// :138-140；:145 起已是 setQuery）。
+  void _setModal(String modal) {
+    if (_modal == modal || !mounted) {
+      return;
+    }
+    // Qt openModal 会 cacheMessage.clear()（Qt/src/NativeHudController.cpp:95）：
+    // 开弹层时旧的动作反馈必须收起，否则「尚未接入」的提示会挂在搜索框上。
+    // 资源失败横幅是另一槽（_resourceNotice），与弹层无关，不跟着清。
+    setState(() {
+      _modal = modal;
+      if (modal.isNotEmpty) {
+        _actionNotice = null;
+      }
+    });
+  }
+
+  /// 动作反馈单写口（见 [_actionNotice] 的两槽说明）。
+  void _notice(String text) {
+    if (!mounted) {
+      return;
+    }
+    setState(() => _actionNotice = text);
+  }
+
+  // ── TextInputPorts（lib/hud/input/text_input_overlay.dart:361-391）────────────
+  //
+  // 输入层只在这里落地一次。composing / commit 的去重由 Overlay 自己的
+  // TextCommitTracker 负责（text_input_overlay.dart:487-505：acceptText 与上一份
+  // 已提交文本相同就返回 null、程序化回填后 resetTo），所以这里【不得】再加第二层
+  // 去重——加了会把真实的组合态二次提交吞掉（中文输入法最典型）。
+
+  /// Overlay.qml:549 → rhine.action("close-modal")：回到命中层。
+  @override
+  void action(String action) => _onAction(action);
+
+  /// Overlay.qml:540（onTextEdited）→ Engine::query → NativeHud::setQuery
+  /// （Qt/src/Engine.cpp:1022-1025、NativeHudController.cpp:145-163）。
+  /// 真实检索入口只有 [BasicController.setQuery]，这里不做节流、不去重：
+  /// Qt 的 setQuery 也不因取词相同而跳过（重新计时 700ms 再搜一次）。
+  @override
+  void query(String text) {
+    // 不在外壳再加 700ms 计时器：Qt 把整次 m_music->search 推迟 700ms ——
+    // schedule(700) 的 lambda 里才调 search（NativeHudController.cpp:145-163，:153
+    // 起），在 lambda 真正执行前不发起任何检索，且没有 provider 条件；本版
+    // BasicController.setQuery 的本地过滤与 publish 立即生效
+    // （lib/basic/siren_controller.dart:183-205）。
+    //
+    // 这是【已知的可见时序差异】：Qt 的结果列表在最后一次击键后约 700ms 才更新，
+    // 本版立即更新。外壳再加计时器会变成第二份时间源，并与 700ms 后的真实检索
+    // 双触发，故不加，只记录差异。
+    unawaited(controller.setQuery(text));
+  }
+
+  /// Overlay.qml:550-552 → Engine::searchAccepted（Qt/src/Engine.cpp:1006-1012）。
+  @override
+  void searchAccepted(String text, {required bool control}) {
+    if (control) {
+      // Qt 带 Control 时把回车交给键盘通路（NativeHudController.cpp:905-907 →
+      // m_music->play()，播放当前队列项）。BasicController 没有 play()，只有
+      // togglePlay()（lib/basic/siren_controller.dart:331）：拿 toggle 顶替会把
+      // “播放”变成“暂停”，所以不伪造，只留可见反馈。
+      _notice('控制键回车尚未接入：Qt 走 m_music->play()，BasicController 只有 togglePlay()');
+      return;
+    }
+    unawaited(controller.setQuery(text));
+  }
+
+  /// 账号表单（发送验证码 / 提交）在本外壳不可达：formVisible 只在
+  /// modal ∈ {login, playlist-form} 时为真（text_input_overlay.dart 的
+  /// TextInputStageState.formVisible），而本预览只有 '' 与 'search' 两个 modal，
+  /// 账号三平台保持暂停。空实现是“不可达”，不是伪造动作；将来接登录必须换真实调用。
+  @override
+  void submitForm(String account, String captcha) {}
+
+  @override
+  void sendLoginCode(String phone) {}
+
+  /// 设置编辑框同理不可达（editingSetting 恒为 false，设置页未接入）。
+  @override
+  void settingEditText(String text) {}
+
+  @override
+  void settingEditAccepted() {}
+
+  @override
+  void settingEditCancel() {}
+
+  /// Overlay.qml:541-548（隐藏分支 :546）：输入框隐藏时 inputLayer.forceActiveFocus()，
+  /// 把焦点交回 HUD 输入层（Qt 侧由 QML 焦点作用域实现）。
+  ///
+  /// 这里不能只 unmount 焦点：Qt 是「交还」，不是「丢掉」——直接 unfocus 会让
+  /// 关框后没有任何节点持焦点，硬件键盘/遥控器导航断掉。
+  @override
+  void focusInputLayer() {
+    if (!_hudFocusNode.hasFocus) {
+      _hudFocusNode.requestFocus();
+    }
+  }
+
+  /// 把输入层铺到窗口级。
+  ///
+  /// Overlay.qml:528-531 的 x / y / width 是「舞台值 × stageScale」的**逻辑像素**，
+  /// 和 HUD 面板同处一个窗口坐标系。PortraitStage 的子树活在舞台单位里（外面套了
+  /// Transform.scale，lib/ui/layout/portrait_stage.dart:34-150），把 Overlay 挂进去
+  /// 会再乘一次 stageScale（竖屏 s≈0.38 时框只剩 1/2.6），所以挂在 Scaffold body 的
+  /// Stack 上，用 [TextInputStageState.fromGeometry] 拿同一份 scale。
+  ///
+  /// [geometry] 为 null 表示竖屏首帧还没接管到作用域里的实例：这一帧不铺，第二帧再来。
+  Widget? _textInput(BasicViewState state, {required StageGeometry? geometry}) {
+    if (geometry == null) {
+      return null;
+    }
+    final Rect rect = _searchInputStageRect(geometry.stageWidth);
+    // 竖屏的舞台原点被 PortraitStage 下移了 originY 个舞台单位（状态栏带，
+    // lib/ui/layout/portrait_stage.dart:34-150 的 Padding(top: containerTop*stageScale)），
+    // 而 Overlay 的 y 是「舞台值 × stageScale」、不带原点（Overlay.qml:529）。
+    // 把 originY 折进舞台 y 才是 Qt 那个「y 从 HUD 原点量起」的坐标；横屏 originY
+    // 恒为 0（StageGeometry 默认值），数字与 Qt 逐字相同。
+    final double stageY = rect.top + geometry.originY;
+    return TextInputOverlay(
+      state: TextInputStageState.fromGeometry(
+        geometry,
+        modal: _modal,
+        // Qt/src/NativeHud.cpp:184-186 的 inputX / inputY / inputWidth（舞台单位），
+        // 检索分支见 :154-157（:158 是 bounds 返回）。
+        inputX: rect.left,
+        inputY: stageY,
+        inputWidth: rect.width,
+        // 本预览不播 Qt 的 0.3s 淡入 / 0.2s 淡出（Qt/src/UiMotion.cpp:101-120，
+        // SurfaceMotion::set：shown duration 0.3 :112、hidden 0.2 :114，reduced 时
+        // duration 0 瞬变）：打开即全不透明，关闭即不可见，属明示的未实现动画。
+        // modalOpacity 同时是 QML 里输入框自身的 opacity（Overlay.qml:535），
+        // 给 0 会让已经 visible 的框彻底透明——所以按弹层状态二值化。
+        modalOpacity: _modal.isEmpty ? 0.0 : 1.0,
+        // Qt NativeHudController.cpp:117-119：检索弹层打开时输入框取 m_music->keyword。
+        query: state.query,
+        dark: state.dark,
+        // BasicGlyphPorts 没有 fontFamily getter（basic_hud_resources.dart:133-140 只暴露
+        // glyphs/text 与各端口方法），字体族直接用常量（basic_hud_resources.dart:32）。
+        rhineFontFamily: basicRhineMiSansFamily,
+      ),
+      ports: this,
+    );
+  }
+
+  /// Qt/src/NativeHud.cpp:140-158（modalBounds，检索分支 :154-157）+ :184-186
+  /// （input 矩形），逐项照抄；[stageWidth] 是舞台宽（= StageGeometry.stageWidth
+  /// = HudStage.width）。
+  ///
+  /// libraryToolbarActionWidth() 只在 modal == 'saved' 时非 0
+  /// （Qt/src/NativeHudLibrary.cpp:60-72），检索弹层恒为 0，所以 inputWidth 就是
+  /// modalWidth - 106。height 54 是 QML 常量（Overlay.qml:531），由 Overlay 自己固定，
+  /// 这里只填以保持矩形完整。
+  static Rect _searchInputStageRect(double stageWidth) {
+    final double modalWidth = math.min(
+      stageWidth - 100.0,
+      math.max(760.0, math.min(1000.0, stageWidth * 0.5 - 59.0)),
+    );
+    final double left = stageWidth - modalWidth - 59.0;
+    return Rect.fromLTWH(
+      left + 53.0,
+      122.0 + 180.0,
+      math.max(0.0, modalWidth - 106.0),
+      54.0,
+    );
+  }
+
+  /// 接管竖屏那份 [StageGeometry]（只存引用，不重算 scale）。
+  ///
+  /// [StageGeometry] 没有 operator==（lib/hud/input/hit_layer.dart:55-150），
+  /// 所以按字段比较：值相同就不 setState，避免 PortraitStage 每帧新造实例
+  /// 引起的无限重建。
+  void _adoptPortraitGeometry(StageGeometry geometry) {
+    final StageGeometry? current = _portraitGeometry;
+    if (current != null &&
+        current.stageScale == geometry.stageScale &&
+        current.logicalWidth == geometry.logicalWidth &&
+        current.logicalHeight == geometry.logicalHeight &&
+        current.originY == geometry.originY) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((Duration _) {
+      if (!mounted) {
+        return;
+      }
+      setState(() => _portraitGeometry = geometry);
+    });
   }
 
   /// 命中动作 → controller 调用；返回 null 表示已分派，返回文案表示这是
@@ -518,16 +790,14 @@ class _BasicShellState extends State<_BasicShell> {
       _cycleAlbum(state, action == 'column-next' ? 1 : -1);
       return null;
     }
-    // 检索：controller.setQuery 是真实过滤（Qt/src/MusicSiren.cpp:100-124）。
+    // 检索：controller.setQuery 是真实过滤（Qt/src/MusicSiren.cpp:91-124）。
     // 载荷沿用本契约既有的 `动作:参数` 形状（music:index:<i>、player:seek-fraction:<f>）。
-    // 真实输入控件 TextInputOverlay（lib/hud/input/text_input_overlay.dart:994）已存在，
-    // 但本原子还没把它铺进 BasicApp，所以承载文本只能从 action 来；裸 'search' 给可见反馈。
+    // 裸 'search' 不在这里：它在 [_onAction] 里已被拦成 openModal("search")
+    // （Qt/src/NativeHudController.cpp:684），承载文本走 TextInputOverlay 的
+    // TextInputPorts.query，不再是“尚未接入”。
     if (action.startsWith(basicSearchActionPrefix)) {
       unawaited(controller.setQuery(action.substring(basicSearchActionPrefix.length)));
       return null;
-    }
-    if (action == 'search') {
-      return '检索输入框尚未接线：TextInputOverlay 已存在但还没铺进预览（不伪造搜索框）';
     }
     // 'music:open-all-siren' 是 archive 页的「在资料库中打开 →」（archive_page.dart:255），
     // 对应 Qt QML 的同一个动作名（Qt/src/NativeHud.cpp:426）→ NativeHudMusic.cpp:365-369 →

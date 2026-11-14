@@ -10,6 +10,10 @@ import 'package:rhine_music_database/basic/basic_hud_resources.dart';
 import 'package:rhine_music_database/basic/basic_models.dart';
 import 'package:rhine_music_database/basic/platform_playback.dart';
 import 'package:rhine_music_database/basic/siren_controller.dart';
+import 'package:rhine_music_database/hud/input/hit_layer.dart';
+import 'package:rhine_music_database/hud/input/key_router.dart' show HudAction;
+import 'package:rhine_music_database/hud/input/text_input_overlay.dart';
+import 'package:rhine_music_database/ui/layout/portrait_stage.dart';
 import 'package:rhine_music_database/ui/pages/consent_page.dart';
 
 /// 播放端口替身：只记录 dispose，播放方法全部是空操作。
@@ -573,13 +577,14 @@ void main() {
       tester.widget<BasicHudSurface>(find.byType(BasicHudSurface)).onAction(action);
     }
 
-    testWidgets('search action feeds the real controller query', (WidgetTester tester) async {
+    testWidgets('search:<query> payload still reaches controller.setQuery',
+        (WidgetTester tester) async {
       final _TrackingController controller = await pumpShell(tester);
 
       fire(tester, '${basicSearchActionPrefix}周杰伦');
       await tester.pump();
 
-      // setQuery 是 controller 的真实过滤入口（Qt/src/MusicSiren.cpp:100-124）。
+      // setQuery 是 controller 的真实过滤入口（Qt/src/MusicSiren.cpp:91-124）。
       expect(controller.queries, <String>['周杰伦']);
       expect(find.textContaining(basicUnimplementedPrefix), findsNothing);
 
@@ -588,12 +593,160 @@ void main() {
       await tester.pump();
       expect(controller.queries, <String>['周杰伦', '']);
 
-      // 裸 'search' 是 HUD 检索页签的真实动作（lib/hud/pages/chrome.dart:166）；
-      // 输入层还没铺进预览，所以必须给可见反馈，绝不静默 no-op。
-      fire(tester, 'search');
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    testWidgets('bare search opens the real TextInputOverlay and typing feeds setQuery',
+        (WidgetTester tester) async {
+      final _TrackingController controller = await pumpShell(tester);
+
+      // Qt 里 Overlay 的 QML 对象常驻：输入层一直挂在树上，弹层关闭时只是不可见。
+      expect(find.byType(TextInputOverlay), findsOneWidget);
+      expect(find.byType(EditableText), findsNothing);
+
+      fire(tester, HudAction.search);
       await tester.pump();
-      expect(find.textContaining('检索输入框尚未接线'), findsOneWidget);
-      expect(controller.queries, <String>['周杰伦', '']);
+
+      // 'search' 是弹层开关（Qt/src/NativeHudController.cpp:684-687），
+      // 不再是“尚未接线”的可见反馈；输入框是真控件。
+      expect(find.byType(EditableText), findsOneWidget);
+      // 打开弹层本身不发检索：Qt openModal 只把 m_music->keyword 灌进输入框
+      // （NativeHudController.cpp:117-119），不调 m_music->search。
+      expect(controller.queries, isEmpty);
+
+      // Qt/src/NativeHud.cpp:140-158（检索分支 :154-157）+ :184-186。默认测试窗口 800x600 →
+      // stageScale = 600/1080、舞台宽 = 800/stageScale = 1440 →
+      // modalWidth 760、left 621、inputX 674、inputY 302、inputWidth 654。
+      final TextInputOverlay overlay =
+          tester.widget<TextInputOverlay>(find.byType(TextInputOverlay));
+      expect(overlay.state.modal, 'search');
+      expect(overlay.state.stageScale, closeTo(600 / 1080, 1e-12));
+      expect(overlay.state.inputX, 674.0);
+      expect(overlay.state.inputY, 302.0);
+      expect(overlay.state.inputWidth, 654.0);
+      expect(overlay.state.modalOpacity, 1.0);
+      // 钉住字体族接线本身：Qt Overlay.qml:532 font.family: rhineFontFamily，
+      // Flutter 侧同名字族由 basic_hud_resources.dart:87 注册（常量 :32）。
+      expect(overlay.state.rhineFontFamily, basicRhineMiSansFamily);
+
+      // 输入层必须落在窗口坐标系（逻辑像素 = 舞台值 × stageScale）。
+      // 若被塞进 PortraitStage 的 Transform.scale 里会再乘一次：384.4 → 213.6。
+      final double s = 600 / 1080;
+      expect(
+        tester.getRect(find.byType(EditableText)).left,
+        closeTo((674 + 18) * s, 0.5),
+      );
+
+      // 组合态（拼音未上屏）不得提交：committedText 剥掉 composing 段得到 ''，
+      // 与 TextCommitTracker 的基线相同 → 返回 null，不碰 ports.query。
+      await tester.showKeyboard(find.byType(EditableText));
+      tester.testTextInput.updateEditingValue(const TextEditingValue(
+        text: 'zhoujielun',
+        selection: TextSelection.collapsed(offset: 10),
+        composing: TextRange(start: 0, end: 10),
+      ));
+      await tester.pump();
+      expect(controller.queries, isEmpty);
+
+      // 上屏（composing 清掉）才提交：TextInputPorts.query → setQuery。
+      tester.testTextInput.updateEditingValue(const TextEditingValue(
+        text: '周杰伦',
+        selection: TextSelection.collapsed(offset: 3),
+      ));
+      await tester.pump();
+      expect(controller.queries, <String>['周杰伦']);
+
+      // Esc：Overlay.qml:549 → rhine.action("close-modal") → 弹层收起（输入框不再可见）。
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pump();
+      expect(find.byType(EditableText), findsNothing);
+      expect(
+        tester.widget<TextInputOverlay>(find.byType(TextInputOverlay)).state.modal,
+        '',
+      );
+      expect(controller.queries, <String>['周杰伦']);
+
+      // 再开一次：输入框应该被 state.query 重新播种（这里 controller 的 query 仍是空），
+      // 然后回车必须重新提交——Qt Engine::searchAccepted 无 Control 时重新 query(text)
+      // （Qt/src/Engine.cpp:1006-1012；NativeHud::setQuery 不去重，NativeHudController.cpp:145-163）。
+      fire(tester, HudAction.search);
+      await tester.pump();
+      expect(tester.widget<EditableText>(find.byType(EditableText)).controller.text, '');
+      await tester.enterText(find.byType(EditableText), 'a');
+      await tester.pump();
+      expect(controller.queries, <String>['周杰伦', 'a']);
+
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pump();
+      expect(controller.queries, <String>['周杰伦', 'a', 'a']);
+
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    testWidgets('control+return is surfaced instead of faking m_music->play()',
+        (WidgetTester tester) async {
+      final _TrackingController controller = await pumpShell(tester);
+
+      fire(tester, HudAction.search);
+      await tester.pump();
+      await tester.enterText(find.byType(EditableText), '摩天轮');
+      await tester.pump();
+      expect(controller.queries, <String>['摩天轮']);
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pump();
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pump();
+
+      // Qt 这条分支是 m_music->play()（NativeHudController.cpp:905-907），
+      // BasicController 只有 togglePlay()：不伪造播放/暂停，只留可见反馈。
+      expect(find.textContaining('控制键回车尚未接入'), findsOneWidget);
+      expect(controller.toggleCalls, 0);
+      expect(controller.queries, <String>['摩天轮']);
+
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    testWidgets('portrait overlay consumes the single PortraitStage geometry',
+        (WidgetTester tester) async {
+      tester.view.physicalSize = const Size(600, 900);
+      tester.view.devicePixelRatio = 1.0;
+      // 真机上 status bar 会给竖屏舞台一个下移原点（originY）；这里用 safe.top=48
+      // 让 originY > 0，检索框的 y 才会真的走到「302 + originY」这条折算上。
+      tester.view.padding = const FakeViewPadding(top: 48.0);
+      addTearDown(tester.view.reset);
+
+      final _TrackingController controller = await pumpShell(tester);
+      fire(tester, HudAction.search);
+      // 竖屏几何体由 PortraitStage 在首帧后交给外壳：多 pump 让接管落地。
+      await tester.pump();
+      await tester.pump();
+
+      final TextInputOverlay overlay =
+          tester.widget<TextInputOverlay>(find.byType(TextInputOverlay));
+      // 唯一 scale 来自 PortraitStage 自己（lib/ui/layout/portrait_bands.dart:776）：
+      // 600 / 1080。自己重算一份会是 1.0，叠两次会是 0.3086。
+      final StageGeometry geometry =
+          StageGeometryScope.of(tester.element(find.byType(BasicHudSurface)));
+      expect(overlay.state.stageScale, geometry.stageScale);
+      expect(overlay.state.stageScale, closeTo(600 / 1080, 1e-12));
+      // 竖屏舞台宽恒为 1080（portraitStageWidthConstant）→ 检索框 314 / 654；
+      // y = Qt 的 302 + 舞台原点 originY（状态栏带），否则会盖到状态栏上。
+      expect(overlay.state.inputX, 314.0);
+      expect(overlay.state.inputWidth, 654.0);
+      expect(geometry.originY, greaterThan(0));
+      expect(overlay.state.inputY, 302.0 + geometry.originY);
+
+      final double s = 600 / 1080;
+      expect(
+        tester.getRect(find.byType(EditableText)).left,
+        closeTo((314 + 18) * s, 0.5),
+      );
+
+      await tester.enterText(find.byType(EditableText), '本地');
+      await tester.pump();
+      expect(controller.queries, <String>['本地']);
 
       await tester.pumpWidget(const SizedBox());
     });
