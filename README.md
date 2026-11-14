@@ -288,6 +288,40 @@ Linux CI 从 GitHub 浅检出已锁定提交的 `third_party/ffmpeg`，直接使
 
 AppImage 默认使用 DwarFS 镜像：跨文件去重后体积明显小于 squashfs，随机读取也更快。运行时是 `uruntime`，需要 FUSE；没有 FUSE 的机器上会退化成解包运行（等价于 `--appimage-extract-and-run`）。`mkdwarfs` 与 `uruntime` 由脚本按锁定版本下载并校验 SHA256，也可用 `MKDWARFS`、`URUNTIME` 指定本地路径；压缩参数用 `RHINE_DWARFS_OPTIONS` 覆盖，默认 `zstd:level=22 -S26 -B2`（`-S` 调小可让随机读取更快、体积略增）。设置 `RHINE_APPIMAGE_FS=squashfs` 可退回 appimagetool 的 squashfs 打包。
 
+### NixOS x86_64（原生 Nix 包）
+
+在项目根目录执行：
+
+```sh
+nix-build --cores 6
+./result/bin/RhineMusicDatabase
+```
+
+`--cores 6` 指定构建使用的并行任务数，可按机器配置调整。首次构建需要联网获取依赖，后续可复用 Nix 缓存。
+`default.nix` 固定了提供 Qt 6.12.0 和 Node.js 26 的 nixpkgs 版本，无需预先安装 Qt、设置 `QT_ROOT` 或升级系统。
+构建会自动准备 npm 依赖、生成场景资源和音乐桥接、编译程序并运行核心离线测试；不需要先执行 `npm ci` 或 `npm run build`。
+产物通过 `result` 链接访问，运行时也不需要进入开发环境。本流程不会修改 NixOS 系统配置，不生成 AppImage。
+
+需要交互式开发环境时执行：
+
+```sh
+nix-shell
+qmake -query QT_VERSION
+# 退出开发环境
+exit
+```
+
+当前 Nix 配方构建 core-only 版本，包含本地音乐和内置塞壬来源，不预装第三方音乐插件；暂未启用 FidelityFX/FSR3 和插帧，因此无需检出 Git 子模块。普通 Vulkan/OpenGL 渲染仍可使用。
+资源包包含采用独立限制性许可的 MiSans 字体，`default.nix` 仅为此应用允许非自由软件，不会全局启用 `allowUnfree`。
+
+安装后的离线自检可单独运行：
+
+```sh
+QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software ./result/bin/RhineMusicDatabase --self-test
+```
+
+更多构建细节、显示问题排查和向 nixpkgs 投稿前的注意事项见 [NIX.md](NIX.md)。
+
 ### 开发与测试
 
 默认构建类型为 `Release`，Linux 构建为主程序开 LTO（`INTERPROCEDURAL_OPTIMIZATION_RELEASE`，GCC 下即 `-flto=auto`）。工具链缺 LTO 插件时 CMake 只会告警并降级，产物约大 1.5 MB；设 `RHINE_REQUIRE_LTO=1` 可把这种降级变成配置期错误（CI 的 Linux 任务即如此），核对方法见构建日志里的 `IPO/LTO enabled for Release` 一行。设置 `RHINE_BUILD_TYPE=Debug` 可构建调试版本；`PYTHON` 可覆盖 Python 命令。Qt 6.12+ 安装包含官方 QML Live Preview 工具时，可使用 `npm run preview` 进行热预览。
