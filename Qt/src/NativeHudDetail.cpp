@@ -459,7 +459,7 @@ void NativeHud::container(double width, double opacity) {
         card.sort = {"排序方式 ▾", "music:sort-menu"};
     }
     if (item["kind"] == "artist") {
-        card.tabs = {{"热门歌曲", "music:artist-tab:songs", artistTab == "songs"},
+        card.tabs = {{"歌曲", "music:artist-tab:songs", artistTab == "songs"},
                      {"发行专辑", "music:artist-tab:albums", artistTab == "albums"}};
     }
     if (music.canEditPlaylist(item)) {
@@ -496,7 +496,11 @@ void NativeHud::container(double width, double opacity) {
     }
     if (albums && music.directory && music.directory->albumsMore) {
         card.more = {music.directory->albumsLoading ? "载入中…" : "更多专辑 ↓", "music:artist-more"};
-    } else if (!albums && songs.size() < card.totalCount) {
+    } else if (!albums && music.directory && music.directory->artistSongsPaged &&
+               music.directory->artistSongsMore) {
+        card.more = {music.directoryLoading ? "载入中…" : "加载更多 ↓", "music:directory-more"};
+    } else if (!albums && (!music.directory || !music.directory->artistSongsPaged) &&
+               songs.size() < card.totalCount) {
         card.more = {music.directoryLoading ? "载入中…" : "加载更多 ↓", "music:directory-more"};
     }
     if (songs.isEmpty()) {

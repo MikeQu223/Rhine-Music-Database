@@ -31,6 +31,10 @@ struct MusicDirectory {
     int parentLane = 0;
     QJsonObject parentItem;
     int albumCursor = 0;
+    int artistSongCursor = 0;
+    bool artistSongsPaged = false;
+    bool artistSongsMore = false;
+    bool playArtistWhenLoaded = false;
     bool albumsMore = false;
     bool albumsLoading = false;
 };

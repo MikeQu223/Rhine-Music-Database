@@ -1223,6 +1223,11 @@ MusicLibrary::QueueSource MusicLibrary::directorySource() const {
 /** 一键播放 */
 void MusicLibrary::playDirectory(bool includeAllSongSources) {
     m_sourcePlayback.reset();
+    if (directory && directory->artistSongsPaged && directory->artistSongsMore) {
+        directory->playArtistWhenLoaded = true;
+        loadDirectoryPage();
+        return;
+    }
     // 原桌面入口保留来源限制；手机标题按钮可以播放任意纯歌曲来源。
     if (!directory && !includeAllSongSources && selectedLane != 1 && !(isSiren() && selectedLane == 3)) {
         return;

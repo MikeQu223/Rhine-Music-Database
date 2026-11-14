@@ -241,7 +241,7 @@ export interface PluginRuntime {
 | `songs`         | `(ids: string[])`                                         | `Track[]`                                       |
 | `detail`        | `(ref: EntityRef)`                                        | `[MusicEntity, Track[], string[]]`              |
 | `artistAlbums`  | `(id, offset)`                                            | `Page<Album>`                                   |
-| `trackPage`     | `(ref, offset)`                                           | `Page<Track>`                                   |
+| `trackPage`     | `(ref, offset)`，歌手页使用 `kind=artist`                  | `Page<Track>`                                   |
 | `catalog`       | `()`                                                      | `Page<MusicEntity>`                             |
 | `playback`      | `(track, qualityId, alternative)`                         | `PlaybackSource`                                |
 | `preview`       | `(track, qualityId, alternative)`                         | `PlaybackSource`                                |
@@ -341,7 +341,7 @@ worker 在每个 native operation 返回后调用 `models.cjs` 的 `assertValid`
 ```ts
 interface Page<T> {
     items: T[];
-    rawCount: number; // 本页返回的原始条目数，用于推进 offset
+    rawCount: number; // 本页消费的上游原始条目数，用于推进 offset
     total?: number;
     more: boolean;
     notice?: string;
@@ -355,9 +355,20 @@ interface Page<T> {
 分页约定：
 
 - 请求使用 `offset`，插件自己换算成 page/cursor；
-- `rawCount` 必须是本页实际返回数，Qt 用 `offset += rawCount` 推进；
-- `more` 必须诚实；没有可靠 total 时，用 `rawCount >= pageSize` 或上游 hasMore；
-- 空页必须 `more=false`，避免 UI 无限请求。
+- `rawCount` 是本页消费的上游原始条目数，不是累计数，也不是过滤和去重后的 `items.length`；
+  Qt 用 `offset += rawCount` 推进。即使原始条目无法映射，也不得让下一页重复或跳过条目；
+- `more` 必须反映可靠的上游分页信息；使用页大小推断时，必须确认该上游的分页行为支持这一推断；
+- 若无法可靠判断后续页或已消费数量，返回 `incomplete: true` 或抛出错误，不要把部分结果当作完整结果；
+- `more=true` 时 `rawCount` 必须大于零，避免无法推进的循环；过滤后 `items` 为空但原始消费数大于零
+  时，仍可继续分页。
+
+歌手详情页在来源声明 `trackPage` 时，从 `offset=0` 请求 `kind=artist` 的歌曲页，按 `rawCount`
+推进并按歌曲键去重；浏览至末尾可继续加载，播放全部会先补齐后续页。请求失败或返回
+`incomplete: true` 时保留已显示的歌曲并允许重试。未声明 `trackPage` 的旧插件继续显示 `detail`
+返回的歌曲，不能据此保证歌曲完整。声明此 operation 的插件应支持歌手歌曲分页；分页范围和排序由
+插件按照上游实际能力定义，核心不假设热门列表等于完整曲库。会话恢复保留分页进度。
+
+缓存策略应允许不完整或失败的分页重新请求；如果缓存层不能识别 `incomplete`，不要缓存该 operation。
 
 ### 6.3 PlaybackSource
 

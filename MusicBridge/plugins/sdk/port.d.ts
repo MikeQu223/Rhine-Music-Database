@@ -374,6 +374,7 @@ export type MusicEntity = Track | Album | Artist | Playlist;
 
 export interface Page<T extends MusicEntity = MusicEntity> {
     items: T[];
+    /** 本页消费的上游原始条目数，过滤或去重前计数，用于推进 offset。 */
     rawCount: number;
     total?: number;
     more: boolean;
@@ -593,6 +594,7 @@ export interface ProviderAdapter {
     songs?(ids: string[]): Promise<Track[]>;
     detail?(ref: EntityRef): Promise<Detail>;
     artistAlbums?(id: string, offset?: number): Promise<Page<Album>>;
+    /** 歌手页以 kind=artist 请求歌曲分页；无法可靠续页时标记 incomplete 或抛出错误。 */
     trackPage?(ref: EntityRef, offset?: number): Promise<Page<Track>>;
     catalog?(): Promise<Page<MusicEntity>>;
 

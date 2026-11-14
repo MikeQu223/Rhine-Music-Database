@@ -111,7 +111,8 @@ void NativeHud::musicAction(const QStringList &parts, const QString &value) {
         const auto directory = music.directory;
         if (directory && !directory->songs.isEmpty()) {
             const auto index = directory->page + wrap(music.selectedLane * 8 + last - directory->anchor, 40);
-            if (index >= directory->songs.size() && directory->cursor < directory->ids.size()) {
+            if (index >= directory->songs.size() &&
+                (directory->artistSongsMore || directory->cursor < directory->ids.size())) {
                 music.loadDirectoryPage(index);
             } else {
                 music.selectDirectory(wrap(index, directory->songs.size()));

@@ -72,6 +72,53 @@ QString createTestAudio(QTemporaryDir &dir) {
     return QUrl::fromLocalFile(audio.fileName()).toString();
 }
 
+/** 验证歌手分页按原始数量推进，并在恢复会话后继续读取。 */
+bool checkArtistSongPages(const QString &root) {
+    Host host(root, true);
+    MusicLibrary music(&host, {});
+    music.provider = "siren";
+    music.api.provider = "siren";
+    host.setProvider("siren");
+    music.directory = std::make_shared<MusicDirectory>();
+    music.directory->item = MusicData::item("artist", "artist-1", "测试歌手", {}, "siren");
+    music.directory->artistSongsPaged = true;
+    music.directory->artistSongsMore = true;
+    music.directoryInfo = true;
+    QList<int> offsets;
+    host.fixture = [&](QString route, QJsonObject parameters) {
+        if (!route.endsWith("/trackPage")) {
+            return QJsonObject{{"body", QJsonObject{{"code", 200}}}};
+        }
+        const auto offset = parameters["args"].toArray().at(1).toInt();
+        offsets.append(offset);
+        const auto items = offset == 0 ? QJsonArray{song("1"), song("1")} : QJsonArray{song("2")};
+        const auto page = QJsonObject{{"items", items},
+                                      {"rawCount", offset == 0 ? 2 : 1},
+                                      {"more", offset == 0},
+                                      {"total", 3}};
+        return QJsonObject{{"body", QJsonObject{{"code", 200}, {"value", page}}}};
+    };
+    music.loadDirectoryPage();
+    if (!waitFor([&] { return !music.directoryLoading; }) || music.directory->songs.size() != 1 ||
+        music.directory->artistSongCursor != 2 || !music.directory->artistSongsMore) {
+        qCritical() << "Artist first page did not preserve raw pagination";
+        return false;
+    }
+    const auto saved = music.sessionState();
+    if (!music.restoreSessionState(saved) || !music.directory->artistSongsMore ||
+        music.directory->artistSongCursor != 2) {
+        qCritical() << "Artist pagination did not survive session restore";
+        return false;
+    }
+    music.loadDirectoryPage();
+    if (!waitFor([&] { return !music.directoryLoading; }) || offsets != QList<int>{0, 2} ||
+        music.directory->songs.size() != 2 || music.directory->artistSongsMore) {
+        qCritical() << "Artist second page did not complete";
+        return false;
+    }
+    return true;
+}
+
 /** 固定响应覆盖首次读取、切歌、写入失败、重复点击及退出账号的过期回包。 */
 bool checkPlaybackLikes(const QString &root, const QString &provider) {
     Host host(root, true);
@@ -178,6 +225,9 @@ bool checkSubscriptionPlaybackLikes(const QString &root, const QString &provider
 bool runNativeSessionChecks(const QString &root, const QString &audioURL);
 
 bool runNativeMusicChecks(const QString &root) {
+    if (!checkArtistSongPages(root)) {
+        return false;
+    }
     QStringList remoteProviders;
     for (const auto &id : ProviderRegistry::instance().ids()) {
         if (id != "local" && id != "siren") {
