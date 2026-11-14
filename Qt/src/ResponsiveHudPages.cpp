@@ -505,7 +505,8 @@ double ResponsiveHudLayout::settings(ResponsiveHudCanvas &c, const QJsonObject &
     c.text(logged ? "退出登录 ↗" : "登录账号 ↗", 281, y + 71, 10, 83, "regular", c.muted);
     c.hit({269, y + 52, 104, 44}, logged ? "music:logout" : "music:login", logged ? "退出登录" : "登录");
     y += 116;
-    int sectionNumber = 1;
+    // 平台卡固定为 01，后续设置分组从 02 开始。
+    int sectionNumber = 2;
     for (const auto &section : m_settings->sections) {
         if (!section.meta->customRenderer.isEmpty()) {
             if (section.meta->customRenderer == "provider-card") {
@@ -532,11 +533,14 @@ double ResponsiveHudLayout::settings(ResponsiveHudCanvas &c, const QJsonObject &
         y += 27;
         for (const auto &row : section.rows) {
             const auto *d = row.descriptor;
-            c.fill({20, y + 55, 353, .6}, c.line);
+            double rowHeight = 56;
             c.text(d->titleZh, 20, y + 19, 12, 170);
-            if (d->showDescription) {
-                c.paragraph(d->description, 20, y + 34, 9, 165, c.muted, "regular", 2);
+            const auto hint = d->showDescription ? d->description : d->restartHint;
+            if (!hint.isEmpty()) {
+                const double noteBottom = c.paragraph(hint, 20, y + 34, 12, 165, c.muted, "regular", 0, 1.5);
+                rowHeight = std::max(rowHeight, noteBottom - y + 5.);
             }
+            c.fill({20, y + rowHeight - 1, 353, .6}, c.line);
             if (d->kind == SettingsSchema::SettingKind::TextInput && s["editingSettingId"] == d->id) {
                 c.fill({201, y + 4, 172, 44}, c.raised);
                 c.field("setting", {201, y + 4, 172, 44});
@@ -561,7 +565,7 @@ double ResponsiveHudLayout::settings(ResponsiveHudCanvas &c, const QJsonObject &
                 c.text(choice ? "⌄" : "↗", 355, y + 18, 12, 16, "regular", c.muted);
                 c.hit({195, y + 4, 178, 44}, route, d->titleZh);
             }
-            y += 56;
+            y += rowHeight;
             if (row.expanded) {
                 for (const auto &option : row.choices) {
                     c.chip({20, y, 353, 40}, option.label, settingRoute(row) + option.value,

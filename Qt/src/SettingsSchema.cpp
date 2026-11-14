@@ -198,6 +198,11 @@ QVector<SettingChoice> qualityChoices(const SettingsContext &context) {
     return values;
 }
 
+QString qualityDefault(const SettingsContext &context) {
+    const auto values = qualityChoices(context);
+    return values.isEmpty() ? QString() : values.last().value;
+}
+
 QVector<SettingChoice> graphicsChoices(const SettingsContext &) {
 #if defined(Q_OS_DARWIN)
     // macOS 只有 Metal 后端；不再暴露 Vulkan/OpenGL 等无效选项。
@@ -336,7 +341,14 @@ QString descriptorAction(const SettingDescriptor &descriptor) {
                                                      : descriptor.binding.actionPrefix;
 }
 
-QString defaultFor(const SettingDescriptor &descriptor, const QString &fallback) {
+QString defaultFor(const SettingDescriptor &descriptor, const SettingsContext &context,
+                   const QString &fallback) {
+    if (descriptor.defaultTarget) {
+        const auto value = descriptor.defaultTarget(context);
+        if (!value.isEmpty()) {
+            return value;
+        }
+    }
     return descriptor.defaultValue.isEmpty() ? fallback : descriptor.defaultValue;
 }
 
@@ -364,7 +376,7 @@ const QVector<SettingDescriptor> &descriptors() {
              .kind = SettingKind::Action,
              .binding = {.kind = BindingKind::Action, .action = "window:fullscreen"},
              .storage = StorageType::None,
-             .order = 100,
+             .order = 120,
              .titleEn = "WINDOW",
              .titleZh = "窗口显示",
              .actionLabel = "切换全屏 / F11",
@@ -377,7 +389,7 @@ const QVector<SettingDescriptor> &descriptors() {
                          .action = "close-behavior",
                          .actionPrefix = "setting:close-behavior:"},
              .storage = StorageType::TrayQuit,
-             .order = 110,
+             .order = 130,
              .titleEn = "CLOSE WINDOW",
              .titleZh = "点击关闭窗口",
              .defaultValue = "quit",
@@ -388,20 +400,20 @@ const QVector<SettingDescriptor> &descriptors() {
              .kind = SettingKind::Choice,
              .binding = {.kind = BindingKind::HudState, .action = "theme", .actionPrefix = "setting:theme:"},
              .storage = StorageType::Theme,
-             .order = 120,
+             .order = 100,
              .titleEn = "COLOR THEME",
              .titleZh = "界面配色",
-             .defaultValue = "light",
+             .defaultValue = "system",
              .choices = themeChoices(),
              .label = themeLabel});
         add({.id = "motion",
-             .section = SectionId::Preferences,
+             .section = SectionId::Rendering,
              .kind = SettingKind::Choice,
              .binding = {.kind = BindingKind::HudState,
                          .action = "motion",
                          .actionPrefix = "setting:motion:"},
              .storage = StorageType::ReducedFull,
-             .order = 130,
+             .order = 200,
              .titleEn = "REDUCED MOTION",
              .titleZh = "动态效果",
              .defaultValue = "full",
@@ -428,14 +440,14 @@ const QVector<SettingDescriptor> &descriptors() {
              .titleZh = "手动显示初始化页面",
              .actionLabel = "Reinitialize"});
         add({.id = "mv-auto",
-             .section = SectionId::Preferences,
+             .section = SectionId::Audio,
              .kind = SettingKind::Choice,
              .binding = {.kind = BindingKind::Preference,
                          .preferenceKey = "mv-auto",
                          .action = "mv-auto",
                          .actionPrefix = "setting:mv-auto:"},
              .storage = StorageType::OnOff,
-             .order = 155,
+             .order = 130,
              .titleEn = "MUSIC VIDEO",
              .titleZh = "自动播放关联 MV",
              .description = "静音跟随音乐，支持独立窗口、全屏与透明度；Windows 可设为桌面壁纸。",
@@ -444,14 +456,14 @@ const QVector<SettingDescriptor> &descriptors() {
              .visible = desktopWindowVisible});
 #ifdef Q_OS_WIN
         add({.id = "audio-exclusive",
-             .section = SectionId::Preferences,
+             .section = SectionId::Audio,
              .kind = SettingKind::Choice,
              .binding = {.kind = BindingKind::Preference,
                          .preferenceKey = "audio-exclusive",
                          .action = "audio-exclusive",
                          .actionPrefix = "setting:audio-exclusive:"},
              .storage = StorageType::OnOff,
-             .order = 158,
+             .order = 140,
              .titleEn = "EXCLUSIVE AUDIO",
              .titleZh = "音频独占输出",
              .description = "独占系统默认音频设备，其他应用可能无法发声；设备不允许独占时请关闭此选项。",
@@ -460,26 +472,26 @@ const QVector<SettingDescriptor> &descriptors() {
              .choices = onOffChoices()});
 #endif
         add({.id = "quality",
-             .section = SectionId::Preferences,
+             .section = SectionId::Audio,
              .kind = SettingKind::Choice,
              .binding = {.kind = BindingKind::Player, .action = "quality", .actionPrefix = "quality:set:"},
              .storage = StorageType::PlayerQuality,
-             .order = 160,
+             .order = 100,
              .titleEn = "AUDIO QUALITY",
              .titleZh = "音质",
-             .defaultValue = "exhigh",
+             .defaultTarget = qualityDefault,
              .choicesFor = qualityChoices,
              .visible = qualityVisible});
 #if !defined(Q_OS_MACOS) && !defined(Q_OS_IOS)
         add({.id = "audio-output-policy",
-             .section = SectionId::Preferences,
+             .section = SectionId::Audio,
              .kind = SettingKind::Choice,
              .binding = {.kind = BindingKind::Preference,
                          .preferenceKey = "audio-output-policy",
                          .action = "audio-output-policy",
                          .actionPrefix = "setting:audio-output-policy:"},
              .storage = StorageType::Enum,
-             .order = 165,
+             .order = 120,
              .titleEn = "AUDIO OUTPUT",
              .titleZh = "输出格式",
              .description = "跟随系统按当前输出设备的混音格式提交，通常转换最少、兼容性最好；保留源格式仅在设"
@@ -490,29 +502,29 @@ const QVector<SettingDescriptor> &descriptors() {
 #endif
         if constexpr (PlatformFeatures::AutomaticTransition) {
             add({.id = "apple-smart-transition",
-                 .section = SectionId::Preferences,
+                 .section = SectionId::Audio,
                  .kind = SettingKind::Choice,
                  .binding = {.kind = BindingKind::Preference,
                              .preferenceKey = "apple-smart-transition",
                              .action = "apple-smart-transition",
                              .actionPrefix = "setting:apple-smart-transition:"},
                  .storage = StorageType::OnOff,
-                 .order = 166,
+                 .order = 110,
                  .titleEn = "AUTO TRANSITION",
                  .titleZh = "自动过渡",
                  .description = "根据音乐调性和拍速，在合适的时间点衔接相邻歌曲",
                  .showDescription = true,
-                 .defaultValue = Off,
+                 .defaultValue = On,
                  .choices = onOffChoices()});
         }
         add({.id = "alternative",
-             .section = SectionId::Preferences,
+             .section = SectionId::Audio,
              .kind = SettingKind::Choice,
              .binding = {.kind = BindingKind::Player,
                          .action = "alternative",
                          .actionPrefix = "setting:alternative:"},
              .storage = StorageType::PlayerAlternative,
-             .order = 170,
+             .order = 150,
              .titleEn = "ALTERNATE SOURCE",
              .titleZh = "替代音源",
              .defaultValue = Off,
@@ -525,66 +537,66 @@ const QVector<SettingDescriptor> &descriptors() {
                          .action = "music:activate",
                          .actionPrefix = "setting:official-player:"},
              .storage = StorageType::ExternalBool,
-             .order = 180,
+             .order = 160,
              .titleEn = "OFFICIAL PLAYER",
              .titleZh = "官方窗口",
              .defaultValue = Off,
              .choices = {{Off, QStringLiteral("尽量保持后台")}, {On, QStringLiteral("播放时显示")}},
              .visible = officialVisible});
         add({.id = "detail-autoplay",
-             .section = SectionId::Preferences,
+             .section = SectionId::Playback,
              .kind = SettingKind::Choice,
              .binding = {.kind = BindingKind::Preference,
                          .preferenceKey = "detail-autoplay",
                          .action = "detail-autoplay",
                          .actionPrefix = "setting:detail-autoplay:"},
              .storage = StorageType::OnOff,
-             .order = 190,
+             .order = 130,
              .titleEn = "ENTER AUTOPLAY",
              .titleZh = "进入详情自动播放",
              .defaultValue = Off,
              .choices = onOffChoices()});
         add({.id = "skip-detail-on-switch",
-             .section = SectionId::Preferences,
+             .section = SectionId::Playback,
              .kind = SettingKind::Choice,
              .binding = {.kind = BindingKind::Preference,
                          .preferenceKey = "skip-detail-on-switch",
                          .action = "skip-detail-on-switch",
                          .actionPrefix = "setting:skip-detail-on-switch:"},
              .storage = StorageType::OnOff,
-             .order = 195,
+             .order = 140,
              .titleEn = "KEEP LIST ON SWITCH",
              .titleZh = "切歌不打开详情",
              .description = "上一首、下一首与自动切歌保持在当前列表；资料库按 ENTER 直接播放，不进入详情。",
              .defaultValue = Off,
              .choices = onOffChoices()});
         add({.id = "single-play-mode",
-             .section = SectionId::Preferences,
+             .section = SectionId::Playback,
              .kind = SettingKind::Choice,
              .binding = {.kind = BindingKind::Preference,
                          .preferenceKey = "single-play-mode",
                          .action = "single-play-mode",
                          .actionPrefix = "setting:single-play-mode:"},
              .storage = StorageType::AppendReplace,
-             .order = 200,
+             .order = 120,
              .titleEn = "PLAYLIST ON PLAY",
              .titleZh = "点击播放单曲",
              .defaultValue = "replace",
              .choices = appendReplaceChoices()});
         add({.id = "desktop-lyrics",
-             .section = SectionId::Preferences,
+             .section = SectionId::Playback,
              .kind = SettingKind::Action,
              .binding = {.kind = BindingKind::Action, .action = "desktop-lyrics:open"},
-             .order = 205,
+             .order = 100,
              .titleEn = "DESKTOP LYRICS",
              .titleZh = "桌面歌词",
              .actionLabel = "样式与同步",
              .visible = desktopLyricsVisible});
         add({.id = "global-shortcuts-settings",
-             .section = SectionId::Preferences,
+             .section = SectionId::Playback,
              .kind = SettingKind::Action,
              .binding = {.kind = BindingKind::Action, .action = "shortcuts:open"},
-             .order = 175,
+             .order = 110,
              .titleEn = "GLOBAL SHORTCUTS",
              .titleZh = "全局快捷键",
              .description = "自定义后台播放、音量、桌面歌词与主窗口快捷键",
@@ -612,7 +624,7 @@ const QVector<SettingDescriptor> &descriptors() {
              .kind = SettingKind::Stepper,
              .binding = {.kind = BindingKind::HudState, .actionPrefix = "archive-mask:"},
              .storage = StorageType::HudCachedInt,
-             .order = 210,
+             .order = 110,
              .titleEn = "RIGHT MASK",
              .titleZh = "右侧画面遮罩",
              .defaultValue = "50",
@@ -621,14 +633,14 @@ const QVector<SettingDescriptor> &descriptors() {
              .step = 10,
              .label = archiveMaskLabel});
         add({.id = "graphics-backend",
-             .section = SectionId::Preferences,
+             .section = SectionId::Rendering,
              .kind = SettingKind::Choice,
              .binding = {.kind = BindingKind::Preference,
                          .preferenceKey = "graphics-backend",
                          .action = "graphics-backend",
                          .actionPrefix = "setting:graphics-backend:"},
              .storage = StorageType::Enum,
-             .order = 220,
+             .order = 100,
 #if defined(Q_OS_DARWIN)
              .titleEn = "METAL RENDERER",
              .titleZh = "渲染模式",
@@ -643,13 +655,13 @@ const QVector<SettingDescriptor> &descriptors() {
                  return graphicsBackendLabel(context);
              }});
         add({.id = "gpu-index",
-             .section = SectionId::Preferences,
+             .section = SectionId::Rendering,
              .kind = SettingKind::Choice,
              .binding = {.kind = BindingKind::Preference,
                          .preferenceKey = "gpu-index",
                          .actionPrefix = "gpu-index:"},
              .storage = StorageType::Enum,
-             .order = 230,
+             .order = 110,
              .titleEn = "GPU",
              .titleZh = "显卡",
              .restartHint = QStringLiteral("重启生效"),
@@ -659,11 +671,11 @@ const QVector<SettingDescriptor> &descriptors() {
                  return gpuIndexLabel(context);
              }});
         add({.id = "vsync",
-             .section = SectionId::Preferences,
+             .section = SectionId::Rendering,
              .kind = SettingKind::Choice,
              .binding = {.kind = BindingKind::HudState, .action = "vsync", .actionPrefix = "setting:vsync:"},
              .storage = StorageType::HudCachedBool,
-             .order = 240,
+             .order = 120,
              .titleEn = "V-SYNC",
              .titleZh = "垂直同步",
              .restartHint = QStringLiteral("重启生效"),
@@ -671,13 +683,13 @@ const QVector<SettingDescriptor> &descriptors() {
              .choices = onOffChoices(),
              .visible = vsyncVisible});
         add({.id = "render-scale",
-             .section = SectionId::Preferences,
+             .section = SectionId::Rendering,
              .kind = SettingKind::Stepper,
              .binding = {.kind = BindingKind::Preference,
                          .preferenceKey = "render-scale",
                          .actionPrefix = "render-scale:"},
              .storage = StorageType::Integer,
-             .order = 250,
+             .order = 130,
              .titleEn = "RENDER SCALE",
              .titleZh = "渲染分辨率",
              // 与 applyRenderScaleSetting() 共用同一个默认值：Android 90%，其它平台 100%。
@@ -685,13 +697,13 @@ const QVector<SettingDescriptor> &descriptors() {
              .steps = {50, 60, 75, 90, 100},
              .label = renderScaleLabel});
         add({.id = "aa-mode",
-             .section = SectionId::Preferences,
+             .section = SectionId::Rendering,
              .kind = SettingKind::Choice,
              .binding = {.kind = BindingKind::Preference,
                          .preferenceKey = "aa-mode",
                          .actionPrefix = "aa-mode:"},
              .storage = StorageType::Enum,
-             .order = 260,
+             .order = 140,
 #if defined(Q_OS_DARWIN)
              .titleEn = "METALFX",
              .titleZh = "时域抗锯齿与超分辨率",
@@ -704,13 +716,13 @@ const QVector<SettingDescriptor> &descriptors() {
              .enabled = aaEnabled,
              .label = aaModeLabel});
         add({.id = "aa-scale",
-             .section = SectionId::Preferences,
+             .section = SectionId::Rendering,
              .kind = SettingKind::Stepper,
              .binding = {.kind = BindingKind::Preference,
                          .preferenceKey = "aa-scale",
                          .actionPrefix = "aa-scale:"},
              .storage = StorageType::Integer,
-             .order = 270,
+             .order = 150,
              .titleEn = "AA SCALE",
              .titleZh = "抗锯齿倍率",
              .defaultValue = "125",
@@ -720,11 +732,11 @@ const QVector<SettingDescriptor> &descriptors() {
              .visible = aaScaleVisible,
              .label = percentLabel});
         add({.id = "msaa",
-             .section = SectionId::Preferences,
+             .section = SectionId::Rendering,
              .kind = SettingKind::Stepper,
              .binding = {.kind = BindingKind::Preference, .preferenceKey = "msaa", .actionPrefix = "msaa:"},
              .storage = StorageType::Integer,
-             .order = 280,
+             .order = 160,
              .titleEn = "MSAA SAMPLES",
              .titleZh = "多重采样倍率",
              .defaultValue = "4",
@@ -733,26 +745,26 @@ const QVector<SettingDescriptor> &descriptors() {
              .visible = msaaVisible,
              .label = msaaLabel});
         add({.id = "fsr-quality",
-             .section = SectionId::Preferences,
+             .section = SectionId::Rendering,
              .kind = SettingKind::Choice,
              .binding = {.kind = BindingKind::Preference,
                          .preferenceKey = "fsr-quality",
                          .actionPrefix = "fsr-quality:"},
              .storage = StorageType::Enum,
-             .order = 290,
+             .order = 170,
              .titleEn = "FSR QUALITY",
              .titleZh = "FSR 档位",
              .defaultValue = "native",
              .choices = fsrChoices(),
              .visible = fsrVisible});
         add({.id = "fsr-sharpness",
-             .section = SectionId::Preferences,
+             .section = SectionId::Rendering,
              .kind = SettingKind::Stepper,
              .binding = {.kind = BindingKind::Preference,
                          .preferenceKey = "fsr-sharpness",
                          .actionPrefix = "fsr-sharpness:"},
              .storage = StorageType::Integer,
-             .order = 300,
+             .order = 180,
              .titleEn = "FSR SHARPNESS",
              .titleZh = "FSR 锐化",
              .defaultValue = "50",
@@ -763,14 +775,14 @@ const QVector<SettingDescriptor> &descriptors() {
              .label = percentLabel});
 
         add({.id = "fg",
-             .section = SectionId::Preferences,
+             .section = SectionId::Rendering,
              .kind = SettingKind::Choice,
              .binding = {.kind = BindingKind::Preference,
                          .preferenceKey = "fg",
                          .action = "fg",
                          .actionPrefix = "setting:fg:"},
              .storage = StorageType::OnOff,
-             .order = 310,
+             .order = 190,
              .titleEn = "FRAME GENERATION",
              .titleZh = "帧生成",
              .defaultValue = Off,
@@ -808,16 +820,21 @@ const QVector<SettingDescriptor> &descriptors() {
 const QVector<SettingsSection> &sections() {
     static const QVector<SettingsSection> values{
         {SectionId::Provider, 1, 10, "PROVIDER ACCESS", "音乐平台", "provider-card", 160, alwaysVisible},
-        {SectionId::Preferences, 2, 20, "TERMINAL PREFERENCES", "终端偏好", {}, 0, alwaysVisible},
+        {SectionId::Audio, 2, 20, "AUDIO", "音频", {}, 0, alwaysVisible},
+        {SectionId::Playback, 3, 30, "PLAYBACK", "播放", {}, 0, alwaysVisible},
+        {SectionId::Preferences, 4, 40, "TERMINAL PREFERENCES", "终端偏好", {}, 0, alwaysVisible},
+        {SectionId::Rendering, 5, 50, "RENDERING SETTINGS", "渲染设置", {}, 0, alwaysVisible},
+        {SectionId::Experimental, 6, 60, "EXPERIMENTAL FEATURES", "实验性功能", "experimental", 120,
+         alwaysVisible},
+        {SectionId::Storage, 7, 70, "STORAGE", "存储与缓存", "storage", 174, alwaysVisible},
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
-        {SectionId::Performance, 3, 30, "PERFORMANCE", "性能与诊断", "performance", 316, alwaysVisible},
+        {SectionId::Performance, 8, 80, "PERFORMANCE", "性能与诊断", "performance", 220, alwaysVisible},
 #else
-        {SectionId::Performance, 3, 30, "PERFORMANCE", "性能与诊断", "performance", 220, alwaysVisible},
+        {SectionId::Performance, 8, 80, "PERFORMANCE", "性能与诊断", "performance", 120, alwaysVisible},
 #endif
-        {SectionId::Storage, 4, 40, "STORAGE", "存储与缓存", "storage", 162, alwaysVisible},
-        {SectionId::Update, 5, 50, "SOFTWARE UPDATE", "软件更新", "update", 220, alwaysVisible},
-        {SectionId::Project, 6, 60, "PROJECT", "项目与开源参考", {}, 0, alwaysVisible},
-        {SectionId::Footer, 7, 70, "CONFIG", "配置管理", "defaults", 84, alwaysVisible}};
+        {SectionId::Footer, 9, 90, "CONFIG", "配置管理", "defaults", 84, alwaysVisible},
+        {SectionId::Update, 10, 100, "SOFTWARE UPDATE", "软件更新", "update", 220, alwaysVisible},
+        {SectionId::Project, 11, 110, "PROJECT", "项目与开源参考", {}, 0, alwaysVisible}};
     return values;
 }
 
@@ -834,9 +851,13 @@ QVector<SettingChoice> choices(const SettingDescriptor &descriptor, const Settin
     return descriptor.choicesFor ? descriptor.choicesFor(context) : descriptor.choices;
 }
 
+QString resolvedDefault(const SettingDescriptor &descriptor, const SettingsContext &context) {
+    return defaultFor(descriptor, context, {});
+}
+
 QString normalize(const SettingDescriptor &descriptor, const SettingsContext &context, const QString &raw) {
     const auto options = choices(descriptor, context);
-    const auto fallback = descriptor.defaultValue;
+    const auto fallback = defaultFor(descriptor, context, {});
     const auto firstChoice = options.isEmpty() ? QString() : options.first().value;
     auto hasChoice = [&options](const QString &value) {
         return std::any_of(options.cbegin(), options.cend(),
@@ -847,13 +868,15 @@ QString normalize(const SettingDescriptor &descriptor, const SettingsContext &co
     case StorageType::OnOff:
         return raw == On || raw == Off ? raw : (fallback.isEmpty() ? QString(Off) : fallback);
     case StorageType::ReducedFull:
-        return raw == "reduced" || raw == "full" ? raw : defaultFor(descriptor, "full");
-    case StorageType::Theme:
-        return raw == "light" || raw == "dark" || raw == "system" ? raw : defaultFor(descriptor, "light");
+        return raw == "reduced" || raw == "full" ? raw : defaultFor(descriptor, context, "full");
+    case StorageType::Theme: {
+        const bool valid = raw == "light" || raw == "dark" || raw == "system";
+        return valid ? raw : defaultFor(descriptor, context, "light");
+    }
     case StorageType::TrayQuit:
-        return raw == "tray" || raw == "quit" ? raw : defaultFor(descriptor, "quit");
+        return raw == "tray" || raw == "quit" ? raw : defaultFor(descriptor, context, "quit");
     case StorageType::AppendReplace:
-        return raw == "append" || raw == "replace" ? raw : defaultFor(descriptor, "replace");
+        return raw == "append" || raw == "replace" ? raw : defaultFor(descriptor, context, "replace");
     case StorageType::PlayerQuality: {
         if (hasChoice(raw)) {
             return raw;

@@ -138,10 +138,8 @@ void MusicPlayer::refreshQualityPreference() {
         quality = saved;
         return;
     }
-    quality = ProviderRegistry::instance().defaultQuality(m_api->provider);
-    if (quality.isEmpty() && !options.isEmpty()) {
-        quality = options.first().first;
-    }
+    quality = options.isEmpty() ? ProviderRegistry::instance().defaultQuality(m_api->provider)
+                                : options.last().first;
     if (quality.isEmpty()) {
         quality = "standard";
     }
@@ -171,7 +169,8 @@ MusicPlayer::MusicPlayer(Host *host, MusicApi *api, QObject *parent)
     }
     refreshQualityPreference();
 #if defined(Q_OS_MACOS) || defined(Q_OS_IOS) || defined(Q_OS_WIN)
-    m_appleTransitionsEnabled = host->preference("apple-smart-transition") == "on";
+    const auto transition = host->preference("apple-smart-transition");
+    m_appleTransitionsEnabled = transition.isEmpty() || transition == "on";
     connect(host, &Host::preferenceChanged, this, [this](const QString &key, const QString &value) {
         if (key == "apple-smart-transition") {
             m_appleTransitionsEnabled = value == "on";
@@ -416,10 +415,8 @@ QString MusicPlayer::effectivePlaybackQuality() const {
     const auto supported = std::any_of(options.begin(), options.end(),
                                        [this](const auto &option) { return option.first == quality; });
     if (!supported) {
-        effectiveQuality = ProviderRegistry::instance().defaultQuality(m_api->provider);
-        if (effectiveQuality.isEmpty() && !options.isEmpty()) {
-            effectiveQuality = options.first().first;
-        }
+        effectiveQuality = options.isEmpty() ? ProviderRegistry::instance().defaultQuality(m_api->provider)
+                                             : options.last().first;
     }
     if (m_api->provider == "siren" && effectiveQuality.isEmpty()) {
         effectiveQuality = "original";

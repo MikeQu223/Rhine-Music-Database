@@ -14,7 +14,7 @@ void NativeHud::shortcutsPanel(double x, double y, double width) {
     const double top = y + 200;
     button(shortcuts->enabled() ? "● 已启用全局快捷键" : "○ 启用全局快捷键", left, top, 250, 42,
            "shortcuts:enabled", 16);
-    limited("窗口隐藏到托盘后也可响应；退出应用后释放绑定。", left + 270, top + 13, 13, right - left - 270);
+    limited("窗口隐藏到托盘后也可响应；退出应用后释放绑定。", left + 270, top + 9, 16, right - left - 270);
     const double keyLeft = left + (right - left) * 0.43;
     const double clearLeft = right - 64;
     for (int i = 0; i < GlobalShortcuts::actions().size(); ++i) {
@@ -44,7 +44,7 @@ void NativeHud::shortcutsPanel(double x, double y, double width) {
     const auto message = shortcuts->message().isEmpty()
                              ? QStringLiteral("点击按键框录入；Esc 取消，Backspace / Delete 清除。")
                              : shortcuts->message();
-    text(fit(message, 12, right - left - 210, "regular"), left + 210, top + 581, 12, "regular", 0,
+    text(fit(message, 16, right - left - 210, "regular"), left + 210, top + 577, 16, "regular", 0,
          shortcuts->message().isEmpty() ? muted : gold);
 }
 

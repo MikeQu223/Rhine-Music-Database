@@ -8,7 +8,19 @@ class MusicLibrary;
 
 /** 设置项的声明式描述 */
 namespace SettingsSchema {
-enum class SectionId { Provider, Preferences, Performance, Storage, Update, Project, Footer };
+enum class SectionId {
+    Provider,
+    Audio,
+    Playback,
+    Preferences,
+    Rendering,
+    Experimental,
+    Storage,
+    Performance,
+    Footer,
+    Update,
+    Project
+};
 enum class SettingKind { Switch, Choice, Stepper, Slider, TextInput, Action, Link, Custom };
 enum class BindingKind { Preference, HudState, Player, External, Capability, Updater, Action, CustomSection };
 enum class StorageType {
@@ -51,7 +63,6 @@ struct SettingsContext {
     QString themeMode;
     bool reduced = false;
     bool startupAnimation = false;
-    bool discRotation = false;
     bool vsync = true;
     int archiveMaskStrength = 50;
     QString expandedId;
@@ -61,6 +72,7 @@ struct SettingsContext {
 using Predicate = bool (*)(const SettingsContext &);
 using LabelFn = QString (*)(const SettingsContext &, const SettingsValue &);
 using ChoicesFn = QVector<SettingChoice> (*)(const SettingsContext &);
+using DefaultTargetFn = QString (*)(const SettingsContext &);
 
 struct SettingBinding {
     BindingKind kind = BindingKind::Preference;
@@ -83,6 +95,7 @@ struct SettingDescriptor {
     QString actionLabel;
     QString restartHint;
     QString defaultValue;
+    DefaultTargetFn defaultTarget = nullptr;
     QVector<SettingChoice> choices;
     ChoicesFn choicesFor = nullptr;
     int minimum = 0;
@@ -116,6 +129,7 @@ const SettingDescriptor *find(const QString &id);
 SettingsValue read(const SettingDescriptor &descriptor, const SettingsContext &context);
 QString displayLabel(const SettingDescriptor &descriptor, const SettingsContext &context);
 QVector<SettingChoice> choices(const SettingDescriptor &descriptor, const SettingsContext &context);
+QString resolvedDefault(const SettingDescriptor &descriptor, const SettingsContext &context);
 bool visible(const SettingDescriptor &descriptor, const SettingsContext &context);
 bool enabled(const SettingDescriptor &descriptor, const SettingsContext &context);
 QString normalize(const SettingDescriptor &descriptor, const SettingsContext &context, const QString &raw);

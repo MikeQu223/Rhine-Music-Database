@@ -9,7 +9,10 @@ namespace {
 constexpr double HeaderHeight = 46.;
 constexpr double SectionGap = 24.;
 constexpr double RowHeight = 66.;
-constexpr double RowStep = 76.;
+constexpr double RowHeightWithHint = 82.;
+constexpr double RowGap = 10.;
+constexpr double RowTitleTextSize = 17.;
+constexpr double RowHintTextSize = RowTitleTextSize;
 constexpr double OptionHeight = 50.;
 constexpr double BottomPad = 28.;
 constexpr double ContentInset = 14.;
@@ -85,7 +88,7 @@ void drawChoice(const RowLayout &layout, const RowModel &row, const Colors &colo
             const auto labelLeft = layout.bounds.left() + 30;
             const auto labelWidth = control.left() - labelLeft - 8;
             if (labelWidth > 0) {
-                canvas.hit(labelLeft, layout.bounds.top() + 4, labelWidth, RowHeight - 8,
+                canvas.hit(labelLeft, layout.bounds.top() + 4, labelWidth, layout.bounds.height() - 8,
                            row.descriptor->binding.action, row.descriptor->titleZh);
             }
         }
@@ -197,11 +200,12 @@ void drawRow(const RowLayout &layout, const RowModel &row, int index, const Colo
     canvas.fill(rect.left(), rect.bottom() - 1, rect.width(), 1, colors.line);
     canvas.text(rowIndex(index), rect.left(), rect.top() + 25, 11, "regular", 0.04, muted);
     canvas.text(row.descriptor->titleEn, rect.left() + 30, rect.top() + 10, 11, "regular", 0.08, muted);
-    canvas.text(row.descriptor->titleZh, rect.left() + 30, rect.top() + 25, 17, "demibold", -0.01, ink);
+    canvas.text(row.descriptor->titleZh, rect.left() + 30, rect.top() + 25, RowTitleTextSize, "demibold",
+                -0.01, ink);
     const auto &hint =
         row.descriptor->showDescription ? row.descriptor->description : row.descriptor->restartHint;
     if (!hint.isEmpty()) {
-        canvas.text(hint, rect.left() + 30, rect.top() + 50, 10, "regular", 0.03, muted);
+        canvas.text(hint, rect.left() + 30, rect.top() + 47, RowHintTextSize, "regular", 0.03, muted);
     }
 
     switch (row.descriptor->kind) {
@@ -269,17 +273,20 @@ Layout layout(const Model &model) {
         } else {
             const auto bodyTop = cursor;
             for (auto &row : section.rows) {
+                const auto hasHint = row.descriptor->showDescription ? !row.descriptor->description.isEmpty()
+                                                                     : !row.descriptor->restartHint.isEmpty();
+                const auto rowHeight = hasHint ? RowHeightWithHint : RowHeight;
                 RowLayout rowLayout;
                 rowLayout.row = &row;
-                rowLayout.bounds = QRectF(left, cursor, width, RowHeight);
+                rowLayout.bounds = QRectF(left, cursor, width, rowHeight);
                 rowLayout.control = QRectF(left + width - ControlWidth, cursor + 9, ControlWidth, 48);
                 if (row.expanded && row.enabled) {
                     rowLayout.optionsHeight = row.choices.size() * OptionHeight + 4;
-                    rowLayout.options = QRectF(rowLayout.control.left(), cursor + RowHeight + 2, ControlWidth,
+                    rowLayout.options = QRectF(rowLayout.control.left(), cursor + rowHeight + 2, ControlWidth,
                                                rowLayout.optionsHeight);
                 }
                 sectionLayout.rows.append(rowLayout);
-                cursor += RowStep + rowLayout.optionsHeight;
+                cursor += rowHeight + RowGap + rowLayout.optionsHeight;
             }
             sectionLayout.body = QRectF(left, bodyTop, width, cursor - bodyTop);
             sectionLayout.height = HeaderHeight + (cursor - bodyTop);

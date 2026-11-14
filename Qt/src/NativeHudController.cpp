@@ -31,7 +31,7 @@ NativeHud::NativeHud(Host *host, Glyphs *glyphs, MusicLibrary *music, HudSceneAc
     : QObject(parent), m_host(host), m_glyphs(glyphs), m_music(music), m_scene(std::move(scene)) {
     themeMode = host->preference("theme");
     if (themeMode.isEmpty()) {
-        themeMode = "light";
+        themeMode = "system";
     }
     dark = themeMode == "system" ? host->systemDark() : themeMode == "dark";
     reduced = host->preference("motion") == "reduced";

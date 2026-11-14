@@ -1,6 +1,7 @@
 #include "NativeHud.h"
 #include "AppStorage.h"
 #include "ProviderRegistry.h"
+#include "PlatformFeatures.h"
 #include "fg/FgCapability.h"
 #include "fg/FgConfig.h"
 #include "NativeApplication.h"
@@ -9,6 +10,8 @@
 #include "MusicData.h"
 #include "MusicDiscover.h"
 #include "PlayerBar.h"
+#include "SettingsCard.h"
+#include "SettingsSchema.h"
 #include "DiscoverArtwork.h"
 #include "DiscoverMusicCard.h"
 #include <QCoreApplication>
@@ -57,6 +60,154 @@ QJsonObject getHit(const QJsonArray &hits, const QString &action) {
         }
     }
     return QJsonObject();
+}
+
+QStringList settingsInSection(SettingsSchema::SectionId id) {
+    QVector<const SettingsSchema::SettingDescriptor *> rows;
+    for (const auto &descriptor : SettingsSchema::descriptors()) {
+        if (descriptor.section == id) {
+            rows.append(&descriptor);
+        }
+    }
+    std::sort(rows.begin(), rows.end(),
+              [](const auto *left, const auto *right) { return left->order < right->order; });
+    QStringList ids;
+    for (const auto *row : rows) {
+        ids.append(row->id);
+    }
+    return ids;
+}
+
+/** 锁定设置分组顺序、动态默认值和行备注字号，避免后续排序改动回退。 */
+bool checkSettingsSchema() {
+    struct ExpectedSection {
+        SettingsSchema::SectionId id;
+        int number;
+        const char *titleEn;
+        const char *titleZh;
+    };
+    const QVector<ExpectedSection> expectedSections{
+        {SettingsSchema::SectionId::Provider, 1, "PROVIDER ACCESS", "音乐平台"},
+        {SettingsSchema::SectionId::Audio, 2, "AUDIO", "音频"},
+        {SettingsSchema::SectionId::Playback, 3, "PLAYBACK", "播放"},
+        {SettingsSchema::SectionId::Preferences, 4, "TERMINAL PREFERENCES", "终端偏好"},
+        {SettingsSchema::SectionId::Rendering, 5, "RENDERING SETTINGS", "渲染设置"},
+        {SettingsSchema::SectionId::Experimental, 6, "EXPERIMENTAL FEATURES", "实验性功能"},
+        {SettingsSchema::SectionId::Storage, 7, "STORAGE", "存储与缓存"},
+        {SettingsSchema::SectionId::Performance, 8, "PERFORMANCE", "性能与诊断"},
+        {SettingsSchema::SectionId::Footer, 9, "CONFIG", "配置管理"},
+        {SettingsSchema::SectionId::Update, 10, "SOFTWARE UPDATE", "软件更新"},
+        {SettingsSchema::SectionId::Project, 11, "PROJECT", "项目与开源参考"},
+    };
+    const auto &sections = SettingsSchema::sections();
+    if (sections.size() != expectedSections.size()) {
+        qCritical() << "Settings section count changed" << sections.size();
+        return false;
+    }
+    for (int index = 0; index < expectedSections.size(); ++index) {
+        const auto &actual = sections.at(index);
+        const auto &expected = expectedSections.at(index);
+        if (actual.id != expected.id || actual.number != expected.number ||
+            actual.titleEn != expected.titleEn || actual.titleZh != expected.titleZh) {
+            qCritical() << "Settings section order or title changed at" << index;
+            return false;
+        }
+    }
+
+    QStringList audio{"quality"};
+    if constexpr (PlatformFeatures::AutomaticTransition) {
+        audio.append("apple-smart-transition");
+    }
+#if !defined(Q_OS_MACOS) && !defined(Q_OS_IOS)
+    audio.append("audio-output-policy");
+#endif
+    audio.append("mv-auto");
+#ifdef Q_OS_WIN
+    audio.append("audio-exclusive");
+#endif
+    audio.append("alternative");
+    const QVector<QPair<SettingsSchema::SectionId, QStringList>> expectedRows{
+        {SettingsSchema::SectionId::Audio, audio},
+        {SettingsSchema::SectionId::Playback,
+         {"desktop-lyrics", "global-shortcuts-settings", "single-play-mode", "detail-autoplay",
+          "skip-detail-on-switch"}},
+        {SettingsSchema::SectionId::Preferences,
+         {"theme", "archive-mask", "window", "close-behavior", "startup-animation", "replay",
+          "official-player"}},
+        {SettingsSchema::SectionId::Rendering,
+         {"graphics-backend", "gpu-index", "vsync", "render-scale", "aa-mode", "aa-scale", "msaa",
+          "fsr-quality", "fsr-sharpness", "fg", "motion"}},
+        {SettingsSchema::SectionId::Project,
+         {"project-home", "project-rhine", "project-lyricsx", "project-lyricskit", "project-lyrimuse"}},
+    };
+    for (const auto &expected : expectedRows) {
+        if (settingsInSection(expected.first) != expected.second) {
+            qCritical() << "Settings rows changed inside section" << int(expected.first);
+            return false;
+        }
+    }
+
+    SettingsSchema::SettingsContext context;
+    const auto *theme = SettingsSchema::find("theme");
+    const auto *transition = SettingsSchema::find("apple-smart-transition");
+    if (!theme || SettingsSchema::resolvedDefault(*theme, context) != "system" ||
+        (transition && SettingsSchema::resolvedDefault(*transition, context) != "on")) {
+        qCritical() << "Settings defaults did not adopt system theme and enabled transitions";
+        return false;
+    }
+
+    SettingsSchema::SettingDescriptor title;
+    title.kind = SettingsSchema::SettingKind::Action;
+    title.titleEn = "TITLE";
+    title.titleZh = "标题";
+    title.description = "备注";
+    title.showDescription = true;
+    title.actionLabel = "操作";
+    SettingsSchema::SettingsSection section;
+    section.titleEn = "TEST";
+    section.titleZh = "测试";
+    SettingsCard::RowModel row;
+    row.descriptor = &title;
+    row.label = title.actionLabel;
+    row.enabled = true;
+    SettingsCard::SectionModel sectionModel;
+    sectionModel.meta = &section;
+    sectionModel.rows.append(row);
+    SettingsCard::Model model;
+    model.viewport = {0, 0, 1000, 300};
+    model.sections.append(sectionModel);
+    const auto layout = SettingsCard::layout(model);
+    SettingsCard::Colors colors;
+    colors.ink = {0, 0, 0, 1};
+    colors.muted = {0.5, 0.5, 0.5, 1};
+    colors.faint = {0, 0, 0, 0.1};
+    colors.line = {0, 0, 0, 0.2};
+    colors.soft = {0, 0, 0, 0.03};
+    colors.gold = {0.8, 0.6, 0.2, 1};
+    double titleSize = 0;
+    double noteSize = 0;
+    QJsonArray noteColor;
+    SettingsCard::Canvas canvas;
+    canvas.fill = [](double, double, double, double, QJsonArray) {};
+    canvas.text = [&](QString value, double, double, double size, QString, double, QJsonArray color) {
+        if (value == title.titleZh) {
+            titleSize = size;
+        } else if (value == title.description) {
+            noteSize = size;
+            noteColor = color;
+        }
+    };
+    canvas.fit = [](QString value, double, double, QString) { return value; };
+    canvas.hit = [](double, double, double, double, QString, QString) {};
+    canvas.centered = [](QString, double, double, double, QString, bool) {};
+    canvas.stroke = [](const QRectF &, QJsonArray) {};
+    canvas.custom = [](QString, const QRectF &, double) {};
+    SettingsCard::paint(model, layout, colors, canvas);
+    if (titleSize <= 0 || titleSize != noteSize || noteColor != colors.muted) {
+        qCritical() << "Settings note size or muted color differs from its title";
+        return false;
+    }
+    return true;
 }
 
 // 测试使用已安装的第一个远程来源；core-only 时退回内置来源。
@@ -1525,6 +1676,7 @@ bool checkSkipDetailOnSwitch(const QString &root, Glyphs &glyphs, const QJsonObj
 
 bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
     Host host(root, true);
+    const bool settingsSchemaOk = checkSettingsSchema();
     QStringList providers;
     for (const auto &id : ProviderRegistry::instance().ids()) {
         if (id != "local" && id != "siren") {
@@ -1533,7 +1685,7 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
     }
     if (providers.isEmpty()) {
         qInfo() << "Native HUD checks skipped: no music source plugin installed";
-        return true;
+        return settingsSchemaOk;
     }
     const auto content = QJsonDocument::fromJson(host.read("slots.json").toUtf8()).object();
     // 单项检查失败时输出名称，避免回归报告只剩总数而无法定位。
@@ -1543,7 +1695,22 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
         }
         return passed;
     };
-    bool ok = record("responsive transitions", checkResponsiveTransitions());
+    bool ok = settingsSchemaOk;
+    {
+        MusicLibrary qualityMusic(&host, content);
+        qualityMusic.provider = providers.first();
+        qualityMusic.api.provider = providers.first();
+        SettingsSchema::SettingsContext context;
+        context.music = &qualityMusic;
+        const auto *quality = SettingsSchema::find("quality");
+        const auto options = MusicPlayer::qualityOptions(providers.first());
+        if (!quality || options.isEmpty() ||
+            SettingsSchema::resolvedDefault(*quality, context) != options.last().first) {
+            qCritical() << "Quality default is not the provider's highest option";
+            ok = false;
+        }
+    }
+    ok &= record("responsive transitions", checkResponsiveTransitions());
     ok &= record("playlist sorting", checkSorting(root, glyphs, content));
     ok &= record("responsive hud", checkResponsiveHud(root, glyphs, content));
     ok &= record("skip detail on switch", checkSkipDetailOnSwitch(root, glyphs, content));
@@ -1719,7 +1886,7 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
                 ok = false;
             }
 
-            if (!hasAction(hud.hits, "window:fullscreen") || hasAction(hud.hits, "music:project-home")) {
+            if (!hasAction(hud.hits, "expand:quality") || hasAction(hud.hits, "music:project-home")) {
                 qCritical() << "Settings section order failed" << provider << dark;
                 ok = false;
             }
