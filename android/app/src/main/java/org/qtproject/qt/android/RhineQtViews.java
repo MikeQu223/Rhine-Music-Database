@@ -399,14 +399,30 @@ public final class RhineQtViews {
             // 重开时的 false→true 迁移只会落到新 delegate 上。
             QtNative.unregisterAppStateListener((QtNative.AppStateDetailsListener) delegate);
         }
-        sDelegate = null;
-        sHostActivity = new WeakReference<>(null);
+        // 退役身份/代次门禁（139/140）：只有"当前登记的仍是这一个 delegate"时才断开，
+        // 一个迟到的旧回调绝不能把已经接手的新宿主清掉。
+        final boolean stillCurrentHost = sDelegate == delegate;
+        if (stillCurrentHost) {
+            sDelegate = null;
+            sHostActivity = new WeakReference<>(null);
+        }
         QtEmbeddedViewInterfaceFactory.remove(activity);
         // MUST-4：可复用 delegate 的静态弱引用也必须断，否则重挂的 QtView 可能把死宿主的
         // delegate 拿去 addView（弱引用未回收的窗口期内）。
         org.qtproject.qt.android.QtView.clearReusableInterface();
         // isStarted 仍是 false，setActivity 不会打到原生侧；只是松开 Java 侧的 Activity 引用。
-        QtNative.setActivity(null);
+        if (stillCurrentHost) {
+            QtNative.setActivity(null);
+            // 140 已证：setActivity 里的 updateNativeActivity() 被 isStarted 门挡住，所以原生侧
+            // g_jActivity 仍然持着已销毁 Activity 的 JNI global ref（137 的 chain C）。这里直接
+            // 补一次更新，让 native 侧走 DeleteGlobalRef(old) + 置零；调用是 stock 方法，
+            // 不做内存偏移补丁。失败只记日志：这一轮回收不了也不会让运行时崩掉。
+            try {
+                QtNative.updateNativeActivity();
+            } catch (Throwable error) {
+                android.util.Log.w(TAG, "updateNativeActivity after host destroy failed: " + error);
+            }
+        }
         sRuntimeRetained = true;
         synchronized (sCycleProbes) {
             sCycleProbes.add(new CycleProbe(sCycleProbes.size() + 1, activity, delegate, sceneView));

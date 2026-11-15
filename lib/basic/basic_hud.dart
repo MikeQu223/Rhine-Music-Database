@@ -1,4 +1,5 @@
-import 'package:flutter/foundation.dart' show TargetPlatform, defaultTargetPlatform;
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform, visibleForTesting;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -190,7 +191,15 @@ class BasicHudFrame {
         state.error.isNotEmpty
             ? state.error
             // 空列文案按列区分（账号列不假装已加载、检索列提示输入关键词）。
-            : (state.status.isEmpty ? basicLaneEmptyNotice(state.selectedLane) : state.status),
+            : (state.status.isEmpty
+                ? basicLaneEmptyNotice(
+                    state.selectedLane,
+                    // 「喜欢/歌单」列的空态必须同时看端口可用性与未解析条数：
+                    // 端口没接上 ≠ 收藏是空的（basic_models.dart:531-538）。
+                    localCollectionsAvailable: state.localCollectionsAvailable,
+                    unresolvedLikedIds: state.localUnresolvedLikedIds,
+                  )
+                : state.status),
         59,
         500,
         20,
@@ -242,11 +251,21 @@ class BasicHudFrame {
     return '';
   }
 
+  /// 测试入口：右栏高亮行的身份 id（与绘制/封面共用同一个函数）。
+  @visibleForTesting
+  static String currentIdForTest(BasicViewState state, BasicListItem item) =>
+      _currentId(state, item);
+
   static String _currentId(BasicViewState state, BasicListItem item) {
     if (item.kind == 'album' && item.index < state.albums.length) {
       return state.albums[item.index].id;
     }
-    if (item.index < state.songs.length) {
+    // 歌单行的身份来自行自己（BasicListItem.id），不能拿 state.songs[item.index] 顶——
+    // 「我的歌单」列里没有曲目，按下标回落到曲库会给出另一首歌的 id（132R D2）。
+    if (item.kind == 'playlist') {
+      return item.id;
+    }
+    if (item.kind == 'song' && item.index < state.songs.length) {
       return state.songs[item.index].id;
     }
     return '';

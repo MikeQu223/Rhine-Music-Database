@@ -91,12 +91,30 @@ bool reapplyPendingState()
     return true;
 }
 
+namespace {
+// 封面投影：Flutter 快照里的「当前选中」身份。空串 = 没有选中（要清旧图）。
+QString g_projectedCover;
+QJsonObject g_projectedCurrent;
+}
+
+QString projectedCover()
+{
+    return g_projectedCover;
+}
+
+QJsonObject projectedCurrent()
+{
+    return g_projectedCurrent;
+}
+
 void resetAppliedState()
 {
     g_appliedMode.clear();
     g_appliedIndex = -2;
     g_appliedDark = -1;
     g_appliedKey.clear();
+    g_projectedCover.clear();
+    g_projectedCurrent = QJsonObject();
 }
 
 // pointerdown 时只清选中相关：Qt 自己的 NativeSceneInput 可能在这一轮里改了选中，之后
@@ -160,6 +178,20 @@ void applySceneState(const QString &json)
             qInfo("RHINE_QT_SCENE_STATE index %d beyond archive domain (40): selection untouched",
                   index);
         }
+    }
+
+    // 封面身份投影（FINAL-RECOVERY-138 / 决策：URL 优先，选中身份不是播放身份）。
+    // 快照带 cover 就用 cover；没有 cover 键或键为空一律清空——不能留着上一首的图。
+    // 这里只**记录**，真正的下载在 Engine 的异步路径里（Host::loadCover 回调返回的
+    // cache key 才是 host.image() 能命中的那个键）。
+    const QJsonObject current = payload.value("current").toObject();
+    const QString cover = current.value("cover").toString();
+    const bool coverChanged = cover != g_projectedCover;
+    if (coverChanged) {
+        g_projectedCover = cover;
+    }
+    if (current != g_projectedCurrent) {
+        g_projectedCurrent = current;
     }
 
     if (payload.contains("key")) {

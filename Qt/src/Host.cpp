@@ -1,4 +1,5 @@
 #include "fg/FgConfig.h"
+#include "EmbeddedSceneHost.h"
 #include "Host.h"
 #include "AppStorage.h"
 #include <QBuffer>
@@ -44,6 +45,8 @@ static QString routeProvider(const QString &route) {
 Host::Host(QString path, bool test, QObject *parent, bool service, PlaybackConnection *connection)
     : QObject(parent), updater(test), root(path), offline(test), remote(test ? nullptr : connection),
       playbackOnly(service) {
+    // 内嵌渲染层：Flutter 持有播放/账号/曲库，Qt 这里不能再造第二份（见 Host.h 注释）。
+    renderOnly = RhineEmbedded::requested();
     connect(&updater, &AppUpdater::changed, this, &Host::invalidate);
     if (remote) {
         connect(remote, &PlaybackConnection::diagnosticEvent, this,
@@ -59,12 +62,12 @@ Host::Host(QString path, bool test, QObject *parent, bool service, PlaybackConne
     if (preference("kugou-edition") == "lite") {
         kugouEdition = "lite";
     }
-    if (!offline && !remote) {
+    if (!offline && !remote && !renderOnly) {
         cookies = QJsonDocument::fromJson(platformCredential()).object();
     } else {
         interval = 0;
     }
-    if (!offline && !remote) {
+    if (!offline && !remote && !renderOnly) {
         platformMediaCommands([this](QString action) {
             QMetaObject::invokeMethod(
                 this, [this, action] { emit mediaAction(action); }, Qt::QueuedConnection);
@@ -912,6 +915,11 @@ void Host::playOfficial(QString id, TextReply callback) {
     });
 }
 bool Host::mediaLoad(QString url, bool alternative, double position, bool paused) {
+    if (renderOnly) {
+        // 内嵌：Flutter 的 BasicAudioChannel 是唯一播放通道，这里连 AudioPlayer 都不建，
+        // 否则会在内嵌进程里多出一个 QMediaPlayer（及其 Android MediaPlayer 的 mContext 根）。
+        return false;
+    }
     if (remote) {
         return remote
             ->call("host.mediaLoad", {{"url", url},
@@ -930,6 +938,9 @@ bool Host::mediaLoad(QString url, bool alternative, double position, bool paused
     return audio->load(url, offline, alternative, provider, position, paused);
 }
 void Host::mediaControl(QString action, double value) {
+    if (renderOnly) {
+        return;
+    }
     if (remote) {
         remote->call("host.mediaControl", {{"action", action}, {"value", value}});
         return;
@@ -963,6 +974,9 @@ void Host::mediaMetadata(QString title, QString artist, QString album, const QSt
 /** 把当前曲目的封面取到本地（系统媒体控件的 artwork 需要真实文件/位图，不能是远端地址）。
  *  复用 loadCover 的下载与去重，把回调拿到的键反查回 QImage 缓存再落盘。 */
 void Host::refreshMediaCover() {
+    if (renderOnly) {
+        return;
+    }
     mediaCoverPath.clear();
     if (mediaCoverUrl.isEmpty()) {
         lastMediaUpdate = 0;

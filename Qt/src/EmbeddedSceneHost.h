@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QJsonObject>
 #include <QString>
 
 class Engine;
@@ -29,6 +30,17 @@ void publish(Engine *engine, FrameProfiler *profiler, const QString &fontFamily)
 /// 语义：dark→theme、mode→setMode、index→select（-1 不动）、key→musicIdentity，
 /// 没有 key 就 musicClear（不留上一首封面）。**不接收任何播放指令**。
 void applySceneState(const QString &json);
+
+/// 内嵌模式下**当前选中**条目的封面地址与身份（来自 Flutter 快照的 cover/kind/id）。
+///
+/// 为什么必须由 Flutter 给：内嵌模式里 Qt 侧的 MusicLibrary 是空壳（renderOnly，
+/// 不建第二份曲库、不建第二个播放器），`music.coverImage` 永远是空串；封面只能来自
+/// 「Flutter 选中的那一首」的 cover。Engine 拿这个值当 cache key 查 host.image()，
+/// miss 时按 URL 走 Host::loadCover（异步，回调里用的是 loadCover **返回**的 cache
+/// key，因为 image 查询会给 URL 补上 `param=NyN`）。没有选中时是空串 → 清旧图。
+QString projectedCover();
+/// 选中身份对象 {kind, key, id, cover}；没有选中时为空对象。
+QJsonObject projectedCurrent();
 // 销毁场景视图时清掉快照去重状态（同进程重建 Engine 后需要重新应用一次）。
 void resetAppliedState();
 // 只清选中相关（index/key），供 pointerdown 用；不要拿它替代 resetAppliedState()。

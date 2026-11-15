@@ -25,6 +25,7 @@ library;
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:rhine_music_database/basic/basic_hud.dart';
 import 'package:rhine_music_database/basic/basic_models.dart';
 import 'package:rhine_music_database/basic/siren_controller.dart';
 import 'package:rhine_music_database/basic/siren_repository.dart';
@@ -179,6 +180,40 @@ Future<BasicController> _loaded(
 }
 
 void main() {
+  group('mustFor132R：歌单行的身份与打开路径', () {
+    test('「我的歌单」列的行带 kind=playlist 与行自己的 id', () {
+      const BasicViewState state = BasicViewState(
+        selectedLane: 2,
+        localCollectionsAvailable: true,
+        localPlaylists: <BasicLocalPlaylist>[
+          BasicLocalPlaylist(id: 'pl-7', title: '深夜循环'),
+        ],
+      );
+      final List<BasicListItem> items = basicLibraryItems(state);
+      expect(items.length, 1);
+      expect(items.single.kind, 'playlist');
+      expect(items.single.id, 'pl-7');
+      expect(
+        BasicHudFrame.currentIdForTest(state, items.single),
+        'pl-7',
+        reason: '歌单行不能按 index 回落到 state.songs（那里是另一首歌的 id）',
+      );
+    });
+
+    test('歌单行没有 id 时也不借用曲库', () {
+      const BasicViewState state = BasicViewState(
+        selectedLane: 3,
+        songs: <SirenSong>[],
+      );
+      const BasicListItem row = BasicListItem(
+        title: '我的歌单',
+        kind: 'playlist',
+        index: 0,
+      );
+      expect(BasicHudFrame.currentIdForTest(state, row), '');
+    });
+  });
+
   group('BasicDirectory.anchor（Qt selectDirectory 的 cell 折列，纯算术）', () {
     test('cell = (index + anchor) % 40；lane = cell / 8；page 恒为 index ~/ 40 * 40', () {
       final BasicDirectory directory = BasicDirectory(

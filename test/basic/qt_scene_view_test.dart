@@ -78,7 +78,7 @@ void main() {
       final Map<String, Object?> payload = _decode(qtSceneStateSnapshot(
         _state(phase: BasicPhase.detail, song: a, songs: <SirenSong>[a], dark: false),
       ));
-      expect(payload['v'], 1);
+      expect(payload['v'], 2);
       expect(payload['dark'], isFalse);
       expect(payload['mode'], 'detail');
       expect(payload['index'], 0);
@@ -92,6 +92,33 @@ void main() {
       expect(payload.containsKey('key'), isFalse);
       expect(payload['index'], -1);
       expect(payload['mode'], 'archive');
+    });
+
+    test('封面走选中身份的 URL，没有选中就没有 current（Qt 据此清旧图）', () {
+      final SirenSong withCover = SirenSong(
+        id: 'c',
+        title: 'song-c',
+        artist: 'artist',
+        album: 'album',
+        albumId: 'album-c',
+        cover: 'https://hycdn.cn/cover/c.jpg',
+        sourceUrl: '',
+        lyricUrl: '',
+        durationMs: 0,
+      );
+      final Map<String, Object?> payload = _decode(qtSceneStateSnapshot(
+        _state(song: withCover, songs: <SirenSong>[withCover]),
+      ));
+      final Map<String, Object?> current =
+          (payload['current']! as Map<Object?, Object?>).cast<String, Object?>();
+      expect(current['kind'], 'song');
+      expect(current['id'], 'c');
+      expect(current['cover'], 'https://hycdn.cn/cover/c.jpg');
+
+      final Map<String, Object?> none =
+          _decode(qtSceneStateSnapshot(_state(songs: <SirenSong>[withCover])));
+      expect(none.containsKey('current'), isFalse,
+          reason: '没有选中时不能带上一个 current，否则 Qt 会继续显示上一首的封面');
     });
 
     test('播放状态不进快照：playing 不影响 payload（不冒充播放/不推播放指令）', () {

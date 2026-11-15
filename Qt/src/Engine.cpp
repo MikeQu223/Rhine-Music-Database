@@ -1251,7 +1251,8 @@ void Engine::step(double time) {
     // 会以为"什么都没变"，HUD 上那张图就永远不刷新。这里单独记一笔。
     [[maybe_unused]] const bool coverArrived = coverRevision != m_coverRevision;
     bool visualChanged = discChanged || !stable || current != m_current || cover != m_cover ||
-                         coverRevision != m_coverRevision;
+                         coverRevision != m_coverRevision || m_coverRefresh;
+    m_coverRefresh = false;
     if (!temporal) {
         m_temporalFramesRemaining = 0;
     }
@@ -1267,6 +1268,27 @@ void Engine::step(double time) {
     m_cover = object["cover"].toString();
     // 图片缓存只在 GUI 线程读取，渲染线程通过 cover() 拿这份副本。
     m_coverImage = host.image(m_cover);
+    // Host::image() 只是**缓存查找**：缓存键是 loadCover 给 URL 补上 `param=NyN` 之后的
+    // 字符串，拿原始地址去查必然 miss（132R 真机上"详情页没有封面"就是这个）。所以 miss
+    // 时主动 loadCover，并用**回调返回的键**取图 —— 那才是缓存里真正的键。
+    if (!m_cover.isEmpty() && m_coverImage.isNull() && !m_coverRequests.contains(m_cover)) {
+        m_coverRequests.insert(m_cover);
+        const QString requested = m_cover;
+        host.loadCover(
+            requested,
+            [this, requested](QString loaded) {
+                if (loaded.isEmpty() || m_cover != requested) {
+                    return; // 期间换了选中/换了视图：旧的这首不再回填
+                }
+                const QImage pixels = host.image(loaded);
+                if (pixels.isNull()) {
+                    return;
+                }
+                m_coverImage = pixels;
+                m_coverRefresh = true;
+            },
+            1024);
+    }
     // 图形设备在后台可销毁；仅保存当前与可见归位卡片的图片，供恢复时重建纹理。
     const auto musicKey = current["key"].toString("empty");
     submitTextureAdmission(musicKey);

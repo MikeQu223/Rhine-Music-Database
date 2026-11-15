@@ -885,6 +885,12 @@ class _BasicShellState extends State<_BasicShell> implements TextInputPorts {
       unawaited(controller.openSong(tracks[item.index], play: play));
       return null;
     }
+    if (item.kind == 'playlist') {
+      // 歌单行是**目录**，不是专辑（Qt/src/MusicSiren.cpp:251-335 的 playlists 分支走
+      // selectDirectory）。把歌单行当专辑打开会显示一张不相干的专辑——这正是 132R 的
+      // D2 缺陷。基础版没有本机歌单端口时不编造目录内容，如实标记未接入。
+      return basicUnimplementedPrefix + 'music:playlist:${item.id.isEmpty ? item.index : item.id}';
+    }
     if (item.index < 0 || item.index >= state.albums.length) {
       return basicUnimplementedPrefix + 'music:index:$index';
     }

@@ -97,12 +97,28 @@ int qtSceneSelectedIndexOf(BasicViewState state) {
 String qtSceneStateSnapshot(BasicViewState state) {
   final SirenSong? song = state.song;
   final int index = qtSceneSelectedIndexOf(state);
+  // `current` 是**选中身份**（不是 playingTrack）：Qt 侧 render-only 没有曲库，封面只能
+  // 由这里投影过去。cover 是原始 URL：Qt 的 Host::image() 只是 cache 查询，真正下载走
+  // Host::loadCover(url, cb)，cb 拿到的是加过 `param=NyN` 的**返回** cache key。
+  // 没有选中就整块省略 → Qt 清掉旧封面（不能留着上一首的图）。
+  final Map<String, Object?>? current =
+      (song == null || song.key.isEmpty)
+          ? null
+          : <String, Object?>{
+              'kind': 'song',
+              'id': song.id,
+              'key': song.key,
+              'cover': song.cover,
+              'title': song.title,
+              'artist': song.artist,
+            };
   final Map<String, Object?> payload = <String, Object?>{
-    'v': 1,
+    'v': 2,
     'dark': state.dark,
     'mode': qtSceneModeOf(state),
     'index': index,
     'count': state.songs.length,
+    if (current != null) 'current': current,
     if (song != null && song.key.isNotEmpty) 'key': song.key,
   };
   return jsonEncode(payload);
@@ -289,8 +305,15 @@ class QtScenePointerBridge {
   static final QtScenePointerBridge instance = QtScenePointerBridge._();
 
   final QtScenePointerSender _sender = QtScenePointerSender();
-  final Map<int, Duration> _lastStamp = <int, Duration>{};
+  /// 去重键必须带事件类型：同一次扫描里 down/up 可能共享 timeStamp 且坐标相同
+  /// （合成事件、重采样），只按 timeStamp+位置去重会把真正的 up 吞掉，Qt 侧就永远
+  /// 停在下压状态。键 = '<type>|timeStamp'，值是位置。
+  final Map<int, String> _lastKey = <int, String>{};
   final Map<int, Offset> _lastPosition = <int, Offset>{};
+  /// 真正给 Qt 发过 pointerdown 的指针。只有它们的 move/up 才会转发：
+  /// 双指落下时 Qt 收到的是 pointercancel，剩下的那根手指没有被 Qt 认领过，
+  /// 它的 move 就是"幽灵拖动"（设备实测：缩放后松一根手指，归档跟着手指跑）。
+  final Set<int> _forwarded = <int>{};
   int? _viewId;
 
   /// 场景视图创建后调用（同一时刻只服务一个场景视图）。
@@ -298,6 +321,12 @@ class QtScenePointerBridge {
     _viewId = viewId;
     _reset();
   }
+
+  /// 测试用：当前绑定的视图 id（生产代码不要读它）。
+  int? get viewIdForTest => _viewId;
+
+  /// 测试用：清空指针状态机（生产代码不要调用）。
+  void resetForTest() => _reset();
 
   void detach(int viewId) {
     if (_viewId == viewId) {
@@ -308,8 +337,9 @@ class QtScenePointerBridge {
 
   void _reset() {
     _pointers.clear();
-    _lastStamp.clear();
+    _lastKey.clear();
     _lastPosition.clear();
+    _forwarded.clear();
     _multi = false;
     _lastCentroid = null;
     _lastDistance = null;
@@ -331,14 +361,15 @@ class QtScenePointerBridge {
   }
 
   bool _claim(PointerEvent event) {
-    // 同一指针的同一时刻只搬一次；但重采样事件可能共用 timeStamp 而坐标不同，
-    // 那种必须放过（否则快速拖动会丢帧，表现为"拖了一半不跟手"）。
-    final Duration? previous = _lastStamp[event.pointer];
-    if (previous == event.timeStamp &&
-        _lastPosition[event.pointer] == event.position) {
+    // 同一指针的同一时刻同一位置**同类型**事件只搬一次；但重采样事件可能共用
+    // timeStamp 而坐标不同，那种必须放过（否则快速拖动会丢帧，表现为"拖了一半不跟手"）。
+    final String key = '${event.runtimeType}|${event.timeStamp.inMicroseconds}';
+    final bool duplicate =
+        _lastKey[event.pointer] == key && _lastPosition[event.pointer] == event.position;
+    if (duplicate) {
       return false;
     }
-    _lastStamp[event.pointer] = event.timeStamp;
+    _lastKey[event.pointer] = key;
     _lastPosition[event.pointer] = event.position;
     return true;
   }
@@ -363,6 +394,8 @@ class QtScenePointerBridge {
         if (id != null) {
           _sender.pointer(id, 'pointercancel', 0, 0);
         }
+        // Qt 那边已经收到 cancel，之前那根手指也不再被认领：它后续的 move 一律不转发。
+        _forwarded.clear();
       }
       _lastCentroid = null;
       _lastDistance = null;
@@ -371,6 +404,7 @@ class QtScenePointerBridge {
     final int? id = _viewId;
     if (id != null) {
       final Offset stage = _stagePoint(event.localPosition, sceneRect);
+      _forwarded.add(event.pointer);
       _sender.pointer(id, 'pointerdown', stage.dx, stage.dy);
     }
   }
@@ -413,7 +447,7 @@ class QtScenePointerBridge {
       }
       return;
     }
-    if (_pointers.length == 1) {
+    if (_pointers.length == 1 && _forwarded.contains(event.pointer)) {
       final Offset stage = _stagePoint(event.localPosition, sceneRect);
       _sender.pointer(id, 'pointermove', stage.dx, stage.dy);
     }
@@ -424,8 +458,21 @@ class QtScenePointerBridge {
       return;
     }
     _pointers.remove(event.pointer);
+    final bool forwarded = _forwarded.remove(event.pointer);
+    _lastKey.remove(event.pointer);
+    _lastPosition.remove(event.pointer);
     final int? id = _viewId;
     if (id == null) {
+      return;
+    }
+    if (!forwarded) {
+      // 这根手指没被 Qt 认领（双指时的第二根，或 cancel 之后剩下的那根）：
+      // 不发 pointerup，否则 Qt 会收到一个没有 down 的 up。
+      if (_pointers.isEmpty) {
+        _multi = false;
+        _lastCentroid = null;
+        _lastDistance = null;
+      }
       return;
     }
     if (_pointers.isEmpty) {
@@ -437,7 +484,27 @@ class QtScenePointerBridge {
       return;
     }
     if (_pointers.length == 1) {
-      // 双指变单指：不把剩下的手指当作新的拖拽起点，等它抬起。
+      // 双指变单指：不把剩下的手指当作新的拖拽起点，等它抬起（它不在 _forwarded 里）。
+      _multi = false;
+      _lastCentroid = null;
+      _lastDistance = null;
+    }
+  }
+
+  /// 系统取消（来电、手势被父级抢走）：Qt 必须收到 pointercancel，不能拿 up 顶替。
+  void cancel(PointerCancelEvent event) {
+    if (_viewId == null) {
+      return;
+    }
+    final int? id = _viewId;
+    if (id != null && _forwarded.contains(event.pointer)) {
+      _sender.pointer(id, 'pointercancel', 0, 0);
+    }
+    _pointers.remove(event.pointer);
+    _forwarded.remove(event.pointer);
+    _lastKey.remove(event.pointer);
+    _lastPosition.remove(event.pointer);
+    if (_pointers.isEmpty) {
       _multi = false;
       _lastCentroid = null;
       _lastDistance = null;
@@ -694,10 +761,24 @@ class _QtSceneRawPointerLayerState extends State<QtSceneRawPointerLayer> {
       },
       onPointerCancel: (PointerCancelEvent event) {
         if (_owned.remove(event.pointer)) {
-          bridge.up(event, widget.sceneRect);
+          bridge.cancel(event);
         }
       },
       child: widget.child,
     );
+  }
+
+  @override
+  void dispose() {
+    // 视图被销毁/重建时，已判定归属的指针不会再有 up：清掉，避免跨视图把旧手势
+    // 带到新视图上（同一时刻只服务一个 viewId，但 _owned 属于这个 State）。
+    if (_owned.isNotEmpty) {
+      final int? viewId = QtScenePointerBridge.instance.viewIdForTest;
+      _owned.clear();
+      if (viewId != null) {
+        QtScenePointerBridge.instance.resetForTest();
+      }
+    }
+    super.dispose();
   }
 }

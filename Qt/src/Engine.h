@@ -433,4 +433,6 @@ class Engine : public QObject {
     QString m_cover;
     QImage m_coverImage;
     qint64 m_coverRevision = 0;
+    /// 异步封面到达：下一帧必须重画（命令流逐字相同，靠命令比对会永远不刷新）。
+    bool m_coverRefresh = false;
 };
