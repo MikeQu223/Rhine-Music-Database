@@ -145,6 +145,9 @@ class Painter {
         if (!model.sort.action.isEmpty()) {
             outlinedButton(model.sort, model.x + 195, 339, 180, 44, 16);
         }
+        if (!model.search.action.isEmpty()) {
+            searchField(model.x + 390, 339, 270, 44);
+        }
         for (int index = 0; index < model.tabs.size(); ++index) {
             const auto &tab = model.tabs.at(index);
             const auto left = model.x + 210 + index * 125;
@@ -155,6 +158,24 @@ class Painter {
             }
         }
         rightLabel("TRACK INDEX / 曲目目录", right - 22, 354, 11, muted, "regular", 0.5);
+    }
+
+    void searchField(double x, double y, double width, double height) {
+        const auto border = withAlpha(line, 0.9);
+        canvas.fill(x, y, width, height, soft);
+        canvas.fill(x, y, width, 1, border);
+        canvas.fill(x, y + height - 1, width, 1, border);
+        canvas.fill(x, y, 1, height, border);
+        canvas.fill(x + width - 1, y, 1, height, border);
+        canvas.hit(x, y, width - 40, height, model.search.action, model.search.label);
+        if (!model.searchEditing) {
+            canvas.text(canvas.fit(model.search.label, 14, width - 62, "regular"), x + 14, y + 12, 14,
+                        "regular", 0, muted);
+        }
+        if (!model.clearSearch.action.isEmpty()) {
+            canvas.hit(x + width - 40, y, 40, height, model.clearSearch.action, model.clearSearch.label);
+            canvas.text("×", x + width - 28, y + 8, 22, "regular", 0, muted);
+        }
     }
 
     void table() {

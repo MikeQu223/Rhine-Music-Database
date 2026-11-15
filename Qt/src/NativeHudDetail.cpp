@@ -3,6 +3,7 @@
 #include "MusicData.h"
 #include "ProviderRegistry.h"
 #include "SongDetailCard.h"
+#include <QTimer>
 #include <algorithm>
 #include <cmath>
 
@@ -407,6 +408,9 @@ void NativeHud::container(double width, double opacity) {
     if (containerKey != m_sortContainerKey) {
         m_sortContainerKey = containerKey;
         detailSort = "none";
+        detailQuery.clear();
+        playlistSearchActive = false;
+        m_detailSearchCursor = -1;
         m_sortNotice.clear();
     }
     if (music.directory) {
@@ -414,12 +418,44 @@ void NativeHud::container(double width, double opacity) {
     }
     const auto sortField =
         !music.directory && !albums && item["kind"] == "playlist" ? detailSort : QString("none");
-    if (songs != m_sortTracks || sortField != m_sortField) {
+    const auto filter = item["kind"] == "playlist" ? detailQuery.trimmed() : QString();
+    if (songs != m_sortTracks || sortField != m_sortField || filter != m_trackFilter) {
         m_sortTracks = songs;
         m_sortField = sortField;
-        m_trackOrder = MusicData::sortOrder(songs, sortField);
+        m_trackFilter = filter;
+        m_trackOrder.clear();
+        for (const auto position : MusicData::sortOrder(songs, sortField)) {
+            const auto song = songs.at(position).toObject();
+            const auto searchable = song["title"].toString() + " " + song["artist"].toString() + " " +
+                                    song["album"].toString() + " " + song["id"].toString();
+            if (filter.isEmpty() || searchable.contains(filter, Qt::CaseInsensitive)) {
+                m_trackOrder.append(position);
+            }
+        }
     }
-    trackOffset = std::min(trackOffset, std::max(0, int(songs.size()) - layout.rowCount));
+    const bool searching = item["kind"] == "playlist" && !filter.isEmpty();
+    const int resultCount = m_trackOrder.size();
+    trackOffset = std::min(trackOffset, std::max(0, resultCount - layout.rowCount));
+    const auto hasMoreTracks = music.directory ? music.directory->cursor < music.directory->ids.size()
+                                               : music.trackCursor < music.trackIDs.size();
+    const auto searchCursor = music.directory ? music.directory->cursor : music.trackCursor;
+    const bool searchLoadStalled = searching && hasMoreTracks && searchCursor == m_detailSearchCursor;
+    if (searching && hasMoreTracks && !searchLoadStalled && !music.directoryLoading && !music.trackLoad) {
+        m_detailSearchCursor = searchCursor;
+        const auto folder = music.directory;
+        QTimer::singleShot(0, this, [this, folder] {
+            auto &library = *m_music;
+            if (library.directory != folder || library.directoryLoading || library.trackLoad ||
+                library.current["kind"] != "playlist" || detailQuery.trimmed().isEmpty()) {
+                return;
+            }
+            if (library.directory) {
+                library.loadDirectoryPage();
+            } else {
+                library.loadTrackPage(library.tracks.size());
+            }
+        });
+    }
     // 控制器只整理真实数据与可用动作，独立卡片组件负责内部排版与绘制。
     CollectionDetailCard::Model card;
     card.bounds = detailBounds(width);
@@ -446,7 +482,7 @@ void NativeHud::container(double width, double opacity) {
     }
     const auto ids = music.directory ? music.directory->ids.size() : 0;
     card.totalCount = std::max({item["trackCount"].toInt(), int(ids), int(songs.size())});
-    card.loadedCount = songs.size();
+    card.loadedCount = resultCount;
     const auto date = item["date"].toString();
     card.facts = {{"RELEASE / 发行日期", date.isEmpty() ? QString("暂无") : date},
                   {"FORMAT / 收录", QString::number(card.totalCount) + " TRACKS / 曲目"}};
@@ -457,6 +493,12 @@ void NativeHud::container(double width, double opacity) {
     }
     if (item["kind"] == "playlist") {
         card.sort = {"排序方式 ▾", "music:sort-menu"};
+        card.search = {detailQuery.isEmpty() ? QStringLiteral("搜索歌单曲目") : detailQuery,
+                       "music:playlist-search"};
+        card.searchEditing = playlistSearchActive;
+        if (!detailQuery.isEmpty()) {
+            card.clearSearch = {"清空歌单搜索", "music:playlist-search-clear"};
+        }
     }
     if (item["kind"] == "artist") {
         card.tabs = {{"歌曲", "music:artist-tab:songs", artistTab == "songs"},
@@ -499,16 +541,31 @@ void NativeHud::container(double width, double opacity) {
     } else if (!albums && music.directory && music.directory->artistSongsPaged &&
                music.directory->artistSongsMore) {
         card.more = {music.directoryLoading ? "载入中…" : "加载更多 ↓", "music:directory-more"};
-    } else if (!albums && (!music.directory || !music.directory->artistSongsPaged) &&
+    } else if (!searching && !albums && (!music.directory || !music.directory->artistSongsPaged) &&
                songs.size() < card.totalCount) {
         card.more = {music.directoryLoading ? "载入中…" : "加载更多 ↓", "music:directory-more"};
     }
-    if (songs.isEmpty()) {
-        card.emptyMessage =
-            music.directoryLoading || music.detailLoading ? "正在载入曲目…" : "暂无可读取曲目";
+    if (resultCount == 0) {
+        if (music.directoryLoading || music.detailLoading) {
+            card.emptyMessage = "正在载入曲目…";
+        } else if (searching && hasMoreTracks && !searchLoadStalled) {
+            card.emptyMessage = "正在检索全部曲目…";
+        } else if (searching && hasMoreTracks) {
+            card.emptyMessage = "检索未完成，可稍后重试";
+        } else if (searching) {
+            card.emptyMessage = "没有匹配的歌曲";
+        } else {
+            card.emptyMessage = "暂无可读取曲目";
+        }
     }
     card.hint = "滚轮浏览曲目 · 点击查看歌曲";
-    if (m_sortRequest) {
+    if (searching && hasMoreTracks && !searchLoadStalled) {
+        card.hint = "正在补齐全部曲目以检索…";
+    } else if (searching && hasMoreTracks) {
+        card.hint = "未能补齐全部曲目，当前仅检索已载入内容";
+    } else if (searching) {
+        card.hint = "歌单内找到 " + QString::number(resultCount) + " 首 · 回车结束搜索";
+    } else if (m_sortRequest) {
         card.hint = "正在补齐曲目以排序…";
     } else if (!m_sortNotice.isEmpty()) {
         card.hint = m_sortNotice;
@@ -539,13 +596,13 @@ void NativeHud::container(double width, double opacity) {
     if (m_responsive.compact()) {
         card.rowAt = rowAt;
     } else {
-        for (int row = 0; row < layout.rowCount && trackOffset + row < songs.size(); ++row) {
+        for (int row = 0; row < layout.rowCount && trackOffset + row < resultCount; ++row) {
             card.rows.append(rowAt(trackOffset + row));
         }
     }
-    if (songs.size() > layout.rowCount) {
-        card.scrollFraction = double(trackOffset) / std::max(1, int(songs.size()) - layout.rowCount);
-        card.scrollThumb = double(layout.rowCount) / songs.size();
+    if (resultCount > layout.rowCount) {
+        card.scrollFraction = double(trackOffset) / std::max(1, resultCount - layout.rowCount);
+        card.scrollThumb = double(layout.rowCount) / resultCount;
     }
     const CollectionDetailCard::Canvas canvas{
         [this](double x, double y, double width, double height, QJsonArray color) {

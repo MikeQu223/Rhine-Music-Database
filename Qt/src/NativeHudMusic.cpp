@@ -86,7 +86,22 @@ void NativeHud::musicAction(const QStringList &parts, const QString &value) {
     if (music.isLocal() && (name == "source" || name == "official")) {
         return;
     }
-    if (name == "sort-menu") {
+    if (name == "playlist-search" || name == "playlist-search-close" || name == "playlist-search-clear") {
+        if (music.current["kind"] != "playlist" || frame["mode"] != "detail") {
+            return;
+        }
+        if (name == "playlist-search") {
+            playlistSearchActive = true;
+        } else {
+            playlistSearchActive = false;
+            if (name == "playlist-search-clear") {
+                detailQuery.clear();
+            }
+        }
+        m_detailSearchCursor = -1;
+        trackOffset = 0;
+        m_host->invalidate();
+    } else if (name == "sort-menu") {
         if (music.current["kind"] == "playlist" && frame["mode"] == "detail") {
             openModal("detail-sort");
         }
@@ -155,6 +170,7 @@ void NativeHud::musicAction(const QStringList &parts, const QString &value) {
         trackOffset = 0;
         bodyOffset = 0;
     } else if (name == "track") {
+        playlistSearchActive = false;
         if (music.directory && last >= 0 && last < music.directory->songs.size()) {
             music.selectDirectory(last, "detail");
         } else if (last >= 0 && last < music.tracks.size()) {
@@ -166,6 +182,8 @@ void NativeHud::musicAction(const QStringList &parts, const QString &value) {
         trackOffset = 0;
         bodyOffset = 0;
     } else if (name == "parent") {
+        playlistSearchActive = false;
+        detailQuery.clear();
         music.leaveDirectory();
     } else if (name == "directory-more") {
         if (music.directory) {
@@ -177,6 +195,8 @@ void NativeHud::musicAction(const QStringList &parts, const QString &value) {
         music.showDirectoryInfo();
         trackOffset = 0;
     } else if (name == "directory") {
+        playlistSearchActive = false;
+        detailQuery.clear();
         if (music.directory) {
             music.returnToDirectory();
         } else if (!music.current.isEmpty()) {
@@ -234,9 +254,13 @@ void NativeHud::musicAction(const QStringList &parts, const QString &value) {
         listOffset = 0;
         resetResultViews();
     } else if (name == "artist") {
+        playlistSearchActive = false;
+        detailQuery.clear();
         music.openSongArtist(last);
         artistTab = "songs";
     } else if (name == "artist-tab") {
+        playlistSearchActive = false;
+        detailQuery.clear();
         artistTab = parts.value(2);
         trackOffset = 0;
         if (artistTab == "albums") {
@@ -269,7 +293,8 @@ void NativeHud::musicAction(const QStringList &parts, const QString &value) {
         pageResults(name == "page-prev" ? -1 : 1);
     } else if (name == "play") {
         music.play();
-    } else if (name == "preview" && ProviderRegistry::instance().capability(music.provider, "preview", false)) {
+    } else if (name == "preview" &&
+               ProviderRegistry::instance().capability(music.provider, "preview", false)) {
         music.player.play(music.current, std::nullopt, std::nullopt, true);
     } else if (name == "play-next" || name == "enqueue") {
         const auto key = music.uid + ":" + PlaybackQueue::identity(music.current);

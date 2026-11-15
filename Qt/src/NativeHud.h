@@ -98,9 +98,11 @@ class NativeHud : public QObject {
     QString confirmMessage;
     QString confirmLabel;
     QString detailSort = "none";
+    QString detailQuery;
     QString groupBy = "none";
     QString activeGroup;
     QString artistTab = "songs";
+    bool playlistSearchActive = false;
     bool categoryPicker = false;
     int categoryPage = 0;
     static constexpr int CategoryPageSize = 40;
@@ -262,6 +264,8 @@ class NativeHud : public QObject {
     QString m_sortContainerKey;
     QJsonArray m_sortTracks;
     QString m_sortField;
+    QString m_trackFilter;
+    int m_detailSearchCursor = -1;
     QVector<int> m_trackOrder;
     QString m_rowsKey;
     QJsonArray m_rowsSource;

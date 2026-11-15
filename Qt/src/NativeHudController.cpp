@@ -66,6 +66,7 @@ NativeHud::NativeHud(Host *host, Glyphs *glyphs, MusicLibrary *music, HudSceneAc
 
 void NativeHud::openModal(QString kind) {
     m_sortRequest.reset();
+    playlistSearchActive = false;
     if (m_music->isLocal() &&
         QStringList{"login", "quality", "playlist-picker", "playlist-form"}.contains(kind)) {
         return;
@@ -160,6 +161,13 @@ void NativeHud::closeModal() {
 }
 
 void NativeHud::setQuery(QString value) {
+    if (playlistSearchActive && frame["mode"] == "detail" && m_music->current["kind"] == "playlist") {
+        detailQuery = value;
+        m_detailSearchCursor = -1;
+        trackOffset = 0;
+        m_host->invalidate();
+        return;
+    }
     // ！？ 325 ？！
     if (!m_responsive.compact() && value == QStringLiteral("325")) {
         m_secretKeys.clear();

@@ -251,15 +251,27 @@ QJsonObject NativeHud::sourceState() const {
         return QJsonObject{
             {"x", value->x()}, {"y", value->y()}, {"width", value->width()}, {"height", value->height()}};
     };
+    auto inputX = bounds.x() + 53;
+    auto inputY = bounds.y() + 180;
+    auto inputWidth = bounds.width() - 106 - libraryToolbarActionWidth();
+    auto inputHeight = 54.0;
+    if (playlistSearchActive && frame["mode"] == "detail" && m_music->current["kind"] == "playlist") {
+        const auto layout = containerLayout(width);
+        inputX = layout.x + 390;
+        inputY = 339;
+        inputWidth = 230;
+        inputHeight = 44;
+    }
     return {{"lyricsMode", lyricsMode},
             {"commentsMode", commentsMode},
             {"commentsAvailable", m_music->commentsAvailable()},
             {"archiveName", m_music->libraryName()},
             {"archiveIndex", m_music->libraryIndex()},
             {"archiveTotal", m_music->libraryTotal()},
-            {"inputX", bounds.x() + 53},
-            {"inputY", bounds.y() + 180},
-            {"inputWidth", bounds.width() - 106 - libraryToolbarActionWidth()},
+            {"inputX", inputX},
+            {"inputY", inputY},
+            {"inputWidth", inputWidth},
+            {"inputHeight", inputHeight},
             // QML 手势层与原生结果视口共用同一组舞台坐标。
             {"searchListX", bounds.x() + 53},
             {"searchListY", bounds.y() + ResultListTop},
@@ -290,6 +302,8 @@ QJsonObject NativeHud::sourceState() const {
             {"archiveMaskStrength", archiveMaskStrength},
             {"trackListMode", trackListMode},
             {"detailSort", detailSort},
+            {"detailQuery", detailQuery},
+            {"playlistSearchActive", playlistSearchActive},
             {"sortLoading", m_sortRequest.has_value()},
             {"mode", frame["mode"]},
             {"viewer", frame["viewer"]},

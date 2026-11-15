@@ -531,41 +531,79 @@ Item {
     TextInput {
         id: searchInput
         objectName: "musicSearchInput"
+        readonly property bool playlistSearch: rhine.state.playlistSearchActive === true
+        readonly property bool modalSearch: rhine.state.modal === "search" || rhine.state.modal === "saved"
+        readonly property real inputOffset: playlistSearch ? 0 : (rhine.state.modalOffset || 0)
+        readonly property real searchFontSize: {
+            if (playlistSearch) {
+                return 14;
+            }
+            if (overlay.compactLayout) {
+                return 14 * rhine.state.compactUnit;
+            }
+            return 22;
+        }
+        readonly property string searchPlaceholder: {
+            if (playlistSearch) {
+                return "搜索当前歌单内的歌曲";
+            }
+            if (rhine.state.localMusic) {
+                return "检索本地歌曲、歌手、专辑或文件夹";
+            }
+            return "搜索歌曲、歌手、专辑或歌单";
+        }
+        readonly property color searchTextColor: {
+            if (modalSearch || playlistSearch) {
+                return rhine.state.dark ? "#e9e7da" : "#222a25";
+            }
+            return rhine.state.dark ? "#ebebeb" : "#141613";
+        }
         verticalAlignment: TextInput.AlignVCenter
-        leftPadding: overlay.compactLayout ? 0 : 18 * overlay.stageScale
+        leftPadding: overlay.compactLayout ? 0 : (playlistSearch ? 14 : 18) * overlay.stageScale
         rightPadding: 14 * overlay.stageScale
         renderType: Text.NativeRendering
-        visible: (rhine.state.modal === "search" || rhine.state.modal === "saved") && (!overlay.compactLayout || rhine.state.compactInputVisible === true)
+        visible: (modalSearch || playlistSearch) && (!overlay.compactLayout || rhine.state.compactInputVisible === true)
         enabled: !rhine.state.closing
         x: (rhine.state.inputX || 0) * overlay.stageScale
-        y: ((rhine.state.inputY || 302) + (rhine.state.modalOffset || 0)) * overlay.stageScale
+        y: ((rhine.state.inputY || 302) + inputOffset) * overlay.stageScale
         width: (rhine.state.inputWidth || 0) * overlay.stageScale
-        height: (overlay.compactLayout ? (rhine.state.inputHeight || 54) : 54) * overlay.stageScale
+        height: (rhine.state.inputHeight || 54) * overlay.stageScale
         font.family: rhineFontFamily
-        font.pixelSize: (overlay.compactLayout ? 14 * rhine.state.compactUnit : 22) * overlay.stageScale
-        color: (rhine.state.modal === "search" || rhine.state.modal === "saved") ? (rhine.state.dark ? "#e9e7da" : "#222a25") : (rhine.state.dark ? "#ebebeb" : "#141613")
-        opacity: overlay.compactLayout ? 1 : (rhine.state.modalOpacity || 0)
+        font.pixelSize: searchFontSize * overlay.stageScale
+        color: searchTextColor
+        opacity: overlay.compactLayout || playlistSearch ? 1 : (rhine.state.modalOpacity || 0)
         clip: true
         cursorVisible: activeFocus && !rhine.performance.idle
         selectByMouse: true
-        Accessible.name: rhine.state.localMusic ? "检索本地歌曲、歌手、专辑或文件夹" : "搜索歌曲、歌手、专辑或歌单"
+        Accessible.name: searchPlaceholder
         onTextEdited: rhine.query(text)
         onVisibleChanged: {
             if (visible) {
-                text = rhine.state.query || "";
+                text = playlistSearch ? (rhine.state.detailQuery || "") : (rhine.state.query || "");
                 forceActiveFocus();
             } else {
                 inputLayer.forceActiveFocus();
             }
         }
-        Keys.onEscapePressed: rhine.action("close-modal")
+        Keys.onEscapePressed: {
+            if (playlistSearch) {
+                rhine.action("music:playlist-search-close");
+            } else {
+                rhine.action("close-modal");
+            }
+        }
         Keys.onReturnPressed: function (event) {
-            rhine.searchAccepted(text, event.modifiers);
+            if (playlistSearch) {
+                rhine.action("music:playlist-search-close");
+                event.accepted = true;
+            } else {
+                rhine.searchAccepted(text, event.modifiers);
+            }
         }
         Text {
             anchors.fill: parent
-            visible: searchInput.text.length === 0 && !searchInput.preeditText
-            text: rhine.state.localMusic ? "检索本地歌曲、歌手、专辑或文件夹" : "搜索歌曲、歌手、专辑或歌单"
+            visible: !searchInput.playlistSearch && searchInput.text.length === 0 && !searchInput.preeditText
+            text: searchInput.searchPlaceholder
             font: searchInput.font
             leftPadding: searchInput.leftPadding
             verticalAlignment: Text.AlignVCenter

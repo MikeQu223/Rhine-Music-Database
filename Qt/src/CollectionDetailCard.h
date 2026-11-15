@@ -49,6 +49,8 @@ struct Model {
     QVector<Choice> tabs;
     Choice playAll;
     Choice sort;
+    Choice search;
+    Choice clearSearch;
     Choice rename;
     Choice remove;
     Choice subscribe;
@@ -56,6 +58,7 @@ struct Model {
     Choice more;
     int totalCount = 0;
     int loadedCount = 0;
+    bool searchEditing = false;
     QVector<Row> rows;
     // 移动端按可见窗口惰性读取；闭包持有只读的 Qt 隐式共享数据。
     std::function<Row(int)> rowAt;
