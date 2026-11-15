@@ -16,6 +16,7 @@ import 'basic_hud.dart';
 import 'basic_hud_resources.dart';
 import 'basic_models.dart';
 import 'platform_playback.dart';
+import 'qt_scene_view.dart';
 import 'siren_controller.dart';
 
 /// 启动失败页的可见前缀。外壳与测试共用这一份字面量，避免两处文案漂移。
@@ -134,6 +135,11 @@ class _BasicAppState extends State<BasicApp> {
   late final bool _ownsAudio;
   late final bool _ownsController;
 
+  /// 回执接收面的稳定句柄：方法掏出来的 tear-off 每次都是新闭包，
+  /// 直接拿 `_onSceneScroll` 做 identical() 判断永远不会相等，dispose 就摘不掉。
+  late final ValueChanged<QtSceneScrollEvent> _sceneScrollHandler =
+      _onSceneScroll;
+
   @override
   void initState() {
     super.initState();
@@ -141,9 +147,24 @@ class _BasicAppState extends State<BasicApp> {
     _ownsController = widget.controller == null;
     _audio = widget.audio ?? MethodChannelBasicAudio();
     _controller = widget.controller ?? BasicController(audio: _audio);
+    // 3D 场景的连续滚动回执（拖动/惯性/滚轮）落到同一个 controller 窗口真值上：
+    // 方向 B（3D → 列表/ruler）因此不依赖 HUD 是否接了 onScroll 参数。
+    QtSceneScrollRouter.instance.handler = _sceneScrollHandler;
     // 两路互不依赖：曲库走网络，字形走 asset。并行启动，任一失败都不会互相取消。
     unawaited(_boot());
     unawaited(_loadResources());
+  }
+
+  /// Qt 把连续条目增量报回来：拖动/惯性中途只滚窗口，松手才 commit 落行。
+  void _onSceneScroll(QtSceneScrollEvent event) {
+    if (!mounted) {
+      return;
+    }
+    _controller.applyNativeArchiveScroll(
+      event.deltaRows,
+      committed: event.committed,
+      started: event.started,
+    );
   }
 
   /// 启动恰一次：`boot()` 内部幂等，但真正的“一次”由 initState 保证。
@@ -217,6 +238,9 @@ class _BasicAppState extends State<BasicApp> {
 
   @override
   void dispose() {
+    if (identical(QtSceneScrollRouter.instance.handler, _sceneScrollHandler)) {
+      QtSceneScrollRouter.instance.handler = null;
+    }
     if (_ownsController) {
       _controller.dispose();
     }
@@ -497,6 +521,16 @@ class _BasicShellState extends State<_BasicShell> implements TextInputPorts {
   }
 
   void _onAction(String action) {
+    // 3D 归档里点到某一格：Qt 只回传**几何格**（lane+物理行），条目身份仍由这里的
+    // 唯一列表真值折出来。折不出来（不是当前列/空列）就不动，不猜下标。
+    final QtSceneCellRef? cell = QtSceneCellRef.parse(action);
+    if (cell != null) {
+      final int? row = qtSceneRowOfCell(controller.state, cell);
+      if (row != null) {
+        unawaited(controller.selectLibraryRow(row));
+      }
+      return;
+    }
     // Qt/src/NativeHudController.cpp:684：'search' 走 openModal("search")；
     // :686 'close-modal' 走 closeModal()。两者是弹层开关，不是“尚未接入”的动作。
     if (action == HudAction.search) {

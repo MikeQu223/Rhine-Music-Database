@@ -680,6 +680,8 @@ class BasicViewState {
     this.localCollectionsAvailable = false,
     this.localUnresolvedLikedIds = 0,
     this.localPlaylists = const <BasicLocalPlaylist>[],
+    this.laneItems = const <List<BasicListItem>>[],
+    this.laneOffsets = const <int>[],
   });
 
   /// 当前页面。
@@ -795,6 +797,22 @@ class BasicViewState {
   /// （与 [selectedLane] 的投影同一份真值），见 [basicLibraryItems] 的 lane 1 分支。
   final List<BasicLocalPlaylist> localPlaylists;
 
+  /// 五列的条目投影（0..4 = [basicSirenColumns] 的顺序），给 Qt 的 40 格语义槽位用。
+  ///
+  /// 这是**同一份** [basicLibraryItems] 真值的按列展开，不是第二套业务状态：
+  /// Qt 侧继续用自己的 m_columns/physicalSlots 几何，只是把 5×8 个物理格的
+  /// `kind + id` 与这里的条目对上（槽位→条目的对应在 qt_scene_view 里做）。
+  /// 空/越界的位置在投影里就是空槽，不造占位、不把 logical%40 冒充物理格。
+  ///
+  /// 默认空表 = 没有语义表（旧构造点/HUD 测试不需要知道这一层）。
+  final List<List<BasicListItem>> laneItems;
+
+  /// 五列窗口起点（Qt `offsets[lane]` 同义，单位条目，**可以是负数**）。
+  ///
+  /// 与 [laneItems] 一起构成有界的 8 行窗口：物理行 r 的条目 = laneOffsets[lane] + r。
+  /// 负数/超出末尾的位置键为 Qt 的 wrap 语义保留（Qt src/MusicLibrary.cpp:646-667）。
+  final List<int> laneOffsets;
+
   bool get hasCatalog => catalogLoaded;
 
   bool get canPlay => song != null;
@@ -841,6 +859,8 @@ class BasicViewState {
     bool? localCollectionsAvailable,
     int? localUnresolvedLikedIds,
     List<BasicLocalPlaylist>? localPlaylists,
+    List<List<BasicListItem>>? laneItems,
+    List<int>? laneOffsets,
     bool dropAlbum = false,
     bool dropDirectory = false,
     bool dropSong = false,
@@ -879,6 +899,8 @@ class BasicViewState {
       localCollectionsAvailable: localCollectionsAvailable ?? this.localCollectionsAvailable,
       localUnresolvedLikedIds: localUnresolvedLikedIds ?? this.localUnresolvedLikedIds,
       localPlaylists: localPlaylists ?? this.localPlaylists,
+      laneItems: laneItems ?? this.laneItems,
+      laneOffsets: laneOffsets ?? this.laneOffsets,
     );
   }
 }

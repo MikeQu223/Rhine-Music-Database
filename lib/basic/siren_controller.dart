@@ -182,7 +182,26 @@ class BasicController extends ChangeNotifier {
   BasicSelection? _selection;
 
   /// 曲目列滚动位置（单位：条目，小数 = 两项之间）。
+  ///
+  /// 这是**唯一的连续窗口真值**：列表拖动过程中（松手前）就写这里并投影给 Qt 的
+  /// 3D 场景，Qt 的 3D 拖动/滚轮也回写到这同一个值。两侧都只是同一份状态的
+  /// 投影，任何一侧都不持有第二份窗口位置（用户 P0 #1：双向连续同步）。
   double _listPosition = 0;
+
+  /// Qt 3D 侧一次拖动/滚轮序列的起点窗口（条目）。用来把原生的连续增量折成
+  /// 绝对位置，并折断 list→Qt→list 的回声：同一位置再回写时不再产生新状态。
+  double? _nativeScrollOrigin;
+
+  /// 曲库失败后的有界自动重试次数（冷启动 count=0 的真实 loading/error/retry）。
+  int _catalogRetries = 0;
+  Timer? _catalogRetryTimer;
+
+  /// 冷启动曲库的自动重试上限：一次瞬时失败不该让首页永远停在空列表。
+  static const int maxCatalogRetries = 3;
+
+  /// [_laneItemTable] 的签名缓存（见该方法的失效规则）。
+  String _laneItemsSignature = '';
+  List<List<BasicListItem>>? _laneItemsCache;
 
   /// 当前资料库列（Qt `MusicLibrary::selectedLane`，Qt/src/MusicLibrary.cpp:167 起）：
   /// 根页列表只承载这一列，←/→ 按 [basicSirenSourceOrder] 循环换列。
@@ -541,6 +560,58 @@ class BasicController extends ChangeNotifier {
     await selectLibraryRow(row);
   }
 
+  /// 列表拖动**过程中**的连续窗口位置（单位条目，可为小数）。
+  ///
+  /// 与 [commitLibraryScroll] 的分工就是 Qt 的 observe / select 分工：拖动中途只写
+  /// 窗口（不选中、不播、不换队列），松手才由 commit 落行选中。写进 state.listPosition
+  /// 之后，Qt 场景层（只读投影）在拖动期间就跟着一起滚，而不是等松手才动。
+  void updateLibraryScroll(double position) {
+    if (_disposed || position.isNaN || !position.isFinite) {
+      return;
+    }
+    if ((position - _listPosition).abs() < 1e-4) {
+      return;
+    }
+    _listPosition = position;
+    _publish();
+  }
+
+  /// Qt 3D 场景回写的 archive 连续滚动（条目增量，可为小数；见 NativeScene 的滚动出口）。
+  ///
+  /// 三个约束都来自 Qt 原始语义与用户 m01597 的补充：
+  ///  - 只动**当前列**的窗口：3D 手势不换所属列（换列只有显式 HUD ←/→）。
+  ///  - 松手（[committed]）才落行选中；中途只滚窗口，桌面惯性与选中都不被改写。
+  ///  - [started] 记下序列起点，之后同一位置回写被 `1e-4` 门限吃掉，不会回声。
+  void applyNativeArchiveScroll(
+    double deltaRows, {
+    bool committed = false,
+    bool started = false,
+  }) {
+    if (_disposed || deltaRows.isNaN || !deltaRows.isFinite) {
+      return;
+    }
+    final List<BasicListItem> items = basicLibraryItems(_state);
+    if (items.isEmpty) {
+      _nativeScrollOrigin = null;
+      return;
+    }
+    if (started || _nativeScrollOrigin == null) {
+      _nativeScrollOrigin = _listPosition;
+    }
+    final double max = (items.length - 1).toDouble();
+    final double next = ((_nativeScrollOrigin ?? _listPosition) + deltaRows).clamp(0.0, max);
+    if (committed) {
+      _nativeScrollOrigin = null;
+      unawaited(commitLibraryScroll(next));
+      return;
+    }
+    if ((next - _listPosition).abs() < 1e-4) {
+      return;
+    }
+    _listPosition = next;
+    _publish();
+  }
+
   /// ←/→：Qt/src/NativeHudController.cpp:650-662 的两条分支，逐条照抄。
   ///
   ///  - 有目录 → `music.navigateDirectory(next ? 8 : -8)`（Qt/src/MusicDirectory.cpp:321-344）：
@@ -648,7 +719,12 @@ class BasicController extends ChangeNotifier {
   ///
   /// 专辑行只改选中身份，不打开详情（Qt 的 selectResult(..., highlightOnly) 不改 mode）；
   /// 详情由 'open' 路径（[openSong]/openAlbum）负责。
-  void _selectRow(List<BasicListItem> items, int row, {bool recordWindow = true}) {
+  void _selectRow(
+    List<BasicListItem> items,
+    int row, {
+    bool recordWindow = true,
+    bool announce = true,
+  }) {
     final BasicListItem item = items[row];
     final BasicSelection? selection = basicItemSelection(_state, item);
     if (selection != null) {
@@ -690,7 +766,9 @@ class BasicController extends ChangeNotifier {
       // 写进去会让退出目录时把目录行号当根列位置恢复。
       _lanePositions[_selectedLane] = _listPosition;
     }
-    _status = '已选中：${item.title}';
+    if (announce) {
+      _status = '已选中：${item.title}';
+    }
   }
 
   /// 当前选中身份对应的列表行号（探针状态只为复用同一份列表真值）。
@@ -795,6 +873,8 @@ class BasicController extends ChangeNotifier {
     _disposed = true;
     _ticker?.cancel();
     _ticker = null;
+    _catalogRetryTimer?.cancel();
+    _catalogRetryTimer = null;
     _clock.stop();
     _player.removeListener(_onPlayerChanged);
     _lyrics?.removeListener(_onLyricsChanged);
@@ -814,7 +894,9 @@ class BasicController extends ChangeNotifier {
     _catalogLoaded = false;
     _loading = true;
     _error = '';
-    _status = sirenCatalogLoadingStatus;
+    _status = _catalogRetries > 0
+        ? '$sirenCatalogLoadingStatus（重试 $_catalogRetries/$maxCatalogRetries）'
+        : sirenCatalogLoadingStatus;
     _phase = BasicPhase.boot;
     _publish();
     try {
@@ -835,8 +917,19 @@ class BasicController extends ChangeNotifier {
       _catalogLoaded = true;
       _loading = false;
       _error = '';
+      _catalogRetries = 0;
+      _catalogRetryTimer?.cancel();
+      _catalogRetryTimer = null;
       _status = _catalogLoadedStatus();
       _phase = BasicPhase.library;
+      // 冷启动默认选中：Qt 打开资料库时 MusicLibrary 里本来就有一条 current，
+      // 3D 场景靠它拿到 current{kind,id,key,cover} 才会 loadCover 并画出封面。
+      // 少了这一步，场景只收到 index=-1/count=936/key=（真机 06:28:28 日志），
+      // 于是永远没有 cover 请求 —— 这正是用户 P0 #2「封面还是不加载」的根因。
+      _publish();
+      if (_selection == null) {
+        _selectInitialRow();
+      }
     } on Object catch (error) {
       if (generation != _catalogGeneration) {
         return;
@@ -846,8 +939,44 @@ class BasicController extends ChangeNotifier {
       _error = _messageOf(error);
       _status = sirenCatalogFailurePrefix + _error;
       _phase = BasicPhase.library;
+      _scheduleCatalogRetry();
     }
     _publish();
+  }
+
+  /// 冷启动/重试后的默认选中：取当前列第一条可见行（Qt 首个物理槽的等价物）。
+  ///
+  /// 只在「曲库刚到位且还没有选中」时调用，不覆盖用户已有选中，也不播放。
+  void _selectInitialRow() {
+    final List<BasicListItem> items = basicLibraryItems(_state);
+    if (items.isEmpty) {
+      return;
+    }
+    // announce:false —— 首屏那句话仍然是"曲库已加载：N 首 / M 张专辑"，不能一进页面
+    // 就被"已选中：…"盖掉（那不是用户做的动作，藏掉曲库规模反而是信息损失）。
+    _selectRow(items, 0, announce: false);
+    _publish();
+  }
+
+  /// 曲库失败的有界自动重试（400/800/1600ms），状态文案如实写第几次。
+  ///
+  /// Qt 侧没有这条路径（失败就停在失败态），但用户看到的是「首页永远空」；
+  /// 这里保持真实 loading/error/retry 语义，不造假数据、不换第二个 backend。
+  void _scheduleCatalogRetry() {
+    if (_disposed || _catalogLoaded || _catalogRetries >= maxCatalogRetries) {
+      return;
+    }
+    _catalogRetries += 1;
+    final int attempt = _catalogRetries;
+    // 失败文案保持**原文**（失败原因不被追加词污染）；"正在重试第几次"由下一轮
+    // _loadCatalog 的 loading 文案如实给出。
+    _catalogRetryTimer?.cancel();
+    _catalogRetryTimer = Timer(Duration(milliseconds: 400 * (1 << (attempt - 1))), () {
+      if (_disposed || _catalogLoaded || !_booted) {
+        return;
+      }
+      unawaited(_loadCatalog());
+    });
   }
 
   String _catalogLoadedStatus() {
@@ -1068,7 +1197,8 @@ class BasicController extends ChangeNotifier {
     return null;
   }
 
-  List<SirenSong> _visibleSongs() {
+  List<SirenSong> _visibleSongs({int? lane}) {
+    final int selected = lane ?? _selectedLane;
     final BasicDirectory? directory = _directory;
     if (directory != null) {
       // Qt/src/MusicLibrary.cpp:212-214：`directory ? directory->orderedSongs() : …`。
@@ -1078,15 +1208,15 @@ class BasicController extends ChangeNotifier {
     if (_phase == BasicPhase.detail && _album != null) {
       return _album!.songs;
     }
-    if (_selectedLane == basicSearchLane) {
+    if (selected == basicSearchLane) {
       // 「搜索结果」列只列本次检索命中的曲目（Qt lists[0]）。
       return filterSirenSongs(_catalogSongs, _query);
     }
-    if (_selectedLane == 1) {
+    if (selected == 1) {
       // 「喜欢的歌曲」列：本机 likedIDs 经曲库解析出的曲目（Qt lists[1]）。
       return _likedSongs;
     }
-    if (_selectedLane == 2) {
+    if (selected == 2) {
       // 「我的歌单」列的行是歌单（state.localPlaylists），这一列里没有曲目：
       // 不能把整库曲目塞进 state.songs，否则 state.song/播放面会指到不相干的曲目。
       return const <SirenSong>[];
@@ -1094,7 +1224,8 @@ class BasicController extends ChangeNotifier {
     return _catalogSongs;
   }
 
-  List<SirenAlbum> _visibleAlbums() {
+  List<SirenAlbum> _visibleAlbums({int? lane}) {
+    final int selected = lane ?? _selectedLane;
     if (_directory != null) {
       // 目录里只列曲目（Qt libraryItems() 的 directory 分支），专辑行不再出现。
       return const <SirenAlbum>[];
@@ -1102,10 +1233,37 @@ class BasicController extends ChangeNotifier {
     if (_phase == BasicPhase.detail && _album != null) {
       return const <SirenAlbum>[];
     }
-    if (_selectedLane == basicSearchLane) {
+    if (selected == basicSearchLane) {
       return filterSirenAlbums(_catalogAlbums, _query);
     }
     return _catalogAlbums;
+  }
+
+  /// 五列的条目表（Qt 40 格语义槽位的来源），带签名缓存。
+  ///
+  /// 拖动时每帧都会 _publish，而整库有 936 首；每次重建 5 列列表会拖垮帧率。
+  /// 这里按「会影响列内容的东西」缓存：曲库代际、检索词、目录身份、页面、专辑、列。
+  List<List<BasicListItem>> _laneItemTable() {
+    final String signature = <Object?>[
+      _catalogGeneration,
+      _query,
+      _directory?.id ?? '',
+      _phase.name,
+      _album?.id ?? '',
+      _likedSongs.length,
+      _localPlaylists.length,
+      _localCollectionsAvailable,
+    ].join('|');
+    if (signature == _laneItemsSignature && _laneItemsCache != null) {
+      return _laneItemsCache!;
+    }
+    final List<List<BasicListItem>> table = <List<BasicListItem>>[
+      for (int lane = 0; lane < basicSirenColumns.length; lane++)
+        basicLibraryItems(_probeState(lane: lane)),
+    ];
+    _laneItemsSignature = signature;
+    _laneItemsCache = table;
+    return table;
   }
 
   /// 探针状态：只为复用 [basicLibraryItems] / [basicSelectedItemIndex] 的映射规则，
@@ -1115,8 +1273,8 @@ class BasicController extends ChangeNotifier {
       phase: _phase,
       query: _query,
       selectedLane: lane ?? _selectedLane,
-      songs: _visibleSongs(),
-      albums: _visibleAlbums(),
+      songs: _visibleSongs(lane: lane),
+      albums: _visibleAlbums(lane: lane),
       album: _album,
       directory: _directory,
       song: _song,
@@ -1354,6 +1512,8 @@ class BasicController extends ChangeNotifier {
       playingTrack: _playingTrackOf(),
       listPosition: _listPosition,
       selectedLane: _selectedLane,
+      laneItems: _laneItemTable(),
+      laneOffsets: List<int>.unmodifiable(_laneOffsets),
       playing: playerState['playing'] == true,
       buffering: _audio.state.buffering,
       positionMs: _number(playerState['position']),

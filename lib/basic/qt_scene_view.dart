@@ -129,15 +129,183 @@ String qtSceneStateSnapshot(BasicViewState state) {
               'artist': song.artist,
             };
   final Map<String, Object?> payload = <String, Object?>{
-    'v': 2,
+    'v': 3,
     'dark': state.dark,
     'mode': qtSceneModeOf(state),
     'index': index,
     'count': state.songs.length,
+    // 连续窗口位置（条目，小数 = 两项之间）与所属列：Qt 只**投影**它，
+    // 不把它当第二份真值。拖动中途也会变，所以 3D 场景在手指还没松时就跟着滚。
+    'pos': state.listPosition ?? 0,
+    'lane': state.selectedLane,
+    'cells': qtSceneCellsOf(state),
     if (current != null) 'current': current,
     if (song != null && song.key.isNotEmpty) 'key': song.key,
   };
   return jsonEncode(payload);
+}
+
+/// 40 格语义槽位（5 列 × 8 物理行）。
+///
+/// Qt 侧已经有真实的 `m_columns` / `physicalSlots` 几何与物理选中（NativeScene.cpp
+/// 的 cell{ lane, 12+row }），这里**不重造几何**，只把每个物理格的业务身份
+/// （kind + id）与 Flutter 唯一的列表真值对起来，让原生能回传正确 identity 而不是
+/// `logical%40` 之类的位置当身份。
+///
+/// 有界：最多 5×8 条；空列/越界不产生条目（空槽就是空槽，不造占位）。
+/// 行键沿用 Qt 的 wrap 语义（src/MusicLibrary.cpp:646-667）：`index = offset + row`
+/// 允许负数/超过末尾，取模回列表内——负数窗口起点是 Qt 的真实行为，不在这里夹平。
+///
+/// 不带 cover：素材纹理仍由 `current`（单选身份）驱动，逐格下发封面会把 40 个
+/// 下载/纹理塞进一次状态推送；卡片面在本版本就是抽取面，不画专辑图。
+List<Map<String, Object?>> qtSceneCellsOf(BasicViewState state) {
+  final List<List<BasicListItem>> table = state.laneItems;
+  if (table.isEmpty) {
+    return const <Map<String, Object?>>[];
+  }
+  final List<int> offsets = state.laneOffsets;
+  final List<Map<String, Object?>> cells = <Map<String, Object?>>[];
+  for (int lane = 0; lane < qtSceneLaneCount && lane < table.length; lane++) {
+    final List<BasicListItem> items = table[lane];
+    if (items.isEmpty) {
+      continue;
+    }
+    final int offset = lane < offsets.length ? offsets[lane] : 0;
+    for (int row = 0; row < qtScenePhysicalRows; row++) {
+      final int raw = offset + row;
+      final int index = ((raw % items.length) + items.length) % items.length;
+      final BasicListItem item = items[index];
+      cells.add(<String, Object?>{
+        'l': lane,
+        'r': row,
+        'k': item.kind,
+        'i': item.id,
+        't': item.title,
+      });
+    }
+  }
+  return cells;
+}
+
+/// Qt 物理几何：5 列 × 8 物理行（NativeScene 的 m_columns / cell.row = 12+row）。
+const int qtSceneLaneCount = 5;
+const int qtScenePhysicalRows = 8;
+
+/// 原生 → Dart 的归档滚动回执前缀（走既有的 `action` 字符串通道）。
+///
+/// 格式 `archive-scroll:<start|move|commit>:<deltaRows>`；deltaRows 是**条目**增量
+/// （Qt 的拖拽/滚轮位移按行折算，见 NativeScene 的滚动出口）。分三类是为了让
+/// Flutter 记住序列起点、并在松手时才落行选中——与 Qt 的 observe/select 同构。
+const String qtSceneScrollPrefix = 'archive-scroll:';
+
+/// 一条原生归档滚动回执。
+class QtSceneScrollEvent {
+  const QtSceneScrollEvent({
+    required this.deltaRows,
+    this.started = false,
+    this.committed = false,
+  });
+
+  /// 相对序列起点的条目增量（可为小数、可为负）。
+  final double deltaRows;
+
+  /// 这条是不是一次拖拽/滚轮的起点（用来记 origin）。
+  final bool started;
+
+  /// 松手/滚轮结束：是否落行选中。
+  final bool committed;
+
+  /// 解析原生 action 字符串；不是滚动回执返回 null。
+  static QtSceneScrollEvent? parse(String action) {
+    if (!action.startsWith(qtSceneScrollPrefix)) {
+      return null;
+    }
+    final List<String> parts = action
+        .substring(qtSceneScrollPrefix.length)
+        .split(':');
+    if (parts.length != 2) {
+      return null;
+    }
+    final double delta = double.tryParse(parts[1]) ?? 0;
+    switch (parts[0]) {
+      case 'start':
+        return QtSceneScrollEvent(deltaRows: delta, started: true);
+      case 'commit':
+        return QtSceneScrollEvent(deltaRows: delta, committed: true);
+      case 'move':
+        return QtSceneScrollEvent(deltaRows: delta);
+      default:
+        return null;
+    }
+  }
+}
+
+/// 原生回传的**几何格**（Qt 的 cell{lane,row}，row 是 12..19 的物理行）。
+///
+/// 为什么回传格子而不是列表下标：几何与物理槽位归 Qt，条目身份归 Flutter 唯一真值。
+/// Flutter 收到 (lane,row) 后用自己的 [_laneItems]/offsets 折成行号——这正是
+/// "native 用真实几何 ID 绑定、回传正确 identity"的那一半，不需要 Qt 认识 Siren 曲目。
+class QtSceneCellRef {
+  const QtSceneCellRef(this.lane, this.row);
+
+  final int lane;
+  final int row;
+
+  static const String prefix = 'archive-select:';
+
+  static QtSceneCellRef? parse(String action) {
+    if (!action.startsWith(prefix)) {
+      return null;
+    }
+    final List<String> parts = action.substring(prefix.length).split(':');
+    if (parts.length != 2) {
+      return null;
+    }
+    final int? lane = int.tryParse(parts[0]);
+    final int? row = int.tryParse(parts[1]);
+    if (lane == null || row == null) {
+      return null;
+    }
+    return QtSceneCellRef(lane, row);
+  }
+}
+
+/// 物理行 -> 当前列表行（Qt 的 wrap 语义：`index = offsets[lane] + row`，负数/越界取模）。
+///
+/// 只对**当前列**成立：3D 手势不换所属列，换列必须走 HUD 的显式 ←/→。别的列返回 null，
+/// 调用方就知道"这一格不是当前窗口里的条目"，不去猜。
+int? qtSceneRowOfCell(BasicViewState state, QtSceneCellRef cell) {
+  if (cell.lane != state.selectedLane) {
+    return null;
+  }
+  final List<List<BasicListItem>> table = state.laneItems;
+  if (cell.lane < 0 || cell.lane >= table.length) {
+    return null;
+  }
+  final List<BasicListItem> items = table[cell.lane];
+  if (items.isEmpty) {
+    return null;
+  }
+  final List<int> offsets = state.laneOffsets;
+  final int offset = cell.lane < offsets.length ? offsets[cell.lane] : 0;
+  // 物理行的基址是 12（NativeScene 的 cell.row = 12 + 列内序号）。
+  final int raw = offset + (cell.row - 12);
+  return ((raw % items.length) + items.length) % items.length;
+}
+
+/// Qt 3D 滚动回执的默认接收面。
+///
+/// [QtSceneView] 的 `onScroll` 参数优先；HUD 里的场景视图没有传这个参数时（它的
+/// 构造点在 HUD 内部），回执落到这里。BasicApp 在 initState 里把 controller 的
+/// 连续窗口写入挂上来——这样"3D 拖动/滚轮 → 列表/ruler/换列"不依赖 HUD 接线。
+class QtSceneScrollRouter {
+  QtSceneScrollRouter._();
+
+  static final QtSceneScrollRouter instance = QtSceneScrollRouter._();
+
+  ValueChanged<QtSceneScrollEvent>? handler;
+
+  void dispatch(QtSceneScrollEvent event) => handler?.call(event);
 }
 
 /// 原生动作的分发表：platform view id → 回调。
@@ -567,6 +735,7 @@ class QtSceneView extends StatefulWidget {
     required this.state,
     this.onAction,
     this.onCreated,
+    this.onScroll,
   });
 
   /// 当前界面状态（只读快照）。选中身份看 state.song，不看播放状态。
@@ -577,6 +746,11 @@ class QtSceneView extends StatefulWidget {
 
   /// platform view id：调用方只用来打日志/排障。
   final ValueChanged<int>? onCreated;
+
+  /// Qt 3D 侧的连续归档滚动（拖动/滚轮）。`action` 通道里的 `archive-scroll:*`
+  /// 回执在这里解释成增量，交给 controller 折算成 state.listPosition——3D 拖动
+  /// 因此每帧推动列表/ruler，而不是松手才动一次。
+  final ValueChanged<QtSceneScrollEvent>? onScroll;
 
   @override
   State<QtSceneView> createState() => _QtSceneViewState();
@@ -624,9 +798,25 @@ class _QtSceneViewState extends State<QtSceneView> {
     return child;
   }
 
+  /// 原生 action 的分流：滚动回执走 [QtSceneView.onScroll]，其余原文透传给
+  /// [QtSceneView.onAction]（本版本 onAction 仍无生产者，词表未定）。
+  void _onNativeAction(String action) {
+    final QtSceneScrollEvent? scroll = QtSceneScrollEvent.parse(action);
+    if (scroll != null) {
+      final ValueChanged<QtSceneScrollEvent>? direct = widget.onScroll;
+      if (direct != null) {
+        direct(scroll);
+      } else {
+        QtSceneScrollRouter.instance.dispatch(scroll);
+      }
+      return;
+    }
+    widget.onAction?.call(action);
+  }
+
   void _onPlatformViewCreated(int id) {
     _viewId = id;
-    QtSceneActions.register(id, widget.onAction);
+    QtSceneActions.register(id, _onNativeAction);
     QtScenePointerBridge.instance.attach(id);
     // 首个快照必须在视图创建后立刻给：Qt 的归档/唱片/主题都靠它进正确状态，
     // 否则会先按 archive+light 渲染一帧再跳变。

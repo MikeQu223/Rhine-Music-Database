@@ -80,7 +80,8 @@ void main() {
       final Map<String, Object?> payload = _decode(qtSceneStateSnapshot(
         _state(phase: BasicPhase.detail, song: a, songs: <SirenSong>[a], dark: false),
       ));
-      expect(payload['v'], 2);
+      // v3：在 v2 的选中身份之上加了连续窗口（pos/lane）与 40 格语义槽位（cells）。
+      expect(payload['v'], 3);
       expect(payload['dark'], isFalse);
       expect(payload['mode'], 'detail');
       expect(payload['index'], 0);

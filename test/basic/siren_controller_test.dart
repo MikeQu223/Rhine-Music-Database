@@ -558,9 +558,15 @@ void main() {
       await controller.boot();
       await _settle();
 
+      // 首屏默认选中第一行（Qt 的 current 一进库就有一条；封面/唱片需要它），
+      // 所以"没有当前曲目"要用真实的空列来构造：← 到「我的歌单」列（没有本地歌单）。
+      await controller.navigateColumn(-1);
+      expect(controller.state.song, isNull, reason: '空列清掉选中身份');
       await controller.openLyrics();
       expect(controller.state.phase, BasicPhase.library, reason: '没有当前曲目不允许进歌词页');
 
+      // 回到「全部歌曲」列继续原来的断言（列 3 有 3 首真实曲目）。
+      await controller.navigateColumn(1);
       await controller.openSong(controller.state.songs.first);
       await _settle();
       expect(controller.state.phase, BasicPhase.detail);
@@ -829,13 +835,12 @@ void main() {
       expect(controller.state.phase, BasicPhase.library);
       expect(controller.state.status, '已返回：塞壬唱片');
       expect(controller.state.songs.length, 3);
-      // Qt/src/MusicSiren.cpp:225 `next->parentItem = current;` —— 打开目录时没有选中
-      // 任何行，parentItem 就是空对象；MusicDirectory.cpp:431-435 的
-      // `current = details.value(key, folder->parentItem)` 于是把 current 恢复成空，
-      // 所以返回资料库根**没有**当前曲目（选中身份也一起清空）。它与播放队列无关：
-      // 队列/播放不因为返回而变。
-      expect(controller.state.song, isNull, reason: 'parentItem 为空 → current 为空');
-      expect(controller.state.selection, isNull);
+      // Qt/src/MusicSiren.cpp:225 `next->parentItem = current;` 与 MusicDirectory.cpp:431-435
+      // 的 `current = details.value(key, folder->parentItem)`：返回资料库根时 current 被
+      // 恢复成**打开目录那一刻**的选中身份。首屏已默认选中第一行，所以 parentItem 不是空
+      // 对象，恢复回来就是 s1（不是"清空"）。它与播放队列无关：队列/播放不因返回而变。
+      expect(controller.state.song?.id, 's1', reason: 'parentItem = 打开时的 current');
+      expect(controller.state.selection?.id, 's1');
     });
 
     test('目录内搜索离开目录（Qt/src/MusicSiren.cpp:184-188）', () async {
