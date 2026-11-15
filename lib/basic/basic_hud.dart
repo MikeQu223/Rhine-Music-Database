@@ -32,11 +32,16 @@ const double basicPortraitListOffset = 1080.0;
 /// 侧栏起点：Qt NativeHud.cpp:408 `navigationLeft(width) = width - 789`。
 double basicNavigationLeft(double width) => width - 789;
 
-/// 资料库标题（Qt MusicLibrary::libraryName()，Qt/src/MusicLibrary.cpp:189-194）：
-/// 目录打开时是目录标题（'全部歌曲'），否则是 provider 名。
+/// 资料库标题（Qt MusicLibrary::libraryName()，Qt/src/MusicLibrary.cpp:188-193）：
+/// 目录打开时是目录标题（'全部歌曲'），否则是**当前列名**（`columns.value(lane)`：
+/// 搜索结果 / 喜欢的歌曲 / 我的歌单 / 全部歌曲 / 全部专辑）。
 String basicLibraryTitle(BasicViewState state) {
   final String title = state.directory?.title ?? '';
-  return title.isEmpty ? basicLibraryName : title;
+  if (title.isNotEmpty) {
+    return title;
+  }
+  final String lane = basicLaneName(state.selectedLane);
+  return lane.isEmpty ? basicLibraryName : lane;
 }
 
 /// 一帧的扁平命令流 + 命中集合。绘制（HudStagePainter）与命中（HitLayer）
@@ -142,9 +147,11 @@ class BasicHudFrame {
         libraryName: basicLibraryTitle(state),
         libraryIndex: selected,
         libraryTotal: items.length,
-        selectedLane: 3,
-        laneCount: 5,
-        sourceOrderIndex: 2,
+        // 真实列：Qt `selectedLane` / `sourceOrder().indexOf(selectedLane)` /
+        // columns.size()（Qt/src/NativeHud.cpp:479-490 的 COLLECTION xx / 05）。
+        selectedLane: state.selectedLane.clamp(0, basicSirenColumns.length - 1).toInt(),
+        laneCount: basicSirenColumns.length,
+        sourceOrderIndex: basicSourceOrderIndex(state.selectedLane),
         provider: sirenProvider,
         isLocal: false,
         isSiren: true,
@@ -158,7 +165,8 @@ class BasicHudFrame {
           id: currentId,
           title: currentTitle.isEmpty ? sirenUnknownTitle : currentTitle,
           artist: currentArtist,
-          kind: 'song',
+          // 真实条目类型：专辑列（lane 4）的行是 album，不当 song 冒充。
+          kind: items.isEmpty ? 'song' : items[selected].kind,
         ),
         libraryItemsEmpty: items.isEmpty,
         libraryItemsLength: items.length,
@@ -175,7 +183,8 @@ class BasicHudFrame {
         sink,
         state.error.isNotEmpty
             ? state.error
-            : (state.status.isEmpty ? '塞壬唱片曲库为空' : state.status),
+            // 空列文案按列区分（账号列不假装已加载、检索列提示输入关键词）。
+            : (state.status.isEmpty ? basicLaneEmptyNotice(state.selectedLane) : state.status),
         59,
         500,
         20,
@@ -369,6 +378,76 @@ Rect basicLibraryListStageRect({required bool portrait, required double width}) 
   );
 }
 
+/// HUD 自己的触摸区域（stage 坐标，闭区间）：每个命中形状（含 android 的触控
+/// 余量，口径与 [HitLayer.effectiveRect] 同一处）＋曲目列矩形。
+///
+/// 这是「谁消费这条指针」的唯一真值：HUD 手势层用它决定 hitTest，原生 raw
+/// pointer 适配层也必须用它在 **down 时**决定 ownership（命中这里＝HUD 消费整条
+/// 指针序列，不转发给 Qt；否则＝场景消费，转发 Qt 并捕获到终止事件）。
+///
+/// 与 [BasicHudSurface] 共用同一个 [frame]：绘制、点选、ownership 三者不会各自
+/// 推导出不同的命中地图。坐标空间只有一种——舞台坐标（横屏 0..width / 0..984，
+/// 竖屏 0..1080 见 [basicSceneStageRect]），不做第二次换算。
+List<Rect> basicHudRegionRects(
+  BasicHudFrame frame, {
+  required StageGeometry geometry,
+  required bool android,
+  required bool portrait,
+  required double width,
+}) {
+  final HitLayer layer = HitLayer(geometry: geometry, android: android);
+  return <Rect>[
+    for (final HudHit hit in frame.hits) layer.effectiveRect(hit),
+    basicLibraryListStageRect(portrait: portrait, width: width),
+  ];
+}
+
+/// 同上，但自己起一帧：给不持有 [frame] 的调用方（原生适配层的 ownership
+/// 判定、测试）用。命中地图仍然只有一份来源（[BasicHudFrame.build]）。
+List<Rect> basicHudOwnedStageRects({
+  required BasicViewState state,
+  required BasicGlyphPorts ports,
+  required StageGeometry geometry,
+  required double width,
+  required double height,
+  required bool portrait,
+  bool android = false,
+  double? listPosition,
+}) {
+  final BasicHudFrame frame = BasicHudFrame.build(
+    state: state,
+    ports: ports,
+    width: width,
+    height: height,
+    portrait: portrait,
+    listPosition: listPosition,
+  );
+  return basicHudRegionRects(
+    frame,
+    geometry: geometry,
+    android: android,
+    portrait: portrait,
+    width: width,
+  );
+}
+
+/// 这条 stage 坐标的指针是否归 HUD 消费（闭区间，与 [HitLayer.containsClosed]
+/// 同一约定：右/下边界也算命中）。
+bool basicHudOwnsStagePoint(
+  Offset stagePoint, {
+  required List<Rect> regions,
+}) {
+  for (final Rect rect in regions) {
+    if (stagePoint.dx >= rect.left &&
+        stagePoint.dx <= rect.right &&
+        stagePoint.dy >= rect.top &&
+        stagePoint.dy <= rect.bottom) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /// HUD 手势层：只在 [regions] 给的矩形内参与命中，矩形外返回 false。
 ///
 /// 这是“不抢 Qt 触摸”的关键：Stack 命中链在返回 true 的子节点处停下，旧实现用
@@ -504,14 +583,14 @@ class _BasicHudSurfaceState extends State<BasicHudSurface> {
     );
     // 命中矩形（stage 单位，已含触控余量）+ 曲目列；竖屏本层就在 stage 单位里，
     // 横屏本层是逻辑像素，统一在这里换算一次（HitLayer 内部同理只换一次）。
-    final HitLayer layer = HitLayer(
+    // 区域集合由 [basicHudRegionRects] 给出：手势层与原生 ownership 判定同源。
+    final List<Rect> stageRegions = basicHudRegionRects(
+      frame,
       geometry: geometry,
       android: defaultTargetPlatform == TargetPlatform.android,
+      portrait: portrait,
+      width: stage.width,
     );
-    final List<Rect> stageRegions = <Rect>[
-      for (final HudHit hit in frame.hits) layer.effectiveRect(hit),
-      listStageRect,
-    ];
     final List<Rect> regions = portrait
         ? stageRegions
         : <Rect>[for (final Rect rect in stageRegions) geometry.rectToLogical(rect)];

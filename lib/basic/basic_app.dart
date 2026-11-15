@@ -813,8 +813,8 @@ class _BasicShellState extends State<_BasicShell> implements TextInputPorts {
       unawaited(controller.seekToFraction(state.lyrics[line].startMs / state.durationMs));
       return null;
     }
-    // ←/→：目录内翻 8 行、目录外切来源（单来源=进入『全部歌曲』资料库目录），
-    // 只选中不播放（Qt/src/NativeHudController.cpp:652-663）。
+    // ←/→：目录内 ±8 换页（始终取模）、目录外按 sourceOrder() 换资料库列，
+    // 两条分支都只选中/换列，不播放、不建队列（Qt/src/NativeHudController.cpp:650-662）。
     if (action == 'column-prev' || action == 'column-next') {
       unawaited(controller.navigateColumn(action == 'column-next' ? 1 : -1));
       return null;

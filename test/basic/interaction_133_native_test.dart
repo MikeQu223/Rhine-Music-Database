@@ -189,9 +189,10 @@ void main() {
       expect(controller.state.playingTrack?.id, first.id);
 
       // 选中另一首但不播放：播放身份必须留在原曲目上。
-      // 曲库阶段的列表是「专辑行在前、歌曲行在后」，所以第 3 行才是第二首歌。
+      // 首屏默认列是「全部歌曲」，列表只列曲目行，所以第 1 行就是第二首
+      // （Qt/src/MusicLibrary.cpp:195-207 sourceItems(selectedLane)）。
       final SirenSong second = controller.state.songs[1];
-      await controller.selectLibraryRow(3);
+      await controller.selectLibraryRow(1);
       await _settle();
       expect(controller.state.song?.id, second.id, reason: '选中已移动到第二首');
       expect(controller.state.song?.id, isNot(first.id), reason: '选中已移动');
@@ -296,7 +297,7 @@ void main() {
       expect(audio.played, isFalse);
     });
 
-    test('目录第一行再往左 = 退目录回资料库（不伪造第二套导航栈）', () async {
+    test('目录第一行再往左 = 恒取模绕到上一页末尾（返回只走 back/music:parent）', () async {
       final _Server server = _Server();
       final _FakeAudio audio = _FakeAudio();
       final BasicController controller = await _loaded(server, audio);
@@ -306,25 +307,99 @@ void main() {
       await _settle();
       expect(controller.state.directory, isNotNull);
 
+      final int count = controller.state.songs.length;
       await controller.selectLibraryRow(0);
       await controller.navigateColumn(-1);
       await _settle();
-      expect(controller.state.directory, isNull, reason: '左键返回上一级');
+
+      // Qt/src/MusicDirectory.cpp:321-344 navigateDirectory(-8)：
+      // `selectDirectory(((target % count) + count) % count, ...)`——第一行再往左是绕到
+      // 末尾那一页，不是"返回上一级"。返回只有显式 back（Qt `music:parent`，
+      // Qt/src/NativeHud.cpp:378-410 的『← 返回上一级』）。
+      expect(controller.state.directory, isNotNull, reason: '← 在目录内永远是 navigateDirectory');
+      final int expected = (((0 - 8) % count) + count) % count;
+      expect(controller.state.directory!.index, expected);
+      expect(controller.state.listPosition, expected.toDouble());
+      expect(audio.played, isFalse, reason: '换页只选中，不播放');
+
+      await controller.back();
+      await _settle();
+      expect(controller.state.directory, isNull, reason: '显式 back 才退出目录');
       expect(controller.state.phase, BasicPhase.library);
     });
 
-    test('目录外 → 进入『全部歌曲』资料库目录', () async {
+    test('目录外 ←/→ = 按 sourceOrder() 循环换资料库列（不打开目录）', () async {
       final _Server server = _Server();
       final _FakeAudio audio = _FakeAudio();
       final BasicController controller = await _loaded(server, audio);
       addTearDown(controller.dispose);
       audio.calls.clear();
 
+      // Qt/src/NativeHudController.cpp:658-662：无目录时
+      // `showSource(sourceOrder().at(wrap(index ± 1, sources.size())))`。
+      // Siren 的 sourceOrder 是 {1,2,3,4,0}（Qt/src/MusicLibrary.cpp:184-186），
+      // 首屏在「全部歌曲」(3)，所以 → 依次是 4,0,1,2,3。
+      expect(controller.state.selectedLane, 3);
+      expect(controller.state.directory, isNull);
+
+      final List<int> visited = <int>[3];
+      for (var step = 0; step < 5; step++) {
+        await controller.navigateColumn(1);
+        await _settle();
+        visited.add(controller.state.selectedLane);
+      }
+      expect(visited, <int>[3, 4, 0, 1, 2, 3], reason: '五列按 sourceOrder 回环');
+      expect(controller.state.directory, isNull, reason: '换列不是打开目录');
+
+      // 反向一步回到 sourceOrder 的上一列（3 → 2，我的歌单）。
+      await controller.navigateColumn(-1);
+      await _settle();
+      expect(controller.state.selectedLane, 2);
+      expect(controller.state.directory, isNull);
+
+      // 账号列诚实为空：没有条目、没有选中、文案说清楚没接入，不编数据。
+      expect(basicLibraryItems(controller.state), isEmpty);
+      expect(controller.state.selection, isNull);
+      expect(controller.state.status, contains('未接入'));
+
+      // 我的歌单 → 全部歌曲 → 全部专辑：一路只换列。
       await controller.navigateColumn(1);
       await _settle();
-      expect(controller.state.directory, isNotNull);
-      expect(controller.state.directory!.title, sirenAllSongsTitle);
-      expect(audio.played, isFalse);
+      expect(controller.state.selectedLane, 3);
+      expect(basicLibraryItems(controller.state), isNotEmpty);
+      await controller.navigateColumn(1);
+      await _settle();
+      expect(controller.state.selectedLane, 4);
+      expect(controller.state.selection?.kind, 'album',
+          reason: '全部专辑列选中的是专辑条目');
+      expect(audio.played, isFalse, reason: '换列不播放');
+      expect(audio.calls, isEmpty);
+    });
+
+    test('专辑行只换身份：选中专辑后 state.song 不残留上一首（Qt choose 换 current）', () async {
+      final _Server server = _Server();
+      final _FakeAudio audio = _FakeAudio();
+      final BasicController controller = await _loaded(server, audio);
+      addTearDown(controller.dispose);
+      audio.calls.clear();
+
+      // 先在「全部歌曲」选一首真的曲目：state.song 有值。
+      expect(controller.state.selectedLane, 3);
+      await controller.selectLibraryRow(1);
+      await _settle();
+      expect(controller.state.song?.id, 's2', reason: '曲目行选中会写入 state.song');
+
+      // 换到「全部专辑」并选专辑行：Qt MusicLibrary::choose 对非 song 会整体换
+      // current，基础版把 current 拆成 selection + song，因此 song 必须清空——
+      // 否则 basic_app 的 `music:play`（走 openSong(state.song)）会在专辑列播旧歌。
+      await controller.navigateColumn(1);
+      await _settle();
+      expect(controller.state.selectedLane, 4);
+      await controller.selectLibraryRow(1);
+      await _settle();
+      expect(controller.state.selection?.kind, 'album');
+      expect(controller.state.song, isNull, reason: '专辑列不许留着上一首曲目');
+      expect(audio.calls, isEmpty, reason: '选专辑行不播放');
     });
   });
 
