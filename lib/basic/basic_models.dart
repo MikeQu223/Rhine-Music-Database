@@ -262,8 +262,11 @@ class BasicDirectory {
     required this.ids,
     required this.cursor,
     required this.index,
+    this.anchor = 0,
     this.virtual = true,
     this.parent,
+    this.parentLane = basicDefaultLane,
+    this.parentSelection,
   });
 
   /// Qt item.provider（'siren'）。
@@ -308,16 +311,47 @@ class BasicDirectory {
   /// Qt MusicDirectory::index：目录内选中行（位置真值，不是身份）。
   final int index;
 
+  /// Qt MusicDirectory::anchor（0..39）：目录窗口的锚点。
+  ///
+  /// Qt 用 `cell = (index + anchor) % 40` 把目录行折进 5 列 × 8 行的逻辑格，再用
+  /// `selectedLane = cell / 8` 决定高亮在哪一列（Qt/src/MusicDirectory.cpp:302-319
+  /// selectDirectory）；`updateSongs` 还用它算 page（同文件 :21-31）。
+  ///
+  /// 打开目录时 Qt 就写好它：`destination = (selectedLane + 1) % 5;
+  /// next->anchor = destination * 8 + rowMemory[destination]`
+  /// （Qt/src/MusicDirectory.cpp:50-90 enterDirectory / Qt/src/MusicSiren.cpp:229-240
+  /// openSirenAllSongs），但 open 本身**不调** selectDirectory，所以首帧列号仍是打开前
+  /// 那一列；之后 ±8/选中才按 anchor 折列。基础版没有 physicalSlots，所以这里只持有
+  /// 逻辑锚点：它**不是**物理记录下标或物理槽位。
+  final int anchor;
+
+  /// Qt MusicDirectory::page：当前 40 条窗口起点（Qt/src/MusicDirectory.cpp:308）。
+  int get page => index ~/ 40 * 40;
+
+  /// 目录行 [index] 折进 Qt 40 格窗口后的**逻辑格**（0..39，不是物理槽）。
+  int cellAt(int index) => ((index + anchor) % 40 + 40) % 40;
+
+  /// 目录行 [index] 落在哪一列（Qt `selectedLane = cell / 8`）。
+  int laneAt(int index) => cellAt(index) ~/ 8;
+
   /// 上一级目录（null = 资料库根）。
   final BasicDirectory? parent;
 
-  /// 复制并改选中行/游标/曲目（Qt 直接改 MusicDirectory 的可变字段）。
+  /// 退出目录后回到的资料库列（Qt/src/MusicDirectory.cpp:417-452 `leaveDirectory(true)`
+  /// 的 `parentLane`：Qt 退出目录会恢复打开前的那一列，不会把用户丢到 lane 0）。
+  final int parentLane;
+
+  /// 退出目录后恢复的选中身份（Qt `parentItem` 的 kind + id 投影）。
+  final BasicSelection? parentSelection;
+
+  /// 复制并改选中行/游标/曲目/锚点（Qt 直接改 MusicDirectory 的可变字段）。
   BasicDirectory copyWith({
     List<SirenSong>? songs,
     List<String>? ids,
     int? cursor,
     int? trackCount,
     int? index,
+    int? anchor,
   }) {
     return BasicDirectory(
       provider: provider,
@@ -333,8 +367,11 @@ class BasicDirectory {
       ids: ids ?? this.ids,
       cursor: cursor ?? this.cursor,
       index: index ?? this.index,
+      anchor: anchor ?? this.anchor,
       virtual: virtual,
       parent: parent,
+      parentLane: parentLane,
+      parentSelection: parentSelection,
     );
   }
 
@@ -441,6 +478,170 @@ class BasicLyricsDocument {
 /// 基础版的一级页面（Qt MusicSiren 的 archive/lanes 收窄成一个库页 + 详情 + 歌词）。
 enum BasicPhase { boot, library, detail, lyrics }
 
+/// 塞壬唱片的资料库**五列**（Qt/src/MusicLibrary.cpp:26-27 构造里的 columns，逐字）：
+/// `{"搜索结果", "喜欢的歌曲", "我的歌单", "全部歌曲", "全部专辑"}`。
+///
+/// Qt 的 source/column 是资料库的列，**不是 provider**：单个 Siren 平台也有这五列，
+/// ←/→ 在列之间循环（Qt/src/MusicLibrary.cpp:184-186 sourceOrder()）。
+const List<String> basicSirenColumns = <String>[
+  '搜索结果',
+  '喜欢的歌曲',
+  '我的歌单',
+  '全部歌曲',
+  '全部专辑',
+];
+
+/// Qt MusicLibrary::sourceOrder()（Qt/src/MusicLibrary.cpp:184-186）：
+/// Siren = `{1,2,3,4,0}`（kugou 是四列 `{1,2,3,0}`，基础版只接 Siren）。
+const List<int> basicSirenSourceOrder = <int>[1, 2, 3, 4, 0];
+
+/// 「搜索结果」列（Qt 的 lane 0）。
+const int basicSearchLane = 0;
+
+/// 首屏列：Qt 是 0（MusicLibrary.h:167 `selectedLane = 0`，再由 MusicSession.cpp:93-138
+/// 用会话恢复）；基础版没有会话持久化，而 lane 0 在空关键词下诚实为空，所以首屏落在
+/// **全部歌曲**（lane 3）。这只是初始列的选择：列名、顺序、循环仍是 Qt 的那一套。
+const int basicDefaultLane = 3;
+
+/// 列名（越界回空串；Qt MusicLibrary::libraryName() 的 `columns.value(lane)` 分支，
+/// Qt/src/MusicLibrary.cpp:188-193）。
+String basicLaneName(int lane) =>
+    lane >= 0 && lane < basicSirenColumns.length ? basicSirenColumns[lane] : '';
+
+/// 列在 sourceOrder 里的序号（界面 `COLLECTION xx / 05` 的 xx-1：
+/// Qt/src/NativeHud.cpp:479 `sourceOrder().indexOf(selectedLane)`）。
+int basicSourceOrderIndex(int lane) {
+  final int index = basicSirenSourceOrder.indexOf(lane);
+  return index < 0 ? 0 : index;
+}
+
+/// ←/→ 的下一列：Qt `wrap(index ± 1, sources.size())`（Qt/src/NativeHudController.cpp:658-662）。
+int basicStepSourceLane(int lane, int direction) {
+  final int count = basicSirenSourceOrder.length;
+  final int step = direction >= 0 ? 1 : -1;
+  return basicSirenSourceOrder[(basicSourceOrderIndex(lane) + step + count) % count];
+}
+
+/// 空列上屏的诚实空态：不编数据、不假装本机集合已经接上。
+///
+/// lane 1「喜欢的歌曲」/ lane 2「我的歌单」是**本机**集合，不是账号数据：Qt 给 Siren
+/// 构造的是 `LocalCollections`（Qt/src/MusicLibrary.cpp:26-30），`reloadSirenCollections`
+/// 只读 `likedIDs()` 与 `playlists()`（Qt/src/MusicSiren.cpp:6-21），没有任何登录条件。
+///
+/// [localCollectionsAvailable] 是“这一个基础版进程真的拿到本机集合端口了吗”：
+/// false（当前生产事实）时只声明暂不可用——不能把“没查询过”说成“空库”，更不能说成
+/// “账号数据”；只有端口真的注入并查询过、结果确实为空，才上屏 Qt 的空态文案
+/// （Qt/src/MusicSiren.cpp:265/:283 '暂无喜欢的歌曲' / '暂无本地歌单…'）。
+///
+/// [unresolvedLikedIds] 是“源集合非空、但曲库还解析不出这些 id”的条数（端口刚注入、
+/// 曲库还没加载完时就是全部）。这种情况**不是空收藏**：Qt loadSirenSource 会拿 id 去
+/// 请求 songs 再补行（Qt/src/MusicSiren.cpp:296-322），所以这里只诚实声明“还没对上曲库”，
+/// 既不造 `SirenSong`、也不上屏 '暂无喜欢的歌曲'。
+String basicLaneEmptyNotice(
+  int lane, {
+  bool localCollectionsAvailable = false,
+  int unresolvedLikedIds = 0,
+}) {
+  switch (lane) {
+    case basicSearchLane:
+      return '输入关键词检索塞壬唱片曲库';
+    case 1:
+      if (!localCollectionsAvailable) {
+        return '本地集合暂不可用：还没接上本机收藏';
+      }
+      if (unresolvedLikedIds > 0) {
+        return '本地收藏有 $unresolvedLikedIds 首还没对上曲库，稍后重试';
+      }
+      return '暂无喜欢的歌曲';
+    case 2:
+      return localCollectionsAvailable ? '暂无本地歌单' : '本地集合暂不可用：还没接上本机歌单';
+    case 3:
+      return '塞壬唱片曲库为空';
+    case 4:
+      return '塞壬唱片还没有专辑';
+    default:
+      return '这一列没有内容';
+  }
+}
+
+/// 列表里“被选中”的那一项（Qt `music.current` 的单值投影：kind + id）。
+///
+/// 选中与播放是**两件事**：Qt 的 archive 列表只维护 current/selectedPhysical
+/// （Qt/src/MusicDirectory.cpp:302-319 `selectDirectory` 不发 play），播放身份是
+/// MusicPlayer 的 current。这里同理：[BasicViewState.song] 是选中曲目，
+/// [BasicViewState.playingTrack] 是真正的播放曲目，两者不得互相顶替。
+class BasicSelection {
+  const BasicSelection({required this.kind, required this.id});
+
+  /// 'song' 或 'album'（与列表行的 kind 同一词表）。
+  final String kind;
+
+  /// 源条目 id（[BasicViewState.songs] / [BasicViewState.albums] 里的 id）。
+  final String id;
+
+  bool get isSong => kind == 'song';
+
+  @override
+  bool operator ==(Object other) =>
+      other is BasicSelection && other.kind == kind && other.id == id;
+
+  @override
+  int get hashCode => Object.hash(kind, id);
+
+  @override
+  String toString() => 'BasicSelection($kind:$id)';
+}
+
+/// 本机集合的**只读**查询端口：Qt `LocalCollections`（Qt/src/MusicLibrary.cpp:26-30）
+/// 里 Siren 列真正读到的两项——`likedIDs()` 与 `playlists()`
+/// （Qt/src/MusicSiren.cpp:6-21 reloadSirenCollections）。
+///
+/// 这是查询接口，不是第二份曲库/播放器/持久化：行数据仍由 Flutter 曲库投影
+/// （喜欢过的 id → 现有曲库的曲目；歌单 → [BasicLocalPlaylist] 行），基础版也没有
+/// 收藏/歌单的写入口（编辑 UI 不在本次范围）。生产侧目前没有任何实现曾被注入
+/// （`BasicController(collections:)` 默认 null），所以 [BasicViewState.localCollectionsAvailable]
+/// 为 false 是事实，不是“空库”。
+abstract class BasicLocalCollections {
+  /// 本机喜欢过的曲目 id（按本机顺序；Qt `likedIDs()` 的字符串列表投影）。
+  List<String> likedIds();
+
+  /// 本机歌单（Qt `collections->playlists()` 的 id/title/trackCount 投影）。
+  List<BasicLocalPlaylist> playlists();
+}
+
+/// 本机歌单的一行（Qt `playlists()` 的 id/title/trackCount）。
+///
+/// 基础版只展示（列表行 + 身份），不提供新建/改名/删除/加曲。
+class BasicLocalPlaylist {
+  const BasicLocalPlaylist({
+    required this.id,
+    required this.title,
+    this.trackCount = 0,
+  });
+
+  /// 本机歌单 id（Qt `playlists()` 的 id）。
+  final String id;
+
+  /// 上屏标题（Qt `playlists()` 的 title）。
+  final String title;
+
+  /// 曲目数（Qt `playlists()` 的 trackCount）。
+  final int trackCount;
+
+  @override
+  bool operator ==(Object other) =>
+      other is BasicLocalPlaylist &&
+      other.id == id &&
+      other.title == title &&
+      other.trackCount == trackCount;
+
+  @override
+  int get hashCode => Object.hash(id, title, trackCount);
+
+  @override
+  String toString() => 'BasicLocalPlaylist($id:$title/$trackCount)';
+}
+
 /// 界面只读的状态快照；唯一写者是 BasicController。
 ///
 /// 冻结契约要求的 getter（phase/loading/error/status/query/songs/albums/album/song/playing/
@@ -472,6 +673,13 @@ class BasicViewState {
     this.lyricMessage = '',
     this.playerStatus = '',
     this.catalogLoaded = false,
+    this.selection,
+    this.playingTrack,
+    this.listPosition,
+    this.selectedLane = basicDefaultLane,
+    this.localCollectionsAvailable = false,
+    this.localUnresolvedLikedIds = 0,
+    this.localPlaylists = const <BasicLocalPlaylist>[],
   });
 
   /// 当前页面。
@@ -504,7 +712,10 @@ class BasicViewState {
   /// `directory ? directory->orderedSongs() : …`），[albums] 为空。
   final BasicDirectory? directory;
 
-  /// 当前曲目（正在播放或刚选中；歌词页与播放条都以它为准）。
+  /// 当前**选中**的曲目（浏览/选中/详情页都看它）：只由列表选中写入。
+  ///
+  /// 它不是播放身份——真正在播的是 [playingTrack]（MusicPlayer 的 current）；歌词页与
+  /// 播放条都以 [playingTrack] 为准，浏览/换列不改播放，播放器换曲也不改这里。
   final SirenSong? song;
 
   final bool playing;
@@ -546,6 +757,44 @@ class BasicViewState {
   /// 曲库是否已成功加载过（失败重试/搜索空态判断用）。
   final bool catalogLoaded;
 
+  /// 列表选中身份（Qt `music.current`）；null = 还没选过，按 [song]/[album] 回退。
+  final BasicSelection? selection;
+
+  /// 真正的播放曲目（来自 MusicPlayer 的 current）；null = 播放器没有 loaded 曲目。
+  ///
+  /// 与 [song]（选中）严格分开：浏览/选曲不改它，播放器换曲也不改 [song]。
+  final SirenSong? playingTrack;
+
+  /// 曲目列的滚动位置，单位是**条目**（小数 = 两项之间），Qt 的 ruler 同义
+  /// （Qt/src/NativeHud.cpp:509 的 titleY + TrackRuler 的连续 position）。
+  ///
+  /// null = 没有独立的窗口位置，窗口跟随选中行（旧行为）；controller 每次都写绝对值。
+  final double? listPosition;
+
+  /// 当前资料库列（0..4，列名见 [basicSirenColumns]；Qt `MusicLibrary::selectedLane`）。
+  ///
+  /// 根页列表只承载这一列（Qt/src/MusicLibrary.cpp:195-207 sourceItems(lane)），
+  /// ←/→ 按 [basicSirenSourceOrder] 循环换列。
+  final int selectedLane;
+
+  /// 本进程是否真的拿到了本机集合端口并查询过（Qt 的 `collections != nullptr` 同义）。
+  ///
+  /// false 时 lane 1/2 只声明「本地集合暂不可用」——不是空库，也不是平台前置条件缺失；
+  /// true 时空才是 Qt 的真空态（Qt/src/MusicSiren.cpp:265/:283）。
+  final bool localCollectionsAvailable;
+
+  /// 源集合里已有、但当前曲库还解析不出的本机收藏条数（Qt 会拿这些 id 再补 songs）。
+  ///
+  /// 它让“源集合非空但暂时一首都显示不出来”与“源集合真的空”说出两句话：
+  /// 前者见 [basicLaneEmptyNotice] 的 `unresolvedLikedIds` 分支，后者才是 '暂无喜欢的歌曲'。
+  final int localUnresolvedLikedIds;
+
+  /// 「我的歌单」列的行投影（本机 `playlists()`；不可用时为空）。
+  ///
+  /// 「喜欢的歌曲」的行不在这里：它们经 Flutter 曲库解析后进 [songs]
+  /// （与 [selectedLane] 的投影同一份真值），见 [basicLibraryItems] 的 lane 1 分支。
+  final List<BasicLocalPlaylist> localPlaylists;
+
   bool get hasCatalog => catalogLoaded;
 
   bool get canPlay => song != null;
@@ -585,9 +834,18 @@ class BasicViewState {
     String? lyricMessage,
     String? playerStatus,
     bool? catalogLoaded,
+    BasicSelection? selection,
+    SirenSong? playingTrack,
+    double? listPosition,
+    int? selectedLane,
+    bool? localCollectionsAvailable,
+    int? localUnresolvedLikedIds,
+    List<BasicLocalPlaylist>? localPlaylists,
     bool dropAlbum = false,
     bool dropDirectory = false,
     bool dropSong = false,
+    bool dropSelection = false,
+    bool dropPlayingTrack = false,
   }) {
     return BasicViewState(
       phase: phase ?? this.phase,
@@ -614,9 +872,248 @@ class BasicViewState {
       lyricMessage: lyricMessage ?? this.lyricMessage,
       playerStatus: playerStatus ?? this.playerStatus,
       catalogLoaded: catalogLoaded ?? this.catalogLoaded,
+      selection: dropSelection ? null : (selection ?? this.selection),
+      playingTrack: dropPlayingTrack ? null : (playingTrack ?? this.playingTrack),
+      listPosition: listPosition ?? this.listPosition,
+      selectedLane: selectedLane ?? this.selectedLane,
+      localCollectionsAvailable: localCollectionsAvailable ?? this.localCollectionsAvailable,
+      localUnresolvedLikedIds: localUnresolvedLikedIds ?? this.localUnresolvedLikedIds,
+      localPlaylists: localPlaylists ?? this.localPlaylists,
     );
   }
 }
+
+/// 一条可点条目：资料库一列里的一个条目（曲目或专辑），专辑页只承载该专辑曲目。
+/// kind/index 指回 [BasicViewState] 的列表，绘制、命中、选中三处共用同一份顺序。
+///
+/// [id] 是条目身份（曲目 id / 专辑 id）。它是**唯一可靠的身份**：搜索结果列的
+/// index 指回本次过滤后的列表，与 state.songs 的下标不同，只有 id 能对上选中。
+class BasicListItem {
+  const BasicListItem({
+    required this.title,
+    required this.kind,
+    required this.index,
+    this.id = '',
+  });
+
+  final String title;
+  final String kind;
+  final int index;
+
+  /// 源条目 id（空串 = 旧调用点没给，退化为按 index 读源列表）。
+  final String id;
+}
+
+/// 绘制与命中共用的一份列表真值。
+///
+/// 根页**只列 selectedLane 这一列**（Qt/src/MusicLibrary.cpp:195-207 sourceItems(lane)：
+/// lane 越界为空，groupLane != lane 取 lists[lane]）。133 把专辑行与曲目行压进同一列
+/// 是错的：Qt 的列是资料库列（搜索结果/喜欢的歌曲/我的歌单/全部歌曲/全部专辑），
+/// 单平台也有五列，左右箭头换的是列。
+///
+/// [BasicViewState.songs] / [BasicViewState.albums] 由 controller 按当前列投好影
+/// （搜索结果列是过滤后的集合，喜欢的歌曲列是本机 likedIDs 经曲库解析出的曲目，
+/// 我的歌单列不含曲目，其余列是整库），这里不再二次过滤。
+List<BasicListItem> basicLibraryItems(BasicViewState state) {
+  if (state.directory != null) {
+    // Qt/src/MusicLibrary.cpp:212-214 `directory ? directory->orderedSongs() : …`：
+    // 目录打开时列表只有目录曲目（不再有专辑行），行号就是目录位置。
+    return <BasicListItem>[
+      for (var index = 0; index < state.songs.length; index++)
+        BasicListItem(
+          title: state.songs[index].title.isEmpty ? sirenUnknownTitle : state.songs[index].title,
+          kind: 'song',
+          index: index,
+          id: state.songs[index].id,
+        ),
+    ];
+  }
+  final SirenAlbum? album = state.album;
+  if (state.phase == BasicPhase.detail && album != null) {
+    return <BasicListItem>[
+      for (var index = 0; index < album.songs.length; index++)
+        BasicListItem(
+          title: album.songs[index].title.isEmpty ? sirenUnknownTitle : album.songs[index].title,
+          kind: 'song',
+          index: index,
+          id: album.songs[index].id,
+        ),
+    ];
+  }
+  if (state.selectedLane == 4) {
+    // 「全部专辑」列（Qt lane 4 的 lists[4]）。
+    return <BasicListItem>[
+      for (var index = 0; index < state.albums.length; index++)
+        BasicListItem(
+          title: state.albums[index].name.isEmpty ? '未命名专辑' : state.albums[index].name,
+          kind: 'album',
+          index: index,
+          id: state.albums[index].id,
+        ),
+    ];
+  }
+  if (state.selectedLane == basicSearchLane) {
+    // 「搜索结果」列（Qt lane 0 的 lists[0]）。Qt 用 searchKind 一次只搜一类；
+    // 基础版只有一个检索框，命中结果按 专辑行 + 曲目行 同列列出。
+    // 空关键词 = 该列清空（Qt MusicLibrary.cpp:409-486 的 search() 清 lists[0] 后
+    // 只上屏 '请输入 1–100 字关键词'），不是"列出全部"。
+    if (state.query.trim().isEmpty) {
+      return const <BasicListItem>[];
+    }
+    return <BasicListItem>[
+      for (var index = 0; index < state.albums.length; index++)
+        BasicListItem(
+          title: state.albums[index].name.isEmpty ? '未命名专辑' : state.albums[index].name,
+          kind: 'album',
+          index: index,
+          id: state.albums[index].id,
+        ),
+      for (var index = 0; index < state.songs.length; index++)
+        BasicListItem(
+          title: state.songs[index].title.isEmpty ? sirenUnknownTitle : state.songs[index].title,
+          kind: 'song',
+          index: index,
+          id: state.songs[index].id,
+        ),
+    ];
+  }
+  if (state.selectedLane == 3) {
+    // 「全部歌曲」列（Qt lane 3 的 lists[3]）。
+    return <BasicListItem>[
+      for (var index = 0; index < state.songs.length; index++)
+        BasicListItem(
+          title: state.songs[index].title.isEmpty ? sirenUnknownTitle : state.songs[index].title,
+          kind: 'song',
+          index: index,
+          id: state.songs[index].id,
+        ),
+    ];
+  }
+  if (state.selectedLane == 1) {
+    // 「喜欢的歌曲」列（Qt lane 1 的 lists[1]）：本机 likedIDs 经 Flutter 曲库解析出的
+    // 曲目（Qt/src/MusicSiren.cpp:296-335 只按 id 取 songs，不产生账号请求）。
+    // 端口不可用时 state.songs 会是空投影，空态文案由 basicLaneEmptyNotice 说明。
+    return <BasicListItem>[
+      for (var index = 0; index < state.songs.length; index++)
+        BasicListItem(
+          title: state.songs[index].title.isEmpty ? sirenUnknownTitle : state.songs[index].title,
+          kind: 'song',
+          index: index,
+          id: state.songs[index].id,
+        ),
+    ];
+  }
+  if (state.selectedLane == 2) {
+    // 「我的歌单」列（Qt lane 2 的 lists[2] = collections->playlists()）：
+    // 端口不可用时一条也不编（诚实空态），可用时列真实歌单行。
+    if (!state.localCollectionsAvailable) {
+      return const <BasicListItem>[];
+    }
+    return <BasicListItem>[
+      for (var index = 0; index < state.localPlaylists.length; index++)
+        BasicListItem(
+          title: state.localPlaylists[index].title.isEmpty
+              ? '未命名歌单'
+              : state.localPlaylists[index].title,
+          kind: 'playlist',
+          index: index,
+          id: state.localPlaylists[index].id,
+        ),
+    ];
+  }
+  return const <BasicListItem>[];
+}
+
+/// 当前高亮条目（Qt MusicLibrary::libraryIndex()，Qt/src/MusicLibrary.cpp:196-212）。
+///
+/// 目录内用 directory.index —— Qt MusicDirectory::index 是位置真值，selectDirectory
+/// 先写它再 choose（Qt/src/MusicDirectory.cpp:302-319）。
+///
+/// 资料库/专辑页按**身份**在 items 里找自己的行：先按 [BasicViewState.selection]
+/// （一个 (kind, id) 的单值，等于 Qt 的 music.current）匹配；没有 selection 时再用当前
+/// 曲目 id 匹配 kind == 'song' 行、用当前专辑 id 匹配 kind == 'album' 行。items 同时含
+/// 专辑与曲目时行序与 state.songs 的下标并不相同（专辑行占前段），所以不能拿 state.songs
+/// 的下标当行号，也没有固定偏移可加；标题可能重复，不能按标题匹配。
+int basicSelectedItemIndex(BasicViewState state, List<BasicListItem> items) {
+  if (items.isEmpty) {
+    return 0;
+  }
+  final BasicDirectory? directory = state.directory;
+  if (directory != null) {
+    final int index = directory.index;
+    return index < 0 || index >= items.length ? 0 : index;
+  }
+  final BasicSelection? selection = state.selection;
+  if (selection != null) {
+    for (var position = 0; position < items.length; position++) {
+      final BasicListItem item = items[position];
+      if (item.kind == selection.kind && _itemIdAt(state, item) == selection.id) {
+        return position;
+      }
+    }
+  }
+  final String songId = state.song?.id ?? '';
+  if (songId.isNotEmpty) {
+    for (var position = 0; position < items.length; position++) {
+      final BasicListItem item = items[position];
+      if (item.kind != 'song' || item.index < 0 || item.index >= state.songs.length) {
+        continue;
+      }
+      if (state.songs[item.index].id == songId) {
+        return position;
+      }
+    }
+  }
+  final String albumId = state.album?.id ?? '';
+  if (albumId.isNotEmpty) {
+    for (var position = 0; position < items.length; position++) {
+      final BasicListItem item = items[position];
+      if (item.kind != 'album' || item.index < 0 || item.index >= state.albums.length) {
+        continue;
+      }
+      if (state.albums[item.index].id == albumId) {
+        return position;
+      }
+    }
+  }
+  return 0;
+}
+
+/// 列表条目指回的源条目 id（越界/无源返回空串）。
+///
+/// 条目自带 id 时以它为身份真值（搜索结果列的 index 指回过滤后的列表，
+/// 与 state.songs 下标并不相同）；只有旧调用点没给 id 时才按 index 回读源列表。
+String _itemIdAt(BasicViewState state, BasicListItem item) {
+  if (item.id.isNotEmpty) {
+    return item.id;
+  }
+  if (item.index < 0) {
+    return '';
+  }
+  if (item.kind == 'song') {
+    if (item.index >= state.songs.length) {
+      return '';
+    }
+    return state.songs[item.index].id;
+  }
+  if (item.kind == 'album') {
+    if (item.index >= state.albums.length) {
+      return '';
+    }
+    return state.albums[item.index].id;
+  }
+  return '';
+}
+
+/// 条目的选中身份（越界/无源返回 null）。
+BasicSelection? basicItemSelection(BasicViewState state, BasicListItem item) {
+  final String id = _itemIdAt(state, item);
+  if (id.isEmpty) {
+    return null;
+  }
+  return BasicSelection(kind: item.kind, id: id);
+}
+
 
 /// Qt MusicLibrary::searchSirenLocal 的歌曲匹配（MusicSiren.cpp:105-124）：
 /// 空词全匹配，否则 title / album / artist 任一包含即命中（大小写不敏感）。

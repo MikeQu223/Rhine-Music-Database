@@ -4,6 +4,7 @@ import 'package:rhine_music_database/basic/basic_hud.dart';
 import 'package:rhine_music_database/basic/basic_hud_resources.dart';
 import 'package:rhine_music_database/basic/basic_models.dart';
 import 'package:rhine_music_database/hud/input/hit_layer.dart';
+import 'package:rhine_music_database/hud/protocol/hud_hit.dart';
 import 'package:rhine_music_database/hud/protocol/hud_frame.dart';
 import 'package:rhine_music_database/hud/text/glyph_font.dart';
 import 'package:rhine_music_database/hud/text/glyph_run.dart';
@@ -99,7 +100,8 @@ void main() {
   });
 
   group('hit dispatch', () {
-    testWidgets('tapping the player song area emits player:open', (WidgetTester tester) async {
+    testWidgets('tapping the player queue entry emits player:open',
+        (WidgetTester tester) async {
       tester.view.physicalSize = const Size(1920, 1080);
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.resetPhysicalSize);
@@ -121,8 +123,18 @@ void main() {
       ));
       await tester.pump();
 
-      // 播放条行内左侧是当前曲目区（Qt PlayerBar.cpp 的 song 命中）。
-      await tester.tapAt(const Offset(100, 1040));
+      // `player:open` 全表唯一发射点是播放条右端的队列入口
+      // （Qt/src/PlayerBar.cpp:224 `hit({queueX - 14, y + 16, 54, 65}, "player:open", …)`）；
+      // 歌曲信息区在 Qt 里只有 player:lyrics（:136），没有 player:open。
+      // 旧版这里硬编码 (100, 1040)，那是 transport 区的左侧空白，从未命中任何 hit。
+      final HudHit open = BasicHudFrame.build(
+        state: _library(),
+        ports: _ports(),
+        width: 1920,
+        height: 1080,
+        portrait: false,
+      ).hits.firstWhere((HudHit hit) => hit.action == 'player:open');
+      await tester.tapAt(Offset(open.x + open.width / 2, open.y + open.height / 2));
       await tester.pump();
       expect(actions, contains('player:open'));
     });
