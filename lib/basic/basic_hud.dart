@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart'
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/scheduler.dart' show Ticker;
 
 import '../hud/input/hit_layer.dart';
 import '../hud/modals/lyrics_panel.dart' as lyrics;
@@ -51,11 +52,20 @@ String basicLibraryTitle(BasicViewState state) {
 /// 一帧的扁平命令流 + 命中集合。绘制（HudStagePainter）与命中（HitLayer）
 /// 消费同一份，禁止各自再推导坐标。
 class BasicHudFrame {
-  BasicHudFrame({required this.generation, required this.commands, required this.hits});
+  BasicHudFrame({
+    required this.generation,
+    required this.commands,
+    required this.hits,
+    this.animating = false,
+  });
 
   final int generation;
   final List<List<Object?>> commands;
   final List<HudHit> hits;
+
+  /// 本帧绘制结束后，共享滚动文字是否仍有字符槽在动。宿主
+  /// （[BasicHudSurface]）据此续帧；静止帧为 false，不空转 ticker。
+  final bool animating;
 
   static int _generation = 0;
 
@@ -67,9 +77,26 @@ class BasicHudFrame {
     required bool portrait,
     /// 拖动中的临时滚动位置（条目单位）；null = 用 state.listPosition。
     double? listPosition,
+    /// 本帧的共享滚动文字时钟（秒，与 kReelDuration 同单位）。宿主 ticker 推进；
+    /// 缺省 0 时首帧仍会画静态文字（RollingLabel 首帧 alpha=1），不会空白。
+    double animationTime = 0,
+    /// 是否让值变化走卷动动画；false 时滚动标签退化为单条静态 text。
+    ///
+    /// 默认 **false**：没有帧时钟的调用点（离屏/测试逐帧构造）必须拿到与旧行为
+    /// 同形的单条 text 命令（如整条歌名），不能因为它们不推进时间就把文字拆成
+    /// 逐字槽或整段不画。宿主 [BasicHudSurface] 有 ticker，显式传 true。
+    bool animateText = false,
   }) {
     final _HudSink sink = _HudSink();
     final bool dark = state.dark;
+    // 本帧绑定：滚动标签与静态 hudText 走同一个 sink、同一发射顺序，
+    // ink 取同一 hudInk(dark)，暗/亮主题不会画出两套颜色。
+    ports.beginFrame(
+      sink: sink,
+      time: animationTime,
+      ink: hudInk(dark),
+      animate: animateText,
+    );
     HudChrome(sink, ports, dark: dark).chromeView(
       width: width,
       archiveMode: state.phase == BasicPhase.library && !portrait,
@@ -124,8 +151,14 @@ class BasicHudFrame {
     );
     sink.addDrawing(bar.commands, bar.hits);
 
+    final bool animating = ports.endFrame();
     _generation += 1;
-    return BasicHudFrame(generation: _generation, commands: sink.commands, hits: sink.hits);
+    return BasicHudFrame(
+      generation: _generation,
+      commands: sink.commands,
+      hits: sink.hits,
+      animating: animating,
+    );
   }
 
   static void _paintLibrary(
@@ -541,6 +574,7 @@ class BasicHudSurface extends StatefulWidget {
     required this.ports,
     required this.onAction,
     this.onLibraryScroll,
+    this.onLibraryScrollUpdate,
     this.geometry,
     this.stage,
     this.sceneKey,
@@ -553,6 +587,12 @@ class BasicHudSurface extends StatefulWidget {
   /// 列表拖动结束的落点（条目单位，可含小数）；由 basic_app 接到
   /// BasicController.commitLibraryScroll。null = 只支持点选，不支持拖动。
   final ValueChanged<double>? onLibraryScroll;
+
+  /// 拖动中的连续窗口位置（条目单位，可含小数）。Q3 双向跟随契约：
+  /// 抬手前必须多次回调（每次指针 move 一次），供宿主把列表窗口实时投影到
+  /// 3D 层（BasicApp -> controller.listPosition -> Qt 场景）。只读位置：
+  /// 不播放、不换队列、不改选中之外的任何状态；抬手落点仍走 [onLibraryScroll]。
+  final ValueChanged<double>? onLibraryScrollUpdate;
 
   /// 横屏由调用方按逻辑尺寸构造；竖屏用 PortraitStage 注入的 scope。
   final StageGeometry? geometry;
@@ -567,13 +607,80 @@ class BasicHudSurface extends StatefulWidget {
   State<BasicHudSurface> createState() => _BasicHudSurfaceState();
 }
 
-class _BasicHudSurfaceState extends State<BasicHudSurface> {
+class _BasicHudSurfaceState extends State<BasicHudSurface>
+    with SingleTickerProviderStateMixin {
   /// 拖动中的临时滚动位置（条目单位）；null = 跟随 state.listPosition。
   double? _dragPosition;
 
   /// ruler 相邻两项的中心距（lib/hud/widgets/track_ruler.dart 的 88/52 布局，
   /// 相邻为 88）；拖动换算用同一常量，避免手感与绘制不一致。
   static const double _rowStep = 88;
+
+  /// 共享滚动文字的帧时钟（秒）。只由 [_rollingTicker] 单调推进，不跟触摸绑定：
+  /// 初始/暂停/不触摸时标签也会走到可见终态（见 lib/hud/text/rolling_text.dart）。
+  double _animationTime = 0;
+
+  /// ticker 的单调累加基准：Ticker.start() 会把 elapsed 归零重来，直接当时间用会
+  /// 让字符槽"倒放"，所以只在两次 tick 之间取增量再累加。
+  Duration? _tickerBase;
+  Ticker? _rollingTicker;
+  bool _rollingAnimating = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // 端口里的 RollingLabel 可能比本 State 活得久（端口随 resources 复用），
+    // 它们的动画曲线记的是旧时钟；新 State 若从 0 起算，旧曲线会被当成"仍在动"
+    // 而空转 ticker。接上端口的当前帧时钟，保证同一时间基准。
+    _animationTime = widget.ports.rollingText.time;
+    _rollingTicker = createTicker(_onRollingTick);
+  }
+
+  @override
+  void dispose() {
+    // 释放 ticker 并解绑：避免已卸载的 state 继续 setState，也保证外部
+    // state.listPosition 不会被残留的 _dragPosition 遮住。
+    _rollingTicker?.dispose();
+    _rollingTicker = null;
+    _dragPosition = null;
+    super.dispose();
+  }
+
+  void _onRollingTick(Duration elapsed) {
+    final Duration? base = _tickerBase;
+    _tickerBase = elapsed;
+    if (base == null || !mounted) {
+      return;
+    }
+    final double delta =
+        (elapsed - base).inMicroseconds / Duration.microsecondsPerSecond;
+    if (delta <= 0) {
+      return;
+    }
+    setState(() => _animationTime += delta);
+  }
+
+  /// 本帧结束后是否继续 ticker。在 build 里不能直接 start/stop，post-frame 生效。
+  void _scheduleRollingTicker(bool animating) {
+    if (animating == _rollingAnimating &&
+        (!animating || (_rollingTicker?.isActive ?? false))) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((Duration _) {
+      if (!mounted) {
+        return;
+      }
+      if (animating) {
+        if (!(_rollingTicker?.isActive ?? false)) {
+          _tickerBase = null;
+          _rollingTicker?.start();
+        }
+      } else {
+        _rollingTicker?.stop();
+      }
+      _rollingAnimating = animating;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -588,7 +695,11 @@ class _BasicHudSurfaceState extends State<BasicHudSurface> {
       height: stage.height,
       portrait: portrait,
       listPosition: _dragPosition,
+      animationTime: _animationTime,
+      animateText: true,
     );
+    // 共享滚动文字有字符槽还在 kReelDuration 内 -> 续帧；静止后停 ticker。
+    _scheduleRollingTicker(frame.animating);
     final HudFrameEnvelope envelope = HudFrameEnvelope.decode(<String, Object?>{
       'generation': frame.generation,
       'frame': <String, Object?>{},
@@ -717,7 +828,10 @@ class _BasicHudSurfaceState extends State<BasicHudSurface> {
   }
 
   void _dragStarted(BasicViewState state) {
-    setState(() => _dragPosition = _windowOf(state));
+    final double start = _windowOf(state);
+    setState(() => _dragPosition = start);
+    // 起点也发一次：3D/原生层从当前窗口接上，第一次 move 之前就不会跳。
+    widget.onLibraryScrollUpdate?.call(start);
   }
 
   /// 当前滚动窗口（条目单位）：显式位置优先，其次跟随选中，与 painter 同一规则。
@@ -749,6 +863,10 @@ class _BasicHudSurfaceState extends State<BasicHudSurface> {
     final double max = (count - 1).toDouble();
     final double clamped = next < 0 ? 0 : (next > max ? max : next);
     setState(() => _dragPosition = clamped);
+    // Q3 双向连续跟随：抬手前每个 move 都发一次连续条目位置。宿主把它投影到
+    // 3D/原生层；这里只报告窗口，不选中、不播放、不改队列（落点仍由
+    // _dragEnded 的 onLibraryScroll 提交）。
+    widget.onLibraryScrollUpdate?.call(clamped);
   }
 
   void _dragEnded() {
