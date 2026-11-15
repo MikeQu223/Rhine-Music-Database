@@ -357,10 +357,12 @@ void main() {
       expect(controller.state.selectedLane, 2);
       expect(controller.state.directory, isNull);
 
-      // 账号列诚实为空：没有条目、没有选中、文案说清楚没接入，不编数据。
+      // 本机集合列（lane 1/2）与账号无关：基础版没有本机集合端口时诚实为空，
+      // 不编数据、不冒充空库，也不把空态归因到平台前置条件（Qt/src/MusicLibrary.cpp:26-30 的
+      // Siren 分支直接构造 LocalCollections，Qt/src/MusicSiren.cpp:6-21 只读本机集合）。
       expect(basicLibraryItems(controller.state), isEmpty);
       expect(controller.state.selection, isNull);
-      expect(controller.state.status, contains('未接入'));
+      expect(controller.state.status, contains('本地集合暂不可用'));
 
       // 我的歌单 → 全部歌曲 → 全部专辑：一路只换列。
       await controller.navigateColumn(1);

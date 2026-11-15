@@ -119,8 +119,15 @@ void main() {
           basicLaneEmptyNotice(lane),
       };
       expect(notices.length, basicSirenColumns.length, reason: '每列空态各说各话');
-      expect(basicLaneEmptyNotice(1), contains('账号'));
-      expect(basicLaneEmptyNotice(2), contains('账号'));
+      // 本机收藏/歌单不依赖账号（Qt/src/MusicLibrary.cpp:26-30 的 Siren 分支直接构造
+      // LocalCollections，Qt/src/MusicSiren.cpp:6-21 只读 likedIDs/playlists）。
+      for (var lane = 0; lane < basicSirenColumns.length; lane++) {
+        expect(basicLaneEmptyNotice(lane), isNot(contains('账号')), reason: 'lane $lane 不提账号');
+      }
+      expect(basicLaneEmptyNotice(1), contains('本地集合暂不可用'));
+      expect(basicLaneEmptyNotice(2), contains('本地集合暂不可用'));
+      expect(basicLaneEmptyNotice(1, localCollectionsAvailable: true), contains('暂无喜欢的歌曲'));
+      expect(basicLaneEmptyNotice(2, localCollectionsAvailable: true), contains('暂无本地歌单'));
       expect(basicLaneEmptyNotice(3), contains('曲库'));
     });
   });
@@ -202,15 +209,44 @@ void main() {
       expect(basicLibraryItems(state), isEmpty);
     });
 
-    test('账号列（lane 1/2）：诚实空，不编条目', () {
+    test('本机收藏/歌单列（lane 1/2）：端口不可用不编条目，可用才列真实本机数据', () {
+      final SirenSong s1 = _song('s1', '第一首');
+      final SirenAlbum a1 = _album('album-1', '测试专辑', <SirenSong>[s1]);
       final BasicViewState base = BasicViewState(
         phase: BasicPhase.library,
-        songs: <SirenSong>[_song('s1', '第一首')],
-        albums: <SirenAlbum>[_album('album-1', '测试专辑', <SirenSong>[_song('s1', '第一首')])],
+        songs: <SirenSong>[s1],
+        albums: <SirenAlbum>[a1],
       );
 
-      expect(basicLibraryItems(base.copyWith(selectedLane: 1)), isEmpty);
-      expect(basicLibraryItems(base.copyWith(selectedLane: 2)), isEmpty);
+      // 端口不可用：lane 1 的曲目投影是空表（controller 不投任何条目），
+      // lane 2 一条都不编（文案说明“暂不可用”）。
+      final BasicViewState empty = base.copyWith(songs: const <SirenSong>[]);
+      expect(basicLibraryItems(empty.copyWith(selectedLane: 1)), isEmpty);
+      expect(basicLibraryItems(empty.copyWith(selectedLane: 2)), isEmpty);
+
+      // lane 1 真实投影：likedIDs 经曲库解析出的曲目行进 state.songs（Qt lists[1]）。
+      final List<BasicListItem> liked = basicLibraryItems(
+        base.copyWith(selectedLane: 1, localCollectionsAvailable: true),
+      );
+      expect(liked.map((BasicListItem item) => item.kind).toList(), <String>['song']);
+      expect(liked.map((BasicListItem item) => item.id).toList(), <String>['s1']);
+
+      // lane 2 真实投影：本机歌单行（Qt lists[2] = collections->playlists()）。
+      final List<BasicListItem> playlists = basicLibraryItems(
+        base.copyWith(
+          selectedLane: 2,
+          localCollectionsAvailable: true,
+          localPlaylists: const <BasicLocalPlaylist>[
+            BasicLocalPlaylist(id: 'p1', title: '通勤', trackCount: 3),
+            BasicLocalPlaylist(id: 'p2', title: '', trackCount: 0),
+          ],
+        ),
+      );
+      expect(playlists.map((BasicListItem item) => item.kind).toList(),
+          <String>['playlist', 'playlist']);
+      expect(playlists.map((BasicListItem item) => item.id).toList(), <String>['p1', 'p2']);
+      expect(playlists.first.title, '通勤');
+      expect(playlists[1].title, '未命名歌单', reason: '空标题有兜底，不出现空行');
     });
 
     test('目录打开：只列目录曲目，专辑行不再出现', () {
