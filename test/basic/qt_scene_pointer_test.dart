@@ -1,4 +1,5 @@
 import 'package:flutter/gestures.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:rhine_music_database/basic/qt_scene_view.dart';
@@ -123,5 +124,39 @@ void main() {
     // 6 组 down/up 全部下发；如果 up 之后没清表，第 2 根的同坐标事件会被误判重复。
     expect(types().where((String type) => type == 'pointerdown').length, 6);
     expect(types().where((String type) => type == 'pointerup').length, 6);
+  });
+
+  testWidgets('取消必须走 pointercancel 接线，改回 bridge.up 立刻变红', (WidgetTester tester) async {
+    // 复审 SHOULD：把 onPointerCancel 里的 bridge.cancel 换回 bridge.up，旧测试全绿，
+    // 因为谁都没断言"取消真的产生了 cancel"。这里用注入点直接锁这条接线。
+    final List<int> cancelled = <int>[];
+    QtSceneRawPointerLayer.cancelHook =
+        (PointerCancelEvent event) => cancelled.add(event.pointer);
+    addTearDown(() => QtSceneRawPointerLayer.cancelHook = null);
+    await tester.pumpWidget(
+      QtSceneRawPointerLayer(
+        sceneRect: const Rect.fromLTWH(0, 0, 1920, 1080),
+        child: const SizedBox.expand(),
+      ),
+    );
+    final TestGesture gesture =
+        await tester.createGesture(pointer: 42, kind: PointerDeviceKind.touch);
+    await gesture.down(const Offset(120, 240));
+    await gesture.cancel();
+    expect(cancelled, <int>[42]);
+    expect(types().where((String type) => type == 'pointerup'), isEmpty);
+  });
+
+  test('重新 attach 旧视图时补齐 pointercancel，不把下压状态带到新视图', () {
+    final QtScenePointerBridge bridge = QtScenePointerBridge.instance;
+    bridge.down(down(5, const Offset(100, 100), stamp: 1), scene);
+    expect(types(), <String>['pointerdown']);
+    // 视图重建：新 viewId 接管，旧 viewId 上那根手指必须被显式释放。
+    bridge.attach(8);
+    addTearDown(() => bridge.detach(8));
+    expect(types(), <String>['pointerdown', 'pointercancel']);
+    bridge.move(move(5, const Offset(160, 100), stamp: 2), scene);
+    expect(types(), <String>['pointerdown', 'pointercancel'],
+        reason: '被释放的指针不能再回放 move，否则新视图会带着旧手势跑');
   });
 }

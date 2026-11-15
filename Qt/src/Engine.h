@@ -182,6 +182,12 @@ class Engine : public QObject {
     void wake(bool input = true);
     void wake(WakeSource source);
     void start();
+    /// 内嵌模式（RHINE_QT_EMBEDDED=1）的封面预取：Flutter 快照一落地就按 URL 异步取图，
+    /// **不依赖帧循环**。为什么必须这样：异步封面原本只写在 step() 里，而 tick() 的 pacing
+    /// Skip / 引擎休眠会在 step() 之前就 return（Engine.cpp 的 C04 分支），真机表现就是
+    /// 「URL 到了、盘面永远占位图」——诊断日志里 SCENE_COVER 有、COVER_REQUEST 一条没有。
+    /// 缓存写入由 Host::loadCover 负责；这里只负责解码完成后唤醒一帧，让纹理真的上传。
+    void prefetchCover(const QString &url);
     /// A03：内容版本。呈现层用它代替"按信号重复置脏"——版本前进一次只重渲一层，
     /// 重复推同一个值只在两个整数上比较一次。主线程写、渲染线程读，用 relaxed 原子
     /// 即可：这里要的是"值变了/没变"，不是用它同步任何内存。

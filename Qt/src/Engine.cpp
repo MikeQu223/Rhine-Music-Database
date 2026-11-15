@@ -4,6 +4,8 @@
 #endif
 #include "Engine.h"
 #include "DiscGeometry.h"
+// prefetchCover(): 内嵌模式的选中封面投影（RhineEmbedded::projectedCover）。
+#include "EmbeddedSceneHost.h"
 #include "RhiScene.h"
 #include "fg/FgCapability.h"
 #include "fg/FgStats.h"
@@ -450,6 +452,45 @@ void Engine::sceneConsumed() {
 }
 void Engine::wake(bool input) {
     wake(input ? WakeSource::Input : WakeSource::Other);
+}
+void Engine::prefetchCover(const QString &url) {
+    // 选中身份切换后旧请求没有意义；已请求过、或缓存里已有像素就不再重复。
+    if (url.isEmpty() || !host.image(url).isNull() || m_coverRequests.contains(url)) {
+        return;
+    }
+    m_coverRequests.insert(url);
+    qInfo("RHINE_QT_COVER_REQUEST len=%d url=%.96s", int(url.size()), qPrintable(url));
+    // Host::image() 只是缓存查找，缓存键是 loadCover 给 URL 补 `param=NyN` 之后的字符串，
+    // 所以必须用回调**返回**的键去取图；直接用原始 URL 查必然 miss。
+    host.loadCover(
+        url,
+        [this, url](QString loaded) {
+            qInfo("RHINE_QT_COVER_RESULT len=%d key=%.96s", int(loaded.size()), qPrintable(loaded));
+            if (loaded.isEmpty()) {
+                // 失败要能重试：把这条记录撤掉，下次快照/切歌还会再试（否则一次瞬时失败
+                // 就永久压掉这首的封面，和「已请求过」的初衷相反）。
+                m_coverRequests.remove(url);
+                return;
+            }
+            if (RhineEmbedded::projectedCover() != url) {
+                return; // 期间换了选中：旧的那首不回填
+            }
+            const QImage pixels = host.image(loaded);
+            if (pixels.isNull()) {
+                qWarning("RHINE_QT_COVER_DECODE miss key=%.96s", qPrintable(loaded));
+                m_coverRequests.remove(url);
+                return;
+            }
+            qInfo("RHINE_QT_COVER_READY %dx%d", pixels.width(), pixels.height());
+            m_coverImage = pixels;
+            m_coverRefresh = true;
+            // 醒来一帧：m_coverRefresh 只在 step() 里被消费，而 step() 可能正被 pacing Skip
+            // 挡着。这条路径和页面过渡期用的是同一个放行窗口。
+            m_sceneSleeping = false;
+            m_hudTransitionUntilMs = clock.elapsed() + 600;
+            timer.start(0);
+        },
+        1024);
 }
 void Engine::wake(WakeSource source) {
     switch (source) {

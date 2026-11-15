@@ -192,6 +192,10 @@ void applySceneState(const QString &json)
         // 有界诊断（只在这一字段真的变化时打印一次），用于设备侧证明封面 URL 是否到了
         // Qt 侧：URL 本身不是凭据，只截断到 96 字符。
         qInfo("RHINE_QT_SCENE_COVER len=%d url=%.96s", int(cover.size()), qPrintable(cover));
+        // 快照落地即预取：不能等 Engine::step()，那条路会被 pacing Skip/休眠整段跳过。
+        if (Engine *engine = RhineEmbedded::engine()) {
+            engine->prefetchCover(cover);
+        }
     }
     if (current != g_projectedCurrent) {
         g_projectedCurrent = current;

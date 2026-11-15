@@ -333,9 +333,32 @@ class QtScenePointerBridge {
   int? _viewId;
 
   /// 场景视图创建后调用（同一时刻只服务一个场景视图）。
+  ///
+  /// 重建视图时会先 attach 新的 viewId：旧视图上已判定给 Qt 的指针不会再有 up，
+  /// 必须在这里显式 pointercancel 掉再重绑，否则新视图第一帧就可能带着上一视图的
+  /// 下压状态（旧实现直接覆盖 _viewId，等于把那些指针静默丢掉）。
   void attach(int viewId) {
+    if (_viewId != null && _viewId != viewId) {
+      releasePointers(_forwarded);
+    }
     _viewId = viewId;
     _reset();
+  }
+
+  /// 释放这些指针：给 Qt 发过 pointerdown 的补一个 pointercancel（不留悬挂下压），
+  /// 然后清掉它们的去重/转发状态。只动传进来的指针，不影响别的视图。
+  void releasePointers(Iterable<int> pointers) {
+    final int? viewId = _viewId;
+    final List<int> released = pointers.toList(growable: false);
+    for (final int pointer in released) {
+      final Offset? position = _lastPosition[pointer];
+      if (viewId != null && _forwarded.contains(pointer) && position != null) {
+        _sender.pointer(viewId, 'pointercancel', position.dx, position.dy);
+      }
+      _forwarded.remove(pointer);
+      _lastKey.remove(pointer);
+      _lastPosition.remove(pointer);
+    }
   }
 
   /// 测试用：当前绑定的视图 id（生产代码不要读它）。
@@ -721,6 +744,11 @@ class QtSceneUnsupported extends StatelessWidget {
 /// 与调用方给 QtSceneView 的那份一致）：换算只按它的高度归一，不猜 dpr。
 /// 只搬运 down/move/up/cancel 与双指 pan/缩放；谁被拖、拖多远、何时选中全由 Qt 决定。
 class QtSceneRawPointerLayer extends StatefulWidget {
+  /// 测试注入点：替换 onPointerCancel 的生产调用（QtScenePointerBridge.cancel）。
+  /// 生产恒为 null；它存在的唯一目的是让"取消必须发 pointercancel"这条接线可证伪。
+  @visibleForTesting
+  static void Function(PointerCancelEvent event)? cancelHook;
+
   const QtSceneRawPointerLayer({
     super.key,
     required this.sceneRect,
@@ -777,7 +805,11 @@ class _QtSceneRawPointerLayerState extends State<QtSceneRawPointerLayer> {
       },
       onPointerCancel: (PointerCancelEvent event) {
         if (_owned.remove(event.pointer)) {
-          bridge.cancel(event);
+          // 可证伪：cancelHook 在测试里替换生产调用；把它改回 bridge.up 会让这条
+          // 断言立刻变红（旧实现正是 cancel→pointerup，Qt 侧收不到取消）。
+          final void Function(PointerCancelEvent) cancel =
+              QtSceneRawPointerLayer.cancelHook ?? bridge.cancel;
+          cancel(event);
         }
       },
       child: widget.child,
@@ -786,14 +818,12 @@ class _QtSceneRawPointerLayerState extends State<QtSceneRawPointerLayer> {
 
   @override
   void dispose() {
-    // 视图被销毁/重建时，已判定归属的指针不会再有 up：清掉，避免跨视图把旧手势
-    // 带到新视图上（同一时刻只服务一个 viewId，但 _owned 属于这个 State）。
+    // 视图被销毁/重建时，已判定归属的指针不会再有 up：给 Qt 补 pointercancel 再清，
+    // 避免跨视图把旧手势带到新视图上。用生产 API（releasePointers）而不是测试用的
+    // resetForTest —— 旧实现整体重置状态机，会连别的指针一起去重记录都抹掉。
     if (_owned.isNotEmpty) {
-      final int? viewId = QtScenePointerBridge.instance.viewIdForTest;
+      QtScenePointerBridge.instance.releasePointers(_owned.toList(growable: false));
       _owned.clear();
-      if (viewId != null) {
-        QtScenePointerBridge.instance.resetForTest();
-      }
     }
     super.dispose();
   }
