@@ -544,6 +544,8 @@ void NativeHud::action(QString value) {
     if (value == "home") {
         lyricsMode = false;
         commentsMode = false;
+        playlistSearchActive = false;
+        detailQuery.clear();
         if (!modal.isEmpty()) {
             closeModal();
         }
@@ -956,6 +958,8 @@ void NativeHud::action(QString value) {
     if (value == "back") {
         lyricsMode = false;
         commentsMode = false;
+        playlistSearchActive = false;
+        detailQuery.clear();
         if (music.directory) {
             if (frame["mode"] == "detail") {
                 music.returnToDirectory();

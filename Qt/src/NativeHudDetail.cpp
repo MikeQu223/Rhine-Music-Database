@@ -580,7 +580,8 @@ void NativeHud::container(double width, double opacity) {
     const int directoryIndex = music.directory ? music.directory->index : -1;
     const auto playingIdentity =
         music.player.current.isEmpty() ? QString() : PlaybackQueue::identity(music.player.current);
-    const auto rowAt = [songs, order = m_trackOrder, albums, directoryIndex, playingIdentity](int index) {
+    const auto rowAt = [this, songs, order = m_trackOrder, albums, directoryIndex,
+                        playingIdentity](int index) {
         const int rawIndex = order.at(index);
         const auto song = songs.at(rawIndex).toObject();
         CollectionDetailCard::Row entry;
@@ -588,7 +589,9 @@ void NativeHud::container(double width, double opacity) {
         entry.title = song["title"].toString();
         entry.artist = song["artist"].toString();
         entry.stamp = MusicData::time(song);
-        entry.image = song["cover"].toString();
+        // 只把行内封面解析为缩略图；详情主封面仍直接交给 Host 按原图尺寸加载。
+        const auto imageKey = song["cover"].toString();
+        entry.image = m_detailArtwork ? m_detailArtwork->image(imageKey) : imageKey;
         if (albums) {
             entry.stamp = song["date"].toString("专辑");
             if (entry.stamp.isEmpty()) {
@@ -601,7 +604,6 @@ void NativeHud::container(double width, double opacity) {
         entry.label = entry.title;
         return entry;
     };
-    card.image = [this](QString url) { return m_detailArtwork ? m_detailArtwork->image(url) : QString(); };
     if (m_responsive.compact()) {
         card.rowAt = rowAt;
     } else {
@@ -630,8 +632,7 @@ void NativeHud::container(double width, double opacity) {
             hit(x, y, width, height, action, label);
         },
         [this](QString key, double x, double y, double width, double height) {
-            const auto resolved = m_detailArtwork ? m_detailArtwork->image(key) : key;
-            image(resolved, x, y, width, height);
+            image(key, x, y, width, height);
         }};
     if (m_responsive.compact()) {
         m_responsive.setCollection(card);

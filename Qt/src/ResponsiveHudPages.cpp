@@ -2,6 +2,7 @@
 #include "MusicData.h"
 #include "ProviderRegistry.h"
 #include <algorithm>
+#include <cmath>
 #include <QHash>
 #include <QJsonDocument>
 #include <QUrl>
@@ -318,8 +319,35 @@ double ResponsiveHudLayout::collection(ResponsiveHudCanvas &c) {
     y = c.paragraph(m.quote, 20, y, 12, 353, c.muted) + 14;
     c.fill({20, y, 353, .6}, c.line);
     y += 17;
+    const bool searchEditing = !m.search.action.isEmpty() && m.searchEditing;
+    const bool searchHasValue = !m.clearSearch.action.isEmpty();
+    if (searchEditing) {
+        c.fill({20, y, 353, 44}, c.surface);
+        c.border({20, y, 353, 44}, c.line);
+        c.icon("search", 32, y + 13, 18, c.muted);
+        c.field("input", {58, y, searchHasValue ? 248.0 : 282.0, 44});
+        if (searchHasValue) {
+            c.icon("close", 339, y + 13, 18, c.muted);
+            c.hit({320, y, 53, 44}, m.clearSearch.action, m.clearSearch.label);
+        } else {
+            // QML 编辑框在歌单检索态下不绘制占位文本，由原生输入条补足提示。
+            c.text(m.search.label, 58, y + 13, 14, 282, "regular", c.muted);
+        }
+        y += 54;
+    }
     QVector<CollectionDetailCard::Choice> tools = m.tabs;
-    for (const auto &tool : {m.sort, m.rename, m.remove, m.source}) {
+    for (const auto &tool : {m.sort, m.search}) {
+        if (!tool.action.isEmpty()) {
+            if (searchEditing && tool.action == m.search.action) {
+                continue;
+            }
+            tools.append(tool);
+        }
+    }
+    if (!searchEditing && searchHasValue) {
+        tools.append(m.clearSearch);
+    }
+    for (const auto &tool : {m.rename, m.remove, m.source}) {
         if (!tool.action.isEmpty()) {
             tools.append(tool);
         }
@@ -488,10 +516,13 @@ double ResponsiveHudLayout::queue(ResponsiveHudCanvas &c, bool newScope, const Q
     }
     y = c.paragraph("清空仅移除待播歌曲，当前歌曲继续播放。", 20, y + 14, 12, 353, c.muted) + 24;
     if (m_player.applicationVolume) {
+        const auto volume = std::clamp(m_player.volume, 0., 1.);
         c.text("OUTPUT / 音量", 20, y, 9, 353, "regular", c.muted);
-        c.fill({20, y + 31, 353, 2}, c.line);
-        c.fill({20, y + 31, 353 * std::clamp(m_player.volume, 0., 1.), 2}, c.ink);
-        c.field("volume", {20, y + 16, 353, 32});
+        c.fill({20, y + 31, 300, 2}, c.line);
+        c.fill({20, y + 31, 300 * volume, 2}, c.ink);
+        c.text(QString::number(int(std::lround(volume * 100))) + "%", 328, y + 25, 11, 45, "regular",
+               c.muted);
+        c.field("volume", {20, y + 16, 300, 32});
         y += 62;
     }
     return std::max(y + m_scroll + 20,

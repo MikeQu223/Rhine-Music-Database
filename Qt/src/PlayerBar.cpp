@@ -213,6 +213,8 @@ void output(Painter &paint, const State &state, double x, double y, double right
         paint.fill({volumeX, y + 60, 100, 3}, paint.line);
         paint.fill({volumeX, y + 60, 100 * std::clamp(state.volume, 0.0, 1.0), 3}, paint.ink);
         paint.hit(*paint.drawing.volume, "player:volume-fraction:0", "音量");
+        const auto volume = int(std::lround(std::clamp(state.volume, 0.0, 1.0) * 100));
+        paint.label(QString::number(volume) + "%", volumeX + 108, y + 53, 11, 42, "regular", true);
     }
     const auto queueX = right - 65;
     paint.fill({queueX, y + 28, 19, 1.5}, paint.ink);

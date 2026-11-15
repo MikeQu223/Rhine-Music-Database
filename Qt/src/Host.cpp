@@ -31,6 +31,7 @@
 #include <QtConcurrentRun>
 #include <algorithm>
 #include <cmath>
+#include <memory>
 #include <mutex>
 
 static QString hash(QByteArray value) {
@@ -40,6 +41,50 @@ static QString hash(QByteArray value) {
 constexpr qint64 CoverCacheBudgetBytes = 256LL * 1024 * 1024;
 constexpr qint64 CoverThumbnailCacheBudgetBytes = 32LL * 1024 * 1024;
 constexpr qint64 CoverCacheEntryLimitBytes = 8LL * 1024 * 1024;
+
+/**
+ * 封面写任务与清除缓存共用的代数状态。
+ * 任务独立持有共享状态，Host 销毁后仍可安全判断并放弃过期写回。
+ */
+struct CoverCacheGenerationState {
+    std::mutex mutex;
+    quint64 generation = 0;
+};
+
+struct CoverCacheGenerationRegistry {
+    std::mutex mutex;
+    QHash<const Host *, std::shared_ptr<CoverCacheGenerationState>> states;
+};
+
+CoverCacheGenerationRegistry &coverCacheGenerationRegistry() {
+    static CoverCacheGenerationRegistry registry;
+    return registry;
+}
+
+std::shared_ptr<CoverCacheGenerationState> coverCacheGenerationState(const Host *host) {
+    auto &registry = coverCacheGenerationRegistry();
+    std::lock_guard<std::mutex> lock(registry.mutex);
+    auto &state = registry.states[host];
+    if (!state) {
+        state = std::make_shared<CoverCacheGenerationState>();
+    }
+    return state;
+}
+
+void forgetCoverCacheGeneration(const Host *host) {
+    auto &registry = coverCacheGenerationRegistry();
+    std::lock_guard<std::mutex> lock(registry.mutex);
+    registry.states.remove(host);
+}
+
+bool isCoverCacheGenerationCurrent(const std::shared_ptr<CoverCacheGenerationState> &state,
+                                   quint64 expectedGeneration) {
+    if (!state) {
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(state->mutex);
+    return state->generation == expectedGeneration;
+}
 
 QString coverCacheDirectory() {
     const auto cache = AppStorage::cacheDirectory();
@@ -127,12 +172,15 @@ void pruneCoverCache(const QString &directory, qint64 budgetBytes) {
     }
 }
 
-void storeCoverCache(const QString &path, const QByteArray &bytes, int maximumDimension, qint64 budgetBytes) {
-    if (path.isEmpty() || bytes.isEmpty() || bytes.size() >= CoverCacheEntryLimitBytes) {
+void storeCoverCache(const QString &path, const QImage &image, qint64 budgetBytes,
+                     const std::shared_ptr<CoverCacheGenerationState> &generationState,
+                     quint64 expectedGeneration) {
+    if (path.isEmpty() || image.isNull()) {
         return;
     }
-    const auto image = decodeCover(bytes, maximumDimension);
-    if (image.isNull()) {
+    // 编码可能较慢，先排除已经过期的任务。
+    // 最终落盘前还会在同步区内复核代数。
+    if (!isCoverCacheGenerationCurrent(generationState, expectedGeneration)) {
         return;
     }
     QByteArray encoded;
@@ -155,6 +203,12 @@ void storeCoverCache(const QString &path, const QByteArray &bytes, int maximumDi
         return;
     }
     const auto directory = QFileInfo(path).absolutePath();
+    // 与清除缓存共用同一互斥边界：要么旧任务先提交后被整体删除，
+    // 要么先清除再让旧任务放弃。
+    std::lock_guard<std::mutex> lock(generationState->mutex);
+    if (generationState->generation != expectedGeneration) {
+        return;
+    }
     if (!QDir().mkpath(directory)) {
         return;
     }
@@ -741,6 +795,7 @@ Host::Host(QString path, bool test, QObject *parent, bool service, PlaybackConne
 }
 Host::~Host() {
     shutdown();
+    forgetCoverCacheGeneration(this);
 }
 int Host::lifetime(const QString &route) {
     const auto service = routeProvider(route);
@@ -1885,13 +1940,18 @@ void Host::reloadPlugins() {
         }
     }
     // 插件版本变化后旧元数据、封面和限流状态不再代表当前实现。
+    const auto generationState = coverCacheGenerationState(this);
+    {
+        std::lock_guard<std::mutex> lock(generationState->mutex);
+        ++imageCacheGeneration;
+        generationState->generation = imageCacheGeneration;
+    }
     cache.clear();
     images.clear();
     thumbnailImages.clear();
     coverFlights.clear();
     blockedUntil.clear();
     ++metadataRevision;
-    ++imageCacheGeneration;
     emit pluginsReloaded();
     emit invalidated();
 }
@@ -2157,8 +2217,11 @@ void Host::loadCover(QString input, TextReply callback, int maximumDimension, bo
         callback(key);
         return;
     }
+    const auto imageEpoch = epoch;
     const auto imageGeneration = imageCacheGeneration;
-    const auto flightKey = QString::number(imageGeneration) + ':' + key;
+    const auto generationState = coverCacheGenerationState(this);
+    // epoch 也进入 flight 键，账号切换后不能复用上一账号仍在进行的封面请求。
+    const auto flightKey = QString::number(imageGeneration) + ':' + QString::number(imageEpoch) + ':' + key;
     if (coverFlights.contains(flightKey)) {
         coverFlights[flightKey].append({callback, epoch});
         return;
@@ -2174,10 +2237,11 @@ void Host::loadCover(QString input, TextReply callback, int maximumDimension, bo
             }
         }
     };
-    const auto completeFlight = [this, key, cachePath, flightKey, imageGeneration, thumbnail,
-                                 dimension](QImage image, QByteArray sourceBytes = {}) {
+    const auto completeFlight = [this, key, cachePath, flightKey, imageEpoch, imageGeneration, generationState,
+                                 thumbnail](QImage image, QByteArray sourceBytes = {}) {
         const auto waiters = coverFlights.take(flightKey);
-        if (stopped || imageGeneration != imageCacheGeneration || image.isNull()) {
+        // 账号切换后旧响应既不能进入内存缓存，也不能通知当前账号的 waiter。
+        if (stopped || imageEpoch != epoch || imageGeneration != imageCacheGeneration || image.isNull()) {
             for (const auto &waiter : waiters) {
                 if (waiter.epoch == epoch) {
                     waiter.callback({});
@@ -2188,10 +2252,9 @@ void Host::loadCover(QString input, TextReply callback, int maximumDimension, bo
         auto &target = thumbnail ? thumbnailImages : images;
         target.insert(key, new QImage(image), qMax(1, int(image.sizeInBytes() / 1024)));
         if (!sourceBytes.isEmpty() && !cachePath.isEmpty()) {
-            const auto cacheDimension = thumbnail ? dimension : 1024;
             const auto budget = thumbnail ? CoverThumbnailCacheBudgetBytes : CoverCacheBudgetBytes;
-            (void)QtConcurrent::run([cachePath, sourceBytes, cacheDimension, budget] {
-                storeCoverCache(cachePath, sourceBytes, cacheDimension, budget);
+            (void)QtConcurrent::run([cachePath, image, budget, generationState, imageGeneration] {
+                storeCoverCache(cachePath, image, budget, generationState, imageGeneration);
             });
         }
         for (const auto &waiter : waiters) {
@@ -2594,7 +2657,10 @@ void Host::clearLegacyMetadata(StorageCoordinator::Completion done) {
 }
 
 QJsonObject Host::clearNetworkImages() {
+    const auto generationState = coverCacheGenerationState(this);
+    std::lock_guard<std::mutex> generationLock(generationState->mutex);
     ++imageCacheGeneration;
+    generationState->generation = imageCacheGeneration;
     const auto costBefore = images.totalCost() + thumbnailImages.totalCost();
     int removed = 0;
     for (const auto &key : images.keys()) {

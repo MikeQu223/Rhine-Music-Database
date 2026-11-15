@@ -81,8 +81,8 @@ void NativeHud::playerPanel(double x, double y, double width) {
         hit(left, top, w, h, action, label);
     };
     canvas.image = [this](QString key, double left, double top, double w, double h) {
-        const auto resolved = m_queueArtwork ? m_queueArtwork->image(key) : key;
-        image(resolved, left, top, w, h);
+        // 队列卡片已把歌曲 URL 解析为 Host 缓存键，这里直接提交给 Canvas 取样。
+        image(key, left, top, w, h);
     };
     if (m_responsive.compact()) {
         m_responsive.setQueue(model);
