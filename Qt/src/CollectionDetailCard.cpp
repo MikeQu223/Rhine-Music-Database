@@ -184,7 +184,7 @@ class Painter {
         const auto titleX = model.x + 48;
         const auto artistX = model.x + model.width * 0.55;
         const auto timeEdge = contentRight - 60;
-        label("#", model.x, 414, 11, muted, "regular", 0.5);
+        label("封面", model.x, 414, 11, muted, "regular", 0.5);
         label("曲目 / TITLE", titleX, 414, 11, muted, "regular", 0.5);
         label("歌手 / ARTIST", artistX, 414, 11, muted, "regular", 0.5);
         rightLabel("时长", timeEdge, 414, 11, muted, "regular", 0.5);
@@ -196,7 +196,18 @@ class Painter {
                 canvas.fill(model.x - 8, yy, contentRight - model.x + 16, model.rowHeight - 2, soft);
                 canvas.fill(model.x - 8, yy, 3, model.rowHeight - 2, amber);
             }
-            label(row.number, model.x, yy + 18, 11, row.current ? ink : muted);
+            const QRectF artwork(model.x, yy + 8, 38, 38);
+            canvas.fill(artwork.x(), artwork.y(), artwork.width(), artwork.height(), withAlpha(line, 0.16));
+            if (!row.image.isEmpty()) {
+                canvas.image(row.image, artwork.x(), artwork.y(), artwork.width(), artwork.height());
+                const auto border = withAlpha(line, 0.7);
+                canvas.fill(artwork.x(), artwork.y(), artwork.width(), 1, border);
+                canvas.fill(artwork.x(), artwork.bottom() - 1, artwork.width(), 1, border);
+                canvas.fill(artwork.x(), artwork.y(), 1, artwork.height(), border);
+                canvas.fill(artwork.right() - 1, artwork.y(), 1, artwork.height(), border);
+            } else {
+                label(row.number, model.x + 13, yy + 18, 11, row.current ? ink : muted);
+            }
             fitted(row.title, titleX, yy + 13, 18, artistX - titleX - 30, ink, "demibold");
             fitted(row.artist, artistX, yy + 17, 13, timeEdge - artistX - 30, muted);
             rightLabel(row.stamp, timeEdge, yy + 18, 12, muted);

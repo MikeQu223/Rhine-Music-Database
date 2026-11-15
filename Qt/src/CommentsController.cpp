@@ -649,7 +649,7 @@ void CommentsController::ensureAvatar(const QString &url) {
             }
             owner->m_host->invalidate();
         },
-        128);
+        CoverThumbnailDimension);
 }
 
 QString CommentsController::avatar(const QString &url) const {

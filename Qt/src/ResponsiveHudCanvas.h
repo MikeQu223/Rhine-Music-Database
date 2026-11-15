@@ -40,7 +40,8 @@ class ResponsiveHudCanvas {
     void chip(QRectF rect, QString title, QString action, bool selected = false);
     void section(double y, QString title, QString subtitle = {});
     void row(double y, QString title, QString artist, QString stamp, QString action, QString number = {},
-             bool current = false, QString remove = {}, QString playAction = {});
+             bool current = false, QString remove = {}, QString playAction = {}, QString image = {},
+             bool hasImage = false);
     void indexRow(double y, QString title, QString subtitle, QString action, QString iconName);
     void beginContent(double top = 158);
     void endContent();

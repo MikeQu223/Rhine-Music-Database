@@ -1,4 +1,5 @@
 #include "NativeHud.h"
+#include "DiscoverArtwork.h"
 #include "MusicData.h"
 #include "PlayerBar.h"
 #include "PlaybackQueueCard.h"
@@ -49,6 +50,11 @@ void NativeHud::playerBar(double x, double y, double width) {
 /** 队列面板 */
 void NativeHud::playerPanel(double x, double y, double width) {
     const auto &player = m_music->player;
+    if (!m_queueArtwork) {
+        m_queueArtwork = new DiscoverArtwork(m_host, this, CoverThumbnailDimension);
+    }
+    m_queueArtwork->show(m_music->provider + ":" + QString::number(m_music->accountGeneration()) + ":queue",
+                         {});
     queueOffset = std::clamp(queueOffset, 0, PlaybackQueueCard::maximumOffset(player.queue.size()));
     PlaybackQueueCard::Model model;
     model.bounds = {x, y, width, 836};
@@ -61,6 +67,7 @@ void NativeHud::playerPanel(double x, double y, double width) {
     model.offset = queueOffset;
     model.playing = player.state["playing"].toBool();
     model.dark = dark;
+    model.image = [this](QString url) { return m_queueArtwork ? m_queueArtwork->image(url) : QString(); };
     PlaybackQueueCard::Canvas canvas;
     canvas.fill = [this](double left, double top, double w, double h, QJsonArray color) {
         fill(left, top, w, h, color);
@@ -74,7 +81,8 @@ void NativeHud::playerPanel(double x, double y, double width) {
         hit(left, top, w, h, action, label);
     };
     canvas.image = [this](QString key, double left, double top, double w, double h) {
-        image(key, left, top, w, h);
+        const auto resolved = m_queueArtwork ? m_queueArtwork->image(key) : key;
+        image(resolved, left, top, w, h);
     };
     if (m_responsive.compact()) {
         m_responsive.setQueue(model);

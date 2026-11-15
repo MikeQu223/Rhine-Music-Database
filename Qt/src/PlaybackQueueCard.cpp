@@ -41,7 +41,8 @@ void paint(const Model &model, const Canvas &canvas) {
     const auto summaryWidth = width * 0.42;
     const auto hasCover = !model.cover.isEmpty();
     if (hasCover) {
-        canvas.image(model.cover, summaryX, y + 100, 58, 58);
+        const auto cover = model.image ? model.image(model.cover) : model.cover;
+        canvas.image(cover, summaryX, y + 100, 58, 58);
     }
     const auto copyX = summaryX + (hasCover ? 72 : 0);
     const auto copyWidth = summaryWidth - (hasCover ? 72 : 0);
@@ -68,7 +69,7 @@ void paint(const Model &model, const Canvas &canvas) {
     }
     canvas.fill(x, y + 322, width, 1, line);
     label("#", x + 10, y + 334, 10, 28, true);
-    label("曲目 / TRACK", x + 44, y + 334, 10, width - 160, true);
+    label("曲目 / TRACK", x + 82, y + 334, 10, width - 198, true);
     label("时长", x + width - 100, y + 334, 10, 55, true);
 
     const auto offset = std::clamp(model.offset, 0, maximumOffset(int(model.tracks.size())));
@@ -82,9 +83,24 @@ void paint(const Model &model, const Canvas &canvas) {
             canvas.fill(x, top, 3, 56, amber);
         }
         label(current ? "●" : MusicData::pad(index + 1), x + 10, top + 18, 12, 28, !current);
-        label(song.value("title").toString(), x + 44, top + 7, 17, width - 175, false,
+        const auto cover = song.value("cover").toString();
+        const auto image = model.image ? model.image(cover) : cover;
+        const QRectF artwork(x + 34, top + 8, 40, 40);
+        const QJsonArray artworkFill =
+            model.dark ? QJsonArray{0.18, 0.21, 0.18, 1} : QJsonArray{0.88, 0.88, 0.82, 1};
+        canvas.fill(artwork.x(), artwork.y(), artwork.width(), artwork.height(), artworkFill);
+        if (!image.isEmpty()) {
+            canvas.image(image, artwork.x(), artwork.y(), artwork.width(), artwork.height());
+        }
+        const auto artworkLine =
+            model.dark ? QJsonArray{0.42, 0.46, 0.39, 1} : QJsonArray{0.68, 0.70, 0.63, 1};
+        canvas.fill(artwork.x(), artwork.y(), artwork.width(), 1, artworkLine);
+        canvas.fill(artwork.x(), artwork.bottom() - 1, artwork.width(), 1, artworkLine);
+        canvas.fill(artwork.x(), artwork.y(), 1, artwork.height(), artworkLine);
+        canvas.fill(artwork.right() - 1, artwork.y(), 1, artwork.height(), artworkLine);
+        label(song.value("title").toString(), x + 82, top + 7, 17, width - 213, false,
               current ? "demibold" : "regular");
-        label(song.value("artist").toString(), x + 44, top + 32, 11, width - 175, true);
+        label(song.value("artist").toString(), x + 82, top + 32, 11, width - 213, true);
         label(MusicData::time(song), x + width - 100, top + 18, 12, 55, true);
         // 曲目与移除按钮使用独立命中区域，避免点击移除时触发播放。
         canvas.hit(x + 5, top, width - 50, 55, "player:queue:" + QString::number(index),

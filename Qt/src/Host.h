@@ -21,6 +21,8 @@
 #include "AppleTransitionPlan.h"
 #endif
 
+inline constexpr int CoverThumbnailDimension = 128;
+
 // 系统边界：只通过管道调用锁定的上游；凭据不进入参数、环境或日志。
 class Host : public QObject {
     Q_OBJECT
@@ -206,6 +208,7 @@ class Host : public QObject {
     void downloadPluginFiles(QStringList files, QString base, QString directory, QString id,
                              std::function<void(QString)> done);
     mutable QCache<QString, QImage> images{32 * 1024};
+    mutable QCache<QString, QImage> thumbnailImages{8 * 1024};
     qint64 lastStart = 0;
     QHash<QString, qint64> blockedUntil;
     QJsonObject cookiesFor(const QString &provider) const;

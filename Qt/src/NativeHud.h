@@ -246,6 +246,8 @@ class NativeHud : public QObject {
     // QObject 子对象拥有生命周期，封面回调不跨越 HUD 销毁。
     DiscoverArtwork *m_discoverArtwork = nullptr;
     DiscoverArtwork *m_savedArtwork = nullptr;
+    DiscoverArtwork *m_detailArtwork = nullptr;
+    DiscoverArtwork *m_queueArtwork = nullptr;
     QString m_discoverScrollScope;
     QString m_songQueueFeedbackKey;
     QHash<QString, QString> m_songQueueFeedback;

@@ -1,5 +1,6 @@
 #include "NativeHud.h"
 #include "CollectionDetailCard.h"
+#include "DiscoverArtwork.h"
 #include "MusicData.h"
 #include "ProviderRegistry.h"
 #include "SongDetailCard.h"
@@ -416,6 +417,12 @@ void NativeHud::container(double width, double opacity) {
     if (music.directory) {
         detailSort = music.directory->sortField;
     }
+    if (!m_detailArtwork) {
+        m_detailArtwork = new DiscoverArtwork(m_host, this, CoverThumbnailDimension);
+    }
+    m_detailArtwork->show(music.provider + ":" + QString::number(music.accountGeneration()) + ":" +
+                              containerKey + ":" + artistTab,
+                          {});
     const auto sortField =
         !music.directory && !albums && item["kind"] == "playlist" ? detailSort : QString("none");
     const auto filter = item["kind"] == "playlist" ? detailQuery.trimmed() : QString();
@@ -581,6 +588,7 @@ void NativeHud::container(double width, double opacity) {
         entry.title = song["title"].toString();
         entry.artist = song["artist"].toString();
         entry.stamp = MusicData::time(song);
+        entry.image = song["cover"].toString();
         if (albums) {
             entry.stamp = song["date"].toString("专辑");
             if (entry.stamp.isEmpty()) {
@@ -593,6 +601,7 @@ void NativeHud::container(double width, double opacity) {
         entry.label = entry.title;
         return entry;
     };
+    card.image = [this](QString url) { return m_detailArtwork ? m_detailArtwork->image(url) : QString(); };
     if (m_responsive.compact()) {
         card.rowAt = rowAt;
     } else {
@@ -621,7 +630,8 @@ void NativeHud::container(double width, double opacity) {
             hit(x, y, width, height, action, label);
         },
         [this](QString key, double x, double y, double width, double height) {
-            image(key, x, y, width, height);
+            const auto resolved = m_detailArtwork ? m_detailArtwork->image(key) : key;
+            image(resolved, x, y, width, height);
         }};
     if (m_responsive.compact()) {
         m_responsive.setCollection(card);

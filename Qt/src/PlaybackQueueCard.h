@@ -20,6 +20,7 @@ struct Model {
     int offset = 0;
     bool playing = false;
     bool dark = false;
+    std::function<QString(QString)> image;
 };
 struct Canvas {
     std::function<void(double, double, double, double, QJsonArray)> fill;

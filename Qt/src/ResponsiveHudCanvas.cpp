@@ -171,19 +171,30 @@ void ResponsiveHudCanvas::section(double y, QString title, QString subtitle) {
     text(subtitle, 245, y + 5, 9, 128, "regular", muted);
 }
 void ResponsiveHudCanvas::row(double y, QString title, QString artist, QString stamp, QString action,
-                              QString number, bool current, QString remove, QString playAction) {
+                              QString number, bool current, QString remove, QString playAction, QString image,
+                              bool hasImage) {
     if (current) {
         fill({20, y, 353, 68}, raised);
         fill({20, y, 2, 68}, amber);
     }
-    const double left = number.isEmpty() ? 20 : 54;
-    text(number, 25, y + 24, 11, 26, "regular", muted);
-    double titleWidth = remove.isEmpty() ? 270 : 260;
-    if (!playAction.isEmpty()) {
-        titleWidth = 235;
+    double left = number.isEmpty() ? 20 : 54;
+    if (hasImage) {
+        left = 74;
     }
+    if (hasImage) {
+        const QRectF artwork{20, y + 12, 44, 44};
+        fill(artwork, surface);
+        if (!image.isEmpty()) {
+            this->image(image, artwork);
+        }
+        border(artwork, line);
+    } else {
+        text(number, 25, y + 24, 11, 26, "regular", muted);
+    }
+    const double titleRight = playAction.isEmpty() && remove.isEmpty() ? 333 : 300;
+    const double titleWidth = titleRight - left - 8;
     text(title, left, y + 12, 14, titleWidth, "demibold", current ? QJsonArray{.455, .333, .098, 1} : ink);
-    text(artist, left, y + 36, 11, 270, "regular", muted);
+    text(artist, left, y + 36, 11, titleRight - left, "regular", muted);
     if (remove.isEmpty()) {
         if (playAction.isEmpty()) {
             text(stamp, 333, y + 26, 10, 40, "regular", muted);

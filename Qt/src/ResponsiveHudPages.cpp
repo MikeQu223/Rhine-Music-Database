@@ -335,7 +335,9 @@ double ResponsiveHudLayout::collection(ResponsiveHudCanvas &c) {
     const auto [first, last] = c.visibleRows(y, 68, count);
     for (int index = first; index < last; ++index) {
         const auto row = m.rowAt ? m.rowAt(index) : m.rows[index];
-        c.row(y + index * 68., row.title, row.artist, row.stamp, row.action, row.number, row.current);
+        const auto image = m.image ? m.image(row.image) : row.image;
+        c.row(y + index * 68., row.title, row.artist, row.stamp, row.action, row.number, row.current, {}, {},
+              image, !row.image.isEmpty());
     }
     y += count * 68.;
     if (count == 0) {
@@ -471,10 +473,13 @@ double ResponsiveHudLayout::queue(ResponsiveHudCanvas &c, bool newScope, const Q
     const auto [first, last] = c.visibleRows(y, 68, int(m_queue.tracks.size()));
     for (int index = first; index < last; ++index) {
         const auto track = m_queue.tracks[index].toObject();
+        const auto cover = track["cover"].toString();
+        const auto image = m_queue.image ? m_queue.image(cover) : cover;
         c.row(y + index * 68., track["title"].toString(), track["artist"].toString(), MusicData::time(track),
               "player:queue:" + QString::number(index),
               index == m_queue.currentIndex ? "●" : MusicData::pad(index + 1), index == m_queue.currentIndex,
-              index == m_queue.currentIndex ? QString() : "player:remove:" + QString::number(index));
+              index == m_queue.currentIndex ? QString() : "player:remove:" + QString::number(index), {},
+              image, !cover.isEmpty());
     }
     y += m_queue.tracks.size() * 68.;
     if (m_queue.tracks.isEmpty()) {

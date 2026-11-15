@@ -8,6 +8,7 @@
 #include <QDateTime>
 #include <QDesktopServices>
 #include <QDir>
+#include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
 #include <QProcess>
@@ -20,6 +21,7 @@
 #include <QNetworkCookie>
 #include <QNetworkReply>
 #include <QNetworkInformation>
+#include <QPainter>
 #include <QPointer>
 #include <QRegularExpression>
 #include <QSaveFile>
@@ -27,10 +29,147 @@
 #include <QUrlQuery>
 #include <QUuid>
 #include <QtConcurrentRun>
+#include <algorithm>
 #include <cmath>
+#include <mutex>
 
 static QString hash(QByteArray value) {
     return QCryptographicHash::hash(value, QCryptographicHash::Sha256).toHex();
+}
+
+constexpr qint64 CoverCacheBudgetBytes = 256LL * 1024 * 1024;
+constexpr qint64 CoverThumbnailCacheBudgetBytes = 32LL * 1024 * 1024;
+constexpr qint64 CoverCacheEntryLimitBytes = 8LL * 1024 * 1024;
+
+QString coverCacheDirectory() {
+    const auto cache = AppStorage::cacheDirectory();
+    return cache.isEmpty() ? QString() : cache + "/covers";
+}
+
+QString coverThumbnailCacheDirectory(int dimension) {
+    const auto directory = coverCacheDirectory();
+    return directory.isEmpty() ? QString() : directory + "/thumbnails/" + QString::number(dimension);
+}
+
+QString coverCachePath(const QString &key, bool thumbnail, int dimension) {
+    const auto directory = thumbnail ? coverThumbnailCacheDirectory(dimension) : coverCacheDirectory();
+    return directory.isEmpty() ? QString() : directory + "/" + hash(key.toUtf8());
+}
+
+void cleanupLegacyCoverCaches() {
+    static std::once_flag once;
+    std::call_once(once, [] {
+        const auto directory = coverCacheDirectory();
+        if (directory.isEmpty()) {
+            return;
+        }
+        static const QRegularExpression namePattern("^[0-9a-f]{64}$");
+        QDir root(directory);
+        const auto files = root.entryInfoList({"*.img"}, QDir::Files | QDir::NoSymLinks);
+        for (const auto &file : files) {
+            const auto name = file.completeBaseName();
+            if (!namePattern.match(name).hasMatch()) {
+                continue;
+            }
+            QFile::remove(file.absoluteFilePath());
+        }
+    });
+}
+
+QImage decodeCover(const QByteArray &bytes, int dimension) {
+    if (bytes.isEmpty() || bytes.size() >= CoverCacheEntryLimitBytes) {
+        return {};
+    }
+    QBuffer buffer;
+    buffer.setData(bytes);
+    if (!buffer.open(QIODevice::ReadOnly)) {
+        return {};
+    }
+    QImageReader reader(&buffer);
+    reader.setAutoTransform(true);
+    const auto size = reader.size();
+    if (!size.isValid() || size.width() > 8192 || size.height() > 8192) {
+        return {};
+    }
+    // 小图不在解码阶段放大，避免重复插值。
+    if (size.width() > dimension || size.height() > dimension) {
+        reader.setScaledSize(size.scaled(dimension, dimension, Qt::KeepAspectRatio));
+    }
+    return reader.read();
+}
+
+void pruneCoverCache(const QString &directory, qint64 budgetBytes) {
+    QDir root(directory);
+    static const QRegularExpression namePattern("^[0-9a-f]{64}$");
+    const auto entries = root.entryInfoList(QDir::Files | QDir::NoSymLinks);
+    QFileInfoList files;
+    for (const auto &entry : entries) {
+        if (namePattern.match(entry.fileName()).hasMatch()) {
+            files.append(entry);
+        }
+    }
+    qint64 total = 0;
+    for (const auto &file : files) {
+        total += file.size();
+    }
+    if (total <= budgetBytes) {
+        return;
+    }
+    auto oldest = files;
+    std::sort(oldest.begin(), oldest.end(), [](const QFileInfo &left, const QFileInfo &right) {
+        return left.lastModified() < right.lastModified();
+    });
+    for (const auto &file : oldest) {
+        if (total <= budgetBytes || !QFile::remove(file.absoluteFilePath())) {
+            continue;
+        }
+        total -= file.size();
+    }
+}
+
+void storeCoverCache(const QString &path, const QByteArray &bytes, int maximumDimension, qint64 budgetBytes) {
+    if (path.isEmpty() || bytes.isEmpty() || bytes.size() >= CoverCacheEntryLimitBytes) {
+        return;
+    }
+    const auto image = decodeCover(bytes, maximumDimension);
+    if (image.isNull()) {
+        return;
+    }
+    QByteArray encoded;
+    QBuffer buffer(&encoded);
+    if (!buffer.open(QIODevice::WriteOnly) || !image.save(&buffer, "WEBP", 88)) {
+        buffer.close();
+        encoded.clear();
+        // WebP 插件不可用时退回不透明 JPEG，封面本身通常是照片或插画。
+        QImage opaque(image.size(), QImage::Format_RGB32);
+        opaque.fill(Qt::white);
+        QPainter painter(&opaque);
+        painter.drawImage(0, 0, image);
+        painter.end();
+        buffer.open(QIODevice::WriteOnly);
+        if (!opaque.save(&buffer, "JPG", 90)) {
+            return;
+        }
+    }
+    if (encoded.isEmpty() || encoded.size() >= CoverCacheEntryLimitBytes) {
+        return;
+    }
+    const auto directory = QFileInfo(path).absolutePath();
+    if (!QDir().mkpath(directory)) {
+        return;
+    }
+    QSaveFile file(path);
+    if (!file.open(QIODevice::WriteOnly) || file.write(encoded) != encoded.size() || !file.commit()) {
+        return;
+    }
+    pruneCoverCache(directory, budgetBytes);
+}
+
+void touchCoverCache(const QString &path) {
+    QFile file(path);
+    if (file.open(QIODevice::ReadOnly)) {
+        file.setFileTime(QDateTime::currentDateTime(), QFileDevice::FileModificationTime);
+    }
 }
 
 // 插件清单声明可落盘的操作，响应还必须通过凭据和临时地址检查。
@@ -1157,6 +1296,7 @@ void Host::setProvider(QString value) {
     ++metadataRevision;
     cache.clear();
     images.clear();
+    thumbnailImages.clear();
     coverFlights.clear();
 }
 /**
@@ -1194,6 +1334,7 @@ void Host::setProviderVariant(QString variant) {
     ++metadataRevision;
     cache.clear();
     images.clear();
+    thumbnailImages.clear();
     coverFlights.clear();
     if (child.state() != BridgeProcess::NotRunning) {
         child.kill();
@@ -1746,6 +1887,7 @@ void Host::reloadPlugins() {
     // 插件版本变化后旧元数据、封面和限流状态不再代表当前实现。
     cache.clear();
     images.clear();
+    thumbnailImages.clear();
     coverFlights.clear();
     blockedUntil.clear();
     ++metadataRevision;
@@ -1894,6 +2036,7 @@ void Host::logout() {
         ++epoch;
         cache.clear();
         images.clear();
+        thumbnailImages.clear();
         coverFlights.clear();
         return;
     }
@@ -1924,6 +2067,7 @@ void Host::logout() {
     }
     cache.clear();
     images.clear();
+    thumbnailImages.clear();
     coverFlights.clear();
     if (!offline) {
         bool any = false;
@@ -1939,7 +2083,8 @@ void Host::logout() {
     }
 }
 void Host::loadCover(QString input, TextReply callback, int maximumDimension, bool allowPlaybackOnly) {
-    const auto dimension = std::clamp(maximumDimension, 128, 1024);
+    const bool thumbnail = maximumDimension <= CoverThumbnailDimension;
+    const auto dimension = std::clamp(maximumDimension, CoverThumbnailDimension, 1024);
     // 后台默认只保留封面地址；系统媒体控件需要封面文件时显式放行解码。
     if (playbackOnly && !allowPlaybackOnly) {
         schedule(0, [input, callback] { callback(input); });
@@ -1951,23 +2096,27 @@ void Host::loadCover(QString input, TextReply callback, int maximumDimension, bo
             !(remote && remote->snapshot()["current"].toObject()["provider"] == "local")) {
             return;
         }
-        const auto key = input;
-        if (images.contains(key)) {
+        const auto key =
+            thumbnail ? "cover-thumb:" + hash(input.toUtf8()) + ":" + QString::number(dimension) : input;
+        auto &memoryCache = thumbnail ? thumbnailImages : images;
+        if (memoryCache.contains(key)) {
             callback(key);
             return;
         }
         const auto generation = epoch;
         auto watcher = new QFutureWatcher<QImage>(this);
-        connect(watcher, &QFutureWatcher<QImage>::finished, this, [this, watcher, generation, key, callback] {
-            const auto image = watcher->result();
-            watcher->deleteLater();
-            if (generation == epoch && !stopped) {
-                if (!image.isNull()) {
-                    images.insert(key, new QImage(image), qMax(1, int(image.sizeInBytes() / 1024)));
-                }
-                callback(image.isNull() ? QString() : key);
-            }
-        });
+        connect(watcher, &QFutureWatcher<QImage>::finished, this,
+                [this, watcher, generation, key, thumbnail, callback] {
+                    const auto image = watcher->result();
+                    watcher->deleteLater();
+                    if (generation == epoch && !stopped) {
+                        if (!image.isNull()) {
+                            auto &target = thumbnail ? thumbnailImages : images;
+                            target.insert(key, new QImage(image), qMax(1, int(image.sizeInBytes() / 1024)));
+                        }
+                        callback(image.isNull() ? QString() : key);
+                    }
+                });
         watcher->setFuture(QtConcurrent::run([path = local.toLocalFile(), dimension] {
             QImageReader reader(path);
             const auto size = reader.size();
@@ -2000,13 +2149,12 @@ void Host::loadCover(QString input, TextReply callback, int maximumDimension, bo
         return;
     }
     // 封面尺寸由插件返回最终 URL；core 不再追加平台专用查询参数。
-    auto key = url.toString();
-    if (images.contains(key)) {
+    const auto urlKey = url.toString();
+    const auto key =
+        thumbnail ? "cover-thumb:" + hash(urlKey.toUtf8()) + ":" + QString::number(dimension) : urlKey;
+    auto &memoryCache = thumbnail ? thumbnailImages : images;
+    if (memoryCache.contains(key)) {
         callback(key);
-        return;
-    }
-    if (offline) {
-        callback({});
         return;
     }
     const auto imageGeneration = imageCacheGeneration;
@@ -2016,28 +2164,20 @@ void Host::loadCover(QString input, TextReply callback, int maximumDimension, bo
         return;
     }
     coverFlights[flightKey] = {{callback, epoch}};
-    const auto imageEpoch = epoch;
-    QNetworkRequest request(url);
-    request.setTransferTimeout(20000);
-    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
-    auto reply = network.get(request);
-    connect(reply, &QNetworkReply::downloadProgress, reply, [reply](qint64 size, qint64) {
-        if (size >= 8 * 1024 * 1024) {
-            reply->abort();
+    cleanupLegacyCoverCaches();
+    const auto cachePath = coverCachePath(urlKey, thumbnail, dimension);
+    const auto failFlight = [this, flightKey] {
+        const auto waiters = coverFlights.take(flightKey);
+        for (const auto &waiter : waiters) {
+            if (waiter.epoch == epoch) {
+                waiter.callback({});
+            }
         }
-    });
-    connect(reply, &QNetworkReply::finished, this, [=, this]() {
-        const auto bytes = reply->readAll();
-        if (imageEpoch != epoch || stopped) {
-            reply->deleteLater();
-            return;
-        }
-        const bool valid = reply->error() == QNetworkReply::NoError &&
-                           reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() == 200 &&
-                           bytes.size() < 8 * 1024 * 1024;
-        reply->deleteLater();
-        if (!valid) {
-            const auto waiters = coverFlights.take(flightKey);
+    };
+    const auto completeFlight = [this, key, cachePath, flightKey, imageGeneration, thumbnail,
+                                 dimension](QImage image, QByteArray sourceBytes = {}) {
+        const auto waiters = coverFlights.take(flightKey);
+        if (stopped || imageGeneration != imageCacheGeneration || image.isNull()) {
             for (const auto &waiter : waiters) {
                 if (waiter.epoch == epoch) {
                     waiter.callback({});
@@ -2045,55 +2185,84 @@ void Host::loadCover(QString input, TextReply callback, int maximumDimension, bo
             }
             return;
         }
-        // 工作者只接触不可变字节和 QImage；回调与缓存仍在 Host 所在线程执行。
-        auto watcher = new QFutureWatcher<QImage>(this);
-        connect(watcher, &QFutureWatcher<QImage>::finished, this,
-                [this, watcher, key, flightKey, imageEpoch, imageGeneration] {
-            const auto image = watcher->result();
-            watcher->deleteLater();
-            if (imageEpoch != epoch || stopped) {
-                return;
+        auto &target = thumbnail ? thumbnailImages : images;
+        target.insert(key, new QImage(image), qMax(1, int(image.sizeInBytes() / 1024)));
+        if (!sourceBytes.isEmpty() && !cachePath.isEmpty()) {
+            const auto cacheDimension = thumbnail ? dimension : 1024;
+            const auto budget = thumbnail ? CoverThumbnailCacheBudgetBytes : CoverCacheBudgetBytes;
+            (void)QtConcurrent::run([cachePath, sourceBytes, cacheDimension, budget] {
+                storeCoverCache(cachePath, sourceBytes, cacheDimension, budget);
+            });
+        }
+        for (const auto &waiter : waiters) {
+            if (waiter.epoch == epoch) {
+                waiter.callback(key);
             }
-            const auto waiters = coverFlights.take(flightKey);
-            bool current = false;
-            for (const auto &waiter : waiters) {
-                current |= waiter.epoch == epoch;
-            }
-            if (stopped || !current) {
-                return;
-            }
-            if (image.isNull() || imageGeneration != imageCacheGeneration) {
-                for (const auto &waiter : waiters) {
-                    if (waiter.epoch == epoch) {
-                        waiter.callback({});
-                    }
-                }
-                return;
-            }
-            // QCache 按内存预算逐项淘汰，不再在第 32 张封面清空所有命中。
-            images.insert(key, new QImage(image), qMax(1, int(image.sizeInBytes() / 1024)));
-            for (const auto &waiter : waiters) {
-                if (waiter.epoch == epoch) {
-                    waiter.callback(key);
-                }
+        }
+    };
+    const auto requestNetwork = [this, url, cachePath, dimension, failFlight, completeFlight] {
+        if (offline) {
+            failFlight();
+            return;
+        }
+        QNetworkRequest request(url);
+        request.setTransferTimeout(20000);
+        request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                             QNetworkRequest::NoLessSafeRedirectPolicy);
+        auto reply = network.get(request);
+        connect(reply, &QNetworkReply::downloadProgress, reply, [reply](qint64 size, qint64) {
+            if (size >= CoverCacheEntryLimitBytes) {
+                reply->abort();
             }
         });
-        watcher->setFuture(QtConcurrent::run([bytes, dimension] {
-            QBuffer buffer;
-            buffer.setData(bytes);
-            buffer.open(QIODevice::ReadOnly);
-            QImageReader reader(&buffer);
-            const auto size = reader.size();
-            if (!size.isValid() || size.width() > 8192 || size.height() > 8192) {
+        connect(reply, &QNetworkReply::finished, this,
+                [this, reply, cachePath, dimension, failFlight, completeFlight]() {
+                    const auto bytes = reply->readAll();
+                    const bool valid =
+                        reply->error() == QNetworkReply::NoError &&
+                        reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() == 200 &&
+                        bytes.size() < CoverCacheEntryLimitBytes;
+                    reply->deleteLater();
+                    if (!valid) {
+                        failFlight();
+                        return;
+                    }
+                    // 解码在工作线程执行，结果和持久化仍由 Host 生命周期内完成。
+                    auto watcher = new QFutureWatcher<QImage>(this);
+                    connect(watcher, &QFutureWatcher<QImage>::finished, this,
+                            [watcher, bytes, completeFlight] {
+                                const auto image = watcher->result();
+                                watcher->deleteLater();
+                                completeFlight(image, bytes);
+                            });
+                    watcher->setFuture(
+                        QtConcurrent::run([bytes, dimension] { return decodeCover(bytes, dimension); }));
+                });
+    };
+    if (!cachePath.isEmpty() && QFileInfo::exists(cachePath)) {
+        auto watcher = new QFutureWatcher<QImage>(this);
+        connect(watcher, &QFutureWatcher<QImage>::finished, this,
+                [this, watcher, cachePath, dimension, completeFlight, requestNetwork] {
+                    const auto image = watcher->result();
+                    watcher->deleteLater();
+                    if (image.isNull()) {
+                        QFile::remove(cachePath);
+                        requestNetwork();
+                        return;
+                    }
+                    touchCoverCache(cachePath);
+                    completeFlight(image);
+                });
+        watcher->setFuture(QtConcurrent::run([cachePath, dimension] {
+            QFile file(cachePath);
+            if (!file.open(QIODevice::ReadOnly) || file.size() >= CoverCacheEntryLimitBytes) {
                 return QImage();
             }
-            // 小图不在解码阶段放大，避免重复插值。
-            if (size.width() > dimension || size.height() > dimension) {
-                reader.setScaledSize(size.scaled(dimension, dimension, Qt::KeepAspectRatio));
-            }
-            return reader.read();
+            return decodeCover(file.readAll(), dimension);
         }));
-    });
+        return;
+    }
+    requestNetwork();
 }
 QString Host::qrImage(QString data) {
     if (data.size() > 8 * 1024 * 1024 ||
@@ -2148,7 +2317,7 @@ QImage Host::image(const QString &key) const {
         badges.insert(key, new QImage(image), 32);
         return image;
     }
-    auto p = images.object(key);
+    auto p = key.startsWith(QLatin1String("cover-thumb:")) ? thumbnailImages.object(key) : images.object(key);
     return p ? *p : QImage();
 }
 void Host::trimMemory(const QStringList &retainedImages) {
@@ -2162,20 +2331,30 @@ void Host::trimMemory(const QStringList &retainedImages) {
     // 请求结果仍可从磁盘按需读取；保留当前 HUD 图片，避免恢复后二维码或封面空白。
     cache.clear();
     images.clear();
+    thumbnailImages.clear();
     int retainedCost = 0;
-    for (const auto &pixels : retained) {
-        retainedCost += qMax(1, int(pixels.sizeInBytes() / 1024));
+    int thumbnailCost = 0;
+    for (auto it = retained.cbegin(); it != retained.cend(); ++it) {
+        const auto cost = qMax(1, int(it->sizeInBytes() / 1024));
+        if (it.key().startsWith(QLatin1String("cover-thumb:"))) {
+            thumbnailCost += cost;
+        } else {
+            retainedCost += cost;
+        }
     }
     // 渲染预算
     images.setMaxCost(qMax(4 * 1024, retainedCost));
+    thumbnailImages.setMaxCost(qMax(2 * 1024, thumbnailCost));
     for (auto it = retained.begin(); it != retained.end(); ++it) {
-        images.insert(it.key(), new QImage(it.value()), qMax(1, int(it->sizeInBytes() / 1024)));
+        auto &target = it.key().startsWith(QLatin1String("cover-thumb:")) ? thumbnailImages : images;
+        target.insert(it.key(), new QImage(it.value()), qMax(1, int(it->sizeInBytes() / 1024)));
     }
 }
 void Host::fixtureImage(const QString &key, const QImage &image) {
     // 仅离线窗口验收可注入本地封面，不读取账号或访问封面服务器。
     if (offline && !image.isNull()) {
-        images.insert(key, new QImage(image), int(image.sizeInBytes() / 1024));
+        auto &target = key.startsWith(QLatin1String("cover-thumb:")) ? thumbnailImages : images;
+        target.insert(key, new QImage(image), int(image.sizeInBytes() / 1024));
     }
 }
 void Host::playOfficial(QString id, TextReply callback) {
@@ -2416,16 +2595,32 @@ void Host::clearLegacyMetadata(StorageCoordinator::Completion done) {
 
 QJsonObject Host::clearNetworkImages() {
     ++imageCacheGeneration;
-    const auto costBefore = images.totalCost();
+    const auto costBefore = images.totalCost() + thumbnailImages.totalCost();
     int removed = 0;
     for (const auto &key : images.keys()) {
         if (key.startsWith(QLatin1String("https://")) && images.remove(key)) {
             ++removed;
         }
     }
+    removed += thumbnailImages.size();
+    thumbnailImages.clear();
+    qint64 diskBytes = 0;
+    const auto coverCache = coverCacheDirectory();
+    if (!coverCache.isEmpty()) {
+        QDir directory(coverCache);
+        if (directory.exists()) {
+            QDirIterator files(coverCache, QDir::Files | QDir::NoSymLinks, QDirIterator::Subdirectories);
+            while (files.hasNext()) {
+                files.next();
+                diskBytes += files.fileInfo().size();
+            }
+            directory.removeRecursively();
+        }
+    }
     auto result = StorageCoordinator::result("network-images", "cleared");
     result["entries"] = removed;
-    result["memoryBytes"] = (costBefore - images.totalCost()) * 1024LL;
+    result["memoryBytes"] = (costBefore - images.totalCost() - thumbnailImages.totalCost()) * 1024LL;
+    result["diskBytes"] = diskBytes;
     return result;
 }
 /** 清除可重建的缓存；登录凭据、账号设置与本地音乐库保持不变。 */
