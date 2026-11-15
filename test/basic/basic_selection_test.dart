@@ -128,6 +128,16 @@ void main() {
       expect(basicLaneEmptyNotice(2), contains('本地集合暂不可用'));
       expect(basicLaneEmptyNotice(1, localCollectionsAvailable: true), contains('暂无喜欢的歌曲'));
       expect(basicLaneEmptyNotice(2, localCollectionsAvailable: true), contains('暂无本地歌单'));
+      // 源集合非空、曲库还解析不出时既不冒充空收藏，也不冒充账号：
+      // Qt loadSirenSource 会拿这些 id 再补 songs（Qt/src/MusicSiren.cpp:296-322）。
+      expect(
+        basicLaneEmptyNotice(1, localCollectionsAvailable: true, unresolvedLikedIds: 3),
+        contains('还没对上曲库'),
+      );
+      expect(
+        basicLaneEmptyNotice(1, localCollectionsAvailable: true, unresolvedLikedIds: 3),
+        isNot(contains('暂无喜欢的歌曲')),
+      );
       expect(basicLaneEmptyNotice(3), contains('曲库'));
     });
   });

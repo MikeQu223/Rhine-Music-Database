@@ -42,6 +42,10 @@ SirenHttpResult _json(Object? body) =>
 
 /// 假塞壬站点：20 首曲目（够跨页，> 8 才会出现 cell 折列差异）、2 张专辑。
 class _Server {
+  _Server({this.albumCount = 2});
+
+  final int albumCount;
+
   static final List<String> songIds = <String>[
     for (int i = 1; i <= 20; i += 1) 's' + i.toString().padLeft(2, '0'),
   ];
@@ -65,8 +69,13 @@ class _Server {
       return _json(<String, Object?>{
         'code': 0,
         'data': <Object?>[
-          <String, Object?>{'cid': 'a1', 'name': 'Album One', 'artistes': <Object?>['A'], 'coverUrl': ''},
-          <String, Object?>{'cid': 'a2', 'name': 'Album Two', 'artistes': <Object?>['B'], 'coverUrl': ''},
+          for (int i = 1; i <= albumCount; i += 1)
+            <String, Object?>{
+              'cid': 'a' + i.toString(),
+              'name': 'Album ' + i.toString(),
+              'artistes': <Object?>['A'],
+              'coverUrl': '',
+            },
         ],
       });
     }
@@ -445,6 +454,139 @@ void main() {
       await _settle();
       expect(controller.state.status, contains('本地集合暂不可用'));
       expect(controller.state.status, isNot(contains('暂无本地歌单')));
+    });
+  });
+
+  group('根列 next 与点击选中是两条入口：滚动窗口 offsets/rowMemory 不能互相覆盖', () {
+    test('lane4 十张专辑：select9 后 next+1 得 rowMemory=2，open-all anchor = 34（不是 32）', () async {
+      final _Server server = _Server(albumCount: 10);
+      final _FakeAudio audio = _FakeAudio();
+      final BasicController controller = await _loaded(server, audio);
+      addTearDown(controller.dispose);
+      audio.calls.clear();
+
+      await controller.navigateColumn(1); // 3 → 4（全部专辑）
+      await _settle();
+      expect(controller.state.selectedLane, 4);
+      expect(controller.state.albums.length, 10);
+
+      // 直接点击第 10 张：Qt selectResult（Qt/src/MusicLibrary.cpp:616-643）
+      // offsets[4] = 9 / 8 * 8 = 8；rowMemory[4] = 9 % 8 = 1。
+      await controller.selectLibraryRow(9);
+      await _settle();
+      expect(controller.state.selection?.id, 'a10');
+
+      // ↓ 一次：Qt MusicLibrary::next（Qt/src/MusicLibrary.cpp:651-663）
+      //   absolute = wrap(8 + 1, 10) = 9；next = wrap(9 + 1, 10) = 0
+      //   target = wrap(1 + 1, 8) = 2；offsets[4] = 0 - 2 = -2；rowMemory[4] = 2
+      await controller.stepLibrarySelection(1);
+      await _settle();
+      expect(controller.state.selection?.id, 'a1', reason: 'next 从末尾绕回第 1 张');
+      expect(controller.state.selectedLane, 4);
+      expect(audio.played, isFalse, reason: '逐项选中不播放');
+
+      // 负 offsets 必须能活着穿过一次换列往返：Qt showSource 用 wrap(offsets+rowMemory,count)
+      // 恢复窗口行（Qt/src/MusicLibrary.cpp:566-573），不能被“记住的选中身份/row%8”顶掉。
+      await controller.navigateColumn(1); // 4 → 0（sourceOrder 回环）
+      await _settle();
+      expect(controller.state.selectedLane, 0);
+      await controller.navigateColumn(-1); // 0 → 4
+      await _settle();
+      expect(controller.state.selectedLane, 4);
+      expect(controller.state.selection?.id, 'a1',
+          reason: 'offsets[4]=-2 → wrap(-2+2,10)=0，仍是我刚选的那张');
+      expect(audio.played, isFalse);
+
+      // 回到「全部歌曲」再打开：anchor 必须带上 next 之后的 rowMemory[4]=2。
+      // 旧的 row%8 覆盖写法会把 rowMemory 归零，得 anchor=32——那是错的。
+      await controller.navigateColumn(-1); // 4 → 3（sourceOrder 回环）
+      await _settle();
+      expect(controller.state.selectedLane, 3);
+
+      await controller.openAllSirenSongs();
+      await _settle();
+      final BasicDirectory directory = controller.state.directory!;
+      expect(directory.anchor, 34, reason: 'destination=4 → 32 + rowMemory[4](2)');
+      expect(directory.cellAt(0), 34);
+      expect(directory.laneAt(0), 4, reason: '34 ~/ 8 = 4');
+      expect(audio.played, isFalse, reason: '打开目录不播放');
+    });
+  });
+
+  group('源集合非空但还解析不出：不是空收藏，也不冒充空库', () {
+    test('likedIDs 全部解析不到 → “还没对上曲库”，不是“暂无喜欢的歌曲”', () async {
+      final _Server server = _Server();
+      final _FakeAudio audio = _FakeAudio();
+      final BasicController controller = await _loaded(
+        server,
+        audio,
+        collections: _FakeCollections(liked: <String>['missing-1', 'missing-2']),
+      );
+      addTearDown(controller.dispose);
+
+      expect(controller.state.localCollectionsAvailable, isTrue,
+          reason: '端口是真的查询过了');
+      expect(controller.state.localUnresolvedLikedIds, 2);
+      expect(controller.state.localPlaylists, isEmpty);
+
+      await controller.navigateColumn(-1); // 3 → 2
+      await _settle();
+      await controller.navigateColumn(-1); // 2 → 1
+      await _settle();
+      expect(controller.state.selectedLane, 1);
+      expect(basicLibraryItems(controller.state), isEmpty,
+          reason: '解析不出的 id 不造行，也不造 SirenSong');
+      expect(controller.state.status, contains('还没对上曲库'));
+      expect(controller.state.status, isNot(contains('暂无喜欢的歌曲')),
+          reason: '源集合非空时不能上屏 Qt 的空收藏文案');
+      expect(audio.played, isFalse);
+    });
+
+    test('部分解析得到：出已解析的行，同时把未解析条数留在 state 里', () async {
+      final _Server server = _Server();
+      final _FakeAudio audio = _FakeAudio();
+      final BasicController controller = await _loaded(
+        server,
+        audio,
+        collections: _FakeCollections(liked: <String>['s02', 'missing-1']),
+      );
+      addTearDown(controller.dispose);
+
+      expect(controller.state.localCollectionsAvailable, isTrue);
+      expect(controller.state.localUnresolvedLikedIds, 1);
+
+      await controller.navigateColumn(-1);
+      await _settle();
+      await controller.navigateColumn(-1);
+      await _settle();
+      expect(controller.state.selectedLane, 1);
+      expect(controller.state.songs.map((SirenSong song) => song.id).toList(), <String>['s02'],
+          reason: '已解析的照列，未解析的不造行');
+      expect(controller.state.status, contains('喜欢的歌曲'));
+      expect(controller.state.status, isNot(contains('暂无喜欢的歌曲')));
+      expect(audio.played, isFalse);
+    });
+
+    test('端口查询成功且源集合真的空 → 才是“暂无喜欢的歌曲”', () async {
+      final _Server server = _Server();
+      final _FakeAudio audio = _FakeAudio();
+      final BasicController controller = await _loaded(
+        server,
+        audio,
+        collections: _FakeCollections(),
+      );
+      addTearDown(controller.dispose);
+
+      expect(controller.state.localCollectionsAvailable, isTrue);
+      expect(controller.state.localUnresolvedLikedIds, 0);
+
+      await controller.navigateColumn(-1);
+      await _settle();
+      await controller.navigateColumn(-1);
+      await _settle();
+      expect(controller.state.selectedLane, 1);
+      expect(controller.state.status, '暂无喜欢的歌曲');
+      expect(audio.played, isFalse);
     });
   });
 }

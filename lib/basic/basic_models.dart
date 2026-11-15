@@ -532,12 +532,27 @@ int basicStepSourceLane(int lane, int direction) {
 /// false（当前生产事实）时只声明暂不可用——不能把“没查询过”说成“空库”，更不能说成
 /// “账号数据”；只有端口真的注入并查询过、结果确实为空，才上屏 Qt 的空态文案
 /// （Qt/src/MusicSiren.cpp:265/:283 '暂无喜欢的歌曲' / '暂无本地歌单…'）。
-String basicLaneEmptyNotice(int lane, {bool localCollectionsAvailable = false}) {
+///
+/// [unresolvedLikedIds] 是“源集合非空、但曲库还解析不出这些 id”的条数（端口刚注入、
+/// 曲库还没加载完时就是全部）。这种情况**不是空收藏**：Qt loadSirenSource 会拿 id 去
+/// 请求 songs 再补行（Qt/src/MusicSiren.cpp:296-322），所以这里只诚实声明“还没对上曲库”，
+/// 既不造 `SirenSong`、也不上屏 '暂无喜欢的歌曲'。
+String basicLaneEmptyNotice(
+  int lane, {
+  bool localCollectionsAvailable = false,
+  int unresolvedLikedIds = 0,
+}) {
   switch (lane) {
     case basicSearchLane:
       return '输入关键词检索塞壬唱片曲库';
     case 1:
-      return localCollectionsAvailable ? '暂无喜欢的歌曲' : '本地集合暂不可用：还没接上本机收藏';
+      if (!localCollectionsAvailable) {
+        return '本地集合暂不可用：还没接上本机收藏';
+      }
+      if (unresolvedLikedIds > 0) {
+        return '本地收藏有 $unresolvedLikedIds 首还没对上曲库，稍后重试';
+      }
+      return '暂无喜欢的歌曲';
     case 2:
       return localCollectionsAvailable ? '暂无本地歌单' : '本地集合暂不可用：还没接上本机歌单';
     case 3:
@@ -663,6 +678,7 @@ class BasicViewState {
     this.listPosition,
     this.selectedLane = basicDefaultLane,
     this.localCollectionsAvailable = false,
+    this.localUnresolvedLikedIds = 0,
     this.localPlaylists = const <BasicLocalPlaylist>[],
   });
 
@@ -767,6 +783,12 @@ class BasicViewState {
   /// true 时空才是 Qt 的真空态（Qt/src/MusicSiren.cpp:265/:283）。
   final bool localCollectionsAvailable;
 
+  /// 源集合里已有、但当前曲库还解析不出的本机收藏条数（Qt 会拿这些 id 再补 songs）。
+  ///
+  /// 它让“源集合非空但暂时一首都显示不出来”与“源集合真的空”说出两句话：
+  /// 前者见 [basicLaneEmptyNotice] 的 `unresolvedLikedIds` 分支，后者才是 '暂无喜欢的歌曲'。
+  final int localUnresolvedLikedIds;
+
   /// 「我的歌单」列的行投影（本机 `playlists()`；不可用时为空）。
   ///
   /// 「喜欢的歌曲」的行不在这里：它们经 Flutter 曲库解析后进 [songs]
@@ -817,6 +839,7 @@ class BasicViewState {
     double? listPosition,
     int? selectedLane,
     bool? localCollectionsAvailable,
+    int? localUnresolvedLikedIds,
     List<BasicLocalPlaylist>? localPlaylists,
     bool dropAlbum = false,
     bool dropDirectory = false,
@@ -854,6 +877,7 @@ class BasicViewState {
       listPosition: listPosition ?? this.listPosition,
       selectedLane: selectedLane ?? this.selectedLane,
       localCollectionsAvailable: localCollectionsAvailable ?? this.localCollectionsAvailable,
+      localUnresolvedLikedIds: localUnresolvedLikedIds ?? this.localUnresolvedLikedIds,
       localPlaylists: localPlaylists ?? this.localPlaylists,
     );
   }

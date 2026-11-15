@@ -134,10 +134,21 @@ class BasicController extends ChangeNotifier {
   /// 「我的歌单」列的行（本机 playlists() 的投影）。
   List<BasicLocalPlaylist> _localPlaylists = const <BasicLocalPlaylist>[];
 
+  /// 源 likedIDs 里已存在、但曲库还解析不出的条数（Qt 会拿这些 id 再补 songs，
+  /// Qt/src/MusicSiren.cpp:296-322）。它让“非空但暂时显示不出来”不等于“空收藏”。
+  int _localUnresolvedLikedIds = 0;
+
   /// Qt `rowMemory[lane]`（0..7 的页内行）：`openSirenAllSongs` 用
   /// `anchor = destination*8 + rowMemory[destination]` 决定目录的折列锚点
   /// （Qt/src/MusicSiren.cpp:229-240）。基础版没有 physicalSlots，这里只是逻辑行号。
   final List<int> _rowMemory = List<int>.filled(basicSirenColumns.length, 0);
+
+  /// Qt `offsets[lane]`（Qt/src/MusicLibrary.h:148-149）：根列滚动窗口的起始绝对行号。
+  ///
+  /// `next` 走到边缘时 Qt 会写成 `offsets[lane] = next - target`（可能为负，
+  /// Qt/src/MusicLibrary.cpp:651-663），随后 `wrap(offsets[lane]+row, count)` 再取模。
+  /// 它与 [_rowMemory] 一起决定 open-all 的目录 anchor，不能只留 rowMemory。
+  final List<int> _laneOffsets = List<int>.filled(basicSirenColumns.length, 0);
 
   late final MusicPlayer _player;
   late BasicViewState _state;
@@ -177,11 +188,11 @@ class BasicController extends ChangeNotifier {
   /// 根页列表只承载这一列，←/→ 按 [basicSirenSourceOrder] 循环换列。
   int _selectedLane = basicDefaultLane;
 
-  /// 每列各自的滚动窗口（Qt 的 `offsets[lane]`，单位条目）与选中身份
-  /// （Qt 的 `rowMemory[lane]` / `selectedPhysical` 投影）：换列再换回来时恢复位置。
+  /// 每列各自的滚动位置（单位条目），只在目录外/无父目录这类退化路径上用。
+  ///
+  /// 常规的换列恢复走 Qt showSource 的窗口语义 `wrap(offsets[lane]+rowMemory[lane], count)`，
+  /// 见 [_showSourceLane]；这里保留的是「退出目录后没有父目录可复位」时的落点。
   final List<double> _lanePositions = List<double>.filled(basicSirenColumns.length, 0);
-  final List<BasicSelection?> _laneSelections =
-      List<BasicSelection?>.filled(basicSirenColumns.length, null);
   BasicPhase? _phaseBeforeLyrics;
   bool _catalogLoaded = false;
   bool _booted = false;
@@ -275,7 +286,6 @@ class BasicController extends ChangeNotifier {
     if (value.trim().isEmpty) {
       // Qt MusicLibrary.cpp:409-486：空关键词清 lists[0]，只留提示文案。
       _status = basicLaneEmptyNotice(basicSearchLane);
-      _laneSelections[basicSearchLane] = null;
     } else if (count == 0) {
       _status = '没有匹配的音乐';
     } else {
@@ -478,14 +488,40 @@ class BasicController extends ChangeNotifier {
     if (_disposed || direction == 0) {
       return;
     }
+    final BasicDirectory? directory = _directory;
+    if (directory != null) {
+      // Qt MusicLibrary::next（Qt/src/MusicLibrary.cpp:646-650）在有目录时走
+      // navigateDirectory(direction, "row")：同样先取模换 index，再由目录 anchor 折列。
+      _navigateDirectoryBy(direction);
+      return;
+    }
     final List<BasicListItem> items = basicLibraryItems(_state);
     if (items.isEmpty) {
       return;
     }
+    final int lane = _selectedLane;
+    if (lane < 0 || lane >= _laneOffsets.length) {
+      return;
+    }
     final int count = items.length;
-    final int current = basicSelectedItemIndex(_state, items);
-    final int next = ((current + direction) % count + count) % count;
-    _selectRow(items, next);
+    // Qt/src/MusicLibrary.cpp:651-663（根列 next）：
+    //   row = physicalSlots[lane].indexOf(selectedPhysical)  → 这里等价于 rowMemory[lane]
+    //   absolute = wrap(offsets[lane] + row, count)
+    //   next     = wrap(absolute + direction, count)
+    //   target   = wrap(row + direction, 8)
+    //   offsets[lane] = next - target      ← Qt 也允许为负
+    // 这条入口与点击选中（selectResult 把 offsets 归一成 index/8*8）是**两条**入口：
+    // 用 row%8 覆盖 rowMemory 会让边缘换行后的 open-all anchor 少一页
+    // （lead 的 lane4 count10 反例：select9 后 next+1 应得 rowMemory=2/anchor=34，不是 32）。
+    final int row = _rowMemory[lane] < 0
+        ? 0
+        : (_rowMemory[lane] >= count ? count - 1 : _rowMemory[lane]);
+    final int absolute = (((_laneOffsets[lane] + row) % count) + count) % count;
+    final int next = ((absolute + direction) % count + count) % count;
+    final int target = ((row + direction) % 8 + 8) % 8;
+    _laneOffsets[lane] = next - target;
+    _rowMemory[lane] = target;
+    _selectRow(items, next, recordWindow: false);
     _publish();
   }
 
@@ -582,29 +618,23 @@ class BasicController extends ChangeNotifier {
       _song = null;
       _listPosition = 0;
       _lanePositions[lane] = 0;
-      _laneSelections[lane] = null;
-      _status = basicLaneEmptyNotice(lane, localCollectionsAvailable: _localCollectionsAvailable);
+      _status = basicLaneEmptyNotice(
+        lane,
+        localCollectionsAvailable: _localCollectionsAvailable,
+        unresolvedLikedIds: _localUnresolvedLikedIds,
+      );
       _publish();
       return;
     }
-    // 恢复该列上次选中的那一行（Qt rowMemory[lane] → physicalSlots → observe）；
-    // 没有记忆时落回该列记住的滚动窗口，再退到第一行。
-    int row = 0;
-    final BasicSelection? remembered = _laneSelections[lane];
-    if (remembered != null) {
-      final int found = basicSelectedItemIndex(
-        _probeState(selection: remembered, lane: lane),
-        items,
-      );
-      if (found >= 0 && found < items.length) {
-        row = found;
-      }
-    } else {
-      final double stored = _lanePositions[lane];
-      final int last = items.length - 1;
-      row = stored.isNaN ? 0 : stored.round().clamp(0, last).toInt();
-    }
-    _selectRow(items, row);
+    // Qt showSource（Qt/src/MusicLibrary.cpp:566-573）恢复的是**滚动窗口的那一行**：
+    //   physical = physicalSlots[lane].value(rowMemory[lane]); observe(physical)
+    //   → 绝对行 = wrap(offsets[lane] + rowMemory[lane], count)
+    // 不是“上次记住的选中身份”（那个可能已被 openSong/step 挪到别的窗口行）。
+    final int count = items.length;
+    final int row = (((_laneOffsets[lane] + _rowMemory[lane]) % count) + count) % count;
+    // Qt showSource（Qt/src/MusicLibrary.cpp:556-580）只恢复 selectedPhysical/observe，
+    // 不改 offsets/rowMemory —— 恢复一条记忆不能把该列的滚动窗口重算成 row%8。
+    _selectRow(items, row, recordWindow: false);
     _status = '${basicLaneName(lane)}：${items.length} 项';
     _publish();
   }
@@ -613,7 +643,7 @@ class BasicController extends ChangeNotifier {
   ///
   /// 专辑行只改选中身份，不打开详情（Qt 的 selectResult(..., highlightOnly) 不改 mode）；
   /// 详情由 'open' 路径（[openSong]/openAlbum）负责。
-  void _selectRow(List<BasicListItem> items, int row) {
+  void _selectRow(List<BasicListItem> items, int row, {bool recordWindow = true}) {
     final BasicListItem item = items[row];
     final BasicSelection? selection = basicItemSelection(_state, item);
     if (selection != null) {
@@ -645,11 +675,15 @@ class BasicController extends ChangeNotifier {
       // 写 `rowMemory[selectedLane] = 页内行`（0..7）。openSirenAllSongs 用它拼目录
       // anchor（Qt/src/MusicSiren.cpp:239-240）；目录内部不写 rowMemory
       // （observeDirectory 只折 anchor，Qt/src/MusicDirectory.cpp:255-300）。
-      _rowMemory[_selectedLane] = row % 8;
+      if (recordWindow) {
+        // Qt MusicLibrary::selectResult（Qt/src/MusicLibrary.cpp:616-643）：
+        //   offsets[lane] = viewIndex / 8 * 8;  rowMemory[lane] = viewIndex % 8
+        _laneOffsets[_selectedLane] = row ~/ 8 * 8;
+        _rowMemory[_selectedLane] = row % 8;
+      }
       // 根列的"上次选中/滚动位置"只属于根列：目录里的行号与根列不是同一套坐标，
       // 写进去会让退出目录时把目录行号当根列位置恢复。
       _lanePositions[_selectedLane] = _listPosition;
-      _laneSelections[_selectedLane] = _selection;
     }
     _status = '已选中：${item.title}';
   }
@@ -922,7 +956,6 @@ class BasicController extends ChangeNotifier {
       _listPosition = _lanePositions[_selectedLane];
     }
     _lanePositions[_selectedLane] = _listPosition;
-    _laneSelections[_selectedLane] = _selection;
     return parent;
   }
 
@@ -956,6 +989,7 @@ class BasicController extends ChangeNotifier {
     final BasicLocalCollections? collections = _collections;
     if (collections == null) {
       _localCollectionsAvailable = false;
+      _localUnresolvedLikedIds = 0;
       _likedSongs = const <SirenSong>[];
       _localPlaylists = const <BasicLocalPlaylist>[];
       return;
@@ -963,19 +997,26 @@ class BasicController extends ChangeNotifier {
     try {
       final List<SirenSong> liked = <SirenSong>[];
       final Set<String> seen = <String>{};
+      int unresolved = 0;
       for (final String id in collections.likedIds()) {
         final SirenSong? song = _songById[id];
         if (song != null && seen.add(id)) {
           liked.add(song);
+        } else if (song == null && seen.add(id)) {
+          // 源集合里确实有这个 id，但曲库还没解析出来（Qt 会拿 id 再请求 songs，
+          // Qt/src/MusicSiren.cpp:296-322）。这里不造 SirenSong，只保留“还没对上”的事实。
+          unresolved += 1;
         }
       }
       final List<BasicLocalPlaylist> playlists = collections.playlists();
       _likedSongs = List<SirenSong>.unmodifiable(liked);
       _localPlaylists = List<BasicLocalPlaylist>.unmodifiable(playlists);
+      _localUnresolvedLikedIds = unresolved;
       _localCollectionsAvailable = true;
     } on Object {
       // 本机集合读不出来就是一个可上屏的事实（“暂不可用”），不让它拖垮曲库页。
       _localCollectionsAvailable = false;
+      _localUnresolvedLikedIds = 0;
       _likedSongs = const <SirenSong>[];
       _localPlaylists = const <BasicLocalPlaylist>[];
     }
@@ -1035,6 +1076,7 @@ class BasicController extends ChangeNotifier {
       song: _song,
       selection: selection ?? _selection,
       localCollectionsAvailable: _localCollectionsAvailable,
+      localUnresolvedLikedIds: _localUnresolvedLikedIds,
       localPlaylists: _localPlaylists,
     );
   }
@@ -1283,6 +1325,7 @@ class BasicController extends ChangeNotifier {
       playerStatus: _player.status,
       catalogLoaded: _catalogLoaded,
       localCollectionsAvailable: _localCollectionsAvailable,
+      localUnresolvedLikedIds: _localUnresolvedLikedIds,
       localPlaylists: _localPlaylists,
     );
     notifyListeners();
