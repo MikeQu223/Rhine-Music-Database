@@ -515,6 +515,10 @@ class _BasicShellState extends State<_BasicShell> implements TextInputPorts {
       // 拖动过程的插值在 surface 内部完成，这里只接结束时的那一次提交。
       onLibraryScroll: (double position) =>
           unawaited(controller.commitLibraryScroll(position)),
+      // 用户 P0 #1 的列表→3D 那半：拖动**中途**每次位置变化都推进同一个窗口真值，
+      // snapshot 的 pos 因此每帧变化，Qt 侧 projectArchiveScroll 让原 3D 窗口跟着滚，
+      // 不必等松手（松手仍由 onLibraryScroll 落行选中）。
+      onLibraryScrollUpdate: controller.updateLibraryScroll,
       geometry: geometry,
       stage: stage,
     );

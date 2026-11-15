@@ -13,6 +13,7 @@
 // `/` 与 total；把 rolling 链改回"只计数不发射"会让第一条断言立刻为红。
 
 import 'dart:io';
+import 'dart:typed_data';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
@@ -106,6 +107,16 @@ List<List<Object?>> _texts(BasicHudFrame frame) => <List<Object?>>[
 List<List<Object?>> _textsWith(BasicHudFrame frame, String value) => <List<Object?>>[
       for (final List<Object?> c in _texts(frame))
         if (c.length > 1 && c[1] == value) c,
+    ];
+
+/// 左上角「所属」文字（music-brand 槽：44 号粗体、落在 _brandTop）。
+///
+/// 同一个词在底部的列游标（`music-column`，archive_page.dart:322 的 (col+70, 925, 15)）
+/// 也会出现，所以不能只按字符串断言"只有一条"—— 那是两处不同的绘制点，都在画是对的。
+List<List<Object?>> _brandTextsWith(BasicHudFrame frame, String value) =>
+    <List<Object?>>[
+      for (final List<Object?> c in _textsWith(frame, value))
+        if (c.length > 4 && c[4] == 44.0 && _near(c[3], _brandTop)) c,
     ];
 
 bool _near(Object? value, double target) =>
@@ -267,7 +278,7 @@ void main() {
         animationTime: 1.2,
         animateText: true,
       );
-      final List<List<Object?>> brand = _textsWith(settled, '全部专辑');
+      final List<List<Object?>> brand = _brandTextsWith(settled, '全部专辑');
       expect(brand, hasLength(1), reason: '稳定后应是一条整段 text，而不是逐字槽');
       expect(_near(brand.single[3], _brandTop), isTrue);
       expect(_clipsNear(settled, _brandTop), isEmpty);
@@ -289,7 +300,7 @@ void main() {
         animateText: false,
       );
       expect(frame.animating, isFalse);
-      expect(_textsWith(frame, '全部歌曲'), hasLength(1));
+      expect(_brandTextsWith(frame, '全部歌曲'), hasLength(1));
       final List<List<Object?>> number = _textsWith(frame, '01');
       expect(number, hasLength(1));
       expect((number.single[2] as num).toDouble(), closeTo(60, 0.001));
@@ -323,7 +334,7 @@ void main() {
     test('稳定帧：显式换列更新所属与总数；listPosition 只滚窗口，不改标题/序号', () async {
       final BasicGlyphPorts songsPorts = await _realPorts();
       final BasicHudFrame songs = _settle(songsPorts, _library(lane: 3));
-      expect(_textsWith(songs, '全部歌曲'), hasLength(1),
+      expect(_brandTextsWith(songs, '全部歌曲'), hasLength(1),
           reason: '全部歌曲 5 首 → 左上显示列名，不显示固定品牌名');
       expect(_glyphsNear(songs, _numberTop).join(), '01');
       expect(_textsWith(songs, '5'), isNotEmpty);
@@ -334,16 +345,18 @@ void main() {
         scrollPorts,
         _library(lane: 3, listPosition: 2.4),
       );
-      expect(_textsWith(scrolled, '全部歌曲'), hasLength(1),
+      expect(_brandTextsWith(scrolled, '全部歌曲'), hasLength(1),
           reason: 'ARCHIVE3D 滑动锁当前所属：只滚当前列表');
       expect(_glyphsNear(scrolled, _numberTop).join(), '01',
           reason: '滚动窗口不是选中项，序号只跟 selection');
 
       final BasicGlyphPorts albumsPorts = await _realPorts();
       final BasicHudFrame albums = _settle(albumsPorts, _library(lane: 4));
-      expect(_textsWith(albums, '全部专辑'), hasLength(1),
+      expect(_brandTextsWith(albums, '全部专辑'), hasLength(1),
           reason: '显式切换到全部专辑 → 左上所属跟着换');
-      expect(_textsWith(albums, '全部歌曲'), isEmpty);
+      // 顶部品牌槽必须只剩新所属；底部列游标(music-column)同时换词，所以按字符串单看会有
+      // 第二条，这里同样只在左上槽上断言。
+      expect(_brandTextsWith(albums, '全部歌曲'), isEmpty);
       expect(_glyphsNear(albums, _numberTop).join(), '01');
       expect(_textsWith(albums, '2'), isNotEmpty);
     });
@@ -455,15 +468,32 @@ void main() {
         animateText: true,
       );
       HudPaintResult? result;
+      int textRuns = 0;
       final HudStagePainter painter = HudStagePainter(
         envelope: _envelope(frame),
-        ports: HudPainterPorts(text: ports.draw, path: ports.pathFor, image: ports.imageFor),
+        ports: HudPainterPorts(
+          text: (
+            ui.Canvas canvas,
+            String value,
+            double x,
+            double y,
+            double size,
+            String weight,
+            double tracking,
+            ui.Color color,
+          ) {
+            textRuns++;
+            ports.draw(canvas, value, x, y, size, weight, tracking, color);
+          },
+          path: ports.pathFor,
+          image: ports.imageFor,
+        ),
         stage: const HudStage(scale: 1, width: 1080, height: 1920),
         onPainted: (HudPaintResult painted) => result = painted,
       );
       final ui.PictureRecorder recorder = ui.PictureRecorder();
       painter.paint(ui.Canvas(recorder), const Size(1080, 1920));
-      final ui.Picture picture = recorder.endRecording();
+      recorder.endRecording().dispose();
       expect(result, isNotNull);
       expect(
         result!.issues.where((HudPaintIssue issue) =>
@@ -472,8 +502,11 @@ void main() {
         isEmpty,
         reason: '滚动链只允许 17 命令契约内的 save/clip/alpha/text/restore',
       );
-      expect(picture.getBounds().isEmpty, isFalse, reason: '真实 painter 必须画出内容');
-      picture.dispose();
+      // Picture.getBounds() 在本机 dart:ui 里不存在（142 未能执行测试，编译错误随合并进来）；
+      // 而 picture.toImage() 在 flutter_test 的 fake async 下会一直挂住（实测 10 分钟超时）。
+      // 这里改用"真实 painter 确实把文本命令交给了端口"来做可见性证据：端口是本测试里
+      // 唯一的绘制出口，命令数为 0 就一定是空画面。
+      expect(textRuns, greaterThan(0), reason: '真实 painter 必须发出可见的文本绘制命令');
     });
   });
 }
