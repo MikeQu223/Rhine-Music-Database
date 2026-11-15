@@ -140,13 +140,17 @@ void main() {
     });
 
     testWidgets('seek hits resolve to a real fraction via HitLayer', (WidgetTester tester) async {
+      // Qt PlayerBar.cpp:148-150 只在 `state.seekable && durationMs > 0` 时挂
+      // `player:seek-fraction:0`；空转的曲库（没有时长）本来就没有进度命中，
+      // 所以这里必须给一个真的有时长的播放投影，而不是断言"总有一个 seek 命中"。
+      final BasicViewState seekable = _library().copyWith(durationMs: 180000, positionMs: 60000);
       tester.view.physicalSize = const Size(1920, 1080);
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
 
       final BasicHudFrame frame = BasicHudFrame.build(
-        state: _library(),
+        state: seekable,
         ports: _ports(),
         width: 1920,
         height: 1080,
@@ -160,7 +164,7 @@ void main() {
         home: Scaffold(
           backgroundColor: Colors.black,
           body: BasicHudSurface(
-            state: _library(),
+            state: seekable,
             ports: _ports(),
             onAction: actions.add,
             geometry: const StageGeometry(logicalWidth: 1920.0, logicalHeight: 1080.0),

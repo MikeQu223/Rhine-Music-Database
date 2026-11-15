@@ -36,9 +36,12 @@ double basicNavigationLeft(double width) => width - 789;
 /// 目录打开时是目录标题（'全部歌曲'），否则是**当前列名**（`columns.value(lane)`：
 /// 搜索结果 / 喜欢的歌曲 / 我的歌单 / 全部歌曲 / 全部专辑）。
 String basicLibraryTitle(BasicViewState state) {
-  final String title = state.directory?.title ?? '';
-  if (title.isNotEmpty) {
-    return title;
+  final BasicDirectory? directory = state.directory;
+  if (directory != null) {
+    // Qt/src/MusicLibrary.cpp:189-193：目录内就是 directory->item["title"]。
+    // 目录确实可能没标题（来源没给），那时回落到 provider 名——不编造标题，
+    // 也不拿根列的列名冒充目录名（目录不是列）。
+    return directory.title.isEmpty ? basicLibraryName : directory.title;
   }
   final String lane = basicLaneName(state.selectedLane);
   return lane.isEmpty ? basicLibraryName : lane;

@@ -94,14 +94,16 @@ void main() {
       expect(gate.backPressed(), isTrue);
     });
 
-    testWidgets('decline -> terminated and exitApp', (WidgetTester tester) async {
+    testWidgets('decline -> declined (finishAffinity) and exitApp', (WidgetTester tester) async {
       final _FakeConsentPorts ports = _FakeConsentPorts();
       final ConsentGate gate = ConsentGate(ports);
       await gate.start();
       expect(gate.phase, ConsentPhase.awaitingConsent);
 
+      // Qt ConsentActivity.java:126 finishAffinity()：这个相位就是 enum 里的 `declined`
+      // （lib/app/consent_gate.dart:293-296）；terminated 是进程拆除，不是这次拒绝。
       gate.decline();
-      expect(gate.phase, ConsentPhase.terminated);
+      expect(gate.phase, ConsentPhase.declined);
       expect(ports.exits, 1);
       expect(ports.record.granted, isFalse);
     });
@@ -137,17 +139,32 @@ void main() {
   });
 
   group('library items', () {
-    test('albums come before songs and detail shows the album track list', () {
+    test('the list is the selected lane; search puts albums before songs', () {
+      // Qt MusicLibrary::libraryItems（Qt/src/MusicLibrary.cpp:212-214）=
+      // `directory ? orderedSongs() : sourceItems(selectedLane)`：根列一次只有**一列**
+      // 的条目，lane 3 = 全部歌曲（只有 song），lane 4 = 全部专辑（只有 album），
+      // 只有 lane 0 的检索把 album 行排在 song 行前面。
       final BasicViewState library = BasicViewState(
         phase: BasicPhase.library,
         albums: <SirenAlbum>[_album()],
         songs: <SirenSong>[_song('s1', '第一首'), _song('s2', '第二首')],
         catalogLoaded: true,
       );
-      final List<BasicListItem> items = basicLibraryItems(library);
-      expect(items.map((BasicListItem item) => item.kind).toList(),
+      expect(basicLibraryItems(library).map((BasicListItem item) => item.kind).toList(),
+          <String>['song', 'song'], reason: '默认列 lane 3 = 全部歌曲');
+      expect(
+        basicLibraryItems(library.copyWith(selectedLane: 4))
+            .map((BasicListItem item) => item.kind)
+            .toList(),
+        <String>['album'],
+        reason: 'lane 4 = 全部专辑',
+      );
+      final List<BasicListItem> search = basicLibraryItems(
+        library.copyWith(selectedLane: basicSearchLane, query: '塞壬'),
+      );
+      expect(search.map((BasicListItem item) => item.kind).toList(),
           <String>['album', 'song', 'song']);
-      expect(items.first.index, 0);
+      expect(search.first.index, 0);
 
       final BasicViewState detail = library.copyWith(
         phase: BasicPhase.detail,

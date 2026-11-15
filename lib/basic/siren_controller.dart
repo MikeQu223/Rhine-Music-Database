@@ -285,7 +285,10 @@ class BasicController extends ChangeNotifier {
         value.trim().isEmpty ? 0 : _visibleSongs().length + _visibleAlbums().length;
     if (value.trim().isEmpty) {
       // Qt MusicLibrary.cpp:409-486：空关键词清 lists[0]，只留提示文案。
-      _status = basicLaneEmptyNotice(basicSearchLane);
+      // 状态栏那句是 MusicLibrary::search 的空/超长早退（:441-455
+      // `status = "请输入 1–<maximum> 字关键词"`；塞壬不是 qq，maximum = 100）；
+      // basicLaneEmptyNotice(0) 是列表区的空列提示，两者不是同一处文案。
+      _status = '请输入 1\u2013100 字关键词';
     } else if (count == 0) {
       _status = '没有匹配的音乐';
     } else {
@@ -513,9 +516,11 @@ class BasicController extends ChangeNotifier {
     // 这条入口与点击选中（selectResult 把 offsets 归一成 index/8*8）是**两条**入口：
     // 用 row%8 覆盖 rowMemory 会让边缘换行后的 open-all anchor 少一页
     // （lead 的 lane4 count10 反例：select9 后 next+1 应得 rowMemory=2/anchor=34，不是 32）。
-    final int row = _rowMemory[lane] < 0
-        ? 0
-        : (_rowMemory[lane] >= count ? count - 1 : _rowMemory[lane]);
+    // `row` 是**物理行**（Qt `physicalSlots[lane].indexOf(selectedPhysical)`，8 个物理
+    // 行恒存在），绝对不是条目下标，Qt 也从不按 count 夹它：夹成 count-1 会把短列表
+    // 钉死在末行。反例（Qt/src/MusicLibrary.cpp:651-663，count=3 直接选第 0 条再连点
+    // 四次 ↓）：正确 0,1,2,0,1（第 4 步 row=4、offsets=-3），夹 count 后变成 0,1,2,0,0。
+    final int row = ((_rowMemory[lane] % 8) + 8) % 8;
     final int absolute = (((_laneOffsets[lane] + row) % count) + count) % count;
     final int next = ((absolute + direction) % count + count) % count;
     final int target = ((row + direction) % 8 + 8) % 8;
@@ -774,7 +779,13 @@ class BasicController extends ChangeNotifier {
   /// 生产 ticker 是 100ms 的真实 Timer；测试里 Timer 不会自己走，所以留这一个入口。
   /// 它只调用 MusicPlayer.tick / LyricsController.tick，不产生任何进度。
   @visibleForTesting
-  void pumpForTest(double seconds) => _pump(seconds);
+  /// 测试用的**单链路** tick 替身（生产由 100ms Timer 喂 [_clock] 的 elapsed）。
+  ///
+  /// tick 的 time 是"单调秒数"绝对值，测试里写成从 0 起的相对脚本时间（0.2、0.3…）；
+  /// 生产 ticker 也在同一轴上真跑（boot 起每 100ms 一次，值 ≈0.1…），两者会互相把对方
+  /// 挡在 0.1 秒闸门外。这里整体加一个远离真实 elapsed 的常量偏移，让脚本时间保持单调
+  /// 且始终在 ticker 之上——节流语义（0.1 秒一次）与零点都按测试意图生效。
+  void pumpForTest(double seconds) => _pump(seconds + 600.0);
 
   @override
   void dispose() {
@@ -935,7 +946,7 @@ class BasicController extends ChangeNotifier {
       final BasicSelection? restored = leaving.parentSelection;
       _selection = restored;
       if (restored != null && restored.isSong) {
-        _song = _songById[restored.id];
+        _song = _resolveSongById(restored.id);
       } else {
         // Qt leaveDirectory(true) 的 `current = folder->parentItem`：parentItem 不是曲目
         // （专辑/歌单行）或根本没有时，不能把目录里那首歌留成 state.song——否则随后的
@@ -999,7 +1010,7 @@ class BasicController extends ChangeNotifier {
       final Set<String> seen = <String>{};
       int unresolved = 0;
       for (final String id in collections.likedIds()) {
-        final SirenSong? song = _songById[id];
+        final SirenSong? song = _resolveSongById(id);
         if (song != null && seen.add(id)) {
           liked.add(song);
         } else if (song == null && seen.add(id)) {
@@ -1020,6 +1031,41 @@ class BasicController extends ChangeNotifier {
       _likedSongs = const <SirenSong>[];
       _localPlaylists = const <BasicLocalPlaylist>[];
     }
+  }
+
+  /// 按 id 找一首真曲目：详情/播放过的缓存优先，其次整份曲库，最后当前目录/可见列表。
+  ///
+  /// [_songById] 只装详情页/播放过的歌曲（:326/:1165 两处写入），曲库里没点开过的歌
+  /// 不在里面；只靠它还原选中，会把「返回资料库」「喜欢的歌曲」这类仅有 id 的路径
+  /// 静默变成 null/0——曲库里明明有这首歌。Qt 侧对应的是整份曲目表先查缓存再回落
+  /// （MusicDirectory.cpp:417-452 的 `details.value(key, folder->parentItem)`）。
+  SirenSong? _resolveSongById(String id) {
+    if (id.isEmpty) {
+      return null;
+    }
+    final SirenSong? cached = _songById[id];
+    if (cached != null) {
+      return cached;
+    }
+    for (final SirenSong song in _catalogSongs) {
+      if (song.id == id) {
+        return song;
+      }
+    }
+    final BasicDirectory? directory = _directory;
+    if (directory != null) {
+      for (final SirenSong song in directory.songs) {
+        if (song.id == id) {
+          return song;
+        }
+      }
+    }
+    for (final SirenSong song in _visibleSongs()) {
+      if (song.id == id) {
+        return song;
+      }
+    }
+    return null;
   }
 
   List<SirenSong> _visibleSongs() {

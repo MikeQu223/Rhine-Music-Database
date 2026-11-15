@@ -42,9 +42,12 @@ SirenHttpResult _json(Object? body) =>
 
 /// 假塞壬站点：20 首曲目（够跨页，> 8 才会出现 cell 折列差异）、2 张专辑。
 class _Server {
-  _Server({this.albumCount = 2});
+  _Server({this.albumCount = 2, this.songCount = 20});
 
   final int albumCount;
+
+  /// 曲目条数：短列表（count < 8）也要有 8 个物理行，见本文件末尾的反例。
+  final int songCount;
 
   static final List<String> songIds = <String>[
     for (int i = 1; i <= 20; i += 1) 's' + i.toString().padLeft(2, '0'),
@@ -55,7 +58,7 @@ class _Server {
       return _json(<String, Object?>{
         'code': 0,
         'data': <Object?>[
-          for (final String id in songIds)
+          for (final String id in songIds.take(songCount))
             <String, Object?>{
               'cid': id,
               'name': 'Song ' + id,
@@ -510,6 +513,78 @@ void main() {
       expect(directory.cellAt(0), 34);
       expect(directory.laneAt(0), 4, reason: '34 ~/ 8 = 4');
       expect(audio.played, isFalse, reason: '打开目录不播放');
+    });
+  });
+
+  // lead 反例：rowMemory 是 8 个**物理行**里的行号（Qt
+  // `physicalSlots[lane].indexOf(selectedPhysical)` ∈ 0..7），永远不被 count 夹。
+  // 旧代码 `_rowMemory[lane] >= count ? count - 1` 在 count=3 时把第 3 步的 rowMemory=3
+  // 夹回 2，于是第 4 次 ↓ 又算出 0 号条目（0,1,2,0,0）。Qt/src/MusicLibrary.cpp:651-663
+  // 的正确序列是 0,1,2,0,1（第 4 步 row=4、offsets=-3、wrap(-3+4,3)=1）。
+  group('短列表（count<8）：物理行不按 count 夹，窗口偏移可以为负', () {
+    test('count3 选 0 后连点四次 ↓：0,1,2,0,1', () async {
+      final _Server server = _Server(songCount: 3);
+      final _FakeAudio audio = _FakeAudio();
+      final BasicController controller = await _loaded(server, audio);
+      addTearDown(controller.dispose);
+      audio.calls.clear();
+      expect(controller.state.selectedLane, 3, reason: '首帧在「全部歌曲」列');
+      expect(controller.state.songs.length, 3);
+
+      await controller.selectLibraryRow(0);
+      await _settle();
+      final List<String?> visited = <String?>[controller.state.selection?.id];
+      for (int i = 0; i < 4; i += 1) {
+        await controller.stepLibrarySelection(1);
+        await _settle();
+        visited.add(controller.state.selection?.id);
+      }
+      expect(visited, <String>['s01', 's02', 's03', 's01', 's02'],
+          reason: '物理行 0→1→2→3→4，负 offsets 仍然 wrap 到 0/1 号条目');
+      expect(audio.played, isFalse, reason: '逐项选中不播放');
+    });
+
+    test('count3 选 0 后连点两次 ↑：0,2,1（负 offsets 而不是夹住）', () async {
+      final _Server server = _Server(songCount: 3);
+      final _FakeAudio audio = _FakeAudio();
+      final BasicController controller = await _loaded(server, audio);
+      addTearDown(controller.dispose);
+      audio.calls.clear();
+
+      await controller.selectLibraryRow(0);
+      await _settle();
+      final List<String?> visited = <String?>[controller.state.selection?.id];
+      for (int i = 0; i < 2; i += 1) {
+        await controller.stepLibrarySelection(-1);
+        await _settle();
+        visited.add(controller.state.selection?.id);
+      }
+      // Qt: row=0 → raw=-1 → next=wrap(-1,3)=2, target=wrap(-1,8)=7, offsets=-5；
+      //     再 ↑ → row=7, absolute=wrap(-5+7,3)=2 → next=1, target=6, offsets=-5。
+      expect(visited, <String>['s01', 's03', 's02']);
+      expect(audio.played, isFalse);
+    });
+
+    test('count3 负偏移穿一次换列往返仍在同一条目（showSource 用 wrap(offsets+row)）', () async {
+      final _Server server = _Server(songCount: 3);
+      final _FakeAudio audio = _FakeAudio();
+      final BasicController controller = await _loaded(server, audio);
+      addTearDown(controller.dispose);
+      audio.calls.clear();
+
+      await controller.selectLibraryRow(0);
+      await _settle();
+      await controller.stepLibrarySelection(1);
+      await _settle();
+      expect(controller.state.selection?.id, 's02');
+
+      await controller.navigateColumn(1); // 3 → 4
+      await _settle();
+      await controller.navigateColumn(-1); // 4 → 3
+      await _settle();
+      expect(controller.state.selectedLane, 3);
+      expect(controller.state.selection?.id, 's02', reason: '换列不能把负偏移的窗口丢掉');
+      expect(audio.played, isFalse);
     });
   });
 

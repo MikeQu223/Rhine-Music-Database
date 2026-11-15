@@ -992,7 +992,11 @@ List<BasicListItem> basicLibraryItems(BasicViewState state) {
   if (state.selectedLane == 1) {
     // 「喜欢的歌曲」列（Qt lane 1 的 lists[1]）：本机 likedIDs 经 Flutter 曲库解析出的
     // 曲目（Qt/src/MusicSiren.cpp:296-335 只按 id 取 songs，不产生账号请求）。
-    // 端口不可用时 state.songs 会是空投影，空态文案由 basicLaneEmptyNotice 说明。
+    // 没有本机集合端口时一条也不编：Qt 的 lists[1] 来自 LocalCollections.likedIDs()，
+    // 端口不存在就等于「还没查询过」，把整库曲目当成「喜欢的歌曲」是假数据。
+    if (!state.localCollectionsAvailable) {
+      return const <BasicListItem>[];
+    }
     return <BasicListItem>[
       for (var index = 0; index < state.songs.length; index++)
         BasicListItem(

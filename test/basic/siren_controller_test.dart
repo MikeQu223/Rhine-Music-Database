@@ -312,9 +312,11 @@ void main() {
       expect(controller.state.status, '找到 1 条结果');
 
       await controller.setQuery('album');
-      expect(controller.state.songs.length, 2, reason: 'album 字段命中 s1/s2 的专辑名');
-      expect(controller.state.albums.length, 2, reason: '专辑名/艺人命中');
-      expect(controller.state.status, '找到 4 条结果');
+      // Qt/src/MusicSiren.cpp:110-116 的曲目匹配是 title/album/artist 三字段 contains；
+      // 假曲库的 a2 名字是 'Album Two'，也含 album，所以三首都命中（不是两首）。
+      expect(controller.state.songs.length, 3, reason: 'title/album/artist 三字段命中 s1/s2/s3');
+      expect(controller.state.albums.length, 2, reason: '专辑名/艺人命中 a1/a2');
+      expect(controller.state.status, '找到 5 条结果', reason: '3 首 + 2 张');
 
       await controller.setQuery('zzz');
       expect(controller.state.songs, isEmpty);
@@ -322,7 +324,9 @@ void main() {
       expect(controller.state.status, '没有匹配的音乐');
 
       await controller.setQuery('');
-      expect(controller.state.status, '已加载塞壬唱片曲库：3 首 / 2 张专辑');
+      // Qt MusicLibrary.cpp:441-455：清空关键词走的是"空/超长输入"早退，状态栏上屏
+      // '请输入 1–100 字关键词'（maximum 对非 qq 是 100），不是曲库加载结果文案。
+      expect(controller.state.status, '请输入 1\u2013100 字关键词');
       expect(controller.state.songs.length, 3);
     });
   });
@@ -615,13 +619,17 @@ void main() {
       await controller.next();
       await _settle();
       expect(controller.state.queueIndex, 1);
-      expect(controller.state.song?.id, 's2');
+      // 选中（state.song）与播放身份（state.playingTrack）是两件事：Qt 的
+      // MusicPlayer::next 只推进队列并重播，不改 MusicLibrary 的 current/选中；
+      // 换曲要走 scene→selectionRequested→observe 才会动选中。
+      expect(controller.state.playingTrack?.id, 's2');
+      expect(controller.state.song?.id, 's1', reason: 'next 不移动浏览选中');
       expect(audio.calls, contains('prepare:https://file.test/s2.flac:2'));
 
       await controller.previous();
       await _settle();
       expect(controller.state.queueIndex, 0);
-      expect(controller.state.song?.id, 's1');
+      expect(controller.state.playingTrack?.id, 's1');
     });
 
     test('dispose 后不再响应 native 状态，也不 dispose B 的音频端口', () async {
@@ -821,7 +829,13 @@ void main() {
       expect(controller.state.phase, BasicPhase.library);
       expect(controller.state.status, '已返回：塞壬唱片');
       expect(controller.state.songs.length, 3);
-      expect(controller.state.song?.id, 's1', reason: '返回不换当前曲目');
+      // Qt/src/MusicSiren.cpp:225 `next->parentItem = current;` —— 打开目录时没有选中
+      // 任何行，parentItem 就是空对象；MusicDirectory.cpp:431-435 的
+      // `current = details.value(key, folder->parentItem)` 于是把 current 恢复成空，
+      // 所以返回资料库根**没有**当前曲目（选中身份也一起清空）。它与播放队列无关：
+      // 队列/播放不因为返回而变。
+      expect(controller.state.song, isNull, reason: 'parentItem 为空 → current 为空');
+      expect(controller.state.selection, isNull);
     });
 
     test('目录内搜索离开目录（Qt/src/MusicSiren.cpp:184-188）', () async {
