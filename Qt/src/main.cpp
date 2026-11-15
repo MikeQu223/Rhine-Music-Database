@@ -1064,6 +1064,13 @@ int main(int argc, char **argv) {
     // 不创建 QQmlApplicationEngine，不加载 Main.qml，也就不存在第二个 Qt 窗口、
     // 不了锁横屏、不改 Activity 的窗口形态（沉浸式由 Flutter 宿主自己负责）。
     if (RhineEmbedded::requested()) {
+        // 内嵌路径的窗口由 Flutter 的 PlatformView 持有：Activity 销毁时我们会同步销毁
+        // 那个 QQuickView（Qt/src/EmbeddedSceneHost.cpp 的 destroySceneView），而它是本进程
+        // 唯一的 window。默认 quitOnLastWindowClosed=true 会让 Qt 在此时退出事件循环 →
+        // QtNative 收尾 → 整个进程随 Activity 一起死（真机表现：Back 后 pidof 为空、
+        // 日志没有 "kept Qt runtime alive"）。桌面路径一直显式关掉这个开关
+        // （Qt/src/DesktopTray.cpp:50、Qt/src/playback_main.cpp:41），内嵌路径同样必须关。
+        QGuiApplication::setQuitOnLastWindowClosed(false);
         qmlRegisterType<RhiScene>("Rhine.Native", 1, 0, "RhiScene");
         qmlRegisterType<Hud>("Rhine.Native", 1, 0, "Hud");
         qmlRegisterUncreatableType<Engine>("Rhine.Native", 1, 0, "Engine", "Provided by application");

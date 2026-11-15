@@ -17,6 +17,7 @@ import rhine.music.database.basic.BasicAudioChannel
 import rhine.music.database.porting.MediaSessionChannel
 import rhine.music.database.porting.QtPlatformViewHost
 import rhine.music.database.qt.QT_SCENE_VIEW_TYPE
+import rhine.music.database.qt.QtSceneChannel
 import rhine.music.database.qt.QtSceneViewFactory
 
 private const val TAG = "RhineMainActivity"
@@ -93,6 +94,9 @@ class MainActivity : FlutterActivity() {
         //  两者都只在 engine 装配完成后各装一次：重复 install 会接管旧 channel
         //  （BasicAudioChannel.install 先 detach 再替换），不会叠出第二个实例。
         BasicAudioChannel.install(flutterEngine.dartExecutor.binaryMessenger) { this }
+        //  状态通道先装：视图创建后 Dart 会立刻推首个快照（主题/模式/选中行），
+        //  通道晚一步就会丢掉第一次 state 直到下一次状态变化。
+        QtSceneChannel.install(flutterEngine)
         flutterEngine.platformViewsController.registry.registerViewFactory(
             QT_SCENE_VIEW_TYPE,
             QtSceneViewFactory(),
@@ -109,6 +113,12 @@ class MainActivity : FlutterActivity() {
 
     override fun onDestroy() {
         hostBackDispatcher?.remove()
+        // 静态通道对象会经 MethodChannel 反向握住本引擎（→ 平台视图 → 本 Activity）。
+        // 引擎随 Activity 一起销毁，这里必须同步断开，否则旧 Activity 永远进不了回收。
+        QtSceneChannel.uninstall()
+        // 同一个理由：BasicAudioChannel 的静态 current + 注册在 Application 上的
+        // ActivityLifecycleCallbacks 都反向握着本 Activity。
+        BasicAudioChannel.uninstall()
         super.onDestroy()
     }
 

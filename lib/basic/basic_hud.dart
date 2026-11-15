@@ -151,7 +151,10 @@ class BasicHudFrame {
     HudChrome(sink, ports, dark: dark).chromeView(
       width: width,
       archiveMode: state.phase == BasicPhase.library && !portrait,
-      suppressMask: true,
+      // 场景铺满整窗（见 basicSceneStageRect），3D 会画到右栏文字下面，所以归档态必须
+      // 让 HudChrome 自己盖右栏遮罩（lib/hud/pages/chrome.dart:231 的 archiveMask，
+      // fadeWidth 300 = 原 Qt 的 NativeHud.cpp:313-330 FadeWidth）。
+      suppressMask: false,
       libraryName: basicLibraryTitle(state),
       isLocal: false,
       isSiren: true,
@@ -398,7 +401,11 @@ class BasicHudFrame {
 }
 
 /// 3D 场景在 stage 坐标里的占位矩形（绘制与命中共用同一套 stage 约定）：
-///  - 横屏：左侧 0..navigationLeft(width)、高 984（Qt 舞台里 3D 容器占满播放条以上）；
+///  - 横屏：整窗（0,0,width,height）。Qt 的 Engine::resize 把场景按
+///    `width / (height / 1080)`、1080 高舞台算投影（Qt/src/Engine.cpp:841-849），
+///    也就是原 Qt 的 1728x1080 整幅；只给左栏会让 QQuickView 变成比 1 比 1 左右的
+///    竖长视口，归档被压扁、详情抽出的唱片被裁。右栏文字可读性由 HudChrome 的
+///    archiveMask 负责，不是靠缩小矩形；
 ///  - 竖屏：顶部 1080 设计高度（曲目列从 [basicPortraitListOffset] 开始，
 ///    所以这块区域本来就是空的，正好给 3D 场景）。
 ///
@@ -415,7 +422,7 @@ Rect? basicSceneStageRect({
           width,
           height < basicPortraitListOffset ? height : basicPortraitListOffset,
         )
-      : Rect.fromLTWH(0, 0, basicNavigationLeft(width), 984);
+      : Rect.fromLTWH(0, 0, width, height);
   if (rect.width < 320 || rect.height < 320) {
     return null;
   }
@@ -466,6 +473,10 @@ class BasicHudSurface extends StatelessWidget {
       height: stage.height,
     );
     final Widget? scene = sceneRect == null ? null : _scene(state, geometry, sceneRect, portrait: portrait);
+    // 场景矩形已换算到本层坐标（竖屏在 stage 单位里、横屏在逻辑坐标里），
+    // 原始指针搬运层要用它把设备坐标归一成 1080 高的舞台坐标。
+    final Rect? rawSceneRect =
+        sceneRect == null ? null : (portrait ? sceneRect : geometry.rectToLogical(sceneRect));
     return Stack(
       children: <Widget>[
         if (scene != null) scene,
@@ -482,23 +493,48 @@ class BasicHudSurface extends StatelessWidget {
             ),
           ),
         ),
-        Positioned.fill(
-          child: GestureDetector(
-            // translucent：空白处返回 false，命中链继续下探到原生 3D（WebView），
-            // 但本层仍收到 tap 供 HUD 命中解析——两者不互相吞掉。
-            behavior: HitTestBehavior.translucent,
-            // 竖屏手势层在 PortraitStage 的 Transform.scale 里，localPosition 已经是
-            // 舞台坐标；而 HitLayer/StageGeometry 的入口约定是窗口逻辑坐标（唯一换算
-            // 收在 geometry.toStage 里）。这里先 toLogical 再交给 _dispatch，横屏的
-            // Stack 本来就是逻辑坐标，原样传入。92 少这一步，竖屏命中被除了两次 scale。
-            onTapUp: (TapUpDetails details) => _dispatch(
-              geometry,
-              frame,
-              this.geometry == null ? geometry.toLogical(details.localPosition) : details.localPosition,
-            ),
-          ),
-        ),
+        Positioned.fill(child: _tapLayer(geometry, frame, rawSceneRect)),
       ],
+    );
+  }
+
+  /// HUD 的顶层点击层：既解析 HUD 命中，也把**原始**指针搬给 Qt 场景。
+  ///
+  /// 为什么搬指针：hybrid composition 下 Android 的原生派发到不了 Qt 子树
+  /// （FlutterView 里 PlatformOverlayView 排在最后、先拿到事件；实测 QtSceneView
+  /// 的 FrameLayout.dispatchTouchEvent 一次都不进），而本层 `translucent` 又让场景
+  /// 子树永远不被命中——所以场景自己挂监听是收不到的，只能由这一层转发。
+  /// 只转发原始 down/move/up/cancel，手势语义全部由 Qt 的 NativeSceneInput 决定。
+  Widget _tapLayer(StageGeometry geometry, BasicHudFrame frame, Rect? rawSceneRect) {
+    final Widget layer = GestureDetector(
+      // translucent：空白处返回 false，命中链继续下探到原生 3D（WebView），
+      // 但本层仍收到 tap 供 HUD 命中解析——两者不互相吞掉。
+      behavior: HitTestBehavior.translucent,
+      // 竖屏手势层在 PortraitStage 的 Transform.scale 里，localPosition 已经是
+      // 舞台坐标；而 HitLayer/StageGeometry 的入口约定是窗口逻辑坐标（唯一换算
+      // 收在 geometry.toStage 里）。这里先 toLogical 再交给 _dispatch，横屏的
+      // Stack 本来就是逻辑坐标，原样传入。92 少这一步，竖屏命中被除了两次 scale。
+      onTapUp: (TapUpDetails details) => _dispatch(
+        geometry,
+        frame,
+        this.geometry == null ? geometry.toLogical(details.localPosition) : details.localPosition,
+      ),
+    );
+    if (rawSceneRect == null) {
+      return layer;
+    }
+    // Listener 在 GestureDetector 之外，先拿到原始事件，再交给手势识别器。
+    // forwardAt：这一串手势是否归 Qt。只有"该点没有 HUD 命中目标"才归 Qt——
+    // 否则点列表行/上下按钮/播放条时会顺带把 Qt 场景也拖一下（设备实测现象）。
+    // 归属在按下时定下来并保持整串手势，不做中途翻转。
+    final HitLayer hitLayer = HitLayer(
+      geometry: geometry,
+      android: defaultTargetPlatform == TargetPlatform.android,
+    );
+    return QtSceneRawPointerLayer(
+      sceneRect: rawSceneRect,
+      forwardAt: (Offset local) => hitLayer.hitAt(frame.hits, local) == null,
+      child: layer,
     );
   }
 
@@ -519,7 +555,7 @@ class BasicHudSurface extends StatelessWidget {
     final Rect rect = portrait ? stageRect : geometry.rectToLogical(stageRect);
     return Positioned.fromRect(
       rect: rect,
-      child: const QtSceneView(),
+      child: QtSceneView(state: state, onAction: onAction),
     );
   }
 

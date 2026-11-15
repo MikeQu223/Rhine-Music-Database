@@ -23,6 +23,19 @@ namespace RhineEmbedded {
 bool requested();
 /** main() 在返回 application.exec() 之前发布进程级指针与字体族。 */
 void publish(Engine *engine, FrameProfiler *profiler, const QString &fontFamily);
+
+/// Flutter 侧推来的渲染状态快照（JSON 字符串，见 lib/basic/qt_scene_view.dart 的
+/// qtSceneStateSnapshot）。只在 Qt 主线程调用；重复/相同快照不会重复生效。
+/// 语义：dark→theme、mode→setMode、index→select（-1 不动）、key→musicIdentity，
+/// 没有 key 就 musicClear（不留上一首封面）。**不接收任何播放指令**。
+void applySceneState(const QString &json);
+// 销毁场景视图时清掉快照去重状态（同进程重建 Engine 后需要重新应用一次）。
+void resetAppliedState();
+// 只清选中相关（index/key），供 pointerdown 用；不要拿它替代 resetAppliedState()。
+void resetSelectionState();
+// 记住最后一份 Flutter 快照，并在场景就绪时补应用（首帧可能早于 qApp）。
+void rememberState(const QString &json);
+bool reapplyPendingState();
 Engine *engine();
 FrameProfiler *profiler();
 QString fontFamily();

@@ -184,15 +184,18 @@ dependencies { testImplementation("junit:junit:4.13.2") }
 // 目录缺失时**配置阶段就失败**：没有 Qt 运行时的 APK 里，场景视图在运行时找不到
 // QtNative 只能退化成空白——那正是本卡要取消的"假内嵌"，不允许静默产出。
 // ---------------------------------------------------------------------------
-// 默认目录按本卡布局推导，不写死绝对路径：
-//   rootProject.projectDir = <parity>/worktrees/QT-OVERLAY-128/android
-//   parentFile             = <parity>/worktrees/QT-OVERLAY-128
+// 默认目录按本卡的布局推导，不写死绝对路径：
+//   rootProject.projectDir = <parity>/worktrees/NATIVE-RECOVERY-132/android
+//   parentFile             = <parity>/worktrees/NATIVE-RECOVERY-132
 //   parentFile.parentFile  = <parity>/worktrees
 //   parentFile.parentFile.parentFile = <parity>
+// 只指向**本树自己的** Qt staging：旧卡 builds/QT-OVERLAY-128 与
+// builds/DEVICE-VISUAL-131 是冻结产物，默认回落到它们会让"改了 Qt 源码却装到旧 .so"
+// 静默发生（那是假验证）。
 val qtOverlayWorktreeDir: File = rootProject.projectDir.parentFile
 val qtOverlayParityRootDir: File = qtOverlayWorktreeDir.parentFile.parentFile
 val qtOverlayDefaultDeployDir: File =
-    File(qtOverlayParityRootDir, "builds/QT-OVERLAY-128/qt-build/Qt/android-build")
+    File(qtOverlayParityRootDir, "builds/NATIVE-RECOVERY-132/qt-build/Qt/android-build")
 
 val qtAndroidDeployDir: File =
     (project.findProperty("rhineQtAndroidDeployDir") as String?)
@@ -202,6 +205,25 @@ val qtAndroidDeployDir: File =
             ?.takeIf { it.isNotBlank() }
             ?.let { rootProject.file(it) }
         ?: qtOverlayDefaultDeployDir
+
+// ---------------------------------------------------------------------------
+// 局部 jar 补丁必须挂在构建里（审查 MUST-3）：
+// androiddeployqt 每次 Qt 构建都会用 SDK 里的 stock Qt6Android.jar 覆盖
+// <deploy>/libs/Qt6Android.jar，如果补丁只靠人手跑一次，下一次 Qt 重建就静默回退成
+// stock——"设备上装的是补丁类"这件事就再也没有证据。这里让 preBuild 依赖
+// android/app/javapatch/apply.sh：它只改本卡 deploy（不碰全局 SDK / 冻结产物），
+// 幂等（已打成期望字节就跳过），并且**编译出的 class 内容 sha256 必须等于
+// android/app/javapatch/EXPECTED.sha256**，否则构建失败。
+val javapatchDir = File(project.projectDir, "javapatch")
+val patchQtAndroidJar = tasks.register<Exec>("patchQtAndroidJar") {
+    description = "把 android/app/javapatch 的局部补丁打进本卡 Qt deploy 的 Qt6Android.jar 并校验字节"
+    group = "qt"
+    workingDir = javapatchDir
+    commandLine("bash", File(javapatchDir, "apply.sh").absolutePath, qtAndroidDeployDir.absolutePath)
+    // 幂等脚本，跳过时只有几百毫秒；不做 up-to-date 缓存，避免"jar 被 androiddeployqt 换掉
+    // 但 gradle 认为没变化"这一类假通过。
+    outputs.upToDateWhen { false }
+}
 
 val qtAndroidLibsDir = File(qtAndroidDeployDir, "libs")
 val qtAndroidAbiDir = File(qtAndroidLibsDir, "arm64-v8a")
@@ -260,6 +282,11 @@ android {
             useLegacyPackaging = true
         }
     }
+}
+
+// 打补丁 + 校验必须早于任何消费 jar 的编译/打包任务。
+tasks.named("preBuild") {
+    dependsOn(patchQtAndroidJar)
 }
 
 dependencies {

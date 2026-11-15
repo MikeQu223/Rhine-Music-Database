@@ -59,6 +59,10 @@ class QtSceneView(context: Context, private val viewId: Int) : PlatformView {
             ),
         )
         Log.i(TAG, "qt scene view created id=$viewId")
+
+        // 状态通道：Dart 的 QtSceneStateSender 推来的 JSON 直接交给 Qt 侧
+        // （RhineQtViews.pushSceneState → EmbeddedSceneHost::applySceneState）。
+        QtSceneChannel.register(viewId) { json -> RhineQtViews.pushSceneState(json) }
     }
 
     override fun getView(): View = root
@@ -73,6 +77,7 @@ class QtSceneView(context: Context, private val viewId: Int) : PlatformView {
     override fun dispose() {
         // 先摘子视图：QtView.onDetachedFromWindow 会销毁 QQuickView 并删除父窗口，
         // 这一步必须发生在 FrameLayout 被丢弃之前。
+        QtSceneChannel.unregister(viewId)
         val child = qtView
         qtView = null
         if (child != null) {

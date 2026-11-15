@@ -75,6 +75,30 @@ public class RhineQtView extends QtView {
         createEmbeddedScene(parentWindowRef, width, height);
     }
 
+    /**
+     * 宿主 Activity 销毁时由 {@link RhineQtViews} 显式调用。
+     *
+     * 为什么不能只等 onDetachedFromWindow：Activity 销毁时 Flutter 的 PlatformView 不一定
+     * 立刻 dispose（引擎缓存在进程里），RhineQtView 会继续留在已死的 View 树上，里面的
+     * QtWindow / QtTextureView 也继续向 WindowManager 注册输入窗口。下一个 Activity 起来后
+     * `dumpsys window` 里 `mCurrentFocus=null`，输入派发超时 → 系统按 ANR 杀掉整个进程
+     * （真机 evidence：`Input dispatching timed out (Application does not have a focused window)`）。
+     *
+     * 这里只摘"场景窗口"，不拆 Qt 运行时（运行时要跨 Activity 存活，见 RhineQtViews 注释）。
+     * destroyEmbeddedScene 在原生侧是**排队**执行（QueuedConnection，不是 Blocking——在 UI
+     * 线程上阻塞等 Qt 线程会和 Qt 的 Android QPA 形成双向等待）：本方法返回时窗口还没析构，
+     * 但 Qt 线程一拍之内就会 window->setVisible(false) 并 destroySceneView()，之后 QtWindow
+     * 从窗口管理器摘除，这个 Activity 不再持有输入窗口。
+     */
+    public void releaseSceneForHostDestroy() {
+        if (!sceneRequested) {
+            return;
+        }
+        // 允许新宿主重挂时再走一次 createWindow。
+        sceneRequested = false;
+        destroyEmbeddedScene();
+    }
+
     @Override
     protected void onDetachedFromWindow() {
         sceneRequested = false;

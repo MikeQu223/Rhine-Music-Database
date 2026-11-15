@@ -283,6 +283,20 @@ class BasicAudioChannel private constructor(
             current?.detach()
             current = BasicAudioChannel(messenger, contextProvider, shared).also { it.attach() }
         }
+
+        /**
+         * 宿主 Activity 销毁时断开：`current` 握 messenger（→ FlutterEngine → 平台视图 →
+         * 旧 Activity）和 `contextProvider`（闭包捕获 Activity），而 `registerLifecycle()`
+         * 注册在 Application（进程级单例）上的匿名回调又反向握着本对象——不在这里显式断，
+         * 旧 Activity 永远进不了回收（132R 的 cycle 探针 activity=false 就是它）。
+         *
+         * 只断通道与监听，**不碰 authority**：MediaPlayer 的释放仍归 onDestroy/dispose 语义
+         * （见类头「生命周期」：Activity 销毁即引擎 detach，播放要停）。
+         */
+        fun uninstall() {
+            current?.detach()
+            current = null
+        }
     }
 }
 
