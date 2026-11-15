@@ -1274,16 +1274,22 @@ void Engine::step(double time) {
     if (!m_cover.isEmpty() && m_coverImage.isNull() && !m_coverRequests.contains(m_cover)) {
         m_coverRequests.insert(m_cover);
         const QString requested = m_cover;
+        qInfo("RHINE_QT_COVER_REQUEST len=%d url=%.96s", int(requested.size()),
+              qPrintable(requested));
         host.loadCover(
             requested,
             [this, requested](QString loaded) {
+                qInfo("RHINE_QT_COVER_RESULT len=%d key=%.96s", int(loaded.size()),
+                      qPrintable(loaded));
                 if (loaded.isEmpty() || m_cover != requested) {
                     return; // 期间换了选中/换了视图：旧的这首不再回填
                 }
                 const QImage pixels = host.image(loaded);
                 if (pixels.isNull()) {
+                    qWarning("RHINE_QT_COVER_DECODE miss key=%.96s", qPrintable(loaded));
                     return;
                 }
+                qInfo("RHINE_QT_COVER_READY %dx%d", pixels.width(), pixels.height());
                 m_coverImage = pixels;
                 m_coverRefresh = true;
             },

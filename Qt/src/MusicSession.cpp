@@ -267,7 +267,11 @@ bool NativeApplication::restoreSessionState(const QJsonObject &saved) {
 }
 
 void NativeApplication::saveSession() {
-    if (m_host->offline) {
+    // RHINE PATCH (FINAL-RECOVERY-138)：内嵌 render-only 模式下 session.json 的唯一写入者
+    // 是 Flutter（lib/data/storage/app_storage.dart 的 sessionPath 就是同一个文件）。Qt 侧
+    // 这时既没有曲库也没有播放器，一旦 aboutToQuit 真的触发就会用空状态覆盖 Flutter 的会话
+    // —— 那是第二个业务权威。离线已经拦过一路，这里必须连 renderOnly 一起拦。
+    if (m_host->offline || m_host->renderOnly) {
         return;
     }
     const auto directory = AppStorage::dataDirectory();

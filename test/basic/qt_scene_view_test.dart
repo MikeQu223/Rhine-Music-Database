@@ -27,6 +27,7 @@ BasicViewState _state({
   BasicPhase phase = BasicPhase.library,
   SirenSong? song,
   List<SirenSong> songs = const <SirenSong>[],
+  List<SirenAlbum> albums = const <SirenAlbum>[],
   bool dark = true,
   bool playing = false,
 }) =>
@@ -34,6 +35,7 @@ BasicViewState _state({
       phase: phase,
       song: song,
       songs: songs,
+      albums: albums,
       dark: dark,
       playing: playing,
     );
@@ -119,6 +121,42 @@ void main() {
           _decode(qtSceneStateSnapshot(_state(songs: <SirenSong>[withCover])));
       expect(none.containsKey('current'), isFalse,
           reason: '没有选中时不能带上一个 current，否则 Qt 会继续显示上一首的封面');
+    });
+
+    test('歌曲自身没有封面时用同一张专辑的真实封面，取不到就诚实留空', () {
+      SirenSong bare = SirenSong(
+        id: 'n1',
+        title: 'song-n1',
+        artist: 'artist',
+        album: 'album-n1',
+        albumId: 'album-n1',
+        cover: '',
+        sourceUrl: '',
+        lyricUrl: '',
+        durationMs: 0,
+      );
+      SirenAlbum album = SirenAlbum(
+        id: 'album-n1',
+        name: 'album-n1',
+        artist: 'artist',
+        cover: 'https://hycdn.cn/cover/n1.jpg',
+        songCount: 1,
+        songs: const <SirenSong>[],
+      );
+      Map<String, Object?> payload = _decode(qtSceneStateSnapshot(
+        _state(song: bare, songs: <SirenSong>[bare], albums: <SirenAlbum>[album]),
+      ));
+      Map<String, Object?> current =
+          (payload['current']! as Map<Object?, Object?>).cast<String, Object?>();
+      expect(current['cover'], 'https://hycdn.cn/cover/n1.jpg',
+          reason: '塞壬 /api/songs 不保证带封面，专辑封面上是真实数据，不能因此留白');
+
+      Map<String, Object?> miss =
+          _decode(qtSceneStateSnapshot(_state(song: bare, songs: <SirenSong>[bare])));
+      Map<String, Object?> missCurrent =
+          (miss['current']! as Map<Object?, Object?>).cast<String, Object?>();
+      expect(missCurrent['cover'], '',
+          reason: '找不到专辑就只能空字符串：Qt 据此显示占位盘面，不能编一个 URL');
     });
 
     test('播放状态不进快照：playing 不影响 payload（不冒充播放/不推播放指令）', () {

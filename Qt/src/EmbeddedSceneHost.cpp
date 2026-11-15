@@ -189,6 +189,9 @@ void applySceneState(const QString &json)
     const bool coverChanged = cover != g_projectedCover;
     if (coverChanged) {
         g_projectedCover = cover;
+        // 有界诊断（只在这一字段真的变化时打印一次），用于设备侧证明封面 URL 是否到了
+        // Qt 侧：URL 本身不是凭据，只截断到 96 字符。
+        qInfo("RHINE_QT_SCENE_COVER len=%d url=%.96s", int(cover.size()), qPrintable(cover));
     }
     if (current != g_projectedCurrent) {
         g_projectedCurrent = current;

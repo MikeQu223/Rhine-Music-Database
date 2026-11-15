@@ -25,8 +25,12 @@ MusicLibrary::MusicLibrary(Host *host, const QJsonObject &content, QObject *pare
     }
     if (provider == "siren") {
         columns = {"搜索结果", "喜欢的歌曲", "我的歌单", "全部歌曲", "全部专辑"};
-        collections = std::make_unique<LocalCollections>(provider, QString(), this);
-        reloadSirenCollections();
+        // RHINE PATCH (FINAL-RECOVERY-138)：render-only 下连本地库都不建/不扫——本地收藏
+        // 的唯一权威也在 Flutter 侧，这里建出来只会多一份可被写坏的影子状态。
+        if (!host->renderOnly) {
+            collections = std::make_unique<LocalCollections>(provider, QString(), this);
+            reloadSirenCollections();
+        }
     }
     api.provider = provider;
     host->setProvider(provider);

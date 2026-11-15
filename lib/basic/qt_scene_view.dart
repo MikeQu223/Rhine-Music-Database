@@ -94,6 +94,22 @@ int qtSceneSelectedIndexOf(BasicViewState state) {
 ///  * `key`：材质/封面身份键（SirenSong.key）。**没有选中就不带这个键**：
 ///    Qt 侧据此 musicClear()，不留上一首的旧封面。
 ///  * `count`：当前列表长度（Qt 侧只用于诊断/范围校验，不建第二套曲库）。
+/// 选中项的真实封面 URL：歌曲自带 cover 优先；没有就用**同一张专辑**的封面。
+///
+/// 塞壬的 `/api/songs` 条目不保证带封面，专辑封面在 `/api/albums` 上（Qt 侧 detail 页
+/// 的盘面也是专辑封面）。这里只做"同一个真实标识的另一种取法"，不造数据、不查账号。
+String qtSceneCoverOf(BasicViewState state, SirenSong song) {
+  if (song.cover.isNotEmpty) {
+    return song.cover;
+  }
+  for (final SirenAlbum album in state.albums) {
+    if (album.id == song.albumId) {
+      return album.cover;
+    }
+  }
+  return '';
+}
+
 String qtSceneStateSnapshot(BasicViewState state) {
   final SirenSong? song = state.song;
   final int index = qtSceneSelectedIndexOf(state);
@@ -108,7 +124,7 @@ String qtSceneStateSnapshot(BasicViewState state) {
               'kind': 'song',
               'id': song.id,
               'key': song.key,
-              'cover': song.cover,
+              'cover': qtSceneCoverOf(state, song),
               'title': song.title,
               'artist': song.artist,
             };
