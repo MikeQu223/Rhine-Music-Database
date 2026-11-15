@@ -6,6 +6,7 @@
 #include "render/HudPaintStats.h"
 #endif
 #include "AppStorage.h"
+#include "EmbeddedSceneHost.h"
 #include <QFile>
 #include <QGuiApplication>
 #include <QJsonDocument>
@@ -42,6 +43,13 @@ NativeApplication::NativeApplication(Host *host, Glyphs *glyphs, NativeScene *sc
     connect(&music, &MusicLibrary::musicClearRequested, this, [scene]() { scene->musicClear(); });
 }
 void NativeApplication::initialize() {
+    // 内嵌路径（Flutter PlatformView + Flutter HUD）必须与上层 HUD 同一个主题：
+    // Flutter 的 HUD 只画浅色文字（暗色调色板），而 Qt 场景默认跟随 "theme" 偏好（缺省 light），
+    // light 主题会把雾底渲成亮色；场景一旦铺满舞台，浅色文字叠在亮底上就看不见列表。
+    // 所以内嵌时强制暗色场景，让 3D 与 HUD 是同一套明暗，而不是亮底 + 浅字混搭。
+    if (RhineEmbedded::requested()) {
+        hud.dark = true;
+    }
     m_scene->theme(hud.dark);
     m_scene->reduced(hud.reduced);
     const auto startupPreference = m_host->preference("startup-animation");
