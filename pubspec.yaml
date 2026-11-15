@@ -71,16 +71,6 @@ flutter:
     - Assets/previews/
     - Assets/quality/
     - Resources/
-    # BASIC-89 lane C — local WebView bundle for the Siren 3D preview.
-    # Flutter does not recurse into directories, so every shipped subdirectory
-    # of web/basic_preview/ is declared explicitly (index.html and renderer.js
-    # live directly in web/basic_preview/).
-    - web/basic_preview/
-    - web/basic_preview/vendor/
-    - web/basic_preview/vendor/three/
-    - web/basic_preview/vendor/three/build/
-    - web/basic_preview/vendor/three/examples/jsm/loaders/
-    - web/basic_preview/vendor/three/examples/jsm/utils/
 
   # To add assets to your application, add an assets section, like this:
   # assets:

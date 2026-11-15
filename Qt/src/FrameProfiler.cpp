@@ -102,7 +102,14 @@ FrameProfiler::FrameProfiler(Engine *engine, const QString &path, QObject *paren
 
 /** 渲染线程只写原子计数与有界帧间隔队列，文件和业务状态始终由 GUI 线程访问。 */
 void FrameProfiler::attach(QQuickWindow *window) {
-    Q_ASSERT(!m_window);
+    if (m_window) {
+        if (m_window == window) {
+            return; // 同一个窗口重复 attach：不建第二组连接
+        }
+        // 宿主销毁窗口后又重建（Flutter 侧 PlatformView 重建/旋转即如此）会带着新窗口回来。
+        // 旧窗口的 QPointer 可能还没被清空（deleteLater 尚未执行），这里先断开旧连接再挂新窗口。
+        disconnect(m_window, nullptr, this, nullptr);
+    }
     m_window = window;
     connect(
         window, &QQuickWindow::beforeSynchronizing, this,

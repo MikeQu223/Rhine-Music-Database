@@ -100,7 +100,7 @@ void main() {
       addTearDown(tester.view.resetDevicePixelRatio);
 
       // 场景现在无条件挂载（含竖屏）：widget 测试不创建真实 PlatformView，
-      // 走 ScenePreview 的非 Android 可见说明分支，避免依赖引擎视口。
+      // 走 QtSceneView 的非 Android 可见说明分支，避免依赖引擎视口。
       debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
       addTearDown(() => debugDefaultTargetPlatformOverride = null);
 

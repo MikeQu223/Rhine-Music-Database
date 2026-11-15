@@ -165,6 +165,110 @@ kotlin {
 }
 
 dependencies { testImplementation("junit:junit:4.13.2") }
+
+// ---------------------------------------------------------------------------
+// Qt 场景运行时（PARITY QT-OVERLAY-128）：APK 里的 Qt 只在**同一个进程**里跑，
+// 视图由 org.qtproject.qt.android.RhineQtView 挂进 Flutter 页面（platform view），
+// 不是另一个 Activity/APK。
+//
+// 运行时来源必须是本仓库源码自己跑 androiddeployqt 的产物，而不是一个文件名带旧
+// SHA 的 APK：目录里必须有 libs/arm64-v8a/（含 libRhineMusicDatabase_arm64-v8a.so）、
+// assets/android_rcc_bundle.rcc 和 res/values/libs.xml（QtLoader 靠它反射读取
+// qt_libs/bundled_libs/load_local_libs）。
+//
+// 解析顺序：
+//   1. -PrhineQtAndroidDeployDir=<path>
+//   2. RHINE_QT_ANDROID_DEPLOY_DIR 环境变量
+//   3. 本卡默认构建目录（本工作树自己的 Qt Debug staging）
+//
+// 目录缺失时**配置阶段就失败**：没有 Qt 运行时的 APK 里，场景视图在运行时找不到
+// QtNative 只能退化成空白——那正是本卡要取消的"假内嵌"，不允许静默产出。
+// ---------------------------------------------------------------------------
+// 默认目录按本卡布局推导，不写死绝对路径：
+//   rootProject.projectDir = <parity>/worktrees/QT-OVERLAY-128/android
+//   parentFile             = <parity>/worktrees/QT-OVERLAY-128
+//   parentFile.parentFile  = <parity>/worktrees
+//   parentFile.parentFile.parentFile = <parity>
+val qtOverlayWorktreeDir: File = rootProject.projectDir.parentFile
+val qtOverlayParityRootDir: File = qtOverlayWorktreeDir.parentFile.parentFile
+val qtOverlayDefaultDeployDir: File =
+    File(qtOverlayParityRootDir, "builds/QT-OVERLAY-128/qt-build/Qt/android-build")
+
+val qtAndroidDeployDir: File =
+    (project.findProperty("rhineQtAndroidDeployDir") as String?)
+        ?.takeIf { it.isNotBlank() }
+        ?.let { rootProject.file(it) }
+        ?: System.getenv("RHINE_QT_ANDROID_DEPLOY_DIR")
+            ?.takeIf { it.isNotBlank() }
+            ?.let { rootProject.file(it) }
+        ?: qtOverlayDefaultDeployDir
+
+val qtAndroidLibsDir = File(qtAndroidDeployDir, "libs")
+val qtAndroidAbiDir = File(qtAndroidLibsDir, "arm64-v8a")
+val qtRuntimeLibsXml = File(qtAndroidDeployDir, "res/values/libs.xml")
+
+if (!qtAndroidAbiDir.isDirectory) {
+    throw org.gradle.api.GradleException(
+        "Qt 场景运行时不在 " + qtAndroidDeployDir.absolutePath + "（缺 libs/arm64-v8a）。" +
+            "先用源码重建本分支的 Qt 运行时：" +
+            " cmake -S <worktree> -B .agents/parity-20261109/builds/QT-OVERLAY-128/qt-build-release" +
+            " -G Ninja -DCMAKE_TOOLCHAIN_FILE=<qt-android>/lib/cmake/Qt6/qt.toolchain.cmake" +
+            " -DQT_HOST_PATH=/usr -DQT_HOST_PATH_CMAKE_DIR=/usr/lib/cmake" +
+            " -DQT_QMAKE_TARGET_MKSPEC=android-clang -DANDROID_ABI=arm64-v8a" +
+            " -DANDROID_PLATFORM=android-28 -DANDROID_NDK_ROOT=/home/aibeto/Android/Sdk/ndk/30.0.16248370" +
+            " -DANDROID_SDK_ROOT=/home/aibeto/Android/Sdk -DCMAKE_BUILD_TYPE=Release" +
+            " -DCMAKE_MAKE_PROGRAM=/usr/bin/ninja" +
+            " -DRHINE_ANDROID_NODE_ROOT=<node-mobile> -DRHINE_ANDROID_RESOURCES=<android-resources>" +
+            " 然后 ninja -j20 apk；或用 -PrhineQtAndroidDeployDir=<path> /" +
+            " RHINE_QT_ANDROID_DEPLOY_DIR=<path> 指向已有产物。",
+    )
+}
+
+if (!qtRuntimeLibsXml.isFile) {
+    throw org.gradle.api.GradleException(
+        "Qt 场景运行时缺 " + qtRuntimeLibsXml.absolutePath + "：QtLoader 靠 libs.xml 里的" +
+            " qt_libs/bundled_libs/load_local_libs 决定加载哪些 .so，缺了会在启动时找不到 Qt。",
+    )
+}
+
+// Qt 的 libs.xml 与 Flutter 自己那份 res/values/styles.xml 不同义，整目录并进 app 的
+// res 会撞名（Qt 还有自己的 styles.xml）。这里只把 libs.xml 抄进独立的结果目录；文件
+// 2.7KB，配置阶段完成即可，不需要额外任务依赖。
+val qtRuntimeResDir = layout.buildDirectory.dir("qt-runtime-res").get().asFile
+qtRuntimeResDir.resolve("values").mkdirs()
+qtRuntimeLibsXml.copyTo(
+    qtRuntimeResDir.resolve("values/libs.xml"),
+    overwrite = true,
+)
+
+android {
+    sourceSets.getByName("main") {
+        // .so 走 jniLibs：AGP 按 ABI 目录收进 APK，并在安装时解包到 nativeLibraryDir。
+        jniLibs.srcDir(qtAndroidLibsDir)
+        // assets/android_rcc_bundle.rcc：Qt 的 Android 平台插件启动时从
+        // assets:/android_rcc_bundle.rcc 注册资源（androidjnimain.cpp:475）。
+        assets.srcDir(File(qtAndroidDeployDir, "assets"))
+        // 只有 values/libs.xml 这一份 Qt 资源，见上面的取名理由。
+        res.srcDir(qtRuntimeResDir)
+    }
+
+    packaging {
+        jniLibs {
+            // Qt 的插件加载按文件路径 dlopen（libplugins_platforms_qtforandroid_*.so
+            // 与 imageformats/multimedia/tls 插件），必须真实解包到 nativeLibraryDir，
+            // 不能只映射 APK 内的未压缩项。等价于 android:extractNativeLibs="true"。
+            useLegacyPackaging = true
+        }
+    }
+}
+
+dependencies {
+    // Qt 的 Java 对端（QtNative/QtLoader/QtView/QtWindow…）必须与 app 在同一个
+    // classloader 里：RhineQtView 直接 extends QtView，QtLoader 又要在同一个进程里
+    // 启动 Qt。这里用 deploy 目录里的 jar，保证 Java 与 .so 来自同一次构建。
+    implementation(fileTree(qtAndroidLibsDir) { include("*.jar") })
+}
+
 flutter {
     source = "../.."
 }

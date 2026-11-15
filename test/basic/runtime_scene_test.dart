@@ -4,7 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:rhine_music_database/basic/basic_hud.dart';
 import 'package:rhine_music_database/basic/basic_hud_resources.dart';
 import 'package:rhine_music_database/basic/basic_models.dart';
-import 'package:rhine_music_database/basic/scene_preview.dart';
+import 'package:rhine_music_database/basic/qt_scene_view.dart';
 import 'package:rhine_music_database/hud/input/hit_layer.dart';
 import 'package:rhine_music_database/hud/protocol/hud_frame.dart';
 import 'package:rhine_music_database/hud/text/glyph_font.dart';
@@ -103,50 +103,68 @@ void main() {
     expect(logical.height, closeTo(984 * 4 / 3, 1e-6));
   });
 
-  testWidgets('空曲库、无选中 id 时横屏仍挂载真实场景（不是静态图）', (WidgetTester tester) async {
+  test('Qt 场景视图类型就是注册到 Flutter 的那个 viewType', () {
+    // 原生侧 QtSceneViewFactory（android/.../qt/QtSceneViewFactory.kt）注册的名字
+    // 必须与这里一致，否则页面上只会拿到 "no factory registered"。
+    expect(qtSceneViewType, 'rhine/qt_scene');
+  });
+
+  testWidgets('空曲库、无选中 id 时横屏仍挂载场景（不是静态图）', (WidgetTester tester) async {
+    // widget 测试不创建真实 PlatformView：把 target platform 指到非 Android，走
+    // QtSceneView 自己的可见说明分支（Android 真机上这块矩形是 Qt 的 QQuickView）。
+    // 必须在测试体内 finally 复位：flutter_test 一离开 body 就检查 foundation debug
+    // 变量，addTearDown 已经在检查之后，太晚。
     debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
-    addTearDown(() => debugDefaultTargetPlatformOverride = null);
-    await tester.pumpWidget(
-      _landscapeHarness(size: const Size(1920, 1080), state: _emptyLibrary()),
-    );
-    await tester.pump();
-    expect(find.byType(ScenePreview), findsOneWidget);
-    expect(tester.getSize(find.byType(ScenePreview)), const Size(1131, 984));
-    // 非 Android 走 ScenePreview 自己的可见说明；Android 上这里是真实 WebView。
-    expect(find.text('3D 场景预览仅在 Android 可用'), findsOneWidget);
-    expect(tester.takeException(), isNull);
+    try {
+      await tester.pumpWidget(
+        _landscapeHarness(size: const Size(1920, 1080), state: _emptyLibrary()),
+      );
+      await tester.pump();
+      expect(find.byType(QtSceneView), findsOneWidget);
+      expect(tester.getSize(find.byType(QtSceneView)), const Size(1131, 984));
+      expect(find.text('3D 场景预览仅在 Android 可用'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
   });
 
   testWidgets('竖屏首页同样挂载场景，尺寸正好 1080 设计高度', (WidgetTester tester) async {
-    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
-    addTearDown(() => debugDefaultTargetPlatformOverride = null);
     tester.view.physicalSize = const Size(1080, 1920);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
-    await tester.pumpWidget(MaterialApp(
-      home: PortraitStage(
-        child: BasicHudSurface(
-          state: _emptyLibrary(),
-          ports: _ports(),
-          onAction: (String _) {},
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    try {
+      await tester.pumpWidget(MaterialApp(
+        home: PortraitStage(
+          child: BasicHudSurface(
+            state: _emptyLibrary(),
+            ports: _ports(),
+            onAction: (String _) {},
+          ),
         ),
-      ),
-    ));
-    await tester.pump();
-    expect(find.byType(ScenePreview), findsOneWidget);
-    expect(tester.getSize(find.byType(ScenePreview)), const Size(1080, 1080));
-    expect(tester.takeException(), isNull);
+      ));
+      await tester.pump();
+      expect(find.byType(QtSceneView), findsOneWidget);
+      expect(tester.getSize(find.byType(QtSceneView)), const Size(1080, 1080));
+      expect(tester.takeException(), isNull);
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
   });
 
   testWidgets('阶段退化时宁可不挂载，也不伪造 3D', (WidgetTester tester) async {
     debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
-    addTearDown(() => debugDefaultTargetPlatformOverride = null);
-    await tester.pumpWidget(
-      _landscapeHarness(size: const Size(1080, 1080), state: _emptyLibrary()),
-    );
-    await tester.pump();
-    expect(find.byType(ScenePreview), findsNothing);
+    try {
+      await tester.pumpWidget(
+        _landscapeHarness(size: const Size(1080, 1080), state: _emptyLibrary()),
+      );
+      await tester.pump();
+      expect(find.byType(QtSceneView), findsNothing);
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
   });
 }

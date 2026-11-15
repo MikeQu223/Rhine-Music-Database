@@ -14,7 +14,7 @@ import '../hud/widgets/track_ruler.dart' as ruler;
 import '../ui/layout/portrait_stage.dart';
 import 'basic_hud_resources.dart';
 import 'basic_models.dart';
-import 'scene_preview.dart';
+import 'qt_scene_view.dart';
 
 /// 资料库名（Qt NativeHud.cpp:380 的 "MUSIC DATABASE / <libraryName>"）。
 const String basicLibraryName = '塞壬唱片';
@@ -502,9 +502,12 @@ class BasicHudSurface extends StatelessWidget {
     );
   }
 
-  /// Qt 左侧是 3D 容器区；这里如实挂载真实的 ScenePreview（本地 GLB），
-  /// 非 Android 平台由它自己给出可见说明。挂载不以网络、选中 id 或歌词页为前提：
-  /// 92 在这里用 songId/albumId 空值 return null，首页（刚启动的空曲库）永远没有 3D。
+  /// Qt 左侧是 3D 容器区；这里挂的是 Qt 自己的场景层（同进程 QQuickView，
+  /// platform view），非 Android 平台由 [QtSceneView] 自己给出可见说明。
+  ///
+  /// 挂载不以网络、选中 id 或歌词页为前提：首页（刚启动的空曲库）同样有场景。
+  /// 这里**不再**向场景传 songId/albumId/model——曲库、播放与相机都由 Qt 的 Engine
+  /// 与场景层自己持有，Flutter 只提供矩形，避免两套状态各自跑一套动画。
   Widget _scene(
     BasicViewState state,
     StageGeometry geometry,
@@ -516,11 +519,7 @@ class BasicHudSurface extends StatelessWidget {
     final Rect rect = portrait ? stageRect : geometry.rectToLogical(stageRect);
     return Positioned.fromRect(
       rect: rect,
-      child: ScenePreview(
-        songId: state.song?.id ?? '',
-        albumId: state.album?.id ?? state.song?.albumId ?? '',
-        model: basicSceneDefaultModel,
-      ),
+      child: const QtSceneView(),
     );
   }
 

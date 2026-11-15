@@ -10,6 +10,7 @@
 #include "MobileTarget.h"
 #include "AppStorage.h"
 #include "Engine.h"
+#include "EmbeddedSceneHost.h"
 #include "fg/FgCapability.h"
 #if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
 #include "fg/FgConfig.h"
@@ -1056,6 +1057,24 @@ int main(int argc, char **argv) {
     QObject::connect(backend.get(), &Engine::performanceRequested, profiler.get(),
                      &FrameProfiler::toggleVisible);
     backend->start();
+#ifdef Q_OS_ANDROID
+    // Flutter 内嵌路径（PARITY QT-OVERLAY-128）：宿主 Activity 是 FlutterActivity，
+    // 场景视图由 Java 侧的 RhineQtView 在自己的父窗口上创建。所以这里只做进程级准备：
+    // QML 类型注册、场景字体、把 Engine/FrameProfiler 发布给后来的 QQuickView。
+    // 不创建 QQmlApplicationEngine，不加载 Main.qml，也就不存在第二个 Qt 窗口、
+    // 不了锁横屏、不改 Activity 的窗口形态（沉浸式由 Flutter 宿主自己负责）。
+    if (RhineEmbedded::requested()) {
+        qmlRegisterType<RhiScene>("Rhine.Native", 1, 0, "RhiScene");
+        qmlRegisterType<Hud>("Rhine.Native", 1, 0, "Hud");
+        qmlRegisterUncreatableType<Engine>("Rhine.Native", 1, 0, "Engine", "Provided by application");
+        const auto embeddedFontId = QFontDatabase::addApplicationFont(root + "/RhineMiSans-regular.otf");
+        const auto embeddedFamilies = QFontDatabase::applicationFontFamilies(embeddedFontId);
+        RhineEmbedded::publish(backend.get(), profiler.get(),
+                               embeddedFamilies.isEmpty() ? QString("sans-serif") : embeddedFamilies.first());
+        qInfo("RHINE_QT_EMBEDDED_READY resource=%s ready=%d", qPrintable(root), int(backend->ready()));
+        return application.exec();
+    }
+#endif
     // 声明顺序决定析构顺序：QML 引擎必须晚于业务引擎，才能先销毁 QML 对象。
     QQmlApplicationEngine engine;
     qmlRegisterType<RhiScene>("Rhine.Native", 1, 0, "RhiScene");

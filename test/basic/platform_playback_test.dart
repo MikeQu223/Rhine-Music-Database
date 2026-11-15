@@ -557,7 +557,10 @@ void main() {
           activity.indexOf('super.configureFlutterEngine(flutterEngine)');
       final int mediaIndex = activity.indexOf('MediaSessionChannel.install(');
       final int audioIndex = activity.indexOf('BasicAudioChannel.install(');
-      final int sceneIndex = activity.indexOf('BasicSceneViewFactory.install(');
+      // 3D 场景现在是 Qt 自己的 PlatformView（view type "rhine/qt_scene"）：
+      // 工厂在 engine 装配后注册一次，不再是 WebView/Three.js 那套 BasicSceneViewFactory。
+      final int sceneIndex = activity.indexOf('registerViewFactory(');
+      expect(activity, contains('QT_SCENE_VIEW_TYPE'));
       expect(superIndex, greaterThanOrEqualTo(0));
       expect(mediaIndex, greaterThan(superIndex));
       expect(audioIndex, greaterThan(mediaIndex));
