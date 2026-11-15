@@ -209,7 +209,11 @@ class BasicGlyphPorts
     try {
       return text.inset(value, size, weight: weight);
     } on StateError {
-      return _fallbackParagraph(value, size, weight, 0).width;
+      // 与 Qt Glyphs::inset 对齐（Qt/src/Glyphs.cpp:339-349）：字形表里没有轮廓时
+      // Qt 回 0，而不是整段 advance。回 advance 会让调用方把整行左移一个文字宽度；
+      // 真机表现就是右侧歌名只剩列表裁剪窗口里那几个像素（DEVICE-VISUAL-131 缺陷②）。
+      // draw() 的 OTF 回退分支正是在 x 处起笔，所以 0 才是自洽值。
+      return 0;
     }
   }
 
@@ -376,8 +380,12 @@ class BasicGlyphPorts
     }
   }
 
-  /// 本版没有字形外的路径/贴图来源，返回 null 并让 paint_stack 记录缺失项。
-  ui.Path? pathFor(String key) => null;
+  /// HudPainterPorts.path：线上传输的就是 SVG 路径数据（不是路径名），
+  /// 与 Qt Glyphs.cpp:728-760 一致——Qt 对 'path' / 'fill-path' 都现解析这份
+  /// 字符串。解析器在 lib/hud/text/glyph_font.dart 里已是 Glyphs::path 的移植。
+  /// 返回 null 会让 paint_stack 记 missingPath 并跳过绘制：真机上底栏播放键
+  /// 因此只剩实心底板、没有三角与箭头（DEVICE-VISUAL-131 缺陷③）。
+  ui.Path? pathFor(String key) => key.isEmpty ? null : parseSvgPath(key);
 
   ui.Image? imageFor(String key) => null;
 }

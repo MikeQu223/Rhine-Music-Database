@@ -80,6 +80,15 @@ class QtSceneView extends StatelessWidget {
           // onFocus 在这里不注册：Qt 视图自己拿 focus（QtView/QtWindow 的舞台与
           // 输入层由 Qt 的 Overlay/输入路径管理），Flutter 侧不参与焦点仲裁。
         );
+        // 必须把 Flutter 自己的创建回调挂上：PlatformViewLink 的
+        // _platformViewCreated 只有在 params.onPlatformViewCreated 被调用后才置 true，
+        // 而 controller.create() 完成后只会遍历 addOnPlatformViewCreatedListener 注册的回调
+        // （flutter/lib/src/services/platform_views.dart 的 create() 尾部）。
+        // 之前这里只挂外部可选 listener（本页传的是 const QtSceneView()，没有回调），
+        // 于是 _platformViewCreated 永远是 false：widget 永远停在
+        // _PlatformViewPlaceHolder，AndroidViewSurface 从不构建，Qt 视图也就永远不会
+        // 进入 Flutter 的合成树（真机上只剩 HUD 的黑底）。
+        controller.addOnPlatformViewCreatedListener(params.onPlatformViewCreated);
         final ValueChanged<int>? listener = onCreated;
         if (listener != null) {
           controller.addOnPlatformViewCreatedListener(listener);

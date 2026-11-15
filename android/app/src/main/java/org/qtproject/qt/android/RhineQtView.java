@@ -31,6 +31,9 @@ public class RhineQtView extends QtView {
         super(context, "RhineMusicDatabase");
     }
 
+    /** createWindow 已经进来过一次：同一次布局里 Qt 会连发多个根窗口请求，只认第一个。 */
+    private boolean sceneRequested = false;
+
     @Override
     protected void createWindow(final long parentWindowRef) {
         // 由 Qt 的 createRootWindow 在 Qt 线程上回调（QtEmbeddedDelegate 在 onAttachedToWindow
@@ -44,6 +47,12 @@ public class RhineQtView extends QtView {
         //    等一次布局完成再建场景。
         // 2. 下面这两个读取只当"是否已经布局"的提示用（0 就是还没布局）；真正要用的尺寸
         //    在 post 出去的 Runnable 里、在 UI 线程上重新取一次。
+        if (sceneRequested) {
+            // 同一轮布局里 Qt 会重复请求同一个父窗口；重复 createEmbeddedScene 会再建一个
+            // QQuickView（连带一份 RHI 上下文），所以只认第一次。
+            return;
+        }
+        sceneRequested = true;
         final int width = getWidth();
         final int height = getHeight();
         if (width <= 0 || height <= 0) {
@@ -54,6 +63,8 @@ public class RhineQtView extends QtView {
                     // 此时父窗口正在销毁，再挂 QQuickView 会往死掉的 ViewGroup 里 addView；
                     // 真重挂时 Qt 自己会再回调一次 createWindow，这里直接放弃即可。
                     if (!isAttachedToWindow()) {
+                        // 这一帧没建起来：允许重挂时再来一次。
+                        sceneRequested = false;
                         return;
                     }
                     createEmbeddedScene(parentWindowRef, getWidth(), getHeight());
@@ -66,6 +77,7 @@ public class RhineQtView extends QtView {
 
     @Override
     protected void onDetachedFromWindow() {
+        sceneRequested = false;
         destroyEmbeddedScene();
         super.onDetachedFromWindow();
     }
