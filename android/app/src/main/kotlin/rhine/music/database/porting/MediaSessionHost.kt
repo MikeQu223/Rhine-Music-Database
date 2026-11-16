@@ -39,9 +39,10 @@ import android.util.Log
  *      sink 未安装时把动作按到达顺序留在 pendingActions，install 后原序补投；每条只尝试交付
  *      一次（不清队列、不设容量上限、不去重、不合并）。本文件不声明任何 native/external
  *      方法，也不调用 System.loadLibrary。
- *   2. minSdk 24 守卫：Qt 侧 minSdk 28；Flutter 侧 compileSdk=targetSdk=36 而 minSdk=24，
- *      所以 startForegroundService（API 26）、AudioFocusRequest（API 26）、
- *      POST_NOTIFICATIONS（API 33）都必须走版本分支，低版本用等价路径（不是静默跳过）。
+ *   2. 版本守卫：本工程 compileSdk=targetSdk=36、**minSdk 28**（Qt 侧同为 28）。startForegroundService
+ *      （API 26）、AudioFocusRequest（API 26）、POST_NOTIFICATIONS（API 33）仍按 API 级分支实现：
+ *      33 的分支是活路径，26 的分支在本工程已不可达但保留（与 Java 源一一对照，删了会丢掉
+ *      对 org.qtproject 端口行为的可核对性），低版本一律走等价路径而不是静默跳过。
  *   3. 类名/FQCN 变更：rhine.music.database.RhineMediaService →
  *      rhine.music.database.porting.MediaSessionHost（共享状态与静态入口）
  *      + rhine.music.database.porting.MediaPlaybackService（Service 实例）。
@@ -92,8 +93,9 @@ object MediaSessionHost {
     internal var notifiedKey = ""
 
     /**
-     * 音频焦点是否已持有。Java:228 用 focusRequest != null 判定，但 minSdk 24 下 API < 26 没有
-     * AudioFocusRequest 对象；用这个标志统一两条路径的"已持有"语义，避免重复申请或漏释放。
+     * 音频焦点是否已持有。Java:228 用 focusRequest != null 判定，但 API < 26 没有
+     * AudioFocusRequest 对象（本工程 minSdk 28，这条分支已不可达，保留对照 Java 源）；
+     * 用这个标志统一两条路径的"已持有"语义，避免重复申请或漏释放。
      */
     private var focusHeld = false
 
@@ -176,7 +178,8 @@ object MediaSessionHost {
             while (pendingActions.isNotEmpty()) {
                 val sink = commandSink
                 if (sink == null) {
-                    // 现阶段没有反安装入口，仅为可空性兜底：把剩余动作留在队列里。
+                    // sink 被 uninstall/shutdown 清空后到下一次 install 之间的空窗：
+                    // 剩下的动作留在队列里，等新 sink 装好再按原序补投。
                     Log.w(TAG, "media action held: command sink cleared: pending=" + pendingActions.size)
                     return
                 }
@@ -201,16 +204,19 @@ object MediaSessionHost {
      * Java:63-70 的 start(Context)，并合入 Qt 侧"先申请通知权限再启动"的流程
      * （AndroidMediaSession.cpp:27-56）。幂等：服务已实例化时早退。
      *
-     * 保持 void 门面：启动被系统拒绝时不抛、不重试，只降级为"没有前台通知/无保活保障"，
-     * 播放与会话控制照常；最近一次请求的结局留在 lastStartRejected 里供排障
-     * （见 startForegroundServiceCompat 的 DEDUP-40 说明）。
+     * 返回值就是这次请求的结局，供通道如实回给 Dart：true = 系统已受理启动请求，
+     * false = 被系统拒绝（API 31+ 的后台启动限制等），此时降级为"没有前台通知/无保活
+     * 保障"，播放与会话控制照常。不抛、不重试：拒绝只说明"当时那一刻不允许"。
+     *
+     * true 只代表"已经请求启动"：服务 onCreate 是稍后异步发生的，通知是否可见还取决于
+     * POST_NOTIFICATIONS 授权；调用方不得把 true 当成"通知已显示"。
      */
-    fun ensureStarted(context: Context) {
+    fun ensureStarted(context: Context): Boolean {
         if (instance != null) {
-            return
+            return true
         }
         requestNotificationPermissionOnce(context)
-        startForegroundServiceCompat(context)
+        return startForegroundServiceCompat(context)
     }
 
     /**
@@ -221,7 +227,8 @@ object MediaSessionHost {
         private set
 
     /**
-     * minSdk 24 守卫①：API 26 起必须 startForegroundService，否则随后 startForeground 会抛异常。
+     * 版本分支①（API 26；minSdk 28 下不可达，保留对照 Java 源）：API 26 起必须
+     * startForegroundService，否则随后 startForeground 会抛异常。
      *
      * DEDUP-40：Android 12（API 31）起，从非前台上下文调用 startForegroundService 会抛
      * ForegroundServiceStartNotAllowedException。它不是"通知没显示"级别的噪音：异常穿出
@@ -306,16 +313,86 @@ object MediaSessionHost {
      * Java:101-114 的 stop：播放被清空（切页/停止）。服务与通知保持前台待机——这是应用保活的根：
      * 前台服务 + mediaPlayback 类型让系统在无播放时也不回收进程，下次打开立即可续播。
      * 只释放音频焦点（暂停/空闲时占着焦点会拦住其它应用出声）。
+     *
+     * MEDIA-CONTROLS-146：同时清掉元数据与封面。旧实现只把 playing 置 false 就 publish，
+     * 通知与锁屏会继续挂着上一首的标题、并且上一曲/播放/下一曲按钮看起来仍然可点——
+     * 内容已经没了，控件却还在，等于对用户谎称"这首还能操作"。清空后 isIdle() 为真，
+     * Service 侧据此上报 STATE_STOPPED 且不再提供任何动作。
      */
     fun stop() {
         playing = false
         positionMs = 0L
+        clearMetadata()
         releaseFocus()
         instance?.publish()
     }
 
     /**
-     * minSdk 24 守卫⑤：POST_NOTIFICATIONS 是 API 33 起的运行时权限；被拒不阻塞——
+     * 会话当前是否为空（没有在播内容）。通知与 PlaybackState 据此撤销全部动作，
+     * 而不是留着一个点了没反应的按钮。
+     */
+    internal fun isIdle(): Boolean = title.isEmpty()
+
+    /**
+     * 反安装动作出口（MediaSessionChannel.uninstall 调用）。
+     *
+     * 只清 sink 与在途队列：appContext 是 application 级的，不随 Engine/Activity 走；
+     * 服务实例、会话与通知也不在这里动（它们归 shutdown / Service.onDestroy）。
+     * 清队列是有意的：队列里的动作属于已经断开的那个 engine，重投只会打到无人的 DART 侧。
+     */
+    fun uninstall() {
+        commandSink = null
+        pendingActions.clear()
+    }
+
+    /**
+     * 宿主收尾（BasicAudioChannel.uninstall：Activity onDestroy / 最后一个 engine detach）。
+     *
+     * 与 stop() 的差别是"没有下一个客户端了"：stop 只回到待机（服务保活、通知留着待命），
+     * shutdown 把元数据、封面、焦点、通知、服务全部收掉。服务本身只保留 application 级资源。
+     */
+    fun shutdown() {
+        playing = false
+        positionMs = 0L
+        durationMs = 0L
+        clearMetadata()
+        // 通知已撤，去重键必须一起复位：否则下次真实 update 可能算出同一个 key 而跳过重发，
+        // 表现是"播了但通知再也不出现"。
+        notifiedKey = ""
+        releaseFocus()
+        // 先让会话如实退到待机：isIdle() 已经成立，publish() 会写 STATE_STOPPED 且 actions=0，
+        // 锁屏/系统媒体面板里的播放键、切歌键、进度条在这一刻就失效。少了这一次 publish，
+        // 从"释放唯一播放器"到 Service.onDestroy 之间，面板仍在展示上一帧的 STATE_PLAYING 与
+        // SKIP/SEEK 动作——正是本 lane 明令禁止的"没有播放器却显示可操作"。
+        try {
+            instance?.publish()
+        } catch (e: Exception) {
+            // publish 会走 buildNotification/notify，OEM 偶发 SecurityException 之类：
+            // 这一次 publish 只是"顺手把面板退成待机"，失败绝不能让下面真正撤通知、
+            // 停服务的两行被跳过——否则恰好在收尾时留下可点的旧控件。
+            Log.w(TAG, "shutdown publish failed: continuing teardown", e)
+        }
+        // 没有下一个客户端了：sink 与在途动作一起丢弃（否则残留在 shutdown 后会一直重试）。
+        commandSink = null
+        pendingActions.clear()
+        instance?.stopForHostShutdown()
+    }
+
+    /** 清元数据与封面位图（幂等；封面位图必须先回收再置空，避免 native 内存滞留）。 */
+    private fun clearMetadata() {
+        title = ""
+        artist = ""
+        album = ""
+        coverPath = ""
+        val cover = coverBitmap
+        coverBitmap = null
+        if (cover != null && !cover.isRecycled) {
+            cover.recycle()
+        }
+    }
+
+    /**
+     * 版本分支⑤（API 33，本工程 minSdk 28 下的活路径）：POST_NOTIFICATIONS 是运行时权限；被拒不阻塞——
      * 通知不显示，但 MediaSession 与耳机按键仍然可用（AndroidMediaSession.cpp:32-33）。
      * 只用框架 API（Activity.requestPermissions），不引 androidx。
      *
@@ -388,7 +465,7 @@ object MediaSessionHost {
         focusHeld = true
     }
 
-    /** minSdk 24 守卫③（<26 分支）：AudioFocusRequest 不可用，回落到流类型版申请。 */
+    /** 版本分支③（<26 分支；minSdk 28 下不可达）：AudioFocusRequest 不可用，回落到流类型版申请。 */
     @Suppress("DEPRECATION")
     private fun requestLegacyFocus(manager: AudioManager) {
         manager.requestAudioFocus(
@@ -416,7 +493,7 @@ object MediaSessionHost {
         focusHeld = false
     }
 
-    /** minSdk 24 守卫③（<26 分支）：与申请路径成对释放，保证不重复申请也不漏释放。 */
+    /** 版本分支③（<26 分支；minSdk 28 下不可达）：与申请路径成对释放，保证不重复申请也不漏释放。 */
     @Suppress("DEPRECATION")
     private fun abandonLegacyFocus(manager: AudioManager) {
         manager.abandonAudioFocus(focusListener)

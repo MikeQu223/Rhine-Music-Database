@@ -17,7 +17,8 @@ import io.flutter.plugin.common.MethodChannel
  *
  * 通道（名字是跨语言契约，Dart 侧同名常量逐字对应）：
  *  - MethodChannel "rhine.music.database/media_session"
- *      ensureStarted()          -> Boolean true（只表示启动请求已发出）
+ *      ensureStarted()          -> Boolean（true = 平台受理启动请求；false = 被前台服务
+ *                                  策略拒绝。两者都不代表通知可见）
  *      update(map)              -> null
  *      stop()                   -> null
  *      未知方法                 -> notImplemented
@@ -34,9 +35,10 @@ import io.flutter.plugin.common.MethodChannel
  * 线程：MethodChannel 与 EventChannel 的回调都在平台主线程；MediaSessionHost 的四个入口
  * 也约定只在主线程调用，所以这里不加锁，也不引入协程。
  *
- * 生命周期：install 每个 engine 调用一次（MainActivity.configureFlutterEngine）。重复调用
- * 会替换 messenger 上的 handler；本对象不保存旧 engine 的引用，也不在 onCancel 时停止
- * 服务——服务与通知的存亡只由 MediaSessionHost 决定。
+ * 生命周期：install 每个 engine 调用一次（MainActivity.configureFlutterEngine）；重复调用先摘
+ * 旧 handler 再装新的。uninstall（MainActivity.onDestroy，MEDIA-CONTROLS-146 新增）摘掉两个
+ * handler 与 EventSink，把 activityProvider 闭包（→ MainActivity）从进程级 object 上断开。
+ * onCancel 只清 sink，不停止服务——服务与通知的存亡只由 MediaSessionHost 决定。
  */
 object MediaSessionChannel {
 
@@ -53,6 +55,16 @@ object MediaSessionChannel {
     /** update 的可空元数据键；Qt 的四个 QString 入参在这里允许 null。 */
     private val OPTIONAL_STRING_KEYS = listOf("title", "artist", "album", "coverPath")
 
+    /** 最近一次 install 建出来的两个通道；uninstall 用同一对对象摘 handler。 */
+    private var installedMethod: MethodChannel? = null
+    private var installedEvents: EventChannel? = null
+
+    /**
+     * 当前订阅的 sink。提到 object 层，uninstall 才能先断 sink：之后迟到/在途的媒体动作
+     * 不再往已经 detach 的 engine 里推（EventSink 失效后 success() 会抛）。
+     */
+    private var activeSink: EventChannel.EventSink? = null
+
     /**
      * 注册两个通道。
      *
@@ -66,13 +78,21 @@ object MediaSessionChannel {
         activityProvider: () -> Activity?,
         context: Context,
     ) {
+        // 重复 install（新 engine）：先摘上一套 handler 与 sink，再装新的。
+        detachChannels()
+
         val appContext = context.applicationContext
 
-        MethodChannel(messenger, METHOD_CHANNEL).setMethodCallHandler { call, result ->
+        val method = MethodChannel(messenger, METHOD_CHANNEL)
+        val events = EventChannel(messenger, EVENT_CHANNEL)
+        installedMethod = method
+        installedEvents = events
+
+        method.setMethodCallHandler { call, result ->
             handleMethodCall(call, result, activityProvider)
         }
 
-        EventChannel(messenger, EVENT_CHANNEL).setStreamHandler(
+        events.setStreamHandler(
             object : EventChannel.StreamHandler {
                 /**
                  * 保存本次订阅的 sink，并把动作出口装到 MediaSessionHost。
@@ -81,8 +101,6 @@ object MediaSessionChannel {
                  * （MediaSessionHost.install 的契约）。回调里再校验 activeSink 的身份，
                  * 保证 cancel 之后迟到的动作不会打到已失效的 EventSink。
                  */
-                private var activeSink: EventChannel.EventSink? = null
-
                 override fun onListen(arguments: Any?, sink: EventChannel.EventSink) {
                     activeSink = sink
                     MediaSessionHost.install(appContext) { action ->
@@ -99,6 +117,34 @@ object MediaSessionChannel {
                 }
             },
         )
+    }
+
+    /**
+     * 反安装（MEDIA-CONTROLS-146 新增）：MainActivity.onDestroy 在 super.onDestroy() 之前调用。
+     *
+     * 必须断三样，缺一样就是泄漏或"没有接收器的通知"：
+     *  1. EventSink：之后 MediaSessionHost 的动作不再推进已死的 engine；
+     *  2. MethodChannel handler：闭包捕获 activityProvider（MainActivity 传 { this }）；
+     *  3. EventChannel stream handler。
+     * 最后清 MediaSessionHost 的动作出口与在途队列；appContext 是 application 级的，保留。
+     *
+     * 不停止服务、不撤通知：那两件事只由 BasicAudioChannel.uninstall() →
+     * MediaSessionHost.shutdown() 决定（唯一播放实例跟着宿主收尾），两个入口不互相踩。
+     */
+    fun uninstall() {
+        detachChannels()
+        MediaSessionHost.uninstall()
+    }
+
+    private fun detachChannels() {
+        activeSink = null
+        val method = installedMethod
+        val events = installedEvents
+        installedMethod = null
+        installedEvents = null
+        // setMethodCallHandler(null) / setStreamHandler(null) 是官方反注册方式；已为 null 时空操作。
+        method?.setMethodCallHandler(null)
+        events?.setStreamHandler(null)
     }
 
     private fun handleMethodCall(
@@ -121,9 +167,12 @@ object MediaSessionChannel {
     /**
      * 启动请求：只在前台 Activity 链路调用。
      *
-     * MediaSessionHost.ensureStarted 的 lastStartRejected 只记录系统是否拒绝启动；即使为
-     * true，这次请求也已经发出，故仍回 success(true)。不伪造通知已显示——通知是否可见
-     * 由 POST_NOTIFICATIONS 与系统前台服务策略决定，本通道不查询也不承诺。
+     * 返回布尔而不是无条件 true：MediaSessionHost.ensureStarted 现在把这次请求的结局
+     * 交回来（系统受理 = true，被前台服务策略拒绝 = false），Dart 侧据此如实报告
+     * "没有常驻通知"，而不是把一次被拒的启动冒充成功。
+     *
+     * 两个刻意不承诺：即使回 true，通知是否**可见**仍取决于 POST_NOTIFICATIONS 授权与
+     * 系统策略；回 false 也不代表播放失败，只是没有前台保活。本通道不查询可见性。
      */
     private fun ensureStarted(
         result: MethodChannel.Result,
@@ -138,8 +187,9 @@ object MediaSessionChannel {
             )
             return
         }
-        MediaSessionHost.ensureStarted(activity)
-        result.success(true)
+        // 如实回给 Dart：false 表示系统拒绝了前台服务启动（无通知、无保活），
+        // 不是"通知已经显示"，也不是播放失败。
+        result.success(MediaSessionHost.ensureStarted(activity))
     }
 
     /**

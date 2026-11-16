@@ -13,6 +13,8 @@ import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+import rhine.music.database.porting.MediaSessionChannel
+import rhine.music.database.porting.MediaSessionHost
 
 /**
  * BASIC-89 lane B：真实音频播放的 Android 端（系统 MediaPlayer，唯一播放权威）。
@@ -216,7 +218,11 @@ class BasicAudioChannel private constructor(
             override fun onActivityStopped(activity: Activity) {}
             override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
             override fun onActivityDestroyed(activity: Activity) {
+                // 兜底路径：正常收尾走 uninstall()（那里的注销发生在本次 dispatch 之前，
+                // 所以本回调通常不会触发）。真触发时同样必须一起收尾媒体会话，
+                // 否则会留下"没有播放器却可点"的通知。
                 authority.releaseForHostShutdown()
+                MediaSessionHost.shutdown()
             }
         }
         try {
@@ -290,12 +296,34 @@ class BasicAudioChannel private constructor(
          * 注册在 Application（进程级单例）上的匿名回调又反向握着本对象——不在这里显式断，
          * 旧 Activity 永远进不了回收（132R 的 cycle 探针 activity=false 就是它）。
          *
-         * 只断通道与监听，**不碰 authority**：MediaPlayer 的释放仍归 onDestroy/dispose 语义
-         * （见类头「生命周期」：Activity 销毁即引擎 detach，播放要停）。
+         * 前提（写清楚，免得当成 bug 再次踩）：本方法的收尾力度是"整个宿主结束"，不是
+         * "换一个 Activity"。它假定 uninstall 之后进程内不再有 live Activity/engine 需要播放——
+         * 也就是配置变化都被 AndroidManifest 的 configChanges 吸收（当前覆盖 orientation/
+         * screenSize/density/uiMode 等）。若将来出现 configChanges 未覆盖的重建，旧 Activity 的
+         * uninstall 会晚于新 Activity 的 install 执行，那时它会把新 engine 的通道一并摘掉并停掉
+         * 播放；真要做多 Activity/多 engine 支持，必须改成按 owner 守卫（install 记 owner，
+         * uninstall(owner) 在 current !== owner 时直接返回）。
+         *
+         * 断通道**同时**收尾唯一播放实例与媒体会话（MEDIA-CONTROLS-146）：
+         *   - 断完通道就不存在能发命令的客户端了，留着 MediaPlayer 只会是"没有主人的声音"；
+         *   - MainActivity.onDestroy 先调本方法、再调 super.onDestroy()，而
+         *     Application.dispatchActivityDestroyed 发生在 super 里——registerLifecycle 的回调
+         *     此刻已经注销，所以**不能**指望 onActivityDestroyed 兜底（本分支以前就是这么漏的：
+         *     Back 之后 MediaPlayer 还在响，通知还停在"播放中"且按钮可点）；
+         *   - 服务只保留 application 级资源（MediaSessionHost.appContext），不留 Activity/Engine
+         *     闭包，前台通知由 MediaSessionHost.shutdown 撤掉后 stopSelf。
          */
         fun uninstall() {
             current?.detach()
             current = null
+            // 先摘两个通道：这一句才真正掐断 Activity/Engine 闭包（MEDIA-CONTROLS-146 之前
+            // 通道是 install 里的局部量，只挂在 engine 的 messenger 上；现在它被 object 字段
+            // 持有，不显式 uninstall 就会把 Activity + engine 一直钉住），同时清掉 sink 与
+            // 在途媒体动作。放在释放播放器之前，保证收尾期间不会再有动作投进旧 engine。
+            MediaSessionChannel.uninstall()
+            authority?.releaseForHostShutdown()
+            // 会话与通知跟随唯一音频实例一起收尾：没有播放器就不该有可点的媒体控件。
+            MediaSessionHost.shutdown()
         }
     }
 }
