@@ -6,9 +6,11 @@
 #include "SceneMath.h"
 #include "SceneMotion.h"
 #include "SceneTypes.h"
+#include <QHash>
 #include <QJsonObject>
 #include <QPointF>
 #include <array>
+#include <cmath>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -53,6 +55,19 @@ class NativeScene {
     void energyIdle(bool value);
     void musicIdentity(QString key);
     void musicClear();
+    // MUST-C：把每一格真实的业务 key 绑到它自己的位置上。键是 cellInstanceId(lane,row)，
+    // 值是 siren:<kind>:<id>。只影响"这一格画不画封面/标签"，不动矩阵、实例缓冲与选中态。
+    // 传空表即恢复纯占位档案壳。
+    void projectEmbeddedCellKeys(const QHash<quint32, QString> &keys);
+    int embeddedCellCount() const {
+        return int(m_embeddedCellKeys.size());
+    }
+    // 归档轨道此刻是否在"快速移动"（拖动中、有惯性、或有可观测速度）。可见格的封面/标签
+    // 准入会与调用方传来的 scrolling 取并集：滚动期间一个都不新建，热资源照常显示。
+    bool archiveScrolling() const {
+        return m_dragging || m_drag.active || m_momentum.has_value() ||
+               std::abs(m_rail.velocity) > 0.25 || std::abs(m_columnCamera.velocity) > 0.25;
+    }
     void pointer(QString type, double x, double y, double delta = 0);
     std::optional<SceneMotion::Cell> pick(double x, double y);
     void openViewer();
@@ -184,6 +199,8 @@ class NativeScene {
     std::optional<double> m_sceneFreeze;
     std::optional<Cell> m_hover;
     QHash<QString, double> m_hoverLifts;
+    // cellInstanceId → 业务 key。只有解析出真实身份的格才在这里；其余格保持纯占位壳。
+    QHash<quint32, QString> m_embeddedCellKeys;
     std::optional<QPointF> m_pendingHover;
     QPointF m_pointer;
     QPointF m_down;

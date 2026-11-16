@@ -3,6 +3,7 @@
 #include "Glyphs.h"
 #include "Host.h"
 #include "NativeApplication.h"
+#include "render/EmbeddedCellResources.h"
 #include "render/FramePacingPolicy.h"
 #include "render/MusicTextureAdmission.h"
 #include "render/RenderPolicy.h"
@@ -188,6 +189,23 @@ class Engine : public QObject {
     /// 「URL 到了、盘面永远占位图」——诊断日志里 SCENE_COVER 有、COVER_REQUEST 一条没有。
     /// 缓存写入由 Host::loadCover 负责；这里只负责解码完成后唤醒一帧，让纹理真的上传。
     void prefetchCover(const QString &url);
+    /**
+     * MUST-C：归档可见格的业务资源。由宿主在**真正 apply 完**一份 Flutter 快照之后调用
+     * （不是每帧）：cells 就是快照里的 [{l,r,k,i,t[,c,a,b]}]；contextGeneration 是交互/
+     * 所属/目录/窗口的稳定代次（同一份窗口内容重复 apply 必须给同一个值）；scrolling 是
+     * 调用方看到的"列表正在快速移动"，会与原生轨道自身的拖动/惯性取并集。
+     *
+     * 这里只决定这些格显示什么封面与标签：不切资料库、不播放、不改队列；没有封面的格
+     * 诚实显示占位。同一份签名重复调用是空操作，不会重置任何准入计时。
+     */
+    void projectEmbeddedCells(const QJsonArray &cells, quint64 contextGeneration, bool scrolling);
+    /// 诊断/回归用：当前投影里的格数与已准入格数。
+    int embeddedCellCount() const {
+        return int(m_embeddedCells.size());
+    }
+    int embeddedCellAdmittedCount() const {
+        return m_embeddedCellAdmitted;
+    }
     /// A03：内容版本。呈现层用它代替"按信号重复置脏"——版本前进一次只重渲一层，
     /// 重复推同一个值只在两个整数上比较一次。主线程写、渲染线程读，用 relaxed 原子
     /// 即可：这里要的是"值变了/没变"，不是用它同步任何内存。
@@ -275,6 +293,26 @@ class Engine : public QObject {
     bool m_inputPending = false;
     /// C03：准入状态随 musicTextures 一起在 GUI 线程生成，渲染线程只读这份快照。
     MusicTextures m_musicTextureSnapshot;
+    // MUST-C：可见格的身份投影与准入。与选中焦点通道（m_admission）完全分开：
+    // 焦点只有一个，可见格是一组，且滚动中一律不新建资源。
+    QVector<RhineRender::EmbeddedCell> m_embeddedCells;
+    QHash<QString, RhineRender::EmbeddedCell> m_embeddedCellByKey;
+    QString m_embeddedCellSignature;
+    quint64 m_embeddedCellContext = 0;
+    bool m_embeddedCellScrolling = false;
+    int m_embeddedCellAdmitted = 0;
+    int m_embeddedCellPending = 0;
+    // 其中到期却因为名额被可见格占满而进不来的那些：它们只能等窗口变化，
+    // 不该让引擎为它们一直醒着（否则归档页永远睡不着）。
+    int m_embeddedCellStarved = 0;
+    RhineRender::EmbeddedCellAdmission m_embeddedCellAdmission =
+        RhineRender::EmbeddedCellAdmission::fromEnvironment();
+    // 同一个封面 URL 只允许有限次失败重试；成功一次之后图在 Host 缓存里，走热路径。
+    QHash<QString, int> m_embeddedCoverAttempts;
+    void pumpEmbeddedCells(const QSet<QString> &retained, bool scrolling);
+    const RhineRender::EmbeddedCell *embeddedCellFor(const QString &key) const;
+    QJsonObject embeddedCellItem(const RhineRender::EmbeddedCell &cell) const;
+    void publishEmbeddedCells(const QSet<QString> &retained);
     /// C01：按来源分开计数，避免把"输入唤醒"和"Host 失效唤醒"混成一个数字。
     quint64 m_wakesInput = 0, m_wakesHost = 0, m_wakesMedia = 0, m_wakesOther = 0;
     /// C01：requestSceneContent 与 stableFrames 复位的次数／原因。
