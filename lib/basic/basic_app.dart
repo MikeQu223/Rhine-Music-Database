@@ -1202,6 +1202,13 @@ class _BasicShellState extends State<_BasicShell>
         return basicUnimplementedPrefix + 'music:index:$index';
       }
       unawaited(controller.openSong(tracks[item.index], play: play));
+      if (!play) {
+        // 「打开」进详情：只有 detail-autoplay 开着才自动出声
+        // （Qt/src/NativeHudController.cpp:626-638 的 music.play(false)）。
+        // 浏览路径（music:index:<i> / music:slot:<i> → [_selectAt]）不经过这里，
+        // 所以关着时点行永远不播。
+        unawaited(controller.autoplayDetailIfEnabled(tracks[item.index]));
+      }
       return null;
     }
     if (item.kind == 'playlist') {

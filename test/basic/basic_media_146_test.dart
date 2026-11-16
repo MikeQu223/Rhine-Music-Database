@@ -787,6 +787,12 @@ class _FakePort implements MediaSessionPort {
   @override
   Stream<String> get actions => _actions.stream;
 
+  /// 通知封面的落盘目录：本文件不验证封面（返回 null = 不建缓存、不触网、
+  /// 上报的 coverPath 恒为空），封面落盘由 user_scope_152_test.dart 用假
+  /// HttpClient 单独证明。
+  @override
+  Future<String?> cacheDirectory() async => null;
+
   @override
   Future<void> dispose() async {
     disposed = true;
