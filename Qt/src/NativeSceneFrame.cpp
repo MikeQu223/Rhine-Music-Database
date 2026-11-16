@@ -1,7 +1,10 @@
 #include "NativeScene.h"
 #include "NativeViewer.h"
+#include "render/EmbeddedCellResources.h"
 #include <QJsonArray>
 #include <QElapsedTimer>
+#include <QSet>
+#include <QStringList>
 #include <algorithm>
 #include <cmath>
 
@@ -76,6 +79,74 @@ void NativeScene::emitFrame(double time) {
         drawBuffers[id] = instanceBytes;
         draws.append(draw);
     }
+    // MUST-C：这一格有真实业务身份时，给它加两条「只属于这一格」的覆盖绘制——封面板与标签面。
+    // 底下的档案壳仍然是上面那条共享实例缓冲：几何、材质、机位、惯性、数量一律不动，
+    // 这里只往同一格的世界矩阵上加薄薄一层贴面，所以不会变成 40 个 detail actor。
+    QSet<quint32> embeddedCells;
+    QStringList embeddedKeys;
+    for (int index = 0; index < m_drawnCells.size() && index < m_drawnMatrices.size(); ++index) {
+        const auto cell = m_drawnCells.at(index);
+        const auto cellId = RhineRender::embeddedCellId(cell.lane, cell.row);
+        if (embeddedCells.contains(cellId)) {
+            continue;
+        }
+        const auto key = m_embeddedCellKeys.value(cellId);
+        if (key.isEmpty()) {
+            // 没有身份就保持纯占位壳：宁可空着，也不拿别的格的内容顶上。
+            continue;
+        }
+        embeddedCells.insert(cellId);
+        embeddedKeys.append(key);
+        const auto root = m_drawnMatrices.at(index);
+        const auto cellTheme = float(m_theme.sample(cell, time));
+        QByteArray themeBytes;
+        themeBytes.append(reinterpret_cast<const char *>(&cellTheme), sizeof(cellTheme));
+        // 封面板：正面方形画心（1:1，不被拉扁），落在档案纸之前（z=0.25）。
+        auto plate = QJsonObject{{"mesh", -8},
+                                 {"asset", "cassette"},
+                                 {"label", false},
+                                 {"name", "Embedded_Cell_Print"},
+                                 // instanced=true 只为让 isFocusedSceneCard()/SceneTransformHistory
+                                 // 不把可见格误认成"详情焦点主体"（那会切到 hero 的背板与主光分支）。
+                                 // 实例数据仍来自本 draw 自己的 drawBuffers 条目，不走共享实例缓冲。
+                                 {"instanced", true},
+                                 {"floor", false},
+                                 {"transparent", false},
+                                 {"depthWrite", true},
+                                 {"order", 0},
+                                 {"side", 2},
+                                 {"castShadow", false},
+                                 {"musicKey", key},
+                                 {"musicSelected", false},
+                                 {"shadowOnly", false},
+                                 {"count", 1},
+                                 {"quality", 1},
+                                 // clarity=1 让封面直接采样（片元着色器里 blur=1-clarity），不做唱片模糊。
+                                 {"clarity", 1},
+                                 {"theme", double(cellTheme)},
+                                 {"matrices", QJsonArray{}},
+                                 {"themes", QJsonArray{}},
+                                 {"matrixBuffer", -1},
+                                 {"themeBuffer", -1}};
+        plate["id"] = RhineRender::embeddedCellDrawId(cellId, 0);
+        const auto plateId = plate["id"].toInt();
+        retained.insert(plateId);
+        drawBuffers[plateId] = {root.bytes(), themeBytes, {cellId}};
+        draws.append(plate);
+        // 标签面：与详情卡同一张平面、同一条本地偏移（印刷标签的位置），只是身份换成这一格。
+        auto label = plate;
+        label["id"] = RhineRender::embeddedCellDrawId(cellId, 1);
+        label["mesh"] = -1;
+        label["label"] = true;
+        label["name"] = "Embedded_Cell_Label";
+        label["transparent"] = true;
+        label["depthWrite"] = false;
+        label["order"] = 1;
+        const auto labelId = label["id"].toInt();
+        retained.insert(labelId);
+        drawBuffers[labelId] = {(root * Matrix::compose({-1.36, 3.04, 0.255}, {})).bytes(), themeBytes, {cellId}};
+        draws.append(label);
+    }
     QJsonArray returningKeys;
     double returningAgeMax = 0;
     for (const auto &actor : m_returning) {
@@ -102,6 +173,9 @@ void NativeScene::emitFrame(double time) {
              {"globalSubdued", 0},
              {"returningMusicKeys", returningKeys},
              {"returningAgeMax", returningAgeMax},
+             // 名字与 Engine 发布的摘要帧字段（embeddedCells）区分开：一个是"这一帧画了几格"，
+             // 一个是"这一帧几格真实/几格占位"，同名字段会被后者覆盖，看起来像被清零。
+             {"embeddedCellDraws", embeddedKeys.size()},
              {"time", time},
              {"draws", draws},
              {"view", m_view.json()},
