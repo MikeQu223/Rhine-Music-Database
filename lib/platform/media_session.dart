@@ -92,16 +92,29 @@ class MediaSessionState {
 /// 媒体会话端口：UI/业务层只依赖这个接口，测试可以注入 fake。
 abstract interface class MediaSessionPort {
   /// 请求启动前台媒体服务；只应从前台 Activity 链路调用。
-  Future<void> ensureStarted();
+  ///
+  /// 返回 true 仅表示平台受理了这次启动请求，**不代表通知已显示**（还取决于
+  /// POST_NOTIFICATIONS 授权）；返回 false 表示系统拒绝了启动（例如应用不在前台），
+  /// 此时播放与控制照常，只是没有常驻通知。
+  Future<bool> ensureStarted();
 
   /// 上报一次状态；每次调用只产生一次平台调用。
   Future<void> update(MediaSessionState state);
 
-  /// 停止播放状态并更新通知，但不结束前台服务。
+  /// 停止播放状态、清空元数据并更新通知，但不结束前台服务。
+  ///
+  /// 这是"没有在播内容"的收尾语义：调用后通知不得再挂着上一首的标题或可点的
+  /// 播放/下一首动作（Kotlin 侧 MediaSessionHost.stop 会清元数据）。
   Future<void> stop();
 
   /// 平台动作流："pause" / "resume" / "next" / "prev" / "rhine.media.SEEK:<ms>"。
+  ///
+  /// SEEK 后面是系统给的**绝对毫秒**（可能越界或为负），消费方必须按真实 duration
+  /// 夹取后才能使用；方向键/耳机键与锁屏按钮走同一条串。
   Stream<String> get actions;
+
+  /// 退订动作流并释放通道资源；可重复调用。端口被释放后其余方法不得再调。
+  Future<void> dispose();
 }
 
 /// 基于 MethodChannel / EventChannel 的默认实现。
@@ -125,6 +138,9 @@ class MethodChannelMediaSession implements MediaSessionPort {
   StreamSubscription<dynamic>? _subscription;
   bool _disposed = false;
 
+  /// 通道是否已释放；释放后 [actions] / apply 方法都抛 StateError。
+  bool get isDisposed => _disposed;
+
   @override
   Stream<String> get actions {
     _checkNotDisposed();
@@ -136,9 +152,11 @@ class MethodChannelMediaSession implements MediaSessionPort {
   }
 
   @override
-  Future<void> ensureStarted() async {
+  Future<bool> ensureStarted() async {
     _checkNotDisposed();
-    await _methodChannel.invokeMethod<bool>('ensureStarted');
+    final bool? started =
+        await _methodChannel.invokeMethod<bool>('ensureStarted');
+    return started ?? false;
   }
 
   @override
@@ -176,6 +194,7 @@ class MethodChannelMediaSession implements MediaSessionPort {
   }
 
   /// 取消 EventChannel 订阅并关闭广播控制器；可重复调用。
+  @override
   Future<void> dispose() async {
     if (_disposed) {
       return;
