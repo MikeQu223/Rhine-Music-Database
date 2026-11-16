@@ -34,7 +34,9 @@ import 'package:flutter/foundation.dart';
 
 import '../domain/lyrics/lyrics_controller.dart';
 import '../domain/player/music_player.dart';
+import 'basic_media_session.dart';
 import 'basic_models.dart';
+import '../platform/media_session.dart';
 import 'platform_playback.dart';
 import 'siren_repository.dart';
 
@@ -87,12 +89,13 @@ const String sirenProviderLabel = '塞壬唱片';
 ///
 /// 构造注入 lane B 的 [BasicAudioPort]；[repository] 可注入（测试/替换 baseUri），
 /// [dark] 只影响 [state].dark（基础版不做主题切换）。
-class BasicController extends ChangeNotifier {
+class BasicController extends ChangeNotifier implements BasicMediaSessionCommands {
   BasicController({
     required BasicAudioPort audio,
     SirenRepository? repository,
     bool dark = true,
     BasicLocalCollections? collections,
+    MediaSessionPort? mediaSessionPort,
   })  : _audio = audio,
         _repository = repository ?? SirenRepository(),
         _ownsRepository = repository == null,
@@ -107,7 +110,17 @@ class BasicController extends ChangeNotifier {
     );
     _player.addListener(_onPlayerChanged);
     _audio.addListener(_onAudioStateChanged);
+    // 系统媒体控件（通知/锁屏/蓝牙）不是第二套播放器：它只把真实动作交回
+    // 本控制器，并把真实在播身份与真实 audio 读数报出去。没注入端口（widget
+    // 测试、桌面预览）就没有这层，一切照旧。
+    final MediaSessionPort? port = mediaSessionPort;
+    if (port != null) {
+      _mediaSession = BasicMediaSessionAdapter(port: port, commands: this);
+    }
   }
+
+  /// 系统媒体控件适配器；未注入 [MediaSessionPort] 时为 null。
+  BasicMediaSessionAdapter? _mediaSession;
 
   static String _providerName() => sirenProvider;
 
@@ -837,6 +850,48 @@ class BasicController extends ChangeNotifier {
   }
 
   /// 播放/暂停；没有播放中的曲目时从当前选中的歌开始。
+  /// 系统 PLAY：幂等。已经在播就不动（不得变成暂停）。
+  @override
+  Future<void> play() async {
+    if (_disposed || _audio.state.playing) {
+      return;
+    }
+    await togglePlay();
+  }
+
+  /// 系统 PAUSE：幂等。已经暂停就不动。
+  @override
+  Future<void> pause() async {
+    if (_disposed || !_audio.state.playing) {
+      return;
+    }
+    await togglePlay();
+  }
+
+  /// 把真实在播身份 + 真实 audio 读数报给系统媒体控件。
+  ///
+  /// 身份只来自 [_playingTrackOf]（真实 audio 对应曲目），不是 UI 选中行；
+  /// 封面这里是空的——SirenSong.cover 是远端 URL，通知栏要求本地文件，
+  /// 在没有本地资源缓存之前如实留空，绝不把 URL 塞给 decodeFile。
+  void _syncMediaSession() {
+    final BasicMediaSessionAdapter? media = _mediaSession;
+    if (media == null || _disposed) {
+      return;
+    }
+    final SirenSong? track = _playingTrackOf();
+    unawaited(media.sync(
+      identity: track == null
+          ? null
+          : BasicMediaIdentity(
+              id: track.id,
+              title: track.title,
+              artist: track.artist,
+              album: track.album,
+            ),
+      audio: _audio.state,
+    ));
+  }
+
   Future<void> togglePlay() async {
     if (_disposed) {
       return;
@@ -915,6 +970,8 @@ class BasicController extends ChangeNotifier {
     _player.removeListener(_onPlayerChanged);
     _lyrics?.removeListener(_onLyricsChanged);
     _audio.removeListener(_onAudioStateChanged);
+    unawaited(_mediaSession?.dispose() ?? Future<void>.value());
+    _mediaSession = null;
     if (_ownsRepository) {
       _repository.close();
     }
@@ -1372,6 +1429,9 @@ class BasicController extends ChangeNotifier {
       }
       await _audio.prepare(detail.sourceUrl, generation: generation);
       await _audio.play(generation: generation);
+      // 真正开始播放（前台 Activity）时才拉起前台媒体服务；返回值只表示平台
+      // 接受请求，通知是否可见取决于 POST_NOTIFICATIONS，失败不影响播放。
+      unawaited(_mediaSession?.ensureStarted() ?? Future<bool>.value(false));
       _player.playbackStarted(generation: generation);
       unawaited(_loadLyrics(track, LyricsController.trackKey(track), detail.lyricUrl));
     } on Object catch (error) {
@@ -1571,6 +1631,7 @@ class BasicController extends ChangeNotifier {
       localPlaylists: _localPlaylists,
     );
     notifyListeners();
+    _syncMediaSession();
   }
 
   SirenSong _songFromTrack(Map<String, Object?> track) {

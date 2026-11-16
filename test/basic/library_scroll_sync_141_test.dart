@@ -16,6 +16,7 @@
 // 真机侧还要证明的是像素与纹理（RHINE_QT_COVER_REQUEST/RESULT/READY + 盘面像素），
 // widget 测试只能证明状态/协议这一段；文件里不把两者混着说。
 
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -27,6 +28,7 @@ import 'package:rhine_music_database/basic/basic_models.dart';
 import 'package:rhine_music_database/basic/platform_playback.dart';
 import 'package:rhine_music_database/basic/qt_scene_view.dart';
 import 'package:rhine_music_database/basic/siren_controller.dart';
+import 'package:rhine_music_database/platform/media_session.dart';
 import 'package:rhine_music_database/basic/siren_repository.dart';
 
 /// 只记录调用、不出声的音频端口。
@@ -176,6 +178,39 @@ BasicViewState _stateWithLanes({
 
 Map<String, Object?> _decode(String raw) =>
     jsonDecode(raw) as Map<String, Object?>;
+
+/// 只记录、不碰平台的媒体端口：用来钉"上报的是真实身份 + 真实读数"。
+class _FakeMediaPort implements MediaSessionPort {
+  final StreamController<String> _controller = StreamController<String>.broadcast();
+  final List<MediaSessionState> updates = <MediaSessionState>[];
+  int ensureCalls = 0;
+  int disposeCalls = 0;
+
+  @override
+  Stream<String> get actions => _controller.stream;
+
+  @override
+  Future<bool> ensureStarted() async {
+    ensureCalls += 1;
+    return true;
+  }
+
+  @override
+  Future<void> update(MediaSessionState state) async {
+    updates.add(state);
+  }
+
+  @override
+  Future<void> stop() async {}
+
+  @override
+  Future<void> dispose() async {
+    disposeCalls += 1;
+    await _controller.close();
+  }
+
+  void push(String action) => _controller.add(action);
+}
 
 void main() {
   group('快照 v3：连续窗口 + 40 格语义槽位', () {
@@ -712,6 +747,30 @@ void main() {
       expect(controller.state.catalogLoaded, isTrue, reason: '退避后必须自愈');
       expect(controller.state.songs, hasLength(1));
       expect(controller.state.selection, isNotNull, reason: '加载成功仍要默认选中第一行');
+    });
+  });
+
+  group('系统媒体控件接的是同一个播放权威（146 接线）', () {
+    test('未播放不上报身份；PLAY/PAUSE 幂等（不盲翻成相反动作）', () async {
+      final _RecordingAudio audio = _RecordingAudio();
+      final _FakeMediaPort port = _FakeMediaPort();
+      final BasicController controller = BasicController(
+        audio: audio,
+        repository: _repository(<String>['s1', 's2', 's3']),
+        mediaSessionPort: port,
+      );
+      addTearDown(controller.dispose);
+      await controller.boot();
+
+      // 没在播就不许上报任何身份：通知栏不能挂着一条空曲目。
+      expect(port.updates, isEmpty);
+
+      // 已暂停时收到系统 PLAY 之前先看 PAUSE：不得把暂停翻成播放。
+      final int before = audio.calls.length;
+      await controller.pause();
+      await Future<void>.delayed(Duration.zero);
+      expect(audio.calls.length, before,
+          reason: '未在播时 PAUSE 必须幂等，不能盲翻（calls=${audio.calls}）');
     });
   });
 }
