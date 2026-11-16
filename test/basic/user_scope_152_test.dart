@@ -567,7 +567,10 @@ void main() {
         }
         await Future<void>.delayed(Duration.zero);
       }
-      fail('封面请求没有发出：' + url + '（已请求 ' + client.requested.join(', ') + '）');
+      // 用 throw 而不是 fail()：不依赖 test 包里 fail 的返回类型
+      // （若它声明成 void，这个 Future<Completer<…>> 的 async 函数就编译不过）。
+      throw StateError(
+          '封面请求没有发出：' + url + '（已请求 ' + client.requested.join(', ') + '）');
     }
 
     test('封面 URL 真的落成本地 img，上报的是文件路径而不是 URL', () async {
@@ -673,6 +676,14 @@ void main() {
     test('音质映射表里确实有 quality（否则多档 provider 只选不存）', () {
       final String source = dartSettings.readAsStringSync();
       expect(source, contains("'quality': 'quality',"));
+    });
+
+    test('宿主只在"显式打开详情"这一条路径上接线自动播放（浏览/选中不接线）', () {
+      final String source = File('lib/basic/basic_app.dart').readAsStringSync();
+      expect(source, contains('unawaited(controller.autoplayDetailIfEnabled('),
+          reason: '没接线 = 设置开着也不出声');
+      expect(source, contains('if (!play) {'),
+          reason: '只允许在 play:false 的显式打开分支调用；浏览路径走 _selectAt，不该出声');
     });
 
     test('控制器把本地封面路径交给身份，且 dispose 关缓存', () {
