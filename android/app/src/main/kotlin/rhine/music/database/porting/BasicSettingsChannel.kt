@@ -78,11 +78,20 @@ class BasicSettingsChannel private constructor(
             return channel
         }
 
-        fun uninstall(messenger: BinaryMessenger) {
+        fun uninstall(messenger: BinaryMessenger?) {
             if (installed == null) {
                 return
             }
-            MethodChannel(messenger, CHANNEL).setMethodCallHandler(null)
+            val owner = installedMessenger
+            //  归属校验：旧宿主的 onDestroy 不能拆掉新宿主刚装上的通道（Activity 重建时
+            //  安装与销毁的先后顺序不保证）。只有 "要卸的 messenger 就是当前 owner" 才卸。
+            if (owner != null && messenger != null && owner !== messenger) {
+                return
+            }
+            val target = owner ?: messenger
+            if (target != null) {
+                MethodChannel(target, CHANNEL).setMethodCallHandler(null)
+            }
             installed = null
             installedMessenger = null
         }
