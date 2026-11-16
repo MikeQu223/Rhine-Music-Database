@@ -60,6 +60,14 @@ bool allowsPlaybackSource(const QUrl &url, bool offline, bool alternative, const
                ? url.isLocalFile()
                : allowsMediaEndpoint(url, alternative, ProviderRegistry::instance().mediaPolicy(provider));
 }
+
+#ifdef Q_OS_WIN
+/** 自动过渡默认开启；未写入偏好时与设置页的默认值保持一致。 */
+bool automaticTransitionsEnabled() {
+    const auto value = AppStorage::settings().value("panel/apple-smart-transition").toString();
+    return value.isEmpty() || value == "on";
+}
+#endif
 }
 
 #if defined(Q_OS_MACOS) || defined(Q_OS_IOS) || defined(Q_OS_WIN)
@@ -556,13 +564,19 @@ void AudioPlayer::followDefaultOutput(bool refresh, const AudioOutputFormat::Sys
     if (hasNativePlayback()) {
 #ifdef Q_OS_WIN
         const auto unavailable = device.isNull();
-        if (output.device() != device || outputUnavailable != unavailable) {
+        const bool deviceChanged = output.device() != device;
+        const bool wasUnavailable = outputUnavailable;
+        if (deviceChanged || wasUnavailable != unavailable) {
             resetAppleTransitionSchedule();
             output.setDevice(device);
         }
         outputUnavailable = unavailable;
         if (unavailable) {
             applePlayer->setPaused(true);
+        } else if (wasUnavailable || deviceChanged) {
+            // 设备恢复后从新的可播放位置重新计时，避免断线时间被误判为播放卡死。
+            lastPosition = applePlayer->position();
+            progressClock.restart();
         }
 #endif
 #ifdef Q_OS_MACOS
@@ -728,8 +742,7 @@ bool AudioPlayer::load(QString input, bool offline, bool alternative, QString pr
         return false;
     }
 #ifdef Q_OS_WIN
-    useApplePlayback = allowWindowsTransitions &&
-                       AppStorage::settings().value("panel/apple-smart-transition").toString() == "on";
+    useApplePlayback = allowWindowsTransitions && automaticTransitionsEnabled();
     windowsProvider = provider;
     windowsAlternative = alternative;
 #endif
@@ -1339,7 +1352,7 @@ bool AudioPlayer::prepareAppleTransition(const QUrl &next, bool offline, bool al
                                          const QString &provider) {
 #ifdef Q_OS_WIN
     if (!applePlayer && allowWindowsTransitions && !sourceEnded && !player->source().isEmpty() &&
-        AppStorage::settings().value("panel/apple-smart-transition").toString() == "on" &&
+        automaticTransitionsEnabled() &&
         NativeTransitionPlayer::transitionOutput() != NativeTransitionPlayer::TransitionOutput::Unsupported &&
         allowsPlaybackSource(next, offline, alternative, provider)) {
         applePlayer = NativeTransitionPlayer::borrow(*this);

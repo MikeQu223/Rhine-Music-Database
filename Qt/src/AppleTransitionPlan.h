@@ -14,6 +14,8 @@ enum class AppleTransitionPreparation {
 
 struct AppleTransitionPlan {
     static constexpr qint64 searchWindowMs = 20000;
+    static constexpr double minimumTempoRate = 0.76;
+    static constexpr double maximumTempoRate = 1.24;
 
     enum class Kind { Original, Trim, Fade, BeatMatch };
     enum class Alignment { None, Beat, Bar };

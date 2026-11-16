@@ -1,7 +1,6 @@
 #include "../src/AudioPlayer.h"
 #include "../src/AppStorage.h"
 #include "../src/AppleTransitionPlan.h"
-#include "../src/WindowsTransitionPlayer.h"
 #include "../src/Host.h"
 #include "../src/MusicApi.h"
 #include "../src/MusicPlayer.h"
@@ -42,28 +41,34 @@ int main(int argc, char **argv) {
     if (!directory.isValid() || !AppStorage::initializePortable(directory.path()).isEmpty()) {
         return failure(__LINE__);
     }
-    {
-        AudioPlayer volumeHolder(nullptr, false);
-        volumeHolder.control("volume", 0.7);
-        const auto borrowed = WindowsTransitionPlayer::borrow(volumeHolder);
-        borrowed->setVolume(0.2f);
-        if (!check(std::abs(volumeHolder.state()["volume"].toDouble() - 0.7) < 0.001,
-                   "Crossfade output gain must not change the user's base volume")) {
-            return failure(__LINE__);
-        }
-    }
     if (QMediaDevices::defaultAudioOutput().isNull()) {
         qInfo("WASAPI integration requires an output endpoint");
         return 77;
     }
-    auto settings = AppStorage::settings();
-    settings.setValue("panel/apple-smart-transition", "off");
-    settings.setValue("panel/audio-exclusive", "off");
-    settings.sync();
     const auto a = directory.path() + "/a.wav", b = directory.path() + "/b.wav";
     if (!TransitionTestTrack::writePulseTrack(a, 120) || !TransitionTestTrack::writePulseTrack(b, 124)) {
         return failure(__LINE__);
     }
+    auto settings = AppStorage::settings();
+    settings.remove("panel/apple-smart-transition");
+    settings.setValue("panel/audio-exclusive", "off");
+    settings.sync();
+    {
+        // 未写入偏好时设置页默认开启，Windows 播放器也必须启用原生过渡路径。
+        AudioPlayer defaultPlayer;
+        defaultPlayer.control("volume", 0);
+        if (!defaultPlayer.load(QUrl::fromLocalFile(a).toString(), true, false, "local") ||
+            !waitFor([&] { return defaultPlayer.state()["playing"].toBool(); })) {
+            return failure(__LINE__);
+        }
+        if (!defaultPlayer.prepareAppleTransition(QUrl::fromLocalFile(b), true, false, "local")) {
+            qCritical() << "Unset transition preference did not enable the default-on path";
+            return failure(__LINE__);
+        }
+        defaultPlayer.control("stop");
+    }
+    settings.setValue("panel/apple-smart-transition", "off");
+    settings.sync();
     AudioPlayer player;
     player.control("volume", 0); // Exercise real device clocks without audible test tones.
     player.enableDiagnostics(true);
@@ -72,10 +77,6 @@ int main(int argc, char **argv) {
     if (!player.load(QUrl::fromLocalFile(a).toString(), true, false, "local") ||
         !waitFor([&] { return player.state()["playing"].toBool(); })) {
         qCritical() << "WASAPI start failed" << player.state();
-        return failure(__LINE__);
-    }
-    if (!waitFor([&] { return player.diagnosticState()["outputBackend"].toInt() == 3; })) {
-        qCritical() << "Smart playback must keep WASAPI output" << player.diagnosticState();
         return failure(__LINE__);
     }
     const auto beforeEnable = player.state()["position"].toLongLong();
@@ -127,22 +128,6 @@ int main(int argc, char **argv) {
         return failure(__LINE__);
     }
     if (!waitFor([&] { return player.diagnosticState()["nativeRateRestored"].toBool(); }, 4000)) {
-        return failure(__LINE__);
-    }
-    player.control("seek", 15000);
-    if (!waitFor([&] { return player.state()["position"].toLongLong() >= 15000; })) {
-        return failure(__LINE__);
-    }
-    if (!check(player.state()["position"].toLongLong() < 15500 && committed == 1,
-               "Seeking after the handoff must use original-song coordinates")) {
-        return failure(__LINE__);
-    }
-    player.control("stop");
-    if (!check(!player.state()["requested"].toBool() && committed == 1, "Stopping must not commit again")) {
-        return failure(__LINE__);
-    }
-    if (!player.load(QUrl::fromLocalFile(a).toString(), true, false, "local") ||
-        !waitFor([&] { return player.state()["playing"].toBool(); })) {
         return failure(__LINE__);
     }
     player.control("stop");

@@ -18,6 +18,11 @@ constexpr int quietFrames = 22;
 constexpr float silenceRms = 0.001f;
 constexpr int maximumAnalysisChannels = 8;
 constexpr double maximumTempoAdjustment = 0.16;
+constexpr double extendedTempoAdjustment = AppleTransitionPlan::maximumTempoRate - 1.0;
+constexpr double extendedTempoSpectralScore = 0.18;
+constexpr qint64 extendedTempoOverlapMs = 1400;
+constexpr double rhythmFirstTempoAdjustment = 0.10;
+constexpr qint64 rhythmFirstAlignedSpanMs = 750;
 constexpr int localGridFrames = 1400;
 using SpectralFrame = std::array<float, 3>;
 
@@ -469,20 +474,25 @@ qint64 earliestOutgoingCue(const AudioWindow &window) {
 AppleTransitionPlan planBarMatch(const AudioWindow &a, const AudioWindow &b, const BeatGrid &aGrid,
                                  const BeatGrid &bGrid, qint64 aEnd, qint64 bStart) {
     using Kind = AppleTransitionPlan::Kind;
-    if (aGrid.beatsPerBar == 0 || bGrid.beatsPerBar == 0) {
+    if (aGrid.beatsPerBar == 0 || bGrid.beatsPerBar == 0 || !aGrid.beatPhaseConfident ||
+        !bGrid.beatPhaseConfident) {
         return {};
     }
     const double speed = bGrid.period / aGrid.period;
+    const double tempoDistance = std::abs(speed - 1.0);
     const double aBar = aGrid.period * aGrid.beatsPerBar;
     const double bBar = bGrid.period * bGrid.beatsPerBar;
-    if (std::abs(speed - 1.0) > maximumTempoAdjustment) {
+    if (tempoDistance > extendedTempoAdjustment) {
         return {};
     }
+    const bool extendedTempo = tempoDistance > maximumTempoAdjustment;
     const double aEndBar = aGrid.firstBar + std::floor((a.lastSound - aGrid.firstBar) / aBar) * aBar;
     AppleTransitionPlan best;
     double bestScore = -1;
     const auto earliestCueMs = earliestOutgoingCue(a);
-    const auto targetOverlapMs = qRound64(2 * aBar * frameMs);
+    const auto targetOverlapMs = qRound64((extendedTempo ? 1 : 2) * aBar * frameMs);
+    // 小节网格需要两个半窗确认同一重音相位，已经足够可信；起音相似度只用于排序，
+    // 不能因为两首歌音色不同就把可靠的小节对齐降级成原速淡化。
     const auto candidates = incomingCues(b, firstAudibleBar(b, bGrid), bBar, bStart, speed);
     for (const auto &cue : candidates) {
         for (int bars = 0;; ++bars) {
@@ -497,9 +507,12 @@ AppleTransitionPlan planBarMatch(const AudioWindow &a, const AudioWindow &b, con
                 continue;
             }
             const auto spectral = spectralAlignment(a, b, aBeat, cue.beatFrame, speed, alignedSpanMs);
+            if (extendedTempo && spectral < extendedTempoSpectralScore) {
+                continue;
+            }
             const auto spanPenalty = 0.16 * std::abs(overlap - targetOverlapMs) / 1000.0;
             const auto score = spectral - spanPenalty - cue.skipPenalty - 0.10 * cue.leadMs / 1000.0;
-            if (spectral >= 0.09 && score > bestScore) {
+            if (score > bestScore) {
                 best = {Kind::BeatMatch, out, cue.startMs, overlap, speed};
                 best.alignment = AppleTransitionPlan::Alignment::Bar;
                 best.spectralScore = spectral;
@@ -518,8 +531,7 @@ AppleTransitionPlan planBeatMatch(const AudioWindow &a, const AudioWindow &b, co
         return {};
     }
     constexpr std::array<double, 3> tempoFactors{1.0, 0.5, 2.0};
-    const qint64 targetOverlapMs = compatibleKeys ? 2250 : 1000;
-    const double minimumSpectralScore = aGrid.beatPhaseConfident && bGrid.beatPhaseConfident ? 0.09 : 0.23;
+    const bool reliableBeatPhase = aGrid.beatPhaseConfident && bGrid.beatPhaseConfident;
     const auto earliestCueMs = earliestOutgoingCue(a);
     AppleTransitionPlan best;
     double bestScore = -1;
@@ -529,8 +541,29 @@ AppleTransitionPlan planBeatMatch(const AudioWindow &a, const AudioWindow &b, co
         bGrid.firstBeat + std::ceil((b.firstSound - 4 - bGrid.firstBeat) / bGrid.period) * bGrid.period;
     for (const double factor : tempoFactors) {
         const double rate = bGrid.period / aGrid.period * factor;
-        if (std::abs(rate - 1.0) > maximumTempoAdjustment) {
+        const double tempoDistance = std::abs(rate - 1.0);
+        if (tempoDistance > extendedTempoAdjustment) {
             continue;
+        }
+        const bool extendedTempo = tempoDistance > maximumTempoAdjustment;
+        // 扩展区间不能用低置信度相位换取大幅变速，必须同时满足节奏和起音证据。
+        if (extendedTempo && !reliableBeatPhase) {
+            continue;
+        }
+        // 调性可叠播、近拍速且双方相位可靠时，允许只凭节奏网格对齐；
+        // 音色相似度仍参与排序。
+        const bool rhythmFirst = compatibleKeys && reliableBeatPhase && !extendedTempo &&
+                                 tempoDistance <= rhythmFirstTempoAdjustment;
+        double minimumSpectralScore = reliableBeatPhase ? 0.09 : 0.23;
+        if (extendedTempo) {
+            minimumSpectralScore = extendedTempoSpectralScore;
+        } else if (rhythmFirst) {
+            minimumSpectralScore = 0;
+        }
+        const qint64 minimumAlignedSpanMs = rhythmFirst ? rhythmFirstAlignedSpanMs : 430;
+        qint64 targetOverlapMs = compatibleKeys ? 2250 : 1000;
+        if (extendedTempo) {
+            targetOverlapMs = extendedTempoOverlapMs;
         }
         for (const auto &cue : incomingCues(b, bFirstBeat, bGrid.period, bStart, rate)) {
             for (int previousBeat = 0;; ++previousBeat) {
@@ -542,7 +575,8 @@ AppleTransitionPlan planBeatMatch(const AudioWindow &a, const AudioWindow &b, co
                 const auto availableMs = aEnd - out;
                 const auto overlapMs = compatibleKeys ? availableMs : std::min<qint64>(availableMs, 1500);
                 const auto alignedSpanMs = overlapMs - cue.leadMs;
-                if (alignedSpanMs < 430 || cue.startMs + overlapMs * rate >= b.durationMs - 2000) {
+                if (alignedSpanMs < minimumAlignedSpanMs ||
+                    cue.startMs + overlapMs * rate >= b.durationMs - 2000) {
                     continue;
                 }
                 const auto spectral = spectralAlignment(a, b, aBeat, cue.beatFrame, rate, alignedSpanMs);

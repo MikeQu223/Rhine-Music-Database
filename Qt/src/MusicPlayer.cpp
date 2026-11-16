@@ -8,6 +8,17 @@
 #include <algorithm>
 #include <cmath>
 
+namespace {
+/** 试听信息判断 */
+bool isTrialPlayback(const QJsonObject &audio) {
+    const auto freeTrial = audio["freeTrialInfo"];
+    return audio["trial"].toBool() || audio["preview"].toBool() || freeTrial.isObject() ||
+           freeTrial.isArray() ||
+           (freeTrial.isString() && !freeTrial.toString().isEmpty() && freeTrial.toString() != "null") ||
+           (freeTrial.isBool() && freeTrial.toBool()) || (freeTrial.isDouble() && freeTrial.toDouble() != 0);
+}
+}
+
 /** 本地音质近似分级 */
 QString MusicPlayer::localQuality(const QJsonObject &track) {
     const auto name = QFileInfo(track["path"].toString()).completeBaseName().toLower();
@@ -449,11 +460,7 @@ void MusicPlayer::finishOnlinePlayback(const QJsonObject &track, const QJsonObje
     history = recent;
     m_host->setPreference("play-history",
                           QString::fromUtf8(QJsonDocument(history).toJson(QJsonDocument::Compact)));
-    const auto freeTrial = audio["freeTrialInfo"];
-    trial = audio["trial"].toBool() || audio["preview"].toBool() || freeTrial.isObject() ||
-            freeTrial.isArray() ||
-            (freeTrial.isString() && !freeTrial.toString().isEmpty() && freeTrial.toString() != "null") ||
-            (freeTrial.isBool() && freeTrial.toBool()) || (freeTrial.isDouble() && freeTrial.toDouble() != 0);
+    trial = isTrialPlayback(audio);
     actualQuality = sourceQuality(m_api->provider, audio, trial);
     status = trial ? QStringLiteral("当前音源为试听片段")
                    : QStringLiteral("正在播放：") + track["title"].toString();
@@ -505,6 +512,10 @@ void MusicPlayer::prepareAppleTransition() {
         !state["playing"].toBool() || state["buffering"].toBool()) {
         return;
     }
+    if (previewRequested || trial) {
+        m_host->setAppleTransitionPreparation(AppleTransitionPreparation::Natural);
+        return;
+    }
     const auto durationMs = state["duration"].toInteger();
     if (durationMs <= 0) {
         return;
@@ -547,6 +558,9 @@ void MusicPlayer::prepareAppleTransition() {
             const QUrl url(audio["url"].toString());
             if (!result.ok() || url.isEmpty()) {
                 m_host->setAppleTransitionPreparation(AppleTransitionPreparation::SourceUnavailable);
+            } else if (isTrialPlayback(audio)) {
+                // 下一首若返回试听片段，交给曲尾的自然推进流程。
+                m_host->setAppleTransitionPreparation(AppleTransitionPreparation::Natural);
             } else if (m_host->prepareAppleTransition(url, alternative)) {
                 m_appleNextAudio = audio;
             }

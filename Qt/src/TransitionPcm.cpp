@@ -8,7 +8,8 @@
 #include <cmath>
 
 namespace TransitionPcm {
-bool decode(const QUrl &source, const std::atomic_bool &cancelled, const Consume &consume) {
+bool decode(const QUrl &source, const std::atomic_bool &cancelled, const QAudioFormat &outputFormat,
+            const Consume &consume) {
     if (!source.isLocalFile() || !QFileInfo(source.toLocalFile()).isFile() || cancelled.load()) {
         return false;
     }
@@ -50,6 +51,9 @@ bool decode(const QUrl &source, const std::atomic_bool &cancelled, const Consume
     });
     deadline.start(15000);
     cancellation.start(10);
+    if (outputFormat.isValid()) {
+        decoder.setAudioFormat(outputFormat);
+    }
     decoder.setSource(source);
     decoder.start();
     if (!done) {
@@ -57,6 +61,10 @@ bool decode(const QUrl &source, const std::atomic_bool &cancelled, const Consume
     }
     decoder.stop();
     return success && !cancelled.load();
+}
+
+bool decode(const QUrl &source, const std::atomic_bool &cancelled, const Consume &consume) {
+    return decode(source, cancelled, QAudioFormat{}, consume);
 }
 
 bool floats(const QAudioBuffer &buffer, std::vector<float> &samples) {

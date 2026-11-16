@@ -86,7 +86,8 @@ std::shared_ptr<const AppleTransitionAudio> AppleTransitionAudio::render(const Q
                                                                          const std::atomic_bool &cancelled) {
     @autoreleasepool {
         if (!source.isLocalFile() || cancelled.load() || !std::isfinite(plan.incomingRate) ||
-            plan.incomingRate < 0.80 || plan.incomingRate > 1.20 || plan.overlapMs <= 0 ||
+            plan.incomingRate < AppleTransitionPlan::minimumTempoRate ||
+            plan.incomingRate > AppleTransitionPlan::maximumTempoRate || plan.overlapMs <= 0 ||
             plan.overlapMs > AppleTransitionPlan::searchWindowMs || plan.incomingMs < 0) {
             return {};
         }

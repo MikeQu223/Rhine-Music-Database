@@ -659,11 +659,19 @@ if(WIN32)
     target_link_libraries(${RHINE_SYSTEM_CORE} PRIVATE RhineWindowsTransition)
 endif()
 if(APPLE)
-    add_library(RhineApplePlayback STATIC Qt/src/AppleAudioPlayer.mm Qt/src/AppleTransitionPlan.mm
-                                          Qt/src/AppleTransitionMedia.cpp Qt/src/AppleTransitionAudio.mm)
+    add_library(
+        RhineApplePlayback STATIC
+        Qt/src/AppleAudioPlayer.mm Qt/src/AppleTransitionPlan.mm Qt/src/TransitionPcm.cpp
+        Qt/src/AppleTransitionMedia.cpp Qt/src/AppleTransitionAudio.mm)
     target_link_libraries(
-        RhineApplePlayback PRIVATE Qt6::Core Qt6::Network "-framework AVFoundation" "-framework CoreMedia"
-                                   "-framework Foundation" "-framework AVFAudio")
+        RhineApplePlayback
+        PRIVATE Qt6::Core
+                Qt6::Network
+                Qt6::Multimedia
+                "-framework AVFoundation"
+                "-framework CoreMedia"
+                "-framework Foundation"
+                "-framework AVFAudio")
     target_compile_options(RhineApplePlayback PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
     set_target_properties(RhineApplePlayback PROPERTIES XCODE_ATTRIBUTE_CLANG_ENABLE_OBJC_ARC YES)
     if(NOT IOS)
@@ -919,6 +927,13 @@ if(WIN32 OR (APPLE AND NOT IOS))
     endif()
     add_test(NAME qt_global_shortcut_regression COMMAND RhineGlobalShortcutRegression)
 endif()
+qt_add_executable(RhineTransitionAnalysisRegression Qt/tests/AudioTransitionAnalysisChecks.cpp)
+target_include_directories(RhineTransitionAnalysisRegression PRIVATE Qt/src)
+target_link_libraries(RhineTransitionAnalysisRegression PRIVATE Qt6::Core)
+if(MSVC)
+    target_compile_options(RhineTransitionAnalysisRegression PRIVATE /utf-8)
+endif()
+add_test(NAME qt_transition_analysis_regression COMMAND RhineTransitionAnalysisRegression)
 qt_add_executable(
     RhineAudioOutputRegression
     Qt/tests/AudioOutputChecks.cpp

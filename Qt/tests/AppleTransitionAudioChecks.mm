@@ -32,19 +32,44 @@ bool writeTone(const QUrl &url) {
     return writer && [writer writeFromBuffer:buffer error:nullptr];
 }
 
+/** 检查 composition 各段的播放目标时间轴连续覆盖完整时长。 */
+bool checkTimeline(const AppleTransitionAudio &audio) {
+    NSArray<AVAssetTrack *> *tracks = [audio.asset() tracksWithMediaType:AVMediaTypeAudio];
+    if (tracks.count != 1) {
+        return false;
+    }
+    auto *track = static_cast<AVCompositionTrack *>(tracks.firstObject);
+    const auto duration = CMTimeGetSeconds(audio.asset().duration);
+    if (!std::isfinite(duration) || duration <= 0) {
+        return false;
+    }
+
+    double expectedStart = 0;
+    for (AVCompositionTrackSegment *segment in track.segments) {
+        const auto target = segment.timeMapping.target;
+        const auto start = CMTimeGetSeconds(target.start);
+        const auto end = CMTimeGetSeconds(CMTimeRangeGetEnd(target));
+        if (!std::isfinite(start) || !std::isfinite(end) || std::abs(start - expectedStart) > 1e-6 ||
+            end + 1e-6 < start) {
+            return false;
+        }
+        expectedStart = end;
+    }
+    return std::abs(expectedStart - duration) <= 1e-4;
+}
+
 /** 读取送入播放器的同一条合成音轨，核对采样连续、相位、音高和未处理尾段。 */
 bool checkSamples(const AppleTransitionAudio &audio) {
     AVAsset *asset = audio.asset();
+    NSArray<AVAssetTrack *> *audioTracks = [asset tracksWithMediaType:AVMediaTypeAudio];
     AVAssetReader *reader = [[AVAssetReader alloc] initWithAsset:asset error:nullptr];
-    auto *output =
-        [AVAssetReaderAudioMixOutput assetReaderAudioMixOutputWithAudioTracks:asset.tracks
-                                                                audioSettings:@{
-                                                                    AVFormatIDKey : @(kAudioFormatLinearPCM),
-                                                                    AVLinearPCMBitDepthKey : @32,
-                                                                    AVLinearPCMIsFloatKey : @YES,
-                                                                    AVSampleRateKey : @(sampleRate),
-                                                                    AVNumberOfChannelsKey : @2
-                                                                }];
+    // 当前 AVFoundation 对合成音轨显式要求 Float32 会启动失败；保留原生格式，
+    // 下面再确认输出确实是交错 Float32 双声道。
+    AVAssetReaderTrackOutput *output =
+        audioTracks.count == 1
+            ? [AVAssetReaderTrackOutput assetReaderTrackOutputWithTrack:audioTracks.firstObject
+                                                         outputSettings:nil]
+            : nil;
     if (!reader || ![reader canAddOutput:output]) {
         return false;
     }
@@ -52,6 +77,7 @@ bool checkSamples(const AppleTransitionAudio &audio) {
     if (![reader startReading]) {
         return false;
     }
+
     constexpr int energyWindow = sampleRate / 100;
     constexpr int pitchWindow = sampleRate / 4;
     int frames = 0;
@@ -65,14 +91,25 @@ bool checkSamples(const AppleTransitionAudio &audio) {
     double channelError = 0;
     while (auto sampleBuffer = [output copyNextSampleBuffer]) {
         const auto count = int(CMSampleBufferGetNumSamples(sampleBuffer));
-        const auto time = CMSampleBufferGetPresentationTimeStamp(sampleBuffer);
+        if (count <= 0) {
+            // 合成音轨会插入无采样的时间标记，继续读取真正的 PCM 缓冲。
+            CFRelease(sampleBuffer);
+            continue;
+        }
+        const auto *format = CMAudioFormatDescriptionGetStreamBasicDescription(
+            CMSampleBufferGetFormatDescription(sampleBuffer));
+        if (!format || !(format->mFormatFlags & kAudioFormatFlagIsFloat) || format->mBitsPerChannel != 32 ||
+            format->mChannelsPerFrame != 2 || format->mBytesPerFrame != 2 * sizeof(float)) {
+            CFRelease(sampleBuffer);
+            return false;
+        }
+
         AudioBufferList list{};
         CMBlockBufferRef storage = nullptr;
         const auto status = CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
             sampleBuffer, nullptr, &list, sizeof(list), nullptr, nullptr, 0, &storage);
         const bool valid = status == noErr && list.mNumberBuffers == 1 && list.mBuffers[0].mData &&
-                           list.mBuffers[0].mDataByteSize >= count * 2 * sizeof(float) &&
-                           std::abs(CMTimeGetSeconds(time) * sampleRate - frames) <= 1;
+                           list.mBuffers[0].mDataByteSize >= count * 2 * sizeof(float);
         if (!valid) {
             if (storage) {
                 CFRelease(storage);
@@ -80,6 +117,7 @@ bool checkSamples(const AppleTransitionAudio &audio) {
             CFRelease(sampleBuffer);
             return false;
         }
+
         const auto *samples = static_cast<const float *>(list.mBuffers[0].mData);
         for (int index = 0; index < count; ++index) {
             const auto sample = samples[index * 2];
@@ -124,10 +162,10 @@ bool checkAppleTransitionAudio(const QUrl &url) {
             return false;
         }
         const std::atomic_bool cancelled = false;
-        for (const double rate : {1.153, 0.858}) {
+        for (const double rate : {1.153, 0.816}) {
             const AppleTransitionPlan plan{AppleTransitionPlan::Kind::BeatMatch, 0, 960, 2329, rate};
             const auto audio = AppleTransitionAudio::render(url, plan, cancelled);
-            if (!audio || std::abs(audio->tempo(1000) - rate) > 0.001 ||
+            if (!audio || !checkTimeline(*audio) || std::abs(audio->tempo(1000) - rate) > 0.001 ||
                 std::abs(audio->tempo(4190) - (1.0 + rate) / 2) > 0.001 ||
                 std::abs(audio->sourceMs(audio->playbackMs(3800)) - 3800) > 0.1 || !checkSamples(*audio)) {
                 return false;

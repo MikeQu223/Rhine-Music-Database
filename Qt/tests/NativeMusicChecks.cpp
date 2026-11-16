@@ -59,7 +59,8 @@ QString createTestAudio(QTemporaryDir &dir) {
     }
     QDataStream wav(&audio);
     wav.setByteOrder(QDataStream::LittleEndian);
-    constexpr quint32 bytes = 8000 * 2 * 4;
+    // 自动过渡只在当前曲目长于 8 秒时准备；测试夹具必须覆盖这条门槛。
+    constexpr quint32 bytes = 8000 * 2 * 12;
     wav.writeRawData("RIFF", 4);
     wav << quint32(36 + bytes);
     wav.writeRawData("WAVEfmt ", 8);
@@ -255,6 +256,8 @@ bool runNativeMusicChecks(const QString &root) {
     int smsRequests = 0;
     int captchaLogins = 0;
     bool loginParametersValid = true;
+    int playbackRouteCount = 0;
+    int trialPlaybackFrom = -1;
     // 只保留核心业务所需的最小离线响应，不模拟未覆盖的边缘路由。
     host.fixture = [&](QString route, QJsonObject parameters) {
         const auto args = parameters.value("args").toArray();
@@ -275,8 +278,13 @@ bool runNativeMusicChecks(const QString &root) {
             }
             value = songs;
         } else if (route.endsWith("/playback") || route.endsWith("/preview")) {
-            value =
-                QJsonObject{{"url", audioURL}, {"level", "exhigh"}, {"preview", route.endsWith("/preview")}};
+            const bool isPlaybackRoute = route.endsWith("/playback");
+            bool trial = !isPlaybackRoute;
+            if (isPlaybackRoute) {
+                trial = trialPlaybackFrom >= 0 && playbackRouteCount >= trialPlaybackFrom;
+                ++playbackRouteCount;
+            }
+            value = QJsonObject{{"url", audioURL}, {"level", "exhigh"}, {"preview", trial}};
         } else if (route.endsWith("/account")) {
             value = QJsonObject{{"uid", "42"}, {"nickname", "本地账号"}};
         } else if (route.endsWith("/likedState")) {
@@ -370,6 +378,33 @@ bool runNativeMusicChecks(const QString &root) {
     check(library.player.current["id"] == "1", "previous track");
 
     library.player.stop();
+
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS) || defined(Q_OS_WIN)
+    // 当前曲目正常播放、下一首返回试听时，不得建立过渡。
+    host.setAppleTransitionPreparation(AppleTransitionPreparation::WaitingForPlayback);
+    playbackRouteCount = 0;
+    trialPlaybackFrom = 1;
+    library.player.play(queue.first().toObject(), queue);
+    check(waitFor([&] { return !library.player.loading; }), "full playback starts");
+    const auto playbackStarted = waitFor([&] {
+        library.player.tick(0, true);
+        return library.player.state["playing"].toBool() && !library.player.state["buffering"].toBool();
+    });
+    check(playbackStarted, "full playback reaches playing state");
+    check(waitFor([&] {
+              library.player.tick(0, true);
+              return playbackRouteCount >= 2;
+          }),
+          "next source is resolved");
+    waitFor([&] { return false; }, 150);
+    const auto audio = host.playbackSnapshot();
+    check(playbackStarted &&
+              audio["transitionPreparation"].toInt() == int(AppleTransitionPreparation::Natural) &&
+              !audio.contains("transitionKind"),
+          "trial next track must not create a transition");
+    trialPlaybackFrom = -1;
+    library.player.stop();
+#endif
 
     // === 测试 4: 搜索功能 ===
     library.search("测试");

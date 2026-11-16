@@ -669,8 +669,10 @@ void FrameProfiler::setDetailsEnabled(bool enabled) {
 /** 单独刷新短文本，避免播放速率变化触发整个性能详情重排。 */
 void FrameProfiler::updateTransitionDetails(const QJsonObject &audio) {
     QString text;
+    const auto transition = m_engine->host.preference("apple-smart-transition");
+    const bool transitionEnabled = transition.isEmpty() || transition == "on";
     if ((audio["outputBackend"].toInt() == 2 || audio["outputBackend"].toInt() == 3) &&
-        m_engine->host.preference("apple-smart-transition") == "on") {
+        transitionEnabled) {
         text = playbackRateLine(audio);
         if (m_engine->app) {
             const auto &player = m_engine->app->music.player;

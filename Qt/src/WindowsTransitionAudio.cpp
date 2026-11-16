@@ -25,11 +25,14 @@ std::shared_ptr<const AppleTransitionAudio> AppleTransitionAudio::render(const Q
                                                                          const std::atomic_bool &cancelled) {
     using TransitionPcm::Action;
     if (!source.isLocalFile() || cancelled.load() || !std::isfinite(plan.incomingRate) ||
-        plan.incomingRate < 0.80 || plan.incomingRate > 1.20 || plan.overlapMs <= 0 ||
+        plan.incomingRate < AppleTransitionPlan::minimumTempoRate ||
+        plan.incomingRate > AppleTransitionPlan::maximumTempoRate || plan.overlapMs <= 0 ||
         plan.overlapMs > AppleTransitionPlan::searchWindowMs || plan.incomingMs < 0) {
         return {};
     }
-    auto input = TransitionPcm::read(source, plan.incomingMs, plan.overlapMs * 1.2 + 2000, false, cancelled);
+    const auto inputLengthMs =
+        plan.overlapMs * plan.incomingRate + 1800 * ((plan.incomingRate + 1) / 2) + 200;
+    auto input = TransitionPcm::read(source, plan.incomingMs, inputLengthMs, false, cancelled);
     if (!input.valid()) {
         return {};
     }

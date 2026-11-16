@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QAudioBuffer>
+#include <QAudioFormat>
 #include <QUrl>
 #include <atomic>
 #include <functional>
@@ -12,6 +13,8 @@ using Consume = std::function<Action(const QAudioBuffer &, qint64 durationMs)>;
 
 // Local inputs only. The caller owns the event loop thread and cancellation token.
 bool decode(const QUrl &source, const std::atomic_bool &cancelled, const Consume &consume);
+bool decode(const QUrl &source, const std::atomic_bool &cancelled, const QAudioFormat &outputFormat,
+            const Consume &consume);
 bool floats(const QAudioBuffer &buffer, std::vector<float> &samples);
 
 struct Window {
