@@ -497,7 +497,7 @@ public final class RhineQtViews {
             qtActivity = "err:" + error;
         }
         try {
-            final android.content.Context context = QtNative.applicationContext();
+            final android.content.Context context = QtNative.getContext();
             appContext = context == null ? "null" : context.getClass().getName();
         } catch (Throwable error) {
             appContext = "err:" + error;
