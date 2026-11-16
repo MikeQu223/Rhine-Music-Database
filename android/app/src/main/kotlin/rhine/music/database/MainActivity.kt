@@ -134,7 +134,7 @@ class MainActivity : FlutterActivity() {
         BasicAudioChannel.uninstall()
         // 设置通道同样是"每引擎一份"的静态 handler：不断开就会把 handler 留在旧 engine
         // 的 messenger 上（重新装只能靠 install 的迁移分支自救）。
-        BasicSettingsChannel.uninstall(flutterEngine.dartExecutor.binaryMessenger)
+        BasicSettingsChannel.uninstall(flutterEngine?.dartExecutor?.binaryMessenger)
         super.onDestroy()
     }
 
