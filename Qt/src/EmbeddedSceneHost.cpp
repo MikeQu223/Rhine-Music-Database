@@ -714,10 +714,12 @@ Java_org_qtproject_qt_android_RhineQtViews_nativePushScenePointer(
                 // 8 行的两次点击会相等 → 第二次点选静默无响应（审查 S9）。
                 // 详情页把唱片转到阈值以外 → 请求切到相邻一张（不自动播放，切哪张由
                 // Dart 的列表真值决定）。角度随即复位，避免停在一个偏着的姿态上。
+                // 只在真正的 pointerup 上判定：pointercancel / lostpointercapture 是
+                // "手势被取消"（旋屏、重挂、PlatformView 重建），那时用户没有"转到底"的
+                // 意图，切歌就是越界。resetPointer 不清 m_targetRotation，所以被取消的手势
+                // 仍会读到超阈值的角度。
                 if (!browsing && engine->scene.mode() == QLatin1String("detail")
-                    && (eventType == QLatin1String("pointerup")
-                        || eventType == QLatin1String("pointercancel")
-                        || eventType == QLatin1String("lostpointercapture"))) {
+                    && eventType == QLatin1String("pointerup")) {
                     const double rotation = engine->scene.rotationTarget();
                     if (std::abs(rotation) > 0.62) {
                         RhineEmbedded::emitSceneAction(QStringLiteral("archive-step:%1")
@@ -726,7 +728,9 @@ Java_org_qtproject_qt_android_RhineQtViews_nativePushScenePointer(
                         engine->scene.resetRotation();
                     }
                 }
-                if (picked && tapOnly) {
+                // 只有 archive 模式、只有真点选（轨道没动 + 引擎也判没动）才回传身份。
+                // 详情页转唱片、横滑、取消的手势一律不回传：它们都不该改列表选中。
+                if (browsing && picked && tapOnly && engine->scene.tapLike()) {
                     // 带身份回传：kind+id 来自 Flutter 的 40 格语义表（唯一真值），
                     // 位置只是几何。Dart 侧先按 (kind,id) 折回真实行，折不到才用几何。
                     const auto identity = g_cellIdentity.value(

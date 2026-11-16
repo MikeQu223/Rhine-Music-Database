@@ -604,7 +604,9 @@ class BasicController extends ChangeNotifier {
 
   /// 3D 归档点选落到列表行（手势进行中直接忽略，见 [nativeScrollActive]）。
   Future<void> selectCellFromScene(int row) async {
-    if (_disposed || nativeScrollActive) {
+    // 第二道闸：只允许归档/曲库相位改选中。详情页/歌词页收到这种回执一律忽略
+    // （与 stepDetailFromScene 的相位守卫对称），否则"转唱片"会静默换歌。
+    if (_disposed || nativeScrollActive || _phase != BasicPhase.library) {
       return;
     }
     await selectLibraryRow(row);
