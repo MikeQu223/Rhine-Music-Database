@@ -100,15 +100,18 @@ void main() {
       final BasicListItem a = _item('a');
       final BasicListItem b = _item('b');
       final BasicListItem c = _item('c');
-      final String before = qtSceneLaneIdentity(<BasicListItem>[a, b, c]);
-      final String after = qtSceneLaneIdentity(<BasicListItem>[a, c, b]);
+      final BasicListItem d = _item('d');
+      // 只对调中间两项：条数、首、末都不变，旧指纹 `length:first:last` 才真的看不见。
+      // （三项时对调的是最后两项，末项会变，那样就证明不了缺陷。）
+      final String before = qtSceneLaneIdentity(<BasicListItem>[a, b, c, d]);
+      final String after = qtSceneLaneIdentity(<BasicListItem>[a, c, b, d]);
       expect(after, isNot(before));
       // 旧实现 `length:first:last` 在这两份集合上完全相同——这正是缺陷本身：
       String oldForm(List<BasicListItem> lane) =>
           '${lane.length}:${lane.first.key}:${lane.last.key}';
       expect(
-        oldForm(<BasicListItem>[a, b, c]),
-        oldForm(<BasicListItem>[a, c, b]),
+        oldForm(<BasicListItem>[a, b, c, d]),
+        oldForm(<BasicListItem>[a, c, b, d]),
         reason: '旧指纹看不见这种变化，所以代次不递增',
       );
     });
