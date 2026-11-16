@@ -437,6 +437,25 @@ void main() {
       expect(controller.state.queue, isEmpty, reason: '3D 滚动不建队列');
     });
 
+    test('手势进行中的点选回执被丢弃：拖动松手不得改写选中（双消费）', () async {
+      final BasicController controller = BasicController(
+        audio: _RecordingAudio(),
+        repository: _repository(<String>['s1', 's2', 's3', 's4']),
+      );
+      addTearDown(controller.dispose);
+      await controller.boot();
+      final String first = controller.state.selection?.id ?? '';
+      controller.applyNativeArchiveScroll(0, started: true);
+      expect(controller.nativeScrollActive, isTrue);
+      await controller.selectCellFromScene(3);
+      expect(controller.state.selection?.id, first,
+          reason: '手势进行中落行 = 双消费（用户实测"原地跳动一次"）');
+      controller.applyNativeArchiveScroll(3, committed: true);
+      expect(controller.nativeScrollActive, isFalse);
+      await controller.selectCellFromScene(2);
+      expect(controller.state.selection?.id, isNot(first));
+    });
+
     test('回执夹在列表范围内，不会越界', () async {
       final _RecordingAudio audio = _RecordingAudio();
       final BasicController controller = BasicController(

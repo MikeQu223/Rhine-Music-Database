@@ -531,7 +531,8 @@ class _BasicShellState extends State<_BasicShell> implements TextInputPorts {
     if (cell != null) {
       final int? row = qtSceneRowOfCell(controller.state, cell);
       if (row != null) {
-        unawaited(controller.selectLibraryRow(row));
+        // 手势进行中的身份回执一律丢掉：拖动松手 ≠ 选曲（见 selectCellFromScene）。
+        unawaited(controller.selectCellFromScene(row));
       }
       return;
     }
