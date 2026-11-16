@@ -183,6 +183,13 @@ class NativeHud : public QObject {
     bool trackListMode = false;
     double width = 1920;
     double lastTime = 0;
+    /// 播放键变形动画（HUD 时钟，秒）：起点形态、起始时刻（< 0 表示静止）、目标是否为暂停形态。
+    static constexpr double PlayMorphDuration = 0.18;
+    double m_playMorphFrom = 0;
+    double m_playMorphStart = -1;
+    bool m_playMorphTarget = false;
+    bool m_playMorphReady = false;
+    double playMorph(double time) const;
     /// 进入 detail 的真实墙钟时刻（QDateTime 毫秒）。HUD 淡入不能只依赖
     /// frame["detail"]：那个值来自 m_animationTime 伪时钟，引擎休眠时会永久停住。
     qint64 m_detailEnterWallMs = -1;

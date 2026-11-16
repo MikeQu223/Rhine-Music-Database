@@ -62,7 +62,7 @@ QSize ScenePostProcess::renderSize(QSize display) const {
     const auto mode = qEnvironmentVariable("RHINE_AA_MODE");
     const int supersample = qBound(1, qEnvironmentVariableIntValue("RHINE_SUPERSAMPLE"), 2);
     const int percent = qEnvironmentVariableIntValue("RHINE_RENDER_SCALE");
-    const double scale = percent > 0 ? qBound(.5, percent / 100., 1.) : 1.;
+    const double scale = percent > 0 ? qBound(.5, percent / 100., 2.) : 1.;
     const double aaScale =
         mode == "ssaa" ? qBound(1., qEnvironmentVariableIntValue("RHINE_AA_SCALE") / 100., 2.) : 1.;
     double divisor = 1.;
@@ -78,7 +78,9 @@ QSize ScenePostProcess::renderSize(QSize display) const {
             divisor = 1.5;
         }
     }
-    const double factor = supersample * scale * aaScale / divisor;
+    // 渲染分辨率允许超过 100%（超采样）；与 SSAA 倍率、超采样倍数相乘后总倍率封顶 2×，
+    // 避免 4K 屏上叠加出 16 倍像素的离屏目标。
+    const double factor = qMin(2., supersample * scale * aaScale / divisor);
     return {qMax(1, qRound(display.width() * factor)), qMax(1, qRound(display.height() * factor))};
 }
 int ScenePostProcess::samples() const {

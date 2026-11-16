@@ -694,7 +694,7 @@ const QVector<SettingDescriptor> &descriptors() {
              .titleZh = "渲染分辨率",
              // 与 applyRenderScaleSetting() 共用同一个默认值：Android 90%，其它平台 100%。
              .defaultValue = QString::number(RhineRender::androidDefaultRenderScale()),
-             .steps = {50, 60, 75, 90, 100},
+             .steps = {50, 60, 75, 90, 100, 125, 150, 200},
              .label = renderScaleLabel});
         add({.id = "aa-mode",
              .section = SectionId::Rendering,

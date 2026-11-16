@@ -803,6 +803,7 @@ static void applyFrameGenerationSetting() {
 /**
  * 渲染分辨率百分比：panel/render-scale=75 表示按窗口的 75% 渲染，再由最终合成通道放大。
  * 集成显卡上这是最直接的一档性能/画质交换，50 大致相当于像素数降到 1/4。
+ * 大于 100（最高 200）为超采样：按更高分辨率渲染再缩回窗口，换取更细的边缘。
  */
 static void applyRenderScaleSetting() {
     if (!qEnvironmentVariableIsEmpty("RHINE_RENDER_SCALE")) {
@@ -813,7 +814,7 @@ static void applyRenderScaleSetting() {
     const auto percent =
         graphicsSettings().value("panel/render-scale", RhineRender::androidDefaultRenderScale()).toInt();
     if (percent > 0 && percent != 100) {
-        qputenv("RHINE_RENDER_SCALE", QByteArray::number(qBound(50, percent, 100)));
+        qputenv("RHINE_RENDER_SCALE", QByteArray::number(qBound(50, percent, 200)));
     }
 }
 
