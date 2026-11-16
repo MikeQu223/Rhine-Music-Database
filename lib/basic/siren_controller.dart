@@ -145,6 +145,16 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
   /// 已落盘的封面绝对路径；只有 [_artTrackId] 与当前播放身份一致时才上报。
   String _artPath = '';
 
+  /// 同一 (id, url) 已经发过几次请求。
+  ///
+  /// 有界重试：瞬时失败（离线、目录暂时不可写、非 200）不该让这首曲子整个会话
+  /// 都永远没有封面，但也不能变成一个高频重试循环 —— 所以只给 2 次机会，
+  /// 用完就如实留空（LEAD 2026-11-16 的 M2 反例）。
+  int _artAttempts = 0;
+
+  /// 首次请求 + 1 次重试。
+  static const int _artMaxAttempts = 2;
+
   static String _providerName() => sirenProvider;
 
   final BasicAudioPort _audio;
@@ -977,10 +987,17 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
       _artTrackId = '';
       _artUrl = '';
       _artPath = '';
+      _artAttempts = 0;
       unawaited(media.sync(identity: null, audio: _audio.state));
       return;
     }
-    final String cover = _artTrackId == track.id ? _artPath : '';
+    // 先按当前 (id, url) 归位封面状态，再决定这次上报贴不贴图。
+    // 反过来的话，同一身份把封面 URL 换成空时，这一次上报仍会把旧图带出去
+    // （LEAD 2026-11-16 的 M1 反例）。
+    _requestArtwork(track);
+    final bool artMatches =
+        _artTrackId == track.id && _artUrl == track.cover.trim();
+    final String cover = artMatches ? _artPath : '';
     unawaited(media.sync(
       identity: BasicMediaIdentity(
         id: track.id,
@@ -991,7 +1008,6 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
       ),
       audio: _audio.state,
     ));
-    _requestArtwork(track);
   }
 
   /// 把当前播放曲目的远端封面落成本地文件，成功后补一次上报。
@@ -1009,34 +1025,59 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
       return;
     }
     final String url = track.cover.trim();
-    if (track.id == _artTrackId && url == _artUrl) {
-      return;
+    final bool same = track.id == _artTrackId && url == _artUrl;
+    if (!same) {
+      // 换曲或换 URL（包括"换成空"都是一次状态切换）：必须在这里就作废在飞结果，
+      // 并且必须早于下面任何 early return —— 否则同一个 (id, url) 的旧闭包
+      // 会带着相同代次回来，把旧图写进一个已经该显示空封面的身份。
+      _artTrackId = track.id;
+      _artUrl = url;
+      _artPath = '';
+      _artAttempts = 0;
+      cache.beginGeneration();
     }
-    _artTrackId = track.id;
-    _artUrl = url;
-    _artPath = '';
     if (url.isEmpty) {
+      // 空 URL 的结论就是"没有封面"：_syncMediaSession 紧接着会如实上报空字符串。
       return;
     }
-    cache.beginGeneration();
+    if (_artPath.isNotEmpty) {
+      return;
+    }
+    if (_artAttempts >= _artMaxAttempts) {
+      return;
+    }
+    // 注意：这里不计数，只在"真的失败了"之后才 +1（见闭包内）。
+    // 否则在飞期间的普通上报也会把额度吃掉，一次瞬时失败就再没有重试机会。
     final int generation = cache.generation;
+    final String requestUrl = url;
     unawaited(() async {
       // 封面永远不是播放错误：目录缺失、读盘、落盘、上报里的任何异常都在这里
       // 咽掉并留空封面，绝不让一个未处理的 zone error 打到 debug 红屏。
       try {
-        final String? path = await cache.localPath(url);
-        if (_disposed || generation != cache.generation) {
+        final String? path = await cache.localPath(requestUrl);
+        if (_disposed) {
+          return;
+        }
+        if (generation != cache.generation) {
+          return;
+        }
+        if (_artTrackId != track.id || _artUrl != requestUrl) {
           return;
         }
         if (_playingTrackOf()?.id != track.id) {
           return;
         }
-        _artPath = path ?? '';
-        if (path != null && path.isNotEmpty) {
-          // 只有真的落了盘才补一次上报（失败留空的结论已经由上面那次 sync 送出）。
-          _syncMediaSession();
+        if (path == null || path.isEmpty) {
+          // 这次抓取失败：记一次额度，下一次上报才允许重试（上限 _artMaxAttempts）。
+          _artAttempts += 1;
+          _artPath = '';
+          return;
         }
+        _artPath = path;
+        // 只有真的落了盘才补一次上报（失败留空的结论已经由上面那次 sync 送出）。
+        _syncMediaSession();
       } catch (_) {
+        _artAttempts += 1;
         _artPath = '';
       }
     }());
@@ -1493,6 +1534,41 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
   ///
   /// 拖动时每帧都会 _publish，而整库有 936 首；每次重建 5 列列表会拖垮帧率。
   /// 这里按「会影响列内容的东西」缓存：曲库代际、检索词、目录身份、页面、专辑、列。
+  /// 收藏/歌单的**内容**签名。
+  ///
+  /// 只数长度抓不到「同长度替换」（一首收藏换另一首、歌单里换一首歌但 trackCount 不变），
+  /// 那样 [_laneItemTable] 会命中旧缓存，把旧行对象继续发出去，场景身份/epoch 也就不会
+  /// 因真实内容变化而递增（ORIGIN-LIFECYCLE-153 的 apiAsks.for152_noSourceWritesBy153[0]）。
+  String _collectionsDigest() {
+    final StringBuffer buffer = StringBuffer();
+    for (final SirenSong song in _likedSongs) {
+      buffer
+        ..write(song.id)
+        ..write(',');
+    }
+    buffer.write('|');
+    for (final BasicLocalPlaylist playlist in _localPlaylists) {
+      buffer
+        ..write(playlist.id)
+        ..write(':')
+        ..write(playlist.title)
+        ..write(':')
+        ..write(playlist.trackCount)
+        ..write(',');
+    }
+    return _fnv1a64(buffer.toString());
+  }
+
+  /// FNV-1a 64：只用来给缓存签名做稳定的短摘要，不参与任何真值判断。
+  static String _fnv1a64(String value) {
+    int hash = 0xcbf29ce484222325;
+    for (final int unit in value.codeUnits) {
+      hash = (hash ^ unit) * 0x100000001b3;
+      hash &= 0xFFFFFFFFFFFFFFFF;
+    }
+    return hash.toRadixString(16).padLeft(16, '0');
+  }
+
   List<List<BasicListItem>> _laneItemTable() {
     final String signature = <Object?>[
       _catalogGeneration,
@@ -1500,8 +1576,7 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
       _directory?.id ?? '',
       _phase.name,
       _album?.id ?? '',
-      _likedSongs.length,
-      _localPlaylists.length,
+      _collectionsDigest(),
       _localCollectionsAvailable,
     ].join('|');
     if (signature == _laneItemsSignature && _laneItemsCache != null) {
