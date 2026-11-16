@@ -123,6 +123,13 @@ public final class RhineQtViews {
     private static boolean probeEnabled;
 
 
+    /**
+     * 上一个宿主退役时留下的 delegate。retained 的 Qt 运行时仍持有它，而它的 final 字段
+     * m_activity 指着已销毁的 Activity——所以必须等到新宿主的新 delegate 就位后再把这个字段
+     * 置空（见 releaseDelegateActivity）。这里保留强引用是有意的：它就是要被清理的那个对象。
+     */
+    private static Object sRetiredDelegate;
+
     private static final class CycleProbe {
         final int cycle;
         final WeakReference<Activity> activity;
@@ -177,6 +184,12 @@ public final class RhineQtViews {
             sHostActivity = new WeakReference<>(activity);
         } else {
             android.util.Log.i(TAG, "reusing existing delegate for activity " + activity);
+        }
+
+        final Object retired = sRetiredDelegate;
+        if (retired != null && retired != sDelegate) {
+            releaseDelegateActivity(retired);
+            sRetiredDelegate = null;
         }
 
         if (sRuntimeRetained) {
@@ -416,6 +429,9 @@ public final class RhineQtViews {
         if (stillCurrentHost) {
             sDelegate = null;
             sHostActivity = new WeakReference<>(null);
+            // 交给下一个宿主的 create() 收尾：那时旧 delegate 已经被取代，清它的 Activity
+            // 字段不会打断在用的对象图。
+            sRetiredDelegate = delegate;
         }
         QtEmbeddedViewInterfaceFactory.remove(activity);
         // MUST-4：可复用 delegate 的静态弱引用也必须断，否则重挂的 QtView 可能把死宿主的
