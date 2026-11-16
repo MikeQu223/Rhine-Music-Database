@@ -82,15 +82,17 @@ class BasicSettingsChannel private constructor(
                 return
             }
             val owner = installedMessenger
-            //  归属校验：旧宿主的 onDestroy 不能拆掉新宿主刚装上的通道（Activity 重建时
-            //  安装与销毁的先后顺序不保证）。只有 "要卸的 messenger 就是当前 owner" 才卸。
-            if (owner != null && messenger != null && owner !== messenger) {
+            //  拿不到 messenger 时什么都不做：把 handler 留在一条已经没人用的 messenger 上
+            //  是无害的，而"猜着把当前 owner 拆掉"会把还在用的通道打死（LEAF-159 SHOULD-7-1）。
+            if (messenger == null) {
                 return
             }
-            val target = owner ?: messenger
-            if (target != null) {
-                MethodChannel(target, CHANNEL).setMethodCallHandler(null)
+            //  归属校验：旧宿主的 onDestroy 不能拆掉新宿主刚装上的通道（Activity 重建时
+            //  安装与销毁的先后顺序不保证）。只有 "要卸的 messenger 就是当前 owner" 才卸。
+            if (owner != null && owner !== messenger) {
+                return
             }
+            MethodChannel(messenger, CHANNEL).setMethodCallHandler(null)
             installed = null
             installedMessenger = null
         }
