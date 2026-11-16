@@ -12,6 +12,7 @@ import android.view.ViewGroup;
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Kotlin 侧的取用入口（PARITY QT-OVERLAY-128 / DEVICE-VISUAL-131）。
@@ -595,6 +596,25 @@ public final class RhineQtViews {
     }
 
     /**
+     * 场景世代号计数器（进程级单调）。
+     *
+     * 谁在用：{@link RhineQtView#createWindow} 每次发起 create 请求取一个号，同一个号也用于
+     * 它自己的 destroy；原生侧 Qt/src/EmbeddedSceneHost.cpp 的 SceneEpoch 只 adopt 更大的
+     * 号。于是"上一代宿主的 destroy 晚到"会被判成旧世代而整段跳过，不会拆掉新宿主刚建好的
+     * 场景（一个进程只有一个嵌入场景，旧代码在这里没有任何世代概念）。
+     *
+     * 为什么不是每实例一个号：号必须在**发起 create 的那一刻**分配，才保证"建的顺序 =
+     * 号的顺序"；挂在构造上时，先构造后 create 的视图会拿到更小的号，它的 destroy 就能
+     * 合法地拆掉后建的那一代。
+     */
+    private static final AtomicLong sSceneGeneration = new AtomicLong(0);
+
+    /** 下一个场景世代号（每次 create 请求一个，单调递增、永不回退）。 */
+    static long nextSceneGeneration() {
+        return sSceneGeneration.incrementAndGet();
+    }
+
+    /**
      * 把 Flutter 侧的渲染状态快照交给 Qt 场景（原生 QQuickView 里的 NativeScene）。
      *
      * 只做转交：解析/去重/生效都在 Qt 侧（Qt/src/EmbeddedSceneHost.cpp 的
@@ -673,11 +693,15 @@ public final class RhineQtViews {
 
     private static native void nativePushSceneWheel(int viewId, long context, double x, double y, double delta);
 
-    /** Qt 场景 → Flutter 的动作出口（目前只有"选中"）。由 Kotlin 侧注册/注销。 */
+    /**
+     * Qt 场景 → Flutter 的动作出口（滚动回执 archive-scroll、点选 archive-select、
+     * 步进 archive-step）。由 Kotlin 侧注册/注销。
+     */
     public interface SceneActionSink {
         /**
-         * @param viewId  产出这个动作的平台视图（Qt 侧记住的 origin；<0 表示未知）
-         * @param context 该视图当时的交互上下文代次（0 表示未登记）
+         * @param viewId  产出这个动作的平台视图（Qt 在**应用快照时**记下的 origin，恒 {@code >= 0}；
+         *                未登记 origin 的动作到不了这里，Kotlin 侧已丢弃）
+         * @param context 该视图当时的交互上下文代次（0 表示未登记，同样会被 Kotlin 侧丢弃）
          */
         void onSceneAction(int viewId, long context, String action);
     }
@@ -688,17 +712,16 @@ public final class RhineQtViews {
         sSceneActionSink = sink;
     }
 
-    /** JNI 入口：Qt 主线程 → Flutter。动作词表见 EmbeddedSceneHost.cpp。 */
     /**
-     * Qt → Flutter 的动作出口。
+     * 没有 producer origin 的动作出口。
      *
-     * **当前没有生产者**：Qt 的归档槽位是 40 条占位记录（Assets/android-3d/slots.json），
-     * 不带 Siren 身份，用它拼 music:index:<i> 会把界面上别的歌点开（假映射），所以
-     * Qt/src/EmbeddedSceneHost.cpp 里的 selection→action 连线已停发。通道基础设施保留，
-     * 等权威词表（能表达"归档槽位"）确定后再接。别在这里临时凑映射。
+     * **不投递**：viewId/ctx 是动作归属的一半，缺了它就只能用"此刻谁在前台"给迟到事件
+     * 补标签，而那正是 QUEUED-A-OVER-B 的错源。调用方必须改用
+     * {@link #emitSceneAction(int, long, String)} 并带上 Qt 在应用快照时记下的 origin。
+     * 保留这个签名只是为了不让任何旧调用点把构建打断——它自己会把动作丢掉并留证据。
      */
     public static void emitSceneAction(String action) {
-        emitSceneAction(-1, 0L, action);
+        android.util.Log.w(TAG, "scene action without origin dropped: " + action);
     }
 
     /**
