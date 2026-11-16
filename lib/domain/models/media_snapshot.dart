@@ -82,7 +82,7 @@ class MediaSnapshot {
   ///
   /// 这是只读派生，不是隐藏字段；置真时 Qt 的行为是 AndroidMediaSession::stop()
   /// （PlatformAndroid.cpp:66，播放态撤下而前台服务保活），该动作由调用方执行。
-  bool get isStandby => title.isEmpty() || durationMs <= 0;
+  bool get isStandby => title.isEmpty || durationMs <= 0;
 
   /// 纯值语义的部分更新：未给出的字段沿用当前值。
   ///

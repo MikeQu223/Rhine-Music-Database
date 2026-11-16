@@ -564,14 +564,14 @@ void main() {
       final Rect plus = Rect.fromLTWH(966 + 300 - 40, 193, 32, 32);
       expect(recorder.strokes[1], SettingsStrokeOp(minus, palette.line));
       expect(recorder.strokes[2], SettingsStrokeOp(plus, palette.line));
-      expect(recorder.centered[0].value, '−');
-      expect(recorder.centered[0].size, 19);
-      expect(recorder.centered[0].horizontal, isTrue);
-      expect(recorder.centered[0].x, minus.center.dx);
-      expect(recorder.centered[0].cy, minus.center.dy);
-      expect(recorder.centered[1].value, '＋');
-      expect(recorder.centered[1].size, 16);
-      expect(recorder.centered[1].x, plus.center.dx);
+      expect(recorder.centeredOps[0].value, '−');
+      expect(recorder.centeredOps[0].size, 19);
+      expect(recorder.centeredOps[0].horizontal, isTrue);
+      expect(recorder.centeredOps[0].x, minus.center.dx);
+      expect(recorder.centeredOps[0].cy, minus.center.dy);
+      expect(recorder.centeredOps[1].value, '＋');
+      expect(recorder.centeredOps[1].size, 16);
+      expect(recorder.centeredOps[1].x, plus.center.dx);
     });
 
     test('轨道几何、选中比例与滑块（SettingsCard.cpp:111-126）', () {
@@ -611,7 +611,7 @@ void main() {
           .layout;
       paintSettingsStepper(layout: layout, canvas: recorder, palette: darkPalette());
       expect(recorder.fills.length, 1);
-      expect(recorder.centered.length, 2);
+      expect(recorder.centeredOps.length, 2);
     });
 
     test('每个数值一段命中，最后一段正好到轨道右端（SettingsCard.cpp:127-133）', () {

@@ -350,7 +350,7 @@ void main() {
       final BasicSettingsCommand cmd =
           command('setting:theme:dark', snapshot: const SettingsPreferenceSnapshot(themeMode: 'dark'));
       expect((cmd as BasicSettingsUnavailableCommand).rejection, BasicSettingsRejection.unchanged);
-      expect(cmd.message, isNonEmpty);
+      expect(cmd.message, isNotEmpty);
     });
 
     test('图形后端：写入 requested 且明确提示重启生效', () {

@@ -86,6 +86,9 @@ class BasicHudFrame {
     /// 同形的单条 text 命令（如整条歌名），不能因为它们不推进时间就把文字拆成
     /// 逐字槽或整段不画。宿主 [BasicHudSurface] 有 ticker，显式传 true。
     bool animateText = false,
+    /// 右栏遮罩强度（0..100，Qt `archive-mask-strength` / 设置页“右侧画面遮罩”）。
+    /// 默认就是 Qt 常量 [HudChrome.defaultArchiveMaskStrength]；注入只来自设置页真值。
+    double archiveMaskStrength = 55, // = HudChrome.defaultArchiveMaskStrength（int 常量转 double）
   }) {
     final _HudSink sink = _HudSink();
     final bool dark = state.dark;
@@ -109,7 +112,7 @@ class BasicHudFrame {
       isSiren: true,
       uid: '',
       provider: sirenProvider,
-      archiveMaskStrength: HudChrome.defaultArchiveMaskStrength,
+      archiveMaskStrength: archiveMaskStrength.round(),
       updaterAvailable: false,
     );
 
@@ -578,6 +581,7 @@ class BasicHudSurface extends StatefulWidget {
     this.geometry,
     this.stage,
     this.sceneKey,
+    this.archiveMaskStrength = 55, // = HudChrome.defaultArchiveMaskStrength
   });
 
   final BasicViewState state;
@@ -597,6 +601,10 @@ class BasicHudSurface extends StatefulWidget {
   /// 横屏由调用方按逻辑尺寸构造；竖屏用 PortraitStage 注入的 scope。
   final StageGeometry? geometry;
   final HudStage? stage;
+
+  /// 右栏遮罩强度（0..100）：设置页“右侧画面遮罩”的唯一真值来源；
+  /// 未接入设置页时为 [HudChrome.defaultArchiveMaskStrength]。
+  final double archiveMaskStrength;
 
   /// 场景层（Qt platform view）的身份键：横竖屏切换时由上层传入**同一个** key，
   /// 让 PlatformView 的 element 被移动（reparent）而不是销毁重建——否则旋转会
@@ -697,6 +705,7 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       listPosition: _dragPosition,
       animationTime: _animationTime,
       animateText: true,
+      archiveMaskStrength: widget.archiveMaskStrength,
     );
     // 共享滚动文字有字符槽还在 kReelDuration 内 -> 续帧；静止后停 ticker。
     _scheduleRollingTicker(frame.animating);

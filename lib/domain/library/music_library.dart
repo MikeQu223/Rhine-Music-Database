@@ -3716,7 +3716,7 @@ class MusicLibrary {
       return;
     }
     final trimmed = phone.trim();
-    if (!RegExp('^1[0-9]{10}$').hasMatch(trimmed)) {
+    if (!RegExp(r'^1[0-9]{10}$').hasMatch(trimmed)) {
       status = '请输入有效的中国大陆手机号码';
       changed();
       return;
@@ -3746,7 +3746,7 @@ class MusicLibrary {
     }
     final trimmedPhone = phone.trim();
     final trimmedCaptcha = captcha.trim();
-    if (!RegExp('^1[0-9]{10}$').hasMatch(trimmedPhone) || !RegExp('^[0-9]{4,8}$').hasMatch(trimmedCaptcha)) {
+    if (!RegExp(r'^1[0-9]{10}$').hasMatch(trimmedPhone) || !RegExp(r'^[0-9]{4,8}$').hasMatch(trimmedCaptcha)) {
       status = '请输入中国大陆手机号码和短信验证码';
       changed();
       return;

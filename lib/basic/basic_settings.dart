@@ -100,6 +100,13 @@ const List<String> basicSettingsRejectedDescriptorIds = <String>[
   'fg', // 帧生成
 ];
 
+/// hudState 绑定行在偏好里的真实键（descriptor 不带键，见 [basicSettingsCommandFor]）。
+const Map<String, String> basicSettingsHudStatePreferenceKeys = <String, String>{
+  'startup-animation': 'startup-animation',
+  'archive-mask': 'archive-mask-strength',
+  'vsync': 'vsync',
+};
+
 /// ONLY14 允许暴露的 descriptor id 集合（由 [basicSettingDescriptorIds] 展开）。
 final Set<String> basicSettingsAllowedDescriptorIds = Set<String>.unmodifiable(<String>{
   for (final List<String> ids in basicSettingDescriptorIds.values) ...ids,
@@ -812,6 +819,17 @@ BasicSettingsCommand basicSettingsCommandFor(
           rejection: BasicSettingsRejection.platformNoop,
           descriptorId: descriptor.id);
   }
+  // hudState 绑定的行由 Qt 控制器自己 setPreference，descriptor 里既没有
+  // preferenceKey 也没有 actionPrefix，面板因此算不出键；但宿主确实持久化它们，
+  // 键名逐条来自源码（不是这里发明的）：
+  //   startup-animation -> NativeHudController.cpp:870-872 setPreference("startup-animation")
+  //                        （读回 :37）
+  //   archive-mask      -> NativeHudController.cpp:733-734 setPreference("archive-mask-strength")
+  //                        （读回 :50-52）
+  //   vsync             -> NativeHudController.cpp:46 读 "vsync"，写入同键
+  // 这三个键都在 Host.cpp:1056-1058 的白名单里。
+  final String persistedKey = plan.preferenceKey ??
+      (basicSettingsHudStatePreferenceKeys[descriptor.id] ?? '');
   final String restartHint = settingsRestartHint(descriptor, context);
   return BasicSettingsWriteCommand(
     action: raw,
@@ -819,7 +837,7 @@ BasicSettingsCommand basicSettingsCommandFor(
     descriptorId: descriptor.id,
     value: canonical,
     currentValue: current.canonical,
-    preferenceKey: plan.preferenceKey ?? '',
+    preferenceKey: persistedKey,
     declaredPreferenceKey: descriptor.preferenceKey,
     dispatchAction: plan.action ?? '',
     updatesSceneTheme: plan.updatesSceneTheme,

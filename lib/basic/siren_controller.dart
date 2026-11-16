@@ -96,7 +96,9 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     bool dark = true,
     BasicLocalCollections? collections,
     MediaSessionPort? mediaSessionPort,
+    PreferencePort? preferences,
   })  : _audio = audio,
+        _preferencesPort = preferences,
         _repository = repository ?? SirenRepository(),
         _ownsRepository = repository == null,
         _dark = dark,
@@ -104,7 +106,9 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     _state = BasicViewState(dark: dark);
     _player = MusicPlayer(
       media: _BasicMediaHost(this),
-      preferences: _MemoryPreferences(),
+      // 真实面板偏好端口（SharedPreferences）。没有注入时退到内存端口：
+      // 播放队列的偏好读写在测试/桌面预览里也不必落盘。
+      preferences: _preferencesPort ?? _MemoryPreferences(),
       engine: _BasicPlaybackEngine(this),
       provider: _providerName,
     );
@@ -127,7 +131,13 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
   final BasicAudioPort _audio;
   final SirenRepository _repository;
   final bool _ownsRepository;
-  final bool _dark;
+  /// 真实面板偏好端口（可注入）。[BasicApp] 生产路径注入 SharedPreferences 端口，
+  /// 于是 `single-play-mode` 等键与设置页写的是**同一份**存储，不是两份真值。
+  final PreferencePort? _preferencesPort;
+
+  /// 明暗主题。Qt 侧主题由面板偏好驱动；这里只有这一个真值源，
+  /// [setDark] 是设置页“界面配色”唯一的写入点（[state].dark 每帧从这里取）。
+  bool _dark;
 
   /// 本机集合的只读端口（Qt `LocalCollections` 的收窄投影）；null = 基础版没接上。
   ///
@@ -380,6 +390,43 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
   ///
   /// [play] = false 时只进详情/只选中，不动播放器与队列（Qt NativeHudController.cpp:626-638
   /// 的 'open' 只在 preference('detail-autoplay') == 'on' 时才 play）。浏览不该出声。
+  /// 设置页读的唯一主题真值。
+  bool get dark => _dark;
+
+  /// 界面配色：只改本控制器的主题真值并重绘（HUD/弹层/输入框/原生场景都读
+  /// [state].dark），不重建 controller、不断播放。
+  void setDark(bool value) {
+    if (_disposed || _dark == value) {
+      return;
+    }
+    _dark = value;
+    _state = _state.copyWith(dark: value);
+    _publish();
+  }
+
+  /// 进入详情页自动播放（Qt NativeHudController.cpp:626-638 的 detail-autoplay）。
+  bool get detailAutoplay => _detailAutoplay;
+  bool _detailAutoplay = false;
+  void setDetailAutoplay(bool value) {
+    if (_disposed || _detailAutoplay == value) {
+      return;
+    }
+    _detailAutoplay = value;
+    _publish();
+  }
+
+  /// 点击播放单曲：true = 仅把当前单曲加到队尾并选中（append），
+  /// false = 用“所在列表”替换队列（replace，Qt MusicLibrary 默认）。
+  bool get singlePlayAppend => _singlePlayAppend;
+  bool _singlePlayAppend = false;
+  void setSinglePlayAppend(bool value) {
+    if (_disposed || _singlePlayAppend == value) {
+      return;
+    }
+    _singlePlayAppend = value;
+    _publish();
+  }
+
   Future<void> openSong(SirenSong song, {bool play = true}) async {
     if (_disposed) {
       return;
@@ -398,6 +445,13 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
       return;
     }
     _status = '正在准备：${song.title}';
+    if (_singlePlayAppend) {
+      // 仅添加当前单曲：不替换队列（PlaybackQueue.selectTrack 会先找同曲目，
+      // 找不到才追加到队尾），已有队列原样保留。
+      _publish();
+      _player.play(song.toTrack());
+      return;
+    }
     final List<SirenSong> source = _queueFor(song);
     final int index = source.indexWhere((SirenSong item) => item.id == song.id);
     _publish();

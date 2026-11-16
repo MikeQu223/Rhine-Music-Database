@@ -1675,13 +1675,13 @@ void paintSettingsCard({
 }) {
   for (final SettingsSectionLayout section in layout.sections) {
     final SettingsSectionLayout moved = section.translated(-scroll);
-    // :299 header.intersects(viewport) 才画表头
-    if (moved.header.intersects(layout.viewport)) {
+    // :299 header.overlaps(viewport) 才画表头
+    if (moved.header.overlaps(layout.viewport)) {
       paintSettingsSectionHeader(section: moved, canvas: canvas, palette: palette);
     }
     // :300-305 自定义区：body 可见才分发给渲染器
     if (moved.section.hasCustomRenderer) {
-      if (moved.body.intersects(layout.viewport)) {
+      if (moved.body.overlaps(layout.viewport)) {
         paintSettingsCustomSection(
           renderer: moved.section.customRenderer,
           body: moved.body,
@@ -1697,9 +1697,9 @@ void paintSettingsCard({
     // :307-326 普通行
     for (int index = 0; index < moved.rows.length; index++) {
       final SettingsRowLayout row = moved.rows[index];
-      final bool rowVisible = row.bounds.intersects(layout.viewport);
+      final bool rowVisible = row.bounds.overlaps(layout.viewport);
       final bool optionsVisible =
-          row.row.expanded && row.options.intersects(layout.viewport);
+          row.row.expanded && row.options.overlaps(layout.viewport);
       if (rowVisible) {
         paintSettingsRowLayer(
             layout: row,

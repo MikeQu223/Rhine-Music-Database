@@ -235,12 +235,12 @@ class BasicSettingsSurface {
     final double offset = clampedScroll;
     for (final SettingsSectionLayout rawSection in card.sections) {
       final SettingsSectionLayout section = rawSection.translated(-offset);
-      if (section.header.intersects(viewport)) {
+      if (section.header.overlaps(viewport)) {
         paintSettingsSectionHeader(
             section: section, canvas: canvas, palette: palette);
       }
       if (section.section.hasCustomRenderer) {
-        if (section.body.intersects(viewport)) {
+        if (section.body.overlaps(viewport)) {
           _paintCustomSection(section, canvas);
         }
         continue;
@@ -252,8 +252,8 @@ class BasicSettingsSurface {
         if (!basicSettingAllowsDescriptor(row.row.id)) {
           continue;
         }
-        final bool rowVisible = row.bounds.intersects(viewport);
-        final bool optionsVisible = row.row.expanded && row.options.intersects(viewport);
+        final bool rowVisible = row.bounds.overlaps(viewport);
+        final bool optionsVisible = row.row.expanded && row.options.overlaps(viewport);
         if (rowVisible) {
           paintSettingsRowLayer(
             layout: row,

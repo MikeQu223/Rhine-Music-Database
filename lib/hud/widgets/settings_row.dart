@@ -583,7 +583,8 @@ class SettingsRowRecorder implements SettingsCanvas {
   List<SettingsFillOp> get fills => ops.whereType<SettingsFillOp>().toList();
   List<SettingsStrokeOp> get strokes => ops.whereType<SettingsStrokeOp>().toList();
   List<SettingsTextOp> get texts => ops.whereType<SettingsTextOp>().toList();
-  List<SettingsCenteredOp> get centered => ops.whereType<SettingsCenteredOp>().toList();
+  /// 居中文本绘制指令（与 [SettingsCanvas.centered] 同名会冲突，故用独立 getName）。
+  List<SettingsCenteredOp> get centeredOps => ops.whereType<SettingsCenteredOp>().toList();
   List<SettingsCustomOp> get customs => ops.whereType<SettingsCustomOp>().toList();
 
   SettingsTextOp? textAt(String value) {
@@ -878,7 +879,7 @@ void paintSettingsRow({
       break;
   }
 
-  if (row.expanded && row.enabled && layout.options.intersects(viewport)) {
+  if (row.expanded && row.enabled && layout.options.overlaps(viewport)) {
     paintSettingsOptions(layout: layout, canvas: canvas, palette: palette, fit: fit);
   }
 }
@@ -895,9 +896,9 @@ void paintSettingsRowLayer({
   SettingsTextFit fit = identitySettingsTextFit,
   bool desktopTitleLoopHit = false,
 }) {
-  final bool rowVisible = layout.bounds.intersects(viewport);
+  final bool rowVisible = layout.bounds.overlaps(viewport);
   final bool optionsVisible =
-      layout.row.expanded && layout.options.intersects(viewport);
+      layout.row.expanded && layout.options.overlaps(viewport);
   if (rowVisible) {
     paintSettingsRow(
         layout: layout,
