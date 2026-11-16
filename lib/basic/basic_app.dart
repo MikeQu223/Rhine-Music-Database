@@ -518,6 +518,10 @@ class _BasicShellState extends State<_BasicShell>
     final String? resourceNotice = _resourceNotice;
     return Scaffold(
       backgroundColor: Colors.black,
+      // 输入法不避让（真人要求 m01988）：弹出键盘不许把舞台/3D 视图顶上去，
+      // 也不许缩窗。Manifest 的 windowSoftInputMode 同步是 adjustNothing，
+      // 两侧一致才不会出现"Flutter 留白 + 原生窗口被压缩"的混搭。
+      resizeToAvoidBottomInset: false,
       body: Stack(
         fit: StackFit.expand,
         children: <Widget>[
@@ -1223,10 +1227,24 @@ class _BasicShellState extends State<_BasicShell>
   Widget _popScope(BasicViewState state, Widget child) {
     final bool libraryRoot =
         state.phase == BasicPhase.library && state.directory == null;
+    // 开着模态（设置/搜索/风险确认）时返回键先收模态：面板盖在资料库根上，
+    // 若还让 canPop=true，一按返回就把整个 App 退了。
+    final bool modalOpen = _modal.isNotEmpty;
     return PopScope(
-      canPop: libraryRoot,
+      canPop: libraryRoot && !modalOpen,
       onPopInvoked: (bool didPop) {
         if (didPop) {
+          return;
+        }
+        if (_modal == DiscWarningModal.kind) {
+          // 风险确认收起来后回到设置面板，不是直接关掉整页。
+          _setModal('settings');
+          return;
+        }
+        if (modalOpen) {
+          // 关闭模态同时撤掉输入层 -> 焦点回到 HUD，输入法随之收起。
+          _setModal('');
+          _hudFocusNode.requestFocus();
           return;
         }
         if (state.phase == BasicPhase.lyrics) {

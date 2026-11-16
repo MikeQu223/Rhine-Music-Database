@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -327,6 +329,39 @@ void main() {
     // Android 上 AA 档位里没有 MetalFX（那是 Darwin 专用），选 fxaa 才是真值。
     await act(tester, overlay, 'aa-mode:fxaa');
     expect(shell.port.values['panel/aa-mode'], 'fxaa');
+
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('system back closes the open panel instead of leaving the app',
+      (WidgetTester tester) async {
+    await pumpShell(tester);
+    await openSettings(tester);
+
+    await tester.binding.handlePopRoute();
+    await tester.pump();
+    expect(find.byType(BasicSettingsOverlay), findsNothing);
+
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('IME never resizes the stage: Scaffold keeps its body and manifest is adjustNothing',
+      (WidgetTester tester) async {
+    await pumpShell(tester);
+    final Scaffold scaffold = tester.widget<Scaffold>(find.byType(Scaffold).first);
+    expect(scaffold.resizeToAvoidBottomInset, isFalse);
+
+    // Manifest 与 Dart 侧必须一致（否则窗口仍会被系统压缩）。
+    final String manifest =
+        File('android/app/src/main/AndroidManifest.xml').readAsStringSync();
+    expect(manifest.contains('android:windowSoftInputMode="adjustNothing"'), isTrue);
+    expect(manifest.contains('adjustResize'), isFalse);
+
+    // 键盘弹出（viewInsets）不许改变舞台几何。
+    tester.view.viewInsets = const FakeViewPadding(bottom: 900);
+    await tester.pump();
+    final Scaffold after = tester.widget<Scaffold>(find.byType(Scaffold).first);
+    expect(after.resizeToAvoidBottomInset, isFalse);
 
     await tester.pumpWidget(const SizedBox());
   });
