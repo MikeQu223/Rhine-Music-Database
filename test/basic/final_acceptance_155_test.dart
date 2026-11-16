@@ -1,21 +1,17 @@
-// FINAL-ACCEPTANCE-155 · 两处"看起来接了、实际没接"的收口回归。
+// FINAL-ACCEPTANCE-155 · 封面迟到结果的收口回归（FSR 组已按 m03406 暂缓移出本阶段）。
 //
-// 本文件守的是两条**真实链路**，不是注释：
+// 本文件守的是一条**真实链路**，不是注释：
 //
-//  A. FSR 档位/锐化：设置面板（BasicSettingsRuntime）→ BasicSceneSettings →
-//     场景快照 JSON → Qt/src/EmbeddedSceneHost.cpp 的 settings 处理 →
-//     (1) QSettings panel/fsr-quality|fsr-sharpness（Qt/src/main.cpp:755-763 下次启动读）
-//     (2) qputenv RHINE_FSR_QUALITY|RHINE_FSR_SHARPNESS（Qt/src/render/ScenePostProcess.cpp
-//         :15-20 sharpness()、:68-84 renderSize() 每帧读，所以当场生效）。
-//     归一/夹取必须与渲染器口径逐字一致：只有 super=3.0 / performance=2.0 /
-//     balanced=1.7 / quality=1.5，其它值（含 native）都是 1.0；锐化 0..100、缺省 50。
-//
-//  B. 通知封面的迟到结果：同一 (id, url) 的旧闭包回来时（成功**或异常**）都不能改写
+//  通知封面的迟到结果：同一 (id, url) 的旧闭包回来时（成功**或异常**）都不能改写
 //     当前身份的封面；封面变空要立刻上报空；失败重试有界；缓存自己在文件系统上
 //     出错不能把"已经落盘"的结论改成"没有"。
 //
-// 静态护栏（group 里明确标注 STATIC GUARD 的几条）只证明"代码里确实写着这条路径"，
-// 真机上的像素/通知可见性仍由设备验收负责，不能拿这里的 pass 当 device PASS。
+// 说明：f669f56 里的 FSR 档位/锐化桥（BasicSceneSettings.fsrQuality/fsrSharpness →
+// 场景快照 → Qt qputenv）连同它的断言组一起暂缓（用户 m03406）。FSR 的持久化契约
+// （panel/fsr-quality|fsr-sharpness）仍在 basic_settings.dart 的 antiAliasing 细项里，
+// 属既有范围，本阶段既不新增 UI 也不做当场生效。
+//
+// 真机上的通知可见性仍由设备验收负责，不能拿这里的 pass 当 device PASS。
 
 import 'dart:async';
 import 'dart:convert';
@@ -25,7 +21,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:rhine_music_database/basic/basic_art_cache.dart';
 import 'package:rhine_music_database/basic/basic_models.dart';
 import 'package:rhine_music_database/basic/platform_playback.dart';
-import 'package:rhine_music_database/basic/qt_scene_view.dart';
 import 'package:rhine_music_database/basic/siren_controller.dart';
 import 'package:rhine_music_database/basic/siren_repository.dart';
 import 'package:rhine_music_database/platform/media_session.dart';
@@ -45,9 +40,6 @@ SirenHttpResult _json(Object? body, {int statusCode = 200}) {
 SirenHttpResult _text(String body, {int statusCode = 200}) {
   return SirenHttpResult(statusCode: statusCode, bytes: utf8.encode(body));
 }
-
-Map<String, Object?> _decode(String json) =>
-    (jsonDecode(json) as Map<Object?, Object?>).cast<String, Object?>();
 
 // ---------------------------------------------------------------------------
 // 端口替身（与 test/basic/user_scope_152_test.dart 同一套形状，这里只留用到的）
@@ -304,129 +296,6 @@ class _GatedThrowingCache extends BasicArtCache {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-
-  group('FSR 桥：面板值 → 场景快照 → Qt 原生参数', () {
-    test('默认值就是渲染器的缺省：native / 50', () {
-      const BasicSceneSettings settings = BasicSceneSettings();
-      expect(settings.fsrQuality, 'native');
-      expect(settings.fsrSharpness, 50);
-      // Qt 侧两个缺省值（main.cpp:758/:762 与 ScenePostProcess.cpp:15-20）必须同源。
-      expect(settings.toJson()['fsrQuality'], 'native');
-      expect(settings.toJson()['fsrSharpness'], 50);
-    });
-
-    test('档位归一：未知/空/大小写不一是 native，五个真档位逐字保留', () {
-      expect(BasicSceneSettings.normalizeFsrQuality(''), 'native');
-      expect(BasicSceneSettings.normalizeFsrQuality('   '), 'native');
-      expect(BasicSceneSettings.normalizeFsrQuality('off'), 'native');
-      expect(BasicSceneSettings.normalizeFsrQuality('超级性能'), 'native');
-      expect(BasicSceneSettings.normalizeFsrQuality('QUality'), 'quality');
-      expect(BasicSceneSettings.normalizeFsrQuality(' balanced '), 'balanced');
-      for (final String quality in BasicSceneSettings.fsrQualities) {
-        expect(BasicSceneSettings.normalizeFsrQuality(quality), quality);
-      }
-      // 与渲染器同一张表：只有这四项会改变内部尺寸，native 是 1.0 倍。
-      expect(BasicSceneSettings.fsrQualities,
-          <String>['native', 'quality', 'balanced', 'performance', 'super']);
-    });
-
-    test('锐化归一：空前非数字给 50，越界夹到 0..100', () {
-      expect(BasicSceneSettings.normalizeFsrSharpness(''), 50);
-      expect(BasicSceneSettings.normalizeFsrSharpness('abc'), 50);
-      expect(BasicSceneSettings.normalizeFsrSharpness('  '), 50);
-      expect(BasicSceneSettings.normalizeFsrSharpness('0'), 0);
-      expect(BasicSceneSettings.normalizeFsrSharpness('37'), 37);
-      expect(BasicSceneSettings.normalizeFsrSharpness('100'), 100);
-      expect(BasicSceneSettings.normalizeFsrSharpness('-5'), 0);
-      expect(BasicSceneSettings.normalizeFsrSharpness('150'), 100);
-    });
-
-    test('== / hashCode 覆盖 FSR 两个字段（否则快照去重会把新值当成旧值吞掉）', () {
-      const BasicSceneSettings base = BasicSceneSettings();
-      const BasicSceneSettings other =
-          BasicSceneSettings(fsrQuality: 'quality');
-      const BasicSceneSettings same =
-          BasicSceneSettings(fsrQuality: 'native', fsrSharpness: 50);
-      expect(base == same, isTrue);
-      expect(base.hashCode, same.hashCode);
-      expect(base == other, isFalse);
-      expect(
-          base == const BasicSceneSettings(fsrSharpness: 51), isFalse);
-      expect(
-          const BasicSceneSettings(fsrQuality: 'quality', fsrSharpness: 51) ==
-              other,
-          isFalse);
-    });
-
-    test('快照 JSON 的 settings 块真的带上 FSR（Qt 的 payload.value("settings") 读的就是它）', () {
-      final BasicViewState state = BasicViewState(
-        phase: BasicPhase.library,
-        songs: const <SirenSong>[],
-        albums: const <SirenAlbum>[],
-        song: null,
-        playing: false,
-      );
-      final String json = qtSceneStateSnapshot(
-        state,
-        settings: const BasicSceneSettings(
-            fsrQuality: 'performance', fsrSharpness: 73),
-      );
-      final Map<String, Object?> settings =
-          (_decode(json)['settings']! as Map<Object?, Object?>)
-              .cast<String, Object?>();
-      expect(settings['fsrQuality'], 'performance');
-      expect(settings['fsrSharpness'], 73);
-      // 既有 9 个键不能被这次改动挤掉。
-      for (final String key in <String>[
-        'disc',
-        'mask',
-        'vsync',
-        'renderScale',
-        'backend',
-        'aa',
-        'aaScale',
-        'msaa',
-        'supersample',
-      ]) {
-        expect(settings.containsKey(key), isTrue, reason: '缺键：$key');
-      }
-    });
-
-    test('STATIC GUARD：App 的投影与 Qt 的落点都在代码里（不是注释里）', () {
-      final String app = File('lib/basic/basic_app.dart').readAsStringSync();
-      expect(app, contains('fsrQuality: BasicSceneSettings.normalizeFsrQuality('));
-      expect(app, contains('fsrSharpness: BasicSceneSettings.normalizeFsrSharpness('));
-
-      final String host = File('Qt/src/EmbeddedSceneHost.cpp').readAsStringSync();
-      // 持久化（下次启动由 main.cpp:755-763 读同一份 QSettings）
-      expect(host, contains('setPreference(QStringLiteral("fsr-quality"), quality)'));
-      expect(host, contains('setPreference(QStringLiteral("fsr-sharpness"),'));
-      // 当场生效（渲染器每帧读环境变量）
-      expect(host, contains('qputenv("RHINE_FSR_QUALITY"'));
-      expect(host, contains('qputenv("RHINE_FSR_SHARPNESS"'));
-      // 夹取/白名单与渲染器口径一致
-      expect(host, contains('std::clamp(percent, 0, 100)'));
-      for (final String quality in <String>[
-        'super',
-        'performance',
-        'balanced',
-        'quality',
-        'native',
-      ]) {
-        expect(host, contains('quality == "$quality"'),
-            reason: 'Qt 侧白名单缺档位：$quality');
-      }
-
-      // 渲染器真表：这里断言的是"归一依据"，不是"界面好看"。
-      final String post = File('Qt/src/render/ScenePostProcess.cpp').readAsStringSync();
-      expect(post, contains('divisor = 3.;'));
-      expect(post, contains('divisor = 2.;'));
-      expect(post, contains('divisor = 1.7;'));
-      expect(post, contains('divisor = 1.5;'));
-      expect(post, contains('return 50;'));
-      expect(post, contains('qBound(0, qEnvironmentVariableIntValue("RHINE_FSR_SHARPNESS"), 100)'));
-    });
-  });
 
   group('通知封面：迟到结果/异常与有界重试', () {
     late Directory tempDir;
