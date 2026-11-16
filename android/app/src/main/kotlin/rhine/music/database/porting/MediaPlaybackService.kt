@@ -260,6 +260,12 @@ class MediaPlaybackService : Service() {
             .setContentText(contentText())
             .setOngoing(true)
             .setOnlyAlertOnce(true)
+        // 系统媒体卡（QS/锁屏）的封面走 setLargeIcon：部分 ROM 只认通知自带的
+        // largeIcon、不读会话元数据里的位图，缺它时卡片只剩标题文字。位图由通道
+        // 下发并在 MediaSessionHost 里解码，和元数据 ART 用同一份。
+        MediaSessionHost.coverBitmap?.let { cover ->
+            if (!cover.isRecycled) builder.setLargeIcon(cover)
+        }
         // 待机（无在播内容）不挂动作按钮：没有内容时按钮要么无反应，要么触发一次无意义
         // 上一曲/下一曲。通知本身保留（前台服务保活），只是不给假的可操作外观。
         if (!MediaSessionHost.isIdle()) {
@@ -301,7 +307,11 @@ class MediaPlaybackService : Service() {
         // 判空只是消除可空报警，不改变行为。
         val session = MediaSessionHost.session
         if (session != null) {
-            builder.setStyle(Notification.MediaStyle().setMediaSession(session.sessionToken))
+            val style = Notification.MediaStyle().setMediaSession(session.sessionToken)
+            // 紧凑态显示 上一曲/播放暂停/下一曲：三个 action 在 idle 时不挂，
+            // 索引必须跟着条件走，否则 setShowActionsInCompactView 会越界。
+            if (!MediaSessionHost.isIdle()) style.setShowActionsInCompactView(0, 1, 2)
+            builder.setStyle(style)
         }
         return builder.build()
     }
