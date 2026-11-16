@@ -660,23 +660,35 @@ void main() {
 
   group('第二轮复审回归', () {
     test('expand: 不可见行返回 disabled（不发出永远展不开的展开命令）', () {
-      final BasicSettingsCommand cmd =
-          basicSettingsCommandFor('expand:aa-scale', context: _context(), snapshot: const SettingsPreferenceSnapshot());
+      final BasicSettingsCommand cmd = basicSettingsCommandFor(
+        'expand:aa-scale',
+        context: _context(),
+        snapshot: const SettingsPreferenceSnapshot(),
+      );
       expect(cmd, isA<BasicSettingsUnavailableCommand>());
       expect((cmd as BasicSettingsUnavailableCommand).rejection, BasicSettingsRejection.disabled);
 
-      final BasicSettingsCommand visible =
-          basicSettingsCommandFor('expand:aa-mode', context: _context(), snapshot: const SettingsPreferenceSnapshot());
+      final BasicSettingsCommand visible = basicSettingsCommandFor(
+        'expand:aa-mode',
+        context: _context(),
+        snapshot: const SettingsPreferenceSnapshot(),
+      );
       expect(visible, isA<BasicSettingsExpandCommand>());
     });
 
     test('裸前缀（空 target）返回 unknownAction，不回落成任何写入', () {
       for (final String raw in <String>['quality:set:', 'setting:theme:', 'archive-mask:']) {
-        final BasicSettingsCommand cmd =
-            basicSettingsCommandFor(raw, context: _context(providerId: 'qq'), snapshot: const SettingsPreferenceSnapshot());
+        final BasicSettingsCommand cmd = basicSettingsCommandFor(
+          raw,
+          context: _context(providerId: 'qq'),
+          snapshot: const SettingsPreferenceSnapshot(),
+        );
         expect(cmd, isA<BasicSettingsUnavailableCommand>(), reason: raw);
-        expect((cmd as BasicSettingsUnavailableCommand).rejection, BasicSettingsRejection.unknownAction,
-            reason: raw);
+        expect(
+          (cmd as BasicSettingsUnavailableCommand).rejection,
+          BasicSettingsRejection.unknownAction,
+          reason: raw,
+        );
       }
     });
 

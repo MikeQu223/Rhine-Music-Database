@@ -170,8 +170,10 @@ void paintBasicSettingsVersion({
 /// ```
 ///
 /// 注意（重要）：
-/// * 直写 `HudSurfaceSink` 的实现无法回退已发出的 op，所以**裁剪必须靠
-///   [clipHits]**（收集 -> 裁剪 -> 落 sink），不要在绘制阶段指望裁剪。
+/// * [clipHits] **只裁剪命中区，不裁剪绘制 op**：绘制已按 `viewport` 判断行/
+///   选项是否可见，但面板外的整块画布裁剪属宿主（`clip` op）。直写
+///   `HudSurfaceSink` 的实现无法回退已发出的 op，命中裁剪必须走
+///   recorder -> [clipHits] -> sink 这个顺序。
 /// * [BasicSettingsHudCanvas] 是给“直接落 sink 且不做命中裁剪”的宿主用的便利桥；
 ///   需要精确命中裁剪时走 recorder + [clipHits]。
 /// * 竖向居中字形（步进器 `−` / `＋`）默认用 `insetY=0, boxHeight=size` 近似
@@ -314,13 +316,15 @@ class BasicSettingsHudCanvas implements SettingsCanvas {
     required HudTextPort text,
     this.dark = false,
     this.glyphBounds,
-  }) : textPort = text;
+  }) : _textPort = text;
 
   final HudSurfaceSink sink;
 
-  /// 宿主注入的字形度量端口（构造参数名保持 `text`，避免宿主侧多一层命名）。
-  /// 字段名不能叫 `text`：本类同时要覆写 `SettingsCanvas.text()`。
-  final HudTextPort textPort;
+  /// 宿主注入的字形度量端口（构造参数名保持 `text`，稳定给宿主用）。
+  /// 存储刻意私有 `_textPort`：本类同时要覆写 `SettingsCanvas.text()`，
+  /// 不把内部存储端口并入公开 API（同名成员会与方法冲突，近名成员只会让
+  /// 宿主分不清该用哪个，两者都不该出现）。
+  final HudTextPort _textPort;
 
   /// 面板明暗：只用于 Qt「未显式传色 -> ink()」的回落（centeredText，NativeHud.cpp:85）。
   final bool dark;
@@ -363,8 +367,8 @@ class BasicSettingsHudCanvas implements SettingsCanvas {
     final String weightName = _weight(weight);
     final ({double x, double y, double width, double height})? bounds =
         glyphBounds?.call(value, size, weightName);
-    final double advance = bounds?.width ?? textPort.glyphWidth(value, size, weightName);
-    final double insetX = bounds?.x ?? textPort.glyphInset(value, size, weightName);
+    final double advance = bounds?.width ?? _textPort.glyphWidth(value, size, weightName);
+    final double insetX = bounds?.x ?? _textPort.glyphInset(value, size, weightName);
     final double insetY = bounds?.y ?? 0;
     final double boxHeight = bounds?.height ?? size;
     hudText(
