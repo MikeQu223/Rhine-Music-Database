@@ -49,23 +49,27 @@ class_sha() { unzip -p "$jar" "$1" | sha256sum | cut -d' ' -f1; }
 
 want_delegate="$(awk '$2 ~ /QtEmbeddedDelegate.class$/ {print $1}' "$expected")"
 want_view="$(awk '$2 ~ /QtView.class$/ {print $1}' "$expected")"
-[ -n "$want_delegate" ] && [ -n "$want_view" ] || { echo "bad $expected" >&2; exit 1; }
+want_clipboard="$(awk '$2 ~ /QtClipboardManager.class$/ {print $1}' "$expected")"
+[ -n "$want_delegate" ] && [ -n "$want_view" ] && [ -n "$want_clipboard" ] ||
+  { echo "bad $expected" >&2; exit 1; }
 
 patched_ok() {
   [ "$(class_sha org/qtproject/qt/android/QtEmbeddedDelegate.class)" = "$want_delegate" ] &&
-  [ "$(class_sha org/qtproject/qt/android/QtView.class)" = "$want_view" ]
+  [ "$(class_sha org/qtproject/qt/android/QtView.class)" = "$want_view" ] &&
+  [ "$(class_sha org/qtproject/qt/android/QtClipboardManager.class)" = "$want_clipboard" ]
 }
 
 echo "== javapatch =="
 echo "deploy   : $deploy"
 echo "jar      : $jar"
-echo "expected : delegate=$want_delegate view=$want_view"
+echo "expected : delegate=$want_delegate view=$want_view clipboard=$want_clipboard"
 
 if patched_ok; then
   echo "status   : already patched (skip) jar_sha256=$(sha256sum "$jar" | cut -d' ' -f1)"
   echo "patched class content sha256:"
   printf '%s  %s\n' "$want_delegate" org/qtproject/qt/android/QtEmbeddedDelegate.class
   printf '%s  %s\n' "$want_view" org/qtproject/qt/android/QtView.class
+  printf '%s  %s\n' "$want_clipboard" org/qtproject/qt/android/QtClipboardManager.class
   exit 0
 fi
 
@@ -80,34 +84,47 @@ echo "src sha  :"
 ( cd "$here/src" && find . -name '*.java' -print0 | sort -z | xargs -0 sha256sum )
 echo "before   : sha256=$(sha256sum "$jar" | cut -d' ' -f1) entries=$(unzip -l "$jar" | awk 'END{print $2}')"
 
-# 两份被替换的类；其余 entry 原样保留。
+# 三份被替换的类；其余 entry 原样保留。QtClipboardManager 换成用 application context
+# 取系统剪贴板，否则框架的 ClipboardManager.mContext 会永久钉住每进程第一个宿主 Activity
+# （真机根链：jni_global QtClipboardManager -> ClipboardManager.mContext -> cold-first MainActivity）。
 javac -nowarn -Xlint:-options --release 17 \
       -cp "$android_jar:$jar" \
       -d "$work/classes" \
       "$here/src/org/qtproject/qt/android/QtEmbeddedDelegate.java" \
-      "$here/src/org/qtproject/qt/android/QtView.java"
+      "$here/src/org/qtproject/qt/android/QtView.java" \
+      "$here/src/org/qtproject/qt/android/QtClipboardManager.java"
 
 ( cd "$work/classes" && jar uf "$jar" \
       org/qtproject/qt/android/QtEmbeddedDelegate.class \
-      org/qtproject/qt/android/QtView.class )
+      org/qtproject/qt/android/QtView.class \
+      org/qtproject/qt/android/QtClipboardManager.class )
 [ -f "$work/classes/org/qtproject/qt/android/QtEmbeddedDelegate\$1.class" ] && \
 ( cd "$work/classes" && jar uf "$jar" 'org/qtproject/qt/android/QtEmbeddedDelegate$1.class' ) || true
+# 匿名内部类也要进 jar，否则运行期找不到 OnPrimaryClipChangedListener 实现。
+for inner in 'QtClipboardManager$1.class' 'QtClipboardManager$1$1.class'; do
+  [ -f "$work/classes/org/qtproject/qt/android/$inner" ] && \
+  ( cd "$work/classes" && jar uf "$jar" "org/qtproject/qt/android/$inner" ) || true
+done
 
 echo "after    : sha256=$(sha256sum "$jar" | cut -d' ' -f1) entries=$(unzip -l "$jar" | awk 'END{print $2}')"
 echo "patched class entries in jar:"
-unzip -l "$jar" | grep -E 'QtEmbeddedDelegate|QtView' || true
+unzip -l "$jar" | grep -E 'QtEmbeddedDelegate|QtView|QtClipboardManager' || true
 echo "patched class content sha256:"
 got_delegate="$(class_sha org/qtproject/qt/android/QtEmbeddedDelegate.class)"
 got_view="$(class_sha org/qtproject/qt/android/QtView.class)"
+got_clipboard="$(class_sha org/qtproject/qt/android/QtClipboardManager.class)"
 printf '%s  %s\n' "$got_delegate" org/qtproject/qt/android/QtEmbeddedDelegate.class
 printf '%s  %s\n' "$got_view" org/qtproject/qt/android/QtView.class
+printf '%s  %s\n' "$got_clipboard" org/qtproject/qt/android/QtClipboardManager.class
 
 # 门禁：编出来的字节必须等于仓库里登记的期望值。javac 版本漂移会让它失败——那时要显式
 # 更新 EXPECTED.sha256 并重新验证设备行为，而不是让补丁静默变成别的字节。
-if [ "$got_delegate" != "$want_delegate" ] || [ "$got_view" != "$want_view" ]; then
+if [ "$got_delegate" != "$want_delegate" ] || [ "$got_view" != "$want_view" ] ||
+   [ "$got_clipboard" != "$want_clipboard" ]; then
   echo "FAIL: patched class bytes differ from android/app/javapatch/EXPECTED.sha256" >&2
   echo "  want delegate=$want_delegate got=$got_delegate" >&2
   echo "  want view    =$want_view got=$got_view" >&2
+  echo "  want clip    =$want_clipboard got=$got_clipboard" >&2
   exit 2
 fi
 echo "verify   : OK (matches EXPECTED.sha256)"
