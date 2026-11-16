@@ -1163,7 +1163,7 @@ void NativeHud::action(QString value) {
         bool valid = false;
         const auto percent = value.mid(13).toInt(&valid);
         if (valid) {
-            const auto clamped = std::clamp(percent, 50, 100);
+            const auto clamped = std::clamp(percent, 50, 200);
             m_host->setPreference("render-scale", QString::number(clamped));
             // 渲染器每帧读取该环境变量，改完下一帧即生效，不需要重启。
             qputenv("RHINE_RENDER_SCALE", QByteArray::number(clamped));
@@ -1313,7 +1313,9 @@ bool NativeHud::animating(double time) const {
                         time - m_lyricsCurve->start < m_lyricsCurve->duration;
     const bool trackList = trackListMode && frame["mode"] == "archive" && modal.isEmpty() &&
                            m_trackListCurve && time - m_trackListCurve->start < m_trackListCurve->duration;
-    if (!motion.finished() || lyrics || trackList || closing || time - m_resultStart < 0.5) {
+    // 播放键变形期间保持出帧，否则引擎休眠会让图标停在半变形状态。
+    const bool playMorphing = m_playMorphStart >= 0 && time - m_playMorphStart < PlayMorphDuration;
+    if (!motion.finished() || lyrics || trackList || playMorphing || closing || time - m_resultStart < 0.5) {
         return true;
     }
     return std::any_of(m_rolling.cbegin(), m_rolling.cend(),

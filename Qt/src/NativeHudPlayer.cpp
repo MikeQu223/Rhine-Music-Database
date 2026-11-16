@@ -19,6 +19,18 @@ void NativeHud::playerBar(double x, double y, double width) {
     state.durationMs = player.state["duration"].toDouble();
     state.volume = player.state["volume"].toDouble();
     state.playing = player.state["playing"].toBool();
+    // 播放状态翻转时从当前形态（可能正处在上一次过渡中途）开始新的变形；减少动态效果时直接跳到终点。
+    if (!m_playMorphReady || reduced) {
+        m_playMorphReady = true;
+        m_playMorphTarget = state.playing;
+        m_playMorphFrom = state.playing ? 1 : 0;
+        m_playMorphStart = -1;
+    } else if (state.playing != m_playMorphTarget) {
+        m_playMorphFrom = playMorph(lastTime);
+        m_playMorphTarget = state.playing;
+        m_playMorphStart = lastTime;
+    }
+    state.playMorph = playMorph(lastTime);
     state.loading = player.loading;
     state.failed = player.failed;
     state.hasTrack = !player.current.isEmpty();
@@ -45,6 +57,17 @@ void NativeHud::playerBar(double x, double y, double width) {
     playerBounds = drawing.inputBounds;
     playerSeekRect = drawing.seek;
     playerVolumeRect = drawing.volume;
+}
+
+/** 播放键形态 0..1，smoothstep 缓动；静止时直接返回目标端点。 */
+double NativeHud::playMorph(double time) const {
+    const double target = m_playMorphTarget ? 1 : 0;
+    if (m_playMorphStart < 0) {
+        return target;
+    }
+    const double progress = std::clamp((time - m_playMorphStart) / PlayMorphDuration, 0.0, 1.0);
+    const double eased = progress * progress * (3 - 2 * progress);
+    return m_playMorphFrom + (target - m_playMorphFrom) * eased;
 }
 
 /** 队列面板 */

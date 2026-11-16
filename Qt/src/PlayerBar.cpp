@@ -64,22 +64,42 @@ class Painter {
         label(value, center.x() - bounds["x"].toDouble() - bounds["width"].toDouble() / 2,
               center.y() - bounds["y"].toDouble() - bounds["height"].toDouble() / 2, size, 100, weight);
     }
+    /**
+     * 播放三角与暂停双竖杠之间的变形：三角按 x = 2 切成左右两块四边形，
+     * 每块的四个顶点线性插值到对应竖杠的四个角，t = 0 为三角、t = 1 为双竖杠。
+     * 坐标保留两位小数，避免动画期间每帧生成大量不同的路径字符串挤占路径缓存。
+     */
+    void playPauseGlyph(double t, double scale, const QJsonArray &color) {
+        static constexpr double play[2][4][2] = {{{-5, -10}, {2, -5}, {2, 5}, {-5, 10}},
+                                                 {{2, -5}, {9, 0}, {9, 0}, {2, 5}}};
+        static constexpr double pause[2][4][2] = {{{-6, -9}, {-3, -9}, {-3, 9}, {-6, 9}},
+                                                  {{3, -9}, {6, -9}, {6, 9}, {3, 9}}};
+        for (int part = 0; part < 2; ++part) {
+            QString value;
+            for (int corner = 0; corner < 4; ++corner) {
+                const double px = (play[part][corner][0] + (pause[part][corner][0] - play[part][corner][0]) * t) * scale;
+                const double py = (play[part][corner][1] + (pause[part][corner][1] - play[part][corner][1]) * t) * scale;
+                value += (corner == 0 ? QStringLiteral("M ") : QStringLiteral(" L ")) + QString::number(px, 'f', 2) +
+                         QLatin1Char(' ') + QString::number(py, 'f', 2);
+            }
+            path(value + QStringLiteral(" Z"), color, true);
+        }
+    }
     void controls(const State &state, double x, double y) {
         drawing.commands.append(QJsonArray{"save"});
         drawing.commands.append(QJsonArray{"translate", x, y});
         path("M -57 -9 L -69 0 L -57 9 Z M -73 -10 L -73 10", ink);
         path("M 57 -9 L 69 0 L 57 9 Z M 73 -10 L 73 10", ink);
-        fill({-23, -23, 46, 46}, ink);
+        // 主播放键不再画实心底块：深色主题下那块高亮方块与两侧细线图标反差过大。
+        // 改为放大 1.25 倍的墨色图标，命中区仍是原来的 46×46。
         if (state.loading) {
-            // 加载提示使用底色，避免与深色播放键融在一起。
-            fill({-11, -2, 4, 4}, paper);
-            fill({-2, -2, 4, 4}, paper);
-            fill({7, -2, 4, 4}, paper);
-        } else if (state.playing) {
-            fill({-6, -9, 3, 18}, paper);
-            fill({3, -9, 3, 18}, paper);
+            fill({-11, -2, 4, 4}, ink);
+            fill({-2, -2, 4, 4}, ink);
+            fill({7, -2, 4, 4}, ink);
         } else {
-            path("M -5 -10 L 9 0 L -5 10 Z", paper, true);
+            const double morph = state.playMorph >= 0 ? std::clamp(state.playMorph, 0.0, 1.0)
+                                                      : (state.playing ? 1.0 : 0.0);
+            playPauseGlyph(morph, 1.25, ink);
         }
         drawing.commands.append(QJsonArray{"restore"});
         hit({x - 89, y - 24, 44, 48}, "player:prev", "上一首");

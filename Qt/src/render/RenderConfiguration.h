@@ -33,7 +33,7 @@ struct Settings {
                supersample * renderPercent <= 100;
     }
     QSize renderSize(QSize display) const {
-        const double scale = supersample * renderPercent / 100.0;
+        const double scale = qMin(2.0, supersample * renderPercent / 100.0);
         return {qMax(1, qRound(display.width() * scale)), qMax(1, qRound(display.height() * scale))};
     }
 };
@@ -133,7 +133,7 @@ class RenderConfiguration {
                 return false;
             }
             if (key == QLatin1String("render-scale")) {
-                m_settings.renderPercent = qBound(50, number, 100);
+                m_settings.renderPercent = qBound(50, number, 200);
             } else if (key == QLatin1String("supersample")) {
                 m_settings.supersample = qBound(1, number, 2);
             } else {

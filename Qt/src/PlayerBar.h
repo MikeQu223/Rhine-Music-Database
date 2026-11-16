@@ -18,6 +18,8 @@ struct State {
     double durationMs = 0;
     double volume = 1;
     bool playing = false;
+    /// 播放键形态：0 = 播放三角，1 = 暂停双竖杠，中间值为变形过渡；小于 0 时按 playing 直接取端点。
+    double playMorph = -1;
     bool loading = false;
     bool failed = false;
     bool hasTrack = false;
