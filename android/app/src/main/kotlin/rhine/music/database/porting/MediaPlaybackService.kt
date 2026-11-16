@@ -17,6 +17,7 @@ import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.os.Build
 import android.os.IBinder
+import android.util.Log
 
 /**
  * 系统媒体控件的前台服务：MediaSession + MediaStyle 通知 + 音频焦点。
@@ -38,9 +39,10 @@ import android.os.IBinder
  *      android:name 必须与本 FQCN 一致（manifest 由父改，本文件只负责类名对齐）。
  *   2. 静态 native mediaAction（Java:44）→ MediaSessionHost.enqueue 的注入 sink
  *      （原因与 sink 契约见 MediaSessionHost 文件头；本文件不声明任何 native 方法）。
- *   3. minSdk 24 守卫：Qt 侧 minSdk 28，这里 minSdk 24 → 通知渠道与带 channel 的 Builder、
- *      startForeground 的类型版都需要版本分支（createNotificationChannelIfNeeded /
- *      newNotificationBuilder / startForegroundCompat），低版本走可用的等价路径。
+ *   3. 版本守卫：本工程 minSdk 28（Qt 侧同为 28）→ 通知渠道与带 channel 的 Builder、
+ *      startForeground 的类型版都按 API 级分支实现（createNotificationChannelIfNeeded /
+ *      newNotificationBuilder / startForegroundCompat）；API 26 的分支已不可达但保留对照 Java 源，
+ *      API 29 的前台服务类型分支是活路径。
  *
  * ARCH_BLOCKED：Dart ↔ Kotlin 的通道接线属 T21；本文件不含 MethodChannel，也不改 MainActivity。
  *
@@ -152,6 +154,11 @@ class MediaPlaybackService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    private companion object {
+        /** 与 MediaSessionHost 同名，便于按 session 过滤日志。 */
+        const val TAG = "RhineMediaSession"
+    }
+
     /**
      * Java:256-290：同步 PlaybackState、MediaMetadata 与通知；必须与 update 同线程（主线程）。
      * Java 里是 private 成员，这里给 MediaSessionHost 的 update/stop 调用，故为 internal。
@@ -174,15 +181,25 @@ class MediaPlaybackService : Service() {
         }
         session.setMetadata(metadata.build())
 
-        val actions = PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or
-            PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_SKIP_TO_NEXT or
-            PlaybackState.ACTION_SKIP_TO_PREVIOUS or PlaybackState.ACTION_SEEK_TO
+        // 没有在播内容时（stop/shutdown 已清元数据）不提供任何动作、状态上报 STOPPED：
+        // 让系统媒体面板/耳机键/锁屏知道"现在没有可控制的东西"，而不是显示按钮点了没反应。
+        val idle = MediaSessionHost.isIdle()
+        val actions = if (idle) {
+            0L
+        } else {
+            PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or
+                PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_SKIP_TO_NEXT or
+                PlaybackState.ACTION_SKIP_TO_PREVIOUS or PlaybackState.ACTION_SEEK_TO
+        }
         session.setPlaybackState(
             PlaybackState.Builder()
                 .setActions(actions)
                 .setState(
-                    if (MediaSessionHost.playing) PlaybackState.STATE_PLAYING
-                    else PlaybackState.STATE_PAUSED,
+                    when {
+                        idle -> PlaybackState.STATE_STOPPED
+                        MediaSessionHost.playing -> PlaybackState.STATE_PLAYING
+                        else -> PlaybackState.STATE_PAUSED
+                    },
                     MediaSessionHost.positionMs,
                     if (MediaSessionHost.playing) 1f else 0f,
                 )
@@ -197,6 +214,24 @@ class MediaPlaybackService : Service() {
             MediaSessionHost.notifiedKey = key
             notificationManager().notify(MediaSessionHost.NOTIFICATION_ID, buildNotification())
         }
+    }
+
+    /**
+     * 宿主收尾（MediaSessionHost.shutdown）：撤前台通知并结束自己。
+     *
+     * 本服务不持有 Activity/Engine 引用：撤通知、结束自己，会话/焦点/noisy 接收器由
+     * onDestroy 统一释放。用带标志的 stopForeground（API 24+，本工程 minSdk 28 满足），
+     * 不用已废弃的布尔重载。
+     */
+    internal fun stopForHostShutdown() {
+        try {
+            stopForeground(Service.STOP_FOREGROUND_REMOVE)
+        } catch (e: Exception) {
+            // 前台状态已被系统清掉（或从未成功进入前台）时这里没有可撤的东西，不阻塞收尾。
+            Log.w(TAG, "stopForeground during shutdown failed", e)
+        }
+        notificationManager().cancel(MediaSessionHost.NOTIFICATION_ID)
+        stopSelf()
     }
 
     /** Java:292-326。 */
@@ -225,35 +260,40 @@ class MediaPlaybackService : Service() {
             .setContentText(contentText())
             .setOngoing(true)
             .setOnlyAlertOnce(true)
-            .addAction(
-                actionNotification(
-                    MediaSessionHost.ACTION_PREV,
-                    "上一曲",
-                    android.R.drawable.ic_media_previous,
-                )
-            )
-            .addAction(
-                if (MediaSessionHost.playing) {
+        // 待机（无在播内容）不挂动作按钮：没有内容时按钮要么无反应，要么触发一次无意义
+        // 上一曲/下一曲。通知本身保留（前台服务保活），只是不给假的可操作外观。
+        if (!MediaSessionHost.isIdle()) {
+            builder
+                .addAction(
                     actionNotification(
-                        MediaSessionHost.ACTION_PAUSE,
-                        "暂停",
-                        android.R.drawable.ic_media_pause,
+                        MediaSessionHost.ACTION_PREV,
+                        "上一曲",
+                        android.R.drawable.ic_media_previous,
                     )
-                } else {
-                    actionNotification(
-                        MediaSessionHost.ACTION_PLAY,
-                        "播放",
-                        android.R.drawable.ic_media_play,
-                    )
-                }
-            )
-            .addAction(
-                actionNotification(
-                    MediaSessionHost.ACTION_NEXT,
-                    "下一曲",
-                    android.R.drawable.ic_media_next,
                 )
-            )
+                .addAction(
+                    if (MediaSessionHost.playing) {
+                        actionNotification(
+                            MediaSessionHost.ACTION_PAUSE,
+                            "暂停",
+                            android.R.drawable.ic_media_pause,
+                        )
+                    } else {
+                        actionNotification(
+                            MediaSessionHost.ACTION_PLAY,
+                            "播放",
+                            android.R.drawable.ic_media_play,
+                        )
+                    }
+                )
+                .addAction(
+                    actionNotification(
+                        MediaSessionHost.ACTION_NEXT,
+                        "下一曲",
+                        android.R.drawable.ic_media_next,
+                    )
+                )
+        }
         if (contentPending != null) {
             builder.setContentIntent(contentPending)
         }
@@ -296,7 +336,8 @@ class MediaPlaybackService : Service() {
     }
 
     /**
-     * minSdk 24 守卫②（Builder 侧）：API 26 起通知必须归属渠道，用带 channelId 的构造器；
+     * 版本分支②（Builder 侧；API 26，minSdk 28 下不可达，保留对照 Java 源）：
+     * API 26 起通知必须归属渠道，用带 channelId 的构造器；
      * < 26 没有渠道概念，用无 channel 的旧构造器（唯一可用路径）。
      */
     private fun newNotificationBuilder(): Notification.Builder =
@@ -309,7 +350,7 @@ class MediaPlaybackService : Service() {
     @Suppress("DEPRECATION")
     private fun legacyNotificationBuilder(): Notification.Builder = Notification.Builder(this)
 
-    /** minSdk 24 守卫②（渠道侧）：Java:164-166 无条件建渠道，这里只在 API 26+ 建。 */
+    /** 版本分支②（渠道侧；API 26，minSdk 28 下不可达）：Java:164-166 无条件建渠道，这里只在 API 26+ 建。 */
     private fun createNotificationChannelIfNeeded() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
             return
@@ -324,7 +365,7 @@ class MediaPlaybackService : Service() {
     }
 
     /**
-     * minSdk 24 守卫④：API 29 起 startForeground 要显式声明前台服务类型
+     * 版本分支④（API 29，本工程 minSdk 28 下的活路径）：startForeground 要显式声明前台服务类型
      * （manifest 已声明 foregroundServiceType="mediaPlayback"，类型常量来自 android.content.pm.ServiceInfo）；
      * < 29 只有两参版本。
      */
