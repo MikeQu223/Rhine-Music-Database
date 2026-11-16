@@ -13,6 +13,8 @@ import android.window.OnBackInvokedCallback
 import android.window.OnBackInvokedDispatcher
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
+
+import rhine.music.database.porting.BasicSettingsChannel
 import rhine.music.database.basic.BasicAudioChannel
 import rhine.music.database.porting.MediaSessionChannel
 import rhine.music.database.porting.QtPlatformViewHost
@@ -97,6 +99,12 @@ class MainActivity : FlutterActivity() {
         BasicAudioChannel.install(flutterEngine.dartExecutor.binaryMessenger) { this }
         //  状态通道先装：视图创建后 Dart 会立刻推首个快照（主题/模式/选中行），
         //  通道晚一步就会丢掉第一次 state 直到下一次状态变化。
+        //  SETTINGS-148 的通道：版本真值（PackageManager）与外链（ACTION_VIEW）走它。
+        //  真机实测：不装这条通道时，面板的版本行显示「未知版本」，设置写入也一律失败
+        //  （2026-11-16 21:0x，526f6b6d）。持久化本身按用户指示改走 Flutter 官方
+        //  shared_preferences（见 lib/basic/basic_settings_store.dart），这条通道只留
+        //  packageInfo / openUrl 两个不属于持久化的方法。
+        BasicSettingsChannel.install(flutterEngine.dartExecutor.binaryMessenger) { this }
         QtSceneChannel.install(flutterEngine, this)
         flutterEngine.platformViewsController.registry.registerViewFactory(
             QT_SCENE_VIEW_TYPE,
@@ -124,6 +132,9 @@ class MainActivity : FlutterActivity() {
         // 同一个理由：BasicAudioChannel 的静态 current + 注册在 Application 上的
         // ActivityLifecycleCallbacks 都反向握着本 Activity。
         BasicAudioChannel.uninstall()
+        // 设置通道同样是"每引擎一份"的静态 handler：不断开就会把 handler 留在旧 engine
+        // 的 messenger 上（重新装只能靠 install 的迁移分支自救）。
+        BasicSettingsChannel.uninstall(flutterEngine.dartExecutor.binaryMessenger)
         super.onDestroy()
     }
 

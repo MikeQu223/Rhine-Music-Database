@@ -177,9 +177,21 @@ class SharedPreferencesBasicSettingsPort implements BasicSettingsPort {
 
   @override
   Future<bool> write(String key, String value) async {
+    // 只接受完整 `panel/<裸键>`：裸键写进去也永远读不出来（readAll 只收前缀键），
+    // 那是"看起来存了、其实丢了"，宁可如实拒绝。
+    if (!key.startsWith(basicSettingsPreferencePrefix)) {
+      return false;
+    }
     try {
       final SharedPreferences prefs = await _preferences();
-      return await prefs.setString(key, value);
+      final bool ok = await prefs.setString(key, value);
+      if (!ok) {
+        // shared_preferences 会先把值写进内存缓存再落盘；落盘失败时缓存里已经"有值"，
+        // 同进程的 readAll 会把没存住的值报成已存。这里按官方 API 重新读一次盘，
+        // 让内存与本 APK 的真实落盘状态一致（失败就是失败，不假装成功）。
+        await prefs.reload();
+      }
+      return ok;
     } catch (_) {
       return false;
     }
