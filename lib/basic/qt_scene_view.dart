@@ -158,19 +158,37 @@ String qtSceneStateSnapshot(BasicViewState state) {
 ///
 /// 不带 cover：素材纹理仍由 `current`（单选身份）驱动，逐格下发封面会把 40 个
 /// 下载/纹理塞进一次状态推送；卡片面在本版本就是抽取面，不画专辑图。
+/// 当前列的窗口基址（物理行 12 对应的条目行号）。
+///
+/// 唯一真值是连续的 `listPosition`：窗口基址 = `round(pos) ~/ 8 * 8`，于是
+/// `round(pos) % 8` 就是选中条目所在的物理槽位（0..7）。`laneOffsets` 只是 HUD
+/// 的松手记忆（8 的倍数），**不能**拿来做连续拖动的基准——那样 pos 为小数时
+/// 反向折行会整体偏移（审查 MUST-5）。非当前列没有连续位置，退回记忆值。
+int qtSceneWindowBase(BasicViewState state, int lane) {
+  final List<int> offsets = state.laneOffsets;
+  final int memory = lane >= 0 && lane < offsets.length ? offsets[lane] : 0;
+  if (lane != state.selectedLane) {
+    return memory;
+  }
+  final double? pos = state.listPosition;
+  if (pos == null || !pos.isFinite) {
+    return memory;
+  }
+  return (pos.round() ~/ qtScenePhysicalRows) * qtScenePhysicalRows;
+}
+
 List<Map<String, Object?>> qtSceneCellsOf(BasicViewState state) {
   final List<List<BasicListItem>> table = state.laneItems;
   if (table.isEmpty) {
     return const <Map<String, Object?>>[];
   }
-  final List<int> offsets = state.laneOffsets;
   final List<Map<String, Object?>> cells = <Map<String, Object?>>[];
   for (int lane = 0; lane < qtSceneLaneCount && lane < table.length; lane++) {
     final List<BasicListItem> items = table[lane];
     if (items.isEmpty) {
       continue;
     }
-    final int offset = lane < offsets.length ? offsets[lane] : 0;
+    final int offset = qtSceneWindowBase(state, lane);
     for (int row = 0; row < qtScenePhysicalRows; row++) {
       final int raw = offset + row;
       final int index = ((raw % items.length) + items.length) % items.length;
@@ -246,18 +264,44 @@ class QtSceneScrollEvent {
 /// Flutter 收到 (lane,row) 后用自己的 [_laneItems]/offsets 折成行号——这正是
 /// "native 用真实几何 ID 绑定、回传正确 identity"的那一半，不需要 Qt 认识 Siren 曲目。
 class QtSceneCellRef {
-  const QtSceneCellRef(this.lane, this.row);
+  const QtSceneCellRef(this.lane, this.row, {this.kind, this.id});
 
   final int lane;
   final int row;
 
+  /// 40 格语义表里的业务身份（原生从 `cells` 里查出来一起回传）。
+  ///
+  /// 只带回几何是不够的：窗口一动，同一个物理行就换了条目；身份才是"回传正确
+  /// identity"的部分。原生不带身份时（旧格式）这里为 null，退化成纯几何折行。
+  final String? kind;
+  final String? id;
+
   static const String prefix = 'archive-select:';
 
+  /// 两种线上格式：
+  /// - `archive-select:<lane>:<row>`（只有几何）
+  /// - `archive-select:<lane>|<row>|<kind>|<id>`（几何 + 身份；id 里允许有冒号）
   static QtSceneCellRef? parse(String action) {
     if (!action.startsWith(prefix)) {
       return null;
     }
-    final List<String> parts = action.substring(prefix.length).split(':');
+    final String body = action.substring(prefix.length);
+    if (body.contains('|')) {
+      final List<String> parts = body.split('|');
+      if (parts.length < 4) {
+        return null;
+      }
+      final int? lane = int.tryParse(parts[0]);
+      final int? row = int.tryParse(parts[1]);
+      if (lane == null || row == null) {
+        return null;
+      }
+      final String kind = parts[2];
+      final String id = parts.sublist(3).join('|');
+      return QtSceneCellRef(lane, row,
+          kind: kind.isEmpty ? null : kind, id: id.isEmpty ? null : id);
+    }
+    final List<String> parts = body.split(':');
     if (parts.length != 2) {
       return null;
     }
@@ -286,8 +330,19 @@ int? qtSceneRowOfCell(BasicViewState state, QtSceneCellRef cell) {
   if (items.isEmpty) {
     return null;
   }
-  final List<int> offsets = state.laneOffsets;
-  final int offset = cell.lane < offsets.length ? offsets[cell.lane] : 0;
+  // 1) 身份优先：原生带回来的 (kind,id) 直接在这一列里找出真实行。窗口移动后
+  //    同一个物理行对应的条目会变，只有身份永远指向同一条。
+  final String? kind = cell.kind;
+  final String? id = cell.id;
+  if (kind != null && id != null && id.isNotEmpty) {
+    final int index = items.indexWhere((BasicListItem item) => item.kind == kind && item.id == id);
+    if (index >= 0) {
+      return index;
+    }
+  }
+  // 2) 退化到几何：基址必须用连续窗口真值（`round(pos) ~/ 8 * 8`），不是 HUD 的
+  //    8 倍数记忆值——否则 pos 带小数时点选会整体偏移（审查 MUST-5）。
+  final int offset = qtSceneWindowBase(state, cell.lane);
   // 物理行的基址是 12（NativeScene 的 cell.row = 12 + 列内序号）。
   final int raw = offset + (cell.row - 12);
   return ((raw % items.length) + items.length) % items.length;

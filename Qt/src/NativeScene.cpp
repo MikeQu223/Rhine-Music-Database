@@ -79,6 +79,9 @@ void NativeScene::projectArchiveScroll(double item, int lane) {
     // 的位置。早期实现顺手把 m_targetDetail 清零，结果每次 state 推送都把刚打开的详情
     // 拉回档案页 —— 详情盘面永远不出现，封面自然也就"一直不加载"。
     m_lastInteraction = m_clock;
+    // 外部窗口在接下来半秒内是权威：NativeSceneUpdate 里的重定心会让位（MUST-2）。
+    // 0.5s 只覆盖"列表每帧都在推"的间隙；手指/惯性开始后由 pointerdown 立刻清掉。
+    m_externalUntil = m_clock + 0.5;
     m_changed = true;
 }
 

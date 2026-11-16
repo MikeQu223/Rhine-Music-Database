@@ -212,8 +212,10 @@ void main() {
       final List<BasicListItem> lane4 = <BasicListItem>[
         for (int i = 0; i < 10; i++) _item('album', i, 'a$i', 'Album $i'),
       ];
+      // 负 offset 属于 HUD 记忆：只有**非当前列**还用记忆值（当前列的基址跟随连续
+      // pos）。Qt MusicLibrary.cpp:646-667 的 next() 会算出 -2 = 从倒数第二条起。
       final BasicViewState state = _stateWithLanes(
-        lane: 4,
+        lane: 3,
         lanes: <List<BasicListItem>>[
           const <BasicListItem>[],
           const <BasicListItem>[],
@@ -221,7 +223,6 @@ void main() {
           const <BasicListItem>[],
           lane4,
         ],
-        // Qt MusicLibrary.cpp:646-667 的 next() 会算出负的 offsets（-2 = 从倒数第二条起）。
         offsets: const <int>[0, 0, 0, 0, -2],
       );
       final List<Map<String, Object?>> cells = qtSceneCellsOf(state);
@@ -265,10 +266,86 @@ void main() {
         ],
         offsets: const <int>[0, 0, 0, -2, 0],
       );
-      // 物理行 12 是列内第 0 行 → offset(-2)+0 → wrap 到 8。
-      expect(qtSceneRowOfCell(state, const QtSceneCellRef(3, 12)), 8);
-      expect(qtSceneRowOfCell(state, const QtSceneCellRef(3, 14)), 0);
+      // 当前列的基址跟随连续 pos（默认 0）：物理行 12 是条目 0、行 14 是条目 2。
+      expect(qtSceneRowOfCell(state, const QtSceneCellRef(3, 12)), 0);
+      expect(qtSceneRowOfCell(state, const QtSceneCellRef(3, 14)), 2);
       expect(qtSceneRowOfCell(state, const QtSceneCellRef(1, 12)), isNull);
+      // pos 推到 14 时基址变成 (14~/8)*8 = 8：同一物理行折出不同条目——这就是
+      // "窗口动了、几何行没动"的真实语义。
+      final BasicViewState moved = _stateWithLanes(
+        lanes: <List<BasicListItem>>[
+          const <BasicListItem>[],
+          const <BasicListItem>[],
+          const <BasicListItem>[],
+          lane3,
+          const <BasicListItem>[],
+        ],
+        offsets: const <int>[0, 0, 0, -2, 0],
+        pos: 14,
+      );
+      expect(qtSceneRowOfCell(moved, const QtSceneCellRef(3, 12)), 8);
+      expect(qtSceneRowOfCell(moved, const QtSceneCellRef(3, 14)), 0);
+    });
+
+    test('拖动后 pos≠offset：折行基准必须跟随连续位置（审查 MUST-5 反例）', () {
+      final List<BasicListItem> lane3 = <BasicListItem>[
+        for (int i = 0; i < 300; i++) _item('song', i, 's$i', 'Song $i'),
+      ];
+      // HUD 记忆仍是上次松手的 8 倍数窗口（-2），但连续真值已经推到 87。
+      final BasicViewState state = _stateWithLanes(
+        lanes: <List<BasicListItem>>[
+          const <BasicListItem>[],
+          const <BasicListItem>[],
+          const <BasicListItem>[],
+          lane3,
+          const <BasicListItem>[],
+        ],
+        offsets: const <int>[0, 0, 0, -2, 0],
+        pos: 87,
+      );
+      // 基址 = (87 ~/ 8) * 8 = 80 → 物理行 12 是条目 80、行 19 是条目 87。
+      expect(qtSceneRowOfCell(state, const QtSceneCellRef(3, 12)), 80);
+      expect(qtSceneRowOfCell(state, const QtSceneCellRef(3, 19)), 87);
+      expect(qtSceneRowOfCell(state, const QtSceneCellRef(3, 12)),
+          isNot(equals(8)),
+          reason: '不能退回 8 倍数记忆值');
+    });
+
+    test('身份优先：带 kind+id 回传时按身份折行，窗口移动也指向同一条（MUST-4）', () {
+      final List<BasicListItem> lane3 = <BasicListItem>[
+        for (int i = 0; i < 300; i++) _item('song', i, 's$i', 'Song $i'),
+      ];
+      final BasicViewState state = _stateWithLanes(
+        lanes: <List<BasicListItem>>[
+          const <BasicListItem>[],
+          const <BasicListItem>[],
+          const <BasicListItem>[],
+          lane3,
+          const <BasicListItem>[],
+        ],
+        offsets: const <int>[0, 0, 0, 0, 0],
+        pos: 87,
+      );
+      // 同一条目 s50：几何上物理行 12 现在指 80，但身份回传必须折回 50。
+      expect(
+        qtSceneRowOfCell(
+            state, const QtSceneCellRef(3, 12, kind: 'song', id: 's50')),
+        50,
+      );
+      // 身份不在这一列（编造 id）时退化到几何，而不是 null 或 -1。
+      expect(
+        qtSceneRowOfCell(
+            state, const QtSceneCellRef(3, 12, kind: 'song', id: 'nope')),
+        80,
+      );
+      // 线上格式（原生带身份回传）：archive-select:<lane>|<row>|<kind>|<id>
+      final QtSceneCellRef? parsed =
+          QtSceneCellRef.parse('archive-select:3|12|song|siren:song:880380');
+      expect(parsed?.lane, 3);
+      expect(parsed?.row, 12);
+      expect(parsed?.kind, 'song');
+      expect(parsed?.id, 'siren:song:880380', reason: 'id 里允许出现冒号');
+      expect(QtSceneCellRef.parse('archive-select:3:12')?.kind, isNull);
     });
   });
 
@@ -373,6 +450,38 @@ void main() {
     });
   });
 
+  group('原生点选身份 → 列表行（archive-select 的消费端）', () {
+    test('带身份的格回传折回真实行；别列/无身份不猜行', () async {
+      final _RecordingAudio audio = _RecordingAudio();
+      final BasicController controller = BasicController(
+        audio: audio,
+        repository: _repository(<String>['s1', 's2', 's3', 's4', 's5']),
+      );
+      addTearDown(controller.dispose);
+      await controller.boot();
+      // BasicApp._onAction 的做法：解析原生回传 → 折行 → selectLibraryRow(row)。
+      final BasicViewState state = controller.state;
+      expect(state.selectedLane, 3, reason: '默认落在全部歌曲列');
+      expect(state.laneItems.length, 5);
+      expect(state.laneItems[3].length, 5);
+
+      // 身份回传（原生从 cells 里查到的 kind+id）→ 该条目的真实行，即使几何行不同。
+      final QtSceneCellRef identity =
+          QtSceneCellRef.parse('archive-select:3|17|song|s4')!;
+      final int? row = qtSceneRowOfCell(state, identity);
+      expect(row, 3, reason: 's4 是第 4 行（0 基 3）');
+      await controller.selectLibraryRow(row!);
+      expect(controller.state.selection?.id, 's4');
+
+      // 别列的格：当前窗口没有它，返回 null（调用方不猜行，原生会还原选中）。
+      expect(qtSceneRowOfCell(controller.state, const QtSceneCellRef(1, 12)), isNull);
+      // 纯几何回传：pos=3 时基址 0，物理行 13 → 行 1。
+      expect(qtSceneRowOfCell(controller.state, const QtSceneCellRef(3, 13)), 1);
+      expect(audio.calls.where((String c) => c.startsWith('play')), isEmpty,
+          reason: '点选只改选中，不自动播放');
+    });
+  });
+
   group('真实 BasicApp 接线（用户 P0 #1/#2 的软件侧闭合）', () {
     testWidgets('冷启动曲库到位即默认选中第一行，快照带 current(cover)/index/pos',
         (WidgetTester tester) async {
@@ -428,7 +537,10 @@ void main() {
       expect(wired, isNotNull, reason: 'BasicApp.initState 必须挂上回执接收面');
       final ValueChanged<QtSceneScrollEvent> handler = wired!;
 
-      (const QtSceneScrollEvent(deltaRows: 0, started: true));
+      handler!(const QtSceneScrollEvent(deltaRows: 0, started: true));
+      await tester.pump();
+      expect(controller.state.listPosition, closeTo(0, 1e-9),
+          reason: 'start 只记 origin，不动窗口');
       handler!(const QtSceneScrollEvent(deltaRows: 2.4));
       await tester.pump();
       expect(controller.state.listPosition, closeTo(2.4, 1e-9));
