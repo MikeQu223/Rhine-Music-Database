@@ -155,6 +155,13 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
   /// 首次请求 + 1 次重试。
   static const int _artMaxAttempts = 2;
 
+  /// 当前在飞请求的代次；-1 表示没有在飞请求。
+  ///
+  /// 没有这个闸门时，起步阶段每次 _publish（_player.play 的 _emit、_startPlayback、
+  /// buffering 上报）都会新建一个闭包：HTTP 层有 inflight 去重，所以只有一个真请求，
+  /// 但闭包不去重 → 一次失败会被多个闭包各记一次额度，重试机会当场被吃光。
+  int _artInFlight = -1;
+
   static String _providerName() => sirenProvider;
 
   final BasicAudioPort _audio;
@@ -1034,6 +1041,7 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
       _artUrl = url;
       _artPath = '';
       _artAttempts = 0;
+      _artInFlight = -1;
       cache.beginGeneration();
     }
     if (url.isEmpty) {
@@ -1046,15 +1054,23 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     if (_artAttempts >= _artMaxAttempts) {
       return;
     }
-    // 注意：这里不计数，只在"真的失败了"之后才 +1（见闭包内）。
-    // 否则在飞期间的普通上报也会把额度吃掉，一次瞬时失败就再没有重试机会。
+    if (_artInFlight >= 0) {
+      // 已经有同一 (id, url) 的请求在飞：不要再建闭包，否则失败会被重复记账。
+      return;
+    }
     final int generation = cache.generation;
+    _artInFlight = generation;
+    _artAttempts += 1;
     final String requestUrl = url;
     unawaited(() async {
       // 封面永远不是播放错误：目录缺失、读盘、落盘、上报里的任何异常都在这里
       // 咽掉并留空封面，绝不让一个未处理的 zone error 打到 debug 红屏。
       try {
         final String? path = await cache.localPath(requestUrl);
+        if (_artInFlight == generation) {
+          // 归还在飞名额（无论成功失败）：只有真正拥有这个名额的那次请求才还。
+          _artInFlight = -1;
+        }
         if (_disposed) {
           return;
         }
@@ -1068,8 +1084,8 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
           return;
         }
         if (path == null || path.isEmpty) {
-          // 这次抓取失败：记一次额度，下一次上报才允许重试（上限 _artMaxAttempts）。
-          _artAttempts += 1;
+          // 这次抓取失败：额度已在发请求时记过，这里只留空，
+          // 下一次上报才允许重试（上限 _artMaxAttempts）。
           _artPath = '';
           return;
         }
@@ -1077,7 +1093,10 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
         // 只有真的落了盘才补一次上报（失败留空的结论已经由上面那次 sync 送出）。
         _syncMediaSession();
       } catch (_) {
-        _artAttempts += 1;
+        if (_artInFlight == generation) {
+          // localPath 自己承诺不抛，但真抛了也不能把在飞名额永久占住。
+          _artInFlight = -1;
+        }
         _artPath = '';
       }
     }());

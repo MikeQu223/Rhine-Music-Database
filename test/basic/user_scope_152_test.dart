@@ -825,6 +825,8 @@ void main() {
       expect(source, contains('static const int _artMaxAttempts'));
       expect(source, contains('_artAttempts >= _artMaxAttempts'));
       expect(source, contains('_artAttempts += 1'));
+      expect(source, contains('if (_artInFlight >= 0)'),
+          reason: '在飞闸门必须在建闭包之前：否则起步阶段多个闭包会重复记额度、把重试机会吃光');
     });
 
     test('本机集合缓存签名带内容摘要（同长度替换也算变化）', () {
