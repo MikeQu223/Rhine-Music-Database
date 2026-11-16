@@ -1,5 +1,4 @@
 #include "fg/FgConfig.h"
-#include "EmbeddedSceneHost.h"
 #include "Host.h"
 #include "AppStorage.h"
 #include <QBuffer>
@@ -42,11 +41,18 @@ static QString routeProvider(const QString &route) {
     }
     return "netease";
 }
+// 内嵌开关必须在播放核心内本地求值：RhinePlaybackCore 同时被后台 RhinePlaybackService 链接，
+// 而 RhineEmbedded::requested() 的定义在 EmbeddedSceneHost.cpp，它依赖 Qt Quick/QML，只能
+// 属于应用目标（见 Qt/CMakeLists.txt 中对该目标的注释）。语义与那边的实现完全一致。
+static bool embeddedRequested() {
+    return qEnvironmentVariableIntValue("RHINE_QT_EMBEDDED") == 1;
+}
+
 Host::Host(QString path, bool test, QObject *parent, bool service, PlaybackConnection *connection)
     : QObject(parent), updater(test), root(path), offline(test), remote(test ? nullptr : connection),
       playbackOnly(service) {
     // 内嵌渲染层：Flutter 持有播放/账号/曲库，Qt 这里不能再造第二份（见 Host.h 注释）。
-    renderOnly = RhineEmbedded::requested();
+    renderOnly = embeddedRequested();
     connect(&updater, &AppUpdater::changed, this, &Host::invalidate);
     if (remote) {
         connect(remote, &PlaybackConnection::diagnosticEvent, this,
