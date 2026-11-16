@@ -45,6 +45,10 @@ class BasicSettingsChannel private constructor(
         @Volatile
         private var installed: BasicSettingsChannel? = null
 
+        /** install 时装上的 messenger；engine 重建后据此把 handler 迁到新 messenger。 */
+        @Volatile
+        private var installedMessenger: BinaryMessenger? = null
+
         /**
          * 装配一次。传 contextProvider 而不是 Context：通道对象不长期握着 Activity
          * （Application context 可以，Activity 不行——那会把已销毁的宿主钉在进程里）。
@@ -52,12 +56,25 @@ class BasicSettingsChannel private constructor(
         fun install(messenger: BinaryMessenger, contextProvider: () -> Context): BasicSettingsChannel {
             val existing = installed
             if (existing != null) {
+                val previous = installedMessenger
+                if (previous === messenger) {
+                    return existing
+                }
+                //  新 engine（Activity 重建 / 旋转）：把同一个 handler 迁到新 messenger 上。
+                //  不迁的话 handler 挂在已销毁的 engine 上，重建后版本/外链调用全变成
+                //  MissingPluginException——真机上表现为版本行回到「未知版本」。
+                if (previous != null) {
+                    MethodChannel(previous, CHANNEL).setMethodCallHandler(null)
+                }
+                MethodChannel(messenger, CHANNEL).setMethodCallHandler(existing)
+                installedMessenger = messenger
                 return existing
             }
             val channel = BasicSettingsChannel(contextProvider)
             val methodChannel = MethodChannel(messenger, CHANNEL)
             methodChannel.setMethodCallHandler(channel)
             installed = channel
+            installedMessenger = messenger
             return channel
         }
 
@@ -67,6 +84,7 @@ class BasicSettingsChannel private constructor(
             }
             MethodChannel(messenger, CHANNEL).setMethodCallHandler(null)
             installed = null
+            installedMessenger = null
         }
     }
 

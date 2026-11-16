@@ -100,4 +100,13 @@ void main() {
     expect(await port.openUrl('https://example.invalid/x'), isTrue);
     expect(calls.map((MethodCall c) => c.method), <String>['packageInfo', 'openUrl']);
   });
+
+  test('没有 panel/ 前缀的键拒绝写入（写进去也读不出来）', () async {
+    final SharedPreferencesBasicSettingsPort port = SharedPreferencesBasicSettingsPort();
+    expect(await port.write('archive-mask-strength', '80'), isFalse);
+    expect(await port.readAll(), isEmpty);
+    // 带前缀写同一个键才是真落盘。
+    expect(await port.write('${basicSettingsPreferencePrefix}archive-mask-strength', '80'), isTrue);
+    expect((await port.readAll())['panel/archive-mask-strength'], '80');
+  });
 }
