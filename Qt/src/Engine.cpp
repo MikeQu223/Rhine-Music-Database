@@ -617,6 +617,229 @@ void Engine::submitTextureAdmission(const QString &musicKey) {
     m_admissionArmed = status.generation;
     m_admissionScheduler.stop();
 }
+/**
+ * MUST-C 的主入口：把一份"真的 apply 过的" Flutter 快照投影成原生可见格的业务资源。
+ *
+ * 三条边界写在这里，别在别处偷偷放宽：
+ *   - 只有解析出真实身份（siren:<kind>:<id>）的格才会被投影；没身份的格继续是占位档案壳。
+ *   - 同一份签名重复 apply 完全不动状态：不会重置准入计时，也不会把已经热的封面打回冷态。
+ *   - 这里只登记"这一格该显示什么"，不取图、不建纹理——取图在 step() 的泵里按准入做。
+ */
+void Engine::projectEmbeddedCells(const QJsonArray &cells, quint64 contextGeneration, bool scrolling) {
+    const auto projection = RhineRender::projectEmbeddedCells(cells, contextGeneration);
+    const bool wasScrolling = m_embeddedCellScrolling;
+    m_embeddedCellContext = contextGeneration;
+    m_embeddedCellScrolling = scrolling;
+    if (projection.signature == m_embeddedCellSignature) {
+        // 同一份窗口内容重复上报（每次 apply 都会来一次）：不动准入，也不重置计时。
+        // 但"滚动结束"是一次真实的边界事件：内容没变也要醒一次去结算待定项，否则
+        // 拖动中压下的那些格会一直停在占位（引擎这时可能已经休眠，没人来推进准入）。
+        if (wasScrolling && !scrolling) {
+            m_embeddedCellAdmission.setVisible(m_visible, clock.elapsed());
+            m_sceneSleeping = false;
+            m_inputPending = true;
+            if (m_started && m_visible && !timer.isActive()) {
+                timer.start(0);
+            }
+        }
+        return;
+    }
+    m_embeddedCellSignature = projection.signature;
+    m_embeddedCells = projection.cells;
+    m_embeddedCellByKey.clear();
+    QHash<quint32, QString> sceneKeys;
+    sceneKeys.reserve(m_embeddedCells.size());
+    for (const auto &cell : m_embeddedCells) {
+        m_embeddedCellByKey.insert(cell.key, cell);
+        sceneKeys.insert(RhineRender::embeddedCellId(cell.lane, cell.row), cell.key);
+        // 已经在这个 key 上的条目跟着新元数据走：标题/歌手变了，标签要按新 revision 重画。
+        auto entry = m_musicTextures.find(cell.key);
+        if (entry != m_musicTextures.end()) {
+            const auto item = embeddedCellItem(cell);
+            if (entry->item != item) {
+                // 封面地址变了必须把旧像素丢掉：条目上的图是按上一个地址取的，留着它
+                // 等于把旧封面贴到新元数据上（泵看到 cover 非空就不会再请求了）。
+                if (entry->item.value("cover").toString() != cell.cover) {
+                    entry->cover = QImage();
+                }
+                entry->item = item;
+                m_coverRefresh = true;
+            }
+        }
+    }
+    // 身份表整块替换：掉队的格回到占位壳，绝不让旧图留在新格上。
+    scene.projectEmbeddedCellKeys(sceneKeys);
+    m_embeddedCellAdmission.setVisible(m_visible, clock.elapsed());
+    m_sceneSleeping = false;
+    m_inputPending = true;
+    // 与其它唤醒点同一套守卫：页面不可见时不许把整台引擎从后台叫起来（那会在后台
+    // 持续步进 + 出图）。可见性由 Engine::setVisible 负责，这里只跟着走。
+    if (m_started && m_visible && !timer.isActive()) {
+        timer.start(0);
+    }
+}
+
+const RhineRender::EmbeddedCell *Engine::embeddedCellFor(const QString &key) const {
+    const auto it = m_embeddedCellByKey.constFind(key);
+    return it == m_embeddedCellByKey.constEnd() ? nullptr : &it.value();
+}
+
+QJsonObject Engine::embeddedCellItem(const RhineRender::EmbeddedCell &cell) const {
+    // 只放这一格真的有的字段：缺歌手就留空，由标签生成器显示"暂无歌手"，
+    // 绝不从当前曲目借文字（B02 的规矩同样适用于可见格）。
+    QJsonObject item{{"key", cell.key}, {"kind", cell.kind}, {"id", cell.id}, {"title", cell.title}};
+    if (!cell.artist.isEmpty()) {
+        item["artist"] = cell.artist;
+    }
+    if (!cell.album.isEmpty()) {
+        item["album"] = cell.album;
+    }
+    if (!cell.cover.isEmpty()) {
+        item["cover"] = cell.cover;
+    }
+    return item;
+}
+
+/**
+ * 每帧一次的准入上报与封面泵。
+ *
+ * 顺序是刻意：先上报（滚动中一个都不准入），再取图。取图只针对"这一帧真的被画出来"
+ * 的格（retained），这样滚动时不会有为屏外格白下载的请求，资源量天然跟着可见窗口走。
+ */
+void Engine::pumpEmbeddedCells(const QSet<QString> &retained, bool scrolling) {
+    QStringList visible;
+    visible.reserve(m_embeddedCells.size());
+    for (const auto &cell : m_embeddedCells) {
+        // 只上报这一帧真的画出来的格：把整份 40 格投影都当"可见"，屏外格会占住准入名额
+        // 变成 starved，唤醒逻辑也会永远有活干（归档页就再也不会休眠）。
+        if (!retained.contains(cell.key)) {
+            continue;
+        }
+        visible.append(cell.key);
+    }
+    // 宿主给的 scrolling 与原生轨道自己的拖动/惯性取并集：任何一边在动都不新建资源。
+    const bool moving = scrolling || scene.archiveScrolling();
+    const auto report =
+        m_embeddedCellAdmission.report(visible, m_embeddedCellContext, moving, clock.elapsed());
+    m_embeddedCellAdmitted = report.admitted;
+    m_embeddedCellPending = report.pending;
+    m_embeddedCellStarved = report.starved;
+    if (moving || !m_visible) {
+        return;
+    }
+    for (const auto &key : m_embeddedCellAdmission.admittedKeys()) {
+        const auto cell = embeddedCellFor(key);
+        if (cell == nullptr) {
+            continue;
+        }
+        auto entry = m_musicTextures.find(key);
+        if (entry == m_musicTextures.end()) {
+            if (!retained.contains(key)) {
+                // 这一帧没画它：不给屏外格占资源，等它真的进画面再建。
+                continue;
+            }
+            entry = m_musicTextures.insert(key, {embeddedCellItem(*cell), {}});
+        }
+        if (!entry->cover.isNull() || cell->cover.isEmpty()) {
+            continue;
+        }
+        // 热复用：同一个 URL 的另一格已经把图取回来了，直接共享像素，标签仍按 key 隔离。
+        if (const auto image = coverImageOf(cell->cover); !image.isNull()) {
+            entry->cover = image;
+            m_coverRefresh = true;
+            continue;
+        }
+        if (m_coverRequests.contains(cell->cover)) {
+            continue;
+        }
+        if (m_embeddedCoverAttempts.value(cell->cover) >= RhineRender::EmbeddedCellCoverAttempts) {
+            continue;
+        }
+        m_embeddedCoverAttempts.insert(cell->cover, m_embeddedCoverAttempts.value(cell->cover) + 1);
+        while (m_embeddedCoverAttempts.size() > 256) {
+            m_embeddedCoverAttempts.erase(m_embeddedCoverAttempts.begin());
+        }
+        const auto requested = cell->cover;
+        const auto requestedKey = key;
+        m_coverRequests.insert(requested);
+        host.loadCover(
+            requested,
+            [this, requested, requestedKey](QString loaded) {
+                m_coverRequests.remove(requested);
+                if (loaded.isEmpty()) {
+                    return; // 失败已记账：有限次之后停手，不刷屏
+                }
+                // 迟到结果的唯一判据：这一格还在投影里，且它现在要的仍是这个地址。
+                // A→B→A 时中间那次 B 的结果会被这一条丢掉。
+                if (!RhineRender::embeddedCellCoverStillWanted(embeddedCellFor(requestedKey),
+                                                              requested)) {
+                    return;
+                }
+                const auto image = host.image(loaded);
+                if (image.isNull()) {
+                    return;
+                }
+                // 记下 URL -> host.loadCover 真正返回的 cache key：同 URL 的其它格之后走
+                // coverImageOf() 热复用，既不重复下载，也不会把同一张图算成多次尝试。
+                m_coverKeys.insert(requested, loaded);
+                while (m_coverKeys.size() > 96) {
+                    m_coverKeys.erase(m_coverKeys.begin());
+                }
+                // 成功一次就把该 URL 的尝试额度还回去：额度只该记失败，不该记命中。
+                m_embeddedCoverAttempts.remove(requested);
+                auto entry = m_musicTextures.find(requestedKey);
+                if (entry != m_musicTextures.end() && entry->cover.isNull()) {
+                    entry->cover = image;
+                    m_coverRefresh = true;
+                    m_sceneSleeping = false;
+                    m_hudTransitionUntilMs = clock.elapsed() + 600;
+                    if (m_started && m_visible && !timer.isActive()) {
+                        timer.start(0);
+                    }
+                }
+            },
+            512);
+    }
+}
+
+/**
+ * 诊断：本帧**真的画出来**的格的真实/占位拆分（像素级真值在渲染侧 TEXDIAG 的 cellReal/cellPh）。
+ *
+ * "visible" 只数这一帧进过画面的格（与准入上报同一集合）：早先按整份 40 格投影统计，
+ * 被视锥剔掉的格会被算成占位，看起来像"20 格真实 20 格占位"，其实它们根本没画。
+ * 整份投影的数量单独报 projected，两个数不能混着读。
+ * labels 故意留空：标签纹理在 RhiScene 手里，硬编一个数只会跟 TEXDIAG 的 cellLab 打架。
+ */
+void Engine::publishEmbeddedCells(const QSet<QString> &retained) {
+    QStringList order;
+    order.reserve(m_embeddedCells.size());
+    QSet<QString> coverKeys;
+    for (const auto &cell : m_embeddedCells) {
+        if (!retained.contains(cell.key)) {
+            continue;
+        }
+        order.append(cell.key);
+        const auto entry = m_musicTextures.constFind(cell.key);
+        if (entry != m_musicTextures.constEnd() && !entry->cover.isNull()) {
+            coverKeys.insert(cell.key);
+        }
+    }
+    QSet<QString> admitted;
+    for (const auto &key : m_embeddedCellAdmission.admittedKeys()) {
+        admitted.insert(key);
+    }
+    const auto binding = RhineRender::embeddedCellBinding(order, admitted, coverKeys, {});
+    m_frame["embeddedCells"] = QJsonObject{{"visible", binding.visible},
+                                           {"projected", int(m_embeddedCells.size())},
+                                           {"admitted", binding.admitted},
+                                           {"covers", binding.covers},
+                                           {"placeholders", binding.placeholders},
+                                           {"pending", m_embeddedCellPending},
+                                           {"starved", m_embeddedCellStarved},
+                                           {"context", double(m_embeddedCellContext)},
+                                           {"scrolling", m_embeddedCellScrolling}};
+}
+
 void Engine::setVisible(bool value) {
     if (m_visible == value) {
         return;
@@ -635,8 +858,11 @@ void Engine::setVisible(bool value) {
         // 隐藏期间不创建 GPU 资源：作废"等到一半"的等待，恢复后重新计时。
         m_admission.setVisible(false, clock.elapsed());
         m_admissionScheduler.stop();
+        // 可见格也一样：待定项作废，但已准入的 key 保留（回来时还是热的）。
+        m_embeddedCellAdmission.setVisible(false, clock.elapsed());
     } else {
         m_admission.setVisible(true, clock.elapsed());
+        m_embeddedCellAdmission.setVisible(true, clock.elapsed());
         host.restoreMemoryBudget();
 #ifdef Q_OS_DARWIN
         if (renderConfiguration.snapshot().temporal()) {
@@ -783,6 +1009,9 @@ void Engine::tick() {
     const bool workPending = inputPending || scene.changed() || !m_sceneSleeping || m_discRotating ||
                              app->hud.animating(m_animationTime) || hudTransition ||
                              m_frame.value("pendingAnimations").toBool() || m_temporalFramesRemaining > 0 ||
+                             // 可见格还在等准入：这不是"动画"，但必须有一帧去把它接下来。
+                             // 被名额卡住的那部分（starved）等的是窗口变化，不算这件事。
+                             m_embeddedCellPending > m_embeddedCellStarved ||
                              m_frame.value("mode") == "boot";
     if (!inputPending && !hudTransition) {
         const auto decision = m_pacing.decide(workPending, false, now);
@@ -877,6 +1106,11 @@ void Engine::tick() {
         }
     }
 #endif
+    // 可见格准入只差时间：按时到期醒一次就够，不必为了等它连续烧帧。
+    if (m_embeddedCellPending > m_embeddedCellStarved) {
+        const int remaining = m_embeddedCellAdmission.nextAdmissionInMs(clock.elapsed());
+        intervalMs = qMax(intervalMs, qMax(16, remaining < 0 ? 0 : remaining));
+    }
     timer.setInterval(fixedMs > 0 ? fixedMs : intervalMs);
     // 排障专用：RHINE_DIAG_ANIMATE=1 时永不休眠。静止场景下引擎会主动休眠、
     // presented 不再增长，那时测出来的"帧率"是没有负载的数字，A/B 对比没有意义。
@@ -892,7 +1126,10 @@ void Engine::tick() {
         !app->hud.animating(m_animationTime) && !m_discRotating && !hudTransition &&
         // 用实时成员而非 tick 开头的局部快照：step() 里可能刚把 m_detailGrace 置真。
         !m_detailGrace && !hudStillPending && m_frame["mode"] != "boot" &&
-        m_temporalFramesRemaining == 0 && !m_pacing.awaitingConsumption()) {
+        m_temporalFramesRemaining == 0 && !m_pacing.awaitingConsumption() &&
+        // 有待定的可见格：睡着就没人再推进准入，封面会永远停在占位。
+        // starved 的格等的是"窗口变化"而不是时间：拿它当唤醒理由会让静止的归档页永远醒着。
+        m_embeddedCellPending <= m_embeddedCellStarved) {
         timer.stop();
         m_sleeping = true;
         emit stateChanged();
@@ -1378,6 +1615,9 @@ void Engine::step(double time) {
             ++it;
         }
     }
+    // MUST-C：可见格的准入上报与封面泵。放在 prune 之后：只给真正留下来的条目做事。
+    pumpEmbeddedCells(retainedKeys, m_embeddedCellScrolling);
+    publishEmbeddedCells(retainedKeys);
 #if defined(Q_OS_ANDROID)
     // 归档页会同时画 7 张唱片，但每个条目的封面图只在"它成为当前曲目"的那一帧取一次
     // （上面的 `m_musicTextures[musicKey] = {current, m_coverImage}`），切歌瞬间
@@ -1394,7 +1634,8 @@ void Engine::step(double time) {
             continue;
         }
         const auto url = it->item["cover"].toString();
-        if (url.isEmpty() || m_coverRequests.contains(it.key())) {
+        // 可见格那条通道是按 URL 记账的（同一个地址可能被多格共享），两个键都要查。
+        if (url.isEmpty() || m_coverRequests.contains(it.key()) || m_coverRequests.contains(url)) {
             continue;
         }
         const auto key = it.key();
@@ -1430,7 +1671,8 @@ void Engine::step(double time) {
     m_musicTextureSnapshot.clear();
     for (auto it = m_musicTextures.cbegin(); it != m_musicTextures.cend(); ++it) {
         auto entry = it.value();
-        entry.admitted = m_admission.isAdmitted(it.key());
+        // 选中焦点通道与可见格通道各管一半：任一准入就让渲染侧建这一格的标签/封面。
+        entry.admitted = m_admission.isAdmitted(it.key()) || m_embeddedCellAdmission.isAdmitted(it.key());
         m_musicTextureSnapshot.insert(it.key(), entry);
     }
     auto commands = object["commands"].toArray();

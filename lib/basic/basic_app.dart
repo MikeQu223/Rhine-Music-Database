@@ -10,6 +10,13 @@ import '../app/orientation_state.dart';
 import '../hud/input/hit_layer.dart';
 import '../hud/input/key_router.dart' show HudAction;
 import '../hud/input/text_input_overlay.dart';
+import '../hud/modals/disc_warning_modal.dart';
+import '../hud/modals/settings_modal.dart'
+    show
+        PlatformCapabilities,
+        SettingsOperatingSystem,
+        SettingsPreferenceContext,
+        SettingsPreferenceSnapshot;
 import '../hud/player/player_bar.dart' show playerBarHeaderHeight, playerBarRowHeight;
 import '../hud/protocol/hud_frame.dart';
 import '../ui/layout/portrait_stage.dart';
@@ -17,6 +24,10 @@ import '../platform/media_session.dart';
 import 'basic_hud.dart';
 import 'basic_hud_resources.dart';
 import 'basic_models.dart';
+import 'basic_settings.dart';
+import 'basic_settings_runtime.dart';
+import 'basic_settings_store.dart';
+import 'basic_settings_view.dart';
 import 'platform_playback.dart';
 import 'qt_scene_view.dart';
 import 'siren_controller.dart';
@@ -98,6 +109,7 @@ class BasicApp extends StatefulWidget {
     this.gate,
     this.bundle,
     this.mediaSessionPort,
+    this.settingsPort,
   });
 
   /// 外部注入的 controller；注入方持有所有权（本 widget 不 dispose）。
@@ -121,6 +133,10 @@ class BasicApp extends StatefulWidget {
   /// 不注入就没有这层（桌面预览、widget 测试一律不碰平台通道）。
   final MediaSessionPort? mediaSessionPort;
 
+  /// 面板偏好的真实端口（SharedPreferences）。生产留空 = 走平台通道
+  /// [MethodChannelBasicSettingsPort]；widget 测试注入 [MemoryBasicSettingsPort]。
+  final BasicSettingsPort? settingsPort;
+
   @override
   State<BasicApp> createState() => _BasicAppState();
 }
@@ -131,6 +147,9 @@ class _BasicAppState extends State<BasicApp> {
 
   /// 唯一 controller：initState 装配一次，跨旋转/重建不再新建。
   late final BasicController _controller;
+
+  /// 面板偏好存储：与设置页是同一份（`panel/<key>` 命名空间），跨旋转不重建。
+  late final BasicSettingsStore _settingsStore;
 
   BasicHudResources? _resources;
   Object? _resourceError;
@@ -150,6 +169,8 @@ class _BasicAppState extends State<BasicApp> {
   @override
   void initState() {
     super.initState();
+    _settingsStore =
+        BasicSettingsStore(port: widget.settingsPort ?? MethodChannelBasicSettingsPort());
     _ownsAudio = widget.audio == null;
     _ownsController = widget.controller == null;
     _audio = widget.audio ?? MethodChannelBasicAudio();
@@ -310,7 +331,11 @@ class _BasicAppState extends State<BasicApp> {
         onAction: _retryResources,
       );
     }
-    return _BasicShell(controller: _controller, resources: resources);
+    return _BasicShell(
+      controller: _controller,
+      resources: resources,
+      settingsStore: _settingsStore,
+    );
   }
 }
 
@@ -324,16 +349,22 @@ class _BasicShell extends StatefulWidget {
     super.key,
     required this.controller,
     required this.resources,
+    required this.settingsStore,
   });
 
   final BasicController controller;
   final BasicHudResources resources;
 
+  /// 面板偏好的唯一存储（`panel/<key>`）。设置页写、启动读、效果读的都是它。
+  final BasicSettingsStore settingsStore;
+
   @override
   State<_BasicShell> createState() => _BasicShellState();
 }
 
-class _BasicShellState extends State<_BasicShell> implements TextInputPorts {
+class _BasicShellState extends State<_BasicShell>
+    with SingleTickerProviderStateMixin
+    implements TextInputPorts {
   /// 未接入动作的可见反馈（null = 无）。这里绝不静默吞点击，也不假装有设置/
   /// 账号功能：真实缺口写进可见反馈，并在报告里点名缺少的 controller 契约。
   ///
@@ -354,6 +385,22 @@ class _BasicShellState extends State<_BasicShell> implements TextInputPorts {
   /// 只有 '' 与 'search'：登录表单 / 歌单表单 / 设置编辑在本预览里没有入口
   /// （账号三平台暂停、设置页未接入），不伪造第三态。
   String _modal = '';
+
+  /// 面板偏好的唯一运行时（读/写/展开态/重启口径）。外壳持有一份，跨旋转不重建。
+  late final BasicSettingsRuntime _settings;
+
+  /// 初始化动画（Qt 的启动动效）。只在“初始化动画”偏好为 on 时跑，
+  /// 或由“手动显示初始化动画”动作行显式重放（NativeHud 的 'replay'）。
+  late final AnimationController _startup = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1200),
+    // 1.0 = 已播完：默认不盖黑幕，只有“初始化动画”开启或手动重放时才从 0 跑。
+    value: 1,
+  );
+  bool _startupEnabled = false;
+
+  /// 设置项“右侧画面遮罩”的强度真值（0..100）。默认即 Qt 常量，装载后取偏好值。
+  double _archiveMaskStrength = 55;
 
   /// 竖屏唯一 [StageGeometry] 的引用（横屏不用）。
   ///
@@ -384,10 +431,58 @@ class _BasicShellState extends State<_BasicShell> implements TextInputPorts {
   void initState() {
     super.initState();
     _resourceNotice = _resourceFailuresNotice(widget.resources);
+    _settings = BasicSettingsRuntime(store: widget.settingsStore);
+    _startup.addStatusListener(_onStartupStatus);
+    unawaited(_loadSettings());
+  }
+
+  void _onStartupStatus(AnimationStatus status) {
+    if (status == AnimationStatus.completed || status == AnimationStatus.dismissed) {
+      if (mounted) {
+        setState(() {});
+      }
+    }
+  }
+
+  /// 装载真值：读完偏好后把**真实生效**的效果接到 controller / 场景上。
+  ///
+  /// 这条链是"持久化 -> 效果"的唯一入口，因此重启 App 后配色、自动播放、
+  /// 单曲播放语义、画面遮罩都从这里恢复，不是只记住开关样子。
+  Future<void> _loadSettings() async {
+    try {
+      await _settings.load();
+    } on Object {
+      // 读偏好失败不阻断启动：运行时自己退到默认值，面板照常可打开。
+    }
+    if (!mounted) {
+      return;
+    }
+    _applySettingsEffects(replayStartup: true);
+    setState(() {});
+  }
+
+  void _applySettingsEffects({bool replayStartup = false}) {
+    controller.setDark(_settings.dark);
+    controller.setDetailAutoplay(_settings.detailAutoplay);
+    controller.setSinglePlayAppend(_settings.singlePlayAppend);
+    _archiveMaskStrength = _settings.archiveMaskStrength.toDouble();
+    _startupEnabled = _settings.startupAnimation;
+    if (replayStartup && _startupEnabled) {
+      _replayStartup();
+    }
+  }
+
+  void _replayStartup() {
+    if (!mounted) {
+      return;
+    }
+    _startup.forward(from: 0);
+    setState(() {});
   }
 
   @override
   void dispose() {
+    _startup.dispose();
     _hudFocusNode.dispose();
     super.dispose();
   }
@@ -423,6 +518,10 @@ class _BasicShellState extends State<_BasicShell> implements TextInputPorts {
     final String? resourceNotice = _resourceNotice;
     return Scaffold(
       backgroundColor: Colors.black,
+      // 输入法不避让（真人要求 m01988）：弹出键盘不许把舞台/3D 视图顶上去，
+      // 也不许缩窗。Manifest 的 windowSoftInputMode 同步是 adjustNothing，
+      // 两侧一致才不会出现"Flutter 留白 + 原生窗口被压缩"的混搭。
+      resizeToAvoidBottomInset: false,
       body: Stack(
         fit: StackFit.expand,
         children: <Widget>[
@@ -516,7 +615,7 @@ class _BasicShellState extends State<_BasicShell> implements TextInputPorts {
   }
 
   Widget _surface(BasicViewState state, {StageGeometry? geometry, HudStage? stage}) {
-    return BasicHudSurface(
+    final Widget hud = BasicHudSurface(
       state: state,
       ports: widget.resources.ports,
       onAction: _onAction,
@@ -524,6 +623,9 @@ class _BasicShellState extends State<_BasicShell> implements TextInputPorts {
       // 父链（PortraitStage ↔ 直挂 Stack），只有把 key 抬到上层，PlatformView 的
       // element 才能被移动而非重建。
       sceneKey: _sceneKey,
+      // 渲染参数投影：disc/mask 逐帧生效，其余四项（后端/vsync/渲染分辨率/AA）
+      // 在 Android 上是"写进 Qt 的 panel/* 偏好、下次启动生效"（main.cpp 启动读）。
+      sceneSettings: _sceneSettings(),
       // 曲目列手指拖动的落点（条目单位）：只**选中**落到的那一项，
       // 不播放、不换队列（Qt/src/MusicLibrary.cpp:616-643 open=false 的选中语义）。
       // 拖动过程的插值在 surface 内部完成，这里只接结束时的那一次提交。
@@ -535,7 +637,160 @@ class _BasicShellState extends State<_BasicShell> implements TextInputPorts {
       onLibraryScrollUpdate: controller.updateLibraryScroll,
       geometry: geometry,
       stage: stage,
+      archiveMaskStrength: _archiveMaskStrength,
     );
+    final bool settingsOpen =
+        _modal == 'settings' || _modal == DiscWarningModal.kind;
+    final bool animating = _startup.isAnimating;
+    if (!settingsOpen && !animating) {
+      return hud;
+    }
+    final double scale = stage?.scale ?? 1.0;
+    return Stack(
+      fit: StackFit.expand,
+      children: <Widget>[
+        _startupCurtain(hud, scale: scale),
+        if (settingsOpen)
+          Builder(
+            builder: (BuildContext inner) {
+              final HudStage resolved = stage ?? HudStageScope.of(inner);
+              return Stack(
+                fit: StackFit.expand,
+                children: <Widget>[
+                  BasicSettingsOverlay(
+                    stage: resolved,
+                    ports: widget.resources.ports,
+                    model: _settingsPanelModel(),
+                    dark: state.dark,
+                    onAction: (String action) => unawaited(_onSettingsAction(action)),
+                  ),
+                  if (_modal == DiscWarningModal.kind)
+                    BasicDiscWarningOverlay(
+                      stage: resolved,
+                      ports: widget.resources.ports,
+                      dark: state.dark,
+                      onAction: (String action) =>
+                          unawaited(_onSettingsAction(action)),
+                    ),
+                ],
+              );
+            },
+          ),
+      ],
+    );
+  }
+
+  /// 初始化动画：黑色幕布淡出 + 舞台轻微上升（1200ms，ease-out）。
+  ///
+  /// 只在运转时包一层；静止后原样返回 [child]，不额外留一个恒等变换。
+  Widget _startupCurtain(Widget child, {required double scale}) {
+    if (!_startup.isAnimating && _startup.value >= 1) {
+      return child;
+    }
+    return AnimatedBuilder(
+      animation: _startup,
+      child: child,
+      builder: (BuildContext context, Widget? inner) {
+        final double t = Curves.easeOutCubic.transform(_startup.value.clamp(0.0, 1.0));
+        return Stack(
+          fit: StackFit.expand,
+          children: <Widget>[
+            Transform.translate(
+              offset: Offset(0, (1 - t) * 24 * scale),
+              child: Opacity(opacity: t, child: inner),
+            ),
+            if (t < 1)
+              IgnorePointer(
+                child: ColoredBox(color: Colors.black.withValues(alpha: 1 - t)),
+              ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// 面板模型：每次按当前偏好快照重建（写进去 -> 立刻读回 -> 行显示新值的同一条链）。
+  /// 原生渲染参数：唯一真值仍是 [_settings]，这里只是投影给 Qt 的那一份。
+  BasicSceneSettings _sceneSettings() => BasicSceneSettings(
+        discRotation: _settings.discRotation,
+        archiveMaskStrength: _settings.archiveMaskStrength,
+        // vsync/后端/分辨率/AA 下发的是**当前请求值**：Qt 侧把它写进 panel/*，
+        // 下次启动由 main.cpp 读同一套偏好（所以"请求值 vs 生效值"仍然分得开）。
+        vsync: _settings.requestedVsync,
+        renderScale: _settings.renderScalePercent,
+        graphicsBackend: _settings.requestedGraphicsBackend,
+        aaMode: _settings.aaMode,
+        aaScale: _settings.aaScalePercent,
+        msaa: _settings.msaaSamples,
+        supersample: _settings.supersampleFactor,
+      );
+
+  BasicSettingsPanelModel _settingsPanelModel() {
+    return basicSettingsPanelModel(
+      context: _settingsContext(),
+      snapshot: _settings.snapshot,
+      // 版本必须是真值：读到的包信息优先；平台没给（例如纯 Dart 预览）时
+      // 如实显示“未知版本”，绝不编一个像版本号的串。
+      version: _settings.version ??
+          BasicSettingsVersion(
+            version: basicSettingsUnknownVersion,
+            releaseBuild: false,
+          ),
+      expandedId: _settings.expandedId,
+    );
+  }
+
+  /// 面板上下文：Android 基本版的真实平台能力（没有桌面歌词 / 官方音源 / 应用音量）。
+  SettingsPreferenceContext _settingsContext() {
+    return SettingsPreferenceContext(
+      capabilities: const PlatformCapabilities.android(),
+      operatingSystem: SettingsOperatingSystem.android,
+      providerId: sirenProvider,
+      musicEnabled: true,
+      providerIsLocal: false,
+      gpuDeviceCount: 1,
+      direct3d12Available: false,
+      temporalAntialiasingAvailable: false,
+      frameGenerationClickable: false,
+      aaMode: _settings.aaMode,
+      appliedGraphicsBackend: _settings.effectiveGraphicsBackend,
+      gpuAppliedIndex: -1,
+    );
+  }
+
+  /// 设置浮层的唯一动作入口：命中串 -> typed 命令 -> 真实落盘 -> 真实效果。
+  Future<void> _onSettingsAction(String action) async {
+    if (action == HudAction.closeModal) {
+      _setModal('settings');
+      return;
+    }
+    if (action == 'disc-rotation:cancel') {
+      // 风险弹层的“保持关闭”：不写任何值，退回设置面板。
+      _setModal('settings');
+      return;
+    }
+    final BasicSettingsApplyResult result =
+        await _settings.apply(action, context: _settingsContext());
+    if (!mounted) {
+      return;
+    }
+    if (result.requiresWarning) {
+      _setModal(DiscWarningModal.kind);
+      return;
+    }
+    if (result.command is BasicSettingsActionRowCommand &&
+        (result.command as BasicSettingsActionRowCommand).dispatchAction == 'replay') {
+      // “手动显示初始化动画”：真的重放那一段动效，不弹 toast 了事。
+      _replayStartup();
+      return;
+    }
+    _applySettingsEffects();
+    setState(() {});
+    if (result.notice.isNotEmpty) {
+      _notice(result.notice);
+    } else if (result.restartPending) {
+      _notice('已保存：${_settings.pendingRestart.join('、')} 下次启动生效');
+    }
   }
 
   void _onAction(String action) {
@@ -563,7 +818,15 @@ class _BasicShellState extends State<_BasicShell> implements TextInputPorts {
       return;
     }
     if (action == HudAction.closeModal) {
+      if (_modal == DiscWarningModal.kind) {
+        _setModal('settings');
+        return;
+      }
       _setModal('');
+      return;
+    }
+    if (action == 'settings') {
+      _setModal('settings');
       return;
     }
     final String? notice = _route(action);
@@ -903,9 +1166,6 @@ class _BasicShellState extends State<_BasicShell> implements TextInputPorts {
     if (action.startsWith(basicVolumeFractionActionPrefix)) {
       return '音量调节尚未接入：BasicController 还缺 setVolumeFraction（预览不伪造音量）';
     }
-    if (action == 'settings' || action.startsWith('settings:')) {
-      return '设置页尚未接入：预览不提供设置项（不伪造已有设置）';
-    }
     if (action == 'music:login' || action == 'music:qr' || action == 'music:logout') {
       return '账号功能尚未接入：预览不伪造登录态';
     }
@@ -942,6 +1202,13 @@ class _BasicShellState extends State<_BasicShell> implements TextInputPorts {
         return basicUnimplementedPrefix + 'music:index:$index';
       }
       unawaited(controller.openSong(tracks[item.index], play: play));
+      if (!play) {
+        // 「打开」进详情：只有 detail-autoplay 开着才自动出声
+        // （Qt/src/NativeHudController.cpp:626-638 的 music.play(false)）。
+        // 浏览路径（music:index:<i> / music:slot:<i> → [_selectAt]）不经过这里，
+        // 所以关着时点行永远不播。
+        unawaited(controller.autoplayDetailIfEnabled(tracks[item.index]));
+      }
       return null;
     }
     if (item.kind == 'playlist') {
@@ -985,10 +1252,24 @@ class _BasicShellState extends State<_BasicShell> implements TextInputPorts {
   Widget _popScope(BasicViewState state, Widget child) {
     final bool libraryRoot =
         state.phase == BasicPhase.library && state.directory == null;
+    // 开着模态（设置/搜索/风险确认）时返回键先收模态：面板盖在资料库根上，
+    // 若还让 canPop=true，一按返回就把整个 App 退了。
+    final bool modalOpen = _modal.isNotEmpty;
     return PopScope(
-      canPop: libraryRoot,
+      canPop: libraryRoot && !modalOpen,
       onPopInvoked: (bool didPop) {
         if (didPop) {
+          return;
+        }
+        if (_modal == DiscWarningModal.kind) {
+          // 风险确认收起来后回到设置面板，不是直接关掉整页。
+          _setModal('settings');
+          return;
+        }
+        if (modalOpen) {
+          // 关闭模态同时撤掉输入层 -> 焦点回到 HUD，输入法随之收起。
+          _setModal('');
+          _hudFocusNode.requestFocus();
           return;
         }
         if (state.phase == BasicPhase.lyrics) {

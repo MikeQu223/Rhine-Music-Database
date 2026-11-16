@@ -762,7 +762,7 @@ class LibrarySavedPanel {
         width: width,
       );
     }
-    return buildSaved(snapshot: snapshot, x: x, y: y, width: width);
+    return buildSaved(s: snapshot, x: x, y: y, width: width);
   }
 
   /// savedPanel(x, y, width)。@see Qt/src/NativeHudLibrary.cpp:54-58

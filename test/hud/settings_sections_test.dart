@@ -25,7 +25,7 @@ import 'dart:ui' show Rect;
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:rhine_music_database/hud/modals/settings_modal.dart';
-import 'package:rhine_music_database/hud/widgets/settings_row.dart';
+import 'package:rhine_music_database/hud/widgets/settings_row.dart' hide settingsRowExpanded;
 
 SettingsPalette darkPalette() =>
     SettingsPalette.fromInk(const SettingsRgba(1, 1, 1, 1), dark: true);
@@ -1038,7 +1038,7 @@ void main() {
       expect(switchHit, isNotNull);
       expect(switchHit!.rect, const Rect.fromLTWH(1100, 249, 110, 34));
       expect(switchHit.label, '切换平台');
-      expect(recorder.centered.any((SettingsCenteredOp op) => op.value == '切换平台 ▾'), isTrue);
+      expect(recorder.centeredOps.any((SettingsCenteredOp op) => op.value == '切换平台 ▾'), isTrue);
       // :289-295 账号行 action
       final SettingsHitRegion? accountHit = recorder.hitAt('music:logout');
       expect(accountHit, isNotNull);
@@ -1159,20 +1159,20 @@ void main() {
       final SettingsRowRecorder off = SettingsRowRecorder();
       paintPerformanceSection(
           body: body, discRotation: false, canvas: off, palette: darkPalette());
-      expect(off.centered.any((SettingsCenteredOp op) => op.value == '关闭 / 点击了解风险'), isTrue);
-      expect(off.centered.any((SettingsCenteredOp op) => op.value == '开启 / 点击关闭'), isFalse);
+      expect(off.centeredOps.any((SettingsCenteredOp op) => op.value == '关闭 / 点击了解风险'), isTrue);
+      expect(off.centeredOps.any((SettingsCenteredOp op) => op.value == '开启 / 点击关闭'), isFalse);
       final SettingsRowRecorder on = SettingsRowRecorder();
       paintPerformanceSection(
           body: body, discRotation: true, canvas: on, palette: darkPalette());
-      expect(on.centered.any((SettingsCenteredOp op) => op.value == '开启 / 点击关闭'), isTrue);
-      expect(on.centered.any((SettingsCenteredOp op) => op.value == '关闭 / 点击了解风险'), isFalse);
+      expect(on.centeredOps.any((SettingsCenteredOp op) => op.value == '开启 / 点击关闭'), isTrue);
+      expect(on.centeredOps.any((SettingsCenteredOp op) => op.value == '关闭 / 点击了解风险'), isFalse);
     });
 
     test('第一行固定文案与命中（:320-321）', () {
       final SettingsRowRecorder recorder = SettingsRowRecorder();
       paintPerformanceSection(
           body: body, discRotation: false, canvas: recorder, palette: darkPalette());
-      expect(recorder.centered.any((SettingsCenteredOp op) => op.value == '显示 / 隐藏 · F10'), isTrue);
+      expect(recorder.centeredOps.any((SettingsCenteredOp op) => op.value == '显示 / 隐藏 · F10'), isTrue);
       final SettingsHitRegion? hit = recorder.hitAt('performance:toggle');
       expect(hit, isNotNull);
       expect(hit!.rect, const Rect.fromLTWH(926, 1826, 300, 48));
@@ -1231,12 +1231,12 @@ void main() {
       final SettingsRowRecorder empty = SettingsRowRecorder();
       paintStorageSection(
           body: body, cacheMessage: '', canvas: empty, palette: darkPalette());
-      expect(empty.centered.any((SettingsCenteredOp op) => op.value == '清除缓存'), isTrue);
+      expect(empty.centeredOps.any((SettingsCenteredOp op) => op.value == '清除缓存'), isTrue);
       final SettingsRowRecorder filled = SettingsRowRecorder();
       paintStorageSection(
           body: body, cacheMessage: '已清除', canvas: filled, palette: darkPalette());
-      expect(filled.centered.any((SettingsCenteredOp op) => op.value == '已清除'), isTrue);
-      expect(filled.centered.any((SettingsCenteredOp op) => op.value == '清除缓存'), isFalse);
+      expect(filled.centeredOps.any((SettingsCenteredOp op) => op.value == '已清除'), isTrue);
+      expect(filled.centeredOps.any((SettingsCenteredOp op) => op.value == '清除缓存'), isFalse);
       // 命中 label 恒为"清除缓存"，不随文案变化（:337）。
       final SettingsHitRegion? hit = filled.hitAt('cache:clear');
       expect(hit, isNotNull);
@@ -1338,7 +1338,7 @@ void main() {
       expect(autoHit, isNotNull);
       expect(autoHit!.rect, const Rect.fromLTWH(926, 2329, 300, 48));
       expect(autoHit.label, '启动检查');
-      expect(off.centered.any((SettingsCenteredOp op) => op.value == '启动检查 / 关闭'), isTrue);
+      expect(off.centeredOps.any((SettingsCenteredOp op) => op.value == '启动检查 / 关闭'), isTrue);
       final SettingsRowRecorder on = SettingsRowRecorder();
       paintUpdateSection(
         body: body,
@@ -1352,7 +1352,7 @@ void main() {
         canvas: on,
         palette: darkPalette(),
       );
-      expect(on.centered.any((SettingsCenteredOp op) => op.value == '启动检查 / 开启'), isTrue);
+      expect(on.centeredOps.any((SettingsCenteredOp op) => op.value == '启动检查 / 开启'), isTrue);
     });
 
     test('检查块：busy 时是取消，否则检查更新（:358-360）', () {
@@ -1373,7 +1373,7 @@ void main() {
       expect(check, isNotNull);
       expect(check!.rect, const Rect.fromLTWH(54, 2391, 170, 46));
       expect(check.label, '检查更新');
-      expect(idle.centered.any((SettingsCenteredOp op) => op.value == '检查更新'), isTrue);
+      expect(idle.centeredOps.any((SettingsCenteredOp op) => op.value == '检查更新'), isTrue);
       final SettingsRowRecorder busy = SettingsRowRecorder();
       paintUpdateSection(
         body: body,
@@ -1390,7 +1390,7 @@ void main() {
       final SettingsHitRegion? cancel = busy.hitAt('update:cancel');
       expect(cancel, isNotNull);
       expect(cancel!.label, '检查更新');
-      expect(busy.centered.any((SettingsCenteredOp op) => op.value == '取消'), isTrue);
+      expect(busy.centeredOps.any((SettingsCenteredOp op) => op.value == '取消'), isTrue);
       expect(busy.hits.any((SettingsHitRegion h) => h.action == 'update:check'), isFalse);
     });
 
@@ -1408,7 +1408,7 @@ void main() {
         canvas: available,
         palette: darkPalette(),
       );
-      expect(available.centered.any((SettingsCenteredOp op) => op.value == '前往更新 ↗'), isTrue);
+      expect(available.centeredOps.any((SettingsCenteredOp op) => op.value == '前往更新 ↗'), isTrue);
       expect(
           available.hits.any((SettingsHitRegion h) =>
               h.action == 'update:release' &&
@@ -1428,7 +1428,7 @@ void main() {
         canvas: none,
         palette: darkPalette(),
       );
-      expect(none.centered.any((SettingsCenteredOp op) => op.value == '前往更新 ↗'), isFalse);
+      expect(none.centeredOps.any((SettingsCenteredOp op) => op.value == '前往更新 ↗'), isFalse);
     });
 
     test('发布说明 无条件恒绘制，且不并入条件行（:365-366）', () {
@@ -1446,7 +1446,7 @@ void main() {
           canvas: recorder,
           palette: darkPalette(),
         );
-        expect(recorder.centered.any((SettingsCenteredOp op) => op.value == '发布说明 ↗'), isTrue,
+        expect(recorder.centeredOps.any((SettingsCenteredOp op) => op.value == '发布说明 ↗'), isTrue,
             reason: 'busy=' + busy.toString());
         final List<SettingsHitRegion> notesHits = recorder.hits
             .where((SettingsHitRegion h) =>
@@ -1489,7 +1489,7 @@ void main() {
       expect(hit, isNotNull);
       expect(hit!.rect, const Rect.fromLTWH(54, 2885, 300, 46));
       expect(hit.label, '恢复默认设置');
-      expect(recorder.centered.any((SettingsCenteredOp op) => op.value == '恢复默认设置'), isTrue);
+      expect(recorder.centeredOps.any((SettingsCenteredOp op) => op.value == '恢复默认设置'), isTrue);
       final SettingsTextOp help = recorder.textAt('仅重置终端偏好，平台、账号与更新状态保持不变。')!;
       expect(help.left, 370);
       expect(help.top, 2899);
@@ -1745,7 +1745,7 @@ void main() {
       expect(backText.top, 31);
       expect(backText.size, 20);
       expect(backText.weight, SettingsFontWeight.demibold);
-      expect(recorder.centered.where((SettingsCenteredOp op) => op.value == '← 返回'), isEmpty);
+      expect(recorder.centeredOps.where((SettingsCenteredOp op) => op.value == '← 返回'), isEmpty);
     });
 
     test('x / y 偏移整体平移（模态不是从 (0,0) 起）', () {

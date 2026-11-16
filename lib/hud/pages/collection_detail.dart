@@ -955,7 +955,7 @@ class _CardPainter {
     label('曲目 / TITLE', titleLeft, 414, 11, palette.muted, 'regular', 0.5);
     label('歌手 / ARTIST', artistX, 414, 11, palette.muted, 'regular', 0.5);
     rightLabel('时长', timeEdge, 414, 11, palette.muted, 'regular', 0.5);
-    painter.rule(x, 433, width, 0.25);
+    rule(x, 433, width, 0.25);
     for (int index = 0; index < model.rows.length; index++) {
       final CollectionDetailRow row = model.rows[index];
       final double yy = model.rowsY + index * model.rowHeight;
@@ -968,7 +968,7 @@ class _CardPainter {
       fitted(row.artist, artistX, yy + 17, 13, timeEdge - artistX - 30, palette.muted);
       rightLabel(row.stamp, timeEdge, yy + 18, 12, palette.muted);
       rightLabel('▷', contentRight, yy + 13, 18, row.current ? collectionDetailAmber : palette.muted);
-      painter.rule(x, yy + model.rowHeight - 1, contentRight - x, 0.15);
+      rule(x, yy + model.rowHeight - 1, contentRight - x, 0.15);
       painter.hit(x - 8, yy, contentRight - x + 16, model.rowHeight - 2, row.action, row.label);
     }
     if (model.rows.isEmpty && model.emptyMessage.isNotEmpty) {
@@ -1011,7 +1011,7 @@ class _CardPainter {
       y += 40;
     }
     if (model.quote.isNotEmpty) {
-      painter.rule(sx, y + 14, sideWidth, 0.35);
+      rule(sx, y + 14, sideWidth, 0.35);
       final List<String> lines = glyphs.wrap(model.quote, sideWidth, 12, 'regular');
       final int count = math.min(2, lines.length);
       for (int index = 0; index < count; index++) {
@@ -1019,12 +1019,12 @@ class _CardPainter {
       }
     }
     if (!model.rename.isEmpty || !model.remove.isEmpty) {
-      painter.rule(sx, 858, sideWidth, 0.3);
+      rule(sx, 858, sideWidth, 0.3);
       textButton(model.rename, sx, 866, sideWidth / 2 - 6, 30, 12, palette.ink);
       textButton(model.remove, sx + sideWidth / 2, 866, sideWidth / 2, 30, 12, palette.ink);
     }
     if (!model.subscribe.isEmpty) {
-      painter.rule(sx, 900, sideWidth, 0.3);
+      rule(sx, 900, sideWidth, 0.3);
       painter.hit(sx, 904, sideWidth, 40, model.subscribe.action, model.subscribe.label);
       painter.text(painter.fit(model.subscribe.label, 14, sideWidth, 'regular'), sx, 914, 14,
           'regular', 0, model.subscribe.selected ? collectionDetailAmber : palette.ink);

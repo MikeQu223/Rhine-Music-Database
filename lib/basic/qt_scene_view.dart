@@ -110,7 +110,215 @@ String qtSceneCoverOf(BasicViewState state, SirenSong song) {
   return '';
 }
 
-String qtSceneStateSnapshot(BasicViewState state) {
+/// 单格条目的真实封面：条目自带图优先；歌曲没有自带图时只允许回退到**同一张专辑**
+/// 的封面（`state.albums` 里 `albumId` 相等的那一张），与 [qtSceneCoverOf] 同一条规则。
+///
+/// 不做的事：不按 filtered index 去 state.songs 里翻、不跨条目借图、不造占位 URL。
+/// 拿不到就返回空串——Qt 侧（EmbeddedCellResources）据此走 honest placeholder。
+String qtSceneCellCoverOf(BasicViewState state, BasicListItem item) {
+  if (item.cover.isNotEmpty) {
+    return item.cover;
+  }
+  if (item.kind != 'song' || item.albumId.isEmpty) {
+    return '';
+  }
+  for (final SirenAlbum album in state.albums) {
+    if (album.id == item.albumId) {
+      return album.cover;
+    }
+  }
+  return '';
+}
+
+/// 一列身份用的稳定散列（FNV-1a 32 位，逐条逐字符）。
+///
+/// 为什么不用 Dart 的 `Object.hash` / `hashCode`：字符串的 hashCode 在 VM 上带随机种子
+/// （每次进程启动不同），指纹会跨进程漂移，设备日志里的"同一份集合"无法复现比较；而且
+/// `List.hashCode` 是同一性散列，对内容不做任何承诺。这里自己算，纯函数、无随机种子、
+/// 对**顺序**敏感（相邻两条对调一定变）。
+int _qtSceneLaneHash(List<BasicListItem> lane) {
+  int hash = 0x811c9dc5;
+  for (int i = 0; i < lane.length; i++) {
+    final BasicListItem item = lane[i];
+    final String identity = '${item.kind}\u0000${item.key}';
+    for (int j = 0; j < identity.length; j++) {
+      hash ^= identity.codeUnitAt(j);
+      hash = (hash * 0x01000193) & 0xFFFFFFFF;
+    }
+    // 分隔符参与散列：否则 "ab"+"c" 与 "a"+"bc" 在同一列里会撞成同一个值。
+    hash ^= 0x1f;
+    hash = (hash * 0x01000193) & 0xFFFFFFFF;
+  }
+  return hash;
+}
+
+/// 一列条目的**完整有序身份**：长度 + 全量顺序散列 + 首末 key。
+///
+/// 旧实现只写 `length:first:last`，于是"中间两条对调、条数不变、首末不变"这类集合变化
+/// 完全不可见 —— 交互代次不递增，Qt 侧仍把它当成同一份上下文的迟到输入，而画面已经被
+/// 换成了新顺序。首末 key 现在只是便于人工判读的冗余信息（设备日志里能看出是哪一列换了），
+/// 判等靠长度 + 全量散列。
+String qtSceneLaneIdentity(List<BasicListItem> lane) {
+  if (lane.isEmpty) {
+    return '-';
+  }
+  return '${lane.length}:${_qtSceneLaneHash(lane)}:${lane.first.key}:${lane.last.key}';
+}
+
+/// 场景的身份签名：决定 Qt 侧"这一份交互上下文"是否还是同一个。
+///
+/// 只放**目录/集合身份**（页面、目录、专辑、列、搜索词、每列完整有序身份），不放滚动
+/// 位置、不放 cells 窗口、不放播放/音频状态：拖动/惯性/切歌本身就是合法变化，每帧换代次
+/// 会把它们全判成旧事件，惯性就被自己的代次切换掐死了。
+String qtSceneIdentitySignature(BasicViewState state) {
+  final StringBuffer buffer = StringBuffer()
+    ..write(state.phase.name)
+    ..write('|')
+    ..write(state.selectedLane)
+    ..write('|')
+    ..write(state.query.trim())
+    ..write('|')
+    ..write(state.directory?.id ?? '')
+    ..write('|')
+    ..write(state.album?.id ?? '');
+  for (final List<BasicListItem> lane in state.laneItems) {
+    buffer
+      ..write('|')
+      ..write(qtSceneLaneIdentity(lane));
+  }
+  return buffer.toString();
+}
+
+/// 交互代次的前进规则：0（还没登记）→ 1，之后每次 +1。
+///
+/// 提成纯函数是为了让"只在集合身份变化时才换代"这条规则可以被测试直接钉住：视图状态
+/// 只在 [_identitySignature] 变化时调用它，拖动/惯性/播放状态变化不调用。
+int qtSceneNextContext(int current) => current == 0 ? 1 : current + 1;
+
+/// 增量版身份签名：按「列表实例」缓存每一列的身份，避免拖动中每帧重扫整库。
+///
+/// 为什么 `identical()` 缓存是有效的：集合没变时 controller 会**复用同一份**
+/// `List<List<BasicListItem>>`（lib/basic/siren_controller.dart `_laneItemTable()` 按
+/// [曲库代际, 检索词, 目录, 页面, 专辑, 喜欢数, 歌单数, 本地集合] 缓存整张表，命中时返回
+/// 的是同一批 List 实例，且这些 List 构建后再也不会被就地修改）。所以"实例没变"就是
+/// "这一列的完整有序内容没变"。
+///
+/// 与 [qtSceneIdentitySignature] 必须给出**完全相同**的签名（同一份判据的快速实现）。
+class QtSceneIdentityTracker {
+  final List<List<BasicListItem>?> _lanes = <List<BasicListItem>?>[];
+  final List<String> _identities = <String>[];
+
+  /// 这一列的身份（命中缓存时零扫描）。
+  String identityOf(int lane, List<BasicListItem> items) {
+    while (_lanes.length <= lane) {
+      _lanes.add(null);
+      _identities.add('');
+    }
+    if (identical(_lanes[lane], items)) {
+      return _identities[lane];
+    }
+    final String identity = qtSceneLaneIdentity(items);
+    _lanes[lane] = items;
+    _identities[lane] = identity;
+    return identity;
+  }
+
+  String signature(BasicViewState state) {
+    final StringBuffer buffer = StringBuffer()
+      ..write(state.phase.name)
+      ..write('|')
+      ..write(state.selectedLane)
+      ..write('|')
+      ..write(state.query.trim())
+      ..write('|')
+      ..write(state.directory?.id ?? '')
+      ..write('|')
+      ..write(state.album?.id ?? '');
+    final List<List<BasicListItem>> lanes = state.laneItems;
+    for (int lane = 0; lane < lanes.length; lane++) {
+      buffer
+        ..write('|')
+        ..write(identityOf(lane, lanes[lane]));
+    }
+    return buffer.toString();
+  }
+
+  /// 视图销毁时调用：缓存归零，避免把上一份列表实例的结论带进下一轮。
+  void reset() {
+    _lanes.clear();
+    _identities.clear();
+  }
+}
+
+
+/// 原生渲染参数：设置面板里那些**真的影响渲染**的项，随场景快照一起去 Qt。
+///
+/// 这里只是同一个真值的投影：Dart 侧的唯一真值是 [BasicSettingsRuntime] 的持久化值，
+/// Qt 侧不保存第二份。`restart` 组（图形后端/垂直同步/渲染分辨率/抗锯齿）在 Android
+/// 上由进程启动时的 Qt main.cpp 读取同一套 `panel/*` 偏好（Host.cpp:1075-1089），
+/// 所以这里下发的意义是"写进 Qt 的偏好"，真生效在下次启动；`disc`/`mask` 是逐帧读的，
+/// 下发即生效（Engine.cpp:1296 / NativeHudController.cpp:50-52）。
+class BasicSceneSettings {
+  const BasicSceneSettings({
+    this.discRotation = false,
+    this.archiveMaskStrength = 55,
+    this.vsync = true,
+    this.renderScale = 75,
+    this.graphicsBackend = '',
+    this.aaMode = 'off',
+    this.aaScale = 125,
+    this.msaa = 0,
+    this.supersample = 1,
+  });
+
+  final bool discRotation;
+  final int archiveMaskStrength;
+  final bool vsync;
+  final int renderScale;
+  final String graphicsBackend;
+  final String aaMode;
+  final int aaScale;
+  final int msaa;
+  final int supersample;
+
+  static const BasicSceneSettings fallback = BasicSceneSettings();
+
+  Map<String, Object?> toJson() => <String, Object?>{
+        'disc': discRotation,
+        'mask': archiveMaskStrength,
+        'vsync': vsync ? 'on' : 'off',
+        'renderScale': renderScale,
+        'backend': graphicsBackend,
+        'aa': aaMode,
+        'aaScale': aaScale,
+        'msaa': msaa,
+        'supersample': supersample,
+      };
+
+  @override
+  bool operator ==(Object other) =>
+      other is BasicSceneSettings &&
+      other.discRotation == discRotation &&
+      other.archiveMaskStrength == archiveMaskStrength &&
+      other.vsync == vsync &&
+      other.renderScale == renderScale &&
+      other.graphicsBackend == graphicsBackend &&
+      other.aaMode == aaMode &&
+      other.aaScale == aaScale &&
+      other.msaa == msaa &&
+      other.supersample == supersample;
+
+  @override
+  int get hashCode => Object.hash(discRotation, archiveMaskStrength, vsync,
+      renderScale, graphicsBackend, aaMode, aaScale, msaa, supersample);
+}
+
+String qtSceneStateSnapshot(
+  BasicViewState state, {
+  BasicSceneSettings? settings,
+  int? viewId,
+  int contextGeneration = 0,
+}) {
   final SirenSong? song = state.song;
   final int index = qtSceneSelectedIndexOf(state);
   // `current` 是**选中身份**（不是 playingTrack）：Qt 侧 render-only 没有曲库，封面只能
@@ -129,7 +337,13 @@ String qtSceneStateSnapshot(BasicViewState state) {
               'artist': song.artist,
             };
   final Map<String, Object?> payload = <String, Object?>{
-    'v': 3,
+    'v': 4,
+    // producer/input 的 origin：平台视图 id + 稳定的交互上下文代次。
+    // Native 侧（EmbeddedSceneHost）把它们记成"最后应用的那一份"，之后所有排队中的
+    // pointer/wheel/scroll/action 都带着自己的 origin 回来对——对不上就丢，
+    // 而不是把旧视图（或同视图的旧目录）的事件贴到当前场景上。
+    if (viewId != null) 'view': viewId,
+    'ctx': contextGeneration,
     'dark': state.dark,
     'mode': qtSceneModeOf(state),
     'index': index,
@@ -139,6 +353,7 @@ String qtSceneStateSnapshot(BasicViewState state) {
     'pos': state.listPosition ?? 0,
     'lane': state.selectedLane,
     'cells': qtSceneCellsOf(state),
+    if (settings != null) 'settings': settings.toJson(),
     if (current != null) 'current': current,
     if (song != null && song.key.isNotEmpty) 'key': song.key,
   };
@@ -156,8 +371,11 @@ String qtSceneStateSnapshot(BasicViewState state) {
 /// 行键沿用 Qt 的 wrap 语义（src/MusicLibrary.cpp:646-667）：`index = offset + row`
 /// 允许负数/超过末尾，取模回列表内——负数窗口起点是 Qt 的真实行为，不在这里夹平。
 ///
-/// 不带 cover：素材纹理仍由 `current`（单选身份）驱动，逐格下发封面会把 40 个
-/// 下载/纹理塞进一次状态推送；卡片面在本版本就是抽取面，不画专辑图。
+/// 带真实 metadata：`c`/`a`/`b` 是本格源条目的封面 URL/艺人/专辑，取自
+/// [BasicListItem]（由 basicLibraryItems 从 SirenSong/SirenAlbum 填），不是
+/// `current`（选中身份）的复制。Qt 侧 Engine::projectEmbeddedCells 按
+/// `siren:<kind>:<id>` 去重、限流、准入纹理；空封面走 honest placeholder，
+/// 绝不把选中那张的图贴到所有格上。
 /// 当前列的窗口基址（物理行 12 对应的条目行号）。
 ///
 /// 唯一真值是连续的 `listPosition`：窗口基址 = `round(pos) ~/ 8 * 8`，于是
@@ -193,6 +411,7 @@ List<Map<String, Object?>> qtSceneCellsOf(BasicViewState state) {
       final int raw = offset + row;
       final int index = ((raw % items.length) + items.length) % items.length;
       final BasicListItem item = items[index];
+      final String cover = qtSceneCellCoverOf(state, item);
       cells.add(<String, Object?>{
         'l': lane,
         // 绝对行域：`12 + 轨道条目` 的行键偏移（= 窗口基址 + 窗口内行）。
@@ -202,6 +421,11 @@ List<Map<String, Object?>> qtSceneCellsOf(BasicViewState state) {
         'k': item.kind,
         'i': item.id,
         't': item.title,
+        // 真实 metadata：只在本格自己的源条目有值时才带键（省字节，也避免把
+        // 空串当成"有一张空图"）。封面仍是 URL，抓取/重试/纹理准入全在 Qt 侧。
+        if (cover.isNotEmpty) 'c': cover,
+        if (item.artist.isNotEmpty) 'a': item.artist,
+        if (item.album.isNotEmpty) 'b': item.album,
       });
     }
   }
@@ -400,6 +624,17 @@ class QtSceneActions {
 
   static final Map<int, ValueChanged<String>> _callbacks =
       <int, ValueChanged<String>>{};
+
+  /// 每个视图当前生效的交互上下文代次（0 = 未登记，此时该视图的动作一律丢弃）。
+  ///
+  /// origin 门禁的另一半：原生只把**它记下的 origin** 写回动作里；如果这个视图像素
+  /// 已经换到另一个目录（ctx 递增），旧 ctx 的迟到动作就不能再驱动列表——否则
+  /// "同 view 换目录"会把上一页的选中/滚动贴到新页面上。
+  ///
+  /// 三处 fail-closed（原生侧 Kotlin 已先拦一遍，这里是第二道）：未登记（unbound）、
+  /// 动作没带 ctx、ctx 与登记值不等——都不交给页面。宁可丢一个动作，也不用"当前代次"
+  /// 给迟到动作补标签。
+  static final Map<int, int> _contexts = <int, int>{};
   static MethodChannel? _channel;
 
   /// 安装通道处理器（幂等）。测试里用 [installForTest] 换成 mock 通道。
@@ -416,19 +651,31 @@ class QtSceneActions {
   @visibleForTesting
   static void resetForTest() {
     _callbacks.clear();
+    _contexts.clear();
     _channel = null;
   }
 
   static void register(int viewId, ValueChanged<String>? callback) {
     if (callback == null) {
       _callbacks.remove(viewId);
+      _contexts.remove(viewId);
       return;
     }
     _callbacks[viewId] = callback;
   }
 
+  /// 视图的交互上下文代次变了（同 view 换目录/换列/换所属）：
+  /// 记下新代次，旧代次的动作从此被丢弃。
+  static void setContext(int viewId, int contextGeneration) {
+    if (!_callbacks.containsKey(viewId)) {
+      return;
+    }
+    _contexts[viewId] = contextGeneration;
+  }
+
   static void unregister(int viewId) {
     _callbacks.remove(viewId);
+    _contexts.remove(viewId);
   }
 
   @visibleForTesting
@@ -440,8 +687,24 @@ class QtSceneActions {
           return null;
         }
         final Object? id = raw['viewId'];
+        final Object? ctx = raw['ctx'];
         final Object? action = raw['action'];
         if (id is int && action is String) {
+          if (id < 0) {
+            debugPrint('RHINE_DART scene_action_dropped_no_origin action=$action');
+            return null;
+          }
+          final int known = _contexts[id] ?? 0;
+          if (known == 0) {
+            // 视图还没登记代次（或已注销）：没有可比对的归属，直接丢。
+            debugPrint('RHINE_DART scene_action_dropped_unbound view=$id action=$action');
+            return null;
+          }
+          if (ctx is! int || ctx != known) {
+            // 迟到的旧上下文：明确丢弃，不交给页面。
+            debugPrint('RHINE_DART scene_action_dropped view=$id ctx=$ctx known=$known');
+            return null;
+          }
           _callbacks[id]?.call(action);
         }
         return null;
@@ -460,15 +723,28 @@ class QtSceneStateSender {
   final MethodChannel _channel;
 
   /// 同一份快照不重复发（Qt 侧解析+重建也是成本）。返回是否真的发出去了。
-  Future<bool> push(int viewId, String snapshot) async {
-    if (_sent[viewId] == snapshot) {
+  ///
+  /// [contextGeneration] 与快照里的 `ctx` 是同一个值，单独传一份是给 Kotlin 侧做
+  /// 每视图登记/门禁用——原生不该为了拿 origin 去解析一遍业务 JSON。
+  ///
+  /// 去重键必须**含代次**：只用快照字符串做键时，"同一份快照、只换了代次"会被当成重复
+  /// 吞掉，Kotlin 的 `contexts[viewId]` 永远学不到新代次，该视图之后的 pointer/wheel/
+  /// action 全部按 fail-closed 丢掉——静默、无日志、也再无恢复路径（直到快照内容本身
+  /// 又变化一次）。快照里通常自带 `ctx`，但 sender 是公开 API，不能依赖调用点自觉。
+  Future<bool> push(int viewId, String snapshot, {int contextGeneration = 0}) async {
+    final String key = '$contextGeneration\u0000$snapshot';
+    if (_sent[viewId] == key) {
       return false;
     }
-    _sent[viewId] = snapshot;
+    _sent[viewId] = key;
     try {
       final Object? accepted = await _channel.invokeMethod<Object?>(
         'state',
-        <String, Object?>{'viewId': viewId, 'json': snapshot},
+        <String, Object?>{
+          'viewId': viewId,
+          'ctx': contextGeneration,
+          'json': snapshot,
+        },
       );
       if (accepted == false) {
         // 原生侧没受理（Qt 主线程还没建好/视图已解绑）：不能留着去重记录，否则同一份
@@ -497,6 +773,7 @@ class QtSceneStateSender {
 
   void forget(int viewId) => _sent.remove(viewId);
 
+  /// 每个视图上一次发出的去重键（代次 + '\u0000' + 快照），不是裸快照。
   final Map<int, String> _sent = <int, String>{};
 }
 
@@ -523,11 +800,20 @@ class QtScenePointerSender {
 
   final MethodChannel _channel;
 
+  /// 当前视图的交互上下文代次。桥在 attach/换目录时更新；每个事件显式带上它。
+  int currentContext = 0;
+
   /// [x]/[y] 是**舞台单位**（与 Overlay.qml 的 x / stageScale 同义）。
-  Future<void> pointer(int viewId, String type, double x, double y) async {
+  ///
+  /// [contextGeneration] 跟着每一个事件走完整条队列（Dart → Kotlin → Qt）：Qt 侧把它
+  /// 与"最后应用的那一份快照"的 origin 对比，对不上就丢。这样排队的旧 A 视图事件
+  /// 不会在 B 已经接手后落到 B 的场景上。
+  Future<void> pointer(int viewId, String type, double x, double y,
+      {int? contextGeneration}) async {
     try {
       await _channel.invokeMethod<void>('pointer', <String, Object?>{
         'viewId': viewId,
+        'ctx': contextGeneration ?? currentContext,
         'type': type,
         'x': x,
         'y': y,
@@ -539,10 +825,12 @@ class QtScenePointerSender {
     }
   }
 
-  Future<void> wheel(int viewId, double x, double y, double delta) async {
+  Future<void> wheel(int viewId, double x, double y, double delta,
+      {int? contextGeneration}) async {
     try {
       await _channel.invokeMethod<void>('wheel', <String, Object?>{
         'viewId': viewId,
+        'ctx': contextGeneration ?? currentContext,
         'x': x,
         'y': y,
         'delta': delta,
@@ -583,12 +871,20 @@ class QtScenePointerBridge {
   /// 重建视图时会先 attach 新的 viewId：旧视图上已判定给 Qt 的指针不会再有 up，
   /// 必须在这里显式 pointercancel 掉再重绑，否则新视图第一帧就可能带着上一视图的
   /// 下压状态（旧实现直接覆盖 _viewId，等于把那些指针静默丢掉）。
-  void attach(int viewId) {
+  void attach(int viewId, {int contextGeneration = 0}) {
     if (_viewId != null && _viewId != viewId) {
       releasePointers(_forwarded);
     }
     _viewId = viewId;
+    _sender.currentContext = contextGeneration;
     _reset();
+  }
+
+  /// 同 view 的目录/所属变了：后续事件带新代次，Qt 侧据此拒掉排队中的旧事件。
+  void setContext(int viewId, int contextGeneration) {
+    if (_viewId == viewId) {
+      _sender.currentContext = contextGeneration;
+    }
   }
 
   /// 释放这些指针：给 Qt 发过 pointerdown 的补一个 pointercancel（不留悬挂下压），
@@ -616,6 +912,9 @@ class QtScenePointerBridge {
   void detach(int viewId) {
     if (_viewId == viewId) {
       _viewId = null;
+      // 代次归零：脱离后任何残留事件带 0，原生侧 acceptsInput 一律丢弃（没有"沿用上一
+      // 个视图代次"的窗口）。
+      _sender.currentContext = 0;
       _reset();
     }
   }
@@ -814,10 +1113,14 @@ class QtSceneView extends StatefulWidget {
     this.onAction,
     this.onCreated,
     this.onScroll,
+    this.settings,
   });
 
   /// 当前界面状态（只读快照）。选中身份看 state.song，不看播放状态。
   final BasicViewState state;
+
+  /// 渲染参数（设置面板的真实值）。为空时不下发 settings 块，Qt 保持自己的默认值。
+  final BasicSceneSettings? settings;
 
   /// Qt 侧产生的动作（如 'select:12' / 'viewer:open'）。原文透传，不在这里解释词表。
   final ValueChanged<String>? onAction;
@@ -839,6 +1142,30 @@ class _QtSceneViewState extends State<QtSceneView> {
 
   int? _viewId;
 
+  /// 稳定交互上下文代次：只在**目录/集合身份**变化时递增（见
+  /// [qtSceneIdentitySignature]），不在拖动/惯性/选中变化时递增。
+  int _contextGeneration = 0;
+  String? _identitySignature;
+
+  /// 身份的增量计算器：按列表实例缓存每一列的有序指纹，拖动中每帧的那次 `_syncContext`
+  /// 不会重扫整库（控制器复用同一份 List 实例时直接命中缓存）。
+  final QtSceneIdentityTracker _identity = QtSceneIdentityTracker();
+
+  /// 目录身份变了才换代次，并把新代次登记给动作分发与指针桥。
+  void _syncContext() {
+    final String signature = _identity.signature(widget.state);
+    if (_identitySignature == signature) {
+      return;
+    }
+    _identitySignature = signature;
+    _contextGeneration = qtSceneNextContext(_contextGeneration);
+    final int? id = _viewId;
+    if (id != null) {
+      QtSceneActions.setContext(id, _contextGeneration);
+      QtScenePointerBridge.instance.setContext(id, _contextGeneration);
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -852,8 +1179,21 @@ class _QtSceneViewState extends State<QtSceneView> {
     if (id == null) {
       return;
     }
-    // 快照只与 state 有关：父级重建但状态没变时不重复下发。
-    _sender.push(id, qtSceneStateSnapshot(widget.state));
+    // 快照只与 state/settings 有关：父级重建但两者都没变时不重复下发
+    // （QtSceneStateSender 自己按最后一次字符串去重）。
+    if (oldWidget.state != widget.state || oldWidget.settings != widget.settings) {
+      _syncContext();
+      _sender.push(
+        id,
+        qtSceneStateSnapshot(
+          widget.state,
+          settings: widget.settings,
+          viewId: id,
+          contextGeneration: _contextGeneration,
+        ),
+        contextGeneration: _contextGeneration,
+      );
+    }
   }
 
   @override
@@ -864,6 +1204,8 @@ class _QtSceneViewState extends State<QtSceneView> {
       QtScenePointerBridge.instance.detach(id);
       _sender.forget(id);
     }
+    // 缓存随视图一起丢弃：下一个视图是新一代次，不该继承上一份列表实例的结论。
+    _identity.reset();
     super.dispose();
   }
 
@@ -899,10 +1241,29 @@ class _QtSceneViewState extends State<QtSceneView> {
   void _onPlatformViewCreated(int id) {
     _viewId = id;
     QtSceneActions.register(id, _onNativeAction);
-    QtScenePointerBridge.instance.attach(id);
+    // 先算代次再登记/下发：这一份快照是 Qt 侧的"当前 origin"，之后的输入都按它校验。
+    _syncContext();
+    if (_contextGeneration == 0) {
+      // 兜底：正常路径上 `_syncContext` 因为 `_identitySignature` 从 null 变成具体签名而
+      // 一定会代入次；这里只防"签名恰好等于 null"这类不可能状态，规则与上面共用同一个
+      // 纯函数，避免两处各写一遍 0→1 / +1。
+      _contextGeneration = qtSceneNextContext(_contextGeneration);
+      _identitySignature = _identity.signature(widget.state);
+    }
+    QtSceneActions.setContext(id, _contextGeneration);
+    QtScenePointerBridge.instance.attach(id, contextGeneration: _contextGeneration);
     // 首个快照必须在视图创建后立刻给：Qt 的归档/唱片/主题都靠它进正确状态，
     // 否则会先按 archive+light 渲染一帧再跳变。
-    _sender.push(id, qtSceneStateSnapshot(widget.state));
+    _sender.push(
+      id,
+      qtSceneStateSnapshot(
+        widget.state,
+        settings: widget.settings,
+        viewId: id,
+        contextGeneration: _contextGeneration,
+      ),
+      contextGeneration: _contextGeneration,
+    );
     widget.onCreated?.call(id);
   }
 

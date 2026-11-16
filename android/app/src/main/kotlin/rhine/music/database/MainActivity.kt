@@ -85,6 +85,7 @@ class MainActivity : FlutterActivity() {
             flutterEngine.dartExecutor.binaryMessenger,
             { this },
             applicationContext,
+            this,
         )
         // 两条注册都不碰上面 MediaSession 的顺序与语义。
         //  BasicAudioChannel 是真实音频的唯一权威（android.media.MediaPlayer）；MediaSession 只做
@@ -96,7 +97,7 @@ class MainActivity : FlutterActivity() {
         BasicAudioChannel.install(flutterEngine.dartExecutor.binaryMessenger) { this }
         //  状态通道先装：视图创建后 Dart 会立刻推首个快照（主题/模式/选中行），
         //  通道晚一步就会丢掉第一次 state 直到下一次状态变化。
-        QtSceneChannel.install(flutterEngine)
+        QtSceneChannel.install(flutterEngine, this)
         flutterEngine.platformViewsController.registry.registerViewFactory(
             QT_SCENE_VIEW_TYPE,
             QtSceneViewFactory(),
@@ -115,7 +116,11 @@ class MainActivity : FlutterActivity() {
         hostBackDispatcher?.remove()
         // 静态通道对象会经 MethodChannel 反向握住本引擎（→ 平台视图 → 本 Activity）。
         // 引擎随 Activity 一起销毁，这里必须同步断开，否则旧 Activity 永远进不了回收。
-        QtSceneChannel.uninstall()
+        QtSceneChannel.uninstall(this)
+        // 媒体通道同样是"每引擎一份"的静态对象：不在这里断，旧 engine 的 handler 与
+        // activityProvider（→ 本 Activity）会跨宿主存活，新宿主的 install 只能靠自身
+        // detach 自救。带 host 参数做归属校验，旧 onDestroy 不能拆新宿主的通道。
+        MediaSessionChannel.uninstall(this)
         // 同一个理由：BasicAudioChannel 的静态 current + 注册在 Application 上的
         // ActivityLifecycleCallbacks 都反向握着本 Activity。
         BasicAudioChannel.uninstall()

@@ -398,7 +398,7 @@ Future<void> librarySelectDirectory(
   final int cell = (index + folder.anchor) % 40;
   lib.selectedLane = cell ~/ 8;
   final int physical = directoryPhysicalOfCell(lib, cell);
-  final JsonMap navigation = axis.isEmpty()
+  final JsonMap navigation = axis.isEmpty
       ? <String, Object?>{}
       : <String, Object?>{'axis': axis, 'direction': direction};
   lib.selectionRequests.add((index: physical, navigation: navigation));

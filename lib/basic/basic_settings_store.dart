@@ -1,0 +1,308 @@
+import 'package:flutter/services.dart';
+
+import '../data/storage/preference_store.dart';
+import '../hud/modals/settings_modal.dart';
+import 'basic_settings.dart';
+
+/// SETTINGS-148 跨语言契约：Android 侧 porting/BasicSettingsChannel.kt 的 CHANNEL 逐字相同。
+const String basicSettingsChannelName = 'rhine.music.database/basic_settings';
+
+/// 本 APK 的真实版本真值（PackageManager 读出来的，不是写死的）。
+/// 平台没有报告 versionName 时的可见版本串（如实说“未知”，不编版本号）。
+const String basicSettingsUnknownVersion = '未知版本';
+
+class BasicSettingsPackageInfo {
+  const BasicSettingsPackageInfo({
+    required this.packageName,
+    required this.versionName,
+    required this.versionCode,
+    required this.debuggable,
+  });
+
+  static const BasicSettingsPackageInfo unknown = BasicSettingsPackageInfo(
+    packageName: '',
+    versionName: '',
+    versionCode: 0,
+    debuggable: true,
+  );
+
+  final String packageName;
+  final String versionName;
+  final int versionCode;
+
+  /// true = debuggable 构建 → 面板显示"开发版"并画 commit 行。
+  final bool debuggable;
+
+  /// 面板版本行：version 只取 [versionName]；releaseBuild 由 debuggable 反推。
+  /// 读不到版本时宁可不出行，也不编一个（[BasicSettingsVersion.version] 断言非空）。
+  BasicSettingsVersion? get version {
+    if (versionName.isEmpty) {
+      return null;
+    }
+    return BasicSettingsVersion(
+      version: versionName,
+      releaseBuild: !debuggable,
+      commitTitle: '',
+    );
+  }
+}
+
+/// 设置持久化的宿主端口（Android = MethodChannel；测试 = 内存）。
+abstract class BasicSettingsPort {
+  Future<Map<String, String>> readAll();
+  Future<bool> write(String key, String value);
+  Future<void> remove(String key);
+  Future<BasicSettingsPackageInfo> packageInfo();
+  Future<bool> openUrl(String url);
+}
+
+/// 真实落盘：通道失败一律收敛成"失败"，绝不假装写成功。
+class MethodChannelBasicSettingsPort implements BasicSettingsPort {
+  MethodChannelBasicSettingsPort({MethodChannel? channel})
+      : _channel = channel ?? const MethodChannel(basicSettingsChannelName);
+
+  final MethodChannel _channel;
+
+  @override
+  Future<Map<String, String>> readAll() async {
+    try {
+      final Object? raw = await _channel.invokeMethod<Object?>('all');
+      if (raw is! Map) {
+        return const <String, String>{};
+      }
+      final Map<String, String> out = <String, String>{};
+      raw.forEach((Object? key, Object? value) {
+        if (key is String && value is String) {
+          out[key] = value;
+        }
+      });
+      return out;
+    } catch (_) {
+      return const <String, String>{};
+    }
+  }
+
+  @override
+  Future<bool> write(String key, String value) async {
+    try {
+      final Object? ok = await _channel
+          .invokeMethod<Object?>('write', <String, Object?>{'key': key, 'value': value});
+      return ok == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  @override
+  Future<void> remove(String key) async {
+    try {
+      await _channel.invokeMethod<Object?>('remove', <String, Object?>{'key': key});
+    } catch (_) {
+      // 删除失败等价于"值还在"：下一次读回会拿到旧值，面板不会撒谎。
+    }
+  }
+
+  @override
+  Future<BasicSettingsPackageInfo> packageInfo() async {
+    try {
+      final Object? raw = await _channel.invokeMethod<Object?>('packageInfo');
+      if (raw is! Map) {
+        return BasicSettingsPackageInfo.unknown;
+      }
+      return BasicSettingsPackageInfo(
+        packageName: raw['packageName'] is String ? raw['packageName']! as String : '',
+        versionName: raw['versionName'] is String ? raw['versionName']! as String : '',
+        versionCode: raw['versionCode'] is int ? raw['versionCode']! as int : 0,
+        debuggable: raw['debuggable'] == true,
+      );
+    } catch (_) {
+      return BasicSettingsPackageInfo.unknown;
+    }
+  }
+
+  @override
+  Future<bool> openUrl(String url) async {
+    try {
+      final Object? ok =
+          await _channel.invokeMethod<Object?>('openUrl', <String, Object?>{'url': url});
+      return ok == true;
+    } catch (_) {
+      return false;
+    }
+  }
+}
+
+/// 测试/桌面预览用的内存端口：行为与真实端口一致（含失败注入）。
+class MemoryBasicSettingsPort implements BasicSettingsPort {
+  MemoryBasicSettingsPort({
+    Map<String, String>? values,
+    this.package = BasicSettingsPackageInfo.unknown,
+    this.failWrites = false,
+    this.failReads = false,
+  }) : values = <String, String>{...?values};
+
+  final Map<String, String> values;
+  BasicSettingsPackageInfo package;
+
+  /// true 时 [write] 返回 false 且不改内容（模拟 commit 失败）。
+  bool failWrites;
+
+  /// true 时 [readAll] 返回空表（模拟通道不可用）。
+  bool failReads;
+
+  /// 记录 openUrl 调用，测试断言"确实请求了真实 URL"。
+  final List<String> openedUrls = <String>[];
+
+  @override
+  Future<Map<String, String>> readAll() async =>
+      failReads ? const <String, String>{} : Map<String, String>.from(values);
+
+  @override
+  Future<bool> write(String key, String value) async {
+    if (failWrites) {
+      return false;
+    }
+    values[key] = value;
+    return true;
+  }
+
+  @override
+  Future<void> remove(String key) async {
+    values.remove(key);
+  }
+
+  @override
+  Future<BasicSettingsPackageInfo> packageInfo() async => package;
+
+  @override
+  Future<bool> openUrl(String url) async {
+    openedUrls.add(url);
+    return true;
+  }
+}
+
+/// 一次加载的结果：面板要的三样真值（快照 / 版本 / 包信息）一起给。
+class BasicSettingsLoad {
+  const BasicSettingsLoad({
+    required this.snapshot,
+    required this.package,
+    required this.raw,
+  });
+
+  final SettingsPreferenceSnapshot snapshot;
+  final BasicSettingsPackageInfo package;
+
+  /// 原始 `panel/<key>` 表（键含前缀，值逐字），供真实生效路径复用。
+  final Map<String, String> raw;
+
+  BasicSettingsVersion? get version => package.version;
+
+  /// 原始表里取一个 panel key 的已存值；缺键给空串（与 Host::preference 一致）。
+  String value(String panelKey) => raw['$basicSettingsPreferencePrefix$panelKey'] ?? '';
+}
+
+/// 设置面板落在 `panel/<key>`（Qt/src/Host.cpp:1075），与既有 HUD 偏好同一键空间。
+const String basicSettingsPreferencePrefix = 'panel/';
+
+/// 把 `panel/<key>` 原始表收敛成 [SettingsPreferenceSnapshot]（默认值取 Qt 真值表）。
+SettingsPreferenceSnapshot basicSettingsSnapshotFrom(
+  Map<String, String> raw, {
+  bool dark = true,
+}) {
+  String value(String key) => raw['$basicSettingsPreferencePrefix$key'] ?? '';
+  bool flag(String key, {required bool fallback}) {
+    final String text = value(key).trim().toLowerCase();
+    if (text == 'on' || text == 'true' || text == '1') {
+      return true;
+    }
+    if (text == 'off' || text == 'false' || text == '0') {
+      return false;
+    }
+    return fallback;
+  }
+
+  int intValue(String key, int fallback) {
+    final String text = value(key).trim();
+    final int? parsed = int.tryParse(text);
+    return parsed ?? fallback;
+  }
+
+  final String theme = value('theme');
+  final String quality = value('quality');
+  return SettingsPreferenceSnapshot(
+    preferences: <String, String>{
+      for (final MapEntry<String, String> entry in raw.entries)
+        if (entry.key.startsWith(basicSettingsPreferencePrefix))
+          entry.key.substring(basicSettingsPreferencePrefix.length): entry.value,
+    },
+    // 面板显示"当前生效"的配色：缺键时跟随真实 HUD（基本版默认暗色），
+    // 不能让面板写着"浅色"而画面是暗的。
+    themeMode: theme == 'light' ? 'light' : 'dark',
+    reducedMotion: flag('motion', fallback: false),
+    startupAnimation: flag('startup-animation', fallback: false),
+    discRotation: flag('disc-rotation', fallback: false),
+    vsync: flag('vsync', fallback: true),
+    archiveMaskStrength: intValue('archive-mask-strength', 55),
+    quality: quality.isEmpty ? 'lossless' : quality,
+    alternative: flag('alternative', fallback: false),
+    officialPlayerActive: false,
+  );
+}
+
+/// 设置读写器：只经由 [PreferenceStore]（白名单 + 长度上限 + 离线语义都在那里）。
+class BasicSettingsStore {
+  BasicSettingsStore({required BasicSettingsPort port, bool offline = false})
+      : _port = port,
+        _preferences = PreferenceStore(port: _PortAdapter(port), offline: offline);
+
+  final BasicSettingsPort _port;
+  final PreferenceStore _preferences;
+
+  BasicSettingsPort get port => _port;
+
+  Future<BasicSettingsLoad> load({bool dark = true}) async {
+    final Map<String, String> raw = await _port.readAll();
+    return BasicSettingsLoad(
+      snapshot: basicSettingsSnapshotFrom(raw, dark: dark),
+      package: await _port.packageInfo(),
+      raw: raw,
+    );
+  }
+
+  /// 写一个 panel key（前缀由 [PreferenceStore] 自己加：它的白名单是**裸键**，
+  /// 传 `panel/xxx` 会被当成未知键直接丢弃——Qt/src/Host.cpp:1107 的白名单也是裸键）。
+  /// 返回真实结果：false = 没落盘。
+  Future<bool> write(String panelKey, String value) =>
+      _preferences.write(panelKey, value);
+
+  Future<void> remove(String panelKey) => _preferences.remove(panelKey);
+
+  Future<String> read(String panelKey) => _preferences.read(panelKey);
+
+  Future<bool> openUrl(String url) => _port.openUrl(url);
+}
+
+/// PreferenceStore 要的是 [PreferencePort]；本适配器把 KeyValue 端口桥过去，
+/// 并且**保留异常语义**（PreferenceStore 自己会把异常收敛成 false/''）。
+class _PortAdapter implements PreferencePort {
+  const _PortAdapter(this._port);
+
+  final BasicSettingsPort _port;
+
+  @override
+  Future<String?> read(String key) async {
+    final Map<String, String> all = await _port.readAll();
+    return all[key];
+  }
+
+  @override
+  Future<void> write(String key, String value) async {
+    final bool ok = await _port.write(key, value);
+    if (!ok) {
+      throw StateError('settings write rejected: $key');
+    }
+  }
+
+  @override
+  Future<void> remove(String key) => _port.remove(key);
+}

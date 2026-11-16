@@ -265,6 +265,15 @@ void NativeScene::musicClear() {
         actor.musicKey.clear();
     }
 }
+void NativeScene::projectEmbeddedCellKeys(const QHash<quint32, QString> &keys) {
+    if (keys == m_embeddedCellKeys) {
+        // 同一批可见格重复上报是常态（每帧一次）：内容没变就不动 m_changed，
+        // 否则引擎会一直以为自己有活要干，永远睡不着。
+        return;
+    }
+    m_embeddedCellKeys = keys;
+    m_changed = true;
+}
 void NativeScene::freeze(std::optional<double> time) {
     m_changed = true;
     m_freeze = time;

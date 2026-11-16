@@ -52,6 +52,12 @@ object MediaSessionChannel {
     private const val METHOD_UPDATE = "update"
     private const val METHOD_STOP = "stop"
 
+    /**
+     * 平台私有缓存目录。通知封面只能是本地文件（MediaSessionHost 用
+     * BitmapFactory.decodeFile 读），Dart 侧要把远端封面落盘就必须先问到这个目录。
+     */
+    private const val METHOD_CACHE_DIR = "cacheDir"
+
     /** update 的可空元数据键；Qt 的四个 QString 入参在这里允许 null。 */
     private val OPTIONAL_STRING_KEYS = listOf("title", "artist", "album", "coverPath")
 
@@ -60,10 +66,24 @@ object MediaSessionChannel {
     private var installedEvents: EventChannel? = null
 
     /**
+     * 装了这套通道的宿主 Activity（弱持有）。旧 Activity 的 onDestroy 晚到、而新宿主已经
+     * install 时，旧 onDestroy 不能把新宿主的通道拆掉——那会让通知动作全部静默。
+     */
+    private var host = java.lang.ref.WeakReference<Any>(null)
+
+    /**
      * 当前订阅的 sink。提到 object 层，uninstall 才能先断 sink：之后迟到/在途的媒体动作
      * 不再往已经 detach 的 engine 里推（EventSink 失效后 success() 会抛）。
      */
     private var activeSink: EventChannel.EventSink? = null
+
+    /**
+     * 应用级 context，只用于 cacheDir 这类与宿主 Activity 无关的查询。
+     *
+     * 与 activityProvider 严格分开：这里拿到的绝不能用来拉起前台服务（后台启动会被系统
+     * 拒绝），也绝不能是 Activity 本身——那等于把旧宿主钉在进程级的通道对象上。
+     */
+    private var appContext: Context? = null
 
     /**
      * 注册两个通道。
@@ -77,11 +97,16 @@ object MediaSessionChannel {
         messenger: BinaryMessenger,
         activityProvider: () -> Activity?,
         context: Context,
+        host: Any? = null,
     ) {
         // 重复 install（新 engine）：先摘上一套 handler 与 sink，再装新的。
         detachChannels()
+        if (host != null) {
+            this.host = java.lang.ref.WeakReference(host)
+        }
 
         val appContext = context.applicationContext
+        this.appContext = appContext
 
         val method = MethodChannel(messenger, METHOD_CHANNEL)
         val events = EventChannel(messenger, EVENT_CHANNEL)
@@ -131,7 +156,15 @@ object MediaSessionChannel {
      * 不停止服务、不撤通知：那两件事只由 BasicAudioChannel.uninstall() →
      * MediaSessionHost.shutdown() 决定（唯一播放实例跟着宿主收尾），两个入口不互相踩。
      */
-    fun uninstall() {
+    fun uninstall(host: Any? = null) {
+        if (host != null) {
+            val current = this.host.get()
+            if (current != null && current !== host) {
+                // 旧宿主的迟到 onDestroy：新宿主的通道与动作出口必须留着。
+                return
+            }
+        }
+        this.host.clear()
         detachChannels()
         MediaSessionHost.uninstall()
     }
@@ -158,6 +191,11 @@ object MediaSessionChannel {
             METHOD_STOP -> {
                 MediaSessionHost.stop()
                 result.success(null)
+            }
+
+            METHOD_CACHE_DIR -> {
+                // 只回真实目录；拿不到就如实 null，Dart 侧据此放弃封面而不是报错。
+                result.success(appContext?.cacheDir?.absolutePath)
             }
 
             else -> result.notImplemented()

@@ -662,7 +662,7 @@ final class NodeRuntime {
       return;
     }
     if (host is NodeRuntimeExitSource) {
-      _hostExitSubscription = host.runtimeExited.listen(
+      _hostExitSubscription = (host as NodeRuntimeExitSource).runtimeExited.listen(
         _onHostRuntimeExited,
         // 事件源只承载退出码；流自身出错不代表运行时退出（Qt 没有对应通道），这里吞掉，
         // 避免变成未捕获异步异常；运行时终态仍由断链或下一次 prepare 决定。

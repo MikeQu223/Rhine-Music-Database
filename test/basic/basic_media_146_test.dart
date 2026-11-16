@@ -555,6 +555,81 @@ void main() {
 
   // 静态文本守卫：只在磁盘源码上断言关键接口存在，防止实现回退。
   // 这不是设备 PASS，真实的 HOME/锁屏/通知/按键验收由 141 在真机执行。
+  group('late platform results never overwrite a newer truth', () {
+    test('an update that returns after stop() does not republish the old state',
+        () async {
+      final BasicMediaSessionAdapter adapter = buildAdapter();
+      port.updateGate = Completer<void>();
+
+      final Future<void> inFlight = adapter.sync(
+        identity: track,
+        audio: audio(playing: true, positionMs: 500, durationMs: 10000),
+      );
+      await pumpEventQueue();
+      expect(adapter.published, isFalse, reason: 'update 还没回来');
+
+      // 用户在通知里按了停止/切走了：这条在飞的 update 属于上一代意图。
+      await adapter.stop();
+      port.updateGate!.complete();
+      port.updateGate = null;
+      await inFlight;
+
+      expect(adapter.published, isFalse,
+          reason: '晚回的 update 不能把已停止的通知重新点亮');
+      expect(port.calls.where((String c) => c == 'stop'), isNotEmpty);
+
+      await adapter.dispose();
+    });
+
+    test('a failed clear keeps the published state so the next sync can retry',
+        () async {
+      final BasicMediaSessionAdapter adapter = buildAdapter();
+      await adapter.sync(
+        identity: track,
+        audio: audio(playing: true, durationMs: 10000),
+      );
+      expect(adapter.published, isTrue);
+
+      port.stopFailure = StateError('backend busy');
+      await adapter.sync(identity: null, audio: audio());
+      expect(adapter.lastError, isNotNull);
+      expect(adapter.published, isTrue,
+          reason: '后端可能还留着旧通知：不能先抹掉去重记录、再也没人去清');
+
+      port.stopFailure = null;
+      await adapter.sync(identity: null, audio: audio());
+      expect(adapter.published, isFalse);
+      expect(port.calls.where((String c) => c == 'stop').length, 2);
+
+      await adapter.dispose();
+    });
+
+    test('identity.id participates in dedupe: same text, different song republishes',
+        () async {
+      final BasicMediaSessionAdapter adapter = buildAdapter();
+      const BasicMediaIdentity a = BasicMediaIdentity(
+        id: 'siren:song:1',
+        title: 'Same Title',
+        artist: 'Same Artist',
+        album: 'Same Album',
+      );
+      const BasicMediaIdentity b = BasicMediaIdentity(
+        id: 'siren:song:2',
+        title: 'Same Title',
+        artist: 'Same Artist',
+        album: 'Same Album',
+      );
+
+      await adapter.sync(identity: a, audio: audio(durationMs: 10000));
+      await adapter.sync(identity: b, audio: audio(durationMs: 10000));
+
+      expect(port.updates.length, 2,
+          reason: '两首歌同名同封面也必须各报一次，否则通知停在上一首');
+
+      await adapter.dispose();
+    });
+  });
+
   group('source guards (never a device PASS)', () {
     String readSource(String path) {
       final File file = File(path);
@@ -595,7 +670,7 @@ void main() {
         'android/app/src/main/kotlin/rhine/music/database/porting/MediaSessionChannel.kt',
       );
 
-      expect(source, contains('fun uninstall()'));
+      expect(source, contains('fun uninstall('));
       expect(source, contains('MediaSessionHost.uninstall()'));
       expect(source, contains('setMethodCallHandler(null)'));
       expect(source, contains('setStreamHandler(null)'));
@@ -663,6 +738,10 @@ class _FakePort implements MediaSessionPort {
 
   Object? startFailure;
   Object? updateFailure;
+  Object? stopFailure;
+
+  /// 让 update 停在"已发出、还没回来"的状态，用来证明晚回值不覆盖更新的意图。
+  Completer<void>? updateGate;
   bool disposed = false;
 
   /// 平台是否受理 ensureStarted（false = 被系统拒绝：无通知、无保活）。
@@ -685,6 +764,10 @@ class _FakePort implements MediaSessionPort {
   @override
   Future<void> update(MediaSessionState state) async {
     calls.add('update');
+    final Completer<void>? gate = updateGate;
+    if (gate != null) {
+      await gate.future;
+    }
     final Object? failure = updateFailure;
     if (failure != null) {
       throw failure;
@@ -695,10 +778,20 @@ class _FakePort implements MediaSessionPort {
   @override
   Future<void> stop() async {
     calls.add('stop');
+    final Object? failure = stopFailure;
+    if (failure != null) {
+      throw failure;
+    }
   }
 
   @override
   Stream<String> get actions => _actions.stream;
+
+  /// 通知封面的落盘目录：本文件不验证封面（返回 null = 不建缓存、不触网、
+  /// 上报的 coverPath 恒为空），封面落盘由 user_scope_152_test.dart 用假
+  /// HttpClient 单独证明。
+  @override
+  Future<String?> cacheDirectory() async => null;
 
   @override
   Future<void> dispose() async {

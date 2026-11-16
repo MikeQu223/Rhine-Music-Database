@@ -34,6 +34,17 @@ public class RhineQtView extends QtView {
     /** createWindow 已经进来过一次：同一次布局里 Qt 会连发多个根窗口请求，只认第一个。 */
     private boolean sceneRequested = false;
 
+    /**
+     * 本次 create 请求的场景世代号（0 = 还没有活着的场景请求）。
+     *
+     * 为什么需要：一个进程里只有一个嵌入场景，而"旧宿主的 destroy 晚到"会把新宿主刚建好
+     * 的场景拆掉（Flutter 侧 Activity 重建时 PlatformView 的 dispose 与新 create 没有
+     * 跨端顺序保证）。原生侧按这个号比对，晚到的旧 destroy 会整段跳过。号由
+     * {@link RhineQtViews#nextSceneGeneration()} 在**每次 create 请求时**分配（不是在构造
+     * 时），保证"建的顺序 = 号的顺序"，也与本视图自己的 destroy 用的是同一个号。
+     */
+    private long sceneGeneration = 0;
+
     @Override
     protected void createWindow(final long parentWindowRef) {
         // 由 Qt 的 createRootWindow 在 Qt 线程上回调（QtEmbeddedDelegate 在 onAttachedToWindow
@@ -53,6 +64,9 @@ public class RhineQtView extends QtView {
             return;
         }
         sceneRequested = true;
+        // 号在"发起请求"这一刻分配：即使下面因为没布局把这帧放弃、之后重挂再来一次，
+        // 每一次请求仍然各有一个严格递增的号（原生侧只 adopt 更大的号）。
+        final long generation = sceneGeneration = RhineQtViews.nextSceneGeneration();
         final int width = getWidth();
         final int height = getHeight();
         if (width <= 0 || height <= 0) {
@@ -67,12 +81,12 @@ public class RhineQtView extends QtView {
                         sceneRequested = false;
                         return;
                     }
-                    createEmbeddedScene(parentWindowRef, getWidth(), getHeight());
+                    createEmbeddedScene(parentWindowRef, getWidth(), getHeight(), generation);
                 }
             });
             return;
         }
-        createEmbeddedScene(parentWindowRef, width, height);
+        createEmbeddedScene(parentWindowRef, width, height, generation);
     }
 
     /**
@@ -96,17 +110,34 @@ public class RhineQtView extends QtView {
         }
         // 允许新宿主重挂时再走一次 createWindow。
         sceneRequested = false;
-        destroyEmbeddedScene();
+        retireScene();
     }
 
     @Override
     protected void onDetachedFromWindow() {
         sceneRequested = false;
-        destroyEmbeddedScene();
+        retireScene();
         super.onDetachedFromWindow();
     }
 
-    private native void createEmbeddedScene(long parentWindowRef, int width, int height);
+    /**
+     * 只拆"自己这一代"场景。
+     *
+     * sceneGeneration == 0 表示本视图没有活着的场景请求（从没创建成功，或已经拆过），
+     * 这时**不发** destroy：原生侧把 0 当成"内部无条件拆"，发出去就会拆掉另一个宿主刚
+     * 建好的场景——旧宿主的 onDetachedFromWindow 晚到正是这条路径（进程里只有一个场景）。
+     */
+    private void retireScene() {
+        final long generation = sceneGeneration;
+        if (generation == 0) {
+            return;
+        }
+        sceneGeneration = 0;
+        destroyEmbeddedScene(generation);
+    }
 
-    private native void destroyEmbeddedScene();
+    private native void createEmbeddedScene(long parentWindowRef, int width, int height,
+                                            long sceneGeneration);
+
+    private native void destroyEmbeddedScene(long sceneGeneration);
 }

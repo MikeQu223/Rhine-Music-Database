@@ -781,16 +781,16 @@ void main() {
         (WidgetTester tester) async {
       final _TrackingController controller = await pumpShell(tester);
 
-      fire(tester, 'settings');
+      fire(tester, 'music:login');
       await tester.pump();
-      // 设置页确实没接：给可见反馈，且绝不假装打开了设置。
-      expect(find.textContaining('设置页尚未接入'), findsOneWidget);
+      // 账号功能确实没接：给可见反馈，且绝不假装登录成功。
+      expect(find.textContaining('账号功能尚未接入'), findsOneWidget);
 
       fire(tester, 'player:next');
       await tester.pump();
       // 已接入的动作真的到 controller，并且清掉上一条反馈。
       expect(controller.nextCalls, 1);
-      expect(find.textContaining('设置页尚未接入'), findsNothing);
+      expect(find.textContaining('账号功能尚未接入'), findsNothing);
 
       fire(tester, 'music:like');
       await tester.pump();
@@ -1067,15 +1067,15 @@ void main() {
 
       // 资源失败是状态，不是一次性提示：动作反馈出现时它必须还在，
       // 动作反馈消失后它也必须还在（否则一次点击就把失败静默抹掉了）。
-      fire(tester, 'settings');
+      fire(tester, 'music:login');
       await tester.pump();
-      expect(find.textContaining('设置页尚未接入'), findsOneWidget);
+      expect(find.textContaining('账号功能尚未接入'), findsOneWidget);
       expect(find.textContaining(basicResourceFailurePrefix), findsOneWidget);
 
       fire(tester, 'player:next');
       await tester.pump();
       expect(controller.nextCalls, 1);
-      expect(find.textContaining('设置页尚未接入'), findsNothing);
+      expect(find.textContaining('账号功能尚未接入'), findsNothing);
       expect(find.textContaining(basicResourceFailurePrefix), findsOneWidget);
 
       await tester.pumpWidget(const SizedBox());

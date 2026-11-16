@@ -916,6 +916,10 @@ class BasicListItem {
     required this.kind,
     required this.index,
     this.id = '',
+    this.cover = '',
+    this.artist = '',
+    this.album = '',
+    this.albumId = '',
   });
 
   final String title;
@@ -924,6 +928,48 @@ class BasicListItem {
 
   /// 源条目 id（空串 = 旧调用点没给，退化为按 index 读源列表）。
   final String id;
+
+  /// 源条目**自带**的真实封面 URL（空串 = 源条目没有图，不是"去别处猜一张"）。
+  ///
+  /// 原生 5×8 格的身份是 `siren:<kind>:<id>`（Engine::projectEmbeddedCells 的
+  /// cellMap），封面只能按**这一格自己的**源条目取；用 filtered index 去
+  /// state.songs 里翻封面会在搜索列/歌单列把别的歌的图贴上来。
+  final String cover;
+
+  /// 艺人名（真实字段，空串 = 上游没给）。
+  final String artist;
+
+  /// 专辑名（真实字段，空串 = 上游没给）。
+  final String album;
+
+  /// 歌曲条目的所属专辑 id：本条目没有自带封面时，允许用**同一张专辑**的封面
+  /// （`qtSceneCoverOf` 的同一条规则），不允许跨条目借图。
+  final String albumId;
+
+  /// 稳定的源身份键：与 Qt 的 EmbeddedCellResources / Engine cellMap 同词。
+  String get key => 'siren:$kind:$id';
+
+  BasicListItem copyWith({
+    String? title,
+    String? kind,
+    int? index,
+    String? id,
+    String? cover,
+    String? artist,
+    String? album,
+    String? albumId,
+  }) {
+    return BasicListItem(
+      title: title ?? this.title,
+      kind: kind ?? this.kind,
+      index: index ?? this.index,
+      id: id ?? this.id,
+      cover: cover ?? this.cover,
+      artist: artist ?? this.artist,
+      album: album ?? this.album,
+      albumId: albumId ?? this.albumId,
+    );
+  }
 }
 
 /// 绘制与命中共用的一份列表真值。
@@ -947,6 +993,10 @@ List<BasicListItem> basicLibraryItems(BasicViewState state) {
           kind: 'song',
           index: index,
           id: state.songs[index].id,
+          cover: state.songs[index].cover,
+          artist: state.songs[index].artist,
+          album: state.songs[index].album,
+          albumId: state.songs[index].albumId,
         ),
     ];
   }
@@ -959,6 +1009,10 @@ List<BasicListItem> basicLibraryItems(BasicViewState state) {
           kind: 'song',
           index: index,
           id: album.songs[index].id,
+          cover: album.songs[index].cover,
+          artist: album.songs[index].artist,
+          album: album.songs[index].album,
+          albumId: album.songs[index].albumId,
         ),
     ];
   }
@@ -971,6 +1025,9 @@ List<BasicListItem> basicLibraryItems(BasicViewState state) {
           kind: 'album',
           index: index,
           id: state.albums[index].id,
+          cover: state.albums[index].cover,
+          artist: state.albums[index].artist,
+          album: state.albums[index].name,
         ),
     ];
   }
@@ -989,6 +1046,9 @@ List<BasicListItem> basicLibraryItems(BasicViewState state) {
           kind: 'album',
           index: index,
           id: state.albums[index].id,
+          cover: state.albums[index].cover,
+          artist: state.albums[index].artist,
+          album: state.albums[index].name,
         ),
       for (var index = 0; index < state.songs.length; index++)
         BasicListItem(
@@ -996,6 +1056,10 @@ List<BasicListItem> basicLibraryItems(BasicViewState state) {
           kind: 'song',
           index: index,
           id: state.songs[index].id,
+          cover: state.songs[index].cover,
+          artist: state.songs[index].artist,
+          album: state.songs[index].album,
+          albumId: state.songs[index].albumId,
         ),
     ];
   }
@@ -1008,6 +1072,10 @@ List<BasicListItem> basicLibraryItems(BasicViewState state) {
           kind: 'song',
           index: index,
           id: state.songs[index].id,
+          cover: state.songs[index].cover,
+          artist: state.songs[index].artist,
+          album: state.songs[index].album,
+          albumId: state.songs[index].albumId,
         ),
     ];
   }
@@ -1026,6 +1094,10 @@ List<BasicListItem> basicLibraryItems(BasicViewState state) {
           kind: 'song',
           index: index,
           id: state.songs[index].id,
+          cover: state.songs[index].cover,
+          artist: state.songs[index].artist,
+          album: state.songs[index].album,
+          albumId: state.songs[index].albumId,
         ),
     ];
   }

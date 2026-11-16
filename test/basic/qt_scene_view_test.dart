@@ -23,6 +23,23 @@ SirenSong _song(String id, {String title = ''}) => SirenSong(
       durationMs: 0,
     );
 
+/// 只为身份签名服务的目录替身（真实字段全给，避免测试构造半真对象）。
+BasicDirectory _directory(String id) => BasicDirectory(
+      provider: 'siren',
+      kind: 'playlist',
+      id: id,
+      key: 'siren:playlist:$id',
+      title: 'dir-$id',
+      artist: '',
+      cover: '',
+      description: '',
+      trackCount: 0,
+      songs: const <SirenSong>[],
+      ids: const <String>[],
+      cursor: 0,
+      index: 0,
+    );
+
 BasicViewState _state({
   BasicPhase phase = BasicPhase.library,
   SirenSong? song,
@@ -30,6 +47,9 @@ BasicViewState _state({
   List<SirenAlbum> albums = const <SirenAlbum>[],
   bool dark = true,
   bool playing = false,
+  List<List<BasicListItem>> laneItems = const <List<BasicListItem>>[],
+  double? listPosition,
+  BasicDirectory? directory,
 }) =>
     BasicViewState(
       phase: phase,
@@ -38,6 +58,9 @@ BasicViewState _state({
       albums: albums,
       dark: dark,
       playing: playing,
+      laneItems: laneItems,
+      listPosition: listPosition,
+      directory: directory,
     );
 
 Map<String, Object?> _decode(String snapshot) =>
@@ -74,14 +97,232 @@ void main() {
     });
   });
 
+  group('origin：输入/动作按 (viewId, ctx) 校验', () {
+    test('ctx 不匹配 / 缺 ctx / 未登记的动作为一律不交给页面', () async {
+      final List<String> delivered = <String>[];
+      QtSceneActions.resetForTest();
+      QtSceneActions.register(7, delivered.add);
+      QtSceneActions.setContext(7, 3);
+
+      // 旧代次（换目录前）的迟到动作：丢弃。
+      await QtSceneActions.handleNativeCall(const MethodCall(
+        'action',
+        <String, Object?>{'viewId': 7, 'ctx': 2, 'action': 'archive-select:1|2|song|x'},
+      ));
+      expect(delivered, isEmpty);
+
+      // 当前代次：正常送达。
+      await QtSceneActions.handleNativeCall(const MethodCall(
+        'action',
+        <String, Object?>{'viewId': 7, 'ctx': 3, 'action': 'archive-scroll:commit:1.0'},
+      ));
+      expect(delivered, <String>['archive-scroll:commit:1.0']);
+
+      // 不带 ctx 的动作：没有归属可比对，丢弃。旧实现在这里 fail-open（"原生的老调用点
+      // 放行"），等于让没带代次的动作穿透全部门禁——这正是 153 要根除的那一类。
+      await QtSceneActions.handleNativeCall(const MethodCall(
+        'action',
+        <String, Object?>{'viewId': 7, 'action': 'archive-select:0:0'},
+      ));
+      expect(delivered, hasLength(1));
+
+      // 没有 origin（viewId<0）的动作：丢弃。
+      await QtSceneActions.handleNativeCall(const MethodCall(
+        'action',
+        <String, Object?>{'viewId': -1, 'ctx': 3, 'action': 'archive-select:0:0'},
+      ));
+      expect(delivered, hasLength(1));
+
+      // 未注册的 viewId 不抛、不下发。
+      await QtSceneActions.handleNativeCall(const MethodCall(
+        'action',
+        <String, Object?>{'viewId': 99, 'ctx': 3, 'action': 'archive-select:0:0'},
+      ));
+      expect(delivered, hasLength(1));
+
+      // 已注销视图：登记表里没有它，同样丢弃。
+      QtSceneActions.unregister(7);
+      await QtSceneActions.handleNativeCall(const MethodCall(
+        'action',
+        <String, Object?>{'viewId': 7, 'ctx': 3, 'action': 'archive-select:0:0'},
+      ));
+      expect(delivered, hasLength(1));
+
+      QtSceneActions.resetForTest();
+    });
+  });
+
+  group('qtSceneIdentitySignature：只在集合身份变化时换代', () {
+    test('拖动/惯性/选中变化不换代，换目录才换代', () {
+      const BasicListItem item = BasicListItem(
+        title: 'a',
+        kind: 'song',
+        index: 0,
+        id: 'a',
+        cover: 'https://cover/a.jpg',
+      );
+      final BasicViewState base = _state(
+        songs: <SirenSong>[_song('a')],
+        laneItems: const <List<BasicListItem>>[
+          <BasicListItem>[item],
+        ],
+      );
+      final BasicViewState scrolled = _state(
+        song: _song('a'),
+        songs: <SirenSong>[_song('a')],
+        listPosition: 12.5,
+        laneItems: const <List<BasicListItem>>[
+          <BasicListItem>[item],
+        ],
+      );
+      expect(qtSceneIdentitySignature(base), qtSceneIdentitySignature(scrolled));
+
+      final BasicViewState otherDirectory = BasicViewState(
+        phase: base.phase,
+        songs: base.songs,
+        laneItems: base.laneItems,
+        directory: _directory('dir-1'),
+      );
+      expect(
+        qtSceneIdentitySignature(otherDirectory),
+        isNot(qtSceneIdentitySignature(base)),
+      );
+    });
+
+    test('中间条目对调（条数、首末都不变）必须换代', () {
+      const BasicListItem a = BasicListItem(title: 'a', kind: 'song', index: 0, id: 'a');
+      const BasicListItem b = BasicListItem(title: 'b', kind: 'song', index: 1, id: 'b');
+      const BasicListItem c = BasicListItem(title: 'c', kind: 'song', index: 2, id: 'c');
+      final BasicViewState before = _state(
+        laneItems: const <List<BasicListItem>>[
+          <BasicListItem>[a, b, c],
+        ],
+      );
+      final BasicViewState after = _state(
+        laneItems: const <List<BasicListItem>>[
+          <BasicListItem>[a, c, b],
+        ],
+      );
+      // 旧实现只写 length:first:last → 这份集合变化完全不可见，代次不递增，Qt 侧仍把
+      // 迟到输入当成"同一份上下文"，画面已被换成新顺序。
+      expect(
+        qtSceneIdentitySignature(before),
+        isNot(qtSceneIdentitySignature(after)),
+      );
+      expect(qtSceneLaneIdentity(const <BasicListItem>[a, b, c]),
+          isNot(qtSceneLaneIdentity(const <BasicListItem>[a, c, b])));
+      // 首末也真的换了位置的相邻对调同样要变。
+      expect(
+        qtSceneLaneIdentity(const <BasicListItem>[a, b, c]),
+        isNot(qtSceneLaneIdentity(const <BasicListItem>[b, a, c])),
+      );
+    });
+
+    test('位置/播放/封面补全不换代：合法惯性不被自己的代次掐死', () {
+      const BasicListItem a = BasicListItem(title: 'a', kind: 'song', index: 0, id: 'a');
+      final BasicViewState base = _state(
+        song: _song('a'),
+        songs: <SirenSong>[_song('a')],
+        laneItems: const <List<BasicListItem>>[
+          <BasicListItem>[a],
+        ],
+      );
+      final BasicViewState moved = _state(
+        song: _song('a'),
+        songs: <SirenSong>[_song('a')],
+        playing: true,
+        listPosition: 37.5,
+        laneItems: base.laneItems,
+      );
+      expect(qtSceneIdentitySignature(base), qtSceneIdentitySignature(moved));
+    });
+
+    test('列表实例不同但内容相同 → 身份相同（重建列表不等于换集合）', () {
+      const BasicListItem a = BasicListItem(title: 'a', kind: 'song', index: 0, id: 'a');
+      const BasicListItem b = BasicListItem(title: 'b', kind: 'song', index: 1, id: 'b');
+      final BasicViewState first = _state(
+        laneItems: <List<BasicListItem>>[
+          <BasicListItem>[a, b],
+        ],
+      );
+      final BasicViewState rebuilt = _state(
+        laneItems: <List<BasicListItem>>[
+          <BasicListItem>[a, b],
+        ],
+      );
+      expect(identical(first.laneItems.first, rebuilt.laneItems.first), isFalse);
+      expect(qtSceneIdentitySignature(first), qtSceneIdentitySignature(rebuilt));
+      final QtSceneIdentityTracker tracker = QtSceneIdentityTracker();
+      expect(tracker.signature(first), qtSceneIdentitySignature(first));
+      expect(tracker.signature(rebuilt), qtSceneIdentitySignature(rebuilt));
+    });
+
+    test('tracker 命中缓存后仍与纯函数一致（同一实例重复调用）', () {
+      const BasicListItem a = BasicListItem(title: 'a', kind: 'song', index: 0, id: 'a');
+      final List<BasicListItem> lane = <BasicListItem>[a];
+      final BasicViewState state = _state(
+        laneItems: <List<BasicListItem>>[lane],
+      );
+      final QtSceneIdentityTracker tracker = QtSceneIdentityTracker();
+      final String firstCall = tracker.signature(state);
+      final String secondCall = tracker.signature(state);
+      expect(secondCall, firstCall);
+      expect(secondCall, qtSceneIdentitySignature(state));
+      tracker.reset();
+      expect(tracker.signature(state), firstCall);
+    });
+  });
+
+  group('qtSceneCellsOf：每格带自己的真实 metadata', () {
+    test('c/a/b 来自本格源条目，不是选中项；空封面不带键', () {
+      const BasicListItem withArt = BasicListItem(
+        title: 'Song A',
+        kind: 'song',
+        index: 0,
+        id: 'a',
+        cover: 'https://cover/a.jpg',
+        artist: 'Artist A',
+        album: 'Album A',
+        albumId: 'album-a',
+      );
+      const BasicListItem bare = BasicListItem(
+        title: 'Song B',
+        kind: 'song',
+        index: 1,
+        id: 'b',
+      );
+      final BasicViewState state = _state(
+        laneItems: const <List<BasicListItem>>[
+          <BasicListItem>[withArt, bare],
+        ],
+      );
+      final List<Map<String, Object?>> cells = qtSceneCellsOf(state);
+      expect(cells, isNotEmpty);
+      final Map<String, Object?> first = cells.first;
+      expect(first['k'], 'song');
+      expect(first['i'], 'a');
+      expect(first['c'], 'https://cover/a.jpg');
+      expect(first['a'], 'Artist A');
+      expect(first['b'], 'Album A');
+      expect(first['r'], 0, reason: '绝对行：窗口基址 + 行');
+      // 第 2 行是 bare：没有任何 metadata 键。
+      final Map<String, Object?> second = cells[1];
+      expect(second['i'], 'b');
+      expect(second.containsKey('c'), isFalse);
+      expect(second.containsKey('a'), isFalse);
+      expect(second.containsKey('b'), isFalse);
+    });
+  });
+
   group('qtSceneStateSnapshot', () {
     test('有选中：带 index 与身份键，mode/dark 来自状态', () {
       final SirenSong a = _song('a');
       final Map<String, Object?> payload = _decode(qtSceneStateSnapshot(
         _state(phase: BasicPhase.detail, song: a, songs: <SirenSong>[a], dark: false),
       ));
-      // v3：在 v2 的选中身份之上加了连续窗口（pos/lane）与 40 格语义槽位（cells）。
-      expect(payload['v'], 3);
+      // v4：在 v3 的连续窗口（pos/lane）与 40 格语义槽位之上，加了
+      // origin（view/ctx）与每格真实 metadata（c/a/b）。
+      expect(payload['v'], 4);
       expect(payload['dark'], isFalse);
       expect(payload['mode'], 'detail');
       expect(payload['index'], 0);
@@ -193,7 +434,11 @@ void main() {
       expect(sent, isTrue);
       expect(calls, hasLength(1));
       expect(calls.single.method, 'state');
-      expect(calls.single.arguments, <String, Object?>{'viewId': 7, 'json': '{"v":1}'});
+      // ctx 与写入快照的 ctx 是同一个值：原生用它给每个视图登记 origin。
+      expect(
+        calls.single.arguments,
+        <String, Object?>{'viewId': 7, 'ctx': 0, 'json': '{"v":1}'},
+      );
     });
 
     test('同一份快照不重复发；内容变了再发', () async {
@@ -231,23 +476,30 @@ void main() {
       final List<String> got = <String>[];
       QtSceneActions.register(11, got.add);
       QtSceneActions.register(12, (String action) => got.add('12:$action'));
+      // 每个视图先登记自己的代次：动作必须带上它，未登记的动作一律丢弃（见上一条 group）。
+      QtSceneActions.setContext(11, 4);
+      QtSceneActions.setContext(12, 5);
 
       await QtSceneActions.handleNativeCall(const MethodCall(
         'action',
-        <String, Object?>{'viewId': 12, 'action': 'select:3'},
+        <String, Object?>{'viewId': 12, 'ctx': 5, 'action': 'select:3'},
       ));
       await QtSceneActions.handleNativeCall(const MethodCall(
         'action',
-        <String, Object?>{'viewId': 11, 'action': 'viewer:open'},
+        <String, Object?>{'viewId': 11, 'ctx': 4, 'action': 'viewer:open'},
       ));
       expect(got, <String>['12:select:3', 'viewer:open']);
     });
 
     test('未知 viewId / 未注册回调不抛异常', () async {
+      final List<String> got = <String>[];
+      QtSceneActions.register(11, got.add);
+      QtSceneActions.setContext(11, 4);
       await QtSceneActions.handleNativeCall(const MethodCall(
         'action',
-        <String, Object?>{'viewId': 99, 'action': 'select:1'},
+        <String, Object?>{'viewId': 99, 'ctx': 1, 'action': 'select:1'},
       ));
+      expect(got, isEmpty);
       QtSceneActions.unregister(99);
     });
   });
