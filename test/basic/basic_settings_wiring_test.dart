@@ -10,6 +10,7 @@ import 'package:rhine_music_database/basic/basic_models.dart';
 import 'package:rhine_music_database/basic/basic_settings.dart';
 import 'package:rhine_music_database/basic/basic_settings_store.dart';
 import 'package:rhine_music_database/basic/basic_settings_view.dart';
+import 'package:rhine_music_database/basic/basic_settings_window.dart';
 import 'package:rhine_music_database/basic/platform_playback.dart';
 import 'package:rhine_music_database/basic/siren_controller.dart';
 
@@ -115,22 +116,26 @@ Future<({_ShellController controller, MemoryBasicSettingsPort port})> pumpShell(
 }
 
 /// 走 HUD 的命中串打开设置页（chrome.dart:171 的真实命中就是 'settings'）。
-Future<BasicSettingsOverlayState> openSettings(
+///
+/// m03428：设置窗口现在是真实 Flutter widget 层（BasicSettingsWindow），
+/// 不再有 HUD 命中画布；这里返回窗口 widget 本身，行为断言仍走产品里那条
+/// 唯一的 action 入口（BasicApp._onSettingsAction）。
+Future<BasicSettingsWindow> openSettings(
   WidgetTester tester,
 ) async {
   tester.widget<BasicHudSurface>(find.byType(BasicHudSurface)).onAction('settings');
   await tester.pump();
-  final Finder overlay = find.byType(BasicSettingsOverlay);
-  expect(overlay, findsOneWidget);
-  return tester.state<BasicSettingsOverlayState>(overlay);
+  final Finder window = find.byType(BasicSettingsWindow);
+  expect(window, findsOneWidget);
+  return tester.widget<BasicSettingsWindow>(window);
 }
 
 Future<void> act(
   WidgetTester tester,
-  BasicSettingsOverlayState overlay,
+  BasicSettingsWindow window,
   String action,
 ) async {
-  overlay.widget.onAction(action);
+  window.onAction(action);
   await tester.pump();
   await tester.pump();
 }
@@ -139,9 +144,9 @@ void main() {
   testWidgets('gear opens the ONLY14 panel with real rows and no rejected settings',
       (WidgetTester tester) async {
     await pumpShell(tester);
-    final BasicSettingsOverlayState overlay = await openSettings(tester);
+    final BasicSettingsWindow overlay = await openSettings(tester);
 
-    final List<String> ids = overlay.widget.model.rowIds;
+    final List<String> ids = overlay.model.rowIds;
     // 14 项都在（展开子行前就是这 14 个顶层行/分组）。
     expect(ids, contains('theme'));
     expect(ids, contains('startup-animation'));
@@ -154,7 +159,7 @@ void main() {
     expect(ids, contains('render-scale'));
     // 唱片旋转/当前版本是 Qt 自定义区里的行（没有 descriptor），
     // 由 BasicSettingsPanelModel 的 discRotation / version 承载。
-    expect(overlay.widget.model.discRotation, isFalse);
+    expect(overlay.model.discRotation, isFalse);
     // 被否决的旧 Qt 项一个都不许出现。
     for (final String rejected in <String>[
       'official-player',
@@ -176,7 +181,7 @@ void main() {
         await pumpShell(tester);
     expect(shell.controller.dark, isTrue, reason: '默认深色');
 
-    final BasicSettingsOverlayState overlay = await openSettings(tester);
+    final BasicSettingsWindow overlay = await openSettings(tester);
     await act(tester, overlay, 'setting:theme:light');
 
     // 真实落盘（bare panel key，PreferenceStore 自己加 panel/ 前缀）。
@@ -191,7 +196,7 @@ void main() {
       (WidgetTester tester) async {
     final ({_ShellController controller, MemoryBasicSettingsPort port}) shell =
         await pumpShell(tester);
-    final BasicSettingsOverlayState overlay = await openSettings(tester);
+    final BasicSettingsWindow overlay = await openSettings(tester);
 
     await act(tester, overlay, 'setting:startup-animation:on');
     expect(shell.port.values['panel/startup-animation'], 'on');
@@ -213,7 +218,7 @@ void main() {
       (WidgetTester tester) async {
     final ({_ShellController controller, MemoryBasicSettingsPort port}) shell =
         await pumpShell(tester);
-    final BasicSettingsOverlayState overlay = await openSettings(tester);
+    final BasicSettingsWindow overlay = await openSettings(tester);
 
     await act(tester, overlay, 'disc-rotation');
     expect(find.byType(BasicDiscWarningOverlay), findsOneWidget);
@@ -233,7 +238,7 @@ void main() {
       (WidgetTester tester) async {
     final ({_ShellController controller, MemoryBasicSettingsPort port}) shell =
         await pumpShell(tester);
-    final BasicSettingsOverlayState overlay = await openSettings(tester);
+    final BasicSettingsWindow overlay = await openSettings(tester);
 
     await act(tester, overlay, 'music:project-lyricsx');
     expect(shell.port.openedUrls, <String>[
@@ -247,7 +252,7 @@ void main() {
       (WidgetTester tester) async {
     final ({_ShellController controller, MemoryBasicSettingsPort port}) shell =
         await pumpShell(tester);
-    final BasicSettingsOverlayState overlay = await openSettings(tester);
+    final BasicSettingsWindow overlay = await openSettings(tester);
 
     expect(shell.controller.singlePlayAppend, isFalse, reason: '默认 replace');
     await act(tester, overlay, 'setting:single-play-mode:append');
@@ -261,7 +266,7 @@ void main() {
       (WidgetTester tester) async {
     final ({_ShellController controller, MemoryBasicSettingsPort port}) shell =
         await pumpShell(tester);
-    final BasicSettingsOverlayState overlay = await openSettings(tester);
+    final BasicSettingsWindow overlay = await openSettings(tester);
 
     expect(shell.controller.detailAutoplay, isFalse);
     await act(tester, overlay, 'setting:detail-autoplay:on');
@@ -285,7 +290,7 @@ void main() {
     await tester.pump();
     await tester.pump();
 
-    final BasicSettingsOverlayState overlay = await openSettings(tester);
+    final BasicSettingsWindow overlay = await openSettings(tester);
     await act(tester, overlay, 'setting:theme:light');
 
     expect(controller.dark, isTrue, reason: '写失败不许假装改成浅色');
@@ -298,7 +303,7 @@ void main() {
       (WidgetTester tester) async {
     final ({_ShellController controller, MemoryBasicSettingsPort port}) shell =
         await pumpShell(tester, values: <String, String>{'panel/graphics-backend': 'vulkan'});
-    final BasicSettingsOverlayState overlay = await openSettings(tester);
+    final BasicSettingsWindow overlay = await openSettings(tester);
 
     await act(tester, overlay, 'setting:graphics-backend:opengl');
     expect(shell.port.values['panel/graphics-backend'], 'opengl');
@@ -312,7 +317,7 @@ void main() {
       (WidgetTester tester) async {
     final ({_ShellController controller, MemoryBasicSettingsPort port}) shell =
         await pumpShell(tester);
-    final BasicSettingsOverlayState overlay = await openSettings(tester);
+    final BasicSettingsWindow overlay = await openSettings(tester);
 
     // Android 的默认渲染分辨率就是 75（SettingsSchema.cpp:566 的
     // androidDefaultRenderScale），写回 75 属于 unchanged，所以这里选 90。
@@ -370,7 +375,7 @@ void main() {
       (WidgetTester tester) async {
     final ({_ShellController controller, MemoryBasicSettingsPort port}) shell =
         await pumpShell(tester);
-    final BasicSettingsOverlayState overlay = await openSettings(tester);
+    final BasicSettingsWindow overlay = await openSettings(tester);
     await act(tester, overlay, 'archive-mask:80');
     expect(shell.port.values['panel/archive-mask-strength'], '80');
 
@@ -378,10 +383,11 @@ void main() {
     tester.view.physicalSize = const Size(1080, 1920);
     await tester.pump();
     await tester.pump();
-    expect(find.byType(BasicSettingsOverlay), findsOneWidget);
-    final BasicSettingsOverlayState rotated =
-        tester.state<BasicSettingsOverlayState>(find.byType(BasicSettingsOverlay));
-    expect(rotated.widget.model.rowIds, contains('archive-mask'));
+    expect(find.byType(BasicSettingsWindow), findsOneWidget);
+    final BasicSettingsWindow rotated =
+        tester.widget<BasicSettingsWindow>(find.byType(BasicSettingsWindow));
+    expect(rotated.portrait, isTrue);
+    expect(rotated.model.rowIds, contains('archive-mask'));
     expect(shell.port.values['panel/archive-mask-strength'], '80');
 
     await tester.pumpWidget(const SizedBox());

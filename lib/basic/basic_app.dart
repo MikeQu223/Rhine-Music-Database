@@ -28,6 +28,7 @@ import 'basic_settings.dart';
 import 'basic_settings_runtime.dart';
 import 'basic_settings_store.dart';
 import 'basic_settings_view.dart';
+import 'basic_settings_window.dart';
 import 'platform_playback.dart';
 import 'qt_scene_view.dart';
 import 'siren_controller.dart';
@@ -657,12 +658,16 @@ class _BasicShellState extends State<_BasicShell>
               return Stack(
                 fit: StackFit.expand,
                 children: <Widget>[
-                  BasicSettingsOverlay(
+                  // m03428：设置窗口是真实 Flutter widget 层（文本/控件/滚动/
+                  // 焦点/语义都是 widget），不再走 HUD 命令 + 命中画布。
+                  BasicSettingsWindow(
                     stage: resolved,
-                    ports: widget.resources.ports,
+                    portrait: geometry == null,
                     model: _settingsPanelModel(),
                     dark: state.dark,
-                    onAction: (String action) => unawaited(_onSettingsAction(action)),
+                    scrollStorage: _settingsScroll,
+                    onAction: (String action) =>
+                        unawaited(_onSettingsAction(action)),
                   ),
                   if (_modal == DiscWarningModal.kind)
                     BasicDiscWarningOverlay(
@@ -729,6 +734,9 @@ class _BasicShellState extends State<_BasicShell>
         fsrQuality: BasicSceneSettings.normalizeFsrQuality(_settings.fsrQuality),
         fsrSharpness: BasicSceneSettings.normalizeFsrSharpness(_settings.fsrSharpness),
       );
+
+  /// 设置面板滚动偏移（跨越开关面板保持；由 BasicSettingsWindow 写回）。
+  final ValueNotifier<double> _settingsScroll = ValueNotifier<double>(0);
 
   BasicSettingsPanelModel _settingsPanelModel() {
     return basicSettingsPanelModel(
