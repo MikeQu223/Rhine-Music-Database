@@ -70,10 +70,11 @@ const BasicSettingsPackageInfo _androidPackage = BasicSettingsPackageInfo(
   debuggable: true,
 );
 
-SettingsPreferenceContext _settingsContext() => const SettingsPreferenceContext(
-      capabilities: PlatformCapabilities.android(),
+SettingsPreferenceContext _settingsContext({String providerId = 'siren'}) =>
+    SettingsPreferenceContext(
+      capabilities: const PlatformCapabilities.android(),
       operatingSystem: SettingsOperatingSystem.android,
-      providerId: 'siren',
+      providerId: providerId,
       musicEnabled: true,
       providerIsLocal: false,
     );
@@ -332,26 +333,53 @@ class _FakeHttpClient implements HttpClient {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  group('音质：真的落到宿主偏好键 quality', () {
-    test('quality:set 在 siren 上算得出可写键（Qt MusicPlayer.cpp:139）', () {
+  group('音质：可切换的 provider 上真的落到宿主偏好键 quality', () {
+    // 事实先行（复审给出的关键修正）：
+    //  * 出厂 provider 只有 siren，而 siren 的音质 choices 只有一档 'lossless'
+    //    （settings_modal.dart:2495-2499），descriptor 默认值却是 'exhigh'；
+    //    于是 `target == currentCanonical` 的 unchanged 检查先命中
+    //    （settings_row.dart:1088），命令在读到映射表之前就返回了。
+    //    这不是缺陷，是"只有一档就没什么可切换"——面板如实报 unchanged。
+    //  * 这条映射真正的用途在多档 provider（qq/kugou/netease…）：它们的 quality
+    //    descriptor 同样没有 preferenceKey，也没有 actionPrefix 之外的键来源，
+    //    没有映射时 runtime 会拒绝写入（"这一项没有可持久化的偏好键"）。
+    test('qq：quality:set 算得出可写键 quality（Qt MusicPlayer.cpp:139/:181、Host.cpp:1063）', () {
       final SettingsPreferenceSnapshot snapshot = basicSettingsSnapshotFrom(
         <String, String>{'panel/quality': 'exhigh'},
         dark: true,
       );
       final BasicSettingsCommand command = basicSettingsCommandFor(
         'quality:set:lossless',
-        context: _settingsContext(),
+        context: _settingsContext(providerId: 'qq'),
         snapshot: snapshot,
       );
       expect(command, isA<BasicSettingsWriteCommand>());
       final BasicSettingsWriteCommand write = command as BasicSettingsWriteCommand;
       expect(write.preferenceKey, 'quality',
-          reason: '没有这条映射时 runtime 会拒绝写入（"这一项没有可持久化的偏好键"），'
-              '于是音质只在界面上选得动、存不下');
+          reason: '缺这条映射 → runtime 报"这一项没有可持久化的偏好键"，音质只选不存');
+      expect(write.value, 'lossless');
       expect(write.dispatchAction, 'quality:set:lossless');
     });
 
-    test('写入后端口里真的有 panel/quality，重新 load 还读得出来', () async {
+    test('siren 只有一档：任何切换都如实报 unchanged（不伪造写成功）', () {
+      final SettingsPreferenceSnapshot snapshot = basicSettingsSnapshotFrom(
+        <String, String>{'panel/quality': 'exhigh'},
+        dark: true,
+      );
+      for (final String action in <String>['quality:set:lossless', 'quality:set:exhigh']) {
+        final BasicSettingsCommand command = basicSettingsCommandFor(
+          action,
+          context: _settingsContext(),
+          snapshot: snapshot,
+        );
+        expect(command, isA<BasicSettingsUnavailableCommand>(), reason: action);
+        expect((command as BasicSettingsUnavailableCommand).rejection,
+            BasicSettingsRejection.unchanged,
+            reason: action);
+      }
+    });
+
+    test('qq：写入后端口里真的有 panel/quality，重新 load 还读得出来', () async {
       final MemoryBasicSettingsPort port =
           MemoryBasicSettingsPort(package: _androidPackage);
       port.values['panel/quality'] = 'exhigh';
@@ -359,8 +387,10 @@ void main() {
           BasicSettingsRuntime(store: BasicSettingsStore(port: port));
       await runtime.load();
 
-      final BasicSettingsApplyResult result =
-          await runtime.apply('quality:set:lossless', context: _settingsContext());
+      final BasicSettingsApplyResult result = await runtime.apply(
+        'quality:set:lossless',
+        context: _settingsContext(providerId: 'qq'),
+      );
       expect(result.persisted, isTrue);
       expect(result.persistedValue, 'lossless');
       expect(port.values['panel/quality'], 'lossless');
@@ -372,19 +402,19 @@ void main() {
       expect(reloaded.snapshot.quality, 'lossless');
     });
 
-    test('已是 lossless 时报告 unchanged，不写第二个键', () async {
+    test('qq：已是 lossless 时报告 unchanged，值原样不动', () async {
       final MemoryBasicSettingsPort port =
           MemoryBasicSettingsPort(package: _androidPackage);
       port.values['panel/quality'] = 'lossless';
       final BasicSettingsRuntime runtime =
           BasicSettingsRuntime(store: BasicSettingsStore(port: port));
       await runtime.load();
-      final BasicSettingsApplyResult result =
-          await runtime.apply('quality:set:lossless', context: _settingsContext());
+      final BasicSettingsApplyResult result = await runtime.apply(
+        'quality:set:lossless',
+        context: _settingsContext(providerId: 'qq'),
+      );
       expect(result.persisted, isFalse);
       expect(result.persistedValue, '');
-      // 没写入：端口里的值原样不动（MemoryBasicSettingsPort 不记录写次数，
-      // 所以断言"值没被改成别的"）
       expect(port.values['panel/quality'], 'lossless');
     });
   });
@@ -525,13 +555,28 @@ void main() {
       await _settle();
     }
 
+    /// 等封面请求真的发出（假 client 已登记该 URL 的闸门）。
+    ///
+    /// 不能靠固定微任务轮数：控制器要先 await 一次目录解析才走到 getUrl，
+    /// 轮数不够时 client.gates[...] 还是 null，测试会以空指针而不是断言失败收场。
+    Future<Completer<List<int>>> gateFor(String url) async {
+      for (int i = 0; i < 200; i += 1) {
+        final Completer<List<int>>? gate = client.gates[url];
+        if (gate != null) {
+          return gate;
+        }
+        await Future<void>.delayed(Duration.zero);
+      }
+      fail('封面请求没有发出：' + url + '（已请求 ' + client.requested.join(', ') + '）');
+    }
+
     test('封面 URL 真的落成本地 img，上报的是文件路径而不是 URL', () async {
       final SirenSong song = songOf('Song One');
       expect(song.cover, 'https://cover.test/a1.jpg');
 
       await playAndEmit(song);
       // 缓存目录已解析、请求已发出，等本次落盘完成。
-      client.gates[song.cover]!.complete(<int>[1, 2, 3, 4]);
+      (await gateFor(song.cover)).complete(<int>[1, 2, 3, 4]);
       await _settle();
 
       final MediaSessionState last = port.updates.last;
@@ -539,14 +584,14 @@ void main() {
       expect(last.coverPath, isNotEmpty,
           reason: 'decodeFile 只认本地路径：远端 URL 必须落盘后再上报');
       expect(last.coverPath, isNot(contains('http')));
-      expect(File(last.coverPath).existsSync(), isTrue);
+      expect(File(last.coverPath!).existsSync(), isTrue);
       expect(last.coverPath, endsWith('.img'));
     });
 
     test('失败（404/无字节）如实留空封面，不抛也不重试失控', () async {
       final SirenSong song = songOf('Song One');
       await playAndEmit(song);
-      client.gates[song.cover]!.complete(<int>[]);
+      (await gateFor(song.cover)).complete(<int>[]);
       await _settle();
       expect(port.updates.last.coverPath, '');
       expect(client.requested.length, 1,
@@ -562,14 +607,14 @@ void main() {
       await playAndEmit(a); // 回到 A：新一代请求
 
       // 先让 A 落盘（当前身份是 A，允许上报）。
-      client.gates[a.cover]!.complete(<int>[9, 9, 9]);
+      (await gateFor(a.cover)).complete(<int>[9, 9, 9]);
       await _settle();
-      final String coverA = port.updates.last.coverPath;
+      final String coverA = port.updates.last.coverPath ?? '';
       expect(coverA, isNotEmpty);
       expect(port.updates.last.title, 'Song One');
 
       // 再让 B 迟到回来：代次与身份都已过期，必须被丢弃。
-      client.gates[b.cover]!.complete(<int>[7, 7, 7]);
+      (await gateFor(b.cover)).complete(<int>[7, 7, 7]);
       await _settle();
       expect(port.updates.last.coverPath, coverA);
       expect(port.updates.last.title, 'Song One');
@@ -580,9 +625,9 @@ void main() {
       final SirenSong a = songOf('Song One');
       final SirenSong b = songOf('Song Two');
       await playAndEmit(a);
-      client.gates[a.cover]!.complete(<int>[5, 6]);
+      (await gateFor(a.cover)).complete(<int>[5, 6]);
       await _settle();
-      final String coverA = port.updates.last.coverPath;
+      final String coverA = port.updates.last.coverPath ?? '';
       expect(coverA, isNotEmpty);
 
       // B 的封面还没回来：这一次上报必须是"还没有封面"，而不是 A 的路径。
@@ -610,6 +655,7 @@ void main() {
     final File kotlinHost = File(
         'android/app/src/main/kotlin/rhine/music/database/porting/MediaSessionHost.kt');
     final File dartController = File('lib/basic/siren_controller.dart');
+    final File dartSettings = File('lib/basic/basic_settings.dart');
 
     test('cacheDir 方法真的在 Kotlin 侧实现（否则封面目录永远拿不到）', () {
       final String source = kotlinChannel.readAsStringSync();
@@ -622,6 +668,11 @@ void main() {
       final String source = kotlinHost.readAsStringSync();
       expect(source, contains('BitmapFactory.decodeFile'));
       expect(source, isNot(contains('decodeStream(URL')));
+    });
+
+    test('音质映射表里确实有 quality（否则多档 provider 只选不存）', () {
+      final String source = dartSettings.readAsStringSync();
+      expect(source, contains("'quality': 'quality',"));
     });
 
     test('控制器把本地封面路径交给身份，且 dispose 关缓存', () {
