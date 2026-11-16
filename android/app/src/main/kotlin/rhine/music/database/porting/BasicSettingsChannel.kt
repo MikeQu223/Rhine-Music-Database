@@ -54,25 +54,24 @@ class BasicSettingsChannel private constructor(
          * （Application context 可以，Activity 不行——那会把已销毁的宿主钉在进程里）。
          */
         fun install(messenger: BinaryMessenger, contextProvider: () -> Context): BasicSettingsChannel {
-            val existing = installed
-            if (existing != null) {
-                val previous = installedMessenger
-                if (previous === messenger) {
-                    return existing
-                }
-                //  新 engine（Activity 重建 / 旋转）：把同一个 handler 迁到新 messenger 上。
-                //  不迁的话 handler 挂在已销毁的 engine 上，重建后版本/外链调用全变成
-                //  MissingPluginException——真机上表现为版本行回到「未知版本」。
-                if (previous != null) {
-                    MethodChannel(previous, CHANNEL).setMethodCallHandler(null)
-                }
-                MethodChannel(messenger, CHANNEL).setMethodCallHandler(existing)
-                installedMessenger = messenger
-                return existing
+            val previous = installed
+            val previousMessenger = installedMessenger
+            if (previous != null && previousMessenger === messenger) {
+                return previous
             }
+            //  新 engine（Activity 重建 / 旋转）：**新建**一个通道对象装到新 messenger 上。
+            //  绝不能把旧对象迁过来——旧对象的 contextProvider 是上一个 Activity 的闭包，
+            //  迁移等于把已销毁的宿主钉在进程里（真实泄漏，不是理论风险）。
+            if (previous != null && previousMessenger != null) {
+                MethodChannel(previousMessenger, CHANNEL).setMethodCallHandler(null)
+            }
+            installed = null
+            installedMessenger = null
+            //  contextProvider 必须是 Application（MainActivity 传 applicationContext）：
+            //  本通道只用得到 SharedPreferences / PackageManager / startActivity，
+            //  全都不需要 Activity。
             val channel = BasicSettingsChannel(contextProvider)
-            val methodChannel = MethodChannel(messenger, CHANNEL)
-            methodChannel.setMethodCallHandler(channel)
+            MethodChannel(messenger, CHANNEL).setMethodCallHandler(channel)
             installed = channel
             installedMessenger = messenger
             return channel
