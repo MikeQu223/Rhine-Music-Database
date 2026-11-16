@@ -72,6 +72,11 @@ int main(int argc, char **argv) {
     AudioPlayer player;
     player.control("volume", 0); // Exercise real device clocks without audible test tones.
     player.enableDiagnostics(true);
+    player.diagnosticEvent = [](const QString &event, const QJsonObject &values) {
+        if (event == "transition-incoming-failed") {
+            qCritical() << "Incoming transition player failed" << values;
+        }
+    };
     int committed = 0;
     player.appleTransitionCommitted = [&] { ++committed; };
     if (!player.load(QUrl::fromLocalFile(a).toString(), true, false, "local") ||
@@ -116,8 +121,9 @@ int main(int argc, char **argv) {
                "Stable beats should produce a beat-matched WASAPI handoff")) {
         return failure(__LINE__);
     }
-    player.control("seek", plan["transitionAtMs"].toDouble() - 1700);
-    if (!waitFor([&] { return committed > 0; }, 10000)) {
+    // 预卷到过渡点前 12 秒
+    player.control("seek", plan["transitionAtMs"].toDouble() - 12000);
+    if (!waitFor([&] { return committed > 0; }, 20000)) {
         qCritical() << "WASAPI handoff failed" << player.diagnosticState();
         return failure(__LINE__);
     }

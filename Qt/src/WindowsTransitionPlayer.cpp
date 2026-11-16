@@ -5,6 +5,12 @@
 #include <QMediaDevices>
 #include <cmath>
 
+namespace {
+// 每 10ms 检查一次缓冲是否达到目标。
+constexpr int PREROLL_CHECK_INTERVAL_MS = 10;
+constexpr double PREROLL_TARGET_BUFFER_MS = 500;
+}
+
 WindowsTransitionPlayer::WindowsTransitionPlayer(AudioPlayer *current) {
     if (current) {
         audio = current;
@@ -25,6 +31,21 @@ WindowsTransitionPlayer::WindowsTransitionPlayer(AudioPlayer *current) {
             setPaused(false);
         }
     });
+    prerollTimer.setInterval(PREROLL_CHECK_INTERVAL_MS);
+    QObject::connect(&prerollTimer, &QTimer::timeout, &prerollTimer, [this] {
+        if (!prerolled || decoderHeld) {
+            prerollTimer.stop();
+            return;
+        }
+        const auto bufferedMs = audio->pcm.snapshot()["outputBufferMs"].toDouble();
+        if (bufferedMs < PREROLL_TARGET_BUFFER_MS) {
+            return;
+        }
+        // 主动停住媒体解码，等待真正接拍时再由 setPaused(false) 恢复。
+        audio->player->pause();
+        decoderHeld = true;
+        prerollTimer.stop();
+    });
     if (ownedAudio) {
         audio->spectrumChanged = [this](QJsonArray levels) {
             if (spectrumChanged) {
@@ -40,6 +61,7 @@ WindowsTransitionPlayer::WindowsTransitionPlayer(AudioPlayer *current) {
 }
 WindowsTransitionPlayer::~WindowsTransitionPlayer() {
     startTimer.stop();
+    prerollTimer.stop();
 }
 std::unique_ptr<WindowsTransitionPlayer> WindowsTransitionPlayer::borrow(AudioPlayer &current) {
     return std::unique_ptr<WindowsTransitionPlayer>(new WindowsTransitionPlayer(&current));
@@ -110,6 +132,8 @@ void WindowsTransitionPlayer::setPaused(bool value) {
     if (paused == value && !prerolled) {
         return;
     }
+    prerollTimer.stop();
+    decoderHeld = false;
     paused = value;
     prerolled = false;
     audio->control(value ? "pause" : "resume");
@@ -146,14 +170,15 @@ bool WindowsTransitionPlayer::preroll() {
         return false;
     }
     prerolled = true;
+    decoderHeld = false;
     audio->playbackRequested = true;
     audio->pcm.pause(true);
     audio->player->play();
+    prerollTimer.start();
     return true;
 }
 bool WindowsTransitionPlayer::isPrerolled() const {
-    return prerolled && status() == Status::Ready && audio->pcm.active() &&
-           audio->pcm.snapshot()["outputBufferMs"].toDouble() >= 20;
+    return prerolled && decoderHeld && status() == Status::Ready && audio->pcm.active();
 }
 bool WindowsTransitionPlayer::synchronizeWith(const WindowsTransitionPlayer &current, qint64 cue,
                                               qint64 incomingMs) {

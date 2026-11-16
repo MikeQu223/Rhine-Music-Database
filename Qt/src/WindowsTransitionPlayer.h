@@ -55,7 +55,8 @@ class WindowsTransitionPlayer {
     std::unique_ptr<AudioPlayer> ownedAudio;
     AudioPlayer *audio = nullptr;
     QTimer startTimer;
+    QTimer prerollTimer;
     const WindowsTransitionPlayer *outgoing = nullptr;
     qint64 outgoingCue = 0;
-    bool paused = true, prerolled = false, tempoWasRestored = false;
+    bool paused = true, prerolled = false, decoderHeld = false, tempoWasRestored = false;
 };

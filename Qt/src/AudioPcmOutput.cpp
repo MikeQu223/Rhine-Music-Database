@@ -9,6 +9,8 @@ constexpr qint64 PRESSURE_HIGH_MS = 200;
 constexpr qint64 PRESSURE_LOW_MS = 50;
 // 未写入队列的硬上限：解码器忽略背压时显式失败，不丢样本也不无限增长。
 constexpr qint64 QUEUE_LIMIT_MS = 2000;
+// 预卷/暂停时解码器限时
+constexpr qint64 PAUSED_QUEUE_LIMIT_MS = 6000;
 // 设备连续这么久没有消费、解码时钟却仍在推进，就判定设备停滞。
 constexpr qint64 STALL_TIMEOUT_MS = 5000;
 }
@@ -167,7 +169,8 @@ bool AudioPcmOutput::push(const QAudioBuffer &buffer) {
         offset = 0;
     }
     // 在硬上限之前很早就暂停解码；后端无视背压时显式失败，而不是丢 PCM 或无限占内存。
-    if (qint64(pending.size()) + converted.size() > submitted.bytesForDuration(QUEUE_LIMIT_MS * 1000)) {
+    const auto queueLimitMs = paused ? PAUSED_QUEUE_LIMIT_MS : QUEUE_LIMIT_MS;
+    if (qint64(pending.size()) + converted.size() > submitted.bytesForDuration(queueLimitMs * 1000)) {
         fail(5);
         return false;
     }

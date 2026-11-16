@@ -1096,6 +1096,11 @@ QJsonObject AudioPlayer::diagnosticState() const {
                 values["transitionOutgoingGain"] = transition.outgoingGain;
                 values["transitionIncomingGain"] = transition.incomingGain;
             }
+            if (transition.incoming) {
+                // 下一首有独立播放器和输出，失败时需并入其状态。
+                const auto incoming = transition.incoming->diagnosticState();
+                values["transitionIncomingOutputError"] = incoming["outputError"];
+            }
         }
     }
 #endif
@@ -1536,6 +1541,7 @@ void AudioPlayer::advanceAppleTransition() {
     }
     if (transition.incoming && transition.incoming->status() == Status::Failed &&
         transition.phase != Phase::Recovering) {
+        diagnose("transition-incoming-failed");
         if (!mixing && transition.analysis->preparedAudio && !transition.rejectedPreparedAudio) {
             transition.rejectedPreparedAudio = true;
             resetAppleTransitionSchedule();

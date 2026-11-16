@@ -88,7 +88,7 @@ bool checkAppleTransitionAudio(const QUrl &url) {
         return false;
     }
     const std::atomic_bool cancelled = false;
-    for (double speed : {1.153, 0.816}) {
+    for (double speed : {1.153, 0.816, 0.763}) {
         const AppleTransitionPlan plan{AppleTransitionPlan::Kind::BeatMatch, 0, 960, 2329, speed};
         const auto audio = AppleTransitionAudio::render(url, plan, cancelled);
         if (!audio || std::abs(audio->tempo(1000) - speed) > 0.001 ||
