@@ -567,7 +567,10 @@ void main() {
         }
         await Future<void>.delayed(Duration.zero);
       }
-      fail('封面请求没有发出：' + url + '（已请求 ' + client.requested.join(', ') + '）');
+      // 用 throw 而不是 fail()：不依赖 test 包里 fail 的返回类型
+      // （若它声明成 void，这个 Future<Completer<…>> 的 async 函数就编译不过）。
+      throw StateError(
+          '封面请求没有发出：' + url + '（已请求 ' + client.requested.join(', ') + '）');
     }
 
     test('封面 URL 真的落成本地 img，上报的是文件路径而不是 URL', () async {
