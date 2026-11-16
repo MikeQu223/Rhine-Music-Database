@@ -1,4 +1,5 @@
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../data/storage/preference_store.dart';
 import '../hud/modals/settings_modal.dart';
@@ -133,6 +134,74 @@ class MethodChannelBasicSettingsPort implements BasicSettingsPort {
 }
 
 /// 测试/桌面预览用的内存端口：行为与真实端口一致（含失败注入）。
+/// 用 Flutter 官方 **shared_preferences** 真实落盘（2026-11-16 用户直接指示）。
+///
+/// 键就是完整 `<prefix><panel key>`（与 Qt/src/Host.cpp:1075 的 `"panel/" + key`
+/// 同一字符串），值一律字符串：shared_preferences 不做类型转换，bool/number
+/// 的解释仍归调用方，和 Qt 的 QSettings 契约一致。
+///
+/// 为什么不复用 [MethodChannelBasicSettingsPort] 的 `write`：真机上那条通道
+/// 返回失败（设备实测横幅「写入失败：archive-mask-strength 未能保存（仍是 55）」），
+/// 而 shared_preferences 是官方插件、由 GeneratedPluginRegistrant 保证注册。
+/// `packageInfo` / `openUrl` 仍然走原通道：它们不是持久化，不需要换实现。
+class SharedPreferencesBasicSettingsPort implements BasicSettingsPort {
+  SharedPreferencesBasicSettingsPort({
+    Future<SharedPreferences> Function()? preferences,
+    MethodChannelBasicSettingsPort? host,
+  })  : _preferences = preferences ?? SharedPreferences.getInstance,
+        _host = host ?? MethodChannelBasicSettingsPort();
+
+  final Future<SharedPreferences> Function() _preferences;
+  final MethodChannelBasicSettingsPort _host;
+
+  @override
+  Future<Map<String, String>> readAll() async {
+    try {
+      final SharedPreferences prefs = await _preferences();
+      final Map<String, String> out = <String, String>{};
+      for (final String key in prefs.getKeys()) {
+        if (!key.startsWith(basicSettingsPreferencePrefix)) {
+          continue;
+        }
+        final Object? value = prefs.get(key);
+        if (value is String) {
+          out[key] = value;
+        }
+      }
+      return out;
+    } catch (_) {
+      // 读不到就当没有已存值：与 Qt 的"缺键给空串"同一语义，不编默认值。
+      return const <String, String>{};
+    }
+  }
+
+  @override
+  Future<bool> write(String key, String value) async {
+    try {
+      final SharedPreferences prefs = await _preferences();
+      return await prefs.setString(key, value);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  @override
+  Future<void> remove(String key) async {
+    try {
+      final SharedPreferences prefs = await _preferences();
+      await prefs.remove(key);
+    } catch (_) {
+      // 删不存在的键不算错；删失败也不假装成功（读回自然还是旧值）。
+    }
+  }
+
+  @override
+  Future<BasicSettingsPackageInfo> packageInfo() => _host.packageInfo();
+
+  @override
+  Future<bool> openUrl(String url) => _host.openUrl(url);
+}
+
 class MemoryBasicSettingsPort implements BasicSettingsPort {
   MemoryBasicSettingsPort({
     Map<String, String>? values,
