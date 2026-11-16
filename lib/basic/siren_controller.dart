@@ -576,6 +576,20 @@ class BasicController extends ChangeNotifier {
     _publish();
   }
 
+  /// 3D 手势是否正在进行（`start` 之后、`commit` 之前）。
+  ///
+  /// 手势期间的"点选身份"回执必须丢掉：拖动松手与惯性落点不是同一条，谁先到都
+  /// 不该改写列表选中，否则就是双消费（用户实测的"原地跳动一次"）。
+  bool get nativeScrollActive => _nativeScrollOrigin != null;
+
+  /// 3D 归档点选落到列表行（手势进行中直接忽略，见 [nativeScrollActive]）。
+  Future<void> selectCellFromScene(int row) async {
+    if (_disposed || nativeScrollActive) {
+      return;
+    }
+    await selectLibraryRow(row);
+  }
+
   /// Qt 3D 场景回写的 archive 连续滚动（条目增量，可为小数；见 NativeScene 的滚动出口）。
   ///
   /// 三个约束都来自 Qt 原始语义与用户 m01597 的补充：

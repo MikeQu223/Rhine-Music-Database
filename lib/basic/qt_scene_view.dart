@@ -371,9 +371,10 @@ class QtSceneScrollRouter {
 /// 场景视图同时活着（横竖屏切换、退出重进都可能先后存在两个）。
 /// 原生 → Dart 的动作接收面（`action` 方法调用）。
 ///
-/// **当前无生产者**：Qt 归档槽位是 40 条占位记录，不带 Siren 身份，用它的 selection
-/// 去拼 `music:index:<i>` 会打开别的歌（假映射），所以原生侧已停发。接收面保留，
-/// 等权威词表确定后再接。
+/// 生产者是 `Qt/src/EmbeddedSceneHost.cpp` 的 pointerup 分支：**只有一次点选**
+/// （位移小于阈值）才会发 `archive-select:<lane>|<row>|<kind>|<id>`，拖动松手不发——
+/// 否则列表会先跳到手指处那首歌再被惯性落点拉回（用户实测"原地跳动一次"，也是
+/// P0#1 禁止的双消费）。滚动回执 `archive-scroll:<phase>:<delta>` 走另一条分流。
 class QtSceneActions {
   QtSceneActions._();
 
@@ -856,7 +857,7 @@ class _QtSceneViewState extends State<QtSceneView> {
   }
 
   /// 原生 action 的分流：滚动回执走 [QtSceneView.onScroll]，其余原文透传给
-  /// [QtSceneView.onAction]（本版本 onAction 仍无生产者，词表未定）。
+  /// [QtSceneView.onAction]（点选身份 `archive-select:…` 由原生 pointerup 的 tap 分支发出）。
   void _onNativeAction(String action) {
     final QtSceneScrollEvent? scroll = QtSceneScrollEvent.parse(action);
     if (scroll != null) {

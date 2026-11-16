@@ -213,10 +213,12 @@ void flushPendingSelection(Engine *engine)
         return;
     const int pending = g_pendingIndex;
     g_pendingIndex = -1;
+    // 行用 pending 自己的条目号：g_appliedPos 在手势期间会比选中晚几行（回声滞后），
+    // 用它摆 actor 会偏几行。
     engine->scene.select(pending,
                          QJsonObject{{QStringLiteral("cell"),
                                       QJsonObject{{QStringLiteral("lane"), g_appliedLane},
-                                                  {QStringLiteral("row"), absoluteRowFor(g_appliedPos)}}}});
+                                                  {QStringLiteral("row"), 12 + pending}}}});
 }
 
 void startScrollTicker(double reference)
@@ -695,18 +697,26 @@ Java_org_qtproject_qt_android_RhineQtViews_nativePushScenePointer(
                 // 列表决定（拖动 3D 只能滚动当前所属），所以点到别层的卡时把选中还回去，
                 // 让 3D 与列表保持同一个窗口；08:59 真机证据：点到 lane=2 的卡会让
                 // 原生光标停在 lane 2，而列表还在 lane 3，两边就此不一致。
-                if (browsing && picked && g_appliedLane >= 0 && picked->lane != g_appliedLane
+                // 本次手势是不是一次"点选"：位移小于阈值才算。拖动松手**绝不能**回传
+                // 选中——那会让列表先跳到手指处那首歌、再被惯性落点拉回，用户实测就是
+                // "一定会原地跳动一次"，也是 P0#1 明文禁止的双消费。
+                const bool tapOnly = !(std::abs(after - g_scrollOrigin) > 1e-3);
+                // lane 只可能在 0..4（wrap(lane,5) 对负数会产生界外值），先夹再打包，
+                // 避免 (lane<<16) 负左移 UB 与越界身份。
+                const int pickedLane = picked ? qBound(0, picked->lane, 4) : -1;
+                if (browsing && picked && tapOnly && g_appliedLane >= 0
+                    && pickedLane != g_appliedLane
                     && engine->scene.selection() != previousSelection) {
                     engine->scene.select(previousSelection);
                 }
                 // 只要真的拾取到格子就回传身份：不再用 selection 差值判定。NativeScene 的
                 // tap 走 select(fileAt(cell))，那个整数是 8 环绕的占位槽（0..39），同列相隔
                 // 8 行的两次点击会相等 → 第二次点选静默无响应（审查 S9）。
-                if (picked) {
+                if (picked && tapOnly) {
                     // 带身份回传：kind+id 来自 Flutter 的 40 格语义表（唯一真值），
                     // 位置只是几何。Dart 侧先按 (kind,id) 折回真实行，折不到才用几何。
                     const auto identity = g_cellIdentity.value(
-                        (picked->lane << 16) | picked->row, qMakePair(QString(), QString()));
+                        (pickedLane << 16) | picked->row, qMakePair(QString(), QString()));
                     if (!identity.second.isEmpty()) {
                         RhineEmbedded::emitSceneAction(QStringLiteral("archive-select:%1|%2|%3|%4")
                                                            .arg(picked->lane)
