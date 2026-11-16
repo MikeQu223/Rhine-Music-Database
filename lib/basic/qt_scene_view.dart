@@ -195,7 +195,10 @@ List<Map<String, Object?>> qtSceneCellsOf(BasicViewState state) {
       final BasicListItem item = items[index];
       cells.add(<String, Object?>{
         'l': lane,
-        'r': row,
+        // 绝对行域：`12 + 轨道条目` 的行键偏移（= 窗口基址 + 窗口内行）。
+        // 必须与原生 pick 的绝对场景行同一个域，否则 pos≥8 时身份查表必然 miss，
+        // 退化分支还会把行号放大一个基址（审查 MUST-1'/MUST-5'）。
+        'r': offset + row,
         'k': item.kind,
         'i': item.id,
         't': item.title,
@@ -340,11 +343,10 @@ int? qtSceneRowOfCell(BasicViewState state, QtSceneCellRef cell) {
       return index;
     }
   }
-  // 2) 退化到几何：基址必须用连续窗口真值（`round(pos) ~/ 8 * 8`），不是 HUD 的
-  //    8 倍数记忆值——否则 pos 带小数时点选会整体偏移（审查 MUST-5）。
-  final int offset = qtSceneWindowBase(state, cell.lane);
-  // 物理行的基址是 12（NativeScene 的 cell.row = 12 + 列内序号）。
-  final int raw = offset + (cell.row - 12);
+  // 2) 退化到几何：`cell.row` 是**绝对场景行**（原生 pick 返回 12+轨道条目），
+  //    减去 12 就是条目行本身，不能再叠加窗口基址（审查 MUST-1' 反例：pos=87 时
+  //    叠加会得到 167）。
+  final int raw = cell.row - 12;
   return ((raw % items.length) + items.length) % items.length;
 }
 
