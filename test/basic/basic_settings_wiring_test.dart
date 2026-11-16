@@ -66,6 +66,13 @@ class _ShellController extends BasicController {
 
   int bootCalls = 0;
 
+  /// 键盘门要的是「启动完成后的 HUD」，不是 boot 幕布：frameEmpty 时
+  /// HudKeyRouter.key 首门直接返回未消费（Qt :888-890），模拟启动态即可。
+  BasicViewState? stateOverride;
+
+  @override
+  BasicViewState get state => stateOverride ?? super.state;
+
   @override
   Future<void> boot() async {
     bootCalls += 1;
@@ -204,6 +211,43 @@ Future<void> tapWarning(WidgetTester tester, String action) async {
 }
 
 void main() {
+  testWidgets('键盘上下键真的滚动面板（161 MUST-B1：偏移不再是死字段）',
+      (WidgetTester tester) async {
+    final ({_ShellController controller, MemoryBasicSettingsPort port}) shell =
+        await pumpShell(tester);
+    shell.controller.stateOverride = BasicViewState(
+      phase: BasicPhase.library,
+      catalogLoaded: true,
+    );
+    await tester.pump();
+    await openSettings(tester);
+    // 面板打开后 postFrame 才会把真实 maxScrollExtent 公布给外壳。
+    await tester.pump();
+    await tester.pump();
+
+    final Finder firstRow = find.text('界面配色');
+    final double before = tester.getTopLeft(firstRow).dy;
+
+    // NativeHudController.cpp:891-897 的 settings 分支：每步 66 逻辑像素。
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pump();
+    final double oneStep = tester.getTopLeft(firstRow).dy;
+    expect(oneStep, lessThan(before));
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pump();
+    final double twoSteps = tester.getTopLeft(firstRow).dy;
+    expect(twoSteps, lessThan(oneStep));
+    // 两步位移相同（66 逻辑像素/步，按舞台缩放折算），且不是被吞掉的 0。
+    expect((oneStep - before) - (twoSteps - oneStep), closeTo(0, 0.5));
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+    await tester.pump();
+    expect(tester.getTopLeft(firstRow).dy, closeTo(oneStep, 0.5));
+
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('gear opens the ONLY14 panel with real rows and no rejected settings',
       (WidgetTester tester) async {
     await pumpShell(tester);

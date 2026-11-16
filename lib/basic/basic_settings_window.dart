@@ -50,6 +50,7 @@ class BasicSettingsWindow extends StatefulWidget {
     required this.onAction,
     this.portrait = false,
     this.scrollStorage,
+    this.scrollMaximumStorage,
   });
 
   /// 舞台几何：横屏用于换算逻辑像素，竖屏只读 width/height。
@@ -67,7 +68,16 @@ class BasicSettingsWindow extends StatefulWidget {
   final bool portrait;
 
   /// 可选：把滚动偏移存到宿主，重开面板时接上（null = 每次从 0 开始）。
+  ///
+  /// 宿主（BasicApp）既是读写这一份偏移的唯一入口，也是把键盘上下键的步进写回这里
+  /// 的地方——见 [_onStorageOffset]。
   final ValueNotifier<double>? scrollStorage;
+
+  /// 可选：把当前内容的真实可滚动距离（maxScrollExtent）公布给宿主。
+  ///
+  /// 键盘路径（NativeHudController.cpp:891-897 的 settingsScroll clamp）需要的是
+  /// 舞台坐标下的 contentBottom；这个值只能由真正排完版的卡片给出，不能拍一个常数。
+  final ValueNotifier<double>? scrollMaximumStorage;
 
   @override
   State<BasicSettingsWindow> createState() => _BasicSettingsWindowState();
@@ -82,10 +92,37 @@ class _BasicSettingsWindowState extends State<BasicSettingsWindow> {
   void initState() {
     super.initState();
     _scroll.addListener(_onScroll);
+    widget.scrollStorage?.addListener(_onStorageOffset);
+  }
+
+  @override
+  void didUpdateWidget(covariant BasicSettingsWindow oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.scrollStorage != widget.scrollStorage) {
+      oldWidget.scrollStorage?.removeListener(_onStorageOffset);
+      widget.scrollStorage?.addListener(_onStorageOffset);
+    }
+  }
+
+  /// 宿主改偏移（键盘上下键）→ 真实 ScrollController 跟随。
+  ///
+  /// 面板自己的滚动仍然只经 [_onScroll] 写回存储；两边用 0.5px 的死区断开回环。
+  void _onStorageOffset() {
+    final ValueNotifier<double>? storage = widget.scrollStorage;
+    if (storage == null || !_scroll.hasClients) {
+      return;
+    }
+    final double max =
+        _scroll.position.maxScrollExtent.clamp(0.0, double.infinity).toDouble();
+    final double target = storage.value.clamp(0.0, max).toDouble();
+    if ((target - _scroll.offset).abs() > 0.5) {
+      _scroll.jumpTo(target);
+    }
   }
 
   @override
   void dispose() {
+    widget.scrollStorage?.removeListener(_onStorageOffset);
     _scroll.removeListener(_onScroll);
     _scroll.dispose();
     super.dispose();
@@ -173,6 +210,16 @@ class _BasicSettingsWindowState extends State<BasicSettingsWindow> {
     );
     final SettingsCardLayout layout =
         layoutSettingsCard(viewport: viewport, model: widget.model.sections);
+    // 真实可滚动距离公布给宿主：键盘上下键的 clamp 上界（NativeHudController.cpp:891-897）
+    // 必须与这条 SingleChildScrollView 的实际内容一致，不能拍一个 1600 常数。
+    final ValueNotifier<double>? maximum = widget.scrollMaximumStorage;
+    if (maximum != null && (maximum.value - layout.maximumScroll).abs() > 0.01) {
+      WidgetsBinding.instance.addPostFrameCallback((Duration _) {
+        if (mounted) {
+          maximum.value = layout.maximumScroll;
+        }
+      });
+    }
     final SettingsPalette palette = basicSettingsPalette(dark: widget.dark);
     final double offset = _scroll.hasClients ? _scroll.offset : 0;
     final double maxScroll = layout.maximumScroll;
