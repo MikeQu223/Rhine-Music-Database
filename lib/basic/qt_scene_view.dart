@@ -355,6 +355,26 @@ int? qtSceneRowOfCell(BasicViewState state, QtSceneCellRef cell) {
 /// [QtSceneView] 的 `onScroll` 参数优先；HUD 里的场景视图没有传这个参数时（它的
 /// 构造点在 HUD 内部），回执落到这里。BasicApp 在 initState 里把 controller 的
 /// 连续窗口写入挂上来——这样"3D 拖动/滚轮 → 列表/ruler/换列"不依赖 HUD 接线。
+/// 详情页唱片转到阈值以外的回执：`archive-step:next` / `archive-step:prev`。
+///
+/// 原生只报"用户把唱片转到底了"这个手势，换到哪一张由这里的列表真值决定（原始 Qt
+/// 的"转到底换一张"行为）。+-1 表示方向，null 表示不是这类回执。
+const String qtSceneStepPrefix = 'archive-step:';
+
+int? qtSceneStepOf(String action) {
+  if (!action.startsWith(qtSceneStepPrefix)) {
+    return null;
+  }
+  final String body = action.substring(qtSceneStepPrefix.length);
+  if (body == 'next') {
+    return 1;
+  }
+  if (body == 'prev') {
+    return -1;
+  }
+  return null;
+}
+
 class QtSceneScrollRouter {
   QtSceneScrollRouter._();
 

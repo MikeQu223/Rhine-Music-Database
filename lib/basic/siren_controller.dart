@@ -582,6 +582,26 @@ class BasicController extends ChangeNotifier {
   /// 不该改写列表选中，否则就是双消费（用户实测的"原地跳动一次"）。
   bool get nativeScrollActive => _nativeScrollOrigin != null;
 
+  /// 详情页把唱片转到阈值以外：切到当前曲序里的相邻一张（[direction] = ±1）。
+  ///
+  /// 只换选中/详情，不播、不改队列——与 Qt 原始的"转到底翻一张"一致。
+  Future<void> stepDetailFromScene(int direction) async {
+    if (_disposed || _phase != BasicPhase.detail || direction == 0) {
+      return;
+    }
+    final List<SirenSong> songs = _visibleSongs();
+    if (songs.length < 2) {
+      return;
+    }
+    final SirenSong? current = _song;
+    final int index = current == null ? -1 : songs.indexWhere((SirenSong s) => s.id == current.id);
+    final int next = index < 0 ? 0 : ((index + direction) % songs.length + songs.length) % songs.length;
+    if (songs[next].id == current?.id) {
+      return;
+    }
+    await openSong(songs[next], play: false);
+  }
+
   /// 3D 归档点选落到列表行（手势进行中直接忽略，见 [nativeScrollActive]）。
   Future<void> selectCellFromScene(int row) async {
     if (_disposed || nativeScrollActive) {

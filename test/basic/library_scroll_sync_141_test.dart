@@ -473,6 +473,37 @@ void main() {
     });
   });
 
+  group('详情页唱片转到底 → 相邻唱片（archive-step 回执）', () {
+    test('archive-step 回执解析：next/prev，其它一律 null', () {
+      expect(qtSceneStepOf('archive-step:next'), 1);
+      expect(qtSceneStepOf('archive-step:prev'), -1);
+      expect(qtSceneStepOf('archive-step:'), isNull);
+      expect(qtSceneStepOf('archive-select:3|12|song|s1'), isNull);
+      expect(qtSceneStepOf('archive-scroll:move:1.5'), isNull);
+    });
+
+    test('stepDetailFromScene 换选中/详情但不播、不改队列', () async {
+      final _RecordingAudio audio = _RecordingAudio();
+      final BasicController controller = BasicController(
+        audio: audio,
+        repository: _repository(<String>['s1', 's2', 's3']),
+      );
+      addTearDown(controller.dispose);
+      await controller.boot();
+      await controller.openSong(controller.state.songs.first, play: false);
+      final String from = controller.state.song!.id;
+      final int queueBefore = controller.state.queue.length;
+      final int prepareBefore = audio.calls.where((String c) => c.startsWith('prepare')).length;
+      await controller.stepDetailFromScene(1);
+      expect(controller.state.song!.id, isNot(from), reason: '转到底必须换到相邻一张');
+      expect(controller.state.queue.length, queueBefore, reason: '不改队列');
+      expect(audio.calls.where((String c) => c.startsWith('prepare')).length, prepareBefore,
+          reason: '不自动播放');
+      await controller.stepDetailFromScene(-1);
+      expect(controller.state.song!.id, from, reason: '反向转回原唱片');
+    });
+  });
+
   group('原生点选身份 → 列表行（archive-select 的消费端）', () {
     test('带身份的格回传折回真实行；别列/无身份不猜行', () async {
       final _RecordingAudio audio = _RecordingAudio();
