@@ -487,7 +487,7 @@ public final class RhineQtViews {
      * → 根在 retained delegate 的原生持有者，或 Flutter 侧 retained engine 的 activity
      * attachment。只读，不改任何状态。
      */
-    private static void logPinningSources(String tag) {
+    private static void logPinningSources(String tag, Activity target) {
         String qtActivity = "?";
         String appContext = "?";
         try {
@@ -502,7 +502,13 @@ public final class RhineQtViews {
         } catch (Throwable error) {
             appContext = "err:" + error;
         }
-        android.util.Log.i(TAG, tag + " pin sources qtNativeActivity=" + qtActivity
+        final android.app.Activity slot = QtNative.activity();
+        android.util.Log.i(TAG, tag + " pin sources sameAsLeaked="
+                + (slot != null && target != null && slot == target)
+                + " slotIdentity=" + (slot == null ? "null" : Integer.toHexString(System.identityHashCode(slot)))
+                + " leakedIdentity="
+                + (target == null ? "null" : Integer.toHexString(System.identityHashCode(target)))
+                + " qtNativeActivity=" + qtActivity
                 + " qtApplicationContext=" + appContext
                 + " sDelegateNull=" + (sDelegate == null)
                 + " sHostActivityNull=" + (sHostActivity.get() == null));
@@ -544,7 +550,7 @@ public final class RhineQtViews {
                     android.util.Log.i(TAG, "root probe attempt " + current + " canaryCleared="
                             + (canary.get() == null));
                     if (current == 1) {
-                        logPinningSources("probe");
+                        logPinningSources("probe", probes.get(0).activity.get());
                     }
                     if (current == 1 && !probes.isEmpty()) {
                         logStaticHolders("probe",
