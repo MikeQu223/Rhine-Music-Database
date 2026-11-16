@@ -422,31 +422,46 @@ void main() {
     });
   });
 
-  group('controller：一份窗口真值（更新不落行，落行不改播放）', () {
-    test('updateLibraryScroll 只写 listPosition：选中/播放/队列都不动', () async {
+  group('controller：一份窗口真值（更新即进入但窗口保小数，落行不改播放）', () {
+    test('updateLibraryScroll 越过即进入：窗口保小数、选中当帧落最近行（双向）', () async {
       final _RecordingAudio audio = _RecordingAudio();
       final BasicController controller = BasicController(
         audio: audio,
-        repository: _repository(<String>['s1', 's2', 's3']),
+        repository: _repository(<String>['s1', 's2', 's3', 's4', 's5']),
       );
       addTearDown(controller.dispose);
       await controller.boot();
-      final String? selectionBefore = controller.state.selection?.id;
       final int queueBefore = controller.state.queue.length;
 
-      controller.updateLibraryScroll(2.5);
-      expect(controller.state.listPosition, 2.5);
-      expect(controller.state.selection?.id, selectionBefore, reason: '拖动中途不改选中');
+      // 往下拖 2.6 行：窗口仍是 2.6（不吸附），选中当场落到最近一行 3 = s4。
+      // Qt 真值：NativeScene::navigatePlane 每跨一格 select，HUD 每帧 observe(selected)。
+      controller.updateLibraryScroll(2.6);
+      expect(controller.state.listPosition, closeTo(2.6, 1e-9));
+      expect(controller.state.selection?.id, 's4', reason: '拖动中途必须越过即进入');
       expect(controller.state.queue.length, queueBefore);
       expect(audio.calls.where((String c) => c.startsWith('play')), isEmpty);
       expect(audio.calls.where((String c) => c.startsWith('prepare')), isEmpty);
+      expect(controller.state.playing, isFalse);
+
+      final String statusMid = controller.state.status;
+      expect(statusMid.startsWith('已选中'), isFalse,
+          reason: '中途 observe 不播报已选中（那是抬手落定的动作）');
+
+      // 反向拖回 1.4：同一个手势里也必须双向进入，且是"从 s4 回到 s2"这种
+      // 真正会失败的方向（若只写窗口，选中会停在 s4）。
+      controller.updateLibraryScroll(1.4);
+      expect(controller.state.listPosition, closeTo(1.4, 1e-9));
+      expect(controller.state.selection?.id, 's2', reason: '反向拖动同样越过即进入');
+      controller.updateLibraryScroll(0.4);
+      expect(controller.state.selection?.id, 's1');
 
       // 同一个位置再写一次是 no-op（防回声/防重复投影）。
-      controller.updateLibraryScroll(2.5);
-      expect(controller.state.listPosition, 2.5);
+      controller.updateLibraryScroll(0.4);
+      expect(controller.state.listPosition, closeTo(0.4, 1e-9));
+      expect(controller.state.selection?.id, 's1');
     });
 
-    test('applyNativeArchiveScroll：start 记原点、move 连续、commit 才落行', () async {
+    test('applyNativeArchiveScroll：start 记原点、move 越过即进入、commit 落定', () async {
       final _RecordingAudio audio = _RecordingAudio();
       final BasicController controller = BasicController(
         audio: audio,
@@ -458,11 +473,11 @@ void main() {
       controller.applyNativeArchiveScroll(0, started: true);
       controller.applyNativeArchiveScroll(1.4);
       expect(controller.state.listPosition, closeTo(1.4, 1e-9));
-      expect(controller.state.selection?.id, 's1', reason: '拖动中途不落行（仍是最初选中）');
+      expect(controller.state.selection?.id, 's2', reason: '3D 手势中途越过即进入');
 
       controller.applyNativeArchiveScroll(2.6);
       expect(controller.state.listPosition, closeTo(2.6, 1e-9));
-      expect(controller.state.selection?.id, 's1');
+      expect(controller.state.selection?.id, 's4');
 
       // 松手：落到最近一行（3 = s4），仍然只是选中，不 prepare/不 play/不改队列。
       controller.applyNativeArchiveScroll(2.6, committed: true);
@@ -636,7 +651,7 @@ void main() {
       handler!(const QtSceneScrollEvent(deltaRows: 2.4));
       await tester.pump();
       expect(controller.state.listPosition, closeTo(2.4, 1e-9));
-      expect(controller.state.selection?.id, 's1', reason: '拖动中途 3D 不落行');
+      expect(controller.state.selection?.id, 's3', reason: '3D 拖动中途越过即进入（行 2）');
 
       handler!(const QtSceneScrollEvent(deltaRows: 2.4, committed: true));
       await tester.pump();

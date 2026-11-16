@@ -204,7 +204,7 @@ class _BasicAppState extends State<BasicApp> {
     unawaited(_loadResources());
   }
 
-  /// Qt 把连续条目增量报回来：拖动/惯性中途只滚窗口，松手才 commit 落行。
+  /// Qt 把连续条目增量报回来：拖动/惯性中途即越过即进入（窗口保小数），松手才 commit 落行。
   void _onSceneScroll(QtSceneScrollEvent event) {
     if (!mounted) {
       return;
