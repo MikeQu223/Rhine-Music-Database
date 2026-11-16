@@ -527,6 +527,12 @@ class _BasicShellState extends State<_BasicShell> implements TextInputPorts {
   void _onAction(String action) {
     // 3D 归档里点到某一格：Qt 只回传**几何格**（lane+物理行），条目身份仍由这里的
     // 唯一列表真值折出来。折不出来（不是当前列/空列）就不动，不猜下标。
+    // 详情页唱片转到底：原生只报手势方向，切哪一张由这里的列表真值决定。
+    final int? step = qtSceneStepOf(action);
+    if (step != null) {
+      unawaited(controller.stepDetailFromScene(step));
+      return;
+    }
     final QtSceneCellRef? cell = QtSceneCellRef.parse(action);
     if (cell != null) {
       final int? row = qtSceneRowOfCell(controller.state, cell);

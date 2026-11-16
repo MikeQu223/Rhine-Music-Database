@@ -25,6 +25,10 @@ class NativeScene {
     void select(int index, QJsonObject navigation = {});
     void navigate(QString axis, int direction);
     int selection() const;
+    // 详情页唱片被拖到的相对角度（-0.8..0.8）。过阈值就该翻到相邻唱片——这是原始 Qt
+    // 的"转到底换一张"行为，切哪一张由 Flutter 的列表真值决定，原生只报手势。
+    double rotationTarget() const { return m_targetRotation; }
+    void resetRotation() { m_targetRotation = 0; }
     // 归档轨道当前的**条目位置**（0 = 本列第一条；小数 = 两条之间）。
     // Flutter 的 state.listPosition 与它是同一件事的两种写法：Flutter 侧是列表窗口真值，
     // 这里只是把 Qt 的连续轨道折算回条目，供 pointer/wheel 结束后把增量回写给 Flutter。

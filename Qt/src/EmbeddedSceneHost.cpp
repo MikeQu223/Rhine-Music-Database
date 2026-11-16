@@ -712,6 +712,20 @@ Java_org_qtproject_qt_android_RhineQtViews_nativePushScenePointer(
                 // 只要真的拾取到格子就回传身份：不再用 selection 差值判定。NativeScene 的
                 // tap 走 select(fileAt(cell))，那个整数是 8 环绕的占位槽（0..39），同列相隔
                 // 8 行的两次点击会相等 → 第二次点选静默无响应（审查 S9）。
+                // 详情页把唱片转到阈值以外 → 请求切到相邻一张（不自动播放，切哪张由
+                // Dart 的列表真值决定）。角度随即复位，避免停在一个偏着的姿态上。
+                if (!browsing && engine->scene.mode() == QLatin1String("detail")
+                    && (eventType == QLatin1String("pointerup")
+                        || eventType == QLatin1String("pointercancel")
+                        || eventType == QLatin1String("lostpointercapture"))) {
+                    const double rotation = engine->scene.rotationTarget();
+                    if (std::abs(rotation) > 0.62) {
+                        RhineEmbedded::emitSceneAction(QStringLiteral("archive-step:%1")
+                                                           .arg(rotation > 0 ? QStringLiteral("next")
+                                                                             : QStringLiteral("prev")));
+                        engine->scene.resetRotation();
+                    }
+                }
                 if (picked && tapOnly) {
                     // 带身份回传：kind+id 来自 Flutter 的 40 格语义表（唯一真值），
                     // 位置只是几何。Dart 侧先按 (kind,id) 折回真实行，折不到才用几何。
