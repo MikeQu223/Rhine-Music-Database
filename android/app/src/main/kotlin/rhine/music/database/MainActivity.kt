@@ -104,7 +104,9 @@ class MainActivity : FlutterActivity() {
         //  （2026-11-16 21:0x，526f6b6d）。持久化本身按用户指示改走 Flutter 官方
         //  shared_preferences（见 lib/basic/basic_settings_store.dart），这条通道只留
         //  packageInfo / openUrl 两个不属于持久化的方法。
-        BasicSettingsChannel.install(flutterEngine.dartExecutor.binaryMessenger) { this }
+        BasicSettingsChannel.install(flutterEngine.dartExecutor.binaryMessenger) {
+            applicationContext
+        }
         QtSceneChannel.install(flutterEngine, this)
         flutterEngine.platformViewsController.registry.registerViewFactory(
             QT_SCENE_VIEW_TYPE,
