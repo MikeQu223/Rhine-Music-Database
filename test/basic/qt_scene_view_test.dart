@@ -23,6 +23,23 @@ SirenSong _song(String id, {String title = ''}) => SirenSong(
       durationMs: 0,
     );
 
+/// 只为身份签名服务的目录替身（真实字段全给，避免测试构造半真对象）。
+BasicDirectory _directory(String id) => BasicDirectory(
+      provider: 'siren',
+      kind: 'playlist',
+      id: id,
+      key: 'siren:playlist:$id',
+      title: 'dir-$id',
+      artist: '',
+      cover: '',
+      description: '',
+      trackCount: 0,
+      songs: const <SirenSong>[],
+      ids: const <String>[],
+      cursor: 0,
+      index: 0,
+    );
+
 BasicViewState _state({
   BasicPhase phase = BasicPhase.library,
   SirenSong? song,
@@ -30,6 +47,9 @@ BasicViewState _state({
   List<SirenAlbum> albums = const <SirenAlbum>[],
   bool dark = true,
   bool playing = false,
+  List<List<BasicListItem>> laneItems = const <List<BasicListItem>>[],
+  double? listPosition,
+  BasicDirectory? directory,
 }) =>
     BasicViewState(
       phase: phase,
@@ -38,6 +58,9 @@ BasicViewState _state({
       albums: albums,
       dark: dark,
       playing: playing,
+      laneItems: laneItems,
+      listPosition: listPosition,
+      directory: directory,
     );
 
 Map<String, Object?> _decode(String snapshot) =>
@@ -74,14 +97,133 @@ void main() {
     });
   });
 
+  group('origin：输入/动作按 (viewId, ctx) 校验', () {
+    test('ctx 不匹配的动作不交给页面；同 ctx 与未登记照常放行', () async {
+      final List<String> delivered = <String>[];
+      QtSceneActions.resetForTest();
+      QtSceneActions.register(7, delivered.add);
+      QtSceneActions.setContext(7, 3);
+
+      // 旧代次（换目录前）的迟到动作：丢弃。
+      await QtSceneActions.handleNativeCall(const MethodCall(
+        'action',
+        <String, Object?>{'viewId': 7, 'ctx': 2, 'action': 'archive-select:1|2|song|x'},
+      ));
+      expect(delivered, isEmpty);
+
+      // 当前代次：正常送达。
+      await QtSceneActions.handleNativeCall(const MethodCall(
+        'action',
+        <String, Object?>{'viewId': 7, 'ctx': 3, 'action': 'archive-scroll:commit:1.0'},
+      ));
+      expect(delivered, <String>['archive-scroll:commit:1.0']);
+
+      // 老调用点不带 ctx：按旧行为放行（不能因为原生多知道一点就吞掉正常回执）。
+      await QtSceneActions.handleNativeCall(const MethodCall(
+        'action',
+        <String, Object?>{'viewId': 7, 'action': 'archive-select:0:0'},
+      ));
+      expect(delivered.last, 'archive-select:0:0');
+
+      // 未注册的 viewId 不抛、不下发。
+      await QtSceneActions.handleNativeCall(const MethodCall(
+        'action',
+        <String, Object?>{'viewId': 99, 'ctx': 3, 'action': 'archive-select:0:0'},
+      ));
+      expect(delivered, hasLength(2));
+
+      QtSceneActions.resetForTest();
+    });
+  });
+
+  group('qtSceneIdentitySignature：只在集合身份变化时换代', () {
+    test('拖动/惯性/选中变化不换代，换目录才换代', () {
+      const BasicListItem item = BasicListItem(
+        title: 'a',
+        kind: 'song',
+        index: 0,
+        id: 'a',
+        cover: 'https://cover/a.jpg',
+      );
+      final BasicViewState base = _state(
+        songs: <SirenSong>[_song('a')],
+        laneItems: const <List<BasicListItem>>[
+          <BasicListItem>[item],
+        ],
+      );
+      final BasicViewState scrolled = _state(
+        song: _song('a'),
+        songs: <SirenSong>[_song('a')],
+        listPosition: 12.5,
+        laneItems: const <List<BasicListItem>>[
+          <BasicListItem>[item],
+        ],
+      );
+      expect(qtSceneIdentitySignature(base), qtSceneIdentitySignature(scrolled));
+
+      final BasicViewState otherDirectory = BasicViewState(
+        phase: base.phase,
+        songs: base.songs,
+        laneItems: base.laneItems,
+        directory: _directory('dir-1'),
+      );
+      expect(
+        qtSceneIdentitySignature(otherDirectory),
+        isNot(qtSceneIdentitySignature(base)),
+      );
+    });
+  });
+
+  group('qtSceneCellsOf：每格带自己的真实 metadata', () {
+    test('c/a/b 来自本格源条目，不是选中项；空封面不带键', () {
+      const BasicListItem withArt = BasicListItem(
+        title: 'Song A',
+        kind: 'song',
+        index: 0,
+        id: 'a',
+        cover: 'https://cover/a.jpg',
+        artist: 'Artist A',
+        album: 'Album A',
+        albumId: 'album-a',
+      );
+      const BasicListItem bare = BasicListItem(
+        title: 'Song B',
+        kind: 'song',
+        index: 1,
+        id: 'b',
+      );
+      final BasicViewState state = _state(
+        laneItems: const <List<BasicListItem>>[
+          <BasicListItem>[withArt, bare],
+        ],
+      );
+      final List<Map<String, Object?>> cells = qtSceneCellsOf(state);
+      expect(cells, isNotEmpty);
+      final Map<String, Object?> first = cells.first;
+      expect(first['k'], 'song');
+      expect(first['i'], 'a');
+      expect(first['c'], 'https://cover/a.jpg');
+      expect(first['a'], 'Artist A');
+      expect(first['b'], 'Album A');
+      expect(first['r'], 0, reason: '绝对行：窗口基址 + 行');
+      // 第 2 行是 bare：没有任何 metadata 键。
+      final Map<String, Object?> second = cells[1];
+      expect(second['i'], 'b');
+      expect(second.containsKey('c'), isFalse);
+      expect(second.containsKey('a'), isFalse);
+      expect(second.containsKey('b'), isFalse);
+    });
+  });
+
   group('qtSceneStateSnapshot', () {
     test('有选中：带 index 与身份键，mode/dark 来自状态', () {
       final SirenSong a = _song('a');
       final Map<String, Object?> payload = _decode(qtSceneStateSnapshot(
         _state(phase: BasicPhase.detail, song: a, songs: <SirenSong>[a], dark: false),
       ));
-      // v3：在 v2 的选中身份之上加了连续窗口（pos/lane）与 40 格语义槽位（cells）。
-      expect(payload['v'], 3);
+      // v4：在 v3 的连续窗口（pos/lane）与 40 格语义槽位之上，加了
+      // origin（view/ctx）与每格真实 metadata（c/a/b）。
+      expect(payload['v'], 4);
       expect(payload['dark'], isFalse);
       expect(payload['mode'], 'detail');
       expect(payload['index'], 0);
@@ -193,7 +335,11 @@ void main() {
       expect(sent, isTrue);
       expect(calls, hasLength(1));
       expect(calls.single.method, 'state');
-      expect(calls.single.arguments, <String, Object?>{'viewId': 7, 'json': '{"v":1}'});
+      // ctx 与写入快照的 ctx 是同一个值：原生用它给每个视图登记 origin。
+      expect(
+        calls.single.arguments,
+        <String, Object?>{'viewId': 7, 'ctx': 0, 'json': '{"v":1}'},
+      );
     });
 
     test('同一份快照不重复发；内容变了再发', () async {

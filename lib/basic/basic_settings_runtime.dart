@@ -115,6 +115,14 @@ class BasicSettingsRuntime {
   String get aaMode => _aaMode;
   String get aaScale => _aaScale;
   String get msaa => _msaa;
+
+  /// 下面四个是给原生渲染参数用的**数值**投影（raw 里存的是字符串）：
+  /// 渲染分辨率百分比默认 75（Android 集成 GPU 的既有默认，main.cpp 同一套口径），
+  /// SSAA 倍率默认 125，MSAA 未选过是 0（= 渲染器自己挑），超采样默认 1。
+  int get renderScalePercent => int.tryParse(_renderScale) ?? 75;
+  int get aaScalePercent => int.tryParse(_aaScale) ?? 125;
+  int get msaaSamples => int.tryParse(_msaa) ?? 0;
+  int get supersampleFactor => int.tryParse(rawValue('supersample')) ?? 1;
   String get fsrQuality => _fsrQuality;
   String get fsrSharpness => _fsrSharpness;
 

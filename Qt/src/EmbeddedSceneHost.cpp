@@ -56,6 +56,30 @@ int g_pendingIndex = -1;
 // 语义表的 (lane,row) -> {kind,id} 索引，供点选回传正确身份（MUST-4 的消费者）。
 QHash<int, QPair<QString, QString>> g_cellIdentity;
 int g_windowSlot = -1;
+
+// ── 画面来源（origin）───────────────────────────────────────────────────────
+// 产出当前快照的平台视图与其交互上下文代次。Dart 侧每份快照带 (viewId, ctx)，由
+// Kotlin → RhineQtViews.pushSceneState → 这里落账；之后所有排队中的输入/动作都要拿它
+// 比对，而不是靠"最后注册的视图"猜 origin。
+// viewId < 0 / ctx == 0 一律视为"未登记"（非 Android 搬运通道、老调用点），按旧行为放行。
+int g_originViewId = -1;
+quint64 g_originContext = 0;
+
+// 已经**应用**过的那份快照的 origin：队列里可能还有上一份快照的输入，只有在应用点
+// 才能确定谁是当前画面。同 view 换目录（ctx 递增）后，旧代次的输入/动作被拒。
+int g_appliedOriginView = -1;
+quint64 g_appliedOriginContext = 0;
+
+bool originAccepts(int viewId, quint64 context)
+{
+    if (viewId < 0 || g_appliedOriginView < 0)
+        return true;
+    if (viewId != g_appliedOriginView)
+        return false;
+    if (context != 0 && g_appliedOriginContext != 0 && context != g_appliedOriginContext)
+        return false;
+    return true;
+}
 } // namespace
 
 namespace RhineEmbedded {
@@ -97,6 +121,9 @@ QString g_appliedMode;
 int g_appliedIndex = -2;
 int g_appliedDark = -1;
 QString g_appliedKey;
+// 最近一次应用的渲染设置（Flutter 是唯一真值）：值不变就一个字节都不写，
+// 否则每次快照都会重写一遍 QSettings 并把 NativeHud 的字段重新赋值。
+QJsonObject g_appliedSettings;
 } // namespace
 
 void rememberState(const QString &json)
@@ -136,12 +163,19 @@ QJsonObject projectedCurrent()
 
 void resetAppliedState()
 {
+    // 场景整个拆掉时 origin 不再有意义：退回"未登记"，让下一次建场景前的输入不被
+    // 上一轮视图的 (viewId, ctx) 误拒（旧 host 已经死了，没有再比对的必要）。
+    g_originViewId = -1;
+    g_originContext = 0;
+    g_appliedOriginView = -1;
+    g_appliedOriginContext = 0;
     g_appliedMode.clear();
     g_appliedIndex = -2;
     g_appliedDark = -1;
     g_appliedKey.clear();
     g_projectedCover.clear();
     g_projectedCurrent = QJsonObject();
+    g_appliedSettings = QJsonObject();
 }
 
 // pointerdown 时只清选中相关：Qt 自己的 NativeSceneInput 可能在这一轮里改了选中，之后
@@ -168,10 +202,14 @@ void emitSceneAction(const QString &action)
     jclass viewClass = env.findClass("org/qtproject/qt/android/RhineQtViews");
     if (!viewClass)
         return;
-    jmethodID method = env->GetStaticMethodID(viewClass, "emitSceneAction", "(Ljava/lang/String;)V");
+    // 动作带着**生产者 origin** 出去：Kotlin/Dart 都要能用它拒掉"已经换页/换目录的旧视图"
+    // 产生的迟到动作。origin 未知时传 (-1, 0)，Java 侧退回旧行为。
+    jmethodID method =
+        env->GetStaticMethodID(viewClass, "emitSceneAction", "(IJLjava/lang/String;)V");
     if (method) {
         QJniObject argument = QJniObject::fromString(action);
-        env->CallStaticVoidMethod(viewClass, method, argument.object<jstring>());
+        env->CallStaticVoidMethod(viewClass, method, static_cast<jint>(g_originViewId),
+                                  static_cast<jlong>(g_originContext), argument.object<jstring>());
         if (env->ExceptionCheck()) {
             env->ExceptionClear();
             qWarning("RHINE_QT_SCENE_ACTION threw");
@@ -390,6 +428,53 @@ void applySceneState(const QString &json)
             g_cellIdentity.insert(key, qMakePair(kind, id));
         }
         qInfo("RHINE_QT_SCENE_CELLS n=%d lane=%d pos=%.3f", int(cells.size()), lane, pos);
+        applied = true;
+    }
+
+    // 设置面板的真值（Flutter 的 BasicSettingsRuntime 是唯一真值）→ Qt。
+    //
+    // 两条路必须都走，否则就是假开关：
+    //  * 能当场生效的（唱片旋转、右侧画面遮罩）写 NativeHud 的字段：Engine::step()
+    //    每帧读 hud.discRotation（Engine.cpp:1296）与 hud.archiveMaskStrength，不用重启；
+    //  * 只能在启动时决定的（图形后端/垂直同步/渲染分辨率/抗锯齿/超采样/MSAA）写进
+    //    QSettings 的 panel/<key>：Qt/src/main.cpp:680(panel/graphics-backend)、
+    //    :725(panel/vsync)、:738(panel/supersample)、:749(panel/aa-mode/:aa-scale)、
+    //    :767(panel/msaa)、:809(panel/render-scale) 下次启动读的是同一份文件。
+    //    Flutter 自己落的是另一个 SharedPreferences 文件（rhine_basic_settings），Qt 读不到，
+    //    所以这一步不是重复：它是"下次启动真的换了"的唯一凭据。
+    const QJsonObject settings = payload.value("settings").toObject();
+    if (!settings.isEmpty() && settings != g_appliedSettings) {
+        g_appliedSettings = settings;
+        const bool disc = settings.value("disc").toBool(false);
+        const int mask = qBound(0, settings.value("mask").toInt(55), 100);
+        if (NativeApplication *application = engine->app.get()) {
+            // 立即生效：Engine::step() 每帧都从这里读，不需要重建场景。
+            application->hud.discRotation = disc;
+            application->hud.archiveMaskStrength = mask;
+        }
+        engine->host.setPreference(QStringLiteral("disc-rotation"),
+                                   disc ? QStringLiteral("on") : QStringLiteral("off"));
+        engine->host.setPreference(QStringLiteral("archive-mask-strength"), QString::number(mask));
+        // 仅下次启动生效的项：原样落进 Qt 的 QSettings（值就是 Dart 侧选的那个词）。
+        const auto writeNextLaunch = [&](const char *key, const char *preference) {
+            if (!settings.contains(QLatin1String(key)))
+                return;
+            const QString text = settings.value(QLatin1String(key)).toVariant().toString();
+            if (!text.isEmpty())
+                engine->host.setPreference(QLatin1String(preference), text);
+        };
+        writeNextLaunch("vsync", "vsync");
+        writeNextLaunch("renderScale", "render-scale");
+        writeNextLaunch("backend", "graphics-backend");
+        writeNextLaunch("aa", "aa-mode");
+        writeNextLaunch("aaScale", "aa-scale");
+        writeNextLaunch("msaa", "msaa");
+        writeNextLaunch("supersample", "supersample");
+        qInfo("RHINE_QT_SCENE_SETTINGS disc=%d mask=%d vsync=%s scale=%d backend=%s aa=%s/%d msaa=%d ss=%d",
+              int(disc), mask, qPrintable(settings.value("vsync").toString()),
+              settings.value("renderScale").toInt(75), qPrintable(settings.value("backend").toString()),
+              qPrintable(settings.value("aa").toString()), settings.value("aaScale").toInt(125),
+              settings.value("msaa").toInt(0), settings.value("supersample").toInt(1));
         applied = true;
     }
 
@@ -612,7 +697,8 @@ Java_org_qtproject_qt_android_RhineQtView_destroyEmbeddedScene(JNIEnv *, jobject
 // Flutter → Kotlin(PlatformView) → RhineQtViews.pushSceneState → 这里。
 // 入口在 Flutter platform thread，必须切回 Qt 主线程再碰场景。
 extern "C" JNIEXPORT jboolean JNICALL
-Java_org_qtproject_qt_android_RhineQtViews_nativePushSceneState(JNIEnv *env, jclass, jstring json)
+Java_org_qtproject_qt_android_RhineQtViews_nativePushSceneState(
+    JNIEnv *env, jclass, jint viewId, jlong context, jstring json)
 {
     if (!env || !json)
         return JNI_FALSE;
@@ -623,10 +709,21 @@ Java_org_qtproject_qt_android_RhineQtViews_nativePushSceneState(JNIEnv *env, jcl
     env->ReleaseStringUTFChars(json, raw);
     // 先落盘再投递：即使此刻 qApp 还没建好（首帧竞态）也不会丢，场景就绪时会自应用。
     RhineEmbedded::rememberState(payload);
+    g_originViewId = static_cast<int>(viewId);
+    g_originContext = context > 0 ? static_cast<quint64>(context) : 0;
     if (!qApp)
         return JNI_TRUE; // 已受理（缓存），就绪后补
     QMetaObject::invokeMethod(
-        qApp, [payload] { RhineEmbedded::applySceneState(payload); }, Qt::QueuedConnection);
+        qApp,
+        [payload, viewId, context] {
+            RhineEmbedded::applySceneState(payload);
+            // 应用点才更新"当前画面来源"：队列里可能还排着上一份快照的输入/动作，
+            // 这一步之后它们就会被 originAccepts() 判旧。
+            g_appliedOriginView = static_cast<int>(viewId);
+            g_appliedOriginContext =
+                context > 0 ? static_cast<quint64>(context) : 0;
+        },
+        Qt::QueuedConnection);
     return JNI_TRUE;
 }
 
@@ -635,7 +732,7 @@ Java_org_qtproject_qt_android_RhineQtViews_nativePushSceneState(JNIEnv *env, jcl
 // NativeSceneInput 决定，这里不加任何判断，也不做坐标换算（调用方给的是舞台单位）。
 extern "C" JNIEXPORT void JNICALL
 Java_org_qtproject_qt_android_RhineQtViews_nativePushScenePointer(
-    JNIEnv *env, jclass, jstring type, jdouble x, jdouble y)
+    JNIEnv *env, jclass, jint viewId, jlong context, jstring type, jdouble x, jdouble y)
 {
     if (!env || !type)
         return;
@@ -648,10 +745,20 @@ Java_org_qtproject_qt_android_RhineQtViews_nativePushScenePointer(
         return;
     QMetaObject::invokeMethod(
         qApp,
-        [eventType, sx = static_cast<double>(x), sy = static_cast<double>(y)] {
+        [eventType, sx = static_cast<double>(x), sy = static_cast<double>(y), viewId, context] {
             Engine *engine = RhineEmbedded::engine();
             if (!engine)
                 return;
+            // origin 门禁：这里的判断发生在 Qt 线程上，也就是**应用顺序**里——排队的旧 A
+            // 视图事件在 B 的快照被应用之后到达时会被拒，不会贴到 B 的画面上。
+            if (!originAccepts(static_cast<int>(viewId),
+                               context > 0 ? static_cast<quint64>(context) : 0)) {
+                qInfo("RHINE_QT_SCENE_ORIGIN_DROP pointer view=%d ctx=%lld applied=%d/%llu",
+                      static_cast<int>(viewId), static_cast<long long>(context),
+                      g_appliedOriginView,
+                      static_cast<unsigned long long>(g_appliedOriginContext));
+                return;
+            }
             // 只有归档页的"浏览拖动"才是共享窗口的输入；详情页拖动是旋转唱片，属于
             // 场景内部姿态，绝不能把它当成滚动量发给 Flutter（真机实测：详情页里拖一下
             // 会算出上百行的位移，列表直接被甩飞）。
@@ -759,17 +866,23 @@ Java_org_qtproject_qt_android_RhineQtViews_nativePushScenePointer(
 // PinchHandler 同一个入口），angleDelta 记 0。
 extern "C" JNIEXPORT void JNICALL
 Java_org_qtproject_qt_android_RhineQtViews_nativePushSceneWheel(
-    JNIEnv *, jclass, jdouble x, jdouble y, jdouble delta)
+    JNIEnv *, jclass, jint viewId, jlong context, jdouble x, jdouble y, jdouble delta)
 {
     if (!qApp)
         return;
     QMetaObject::invokeMethod(
         qApp,
         [sx = static_cast<double>(x), sy = static_cast<double>(y),
-         sd = static_cast<double>(delta)] {
+         sd = static_cast<double>(delta), viewId, context] {
             Engine *engine = RhineEmbedded::engine();
             if (!engine)
                 return;
+            if (!originAccepts(static_cast<int>(viewId),
+                               context > 0 ? static_cast<quint64>(context) : 0)) {
+                qInfo("RHINE_QT_SCENE_ORIGIN_DROP wheel view=%d ctx=%lld",
+                      static_cast<int>(viewId), static_cast<long long>(context));
+                return;
+            }
             // 滚轮是离散一跳：一次 start + commit 就够，不需要拖动那样的连续帧。
             // 详情页的滚轮不是共享窗口输入（那里是旋转/放大唱片），只驱动场景本身。
             if (engine->scene.mode() != QLatin1String("archive")) {

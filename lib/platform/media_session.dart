@@ -113,6 +113,13 @@ abstract interface class MediaSessionPort {
   /// 夹取后才能使用；方向键/耳机键与锁屏按钮走同一条串。
   Stream<String> get actions;
 
+  /// 平台私有的缓存目录（Application.cacheDir 的绝对路径）。
+  ///
+  /// 为什么放在端口上：系统媒体通知的封面只能是**本地文件路径**，而曲库里的
+  /// cover 是远端 URL；要把图落盘就必须知道一个可写目录。返回 null 表示这一
+  /// 平台没有给出目录（例如测试替身），调用方据实放弃封面而不是报错。
+  Future<String?> cacheDirectory();
+
   /// 退订动作流并释放通道资源；可重复调用。端口被释放后其余方法不得再调。
   Future<void> dispose();
 }
@@ -169,6 +176,26 @@ class MethodChannelMediaSession implements MediaSessionPort {
   Future<void> stop() async {
     _checkNotDisposed();
     await _methodChannel.invokeMethod<void>('stop');
+  }
+
+  @override
+  Future<String?> cacheDirectory() async {
+    if (_disposed) {
+      return null;
+    }
+    try {
+      final String? path =
+          await _methodChannel.invokeMethod<String>('cacheDir');
+      if (path == null || path.isEmpty) {
+        return null;
+      }
+      return path;
+    } on PlatformException {
+      // 老版本宿主没有这个方法：封面就此放弃，不影响播放与通知本体。
+      return null;
+    } on MissingPluginException {
+      return null;
+    }
   }
 
   void _startActions() {

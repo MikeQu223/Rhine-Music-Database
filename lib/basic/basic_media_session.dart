@@ -139,6 +139,21 @@ class BasicMediaSessionAdapter {
   /// 最近一次平台/命令失败；失败只记录，绝不向调用方抛。
   Object? get lastError => _lastError;
 
+  // ── 串行发布状态机 ───────────────────────────────────────────────────────
+  // 平台调用（ensureStarted/update/stop/dispose）都是跨 isolate 的异步边界，晚回是常态。
+  // 这里用"一个在飞的发布 + 最新意图"而不是"每次调用各发一条"：
+  //  - _epoch：stop/dispose/重新 ensureStarted 时递增。在飞的结果回来时 epoch 已经变了，
+  //    就不许再把 _published 标成那条旧状态（否则通知会回到 A，而界面已经在 B）。
+  //  - _desired/_desiredId：最后一次真实意图（含 identity.id）。去重按"意图"而不是按
+  //    上一次成功，所以失败后下一次 sync 会自动重试同一份。
+  //  - _dirty：在飞期间又来了新意图，本轮结束后立刻再发最新那份，中间的旧值直接跳过。
+  int _epoch = 0;
+  bool _pumping = false;
+  bool _dirty = false;
+  MediaSessionState? _desired;
+  String _desiredId = '';
+  String _publishedId = '';
+
   /// 请求启动前台媒体服务。
   ///
   /// 返回 true 仅表示平台接受了请求（Activity 在前台且服务已拉起）；通知是否真的
@@ -150,32 +165,45 @@ class BasicMediaSessionAdapter {
     if (_started) {
       return true;
     }
+    final int epoch = _epoch;
     try {
       final bool accepted = await _port.ensureStarted();
       if (!accepted) {
-        // 平台拒绝启动（例如不在前台）：如实返回 false，不假装通知已挂上。
-        _started = false;
-        _lastError = StateError(
-          'media foreground service start was rejected by the platform',
-        );
+        if (epoch == _epoch) {
+          // 平台拒绝启动（例如不在前台）：如实返回 false，不假装通知已挂上。
+          _started = false;
+          _lastError = StateError(
+            'media foreground service start was rejected by the platform',
+          );
+        }
+        return false;
+      }
+      if (_disposed || epoch != _epoch) {
+        // 等待期间被 stop()/dispose() 了：服务确实起来了，但状态意图已经作废，
+        // 不能把 _started 翻回 true 再把旧元数据贴回去。
         return false;
       }
       _started = true;
       _lastError = null;
-      // 服务刚拉起时平台通知内容还是"未在播放"，清掉去重缓存逼下一次 sync 落地。
+      // 服务刚拉起时平台通知内容还是"未在播放"，清掉去重缓存逼最新意图再落地一次。
       _published = null;
+      _publishedId = '';
       _lastPublishAt = null;
+      _dirty = true;
+      await _pump();
       return true;
     } catch (error) {
-      _lastError = error;
+      if (epoch == _epoch) {
+        _lastError = error;
+      }
       return false;
     }
   }
 
   /// 上报一次真实状态。
   ///
-  /// [identity] 为空或 [audio] 处于失败态时不上报，并清掉上一轮通知（一次），
-  /// 避免留下可点的旧元数据。任何平台异常都进 [lastError]，不抛给调用方。
+  /// [identity] 为空或 [audio] 处于失败态时要求清空上一轮通知（一次），避免留下可点的
+  /// 旧元数据。任何平台异常都进 [lastError]，不抛给调用方。
   Future<void> sync({
     BasicMediaIdentity? identity,
     required BasicAudioState audio,
@@ -184,10 +212,12 @@ class BasicMediaSessionAdapter {
       return;
     }
     if (identity == null || identity.isEmpty || audio.hasError) {
-      await _clearPublished();
+      _desired = null;
+      _desiredId = '';
+      await _pump();
       return;
     }
-    final MediaSessionState desired = MediaSessionState(
+    _desired = MediaSessionState(
       playing: audio.playing,
       positionMs: _ms(audio.positionMs),
       durationMs: _ms(audio.durationMs),
@@ -196,18 +226,8 @@ class BasicMediaSessionAdapter {
       album: identity.album,
       coverPath: identity.coverFilePath,
     );
-    if (!_shouldPublish(desired)) {
-      return;
-    }
-    try {
-      await _port.update(desired);
-      _published = desired;
-      _lastPublishAt = _clock();
-      _lastError = null;
-    } catch (error) {
-      // 保留旧 _published：下一次 sync 会再试，界面照真实读数走。
-      _lastError = error;
-    }
+    _desiredId = identity.id;
+    await _pump();
   }
 
   /// 显式停止：清空平台元数据与通知（前台服务本身由 native 生命周期决定）。
@@ -215,39 +235,110 @@ class BasicMediaSessionAdapter {
     if (_disposed) {
       return;
     }
+    // 新代次：在飞的 update/ensureStarted 结果一律作废，之后的 sync 才能作为新意图生效。
+    _epoch++;
+    _started = false;
+    _desired = null;
+    _desiredId = '';
     try {
+      // 显式 stop 无条件打到平台：即使这一进程还没上报过状态，后端也可能留着上一轮的
+      // 元数据/通知（例如服务刚拉起就被要求停止）。
       await _port.stop();
+      _published = null;
+      _publishedId = '';
+      _lastPublishAt = null;
       _lastError = null;
     } catch (error) {
+      // 没清干净就保留 _published：下一次 sync/stop 还能重试，而不是先抹掉去重记录。
       _lastError = error;
-      return;
     }
-    _published = null;
-    _lastPublishAt = null;
   }
 
   /// 取消动作订阅、清理已上报状态、释放端口；可重复调用，不抛。
+  ///
+  /// 顺序是契约：先取消订阅（失败也继续），再把通知清掉，最后释放端口。任何一步抛异常
+  /// 都不能跳过后面的清理——否则端口/前端服务会留在"没有人收动作"的状态且无法重试。
   Future<void> dispose() async {
     if (_disposed) {
       return;
     }
     _disposed = true;
+    _epoch++;
+    _desired = null;
+    _desiredId = '';
     final StreamSubscription<String>? actions = _actions;
     _actions = null;
-    await actions?.cancel();
-    if (_published != null) {
-      try {
-        await _port.stop();
-      } catch (error) {
-        _lastError = error;
-      }
+    try {
+      await actions?.cancel();
+    } catch (error) {
+      _lastError = error;
+    }
+    try {
+      await _pump();
+    } catch (error) {
+      _lastError = error;
     }
     _published = null;
+    _publishedId = '';
     _lastPublishAt = null;
     try {
       await _port.dispose();
     } catch (error) {
       _lastError = error;
+    }
+  }
+
+  /// 把"最新意图"发出去：同一时刻只有一个平台调用在飞，晚回值不覆盖更新的意图。
+  Future<void> _pump() async {
+    if (_pumping) {
+      _dirty = true;
+      return;
+    }
+    _pumping = true;
+    try {
+      do {
+        _dirty = false;
+        final int epoch = _epoch;
+        final MediaSessionState? desired = _desired;
+        if (desired == null) {
+          if (_published == null) {
+            break;
+          }
+          try {
+            await _port.stop();
+            if (epoch == _epoch) {
+              _published = null;
+              _publishedId = '';
+              _lastPublishAt = null;
+              _lastError = null;
+            }
+          } catch (error) {
+            // 后端可能仍有旧元数据：保留 _published 让下一次 sync/stop 继续重试，
+            // 而不是先把去重记录清空、再也没人去清那条通知。
+            _lastError = error;
+          }
+          break;
+        }
+        if (epoch != _epoch) {
+          break;
+        }
+        if (!_shouldPublish(desired, _desiredId)) {
+          break;
+        }
+        try {
+          await _port.update(desired);
+          if (epoch == _epoch) {
+            _published = desired;
+            _publishedId = _desiredId;
+            _lastPublishAt = _clock();
+            _lastError = null;
+          }
+        } catch (error) {
+          _lastError = error;
+        }
+      } while (_dirty && !_disposed);
+    } finally {
+      _pumping = false;
     }
   }
 
@@ -301,29 +392,15 @@ class BasicMediaSessionAdapter {
     });
   }
 
-  Future<void> _clearPublished() async {
-    if (_published == null) {
-      return;
-    }
-    try {
-      await _port.stop();
-      _lastError = null;
-    } catch (error) {
-      _lastError = error;
-      return;
-    }
-    _published = null;
-    _lastPublishAt = null;
-  }
-
-  // 节流只决定"要不要把最新真实读数再报一次"：位置以外的字段一变就必须报；
-  // 只有位置在动时按刷新间隔抑制。
-  bool _shouldPublish(MediaSessionState next) {
+  // 节流只决定"要不要把最新真实读数再报一次"：位置以外的字段（含 identity.id）一变就必须
+  // 报；只有位置在动时按刷新间隔抑制。
+  bool _shouldPublish(MediaSessionState next, String identityId) {
     final MediaSessionState? prev = _published;
     if (prev == null) {
       return true;
     }
     final bool sameContent = prev.playing == next.playing &&
+        identityId == _publishedId &&
         prev.title == next.title &&
         prev.artist == next.artist &&
         prev.album == next.album &&

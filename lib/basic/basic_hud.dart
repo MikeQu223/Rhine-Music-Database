@@ -582,6 +582,7 @@ class BasicHudSurface extends StatefulWidget {
     this.stage,
     this.sceneKey,
     this.archiveMaskStrength = 55, // = HudChrome.defaultArchiveMaskStrength
+    this.sceneSettings,
   });
 
   final BasicViewState state;
@@ -605,6 +606,10 @@ class BasicHudSurface extends StatefulWidget {
   /// 右栏遮罩强度（0..100）：设置页“右侧画面遮罩”的唯一真值来源；
   /// 未接入设置页时为 [HudChrome.defaultArchiveMaskStrength]。
   final double archiveMaskStrength;
+
+  /// 原生渲染参数（设置面板的真实值，见 [BasicSceneSettings]）：随快照下发，
+  /// 只影响 Qt 渲染，不构成第二份真值。null = 不下发，Qt 用自己的默认。
+  final BasicSceneSettings? sceneSettings;
 
   /// 场景层（Qt platform view）的身份键：横竖屏切换时由上层传入**同一个** key，
   /// 让 PlatformView 的 element 被移动（reparent）而不是销毁重建——否则旋转会
@@ -909,6 +914,7 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       child: QtSceneView(
         key: widget.sceneKey,
         state: state,
+        settings: widget.sceneSettings,
         onAction: widget.onAction,
       ),
     );

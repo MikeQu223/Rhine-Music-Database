@@ -62,7 +62,11 @@ class QtSceneView(context: Context, private val viewId: Int) : PlatformView {
 
         // 状态通道：Dart 的 QtSceneStateSender 推来的 JSON 直接交给 Qt 侧
         // （RhineQtViews.pushSceneState → EmbeddedSceneHost::applySceneState）。
-        QtSceneChannel.register(viewId) { json -> RhineQtViews.pushSceneState(json) }
+        // (json, viewId, ctx) 一起下传：Qt 侧按它记住"当前画面来源"，输入与动作都按
+        // origin 校验，而不是靠"最后注册的视图"猜。
+        QtSceneChannel.register(viewId) { json, id, context ->
+            RhineQtViews.pushSceneState(id, context, json)
+        }
     }
 
     override fun getView(): View = root

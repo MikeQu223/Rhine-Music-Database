@@ -623,6 +623,9 @@ class _BasicShellState extends State<_BasicShell>
       // 父链（PortraitStage ↔ 直挂 Stack），只有把 key 抬到上层，PlatformView 的
       // element 才能被移动而非重建。
       sceneKey: _sceneKey,
+      // 渲染参数投影：disc/mask 逐帧生效，其余四项（后端/vsync/渲染分辨率/AA）
+      // 在 Android 上是"写进 Qt 的 panel/* 偏好、下次启动生效"（main.cpp 启动读）。
+      sceneSettings: _sceneSettings(),
       // 曲目列手指拖动的落点（条目单位）：只**选中**落到的那一项，
       // 不播放、不换队列（Qt/src/MusicLibrary.cpp:616-643 open=false 的选中语义）。
       // 拖动过程的插值在 surface 内部完成，这里只接结束时的那一次提交。
@@ -707,6 +710,21 @@ class _BasicShellState extends State<_BasicShell>
   }
 
   /// 面板模型：每次按当前偏好快照重建（写进去 -> 立刻读回 -> 行显示新值的同一条链）。
+  /// 原生渲染参数：唯一真值仍是 [_settings]，这里只是投影给 Qt 的那一份。
+  BasicSceneSettings _sceneSettings() => BasicSceneSettings(
+        discRotation: _settings.discRotation,
+        archiveMaskStrength: _settings.archiveMaskStrength,
+        // vsync/后端/分辨率/AA 下发的是**当前请求值**：Qt 侧把它写进 panel/*，
+        // 下次启动由 main.cpp 读同一套偏好（所以"请求值 vs 生效值"仍然分得开）。
+        vsync: _settings.requestedVsync,
+        renderScale: _settings.renderScalePercent,
+        graphicsBackend: _settings.requestedGraphicsBackend,
+        aaMode: _settings.aaMode,
+        aaScale: _settings.aaScalePercent,
+        msaa: _settings.msaaSamples,
+        supersample: _settings.supersampleFactor,
+      );
+
   BasicSettingsPanelModel _settingsPanelModel() {
     return basicSettingsPanelModel(
       context: _settingsContext(),

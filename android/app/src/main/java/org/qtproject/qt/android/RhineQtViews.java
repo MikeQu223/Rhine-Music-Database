@@ -607,18 +607,27 @@ public final class RhineQtViews {
      *     以便下一次重发。首帧可能早于 Qt 的 qApp，原生侧会把这份快照缓存到场景就绪。
      */
     public static boolean pushSceneState(String json) {
+        return pushSceneState(-1, 0L, json);
+    }
+
+    /**
+     * 带 origin 的快照推送：([viewId], [context]) 是**产出这份快照的**平台视图与其交互
+     * 上下文代次。Qt 侧按它记住"当前画面来源"，之后排队中的输入/动作都要拿 origin 比对，
+     * 不再靠"最后一个注册的视图"去猜。
+     */
+    public static boolean pushSceneState(int viewId, long context, String json) {
         if (json == null) {
             return false;
         }
         try {
-            return nativePushSceneState(json);
+            return nativePushSceneState(viewId, context, json);
         } catch (Throwable error) {
             android.util.Log.w(TAG, "pushSceneState failed: " + error);
             return false;
         }
     }
 
-    private static native boolean nativePushSceneState(String json);
+    private static native boolean nativePushSceneState(int viewId, long context, String json);
 
     /**
      * 把 Flutter 搬过来的**原始**指针事件交给 Qt 场景。
@@ -632,32 +641,45 @@ public final class RhineQtViews {
      * 坐标是**舞台单位**（Qt 的 1080p 舞台）：调用方已经除以 stageScale。
      */
     public static void pushScenePointer(String type, double x, double y) {
+        pushScenePointer(-1, 0L, type, x, y);
+    }
+
+    /** 带 origin 的指针搬运：viewId/context 跟着事件一路到 Qt，Qt 只对当前来源生效。 */
+    public static void pushScenePointer(int viewId, long context, String type, double x, double y) {
         if (type == null) {
             return;
         }
         try {
-            nativePushScenePointer(type, x, y);
+            nativePushScenePointer(viewId, context, type, x, y);
         } catch (Throwable error) {
             android.util.Log.w(TAG, "pushScenePointer failed: " + error);
         }
     }
 
-    private static native void nativePushScenePointer(String type, double x, double y);
+    private static native void nativePushScenePointer(int viewId, long context, String type, double x, double y);
 
     /** 双指缩放的搬运通道（Qt 侧进 Engine::wheelInput 的 pixelDelta）。 */
     public static void pushSceneWheel(double x, double y, double delta) {
+        pushSceneWheel(-1, 0L, x, y, delta);
+    }
+
+    public static void pushSceneWheel(int viewId, long context, double x, double y, double delta) {
         try {
-            nativePushSceneWheel(x, y, delta);
+            nativePushSceneWheel(viewId, context, x, y, delta);
         } catch (Throwable error) {
             android.util.Log.w(TAG, "pushSceneWheel failed: " + error);
         }
     }
 
-    private static native void nativePushSceneWheel(double x, double y, double delta);
+    private static native void nativePushSceneWheel(int viewId, long context, double x, double y, double delta);
 
     /** Qt 场景 → Flutter 的动作出口（目前只有"选中"）。由 Kotlin 侧注册/注销。 */
     public interface SceneActionSink {
-        void onSceneAction(String action);
+        /**
+         * @param viewId  产出这个动作的平台视图（Qt 侧记住的 origin；<0 表示未知）
+         * @param context 该视图当时的交互上下文代次（0 表示未登记）
+         */
+        void onSceneAction(int viewId, long context, String action);
     }
 
     private static volatile SceneActionSink sSceneActionSink;
@@ -676,9 +698,18 @@ public final class RhineQtViews {
      * 等权威词表（能表达"归档槽位"）确定后再接。别在这里临时凑映射。
      */
     public static void emitSceneAction(String action) {
+        emitSceneAction(-1, 0L, action);
+    }
+
+    /**
+     * 带 producer origin 的动作出口。origin 由 Qt 在**应用快照时**记下（viewId+代次），
+     * 这里原样透传；Java 侧不再用"当前前台视图"顶替 origin。
+     */
+    public static void emitSceneAction(final int viewId, final long context, String action) {
         if (action == null || action.isEmpty()) {
             return;
         }
+        final String payload = action;
         // 调用方是 Qt 主循环线程（qtMainLoopThread），而 Flutter 的 MethodChannel
         // 挂在 @UiThread 上：直接在 Qt 线程里调会抛
         // "Methods marked with @UiThread must be executed on the main thread"。
@@ -686,21 +717,21 @@ public final class RhineQtViews {
             MAIN_HANDLER.post(new Runnable() {
                 @Override
                 public void run() {
-                    deliverSceneAction(action);
+                    deliverSceneAction(viewId, context, payload);
                 }
             });
             return;
         }
-        deliverSceneAction(action);
+        deliverSceneAction(viewId, context, payload);
     }
 
-    private static void deliverSceneAction(String action) {
+    private static void deliverSceneAction(int viewId, long context, String action) {
         final SceneActionSink sink = sSceneActionSink;
         if (sink == null) {
             return;
         }
         try {
-            sink.onSceneAction(action);
+            sink.onSceneAction(viewId, context, action);
         } catch (Throwable error) {
             android.util.Log.w(TAG, "emitSceneAction failed: " + error);
         }

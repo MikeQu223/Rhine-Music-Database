@@ -213,7 +213,7 @@ class _FakeMediaPort implements MediaSessionPort {
 }
 
 void main() {
-  group('快照 v3：连续窗口 + 40 格语义槽位', () {
+  group('快照 v4：连续窗口 + 40 格语义槽位', () {
     test('cells 有界（≤5×8）且带真实 kind+id，空列不产生占位', () {
       final List<BasicListItem> lane3 = <BasicListItem>[
         for (int i = 0; i < 12; i++) _item('song', i, 's$i', 'Song $i'),
@@ -281,7 +281,7 @@ void main() {
         lane: 3,
       );
       final Map<String, Object?> payload = _decode(qtSceneStateSnapshot(state));
-      expect(payload['v'], 3);
+      expect(payload['v'], 4);
       expect(payload['pos'], 12.5);
       expect(payload['lane'], 3);
       expect(payload['cells'], isA<List<Object?>>());
