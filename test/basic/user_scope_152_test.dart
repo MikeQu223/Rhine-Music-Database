@@ -223,10 +223,14 @@ class _Server {
     }
     if (uri.path.startsWith('/api/song/')) {
       final String id = uri.path.substring('/api/song/'.length);
+      // 详情里的歌名必须和曲库一致：控制器会拿详情覆盖 _songById[id]
+      // （lib/basic/siren_controller.dart:1615-1620），名字不一致的话
+      // 通知/队列标题会在详情回来那一刻改名，测试就会在断言标题上假失败。
+      final String name = <String, String>{'s1': 'Song One', 's2': 'Song Two'}[id] ?? 'Song $id';
       return _json(<String, Object?>{
         'code': 0,
         'data': <String, Object?>{
-          'name': 'Song $id',
+          'name': name,
           'sourceUrl': 'https://file.test/$id.flac',
           'lyricUrl': 'https://file.test/$id.lrc',
         },
@@ -573,16 +577,34 @@ void main() {
           '封面请求没有发出：' + url + '（已请求 ' + client.requested.join(', ') + '）');
     }
 
+    /// 等到"带本地封面文件的上报"真的出现。
+    ///
+    /// 落盘走真实 File.writeAsBytes + rename，属于真 IO：16 次零延迟微任务
+    /// 不保证它在同一轮跑完，所以按结果轮询，不赌固定轮数。
+    Future<MediaSessionState> waitForCover(int fromIndex) async {
+      for (int i = 0; i < 400; i += 1) {
+        for (final MediaSessionState state in port.updates.skip(fromIndex)) {
+          final String path = state.coverPath ?? '';
+          if (path.isNotEmpty && File(path).existsSync()) {
+            return state;
+          }
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 2));
+      }
+      throw StateError(
+          '没有等到带本地封面的上报（累计 ' + port.updates.length.toString() + ' 次上报）');
+    }
+
     test('封面 URL 真的落成本地 img，上报的是文件路径而不是 URL', () async {
       final SirenSong song = songOf('Song One');
       expect(song.cover, 'https://cover.test/a1.jpg');
 
       await playAndEmit(song);
-      // 缓存目录已解析、请求已发出，等本次落盘完成。
+      // 缓存目录已解析、请求已发出，等本次落盘真正完成（真 IO，按结果轮询）。
+      final int before = port.updates.length;
       (await gateFor(song.cover)).complete(<int>[1, 2, 3, 4]);
-      await _settle();
 
-      final MediaSessionState last = port.updates.last;
+      final MediaSessionState last = await waitForCover(before);
       expect(last.title, 'Song One');
       expect(last.coverPath, isNotEmpty,
           reason: 'decodeFile 只认本地路径：远端 URL 必须落盘后再上报');
@@ -610,11 +632,12 @@ void main() {
       await playAndEmit(a); // 回到 A：新一代请求
 
       // 先让 A 落盘（当前身份是 A，允许上报）。
+      final int beforeA = port.updates.length;
       (await gateFor(a.cover)).complete(<int>[9, 9, 9]);
-      await _settle();
-      final String coverA = port.updates.last.coverPath ?? '';
+      final MediaSessionState stateA = await waitForCover(beforeA);
+      final String coverA = stateA.coverPath ?? '';
       expect(coverA, isNotEmpty);
-      expect(port.updates.last.title, 'Song One');
+      expect(stateA.title, 'Song One');
 
       // 再让 B 迟到回来：代次与身份都已过期，必须被丢弃。
       (await gateFor(b.cover)).complete(<int>[7, 7, 7]);
@@ -628,9 +651,9 @@ void main() {
       final SirenSong a = songOf('Song One');
       final SirenSong b = songOf('Song Two');
       await playAndEmit(a);
+      final int beforeA = port.updates.length;
       (await gateFor(a.cover)).complete(<int>[5, 6]);
-      await _settle();
-      final String coverA = port.updates.last.coverPath ?? '';
+      final String coverA = (await waitForCover(beforeA)).coverPath ?? '';
       expect(coverA, isNotEmpty);
 
       // B 的封面还没回来：这一次上报必须是"还没有封面"，而不是 A 的路径。
@@ -684,6 +707,8 @@ void main() {
           reason: '没接线 = 设置开着也不出声');
       expect(source, contains('if (!play) {'),
           reason: '只允许在 play:false 的显式打开分支调用；浏览路径走 _selectAt，不该出声');
+      expect(source, contains('unawaited(controller.autoplayDetailIfEnabled(tracks[item.index]));'),
+          reason: '断言到具体调用点，避免同形分支冒充接线');
     });
 
     test('控制器把本地封面路径交给身份，且 dispose 关缓存', () {
