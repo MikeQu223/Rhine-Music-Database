@@ -83,6 +83,17 @@ class _TrackingController extends BasicController {
   final List<String> openedSongs = <String>[];
   final List<String> openedAlbums = <String>[];
 
+  /// 行点击 = 纯选中（Qt/src/NativeHudMusic.cpp:47-91 的 selectResult/selectDirectory
+  /// 都是 open=false）：只记列表下标，不打开、不播放。
+  final List<int> selectedRows = <int>[];
+
+  /// ←/→ 的方向（Qt/src/NativeHudController.cpp:650-662：目录内 navigateDirectory(±8)、
+  /// 目录外 showSource(sourceOrder ±1)）——换列/换页，不打开、不播放。
+  final List<int> columnDirections = <int>[];
+
+  /// ↑/↓ 的方向（Qt `music.next(±1)`：资料库逐项选曲，**不是**播放器的 previous/next）。
+  final List<int> stepDirections = <int>[];
+
   /// 只在这些动作测试里顶掉真实状态：外壳的分派必须按 state 的真实结构走
   /// （首屏单曲行的 index 指回 state.songs，专辑详情指回 album.songs）。
   BasicViewState? stateOverride;
@@ -118,8 +129,23 @@ class _TrackingController extends BasicController {
   }
 
   @override
-  Future<void> openSong(SirenSong song) async {
+  Future<void> openSong(SirenSong song, {bool play = true}) async {
     openedSongs.add(song.id);
+  }
+
+  @override
+  Future<void> selectLibraryRow(int row) async {
+    selectedRows.add(row);
+  }
+
+  @override
+  Future<void> stepLibrarySelection(int direction) async {
+    stepDirections.add(direction);
+  }
+
+  @override
+  Future<void> navigateColumn(int direction) async {
+    columnDirections.add(direction);
   }
 
   @override
@@ -806,7 +832,9 @@ void main() {
         (WidgetTester tester) async {
       final _TrackingController controller = await pumpShell(tester);
 
-      // 曲库首屏「播放全部」：落到列表第一条真实条目（专辑 0）。
+      // 曲库首屏（默认列 = 全部歌曲 lane 3）「播放全部」：落到**该列第一条曲目**。
+      // Qt 的列表只列 selectedLane 这一列（MusicLibrary.cpp:195-207 sourceItems(lane)），
+      // 专辑与曲目不再是同一列里混排的一句“取第一条”。
       controller.stateOverride = BasicViewState(
         phase: BasicPhase.library,
         albums: <SirenAlbum>[_album()],
@@ -816,17 +844,26 @@ void main() {
       await tester.pump();
       fire(tester, 'music:play-loaded');
       await tester.pump();
-      expect(controller.openedAlbums, <String>['album-1']);
+      expect(controller.openedSongs, <String>['s1'],
+          reason: '全部歌曲列的第一条是曲目 s1');
+      expect(controller.openedAlbums, isEmpty,
+          reason: '专辑在 lane 4，不属于全部歌曲列');
 
-      // 专辑列翻页 column-next：没有当前专辑时取第一张，仍是真实 openAlbum。
+      // ←/→ 是换资料库列：Qt NativeHudController.cpp:658-662
+      // `showSource(sourceOrder().at(wrap(index ± 1, size)))`——不打开专辑、不播放。
       fire(tester, 'column-next');
       await tester.pump();
-      expect(controller.openedAlbums, <String>['album-1', 'album-1']);
+      expect(controller.columnDirections, <int>[1]);
+      expect(controller.openedAlbums, isEmpty, reason: 'column-next 换列，不是翻专辑');
+      expect(controller.openedSongs, <String>['s1'], reason: '换列不播放');
 
-      // 'music:slot:<i>'（archive_page.dart:311）与 music:index:<i> 共用一份下标。
-      fire(tester, 'music:slot:2');
+      // 'music:slot:<i>'（archive_page.dart:311）与 music:index:<i> 共用一份下标，
+      // 且都是**只选中**（Qt NativeHudMusic.cpp:47-66 selectResult(..., false)）。
+      fire(tester, 'music:index:1');
       await tester.pump();
-      expect(controller.openedSongs, <String>['s2']);
+      expect(controller.selectedRows, <int>[1]);
+      expect(controller.openedSongs, <String>['s1'], reason: '点行不播放');
+      expect(controller.openedAlbums, isEmpty, reason: '点行不打开');
 
       // 详情页主按钮 'music:play'（song_detail.dart:755）：当前曲目 → 真实 openSong。
       controller.stateOverride = BasicViewState(
@@ -840,7 +877,7 @@ void main() {
       await tester.pump();
       fire(tester, 'music:play');
       await tester.pump();
-      expect(controller.openedSongs, <String>['s2', 's1']);
+      expect(controller.openedSongs, <String>['s1', 's1']);
       expect(controller.toggleCalls, 0);
 
       // 没有当前曲目时退化为播放条语义的 toggle（仍只走唯一 controller）。
@@ -909,9 +946,12 @@ void main() {
       await tester.pumpWidget(const SizedBox());
     });
 
-    testWidgets('library song row opens its song, album row opens its album',
+    testWidgets('library row click only selects; open opens the selected row',
         (WidgetTester tester) async {
       final _TrackingController controller = await pumpShell(tester);
+
+      // 全部歌曲列（lane 3）：列表 = 该列曲目行。点行只写选中身份
+      // （Qt/src/NativeHudMusic.cpp:47-66 selectResult(raw, lane, false)）。
       controller.stateOverride = BasicViewState(
         phase: BasicPhase.library,
         albums: <SirenAlbum>[_album()],
@@ -919,24 +959,47 @@ void main() {
         catalogLoaded: true,
       );
       await tester.pump();
+      fire(tester, 'music:index:1');
+      await tester.pump();
+      expect(controller.selectedRows, <int>[1]);
+      expect(controller.openedSongs, isEmpty, reason: '点行不播放');
+      expect(controller.openedAlbums, isEmpty, reason: '点行不打开');
+      expect(find.textContaining(basicUnimplementedPrefix), findsNothing);
 
-      // items = [album(0), song s1(1), song s2(2)]（basic_hud.dart:39-66 的顺序）。
+      // 全部专辑列（lane 4）：列表 = 专辑行；行号按**本列**算，不会串到曲目列。
+      controller.stateOverride = BasicViewState(
+        phase: BasicPhase.library,
+        selectedLane: 4,
+        albums: <SirenAlbum>[_album()],
+        songs: <SirenSong>[_song('s1', '第一首')],
+        catalogLoaded: true,
+      );
+      await tester.pump();
       fire(tester, 'music:index:0');
+      await tester.pump();
+      expect(controller.selectedRows, <int>[1, 0]);
+      expect(controller.openedAlbums, isEmpty, reason: '点专辑行也不打开');
+
+      // 真正打开走 'open'（Qt `music:open`），按当前选中身份分派到 openAlbum。
+      controller.stateOverride = BasicViewState(
+        phase: BasicPhase.library,
+        selectedLane: 4,
+        albums: <SirenAlbum>[_album()],
+        songs: <SirenSong>[_song('s1', '第一首')],
+        selection: const BasicSelection(kind: 'album', id: 'album-1'),
+        catalogLoaded: true,
+      );
+      await tester.pump();
+      fire(tester, 'open');
       await tester.pump();
       expect(controller.openedAlbums, <String>['album-1']);
       expect(controller.openedSongs, isEmpty);
 
-      // 首屏的曲目行：此时 state.album == null，index 指回 state.songs。
-      // 只看 album 的实现在这里会落进“尚未实现”——正是用户报的点击没反应。
-      fire(tester, 'music:index:2');
-      await tester.pump();
-      expect(controller.openedSongs, <String>['s2']);
-      expect(find.textContaining(basicUnimplementedPrefix), findsNothing);
-
       await tester.pumpWidget(const SizedBox());
     });
 
-    testWidgets('detail song row opens the album track it names', (WidgetTester tester) async {
+    testWidgets('detail row click selects; open opens the album track it names',
+        (WidgetTester tester) async {
       final _TrackingController controller = await pumpShell(tester);
       controller.stateOverride = BasicViewState(
         phase: BasicPhase.detail,
@@ -946,8 +1009,24 @@ void main() {
       );
       await tester.pump();
 
-      // 专辑详情：items 只来自 album.songs，index 指回 album.songs。
+      // 专辑详情：items 只来自 album.songs，item.index 指回 album.songs。
       fire(tester, 'music:index:1');
+      await tester.pump();
+      expect(controller.selectedRows, <int>[1]);
+      expect(controller.openedSongs, isEmpty, reason: '点行只选中');
+
+      // 打开：Qt music:open → selectResult(..., true) / detail，
+      // 基础版 'open' 按选中身份落到 openSong(album.songs[index])。
+      controller.stateOverride = BasicViewState(
+        phase: BasicPhase.detail,
+        album: _album(),
+        song: _song('s2', '第二首'),
+        songs: <SirenSong>[_song('s1', '第一首'), _song('s2', '第二首')],
+        selection: const BasicSelection(kind: 'song', id: 's2'),
+        catalogLoaded: true,
+      );
+      await tester.pump();
+      fire(tester, 'open');
       await tester.pump();
       expect(controller.openedSongs, <String>['s2']);
       expect(controller.openedAlbums, isEmpty);

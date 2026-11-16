@@ -259,7 +259,10 @@ class LyricsController {
   /// 返回值只作诊断：true = 本次越过闸门并跑了一次 [sync]，false = 被闸门挡住。
   /// Qt 的 tick 返回 void；force 的语义照 :475 —— 跳过闸门但仍然记 m_lastPoll、仍然 sync。
   bool tick(double time, {required double positionMs, bool force = false}) {
-    if (!force && time - _lastPoll < tickIntervalSeconds) {
+    // 与 MusicPlayer::tick 同样的表示误差余量：Qt 的 time 来自真实时钟，抖动让
+    // `time - m_lastPoll` 不会正好落在 0.1 上；这里的时间可以由调用方按十进制累加，
+    // 10.3 - 10.2 = 0.09999999999999964 会被"< 0.1"整拍吞掉，歌词行停在上一条。
+    if (!force && time - _lastPoll < tickIntervalSeconds - 1e-9) {
       return false;
     }
     _lastPoll = time;

@@ -25,6 +25,13 @@ class NativeScene {
     void select(int index, QJsonObject navigation = {});
     void navigate(QString axis, int direction);
     int selection() const;
+    // 归档轨道当前的**条目位置**（0 = 本列第一条；小数 = 两条之间）。
+    // Flutter 的 state.listPosition 与它是同一件事的两种写法：Flutter 侧是列表窗口真值，
+    // 这里只是把 Qt 的连续轨道折算回条目，供 pointer/wheel 结束后把增量回写给 Flutter。
+    double archiveTrackItem() const;
+    // 反向投影：把 Flutter 的窗口位置/所属列落到 Qt 的连续轨道上（只改位置，不动
+    // 指针/惯性以外的状态）。echo 判定在调用方（EmbeddedSceneHost）做。
+    void projectArchiveScroll(double item, int lane);
     QString mode() const {
         return m_mode;
     }

@@ -5,6 +5,7 @@ import 'package:rhine_music_database/basic/basic_hud.dart';
 import 'package:rhine_music_database/basic/basic_hud_resources.dart';
 import 'package:rhine_music_database/basic/basic_models.dart';
 import 'package:rhine_music_database/hud/input/hit_layer.dart';
+import 'package:rhine_music_database/hud/protocol/hud_hit.dart';
 import 'package:rhine_music_database/hud/protocol/hud_frame.dart';
 import 'package:rhine_music_database/hud/text/glyph_font.dart';
 import 'package:rhine_music_database/ui/layout/portrait_stage.dart';
@@ -61,7 +62,11 @@ void main() {
       );
       final HudHit landscapeOpen = _hit(landscape, 'open');
       final HudHit portraitOpen = _hit(portrait, 'open');
-      expect(portraitOpen.x, landscapeOpen.x);
+      // Qt NativeHud.cpp:342-344 `navigationLeft(width) = width - 789` 吃的是**当前舞台
+      // 宽度**，所以竖屏 1080 宽得到 291、横屏 1920 宽得到 1131——两个 x 本来就不该相等；
+      // 真正不变的是列宽与"整块列表再下移一个 1080 设计高度"。
+      expect(portraitOpen.x, 1080 - 789);
+      expect(landscapeOpen.x, 1920 - 789);
       expect(portraitOpen.width, landscapeOpen.width);
       expect(portraitOpen.y - landscapeOpen.y, basicPortraitListOffset);
       expect(portraitOpen.action, landscapeOpen.action);
@@ -102,16 +107,20 @@ void main() {
       // 场景现在无条件挂载（含竖屏）：widget 测试不创建真实 PlatformView，
       // 走 QtSceneView 的非 Android 可见说明分支，避免依赖引擎视口。
       debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
-      addTearDown(() => debugDefaultTargetPlatformOverride = null);
-
-      final List<String> actions = <String>[];
-      await tester.pumpWidget(MaterialApp(
-        home: PortraitStage(
-          child: BasicHudSurface(state: _library(), ports: _ports(), onAction: actions.add),
-        ),
-      ));
-      await tester.pump();
-      expect(tester.takeException(), isNull);
+      try {
+        final List<String> actions = <String>[];
+        await tester.pumpWidget(MaterialApp(
+          home: PortraitStage(
+            child: BasicHudSurface(state: _library(), ports: _ports(), onAction: actions.add),
+          ),
+        ));
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+      } finally {
+        // flutter_test 在跑 tearDown 之前就检查 foundation 调试点，所以必须在这里复位，
+        // 不能靠 addTearDown（否则 "The value of a foundation debug variable was changed"）。
+        debugDefaultTargetPlatformOverride = null;
+      }
     });
 
     testWidgets('non-unit stage scale still routes portrait taps to HUD hits', (WidgetTester tester) async {
@@ -123,16 +132,23 @@ void main() {
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
       debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
-      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+      try {
+        final List<String> actions = <String>[];
+        await tester.pumpWidget(MaterialApp(
+          home: PortraitStage(
+            child: BasicHudSurface(state: _library(), ports: _ports(), onAction: actions.add),
+          ),
+        ));
+        await tester.pump();
+        await _assertNonUnitScaleTap(tester, actions);
+      } finally {
+        debugDefaultTargetPlatformOverride = null;
+      }
+    });
+  });
+}
 
-      final List<String> actions = <String>[];
-      await tester.pumpWidget(MaterialApp(
-        home: PortraitStage(
-          child: BasicHudSurface(state: _library(), ports: _ports(), onAction: actions.add),
-        ),
-      ));
-      await tester.pump();
-
+Future<void> _assertNonUnitScaleTap(WidgetTester tester, List<String> actions) async {
       final BuildContext surfaceContext = tester.element(find.byType(BasicHudSurface));
       final StageGeometry geometry = StageGeometryScope.of(surfaceContext);
       final HudStage stage = HudStageScope.of(surfaceContext);
@@ -153,6 +169,4 @@ void main() {
       await tester.pump();
       expect(actions, contains('player:toggle'));
       expect(actions, isNot(contains('open')));
-    });
-  });
 }

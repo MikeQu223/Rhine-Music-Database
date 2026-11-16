@@ -16,6 +16,7 @@ import 'basic_hud.dart';
 import 'basic_hud_resources.dart';
 import 'basic_models.dart';
 import 'platform_playback.dart';
+import 'qt_scene_view.dart';
 import 'siren_controller.dart';
 
 /// 启动失败页的可见前缀。外壳与测试共用这一份字面量，避免两处文案漂移。
@@ -134,6 +135,11 @@ class _BasicAppState extends State<BasicApp> {
   late final bool _ownsAudio;
   late final bool _ownsController;
 
+  /// 回执接收面的稳定句柄：方法掏出来的 tear-off 每次都是新闭包，
+  /// 直接拿 `_onSceneScroll` 做 identical() 判断永远不会相等，dispose 就摘不掉。
+  late final ValueChanged<QtSceneScrollEvent> _sceneScrollHandler =
+      _onSceneScroll;
+
   @override
   void initState() {
     super.initState();
@@ -141,9 +147,24 @@ class _BasicAppState extends State<BasicApp> {
     _ownsController = widget.controller == null;
     _audio = widget.audio ?? MethodChannelBasicAudio();
     _controller = widget.controller ?? BasicController(audio: _audio);
+    // 3D 场景的连续滚动回执（拖动/惯性/滚轮）落到同一个 controller 窗口真值上：
+    // 方向 B（3D → 列表/ruler）因此不依赖 HUD 是否接了 onScroll 参数。
+    QtSceneScrollRouter.instance.handler = _sceneScrollHandler;
     // 两路互不依赖：曲库走网络，字形走 asset。并行启动，任一失败都不会互相取消。
     unawaited(_boot());
     unawaited(_loadResources());
+  }
+
+  /// Qt 把连续条目增量报回来：拖动/惯性中途只滚窗口，松手才 commit 落行。
+  void _onSceneScroll(QtSceneScrollEvent event) {
+    if (!mounted) {
+      return;
+    }
+    _controller.applyNativeArchiveScroll(
+      event.deltaRows,
+      committed: event.committed,
+      started: event.started,
+    );
   }
 
   /// 启动恰一次：`boot()` 内部幂等，但真正的“一次”由 initState 保证。
@@ -217,6 +238,9 @@ class _BasicAppState extends State<BasicApp> {
 
   @override
   void dispose() {
+    if (identical(QtSceneScrollRouter.instance.handler, _sceneScrollHandler)) {
+      QtSceneScrollRouter.instance.handler = null;
+    }
     if (_ownsController) {
       _controller.dispose();
     }
@@ -323,6 +347,14 @@ class _BasicShellState extends State<_BasicShell> implements TextInputPorts {
   /// 这里只【接管】同一实例，绝不自己调 computePortraitBands / withScale 再推一份
   /// （DEDUP-13：scale 只允许一个来源）。接管发生在首帧后，所以竖屏首帧不铺输入层。
   StageGeometry? _portraitGeometry;
+
+  /// 场景层（Qt platform view）的身份键。
+  ///
+  /// 放在 App 状态里而不是 surface 里：横竖屏会换掉 surface 的父链
+  /// （PortraitStage 的 Transform.scale ↔ 直挂 Stack），key 在更上层才能在
+  /// 旋转时把同一个 PlatformView element 移动过去，而不是销毁重建 QQuickView
+  /// （重建 = 场景/Node/播放全断，用户报的"一转屏就重启"）。
+  final GlobalKey _sceneKey = GlobalKey(debugLabel: 'basic-qt-scene');
 
   /// HUD 输入层的焦点节点。
   ///
@@ -474,12 +506,35 @@ class _BasicShellState extends State<_BasicShell> implements TextInputPorts {
       state: state,
       ports: widget.resources.ports,
       onAction: _onAction,
+      // 场景层的身份键在 App 状态里（不在 surface 里）：横竖屏会换掉 surface 的
+      // 父链（PortraitStage ↔ 直挂 Stack），只有把 key 抬到上层，PlatformView 的
+      // element 才能被移动而非重建。
+      sceneKey: _sceneKey,
+      // 曲目列手指拖动的落点（条目单位）：只**选中**落到的那一项，
+      // 不播放、不换队列（Qt/src/MusicLibrary.cpp:616-643 open=false 的选中语义）。
+      // 拖动过程的插值在 surface 内部完成，这里只接结束时的那一次提交。
+      onLibraryScroll: (double position) =>
+          unawaited(controller.commitLibraryScroll(position)),
+      // 用户 P0 #1 的列表→3D 那半：拖动**中途**每次位置变化都推进同一个窗口真值，
+      // snapshot 的 pos 因此每帧变化，Qt 侧 projectArchiveScroll 让原 3D 窗口跟着滚，
+      // 不必等松手（松手仍由 onLibraryScroll 落行选中）。
+      onLibraryScrollUpdate: controller.updateLibraryScroll,
       geometry: geometry,
       stage: stage,
     );
   }
 
   void _onAction(String action) {
+    // 3D 归档里点到某一格：Qt 只回传**几何格**（lane+物理行），条目身份仍由这里的
+    // 唯一列表真值折出来。折不出来（不是当前列/空列）就不动，不猜下标。
+    final QtSceneCellRef? cell = QtSceneCellRef.parse(action);
+    if (cell != null) {
+      final int? row = qtSceneRowOfCell(controller.state, cell);
+      if (row != null) {
+        unawaited(controller.selectLibraryRow(row));
+      }
+      return;
+    }
     // Qt/src/NativeHudController.cpp:684：'search' 走 openModal("search")；
     // :686 'close-modal' 走 closeModal()。两者是弹层开关，不是“尚未接入”的动作。
     if (action == HudAction.search) {
@@ -709,12 +764,20 @@ class _BasicShellState extends State<_BasicShell> implements TextInputPorts {
       unawaited(controller.togglePlay());
       return null;
     }
-    if (action == 'player:prev' || action == 'prev') {
+    // 播放器传输：只有 player:prev / player:next 才推播放队列
+    // （Qt/src/NativeApplication.cpp:202-203 的 music.player.next）。
+    if (action == 'player:prev') {
       unawaited(controller.previous());
       return null;
     }
-    if (action == 'player:next' || action == 'next') {
+    if (action == 'player:next') {
       unawaited(controller.next());
+      return null;
+    }
+    // HUD 的 ↑/↓ 是**逐项选曲**，不是播放器换曲（Qt/src/NativeHud.cpp:465/478 →
+    // NativeHudController.cpp:655-660 → MusicLibrary::next(±1)，只动选中与滚动窗口）。
+    if (action == 'prev' || action == 'next') {
+      unawaited(controller.stepLibrarySelection(action == 'next' ? 1 : -1));
       return null;
     }
     // 本版没有独立的“正在播放”浮层：player:open / player:lyrics 都落到歌词面板。
@@ -738,12 +801,13 @@ class _BasicShellState extends State<_BasicShell> implements TextInputPorts {
       }
       return null;
     }
-    // 'music:play-loaded'：曲库装载完成后"播放全部"热区，落到第一条真实条目。
+    // 'music:play-loaded'：曲库装载完成后"播放全部"热区，落到第一条真实条目并**播放**
+    // （Qt/src/MusicLibrary.cpp:943-957 只在用户按下播放时才 replaceQueue）。
     if (action == 'music:play-loaded') {
       if (basicLibraryItems(state).isEmpty) {
         return basicEmptyLibraryNotice;
       }
-      return _openAt(state, 0);
+      return _openAt(state, 0, play: true);
     }
     if (action.startsWith(basicSeekFractionActionPrefix)) {
       final double? fraction =
@@ -758,12 +822,14 @@ class _BasicShellState extends State<_BasicShell> implements TextInputPorts {
     if (action == 'open') {
       return _openSelected(state);
     }
+    // 行点击 = **纯选中**（Qt/src/NativeHudMusic.cpp:79-91 的 selectResult/selectDirectory
+    // 都是 open=false：只写 current/index/highlight，不回放、不换队列、不进详情）。
     if (action.startsWith(basicMusicIndexActionPrefix)) {
       final int? index = int.tryParse(action.substring(basicMusicIndexActionPrefix.length));
       if (index == null) {
         return basicUnimplementedPrefix + action;
       }
-      return _openAt(state, index);
+      return _selectAt(state, index);
     }
     // 'music:slot:<i>' 与 music:index:<i> 指向同一份列表下标（archive_page.dart:311）。
     if (action.startsWith(basicMusicSlotActionPrefix)) {
@@ -771,7 +837,7 @@ class _BasicShellState extends State<_BasicShell> implements TextInputPorts {
       if (index == null) {
         return basicUnimplementedPrefix + action;
       }
-      return _openAt(state, index);
+      return _selectAt(state, index);
     }
     // 歌词行点击：按歌词时间轴换算进度（94 已上线的真实跳转，player 面板热区）。
     if (action.startsWith(basicLyricLineActionPrefix)) {
@@ -785,9 +851,10 @@ class _BasicShellState extends State<_BasicShell> implements TextInputPorts {
       unawaited(controller.seekToFraction(state.lyrics[line].startMs / state.durationMs));
       return null;
     }
-    // 专辑列左右翻页（archive_page.dart:318 的 '←'/'→' 与 key_router.dart:156 的箭头键）。
+    // ←/→：目录内 ±8 换页（始终取模）、目录外按 sourceOrder() 换资料库列，
+    // 两条分支都只选中/换列，不播放、不建队列（Qt/src/NativeHudController.cpp:650-662）。
     if (action == 'column-prev' || action == 'column-next') {
-      _cycleAlbum(state, action == 'column-next' ? 1 : -1);
+      unawaited(controller.navigateColumn(action == 'column-next' ? 1 : -1));
       return null;
     }
     // 检索：controller.setQuery 是真实过滤（Qt/src/MusicSiren.cpp:91-124）。
@@ -835,11 +902,12 @@ class _BasicShellState extends State<_BasicShell> implements TextInputPorts {
   /// 索引全部越界就原地给可见反馈：不打开错的行，也不假装打开成功。
   ///
   /// 曲目行的 `item.index` 是 [basicLibraryItems] 的**列表内**下标，它指回哪份
-  /// 列表随相位不同（basic_hud.dart:39-66 同一份真值）：
+  /// 列表随相位不同（真值只有一处：basic_models.dart 的 [basicLibraryItems]，
+  /// 由 basic_hud.dart:39-66 原样迁入，控制器与绘制/命中共用）：
   /// * 专辑详情（phase == detail 且 album != null）→ album.songs；
   /// * 资料库首屏 → state.songs（这里 state.album 恒为 null，早期版本只看 album，
   ///   导致首屏每一行单曲都变成“尚未实现”，正是用户报的“点击没反应”）。
-  String? _openAt(BasicViewState state, int index) {
+  String? _openAt(BasicViewState state, int index, {bool play = false}) {
     final List<BasicListItem> items = basicLibraryItems(state);
     if (index < 0 || index >= items.length) {
       return basicUnimplementedPrefix + 'music:index:$index';
@@ -852,8 +920,14 @@ class _BasicShellState extends State<_BasicShell> implements TextInputPorts {
       if (item.index < 0 || item.index >= tracks.length) {
         return basicUnimplementedPrefix + 'music:index:$index';
       }
-      unawaited(controller.openSong(tracks[item.index]));
+      unawaited(controller.openSong(tracks[item.index], play: play));
       return null;
+    }
+    if (item.kind == 'playlist') {
+      // 歌单行是**目录**，不是专辑（Qt/src/MusicSiren.cpp:251-335 的 playlists 分支走
+      // selectDirectory）。把歌单行当专辑打开会显示一张不相干的专辑——这正是 132R 的
+      // D2 缺陷。基础版没有本机歌单端口时不编造目录内容，如实标记未接入。
+      return basicUnimplementedPrefix + 'music:playlist:${item.id.isEmpty ? item.index : item.id}';
     }
     if (item.index < 0 || item.index >= state.albums.length) {
       return basicUnimplementedPrefix + 'music:index:$index';
@@ -862,16 +936,19 @@ class _BasicShellState extends State<_BasicShell> implements TextInputPorts {
     return null;
   }
 
-  /// 专辑列左右翻页（archive_page.dart:318 的 '←'/'→' 与 key_router.dart 的箭头键）：
-  /// 只按当前专辑在真实 albums 列表里的位置换一首，空曲库不动作。
-  void _cycleAlbum(BasicViewState state, int delta) {
-    if (state.albums.isEmpty) {
-      return;
+  /// 列表行的**纯选中**（Qt/src/NativeHudMusic.cpp:79-91 的 selectResult/selectDirectory
+  /// 都是 open=false）：只写 current/index/highlight 与滚动窗口，不回放、不换队列、
+  /// 不进详情。下标越界给可见反馈，不选错行、不假装成功。
+  ///
+  /// 旧实现把 'music:index:<i>' 直接交给 [_openAt]，那会 `_player.play(...)`——
+  /// 于是"点一行"= 开始播放，正是用户报的"浏览就自动播放"。
+  String? _selectAt(BasicViewState state, int index) {
+    final List<BasicListItem> items = basicLibraryItems(state);
+    if (index < 0 || index >= items.length) {
+      return basicUnimplementedPrefix + 'music:index:$index';
     }
-    final String currentId = state.album?.id ?? '';
-    final int current = state.albums.indexWhere((SirenAlbum album) => album.id == currentId);
-    final int next = current < 0 ? 0 : (current + delta) % state.albums.length;
-    unawaited(controller.openAlbum(state.albums[next < 0 ? next + state.albums.length : next]));
+    unawaited(controller.selectLibraryRow(index));
+    return null;
   }
 
   /// 系统返回键：只有资料库根（未打开目录）可以退出 App，目录、详情、歌词都在

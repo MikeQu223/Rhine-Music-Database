@@ -182,6 +182,12 @@ class Engine : public QObject {
     void wake(bool input = true);
     void wake(WakeSource source);
     void start();
+    /// 内嵌模式（RHINE_QT_EMBEDDED=1）的封面预取：Flutter 快照一落地就按 URL 异步取图，
+    /// **不依赖帧循环**。为什么必须这样：异步封面原本只写在 step() 里，而 tick() 的 pacing
+    /// Skip / 引擎休眠会在 step() 之前就 return（Engine.cpp 的 C04 分支），真机表现就是
+    /// 「URL 到了、盘面永远占位图」——诊断日志里 SCENE_COVER 有、COVER_REQUEST 一条没有。
+    /// 缓存写入由 Host::loadCover 负责；这里只负责解码完成后唤醒一帧，让纹理真的上传。
+    void prefetchCover(const QString &url);
     /// A03：内容版本。呈现层用它代替"按信号重复置脏"——版本前进一次只重渲一层，
     /// 重复推同一个值只在两个整数上比较一次。主线程写、渲染线程读，用 relaxed 原子
     /// 即可：这里要的是"值变了/没变"，不是用它同步任何内存。
@@ -346,6 +352,10 @@ class Engine : public QObject {
     // 的那一帧取过一次图，切歌瞬间往往还没解码完）。这里记已经发起过的 key，避免每帧
     // 重复 loadCover 把同一张图反复排队；失败也留在集合里，不重试。
     QSet<QString> m_coverRequests;
+    // URL -> loadCover **返回**的缓存键（带 `param=NyN`）。Host::image() 只按缓存键精确
+    // 命中，用原始 URL 查永远 miss；没有这张表，解码成功的像素会在下一帧 step() 里
+    // 又被 null 覆盖，纹理永远停在占位图（真机"封面一直不显示"的根因）。
+    QHash<QString, QString> m_coverKeys;
     // B01：冷纹理准入。判定在纯逻辑类里（可离线测），定时器只负责到点喊一声。
     // 计时基准是构造时启动的单调时钟，与帧号无关——引擎休眠不出帧时定时器照样到期。
     RhineRender::MusicTextureAdmission m_admission = RhineRender::MusicTextureAdmission::fromEnvironment();
@@ -432,5 +442,9 @@ class Engine : public QObject {
     QString m_loginMethod;
     QString m_cover;
     QImage m_coverImage;
+    // 按"原始 URL"解释封面像素：先直接查（本地键），再查 loadCover 解析出的键。
+    QImage coverImageOf(const QString &url) const;
     qint64 m_coverRevision = 0;
+    /// 异步封面到达：下一帧必须重画（命令流逐字相同，靠命令比对会永远不刷新）。
+    bool m_coverRefresh = false;
 };

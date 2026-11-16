@@ -316,7 +316,17 @@ void main() {
     });
 
     test('baseUri 的子路径被保留（便于测试/反代注入）', () async {
-      final _Transport transport = _Transport(_catalogHandler);
+      // 这条断言的是"子路径不被吃掉"，所以处理器必须按带前缀的真实路径应答；
+      // 直接复用只认 /api/* 的 _catalogHandler 会把正确行为报成 Bad state。
+      Future<SirenHttpResult> prefixed(Uri uri) {
+        final String path = uri.path;
+        if (!path.startsWith('/base/')) {
+          throw StateError('baseUri 子路径被吃掉：' + path);
+        }
+        return _catalogHandler(uri.replace(path: path.substring('/base'.length)));
+      }
+
+      final _Transport transport = _Transport(prefixed);
       await _repository(transport, baseUri: Uri.parse('https://example.test/base/')).loadCatalog();
       expect(transport.paths, <String>['/base/api/songs', '/base/api/albums']);
     });

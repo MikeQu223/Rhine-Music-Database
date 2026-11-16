@@ -16,6 +16,10 @@
 #include <QQmlEngine>
 #include <QQuickView>
 #include <QQuickWindow>
+#include <QDateTime>
+#include <QTimer>
+#include <cmath>
+#include <limits>
 
 #if defined(Q_OS_ANDROID)
 #include <QJniEnvironment>
@@ -29,6 +33,24 @@ namespace {
 Engine *g_engine = nullptr;
 FrameProfiler *g_profiler = nullptr;
 QString g_fontFamily = QStringLiteral("sans-serif");
+
+// 连续归档滚动（P0 #1 的 Qt → Flutter 方向）。
+//
+// Qt 的 NativeScene 是原几何与惯性的唯一持有者；这里只把"轨道条目位置"的**增量**报给
+// Flutter，由 Flutter 的 listPosition 当窗口真值再投影回来。三类回执：start（记序列
+// 起点）、move（拖动/惯性中的连续增量）、commit（落行选中）。
+double g_scrollOrigin = 0;
+bool g_scrollTracking = false;
+double g_scrollRef = 0;
+int g_scrollIdle = 0;
+QTimer *g_scrollTicker = nullptr;
+// 反回声：刚由我们报出去的位置，Flutter 会原样投影回来。若把它当外部指令再落到轨道上，
+// 就等于每帧把速度清零——3D 惯性会被自己的回声吃掉。一行/600ms 内一律忽略。
+double g_emittedItem = std::numeric_limits<double>::quiet_NaN();
+qint64 g_emittedAtMs = 0;
+double g_appliedPos = std::numeric_limits<double>::quiet_NaN();
+int g_appliedLane = -1;
+QJsonArray g_cellSemantics;
 } // namespace
 
 namespace RhineEmbedded {
@@ -91,12 +113,30 @@ bool reapplyPendingState()
     return true;
 }
 
+namespace {
+// 封面投影：Flutter 快照里的「当前选中」身份。空串 = 没有选中（要清旧图）。
+QString g_projectedCover;
+QJsonObject g_projectedCurrent;
+}
+
+QString projectedCover()
+{
+    return g_projectedCover;
+}
+
+QJsonObject projectedCurrent()
+{
+    return g_projectedCurrent;
+}
+
 void resetAppliedState()
 {
     g_appliedMode.clear();
     g_appliedIndex = -2;
     g_appliedDark = -1;
     g_appliedKey.clear();
+    g_projectedCover.clear();
+    g_projectedCurrent = QJsonObject();
 }
 
 // pointerdown 时只清选中相关：Qt 自己的 NativeSceneInput 可能在这一轮里改了选中，之后
@@ -107,6 +147,94 @@ void resetSelectionState()
 {
     g_appliedIndex = -2;
     g_appliedKey.clear();
+}
+
+// Qt → Dart 的动作出口（沿用已有的 RhineQtViews.emitSceneAction → MethodChannel）。
+void emitSceneAction(const QString &action)
+{
+#if defined(Q_OS_ANDROID)
+    QJniEnvironment env;
+    if (!env.isValid())
+        return;
+    // QJniEnvironment::findClass() 返回的是**全局**引用（Qt 自己缓存它，跨线程复用）。
+    // 对全局引用调 DeleteLocalRef() 会被 ART 判成 "expected reference of kind Local but
+    // found Global" 并直接 SIGABRT —— 07:17:25 真机在第一次 pointerdown 就走到了这里，
+    // 整进程崩溃。所以这里既不删除它，也不假设它的生命周期归调用方。
+    jclass viewClass = env.findClass("org/qtproject/qt/android/RhineQtViews");
+    if (!viewClass)
+        return;
+    jmethodID method = env->GetStaticMethodID(viewClass, "emitSceneAction", "(Ljava/lang/String;)V");
+    if (method) {
+        QJniObject argument = QJniObject::fromString(action);
+        env->CallStaticVoidMethod(viewClass, method, argument.object<jstring>());
+        if (env->ExceptionCheck()) {
+            env->ExceptionClear();
+            qWarning("RHINE_QT_SCENE_ACTION threw");
+        }
+    }
+#else
+    Q_UNUSED(action);
+#endif
+}
+
+void emitScroll(const char *phase, double delta)
+{
+    g_emittedItem = g_scrollOrigin + delta;
+    g_emittedAtMs = QDateTime::currentMSecsSinceEpoch();
+    emitSceneAction(QStringLiteral("archive-scroll:%1:%2")
+                        .arg(QString::fromLatin1(phase))
+                        .arg(delta, 0, 'f', 3));
+}
+
+void scrollTick();
+
+void startScrollTicker(double reference)
+{
+    if (!qApp)
+        return;
+    g_scrollRef = reference;
+    g_scrollIdle = 0;
+    if (!g_scrollTicker) {
+        g_scrollTicker = new QTimer(qApp);
+        g_scrollTicker->setInterval(33);
+        QObject::connect(g_scrollTicker, &QTimer::timeout, qApp, [] { scrollTick(); });
+    }
+    g_scrollTicker->start();
+}
+
+// 松手之后的惯性也继续推动列表：每帧读 Qt 的轨道位置，停止变化 3 帧才 commit。
+void scrollTick()
+{
+    Engine *engine = g_engine;
+    if (!engine) {
+        if (g_scrollTicker)
+            g_scrollTicker->stop();
+        g_scrollTracking = false;
+        return;
+    }
+    const double item = engine->scene.archiveTrackItem();
+    if (std::abs(item - g_scrollRef) < 1e-3) {
+        if (++g_scrollIdle < 3)
+            return;
+        if (g_scrollTicker)
+            g_scrollTicker->stop();
+        g_scrollTracking = false;
+        emitScroll("commit", item - g_scrollOrigin);
+        return;
+    }
+    g_scrollIdle = 0;
+    g_scrollRef = item;
+    emitScroll("move", item - g_scrollOrigin);
+}
+
+// 自己刚报出去的位置回来了吗？（见 g_emittedItem 的说明）
+bool scrollEcho(double item)
+{
+    if (std::isnan(g_emittedItem))
+        return false;
+    if (QDateTime::currentMSecsSinceEpoch() - g_emittedAtMs > 600)
+        return false;
+    return std::abs(item - g_emittedItem) < 1.0;
 }
 
 void applySceneState(const QString &json)
@@ -150,16 +278,67 @@ void applySceneState(const QString &json)
     // index 是 Flutter 列表行号；Qt 归档是 5 列 × 8 槽、索引域 0..39。
     // 行号 >39 时**不取模映射**：那会把第 41 行的歌高亮到第 1 行卡片上，而 key 指向的
     // 却是另一首歌（高亮与封面身份互相矛盾）。此时只换封面身份，不动选中。
+    // index 是 Flutter 列表行号，Qt 侧用 fileLocation(index) 落到本列的真实行
+    // （cell{ lane, 12+row }）。40 只是占位素材的槽位数，不是曲目域：塞壬有 936 首，
+    // 早先的 `index < 40` gate 会让第 41 行之后的选中整条丢掉。
+    // 手势进行中（手指按着、或 3D 惯性还在滑）时，Flutter 发来的 index/pos 是本轮拖动的
+    // **回声**：把它回灌给 scene.select() 会走 !m_navigating 分支 -> resetPointer() 直接把
+    // 捕获打断，用户表现为"按着拖一下就没反应了"（真机日志：RHINE_QT_RESET why=select
+    // captured=1 browsing=1 出现在拖动中途）。所以手势期间只记数值，动画由 NativeScene
+    // 自己驱动；松手 commit 之后再来的一帧才是权威位置。
+    const bool gestureDriving = g_scrollTracking;
     const int index = payload.value("index").toInt(-1);
     if (index >= 0 && index != g_appliedIndex) {
-        g_appliedIndex = index;
-        if (index < 40) {
+        if (gestureDriving) {
+            g_appliedIndex = index;
+        } else {
+            g_appliedIndex = index;
             scene.select(index);
             applied = true;
-        } else {
-            qInfo("RHINE_QT_SCENE_STATE index %d beyond archive domain (40): selection untouched",
-                  index);
         }
+    }
+
+    // 连续窗口投影（列表 → 3D）：拖动中途也会来，所以这里不做"松手才动"的判断。
+    // 回声（我们刚报出去的同一个位置）不回灌，否则 3D 惯性的速度每帧被清零。
+    const double pos = payload.value("pos").toDouble(0.0);
+    const int lane = payload.value("lane").toInt(g_appliedLane < 0 ? 2 : g_appliedLane);
+    if (!std::isnan(pos) && (std::abs(pos - g_appliedPos) > 1e-4 || lane != g_appliedLane)) {
+        g_appliedPos = pos;
+        g_appliedLane = lane;
+        // 只在档案页投影：详情/歌词页的镜头由 setMode 自己的过渡管，外部窗口不该插手。
+        if (scene.mode() == QLatin1String("archive") && !scrollEcho(pos) && !gestureDriving) {
+            scene.projectArchiveScroll(pos, lane);
+            applied = true;
+        }
+    }
+
+    // 40 格语义槽位（5 列 × 8 物理行）：只存身份表，几何仍然由 NativeScene 自己算。
+    const QJsonArray cells = payload.value("cells").toArray();
+    if (cells != g_cellSemantics) {
+        g_cellSemantics = cells;
+        qInfo("RHINE_QT_SCENE_CELLS n=%d lane=%d pos=%.3f", int(cells.size()), lane, pos);
+        applied = true;
+    }
+
+    // 封面身份投影（FINAL-RECOVERY-138 / 决策：URL 优先，选中身份不是播放身份）。
+    // 快照带 cover 就用 cover；没有 cover 键或键为空一律清空——不能留着上一首的图。
+    // 这里只**记录**，真正的下载在 Engine 的异步路径里（Host::loadCover 回调返回的
+    // cache key 才是 host.image() 能命中的那个键）。
+    const QJsonObject current = payload.value("current").toObject();
+    const QString cover = current.value("cover").toString();
+    const bool coverChanged = cover != g_projectedCover;
+    if (coverChanged) {
+        g_projectedCover = cover;
+        // 有界诊断（只在这一字段真的变化时打印一次），用于设备侧证明封面 URL 是否到了
+        // Qt 侧：URL 本身不是凭据，只截断到 96 字符。
+        qInfo("RHINE_QT_SCENE_COVER len=%d url=%.96s", int(cover.size()), qPrintable(cover));
+        // 快照落地即预取：不能等 Engine::step()，那条路会被 pacing Skip/休眠整段跳过。
+        if (Engine *engine = RhineEmbedded::engine()) {
+            engine->prefetchCover(cover);
+        }
+    }
+    if (current != g_projectedCurrent) {
+        g_projectedCurrent = current;
     }
 
     if (payload.contains("key")) {
@@ -178,6 +357,16 @@ void applySceneState(const QString &json)
         g_appliedKey.clear();
         scene.musicClear();
         applied = true;
+    }
+
+    // 应用完必须自己唤醒一帧：引擎休眠（m_sceneSleeping）时 setMode("detail") 只是把
+    // 目标值改了，过渡一帧都不会跑。真机现场：09:03:43 收到 mode=detail 并返回 applied，
+    // 但之后没有任何一帧，屏幕还停在上一次 archive 画面（盘面/封面当然看不到）。
+    // 早先"能进详情"是碰巧：新封面异步下载回调里顺手把 m_sceneSleeping 清了。
+    if (applied) {
+        if (Engine *engine = RhineEmbedded::engine()) {
+            engine->wake(Engine::WakeSource::Input);
+        }
     }
 
     // 只在真的改变了场景时打（S3）：否则每次重连都刷一条全量快照，日志里分不清"收到"
@@ -387,12 +576,64 @@ Java_org_qtproject_qt_android_RhineQtViews_nativePushScenePointer(
     QMetaObject::invokeMethod(
         qApp,
         [eventType, sx = static_cast<double>(x), sy = static_cast<double>(y)] {
+            Engine *engine = RhineEmbedded::engine();
+            if (!engine)
+                return;
+            // 只有归档页的"浏览拖动"才是共享窗口的输入；详情页拖动是旋转唱片，属于
+            // 场景内部姿态，绝不能把它当成滚动量发给 Flutter（真机实测：详情页里拖一下
+            // 会算出上百行的位移，列表直接被甩飞）。
+            const bool browsing = engine->scene.mode() == QLatin1String("archive");
+            const double before = engine->scene.archiveTrackItem();
+            const int previousSelection = engine->scene.selection();
+            // 选中身份回传要**在手势之前**取格：pointerup 之后 NativeScene 会 resetPointer
+            // 并把 hover 清掉，事后 pick() 拿不到用户点的那个格子。
+            std::optional<SceneMotion::Cell> picked;
+            if (eventType == QLatin1String("pointerup"))
+                picked = engine->scene.pick(sx, sy);
             // 手指落下时清掉选中相关的"已应用"记录（S3）；只清 index/key，
             // 不清 mode/dark——见 resetSelectionState() 的注释。
-            if (eventType == QLatin1String("pointerdown"))
+            if (eventType == QLatin1String("pointerdown")) {
                 RhineEmbedded::resetSelectionState();
-            if (Engine *engine = RhineEmbedded::engine())
-                engine->pointer(eventType, sx, sy);
+                g_scrollTracking = browsing;
+                g_scrollOrigin = before;
+                g_scrollRef = before;
+                if (browsing) {
+                    RhineEmbedded::emitScroll("start", 0.0);
+                }
+            }
+            engine->pointer(eventType, sx, sy);
+            const double after = engine->scene.archiveTrackItem();
+            if (eventType == QLatin1String("pointermove") && g_scrollTracking && browsing) {
+                if (std::abs(after - g_scrollRef) > 1e-3) {
+                    g_scrollRef = after;
+                    RhineEmbedded::emitScroll("move", after - g_scrollOrigin);
+                }
+            }
+            if (eventType == QLatin1String("pointerup")
+                || eventType == QLatin1String("pointercancel")
+                || eventType == QLatin1String("lostpointercapture")) {
+                if (g_scrollTracking) {
+                    if (std::abs(after - g_scrollOrigin) > 1e-3) {
+                        // 有位移/有惯性：交给 ticker 继续跟，停下来再 commit。
+                        RhineEmbedded::startScrollTicker(after);
+                    } else {
+                        g_scrollTracking = false;
+                        RhineEmbedded::emitScroll("commit", 0.0);
+                    }
+                }
+                // 别的所属的卡：3D 不能替列表决定"所属"。用户 06:19 的规则是所属只由
+                // 列表决定（拖动 3D 只能滚动当前所属），所以点到别层的卡时把选中还回去，
+                // 让 3D 与列表保持同一个窗口；08:59 真机证据：点到 lane=2 的卡会让
+                // 原生光标停在 lane 2，而列表还在 lane 3，两边就此不一致。
+                if (browsing && picked && g_appliedLane >= 0 && picked->lane != g_appliedLane
+                    && engine->scene.selection() != previousSelection) {
+                    engine->scene.select(previousSelection);
+                }
+                if (picked && engine->scene.selection() != previousSelection) {
+                    RhineEmbedded::emitSceneAction(
+                        QStringLiteral("archive-select:%1:%2").arg(picked->lane).arg(picked->row));
+                }
+            }
         },
         Qt::AutoConnection);
 }
@@ -409,8 +650,25 @@ Java_org_qtproject_qt_android_RhineQtViews_nativePushSceneWheel(
         qApp,
         [sx = static_cast<double>(x), sy = static_cast<double>(y),
          sd = static_cast<double>(delta)] {
-            if (Engine *engine = RhineEmbedded::engine())
+            Engine *engine = RhineEmbedded::engine();
+            if (!engine)
+                return;
+            // 滚轮是离散一跳：一次 start + commit 就够，不需要拖动那样的连续帧。
+            // 详情页的滚轮不是共享窗口输入（那里是旋转/放大唱片），只驱动场景本身。
+            if (engine->scene.mode() != QLatin1String("archive")) {
                 engine->wheelInput(sx, sy, sd, 0);
+                return;
+            }
+            const double before = engine->scene.archiveTrackItem();
+            g_scrollOrigin = before;
+            g_scrollTracking = true;
+            engine->wheelInput(sx, sy, sd, 0);
+            const double after = engine->scene.archiveTrackItem();
+            if (std::abs(after - before) > 1e-3) {
+                RhineEmbedded::emitScroll("start", 0.0);
+                RhineEmbedded::emitScroll("commit", after - before);
+            }
+            g_scrollTracking = false;
         },
         Qt::AutoConnection);
 }

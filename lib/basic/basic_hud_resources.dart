@@ -5,11 +5,12 @@ import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
 import '../hud/modals/lyrics_panel.dart' as lyrics;
-import '../hud/pages/chrome.dart' show HudTextPort;
+import '../hud/pages/chrome.dart' show HudSurfaceSink, HudTextPort;
 import '../hud/pages/song_detail.dart' as detail;
 import '../hud/player/player_bar.dart' as player;
 import '../hud/text/glyph_font.dart';
 import '../hud/text/glyph_run.dart';
+import '../hud/text/rolling_text.dart';
 import '../hud/widgets/track_ruler.dart' as ruler;
 
 /// 字形资源：misans-glyphs.json 是 Qt 真值的字形表，boot-lettering-art.json 是
@@ -143,8 +144,37 @@ class BasicGlyphPorts
   final GlyphText text;
 
   /// 记录 rolling 请求次数，便于测试断言“页面确实请求过滚动标签”。
-  /// 本版没有帧时钟，rolling 绘制仍是静止文本（不伪造动画）。
+  /// 实际绘制见 [beginFrame]/[rolling]：每次请求都按当前帧时钟落到命令流，
+  /// 不再是空实现（旧实现在这里直接 return，导致标题/当前序号整段不画）。
   int rollingRequests = 0;
+
+  /// 共享滚动文字运行时（见 lib/hud/text/rolling_text.dart）：每个 key 一份
+  /// [RollingLabel]，字符槽跨帧保留。时钟/repaint 由宿主注入，本端口不自带计时器。
+  late final HudRollingText rollingText = HudRollingText(
+    measure: (String value, double size, String weight, double tracking) =>
+        _width(value, size, weight, tracking),
+  );
+
+  List<Object?> _frameInk = const <Object?>[];
+  bool _frameAnimate = true;
+
+  /// 宿主（[BasicHudFrame.build]）在绘制本帧前绑定时钟、ink 与动画开关。
+  void beginFrame({
+    required HudSurfaceSink sink,
+    required double time,
+    required List<Object?> ink,
+    bool animate = true,
+  }) {
+    _frameInk = ink;
+    _frameAnimate = animate;
+    rollingText.begin(time: time, emit: sink.op);
+  }
+
+  /// 结束本帧；true = 仍有滚动字符槽在动，宿主应继续 ticker 续帧。
+  bool endFrame() => rollingText.end();
+
+  /// 本帧绘制结束后共享滚动文字是否还在动。
+  bool get rollingAnimating => rollingText.animating;
 
   static const double _fallbackTextScale = kBaselineFactor;
 
@@ -234,7 +264,14 @@ class BasicGlyphPorts
     return '…';
   }
 
-  /// HudTextPort：滚动标签在本版没有帧时钟，记录请求但不伪造运动。
+  /// HudTextPort：把滚动标签落到当前帧命令流（Qt NativeHud::roll）。
+  ///
+  /// 真机缺陷（左侧标题空白、底部只显示 "/936"）的源根因就在这里：旧实现只
+  /// `rollingRequests += 1` 就返回，页面按 Qt 顺序发出的 music-brand /
+  /// music-source / music-title / music-id / music-column / music-number 六类
+  /// 滚动文字全部没有命令落到 HUD；静态 hudText("/") 与 total 仍照常画，于是
+  /// 只剩 "/936"。现在走 [HudRollingText]：初始帧即发静态 text（可见），值变化
+  /// 时按 kReelDuration 发 save/alpha/clip/text/restore，由宿主 ticker 推进。
   @override
   void rolling(
     String key,
@@ -247,6 +284,18 @@ class BasicGlyphPorts
     bool numeric,
   ) {
     rollingRequests += 1;
+    rollingText.request(
+      key: key,
+      value: value,
+      x: x,
+      y: y,
+      size: size,
+      weight: weight,
+      tracking: tracking,
+      numeric: numeric,
+      ink: _frameInk,
+      animate: _frameAnimate,
+    );
   }
 
   /// HudGlyphBoundsPort（track_ruler）

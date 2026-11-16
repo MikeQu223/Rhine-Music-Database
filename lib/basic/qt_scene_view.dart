@@ -94,18 +94,218 @@ int qtSceneSelectedIndexOf(BasicViewState state) {
 ///  * `key`：材质/封面身份键（SirenSong.key）。**没有选中就不带这个键**：
 ///    Qt 侧据此 musicClear()，不留上一首的旧封面。
 ///  * `count`：当前列表长度（Qt 侧只用于诊断/范围校验，不建第二套曲库）。
+/// 选中项的真实封面 URL：歌曲自带 cover 优先；没有就用**同一张专辑**的封面。
+///
+/// 塞壬的 `/api/songs` 条目不保证带封面，专辑封面在 `/api/albums` 上（Qt 侧 detail 页
+/// 的盘面也是专辑封面）。这里只做"同一个真实标识的另一种取法"，不造数据、不查账号。
+String qtSceneCoverOf(BasicViewState state, SirenSong song) {
+  if (song.cover.isNotEmpty) {
+    return song.cover;
+  }
+  for (final SirenAlbum album in state.albums) {
+    if (album.id == song.albumId) {
+      return album.cover;
+    }
+  }
+  return '';
+}
+
 String qtSceneStateSnapshot(BasicViewState state) {
   final SirenSong? song = state.song;
   final int index = qtSceneSelectedIndexOf(state);
+  // `current` 是**选中身份**（不是 playingTrack）：Qt 侧 render-only 没有曲库，封面只能
+  // 由这里投影过去。cover 是原始 URL：Qt 的 Host::image() 只是 cache 查询，真正下载走
+  // Host::loadCover(url, cb)，cb 拿到的是加过 `param=NyN` 的**返回** cache key。
+  // 没有选中就整块省略 → Qt 清掉旧封面（不能留着上一首的图）。
+  final Map<String, Object?>? current =
+      (song == null || song.key.isEmpty)
+          ? null
+          : <String, Object?>{
+              'kind': 'song',
+              'id': song.id,
+              'key': song.key,
+              'cover': qtSceneCoverOf(state, song),
+              'title': song.title,
+              'artist': song.artist,
+            };
   final Map<String, Object?> payload = <String, Object?>{
-    'v': 1,
+    'v': 3,
     'dark': state.dark,
     'mode': qtSceneModeOf(state),
     'index': index,
     'count': state.songs.length,
+    // 连续窗口位置（条目，小数 = 两项之间）与所属列：Qt 只**投影**它，
+    // 不把它当第二份真值。拖动中途也会变，所以 3D 场景在手指还没松时就跟着滚。
+    'pos': state.listPosition ?? 0,
+    'lane': state.selectedLane,
+    'cells': qtSceneCellsOf(state),
+    if (current != null) 'current': current,
     if (song != null && song.key.isNotEmpty) 'key': song.key,
   };
   return jsonEncode(payload);
+}
+
+/// 40 格语义槽位（5 列 × 8 物理行）。
+///
+/// Qt 侧已经有真实的 `m_columns` / `physicalSlots` 几何与物理选中（NativeScene.cpp
+/// 的 cell{ lane, 12+row }），这里**不重造几何**，只把每个物理格的业务身份
+/// （kind + id）与 Flutter 唯一的列表真值对起来，让原生能回传正确 identity 而不是
+/// `logical%40` 之类的位置当身份。
+///
+/// 有界：最多 5×8 条；空列/越界不产生条目（空槽就是空槽，不造占位）。
+/// 行键沿用 Qt 的 wrap 语义（src/MusicLibrary.cpp:646-667）：`index = offset + row`
+/// 允许负数/超过末尾，取模回列表内——负数窗口起点是 Qt 的真实行为，不在这里夹平。
+///
+/// 不带 cover：素材纹理仍由 `current`（单选身份）驱动，逐格下发封面会把 40 个
+/// 下载/纹理塞进一次状态推送；卡片面在本版本就是抽取面，不画专辑图。
+List<Map<String, Object?>> qtSceneCellsOf(BasicViewState state) {
+  final List<List<BasicListItem>> table = state.laneItems;
+  if (table.isEmpty) {
+    return const <Map<String, Object?>>[];
+  }
+  final List<int> offsets = state.laneOffsets;
+  final List<Map<String, Object?>> cells = <Map<String, Object?>>[];
+  for (int lane = 0; lane < qtSceneLaneCount && lane < table.length; lane++) {
+    final List<BasicListItem> items = table[lane];
+    if (items.isEmpty) {
+      continue;
+    }
+    final int offset = lane < offsets.length ? offsets[lane] : 0;
+    for (int row = 0; row < qtScenePhysicalRows; row++) {
+      final int raw = offset + row;
+      final int index = ((raw % items.length) + items.length) % items.length;
+      final BasicListItem item = items[index];
+      cells.add(<String, Object?>{
+        'l': lane,
+        'r': row,
+        'k': item.kind,
+        'i': item.id,
+        't': item.title,
+      });
+    }
+  }
+  return cells;
+}
+
+/// Qt 物理几何：5 列 × 8 物理行（NativeScene 的 m_columns / cell.row = 12+row）。
+const int qtSceneLaneCount = 5;
+const int qtScenePhysicalRows = 8;
+
+/// 原生 → Dart 的归档滚动回执前缀（走既有的 `action` 字符串通道）。
+///
+/// 格式 `archive-scroll:<start|move|commit>:<deltaRows>`；deltaRows 是**条目**增量
+/// （Qt 的拖拽/滚轮位移按行折算，见 NativeScene 的滚动出口）。分三类是为了让
+/// Flutter 记住序列起点、并在松手时才落行选中——与 Qt 的 observe/select 同构。
+const String qtSceneScrollPrefix = 'archive-scroll:';
+
+/// 一条原生归档滚动回执。
+class QtSceneScrollEvent {
+  const QtSceneScrollEvent({
+    required this.deltaRows,
+    this.started = false,
+    this.committed = false,
+  });
+
+  /// 相对序列起点的条目增量（可为小数、可为负）。
+  final double deltaRows;
+
+  /// 这条是不是一次拖拽/滚轮的起点（用来记 origin）。
+  final bool started;
+
+  /// 松手/滚轮结束：是否落行选中。
+  final bool committed;
+
+  /// 解析原生 action 字符串；不是滚动回执返回 null。
+  static QtSceneScrollEvent? parse(String action) {
+    if (!action.startsWith(qtSceneScrollPrefix)) {
+      return null;
+    }
+    final List<String> parts = action
+        .substring(qtSceneScrollPrefix.length)
+        .split(':');
+    if (parts.length != 2) {
+      return null;
+    }
+    final double delta = double.tryParse(parts[1]) ?? 0;
+    switch (parts[0]) {
+      case 'start':
+        return QtSceneScrollEvent(deltaRows: delta, started: true);
+      case 'commit':
+        return QtSceneScrollEvent(deltaRows: delta, committed: true);
+      case 'move':
+        return QtSceneScrollEvent(deltaRows: delta);
+      default:
+        return null;
+    }
+  }
+}
+
+/// 原生回传的**几何格**（Qt 的 cell{lane,row}，row 是 12..19 的物理行）。
+///
+/// 为什么回传格子而不是列表下标：几何与物理槽位归 Qt，条目身份归 Flutter 唯一真值。
+/// Flutter 收到 (lane,row) 后用自己的 [_laneItems]/offsets 折成行号——这正是
+/// "native 用真实几何 ID 绑定、回传正确 identity"的那一半，不需要 Qt 认识 Siren 曲目。
+class QtSceneCellRef {
+  const QtSceneCellRef(this.lane, this.row);
+
+  final int lane;
+  final int row;
+
+  static const String prefix = 'archive-select:';
+
+  static QtSceneCellRef? parse(String action) {
+    if (!action.startsWith(prefix)) {
+      return null;
+    }
+    final List<String> parts = action.substring(prefix.length).split(':');
+    if (parts.length != 2) {
+      return null;
+    }
+    final int? lane = int.tryParse(parts[0]);
+    final int? row = int.tryParse(parts[1]);
+    if (lane == null || row == null) {
+      return null;
+    }
+    return QtSceneCellRef(lane, row);
+  }
+}
+
+/// 物理行 -> 当前列表行（Qt 的 wrap 语义：`index = offsets[lane] + row`，负数/越界取模）。
+///
+/// 只对**当前列**成立：3D 手势不换所属列，换列必须走 HUD 的显式 ←/→。别的列返回 null，
+/// 调用方就知道"这一格不是当前窗口里的条目"，不去猜。
+int? qtSceneRowOfCell(BasicViewState state, QtSceneCellRef cell) {
+  if (cell.lane != state.selectedLane) {
+    return null;
+  }
+  final List<List<BasicListItem>> table = state.laneItems;
+  if (cell.lane < 0 || cell.lane >= table.length) {
+    return null;
+  }
+  final List<BasicListItem> items = table[cell.lane];
+  if (items.isEmpty) {
+    return null;
+  }
+  final List<int> offsets = state.laneOffsets;
+  final int offset = cell.lane < offsets.length ? offsets[cell.lane] : 0;
+  // 物理行的基址是 12（NativeScene 的 cell.row = 12 + 列内序号）。
+  final int raw = offset + (cell.row - 12);
+  return ((raw % items.length) + items.length) % items.length;
+}
+
+/// Qt 3D 滚动回执的默认接收面。
+///
+/// [QtSceneView] 的 `onScroll` 参数优先；HUD 里的场景视图没有传这个参数时（它的
+/// 构造点在 HUD 内部），回执落到这里。BasicApp 在 initState 里把 controller 的
+/// 连续窗口写入挂上来——这样"3D 拖动/滚轮 → 列表/ruler/换列"不依赖 HUD 接线。
+class QtSceneScrollRouter {
+  QtSceneScrollRouter._();
+
+  static final QtSceneScrollRouter instance = QtSceneScrollRouter._();
+
+  ValueChanged<QtSceneScrollEvent>? handler;
+
+  void dispatch(QtSceneScrollEvent event) => handler?.call(event);
 }
 
 /// 原生动作的分发表：platform view id → 回调。
@@ -289,15 +489,51 @@ class QtScenePointerBridge {
   static final QtScenePointerBridge instance = QtScenePointerBridge._();
 
   final QtScenePointerSender _sender = QtScenePointerSender();
-  final Map<int, Duration> _lastStamp = <int, Duration>{};
+  /// 去重键必须带事件类型：同一次扫描里 down/up 可能共享 timeStamp 且坐标相同
+  /// （合成事件、重采样），只按 timeStamp+位置去重会把真正的 up 吞掉，Qt 侧就永远
+  /// 停在下压状态。键 = '<type>|timeStamp'，值是位置。
+  final Map<int, String> _lastKey = <int, String>{};
   final Map<int, Offset> _lastPosition = <int, Offset>{};
+  /// 真正给 Qt 发过 pointerdown 的指针。只有它们的 move/up 才会转发：
+  /// 双指落下时 Qt 收到的是 pointercancel，剩下的那根手指没有被 Qt 认领过，
+  /// 它的 move 就是"幽灵拖动"（设备实测：缩放后松一根手指，归档跟着手指跑）。
+  final Set<int> _forwarded = <int>{};
   int? _viewId;
 
   /// 场景视图创建后调用（同一时刻只服务一个场景视图）。
+  ///
+  /// 重建视图时会先 attach 新的 viewId：旧视图上已判定给 Qt 的指针不会再有 up，
+  /// 必须在这里显式 pointercancel 掉再重绑，否则新视图第一帧就可能带着上一视图的
+  /// 下压状态（旧实现直接覆盖 _viewId，等于把那些指针静默丢掉）。
   void attach(int viewId) {
+    if (_viewId != null && _viewId != viewId) {
+      releasePointers(_forwarded);
+    }
     _viewId = viewId;
     _reset();
   }
+
+  /// 释放这些指针：给 Qt 发过 pointerdown 的补一个 pointercancel（不留悬挂下压），
+  /// 然后清掉它们的去重/转发状态。只动传进来的指针，不影响别的视图。
+  void releasePointers(Iterable<int> pointers) {
+    final int? viewId = _viewId;
+    final List<int> released = pointers.toList(growable: false);
+    for (final int pointer in released) {
+      final Offset? position = _lastPosition[pointer];
+      if (viewId != null && _forwarded.contains(pointer) && position != null) {
+        _sender.pointer(viewId, 'pointercancel', position.dx, position.dy);
+      }
+      _forwarded.remove(pointer);
+      _lastKey.remove(pointer);
+      _lastPosition.remove(pointer);
+    }
+  }
+
+  /// 测试用：当前绑定的视图 id（生产代码不要读它）。
+  int? get viewIdForTest => _viewId;
+
+  /// 测试用：清空指针状态机（生产代码不要调用）。
+  void resetForTest() => _reset();
 
   void detach(int viewId) {
     if (_viewId == viewId) {
@@ -308,8 +544,9 @@ class QtScenePointerBridge {
 
   void _reset() {
     _pointers.clear();
-    _lastStamp.clear();
+    _lastKey.clear();
     _lastPosition.clear();
+    _forwarded.clear();
     _multi = false;
     _lastCentroid = null;
     _lastDistance = null;
@@ -331,14 +568,15 @@ class QtScenePointerBridge {
   }
 
   bool _claim(PointerEvent event) {
-    // 同一指针的同一时刻只搬一次；但重采样事件可能共用 timeStamp 而坐标不同，
-    // 那种必须放过（否则快速拖动会丢帧，表现为"拖了一半不跟手"）。
-    final Duration? previous = _lastStamp[event.pointer];
-    if (previous == event.timeStamp &&
-        _lastPosition[event.pointer] == event.position) {
+    // 同一指针的同一时刻同一位置**同类型**事件只搬一次；但重采样事件可能共用
+    // timeStamp 而坐标不同，那种必须放过（否则快速拖动会丢帧，表现为"拖了一半不跟手"）。
+    final String key = '${event.runtimeType}|${event.timeStamp.inMicroseconds}';
+    final bool duplicate =
+        _lastKey[event.pointer] == key && _lastPosition[event.pointer] == event.position;
+    if (duplicate) {
       return false;
     }
-    _lastStamp[event.pointer] = event.timeStamp;
+    _lastKey[event.pointer] = key;
     _lastPosition[event.pointer] = event.position;
     return true;
   }
@@ -363,6 +601,8 @@ class QtScenePointerBridge {
         if (id != null) {
           _sender.pointer(id, 'pointercancel', 0, 0);
         }
+        // Qt 那边已经收到 cancel，之前那根手指也不再被认领：它后续的 move 一律不转发。
+        _forwarded.clear();
       }
       _lastCentroid = null;
       _lastDistance = null;
@@ -371,6 +611,7 @@ class QtScenePointerBridge {
     final int? id = _viewId;
     if (id != null) {
       final Offset stage = _stagePoint(event.localPosition, sceneRect);
+      _forwarded.add(event.pointer);
       _sender.pointer(id, 'pointerdown', stage.dx, stage.dy);
     }
   }
@@ -413,7 +654,7 @@ class QtScenePointerBridge {
       }
       return;
     }
-    if (_pointers.length == 1) {
+    if (_pointers.length == 1 && _forwarded.contains(event.pointer)) {
       final Offset stage = _stagePoint(event.localPosition, sceneRect);
       _sender.pointer(id, 'pointermove', stage.dx, stage.dy);
     }
@@ -424,8 +665,21 @@ class QtScenePointerBridge {
       return;
     }
     _pointers.remove(event.pointer);
+    final bool forwarded = _forwarded.remove(event.pointer);
+    _lastKey.remove(event.pointer);
+    _lastPosition.remove(event.pointer);
     final int? id = _viewId;
     if (id == null) {
+      return;
+    }
+    if (!forwarded) {
+      // 这根手指没被 Qt 认领（双指时的第二根，或 cancel 之后剩下的那根）：
+      // 不发 pointerup，否则 Qt 会收到一个没有 down 的 up。
+      if (_pointers.isEmpty) {
+        _multi = false;
+        _lastCentroid = null;
+        _lastDistance = null;
+      }
       return;
     }
     if (_pointers.isEmpty) {
@@ -437,7 +691,27 @@ class QtScenePointerBridge {
       return;
     }
     if (_pointers.length == 1) {
-      // 双指变单指：不把剩下的手指当作新的拖拽起点，等它抬起。
+      // 双指变单指：不把剩下的手指当作新的拖拽起点，等它抬起（它不在 _forwarded 里）。
+      _multi = false;
+      _lastCentroid = null;
+      _lastDistance = null;
+    }
+  }
+
+  /// 系统取消（来电、手势被父级抢走）：Qt 必须收到 pointercancel，不能拿 up 顶替。
+  void cancel(PointerCancelEvent event) {
+    if (_viewId == null) {
+      return;
+    }
+    final int? id = _viewId;
+    if (id != null && _forwarded.contains(event.pointer)) {
+      _sender.pointer(id, 'pointercancel', 0, 0);
+    }
+    _pointers.remove(event.pointer);
+    _forwarded.remove(event.pointer);
+    _lastKey.remove(event.pointer);
+    _lastPosition.remove(event.pointer);
+    if (_pointers.isEmpty) {
       _multi = false;
       _lastCentroid = null;
       _lastDistance = null;
@@ -461,6 +735,7 @@ class QtSceneView extends StatefulWidget {
     required this.state,
     this.onAction,
     this.onCreated,
+    this.onScroll,
   });
 
   /// 当前界面状态（只读快照）。选中身份看 state.song，不看播放状态。
@@ -471,6 +746,11 @@ class QtSceneView extends StatefulWidget {
 
   /// platform view id：调用方只用来打日志/排障。
   final ValueChanged<int>? onCreated;
+
+  /// Qt 3D 侧的连续归档滚动（拖动/滚轮）。`action` 通道里的 `archive-scroll:*`
+  /// 回执在这里解释成增量，交给 controller 折算成 state.listPosition——3D 拖动
+  /// 因此每帧推动列表/ruler，而不是松手才动一次。
+  final ValueChanged<QtSceneScrollEvent>? onScroll;
 
   @override
   State<QtSceneView> createState() => _QtSceneViewState();
@@ -518,9 +798,29 @@ class _QtSceneViewState extends State<QtSceneView> {
     return child;
   }
 
+  /// 原生 action 的分流：滚动回执走 [QtSceneView.onScroll]，其余原文透传给
+  /// [QtSceneView.onAction]（本版本 onAction 仍无生产者，词表未定）。
+  void _onNativeAction(String action) {
+    final QtSceneScrollEvent? scroll = QtSceneScrollEvent.parse(action);
+    if (scroll != null) {
+      final ValueChanged<QtSceneScrollEvent>? direct = widget.onScroll;
+      if (direct != null) {
+        direct(scroll);
+      } else {
+        QtSceneScrollRouter.instance.dispatch(scroll);
+      }
+      return;
+    }
+    // 选中身份回执（archive-select:<lane>:<row>）：原生只报它真实拾取到的
+    // 物理格，映射成列表行由 Dart 侧当前窗口决定；这里留一行证据日志，
+    // 否则"3D 点选没反应"无法区分是没发出来还是被窗口判空丢掉。
+    debugPrint('RHINE_DART scene_action $action');
+    widget.onAction?.call(action);
+  }
+
   void _onPlatformViewCreated(int id) {
     _viewId = id;
-    QtSceneActions.register(id, widget.onAction);
+    QtSceneActions.register(id, _onNativeAction);
     QtScenePointerBridge.instance.attach(id);
     // 首个快照必须在视图创建后立刻给：Qt 的归档/唱片/主题都靠它进正确状态，
     // 否则会先按 archive+light 渲染一帧再跳变。
@@ -638,6 +938,11 @@ class QtSceneUnsupported extends StatelessWidget {
 /// 与调用方给 QtSceneView 的那份一致）：换算只按它的高度归一，不猜 dpr。
 /// 只搬运 down/move/up/cancel 与双指 pan/缩放；谁被拖、拖多远、何时选中全由 Qt 决定。
 class QtSceneRawPointerLayer extends StatefulWidget {
+  /// 测试注入点：替换 onPointerCancel 的生产调用（QtScenePointerBridge.cancel）。
+  /// 生产恒为 null；它存在的唯一目的是让"取消必须发 pointercancel"这条接线可证伪。
+  @visibleForTesting
+  static void Function(PointerCancelEvent event)? cancelHook;
+
   const QtSceneRawPointerLayer({
     super.key,
     required this.sceneRect,
@@ -694,10 +999,26 @@ class _QtSceneRawPointerLayerState extends State<QtSceneRawPointerLayer> {
       },
       onPointerCancel: (PointerCancelEvent event) {
         if (_owned.remove(event.pointer)) {
-          bridge.up(event, widget.sceneRect);
+          // 可证伪：cancelHook 在测试里替换生产调用；把它改回 bridge.up 会让这条
+          // 断言立刻变红（旧实现正是 cancel→pointerup，Qt 侧收不到取消）。
+          final void Function(PointerCancelEvent) cancel =
+              QtSceneRawPointerLayer.cancelHook ?? bridge.cancel;
+          cancel(event);
         }
       },
       child: widget.child,
     );
+  }
+
+  @override
+  void dispose() {
+    // 视图被销毁/重建时，已判定归属的指针不会再有 up：给 Qt 补 pointercancel 再清，
+    // 避免跨视图把旧手势带到新视图上。用生产 API（releasePointers）而不是测试用的
+    // resetForTest —— 旧实现整体重置状态机，会连别的指针一起去重记录都抹掉。
+    if (_owned.isNotEmpty) {
+      QtScenePointerBridge.instance.releasePointers(_owned.toList(growable: false));
+      _owned.clear();
+    }
+    super.dispose();
   }
 }

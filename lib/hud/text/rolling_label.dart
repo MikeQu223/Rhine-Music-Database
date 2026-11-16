@@ -198,7 +198,7 @@ class RollingLabel {
           final landed = slot.wheel[wrapIndex(p.floor(), slot.wheel.length)];
           if (landed != ch || (p - p.roundToDouble()).abs() > kReelSettleEpsilon) {
             if (numeric && isDigitCharacter(ch)) {
-              var target = (p / 10).floor() * 10 + (double.tryParse(ch) ?? 0);
+              var target = (p / 10).floor() * 10 + (double.tryParse(ch) ?? 0.0);
               if (newNumber > oldNumber && target < p) {
                 target += 10;
               }

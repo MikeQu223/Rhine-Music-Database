@@ -4,6 +4,8 @@
 #endif
 #include "Engine.h"
 #include "DiscGeometry.h"
+// prefetchCover(): 内嵌模式的选中封面投影（RhineEmbedded::projectedCover）。
+#include "EmbeddedSceneHost.h"
 #include "RhiScene.h"
 #include "fg/FgCapability.h"
 #include "fg/FgStats.h"
@@ -450,6 +452,64 @@ void Engine::sceneConsumed() {
 }
 void Engine::wake(bool input) {
     wake(input ? WakeSource::Input : WakeSource::Other);
+}
+QImage Engine::coverImageOf(const QString &url) const {
+    if (url.isEmpty()) {
+        return QImage();
+    }
+    if (QImage direct = host.image(url); !direct.isNull()) {
+        return direct;
+    }
+    const auto resolved = m_coverKeys.constFind(url);
+    if (resolved == m_coverKeys.constEnd()) {
+        return QImage();
+    }
+    return host.image(*resolved);
+}
+
+void Engine::prefetchCover(const QString &url) {
+    // 选中身份切换后旧请求没有意义；已请求过、或缓存里已有像素就不再重复。
+    if (url.isEmpty() || !coverImageOf(url).isNull() || m_coverRequests.contains(url)) {
+        return;
+    }
+    m_coverRequests.insert(url);
+    qInfo("RHINE_QT_COVER_REQUEST len=%d url=%.96s", int(url.size()), qPrintable(url));
+    // Host::image() 只是缓存查找，缓存键是 loadCover 给 URL 补 `param=NyN` 之后的字符串，
+    // 所以必须用回调**返回**的键去取图；直接用原始 URL 查必然 miss。
+    host.loadCover(
+        url,
+        [this, url](QString loaded) {
+            qInfo("RHINE_QT_COVER_RESULT len=%d key=%.96s", int(loaded.size()), qPrintable(loaded));
+            if (loaded.isEmpty()) {
+                // 失败要能重试：把这条记录撤掉，下次快照/切歌还会再试（否则一次瞬时失败
+                // 就永久压掉这首的封面，和「已请求过」的初衷相反）。
+                m_coverRequests.remove(url);
+                return;
+            }
+            if (RhineEmbedded::projectedCover() != url) {
+                return; // 期间换了选中：旧的那首不回填
+            }
+            const QImage pixels = host.image(loaded);
+            if (pixels.isNull()) {
+                qWarning("RHINE_QT_COVER_DECODE miss key=%.96s", qPrintable(loaded));
+                m_coverRequests.remove(url);
+                return;
+            }
+            qInfo("RHINE_QT_COVER_READY %dx%d", pixels.width(), pixels.height());
+            // 记住解析后的缓存键，之后每帧都靠它取像素（有界：见下面的淘汰）。
+            m_coverKeys.insert(url, loaded);
+            while (m_coverKeys.size() > 96) {
+                m_coverKeys.erase(m_coverKeys.begin());
+            }
+            m_coverImage = pixels;
+            m_coverRefresh = true;
+            // 醒来一帧：m_coverRefresh 只在 step() 里被消费，而 step() 可能正被 pacing Skip
+            // 挡着。这条路径和页面过渡期用的是同一个放行窗口。
+            m_sceneSleeping = false;
+            m_hudTransitionUntilMs = clock.elapsed() + 600;
+            timer.start(0);
+        },
+        1024);
 }
 void Engine::wake(WakeSource source) {
     switch (source) {
@@ -1251,7 +1311,8 @@ void Engine::step(double time) {
     // 会以为"什么都没变"，HUD 上那张图就永远不刷新。这里单独记一笔。
     [[maybe_unused]] const bool coverArrived = coverRevision != m_coverRevision;
     bool visualChanged = discChanged || !stable || current != m_current || cover != m_cover ||
-                         coverRevision != m_coverRevision;
+                         coverRevision != m_coverRevision || m_coverRefresh;
+    m_coverRefresh = false;
     if (!temporal) {
         m_temporalFramesRemaining = 0;
     }
@@ -1266,7 +1327,34 @@ void Engine::step(double time) {
     m_current = current;
     m_cover = object["cover"].toString();
     // 图片缓存只在 GUI 线程读取，渲染线程通过 cover() 拿这份副本。
-    m_coverImage = host.image(m_cover);
+    m_coverImage = coverImageOf(m_cover);
+    // Host::image() 只是**缓存查找**：缓存键是 loadCover 给 URL 补上 `param=NyN` 之后的
+    // 字符串，拿原始地址去查必然 miss（132R 真机上"详情页没有封面"就是这个）。所以 miss
+    // 时主动 loadCover，并用**回调返回的键**取图 —— 那才是缓存里真正的键。
+    if (!m_cover.isEmpty() && m_coverImage.isNull() && !m_coverRequests.contains(m_cover)) {
+        m_coverRequests.insert(m_cover);
+        const QString requested = m_cover;
+        qInfo("RHINE_QT_COVER_REQUEST len=%d url=%.96s", int(requested.size()),
+              qPrintable(requested));
+        host.loadCover(
+            requested,
+            [this, requested](QString loaded) {
+                qInfo("RHINE_QT_COVER_RESULT len=%d key=%.96s", int(loaded.size()),
+                      qPrintable(loaded));
+                if (loaded.isEmpty() || m_cover != requested) {
+                    return; // 期间换了选中/换了视图：旧的这首不再回填
+                }
+                const QImage pixels = host.image(loaded);
+                if (pixels.isNull()) {
+                    qWarning("RHINE_QT_COVER_DECODE miss key=%.96s", qPrintable(loaded));
+                    return;
+                }
+                qInfo("RHINE_QT_COVER_READY %dx%d", pixels.width(), pixels.height());
+                m_coverImage = pixels;
+                m_coverRefresh = true;
+            },
+            1024);
+    }
     // 图形设备在后台可销毁；仅保存当前与可见归位卡片的图片，供恢复时重建纹理。
     const auto musicKey = current["key"].toString("empty");
     submitTextureAdmission(musicKey);

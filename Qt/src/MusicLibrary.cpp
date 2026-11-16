@@ -25,20 +25,32 @@ MusicLibrary::MusicLibrary(Host *host, const QJsonObject &content, QObject *pare
     }
     if (provider == "siren") {
         columns = {"搜索结果", "喜欢的歌曲", "我的歌单", "全部歌曲", "全部专辑"};
-        collections = std::make_unique<LocalCollections>(provider, QString(), this);
-        reloadSirenCollections();
+        // RHINE PATCH (FINAL-RECOVERY-138)：render-only 下连本地库都不建/不扫——本地收藏
+        // 的唯一权威也在 Flutter 侧，这里建出来只会多一份可被写坏的影子状态。
+        if (!host->renderOnly) {
+            collections = std::make_unique<LocalCollections>(provider, QString(), this);
+            reloadSirenCollections();
+        }
     }
     api.provider = provider;
     host->setProvider(provider);
-    if (isSiren()) {
+    // 内嵌渲染层（Flutter PlatformView）：曲库/账号/收藏全部由 Flutter 持有，Qt 侧只保留
+    // 被动数据结构（physicalSlots/offsets/rowMemory 等渲染投影要用），绝不发起第二次曲库
+    // 拉取、会话恢复或本地库扫描——137 的堆里第二个播放器和账号根就是从这些副作用长出来的。
+    if (isSiren() && !host->renderOnly) {
         loadSirenCatalog();
     }
     for (const auto &source : {"netease", "qq"}) {
         identityNames[source] = host->preference("welcome-name-" + QString::fromUtf8(source));
     }
     identityNames["kugou"] = host->preference("welcome-name-kugou-" + kugouEdition);
-    restoreCachedAccount();
-    local = std::make_unique<LocalMusicLibrary>(QString(), host->offline || !PlatformFeatures::LocalMusic);
+    if (!host->renderOnly) {
+        restoreCachedAccount();
+    }
+    // 本地库即便在内嵌模式下也保留对象（渲染投影可能读它的行），但强制离线/惰性：
+    // 第二个参数为 true 时它不扫描目录、不建监听。
+    local = std::make_unique<LocalMusicLibrary>(
+        QString(), host->offline || host->renderOnly || !PlatformFeatures::LocalMusic);
     connect(local.get(), &LocalMusicLibrary::changed, this, [this] {
         if (isLocal()) {
             refreshLocal();

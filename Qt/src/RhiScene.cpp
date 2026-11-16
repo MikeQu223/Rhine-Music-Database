@@ -1634,6 +1634,8 @@ class Renderer {
         const auto next = coverTextures.value(revision);
         covers[key] = next;
         coverRevisions[key] = revision;
+        qInfo("RHINE_QT_COVER_BIND key=%.48s rev=%lld tex=%d", qPrintable(key),
+              static_cast<long long>(revision), next ? 1 : 0);
         coverWanted.remove(key);
         // B04：焦点稳定（准入）到封面真正换绑的帧差。样本窗口很小，只用于探针。
         if (const auto admittedAt = admittedFrame.constFind(key); admittedAt != admittedFrame.constEnd()) {
