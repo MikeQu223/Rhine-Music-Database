@@ -123,13 +123,6 @@ public final class RhineQtViews {
     private static boolean probeEnabled;
 
 
-    /**
-     * 上一个宿主退役时留下的 delegate。retained 的 Qt 运行时仍持有它，而它的 final 字段
-     * m_activity 指着已销毁的 Activity——所以必须等到新宿主的新 delegate 就位后再把这个字段
-     * 置空（见 releaseDelegateActivity）。这里保留强引用是有意的：它就是要被清理的那个对象。
-     */
-    private static Object sRetiredDelegate;
-
     private static final class CycleProbe {
         final int cycle;
         final WeakReference<Activity> activity;
@@ -173,23 +166,11 @@ public final class RhineQtViews {
         if (liveDelegate == null || knownActivity != activity) {
             if (liveDelegate != null) {
                 unregisterDelegate(liveDelegate);
-                // 旧的 delegate 会被原生侧（retained 运行时）继续持有，而它的 Activity 存在
-                // QtActivityDelegateBase 的 final 字段 m_activity 里——这是每进程第一个宿主
-                // Activity 永不回收的最后一环（真机：cycle 1 恒 false、cycle 2..5 恒 true，
-                // 且反射扫描证明没有任何 Java 静态字段指向它 → 钉在 native 持有的 delegate 上）。
-                // 这里在**已经有新 delegate 顶替**之后把旧的那个字段置空，只影响旧宿主。
-                releaseDelegateActivity(liveDelegate);
             }
             sDelegate = QtEmbeddedViewInterfaceFactory.create(activity);
             sHostActivity = new WeakReference<>(activity);
         } else {
             android.util.Log.i(TAG, "reusing existing delegate for activity " + activity);
-        }
-
-        final Object retired = sRetiredDelegate;
-        if (retired != null && retired != sDelegate) {
-            releaseDelegateActivity(retired);
-            sRetiredDelegate = null;
         }
 
         if (sRuntimeRetained) {
@@ -429,9 +410,6 @@ public final class RhineQtViews {
         if (stillCurrentHost) {
             sDelegate = null;
             sHostActivity = new WeakReference<>(null);
-            // 交给下一个宿主的 create() 收尾：那时旧 delegate 已经被取代，清它的 Activity
-            // 字段不会打断在用的对象图。
-            sRetiredDelegate = delegate;
         }
         QtEmbeddedViewInterfaceFactory.remove(activity);
         // MUST-4：可复用 delegate 的静态弱引用也必须断，否则重挂的 QtView 可能把死宿主的
@@ -502,6 +480,34 @@ public final class RhineQtViews {
         }
     }
 
+    /**
+     * 只读诊断（MUST-7 定位第 2 步）：cycle1 仍活着的那一刻，记下已知的"可能钉住"来源。
+     *
+     * 判读：QtNative.activity() 非空 → 根在 Qt 原生/JNI 侧；Java 侧全空而 Activity 仍可达
+     * → 根在 retained delegate 的原生持有者，或 Flutter 侧 retained engine 的 activity
+     * attachment。只读，不改任何状态。
+     */
+    private static void logPinningSources(String tag) {
+        String qtActivity = "?";
+        String appContext = "?";
+        try {
+            final android.app.Activity activity = QtNative.activity();
+            qtActivity = activity == null ? "null" : activity.getClass().getName();
+        } catch (Throwable error) {
+            qtActivity = "err:" + error;
+        }
+        try {
+            final android.content.Context context = QtNative.applicationContext();
+            appContext = context == null ? "null" : context.getClass().getName();
+        } catch (Throwable error) {
+            appContext = "err:" + error;
+        }
+        android.util.Log.i(TAG, tag + " pin sources qtNativeActivity=" + qtActivity
+                + " qtApplicationContext=" + appContext
+                + " sDelegateNull=" + (sDelegate == null)
+                + " sHostActivityNull=" + (sHostActivity.get() == null));
+    }
+
     private static void verifyPreviousCyclesReleased() {
         if (!probeEnabled) {
             // 生产包不跑探针，但也不能让 sCycleProbes 每轮 +1 无界增长。
@@ -537,6 +543,9 @@ public final class RhineQtViews {
                     System.runFinalization();
                     android.util.Log.i(TAG, "root probe attempt " + current + " canaryCleared="
                             + (canary.get() == null));
+                    if (current == 1) {
+                        logPinningSources("probe");
+                    }
                     if (current == 1 && !probes.isEmpty()) {
                         logStaticHolders("probe",
                                 probes.get(0).activity.get(),
@@ -560,28 +569,6 @@ public final class RhineQtViews {
             android.util.Log.i(TAG, "drained pending Qt runnables (" + reason + ")");
         } catch (Throwable error) {
             android.util.Log.w(TAG, "drain pending Qt runnables failed (" + reason + "): " + error);
-        }
-    }
-
-    /**
-     * 把某个旧 delegate 里指向宿主的 final 字段 m_activity 置空。
-     *
-     * 只读替代不存在——QtActivityDelegateBase 把它声明成 final，而该 delegate 会被 retained
-     * 的 Qt 运行时长期持有；不置空，第一个宿主的 Activity 就永远可达。仅在该 delegate 已被
-     * 新宿主的新 delegate 取代后调用，因此不会打断在用的对象图。失败只记日志，不改变行为。
-     */
-    private static void releaseDelegateActivity(Object delegate) {
-        if (delegate == null) {
-            return;
-        }
-        try {
-            final java.lang.reflect.Field field =
-                    delegate.getClass().getSuperclass().getDeclaredField("m_activity");
-            field.setAccessible(true);
-            field.set(delegate, null);
-            android.util.Log.i(TAG, "cleared retained delegate activity reference");
-        } catch (Throwable error) {
-            android.util.Log.w(TAG, "clearing retained delegate activity failed: " + error);
         }
     }
 

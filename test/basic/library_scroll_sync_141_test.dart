@@ -612,4 +612,106 @@ void main() {
       controller.dispose();
     });
   });
+
+  group('点选回执的相位守卫（审查 MUST-N4）', () {
+    test('详情页收到 archive-select 一律忽略：转唱片不得静默换歌', () async {
+      final _RecordingAudio audio = _RecordingAudio();
+      final BasicController controller = BasicController(
+        audio: audio,
+        repository: _repository(<String>['s1', 's2', 's3', 's4']),
+      );
+      addTearDown(controller.dispose);
+      await controller.boot();
+      await controller.openSong(controller.state.songs.first, play: false);
+      final String song = controller.state.song!.id;
+      final int prepareBefore = audio.calls.where((String c) => c.startsWith('prepare')).length;
+
+      await controller.selectCellFromScene(3);
+
+      expect(controller.state.phase, BasicPhase.detail);
+      expect(controller.state.song!.id, song, reason: '详情页相位只允许转唱片，不允许换歌');
+      expect(controller.state.selection?.id, song);
+      expect(audio.calls.where((String c) => c.startsWith('prepare')).length, prepareBefore,
+          reason: '被守卫丢弃的回执也不能顺带准备播放');
+    });
+
+    test('归档相位仍认点选：守卫不能把正常点选一起挡掉', () async {
+      final _RecordingAudio audio = _RecordingAudio();
+      final BasicController controller = BasicController(
+        audio: audio,
+        repository: _repository(<String>['s1', 's2', 's3', 's4']),
+      );
+      addTearDown(controller.dispose);
+      await controller.boot();
+      await controller.selectCellFromScene(2);
+      expect(controller.state.phase, BasicPhase.library);
+      expect(controller.state.selection?.id, 's3');
+      expect(audio.calls.where((String c) => c.startsWith('play')), isEmpty);
+    });
+  });
+
+  group('冷启动曲库失败：真实 loading/error + 有界重试（审查 S1）', () {
+    test('首次加载失败不假空，状态显示重试并自愈', () async {
+      bool failedOnce = false;
+      final SirenRepository repository = SirenRepository(
+        get: (Uri uri) async {
+          if (!failedOnce) {
+            failedOnce = true;
+            throw const SirenException('塞壬唱片请求失败：连接被拒绝');
+          }
+          switch (uri.path) {
+            case '/api/songs':
+              return _json(<String, Object?>{
+                'code': 0,
+                'data': <Object?>[
+                  <String, Object?>{
+                    'cid': 's1',
+                    'name': 'Song s1',
+                    'albumCid': 'a1',
+                    'artists': <Object?>['歌手甲'],
+                  },
+                ],
+              });
+            case '/api/albums':
+              return _json(<String, Object?>{
+                'code': 0,
+                'data': <Object?>[
+                  <String, Object?>{
+                    'cid': 'a1',
+                    'name': 'Album One',
+                    'coverUrl': 'https://cover.test/a1.jpg',
+                    'artistes': <Object?>['歌手甲'],
+                  },
+                ],
+              });
+            default:
+              return _json(<String, Object?>{'code': 0, 'data': const <Object?>[]});
+          }
+        },
+      );
+      final BasicController controller = BasicController(
+        audio: _RecordingAudio(),
+        repository: repository,
+      );
+      addTearDown(controller.dispose);
+
+      final List<String> statuses = <String>[];
+      controller.addListener(() => statuses.add(controller.state.status));
+
+      await controller.boot();
+      expect(controller.state.catalogLoaded, isFalse, reason: '失败不得假装加载成功');
+      expect(controller.state.error, isNotEmpty);
+      expect(controller.state.status, startsWith(sirenCatalogFailurePrefix),
+          reason: '失败文案保留真实原因，不追加"重试"词');
+      expect(controller.state.songs, isEmpty, reason: '失败不造假数据');
+
+      // 重试是真实 Timer（400ms 退避），等它落地；中途必须出现"正在重试第几次"。
+      await Future<void>.delayed(const Duration(milliseconds: 1200));
+      expect(statuses.any((String s) => s.contains('重试 1/3')), isTrue,
+          reason: '重试轮次必须如实出现在 loading 文案里');
+      expect(controller.state.catalogLoaded, isTrue, reason: '退避后必须自愈');
+      expect(controller.state.songs, hasLength(1));
+      expect(controller.state.selection, isNotNull, reason: '加载成功仍要默认选中第一行');
+    });
+  });
 }
