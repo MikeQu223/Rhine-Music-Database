@@ -105,6 +105,13 @@ const Map<String, String> basicSettingsHudStatePreferenceKeys = <String, String>
   'startup-animation': 'startup-animation',
   'archive-mask': 'archive-mask-strength',
   'vsync': 'vsync',
+  // 音质：Qt 的 descriptor 也没有 preferenceKey（bindingKind=player，走
+  // `quality:set:<value>` 派发），但播放器自己会把值写进同一份偏好
+  // （Qt/src/MusicPlayer.cpp:139 `m_host->setPreference("quality", value)`，读回
+  // 同键 :181），"quality" 也在宿主白名单里（Qt/src/Host.cpp:1063）。缺这条映射时
+  // 本面板会如实拒绝写入（"这一项没有可持久化的偏好键"），于是音质永远只剩默认值——
+  // 那不是 Qt 的行为。
+  'quality': 'quality',
 };
 
 /// ONLY14 允许暴露的 descriptor id 集合（由 [basicSettingDescriptorIds] 展开）。
@@ -827,7 +834,8 @@ BasicSettingsCommand basicSettingsCommandFor(
   //   archive-mask      -> NativeHudController.cpp:733-734 setPreference("archive-mask-strength")
   //                        （读回 :50-52）
   //   vsync             -> NativeHudController.cpp:46 读 "vsync"，写入同键
-  // 这三个键都在 Host.cpp:1056-1058 的白名单里。
+  //   quality           -> MusicPlayer.cpp:139 写 "quality"、:181 读回（见上方映射表的注释）
+  // 这几个键都在 Host.cpp:1056-1063 的白名单里。
   final String persistedKey = plan.preferenceKey ??
       (basicSettingsHudStatePreferenceKeys[descriptor.id] ?? '');
   final String restartHint = settingsRestartHint(descriptor, context);

@@ -34,6 +34,7 @@ import 'package:flutter/foundation.dart';
 
 import '../domain/lyrics/lyrics_controller.dart';
 import '../domain/player/music_player.dart';
+import 'basic_art_cache.dart';
 import 'basic_media_session.dart';
 import 'basic_models.dart';
 import '../platform/media_session.dart';
@@ -96,6 +97,7 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     bool dark = true,
     BasicLocalCollections? collections,
     MediaSessionPort? mediaSessionPort,
+    BasicArtCache? artCache,
     PreferencePort? preferences,
   })  : _audio = audio,
         _preferencesPort = preferences,
@@ -120,11 +122,28 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     final MediaSessionPort? port = mediaSessionPort;
     if (port != null) {
       _mediaSession = BasicMediaSessionAdapter(port: port, commands: this);
+      // 封面落盘：系统通知只认本地文件（MediaSessionHost 用 BitmapFactory.decodeFile），
+      // 而 SirenSong.cover 是远端 URL，所以必须有一层"URL -> 私有目录里的真实文件"。
+      // 目录来自同一个端口的 cacheDirectory()；没有端口（widget 测试、桌面预览）就没有
+      // 缓存，也不写盘。
+      _artCache = artCache ?? BasicArtCache(directory: port.cacheDirectory);
+    } else {
+      _artCache = artCache;
     }
   }
 
   /// 系统媒体控件适配器；未注入 [MediaSessionPort] 时为 null。
   BasicMediaSessionAdapter? _mediaSession;
+
+  /// 通知封面的本地缓存；没有媒体端口也没有注入时为 null（不落盘、不触网）。
+  BasicArtCache? _artCache;
+
+  /// 当前已落盘封面所属的曲目与来源 URL（防重复请求、防止 A/B 串台）。
+  String _artTrackId = '';
+  String _artUrl = '';
+
+  /// 已落盘的封面绝对路径；只有 [_artTrackId] 与当前播放身份一致时才上报。
+  String _artPath = '';
 
   static String _providerName() => sirenProvider;
 
@@ -413,6 +432,26 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     }
     _detailAutoplay = value;
     _publish();
+  }
+
+  /// 「打开」（Qt 动作 `open`）进入详情后的自动播放。
+  ///
+  /// 只由**显式打开**触发；单纯浏览/翻行（`music:index:<i>`、`music:slot:<i>`）永远不
+  /// 经过这里，所以设置关着时浏览一声不出。开启时走 Qt 的 `music.play(false)` 同义路径：
+  /// 不带 source 的单曲播放——**不替换**播放列表，与 single-play-mode 的
+  /// append/replace 选择完全独立（Qt 注释「自动播放不触发"替换播放列表"」）。
+  ///
+  /// 已经在播这首就不重复起播（避免 `open` 打断当前播放位置）。
+  Future<void> autoplayDetailIfEnabled(SirenSong song) async {
+    if (_disposed || !_detailAutoplay) {
+      return;
+    }
+    if (_playingTrackOf()?.id == song.id && _audio.state.playing) {
+      return;
+    }
+    _status = '正在准备：${song.title}';
+    _publish();
+    _player.play(song.toTrack());
   }
 
   /// 点击播放单曲：true = 仅把当前单曲加到队尾并选中（append），
@@ -925,25 +964,76 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
   /// 把真实在播身份 + 真实 audio 读数报给系统媒体控件。
   ///
   /// 身份只来自 [_playingTrackOf]（真实 audio 对应曲目），不是 UI 选中行；
-  /// 封面这里是空的——SirenSong.cover 是远端 URL，通知栏要求本地文件，
-  /// 在没有本地资源缓存之前如实留空，绝不把 URL 塞给 decodeFile。
+  /// 封面走 [_requestArtwork] 的本地落盘结果：只有在**当前播放身份**仍然是这首时
+  /// 才把路径写进通知，绝不把远端 URL 交给 Kotlin 的 decodeFile。
   void _syncMediaSession() {
     final BasicMediaSessionAdapter? media = _mediaSession;
     if (media == null || _disposed) {
       return;
     }
     final SirenSong? track = _playingTrackOf();
+    if (track == null) {
+      // 没有在播身份就是"没有封面"：连带把上一首的落盘路径作废，避免复用时串台。
+      _artTrackId = '';
+      _artUrl = '';
+      _artPath = '';
+      unawaited(media.sync(identity: null, audio: _audio.state));
+      return;
+    }
+    final String cover = _artTrackId == track.id ? _artPath : '';
     unawaited(media.sync(
-      identity: track == null
-          ? null
-          : BasicMediaIdentity(
-              id: track.id,
-              title: track.title,
-              artist: track.artist,
-              album: track.album,
-            ),
+      identity: BasicMediaIdentity(
+        id: track.id,
+        title: track.title,
+        artist: track.artist,
+        album: track.album,
+        coverFilePath: cover,
+      ),
       audio: _audio.state,
     ));
+    _requestArtwork(track);
+  }
+
+  /// 把当前播放曲目的远端封面落成本地文件，成功后补一次上报。
+  ///
+  /// 三条护栏，专治 A→B→A 的迟到结果：
+  ///  1. 同一 (id, url) 只请求一次——本方法由 [_publish] 高频调用，不能每次重抓；
+  ///  2. 缓存代次：每次新请求 [_artCache.beginGeneration]，回来的结果代次不是最新就丢弃；
+  ///  3. 身份复核：真正落值前再确认"当前在播的仍是这首"，否则丢弃（回到 A 后，
+  ///     B 的迟到结果既过不了代次也过不了身份）。
+  ///
+  /// 失败（没有目录 / 404 / 超时）一律留空封面：通知没有封面不是播放错误。
+  void _requestArtwork(SirenSong track) {
+    final BasicArtCache? cache = _artCache;
+    if (cache == null || _disposed) {
+      return;
+    }
+    final String url = track.cover.trim();
+    if (track.id == _artTrackId && url == _artUrl) {
+      return;
+    }
+    _artTrackId = track.id;
+    _artUrl = url;
+    _artPath = '';
+    if (url.isEmpty) {
+      return;
+    }
+    cache.beginGeneration();
+    final int generation = cache.generation;
+    unawaited(() async {
+      final String? path = await cache.localPath(url);
+      if (_disposed || generation != cache.generation) {
+        return;
+      }
+      if (_playingTrackOf()?.id != track.id) {
+        return;
+      }
+      _artPath = path ?? '';
+      if (path != null && path.isNotEmpty) {
+        // 只有真的落了盘才补一次上报（失败留空的结论已经由上面那次 sync 送出）。
+        _syncMediaSession();
+      }
+    }());
   }
 
   Future<void> togglePlay() async {
@@ -1026,6 +1116,13 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     _audio.removeListener(_onAudioStateChanged);
     unawaited(_mediaSession?.dispose() ?? Future<void>.value());
     _mediaSession = null;
+    // 封面缓存的关闭与媒体适配器的释放彼此独立：前者失败不影响后者，
+    // 反之亦然（都只是资源，不该把 dispose 变成会抛的路径）。
+    final BasicArtCache? artCache = _artCache;
+    _artCache = null;
+    if (artCache != null) {
+      unawaited(artCache.close());
+    }
     if (_ownsRepository) {
       _repository.close();
     }

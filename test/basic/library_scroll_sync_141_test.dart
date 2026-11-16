@@ -190,6 +190,9 @@ class _FakeMediaPort implements MediaSessionPort {
   Stream<String> get actions => _controller.stream;
 
   @override
+  Future<String?> cacheDirectory() async => null;
+
+  @override
   Future<bool> ensureStarted() async {
     ensureCalls += 1;
     return true;
