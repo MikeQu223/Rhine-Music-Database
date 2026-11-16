@@ -8,8 +8,16 @@ import 'package:flutter/services.dart';
 import '../app/consent_gate.dart';
 import '../app/orientation_state.dart';
 import '../hud/input/hit_layer.dart';
-import '../hud/input/key_router.dart' show HudAction;
+import '../hud/input/key_router.dart'
+    show
+        HudAction,
+        HudKeyOutcome,
+        HudKeyPorts,
+        HudKeyRouter,
+        HudKeySnapshot,
+        KeySymbol;
 import '../hud/input/text_input_overlay.dart';
+import '../hud/input/wheel_router.dart' show HudScrollOffsets;
 import '../hud/modals/disc_warning_modal.dart';
 import '../hud/modals/settings_modal.dart'
     show
@@ -427,6 +435,19 @@ class _BasicShellState extends State<_BasicShell>
   /// 硬件键盘/遥控器导航断掉。
   final FocusNode _hudFocusNode = FocusNode(debugLabel: 'basic-hud-input-layer');
 
+  /// NativeHud::key 的两个成员：Qt 里 settingsScroll / desktopLyricsScroll 是
+  /// NativeHud 的成员变量（Qt/src/NativeHudController.cpp:891-904 就地修改），这里同形。
+  final HudScrollOffsets _keyScrollOffsets = HudScrollOffsets();
+
+  /// NativeHud::key（Qt/src/NativeHudController.cpp:887-943）的 1:1 路由。
+  ///
+  /// 之前这个外壳**没有**键盘入口：HUD 根节点只有 Force 焦点，没有 onKeyEvent，
+  /// 于是 Overlay.qml:118-120（`Keys.onPressed` → `rhine.keyEvent`）在 Flutter 侧
+  /// 整层缺失——用户看得到 HUD 底部「←→ 切换来源 / ↑↓ 选曲 / ENTER 查看 / 检索」的
+  /// 提示，按下去却没有动作。补的就是这一层：键 → [HudKeyRouter] → 既有 [_onAction]。
+  late final HudKeyRouter _keyRouter =
+      HudKeyRouter(ports: _BasicHudKeyPorts(this));
+
   BasicController get controller => widget.controller;
 
   @override
@@ -436,6 +457,14 @@ class _BasicShellState extends State<_BasicShell>
     _settings = BasicSettingsRuntime(store: widget.settingsStore);
     _startup.addStatusListener(_onStartupStatus);
     unawaited(_loadSettings());
+    // Overlay.qml:541-548：输入框隐藏时 inputLayer.forceActiveFocus()。Qt 在启动
+    // 完成时就把焦点交给 HUD 输入层；这里晚一帧做同一件事，否则硬件键盘没有任何
+    // 节点接收——设备上「ENTER 查看 / 方向键」会全部静默（161 补的键盘入口要靠它）。
+    WidgetsBinding.instance.addPostFrameCallback((Duration _) {
+      if (mounted && _modal.isEmpty) {
+        focusInputLayer();
+      }
+    });
   }
 
   void _onStartupStatus(AnimationStatus status) {
@@ -587,6 +616,7 @@ class _BasicShellState extends State<_BasicShell>
                       Focus(
                         focusNode: _hudFocusNode,
                         includeSemantics: false,
+                        onKeyEvent: _onHudKeyEvent,
                         child: surface,
                       ),
                       if (input != null) Positioned.fill(child: input),
@@ -1049,6 +1079,47 @@ class _BasicShellState extends State<_BasicShell>
     });
   }
 
+  /// 硬件键 → HUD 动作。Overlay.qml:118-120 / Engine.cpp:952-1012 /
+  /// NativeHudController.cpp:887-943 的接线点。
+  ///
+  /// 只在这个焦点节点持焦时生效：检索框是**兄弟**节点（不是祖先链），输入法
+  /// 持焦期间按键不会冒泡到这里，所以不抢输入框的 Return/Escape。
+  KeyEventResult _onHudKeyEvent(FocusNode node, KeyEvent event) {
+    if (event is KeyUpEvent) {
+      return KeyEventResult.ignored;
+    }
+    final String? value = basicHudKeyValue(event);
+    if (value == null) {
+      return KeyEventResult.ignored;
+    }
+    final HardwareKeyboard keyboard = HardwareKeyboard.instance;
+    final HudKeyOutcome outcome = _keyRouter.key(
+      _hudKeySnapshot(),
+      _keyScrollOffsets,
+      value: value,
+      command: keyboard.isControlPressed || keyboard.isMetaPressed,
+    );
+    if (outcome.region == 'settings' || outcome.region == 'desktop-lyrics') {
+      setState(() {});
+    }
+    return outcome.consumed ? KeyEventResult.handled : KeyEventResult.ignored;
+  }
+
+  /// NativeHud 的状态投影。基础外壳没有 3D viewer 键域（viewer 键盘归 Qt 场景），
+  /// 只有设置/桌面歌词两个弹层是滚动域；本外壳的 _modal 只有 ''/'search'/'settings'
+  /// 与唱片确认弹层，故内容高度按 0 传（无弹层时用不到）。
+  HudKeySnapshot _hudKeySnapshot() {
+    final BasicViewState state = controller.state;
+    return HudKeySnapshot(
+      frameEmpty: state.phase == BasicPhase.boot,
+      modal: _modal,
+      closing: false,
+      viewer: false,
+      settingsContentBottom: 0,
+      desktopLyricsContentBottom: 0,
+    );
+  }
+
   /// 命中动作 → controller 调用；返回 null 表示已分派，返回文案表示这是
   /// 可见的“尚未接入”反馈（不静默 no-op、不伪造功能、不复制 controller）。
   String? _route(String action) {
@@ -1370,4 +1441,57 @@ class _BasicNotice extends StatelessWidget {
       ),
     );
   }
+}
+
+/// [HudKeyPorts] 的本外壳实现：四个端口全部落到**产品里已有的**那条动作链，
+/// 不新增第二条播放/导航路径。
+class _BasicHudKeyPorts implements HudKeyPorts {
+  _BasicHudKeyPorts(this._app);
+
+  final _BasicShellState _app;
+
+  @override
+  void play() => _app._onAction('music:play');
+
+  @override
+  void viewerKey(String value) => _app._onAction('viewer:' + value);
+
+  @override
+  void action(String action) => _app._onAction(action);
+
+  @override
+  void togglePlayer() => unawaited(_app.controller.togglePlay());
+}
+
+/// Engine.cpp:974-995 的键名翻译（生产入口：Focus.onKeyEvent → HudKeyRouter）；'/' 与空格由 `event.text` 直接透传（:999-1001）。
+String? basicHudKeyValue(KeyEvent event) {
+  final LogicalKeyboardKey key = event.logicalKey;
+  if (key == LogicalKeyboardKey.arrowLeft) {
+    return KeySymbol.arrowLeft;
+  }
+  if (key == LogicalKeyboardKey.arrowRight) {
+    return KeySymbol.arrowRight;
+  }
+  if (key == LogicalKeyboardKey.arrowUp) {
+    return KeySymbol.arrowUp;
+  }
+  if (key == LogicalKeyboardKey.arrowDown) {
+    return KeySymbol.arrowDown;
+  }
+  if (key == LogicalKeyboardKey.enter || key == LogicalKeyboardKey.numpadEnter) {
+    return KeySymbol.enter;
+  }
+  if (key == LogicalKeyboardKey.escape) {
+    return KeySymbol.escape;
+  }
+  if (key == LogicalKeyboardKey.tab) {
+    return KeySymbol.tab;
+  }
+  if (key == LogicalKeyboardKey.space) {
+    return KeySymbol.space;
+  }
+  if (event is KeyDownEvent && event.character == KeySymbol.slash) {
+    return KeySymbol.slash;
+  }
+  return null;
 }
