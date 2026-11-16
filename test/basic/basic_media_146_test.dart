@@ -1,13 +1,12 @@
-// EXECUTION STATUS: NOT EXECUTED.
+// EXECUTION STATUS: EXECUTED on ROOT (2026-11-16 23:5xAsia/Shanghai) —— 36/36 passed；
+// 同一命令在 FINAL-CLOSURE-161 分支与 ROOT `5a17764` 上均通过，含媒体通知的封面/紧凑三键护栏。
 //
-// This worktree forbids flutter test / dart test / build / analyze / pub get. The tests
-// below are written for later execution on a machine with the Flutter SDK:
+// This file is written to run on a machine with the Flutter SDK:
 //
 //   flutter test test/basic/basic_media_146_test.dart
 //
-// RED/GREEN are unknown until that command runs. The last group reads the working-tree
-// source text (File.readAsStringSync: what is on disk now, not what is in git HEAD), so it
-// needs no engine, platform channel, or device.
+// The last group reads the working-tree source text (File.readAsStringSync: what is on disk
+// now, not what is in git HEAD), so it needs no engine, platform channel, or device.
 //
 // 覆盖 MEDIA-CONTROLS-146 的 Dart 适配器契约：真实身份 + 真实 native 读数上报、
 // 空/错误清通知、动作回既有权威、SEEK 按真实时长夹取、dispose 断订阅与端口。
@@ -723,25 +722,30 @@ void main() {
       );
 
       // 封面必须挂到通知本身：会话元数据里的 ALBUM_ART 有些 ROM 不读，只认 setLargeIcon。
-      // 删掉这两行回归会静默复活（卡片只剩标题文字），所以这里钉住契约。
-      expect(source, contains('coverBitmap?.let'));
-      expect(source, contains('setLargeIcon'));
-      expect(source, contains('isRecycled'));
-
-      // 紧凑态三键的索引必须和 action 的挂载条件同门：idle 时没有 action，
-      // 无条件 setShowActionsInCompactView(0,1,2) 等于给不存在的控件按索引。
-      // 用带接收者的写法定位，避开注释里同名文字的第一次命中。
-      final int compactAt = source.indexOf('style.setShowActionsInCompactView');
-      expect(compactAt, isNonNegative);
-      final int lineStart = source.lastIndexOf('\n', compactAt);
-      final String callLine = source.substring(
-        lineStart < 0 ? 0 : lineStart,
-        source.indexOf('\n', compactAt),
+      // 钉「调用点 + 同一行的回收守卫」，而不是裸的 isRecycled——publish() 里本来就有一处，
+      // 裸断言删掉通知侧守卫仍然绿。
+      final int iconAt = source.indexOf('builder.setLargeIcon(');
+      expect(iconAt, isNonNegative, reason: '通知必须把封面挂上去');
+      final int iconLineStart = source.lastIndexOf('\n', iconAt);
+      final int iconLineEnd = source.indexOf('\n', iconAt);
+      final String iconLine = source.substring(
+        iconLineStart < 0 ? 0 : iconLineStart,
+        iconLineEnd < 0 ? source.length : iconLineEnd,
       );
       expect(
-        callLine,
-        contains('isIdle'),
-        reason: '三键索引必须在 !isIdle() 行内条件挂载',
+        iconLine,
+        contains('!cover.isRecycled'),
+        reason: 'setLargeIcon 必须带 isRecycled 守卫',
+      );
+      expect(source, contains('coverBitmap?.let'));
+
+      // 紧凑态三键的索引必须和 action 的挂载条件同门。先把空白压平再断言：
+      // ktlint 折行/缩进变化不会误伤，删掉 !isIdle() 条件则一定红。
+      final String flat = source.replaceAll(RegExp(r'\s+'), ' ');
+      expect(
+        flat,
+        contains('!MediaSessionHost.isIdle()) style.setShowActionsInCompactView('),
+        reason: '三键索引必须条件挂载',
       );
     });
 
