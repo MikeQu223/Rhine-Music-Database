@@ -781,6 +781,17 @@ if(MSVC)
 endif()
 add_test(NAME qt_embedded_cell_resources_149 COMMAND RhineEmbeddedCellResources149Test)
 
+# 153：origin / 生命周期判据（排队输入按起手 origin、惯性 ticker 带起手 origin、拆场景
+# fail-closed、旧世代 destroy 被拒、149 contextGeneration 契约、M1 手势阶段、M2 换人）。
+# 判据全在 Qt/src/EmbeddedSceneOrigin.h（header-only），只依赖 Qt6::Core，离线可跑。
+qt_add_executable(RhineEmbeddedSceneOrigin153Test Qt/tests/EmbeddedSceneOrigin153Test.cpp)
+target_include_directories(RhineEmbeddedSceneOrigin153Test PRIVATE Qt/src)
+target_link_libraries(RhineEmbeddedSceneOrigin153Test PRIVATE Qt6::Core)
+if(MSVC)
+    target_compile_options(RhineEmbeddedSceneOrigin153Test PRIVATE /utf-8)
+endif()
+add_test(NAME qt_embedded_scene_origin_153 COMMAND RhineEmbeddedSceneOrigin153Test)
+
 qt_add_executable(RhineSceneLifetimeRegression Qt/tests/SceneLifetimeChecks.cpp)
 target_include_directories(RhineSceneLifetimeRegression PRIVATE Qt/src)
 target_link_libraries(RhineSceneLifetimeRegression PRIVATE Qt6::Core)
