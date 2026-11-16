@@ -675,6 +675,14 @@ void main() {
       expect(source, contains("'quality': 'quality',"));
     });
 
+    test('宿主只在"显式打开详情"这一条路径上接线自动播放（浏览/选中不接线）', () {
+      final String source = File('lib/basic/basic_app.dart').readAsStringSync();
+      expect(source, contains('unawaited(controller.autoplayDetailIfEnabled('),
+          reason: '没接线 = 设置开着也不出声');
+      expect(source, contains('if (!play) {'),
+          reason: '只允许在 play:false 的显式打开分支调用；浏览路径走 _selectAt，不该出声');
+    });
+
     test('控制器把本地封面路径交给身份，且 dispose 关缓存', () {
       final String source = dartController.readAsStringSync();
       expect(source, contains('coverFilePath: cover'));
