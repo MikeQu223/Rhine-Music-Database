@@ -878,8 +878,8 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
     final double clamped = next < 0 ? 0 : (next > max ? max : next);
     setState(() => _dragPosition = clamped);
     // Q3 双向连续跟随：抬手前每个 move 都发一次连续条目位置。宿主把它投影到
-    // 3D/原生层；这里只报告窗口，不选中、不播放、不改队列（落点仍由
-    // _dragEnded 的 onLibraryScroll 提交）。
+    // 3D/原生层，并按 Qt observe 语义当帧进入最近一行（不进播放器、不改队列、
+    // 不播报已选中）；落定与播报仍由 _dragEnded 的 onLibraryScroll 提交。
     widget.onLibraryScrollUpdate?.call(clamped);
   }
 

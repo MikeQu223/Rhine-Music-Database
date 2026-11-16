@@ -774,7 +774,8 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
   ///
   /// 三个约束都来自 Qt 原始语义与用户 m01597 的补充：
   ///  - 只动**当前列**的窗口：3D 手势不换所属列（换列只有显式 HUD ←/→）。
-  ///  - 松手（[committed]）才落行选中；中途只滚窗口，桌面惯性与选中都不被改写。
+  ///  - 中途就越过即进入（见 [updateLibraryScroll] 的同一份 observe 语义）：窗口保小数跟手，
+  ///    选中当帧落到最近一行；松手（[committed]）才落定整数行并吃掉惯性回执。
   ///  - [started] 记下序列起点，之后同一位置回写被 `1e-4` 门限吃掉，不会回声。
   void applyNativeArchiveScroll(
     double deltaRows, {

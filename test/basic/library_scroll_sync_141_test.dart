@@ -422,7 +422,7 @@ void main() {
     });
   });
 
-  group('controller：一份窗口真值（更新不落行，落行不改播放）', () {
+  group('controller：一份窗口真值（更新即进入但窗口保小数，落行不改播放）', () {
     test('updateLibraryScroll 越过即进入：窗口保小数、选中当帧落最近行（双向）', () async {
       final _RecordingAudio audio = _RecordingAudio();
       final BasicController controller = BasicController(
@@ -443,10 +443,17 @@ void main() {
       expect(audio.calls.where((String c) => c.startsWith('prepare')), isEmpty);
       expect(controller.state.playing, isFalse);
 
-      // 反向拖回 0.4：同一个手势里也需要双向，选中回到行 0 = s1。
+      final String statusMid = controller.state.status;
+      expect(statusMid.startsWith('已选中'), isFalse,
+          reason: '中途 observe 不播报已选中（那是抬手落定的动作）');
+
+      // 反向拖回 1.4：同一个手势里也必须双向进入，且是"从 s4 回到 s2"这种
+      // 真正会失败的方向（若只写窗口，选中会停在 s4）。
+      controller.updateLibraryScroll(1.4);
+      expect(controller.state.listPosition, closeTo(1.4, 1e-9));
+      expect(controller.state.selection?.id, 's2', reason: '反向拖动同样越过即进入');
       controller.updateLibraryScroll(0.4);
-      expect(controller.state.listPosition, closeTo(0.4, 1e-9));
-      expect(controller.state.selection?.id, 's1', reason: '反向拖动同样越过即进入');
+      expect(controller.state.selection?.id, 's1');
 
       // 同一个位置再写一次是 no-op（防回声/防重复投影）。
       controller.updateLibraryScroll(0.4);
