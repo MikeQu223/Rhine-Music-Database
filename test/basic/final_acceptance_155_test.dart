@@ -396,22 +396,31 @@ void main() {
     test('失败后有界重试：第二次真实请求，第三次不再发', () async {
       final SirenSong a = songOf('Song One');
       await playAndEmit(a);
+      // 第一条请求还在飞（gate[0] 未完成）：此时再上报必须被在飞名额挡住。
+      // 断言必须在完成 gate **之前**数请求：完成后任何一次真实上报都允许一次合法重试，
+      // 数在之后就会把"合法重试"误判成"无限重试"，在全量并发跑时变成抖动断言。
+      expect(client.requested.length, 1,
+          reason: '同一 (id,url) 在飞时不允许重复建闭包');
+
       (await gateFor(a.cover, 0)).complete(<int>[]);
       await _settle();
-      expect(client.requested.length, 1);
+      expect(client.requested.length, 1,
+          reason: '失败本身不触发重试：只有下一次上报才允许再发一次');
       expect(port.updates.last.coverPath, '');
 
-      // 再发布一次（同一身份、同一 URL）：允许一次重试，且真的再发请求。
-      await controller.openSong(a, play: true);
+      // 再发布一次（同一身份、同一 URL、真实 audio 上报）：允许一次重试，且真的再发请求。
+      audio.emit(BasicAudioState(
+          playing: true, positionMs: 1000, durationMs: 20000, generation: 1));
       await _settle();
-      final Completer<List<int>> second = await gateFor(a.cover, 1);
       expect(client.requested.length, 2);
+      final Completer<List<int>> second = await gateFor(a.cover, 1);
       second.complete(<int>[]);
       await _settle();
       expect(port.updates.last.coverPath, '');
 
       // 第三次：额度用尽，不再建闭包，也不再发请求。
-      await controller.openSong(a, play: true);
+      audio.emit(BasicAudioState(
+          playing: true, positionMs: 2000, durationMs: 20000, generation: 1));
       await _settle();
       expect(client.requested.length, 2,
           reason: '_artMaxAttempts 是硬上限，不能无限重试');
