@@ -771,6 +771,16 @@ if(MSVC)
 endif()
 add_test(NAME qt_vulkan_resource_regression COMMAND RhineVulkanResourceRegression)
 
+# 149：可见格业务资源投影（身份不含位置、绝对行号、A→B→A 作废、稳定窗准入、有界淘汰）。
+# 纯函数 + 可注入时钟的状态机，只依赖 Qt6::Core，离线可跑。
+qt_add_executable(RhineEmbeddedCellResources149Test Qt/tests/EmbeddedCellResources149Test.cpp)
+target_include_directories(RhineEmbeddedCellResources149Test PRIVATE Qt/src)
+target_link_libraries(RhineEmbeddedCellResources149Test PRIVATE Qt6::Core)
+if(MSVC)
+    target_compile_options(RhineEmbeddedCellResources149Test PRIVATE /utf-8)
+endif()
+add_test(NAME qt_embedded_cell_resources_149 COMMAND RhineEmbeddedCellResources149Test)
+
 qt_add_executable(RhineSceneLifetimeRegression Qt/tests/SceneLifetimeChecks.cpp)
 target_include_directories(RhineSceneLifetimeRegression PRIVATE Qt/src)
 target_link_libraries(RhineSceneLifetimeRegression PRIVATE Qt6::Core)
