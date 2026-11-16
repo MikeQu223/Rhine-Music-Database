@@ -2640,8 +2640,10 @@ void Host::clearLegacyMetadata(StorageCoordinator::Completion done) {
             if (!key.match(entry.fileName()).hasMatch()) {
                 continue;
             }
+            // Linux 删除目录项后 QFileInfo::size() 可能已变为 0，必须在落盘删除前记录释放量。
+            const auto fileBytes = entry.size();
             if (QFile::remove(entry.absoluteFilePath())) {
-                releasedBytes += entry.size();
+                releasedBytes += fileBytes;
                 ++removed;
             } else if (QFileInfo::exists(entry.absoluteFilePath())) {
                 ++failed;
