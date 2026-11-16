@@ -181,6 +181,13 @@ class _FakeMediaPort implements MediaSessionPort {
 class _Server {
   final List<Uri> calls = <Uri>[];
 
+  /// 专辑封面可换：用来造"同一身份换了封面 URL"这种真实可达的状态切换
+  /// （详情覆盖曲库封面，lib/basic/siren_repository.dart albumDetail 的 albumCover）。
+  final Map<String, String> albumCovers = <String, String>{
+    'a1': 'https://cover.test/a1.jpg',
+    'a2': 'https://cover.test/a2.jpg',
+  };
+
   Future<SirenHttpResult> handle(Uri uri) async {
     calls.add(uri);
     if (uri.path == '/api/songs') {
@@ -210,15 +217,36 @@ class _Server {
             'cid': 'a1',
             'name': 'Album One',
             'artistes': <Object?>['A'],
-            'coverUrl': 'https://cover.test/a1.jpg',
+            'coverUrl': albumCovers['a1'],
           },
           <String, Object?>{
             'cid': 'a2',
             'name': 'Album Two',
             'artistes': <Object?>['B'],
-            'coverUrl': 'https://cover.test/a2.jpg',
+            'coverUrl': albumCovers['a2'],
           },
         ],
+      });
+    }
+    if (uri.path.startsWith('/api/album/') && uri.path.endsWith('/detail')) {
+      final String id = uri.path
+          .substring('/api/album/'.length)
+          .replaceAll('/detail', '');
+      return _json(<String, Object?>{
+        'code': 0,
+        'data': <String, Object?>{
+          'cid': id,
+          'name': id == 'a1' ? 'Album One' : 'Album Two',
+          'coverUrl': albumCovers[id],
+          'artistes': <Object?>[id == 'a1' ? 'A' : 'B'],
+          'songs': <Object?>[
+            <String, Object?>{
+              'cid': 's1',
+              'name': 'Song One',
+              'artistes': <Object?>['A'],
+            },
+          ],
+        },
       });
     }
     if (uri.path.startsWith('/api/song/')) {
@@ -264,9 +292,11 @@ class _FakeHeaders implements HttpHeaders {
 }
 
 class _FakeRequest implements HttpClientRequest {
-  _FakeRequest(this._client, this.uri);
+  _FakeRequest(this.uri, this._gate);
 
-  final _FakeHttpClient _client;
+  /// 每个请求一个闸门：同一个 URL 的第二/第三次请求各有各的 Future，
+  /// 否则「失败一次后重试成功」这种两次请求的用例没法分别控制。
+  final Completer<List<int>> _gate;
 
   @override
   final Uri uri;
@@ -275,7 +305,7 @@ class _FakeRequest implements HttpClientRequest {
   final HttpHeaders headers = _FakeHeaders();
 
   @override
-  Future<HttpClientResponse> close() => _client.respond(uri);
+  Future<HttpClientResponse> close() async => _FakeResponse(await _gate.future);
 
   @override
   dynamic noSuchMethod(Invocation invocation) => null;
@@ -305,26 +335,24 @@ class _FakeResponse implements HttpClientResponse {
 }
 
 class _FakeHttpClient implements HttpClient {
-  /// 每个 URL 一个 Future：测试决定它什么时候回来（迟到结果是本文件的重点）。
-  final Map<String, Completer<List<int>>> gates =
-      <String, Completer<List<int>>>{};
+  /// 每个 URL 一串闸门，按请求顺序排列：测试决定每一次请求什么时候回来。
+  final Map<String, List<Completer<List<int>>>> gates =
+      <String, List<Completer<List<int>>>>{};
   final List<String> requested = <String>[];
+
+  List<Completer<List<int>>> gatesFor(String url) =>
+      gates.putIfAbsent(url, () => <Completer<List<int>>>[]);
 
   @override
   Duration? connectionTimeout;
 
   @override
   Future<HttpClientRequest> getUrl(Uri url) async {
-    requested.add(url.toString());
-    gates.putIfAbsent(url.toString(), () => Completer<List<int>>());
-    return _FakeRequest(this, url);
-  }
-
-  Future<HttpClientResponse> respond(Uri url) async {
-    final Completer<List<int>> gate =
-        gates.putIfAbsent(url.toString(), () => Completer<List<int>>());
-    final List<int> bytes = await gate.future;
-    return _FakeResponse(bytes);
+    final String key = url.toString();
+    requested.add(key);
+    final Completer<List<int>> gate = Completer<List<int>>();
+    gatesFor(key).add(gate);
+    return _FakeRequest(url, gate);
   }
 
   @override
@@ -563,18 +591,23 @@ void main() {
     ///
     /// 不能靠固定微任务轮数：控制器要先 await 一次目录解析才走到 getUrl，
     /// 轮数不够时 client.gates[...] 还是 null，测试会以空指针而不是断言失败收场。
-    Future<Completer<List<int>>> gateFor(String url) async {
+    Future<Completer<List<int>>> gateFor(String url, [int nth = 0]) async {
       for (int i = 0; i < 200; i += 1) {
-        final Completer<List<int>>? gate = client.gates[url];
-        if (gate != null) {
-          return gate;
+        final List<Completer<List<int>>> list = client.gatesFor(url);
+        if (list.length > nth) {
+          return list[nth];
         }
         await Future<void>.delayed(Duration.zero);
       }
       // 用 throw 而不是 fail()：不依赖 test 包里 fail 的返回类型
       // （若它声明成 void，这个 Future<Completer<…>> 的 async 函数就编译不过）。
-      throw StateError(
-          '封面请求没有发出：' + url + '（已请求 ' + client.requested.join(', ') + '）');
+      throw StateError('封面请求没有发出：' +
+          url +
+          '（第 ' +
+          (nth + 1).toString() +
+          ' 次；已请求 ' +
+          client.requested.join(', ') +
+          '）');
     }
 
     /// 等到"带本地封面文件的上报"真的出现。
@@ -666,6 +699,68 @@ void main() {
       expect(firstB.coverPath, isNot(coverA));
     });
 
+    test('同一身份换了封面 URL：旧请求迟到落地也不许贴上来', () async {
+      final SirenSong a = songOf('Song One');
+      await playAndEmit(a);
+      final Completer<List<int>> oldGate = await gateFor(a.cover, 0);
+
+      // 曲库这张专辑的封面换成了另一张（详情覆盖曲库值）：同一个 s1 身份、不同 URL。
+      server.albumCovers['a1'] = 'https://cover.test/a1b.jpg';
+      final SirenAlbum album = controller.state.albums
+          .firstWhere((SirenAlbum item) => item.id == 'a1');
+      await controller.openAlbum(album);
+      await _settle();
+
+      // 换 URL 的那一刻就必须如实上报"没有封面"，而不是继续贴旧图。
+      expect(port.updates.last.coverPath, '');
+      expect(port.updates.last.title, 'Song One');
+
+      // 旧 URL 的结果现在才回来：代次已作废，必须整份丢弃。
+      oldGate.complete(<int>[1, 2, 3, 4]);
+      await _settle();
+      expect(port.updates.last.coverPath, '');
+      expect(
+          port.updates.every(
+              (MediaSessionState state) => (state.coverPath ?? '').isEmpty),
+          isTrue,
+          reason: '旧 URL 的结果一条都不许上报（没有后续事件也照样不许）');
+
+      // 新 URL 落地后才允许贴图，且文件内容必须是新字节 —— 这是"不是旧结果"的硬证据。
+      final int beforeNew = port.updates.length;
+      (await gateFor('https://cover.test/a1b.jpg', 0)).complete(<int>[9, 9, 9]);
+      final MediaSessionState fresh = await waitForCover(beforeNew);
+      expect(fresh.coverPath, isNotEmpty);
+      expect(File(fresh.coverPath!).readAsBytesSync(), <int>[9, 9, 9]);
+    });
+
+    test('一次瞬时失败后有界重试：第二次成功就贴上来，且不会无限重试', () async {
+      final SirenSong a = songOf('Song One');
+      await playAndEmit(a);
+      (await gateFor(a.cover, 0)).complete(<int>[]); // 空字节 = 这次抓取失败
+      await _settle();
+      expect(port.updates.last.coverPath, '');
+      expect(client.requested.where((String url) => url == a.cover).length, 1,
+          reason: '第一次失败当下不补发，避免同步重试循环');
+
+      // 下一次上报允许补一次（上限 2 次）。
+      final int before = port.updates.length;
+      audio.emit(BasicAudioState(
+          playing: true, positionMs: 500, durationMs: 20000, generation: 1));
+      await _settle();
+      expect(client.requested.where((String url) => url == a.cover).length, 2);
+
+      (await gateFor(a.cover, 1)).complete(<int>[7, 7, 7]);
+      final MediaSessionState fresh = await waitForCover(before);
+      expect(fresh.coverPath, isNotEmpty);
+      expect(File(fresh.coverPath!).readAsBytesSync(), <int>[7, 7, 7]);
+
+      // 已经有封面之后，再怎么上报也不会再发请求。
+      audio.emit(BasicAudioState(
+          playing: true, positionMs: 900, durationMs: 20000, generation: 1));
+      await _settle();
+      expect(client.requested.where((String url) => url == a.cover).length, 2);
+    });
+
     test('dispose 关掉封面缓存：之后不再写盘', () async {
       controller.dispose();
       await _settle();
@@ -709,6 +804,36 @@ void main() {
           reason: '只允许在 play:false 的显式打开分支调用；浏览路径走 _selectAt，不该出声');
       expect(source, contains('unawaited(controller.autoplayDetailIfEnabled(tracks[item.index]));'),
           reason: '断言到具体调用点，避免同形分支冒充接线');
+    });
+
+    test('换封面 URL / 换成空 URL 时先作废代次，再走早退（顺序不能反）', () {
+      final String source = dartController.readAsStringSync();
+      final int bump = source.indexOf('cache.beginGeneration();');
+      final int emptyReturn = source.indexOf('if (url.isEmpty) {');
+      final int attemptsGate = source.indexOf('_artAttempts >= _artMaxAttempts');
+      expect(bump, greaterThan(-1));
+      expect(emptyReturn, greaterThan(-1));
+      expect(bump, lessThan(emptyReturn),
+          reason: '代次必须在空 URL 早退之前递增，否则同一 (id,url) 的旧闭包会写回旧图');
+      expect(bump, lessThan(attemptsGate));
+      expect(source, contains('_artUrl != requestUrl'),
+          reason: '闭包里要复核捕获到的 URL，不只看代次与身份');
+    });
+
+    test('封面重试有界：有上限常量与比较，不是无限重试循环', () {
+      final String source = dartController.readAsStringSync();
+      expect(source, contains('static const int _artMaxAttempts'));
+      expect(source, contains('_artAttempts >= _artMaxAttempts'));
+      expect(source, contains('_artAttempts += 1'));
+    });
+
+    test('本机集合缓存签名带内容摘要（同长度替换也算变化）', () {
+      final String source = dartController.readAsStringSync();
+      expect(source, contains('String _collectionsDigest()'));
+      expect(source, contains('_collectionsDigest(),'),
+          reason: '摘要必须真的进了 _laneItemTable 的签名数组');
+      expect(source, isNot(contains('_likedSongs.length,')),
+          reason: '只数长度的项已被内容摘要取代');
     });
 
     test('控制器把本地封面路径交给身份，且 dispose 关缓存', () {
