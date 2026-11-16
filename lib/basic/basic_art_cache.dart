@@ -82,7 +82,15 @@ class BasicArtCache {
       return Future<String?>.value(null);
     }
     final String key = _keyOf(normalized);
-    final String? cached = _cachedPath(key);
+    // `_cachedPath` 摸的是真实文件系统（existsSync/lengthSync/setLastModifiedSync），
+    // 这些同步调用在任何 I/O 错误上都会抛；本方法承诺"永不抛"，所以在调用点收敛，
+    // 不让一个坏目录把异常漏给调用方，也不让它顺带跳过真正的抓取。
+    String? cached;
+    try {
+      cached = _cachedPath(key);
+    } on FileSystemException {
+      cached = null;
+    }
     if (cached != null) {
       _lastUse[key] = ++_useCounter;
       return Future<String?>.value(cached);
@@ -173,7 +181,12 @@ class BasicArtCache {
       await temp.writeAsBytes(bytes, flush: true);
       await temp.rename(path);
       _lastUse[key] = ++_useCounter;
-      await _prune(keep: path);
+      try {
+        await _prune(keep: path);
+      } catch (_) {
+        // 淘汰是**容量维护**，不是这次抓取的一部分：文件已经原子落好盘，
+        // 淘汰自己抛错（目录被并发删除/条目刚好消失）不能把封面结论改成"没有"。
+      }
       return path;
     } catch (_) {
       try {
@@ -250,15 +263,14 @@ class BasicArtCache {
     if (files.length <= maxEntries) {
       int total = 0;
       for (final File file in files) {
-        total += file.lengthSync();
+        total += _sizeOf(file);
       }
       if (total <= maxTotalBytes) {
         return;
       }
     }
     files.sort((File a, File b) {
-      final int byTime =
-          a.lastModifiedSync().compareTo(b.lastModifiedSync());
+      final int byTime = _modifiedOf(a).compareTo(_modifiedOf(b));
       if (byTime != 0) {
         return byTime;
       }
@@ -266,7 +278,7 @@ class BasicArtCache {
     });
     int total = 0;
     for (final File file in files) {
-      total += file.lengthSync();
+      total += _sizeOf(file);
     }
     int count = files.length;
     for (final File file in files) {
@@ -276,7 +288,7 @@ class BasicArtCache {
       if (keep != null && file.path == keep) {
         continue;
       }
-      final int size = file.lengthSync();
+      final int size = _sizeOf(file);
       try {
         file.deleteSync();
         count--;
@@ -284,6 +296,25 @@ class BasicArtCache {
       } on FileSystemException {
         // 删不掉就跳过，下一次再试，不因此丢掉刚拿到的封面。
       }
+    }
+  }
+
+  /// 条目大小：读不到的条目按 0 计（它要么刚被并发删掉，要么无权访问——
+  /// 这两种情况下"少算一个字节"都比让整个淘汰流程抛错更接近真相）。
+  static int _sizeOf(File file) {
+    try {
+      return file.lengthSync();
+    } on FileSystemException {
+      return 0;
+    }
+  }
+
+  /// 条目时间戳：读不到就给 epoch，排序时自然排在最前（=最先被淘汰）。
+  static DateTime _modifiedOf(File file) {
+    try {
+      return file.lastModifiedSync();
+    } on FileSystemException {
+      return DateTime.fromMillisecondsSinceEpoch(0);
     }
   }
 

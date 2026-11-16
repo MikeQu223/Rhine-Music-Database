@@ -543,6 +543,9 @@ void applySceneState(const QString &json, const ProducerOrigin &origin)
         writeNextLaunch("aaScale", "aa-scale");
         writeNextLaunch("msaa", "msaa");
         writeNextLaunch("supersample", "supersample");
+        // FSR 档位/锐化：用户 m03406 暂缓，本阶段不接。快照里即使出现 fsrQuality /
+        // fsrSharpness 也不写偏好、不 qputenv，渲染器继续走 ScenePostProcess.cpp
+        // 自己的缺省（未知档位=1.0 倍，锐化 50）。
         qInfo("RHINE_QT_SCENE_SETTINGS disc=%d mask=%d vsync=%s scale=%d backend=%s aa=%s/%d msaa=%d ss=%d",
               int(disc), mask, qPrintable(settings.value("vsync").toString()),
               settings.value("renderScale").toInt(75), qPrintable(settings.value("backend").toString()),

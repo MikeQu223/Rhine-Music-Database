@@ -28,6 +28,7 @@ import 'basic_settings.dart';
 import 'basic_settings_runtime.dart';
 import 'basic_settings_store.dart';
 import 'basic_settings_view.dart';
+import 'basic_settings_window.dart';
 import 'platform_playback.dart';
 import 'qt_scene_view.dart';
 import 'siren_controller.dart';
@@ -484,6 +485,8 @@ class _BasicShellState extends State<_BasicShell>
   void dispose() {
     _startup.dispose();
     _hudFocusNode.dispose();
+    // 面板滚动偏移是本次运行内跨开关复用的 notifier；State 自己持有，自己负责关掉。
+    _settingsScroll.dispose();
     super.dispose();
   }
 
@@ -657,12 +660,16 @@ class _BasicShellState extends State<_BasicShell>
               return Stack(
                 fit: StackFit.expand,
                 children: <Widget>[
-                  BasicSettingsOverlay(
+                  // m03428：设置窗口是真实 Flutter widget 层（文本/控件/滚动/
+                  // 焦点/语义都是 widget），不再走 HUD 命令 + 命中画布。
+                  BasicSettingsWindow(
                     stage: resolved,
-                    ports: widget.resources.ports,
+                    portrait: geometry == null,
                     model: _settingsPanelModel(),
                     dark: state.dark,
-                    onAction: (String action) => unawaited(_onSettingsAction(action)),
+                    scrollStorage: _settingsScroll,
+                    onAction: (String action) =>
+                        unawaited(_onSettingsAction(action)),
                   ),
                   if (_modal == DiscWarningModal.kind)
                     BasicDiscWarningOverlay(
@@ -723,7 +730,13 @@ class _BasicShellState extends State<_BasicShell>
         aaScale: _settings.aaScalePercent,
         msaa: _settings.msaaSamples,
         supersample: _settings.supersampleFactor,
+        // FSR（fsr-quality / fsr-sharpness）按用户 m03406 暂缓：持久化契约里仍有这两项
+        // （basic_settings.dart 的 antiAliasing 细项），但本阶段既不出档位 UI，也不把
+        // 它们塞进场景快照/不 qputenv，渲染器继续按自己的缺省（native / 50）走。
       );
+
+  /// 设置面板滚动偏移（跨越开关面板保持；由 BasicSettingsWindow 写回）。
+  final ValueNotifier<double> _settingsScroll = ValueNotifier<double>(0);
 
   BasicSettingsPanelModel _settingsPanelModel() {
     return basicSettingsPanelModel(
@@ -761,7 +774,12 @@ class _BasicShellState extends State<_BasicShell>
   /// 设置浮层的唯一动作入口：命中串 -> typed 命令 -> 真实落盘 -> 真实效果。
   Future<void> _onSettingsAction(String action) async {
     if (action == HudAction.closeModal) {
-      _setModal('settings');
+      // 设置窗自带的返回按钮回的就是 closeModal（SettingsModalFrame.backAction）。
+      // 这里以前写 _setModal('settings')——面板已经开着时那是恒等操作，返回键点
+      // 了没反应；按 Qt closeModal 语义应该是关掉当前弹层，并把焦点还给 HUD
+      // （与 PopScope 的同一条路径一致）。
+      _setModal('');
+      _hudFocusNode.requestFocus();
       return;
     }
     if (action == 'disc-rotation:cancel') {
