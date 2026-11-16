@@ -717,6 +717,34 @@ void main() {
       expect(source, contains('STOP_FOREGROUND_REMOVE'));
     });
 
+    test('the media notification carries the real cover and compact controls', () {
+      final String source = readSource(
+        'android/app/src/main/kotlin/rhine/music/database/porting/MediaPlaybackService.kt',
+      );
+
+      // 封面必须挂到通知本身：会话元数据里的 ALBUM_ART 有些 ROM 不读，只认 setLargeIcon。
+      // 删掉这两行回归会静默复活（卡片只剩标题文字），所以这里钉住契约。
+      expect(source, contains('coverBitmap?.let'));
+      expect(source, contains('setLargeIcon'));
+      expect(source, contains('isRecycled'));
+
+      // 紧凑态三键的索引必须和 action 的挂载条件同门：idle 时没有 action，
+      // 无条件 setShowActionsInCompactView(0,1,2) 等于给不存在的控件按索引。
+      // 用带接收者的写法定位，避开注释里同名文字的第一次命中。
+      final int compactAt = source.indexOf('style.setShowActionsInCompactView');
+      expect(compactAt, isNonNegative);
+      final int lineStart = source.lastIndexOf('\n', compactAt);
+      final String callLine = source.substring(
+        lineStart < 0 ? 0 : lineStart,
+        source.indexOf('\n', compactAt),
+      );
+      expect(
+        callLine,
+        contains('isIdle'),
+        reason: '三键索引必须在 !isIdle() 行内条件挂载',
+      );
+    });
+
     test('the sole audio channel releases the player and session on uninstall',
         () {
       final String source = readSource(
