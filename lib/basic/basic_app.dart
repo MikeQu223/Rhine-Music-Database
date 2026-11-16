@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -152,8 +153,14 @@ class _BasicAppState extends State<BasicApp> {
     _ownsAudio = widget.audio == null;
     _ownsController = widget.controller == null;
     _audio = widget.audio ?? MethodChannelBasicAudio();
-    _controller = widget.controller ??
-        BasicController(audio: _audio, mediaSessionPort: widget.mediaSessionPort);
+    // 系统媒体控件端口：显式注入优先；否则只在"自己造 controller + 自己造 audio"
+    // 的生产装配里接平台通道（widget 测试一律注入依赖，因此不会碰通道）。
+    final MediaSessionPort? mediaPort = widget.mediaSessionPort ??
+        (widget.controller == null && widget.audio == null
+            ? (kIsWeb ? null : MethodChannelMediaSession())
+            : null);
+    _controller =
+        widget.controller ?? BasicController(audio: _audio, mediaSessionPort: mediaPort);
     // 3D 场景的连续滚动回执（拖动/惯性/滚轮）落到同一个 controller 窗口真值上：
     // 方向 B（3D → 列表/ruler）因此不依赖 HUD 是否接了 onScroll 参数。
     QtSceneScrollRouter.instance.handler = _sceneScrollHandler;
