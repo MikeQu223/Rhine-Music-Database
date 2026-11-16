@@ -195,11 +195,28 @@ void scrollTick();
 
 // 选中条目落在 8 个物理行里的哪一行：窗口基址是 (round(pos)/8)*8，所以槽位就是
 // round(pos) % 8（与 Dart 侧 qtSceneCellsOf/qtSceneRowOfCell 的基址完全一致）。
-int slotRowFor(double pos)
+// 绝对场景行：轨道条目 item 的卡片在 NativeScene 里是 cell.row = 12 + item
+// （cellPosition 的 z = (row-15.5)*0.62 与投影的 -2.17-(row-15.5)*0.62 同一个坐标系）。
+// 早期这里用 `12 + pos%8` 把 actor 钉在 item∈[0,7]，导致静止 0.5s 后轨道被回吸到
+// 8 行窗口（审查 MUST-2'）。
+int absoluteRowFor(double pos)
 {
     if (!std::isfinite(pos))
-        return 0;
-    return ((static_cast<int>(std::llround(pos)) % 8) + 8) % 8;
+        return 12;
+    return 12 + static_cast<int>(std::llround(pos));
+}
+
+// 手势期间压下的选中在提交后补一次（tap 与 ticker 两条路径共用）。
+void flushPendingSelection(Engine *engine)
+{
+    if (!engine || g_pendingIndex < 0 || g_appliedLane < 0)
+        return;
+    const int pending = g_pendingIndex;
+    g_pendingIndex = -1;
+    engine->scene.select(pending,
+                         QJsonObject{{QStringLiteral("cell"),
+                                      QJsonObject{{QStringLiteral("lane"), g_appliedLane},
+                                                  {QStringLiteral("row"), absoluteRowFor(g_appliedPos)}}}});
 }
 
 void startScrollTicker(double reference)
@@ -235,15 +252,7 @@ void scrollTick()
         g_scrollTracking = false;
         emitScroll("commit", item - g_scrollOrigin);
         // 手势期间压下的选中在这里补应用：否则列表显示 A、3D 高亮停在 B（MUST-3）。
-        if (g_pendingIndex >= 0 && g_appliedLane >= 0) {
-            const int pending = g_pendingIndex;
-            const int slot = slotRowFor(g_appliedPos);
-            g_pendingIndex = -1;
-            engine->scene.select(pending,
-                                 QJsonObject{{QStringLiteral("cell"),
-                                              QJsonObject{{QStringLiteral("lane"), g_appliedLane},
-                                                          {QStringLiteral("row"), 12 + slot}}}});
-        }
+        flushPendingSelection(engine);
         return;
     }
     g_scrollIdle = 0;
@@ -327,11 +336,10 @@ void applySceneState(const QString &json)
             // 物理行由连续窗口真值 pos 决定（(round(pos)/8)*8 的基址 + pos%8），
             // 交给 NativeScene 的 navigation["cell"] 分支直接用，绕开 fileLocation 的
             // 占位域与 nearest 夹取（MUST-1：第 18 行/第 936 行都必须落在本列真实行）。
-            const int slot = slotRowFor(indexPos);
             scene.select(index,
                          QJsonObject{{QStringLiteral("cell"),
                                       QJsonObject{{QStringLiteral("lane"), indexLane},
-                                                  {QStringLiteral("row"), 12 + slot}}}});
+                                                  {QStringLiteral("row"), absoluteRowFor(indexPos)}}}});
             applied = true;
         }
     }
@@ -350,11 +358,12 @@ void applySceneState(const QString &json)
         }
         // 有界诊断（只在 pos/lane 真的变化时打印）：这是"列表窗口真值 → 3D 轨道"的
         // 可复现凭据，槽位与 Dart 侧 cells 用同一个基址。
-        const int slot = 12 + slotRowFor(pos);
-        if (slot != g_windowSlot || lane != g_appliedLane) {
-            g_windowSlot = slot;
-            qInfo("RHINE_QT_SCENE_WINDOW lane=%d pos=%.3f slot=%d index=%d cells=%d", lane, pos,
-                  slot, index, int(g_cellSemantics.size()));
+        // 有界诊断：打出轨道的**绝对行**与 archiveTrackItem（真值），不再打 pos%8。
+        const int row = absoluteRowFor(pos);
+        if (row != g_windowSlot) {
+            g_windowSlot = row;
+            qInfo("RHINE_QT_SCENE_WINDOW lane=%d pos=%.3f row=%d track=%.3f index=%d cells=%d",
+                  lane, pos, row, scene.archiveTrackItem(), index, int(g_cellSemantics.size()));
         }
     }
 
@@ -371,7 +380,8 @@ void applySceneState(const QString &json)
             const QString id = cell.value("i").toString();
             if (kind.isEmpty() || id.isEmpty())
                 continue;
-            const int key = (cell.value("l").toInt() << 8) | (12 + cell.value("r").toInt());
+            // 行键是绝对行偏移（0..~948），8 位不够：改成 lane<<16 | (12+r)。
+            const int key = (cell.value("l").toInt() << 16) | (12 + cell.value("r").toInt());
             g_cellIdentity.insert(key, qMakePair(kind, id));
         }
         qInfo("RHINE_QT_SCENE_CELLS n=%d lane=%d pos=%.3f", int(cells.size()), lane, pos);
@@ -677,6 +687,8 @@ Java_org_qtproject_qt_android_RhineQtViews_nativePushScenePointer(
                     } else {
                         g_scrollTracking = false;
                         RhineEmbedded::emitScroll("commit", 0.0);
+                        // 点选路径同样要补发被压下的选中（审查 MUST-3'）。
+                        RhineEmbedded::flushPendingSelection(engine);
                     }
                 }
                 // 别的所属的卡：3D 不能替列表决定"所属"。用户 06:19 的规则是所属只由
@@ -687,11 +699,14 @@ Java_org_qtproject_qt_android_RhineQtViews_nativePushScenePointer(
                     && engine->scene.selection() != previousSelection) {
                     engine->scene.select(previousSelection);
                 }
-                if (picked && engine->scene.selection() != previousSelection) {
+                // 只要真的拾取到格子就回传身份：不再用 selection 差值判定。NativeScene 的
+                // tap 走 select(fileAt(cell))，那个整数是 8 环绕的占位槽（0..39），同列相隔
+                // 8 行的两次点击会相等 → 第二次点选静默无响应（审查 S9）。
+                if (picked) {
                     // 带身份回传：kind+id 来自 Flutter 的 40 格语义表（唯一真值），
                     // 位置只是几何。Dart 侧先按 (kind,id) 折回真实行，折不到才用几何。
                     const auto identity = g_cellIdentity.value(
-                        (picked->lane << 8) | picked->row, qMakePair(QString(), QString()));
+                        (picked->lane << 16) | picked->row, qMakePair(QString(), QString()));
                     if (!identity.second.isEmpty()) {
                         RhineEmbedded::emitSceneAction(QStringLiteral("archive-select:%1|%2|%3|%4")
                                                            .arg(picked->lane)

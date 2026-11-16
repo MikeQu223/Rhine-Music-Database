@@ -266,7 +266,7 @@ void main() {
         ],
         offsets: const <int>[0, 0, 0, -2, 0],
       );
-      // 当前列的基址跟随连续 pos（默认 0）：物理行 12 是条目 0、行 14 是条目 2。
+      // 绝对行域：场景行 = 12 + 条目，与窗口位置无关（行 12 永远是条目 0）。
       expect(qtSceneRowOfCell(state, const QtSceneCellRef(3, 12)), 0);
       expect(qtSceneRowOfCell(state, const QtSceneCellRef(3, 14)), 2);
       expect(qtSceneRowOfCell(state, const QtSceneCellRef(1, 12)), isNull);
@@ -283,8 +283,11 @@ void main() {
         offsets: const <int>[0, 0, 0, -2, 0],
         pos: 14,
       );
-      expect(qtSceneRowOfCell(moved, const QtSceneCellRef(3, 12)), 8);
-      expect(qtSceneRowOfCell(moved, const QtSceneCellRef(3, 14)), 0);
+      // 窗口滚到 pos=14 以后，原来的"行 12"已经不在视野里；几何折行只看绝对行，
+      // 视野里的前排是场景行 12+14=26（= 条目 14）。
+      // 这一列只有 10 条，所以折行按 Qt 的 wrap 语义取模（14 % 10 = 4）。
+      expect(qtSceneRowOfCell(moved, const QtSceneCellRef(3, 26)), 4);
+      expect(qtSceneRowOfCell(moved, const QtSceneCellRef(3, 28)), 6);
     });
 
     test('拖动后 pos≠offset：折行基准必须跟随连续位置（审查 MUST-5 反例）', () {
@@ -303,9 +306,10 @@ void main() {
         offsets: const <int>[0, 0, 0, -2, 0],
         pos: 87,
       );
-      // 基址 = (87 ~/ 8) * 8 = 80 → 物理行 12 是条目 80、行 19 是条目 87。
-      expect(qtSceneRowOfCell(state, const QtSceneCellRef(3, 12)), 80);
-      expect(qtSceneRowOfCell(state, const QtSceneCellRef(3, 19)), 87);
+      // 审查 MUST-1' 的反例：pos=87 时原生拾取的前排是绝对行 92..99，
+      // 折回必须是 80..87（旧实现会给出 160..167）。
+      expect(qtSceneRowOfCell(state, const QtSceneCellRef(3, 92)), 80);
+      expect(qtSceneRowOfCell(state, const QtSceneCellRef(3, 99)), 87);
       expect(qtSceneRowOfCell(state, const QtSceneCellRef(3, 12)),
           isNot(equals(8)),
           reason: '不能退回 8 倍数记忆值');
@@ -332,10 +336,10 @@ void main() {
             state, const QtSceneCellRef(3, 12, kind: 'song', id: 's50')),
         50,
       );
-      // 身份不在这一列（编造 id）时退化到几何，而不是 null 或 -1。
+      // 身份不在这一列（编造 id）时退化到几何（绝对行 92 - 12 = 80），不是 null/-1。
       expect(
         qtSceneRowOfCell(
-            state, const QtSceneCellRef(3, 12, kind: 'song', id: 'nope')),
+            state, const QtSceneCellRef(3, 92, kind: 'song', id: 'nope')),
         80,
       );
       // 线上格式（原生带身份回传）：archive-select:<lane>|<row>|<kind>|<id>
