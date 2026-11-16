@@ -440,6 +440,46 @@ public final class RhineQtViews {
      * 只在可调试包、每个进程最多一次 System.gc() + WeakReference 检查，用日志给出
      * 布尔事实（不看 RSS）。生产包不强制 GC。
      */
+    /**
+     * 只读诊断：列出候选 Qt Android 类里仍指向被销毁宿主的 static 字段。
+     *
+     * 用途是区分"钉住发生在 Java 静态字段"还是"钉住发生在 native JNI global"——这决定下
+     * 一步该改哪里。只读，不修改任何字段，也不影响行为。
+     */
+    private static void logStaticHolders(String tag, Object activity, Object delegate, Object view) {
+        final String[] candidates = new String[] {
+            "org.qtproject.qt.android.QtNative",
+            "org.qtproject.qt.android.QtClipboardManager",
+            "org.qtproject.qt.android.QtEmbeddedViewInterfaceFactory",
+            "org.qtproject.qt.android.RhineQtViews",
+            "org.qtproject.qt.android.QtEmbeddedDelegate",
+            "org.qtproject.qt.android.QtActivityDelegateBase",
+        };
+        for (String name : candidates) {
+            try {
+                final Class<?> type = Class.forName(name);
+                for (java.lang.reflect.Field field : type.getDeclaredFields()) {
+                    if (!java.lang.reflect.Modifier.isStatic(field.getModifiers())) {
+                        continue;
+                    }
+                    field.setAccessible(true);
+                    final Object value = field.get(null);
+                    if (value == null) {
+                        continue;
+                    }
+                    final boolean hit = value == activity || value == delegate || value == view;
+                    if (hit || value instanceof android.app.Activity) {
+                        android.util.Log.w(TAG, tag + " static holder " + name + "."
+                                + field.getName() + " -> " + value.getClass().getName()
+                                + " hitsRetiredHost=" + hit);
+                    }
+                }
+            } catch (Throwable ignored) {
+                // 类不在包里或反射被挡住时跳过：这条诊断不影响行为。
+            }
+        }
+    }
+
     private static void verifyPreviousCyclesReleased() {
         if (!probeEnabled) {
             // 生产包不跑探针，但也不能让 sCycleProbes 每轮 +1 无界增长。
@@ -475,6 +515,12 @@ public final class RhineQtViews {
                     System.runFinalization();
                     android.util.Log.i(TAG, "root probe attempt " + current + " canaryCleared="
                             + (canary.get() == null));
+                    if (current == 1 && !probes.isEmpty()) {
+                        logStaticHolders("probe",
+                                probes.get(0).activity.get(),
+                                probes.get(0).delegate.get(),
+                                probes.get(0).view.get());
+                    }
                     for (CycleProbe probe : probes) {
                         android.util.Log.i(TAG, "cycle " + probe.cycle + " attempt " + current
                                 + " released activity=" + (probe.activity.get() == null)
