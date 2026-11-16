@@ -811,6 +811,10 @@ class _QtSceneViewState extends State<QtSceneView> {
       }
       return;
     }
+    // 选中身份回执（archive-select:<lane>:<row>）：原生只报它真实拾取到的
+    // 物理格，映射成列表行由 Dart 侧当前窗口决定；这里留一行证据日志，
+    // 否则"3D 点选没反应"无法区分是没发出来还是被窗口判空丢掉。
+    debugPrint('RHINE_DART scene_action $action');
     widget.onAction?.call(action);
   }
 

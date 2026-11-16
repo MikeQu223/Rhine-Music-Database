@@ -178,6 +178,11 @@ public final class RhineQtViews {
             // 再把新 Activity 交给原生侧。QtView 构造函数里的 startApplication() 会因此
             // 直接 return，不会重入 main()，也就不再触发 NULL jclass 崩溃。
             QtNative.setStarted(true);
+            // 重挂必须把**新宿主**写进 QtNative 的 Activity 槽，再交给原生侧：
+            // 只调 updateNativeActivity() 时它读的是上一次 setActivity 留下的槽，
+            // 而上一轮销毁路径已经把它置成 null —— 结果是原生侧长期没有 Activity，
+            // 而真正想清的旧宿主引用（cycle 1）根本没被替换过。
+            QtNative.setActivity(activity);
             if (!updateNativeActivity()) {
                 android.util.Log.w(TAG, "updateNativeActivity failed after activity reattach");
             }

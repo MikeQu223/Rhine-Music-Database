@@ -359,6 +359,16 @@ void applySceneState(const QString &json)
         applied = true;
     }
 
+    // 应用完必须自己唤醒一帧：引擎休眠（m_sceneSleeping）时 setMode("detail") 只是把
+    // 目标值改了，过渡一帧都不会跑。真机现场：09:03:43 收到 mode=detail 并返回 applied，
+    // 但之后没有任何一帧，屏幕还停在上一次 archive 画面（盘面/封面当然看不到）。
+    // 早先"能进详情"是碰巧：新封面异步下载回调里顺手把 m_sceneSleeping 清了。
+    if (applied) {
+        if (Engine *engine = RhineEmbedded::engine()) {
+            engine->wake(Engine::WakeSource::Input);
+        }
+    }
+
     // 只在真的改变了场景时打（S3）：否则每次重连都刷一条全量快照，日志里分不清"收到"
     // 与"应用"。
     if (applied) {
@@ -610,6 +620,14 @@ Java_org_qtproject_qt_android_RhineQtViews_nativePushScenePointer(
                         g_scrollTracking = false;
                         RhineEmbedded::emitScroll("commit", 0.0);
                     }
+                }
+                // 别的所属的卡：3D 不能替列表决定"所属"。用户 06:19 的规则是所属只由
+                // 列表决定（拖动 3D 只能滚动当前所属），所以点到别层的卡时把选中还回去，
+                // 让 3D 与列表保持同一个窗口；08:59 真机证据：点到 lane=2 的卡会让
+                // 原生光标停在 lane 2，而列表还在 lane 3，两边就此不一致。
+                if (browsing && picked && g_appliedLane >= 0 && picked->lane != g_appliedLane
+                    && engine->scene.selection() != previousSelection) {
+                    engine->scene.select(previousSelection);
                 }
                 if (picked && engine->scene.selection() != previousSelection) {
                     RhineEmbedded::emitSceneAction(
