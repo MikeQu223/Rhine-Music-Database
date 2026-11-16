@@ -221,6 +221,14 @@ class BasicAudioChannel private constructor(
                 // 兜底路径：正常收尾走 uninstall()（那里的注销发生在本次 dispatch 之前，
                 // 所以本回调通常不会触发）。真触发时同样必须一起收尾媒体会话，
                 // 否则会留下"没有播放器却可点"的通知。
+                //
+                // 必须和 uninstall() 逐项对齐（FINAL-REVIEW-141 SHOULD S-b）：只放播放器
+                // 而不摘通道，`current` 仍然握着 messenger → FlutterEngine → 平台视图，
+                // 外加 contextProvider 闭包捕获的 Activity —— 那条链会把刚销毁的宿主钉住，
+                // 正是本类注释自己警告过的形态。
+                current?.detach()
+                current = null
+                MediaSessionChannel.uninstall()
                 authority.releaseForHostShutdown()
                 MediaSessionHost.shutdown()
             }

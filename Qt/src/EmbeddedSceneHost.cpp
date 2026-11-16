@@ -361,6 +361,9 @@ void applySceneState(const QString &json)
         // 有界诊断（只在 pos/lane 真的变化时打印）：这是"列表窗口真值 → 3D 轨道"的
         // 可复现凭据，槽位与 Dart 侧 cells 用同一个基址。
         // 有界诊断：打出轨道的**绝对行**与 archiveTrackItem（真值），不再打 pos%8。
+        // track 就是 m_rail 的线性读出（`NativeScene::archiveTrackItem()` =
+        // `(-rail - 2.17)/0.62 + 15.5 - 12`），所以 rail 不需要再单开一条日志：
+        // 反解 rail = -((track - 3.5) * 0.62 + 2.17)，"停手 1s 后是否回弹"看 track 是否守住即可。
         const int row = absoluteRowFor(pos);
         if (row != g_windowSlot) {
             g_windowSlot = row;

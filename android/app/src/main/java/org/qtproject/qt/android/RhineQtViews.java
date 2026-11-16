@@ -492,13 +492,17 @@ public final class RhineQtViews {
         String appContext = "?";
         try {
             final android.app.Activity activity = QtNative.activity();
-            qtActivity = activity == null ? "null" : activity.getClass().getName();
+            // 打 identityHashCode 而不是类名（FINAL-REVIEW-141 SHOULD S-a）：类名对每个宿主
+            // 都一样，读日志的人会误当成"同一个 Activity"。
+            qtActivity = activity == null ? "null" : Integer.toHexString(System.identityHashCode(activity));
         } catch (Throwable error) {
             qtActivity = "err:" + error;
         }
         try {
             final android.content.Context context = QtNative.getContext();
-            appContext = context == null ? "null" : context.getClass().getName();
+            appContext = context == null
+                    ? "null"
+                    : Integer.toHexString(System.identityHashCode(context));
         } catch (Throwable error) {
             appContext = "err:" + error;
         }
