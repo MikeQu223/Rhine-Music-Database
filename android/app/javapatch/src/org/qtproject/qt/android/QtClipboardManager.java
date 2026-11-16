@@ -55,6 +55,8 @@ class QtClipboardManager {
         // The whole point of the patch: never hand an Activity to the framework clipboard.
         final Context application = context.getApplicationContext();
         final Context safe = application != null ? application : context;
+        Log.i(TAG, "clipboard host context=" + context.getClass().getName()
+                + " application=" + (application != null) + " patched=application-context");
         final CountDownLatch latch = new CountDownLatch(1);
         QtNative.runAction(new Runnable() {
             @Override
