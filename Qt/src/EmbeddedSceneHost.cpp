@@ -235,7 +235,7 @@ void scrollTick()
         g_scrollTracking = false;
         emitScroll("commit", item - g_scrollOrigin);
         // 手势期间压下的选中在这里补应用：否则列表显示 A、3D 高亮停在 B（MUST-3）。
-        if (g_pendingIndex >= 0) {
+        if (g_pendingIndex >= 0 && g_appliedLane >= 0) {
             const int pending = g_pendingIndex;
             const int slot = slotRowFor(g_appliedPos);
             g_pendingIndex = -1;
