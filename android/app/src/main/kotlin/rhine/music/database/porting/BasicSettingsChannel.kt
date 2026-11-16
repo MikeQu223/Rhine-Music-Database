@@ -11,6 +11,47 @@ import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 
 /**
+ * 设置通道的纯决策（无 android.* 依赖，供 JVM 合同测试直接调用）。
+ *
+ * 为什么把「要不要卸载」提出来：uninstall 的三条早退以前分散在 if 里，任何一条改了都没有
+ * 可执行断言兜底；159 就曾在 uninstall(null) 上退化成"拆当前 owner"。把决策收敛成枚举后，
+ * install/uninstall 只负责执行，测试直接钉住"old/null/unknown 不得清 CURRENT"。
+ */
+internal enum class SettingsChannelTeardown {
+    /** 从没装过：什么都不做。 */
+    NOT_INSTALLED,
+
+    /** 没拿到 messenger：fail-closed，不猜、不清。 */
+    NO_MESSENGER,
+
+    /** 已装但 owner 身份未知：不授权任何清理。 */
+    UNKNOWN_OWNER,
+
+    /** 要卸的不是当前 owner（旧宿主晚销毁 / 新宿主已接管）：拒绝。 */
+    OTHER_OWNER,
+
+    /** 请求者就是当前 owner：摘 handler 并清字段。 */
+    DETACH,
+}
+
+/** 同一 messenger 重复 install 直接复用现对象（避免 handler 被重装抖掉）。 */
+internal fun settingsChannelReusesInstall(installed: Any?, owner: Any?, messenger: Any?): Boolean =
+    installed != null && owner === messenger
+
+/** 只按「是否装过 / 当前 owner / 请求者」判定，绝不从 CURRENT 单例反推授权。 */
+internal fun settingsChannelTeardown(
+    installed: Any?,
+    owner: Any?,
+    requested: Any?,
+): SettingsChannelTeardown = when {
+    installed == null -> SettingsChannelTeardown.NOT_INSTALLED
+    requested == null -> SettingsChannelTeardown.NO_MESSENGER
+    owner == null -> SettingsChannelTeardown.UNKNOWN_OWNER
+    owner !== requested -> SettingsChannelTeardown.OTHER_OWNER
+    else -> SettingsChannelTeardown.DETACH
+}
+
+/**
  * SETTINGS-148：Flutter 基本版设置面板的真实持久化 / 版本真值 / 外链通道。
  *
  * 为什么需要这条通道：
@@ -31,7 +72,7 @@ import io.flutter.plugin.common.MethodChannel
  * basicSettingsChannelName 与下面 CHANNEL 必须逐字相同。
  */
 class BasicSettingsChannel private constructor(
-    private val contextProvider: () -> Context,
+    private val appContext: Context,
 ) : MethodChannel.MethodCallHandler {
 
     companion object {
@@ -50,27 +91,28 @@ class BasicSettingsChannel private constructor(
         private var installedMessenger: BinaryMessenger? = null
 
         /**
-         * 装配一次。传 contextProvider 而不是 Context：通道对象不长期握着 Activity
-         * （Application context 可以，Activity 不行——那会把已销毁的宿主钉在进程里）。
+         * 装配一次。**直接收 Context 值，在构造前 eager unwrap 成 applicationContext**：
+         * 不存 caller 提供的 lambda/provider（闭包会捕获调用者 Activity，编译字节码里表现
+         * 为 configureFlutterEngine$lambda$N(MainActivity)），也不存调用者传进来的 Context
+         * 本身（调用者可能误传 Activity）。通道对象只长期握 Application。
          */
-        fun install(messenger: BinaryMessenger, contextProvider: () -> Context): BasicSettingsChannel {
+        fun install(messenger: BinaryMessenger, context: Context): BasicSettingsChannel {
             val previous = installed
             val previousMessenger = installedMessenger
-            if (previous != null && previousMessenger === messenger) {
-                return previous
+            if (settingsChannelReusesInstall(previous, previousMessenger, messenger)) {
+                return previous!!
             }
             //  新 engine（Activity 重建 / 旋转）：**新建**一个通道对象装到新 messenger 上。
-            //  绝不能把旧对象迁过来——旧对象的 contextProvider 是上一个 Activity 的闭包，
-            //  迁移等于把已销毁的宿主钉在进程里（真实泄漏，不是理论风险）。
+            //  绝不能把旧对象迁过来——迁移等于把已销毁的宿主钉在进程里（真实泄漏，不是理论风险）。
             if (previous != null && previousMessenger != null) {
                 MethodChannel(previousMessenger, CHANNEL).setMethodCallHandler(null)
             }
             installed = null
             installedMessenger = null
-            //  contextProvider 必须是 Application（MainActivity 传 applicationContext）：
-            //  本通道只用得到 SharedPreferences / PackageManager / startActivity，
-            //  全都不需要 Activity。
-            val channel = BasicSettingsChannel(contextProvider)
+            //  appContext 必须是 Application：本通道只用得到 SharedPreferences /
+            //  PackageManager / startActivity，全都不需要 Activity。eager unwrap 把
+            //  「传的是 Activity」也收敛成 Application，调用点没有可捕获 Activity 的闭包。
+            val channel = BasicSettingsChannel(context.applicationContext)
             MethodChannel(messenger, CHANNEL).setMethodCallHandler(channel)
             installed = channel
             installedMessenger = messenger
@@ -78,27 +120,25 @@ class BasicSettingsChannel private constructor(
         }
 
         fun uninstall(messenger: BinaryMessenger?) {
-            if (installed == null) {
-                return
-            }
-            val owner = installedMessenger
-            //  拿不到 messenger 时什么都不做：把 handler 留在一条已经没人用的 messenger 上
-            //  是无害的，而"猜着把当前 owner 拆掉"会把还在用的通道打死（LEAF-159 SHOULD-7-1）。
-            if (messenger == null) {
-                return
-            }
             //  归属校验：旧宿主的 onDestroy 不能拆掉新宿主刚装上的通道（Activity 重建时
-            //  安装与销毁的先后顺序不保证）。只有 "要卸的 messenger 就是当前 owner" 才卸。
-            if (owner != null && owner !== messenger) {
-                return
+            //  安装与销毁的先后顺序不保证）。null/unknown 一律 fail-closed：既不清 CURRENT，
+            //  也不从单例反推授权（159 的 uninstall(null) 反例：installA;installB;
+            //  oldA.onDestroy 拿到 null engine 时曾会拆掉 B）。
+            when (settingsChannelTeardown(installed, installedMessenger, messenger)) {
+                SettingsChannelTeardown.NOT_INSTALLED -> return
+                SettingsChannelTeardown.NO_MESSENGER -> return
+                SettingsChannelTeardown.UNKNOWN_OWNER -> return
+                SettingsChannelTeardown.OTHER_OWNER -> return
+                SettingsChannelTeardown.DETACH -> {
+                    MethodChannel(messenger!!, CHANNEL).setMethodCallHandler(null)
+                    installed = null
+                    installedMessenger = null
+                }
             }
-            MethodChannel(messenger, CHANNEL).setMethodCallHandler(null)
-            installed = null
-            installedMessenger = null
         }
     }
 
-    private fun prefs() = contextProvider().getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+    private fun prefs() = appContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         try {
@@ -160,7 +200,7 @@ class BasicSettingsChannel private constructor(
     }
 
     private fun packageInfo(): Map<String, Any?> {
-        val context = contextProvider()
+        val context = appContext
         val pm = context.packageManager
         val info = pm.getPackageInfo(context.packageName, 0)
         val versionName = info.versionName ?: ""
@@ -181,7 +221,7 @@ class BasicSettingsChannel private constructor(
     }
 
     private fun openUrl(url: String): Boolean {
-        val context = contextProvider()
+        val context = appContext
         val uri = Uri.parse(url)
         val intent = Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         val resolved = context.packageManager.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY)

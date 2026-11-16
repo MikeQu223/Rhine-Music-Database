@@ -13,6 +13,7 @@ import android.window.OnBackInvokedCallback
 import android.window.OnBackInvokedDispatcher
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.BinaryMessenger
 
 import rhine.music.database.porting.BasicSettingsChannel
 import rhine.music.database.basic.BasicAudioChannel
@@ -59,6 +60,17 @@ class MainActivity : FlutterActivity() {
             null
         }
 
+    /**
+     * 本 Activity 在 configureFlutterEngine 里真实装上的 settings 通道 messenger。
+     *
+     * onDestroy 只用这份保存的身份清理，不再现取 flutterEngine?.dartExecutor?.binaryMessenger：
+     * 销毁时引擎已被 detach 时 getter 为 null，旧代码的 uninstall(null) 曾会回退到
+     * 「拆当前 owner」；即使修成 null no-op，也只是把「清不掉自己的」变成静默泄漏。
+     * 保存身份后，新宿主先装、旧宿主后销毁的乱序也不会拆到新 owner
+     * （BasicSettingsChannel.uninstall 的 messenger 归属校验会拒绝非 owner）。
+     */
+    private var installedSettingsMessenger: BinaryMessenger? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // 注册放在 super.onCreate 之后，而不是之前：Activity 恢复时 Flutter 会在
@@ -104,9 +116,12 @@ class MainActivity : FlutterActivity() {
         //  （2026-11-16 21:0x，526f6b6d）。持久化本身按用户指示改走 Flutter 官方
         //  shared_preferences（见 lib/basic/basic_settings_store.dart），这条通道只留
         //  packageInfo / openUrl 两个不属于持久化的方法。
-        BasicSettingsChannel.install(flutterEngine.dartExecutor.binaryMessenger) {
-            applicationContext
-        }
+        val settingsMessenger = flutterEngine.dartExecutor.binaryMessenger
+        installedSettingsMessenger = settingsMessenger
+        //  显式传 applicationContext；BasicSettingsChannel 构造时再 eager unwrap。
+        //  这里不再有捕获 MainActivity 的 lambda（旧写法 { applicationContext } 在字节码里
+        //  编译成 configureFlutterEngine$lambda$2(MainActivity) 并送进通道存储）。
+        BasicSettingsChannel.install(settingsMessenger, applicationContext)
         QtSceneChannel.install(flutterEngine, this)
         flutterEngine.platformViewsController.registry.registerViewFactory(
             QT_SCENE_VIEW_TYPE,
@@ -136,7 +151,8 @@ class MainActivity : FlutterActivity() {
         BasicAudioChannel.uninstall()
         // 设置通道同样是"每引擎一份"的静态 handler：不断开就会把 handler 留在旧 engine
         // 的 messenger 上（重新装只能靠 install 的迁移分支自救）。
-        BasicSettingsChannel.uninstall(flutterEngine?.dartExecutor?.binaryMessenger)
+        BasicSettingsChannel.uninstall(installedSettingsMessenger)
+        installedSettingsMessenger = null
         super.onDestroy()
     }
 
