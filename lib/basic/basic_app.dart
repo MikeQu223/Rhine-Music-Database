@@ -10,14 +10,18 @@ import '../app/orientation_state.dart';
 import '../hud/input/hit_layer.dart';
 import '../hud/input/key_router.dart'
     show
+        EngineKeyOutcome,
+        EngineKeyPorts,
+        EngineKeyRouter,
         HudAction,
+        HudKeyEvent,
         HudKeyOutcome,
         HudKeyPorts,
         HudKeyRouter,
         HudKeySnapshot,
         KeySymbol;
 import '../hud/input/text_input_overlay.dart';
-import '../hud/input/wheel_router.dart' show HudScrollOffsets;
+import '../hud/input/wheel_router.dart' show HudScrollOffsets, HudWheelConstants;
 import '../hud/modals/disc_warning_modal.dart';
 import '../hud/modals/settings_modal.dart'
     show
@@ -437,7 +441,20 @@ class _BasicShellState extends State<_BasicShell>
 
   /// NativeHud::key 的两个成员：Qt 里 settingsScroll / desktopLyricsScroll 是
   /// NativeHud 的成员变量（Qt/src/NativeHudController.cpp:891-904 就地修改），这里同形。
+  ///
+  /// settingsScroll 不另存一份真值：每次分派前从 [_settingsScroll]（真实
+  /// ScrollController 的存储）拷进来、分派后写回去，避免「键改的是死变量」。
   final HudScrollOffsets _keyScrollOffsets = HudScrollOffsets();
+
+  /// 设置卡片当前的真实可滚动距离（由 BasicSettingsWindow 排完版后公布）。
+  ///
+  /// NativeHudController.cpp:891-897 的 clamp 上界是 contentBottom - settingsViewportTop；
+  /// 这里用真实 maxScrollExtent 反推，而不是写死 1600。
+  final ValueNotifier<double> _settingsScrollMaximum = ValueNotifier<double>(0);
+
+  /// Engine.cpp:952-1012 的 keyEvent 层：媒体键 → 翻译键 → event.text → key(value)。
+  late final EngineKeyRouter _engineKeyRouter =
+      EngineKeyRouter(ports: _BasicEngineKeyPorts(this));
 
   /// NativeHud::key（Qt/src/NativeHudController.cpp:887-943）的 1:1 路由。
   ///
@@ -517,6 +534,7 @@ class _BasicShellState extends State<_BasicShell>
     _hudFocusNode.dispose();
     // 面板滚动偏移是本次运行内跨开关复用的 notifier；State 自己持有，自己负责关掉。
     _settingsScroll.dispose();
+    _settingsScrollMaximum.dispose();
     super.dispose();
   }
 
@@ -699,6 +717,7 @@ class _BasicShellState extends State<_BasicShell>
                     model: _settingsPanelModel(),
                     dark: state.dark,
                     scrollStorage: _settingsScroll,
+                    scrollMaximumStorage: _settingsScrollMaximum,
                     onAction: (String action) =>
                         unawaited(_onSettingsAction(action)),
                   ),
@@ -948,10 +967,9 @@ class _BasicShellState extends State<_BasicShell>
   void searchAccepted(String text, {required bool control}) {
     if (control) {
       // Qt 带 Control 时把回车交给键盘通路（NativeHudController.cpp:905-907 →
-      // m_music->play()，播放当前队列项）。BasicController 没有 play()，只有
-      // togglePlay()（lib/basic/siren_controller.dart:331）：拿 toggle 顶替会把
-      // “播放”变成“暂停”，所以不伪造，只留可见反馈。
-      _notice('控制键回车尚未接入：Qt 走 m_music->play()，BasicController 只有 togglePlay()');
+      // m_music->play()，播放当前队列项）。BasicController 有真实 play()
+      // （lib/basic/siren_controller.dart:965），不再用 toggle 顶替、也不再只弹提示。
+      unawaited(controller.play());
       return;
     }
     unawaited(controller.setQuery(text));
@@ -1088,21 +1106,36 @@ class _BasicShellState extends State<_BasicShell>
     if (event is KeyUpEvent) {
       return KeyEventResult.ignored;
     }
-    final String? value = basicHudKeyValue(event);
-    if (value == null) {
-      return KeyEventResult.ignored;
-    }
     final HardwareKeyboard keyboard = HardwareKeyboard.instance;
+    final EngineKeyOutcome outcome = _engineKeyRouter.keyEvent(
+      basicHudKeyEvent(
+        event,
+        command: keyboard.isControlPressed || keyboard.isMetaPressed,
+      ),
+    );
+    // Qt 把 Engine::keyEvent 的返回值直接赋给 event.accepted（Overlay.qml:118-120）；
+    // 与 consumed 不是同一个东西：frameEmpty 时 HUD 不动作但 Engine 仍返回 true。
+    return outcome.accepted ? KeyEventResult.handled : KeyEventResult.ignored;
+  }
+
+  /// NativeHud::key(...)：Qt 里 settingsScroll / desktopLyricsScroll 是 NativeHud
+  /// 的成员变量，本外壳把 settingsScroll 换成真实滚动存储的读-改-写。
+  HudKeyOutcome _dispatchHudKey(String value, bool command) {
+    _keyScrollOffsets.settingsScroll = _settingsScroll.value;
     final HudKeyOutcome outcome = _keyRouter.key(
       _hudKeySnapshot(),
       _keyScrollOffsets,
       value: value,
-      command: keyboard.isControlPressed || keyboard.isMetaPressed,
+      command: command,
     );
+    if (outcome.region == 'settings') {
+      // 步进被 clamp 在真实 maxScrollExtent 上，再写回面板的滚动存储（面板 jumpTo）。
+      _settingsScroll.value = _keyScrollOffsets.settingsScroll;
+    }
     if (outcome.region == 'settings' || outcome.region == 'desktop-lyrics') {
       setState(() {});
     }
-    return outcome.consumed ? KeyEventResult.handled : KeyEventResult.ignored;
+    return outcome;
   }
 
   /// NativeHud 的状态投影。基础外壳没有 3D viewer 键域（viewer 键盘归 Qt 场景），
@@ -1115,7 +1148,15 @@ class _BasicShellState extends State<_BasicShell>
       modal: _modal,
       closing: false,
       viewer: false,
-      settingsContentBottom: 0,
+      // NativeHudController.cpp:891-897 把 contentBottom - settingsViewportTop 当作
+      // 「内容高度」再减视口高求上界，所以这里按同一算法反推：
+      // contentBottom = viewportTop + 真实内容高（= maxScrollExtent + 视口高）。
+      settingsContentBottom: _settingsScrollMaximum.value > 0
+          ? HudWheelConstants.settingsViewportTop +
+              _settingsScrollMaximum.value +
+              (HudWheelConstants.settingsViewportBottom -
+                  HudWheelConstants.settingsViewportTop)
+          : 1600.0,
       desktopLyricsContentBottom: 0,
     );
   }
@@ -1171,7 +1212,8 @@ class _BasicShellState extends State<_BasicShell>
       if (detailSong != null) {
         unawaited(controller.openSong(detailSong));
       } else {
-        unawaited(controller.togglePlay());
+        // Qt NativeHudController.cpp:905-907 的 m_music->play()：播放，不是暂停开关。
+        unawaited(controller.play());
       }
       return null;
     }
@@ -1463,9 +1505,34 @@ class _BasicHudKeyPorts implements HudKeyPorts {
   void togglePlayer() => unawaited(_app.controller.togglePlay());
 }
 
-/// Engine.cpp:974-995 的键名翻译（生产入口：Focus.onKeyEvent → HudKeyRouter）；'/' 与空格由 `event.text` 直接透传（:999-1001）。
-String? basicHudKeyValue(KeyEvent event) {
-  final LogicalKeyboardKey key = event.logicalKey;
+/// 桥接层：Flutter 的 KeyEvent → Qt 的 (key, modifiers, text) 三元组。
+///
+/// Engine.cpp:952-1012 的判定顺序（媒体键 → 7 个翻译键 → event.text → 空则不接受）
+/// 全部在 [EngineKeyRouter] 里，这里只负责把 Flutter 的键码翻成 [KeySymbol]，
+/// 并把 `event.character` 当作 QKeyEvent::text()——翻译表因此只有一份真值。
+HudKeyEvent basicHudKeyEvent(KeyEvent event, {bool command = false}) {
+  final String? symbol = basicHudKeySymbol(event.logicalKey);
+  String text = '';
+  if (event is KeyDownEvent || event is KeyRepeatEvent) {
+    text = event.character ?? '';
+  }
+  if (text.isEmpty && symbol == KeySymbol.space) {
+    // Qt 里空格 key 与 text 都是 " "；某些平台键事件不带 character。
+    text = KeySymbol.space;
+  }
+  return HudKeyEvent(
+    symbol: symbol ?? '',
+    key: event.logicalKey.keyId,
+    text: text,
+    command: command,
+  );
+}
+
+/// Flutter 平台键 → Qt::Key 语义名（Engine.cpp:963-995 的翻译输入）。
+///
+/// 媒体键五枚（Engine.cpp:963-973）与七个被翻译的键（:974-995）；其余返回 null，
+/// 由 `event.text` 决定（空格与 "/" 就属于这一类）。
+String? basicHudKeySymbol(LogicalKeyboardKey key) {
   if (key == LogicalKeyboardKey.arrowLeft) {
     return KeySymbol.arrowLeft;
   }
@@ -1490,8 +1557,38 @@ String? basicHudKeyValue(KeyEvent event) {
   if (key == LogicalKeyboardKey.space) {
     return KeySymbol.space;
   }
-  if (event is KeyDownEvent && event.character == KeySymbol.slash) {
-    return KeySymbol.slash;
+  if (key == LogicalKeyboardKey.mediaPlayPause) {
+    return KeySymbol.mediaTogglePlayPause;
+  }
+  if (key == LogicalKeyboardKey.mediaPlay) {
+    return KeySymbol.mediaPlay;
+  }
+  if (key == LogicalKeyboardKey.mediaPause) {
+    return KeySymbol.mediaPause;
+  }
+  if (key == LogicalKeyboardKey.mediaTrackNext) {
+    return KeySymbol.mediaNext;
+  }
+  if (key == LogicalKeyboardKey.mediaTrackPrevious) {
+    return KeySymbol.mediaPrevious;
   }
   return null;
+}
+
+/// [EngineKeyPorts] 的本外壳实现：三处端口都落到唯一的产品动作链
+/// （_onAction / _dispatchHudKey / controller.setQuery），不新增第二条路径。
+class _BasicEngineKeyPorts implements EngineKeyPorts {
+  _BasicEngineKeyPorts(this._app);
+
+  final _BasicShellState _app;
+
+  @override
+  void action(String action) => _app._onAction(action);
+
+  @override
+  void key(String value, bool command) =>
+      _app._dispatchHudKey(value, command);
+
+  @override
+  void query(String text) => unawaited(_app.controller.setQuery(text));
 }

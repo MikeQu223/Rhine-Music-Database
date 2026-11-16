@@ -71,6 +71,7 @@ class _TrackingController extends BasicController {
   int disposeCalls = 0;
   int nextCalls = 0;
   int toggleCalls = 0;
+  int playCalls = 0;
   int lyricsOpens = 0;
   int libraryOpens = 0;
   int allSirenOpens = 0;
@@ -151,6 +152,13 @@ class _TrackingController extends BasicController {
   @override
   Future<void> openAlbum(SirenAlbum album) async {
     openedAlbums.add(album.id);
+  }
+
+  /// 控制键回车走 NativeHudController.cpp:905-907 的 m_music->play()：
+  /// 真实 controller.play()（幂等，已播不暂停），不是 toggle。
+  @override
+  Future<void> play() async {
+    playCalls += 1;
   }
 
   @override
@@ -709,7 +717,7 @@ void main() {
       await tester.pumpWidget(const SizedBox());
     });
 
-    testWidgets('control+return is surfaced instead of faking m_music->play()',
+    testWidgets('control+return 走真实 play()（幂等），不落成 toggle 也不落成检索',
         (WidgetTester tester) async {
       final _TrackingController controller = await pumpShell(tester);
 
@@ -725,9 +733,11 @@ void main() {
       await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
       await tester.pump();
 
-      // Qt 这条分支是 m_music->play()（NativeHudController.cpp:905-907），
-      // BasicController 只有 togglePlay()：不伪造播放/暂停，只留可见反馈。
-      expect(find.textContaining('控制键回车尚未接入'), findsOneWidget);
+      // Qt 这条分支是 m_music->play()（NativeHudController.cpp:905-907）。161 把
+      // 「只有 togglePlay」的判断撤回：siren_controller.dart:965 的 play() 是幂等
+      // 播放（已在播就不动，绝不变成暂停），就是这条分支的真实对应物。
+      expect(find.textContaining('控制键回车尚未接入'), findsNothing);
+      expect(controller.playCalls, 1);
       expect(controller.toggleCalls, 0);
       expect(controller.queries, <String>['摩天轮']);
 
@@ -880,7 +890,8 @@ void main() {
       expect(controller.openedSongs, <String>['s1', 's1']);
       expect(controller.toggleCalls, 0);
 
-      // 没有当前曲目时退化为播放条语义的 toggle（仍只走唯一 controller）。
+      // 没有当前曲目时走 controller.play()（NativeHudController.cpp:905-907 的
+      // m_music->play()；161 撤回了「用 toggle 顶替」的旧实现），仍只走唯一 controller。
       controller.stateOverride = BasicViewState(
         phase: BasicPhase.detail,
         album: _album(),
@@ -890,7 +901,8 @@ void main() {
       await tester.pump();
       fire(tester, 'music:play');
       await tester.pump();
-      expect(controller.toggleCalls, 1);
+      expect(controller.playCalls, 1);
+      expect(controller.toggleCalls, 0);
 
       // 歌词行点击 'player:lyric-line:1'：按真实时间轴换算进度（90s / 180s = 0.5）。
       controller.stateOverride = BasicViewState(
