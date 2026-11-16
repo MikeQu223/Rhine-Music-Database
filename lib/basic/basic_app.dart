@@ -728,11 +728,9 @@ class _BasicShellState extends State<_BasicShell>
         aaScale: _settings.aaScalePercent,
         msaa: _settings.msaaSamples,
         supersample: _settings.supersampleFactor,
-        // FSR：面板存的是原始字符串，渲染器只认 5 个档位 + 0..100 的锐化
-        // （Qt/src/render/ScenePostProcess.cpp:68-84 与 :15-20），所以这里先归一，
-        // 让"面板显示的值"和"Qt 真正拿到的值"是同一个词，而不是靠 Qt 再猜一次。
-        fsrQuality: BasicSceneSettings.normalizeFsrQuality(_settings.fsrQuality),
-        fsrSharpness: BasicSceneSettings.normalizeFsrSharpness(_settings.fsrSharpness),
+        // FSR（fsr-quality / fsr-sharpness）按用户 m03406 暂缓：持久化契约里仍有这两项
+        // （basic_settings.dart 的 antiAliasing 细项），但本阶段既不出档位 UI，也不把
+        // 它们塞进场景快照/不 qputenv，渲染器继续按自己的缺省（native / 50）走。
       );
 
   /// 设置面板滚动偏移（跨越开关面板保持；由 BasicSettingsWindow 写回）。

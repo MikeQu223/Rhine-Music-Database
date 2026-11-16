@@ -18,7 +18,6 @@
 #include <QQuickWindow>
 #include <QDateTime>
 #include <QTimer>
-#include <algorithm>
 #include <cmath>
 #include <limits>
 
@@ -544,41 +543,14 @@ void applySceneState(const QString &json, const ProducerOrigin &origin)
         writeNextLaunch("aaScale", "aa-scale");
         writeNextLaunch("msaa", "msaa");
         writeNextLaunch("supersample", "supersample");
-        // FSR 档位/锐化与上面几个"下次启动才生效"的项不同：渲染器**每帧**读这两个环境变量
-        // （Qt/src/render/ScenePostProcess.cpp:15-20 sharpness()、:68-84 renderSize()），
-        // 所以除了落进 QSettings（Qt/src/main.cpp:755-763 下次启动读同一份），还要像
-        // NativeHudController.cpp:781-800 那样当场 qputenv —— 否则面板换了、画面没换，就是假开关。
-        // 归一/夹取与渲染器口径逐字一致：未知档位不写（ScenePostProcess.cpp:69-84 对未知值的行为
-        // 是 divisor=1.0，即原生渲染），锐化夹到 0..100（sharpness() 的 qBound）。
-        int appliedFsrSharpness = -1;
-        QString appliedFsrQuality;
-        if (settings.contains(QLatin1String("fsrQuality"))) {
-            const QString quality = settings.value(QLatin1String("fsrQuality")).toString();
-            if (quality == "super" || quality == "performance" || quality == "balanced" ||
-                quality == "quality" || quality == "native") {
-                appliedFsrQuality = quality;
-                engine->host.setPreference(QStringLiteral("fsr-quality"), quality);
-                qputenv("RHINE_FSR_QUALITY", quality.toUtf8());
-            }
-        }
-        if (settings.contains(QLatin1String("fsrSharpness"))) {
-            bool valid = false;
-            const int percent = settings.value(QLatin1String("fsrSharpness")).toVariant().toInt(&valid);
-            if (valid) {
-                appliedFsrSharpness = std::clamp(percent, 0, 100);
-                engine->host.setPreference(QStringLiteral("fsr-sharpness"),
-                                           QString::number(appliedFsrSharpness));
-                qputenv("RHINE_FSR_SHARPNESS", QByteArray::number(appliedFsrSharpness));
-            }
-        }
-        qInfo("RHINE_QT_SCENE_SETTINGS disc=%d mask=%d vsync=%s scale=%d backend=%s aa=%s/%d msaa=%d ss=%d "
-              "fsr=%s/%d",
+        // FSR 档位/锐化：用户 m03406 暂缓，本阶段不接。快照里即使出现 fsrQuality /
+        // fsrSharpness 也不写偏好、不 qputenv，渲染器继续走 ScenePostProcess.cpp
+        // 自己的缺省（未知档位=1.0 倍，锐化 50）。
+        qInfo("RHINE_QT_SCENE_SETTINGS disc=%d mask=%d vsync=%s scale=%d backend=%s aa=%s/%d msaa=%d ss=%d",
               int(disc), mask, qPrintable(settings.value("vsync").toString()),
               settings.value("renderScale").toInt(75), qPrintable(settings.value("backend").toString()),
               qPrintable(settings.value("aa").toString()), settings.value("aaScale").toInt(125),
-              settings.value("msaa").toInt(0), settings.value("supersample").toInt(1),
-              qPrintable(appliedFsrQuality.isEmpty() ? QStringLiteral("(unset)") : appliedFsrQuality),
-              appliedFsrSharpness);
+              settings.value("msaa").toInt(0), settings.value("supersample").toInt(1));
         applied = true;
     }
 

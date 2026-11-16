@@ -269,8 +269,6 @@ class BasicSceneSettings {
     this.aaScale = 125,
     this.msaa = 0,
     this.supersample = 1,
-    this.fsrQuality = 'native',
-    this.fsrSharpness = 50,
   });
 
   final bool discRotation;
@@ -282,43 +280,6 @@ class BasicSceneSettings {
   final int aaScale;
   final int msaa;
   final int supersample;
-
-  /// FSR 画质档（[fsrQualities] 之一）。语义与渲染器逐字一致：
-  /// Qt/src/render/ScenePostProcess.cpp:68-84 只认 super/performance/balanced/quality，
-  /// 其它任何值（含未设置）都按 1.0 倍=原生渲染，也就是 `native`。
-  final String fsrQuality;
-
-  /// FSR 锐化百分比 0..100（Qt/src/render/ScenePostProcess.cpp:15-20 的 `sharpness()`）：
-  /// 未设置时 Qt 自己的默认值是 50，所以这里的默认值必须是 50 而不是 0。
-  final int fsrSharpness;
-
-  /// 设置面板的 FSR 档位（settings_modal.dart:2436-2442 settingsFsrChoices 逐条）。
-  static const List<String> fsrQualities = <String>[
-    'native',
-    'quality',
-    'balanced',
-    'performance',
-    'super',
-  ];
-
-  static const String defaultFsrQuality = 'native';
-  static const int defaultFsrSharpness = 50;
-
-  /// 把持久化里的原始字符串归一成渲染器真正认识的档位：未知/空一律 `native`
-  /// （渲染器对未知值的行为就是 1.0 倍，这里不另外发明一个"大概"）。
-  static String normalizeFsrQuality(String raw) {
-    final String value = raw.trim().toLowerCase();
-    return fsrQualities.contains(value) ? value : defaultFsrQuality;
-  }
-
-  /// 把持久化里的原始字符串归一成 0..100 的整数：空/非数字给 50（Qt 默认），越界夹取。
-  static int normalizeFsrSharpness(String raw) {
-    final int? parsed = int.tryParse(raw.trim());
-    if (parsed == null) {
-      return defaultFsrSharpness;
-    }
-    return parsed.clamp(0, 100);
-  }
 
   static const BasicSceneSettings fallback = BasicSceneSettings();
 
@@ -332,8 +293,6 @@ class BasicSceneSettings {
         'aaScale': aaScale,
         'msaa': msaa,
         'supersample': supersample,
-        'fsrQuality': fsrQuality,
-        'fsrSharpness': fsrSharpness,
       };
 
   @override
@@ -347,14 +306,11 @@ class BasicSceneSettings {
       other.aaMode == aaMode &&
       other.aaScale == aaScale &&
       other.msaa == msaa &&
-      other.supersample == supersample &&
-      other.fsrQuality == fsrQuality &&
-      other.fsrSharpness == fsrSharpness;
+      other.supersample == supersample;
 
   @override
   int get hashCode => Object.hash(discRotation, archiveMaskStrength, vsync,
-      renderScale, graphicsBackend, aaMode, aaScale, msaa, supersample,
-      fsrQuality, fsrSharpness);
+      renderScale, graphicsBackend, aaMode, aaScale, msaa, supersample);
 }
 
 String qtSceneStateSnapshot(
