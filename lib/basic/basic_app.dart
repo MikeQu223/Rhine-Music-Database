@@ -1492,8 +1492,11 @@ class _BasicHudKeyPorts implements HudKeyPorts {
 
   final _BasicShellState _app;
 
+  /// Qt 的两条 Ctrl+Enter 入口完全同路（NativeHudController.cpp:905-907 与
+  /// Overlay 键盘都是 key("Enter", true) → m_music->play()），所以这里也不绕
+  /// _route('music:play')：那条详情按钮语义会 openSong(选中曲)，键盘不该借它。
   @override
-  void play() => _app._onAction('music:play');
+  void play() => unawaited(_app.controller.play());
 
   @override
   void viewerKey(String value) => _app._onAction('viewer:' + value);
