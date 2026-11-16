@@ -281,11 +281,21 @@ void applySceneState(const QString &json)
     // index 是 Flutter 列表行号，Qt 侧用 fileLocation(index) 落到本列的真实行
     // （cell{ lane, 12+row }）。40 只是占位素材的槽位数，不是曲目域：塞壬有 936 首，
     // 早先的 `index < 40` gate 会让第 41 行之后的选中整条丢掉。
+    // 手势进行中（手指按着、或 3D 惯性还在滑）时，Flutter 发来的 index/pos 是本轮拖动的
+    // **回声**：把它回灌给 scene.select() 会走 !m_navigating 分支 -> resetPointer() 直接把
+    // 捕获打断，用户表现为"按着拖一下就没反应了"（真机日志：RHINE_QT_RESET why=select
+    // captured=1 browsing=1 出现在拖动中途）。所以手势期间只记数值，动画由 NativeScene
+    // 自己驱动；松手 commit 之后再来的一帧才是权威位置。
+    const bool gestureDriving = g_scrollTracking;
     const int index = payload.value("index").toInt(-1);
     if (index >= 0 && index != g_appliedIndex) {
-        g_appliedIndex = index;
-        scene.select(index);
-        applied = true;
+        if (gestureDriving) {
+            g_appliedIndex = index;
+        } else {
+            g_appliedIndex = index;
+            scene.select(index);
+            applied = true;
+        }
     }
 
     // 连续窗口投影（列表 → 3D）：拖动中途也会来，所以这里不做"松手才动"的判断。
@@ -295,7 +305,8 @@ void applySceneState(const QString &json)
     if (!std::isnan(pos) && (std::abs(pos - g_appliedPos) > 1e-4 || lane != g_appliedLane)) {
         g_appliedPos = pos;
         g_appliedLane = lane;
-        if (!scrollEcho(pos)) {
+        // 只在档案页投影：详情/歌词页的镜头由 setMode 自己的过渡管，外部窗口不该插手。
+        if (scene.mode() == QLatin1String("archive") && !scrollEcho(pos) && !gestureDriving) {
             scene.projectArchiveScroll(pos, lane);
             applied = true;
         }
@@ -558,6 +569,10 @@ Java_org_qtproject_qt_android_RhineQtViews_nativePushScenePointer(
             Engine *engine = RhineEmbedded::engine();
             if (!engine)
                 return;
+            // 只有归档页的"浏览拖动"才是共享窗口的输入；详情页拖动是旋转唱片，属于
+            // 场景内部姿态，绝不能把它当成滚动量发给 Flutter（真机实测：详情页里拖一下
+            // 会算出上百行的位移，列表直接被甩飞）。
+            const bool browsing = engine->scene.mode() == QLatin1String("archive");
             const double before = engine->scene.archiveTrackItem();
             const int previousSelection = engine->scene.selection();
             // 选中身份回传要**在手势之前**取格：pointerup 之后 NativeScene 会 resetPointer
@@ -569,13 +584,16 @@ Java_org_qtproject_qt_android_RhineQtViews_nativePushScenePointer(
             // 不清 mode/dark——见 resetSelectionState() 的注释。
             if (eventType == QLatin1String("pointerdown")) {
                 RhineEmbedded::resetSelectionState();
-                g_scrollTracking = true;
+                g_scrollTracking = browsing;
                 g_scrollOrigin = before;
-                RhineEmbedded::emitScroll("start", 0.0);
+                g_scrollRef = before;
+                if (browsing) {
+                    RhineEmbedded::emitScroll("start", 0.0);
+                }
             }
             engine->pointer(eventType, sx, sy);
             const double after = engine->scene.archiveTrackItem();
-            if (eventType == QLatin1String("pointermove") && g_scrollTracking) {
+            if (eventType == QLatin1String("pointermove") && g_scrollTracking && browsing) {
                 if (std::abs(after - g_scrollRef) > 1e-3) {
                     g_scrollRef = after;
                     RhineEmbedded::emitScroll("move", after - g_scrollOrigin);
@@ -618,6 +636,11 @@ Java_org_qtproject_qt_android_RhineQtViews_nativePushSceneWheel(
             if (!engine)
                 return;
             // 滚轮是离散一跳：一次 start + commit 就够，不需要拖动那样的连续帧。
+            // 详情页的滚轮不是共享窗口输入（那里是旋转/放大唱片），只驱动场景本身。
+            if (engine->scene.mode() != QLatin1String("archive")) {
+                engine->wheelInput(sx, sy, sd, 0);
+                return;
+            }
             const double before = engine->scene.archiveTrackItem();
             g_scrollOrigin = before;
             g_scrollTracking = true;

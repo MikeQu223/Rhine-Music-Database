@@ -453,9 +453,23 @@ void Engine::sceneConsumed() {
 void Engine::wake(bool input) {
     wake(input ? WakeSource::Input : WakeSource::Other);
 }
+QImage Engine::coverImageOf(const QString &url) const {
+    if (url.isEmpty()) {
+        return QImage();
+    }
+    if (QImage direct = host.image(url); !direct.isNull()) {
+        return direct;
+    }
+    const auto resolved = m_coverKeys.constFind(url);
+    if (resolved == m_coverKeys.constEnd()) {
+        return QImage();
+    }
+    return host.image(*resolved);
+}
+
 void Engine::prefetchCover(const QString &url) {
     // 选中身份切换后旧请求没有意义；已请求过、或缓存里已有像素就不再重复。
-    if (url.isEmpty() || !host.image(url).isNull() || m_coverRequests.contains(url)) {
+    if (url.isEmpty() || !coverImageOf(url).isNull() || m_coverRequests.contains(url)) {
         return;
     }
     m_coverRequests.insert(url);
@@ -482,6 +496,11 @@ void Engine::prefetchCover(const QString &url) {
                 return;
             }
             qInfo("RHINE_QT_COVER_READY %dx%d", pixels.width(), pixels.height());
+            // 记住解析后的缓存键，之后每帧都靠它取像素（有界：见下面的淘汰）。
+            m_coverKeys.insert(url, loaded);
+            while (m_coverKeys.size() > 96) {
+                m_coverKeys.erase(m_coverKeys.begin());
+            }
             m_coverImage = pixels;
             m_coverRefresh = true;
             // 醒来一帧：m_coverRefresh 只在 step() 里被消费，而 step() 可能正被 pacing Skip
@@ -1308,7 +1327,7 @@ void Engine::step(double time) {
     m_current = current;
     m_cover = object["cover"].toString();
     // 图片缓存只在 GUI 线程读取，渲染线程通过 cover() 拿这份副本。
-    m_coverImage = host.image(m_cover);
+    m_coverImage = coverImageOf(m_cover);
     // Host::image() 只是**缓存查找**：缓存键是 loadCover 给 URL 补上 `param=NyN` 之后的
     // 字符串，拿原始地址去查必然 miss（132R 真机上"详情页没有封面"就是这个）。所以 miss
     // 时主动 loadCover，并用**回调返回的键**取图 —— 那才是缓存里真正的键。

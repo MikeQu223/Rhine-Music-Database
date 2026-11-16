@@ -74,8 +74,10 @@ void NativeScene::projectArchiveScroll(double item, int lane) {
     // 只摆位置、速度归零：这是"外部窗口真值"的一次投影，不是用户手势的第二份惯性。
     m_rail = SceneMotion::Spring{railZ, 0};
     m_columnCamera = SceneMotion::Spring{(clampedLane - 2) * 5.2, 0};
-    m_targetDetail = 0;
-    m_hover.reset();
+    // 注意：这里**不能**碰 m_targetDetail / m_detail。档案页的窗口投影与"是否进入详情"
+    // 是两条独立的真值：detail 由 Flutter 的 mode 决定（setMode），投影只负责归档轨道
+    // 的位置。早期实现顺手把 m_targetDetail 清零，结果每次 state 推送都把刚打开的详情
+    // 拉回档案页 —— 详情盘面永远不出现，封面自然也就"一直不加载"。
     m_lastInteraction = m_clock;
     m_changed = true;
 }

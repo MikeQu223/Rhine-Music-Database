@@ -122,6 +122,9 @@ void NativeScene::moveArchive(double x, double y) {
     }
     if (pending) {
         m_startTrack = {m_columnCamera.value, m_rail.value};
+        {
+            const auto projection = dragProjection();
+        }
     }
     m_hover.reset();
     m_lastInteraction = m_clock;
