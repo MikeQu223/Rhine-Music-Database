@@ -228,6 +228,17 @@ npm run preview   # QML 实时预览（需对应 Qt 工具）
 
 登录为可选功能。应用不读取浏览器或官方客户端的登录信息。
 
+## Star History
+
+<a href="https://www.star-history.com/?repos=mikequ223%2Frhine-music-database&type=date&legend=top-left">
+
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=mikequ223/rhine-music-database&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=mikequ223/rhine-music-database&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=mikequ223/rhine-music-database&type=date&legend=top-left" />
+ </picture>
+</a>
+
 ## 参考项目
 
 - **[LBEILC / RhineLabUI](https://github.com/LBEILC/RhineLabUI)**：特别感谢原界面、模型与场景作者，版权声明随项目保留。
