@@ -189,6 +189,9 @@ class NativeScene {
     std::optional<SceneMotion::DragPosition> m_dragTrack;
     SceneMotion::DragPosition m_startTrack;
     std::optional<SceneMotion::ArchivePlaneMomentum> m_momentum;
+    // 外部窗口（Flutter 列表真值）刚投影过的时间戳；有效期内不要再把轨道
+    // damp 回选中卡，否则"列表推到第 300 行、3D 停在选中行"（MUST-2）。
+    double m_externalUntil = -1;
     double m_momentumTime = 0;
     void update(double time, std::optional<Cinema> cinema);
     void updateCamera(double seconds, std::optional<Cinema> cinema);

@@ -14,6 +14,8 @@ void NativeScene::resetPointer(bool stopMomentum) {
     m_holding = false;
     m_browsing = false;
     m_hover.reset();
+    // 手势接管：外部窗口立刻让位给真实的拖动/惯性速度。
+    m_externalUntil = -1;
     if (stopMomentum && m_momentum) {
         m_columnCamera.velocity = 0;
         m_rail.velocity = 0;
