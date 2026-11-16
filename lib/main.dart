@@ -52,10 +52,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'basic/basic_app.dart';
+import 'platform/media_session.dart';
 
 void main() {
   // runApp 自己会 ensureInitialized，但下面的 SystemChrome 调用需要 ServicesBinding。
   WidgetsFlutterBinding.ensureInitialized();
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-  runApp(const BasicApp());
+  runApp(BasicApp(mediaSessionPort: MethodChannelMediaSession()));
 }

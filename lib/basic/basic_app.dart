@@ -12,6 +12,7 @@ import '../hud/input/text_input_overlay.dart';
 import '../hud/player/player_bar.dart' show playerBarHeaderHeight, playerBarRowHeight;
 import '../hud/protocol/hud_frame.dart';
 import '../ui/layout/portrait_stage.dart';
+import '../platform/media_session.dart';
 import 'basic_hud.dart';
 import 'basic_hud_resources.dart';
 import 'basic_models.dart';
@@ -95,6 +96,7 @@ class BasicApp extends StatefulWidget {
     this.audio,
     this.gate,
     this.bundle,
+    this.mediaSessionPort,
   });
 
   /// 外部注入的 controller；注入方持有所有权（本 widget 不 dispose）。
@@ -113,6 +115,10 @@ class BasicApp extends StatefulWidget {
 
   /// 字形资源包；只有测试/离线预览需要注入，生产用 rootBundle。
   final AssetBundle? bundle;
+
+  /// 系统媒体控件端口（通知/锁屏/蓝牙）。只有自己创建 controller 时才使用；
+  /// 不注入就没有这层（桌面预览、widget 测试一律不碰平台通道）。
+  final MediaSessionPort? mediaSessionPort;
 
   @override
   State<BasicApp> createState() => _BasicAppState();
@@ -146,7 +152,8 @@ class _BasicAppState extends State<BasicApp> {
     _ownsAudio = widget.audio == null;
     _ownsController = widget.controller == null;
     _audio = widget.audio ?? MethodChannelBasicAudio();
-    _controller = widget.controller ?? BasicController(audio: _audio);
+    _controller = widget.controller ??
+        BasicController(audio: _audio, mediaSessionPort: widget.mediaSessionPort);
     // 3D 场景的连续滚动回执（拖动/惯性/滚轮）落到同一个 controller 窗口真值上：
     // 方向 B（3D → 列表/ruler）因此不依赖 HUD 是否接了 onScroll 参数。
     QtSceneScrollRouter.instance.handler = _sceneScrollHandler;
