@@ -1,3 +1,7 @@
+// LEAF-159 review MUST-2(c)：本文件量的是**画家几何数学**（lib/basic/basic_settings_surface.dart，产品里已不再挂载），不是 Flutter 真控件设置页的
+// 交互证据。真控件验收（点击/滚动/返回/落盘/旋转）在 test/basic/basic_settings_wiring_test.dart。
+// 文件保留是为了继续守住这些共享布局常量的数值，禁止把它算成 GUI PASS。
+
 // SETTINGS-148 · ONLY14 设置页真值链回归（真实持久化 + 真实命令 + 真实命中裁剪）。
 //
 // 用户 2026-11-16（m01988）确认"输入法不避让、只要 14 项设置"，并明确要求

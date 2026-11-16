@@ -6,7 +6,7 @@
 // 交付方（FINAL-VERIFY-154）在真机上执行：
 //
 //   flutter test test/basic/user_scope_152_test.dart
-//   flutter test test/basic/basic_settings_145_test.dart
+//   flutter test test/basic/basic_settings_painter_math_145_test.dart
 //   flutter test test/basic/basic_media_146_test.dart
 //   flutter test test/basic/library_scroll_sync_141_test.dart
 //

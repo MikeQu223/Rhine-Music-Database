@@ -13,6 +13,11 @@ import 'package:rhine_music_database/basic/basic_settings_view.dart';
 import 'package:rhine_music_database/basic/basic_settings_window.dart';
 import 'package:rhine_music_database/basic/platform_playback.dart';
 import 'package:rhine_music_database/basic/siren_controller.dart';
+import 'package:rhine_music_database/hud/modals/disc_warning_modal.dart';
+import 'package:rhine_music_database/hud/modals/modal_shell.dart';
+import 'package:rhine_music_database/hud/modals/settings_modal.dart';
+import 'package:rhine_music_database/hud/protocol/hud_hit.dart';
+import 'package:rhine_music_database/hud/widgets/settings_row.dart';
 
 /// 播放端口替身：只记录 dispose，播放方法全部是空操作。
 class _FakeAudio implements BasicAudioPort {
@@ -94,6 +99,7 @@ Future<({_ShellController controller, MemoryBasicSettingsPort port})> pumpShell(
   WidgetTester tester, {
   Map<String, String> values = const <String, String>{},
   BasicSettingsPackageInfo package = BasicSettingsPackageInfo.unknown,
+  bool failWrites = false,
 }) async {
   tester.view.physicalSize = const Size(1920, 1080);
   tester.view.devicePixelRatio = 1;
@@ -101,8 +107,11 @@ Future<({_ShellController controller, MemoryBasicSettingsPort port})> pumpShell(
 
   final _FakeAudio audio = _FakeAudio();
   final _ShellController controller = _ShellController(audio: audio);
-  final MemoryBasicSettingsPort port =
-      MemoryBasicSettingsPort(values: values, package: package);
+  final MemoryBasicSettingsPort port = MemoryBasicSettingsPort(
+    values: values,
+    package: package,
+    failWrites: failWrites,
+  );
   await tester.pumpWidget(BasicApp(
     controller: controller,
     audio: audio,
@@ -116,13 +125,7 @@ Future<({_ShellController controller, MemoryBasicSettingsPort port})> pumpShell(
 }
 
 /// 走 HUD 的命中串打开设置页（chrome.dart:171 的真实命中就是 'settings'）。
-///
-/// m03428：设置窗口现在是真实 Flutter widget 层（BasicSettingsWindow），
-/// 不再有 HUD 命中画布；这里返回窗口 widget 本身，行为断言仍走产品里那条
-/// 唯一的 action 入口（BasicApp._onSettingsAction）。
-Future<BasicSettingsWindow> openSettings(
-  WidgetTester tester,
-) async {
+Future<BasicSettingsWindow> openSettings(WidgetTester tester) async {
   tester.widget<BasicHudSurface>(find.byType(BasicHudSurface)).onAction('settings');
   await tester.pump();
   final Finder window = find.byType(BasicSettingsWindow);
@@ -130,23 +133,83 @@ Future<BasicSettingsWindow> openSettings(
   return tester.widget<BasicSettingsWindow>(window);
 }
 
-Future<void> act(
+// ---------------------------------------------------------------------------
+// LEAF-159 MUST-2：这里所有交互都点**真实控件**（InkWell / GestureDetector /
+/// Semantic 命中的真实 Rect），不再把动作串直接塞进 onAction 回调。
+// ---------------------------------------------------------------------------
+
+Finder rowControl(String id) =>
+    find.byKey(ValueKey<String>(basicSettingsControlKey(id)));
+
+Future<void> settle(WidgetTester tester) async {
+  await tester.pump();
+  await tester.pump();
+}
+
+/// 把控件滚进视口再点它（面板是真实 SingleChildScrollView，视口外的控件点不到）。
+Future<void> tapVisible(
   WidgetTester tester,
-  BasicSettingsWindow window,
-  String action,
+  Finder target, {
+  required String what,
+}) async {
+  expect(target, findsOneWidget, reason: what);
+  await tester.ensureVisible(target);
+  await settle(tester);
+  await tester.tap(target);
+  await settle(tester);
+}
+
+/// 点开一行；如果是 choice 行，展开后再点指定的那个真实选项控件。
+/// 返回是否真的点到了展开出来的选项（false = 这一次点击本身就是动作）。
+Future<bool> activate(
+  WidgetTester tester,
+  String id,
+  String? value,
 ) async {
-  window.onAction(action);
-  await tester.pump();
-  await tester.pump();
+  await tapVisible(tester, rowControl(id), what: '设置行 $id 的控件');
+  if (value == null) {
+    return false;
+  }
+  final Finder option = rowControl('$id-$value');
+  if (option.evaluate().isEmpty) {
+    return false;
+  }
+  await tapVisible(tester, option, what: '设置行 $id 的选项 $value');
+  return true;
+}
+
+/// stepper：点轨道上某一档的真实命中区块（每档都是独立的 GestureDetector）。
+Future<void> setStep(WidgetTester tester, String id, int value) async {
+  await tapVisible(
+    tester,
+    find.byKey(ValueKey<String>('settings-notch-$id-$value')),
+    what: 'stepper $id 的档位 $value',
+  );
+}
+
+/// 唱片旋转风险弹层是 HUD 命中矩形（与 Qt 同一张表）：按真实命中 Rect 点它。
+Future<void> tapWarning(WidgetTester tester, String action) async {
+  final BasicDiscWarningOverlay overlay =
+      tester.widget<BasicDiscWarningOverlay>(find.byType(BasicDiscWarningOverlay));
+  final BasicSettingsSink sink = BasicSettingsSink();
+  final ModalShellResult shell =
+      DiscWarningModal(width: overlay.stage.width, dark: overlay.dark)
+          .build(sink, overlay.ports);
+  final HudHit hit = shell.hits.lastWhere((HudHit h) => h.action == action);
+  final Rect rect = tester.getRect(find.byType(BasicDiscWarningOverlay));
+  final double scale = overlay.stage.scale > 0 ? overlay.stage.scale : 1.0;
+  await tester.tapAt(rect.topLeft +
+      Offset((hit.x + hit.width / 2) * scale, (hit.y + hit.height / 2) * scale));
+  await settle(tester);
 }
 
 void main() {
   testWidgets('gear opens the ONLY14 panel with real rows and no rejected settings',
       (WidgetTester tester) async {
     await pumpShell(tester);
-    final BasicSettingsWindow overlay = await openSettings(tester);
+    final BasicSettingsWindow window = await openSettings(tester);
 
-    final List<String> ids = overlay.model.rowIds;
+    final List<String> ids = window.model.rowIds;
     // 14 项都在（展开子行前就是这 14 个顶层行/分组）。
     expect(ids, contains('theme'));
     expect(ids, contains('startup-animation'));
@@ -159,7 +222,24 @@ void main() {
     expect(ids, contains('render-scale'));
     // 唱片旋转/当前版本是 Qt 自定义区里的行（没有 descriptor），
     // 由 BasicSettingsPanelModel 的 discRotation / version 承载。
-    expect(overlay.model.discRotation, isFalse);
+    expect(window.model.discRotation, isFalse);
+    // 窗口是真实 widget 树：框架/行/控件/滚动/语义都在，不是命中画布。
+    expect(find.byKey(basicSettingsWindowKey), findsOneWidget);
+    expect(find.byType(BasicSettingsOverlay), findsNothing);
+    // 每一行不是都有控件 widget：项目链接是整块网格项、custom 行由
+    // 自定义区承载（唱片旋转/版本），其余行都必须有真控件。
+    for (final SettingsSectionModel section in window.model.sections) {
+      for (final SettingsRowSpec row in section.rows) {
+        if (row.kind == SettingsRowKind.link ||
+            row.kind == SettingsRowKind.custom) {
+          continue;
+        }
+        expect(rowControl(row.id), findsOneWidget,
+            reason: '缺少真实控件：${row.id} (${row.kind})');
+      }
+    }
+    expect(find.byType(SingleChildScrollView), findsOneWidget);
+    expect(find.byType(InkWell), findsWidgets);
     // 被否决的旧 Qt 项一个都不许出现。
     for (final String rejected in <String>[
       'official-player',
@@ -181,8 +261,9 @@ void main() {
         await pumpShell(tester);
     expect(shell.controller.dark, isTrue, reason: '默认深色');
 
-    final BasicSettingsWindow overlay = await openSettings(tester);
-    await act(tester, overlay, 'setting:theme:light');
+    await openSettings(tester);
+    expect(await activate(tester, 'theme', 'light'), isTrue,
+        reason: '配色是 choice 行，必须点开再点真实选项');
 
     // 真实落盘（bare panel key，PreferenceStore 自己加 panel/ 前缀）。
     expect(shell.port.values['panel/theme'], 'light');
@@ -196,12 +277,12 @@ void main() {
       (WidgetTester tester) async {
     final ({_ShellController controller, MemoryBasicSettingsPort port}) shell =
         await pumpShell(tester);
-    final BasicSettingsWindow overlay = await openSettings(tester);
+    await openSettings(tester);
 
-    await act(tester, overlay, 'setting:startup-animation:on');
+    await activate(tester, 'startup-animation', 'on');
     expect(shell.port.values['panel/startup-animation'], 'on');
 
-    await act(tester, overlay, 'replay');
+    await tapVisible(tester, rowControl('replay'), what: '手动重放动作行');
     await tester.pump(const Duration(milliseconds: 60));
     // 幕布真的在动：透明度不是 0 也不是 1，且还在走动画。
     final Iterable<Opacity> opacities = tester.widgetList<Opacity>(find.byType(Opacity));
@@ -218,17 +299,17 @@ void main() {
       (WidgetTester tester) async {
     final ({_ShellController controller, MemoryBasicSettingsPort port}) shell =
         await pumpShell(tester);
-    final BasicSettingsWindow overlay = await openSettings(tester);
+    await openSettings(tester);
 
-    await act(tester, overlay, 'disc-rotation');
+    await tapVisible(tester, rowControl('disc-rotation'), what: '唱片旋转开关');
     expect(find.byType(BasicDiscWarningOverlay), findsOneWidget);
 
-    await act(tester, overlay, 'disc-rotation:cancel');
+    await tapWarning(tester, 'disc-rotation:cancel');
     expect(find.byType(BasicDiscWarningOverlay), findsNothing);
     expect(shell.port.values.containsKey('panel/disc-rotation'), isFalse);
 
-    await act(tester, overlay, 'disc-rotation');
-    await act(tester, overlay, 'disc-rotation:enable');
+    await tapVisible(tester, rowControl('disc-rotation'), what: '唱片旋转开关');
+    await tapWarning(tester, 'disc-rotation:enable');
     expect(shell.port.values['panel/disc-rotation'], 'on');
 
     await tester.pumpWidget(const SizedBox());
@@ -238,9 +319,9 @@ void main() {
       (WidgetTester tester) async {
     final ({_ShellController controller, MemoryBasicSettingsPort port}) shell =
         await pumpShell(tester);
-    final BasicSettingsWindow overlay = await openSettings(tester);
+    await openSettings(tester);
 
-    await act(tester, overlay, 'music:project-lyricsx');
+    await tapVisible(tester, rowControl('project-lyricsx'), what: '项目链接行');
     expect(shell.port.openedUrls, <String>[
       'https://github.com/MxIris-LyricsX-Project/LyricsX',
     ]);
@@ -252,10 +333,10 @@ void main() {
       (WidgetTester tester) async {
     final ({_ShellController controller, MemoryBasicSettingsPort port}) shell =
         await pumpShell(tester);
-    final BasicSettingsWindow overlay = await openSettings(tester);
+    await openSettings(tester);
 
     expect(shell.controller.singlePlayAppend, isFalse, reason: '默认 replace');
-    await act(tester, overlay, 'setting:single-play-mode:append');
+    expect(await activate(tester, 'single-play-mode', 'append'), isTrue);
     expect(shell.port.values['panel/single-play-mode'], 'append');
     expect(shell.controller.singlePlayAppend, isTrue);
 
@@ -266,10 +347,10 @@ void main() {
       (WidgetTester tester) async {
     final ({_ShellController controller, MemoryBasicSettingsPort port}) shell =
         await pumpShell(tester);
-    final BasicSettingsWindow overlay = await openSettings(tester);
+    await openSettings(tester);
 
     expect(shell.controller.detailAutoplay, isFalse);
-    await act(tester, overlay, 'setting:detail-autoplay:on');
+    await activate(tester, 'detail-autoplay', 'on');
     expect(shell.port.values['panel/detail-autoplay'], 'on');
     expect(shell.controller.detailAutoplay, isTrue);
 
@@ -280,7 +361,8 @@ void main() {
       (WidgetTester tester) async {
     final _FakeAudio audio = _FakeAudio();
     final _ShellController controller = _ShellController(audio: audio);
-    final MemoryBasicSettingsPort port = MemoryBasicSettingsPort(failWrites: true);
+    final MemoryBasicSettingsPort port =
+        MemoryBasicSettingsPort(failWrites: true);
     await tester.pumpWidget(BasicApp(
       controller: controller,
       audio: audio,
@@ -290,8 +372,8 @@ void main() {
     await tester.pump();
     await tester.pump();
 
-    final BasicSettingsWindow overlay = await openSettings(tester);
-    await act(tester, overlay, 'setting:theme:light');
+    await openSettings(tester);
+    await activate(tester, 'theme', 'light');
 
     expect(controller.dark, isTrue, reason: '写失败不许假装改成浅色');
     expect(find.textContaining('写入失败'), findsOneWidget);
@@ -302,10 +384,11 @@ void main() {
   testWidgets('graphics backend keeps requested vs effective and promises next launch',
       (WidgetTester tester) async {
     final ({_ShellController controller, MemoryBasicSettingsPort port}) shell =
-        await pumpShell(tester, values: <String, String>{'panel/graphics-backend': 'vulkan'});
-    final BasicSettingsWindow overlay = await openSettings(tester);
+        await pumpShell(tester,
+            values: <String, String>{'panel/graphics-backend': 'vulkan'});
+    await openSettings(tester);
 
-    await act(tester, overlay, 'setting:graphics-backend:opengl');
+    expect(await activate(tester, 'graphics-backend', 'opengl'), isTrue);
     expect(shell.port.values['panel/graphics-backend'], 'opengl');
     // 本次运行仍然是启动时那套（vulkan）：重启口径不许当场改口。
     expect(find.textContaining('下次启动生效'), findsOneWidget);
@@ -317,23 +400,54 @@ void main() {
       (WidgetTester tester) async {
     final ({_ShellController controller, MemoryBasicSettingsPort port}) shell =
         await pumpShell(tester);
-    final BasicSettingsWindow overlay = await openSettings(tester);
+    await openSettings(tester);
 
     // Android 的默认渲染分辨率就是 75（SettingsSchema.cpp:566 的
     // androidDefaultRenderScale），写回 75 属于 unchanged，所以这里选 90。
-    await act(tester, overlay, 'render-scale:75');
+    await setStep(tester, 'render-scale', 75);
     expect(shell.port.values.containsKey('panel/render-scale'), isFalse);
-    await act(tester, overlay, 'render-scale:90');
+    await setStep(tester, 'render-scale', 90);
     expect(shell.port.values['panel/render-scale'], '90');
 
-    // 开关型 hudState 行（垂直同步）在面板里是**裸动作**切换，Qt 侧就是这样
-    // toggle 的（NativeHudController.cpp:46/860-880）；不存在 'vsync:off' 这种串。
-    await act(tester, overlay, 'vsync');
+    // 开关型 hudState 行（垂直同步）：面板里是一次真实的控件命中（choice 行
+    // 展开成 on/off 两个真控件，Qt 侧是 toggle）——两条路径都落到同一个
+    // panel/vsync 写入口，这里只断言真实落盘值。
+    await activate(tester, 'vsync', 'off');
     expect(shell.port.values['panel/vsync'], 'off');
 
     // Android 上 AA 档位里没有 MetalFX（那是 Darwin 专用），选 fxaa 才是真值。
-    await act(tester, overlay, 'aa-mode:fxaa');
+    expect(await activate(tester, 'aa-mode', 'fxaa'), isTrue);
     expect(shell.port.values['panel/aa-mode'], 'fxaa');
+
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('the stepper fill and knob follow the Qt mapping (first notch left, last notch right)',
+      (WidgetTester tester) async {
+    await pumpShell(tester);
+    await openSettings(tester);
+
+    // 首档：金色填充长度为 0，knob 贴在轨道左端（Qt settings_row.dart:744
+    // 的 selected/(count-1)：index 0 -> 0）。
+    await setStep(tester, 'archive-mask', 0);
+    final Finder fill =
+        find.byKey(const ValueKey<String>('settings-fill-archive-mask'));
+    final Finder knob =
+        find.byKey(const ValueKey<String>('settings-knob-archive-mask'));
+    expect(fill, findsOneWidget);
+    expect(knob, findsOneWidget);
+    final double fillLeft = tester.getTopLeft(fill).dx;
+    expect(tester.getSize(fill).width, 0.0,
+        reason: '首档的填充必须是 0，不能是 1/count');
+    expect(tester.getTopLeft(knob).dx, fillLeft - 4,
+        reason: '首档 knob 必须贴在轨道左端');
+
+    // 末档：填充铺满整条轨道，knob 在右端。
+    await setStep(tester, 'archive-mask', 100);
+    final double trackWidth = tester.getSize(fill).width;
+    expect(trackWidth, greaterThan(0));
+    expect(tester.getTopLeft(knob).dx, fillLeft + trackWidth - 4,
+        reason: '末档 knob 必须落在轨道右端');
 
     await tester.pumpWidget(const SizedBox());
   });
@@ -345,7 +459,53 @@ void main() {
 
     await tester.binding.handlePopRoute();
     await tester.pump();
-    expect(find.byType(BasicSettingsOverlay), findsNothing);
+    // 真实断言对象：产品里真正挂载的窗口（不是早就没人用的 painter 浮层）。
+    expect(find.byType(BasicSettingsWindow), findsNothing);
+    expect(find.byType(BasicHudSurface), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('the Back control inside the window closes the panel',
+      (WidgetTester tester) async {
+    await pumpShell(tester);
+    await openSettings(tester);
+
+    final Finder back = find.byKey(const ValueKey<String>('settings-back'));
+    expect(back, findsOneWidget);
+    await tester.tap(back);
+    await settle(tester);
+    expect(find.byType(BasicSettingsWindow), findsNothing);
+
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('the scroll rail buttons really move the card viewport',
+      (WidgetTester tester) async {
+    await pumpShell(tester);
+    await openSettings(tester);
+
+    final Finder scrollView = find.byType(SingleChildScrollView);
+    final ScrollController controller =
+        tester.widget<SingleChildScrollView>(scrollView).controller!;
+    expect(controller.offset, 0.0);
+
+    final Finder down = find.byKey(const ValueKey<String>('settings-scroll-down'));
+    expect(down, findsOneWidget,
+        reason: '内容超出视口时，上下滚动按钮必须是真控件');
+    await tester.tap(down);
+    await settle(tester);
+    expect(controller.offset, greaterThan(0.0),
+        reason: '滚动按钮必须真的滚动卡片视口，而不是只画个箭头');
+
+    final Finder up = find.byKey(const ValueKey<String>('settings-scroll-up'));
+    expect(up, findsOneWidget);
+    final double afterDown = controller.offset;
+    for (int i = 0; i < 8; i++) {
+      await tester.tap(up);
+      await settle(tester);
+    }
+    expect(controller.offset, lessThan(afterDown));
 
     await tester.pumpWidget(const SizedBox());
   });
@@ -375,8 +535,8 @@ void main() {
       (WidgetTester tester) async {
     final ({_ShellController controller, MemoryBasicSettingsPort port}) shell =
         await pumpShell(tester);
-    final BasicSettingsWindow overlay = await openSettings(tester);
-    await act(tester, overlay, 'archive-mask:80');
+    await openSettings(tester);
+    await setStep(tester, 'archive-mask', 80);
     expect(shell.port.values['panel/archive-mask-strength'], '80');
 
     // 转竖屏：面板仍在，且写进去的值还在（不是重建后回到默认）。
@@ -389,6 +549,8 @@ void main() {
     expect(rotated.portrait, isTrue);
     expect(rotated.model.rowIds, contains('archive-mask'));
     expect(shell.port.values['panel/archive-mask-strength'], '80');
+    // 竖屏下控件仍然是真控件（不是回到命中画布）。
+    expect(rowControl('archive-mask'), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox());
   });

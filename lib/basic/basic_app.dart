@@ -485,6 +485,8 @@ class _BasicShellState extends State<_BasicShell>
   void dispose() {
     _startup.dispose();
     _hudFocusNode.dispose();
+    // 面板滚动偏移是本次运行内跨开关复用的 notifier；State 自己持有，自己负责关掉。
+    _settingsScroll.dispose();
     super.dispose();
   }
 
@@ -772,7 +774,12 @@ class _BasicShellState extends State<_BasicShell>
   /// 设置浮层的唯一动作入口：命中串 -> typed 命令 -> 真实落盘 -> 真实效果。
   Future<void> _onSettingsAction(String action) async {
     if (action == HudAction.closeModal) {
-      _setModal('settings');
+      // 设置窗自带的返回按钮回的就是 closeModal（SettingsModalFrame.backAction）。
+      // 这里以前写 _setModal('settings')——面板已经开着时那是恒等操作，返回键点
+      // 了没反应；按 Qt closeModal 语义应该是关掉当前弹层，并把焦点还给 HUD
+      // （与 PopScope 的同一条路径一致）。
+      _setModal('');
+      _hudFocusNode.requestFocus();
       return;
     }
     if (action == 'disc-rotation:cancel') {

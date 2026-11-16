@@ -292,12 +292,14 @@ class _BasicSettingsWindowState extends State<BasicSettingsWindow> {
                   glyph: SettingsPanelGeometry.scrollUpGlyph,
                   palette: palette,
                   action: SettingsPanelGeometry.scrollUpAction,
+                  keyName: 'settings-scroll-up',
                 ),
                 _scrollButton(
                   rect: downButton,
                   glyph: SettingsPanelGeometry.scrollDownGlyph,
                   palette: palette,
                   action: SettingsPanelGeometry.scrollDownAction,
+                  keyName: 'settings-scroll-down',
                 ),
               ],
             ),
@@ -358,6 +360,7 @@ class _BasicSettingsWindowState extends State<BasicSettingsWindow> {
             button: true,
             label: SettingsModalFrame.backLabel,
             child: InkWell(
+              key: const ValueKey<String>('settings-back'),
               onTap: () => _handle(SettingsModalFrame.backAction),
               child: DecoratedBox(
                 decoration: BoxDecoration(
@@ -388,6 +391,7 @@ class _BasicSettingsWindowState extends State<BasicSettingsWindow> {
     required String glyph,
     required SettingsPalette palette,
     required String action,
+    required String keyName,
   }) {
     return Positioned.fromRect(
       rect: rect,
@@ -395,6 +399,7 @@ class _BasicSettingsWindowState extends State<BasicSettingsWindow> {
         button: true,
         label: glyph,
         child: InkWell(
+          key: ValueKey<String>(keyName),
           onTap: () => _handle(action),
           child: Center(
             child: _text(
@@ -786,10 +791,14 @@ class _BasicSettingsWindowState extends State<BasicSettingsWindow> {
     final double trackRight = w - 40 - 12;
     final double trackWidth = trackRight - trackLeft;
     final int selected = _selectedIndex(row);
-    final double fraction = row.numericValues.isEmpty
-        ? 0
-        : ((selected + 1) / row.numericValues.length).clamp(0.0, 1.0).toDouble();
+    // LEAF-159 MUST-1：与 Qt 画家同一套映射（lib/hud/widgets/settings_row.dart:744
+    // 的 `count <= 1 ? 0 : selected / (count - 1)`）。用 (selected+1)/count 会把
+    // 首档画到 1/count 处，knob 永远贴不到左端，和分段命中也对不上。
+    final int count = row.numericValues.length;
+    final double fraction = count <= 1 ? 0 : selected / (count - 1);
     return Stack(
+      // 真控件入口（测试/无障碍都从这里点这一行）。
+      key: ValueKey<String>(basicSettingsControlKey(row.id)),
       children: <Widget>[
         Positioned(
           left: 2,
@@ -799,7 +808,8 @@ class _BasicSettingsWindowState extends State<BasicSettingsWindow> {
             row.label,
             15,
             96,
-            palette.ink,
+            // Qt 同一行（lib/hud/widgets/settings_row.dart:722）：禁用态文字渐隐。
+            row.enabled ? palette.ink : palette.ink.fade(0.35),
             weight: SettingsFontWeight.demibold,
           ),
         ),
@@ -839,6 +849,7 @@ class _BasicSettingsWindowState extends State<BasicSettingsWindow> {
           child: ColoredBox(color: _color(palette.faint)),
         ),
         Positioned(
+          key: ValueKey<String>('settings-fill-${row.id}'),
           left: trackLeft,
           top: h / 2 - 2,
           width: trackWidth * fraction,
@@ -846,6 +857,7 @@ class _BasicSettingsWindowState extends State<BasicSettingsWindow> {
           child: IgnorePointer(child: ColoredBox(color: _color(palette.gold))),
         ),
         Positioned(
+          key: ValueKey<String>('settings-knob-${row.id}'),
           left: trackLeft + trackWidth * fraction - 4,
           top: h / 2 - 2 - 5,
           width: 8,
@@ -863,6 +875,8 @@ class _BasicSettingsWindowState extends State<BasicSettingsWindow> {
               button: true,
               label: row.numericValues[i].toString(),
               child: GestureDetector(
+                key: ValueKey<String>(
+                    'settings-notch-${row.id}-${row.numericValues[i]}'),
                 behavior: HitTestBehavior.translucent,
                 onTap: row.enabled
                     ? () => _handle('$prefix${row.numericValues[i]}')
