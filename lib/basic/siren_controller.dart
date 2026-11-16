@@ -1097,6 +1097,20 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
           // localPath 自己承诺不抛，但真抛了也不能把在飞名额永久占住。
           _artInFlight = -1;
         }
+        // 迟到的异常与迟到的成功一样危险：只有"这次异常仍属于当前身份"才允许清空
+        // 封面。否则 A 的旧闭包在 B 已落图之后抛一次，就会把 B 的封面清成空。
+        if (_disposed) {
+          return;
+        }
+        if (generation != cache.generation) {
+          return;
+        }
+        if (_artTrackId != track.id || _artUrl != requestUrl) {
+          return;
+        }
+        if (_playingTrackOf()?.id != track.id) {
+          return;
+        }
         _artPath = '';
       }
     }());
