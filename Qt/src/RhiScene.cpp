@@ -112,13 +112,19 @@ static constexpr int COVER_LATENCY_SAMPLES = 8;
 static QMatrix4x4 matrix(QJsonArray a, int offset = 0) {
     QMatrix4x4 m;
     for (int i = 0; i < 16; ++i) {
-        m.data()[i] = float(a[offset + i].toDouble());
+        // 越界必须当成 0，不能让 QJsonArray::operator[] 交出空引用去 toDouble()：
+        // Qt 6 的 QJsonValueConstRef 一旦指向越界/缺失槽位，内部指针为空，
+        // toDouble() 直接对空指针 +0x30 取值 ⇒ 原生 SIGSEGV（FA-159 设备实测
+        // tombstone_04：RhineRendering::vector → QJsonValueConstRef::concreteDouble）。
+        const int k = offset + i;
+        m.data()[i] = k >= 0 && k < a.size() ? float(a.at(k).toDouble()) : float(i % 5 == 0 ? 1 : 0);
     }
     return m;
 }
 static QVector3D vector(QJsonValue a) {
-    auto v = a.toArray();
-    return {float(v[0].toDouble()), float(v[1].toDouble()), float(v[2].toDouble())};
+    const auto v = a.toArray();
+    auto at = [&v](int i) { return i < v.size() ? float(v.at(i).toDouble()) : 0.f; };
+    return {at(0), at(1), at(2)};
 }
 static float n(QJsonObject o, const char *k) {
     return float(o[k].toDouble());
@@ -1388,7 +1394,8 @@ class Renderer {
         if (temporal && jitter.size() == 2) {
             RhineRender::applyJitter(projection, {jitter[0].toDouble(), jitter[1].toDouble()}, size);
         }
-        auto theme = n(f["draws"].toArray().first().toObject(), "theme");
+        const auto drawsForTheme = f["draws"].toArray();
+        auto theme = drawsForTheme.isEmpty() ? 0.f : n(drawsForTheme.first().toObject(), "theme");
         QMatrix4x4 emitter;
         bool hasEmitter = false;
         for (const auto &entry : f["draws"].toArray()) {
