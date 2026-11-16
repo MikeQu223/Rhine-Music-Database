@@ -166,6 +166,12 @@ public final class RhineQtViews {
         if (liveDelegate == null || knownActivity != activity) {
             if (liveDelegate != null) {
                 unregisterDelegate(liveDelegate);
+                // 旧的 delegate 会被原生侧（retained 运行时）继续持有，而它的 Activity 存在
+                // QtActivityDelegateBase 的 final 字段 m_activity 里——这是每进程第一个宿主
+                // Activity 永不回收的最后一环（真机：cycle 1 恒 false、cycle 2..5 恒 true，
+                // 且反射扫描证明没有任何 Java 静态字段指向它 → 钉在 native 持有的 delegate 上）。
+                // 这里在**已经有新 delegate 顶替**之后把旧的那个字段置空，只影响旧宿主。
+                releaseDelegateActivity(liveDelegate);
             }
             sDelegate = QtEmbeddedViewInterfaceFactory.create(activity);
             sHostActivity = new WeakReference<>(activity);
@@ -538,6 +544,28 @@ public final class RhineQtViews {
             android.util.Log.i(TAG, "drained pending Qt runnables (" + reason + ")");
         } catch (Throwable error) {
             android.util.Log.w(TAG, "drain pending Qt runnables failed (" + reason + "): " + error);
+        }
+    }
+
+    /**
+     * 把某个旧 delegate 里指向宿主的 final 字段 m_activity 置空。
+     *
+     * 只读替代不存在——QtActivityDelegateBase 把它声明成 final，而该 delegate 会被 retained
+     * 的 Qt 运行时长期持有；不置空，第一个宿主的 Activity 就永远可达。仅在该 delegate 已被
+     * 新宿主的新 delegate 取代后调用，因此不会打断在用的对象图。失败只记日志，不改变行为。
+     */
+    private static void releaseDelegateActivity(Object delegate) {
+        if (delegate == null) {
+            return;
+        }
+        try {
+            final java.lang.reflect.Field field =
+                    delegate.getClass().getSuperclass().getDeclaredField("m_activity");
+            field.setAccessible(true);
+            field.set(delegate, null);
+            android.util.Log.i(TAG, "cleared retained delegate activity reference");
+        } catch (Throwable error) {
+            android.util.Log.w(TAG, "clearing retained delegate activity failed: " + error);
         }
     }
 
