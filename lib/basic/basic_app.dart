@@ -135,7 +135,8 @@ class BasicApp extends StatefulWidget {
   final MediaSessionPort? mediaSessionPort;
 
   /// 面板偏好的真实端口（SharedPreferences）。生产留空 = 走平台通道
-  /// [MethodChannelBasicSettingsPort]；widget 测试注入 [MemoryBasicSettingsPort]。
+  /// [SharedPreferencesBasicSettingsPort]（2026-11-16 用户指示：设置参数用
+  /// shared_preferences 保存）；widget 测试注入 [MemoryBasicSettingsPort]。
   final BasicSettingsPort? settingsPort;
 
   @override
@@ -171,7 +172,7 @@ class _BasicAppState extends State<BasicApp> {
   void initState() {
     super.initState();
     _settingsStore =
-        BasicSettingsStore(port: widget.settingsPort ?? MethodChannelBasicSettingsPort());
+        BasicSettingsStore(port: widget.settingsPort ?? SharedPreferencesBasicSettingsPort());
     _ownsAudio = widget.audio == null;
     _ownsController = widget.controller == null;
     _audio = widget.audio ?? MethodChannelBasicAudio();
