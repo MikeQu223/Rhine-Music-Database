@@ -1021,17 +1021,23 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     cache.beginGeneration();
     final int generation = cache.generation;
     unawaited(() async {
-      final String? path = await cache.localPath(url);
-      if (_disposed || generation != cache.generation) {
-        return;
-      }
-      if (_playingTrackOf()?.id != track.id) {
-        return;
-      }
-      _artPath = path ?? '';
-      if (path != null && path.isNotEmpty) {
-        // 只有真的落了盘才补一次上报（失败留空的结论已经由上面那次 sync 送出）。
-        _syncMediaSession();
+      // 封面永远不是播放错误：目录缺失、读盘、落盘、上报里的任何异常都在这里
+      // 咽掉并留空封面，绝不让一个未处理的 zone error 打到 debug 红屏。
+      try {
+        final String? path = await cache.localPath(url);
+        if (_disposed || generation != cache.generation) {
+          return;
+        }
+        if (_playingTrackOf()?.id != track.id) {
+          return;
+        }
+        _artPath = path ?? '';
+        if (path != null && path.isNotEmpty) {
+          // 只有真的落了盘才补一次上报（失败留空的结论已经由上面那次 sync 送出）。
+          _syncMediaSession();
+        }
+      } catch (_) {
+        _artPath = '';
       }
     }());
   }

@@ -105,12 +105,17 @@ const Map<String, String> basicSettingsHudStatePreferenceKeys = <String, String>
   'startup-animation': 'startup-animation',
   'archive-mask': 'archive-mask-strength',
   'vsync': 'vsync',
-  // 音质：Qt 的 descriptor 也没有 preferenceKey（bindingKind=player，走
-  // `quality:set:<value>` 派发），但播放器自己会把值写进同一份偏好
+  // 音质：descriptor 的 bindingKind 是 player，既没有 preferenceKey 也只派发
+  // `quality:set:<value>`，但播放器自己把值写进同一份偏好
   // （Qt/src/MusicPlayer.cpp:139 `m_host->setPreference("quality", value)`，读回
-  // 同键 :181），"quality" 也在宿主白名单里（Qt/src/Host.cpp:1063）。缺这条映射时
-  // 本面板会如实拒绝写入（"这一项没有可持久化的偏好键"），于是音质永远只剩默认值——
-  // 那不是 Qt 的行为。
+  // 同键 :181；"quality" 在宿主白名单里 Host.cpp:1063）。没有这条映射时，
+  // 可以切换的 provider（qq/kugou/…）会得到「这一项没有可持久化的偏好键」，音质
+  // 只选不存。
+  //
+  // 注意出厂 provider siren 只有一档 'lossless'（settings_modal.dart:2495-2499），
+  // 而 descriptor 默认值是 'exhigh'：归一化后 target 恒等于当前档，命令在
+  // settings_row.dart:1088 的 unchanged 检查就返回了，压根走不到这里。那是
+  // 「只有一档就没什么可切换」，属实的 unchanged 而非这篇映射的漏洞。
   'quality': 'quality',
 };
 
@@ -834,7 +839,8 @@ BasicSettingsCommand basicSettingsCommandFor(
   //   archive-mask      -> NativeHudController.cpp:733-734 setPreference("archive-mask-strength")
   //                        （读回 :50-52）
   //   vsync             -> NativeHudController.cpp:46 读 "vsync"，写入同键
-  //   quality           -> MusicPlayer.cpp:139 写 "quality"、:181 读回（见上方映射表的注释）
+  //   quality           -> MusicPlayer.cpp:139 写 "quality"、:181 读回（见上方映射表的注释；
+  //                        仅多档 provider 可达，单档 siren 先被 unchanged 拦下）
   // 这几个键都在 Host.cpp:1056-1063 的白名单里。
   final String persistedKey = plan.preferenceKey ??
       (basicSettingsHudStatePreferenceKeys[descriptor.id] ?? '');
