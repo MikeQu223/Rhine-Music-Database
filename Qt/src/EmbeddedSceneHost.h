@@ -1,5 +1,7 @@
 #pragma once
 
+#include "EmbeddedSceneOrigin.h"
+
 #include <QJsonObject>
 #include <QString>
 
@@ -29,7 +31,15 @@ void publish(Engine *engine, FrameProfiler *profiler, const QString &fontFamily)
 /// qtSceneStateSnapshot）。只在 Qt 主线程调用；重复/相同快照不会重复生效。
 /// 语义：dark→theme、mode→setMode、index→select（-1 不动）、key→musicIdentity，
 /// 没有 key 就 musicClear（不留上一首封面）。**不接收任何播放指令**。
-void applySceneState(const QString &json);
+///
+/// origin 是这份快照的**产出者**（Dart 的 viewId/ctx），必须由调用方按值传入：apply 成功
+/// 之后它才成为"当前画面来源"，排队中的旧输入/动作随后会被 OriginLedger 判旧。
+void applySceneState(const QString &json, const ProducerOrigin &origin);
+
+/// 应用点账本（Qt 线程独占）。诊断与测试用它证明"哪一帧是第几次成功 apply 之后来的"。
+OriginLedger &originLedger();
+/// 场景世代账本：Java 侧每次 create 请求的世代号在这里 adopt，destroy 只允许拆自己那一代。
+SceneEpoch &sceneEpoch();
 
 /// 内嵌模式下**当前选中**条目的封面地址与身份（来自 Flutter 快照的 cover/kind/id）。
 ///
@@ -42,11 +52,16 @@ QString projectedCover();
 /// 选中身份对象 {kind, key, id, cover}；没有选中时为空对象。
 QJsonObject projectedCurrent();
 // 销毁场景视图时清掉快照去重状态（同进程重建 Engine 后需要重新应用一次）。
-void resetAppliedState();
+//
+// sceneEpoch 是调用方以为自己在拆的那一代：对不上就整段跳过——旧 host（比如上一轮
+// Activity 的 RhineQtView）的 destroy 不许把新 host 的已应用 origin 抹掉，否则新 host
+// 的输入会因为"账本已关闭"被一直丢弃。0 = 不带世代（内部路径），无条件生效。
+void resetAppliedState(quint64 sceneEpoch);
 // 只清选中相关（index/key），供 pointerdown 用；不要拿它替代 resetAppliedState()。
 void resetSelectionState();
-// 记住最后一份 Flutter 快照，并在场景就绪时补应用（首帧可能早于 qApp）。
-void rememberState(const QString &json);
+// 记住最后一份 Flutter 快照（连同它的 origin），并在场景就绪时带着同一份 origin 补应用
+// （首帧可能早于 qApp）。补应用的 origin 必须来自这里，而不是"当前是谁"。
+void rememberState(const QString &json, const ProducerOrigin &origin);
 bool reapplyPendingState();
 Engine *engine();
 FrameProfiler *profiler();

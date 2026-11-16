@@ -98,7 +98,7 @@ void main() {
   });
 
   group('origin：输入/动作按 (viewId, ctx) 校验', () {
-    test('ctx 不匹配的动作不交给页面；同 ctx 与未登记照常放行', () async {
+    test('ctx 不匹配 / 缺 ctx / 未登记的动作为一律不交给页面', () async {
       final List<String> delivered = <String>[];
       QtSceneActions.resetForTest();
       QtSceneActions.register(7, delivered.add);
@@ -118,19 +118,35 @@ void main() {
       ));
       expect(delivered, <String>['archive-scroll:commit:1.0']);
 
-      // 老调用点不带 ctx：按旧行为放行（不能因为原生多知道一点就吞掉正常回执）。
+      // 不带 ctx 的动作：没有归属可比对，丢弃。旧实现在这里 fail-open（"原生的老调用点
+      // 放行"），等于让没带代次的动作穿透全部门禁——这正是 153 要根除的那一类。
       await QtSceneActions.handleNativeCall(const MethodCall(
         'action',
         <String, Object?>{'viewId': 7, 'action': 'archive-select:0:0'},
       ));
-      expect(delivered.last, 'archive-select:0:0');
+      expect(delivered, hasLength(1));
+
+      // 没有 origin（viewId<0）的动作：丢弃。
+      await QtSceneActions.handleNativeCall(const MethodCall(
+        'action',
+        <String, Object?>{'viewId': -1, 'ctx': 3, 'action': 'archive-select:0:0'},
+      ));
+      expect(delivered, hasLength(1));
 
       // 未注册的 viewId 不抛、不下发。
       await QtSceneActions.handleNativeCall(const MethodCall(
         'action',
         <String, Object?>{'viewId': 99, 'ctx': 3, 'action': 'archive-select:0:0'},
       ));
-      expect(delivered, hasLength(2));
+      expect(delivered, hasLength(1));
+
+      // 已注销视图：登记表里没有它，同样丢弃。
+      QtSceneActions.unregister(7);
+      await QtSceneActions.handleNativeCall(const MethodCall(
+        'action',
+        <String, Object?>{'viewId': 7, 'ctx': 3, 'action': 'archive-select:0:0'},
+      ));
+      expect(delivered, hasLength(1));
 
       QtSceneActions.resetForTest();
     });
@@ -171,6 +187,89 @@ void main() {
         qtSceneIdentitySignature(otherDirectory),
         isNot(qtSceneIdentitySignature(base)),
       );
+    });
+
+    test('中间条目对调（条数、首末都不变）必须换代', () {
+      const BasicListItem a = BasicListItem(title: 'a', kind: 'song', index: 0, id: 'a');
+      const BasicListItem b = BasicListItem(title: 'b', kind: 'song', index: 1, id: 'b');
+      const BasicListItem c = BasicListItem(title: 'c', kind: 'song', index: 2, id: 'c');
+      final BasicViewState before = _state(
+        laneItems: const <List<BasicListItem>>[
+          <BasicListItem>[a, b, c],
+        ],
+      );
+      final BasicViewState after = _state(
+        laneItems: const <List<BasicListItem>>[
+          <BasicListItem>[a, c, b],
+        ],
+      );
+      // 旧实现只写 length:first:last → 这份集合变化完全不可见，代次不递增，Qt 侧仍把
+      // 迟到输入当成"同一份上下文"，画面已被换成新顺序。
+      expect(
+        qtSceneIdentitySignature(before),
+        isNot(qtSceneIdentitySignature(after)),
+      );
+      expect(qtSceneLaneIdentity(const <BasicListItem>[a, b, c]),
+          isNot(qtSceneLaneIdentity(const <BasicListItem>[a, c, b])));
+      // 首末也真的换了位置的相邻对调同样要变。
+      expect(
+        qtSceneLaneIdentity(const <BasicListItem>[a, b, c]),
+        isNot(qtSceneLaneIdentity(const <BasicListItem>[b, a, c])),
+      );
+    });
+
+    test('位置/播放/封面补全不换代：合法惯性不被自己的代次掐死', () {
+      const BasicListItem a = BasicListItem(title: 'a', kind: 'song', index: 0, id: 'a');
+      final BasicViewState base = _state(
+        song: _song('a'),
+        songs: <SirenSong>[_song('a')],
+        laneItems: const <List<BasicListItem>>[
+          <BasicListItem>[a],
+        ],
+      );
+      final BasicViewState moved = _state(
+        song: _song('a'),
+        songs: <SirenSong>[_song('a')],
+        playing: true,
+        listPosition: 37.5,
+        laneItems: base.laneItems,
+      );
+      expect(qtSceneIdentitySignature(base), qtSceneIdentitySignature(moved));
+    });
+
+    test('列表实例不同但内容相同 → 身份相同（重建列表不等于换集合）', () {
+      const BasicListItem a = BasicListItem(title: 'a', kind: 'song', index: 0, id: 'a');
+      const BasicListItem b = BasicListItem(title: 'b', kind: 'song', index: 1, id: 'b');
+      final BasicViewState first = _state(
+        laneItems: <List<BasicListItem>>[
+          <BasicListItem>[a, b],
+        ],
+      );
+      final BasicViewState rebuilt = _state(
+        laneItems: <List<BasicListItem>>[
+          <BasicListItem>[a, b],
+        ],
+      );
+      expect(identical(first.laneItems.first, rebuilt.laneItems.first), isFalse);
+      expect(qtSceneIdentitySignature(first), qtSceneIdentitySignature(rebuilt));
+      final QtSceneIdentityTracker tracker = QtSceneIdentityTracker();
+      expect(tracker.signature(first), qtSceneIdentitySignature(first));
+      expect(tracker.signature(rebuilt), qtSceneIdentitySignature(rebuilt));
+    });
+
+    test('tracker 命中缓存后仍与纯函数一致（同一实例重复调用）', () {
+      const BasicListItem a = BasicListItem(title: 'a', kind: 'song', index: 0, id: 'a');
+      final List<BasicListItem> lane = <BasicListItem>[a];
+      final BasicViewState state = _state(
+        laneItems: <List<BasicListItem>>[lane],
+      );
+      final QtSceneIdentityTracker tracker = QtSceneIdentityTracker();
+      final String firstCall = tracker.signature(state);
+      final String secondCall = tracker.signature(state);
+      expect(secondCall, firstCall);
+      expect(secondCall, qtSceneIdentitySignature(state));
+      tracker.reset();
+      expect(tracker.signature(state), firstCall);
     });
   });
 
@@ -377,23 +476,30 @@ void main() {
       final List<String> got = <String>[];
       QtSceneActions.register(11, got.add);
       QtSceneActions.register(12, (String action) => got.add('12:$action'));
+      // 每个视图先登记自己的代次：动作必须带上它，未登记的动作一律丢弃（见上一条 group）。
+      QtSceneActions.setContext(11, 4);
+      QtSceneActions.setContext(12, 5);
 
       await QtSceneActions.handleNativeCall(const MethodCall(
         'action',
-        <String, Object?>{'viewId': 12, 'action': 'select:3'},
+        <String, Object?>{'viewId': 12, 'ctx': 5, 'action': 'select:3'},
       ));
       await QtSceneActions.handleNativeCall(const MethodCall(
         'action',
-        <String, Object?>{'viewId': 11, 'action': 'viewer:open'},
+        <String, Object?>{'viewId': 11, 'ctx': 4, 'action': 'viewer:open'},
       ));
       expect(got, <String>['12:select:3', 'viewer:open']);
     });
 
     test('未知 viewId / 未注册回调不抛异常', () async {
+      final List<String> got = <String>[];
+      QtSceneActions.register(11, got.add);
+      QtSceneActions.setContext(11, 4);
       await QtSceneActions.handleNativeCall(const MethodCall(
         'action',
-        <String, Object?>{'viewId': 99, 'action': 'select:1'},
+        <String, Object?>{'viewId': 99, 'ctx': 1, 'action': 'select:1'},
       ));
+      expect(got, isEmpty);
       QtSceneActions.unregister(99);
     });
   });
