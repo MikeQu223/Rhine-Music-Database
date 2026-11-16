@@ -685,9 +685,12 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
 
   /// 列表拖动**过程中**的连续窗口位置（单位条目，可为小数）。
   ///
-  /// 与 [commitLibraryScroll] 的分工就是 Qt 的 observe / select 分工：拖动中途只写
-  /// 窗口（不选中、不播、不换队列），松手才由 commit 落行选中。写进 state.listPosition
-  /// 之后，Qt 场景层（只读投影）在拖动期间就跟着一起滚，而不是等松手才动。
+  /// 与 [commitLibraryScroll] 的分工就是 Qt 的 observe / select 分工：拖动中途窗口跟
+  /// 手指走（可以是 72.6 这种小数），但"越过即进入"必须当场发生——Qt 的手势路径是
+  /// `NativeScene::navigatePlane` 每跨一格就 `select(fileAt(cell))`
+  /// （Qt/src/NativeSceneInput.cpp:97-115），而 HUD 每帧 `observe(frame["selected"])`
+  /// （Qt/src/NativeApplication.cpp:138）。所以这里写窗口的同时把选中落到最近一行，
+  /// 只是**不播、不换队列、不刷状态条**（那是 commit/显式点选的事）。
   void updateLibraryScroll(double position) {
     if (_disposed || position.isNaN || !position.isFinite) {
       return;
@@ -695,7 +698,39 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     if ((position - _listPosition).abs() < 1e-4) {
       return;
     }
-    _listPosition = position;
+    _observeWindow(position);
+  }
+
+  /// 拖动中途的"越过即进入"：窗口保持小数（列表跟手），选中立刻落到最近一行。
+  ///
+  /// 与 [_selectRow] 的差别只有两处：`recordWindow: false`（不重算 8 行页偏移）和
+  /// `announce: false`（不刷"已选中：…"），并且写回时把 [_listPosition] 还原成小数
+  /// 位置，避免 `_selectRow` 的窗口吸附把列表钉在整行上（那正是"高亮跟着行跑、条目
+  /// 不跳格"的旧缺陷）。目录里同一份真值由 [_syncDirectoryIndex] 跟着走。
+  void _observeWindow(double position) {
+    final List<BasicListItem> items = basicLibraryItems(_state);
+    if (items.isEmpty) {
+      _listPosition = position;
+      _publish();
+      return;
+    }
+    final double max = (items.length - 1).toDouble();
+    final double clamped = position.clamp(0.0, max);
+    if (_phase == BasicPhase.library) {
+      final int row = clamped.round();
+      final bool needsSelection =
+          _selection == null || row != basicSelectedItemIndex(_state, items);
+      if (needsSelection) {
+        _selectRow(items, row, recordWindow: false, announce: false);
+      }
+    }
+    if ((_listPosition - clamped).abs() > 1e-4) {
+      _listPosition = clamped;
+    }
+    if (_directory == null && _selectedLane >= 0 && _selectedLane < _lanePositions.length) {
+      // 记忆的是"窗口停在哪"，不是吸附后的整行（Qt observe 只折 anchor，不改窗口）。
+      _lanePositions[_selectedLane] = _listPosition;
+    }
     _publish();
   }
 
@@ -767,8 +802,9 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     if ((next - _listPosition).abs() < 1e-4) {
       return;
     }
-    _listPosition = next;
-    _publish();
+    // 3D 手势中途同样"越过即进入"：窗口小数跟手，选中当帧落到最近一行（[updateLibraryScroll]
+    // 的同一份 observe 语义），松手才由 committed 分支落定并吃掉惯性回执。
+    _observeWindow(next);
   }
 
   /// ←/→：Qt/src/NativeHudController.cpp:650-662 的两条分支，逐条照抄。
