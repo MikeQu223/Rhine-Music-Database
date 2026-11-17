@@ -708,8 +708,9 @@ SettingsActionRoute? parseActionKey(String key) {
       return const SettingsActionRoute(SettingsActionKind.reinitialize);
     case 'quality':
       return const SettingsActionRoute(SettingsActionKind.quality);
-    case 'performance:toggle':
-      return const SettingsActionRoute(SettingsActionKind.diagnostics);
+    // 用户 m10082：性能面板不是用户要求的功能 —— 入口注释掉（保留原文，不删）。
+    // case 'performance:toggle':
+    //   return const SettingsActionRoute(SettingsActionKind.diagnostics);
     case 'cache:clear':
       return const SettingsActionRoute(SettingsActionKind.cache);
     case 'update:check':

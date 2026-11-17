@@ -615,7 +615,8 @@ Item {
             dark: rhine.state.dark === true
         }
     }
-    PerformancePanel {
-        z: 1000
-    }
+    // 用户 m10082：性能面板不是用户要求的功能 —— 显示实例注释掉（保留原文，不删）。
+    // PerformancePanel {
+    //     z: 1000
+    // }
 }
