@@ -29,7 +29,8 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
-import 'package:rhine_music_database/app/lifecycle.dart';
+// 用户 m10088：lib/app/lifecycle.dart（68b4d60）已整体撤回，本文件不再依赖它。
+// import 'package:rhine_music_database/app/lifecycle.dart';
 import 'package:rhine_music_database/bridge/engine_transport.dart';
 import 'package:rhine_music_database/bridge/node_runtime.dart';
 
@@ -190,82 +191,84 @@ final class _RecordingHost implements NodeRuntimeHost {
   }
 }
 
-/// T21-S08 的 foreground 端口：只记录 AppLifecycle 的 host 调用，不碰 Node。
-///
-/// MainActivity.kt:68-74 目前只重放沉浸式窗口，尚未把 Activity.onResume/onPause
-/// 接到 AppLifecycle；这里直接驱动已落地的 real lifecycle port
-/// (lib/app/lifecycle.dart:402 hostActivityChanged)，不新建 EngineTransport。
-final class _LifecyclePortsFake implements LifecyclePorts {
-  int attachCount = 0;
-  int saveCount = 0;
-  final List<bool> visibility = <bool>[];
-
-  @override
-  bool get offline => false;
-
-  @override
-  bool get playbackConnection => false;
-
-  @override
-  String preference(String key) => '';
-
-  @override
-  void setPreference(String key, String value) {}
-
-  @override
-  EngineAttachment attachEngine() {
-    attachCount += 1;
-    return const EngineAttachment(
-      nodeRuntimeId: 'node-process-singleton',
-      loginSessionId: 'login-session',
-      playerId: 'player',
-    );
-  }
-
-  @override
-  void applyPresentationPreferences() {}
-
-  @override
-  StoredSession? loadSession() => null;
-
-  @override
-  bool restoreSession(StoredSession session, {required bool restorePlayer}) =>
-      true;
-
-  @override
-  void restoreAccount() {}
-
-  @override
-  void restoreIdentityName() {}
-
-  @override
-  void setVolume(double volume) {}
-
-  @override
-  void setSceneModeArchive() {}
-
-  @override
-  void replayStartupAnimation() {}
-
-  @override
-  void saveSession() {
-    saveCount += 1;
-  }
-
-  @override
-  void applyWindowShape() {}
-
-  @override
-  void showFullScreen() {}
-
-  @override
-  void setEngineVisible(bool visible) {
-    visibility.add(visible);
-  }
-
-  @override
-  void trimMemory() {}
-}
+// 用户 m10088：以下 LifecyclePorts 假端口依赖已撤回的 lib/app/lifecycle.dart，整块停用。
+// 保留原文，不删；NodeRuntime 相关断言不受影响。
+// /// T21-S08 的 foreground 端口：只记录 AppLifecycle 的 host 调用，不碰 Node。
+// ///
+// /// MainActivity.kt:68-74 目前只重放沉浸式窗口，尚未把 Activity.onResume/onPause
+// /// 接到 AppLifecycle；这里直接驱动已落地的 real lifecycle port
+// /// (lib/app/lifecycle.dart:402 hostActivityChanged)，不新建 EngineTransport。
+// final class _LifecyclePortsFake implements LifecyclePorts {
+//   int attachCount = 0;
+//   int saveCount = 0;
+//   final List<bool> visibility = <bool>[];
+//
+//   @override
+//   bool get offline => false;
+//
+//   @override
+//   bool get playbackConnection => false;
+//
+//   @override
+//   String preference(String key) => '';
+//
+//   @override
+//   void setPreference(String key, String value) {}
+//
+//   @override
+//   EngineAttachment attachEngine() {
+//     attachCount += 1;
+//     return const EngineAttachment(
+//       nodeRuntimeId: 'node-process-singleton',
+//       loginSessionId: 'login-session',
+//       playerId: 'player',
+//     );
+//   }
+//
+//   @override
+//   void applyPresentationPreferences() {}
+//
+//   @override
+//   StoredSession? loadSession() => null;
+//
+//   @override
+//   bool restoreSession(StoredSession session, {required bool restorePlayer}) =>
+//       true;
+//
+//   @override
+//   void restoreAccount() {}
+//
+//   @override
+//   void restoreIdentityName() {}
+//
+//   @override
+//   void setVolume(double volume) {}
+//
+//   @override
+//   void setSceneModeArchive() {}
+//
+//   @override
+//   void replayStartupAnimation() {}
+//
+//   @override
+//   void saveSession() {
+//     saveCount += 1;
+//   }
+//
+//   @override
+//   void applyWindowShape() {}
+//
+//   @override
+//   void showFullScreen() {}
+//
+//   @override
+//   void setEngineVisible(bool visible) {
+//     visibility.add(visible);
+//   }
+//
+//   @override
+//   void trimMemory() {}
+// }
 
 /// 轮询等待条件成立：真实回环 socket 是内核异步投递的，pumpEventQueue 不保证已到达。
 Future<void> _waitFor(
@@ -891,31 +894,34 @@ void main() {
       expect(errors, isEmpty);
     });
 
-    test('前后台/旋转：real LifecyclePort 的 inactive→active 不重启 Node', () async {
-      expect(await runtime.launch(tempRoot.path, host), isTrue);
-      final _LifecyclePortsFake ports = _LifecyclePortsFake();
-      final AppLifecycle lifecycle = AppLifecycle(ports)..grantConsent();
-      expect(ports.attachCount, 1, reason: '进程级 EngineAttachment 只构建一次');
+    // 用户 m10088：该用例驱动已撤回的 AppLifecycle/HostActivity，整块停用（保留原文）。
+    // 前后台/旋转不重启 Node 的宿主断言仍由上面的 transport 用例覆盖。
+//     test('前后台/旋转：real LifecyclePort 的 inactive→active 不重启 Node', () async {
+//       expect(await runtime.launch(tempRoot.path, host), isTrue);
+//       final _LifecyclePortsFake ports = _LifecyclePortsFake();
+//       final AppLifecycle lifecycle = AppLifecycle(ports)..grantConsent();
+//       expect(ports.attachCount, 1, reason: '进程级 EngineAttachment 只构建一次');
+//
+//       lifecycle.hostActivityChanged(HostActivity.active);
+//       lifecycle.hostActivityChanged(HostActivity.inactive);
+//       lifecycle.hostActivityChanged(HostActivity.active);
+//       lifecycle.rotation();
+//       lifecycle.activityReattached();
+//
+//       expect(lifecycle.snapshot.foregroundCount, 2);
+//       expect(lifecycle.snapshot.backgroundCount, 1);
+//       expect(ports.saveCount, 1, reason: 'inactive 保存一次会话');
+//       expect(ports.visibility, <bool>[true, false, true],
+//           reason: 'Qt AndroidWindow.cpp:100：非 active 隐藏引擎，active 恢复');
+//       expect(ports.attachCount, 1);
+//       expect(host.starts, hasLength(1),
+//           reason: '前后台/旋转不得第二次 node::Start');
+//       expect(host.prepareCount, 1);
+//
+//       expect(await runtime.launch(tempRoot.path, host), isTrue);
+//       expect(host.starts, hasLength(1),
+//           reason: 'Qt:99-100：已 launched 且连接仍活 → true，不重复启动');
+//     });
 
-      lifecycle.hostActivityChanged(HostActivity.active);
-      lifecycle.hostActivityChanged(HostActivity.inactive);
-      lifecycle.hostActivityChanged(HostActivity.active);
-      lifecycle.rotation();
-      lifecycle.activityReattached();
-
-      expect(lifecycle.snapshot.foregroundCount, 2);
-      expect(lifecycle.snapshot.backgroundCount, 1);
-      expect(ports.saveCount, 1, reason: 'inactive 保存一次会话');
-      expect(ports.visibility, <bool>[true, false, true],
-          reason: 'Qt AndroidWindow.cpp:100：非 active 隐藏引擎，active 恢复');
-      expect(ports.attachCount, 1);
-      expect(host.starts, hasLength(1),
-          reason: '前后台/旋转不得第二次 node::Start');
-      expect(host.prepareCount, 1);
-
-      expect(await runtime.launch(tempRoot.path, host), isTrue);
-      expect(host.starts, hasLength(1),
-          reason: 'Qt:99-100：已 launched 且连接仍活 → true，不重复启动');
-    });
   });
 }
