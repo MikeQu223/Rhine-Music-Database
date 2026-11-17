@@ -111,32 +111,11 @@ public final class RhineQtViews {
     /** 本进程创建过的场景视图（销毁时逐个从 Qt 的 app-state 监听列表注销）。 */
     private static final List<WeakReference<View>> sSceneViews = new ArrayList<>();
 
-    /** 每轮销毁时的对象根探针，下一轮 gc 后检查是否真的被回收。 */
-    private static final List<CycleProbe> sCycleProbes = new ArrayList<>();
-
     /** Qt 运行时是否已经跨过一次 Activity 销毁（true 时重开走"复用运行时"分支）。 */
     private static boolean sRuntimeRetained;
 
     /** 上一轮 Qt 运行时已经被 terminate（只可能来自外部 terminate 或库替换后的首启）。 */
     private static boolean sRuntimeTornDown;
-
-    /** 对象根探针开关：只在 debuggable 包打开（生产包不强制 GC）。 */
-    private static boolean probeEnabled;
-
-
-    private static final class CycleProbe {
-        final int cycle;
-        final WeakReference<Activity> activity;
-        final WeakReference<Object> delegate;
-        final WeakReference<Object> view;
-
-        CycleProbe(int cycle, Activity activity, Object delegate, Object view) {
-            this.cycle = cycle;
-            this.activity = new WeakReference<>(activity);
-            this.delegate = new WeakReference<>(delegate);
-            this.view = new WeakReference<>(view);
-        }
-    }
 
     /** 创建 Qt 场景视图；首次调用会加载 Qt 运行时并进入本库 main()。 */
     public static View create(Context context) {
@@ -204,12 +183,6 @@ public final class RhineQtViews {
         syncApplicationState();
         scheduleStateSync();
 
-        // 4) 上一轮的宿主对象根探针：确认已销毁的 Activity / delegate / view 真的能回收。
-        //    只在可调试包、且只在确实攒到待验证的轮次时才跑（首次 create 没有 probe，
-        //    直接返回、不 GC）；生产包永不强制 GC。
-        probeEnabled = (activity.getApplicationInfo().flags
-                & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0;
-        verifyPreviousCyclesReleased();
         return view;
     }
 
@@ -430,148 +403,7 @@ public final class RhineQtViews {
             }
         }
         sRuntimeRetained = true;
-        synchronized (sCycleProbes) {
-            sCycleProbes.add(new CycleProbe(sCycleProbes.size() + 1, activity, delegate, sceneView));
-        }
         android.util.Log.i(TAG, "kept Qt runtime alive after activity destroy; released host refs");
-    }
-
-    /**
-     * 对象根证据：被销毁的 Activity、旧 delegate、旧 QtView 在下一轮是否真的可回收。
-     * 只在可调试包、每个进程最多一次 System.gc() + WeakReference 检查，用日志给出
-     * 布尔事实（不看 RSS）。生产包不强制 GC。
-     */
-    /**
-     * 只读诊断：列出候选 Qt Android 类里仍指向被销毁宿主的 static 字段。
-     *
-     * 用途是区分"钉住发生在 Java 静态字段"还是"钉住发生在 native JNI global"——这决定下
-     * 一步该改哪里。只读，不修改任何字段，也不影响行为。
-     */
-    private static void logStaticHolders(String tag, Object activity, Object delegate, Object view) {
-        final String[] candidates = new String[] {
-            "org.qtproject.qt.android.QtNative",
-            "org.qtproject.qt.android.QtClipboardManager",
-            "org.qtproject.qt.android.QtEmbeddedViewInterfaceFactory",
-            "org.qtproject.qt.android.RhineQtViews",
-            "org.qtproject.qt.android.QtEmbeddedDelegate",
-            "org.qtproject.qt.android.QtActivityDelegateBase",
-        };
-        for (String name : candidates) {
-            try {
-                final Class<?> type = Class.forName(name);
-                for (java.lang.reflect.Field field : type.getDeclaredFields()) {
-                    if (!java.lang.reflect.Modifier.isStatic(field.getModifiers())) {
-                        continue;
-                    }
-                    field.setAccessible(true);
-                    final Object value = field.get(null);
-                    if (value == null) {
-                        continue;
-                    }
-                    final boolean hit = value == activity || value == delegate || value == view;
-                    if (hit || value instanceof android.app.Activity) {
-                        android.util.Log.w(TAG, tag + " static holder " + name + "."
-                                + field.getName() + " -> " + value.getClass().getName()
-                                + " hitsRetiredHost=" + hit);
-                    }
-                }
-            } catch (Throwable ignored) {
-                // 类不在包里或反射被挡住时跳过：这条诊断不影响行为。
-            }
-        }
-    }
-
-    /**
-     * 只读诊断（MUST-7 定位第 2 步）：cycle1 仍活着的那一刻，记下已知的"可能钉住"来源。
-     *
-     * 判读：QtNative.activity() 非空 → 根在 Qt 原生/JNI 侧；Java 侧全空而 Activity 仍可达
-     * → 根在 retained delegate 的原生持有者，或 Flutter 侧 retained engine 的 activity
-     * attachment。只读，不改任何状态。
-     */
-    private static void logPinningSources(String tag, Activity target) {
-        String qtActivity = "?";
-        String appContext = "?";
-        try {
-            final android.app.Activity activity = QtNative.activity();
-            // 打 identityHashCode 而不是类名（FINAL-REVIEW-141 SHOULD S-a）：类名对每个宿主
-            // 都一样，读日志的人会误当成"同一个 Activity"。
-            qtActivity = activity == null ? "null" : Integer.toHexString(System.identityHashCode(activity));
-        } catch (Throwable error) {
-            qtActivity = "err:" + error;
-        }
-        try {
-            final android.content.Context context = QtNative.getContext();
-            appContext = context == null
-                    ? "null"
-                    : Integer.toHexString(System.identityHashCode(context));
-        } catch (Throwable error) {
-            appContext = "err:" + error;
-        }
-        final android.app.Activity slot = QtNative.activity();
-        android.util.Log.i(TAG, tag + " pin sources sameAsLeaked="
-                + (slot != null && target != null && slot == target)
-                + " slotIdentity=" + (slot == null ? "null" : Integer.toHexString(System.identityHashCode(slot)))
-                + " leakedIdentity="
-                + (target == null ? "null" : Integer.toHexString(System.identityHashCode(target)))
-                + " qtNativeActivity=" + qtActivity
-                + " qtApplicationContext=" + appContext
-                + " sDelegateNull=" + (sDelegate == null)
-                + " sHostActivityNull=" + (sHostActivity.get() == null));
-    }
-
-    private static void verifyPreviousCyclesReleased() {
-        if (!probeEnabled) {
-            // 生产包不跑探针，但也不能让 sCycleProbes 每轮 +1 无界增长。
-            synchronized (sCycleProbes) {
-                sCycleProbes.clear();
-            }
-            return;
-        }
-        if (sCycleProbes.isEmpty()) {
-            return;
-        }
-        final List<CycleProbe> probes;
-        synchronized (sCycleProbes) {
-            if (sCycleProbes.isEmpty()) {
-                return;
-            }
-            // 不清空：要给同一批探针多次机会（一次 GC 的时点可能正好撞上异步 teardown）。
-            probes = new ArrayList<>(sCycleProbes);
-        }
-        // 2.5s / 5.5s / 9.5s 三次：上一轮 Activity 的 teardown（Flutter engine/PlatformView
-        // 的 dispose）是异步的，太早测会把"还没拆完"误当成泄漏；而只测一次也说不清
-        // "是延迟释放还是永不释放"。
-        for (int attempt = 1; attempt <= 3; attempt++) {
-            final int current = attempt;
-            // 对照 canary：同一次 GC 后它必须被清空。canary 清了而 Activity 没清，才说明
-            // "GC 真跑了、弱引用真会清"，把根因收敛到别处（Java 静态已排除 → 原生 JNI 全局引用）。
-            final java.lang.ref.WeakReference<Object> canary =
-                    new java.lang.ref.WeakReference<>(new Object());
-            MAIN_HANDLER.postDelayed(new Runnable() {
-                @Override
-                public void run() {
-                    System.gc();
-                    System.runFinalization();
-                    android.util.Log.i(TAG, "root probe attempt " + current + " canaryCleared="
-                            + (canary.get() == null));
-                    if (current == 1) {
-                        logPinningSources("probe", probes.get(0).activity.get());
-                    }
-                    if (current == 1 && !probes.isEmpty()) {
-                        logStaticHolders("probe",
-                                probes.get(0).activity.get(),
-                                probes.get(0).delegate.get(),
-                                probes.get(0).view.get());
-                    }
-                    for (CycleProbe probe : probes) {
-                        android.util.Log.i(TAG, "cycle " + probe.cycle + " attempt " + current
-                                + " released activity=" + (probe.activity.get() == null)
-                                + " delegate=" + (probe.delegate.get() == null)
-                                + " view=" + (probe.view.get() == null));
-                    }
-                }
-            }, attempt * 2500L);
-        }
     }
 
     private static void drainPendingCppRunnables(String reason) {
