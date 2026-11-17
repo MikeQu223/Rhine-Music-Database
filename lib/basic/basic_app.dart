@@ -927,16 +927,35 @@ class _BasicShellState extends State<_BasicShell>
                 // 初始化页整套坐标是 Qt 舞台坐标（1920 设计宽 / 1080 高，见
                 // boot_page.dart:1119 的约定）：门槛层命令与 ENTER SYSTEM 按钮都是
                 // stage 单位。logical→stage 的这一次缩放由宿主给，页内不再二次换算。
-                return Transform.scale(
-                  scale: pageScale,
-                  alignment: Alignment.topLeft,
-                  child: SizedBox(
-                    width: resolved.width,
-                    height: resolved.height,
-                    child: BasicStartupView(
-                      ports: widget.resources.ports,
-                      dark: state.dark,
-                      onHandoff: _finishStartupPage,
+                //
+                // 但 Positioned.fill 给的是 logical 紧约束：直接套 Transform 时
+                // RenderConstrainedBox 会用 `additionalConstraints.enforce(parent)`
+                // 把 SizedBox 声明的 stage 尺寸压回 logical（2880x1800 / dpr≈2.3625 →
+                // 1219x762），子树按 logical 布局后再被 Transform.scale(0.70556) 缩一次，
+                // 画面只剩左上 1219*0.70556 ≈ 860 logical（= 2032 物理，70.5%）。
+                // OverflowBox 放开紧约束，让 stage 子树真实按 stage 尺寸（1728x1080）
+                // 布局，缩放只发生这一次（DEDUP-13；同 basic_settings_window.dart:176-199）。
+                // stage.scale == 1 时（竖屏 PortraitStage 的 stageHeight 舞台 / 1080 高窗口）
+                // min/max 与父级紧约束完全一致，是零差异的 no-op。
+                return ClipRect(
+                  child: OverflowBox(
+                    alignment: Alignment.topLeft,
+                    minWidth: resolved.width,
+                    maxWidth: resolved.width,
+                    minHeight: resolved.height,
+                    maxHeight: resolved.height,
+                    child: Transform.scale(
+                      scale: pageScale,
+                      alignment: Alignment.topLeft,
+                      child: SizedBox(
+                        width: resolved.width,
+                        height: resolved.height,
+                        child: BasicStartupView(
+                          ports: widget.resources.ports,
+                          dark: state.dark,
+                          onHandoff: _finishStartupPage,
+                        ),
+                      ),
                     ),
                   ),
                 );
