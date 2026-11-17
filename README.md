@@ -289,6 +289,8 @@ Qt RHI 使用私有头文件，升级 Qt 后需重新编译并验证。
 
 ## Android 构建（arm64-v8a）
 
+> 此部分已过时
+
 需要 Android SDK（`platforms/android-36` 与 build-tools）、NDK r27 以上、JDK 17–25，
 以及 Qt 6.12.0 的 `android_arm64_v8a` kit——Qt 没有公开这个版本的 Android 预编译包，
 可以用仓库内 `third_party/qt` 的固定提交自行构建（`npm run build:qt:android`）。
