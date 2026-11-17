@@ -1145,10 +1145,11 @@ void Engine::resize(double width, double height) {
     wake();
 }
 void Engine::action(QString value) {
-    if (value == "performance:toggle") {
-        emit performanceRequested();
-        return;
-    }
+    // 用户 m10082：性能面板不是用户要求的功能 —— 其专用动作入口注释掉（保留原文，不删）。
+    // if (value == "performance:toggle") {
+    //     emit performanceRequested();
+    //     return;
+    // }
     // 窗口模式由 Qt 原生窗口处理，不进入音乐状态或场景动画。
     if (value == "window:fullscreen") {
         toggleFullscreen();
