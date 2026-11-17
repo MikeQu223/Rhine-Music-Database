@@ -128,6 +128,10 @@ QString g_appliedKey;
 // 最近一次应用的渲染设置（Flutter 是唯一真值）：值不变就一个字节都不写，
 // 否则每次快照都会重写一遍 QSettings 并把 NativeHud 的字段重新赋值。
 QJsonObject g_appliedSettings;
+// 最近一次执行的封面查看器命令序号（Flutter 快照里的 coverViewer.seq）。
+// 查看器命令不是偏好、不能落盘，但必须去重：同一份快照会被补应用一次
+// （reapplyPendingState），没有这道闸就会开两次/关两次。
+int g_appliedViewerSeq = -1;
 } // namespace
 
 void rememberState(const QString &json, const ProducerOrigin &origin)
@@ -193,6 +197,7 @@ void resetAppliedState(quint64 sceneEpochToken)
     g_projectedCover.clear();
     g_projectedCurrent = QJsonObject();
     g_appliedSettings = QJsonObject();
+    g_appliedViewerSeq = -1;
 }
 
 // pointerdown 时只清选中相关：Qt 自己的 NativeSceneInput 可能在这一轮里改了选中，之后
@@ -552,6 +557,32 @@ void applySceneState(const QString &json, const ProducerOrigin &origin)
               qPrintable(settings.value("aa").toString()), settings.value("aaScale").toInt(125),
               settings.value("msaa").toInt(0), settings.value("supersample").toInt(1));
         applied = true;
+    }
+
+    // 封面查看器（Qt NativeViewer）命令：打开/关闭/清晰/磨砂/复位/封面正面。
+    //
+    // Flutter 的 HUD 是唯一交互面，Qt 内嵌时没有自己的命中层可点，而 Flutter→Qt 只有
+    // state/pointer/wheel 三条方法（QtSceneChannel.kt:123-170），所以这些动作只能贴着
+    // 快照下发。这里按 seq 单调去重；动作本身交给 NativeScene 的既有入口
+    // （NativeSceneInput.cpp:241-257 openViewer/coverFront/viewerAction → NativeViewer），
+    // Qt 侧的查看器状态仍是唯一真值，本函数不保存第二份。
+    const QJsonObject coverViewer = payload.value("coverViewer").toObject();
+    if (!coverViewer.isEmpty()) {
+        const int viewerSeq = coverViewer.value("seq").toInt(-1);
+        if (viewerSeq != g_appliedViewerSeq) {
+            g_appliedViewerSeq = viewerSeq;
+            const QString viewerAction = coverViewer.value("action").toString();
+            if (viewerAction == QLatin1String("open")) {
+                scene.openViewer();
+            } else if (viewerAction == QLatin1String("cover-front")) {
+                scene.coverFront(true);
+            } else if (!viewerAction.isEmpty()) {
+                scene.viewerAction(viewerAction);
+            }
+            qInfo("RHINE_QT_SCENE_COVER_VIEWER seq=%d action=%s", viewerSeq,
+                  qPrintable(viewerAction));
+            applied = true;
+        }
     }
 
     // 封面身份投影（FINAL-RECOVERY-138 / 决策：URL 优先，选中身份不是播放身份）。

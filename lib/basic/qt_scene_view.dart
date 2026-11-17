@@ -269,6 +269,9 @@ class BasicSceneSettings {
     this.aaScale = 125,
     this.msaa = 0,
     this.supersample = 1,
+    this.viewerSeq = 0,
+    this.viewerAction = '',
+    this.bootPhase = false,
   });
 
   final bool discRotation;
@@ -280,6 +283,36 @@ class BasicSceneSettings {
   final int aaScale;
   final int msaa;
   final int supersample;
+
+  /// 封面查看器（Qt `NativeViewer`）的单次命令序号。
+  ///
+  /// Flutter→Qt 只有 `state`/`pointer`/`wheel` 三个方法
+  /// （android/.../qt/QtSceneChannel.kt:123-170），没有任何"动作"通道，所以打开/关闭
+  /// 查看器也只能贴着场景快照下发。`seq` 单调递增：同一份快照被重复应用
+  /// （EmbeddedSceneHost 的 reapplyPendingState / 首帧 replay）时 Qt 只执行一次。
+  ///
+  /// 这条命令和渲染参数不同，它**不是**偏好，Qt 侧不落盘、不保存第二份状态；
+  /// 查看器自己的状态仍在 Qt 的 NativeViewer 里（与独立 Qt 版同一条链）。
+  final int viewerSeq;
+
+  /// `''`（无命令）| `open` | `close` | `clear` | `frosted` | `reset` | `cover-front`。
+  final String viewerAction;
+
+  /// 初始化页面（boot 相位）是否在场：为 true 时快照的 `mode` 强制为 "boot"。
+  ///
+  /// Qt 独立版进入 boot 时 `NativeScene::setMode("boot")`（NativeScene.cpp:194-227），
+  /// 由场景自己按 `m_bootStart = m_clock - 1.76` 的时间轴画 3D 引导视觉
+  /// （NativeSceneFrame.cpp:18-21，35s 硬闸门切 detail）。内嵌时相位由 Flutter 决定，
+  /// 所以这个开关必须随快照过去，否则 3D 层会在初始化页面底下画资料库。
+  final bool bootPhase;
+
+  /// 有查看器命令要随快照下发（见 [viewerSeq]）。
+  bool get hasViewerCommand => viewerAction.isNotEmpty;
+
+  /// 快照里的 `coverViewer` 字段；没有命令时返回 null。
+  Map<String, Object?>? get viewerCommandJson => hasViewerCommand
+      ? <String, Object?>{'seq': viewerSeq, 'action': viewerAction}
+      : null;
 
   static const BasicSceneSettings fallback = BasicSceneSettings();
 
@@ -306,11 +339,15 @@ class BasicSceneSettings {
       other.aaMode == aaMode &&
       other.aaScale == aaScale &&
       other.msaa == msaa &&
-      other.supersample == supersample;
+      other.supersample == supersample &&
+      other.viewerSeq == viewerSeq &&
+      other.viewerAction == viewerAction &&
+      other.bootPhase == bootPhase;
 
   @override
   int get hashCode => Object.hash(discRotation, archiveMaskStrength, vsync,
-      renderScale, graphicsBackend, aaMode, aaScale, msaa, supersample);
+      renderScale, graphicsBackend, aaMode, aaScale, msaa, supersample,
+      viewerSeq, viewerAction, bootPhase);
 }
 
 String qtSceneStateSnapshot(
@@ -335,6 +372,11 @@ String qtSceneStateSnapshot(
               'cover': qtSceneCoverOf(state, song),
               'title': song.title,
               'artist': song.artist,
+              // 播放真值：内嵌（render-only）时 Qt 的 NativeApplication 没有曲库也没有
+              // 自己的播放器（NativeApplication.cpp:166-177 只投影 current/cover），
+              // 唱片旋转因此不能读 Qt 播放器（Engine.cpp:1529-1548 读 player.state）。
+              // 这里把唯一播放器（Flutter 侧）的 playing 投影过去，Qt 只读不算。
+              'playing': state.playing,
             };
   final Map<String, Object?> payload = <String, Object?>{
     'v': 4,
@@ -345,7 +387,9 @@ String qtSceneStateSnapshot(
     if (viewId != null) 'view': viewId,
     'ctx': contextGeneration,
     'dark': state.dark,
-    'mode': qtSceneModeOf(state),
+    // boot 相位由宿主的外壳状态决定（Flutter 是唯一相位真值）：初始化页面在场时
+    // 场景走 Qt 自己的 boot 时间轴，和独立版一致。
+    'mode': settings?.bootPhase == true ? 'boot' : qtSceneModeOf(state),
     'index': index,
     'count': state.songs.length,
     // 连续窗口位置（条目，小数 = 两项之间）与所属列：Qt 只**投影**它，
@@ -354,6 +398,10 @@ String qtSceneStateSnapshot(
     'lane': state.selectedLane,
     'cells': qtSceneCellsOf(state),
     if (settings != null) 'settings': settings.toJson(),
+    // 查看器命令（见 BasicSceneSettings.viewerSeq）：只在有命令时出现，Qt 侧按 seq
+    // 去重后执行一次，不会因为快照重复下发而二次打开/关闭。
+    if (settings != null && settings.hasViewerCommand)
+      'coverViewer': settings.viewerCommandJson,
     if (current != null) 'current': current,
     if (song != null && song.key.isNotEmpty) 'key': song.key,
   };

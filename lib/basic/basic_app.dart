@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart' show Ticker;
 import 'package:flutter/services.dart';
 
 import '../app/consent_gate.dart';
@@ -30,9 +31,12 @@ import '../hud/modals/settings_modal.dart'
         SettingsPreferenceContext,
         SettingsPreferenceSnapshot;
 import '../hud/player/player_bar.dart' show playerBarHeaderHeight, playerBarRowHeight;
+import '../hud/pages/viewer_hud.dart';
 import '../hud/protocol/hud_frame.dart';
+import '../scene/viewer_state.dart';
 import '../ui/layout/portrait_stage.dart';
 import '../platform/media_session.dart';
+import 'basic_cover_viewer.dart';
 import 'basic_hud.dart';
 import 'basic_hud_resources.dart';
 import 'basic_models.dart';
@@ -41,6 +45,7 @@ import 'basic_settings_runtime.dart';
 import 'basic_settings_store.dart';
 import 'basic_settings_view.dart';
 import 'basic_settings_window.dart';
+import 'basic_startup_view.dart';
 import 'platform_playback.dart';
 import 'qt_scene_view.dart';
 import 'siren_controller.dart';
@@ -377,7 +382,10 @@ class _BasicShell extends StatefulWidget {
 }
 
 class _BasicShellState extends State<_BasicShell>
-    with SingleTickerProviderStateMixin
+    // 两条 ticker：初始化动画（AnimationController）与封面查看器的场景时钟
+    // （ViewerState.update 需要逐帧推进 transition/spring，见 lib/scene/viewer_state.dart:579）。
+    // Qt 侧这两条时钟也是各自独立的（NativeScene 的 m_clock + NativeViewer 的 update）。
+    with TickerProviderStateMixin
     implements TextInputPorts {
   /// 未接入动作的可见反馈（null = 无）。这里绝不静默吞点击，也不假装有设置/
   /// 账号功能：真实缺口写进可见反馈，并在报告里点名缺少的 controller 契约。
@@ -411,7 +419,32 @@ class _BasicShellState extends State<_BasicShell>
     // 1.0 = 已播完：默认不盖黑幕，只有“初始化动画”开启或手动重放时才从 0 跑。
     value: 1,
   );
+  /// 初始化页面是否正在显示（真实 boot 门槛页 + glyph 层，见 basic_startup_view.dart）。
+  ///
+  /// 与 [_startup] 分工：[_startup] 只是那一小段 1200ms 的交接淡出/舞台上移；
+  /// 本开关代表"整页初始化界面在场"，由 boot 页自己的 35s 闸门或 ENTER SYSTEM 收起。
+  bool _startupPageOpen = false;
+
   bool _startupEnabled = false;
+
+  /// 封面查看器（Qt `NativeViewer`）在 Flutter 侧的镜像状态。
+  ///
+  /// 唯一真值仍是 Qt 的 NativeViewer（网格、相机、清晰度都在那边，Qt 侧不保存
+  /// 第二份）；这里只镜像 HUD 需要的部分（transition/surface/clarity 弹簧），
+  /// 用的就是 lib/scene/viewer_state.dart 这份逐字移植。null = 查看器没开。
+  ViewerState? _coverViewer;
+
+  /// 查看器场景时钟（秒），喂给 [ViewerState.update]；只在查看器期间推进。
+  double _viewerTime = 0;
+  Ticker? _viewerTicker;
+  Duration? _viewerTickBase;
+
+  /// 查看器命令的单调序号与当前命令（见 [BasicSceneSettings.viewerSeq]）。
+  ///
+  /// Flutter→Qt 只有 state/pointer/wheel 三条通道，命令只能贴快照下发；seq 递增
+  /// 才能让 QtSceneView 判定"settings 变了"而真的推一份出去。
+  int _viewerCommandSeq = 0;
+  String _viewerCommand = '';
 
   /// 设置项“右侧画面遮罩”的强度真值（0..100）。默认即 Qt 常量，装载后取偏好值。
   double _archiveMaskStrength = 55;
@@ -506,6 +539,9 @@ class _BasicShellState extends State<_BasicShell>
       return;
     }
     _applySettingsEffects(replayStartup: true);
+    // 首启把空偏好补成 "off"（Qt/src/NativeApplication.cpp:69-71）：本次已经播了 boot，
+    // 之后开屏不再强制显示，直到用户自己在设置里打开。
+    unawaited(_settings.settleFirstLaunchStartupPreference());
     setState(() {});
   }
 
@@ -514,22 +550,183 @@ class _BasicShellState extends State<_BasicShell>
     controller.setDetailAutoplay(_settings.detailAutoplay);
     controller.setSinglePlayAppend(_settings.singlePlayAppend);
     _archiveMaskStrength = _settings.archiveMaskStrength.toDouble();
-    _startupEnabled = _settings.startupAnimation;
+    // Qt/src/NativeApplication.cpp:62-71：首启（偏好为空）也会播一次 boot，之后
+    // 才把空偏好补成 "off"；用户显式关掉之后不再强制开屏。
+    _startupEnabled =
+        _settings.startupAnimation || _settings.startupAnimationNeverConfigured;
     if (replayStartup && _startupEnabled) {
       _replayStartup();
     }
   }
 
+  /// 重新进入 boot：显示真实初始化页面（Qt 的 `hud.action("replay")`，
+  /// NativeHudController.cpp:698 → `m_scene.mode("boot")`）。
   void _replayStartup() {
     if (!mounted) {
       return;
     }
-    _startup.forward(from: 0);
+    _startup.value = 0;
+    _startupPageOpen = true;
     setState(() {});
+  }
+
+  /// 初始化页面交割（35s 到点，或用户点 ENTER SYSTEM / 跳过）：收起整页，
+  /// 然后播那一小段舞台上升淡出（保留原有 1200ms 手感，作为 boot 页退出后的落位）。
+  void _finishStartupPage() {
+    if (!_startupPageOpen) {
+      return;
+    }
+    setState(() => _startupPageOpen = false);
+    if (_startupEnabled) {
+      _startup.forward(from: 0);
+    } else {
+      // 手动重放（偏好本来是关的）也要把幕布收干净：_startup.value 停在 0 且没有
+      // 动画在跑时，[_startupCurtain] 会按 t=0 画一整块黑幕，界面就再也回不来了。
+      _startup.value = 1;
+    }
+  }
+
+  // ── 封面查看器（req3：详情页「查看封面 ↗」的真实归属）──────────────────────────
+
+  /// 打开查看器：真实选中条目的封面/展厅由 Qt 的 NativeViewer 渲染
+  /// （NativeSceneInput.cpp:241-243 openViewer），Flutter 只负责命令与 HUD。
+  ///
+  /// `resumeMode` 记的是打开时的场景模式：关掉后回到先前那个相位（详情/资料库），
+  /// 选中、滚动、队列一概不动（本方法不碰 controller）。
+  void _openCoverViewer() {
+    if (_coverViewer != null) {
+      return;
+    }
+    final ViewerState viewer = ViewerState(resumeMode: qtSceneModeOf(controller.state));
+    // ready 在 Flutter 侧只能是"HUD 按 Qt 版式画全"的意思：Qt 的 m_ready 取决于
+    // archive-assembly.json 网格是否装载成功（NativeViewer::open 里 m_ready = !m_meshes.isEmpty()），
+    // 而 Flutter→Qt 只有 state/pointer/wheel 三条单向通道，拿不到这个布尔值。
+    // 真正的门禁仍在 Qt：viewerAction 在 !m_ready 时直接返回（NativeViewer.cpp:108-120），
+    // 所以网格缺失时按 clear/frosted/reset 只是这里高亮、Qt 不动，不会画出假状态。
+    viewer.open(_viewerTime, ready: true);
+    _coverViewer = viewer;
+    _sendCoverViewerCommand('open');
+    _viewerTicker ??= createTicker(_onViewerTick);
+    _viewerTickBase = null;
+    if (!_viewerTicker!.isActive) {
+      _viewerTicker!.start();
+    }
+    setState(() {});
+  }
+
+  /// 关闭查看器：先走 NativeViewer 的 close 语义（transition=closing，0.22s 后
+  /// 真正落地），动画结束由 [_onViewerTick] 收尾。Qt 侧同一份状态自己也在跑。
+  void _requestCloseCoverViewer() {
+    final ViewerState? viewer = _coverViewer;
+    if (viewer == null || viewer.isClosing) {
+      return;
+    }
+    viewer.act(ViewerAction.close, _viewerTime);
+    _sendCoverViewerCommand('close');
+    setState(() {});
+  }
+
+  void _finishCoverViewer() {
+    _viewerTicker?.stop();
+    _viewerTickBase = null;
+    if (!mounted) {
+      return;
+    }
+    setState(() => _coverViewer = null);
+  }
+
+  /// 逐帧推进查看器时钟（Qt NativeViewer::update 的对应物）。
+  void _onViewerTick(Duration elapsed) {
+    final ViewerState? viewer = _coverViewer;
+    if (viewer == null) {
+      return;
+    }
+    final Duration? base = _viewerTickBase;
+    _viewerTickBase = elapsed;
+    if (base != null) {
+      final double delta =
+          (elapsed - base).inMicroseconds / Duration.microsecondsPerSecond;
+      if (delta > 0) {
+        _viewerTime += delta;
+      }
+    }
+    final ViewerCloseOutcome? outcome = viewer.update(_viewerTime);
+    if (outcome != null) {
+      _finishCoverViewer();
+      return;
+    }
+    // 只有还在过渡/弹簧未收敛时才重建：查看器完全打开后 HUD 是静止的，
+    // 每帧 setState 会把整个外壳（含 PlatformView 的父链）都刷一遍，白耗。
+    final bool animating = viewer.isClosing ||
+        viewer.transition != ViewerTransition.open ||
+        viewer.resetting ||
+        (viewer.clarity - viewer.targetClarity).abs() > 0.001 ||
+        (viewer.spread - viewer.targetSpread).abs() > 0.001;
+    if (animating) {
+      setState(() {});
+    }
+  }
+
+  /// 下一条查看器命令（seq 单调，Qt 侧按 seq 去重后执行一次）。
+  void _sendCoverViewerCommand(String action) {
+    _viewerCommandSeq += 1;
+    _viewerCommand = action;
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  /// 查看器 HUD 的命中断言：Qt 的 viewer 页只有 6 个按钮，动作语义逐条对应
+  /// NativeHudController.cpp 的路由（'music:cover-front' 走 coverFront，其余走
+  /// NativeViewer::action）。HUD 的命中串本身就是动作串，这里不再造第二套。
+  void _onCoverViewerAction(String action) {
+    final ViewerState? viewer = _coverViewer;
+    if (viewer == null) {
+      return;
+    }
+    if (action == 'viewer:close') {
+      _requestCloseCoverViewer();
+      return;
+    }
+    if (action == 'music:cover-front') {
+      // NativeViewer::coverFront 没有 m_open / m_ready 门禁（NativeViewer.cpp:99-107）。
+      _sendCoverViewerCommand('cover-front');
+      return;
+    }
+    final ViewerAction? parsed = ViewerAction.fromWire(action.replaceFirst('viewer:', ''));
+    if (parsed == null) {
+      return;
+    }
+    // 本地镜像与 Qt 走同一份仲裁：ready/closing 时 Qt 也会忽略，两边不会各说各话。
+    viewer.act(parsed, _viewerTime);
+    _sendCoverViewerCommand(parsed.wire);
+    setState(() {});
+  }
+
+  /// 查看器 HUD 状态：条目取**当前选中曲目**（其次专辑）——与 Qt 读 m_music->current
+  /// 同一份真值；没有选中就传 null，viewer 页按 NativeHudDetail.cpp:514-516 早退。
+  ViewerHudState _viewerHudState(BasicViewState state, ViewerState viewer) {
+    final SirenSong? song = state.song;
+    if (song != null) {
+      return basicViewerHudState(
+        viewer: viewer,
+        dark: state.dark,
+        id: song.id,
+        title: song.title,
+      );
+    }
+    final SirenAlbum? album = state.album;
+    return basicViewerHudState(
+      viewer: viewer,
+      dark: state.dark,
+      id: album?.id,
+      title: album?.name,
+    );
   }
 
   @override
   void dispose() {
+    _viewerTicker?.dispose();
     _startup.dispose();
     _hudFocusNode.dispose();
     // 面板滚动偏移是本次运行内跨开关复用的 notifier；State 自己持有，自己负责关掉。
@@ -667,6 +864,13 @@ class _BasicShellState extends State<_BasicShell>
   }
 
   Widget _surface(BasicViewState state, {StageGeometry? geometry, HudStage? stage}) {
+    // 封面查看器开着：Qt 侧只画 viewer 页（NativeHud.cpp:267-268），详情页的 HUD
+    // 不能再画一份，所以整屏换成查看器那一支。3D 场景层仍是同一个 PlatformView
+    // （_sceneKey 不变 → element 被移动而非重建，QQuickView 不重启）。
+    final ViewerState? coverViewer = _coverViewer;
+    if (coverViewer != null) {
+      return _coverViewerSurface(state, coverViewer, geometry: geometry, stage: stage);
+    }
     final Widget hud = BasicHudSurface(
       state: state,
       ports: widget.resources.ports,
@@ -693,15 +897,52 @@ class _BasicShellState extends State<_BasicShell>
     );
     final bool settingsOpen =
         _modal == 'settings' || _modal == DiscWarningModal.kind;
-    final bool animating = _startup.isAnimating;
-    if (!settingsOpen && !animating) {
+    final bool startupOpen = _startupPageOpen;
+    // 初始化页面在场时不再叠黑幕：那时整页 boot HUD 自己就是画面
+    // （NativeHudBoot::boot 的 gradient/flash 门槛层），底下留真实场景当背景。
+    final bool animating = !startupOpen && _startup.isAnimating;
+    if (!settingsOpen && !startupOpen && !animating) {
       return hud;
     }
     final double scale = stage?.scale ?? 1.0;
     return Stack(
       fit: StackFit.expand,
       children: <Widget>[
-        _startupCurtain(hud, scale: scale),
+        if (startupOpen)
+          Builder(
+            builder: (BuildContext inner) => _sceneOnly(
+              state,
+              geometry: geometry,
+              stage: stage ?? HudStageScope.of(inner),
+            ),
+          )
+        else
+          _startupCurtain(hud, scale: scale),
+        if (startupOpen)
+          Positioned.fill(
+            child: Builder(
+              builder: (BuildContext inner) {
+                final HudStage resolved = stage ?? HudStageScope.of(inner);
+                final double pageScale = resolved.scale > 0 ? resolved.scale : 1.0;
+                // 初始化页整套坐标是 Qt 舞台坐标（1920 设计宽 / 1080 高，见
+                // boot_page.dart:1119 的约定）：门槛层命令与 ENTER SYSTEM 按钮都是
+                // stage 单位。logical→stage 的这一次缩放由宿主给，页内不再二次换算。
+                return Transform.scale(
+                  scale: pageScale,
+                  alignment: Alignment.topLeft,
+                  child: SizedBox(
+                    width: resolved.width,
+                    height: resolved.height,
+                    child: BasicStartupView(
+                      ports: widget.resources.ports,
+                      dark: state.dark,
+                      onHandoff: _finishStartupPage,
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
         if (settingsOpen)
           Builder(
             builder: (BuildContext inner) {
@@ -734,6 +975,110 @@ class _BasicShellState extends State<_BasicShell>
             },
           ),
       ],
+    );
+  }
+
+  /// 只有 3D 场景层，没有 HUD。
+  ///
+  /// 初始化页面在场时就是这个形态：Qt 的 boot 相位里 scene 在自己的时间轴上画
+  /// boot 视觉，HUD 整块交给 NativeHudBoot（NativeHud.cpp:267-268 的 boot 分支
+  /// 不画 brand/导航/曲目列/播放条）。若这里仍把详情 HUD 垫在底下，boot 页在
+  /// 26.92s 淡出（backgroundOpacity→0）之后就会露出详情页——Qt 不会。
+  Widget _sceneOnly(
+    BasicViewState state, {
+    required StageGeometry? geometry,
+    required HudStage stage,
+  }) {
+    final StageGeometry? landscape = geometry;
+    final Rect? sceneStage = basicSceneStageRect(
+      portrait: landscape == null,
+      width: stage.width,
+      height: stage.height,
+    );
+    if (sceneStage == null) {
+      return const SizedBox.expand();
+    }
+    // 竖屏子树已经在 stage 坐标里，横屏才要 logical→stage（与 BasicHudSurface 同式）。
+    final Rect rawSceneRect =
+        landscape == null ? sceneStage : landscape.rectToLogical(sceneStage);
+    return Stack(
+      fit: StackFit.expand,
+      children: <Widget>[
+        Positioned.fromRect(
+          rect: rawSceneRect,
+          child: QtSceneView(
+            key: _sceneKey,
+            state: state,
+            settings: _sceneSettings(),
+            onAction: _onAction,
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 查看器那一支的舞台：3D 场景层（同一个 PlatformView）+ 查看器 HUD。
+  ///
+  /// 为什么不复用 [BasicHudSurface]：它会画详情/资料库的整页 HUD（brand、导航、
+  /// 曲目列、播放条），而 Qt 的 viewer 页把这些全部让给查看器
+  /// （NativeHud.cpp:267-268 只调 viewer()，:306-311 只补 modal 与播放条）。
+  /// 这里也不去改 basic_hud.dart（source_A 的写域），免得两路同时改同一个文件。
+  Widget _coverViewerSurface(
+    BasicViewState state,
+    ViewerState viewer, {
+    StageGeometry? geometry,
+    HudStage? stage,
+  }) {
+    return Builder(
+      builder: (BuildContext inner) {
+        final HudStage resolved = stage ?? HudStageScope.of(inner);
+        final StageGeometry? landscape = geometry;
+        final bool portrait = landscape == null;
+        // 与 BasicHudSurface 同一份几何真值（basic_hud.dart:409-427）：横屏铺满整窗、
+        // 竖屏铺到列表起点之上。查看器的相机视口就是这块，改它等于改 fov。
+        final Rect? sceneStage = basicSceneStageRect(
+          portrait: portrait,
+          width: resolved.width,
+          height: resolved.height,
+        );
+        final Rect? rawSceneRect = (sceneStage == null || landscape == null)
+            ? sceneStage
+            : landscape.rectToLogical(sceneStage);
+        final Widget viewerHud = BasicCoverViewerOverlay(
+          stage: resolved,
+          ports: widget.resources.ports,
+          state: _viewerHudState(state, viewer),
+          onAction: _onCoverViewerAction,
+        );
+        return Stack(
+          fit: StackFit.expand,
+          children: <Widget>[
+            if (rawSceneRect != null)
+              Positioned.fromRect(
+                rect: rawSceneRect,
+                child: QtSceneView(
+                  key: _sceneKey,
+                  state: state,
+                  settings: _sceneSettings(),
+                  onAction: _onAction,
+                ),
+              ),
+            // 查看器 HUD 盖在场景上；指针同时照旧搬给 Qt（旋转/平移/双指缩放都在
+            // NativeViewer::pointer 里），HUD 只有 6 个按钮，点一下同时到达两边
+            // 也只是一次没有位移的 down/up，Qt 看不到拖动——不设 ownership 判据
+            // 反而不会出现"点在按钮上时场景不动、拖动时按钮又吃掉"的半吊子状态。
+            if (rawSceneRect != null)
+              Positioned.fill(
+                child: QtSceneRawPointerLayer(
+                  sceneRect: rawSceneRect,
+                  child: viewerHud,
+                ),
+              )
+            else
+              Positioned.fill(child: viewerHud),
+          ],
+        );
+      },
     );
   }
 
@@ -780,6 +1125,11 @@ class _BasicShellState extends State<_BasicShell>
         aaScale: _settings.aaScalePercent,
         msaa: _settings.msaaSamples,
         supersample: _settings.supersampleFactor,
+        // 封面查看器命令（不是偏好）：seq 单调，Qt 侧执行一次就记账，重复应用被丢掉。
+        viewerSeq: _viewerCommandSeq,
+        viewerAction: _viewerCommand,
+        // 初始化页面在场 → 场景走 "boot"（Qt 同相位），否则回到 detail/archive。
+        bootPhase: _startupPageOpen,
         // FSR（fsr-quality / fsr-sharpness）按用户 m03406 暂缓：持久化契约里仍有这两项
         // （basic_settings.dart 的 antiAliasing 细项），但本阶段既不出档位 UI，也不把
         // 它们塞进场景快照/不 qputenv，渲染器继续按自己的缺省（native / 50）走。
@@ -846,9 +1196,22 @@ class _BasicShellState extends State<_BasicShell>
       _setModal(DiscWarningModal.kind);
       return;
     }
+    // 风险确认的**成功**分支：退回打开它的设置面板（关闭风险窗），让用户立刻看到
+    // 开关已经是"开"、并且这一条真的落盘了。旧实现只处理了 'disc-rotation:cancel'，
+    // 成功路径既没关窗也没退回——用户必须手动按返回，也就是"确认后窗口没有消失"。
+    // 风险页在 Qt 侧就是设置面板上的一层弹层（NativeHudController 的 modal 栈），
+    // 收掉它不等于关掉设置，所以这里回到 'settings' 而不是 ''。
+    if (_modal == DiscWarningModal.kind) {
+      _setModal('settings');
+    }
     if (result.command is BasicSettingsActionRowCommand &&
         (result.command as BasicSettingsActionRowCommand).dispatchAction == 'replay') {
       // “手动显示初始化动画”：真的重放那一段动效，不弹 toast 了事。
+      // 先收掉设置面板：Qt 侧 replay 就是场景相位切换（NativeHudController.cpp:698
+      // → `m_scene.mode("boot")`），面板留在最上层会把整页初始化盖住——用户看不到
+      // "重新显示"发生，就会以为这一项还是没反应。
+      _setModal('');
+      _hudFocusNode.requestFocus();
       _replayStartup();
       return;
     }
@@ -862,6 +1225,12 @@ class _BasicShellState extends State<_BasicShell>
   }
 
   void _onAction(String action) {
+    // 详情页的「查看封面 ↗」（lib/hud/pages/song_detail.dart:710 的 'viewer' 命中）。
+    // Qt 侧同一条：NativeHudController.cpp:688 value=="viewer" → scene.openViewer()。
+    if (action == 'viewer') {
+      _openCoverViewer();
+      return;
+    }
     // 3D 归档里点到某一格：Qt 只回传**几何格**（lane+物理行），条目身份仍由这里的
     // 唯一列表真值折出来。折不出来（不是当前列/空列）就不动，不猜下标。
     // 详情页唱片转到底：原生只报手势方向，切哪一张由这里的列表真值决定。
@@ -1103,6 +1472,15 @@ class _BasicShellState extends State<_BasicShell>
   /// 只在这个焦点节点持焦时生效：检索框是**兄弟**节点（不是祖先链），输入法
   /// 持焦期间按键不会冒泡到这里，所以不抢输入框的 Return/Escape。
   KeyEventResult _onHudKeyEvent(FocusNode node, KeyEvent event) {
+    // 查看器开着时 HUD 键路由整块让位：Esc 只关查看器（NativeViewer.cpp:132-134
+    // "Escape 即使在网格没装载时也关"），不往下走 HUD/settings 的键。
+    if (_coverViewer != null) {
+      if (event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.escape) {
+        _requestCloseCoverViewer();
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.ignored;
+    }
     if (event is KeyUpEvent) {
       return KeyEventResult.ignored;
     }
@@ -1387,10 +1765,23 @@ class _BasicShellState extends State<_BasicShell>
     // 开着模态（设置/搜索/风险确认）时返回键先收模态：面板盖在资料库根上，
     // 若还让 canPop=true，一按返回就把整个 App 退了。
     final bool modalOpen = _modal.isNotEmpty;
+    // 查看器也是一层"盖在相位上的界面"：返回键先关它，不能直接退出 App，
+    // 也不该顺手把详情页退掉（关掉后回到打开前的详情/列表）。
+    final bool viewerOpen = _coverViewer != null;
     return PopScope(
-      canPop: libraryRoot && !modalOpen,
+      canPop: libraryRoot && !modalOpen && !viewerOpen,
       onPopInvoked: (bool didPop) {
         if (didPop) {
+          return;
+        }
+        if (viewerOpen) {
+          _requestCloseCoverViewer();
+          return;
+        }
+        if (_startupPageOpen) {
+          // 初始化页在场上时返回键 = Qt 的 skip（NativeHudController.cpp:682-683
+          // 'skip' → archive），看完就正常回到原本相位，不做别的。
+          _finishStartupPage();
           return;
         }
         if (_modal == DiscWarningModal.kind) {
