@@ -1,3 +1,30 @@
+// ===== RHINE pure-Qt Android packaging block (FLUTTER-ONLY-ANDROID-20261117) =====
+//
+// 纯 Qt 的 Android Gradle 打包已封堵（FLUTTER-ONLY-ANDROID-20261117）。
+//
+// 本文件是**纯 Qt 部署工程**的 Gradle 脚本：androiddeployqt 从 kit 的
+// src/android/templates/build.gradle 复制模板、再用包源目录（QT_ANDROID_PACKAGE_SOURCE_DIR =
+// Qt/android）里的这份整份覆盖。任何一次由它驱动的 assembleDebug/assembleRelease/bundle*
+// 产出的都是纯 Qt 包（Qt ConsentActivity，无 libflutter.so、无 flutter_assets）。
+//
+// Android 交付只走 Flutter：入口 lib/main.dart、Gradle 工程 android/app/build.gradle.kts、
+// `flutter build apk`。所以这里在 buildscript 之前直接失败——连 AGP classpath 都不解析。
+// 构建代码按用户要求保留（下面的模板与 RHINE 追加段一个字都没删），只是不再可执行。
+// scripts/android-gradle-sync.cjs 重新生成时会强制注入本段，重同步不能把它丢掉。
+// ============================================================================
+throw new GradleException(
+    '''
+纯 Qt 的 Android Gradle 打包已停用（FLUTTER-ONLY-ANDROID-20261117）。
+
+Android 包只能由 Flutter 工程构建：
+  flutter build apk --debug --target-platform android-arm64
+入口 lib/main.dart，Gradle 工程 android/app/build.gradle.kts。
+
+Qt 侧只提供 native 产物：
+  编 libRhineMusicDatabase_arm64-v8a.so + androiddeployqt --no-build 的 libs/jar/assets/libs.xml
+本文件（纯 Qt 部署工程的 Gradle 脚本）保留但不再可执行。
+'''.stripIndent())
+
 buildscript {
     repositories {
         google()
