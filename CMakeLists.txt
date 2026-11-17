@@ -666,6 +666,12 @@ if(APPLE
         VERBATIM)
 endif()
 qt_finalize_executable(RhineMusicDatabase)
+# Android（FLUTTER-ONLY-ANDROID-20261117）：Android 包只由 Flutter 工程产出，Qt 侧只编 native。
+# RHINE_FLUTTER_HOST_ONLY=ON 时终结器仍会建出 ${target}_make_apk / _make_aab 等打包 target，
+# 这里给它们挂必定失败的依赖——native 目标照常构建，纯 Qt 打包 target 直接停（见 Qt/Android.cmake）。
+if(ANDROID AND RHINE_FLUTTER_HOST_ONLY)
+    rhine_android_forbid_pure_qt_package_targets()
+endif()
 # 桌面回归包含子进程和桌面路径，移动端只构建正式应用。
 if(RHINE_MOBILE_PLATFORM)
     return()

@@ -2,6 +2,39 @@
 // 项目根存在 Rhine-Music-Database.key 与同名 .password.key 时改用发布密钥，产物加
 // -signed 后缀；否则沿用工作区内的调试密钥。全程不写工作区以外的路径（Gradle/Android
 // 的用户目录都改指到 output/android-work 下）。
+//
+// ============================================================================
+// 纯 Qt 的 Android 打包入口已封堵（FLUTTER-ONLY-ANDROID-20261117）。
+//
+// Android 交付只走 Flutter 宿主：入口 lib/main.dart，Gradle 工程 android/app/build.gradle.kts，
+// 出包命令 `flutter build apk --debug --target-platform android-arm64`。Qt 侧只负责 native：
+// libRhineMusicDatabase_arm64-v8a.so，以及 androiddeployqt --no-build 生成的 libs/jar/assets/libs.xml。
+//
+// 为什么在这里硬失败而不是删代码：这个脚本整条链（qt-cmake 配置 → `cmake --build --target apk`
+// → androiddeployqt → Gradle assembleDebug）产出的都是纯 Qt 包——没有 libflutter.so、没有
+// flutter_assets，装到设备上跑的是 Qt ConsentActivity。构建代码按用户要求保留，但绝不能再被跑通。
+// 失败点放在**任何**动作之前：不读签名凭据、不准备 Node/资源、不配置 CMake、不动 Gradle。
+// 同一条封堵还在 Qt/android/build.gradle（Gradle 层）与 Qt/Android.cmake（RHINE_FLUTTER_HOST_ONLY，
+// 默认 fail-closed）里各有一道，任何一道单独被绕过都不会出包。
+// ============================================================================
+console.error(
+    [
+        '纯 Qt 的 Android 打包已停用（FLUTTER-ONLY-ANDROID-20261117）。',
+        '',
+        'Android 包必须由 Flutter 工程构建：',
+        '    flutter build apk --debug --target-platform android-arm64',
+        '  入口 lib/main.dart，Gradle 工程 android/app/build.gradle.kts。',
+        '',
+        'Qt 侧只提供 native 产物（不走本脚本）：',
+        '    qt-cmake -DRHINE_FLUTTER_HOST_ONLY=ON 配置 → 编 libRhineMusicDatabase_arm64-v8a.so',
+        '    androiddeployqt --input <build>/Qt/android-RhineMusicDatabase-deployment-settings.json \\',
+        '                    --output <staging> --no-build（只生成 libs/jar/assets/libs.xml）',
+        '',
+        '本脚本的打包链（cmake --build --target apk / aab + Gradle assembleDebug）已封堵：',
+        '代码保留，不执行，未读取签名凭据，未准备任何资源或构建目录。',
+    ].join('\n'));
+process.exit(1);
+
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');

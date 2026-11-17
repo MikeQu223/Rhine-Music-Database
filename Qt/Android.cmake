@@ -7,6 +7,33 @@
 # Android 的 assets/ 目录枚举依赖 AAssetDir，不保证列出子目录，靠构建期清单兜底会在
 # 资源切片变化时静默漏文件；qrc 的枚举语义在所有平台上一致。
 
+# --- 纯 Qt Android 打包封堵（FLUTTER-ONLY-ANDROID-20261117）-------------------
+#
+# Android 交付只走 Flutter 宿主：入口 lib/main.dart，Gradle 工程 android/app/build.gradle.kts，
+# 出包命令 `flutter build apk --debug --target-platform android-arm64`。Qt 侧只提供 native：
+# libRhineMusicDatabase_arm64-v8a.so，以及 androiddeployqt --no-build 生成的 libs/jar/assets/libs.xml.
+#
+# 所以 Android 配置默认 fail-closed：不给 RHINE_FLUTTER_HOST_ONLY=ON 就 configure 直接失败。
+# 打开该选项后仍然只产 native 产物——Qt 终结器照样会建 *_make_apk / *_make_aab 等 target，
+# 那些 target 由文件末尾的 rhine_android_forbid_pure_qt_package_targets() 挂上必定失败的依赖，
+# 在 target 层面不可用（不是"提示"，是构建直接停）。纯 Qt 的两条入口也各有封堵：
+# scripts/build-android.cjs（顶层 fail-fast）、Qt/android/build.gradle（GradleException）。
+# 构建代码按用户要求全部保留，未移除。
+option(RHINE_FLUTTER_HOST_ONLY
+    "Android: build only the native library/deploy staging consumed by the Flutter host; never a pure-Qt APK/AAB"
+    OFF)
+if(NOT RHINE_FLUTTER_HOST_ONLY)
+    message(
+        FATAL_ERROR
+        "纯 Qt 的 Android 应用构建已停用（FLUTTER-ONLY-ANDROID-20261117）。\n"
+        "Android 包只能由 Flutter 工程产出：android/app/build.gradle.kts + lib/main.dart + `flutter build apk`。\n"
+        "Flutter 需要的那份 native 构建这样配置：\n"
+        "    qt-cmake -DRHINE_FLUTTER_HOST_ONLY=ON -DCMAKE_BUILD_TYPE=Debug <source-dir>\n"
+        "该模式只编 libRhineMusicDatabase_arm64-v8a.so 与 androiddeployqt 的 libs/jar/assets；\n"
+        "apk / aab / aar 目标一律失败。纯 Qt 打包入口（scripts/build-android.cjs、Qt/android/build.gradle）同样已封堵。\n"
+        "构建代码保留、未移除。")
+endif()
+
 set(RHINE_ANDROID_NODE_ROOT
     ""
     CACHE PATH "Extracted nodejs-mobile Android release (bin/arm64-v8a/libnode.so)")
@@ -180,3 +207,37 @@ foreach(requiredFile AndroidManifest.xml res/mipmap-xxxhdpi/ic_launcher.png)
         message(FATAL_ERROR "Android package source is missing ${requiredFile}")
     endif()
 endforeach()
+
+# --- 纯 Qt 打包 target 禁止器 -------------------------------------------------
+#
+# 只给 Flutter 编 native 时，Qt 的 Android 终结器仍然会建出打包 target（Qt6AndroidMacros.cmake
+# 的 ${target}_make_apk / _make_aab / _make_aar，以及全局 apk / aab / aar / apk_all）。这些 target
+# 的名字由 Qt 生成，CMake 不允许重定义，所以做法是给它们挂一个**必定失败**的依赖：ninja 一进
+# 这条目标就先跑本函数建的 guard target，输出一句明确理由再以 1 退出。native 目标（RhineMusicDatabase、
+# RhineCore、_prepare_apk_dir 之类 ALL 目标）不依赖它，所以"编 .so"照常通过，"出纯 Qt 包"必失败。
+#
+# 调用点：CMakeLists.txt 的 qt_finalize_executable(RhineMusicDatabase) 之后——target 到那时才存在。
+function(rhine_android_forbid_pure_qt_package_targets)
+    add_custom_target(
+        rhine_android_pure_qt_package_blocked
+        COMMAND
+            ${CMAKE_COMMAND} -E echo
+            "纯 Qt 的 Android APK/AAB/AAR 已封堵（FLUTTER-ONLY-ANDROID-20261117）：包只能由 Flutter 工程产出（android/app/build.gradle.kts + lib/main.dart）。"
+        COMMAND ${CMAKE_COMMAND} -E false
+        COMMENT "rhine: pure-Qt Android packaging is blocked"
+        VERBATIM)
+    set(blockedTargets
+        RhineMusicDatabase_make_apk
+        RhineMusicDatabase_make_aab
+        RhineMusicDatabase_make_aar
+        apk
+        aab
+        aar
+        apk_all)
+    foreach(blockedTarget IN LISTS blockedTargets)
+        if(TARGET ${blockedTarget})
+            add_dependencies(${blockedTarget} rhine_android_pure_qt_package_blocked)
+            message(STATUS "Android: pure-Qt packaging target '${blockedTarget}' is blocked")
+        endif()
+    endforeach()
+endfunction()
