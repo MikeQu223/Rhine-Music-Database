@@ -85,9 +85,11 @@ enum SettingsActionKind {
   /// NativeHudSettings.cpp:481-484 的 quality:set:<v>，落到 MusicPlayer.cpp:127-139）。
   quality,
 
-  /// PERFORMANCE / 性能面板（NativeHudSettings.cpp:320-323 的 performance:toggle；
-  /// Engine.cpp:850-853 转 performanceRequested）。诊断入口在移动端也不得移除。
-  diagnostics,
+  // 用户 m10082：性能面板不是用户要求的功能 —— diagnostics 动作种类整体停用，
+  // 连同其状态字段/分发/反查映射一起注释（原文保留，不删）。
+  // /// PERFORMANCE / 性能面板（NativeHudSettings.cpp:320-323 的 performance:toggle；
+  // /// Engine.cpp:850-853 转 performanceRequested）。诊断入口在移动端也不得移除。
+  // diagnostics,
 
   /// STORAGE / 存储与缓存（NativeHudSettings.cpp:332-341 的 cache:clear；
   /// NativeHudController.cpp:479-483）。
@@ -146,8 +148,9 @@ class SettingsActionAvailability {
   /// - quality 只在 officialPlayback 为真时可见。Qt 的 officialVisible 还要叠加
   ///   「当前曲目非本地」（SettingsSchema.cpp:84-86）；本层只做平台门，内容谓词由
   ///   调用方与本方法的结果相与。
-  /// - diagnostics 恒可见：契约 :131-137 明令不得因移动端移除诊断入口，:322 把
-  ///   Update、Performance（诊断）、Storage 列为全平台必须保留的可见分区。
+  // 用户 m10082：诊断/性能面板入口停用，以下两条可见性说明随之注释。
+  // /// - diagnostics 恒可见：契约 :131-137 明令不得因移动端移除诊断入口，:322 把
+  // ///   Update、Performance（诊断）、Storage 列为全平台必须保留的可见分区。
   /// - theme / motion / startupAnimation / reinitialize / cache / update /
   ///   projectLinks / restoreDefaults 恒可见：前三个偏好行没有 visible 谓词
   ///   （settings_modal.dart:2681-2723），replay 同 settings_modal.dart:2724-2734；
@@ -199,7 +202,8 @@ class SettingsActionState {
     this.motionEnabled = true,
     this.startupAnimationEnabled = false,
     this.quality = 'exhigh',
-    this.diagnosticsVisible = false,
+    // 用户 m10082：性能面板停用 —— diagnosticsVisible 状态同步注释。
+    // this.diagnosticsVisible = false,
     this.cacheBusy = false,
     this.updateBusy = false,
     this.updateAvailable = false,
@@ -220,9 +224,10 @@ class SettingsActionState {
   /// 当前音质，默认 exhigh（settings_modal.dart:2744）。
   final String quality;
 
-  /// 性能面板是否显示。面板默认隐藏，performance:toggle 才是显示入口
-  /// （Engine.cpp:850-853）。
-  final bool diagnosticsVisible;
+  // 用户 m10082：性能面板停用 —— 该状态字段注释（原文保留）。
+  // /// 性能面板是否显示。面板默认隐藏，performance:toggle 才是显示入口
+  // /// （Engine.cpp:850-853）。
+  // final bool diagnosticsVisible;
 
   /// 一次 cache:clear 是否在飞行中。Qt 的 clearCaches 同步完成后直接写
   /// cacheMessage「已清除」（NativeHudController.cpp:479-483）；Flutter 侧若异步，
@@ -247,7 +252,8 @@ class SettingsActionState {
     bool? motionEnabled,
     bool? startupAnimationEnabled,
     String? quality,
-    bool? diagnosticsVisible,
+    // this.diagnosticsVisible 随性能面板停用（用户 m10082）。
+    // bool? diagnosticsVisible,
     bool? cacheBusy,
     bool? updateBusy,
     bool? updateAvailable,
@@ -258,7 +264,7 @@ class SettingsActionState {
         motionEnabled: motionEnabled ?? this.motionEnabled,
         startupAnimationEnabled: startupAnimationEnabled ?? this.startupAnimationEnabled,
         quality: quality ?? this.quality,
-        diagnosticsVisible: diagnosticsVisible ?? this.diagnosticsVisible,
+        // diagnosticsVisible: diagnosticsVisible ?? this.diagnosticsVisible,
         cacheBusy: cacheBusy ?? this.cacheBusy,
         updateBusy: updateBusy ?? this.updateBusy,
         updateAvailable: updateAvailable ?? this.updateAvailable,
@@ -272,7 +278,7 @@ class SettingsActionState {
       other.motionEnabled == motionEnabled &&
       other.startupAnimationEnabled == startupAnimationEnabled &&
       other.quality == quality &&
-      other.diagnosticsVisible == diagnosticsVisible &&
+      // other.diagnosticsVisible == diagnosticsVisible &&
       other.cacheBusy == cacheBusy &&
       other.updateBusy == updateBusy &&
       other.updateAvailable == updateAvailable &&
@@ -280,7 +286,8 @@ class SettingsActionState {
 
   @override
   int get hashCode => Object.hash(themeMode, motionEnabled, startupAnimationEnabled, quality,
-      diagnosticsVisible, cacheBusy, updateBusy, updateAvailable, statusMessage);
+      // diagnosticsVisible 随性能面板停用（用户 m10082）。
+      cacheBusy, updateBusy, updateAvailable, statusMessage);
 
   @override
   String toString() => 'SettingsActionState(themeMode: ' +
@@ -291,8 +298,9 @@ class SettingsActionState {
       startupAnimationEnabled.toString() +
       ', quality: ' +
       quality +
-      ', diagnosticsVisible: ' +
-      diagnosticsVisible.toString() +
+      // 用户 m10082：性能面板停用 —— diagnosticsVisible 不再参与 toString。
+      // ', diagnosticsVisible: ' +
+      // diagnosticsVisible.toString() +
       ', cacheBusy: ' +
       cacheBusy.toString() +
       ', updateBusy: ' +
@@ -329,8 +337,9 @@ abstract interface class SettingsActionPorts {
   /// （MusicPlayer.cpp:127-139）。
   void setQuality(String value);
 
-  /// 显示/隐藏性能面板（Engine.cpp:850-853 的 performanceRequested）。
-  void toggleDiagnostics();
+  // 用户 m10082：性能面板停用 —— 该端口一并停用（原文保留，不删）。
+  // /// 显示/隐藏性能面板（Engine.cpp:850-853 的 performanceRequested）。
+  // void toggleDiagnostics();
 
   /// 清缓存。Qt 删除缓存目录以及 cacheDirectory()/qml 与 /shaders，不清偏好与
   /// 账号（契约 :145；Host.cpp:1033-1036）。
@@ -436,7 +445,8 @@ class SettingsActionRouter {
       SettingsActionKind.startupAnimation => _startupAnimation(value),
       SettingsActionKind.reinitialize => _reinitialize(value),
       SettingsActionKind.quality => _quality(value),
-      SettingsActionKind.diagnostics => _diagnostics(value),
+      // 用户 m10082：性能面板停用 —— 分发分支注释。
+      // SettingsActionKind.diagnostics => _diagnostics(value),
       SettingsActionKind.cache => _cache(value),
       SettingsActionKind.update => _update(value),
       SettingsActionKind.projectLinks => _projectLinks(value),
@@ -507,17 +517,18 @@ class SettingsActionRouter {
     return SettingsActionApplied(state: state.copyWith(quality: value), message: 'quality=' + value);
   }
 
-  SettingsActionResult _diagnostics(String? value) {
-    if (value != null) {
-      return SettingsActionIgnored('performance:toggle 不接受值，收到 ' + value);
-    }
-    ports.toggleDiagnostics();
-    final bool next = !state.diagnosticsVisible;
-    return SettingsActionApplied(
-      state: state.copyWith(diagnosticsVisible: next),
-      message: next ? '性能面板显示' : '性能面板隐藏',
-    );
-  }
+  // 用户 m10082：性能面板停用 —— 整个处理函数注释（原文保留，不删，不执行）。
+  // SettingsActionResult _diagnostics(String? value) {
+  //   if (value != null) {
+  //     return SettingsActionIgnored('performance:toggle 不接受值，收到 ' + value);
+  //   }
+  //   ports.toggleDiagnostics();
+  //   final bool next = !state.diagnosticsVisible;
+  //   return SettingsActionApplied(
+  //     state: state.copyWith(diagnosticsVisible: next),
+  //     message: next ? '性能面板显示' : '性能面板隐藏',
+  //   );
+  // }
 
   SettingsActionResult _cache(String? value) {
     if (value != null) {
@@ -643,7 +654,8 @@ bool? _parseOnOff(String? value, {bool acceptReducedFull = false}) {
 /// - quality：裸串 quality 是循环下一档（NativeHudController.cpp:701-706）；带值串
 ///   quality:set:<v>（NativeHudController.cpp:709-710、settings_modal.dart:2746、
 ///   NativeHudSettings.cpp:481-484）。
-/// - diagnostics：performance:toggle（NativeHudSettings.cpp:320-321、Engine.cpp:850-853）。
+// 用户 m10082：性能面板停用 —— 反向映射说明一并注释。
+// /// - diagnostics：performance:toggle（NativeHudSettings.cpp:320-321、Engine.cpp:850-853）。
 /// - cache：cache:clear（NativeHudSettings.cpp:336-337、NativeHudController.cpp:479-483）。
 /// - update：update:check（NativeHudSettings.cpp:358-360、NativeHudController.cpp:467-468）。
 /// - projectLinks：没有单一串，八个链接各自是 music:project-<id>
@@ -655,7 +667,8 @@ String actionKey(SettingsActionKind kind) => switch (kind) {
       SettingsActionKind.startupAnimation => 'startup-animation',
       SettingsActionKind.reinitialize => 'replay',
       SettingsActionKind.quality => 'quality',
-      SettingsActionKind.diagnostics => 'performance:toggle',
+      // 用户 m10082：性能面板停用 —— 反向映射注释。
+      // SettingsActionKind.diagnostics => 'performance:toggle',
       SettingsActionKind.cache => 'cache:clear',
       SettingsActionKind.update => 'update:check',
       SettingsActionKind.projectLinks => 'music:project-',

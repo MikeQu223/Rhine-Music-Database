@@ -704,7 +704,8 @@ void createSceneView(const QJniObject &javaView, jlong parentWindowReference, ji
     QQmlEngine *engine = view->engine();
     engine->rootContext()->setContextProperty(QStringLiteral("rhineFontFamily"), RhineEmbedded::fontFamily());
     engine->rootContext()->setContextProperty(QStringLiteral("rhine"), RhineEmbedded::engine());
-    engine->rootContext()->setContextProperty(QStringLiteral("profiler"), RhineEmbedded::profiler());
+    // 用户 m10082：性能面板不是用户要求的功能 —— 不再向 QML 暴露 profiler。
+    // engine->rootContext()->setContextProperty(QStringLiteral("profiler"), RhineEmbedded::profiler());
     QObject::connect(engine, &QQmlEngine::quit, QCoreApplication::instance(), &QCoreApplication::quit);
 
     // Qt 自己的 QtQuickView 就是把子窗口的 Java QtWindow 交给 QtView.addQtWindow；
@@ -723,8 +724,9 @@ void createSceneView(const QJniObject &javaView, jlong parentWindowReference, ji
         // 真正的动作词表等 lead / 133 定（需要能表达“归档槽位”而不是曲目下标）。
         Q_UNUSED(engine);
     }
-    if (RhineEmbedded::profiler())
-        RhineEmbedded::profiler()->attach(view);
+    // 用户 m10082：性能面板采样链停用 —— 不再把 profiler 挂到内嵌场景窗口。
+    // if (RhineEmbedded::profiler())
+    //     RhineEmbedded::profiler()->attach(view);
 
     QJniEnvironment env;
     jclass viewClass = env->GetObjectClass(javaView.object());

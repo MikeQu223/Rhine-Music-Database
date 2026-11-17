@@ -311,20 +311,7 @@ void main() {
       expect(manifestCode.contains('android:screenOrientation'), isFalse);
     });
 
-    test('lifecycle.dart 文档记录与 Qt sensorLandscape 的偏离理由', () {
-      final String lifecycleDart = File('lib/app/lifecycle.dart').readAsStringSync();
-      final int shapeDoc = _indexAfter(
-        lifecycleDart,
-        'Fullscreen plus immersive-sticky window flags',
-      );
-      final int shapeDecl = _indexAfter(lifecycleDart, 'void applyWindowShape();', from: shapeDoc);
-      final String doc = lifecycleDart.substring(shapeDoc, shapeDecl);
-      expect(doc.contains('no orientation lock'), isTrue);
-      expect(doc.contains('sensorLandscape'), isTrue);
-      expect(doc.contains('must never'), isTrue);
-      expect(doc.contains('setRequestedOrientation'), isTrue);
-      expect(lifecycleDart.contains('DEDUP-39 bindingRuling'), isTrue);
-      expect(lifecycleDart.contains('portrait-responsive'), isTrue);
-    });
+    // 用户 m10088：lib/app/lifecycle.dart（68b4d60 的架构中立生命周期层）已整体撤回——
+    // 它没有任何直接调用方，也不是用户指定要做的功能；断言该文件文档内容的用例随之停用。
   });
 }

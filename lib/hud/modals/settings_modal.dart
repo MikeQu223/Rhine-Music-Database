@@ -1230,11 +1230,13 @@ class SettingsPerformanceSectionMetrics {
 class SettingsPerformanceContent {
   const SettingsPerformanceContent._();
 
-  static const String firstTitleEn = 'PERFORMANCE';
-  static const String firstTitleZh = '性能面板';
-  static const String firstAction = 'performance:toggle';
-  static const String firstHitLabel = '性能面板';
-  static const String firstHelp = '在性能面板内手动收集、导出诊断文件。';
+  // 用户 m10082：性能面板不是用户要求的功能 —— PERFORMANCE 第一行专用文案整体停用，
+  // 连同其 action（performance:toggle）与帮助文案一起注释（原文保留，不删）。
+  // static const String firstTitleEn = 'PERFORMANCE';
+  // static const String firstTitleZh = '性能面板';
+  // static const String firstAction = 'performance:toggle';
+  // static const String firstHitLabel = '性能面板';
+  // static const String firstHelp = '在性能面板内手动收集、导出诊断文件。';
 
   static const String secondTitleEn = 'DISC ROTATION';
   static const String secondTitleZh = '唱片旋转';
@@ -1244,8 +1246,9 @@ class SettingsPerformanceContent {
   static const String secondLabelOff = '关闭 / 点击了解风险';
   static const String secondHelp = '默认关闭；开启会增加持续渲染、耗电和发热。';
 
-  /// :320 row(4, ...) 的 label 是固定文案 "显示 / 隐藏 · F10"。
-  static const String firstLabel = '显示 / 隐藏 · F10';
+  // 用户 m10082：性能面板停用 —— 其固定 label 一并注释。
+  // /// :320 row(4, ...) 的 label 是固定文案 "显示 / 隐藏 · F10"。
+  // static const String firstLabel = '显示 / 隐藏 · F10';
 }
 
 /// NativeHudSettings.cpp:310-330。
