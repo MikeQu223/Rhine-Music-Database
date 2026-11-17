@@ -18,6 +18,7 @@ import '../hud/widgets/track_ruler.dart' as ruler;
 import '../ui/layout/portrait_stage.dart';
 import 'basic_hud_resources.dart';
 import 'basic_models.dart';
+import 'library_gesture_adapter.dart';
 import 'qt_scene_view.dart';
 
 // 列表真值（BasicListItem / basicLibraryItems / basicSelectedItemIndex）住在
@@ -89,6 +90,10 @@ class BasicHudFrame {
     /// 右栏遮罩强度（0..100，Qt `archive-mask-strength` / 设置页“右侧画面遮罩”）。
     /// 默认就是 Qt 常量 [HudChrome.defaultArchiveMaskStrength]；注入只来自设置页真值。
     double archiveMaskStrength = 55, // = HudChrome.defaultArchiveMaskStrength（int 常量转 double）
+    /// 资料库列表页的「列表形式」真值（Qt `NativeHud::trackListMode`）：
+    /// true = 右栏是曲目列表；false = 右栏是当前条目的单条面板（Tab Mode 切换）。
+    /// 只影响资料库列表页的绘制分支，不参与选中/滚动真值。
+    bool trackListMode = true,
   }) {
     final _HudSink sink = _HudSink();
     final bool dark = state.dark;
@@ -143,6 +148,7 @@ class BasicHudFrame {
         width,
         portrait: portrait,
         listPosition: listPosition,
+        trackListMode: trackListMode,
       );
     }
 
@@ -171,6 +177,7 @@ class BasicHudFrame {
     double width, {
     required bool portrait,
     double? listPosition,
+    bool trackListMode = true,
   }) {
     final List<BasicListItem> items = basicLibraryItems(state);
     final int rawSelected = basicSelectedItemIndex(state, items);
@@ -203,7 +210,9 @@ class BasicHudFrame {
         uid: '',
         restoringAccount: false,
         sourceLoading: state.loading,
-        trackListMode: true,
+        // 列表形式真值由 surface 持有（Tab Mode 切换），这里只投影当前值：
+        // 绘制分支（列表 / 单条面板）与 Tab 文案的粗细都读它，不再写死 true。
+        trackListMode: trackListMode,
         current: ArchiveItem(
           id: currentId,
           title: currentTitle.isEmpty ? sirenUnknownTitle : currentTitle,
@@ -218,7 +227,10 @@ class BasicHudFrame {
       ),
       drawTrackList: (double _, HudArchiveState __) {},
       drawEmpty: (double _, HudArchiveState __) {},
-      supportsTrackList: (HudArchiveState _) => false,
+      // Qt NativeHudController.cpp:945-948 supportsTrackList()：只有当前条目是
+      // 曲目（kind == "song"）时才给 Tab Mode 按钮。原来这里恒 false，按钮因此
+      // 永远不出现（用户 m10322-2 的现象）。
+      supportsTrackList: (HudArchiveState s) => s.current?.kind == 'song',
     );
 
     if (items.isEmpty) {
@@ -250,6 +262,11 @@ class BasicHudFrame {
     final List<ruler.TrackListItem> values = <ruler.TrackListItem>[
       for (final BasicListItem item in items) ruler.TrackListItem(title: item.title, kind: item.kind),
     ];
+    // Tab Mode 关掉列表形式、且当前条目是曲目时，右栏整块交给 archive() 的
+    // 单条面板（标题 / ID / 「查看歌曲详情 →」），曲目列不再叠画——这就是
+    // 「真实形式切换」。专辑/歌单等非曲目条目在 Qt 里本来就只走单条面板，
+    // 曲目列照旧绘制，不因这个开关消失（否则专辑列会整块变空）。
+    final bool singleItemForm = !trackListMode && items[selected].kind == 'song';
     void drawList(_HudSink target) {
       ruler.HudTrackRuler(target, ports, dark: state.dark, glyphBounds: ports).archiveTrackList(
         x: basicNavigationLeft(width),
@@ -265,9 +282,9 @@ class BasicHudFrame {
     }
 
     if (portrait) {
-      sink.shifted(0, basicPortraitListOffset, drawList);
+      if (!singleItemForm) sink.shifted(0, basicPortraitListOffset, drawList);
     } else {
-      drawList(sink);
+      if (!singleItemForm) drawList(sink);
     }
 
     if (state.error.isNotEmpty) {
@@ -457,12 +474,26 @@ List<Rect> basicHudRegionRects(
   required bool android,
   required bool portrait,
   required double width,
+  Rect? directTouchStageRect,
+}) {
+  return <Rect>[
+    ...basicHudHitStageRects(frame, geometry: geometry, android: android),
+    basicLibraryListStageRect(portrait: portrait, width: width),
+    // 资料库列表页：左侧 3D 直触区也归 HUD（整串指针由 HUD 消费，3D 层不再
+    // 二次解释这条手势）。非列表阶段/尺寸退化时传 null，行为与扩展前一致。
+    if (directTouchStageRect != null) directTouchStageRect,
+  ];
+}
+
+/// HUD 自己画出来的命中形状在舞台坐标里的矩形（含 android 触控余量）。
+/// 与 [basicHudRegionRects] 共用同一份口径；扩展的手势域要扣掉这些控件。
+List<Rect> basicHudHitStageRects(
+  BasicHudFrame frame, {
+  required StageGeometry geometry,
+  required bool android,
 }) {
   final HitLayer layer = HitLayer(geometry: geometry, android: android);
-  return <Rect>[
-    for (final HudHit hit in frame.hits) layer.effectiveRect(hit),
-    basicLibraryListStageRect(portrait: portrait, width: width),
-  ];
+  return <Rect>[for (final HudHit hit in frame.hits) layer.effectiveRect(hit)];
 }
 
 /// 同上，但自己起一帧：给不持有 [frame] 的调用方（原生适配层的 ownership
@@ -476,6 +507,8 @@ List<Rect> basicHudOwnedStageRects({
   required bool portrait,
   bool android = false,
   double? listPosition,
+  Rect? directTouchStageRect,
+  bool trackListMode = true,
 }) {
   final BasicHudFrame frame = BasicHudFrame.build(
     state: state,
@@ -484,6 +517,7 @@ List<Rect> basicHudOwnedStageRects({
     height: height,
     portrait: portrait,
     listPosition: listPosition,
+    trackListMode: trackListMode,
   );
   return basicHudRegionRects(
     frame,
@@ -491,6 +525,7 @@ List<Rect> basicHudOwnedStageRects({
     android: android,
     portrait: portrait,
     width: width,
+    directTouchStageRect: directTouchStageRect,
   );
 }
 
@@ -582,6 +617,8 @@ class BasicHudSurface extends StatefulWidget {
     this.stage,
     this.sceneKey,
     this.archiveMaskStrength = 55, // = HudChrome.defaultArchiveMaskStrength
+    this.trackListMode = true,
+    this.onTrackListModeChanged,
     this.sceneSettings,
   });
 
@@ -607,6 +644,15 @@ class BasicHudSurface extends StatefulWidget {
   /// 未接入设置页时为 [HudChrome.defaultArchiveMaskStrength]。
   final double archiveMaskStrength;
 
+  /// 资料库列表页的「列表形式」初始值（Qt `NativeHud::trackListMode`，默认开）。
+  /// 只在 surface 内部因 'archive:tab-mode' 翻转；宿主想持久化就传初值并接
+  /// [onTrackListModeChanged]，不传则每次重建回到这里给的值。
+  final bool trackListMode;
+
+  /// 列表形式翻转后的通知（宿主可存进自己的设置）；null = 只在本 surface 内生效。
+  /// 不播放、不改队列、不改选中：Tab Mode 只影响右栏画列表还是画单条面板。
+  final ValueChanged<bool>? onTrackListModeChanged;
+
   /// 原生渲染参数（设置面板的真实值，见 [BasicSceneSettings]）：随快照下发，
   /// 只影响 Qt 渲染，不构成第二份真值。null = 不下发，Qt 用自己的默认。
   final BasicSceneSettings? sceneSettings;
@@ -625,6 +671,11 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
   /// 拖动中的临时滚动位置（条目单位）；null = 跟随 state.listPosition。
   double? _dragPosition;
 
+  /// 资料库列表页的列表形式真值（Qt `trackListMode`）：命中 'archive:tab-mode'
+  /// 时翻转。只决定右栏画曲目列还是画当前条目的单条面板——选中、滚动窗口、
+  /// 播放与队列都不受它影响。
+  late bool _trackListMode;
+
   /// ruler 相邻两项的中心距（lib/hud/widgets/track_ruler.dart 的 88/52 布局，
   /// 相邻为 88）；拖动换算用同一常量，避免手感与绘制不一致。
   static const double _rowStep = 88;
@@ -642,11 +693,38 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
   @override
   void initState() {
     super.initState();
+    _trackListMode = widget.trackListMode;
     // 端口里的 RollingLabel 可能比本 State 活得久（端口随 resources 复用），
     // 它们的动画曲线记的是旧时钟；新 State 若从 0 起算，旧曲线会被当成"仍在动"
     // 而空转 ticker。接上端口的当前帧时钟，保证同一时间基准。
     _animationTime = widget.ports.rollingText.time;
     _rollingTicker = createTicker(_onRollingTick);
+  }
+
+  @override
+  void didUpdateWidget(BasicHudSurface oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 宿主改了初值（例如设置页写回）就跟随；本 State 自己翻转时不回头覆盖宿主，
+    // 两边都以「最新一次显式写入」为准。
+    if (oldWidget.trackListMode != widget.trackListMode) {
+      _trackListMode = widget.trackListMode;
+    }
+  }
+
+  /// Tab Mode：翻转右栏形式。Qt 侧等价的守卫是 supportsTrackList()（当前条目
+  /// 必须是曲目），命中矩形只在满足它时才画出来，这里再判一次防外来回调穿透。
+  void _toggleTrackListMode() {
+    final List<BasicListItem> items = basicLibraryItems(widget.state);
+    if (items.isEmpty) {
+      return;
+    }
+    final int index = basicSelectedItemIndex(widget.state, items);
+    if (items[index].kind != 'song') {
+      return;
+    }
+    final bool next = !_trackListMode;
+    setState(() => _trackListMode = next);
+    widget.onTrackListModeChanged?.call(next);
   }
 
   @override
@@ -711,6 +789,7 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       animationTime: _animationTime,
       animateText: true,
       archiveMaskStrength: widget.archiveMaskStrength,
+      trackListMode: _trackListMode,
     );
     // 共享滚动文字有字符槽还在 kReelDuration 内 -> 续帧；静止后停 ticker。
     _scheduleRollingTicker(frame.animating);
@@ -738,20 +817,70 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       portrait: portrait,
       width: stage.width,
     );
-    // 命中矩形（stage 单位，已含触控余量）+ 曲目列；竖屏本层就在 stage 单位里，
-    // 横屏本层是逻辑像素，统一在这里换算一次（HitLayer 内部同理只换一次）。
-    // 区域集合由 [basicHudRegionRects] 给出：手势层与原生 ownership 判定同源。
+    // 资料库列表页：把列表拖动的手势域从「仅右侧曲目列」扩到「右侧曲目列 ∪ 左侧
+    // 3D 直触区」（用户 m10322-1）。只在列表阶段扩展——详情/歌词页的 3D 操作
+    // （抽唱片、搜索等）保持原样，不受这条规则影响。
+    //
+    // 3D 直触区就是场景自己的矩形：横屏是整窗（Qt Engine 的 1080 高舞台铺满），
+    // 竖屏是顶部 1080（曲目列从 basicPortraitListOffset 开始）。尺寸退化时
+    // basicSceneStageRect 返回 null，此时不扩展、不拦截，回到旧行为。
+    final Rect? directTouchStageRect = state.phase == BasicPhase.library
+        ? basicSceneStageRect(
+            portrait: portrait,
+            width: stage.width,
+            height: stage.height,
+          )
+        : null;
+    final Rect listRect = portrait ? listStageRect : geometry.rectToLogical(listStageRect);
+    final Rect? directTouchRect = directTouchStageRect == null
+        ? null
+        : (portrait ? directTouchStageRect : geometry.rectToLogical(directTouchStageRect));
+    // 拖动判据（本层坐标）：曲目列随便起手；3D 直触区要扣掉已有控件与播放条，
+    // 不跟按钮/设置/弹层/播放器抢手势。
+    final List<Rect> controlStageRects = basicHudHitStageRects(
+      frame,
+      geometry: geometry,
+      android: defaultTargetPlatform == TargetPlatform.android,
+    );
+    final List<Rect> controlRects = portrait
+        ? controlStageRects
+        : <Rect>[for (final Rect rect in controlStageRects) geometry.rectToLogical(rect)];
+    final Rect playerBarStageRect = Rect.fromLTWH(
+      0,
+      stage.height - player.playerBarRowHeight,
+      stage.width,
+      player.playerBarRowHeight,
+    );
+    final LibraryDragDomain dragDomain = LibraryDragDomain(
+      listRect: listRect,
+      directTouchRect: directTouchRect,
+      controlRects: controlRects,
+      // 播放条整行排除：它内部有大量间隙，只扣命中矩形会漏出一条「拖动即滚列表」
+      // 的窄带。竖屏时播放条在本层底边，与顶部 1080 的直触区不相交。
+      excludedRects: <Rect>[
+        portrait ? playerBarStageRect : geometry.rectToLogical(playerBarStageRect),
+      ],
+    );
+    // 命中矩形（stage 单位，已含触控余量）+ 曲目列 + 3D 直触区；竖屏本层就在
+    // stage 单位里，横屏本层是逻辑像素，统一在这里换算一次（HitLayer 内部同理
+    // 只换一次）。区域集合由 [basicHudRegionRects] 给出：手势层与原生 ownership
+    // 判定同源。
+    //
+    // 直触区只在「扣掉控件后还剩可拖部分」时才并入拦截图：万一将来某个控件把
+    // 整块直触区吃掉（hasDirectTouchArea == false），就退回旧行为，不空拦场景。
+    final Rect? interceptStageRect =
+        dragDomain.hasDirectTouchArea ? directTouchStageRect : null;
     final List<Rect> stageRegions = basicHudRegionRects(
       frame,
       geometry: geometry,
       android: defaultTargetPlatform == TargetPlatform.android,
       portrait: portrait,
       width: stage.width,
+      directTouchStageRect: interceptStageRect,
     );
     final List<Rect> regions = portrait
         ? stageRegions
         : <Rect>[for (final Rect rect in stageRegions) geometry.rectToLogical(rect)];
-    final Rect listRect = portrait ? listStageRect : geometry.rectToLogical(listStageRect);
     return Stack(
       children: <Widget>[
         if (scene != null) scene,
@@ -770,17 +899,22 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
         ),
         Positioned.fill(
           // 唯一一条指针消费路径：外层 [QtSceneRawPointerLayer] 在 down 时用 HUD
-          // 自己的区域图（[basicHudRegionRects]，含列表行与 android 触控余量）
-          // 定归属，内层 [_HudGestureRegion] 用同一份 regions 决定谁参与命中。
-          // 于是每一条指针序列只有一个消费者：落在 HUD 上＝整串归 HUD（场景不跟着
-          // 动），落在别处＝整串归 Qt（HUD 不抢），中途不翻转。
+          // 自己的区域图（[basicHudRegionRects]，含列表行、android 触控余量与
+          // 资料库列表页的 3D 直触区）定归属，内层 [_HudGestureRegion] 用同一份
+          // regions 决定谁参与命中。于是每一条指针序列只有一个消费者：落在 HUD
+          // 上＝整串归 HUD（场景不跟着动），落在别处＝整串归 Qt（HUD 不抢），
+          // 中途不翻转。
+          //
+          // 资料库列表页的 3D 直触区归 HUD 之后，Qt 不再收到那里的直达 touch：
+          // archive 的翻动由本页 _LibraryDragRecognizer 统一解释（竖直＝列表
+          // 窗口，不切换所属列、不播放、不改队列），不再由 Qt 原生 pan 另解释。
           child: rawSceneRect == null
-              ? _hudGestureLayer(frame, geometry, portrait, regions, listRect)
+              ? _hudGestureLayer(frame, geometry, portrait, regions, dragDomain)
               : QtSceneRawPointerLayer(
                   sceneRect: rawSceneRect,
                   forwardAt: (Offset local) =>
                       !basicHudOwnsStagePoint(local, regions: regions),
-                  child: _hudGestureLayer(frame, geometry, portrait, regions, listRect),
+                  child: _hudGestureLayer(frame, geometry, portrait, regions, dragDomain),
                 ),
         ),
       ],
@@ -791,12 +925,16 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
   ///
   /// 为什么不再用 `Positioned.fill` + translucent 的 GestureDetector：那会恒返回
   /// true，Qt 的 PlatformView 永远收不到 touch（唱片左右拖不动的机制原因）。
+  ///
+  /// [dragDomain] 决定「能否从这里起手拖动」：默认判据就是曲目列矩形；资料库
+  /// 列表页由 build() 换成「曲目列 ∪ 3D 直触区（扣掉已有控件与播放条）」。拖动
+  /// 识别器本身不动——条目单位、fractional update、结束 commit 全部复用。
   Widget _hudGestureLayer(
     BasicHudFrame frame,
     StageGeometry geometry,
     bool portrait,
     List<Rect> regions,
-    Rect listRect,
+    LibraryDragDomain dragDomain,
   ) {
     return _HudGestureRegion(
       regions: regions,
@@ -818,7 +956,10 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
                 GestureRecognizerFactoryWithHandlers<_LibraryDragRecognizer>(
               () => _LibraryDragRecognizer(debugOwner: this),
               (_LibraryDragRecognizer recognizer) {
-                recognizer.allows = (Offset local) => _inClosed(listRect, local);
+                // 起手位置判据（只在 down 时问一次，随后整串手势归本识别器）：
+                // 资料库列表页 = 曲目列 ∪ 3D 直触区（扣掉已有控件与播放条）。
+                // 其它页面 = dragDomain 只有 listRect，与旧行为一致。
+                recognizer.allows = (Offset local) => dragDomain.allows(local);
                 recognizer.onStart = (DragStartDetails details) =>
                     _dragStarted(widget.state);
                 recognizer.onUpdate = (DragUpdateDetails details) =>
@@ -832,13 +973,6 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
         ),
       ),
     );
-  }
-
-  static bool _inClosed(Rect rect, Offset point) {
-    return point.dx >= rect.left &&
-        point.dx <= rect.right &&
-        point.dy >= rect.top &&
-        point.dy <= rect.bottom;
   }
 
   void _dragStarted(BasicViewState state) {
@@ -927,6 +1061,13 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
     );
     final HudHit? hit = layer.hitAt(frame.hits, logical);
     if (hit == null) {
+      return;
+    }
+    // Tab Mode 由 surface 自己持有（Qt 里是 NativeHud::trackListMode 的成员，
+    // 不是控制器动作）：在这里翻转并消费掉，不再向上转发给 basic_app——
+    // 否则宿主没有这个动作的处理器，Tab 键/按钮就是空点。
+    if (hit.action == 'archive:tab-mode') {
+      _toggleTrackListMode();
       return;
     }
     final bool seek = hit.action.startsWith('player:seek-fraction:');
