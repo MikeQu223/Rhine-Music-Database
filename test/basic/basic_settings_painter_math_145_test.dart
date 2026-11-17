@@ -321,7 +321,9 @@ void main() {
         'update:auto',
         'update:release',
         'cache:clear',
-        'performance:toggle',
+        // 用户 m10082：性能面板停用后 performance:toggle 不再是“已知未授权”动作，
+        // parseActionKey 也不再映射它（见 lib/hud/settings/settings_actions.dart）。
+        // 'performance:toggle',
         'music:login',
       ]) {
         final BasicSettingsCommand cmd = command(rejected);
@@ -523,7 +525,8 @@ void main() {
         'update:auto',
         'update:release',
         'cache:clear',
-        'performance:toggle',
+        // 用户 m10082：性能面板停用，该动作已不存在。
+        // 'performance:toggle',
         'setting:motion:on',
         'setting:alternative:on',
         'setting:official-player:on',

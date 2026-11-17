@@ -269,7 +269,8 @@ class Engine : public QObject {
     void stateChanged();
     void hitsChanged();
     void clearCredentials();
-    void performanceRequested();
+    // 用户 m10082：性能面板不是用户要求的功能 —— 该信号与其采样接线一并停用。
+    // void performanceRequested();
     void localImportRequested(bool folder);
 
   protected:

@@ -171,11 +171,13 @@ Item {
         context: overlay.shortcutContext
         onActivated: rhine.toggleFullscreen()
     }
-    Shortcut {
-        sequence: "F10"
-        context: overlay.shortcutContext
-        onActivated: profiler.toggleVisible()
-    }
+    // 用户 m10082：性能面板不是用户要求的功能 —— F10 切换入口停用，
+    // 且 profiler 上下文属性已不再注册，保留会变成未定义引用。
+    // Shortcut {
+    //     sequence: "F10"
+    //     context: overlay.shortcutContext
+    //     onActivated: profiler.toggleVisible()
+    // }
     Item {
         id: controls
         width: overlay.stageWidth
