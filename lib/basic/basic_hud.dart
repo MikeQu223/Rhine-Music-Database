@@ -481,7 +481,7 @@ List<Rect> basicHudRegionRects(
     basicLibraryListStageRect(portrait: portrait, width: width),
     // 资料库列表页：左侧 3D 直触区也归 HUD（整串指针由 HUD 消费，3D 层不再
     // 二次解释这条手势）。非列表阶段/尺寸退化时传 null，行为与扩展前一致。
-    if (directTouchStageRect != null) directTouchStageRect,
+    ?directTouchStageRect,
   ];
 }
 
