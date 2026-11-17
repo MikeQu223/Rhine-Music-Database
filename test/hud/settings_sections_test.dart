@@ -1168,60 +1168,62 @@ void main() {
       expect(on.centeredOps.any((SettingsCenteredOp op) => op.value == '关闭 / 点击了解风险'), isFalse);
     });
 
-    test('第一行固定文案与命中（:320-321）', () {
-      final SettingsRowRecorder recorder = SettingsRowRecorder();
-      paintPerformanceSection(
-          body: body, discRotation: false, canvas: recorder, palette: darkPalette());
-      expect(recorder.centeredOps.any((SettingsCenteredOp op) => op.value == '显示 / 隐藏 · F10'), isTrue);
-      final SettingsHitRegion? hit = recorder.hitAt('performance:toggle');
-      expect(hit, isNotNull);
-      expect(hit!.rect, const Rect.fromLTWH(926, 1826, 300, 48));
-      expect(hit.label, '性能面板');
-      final SettingsHitRegion? disc = recorder.hitAt('disc-rotation');
-      expect(disc, isNotNull);
-      expect(disc!.rect, const Rect.fromLTWH(926, 1924, 300, 48));
-      expect(disc.label, '唱片旋转');
-    });
+    // 用户 m10082：性能面板（PERFORMANCE 第一行 / performance:toggle / 其帮助文案）已被注释掉，
+    // 以下三条断言随之注释掉；disc-rotation 行仍由上面「两行标签随 discRotation 切换」覆盖。
+    //     test('第一行固定文案与命中（:320-321）', () {
+    //       final SettingsRowRecorder recorder = SettingsRowRecorder();
+    //       paintPerformanceSection(
+    //           body: body, discRotation: false, canvas: recorder, palette: darkPalette());
+    //       expect(recorder.centeredOps.any((SettingsCenteredOp op) => op.value == '显示 / 隐藏 · F10'), isTrue);
+    //       final SettingsHitRegion? hit = recorder.hitAt('performance:toggle');
+    //       expect(hit, isNotNull);
+    //       expect(hit!.rect, const Rect.fromLTWH(926, 1826, 300, 48));
+    //       expect(hit.label, '性能面板');
+    //       final SettingsHitRegion? disc = recorder.hitAt('disc-rotation');
+    //       expect(disc, isNotNull);
+    //       expect(disc!.rect, const Rect.fromLTWH(926, 1924, 300, 48));
+    //       expect(disc.label, '唱片旋转');
+    //     });
 
-    test('标题与下划线位置（:315-318）', () {
-      final SettingsRowRecorder recorder = SettingsRowRecorder();
-      paintPerformanceSection(
-          body: body, discRotation: false, canvas: recorder, palette: darkPalette());
-      final SettingsTextOp firstEn = recorder.textAt('PERFORMANCE')!;
-      expect(firstEn.left, 54);
-      expect(firstEn.top, 1828);
-      expect(firstEn.size, 11);
-      expect(firstEn.tracking, 0.08);
-      final SettingsTextOp firstZh = recorder.textAt('性能面板')!;
-      expect(firstZh.top, 1843);
-      expect(firstZh.size, 17);
-      expect(firstZh.weight, SettingsFontWeight.demibold);
-      final SettingsTextOp secondEn = recorder.textAt('DISC ROTATION')!;
-      expect(secondEn.top, 1926);
-      // 下划线：fill(body.left, body.top + top + 62, body.width, 1)
-      expect(
-          recorder.fills.any((SettingsFillOp op) =>
-              op.left == 54 && op.top == 1880 && op.width == 1172 && op.height == 1),
-          isTrue);
-      expect(
-          recorder.fills.any((SettingsFillOp op) =>
-              op.left == 54 && op.top == 1978 && op.width == 1172 && op.height == 1),
-          isTrue);
-    });
+    //     test('标题与下划线位置（:315-318）', () {
+    //       final SettingsRowRecorder recorder = SettingsRowRecorder();
+    //       paintPerformanceSection(
+    //           body: body, discRotation: false, canvas: recorder, palette: darkPalette());
+    //       final SettingsTextOp firstEn = recorder.textAt('PERFORMANCE')!;
+    //       expect(firstEn.left, 54);
+    //       expect(firstEn.top, 1828);
+    //       expect(firstEn.size, 11);
+    //       expect(firstEn.tracking, 0.08);
+    //       final SettingsTextOp firstZh = recorder.textAt('性能面板')!;
+    //       expect(firstZh.top, 1843);
+    //       expect(firstZh.size, 17);
+    //       expect(firstZh.weight, SettingsFontWeight.demibold);
+    //       final SettingsTextOp secondEn = recorder.textAt('DISC ROTATION')!;
+    //       expect(secondEn.top, 1926);
+    //       // 下划线：fill(body.left, body.top + top + 62, body.width, 1)
+    //       expect(
+    //           recorder.fills.any((SettingsFillOp op) =>
+    //               op.left == 54 && op.top == 1880 && op.width == 1172 && op.height == 1),
+    //           isTrue);
+    //       expect(
+    //           recorder.fills.any((SettingsFillOp op) =>
+    //               op.left == 54 && op.top == 1978 && op.width == 1172 && op.height == 1),
+    //           isTrue);
+    //     });
 
-    test('两条帮助文案逐字（:322-323,327-328）', () {
-      final SettingsRowRecorder recorder = SettingsRowRecorder();
-      paintPerformanceSection(
-          body: body, discRotation: false, canvas: recorder, palette: darkPalette());
-      final SettingsTextOp help1 = recorder.textAt('在性能面板内手动收集、导出诊断文件。')!;
-      expect(help1.left, 54);
-      expect(help1.top, 1892);
-      expect(help1.size, 13);
-      final SettingsTextOp help2 = recorder.textAt('默认关闭；开启会增加持续渲染、耗电和发热。')!;
-      expect(help2.left, 54);
-      expect(help2.top, 1990);
-      expect(help2.size, 13);
-    });
+    //     test('两条帮助文案逐字（:322-323,327-328）', () {
+    //       final SettingsRowRecorder recorder = SettingsRowRecorder();
+    //       paintPerformanceSection(
+    //           body: body, discRotation: false, canvas: recorder, palette: darkPalette());
+    //       final SettingsTextOp help1 = recorder.textAt('在性能面板内手动收集、导出诊断文件。')!;
+    //       expect(help1.left, 54);
+    //       expect(help1.top, 1892);
+    //       expect(help1.size, 13);
+    //       final SettingsTextOp help2 = recorder.textAt('默认关闭；开启会增加持续渲染、耗电和发热。')!;
+    //       expect(help2.left, 54);
+    //       expect(help2.top, 1990);
+    //       expect(help2.size, 13);
+    //     });
   });
 
   group('storage 自定义区（NativeHudSettings.cpp:332-342）', () {
@@ -1837,74 +1839,76 @@ void main() {
     });
   });
 
-  group('性能面板本体（PerformancePanel.qml:1-150）', () {
-    test('四按钮顺序、宽度与 Accessible.name 逐字', () {
-      final List<PerformancePanelButton> buttons = performancePanelButtons(
-        left: 12,
-        top: 100,
-        expanded: true,
-        recording: false,
-        recordingAction: '开始收集',
-      );
-      expect(buttons.length, 4);
-      expect(buttons[0].rect, const Rect.fromLTWH(12, 100, 140, 30));
-      expect(buttons[1].rect, const Rect.fromLTWH(158, 100, 82, 30));
-      expect(buttons[2].rect, const Rect.fromLTWH(246, 100, 50, 30));
-      expect(buttons[3].rect, const Rect.fromLTWH(302, 100, 50, 30));
-      expect(buttons[0].label, '开始收集');
-      expect(buttons[1].label, '诊断目录');
-      expect(buttons[2].label, '精简');
-      expect(buttons[3].label, '关闭');
-      expect(buttons[0].accessibleName, '收集或导出性能诊断');
-      expect(buttons[1].accessibleName, '打开诊断目录');
-      expect(buttons[2].accessibleName, '展开或精简性能面板');
-      expect(buttons[3].accessibleName, '关闭性能面板');
-      expect(buttons[0].objectName, 'performanceRecordButton');
-      expect(buttons[0].color, '#314f47');
-    });
+  // 用户 m10082：性能面板规格块（lib/hud/modals/settings_modal.dart 第 8 区）已注释掉，
+  // 本组测试随之注释，避免引用已注释的 PerformancePanelMetrics/performancePanelButtons。
+  //   group('性能面板本体（PerformancePanel.qml:1-150）', () {
+  //     test('四按钮顺序、宽度与 Accessible.name 逐字', () {
+  //       final List<PerformancePanelButton> buttons = performancePanelButtons(
+  //         left: 12,
+  //         top: 100,
+  //         expanded: true,
+  //         recording: false,
+  //         recordingAction: '开始收集',
+  //       );
+  //       expect(buttons.length, 4);
+  //       expect(buttons[0].rect, const Rect.fromLTWH(12, 100, 140, 30));
+  //       expect(buttons[1].rect, const Rect.fromLTWH(158, 100, 82, 30));
+  //       expect(buttons[2].rect, const Rect.fromLTWH(246, 100, 50, 30));
+  //       expect(buttons[3].rect, const Rect.fromLTWH(302, 100, 50, 30));
+  //       expect(buttons[0].label, '开始收集');
+  //       expect(buttons[1].label, '诊断目录');
+  //       expect(buttons[2].label, '精简');
+  //       expect(buttons[3].label, '关闭');
+  //       expect(buttons[0].accessibleName, '收集或导出性能诊断');
+  //       expect(buttons[1].accessibleName, '打开诊断目录');
+  //       expect(buttons[2].accessibleName, '展开或精简性能面板');
+  //       expect(buttons[3].accessibleName, '关闭性能面板');
+  //       expect(buttons[0].objectName, 'performanceRecordButton');
+  //       expect(buttons[0].color, '#314f47');
+  //     });
 
-    test('recording / 收起会切换首个按钮的颜色与第三按钮的文案（:70,114）', () {
-      final List<PerformancePanelButton> buttons = performancePanelButtons(
-        left: 12,
-        top: 100,
-        expanded: false,
-        recording: true,
-        recordingAction: '停止收集',
-      );
-      expect(buttons[0].color, '#9f3830');
-      expect(buttons[0].label, '停止收集');
-      expect(buttons[2].label, '展开');
-    });
+  //     test('recording / 收起会切换首个按钮的颜色与第三按钮的文案（:70,114）', () {
+  //       final List<PerformancePanelButton> buttons = performancePanelButtons(
+  //         left: 12,
+  //         top: 100,
+  //         expanded: false,
+  //         recording: true,
+  //         recordingAction: '停止收集',
+  //       );
+  //       expect(buttons[0].color, '#9f3830');
+  //       expect(buttons[0].label, '停止收集');
+  //       expect(buttons[2].label, '展开');
+  //     });
 
-    test('卡片尺寸与 details 可视高（:18-19,:48-49）', () {
-      expect(PerformancePanelMetrics.cardWidth, 366);
-      expect(PerformancePanelMetrics.cardMargin, 12);
-      expect(PerformancePanelMetrics.cardRadius, 8);
-      expect(PerformancePanelMetrics.cardColor, '#ed151b20');
-      expect(PerformancePanelMetrics.cardBorderColor, '#54616b');
-      expect(PerformancePanelMetrics.cardHeight(100), 124);
-      // height = min(details.height, max(80, panel.height - 210))
-      expect(
-          PerformancePanelMetrics.detailsHeight(panelHeight: 600, detailsContentHeight: 500),
-          390);
-      expect(
-          PerformancePanelMetrics.detailsHeight(panelHeight: 600, detailsContentHeight: 100),
-          100);
-      expect(
-          PerformancePanelMetrics.detailsHeight(panelHeight: 200, detailsContentHeight: 500),
-          80);
-      expect(PerformancePanelMetrics.detailsSize, 12);
-      expect(PerformancePanelMetrics.detailsLineHeight, 1.35);
-      expect(PerformancePanelMetrics.headlineSize, 21);
-      expect(PerformancePanelMetrics.headlineColor, '#8fe3bb');
-      expect(PerformancePanelMetrics.headlineObjectName, 'performanceHeadline');
-      expect(PerformancePanelMetrics.cardObjectName, 'performanceCard');
-      expect(PerformancePanelMetrics.buttonHeight, 30);
-      expect(PerformancePanelMetrics.buttonRadius, 4);
-      expect(PerformancePanelMetrics.buttonSpacing, 6);
-      expect(PerformancePanelMetrics.buttonColor, '#303b43');
-    });
-  });
+  //     test('卡片尺寸与 details 可视高（:18-19,:48-49）', () {
+  //       expect(PerformancePanelMetrics.cardWidth, 366);
+  //       expect(PerformancePanelMetrics.cardMargin, 12);
+  //       expect(PerformancePanelMetrics.cardRadius, 8);
+  //       expect(PerformancePanelMetrics.cardColor, '#ed151b20');
+  //       expect(PerformancePanelMetrics.cardBorderColor, '#54616b');
+  //       expect(PerformancePanelMetrics.cardHeight(100), 124);
+  //       // height = min(details.height, max(80, panel.height - 210))
+  //       expect(
+  //           PerformancePanelMetrics.detailsHeight(panelHeight: 600, detailsContentHeight: 500),
+  //           390);
+  //       expect(
+  //           PerformancePanelMetrics.detailsHeight(panelHeight: 600, detailsContentHeight: 100),
+  //           100);
+  //       expect(
+  //           PerformancePanelMetrics.detailsHeight(panelHeight: 200, detailsContentHeight: 500),
+  //           80);
+  //       expect(PerformancePanelMetrics.detailsSize, 12);
+  //       expect(PerformancePanelMetrics.detailsLineHeight, 1.35);
+  //       expect(PerformancePanelMetrics.headlineSize, 21);
+  //       expect(PerformancePanelMetrics.headlineColor, '#8fe3bb');
+  //       expect(PerformancePanelMetrics.headlineObjectName, 'performanceHeadline');
+  //       expect(PerformancePanelMetrics.cardObjectName, 'performanceCard');
+  //       expect(PerformancePanelMetrics.buttonHeight, 30);
+  //       expect(PerformancePanelMetrics.buttonRadius, 4);
+  //       expect(PerformancePanelMetrics.buttonSpacing, 6);
+  //       expect(PerformancePanelMetrics.buttonColor, '#303b43');
+  //     });
+  //   });
 
   group('Apple Music 标记（NativeHudSettings.cpp:15-18,261-267）', () {
     test('两条 path 与渲染顺序固定：icon 用 ink，note 用 panel', () {

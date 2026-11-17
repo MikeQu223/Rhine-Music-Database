@@ -145,12 +145,13 @@ abstract final class RhineRoutes {
     RhineRoute(kind: RhineRouteKind.page, name: 'lyrics', path: '/lyrics'),
     // 更新 (plan:346).
     RhineRoute(kind: RhineRouteKind.page, name: 'update', path: '/update'),
-    // 诊断/性能面板 (plan:347).
-    RhineRoute(
-      kind: RhineRouteKind.page,
-      name: 'diagnostics',
-      path: '/diagnostics',
-    ),
+    // 诊断/性能面板 (plan:347)。
+    // 用户 m10082：性能面板是助手自作主张的功能，路由注释掉（保留原文，不删）。
+    // RhineRoute(
+    //   kind: RhineRouteKind.page,
+    //   name: 'diagnostics',
+    //   path: '/diagnostics',
+    // ),
     // Tab Mode (plan:348).
     RhineRoute(kind: RhineRouteKind.page, name: 'tab-mode', path: '/tab-mode'),
     // 桌面歌词 — 仅桌面，Android 不实施; matrix row only (plan:349).

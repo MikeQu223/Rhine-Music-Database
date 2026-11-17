@@ -1281,12 +1281,15 @@ void paintPerformanceSection({
         body.width, 1, palette.line);
   }
 
-  row(SettingsPerformanceSectionMetrics.firstRowTop, SettingsPerformanceContent.firstTitleEn,
-      SettingsPerformanceContent.firstTitleZh, SettingsPerformanceContent.firstLabel,
-      SettingsPerformanceContent.firstAction, SettingsPerformanceContent.firstHitLabel);
-  canvas.text(SettingsPerformanceContent.firstHelp, body.left,
-      body.top + SettingsPerformanceSectionMetrics.firstHelpInsetTop,
-      SettingsPerformanceSectionMetrics.helpSize, SettingsFontWeight.regular, 0, palette.muted);
+  // 用户 m10082：「注释掉所有性能面板相关的代码，我他妈就没让你做这个」——第一行
+  // （PERFORMANCE / 性能面板 → performance:toggle）是性能面板的显示入口，注释掉；
+  // 第二行（DISC ROTATION / 唱片旋转）是用户指定设置项，保留。
+  // row(SettingsPerformanceSectionMetrics.firstRowTop, SettingsPerformanceContent.firstTitleEn,
+  //     SettingsPerformanceContent.firstTitleZh, SettingsPerformanceContent.firstLabel,
+  //     SettingsPerformanceContent.firstAction, SettingsPerformanceContent.firstHitLabel);
+  // canvas.text(SettingsPerformanceContent.firstHelp, body.left,
+  //     body.top + SettingsPerformanceSectionMetrics.firstHelpInsetTop,
+  //     SettingsPerformanceSectionMetrics.helpSize, SettingsFontWeight.regular, 0, palette.muted);
   row(
       SettingsPerformanceSectionMetrics.secondRowTop,
       SettingsPerformanceContent.secondTitleEn,
@@ -1977,160 +1980,161 @@ class SettingsEditOverlayMetrics {
 // 8. 性能面板本体规格（PerformancePanel.qml:1-150）—— 保留，不在设置七区内渲染
 // ---------------------------------------------------------------------------
 
-/// PerformancePanel.qml 的尺寸与文案常量。
-class PerformancePanelMetrics {
-  const PerformancePanelMetrics._();
+// 用户 m10082：性能面板不是用户要求的功能 —— 整块规格注释掉（保留原文，不删）。
+// /// PerformancePanel.qml 的尺寸与文案常量。
+// class PerformancePanelMetrics {
+//   const PerformancePanelMetrics._();
 
-  /// :16-17 anchors.top/right parent, margins 12；:18 width 366；:19 height content.height + 24。
-  static const double cardMargin = 12;
-  static const double cardWidth = 366;
-  static const double cardHeightPadding = 24;
+//   /// :16-17 anchors.top/right parent, margins 12；:18 width 366；:19 height content.height + 24。
+//   static const double cardMargin = 12;
+//   static const double cardWidth = 366;
+//   static const double cardHeightPadding = 24;
 
-  /// :20 radius 8；:21-22 底色与描边。
-  static const double cardRadius = 8;
-  static const String cardColor = '#ed151b20';
-  static const String cardBorderColor = '#54616b';
+//   /// :20 radius 8；:21-22 底色与描边。
+//   static const double cardRadius = 8;
+//   static const String cardColor = '#ed151b20';
+//   static const String cardBorderColor = '#54616b';
 
-  /// :32-35 content x/y 12，spacing 9。
-  static const double contentInset = 12;
-  static const double contentSpacing = 9;
+//   /// :32-35 content x/y 12，spacing 9。
+//   static const double contentInset = 12;
+//   static const double contentSpacing = 9;
 
-  /// :39-41 headline 21pt bold。
-  static const double headlineSize = 21;
-  static const String headlineColor = '#8fe3bb';
+//   /// :39-41 headline 21pt bold。
+//   static const double headlineSize = 21;
+//   static const String headlineColor = '#8fe3bb';
 
-  /// :50-61 details 12pt / lineHeight 1.35 / 可视高 min(h, max(80, panel.height - 210))。
-  static const double detailsSize = 12;
-  static const double detailsLineHeight = 1.35;
-  static const double detailsMinHeight = 80;
-  static const double detailsHeightReserve = 210;
+//   /// :50-61 details 12pt / lineHeight 1.35 / 可视高 min(h, max(80, panel.height - 210))。
+//   static const double detailsSize = 12;
+//   static const double detailsLineHeight = 1.35;
+//   static const double detailsMinHeight = 80;
+//   static const double detailsHeightReserve = 210;
 
-  /// :64-147 四按钮：高 30、radius 4、文字 12pt、间距 6。
-  static const double buttonHeight = 30;
-  static const double buttonRadius = 4;
-  static const double buttonSpacing = 6;
-  static const double buttonTextSize = 12;
-  static const String buttonTextColor = '#ffffff';
-  static const double recordButtonWidth = 140;
-  static const double folderButtonWidth = 82;
-  static const double compactButtonWidth = 50;
-  static const double closeButtonWidth = 50;
-  static const String recordActiveColor = '#9f3830';
-  static const String recordIdleColor = '#314f47';
-  static const String buttonColor = '#303b43';
+//   /// :64-147 四按钮：高 30、radius 4、文字 12pt、间距 6。
+//   static const double buttonHeight = 30;
+//   static const double buttonRadius = 4;
+//   static const double buttonSpacing = 6;
+//   static const double buttonTextSize = 12;
+//   static const String buttonTextColor = '#ffffff';
+//   static const double recordButtonWidth = 140;
+//   static const double folderButtonWidth = 82;
+//   static const double compactButtonWidth = 50;
+//   static const double closeButtonWidth = 50;
+//   static const String recordActiveColor = '#9f3830';
+//   static const String recordIdleColor = '#314f47';
+//   static const String buttonColor = '#303b43';
 
-  /// objectName / 文案 / Accessible.name 逐字。
-  static const String cardObjectName = 'performanceCard';
-  static const String headlineObjectName = 'performanceHeadline';
-  static const String recordObjectName = 'performanceRecordButton';
-  static const String folderLabel = '诊断目录';
-  static const String compactLabelExpanded = '精简';
-  static const String compactLabelCollapsed = '展开';
-  static const String closeLabel = '关闭';
-  static const String recordAccessibleName = '收集或导出性能诊断';
-  static const String folderAccessibleName = '打开诊断目录';
-  static const String compactAccessibleName = '展开或精简性能面板';
-  static const String closeAccessibleName = '关闭性能面板';
+//   /// objectName / 文案 / Accessible.name 逐字。
+//   static const String cardObjectName = 'performanceCard';
+//   static const String headlineObjectName = 'performanceHeadline';
+//   static const String recordObjectName = 'performanceRecordButton';
+//   static const String folderLabel = '诊断目录';
+//   static const String compactLabelExpanded = '精简';
+//   static const String compactLabelCollapsed = '展开';
+//   static const String closeLabel = '关闭';
+//   static const String recordAccessibleName = '收集或导出性能诊断';
+//   static const String folderAccessibleName = '打开诊断目录';
+//   static const String compactAccessibleName = '展开或精简性能面板';
+//   static const String closeAccessibleName = '关闭性能面板';
 
-  /// :19 卡片高 = content.height + 24。
-  static double cardHeight(double contentHeight) => contentHeight + cardHeightPadding;
+//   /// :19 卡片高 = content.height + 24。
+//   static double cardHeight(double contentHeight) => contentHeight + cardHeightPadding;
 
-  /// :48 height = min(details.height, max(80, panel.height - 210))。
-  static double detailsHeight({
-    required double panelHeight,
-    required double detailsContentHeight,
-  }) =>
-      math.min(detailsContentHeight,
-          math.max(detailsMinHeight, panelHeight - detailsHeightReserve));
+//   /// :48 height = min(details.height, max(80, panel.height - 210))。
+//   static double detailsHeight({
+//     required double panelHeight,
+//     required double detailsContentHeight,
+//   }) =>
+//       math.min(detailsContentHeight,
+//           math.max(detailsMinHeight, panelHeight - detailsHeightReserve));
 
-  /// :66 Row 四按钮的顺序与宽度。
-  static List<double> buttonWidths() => <double>[
-        recordButtonWidth,
-        folderButtonWidth,
-        compactButtonWidth,
-        closeButtonWidth,
-      ];
-}
+//   /// :66 Row 四按钮的顺序与宽度。
+//   static List<double> buttonWidths() => <double>[
+//         recordButtonWidth,
+//         folderButtonWidth,
+//         compactButtonWidth,
+//         closeButtonWidth,
+//       ];
+// }
 
-/// 性能面板按钮：文案 + 矩形 + 底色 + 无障碍名。
-class PerformancePanelButton {
-  const PerformancePanelButton({
-    required this.label,
-    required this.rect,
-    required this.color,
-    required this.accessibleName,
-    required this.objectName,
-  });
+// /// 性能面板按钮：文案 + 矩形 + 底色 + 无障碍名。
+// class PerformancePanelButton {
+//   const PerformancePanelButton({
+//     required this.label,
+//     required this.rect,
+//     required this.color,
+//     required this.accessibleName,
+//     required this.objectName,
+//   });
 
-  final String label;
-  final Rect rect;
-  final String color;
-  final String accessibleName;
-  final String objectName;
+//   final String label;
+//   final Rect rect;
+//   final String color;
+//   final String accessibleName;
+//   final String objectName;
 
-  @override
-  String toString() => 'PerformancePanelButton(' + label + ', ' + rect.toString() + ')';
-}
+//   @override
+//   String toString() => 'PerformancePanelButton(' + label + ', ' + rect.toString() + ')';
+// }
 
-/// PerformancePanel.qml:64-147 的横向按钮行（起点 x/y 为按钮行左缘与顶缘）。
-List<PerformancePanelButton> performancePanelButtons({
-  required double left,
-  required double top,
-  required bool expanded,
-  required bool recording,
-  required String recordingAction,
-}) {
-  final List<PerformancePanelButton> out = <PerformancePanelButton>[];
-  double x = left;
-  final List<double> widths = PerformancePanelMetrics.buttonWidths();
-  for (int index = 0; index < 4; index++) {
-    final double width = widths[index];
-    String label;
-    String color;
-    String accessibleName;
-    String objectName;
-    if (index == 0) {
-      // :66-84 录制/导出按钮
-      label = recordingAction;
-      color = recording
-          ? PerformancePanelMetrics.recordActiveColor
-          : PerformancePanelMetrics.recordIdleColor;
-      accessibleName = PerformancePanelMetrics.recordAccessibleName;
-      objectName = PerformancePanelMetrics.recordObjectName;
-    } else if (index == 1) {
-      // :85-97 诊断目录
-      label = PerformancePanelMetrics.folderLabel;
-      color = PerformancePanelMetrics.buttonColor;
-      accessibleName = PerformancePanelMetrics.folderAccessibleName;
-      objectName = '';
-    } else if (index == 2) {
-      // :98-117 精简 / 展开
-      label = expanded
-          ? PerformancePanelMetrics.compactLabelExpanded
-          : PerformancePanelMetrics.compactLabelCollapsed;
-      color = PerformancePanelMetrics.buttonColor;
-      accessibleName = PerformancePanelMetrics.compactAccessibleName;
-      objectName = '';
-    } else {
-      // :118-145 关闭
-      label = PerformancePanelMetrics.closeLabel;
-      color = PerformancePanelMetrics.buttonColor;
-      accessibleName = PerformancePanelMetrics.closeAccessibleName;
-      objectName = '';
-    }
-    out.add(PerformancePanelButton(
-      label: label,
-      rect: Rect.fromLTWH(x, top, width, PerformancePanelMetrics.buttonHeight),
-      color: color,
-      accessibleName: accessibleName,
-      objectName: objectName,
-    ));
-    x += width + PerformancePanelMetrics.buttonSpacing;
-  }
-  return out;
-}
+// /// PerformancePanel.qml:64-147 的横向按钮行（起点 x/y 为按钮行左缘与顶缘）。
+// List<PerformancePanelButton> performancePanelButtons({
+//   required double left,
+//   required double top,
+//   required bool expanded,
+//   required bool recording,
+//   required String recordingAction,
+// }) {
+//   final List<PerformancePanelButton> out = <PerformancePanelButton>[];
+//   double x = left;
+//   final List<double> widths = PerformancePanelMetrics.buttonWidths();
+//   for (int index = 0; index < 4; index++) {
+//     final double width = widths[index];
+//     String label;
+//     String color;
+//     String accessibleName;
+//     String objectName;
+//     if (index == 0) {
+//       // :66-84 录制/导出按钮
+//       label = recordingAction;
+//       color = recording
+//           ? PerformancePanelMetrics.recordActiveColor
+//           : PerformancePanelMetrics.recordIdleColor;
+//       accessibleName = PerformancePanelMetrics.recordAccessibleName;
+//       objectName = PerformancePanelMetrics.recordObjectName;
+//     } else if (index == 1) {
+//       // :85-97 诊断目录
+//       label = PerformancePanelMetrics.folderLabel;
+//       color = PerformancePanelMetrics.buttonColor;
+//       accessibleName = PerformancePanelMetrics.folderAccessibleName;
+//       objectName = '';
+//     } else if (index == 2) {
+//       // :98-117 精简 / 展开
+//       label = expanded
+//           ? PerformancePanelMetrics.compactLabelExpanded
+//           : PerformancePanelMetrics.compactLabelCollapsed;
+//       color = PerformancePanelMetrics.buttonColor;
+//       accessibleName = PerformancePanelMetrics.compactAccessibleName;
+//       objectName = '';
+//     } else {
+//       // :118-145 关闭
+//       label = PerformancePanelMetrics.closeLabel;
+//       color = PerformancePanelMetrics.buttonColor;
+//       accessibleName = PerformancePanelMetrics.closeAccessibleName;
+//       objectName = '';
+//     }
+//     out.add(PerformancePanelButton(
+//       label: label,
+//       rect: Rect.fromLTWH(x, top, width, PerformancePanelMetrics.buttonHeight),
+//       color: color,
+//       accessibleName: accessibleName,
+//       objectName: objectName,
+//     ));
+//     x += width + PerformancePanelMetrics.buttonSpacing;
+//   }
+//   return out;
+// }
 
-// ---------------------------------------------------------------------------
+// // ---------------------------------------------------------------------------
 // 9. 偏好 descriptor 注册表（Qt/src/SettingsSchema.cpp:347-691）
 //    以及 Host::preferenceKeys() 的 53 个 key 白名单（Qt/src/Host.cpp:1041-1059）。
 //    Qt 用 Q_OS_* 宏与 PlatformFeatures 做平台门；Flutter 侧把平台身份和五项能力
