@@ -78,9 +78,7 @@ package rhine.music.database.porting
  *     本 port 的自检码：Qt 侧没有对应字符串，只有 bool 返回值与 logcat 文案
  *     （Qt:122-125、:154、:250-251、:273-275）。
  *  4. [NodeRuntimeHostCandidate.notifyRuntimeExited] 是 Qt:153/:157 的公开回调面，本卡无调用方；
- *     接线方可用 [NodeRuntimeHostCandidate.setRuntimeExitedListener] 注册回调，它在锁外把退出码
- *     推给 Dart（Dart 可选接口 NodeRuntimeExitSource）；没有监听器时行为不变——只让**下一次**
- *     prepare() 报告 runtime_exited。
+ *     它不向 Dart 推事件（端口无事件流），只让**下一次** prepare() 报告 runtime_exited。
  *  5. [NodeRuntimeHostCandidate.retainedStartSpec] 用强引用镜像 Qt:110-113 的「argv 必须活过
  *     node::Start」义务（Qt:160 才 delete）；Java 引用只能保证 Java 对象不被回收，
  *     C 侧单块缓冲区仍由 native 层负责。
@@ -334,13 +332,6 @@ class NodeRuntimeHostCandidate(
     /** 端口内部状态锁：只有 [notifyRuntimeExited] 可能来自运行时线程（Qt:153 的 atomic 写 + :155 的回投）。 */
     private val lock = Any()
 
-    /**
-     * Qt:152-159 的退出推送面：`node::Start` 返回后由 [notifyRuntimeExited] 在锁外回调一次。
-     * null 表示没有接线方，行为退化为「下一次 [prepare] 报 RUNTIME_EXITED」。
-     */
-    @Volatile
-    private var runtimeExitedListener: ((Int) -> Unit)? = null
-
     /** Qt:48 `launched` / Dart 的 launched：已交给宿主启动过（含已经 exited）。 */
     val launched: Boolean
         get() = state == NodeRuntimeLifecycleState.running || state == NodeRuntimeLifecycleState.exited
@@ -348,14 +339,6 @@ class NodeRuntimeHostCandidate(
     /** Qt:50 `exited` / Dart 的 exited：`node::Start` 已返回，本进程内不再启动。 */
     val exited: Boolean
         get() = state == NodeRuntimeLifecycleState.exited
-
-    /**
-     * 接线方注册运行时退出回调（Qt BridgeProcessAndroid.cpp:152-159 的 accept(runtime-error)）。
-     * 传 null 注销；回调在 [notifyRuntimeExited] 的锁外同步执行，必须短小，且不得回调进本对象。
-     */
-    fun setRuntimeExitedListener(listener: ((Int) -> Unit)?) {
-        runtimeExitedListener = listener
-    }
 
     override fun prepare(): NodeRuntimeHostStatus = synchronized(lock) {
         when {
@@ -481,16 +464,14 @@ class NodeRuntimeHostCandidate(
      *
      * 本卡**没有调用方**、也没有 JNI 注册；它存在的意义是把 Qt:153 的
      * `runtime->exited = true` 与 Qt:157 的 `accept({type: runtime-error})` 落成可审查的契约：
-     * 置 [state] = exited、记录退出码与脚本路径（Qt:154 的 logcat 文案），锁外调用一次
-     * [setRuntimeExitedListener] 注册的回调（Dart 的 NodeRuntimeExitSource），并让**下一次**
-     * [prepare] 报 [NodeRuntimeHostReason.RUNTIME_EXITED]（未注册回调时的唯一观测路径）。
+     * 置 [state] = exited、记录退出码与脚本路径（Qt:154 的 logcat 文案），并让**下一次**
+     * [prepare] 报 [NodeRuntimeHostReason.RUNTIME_EXITED] —— Dart 的 _exited 分支 据此把 `_exited` 置真。
      *
-     * 幂等：重复调用只保留第一次（Qt 的 accept(runtime-error) 也只投一次；回调因此至多一次）。
+     * 幂等：重复调用只保留第一次（Qt 的 accept(runtime-error) 也只投一次）。
      *
      * @param exitCode `node::Start(4, values)` 的返回值（Qt:152）。
      */
     fun notifyRuntimeExited(exitCode: Int) {
-        var listener: ((Int) -> Unit)? = null
         synchronized(lock) {
             if (state == NodeRuntimeLifecycleState.exited) {
                 return
@@ -507,11 +488,7 @@ class NodeRuntimeHostCandidate(
             retainedStartSpec = null
             // Qt:153-154 原文：node runtime exited, code <code> script <script>
             lastDiagnostic = "node runtime exited, code " + exitCode + ", script " + script
-            // 锁内只做快照：回调在锁外执行，避免接线方重入 notify/prepare 时自锁。
-            listener = runtimeExitedListener
         }
-        // Qt:157 的 accept(runtime-error)：至多一次；没有监听器时静默（旧行为）。
-        listener?.invoke(exitCode)
     }
 
     /**
