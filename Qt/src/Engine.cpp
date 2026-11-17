@@ -1525,16 +1525,25 @@ void Engine::step(double time) {
     const auto cover = object["cover"].toString();
     const auto coverRevision = host.image(cover).cacheKey();
     const auto &player = app->music.player;
-    const auto identity = PlaybackQueue::identity(player.current);
+    // render-only（Flutter 内嵌）：Qt 的 MusicLibrary/播放器是空壳——NativeApplication.cpp:166-177
+    // 只把 Flutter 的选中身份投影进 frame["current"]，从不建播放器、也不写 playing。所以
+    // 唱片旋转的 identity 与 playing 只能读投影真值（lib/basic/qt_scene_view.dart 的
+    // current.playing 来自唯一播放器）。读 Qt 播放器会让唱片永远不转：identity 恒为空、
+    // loading/playing 恒为 false——这正是"开启后封面不旋转"的根，且不需要第二个播放器。
+    const bool projectedPlayback = host.renderOnly;
+    const auto identity = projectedPlayback ? PlaybackQueue::identity(current)
+                                            : PlaybackQueue::identity(player.current);
     if (identity != m_discIdentity) {
         m_discIdentity = identity;
         m_discAngle = 0;
     }
     const bool wasRotating = m_discRotating;
+    const bool playing = projectedPlayback
+                             ? current.value("playing").toBool(false)
+                             : (!player.loading && !player.failed && player.state["playing"].toBool());
     m_discRotating = m_visible && app->hud.discRotation && !app->hud.reduced && app->hud.modal.isEmpty() &&
                      m_frame.value("mode") == "detail" && !m_frame.value("viewer").toBool() &&
-                     current["kind"] == "song" && PlaybackQueue::identity(current) == identity &&
-                     !player.loading && !player.failed && player.state["playing"].toBool();
+                     current["kind"] == "song" && PlaybackQueue::identity(current) == identity && playing;
     if (wasRotating && m_discRotating) {
         // 20 秒一圈；接续可见视觉时钟，暂停或隐藏期间不补转。
         m_discAngle = std::fmod(m_discAngle + std::clamp(time - m_discTime, 0., .05) *

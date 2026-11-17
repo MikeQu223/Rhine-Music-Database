@@ -97,6 +97,32 @@ class BasicSettingsRuntime {
   bool get discRotation => _discRotation;
 
   bool get startupAnimation => _startupAnimation;
+
+  /// Qt 的 firstLaunch 判定（Qt/src/NativeApplication.cpp:62-71）：
+  /// `startup-animation` 这个键从来没被写过。
+  ///
+  /// Qt 首启时偏好是空的，于是它先补一条 "off"，但仍然播一次 boot
+  /// （`if (firstLaunch || hud.startupAnimation) hud.action("replay");`）。Flutter 沿用
+  /// 同一语义：键不存在 = 首启（给用户看一次初始化页面）；键存在且不是 "on" =
+  /// 用户明确关掉了它，此后每次开屏都不再强制显示。
+  bool get startupAnimationNeverConfigured =>
+      !raw.containsKey('$basicSettingsPreferencePrefix' 'startup-animation');
+
+  /// 首启收尾：把从没写过的 `startup-animation` 补成 "off"。
+  ///
+  /// Qt 在 initialize() 里做同一件事（Qt/src/NativeApplication.cpp:69-71）：偏好为空就
+  /// 先写 "off"，但本次仍然播 boot（`if (firstLaunch || hud.startupAnimation)
+  /// hud.action("replay")`）。少了这一笔，"首启给用户看一次"会退化成"每次开屏都播"
+  /// ——因为 `startup-animation` 永远读成"没配过"。
+  Future<void> settleFirstLaunchStartupPreference() async {
+    if (startupAnimation || !startupAnimationNeverConfigured) {
+      return;
+    }
+    if (await _store.write('startup-animation', 'off')) {
+      _adoptWrittenValue('startup-animation', 'off');
+    }
+  }
+
   String get quality => _quality;
 
   /// 请求值（Qt requested）与生效值（Qt effective）分开报：
