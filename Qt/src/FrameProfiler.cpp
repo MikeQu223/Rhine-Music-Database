@@ -562,6 +562,14 @@ void FrameProfiler::sample() {
     m_metrics.insert("mainProcessResidentBytes", process.residentBytes);
     m_metrics.insert("mainProcessCpuOneCorePercent", cpu);
     m_metrics.insert("stepSamples", qulonglong(m_stepCount));
+    const auto hud = m_engine->state();
+    m_metrics.insert("compactLayout", hud.value("compactLayout").toBool());
+    m_metrics.insert("sceneMode", hud.value("mode"));
+    m_metrics.insert("hudModal", hud.value("modal"));
+    m_metrics.insert("lyricsMode", hud.value("lyricsMode"));
+    m_metrics.insert("commentsMode", hud.value("commentsMode"));
+    m_metrics.insert("sceneLayerVisible", m_engine->sceneLayerVisible());
+    m_metrics.insert("sceneLayerFrozen", m_engine->sceneLayerFrozen());
     m_metrics.insert("stepMeanCpuMs", m_stepCount ? m_stepTotalMs / m_stepCount : 0.);
     m_metrics.insert("stepMaxCpuMs", m_stepMaxMs);
     m_metrics.insert("latestSyncCpuMs", syncNs.load(std::memory_order_relaxed) / 1000000.);
@@ -624,7 +632,8 @@ void FrameProfiler::sample() {
         renderSettings.renderPercent, renderSettings.supersample, renderSettings.modeName,
         renderSettings.interpolation && renderSettings.nativeInterpolationAvailable);
     const bool frameGenerationRequested = renderSettings.interpolation;
-    const bool frameGenerationEffective = renderMode.frameGeneration;
+    const bool frameGenerationEffective =
+        renderMode.frameGeneration && m_engine->sceneLayer() == Engine::SceneLayer::Live;
 #else
     const auto renderMode = RhineRender::currentRenderMode(qEnvironmentVariable("RHINE_AA_MODE"),
                                                            RhineFg::parseBool(qgetenv("RHINE_FG"), false));

@@ -269,6 +269,9 @@ bool SceneLayerHost::createLayerTargets(Layer &layer, const char *name) {
 }
 
 void SceneLayerHost::releaseLayerTargets(Layer &layer) {
+    if (&layer == &m_scene) {
+        m_sceneTargetReady = false;
+    }
     // 先摘掉窗口对 target 的引用，再销毁底层 QRhi 资源，避免窗口持有悬空指针。
     if (layer.window) {
         layer.window->setRenderTarget(QQuickRenderTarget());
@@ -453,6 +456,29 @@ bool SceneLayerHost::resumeGraphics() {
     return true;
 }
 
+bool SceneLayerHost::setSceneLayerPolicy(bool visible, bool frozen) {
+    if (m_sceneLayerVisible == visible && m_sceneLayerFrozen == frozen) {
+        return false;
+    }
+    m_sceneLayerVisible = visible;
+    m_sceneLayerFrozen = frozen;
+    if (sceneLayerActive()) {
+        m_scene.dirty = true;
+    }
+    return true;
+}
+
+bool SceneLayerHost::sceneNeedsRender() const {
+    if (!m_sceneLayerVisible) {
+        return false;
+    }
+    if (m_sceneLayerFrozen) {
+        // Qt 信号和兜底置脏不能反复录制同一张静态场景。
+        return !m_sceneTargetReady || m_renderedSceneRevision != m_resourceRevision;
+    }
+    return m_scene.dirty;
+}
+
 bool SceneLayerHost::renderFrame() {
     // 失败原因已经在 fail() 里打印过一次，这里直接返回，避免每帧刷屏。
     if (!m_valid || !resumeGraphics()) {
@@ -500,15 +526,18 @@ bool SceneLayerHost::renderFrame() {
     }
 #ifdef Q_OS_LINUX
     // 挂起释放后 control 可能为空，与 dirty 一起判断，避免对空控制对象录制。
-    if (m_scene.dirty && m_scene.control) {
+    if (sceneNeedsRender() && m_scene.control) {
         QElapsedTimer layerTimer;
         layerTimer.start();
 #else
-    if (m_scene.dirty) {
+    if (sceneNeedsRender()) {
 #endif
+        const quint64 sceneRevision = m_resourceRevision;
         if (!renderLayer(m_scene, "3D")) {
             return false;
         }
+        m_renderedSceneRevision = sceneRevision;
+        m_sceneTargetReady = true;
 #ifdef Q_OS_LINUX
         // 分层计时：单帧 17ms 到底花在 3D 层还是 UI 层，是决定优化方向的唯一依据。
         m_sceneLayerMs = m_sceneLayerMs * 0.8 + layerTimer.nsecsElapsed() / 1e6 * 0.2;
@@ -704,5 +733,6 @@ void SceneLayerHost::teardown() {
         layer->depthStencil = nullptr;
     }
     m_rhi = nullptr;
+    m_sceneTargetReady = false;
     m_valid = false;
 }

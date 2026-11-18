@@ -232,6 +232,9 @@ void NativeScene::openViewer() {
     m_changed = true;
     m_viewer->open(m_clock);
 }
+bool NativeScene::viewerOpen() const {
+    return m_viewer->isOpen();
+}
 void NativeScene::coverFront(bool front) {
     m_changed = true;
     m_viewer->coverFront(front);

@@ -21,6 +21,7 @@
 #include <QJsonDocument>
 #include <QPainter>
 #include <QQuickWindow>
+#include <QScreen>
 #include <QThread>
 #include <algorithm>
 #include <cmath>
@@ -97,6 +98,12 @@ Engine::Engine(QString path, bool offline, QObject *parent, PlaybackConnection *
     // 呈现层出一帧。不能靠"继续出帧等到期"：引擎静止时根本没有下一帧。
     m_admissionScheduler.setHandler([this](const QString &key, quint64 generation) {
         if (m_admission.expire(key, generation, clock.elapsed())) {
+            if (compactLayout()) {
+                // 静止时不再靠额外更新推进准入，直接同步保留曲目的状态。
+                for (auto it = m_musicTextureSnapshot.begin(); it != m_musicTextureSnapshot.end(); ++it) {
+                    it->admitted = m_admission.isAdmitted(it.key());
+                }
+            }
             requestSceneContent();
         }
     });
@@ -282,8 +289,19 @@ bool Engine::eventFilter(QObject *watched, QEvent *event) {
     case QEvent::KeyPress:
     case QEvent::TouchBegin:
     case QEvent::TouchUpdate:
-    case QEvent::TouchEnd:
         wake();
+        break;
+    case QEvent::TouchEnd:
+        if (compactLayout()) {
+            m_pressed = false;
+        }
+        wake();
+        break;
+    case QEvent::TouchCancel:
+        if (compactLayout()) {
+            m_pressed = false;
+            wake();
+        }
         break;
     default:
         break;
@@ -428,20 +446,30 @@ void Engine::recomputeLedgerPeaks() {
 /** 仅在画面变化时通知唯一场景，静止时保留按需休眠。 */
 void Engine::notifySceneRenderers(bool visualChanged) {
     if (visualChanged) {
+        if (!sceneLayerVisible()) {
+            m_hiddenSceneDirty = true;
+            return;
+        }
         // A03：版本只在真的推进内容时自增。呈现层拿它当"这一帧有没有新内容"的唯一判据，
         // 重复推同一个值不会造成重复重渲；而信号是没法这么用的——同一个内容变化会被
         // 场景帧、HUD、异步资源到达各触发一次。
         m_sceneRevision.fetch_add(1, std::memory_order_relaxed);
+        if (compactLayout()) {
+            // 首次显示与封面就绪也能在 tick() 之外发布快照。
+            m_pacing.publish(sceneRevision(), clock.elapsed());
+        }
         emit sceneUpdated();
     }
 }
 
 /** A03：渲染线程上报"新资源已就位"。语义与一次真实的视觉变化相同，只是触发者不是帧字段。 */
 void Engine::requestSceneContent() {
+    if (!sceneLayerVisible()) {
+        m_hiddenSceneDirty = true;
+        return;
+    }
     ++m_sceneRequests;
     notifySceneRenderers(true);
-    // C04：资源就绪也算一次"视觉快照发布"。它不推进模拟，但要让节拍知道
-    // "还有一份没被消费"，否则下一拍会当成无事可做。
     m_pacing.publish(sceneRevision(), clock.elapsed());
 }
 /**
@@ -465,6 +493,16 @@ void Engine::noteSceneConsumed(quint64 revision) {
 }
 void Engine::sceneConsumed() {
     m_pacing.consume(m_sceneConsumed.load(std::memory_order_relaxed));
+    if (compactLayout()) {
+        // 消费确认只恢复正在等待的动画，不唤醒已经休眠的竖屏页面。
+        if (m_waitingForScene && !m_pacing.awaitingConsumption()) {
+            m_waitingForScene = false;
+            if (timer.isActive()) {
+                timer.start(0);
+            }
+        }
+        return;
+    }
     // 渲染线程已经取走上一份，待办动画／输入需要下一拍；不该靠 1ms 轮询自己撞上。
     if (m_started && m_visible && !timer.isActive()) {
         m_lastTick = clock.elapsed();
@@ -496,11 +534,14 @@ void Engine::wake(WakeSource source) {
     const auto now = clock.elapsed();
     if (input) {
         m_lastInput = now;
-        m_sceneSleeping = false;
-        if (m_stableFrames != 0) {
-            ++m_stableResetInput;
+        // 竖屏详情的输入只操作 HUD，不能反复重置镜头收束计数。
+        if (!compactLayout() || scene.mode() != "detail" || scene.viewerOpen()) {
+            m_sceneSleeping = false;
+            if (m_stableFrames != 0) {
+                ++m_stableResetInput;
+            }
+            m_stableFrames = 0;
         }
-        m_stableFrames = 0;
         scene.energyIdle(false);
     } else if (scene.changed()) {
         m_sceneSleeping = false;
@@ -518,6 +559,10 @@ void Engine::wake(WakeSource source) {
         m_lastTick = now;
         const int resumeMs = frameIntervalMs();
         timer.start(resumeMs > 0 ? resumeMs : 0);
+    }
+    if (m_waitingForScene && timer.isActive()) {
+        m_waitingForScene = false;
+        timer.start(0);
     }
 }
 void Engine::resetTemporalState() {
@@ -547,11 +592,12 @@ void Engine::publishFrameGenerationStats(quint64 presented, quint64 interpolated
                                          bool available, bool wanted, bool active, bool depthReady,
                                          bool motionReady, QSize renderSize, QSize displaySize) {
     auto stats = RhineFg::stats();
-    stats.layerActive = active;
+    const bool running = active && sceneLayer() == SceneLayer::Live;
+    stats.layerActive = running;
     stats.defaultWindow = true;
     stats.interpolationAvailable = available;
     stats.interpolationWanted = wanted;
-    stats.interpolationActive = active;
+    stats.interpolationActive = running;
     stats.depthReady = depthReady;
     stats.motionVectorsReady = motionReady;
     stats.presented = presented;
@@ -597,6 +643,7 @@ void Engine::setVisible(bool value) {
         m_wheelDistance = 0;
         m_wheelRemainingDistance = 0;
         timer.stop();
+        m_waitingForScene = false;
         m_sleeping = true;
         // 隐藏期间不创建 GPU 资源：作废"等到一半"的等待，恢复后重新计时。
         m_admission.setVisible(false, clock.elapsed());
@@ -610,7 +657,7 @@ void Engine::setVisible(bool value) {
         }
 #endif
         wake(false);
-        notifySceneRenderers(true);
+        notifySceneRenderers(sceneLayerVisible());
         m_hudRevision.fetch_add(1, std::memory_order_relaxed);
         // 重新显示时纹理可能已经被丢弃，命令流没有差异也必须整块重画。
         m_hudDirtyFull = true;
@@ -646,13 +693,64 @@ void Engine::refreshPlayback() {
     if (!m_visible) {
         return;
     }
-    if (!m_sleeping || !m_sceneSleeping || scene.changed()) {
+    if (!m_sleeping || (!compactScenePaused() && (!m_sceneSleeping || scene.changed()))) {
         wake(false);
         return;
     }
     step(m_animationTime);
     if (m_discRotating || app->hud.animating(m_animationTime)) {
         wake(false);
+    }
+}
+
+bool Engine::compactLayout() const {
+    // 与 ResponsiveHudLayout 的 1080 舞台宽阈值一致。
+    return m_width > 0 && m_height > 0 && m_width < m_height;
+}
+bool Engine::compactSceneObscured() const {
+    if (scene.mode() == "boot" || scene.viewerOpen()) {
+        return false;
+    }
+    const auto &hud = app->hud;
+    return !hud.modal.isEmpty() || hud.lyricsMode || hud.commentsMode ||
+           (scene.mode() == "detail" && app->music.current.value("kind") != "song");
+}
+/** 隐藏与已停稳页面继续推进 HUD，场景只在路由、选中曲目或可见视口变化时恢复。 */
+bool Engine::compactScenePaused() const {
+    const auto layer = sceneLayer();
+    if (!compactLayout() || layer == SceneLayer::Live || scene.viewerOpen() ||
+        scene.mode() != m_frame.value("mode") || scene.selection() != m_frame.value("selected").toInt()) {
+        return false;
+    }
+    return canReuseFrozenScene() || (layer == SceneLayer::Hidden && compactSceneObscured());
+}
+bool Engine::canReuseFrozenScene() const {
+    return m_hasFrozenScene && scene.mode() == "detail" && !scene.viewerOpen() &&
+           scene.selection() == m_frame.value("selected").toInt() && !m_sceneViewportDirty &&
+           scene.themeSettled() && app->hud.dark == m_sceneDark &&
+           app->music.current.value("key") == m_current.value("key");
+}
+void Engine::setSceneLayer(SceneLayer layer) {
+    const auto previous = m_sceneLayer.exchange(layer, std::memory_order_relaxed);
+    if (previous == layer) {
+        return;
+    }
+    if (layer == SceneLayer::Live) {
+        // 隐藏层可能没有收到渲染回调；恢复后的首帧仍必须丢弃旧补帧历史。
+        m_frame["temporalReset"] = true;
+    }
+#ifdef Q_OS_MACOS
+    if (layer != SceneLayer::Live) {
+        auto stats = RhineFg::stats();
+        if (stats.defaultWindow) {
+            stats.layerActive = false;
+            stats.interpolationActive = false;
+            RhineFg::publish(stats);
+        }
+    }
+#endif
+    if ((previous == SceneLayer::Hidden) != (layer == SceneLayer::Hidden)) {
+        emit sceneLayerVisibilityChanged();
     }
 }
 
@@ -736,7 +834,17 @@ void Engine::tick() {
     updateDetailGrace(now);
     // C04：完整 step 只在"这一份快照还有机会被看到"时跑。渲染线程还没取走上一份，
     // 现在算出来的中间状态会被直接覆盖——这部分 CPU 在任何一帧上都看不到。
-    const bool inputPending = m_inputPending || m_wheelPending || m_pressed || m_pointerPending;
+    const bool compact = compactLayout();
+    m_waitingForScene = false;
+    qint64 displayPeriodNs = 0;
+    if (compact) {
+        const auto screen = m_window ? m_window->screen() : QGuiApplication::primaryScreen();
+        const double refreshRate = screen ? screen->refreshRate() : 60.0;
+        const bool validRefreshRate = std::isfinite(refreshRate) && refreshRate >= 1.0;
+        displayPeriodNs = qint64(1e9 / (validRefreshRate ? refreshRate : 60.0));
+    }
+    const quint64 previousSceneRevision = sceneRevision();
+    const bool inputPending = m_inputPending || m_wheelPending || m_pointerPending || (!compact && m_pressed);
     // 页面过渡期视为「有工作」：否则 pacing 会因为上一份快照还没被消费而 Skip 掉整帧，
     // 引擎也可能直接休眠，HUD 的命令流就停在这一帧（开唱片旋转能绕过正是这个道理）。
     // hudFramePending 必须一并算进来：过渡窗口结束后若 HUD 还没被场景图画过，
@@ -746,19 +854,27 @@ void Engine::tick() {
 #else
     const bool hudNeedsPresent = false;
 #endif
-    const bool hudTransition = clock.elapsed() < m_hudTransitionUntilMs || m_detailGrace || hudNeedsPresent;
-    const bool workPending = inputPending || scene.changed() || !m_sceneSleeping || m_discRotating ||
+    const bool scenePaused = compactScenePaused();
+    const bool sceneTransition = !scenePaused && (now < m_hudTransitionUntilMs || m_detailGrace);
+    const bool hudTransition = sceneTransition || hudNeedsPresent;
+    const bool sceneWork = !scenePaused &&
+                           (scene.changed() || !m_sceneSleeping || m_frame.value("pendingAnimations").toBool());
+    const bool workPending = inputPending || m_pressed || sceneWork || m_discRotating ||
                              app->hud.animating(m_animationTime) || hudTransition ||
-                             m_frame.value("pendingAnimations").toBool() || m_temporalFramesRemaining > 0 ||
-                             m_frame.value("mode") == "boot";
-    if (!inputPending && !hudTransition) {
+                             m_temporalFramesRemaining > 0 || m_frame.value("mode") == "boot";
+    if (!inputPending && !hudTransition && !scenePaused) {
         const auto decision = m_pacing.decide(workPending, false, now);
         if (decision.action == RhineRender::FramePacingPolicy::Action::Skip) {
             m_pacing.noteStep(true);
             ++m_stepsSkipped;
             ++m_paceTicks;
-            // 1ms 只为尽早看到消费进度；这一次 tick 本身几乎不花钱。
-            timer.setInterval(1);
+            if (compact) {
+                const int overrideMs = frameIntervalMs();
+                m_waitingForScene = overrideMs <= 0;
+                timer.setInterval(overrideMs > 0 ? overrideMs : int(qMax<qint64>(1, displayPeriodNs / 1000000)));
+            } else {
+                timer.setInterval(1);
+            }
             return;
         }
     }
@@ -801,8 +917,10 @@ void Engine::tick() {
     m_paceStepSum += stepNs;
     m_paceStepMax = qMax(m_paceStepMax, stepNs);
     ++m_paceTicks;
-    // C04：发布序号就是内容版本；没有视觉变化时这里不会前进，策略自然放行下一拍。
-    m_pacing.publish(sceneRevision(), clock.elapsed());
+    // 横屏在 step 后登记内容版本；竖屏的异步资源也可独立发布。
+    if (!compact) {
+        m_pacing.publish(sceneRevision(), clock.elapsed());
+    }
     m_pacing.noteStep(false);
     m_inputPending = false;
     // 动态帧间隔：不设固定周期常数，帧率上限完全交给呈现侧（垂直同步/缓冲回收）。
@@ -824,6 +942,11 @@ void Engine::tick() {
     // C04：节奏只由"上一份快照有没有被消费"决定。tick() 内部量到的 frameNs-stepNs
     // 测不到呈现阻塞（呈现工作在别的回调里），原来用它推断节流只会恒定落到 1ms。
     int intervalMs = m_pacing.awaitingConsumption() ? 1 : 0;
+    if (compact && (hudTransition || sceneRevision() == previousSceneRevision)) {
+        // HUD 动画没有场景消费回调。按显示周期扣除本次工作耗时，避免无变化时连轴转。
+        const qint64 remainingNs = displayPeriodNs - (clock.nsecsElapsed() - enterNs);
+        intervalMs = int(qMax<qint64>(1, remainingNs / 1000000));
+    }
     if (rotationOnly) {
         intervalMs = 33;
     }
@@ -855,11 +978,12 @@ void Engine::tick() {
 #else
     const bool hudStillPending = false;
 #endif
-    if (!forceAnimate && now - m_lastInput >= 750 && !m_pressed && m_sceneSleeping && !scene.changed() &&
-        !app->hud.animating(m_animationTime) && !m_discRotating && !hudTransition &&
-        // 用实时成员而非 tick 开头的局部快照：step() 里可能刚把 m_detailGrace 置真。
-        !m_detailGrace && !hudStillPending && m_frame["mode"] != "boot" && m_temporalFramesRemaining == 0 &&
-        !m_pacing.awaitingConsumption()) {
+    const bool nowPaused = compactScenePaused();
+    const bool canStopTimer = compact || (now - m_lastInput >= 750 && !m_pacing.awaitingConsumption());
+    const bool settled = nowPaused || (m_sceneSleeping && !scene.changed() && !m_detailGrace);
+    if (!forceAnimate && canStopTimer && !m_pressed && settled &&
+        !app->hud.animating(m_animationTime) && !m_discRotating && (!hudTransition || nowPaused) &&
+        !hudStillPending && m_frame["mode"] != "boot" && m_temporalFramesRemaining == 0) {
         timer.stop();
         m_sleeping = true;
         emit stateChanged();
@@ -871,6 +995,7 @@ void Engine::resize(double width, double height) {
     }
     m_width = width;
     m_height = height;
+    m_sceneViewportDirty = true;
     scene.resize(width / (height / 1080), 1080);
     wake();
 }
@@ -886,10 +1011,10 @@ void Engine::action(QString value) {
     }
     app->hud.action(value);
     // 连续拖动只更新页面位置，不反复同步查询后台播放服务。
-    const bool gesture =
-        app->hud.compactLayout() && (value.startsWith("mobile:lyrics-") || value == "mobile:archive-begin" ||
-                                     value == "mobile:archive-release");
-    if (!gesture) {
+    const bool scrollGesture = value.startsWith("mobile:lyrics-") || value == "mobile:archive-begin" ||
+                               value == "mobile:archive-release" || value.startsWith("mobile:comments-drag:") ||
+                               value == "mobile:comments-release";
+    if (!app->hud.compactLayout() || !scrollGesture) {
         pollMedia();
     }
     // 所有 HUD 动作保留输入唤醒语义，横屏和移动布局都要退出场景休眠。
@@ -1162,7 +1287,15 @@ void Engine::step(double time) {
     const bool hudTransition = clock.elapsed() < m_hudTransitionUntilMs || m_detailGrace;
     // 详情淡入期间绝不复用旧 scene.frame：复用会让 sample() 不被调用，
     // m_detail / m_changed 都停住，正是那个自锁环的入口。
-    const bool reuse = m_sceneSleeping && !scene.changed() && !hudTransition;
+    const bool compact = compactLayout();
+    const bool scenePaused = compactScenePaused();
+    const bool keepFrozen = compact && canReuseFrozenScene();
+    const bool mustRefreshLayer = sceneLayer() != SceneLayer::Live && !scenePaused;
+    const bool reuse = scenePaused || (!mustRefreshLayer && m_sceneSleeping && !scene.changed() && !hudTransition);
+    if (!reuse) {
+        m_sceneViewportDirty = false;
+        m_sceneDark = app->hud.dark;
+    }
     const auto object = app->step(time, m_width / (m_height / 1080), reuse);
 #if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
     const double stepAppMs = stepProbe ? double(stepAppTimer.nsecsElapsed()) / 1e6 : 0.0;
@@ -1174,12 +1307,16 @@ void Engine::step(double time) {
 #ifdef Q_OS_DARWIN
     const auto previousOrigin = m_frame.value("stats").toObject().value("coordinateOrigin");
 #endif
+    const auto previousPanelTop = m_frame.value("songPanelTop");
+    const auto previousPanelTransition = m_frame.value("songPanelTransition");
     m_frame = scene.frame;
     const auto hudState = object["state"].toObject();
     if (hudState["compactLayout"].toBool()) {
         m_frame["mobileHud"] = true;
-        m_frame["songPanelTop"] = hudState["songPanelTop"];
-        m_frame["songPanelTransition"] = hudState["songPanelTransition"];
+        const bool retainPanelMask = keepFrozen && !hudState.value("songPanelTop").isDouble();
+        m_frame["songPanelTop"] = retainPanelMask ? previousPanelTop : hudState.value("songPanelTop");
+        m_frame["songPanelTransition"] = retainPanelMask ? previousPanelTransition
+                                                        : hudState.value("songPanelTransition");
     }
     // 本帧刚切进 detail 时，tick() 开头看到的还是上一帧的 archive；不在这里重算，
     // 帧末的休眠判定就会用 false 把 timer 停掉，再也没有下一帧。
@@ -1217,7 +1354,7 @@ void Engine::step(double time) {
     if (!metalFxTemporal) {
         m_temporalFramesRemaining = 0;
     }
-    const bool temporal = metalFxTemporal;
+    const bool temporal = metalFxTemporal && !scenePaused;
     // 仅开 FG 插值时渲染器同样消费实例运动历史，原点变化必须一并重置。
     const bool usesMotionHistory = temporal || renderSettings.frameGeneration();
     if (usesMotionHistory && previousOrigin != m_frame.value("stats").toObject().value("coordinateOrigin")) {
@@ -1230,7 +1367,7 @@ void Engine::step(double time) {
     // 空间 FSR 回退不累积历史，不能继续投影抖动，否则静止画面会逐帧闪动。
     const bool computeFsr =
         (aaMode == "fsr" || aaMode == "fsr3") && qEnvironmentVariable("RHINE_FSR_ENGINE") == "fsr3";
-    const bool temporal = aaMode == "taa" || computeFsr;
+    const bool temporal = !scenePaused && (aaMode == "taa" || computeFsr);
 #endif
     if (m_jitterEnabled || temporal) {
         m_jitterOffset = haltonJitter(m_jitterPhase);
@@ -1262,6 +1399,30 @@ void Engine::step(double time) {
         !m_frame.value("pendingAnimations").toBool()) {
         m_sceneSleeping = true;
     }
+    const bool compactSong = compact && hudState.value("songPanelTop").isDouble();
+    const bool dedicatedScene = m_frame.value("viewer").toBool() || m_frame.value("mode") == "boot";
+    const bool compactHome = compact && m_frame.value("mode") == "archive" && !compactSceneObscured();
+    SceneLayer layer = SceneLayer::Live;
+    if (compact && !dedicatedScene) {
+        if (compactSong) {
+            // 等原有镜头、唱片解密与归位收束，停稳后把最后一张场景纹理留在详情顶部。
+            const bool settled = (keepFrozen && scene.themeSettled()) || scene.detailSettled();
+            if (settled) {
+                layer = SceneLayer::Frozen;
+            } else {
+                m_sceneSleeping = false;
+            }
+        } else if (!compactHome) {
+            layer = SceneLayer::Hidden;
+        }
+    }
+    const bool layerNeedsDraw = m_hiddenSceneDirty ||
+                                (sceneLayer() != layer && !(layer == SceneLayer::Frozen && keepFrozen));
+    setSceneLayer(layer);
+    m_hasFrozenScene = layer == SceneLayer::Frozen || (layer == SceneLayer::Hidden && keepFrozen);
+    if (sceneLayerVisible()) {
+        m_hiddenSceneDirty = false;
+    }
     const auto current = object["current"].toObject();
     const auto cover = object["cover"].toString();
     const auto coverRevision = host.image(cover).cacheKey();
@@ -1272,7 +1433,8 @@ void Engine::step(double time) {
         m_discAngle = 0;
     }
     const bool wasRotating = m_discRotating;
-    m_discRotating = m_visible && app->hud.discRotation && !app->hud.reduced && app->hud.modal.isEmpty() &&
+    m_discRotating = !compact && m_visible && app->hud.discRotation && !app->hud.reduced &&
+                     app->hud.modal.isEmpty() &&
                      m_frame.value("mode") == "detail" && !m_frame.value("viewer").toBool() &&
                      current["kind"] == "song" && PlaybackQueue::identity(current) == identity &&
                      !player.loading && !player.failed && player.state["playing"].toBool();
@@ -1413,31 +1575,32 @@ void Engine::step(double time) {
         hudChanged = true;
         m_hudDirtyFull = true;
     }
-    const bool transitionNow = clock.elapsed() < m_hudTransitionUntilMs || m_detailGrace;
     if (hudChanged) {
         m_commands = commands;
         ++m_hudUpdates;
         m_hudRevision.fetch_add(1, std::memory_order_relaxed);
     }
-    // 过渡期即便命令流逐条相同也要发一次：Hud 的重绘只由这个信号驱动，
-    // 停在这里就是「进详情时 HUD 整层不显示」。
-    if (hudChanged || transitionNow) {
+    if (compact && coverArrived) {
+        m_hudDirtyFull = true;
+    }
+    // 自管呈现的横屏过渡仍沿用连续提交；竖屏 HUD 只提交命令或图片发生变化的帧。
+    if (hudChanged || (compact && coverArrived) ||
+        (!compact && (clock.elapsed() < m_hudTransitionUntilMs || m_detailGrace))) {
         publishHudFrame();
     }
 #if defined(Q_OS_ANDROID)
-    if (coverArrived) {
+    if (!compact && coverArrived) {
         // 命令流没变但 HUD 上的像素变了：补一次整块重画。
         m_hudDirtyFull = true;
         publishHudFrame();
     }
 #endif
-    if (visualChanged) {
+    if (visualChanged && sceneLayerVisible()) {
         ++m_sceneUpdates;
     }
-    // HUD 命令流变化也必须促成一次呈现帧：RhiScene 把 sceneUpdated() 连到 update()，
-    // 只按 visualChanged（3D）通知时，3D 静止而 HUD 换页的那一帧窗口不会出帧，
-    // HudUploadTexture 的纹理就上传不了 —— 命中区已是新的、按钮能点，画面却是空的。
-    notifySceneRenderers(visualChanged || hudChanged || m_detailGrace);
+    // 横屏保留 HUD 对呈现的原有联动；竖屏由 HUD 独立申请窗口合成。
+    notifySceneRenderers(sceneLayerVisible() &&
+                         (visualChanged || layerNeedsDraw || (!compact && (hudChanged || m_detailGrace))));
     auto state = object["state"].toObject().toVariantMap();
     if (state != m_state) {
         m_state = state;

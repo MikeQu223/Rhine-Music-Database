@@ -265,7 +265,7 @@ void NativeApplication::pointer(QString type, double x, double y) {
     // 窄屏阅读页面覆盖整个场景；资料库主界面仍可在列表以外拖动真实场景。
     if (hud.compactLayout() && !hud.frame["viewer"].toBool()) {
         const auto region = hud.state()["playerBounds"].toObject();
-        if (!hud.modal.isEmpty() || hud.frame["mode"] == "detail" ||
+        if (!hud.modal.isEmpty() || hud.lyricsMode || hud.commentsMode || hud.frame["mode"] == "detail" ||
             (!region.isEmpty() && y >= region["y"].toDouble())) {
             m_dragging = false;
             m_moved = false;

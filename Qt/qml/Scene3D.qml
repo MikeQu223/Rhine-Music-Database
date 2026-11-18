@@ -18,5 +18,6 @@ Item {
         objectName: "rhiScene"
         anchors.fill: parent
         engine: rhine
+        visible: rhine.sceneLayerVisible
     }
 }

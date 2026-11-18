@@ -7,12 +7,15 @@ ResponsiveHudCanvas::ResponsiveHudCanvas(Glyphs &glyphs, double scale, double h,
     ink = dark ? QJsonArray{.925, .933, .886, 1} : QJsonArray{.082, .110, .090, 1};
     muted = dark ? QJsonArray{.63, .68, .60, 1} : QJsonArray{.404, .431, .388, 1};
     line = dark ? QJsonArray{.23, .28, .24, 1} : QJsonArray{.741, .753, .702, 1};
-    paper = dark ? QJsonArray{.075, .110, .094, 1} : QJsonArray{.933, .925, .894, 1};
+    paper = paperColor(dark);
     surface = dark ? QJsonArray{.125, .165, .137, 1} : QJsonArray{.910, .902, .863, 1};
     raised = dark ? QJsonArray{.165, .208, .173, 1} : QJsonArray{.871, .875, .820, 1};
     amber = {.780, .608, .224, 1};
     commands.append(QJsonArray{"save"});
     commands.append(QJsonArray{"scale", unit, unit});
+}
+QJsonArray ResponsiveHudCanvas::paperColor(bool dark) {
+    return dark ? QJsonArray{.075, .110, .094, 1} : QJsonArray{.933, .925, .894, 1};
 }
 QPair<int, int> ResponsiveHudCanvas::visibleRows(double top, double stride, int count) const {
     const int first = std::clamp(int(std::floor((m_clipTop - top) / stride)), 0, count);

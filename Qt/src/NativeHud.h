@@ -285,7 +285,7 @@ class NativeHud : public QObject {
     ResponsiveHudLayout m_responsive;
     ResponsiveHudTransition m_mobileTransition;
     QJsonObject sourceState() const;
-    void drawMobile(double time, const QString &scope);
+    void drawMobile(double time, const QString &scope, double stageWidth);
     ResponsiveHudContent::Model *m_contentSink = nullptr;
     QVector<ResponsiveHudContent::Item> auxiliaryContent();
     void modalBody(double x, double y, double usable);

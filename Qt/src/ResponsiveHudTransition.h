@@ -19,7 +19,7 @@ class ResponsiveHudTransition {
         return time < m_start + .46 || m_sceneRunning || (m_returning && m_drag > .5);
     }
     void apply(QJsonArray &commands, QJsonArray &hits, QString key, double time, double height, bool reduced,
-               double sceneProgress = -1) {
+               double sceneProgress = -1, const QJsonArray &paper = {}) {
         const auto fullPage = [](const QString &value) {
             return value == "lyrics" || value == "comments";
         };
@@ -34,6 +34,9 @@ class ResponsiveHudTransition {
             m_old = {};
             if (m_drag > 0) {
                 QJsonArray moved{QJsonArray{"save"}, QJsonArray{"translate", 0, m_drag}};
+                if (fullPage(key) && !paper.isEmpty()) {
+                    moved.prepend(paper);
+                }
                 for (const auto &command : commands) {
                     moved.append(command);
                 }
@@ -91,6 +94,9 @@ class ResponsiveHudTransition {
         }
         const double eased = 1 - std::pow(1 - progress, 3);
         QJsonArray result;
+        if (fullPage(m_key) && !paper.isEmpty()) {
+            result.append(paper);
+        }
         const auto layer = [&](const QJsonArray &content, double opacity, double offset) {
             result.append(QJsonArray{"save"});
             result.append(QJsonArray{"alpha", opacity});

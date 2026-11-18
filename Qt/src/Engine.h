@@ -25,12 +25,23 @@ class Engine : public QObject {
     Q_PROPERTY(QVariantMap state READ state NOTIFY stateChanged)
     Q_PROPERTY(QVariantList hits READ hits NOTIFY hitsChanged)
     Q_PROPERTY(QVariantMap performance READ performance NOTIFY stateChanged)
+    Q_PROPERTY(bool sceneLayerVisible READ sceneLayerVisible NOTIFY sceneLayerVisibilityChanged)
   public:
+    enum class SceneLayer { Live, Frozen, Hidden };
     Engine(QString root, bool offline = false, QObject *parent = nullptr,
            PlaybackConnection *connection = nullptr, RenderCacheStorage *renderCache = nullptr);
     ~Engine() override;
     QVariantMap state() const {
         return m_state;
+    }
+    SceneLayer sceneLayer() const {
+        return m_sceneLayer.load(std::memory_order_relaxed);
+    }
+    bool sceneLayerVisible() const {
+        return sceneLayer() != SceneLayer::Hidden;
+    }
+    bool sceneLayerFrozen() const {
+        return sceneLayer() == SceneLayer::Frozen;
     }
     QVariantList hits() const {
         return m_hits;
@@ -241,6 +252,7 @@ class Engine : public QObject {
   signals:
     void updated();
     void sceneUpdated();
+    void sceneLayerVisibilityChanged();
     void hudUpdated();
     void stateChanged();
     void hitsChanged();
@@ -254,6 +266,17 @@ class Engine : public QObject {
     bool eventFilter(QObject *watched, QEvent *event) override;
 
   private:
+    bool compactLayout() const;
+    bool compactSceneObscured() const;
+    bool compactScenePaused() const;
+    bool canReuseFrozenScene() const;
+    void setSceneLayer(SceneLayer layer);
+    // 自续的渲染回调可能早于下一次 Qt Quick 同步，必须能直接读取是否仍允许出帧。
+    std::atomic<SceneLayer> m_sceneLayer{SceneLayer::Live};
+    bool m_hasFrozenScene = false;
+    bool m_hiddenSceneDirty = false;
+    bool m_sceneViewportDirty = false;
+    bool m_sceneDark = false;
     /// 按真实墙钟刷新详情淡入宽限期；tick() 开头与 step() 更新 m_frame 后都要调用。
     void updateDetailGrace(qint64 nowMs);
     /// 发布一份新的 HUD 命令流：置位「待呈现」并通知 Hud 标脏。
@@ -264,6 +287,7 @@ class Engine : public QObject {
     quint64 m_geometryRevision = 0;
     /// C04：发布／消费序号对账。m_sceneRevision 就是发布序号，渲染线程回填消费序号。
     RhineRender::FramePacingPolicy m_pacing;
+    bool m_waitingForScene = false;
     std::atomic<quint64> m_sceneConsumed{0};
     /// 已经为哪个序号排过唤醒，避免渲染线程每帧都投递一次队列调用。
     std::atomic<quint64> m_consumeNotified{0};

@@ -687,7 +687,7 @@ bool PresentationShell::composite(QRhiCommandBuffer *cb, QRhiTexture *base, QRhi
     if (!target) {
         return false;
     }
-    QRhiShaderResourceBindings *srb = bindingsFor(base, overlay);
+    QRhiShaderResourceBindings *srb = bindingsFor(base ? base : m_pipelineBase, overlay);
     if (!srb) {
         return false;
     }
@@ -716,6 +716,13 @@ bool PresentationShell::composite(QRhiCommandBuffer *cb, QRhiTexture *base, QRhi
 
     QRhiResourceUpdateBatch *batch = m_rhi->nextResourceUpdateBatch();
     batch->updateDynamicBuffer(m_compositeUbo, 0, kFgUniformSize, uniforms);
+    if (!base && !m_blankBaseUploaded) {
+        // 不采样未录制的资料库目标；隐藏页直接在 1×1 应用底色上合成 HUD。
+        QImage blank(QSize(1, 1), QImage::Format_RGBA8888);
+        blank.fill(QColor(0xe7, 0xe7, 0xe1));
+        batch->uploadTexture(m_pipelineBase, blank);
+        m_blankBaseUploaded = true;
+    }
 
     const QSize pixelSize = target->pixelSize();
     cb->beginPass(target, Qt::black, {1.0f, 0}, batch);
@@ -760,7 +767,10 @@ bool PresentationShell::presentOne(const RhineRender::PresentationBackend::Frame
     // FG 的算法命令必须和合成落在同一个离屏帧里：先插值、再合成、最后注入信号量，
     // 三者由同一次提交保证顺序与可见性。
     const bool interpolated = allowInterpolation && recordFrameGeneration(cb);
-    QRhiTexture *base = interpolated ? m_fg->output() : m_host->sceneTexture();
+    QRhiTexture *base = m_host->sceneLayerVisible() ? m_host->sceneTexture() : nullptr;
+    if (interpolated) {
+        base = m_fg->output();
+    }
     m_probe.restart();
     const bool composed = composite(cb, base, m_host->overlayTexture(), frame.imageIndex);
     m_stats.compositeMs = blend(m_stats.compositeMs, tookMs());
@@ -847,17 +857,26 @@ void PresentationShell::step() {
         return;
     }
     const bool idle = m_backend->performance().value(QStringLiteral("idle")).toBool();
-    const bool interpolationWanted = requested();
+    // Vulkan 和 D3D12 沿用引擎驱动的呈现节拍，包括异步模型与纹理的轮询兜底。
+    const bool engineDriven = m_backendName != QLatin1String("metal");
+    syncSizes();
+    const bool scenePolicyChanged =
+        m_host->setSceneLayerPolicy(m_backend->sceneLayerVisible(), m_backend->sceneLayerFrozen());
+    const bool sceneLayerActive = m_host->sceneLayerActive();
+    if (scenePolicyChanged) {
+        m_pendingRealFrame = false;
+        m_forcePresent = true;
+    }
+    if (!sceneLayerActive) {
+        // 冻结层由修订号决定是否需要重画，先于本拍的 contentDirty 检查更新。
+        m_host->setResourceRevision(m_backend->sceneRevision(), m_backend->hudRevision());
+    }
+    const bool interpolationWanted = sceneLayerActive && requested();
     if (!interpolationWanted && m_fg) {
-        // 降回原生倍率后，第一帧应重建历史，避免和进入超采样前的旧画面插值。
+        // 恢复动态场景或降回原生倍率后，从新帧重建插值历史。
         m_fg->requestReset();
         m_fgArmed = false;
     }
-    // Vulkan and D3D12 both need the engine-driven render cadence, including
-    // polling for completed asynchronous model/texture uploads.
-    const bool engineDriven = m_backendName != QLatin1String("metal");
-    syncSizes();
-
     if (!m_host->resumeGraphics()) {
         m_error = m_host->lastError();
         m_failed = true;
@@ -1377,6 +1396,7 @@ bool PresentationShell::start() {
 #endif
         scheduleNext();
     });
+    connect(m_backend, &Engine::sceneLayerVisibilityChanged, this, [this] { scheduleNext(); });
 
 #ifdef Q_OS_DARWIN
     m_releaseTimer = new QTimer(this);
@@ -1621,7 +1641,10 @@ QImage PresentationShell::grabFrame(bool interpolated) {
     }
     // 读回目标为 RGBA8，交换链可能是 BGRA8，不能复用两者的 render pass 管线。
     releaseSwapchainResources();
-    auto base = interpolated && m_fg && !m_fg->lastFrameReset() ? m_fg->output() : m_host->sceneTexture();
+    QRhiTexture *base = m_host->sceneLayerVisible() ? m_host->sceneTexture() : nullptr;
+    if (m_host->sceneLayerActive() && interpolated && m_fg && !m_fg->lastFrameReset()) {
+        base = m_fg->output();
+    }
     const bool composed = composite(commands, base, m_host->overlayTexture(), 0, target.get());
     QRhiReadbackResult result;
     auto updates = m_rhi->nextResourceUpdateBatch();

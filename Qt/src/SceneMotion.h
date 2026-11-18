@@ -47,6 +47,7 @@ struct ArchiveField {
 class ThemeWave {
   public:
     void set(bool dark, double time, Cell origin, bool immediate = false);
+    bool settled(double time) const;
     double background(double time) const;
     void beginFrame();
     double sample(Cell cell, double time);
@@ -70,6 +71,9 @@ class Decryption {
     void select(double clarity = 0);
     void finish();
     void update(double seconds, bool ready, bool reduced, std::optional<double> reference = std::nullopt);
+    bool settled() const {
+        return !m_active || (m_elapsed && *m_elapsed >= (END - START) / 1.5);
+    }
     double clarity = 0;
     QJsonObject frame = sample(-1);
 

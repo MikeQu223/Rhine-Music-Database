@@ -86,7 +86,6 @@ void ResponsiveHudLayout::arrange(QJsonArray &commands, QJsonArray &hits, const 
     }
     const bool songPage = m_song.has_value() && modal.isEmpty() && !lyric && !comments;
     const bool immersive = modal == "player" || lyric;
-    const bool hud = home || m_song || m_collection || m_discover || lyric || comments || modal == "saved";
     c.contentBottom = songPage ? m_height
                                : m_height - BottomGestureInset -
                                      (lyric       ? 250
@@ -94,26 +93,8 @@ void ResponsiveHudLayout::arrange(QJsonArray &commands, QJsonArray &hits, const 
                                                   : 110);
     const bool terminalPage = modal == "discover" || modal == "search" || modal == "settings";
 
-    const bool paperPage =
-        terminalPage || modal == "provider" || modal == "plugins" || modal == "plugin-detail";
-    if (paperPage || lyric || comments || !hud) {
+    if (!home && !songPage) {
         c.fill({0, 0, 393, m_height}, c.paper);
-    } else if (!songPage && !home) {
-        // 保留真实场景。主界面 tab 列表不加遮罩，其余页面沿用纵向阅读渐变。
-        for (int y = 0; y < int(m_height); y += 8) {
-            auto color = c.paper;
-            const QVector<QPointF> stops{{0, .93}, {.42, .86}, {.75, .66}, {1, .95}};
-            const double fraction = y / m_height;
-            for (int index = 1; index < stops.size(); ++index) {
-                if (fraction <= stops[index].x()) {
-                    const double blend =
-                        (fraction - stops[index - 1].x()) / (stops[index].x() - stops[index - 1].x());
-                    color[3] = stops[index - 1].y() + (stops[index].y() - stops[index - 1].y()) * blend;
-                    break;
-                }
-            }
-            c.fill({0, double(y), 393, 8}, color);
-        }
     }
     QString title = modal == "player"          ? "播放队列"
                     : modal == "search"        ? "音乐检索"

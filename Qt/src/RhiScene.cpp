@@ -185,6 +185,8 @@ struct CoverPrepareResult {
 struct CoverMailbox {
     QMutex mutex;
     QQueue<CoverPrepareResult> queue;
+    // Engine 晚于场景销毁；渲染器解绑与工作线程通知共用此锁。
+    Engine *frozenScene = nullptr;
 };
 /**
  * 单个封面的合成 + mip 链生成。
@@ -202,6 +204,9 @@ class CoverPrepareTask : public QRunnable {
         // 无论成败都入队一条：失败也要让渲染线程知道该改走同步路径，不能静默丢封面。
         QMutexLocker lock(&m_box->mutex);
         m_box->queue.enqueue(std::move(result));
+        if (m_box->frozenScene) {
+            QMetaObject::invokeMethod(m_box->frozenScene, "requestSceneContent", Qt::QueuedConnection);
+        }
     }
 
   private:
@@ -526,6 +531,7 @@ class Renderer {
     // 邮箱用 shared_ptr 持有：切场景销毁 Renderer 时在途任务还在跑，它们写的是这个
     // 邮箱而不是 Renderer 成员，最后一个引用释放前内存一直有效，不会出现悬垂写。
     std::shared_ptr<CoverMailbox> mailbox = std::make_shared<CoverMailbox>();
+    bool coverRetryPending = false;
     QHash<qint64, CoverPrepRequest> coverPrep;  // revision → 在途请求（同一 cacheKey 只发一次）
     QHash<QString, qint64> coverWanted;         // key → 该 key 想要的 revision
     QSet<qint64> coverSyncFallback;             // 预处理失败的 revision：改走同步路径
@@ -910,6 +916,7 @@ class Renderer {
         uploadMipped(placeholderCover, placeholder);
     }
     ~Renderer() {
+        setFrozenCoverReceiver(nullptr);
         if (updates) {
             updates->release();
         }
@@ -1793,6 +1800,7 @@ class Renderer {
     void drainCoverPrep() {
         // 预算按帧重置：这是"每帧最多传多少"的上限，不是全局总量。
         uploadedThisFrame = 0;
+        coverRetryPending = false;
         QQueue<CoverPrepareResult> incoming;
         {
             QMutexLocker lock(&mailbox->mutex);
@@ -1820,6 +1828,7 @@ class Renderer {
                 // 工作线程失败（内存不足 / 缩放产出空图）：记下这个 revision 改走同步，
                 // 封面不能静默消失，更不能让空纹理顶上去。
                 coverSyncFallback.insert(result.revision);
+                coverRetryPending = true;
                 // 撤掉"想要"登记，下一帧 updateMusic 才会重新进入派发、走到同步兜底。
                 // 留着的话它会把这次失败当成"仍在处理中"，封面就永远停在占位图。
                 for (auto it = coverWanted.begin(); it != coverWanted.end();) {
@@ -1845,6 +1854,13 @@ class Renderer {
     }
     /** 还有预处理在路上、或成品没传完：需要再要一帧，否则结果会一直躺在队列里。 */
     bool coverWorkPending() const { return !uploadQueue.isEmpty() || coverBudget.inflight() > 0; }
+    bool coverUploadPending() const {
+        return !uploadQueue.isEmpty() || coverRetryPending;
+    }
+    void setFrozenCoverReceiver(Engine *engine) {
+        QMutexLocker lock(&mailbox->mutex);
+        mailbox->frozenScene = engine;
+    }
     /** RHINE_TEXTURE_PROBE=1 时每 120 帧一行；字段名固定，方便直接 grep/喂脚本。 */
     void reportCoverProbe() {
         if (!coverProbe || (++probeFrames % 120) != 0) {
@@ -3830,6 +3846,10 @@ class Renderer {
 };
 class ItemRenderer : public QQuickRhiItemRenderer {
     Engine *backend = nullptr;
+    bool synchronizedFrozen = false;
+    quint64 renderedRevision = 0;
+    QRhiRenderTarget *renderedTarget = nullptr;
+    QSize renderedSize;
 #ifdef Q_OS_MACOS
     QRhi *capabilityDevice = nullptr;
     Engine *capabilityEngine = nullptr;
@@ -3873,8 +3893,17 @@ class ItemRenderer : public QQuickRhiItemRenderer {
             presentation.reset();
         }
 #endif
+        const bool engineChanged = backend != engine;
+        const bool wasFrozen = synchronizedFrozen;
+        if (renderer && engineChanged && wasFrozen) {
+            renderer->setFrozenCoverReceiver(nullptr);
+        }
         backend = engine;
         if (engine) {
+            synchronizedFrozen = engine->sceneLayerFrozen();
+            if (renderer && (engineChanged || synchronizedFrozen != wasFrozen)) {
+                renderer->setFrozenCoverReceiver(synchronizedFrozen ? engine : nullptr);
+            }
 #ifdef Q_OS_MACOS
             sourceAnimating = !engine->performance().value("idle").toBool();
             // 提前探测 MetalFX 补帧能力：设置页需要知道开关是否可点，不能等到首帧场景渲染。
@@ -3928,6 +3957,7 @@ class ItemRenderer : public QQuickRhiItemRenderer {
     }
     void initialize(QRhiCommandBuffer *) override {
         CrashRenderScope diagnosticScope("scene.initialize");
+        renderedTarget = nullptr;
         if (renderer && renderer->rhi != rhi()) {
             renderer.reset();
 #ifdef Q_OS_MACOS
@@ -3937,6 +3967,24 @@ class ItemRenderer : public QQuickRhiItemRenderer {
     }
     void render(QRhiCommandBuffer *cb) override {
         CrashRenderScope diagnosticScope("scene.render");
+        if (!backend) {
+            return;
+        }
+        // renderer 的 update() 会在没有 GUI 同步的情况下再次进入这里，包括 item 已隐藏时。
+        const auto layer = backend->sceneLayer();
+        if (layer == Engine::SceneLayer::Hidden) {
+#ifdef Q_OS_MACOS
+            if (presentation) {
+                presentation->suspend();
+            }
+#endif
+            return;
+        }
+        const bool sceneFrozen = layer == Engine::SceneLayer::Frozen;
+        if (sceneFrozen && renderedTarget == renderTarget() && renderedSize == renderTarget()->pixelSize() &&
+            renderedRevision == cachedSync.revision) {
+            return;
+        }
         if (qEnvironmentVariableIsSet("RHINE_DEBUG_DRAWS")) {
             std::fprintf(stderr, "scene item render empty=%d mode=%s time=%.2f\n", frame.isEmpty() ? 1 : 0,
                          qPrintable(frame["mode"].toString()), frame["time"].toDouble());
@@ -3953,6 +4001,9 @@ class ItemRenderer : public QQuickRhiItemRenderer {
         }
         if (!renderer) {
             renderer = std::make_unique<Renderer>(root, rhi());
+            if (sceneFrozen) {
+                renderer->setFrozenCoverReceiver(backend);
+            }
         }
 #ifdef Q_OS_MACOS
         backend->renderConfiguration.setNativeInterpolationAvailable(presentation &&
@@ -3989,7 +4040,7 @@ class ItemRenderer : public QQuickRhiItemRenderer {
             submitted["temporalReset"] = true;
         }
         const bool useGeneration =
-            renderer->settings.frameGeneration() && presentation && presentation->supported();
+            !sceneFrozen && renderer->settings.frameGeneration() && presentation && presentation->supported();
         bool renderedReal = true;
         if (useGeneration && presentation->asynchronous()) {
             if (reset) {
@@ -4006,7 +4057,8 @@ class ItemRenderer : public QQuickRhiItemRenderer {
             }
             if (presentation->asyncAvailable()) {
                 presentation->presentAsync(cb, renderTarget());
-                if (sourceAnimating || presentation->hasWork()) {
+                if ((sourceAnimating || presentation->hasWork()) &&
+                    backend->sceneLayer() == Engine::SceneLayer::Live) {
                     update();
                 }
             } else {
@@ -4030,7 +4082,8 @@ class ItemRenderer : public QQuickRhiItemRenderer {
             presentation->present(cb, renderTarget(), !reuseReal && presentation->pendingReal);
             // 插值帧之后还要再出一帧真实帧；动画期间必须每个 vsync 都请求绘制，
             // 否则复用真实帧的那一步结束后循环会断掉，输出就退回引擎的 85–95Hz。
-            if (sourceAnimating || presentation->pendingReal) {
+            if ((sourceAnimating || presentation->pendingReal) &&
+                backend->sceneLayer() == Engine::SceneLayer::Live) {
                 update();
             }
         } else {
@@ -4051,9 +4104,15 @@ class ItemRenderer : public QQuickRhiItemRenderer {
 #endif
         // 引擎静止时会休眠、不再出帧；封面预处理回来的成品必须有人把它取走并上传，
         // 所以只要还有活儿在路上就主动再要一帧（update() 是渲染线程的安全入口）。
-        if (renderer->coverWorkPending()) {
+        if (sceneFrozen && renderer->coverUploadPending()) {
+            // 工作线程在准备完成时唤醒冻结层；这里仅续传已就绪但本帧预算放不下的封面。
+            QMetaObject::invokeMethod(backend, "requestSceneContent", Qt::QueuedConnection);
+        } else if (!sceneFrozen && renderer->coverWorkPending()) {
             update();
         }
+        renderedRevision = cachedSync.revision;
+        renderedTarget = renderTarget();
+        renderedSize = renderedTarget->pixelSize();
 #ifdef Q_OS_DARWIN
         QVariantMap presentationDetails;
 #ifdef Q_OS_MACOS
@@ -4126,7 +4185,7 @@ class ItemRenderer : public QQuickRhiItemRenderer {
             // 帧签名比较永远判不到，只能由发现它的渲染线程回报一次；否则 3D 层要等
             // 兜底间隔（20 帧）才重画，表现就是"封面比歌名慢半拍"。
             // 用 QueuedConnection：Engine 住在主线程，而这里是渲染线程。
-            if (bindings > 0 && backend) {
+            if (bindings > 0 && !sceneFrozen) {
                 QMetaObject::invokeMethod(backend, "requestSceneContent", Qt::QueuedConnection);
             }
             if (gpuTimeMs > 0 && qEnvironmentVariableIsSet("RHINE_DEBUG_GPU")) {
@@ -4187,8 +4246,9 @@ void RhiScene::setEngine(Engine *value) {
         connect(value, &Engine::stateChanged, this,
                 [this, wasIdle = value->performance().value("idle").toBool()]() mutable {
                     const bool idle = m_engine->performance().value("idle").toBool();
-                    if (idle != wasIdle) {
-                        wasIdle = idle;
+                    const bool changed = idle != wasIdle;
+                    wasIdle = idle;
+                    if (changed && m_engine->sceneLayerVisible() && !m_engine->sceneLayerFrozen()) {
                         update();
                     }
                 });

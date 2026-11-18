@@ -5,6 +5,11 @@
 #include <algorithm>
 #include <cmath>
 
+bool NativeScene::detailSettled() const {
+    return m_mode == "detail" && m_detail >= .999 && std::abs(m_actor.lift.value - 4.05) < .01 &&
+           (m_reduced || m_decryption.settled()) && themeSettled();
+}
+
 QJsonObject NativeScene::sample(double time, bool advance) {
     if (!ready()) {
         return {};

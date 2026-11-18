@@ -166,6 +166,7 @@ class PresentationShell : public QObject {
     // 管线要求 SRB 布局已确定，所以用一张 1×1 占位纹理建一份"模板" SRB；
     // 逐帧真正用的 SRB 由 bindingsFor() 按实际输入纹理缓存。
     QRhiTexture *m_pipelineBase = nullptr;
+    bool m_blankBaseUploaded = false;
     QRhiShaderResourceBindings *m_pipelineBindings = nullptr;
     QHash<quint64, QRhiShaderResourceBindings *> m_bindingCache;
     // 建在本类自己的 QRhi 上、需要显式释放的资源（UBO、采样器、占位纹理）。

@@ -7,6 +7,7 @@
 class ResponsiveHudCanvas {
   public:
     ResponsiveHudCanvas(Glyphs &glyphs, double unit, double height, bool dark);
+    static QJsonArray paperColor(bool dark);
     QJsonArray commands;
     QJsonArray hits;
     QJsonObject fields;

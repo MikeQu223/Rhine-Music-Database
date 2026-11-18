@@ -6,6 +6,9 @@
 
 namespace SceneMotion {
 namespace {
+constexpr double MAX_THEME_CELL_DELAY_SECONDS = 0.6;
+constexpr double THEME_CELL_BLEND_SECONDS = 0.58;
+
 double clamp(double value) {
     return std::clamp(value, 0.0, 1.0);
 }
@@ -157,6 +160,9 @@ void ThemeWave::set(bool dark, double time, Cell origin, bool immediate) {
     m_start = immediate ? time - 10 : time;
     m_origin = origin;
 }
+bool ThemeWave::settled(double time) const {
+    return time - m_start >= MAX_THEME_CELL_DELAY_SECONDS + THEME_CELL_BLEND_SECONDS;
+}
 double ThemeWave::background(double time) const {
     return m_backgroundFrom + (target - m_backgroundFrom) * ease((time - m_start) / 0.85);
 }
@@ -164,13 +170,14 @@ void ThemeWave::beginFrame() {
     m_latest.clear();
 }
 double ThemeWave::sample(Cell cell, double time) {
-    if (time - m_start >= 1.18) {
+    if (settled(time)) {
         return target;
     }
-    const auto delay =
-        std::min(0.6, std::abs(cell.row - m_origin.row) * 0.034 + std::abs(cell.lane - m_origin.lane) * 0.11);
+    const auto delay = std::min(MAX_THEME_CELL_DELAY_SECONDS,
+                                std::abs(cell.row - m_origin.row) * 0.034 +
+                                    std::abs(cell.lane - m_origin.lane) * 0.11);
     const auto from = m_from.value(cell.key(), m_backgroundFrom);
-    const auto value = from + (target - from) * ease((time - m_start - delay) / 0.58);
+    const auto value = from + (target - from) * ease((time - m_start - delay) / THEME_CELL_BLEND_SECONDS);
     m_latest.insert(cell.key(), value);
     return value;
 }

@@ -28,6 +28,11 @@ class NativeScene {
     QString mode() const {
         return m_mode;
     }
+    bool viewerOpen() const;
+    bool detailSettled() const;
+    bool themeSettled() const {
+        return m_theme.settled(m_clock);
+    }
     bool isSelectedCell(SceneMotion::Cell cell) const {
         return cell == m_actor.cell;
     }

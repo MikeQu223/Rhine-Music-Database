@@ -48,8 +48,16 @@ class SceneLayerHost {
     bool start(QQmlEngine &engine, const QUrl &scene3dUrl, const QUrl &overlayUrl, QRhi *rhi,
                QVulkanInstance *vulkanInstance = nullptr, QWindow *visibleWindow = nullptr);
 
-    /** 两个场景各走一遍 polishItems → beginFrame → sync → render → endFrame。 */
+    /** 只为需要重画的层运行 polishItems、sync 和 render。 */
     bool renderFrame();
+    /** 竖屏页面隐藏或冻结资料库层，UI 层继续按自己的脏标记呈现。 */
+    bool setSceneLayerPolicy(bool visible, bool frozen);
+    bool sceneLayerVisible() const {
+        return m_sceneLayerVisible;
+    }
+    bool sceneLayerActive() const {
+        return m_sceneLayerVisible && !m_sceneLayerFrozen;
+    }
     void releaseGraphics();
     bool resumeGraphics();
 
@@ -118,7 +126,7 @@ class SceneLayerHost {
         return m_hudResourceRevision;
     }
     bool contentDirty() const {
-        return m_scene.dirty || m_overlay.dirty;
+        return sceneNeedsRender() || m_overlay.dirty;
     }
     /// 外部改了离屏窗口内容（比如转发输入）时显式标脏。
     void markContentDirty() {
@@ -192,11 +200,16 @@ class SceneLayerHost {
     void releaseLayerTargets(Layer &layer);
     bool loadLayer(Layer &layer, QQmlEngine &engine, const QUrl &url, const char *name);
     bool renderLayer(Layer &layer, const char *name);
+    bool sceneNeedsRender() const;
     void applyLayerGeometry(Layer &layer);
     void teardown();
 
     Layer m_scene;
     Layer m_overlay;
+    bool m_sceneLayerVisible = true;
+    bool m_sceneLayerFrozen = false;
+    bool m_sceneTargetReady = false;
+    quint64 m_renderedSceneRevision = 0;
     QRhi *m_rhi = nullptr;
     QSize m_size;
     qreal m_ratio = 1.0;
