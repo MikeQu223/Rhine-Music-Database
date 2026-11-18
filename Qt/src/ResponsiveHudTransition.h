@@ -7,6 +7,8 @@
 /** 保存已显示页面的绘制快照；歌词用整页位移，歌曲取出跟随场景进度，普通 tab 不切换快照。 */
 class ResponsiveHudTransition {
   public:
+    enum class ScenePage { Other, Archive, Song };
+
     void drag(double distance) {
         m_drag = std::max(0., distance);
         m_returning = false;
@@ -19,7 +21,7 @@ class ResponsiveHudTransition {
         return time < m_start + .46 || m_sceneRunning || (m_returning && m_drag > .5);
     }
     void apply(QJsonArray &commands, QJsonArray &hits, QString key, double time, double height, bool reduced,
-               double sceneProgress = -1, const QJsonArray &paper = {}) {
+               ScenePage scenePage = ScenePage::Other, double sceneProgress = 0, const QJsonArray &paper = {}) {
         const auto fullPage = [](const QString &value) {
             return value == "lyrics" || value == "comments";
         };
@@ -28,9 +30,11 @@ class ResponsiveHudTransition {
                 m_drag = 0;
             }
             m_key = key;
+            m_scenePage = scenePage;
             m_last = commands;
             m_start = -1;
             m_sceneRunning = false;
+            m_followScene = false;
             m_old = {};
             if (m_drag > 0) {
                 QJsonArray moved{QJsonArray{"save"}, QJsonArray{"translate", 0, m_drag}};
@@ -48,13 +52,15 @@ class ResponsiveHudTransition {
         }
         if (m_key.isEmpty()) {
             m_key = key;
+            m_scenePage = scenePage;
             m_last = commands;
             return;
         }
-        if (key != m_key) {
-            m_enteringScene = m_key.startsWith(":archive") && key.startsWith(":detail:");
-            m_followScene = sceneProgress >= 0 &&
-                            (m_enteringScene || (m_key.startsWith(":detail:") && key.startsWith(":archive")));
+        if (key != m_key || scenePage != m_scenePage) {
+            // 只有资料库与歌曲详情之间有可跟随的 3D 动画。歌手、专辑和歌单共用详情模式，
+            // 但它们的竖屏场景会隐藏，不能以该模式下的镜头进度阻塞页面切换。
+            m_enteringScene = m_scenePage == ScenePage::Archive && scenePage == ScenePage::Song;
+            m_followScene = m_enteringScene || (m_scenePage == ScenePage::Song && scenePage == ScenePage::Archive);
             m_old = m_last;
             m_fromPage = fullPage(m_key);
             m_toPage = fullPage(key);
@@ -62,6 +68,7 @@ class ResponsiveHudTransition {
             m_drag = 0;
             m_returning = false;
             m_key = key;
+            m_scenePage = scenePage;
             m_start = time;
             // 标签切换直接更新内容，不复用整页快照或移动整个 HUD。
             if (!m_followScene && !m_fromPage && !m_toPage) {
@@ -79,7 +86,7 @@ class ResponsiveHudTransition {
         }
         m_lastTime = time;
         double progress = std::clamp((time - m_start) / .46, 0., 1.);
-        if (m_followScene && sceneProgress >= 0) {
+        if (m_followScene) {
             progress = std::clamp(m_enteringScene ? sceneProgress : 1 - sceneProgress, 0., 1.);
             if (progress > .995) {
                 progress = 1;
@@ -128,6 +135,7 @@ class ResponsiveHudTransition {
 
   private:
     QString m_key;
+    ScenePage m_scenePage = ScenePage::Other;
     QJsonArray m_last;
     QJsonArray m_old;
     double m_start = -1;

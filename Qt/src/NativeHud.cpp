@@ -573,8 +573,16 @@ void NativeHud::drawMobile(double time, const QString &scope, double stageWidth)
         // 整页滑动露出的区域使用当前主题底色，资料库纹理已经隐藏。
         paper = {"fill", ResponsiveHudCanvas::paperColor(dark), 0, 0, stageWidth, 1080};
     }
+    using ScenePage = ResponsiveHudTransition::ScenePage;
+    auto scenePage = ScenePage::Other;
+    if (m_responsive.showsSongPage()) {
+        scenePage = ScenePage::Song;
+    } else if (frame["mode"] == "archive" && !frame["viewer"].toBool() && modal.isEmpty() &&
+               !lyricsMode && !commentsMode) {
+        scenePage = ScenePage::Archive;
+    }
     m_mobileTransition.apply(
-        commands, hits, pageKey, time, 1080, reduced, frame["detail"].toDouble(), paper);
+        commands, hits, pageKey, time, 1080, reduced, scenePage, frame["detail"].toDouble(), paper);
 
     // 列表滚动把固定槽位上的歌曲交给原有选择流程；下一帧再绘制新的选中状态。
     if (const int selection = m_responsive.takeArchiveSelection(); selection >= 0) {

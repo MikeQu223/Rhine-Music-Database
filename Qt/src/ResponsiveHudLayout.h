@@ -19,6 +19,9 @@ class ResponsiveHudLayout {
     bool compact() const {
         return m_compact;
     }
+    bool showsSongPage() const {
+        return m_fields.value("songPanelTop").isDouble();
+    }
     double sourceWidth(double actual) const {
         return m_compact ? SourceWidth : actual;
     }
