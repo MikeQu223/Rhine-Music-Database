@@ -176,6 +176,20 @@ class TrackListScope {
 // HudTrackRuler
 // ---------------------------------------------------------------------------
 
+/// 列表裁剪窗口（也是可拖动/可点选窗口）的锚点，Qt `NativeHud.cpp:543-555` 的常量：
+/// 选中行基线上移到 `titleY`，窗口上沿在 `titleY - trackRulerWindowTopOffset`，
+/// 高 `trackRulerWindowHeight`（上 290 / 下 320，本来就不对称）。
+///
+/// 这三个量是「列表块在舞台里的位置」的唯一真值：竖屏把列表搬进第二带时要减掉
+/// `trackRulerWindowTopOffset`（否则会多平移一整块表头空档），命中矩形与绘制都
+/// 从这里取，不许各自拍一套数字。
+const double trackRulerTitleY = 509.0;
+const double trackRulerWindowTopOffset = 290.0;
+const double trackRulerWindowHeight = 610.0;
+
+/// 窗口上沿相对列表块原点的 y（= 219）。竖屏把窗口上沿对齐到带顶时用它换算。
+const double trackRulerWindowTop = trackRulerTitleY - trackRulerWindowTopOffset;
+
 /// Draws the archive track list and the ruler that shares its displacement
 /// (NativeHud.cpp:535-624).
 ///
@@ -264,7 +278,7 @@ class HudTrackRuler {
       return;
     }
     // NativeHud.cpp:543-544.
-    const titleY = 509.0;
+    const titleY = trackRulerTitleY;
     const titleSize = 28.0;
     // NativeHud.cpp:545-546.
     final titleBounds = _bounds('音乐', titleSize, 'bold');
@@ -280,7 +294,7 @@ class HudTrackRuler {
     final last = math.min(values.length - 1, position.ceil() + 5);
     // NativeHud.cpp:554-555.
     sink.op(<Object?>['save']);
-    sink.op(<Object?>['clip', x - 4, titleY - 290, width - x, 610]);
+    sink.op(<Object?>['clip', x - 4, titleY - trackRulerWindowTopOffset, width - x, trackRulerWindowHeight]);
     // NativeHud.cpp:556-590.
     for (var index = first; index <= last; index++) {
       final relative = index - position;
