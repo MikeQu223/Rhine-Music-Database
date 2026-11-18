@@ -26,6 +26,7 @@ class FrameProfiler : public QObject {
     Q_PROPERTY(bool recording READ recording NOTIFY recordingChanged)
     Q_PROPERTY(QString headline READ headline NOTIFY headlineChanged)
     Q_PROPERTY(QString details READ details NOTIFY detailsChanged)
+    Q_PROPERTY(QString transitionDetails READ transitionDetails NOTIFY transitionDetailsChanged)
     Q_PROPERTY(QString status READ status NOTIFY statusChanged)
     Q_PROPERTY(QString recordingAction READ recordingAction NOTIFY recordingChanged)
     Q_PROPERTY(QVariantMap metrics READ metrics NOTIFY metricsChanged)
@@ -50,6 +51,9 @@ class FrameProfiler : public QObject {
     }
     QString details() const {
         return m_details;
+    }
+    QString transitionDetails() const {
+        return m_transitionDetails;
     }
     QString status() const {
         return m_status;
@@ -78,6 +82,7 @@ class FrameProfiler : public QObject {
     void recordingChanged();
     void headlineChanged();
     void detailsChanged();
+    void transitionDetailsChanged();
     void statusChanged();
     void metricsChanged();
     void detailsEnabledChanged();
@@ -90,6 +95,7 @@ class FrameProfiler : public QObject {
     void collectStep();
     /// `withDetails` 为假时只更新 headline，跳过整段详情构建（面板收起或未到刷新间隔）。
     void formatMetrics(bool withDetails);
+    void updateTransitionDetails(const QJsonObject &audio);
     QJsonObject environment() const;
     Engine *m_engine;
     QPointer<QQuickWindow> m_window;
@@ -110,6 +116,7 @@ class FrameProfiler : public QObject {
     std::atomic<bool> m_capture{false};
     QString m_headline = QStringLiteral("等待采样");
     QString m_details;
+    QString m_transitionDetails;
     QString m_status;
     /// 面板收起时为 false：`details` 不重建，长文本不参与布局。
     bool m_detailsEnabled = true;

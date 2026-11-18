@@ -28,6 +28,7 @@ struct Model {
     double badgeWidth = 0;
     QString tab;
     int trackCount = 0;
+    bool comments = false;
     QVector<Action> primaryActions;
     QVector<Action> secondaryActions;
 };

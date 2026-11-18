@@ -1,6 +1,7 @@
 # Rhine Music Panel 渲染层架构
 
-> 基线：当前工作区（`c4a3e77` 之后，含 Apple 默认窗口 MetalFX 补帧、设置页帧生成开关与性能面板统计）。
+> 基线：`main` 的 `2db3352`（2026-11-16 当前工作区）。本文以当前源码为准，梳理 MetalFX、
+> Windows Vulkan/D3D12 受控呈现、Android GLES 策略、HUD 局部重绘与性能统计。
 > 本文按“共同场景渲染器 + 各平台宿主”梳理当前实际运行的每条管线；Metal 只是其中一条平台路径，
 > 但会写清它从窗口到屏幕的完整链路。
 
@@ -8,15 +9,17 @@
 
 ### 0.1 当前实际存在的管线
 
-| 管线                         | 宿主                        | 图形后端         | 场景后处理                         | 帧生成                                                  | 最终上屏                         | 高 DPI                      |
-| ---------------------------- | --------------------------- | ---------------- | ---------------------------------- | ------------------------------------------------------- | -------------------------------- | --------------------------- |
-| Apple（macOS / iOS）默认窗口 | `Main.qml` / `QQuickWindow` | Metal            | MetalFX 时域（可选）               | `MetalFramePresentation`（`panel/fg` 或 `RHINE_FG=on`） | Qt Quick 场景图 → `CAMetalLayer` | Qt Quick 内部按物理像素     |
-| Windows                      | `PresentationShell`         | Vulkan           | `ScenePostProcess`（FXAA/TAA/FSR） | `FgBackend`（仅 `RHINE_FG=on`）                         | `VulkanPresenter` 自持交换链     | 逻辑尺寸 + target DPR       |
-| Linux（显式开 FG）           | `PresentationShell`         | Vulkan           | `ScenePostProcess`（FXAA/TAA/FSR） | `FgBackend`（仅 `RHINE_FG=on`）                         | `VulkanPresenter` 自持交换链     | 物理像素离屏层 + 根条目缩放 |
-| Windows/Linux 默认窗口       | `Main.qml` / `QQuickWindow` | Vulkan 或 OpenGL | `ScenePostProcess`（FXAA/TAA/FSR） | 无（FG 只存在于呈现层）                                 | Qt Quick 交换链                  | Qt Quick 内部按物理像素     |
+| 管线                         | 宿主                        | 图形后端             | 场景后处理                         | 帧生成                                                  | 最终上屏                         | 高 DPI                      |
+| ---------------------------- | --------------------------- | -------------------- | ---------------------------------- | ------------------------------------------------------- | -------------------------------- | --------------------------- |
+| Apple（macOS / iOS）默认窗口 | `Main.qml` / `QQuickWindow` | Metal                | MetalFX 时域（可选）               | `MetalFramePresentation`（`panel/fg` 或 `RHINE_FG=on`） | Qt Quick 场景图 → `CAMetalLayer` | Qt Quick 内部按物理像素     |
+| Windows Vulkan               | `PresentationShell`         | Vulkan               | `ScenePostProcess`（FXAA/TAA/FSR） | `FgBackend`（仅 `RHINE_FG=on`）                         | `VulkanPresenter` 自持交换链     | 逻辑尺寸 + target DPR       |
+| Windows D3D12                | `PresentationShell`         | Direct3D 12          | `ScenePostProcess`（FXAA/TAA/FSR） | 无 FG；FSR3 超分仅在编入时可用                          | `QRhi` swapchain                 | 逻辑尺寸 + target DPR       |
+| Linux（显式开 FG）           | `PresentationShell`         | Vulkan               | `ScenePostProcess`（FXAA/TAA/FSR） | `FgBackend`（`RHINE_FG=on`）                           | `VulkanPresenter` 自持交换链     | 物理像素离屏层 + 根条目缩放 |
+| Android                      | `Main.qml` / `QQuickWindow` | Vulkan 或 OpenGLES  | `ScenePostProcess`（FXAA/TAA/FSR） | 无                                                      | Qt Quick 交换链                  | Qt Quick 内部按物理像素     |
+| 桌面默认窗口回退             | `Main.qml` / `QQuickWindow` | 当前可用 RHI 后端     | `ScenePostProcess`（FXAA/TAA/FSR） | 无（FG 只存在于受控呈现层）                             | Qt Quick 交换链                  | Qt Quick 内部按物理像素     |
 
-D3D12 代码仍在，但 `RHINE_ENABLE_D3D12_BACKEND` 当前构建为 OFF；OpenGL 后端没有呈现层支持，
-因此也不进入帧生成。
+Windows 的 D3D12 代码默认编入（`RHINE_ENABLE_D3D12_BACKEND` 在 Windows 默认 ON），通过
+`RhiPresentationBackend` 使用 QRhi swapchain；OpenGL 不进入受控呈现，因此没有 FG。
 
 ### 0.2 共同点与差异
 
@@ -27,11 +30,15 @@ D3D12 代码仍在，但 `RHINE_ENABLE_D3D12_BACKEND` 当前构建为 OFF；Open
     - 受控呈现层：应用自己创建 `QWindow` + `QRhi`，用两个 `QQuickRenderControl` 分别渲染 3D/UI，
       `PresentationShell` 合成后由呈现后端上屏。
 - **运动矢量的产出方式按后端分**：
-    - Linux 与 Apple：颜色 pass 的第二颜色附件（单趟 MRT），实例带 `previousModel`；
-    - Windows：独立的 `MotionPass`（D32F + RG16F/RGBA16F），实例不带 `previousModel`。
+    - Linux 与 Apple：有运动消费者时颜色 pass 使用第二颜色附件（单趟 MRT），实例带 `previousModel`；
+    - Windows：独立的 `MotionPass`（D32F + RGBA16F），实例不带 `previousModel`；
+    - Android：默认没有 TAA/FSR/FG 等运动消费者，GLES 主变体跳过空闲运动工作并使用紧凑实例；
+      打开时域能力后恢复运动输入分配。
 - **UI 永远不参与插值**：两种宿主都只对 3D 层做 FG；UI 在合成阶段按显示帧率叠加。
 - **后处理二选一**：Apple 用 MetalFX（时域超分/MetalFX Temporal）；其他平台用 `ScenePostProcess`
   （FXAA/TAA/FSR），不会同时运行。
+- **HUD 是独立的 2D 命令流**：桌面默认窗口和受控呈现层都把它作为 UI 层叠加；Android 还会对命令流
+  求差分，只重画和重传变化区域。
 
 ### 0.3 启动分流
 
@@ -40,19 +47,21 @@ main.cpp
   │
   ├─ selectGraphicsBackend()
   │    macOS/iOS → Metal
-  │    Windows/Linux → Vulkan（可用时）或 OpenGL
+  │    Windows       → Vulkan（可用时）→ Direct3D 12（编译时）→ OpenGL
+  │    Linux/Android → Vulkan（可用时）或 OpenGL/GLES
   │
   ├─ 读取偏好/环境变量（vsync、render-scale、aa-mode、fg…）
   │
   ├─ fgCandidate?
   │    Apple（macOS/iOS）→ 否（默认 QQuickWindow，MetalFX 在窗口内完成）
-  │    Windows→ 是（原生窗口 + Vulkan 呈现层；RHINE_FG_LAYER=off 可强制默认）
+  │    Windows→ 是（原生窗口 + Vulkan/D3D12 呈现层；RHINE_FG_LAYER=off 可强制默认）
   │    Linux  → 仅 RHINE_FG=on 或 RHINE_FG_LAYER=on 时是
+  │    Android→ 否（全屏 Activity，不创建第二窗口）
   │
   ├─ 是 → PresentationShell::start()
   │        ├─ 自建 QWindow + QRhi + 交换链
   │        ├─ SceneLayerHost：Scene3D.qml / Overlay.qml 两个离屏层
-  │        ├─ FrameGenerator（Vulkan FgBackend，Windows/Linux）
+  │        ├─ FrameGenerator（仅 Vulkan FgBackend；D3D12 只做呈现）
   │        ├─ fgComposite 合成 3D（真实/插值）与 UI
   │        └─ PresentationBackend 上屏
   │
@@ -68,13 +77,20 @@ main.cpp
 
 `Qt/src/main.cpp` 在任何 `QQuickWindow` 创建前完成选择：
 
-| 平台        | 选择规则                                                                                               | 回退                      |
-| ----------- | ------------------------------------------------------------------------------------------------------ | ------------------------- |
-| macOS / iOS | Metal；`RHINE_GRAPHICS` 只接受 `metal`/`auto`，其他值会告警并忽略                                      | 无（Qt 平台只提供 Metal） |
-| Windows     | `QSG_RHI_BACKEND` / `RHINE_GRAPHICS` / 保存的 `panel/graphics-backend`；默认探测 Vulkan，失败则 OpenGL | OpenGL                    |
-| Linux       | 同上；默认探测 Vulkan，失败则 OpenGL；选卡结果在启动前落成厂商环境变量                                 | OpenGL                    |
+| 平台        | 选择规则                                                                                               | 默认回退链                         |
+| ----------- | ------------------------------------------------------------------------------------------------------ | ---------------------------------- |
+| macOS / iOS | Metal；`RHINE_GRAPHICS` 只接受 `metal`/`auto`，其他值会告警并忽略                                      | 无（Qt 平台只提供 Metal）          |
+| Windows     | `QSG_RHI_BACKEND` → 本次 `RHINE_GRAPHICS` → 保存的 `panel/graphics-backend`                            | Vulkan → Direct3D 12（编译时）→ OpenGL |
+| Linux       | `QSG_RHI_BACKEND` → 本次 `RHINE_GRAPHICS` → 保存的 `panel/graphics-backend`；选卡在启动前落厂商变量    | Vulkan → OpenGL                     |
+| Android     | 与 Linux 相同的显式/保存优先级；Android 的 OpenGL 由 QRhi 映射为 GLES                                  | Vulkan → OpenGLES                   |
 
-D3D12 只在 `RHINE_ENABLE_D3D12_BACKEND` 打开时参与 Windows 选择；当前构建关闭。
+Windows 的 `RHINE_ENABLE_D3D12_BACKEND` 默认 ON；关闭该选项后默认链变为 Vulkan → OpenGL。显式无效值
+（例如已移除的 `d3d11`）会被忽略并继续默认选择，不会交给 Qt 平台默认重新选回 D3D11。
+
+启动选择顺序是 `QSG_RHI_BACKEND` → 本次 `RHINE_GRAPHICS` → 保存的
+`panel/graphics-backend` → 自动探测。`RHINE_GRAPHICS=auto` 只跳过环境变量层，之后仍会读取保存配置；
+无法识别的值会告警并继续下一项。macOS 的 `QSG_RHI_BACKEND` 分支会先短路到 `activeBackend`，当前
+不会在这里做额外白名单验证；对应配置异常时以实际 Qt 平台插件和启动日志为准。
 
 ### 1.2 偏好与环境变量
 
@@ -89,30 +105,44 @@ D3D12 只在 `RHINE_ENABLE_D3D12_BACKEND` 打开时参与 Windows 选择；当�
 | 渲染倍率      | `render-scale`                  | `RHINE_RENDER_SCALE`                        | 下一帧重建目标                                                                  |
 | 抗锯齿        | `aa-mode`                       | `RHINE_AA_MODE`                             | 每帧读取                                                                        |
 | MSAA          | `msaa`                          | `RHINE_MSAA`                                | 下一帧重建目标                                                                  |
-| FSR 档位/锐化 | `fsr-quality` / `fsr-sharpness` | `RHINE_FSR_QUALITY` / `RHINE_FSR_SHARPNESS` | 下一帧                                                                          |
+| FSR 引擎/档位 | `fsr-quality` / `fsr-sharpness` | `RHINE_FSR_ENGINE` / `RHINE_FSR_QUALITY` / `RHINE_FSR_SHARPNESS` | 下一帧                                                                          |
 | 帧生成        | `fg`                            | `RHINE_FG`                                  | Apple 由设置页/偏好驱动，显式环境变量优先；Windows/Linux 仍以环境变量为排障入口 |
 
+非 Apple 的抗锯齿档位为 `off`、`fxaa`、`ssaa`、`msaa`、`taa`、`fsr`；旧的 `fsr1`/`fsr3` 配置会归一化为
+`fsr`。Android 未单独设置 `render-scale` 时默认 75%，桌面和 iOS 默认 100%。
+
+只有 Apple 的设置页显示帧生成项。Windows/Linux 不显示该项，旧的 `panel/fg` 偏好不会生效，只能通过
+启动时 `RHINE_FG` 排障；Apple 的 `panel/fg` 可以在运行期切换。
+
 `RHINE_FG_LAYER` 不是帧生成开关，而是“是否允许呈现层接管”的排障开关：`on` 在 Linux 强制接管，
-`off` 在 Windows/Linux 强制默认路径；Apple 上已无效果。
+`off` 在 Windows/Linux 强制默认路径；Apple 上已无效果。Windows 的受控呈现层可运行 Vulkan 或 D3D12，
+但只有 Vulkan 的 `FgBackend` 能执行 FG；D3D12 的 `RHINE_FG=on` 不会凭空创建 FG 上下文。
 
 ### 1.3 呈现层门控
 
 `fgCandidate` 的当前条件（`main.cpp`）：
 
-| 平台               | 条件                                                                                    |
-| ------------------ | --------------------------------------------------------------------------------------- |
-| Apple（macOS/iOS） | 固定 false：默认窗口内完成 MetalFX 补帧，不接管窗口                                     |
-| Windows            | `!test && !--capture && !RHINE_FG_LAYER=off && 原生窗口系统 && supportsBackend(Vulkan)` |
-| Linux              | 在 Windows 条件上再加 `(RHINE_FG=on                                                     |     | RHINE_FG_LAYER=on)` |
+| 平台               | 条件                                                                                                               |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------ |
+| Apple（macOS/iOS） | 固定 false：默认窗口内完成 MetalFX 补帧，不接管窗口                                                                |
+| Windows            | `!test && !--capture && !RHINE_FG_LAYER=off && 原生窗口系统 && supportsBackend(activeBackend)`                     |
+| Linux              | Windows 条件再加 `(RHINE_FG=on || RHINE_FG_LAYER=on)`；默认只有 Vulkan 受控呈现可被选择                            |
+| Android            | 固定 false：全屏 Activity 没有第二窗口，受控呈现和桌面 FG 入口整体不可用                                            |
 
-`supportsBackend()` 只认 Metal 和 Vulkan；OpenGL/D3D12 不走呈现层，也就没有 FG。
+`supportsBackend()` 当前识别 Metal、Vulkan 和 Windows D3D12；OpenGL 不进入受控呈现。Windows 只要
+Vulkan 或 D3D12 可用就会走 `PresentationShell`，即使 `RHINE_FG` 为 off；此时它仍负责两层离屏渲染与
+合成，只是不做插值。Linux 只有在显式请求 FG 或 `RHINE_FG_LAYER=on` 时才接管。
 
 ### 1.4 默认窗口与回退
 
 - 默认路径：`engine.loadFromModule("RhineMusic", "Main")`，随后 `window->setGraphicsConfiguration()`
-  开启时间戳查询、设置管线缓存（Windows），并注册 `sceneGraphInvalidated` 资源账本。
-- 受控路径：`PresentationShell::start()` 失败（交换链、离屏 QML、FG 上下文或自检失败）时回退默认窗口，
-  并把原因写入 `RhineFg::publishInactive()`；合成仍可继续，只是没有插值。
+  开启时间戳查询、设置管线缓存（Windows），并注册 `sceneGraphInvalidated` 资源账本。OpenGL、Android
+  以及显式关闭受控呈现时走这条路径。
+- 受控路径：`PresentationShell::start()` 在交换链、离屏 QML 或后端初始化失败时回退默认窗口，
+  并把原因写入 `RhineFg::publishInactive()`。FG 上下文不可用不会导致 `start()` 失败；此时呈现层
+  继续合成真实 3D 纹理，只是没有插值。Windows D3D12 的 QRhi 呈现后端失败与 Vulkan 一样会回退。
+- 运行期 `prepare()`/`dispatch()` 失败只关闭当前帧的插值并继续用真实帧合成；Windows/Linux 的
+  运行期 `m_failed` 当前不会自动重新加载 `Main.qml`，需要重启或依赖启动阶段回退。
 - 旧 iOS 呈现层的 `PresentationStartupProbe` 仍保留，但 Apple 默认窗口路径不再启动它。
 
 ## 2. 共同层：Engine → RhiScene
@@ -122,7 +152,9 @@ D3D12 只在 `RHINE_ENABLE_D3D12_BACKEND` 打开时参与 Windows 选择；当�
 `ItemRenderer::synchronize()` 从 `Engine` 取：
 
 - `Engine::frame()`：QJsonObject，含 `projection`/`view`/`aoProjection`、`draws`、`background`、
-  `mode`、`viewer`、`jitter`、`temporalReset`、`discAngle`、`batchDraws`、`fogNear`/`fogFar` 等；
+  `mode`、`viewer`、`mobileHud`、`songPanelTop`、`stats.coordinateOrigin`、`jitter`、
+  `temporalReset`、`discAngle`、`batchDraws`、`fogNear`/`fogFar` 等；移动端 FG 用其中的页面、
+  布局原点和歌曲上下文判断是否隔离历史；
 - `Engine::drawBuffers()`：实例矩阵、主题值、实例 id；
 - `Engine::current()` / `cover()` / `musicTextures()`：当前曲目、封面和仍在归位的旧唱片；
 - `RhiScene::lightingEnabled()`、`Engine::geometryRevision()`、`Engine::sceneRevision()`。
@@ -149,7 +181,7 @@ MetalFX 时域和补帧都要求 `supersample × renderPercent ≤ 100`（即不
 | ----------------------------------- | ------- | ---------------------------------- | ------------------------------------- |
 | `color`                             | render  | RGBA16F；MSAA 时多重采样 + resolve | 唯一场景颜色                          |
 | `depth`                             | render  | D32F，与 color 同采样数            | 深度测试、时域/插帧输入               |
-| `motionVectors`（Linux/Apple）      | render  | RGBA16F，单采样                    | 颜色 pass 第二附件，MRT 写速度        |
+| `motionVectors`（Linux/Apple/Android 启用时） | render | RGBA16F，单采样                    | 颜色 pass 第二附件，MRT 写速度        |
 | `target`                            | display | RGBA8                              | 仅离线 `renderReference()` 的读回目标 |
 | `ScenePostProcess::m_input`         | render  | FSR 时 RGBA16F，否则 RGBA8         | 非 Apple 后处理输入                   |
 | `ScenePostProcess::m_output`        | display | RGBA16F                            | FSR 升采样输出                        |
@@ -199,9 +231,10 @@ flags（材质类型/side/subdued/floor）, darkColor, emission
 | 8    | 唱片盘体/中心环                    |
 | 9    | 光学薄膜/玻璃                      |
 
-全局 UBO `Globals`：**Linux/Apple 832 字节，Windows 704 字节**；`Instance`：**Linux/Apple 144 字节，
-Windows 80 字节**。差值来自 `previousModel`（Linux/Apple 单趟 MRT 需要）。顶点 32 字节
-（位置、法线、UV）。关闭运动矢量后，Apple 还会使用 80 字节紧凑实例。
+全局 UBO `Globals`：**Linux/Apple/Android 848 字节，Windows 720 字节**；`Instance`：**Linux/Apple
+144 字节，Windows 80 字节**。`Globals` 的差值来自 Linux/Apple/Android 尾部的
+`previousViewProjection`/`currentViewProjection` 两个矩阵；`Instance` 的差值来自 `previousModel`。
+顶点 32 字节（位置、法线、UV）。关闭运动矢量后，Apple 和 Android GLES 默认路径会使用 80 字节紧凑实例。
 
 ### 2.4 绘制列表与批次
 
@@ -220,12 +253,16 @@ Windows 80 字节**。差值来自 `previousModel`（Linux/Apple 单趟 MRT 需�
 
 | 策略                                       | 默认               | 作用                                                     |
 | ------------------------------------------ | ------------------ | -------------------------------------------------------- |
-| 实例池 `RHINE_VK_INSTANCE_ARENA`           | 开                 | Vulkan/Metal 共用一张 Dynamic VertexBuffer，按偏移切片   |
+| 实例池 `RHINE_VK_INSTANCE_ARENA`           | 开                 | Vulkan/Metal 以及 Android GLES 共用一张 Dynamic VertexBuffer，按偏移切片 |
 | 材质 UBO arena `RHINE_VK_UNIFORM_ARENA`    | 关                 | 材质槽 + 动态偏移，复用 SRB（Vulkan 实验）               |
 | 直接写 arena `RHINE_VK_DIRECT_WRITE`       | 关                 | `beginFullDynamicBufferUpdateForCurrentFrame()` 整块直写 |
 | 布局复用 `RHINE_VK_LAYOUT_ONLY_PIPELINES`  | 关                 | arena 换 buffer 不重建 pipeline                          |
-| 紧凑实例 `RHINE_VK_COMPACT_INSTANCES`      | Apple 自动、其他关 | 无运动矢量消费者时用 80 字节实例                         |
-| 深度不保留 `RHINE_VK_DISCARD_UNUSED_DEPTH` | 关                 | 无消费者时 `DoNotStore` 深度                             |
+| 紧凑实例 `RHINE_VK_COMPACT_INSTANCES`      | Apple 自动、Android 默认 | 无运动矢量消费者时用 80 字节实例                         |
+| 深度不保留 `RHINE_VK_DISCARD_UNUSED_DEPTH` | Android 默认、其他关 | 无消费者时 `DoNotStore` 深度                             |
+| 跳过空闲运动 `RHINE_VK_SKIP_IDLE_MOTION`   | Android 默认、其他关 | Android 无 TAA/FSR/FG 消费者时跳过未读的 VP/运动发布     |
+| 常量差分 `RHINE_VK_DIFF_GLOBALS`           | Android 默认、其他关 | GLES 下 Globals 字节未变时跳过动态 UBO 镜像上传           |
+
+Android 的默认值集中在 `AndroidRenderPolicy.h`；`RHINE_ANDROID_RENDER_TUNING=0` 可一次性退回旧默认。
 
 ### 2.5 Pass 顺序
 
@@ -233,17 +270,19 @@ Windows 80 字节**。差值来自 `previousModel`（Linux/Apple 单趟 MRT 需�
 resize / ScenePostProcess::prepare（非 Apple）
   → 材质与实例准备（绑定缓存 + 合批 + 池化）
   → 颜色 pass：清背景 → 不透明 → 透明
-       Linux/Apple：同一 pass 的第二颜色附件写运动矢量（MRT）
-       Windows：颜色 pass 不写运动，之后再跑 MotionPass
-  → finalFragment：ACES、九点柔化、纸张/暗角背景
-  → AA / 超分 / MetalFX
+       Linux/Apple：有运动消费者时同一 pass 的第二颜色附件写运动矢量（MRT）
+       Windows：颜色 pass 不写运动，之后再跑 MotionPass（D3D12 同）
+       Android：默认无时域消费者，跳过运动输出；启用后恢复相应资源
+  → Apple：MetalFX Temporal（可选）→ finalFragment（ACES、九点柔化、纸张/暗角背景）
+  → 非 Apple：finalFragment → ScenePostProcess::resolve（FXAA/TAA/FSR）
   → 目标纹理（默认窗口 / 离屏层 / 读回目标）
-  → FG（如果有）→ 最终上屏
+  → 受控呈现层的 FG（如果有）→ 最终上屏
 ```
 
 - 没有独立的阴影、法线、AO、景深或玻璃抓屏 pass；这些由烘焙图集和材质着色器承担。
-- Linux/Apple 的 MRT 变体由 `RHINE_SINGLE_PASS_MOTION` 烘焙；Apple 另加 `RHINE_METAL_MOTION`，
-  `opticalGeometry.vert` 读 `previousModel0..3`，`opticalSurface.frag` 在 location 1 写速度。
+- 桌面 Linux/Apple 的 MRT 变体由 `RHINE_SINGLE_PASS_MOTION` 烘焙；Apple 另加
+  `RHINE_METAL_MOTION`，`opticalGeometry.vert` 读 `previousModel0..3`，`opticalSurface.frag` 在
+  location 1 写速度。Android 的 300es 主变体不启用该运动尾段，默认走 80 字节紧凑实例。
 - Windows 的 `MotionPass` 使用独立 D32F/RGBA16F 目标，按实例 id/平移列配对上一帧矩阵；
   相机/实例都静止时跳过静态 draw 的栅格化。
 - Linux 另有 `RHINE_WARP_PROBE=1` 的重投影探针，只用于肉眼判断拉丝/残影，不是生产插值路径。
@@ -264,8 +303,11 @@ resize / ScenePostProcess::prepare（非 Apple）
 
 - macOS/iOS：`publishMotionInputs()` 写入 `Engine::metalFxInputs`（渲染线程与 GUI 线程共享的快照），
   由默认窗口的 `MetalFramePresentation` 读取；
-- Linux/Windows：写入进程级 `RhineFg::FrameInputs`，由呈现层读取；
+- Windows/Linux：写入进程级 `RhineFg::FrameInputs`，由呈现层读取；Android 默认没有 FG 消费者，
+  `androidSkipIdleMotionWork()` 会跳过未读的 VP/运动发布，只有打开时域能力时才恢复。
 - `serial` 每发布一次 +1，呈现层据此判断输入是否新鲜，避免对同一场景重复插值。
+- `m_fgAvailable` 只表示当前后端能建立 `FgBackend`，不等于用户要求插值：Windows Vulkan 在
+  `RHINE_FG=off` 时仍可能开启帧输入 tap，`requested()` 为假时不会执行光流和插值。
 
 ### 2.8 封面与标签生命周期
 
@@ -273,9 +315,27 @@ resize / ScenePostProcess::prepare（非 Apple）
 - 封面/标签上限 32 个 key、64 MiB；封面最大 1024²，带完整 mip 链。
 - 封面合成与 mip 生成在工作线程 `CoverPrepareTask` 中完成：默认同时 4 个在途、最多 16 条成品排队、
   每帧上传预算 8 MiB（`RHINE_TEXTURE_UPLOAD_BUDGET_MB`）。预处理失败改走同步路径。
-- 冷纹理准入 `MusicTextureAdmission`：焦点 key 稳定 100ms（`RHINE_TEXTURE_ADMISSION_MS`）后才创建
-  标签/封面纹理；快速滚动时不给每个路过条目建 GPU 资源。
+- 冷纹理准入 `MusicTextureAdmission`：焦点 key 稳定平台默认时间后才创建标签/封面纹理；Android 为
+  500ms，其它平台为 100ms（`RHINE_TEXTURE_ADMISSION_MS` 可覆盖）。快速滚动时不给每个路过条目建 GPU 资源。
 - `renderReference()` 强制同步封面，保证离线截图与实时路径一致。
+
+### 2.9 HUD 命令流与 Android 局部重绘
+
+HUD 是 `QQuickPaintedItem` 绘制的独立命令流，不是 3D 场景的一部分。桌面默认窗口由 Qt Quick 合成 HUD；
+受控呈现层把 HUD 画到 `Overlay.qml` 的 RGBA8 离屏层，再在插值之后叠加。HUD 不参与 FG，避免文字重影。
+
+- Android 从 `RHINE_HUD_DIRTY_RECT` 默认开启局部重绘：`Engine` 比较前后两份命令流的公共前缀/后缀，
+  用 `HudDirtyRect` 估计改动段的保守包围盒，再按舞台 1080 高坐标系映射到画布。
+- 出现换页、详情过渡、封面到齐、`translate/scale/rotate`、未知命令或 save/restore 不平衡时，强制整窗重绘；
+  抗锯齿外溢统一向外扩 2 像素。脏区超过画布 92% 也回退整窗。
+- `HudUploadTexture` 只上传 `dirty` 子矩形；整窗默认画布在 2880×1800 下约 20.7 MB，局部路径可显著降低
+  每帧透明清屏和纹理写带宽。`RHINE_HUD_TEXTURE_SCALE=50..100` 可作为整窗重绘的额外像素档位。
+- 局部重绘仍执行完整命令流，但 `RHINE_HUD_CULL` 会在 Android 按命令包围盒跳过裁剪区外内容；无法定位的
+  命令照画，宁可多画不漏画。
+- macOS 的 `RHINE_HUD_PARTIAL_UPLOAD=1` 是排障候选，只在 Metal 上替换上传策略；默认仍走 Qt 的
+  `QQuickPaintedItem` 节点。
+- Android 性能 JSON 额外记录 `hudDirtyPercent`、`hudCullPercent`、`hudPaints` 与
+  `stepSceneSampleMs` / `stepObserveMs` / `stepHudDrawMs`，用于验证局部重绘是否真的减少了像素和命令成本。
 
 ## 3. 管线 A：Apple 默认 QQuickWindow（macOS / iOS，Metal）
 
@@ -290,7 +350,7 @@ Engine::frame()/drawBuffers()
   → ItemRenderer::synchronize()（SceneSyncCache）
   → Renderer::render()
       → 材质/实例准备
-      → color pass（RGBA16F + D32F，MRT 写运动矢量）
+      → color pass（RGBA16F + D32F；存在 TAA/FSR/FG 等运动消费者时由 MRT 写运动矢量）
       → composite:
           metalfx? → MetalFxTemporal::resolve()（或 RHINE_METAL_TEMPORAL=light）
           → finalFragment（ACES/柔化/纸张）
@@ -371,6 +431,10 @@ Engine::frame()/drawBuffers()
 `RHINE_METAL_FG_SCALE` 控制插值工作分辨率（默认 100%），`RHINE_METAL_FG_LINK_SCALER=on` 才启用
 与 MetalFX 时域 scaler 的链接（默认关，避免不同系统版本的输入尺寸约束）。
 
+`FrameGenerationHistory` 按实际提交的场景隔离移动端插帧历史。移动 HUD 的页面/查看器状态、布局原点、
+歌曲 provider/key/id 或封面 revision 变化时，下一帧强制 `temporalReset`，避免跨页面或旧封面纹理
+配对；桌面端不额外增加换曲重置，继续沿用原有 Engine 重置逻辑。
+
 ## 4. Apple 平台差异与遗留的 PresentationShell
 
 - iOS 与 macOS 共用第 3 节的默认窗口管线：同一个 `RhiScene`、MetalFX 时域、`MetalFramePresentation`
@@ -381,24 +445,31 @@ Engine::frame()/drawBuffers()
 - `PresentationShell`、`SceneLayerHost`、`RhiPresentationBackend` 和 iOS 启动探针代码仍然保留，
   供 Windows/Linux 使用或排障；不要为 Apple Metal 补帧再修改或启动它们。
 
-## 5. 管线 C：Windows（Vulkan 受控 / Qt 默认）
+## 5. 管线 C：Windows（Vulkan/D3D12 受控 / Qt 默认）
 
-### 5.1 受控路径（默认情况下）
+### 5.1 受控路径（Vulkan / D3D12）
 
-- `fgCandidate`：原生窗口 + Vulkan 可用 + 未设置 `RHINE_FG_LAYER=off`；测试/截图模式不接管。
+- `fgCandidate`：原生窗口 + 当前后端在 `PresentationShell::supportsBackend()` 中可用 +
+  未设置 `RHINE_FG_LAYER=off`；`--self-test` 和 `--capture` 不接管。当前 Windows 支持 Vulkan 与
+  D3D12；`--playback-gui-test` 没有被单独排除，无头平台由原生窗口条件阻止呈现层。
 - `VulkanPresentationBackend` + `VulkanPresenter`：应用自持 `VkSwapchainKHR`；vsync 开时 FIFO，
   关时优先 MAILBOX、否则 IMMEDIATE；非 FIFO 增加交换链图像；可选 deferred present。
+- `RhiPresentationBackend`（D3D12）：创建 Direct3D surface 的原生窗口和 QRhi D3D12 swapchain，
+  `endFrame()` 负责 present；不再错误地回落到 Qt 平台默认 D3D11。
 - `SceneLayerHost`：逻辑尺寸 + target DPR；两层 RGBA8；根条目缩放 1.0。
 - 场景渲染器与 Apple 的 `RhiScene` 相同，但 Windows 走独立 `MotionPass`，实例不带 `previousModel`。
-- 帧生成：`FgBackend`（FFX Optical Flow + Frame Interpolation）。`RHINE_FG` 在 Windows 默认被
-  `main.cpp` 固定为 off；只有显式 `RHINE_FG=on` 才插值。设置页不显示该行。
-- `RHINE_FG_LAYER=off` 可强制默认 Qt 窗口；`on` 不是 Windows 的额外条件（默认已允许接管），
-  也不会改变 `RHINE_FG` 的插值请求。
-- 启动自检：3 秒内至少上屏 20 帧、`OutOfDate ≤ 200`；连续 5 次重建仍无新帧则回退默认窗口。
+- 帧生成：只有 Vulkan 的 `FgBackend`（FFX Optical Flow + Frame Interpolation）。`RHINE_FG` 在
+  Windows 默认被 `main.cpp` 固定为 off；只有显式 `RHINE_FG=on` 且当前是 Vulkan/FG 上下文可用
+  时才插值。D3D12 会走同一个受控呈现和 UI 合成路径，但不会创建 `FgBackend`。
+- 设置页不显示 Windows/Linux 的 FG 行；`RHINE_FG_LAYER=off` 可强制默认 Qt 窗口，`on` 不是
+  Windows 的额外接管条件，也不会改变 `RHINE_FG` 的插值请求。
+- 启动自检会尝试在 3 秒内观察 20 帧，但 3 秒内只有 1–19 帧不会仅因此失败。实际快速失败条件是
+  一帧都没有上屏、`OutOfDate > 200`，或连续重建失败超过 5 次（第 6 次仍无新帧）则回退默认窗口。
 
 ### 5.2 默认 Qt Quick 路径
 
-- 触发条件：OpenGL 后端、`RHINE_FG_LAYER=off`，或呈现层启动失败。
+- 触发条件：OpenGL 后端、`RHINE_FG_LAYER=off`，或呈现层启动失败；Vulkan/D3D12 的原生窗口通常
+  先走受控呈现。
 - `QQuickWindow` 的 Qt Quick 场景图直接合成 `Scene3D.qml` 与 `Overlay.qml`；
   `RhiScene` 走 `ScenePostProcess`（FXAA/TAA/FSR）与 `MotionPass`；没有 FG。
 - 高 DPI、焦点、输入法、窗口装饰均由 Qt Quick 负责。
@@ -409,15 +480,17 @@ Engine::frame()/drawBuffers()
 
 - `fgCandidate`：原生窗口 + Vulkan 可用 + `(RHINE_FG=on || RHINE_FG_LAYER=on)`；否则默认 Qt 路径。
 - `VulkanPresentationBackend` + `VulkanPresenter`：自持交换链；vsync 关闭时优先 MAILBOX，
-  其次 IMMEDIATE；非 FIFO 申请更多图像；`presentDeferred` 可把 present 推迟到下一次 acquire；
+  其次 IMMEDIATE；非 FIFO 申请更多图像。`presentDeferred()`/`flushDeferredPresent()` 仅保留为 API，
+  当前 `PresentationShell` 没有调用，实际路径是在 `endFrame()` 内直接 `present()`；
   `RHINE_FG_PRESENT_SYNC=idle` 是退回设备空闲等待的排障通道。
 - `SceneLayerHost`：物理像素离屏层（`pixelSize()`），根条目按 `m_ratio` 缩放；两层 RGBA8。
 - 场景渲染器：Linux 走单趟 MRT（`RHINE_SINGLE_PASS_MOTION`），实例带 `previousModel`；
   `publishMotionInputs()` 直接发布深度/运动矢量。
 - 帧生成：`FgBackend`；`RHINE_FG=on` 时插值，`RHINE_FG_LAYER=on` 单独使用时只接管窗口做 A/B，
   不插值。`RHINE_FG_LAYER=off` 强制默认路径。
-- 实测：呈现层接管且不插值时内容帧率低于 Qt 默认路径约 35%，所以默认不接管；
-  只有显式 FG 才付出这份成本。
+- 单机实测条件：全屏 2560×1440、主界面列表页长按向下；Qt 默认路径内容帧约 27.5/s，
+  呈现层接管且关闭插值约 20.3/s，默认路径高约 35%。这是特定机器、驱动和场景的结果，
+  不应外推为所有 Linux 桌面的固定比例；当前因此在没有显式 FG 需求时默认不接管。
 - 启动自检与回退同 Windows。
 
 ### 6.2 默认 Qt Quick 路径
@@ -426,6 +499,25 @@ Engine::frame()/drawBuffers()
 - `QQuickWindow` + `RhiScene`：Vulkan 走 MRT 运动矢量与 `ScenePostProcess`；OpenGL 回退到
   `surfaceNoMrt` 兼容管线，时域/运动相关模式受后端能力限制。
 - 没有 FG；内容帧率通常高于呈现层接管模式。
+
+### 6.3 Android / GLES 策略
+
+Android 与桌面 Linux 共享 `main.cpp` 的后端选择顺序，但实际图形后端通常是 `QRhi::OpenGLES2`
+（GLES 3.0），且没有桌面受控呈现层：
+
+- 默认优先 Vulkan，探测失败或用户显式选择时使用 GLES/OpenGL；`RHINE_GRAPHICS`、`QSG_RHI_BACKEND`
+  与设置页偏好的优先级同桌面 Linux。Android 的 `render-scale` 默认值为 75%，可用
+  `RHINE_ANDROID_RENDER_SCALE=50..100` 或设置页覆盖。
+- `AndroidRenderPolicy.h` 把移动端默认值集中管理：GLES 实例池、紧凑实例、跳过空闲运动、
+  Globals 差分上传和深度不保留默认开启；`RHINE_ANDROID_RENDER_TUNING=0` 可整体回退旧默认。
+  显式设置的 `RHINE_VK_INSTANCE_ARENA`、`RHINE_VK_COMPACT_INSTANCES`、`RHINE_VK_SKIP_IDLE_MOTION`、
+  `RHINE_VK_DIFF_GLOBALS` 和 `RHINE_VK_DISCARD_UNUSED_DEPTH` 仍优先。
+- 冷纹理准入延迟在 Android 为 500ms，其它平台为 100ms；手指停稳后按标签/封面各最多 2 张/帧补齐，
+  避免 fling 期间为路过条目创建资源和产生 GUI 尖峰。
+- GLES 表面图集保留 ETC2 RGB8 代码路径，但当前手写 ETC2 编码器已知输出错误，默认不启用；
+  实际走 RGBA8。只有同时设置 `RHINE_BAKE_ETC2=1` 与 `RHINE_SURFACE_ETC2=1` 才进入该实验路径。
+- HUD 的脏区重绘、子矩形上传与命令相交预筛见第 2.9 节；Android 不创建 `PresentationShell`，也没有
+  `FgBackend`。
 
 ## 7. 抗锯齿、超分与 MetalFX
 
@@ -450,8 +542,10 @@ Engine::frame()/drawBuffers()
   单采样 resolve，后续只读 resolve 结果。
 - **taa**：`Engine` 以 Halton(2,3) 8 相位推进 `jitter`；`RhiScene` 把抖动应用进投影，
   运动矢量用未抖动 VP 计算。`taa.frag` 按速度重投影历史、3×3 邻域夹紧、0.9 历史权重混合。
-- **fsr**：内部尺寸除以档位；`finalFragment` 写 RGBA16F `m_input`；FSR3 计算路径只在
-  `Fsr3Backend` 可用且 `RHINE_FSR3_FFX=1` 时创建，输出显示分辨率；否则 FSR1 EASU+RCAS。
+- **fsr**：内部尺寸除以档位；`finalFragment` 写 RGBA16F `m_input`；模式为 `fsr` 时会创建
+  `Fsr3Backend` 并尝试初始化，输出显示分辨率。D3D12 在 DX12 FFX 编入时默认走 FFX 计算路径；Vulkan
+  因 Intel ANV 实测崩溃默认拒绝创建 FFX 计算上下文，需显式 `RHINE_FSR3_FFX=1` 才实际派发。计算
+  路径失败时仍回退 FSR1 EASU+RCAS。
 - **metalfx**：`MetalFxTemporal::resolve()` 用渲染分辨率颜色/深度、像素单位运动和 Halton 抖动
   输出显示分辨率；失败时 `implementation="metalfx-unavailable"`，退回 `off`。
 
@@ -482,20 +576,26 @@ Engine::frame()/drawBuffers()
 | 平台               | 宿主                | 插值条件                                                                          |
 | ------------------ | ------------------- | --------------------------------------------------------------------------------- |
 | Apple（macOS/iOS） | 默认 QQuickWindow   | `panel/fg` 或 `RHINE_FG=on`，MetalFX 插帧可用，`renderscale × supersample ≤ 100%` |
-| Windows            | `PresentationShell` | `RHINE_FG=on`（默认 off）；呈现层接管且 FG 上下文可用                             |
+| Windows Vulkan     | `PresentationShell` | `RHINE_FG=on`（默认 off）；`FgBackend` 可用；呈现层接管                            |
+| Windows D3D12      | `PresentationShell` | 只做真实帧受控合成；当前 `FgBackend` 不支持 D3D12，无插值                           |
 | Linux              | `PresentationShell` | `RHINE_FG=on`；`RHINE_FG_LAYER=on` 只接管不插值                                   |
 
 `RHINE_FG_LAYER=off` 在 Windows/Linux 强制默认窗口；Apple 无效果。
+`RHINE_FG=on` 不会改变后台端选择：Windows 仍按 Vulkan → D3D12（编译时）→ OpenGL 选择，
+D3D12 上不会因为该变量创建 `FgBackend`。
 
 ### 8.3 每帧流程
 
-**呈现层（Windows/Linux）**：
+**受控呈现层（Windows/Linux）**：
 
-1. `armFrameGeneration()` 在帧外读 `FrameInputs`，按显示物理像素 resize FG 上下文，写相机/抖动/reset。
-2. `recordFrameGeneration()` 在同一离屏帧内先 `prepare()`（光流 + 深度重建），再 `dispatch()`（插值）。
-3. `composite()` 以插值帧为 base，叠加 UI 层（`fgComposite.frag` 的预乘 source-over）。
-4. 插值帧上屏后，真实帧留到下一次 `step()` 的 `pendingRealFrame` 分支，一步只 present 一次。
-5. `lastFrameReset()` 为真时本帧直接呈现真实颜色。
+1. `m_fgAvailable` 由 `FgBackend::supported(rhi)` 决定；`requested()` 由 `RHINE_FG` 或 Apple 偏好决定。
+   Windows Vulkan 在 `RHINE_FG=off` 时仍可能开启输入 tap，但不会执行光流和插值。
+2. `armFrameGeneration()` 在帧外读 `FrameInputs`，按显示物理像素 resize FG 上下文，写相机/抖动/reset。
+3. `recordFrameGeneration()` 在同一离屏帧内先 `prepare()`（光流 + 深度重建），再 `dispatch()`（插值）。
+4. `composite()` 以插值帧为 base，叠加 UI 层（`fgComposite.frag` 的预乘 source-over）。
+5. 插值帧上屏后，真实帧留到下一次 `step()` 的 `pendingRealFrame` 分支，一步只 present 一次。
+6. `lastFrameReset()` 为真或 `prepare()/dispatch()` 失败时，直接用真实 3D 纹理合成当前帧；
+   运行期 FG 失败不会重新加载 `Main.qml`。
 
 **Apple 默认窗口**：
 
@@ -511,6 +611,8 @@ Engine::frame()/drawBuffers()
 - 设置页“帧生成”行仅 Apple 可见；`panel/fg` 默认关闭，开关运行期生效。
 - `RhineFg::Stats` 统一承载：呈现/真实/插值计数、耗时、交换链信息；默认窗口用
   `defaultWindow=true` 标记，性能面板据此显示“默认窗口”区块并且不覆盖 Qt 的帧间隔。
+- `presentMs` 字段仅保留兼容，当前呈现层不再写入；“整帧” `frameMs` 覆盖
+  `beginFrame → endFrame` 全程，旧的独立“上屏耗时”不作为有效指标。
 - `--frame-profile` CSV 末尾包含 `gpu_time_ms,fg_presented,fg_interpolated,fg_rendered`，
   便于 A/B 与核对 60/60。
 
@@ -526,13 +628,23 @@ Engine::frame()/drawBuffers()
 - `sceneRevision`/`hudRevision` 只在内容真的变化时自增；呈现层用它代替“按信号重复置脏”。
 - Linux `SceneLayerHost` 默认每 20 帧补一次脏（`RHINE_LAYER_SAFETY_FRAMES`）；`RHINE_LAYER_REVISION=1`
   额外按版本号推进置脏，但信号和周期兜底仍然生效。
+- Windows 的 Vulkan/D3D12 受控呈现由引擎步进驱动，因异步模型/纹理上传完成不一定伴随
+  `sceneUpdated`，不能只依赖脏标记。
+- Android 在 HUD 帧已发布但尚未被渲染线程消费时，Engine 会让出 GUI 事件循环，避免 0/1ms 的
+  高密度定时器饿死 Qt Quick 的 render sync；HUD 消费位另有 2 秒 failsafe，呈现泵在窗口暂时不可见时
+  每 100ms 轮询恢复。
 
 ### 9.2 性能与资源计数
 
 - `Engine::recordRender()` 汇总资源数、SRB 创建、纹理字节、封面上传、draw call、GPU 时间
-  （四态 `unsupported/disabled/noSample/ok`）。
+  （四态 `unsupported/disabled/noSample/ok`），并维护最近 240 个渲染帧的资源/纹理滚动峰值、峰值帧号、
+  单帧绑定数、单帧封面上传数、每千帧封面重传率与资源预算。
 - `FrameProfiler`/性能面板读取 `RhineFg::Stats` 与 `Engine` 资源账本；默认窗口的 FG 数据由
   `Engine::publishFrameGenerationStats()` 转交，呈现层由自身 `publishStats()` 写入。
+- Android 额外记录 HUD 局部重绘账本：`hudPaints`、`hudDirtyPercent`、`hudCullPercent`，以及
+  `stepSceneSampleMs`、`stepObserveMs`、`stepHudDrawMs`；这些字段进入诊断 JSON，不依赖设备日志。
+- `*Peak` 是最近 240 个渲染帧的滚动峰值而不是 lifetime 峰值；`*PeakFrame` 与 `renderFrames` 使用同一
+  帧号。`frameBindings`/`frameCoverUploads` 是单帧值，`coverRetransmitPerKFrame` 是每千帧重传次数。
 - 常用诊断：
 
 | 变量                                                                                                     | 用途                                            |
@@ -545,6 +657,9 @@ Engine::frame()/drawBuffers()
 | `RHINE_VK_RESOURCE_PROBE` / `RHINE_MEMORY_PROBE` / `RHINE_TEXTURE_PROBE` / `RHINE_MOTION_PROBE`          | Vulkan 资源、内存、纹理准入、运动矢量配对       |
 | `RHINE_DEBUG_FSR` / `RHINE_DEBUG_GPU` / `RHINE_DEBUG_DRAWS` / `RHINE_DEBUG_TINT` / `RHINE_DEBUG_ATLAS`   | 各专项调试                                      |
 | `RHINE_DRAW_PROBE` / `RHINE_GPU_PROBE` / `RHINE_KEY_PROBE` / `RHINE_HUD_SKIP_PAINT` / `RHINE_POST_REUSE` | 绘制/HUD/后处理探针                             |
+| `RHINE_HUD_DIRTY_RECT` / `RHINE_HUD_CULL` / `RHINE_HUD_TEXTURE_SCALE`                                   | Android HUD 脏区、命令预筛与纹理分辨率          |
+| `RHINE_ANDROID_RENDER_TUNING` / `RHINE_ANDROID_RENDER_SCALE`                                           | Android GLES 默认策略总开关与渲染倍率           |
+| `RHINE_PRESENT_CONTENT_ONLY` / `RHINE_PRESENT_ALWAYS`                                                   | Linux 内容代次与上屏节流对照                    |
 | `RHINE_WARP_PROBE` / `RHINE_WARP_SHOW`                                                                   | Linux 重投影探针                                |
 | `RHINE_FG_DEBUG` / `RHINE_FG_SWAP_IMAGES` / `RHINE_RESOURCE_BUDGET_MB`                                   | FG 呈现与资源预算                               |
 
@@ -574,33 +689,48 @@ Engine::frame()/drawBuffers()
 
 1. **唯一场景渲染器**：`RhiScene` 同时负责资料库、详情页、查看器和唱片；不要引入第二条场景管线。
 2. **平台后处理二选一**：Apple 用 MetalFX，非 Apple 用 `ScenePostProcess`；不会同时运行。
-3. **FSR3 不是默认计算路径**：Vulkan 默认只走 FSR1；`RHINE_FSR3_FFX=1` 才创建 FFX 计算上下文。
-4. **运动矢量按后端**：Linux/Apple 单趟 MRT（实例 144 字节，带 `previousModel`）；Windows
-   `MotionPass`（实例 80 字节）。有 motion/TAA/FG/warp 消费者时不能裁掉第二附件或历史矩阵。
+3. **FSR3 计算路径按后端**：D3D12 在编入 FidelityFX DX12 时默认可创建 FSR3 上下文；Vulkan 因
+   Intel ANV 实测崩溃默认走 FSR1，只有 `RHINE_FSR3_FFX=1` 才尝试 FFX 计算。
+4. **运动矢量按后端**：桌面 Linux/Apple 有消费者时使用单趟 MRT（实例 144 字节，带
+   `previousModel`）；Windows 使用 `MotionPass`（实例 80 字节）；Android 默认无消费者时跳过运动尾部
+   并使用紧凑实例。有 motion/TAA/FSR/FG/warp 消费者时不能裁掉第二附件或历史矩阵。
 5. **共享 QRhi**：呈现层的两个离屏层、FG 宿主和呈现器必须同一设备；`SceneLayerHost::start()` 会校验。
 6. **UI 不参与插值**：插值只作用于 3D 层，UI 在合成阶段按显示帧率叠加。
 7. **高 DPI 不统一**：Linux 呈现层物理像素 + 根条目缩放；Windows 呈现层逻辑尺寸 + target DPR；
    默认 Qt Quick 路径（含 Apple）由 Qt 自己处理 DPR。
-8. **FG 的宿主不同**：Apple 在默认 QQuickWindow 内；Windows/Linux 在呈现层内。
-   Apple 的 `RHINE_FG_LAYER` 无效果；Linux 的呈现层接管需要显式 FG/FG_LAYER。
+8. **FG 的宿主不同**：Apple 在默认 QQuickWindow 内；Windows/Linux 在呈现层内。Windows 的 Vulkan
+   受控层可以插值，D3D12 只能做真实帧受控合成；Linux 的呈现层接管需要显式 FG/FG_LAYER。
+   Apple 的 `RHINE_FG_LAYER` 无效果。
 9. **FG 资源生命周期**：呈现层 `resize()/release()` 只能在帧外；Apple 默认窗口在 pass 结束后调用，
    使用 `deleteLater`、不主动等待设备空闲。`prepare()/dispatch()` 必须在 external 段内。
 10. **退出顺序**：先拆呈现层/交换链，再销毁原生窗口；否则 WSI 会对已销毁 surface 做 roundtrip。
 11. **离线参考渲染强制同步封面**：参考渲染只跑一帧，没有后续帧等异步成品。
 12. **Vulkan 尺寸去重必须在 `finish()` 之前**：`VulkanPresentationBackend::resize()` 同尺寸早退。
+13. **运行期失败不重载默认窗口**：FG 准备/派发失败只退回真实帧合成；启动阶段交换链或离屏层失败才
+    由 `main.cpp` 切回 `Main.qml`。`deferred present` API 当前未接入生产路径。
+14. **能力来源分离**：`PlatformFeatures.h` 只描述业务/窗口能力，不控制图形后端或 FG；后端选择由
+    `main.cpp`、CMake 编译宏和 `PresentationShell` 决定。
 
 ## 12. 验证入口与文件职责
 
 ### 12.1 测试
 
 - `qt_render_policy_regression`：GPU 计时四态、时间戳登记、AA 运动需求、场景同步签名、材质槽键、
-  Apple 补帧设置与启动偏好。
+  Apple 补帧设置、启动偏好与 `FrameGenerationHistory`。
 - `qt_fg_capability_regression`：FG 开关解析、能力快照、设置页三态、帧输入投递。
 - `qt_music_texture_admission_regression`、`qt_frame_pacing_regression`、`qt_vulkan_resource_regression`、
   `qt_scene_lifetime_regression`。
-- `qt_offline`（`RHINE_GPU_TEST=1` 时含 GPU 离线参考）、`qt_glyphs_regression`、`qt_native_hud_regression`
-  （含 Apple 帧生成行的可命中性）、`qt_gpu_choice_regression`、`qt_platform_regression`。
-- `RHINE_VISUAL_TESTS=1` 的冻结动画/场景快照；`npm run test:visual` 手动运行。
+- `qt_scene_transform_history_regression`（Apple）：稳定 ID 重排、集合增删、矩阵截断与重置。
+- `qt_linux_display_regression` / `qt_gpu_choice_regression`：X11 DRI3 判定、PCI 设备筛选与显卡映射。
+- `qt_d3d12_presentation_regression`（Windows 且 D3D12 编入）：QRhi D3D12 原生呈现、resize 与 release。
+- `qt_offline`：通过 `RhineMusicDatabase --self-test` 运行，使用 `QT_QPA_PLATFORM` 与
+  `RHINE_RESOURCES`；当前没有 `RHINE_GPU_TEST` 分支。
+- `qt_glyphs_regression`、`qt_native_hud_regression`（含 Apple 帧生成行的可命中性）与
+  `qt_platform_regression`。
+- 视觉、固定动画采样与多平台渲染效果目前仍需手动验证；可结合真实 GPU 环境和
+  `RhineMusicDatabase --frame-profile <csv>` 记录结果。
+- `RhineFgGateProbe` 是真实 GPU/显示服务的手动探针，默认不进 CTest；自动化用例没有覆盖
+  `main.cpp` 的完整 `fgCandidate` 组合、运行期 FG 失败继续真实帧合成，以及 Windows D3D12 完整应用路径。
 - 离线测试不能替代真实 GPU、Windows/Linux 实机、显示缩放和系统集成验证。
 
 ### 12.2 文件索引
@@ -618,22 +748,90 @@ Engine::frame()/drawBuffers()
 | `Qt/src/render/PresentationShell.{h,cpp}`                                             | 受控呈现调度（Windows/Linux）、FG 装配、合成、统计与降级                |
 | `Qt/src/render/SceneLayerHost.{h,cpp}`                                                | 两个离屏 QML 层、目标与高 DPI 几何                                      |
 | `Qt/src/render/PresentationBackend.h`                                                 | 呈现后端抽象                                                            |
-| `Qt/src/render/RhiPresentationBackend.cpp`                                            | Metal 的 QRhi 交换链呈现（Apple 默认窗口不经过；代码保留）              |
+| `Qt/src/render/RhiPresentationBackend.cpp`                                            | Metal / Windows D3D12 的 QRhi 交换链呈现                                 |
 | `Qt/src/render/VulkanPresentationBackend.cpp`                                         | Vulkan 呈现适配器与管线缓存                                             |
 | `Qt/src/fg/VulkanPresenter.{h,cpp}`                                                   | 自持 `VkSwapchainKHR`、信号量注入、present                              |
-| `Qt/src/fg/FgBackend.{h,cpp}`                                                         | FSR3 光流 + 帧插值算法层                                                |
+| `Qt/src/fg/FgBackend.{h,cpp}`                                                         | Vulkan/FSR3 光流 + 帧插值算法层；D3D12 当前不支持                      |
 | `Qt/src/fg/FgConfig.h` / `FgCapability.h` / `FgFrameTap.h` / `FgStats.h`              | FG 开关、能力、帧输入、统计                                             |
-| `Qt/src/fsr/Fsr3Backend.{h,cpp}`                                                      | FSR3 超分封装（默认 Vulkan FFX 关闭）                                   |
+| `Qt/src/fsr/Fsr3Backend.{h,cpp}`                                                      | FSR3 Vulkan/D3D12 超分封装；Vulkan FFX 默认关闭                         |
 | `Qt/src/fsr/Fsr1Constants.h` / `FsrSharpness.h`                                       | FSR1 常量与锐化换算                                                     |
 | `Qt/src/render/RenderConfiguration.h`                                                 | Apple 每 Engine 的渲染设置、能力与遥测                                  |
 | `Qt/src/render/RenderPolicy.h` / `FramePacingPolicy.h`                                | GPU 计时、时间戳、节拍纯逻辑                                            |
 | `Qt/src/render/MusicTextureAdmission.h` / `CoverPrepBudget.h`                         | 冷纹理准入与封面预处理预算                                              |
+| `Qt/src/render/AndroidRenderPolicy.h`                                                 | Android GLES 默认渲染策略与可回退开关                                   |
+| `Qt/src/render/FrameGenerationHistory.h`                                              | 移动端插帧场景隔离与重置判据                                            |
+| `Qt/src/render/HudDirtyRect.h` / `HudUploadTexture.h` / `HudPaintStats.h`             | HUD 命令差分、子矩形上传与性能账本                                      |
 | `Qt/src/render/SceneSyncCache.h` / `MaterialSlotKey.h`                                | 同步签名与材质槽键                                                      |
 | `Qt/src/render/SceneResources.h` / `VulkanResourcePolicy.h` / `VulkanResourceProbe.h` | 资源所有权、arena/池化策略与探针                                        |
 | `Qt/src/render/FrameGenerator.h`                                                      | 原生插帧算法契约                                                        |
 | `Qt/src/SettingsSchema.cpp` / `NativeHudSettings.cpp` / `NativeHudController.cpp`     | 设置页帧生成行、偏好写入与运行期切换                                    |
-| `Qt/src/FrameProfiler.cpp`                                                            | 性能面板与 CSV（含 `defaultWindow` FG 统计）                            |
+| `Qt/src/FrameProfiler.cpp`                                                            | 性能面板与 CSV（含 FG、HUD 脏区和 step 分段统计）                        |
+| `Qt/src/Hud.cpp`                                                                      | HUD 命令绘制、Android 脏区调度、子矩形纹理上传与消费位                  |
 | `Qt/src/Glyphs.{h,cpp}` / `DiscGeometry.{h,cpp}`                                      | 文字图集与唱片环带网格                                                  |
 | `Qt/qml/Main.qml` / `Scene3D.qml` / `Overlay.qml`                                     | 默认窗口与两层边界                                                      |
 | `Qt/shaders/**`                                                                       | 场景材质、最终合成、后处理、超分、运动、MetalFX 与呈现合成              |
 | `scripts/bake-archive-lighting.py`                                                    | 生成表面/光场/法线烘焙资源                                              |
+
+## 13. 运行说明与 Linux 兼容性
+
+本节是运行、排障与对外说明的摘要；启动条件、平台门控和实现细节以第 1、5、6、8、9 节为准。
+
+### Linux 帧生成、呈现路径与性能面板说明
+
+Linux 的插帧（FSR Frame Generation）当前只能通过启动时的 `RHINE_FG=on` 请求。开启时应用创建
+Vulkan 受控呈现层；`RHINE_FG=off` 时直接走 Qt 默认窗口。`RHINE_FG_LAYER=on` 可单独强制进入受控
+呈现层做 A/B，但不执行插值；`RHINE_FG_LAYER=off` 强制回到 Qt 默认路径。
+
+受控呈现层在关闭插值时仍要承担两层离屏录制、合成与 present。当前单机测量条件为全屏 2560×1440、
+主界面列表页长按向下：Qt 默认路径内容帧约 27.5/s，受控路径约 20.3/s，默认路径高约 35%。该数字
+不能外推为所有驱动、桌面和窗口尺寸的通用比例。
+
+当前只有 Apple 设置页显示“帧生成”开关，并且可在运行期切换；Windows/Linux 不显示该设置项，旧的
+`panel/fg` 偏好会被忽略，只能通过启动时环境变量启用。Linux 的呈现层是否接管在启动时已经决定，
+所以 `RHINE_FG=on` 从默认路径切换时必须重启；已经在接管状态下关闭插值则可在运行期生效。
+
+启动自检会尝试在 3 秒内观察 20 帧；3 秒内只有 1–19 帧不会仅因此失败。实际快速失败条件是一帧都
+没有上屏、`OutOfDate > 200`，或连续重建失败超过 5 次。启动阶段交换链/离屏层失败会回退 `Main.qml`；
+FG 上下文不可用或运行期 `prepare()`/`dispatch()` 失败不会自动重载默认窗口，而是继续用真实 3D 纹理
+合成当前帧。Windows/Linux 的运行期 `m_failed` 当前也不会自动重新加载 `Main.qml`。
+
+只有 3D 场景参与插值，UI 始终以原生分辨率叠加在插值结果之上，因此文字不会重影。性能面板显示取图、
+场景、光流+重建、插值、合成、整帧耗时，以及帧槽等待和离屏收尾；旧的“上屏耗时”字段已不再作为有效
+指标。Linux 呈现层接管且插值可用并已请求时，标题帧率为“渲染+插值”；其他平台和未插值路径沿用当前
+`qtFps`/呈现层帧率口径。
+
+### 图形后端与 Linux 兼容性
+
+启动选择顺序为 `QSG_RHI_BACKEND` → 本次 `RHINE_GRAPHICS` → 保存的
+`panel/graphics-backend` → 自动探测。`RHINE_GRAPHICS=auto` 只跳过环境变量层，不会忽略保存配置；
+无法识别的值会告警并继续下一项。Windows 自动链为 Vulkan → Direct3D 12（仅
+`RHINE_ENABLE_D3D12_BACKEND` 编入时）→ OpenGL；Linux 为 Vulkan → OpenGL。macOS/iOS 固定 Metal。
+
+启动日志中的 `Display: <平台插件> backend: <后端>` 可用于确认实际使用的后端。
+
+**Linux 会话**
+
+`RHINE_QPA_PLATFORM=xcb` 强制使用 X11（Xorg 或 XWayland），`RHINE_QPA_PLATFORM=wayland` 强制使用
+Wayland；它会在 `QGuiApplication` 构造前复制到 `QT_QPA_PLATFORM`。不设置时跟随 `QT_QPA_PLATFORM`
+与系统默认。纯 Xorg 会话，或 Wayland 下出现输入法、窗口装饰相关崩溃时，可以先用 `xcb` 对照。
+
+**DRI3**
+
+只有 Linux 使用 `xcb` 平台插件，且 X 连接明确缺少 DRI3 时，应用才跳过 Vulkan 并回退 OpenGL。
+DRI3 探测为 `Unknown` 时仍允许 Vulkan；Wayland、offscreen 和 minimal 不受这条规则影响。
+确认驱动存在其他呈现路径时，可设置 `RHINE_X11_ALLOW_VULKAN=1`（环境变量解析为大于 0）跳过判断。
+
+**多显卡选择**
+
+Linux 的「设置 → GPU / 显卡」可以指定使用的显卡，重启生效。设置页序号是经过筛选后的 PCI 显示设备
+列表序号，不是 `/sys/class/drm/cardN` 的原始 N；`card0-DP-1` 这类连接器和无 PCI 父设备的条目不会
+占用序号。保存的序号越界、条目不可用或配置损坏时会回退默认行为并显示原因；同序号换卡当前无法仅凭
+序号识别。
+
+Mesa 系驱动（i915 / xe / amdgpu / nouveau）使用 `DRI_PRIME` 将目标卡排到物理设备列表首位；NVIDIA
+专有驱动使用 `__NV_PRIME_RENDER_OFFLOAD=1`、`__VK_LAYER_NV_optimus=NVIDIA_only` 和
+`__GLX_VENDOR_LIBRARY_NAME=nvidia`。选择非 NVIDIA 卡且存在 NVIDIA ICD 时使用 `non_NVIDIA_only`。
+进程已有的同名环境变量优先，应用不会覆盖用户手动对照变量。
+
+`RHINE_GPU_INDEX=N` 只对本次启动生效，不改配置；`RHINE_SOFTWARE_GPU=1` 时不做任何选择。两张同型号
+NVIDIA 显卡之间无法区分，此时会输出警告。

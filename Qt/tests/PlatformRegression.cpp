@@ -1,17 +1,23 @@
 #include "AppStorage.h"
 #include "AudioPlayer.h"
 #include <QAudioBuffer>
+#include <QDataStream>
 #include <QJsonDocument>
 #include <QJsonArray>
 #include "ProcessMetrics.h"
 #include <QCoreApplication>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QGuiApplication>
 #include <QTemporaryDir>
+#include <QThread>
 #include <QtMultimedia/private/qaudiodevice_p.h>
+#include <atomic>
 #include <cstdio>
+#include <functional>
 #include <memory>
+#include <thread>
 #include <type_traits>
 #ifdef Q_OS_LINUX
 #include <sys/stat.h>
@@ -27,6 +33,16 @@ bool check(bool result, const char *message) {
         std::fprintf(stderr, "%s\n", message);
     }
     return result;
+}
+
+bool waitFor(const std::function<bool()> &ready, int milliseconds = 5000) {
+    QElapsedTimer clock;
+    clock.start();
+    while (!ready() && clock.elapsed() < milliseconds) {
+        QCoreApplication::processEvents();
+        QThread::msleep(1);
+    }
+    return ready();
 }
 
 bool processMetricsRegression() {
@@ -125,6 +141,10 @@ class AudioPlayerRegression {
     // 验证解码统计开关
     static bool diagnosticRegression() {
         AudioPlayer audio;
+#ifdef Q_OS_MACOS
+        audio.useApplePlayback = false;
+#endif
+        audio.pcmEnabled = false;
         QJsonArray events;
         audio.diagnosticEvent = [&](const QString &, const QJsonObject &values) { events.append(values); };
         audio.enableDiagnostics(true);
@@ -161,18 +181,20 @@ class AudioPlayerRegression {
         return ok;
     }
 
-    // 没有输出设备时不会访问网络，可验证真实 load 路径是否改写了上游地址。
+    // 没有输出设备时不会访问网络，可验证真实 load 路径的本地文件与未知来源边界。
     static bool sourceRegression() {
         AudioPlayer audio;
+#ifdef Q_OS_MACOS
+        audio.useApplePlayback = false;
+#endif
         audio.defaultOutput = [] { return QAudioDevice(); };
         audio.followDefaultOutput();
-        const QString raw("http://fs.kugou.com/fixture.mp3?key=fixture&filename=a%20b");
-        bool ok = check(audio.load(raw, false, false, "kugou") && audio.pendingSource == QUrl(raw),
-                        "Kugou preserves upstream scheme and signed query");
+        const QString local("file:///fixture.wav");
+        bool ok = check(audio.load(local, false, false, "local") && audio.pendingSource == QUrl(local),
+                        "Local files bypass the network scheme policy");
         audio.control("stop");
-        ok &= check(audio.load("http://music.126.net/fixture.mp3", false, false, "netease") &&
-                        audio.pendingSource.scheme() == "https",
-                    "NetEase keeps existing CDN compatibility");
+        ok &= check(!audio.load("http://example.test/fixture.mp3", false, false, "unknown"),
+                    "Unknown providers cannot load remote media");
         audio.control("stop");
         return ok;
     }
@@ -215,8 +237,140 @@ class AudioPlayerRegression {
 #endif
     }
 
+    // 系统格式探测必须离开音频泵线程：只有设备 id 跨线程，结果回到主线程后才决定重建。
+    static bool outputFormatProbeRegression() {
+        std::atomic<int> probeCalls{0};
+        QByteArray probedId;
+        std::thread::id probeThread;
+        const auto mainThread = std::this_thread::get_id();
+        AudioOutputFormat::SystemFormat reported;
+        AudioPlayer audio;
+#ifdef Q_OS_MACOS
+        audio.useApplePlayback = false;
+#endif
+        const auto device = testDevice<QAudioDevicePrivate>("test-format-probe");
+        audio.defaultOutput = [device] { return device; };
+        audio.followDefaultOutput();
+        const auto baseline = audio.pcm.snapshot();
+        // 只有有效观测（status 非 0）才会触发重建；采样率与当前值不同即构成一次真实变化。
+        reported.status = 1;
+        reported.format.setSampleRate(qMax(1, baseline["outputSystemSampleRateHz"].toInt() + 1000));
+        reported.format.setChannelCount(qMax(1, baseline["outputSystemChannels"].toInt()));
+        reported.format.setSampleFormat(QAudioFormat::Float);
+        int outputEvents = 0;
+        audio.diagnosticEvent = [&](const QString &event, const QJsonObject &) {
+            if (event == "output") {
+                ++outputEvents;
+            }
+        };
+        audio.readSystemOutputFormat = [&](const QByteArray &deviceId, bool) {
+            probedId = deviceId;
+            probeThread = std::this_thread::get_id();
+            ++probeCalls;
+            return reported;
+        };
+        audio.enableDiagnostics(true);
+        // 观测值只消费一次；waitFor 结束前会再问一次谓词，不能让它把结果吃掉。
+        bool applied = false;
+        auto consume = [&] {
+            if (!applied) {
+                applied = audio.applyPendingOutputFormatObservation();
+            }
+            return applied;
+        };
+        audio.requestOutputFormatProbe();
+        bool ok = waitFor(consume);
+        ok &= check(probeCalls == 1 && probedId == device.id() && probeThread != mainThread,
+                    "Format probe runs on a worker thread and only the device id crosses threads");
+        ok &= check(outputEvents == 1, "A changed system format rebuilds the output once");
+        const auto fresh = audio.pcm.snapshot();
+        reported.status = fresh["outputSystemFormatStatus"].toInt();
+        reported.format.setSampleRate(fresh["outputSystemSampleRateHz"].toInt());
+        reported.format.setChannelCount(fresh["outputSystemChannels"].toInt());
+        reported.format.setSampleFormat(
+            QAudioFormat::SampleFormat(fresh["outputSystemSampleFormat"].toInt()));
+        applied = false;
+        audio.requestOutputFormatProbe();
+        ok &= check(waitFor(consume) && outputEvents == 1 && probeCalls == 2,
+                    "An unchanged system format produces no rebuild and no diagnostic event");
+        audio.defaultOutput = [] { return QAudioDevice{}; };
+        audio.followDefaultOutput();
+        const auto before = probeCalls.load();
+        audio.requestOutputFormatProbe();
+        ok &= check(probeCalls.load() == before, "A missing output never schedules a probe");
+        audio.enableDiagnostics(false);
+        return ok;
+    }
+
+    static bool nativePlaybackRegression() {
+#ifdef Q_OS_WIN
+        if (QMediaDevices::defaultAudioOutput().isNull()) {
+            qInfo() << "SKIP: native playback requires a physical audio endpoint";
+            return true;
+        }
+        QTemporaryDir directory;
+        const auto path = directory.filePath("native-playback.wav");
+        QFile file(path);
+        if (!file.open(QIODevice::WriteOnly)) {
+            return false;
+        }
+        constexpr quint32 bytes = 48000 * 4 * 2;
+        QDataStream wav(&file);
+        wav.setByteOrder(QDataStream::LittleEndian);
+        wav.writeRawData("RIFF", 4);
+        wav << quint32(36 + bytes);
+        wav.writeRawData("WAVEfmt ", 8);
+        wav << quint32(16) << quint16(1) << quint16(2) << quint32(48000) << quint32(192000) << quint16(4)
+            << quint16(16);
+        wav.writeRawData("data", 4);
+        wav << bytes;
+        wav.writeRawData(QByteArray(bytes, '\0').constData(), bytes);
+        file.close();
+        AudioPlayer audio;
+        audio.control("volume", 0);
+        audio.enableDiagnostics(true);
+        auto wait = [](const auto &condition) {
+            QElapsedTimer clock;
+            clock.start();
+            while (!condition() && clock.elapsed() < 5000) {
+                QCoreApplication::processEvents();
+                QThread::msleep(2);
+            }
+            return condition();
+        };
+        bool ok = check(audio.load(QUrl::fromLocalFile(path).toString(), true),
+                        "Local source loads into the native playback pipeline");
+        ok &= check(wait([&] { return audio.pcm.active() && audio.pcm.position() > 0; }),
+                    "QMediaPlayer decoded PCM reaches WASAPI");
+        if (!audio.pcm.active()) {
+            return false;
+        }
+        const auto before = audio.pcm.position();
+        QThread::msleep(180);
+        ok &= check(audio.pcm.position() > before, "Decoded PCM delivery survives a blocked GUI thread");
+        ok &= check(audio.pcm.snapshot()["outputUnderruns"].toInt() == 0,
+                    "A blocked GUI does not insert silence into the native stream");
+        audio.control("pause");
+        QThread::msleep(40);
+        const auto paused = audio.pcm.position();
+        QThread::msleep(80);
+        ok &= check(audio.pcm.position() == paused, "Pause stops native PCM consumption");
+        audio.control("seek", 1000);
+        audio.control("resume");
+        ok &= check(wait([&] { return audio.ended > 0 || !audio.error.isEmpty(); }) && audio.error.isEmpty(),
+                    "Seek and resume drain the native tail before end-of-media");
+        audio.control("stop");
+        ok &= check(!audio.pcm.active(), "Stop releases the WASAPI endpoint");
+        return ok;
+#else
+        return true;
+#endif
+    }
     static bool run() {
         AudioPlayer audio;
+#ifdef Q_OS_MACOS
+        audio.useApplePlayback = false;
+#endif
         const auto headphones = testDevice<QAudioDevicePrivate>("test-headphones");
         const auto speakers = testDevice<QAudioDevicePrivate>("test-speakers");
         auto selected = headphones;
@@ -245,7 +399,7 @@ class AudioPlayerRegression {
                     "No output detaches the unavailable device");
         selected = speakers;
         notify();
-        ok &= check(!audio.outputUnavailable && audio.player->audioOutput() == &audio.output,
+        ok &= check(!audio.outputUnavailable && audio.player->audioOutput() == nullptr,
                     "Same device reconnects after disappearing");
         ok &= check(!audio.playbackRequested && !audio.player->isPlaying(),
                     "Reconnecting never cancels user pause");
@@ -303,8 +457,10 @@ int main(int argc, char **argv) {
     }
     const bool storage = storageRegression(fixture.path());
     const bool metrics = processMetricsRegression();
-    const bool audio = AudioPlayerRegression::diagnosticRegression() && AudioPlayerRegression::run() &&
-                       AudioPlayerRegression::layoutRegression() && AudioPlayerRegression::sourceRegression();
+    const bool audio =
+        AudioPlayerRegression::diagnosticRegression() && AudioPlayerRegression::run() &&
+        AudioPlayerRegression::layoutRegression() && AudioPlayerRegression::outputFormatProbeRegression() &&
+        AudioPlayerRegression::sourceRegression() && AudioPlayerRegression::nativePlaybackRegression();
     qInfo() << "Portable storage, process metrics and default audio output regressions:"
             << (storage && metrics && audio ? "PASS" : "FAIL");
     return storage && metrics && audio ? 0 : 1;

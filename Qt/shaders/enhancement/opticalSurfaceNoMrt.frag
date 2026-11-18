@@ -8,7 +8,7 @@
 layout(location = 0) in vec2 v_surfaceUv;
 layout(location = 1) in vec2 v_uv;
 layout(location = 2) in vec3 v_lightUv;
-layout(location = 3) in float v_theme;
+layout(location = 3) flat in float v_theme;
 layout(location = 4) in float v_viewZ;
 layout(location = 5) in float v_quality;
 layout(location = 6) in float v_lightMask;
@@ -60,6 +60,9 @@ vec3 keyLight(vec3 base, float gloss) {
     return base * (0.55 + 0.45 * ndl) + vec3(spec);
 }
 void main() {
+    // 在丢弃片元前求出面内 UV 梯度；昼夜图块只相差半张图集的固定偏移，共用同一 mip 梯度。
+    vec2 surfaceUvDx = dFdx(v_surfaceUv);
+    vec2 surfaceUvDy = dFdy(v_surfaceUv);
     if (m.flags.x == 1.0) {
         if (!gl_FrontFacing && v_mode > 0.5) {
             // 素面封底：封面纸背不承载印刷内容，给一层哑光纸背底色。
@@ -117,24 +120,24 @@ void main() {
         return;
     }
     bool shell = m.flags.x == 3.0 || m.flags.x == 4.0 || m.flags.x == 5.0;
-    // 主题只有两个端点值：纯夜晚时 mix(day, night, 1.0) 精确等于 night，先采 day 是纯浪费。
-    // 只在这一端短路；白天（v_theme == 0）与主题切换动画的中间态仍走原路径，结果逐位不变。
+    // 纯夜色只采下半区；主题波的中间值继续分别采样昼夜图块并混合。
     const bool nightOnly = v_theme >= 1.0;
-    vec4 baked = texture(surfaceAtlas, nightOnly ? v_surfaceUv + vec2(0.0, 0.5) : v_surfaceUv);
+    vec2 surfaceUv = nightOnly ? v_surfaceUv + vec2(0.0, 0.5) : v_surfaceUv;
+    vec4 baked = textureGrad(surfaceAtlas, surfaceUv, surfaceUvDx, surfaceUvDy);
     // 表面图集以 sRGB8 存放线性辐亮度/4；这里手工解码后乘回 4.0。
     baked.rgb = linearColor(baked.rgb) * 4.0;
     vec4 normalResponse = texture(normalAtlas, nightOnly ? v_normalUv + vec2(0.0, 0.5) : v_normalUv);
     if (v_theme > 0.0 && !nightOnly) {
-        vec4 night = texture(surfaceAtlas, v_surfaceUv + vec2(0.0, 0.5));
+        vec4 night = textureGrad(surfaceAtlas, v_surfaceUv + vec2(0.0, 0.5), surfaceUvDx, surfaceUvDy);
         night.rgb = linearColor(night.rgb) * 4.0;
         baked = mix(baked, night, v_theme);
         normalResponse = mix(normalResponse, texture(normalAtlas, v_normalUv + vec2(0.0, 0.5)), v_theme);
     }
-#ifdef RHINE_NORMAL_RGBA8
-    // Android 上法线响应烘焙成 8 位 UNORM：rgb 存 response/4（值域 0..4），
-    // a 存 highlight/0.25（值域 0..0.18）。这里乘回原尺度，与 RGBA16F 路径逐值一致。
-    normalResponse *= vec4(4.0, 4.0, 4.0, 0.25);
-#endif
+    // C++ 按文件字节数决定法线图集格式；这里跟随同一个运行时标志解码，
+    // 不依赖编译宏，避免桌面拿到 8 位资源时高光被放大 4 倍。
+    if (normalParams.x > 0.5) {
+        normalResponse *= vec4(4.0, 4.0, 4.0, 0.25);
+    }
     vec3 color = baked.rgb * normalResponse.rgb + vec3(normalResponse.a);
     if (m.flags.x == 3.0 && v_mode > 0.5) {
         // 玻璃壳：旧渲染器用 transmission/ior 走折射通道，把整张 CD 包在里面。

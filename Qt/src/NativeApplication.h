@@ -1,5 +1,6 @@
 #pragma once
 #include "NativeHud.h"
+#include "GlobalShortcuts.h"
 #include "NativeScene.h"
 
 class NativeApplication : public QObject {
@@ -15,12 +16,14 @@ class NativeApplication : public QObject {
     void mediaAction(QString action);
     void pointer(QString type, double x, double y);
     MusicLibrary music;
+    GlobalShortcuts shortcuts;
     NativeHud hud;
 
   private:
     Host *m_host;
     NativeScene *m_scene;
     bool m_dragging = false;
+    bool m_hudPointerSequence = false;
     bool m_moved = false;
     QPointF m_down;
     static HudSceneActions sceneActions(NativeScene *scene);

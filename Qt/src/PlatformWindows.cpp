@@ -59,11 +59,18 @@ QString platformSaveCredential(const QByteArray &bytes) {
 void platformDeleteCredential() {
     QFile::remove(credentialPath());
 }
-void platformPlay(const QString &id, bool activate, std::function<void(QString)> done) {
+void platformPlay(const QString &id, const QJsonObject &config, bool activate,
+                  std::function<void(QString)> done) {
+    auto payload = config["payload"].toString();
+    payload.replace("{id}", id);
+    const auto encoding = config["encoding"].toString();
+    if (encoding == "base64") {
+        payload = QString::fromLatin1(payload.toUtf8().toBase64());
+    } else if (encoding == "percent") {
+        payload = QString::fromLatin1(QUrl::toPercentEncoding(payload));
+    }
     // 将协议交给 Windows Shell，不直接读取或修改注册表，也不自行解析启动命令。
-    const auto payload =
-        QString("{\"type\":\"song\",\"id\":\"%1\",\"cmd\":\"play\"}").arg(id).toUtf8().toBase64();
-    const auto url = QString("orpheus://") + QString::fromLatin1(payload);
+    const auto url = config["scheme"].toString() + "://" + payload;
     SHELLEXECUTEINFOW info{};
     info.cbSize = sizeof(info);
     info.fMask = SEE_MASK_FLAG_NO_UI;
@@ -71,11 +78,13 @@ void platformPlay(const QString &id, bool activate, std::function<void(QString)>
     info.lpFile = reinterpret_cast<LPCWSTR>(url.utf16());
     info.nShow = activate ? SW_SHOWNORMAL : SW_SHOWNOACTIVATE;
     if (ShellExecuteExW(&info)) {
-        done(QStringLiteral("已交给网易云；若冷启动未切歌，可手动重试"));
+        done(config["successMessage"].toString(QStringLiteral("已交给官方客户端")));
     } else if (GetLastError() == ERROR_NO_ASSOCIATION) {
-        done(QStringLiteral("未安装或未注册网易云音乐客户端，请安装官方客户端后重试"));
+        done(config["application"]
+                 .toObject()["missingMessage"]
+                 .toString(QStringLiteral("未安装或未注册官方客户端")));
     } else {
-        done(QStringLiteral("交付失败：无法启动网易云客户端"));
+        done(config["failureMessage"].toString(QStringLiteral("交付失败")));
     }
 }
 
@@ -107,7 +116,9 @@ void platformMediaCommands(std::function<void(QString)> callback) {
         transportWindow = nullptr;
     }
 }
-void platformMediaInfo(QString title, QString artist, QString album, QVariantMap state) {
+void platformMediaInfo(QString title, QString artist, QString album, QVariantMap state,
+                       const QString &coverPath) {
+    Q_UNUSED(coverPath)
     // SMTC 要求本进程的顶层 HWND；后台使用不显示的原生窗口，不创建 Qt 场景或交换链。
     try {
         if (!transport) {

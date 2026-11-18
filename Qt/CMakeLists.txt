@@ -1,5 +1,6 @@
 # 将应用的 QML 扫描限定在 Qt 源码目录，避免遍历部署包和 Node 依赖。 资源、平台依赖和打包钩子由根目录配置完成后再统一结束目标初始化。
 qt_add_executable(RhineMusicDatabase WIN32 MACOSX_BUNDLE MANUAL_FINALIZATION ${RHINE_APP_SOURCES})
+include("${CMAKE_SOURCE_DIR}/cmake/CrashDiagnostics.cmake")
 target_sources(RhineMusicDatabase PRIVATE src/Gamepad.cpp src/Gamepad.h src/EmbeddedSceneHost.cpp
                                           src/EmbeddedSceneHost.h)
 set_target_properties(RhineMusicDatabase PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
@@ -16,6 +17,9 @@ set_source_files_properties(qml/Scene3D.qml PROPERTIES QT_RESOURCE_ALIAS Scene3D
 set_source_files_properties(qml/Overlay.qml PROPERTIES QT_RESOURCE_ALIAS Overlay.qml)
 set_source_files_properties(qml/TouchInput.qml PROPERTIES QT_RESOURCE_ALIAS TouchInput.qml)
 set_source_files_properties(qml/LocalMusicDialogs.qml PROPERTIES QT_RESOURCE_ALIAS LocalMusicDialogs.qml)
+set_source_files_properties(qml/MvWindow.qml PROPERTIES QT_RESOURCE_ALIAS MvWindow.qml)
+set_source_files_properties(qml/MvWallpaper.qml PROPERTIES QT_RESOURCE_ALIAS MvWallpaper.qml)
+set_source_files_properties(qml/MvDesktopControls.qml PROPERTIES QT_RESOURCE_ALIAS MvDesktopControls.qml)
 # Flutter 内嵌路径的 QML 根：只有场景层，挂在宿主传进来的父窗口上。
 set_source_files_properties(qml/Embedded.qml PROPERTIES QT_RESOURCE_ALIAS Embedded.qml)
 qt_add_qml_module(
@@ -28,6 +32,9 @@ qt_add_qml_module(
     "${CMAKE_BINARY_DIR}/RhineMusic"
     QML_FILES
     qml/Main.qml
+    qml/MvWindow.qml
+    qml/MvWallpaper.qml
+    qml/MvDesktopControls.qml
     qml/TouchInput.qml
     qml/LocalMusicDialogs.qml
     # 用户 m10082：性能面板停用，不再编译进 QML 模块。

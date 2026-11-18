@@ -23,6 +23,9 @@ QJsonObject directoryState(const MusicDirectory &folder) {
             {"parentLane", folder.parentLane},
             {"parentItem", folder.parentItem},
             {"albumCursor", folder.albumCursor},
+            {"artistSongCursor", folder.artistSongCursor},
+            {"artistSongsPaged", folder.artistSongsPaged},
+            {"artistSongsMore", folder.artistSongsMore},
             {"albumsMore", folder.albumsMore}};
 }
 int nonnegative(const QJsonValue &value) {
@@ -48,7 +51,7 @@ QJsonObject MusicLibrary::sessionState() const {
         indices.append(index);
     }
     return {{"provider", provider},
-            {"edition", kugouEdition},
+            {"variant", providerVariant},
             {"uid", uid},
             {"sources", sources},
             {"directories", folders},
@@ -86,7 +89,9 @@ QJsonObject MusicLibrary::sessionState() const {
 }
 
 bool MusicLibrary::restoreSessionState(const QJsonObject &saved) {
-    if (saved["provider"] != provider || saved["edition"] != kugouEdition || saved["uid"].toString() != uid) {
+    const auto savedVariant = saved["variant"].toString(saved["edition"].toString());
+    if (saved["provider"] != provider || savedVariant != providerVariant ||
+        saved["uid"].toString() != uid) {
         return false;
     }
     const auto sources = saved["sources"].toArray();
@@ -132,6 +137,9 @@ bool MusicLibrary::restoreSessionState(const QJsonObject &saved) {
         folder->parentLane = std::clamp(value["parentLane"].toInt(), 0, 4);
         folder->parentItem = value["parentItem"].toObject();
         folder->albumCursor = nonnegative(value["albumCursor"]);
+        folder->artistSongCursor = nonnegative(value["artistSongCursor"]);
+        folder->artistSongsPaged = value["artistSongsPaged"].toBool();
+        folder->artistSongsMore = value["artistSongsMore"].toBool();
         folder->albumsMore = value["albumsMore"].toBool();
         directory = folder;
     }

@@ -1,6 +1,7 @@
 #include "MusicLibrary.h"
 #include "MusicData.h"
 #include "MusicDiscover.h"
+#include "ProviderRegistry.h"
 #include <QCoreApplication>
 #include <QDataStream>
 #include <QElapsedTimer>
@@ -29,8 +30,11 @@ bool waitFor(const std::function<bool()> &ready, int timeout = 3000) {
     return ready();
 }
 
+QString testProvider = "alpha";
+
 QJsonObject song(QString id, QString title = "测试歌曲") {
     auto value = MusicData::item("song", id, title, "测试歌手");
+    value["provider"] = testProvider;
     value["albumID"] = "7";
     value["album"] = "测试专辑";
     value["duration"] = 180000;
@@ -55,7 +59,8 @@ QString createTestAudio(QTemporaryDir &dir) {
     }
     QDataStream wav(&audio);
     wav.setByteOrder(QDataStream::LittleEndian);
-    constexpr quint32 bytes = 8000 * 2 * 4;
+    // 自动过渡只在当前曲目长于 8 秒时准备；测试夹具必须覆盖这条门槛。
+    constexpr quint32 bytes = 8000 * 2 * 12;
     wav.writeRawData("RIFF", 4);
     wav << quint32(36 + bytes);
     wav.writeRawData("WAVEfmt ", 8);
@@ -68,12 +73,60 @@ QString createTestAudio(QTemporaryDir &dir) {
     return QUrl::fromLocalFile(audio.fileName()).toString();
 }
 
-/** 固定响应覆盖首次读取、切歌、写入失败、重复点击及退出账号的过期回包。 */
-bool checkPlaybackLikes(const QString &root) {
+/** 验证歌手分页按原始数量推进，并在恢复会话后继续读取。 */
+bool checkArtistSongPages(const QString &root) {
     Host host(root, true);
     MusicLibrary music(&host, {});
-    music.provider = "netease";
-    music.api.provider = "netease";
+    music.provider = "siren";
+    music.api.provider = "siren";
+    host.setProvider("siren");
+    music.directory = std::make_shared<MusicDirectory>();
+    music.directory->item = MusicData::item("artist", "artist-1", "测试歌手", {}, "siren");
+    music.directory->artistSongsPaged = true;
+    music.directory->artistSongsMore = true;
+    music.directoryInfo = true;
+    QList<int> offsets;
+    host.fixture = [&](QString route, QJsonObject parameters) {
+        if (!route.endsWith("/trackPage")) {
+            return QJsonObject{{"body", QJsonObject{{"code", 200}}}};
+        }
+        const auto offset = parameters["args"].toArray().at(1).toInt();
+        offsets.append(offset);
+        const auto items = offset == 0 ? QJsonArray{song("1"), song("1")} : QJsonArray{song("2")};
+        const auto page = QJsonObject{{"items", items},
+                                      {"rawCount", offset == 0 ? 2 : 1},
+                                      {"more", offset == 0},
+                                      {"total", 3}};
+        return QJsonObject{{"body", QJsonObject{{"code", 200}, {"value", page}}}};
+    };
+    music.loadDirectoryPage();
+    if (!waitFor([&] { return !music.directoryLoading; }) || music.directory->songs.size() != 1 ||
+        music.directory->artistSongCursor != 2 || !music.directory->artistSongsMore) {
+        qCritical() << "Artist first page did not preserve raw pagination";
+        return false;
+    }
+    const auto saved = music.sessionState();
+    if (!music.restoreSessionState(saved) || !music.directory->artistSongsMore ||
+        music.directory->artistSongCursor != 2) {
+        qCritical() << "Artist pagination did not survive session restore";
+        return false;
+    }
+    music.loadDirectoryPage();
+    if (!waitFor([&] { return !music.directoryLoading; }) || offsets != QList<int>{0, 2} ||
+        music.directory->songs.size() != 2 || music.directory->artistSongsMore) {
+        qCritical() << "Artist second page did not complete";
+        return false;
+    }
+    return true;
+}
+
+/** 固定响应覆盖首次读取、切歌、写入失败、重复点击及退出账号的过期回包。 */
+bool checkPlaybackLikes(const QString &root, const QString &provider) {
+    Host host(root, true);
+    MusicLibrary music(&host, {});
+    music.provider = provider;
+    music.api.provider = provider;
+    host.setProvider(provider);
     music.uid = "42";
     int reads = 0;
     int writes = 0;
@@ -83,7 +136,7 @@ bool checkPlaybackLikes(const QString &root) {
             ++reads;
             return QJsonObject{{"body", QJsonObject{{"code", 200}, {"value", QJsonArray{"1"}}}}};
         }
-        if (route == "/like") {
+        if (route.endsWith("/mutate")) {
             ++writes;
             return QJsonObject{{"body", QJsonObject{{"code", fail ? 500 : 200}}}};
         }
@@ -124,18 +177,22 @@ bool checkPlaybackLikes(const QString &root) {
     return true;
 }
 
-/** QQ 单曲状态必须按当前播放曲目隔离，写入结果优先于写入前的状态读取。 */
-bool checkQQPlaybackLikes(const QString &root) {
+/** 收藏状态按当前播放曲目隔离，写入结果优先于写入前的状态读取。 */
+bool checkSubscriptionPlaybackLikes(const QString &root, const QString &provider) {
     Host host(root, true);
     MusicLibrary music(&host, {});
-    music.provider = "qq";
-    music.api.provider = "qq";
+    music.provider = provider;
+    music.api.provider = provider;
+    host.setProvider(provider);
     music.uid = "42";
-    const auto first = MusicData::item("song", "1", "歌曲一", "歌手", "qq");
-    const auto second = MusicData::item("song", "2", "歌曲二", "歌手", "qq");
+    const auto first = MusicData::item("song", "1", "歌曲一", "歌手", provider);
+    const auto second = MusicData::item("song", "2", "歌曲二", "歌手", provider);
     host.fixture = [&](QString route, QJsonObject parameters) {
         QJsonValue value;
-        if (route.endsWith("/subscriptionStatus")) {
+        if (route.endsWith("/likedState")) {
+            const auto id = parameters["args"].toArray().at(0).toArray().at(0).toString();
+            value = QJsonObject{{id, id == "1" ? "subscribed" : "not-subscribed"}};
+        } else if (route.endsWith("/subscriptionStatus")) {
             value = parameters["args"].toArray().at(1) == "1" ? "subscribed" : "not-subscribed";
         } else if (route.endsWith("/mutate")) {
             value = QJsonObject{{"liked", true}};
@@ -148,7 +205,7 @@ bool checkQQPlaybackLikes(const QString &root) {
     music.player.changed();
     if (!waitFor([&] { return music.songLiked(second).has_value(); }) ||
         music.songLiked(second).value_or(true)) {
-        qCritical() << "QQ old track response replaced current heart";
+        qCritical() << "Stale track response replaced current heart";
         return false;
     }
     music.subscriptionStates.clear();
@@ -158,7 +215,7 @@ bool checkQQPlaybackLikes(const QString &root) {
     music.player.changed();
     music.like(second);
     if (!waitFor([&] { return !music.writeLoading; }) || !music.songLiked(second).value_or(false)) {
-        qCritical() << "QQ stale status read replaced successful like";
+        qCritical() << "Stale status read replaced successful like";
         return false;
     }
     return true;
@@ -169,6 +226,20 @@ bool checkQQPlaybackLikes(const QString &root) {
 bool runNativeSessionChecks(const QString &root, const QString &audioURL);
 
 bool runNativeMusicChecks(const QString &root) {
+    if (!checkArtistSongPages(root)) {
+        return false;
+    }
+    QStringList remoteProviders;
+    for (const auto &id : ProviderRegistry::instance().ids()) {
+        if (id != "local" && id != "siren") {
+            remoteProviders.append(id);
+        }
+    }
+    if (remoteProviders.isEmpty()) {
+        qInfo() << "Native online music checks skipped: no music source plugin installed";
+        return true;
+    }
+    testProvider = remoteProviders.first();
     QFile file(root + "/slots.json");
     if (!file.open(QIODevice::ReadOnly)) {
         return false;
@@ -185,6 +256,8 @@ bool runNativeMusicChecks(const QString &root) {
     int smsRequests = 0;
     int captchaLogins = 0;
     bool loginParametersValid = true;
+    int playbackRouteCount = 0;
+    int trialPlaybackFrom = -1;
     // 只保留核心业务所需的最小离线响应，不模拟未覆盖的边缘路由。
     host.fixture = [&](QString route, QJsonObject parameters) {
         const auto args = parameters.value("args").toArray();
@@ -205,27 +278,44 @@ bool runNativeMusicChecks(const QString &root) {
             }
             value = songs;
         } else if (route.endsWith("/playback") || route.endsWith("/preview")) {
-            value =
-                QJsonObject{{"url", audioURL}, {"level", "exhigh"}, {"preview", route.endsWith("/preview")}};
+            const bool isPlaybackRoute = route.endsWith("/playback");
+            bool trial = !isPlaybackRoute;
+            if (isPlaybackRoute) {
+                trial = trialPlaybackFrom >= 0 && playbackRouteCount >= trialPlaybackFrom;
+                ++playbackRouteCount;
+            }
+            value = QJsonObject{{"url", audioURL}, {"level", "exhigh"}, {"preview", trial}};
         } else if (route.endsWith("/account")) {
-            value = QJsonArray{"42", "本地账号"};
+            value = QJsonObject{{"uid", "42"}, {"nickname", "本地账号"}};
+        } else if (route.endsWith("/likedState")) {
+            QJsonObject states;
+            for (const auto &id : args.at(0).toArray()) {
+                states[id.toString()] = "subscribed";
+            }
+            value = states;
         } else if (route.endsWith("/likedIDs")) {
             value = QJsonArray{"1", "missing", "2"};
         } else if (route.endsWith("/userPlaylists")) {
             auto owned = MusicData::item("playlist", "8", "本人歌单");
             owned["creatorID"] = "42";
             value = QJsonObject{{"items", QJsonArray{owned}}, {"rawCount", 1}, {"more", false}};
-        } else if (route == "/captcha/sent") {
+        } else if (route.endsWith("/loginSms")) {
             ++smsRequests;
-            loginParametersValid &= parameters == QJsonObject{{"phone", "13800000000"}, {"ctcode", "86"}};
+            loginParametersValid &= args == QJsonArray{"13800000000"};
             return QJsonObject{{"body", QJsonObject{{"code", 200}, {"data", true}}}};
-        } else if (route == "/login/cellphone") {
+        } else if (route.endsWith("/loginSubmit")) {
             ++captchaLogins;
-            loginParametersValid &=
-                parameters ==
-                QJsonObject{{"phone", "13800000000"}, {"captcha", "123456"}, {"countrycode", "86"}};
+            loginParametersValid &= args == QJsonArray{"13800000000", "123456"};
             return QJsonObject{{"body", QJsonObject{{"code", 200}}},
                                {"cookies", QJsonArray{"MUSIC_U=fixture-native"}}};
+        } else if (route.endsWith("/discover")) {
+            value = QJsonObject{
+                {"items", QJsonArray{MusicData::item("playlist", "8", "原生推荐")}},
+                {"rawCount", 1},
+                {"more", false},
+            };
+        } else if (route.endsWith("/suggest")) {
+            value = QJsonArray{"原生建议"};
         } else if (route == "/personalized") {
             return QJsonObject{
                 {"body", QJsonObject{{"code", 200},
@@ -247,6 +337,12 @@ bool runNativeMusicChecks(const QString &root) {
     };
 
     // === 测试 1: 基础选择 ===
+    check(MusicPlayer::sourceQuality(testProvider, QJsonObject{{"url", "https://x/a.mp3"}, {"tier", "hires"}}) ==
+              "hires",
+          "plugin tier wins over legacy fields");
+    check(MusicPlayer::sourceQuality(testProvider, QJsonObject{{"url", "https://x/a.flac"}, {"level", "lossless"}}) ==
+              "lossless",
+          "legacy level fallback still resolves");
     library.choose({});
     check(library.current.isEmpty() && !library.detailLoading, "empty selection does not load metadata");
 
@@ -283,6 +379,33 @@ bool runNativeMusicChecks(const QString &root) {
 
     library.player.stop();
 
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS) || defined(Q_OS_WIN)
+    // 当前曲目正常播放、下一首返回试听时，不得建立过渡。
+    host.setAppleTransitionPreparation(AppleTransitionPreparation::WaitingForPlayback);
+    playbackRouteCount = 0;
+    trialPlaybackFrom = 1;
+    library.player.play(queue.first().toObject(), queue);
+    check(waitFor([&] { return !library.player.loading; }), "full playback starts");
+    const auto playbackStarted = waitFor([&] {
+        library.player.tick(0, true);
+        return library.player.state["playing"].toBool() && !library.player.state["buffering"].toBool();
+    });
+    check(playbackStarted, "full playback reaches playing state");
+    check(waitFor([&] {
+              library.player.tick(0, true);
+              return playbackRouteCount >= 2;
+          }),
+          "next source is resolved");
+    waitFor([&] { return false; }, 150);
+    const auto audio = host.playbackSnapshot();
+    check(playbackStarted &&
+              audio["transitionPreparation"].toInt() == int(AppleTransitionPreparation::Natural) &&
+              !audio.contains("transitionKind"),
+          "trial next track must not create a transition");
+    trialPlaybackFrom = -1;
+    library.player.stop();
+#endif
+
     // === 测试 4: 搜索功能 ===
     library.search("测试");
     check(waitFor([&] { return !library.searchLoading; }), "search completes");
@@ -311,13 +434,17 @@ bool runNativeMusicChecks(const QString &root) {
     library.captchaLogin("13800000000", "invalid-code");
     check(captchaLogins == 0, "invalid captcha does not attempt login");
     library.captchaLogin("13800000000", "123456");
+    const auto cancelEpoch = host.epoch;
     library.cancelLogin();
+    check(host.epoch > cancelEpoch, "login reset bumps credential epoch");
     library.loginStatus = "cancelled-login";
     check(waitFor([&] { return captchaLogins == 1; }), "cancelled captcha request returns");
     check(library.uid.isEmpty() && library.loginStatus == "cancelled-login" && !host.authenticated(),
           "cancelled captcha response cannot log in or accept cookies");
+    const auto loginEpoch = host.epoch;
     library.captchaLogin("13800000000", "123456");
     check(waitFor([&] { return !library.accountLoading; }), "login completes");
+    check(host.epoch > loginEpoch, "login success bumps credential epoch");
     check(captchaLogins == 2 && loginParametersValid, "SMS login uses upstream parameters without password");
     check(library.uid == "42", "login sets uid");
 
@@ -334,12 +461,14 @@ bool runNativeMusicChecks(const QString &root) {
 
     // === 测试 8: 平台切换 ===
     const QString initialProvider = library.provider;
-    library.switchProvider("qq");
-    check(library.provider == "qq", "provider switches to qq");
-    check(library.player.queue.isEmpty(), "provider switch clears queue");
-
-    library.switchProvider("kugou");
-    check(library.provider == "kugou", "provider switches to kugou");
+    for (const auto &id : remoteProviders) {
+        if (id == initialProvider) {
+            continue;
+        }
+        library.switchProvider(id);
+        check(library.provider == id, "provider switches to installed source");
+        check(library.player.queue.isEmpty(), "provider switch clears queue");
+    }
 
     library.switchProvider(initialProvider);
     check(library.provider == initialProvider, "provider restores");
@@ -375,8 +504,16 @@ bool runNativeMusicChecks(const QString &root) {
     check(normalizedSong.contains("id") && normalizedSong.contains("title"), "music data structure");
 
     library.player.stop();
-    ok &= checkPlaybackLikes(root);
-    ok &= checkQQPlaybackLikes(root);
+    ok &= checkPlaybackLikes(root, testProvider);
+    for (const auto &id : remoteProviders) {
+        if (ProviderRegistry::instance()
+                .descriptor(id)["operations"]
+                .toObject()["subscriptionStatus"]
+                .toBool()) {
+            ok &= checkSubscriptionPlaybackLikes(root, id);
+            break;
+        }
+    }
     ok &= runNativeSessionChecks(root, audioURL);
     host.shutdown();
     qInfo() << "Native music core tests:" << testCount << (ok ? "passed" : "FAILED");

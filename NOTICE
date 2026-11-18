@@ -67,11 +67,11 @@ SOFTWARE.
 
 当前使用 https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced 发布的锁定原包；网易云接口、加密、账号与请求实现不作修改。缓存和限流由应用外层处理。此前使用的 @neteaseapireborn/api 4.29.7 已替换；下方保留 Binaryify 的原始版权许可，以及 YesPlayMusic 账号请求函数的来源记录。版本和完整性记录于 MusicBridge/package-lock.json 与 MusicBridge/upstream/source.json；运行依赖与许可证随分享包保留。
 
-### QQ Music API / @yakult-green-tea/qq-music-api 3.3.1
+### QQ Music API / @yakult-green-tea/qq-music-api 3.3.5
 
 来源：https://github.com/yakult-green-tea/qq-music-api ，基于 Rain120/qq-music-api 的社区维护 fork。保持锁定包的 QQ / 微信扫码、账号和播放协议原样，由本机 Node 子进程承载。仅暴露音乐核心路由，内部 HTTP 服务仅监听随机回环端口并验证随机桥接密钥。原始认证记录通过私有进程管道交由系统凭据库保存，不进入脚本界面、文件或日志。完整 MIT LICENSE 与 ATTRIBUTION.md 随该 npm 包保留。
 
-榜单适配沿用原包 UCommon HTTP 传输及 GetAll / GetDetail 操作，使用平台返回的周期参数，修正旧 getRanks 控制器把日榜周期转为周数的问题；未修改上游包文件。
+3.3.5 起榜单改走上游 `/recommend/toplists` 与 `/recommend/toplist`，周期参数由平台回包直接透传；不再通过 UCommon 自行拼装 GetAll / GetDetail，也未修改上游包文件。
 
 ```text
 The MIT License (MIT)
@@ -258,3 +258,14 @@ MusicBridge/lyrics-format.cjs 移植 LyricsKit 的 LyricsCore LRC 与 LyricsServ
 TagLib 2.1.1，按 MPL-1.1 使用，源码未修改。来源：https://github.com/taglib/taglib/tree/v2.1.1 。
 utfcpp 4.0.6，BSL-1.0，源码未修改。来源：https://github.com/nemtrif/utfcpp/tree/v4.0.6 。
 固定版本完整源码包、许可证及 SHA-256 来源记录保留在 vendor/taglib 与 vendor/utfcpp，并随应用分发。
+
+## 原生崩溃诊断（Windows / macOS）
+
+Crashpad 使用 getsentry/crashpad 的 CMake 分支，锁定提交见 scripts/crash-tools.json，
+按 Apache-2.0 分发，保留 mini_chromium、mpack、zlib 的独立许可证。
+来源：https://github.com/getsentry/crashpad 。第三方源码不作修改。
+离线栈解析使用 rust-minidump/minidump-stackwalk 0.27.0（MIT），
+构建时符号生成使用 mozilla/dump_syms 2.3.9（MIT / Apache-2.0）。
+来源：https://github.com/rust-minidump/rust-minidump 和 https://github.com/mozilla/dump_syms 。
+工具发布归档及校验值锁定于 scripts/crash-tools.json，许可证随包保留在 crash-tools/licenses
+（macOS 为 Contents/Resources/CrashDiagnostics-Licenses）。

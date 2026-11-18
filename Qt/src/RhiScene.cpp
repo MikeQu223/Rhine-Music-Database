@@ -1,9 +1,11 @@
 #include <QtGlobal>
 #include <QLibraryInfo>
 #include "RhiScene.h"
+#include "CrashDiagnostics.h"
 #ifdef Q_OS_DARWIN
 #include "render/MetalFxBackend.h"
 #include "render/MetalFramePresentation.h"
+#include "render/FrameGenerationHistory.h"
 #include "render/MetalTemporalResolve.h"
 #endif
 #include "render/CoverPrepBudget.h"
@@ -14,6 +16,7 @@
 #include "render/SceneTransformHistory.h"
 #endif
 #include "render/MotionPass.h"
+#include "render/RenderModePolicy.h"
 #include "render/RenderPolicy.h"
 #include "render/ScenePostProcess.h"
 #include "render/VulkanResourceProbe.h"
@@ -72,6 +75,9 @@ struct Globals {
     PackedMatrix emitterInverse;
     QVector4D opticalLight;
     QVector4D emissionColor;
+    // 法线图集的实际位宽（x=1 表示 RGBA8）。着色器据此决定是否乘回 4.0/0.25，
+    // 与 C++ 的纹理格式共用同一个运行时判定，不再依赖编译宏。
+    QVector4D normalParams;
 #if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
     PackedMatrix previousViewProjection;
     PackedMatrix currentViewProjection;
@@ -89,9 +95,9 @@ struct Instance {
 #endif
 };
 #if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
-static_assert(sizeof(Globals) == 832);
+static_assert(sizeof(Globals) == 848);
 #else
-static_assert(sizeof(Globals) == 704);
+static_assert(sizeof(Globals) == 720);
 #endif
 static_assert(sizeof(Surface) == 128);
 #if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
@@ -335,6 +341,8 @@ class Renderer {
     QRhiSampler *volume = nullptr;
     /// 实际建出来的表面图集格式（ETC2 RGB8 / BC7 / RGBA8），只用于 TEXDIAG 诊断。
     QString surfaceAtlasFormat = QStringLiteral("RGBA8");
+    /// 法线图集按文件字节数判定为 RGBA8；传给着色器决定是否乘回 4.0/0.25。
+    bool normalAtlasRgba8 = false;
     Target color, target;
     QRhiResourceUpdateBatch *updates = nullptr;
     QHash<QString, QRhiGraphicsPipeline *> pipelines;
@@ -806,20 +814,9 @@ class Renderer {
                    "262144 (RGBA16F). Re-bake with scripts/bake-archive-lighting.py.",
                    static_cast<long long>(normalByteCount));
         }
-        // 纹理格式跟着文件走，但着色器是按宏解码的（RGBA8 要乘回 4.0 / 0.25）。
-        // 两者不一致只会偏色、不会崩，所以用警告而不是 qFatal——崩溃比偏色更糟。
-#if defined(RHINE_NORMAL_RGBA8)
-        constexpr bool shaderNormalRgba8 = true;
-#else
-        constexpr bool shaderNormalRgba8 = false;
-#endif
-        if (shaderNormalRgba8 != normalRgba8) {
-            qWarning("法线图集位宽与着色器宏不一致：文件 %lld 字节（%s），着色器按 %s 解码，"
-                     "画面颜色会偏。重烘焙时把 RHINE_BAKE_NORMAL_RGBA8 与 CMake 的 "
-                     "RHINE_ANDROID_NORMAL_RGBA8 设成同一个值。",
-                     static_cast<long long>(normalByteCount), normalRgba8 ? "RGBA8" : "RGBA16F",
-                     shaderNormalRgba8 ? "RGBA8" : "RGBA16F");
-        }
+        // 纹理格式与着色器解码都按文件字节数走：这里建对应格式的纹理，
+        // normalParams 把同一判定传给着色器，不再依赖编译宏。
+        normalAtlasRgba8 = normalRgba8;
         normalAtlas = texture({128, 256}, normalRgba8 ? QRhiTexture::RGBA8 : QRhiTexture::RGBA16F);
         upload(normalAtlas, normalBytes);
         white = texture({1, 1}, QRhiTexture::RGBA8);
@@ -1287,8 +1284,9 @@ class Renderer {
     }
     /** 仅分配颜色和深度；烘焙增强不创建实时透射、阴影、AO、景深或光晕目标。 */
     void resize(QSize value, bool needsReadbackTarget) {
+        const int maxTextureDimension = rhi->resourceLimit(QRhi::TextureSizeMax);
 #ifdef Q_OS_DARWIN
-        const auto nextSize = settings.renderSize(value);
+        const auto nextSize = RhineRender::fitRenderTextureSize(settings.renderSize(value), maxTextureDimension);
         const bool wantMotion =
             settings.temporal() || settings.frameGeneration();
         const bool wantDepthStore = wantMotion;
@@ -1298,9 +1296,11 @@ class Renderer {
         motionTarget = wantMotion;
         sizedDepthStore = wantDepthStore;
 #else
-        const auto nextSize = postProcess->renderSize(value);
+        const auto nextSize =
+            RhineRender::fitRenderTextureSize(postProcess->renderSize(value), maxTextureDimension);
         const int nextSamples = postProcess->samples();
-        const auto nextMode = qEnvironmentVariable("RHINE_AA_MODE");
+        const auto nextMode =
+            RhineRender::currentRenderMode(qEnvironmentVariable("RHINE_AA_MODE"), false).aaMode;
         // A05：只有确实有人读时才挂运动矢量附件。
         //   · 多采样目标本来就没有第二个 draw buffer 可写，维持原来的让路策略；
         //   · 单采样时看配置（AA 模式 + FG 开关）而不是 FSR 运行期可用性，否则能力
@@ -1425,12 +1425,14 @@ class Renderer {
                 {float(size.width()), float(size.height()), theme, f["viewer"].toBool() ? 1.f : 0.f},
                 {n(f, "near"), n(f, "far"), n(f, "detail"), f["reference"].toBool() ? 1.f : 0.f},
                 rhi->clipSpaceCorrMatrix(),
-                {rhi->isYUpInFramebuffer() ? 1.f : 0.f, 0, 0, 0},
+                {rhi->isYUpInFramebuffer() ? 1.f : 0.f, n(f, "songPanelTop"), n(f, "songPanelTransition"),
+                 f["mobileHud"].toBool() ? 1.f : 0.f},
                 emitter,
                 emitter.inverted(),
                 // 查看封面页不再叠加原版像素，光照强度无需再压低，否则整页偏暗发平。
                 {lightPower, 1.f, 0.62f, 0.f},
-                {1.f, 0.72f, 0.38f, 1.f}};
+                {1.f, 0.72f, 0.38f, 1.f},
+                {normalAtlasRgba8 ? 1.f : 0.f, 0.f, 0.f, 0.f}};
     }
     QVector3D dark(QString name) {
         static const QHash<QString, uint32_t> colors = {
@@ -2131,7 +2133,7 @@ class Renderer {
         config.arenaFallback = arenaFallback;
         config.directWriteFallback = directWriteFallback;
         config.poolFallback = poolFallback;
-        config.aaMode = qEnvironmentVariable("RHINE_AA_MODE");
+        config.aaMode = RhineRender::currentRenderMode(qEnvironmentVariable("RHINE_AA_MODE"), false).aaMode;
         config.host = qEnvironmentVariableIsSet("RHINE_FG_LAYER") ? QStringLiteral("FG 覆盖层")
                                                                   : QStringLiteral("QQuickRhiItem");
 #ifndef Q_OS_DARWIN
@@ -2320,7 +2322,14 @@ class Renderer {
 #if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
         // MRT：场景目标除颜色外还挂着运动矢量附件，必须为**每个**颜色附件声明 blend。
         // 只声明一个时 location=1 的写出会被静默丢弃（表现为运动矢量恒为 0）。
-        if (surfaceMrt) {
+#ifdef Q_OS_DARWIN
+        if (kind == "clearMotion") {
+            QRhiGraphicsPipeline::TargetBlend protectedColor;
+            protectedColor.colorWrite = {};
+            p->setTargetBlends({protectedColor, QRhiGraphicsPipeline::TargetBlend{}});
+        } else
+#endif
+            if (surfaceMrt) {
             p->setTargetBlends({b, QRhiGraphicsPipeline::TargetBlend{}});
         } else {
             p->setTargetBlends({b});
@@ -2358,7 +2367,7 @@ class Renderer {
                     5, QRhiShaderResourceBinding::FragmentStage, white, linear));
                 values.push_back(QRhiShaderResourceBinding::sampledTexture(
                     6, QRhiShaderResourceBinding::FragmentStage, normalAtlas, linear));
-            } else {
+            } else if (kind != "clearMotion") {
                 values.push_back(QRhiShaderResourceBinding::sampledTexture(
                     2, QRhiShaderResourceBinding::FragmentStage, color.texture, linear));
             }
@@ -2366,7 +2375,7 @@ class Renderer {
             create(layout);
             pipelineLayouts[kind] = layout;
         }
-        p->setSampleCount(geo ? sampleCount : 1);
+        p->setSampleCount(geo || kind == "clearMotion" ? sampleCount : 1);
         p->setShaderResourceBindings(pipelineLayouts[kind]);
         p->setRenderPassDescriptor(rp);
         create(p);
@@ -2560,7 +2569,8 @@ class Renderer {
                 theme = float(themes[i].toDouble());
             }
             // state.w 标记"被聚焦的主体"：详情页与查看封面页只有焦点唱片用玻璃壳与主光。
-            // 判断依据是 draw 的 id 与当前曲目 key 对应的装配体 id 是否匹配。
+            // 详情页背景卡与焦点卡一样是非实例化 draw，再按 musicSelected 收一次；
+            // 查看封面页只有一张卡，viewer 打开时直接放行。
             const bool hero = isFocusedSceneCard(draw, detailMode, viewerMode);
             value.state = {n(draw, "quality"), n(draw, "clarity"), theme, hero ? 1.f : 0.f};
 #ifdef Q_OS_LINUX
@@ -3388,7 +3398,9 @@ class Renderer {
             *frameInputs = inputs;
         }
 #else
-        RhineFg::publish(inputs);
+        // Linux 的后处理与插帧宿主共用本次 MRT 的深度和运动矢量。
+        motionInputs = inputs;
+        RhineFg::publish(motionInputs);
 #endif
 #endif
     }
@@ -3748,6 +3760,24 @@ class Renderer {
             }
         }
         cb->beginPass(color.rt, QColor::fromRgbF(background.x(), background.y(), background.z()), {1, 0});
+#ifdef Q_OS_DARWIN
+        if (motionTarget && frame["mobileHud"].toBool()) {
+            // beginPass 的同一清屏色也会落到速度附件；空白背景必须是零位移。
+            // 保持主颜色和深度不变，在当前 pass 内只归零第二个颜色附件。
+            auto &clearBinding = postBindings["clearMotion"];
+            if (!clearBinding) {
+                const auto stages =
+                    QRhiShaderResourceBinding::VertexStage | QRhiShaderResourceBinding::FragmentStage;
+                clearBinding = bindings({QRhiShaderResourceBinding::uniformBuffer(0, stages, globalBuffer)});
+            }
+            cb->setGraphicsPipeline(pipeline("clearMotion", clearBinding, color.rp));
+            cb->setShaderResources(clearBinding);
+            cb->setViewport({0, 0, float(size.width()), float(size.height())});
+            cb->draw(3);
+            ++drawCalls;
+        }
+#endif
+
 #ifdef Q_OS_LINUX
         const double dbgBuildMs = double(dbgClock.nsecsElapsed()) / 1e6;
         QElapsedTimer dbgRecordClock;
@@ -3886,6 +3916,7 @@ class ItemRenderer : public QQuickRhiItemRenderer {
     Engine *capabilityEngine = nullptr;
     bool hasOrigin = false;
     double lastOrigin = 0;
+    RhineRender::FrameGenerationHistory generationHistory;
     std::unique_ptr<RhineRender::MetalFramePresentation> presentation;
     bool sourceAnimating = false;
     bool capabilityKnown = false;
@@ -3912,6 +3943,7 @@ class ItemRenderer : public QQuickRhiItemRenderer {
         }
     }
     void synchronize(QQuickRhiItem *value) override {
+        CrashRenderScope diagnosticScope("scene.synchronize");
         // 同步耗时在所有平台都上报
         QElapsedTimer syncTimer;
         syncTimer.start();
@@ -3978,6 +4010,7 @@ class ItemRenderer : public QQuickRhiItemRenderer {
         }
     }
     void initialize(QRhiCommandBuffer *) override {
+        CrashRenderScope diagnosticScope("scene.initialize");
         if (renderer && renderer->rhi != rhi()) {
             renderer.reset();
 #ifdef Q_OS_DARWIN
@@ -3986,6 +4019,7 @@ class ItemRenderer : public QQuickRhiItemRenderer {
         }
     }
     void render(QRhiCommandBuffer *cb) override {
+        CrashRenderScope diagnosticScope("scene.render");
         if (qEnvironmentVariableIsSet("RHINE_DEBUG_DRAWS")) {
             std::fprintf(stderr, "scene item render empty=%d mode=%s time=%.2f\n", frame.isEmpty() ? 1 : 0,
                          qPrintable(frame["mode"].toString()), frame["time"].toDouble());
@@ -4023,8 +4057,7 @@ class ItemRenderer : public QQuickRhiItemRenderer {
         const auto previousPostDraws = renderer->postProcess->drawCalls;
 #endif
 #ifdef Q_OS_DARWIN
-        // 真实渲染只有 60Hz，可能整帧错过引擎的 temporalReset；坐标原点变化同样会让
-        // 实例 ID 重新编码，所以渲染线程再按 stats 自行复查一次，避免历史跨坐标系配对。
+        // 横屏沿用原有原点检测；手机额外隔离换曲、布局和封面变更的历史。
         const auto origin = frame.value("stats").toObject().value("coordinateOrigin");
         bool originReset = false;
         if (origin.isDouble()) {
@@ -4032,9 +4065,10 @@ class ItemRenderer : public QQuickRhiItemRenderer {
             lastOrigin = origin.toDouble();
             hasOrigin = true;
         }
-        const bool reset = frame.value("temporalReset").toBool() || originReset;
+        const bool contextReset = generationHistory.update(frame, item, cover.cacheKey());
+        const bool reset = frame.value("temporalReset").toBool() || originReset || contextReset;
         QJsonObject submitted = frame;
-        if (reset && !frame.value("temporalReset").toBool()) {
+        if (reset) {
             submitted["temporalReset"] = true;
         }
         const bool useGeneration =
@@ -4071,7 +4105,7 @@ class ItemRenderer : public QQuickRhiItemRenderer {
                 renderer->render(cb, submitted, renderTarget()->pixelSize(), item, cover, realTarget,
                                  musicTextures);
                 static const bool linkScaler = qEnvironmentVariable("RHINE_METAL_FG_LINK_SCALER") == "on";
-                presentation->generate(cb, backend->metalFxInputs,
+                presentation->generate(cb, backend->metalFxInputs, sourceAnimating,
                                        linkScaler && renderer->metalFx && renderer->metalFx->active()
                                            ? renderer->metalFx->nativeScaler()
                                            : nullptr);
@@ -4103,7 +4137,11 @@ class ItemRenderer : public QQuickRhiItemRenderer {
 #ifdef Q_OS_DARWIN
         QVariantMap presentationDetails;
         presentationDetails = presentation ? presentation->telemetry() : QVariantMap{};
-        presentationDetails.insert("fgWanted", renderer->settings.interpolation);
+        presentationDetails.insert("fgRequested", renderer->settings.interpolation);
+        presentationDetails.insert("fgWanted", renderer->settings.frameGeneration());
+        presentationDetails.insert("supersampling",
+                                   RhineRender::supersamplingEnabled(renderer->settings.renderPercent,
+                                                                     renderer->settings.supersample));
         backend->renderTelemetry.publish(renderer->size, renderer->viewSize, 1, renderer->implementation,
                                          true,
                                          {{"motionSource", renderer->motionTarget ? "main-mrt" : "none"},
@@ -4117,6 +4155,12 @@ class ItemRenderer : public QQuickRhiItemRenderer {
                                           { "compactInstances",
                                             renderer->compactInstances },
                                           {"presentation", presentationDetails}});
+#else
+        if (backend) {
+            backend->renderTelemetry.publish(renderer->size, renderer->viewSize, renderer->sampleCount,
+                                             renderer->postProcess->implementation(),
+                                             renderer->postProcess->active());
+        }
 #endif
         if (backend) {
             quint64 resources =
@@ -4188,7 +4232,7 @@ class ItemRenderer : public QQuickRhiItemRenderer {
                     backend,
                     [target = backend, presented = presentation->presented(),
                      interpolated = presentation->interpolated(), rendered = presentation->rendered(),
-                     available = presentation->supported(), wanted = renderer->settings.interpolation,
+                     available = presentation->supported(), wanted = renderer->settings.frameGeneration(),
                      active, depthReady = inputs.depth != nullptr,
                      motionVectorsReady = inputs.motionVectors != nullptr, renderSize = renderer->size,
                      displaySize = renderer->viewSize] {
@@ -4217,6 +4261,16 @@ void RhiScene::setEngine(Engine *value) {
     m_engine = value;
     if (value) {
         connect(value, &Engine::sceneUpdated, this, [this] { update(); });
+#ifdef Q_OS_DARWIN
+        connect(value, &Engine::stateChanged, this,
+                [this, wasIdle = value->performance().value("idle").toBool()]() mutable {
+                    const bool idle = m_engine->performance().value("idle").toBool();
+                    if (idle != wasIdle) {
+                        wasIdle = idle;
+                        update();
+                    }
+                });
+#endif
     }
     emit engineChanged();
     update();

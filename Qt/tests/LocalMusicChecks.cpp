@@ -1,8 +1,7 @@
 #include "LocalMusicLibrary.h"
 #include "MusicLibrary.h"
+#include "ProviderRegistry.h"
 #include "NativeHud.h"
-#include <QAudioBufferOutput>
-#include <QAudioBuffer>
 #include <QCoreApplication>
 #include <QDataStream>
 #include <QDir>
@@ -12,7 +11,6 @@
 #include <QGuiApplication>
 #include <QImage>
 #include <QJsonDocument>
-#include <QMediaDevices>
 #include <QTemporaryDir>
 #include <QThread>
 #include <QUrl>
@@ -45,7 +43,7 @@ QByteArray chunk(const char *name, QByteArray payload) {
     }
     return bytes;
 }
-/** 生成真实 PCM 与 RIFF INFO 标签，直接验证解析器和解码器，不依赖在线音乐或用户文件。 */
+/** 生成真实 PCM 与 RIFF INFO 标签，直接验证本地索引和标签解析，不依赖在线音乐或用户文件。 */
 QByteArray wave(QString title) {
     QByteArray format;
     QDataStream stream(&format, QIODevice::WriteOnly);
@@ -64,7 +62,7 @@ QByteArray wave(QString title) {
         QByteArray("WAVE") + chunk("fmt ", format) + chunk("LIST", info) + chunk("data", samples);
     return chunk("RIFF", body);
 }
-QJsonObject document(QString source = "netease") {
+QJsonObject document(QString source = "remote") {
     return {{"version", 1},
             {"source", source},
             {"timing", "line"},
@@ -74,51 +72,6 @@ QJsonObject document(QString source = "netease") {
                                  QJsonObject{{"startMs", 1000}, {"text", "two"}}}}};
 }
 }
-
-class AudioPlayerRegression {
-  public:
-    static bool decode(const QString &path) {
-        AudioPlayer audio;
-        audio.output.setVolume(0);
-        audio.enableDiagnostics(true);
-        const auto loaded = audio.load(QUrl::fromLocalFile(path).toString(), false, false, "local");
-        // 创建独立媒体会话
-        auto &capture = *audio.decodedOutput;
-        int frames = 0;
-        qint64 bufferPosition = -1;
-        bool nonzero = false;
-        QObject::connect(&capture, &QAudioBufferOutput::audioBufferReceived, &capture,
-                         [&](const QAudioBuffer &buffer) {
-                             frames += buffer.frameCount();
-                             bufferPosition = buffer.startTime() / 1000;
-                             const auto bytes = QByteArrayView(buffer.constData<char>(), buffer.byteCount());
-                             for (const auto byte : bytes) {
-                                 nonzero |= byte != 0;
-                             }
-                         });
-        const auto decoded =
-            loaded && waitFor([&] { return frames > 4000 && nonzero && audio.player->position() >= 200; });
-        const auto position = audio.player->position();
-        audio.control("pause");
-        const auto paused = audio.player->playbackState() == QMediaPlayer::PausedState;
-        const auto framesBeforeSeek = frames;
-        bufferPosition = -1;
-        audio.control("seek", 1800);
-        audio.control("resume");
-        const auto seeked = waitFor([&] {
-            return frames > framesBeforeSeek && bufferPosition >= 1700 && audio.player->position() >= 1900;
-        });
-        // 在清理音源前验证实际编解码器
-        const auto diagnostic = audio.diagnosticState();
-        audio.control("stop");
-        qInfo() << "Local decoder: frames" << frames << "nonzero" << nonzero << "position" << position
-                << "seek buffer position" << bufferPosition;
-        const bool diagnosticDecoded =
-            diagnostic["decodedFrames"].toDouble() > 4000 && diagnostic["sampleRateHz"].toInt() > 0 &&
-            diagnostic["codec"].toInt(-1) >= 0 && diagnostic["decodedBytes"].toDouble() > 0;
-        return decoded && paused && seeked && diagnosticDecoded;
-    }
-};
 
 int main(int argc, char **argv) {
     qputenv("QT_MEDIA_BACKEND", "ffmpeg");
@@ -143,7 +96,6 @@ int main(int argc, char **argv) {
         check(!tracks.isEmpty(), "real directory contains valid tracks");
         int covers = 0;
         int lyrics = 0;
-        int decoded = 0;
         for (const auto &value : tracks) {
             const auto track = value.toObject();
             covers += !track["cover"].toString().isEmpty();
@@ -153,17 +105,12 @@ int main(int argc, char **argv) {
             check(track["duration"].toInt() > 0 && track["sampleRate"].toInt() > 0,
                   "real track has valid duration and sample rate");
             check(!real.search(track["title"].toString(), "song").isEmpty(), "real local title search");
-            if (!QMediaDevices::defaultAudioOutput().isNull()) {
-                const auto result = AudioPlayerRegression::decode(path);
-                check(result, qPrintable("decode " + QFileInfo(path).fileName()));
-                decoded += result;
-            }
         }
         real.rescan();
         check(waitFor([&] { return !real.busy; }, 120000) && real.songs() == tracks,
               "real incremental scan preserves index");
         qInfo() << "REAL LIBRARY tracks" << tracks.size() << "covers" << covers << "sidecars" << lyrics
-                << "decoded" << decoded << real.status;
+                << real.status;
         return ok ? 0 : 1;
     }
     QTemporaryDir temporary;
@@ -230,6 +177,13 @@ int main(int argc, char **argv) {
     QFile sceneContent(host.root + "/slots.json");
     check(sceneContent.open(QIODevice::ReadOnly), "load independent scene content");
     MusicLibrary music(&host, QJsonDocument::fromJson(sceneContent.readAll()).object());
+    QStringList remoteProviders;
+    for (const auto &id : ProviderRegistry::instance().ids()) {
+        if (id != "local" && id != "siren") {
+            remoteProviders.append(id);
+        }
+    }
+    const auto remoteProvider = remoteProviders.value(0);
     QStringList requests;
     bool missingFirstCover = false;
     host.fixture = [&](QString route, QJsonObject values) {
@@ -245,9 +199,9 @@ int main(int argc, char **argv) {
         QJsonValue response;
         if (operation == "search") {
             auto candidate = song;
-            candidate["provider"] = "netease";
+            candidate["provider"] = remoteProvider;
             candidate["id"] = "7";
-            candidate["cover"] = missingFirstCover && route.contains("netease")
+            candidate["cover"] = missingFirstCover && route.contains(remoteProvider)
                                      ? QString()
                                      : QStringLiteral("https://music.126.net/local-fixture.png");
             response = QJsonObject{{"items", QJsonArray{candidate}}};
@@ -257,7 +211,9 @@ int main(int argc, char **argv) {
         return QJsonObject{{"body", QJsonObject{{"code", 200}, {"value", response}}}};
     };
     music.switchProvider("local");
-    host.fixtureImage("https://music.126.net/local-fixture.png?param=1024y1024", cover);
+    QCoreApplication::processEvents();
+    requests.clear();
+    host.fixtureImage("https://music.126.net/local-fixture.png", cover);
     music.importLocal({root});
     check(waitFor([&] { return !music.local->busy; }), "library imports local fixture");
     music.search("Changed");
@@ -270,7 +226,7 @@ int main(int argc, char **argv) {
     check(requests.isEmpty() && !music.editable() && !music.canMutate("/like") && music.provider == "local",
           "local mode disables login, account, writes and official delivery");
     bool rejected = false;
-    host.requestJson("/native/netease/playback", {},
+    host.requestJson("/native/" + remoteProvider + "/playback", {},
                      [&](QJsonObject, QString error) { rejected = !error.isEmpty(); });
     check(rejected && requests.isEmpty(), "transport rejects online playback in local mode");
     const auto track = music.lists[0].first().toObject();
@@ -282,29 +238,33 @@ int main(int argc, char **argv) {
     music.player.stop();
     requests.clear();
     check(QFile::remove(root + "/album/one.lrc"), "remove sidecar lyrics");
-    missingFirstCover = true;
-    auto missing = song;
-    missing["cover"] = "";
-    missing["localLyrics"] = "";
-    QString matchedCover;
-    QObject::connect(&music.player.lyrics, &LyricsController::coverMatched, &music,
-                     [&](QString, QString url) { matchedCover = url; });
-    music.player.lyrics.load(missing);
-    check(waitFor([&] { return music.player.lyrics.status == "ready" && !matchedCover.isEmpty(); }) &&
-              requests.contains("/native/netease/search") && requests.contains("/native/netease/lyrics") &&
-              !matchedCover.isEmpty() && requests.contains("/native/qq/search"),
-          "missing local metadata reuses existing online recording and lyrics matching");
-    music.switchProvider("qq");
-    check(music.provider == "qq" && music.columns[1] == "喜欢的歌曲" && music.local->songs().size() == 1 &&
-              music.player.queue.isEmpty(),
-          "switch restores online columns and retains independent local index");
-    if (QMediaDevices::defaultAudioOutput().isNull()) {
-        qWarning() << "Local audio output unavailable; decoder/output check not verified";
-    } else {
-        check(AudioPlayerRegression::decode(first),
-              "real FFmpeg samples, pause and seek through local AudioPlayer");
+    if (!remoteProviders.isEmpty()) {
+        missingFirstCover = true;
+        auto missing = song;
+        missing["cover"] = "";
+        missing["localLyrics"] = "";
+        QString matchedCover;
+        QObject::connect(&music.player.lyrics, &LyricsController::coverMatched, &music,
+                         [&](QString, QString url) { matchedCover = url; });
+        music.player.lyrics.load(missing);
+        const bool fallbackReady =
+            waitFor([&] { return music.player.lyrics.status == "ready" && !matchedCover.isEmpty(); });
+        const auto remoteSearch = std::any_of(
+            requests.begin(), requests.end(), [](const QString &route) {
+                return route.startsWith("/native/") && route.endsWith("/search");
+            });
+        const auto remoteLyrics = std::any_of(
+            requests.begin(), requests.end(), [](const QString &route) {
+                return route.startsWith("/native/") && route.endsWith("/lyrics");
+            });
+        check(fallbackReady && remoteSearch && remoteLyrics && !matchedCover.isEmpty(),
+              "missing local metadata reuses existing online recording and lyrics matching");
+        music.switchProvider(remoteProvider);
+        check(music.provider == remoteProvider && !music.columns.isEmpty() &&
+                  music.local->songs().size() == 1 && music.player.queue.isEmpty(),
+              "switch restores online columns and retains independent local index");
     }
     host.shutdown();
-    qInfo() << "Local library, provider isolation, metadata priority and playback:" << ok;
+    qInfo() << "Local library, provider isolation and metadata priority:" << ok;
     return ok ? 0 : 1;
 }

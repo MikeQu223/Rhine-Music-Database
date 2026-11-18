@@ -1,0 +1,136 @@
+{
+    "schemaVersion": 2,
+    "id": "local",
+    "display": {
+        "name": "本地音乐",
+        "label": "LOCAL",
+        "detail": "文件夹管理 · 导入与索引 · 本地检索 · 播放",
+        "sessionLabel": "LOCAL LIBRARY",
+        "archiveIdPrefix": "LOCAL / ",
+        "order": 4,
+        "default": false
+    },
+    "capabilities": {
+        "search": true,
+        "suggest": false,
+        "resolveLink": false,
+        "detail": true,
+        "playback": true,
+        "preview": false,
+        "lyrics": true,
+        "account": false,
+        "login": false,
+        "vip": false,
+        "discover": false,
+        "categories": false,
+        "userPlaylists": false,
+        "likedSongs": false,
+        "likedAlbums": false,
+        "mv": false,
+        "officialPlayback": false,
+        "alternativeSource": false,
+        "mutations": {},
+        "playlistManagement": {}
+    },
+    "library": {
+        "columns": [
+            "本地检索",
+            "全部歌曲",
+            "文件夹",
+            "本地专辑",
+            "本地歌手"
+        ],
+        "sourceOrder": [
+            0,
+            1,
+            2,
+            3,
+            4
+        ],
+        "lanes": 5,
+        "identityProviders": [],
+        "likedModel": "local",
+        "playlistNameMaxLength": 100,
+        "playlistEditableRule": "owned",
+        "dirIdRange": null
+    },
+    "quality": {
+        "default": "original",
+        "options": [
+            {
+                "id": "original",
+                "label": "本地文件",
+                "tier": "original"
+            }
+        ],
+        "aliases": {},
+        "descriptions": {
+            "original": {
+                "title": "本地文件",
+                "caption": "LOCAL FILE",
+                "detail": "播放本地文件，不经过在线平台",
+                "badge": ""
+            }
+        },
+        "featured": [],
+        "extras": [],
+        "labels": {
+            "standard": "标准",
+            "hq": "高品质 / HQ",
+            "lossless": "无损",
+            "sq": "无损 / SQ",
+            "hires": "高解析无损 / Hi-Res",
+            "master": "母带",
+            "original": "本地文件"
+        },
+        "localFilenameTiers": {
+            "[master]": "master",
+            "jymaster": "master",
+            "母带": "master",
+            "master quality": "master",
+            "[atmos]": "hires",
+            "[sky]": "hires",
+            "全景声": "hires",
+            "沉浸": "hires",
+            "dolby atmos": "hires",
+            "jyeffect": "hq",
+            "臻音": "hq"
+        }
+    },
+    "discover": {
+        "enabled": false,
+        "defaultTab": "",
+        "tabs": []
+    },
+    "lyrics": {
+        "sources": [
+            "local"
+        ],
+        "fallback": [],
+        "matchMode": "strict",
+        "rateLimitMs": 0,
+        "retryDelaysMs": []
+    },
+    "links": {
+        "parse": false,
+        "patterns": [],
+        "officialLabel": "本地音乐"
+    },
+    "strings": {
+        "loginHint": "本地曲库，无需登录",
+        "accountNote": "本地曲库，无需登录"
+    },
+    "search": {
+        "enabled": true,
+        "maxQueryLength": 100,
+        "suggest": false,
+        "parseLinks": false,
+        "linkPatterns": []
+    },
+    "operations": {
+        "search": true,
+        "detail": true,
+        "playback": true,
+        "lyrics": true
+    }
+}

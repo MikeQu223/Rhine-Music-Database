@@ -25,10 +25,12 @@ class MusicPlayer : public QObject {
     void clearUpcoming();
     void stop();
     void setQuality(const QString &value);
+    void refreshQualityPreference();
     void setMode(const QString &value);
     void setAlternative(bool enabled);
     void clearHistory();
-    void clearCaches();
+    QJsonObject clearPlayHistory();
+    void registerStorageOperations(StorageCoordinator &storage);
     QJsonObject playbackSnapshot() const;
     void applyPlaybackSnapshot();
     static QVector<QPair<QString, QString>> qualityOptions(const QString &provider);
@@ -72,6 +74,22 @@ class MusicPlayer : public QObject {
     bool remoteCommand(const QString &method, QJsonObject arguments = {});
     void recoverPlayback();
     MusicApi::Valid valid(quint64 generation);
-    void prepare(QJsonObject track, quint64 generation, bool reload = false);
+    void prepare(QJsonObject track, quint64 generation, bool reload = false, bool alreadyPlaying = false,
+                 const QJsonObject &adoptedAudio = {});
+    QString effectivePlaybackQuality() const;
+    void finishOnlinePlayback(const QJsonObject &track, const QJsonObject &audio);
     void fail(QString error);
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS) || defined(Q_OS_WIN)
+    bool m_appleTransitionsEnabled = false;
+    bool m_appleTransitionAttempted = false;
+    int m_appleNextIndex = -1;
+    quint64 m_appleTransitionRevision = 0;
+    int m_appleTransitionEpoch = -1;
+    QJsonObject m_appleNextAudio;
+    QString m_appleOutgoingKey;
+    QString m_appleIncomingKey;
+    void prepareAppleTransition();
+    void invalidateAppleTransition(bool keepSelection = false);
+    void commitAppleTransition();
+#endif
 };

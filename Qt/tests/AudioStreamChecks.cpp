@@ -114,12 +114,26 @@ class AudioPlayerRegression {
             return false;
         }
         AudioPlayer audio;
+#ifdef Q_OS_MACOS
+        audio.useApplePlayback = false;
+#endif
         // 只在测试中绕过 CDN 白名单与物理输出；真实 HTTP、解码、错误与健康检查仍走生产实现。
         // CI 枚举到声卡不代表设备能推进播放，改用解码缓冲输出；硬件消费由音频输出回归覆盖。
+        audio.pcmEnabled = false;
         audio.player->setAudioOutput(nullptr);
         audio.outputUnavailable = false;
         audio.recoveryPosition = -1;
         audio.enableDiagnostics(true);
+        int measuredSpectra = 0;
+        audio.spectrumChanged = [&](const QJsonArray &levels) {
+            for (auto value : levels) {
+                if (value.toDouble() > .1) {
+                    ++measuredSpectra;
+                    break;
+                }
+            }
+        };
+        audio.enableSpectrum(transientError);
         audio.progressClock.start();
         audio.playbackRequested = true;
         const QUrl source(QString("http://127.0.0.1:%1/tone.wav").arg(server.serverPort()));
@@ -173,6 +187,13 @@ class AudioPlayerRegression {
             bool ok = check(settled && ended == 1 && audio.ended == 1 && audio.error.isEmpty() &&
                                 !audio.pendingFailure && !audio.player->isPlaying(),
                             "A complete stream must drain to exactly one clean completion");
+            if (transientError) {
+                ok &= check(measuredSpectra > 0, "the production decoder supplies real non-silent FFT data "
+                                                 "while diagnostics stay enabled");
+                audio.enableSpectrum(false);
+                ok &= check(audio.player->audioBufferOutput() == audio.decodedOutput.get(),
+                            "disabling spectrum preserves decoder diagnostics");
+            }
             if (managed) {
                 const auto transport = audio.stream->diagnosticState();
                 ok &= check(audio.player->error() == QMediaPlayer::NoError &&
@@ -203,6 +224,9 @@ class AudioPlayerRegression {
 
     static bool pausedError() {
         AudioPlayer audio;
+#ifdef Q_OS_MACOS
+        audio.useApplePlayback = false;
+#endif
         audio.defaultOutput = [] { return QAudioDevice(); };
         audio.followDefaultOutput();
         audio.load("https://music.126.net/fixture.wav", false);

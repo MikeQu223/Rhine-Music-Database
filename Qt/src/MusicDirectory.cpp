@@ -1,6 +1,7 @@
 #include "MusicLibrary.h"
 #include "MusicData.h"
 #include "MusicDiscover.h"
+#include "ProviderRegistry.h"
 #include <QRegularExpression>
 #include <algorithm>
 #include <cmath>
@@ -50,6 +51,9 @@ void MusicLibrary::enterDirectory(QJsonObject value) {
     if (value["kind"] == "song") {
         choose(value);
         return;
+    }
+    if (directory) {
+        directory->playArtistWhenLoaded = false;
     }
     const auto token = ++m_directoryGeneration;
     ++m_selectionGeneration;
@@ -130,7 +134,14 @@ void MusicLibrary::enterDirectory(QJsonObject value) {
             directoryLoading = false;
             status = QStringLiteral("已打开：") + next->item["title"].toString();
             if (value["kind"] == "artist") {
+                if (supportsOperation("trackPage")) {
+                    next->artistSongsPaged = true;
+                    next->artistSongsMore = true;
+                }
                 showDirectoryInfo();
+                if (next->artistSongsPaged) {
+                    loadDirectoryPage();
+                }
             } else if (!next->songs.isEmpty()) {
                 next->index = 0;
                 choose(next->songs.first().toObject());
@@ -173,7 +184,9 @@ bool MusicLibrary::openDaily() {
         {"virtual", true},
         {"id", "daily"},
         {"key", provider + ":playlist:daily"},
-        {"title", provider == "qq" ? QStringLiteral("每日 30 首") : QStringLiteral("每日推荐")},
+        {"title", ProviderRegistry::instance().text(provider, "dailyTitle").isEmpty()
+                      ? QStringLiteral("每日推荐")
+                      : ProviderRegistry::instance().text(provider, "dailyTitle")},
         {"artist", providerName()},
         {"cover", songs.first().toObject()["cover"].toString()},
         {"description", QStringLiteral("来自发现音乐的每日推荐，打开后不会同步到账号歌单。")},
@@ -281,14 +294,14 @@ void MusicLibrary::observeDirectory(int physical) {
     if (movement != 0) {
         const auto target = folder->index + movement;
         const auto count = int(folder->songs.size());
-        const auto index = target >= count && folder->cursor < folder->ids.size()
+        const auto index = target >= count && (folder->artistSongsMore || folder->cursor < folder->ids.size())
                                ? target
                                : (target % count + count) % count;
         // 行拖动重新对齐锚点
         folder->anchor = (lane * 8 + row - index % 40 + 40) % 40;
         selectedPhysical = physical;
         selectedLane = lane;
-        if (target >= count && folder->cursor < folder->ids.size()) {
+        if (target >= count && (folder->artistSongsMore || folder->cursor < folder->ids.size())) {
             loadDirectoryPage(target);
         } else {
             // 选中槽位后不再通知
@@ -324,7 +337,7 @@ void MusicLibrary::navigateDirectory(int step, QString axis) {
         return;
     }
     const auto target = folder->index + step;
-    if (target >= folder->songs.size() && folder->cursor < folder->ids.size()) {
+    if (target >= folder->songs.size() && (folder->artistSongsMore || folder->cursor < folder->ids.size())) {
         loadDirectoryPage(target);
         return;
     }
@@ -342,7 +355,67 @@ void MusicLibrary::navigateDirectory(int step, QString axis) {
 /** 按完整 ID 分页补齐曲目，游标按已消费 ID 数推进，无法播放的条目不会重复请求。 */
 void MusicLibrary::loadDirectoryPage(std::optional<int> selectAfter) {
     const auto folder = directory;
-    if (!folder || directoryLoading || folder->cursor >= folder->ids.size()) {
+    if (!folder || directoryLoading) {
+        return;
+    }
+    if (folder->artistSongsPaged) {
+        if (!folder->artistSongsMore) {
+            return;
+        }
+        directoryLoading = true;
+        changed();
+        api.call(
+            "trackPage", {folder->item, folder->artistSongCursor},
+            [this, folder, selectAfter](MusicReply result) {
+                directoryLoading = false;
+                if (!result.ok()) {
+                    folder->playArtistWhenLoaded = false;
+                    status = QStringLiteral("歌曲读取失败：") + result.error;
+                    changed();
+                    return;
+                }
+                const auto page = result.value.toObject();
+                const auto rawCount = page["rawCount"].toInt();
+                if (page["incomplete"].toBool() || (page["more"].toBool() && rawCount <= 0)) {
+                    folder->playArtistWhenLoaded = false;
+                    status = QStringLiteral("歌曲分页未完成，请重试");
+                    changed();
+                    return;
+                }
+                const auto previousSongs = folder->artistSongCursor == 0 ? QJsonArray{} : folder->songs;
+                folder->updateSongs(MusicData::unique(previousSongs, page["items"].toArray()), folder->sortField);
+                if (folder->artistSongCursor == 0) {
+                    folder->ids = {};
+                    folder->cursor = 0;
+                }
+                folder->artistSongCursor += rawCount;
+                folder->artistSongsMore = page["more"].toBool() && rawCount > 0;
+                if (page.contains("total")) {
+                    folder->item["trackCount"] = page["total"];
+                }
+                if (directoryInfo) {
+                    tracks = folder->orderedSongs();
+                    current = folder->item;
+                }
+                if (folder->playArtistWhenLoaded && folder->artistSongsMore) {
+                    loadDirectoryPage();
+                } else if (folder->playArtistWhenLoaded) {
+                    folder->playArtistWhenLoaded = false;
+                    playDirectory();
+                } else if (selectAfter && *selectAfter >= 0 && *selectAfter < folder->songs.size()) {
+                    selectDirectory(*selectAfter);
+                } else if (selectAfter && folder->artistSongsMore) {
+                    loadDirectoryPage(selectAfter);
+                } else if (selectAfter && !folder->songs.isEmpty()) {
+                    selectDirectory(*selectAfter % folder->songs.size());
+                } else {
+                    changed();
+                }
+            },
+            valid(m_directoryGeneration, &m_directoryGeneration));
+        return;
+    }
+    if (folder->cursor >= folder->ids.size()) {
         return;
     }
     directoryLoading = true;
@@ -419,6 +492,7 @@ void MusicLibrary::leaveDirectory(bool restore) {
     if (!folder) {
         return;
     }
+    folder->playArtistWhenLoaded = false;
     ++m_directoryGeneration;
     directory = restore ? folder->parent : nullptr;
     directoryLoading = false;
@@ -452,7 +526,7 @@ void MusicLibrary::leaveDirectory(bool restore) {
 }
 
 /** 切歌沿用原物理选中与取出顺序，队列外曲目建立可返回的播放队列目录。 */
-void MusicLibrary::followPlayback(QJsonObject value) {
+void MusicLibrary::followPlayback(QJsonObject value, bool showDetails) {
     if (current.value("key") == value["key"] && current.value("id") == value["id"]) {
         return;
     }
@@ -462,6 +536,11 @@ void MusicLibrary::followPlayback(QJsonObject value) {
                               : frame["selected"].toInt(physicalSlots[selectedLane].value(0, -1));
     auto folder = directory;
     auto index = folder ? MusicData::indexOfId(folder->orderedSongs(), value["id"].toString()) : -1;
+    // 开启“切歌不打开详情”后，只有播放队列或已打开的曲目列表包含该曲目时才继续定位；
+    // 其他视图保持用户当前选择，不跳转，也不建立播放队列目录。显式打开详情仍会定位。
+    if (skipDetailOnSwitch && !showDetails && index < 0) {
+        return;
+    }
     if (index < 0) {
         ++m_directoryGeneration;
         directoryLoading = false;
@@ -496,8 +575,9 @@ void MusicLibrary::followPlayback(QJsonObject value) {
     index = MusicData::indexOfId(folder->orderedSongs(), value["id"].toString());
     const auto cell = (index + folder->anchor) % 40;
     const auto target = physicalSlots[cell / 8].value(cell % 8, -1);
-    selectDirectory(index, "detail", target == physical ? "row" : "", target == physical ? 8 : 1);
-    if (!frame.isEmpty()) {
+    const QString mode = showDetails ? QStringLiteral("detail") : frame["mode"].toString("archive");
+    selectDirectory(index, mode, target == physical ? "row" : "", target == physical ? 8 : 1);
+    if (showDetails && !frame.isEmpty()) {
         frame["mode"] = "detail";
     }
 }

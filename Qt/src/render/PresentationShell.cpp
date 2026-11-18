@@ -1,5 +1,6 @@
 #include <QtGlobal>
 #include "PresentationShell.h"
+#include "../CrashDiagnostics.h"
 #ifdef Q_OS_DARWIN
 #include "MetalFxBackend.h"
 #endif
@@ -9,6 +10,7 @@
 #include "../fg/FgConfig.h"
 #include "../fg/FgFrameTap.h"
 #include "PresentationWindow.h"
+#include "RenderModePolicy.h"
 #include "SceneLayerHost.h"
 
 #include "../Engine.h"
@@ -144,6 +146,7 @@ void PresentationShell::shutdown() {
     if (m_presenter) {
         m_presenter->release();
     }
+    m_rhi = nullptr;
     RhineFg::clear();
     m_backend->setWindow(nullptr);
     m_engine->rootContext()->setContextProperty(QStringLiteral("rhineHostWindow"),
@@ -166,6 +169,11 @@ bool PresentationShell::compiledIn() {
 }
 
 bool PresentationShell::supportsBackend(const QString &name) {
+#if defined(Q_OS_WIN) && RHINE_ENABLE_D3D12_BACKEND
+    if (name == QLatin1String("d3d12")) {
+        return true;
+    }
+#endif
 #if QT_CONFIG(metal)
     if (name == QLatin1String("metal")) {
         return true;
@@ -181,9 +189,11 @@ bool PresentationShell::supportsBackend(const QString &name) {
 
 bool PresentationShell::requested() const {
 #ifdef Q_OS_DARWIN
-    return m_backend->renderConfiguration.snapshot().interpolation;
+    return m_backend->renderConfiguration.snapshot().frameGeneration();
 #else
-    return FgConfig::fromEnvironment().enabled;
+    const bool frameGenerationRequested = FgConfig::fromEnvironment().enabled;
+    return RhineRender::currentRenderMode(qEnvironmentVariable("RHINE_AA_MODE"), frameGenerationRequested)
+        .frameGeneration;
 #endif
 }
 
@@ -477,15 +487,9 @@ bool PresentationShell::armFrameGeneration() {
     const RhineFg::FrameInputs &inputs = currentFrameInputs();
     if (!inputs.depth || !inputs.motionVectors || inputs.renderSize.isEmpty() ||
         inputs.displaySize.isEmpty()) {
+        m_fgArmed = false;
         return false;
     }
-    // 只有场景真的重渲了才有新的光流输入；相机参数（列表页与详情页 near/far 不同）
-    // 每帧都要写，纹理新鲜度用 serial 判断。
-    if (inputs.serial == m_lastTapSerial && m_fg->available()) {
-        return m_fgArmed;
-    }
-    m_lastTapSerial = inputs.serial;
-
     // 注意：resize() 会销毁/重建 GPU 资源并等设备空闲，必须在任何 QRhi 帧之外调用，
     // 不能在 beginOffscreenFrame 之后——那样会卡死在设备等待上。
     // SceneLayerHost 的场景纹理是 RGBA8（Qt 的渲染目标格式），FG 的三张主纹理格式必须一致，
@@ -495,8 +499,10 @@ bool PresentationShell::armFrameGeneration() {
     // 那是运动矢量/深度的分辨率，跟着 3D 渲染尺寸走，与设备像素比无关。
     const QSize fgDisplaySize = pixelSize().isEmpty() ? inputs.displaySize : pixelSize();
     if (!m_fg->resize(m_rhi, inputs.renderSize, fgDisplaySize, QRhiTexture::RGBA8)) {
+        m_fgArmed = false;
         return false;
     }
+    // 相机参数随内容变化，即使尺寸相同也要更新。
     m_fg->setCamera(inputs.nearPlane, inputs.farPlane, inputs.fovYRadians, inputs.frameTimeMs);
     m_fg->setJitter(float(inputs.jitter.x()), float(inputs.jitter.y()));
     if (inputs.reset) {
@@ -724,6 +730,7 @@ bool PresentationShell::composite(QRhiCommandBuffer *cb, QRhiTexture *base, QRhi
 
 bool PresentationShell::presentOne(const RhineRender::PresentationBackend::Frame &frame,
                                    bool allowInterpolation, bool *interpolatedOut) {
+    CrashRenderScope diagnosticScope("presentation.present");
     if (interpolatedOut) {
         *interpolatedOut = false;
     }
@@ -731,7 +738,10 @@ bool PresentationShell::presentOne(const RhineRender::PresentationBackend::Frame
     QRhiCommandBuffer *cb = nullptr;
     m_probe.restart();
     m_frameProbe.restart();
-    const QRhi::FrameOpResult begun = m_presenter->beginFrame(frame, &cb);
+    const QRhi::FrameOpResult begun = [&] {
+        CrashRenderScope stage("presentation.beginFrame");
+        return m_presenter->beginFrame(frame, &cb);
+    }();
     // A02：beginMs 的语义是"帧槽等待"——beginFrame 要等上一帧的命令缓冲/围栏归还。
     // EMA 只能看趋势，原始样本单独留在 slotWaitMs/分位环里作为证据。
     const double beginSample = tookMs();
@@ -755,7 +765,10 @@ bool PresentationShell::presentOne(const RhineRender::PresentationBackend::Frame
     const bool composed = composite(cb, base, m_host->overlayTexture(), frame.imageIndex);
     m_stats.compositeMs = blend(m_stats.compositeMs, tookMs());
     m_probe.restart();
-    const bool presented = m_presenter->endFrame(frame, composed);
+    const bool presented = [&] {
+        CrashRenderScope stage("presentation.endFrame");
+        return m_presenter->endFrame(frame, composed);
+    }();
     // A02：endMs 的语义是"离屏收尾"——只做提交与呈现，没有读回时不应有同步等待。
     const double endSample = tookMs();
     m_stats.endMs = blend(m_stats.endMs, endSample);
@@ -797,6 +810,7 @@ bool PresentationShell::presentOne(const RhineRender::PresentationBackend::Frame
 }
 
 void PresentationShell::step() {
+    CrashRenderScope diagnosticScope("presentation.step");
 #ifdef Q_OS_IOS
     if (QGuiApplication::applicationState() != Qt::ApplicationActive) {
         return;
@@ -834,6 +848,14 @@ void PresentationShell::step() {
     }
     const bool idle = m_backend->performance().value(QStringLiteral("idle")).toBool();
     const bool interpolationWanted = requested();
+    if (!interpolationWanted && m_fg) {
+        // 降回原生倍率后，第一帧应重建历史，避免和进入超采样前的旧画面插值。
+        m_fg->requestReset();
+        m_fgArmed = false;
+    }
+    // Vulkan and D3D12 both need the engine-driven render cadence, including
+    // polling for completed asynchronous model/texture uploads.
+    const bool engineDriven = m_backendName != QLatin1String("metal");
     syncSizes();
 
     if (!m_host->resumeGraphics()) {
@@ -873,7 +895,7 @@ void PresentationShell::step() {
     const bool contentAdvanced = contentOnly
                                      ? (engineHud != m_lastEngineHud || engineScene != m_lastEngineScene)
                                      : (engineSteps != m_lastEngineSteps);
-    const bool engineAdvanced = m_backendName == "vulkan" && contentAdvanced;
+    const bool engineAdvanced = engineDriven && contentAdvanced;
     // 重渲已经由内容代次剔除，但"上屏"仍然每步都做：合成一次缓存纹理很便宜，而把
     // 上屏也一起砍掉会让 presented 从 46/s 掉到 31/s（实测），用户看到的出帧反而更少。
     // RHINE_PRESENT_ALWAYS=0 可退回"没有新内容就不上屏"的省电行为。
@@ -885,12 +907,12 @@ void PresentationShell::step() {
          !m_pendingRealFrame) {
 #else
     const auto engineSteps = m_backend->performance().value(QStringLiteral("steps")).toULongLong();
-    const bool engineAdvanced = m_backendName == "vulkan" && engineSteps != m_lastEngineSteps;
+    const bool engineAdvanced = engineDriven && engineSteps != m_lastEngineSteps;
     if (!m_host->contentDirty() && !engineAdvanced && !m_forcePresent && !m_pendingRealFrame) {
 #endif
         ++m_skippedSteps;
         publishStats(false);
-        if (m_backendName == "vulkan") {
+        if (engineDriven) {
 #ifdef Q_OS_LINUX
             // 看门狗：连续跳过太久说明可能有人漏标脏，强制补渲一次把画面拉回来。
             if (++m_consecutiveSkips >= kSkipWatchdogSteps) {
@@ -940,9 +962,6 @@ void PresentationShell::step() {
         return;
     }
 
-    if (m_backendName == "vulkan") {
-        armFrameGeneration();
-    }
     RhineRender::PresentationBackend::Frame frame;
     m_probe.start();
     const auto acquired = m_presenter->acquire(&frame);
@@ -999,6 +1018,7 @@ void PresentationShell::step() {
 #endif
     const auto previousSceneFrames = m_host->sceneRenderCount();
     const auto previousOverlayFrames = m_host->overlayRenderCount();
+    const auto previousInputSerial = currentFrameInputs().serial;
     const bool sceneRendered = m_host->renderFrame();
     m_stats.sceneMs = blend(m_stats.sceneMs, tookMs());
     // A02：QML 场景层/UI 层每次真正渲染都是一次 QQuickRenderControl 的 beginFrame/endFrame。
@@ -1018,10 +1038,10 @@ void PresentationShell::step() {
     bool interpolated = false;
     // 重建后的前两帧只呈现真实帧：那时 QML 可能还在按旧尺寸排版、交换链也是全新的，
     // 跨尺寸插出来的帧就是满屏错色（改窗口大小时"闪一下"的来源）。
-    // 在离屏提交结束后读取这一帧输入；UI 单独更新不能再次插值同一帧场景。
+    // 离屏提交结束后，从刚完成的场景读取尺寸和输入。倍率变动时旧帧的尺寸可能不同。
     const bool interpolationAllowed = newScene && !idle && interpolationWanted &&
-                                      m_framesSinceRecreate >= 2 &&
-                                      (m_backendName == "vulkan" || armFrameGeneration());
+                                      currentFrameInputs().serial != previousInputSerial &&
+                                      m_framesSinceRecreate >= 2 && armFrameGeneration();
     if (!presentOne(frame, interpolationAllowed, &interpolated)) {
         qWarning().noquote() << "FG: present 失败" << m_presenter->lastError();
         m_needRecreate = true;
@@ -1035,7 +1055,7 @@ void PresentationShell::step() {
     m_forcePresent = false;
     reportStats();
     // 新更新和待呈现的真实帧继续排队；其余情况等待下一次内容更新。
-    if (m_backendName == "vulkan") {
+    if (engineDriven) {
         // 尾部立刻自续：关掉 vsync 时这个应用要的是"能跑多快跑多快"，限速会把帧率
         // 钉死在刷新率上，与设计意图相反。
         // 空转（同一画面反复提交）不再靠限速解决，而是靠 SceneLayerHost 的脏帧剔除：
@@ -1389,6 +1409,9 @@ bool PresentationShell::start() {
     // iOS 切后台时窗口可以仍是 visible；必须按应用状态停掉 GPU 提交并释放离屏资源。
     connect(qGuiApp, &QGuiApplication::applicationStateChanged, this,
             [this, releaseBackgroundGraphics](Qt::ApplicationState state) {
+                if (m_stopped) {
+                    return;
+                }
                 const bool active = state == Qt::ApplicationActive;
                 if (m_backend) {
                     m_backend->setVisible(active);
@@ -1404,7 +1427,9 @@ bool PresentationShell::start() {
                     m_startupProbe.reset();
                     m_timer->stop();
                     // 同步释放，不能依赖进入后台后可能不再执行的定时器。
-                    releaseBackgroundGraphics();
+                    if (state == Qt::ApplicationSuspended) {
+                        releaseBackgroundGraphics();
+                    }
                 }
             });
 #endif
