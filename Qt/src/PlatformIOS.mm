@@ -1,10 +1,16 @@
 #include "AppIdentity.h"
 #include "Host.h"
+#include "PlatformFeatures.h"
 #include <QFileInfo>
 #import <AVFAudio/AVFAudio.h>
 #import <MediaPlayer/MediaPlayer.h>
 #import <Security/Security.h>
 #import <UIKit/UIKit.h>
+
+bool PlatformFeatures::discRotationAvailable() {
+    static const bool available = [UIDevice currentDevice].userInterfaceIdiom != UIUserInterfaceIdiomPhone;
+    return available;
+}
 
 namespace {
 static NSString *const credentialAccount = @"credentials";

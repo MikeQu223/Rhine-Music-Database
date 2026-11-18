@@ -2,6 +2,7 @@
 #include "fg/FgConfig.h"
 #include "GraphicsBackend.h"
 #include "NativeHud.h"
+#include "PlatformFeatures.h"
 #include "MusicData.h"
 #include "MusicDiscover.h"
 #include "ProviderRegistry.h"
@@ -47,7 +48,7 @@ NativeHud::NativeHud(Host *host, Glyphs *glyphs, MusicLibrary *music, HudSceneAc
 #else
     vsync = host->preference("vsync") != "off";
 #endif
-    discRotation = host->preference("disc-rotation") == "on";
+    discRotation = PlatformFeatures::discRotationAvailable() && host->preference("disc-rotation") == "on";
     m_boxedPlayButton = host->preference("play-button-style") == "boxed";
     connect(host, &Host::preferenceChanged, this, [this](const QString &key, const QString &value) {
         if (key == "play-button-style") {
@@ -442,6 +443,10 @@ void NativeHud::playerAction(const QStringList &parts) {
 
 /** 动作字符串保持原有输入协议，控制器直接更新原生音乐状态和场景。 */
 void NativeHud::action(QString value) {
+    if ((value == "disc-rotation" || value.startsWith("disc-rotation:")) &&
+        !PlatformFeatures::discRotationAvailable()) {
+        return;
+    }
     if (m_responsive.compact() && value.startsWith("mobile:play-collection:")) {
         const auto json =
             QUrl::fromPercentEncoding(value.mid(QString("mobile:play-collection:").size()).toUtf8());

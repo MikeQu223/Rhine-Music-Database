@@ -59,6 +59,10 @@ bool alwaysVisible(const SettingsContext &) {
     return true;
 }
 
+bool discRotationVisible(const SettingsContext &) {
+    return PlatformFeatures::discRotationAvailable();
+}
+
 bool desktopWindowVisible(const SettingsContext &) {
     return PlatformFeatures::DesktopWindowControls;
 }
@@ -904,7 +908,7 @@ const QVector<SettingsSection> &sections() {
         {SectionId::Preferences, 4, 40, "TERMINAL PREFERENCES", "终端偏好", {}, 0, alwaysVisible},
         {SectionId::Rendering, 5, 50, "RENDERING SETTINGS", "渲染设置", {}, 0, alwaysVisible},
         {SectionId::Experimental, 6, 60, "EXPERIMENTAL FEATURES", "实验性功能", "experimental", 120,
-         alwaysVisible},
+         discRotationVisible},
         {SectionId::Storage, 7, 70, "STORAGE", "存储与缓存", "storage", 174, alwaysVisible},
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
         {SectionId::Performance, 8, 80, "PERFORMANCE", "性能与诊断", "performance", 220, alwaysVisible},

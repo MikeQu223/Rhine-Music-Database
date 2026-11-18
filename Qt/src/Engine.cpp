@@ -3,6 +3,7 @@
 #include <ctime>
 #endif
 #include "Engine.h"
+#include "PlatformFeatures.h"
 #include "DiscGeometry.h"
 #include "RhiScene.h"
 #include "fg/FgCapability.h"
@@ -1402,14 +1403,29 @@ void Engine::step(double time) {
     const bool compactSong = compact && hudState.value("songPanelTop").isDouble();
     const bool dedicatedScene = m_frame.value("viewer").toBool() || m_frame.value("mode") == "boot";
     const bool compactHome = compact && m_frame.value("mode") == "archive" && !compactSceneObscured();
+    const auto current = object["current"].toObject();
+    const auto cover = object["cover"].toString();
+    const auto coverRevision = host.image(cover).cacheKey();
+    const auto &player = app->music.player;
+    const auto identity = PlaybackQueue::identity(player.current);
+    if (identity != m_discIdentity) {
+        m_discIdentity = identity;
+        m_discAngle = 0;
+    }
+    const bool wasRotating = m_discRotating;
+    m_discRotating = m_visible && app->hud.discRotation && PlatformFeatures::discRotationAvailable() &&
+                     !app->hud.reduced && app->hud.modal.isEmpty() && (!compact || compactSong) &&
+                     m_frame.value("mode") == "detail" && !m_frame.value("viewer").toBool() &&
+                     current["kind"] == "song" && PlaybackQueue::identity(current) == identity &&
+                     !player.loading && !player.failed && player.state["playing"].toBool();
     SceneLayer layer = SceneLayer::Live;
     if (compact && !dedicatedScene) {
         if (compactSong) {
             // 等原有镜头、唱片解密与归位收束，停稳后把最后一张场景纹理留在详情顶部。
             const bool settled = (keepFrozen && scene.themeSettled()) || scene.detailSettled();
-            if (settled) {
+            if (settled && !m_discRotating) {
                 layer = SceneLayer::Frozen;
-            } else {
+            } else if (!settled) {
                 m_sceneSleeping = false;
             }
         } else if (!compactHome) {
@@ -1423,21 +1439,6 @@ void Engine::step(double time) {
     if (sceneLayerVisible()) {
         m_hiddenSceneDirty = false;
     }
-    const auto current = object["current"].toObject();
-    const auto cover = object["cover"].toString();
-    const auto coverRevision = host.image(cover).cacheKey();
-    const auto &player = app->music.player;
-    const auto identity = PlaybackQueue::identity(player.current);
-    if (identity != m_discIdentity) {
-        m_discIdentity = identity;
-        m_discAngle = 0;
-    }
-    const bool wasRotating = m_discRotating;
-    m_discRotating = !compact && m_visible && app->hud.discRotation && !app->hud.reduced &&
-                     app->hud.modal.isEmpty() &&
-                     m_frame.value("mode") == "detail" && !m_frame.value("viewer").toBool() &&
-                     current["kind"] == "song" && PlaybackQueue::identity(current) == identity &&
-                     !player.loading && !player.failed && player.state["playing"].toBool();
     if (wasRotating && m_discRotating) {
         // 20 秒一圈；接续可见视觉时钟，暂停或隐藏期间不补转。
         m_discAngle = std::fmod(m_discAngle + std::clamp(time - m_discTime, 0., .05) *

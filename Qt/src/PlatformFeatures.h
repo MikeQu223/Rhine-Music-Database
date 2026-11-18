@@ -4,6 +4,14 @@
 
 // 平台特性宏
 namespace PlatformFeatures {
+#ifdef Q_OS_IOS
+bool discRotationAvailable();
+#else
+inline constexpr bool discRotationAvailable() {
+    return true;
+}
+#endif
+
 #if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
 inline constexpr bool GlobalShortcuts = true;
 #else
