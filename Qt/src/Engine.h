@@ -60,6 +60,33 @@ class Engine : public QObject {
     bool hudDirtyFull() const {
         return m_hudDirtyFull;
     }
+    /// 分层（见 render/HudLayers.h）：为真时 Hud 用「静态纹理 + 动态纹理」两张节点合成，
+    /// 静态层只在它自己的命令段变化时重画。为假表示退回单层（启动动画 / 全屏播放页 /
+    /// 前缀不自成作用域 / RHINE_HUD_LAYERED=0）。
+    bool hudLayered() const {
+        return m_hudLayered;
+    }
+    /// 分层生效时两段的命令流；`commands()` 仍是拼完整的整条流（单层路径用它）。
+    const QJsonArray &hudStaticCommands() const {
+        return m_hudStaticCommands;
+    }
+    const QJsonArray &hudDynamicCommands() const {
+        return m_hudDynamicCommands;
+    }
+    /// 静态前缀的脏区（舞台坐标）与「必须整块重画」标志，语义同 hudDirtyStage()/hudDirtyFull()。
+    QRectF hudStaticDirtyStage() const {
+        return m_hudStaticDirtyStage;
+    }
+    bool hudStaticDirtyFull() const {
+        return m_hudStaticDirtyFull;
+    }
+    /// 本帧静态前缀 / 动态条带是否真的变了（Hud 按这个决定调度哪一层）。
+    bool hudStaticChanged() const {
+        return m_hudStaticChanged;
+    }
+    bool hudDynamicChanged() const {
+        return m_hudDynamicChanged;
+    }
 #if defined(Q_OS_ANDROID)
     /// 渲染线程在 Hud::updatePaintNode() 里确认「这一份 HUD 命令流已经画进纹理」。
     /// 只做一次原子交换，不触碰 GUI 线程的任何状态。返回交换前的值，方便调用方
@@ -454,6 +481,16 @@ class Engine : public QObject {
     /// 见 render/HudDirtyRect.h：Hud 只重画这块，纹理也只上传这块。
     QRectF m_hudDirtyStage;
     bool m_hudDirtyFull = true;
+    /// 分层：静态前缀的命令流与它自己的脏区（语义同上，独立维护）。
+    QJsonArray m_hudStaticCommands;
+    QJsonArray m_hudDynamicCommands;
+    QRectF m_hudStaticDirtyStage;
+    bool m_hudStaticDirtyFull = true;
+    bool m_hudLayered = false;
+    /// 本帧哪一层真的变了：Hud 只调度变了的那层（未变层的旧脏区不能拿来重画，
+    /// 否则静态前缀会跟着动态条带一起重画，分层的收益就没了）。
+    bool m_hudStaticChanged = false;
+    bool m_hudDynamicChanged = false;
 #if defined(Q_OS_ANDROID)
     /// HUD 命令流已发布、但渲染线程还没调过 Hud::updatePaintNode()。这段时间内
     /// 引擎节拍必须让出 GUI 事件循环：0/1ms 的 QTimer 连轴转会把 Qt Quick 的

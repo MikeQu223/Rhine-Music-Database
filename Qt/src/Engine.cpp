@@ -12,6 +12,7 @@
 #include "render/MemoryProbe.h"
 #if defined(Q_OS_ANDROID)
 #include "render/HudDirtyRect.h"
+#include "render/HudLayers.h"
 #endif
 #include <QCoreApplication>
 #include <QDir>
@@ -873,7 +874,10 @@ void Engine::setVisible(bool value) {
         notifySceneRenderers(true);
         m_hudRevision.fetch_add(1, std::memory_order_relaxed);
         // 重新显示时纹理可能已经被丢弃，命令流没有差异也必须整块重画。
+        m_hudStaticChanged = true;
+        m_hudDynamicChanged = true;
         m_hudDirtyFull = true;
+        m_hudStaticDirtyFull = true;
         publishHudFrame();
     }
     emit stateChanged();
@@ -1694,16 +1698,74 @@ void Engine::step(double time) {
     // 只比对一次：hudDirtyRect 内部的「公共前缀 + 公共后缀」顺带就能判出「逐条相同」，
     // 不必再跑一遍 `commands != m_commands` 的深比较——那是同一条命令流的第二遍遍历。
     const double stageWidth = m_height > 0 ? m_width / (m_height / 1080) : 1920;
-    const auto dirty = RhineRender::hudDirtyRect(m_commands, commands, QSizeF(stageWidth, 1080));
-    hudChanged = !dirty.equal;
-    if (hudChanged) {
-        m_hudDirtyStage = dirty.rect;
-        m_hudDirtyFull = dirty.full;
-        // 详情淡入是整页过渡（真机实证：过渡后段命令流里唯一逐帧变化的是 alpha，
-        // 任何局部归因都可能漏掉 alpha 作用域内的其它像素）。过渡窗口与宽限期内
-        // 一律整窗重绘——淡入总共约一秒，全屏成本可接受，漏画则是「HUD 停在上一页」。
-        if (clock.elapsed() < m_hudTransitionUntilMs || m_detailGrace) {
+    const QSizeF stageSize(stageWidth, 1080);
+    const bool transition = clock.elapsed() < m_hudTransitionUntilMs || m_detailGrace;
+    // 分层（见 render/HudLayers.h）：静态前缀（遮罩 / 品牌 / 导航 / footer）一条都没变时，
+    // 两张纹理只有动态层要重画。滑列表时静态遮罩是一条覆盖整个播放列表条带的渐变，
+    // 它和滚动内容相交，于是单层的脏区每次都退化成整屏——分层就是为这条遮罩做的。
+    // RHINE_HUD_LAYERED=0 退回单层，方便 A/B（默认开）。
+    static const bool layeredEnabled = [] {
+        const auto value = qEnvironmentVariable("RHINE_HUD_LAYERED");
+        return value.isEmpty() || value != QLatin1String("0");
+    }();
+    const auto layers = layeredEnabled
+                            ? RhineRender::hudSplitLayers(commands, app->hud.staticCommandCount())
+                            : RhineRender::HudLayerSplit();
+    if (layers.layered) {
+        const auto staticDirty =
+            RhineRender::hudDirtyRect(m_hudStaticCommands, layers.staticCommands, stageSize);
+        const auto dirty =
+            RhineRender::hudDirtyRect(m_hudDynamicCommands, layers.dynamicCommands, stageSize);
+        m_hudStaticChanged = !staticDirty.equal;
+        m_hudDynamicChanged = !dirty.equal;
+        hudChanged = m_hudStaticChanged || m_hudDynamicChanged;
+        if (m_hudStaticChanged) {
+            m_hudStaticDirtyStage = staticDirty.rect;
+            // 过渡窗口（详情淡入）里 alpha 会包住整条命令流，任何局部归因都可能漏像素：
+            // 两层都整块重画。
+            m_hudStaticDirtyFull = staticDirty.full || transition;
+            m_hudStaticCommands = layers.staticCommands;
+        }
+        if (m_hudDynamicChanged) {
+            m_hudDirtyStage = dirty.rect;
+            m_hudDirtyFull = dirty.full || transition;
+            m_hudDynamicCommands = layers.dynamicCommands;
+        }
+        if (!m_hudLayered) {
+            // 单层 → 分层：两张纹理都是新建的，各自整块画一次。
+            m_hudLayered = true;
+            m_hudStaticDirtyFull = true;
             m_hudDirtyFull = true;
+            m_hudStaticChanged = true;
+            m_hudDynamicChanged = true;
+            hudChanged = true;
+        }
+    } else {
+        const auto dirty = RhineRender::hudDirtyRect(m_commands, commands, stageSize);
+        hudChanged = !dirty.equal;
+        m_hudStaticChanged = false;
+        m_hudDynamicChanged = hudChanged;
+        if (hudChanged) {
+            m_hudDirtyStage = dirty.rect;
+            m_hudDirtyFull = dirty.full;
+            // 详情淡入是整页过渡（真机实证：过渡后段命令流里唯一逐帧变化的是 alpha，
+            // 任何局部归因都可能漏掉 alpha 作用域内的其它像素）。过渡窗口与宽限期内
+            // 一律整窗重绘——淡入总共约一秒，全屏成本可接受，漏画则是「HUD 停在上一页」。
+            if (transition) {
+                m_hudDirtyFull = true;
+            }
+        }
+        if (m_hudLayered) {
+            // 分层 → 单层（启动动画 / 全屏播放页 / 前缀不自成作用域）：节点形态变了，
+            // 必须整块重建，两张纹理都作废。
+            m_hudLayered = false;
+            m_hudStaticCommands = {};
+            m_hudDynamicCommands = {};
+            m_hudStaticDirtyFull = true;
+            m_hudDirtyFull = true;
+            m_hudStaticChanged = false;
+            m_hudDynamicChanged = true;
+            hudChanged = true;
         }
     }
 #else
@@ -1714,8 +1776,12 @@ void Engine::step(double time) {
 #endif
     if (pageSwitch) {
         // 整页换内容：局部重绘会留下上一页的残影，强制整窗且必须发一次更新。
+        // 换页时静态前缀也变了（主题色、导航选中态、footer 文案），两层都整块重画。
         hudChanged = true;
+        m_hudStaticChanged = true;
+        m_hudDynamicChanged = true;
         m_hudDirtyFull = true;
+        m_hudStaticDirtyFull = true;
     }
     const bool transitionNow = clock.elapsed() < m_hudTransitionUntilMs || m_detailGrace;
     if (hudChanged) {
@@ -1730,7 +1796,9 @@ void Engine::step(double time) {
     }
 #if defined(Q_OS_ANDROID)
     if (coverArrived) {
-        // 命令流没变但 HUD 上的像素变了：补一次整块重画。
+        // 命令流没变但 HUD 上的像素变了（封面异步到位）：补一次整块重画。
+        // 封面只出现在动态层，静态前缀不受影响，不要连带把静态层也整块重画。
+        m_hudDynamicChanged = true;
         m_hudDirtyFull = true;
         publishHudFrame();
     }

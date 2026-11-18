@@ -72,6 +72,12 @@ class NativeHud : public QObject {
     QRectF detailBounds(double width) const;
     Layout containerLayout(double width) const;
     QJsonArray commands;
+    /// 分层切分点：commands 里 [0, staticCommandCount()) 是静态前缀（遮罩 / 品牌 /
+    /// 导航 / footer），其余是每帧可能变化的动态条带。0 表示这帧不分层
+    /// （boot 启动动画、viewer 全屏播放页）。
+    int staticCommandCount() const {
+        return m_staticCommands;
+    }
     QJsonArray hits;
     QJsonObject frame;
     QString tab = "overview";
@@ -191,6 +197,8 @@ class NativeHud : public QObject {
     Host *m_host;
     Glyphs *m_glyphs;
     MusicLibrary *m_music;
+    /// commands 的静态前缀长度，见 public 区 staticCommandCount()。
+    int m_staticCommands = 0;
     HudSceneActions m_scene;
     quint64 m_searchGeneration = 0;
     // 首屏不足一屏时自动补页，记录上次自动补页后的条数，避免空页循环请求。
