@@ -25,6 +25,13 @@ double portraitGridHeight(double stageHeight, double unit) => stageHeight / unit
 const double portraitRowHeight = 48;
 const double portraitGestureInset = 34;
 
+/// 底部「迷你播放条 + 底栏 + 手势区」占的设计网格高度。
+///
+/// Qt 里播放条顶 = `c.contentBottom`，导航条 = 顶 + 67，导航条高
+/// `max(0, h - 34 - 导航条)`（`ResponsiveHudLayout.cpp:329-420`）；三者相加
+/// 恒为 144，与 `m_height` 无关。设置/检索这类整页只铺到 `h - 144`。
+const double portraitFooterHeight = 144;
+
 /// 底栏四项。
 enum PortraitNav { archive, discover, search, settings }
 
@@ -186,6 +193,68 @@ PortraitFrame paintPortraitHome(
   );
 }
 
+/// 竖屏「终端页」页头（Qt `ResponsiveHudLayout.cpp:163-193` 的 terminalPage 分支）。
+///
+/// 与主页品牌的差别：第二行写 `AUDIO TERMINAL`（主页是 `MUSIC ARCHIVE / 音乐资料库`），
+/// 右侧是短码 `RL–004`；大标题下多一行「琥珀编号块 + 英文标识」，再一条墨线与
+/// 左缘 16 步长的校准刻度（刻度只做视觉定位，不参与命中）。
+///
+/// 必须在 `canvas.contentBottom` 设好之后调用：刻度一直画到内容底。
+void paintPortraitTerminalHeader(
+  PortraitCanvas c, {
+  required String title,
+  required String code,
+  required String identifier,
+}) {
+  c.text('RHINE LAB', 23, 22, size: 17, width: 115, weight: 'bold');
+  c.text('AUDIO TERMINAL', 23, 43, size: 7, width: 115, color: c.muted);
+  c.rightText('RL–004', 370, 29, 7, 'regular', c.muted);
+  c.text(title, 20, 66, size: 23, width: 290, weight: 'demibold');
+  c.fill(Rect.fromLTWH(20, 101, 25, 14), c.amber);
+  c.centered(code, 32.5, 108, 8, 'demibold', c.ink);
+  c.text(identifier, 53, 104, size: 7, width: 265, color: c.muted);
+  c.fill(Rect.fromLTWH(20, 120, 353, .6), c.ink);
+  final List<Object?> calibration = <Object?>[...c.line]..[3] = .6;
+  for (double tick = 132; tick < c.contentBottom; tick += 16) {
+    c.fill(Rect.fromLTWH(8, tick, 4, .5), calibration);
+  }
+}
+
+/// 竖屏整页外壳：纸色铺满 + （可选）终端页头 + 迷你播放条 + 底栏。
+///
+/// 给「内容由真实 widget 承担、只有 chrome 归 HUD」的页面用（设置整页）。
+/// 上界是 `h - portraitFooterHeight`，与 `_playerAndNav` 的播放条顶同源，
+/// 于是 widget 层与 HUD 层不会各算一份底部高度。
+PortraitFrame paintPortraitShell(
+  PortraitCanvas canvas, {
+  required PortraitPlayer player,
+  required PortraitNav nav,
+  String title = '',
+  String code = '',
+  String identifier = '',
+}) {
+  final double h = canvas.height;
+  final double top = math.max(0, h - portraitFooterHeight);
+  canvas.contentBottom = top;
+  canvas.fill(Rect.fromLTWH(0, 0, portraitDesignWidth, h), canvas.paper);
+  if (title.isNotEmpty) {
+    paintPortraitTerminalHeader(
+      canvas,
+      title: title,
+      code: code,
+      identifier: identifier,
+    );
+  }
+  _playerAndNav(canvas, player: player, nav: nav, top: top);
+  canvas.finish();
+  return PortraitFrame(
+    commands: canvas.commands,
+    hits: canvas.hits,
+    fields: canvas.fields,
+    listTop: top,
+  );
+}
+
 void _brand(PortraitCanvas c) {
   c.text('RHINE LAB', 23, 22, size: 17, width: 200, weight: 'bold');
   c.text('MUSIC ARCHIVE / 音乐资料库', 23, 43, size: 7, width: 240, color: c.muted);
@@ -262,7 +331,16 @@ void _list(
     }
   } else {
     final double slotY = listTop + portraitRowHeight;
-    final (int first, int last) = c.visibleRows(slotY, portraitRowHeight, total);
+    // 可见行区间必须跟着滚动位置走：槽位固定在第二行，一屏最多 4 行。
+    // 旧写法用 `c.visibleRows(slotY, …)`，first 恒被算成 0（slotY 比裁剪顶低一行），
+    // 于是永远只画 0..2 三行；位置一滚走，这三行被裁掉就剩一片空列表
+    // （用户 2026-11-18：「列表只显示三个，再往下滑动就黑了」）。
+    // 行窗口：当前槽固定在第二行，可视区是 [listTop, listTop + 48*4]，即相对当前
+    // 位置 -1 .. +3。上界多留两行给亚像素滑动，下界按同一窗口截断——
+    // 之前按 `visibleRows(slotY, …)` 求上界，slotY 比 clipTop 低一行会恒为 0，
+    // 结果只画 3 行（第一个位置时第 4 行明明在可视区里却不画）。
+    final int first = math.max(0, position.floor() - 1);
+    final int last = math.min(total, position.ceil() + 4);
     final int current = position.round().clamp(0, math.max(0, total - 1));
     for (int row = first; row < last; row++) {
       if (row < 0 || row >= total) {

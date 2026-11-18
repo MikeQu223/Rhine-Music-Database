@@ -36,6 +36,8 @@ import '../hud/protocol/hud_frame.dart';
 import '../scene/viewer_state.dart';
 import '../ui/layout/portrait_stage.dart';
 import '../platform/media_session.dart';
+import 'basic_art_cache.dart';
+import 'basic_cover_images.dart';
 import 'basic_cover_viewer.dart';
 import 'basic_hud.dart';
 import 'basic_hud_resources.dart';
@@ -44,6 +46,7 @@ import 'basic_settings.dart';
 import 'basic_settings_runtime.dart';
 import 'basic_settings_store.dart';
 import 'basic_settings_view.dart';
+import 'basic_settings_portrait.dart';
 import 'basic_settings_window.dart';
 import 'basic_startup_view.dart';
 import 'platform_playback.dart';
@@ -207,6 +210,12 @@ class _BasicAppState extends State<BasicApp> {
             : null);
     _controller =
         widget.controller ?? BasicController(audio: _audio, mediaSessionPort: mediaPort);
+    // 封面像素：控制器那份"URL → 私有目录里的真实图片文件"缓存同时供 HUD 使用，
+    // 不新开第二条下载链路；解码完成的回调让宿主重绘一次（这一帧先画空槽）。
+    final BasicArtCache? artCache = _controller.artCache;
+    if (artCache != null) {
+      _covers = BasicCoverImages(cache: artCache, onChanged: _onCoverDecoded);
+    }
     // 3D 场景的连续滚动回执（拖动/惯性/滚轮）落到同一个 controller 窗口真值上：
     // 方向 B（3D → 列表/ruler）因此不依赖 HUD 是否接了 onScroll 参数。
     QtSceneScrollRouter.instance.handler = _sceneScrollHandler;
@@ -241,7 +250,8 @@ class _BasicAppState extends State<BasicApp> {
 
   Future<void> _loadResources() async {
     try {
-      final BasicHudResources resources = await BasicHudResources.load(bundle: widget.bundle);
+      final BasicHudResources resources =
+          await BasicHudResources.load(bundle: widget.bundle, covers: _covers);
       if (!mounted) {
         return;
       }
@@ -254,6 +264,15 @@ class _BasicAppState extends State<BasicApp> {
         return;
       }
       setState(() => _resourceError = error);
+    }
+  }
+
+  /// 封面像素缓存（真值来自控制器那份落盘缓存）；没有媒体端口时为 null。
+  BasicCoverImages? _covers;
+
+  void _onCoverDecoded() {
+    if (mounted) {
+      setState(() {});
     }
   }
 
@@ -298,6 +317,9 @@ class _BasicAppState extends State<BasicApp> {
 
   @override
   void dispose() {
+    // 解码后的封面像素是本 State 持有的 native 资源，必须自己放掉。
+    _covers?.dispose();
+    _covers = null;
     if (identical(QtSceneScrollRouter.instance.handler, _sceneScrollHandler)) {
       QtSceneScrollRouter.instance.handler = null;
     }
@@ -982,16 +1004,35 @@ class _BasicShellState extends State<_BasicShell>
                 children: <Widget>[
                   // m03428：设置窗口是真实 Flutter widget 层（文本/控件/滚动/
                   // 焦点/语义都是 widget），不再走 HUD 命令 + 命中画布。
-                  BasicSettingsWindow(
-                    stage: resolved,
-                    portrait: geometry == null,
-                    model: _settingsPanelModel(),
-                    dark: state.dark,
-                    scrollStorage: _settingsScroll,
-                    scrollMaximumStorage: _settingsScrollMaximum,
-                    onAction: (String action) =>
-                        unawaited(_onSettingsAction(action)),
-                  ),
+                  //
+                  // 竖屏用 BasicPortraitSettingsPage：那套几何是 393 设计网格的
+                  // compact 版式（Qt ResponsiveHudLayout::settings()）。横屏面板的
+                  // 绝对坐标（viewportTop=176/height=660、controlWidth=300）是为
+                  // 1080 舞台 + 1260 面板设计的，竖屏整体放大后控件会压住标题。
+                  if (geometry == null)
+                    Align(
+                      alignment: Alignment.topLeft,
+                      child: BasicPortraitSettingsPage(
+                        stage: resolved,
+                        model: _settingsPanelModel(),
+                        dark: state.dark,
+                        scrollStorage: _settingsScroll,
+                        scrollMaximumStorage: _settingsScrollMaximum,
+                        onAction: (String action) =>
+                            unawaited(_onSettingsAction(action)),
+                      ),
+                    )
+                  else
+                    BasicSettingsWindow(
+                      stage: resolved,
+                      portrait: false,
+                      model: _settingsPanelModel(),
+                      dark: state.dark,
+                      scrollStorage: _settingsScroll,
+                      scrollMaximumStorage: _settingsScrollMaximum,
+                      onAction: (String action) =>
+                          unawaited(_onSettingsAction(action)),
+                    ),
                   if (_modal == DiscWarningModal.kind)
                     BasicDiscWarningOverlay(
                       stage: resolved,

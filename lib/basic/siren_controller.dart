@@ -138,6 +138,10 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
   /// 通知封面的本地缓存；没有媒体端口也没有注入时为 null（不落盘、不触网）。
   BasicArtCache? _artCache;
 
+  /// 封面落盘缓存（HUD 的封面像素也是从这份缓存读，见 BasicCoverImages）。
+  /// 没有媒体端口也没有注入时为 null —— 那时界面画空槽，不编假图。
+  BasicArtCache? get artCache => _artCache;
+
   /// 当前已落盘封面所属的曲目与来源 URL（防重复请求、防止 A/B 串台）。
   String _artTrackId = '';
   String _artUrl = '';

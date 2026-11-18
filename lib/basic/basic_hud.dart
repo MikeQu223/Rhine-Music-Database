@@ -260,9 +260,30 @@ class BasicHudFrame {
     final BasicDirectory? directory = state.directory;
     final bool songPage = song != null &&
         (state.phase == BasicPhase.detail || state.phase == BasicPhase.lyrics);
+    final PortraitPlayer portraitPlayer = PortraitPlayer(
+      title: bar.title,
+      artist: bar.artist,
+      cover: bar.cover,
+      hasTrack: bar.hasTrack,
+      playing: bar.playing,
+      positionMs: bar.positionMs,
+      durationMs: bar.durationMs,
+    );
     if (songPage) {
       // Qt compact：song() / lyrics() 是两页，共用「档案 + 封面 + 进度 + 传输」骨架。
       _paintPortraitSongPage(canvas, state, song, items.length, selected);
+    } else if (modal == 'settings') {
+      // Qt compact 的设置是「终端页」：页头（品牌/标题/编号块/校准刻度）+ 内容
+      // 由一页铺到 h-144，底下播放条与底栏照旧。内容本身是真实 widget 层
+      // （lib/basic/basic_settings_portrait.dart），这里只画 chrome + 页头。
+      paintPortraitShell(
+        canvas,
+        player: portraitPlayer,
+        nav: PortraitNav.settings,
+        title: '设置',
+        code: '03',
+        identifier: 'SETTINGS / 终端配置',
+      );
     } else if (modal == 'search') {
       // Qt compact `library()` 的 search 分支：检索框 + 四 tab + INDEX/N 结果区。
       // 只有「歌曲」这一 tab 有真数据（BasicController 的搜索列是曲目列）；
@@ -286,9 +307,9 @@ class BasicHudFrame {
         canvas,
         title: basicLibraryTitle(state),
         subtitle: _portraitCollectionSubtitle(directory, items.length),
-        // 封面像素没有接线（BasicGlyphPorts.imageFor 恒 null），这里诚实传空：
-        // 页面画空槽而不是编一张假图。
-        cover: '',
+        // 目录封面是真实 URL（siren.mjs:209），像素由 BasicCoverImages 解码；
+        // 拿不到就留空槽，不编假图。
+        cover: directory.cover,
         rows: <(String, String, String, String)>[
           for (final BasicListItem item in items) (item.title, item.artist, '', item.kind),
         ],
@@ -317,14 +338,7 @@ class BasicHudFrame {
           canPlayAll: items.isNotEmpty,
           emptyNotice: emptyNotice,
         ),
-        player: PortraitPlayer(
-          title: bar.title,
-          artist: bar.artist,
-          hasTrack: bar.hasTrack,
-          playing: bar.playing,
-          positionMs: bar.positionMs,
-          durationMs: bar.durationMs,
-        ),
+        player: portraitPlayer,
         nav: PortraitNav.archive,
         listPosition: listPosition,
       );
@@ -354,8 +368,7 @@ class BasicHudFrame {
         canvas,
         title: song.title,
         artist: song.artist,
-        // 封面像素未接线（见上方 collection 的同一条理由）。
-        cover: '',
+        cover: song.cover,
         playing: state.playing,
         positionMs: state.positionMs,
         durationMs: state.durationMs,
@@ -374,7 +387,7 @@ class BasicHudFrame {
       album: song.album,
       kind: 'song',
       stamp: total <= 0 ? '' : _portraitStamp(selected, total),
-      cover: '',
+      cover: song.cover,
       playing: state.playing,
       // 收藏列没有本地写入通道（liked 集合只在 lane 1 只读解析），这里不假装已收藏。
       favourite: false,

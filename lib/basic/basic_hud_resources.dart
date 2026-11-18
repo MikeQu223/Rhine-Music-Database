@@ -12,6 +12,7 @@ import '../hud/text/glyph_font.dart';
 import '../hud/text/glyph_run.dart';
 import '../hud/text/rolling_text.dart';
 import '../hud/widgets/track_ruler.dart' as ruler;
+import 'basic_cover_images.dart';
 
 /// 字形资源：misans-glyphs.json 是 Qt 真值的字形表，boot-lettering-art.json 是
 /// 启动字标资源（Resources/ 目录）。
@@ -50,7 +51,10 @@ class BasicHudResources {
   final List<String> families;
   final List<String> failures;
 
-  static Future<BasicHudResources> load({AssetBundle? bundle}) async {
+  static Future<BasicHudResources> load({
+    AssetBundle? bundle,
+    BasicCoverImages? covers,
+  }) async {
     final AssetBundle source = bundle ?? rootBundle;
     final List<String> failures = <String>[];
     GlyphFontSet glyphs = GlyphFontSet.empty;
@@ -74,7 +78,7 @@ class BasicHudResources {
     return BasicHudResources(
       glyphs: glyphs,
       text: text,
-      ports: BasicGlyphPorts(glyphs: glyphs, text: text),
+      ports: BasicGlyphPorts(glyphs: glyphs, text: text, covers: covers),
       families: families,
       failures: List<String>.unmodifiable(failures),
     );
@@ -138,10 +142,13 @@ class BasicGlyphPorts
         player.GlyphsPort,
         lyrics.GlyphsPort,
         detail.SongDetailGlyphsPort {
-  BasicGlyphPorts({required this.glyphs, required this.text});
+  BasicGlyphPorts({required this.glyphs, required this.text, this.covers});
 
   final GlyphFontSet glyphs;
   final GlyphText text;
+
+  /// 真实封面像素来源（null = 未接线，页面画空槽而不是假图）。
+  final BasicCoverImages? covers;
 
   /// 记录 rolling 请求次数，便于测试断言“页面确实请求过滚动标签”。
   /// 实际绘制见 [beginFrame]/[rolling]：每次请求都按当前帧时钟落到命令流，
@@ -436,5 +443,7 @@ class BasicGlyphPorts
   /// 因此只剩实心底板、没有三角与箭头（DEVICE-VISUAL-131 缺陷③）。
   ui.Path? pathFor(String key) => key.isEmpty ? null : parseSvgPath(key);
 
-  ui.Image? imageFor(String key) => null;
+  /// HUD image 命令的像素来源：真实专辑封面（[BasicCoverImages] 按 URL 缓存）。
+  /// 端口没接上时仍返回 null——页面画空槽，不画假图。
+  ui.Image? imageFor(String key) => covers?.imageFor(key);
 }
