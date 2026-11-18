@@ -118,6 +118,8 @@ class TextInputStageState {
     this.inputX,
     this.inputY,
     this.inputWidth,
+    this.inputHeight,
+    this.inputFontSize,
     this.modalOffset = 0.0,
     this.modalOpacity = 0.0,
     this.closing = false,
@@ -153,6 +155,8 @@ class TextInputStageState {
     this.inputX,
     this.inputY,
     this.inputWidth,
+    this.inputHeight,
+    this.inputFontSize,
     this.modalOffset = 0.0,
     this.modalOpacity = 0.0,
     this.closing = false,
@@ -194,6 +198,22 @@ class TextInputStageState {
   final double? inputX;
   final double? inputY;
   final double? inputWidth;
+
+  /// 输入框高度（舞台单位，绘制时乘 [stageScale]）。
+  ///
+  /// Qt 的 state() 一直带着 `inputHeight`（Qt/src/NativeHud.cpp:257-274、compact 由
+  /// Qt/src/ResponsiveHudLayout.cpp:397 从 `input` 字段矩形转出），QML 侧
+  /// `Overlay.qml:571` 直接读它；本类原先没接，检索框因此恒用 QML 缺省 54——竖屏
+  /// 输入框实际是 44 网格（≈121 舞台单位），54 会让文字贴在框顶（实机
+  /// device7/s1-search.png：「dx」小字顶在框上沿）。
+  final double? inputHeight;
+
+  /// 输入框字号（舞台单位，绘制时乘 [stageScale]）。null = 沿用 QML 的 22。
+  ///
+  /// 只有检索框需要覆盖：Qt compact 描 14 网格（ResponsiveHudPages.cpp:330、
+  /// Overlay.qml:542-543 的 `14 * compactUnit`），本类原先按横屏 22 画，竖屏就成了
+  /// 框里的小字。
+  final double? inputFontSize;
   final double modalOffset;
   final double modalOpacity;
 
@@ -571,12 +591,12 @@ class TextInputOverlayLogic {
     final visible = state.searchVisible;
     final name =
         state.localMusic ? '检索本地歌曲、歌手、专辑或文件夹' : '搜索歌曲、歌手、专辑或歌单';
-    // Overlay.qml:528-531
+    // Overlay.qml:528-531（高度 :531 的缺省 54 只在宿主没给 inputHeight 时生效）
     final rect = Rect.fromLTWH(
       (state.inputX ?? 0) * s,
       ((_qmlOr(state.inputY, 302) + state.modalOffset) * s),
       (state.inputWidth ?? 0) * s,
-      54 * s,
+      (state.inputHeight ?? 54) * s,
     );
     return TextInputLayout(
       kind: TextFieldKind.search,
@@ -584,8 +604,8 @@ class TextInputOverlayLogic {
       // Overlay.qml:527
       enabled: !state.closing,
       rect: rect,
-      // Overlay.qml:533
-      fontSize: 22 * s,
+      // Overlay.qml:533（compact 走 :542-543 的 14 * compactUnit，由宿主折算成舞台单位传入）
+      fontSize: (state.inputFontSize ?? 22) * s,
       // Overlay.qml:532
       fontFamily: state.rhineFontFamily,
       // Overlay.qml:534

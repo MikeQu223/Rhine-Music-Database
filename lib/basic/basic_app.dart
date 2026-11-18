@@ -1509,6 +1509,11 @@ class _BasicShellState extends State<_BasicShell>
     // 把 originY 折进舞台 y 才是 Qt 那个「y 从 HUD 原点量起」的坐标；横屏 originY
     // 恒为 0（StageGeometry 默认值），数字与 Qt 逐字相同。
     final double stageY = rect.top + geometry.originY;
+    // 竖屏检索框的框高与字号都按 393 网格量（lib/hud/portrait/portrait_pages_library.dart
+    // 的 `field('search', {58, y, 313, 44})`；字号取 Qt compact 的 14 网格，
+    // Qt/src/ResponsiveHudPages.cpp:330 与 Qt/qml/Overlay.qml:542-543）。不传的话输入层
+    // 会用 QML 的缺省 54 / 22，字小且贴在框上沿——用户 2026-11-19 报的「字小的小标题」。
+    final double compactUnit = geometry.stageWidth / 393.0;
     return TextInputOverlay(
       state: TextInputStageState.fromGeometry(
         geometry,
@@ -1518,6 +1523,8 @@ class _BasicShellState extends State<_BasicShell>
         inputX: rect.left,
         inputY: stageY,
         inputWidth: rect.width,
+        inputHeight: portrait ? 44.0 * compactUnit : null,
+        inputFontSize: portrait ? 14.0 * compactUnit : null,
         // 本预览不播 Qt 的 0.3s 淡入 / 0.2s 淡出（Qt/src/UiMotion.cpp:101-120，
         // SurfaceMotion::set：shown duration 0.3 :112、hidden 0.2 :114，reduced 时
         // duration 0 瞬变）：打开即全不透明，关闭即不可见，属明示的未实现动画。
