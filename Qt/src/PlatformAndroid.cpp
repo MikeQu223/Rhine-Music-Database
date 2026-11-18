@@ -45,7 +45,7 @@ void platformDeleteCredential() {
     QFile::remove(credentialPath());
 }
 
-void platformPlay(const QString &, bool, std::function<void(QString)> done) {
+void platformPlay(const QString &, const QJsonObject &, bool, std::function<void(QString)> done) {
     done(QStringLiteral("Android 仅支持面板内播放"));
 }
 

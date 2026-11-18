@@ -1,12 +1,13 @@
 #include "MusicLibrary.h"
 #include "MusicData.h"
+#include "ProviderRegistry.h"
 #include <algorithm>
 
 namespace {
 QJsonArray without(const QJsonArray &values, const QString &field, const QJsonValue &key) {
     QJsonArray result;
     for (const auto &value : values) {
-        const auto match = field.isEmpty() ? value : value.toObject()[field];
+        const auto match = field.isEmpty() ? value : value.toObject().value(field);
         if (match != key) {
             result.append(value);
         }
@@ -15,33 +16,36 @@ QJsonArray without(const QJsonArray &values, const QString &field, const QJsonVa
 }
 }
 
+bool MusicLibrary::supportsOperation(const QString &operation) const {
+    return ProviderRegistry::instance().descriptor(provider)["operations"].toObject()[operation].toBool();
+}
+
+bool MusicLibrary::commentsAvailable() const {
+    return !isLocal() && !CommentsController::commentsProvider(provider).isEmpty();
+}
+
 bool MusicLibrary::canMutate(const QString &route) const {
     if (isSiren()) {
         return QStringList{"/like", "/playlist/create", "/playlist/name/update", "/playlist/delete",
                            "/playlist/tracks"}
             .contains(route);
     }
-    if (provider == "netease") {
-        return true;
-    }
-    if (provider != "qq") {
-        return false;
-    }
-    static const QHash<QString, QStringList> features{
+    static const QHash<QString, QPair<QString, QString>> features{
         {"/like", {"mutations", "likeSong"}},
         {"/album/sub", {"mutations", "subscribeAlbum"}},
         {"/playlist/subscribe", {"mutations", "subscribePlaylist"}},
+        {"/artist/sub", {"mutations", "subscribeArtist"}},
         {"/playlist/tracks", {"mutations", "updatePlaylistTracks"}},
         {"/playlist/create", {"playlistManagement", "createPlaylist"}},
         {"/playlist/name/update", {"playlistManagement", "renamePlaylist"}},
         {"/playlist/delete", {"playlistManagement", "deletePlaylist"}},
     };
     const auto feature = features.value(route);
-    if (feature.isEmpty()) {
+    if (feature.first.isEmpty()) {
         return false;
     }
-    // 暂时读不到声明时仍沿用精确锁定版本的契约；明确关闭的能力禁止写入。
-    return capabilities.isEmpty() || capabilities[feature[0]].toObject()[feature[1]].toBool();
+    const auto capabilities = ProviderRegistry::instance().descriptor(provider)["capabilities"].toObject();
+    return capabilities[feature.first].toObject()[feature.second].toBool();
 }
 
 bool MusicLibrary::canEditPlaylist(const QJsonObject &value) const {
@@ -56,18 +60,27 @@ bool MusicLibrary::canEditPlaylist(const QJsonObject &value) const {
     if (!editable() || uid.isEmpty() || value["kind"] != "playlist" || value["creatorID"] != uid) {
         return false;
     }
-    if (provider != "qq") {
-        return true;
+    const auto library = ProviderRegistry::instance().descriptor(provider)["library"].toObject();
+    const auto rule = library["playlistEditableRule"].toString("all");
+    if (rule == "none") {
+        return false;
     }
-    bool parsed = false;
-    const auto directoryId = value["dirId"].toString().toInt(&parsed);
-    return value["owned"].toBool() && parsed && directoryId >= 1 && directoryId <= 199;
+    if (rule == "owned-with-dir-range") {
+        const auto range = library["dirIdRange"].toArray();
+        bool parsed = false;
+        const auto directoryId = value["dirId"].toString().toInt(&parsed);
+        const auto minimum = range.size() == 2 ? range.at(0).toInt(0) : 0;
+        const auto maximum = range.size() == 2 ? range.at(1).toInt(0) : 0;
+        return value["owned"].toBool() && parsed && directoryId >= minimum && directoryId <= maximum;
+    }
+    return true;
 }
 
 /** 按当前账号与选中条目读取三态收藏信息。 */
 void MusicLibrary::loadSubscriptionStatus(const QJsonObject &value) {
     const auto kind = value["kind"].toString();
-    if (provider != "qq" || uid.isEmpty() || value["virtual"].toBool() ||
+    const auto operations = ProviderRegistry::instance().descriptor(provider)["operations"].toObject();
+    if (!operations["subscriptionStatus"].toBool() || uid.isEmpty() || value["virtual"].toBool() ||
         !QStringList{"song", "album", "playlist"}.contains(kind)) {
         return;
     }
@@ -111,12 +124,11 @@ std::optional<bool> MusicLibrary::songLiked(const QJsonObject &value) const {
     if (uid.isEmpty() || !canMutate("/like")) {
         return std::nullopt;
     }
-    if (provider == "qq") {
-        const auto state = subscriptionStates.value(value["key"].toString());
-        if (state == "subscribed" || state == "not-subscribed") {
-            return state == "subscribed";
-        }
-    } else if (likedIDs) {
+    const auto state = subscriptionStates.value(value["key"].toString());
+    if (state == "subscribed" || state == "not-subscribed") {
+        return state == "subscribed";
+    }
+    if (likedIDs) {
         return MusicData::indexOf(*likedIDs, value["id"]) >= 0;
     }
     if (MusicData::indexOfId(lists[1], value["id"].toString()) >= 0) {
@@ -135,8 +147,10 @@ void MusicLibrary::refreshPlaybackLike() {
         track.value("provider").toString(provider) != provider || !canMutate("/like")) {
         return;
     }
+    const auto library = ProviderRegistry::instance().descriptor(provider)["library"].toObject();
+    const auto likedModel = library["likedModel"].toString();
     const auto context = provider + ":" + uid + ":" + QString::number(m_accountGeneration) + ":" +
-                         (provider == "qq" ? track["key"].toString() : QStringLiteral("likedIDs"));
+                         (likedModel == "likedIDs" ? QStringLiteral("likedIDs") : track["key"].toString());
     if (songLiked(track).has_value() || m_playbackLikeContext == context) {
         return;
     }
@@ -144,20 +158,28 @@ void MusicLibrary::refreshPlaybackLike() {
     const auto token = ++m_playbackLikeGeneration;
     const auto accountAlive = valid(m_accountGeneration, &m_accountGeneration);
     const auto readAlive = valid(token, &m_playbackLikeGeneration);
-    const auto source = provider;
+    if (likedModel == "likedIDs") {
+        api.call(
+            "likedIDs", {uid},
+            [this](MusicReply result) {
+                if (result.ok() && result.value.isArray()) {
+                    likedIDs = result.value.toArray();
+                    changed();
+                }
+            },
+            [accountAlive, readAlive] { return accountAlive() && readAlive(); });
+        return;
+    }
     const auto key = track["key"].toString();
+    const auto id = track["id"].toString();
     api.call(
-        source == "qq" ? "subscriptionStatus" : "likedIDs",
-        source == "qq" ? QJsonArray{"song", track["id"]} : QJsonArray{uid},
-        [this, source, key](MusicReply result) {
+        "likedState", {QJsonArray{id}, uid},
+        [this, key, id](MusicReply result) {
             if (!result.ok()) {
                 return;
             }
-            if (source == "qq") {
-                subscriptionStates[key] = result.value.toString("unknown");
-            } else if (result.value.isArray()) {
-                likedIDs = result.value.toArray();
-            }
+            const auto state = result.value.toObject()[id].toString("unknown");
+            subscriptionStates[key] = state;
             changed();
         },
         [accountAlive, readAlive] { return accountAlive() && readAlive(); });
@@ -191,7 +213,7 @@ void MusicLibrary::mutate(QString route, QJsonObject values, std::function<void(
         } else if (uid.isEmpty()) {
             status = QStringLiteral("请先登录") + providerName();
         } else if (!canMutate(route)) {
-            status = QStringLiteral("当前 QQ 服务未开放此编辑功能");
+            status = QStringLiteral("当前服务未开放此编辑功能");
         }
         changed();
         if (done) {
@@ -202,15 +224,11 @@ void MusicLibrary::mutate(QString route, QJsonObject values, std::function<void(
     writeLoading = true;
     ++m_playbackLikeGeneration;
     m_playbackLikeContext.clear();
-    if (provider == "qq") {
-        ++m_subscriptionGeneration;
-    }
+    ++m_subscriptionGeneration;
     changed();
     const auto complete = [this, success, done](MusicReply result) {
-        if (provider == "qq") {
-            // 写入期间启动的状态读取也必须作废，不能在确认结果后回填旧红心。
-            ++m_subscriptionGeneration;
-        }
+        // 写入期间启动的状态读取也必须作废，不能在确认结果后回填旧状态。
+        ++m_subscriptionGeneration;
         bool ok = result.ok();
         const auto body = result.value.toObject();
         const auto nestedCode = body["body"].toObject()["code"].toInt(200);
@@ -225,11 +243,9 @@ void MusicLibrary::mutate(QString route, QJsonObject values, std::function<void(
             status = QStringLiteral("已同步至") + providerName();
         } else {
             status = result.error;
-            if (provider == "qq") {
-                subscriptionStates.clear();
-                // 写入可能已经生效；下次刷新必须绕开旧列表缓存，不能自动再写。
-                host->invalidateMetadata();
-            }
+            subscriptionStates.clear();
+            // 写入可能已经生效；下次刷新必须绕开旧列表缓存，不能自动再写。
+            host->invalidateMetadata();
         }
         writeLoading = false;
         changed();
@@ -238,11 +254,7 @@ void MusicLibrary::mutate(QString route, QJsonObject values, std::function<void(
         }
     };
     const auto alive = valid(m_accountGeneration, &m_accountGeneration);
-    if (provider == "qq") {
-        api.call("mutate", {route, values}, complete, alive);
-    } else {
-        api.request(route, values, complete, alive);
-    }
+    api.call("mutate", {route, values}, complete, alive);
 }
 
 void MusicLibrary::like(QJsonObject value) {
@@ -288,10 +300,7 @@ void MusicLibrary::like(QJsonObject value) {
         return;
     }
     const auto update = [this, value](bool enabled) {
-        if (provider == "qq") {
-            subscriptionStates[value["key"].toString()] = enabled ? "subscribed" : "not-subscribed";
-        }
-        const bool existed = MusicData::indexOfId(lists[1], value["id"].toString()) >= 0;
+        subscriptionStates[value["key"].toString()] = enabled ? "subscribed" : "not-subscribed";
         if (!enabled) {
             lists[1] = without(lists[1], "id", value["id"]);
             if (likedIDs) {
@@ -303,23 +312,11 @@ void MusicLibrary::like(QJsonObject value) {
                 likedIDs->append(value["id"]);
             }
         }
-        if (provider == "qq") {
-            int adjustment = -1;
-            if (enabled) {
-                adjustment = existed ? 0 : 1;
-            }
-            totals[1] = std::max(int(lists[1].size()), totals[1] + adjustment);
-            likedCursor = int(lists[1].size());
-        } else {
-            totals[1] = int(likedIDs ? likedIDs->size() : lists[1].size());
-        }
+        totals[1] = int(likedIDs ? likedIDs->size() : lists[1].size());
+        likedCursor = int(lists[1].size());
     };
-    if (provider == "qq") {
-        mutate("/like", {{"id", value["id"]}},
-               [update](QJsonObject body) { update(body["liked"].toBool()); });
-        return;
-    }
-    if (!likedIDs) {
+    const auto operations = ProviderRegistry::instance().descriptor(provider)["operations"].toObject();
+    if (!likedIDs && operations["likedIDs"].toBool()) {
         api.call(
             "likedIDs", {uid},
             [this, value](MusicReply result) {
@@ -334,10 +331,16 @@ void MusicLibrary::like(QJsonObject value) {
             valid(m_accountGeneration, &m_accountGeneration));
         return;
     }
-    const auto liked = MusicData::indexOf(*likedIDs, value["id"]) >= 0 ||
+    const auto liked = (likedIDs && MusicData::indexOf(*likedIDs, value["id"]) >= 0) ||
                        MusicData::indexOfId(lists[1], value["id"].toString()) >= 0;
-    mutate("/like", {{"id", value["id"]}, {"like", !liked}},
-           [update, liked](QJsonObject) { update(!liked); });
+    const bool enabled = !liked;
+    mutate("/like", {{"id", value["id"]}, {"like", enabled}},
+           [update, enabled](QJsonObject body) {
+               const auto state = body["state"].toString();
+               update(state == "subscribed" ? true
+                    : state == "not-subscribed" ? false
+                                                : enabled);
+           });
 }
 
 /** 判断专辑、歌单或歌手是否已收藏；本次会话写入与已载入的收藏列表都算已收藏。 */
@@ -370,11 +373,6 @@ void MusicLibrary::subscribe(QJsonObject value) {
     if (!QStringList{"album", "playlist", "artist"}.contains(kind)) {
         return;
     }
-    if (provider == "qq" && kind == "artist") {
-        status = QStringLiteral("QQ 上游尚未提供收藏歌手写入");
-        changed();
-        return;
-    }
     if (value["special"].toBool()) {
         status = QStringLiteral("“我喜欢的音乐”不支持收藏操作");
         changed();
@@ -385,11 +383,12 @@ void MusicLibrary::subscribe(QJsonObject value) {
     const bool subscribed = isSubscribed(value);
     mutate(kind == "playlist" ? "/playlist/subscribe" : "/" + kind + "/sub",
            {{"id", value["id"]}, {"t", subscribed ? 2 : 1}},
-           [this, value, kind, lane, key, subscribed](QJsonObject body) {
-               const auto enabled = provider == "qq" ? body["subscribed"].toBool() : !subscribed;
-               if (provider == "qq") {
-                   subscriptionStates[key] = enabled ? "subscribed" : "not-subscribed";
-               }
+           [this, value, kind, lane, key](QJsonObject body) {
+               const auto state = body["state"].toString();
+               const auto enabled = state == "subscribed"
+                                        ? true
+                                        : (state == "not-subscribed" ? false : !isSubscribed(value));
+               subscriptionStates[key] = enabled ? "subscribed" : "not-subscribed";
                if (!enabled) {
                    subscriptions.remove(key);
                    if (kind != "artist") {
@@ -409,7 +408,8 @@ void MusicLibrary::subscribe(QJsonObject value) {
 
 void MusicLibrary::playlistForm(QString kind, QString name, QString id, Completion done) {
     name = name.trimmed();
-    const auto maximum = provider == "qq" ? 20 : 100;
+    const auto library = ProviderRegistry::instance().descriptor(provider)["library"].toObject();
+    const auto maximum = library["playlistNameMaxLength"].toInt(100);
     if (name.isEmpty() || name.toUcs4().size() > maximum) {
         status = QStringLiteral("请输入 1–") + QString::number(maximum) + QStringLiteral(" 字歌单名称");
         changed();
@@ -467,9 +467,13 @@ void MusicLibrary::playlistForm(QString kind, QString name, QString id, Completi
         kind == "create" ? "/playlist/create" : "/playlist/name/update",
         kind == "create" ? QJsonObject{{"name", name}} : QJsonObject{{"id", id}, {"name", name}},
         [this, kind, name, id](QJsonObject body) {
-            if (kind == "create" && body["playlist"].isObject()) {
-                auto value = provider == "qq" ? body["playlist"].toObject()
-                                              : MusicData::parse(body["playlist"].toObject(), "playlist");
+            if (kind == "create" && (body["item"].isObject() || body["playlist"].isObject())) {
+                const auto raw = body["item"].isObject() ? body["item"].toObject()
+                                                         : body["playlist"].toObject();
+                auto value = MusicData::parse(raw, "playlist");
+                if (raw["provider"].toString() == provider) {
+                    value = raw;
+                }
                 if (!value.isEmpty()) {
                     value["creatorID"] = uid;
                     lists[2] = MusicData::unique(lists[2], {value});
@@ -594,7 +598,7 @@ void MusicLibrary::playlistTrack(QString id, QJsonObject value, bool remove, Com
                 directory->ids = without(directory->ids, {}, value["id"]);
                 directory->item["trackCount"] = std::max(0, directory->item["trackCount"].toInt() - 1);
                 directory->index = std::min(directory->index, std::max(0, int(directory->songs.size()) - 1));
-            } else if (provider == "qq" && !contained) {
+            } else if (!contained) {
                 directory->item["trackCount"] = directory->item["trackCount"].toInt() + 1;
             }
         },

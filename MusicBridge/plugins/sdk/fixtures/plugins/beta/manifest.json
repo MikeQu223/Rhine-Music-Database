@@ -1,0 +1,26 @@
+{
+    "schemaVersion": 2,
+    "apiVersion": "2.0",
+    "id": "beta",
+    "version": "2.0.0",
+    "kind": "third-party",
+    "publisher": "Rhine fixtures",
+    "requiresHost": ">=2.0 <3.0",
+    "license": "MIT",
+    "entry": { "file": "index.cjs" },
+    "runtime": { "hosting": ["module"], "diagnosticsOrdinal": 11 },
+    "display": {
+        "name": "Beta Music",
+        "label": "BETA",
+        "detail": "Minimal fixture provider",
+        "order": 11
+    },
+    "capabilities": { "search": true },
+    "operations": { "search": true },
+    "media": {
+        "hosts": ["media.beta.example"],
+        "coverHosts": ["cover.beta.example"],
+        "allowHttp": false,
+        "schemePolicy": "https"
+    }
+}

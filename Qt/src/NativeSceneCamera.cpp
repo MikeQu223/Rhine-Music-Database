@@ -11,6 +11,13 @@ double lerp(double from, double to, double amount) {
 
 /** 镜头保持原长焦、抽取锚点与响应式构图；所有计算使用双精度，再写入 GPU 矩阵。 */
 void NativeScene::updateCamera(double seconds, std::optional<Cinema> cinema) {
+    const auto aspect = m_width / m_height;
+    const bool portrait = aspect < 1.05;
+    const bool mobile = aspect < 1;
+    // 竖屏播放页沿唱片正面法线观察，抽取过程仍沿用原有的详情过渡权重。
+    const Vector detailDirection = mobile
+                                       ? Vector{std::sin(m_actor.rotation.y), 0, std::cos(m_actor.rotation.y)}
+                                       : Vector{-0.277, 0.238, 0.931};
     const auto shot = cinema ? cinema->time : 29.1;
     const auto orbit = SceneMotion::smooth((shot - 22.6) / 1.6);
     const auto settle = SceneMotion::smooth((shot - 24.25) / 2.25);
@@ -31,12 +38,12 @@ void NativeScene::updateCamera(double seconds, std::optional<Cinema> cinema) {
         direction = {-std::sin(shotYaw) * std::cos(shotElevation), std::sin(shotElevation),
                      std::cos(shotYaw) * std::cos(shotElevation)};
     } else {
-        direction = direction.lerp({-0.277, 0.238, 0.931}, m_detail).normalized();
+        direction = direction.lerp(detailDirection, m_detail).normalized();
     }
     // 抽取时逐步采用详情页视线，让模型进入右侧遮罩之前先向左收束。
     const auto detailHandoff = cinema ? SceneMotion::smooth((shot - 27.3) / 1.55) : 0.0;
     if (cinema) {
-        direction = direction.lerp(Vector{-0.277, 0.238, 0.931}.normalized(), detailHandoff).normalized();
+        direction = direction.lerp(detailDirection.normalized(), detailHandoff).normalized();
     }
     const auto right = Vector{0, 1, 0}.cross(direction).normalized();
     const auto up = direction.cross(right).normalized();
@@ -52,8 +59,6 @@ void NativeScene::updateCamera(double seconds, std::optional<Cinema> cinema) {
         anchorAim = anchorAim + up * (-(540 - lerp(340, 288, pan)) / pixelScale);
         cameraAim = cameraAim.lerp(anchorAim, SceneMotion::smooth((shot - 25.05) / 0.35));
     }
-    const auto aspect = m_width / m_height;
-    const bool portrait = aspect < 1.05;
     const bool compact = !portrait && m_width < 1100;
     const auto baseSpan = lerp(span, 5.9, m_detail);
     const auto portraitDetail =
@@ -73,8 +78,9 @@ void NativeScene::updateCamera(double seconds, std::optional<Cinema> cinema) {
         const auto pixelScale = m_height / viewSpan;
         if (!cinema && portrait) {
             const auto baseline = SceneMotion::cinematicField(12, 2, 26.56);
-            cameraAim =
-                Vector{0, -4.6 + baseline + 0.4 + 1.85, -2.17} + up * ((0.36 - 0.5) * m_height / pixelScale);
+            // 竖屏主界面的 tab 列表占住下部，唱片锚点相应上移，避免被列表遮住。
+            cameraAim = Vector{0, -4.6 + baseline + 0.4 + 1.85, -2.17} +
+                        up * (((mobile ? 0.26 : 0.36) - 0.5) * m_height / pixelScale);
         }
         auto detailAim = m_actor.position + Vector{0, 1.85, 0};
         detailAim = detailAim + right * ((0.5 - anchorX) * m_width / pixelScale);
@@ -83,8 +89,10 @@ void NativeScene::updateCamera(double seconds, std::optional<Cinema> cinema) {
     }
     auto position = cameraAim + direction * distance;
     if (!cinema && !m_reduced) {
-        position.x += m_pointer.x() * 0.12;
-        position.y -= m_pointer.y() * 0.12;
+        // 详情停稳后消除鼠标视差，确保竖屏正视角不会随指针再次倾斜。
+        const double parallax = mobile ? 1 - m_detail : 1;
+        position.x += m_pointer.x() * 0.12 * parallax;
+        position.y -= m_pointer.y() * 0.12 * parallax;
     }
     const auto blend = cinema || m_reduced ? 1 : 1 - std::exp(-seconds * 5);
     m_eye = m_eye.lerp(position, blend);

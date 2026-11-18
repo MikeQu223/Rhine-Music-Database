@@ -23,6 +23,7 @@ class Gamepad : public QObject {
     QElapsedTimer m_clock;
     bool m_enabled = true;
     bool m_connected = false;
+    bool m_foreground = false;
     int m_slot = -1;
     bool m_held[ButtonCount] = {};
     qint64 m_nextRepeat[ButtonCount] = {};

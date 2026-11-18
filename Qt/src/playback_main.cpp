@@ -10,6 +10,7 @@
 
 #ifdef Q_OS_MACOS
 void platformBackgroundService();
+int runMacSpatialAudioProbe(const QString &filePath);
 #endif
 
 /** 后台入口仅初始化音频与本地 IPC，禁止在此创建窗口、托盘或渲染引擎。 */
@@ -49,6 +50,13 @@ int main(int argc, char **argv) {
     }
 #ifdef Q_OS_MACOS
     platformBackgroundService();
+    // 探针使用正式 helper 的应用身份，但独立于播放服务的数据目录和 IPC。
+    if (arguments.value(1) == QStringLiteral("--spatial-audio-probe")) {
+        if (arguments.size() != 3) {
+            return 2;
+        }
+        return runMacSpatialAudioProbe(arguments.at(2));
+    }
 #endif
     const auto root = arguments.value(arguments.indexOf("--resources") + 1);
     const auto gui = arguments.value(arguments.indexOf("--gui") + 1);

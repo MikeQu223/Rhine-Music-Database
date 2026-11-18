@@ -13,13 +13,20 @@ Window {
     width: 1280
     height: 720
     // 移动端是全屏 Activity，窗口尺寸跟随屏幕；给桌面保留的最小尺寸在手机上会把布局顶破。
-    minimumWidth: ios || android ? 0 : 960
+    minimumWidth: ios || android ? 0 : 320
     minimumHeight: ios || android ? 0 : 540
     visible: true
     property bool windowsFrameless: Qt.platform.os === "windows"
     flags: (windowsFrameless ? Qt.FramelessWindowHint : 0) | Qt.Window | Qt.WindowTitleHint | Qt.WindowSystemMenuHint | Qt.WindowMinMaxButtonsHint | Qt.WindowCloseButtonHint | Qt.WindowFullscreenButtonHint
     title: "RHINE MUSIC DATABASE"
     color: "#e7e7e1"
+    // Tray-close events are intercepted before QML. On an accepted primary-window close,
+    // hide the companion so it cannot keep Qt's last-window quit behavior alive.
+    onClosing: {
+        if (!root.ios) {
+            rhineMv.hideForQuit();
+        }
+    }
     // 原生对话框挂在真实窗口；iOS 使用独立的导入入口。
     Loader {
         active: !root.ios

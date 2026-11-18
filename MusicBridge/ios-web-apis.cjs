@@ -25,6 +25,50 @@ for (const [name, value] of Object.entries({
     Object.defineProperty(globalThis, name, { value, writable: true, configurable: true });
 }
 
+// nodejs-mobile 未编译完整 ICU：TextDecoder 的 fatal 选项会直接抛 ERR_NO_ICU，
+// 而插件常拿它校验 UTF-8（网易云插件的上游 crypto 工具在加载阶段就构造）。
+// 用 node:buffer 自带的 UTF-8 校验补回 fatal 语义；流式解码不检查跨块字节。
+(function () {
+    if (typeof TextDecoder !== "function") {
+        return;
+    }
+    try {
+        new TextDecoder("utf-8", { fatal: true });
+        return;
+    } catch {
+        // 运行时没有 ICU，继续安装兼容实现。
+    }
+    const { isUtf8 } = require("node:buffer");
+    const NativeTextDecoder = TextDecoder;
+    const UTF8_LABEL = /^(?:utf-?8|unicode-1-1-utf-8)$/i;
+    class FatalTextDecoder extends NativeTextDecoder {
+        constructor(label, options) {
+            const { fatal, ...rest } = options || {};
+            super(label === undefined ? "utf-8" : label, rest);
+            this.rhineFatalUtf8 = fatal === true && UTF8_LABEL.test(String(label || "utf-8"));
+        }
+        decode(input, options) {
+            if (this.rhineFatalUtf8 && input && !options?.stream) {
+                let bytes;
+                if (input instanceof ArrayBuffer) {
+                    bytes = new Uint8Array(input);
+                } else if (ArrayBuffer.isView(input)) {
+                    bytes = new Uint8Array(input.buffer, input.byteOffset, input.byteLength);
+                }
+                if (bytes && !isUtf8(bytes)) {
+                    throw new TypeError("The encoded data was not valid for encoding utf-8");
+                }
+            }
+            return super.decode(input, options);
+        }
+    }
+    Object.defineProperty(globalThis, "TextDecoder", {
+        value: FatalTextDecoder,
+        writable: true,
+        configurable: true,
+    });
+})();
+
 // nodejs-mobile 的 Worker env 选项不可靠（Android 真机实测：宿主传入的 TMPDIR 没进
 // worker 的环境变量，os.tmpdir() 退回 /tmp，worker 在写 anonymous_token 时 EACCES 崩溃，
 // 「音乐服务已退出」就是它）。运行时经 workerData 直传宿主环境作兜底：这段代码位于

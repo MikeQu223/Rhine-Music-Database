@@ -1,7 +1,10 @@
 #pragma once
+#include "ResponsiveHudTransition.h"
 #include "DesktopLyricsLayout.h"
+#include "GlobalShortcuts.h"
 #include "Glyphs.h"
 #include "HudScroll.h"
+#include "ResponsiveHudLayout.h"
 #include "MusicLibrary.h"
 #include "SettingsSchema.h"
 #include "UiMotion.h"
@@ -49,7 +52,13 @@ class NativeHud : public QObject {
               QObject *parent = nullptr);
     void draw(QJsonObject frame, double width, double time);
     QJsonObject state() const;
+    bool compactLayout() const {
+        return m_responsive.compact();
+    }
     void action(QString action);
+    GlobalShortcuts *shortcuts = nullptr;
+    void shortcutsPanel(double x, double y, double width);
+    void applyShortcutAction(const QString &value);
     void key(QString key, bool command);
     void wheel(double x, double y, double delta, std::optional<int> steps = std::nullopt,
                std::optional<double> distance = std::nullopt);
@@ -57,6 +66,8 @@ class NativeHud : public QObject {
     void openModal(QString kind);
     void closeModal();
     void setQuery(QString value);
+    // ！？ 325 ？！
+    void openHiddenVideo();
     void pageResults(int direction);
     // 重新测量设置页内容高度；会话恢复和展开下拉前必须调用。
     void refreshSettingsLayout();
@@ -67,6 +78,8 @@ class NativeHud : public QObject {
     void cancelSettingEdit();
     bool animating(double time) const;
     bool supportsTrackList() const;
+    // 资料库中的 ENTER 是否直接播放当前曲目（由“切歌不打开详情”控制）。
+    bool enterPlaysSelection() const;
     QVector<Row> rows(int lane);
     QRectF modalBounds(double width) const;
     QRectF detailBounds(double width) const;
@@ -82,14 +95,20 @@ class NativeHud : public QObject {
     QJsonObject frame;
     QString tab = "overview";
     QString modal;
+    QString pluginManagerMessage;
+    QString pluginDetailId;
     QString query;
     QString formKind;
     QString formPID;
     QString confirmTitle;
+    QString confirmMessage;
+    QString confirmLabel;
     QString detailSort = "none";
+    QString detailQuery;
     QString groupBy = "none";
     QString activeGroup;
     QString artistTab = "songs";
+    bool playlistSearchActive = false;
     bool categoryPicker = false;
     int categoryPage = 0;
     static constexpr int CategoryPageSize = 40;
@@ -106,6 +125,14 @@ class NativeHud : public QObject {
     int searchRowCount = 0;
     double savedScroll = 0;
     int savedRowCount = 0;
+    // 插件管理器左右列表各自维护滚动位置与固定行高。
+    static constexpr double PluginListTop = 282;
+    static constexpr double PluginListBottom = 786;
+    static constexpr double PluginMarketRowHeight = 82;
+    static constexpr double PluginInstalledRowHeight = 74;
+    static constexpr double PluginColumnGap = 34;
+    double pluginMarketScroll = 0;
+    double pluginInstalledScroll = 0;
     // 通用文本设置的 QML 编辑浮层状态；清空 id 即隐藏。
     QString editingSettingId;
     QString editingSettingText;
@@ -126,6 +153,8 @@ class NativeHud : public QObject {
     QString expandedPreference;
     // 清除缓存后的结果提示；重新打开设置页时清空。
     QString cacheMessage;
+    QString storageUsage;
+    void refreshStorageUsage();
     // 从主设置页进入桌面歌词页时保留原滚动位置。
     double settingsReturnScroll = 0;
     // 桌面歌词样式页使用独立滚动区。
@@ -147,13 +176,27 @@ class NativeHud : public QObject {
     bool reduced = false;
     bool startupAnimation = false;
     bool discRotation = false;
+    bool skipDetailOnSwitch = false;
     bool vsync = true;
     int archiveMaskStrength = 50;
     bool closing = false;
     bool lyricsMode = false;
+    bool commentsMode = false;
+    QString commentsReturnTab = "overview";
+    QString commentsTrackKey;
+    double commentsScroll = 0;
+    double commentsContentBottom = 0;
     bool trackListMode = false;
     double width = 1920;
     double lastTime = 0;
+    /// 播放键变形动画（HUD 时钟，秒）：起点形态、起始时刻（< 0 表示静止）、目标是否为暂停形态。
+    static constexpr double PlayMorphDuration = 0.18;
+    double m_playMorphFrom = 0;
+    double m_playMorphStart = -1;
+    bool m_playMorphTarget = false;
+    bool m_playMorphReady = false;
+    bool m_boxedPlayButton = false;
+    double playMorph(double time) const;
     /// 进入 detail 的真实墙钟时刻（QDateTime 毫秒）。HUD 淡入不能只依赖
     /// frame["detail"]：那个值来自 m_animationTime 伪时钟，引擎休眠时会永久停住。
     qint64 m_detailEnterWallMs = -1;
@@ -164,6 +207,8 @@ class NativeHud : public QObject {
 
   signals:
     void localImportRequested(bool folder);
+    void pluginImportRequested();
+    void mvRequested();
 
   private:
     struct LyricRow {
@@ -201,6 +246,8 @@ class NativeHud : public QObject {
     int m_staticCommands = 0;
     HudSceneActions m_scene;
     quint64 m_searchGeneration = 0;
+    // ！？ 325 ？！
+    QString m_secretKeys;
     // 首屏不足一屏时自动补页，记录上次自动补页后的条数，避免空页循环请求。
     int m_searchAutoFillSize = -1;
     int m_savedAutoFillSize = -1;
@@ -214,19 +261,42 @@ class NativeHud : public QObject {
     QString m_sortNotice;
     // QObject 子对象拥有生命周期，封面回调不跨越 HUD 销毁。
     DiscoverArtwork *m_discoverArtwork = nullptr;
+    DiscoverArtwork *m_savedArtwork = nullptr;
+    DiscoverArtwork *m_detailArtwork = nullptr;
+    DiscoverArtwork *m_queueArtwork = nullptr;
     QString m_discoverScrollScope;
     QString m_songQueueFeedbackKey;
     QHash<QString, QString> m_songQueueFeedback;
     // 每个按钮独立计时，重复点击重启计时器；HUD 销毁时自动取消回调。
     QHash<QString, QTimer *> m_songQueueFeedbackTimers;
+    struct PlaylistContext {
+        QString id;
+        bool contained = false;
+    };
+    // 只有从可编辑歌单打开的歌曲才返回上下文；搜索结果不参与歌单增删。
+    std::optional<PlaylistContext> openedPlaylistContext() const;
+    void showPlaylistFeedback(const QString &action, const QString &text, int holdMs);
+    QString m_playlistFeedbackKey;
+    QHash<QString, QString> m_playlistFeedback;
+    QHash<QString, QTimer *> m_playlistFeedbackTimers;
     QString m_sortContainerKey;
     QJsonArray m_sortTracks;
     QString m_sortField;
+    QString m_trackFilter;
+    int m_detailSearchCursor = -1;
     QVector<int> m_trackOrder;
     QString m_rowsKey;
+    QJsonArray m_rowsSource;
     QVector<Row> m_rows;
     QString m_resultSignature;
     double m_resultStart = 0;
+    ResponsiveHudLayout m_responsive;
+    ResponsiveHudTransition m_mobileTransition;
+    QJsonObject sourceState() const;
+    void drawMobile(double time, const QString &scope);
+    ResponsiveHudContent::Model *m_contentSink = nullptr;
+    QVector<ResponsiveHudContent::Item> auxiliaryContent();
+    void modalBody(double x, double y, double usable);
     bool m_modalControls = false;
     QJsonObject m_lyricsDocument;
     double m_lyricsWidth = 0;
@@ -265,6 +335,8 @@ class NativeHud : public QObject {
     void hit(double x, double y, double width, double height, QString action, QString label = {});
     void button(QString label, double x, double y, double width, double height, QString action, double size,
                 QString weight = "regular");
+    void pluginButton(const QString &label, double x, double y, double width, double height,
+                      const QString &action, double size, bool primary = false, QJsonArray color = {});
     void control(QString label, double x, double y, double width, QString action);
     void rule(double x, double y, double width, double opacity = 0.4);
     void image(QString key, double x, double y, double width, double height);
@@ -285,6 +357,7 @@ class NativeHud : public QObject {
     void actionButton(QString label, double x, double y, double width, QString action, bool primary = false);
     void detail(double width, double opacity);
     void lyricsPanel(double x, double width);
+    void commentsPanel(double x, double width);
     QString body() const;
     void container(double width, double opacity);
     void viewer(double width);
@@ -317,8 +390,16 @@ class NativeHud : public QObject {
     void localPanel(double x, double y, double width);
     void playerBar(double x, double y, double width);
     void playerPanel(double x, double y, double width);
+    QJsonArray providerCardsState() const;
+    QJsonArray providerPlaylistEditors() const;
+    QRectF pluginMarketViewport(double width) const;
+    QRectF pluginInstalledViewport(double width) const;
+    double pluginMarketScrollMaximum() const;
+    double pluginInstalledScrollMaximum() const;
     void platformChoices(double x, double y, double width, bool expanded = false);
     void platformPanel(double x, double y, double width);
+    void pluginsPanel(double x, double y, double width);
+    void pluginDetailPanel(double x, double y, double width);
     void settingsPanel(double x, double y, double width);
     void paintSettingsCustomSection(const QString &renderer, const QRectF &body, double scroll);
     SettingsSchema::SettingsContext settingsContext() const;

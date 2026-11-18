@@ -4,6 +4,46 @@
 #include <cmath>
 
 namespace PlayerBar {
+/** 共用播放键绘制，桌面和窄屏使用同一组变形顶点。中心和尺寸使用各自的 HUD 坐标。 */
+void appendPlayButton(QJsonArray &commands, const State &state, QPointF center, double size,
+                      const QJsonArray &ink, const QJsonArray &paper) {
+    commands.append(QJsonArray{"save"});
+    commands.append(QJsonArray{"translate", center.x(), center.y()});
+    if (state.boxedPlayButton) {
+        commands.append(QJsonArray{"fill", ink, -size / 2, -size / 2, size, size});
+    }
+    const auto &color = state.boxedPlayButton ? paper : ink;
+    const double glyphScale = size / 46 * (state.loading || state.boxedPlayButton ? 1 : 1.25);
+    commands.append(QJsonArray{"scale", glyphScale, glyphScale});
+    const double morph = state.playMorph >= 0 ? std::clamp(state.playMorph, 0.0, 1.0)
+                                              : (state.playing ? 1.0 : 0.0);
+    if (state.loading) {
+        for (const double x : {-11., -2., 7.}) {
+            commands.append(QJsonArray{"fill", color, x, -2, 4, 4});
+        }
+    } else if (morph == 0) {
+        commands.append(QJsonArray{"fill-path", "M -5 -10 L 9 0 L -5 10 Z", color});
+    } else {
+        // 沿 x = 2 切分三角，两块四边形分别向暂停竖杠插值。
+        static constexpr QPointF play[2][4] = {{{-5, -10}, {2, -5}, {2, 5}, {-5, 10}},
+                                                {{2, -5}, {9, 0}, {9, 0}, {2, 5}}};
+        static constexpr QPointF pause[2][4] = {{{-6, -9}, {-3, -9}, {-3, 9}, {-6, 9}},
+                                                 {{3, -9}, {6, -9}, {6, 9}, {3, 9}}};
+        QString path;
+        for (int part = 0; part < 2; ++part) {
+            for (int corner = 0; corner < 4; ++corner) {
+                const auto start = play[part][corner];
+                const auto vertex = start + (pause[part][corner] - start) * morph;
+                path += corner == 0 ? QStringLiteral("M ") : QStringLiteral(" L ");
+                path += QString::number(vertex.x(), 'f', 2) + ' ' + QString::number(vertex.y(), 'f', 2);
+            }
+            path += QStringLiteral(" Z ");
+        }
+        commands.append(QJsonArray{"fill-path", path, color});
+    }
+    commands.append(QJsonArray{"restore"});
+}
+
 namespace {
 QString clock(double milliseconds) {
     const auto seconds = int(std::max(0.0, milliseconds) / 1000);
@@ -69,19 +109,8 @@ class Painter {
         drawing.commands.append(QJsonArray{"translate", x, y});
         path("M -57 -9 L -69 0 L -57 9 Z M -73 -10 L -73 10", ink);
         path("M 57 -9 L 69 0 L 57 9 Z M 73 -10 L 73 10", ink);
-        fill({-23, -23, 46, 46}, ink);
-        if (state.loading) {
-            // 加载提示使用底色，避免与深色播放键融在一起。
-            fill({-11, -2, 4, 4}, paper);
-            fill({-2, -2, 4, 4}, paper);
-            fill({7, -2, 4, 4}, paper);
-        } else if (state.playing) {
-            fill({-6, -9, 3, 18}, paper);
-            fill({3, -9, 3, 18}, paper);
-        } else {
-            path("M -5 -10 L 9 0 L -5 10 Z", paper, true);
-        }
         drawing.commands.append(QJsonArray{"restore"});
+        appendPlayButton(drawing.commands, state, {x, y}, 46, ink, paper);
         hit({x - 89, y - 24, 44, 48}, "player:prev", "上一首");
         hit({x - 23, y - 23, 46, 46}, "player:toggle", state.playing ? "暂停" : "播放");
         hit({x + 45, y - 24, 44, 48}, "player:next", "下一首");
@@ -163,10 +192,8 @@ void favorite(Painter &paint, const State &state, double x, double y) {
                state.likeKnown ? paint.ink : paint.muted, state.liked);
     paint.drawing.commands.append(QJsonArray{"restore"});
     if (state.canLike) {
-        auto label = state.liked ? QStringLiteral("取消喜欢当前歌曲") : QStringLiteral("喜欢当前歌曲");
-        if (!state.likeKnown) {
-            label = "核实并切换当前歌曲喜欢状态";
-        }
+        const auto label = state.liked ? QStringLiteral("取消喜欢当前歌曲")
+                                       : QStringLiteral("喜欢当前歌曲");
         paint.hit({x - 24, y - 24, 48, 48}, "music:like-current", label);
     }
 }
@@ -215,6 +242,8 @@ void output(Painter &paint, const State &state, double x, double y, double right
         paint.fill({volumeX, y + 60, 100, 3}, paint.line);
         paint.fill({volumeX, y + 60, 100 * std::clamp(state.volume, 0.0, 1.0), 3}, paint.ink);
         paint.hit(*paint.drawing.volume, "player:volume-fraction:0", "音量");
+        const auto volume = int(std::lround(std::clamp(state.volume, 0.0, 1.0) * 100));
+        paint.label(QString::number(volume) + "%", volumeX + 108, y + 53, 11, 42, "regular", true);
     }
     const auto queueX = right - 65;
     paint.fill({queueX, y + 28, 19, 1.5}, paint.ink);
@@ -244,7 +273,12 @@ Drawing render(const State &state, const QRectF &bounds, bool dark, Glyphs &glyp
     const auto centerY = y + RowHeight / 2;
     favorite(paint, state, favoriteX, centerY);
     paint.controls(state, center, centerY);
-    lyrics(paint, state, bounds.right() - 470, centerY);
+    lyrics(paint, state, bounds.right() - (state.musicVideo ? 490 : 470), centerY);
+    if (state.musicVideo) {
+        const auto mvX = bounds.right() - 435;
+        paint.centeredLabel("MV", {mvX, centerY}, 15, "regular");
+        paint.hit({mvX - 24, centerY - 24, 48, 48}, "player:mv", "打开 MV 播放窗口");
+    }
     playbackMode(paint, state, bounds.right() - 380, centerY);
     timeline(paint, state, row);
     output(paint, state, outputX, y, bounds.right());

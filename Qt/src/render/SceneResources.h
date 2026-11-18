@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../CrashDiagnostics.h"
+
 #include <QByteArray>
 #include <rhi/qrhi.h>
 #include <algorithm>
@@ -33,7 +35,9 @@ class SceneResources {
         }
         return value;
     }
-    template <class T> T *create(T *value) {
+    template <class T> T *create(T *value, std::source_location source = std::source_location::current()) {
+        CrashRenderScope diagnosticScope("resource.create", source);
+        CrashDiagnostics::recordResource(value);
         if (!value->create()) {
             qFatal("RHI resource allocation failed");
         }

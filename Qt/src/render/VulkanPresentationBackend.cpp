@@ -3,6 +3,9 @@
 #include "RenderPolicy.h"
 #include "../fg/VulkanPresenter.h"
 #include "../AppStorage.h"
+#ifdef Q_OS_WIN
+#include "../WindowsRoundedCorners.h"
+#endif
 #include <QCoreApplication>
 #include <QDir>
 #include <QElapsedTimer>
@@ -59,7 +62,7 @@ class VulkanPresentationBackend final : public PresentationBackend {
         m_window->setVulkanInstance(m_instance.get());
 #ifdef Q_OS_WIN
         m_window->setTitle(QStringLiteral("RHINE MUSIC DATABASE"));
-        m_window->setMinimumSize(QSize(960, 540));
+        m_window->setMinimumSize(QSize(320, 540));
         // 必须在创建 HWND 和 Vulkan surface 前确定无边框属性。
         m_window->setFlags(Qt::Window | Qt::FramelessWindowHint | Qt::WindowTitleHint |
                            Qt::WindowSystemMenuHint | Qt::WindowMinMaxButtonsHint |
@@ -73,6 +76,10 @@ class VulkanPresentationBackend final : public PresentationBackend {
             m_error = QStringLiteral("QWindow 没有创建出平台窗口");
             return false;
         }
+#ifdef Q_OS_WIN
+        // 无边框窗口没有标准框架，HWND 创建后补一次 DWM 圆角请求。
+        applyWindowsRoundedCorners(m_window.get());
+#endif
 
         m_window->show();
         // Wayland 下 surface 要等窗口真正 expose 之后才存在，只 create() 会拿到空句柄。

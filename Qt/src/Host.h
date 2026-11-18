@@ -6,14 +6,22 @@
 #include <QCache>
 #include <QImage>
 #include <QJsonObject>
+#include <QJsonArray>
 #include <QNetworkAccessManager>
 #include <QObject>
 #include "BridgeProcess.h"
 #include "PlaybackConnection.h"
+#include "storage/StorageCoordinator.h"
+#include "storage/CacheManager.h"
 #include <QQueue>
 #include <QTemporaryDir>
 #include <QTimer>
 #include <functional>
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS) || defined(Q_OS_WIN)
+#include "AppleTransitionPlan.h"
+#endif
+
+inline constexpr int CoverThumbnailDimension = 128;
 
 // 系统边界：只通过管道调用锁定的上游；凭据不进入参数、环境或日志。
 class Host : public QObject {
@@ -22,11 +30,12 @@ class Host : public QObject {
     using JsonReply = std::function<void(QJsonObject, QString)>;
     using TextReply = std::function<void(QString)>;
     explicit Host(QString root, bool offline = false, QObject *parent = nullptr, bool playbackOnly = false,
-                  PlaybackConnection *connection = nullptr);
+                  PlaybackConnection *connection = nullptr, QString isolatedCachePath = {});
     ~Host() override;
     void requestJson(QString route, QJsonObject params, JsonReply callback);
     void schedule(int ms, std::function<void()> callback);
-    void loadCover(QString url, TextReply callback, int maximumDimension = 1024);
+    void loadCover(QString url, TextReply callback, int maximumDimension = 1024,
+                   bool allowPlaybackOnly = false);
     void playOfficial(QString id, TextReply callback);
     Q_INVOKABLE void invalidate() {
         emit invalidated();
@@ -35,10 +44,30 @@ class Host : public QObject {
     Q_INVOKABLE bool hasCredential(QString value) const;
     Q_INVOKABLE QString saveCredential();
     Q_INVOKABLE void logout();
+    Q_INVOKABLE void bumpEpoch();
     Q_INVOKABLE void setProvider(QString provider);
-    Q_INVOKABLE void setKugouEdition(QString edition);
-    Q_INVOKABLE void acceptCookies(QString json, int responseEpoch, QString credentialKey = {});
-    Q_INVOKABLE QString fromLink(QString input) const;
+    Q_INVOKABLE void setProviderVariant(QString variant);
+    Q_INVOKABLE void acceptCookies(QString json, int responseEpoch, QString credentialKey = {},
+                                   QString provider = {});
+    Q_INVOKABLE QJsonArray pluginManagerState() const;
+    Q_INVOKABLE QJsonObject pluginDetail(QString id) const;
+    Q_INVOKABLE QJsonObject pluginMarketplaceState() const;
+    Q_INVOKABLE void checkPluginUpdates();
+    Q_INVOKABLE void refreshPluginMarketplace();
+    Q_INVOKABLE QString installMarketplacePlugin(QString id);
+    Q_INVOKABLE bool pluginEnabled(QString id) const;
+    Q_INVOKABLE bool pluginUpdateAvailable(QString id) const;
+    Q_INVOKABLE void setPluginEnabled(QString id, bool enabled);
+    Q_INVOKABLE QString rollbackPlugin(QString id);
+    Q_INVOKABLE QString uninstallPlugin(QString id);
+    QString importPlugin(QString directory);
+    void reloadPlugins();
+    // v2 凭据封装：按 provider 隔离 cookie 与 secretState；旧扁平 jar 在加载时迁移。
+    static QJsonObject migrateCredential(const QJsonObject &legacy);
+    static QJsonObject credentialCookies(const QJsonObject &credentials, const QString &provider,
+                                         const QString &edition = {});
+    // v2 凭据按原样序列化；旧扁平投影降级兼容已移除。
+    static QJsonObject storageCredential(const QJsonObject &credentials);
     Q_INVOKABLE QString qr(QString key);
     Q_INVOKABLE QString qrImage(QString data);
     Q_INVOKABLE void mediaMetadata(QString title, QString artist, QString album,
@@ -47,6 +76,11 @@ class Host : public QObject {
                                bool paused = false);
     Q_INVOKABLE void mediaControl(QString action, double value = 0);
     Q_INVOKABLE QVariantMap mediaState() const;
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS) || defined(Q_OS_WIN)
+    void setAppleTransitionPreparation(AppleTransitionPreparation preparation);
+    bool prepareAppleTransition(const QUrl &next, bool alternative);
+    void cancelAppleTransition();
+#endif
     Q_INVOKABLE void copy(QString text);
     Q_INVOKABLE void open(QString url);
     Q_INVOKABLE QString modifierKey() const {
@@ -59,8 +93,16 @@ class Host : public QObject {
     Q_INVOKABLE bool systemDark() const;
     Q_INVOKABLE void invalidateMetadata();
     Q_INVOKABLE void clearCache();
+    QJsonObject clearNetworkImages();
+    void clearMetadata(StorageCoordinator::Completion done);
     Q_INVOKABLE QString preference(QString key) const;
     Q_INVOKABLE void setPreference(QString key, QString value);
+    QString writeStoragePreference(const QString &key, const QString &value);
+    void forgetPreference(const QString &key);
+    CacheManager *cacheManager() const;
+    QString cacheAccountScope(const QString &service) const;
+    QString cacheVariant(const QString &service) const;
+    QByteArray cacheScopeIdentity(const QString &service) const;
     // 设置 Schema 与回归测试共用同一份偏好键白名单。
     static bool isPreferenceKey(const QString &key);
     Q_INVOKABLE bool activates() const;
@@ -83,7 +125,7 @@ class Host : public QObject {
     /// 会话/账号恢复和系统媒体会话注册。它不阻止远程封面：封面走 loadCover。
     bool renderOnly = false;
     std::function<QJsonObject(QString, QJsonObject)> fixture;
-    QJsonObject cookies;
+    QJsonObject credentials;
     int epoch = 0;
     int interval = 1200;
     static int lifetime(const QString &route);
@@ -98,13 +140,16 @@ class Host : public QObject {
     }
 
   signals:
-#if defined(Q_OS_DARWIN) || defined(Q_OS_WIN)
     void preferenceChanged(QString key, QString value);
-#endif
     void mediaAction(QString action);
     void mediaChanged();
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS) || defined(Q_OS_WIN)
+    void appleTransitionCommitted();
+#endif
+    void audioSpectrumChanged(QJsonArray levels);
     void playbackDiagnostic(QString event, QJsonObject values);
     void invalidated();
+    void pluginsReloaded();
 
   private:
     friend class AudioPlayerRegression;
@@ -120,7 +165,8 @@ class Host : public QObject {
         QString id, route, key;
         QJsonObject params, cookies;
         QList<Waiter> waiters;
-        bool disk = false;
+        std::optional<CacheKey> diskKey;
+        quint64 diskGeneration = 0;
         int cacheRevision = 0;
     };
     struct Entry {
@@ -141,33 +187,70 @@ class Host : public QObject {
     QString mediaCoverUrl, mediaCoverPath;
     void refreshMediaCover();
     int metadataRevision = 0;
+    std::unique_ptr<CacheManager> m_cacheManager;
+    quint64 imageCacheGeneration = 0;
     mutable qint64 lastMediaUpdate = 0;
     QNetworkAccessManager network;
+    QJsonArray marketplacePlugins;
+    QString marketplaceStatus;
+    bool marketplaceLoading = false;
+    bool marketplaceInstalling = false;
+    QString marketplaceInstallId;
+    QString marketplaceInstallFile;
+    int marketplaceInstallFilesDone = 0;
+    int marketplaceInstallFilesTotal = 0;
+    qint64 marketplaceInstallBytes = 0;
+    qint64 marketplaceInstallFileBytes = 0;
+    qint64 marketplaceInstallFileTotal = 0;
+    qint64 marketplaceInstallStartedAt = 0;
+    qint64 marketplaceInstallLastEmit = 0;
+    double marketplaceInstallSpeed = 0;
+    double marketplaceInstallProgress = 0;
+    void updateMarketplaceInstallProgress(bool force = false);
+    QJsonArray installedPluginManifests() const;
+    QStringList disabledPlugins() const;
+    void writeDisabledPlugins(const QStringList &disabled);
+    QString marketplaceUrl() const;
+    void downloadPluginFile(const QString &url, const QString &path, std::function<void(QString)> done);
+    void downloadPluginFiles(QStringList files, QString base, QString directory, QString id,
+                             std::function<void(QString)> done);
     mutable QCache<QString, QImage> images{32 * 1024};
+    mutable QCache<QString, QImage> thumbnailImages{8 * 1024};
     qint64 lastStart = 0;
     QHash<QString, qint64> blockedUntil;
-    QHash<QString, QJsonObject> privateCredentials;
-    QString provider = "netease";
-    QString kugouEdition = "standard";
+    QJsonObject cookiesFor(const QString &provider) const;
+    QString variantFor(const QString &provider) const;
+    void setCookiesFor(const QString &provider, const QJsonObject &cookies);
+    QJsonObject secretsFor(const QString &provider) const;
+    void setSecretsFor(const QString &provider, const QJsonObject &secrets);
+    QJsonObject cookieSlice(const QString &provider) const;
+    QString provider;
+    QString providerVariant = "standard";
     QString active;
     bool stopped = false;
     bool audioDiagnosticsEnabled = false;
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS) || defined(Q_OS_WIN)
+    AppleTransitionPreparation appleTransitionPreparation = AppleTransitionPreparation::WaitingForPlayback;
+#endif
+    bool audioSpectrumEnabled = false;
     PlaybackConnection *remote = nullptr;
     mutable QHash<QString, QString> remotePreferences;
     bool playbackOnly = false;
     int diagnosticRequestSerial = 0;
     void pump();
+    void dispatchRequest(const QString &key);
+    void clearLegacyMetadata(StorageCoordinator::Completion done);
     void recordPlaybackDiagnostic(const QString &event, const QJsonObject &values);
     void send(QString key);
     void finish(QString key, QJsonObject response, QString error = {});
     void respond(const Waiter &waiter, QJsonObject response, QString error);
-    QString diskPath(QString key) const;
 };
 QByteArray platformCredential();
 QString platformSaveCredential(const QByteArray &data);
 void platformDeleteCredential();
 QImage platformQR(const QString &text);
-void platformPlay(const QString &id, bool activate, std::function<void(QString)> done);
+void platformPlay(const QString &id, const QJsonObject &config, bool activate,
+                  std::function<void(QString)> done);
 bool platformActivates();
 void platformSetActivates(bool value);
 

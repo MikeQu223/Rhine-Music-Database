@@ -30,6 +30,7 @@ Item {
     readonly property var chromeHostWindow: windows && controlledHost ? rhineHostWindow : hostWindow
     property bool frameless: controlledHost && Qt.platform.os === "windows"
     readonly property bool ios: Qt.platform.os === "ios"
+    readonly property bool compactLayout: rhine.state.compactLayout === true
     readonly property bool android: Qt.platform.os === "android"
 
     // 手指比鼠标指针粗：Android 上把每个命中矩形四周各外扩 touchHitPadding 个舞台像素。
@@ -91,7 +92,7 @@ Item {
         focus: true
         onPressed: function (mouse) {
             forceActiveFocus();
-            // 双指捏合期间不让第一根手指的 MouseArea 事件继续驱动单指旋转。
+            // 双指捏合期间不让第一根手指的事件继续驱动单指旋转。
             if (viewerPinch.active) {
                 return;
             }
@@ -161,6 +162,9 @@ Item {
         }
         return hostWindow === null ? Qt.ApplicationShortcut : Qt.WindowShortcut;
     }
+    // The offscreen host needs ApplicationShortcut, but auxiliary windows have their own F11.
+    // Scope window actions to the real host so Qt does not treat the two bindings as ambiguous.
+    readonly property bool hostShortcutsEnabled: !controlledHost || rhineHostWindow.active
     Shortcut {
         sequences: [StandardKey.Quit]
         context: overlay.shortcutContext
@@ -169,6 +173,7 @@ Item {
     Shortcut {
         sequences: Qt.platform.os === "osx" ? [StandardKey.FullScreen, "F11"] : ["F11"]
         context: overlay.shortcutContext
+        enabled: overlay.hostShortcutsEnabled
         onActivated: rhine.toggleFullscreen()
     }
     // 用户 m10082：性能面板不是用户要求的功能 —— F10 切换入口停用，
@@ -291,7 +296,7 @@ Item {
     }
     // 封面查看页的触控：单指拖动交给 inputLayer → NativeViewer 做球面旋转；
     // 双指捏合走与桌面滚轮同一条通路做缩放；双指拖动（质心位移）做平移。
-    // 桌面滚轮语义不变，这里只接触摸屏。
+    // 只收触摸屏事件，桌面鼠标与滚轮语义不变。
     PinchHandler {
         id: viewerPinch
         target: null
@@ -312,8 +317,7 @@ Item {
             const dy = now.y - lastPan.y;
             lastPan = now;
             // 首帧质心坐标未就绪时的异常跳变直接丢弃，防止画面甩飞。
-            if (dx === 0 && dy === 0 ||
-                Math.abs(dx) > overlay.stageWidth * 0.4 || Math.abs(dy) > overlay.height * 0.4) {
+            if (dx === 0 && dy === 0 || Math.abs(dx) > overlay.width * 0.4 || Math.abs(dy) > overlay.height * 0.4) {
                 return;
             }
             rhine.pointer("pan", dx / overlay.stageScale, dy / overlay.stageScale);
@@ -337,13 +341,11 @@ Item {
             // 350 来自 NativeViewer 的 pow(0.95, 0.7*|delta|*0.01) 与 -delta*8 的换算：
             // 让 log(捏合比例) 线性映射到与桌面滚轮同样的缩放速度。
             const p = centroid.scenePosition;
-            rhine.wheelInput(p.x / overlay.stageScale, p.y / overlay.stageScale,
-                             Math.log(delta) * 350, 0);
+            rhine.wheelInput(p.x / overlay.stageScale, p.y / overlay.stageScale, Math.log(delta) * 350, 0);
         }
     }
     // 双指质心位移 → 平移。Connections 的函数语法在信号不存在时只会静默跳过
-    // （不会像 onXxx: 属性赋值那样让整个 Overlay 加载失败），配合上面两路
-    // 差分幂等，跨 Qt 版本安全。
+    // （不会像 onXxx: 属性赋值那样让整个 Overlay 加载失败）。
     Connections {
         target: viewerPinch
         function onTranslationChanged() {
@@ -369,6 +371,12 @@ Item {
                 accountField.forceActiveFocus();
             }
         }
+        readonly property bool accountVisible: !overlay.compactLayout || !!rhine.state.compactaccount
+        readonly property bool captchaVisible: !overlay.compactLayout || !!rhine.state.compactcaptcha
+        readonly property bool submitVisible: !overlay.compactLayout || !!rhine.state.compactsubmit
+        readonly property real accountTop: overlay.compactLayout && rhine.state.compactaccount ? rhine.state.compactaccount.y : 430
+        readonly property real captchaTop: overlay.compactLayout && rhine.state.compactcaptcha ? rhine.state.compactcaptcha.y : 541
+        readonly property real submitTop: overlay.compactLayout && rhine.state.compactsubmit ? rhine.state.compactsubmit.y : (rhine.state.modal === "login" ? 611 : 530)
         function submit() {
             if (rhine.state.modal === "login" && rhine.state.loginBusy) {
                 return;
@@ -377,8 +385,9 @@ Item {
             captchaField.text = "";
         }
         Rectangle {
+            visible: formFields.accountVisible
             x: 0
-            y: 430 * overlay.stageScale
+            y: formFields.accountTop * overlay.stageScale
             width: rhine.state.modal === "login" ? parent.width - 180 * overlay.stageScale : parent.width
             height: 55 * overlay.stageScale
             color: rhine.state.dark ? "#30312b" : "#d9d8ce"
@@ -386,8 +395,9 @@ Item {
         TextInput {
             id: accountField
             objectName: "accountField"
+            visible: formFields.accountVisible
             x: 14 * overlay.stageScale
-            y: 430 * overlay.stageScale
+            y: formFields.accountTop * overlay.stageScale
             width: parent.width - (rhine.state.modal === "login" ? 208 : 28) * overlay.stageScale
             height: 55 * overlay.stageScale
             verticalAlignment: TextInput.AlignVCenter
@@ -408,9 +418,9 @@ Item {
             Keys.onEscapePressed: rhine.action("close-modal")
         }
         Rectangle {
-            visible: rhine.state.modal === "login"
+            visible: rhine.state.modal === "login" && formFields.accountVisible
             x: parent.width - width
-            y: 430 * overlay.stageScale
+            y: formFields.accountTop * overlay.stageScale
             width: 170 * overlay.stageScale
             height: 55 * overlay.stageScale
             enabled: !rhine.state.loginBusy && rhine.state.smsRetrySeconds === 0 && accountField.text.length === 11
@@ -435,9 +445,9 @@ Item {
             }
         }
         Rectangle {
-            visible: rhine.state.modal === "login"
+            visible: rhine.state.modal === "login" && formFields.captchaVisible
             x: 0
-            y: 541 * overlay.stageScale
+            y: formFields.captchaTop * overlay.stageScale
             width: parent.width
             height: 55 * overlay.stageScale
             color: rhine.state.dark ? "#30312b" : "#d9d8ce"
@@ -445,9 +455,9 @@ Item {
         TextInput {
             id: captchaField
             objectName: "captchaField"
-            visible: rhine.state.modal === "login"
+            visible: rhine.state.modal === "login" && formFields.captchaVisible
             x: 14 * overlay.stageScale
-            y: 541 * overlay.stageScale
+            y: formFields.captchaTop * overlay.stageScale
             width: parent.width - 28 * overlay.stageScale
             height: 55 * overlay.stageScale
             verticalAlignment: TextInput.AlignVCenter
@@ -462,8 +472,9 @@ Item {
             Keys.onEscapePressed: rhine.action("close-modal")
         }
         Rectangle {
+            visible: formFields.submitVisible
             x: parent.width - width
-            y: (rhine.state.modal === "login" ? 611 : 530) * overlay.stageScale
+            y: formFields.submitTop * overlay.stageScale
             enabled: rhine.state.modal !== "login" || !rhine.state.loginBusy
             width: 170 * overlay.stageScale
             height: 36 * overlay.stageScale
@@ -521,41 +532,79 @@ Item {
     TextInput {
         id: searchInput
         objectName: "musicSearchInput"
+        readonly property bool playlistSearch: rhine.state.playlistSearchActive === true
+        readonly property bool modalSearch: rhine.state.modal === "search" || rhine.state.modal === "saved"
+        readonly property real inputOffset: playlistSearch ? 0 : (rhine.state.modalOffset || 0)
+        readonly property real searchFontSize: {
+            if (playlistSearch) {
+                return 14;
+            }
+            if (overlay.compactLayout) {
+                return 14 * rhine.state.compactUnit;
+            }
+            return 22;
+        }
+        readonly property string searchPlaceholder: {
+            if (playlistSearch) {
+                return "搜索当前歌单内的歌曲";
+            }
+            if (rhine.state.localMusic) {
+                return "检索本地歌曲、歌手、专辑或文件夹";
+            }
+            return "搜索歌曲、歌手、专辑或歌单";
+        }
+        readonly property color searchTextColor: {
+            if (modalSearch || playlistSearch) {
+                return rhine.state.dark ? "#e9e7da" : "#222a25";
+            }
+            return rhine.state.dark ? "#ebebeb" : "#141613";
+        }
         verticalAlignment: TextInput.AlignVCenter
-        leftPadding: 18 * overlay.stageScale
+        leftPadding: overlay.compactLayout ? 0 : (playlistSearch ? 14 : 18) * overlay.stageScale
         rightPadding: 14 * overlay.stageScale
         renderType: Text.NativeRendering
-        visible: rhine.state.modal === "search" || rhine.state.modal === "saved"
+        visible: (modalSearch || playlistSearch) && (!overlay.compactLayout || rhine.state.compactInputVisible === true)
         enabled: !rhine.state.closing
         x: (rhine.state.inputX || 0) * overlay.stageScale
-        y: ((rhine.state.inputY || 302) + (rhine.state.modalOffset || 0)) * overlay.stageScale
+        y: ((rhine.state.inputY || 302) + inputOffset) * overlay.stageScale
         width: (rhine.state.inputWidth || 0) * overlay.stageScale
-        height: 54 * overlay.stageScale
+        height: (rhine.state.inputHeight || 54) * overlay.stageScale
         font.family: rhineFontFamily
-        font.pixelSize: 22 * overlay.stageScale
-        color: (rhine.state.modal === "search" || rhine.state.modal === "saved") ? (rhine.state.dark ? "#e9e7da" : "#222a25") : (rhine.state.dark ? "#ebebeb" : "#141613")
-        opacity: rhine.state.modalOpacity || 0
+        font.pixelSize: searchFontSize * overlay.stageScale
+        color: searchTextColor
+        opacity: overlay.compactLayout || playlistSearch ? 1 : (rhine.state.modalOpacity || 0)
         clip: true
         cursorVisible: activeFocus && !rhine.performance.idle
         selectByMouse: true
-        Accessible.name: rhine.state.localMusic ? "检索本地歌曲、歌手、专辑或文件夹" : "搜索歌曲、歌手、专辑或歌单"
+        Accessible.name: searchPlaceholder
         onTextEdited: rhine.query(text)
         onVisibleChanged: {
             if (visible) {
-                text = rhine.state.query || "";
+                text = playlistSearch ? (rhine.state.detailQuery || "") : (rhine.state.query || "");
                 forceActiveFocus();
             } else {
                 inputLayer.forceActiveFocus();
             }
         }
-        Keys.onEscapePressed: rhine.action("close-modal")
+        Keys.onEscapePressed: {
+            if (playlistSearch) {
+                rhine.action("music:playlist-search-close");
+            } else {
+                rhine.action("close-modal");
+            }
+        }
         Keys.onReturnPressed: function (event) {
-            rhine.searchAccepted(text, event.modifiers);
+            if (playlistSearch) {
+                rhine.action("music:playlist-search-close");
+                event.accepted = true;
+            } else {
+                rhine.searchAccepted(text, event.modifiers);
+            }
         }
         Text {
             anchors.fill: parent
-            visible: searchInput.text.length === 0 && !searchInput.preeditText
-            text: rhine.state.localMusic ? "检索本地歌曲、歌手、专辑或文件夹" : "搜索歌曲、歌手、专辑或歌单"
+            visible: !searchInput.playlistSearch && searchInput.text.length === 0 && !searchInput.preeditText
+            text: searchInput.searchPlaceholder
             font: searchInput.font
             leftPadding: searchInput.leftPadding
             verticalAlignment: Text.AlignVCenter

@@ -136,6 +136,15 @@ void WindowsTaskbar::bindWindow(QWindow *window) {
         return;
     }
     m_window->installEventFilter(this);
+    // FancyZones requires a normal resizable top-level window. Qt removes these
+    // styles for FramelessWindowHint; keep them while handling the client frame below.
+    if (m_window->flags().testFlag(Qt::FramelessWindowHint)) {
+        const auto style = GetWindowLongPtrW(m_handle, GWL_STYLE);
+        SetWindowLongPtrW(m_handle, GWL_STYLE,
+                          style | WS_CAPTION | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX);
+        SetWindowPos(m_handle, nullptr, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    }
     configurePreview();
     updatePreview();
     initializeToolbar();
@@ -330,6 +339,31 @@ bool WindowsTaskbar::nativeEventFilter(const QByteArray &, void *message, qintpt
     }
     if (!m_window || event->hwnd != m_handle) {
         return false;
+    }
+    if (m_window->flags().testFlag(Qt::FramelessWindowHint)) {
+        if (event->message == WM_NCCALCSIZE && event->wParam) {
+            // Retain the custom title bar; maximized client geometry must exclude
+            // the taskbar rather than extending to the entire monitor.
+            if (IsZoomed(m_handle)) {
+                MONITORINFO monitor{sizeof(MONITORINFO)};
+                if (GetMonitorInfoW(MonitorFromWindow(m_handle, MONITOR_DEFAULTTONEAREST), &monitor)) {
+                    reinterpret_cast<NCCALCSIZE_PARAMS *>(event->lParam)->rgrc[0] = monitor.rcWork;
+                }
+            }
+            *result = 0;
+            return true;
+        }
+        if (event->message == WM_NCHITTEST && m_window->visibility() != QWindow::FullScreen) {
+            POINT point{short(LOWORD(event->lParam)), short(HIWORD(event->lParam))};
+            ScreenToClient(m_handle, &point);
+            const auto dpr = m_window->devicePixelRatio();
+            const QPointF logical(point.x / dpr, point.y / dpr);
+            if (logical.y() >= 5 && logical.y() < 32 && logical.x() >= 5 &&
+                logical.x() < m_window->width() - 132) {
+                *result = HTCAPTION;
+                return true;
+            }
+        }
     }
     if (event->message == WM_DWMSENDICONICTHUMBNAIL || event->message == WM_DWMSENDICONICLIVEPREVIEWBITMAP) {
         const bool live = event->message == WM_DWMSENDICONICLIVEPREVIEWBITMAP;

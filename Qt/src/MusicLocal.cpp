@@ -1,4 +1,5 @@
 #include "MusicLibrary.h"
+#include "ProviderRegistry.h"
 #include <QFileInfo>
 #include <algorithm>
 
@@ -7,7 +8,10 @@ void MusicLibrary::refreshLocal() {
     if (!isLocal()) {
         return;
     }
-    columns = {"本地检索", "全部歌曲", "文件夹", "本地专辑", "本地歌手"};
+    const auto descriptorColumns = ProviderRegistry::instance().columns("local");
+    if (!descriptorColumns.isEmpty()) {
+        columns = descriptorColumns;
+    }
     lists[1] = local->songs();
     lists[2] = local->collections("folder");
     lists[3] = local->collections("album");

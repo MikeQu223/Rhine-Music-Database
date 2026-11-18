@@ -25,6 +25,7 @@ class ScenePostProcess : public SceneResources {
      */
     bool motionConfigured() const;
     bool active() const;
+    QString implementation() const;
     void prepare(QSize render, QSize display, const QJsonObject &frame);
     QRhiRenderTarget *inputTarget() const {
         return m_input.target;

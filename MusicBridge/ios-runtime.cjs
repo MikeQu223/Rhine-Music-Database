@@ -33,13 +33,17 @@ async function execute(message) {
         // （worker 环境不继承运行时的 JS 层修改），所以把宿主环境落在 worker 脚本旁的
         // 文件里——文件系统是唯一可靠通道，worker 前奏会读它。iOS 上脚本目录只读，
         // 写失败被吞掉，由 worker 侧的探测兜底接手。
-        try {
-            fs.writeFileSync(
-                path.join(path.dirname(message.script), 'host-env.json'),
-                JSON.stringify(message.env || {}),
-                { flag: 'w' },
-            );
-        } catch {
+        // 代码签名的 .app 包不能写入
+        const scriptDirectory = path.dirname(message.script);
+        if (!scriptDirectory.includes('.app' + path.sep)) {
+            try {
+                fs.writeFileSync(
+                    path.join(scriptDirectory, 'host-env.json'),
+                    JSON.stringify(message.env || {}),
+                    { flag: 'w' },
+                );
+            } catch {
+            }
         }
         worker = new Worker(message.script, {
             env: { ...process.env, ...message.env },

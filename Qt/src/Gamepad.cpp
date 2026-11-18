@@ -36,6 +36,7 @@ void Gamepad::setEnabled(bool enabled) {
     }
     m_enabled = enabled;
     if (!enabled) {
+        m_foreground = false;
         reset();
     }
 #ifdef Q_OS_WIN
@@ -112,6 +113,20 @@ void Gamepad::poll() {
     if (!m_enabled) {
         return;
     }
+    // XInput 是所有前台程序共享的。无边框窗口化的游戏盖在播放器上层时，手柄输入仍会被我们读到，
+    // 所以在自己进程不持有前台窗口时直接丢弃输入，避免游戏里的按键触发切歌/暂停。
+    const HWND foreground = GetForegroundWindow();
+    DWORD foregroundProcess = 0;
+    if (foreground) {
+        GetWindowThreadProcessId(foreground, &foregroundProcess);
+    }
+    if (foregroundProcess != GetCurrentProcessId()) {
+        if (m_foreground) {
+            m_foreground = false;
+            reset();
+        }
+        return;
+    }
     XINPUT_STATE state{};
     DWORD result = ERROR_SUCCESS;
     if (m_slot >= 0) {
@@ -132,9 +147,13 @@ void Gamepad::poll() {
             reset();
         }
         m_connected = false;
+        m_foreground = true;
         m_timer.setInterval(DisconnectedPollInterval);
         return;
     }
+    // 刚回到前台（或手柄刚连上）时，已经按住不放的键不应该再补发一次动作；先静默同步按下状态。
+    const bool resync = !m_foreground || !m_connected;
+    m_foreground = true;
     if (!m_connected) {
         m_connected = true;
         reset();
@@ -142,6 +161,29 @@ void Gamepad::poll() {
     }
     const auto &pad = state.Gamepad;
     const auto buttons = pad.wButtons;
+    if (resync) {
+        const bool held[ButtonCount] = {
+            (buttons & XINPUT_GAMEPAD_DPAD_UP) != 0,
+            (buttons & XINPUT_GAMEPAD_DPAD_DOWN) != 0,
+            (buttons & XINPUT_GAMEPAD_DPAD_LEFT) != 0,
+            (buttons & XINPUT_GAMEPAD_DPAD_RIGHT) != 0,
+            (buttons & XINPUT_GAMEPAD_A) != 0,
+            (buttons & XINPUT_GAMEPAD_B) != 0,
+            (buttons & XINPUT_GAMEPAD_BACK) != 0,
+            (buttons & XINPUT_GAMEPAD_START) != 0,
+            (buttons & XINPUT_GAMEPAD_LEFT_SHOULDER) != 0,
+            (buttons & XINPUT_GAMEPAD_RIGHT_SHOULDER) != 0,
+            pad.bLeftTrigger >= XINPUT_GAMEPAD_TRIGGER_THRESHOLD,
+            pad.bRightTrigger >= XINPUT_GAMEPAD_TRIGGER_THRESHOLD,
+            (buttons & XINPUT_GAMEPAD_LEFT_THUMB) != 0,
+            (buttons & XINPUT_GAMEPAD_RIGHT_THUMB) != 0,
+        };
+        for (int i = 0; i < ButtonCount; ++i) {
+            m_held[i] = held[i];
+            m_nextRepeat[i] = 0;
+        }
+        return;
+    }
     const qint64 now = m_clock.elapsed();
     update(Up, buttons & XINPUT_GAMEPAD_DPAD_UP, now, DPadInitialDelay, DPadRepeatInterval);
     update(Down, buttons & XINPUT_GAMEPAD_DPAD_DOWN, now, DPadInitialDelay, DPadRepeatInterval);

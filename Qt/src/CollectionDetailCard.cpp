@@ -145,6 +145,9 @@ class Painter {
         if (!model.sort.action.isEmpty()) {
             outlinedButton(model.sort, model.x + 195, 339, 180, 44, 16);
         }
+        if (!model.search.action.isEmpty()) {
+            searchField(model.x + 390, 339, 270, 44);
+        }
         for (int index = 0; index < model.tabs.size(); ++index) {
             const auto &tab = model.tabs.at(index);
             const auto left = model.x + 210 + index * 125;
@@ -157,13 +160,31 @@ class Painter {
         rightLabel("TRACK INDEX / 曲目目录", right - 22, 354, 11, muted, "regular", 0.5);
     }
 
+    void searchField(double x, double y, double width, double height) {
+        const auto border = withAlpha(line, 0.9);
+        canvas.fill(x, y, width, height, soft);
+        canvas.fill(x, y, width, 1, border);
+        canvas.fill(x, y + height - 1, width, 1, border);
+        canvas.fill(x, y, 1, height, border);
+        canvas.fill(x + width - 1, y, 1, height, border);
+        canvas.hit(x, y, width - 40, height, model.search.action, model.search.label);
+        if (!model.searchEditing) {
+            canvas.text(canvas.fit(model.search.label, 14, width - 62, "regular"), x + 14, y + 12, 14,
+                        "regular", 0, muted);
+        }
+        if (!model.clearSearch.action.isEmpty()) {
+            canvas.hit(x + width - 40, y, 40, height, model.clearSearch.action, model.clearSearch.label);
+            canvas.text("×", x + width - 28, y + 8, 22, "regular", 0, muted);
+        }
+    }
+
     void table() {
         const auto contentRight = right - 22;
         canvas.fill(model.x, 398, contentRight - model.x, 2, withAlpha(ink, 0.55));
         const auto titleX = model.x + 48;
         const auto artistX = model.x + model.width * 0.55;
         const auto timeEdge = contentRight - 60;
-        label("#", model.x, 414, 11, muted, "regular", 0.5);
+        label("封面", model.x, 414, 11, muted, "regular", 0.5);
         label("曲目 / TITLE", titleX, 414, 11, muted, "regular", 0.5);
         label("歌手 / ARTIST", artistX, 414, 11, muted, "regular", 0.5);
         rightLabel("时长", timeEdge, 414, 11, muted, "regular", 0.5);
@@ -175,7 +196,18 @@ class Painter {
                 canvas.fill(model.x - 8, yy, contentRight - model.x + 16, model.rowHeight - 2, soft);
                 canvas.fill(model.x - 8, yy, 3, model.rowHeight - 2, amber);
             }
-            label(row.number, model.x, yy + 18, 11, row.current ? ink : muted);
+            const QRectF artwork(model.x, yy + 8, 38, 38);
+            canvas.fill(artwork.x(), artwork.y(), artwork.width(), artwork.height(), withAlpha(line, 0.16));
+            if (!row.image.isEmpty()) {
+                canvas.image(row.image, artwork.x(), artwork.y(), artwork.width(), artwork.height());
+                const auto border = withAlpha(line, 0.7);
+                canvas.fill(artwork.x(), artwork.y(), artwork.width(), 1, border);
+                canvas.fill(artwork.x(), artwork.bottom() - 1, artwork.width(), 1, border);
+                canvas.fill(artwork.x(), artwork.y(), 1, artwork.height(), border);
+                canvas.fill(artwork.right() - 1, artwork.y(), 1, artwork.height(), border);
+            } else {
+                label(row.number, model.x + 13, yy + 18, 11, row.current ? ink : muted);
+            }
             fitted(row.title, titleX, yy + 13, 18, artistX - titleX - 30, ink, "demibold");
             fitted(row.artist, artistX, yy + 17, 13, timeEdge - artistX - 30, muted);
             rightLabel(row.stamp, timeEdge, yy + 18, 12, muted);

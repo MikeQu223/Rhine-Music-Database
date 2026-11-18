@@ -9,8 +9,13 @@
 #include "AppIdentity.h"
 #include "MobileTarget.h"
 #include "AppStorage.h"
+#include "storage/RenderCacheStorage.h"
+#include <optional>
+#include "CrashDiagnostics.h"
 #include "Engine.h"
 #include "EmbeddedSceneHost.h"
+#include "MvController.h"
+#include <QQmlComponent>
 #include "fg/FgCapability.h"
 #if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
 #include "fg/FgConfig.h"
@@ -64,7 +69,7 @@ struct RhineSignalPrevious {
     bool valid;
 };
 RhineSignalPrevious rhineSignalPrevious[3]; // SIGSEGV / SIGBUS / SIGABRT 的旧处置
-int rhineSignalLogFd = -1; // 预打开的现场日志；-1 表示 QGuiApplication 尚未就绪
+int rhineSignalLogFd = -1;                  // 预打开的现场日志；-1 表示 QGuiApplication 尚未就绪
 
 // ---- 异步信号安全的小工具：手写拼装，绕开一切可能分配内存的路径。
 
@@ -77,7 +82,9 @@ struct RhineSignalEmitter {
             cursor += length;
         }
     }
-    void text(const char *value) { text(value, strlen(value)); }
+    void text(const char *value) {
+        text(value, strlen(value));
+    }
     void hex(unsigned long value) { // 递减式十六进制
         char digits[16];
         int length = 0;
@@ -195,8 +202,7 @@ void rhineSignalEmitMapping(unsigned long address, const char *what) {
                 filled = 0;
                 const char *cursor = line;
                 unsigned long start = 0, end = 0, offset = 0;
-                if (!rhineParseMapsHead(cursor, start, end, offset) || address < start ||
-                    address >= end) {
+                if (!rhineParseMapsHead(cursor, start, end, offset) || address < start || address >= end) {
                     continue;
                 }
                 matched = true;
@@ -278,8 +284,8 @@ void rhineSignalDiag(int signal, siginfo_t *info, void *context) {
     // 撞上它只会无限重故障）就按默认方式自杀。末尾的死循环只为不返回出错指令。
     const auto slot = signal == SIGSEGV ? 0 : signal == SIGBUS ? 1 : 2;
     struct sigaction restore;
-    bool usable = (signal == SIGSEGV || signal == SIGBUS || signal == SIGABRT) &&
-                  rhineSignalPrevious[slot].valid;
+    bool usable =
+        (signal == SIGSEGV || signal == SIGBUS || signal == SIGABRT) && rhineSignalPrevious[slot].valid;
     if (usable) {
         restore = rhineSignalPrevious[slot].action;
         if (restore.sa_handler == SIG_IGN) {
@@ -338,8 +344,8 @@ void rhineScanThreadMasks(bool snapshot) {
             }
         }
         fclose(status);
-        const unsigned long fatalBits = (1UL << 3) | (1UL << 4) | (1UL << 5) | (1UL << 6) |
-                                        (1UL << 7) | (1UL << 10);
+        const unsigned long fatalBits =
+            (1UL << 3) | (1UL << 4) | (1UL << 5) | (1UL << 6) | (1UL << 7) | (1UL << 10);
         const unsigned long blocked = blockedMask & fatalBits;
         if (blocked == 0) {
             continue;
@@ -355,8 +361,7 @@ void rhineScanThreadMasks(bool snapshot) {
             continue;
         }
         char message[192];
-        snprintf(message, sizeof(message), "RHINE-SIGBLK tid=%lu thread=%s fatal=0x%lx", tid, name,
-                 blocked);
+        snprintf(message, sizeof(message), "RHINE-SIGBLK tid=%lu thread=%s fatal=0x%lx", tid, name, blocked);
         __android_log_write(ANDROID_LOG_WARN, "RHINE-SIGNAL", message);
         if (isNew && reportedCount < 64) {
             reported[reportedCount++] = tid;
@@ -478,6 +483,7 @@ void rhineOpenSignalDiagFile() {
 #include "InterfaceWindowMac.h"
 #endif
 #ifdef Q_OS_IOS
+#include "IOSDisplayLink.h"
 #include "IOSWindow.h"
 #endif
 #ifdef Q_OS_ANDROID
@@ -528,6 +534,7 @@ bool runPlaybackServiceChecks(const QString &resources, const QString &executabl
 bool runWindowTransitionChecks();
 #endif
 #ifdef Q_OS_WIN
+#include "WindowsRoundedCorners.h"
 #include "WindowsTaskbar.h"
 bool runWindowsTaskbarChecks(Engine &engine);
 void initializeWindowsGraphics();
@@ -627,7 +634,7 @@ static bool applyNamedBackend(const QString &requested) {
     }
     if (requested == "vulkan") {
         if (!vulkanUsable()) {
-            qWarning() << "Vulkan is unavailable; falling back to Vulkan/OpenGL selection.";
+            qWarning() << "Vulkan is unavailable; falling back to the default backend.";
             return false;
         }
         QQuickWindow::setGraphicsApi(QSGRendererInterface::Vulkan);
@@ -798,6 +805,7 @@ static void applyFrameGenerationSetting() {
 /**
  * 渲染分辨率百分比：panel/render-scale=75 表示按窗口的 75% 渲染，再由最终合成通道放大。
  * 集成显卡上这是最直接的一档性能/画质交换，50 大致相当于像素数降到 1/4。
+ * 大于 100（最高 200）为超采样：按更高分辨率渲染再缩回窗口，换取更细的边缘。
  */
 static void applyRenderScaleSetting() {
     if (!qEnvironmentVariableIsEmpty("RHINE_RENDER_SCALE")) {
@@ -808,7 +816,7 @@ static void applyRenderScaleSetting() {
     const auto percent =
         graphicsSettings().value("panel/render-scale", RhineRender::androidDefaultRenderScale()).toInt();
     if (percent > 0 && percent != 100) {
-        qputenv("RHINE_RENDER_SCALE", QByteArray::number(qBound(50, percent, 100)));
+        qputenv("RHINE_RENDER_SCALE", QByteArray::number(qBound(50, percent, 200)));
     }
 }
 
@@ -833,6 +841,8 @@ int main(int argc, char **argv) {
     // 段错误诊断链必须抢在一切组件（Qt 插件、Node、GPU 驱动）可能安装的处理之前。
     rhineInstallSignalDiag();
 #endif
+    // 诊断对象必须比应用实例更晚析构，保留窗口与 GPU 资源销毁阶段的崩溃采集。
+    CrashDiagnostics crashDiagnostics;
 #ifdef Q_OS_WIN
     const auto storageError = AppStorage::initializePortable(AppStorage::executableDirectory());
     if (!storageError.isEmpty()) {
@@ -889,6 +899,10 @@ int main(int argc, char **argv) {
     // 所以同样要早于任何 QQuickWindow——RHI 在创建窗口时就定下了用哪块卡。
     initializeLinuxGraphics();
 #endif
+#ifdef Q_OS_IOS
+    // ProMotion 的 plist 只放开上限；Qt 的 DisplayLink 还要显式请求 80–120Hz。
+    configureIOSDisplayLinkFrameRate();
+#endif
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
     QApplication application(argc, argv);
 #else
@@ -904,8 +918,8 @@ int main(int argc, char **argv) {
     // 也在这里回读转发到 logcat，之后清空文件等待新现场。
     rhineOpenSignalDiagFile();
 #endif
-    application.setWindowIcon(QIcon(":/icons/icon-256.png"));
     QCoreApplication::setApplicationVersion(AppUpdater::currentVersion());
+    application.setWindowIcon(QIcon(":/icons/icon-256.png"));
     QGuiApplication::setApplicationDisplayName(AppIdentity::DisplayName);
     const auto args = application.arguments();
 #if !RHINE_MOBILE
@@ -918,8 +932,16 @@ int main(int argc, char **argv) {
         }
     }
 #endif
+    // 调试模式默认关闭；关闭时不注册 Crashpad，也不保留上次会话的诊断数据。
+    const bool debugMode = AppStorage::settings().value("panel/debug-mode").toString() == QLatin1String("on");
+    if (debugMode && CrashDiagnostics::supported()) {
+        crashDiagnostics.start(application);
+    } else if (!debugMode) {
+        CrashDiagnostics::clearHistory();
+    }
     // 必须在创建任何 QQuickWindow 之前确定后端；组织名先落位，配置路径才能落到应用数据目录。
     selectGraphicsBackend();
+    CrashDiagnostics::setGraphicsBackend(RhineGraphics::activeBackend());
     qInfo().noquote() << "Display:" << QGuiApplication::platformName()
                       << "backend:" << RhineGraphics::activeBackend();
     applyVSyncSetting();
@@ -1053,7 +1075,12 @@ int main(int argc, char **argv) {
         QTimer::singleShot(0, playback.get(), [raw = playback.get()] { raw->call("interface.ready"); });
     }
 #endif
-    auto backend = std::make_unique<Engine>(root, offline, nullptr, playback.get());
+    std::optional<RenderCacheStorage> renderCache;
+    if (!offline) {
+        renderCache.emplace();
+    }
+    auto backend = std::make_unique<Engine>(root, offline, nullptr, playback.get(),
+                                            renderCache ? &*renderCache : nullptr);
     // 用户 m10082：性能面板专用采样链整体停用 —— 不再创建 FrameProfiler 实例、
     // 不再连接 performanceRequested、不再挂到窗口上采样/更新。
     // FrameProfiler.h/.cpp 本体（共用环境/指标显示内容）保留，但不执行其性能面板逻辑。
@@ -1062,6 +1089,22 @@ int main(int argc, char **argv) {
     // QObject::connect(backend.get(), &Engine::performanceRequested, profiler.get(),
     //                  &FrameProfiler::toggleVisible);
     backend->start();
+    // main 新增：设置页的调试模式开关直接驱动采集生命周期；关闭会同时清空已有诊断数据。
+    QObject::connect(
+        &backend->host, &Host::preferenceChanged, &application,
+        [&crashDiagnostics, &application, host = &backend->host](const QString &key, const QString &value) {
+            if (key != QLatin1String("debug-mode")) {
+                return;
+            }
+            if (value == QLatin1String("on")) {
+                // 启动失败时回写关闭，避免界面显示已开启但实际没有采集。
+                if (!crashDiagnostics.start(application)) {
+                    host->setPreference(QStringLiteral("debug-mode"), QStringLiteral("off"));
+                }
+            } else {
+                crashDiagnostics.stop();
+            }
+        });
 #ifdef Q_OS_ANDROID
     // Flutter 内嵌路径（PARITY QT-OVERLAY-128）：宿主 Activity 是 FlutterActivity，
     // 场景视图由 Java 侧的 RhineQtView 在自己的父窗口上创建。所以这里只做进程级准备：
@@ -1105,8 +1148,40 @@ int main(int argc, char **argv) {
     engine.rootContext()->setContextProperty("rhineFontFamily",
                                              families.isEmpty() ? QString("sans-serif") : families.first());
     engine.rootContext()->setContextProperty("rhine", backend.get());
-    // 用户 m10082：性能面板停用 —— 不再向 QML 暴露 profiler。
+    // 用户 m10082：性能面板停用 —— 不再向 QML 暴露 profiler（FrameProfiler 实例也未创建）。
     // engine.rootContext()->setContextProperty("profiler", profiler.get());
+#if !RHINE_MOBILE
+    MvController mv(&backend->host, &backend->app->music.player);
+    engine.rootContext()->setContextProperty("rhineMv", &mv);
+    QObject::connect(backend.get(), &Engine::mvRequested, &mv, &MvController::openWindow);
+    std::unique_ptr<QObject> mvWindow;
+    std::unique_ptr<QObject> mvWallpaper;
+    const auto initializeMvWindows = [&] {
+        if (offline) {
+            return;
+        }
+        QQmlComponent component(&engine, QUrl(QStringLiteral("qrc:/qt/qml/RhineMusic/MvWindow.qml")));
+        mvWindow.reset(component.create());
+        if (auto window = qobject_cast<QWindow *>(mvWindow.get())) {
+            QQmlEngine::setObjectOwnership(window, QQmlEngine::CppOwnership);
+            mv.setWindow(window);
+        } else {
+            qWarning() << "MV window:" << component.errors();
+        }
+        if (mv.wallpaperSupported()) {
+            QQmlComponent wallpaperComponent(&engine,
+                                             QUrl(QStringLiteral("qrc:/qt/qml/RhineMusic/MvWallpaper.qml")));
+            mvWallpaper.reset(wallpaperComponent.create());
+            if (auto window = qobject_cast<QWindow *>(mvWallpaper.get())) {
+                QQmlEngine::setObjectOwnership(window, QQmlEngine::CppOwnership);
+                mv.setWallpaperWindow(window);
+            } else {
+                qWarning() << "MV wallpaper:" << wallpaperComponent.errors();
+                mv.setWallpaper(false);
+            }
+        }
+    };
+#endif
     if (!offline && RHINE_RELEASE_BUILD) {
         QTimer::singleShot(8000, backend.get(), [raw = backend.get()] {
             if (raw->host.preference("auto-update") != "off") {
@@ -1155,6 +1230,7 @@ int main(int argc, char **argv) {
     // 直接挤掉了引擎节拍。不开插帧时它没有收益，只有成本。
     // 代价：切换插帧从此需要重启应用才生效（呈现层在启动时决定是否接管）。
     const bool fgForced = qEnvironmentVariable("RHINE_FG_LAYER").compare("on", Qt::CaseInsensitive) == 0;
+    // 即使启动时超采样暂时屏蔽插帧，仍按请求准备呈现层，降回原生倍率时才能热恢复。
     const bool interpolationWanted = fgForced || RhineFg::parseBool(qgetenv("RHINE_FG"), false);
 #endif
     const bool fgCandidate =
@@ -1251,6 +1327,10 @@ int main(int argc, char **argv) {
 #endif
             QObject::connect(&application, &QCoreApplication::aboutToQuit, shell.get(),
                              [raw = shell.get()] { raw->shutdown(); });
+#if !RHINE_MOBILE
+            // Establish the primary presentation window before an enabled MV can show.
+            QTimer::singleShot(0, &engine, initializeMvWindows);
+#endif
             return application.exec();
         }
         qWarning().noquote() << "FG: 呈现层启动失败，回退默认路径：" << shell->lastError();
@@ -1261,6 +1341,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     auto window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+    CrashDiagnostics::attach(window);
     QQuickGraphicsConfiguration graphics;
 #ifdef Q_OS_WIN
     graphics.setAutomaticPipelineCache(false);
@@ -1277,9 +1358,17 @@ int main(int argc, char **argv) {
     // 这里和 VulkanPresentationBackend 各登记一次，因为存在只走其中一条路径的启动方式。
     RhineRender::requestTimestamps();
     window->setGraphicsConfiguration(graphics);
+#if !RHINE_MOBILE
+    // A saved MV preference must not make the auxiliary window the first rendered window.
+    // frameSwapped comes from the render thread; create QML windows on the GUI thread afterwards.
+    QObject::connect(window, &QQuickWindow::frameSwapped, &engine, initializeMvWindows,
+                     Qt::ConnectionType(Qt::QueuedConnection | Qt::SingleShotConnection));
+#endif
 #ifdef Q_OS_WIN
     taskbar.bindWindow(window);
     window->show();
+    // 无边框主窗口创建后补一次 DWM 圆角请求
+    applyWindowsRoundedCorners(window);
 #endif
     backend->setWindow(window);
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
@@ -1315,6 +1404,7 @@ int main(int argc, char **argv) {
             [window] { activateWindow(window); }, Qt::QueuedConnection);
     }
 #endif
+#ifndef Q_OS_IOS
     // 短暂切换窗口继续复用 GPU；隐藏或最小化超过两秒才释放图形设备和可重建缓存。
     auto backgroundRelease = new QTimer(window);
     backgroundRelease->setSingleShot(true);
@@ -1338,6 +1428,7 @@ int main(int argc, char **argv) {
                              window->setPersistentGraphics(true);
                          }
                      });
+#endif
     QObject::connect(
         window, &QQuickWindow::sceneGraphInvalidated, backend.get(),
         [raw = backend.get()] { raw->recordResourceRelease(); }, Qt::DirectConnection);

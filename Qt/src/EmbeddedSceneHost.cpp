@@ -564,7 +564,9 @@ void applySceneState(const QString &json, const ProducerOrigin &origin)
                 return;
             qputenv(envName, QByteArray::number(std::clamp(value, low, high)));
         };
-        liveScaledPercent("renderScale", "RHINE_RENDER_SCALE", 50, 100);
+        // 上限跟随 main 抬到 200%（RhineRender::MaximumRenderPercent，桌面 NativeHudController
+        // 同样 std::clamp(percent, 50, 200)）：这里若还夹在 100，选 125/150/200 会被静默压回 100。
+        liveScaledPercent("renderScale", "RHINE_RENDER_SCALE", 50, 200);
         liveScaledPercent("aaScale", "RHINE_AA_SCALE", 100, 200);
         if (settings.contains(QLatin1String("aa"))) {
             // FSR 档位按用户 m03406 暂缓，这里只接受非 FSR 的抗锯齿模式。

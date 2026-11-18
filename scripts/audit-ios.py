@@ -14,18 +14,13 @@ expected_platform = "IOSSIMULATOR" if simulator else "IOS"
 info = plistlib.loads((app / "Info.plist").read_bytes())
 assert info["CFBundleIdentifier"] == "rhine.music.database"
 assert "audio" in info["UIBackgroundModes"]
-landscape_orientations = {
-    "UIInterfaceOrientationLandscapeLeft",
-    "UIInterfaceOrientationLandscapeRight",
-}
-for key in [
-    "UISupportedInterfaceOrientations",
-    "UISupportedInterfaceOrientations~ipad",
-]:
-    assert set(info[key]) == landscape_orientations, (
-        f"Portrait orientation enabled: {key}"
-    )
+landscape_orientations = {"UIInterfaceOrientationLandscapeLeft", "UIInterfaceOrientationLandscapeRight"}
+phone_orientations = info["UISupportedInterfaceOrientations"]
+assert set(phone_orientations) == {"UIInterfaceOrientationPortrait"}, "iPhone must be portrait only"
+ipad_orientations = info["UISupportedInterfaceOrientations~ipad"]
+assert set(ipad_orientations) == landscape_orientations, "iPad must be landscape only"
 assert info.get("UIRequiresFullScreen") is True
+assert info.get("CADisableMinimumFrameDurationOnPhone") is True, "iPhone ProMotion refresh must be enabled"
 
 
 def system_bundle_identifier(directory):
@@ -89,7 +84,6 @@ for name in [
     "RhineMiSans-regular.otf",
     "MusicBridge/worker.cjs",
     "MusicBridge/ios-runtime.cjs",
-    "MusicBridge/xhr-sync-worker.js",
     "MusicBridge/NODE-LICENSE",
     "third-party/nodejs-mobile/source.json",
 ]:

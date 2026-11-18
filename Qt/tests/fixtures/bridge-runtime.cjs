@@ -9,7 +9,7 @@ function bridgeRuntime(directory = process.argv[2]) {
     }
     const bridge = path.resolve(directory);
     const runtime = path.join(bridge, process.platform === 'win32' ? 'node.exe' : 'node');
-    for (const file of [runtime, path.join(bridge, 'worker.cjs'), path.join(bridge, 'upstream')]) {
+    for (const file of [runtime, path.join(bridge, 'worker.cjs')]) {
         if (!fs.existsSync(file)) {
             throw new Error('Missing packaged bridge resource; run npm run build first: ' + file);
         }

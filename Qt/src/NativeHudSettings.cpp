@@ -1,16 +1,23 @@
+#include <QScopedValueRollback>
 #include "NativeHud.h"
 #include "AppUpdater.h"
 #include "DesktopLyricsAppearance.h"
 #include "Host.h"
 #include "MusicLibrary.h"
+#include "ProviderRegistry.h"
 #include "MusicPlayer.h"
 #include "PlatformFeatures.h"
 #include "SettingsCard.h"
 #include "SettingsSchema.h"
+#include "render/RenderModePolicy.h"
 #include <QHash>
+#include <QPointer>
 #include <algorithm>
 
 namespace {
+constexpr double SettingTitleSize = 17.;
+constexpr double SettingNoteSize = SettingTitleSize;
+
 // 图标
 constexpr auto AppleMusicIcon =
     R"(M 23.994 6.124 C 24.002 5.387 23.921 4.652 23.754 3.934 C 23.437 2.624 22.692 1.624 21.574 0.891 C 21.004 0.525 20.365 0.278 19.697 0.165 C 19.18 0.076 18.657 0.026 18.133 0.015 C 18.093 0.012 18.05 0.005 18.009 0.002 L 5.986 0.002 C 5.834 0.012 5.683 0.019 5.531 0.028 C 4.784 0.071 4.041 0.151 3.338 0.428 C 2.002 0.958 1.038 1.88 0.473 3.208 C 0.281 3.656 0.181 4.133 0.11 4.616 C 0.054 5.008 0.022 5.401 0.01 5.796 C 0.01 5.828 0.003 5.858 0 5.889 L 0 18.112 C 0.01 18.252 0.017 18.395 0.027 18.536 C 0.077 19.351 0.181 20.16 0.524 20.909 C 1.174 22.329 2.262 23.262 3.758 23.71 C 4.178 23.837 4.614 23.897 5.051 23.938 C 5.606 23.991 6.161 23.998 6.718 23.998 L 17.748 23.998 C 18.273 23.998 18.797 23.964 19.318 23.898 C 20.14 23.792 20.914 23.548 21.613 23.088 C 22.442 22.552 23.096 21.785 23.493 20.881 C 23.679 20.461 23.786 20.011 23.863 19.557 C 23.976 18.882 24.001 18.199 24 17.517 C 23.998 13.717 24 9.922 23.997 6.124 Z)";
@@ -85,7 +92,6 @@ SettingsSchema::SettingsContext NativeHud::settingsContext() const {
     context.themeMode = themeMode;
     context.reduced = reduced;
     context.startupAnimation = startupAnimation;
-    context.discRotation = discRotation;
     context.vsync = vsync;
     context.archiveMaskStrength = archiveMaskStrength;
     context.expandedId = expandedPreference;
@@ -164,6 +170,20 @@ void NativeHud::settingsPanel(double x, double y, double width) {
     const QRectF viewport(x + 40, y + SettingsViewportTop, width - 80,
                           SettingsViewportBottom - SettingsViewportTop);
     auto model = buildSettingsModel(settingsContext(), viewport, settingsScroll, expandedPreference);
+    if (m_responsive.compact()) {
+        m_responsive.setSettings(model);
+        for (const auto &section : model.sections) {
+            const auto renderer = section.meta->customRenderer;
+            if (renderer.isEmpty() || renderer == "provider-card") {
+                continue;
+            }
+            ResponsiveHudContent::Model content;
+            QScopedValueRollback<ResponsiveHudContent::Model *> sink(m_contentSink, &content);
+            paintSettingsCustomSection(renderer, {0, 0, width, section.meta->customHeight}, 0);
+            m_responsive.setSettingsCustom(renderer, content.items);
+        }
+        return;
+    }
     const auto layout = SettingsCard::layout(model);
     settingsContentBottom = SettingsViewportTop + layout.contentHeight;
     settingsScroll = HudScroll::clampOffset(settingsScroll, layout.contentHeight, viewport.height());
@@ -242,6 +262,10 @@ void NativeHud::paintSettingsCustomSection(const QString &renderer, const QRectF
     auto actionBlock = [this, &stroke, &soft, &line, &baseInk](const QRectF &rect, const QString &label,
                                                                const QString &action, const QString &hitLabel,
                                                                bool centeredLabel = false) {
+        if (m_contentSink) {
+            m_contentSink->action(hitLabel + " / " + label, action);
+            return;
+        }
         fill(rect.left(), rect.top(), rect.width(), rect.height(), soft);
         stroke(rect, line);
         const auto shown = fit(label, 14, rect.width() - 26, "regular");
@@ -278,7 +302,7 @@ void NativeHud::paintSettingsCustomSection(const QString &renderer, const QRectF
             accountAction = "discover";
         } else if (m_music->isSiren()) {
             // 塞壬唱片使用官网曲库，没有账号登录入口。
-            accountLabel = QStringLiteral("塞壬唱片");
+            accountLabel = ProviderRegistry::instance().name("siren");
         } else if (m_music->uid.isEmpty()) {
             accountLabel = QStringLiteral("登录 / ") + m_music->providerName();
             accountAction = "music:login";
@@ -293,53 +317,78 @@ void NativeHud::paintSettingsCustomSection(const QString &renderer, const QRectF
         } else {
             actionBlock(account, accountLabel, accountAction, accountLabel);
         }
-        static const QHash<QString, QString> memberships{{"free", QStringLiteral("免费账号")},
-                                                         {"green", QStringLiteral("绿钻会员")},
-                                                         {"super", QStringLiteral("超级会员")},
-                                                         {"unknown", QStringLiteral("会员状态未知")}};
-        const auto note = m_music->isSiren()
-                              ? QStringLiteral("官网曲库 / 无需登录")
-                              : (m_music->provider == "qq" && !m_music->uid.isEmpty()
-                                     ? memberships.value(m_music->vipLevel, QStringLiteral("会员状态未知"))
-                                     : QStringLiteral("各平台账号独立保存"));
-        text(fit(note, 12, body.right() - account.right() - 20, "regular"), account.right() + 16,
-             body.top() + 114, 12, "regular", 0, muted);
+        const auto &registry = ProviderRegistry::instance();
+        static const QHash<QString, QString> vipKeys{
+            {"free", "vipFree"}, {"green", "vipGreen"}, {"super", "vipSuper"}, {"unknown", "vipUnknown"}};
+        const auto vipLabel = registry.text(m_music->provider, vipKeys.value(m_music->vipLevel));
+        const auto accountNote = registry.text(m_music->provider, "accountNote");
+        const auto note =
+            m_music->isSiren()
+                ? (accountNote.isEmpty() ? registry.text("siren", "loginHint") : accountNote)
+                : (!m_music->uid.isEmpty() && !vipLabel.isEmpty()
+                       ? vipLabel
+                       : (accountNote.isEmpty() ? QStringLiteral("各平台账号独立保存") : accountNote));
+        text(fit(note, 15, body.right() - account.right() - 20, "regular"), account.right() + 16,
+             body.top() + 112, 15, "regular", 0, muted);
+        return;
+    }
+
+    const auto sectionRow = [this, &body, &muted, &baseInk, &line, &actionBlock](
+                                double top, const QString &en, const QString &zh, const QString &label,
+                                const QString &action, const QString &hitLabel, const QString &note) {
+        const auto control = QRectF(body.right() - 300, body.top() + top + 8, 300, 48);
+        text(en, body.left(), body.top() + top + 10, 11, "regular", 0.08, muted);
+        text(zh, body.left(), body.top() + top + 25, SettingTitleSize, "demibold", -0.01, baseInk);
+        actionBlock(control, label, action, hitLabel);
+        if (!note.isEmpty()) {
+            text(note, body.left(), body.top() + top + 78, SettingNoteSize, "regular", 0, muted);
+        }
+        fill(body.left(), body.top() + top + 100, body.width(), 1, line);
+    };
+
+    if (renderer == "experimental") {
+        sectionRow(4, "DISC ROTATION", QStringLiteral("唱片旋转"),
+                   discRotation ? QStringLiteral("开启 / 点击关闭") : QStringLiteral("关闭 / 点击了解风险"),
+                   "disc-rotation", QStringLiteral("唱片旋转"),
+                   QStringLiteral("默认关闭；开启会增加持续渲染、耗电和发热。"));
         return;
     }
 
     if (renderer == "performance") {
-        const auto row = [this, &body, &muted, &baseInk, &line, &actionBlock](
-                             double top, const QString &en, const QString &zh, const QString &label,
-                             const QString &action, const QString &hitLabel) {
-            const auto control = QRectF(body.right() - 300, body.top() + top + 8, 300, 48);
-            text(en, body.left(), body.top() + top + 10, 11, "regular", 0.08, muted);
-            text(zh, body.left(), body.top() + top + 25, 17, "demibold", -0.01, baseInk);
-            actionBlock(control, label, action, hitLabel);
-            fill(body.left(), body.top() + top + 62, body.width(), 1, line);
-        };
         // 用户 m10082：性能面板不是用户要求的功能 —— PERFORMANCE 行与其帮助文案注释掉
         // （保留原文，不删）；DISC ROTATION 行是用户指定设置项，保留。
-        // row(4, "PERFORMANCE", QStringLiteral("性能面板"), QStringLiteral("显示 / 隐藏 · F10"),
-        //     "performance:toggle", QStringLiteral("性能面板"));
-        // text(QStringLiteral("在性能面板内手动收集、导出诊断文件。"), body.left(), body.top() + 78, 13,
-        //      "regular", 0, muted);
-        row(102, "DISC ROTATION", QStringLiteral("唱片旋转"),
-            discRotation ? QStringLiteral("开启 / 点击关闭") : QStringLiteral("关闭 / 点击了解风险"),
-            "disc-rotation", QStringLiteral("唱片旋转"));
-        text(QStringLiteral("默认关闭；开启会增加持续渲染、耗电和发热。"), body.left(), body.top() + 176, 13,
-             "regular", 0, muted);
+        // sectionRow(4, "PERFORMANCE", QStringLiteral("性能面板"), QStringLiteral("显示 / 隐藏 · F10"),
+        //            "performance:toggle", QStringLiteral("性能面板"),
+        //            QStringLiteral("在性能面板内手动收集、导出诊断文件。"));
+        sectionRow(102, "DISC ROTATION", QStringLiteral("唱片旋转"),
+                   discRotation ? QStringLiteral("开启 / 点击关闭") : QStringLiteral("关闭 / 点击了解风险"),
+                   "disc-rotation", QStringLiteral("唱片旋转"),
+                   QStringLiteral("默认关闭；开启会增加持续渲染、耗电和发热。"));
+        // main 新增：调试模式（原生崩溃诊断），仅桌面平台编译。
+#if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
+        const bool debugMode = m_host->preference("debug-mode") == "on";
+        sectionRow(212, "DEBUG MODE", QStringLiteral("调试模式（原生崩溃诊断）"),
+                   debugMode ? QStringLiteral("开启 / 点击关闭") : QStringLiteral("关闭 / 点击开启"),
+                   "debug-mode", QStringLiteral("调试模式"),
+                   QStringLiteral("仅用于排查闪退与卡死；关闭后清空诊断数据，完全停止采集需重启。"));
+#endif
         return;
     }
 
     if (renderer == "storage") {
         const auto control = QRectF(body.right() - 300, body.top() + 8, 300, 48);
         text("STORAGE", body.left(), body.top() + 10, 11, "regular", 0.08, muted);
-        text(QStringLiteral("存储与缓存"), body.left(), body.top() + 25, 17, "demibold", -0.01, baseInk);
-        actionBlock(control, cacheMessage.isEmpty() ? QStringLiteral("清除缓存") : cacheMessage,
-                    "cache:clear", QStringLiteral("清除缓存"));
-        fill(body.left(), body.top() + 62, body.width(), 1, line);
-        text(QStringLiteral("清理元数据、歌词、封面与列表缓存，保留主题和账号。"), body.left(),
-             body.top() + 72, 13, "regular", 0, muted);
+        text(QStringLiteral("存储与缓存"), body.left(), body.top() + 25, SettingTitleSize, "demibold", -0.01,
+             baseInk);
+        actionBlock(control, QStringLiteral("清除缓存"), "cache:clear", QStringLiteral("清除缓存"));
+        text(cacheMessage.isEmpty() ? storageUsage : cacheMessage, body.left(), body.top() + 72,
+             SettingNoteSize, "regular", 0, muted);
+        fill(body.left(), body.top() + 100, body.width(), 1, line);
+        const auto historyControl = QRectF(body.right() - 300, body.top() + 110, 300, 48);
+        actionBlock(historyControl, QStringLiteral("清除历史"), "history:clear", QStringLiteral("清除历史"));
+        text(QStringLiteral("搜索与播放历史"), body.left(), body.top() + 124, SettingTitleSize, "regular", 0,
+             baseInk);
+        fill(body.left(), body.top() + 162, body.width(), 1, line);
         return;
     }
 
@@ -355,8 +404,8 @@ void NativeHud::paintSettingsCustomSection(const QString &renderer, const QRectF
                     m_host->preference("auto-update") == "off" ? QStringLiteral("启动检查 / 关闭")
                                                                : QStringLiteral("启动检查 / 开启"),
                     "update:auto", QStringLiteral("启动检查"));
-        text(fit(m_host->updater.status(), 13, body.width() - 340, "regular"), body.left(), body.top() + 68,
-             13, "regular", 0, muted);
+        text(fit(m_host->updater.status(), SettingNoteSize, body.width() - 340, "regular"), body.left(),
+             body.top() + 68, SettingNoteSize, "regular", 0, muted);
         const auto check = QRectF(body.left(), body.top() + 112, 170, 46);
         actionBlock(check, m_host->updater.busy() ? QStringLiteral("取消") : QStringLiteral("检查更新"),
                     m_host->updater.busy() ? "update:cancel" : "update:check", QStringLiteral("检查更新"));
@@ -367,7 +416,7 @@ void NativeHud::paintSettingsCustomSection(const QString &renderer, const QRectF
         actionBlock(QRectF(body.right() - 210, body.top() + 112, 210, 46), QStringLiteral("发布说明 ↗"),
                     "update:release", QStringLiteral("发布说明"));
         text(QStringLiteral("更新将打开 GitHub 发布页面，请在浏览器中下载并安装。"), body.left(),
-             body.top() + 176, 12, "regular", 0, muted);
+             body.top() + 176, SettingNoteSize, "regular", 0, muted);
         return;
     }
 
@@ -376,7 +425,7 @@ void NativeHud::paintSettingsCustomSection(const QString &renderer, const QRectF
         actionBlock(restore, QStringLiteral("恢复默认设置"), "settings:restore-defaults",
                     QStringLiteral("恢复默认设置"));
         text(QStringLiteral("仅重置终端偏好，平台、账号与更新状态保持不变。"), body.left() + 316,
-             body.top() + 20, 12, "regular", 0, muted);
+             body.top() + 18, 14, "regular", 0, muted);
         return;
     }
 }
@@ -444,6 +493,9 @@ void NativeHud::applySettingValue(const QString &id, const QString &value) {
     }
     if (id == "fg") {
 #ifdef Q_OS_DARWIN
+        if (RhineRender::currentRenderMode(qEnvironmentVariable("RHINE_AA_MODE"), false).supersampling) {
+            return;
+        }
         m_host->setPreference("fg", target);
 #endif
         return;
@@ -487,6 +539,11 @@ void NativeHud::applySettingValue(const QString &id, const QString &value) {
     // 新加入的普通偏好只需 descriptor + Host key，通用路径即可持久化。
     if (descriptor->binding.kind == SettingsSchema::BindingKind::Preference) {
         m_host->setPreference(descriptor->binding.preferenceKey, target);
+        // 切歌行为即时生效，不依赖下一帧重读偏好。
+        if (id == "skip-detail-on-switch") {
+            skipDetailOnSwitch = target == "on";
+            m_music->skipDetailOnSwitch = skipDetailOnSwitch;
+        }
         m_host->invalidate();
     }
 }
@@ -507,7 +564,18 @@ void NativeHud::restoreSettingsDefaults() {
             m_host->setPreference("gpu-index", QString());
             continue;
         }
-        applySettingValue(descriptor.id, descriptor.defaultValue);
+        const auto defaultValue = SettingsSchema::resolvedDefault(descriptor, context);
+        // 超采样只临时屏蔽 AA 和帧生成。恢复默认须同时重置保留的请求值。
+        if (descriptor.id == "aa-mode") {
+            m_host->setPreference(descriptor.binding.preferenceKey, defaultValue);
+            qputenv("RHINE_AA_MODE", defaultValue.toUtf8());
+        } else if (descriptor.id == "fg") {
+            m_host->setPreference(descriptor.binding.preferenceKey, defaultValue);
+        } else if (descriptor.id == "render-scale") {
+            action("render-scale:" + defaultValue);
+        } else {
+            applySettingValue(descriptor.id, defaultValue);
+        }
     }
     // 唱片旋转与自动更新由自定义区块绘制，不在 descriptor 表中，单独恢复默认。
     if (discRotation) {
@@ -516,6 +584,10 @@ void NativeHud::restoreSettingsDefaults() {
     m_host->setPreference("auto-update", QString());
     // 桌面歌词的样式行不在主表中，整组恢复到新的默认值并关闭悬浮层。
     if (PlatformFeatures::DesktopLyrics) {
+        if (shortcuts) {
+            shortcuts->setEnabled(false);
+            shortcuts->restoreDefaults();
+        }
         m_host->setPreference(QString::fromLatin1(DesktopLyrics::EnabledKey), QStringLiteral("off"));
         DesktopLyrics::resetAppearance(m_host);
         desktopLyricsAppearanceLoaded = false;
@@ -524,4 +596,22 @@ void NativeHud::restoreSettingsDefaults() {
     refreshSettingsLayout();
     m_music->status = QStringLiteral("已恢复默认设置");
     m_host->invalidate();
+}
+
+void NativeHud::refreshStorageUsage() {
+    m_music->storageStats([owner = QPointer(this)](QJsonArray items) {
+        if (!owner || owner->modal != "settings") {
+            return;
+        }
+        owner->storageUsage = QStringLiteral("结构化磁盘缓存暂不可用");
+        for (const auto &item : items) {
+            const auto result = item.toObject();
+            if (result["category"] == "cache.sqlite" && result["status"] == "available") {
+                owner->storageUsage = QStringLiteral("结构化缓存占用 %1 MiB")
+                                          .arg(result["fileBytes"].toDouble() / 1048576., 0, 'f', 1);
+                break;
+            }
+        }
+        owner->m_host->invalidate();
+    });
 }

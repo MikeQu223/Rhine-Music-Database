@@ -29,6 +29,16 @@ Item {
         nameFilters: ["音乐文件 (*.mp3 *.flac *.m4a *.mp4 *.aac *.ogg *.opus *.ape *.wav *.aiff *.aif *.wv *.wma *.mpc)"]
         onAccepted: backend.importLocal(selectedFiles)
     }
+    FolderDialog {
+        id: pluginFolderDialog
+        objectName: "pluginFolderDialog"
+        Binding on parentWindow {
+            when: Qt.platform.os === "windows"
+            value: dialogs.hostWindow
+        }
+        title: "导入插件文件夹"
+        onAccepted: backend.importPluginFolder(selectedFolder)
+    }
     Connections {
         target: backend
         function onLocalImportRequested(folder: bool) {
@@ -37,6 +47,9 @@ Item {
             } else {
                 localFileDialog.open();
             }
+        }
+        function onPluginImportRequested() {
+            pluginFolderDialog.open();
         }
     }
 }

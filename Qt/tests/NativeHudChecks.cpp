@@ -1,4 +1,7 @@
 #include "NativeHud.h"
+#include "AppStorage.h"
+#include "ProviderRegistry.h"
+#include "PlatformFeatures.h"
 #include "fg/FgCapability.h"
 #include "fg/FgConfig.h"
 #include "NativeApplication.h"
@@ -7,15 +10,19 @@
 #include "MusicData.h"
 #include "MusicDiscover.h"
 #include "PlayerBar.h"
+#include "SettingsCard.h"
+#include "SettingsSchema.h"
 #include "DiscoverArtwork.h"
 #include "DiscoverMusicCard.h"
 #include <QCoreApplication>
 #include <QElapsedTimer>
 #include <QThread>
 #include <QDebug>
+#include <QDir>
 #include <QGuiApplication>
 #include <QJsonDocument>
 #include <QPainter>
+#include <QScopeGuard>
 #include <QSet>
 #include <QTemporaryDir>
 #include <QUrl>
@@ -54,6 +61,164 @@ QJsonObject getHit(const QJsonArray &hits, const QString &action) {
         }
     }
     return QJsonObject();
+}
+
+QStringList settingsInSection(SettingsSchema::SectionId id) {
+    QVector<const SettingsSchema::SettingDescriptor *> rows;
+    for (const auto &descriptor : SettingsSchema::descriptors()) {
+        if (descriptor.section == id) {
+            rows.append(&descriptor);
+        }
+    }
+    std::sort(rows.begin(), rows.end(),
+              [](const auto *left, const auto *right) { return left->order < right->order; });
+    QStringList ids;
+    for (const auto *row : rows) {
+        ids.append(row->id);
+    }
+    return ids;
+}
+
+/** 锁定设置分组顺序、动态默认值和行备注字号，避免后续排序改动回退。 */
+bool checkSettingsSchema() {
+    struct ExpectedSection {
+        SettingsSchema::SectionId id;
+        int number;
+        const char *titleEn;
+        const char *titleZh;
+    };
+    const QVector<ExpectedSection> expectedSections{
+        {SettingsSchema::SectionId::Provider, 1, "PROVIDER ACCESS", "音乐平台"},
+        {SettingsSchema::SectionId::Audio, 2, "AUDIO", "音频"},
+        {SettingsSchema::SectionId::Playback, 3, "PLAYBACK", "播放"},
+        {SettingsSchema::SectionId::Preferences, 4, "TERMINAL PREFERENCES", "终端偏好"},
+        {SettingsSchema::SectionId::Rendering, 5, "RENDERING SETTINGS", "渲染设置"},
+        {SettingsSchema::SectionId::Experimental, 6, "EXPERIMENTAL FEATURES", "实验性功能"},
+        {SettingsSchema::SectionId::Storage, 7, "STORAGE", "存储与缓存"},
+        {SettingsSchema::SectionId::Performance, 8, "PERFORMANCE", "性能与诊断"},
+        {SettingsSchema::SectionId::Footer, 9, "CONFIG", "配置管理"},
+        {SettingsSchema::SectionId::Update, 10, "SOFTWARE UPDATE", "软件更新"},
+        {SettingsSchema::SectionId::Project, 11, "PROJECT", "项目与开源参考"},
+    };
+    const auto &sections = SettingsSchema::sections();
+    if (sections.size() != expectedSections.size()) {
+        qCritical() << "Settings section count changed" << sections.size();
+        return false;
+    }
+    for (int index = 0; index < expectedSections.size(); ++index) {
+        const auto &actual = sections.at(index);
+        const auto &expected = expectedSections.at(index);
+        if (actual.id != expected.id || actual.number != expected.number ||
+            actual.titleEn != expected.titleEn || actual.titleZh != expected.titleZh) {
+            qCritical() << "Settings section order or title changed at" << index;
+            return false;
+        }
+    }
+
+    QStringList audio{"quality"};
+    if constexpr (PlatformFeatures::AutomaticTransition) {
+        audio.append("apple-smart-transition");
+    }
+#if !defined(Q_OS_MACOS) && !defined(Q_OS_IOS)
+    audio.append("audio-output-policy");
+#endif
+    audio.append("mv-auto");
+#ifdef Q_OS_WIN
+    audio.append("audio-exclusive");
+#endif
+    audio.append("alternative");
+    const QVector<QPair<SettingsSchema::SectionId, QStringList>> expectedRows{
+        {SettingsSchema::SectionId::Audio, audio},
+        {SettingsSchema::SectionId::Playback,
+         {"desktop-lyrics", "global-shortcuts-settings", "single-play-mode", "detail-autoplay",
+          "skip-detail-on-switch"}},
+        {SettingsSchema::SectionId::Preferences,
+         {"theme", "archive-mask", "play-button-style", "window", "close-behavior", "startup-animation", "replay",
+          "official-player"}},
+        {SettingsSchema::SectionId::Rendering,
+         {"graphics-backend", "gpu-index", "vsync", "render-scale", "aa-mode", "aa-scale", "msaa",
+          "fsr-quality", "fsr-sharpness", "fg", "motion"}},
+        {SettingsSchema::SectionId::Project,
+         {"project-home", "project-rhine", "project-lyricsx", "project-lyricskit", "project-lyrimuse"}},
+    };
+    for (const auto &expected : expectedRows) {
+        if (settingsInSection(expected.first) != expected.second) {
+            qCritical() << "Settings rows changed inside section" << int(expected.first);
+            return false;
+        }
+    }
+
+    SettingsSchema::SettingsContext context;
+    const auto *theme = SettingsSchema::find("theme");
+    const auto *transition = SettingsSchema::find("apple-smart-transition");
+    if (!theme || SettingsSchema::resolvedDefault(*theme, context) != "system" ||
+        (transition && SettingsSchema::resolvedDefault(*transition, context) != "on")) {
+        qCritical() << "Settings defaults did not adopt system theme and enabled transitions";
+        return false;
+    }
+
+    SettingsSchema::SettingDescriptor title;
+    title.kind = SettingsSchema::SettingKind::Action;
+    title.titleEn = "TITLE";
+    title.titleZh = "标题";
+    title.description = "备注";
+    title.showDescription = true;
+    title.actionLabel = "操作";
+    SettingsSchema::SettingsSection section;
+    section.titleEn = "TEST";
+    section.titleZh = "测试";
+    SettingsCard::RowModel row;
+    row.descriptor = &title;
+    row.label = title.actionLabel;
+    row.enabled = true;
+    SettingsCard::SectionModel sectionModel;
+    sectionModel.meta = &section;
+    sectionModel.rows.append(row);
+    SettingsCard::Model model;
+    model.viewport = {0, 0, 1000, 300};
+    model.sections.append(sectionModel);
+    const auto layout = SettingsCard::layout(model);
+    SettingsCard::Colors colors;
+    colors.ink = {0, 0, 0, 1};
+    colors.muted = {0.5, 0.5, 0.5, 1};
+    colors.faint = {0, 0, 0, 0.1};
+    colors.line = {0, 0, 0, 0.2};
+    colors.soft = {0, 0, 0, 0.03};
+    colors.gold = {0.8, 0.6, 0.2, 1};
+    double titleSize = 0;
+    double noteSize = 0;
+    QJsonArray noteColor;
+    SettingsCard::Canvas canvas;
+    canvas.fill = [](double, double, double, double, QJsonArray) {};
+    canvas.text = [&](QString value, double, double, double size, QString, double, QJsonArray color) {
+        if (value == title.titleZh) {
+            titleSize = size;
+        } else if (value == title.description) {
+            noteSize = size;
+            noteColor = color;
+        }
+    };
+    canvas.fit = [](QString value, double, double, QString) { return value; };
+    canvas.hit = [](double, double, double, double, QString, QString) {};
+    canvas.centered = [](QString, double, double, double, QString, bool) {};
+    canvas.stroke = [](const QRectF &, QJsonArray) {};
+    canvas.custom = [](QString, const QRectF &, double) {};
+    SettingsCard::paint(model, layout, colors, canvas);
+    if (titleSize <= 0 || titleSize != noteSize || noteColor != colors.muted) {
+        qCritical() << "Settings note size or muted color differs from its title";
+        return false;
+    }
+    return true;
+}
+
+// 测试使用已安装的第一个远程来源；core-only 时退回内置来源。
+QString hudTestProvider() {
+    for (const auto &id : ProviderRegistry::instance().ids()) {
+        if (id != "local" && id != "siren") {
+            return id;
+        }
+    }
+    return "siren";
 }
 
 // 创建测试用的 MusicLibrary
@@ -105,8 +270,8 @@ namespace {
 bool checkSorting(const QString &root, Glyphs &glyphs, const QJsonObject &content) {
     Host host(root, true);
     MusicLibrary music(&host, content);
-    music.provider = "qq";
-    music.api.provider = "qq";
+    music.provider = hudTestProvider();
+    music.api.provider = hudTestProvider();
     music.uid = "42";
     const auto track = [](int id, QString title, QString album, QString artist) {
         auto value = song(id);
@@ -145,6 +310,7 @@ bool checkSorting(const QString &root, Glyphs &glyphs, const QJsonObject &conten
     };
     HudSceneActions scene;
     scene.mode = [](QString) {};
+    scene.pointer = [](QString, double, double, double) {};
     NativeHud hud(&host, &glyphs, &music, scene);
     hud.reduced = true;
     QJsonObject frame{{"mode", "detail"}, {"selected", 0}, {"detail", 1}};
@@ -267,8 +433,8 @@ bool checkSorting(const QString &root, Glyphs &glyphs, const QJsonObject &conten
 bool checkCollectionCard(const QString &root, Glyphs &glyphs, const QJsonObject &content) {
     Host host(root, true);
     MusicLibrary music(&host, content);
-    music.provider = "netease";
-    music.api.provider = "netease";
+    music.provider = hudTestProvider();
+    music.api.provider = hudTestProvider();
     music.uid = "42";
     music.current = MusicData::item("album", "165148405", "孤星 OST", "塞壬唱片-MSR");
     music.current["date"] = "2023-05-09";
@@ -286,6 +452,7 @@ bool checkCollectionCard(const QString &root, Glyphs &glyphs, const QJsonObject 
     music.coverImage = coverKey;
     HudSceneActions scene;
     scene.mode = [](QString) {};
+    scene.pointer = [](QString, double, double, double) {};
     NativeHud hud(&host, &glyphs, &music, scene);
     hud.reduced = true;
     const QJsonObject frame{{"mode", "detail"}, {"detail", 1}};
@@ -420,8 +587,8 @@ bool checkCollectionCard(const QString &root, Glyphs &glyphs, const QJsonObject 
 bool checkAlbumTrackSelection(const QString &root, Glyphs &glyphs, const QJsonObject &content) {
     Host host(root, true);
     MusicLibrary music(&host, content);
-    music.provider = "netease";
-    music.api.provider = "netease";
+    music.provider = hudTestProvider();
+    music.api.provider = hudTestProvider();
     music.uid = "42";
     music.directory = std::make_shared<MusicDirectory>();
     music.directory->item = MusicData::item("playlist", "9", "目录");
@@ -438,6 +605,7 @@ bool checkAlbumTrackSelection(const QString &root, Glyphs &glyphs, const QJsonOb
     music.tracks = albumTracks;
     HudSceneActions scene;
     scene.mode = [](QString) {};
+    scene.pointer = [](QString, double, double, double) {};
     NativeHud hud(&host, &glyphs, &music, scene);
     hud.tab = "history";
     const QJsonObject frame{{"mode", "detail"}, {"detail", 1}};
@@ -453,9 +621,81 @@ bool checkAlbumTrackSelection(const QString &root, Glyphs &glyphs, const QJsonOb
     }
     return true;
 }
+
+/** 200% 禁用画质选项，恢复默认也要清除被覆盖的 AA 请求。 */
+bool checkSupersamplingSettings(Host &host, Glyphs &glyphs, const QJsonObject &content) {
+    const QList<QPair<const char *, QByteArray>> environment{
+        {"RHINE_RENDER_SCALE", qgetenv("RHINE_RENDER_SCALE")},
+        {"RHINE_SUPERSAMPLE", qgetenv("RHINE_SUPERSAMPLE")},
+        {"RHINE_AA_MODE", qgetenv("RHINE_AA_MODE")},
+        {"RHINE_FG", qgetenv("RHINE_FG")},
+    };
+    const auto restore = qScopeGuard([&environment] {
+        for (const auto &[name, value] : environment) {
+            if (value.isNull()) {
+                qunsetenv(name);
+            } else {
+                qputenv(name, value);
+            }
+        }
+    });
+    qputenv("RHINE_RENDER_SCALE", "200");
+    qputenv("RHINE_SUPERSAMPLE", "1");
+#ifdef Q_OS_DARWIN
+    qputenv("RHINE_AA_MODE", "metalfx");
+#else
+    qputenv("RHINE_AA_MODE", "fsr");
+#endif
+    qputenv("RHINE_FG", "on");
+
+    const SettingsSchema::SettingsContext context;
+    const auto *scale = SettingsSchema::find("render-scale");
+    const auto *aa = SettingsSchema::find("aa-mode");
+    const auto *fg = SettingsSchema::find("fg");
+    if (!scale || !aa || !fg || SettingsSchema::read(*scale, context).integer != 200 ||
+        SettingsSchema::enabled(*aa, context) || SettingsSchema::enabled(*fg, context)) {
+        qCritical() << "200% must disable the AA and frame generation controls";
+        return false;
+    }
+
+    // 旧配置带有 2× 因子时，恢复默认倍率后依然处于超采样。
+    qputenv("RHINE_SUPERSAMPLE", "2");
+    MusicLibrary music(&host, content);
+    NativeHud hud(&host, &glyphs, &music, {});
+    hud.action("settings:restore-defaults");
+    return qEnvironmentVariable("RHINE_RENDER_SCALE") == SettingsSchema::resolvedDefault(*scale, context) &&
+           qgetenv("RHINE_AA_MODE") == "off";
+}
 }
 
 namespace {
+bool checkPlayButtonStyles(Glyphs &glyphs) {
+    for (const bool boxed : {false, true}) {
+        PlayerBar::State state;
+        state.boxedPlayButton = boxed;
+        const auto draw = [&glyphs, &state](double morph) {
+            state.playMorph = morph;
+            QJsonArray commands;
+            PlayerBar::appendPlayButton(commands, state, {24, 24}, 46, {0, 0, 0, 1}, {1, 1, 1, 1});
+            QImage image(48, 48, QImage::Format_ARGB32_Premultiplied);
+            image.fill(Qt::transparent);
+            QPainter painter(&image);
+            glyphs.commands(painter, commands, [](QString) { return QImage(); });
+            painter.end();
+            return image;
+        };
+        const auto play = draw(0);
+        const auto transition = draw(0.5);
+        const auto pause = draw(1);
+        if ((play.pixelColor(3, 3).alpha() == 255) != boxed || play == pause ||
+            transition == play || transition == pause) {
+            qCritical() << "Play button style, endpoints or in-between frame regressed" << boxed;
+            return false;
+        }
+    }
+    return true;
+}
+
 /** 验证同一展示组件在嵌入与浮窗组合下的交互边界，不复制绘制实现。 */
 bool checkPlayerBar(Glyphs &glyphs) {
     PlayerBar::State state;
@@ -464,6 +704,7 @@ bool checkPlayerBar(Glyphs &glyphs) {
     state.album = "孤星";
     state.hasTrack = true;
     state.canLike = true;
+    state.musicVideo = true;
     state.likeKnown = true;
     state.seekable = true;
     state.durationMs = 195000;
@@ -473,7 +714,7 @@ bool checkPlayerBar(Glyphs &glyphs) {
         const auto drawing = PlayerBar::render(state, row, false, glyphs);
         if (!drawing.seek || !drawing.volume || !drawing.inputBounds.contains(*drawing.seek) ||
             !row.contains(*drawing.volume) || !hasAction(drawing.hits, "player:lyrics") ||
-            !hasAction(drawing.hits, "player:open")) {
+            !hasAction(drawing.hits, "player:open") || !hasAction(drawing.hits, "player:mv")) {
             qCritical() << "Player bar lost seeking, volume, lyrics or queue";
             return false;
         }
@@ -487,6 +728,12 @@ bool checkPlayerBar(Glyphs &glyphs) {
             }
         }
         const auto lyrics = getHit(drawing.hits, "player:lyrics");
+        const auto mv = getHit(drawing.hits, "player:mv");
+        if (mv["x"].toDouble() + mv["width"].toDouble() / 2 != row.right() - 435) {
+            qCritical() << "MV action is missing or no longer centered beside the player controls"
+                        << "row:" << row << "hit:" << mv << "expected center:" << row.right() - 435;
+            return false;
+        }
         const auto toggle = getHit(drawing.hits, "player:toggle");
         const QRectF toggleRect(toggle["x"].toDouble(), toggle["y"].toDouble(), toggle["width"].toDouble(),
                                 toggle["height"].toDouble());
@@ -577,6 +824,38 @@ bool checkPlayerInput(const QString &root, Glyphs &glyphs, const QJsonObject &co
         qCritical() << "Player whitespace closed or scrolled the underlying panel";
         return false;
     }
+    app.hud.draw(frame, 393. * 1080 / 852, 50);
+    app.pointer("pointerdown", 40, 400);
+    app.pointer("pointerup", 40, 400);
+    if (app.hud.closing) {
+        qCritical() << "Mobile panel whitespace closed the panel";
+        return false;
+    }
+    // 实际场景投影中，竖屏详情的左右上角应等高；横屏仍保留原有斜视角。
+    scene.resize(393, 852);
+    scene.reduced(true);
+    scene.review("detail");
+    QJsonObject settled;
+    for (int step = 0; step < 240; ++step) {
+        settled = scene.sample(100 + step / 60.);
+    }
+    const auto stats = settled["stats"].toObject();
+    const auto left = stats["topLeft"].toArray();
+    const auto right = stats["topRight"].toArray();
+    if (left.size() != 2 || right.size() != 2 || left[1] != right[1]) {
+        qCritical() << "Portrait album did not settle into a front view" << stats;
+        return false;
+    }
+    scene.resize(1920, 1080);
+    scene.setMode("detail");
+    for (int step = 0; step < 240; ++step) {
+        settled = scene.sample(110 + step / 60.);
+    }
+    const auto landscape = settled["stats"].toObject();
+    if (landscape["topLeft"].toArray()[1] == landscape["topRight"].toArray()[1]) {
+        qCritical() << "Portrait front view changed the landscape camera";
+        return false;
+    }
     app.hud.closeModal();
     app.hud.draw({{"mode", "boot"}}, 1920, 100);
     if (app.hud.playerBounds || !app.hud.state()["playerBounds"].isNull()) {
@@ -660,17 +939,960 @@ static bool checkCardMaterialCache() {
 }
 
 #endif
+namespace {
+/** 同一控制器跨比例回归：桌面快照不变，窄屏命中与输入使用一致坐标。 */
+bool checkResponsiveHud(const QString &root, Glyphs &glyphs, const QJsonObject &content) {
+    ResponsiveHudLayout policy;
+    for (const double aspect : {.54, .99, 1., 1.01, .999, 1.}) {
+        policy.resize(1080 * aspect);
+        if (policy.compact() != (aspect < 1)) {
+            qCritical() << "Responsive layout must follow width < height" << aspect;
+            return false;
+        }
+    }
+
+    Host host(root, true);
+    std::unique_ptr<MusicLibrary> music(createTestMusicLibrary(&host, hudTestProvider(), content));
+    HudSceneActions scene;
+    scene.mode = [](QString) {};
+    scene.pointer = [](QString, double, double, double) {};
+    NativeHud hud(&host, &glyphs, music.get(), scene);
+    hud.reduced = true;
+    const QJsonObject frame{{"mode", "archive"}, {"detail", 1}, {"selected", 0}};
+    hud.draw(frame, 1920, 50);
+    const auto desktopCommands = hud.commands;
+    const auto desktopHits = hud.hits;
+    constexpr double width = 393. * 1080 / 852;
+    hud.draw(frame, width, 50);
+    if (!hud.state()["compactLayout"].toBool() || !hasAction(hud.hits, "open") ||
+        hasAction(hud.hits, "column-prev") || hasAction(hud.hits, "column-next") ||
+        !hasAction(hud.hits, "player:next")) {
+        return false;
+    }
+    const auto captureRoot = qEnvironmentVariable("RHINE_HUD_CAPTURE_DIR");
+    const auto capture = [&](const QString &name) {
+        if (captureRoot.isEmpty()) {
+            return;
+        }
+        QDir().mkpath(captureRoot);
+        QImage image(393, 852, QImage::Format_ARGB32_Premultiplied);
+        image.fill(QColor("#eeece4"));
+        QPainter painter(&image);
+        painter.scale(852. / 1080, 852. / 1080);
+        glyphs.commands(painter, hud.commands, [&host](QString key) { return host.image(key); });
+        painter.end();
+        image.save(captureRoot + "/" + name + ".png");
+    };
+    const auto validHits = [&] {
+        for (const auto &value : hud.hits) {
+            const auto target = value.toObject();
+            const QRectF area(target["x"].toDouble(), target["y"].toDouble(), target["width"].toDouble(),
+                              target["height"].toDouble());
+            if (!QRectF(0, 0, width + .01, 1080.01).contains(area) || area.width() <= 0 ||
+                area.height() <= 0 || !target["fixed"].toBool()) {
+                return false;
+            }
+        }
+        return true;
+    };
+    if (!validHits()) {
+        return false;
+    }
+    // 四条槽位不覆盖底栏，选中行始终位于第二条。
+    const double listTop = hud.state()["archiveListY"].toDouble();
+    const auto selectedHit = getHit(hud.hits, "open");
+    const double unit = width / 393.;
+    const double playerTop = hud.state()["playerBounds"].toObject()["y"].toDouble();
+    if (std::abs(selectedHit["y"].toDouble() - (listTop + 48 * unit)) > .01 || listTop < 540 ||
+        listTop + 4 * 48 * unit > playerTop + .01) {
+        qCritical() << "Archive slots overlap the scene or player";
+        return false;
+    }
+    capture("archive");
+    bool brand = false;
+    for (const auto &value : hud.commands) {
+        const auto op = value.toArray();
+        if (op[0] == "text" && op[1] == music->libraryName()) {
+            brand = brand || (op[3] == 123 && op[4] == 23 && op[5] == "bold");
+        }
+    }
+    const auto mini = hud.state()["playerBounds"].toObject();
+    if (!brand || std::abs(mini["height"].toDouble() - 144 * width / 393) > 0.01) {
+        return false;
+    }
+    // 底部保留 34 pt 手势区，导航命中不得进入系统的小白条区域。
+    for (const auto &value : hud.hits) {
+        const auto hit = value.toObject();
+        if (hit["y"].toDouble() + hit["height"].toDouble() > (852 - 34) * width / 393 + .01) {
+            qCritical() << "Mobile control entered the bottom gesture area" << hit;
+            return false;
+        }
+    }
+    for (const auto &route : {"player:toggle", "player:next", "player:detail"}) {
+        if (!hasAction(hud.hits, route)) {
+            return false;
+        }
+    }
+    for (const auto &route :
+         {"player:prev", "player:mode", "player:open", "music:like-current", "player:lyrics"}) {
+        if (hasAction(hud.hits, route)) {
+            qCritical() << "Mini player retained a full-page control" << route;
+            return false;
+        }
+    }
+    for (const auto &value : hud.hits) {
+        const auto hit = value.toObject();
+        const auto action = hit["action"].toString();
+        // 页头栏目 tab 是固定控件，其余控件必须在 138 pt 以下。
+        const bool headerControl = action == "mobile:play-archive" || action == "column-prev" ||
+                                   action == "column-next" || action.startsWith("mobile:source:");
+        if (hit["y"].toDouble() < 138 * width / 393 && !headerControl) {
+            qCritical() << "Unexpected control above the mobile header" << action;
+            return false;
+        }
+    }
+    for (const auto &value : hud.commands) {
+        const auto op = value.toArray();
+        if (op[0] == "text" && (op[1].toString().startsWith("FILE NUMBER") || op[1] == "REFERENCE AREA")) {
+            return false;
+        }
+        if (op[0] == "text" && op[1] == "资料库" && op[4] == 13) {
+            const auto bounds = glyphs.bounds("资料库", 13, op[5].toString());
+            const auto target = getHit(hud.hits, "home");
+            const double center = op[2].toDouble() + bounds["x"].toDouble() + bounds["width"].toDouble() / 2;
+            if (std::abs(center * width / 393 - target["x"].toDouble() - target["width"].toDouble() / 2) >
+                .01) {
+                return false;
+            }
+        }
+    }
+    hud.draw(frame, 1920, 50);
+    if (hud.commands != desktopCommands || hud.hits != desktopHits || hud.state()["compactLayout"].toBool()) {
+        qCritical() << "Responsive round trip changed desktop HUD";
+        return false;
+    }
+    music->player.state["playing"] = false;
+    hud.draw(frame, width, 50);
+    if (getHit(hud.hits, "player:toggle")["label"] != "播放") {
+        return false;
+    }
+    music->player.state["playing"] = true;
+    // 主界面 tab 列表：滚动应切换固定槽位上的选中项。
+    hud.draw(frame, width, 50);
+    const int beforeScroll = hud.state()["archiveIndex"].toInt();
+    const auto selectedTitle = music->libraryItems()[beforeScroll].toObject()["title"].toString();
+    const auto selectedRowY = [&] {
+        for (const auto &value : hud.commands) {
+            const auto op = value.toArray();
+            if (op[0] == "text" && op[1] == selectedTitle && op[4] == 18) {
+                return op[3].toDouble();
+            }
+        }
+        return -1.;
+    };
+    hud.action("mobile:archive-begin");
+    const double originalY = selectedRowY();
+    hud.wheel(width / 2, 700, -1, 0, 8);
+    hud.draw(frame, width, 50.01);
+    if (originalY < 0 || std::abs(selectedRowY() - originalY + 8 / (width / 393)) > .01) {
+        qCritical() << "Archive drag rounded away sub-row finger movement";
+        return false;
+    }
+    hud.action("mobile:archive-release");
+    hud.draw(frame, width, 50.02);
+    hud.draw(frame, width, 50.3);
+
+    hud.wheel(width / 2, 700, -120, 1, 128);
+    hud.draw(frame, width, 60);
+    if (hud.state()["archiveIndex"].toInt() == beforeScroll) {
+        qCritical() << "Mobile archive scroll did not move the fixed slot selection";
+        return false;
+    }
+    // 重绘不能重复发出旧选择；慢速小幅拖动也必须能跨行，并保持栏目不变。
+    const int movedIndex = music->libraryIndex();
+    const int selectedLane = music->selectedLane;
+    for (int repaint = 0; repaint < 6; ++repaint) {
+        hud.draw(frame, width, 61 + repaint);
+        if (music->libraryIndex() != movedIndex || music->selectedLane != selectedLane) {
+            qCritical() << "Archive repaint changed the requested selection";
+            return false;
+        }
+    }
+    int requestedPhysical = -1;
+    const auto request =
+        QObject::connect(music.get(), &MusicLibrary::selectionRequested,
+                         [&requestedPhysical](int physical, QJsonObject) { requestedPhysical = physical; });
+    music->selectLibraryIndex(beforeScroll);
+    QObject::disconnect(request);
+    if (requestedPhysical != music->selectedPhysical) {
+        qCritical() << "List selection was not committed to the scene";
+        return false;
+    }
+    hud.draw(frame, width, 69);
+    for (int drag = 0; drag < 20; ++drag) {
+        hud.wheel(width / 2, 700, -1, 0, 4);
+        hud.draw(frame, width, 70 + drag);
+    }
+    if (music->libraryIndex() == beforeScroll || music->selectedLane != selectedLane) {
+        qCritical() << "Slow list drag stalled or switched columns";
+        return false;
+    }
+    // 后续检查仍以原选中项为基准，滚动验证后恢复。
+    music->selectLibraryIndex(beforeScroll);
+    hud.draw(frame, width, 70);
+    for (const QString &page :
+         {QString("search"), QString("settings"), QString("discover"), QString("player")}) {
+        hud.openModal(page);
+        hud.draw(frame, width, 50);
+        if (!validHits()) {
+            qCritical() << "Out-of-bounds mobile target" << page;
+            return false;
+        }
+        capture(page);
+        if (page == "search" || page == "settings" || page == "discover") {
+            bool opaquePaper = false;
+            for (const auto &value : hud.commands) {
+                const auto op = value.toArray();
+                if (op[0] == "fill" && op[2] == 0 && op[3] == 0 && op[4] == 393 &&
+                    std::abs(op[5].toDouble() - 852) < .01 && op[1].toArray()[3].toDouble() == 1) {
+                    opaquePaper = true;
+                }
+            }
+            const auto settingsNav = getHit(hud.hits, "settings");
+            if (!opaquePaper || settingsNav["label"] != "设置" || hasAction(hud.hits, "saved")) {
+                qCritical() << "Terminal page lost its opaque paper or settings navigation" << page;
+                return false;
+            }
+        }
+        if (page == "discover" && !hasAction(hud.hits, "discover:item:3")) {
+            qCritical() << "Visible discovery cover lost its clipped hit target";
+            return false;
+        }
+        if (page == "search" &&
+            (!hud.state()["compactInputVisible"].toBool() || hud.state()["inputWidth"].toDouble() <= 0)) {
+            return false;
+        }
+        if (page == "player") {
+            if (!hasAction(hud.hits, "mobile:queue-modes")) {
+                return false;
+            }
+            hud.action("mobile:queue-modes");
+            hud.draw(frame, width, 50);
+            for (const QString &mode : {QString("off"), QString("all"), QString("one"), QString("shuffle")}) {
+                if (!hasAction(hud.hits, "player:mode:" + mode)) {
+                    return false;
+                }
+            }
+            if (!hasAction(hud.hits, "player:clear") || !hasAction(hud.hits, "player:queue:0") ||
+                !hasAction(hud.hits, "player:remove:1") || hasAction(hud.hits, "player:remove:0")) {
+                return false;
+            }
+            const auto seek = hud.state()["seek"].toObject();
+            if (seek["width"].toDouble() <= 0) {
+                return false;
+            }
+            const auto before = hud.commands;
+            hud.wheel(width / 2, 1040, -120);
+            hud.draw(frame, width, 50);
+            if (hud.commands != before) {
+                return false;
+            }
+            hud.wheel(width / 2, 650, -120, 1, 128);
+            hud.draw(frame, width, 50);
+            if (hud.commands == before || !validHits()) {
+                return false;
+            }
+        }
+        hud.closeModal();
+        hud.draw(frame, 1920, 100);
+    }
+    hud.draw({{"mode", "detail"}, {"detail", 1}}, width, 100);
+    capture("song");
+    const auto closeSong = getHit(hud.hits, "back");
+    const auto moreSong = getHit(hud.hits, "mobile:song-options");
+    const auto queueSong = getHit(hud.hits, "player:open");
+    if (closeSong["label"] != "关闭播放页面" || closeSong["width"].toDouble() < 56 * width / 393 ||
+        moreSong["y"] != queueSong["y"] || moreSong["x"].toDouble() <= queueSong["x"].toDouble()) {
+        qCritical() << "Song close and bottom more actions lost their requested placement";
+        return false;
+    }
+    if (!validHits()) {
+        return false;
+    }
+    for (const auto &route : {"player:prev", "player:toggle", "player:next", "player:mode", "player:open",
+                              "player:lyrics", "music:like"}) {
+        if (!hasAction(hud.hits, route)) {
+            qCritical() << "Full player dropped a control" << route;
+            return false;
+        }
+    }
+    if (hasAction(hud.hits, "home") || hud.state()["seek"].toObject().isEmpty()) {
+        return false;
+    }
+    if (!hud.state()["volume"].isNull()) {
+        qCritical() << "Song HUD retained the removed volume slider";
+        return false;
+    }
+    for (const auto &value : hud.commands) {
+        const auto op = value.toArray();
+        if (op[0] == "image") {
+            return false;
+        }
+        if (op[0] == "fill" && op[3].toDouble() < 491.99 && op[5].toDouble() > 50) {
+            qCritical() << "Full player obscured the live scene";
+            return false;
+        }
+    }
+    const auto originalPlaying = music->player.current;
+    music->player.current = song(20);
+    hud.draw({{"mode", "detail"}, {"detail", 1}}, width, 100);
+    if (!hasAction(hud.hits, "music:play") || !hud.state()["seek"].isNull()) {
+        return false;
+    }
+    music->player.current = originalPlaying;
+    music->player.lyrics.applyPlaybackSnapshot(
+        {{"document", QJsonObject{{"lines", QJsonArray{QJsonObject{{"text", "第一句测试歌词"},
+                                                                   {"translation", "第一句译文"},
+                                                                   {"startMs", 0}},
+                                                       QJsonObject{{"text", "第二句测试歌词"},
+                                                                   {"translation", "第二句译文"},
+                                                                   {"startMs", 5000}}}}}},
+         {"index", 0},
+         {"status", "ready"}});
+    hud.action("player:lyrics");
+    hud.draw({{"mode", "detail"}, {"detail", 1}}, width, 100);
+    capture("lyrics");
+    bool opaqueLyrics = false;
+    for (const auto &value : hud.commands) {
+        const auto op = value.toArray();
+        if (op[0] == "fill" && op[2] == 0 && op[3] == 0 && op[4] == 393 &&
+            std::abs(op[5].toDouble() - 852) < .01 && op[1].toArray()[3] == 1) {
+            opaqueLyrics = true;
+        }
+    }
+    for (const auto &value : hud.hits) {
+        if (value.toObject()["y"].toDouble() < 60 * width / 393 - .01) {
+            qCritical() << "Lyrics control entered the Dynamic Island area";
+            return false;
+        }
+    }
+    if (!opaqueLyrics || !hasAction(hud.hits, "player:lyrics-close") || !validHits()) {
+        return false;
+    }
+    hud.action("player:lyrics-close");
+    for (const QString &kind : {QString("album"), QString("playlist"), QString("artist")}) {
+        music->current =
+            MusicData::item(kind, "42", kind == "artist" ? "塞壬唱片-MSR" : "音乐档案", "塞壬唱片-MSR");
+        music->tracks = music->player.queue.items();
+        hud.draw({{"mode", "detail"}, {"detail", 1}}, width, 100);
+        capture(kind);
+        if (!validHits()) {
+            return false;
+        }
+        hud.wheel(width / 2, 700, -120, 1, 10000);
+        hud.draw({{"mode", "detail"}, {"detail", 1}}, width, 101);
+        if (!hasAction(hud.hits, "music:track:19")) {
+            qCritical() << "Mobile collection lost tracks beyond the desktop viewport" << kind;
+            return false;
+        }
+    }
+    music->current = song(1);
+    hud.openModal("saved");
+    hud.draw(frame, width, 100);
+    capture("mine");
+    if (!hasAction(hud.hits, "music:collection:1")) {
+        return false;
+    }
+    hud.action("music:collection:1");
+    hud.draw(frame, width, 100);
+    capture("liked");
+    if (!hasAction(hud.hits, "mobile:play-liked")) {
+        return false;
+    }
+    hud.action("mobile:mine");
+    hud.draw(frame, width, 100);
+    if (!hasAction(hud.hits, "music:collection:1")) {
+        return false;
+    }
+    hud.openModal("player");
+    music->player.current = music->player.queue.items().last().toObject();
+    hud.draw(frame, width, 100);
+    // 换页后当前尾曲也能作为第一条可见行，移除动作与播放动作保持分离。
+    hud.closeModal();
+    hud.draw(frame, width, 200);
+    hud.openModal("player");
+    hud.draw(frame, width, 200);
+    if (!hasAction(hud.hits, "player:queue:19") || hasAction(hud.hits, "player:remove:19")) {
+        return false;
+    }
+    hud.modal.clear();
+    hud.draw({{"mode", "detail"}, {"viewer", true}, {"detail", 1}}, width, 200);
+    if (!hasAction(hud.hits, "viewer:close") || !hasAction(hud.hits, "viewer:reset") || !validHits()) {
+        return false;
+    }
+    hud.draw({{"mode", "boot"}}, width, 200);
+    if (!hud.state()["playerBounds"].isNull()) {
+        return false;
+    }
+    // 竖屏播放队列切歌只同步唱片选择，不强制进入详情；显式打开仍保留详情路由。
+    music->frame = frame;
+    hud.draw(frame, width, 210);
+    QString requestedMode;
+    const auto modeConnection =
+        QObject::connect(music.get(), &MusicLibrary::modeRequested,
+                         [&requestedMode](const QString &mode) { requestedMode = mode; });
+    const auto nextTrack = music->player.queue.items().first().toObject();
+    music->current = song(999);
+    music->player.trackSelected(nextTrack);
+    QObject::disconnect(modeConnection);
+    if (music->current["id"] != nextTrack["id"] || requestedMode == "detail" ||
+        music->frame["mode"] != "archive") {
+        qCritical() << "Portrait track change unexpectedly opened song details";
+        return false;
+    }
+    // 同一目录跨过八张唱片的物理列边界，页头仍须保持目录所属栏目。
+    const int originLane = music->directory->parentLane;
+    music->selectDirectory(9, "archive");
+    hud.draw(frame, width, 220);
+    bool sourceRetained = false;
+    for (const auto &value : hud.commands) {
+        const auto op = value.toArray();
+        if (op[0] == "text" && op[3] == 76 && op[5] == "demibold") {
+            sourceRetained = op[1] == music->columns.value(originLane);
+        }
+    }
+    if (!sourceRetained || music->libraryIndex() != 9) {
+        qCritical() << "Directory physical lane changed the active source tab";
+        return false;
+    }
+    // 平台与插件页竖屏布局
+    for (const QString &page : {QString("provider"), QString("plugins")}) {
+        hud.openModal(page);
+        hud.draw(frame, width, 50);
+        if (!validHits()) {
+            qCritical() << "Out-of-bounds mobile provider/plugin target" << page;
+            return false;
+        }
+        capture(page);
+    }
+    hud.openModal("provider");
+    hud.draw(frame, width, 50);
+    if (!hasAction(hud.hits, "provider:" + hudTestProvider()) || !hasAction(hud.hits, "plugins") ||
+        !hasAction(hud.hits, "close-modal")) {
+        qCritical() << "Portrait provider page lost provider cards or plugin entry";
+        return false;
+    }
+    hud.openModal("plugins");
+    hud.draw(frame, width, 50);
+    if (!hasAction(hud.hits, "plugin:refresh") || !hasAction(hud.hits, "close-modal")) {
+        qCritical() << "Portrait plugin page lost refresh or back";
+        return false;
+    }
+    qInfo()
+        << "Responsive HUD design anchors, desktop round trip, mobile input, cards, queue and scroll passed";
+    return true;
+}
+}
+
+/** 验证普通切页保留内容与命中区，歌词拖动仅在超过阈值后请求关闭。 */
+static bool checkResponsiveTransitions() {
+    ResponsiveHudTransition transition;
+    // 显式追加命令，避免单个嵌套数组的构造重载歧义。
+    QJsonArray commands;
+    commands.append(QJsonArray{"text", "archive"});
+    QJsonArray hits{QJsonObject{{"action", "open"}}};
+    transition.apply(commands, hits, "archive", 10, 1080, false);
+    commands = {};
+    commands.append(QJsonArray{"text", "detail"});
+    const auto expectedCommands = commands;
+    const auto expectedHits = hits;
+    transition.apply(commands, hits, "detail", 11, 1080, false);
+    if (commands != expectedCommands || hits != expectedHits) {
+        qCritical() << "Tab switch lost its content or actions";
+        return false;
+    }
+    transition.apply(commands, hits, "lyrics", 12, 1080, false);
+    transition.drag(40);
+    if (transition.release()) {
+        qCritical() << "Short lyric drag unexpectedly dismissed the page";
+        return false;
+    }
+    transition.drag(120);
+    if (!transition.release()) {
+        qCritical() << "Long lyric drag did not request dismissal";
+        return false;
+    }
+    return true;
+}
+
+namespace {
+/** 评论页只读模型：验证两端入口、排序、展开、楼层与续载命中，不访问网络。 */
+bool checkSongComments(const QString &root, Glyphs &glyphs, const QJsonObject &content) {
+    const auto provider = CommentsController::commentsProvider("siren");
+    if (provider.isEmpty()) {
+        return true;
+    }
+    Host host(root, true);
+    std::unique_ptr<MusicLibrary> music(createTestMusicLibrary(&host, provider, content));
+    auto track = music->current;
+    track["provider"] = provider;
+    track["id"] = "186016";
+    track["kind"] = "song";
+    track["title"] = "晴天";
+    track["artist"] = "周杰伦";
+    music->current = track;
+    music->provider = provider;
+    music->api.provider = provider;
+    auto &comments = music->comments;
+    comments.status = "ready";
+    comments.sort = "hot";
+    comments.total = 42;
+    comments.hasMore = true;
+    comments.sourceLabel = "生魂灵 / 塞壬唱片-MSR";
+    const auto comment = [](QString id, QString nickname, QString text, int likes, int replyCount,
+                            QJsonArray inlineReplies = QJsonArray{}) {
+        return QJsonObject{{"id", id},
+                           {"content", text},
+                           {"nickname", nickname},
+                           {"avatarUrl", ""},
+                           {"time", double(QDateTime::currentMSecsSinceEpoch() - 2 * 86400000)},
+                           {"likedCount", likes},
+                           {"replyCount", replyCount},
+                           {"expanded", false},
+                           {"replies", QJsonArray{}},
+                           {"repliesExpanded", false},
+                           {"repliesHasMore", false},
+                           {"repliesLoading", false},
+                           {"repliesTime", ""},
+                           {"inlineReplies", inlineReplies}};
+    };
+    QString longText;
+    for (int index = 0; index < 18; ++index) {
+        longText += QStringLiteral("这是一段用于验证换行与展开的评论内容。");
+    }
+    const QJsonArray inlineReply{QJsonObject{{"id", "r1"},
+                                             {"nickname", "远航"},
+                                             {"content", "像是把夜空慢慢点亮。"},
+                                             {"time", 0.0}}};
+    comments.items = {comment("1", "青空来信", longText, 128, 0),
+                      comment("2", "夜航记录", "喜欢层层铺开的弦乐，也喜欢最后留下的那一点点余韵。", 76,
+                              3, inlineReply),
+                      comment("3", "四月的声音", "把这一首放进了夜晚的播放列表。", 23, 0),
+                      comment("4", "远方", "第二段评论。", 8, 0),
+                      comment("5", "信号", "第三段评论。", 5, 0),
+                      comment("6", "档案", "第四段评论。", 2, 0)};
+    HudSceneActions scene;
+    scene.mode = [](QString) {};
+    scene.pointer = [](QString, double, double, double) {};
+    NativeHud hud(&host, &glyphs, music.get(), scene);
+    hud.reduced = true;
+    hud.tab = "comments";
+    hud.commentsReturnTab = "overview";
+    hud.commentsMode = true;
+    hud.commentsTrackKey = CommentsController::trackKey(track);
+    const QJsonObject frame{{"mode", "detail"}, {"detail", 1}, {"selected", 0}};
+    hud.draw(frame, 1920, 50);
+    bool ok = true;
+    const auto require = [&](bool passed, const char *name) {
+        if (!passed) {
+            qCritical() << "Song comments check failed:" << name;
+            ok = false;
+        }
+    };
+    require(hud.commentsMode, "desktop mode");
+    require(hasAction(hud.hits, "comments:close"), "close hit");
+    require(hasAction(hud.hits, "comments:sort:new"), "sort hit");
+    require(hasAction(hud.hits, "comments:expand:1"), "expand hit");
+    require(hasAction(hud.hits, "comments:replies:2"), "replies hit");
+    require(hasAction(hud.hits, "comments:load-more"), "more hit");
+    // 滚动只改变视口位置，不能反过来缩短内容总高度，否则续载时会反复夹回。
+    const auto stableContentHeight = hud.commentsContentBottom;
+    hud.wheel(1400, 500, 0, 2);
+    hud.draw(frame, 1920, 51);
+    require(hud.commentsScroll > 0 && hud.commentsContentBottom + 1 >= stableContentHeight,
+            "stable scroll range");
+    hud.commentsScroll = 0;
+    hud.draw(frame, 1920, 52);
+    const auto captureRoot = qEnvironmentVariable("RHINE_HUD_CAPTURE_DIR");
+    const auto capture = [&](const QString &name, int width, int height, double scale) {
+        if (captureRoot.isEmpty()) {
+            return;
+        }
+        QDir().mkpath(captureRoot);
+        QImage image(width, height, QImage::Format_ARGB32_Premultiplied);
+        image.fill(QColor("#eeece4"));
+        QPainter painter(&image);
+        if (scale != 1.) {
+            painter.scale(scale, scale);
+        }
+        glyphs.commands(painter, hud.commands, [&host](QString key) { return host.image(key); });
+        painter.end();
+        image.save(captureRoot + "/" + name + ".png");
+    };
+    capture("comments-desktop", 1920, 1080, 1.);
+    hud.draw(frame, 393. * 1080 / 852, 60);
+    require(hud.state()["compactLayout"].toBool(), "mobile layout");
+    require(hasAction(hud.hits, "music:comments-close"), "mobile close hit");
+    require(hasAction(hud.hits, "comments:sort:new"), "mobile sort hit");
+    require(hasAction(hud.hits, "comments:expand:1"), "mobile expand hit");
+    require(hasAction(hud.hits, "comments:replies:2"), "mobile replies hit");
+    capture("comments-mobile", 393, 852, 852. / 1080.);
+    // 续载入口在评论列表末尾，滚到底后才会进入可点击视口。
+    hud.wheel(196, 300, 0, std::nullopt, 4000.);
+    hud.draw(frame, 393. * 1080 / 852, 61);
+    require(hasAction(hud.hits, "comments:load-more"), "mobile more hit");
+    capture("comments-mobile-bottom", 393, 852, 852. / 1080.);
+    return ok;
+}
+}
+
+namespace {
+/** 固定回包覆盖塞壬匹配、热门/最新分页、楼层展开与去重，不访问网络。 */
+bool checkCommentsController(const QString &root) {
+    const auto provider = CommentsController::commentsProvider("siren");
+    if (provider.isEmpty()) {
+        return true;
+    }
+    Host host(root, true);
+    host.interval = 1;
+    int pages = 0;
+    int floors = 0;
+    int sortSeen = 0;
+    QString idSeen;
+    QString cursorSeen;
+    const auto songCandidate = [](QString id, QString artist, QString album, int duration) {
+        return QJsonObject{{"id", id},
+                           {"title", "生魂灵"},
+                           {"artist", artist},
+                           {"artists", QJsonArray{QJsonObject{{"id", "1"}, {"name", artist}}}},
+                           {"album", album},
+                           {"duration", duration}};
+    };
+    const QJsonArray candidates{songCandidate("3457361994", "小心绪", "生魂灵", 162377),
+                                songCandidate("3456704425", "塞壬唱片-MSR/Alec Justice", "时间啊，向前！OST",
+                                              110561)};
+    const auto comment = [](QString id, QString text) {
+        return QJsonObject{{"id", id},
+                           {"content", text},
+                           {"nickname", "用户甲"},
+                           {"time", 1700000000000.0},
+                           {"likedCount", 7},
+                           {"replyCount", 2},
+                           {"inlineReplies", QJsonArray{}}};
+    };
+    host.fixture = [&](QString route, QJsonObject parameters) {
+        const auto args = parameters["args"].toArray();
+        if (route == "/native/" + provider + "/search") {
+            return QJsonObject{
+                {"body", QJsonObject{{"code", 200}, {"value", QJsonObject{{"items", candidates}}}}}};
+        }
+        if (route == "/native/" + provider + "/comments") {
+            ++pages;
+            idSeen = args.at(1).toString();
+            sortSeen = args.at(2).toString() == "new" ? 3 : 2;
+            cursorSeen = args.at(4).toString();
+            const auto pageNo = args.at(3).toInt() + 1;
+            const QJsonArray comments{pageNo == 1 ? comment("111", "第一页评论")
+                                                  : comment("222", "第二页评论")};
+            return QJsonObject{
+                {"body", QJsonObject{{"code", 200},
+                                     {"value", QJsonObject{{"comments", comments},
+                                                           {"totalCount", 42},
+                                                           {"hasMore", pageNo == 1},
+                                                           {"cursor", "1700000000000"}}}}}};
+        }
+        if (route == "/native/" + provider + "/commentReplies") {
+            ++floors;
+            const QJsonArray replies{
+                QJsonObject{{"id", "901"},
+                            {"content", "楼层回复"},
+                            {"nickname", "用户乙"},
+                            {"time", 1700000000000.0},
+                            {"replyTo", "用户甲"}}};
+            return QJsonObject{
+                {"body", QJsonObject{{"code", 200},
+                                     {"value", QJsonObject{{"comments", replies},
+                                                           {"hasMore", false},
+                                                           {"time", "1700000000000"}}}}}};
+        }
+        return QJsonObject{{"body", QJsonObject{{"code", 200}}}};
+    };
+    CommentsController comments(&host);
+    const auto wait = [](auto predicate) {
+        QElapsedTimer elapsed;
+        elapsed.start();
+        while (!predicate() && elapsed.elapsed() < 6000) {
+            QCoreApplication::processEvents();
+            QThread::msleep(1);
+        }
+        return predicate();
+    };
+    const QJsonObject track{{"provider", "siren"},
+                            {"kind", "song"},
+                            {"id", "125025"},
+                            {"title", "生魂灵"},
+                            {"artist", "塞壬唱片-MSR"},
+                            {"album", "时间啊，向前！"},
+                            {"duration", 0}};
+    comments.load(track);
+    if (!wait([&] { return comments.status != "loading"; }) || comments.status != "ready" ||
+        idSeen != "3456704425" || sortSeen != 2 || comments.items.size() != 1 || comments.total != 42 ||
+        !comments.hasMore || !comments.sourceLabel.contains(QStringLiteral("塞壬"))) {
+        qCritical() << "Comment controller failed siren matching or first page";
+        return false;
+    }
+    comments.loadMore();
+    if (!wait([&] { return comments.items.size() == 2; }) || comments.hasMore || comments.items.size() != 2) {
+        qCritical() << "Comment controller failed hot pagination";
+        return false;
+    }
+    comments.setSort("new");
+    if (!wait([&] { return comments.status == "ready" && comments.items.size() == 1; }) || sortSeen != 3 ||
+        comments.items.size() != 1) {
+        qCritical() << "Comment controller failed newest sort";
+        return false;
+    }
+    comments.loadMore();
+    if (!wait([&] { return comments.items.size() == 2; }) || cursorSeen != "1700000000000") {
+        qCritical() << "Comment controller failed cursor pagination";
+        return false;
+    }
+    comments.toggleReplies("111");
+    if (!wait([&] { return comments.items.at(0)["repliesExpanded"].toBool(); }) ||
+        comments.items.at(0)["replies"].toArray().size() != 1 ||
+        comments.items.at(0)["replies"].toArray().at(0).toObject()["replyTo"].toString() != "用户甲" ||
+        floors != 1) {
+        qCritical() << "Comment controller failed floor replies";
+        return false;
+    }
+    comments.toggleReplies("111");
+    comments.toggleReplies("111");
+    if (comments.items.at(0)["replies"].toArray().size() != 1 || floors != 1 ||
+        !comments.items.at(0)["repliesExpanded"].toBool()) {
+        qCritical() << "Comment controller refetched an already loaded floor";
+        return false;
+    }
+    comments.clear();
+    return comments.status == "idle" && comments.items.isEmpty();
+}
+
+/** 开启“切歌不打开详情”后不定位无关列表、回车直接播放；队列或已打开的列表仍定位。 */
+bool checkSkipDetailOnSwitch(const QString &root, Glyphs &glyphs, const QJsonObject &content) {
+    Host host(root, true);
+    std::unique_ptr<MusicLibrary> music(createTestMusicLibrary(&host, hudTestProvider(), content));
+    HudSceneActions scene;
+    QString requestedMode;
+    scene.mode = [&requestedMode](QString mode) { requestedMode = mode; };
+    scene.theme = [](bool) {};
+    const auto modeConnection =
+        QObject::connect(music.get(), &MusicLibrary::modeRequested,
+                         [&requestedMode](const QString &mode) { requestedMode = mode; });
+    NativeHud hud(&host, &glyphs, music.get(), scene);
+    const QJsonObject frame{{"mode", "archive"}, {"selected", 0}, {"detail", 1}, {"viewer", false}};
+    music->frame = frame;
+    hud.draw(frame, 1920, 50);
+    hud.action("setting:skip-detail-on-switch:on");
+    if (!hud.skipDetailOnSwitch || !music->skipDetailOnSwitch || !music->followPlaybackDetails ||
+        !hud.enterPlaysSelection()) {
+        qCritical() << "Skip-detail setting did not enable ENTER playback";
+        return false;
+    }
+
+    // 没有打开曲目列表时，切歌不改变资料库选择，也不建立播放队列目录。
+    const auto initialKey = music->current["key"].toString();
+    music->player.trackSelected(music->player.queue.items().at(1).toObject());
+    if (music->current["key"] != initialKey || music->directory || requestedMode == "detail") {
+        qCritical() << "Skip-detail setting moved the library selection";
+        return false;
+    }
+
+    // 关闭设置后恢复原行为：建立播放队列目录、定位并进入详情。
+    hud.skipDetailOnSwitch = false;
+    music->skipDetailOnSwitch = false;
+    music->player.trackSelected(music->player.queue.items().at(2).toObject());
+    if (requestedMode != "detail" || music->current["id"] != "3" || !music->directory) {
+        qCritical() << "Default track change no longer located and opened song details";
+        return false;
+    }
+
+    // 在播放队列目录中切歌：重新开启后仍定位，只是不进入详情。
+    hud.skipDetailOnSwitch = true;
+    music->skipDetailOnSwitch = true;
+    music->frame["mode"] = "archive";
+    requestedMode.clear();
+    const auto queuedKey = music->player.queue.items().at(4).toObject()["key"].toString();
+    music->player.trackSelected(music->player.queue.items().at(4).toObject());
+    if (requestedMode == "detail" || music->current["key"] != queuedKey) {
+        qCritical() << "Skip-detail setting skipped locating inside the playback queue";
+        return false;
+    }
+
+    const QJsonObject lyricFrame{{"mode", "detail"}, {"detail", 1}};
+    music->player.current = music->player.queue.items().at(0).toObject();
+    hud.action("player:lyrics");
+    hud.draw(lyricFrame, 1920, 60);
+    music->directory.reset();
+    const auto advanced = music->player.queue.items().at(1).toObject();
+    music->player.current = advanced;
+    music->player.changed();
+    hud.draw(lyricFrame, 1920, 61);
+    music->player.trackSelected(advanced);
+    hud.draw(lyricFrame, 1920, 62);
+    if (!hud.lyricsMode || music->current["id"] != advanced["id"]) {
+        qCritical() << "Lyrics page fell back to details when playback advanced with skip-detail enabled";
+        return false;
+    }
+    QObject::disconnect(modeConnection);
+    return true;
+}
+
+/** 更新当前来源后 descriptor 与歌词来源必须立即重建，且无需用户再次切换平台。 */
+bool checkPluginReload(const QString &root, const QJsonObject &content) {
+    const auto id = QStringLiteral("hud-plugin-reload-fixture");
+    QTemporaryDir source;
+    if (!source.isValid()) {
+        return false;
+    }
+    const auto directory = source.path() + "/plugin";
+    QDir().mkpath(directory);
+    const auto writeFixture = [&](const QString &version, const QString &column) {
+        const QJsonObject manifest{{"schemaVersion", 2},
+                                   {"apiVersion", "2.0"},
+                                   {"id", id},
+                                   {"version", version},
+                                   {"entry", QJsonObject{{"file", "plugin.cjs"}}},
+                                   {"display", QJsonObject{{"name", "Plugin Reload Fixture"}}},
+                                   {"capabilities", QJsonObject{{"lyrics", true}, {"search", true}}},
+                                   {"operations", QJsonObject{{"lyrics", true}, {"search", true}}},
+                                   {"library", QJsonObject{{"columns", QJsonArray{column}}, {"lanes", 1}}}};
+        QFile manifestFile(directory + "/manifest.json");
+        QFile entryFile(directory + "/plugin.cjs");
+        return manifestFile.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
+               manifestFile.write(QJsonDocument(manifest).toJson()) > 0 &&
+               entryFile.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
+               entryFile.write("module.exports = { create() { return {}; } };\n") > 0;
+    };
+    bool ok = writeFixture("1.0.0", "旧列");
+    if (!ok) {
+        qCritical() << "Cannot prepare plugin reload fixture";
+    }
+    int lyricsRequests = 0;
+    {
+        Host host(root, true);
+        host.fixture = [&](QString route, QJsonObject) {
+            if (route == "/native/" + id + "/search") {
+                ++lyricsRequests;
+            }
+            return QJsonObject{
+                {"body", QJsonObject{{"code", 200}, {"value", QJsonObject{{"items", QJsonArray{}}}}}}};
+        };
+        MusicLibrary music(&host, content);
+        const auto firstImport = host.importPlugin(directory);
+        if (!firstImport.isEmpty()) {
+            qCritical() << "Initial plugin import failed" << firstImport;
+            ok = false;
+        }
+        music.switchProvider(id);
+        if (music.provider != id || music.columns != QStringList{"旧列"}) {
+            qCritical() << "Initial plugin descriptor not active" << music.provider << music.columns;
+            ok = false;
+        }
+
+        if (!writeFixture("2.0.0", "新列")) {
+            qCritical() << "Cannot prepare plugin update fixture";
+            ok = false;
+        }
+        const auto secondImport = host.importPlugin(directory);
+        if (!secondImport.isEmpty()) {
+            qCritical() << "Plugin update import failed" << secondImport;
+            ok = false;
+        }
+        const auto version = ProviderRegistry::instance().manifest(id)["version"].toString();
+        if (version != "2.0.0") {
+            qCritical() << "Plugin registry did not reload version" << version;
+            ok = false;
+        }
+        if (music.columns != QStringList{"新列"} || music.status != QStringLiteral("插件已重新载入")) {
+            qCritical() << "Current provider descriptor did not reload" << music.columns << music.status;
+            ok = false;
+        }
+
+        const auto localTrack = MusicData::item("song", "42", "本地测试", "测试歌手", "local");
+        music.player.lyrics.selectLocalSource(localTrack, id);
+        QElapsedTimer elapsed;
+        elapsed.start();
+        while (lyricsRequests == 0 && elapsed.elapsed() < 2000) {
+            QCoreApplication::processEvents();
+            QThread::msleep(5);
+        }
+        if (lyricsRequests == 0) {
+            qCritical() << "Lyrics controller did not use the updated plugin";
+            ok = false;
+        }
+    }
+    const auto pluginRoot = AppStorage::dataDirectory() + "/plugins";
+    QDir(pluginRoot + "/.backup-" + id).removeRecursively();
+    QDir(pluginRoot + "/" + id).removeRecursively();
+    ProviderRegistry::instance().load(root, pluginRoot, {});
+    if (!ok) {
+        qCritical() << "Plugin reload did not refresh the current provider or lyrics sources";
+    }
+    return ok;
+}
+}
+
 bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
     Host host(root, true);
+    const bool settingsSchemaOk = checkSettingsSchema();
     const auto content = QJsonDocument::fromJson(host.read("slots.json").toUtf8()).object();
-    bool ok = checkSorting(root, glyphs, content);
+    // 单项检查失败时输出名称，避免回归报告只剩总数而无法定位。
+    const auto record = [](const char *name, bool passed) {
+        if (!passed) {
+            qCritical() << "Native HUD check failed:" << name;
+        }
+        return passed;
+    };
+    bool ok = settingsSchemaOk;
+    ok &= record("supersampling settings", checkSupersamplingSettings(host, glyphs, content));
+    ok &= record("play button styles", checkPlayButtonStyles(glyphs));
+    ok &= record("plugin reload", checkPluginReload(root, content));
+    QStringList providers;
+    for (const auto &id : ProviderRegistry::instance().ids()) {
+        if (id != "local" && id != "siren") {
+            providers.append(id);
+        }
+    }
+    if (providers.isEmpty()) {
+        qInfo() << "Native HUD checks skipped: no music source plugin installed";
+        return ok;
+    }
+    {
+        MusicLibrary qualityMusic(&host, content);
+        qualityMusic.provider = providers.first();
+        qualityMusic.api.provider = providers.first();
+        SettingsSchema::SettingsContext context;
+        context.music = &qualityMusic;
+        const auto *quality = SettingsSchema::find("quality");
+        const auto options = MusicPlayer::qualityOptions(providers.first());
+        if (!quality || options.isEmpty() ||
+            SettingsSchema::resolvedDefault(*quality, context) != options.last().first) {
+            qCritical() << "Quality default is not the provider's highest option";
+            ok = false;
+        }
+    }
+    ok &= record("responsive transitions", checkResponsiveTransitions());
+    ok &= record("playlist sorting", checkSorting(root, glyphs, content));
+    ok &= record("responsive hud", checkResponsiveHud(root, glyphs, content));
+    ok &= record("skip detail on switch", checkSkipDetailOnSwitch(root, glyphs, content));
+    ok &= record("song comments", checkSongComments(root, glyphs, content));
+    ok &= record("comments controller", checkCommentsController(root));
 #ifdef Q_OS_DARWIN
-    ok &= checkCardMaterialCache();
+    ok &= record("card material cache", checkCardMaterialCache());
 #endif
-    ok &= checkCollectionCard(root, glyphs, content);
-    ok &= checkAlbumTrackSelection(root, glyphs, content);
-    ok &= checkPlayerBar(glyphs);
-    ok &= checkPlayerInput(root, glyphs, content);
+    ok &= record("collection card", checkCollectionCard(root, glyphs, content));
+    ok &= record("album track selection", checkAlbumTrackSelection(root, glyphs, content));
+    ok &= record("player bar", checkPlayerBar(glyphs));
+    ok &= record("player input", checkPlayerInput(root, glyphs, content));
     {
         // 快速切换可见页时，迟到的封面不能重新写回新页；只保留当前页的键。
         QTemporaryDir directory;
@@ -707,8 +1929,7 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
     }
     int testCount = 0;
 
-    // 测试所有平台和主题组合
-    for (const auto &provider : {QString("netease"), QString("qq"), QString("kugou")}) {
+    for (const auto &provider : providers) {
         for (const bool dark : {false, true}) {
             testCount++;
 
@@ -721,6 +1942,15 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
             hud.dark = dark;
             hud.themeMode = dark ? "dark" : "light";
             hud.motion.set(true, 0, true);
+            const auto discoverTabs = ProviderRegistry::instance().discoverTabs(provider);
+            const auto hasDiscoverTab = [&](const QString &id) {
+                for (const auto &value : discoverTabs) {
+                    if (value.toObject()["id"].toString() == id) {
+                        return true;
+                    }
+                }
+                return false;
+            };
 
             // === 测试 1: 基础面板渲染 ===
             QJsonObject archiveFrame{{"mode", "archive"}, {"selected", 0}, {"detail", 1}, {"viewer", false}};
@@ -826,7 +2056,7 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
                 ok = false;
             }
 
-            if (!hasAction(hud.hits, "window:fullscreen") || hasAction(hud.hits, "music:project-home")) {
+            if (!hasAction(hud.hits, "expand:quality") || hasAction(hud.hits, "music:project-home")) {
                 qCritical() << "Settings section order failed" << provider << dark;
                 ok = false;
             }
@@ -850,6 +2080,7 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
                                                "motion",
                                                "startup-animation",
                                                "detail-autoplay",
+                                               "skip-detail-on-switch",
                                                "single-play-mode",
                                                "quality",
                                                "disc-rotation",
@@ -893,8 +2124,7 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
             }
 #endif
 
-            const QStringList projectActions{"project-home",      "project-author",  "project-player",
-                                             "project-kugou",     "project-rhine",   "project-lyricsx",
+            const QStringList projectActions{"project-home", "project-rhine", "project-lyricsx",
                                              "project-lyricskit", "project-lyrimuse"};
             // 链接应可滚动到达；列数、按钮高度和间距属于可调整的视觉设计。
             for (const auto &action : projectActions) {
@@ -1078,7 +2308,7 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
                 qCritical() << "Play-next did not move an existing item and confirm it";
                 ok = false;
             }
-            if (provider == "netease" && !dark) {
+            {
                 const auto waitFeedback = [](int milliseconds) {
                     QElapsedTimer elapsed;
                     elapsed.start();
@@ -1128,21 +2358,76 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
             }
 
             // === 测试 6: 其他关键面板存在性检查 ===
+            hud.openModal("provider");
+            hud.draw(archiveFrame, 1920, 50);
+            if (!hasAction(hud.hits, "provider:siren") ||
+                getHit(hud.hits, "provider:" + provider)["label"].toString() !=
+                    ProviderRegistry::instance().name(provider)) {
+                qCritical() << "Provider cards are not descriptor-driven" << provider
+                            << (dark ? "dark" : "light");
+                ok = false;
+            }
+            hud.openModal("plugins");
+            hud.draw(archiveFrame, 1920, 50);
+            if (!hasAction(hud.hits, "plugin:refresh") || !hasAction(hud.hits, "plugin:import")) {
+                qCritical() << "Plugin marketplace refresh/import missing" << provider
+                            << (dark ? "dark" : "light");
+                ok = false;
+            }
+            const auto pluginBounds = hud.modalBounds(1920);
+            const auto pluginUsable = pluginBounds.width() - 106;
+            const auto pluginColumn = (pluginUsable - NativeHud::PluginColumnGap) / 2;
+            const QRectF marketViewport(pluginBounds.x() + 53, pluginBounds.y() + NativeHud::PluginListTop,
+                                        pluginColumn - 18,
+                                        NativeHud::PluginListBottom - NativeHud::PluginListTop);
+            const QRectF installedViewport(pluginBounds.x() + 53 + pluginColumn + NativeHud::PluginColumnGap,
+                                           pluginBounds.y() + NativeHud::PluginListTop, pluginColumn - 18,
+                                           NativeHud::PluginListBottom - NativeHud::PluginListTop);
+            if (marketViewport.intersects(installedViewport) ||
+                marketViewport.right() >= installedViewport.left() || hud.pluginMarketScroll != 0 ||
+                hud.pluginInstalledScroll != 0) {
+                qCritical()
+                    << "Plugin marketplace and installed lists did not split into independent columns";
+                ok = false;
+            }
+            hud.pluginMarketScroll = 0;
+            hud.pluginInstalledScroll = 0;
+            hud.wheel(installedViewport.center().x(), installedViewport.center().y() + hud.motion.offset, -1,
+                      1, std::nullopt);
+            if (hud.pluginMarketScroll != 0) {
+                qCritical() << "Installed plugin scrolling moved the marketplace list";
+                ok = false;
+            }
+            hud.pluginMarketScroll = 0;
+            hud.pluginInstalledScroll = 0;
+            hud.wheel(marketViewport.center().x(), marketViewport.center().y() + hud.motion.offset, -1, 1,
+                      std::nullopt);
+            if (hud.pluginInstalledScroll != 0) {
+                qCritical() << "Marketplace scrolling moved the installed plugin list";
+                ok = false;
+            }
             const QStringList criticalPanels = {"search", "login", "player", "confirm"};
             for (const auto &panel : criticalPanels) {
                 hud.openModal(panel);
                 hud.draw(archiveFrame, 1920, 50);
 
-                if (panel == "login" && provider == "netease") {
-                    if (!hasAction(hud.hits, "music:login-method:phone") ||
-                        hasAction(hud.hits, "music:login-method:email")) {
-                        qCritical() << "NetEase login must offer SMS without email password";
+                QJsonObject smsMethod;
+                for (const auto &value : ProviderRegistry::instance().loginMethods(provider)) {
+                    const auto method = value.toObject();
+                    if (method["type"].toString() == "sms") {
+                        smsMethod = method;
+                        break;
+                    }
+                }
+                if (panel == "login" && !smsMethod.isEmpty()) {
+                    const auto method = smsMethod["id"].toString();
+                    if (!hasAction(hud.hits, "music:login-method:" + method)) {
+                        qCritical() << "Descriptor SMS login method is missing" << provider;
                         ok = false;
                     }
-                    hud.action("music:login-method:phone");
-                    hud.action("music:login-method:email");
-                    if (music->loginMethod != "phone") {
-                        qCritical() << "Disabled email login action was accepted";
+                    hud.action("music:login-method:" + method);
+                    if (music->loginMethod != method) {
+                        qCritical() << "SMS login action was not accepted" << provider;
                         ok = false;
                     }
                 }
@@ -1280,26 +2565,29 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
                             << squarePreserved << framedCover << centeredTab;
                 ok = false;
             }
-            music->discover->items[0] = originalFirst;
-            music->discover->items[2] = originalThird;
-            music->discover->tab = "daily";
-            hud.openModal("discover");
-            hud.draw(archiveFrame, 1920, 50);
-            if (!hasAction(hud.hits, "discover:open")) {
-                qCritical() << provider << "daily discover missing library button"
-                            << (dark ? "dark" : "light");
-                ok = false;
+            if (hasDiscoverTab("daily")) {
+                music->discover->items[0] = originalFirst;
+                music->discover->items[2] = originalThird;
+                music->discover->tab = "daily";
+                hud.openModal("discover");
+                hud.draw(archiveFrame, 1920, 50);
+                if (!hasAction(hud.hits, "discover:open")) {
+                    qCritical() << provider << "daily discover missing library button"
+                                << (dark ? "dark" : "light");
+                    ok = false;
+                }
+                hud.action("discover:open");
+                if (!music->directory || music->directory->songs.size() != music->discover->items.size()) {
+                    qCritical() << provider << "daily discover did not open as playlist directory"
+                                << (dark ? "dark" : "light");
+                    ok = false;
+                }
+                music->leaveDirectory(false);
             }
-            hud.action("discover:open");
-            if (!music->directory || music->directory->songs.size() != music->discover->items.size()) {
-                qCritical() << provider << "daily discover did not open as playlist directory"
-                            << (dark ? "dark" : "light");
-                ok = false;
-            }
-            music->leaveDirectory(false);
 
             // === 测试 8: 分类歌单列表选择 ===
-            music->discover->tab = "categories";
+            if (hasDiscoverTab("categories")) {
+                music->discover->tab = "categories";
             music->discover->category = "1";
             music->discover->categories = QJsonArray{
                 QJsonObject{{"id", "1"}, {"name", "甲"}},
@@ -1317,7 +2605,7 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
                 qCritical() << provider << "category list missing choices" << (dark ? "dark" : "light");
                 ok = false;
             }
-            if (provider == "netease") {
+            {
                 music->discover->categories = {};
                 for (int index = 0; index < NativeHud::CategoryPageSize; ++index) {
                     music->discover->categories.append(QJsonObject{{"id", "edge-" + QString::number(index)},
@@ -1330,6 +2618,7 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
                     qCritical() << "Discovery category pagination omitted the final entry after All";
                     ok = false;
                 }
+            }
             }
 
             // 队列卡片
@@ -1369,7 +2658,7 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
             }
 
             const auto captureDirectory = qEnvironmentVariable("RHINE_QUEUE_CAPTURE_DIR");
-            if (provider == "netease" && !captureDirectory.isEmpty()) {
+            if (!providers.isEmpty() && provider == providers.first() && !captureDirectory.isEmpty()) {
                 // 等待原弹窗入场结束，截图不能把透明首帧误当成最终界面。
                 hud.draw(archiveFrame, 1920, 1000);
                 QImage queueImage(1920, 1080, QImage::Format_ARGB32_Premultiplied);
@@ -1442,6 +2731,43 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
         }
     }
 
+    {
+        // 文件夹导入与卸载走同一套用户插件目录，测试后必须恢复现场。
+        QTemporaryDir source;
+        const auto id = QStringLiteral("hud-import-fixture");
+        const auto directory = source.path() + "/plugin";
+        QDir().mkpath(directory);
+        QFile manifest(directory + "/manifest.json");
+        QFile entry(directory + "/plugin.cjs");
+        const auto manifestValue = QJsonObject{{"schemaVersion", 1},
+                                               {"apiVersion", "1.0"},
+                                               {"id", id},
+                                               {"schemaVersion", 2},
+                                               {"apiVersion", "2.0"},
+                                               {"version", "1.0.0"},
+                                               {"entry", QJsonObject{{"file", "plugin.cjs"}}},
+                                               {"display", QJsonObject{{"name", "HUD Import Fixture"}}},
+                                               {"capabilities", QJsonObject{{"search", true}}}};
+        if (!source.isValid() || !manifest.open(QIODevice::WriteOnly) || !entry.open(QIODevice::WriteOnly)) {
+            qCritical() << "Cannot prepare plugin import fixture";
+            ok = false;
+        } else {
+            manifest.write(QJsonDocument(manifestValue).toJson());
+            entry.write("module.exports = { create() { return {}; } };\n");
+            manifest.close();
+            entry.close();
+            const auto importError = host.importPlugin(directory);
+            const auto detail = host.pluginDetail(id);
+            const auto uninstallError = host.uninstallPlugin(id);
+            ok &= record("plugin folder import and uninstall",
+                         importError.isEmpty() && detail["installed"].toBool() &&
+                             detail["userInstalled"].toBool() && uninstallError.isEmpty() &&
+                             !QDir(AppStorage::dataDirectory() + "/plugins/" + id).exists());
+            QDir(AppStorage::dataDirectory() + "/plugins/.backup-" + id).removeRecursively();
+            host.reloadPlugins();
+        }
+    }
+
     qInfo() << "Native HUD core functionality tests:" << testCount << (ok ? "passed" : "FAILED");
     return ok;
 }
@@ -1455,6 +2781,10 @@ int main(int argc, char **argv) {
         std::fflush(stderr);
     });
     QGuiApplication application(argc, argv);
+    QTemporaryDir storage;
+    if (!storage.isValid() || !AppStorage::initializePortable(storage.path()).isEmpty()) {
+        return 1;
+    }
     const auto root = application.arguments().value(1);
     Glyphs glyphs(root);
     return runNativeHudChecks(root, glyphs) ? 0 : 1;

@@ -85,9 +85,7 @@ def collect():
         os.path.join(ROOT, "third_party/ffmpeg/configure"), encoding="utf-8"
     ).read()
     unsafe = {
-        name
-        for name, deps in WITH_DEPS.findall(configure)
-        if not set(deps.split()).issubset(SAFE_DEPS)
+        name for name, deps in WITH_DEPS.findall(configure) if not set(deps.split()).issubset(SAFE_DEPS)
     }
 
     return sorted(
@@ -106,12 +104,13 @@ def main():
         json.dump(
             {
                 "$comment": (
-                    "Linux 随包 FFmpeg 的解码器白名单：仅保留音频解码器，视频/字幕解码器全部关闭。"
+                    "Linux 随包 FFmpeg 的解码器白名单：音频与关联 MV 的 H.264 / HEVC 解码。"
                     "由 scripts/prepare-linux-ffmpeg.cjs 读取后拼成 --enable-decoder 参数；"
                     "新增格式时在此追加，或用 RHINE_FFMPEG_EXTRA_DECODERS 临时覆盖。"
                     "本文件由 scripts/generate-ffmpeg-decoders.py 生成。"
                 ),
                 "decoders": decoders,
+                "videoDecoders": ["h264", "hevc"],
             },
             f,
             indent=4,

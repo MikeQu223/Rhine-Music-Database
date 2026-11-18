@@ -28,7 +28,7 @@ class Engine : public QObject {
     Q_PROPERTY(QVariantMap performance READ performance NOTIFY stateChanged)
   public:
     Engine(QString root, bool offline = false, QObject *parent = nullptr,
-           PlaybackConnection *connection = nullptr);
+           PlaybackConnection *connection = nullptr, RenderCacheStorage *renderCache = nullptr);
     ~Engine() override;
     QVariantMap state() const {
         return m_state;
@@ -110,6 +110,7 @@ class Engine : public QObject {
         return host.root;
     }
     Q_INVOKABLE void importLocal(QList<QUrl> urls);
+    Q_INVOKABLE void importPluginFolder(QUrl url);
     Q_INVOKABLE void resize(double width, double height);
     Q_INVOKABLE void action(QString action);
     Q_INVOKABLE void submitForm(QString account, QString captcha);
@@ -201,9 +202,9 @@ class Engine : public QObject {
 #ifdef Q_OS_DARWIN
     /** 渲染线程把 Apple 默认窗口的 MetalFX 补帧能力与计数转交 GUI 线程（设置页与性能面板读取）。 */
     void publishFrameGenerationCapability(bool available, const QString &reason);
-    void publishFrameGenerationStats(quint64 presented, quint64 interpolated, quint64 rendered, bool available,
-                                     bool wanted, bool active, bool depthReady, bool motionReady,
-                                     QSize renderSize, QSize displaySize);
+    void publishFrameGenerationStats(quint64 presented, quint64 interpolated, quint64 rendered,
+                                     bool available, bool wanted, bool active, bool depthReady,
+                                     bool motionReady, QSize renderSize, QSize displaySize);
 #endif
     /// 唤醒来源只影响诊断计数，不改变行为。
     enum class WakeSource { Input, Host, Media, Other };
@@ -261,8 +262,7 @@ class Engine : public QObject {
     Q_INVOKABLE void sceneConsumed();
     void recordRender(quint64 resources, quint64 bindings = 0, quint64 textureBytes = 0,
                       quint64 coverUploads = 0, quint64 drawCalls = 0, double gpuTimeMs = 0,
-                      RhineRender::GpuTimingStatus gpuTiming =
-                          RhineRender::GpuTimingStatus::Unsupported) {
+                      RhineRender::GpuTimingStatus gpuTiming = RhineRender::GpuTimingStatus::Unsupported) {
         m_renderFrames.fetch_add(1, std::memory_order_relaxed);
         m_gpuResources.store(resources, std::memory_order_relaxed);
         m_bindingCreations.fetch_add(bindings, std::memory_order_relaxed);
@@ -299,6 +299,8 @@ class Engine : public QObject {
     // 用户 m10082：性能面板不是用户要求的功能 —— 该信号与其采样接线一并停用。
     // void performanceRequested();
     void localImportRequested(bool folder);
+    void pluginImportRequested();
+    void mvRequested();
 
   protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
@@ -407,8 +409,7 @@ class Engine : public QObject {
     double m_coverUploadsEma = 0.0;
     // 预算告警只打一次：这个开关是诊断用的，每帧刷屏会淹没真正要看的日志。
     std::atomic<bool> m_budgetWarned{false};
-    void noteFrameLedger(quint64 resources, quint64 bindings, quint64 textureBytes,
-                         quint64 coverUploads);
+    void noteFrameLedger(quint64 resources, quint64 bindings, quint64 textureBytes, quint64 coverUploads);
     void recomputeLedgerPeaks();
     // RHINE_RESOURCE_BUDGET_MB 解析结果（字节，0=关闭）。缓存成静态量：环境变量在进程
     // 生命周期内不变，每帧重新 getenv 只会给渲染线程添无谓的字符串分配。

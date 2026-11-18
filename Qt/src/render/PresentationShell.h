@@ -191,7 +191,6 @@ class PresentationShell : public QObject {
 #endif
     bool m_started = false;
     bool m_stopped = false;
-    quint64 m_lastTapSerial = 0;
     quint64 m_presentedFrames = 0;
     quint64 m_interpolatedFrames = 0;
     // 场景真实重渲的帧数（不是呈现帧数）：面板里的"渲染 FPS"用它。

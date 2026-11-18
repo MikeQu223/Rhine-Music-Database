@@ -268,7 +268,7 @@ void paint(const Model &model, const SettingsCard::Colors &colors, const Setting
     }
     canvas.text(offsetText, left + 30, y + 48, 13, "regular", 0, colors.muted);
     const auto note = QStringLiteral("与歌词页共用同一偏移；调整后悬浮歌词立即同步。");
-    canvas.text(canvas.fit(note, 12, width - 30, "regular"), left + 30, y + 74, 12, "regular", 0,
+    canvas.text(canvas.fit(note, 17, width - 30, "regular"), left + 30, y + 72, 17, "regular", 0,
                 colors.muted);
     const QRectF control(left + width - ControlWidth, y + 8, ControlWidth, 48);
     const QStringList offsetLabels{QStringLiteral("提前 0.2s"), QStringLiteral("延后 0.2s"),
@@ -297,7 +297,7 @@ void paint(const Model &model, const SettingsCard::Colors &colors, const Setting
     canvas.hit(reset.left(), reset.top(), reset.width(), reset.height(),
                QStringLiteral("desktop-lyrics:reset-style"), QStringLiteral("恢复默认样式"));
     const auto resetNote = QStringLiteral("恢复字号、颜色、描边与透明度；开关和偏移保持不变。");
-    canvas.text(canvas.fit(resetNote, 12, std::max(60.0, width - 316), "regular"), left + 316, y + 25, 12,
+    canvas.text(canvas.fit(resetNote, 15, std::max(60.0, width - 316), "regular"), left + 316, y + 20, 15,
                 "regular", 0, colors.muted);
     y += ResetBlockHeight;
     y += SectionGap;
