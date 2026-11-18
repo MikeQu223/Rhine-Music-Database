@@ -1096,13 +1096,16 @@ void Engine::tick() {
     // 纹理却停在上一页：顶部/底部还在，新增的右侧详情卡片整块空白，按钮能点。
     // 真机证据：休眠后进详情时 draw() 以 1~3ms/帧连轴转、40 帧截图逐字节相同；
     // 开唱片旋转（rotationOnly → 33ms）或点一下（打断连轴转）就正常。
-    // 这里让出 8ms（≈120Hz 一帧）给事件循环，等渲染线程消费后自动恢复 0/1ms，
+    // 这里让出 4ms（≈240Hz 一帧）给事件循环，等渲染线程消费后自动恢复 0/1ms，
     // 稳态零开销。2 秒兜底防止窗口长期不可见时永远不让步。
+    // 2026-11-18：原来写死 8ms（≈120Hz 一帧）等于把整条呈现链的节拍钉在 125Hz 以下；
+    // 想把上限交给呈现侧（240Hz/144Hz 面板），这个常量必须是「一帧预算」而不是
+    // 「一个面板帧」。4ms 仍显著大于 0/1ms 的连轴转，不会重新触发 render sync 饿死。
     if (m_hudFramePending.load(std::memory_order_relaxed)) {
         if (now - m_hudFramePendingSinceMs > 2000) {
             m_hudFramePending.store(false, std::memory_order_relaxed);
         } else {
-            intervalMs = qMax(intervalMs, 8);
+            intervalMs = qMax(intervalMs, 4);
         }
     }
 #endif
