@@ -330,7 +330,11 @@ void _list(
           size: 11, width: 347, color: c.muted);
     }
   } else {
-    final double slotY = listTop + portraitRowHeight;
+    // 当前行固定在「第二槽」是 Qt 的原始版式（上方留一行给「上一首」，滚动时顺手滑出）。
+    // 但列表在顶端时 position = 0，第二槽会把第一槽空着——一屏四行的带子只剩三行
+    // （用户 2026-11-18 就是在说这个「只显示三个」）。所以槽位偏移随 position 从 0
+    // 连续长到一整行：顶端四行铺满，往下滚之后恢复「上一行在上方」的原始外观。
+    final double slotY = listTop + portraitRowHeight * position.clamp(0.0, 1.0);
     // 可见行区间必须跟着滚动位置走：槽位固定在第二行，一屏最多 4 行。
     // 旧写法用 `c.visibleRows(slotY, …)`，first 恒被算成 0（slotY 比裁剪顶低一行），
     // 于是永远只画 0..2 三行；位置一滚走，这三行被裁掉就剩一片空列表

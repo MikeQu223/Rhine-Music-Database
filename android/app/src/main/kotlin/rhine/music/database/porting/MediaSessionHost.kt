@@ -297,10 +297,11 @@ object MediaSessionHost {
         if (nextCover != coverPath) {
             coverPath = nextCover
             val decoded = if (coverPath.isEmpty()) null else BitmapFactory.decodeFile(coverPath)
-            val previous = coverBitmap
-            if (previous != null && previous !== decoded) {
-                previous.recycle()
-            }
+            // CRASH-146：绝不 recycle 已经交给 MediaMetadata/通知的位图。
+            // 上一张封面还挂在会话元数据（METADATA_KEY_ALBUM_ART）和通知 largeIcon 上，
+            // SystemUI 会在别的线程/进程里继续读它；recycle() 之后那次读就是原生
+            // use-after-free（2026-11-19 00:12:51 的 SIGSEGV，status=11、无 tombstone，
+            // 正是「换曲改封面 + 开着歌词页」这种时序）。丢掉引用交给 GC 回收即可。
             coverBitmap = decoded
         }
         if (playing) {
@@ -378,17 +379,15 @@ object MediaSessionHost {
         instance?.stopForHostShutdown()
     }
 
-    /** 清元数据与封面位图（幂等；封面位图必须先回收再置空，避免 native 内存滞留）。 */
+    /** 清元数据与封面（幂等）。位图只丢引用不 recycle——见 CRASH-146。 */
     private fun clearMetadata() {
         title = ""
         artist = ""
         album = ""
         coverPath = ""
-        val cover = coverBitmap
+        // 这份位图已经被 publish() 里 setLargeIcon / putBitmap 交出去过，
+        // 通知与 QS/锁屏可能在任意线程继续读它，recycle 会变成原生 use-after-free。
         coverBitmap = null
-        if (cover != null && !cover.isRecycled) {
-            cover.recycle()
-        }
     }
 
     /**

@@ -244,9 +244,14 @@ void paintPortraitLyricsPage(
   c.icon('heart', 344, 50, size: 18, color: c.muted);
   c.icon('more', 370, 52, size: 14, color: c.muted);
 
-  // 阅读区：118 起，下沿让给沉浸条；沉浸条按可用高度取 196..250。
+  // 阅读区：118 起，下沿让给沉浸条。
+  //
+  // Qt compact 给歌词页留的是固定 250（`contentBottom = m_height - 34 - 250`），
+  // 那是按 393×854 的参考机算的。本机网格高只有 ~630，固定 250 会把歌词压成
+  // 一条缝（用户 2026-11-19：「歌词部分空间高度不足」）。所以改成按可用高度取
+  // 比例：高屏逼近 Qt 的 250，矮屏最少让到 150，歌词永远拿到剩下的全部。
   const double viewTop = 118;
-  final double bandHeight = math.min(250, math.max(196, (h - viewTop) * .52));
+  final double bandHeight = math.min(250, math.max(150, (h - 34) * .30));
   final double bandTop = math.max(viewTop + 96, h - 34 - bandHeight);
 
   c.contentBottom = bandTop;
@@ -268,7 +273,8 @@ void _lyricsRows(
 }) {
   final double height = math.max(0, bottom - top);
   if (lines.isEmpty) {
-    c.text('暂无歌词 / NO LYRICS', _gutter, top + math.min(48, height / 3),
+    // 空状态摆阅读区正中，别贴着顶沿（否则歌词区看起来像没铺开）。
+    c.text('暂无歌词 / NO LYRICS', _gutter, top + height / 2 - 8,
         size: 12, width: _bodyWidth, color: c.muted);
     return;
   }
@@ -350,26 +356,28 @@ void _lyricsBar(
   final double h = c.height;
   c.fill(Rect.fromLTWH(0, top, _gridWidth, .6), c.line);
 
-  final double barY = top + 42;
+  // 沉浸条几何照抄 Qt compact `player(c, immersive=true)`
+  // （ResponsiveHudLayout.cpp:303-323）：进度 top+19、时间 top+32、
+  // 五个按键 top+65..117。整条高度由调用方给的 bandHeight 决定，
+  // 多出来的空间留在最下方，歌词因此拿到其余全部高度。
+  final double barY = top + 19;
   final double fraction =
       durationMs.isFinite && durationMs > 0 ? _unit(positionMs / durationMs) : 0;
-  c.fill(Rect.fromLTWH(_gutter, barY, _bodyWidth, 2.5), c.line);
+  c.fill(Rect.fromLTWH(26, barY, 341, 2), c.line);
   if (fraction > 0) {
-    c.fill(Rect.fromLTWH(_gutter, barY, _bodyWidth * fraction, 2.5), c.amber);
+    c.fill(Rect.fromLTWH(26, barY, 341 * fraction, 2), c.amber);
   }
-  c.fill(Rect.fromLTWH(_gutter - 1.5 + _bodyWidth * fraction, barY - 5, 3, 12), c.ink);
+  c.fill(Rect.fromLTWH(24.5 + 341 * fraction, barY - 5, 3, 12), c.ink);
   for (int tick = 0; tick <= 20; tick++) {
     c.fill(
-      Rect.fromLTWH(_gutter + tick * 17.6, barY + 5, .6, tick % 5 == 0 ? 6 : 3),
+      Rect.fromLTWH(26 + tick * 17.05, barY + 4, .6, tick % 5 == 0 ? 6 : 3),
       c.line,
     );
   }
-  c.field('seek', Rect.fromLTWH(15, barY - 11, 361, 26));
-  c.text(_clock(positionMs), _gutter, barY + 12, size: 10, width: 120, color: c.muted);
-  c.rightText(_clock(durationMs), 373, barY + 12, 10, 'regular', c.muted);
+  c.field('seek', Rect.fromLTWH(26, top + 9, 341, 24));
+  c.text(_clock(positionMs), 26, top + 32, size: 10, width: 100, color: c.muted);
+  c.rightText(_clock(durationMs), 367, top + 32, 10, 'regular', c.muted);
 
-  // 五键一行（Qt immersive：x = 26 + i*73，播放键圆心与该行同高），贴底但留出边距。
-  final double rowCenter = math.min(h - 34, math.max(barY + 62, h - 74));
   const List<String> icons = <String>['heart', 'prev', '', 'next', 'queue'];
   const List<String> routes = <String>['', 'player:prev', 'player:toggle', 'player:next', 'player:open'];
   final List<String> labels = <String>[
@@ -379,23 +387,24 @@ void _lyricsBar(
     '下一首',
     '播放队列',
   ];
+  final double rowCenter = top + 90;
   for (int index = 0; index < 5; index++) {
     final double x = 26 + index * 73;
     final double centerX = x + 22;
     if (index == 2) {
-      c.commands.add(<Object?>['arc', centerX, rowCenter, 26, 0, math.pi * 2, 1.2, c.line]);
+      // 整圆必须少画一点：sweep 恰好 2π 时 Path.arcTo 会退化，环画不出来。
+      c.commands.add(
+        <Object?>['arc', centerX, rowCenter, 26, 0, math.pi * 2 - .02, 1.2, c.line],
+      );
       c.icon(playing ? 'pause' : 'play', centerX - 11, rowCenter - 11, size: 22, color: c.ink);
     } else if (index == 0) {
       // 喜欢状态不在本页入参里：只画空心，不发 music:like-current。
-      c.icon(icons[index], centerX - 12, rowCenter - 12, size: 24, color: c.muted);
+      c.icon(icons[index], x + 10, top + 79, size: 23, color: c.muted);
     } else {
-      c.icon(icons[index], centerX - 12, rowCenter - 12, size: 24, color: c.ink);
+      c.icon(icons[index], x + 10, top + 79, size: 23, color: c.ink);
     }
     if (routes[index].isNotEmpty) {
-      final Rect target = index == 2
-          ? Rect.fromLTWH(centerX - 30, rowCenter - 30, 60, 60)
-          : Rect.fromLTWH(x, rowCenter - 26, 44, 52);
-      c.hit(target, routes[index], labels[index]);
+      c.hit(Rect.fromLTWH(x, top + 65, 44, 52), routes[index], labels[index]);
     }
   }
   c.field('playerBounds', Rect.fromLTWH(0, top, _gridWidth, math.max(0, h - top)));
