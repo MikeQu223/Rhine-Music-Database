@@ -246,16 +246,25 @@ void paintPortraitTerminalHeader(
 PortraitFrame paintPortraitShell(
   PortraitCanvas canvas, {
   required PortraitPlayer player,
-  required PortraitNav nav,
+  /// 底栏高亮项；null = 本页不属于任何底栏 tab（Qt 插件页 `active=""`）。
+  PortraitNav? nav,
   String title = '',
   String code = '',
   String identifier = '',
+  /// 自定义页头（插件页用通用页头 `ResponsiveHudCanvas::header`，
+  /// 而不是终端页头）；给了它就不画 [title] 的终端页头。
+  void Function(PortraitCanvas canvas)? header,
+  /// 内容区（在纸色与页头之后、播放条之前调用）；插件页自己的内容在 widget 层，
+  /// 这里传 null。
+  void Function(PortraitCanvas canvas, double pageBottom)? content,
 }) {
   final double h = canvas.height;
   final double top = math.max(0, h - portraitFooterHeight);
   canvas.contentBottom = top;
   canvas.fill(Rect.fromLTWH(0, 0, canvas.gridWidth, h), canvas.paper);
-  if (title.isNotEmpty) {
+  if (header != null) {
+    header(canvas);
+  } else if (title.isNotEmpty) {
     paintPortraitTerminalHeader(
       canvas,
       title: title,
@@ -263,6 +272,7 @@ PortraitFrame paintPortraitShell(
       identifier: identifier,
     );
   }
+  content?.call(canvas, top);
   _playerAndNav(canvas, player: player, nav: nav, top: top);
   canvas.finish();
   return PortraitFrame(
@@ -401,7 +411,7 @@ void _list(
 void _playerAndNav(
   PortraitCanvas c, {
   required PortraitPlayer player,
-  required PortraitNav nav,
+  PortraitNav? nav,
   required double top,
 }) {
   final double h = c.height;

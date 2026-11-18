@@ -21,6 +21,8 @@ import io.flutter.plugin.common.MethodChannel
  *                                  策略拒绝。两者都不代表通知可见）
  *      update(map)              -> null
  *      stop()                   -> null
+ *      cacheDir()               -> String?（平台缓存目录绝对路径；拿不到回 null）
+ *      pluginDir()              -> String?（插件根目录绝对路径；见 [pluginDir]）
  *      未知方法                 -> notImplemented
  *  - EventChannel "rhine.music.database/media_session/events"
  *      动作串："pause" / "resume" / "next" / "prev" / "rhine.media.SEEK:<ms>"
@@ -57,6 +59,19 @@ object MediaSessionChannel {
      * BitmapFactory.decodeFile 读），Dart 侧要把远端封面落盘就必须先问到这个目录。
      */
     private const val METHOD_CACHE_DIR = "cacheDir"
+
+    /**
+     * 插件根目录（PLUGIN-1）：`/sdcard/Android/data/<pkg>/file/plugin`。
+     *
+     * 与 Qt 侧的 `<AppLocalDataLocation>/plugins` 不同——那个是 /data/user/0 下的私有目录，
+     * 用户看不到也拷不进去。插件要能被用户直接放进去、也能被文件管理器看到，所以走
+     * app-specific 外部目录：`getExternalFilesDir(null)` 的父目录（即 `<pkg>/`）再拼
+     * `file/plugin`。父目录拿不到（个别设备没有外部卷）才退回 `filesDir/plugins`，
+     * 保证"装不上"永远不会变成"崩溃"。
+     *
+     * 目录由本方法按需创建；创建失败同样回 null，让 Dart 侧如实显示"无插件目录"。
+     */
+    private const val METHOD_PLUGIN_DIR = "pluginDir"
 
     /** update 的可空元数据键；Qt 的四个 QString 入参在这里允许 null。 */
     private val OPTIONAL_STRING_KEYS = listOf("title", "artist", "album", "coverPath")
@@ -198,8 +213,34 @@ object MediaSessionChannel {
                 result.success(appContext?.cacheDir?.absolutePath)
             }
 
+            METHOD_PLUGIN_DIR -> result.success(pluginDir())
+
+
             else -> result.notImplemented()
         }
+    }
+
+    /**
+     * 插件根目录：app-specific 外部目录下的 `file/plugin`，退回私有 `files/plugins`。
+     *
+     * 只做路径解析与 mkdir，不读不写插件内容（安装、校验、启用状态全在 Dart 侧
+     * lib/plugin 下）。两次 mkdirs 都失败时回 null——Dart 侧据此显示"插件目录不可用"，
+     * 而不是把一个写不进去的路径当成可用路径。
+     */
+    private fun pluginDir(): String? {
+        val application = appContext ?: return null
+        val externalParent = application.getExternalFilesDir(null)?.parentFile
+        if (externalParent != null) {
+            val dir = java.io.File(externalParent, "file/plugin")
+            if (dir.isDirectory || dir.mkdirs()) {
+                return dir.absolutePath
+            }
+        }
+        val fallback = java.io.File(application.filesDir, "plugins")
+        if (fallback.isDirectory || fallback.mkdirs()) {
+            return fallback.absolutePath
+        }
+        return null
     }
 
     /**

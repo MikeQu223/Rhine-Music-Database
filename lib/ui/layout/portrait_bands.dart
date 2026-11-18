@@ -28,7 +28,6 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart' show FlutterError;
 
-import '../../hud/scale/hud_scale.dart';
 
 /// 竖屏舞台宽恒定值（舞台单位）。
 ///

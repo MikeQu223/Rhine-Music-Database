@@ -226,8 +226,60 @@ class _BasicPortraitSettingsPageState extends State<BasicPortraitSettingsPage> {
       }
       children.add(const SizedBox(height: 14));
     }
+    // 「插件管理」入口：Qt 侧插件页是设置面板之外的一层 modal（`NativeHudModal`
+    // 的 plugins 页，入口在设置页里），竖屏这里放在设置末尾作为一张整宽卡片，
+    // 动作串沿用 Qt 契约的 `plugins`。
+    children.add(_pluginsEntry(ink));
     children.add(const SizedBox(height: 28));
     return children;
+  }
+
+  /// 「插件管理」入口卡（整宽、56 高，右侧 ↗ 提示离开当前页）。
+  Widget _pluginsEntry(_PortraitInk ink) {
+    return SizedBox(
+      height: 56,
+      child: Stack(
+        children: <Widget>[
+          Positioned(
+            left: 20,
+            top: 4,
+            width: _pageWidth - 40,
+            height: 48,
+            child: Container(
+              color: ink.surface,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              alignment: Alignment.centerLeft,
+              child: Text('插件管理', style: _style(13, ink.ink)),
+            ),
+          ),
+          Positioned(
+            left: 20,
+            top: 4,
+            width: _pageWidth - 40,
+            height: 48,
+            child: Container(
+              decoration: BoxDecoration(
+                border: Border.all(color: ink.line, width: .7),
+              ),
+            ),
+          ),
+          Positioned(
+            right: 20,
+            top: 19,
+            width: 16,
+            child: Text('↗', style: _style(12, ink.muted)),
+          ),
+          _tapArea(
+            left: 20,
+            top: 4,
+            width: _pageWidth - 40,
+            height: 48,
+            action: 'plugins',
+            label: '插件管理',
+          ),
+        ],
+      ),
+    );
   }
 
   /// 分区头（Qt `terminalSection`）：墨块序号 + 中文标题 + 右对齐英文。

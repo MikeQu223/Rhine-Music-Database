@@ -17,6 +17,8 @@ import '../hud/portrait/portrait_layout.dart';
 import '../hud/portrait/portrait_pages_library.dart';
 import '../hud/portrait/portrait_pages_song.dart';
 import '../hud/player/player_bar.dart' as player;
+import '../plugin/plugin_models.dart';
+import '../plugin/plugin_manager.dart';
 import '../hud/protocol/hud_frame.dart';
 import '../hud/protocol/hud_hit.dart';
 import '../hud/render/hud_painter.dart';
@@ -117,6 +119,15 @@ class BasicHudFrame {
     /// 舞台缩放（逻辑像素 / 舞台单位）。竖屏用它把「1 网格 = 1.3dp」的 DPI 策略
     /// 换算成网格宽度（见 [HudScale.portraitGridWidth]）；0 = 旧口径（1 网格 = 屏宽/393）。
     double stageScale = 0,
+    /// 插件管理页的数据真值（modal == 'plugins' 时用）。页面内容本身是 widget 层
+    /// （`basic_plugins_portrait.dart`），HUD 只画纸色 + 通用页头 + 播放条/底栏。
+    PluginSnapshot? plugins,
+    /// 插件详情（modal == 'plugin-detail'）；null 时详情页不画。
+    PluginManifest? pluginDetail,
+    bool pluginDetailEnabled = true,
+    bool pluginDetailUserInstalled = true,
+    bool pluginDetailCanRollback = false,
+    String pluginMessage = '',
   }) {
     final bool dark = state.dark;
     // 竖屏（compact）走独立排版：393 网格、归档主页 + 迷你播放条 + 底栏，
@@ -133,6 +144,12 @@ class BasicHudFrame {
         animateText: animateText,
         modal: modal,
         stageScale: stageScale,
+        plugins: plugins,
+        pluginDetail: pluginDetail,
+        pluginDetailEnabled: pluginDetailEnabled,
+        pluginDetailUserInstalled: pluginDetailUserInstalled,
+        pluginDetailCanRollback: pluginDetailCanRollback,
+        pluginMessage: pluginMessage,
       );
     }
     final _HudSink sink = _HudSink();
@@ -224,6 +241,12 @@ class BasicHudFrame {
     bool animateText = false,
     String modal = '',
     double stageScale = 0,
+    PluginSnapshot? plugins,
+    PluginManifest? pluginDetail,
+    bool pluginDetailEnabled = true,
+    bool pluginDetailUserInstalled = true,
+    bool pluginDetailCanRollback = false,
+    String pluginMessage = '',
   }) {
     final _HudSink sink = _HudSink();
     ports.beginFrame(sink: sink, time: animationTime, ink: hudInk(dark), animate: animateText);
@@ -309,6 +332,22 @@ class BasicHudFrame {
         total: items.length,
         notice: emptyNotice,
         loading: state.loading,
+      );
+    } else if (modal == 'plugins' || modal == 'plugin-detail') {
+      // Qt compact 插件页：通用页头（不是终端页头）+ 内容区由真实 widget 承担，
+      // 播放条与底栏照旧由画布画。Qt 插件页的底栏没有高亮项（active=""），
+      // 所以 nav 传 null；返回箭头在列表页关弹层（close-modal）、在详情页回列表
+      // （plugin:close-detail）。
+      final bool detail = modal == 'plugin-detail';
+      paintPortraitShell(
+        canvas,
+        player: portraitPlayer,
+        nav: null,
+        header: (PortraitCanvas c) => c.header(
+          detail ? '插件详情' : '插件管理',
+          back: true,
+          backAction: detail ? 'plugin:close-detail' : 'close-modal',
+        ),
       );
     } else if (directory != null) {
       // Qt compact `collection()`：目录（歌单/专辑）内页。
@@ -937,6 +976,12 @@ class BasicHudSurface extends StatefulWidget {
     this.onTrackListModeChanged,
     this.sceneSettings,
     this.modal = '',
+    this.plugins,
+    this.pluginDetail,
+    this.pluginDetailEnabled = true,
+    this.pluginDetailUserInstalled = true,
+    this.pluginDetailCanRollback = false,
+    this.pluginMessage = '',
   });
 
   final BasicViewState state;
@@ -974,9 +1019,19 @@ class BasicHudSurface extends StatefulWidget {
   /// 只影响 Qt 渲染，不构成第二份真值。null = 不下发，Qt 用自己的默认。
   final BasicSceneSettings? sceneSettings;
 
-  /// 宿主当前的弹层（'' / 'search' / 'settings'）：只给竖屏排版决定画哪一页，
-  /// 不参与横屏绘制，也不改任何真值。
+  /// 宿主当前的弹层（'' / 'search' / 'settings' / 'plugins' / 'plugin-detail'）：
+  /// 只给竖屏排版决定画哪一页，不参与横屏绘制，也不改任何真值。
   final String modal;
+
+  /// 插件管理页的数据（[PluginManager.snapshot]）；null = 还没初始化完，页面画空态。
+  final PluginSnapshot? plugins;
+
+  /// 插件详情页的 manifest（modal == 'plugin-detail' 时用）。
+  final PluginManifest? pluginDetail;
+  final bool pluginDetailEnabled;
+  final bool pluginDetailUserInstalled;
+  final bool pluginDetailCanRollback;
+  final String pluginMessage;
 
   /// 场景层（Qt platform view）的身份键：横竖屏切换时由上层传入**同一个** key，
   /// 让 PlatformView 的 element 被移动（reparent）而不是销毁重建——否则旋转会
@@ -1160,6 +1215,12 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       trackListMode: _trackListMode,
       modal: widget.modal,
       stageScale: geometry.stageScale,
+      plugins: widget.plugins,
+      pluginDetail: widget.pluginDetail,
+      pluginDetailEnabled: widget.pluginDetailEnabled,
+      pluginDetailUserInstalled: widget.pluginDetailUserInstalled,
+      pluginDetailCanRollback: widget.pluginDetailCanRollback,
+      pluginMessage: widget.pluginMessage,
     );
     // 共享滚动文字有字符槽还在 kReelDuration 内 -> 续帧；静止后停 ticker。
     // 松手惯性期间也必须续帧（同一个 ticker 兼职推进列表动量）。

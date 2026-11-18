@@ -41,6 +41,7 @@ import 'basic_art_cache.dart';
 import 'basic_cover_images.dart';
 import 'basic_cover_viewer.dart';
 import 'basic_hud.dart';
+import 'basic_plugins_portrait.dart';
 import 'basic_hud_resources.dart';
 import 'basic_models.dart';
 import 'basic_settings.dart';
@@ -50,6 +51,8 @@ import 'basic_settings_view.dart';
 import 'basic_settings_portrait.dart';
 import 'basic_settings_window.dart';
 import 'basic_startup_view.dart';
+import '../plugin/plugin_models.dart';
+import '../plugin/plugin_manager.dart';
 import 'platform_playback.dart';
 import 'qt_scene_view.dart';
 import 'siren_controller.dart';
@@ -437,6 +440,17 @@ class _BasicShellState extends State<_BasicShell>
   /// （账号三平台暂停、设置页未接入），不伪造第三态。
   String _modal = '';
 
+  /// 插件管理器（市场索引 / 安装 / 卸载 / 启用状态）。它是唯一真值来源：
+  /// 页面只读 [PluginManager.snapshot]，动作回灌它的方法，不在外壳里存第二份。
+  ///
+  /// 目录来自 `pluginDir()`（`<pkg>/file/plugin`），与 Qt 的私有 `files/plugins`
+  /// 不同——用户要求插件文件放在外部目录里能直接看到。
+  late final PluginManager _plugins = PluginManager();
+
+  /// 详情页正在看哪个插件（'' = 不在详情页）。列表页/详情页共用弹层栈：
+  /// `_modal == 'plugins'` 是列表，`'plugin-detail'` 是详情。
+  String _pluginDetailId = '';
+
   /// 面板偏好的唯一运行时（读/写/展开态/重启口径）。外壳持有一份，跨旋转不重建。
   late final BasicSettingsRuntime _settings;
 
@@ -535,6 +549,10 @@ class _BasicShellState extends State<_BasicShell>
     _resourceNotice = _resourceFailuresNotice(widget.resources);
     _settings = BasicSettingsRuntime(store: widget.settingsStore);
     _startup.addStatusListener(_onStartupStatus);
+    // 插件：解析目录 + 扫已装插件（不读市场，市场要用户点「刷新市场」才拉——
+    // 与 Qt 相同：openModal 之后才 refreshPluginMarketplace）。
+    _plugins.addListener(_onPluginsChanged);
+    unawaited(_plugins.initialize());
     unawaited(_loadSettings());
     // Overlay.qml:541-548：输入框隐藏时 inputLayer.forceActiveFocus()。Qt 在启动
     // 完成时就把焦点交给 HUD 输入层；这里晚一帧做同一件事，否则硬件键盘没有任何
@@ -761,6 +779,8 @@ class _BasicShellState extends State<_BasicShell>
     // 面板滚动偏移是本次运行内跨开关复用的 notifier；State 自己持有，自己负责关掉。
     _settingsScroll.dispose();
     _settingsScrollMaximum.dispose();
+    _plugins.removeListener(_onPluginsChanged);
+    _plugins.dispose();
     super.dispose();
   }
 
@@ -926,16 +946,26 @@ class _BasicShellState extends State<_BasicShell>
       geometry: geometry,
       stage: stage,
       archiveMaskStrength: _archiveMaskStrength,
-      // 竖屏排版按弹层选页（检索页）；横屏这一项不参与绘制。
+      // 竖屏排版按弹层选页（检索页/设置/插件）；横屏这一项不参与绘制。
       modal: _modal,
+      // 插件页的数据快照与详情（HUD 只画 chrome，内容在 widget 层）。
+      plugins: _plugins.snapshot(),
+      pluginDetail: _pluginDetailManifest(),
+      pluginDetailEnabled: _pluginDetailEnabled,
+      pluginDetailUserInstalled: _pluginDetailUserInstalled,
+      pluginDetailCanRollback: _pluginDetailCanRollback,
+      pluginMessage: _plugins.snapshot().message,
     );
     final bool settingsOpen =
         _modal == 'settings' || _modal == DiscWarningModal.kind;
+    // 插件列表页/详情页与设置页同构：chrome 由 HUD 画，内容是真 widget 层，
+    // 所以这里要把它们一起纳入「需要叠 widget 层」的判断（否则只有 HUD 页头）。
+    final bool pluginsOpen = _modal == 'plugins' || _modal == 'plugin-detail';
     final bool startupOpen = _startupPageOpen;
     // 初始化页面在场时不再叠黑幕：那时整页 boot HUD 自己就是画面
     // （NativeHudBoot::boot 的 gradient/flash 门槛层），底下留真实场景当背景。
     final bool animating = !startupOpen && _startup.isAnimating;
-    if (!settingsOpen && !startupOpen && !animating) {
+    if (!settingsOpen && !pluginsOpen && !startupOpen && !animating) {
       return hud;
     }
     final double scale = stage?.scale ?? 1.0;
@@ -1047,6 +1077,45 @@ class _BasicShellState extends State<_BasicShell>
                     ),
                 ],
               );
+            },
+          ),
+        // 插件列表页 / 详情页：与设置页同构（HUD 画纸色 + 通用页头 + 播放条 + 底栏，
+        // 内容是真 widget 层）。页面自己按 393 网格 + Transform.scale(unit) 排版，
+        // 所以这里只对齐左上角，不再二次缩放。
+        if (pluginsOpen)
+          Builder(
+            builder: (BuildContext inner) {
+              final HudStage resolved = stage ?? HudStageScope.of(inner);
+              // 与竖屏画布同一口径：PortraitBands 的 stageScale = 逻辑宽/1080。
+              final double stageScale =
+                  MediaQuery.sizeOf(inner).width / HudScale.designStageHeight;
+              final PluginSnapshot snapshot = _plugins.snapshot();
+              final PluginManifest? detail = _pluginDetailManifest();
+              final Widget page = _modal == 'plugin-detail' && detail != null
+                  ? BasicPortraitPluginDetailPage(
+                      stage: resolved,
+                      plugin: detail,
+                      enabled: _pluginDetailEnabled,
+                      userInstalled: _pluginDetailUserInstalled,
+                      // `.backup-<id>` 存在才可回滚（Qt 重装/升级后才有）。
+                      canRollback: _pluginDetailCanRollback,
+                      pendingUninstall: _pendingPluginUninstall,
+                      dark: state.dark,
+                      stageScale: stageScale,
+                      message: snapshot.message,
+                      onAction: (String action) =>
+                          unawaited(_onPluginAction(action)),
+                    )
+                  : BasicPortraitPluginsPage(
+                      stage: resolved,
+                      snapshot: snapshot,
+                      dark: state.dark,
+                      pendingUninstall: _pendingPluginUninstall,
+                      stageScale: stageScale,
+                      onAction: (String action) =>
+                          unawaited(_onPluginAction(action)),
+                    );
+              return Align(alignment: Alignment.topLeft, child: page);
             },
           ),
       ],
@@ -1247,7 +1316,163 @@ class _BasicShellState extends State<_BasicShell>
   }
 
   /// 设置浮层的唯一动作入口：命中串 -> typed 命令 -> 真实落盘 -> 真实效果。
+  // ---------------------------------------------------------------------------
+  // 插件（Qt/src/Host.cpp 的插件子系统 + ResponsiveHudPages.cpp:683-852 的竖屏页）
+  // ---------------------------------------------------------------------------
+
+  /// 管理器状态变化（安装进度、市场载入、启停）只推一帧重建。
+  void _onPluginsChanged() {
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  /// 详情页要显示的 manifest：已装插件用磁盘上的那份；市场里未安装的用条目临时拼，
+  /// 这样「点市场行的详情」也能看到发布者/许可证等字段（Qt 同）。
+  PluginManifest? _pluginDetailManifest() {
+    if (_pluginDetailId.isEmpty) {
+      return null;
+    }
+    final PluginSnapshot snapshot = _plugins.snapshot();
+    final InstalledPlugin? installed = snapshot.installedById(_pluginDetailId);
+    if (installed != null) {
+      return installed.manifest;
+    }
+    final MarketPluginEntry? entry = snapshot.marketById(_pluginDetailId);
+    return entry == null ? null : BasicPortraitPluginDetailPage.fromMarket(entry);
+  }
+
+  bool get _pluginDetailEnabled {
+    final InstalledPlugin? installed =
+        _plugins.snapshot().installedById(_pluginDetailId);
+    return installed?.enabled ?? false;
+  }
+
+  bool get _pluginDetailUserInstalled {
+    final InstalledPlugin? installed =
+        _plugins.snapshot().installedById(_pluginDetailId);
+    return installed?.userInstalled ?? false;
+  }
+
+  /// 详情页「回滚上一版本」是否可点：安装成功后 `.backup-<id>` 会保留（与 Qt 同）。
+  /// 待确认卸载的插件 id（空 = 无确认框）。
+  String _pendingPluginUninstall = '';
+
+  bool get _pluginDetailCanRollback =>
+      _pluginDetailId.isNotEmpty && _plugins.hasRollback(_pluginDetailId);
+
+  /// 插件页动作（Qt `NativeHudController.cpp:748-826` 的 `plugin:*` 分支）。
+  ///
+  /// 拒绝文案沿用 Host 原文（「正在安装插件，请稍候」「插件市场中没有该插件」…），
+  /// 不自己造一套：同一件事在两个前端说法必须一致。
+  Future<void> _onPluginAction(String action) async {
+    if (action == 'plugins') {
+      // 入口：开弹层 + 读市场（Qt openModal 之后立刻 refreshPluginMarketplace）。
+      _setModal('plugins');
+      setState(() => _pluginDetailId = '');
+      unawaited(_plugins.refreshMarket());
+      return;
+    }
+    if (action == 'plugin:close-detail') {
+      if (mounted) {
+        setState(() {
+          _pluginDetailId = '';
+          _modal = 'plugins';
+        });
+      }
+      return;
+    }
+    if (action == 'plugin:refresh') {
+      await _plugins.refreshMarket();
+      return;
+    }
+    if (action.startsWith('plugin:market:')) {
+      final String id = action.substring('plugin:market:'.length);
+      final String refusal = await _plugins.install(id);
+      if (!mounted) {
+        return;
+      }
+      if (refusal.isNotEmpty) {
+        setState(() => _actionNotice = refusal);
+      }
+      return;
+    }
+    if (action.startsWith('plugin:detail:')) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _pluginDetailId = action.substring('plugin:detail:'.length);
+        _modal = 'plugin-detail';
+      });
+      return;
+    }
+    if (action.startsWith('plugin:toggle:')) {
+      final String id = action.substring('plugin:toggle:'.length);
+      final InstalledPlugin? plugin = _plugins.snapshot().installedById(id);
+      if (plugin == null) {
+        return;
+      }
+      await _plugins.setEnabled(id, !plugin.enabled);
+      return;
+    }
+    if (action.startsWith('plugin:uninstall:')) {
+      // 先弹二次确认（Qt `Host.cpp:797-826`），确认后才真删。
+      if (!mounted) {
+        return;
+      }
+      setState(() => _pendingPluginUninstall =
+          action.substring('plugin:uninstall:'.length));
+      return;
+    }
+    if (action == 'plugin:uninstall-cancel') {
+      if (!mounted) {
+        return;
+      }
+      setState(() => _pendingPluginUninstall = '');
+      return;
+    }
+    if (action.startsWith('plugin:uninstall-confirm:')) {
+      final String id = action.substring('plugin:uninstall-confirm:'.length);
+      if (mounted) {
+        setState(() => _pendingPluginUninstall = '');
+      }
+      final String refusal = await _plugins.uninstall(id);
+      if (!mounted) {
+        return;
+      }
+      if (refusal.isNotEmpty) {
+        setState(() => _actionNotice = refusal);
+        return;
+      }
+      // 卸载后详情页没有对象可看，退回列表（Qt 删完 reloadPlugins 后仍停在列表）。
+      setState(() {
+        _pluginDetailId = '';
+        _modal = 'plugins';
+      });
+      return;
+    }
+    if (action.startsWith('plugin:rollback:')) {
+      // Qt `rollbackPlugin`：备份目录提为当前版本，失败换回，文案「插件已回滚」。
+      final String id = action.substring('plugin:rollback:'.length);
+      final String refusal = await _plugins.rollback(id);
+      if (!mounted || refusal.isEmpty) {
+        return;
+      }
+      setState(() => _actionNotice = refusal);
+      return;
+    }
+    if (action == 'plugin:import') {
+      setState(() => _actionNotice = '从文件导入插件尚未接入：本版只从市场安装');
+    }
+  }
+
   Future<void> _onSettingsAction(String action) async {
+    if (action == 'plugins') {
+      // 设置整页底部的「插件管理」卡：设置不是唯一真值来源，插件页自己读管理器。
+      await _onPluginAction('plugins');
+      return;
+    }
     if (action == HudAction.closeModal) {
       // 设置窗自带的返回按钮回的就是 closeModal（SettingsModalFrame.backAction）。
       // 这里以前写 _setModal('settings')——面板已经开着时那是恒等操作，返回键点
@@ -1377,6 +1602,11 @@ class _BasicShellState extends State<_BasicShell>
     }
     if (action == 'settings') {
       _setModal('settings');
+      return;
+    }
+    // 插件：入口 'plugins'（设置页末尾的那张卡）+ 全部 'plugin:*' 动作。
+    if (action == 'plugins' || action.startsWith('plugin:')) {
+      unawaited(_onPluginAction(action));
       return;
     }
     final String? notice = _route(action);
