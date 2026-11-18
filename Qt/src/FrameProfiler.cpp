@@ -424,7 +424,7 @@ bool FrameProfiler::sharesReports() const {
 
 bool FrameProfiler::reportShareEnabled() const {
 #ifdef Q_OS_IOS
-    return !m_recording && !m_sharingReport && !m_reportPath.isEmpty();
+    return !m_recording && !m_saving && !m_sharingReport && !m_reportPath.isEmpty();
 #else
     return false;
 #endif
@@ -1276,19 +1276,6 @@ bool FrameProfiler::startRecording() {
         emit changed();
         return false;
     }
-#ifdef Q_OS_IOS
-    m_reportPath.clear();
-    const auto reports = performanceReports(QDir(m_directory));
-    for (const auto &report : reports) {
-        if (!QFile::remove(report.absoluteFilePath())) {
-            m_status = QStringLiteral("无法清除旧的性能诊断报告，请重试。");
-            emit recordingChanged();
-            emit statusChanged();
-            emit changed();
-            return false;
-        }
-    }
-#endif
     // 丢弃打开面板时已有的半个采样区间，让录制从用户按下按钮时开始。
     sample();
 #ifdef Q_OS_DARWIN
@@ -1324,6 +1311,12 @@ bool FrameProfiler::saveRecording() {
     if (m_saving) {
         return false;
     }
+#ifdef Q_OS_IOS
+    // 导出失败后仍可分享上一份报告。分享扩展尚在读取时，不能重试导出并清理旧报告。
+    if (m_sharingReport) {
+        return false;
+    }
+#endif
     m_saving = true;
     if (m_recording) {
         sample();
@@ -1376,7 +1369,6 @@ bool FrameProfiler::saveRecording() {
         emit changed();
         return false;
     }
-    m_saving = false;
     m_samples = {};
     m_audioReport = {};
     m_engine->host.playbackDiagnostics.clear();
@@ -1386,10 +1378,18 @@ bool FrameProfiler::saveRecording() {
     }
 #ifdef Q_OS_IOS
     m_reportPath = report.fileName();
+    // 新报告已原子写入。旧报告清理失败只保留其文件，不影响新报告的分享。
+    const auto reports = performanceReports(QDir(m_directory));
+    for (const auto &previous : reports) {
+        if (previous.fileName() != name && !QFile::remove(previous.absoluteFilePath())) {
+            qWarning("无法清理旧的性能诊断报告，已保留该文件。");
+        }
+    }
     m_status = QStringLiteral("诊断收集已完成，可以分享报告。");
 #else
     m_status = QStringLiteral("已保存：%1").arg(QFileInfo(report.fileName()).fileName());
 #endif
+    m_saving = false;
     updateSampling();
     emit statusChanged();
     emit recordingChanged();
