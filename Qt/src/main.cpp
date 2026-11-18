@@ -949,8 +949,10 @@ int main(int argc, char **argv) {
     applyFrameGenerationSetting();
     // 写给设置界面的能力快照：先按"没编进来"落盘，下面的 FG 分支真正接管后再改写。
     // 设置界面在 RhineCore 里，不能反向 include 依赖 vulkan.h 的实现，只能读这份结论。
-#if (defined(RHINE_FSR3_VULKAN) && RHINE_FSR3_VULKAN) || defined(Q_OS_DARWIN)
-    // Apple 的 MetalFX 补帧不依赖 Vulkan 构建开关；真正可用性稍后由渲染线程/呈现层刷新。
+#if defined(Q_OS_IOS)
+    RhineFg::publishCapability(false, false, false, QStringLiteral("iOS 已禁用帧生成"));
+#elif (defined(RHINE_FSR3_VULKAN) && RHINE_FSR3_VULKAN) || defined(Q_OS_DARWIN)
+    // macOS 的 MetalFX 补帧不依赖 Vulkan 构建开关；真正可用性稍后由渲染线程/呈现层刷新。
     RhineFg::publishCapability(true, false, false);
 #else
     RhineFg::publishCapability(false, false, false, QStringLiteral("此构建未编入 Vulkan 帧生成"));
@@ -1202,7 +1204,7 @@ int main(int argc, char **argv) {
 #endif
     const bool fgCandidate =
 #if defined(Q_OS_DARWIN)
-        // Apple 的 MetalFX 补帧在普通 QQuickWindow 内完成，macOS/iOS 共用同一条管线。
+        // macOS 的 MetalFX 补帧在普通 QQuickWindow 内完成。
         false;
 #else
         !test && !args.contains("--capture") && !fgLayerDisabled && hasNativeWindowSystem &&

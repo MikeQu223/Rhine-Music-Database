@@ -14,6 +14,13 @@ constexpr int MinimumRenderPercent = 50;
 constexpr int MaximumRenderPercent = 200;
 constexpr int MinimumSupersample = 1;
 constexpr int MaximumSupersample = 2;
+#ifdef Q_OS_IOS
+constexpr bool SupportsRenderUpscaling = false;
+constexpr bool SupportsFrameGeneration = false;
+#else
+constexpr bool SupportsRenderUpscaling = true;
+constexpr bool SupportsFrameGeneration = true;
+#endif
 
 /**
  * 用户请求的 AA/帧生成与最终生效值。
@@ -66,8 +73,11 @@ inline RenderMode resolveRenderMode(int renderPercent, int supersample, const QS
         result.requestedAaMode = QStringLiteral("off");
     }
     result.requestedFrameGeneration = requestedFrameGeneration;
-    result.aaMode = result.supersampling ? QStringLiteral("off") : result.requestedAaMode;
-    result.frameGeneration = result.requestedFrameGeneration && !result.supersampling;
+    // iOS 的 MetalFX 时域抗锯齿和超分共用一条路径。
+    if (SupportsRenderUpscaling && !result.supersampling) {
+        result.aaMode = result.requestedAaMode;
+    }
+    result.frameGeneration = SupportsFrameGeneration && result.requestedFrameGeneration && !result.supersampling;
     return result;
 }
 

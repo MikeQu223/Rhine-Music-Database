@@ -485,7 +485,7 @@ void NativeHud::applySettingValue(const QString &id, const QString &value) {
         return;
     }
     if (id == "fg") {
-#ifdef Q_OS_DARWIN
+#ifdef Q_OS_MACOS
         if (RhineRender::currentRenderMode(qEnvironmentVariable("RHINE_AA_MODE"), false).supersampling) {
             return;
         }

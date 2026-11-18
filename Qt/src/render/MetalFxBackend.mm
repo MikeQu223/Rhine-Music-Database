@@ -10,7 +10,7 @@
 #import <dispatch/dispatch.h>
 
 #import <Metal/Metal.h>
-#if __has_include(<MetalFX/MetalFX.h>)
+#if !defined(Q_OS_IOS) && __has_include(<MetalFX/MetalFX.h>)
 #import <MetalFX/MetalFX.h>
 #define RHINE_HAS_METALFX 1
 #else
@@ -723,7 +723,7 @@ QVariantMap MetalFrameQueue::telemetry() const {
 #endif
 
 #else
-// iOS 模拟器 SDK 不提供 MetalFX；保持同一呈现/配置接口，能力检测明确返回不可用。
+// iOS 禁用 MetalFX；无 SDK 支持的构建也保留这组不可用接口。
 struct MetalFxTemporal::Private {};
 MetalFxTemporal::MetalFxTemporal(QRhi *) : d(std::make_unique<Private>()) {
 }

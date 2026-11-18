@@ -178,6 +178,10 @@ bool fsrVisible(const SettingsContext &context) {
     return nonDarwinVisible(context) && (mode == "fsr" || mode == "fsr1" || mode == "fsr3");
 }
 
+bool aaVisible(const SettingsContext &) {
+    return RhineRender::SupportsRenderUpscaling;
+}
+
 bool aaEnabled(const SettingsContext &context) {
     if (usesSupersampling(context)) {
         return false;
@@ -191,7 +195,7 @@ bool aaEnabled(const SettingsContext &context) {
 
 bool fgVisible(const SettingsContext &) {
 #if defined(Q_OS_DARWIN)
-    return true;
+    return RhineRender::SupportsFrameGeneration;
 #else
     return false;
 #endif
@@ -271,7 +275,9 @@ QVector<SettingChoice> gpuChoices(const SettingsContext &) {
 }
 
 QVector<SettingChoice> aaChoices(const SettingsContext &) {
-#if defined(Q_OS_DARWIN)
+#if defined(Q_OS_IOS)
+    return {{"off", QStringLiteral("关闭")}};
+#elif defined(Q_OS_DARWIN)
     return {{"off", QStringLiteral("关闭")}, {"metalfx", "MetalFX Temporal"}};
 #else
     return {{"off", QStringLiteral("关闭")},
@@ -785,6 +791,7 @@ const QVector<SettingDescriptor> &descriptors() {
 #endif
              .defaultValue = "off",
              .choicesFor = aaChoices,
+             .visible = aaVisible,
              .enabled = aaEnabled,
              .label = aaModeLabel});
         add({.id = "aa-scale",
@@ -1067,7 +1074,9 @@ SettingsValue read(const SettingDescriptor &descriptor, const SettingsContext &c
     }
     value.isDefault = value.raw.isEmpty();
     value.canonical = normalize(descriptor, context, value.raw);
-    if ((descriptor.id == "aa-mode" || descriptor.id == "fg") && usesSupersampling(context)) {
+    if ((descriptor.id == "aa-mode" && !RhineRender::SupportsRenderUpscaling) ||
+        (descriptor.id == "fg" && !RhineRender::SupportsFrameGeneration) ||
+        ((descriptor.id == "aa-mode" || descriptor.id == "fg") && usesSupersampling(context))) {
         value.canonical = Off;
     }
     value.boolean = value.canonical == On || value.canonical == "reduced" || value.canonical == "tray" ||

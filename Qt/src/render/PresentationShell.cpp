@@ -159,7 +159,7 @@ PresentationShell::~PresentationShell() {
 }
 
 bool PresentationShell::compiledIn() {
-#if defined(Q_OS_DARWIN) && __has_include(<MetalFX/MTLFXFrameInterpolator.h>)
+#if defined(Q_OS_MACOS) && __has_include(<MetalFX/MTLFXFrameInterpolator.h>)
     return true;
 #elif defined(RHINE_FSR3_VULKAN) && RHINE_FSR3_VULKAN
     return FgBackend::compiledIn();

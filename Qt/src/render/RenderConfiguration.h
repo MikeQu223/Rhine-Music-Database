@@ -25,12 +25,13 @@ struct Settings {
     bool nativeInterpolationAvailable = false;
 
     bool frameGeneration() const {
-        return interpolation && nativeInterpolationAvailable && !supersamplingEnabled(renderPercent, supersample);
+        return SupportsFrameGeneration && interpolation && nativeInterpolationAvailable &&
+               !supersamplingEnabled(renderPercent, supersample);
     }
 #endif
 
     bool temporal() const {
-        return modeName == QLatin1String("metalfx") && nativeTemporalAvailable &&
+        return SupportsRenderUpscaling && modeName == QLatin1String("metalfx") && nativeTemporalAvailable &&
                !supersamplingEnabled(renderPercent, supersample);
     }
     QSize renderSize(QSize display) const {
@@ -120,10 +121,12 @@ class RenderConfiguration {
     bool applyPreference(const QString &key, const QString &value) {
         QMutexLocker lock(&m_mutex);
         if (key == QLatin1String("aa-mode")) {
-            m_settings.modeName = value == "metalfx" ? QStringLiteral("metalfx") : QStringLiteral("off");
+            const bool temporalRequested = SupportsRenderUpscaling && value == "metalfx";
+            m_settings.modeName = temporalRequested ? QStringLiteral("metalfx") : QStringLiteral("off");
         } else if (key == QLatin1String("fg")) {
-            m_settings.interpolation = QStringList{"on", "1", "true", "yes", "enable", "enabled"}.contains(
-                value.trimmed().toLower());
+            m_settings.interpolation = SupportsFrameGeneration &&
+                                       QStringList{"on", "1", "true", "yes", "enable", "enabled"}.contains(
+                                           value.trimmed().toLower());
         } else if (key == QLatin1String("vsync")) {
             m_settings.vsync = !QStringList{"off", "0", "false", "no", "disable", "disabled"}.contains(
                 value.trimmed().toLower());

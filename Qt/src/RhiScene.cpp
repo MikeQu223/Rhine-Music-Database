@@ -3830,7 +3830,7 @@ class Renderer {
 };
 class ItemRenderer : public QQuickRhiItemRenderer {
     Engine *backend = nullptr;
-#ifdef Q_OS_DARWIN
+#ifdef Q_OS_MACOS
     QRhi *capabilityDevice = nullptr;
     Engine *capabilityEngine = nullptr;
     bool hasOrigin = false;
@@ -3868,14 +3868,14 @@ class ItemRenderer : public QQuickRhiItemRenderer {
         syncTimer.start();
         auto scene = static_cast<RhiScene *>(value);
         auto engine = scene->engine();
-#ifdef Q_OS_DARWIN
+#ifdef Q_OS_MACOS
         if (backend != engine) {
             presentation.reset();
         }
 #endif
         backend = engine;
         if (engine) {
-#ifdef Q_OS_DARWIN
+#ifdef Q_OS_MACOS
             sourceAnimating = !engine->performance().value("idle").toBool();
             // 提前探测 MetalFX 补帧能力：设置页需要知道开关是否可点，不能等到首帧场景渲染。
             if (rhi() && !presentation) {
@@ -3898,8 +3898,6 @@ class ItemRenderer : public QQuickRhiItemRenderer {
                 }
                 engine->renderConfiguration.setNativeInterpolationAvailable(available);
             }
-#endif
-#ifdef Q_OS_DARWIN
             if (rhi() && (capabilityDevice != rhi() || capabilityEngine != engine)) {
                 const bool temporalAvailable = RhineRender::MetalFxTemporal::supported(rhi());
                 engine->renderConfiguration.setNativeTemporalAvailable(temporalAvailable);
@@ -3932,7 +3930,7 @@ class ItemRenderer : public QQuickRhiItemRenderer {
         CrashRenderScope diagnosticScope("scene.initialize");
         if (renderer && renderer->rhi != rhi()) {
             renderer.reset();
-#ifdef Q_OS_DARWIN
+#ifdef Q_OS_MACOS
             presentation.reset();
 #endif
         }
@@ -3956,7 +3954,7 @@ class ItemRenderer : public QQuickRhiItemRenderer {
         if (!renderer) {
             renderer = std::make_unique<Renderer>(root, rhi());
         }
-#ifdef Q_OS_DARWIN
+#ifdef Q_OS_MACOS
         backend->renderConfiguration.setNativeInterpolationAvailable(presentation &&
                                                                      presentation->supported());
 #endif
@@ -3975,8 +3973,8 @@ class ItemRenderer : public QQuickRhiItemRenderer {
         const auto previousPostBindings = renderer->postProcess->bindingCreations;
         const auto previousPostDraws = renderer->postProcess->drawCalls;
 #endif
-#ifdef Q_OS_DARWIN
-        // 横屏沿用原有原点检测；手机额外隔离换曲、布局和封面变更的历史。
+#ifdef Q_OS_MACOS
+        // 原点、曲目、布局或封面变化都要隔离补帧历史。
         const auto origin = frame.value("stats").toObject().value("coordinateOrigin");
         bool originReset = false;
         if (origin.isDouble()) {
@@ -4047,6 +4045,9 @@ class ItemRenderer : public QQuickRhiItemRenderer {
         }
 #else
         renderer->render(cb, frame, renderTarget()->pixelSize(), item, cover, renderTarget(), musicTextures);
+#ifdef Q_OS_IOS
+        backend->recordGeometryFrame(cachedSync.geometryRevision);
+#endif
 #endif
         // 引擎静止时会休眠、不再出帧；封面预处理回来的成品必须有人把它取走并上传，
         // 所以只要还有活儿在路上就主动再要一帧（update() 是渲染线程的安全入口）。
@@ -4055,7 +4056,9 @@ class ItemRenderer : public QQuickRhiItemRenderer {
         }
 #ifdef Q_OS_DARWIN
         QVariantMap presentationDetails;
+#ifdef Q_OS_MACOS
         presentationDetails = presentation ? presentation->telemetry() : QVariantMap{};
+#endif
         presentationDetails.insert("fgRequested", renderer->settings.interpolation);
         presentationDetails.insert("fgWanted", renderer->settings.frameGeneration());
         presentationDetails.insert("supersampling",
@@ -4107,7 +4110,7 @@ class ItemRenderer : public QQuickRhiItemRenderer {
             const bool gpuTimingSupported = rhi()->isFeatureSupported(QRhi::Timestamps);
             const double gpuTimeMs =
                 gpuTimingSupported ? cb->lastCompletedGpuTime() * 1000.0 : 0.0;
-#ifdef Q_OS_DARWIN
+#ifdef Q_OS_MACOS
             if (renderedReal) {
 #endif
             backend->recordRender(resources, bindings, renderer->musicTextureBytes(),
@@ -4115,7 +4118,7 @@ class ItemRenderer : public QQuickRhiItemRenderer {
                                   RhineRender::classifyGpuTiming(gpuTimingSupported,
                                                                  RhineRender::timestampsRequested(),
                                                                  gpuTimeMs > 0));
-#ifdef Q_OS_DARWIN
+#ifdef Q_OS_MACOS
             }
 #endif
             // A03：本帧新建过 SRB，说明有新资源真的落地了（异步封面/模型上传完成，或
@@ -4136,7 +4139,7 @@ class ItemRenderer : public QQuickRhiItemRenderer {
                 }
             }
         }
-#ifdef Q_OS_DARWIN
+#ifdef Q_OS_MACOS
         // 性能面板与 FSR/原 MetalFX 共用同一组 fg 统计：呈现/真实/插值三个累计值。
         // 渲染线程不直接写 RhineFg::Stats，交给 GUI 线程在同一个采样节奏内发布。
         if (backend && presentation) {

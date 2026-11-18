@@ -1141,7 +1141,8 @@ void NativeHud::action(QString value) {
         }
     } else if (value.startsWith("aa-mode:")) {
         // 抗锯齿互斥单选，渲染器每帧读取该环境变量，切换后下一帧生效。
-        if (RhineRender::currentRenderMode(qEnvironmentVariable("RHINE_AA_MODE"), false).supersampling) {
+        if (!RhineRender::SupportsRenderUpscaling ||
+            RhineRender::currentRenderMode(qEnvironmentVariable("RHINE_AA_MODE"), false).supersampling) {
             return;
         }
         const auto mode = value.mid(8);
@@ -1211,7 +1212,7 @@ void NativeHud::action(QString value) {
         // const auto next = enabled ? QStringLiteral("off") : QStringLiteral("on");
         // m_host->setPreference("fg", next);
         // RhineFg::applyInterpolationPreference(next);
-#ifdef Q_OS_DARWIN
+#ifdef Q_OS_MACOS
         // Apple 的 MetalFX 补帧与抗锯齿模式互不影响；写偏好后 Host 同步 RHINE_FG，
         // 渲染线程下一次快照生效。显式环境变量排障时按真正生效的状态取反。
         const QByteArray environment = qgetenv("RHINE_FG");
