@@ -58,6 +58,8 @@ if(NOT EXISTS "${RHINE_IOS_RESOURCES}/slots.json")
     message(FATAL_ERROR "iOS resources missing; run npm run build:ios")
 endif()
 file(GLOB_RECURSE iosResources CONFIGURE_DEPENDS "${RHINE_IOS_RESOURCES}/*")
+# Finder 元数据可能进入暂存区，不把它登记为 Xcode 应用资源。
+list(FILTER iosResources EXCLUDE REGEX "/[.]DS_Store$")
 foreach(resource IN LISTS iosResources)
     file(RELATIVE_PATH resourcePath "${RHINE_IOS_RESOURCES}" "${resource}")
     get_filename_component(resourceDirectory "${resourcePath}" DIRECTORY)

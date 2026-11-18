@@ -167,6 +167,8 @@ const app = path.join(build, 'Release', 'RhineMusicDatabase.app');
 if (!fs.existsSync(app)) {
     throw new Error(`Built application missing: ${app}`);
 }
+// Xcode 增量构建会保留已从资源清单移除的旧文件，审计前只清理成品中的 Finder 元数据。
+run('find', [app, '-type', 'f', '-name', '.DS_Store', '-delete']);
 run(process.env.PYTHON || 'python3', ['scripts/audit-ios.py', app, ...(simulator ? ['--simulator'] : [])]);
 if (simulator) {
     run('codesign', ['--force', '--deep', '--sign', '-', app]);
