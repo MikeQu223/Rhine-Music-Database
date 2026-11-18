@@ -49,10 +49,15 @@ class BasicCoverImages {
   final void Function()? onChanged;
 
   final Map<String, ui.Image> _images = <String, ui.Image>{};
+  /// 已摘出缓存、等待释放的图（见 [_retire]）。
+  final List<ui.Image> _retired = <ui.Image>[];
   final List<String> _order = <String>[];
   final Set<String> _loading = <String>{};
   final Set<String> _failed = <String>{};
   bool _disposed = false;
+
+  /// 退场图的安全期：远大于一帧（本机最坏单帧约 460ms，见 [_retire]）。
+  static const Duration _retireDelay = Duration(seconds: 2);
 
   /// 缓存命中数/总量，只用于诊断与测试断言。
   int get length => _images.length;
@@ -134,12 +139,37 @@ class BasicCoverImages {
     _order.add(url);
   }
 
+  /// 淘汰不立即 `dispose`，见 [_retire]。
   void _evict() {
     while (_order.length > maxEntries) {
       final String oldest = _order.removeAt(0);
       final ui.Image? image = _images.remove(oldest);
-      image?.dispose();
+      if (image != null) {
+        _retire(image);
+      }
     }
+  }
+
+  /// 退场图延后释放。
+  ///
+  /// 正在栅格化/等在 GPU fence 上的那一帧仍然引用着这张图（本机实测
+  /// `eglSwapBuffersWithDamageKHR` 能挂 460ms），当场 `dispose()` 就是在
+  /// GPU 还在采样的时候把纹理收回去——那是原生 use-after-free，表现就是
+  /// 没有任何 Dart 异常、只有一条 SIGSEGV（2026-11-19 00:12:51 / 00:48:42
+  /// 两次 `reason=2 status=11`）。所以先摘出缓存、留够两秒再释放；
+  /// 引擎在跑就顺延到下一帧之后再计时。
+  void _retire(ui.Image image) {
+    _retired.add(image);
+    Future<void>.delayed(_retireDelay, () {
+      if (_disposed) {
+        return;
+      }
+      final List<ui.Image> pending = List<ui.Image>.of(_retired);
+      _retired.clear();
+      for (final ui.Image image in pending) {
+        image.dispose();
+      }
+    });
   }
 
   /// 宿主销毁时释放所有解码后的像素。
@@ -151,6 +181,10 @@ class BasicCoverImages {
     for (final ui.Image image in _images.values) {
       image.dispose();
     }
+    for (final ui.Image image in _retired) {
+      image.dispose();
+    }
+    _retired.clear();
     _images.clear();
     _order.clear();
     _loading.clear();
