@@ -18,6 +18,24 @@
         android:label="RHINE MUSIC DATABASE"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
+        <!-- CRASH-163：Impeller（Vulkan）在本机 Adreno 730 上会丢设备。
+             复现日志（2026-11-19 01:02:28，pid 6231，滚动/翻页压力下必现）：
+               flutter: [khr_swapchain_impl_vk.cc(492)] Could not wait on render
+                        semaphore: ErrorDeviceLost
+               BufferQueueProducer: [ImageReader-1800x2880f1m3] dequeueBuffer:
+                        attempting to exceed the max dequeued buffer count (3)
+               flutter: [khr_swapchain_impl_vk.cc(400)] Could not acquire next
+                        swapchain image: Timeout
+               flutter: [gpu_surface_vulkan_impeller.cc(102)] No surface available.
+               随后 libsigchain: Setting SIGSEGV to SIG_DFL → 死在 libflutter.so
+               （exit-info: reason=2 SIGNALED status=11）。
+             与本机既有的 GPU fence 饥饿（Qt 侧一帧挂 460ms，见
+             reports/GPU-FENCE-STALL-20261118.md）是同一个根：消费端太慢，3 个
+             ImageReader 缓冲被生产端击穿后 Vulkan 丢设备。先退回 Skia GL 后端
+             止血，等 Impeller 的 Android 交换链修好再评估。 -->
+        <meta-data
+            android:name="io.flutter.embedding.android.EnableImpeller"
+            android:value="false" />
         <!-- DEDUP-37：返回键交给 MainActivity 的 OnBackInvokedCallback（API 33+）与
              onBackPressed（旧版）处理，顺序是 IME → Qt 宿主视图 → Flutter 默认返回。
              Qt 在 <application> 上声明同一开关（Qt/android/AndroidManifest.xml:64）；
