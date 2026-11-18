@@ -83,6 +83,12 @@ const String basicSeekFractionActionPrefix = 'player:seek-fraction:';
 /// 列表行载荷前缀：`music:index:<i>`（track_ruler.dart:331 的非选中行）。
 const String basicMusicIndexActionPrefix = 'music:index:';
 
+/// 竖屏顶部来源 tab 的命中前缀：`mobile:lane:<lane>`。
+const String basicPortraitLaneActionPrefix = 'mobile:lane:';
+
+/// 竖屏检索页四列 tab 的命中前缀：`mobile:search-tab:<0..3>`。
+const String basicPortraitSearchTabActionPrefix = 'mobile:search-tab:';
+
 /// 音量载荷前缀：`player:volume-fraction:<0..1>`（player_bar.dart:529）。
 /// 本版没有音量 API，命中必须给可见反馈，不能静默吃掉。
 const String basicVolumeFractionActionPrefix = 'player:volume-fraction:';
@@ -820,6 +826,7 @@ class _BasicShellState extends State<_BasicShell>
                   final Widget? input = _textInput(
                     state,
                     geometry: portrait ? _portraitGeometry : landscape,
+                    portrait: portrait,
                   );
                   return Stack(
                     fit: StackFit.expand,
@@ -896,6 +903,8 @@ class _BasicShellState extends State<_BasicShell>
       geometry: geometry,
       stage: stage,
       archiveMaskStrength: _archiveMaskStrength,
+      // 竖屏排版按弹层选页（检索页）；横屏这一项不参与绘制。
+      modal: _modal,
     );
     final bool settingsOpen =
         _modal == 'settings' || _modal == DiscWarningModal.kind;
@@ -1283,6 +1292,44 @@ class _BasicShellState extends State<_BasicShell>
       _setModal('');
       return;
     }
+    // 竖屏（compact）顶部来源 tab：直接换列（只选中不播放，见 selectLane）。
+    if (action.startsWith(basicPortraitLaneActionPrefix)) {
+      final int? lane = int.tryParse(action.substring(basicPortraitLaneActionPrefix.length));
+      if (lane == null) {
+        return;
+      }
+      unawaited(controller.selectLane(lane));
+      return;
+    }
+    // 竖屏底栏：资料库 = 关掉弹层回主页；发现页本版没有内容，诚实提示不装作有。
+    if (action == 'mobile:nav:archive') {
+      _setModal('');
+      return;
+    }
+    if (action == 'mobile:nav:discover') {
+      setState(() => _actionNotice = '发现页尚未接入：本版只有资料库、搜索与设置');
+      return;
+    }
+    // 竖屏检索页的四列 tab：只有「歌曲」这一列有真集合（BasicController 的搜索列
+    // 就是曲目列），其余三列本仓库没有对应数据——点了给可见反馈，不静默吃掉。
+    if (action.startsWith(basicPortraitSearchTabActionPrefix)) {
+      final int? tab = int.tryParse(action.substring(basicPortraitSearchTabActionPrefix.length));
+      if (tab == null || tab == 0) {
+        return;
+      }
+      setState(() => _actionNotice = '歌手 / 专辑 / 歌单检索尚未接入：本版只有歌曲检索');
+      return;
+    }
+    // 竖屏详情页的「随机播放 / 更多」：播放模式与选项面板本仓库没有真值可写，
+    // 命中必须给可见反馈（player:mode 不能被当成已实现）。
+    if (action == 'player:mode') {
+      setState(() => _actionNotice = '播放模式切换尚未接入：本版只有顺序播放');
+      return;
+    }
+    if (action == 'mobile:song-options') {
+      setState(() => _actionNotice = '曲目选项面板尚未接入');
+      return;
+    }
     if (action == 'settings') {
       _setModal('settings');
       return;
@@ -1406,11 +1453,15 @@ class _BasicShellState extends State<_BasicShell>
   /// Stack 上，用 [TextInputStageState.fromGeometry] 拿同一份 scale。
   ///
   /// [geometry] 为 null 表示竖屏首帧还没接管到作用域里的实例：这一帧不铺，第二帧再来。
-  Widget? _textInput(BasicViewState state, {required StageGeometry? geometry}) {
+  Widget? _textInput(
+    BasicViewState state, {
+    required StageGeometry? geometry,
+    bool portrait = false,
+  }) {
     if (geometry == null) {
       return null;
     }
-    final Rect rect = _searchInputStageRect(geometry.stageWidth);
+    final Rect rect = _searchInputStageRect(geometry, portrait: portrait);
     // 竖屏的舞台原点被 PortraitStage 下移了 originY 个舞台单位（状态栏带，
     // lib/ui/layout/portrait_stage.dart:34-150 的 Padding(top: containerTop*stageScale)），
     // 而 Overlay 的 y 是「舞台值 × stageScale」、不带原点（Overlay.qml:529）。
@@ -1451,7 +1502,24 @@ class _BasicShellState extends State<_BasicShell>
   /// （Qt/src/NativeHudLibrary.cpp:60-72），检索弹层恒为 0，所以 inputWidth 就是
   /// modalWidth - 106。height 54 是 QML 常量（Overlay.qml:531），由 Overlay 自己固定，
   /// 这里只填以保持矩形完整。
-  static Rect _searchInputStageRect(double stageWidth) {
+  static Rect _searchInputStageRect(StageGeometry geometry, {required bool portrait}) {
+    final double stageWidth = geometry.stageWidth;
+    if (portrait) {
+      // 竖屏检索页（lib/hud/portrait/portrait_pages_library.dart 的
+      // `field('search', Rect.fromLTWH(58, top, 313, 44))`）用的是 393 网格；
+      // 这里把同一份网格矩形换回舞台单位，输入层就贴在画出来的框上。
+      final double unit = stageWidth / 393.0;
+      final double stageHeight =
+          geometry.stageScale > 0 ? geometry.logicalHeight / geometry.stageScale : 852.0 * unit;
+      final double gridHeight = unit > 0 ? stageHeight / unit : 852.0;
+      final double top = math.min(126.0, gridHeight * .22);
+      return Rect.fromLTWH(
+        58.0 * unit,
+        top * unit,
+        313.0 * unit,
+        44.0 * unit,
+      );
+    }
     final double modalWidth = math.min(
       stageWidth - 100.0,
       math.max(760.0, math.min(1000.0, stageWidth * 0.5 - 59.0)),

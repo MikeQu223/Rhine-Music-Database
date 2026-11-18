@@ -12,6 +12,10 @@ import '../hud/modals/lyrics_panel.dart' as lyrics;
 import '../hud/pages/archive_page.dart';
 import '../hud/pages/chrome.dart';
 import '../hud/pages/song_detail.dart' as detail;
+import '../hud/portrait/portrait_canvas.dart';
+import '../hud/portrait/portrait_layout.dart';
+import '../hud/portrait/portrait_pages_library.dart';
+import '../hud/portrait/portrait_pages_song.dart';
 import '../hud/player/player_bar.dart' as player;
 import '../hud/protocol/hud_frame.dart';
 import '../hud/protocol/hud_hit.dart';
@@ -100,6 +104,9 @@ class BasicHudFrame {
     /// 同形的单条 text 命令（如整条歌名），不能因为它们不推进时间就把文字拆成
     /// 逐字槽或整段不画。宿主 [BasicHudSurface] 有 ticker，显式传 true。
     bool animateText = false,
+    /// 当前弹层（'' = 无，'search' = 检索，'settings' = 设置）。竖屏用它决定画哪一页：
+    /// 设置窗是真实 Flutter widget 层（不走命令流），检索页是命令流页面。
+    String modal = '',
     /// 右栏遮罩强度（0..100，Qt `archive-mask-strength` / 设置页“右侧画面遮罩”）。
     /// 默认就是 Qt 常量 [HudChrome.defaultArchiveMaskStrength]；注入只来自设置页真值。
     double archiveMaskStrength = 55, // = HudChrome.defaultArchiveMaskStrength（int 常量转 double）
@@ -108,8 +115,23 @@ class BasicHudFrame {
     /// 只影响资料库列表页的绘制分支，不参与选中/滚动真值。
     bool trackListMode = true,
   }) {
-    final _HudSink sink = _HudSink();
     final bool dark = state.dark;
+    // 竖屏（compact）走独立排版：393 网格、归档主页 + 迷你播放条 + 底栏，
+    // 与横屏的 1080 设计稿是两套几何，不能互相平移/缩放复用。
+    if (portrait) {
+      return _buildPortraitFrame(
+        state: state,
+        ports: ports,
+        width: width,
+        height: height,
+        dark: dark,
+        listPosition: listPosition,
+        animationTime: animationTime,
+        animateText: animateText,
+        modal: modal,
+      );
+    }
+    final _HudSink sink = _HudSink();
     // 本帧绑定：滚动标签与静态 hudText 走同一个 sink、同一发射顺序，
     // ink 取同一 hudInk(dark)，暗/亮主题不会画出两套颜色。
     ports.beginFrame(
@@ -181,6 +203,225 @@ class BasicHudFrame {
       hits: sink.hits,
       animating: animating,
     );
+  }
+
+  /// 竖屏一帧：`Qt/src/ResponsiveHudPages.cpp` 的 archive 页。
+  ///
+  /// 页面集合当前只有归档主页这一屏；详情/歌词/检索/设置仍由既有 Flutter 层
+  /// （弹层与 widget 窗口）负责，不在这一帧里画——竖屏移植只改「主页长什么样」。
+  static BasicHudFrame _buildPortraitFrame({
+    required BasicViewState state,
+    required BasicGlyphPorts ports,
+    required double width,
+    required double height,
+    required bool dark,
+    double? listPosition,
+    double animationTime = 0,
+    bool animateText = false,
+    String modal = '',
+  }) {
+    final _HudSink sink = _HudSink();
+    ports.beginFrame(sink: sink, time: animationTime, ink: hudInk(dark), animate: animateText);
+    final PortraitMetrics metrics = PortraitMetrics(
+      width: (String value, double size, String weight) => ports.width(value, size, weight),
+      wrap: (String value, double limit, double size, String weight) =>
+          ports.wrap(value, limit, size, weight),
+      bounds: (String value, double size, String weight) {
+        final player.GlyphBounds bounds = ports.bounds(value, size, weight);
+        return PortraitGlyphBounds(
+          x: bounds.x,
+          y: bounds.y,
+          width: bounds.width,
+          height: bounds.height,
+        );
+      },
+    );
+    final double unit = portraitUnit(width);
+    final PortraitCanvas canvas = PortraitCanvas(
+      metrics: metrics,
+      unit: unit,
+      height: portraitGridHeight(height, unit),
+      dark: dark,
+    );
+    final List<BasicListItem> items = basicLibraryItems(state);
+    final int selected = _selectedRow(state, items);
+    final player.PlayerBarState bar = _playerState(state);
+    // 空列/未接入的诚实文案：端口没接上本地集合时不能说「这里本来是空的」。
+    final String emptyNotice = state.error.isNotEmpty
+        ? state.error
+        : (state.status.isNotEmpty
+            ? state.status
+            : basicLaneEmptyNotice(
+                state.selectedLane,
+                localCollectionsAvailable: state.localCollectionsAvailable,
+                unresolvedLikedIds: state.localUnresolvedLikedIds,
+              ));
+    final SirenSong? song = state.song;
+    final BasicDirectory? directory = state.directory;
+    final bool songPage = song != null &&
+        (state.phase == BasicPhase.detail || state.phase == BasicPhase.lyrics);
+    if (songPage) {
+      // Qt compact：song() / lyrics() 是两页，共用「档案 + 封面 + 进度 + 传输」骨架。
+      _paintPortraitSongPage(canvas, state, song, items.length, selected);
+    } else if (modal == 'search') {
+      // Qt compact `library()` 的 search 分支：检索框 + 四 tab + INDEX/N 结果区。
+      // 只有「歌曲」这一 tab 有真数据（BasicController 的搜索列是曲目列）；
+      // 歌手/专辑/歌单三列没有对应集合，画出来但不冒充有结果。
+      paintPortraitSearchPage(
+        canvas,
+        query: state.query,
+        tabLabels: const <String>['歌曲', '歌手', '专辑', '歌单'],
+        selectedTab: 0,
+        rows: <(String, String, String)>[
+          for (final BasicListItem item in items)
+            (item.title, item.artist.isEmpty ? item.kind : item.artist, ''),
+        ],
+        total: items.length,
+        notice: emptyNotice,
+        loading: state.loading,
+      );
+    } else if (directory != null) {
+      // Qt compact `collection()`：目录（歌单/专辑）内页。
+      paintPortraitCollectionPage(
+        canvas,
+        title: basicLibraryTitle(state),
+        subtitle: _portraitCollectionSubtitle(directory, items.length),
+        // 封面像素没有接线（BasicGlyphPorts.imageFor 恒 null），这里诚实传空：
+        // 页面画空槽而不是编一张假图。
+        cover: '',
+        rows: <(String, String, String, String)>[
+          for (final BasicListItem item in items) (item.title, item.artist, '', item.kind),
+        ],
+        index: selected,
+        canPlayAll: items.isNotEmpty,
+        emptyNotice: emptyNotice,
+      );
+    } else {
+      final List<PortraitTab> tabs = <PortraitTab>[
+        for (final int lane in basicSirenSourceOrder)
+          if (lane >= 0 && lane < basicSirenColumns.length)
+            PortraitTab(label: basicSirenColumns[lane], lane: lane),
+      ];
+      paintPortraitHome(
+        canvas,
+        archive: PortraitArchive(
+          tabs: tabs,
+          selectedLane: state.selectedLane,
+          title: basicLibraryTitle(state),
+          rows: <PortraitRow>[
+            for (final BasicListItem item in items)
+              PortraitRow(title: item.title, kind: item.kind),
+          ],
+          index: selected,
+          directory: false,
+          canPlayAll: items.isNotEmpty,
+          emptyNotice: emptyNotice,
+        ),
+        player: PortraitPlayer(
+          title: bar.title,
+          artist: bar.artist,
+          hasTrack: bar.hasTrack,
+          playing: bar.playing,
+          positionMs: bar.positionMs,
+          durationMs: bar.durationMs,
+        ),
+        nav: PortraitNav.archive,
+        listPosition: listPosition,
+      );
+    }
+    sink.commands.addAll(canvas.commands);
+    sink.hits.addAll(canvas.hits);
+    final bool animating = ports.endFrame();
+    _generation += 1;
+    return BasicHudFrame(
+      generation: _generation,
+      commands: sink.commands,
+      hits: sink.hits,
+      animating: animating,
+    );
+  }
+
+  /// 竖屏详情页 / 歌词页（Qt compact `ResponsiveHudPages.cpp` 的 `song()` / `lyrics()`）。
+  static void _paintPortraitSongPage(
+    PortraitCanvas canvas,
+    BasicViewState state,
+    SirenSong song,
+    int total,
+    int selected,
+  ) {
+    if (state.phase == BasicPhase.lyrics) {
+      paintPortraitLyricsPage(
+        canvas,
+        title: song.title,
+        artist: song.artist,
+        // 封面像素未接线（见上方 collection 的同一条理由）。
+        cover: '',
+        playing: state.playing,
+        positionMs: state.positionMs,
+        durationMs: state.durationMs,
+        lines: <(int, String, String)>[
+          for (final BasicLyricLine line in state.lyrics)
+            (line.startMs.round(), line.text, line.translation),
+        ],
+        activeLine: state.lyricIndex,
+      );
+      return;
+    }
+    paintPortraitSongPage(
+      canvas,
+      title: song.title,
+      artist: song.artist,
+      album: song.album,
+      kind: 'song',
+      stamp: total <= 0 ? '' : _portraitStamp(selected, total),
+      cover: '',
+      playing: state.playing,
+      // 收藏列没有本地写入通道（liked 集合只在 lane 1 只读解析），这里不假装已收藏。
+      favourite: false,
+      positionMs: state.positionMs,
+      durationMs: state.durationMs,
+      lyricPreview: _portraitLyricPreview(state),
+      lyricsAvailable: state.lyrics.isNotEmpty,
+    );
+  }
+
+  /// 竖屏序号（Qt 的 `pad()`：两位，超过 99 自然变三位）。
+  static String _portraitStamp(int index, int total) {
+    final String left = (index + 1).toString().padLeft(2, '0');
+    final String right = total.toString().padLeft(2, '0');
+    return '$left / $right';
+  }
+
+  static String _portraitLyricPreview(BasicViewState state) {
+    final int index = state.lyricIndex;
+    if (index >= 0 && index < state.lyrics.length) {
+      return state.lyrics[index].text;
+    }
+    return state.lyrics.isEmpty ? '' : state.lyrics.first.text;
+  }
+
+  /// 目录内页副标：真实曲目数 + 类型（Qt `collection()` 的 eyebrow 行语义）。
+  static String _portraitCollectionSubtitle(BasicDirectory directory, int visible) {
+    final int count = visible > 0 ? visible : directory.trackCount;
+    final String kind = switch (directory.kind) {
+      'playlist' => '歌单',
+      'album' => '专辑',
+      'artist' => '歌手',
+      'collection' => '收藏',
+      _ => '',
+    };
+    if (count <= 0) {
+      return kind;
+    }
+    return kind.isEmpty ? '共 $count 首' : '共 $count 首 · $kind';
+  }
+
+  /// 选中行（空列时 0）：与横屏 `_paintLibrary` 同一份列表真值。
+  static int _selectedRow(BasicViewState state, List<BasicListItem> items) {
+    if (items.isEmpty) {
+      return 0;
+    }
+    return basicSelectedItemIndex(state, items).clamp(0, items.length - 1).toInt();
   }
 
   static void _paintLibrary(
@@ -461,7 +702,14 @@ Rect? basicSceneStageRect({
 /// / `ruler.trackRulerWindowHeight`），绘制与手势共用一处，手势层不再自己拍一套坐标。
 /// 竖屏窗口上沿就是带顶 [basicPortraitListOffset]——与 [basicPortraitListShift] 同一个
 /// 换算，绘制平移多少、命中就从哪里开始。
-Rect basicLibraryListStageRect({required bool portrait, required double width}) {
+Rect basicLibraryListStageRect({required bool portrait, required double width, double? height}) {
+  // 竖屏 compact 版：列表带就是「第二行对齐的那块 4 行窗口」，
+  // 顶边 = portraitListTop（随可视高度伸缩），高 = 4 行。
+  if (portrait && height != null) {
+    final double unit = portraitUnit(width);
+    final double top = portraitListTop(portraitGridHeight(height, unit)) * unit;
+    return Rect.fromLTWH(0, top, width, portraitRowHeight * 4 * unit);
+  }
   final double rawLeft = basicNavigationLeft(width) - 4;
   final double left = rawLeft < 0 ? 0 : rawLeft;
   final double right = width < left ? left : width;
@@ -489,11 +737,12 @@ List<Rect> basicHudRegionRects(
   required bool android,
   required bool portrait,
   required double width,
+  double? height,
   Rect? directTouchStageRect,
 }) {
   return <Rect>[
     ...basicHudHitStageRects(frame, geometry: geometry, android: android),
-    basicLibraryListStageRect(portrait: portrait, width: width),
+    basicLibraryListStageRect(portrait: portrait, width: width, height: height),
     // 资料库列表页：左侧 3D 直触区也归 HUD（整串指针由 HUD 消费，3D 层不再
     // 二次解释这条手势）。非列表阶段/尺寸退化时传 null，行为与扩展前一致。
     ?directTouchStageRect,
@@ -647,6 +896,7 @@ class BasicHudSurface extends StatefulWidget {
     this.trackListMode = true,
     this.onTrackListModeChanged,
     this.sceneSettings,
+    this.modal = '',
   });
 
   final BasicViewState state;
@@ -683,6 +933,10 @@ class BasicHudSurface extends StatefulWidget {
   /// 原生渲染参数（设置面板的真实值，见 [BasicSceneSettings]）：随快照下发，
   /// 只影响 Qt 渲染，不构成第二份真值。null = 不下发，Qt 用自己的默认。
   final BasicSceneSettings? sceneSettings;
+
+  /// 宿主当前的弹层（'' / 'search' / 'settings'）：只给竖屏排版决定画哪一页，
+  /// 不参与横屏绘制，也不改任何真值。
+  final String modal;
 
   /// 场景层（Qt platform view）的身份键：横竖屏切换时由上层传入**同一个** key，
   /// 让 PlatformView 的 element 被移动（reparent）而不是销毁重建——否则旋转会
@@ -740,6 +994,9 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
   /// ruler 相邻两项的中心距（lib/hud/widgets/track_ruler.dart 的 88/52 布局，
   /// 相邻为 88）；拖动换算用同一常量，避免手感与绘制不一致。
   static const double _rowStep = 88;
+
+  /// 最近一帧的舞台尺寸（stage 单位）：竖屏拖动的行高换算需要它。
+  Size _stageSize = Size.zero;
 
   /// 共享滚动文字的帧时钟（秒）。只由 [_rollingTicker] 单调推进，不跟触摸绑定：
   /// 初始/暂停/不触摸时标签也会走到可见终态（见 lib/hud/text/rolling_text.dart）。
@@ -861,6 +1118,7 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       animateText: true,
       archiveMaskStrength: widget.archiveMaskStrength,
       trackListMode: _trackListMode,
+      modal: widget.modal,
     );
     // 共享滚动文字有字符槽还在 kReelDuration 内 -> 续帧；静止后停 ticker。
     // 松手惯性期间也必须续帧（同一个 ticker 兼职推进列表动量）。
@@ -885,9 +1143,11 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
     final Rect? rawSceneRect =
         sceneRect == null ? null : (portrait ? sceneRect : geometry.rectToLogical(sceneRect));
 
+    _stageSize = Size(stage.width, stage.height);
     final Rect listStageRect = basicLibraryListStageRect(
       portrait: portrait,
       width: stage.width,
+      height: stage.height,
     );
     // 资料库列表页：把列表拖动的手势域从「仅右侧曲目列」扩到「右侧曲目列 ∪ 左侧
     // 3D 直触区」（用户 m10322-1）。只在列表阶段扩展——详情/歌词页的 3D 操作
@@ -917,12 +1177,23 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
     final List<Rect> controlRects = portrait
         ? controlStageRects
         : <Rect>[for (final Rect rect in controlStageRects) geometry.rectToLogical(rect)];
-    final Rect playerBarStageRect = Rect.fromLTWH(
-      0,
-      stage.height - player.playerBarRowHeight,
-      stage.width,
-      player.playerBarRowHeight,
-    );
+    // 竖屏 compact 版：播放条 + 底栏整块从列表底开始（参考图里它们是一体纸色），
+    // 所以排除区从 contentBottom 到底边；横屏仍是右下 96 高的播放条行。
+    final Rect playerBarStageRect = portrait
+        ? Rect.fromLTWH(
+            0,
+            (portraitListTop(portraitGridHeight(stage.height, portraitUnit(stage.width))) +
+                    portraitRowHeight * 4) *
+                portraitUnit(stage.width),
+            stage.width,
+            stage.height,
+          )
+        : Rect.fromLTWH(
+            0,
+            stage.height - player.playerBarRowHeight,
+            stage.width,
+            player.playerBarRowHeight,
+          );
     final LibraryDragDomain dragDomain = LibraryDragDomain(
       listRect: listRect,
       directTouchRect: directTouchRect,
@@ -948,6 +1219,7 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       android: defaultTargetPlatform == TargetPlatform.android,
       portrait: portrait,
       width: stage.width,
+      height: stage.height,
       directTouchStageRect: interceptStageRect,
     );
     final List<Rect> regions = portrait
@@ -1091,7 +1363,10 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       return;
     }
     // 手指向下 = 内容下移 = 窗口回退到更小的条目号（Qt ruler 的 position 语义）。
-    final double unit = portrait ? _rowStep : _rowStep * geometry.stageScale;
+    // 竖屏 compact 版行高是 48 网格单位（× unit 换成舞台单位）；横屏仍是 88。
+    final double unit = portrait
+        ? portraitRowHeight * portraitUnit(_stageSize.width <= 0 ? 1080 : _stageSize.width)
+        : _rowStep * geometry.stageScale;
     final double next = current - details.delta.dy / unit;
     final double max = (count - 1).toDouble();
     final double clamped = next < 0 ? 0 : (next > max ? max : next);

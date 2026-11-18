@@ -826,6 +826,20 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     _showSourceLane(basicStepSourceLane(_selectedLane, direction));
   }
 
+  /// 直接换到某一列（竖屏底栏/顶部 tab 点击）。
+  ///
+  /// 语义与 [navigateColumn] 的「无目录」分支逐条相同：只改 selectedLane 与该列
+  /// 记住的行、只选中不播放、不换队列；越界就 no-op，不猜下标。
+  Future<void> selectLane(int lane) async {
+    if (_disposed || _directory != null || lane == _selectedLane) {
+      return;
+    }
+    if (lane < 0 || lane >= basicSirenColumns.length) {
+      return;
+    }
+    _showSourceLane(lane);
+  }
+
   /// 目录内 ±8 换页（Qt MusicDirectory::navigateDirectory，Qt/src/MusicDirectory.cpp:321-344）：
   /// `selectDirectory(((target % count) + count) % count, ...)` —— 始终取模，没有"到头就返回"。
   void _navigateDirectoryBy(int step) {

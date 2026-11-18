@@ -26,6 +26,8 @@
 // ===========================================================================
 library;
 
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../hud/modals/settings_modal.dart';
@@ -202,7 +204,11 @@ class _BasicSettingsWindowState extends State<BasicSettingsWindow> {
 
   Widget _buildStage(BuildContext context) {
     final double stageWidth = widget.stage.width;
-    final Rect bounds = settingsModalBounds(stageWidth);
+    // 竖屏（compact）的设置是整页，不是浮在主页上的卡片：参考图里它和资料库、检索
+    // 一样是全屏页面，标题区在上、条目铺满整幅。横屏仍走既有的浮动卡片几何。
+    final Rect bounds = widget.portrait
+        ? Rect.fromLTWH(0, 0, stageWidth, math.max(widget.stage.height, 1))
+        : settingsModalBounds(stageWidth);
     final Rect viewport = SettingsPanelGeometry.viewport(
       x: bounds.left,
       y: bounds.top,
@@ -270,7 +276,10 @@ class _BasicSettingsWindowState extends State<BasicSettingsWindow> {
                     excludeFromSemantics: true,
                     onTap: () {},
                     child: ColoredBox(
-                      color: _color(SettingsModalMetrics.mask(widget.dark)),
+                      // 竖屏整页设置：下层是主页，再压一层暗遮罩会变成两层页面的错觉。
+                      color: widget.portrait
+                          ? const Color(0x00000000)
+                          : _color(SettingsModalMetrics.mask(widget.dark)),
                     ),
                   ),
                 ),

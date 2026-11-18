@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -44,39 +46,39 @@ HudHit _hit(BasicHudFrame frame, String action) =>
 
 void main() {
   group('portrait re-layout keeps one stage coordinate space', () {
-    testWidgets('track list hits shift by exactly one 1080 design height', (WidgetTester tester) async {
-      final BasicGlyphPorts ports = _ports();
-      final BasicHudFrame landscape = BasicHudFrame.build(
-        state: _library(),
-        ports: ports,
-        width: 1920,
-        height: 1080,
-        portrait: false,
-      );
+    testWidgets('portrait archive page is a 393 grid: lane tabs, list band and 播放全部', (WidgetTester tester) async {
+      // 竖屏排版在 147 之后换成了原 Qt compact 的 393 网格（lib/hud/portrait/），
+      // 不再是「把横屏 1080 稿整块下移 1080」——旧断言随旧排版一起作废。
       final BasicHudFrame portrait = BasicHudFrame.build(
         state: _library(),
-        ports: ports,
+        ports: _ports(),
         width: 1080,
         height: 1920,
         portrait: true,
       );
-      final HudHit landscapeOpen = _hit(landscape, 'open');
-      final HudHit portraitOpen = _hit(portrait, 'open');
-      // Qt NativeHud.cpp:342-344 `navigationLeft(width) = width - 789` 吃的是**当前舞台
-      // 宽度**，所以竖屏 1080 宽得到 291、横屏 1920 宽得到 1131——两个 x 本来就不该相等；
-      // 真正不变的是列宽与"整块列表再下移一个 1080 设计高度"。
-      expect(portraitOpen.x, 1080 - 789);
-      expect(landscapeOpen.x, 1920 - 789);
-      expect(portraitOpen.width, landscapeOpen.width);
-      expect(portraitOpen.y - landscapeOpen.y, basicPortraitListOffset);
-      expect(portraitOpen.action, landscapeOpen.action);
-      // 竖屏命令流确实用 save/translate/restore 承载同一次平移。
-      final bool hasShift = portrait.commands.any((List<Object?> command) =>
-          command.length >= 3 && command[0] == 'translate' && command[1] == 0 && command[2] == basicPortraitListOffset);
-      expect(hasShift, isTrue);
+      final double unit = 1080 / 393;
+      final double gridHeight = 1920 / unit;
+      final double listTop = math.max(gridHeight * .5, gridHeight - 34 - 110 - 48 * 4);
+
+      // 五个来源 tab 全部有命中（顺序由 basicSirenSourceOrder 决定，不是 0..4）。
+      final Iterable<HudHit> lanes =
+          portrait.hits.where((HudHit hit) => hit.action.startsWith('mobile:lane:'));
+      expect(lanes.length, basicSirenColumns.length);
+
+      // 当前行落在「第二槽」：listTop + 48（Qt archive() 的 slotY）。
+      final HudHit open = _hit(portrait, 'open');
+      expect(open.y, closeTo((listTop + 48) * unit, 1.0));
+      expect(open.width, closeTo(347 * unit, 1.0));
+
+      // 「播放全部」与曲目行同一页，且整条命令流在 393 网格坐标系里（scale(unit)）。
+      expect(portrait.hits.any((HudHit hit) => hit.action == 'music:play-loaded'), isTrue);
+      final bool hasScale = portrait.commands.any((List<Object?> command) =>
+          command.length >= 3 && command[0] == 'scale' && command[1] == unit);
+      expect(hasScale, isTrue);
+      expect(open.x + open.width, lessThanOrEqualTo(393 * unit + 1));
     });
 
-    testWidgets('player bar stays pinned to the bottom in both orientations', (WidgetTester tester) async {
+    testWidgets('player bar stays below the list band in both orientations', (WidgetTester tester) async {
       final BasicGlyphPorts ports = _ports();
       final BasicHudFrame landscape = BasicHudFrame.build(
         state: _library(),
@@ -92,10 +94,21 @@ void main() {
         height: 1920,
         portrait: true,
       );
+      // 横屏播放条仍钉在 stage 底部（height - playerBarRowHeight = 984）。
       expect(_hit(landscape, 'player:toggle').y, greaterThanOrEqualTo(984));
-      expect(_hit(portrait, 'player:toggle').y, greaterThanOrEqualTo(1824));
-      // 列表行不会盖到播放条上（竖屏平移量小于 stage 高度 - 播放条）。
-      expect(_hit(portrait, 'open').y, lessThan(_hit(portrait, 'player:toggle').y));
+      // 竖屏是「列表带 → 迷你播放条 → 底栏」三段：播放条在列表下面，
+      // 底栏又在播放条下面，且整块不出舞台。
+      final double unit = 1080 / 393;
+      final double gridHeight = 1920 / unit;
+      final double listBottom =
+          math.max(gridHeight * .5, gridHeight - 34 - 110 - 48 * 4) + 48 * 4;
+      final HudHit toggle = _hit(portrait, 'player:toggle');
+      expect(toggle.y, greaterThanOrEqualTo(listBottom * unit));
+      expect(_hit(portrait, 'open').y, lessThan(toggle.y));
+      final HudHit nav =
+          portrait.hits.firstWhere((HudHit hit) => hit.action == 'mobile:nav:archive');
+      expect(nav.y, greaterThan(toggle.y));
+      expect(nav.y + nav.height, lessThanOrEqualTo(1920 + 1));
     });
 
     testWidgets('PortraitStage injects stage geometry that the surface consumes', (WidgetTester tester) async {
