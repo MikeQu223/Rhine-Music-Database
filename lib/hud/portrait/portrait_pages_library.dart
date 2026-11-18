@@ -174,16 +174,16 @@ void paintPortraitSearchPage(
   double y = top;
 
   // 检索框：raised 底 + 细边 + 放大镜；字段名固定 `search`，宿主据此贴原生输入条。
+  //
+  // 这里**只画框**，不画任何文字：键入的正文与空态占位都由 Qt 的输入层自绘
+  // （Qt/qml/Overlay.qml:532-612：TextInput 自己显示 text，紧跟的占位 Text
+  // `visible: text.length === 0 && !preeditText` 也画占位）。命令流再画一遍就是
+  // 双重显示——实机 device7/s1-search.png 里同一个「dx」上下两份、且随输入联动错位。
   final Rect box = Rect.fromLTWH(_left, y, _pageWidth, 44);
   c.fill(box, c.raised);
   c.border(box, c.line);
   c.icon('search', 32, y + 13, size: 18, color: c.muted);
   c.field('search', Rect.fromLTWH(58, y, 313, 44));
-  if (query.isEmpty) {
-    c.text('搜索曲目 / 歌手 / 专辑', 60, y + 14, size: 12, width: 311, color: c.muted);
-  } else {
-    c.text(query, 60, y + 13, size: 13, width: 311);
-  }
   y += 54;
 
   // 四等分 tab：居中文字 + 底线；选中项再压一条 amber 指示条。
