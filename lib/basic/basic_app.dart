@@ -32,6 +32,7 @@ import '../hud/modals/settings_modal.dart'
         SettingsPreferenceSnapshot;
 import '../hud/player/player_bar.dart' show playerBarHeaderHeight, playerBarRowHeight;
 import '../hud/pages/viewer_hud.dart';
+import '../hud/scale/hud_scale.dart';
 import '../hud/protocol/hud_frame.dart';
 import '../scene/viewer_state.dart';
 import '../ui/layout/portrait_stage.dart';
@@ -818,7 +819,7 @@ class _BasicShellState extends State<_BasicShell>
                   // 横屏：几何体每帧现造一份，绘制 / 命中 / 输入层共用这一个实例（DEDUP-13）。
                   final StageGeometry? landscape = portrait
                       ? null
-                      : StageGeometry(logicalWidth: width, logicalHeight: height);
+                      : StageGeometry.landscape(logicalWidth: width, logicalHeight: height);
                   final Widget surface;
                   if (portrait) {
                     // 竖屏由 PortraitStage 注入唯一的 StageGeometry/HudStage 作用域；
@@ -1014,6 +1015,9 @@ class _BasicShellState extends State<_BasicShell>
                       alignment: Alignment.topLeft,
                       child: BasicPortraitSettingsPage(
                         stage: resolved,
+                        // 与竖屏画布同一口径：PortraitBands 的 stageScale = 逻辑宽/1080。
+                        stageScale: MediaQuery.sizeOf(inner).width /
+                            HudScale.designStageHeight,
                         model: _settingsPanelModel(),
                         dark: state.dark,
                         scrollStorage: _settingsScroll,
@@ -1513,7 +1517,8 @@ class _BasicShellState extends State<_BasicShell>
     // 的 `field('search', {58, y, 313, 44})`；字号取 Qt compact 的 14 网格，
     // Qt/src/ResponsiveHudPages.cpp:330 与 Qt/qml/Overlay.qml:542-543）。不传的话输入层
     // 会用 QML 的缺省 54 / 22，字小且贴在框上沿——用户 2026-11-19 报的「字小的小标题」。
-    final double compactUnit = geometry.stageWidth / 393.0;
+    final double compactUnit =
+        HudScale.portraitUnit(geometry.stageWidth, geometry.stageScale);
     return TextInputOverlay(
       state: TextInputStageState.fromGeometry(
         geometry,
@@ -1554,9 +1559,11 @@ class _BasicShellState extends State<_BasicShell>
     final double stageWidth = geometry.stageWidth;
     if (portrait) {
       // 竖屏检索页（lib/hud/portrait/portrait_pages_library.dart 的
-      // `field('search', Rect.fromLTWH(58, top, 313, 44))`）用的是 393 网格；
+      // `field('search', Rect.fromLTWH(58, top, c.gridWidth - 78, 44))`）用的是网格坐标；
       // 这里把同一份网格矩形换回舞台单位，输入层就贴在画出来的框上。
-      final double unit = stageWidth / 393.0;
+      // 网格宽随 DPI 适配变化（比 393 宽），必须和绘制同源取 portraitGridWidth。
+      final double unit = HudScale.portraitUnit(stageWidth, geometry.stageScale);
+      final double gridWidth = HudScale.portraitGridWidth(stageWidth, geometry.stageScale);
       final double stageHeight =
           geometry.stageScale > 0 ? geometry.logicalHeight / geometry.stageScale : 852.0 * unit;
       final double gridHeight = unit > 0 ? stageHeight / unit : 852.0;
@@ -1564,7 +1571,7 @@ class _BasicShellState extends State<_BasicShell>
       return Rect.fromLTWH(
         58.0 * unit,
         top * unit,
-        313.0 * unit,
+        (gridWidth - 78) * unit,
         44.0 * unit,
       );
     }

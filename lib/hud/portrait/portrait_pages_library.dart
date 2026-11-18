@@ -28,8 +28,9 @@ const double _resultRowHeight = 60;
 
 /// 393 网格的左右页边距（Qt 全站 20 / 373）。
 const double _left = 20;
-const double _right = 373;
-const double _pageWidth = 353;
+double _rightOf(PortraitCanvas c) => c.gridWidth - 20;
+/// 正文宽度：随页宽走（DPI 适配后页宽比 393 宽），左右各留 20 网格。
+double _contentWidth(PortraitCanvas c) => c.gridWidth - 40;
 
 /// 收藏/歌单内页。返回前必须调用 `c.finish()`。
 void paintPortraitCollectionPage(
@@ -71,7 +72,7 @@ void paintPortraitCollectionPage(
 
   // 文本列：标题最多两行，副标贴封面底部（参考图「标题在上、说明在下」）。
   final double textX = math.min(coverRect.right + 16, 300.0);
-  final double textWidth = math.max(0.0, _right - textX);
+  final double textWidth = math.max(0.0, _rightOf(c) - textX);
   final double titleEnd = c.paragraph(
     title,
     textX,
@@ -90,7 +91,7 @@ void paintPortraitCollectionPage(
 
   // 「播放全部」主色按钮（Qt collection() 的 playAll）；只在宿主确认可播时出现。
   if (canPlayAll && y + 42 <= bottom) {
-    c.button(Rect.fromLTWH(_left, y, _pageWidth, 42), '▶  播放全部', 'music:play-loaded', primary: true);
+    c.button(Rect.fromLTWH(_left, y, _contentWidth(c), 42), '▶  播放全部', 'music:play-loaded', primary: true);
     y += 52;
   }
 
@@ -104,10 +105,10 @@ void paintPortraitCollectionPage(
   final bool roomForFooter = bottom - 30 - listTop >= 18;
   final double clipBottom = roomForFooter ? bottom - 30 : bottom;
   if (roomForFooter) {
-    c.fill(Rect.fromLTWH(_left, bottom - 30, _pageWidth, .6), c.line);
+    c.fill(Rect.fromLTWH(_left, bottom - 30, _contentWidth(c), .6), c.line);
     c.text('共 $total 首', _left, bottom - 22, size: 9, width: 200, color: c.muted);
     if (total > 0) {
-      c.rightText('${_pad(index + 1)} / ${_pad(total)}', _right, bottom - 22, 9, 'regular', c.muted);
+      c.rightText('${_pad(index + 1)} / ${_pad(total)}', _rightOf(c), bottom - 22, 9, 'regular', c.muted);
     }
   }
 
@@ -118,7 +119,7 @@ void paintPortraitCollectionPage(
     c.beginContent(listTop);
     if (rows.isEmpty) {
       if (emptyNotice.isNotEmpty) {
-        c.text(emptyNotice, _left, listTop + 12, size: 11, width: _pageWidth, color: c.muted);
+        c.text(emptyNotice, _left, listTop + 12, size: 11, width: _contentWidth(c), color: c.muted);
       }
     } else {
       // 与主页列表同一套窗口语义（见 portrait_layout.dart 的 `_list()`）：当前行钉在
@@ -166,7 +167,7 @@ void paintPortraitSearchPage(
   final double h = c.height;
 
   // 检索是终端页：参考实现整页铺纸色（paperPage → fill({0,0,393,height}, paper)）。
-  c.fill(Rect.fromLTWH(0, 0, 393, h), c.paper);
+  c.fill(Rect.fromLTWH(0, 0, c.gridWidth, h), c.paper);
   c.header('音乐检索', back: true, backAction: 'close-modal');
 
   final double top = math.min(126.0, h * .22);
@@ -179,17 +180,17 @@ void paintPortraitSearchPage(
   // （Qt/qml/Overlay.qml:532-612：TextInput 自己显示 text，紧跟的占位 Text
   // `visible: text.length === 0 && !preeditText` 也画占位）。命令流再画一遍就是
   // 双重显示——实机 device7/s1-search.png 里同一个「dx」上下两份、且随输入联动错位。
-  final Rect box = Rect.fromLTWH(_left, y, _pageWidth, 44);
+  final Rect box = Rect.fromLTWH(_left, y, _contentWidth(c), 44);
   c.fill(box, c.raised);
   c.border(box, c.line);
   c.icon('search', 32, y + 13, size: 18, color: c.muted);
-  c.field('search', Rect.fromLTWH(58, y, 313, 44));
+  c.field('search', Rect.fromLTWH(58, y, c.gridWidth - 78, 44));
   y += 54;
 
   // 四等分 tab：居中文字 + 底线；选中项再压一条 amber 指示条。
   final int tabCount = tabLabels.length;
   if (tabCount > 0) {
-    final double cell = _pageWidth / tabCount;
+    final double cell = _contentWidth(c) / tabCount;
     final bool hasSelection = selectedTab >= 0 && selectedTab < tabCount;
     for (int i = 0; i < tabCount; i++) {
       final double x = _left + cell * i;
@@ -211,14 +212,14 @@ void paintPortraitSearchPage(
 
   // 结果区上方的提示（例如「已按相关度排序」），只在真的有结果时占一行。
   if (notice.isNotEmpty && rows.isNotEmpty) {
-    c.text(notice, _left, y, size: 10, width: _pageWidth, color: c.muted);
+    c.text(notice, _left, y, size: 10, width: _contentWidth(c), color: c.muted);
     y += 16;
   }
   if (y + 22 <= bottom) {
     c.text('检索结果', _left, y, size: 12, width: 200, weight: 'demibold');
-    c.rightText('INDEX / ${_pad(total)}', _right, y + 2, 8, 'regular', c.muted);
+    c.rightText('INDEX / ${_pad(total)}', _rightOf(c), y + 2, 8, 'regular', c.muted);
     y += 20;
-    c.fill(Rect.fromLTWH(_left, y, _pageWidth, .7), c.ink);
+    c.fill(Rect.fromLTWH(_left, y, _contentWidth(c), .7), c.ink);
   }
   final double listTop = math.min(y + 1, bottom);
 
@@ -229,12 +230,12 @@ void paintPortraitSearchPage(
   double cursor = listTop;
   if (loading) {
     // 载入中也保留已有结果，只在顶部补一条状态，避免整块闪空。
-    c.text('检索中…', _left, cursor + 8, size: 11, width: _pageWidth, color: c.muted);
+    c.text('检索中…', _left, cursor + 8, size: 11, width: _contentWidth(c), color: c.muted);
     cursor += 22;
   }
   if (rows.isEmpty) {
     if (!loading && notice.isNotEmpty) {
-      c.text(notice, _left, cursor + 10, size: 11, width: _pageWidth, color: c.muted);
+      c.text(notice, _left, cursor + 10, size: 11, width: _contentWidth(c), color: c.muted);
     }
   } else {
     final (int first, int last) = c.visibleRows(cursor, _resultRowHeight, rows.length);
@@ -244,13 +245,13 @@ void paintPortraitSearchPage(
       }
       final (String rowTitle, String subtitle, String stamp) = rows[i];
       final double rowY = cursor + i * _resultRowHeight;
-      c.text(rowTitle, _left, rowY + 9, size: 14, width: 275, weight: 'demibold');
+      c.text(rowTitle, _left, rowY + 9, size: 14, width: _contentWidth(c) - 80, weight: 'demibold');
       if (stamp.isNotEmpty) {
-        c.rightText(stamp, _right, rowY + 10, 9, 'regular', c.muted);
+        c.rightText(stamp, _rightOf(c), rowY + 10, 9, 'regular', c.muted);
       }
-      c.text(subtitle, _left, rowY + 31, size: 10, width: _pageWidth, color: c.muted);
-      c.fill(Rect.fromLTWH(_left, rowY + _resultRowHeight - .6, _pageWidth, .6), c.line);
-      c.hit(Rect.fromLTWH(_left, rowY, _pageWidth, _resultRowHeight - 2), 'music:index:$i', rowTitle);
+      c.text(subtitle, _left, rowY + 31, size: 10, width: _contentWidth(c), color: c.muted);
+      c.fill(Rect.fromLTWH(_left, rowY + _resultRowHeight - .6, _contentWidth(c), .6), c.line);
+      c.hit(Rect.fromLTWH(_left, rowY, _contentWidth(c), _resultRowHeight - 2), 'music:index:$i', rowTitle);
     }
   }
   c.endContent();
@@ -287,7 +288,7 @@ void _pageWash(PortraitCanvas c) {
       }
     }
     c.fill(
-      Rect.fromLTWH(0, y, 393, 8),
+      Rect.fromLTWH(0, y, c.gridWidth, 8),
       <Object?>[c.paper[0], c.paper[1], c.paper[2], value],
     );
   }

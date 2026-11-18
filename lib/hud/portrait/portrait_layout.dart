@@ -10,13 +10,30 @@ import 'dart:math' as math;
 import 'dart:ui' show Rect;
 
 import '../protocol/hud_hit.dart';
+import '../scale/hud_scale.dart';
 import 'portrait_canvas.dart';
 
-/// 393 网格：舞台宽 1080 时的单位换算（Qt `m_unit = stageWidth / 393`）。
+/// 393 网格：设计稿宽（Qt `ResponsiveHudLayout` 的 393）。
 const double portraitDesignWidth = 393;
 
-/// 舞台宽 1080 → unit = 2.748…；unit 由调用方按真实舞台宽算，这里只给设计稿宽。
-double portraitUnit(double stageWidth) => stageWidth / portraitDesignWidth;
+/// 舞台像素 / 网格。
+///
+/// Qt 原文是 `m_unit = stageWidth / 393`（393 网格铺满舞台宽），屏幕一宽
+/// 「1 网格 = 多少 dp」就跟着涨——本机 1.94dp，参考图那台约 1.07dp。现在按
+/// [HudScale.portraitUnitFactor] 把网格压回 clamp 后的 dp 带（≤1.3dp）；横向多出来
+/// 的空间靠 [portraitGridWidth]（页面更宽、元素尺寸不变）消化，不缩页面也不居中留白。
+/// [stageScale] 缺省 0 表示「不压缩」，仅供不知窗口缩放比的旧调用点使用。
+double portraitUnit(double stageWidth, {double stageScale = 0}) =>
+    stageScale > 0 ? HudScale.portraitUnit(stageWidth, stageScale) : stageWidth / portraitDesignWidth;
+
+/// 页面可用的网格宽度（网格单位）。
+///
+/// 1 网格被 DPI 带夹小之后横向网格数比设计稿的 393 多（本机 586），页面必须按这个
+/// 宽度算右缘才铺满舞台；[stageScale] 缺省 0 表示「不压缩」，退回设计稿宽度。
+double portraitGridWidth(double stageWidth, {double stageScale = 0}) =>
+    stageScale > 0
+        ? HudScale.portraitGridWidth(stageWidth, stageScale)
+        : portraitDesignWidth;
 
 /// 393 网格里的可视高度（Qt `m_height = 1080 / m_unit`）。
 double portraitGridHeight(double stageHeight, double unit) => stageHeight / unit;
@@ -208,12 +225,13 @@ void paintPortraitTerminalHeader(
 }) {
   c.text('RHINE LAB', 23, 22, size: 17, width: 115, weight: 'bold');
   c.text('AUDIO TERMINAL', 23, 43, size: 7, width: 115, color: c.muted);
-  c.rightText('RL–004', 370, 29, 7, 'regular', c.muted);
-  c.text(title, 20, 66, size: 23, width: 290, weight: 'demibold');
+  final double w = c.gridWidth;
+  c.rightText('RL–004', w - 23, 29, 7, 'regular', c.muted);
+  c.text(title, 20, 66, size: 23, width: w - 103, weight: 'demibold');
   c.fill(Rect.fromLTWH(20, 101, 25, 14), c.amber);
   c.centered(code, 32.5, 108, 8, 'demibold', c.ink);
-  c.text(identifier, 53, 104, size: 7, width: 265, color: c.muted);
-  c.fill(Rect.fromLTWH(20, 120, 353, .6), c.ink);
+  c.text(identifier, 53, 104, size: 7, width: w - 128, color: c.muted);
+  c.fill(Rect.fromLTWH(20, 120, w - 40, .6), c.ink);
   final List<Object?> calibration = <Object?>[...c.line]..[3] = .6;
   for (double tick = 132; tick < c.contentBottom; tick += 16) {
     c.fill(Rect.fromLTWH(8, tick, 4, .5), calibration);
@@ -236,7 +254,7 @@ PortraitFrame paintPortraitShell(
   final double h = canvas.height;
   final double top = math.max(0, h - portraitFooterHeight);
   canvas.contentBottom = top;
-  canvas.fill(Rect.fromLTWH(0, 0, portraitDesignWidth, h), canvas.paper);
+  canvas.fill(Rect.fromLTWH(0, 0, canvas.gridWidth, h), canvas.paper);
   if (title.isNotEmpty) {
     paintPortraitTerminalHeader(
       canvas,
@@ -256,10 +274,11 @@ PortraitFrame paintPortraitShell(
 }
 
 void _brand(PortraitCanvas c) {
+  final double w = c.gridWidth;
   c.text('RHINE LAB', 23, 22, size: 17, width: 200, weight: 'bold');
   c.text('MUSIC ARCHIVE / 音乐资料库', 23, 43, size: 7, width: 240, color: c.muted);
-  c.rightText('AUDIO TERMINAL / RL–004', 370, 29, 7, 'regular', c.muted);
-  c.fill(Rect.fromLTWH(23, 58, 347, .6), c.line);
+  c.rightText('AUDIO TERMINAL / RL–004', w - 23, 29, 7, 'regular', c.muted);
+  c.fill(Rect.fromLTWH(23, 58, w - 46, .6), c.line);
 }
 
 void _tabs(PortraitCanvas c, PortraitArchive archive) {
@@ -267,7 +286,7 @@ void _tabs(PortraitCanvas c, PortraitArchive archive) {
   if (tabs.isEmpty) {
     return;
   }
-  final double tabWidth = 347 / tabs.length;
+  final double tabWidth = (c.gridWidth - 46) / tabs.length;
   for (int index = 0; index < tabs.length; index++) {
     final double x = 23 + tabWidth * index;
     final bool selected = index == archive.selectedTab;
@@ -283,19 +302,20 @@ void _tabs(PortraitCanvas c, PortraitArchive archive) {
 }
 
 void _title(PortraitCanvas c, PortraitArchive archive, double listTop) {
+  final double w = c.gridWidth;
   c.text(archive.title, 23, 123,
-      size: 23, width: archive.canPlayAll ? 250 : 345, weight: 'bold');
+      size: 23, width: archive.canPlayAll ? w - 143 : w - 48, weight: 'bold');
   if (archive.canPlayAll && archive.total > 0) {
-    c.icon('play', 288, 126, size: 15);
-    c.text('播放全部', 309, 127, size: 10, width: 74);
-    c.hit(Rect.fromLTWH(280, 114, 94, 44), 'music:play-loaded', '播放全部');
+    c.icon('play', w - 105, 126, size: 15);
+    c.text('播放全部', w - 84, 127, size: 10, width: 74);
+    c.hit(Rect.fromLTWH(w - 113, 114, 94, 44), 'music:play-loaded', '播放全部');
   }
   c.text('上下滑动浏览 / TRACK INDEX', 23, listTop - 18, size: 8, width: 240, color: c.muted);
   final String counter = archive.total == 0
       ? '00 / 00'
       : '${_pad(archive.index + 1)} / ${_pad(archive.total)}';
-  c.rightText(counter, 370, listTop - 18, 8, 'regular', c.ink);
-  c.fill(Rect.fromLTWH(23, listTop - 4, 347, .7), c.ink);
+  c.rightText(counter, w - 23, listTop - 18, 8, 'regular', c.ink);
+  c.fill(Rect.fromLTWH(23, listTop - 4, w - 46, .7), c.ink);
 }
 
 void _list(
@@ -317,17 +337,17 @@ void _list(
     final double t = (step + 1) / steps;
     c.fill(
       Rect.fromLTWH(0, fadeTop + step * (fadeHeight / steps),
-          portraitDesignWidth, fadeHeight / steps + .5),
+          c.gridWidth, fadeHeight / steps + .5),
       <Object?>[.075, .110, .094, t],
     );
   }
-  c.fill(Rect.fromLTWH(0, listTop, portraitDesignWidth, math.max(0, c.height - listTop)),
+  c.fill(Rect.fromLTWH(0, listTop, c.gridWidth, math.max(0, c.height - listTop)),
       <Object?>[.075, .110, .094, 1]);
   c.beginContent(listTop);
   if (archive.rows.isEmpty) {
     if (archive.emptyNotice.isNotEmpty) {
       c.text(archive.emptyNotice, 23, listTop + 16,
-          size: 11, width: 347, color: c.muted);
+          size: 11, width: c.gridWidth - 46, color: c.muted);
     }
   } else {
     // 当前行固定在「第二槽」是 Qt 的原始版式（上方留一行给「上一首」，滚动时顺手滑出）。
@@ -353,20 +373,21 @@ void _list(
       final double y = slotY + (row - position) * portraitRowHeight;
       final double distance = (row - position).abs();
       final bool isCurrent = row == current;
+      final double rowWidth = c.gridWidth - 46;
       if (isCurrent) {
-        c.fill(Rect.fromLTWH(23, y, 347, portraitRowHeight - 2), c.surface);
+        c.fill(Rect.fromLTWH(23, y, rowWidth, portraitRowHeight - 2), c.surface);
         c.fill(Rect.fromLTWH(23, y, 2, portraitRowHeight - 2), c.amber);
       }
       final double alpha = (.85 - distance * .13).clamp(.2, .85);
       final List<Object?> color = <Object?>[.925, .933, .886, alpha];
       c.text(_pad(row + 1), 27, y + 19, size: 8, width: 24, color: c.muted);
       c.text(archive.rows[row].title, 56, y + 14,
-          size: isCurrent ? 14 : 13, width: 292, weight: 'regular', color: color);
+          size: isCurrent ? 14 : 13, width: rowWidth - 55, weight: 'regular', color: color);
       if (isCurrent) {
-        c.icon('right', 359, y + 16, size: 14, color: c.amber);
+        c.icon('right', c.gridWidth - 34, y + 16, size: 14, color: c.amber);
       }
       c.hit(
-        Rect.fromLTWH(23, y, 347, portraitRowHeight),
+        Rect.fromLTWH(23, y, rowWidth, portraitRowHeight),
         isCurrent || row == archive.index ? 'open' : 'music:index:$row',
         archive.rows[row].title,
       );
@@ -374,7 +395,7 @@ void _list(
   }
   c.endContent();
   // 列表底与播放条之间的分隔（Qt `{0,top,393,.6}`）。
-  c.fill(Rect.fromLTWH(0, bottom, portraitDesignWidth, .6), c.line);
+  c.fill(Rect.fromLTWH(0, bottom, c.gridWidth, .6), c.line);
 }
 
 void _playerAndNav(
@@ -384,8 +405,9 @@ void _playerAndNav(
   required double top,
 }) {
   final double h = c.height;
-  c.fill(Rect.fromLTWH(0, top, portraitDesignWidth, math.max(0, h - top)), c.paper);
-  c.fill(Rect.fromLTWH(0, top, portraitDesignWidth * player.fraction, 2), c.amber);
+  final double w = c.gridWidth;
+  c.fill(Rect.fromLTWH(0, top, w, math.max(0, h - top)), c.paper);
+  c.fill(Rect.fromLTWH(0, top, w * player.fraction, 2), c.amber);
 
   // 封面 34×34（Qt `{20, top+15, 34, 34}`），没有真实封面就留空槽，不画假图。
   final Rect cover = Rect.fromLTWH(20, top + 15, 34, 34);
@@ -395,32 +417,34 @@ void _playerAndNav(
   }
   c.border(cover, c.line);
 
+  final double textWidth = math.max(120, w - 175);
   c.text(player.hasTrack ? player.title : '未在播放', 65, top + 13,
-      size: 13, width: 202, weight: 'demibold');
+      size: 13, width: textWidth, weight: 'demibold');
   c.text(player.hasTrack ? player.artist : '选择一首曲目开始', 65, top + 35,
-      size: 10, width: 202, color: c.muted);
-  c.hit(Rect.fromLTWH(60, top + 8, 207, 48), 'player:open', '打开播放器');
+      size: 10, width: textWidth, color: c.muted);
+  c.hit(Rect.fromLTWH(60, top + 8, textWidth + 5, 48), 'player:open', '打开播放器');
 
   // 播放/暂停圆钮（Qt PlayerBar::appendPlayButton 的圆形按钮）。
-  final double cx = 295 + 20;
+  final double cx = w - 78;
   final double cy = top + 34;
   // sweep 必须严格小于 2π：Flutter 的 Path.arcTo 在整圆（2π）时会退化成空路径，
   // 环就画不出来（v101 实机里只剩播放三角形）。
   c.commands.add(<Object?>['arc', cx, cy, 20, 0, math.pi * 2 - .02, 1.2, c.ink]);
   c.icon(player.playing ? 'pause' : 'play', cx - 7.5, cy - 7.5, size: 15, color: c.ink);
-  c.hit(Rect.fromLTWH(291, top + 10, 48, 48), 'player:toggle', player.playing ? '暂停' : '播放');
+  // 播放钮命中刻意比「下一首」左一点：两者相邻，圆心必须只落在播放钮里。
+  c.hit(Rect.fromLTWH(w - 102, top + 10, 46, 46), 'player:toggle', player.playing ? '暂停' : '播放');
 
-  c.icon('next', 341, cy - 10, size: 20, color: c.ink);
-  c.hit(Rect.fromLTWH(331, top + 12, 44, 44), 'player:next', '下一首');
+  c.icon('next', w - 52, cy - 10, size: 20, color: c.ink);
+  c.hit(Rect.fromLTWH(w - 58, top + 12, 44, 44), 'player:next', '下一首');
 
   final double navTop = top + 67;
   final double navHeight = math.max(0, h - portraitGestureInset - navTop);
   if (navHeight <= 0) {
-    c.field('playerBounds', Rect.fromLTWH(0, top, portraitDesignWidth, math.max(0, h - top)));
+    c.field('playerBounds', Rect.fromLTWH(0, top, w, math.max(0, h - top)));
     return;
   }
-  c.fill(Rect.fromLTWH(0, navTop, portraitDesignWidth, .7), c.line);
-  final double cell = portraitDesignWidth / PortraitNav.values.length;
+  c.fill(Rect.fromLTWH(0, navTop, w, .7), c.line);
+  final double cell = w / PortraitNav.values.length;
   for (int index = 0; index < PortraitNav.values.length; index++) {
     final PortraitNav item = PortraitNav.values[index];
     final double x = cell * index;
@@ -436,7 +460,7 @@ void _playerAndNav(
     }
     c.hit(Rect.fromLTWH(x, navTop, cell, navHeight), item.action, item.title);
   }
-  c.field('playerBounds', Rect.fromLTWH(0, top, portraitDesignWidth, math.max(0, h - top)));
+  c.field('playerBounds', Rect.fromLTWH(0, top, w, math.max(0, h - top)));
 }
 
 String _pad(int value) => value.toString().padLeft(2, '0');

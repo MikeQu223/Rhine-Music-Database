@@ -24,7 +24,7 @@ import 'package:flutter/material.dart';
 
 import '../hud/modals/settings_modal.dart';
 import '../hud/portrait/portrait_layout.dart'
-    show portraitDesignWidth, portraitFooterHeight;
+    show portraitDesignWidth, portraitFooterHeight, portraitGridWidth, portraitUnit;
 import '../hud/protocol/hud_frame.dart' show HudStage;
 import '../hud/widgets/settings_row.dart';
 import 'basic_settings.dart';
@@ -49,6 +49,7 @@ class BasicPortraitSettingsPage extends StatefulWidget {
     required this.onAction,
     this.scrollStorage,
     this.scrollMaximumStorage,
+    this.stageScale = 0,
   });
 
   /// 竖屏舞台：width 恒 1080，height 为舞台高，scale 恒 1（缩放在 PortraitStage）。
@@ -68,12 +69,19 @@ class BasicPortraitSettingsPage extends StatefulWidget {
   /// 可选：把真实可滚动距离公布给宿主（键盘滚动 clamp 的上界）。
   final ValueNotifier<double>? scrollMaximumStorage;
 
+  /// 竖屏窗口缩放比（逻辑 dp / 舞台像素，= PortraitBands.stageScale）。
+  /// 用来和 HUD 画布同一口径把 393 网格压进 clamp 后的 dp 带；0 = 不压缩。
+  final double stageScale;
+
   @override
   State<BasicPortraitSettingsPage> createState() =>
       _BasicPortraitSettingsPageState();
 }
 
 class _BasicPortraitSettingsPageState extends State<BasicPortraitSettingsPage> {
+  /// 当前页宽（网格）：DPI 适配后比设计稿 393 宽，行内控件按右缘锚定。
+  double _pageWidth = portraitDesignWidth;
+
   late final ScrollController _scroll = ScrollController(
     initialScrollOffset: widget.scrollStorage?.value ?? 0,
   );
@@ -133,13 +141,17 @@ class _BasicPortraitSettingsPageState extends State<BasicPortraitSettingsPage> {
 
   @override
   Widget build(BuildContext context) {
-    final double unit = widget.stage.width / portraitDesignWidth;
+    // DPI 适配：网格单位与网格宽度都从 portrait_layout 取，和 HUD 命令流同源——
+    // 页面宽度 = 舞台宽 / 网格单位（比设计稿 393 宽），元素尺寸不变、页面铺满。
+    final double unit = portraitUnit(widget.stage.width, stageScale: widget.stageScale);
+    final double gridWidth = portraitGridWidth(widget.stage.width, stageScale: widget.stageScale);
     final double gridHeight =
         unit > 0 ? widget.stage.height / unit : portraitDesignWidth;
     final double pageBottom = math.max(0.0, gridHeight - portraitFooterHeight);
     if (unit <= 0 || pageBottom <= basicPortraitSettingsContentTop) {
       return const SizedBox.shrink();
     }
+    _pageWidth = gridWidth;
     final _PortraitInk ink = _PortraitInk.of(widget.dark);
     return ClipRect(
       key: basicPortraitSettingsPageKey,
@@ -155,26 +167,29 @@ class _BasicPortraitSettingsPageState extends State<BasicPortraitSettingsPage> {
           child: Transform.scale(
             scale: unit,
             alignment: Alignment.topLeft,
-            child: SizedBox(
-              width: portraitDesignWidth,
-              height: pageBottom,
-              child: Stack(
-                children: <Widget>[
-                  Positioned(
-                    left: 0,
-                    right: 0,
-                    top: basicPortraitSettingsContentTop,
-                    bottom: 0,
-                    child: SingleChildScrollView(
-                      controller: _scroll,
-                      padding: EdgeInsets.zero,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: _content(ink),
+            child: Padding(
+              padding: EdgeInsets.zero,
+              child: SizedBox(
+                width: gridWidth,
+                height: pageBottom,
+                child: Stack(
+                  children: <Widget>[
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      top: basicPortraitSettingsContentTop,
+                      bottom: 0,
+                      child: SingleChildScrollView(
+                        controller: _scroll,
+                        padding: EdgeInsets.zero,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: _content(ink),
+                        ),
                       ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
@@ -271,7 +286,7 @@ class _BasicPortraitSettingsPageState extends State<BasicPortraitSettingsPage> {
           Positioned(
             left: 20,
             top: 19,
-            width: 170,
+            width: _pageWidth - 222,
             child: Text(
               row.titleZh,
               maxLines: 1,
@@ -283,7 +298,7 @@ class _BasicPortraitSettingsPageState extends State<BasicPortraitSettingsPage> {
             Positioned(
               left: 20,
               top: 36,
-              width: 170,
+              width: _pageWidth - 222,
               child: Text(
                 row.restartHint,
                 maxLines: 1,
@@ -293,7 +308,7 @@ class _BasicPortraitSettingsPageState extends State<BasicPortraitSettingsPage> {
             ),
           if (stepper) ...<Widget>[
             Positioned(
-              left: 201,
+              left: _pageWidth - 192,
               top: 19,
               width: 70,
               child: Text(
@@ -304,25 +319,25 @@ class _BasicPortraitSettingsPageState extends State<BasicPortraitSettingsPage> {
               ),
             ),
             _stepButton(
-              left: 279,
+              left: _pageWidth - 115,
               glyph: '−',
               action: row.enabled ? route + row.decrementValue : '',
               ink: ink,
             ),
             _stepButton(
-              left: 329,
+              left: _pageWidth - 65,
               glyph: '+',
               action: row.enabled ? route + row.incrementValue : '',
               ink: ink,
             ),
           ] else ...<Widget>[
             Positioned(
-              left: 201,
+              left: _pageWidth - 192,
               top: 9,
               child: Container(width: 172, height: 34, color: ink.surface),
             ),
             Positioned(
-              left: 211,
+              left: _pageWidth - 182,
               top: 19,
               width: 137,
               child: Text(
@@ -333,7 +348,7 @@ class _BasicPortraitSettingsPageState extends State<BasicPortraitSettingsPage> {
               ),
             ),
             Positioned(
-              left: 355,
+              left: _pageWidth - 38,
               top: 18,
               width: 16,
               child: Text(
@@ -343,7 +358,7 @@ class _BasicPortraitSettingsPageState extends State<BasicPortraitSettingsPage> {
             ),
           ],
           _tapArea(
-            left: 195,
+            left: _pageWidth - 198,
             top: 4,
             width: 178,
             height: 44,
@@ -379,7 +394,7 @@ class _BasicPortraitSettingsPageState extends State<BasicPortraitSettingsPage> {
             left: 20,
             top: 4,
             child: Container(
-              width: 353,
+              width: _pageWidth - 40,
               height: 40,
               color: selected ? ink.raised : ink.surface,
               alignment: Alignment.centerLeft,
@@ -396,7 +411,7 @@ class _BasicPortraitSettingsPageState extends State<BasicPortraitSettingsPage> {
             left: 20,
             top: 4,
             child: Container(
-              width: 353,
+              width: _pageWidth - 40,
               height: 40,
               decoration: BoxDecoration(
                 border: Border.all(
@@ -409,7 +424,7 @@ class _BasicPortraitSettingsPageState extends State<BasicPortraitSettingsPage> {
           _tapArea(
             left: 20,
             top: 4,
-            width: 353,
+            width: _pageWidth - 40,
             height: 40,
             action: row.enabled ? route + choice.value : '',
             label: choice.label,
@@ -429,28 +444,28 @@ class _BasicPortraitSettingsPageState extends State<BasicPortraitSettingsPage> {
           Positioned(
             left: 20,
             top: 19,
-            width: 170,
+            width: _pageWidth - 222,
             child: Text('唱片旋转', style: _style(12, ink.ink)),
           ),
           Positioned(
-            left: 201,
+            left: _pageWidth - 192,
             top: 9,
             child: Container(width: 172, height: 34, color: ink.surface),
           ),
           Positioned(
-            left: 211,
+            left: _pageWidth - 182,
             top: 19,
             width: 137,
             child: Text(on ? '开启' : '关闭', style: _style(11, ink.muted)),
           ),
           Positioned(
-            left: 355,
+            left: _pageWidth - 38,
             top: 18,
             width: 16,
             child: Text('⌄', style: _style(12, ink.muted)),
           ),
           _tapArea(
-            left: 195,
+            left: _pageWidth - 198,
             top: 4,
             width: 178,
             height: 44,
@@ -480,7 +495,7 @@ class _BasicPortraitSettingsPageState extends State<BasicPortraitSettingsPage> {
           Positioned(
             left: 20,
             top: 4,
-            width: 353,
+            width: _pageWidth - 40,
             child: Text(
               widget.model.version.label,
               maxLines: 1,
@@ -493,7 +508,7 @@ class _BasicPortraitSettingsPageState extends State<BasicPortraitSettingsPage> {
             Positioned(
               left: 20,
               top: 26,
-              width: 353,
+              width: _pageWidth - 40,
               child: Text(
                 widget.model.version.commitTitle,
                 maxLines: 1,
@@ -514,7 +529,7 @@ class _BasicPortraitSettingsPageState extends State<BasicPortraitSettingsPage> {
           Positioned(
             left: 20,
             top: 14,
-            width: 353,
+            width: _pageWidth - 40,
             child: Text(text, style: _style(11, ink.muted)),
           ),
         ],
@@ -595,7 +610,7 @@ class _BasicPortraitSettingsPageState extends State<BasicPortraitSettingsPage> {
   }) {
     return Positioned(
       left: 20,
-      right: portraitDesignWidth - 373,
+      right: 20,
       top: top,
       child: Align(
         alignment: Alignment.centerRight,

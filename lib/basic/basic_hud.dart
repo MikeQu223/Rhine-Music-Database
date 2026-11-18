@@ -114,6 +114,9 @@ class BasicHudFrame {
     /// true = 右栏是曲目列表；false = 右栏是当前条目的单条面板（Tab Mode 切换）。
     /// 只影响资料库列表页的绘制分支，不参与选中/滚动真值。
     bool trackListMode = true,
+    /// 舞台缩放（逻辑像素 / 舞台单位）。竖屏用它把「1 网格 = 1.3dp」的 DPI 策略
+    /// 换算成网格宽度（见 [HudScale.portraitGridWidth]）；0 = 旧口径（1 网格 = 屏宽/393）。
+    double stageScale = 0,
   }) {
     final bool dark = state.dark;
     // 竖屏（compact）走独立排版：393 网格、归档主页 + 迷你播放条 + 底栏，
@@ -129,6 +132,7 @@ class BasicHudFrame {
         animationTime: animationTime,
         animateText: animateText,
         modal: modal,
+        stageScale: stageScale,
       );
     }
     final _HudSink sink = _HudSink();
@@ -219,6 +223,7 @@ class BasicHudFrame {
     double animationTime = 0,
     bool animateText = false,
     String modal = '',
+    double stageScale = 0,
   }) {
     final _HudSink sink = _HudSink();
     ports.beginFrame(sink: sink, time: animationTime, ink: hudInk(dark), animate: animateText);
@@ -236,10 +241,14 @@ class BasicHudFrame {
         );
       },
     );
-    final double unit = portraitUnit(width);
+    final double unit = portraitUnit(width, stageScale: stageScale);
+    // 页面铺满舞台：网格宽度 = 舞台宽 / unit（元素按 1.3dp 缩小，页宽跟着变宽），
+    // 页面里的右缘常量都读 canvas.gridWidth，不能再写死 393。
+    final double gridWidth = portraitGridWidth(width, stageScale: stageScale);
     final PortraitCanvas canvas = PortraitCanvas(
       metrics: metrics,
       unit: unit,
+      gridWidth: gridWidth,
       height: portraitGridHeight(height, unit),
       dark: dark,
     );
@@ -717,13 +726,23 @@ Rect? basicSceneStageRect({
 /// / `ruler.trackRulerWindowHeight`），绘制与手势共用一处，手势层不再自己拍一套坐标。
 /// 竖屏窗口上沿就是带顶 [basicPortraitListOffset]——与 [basicPortraitListShift] 同一个
 /// 换算，绘制平移多少、命中就从哪里开始。
-Rect basicLibraryListStageRect({required bool portrait, required double width, double? height}) {
+Rect basicLibraryListStageRect({
+  required bool portrait,
+  required double width,
+  double? height,
+  double stageScale = 0,
+}) {
   // 竖屏 compact 版：列表带就是「第二行对齐的那块 4 行窗口」，
   // 顶边 = portraitListTop（随可视高度伸缩），高 = 4 行。
   if (portrait && height != null) {
-    final double unit = portraitUnit(width);
+    final double unit = portraitUnit(width, stageScale: stageScale);
     final double top = portraitListTop(portraitGridHeight(height, unit)) * unit;
-    return Rect.fromLTWH(0, top, width, portraitRowHeight * 4 * unit);
+    return Rect.fromLTWH(
+      0,
+      top,
+      portraitGridWidth(width, stageScale: stageScale) * unit,
+      portraitRowHeight * 4 * unit,
+    );
   }
   final double rawLeft = basicNavigationLeft(width) - 4;
   final double left = rawLeft < 0 ? 0 : rawLeft;
@@ -753,11 +772,17 @@ List<Rect> basicHudRegionRects(
   required bool portrait,
   required double width,
   double? height,
+  double stageScale = 0,
   Rect? directTouchStageRect,
 }) {
   return <Rect>[
     ...basicHudHitStageRects(frame, geometry: geometry, android: android),
-    basicLibraryListStageRect(portrait: portrait, width: width, height: height),
+    basicLibraryListStageRect(
+      portrait: portrait,
+      width: width,
+      height: height,
+      stageScale: stageScale,
+    ),
     // 资料库列表页：左侧 3D 直触区也归 HUD（整串指针由 HUD 消费，3D 层不再
     // 二次解释这条手势）。非列表阶段/尺寸退化时传 null，行为与扩展前一致。
     ?directTouchStageRect,
@@ -1134,6 +1159,7 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       archiveMaskStrength: widget.archiveMaskStrength,
       trackListMode: _trackListMode,
       modal: widget.modal,
+      stageScale: geometry.stageScale,
     );
     // 共享滚动文字有字符槽还在 kReelDuration 内 -> 续帧；静止后停 ticker。
     // 松手惯性期间也必须续帧（同一个 ticker 兼职推进列表动量）。
@@ -1163,6 +1189,7 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       portrait: portrait,
       width: stage.width,
       height: stage.height,
+      stageScale: geometry.stageScale,
     );
     // 资料库列表页：把列表拖动的手势域从「仅右侧曲目列」扩到「右侧曲目列 ∪ 左侧
     // 3D 直触区」（用户 m10322-1）。只在列表阶段扩展——详情/歌词页的 3D 操作
@@ -1197,11 +1224,9 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
     final Rect playerBarStageRect = portrait
         ? Rect.fromLTWH(
             0,
-            (portraitListTop(portraitGridHeight(stage.height, portraitUnit(stage.width))) +
-                    portraitRowHeight * 4) *
-                portraitUnit(stage.width),
+            listStageRect.bottom,
             stage.width,
-            stage.height,
+            stage.height - listStageRect.bottom,
           )
         : Rect.fromLTWH(
             0,

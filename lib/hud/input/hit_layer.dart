@@ -40,6 +40,7 @@ library;
 import 'dart:ui' show Offset, Rect;
 
 import '../protocol/hud_hit.dart';
+import '../scale/hud_scale.dart';
 
 /// 舞台几何：Qt/qml/Overlay.qml:22-23。
 ///
@@ -76,7 +77,27 @@ class StageGeometry {
           originY >= 0 && originY < double.infinity,
           'StageGeometry.originY must be finite and non-negative (landscape keeps 0)',
         ),
+        // 横屏：const 构造里只能放常量表达式，夹带（HudScale.landscapeStageScale）
+        // 放到工厂 [StageGeometry.landscape] 里做，这里保持原式。
         stageScale = logicalHeight > 0 ? logicalHeight / baseHeight : 1.0;
+
+  /// 横屏生产构造：在 [StageGeometry] 的基础上套 DPI 适配带
+  /// （[HudScale.landscapeStageScale]：基准 762dp/1080 = 0.7056，夹在 ±15%）。
+  ///
+  /// const 构造本身只能放常量表达式，所以 clamp 放在这里；测试里直接调
+  /// [StageGeometry] 的用例仍拿到 `logicalHeight / 1080` 的旧口径。
+  factory StageGeometry.landscape({
+    required double logicalWidth,
+    required double logicalHeight,
+    double originY = 0.0,
+  }) {
+    return StageGeometry.withScale(
+      stageScale: HudScale.landscapeStageScale(logicalHeight),
+      logicalWidth: logicalWidth,
+      logicalHeight: logicalHeight,
+      originY: originY,
+    );
+  }
 
   /// 显式注入唯一 scale（DEDUP-13）；竖屏唯一合法构造。
   ///

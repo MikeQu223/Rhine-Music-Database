@@ -20,11 +20,11 @@ import 'dart:ui' show Rect;
 import 'portrait_canvas.dart';
 
 /// 393 设计网格宽。
-const double _gridWidth = 393;
+// 网格宽由 canvas.gridWidth 提供（DPI 适配后页宽可变），这里不再写死。
 
 /// 正文左右留白（Qt 的 20 / 353 对）。
 const double _gutter = 20;
-const double _bodyWidth = 353;
+// 正文宽 = canvas.gridWidth - 40（左右各 20 网格）。
 
 /// 毫秒 → mm:ss（Qt `MusicData::pad`，PlayerBar.cpp:8-12 的同款）。
 String _clock(double ms) {
@@ -80,15 +80,15 @@ void paintPortraitSongPage(
   final double h = c.height;
 
   // 整页铺纸色：竖屏详情是沉浸页，绝不把身后的 3D 唱片透出来（v101 实机串页）。
-  c.fill(Rect.fromLTWH(0, 0, _gridWidth, math.max(0, h)), c.paper);
+  c.fill(Rect.fromLTWH(0, 0, c.gridWidth, math.max(0, h)), c.paper);
 
   // 关闭：参考图是顶部居中的一枚 X，没有「RHINE LAB / 标题」页头。
-  c.icon('close', _gridWidth / 2 - 9, 34, size: 18, color: c.ink);
-  c.hit(Rect.fromLTWH(_gridWidth / 2 - 40, 16, 80, 52), 'back', '关闭');
+  c.icon('close', c.gridWidth / 2 - 9, 34, size: 18, color: c.ink);
+  c.hit(Rect.fromLTWH(c.gridWidth / 2 - 40, 16, 80, 52), 'back', '关闭');
 
   // 唱片卡：正方形居中，最长边 312（参考值），短屏按 .38h 收。
   final double side = math.max(120, math.min(312, h * .38));
-  final Rect card = Rect.fromLTWH((_gridWidth - side) / 2, 84, side, side);
+  final Rect card = Rect.fromLTWH((c.gridWidth - side) / 2, 84, side, side);
   c.fill(card, c.surface);
   if (cover.isNotEmpty) {
     c.image(cover, card);
@@ -99,9 +99,9 @@ void paintPortraitSongPage(
   double y = card.bottom + 16;
   c.text(_sectionLabel(kind), _gutter, y, size: 8, width: 240, color: c.muted);
   if (stamp.isNotEmpty) {
-    c.rightText(stamp, 373, y, 8, 'regular', c.ink);
+    c.rightText(stamp, c.gridWidth - 20, y, 8, 'regular', c.ink);
   }
-  c.fill(Rect.fromLTWH(_gutter, y + 14, _bodyWidth, .6), c.line);
+  c.fill(Rect.fromLTWH(_gutter, y + 14, (c.gridWidth - 40), .6), c.line);
   y += 26;
 
   // 两行大标题（超出省略号）+ 艺人/专辑 + 收藏状态。
@@ -110,7 +110,7 @@ void paintPortraitSongPage(
     _gutter,
     y,
     size: 25,
-    width: _bodyWidth,
+    width: (c.gridWidth - 40),
     weight: 'demibold',
     maximumLines: 2,
     lineSpacing: 1.2,
@@ -118,7 +118,7 @@ void paintPortraitSongPage(
   final String meta = _metaLine(artist, album);
   y += 6;
   if (meta.isNotEmpty) {
-    c.text(meta, _gutter, y, size: 11, width: _bodyWidth - 56, color: c.muted);
+    c.text(meta, _gutter, y, size: 11, width: (c.gridWidth - 40) - 56, color: c.muted);
   }
   c.icon(favourite ? 'heart-filled' : 'heart', 350, y - 4,
       size: 18, color: favourite ? c.ink : c.muted);
@@ -154,15 +154,15 @@ void _songProgressRow(
   if (lyricPreview.isNotEmpty) {
     c.icon('lyrics-lines', _gutter, barY - 22, size: 11, color: c.muted);
     c.text(lyricPreview, _gutter + 18, barY - 21,
-        size: 10, width: _bodyWidth - 18, color: c.muted);
+        size: 10, width: (c.gridWidth - 40) - 18, color: c.muted);
   }
   final double fraction =
       durationMs.isFinite && durationMs > 0 ? _unit(positionMs / durationMs) : 0;
-  c.fill(Rect.fromLTWH(_gutter, barY, _bodyWidth, 2), c.line);
+  c.fill(Rect.fromLTWH(_gutter, barY, (c.gridWidth - 40), 2), c.line);
   if (fraction > 0) {
-    c.fill(Rect.fromLTWH(_gutter, barY, _bodyWidth * fraction, 2), c.amber);
+    c.fill(Rect.fromLTWH(_gutter, barY, (c.gridWidth - 40) * fraction, 2), c.amber);
   }
-  c.fill(Rect.fromLTWH(_gutter - 1.5 + _bodyWidth * fraction, barY - 4, 3, 10), c.ink);
+  c.fill(Rect.fromLTWH(_gutter - 1.5 + (c.gridWidth - 40) * fraction, barY - 4, 3, 10), c.ink);
   for (int tick = 0; tick <= 20; tick++) {
     c.fill(
       Rect.fromLTWH(_gutter + tick * 17.6, barY + 6, .6, tick % 5 == 0 ? 6 : 3),
@@ -173,12 +173,12 @@ void _songProgressRow(
   c.text(_clock(positionMs), _gutter, barY + 16, size: 11, width: 120, color: c.muted);
   final double remaining =
       durationMs.isFinite && durationMs > positionMs ? durationMs - positionMs : 0;
-  c.rightText('-${_clock(remaining)}', 373, barY + 16, 11, 'regular', c.muted);
+  c.rightText('-${_clock(remaining)}', c.gridWidth - 20, barY + 16, 11, 'regular', c.muted);
 }
 
 /// 传输三键：上一首 / 居中的圆环播放键 / 下一首。
 void _songTransportRow(PortraitCanvas c, {required double center, required bool playing}) {
-  final double cx = _gridWidth / 2;
+  final double cx = c.gridWidth / 2;
   c.commands.add(<Object?>['arc', cx, center, 26, 0, math.pi * 2 - .02, 1.2, c.ink]);
   c.icon(playing ? 'pause' : 'play', cx - 11, center - 11, size: 22, color: c.ink);
   c.icon('prev', cx - 104, center - 12, size: 24, color: c.ink);
@@ -190,7 +190,7 @@ void _songTransportRow(PortraitCanvas c, {required double center, required bool 
 
 /// 底部四入口：歌词 / 随机播放 / 播放队列 / 更多。
 void _songFooterRow(PortraitCanvas c, {required double top, bool lyricsAvailable = true}) {
-  c.fill(Rect.fromLTWH(_gutter, top, _bodyWidth, .6), c.line);
+  c.fill(Rect.fromLTWH(_gutter, top, (c.gridWidth - 40), .6), c.line);
   const List<String> labels = <String>['歌词', '随机播放', '播放队列', '更多'];
   const List<String> icons = <String>['lyrics-lines', 'shuffle', 'queue-note', 'more'];
   final List<String> actions = <String>[
@@ -200,7 +200,7 @@ void _songFooterRow(PortraitCanvas c, {required double top, bool lyricsAvailable
     'mobile:song-options',
   ];
   const List<String> hitLabels = <String>['打开全屏歌词', '切换播放模式', '播放队列', '歌曲更多操作'];
-  final double cell = _bodyWidth / 4;
+  final double cell = (c.gridWidth - 40) / 4;
   for (int index = 0; index < labels.length; index++) {
     final double x = _gutter + cell * index;
     c.icon(icons[index], x + 4, top + 15, size: 14, color: c.muted);
@@ -227,7 +227,7 @@ void paintPortraitLyricsPage(
 
   // 歌词页整页铺纸色（Qt 的 lyric 分支：`paperPage || lyric` 全屏 paper），
   // 正文因此始终落在纸面而不是 3D 场景上。
-  c.fill(Rect.fromLTWH(0, 0, _gridWidth, math.max(0, h)), c.paper);
+  c.fill(Rect.fromLTWH(0, 0, c.gridWidth, math.max(0, h)), c.paper);
   // 顶部：只有一枚居中把手（下拉/点击收起），没有「RHINE LAB / 歌词」页头——
   // 参考图的歌词页是沉浸式全屏歌词，标题区只有封面 + 曲名 + 艺人 + 收藏/更多。
   c.fill(const Rect.fromLTWH(160, 16, 73, 3), c.line);
@@ -275,7 +275,7 @@ void _lyricsRows(
   if (lines.isEmpty) {
     // 空状态摆阅读区正中，别贴着顶沿（否则歌词区看起来像没铺开）。
     c.text('暂无歌词 / NO LYRICS', _gutter, top + height / 2 - 8,
-        size: 12, width: _bodyWidth, color: c.muted);
+        size: 12, width: (c.gridWidth - 40), color: c.muted);
     return;
   }
 
@@ -291,10 +291,10 @@ void _lyricsRows(
     final double lineHeight = isActive ? 30 : 26;
     final String body = lines[index].$2.isEmpty ? '•••' : lines[index].$2;
     final List<String> wrapped =
-        c.wrap(body, _bodyWidth, size, isActive ? 'demibold' : 'regular');
+        c.wrap(body, (c.gridWidth - 40), size, isActive ? 'demibold' : 'regular');
     final String source = lines[index].$3;
     final List<String> translated =
-        source.isEmpty ? const <String>[] : c.wrap(source, _bodyWidth, 11);
+        source.isEmpty ? const <String>[] : c.wrap(source, (c.gridWidth - 40), 11);
     final double rowHeight = wrapped.length * lineHeight + translated.length * 17;
     tops.add(cursor);
     heights.add(rowHeight);
@@ -326,14 +326,14 @@ void _lyricsRows(
     final List<String> body = bodies[index];
     for (int line = 0; line < body.length; line++) {
       c.text(body[line], _gutter, y + line * lineHeight,
-          size: size, width: _bodyWidth, weight: isActive ? 'demibold' : 'regular', color: color);
+          size: size, width: (c.gridWidth - 40), weight: isActive ? 'demibold' : 'regular', color: color);
     }
     final List<Object?> translated = List<Object?>.of(color);
     translated[3] = (isActive ? 1.0 : .32) * edge * .7;
     final List<String> translation = translations[index];
     for (int line = 0; line < translation.length; line++) {
       c.text(translation[line], _gutter, y + body.length * lineHeight + line * 17,
-          size: 11, width: _bodyWidth, color: translated);
+          size: 11, width: (c.gridWidth - 40), color: translated);
     }
     // 下标必须是 lines 的真实下标：宿主用它换算真实 seek 目标。
     final double hitTop = math.max(top, y - 8);
@@ -354,7 +354,7 @@ void _lyricsBar(
   required double durationMs,
 }) {
   final double h = c.height;
-  c.fill(Rect.fromLTWH(0, top, _gridWidth, .6), c.line);
+  c.fill(Rect.fromLTWH(0, top, c.gridWidth, .6), c.line);
 
   // 沉浸条几何照抄 Qt compact `player(c, immersive=true)`
   // （ResponsiveHudLayout.cpp:303-323）：进度 top+19、时间 top+32、
@@ -363,20 +363,24 @@ void _lyricsBar(
   final double barY = top + 19;
   final double fraction =
       durationMs.isFinite && durationMs > 0 ? _unit(positionMs / durationMs) : 0;
-  c.fill(Rect.fromLTWH(26, barY, 341, 2), c.line);
+  // 轨道宽度 = 页宽 - 左右各 26（设计稿 393 → 341）；DPI 适配后页宽比 393 宽。
+  final double trackLeft = 26;
+  final double trackWidth = math.max(60, c.gridWidth - 52);
+  c.fill(Rect.fromLTWH(trackLeft, barY, trackWidth, 2), c.line);
   if (fraction > 0) {
-    c.fill(Rect.fromLTWH(26, barY, 341 * fraction, 2), c.amber);
+    c.fill(Rect.fromLTWH(trackLeft, barY, trackWidth * fraction, 2), c.amber);
   }
-  c.fill(Rect.fromLTWH(24.5 + 341 * fraction, barY - 5, 3, 12), c.ink);
+  c.fill(Rect.fromLTWH(trackLeft - 1.5 + trackWidth * fraction, barY - 5, 3, 12), c.ink);
+  final double tickStep = trackWidth / 20;
   for (int tick = 0; tick <= 20; tick++) {
     c.fill(
-      Rect.fromLTWH(26 + tick * 17.05, barY + 4, .6, tick % 5 == 0 ? 6 : 3),
+      Rect.fromLTWH(trackLeft + tick * tickStep, barY + 4, .6, tick % 5 == 0 ? 6 : 3),
       c.line,
     );
   }
-  c.field('seek', Rect.fromLTWH(26, top + 9, 341, 24));
-  c.text(_clock(positionMs), 26, top + 32, size: 10, width: 100, color: c.muted);
-  c.rightText(_clock(durationMs), 367, top + 32, 10, 'regular', c.muted);
+  c.field('seek', Rect.fromLTWH(trackLeft, top + 9, trackWidth, 24));
+  c.text(_clock(positionMs), trackLeft, top + 32, size: 10, width: 100, color: c.muted);
+  c.rightText(_clock(durationMs), c.gridWidth - 26, top + 32, 10, 'regular', c.muted);
 
   const List<String> icons = <String>['heart', 'prev', '', 'next', 'queue'];
   const List<String> routes = <String>['', 'player:prev', 'player:toggle', 'player:next', 'player:open'];
@@ -388,9 +392,12 @@ void _lyricsBar(
     '播放队列',
   ];
   final double rowCenter = top + 90;
+  // 五键等分页宽（设计稿 cell = 73 是 393 页宽算出来的，不能写死）。
+  final double cell = (c.gridWidth - 52) / 5;
+  final double iconOffset = (cell - 23) / 2;
   for (int index = 0; index < 5; index++) {
-    final double x = 26 + index * 73;
-    final double centerX = x + 22;
+    final double x = 26 + index * cell;
+    final double centerX = x + cell / 2;
     if (index == 2) {
       // 整圆必须少画一点：sweep 恰好 2π 时 Path.arcTo 会退化，环画不出来。
       c.commands.add(
@@ -399,13 +406,13 @@ void _lyricsBar(
       c.icon(playing ? 'pause' : 'play', centerX - 11, rowCenter - 11, size: 22, color: c.ink);
     } else if (index == 0) {
       // 喜欢状态不在本页入参里：只画空心，不发 music:like-current。
-      c.icon(icons[index], x + 10, top + 79, size: 23, color: c.muted);
+      c.icon(icons[index], x + iconOffset, top + 79, size: 23, color: c.muted);
     } else {
-      c.icon(icons[index], x + 10, top + 79, size: 23, color: c.ink);
+      c.icon(icons[index], x + iconOffset, top + 79, size: 23, color: c.ink);
     }
     if (routes[index].isNotEmpty) {
-      c.hit(Rect.fromLTWH(x, top + 65, 44, 52), routes[index], labels[index]);
+      c.hit(Rect.fromLTWH(x, top + 65, cell, 52), routes[index], labels[index]);
     }
   }
-  c.field('playerBounds', Rect.fromLTWH(0, top, _gridWidth, math.max(0, h - top)));
+  c.field('playerBounds', Rect.fromLTWH(0, top, c.gridWidth, math.max(0, h - top)));
 }

@@ -243,8 +243,15 @@ void main() {
       const Duration(seconds: 10),
     );
 
-    // 竖屏列表窗口上沿对齐带顶：舞台 y=1080..1690；1080 逻辑宽下 stageScale=1，坐标一致。
-    final TestGesture gesture = await tester.startGesture(const Offset(700, 1400));
+    // 命中带用同一处真值算（DPI 适配后 1 网格 = 1.3dp，带顶不再固定在网上）：
+    // 直接取 basicLibraryListStageRect 的中心，避免测试自己拍一套 1080/393 的旧坐标。
+    final Rect band = basicLibraryListStageRect(
+      portrait: true,
+      width: 1080,
+      height: 1920,
+      stageScale: 1,
+    );
+    final TestGesture gesture = await tester.startGesture(band.center);
     await tester.pump(const Duration(milliseconds: 16));
     // 第一次 move 会被 VerticalDragGestureRecognizer 的 touch slop（18px）吃掉，
     // 不产生 onUpdate（interaction_133_native_test.dart:547-554 有同源说明）；

@@ -41,13 +41,14 @@ class PortraitGlyphBounds {
   final double height;
 }
 
-/// 393 网格画布。
+/// 网格画布：命令流以网格为单位，`scale(unit, unit)` 换成舞台像素。
 class PortraitCanvas {
   PortraitCanvas({
     required PortraitMetrics metrics,
     required this.unit,
     required this.height,
     required this.dark,
+    this.gridWidth = 393,
   }) : _metrics = metrics {
     ink = dark ? <Object?>[.925, .933, .886, 1] : <Object?>[.082, .110, .090, 1];
     muted = dark ? <Object?>[.63, .68, .60, 1] : <Object?>[.404, .431, .388, 1];
@@ -58,14 +59,21 @@ class PortraitCanvas {
     amber = <Object?>[.780, .608, .224, 1];
     commands.add(<Object?>['save']);
     commands.add(<Object?>['scale', unit, unit]);
+    // 网格宽度可变（DPI 适配后 1 网格变小、横向网格数变多），所以命令流只做
+    // scale(unit, unit) 铺满舞台宽，不再做居中 translate（居中=整页缩小的错觉，
+    // 2026-11-19 已被用户否决）。
   }
 
   final PortraitMetrics _metrics;
 
-  /// 舞台单位 / 393（Qt 的 `m_unit`）。
+  /// 舞台单位 / 网格（`HudScale.stageUnit`，Qt 的 `m_unit` 去掉「随舞台宽变」）。
   final double unit;
 
-  /// 393 网格里的可视高度（= 舞台高 / unit）。
+  /// 页面可用宽度（网格单位）。DPI 适配后 1 网格变小，横向网格数比设计稿的 393 多，
+  /// 所有右缘/居中坐标都必须按这个值算，否则页面会缩成一条居中的窄柱。
+  final double gridWidth;
+
+  /// 页面可视高度（= 舞台高 / unit，网格单位）。
   final double height;
 
   final bool dark;
@@ -176,7 +184,7 @@ class PortraitCanvas {
       [String weight = 'regular', List<Object?>? color]) {
     final PortraitGlyphBounds bounds = _metrics.bounds(value, size, weight);
     text(value, cx - bounds.x - bounds.width / 2, cy - bounds.y - bounds.height / 2,
-        size: size, width: 393, weight: weight, color: color);
+        size: size, width: gridWidth, weight: weight, color: color);
   }
 
   /// 24×24 图标路径表（逐条抄自 Qt/src/ResponsiveHudCanvas.cpp:110-127）。
@@ -237,7 +245,7 @@ class PortraitCanvas {
   void hit(Rect rect, String action, String label) {
     Rect r = rect;
     if (_content) {
-      r = _intersect(r, Rect.fromLTWH(0, _clipTop, 393, math.max(0, contentBottom - _clipTop)));
+      r = _intersect(r, Rect.fromLTWH(0, _clipTop, gridWidth, math.max(0, contentBottom - _clipTop)));
     }
     if (action.isEmpty || r.isEmpty) {
       return;
@@ -256,12 +264,17 @@ class PortraitCanvas {
   void field(String name, Rect rect) {
     Rect r = rect;
     if (_content) {
-      r = _intersect(r, Rect.fromLTWH(0, _clipTop, 393, math.max(0, contentBottom - _clipTop)));
+      r = _intersect(r, Rect.fromLTWH(0, _clipTop, gridWidth, math.max(0, contentBottom - _clipTop)));
     }
     if (r.isEmpty) {
       return;
     }
-    fields[name] = Rect.fromLTWH(r.left * unit, r.top * unit, r.width * unit, r.height * unit);
+    fields[name] = Rect.fromLTWH(
+      r.left * unit,
+      r.top * unit,
+      r.width * unit,
+      r.height * unit,
+    );
   }
 
   void button(Rect r, String title, String action, {bool primary = false, bool selected = false}) {
@@ -364,7 +377,7 @@ class PortraitCanvas {
     _clipTop = top;
     _content = true;
     commands.add(<Object?>['save']);
-    commands.add(<Object?>['clip', 0, top, 393, math.max(0, contentBottom - top)]);
+    commands.add(<Object?>['clip', 0, top, gridWidth, math.max(0, contentBottom - top)]);
   }
 
   void endContent() {

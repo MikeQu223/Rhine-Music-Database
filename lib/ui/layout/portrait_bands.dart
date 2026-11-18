@@ -7,10 +7,12 @@
 /// 证据约束（逐条可查 Qt 源码）：
 /// * 竖屏舞台宽恒 1080 舞台单位 —— 依据 T02
 ///   docs/flutter-migration/contracts/layout.md §6（portraitStageWidth = 1080），
-///   不是 Qt 横屏常量：Qt 的不变量是舞台**高** 1080（Qt/qml/Main.qml:32
-///   stageScale = height / 1080），舞台宽 = width / stageScale 随窗口变化
-///   （Qt/qml/Main.qml:33，真机横屏 1728）；绘制从左上方缩放
-///   （Qt/qml/Overlay.qml:179-184）。
+///   不是 Qt 横屏常量：
+///   Qt 的不变量是舞台**高** 1080（Qt/qml/Main.qml:32 stageScale = height / 1080），
+///   舞台宽 = width / stageScale 随窗口变化（Qt/qml/Main.qml:33，真机横屏 1728）；
+///   绘制从左上方缩放（Qt/qml/Overlay.qml:179-184）。
+///   2026-11-19 的 DPI 适配不改这条不变量：只在竖屏画布单位里把「1 网格」压进
+///   clamp 后的 dp 带（lib/hud/scale/hud_scale.dart 的 portraitUnitFactor）。
 /// * 横屏 stageScale 只由逻辑视口高度决定（Qt/qml/Main.qml:32），Qt 不做任何 inset
 ///   处理，所以竖屏也不允许用 MediaQuery.viewInsets 去手改 stageScale。
 /// * 底栏高 96 / 内容裁剪底 984 —— Qt/src/PlayerBar.h:42、Qt/src/NativeHud.cpp:310-327。
@@ -26,11 +28,15 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart' show FlutterError;
 
+import '../../hud/scale/hud_scale.dart';
+
 /// 竖屏舞台宽恒定值（舞台单位）。
 ///
 /// 依据 T02 docs/flutter-migration/contracts/layout.md §6 portraitStageWidth = 1080。
 /// Qt 侧没有这个常量：Qt 的不变量是舞台高 1080（Qt/qml/Main.qml:32），
 /// 舞台宽 = width / stageScale 随窗口变化（Qt/qml/Main.qml:33，真机横屏 1728）。
+/// 竖屏舞台的**设计宽**（1080）。实际舞台宽见 `computePortraitBands` 里按
+/// `HudScale` 反算的 `stageWidth`——DPI 适配后它不再恒等于这个常量。
 const double portraitStageWidthConstant = 1080;
 
 /// 横屏舞台高恒定值（舞台单位）。Qt/qml/Main.qml:32。
@@ -773,6 +779,8 @@ PortraitBands computePortraitBands(
   if (!layoutWidth.isFinite || !layoutHeight.isFinite || layoutWidth <= 0 || layoutHeight <= 0) {
     throw ArgumentError('portrait stage needs a positive finite window, got $layoutWidth x $layoutHeight');
   }
+  // DPI 适配不在这里做：舞台宽仍恒 1080（铺满窗口），「1 网格压到多少 dp」由
+  // HudScale.portraitUnitFactor 在竖屏画布单位里兑换（lib/hud/scale/hud_scale.dart）。
   final double stageScale = layoutWidth / portraitStageWidthConstant;
   if (!stageScale.isFinite || stageScale <= 0) {
     throw ArgumentError('portrait stageScale must be positive and finite, got $stageScale');
