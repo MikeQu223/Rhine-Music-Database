@@ -251,6 +251,7 @@ void NativeHud::draw(QJsonObject next, double stageWidth, double time) {
     }
     commands = {};
     hits = {};
+    m_staticCommands = 0;
     playerBounds.reset();
     playerSeekRect.reset();
     playerVolumeRect.reset();
@@ -275,6 +276,11 @@ void NativeHud::draw(QJsonObject next, double stageWidth, double time) {
         brand();
         navigation(width);
         footer(width);
+        // 分层切分点：以上的遮罩 / 品牌 / 导航 / footer 只在换页、换主题、改名时变，
+        // 之后的详情 / 列表 / 浮层 / 播放条每帧都在动（见 render/HudLayers.h）。
+        // 切在 footer 之后而不是 archiveMask 之后，是因为 brand/navigation/footer 也
+        // 都属于「静态背景」，把它们留在动态层等于每帧照画一遍静态大头。
+        m_staticCommands = int(commands.size());
         if (modal != "search") {
             if (frame["mode"] == "detail" || (lyricsMode && !m_music->player.current.isEmpty())) {
                 double opacity = lyricsMode ? 1 : frame["detail"].toDouble();
