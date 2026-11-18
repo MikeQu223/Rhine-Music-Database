@@ -72,16 +72,45 @@ String qtSceneModeOf(BasicViewState state) {
   }
 }
 
-/// 选中曲目在当前可见列表里的行号（-1 = 不在列表里/没有选中）。
+/// 选中条目在**当前可见列表**里的行号（-1 = 不在列表里/没有选中）。
 ///
-/// 只认 [BasicViewState.song] 这条**选中**身份，不看播放：播放状态是
+/// 只认选中身份 [BasicViewState.selection]，不看播放：播放状态是
 /// BasicViewState.playing/positionMs，与"用户此刻浏览到哪"是两件事。
+///
+/// 必须是"列表行号"，不能是"曲目在 state.songs 里的下标"：
+/// `EmbeddedSceneHost.cpp:455` 拿到这个值直接 `scene.select(index, cell)`
+/// （注释写明「index 是 Flutter 的列表行号」）。旧实现只查 state.songs，
+/// 于是「全部专辑」列（选中的是专辑行、state.song 被清空）永远返回 -1，
+/// Qt 侧一直不 select ⇒ 列表滚动只有镜头在动、高亮模型不换列（用户实测缺陷）。
+/// 这里改成先在 [basicLibraryItems] 里按 (kind,id) 找行号，专辑行/歌曲行同一套。
 int qtSceneSelectedIndexOf(BasicViewState state) {
-  final SirenSong? song = state.song;
-  if (song == null) {
+  final List<BasicListItem> items = basicLibraryItems(state);
+  if (items.isEmpty) {
     return -1;
   }
-  return state.songs.indexWhere((SirenSong item) => item.id == song.id);
+  final BasicSelection? selection = state.selection;
+  if (selection != null) {
+    for (var position = 0; position < items.length; position++) {
+      final BasicListItem item = items[position];
+      if (item.kind == selection.kind && item.id == selection.id) {
+        return position;
+      }
+    }
+  }
+  // 兼容没有 selection 的旧调用点：仍按选中曲目的身份在列表里找行号。
+  final SirenSong? song = state.song;
+  if (song != null) {
+    for (var position = 0; position < items.length; position++) {
+      final BasicListItem item = items[position];
+      if (item.kind != 'song' || item.index < 0 || item.index >= state.songs.length) {
+        continue;
+      }
+      if (state.songs[item.index].id == song.id) {
+        return position;
+      }
+    }
+  }
+  return -1;
 }
 
 /// 推给 Qt 的状态快照（JSON 字符串）。

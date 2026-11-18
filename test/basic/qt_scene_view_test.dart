@@ -23,6 +23,15 @@ SirenSong _song(String id, {String title = ''}) => SirenSong(
       durationMs: 0,
     );
 
+SirenAlbum _album(String id) => SirenAlbum(
+      id: id,
+      name: 'album-$id',
+      artist: 'artist',
+      cover: '',
+      songCount: 0,
+      songs: const <SirenSong>[],
+    );
+
 /// 只为身份签名服务的目录替身（真实字段全给，避免测试构造半真对象）。
 BasicDirectory _directory(String id) => BasicDirectory(
       provider: 'siren',
@@ -43,6 +52,8 @@ BasicDirectory _directory(String id) => BasicDirectory(
 BasicViewState _state({
   BasicPhase phase = BasicPhase.library,
   SirenSong? song,
+  BasicSelection? selection,
+  int selectedLane = basicDefaultLane,
   List<SirenSong> songs = const <SirenSong>[],
   List<SirenAlbum> albums = const <SirenAlbum>[],
   bool dark = true,
@@ -54,6 +65,8 @@ BasicViewState _state({
     BasicViewState(
       phase: phase,
       song: song,
+      selection: selection,
+      selectedLane: selectedLane,
       songs: songs,
       albums: albums,
       dark: dark,
@@ -84,6 +97,24 @@ void main() {
       final SirenSong b = _song('b');
       expect(
         qtSceneSelectedIndexOf(_state(song: b, songs: <SirenSong>[a, b])),
+        1,
+      );
+    });
+
+    test('专辑行（全部专辑列）返回列表行号，不再恒为 -1', () {
+      // 回归：state.song 在专辑列被清空（选中的是专辑行），旧实现只查
+      // state.songs ⇒ 恒 -1 ⇒ Qt 侧不 select（滚动只有镜头动、高亮不换）。
+      final List<SirenAlbum> albums = <SirenAlbum>[
+        _album('a1'),
+        _album('a2'),
+        _album('a3'),
+      ];
+      expect(
+        qtSceneSelectedIndexOf(_state(
+          selectedLane: 4,
+          albums: albums,
+          selection: const BasicSelection(kind: 'album', id: 'a2'),
+        )),
         1,
       );
     });
@@ -401,12 +432,21 @@ void main() {
           reason: '找不到专辑就只能空字符串：Qt 据此显示占位盘面，不能编一个 URL');
     });
 
-    test('播放状态不进快照：playing 不影响 payload（不冒充播放/不推播放指令）', () {
+    test('播放状态只投影到 current.playing，不改选中/窗口（不冒充播放、不推播放指令）', () {
+      // 48d93a0 起 `current.playing` 是**有意**投影的：内嵌 render-only 下 Qt 没有自己的
+      // 播放器（NativeApplication.cpp:166-177 只投影 current），唱片旋转只能读这份真值。
+      // 所以契约不是"payload 完全不变"，而是"只有 current.playing 变"。
       final SirenSong a = _song('a');
-      final String idle = qtSceneStateSnapshot(_state(song: a, songs: <SirenSong>[a]));
-      final String playing =
-          qtSceneStateSnapshot(_state(song: a, songs: <SirenSong>[a], playing: true));
-      expect(playing, idle);
+      Map<String, Object?> snap(bool playingState) =>
+          _decode(qtSceneStateSnapshot(
+              _state(song: a, songs: <SirenSong>[a], playing: playingState)));
+      final Map<String, Object?> idle = snap(false);
+      final Map<String, Object?> playing = snap(true);
+      expect((playing['current']! as Map<Object?, Object?>)['playing'], true);
+      expect((idle['current']! as Map<Object?, Object?>)['playing'], false);
+      idle.remove('current');
+      playing.remove('current');
+      expect(playing, idle, reason: '除 current.playing 外，播放状态不许进快照');
     });
   });
 
