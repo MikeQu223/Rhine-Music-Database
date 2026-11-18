@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/foundation.dart'
     show TargetPlatform, defaultTargetPlatform, visibleForTesting;
 import 'package:flutter/gestures.dart';
@@ -594,6 +596,18 @@ class _LibraryDragRecognizer extends VerticalDragGestureRecognizer {
 
   bool Function(Offset local)? allows;
 
+  /// 抬手事件的毫秒时间戳。DragEndDetails 不带时间，而 Qt 的 releaseVelocity 要用
+  /// 它判断「抬手前是否已经停手 >80ms」（停手再抬手不该起惯性）。
+  Duration? releaseStamp;
+
+  @override
+  void handleEvent(PointerEvent event) {
+    if (event is PointerUpEvent) {
+      releaseStamp = event.timeStamp;
+    }
+    super.handleEvent(event);
+  }
+
   @override
   bool isPointerAllowed(PointerEvent event) {
     final bool Function(Offset local)? check = allows;
@@ -668,8 +682,42 @@ class BasicHudSurface extends StatefulWidget {
 
 class _BasicHudSurfaceState extends State<BasicHudSurface>
     with SingleTickerProviderStateMixin {
-  /// 拖动中的临时滚动位置（条目单位）；null = 跟随 state.listPosition。
+  /// 拖动/惯性中的临时滚动位置（条目单位）；null = 跟随 state.listPosition。
   double? _dragPosition;
+
+  // ---- 松手惯性（与 Qt/src/SceneDrag.cpp 的 ArchiveDrag / ArchiveMomentum 同构）----
+  //
+  // 只服务 HUD 自己拥有的列表行拖动：抬手时用最近一段毫秒采样估行速度，够快就按
+  // Qt 的一维 archive 物理（摩擦 2.4、收尾 0.6 进入吸行、临界阻尼率 10）继续滑行
+  // 再吸到整行；整个过程仍然只走 fractional 的 onLibraryScrollUpdate，落定才用
+  // onLibraryScroll 提交一次最近行。
+  final List<_ScrollSample> _scrollSamples = <_ScrollSample>[];
+  double _scrollVelocity = 0;
+  double _scrollTarget = 0;
+  bool _scrollCoasting = false;
+  bool _scrollAnimating = false;
+
+  /// Qt `m_lastMotion` / `m_motionDirection`：最后一次真实位移的毫秒时间戳与指针
+  /// 位移方向。抬手时距最后一次位移 >80ms 视为已停手（速度 0）；反向移动重置采样
+  /// 窗口，让释放速度按最后一段方向估计。
+  double _scrollLastMotionMs = -1e100;
+  double _scrollLastDelta = 0;
+
+  /// 采样口径（Qt `ArchiveDrag::move` / `releaseVelocity`）：最近 120ms 的窗口、
+  /// 跨度 <8ms 采不到速度、最多 32 个采样。
+  static const double _scrollSampleWindowMs = 120;
+  static const double _scrollMotionGapMs = 80;
+  static const double _scrollMinSampleSpanMs = 8;
+  static const int _scrollSampleLimit = 32;
+
+  /// 物理常量（Qt `ArchiveMomentum::step` 与 `Spring::damp`）：摩擦 2.4、抬手阈值
+  /// 0.75、滑行收尾 0.6、吸行阻尼率 10、收尾容差 1e-4 / 5e-3。
+  static const double _scrollFriction = 2.4;
+  static const double _scrollCoastStart = 0.75;
+  static const double _scrollCoastStop = 0.6;
+  static const double _scrollSnapRate = 10;
+  static const double _scrollPositionEpsilon = 0.0001;
+  static const double _scrollVelocityEpsilon = 0.005;
 
   /// 资料库列表页的列表形式真值（Qt `trackListMode`）：命中 'archive:tab-mode'
   /// 时翻转。只决定右栏画曲目列还是画当前条目的单条面板——选中、滚动窗口、
@@ -734,6 +782,11 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
     _rollingTicker?.dispose();
     _rollingTicker = null;
     _dragPosition = null;
+    // 惯性也一起收干净：卸载后不能再推进位置、也不能再提交落行。
+    _scrollAnimating = false;
+    _scrollCoasting = false;
+    _scrollVelocity = 0;
+    _scrollSamples.clear();
     super.dispose();
   }
 
@@ -749,6 +802,11 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       return;
     }
     setState(() => _animationTime += delta);
+    // 松手惯性挂在同一个 ticker 上（SingleTickerProvider 只给一个），各自推进：
+    // 文字时钟照旧累加，列表动量按同一帧间隔独立积分。
+    if (_scrollAnimating) {
+      _stepScroll(delta);
+    }
   }
 
   /// 本帧结束后是否继续 ticker。在 build 里不能直接 start/stop，post-frame 生效。
@@ -792,7 +850,8 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       trackListMode: _trackListMode,
     );
     // 共享滚动文字有字符槽还在 kReelDuration 内 -> 续帧；静止后停 ticker。
-    _scheduleRollingTicker(frame.animating);
+    // 松手惯性期间也必须续帧（同一个 ticker 兼职推进列表动量）。
+    _scheduleRollingTicker(frame.animating || _scrollAnimating);
     final HudFrameEnvelope envelope = HudFrameEnvelope.decode(<String, Object?>{
       'generation': frame.generation,
       'frame': <String, Object?>{},
@@ -961,11 +1020,13 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
                 // 其它页面 = dragDomain 只有 listRect，与旧行为一致。
                 recognizer.allows = (Offset local) => dragDomain.allows(local);
                 recognizer.onStart = (DragStartDetails details) =>
-                    _dragStarted(widget.state);
+                    _dragStarted(widget.state, details);
                 recognizer.onUpdate = (DragUpdateDetails details) =>
                     _dragUpdated(geometry, portrait, details);
-                recognizer.onEnd = (DragEndDetails details) => _dragEnded();
-                recognizer.onCancel = _dragEnded;
+                recognizer.onEnd = (DragEndDetails details) =>
+                    _dragEnded(details, recognizer.releaseStamp);
+                // 被系统打断（onCancel）绝不起惯性：只落回最近一行。
+                recognizer.onCancel = () => _dragEnded();
               },
             ),
           },
@@ -975,9 +1036,20 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
     );
   }
 
-  void _dragStarted(BasicViewState state) {
-    final double start = _windowOf(state);
-    setState(() => _dragPosition = start);
+  void _dragStarted(BasicViewState state, DragStartDetails details) {
+    // 新手势立即接管：正在跑的滑行/吸行当场停下，并从**当前显示位置**起手（
+    // 中途按住不会再跳回 state.listPosition）。
+    final double start = _dragPosition ?? _windowOf(state);
+    setState(() {
+      _abortScrollMomentum();
+      _dragPosition = start;
+    });
+    // Qt ArchiveDrag::start：只留一个起点采样，lastMotion 清空（还没位移）。
+    _scrollSamples
+      ..clear()
+      ..add(_ScrollSample(_scrollMs(details.sourceTimeStamp), start));
+    _scrollLastMotionMs = -1e100;
+    _scrollLastDelta = 0;
     // 起点也发一次：3D/原生层从当前窗口接上，第一次 move 之前就不会跳。
     widget.onLibraryScrollUpdate?.call(start);
   }
@@ -1011,20 +1083,172 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
     final double max = (count - 1).toDouble();
     final double clamped = next < 0 ? 0 : (next > max ? max : next);
     setState(() => _dragPosition = clamped);
+    // 抬手速度采样：与 Qt ArchiveDrag::move 同一口径（事件毫秒时间戳、120ms 窗口、
+    // 反向只留最后一个采样、最多 32 个）。测试里不给 timeStamp 时全部落在 0ms，
+    // 跨度 <8ms 采不到速度 -> 保持「抬手即提交」的旧行为。
+    _recordScrollSample(clamped, details.delta, details.sourceTimeStamp);
     // Q3 双向连续跟随：抬手前每个 move 都发一次连续条目位置。宿主把它投影到
     // 3D/原生层，并按 Qt observe 语义当帧进入最近一行（不进播放器、不改队列、
     // 不播报已选中）；落定与播报仍由 _dragEnded 的 onLibraryScroll 提交。
     widget.onLibraryScrollUpdate?.call(clamped);
   }
 
-  void _dragEnded() {
+  /// 抬手（[details] 非空）或被系统打断（[details] 为空）后的收尾。
+  ///
+  /// 速度快于 [_scrollCoastStart] 才起惯性（滑行 + 吸行，落定提交一次整数行）；
+  /// 低速或取消仍走既有语义——立刻提交抬手位置，由宿主四舍五入到最近一行。
+  void _dragEnded([DragEndDetails? details, Duration? releaseStamp]) {
     final double? ended = _dragPosition;
     if (ended == null) {
       return;
     }
-    setState(() => _dragPosition = null);
-    // 落点只**选中**：不播放、不换队列（Qt 的 archive 选中无播放副作用）。
-    widget.onLibraryScroll?.call(ended);
+    final int count = basicLibraryItems(widget.state).length;
+    final double velocity =
+        details == null ? 0 : _scrollVelocityAtRelease(releaseStamp);
+    _scrollSamples.clear();
+    _scrollLastMotionMs = -1e100;
+    _scrollLastDelta = 0;
+    if (count == 0 || velocity.abs() < _scrollCoastStart) {
+      setState(() => _dragPosition = null);
+      // 落点只**选中**：不播放、不换队列（Qt 的 archive 选中无播放副作用）。
+      widget.onLibraryScroll?.call(ended);
+      return;
+    }
+    _startScrollMomentum(ended, velocity, count);
+  }
+
+  static double _scrollMs(Duration? stamp) =>
+      (stamp?.inMicroseconds ?? 0) / 1000;
+
+  /// Qt `ArchiveDrag::move` 的采样部分：毫秒时间戳 + 条目位置。
+  void _recordScrollSample(double value, Offset delta, Duration? stamp) {
+    final double now = _scrollMs(stamp);
+    if (delta.dy != 0) {
+      if (_scrollLastDelta * delta.dy < 0 && _scrollSamples.length > 1) {
+        // 反向：丢掉旧窗口，只留最后一个采样重新估计释放速度。
+        _scrollSamples.removeRange(0, _scrollSamples.length - 1);
+      }
+      _scrollLastDelta = delta.dy;
+      _scrollLastMotionMs = now;
+    }
+    if (_scrollSamples.isNotEmpty && _scrollSamples.last.time == now) {
+      _scrollSamples[_scrollSamples.length - 1] = _ScrollSample(now, value);
+    } else {
+      _scrollSamples.add(_ScrollSample(now, value));
+    }
+    _scrollSamples.removeWhere(
+      (_ScrollSample sample) => now - sample.time > _scrollSampleWindowMs,
+    );
+    if (_scrollSamples.length > _scrollSampleLimit) {
+      _scrollSamples.removeRange(0, _scrollSamples.length - _scrollSampleLimit);
+    }
+  }
+
+  /// Qt `ArchiveDrag::releaseVelocity` 的行分量（行/秒）：抬手时已停手 >80ms 或者
+  /// 采样跨度 <8ms 都算 0（采不到速度）。
+  double _scrollVelocityAtRelease(Duration? stamp) {
+    if (_scrollSamples.isEmpty) {
+      return 0;
+    }
+    final double now = _scrollMs(stamp);
+    if (now - _scrollLastMotionMs > _scrollMotionGapMs) {
+      return 0;
+    }
+    final _ScrollSample first = _scrollSamples.first;
+    final _ScrollSample last = _scrollSamples.last;
+    final double span = last.time - first.time;
+    if (span < _scrollMinSampleSpanMs) {
+      return 0;
+    }
+    return (last.value - first.value) * (1000 / span);
+  }
+
+  /// Qt `ArchiveMomentum` 构造：目标 = floor(position + velocity/friction + 0.5)，
+  /// 夹在 [0, count-1]；然后进入滑行（Coasting）阶段。
+  void _startScrollMomentum(double position, double velocity, int count) {
+    final double max = (count - 1).toDouble();
+    double target =
+        (position + velocity / _scrollFriction + 0.5).floorToDouble();
+    target = target < 0 ? 0 : (target > max ? max : target);
+    setState(() {
+      _dragPosition = position;
+      _scrollVelocity = velocity;
+      _scrollTarget = target;
+      _scrollCoasting = true;
+      _scrollAnimating = true;
+    });
+  }
+
+  /// 一帧的动量积分（Qt `ArchiveMomentum::step`）：滑行阶段按摩擦 2.4 衰减，速度跌
+  /// 到 0.6 以下就用当时的预测位置定目标并转入吸行；吸行阶段用临界阻尼率为 10 的
+  /// 弹簧逼近目标，位置与速度都进容差才停稳。全程只发 fractional 位置，停稳才提交。
+  void _stepScroll(double dt) {
+    final int count = basicLibraryItems(widget.state).length;
+    if (count == 0) {
+      // 条目被清空/消息窗口退化：直接收尾，不提交一个不存在的行。
+      _finishScroll(commit: false);
+      return;
+    }
+    final double max = (count - 1).toDouble();
+    double position = _dragPosition ?? _scrollTarget;
+    double velocity = _scrollVelocity;
+    double target =
+        _scrollTarget < 0 ? 0 : (_scrollTarget > max ? max : _scrollTarget);
+    bool settled = false;
+    if (_scrollCoasting) {
+      final double decay = math.exp(-_scrollFriction * dt);
+      position += velocity * (1 - decay) / _scrollFriction;
+      velocity *= decay;
+      if (velocity.abs() < _scrollCoastStop) {
+        target = (position + velocity / _scrollFriction + 0.5).floorToDouble();
+        target = target < 0 ? 0 : (target > max ? max : target);
+        _scrollCoasting = false;
+      }
+    } else {
+      // Qt SceneMotion::Spring::damp(target, 10, seconds) 的闭式解。
+      final double delta = position - target;
+      final double impulse = velocity + _scrollSnapRate * delta;
+      final double decay = math.exp(-_scrollSnapRate * dt);
+      position = target + (delta + impulse * dt) * decay;
+      velocity = (velocity - _scrollSnapRate * impulse * dt) * decay;
+      settled = (position - target).abs() < _scrollPositionEpsilon &&
+          velocity.abs() < _scrollVelocityEpsilon;
+    }
+    position = position < 0 ? 0 : (position > max ? max : position);
+    _scrollVelocity = velocity;
+    _scrollTarget = target;
+    if (settled) {
+      _finishScroll();
+      return;
+    }
+    if (position != _dragPosition) {
+      setState(() => _dragPosition = position);
+      widget.onLibraryScrollUpdate?.call(position);
+    }
+  }
+
+  /// 停稳：清掉临时位置（重新跟随 state.listPosition）并只提交一次吸附行。
+  void _finishScroll({bool commit = true}) {
+    final double target = _scrollTarget;
+    final bool hadPosition = _dragPosition != null;
+    setState(() {
+      _dragPosition = null;
+      _scrollAnimating = false;
+      _scrollCoasting = false;
+      _scrollVelocity = 0;
+    });
+    _scrollSamples.clear();
+    if (commit && hadPosition) {
+      // 与 _dragEnded 同一条提交语义：只选中、不播放、不换队列。
+      widget.onLibraryScroll?.call(target);
+    }
+  }
+
+  /// 停掉在跑的动量（新手势接管时用）：保留 [_dragPosition] 作为新起手位置。
+  void _abortScrollMomentum() {
+    _scrollAnimating = false;
+    _scrollCoasting = false;
+    _scrollVelocity = 0;
   }
 
   /// Qt 左侧是 3D 容器区；这里挂的是 Qt 自己的场景层（同进程 QQuickView，
@@ -1112,6 +1336,15 @@ class _NoImages implements detail.SongDetailImagePort {
 
   @override
   detail.SongDetailImage? image(String key) => null;
+}
+
+/// 列表行拖动的一次速度采样（Qt `SceneMotion::ArchiveDrag::Sample`）：毫秒时间戳
+/// 与条目单位的滚动位置。只用于抬手速度估计，不参与绘制、命中或选择。
+class _ScrollSample {
+  const _ScrollSample(this.time, this.value);
+
+  final double time;
+  final double value;
 }
 
 class _HudSink implements HudSurfaceSink {
