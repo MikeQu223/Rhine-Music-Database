@@ -31,6 +31,7 @@ void NativeHud::playerBar(double x, double y, double width) {
         m_playMorphStart = lastTime;
     }
     state.playMorph = playMorph(lastTime);
+    state.boxedPlayButton = m_boxedPlayButton;
     state.loading = player.loading;
     state.failed = player.failed;
     state.hasTrack = !player.current.isEmpty();

@@ -265,6 +265,7 @@ set(RHINE_APP_SOURCES
     Qt/src/RhiScene.h
     Qt/src/render/MotionPass.cpp
     Qt/src/render/MotionPass.h
+    Qt/src/render/RenderModePolicy.h
     Qt/src/render/ScenePostProcess.cpp
     Qt/src/render/ScenePostProcess.h
     Qt/src/fsr/Fsr3Backend.cpp

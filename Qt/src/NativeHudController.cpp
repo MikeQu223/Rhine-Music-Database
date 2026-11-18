@@ -5,6 +5,7 @@
 #include "MusicData.h"
 #include "MusicDiscover.h"
 #include "ProviderRegistry.h"
+#include "render/RenderModePolicy.h"
 #include <QJsonDocument>
 #include <QPointer>
 #include <QUrl>
@@ -47,6 +48,12 @@ NativeHud::NativeHud(Host *host, Glyphs *glyphs, MusicLibrary *music, HudSceneAc
     vsync = host->preference("vsync") != "off";
 #endif
     discRotation = host->preference("disc-rotation") == "on";
+    m_boxedPlayButton = host->preference("play-button-style") == "boxed";
+    connect(host, &Host::preferenceChanged, this, [this](const QString &key, const QString &value) {
+        if (key == "play-button-style") {
+            m_boxedPlayButton = value == "boxed";
+        }
+    });
     skipDetailOnSwitch = host->preference("skip-detail-on-switch") == "on";
     music->skipDetailOnSwitch = skipDetailOnSwitch;
     bool hasMaskStrength = false;
@@ -1110,6 +1117,9 @@ void NativeHud::action(QString value) {
         refreshSettingsLayout();
     } else if (value.startsWith("fsr-quality:")) {
         // FSR 超分档位：渲染器每帧读取，下一帧生效（内部尺寸变化会触发渲染目标重建）。
+        if (RhineRender::currentRenderMode(qEnvironmentVariable("RHINE_AA_MODE"), false).supersampling) {
+            return;
+        }
         const auto quality = value.mid(12);
         if (quality == "super" || quality == "performance" || quality == "balanced" || quality == "quality" ||
             quality == "native") {
@@ -1119,6 +1129,9 @@ void NativeHud::action(QString value) {
         }
     } else if (value.startsWith("fsr-sharpness:")) {
         // 锐化强度 0–100，逐帧生效：FSR1 换算成 RCAS 的档，FSR3 直接取 0–1。
+        if (RhineRender::currentRenderMode(qEnvironmentVariable("RHINE_AA_MODE"), false).supersampling) {
+            return;
+        }
         bool valid = false;
         const auto percent = value.mid(14).toInt(&valid);
         if (valid) {
@@ -1128,6 +1141,9 @@ void NativeHud::action(QString value) {
         }
     } else if (value.startsWith("aa-mode:")) {
         // 抗锯齿互斥单选，渲染器每帧读取该环境变量，切换后下一帧生效。
+        if (RhineRender::currentRenderMode(qEnvironmentVariable("RHINE_AA_MODE"), false).supersampling) {
+            return;
+        }
         const auto mode = value.mid(8);
         // fsr 是合并后的唯一超分选项；fsr1 / fsr3 仍接受，兼容旧偏好。
         if (mode == "off" || mode == "fxaa" || mode == "ssaa" || mode == "msaa" || mode == "taa" ||
@@ -1143,6 +1159,9 @@ void NativeHud::action(QString value) {
         }
     } else if (value.startsWith("msaa:")) {
         // MSAA 采样数：渲染器每帧读取，改变会触发渲染目标重建，不需要重启。
+        if (RhineRender::currentRenderMode(qEnvironmentVariable("RHINE_AA_MODE"), false).supersampling) {
+            return;
+        }
         bool valid = false;
         const auto samples = value.mid(5).toInt(&valid);
         if (valid && (samples == 2 || samples == 4 || samples == 8)) {
@@ -1150,6 +1169,9 @@ void NativeHud::action(QString value) {
             qputenv("RHINE_MSAA", QByteArray::number(samples));
         }
     } else if (value.startsWith("aa-scale:")) {
+        if (RhineRender::currentRenderMode(qEnvironmentVariable("RHINE_AA_MODE"), false).supersampling) {
+            return;
+        }
         bool valid = false;
         const auto percent = value.mid(9).toInt(&valid);
         if (valid) {
@@ -1169,6 +1191,9 @@ void NativeHud::action(QString value) {
             qputenv("RHINE_RENDER_SCALE", QByteArray::number(clamped));
         }
     } else if (value == "fg") {
+        if (RhineRender::currentRenderMode(qEnvironmentVariable("RHINE_AA_MODE"), false).supersampling) {
+            return;
+        }
         // #ifdef Q_OS_LINUX
         // 帧生成与抗锯齿模式互不影响。**需要重启才生效**：呈现层是否接管窗口在启动时
         // 按 RHINE_FG 决定（fg=off 走 Qt 默认路径，内容帧实测高 35%）。这里仍然写入

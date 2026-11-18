@@ -1,4 +1,5 @@
 #pragma once
+#include <QString>
 #include <QtGlobal>
 
 // Android 专属的 3D 渲染默认策略（只决定「默认值」，不含任何渲染代码）。

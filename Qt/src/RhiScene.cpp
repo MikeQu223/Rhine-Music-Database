@@ -16,6 +16,7 @@
 #include "render/SceneTransformHistory.h"
 #endif
 #include "render/MotionPass.h"
+#include "render/RenderModePolicy.h"
 #include "render/RenderPolicy.h"
 #include "render/ScenePostProcess.h"
 #include "render/VulkanResourceProbe.h"
@@ -1271,8 +1272,9 @@ class Renderer {
     }
     /** 仅分配颜色和深度；烘焙增强不创建实时透射、阴影、AO、景深或光晕目标。 */
     void resize(QSize value, bool needsReadbackTarget) {
+        const int maxTextureDimension = rhi->resourceLimit(QRhi::TextureSizeMax);
 #ifdef Q_OS_DARWIN
-        const auto nextSize = settings.renderSize(value);
+        const auto nextSize = RhineRender::fitRenderTextureSize(settings.renderSize(value), maxTextureDimension);
         const bool wantMotion =
             settings.temporal() || settings.frameGeneration();
         const bool wantDepthStore = wantMotion;
@@ -1282,9 +1284,11 @@ class Renderer {
         motionTarget = wantMotion;
         sizedDepthStore = wantDepthStore;
 #else
-        const auto nextSize = postProcess->renderSize(value);
+        const auto nextSize =
+            RhineRender::fitRenderTextureSize(postProcess->renderSize(value), maxTextureDimension);
         const int nextSamples = postProcess->samples();
-        const auto nextMode = qEnvironmentVariable("RHINE_AA_MODE");
+        const auto nextMode =
+            RhineRender::currentRenderMode(qEnvironmentVariable("RHINE_AA_MODE"), false).aaMode;
         // A05：只有确实有人读时才挂运动矢量附件。
         //   · 多采样目标本来就没有第二个 draw buffer 可写，维持原来的让路策略；
         //   · 单采样时看配置（AA 模式 + FG 开关）而不是 FSR 运行期可用性，否则能力
@@ -2095,7 +2099,7 @@ class Renderer {
         config.arenaFallback = arenaFallback;
         config.directWriteFallback = directWriteFallback;
         config.poolFallback = poolFallback;
-        config.aaMode = qEnvironmentVariable("RHINE_AA_MODE");
+        config.aaMode = RhineRender::currentRenderMode(qEnvironmentVariable("RHINE_AA_MODE"), false).aaMode;
         config.host = qEnvironmentVariableIsSet("RHINE_FG_LAYER") ? QStringLiteral("FG 覆盖层")
                                                                   : QStringLiteral("QQuickRhiItem");
 #ifndef Q_OS_DARWIN
@@ -3327,7 +3331,9 @@ class Renderer {
             *frameInputs = inputs;
         }
 #else
-        RhineFg::publish(inputs);
+        // Linux 的后处理与插帧宿主共用本次 MRT 的深度和运动矢量。
+        motionInputs = inputs;
+        RhineFg::publish(motionInputs);
 #endif
 #endif
     }
@@ -4050,7 +4056,11 @@ class ItemRenderer : public QQuickRhiItemRenderer {
 #ifdef Q_OS_DARWIN
         QVariantMap presentationDetails;
         presentationDetails = presentation ? presentation->telemetry() : QVariantMap{};
-        presentationDetails.insert("fgWanted", renderer->settings.interpolation);
+        presentationDetails.insert("fgRequested", renderer->settings.interpolation);
+        presentationDetails.insert("fgWanted", renderer->settings.frameGeneration());
+        presentationDetails.insert("supersampling",
+                                   RhineRender::supersamplingEnabled(renderer->settings.renderPercent,
+                                                                     renderer->settings.supersample));
         backend->renderTelemetry.publish(renderer->size, renderer->viewSize, 1, renderer->implementation,
                                          true,
                                          {{"motionSource", renderer->motionTarget ? "main-mrt" : "none"},
@@ -4064,6 +4074,12 @@ class ItemRenderer : public QQuickRhiItemRenderer {
                                           { "compactInstances",
                                             renderer->compactInstances },
                                           {"presentation", presentationDetails}});
+#else
+        if (backend) {
+            backend->renderTelemetry.publish(renderer->size, renderer->viewSize, renderer->sampleCount,
+                                             renderer->postProcess->implementation(),
+                                             renderer->postProcess->active());
+        }
 #endif
         if (backend) {
             quint64 resources =
@@ -4135,7 +4151,7 @@ class ItemRenderer : public QQuickRhiItemRenderer {
                     backend,
                     [target = backend, presented = presentation->presented(),
                      interpolated = presentation->interpolated(), rendered = presentation->rendered(),
-                     available = presentation->supported(), wanted = renderer->settings.interpolation,
+                     available = presentation->supported(), wanted = renderer->settings.frameGeneration(),
                      active, depthReady = inputs.depth != nullptr,
                      motionVectorsReady = inputs.motionVectors != nullptr, renderSize = renderer->size,
                      displaySize = renderer->viewSize] {

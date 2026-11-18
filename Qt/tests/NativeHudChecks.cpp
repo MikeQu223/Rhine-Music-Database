@@ -22,6 +22,7 @@
 #include <QGuiApplication>
 #include <QJsonDocument>
 #include <QPainter>
+#include <QScopeGuard>
 #include <QSet>
 #include <QTemporaryDir>
 #include <QUrl>
@@ -132,7 +133,7 @@ bool checkSettingsSchema() {
          {"desktop-lyrics", "global-shortcuts-settings", "single-play-mode", "detail-autoplay",
           "skip-detail-on-switch"}},
         {SettingsSchema::SectionId::Preferences,
-         {"theme", "archive-mask", "window", "close-behavior", "startup-animation", "replay",
+         {"theme", "archive-mask", "play-button-style", "window", "close-behavior", "startup-animation", "replay",
           "official-player"}},
         {SettingsSchema::SectionId::Rendering,
          {"graphics-backend", "gpu-index", "vsync", "render-scale", "aa-mode", "aa-scale", "msaa",
@@ -620,9 +621,81 @@ bool checkAlbumTrackSelection(const QString &root, Glyphs &glyphs, const QJsonOb
     }
     return true;
 }
+
+/** 200% 禁用画质选项，恢复默认也要清除被覆盖的 AA 请求。 */
+bool checkSupersamplingSettings(Host &host, Glyphs &glyphs, const QJsonObject &content) {
+    const QList<QPair<const char *, QByteArray>> environment{
+        {"RHINE_RENDER_SCALE", qgetenv("RHINE_RENDER_SCALE")},
+        {"RHINE_SUPERSAMPLE", qgetenv("RHINE_SUPERSAMPLE")},
+        {"RHINE_AA_MODE", qgetenv("RHINE_AA_MODE")},
+        {"RHINE_FG", qgetenv("RHINE_FG")},
+    };
+    const auto restore = qScopeGuard([&environment] {
+        for (const auto &[name, value] : environment) {
+            if (value.isNull()) {
+                qunsetenv(name);
+            } else {
+                qputenv(name, value);
+            }
+        }
+    });
+    qputenv("RHINE_RENDER_SCALE", "200");
+    qputenv("RHINE_SUPERSAMPLE", "1");
+#ifdef Q_OS_DARWIN
+    qputenv("RHINE_AA_MODE", "metalfx");
+#else
+    qputenv("RHINE_AA_MODE", "fsr");
+#endif
+    qputenv("RHINE_FG", "on");
+
+    const SettingsSchema::SettingsContext context;
+    const auto *scale = SettingsSchema::find("render-scale");
+    const auto *aa = SettingsSchema::find("aa-mode");
+    const auto *fg = SettingsSchema::find("fg");
+    if (!scale || !aa || !fg || SettingsSchema::read(*scale, context).integer != 200 ||
+        SettingsSchema::enabled(*aa, context) || SettingsSchema::enabled(*fg, context)) {
+        qCritical() << "200% must disable the AA and frame generation controls";
+        return false;
+    }
+
+    // 旧配置带有 2× 因子时，恢复默认倍率后依然处于超采样。
+    qputenv("RHINE_SUPERSAMPLE", "2");
+    MusicLibrary music(&host, content);
+    NativeHud hud(&host, &glyphs, &music, {});
+    hud.action("settings:restore-defaults");
+    return qEnvironmentVariable("RHINE_RENDER_SCALE") == SettingsSchema::resolvedDefault(*scale, context) &&
+           qgetenv("RHINE_AA_MODE") == "off";
+}
 }
 
 namespace {
+bool checkPlayButtonStyles(Glyphs &glyphs) {
+    for (const bool boxed : {false, true}) {
+        PlayerBar::State state;
+        state.boxedPlayButton = boxed;
+        const auto draw = [&glyphs, &state](double morph) {
+            state.playMorph = morph;
+            QJsonArray commands;
+            PlayerBar::appendPlayButton(commands, state, {24, 24}, 46, {0, 0, 0, 1}, {1, 1, 1, 1});
+            QImage image(48, 48, QImage::Format_ARGB32_Premultiplied);
+            image.fill(Qt::transparent);
+            QPainter painter(&image);
+            glyphs.commands(painter, commands, [](QString) { return QImage(); });
+            painter.end();
+            return image;
+        };
+        const auto play = draw(0);
+        const auto transition = draw(0.5);
+        const auto pause = draw(1);
+        if ((play.pixelColor(3, 3).alpha() == 255) != boxed || play == pause ||
+            transition == play || transition == pause) {
+            qCritical() << "Play button style, endpoints or in-between frame regressed" << boxed;
+            return false;
+        }
+    }
+    return true;
+}
+
 /** 验证同一展示组件在嵌入与浮窗组合下的交互边界，不复制绘制实现。 */
 bool checkPlayerBar(Glyphs &glyphs) {
     PlayerBar::State state;
@@ -1780,6 +1853,8 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
         return passed;
     };
     bool ok = settingsSchemaOk;
+    ok &= record("supersampling settings", checkSupersamplingSettings(host, glyphs, content));
+    ok &= record("play button styles", checkPlayButtonStyles(glyphs));
     ok &= record("plugin reload", checkPluginReload(root, content));
     QStringList providers;
     for (const auto &id : ProviderRegistry::instance().ids()) {

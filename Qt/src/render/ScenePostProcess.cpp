@@ -1,6 +1,8 @@
 #include "ScenePostProcess.h"
 #include "../CrashDiagnostics.h"
+#include "RenderModePolicy.h"
 #include "RenderPolicy.h"
+#include "../fg/FgConfig.h"
 #include "../fsr/FsrSharpness.h"
 #include <QDebug>
 #include <QFile>
@@ -12,6 +14,12 @@ namespace RhineRender {
 namespace {
 bool isFsr(const QString &mode) {
     return mode == "fsr" || mode == "fsr1" || mode == "fsr3";
+}
+RenderMode effectiveMode(bool requestedFrameGeneration = false) {
+    return currentRenderMode(qEnvironmentVariable("RHINE_AA_MODE"), requestedFrameGeneration);
+}
+bool frameGenerationRequestedByHost() {
+    return RhineFg::isEnabled() && RhineFg::parseBool(qgetenv("RHINE_FG"), false);
 }
 int sharpness() {
     if (qEnvironmentVariableIsEmpty("RHINE_FSR_SHARPNESS")) {
@@ -59,10 +67,10 @@ void ScenePostProcess::probe(const char *path, const char *detail) {
 }
 
 QSize ScenePostProcess::renderSize(QSize display) const {
-    const auto mode = qEnvironmentVariable("RHINE_AA_MODE");
-    const int supersample = qBound(1, qEnvironmentVariableIntValue("RHINE_SUPERSAMPLE"), 2);
-    const int percent = qEnvironmentVariableIntValue("RHINE_RENDER_SCALE");
-    const double scale = percent > 0 ? qBound(.5, percent / 100., 2.) : 1.;
+    const auto renderMode = effectiveMode();
+    const auto mode = renderMode.aaMode;
+    const int supersample = renderMode.supersample;
+    const double scale = renderMode.renderPercent / 100.;
     const double aaScale =
         mode == "ssaa" ? qBound(1., qEnvironmentVariableIntValue("RHINE_AA_SCALE") / 100., 2.) : 1.;
     double divisor = 1.;
@@ -84,7 +92,7 @@ QSize ScenePostProcess::renderSize(QSize display) const {
     return {qMax(1, qRound(display.width() * factor)), qMax(1, qRound(display.height() * factor))};
 }
 int ScenePostProcess::samples() const {
-    if (qEnvironmentVariable("RHINE_AA_MODE") != "msaa") {
+    if (effectiveMode().aaMode != "msaa") {
         return 1;
     }
     const int configured = qEnvironmentVariableIntValue("RHINE_MSAA");
@@ -98,22 +106,29 @@ int ScenePostProcess::samples() const {
     return best;
 }
 bool ScenePostProcess::temporal() const {
-    const auto mode = qEnvironmentVariable("RHINE_AA_MODE");
+    const auto mode = effectiveMode().aaMode;
     return mode == "taa" || (isFsr(mode) && mode != "fsr1" && m_fsr && m_fsr->available());
 }
 bool ScenePostProcess::needsMotion() const {
-    return temporal() || RhineFg::isEnabled();
+    return temporal() || effectiveMode(frameGenerationRequestedByHost()).frameGeneration;
 }
 /**
  * 目标分配口径：只看配置。AA 模式给出"是不是时域"（taa/fsr/fsr3），FG 宿主开关给出
  * "插帧要不要读矢量"。运行期能力一律不参与，理由见头文件注释。
  */
 bool ScenePostProcess::motionConfigured() const {
-    return RhineRender::modeNeedsMotion(qEnvironmentVariable("RHINE_AA_MODE")) ||
-           RhineFg::isEnabled();
+    const auto renderMode = effectiveMode(frameGenerationRequestedByHost());
+    return RhineRender::modeNeedsMotion(renderMode.aaMode) || renderMode.frameGeneration;
 }
 bool ScenePostProcess::active() const {
     return m_mode == "fxaa" || m_mode == "taa" || isFsr(m_mode);
+}
+
+QString ScenePostProcess::implementation() const {
+    if (isFsr(m_mode)) {
+        return m_fsrEngine == "fsr3" ? QStringLiteral("fsr3") : QStringLiteral("fsr1");
+    }
+    return m_mode;
 }
 ScenePostProcess::Target ScenePostProcess::target(QSize size, QRhiTexture::Format format,
                                                   QRhiTexture::Flags flags) {
@@ -128,7 +143,7 @@ ScenePostProcess::Target ScenePostProcess::target(QSize size, QRhiTexture::Forma
 /** 在任何 pass 之前重建尺寸相关资源和 FSR 上下文；关闭模式立即释放历史。 */
 void ScenePostProcess::prepare(QSize render, QSize display, const QJsonObject &frame) {
     CrashRenderScope diagnosticScope("postprocess.prepare");
-    const auto mode = qEnvironmentVariable("RHINE_AA_MODE");
+    const auto mode = effectiveMode().aaMode;
     if (m_mode != mode || m_renderSize != render || m_displaySize != display) {
         CrashDiagnostics::setRenderContext(rhi, render, display, mode);
         {
@@ -199,6 +214,12 @@ void ScenePostProcess::prepare(QSize render, QSize display, const QJsonObject &f
         }
     } else if (m_fsr) {
         m_fsr.reset();
+        m_clock.invalidate();
+        if (m_fsrEngine == "fsr3") {
+            // 超采样暂停 FSR 后，恢复时须等计算后端重新可用才启用相机抖动。
+            qputenv("RHINE_FSR_ENGINE", QByteArrayLiteral("shader"));
+            m_fsrEngine = QByteArrayLiteral("shader");
+        }
     }
 }
 
@@ -272,6 +293,11 @@ void ScenePostProcess::resolve(QRhiCommandBuffer *commands, QRhiRenderTarget *de
         quad(commands, "aaFragment", destination, {m_input.texture});
         probe("fxaa", "aaFragment→destination，1 次全屏 pass，没有多余拷贝");
     } else if (m_mode == "taa") {
+        if (!motion.motionVectors) {
+            m_historyValid = false;
+            quad(commands, "copyColor", destination, {m_input.texture});
+            return;
+        }
         // A07 复查结论：这两次全屏 pass（taa→history、copyColor→destination）没法合并成
         // “taa 直接写 destination”，三点原因缺一不可：
         //   1) m_history[next] 要留下**尚未呈现**的 16F 结果当下一帧的重投影历史，而 destination

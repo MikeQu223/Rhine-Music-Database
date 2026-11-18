@@ -5,8 +5,10 @@
 #include "DiagnosticsDirectory.h"
 
 #include "fg/FgCapability.h"
+#include "fg/FgConfig.h"
 #include "Engine.h"
 #include "ProcessMetrics.h"
+#include "render/RenderModePolicy.h"
 #if defined(Q_OS_ANDROID)
 #include "render/HudPaintStats.h"
 #endif
@@ -524,11 +526,45 @@ void FrameProfiler::sample() {
         m_metrics.insert("gpuAdapter", m_adapterName);
         m_metrics.insert("gpuBackend", m_backendName);
     }
+    const RhineFg::Stats fg = RhineFg::stats();
+    // 实际渲染尺寸必须是数值字段；QSize 直接放进 QVariantMap 会被 QJsonValue 转成 null。
+    const auto renderer = m_engine->renderTelemetry.snapshot();
+    const int renderWidth = renderer.value("renderWidth").toInt();
+    const int renderHeight = renderer.value("renderHeight").toInt();
+    const int displayWidth = renderer.value("displayWidth").toInt();
+    const int displayHeight = renderer.value("displayHeight").toInt();
+    m_metrics.insert("renderWidth", renderWidth);
+    m_metrics.insert("renderHeight", renderHeight);
+    m_metrics.insert("displayWidth", displayWidth);
+    m_metrics.insert("displayHeight", displayHeight);
+    m_metrics.insert("effectiveRenderScale", displayWidth > 0 ? double(renderWidth) / displayWidth : 0.);
+#ifdef Q_OS_DARWIN
+    const auto renderSettings = m_engine->renderConfiguration.snapshot();
+    const auto renderMode = RhineRender::resolveRenderMode(
+        renderSettings.renderPercent, renderSettings.supersample, renderSettings.modeName,
+        renderSettings.interpolation && renderSettings.nativeInterpolationAvailable);
+    const bool frameGenerationRequested = renderSettings.interpolation;
+    const bool frameGenerationEffective = renderMode.frameGeneration;
+#else
+    const auto renderMode = RhineRender::currentRenderMode(qEnvironmentVariable("RHINE_AA_MODE"),
+                                                           RhineFg::parseBool(qgetenv("RHINE_FG"), false));
+    const bool frameGenerationRequested = renderMode.requestedFrameGeneration;
+    const bool frameGenerationEffective = renderMode.frameGeneration &&
+                                          fg.layerActive && fg.interpolationAvailable;
+#endif
+    m_metrics.insert("renderScalePercent", renderMode.renderPercent);
+    m_metrics.insert("supersample", renderMode.supersample);
+    m_metrics.insert("supersampling", renderMode.supersampling);
+    m_metrics.insert("aaModeRequested", renderMode.requestedAaMode);
+    m_metrics.insert("aaModeEffective", renderMode.aaMode);
+    m_metrics.insert("frameGenerationRequested", frameGenerationRequested);
+    m_metrics.insert("frameGenerationEffective", frameGenerationEffective);
+    m_metrics.insert("frameGenerationBlockedReason",
+                     renderMode.supersampling ? QStringLiteral("supersampling") : QString());
     // —— 帧生成呈现层 ——
     // FG 路径把 present 收归呈现层自己，Qt 的 frameSwapped 永远不会触发：上面的
     // qtFps / 帧间隔在那种模式下恒定是 0。所以这里改成读呈现层自己的统计，
     // 并在它接管时用它的数字覆盖同一批字段，保持下面 formatMetrics 的写法不变。
-    const RhineFg::Stats fg = RhineFg::stats();
     const double fgPresentedFps = (fg.presented - m_previousFgPresented) * 1000000000. / elapsedNs;
     const double fgInterpolatedFps = (fg.interpolated - m_previousFgInterpolated) * 1000000000. / elapsedNs;
     const double fgRenderFps = (fg.rendered - m_previousFgRendered) * 1000000000. / elapsedNs;
@@ -576,8 +612,10 @@ void FrameProfiler::sample() {
     m_metrics.insert("fgBackend", fg.backendName);
     m_metrics.insert("fgDepthReady", fg.depthReady);
     m_metrics.insert("fgMotionVectorsReady", fg.motionVectorsReady);
-    m_metrics.insert("fgRenderSize", fg.renderSize);
-    m_metrics.insert("fgDisplaySize", fg.displaySize);
+    m_metrics.insert("fgRenderWidth", fg.renderSize.width());
+    m_metrics.insert("fgRenderHeight", fg.renderSize.height());
+    m_metrics.insert("fgDisplayWidth", fg.displaySize.width());
+    m_metrics.insert("fgDisplayHeight", fg.displaySize.height());
     if (fg.layerActive && !fg.defaultWindow) {
         // 呈现层接管时，屏幕上真正发生的事只有它知道：用它的间隔与计数覆盖。
 #ifdef Q_OS_LINUX
@@ -775,9 +813,10 @@ void FrameProfiler::formatMetrics(bool withDetails) {
         const auto ready = [this](const char *key) {
             return m_metrics.value(key).toBool() ? QStringLiteral("就绪") : QStringLiteral("等待");
         };
-        const auto sizeText = [this](const char *key) {
-            const auto size = m_metrics.value(key).toSize();
-            return QStringLiteral("%1×%2").arg(size.width()).arg(size.height());
+        const auto sizeText = [this](const char *widthKey, const char *heightKey) {
+            return QStringLiteral("%1×%2")
+                .arg(m_metrics.value(widthKey).toInt())
+                .arg(m_metrics.value(heightKey).toInt());
         };
         const auto millis = [&number](const char *key) { return number(key, 2); };
         const auto interpolationState =
@@ -792,29 +831,32 @@ void FrameProfiler::formatMetrics(bool withDetails) {
                     .arg(interpolationState, number("fgPresentedFps"), number("fgRenderFps"),
                          number("fgInterpolatedFps")) +
                 QStringLiteral("输入 / 显示    %1 → %2\n深度 / 运动矢量  %3 / %4\n\n")
-                    .arg(sizeText("fgRenderSize"), sizeText("fgDisplaySize"), ready("fgDepthReady"),
+                    .arg(sizeText("fgRenderWidth", "fgRenderHeight"),
+                         sizeText("fgDisplayWidth", "fgDisplayHeight"), ready("fgDepthReady"),
                          ready("fgMotionVectorsReady"));
         }
         if (!fgDefault) {
-            fgDetails = QStringLiteral("帧生成        %1 · %2\n呈现 / 渲染    %3 / %4 FPS · 插值 %5 FPS\n")
-                            .arg(QStringLiteral("已接管"), interpolationState, number("fgPresentedFps"),
-                                 number("fgRenderFps"), number("fgInterpolatedFps")) +
-                        QStringLiteral("每帧耗时      取图 %1 · 场景 %2 · 光流+重建 %3 · 插值 %4 ms\n")
-                            .arg(millis("fgAcquireMs"), millis("fgSceneMs"), millis("fgPrepareMs"),
-                                 millis("fgDispatchMs")) +
-                        QStringLiteral("              合成 %1 ms · 整帧 %2 ms\n")
-                            .arg(millis("fgCompositeMs"), millis("fgFrameMs")) +
-                        QStringLiteral("交换链        %1 张 · %2 · %3 → %4 · 呈现 %5\n")
-                            .arg(number("fgSwapchainImages", 0),
-                                 m_metrics.value("fgSwapchainFormat").toString(), sizeText("fgRenderSize"),
-                                 sizeText("fgDisplaySize"), m_metrics.value("fgPresentMode").toString())
-                        // 重建/等待/去重三个数要一起看才算证据：跳过数随帧数增长、等待数不增长，
-                        // 才说明同尺寸的尺寸同步没有再去等 GPU 空闲（A10）。
-                        + QStringLiteral("重建 / 设备等待 / 尺寸去重  %1 / %2 / %3 次\n")
-                              .arg(number("fgSwapchainRecreates", 0), number("fgDeviceIdleWaits", 0),
-                                   number("fgResizeSkips", 0)) +
-                        QStringLiteral("深度 / 运动矢量  %1 / %2\n\n")
-                            .arg(ready("fgDepthReady"), ready("fgMotionVectorsReady"));
+            fgDetails =
+                QStringLiteral("帧生成        %1 · %2\n呈现 / 渲染    %3 / %4 FPS · 插值 %5 FPS\n")
+                    .arg(QStringLiteral("已接管"), interpolationState, number("fgPresentedFps"),
+                         number("fgRenderFps"), number("fgInterpolatedFps")) +
+                QStringLiteral("每帧耗时      取图 %1 · 场景 %2 · 光流+重建 %3 · 插值 %4 ms\n")
+                    .arg(millis("fgAcquireMs"), millis("fgSceneMs"), millis("fgPrepareMs"),
+                         millis("fgDispatchMs")) +
+                QStringLiteral("              合成 %1 ms · 整帧 %2 ms\n")
+                    .arg(millis("fgCompositeMs"), millis("fgFrameMs")) +
+                QStringLiteral("交换链        %1 张 · %2 · %3 → %4 · 呈现 %5\n")
+                    .arg(number("fgSwapchainImages", 0), m_metrics.value("fgSwapchainFormat").toString(),
+                         sizeText("fgRenderWidth", "fgRenderHeight"),
+                         sizeText("fgDisplayWidth", "fgDisplayHeight"),
+                         m_metrics.value("fgPresentMode").toString())
+                // 重建/等待/去重三个数要一起看才算证据：跳过数随帧数增长、等待数不增长，
+                // 才说明同尺寸的尺寸同步没有再去等 GPU 空闲（A10）。
+                + QStringLiteral("重建 / 设备等待 / 尺寸去重  %1 / %2 / %3 次\n")
+                      .arg(number("fgSwapchainRecreates", 0), number("fgDeviceIdleWaits", 0),
+                           number("fgResizeSkips", 0)) +
+                QStringLiteral("深度 / 运动矢量  %1 / %2\n\n")
+                    .arg(ready("fgDepthReady"), ready("fgMotionVectorsReady"));
         }
     }
     m_details =
@@ -996,11 +1038,8 @@ void FrameProfiler::formatMetrics(bool withDetails) {
     if (backend.isEmpty()) {
         backend = QStringLiteral("未知");
     }
-#ifdef Q_OS_DARWIN
-    const auto aaMode = m_engine->renderConfiguration.snapshot().modeName;
-#else
-    const auto aaMode = qEnvironmentVariable("RHINE_AA_MODE").toLower();
-#endif
+    const auto aaMode = m_metrics.value("aaModeEffective").toString().toLower();
+    const bool supersampling = m_metrics.value("supersampling").toBool();
     const auto aaName = [&aaMode]() -> QString {
         if (aaMode.isEmpty() || aaMode == "off") {
             return QStringLiteral("关闭");
@@ -1024,8 +1063,8 @@ void FrameProfiler::formatMetrics(bool withDetails) {
         }
         return aaMode;
     }();
-    QString aaLine = aaName;
-    if (aaMode == "msaa") {
+    QString aaLine = supersampling ? QStringLiteral("关闭（超采样模式）") : aaName;
+    if (!supersampling && aaMode == "msaa") {
         // 与 RhiScene::msaaSampleCount() 保持同一套默认值：未设置时目标 4x，
         // 实际采样数由设备能力下取（这里只显示目标值，实际值要看画面）。
         const int configured = qEnvironmentVariableIntValue("RHINE_MSAA");
@@ -1034,9 +1073,9 @@ void FrameProfiler::formatMetrics(bool withDetails) {
         if (configured <= 1) {
             aaLine += QStringLiteral("（自动）");
         }
-    } else if (aaMode == "ssaa") {
+    } else if (!supersampling && aaMode == "ssaa") {
         aaLine += QStringLiteral(" · 倍率 %1%").arg(qEnvironmentVariableIntValue("RHINE_AA_SCALE"));
-    } else if (aaMode == "fsr" || aaMode == "fsr1" || aaMode == "fsr3") {
+    } else if (!supersampling && (aaMode == "fsr" || aaMode == "fsr1" || aaMode == "fsr3")) {
         // 引擎由渲染器写入：fsr3 = FFX 计算后端，shader = EASU/RCAS 片元实现。
         const auto engine = qEnvironmentVariable("RHINE_FSR_ENGINE");
         aaLine += engine == "fsr3" ? QStringLiteral("（FSR3）") : QStringLiteral("（FSR1 EASU/RCAS）");
@@ -1064,21 +1103,20 @@ void FrameProfiler::formatMetrics(bool withDetails) {
         aaLine += QStringLiteral(" · 锐化 %1%").arg(sharpness);
     }
 #ifdef Q_OS_DARWIN
-    if (aaMode == "metalfx") {
+    if (!supersampling && aaMode == "metalfx") {
         const auto actual = m_engine->renderTelemetry.snapshot().value("implementation").toString();
         aaLine = actual == "metalfx-temporal" ? QStringLiteral("MetalFX 时域抗锯齿 / 超分")
                                               : QStringLiteral("MetalFX 未运行（系统或设备不支持）");
     }
 #endif
-    const int renderScale = qEnvironmentVariableIsEmpty("RHINE_RENDER_SCALE")
-                                ? 100
-                                : qEnvironmentVariableIntValue("RHINE_RENDER_SCALE");
-    const int supersample = qEnvironmentVariableIsEmpty("RHINE_SUPERSAMPLE")
-                                ? 1
-                                : qEnvironmentVariableIntValue("RHINE_SUPERSAMPLE");
+    const int renderScale = m_metrics.value("renderScalePercent").toInt();
+    const int supersample = m_metrics.value("supersample").toInt();
     QString renderLine = QStringLiteral("渲染 %1%").arg(renderScale);
     if (supersample > 1) {
         renderLine += QStringLiteral(" · 超采样 %1x").arg(supersample);
+    }
+    if (supersampling) {
+        renderLine += QStringLiteral(" · AA/帧生成关闭");
     }
     // 这一行既有抗锯齿也有 FSR 超分，所以叫"画质模式"；与上面"渲染后端"等宽以便对齐。
     m_details.prepend(

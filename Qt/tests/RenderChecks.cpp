@@ -8,6 +8,7 @@
 // 所以只能靠用例拦。本文件只依赖 Qt6::Core：不建 QGuiApplication、不碰 QRhi，三平台 CI
 // 都能离线跑。
 #include "render/MaterialSlotKey.h"
+#include "render/RenderModePolicy.h"
 #include "render/RenderPolicy.h"
 #include "render/SceneSyncCache.h"
 #include "render/FrameGenerationHistory.h"
@@ -50,6 +51,29 @@ QString statusText(RhineRender::GpuTimingStatus status)
 QString quoted(const QString &value)
 {
     return QStringLiteral("\"%1\"").arg(value);
+}
+
+/** 超采样时保留画质请求，降回原生或更低倍率时恢复。 */
+bool renderModePolicy() {
+    const auto requestedAa = QStringLiteral("fsr");
+    const auto mode = RhineRender::resolveRenderMode(200, 1, requestedAa, true);
+    bool ok = check(mode.renderPercent == 200 && mode.supersampling && mode.aaMode == "off" &&
+                        !mode.frameGeneration,
+                    QStringLiteral("200% 停用 AA 和帧生成"), QStringLiteral("200% off/false"),
+                    QStringLiteral("%1% %2/%3").arg(mode.renderPercent).arg(mode.aaMode, boolText(mode.frameGeneration)));
+    for (const int percent : {90, 100}) {
+        const auto restored = RhineRender::resolveRenderMode(percent, mode.supersample, mode.requestedAaMode,
+                                                             mode.requestedFrameGeneration);
+        ok &= check(!restored.supersampling && restored.aaMode == requestedAa && restored.frameGeneration,
+                    QStringLiteral("降回 %1% 恢复 AA 和帧生成").arg(percent), QStringLiteral("fsr/true"),
+                    restored.aaMode + QLatin1Char('/') + boolText(restored.frameGeneration));
+    }
+    const QSize requestedSize(7680, 4320);
+    const auto boundedSize = RhineRender::fitRenderTextureSize(requestedSize, 4096);
+    ok &= check(boundedSize == QSize(4096, 2304), QStringLiteral("超出纹理上限时等比缩小"),
+                QStringLiteral("4096×2304"),
+                QStringLiteral("%1×%2").arg(boundedSize.width()).arg(boundedSize.height()));
+    return ok;
 }
 
 /**
@@ -317,6 +341,12 @@ bool metalFrameGenerationSettings() {
     ok &= check(settings.temporal() && !settings.frameGeneration(),
                 QStringLiteral("关闭补帧不关闭原生时域超分"), QStringLiteral("true"),
                 boolText(settings.temporal() && !settings.frameGeneration()));
+    settings.renderPercent = 200;
+    ok &= check(!settings.temporal(), QStringLiteral("200% 超采样关闭 MetalFX Temporal"),
+                QStringLiteral("false"), boolText(settings.temporal()));
+    settings.renderPercent = 100;
+    ok &= check(settings.temporal(), QStringLiteral("降回 100% 后恢复 MetalFX Temporal"),
+                QStringLiteral("true"), boolText(settings.temporal()));
     // macOS 启动和运行期都直接读偏好；环境变量只作为排障覆盖。
     const QByteArray savedFg = qgetenv("RHINE_FG");
     qunsetenv("RHINE_FG");
@@ -341,6 +371,7 @@ bool metalFrameGenerationSettings() {
 int main()
 {
     bool ok = true;
+    ok &= renderModePolicy();
     ok &= timingTruthTable();
     ok &= timingStatusNames();
     ok &= motionModeTable();

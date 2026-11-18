@@ -253,14 +253,10 @@ double ResponsiveHudLayout::song(ResponsiveHudCanvas &c, const QJsonObject &s) {
         c.commands.append(QJsonArray{"ellipse", c.paper, ring.x() + .6, ring.y() + .6, ring.width() - 1.2,
                                      ring.height() - 1.2});
     }
-    c.commands.append(QJsonArray{"ellipse", c.ink, 167.5, centerY - 29, 58, 58});
+    const auto button = current ? m_player : PlayerBar::State{.boxedPlayButton = m_player.boxedPlayButton};
+    PlayerBar::appendPlayButton(c.commands, button, {196.5, centerY}, 46, c.ink, c.paper);
     c.commands.append(QJsonArray{"ellipse", c.amber, 210.5, centerY - 33, 5, 5});
     c.icon("transport-prev", 126, centerY - 8, 17);
-    QString transportIcon = playing ? "transport-pause" : "play";
-    if (current && m_player.loading) {
-        transportIcon = "more";
-    }
-    c.icon(transportIcon, 185.5, centerY - 11, 22, c.paper);
     c.icon("transport-next", 250, centerY - 8, 17);
     c.hit({112, centerY - 22, 44, 44}, "player:prev", "上一首");
     c.hit({164.5, centerY - 32, 64, 64}, current ? "player:toggle" : "music:play", playing ? "暂停" : "播放");

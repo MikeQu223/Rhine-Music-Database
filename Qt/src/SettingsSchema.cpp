@@ -6,6 +6,7 @@
 #include "PlatformFeatures.h"
 #include "ProviderRegistry.h"
 #include "render/AndroidRenderPolicy.h"
+#include "render/RenderModePolicy.h"
 #include "fg/FgCapability.h"
 #include "fg/FgConfig.h"
 #include <QHash>
@@ -120,7 +121,40 @@ bool graphicsEnabled(const SettingsContext &) {
 }
 
 QString aaMode(const SettingsContext &context) {
-    return context.host ? context.host->preference("aa-mode") : QString();
+    const auto environment = qgetenv("RHINE_AA_MODE");
+    return environment.isEmpty() ? (context.host ? context.host->preference("aa-mode") : QString())
+                                 : QString::fromUtf8(environment);
+}
+
+int renderPercent(const SettingsContext &context) {
+    const auto fallback = RhineRender::androidDefaultRenderScale();
+    const auto environment = qgetenv("RHINE_RENDER_SCALE");
+    const auto raw = environment.isEmpty()
+                         ? (context.host ? context.host->preference("render-scale") : QString())
+                         : QString::fromUtf8(environment);
+    bool valid = false;
+    const int value = raw.toInt(&valid);
+    return RhineRender::normalizedRenderPercent(valid ? value : 0, fallback);
+}
+
+int supersample(const SettingsContext &context) {
+    const auto environment = qgetenv("RHINE_SUPERSAMPLE");
+    const auto raw = environment.isEmpty()
+                         ? (context.host ? context.host->preference("supersample") : QString())
+                         : QString::fromUtf8(environment);
+    bool valid = false;
+    const int value = raw.toInt(&valid);
+    return RhineRender::normalizedSupersample(valid ? value : 0);
+}
+
+bool usesSupersampling(const SettingsContext &context) {
+    return RhineRender::supersamplingEnabled(renderPercent(context), supersample(context));
+}
+
+QString effectiveAaMode(const SettingsContext &context) {
+    return RhineRender::resolveRenderMode(renderPercent(context), supersample(context), aaMode(context),
+                                          false)
+        .aaMode;
 }
 
 bool nonDarwinVisible(const SettingsContext &) {
@@ -132,19 +166,22 @@ bool nonDarwinVisible(const SettingsContext &) {
 }
 
 bool aaScaleVisible(const SettingsContext &context) {
-    return nonDarwinVisible(context) && aaMode(context) == "ssaa";
+    return nonDarwinVisible(context) && effectiveAaMode(context) == "ssaa";
 }
 
 bool msaaVisible(const SettingsContext &context) {
-    return nonDarwinVisible(context) && aaMode(context) == "msaa";
+    return nonDarwinVisible(context) && effectiveAaMode(context) == "msaa";
 }
 
 bool fsrVisible(const SettingsContext &context) {
-    const auto mode = aaMode(context);
+    const auto mode = effectiveAaMode(context);
     return nonDarwinVisible(context) && (mode == "fsr" || mode == "fsr1" || mode == "fsr3");
 }
 
-bool aaEnabled(const SettingsContext &) {
+bool aaEnabled(const SettingsContext &context) {
+    if (usesSupersampling(context)) {
+        return false;
+    }
 #if defined(Q_OS_DARWIN)
     return RhineFg::capability().temporalAvailable;
 #else
@@ -160,15 +197,22 @@ bool fgVisible(const SettingsContext &) {
 #endif
 }
 
-RhineFg::FrameGenerationUi frameGenerationState(const SettingsContext &context) {
-    // 排障用的 RHINE_FG 会覆盖偏好；开关标签必须反映真正生效的状态。
+bool frameGenerationRequested(const SettingsContext &context) {
 #ifdef Q_OS_DARWIN
     const QByteArray environment = qgetenv("RHINE_FG");
-    const bool preferenceOn = environment.isEmpty() ? context.host && context.host->preference("fg") == On
-                                                    : RhineFg::parseBool(environment, false);
+    return environment.isEmpty() ? context.host && context.host->preference("fg") == On
+                                 : RhineFg::parseBool(environment, false);
 #else
-    const bool preferenceOn = context.host && context.host->preference("fg") == On;
+    return context.host && context.host->preference("fg") == On;
 #endif
+}
+
+RhineFg::FrameGenerationUi frameGenerationState(const SettingsContext &context) {
+    if (usesSupersampling(context)) {
+        return {false, QStringLiteral("超采样模式下关闭")};
+    }
+    // 排障用的 RHINE_FG 会覆盖偏好；开关标签必须反映真正生效的状态。
+    const bool preferenceOn = frameGenerationRequested(context);
     const auto &capability = RhineFg::capability();
     const auto active = RhineGraphics::activeBackend();
     const bool backendCapable = active.isEmpty()
@@ -252,8 +296,21 @@ QString archiveMaskLabel(const SettingsContext &, const SettingsValue &value) {
     return value.integer == 0 ? QStringLiteral("0 · 关闭") : QString::number(value.integer) + "%";
 }
 
-QString renderScaleLabel(const SettingsContext &, const SettingsValue &value) {
-    return value.integer == 100 ? QStringLiteral("100% · 原生") : QString::number(value.integer) + "%";
+QString renderScaleLabel(const SettingsContext &context, const SettingsValue &value) {
+    const int factor = supersample(context);
+    if (factor > 1) {
+        const auto label = QStringLiteral("%1% · %2×").arg(value.integer).arg(factor);
+        return RhineRender::supersamplingEnabled(value.integer, factor)
+                   ? label + QStringLiteral(" 超采样")
+                   : label;
+    }
+    if (value.integer == 100) {
+        return QStringLiteral("100% · 原生");
+    }
+    if (value.integer > 100) {
+        return QString::number(value.integer) + QStringLiteral("% · 超采样");
+    }
+    return QString::number(value.integer) + "%";
 }
 
 QString percentLabel(const SettingsContext &, const SettingsValue &value) {
@@ -306,6 +363,9 @@ QString gpuIndexLabel(const SettingsContext &context) {
 }
 
 QString aaModeLabel(const SettingsContext &context, const SettingsValue &value) {
+    if (usesSupersampling(context)) {
+        return QStringLiteral("关闭 · 超采样模式");
+    }
 #if defined(Q_OS_DARWIN)
     if (!aaEnabled(context)) {
         return QStringLiteral("系统或设备不支持");
@@ -406,6 +466,18 @@ const QVector<SettingDescriptor> &descriptors() {
              .defaultValue = "system",
              .choices = themeChoices(),
              .label = themeLabel});
+        add({.id = "play-button-style",
+             .section = SectionId::Preferences,
+             .kind = SettingKind::Choice,
+             .binding = {.kind = BindingKind::Preference,
+                         .preferenceKey = "play-button-style",
+                         .actionPrefix = "setting:play-button-style:"},
+             .storage = StorageType::Enum,
+             .order = 115,
+             .titleEn = "PLAY BUTTON",
+             .titleZh = "播放键样式",
+             .defaultValue = "plain",
+             .choices = {{"boxed", QStringLiteral("方块")}, {"plain", QStringLiteral("无方块")}}});
         add({.id = "motion",
              .section = SectionId::Rendering,
              .kind = SettingKind::Choice,
@@ -893,13 +965,17 @@ QString normalize(const SettingDescriptor &descriptor, const SettingsContext &co
     case StorageType::HudCachedInt: {
         bool ok = false;
         auto value = raw.toInt(&ok);
+        if (descriptor.id == "render-scale") {
+            return QString::number(RhineRender::normalizedRenderPercent(
+                ok ? value : 0, RhineRender::androidDefaultRenderScale()));
+        }
         if (!ok) {
             value = fallback.toInt(&ok);
         }
         if (!ok) {
             value = descriptor.minimum;
         }
-        // 固定档位表（渲染倍率/MSAA）没有连续范围，先取最近档位再钳制。
+        // 只接受固定档位的设置取最近档位。
         if (!descriptor.steps.isEmpty()) {
             return nearestStep(descriptor.steps, value);
         }
@@ -937,6 +1013,15 @@ SettingsValue read(const SettingDescriptor &descriptor, const SettingsContext &c
             value.raw = context.host->preference(descriptor.binding.preferenceKey);
         }
         // 排障用环境变量覆盖偏好时，开关的“当前值”也要跟着它，否则选“关闭”会被判成无变化。
+        if (descriptor.id == QLatin1String("aa-mode") && !qEnvironmentVariableIsEmpty("RHINE_AA_MODE")) {
+            value.raw = qEnvironmentVariable("RHINE_AA_MODE");
+        } else if (descriptor.id == QLatin1String("render-scale") &&
+                   !qEnvironmentVariableIsEmpty("RHINE_RENDER_SCALE")) {
+            value.raw = qEnvironmentVariable("RHINE_RENDER_SCALE");
+        } else if (descriptor.id == QLatin1String("supersample") &&
+                   !qEnvironmentVariableIsEmpty("RHINE_SUPERSAMPLE")) {
+            value.raw = qEnvironmentVariable("RHINE_SUPERSAMPLE");
+        }
 #ifdef Q_OS_DARWIN
         if (descriptor.id == QLatin1String("fg") && !qEnvironmentVariableIsEmpty("RHINE_FG")) {
             value.raw = RhineFg::parseBool(qgetenv("RHINE_FG"), false) ? On : Off;
@@ -982,6 +1067,9 @@ SettingsValue read(const SettingDescriptor &descriptor, const SettingsContext &c
     }
     value.isDefault = value.raw.isEmpty();
     value.canonical = normalize(descriptor, context, value.raw);
+    if ((descriptor.id == "aa-mode" || descriptor.id == "fg") && usesSupersampling(context)) {
+        value.canonical = Off;
+    }
     value.boolean = value.canonical == On || value.canonical == "reduced" || value.canonical == "tray" ||
                     value.canonical == "append";
     bool ok = false;
@@ -1049,12 +1137,13 @@ QString nextValue(const SettingDescriptor &descriptor, const SettingsContext &co
     }
     if (descriptor.kind == SettingKind::Stepper || descriptor.kind == SettingKind::Slider) {
         if (!descriptor.steps.isEmpty()) {
-            int index = 0;
-            for (int step = 0; step < descriptor.steps.size(); ++step) {
-                if (descriptor.steps.at(step) == value.integer) {
-                    index = step;
-                    break;
-                }
+            const auto first = descriptor.steps.cbegin();
+            const auto last = descriptor.steps.cend();
+            const auto current = std::lower_bound(first, last, value.integer);
+            int index = int(current - first);
+            // 自定义渲染比例可能落在两档之间，增加时选上档，减少时选下档。
+            if (direction > 0 && current != last && *current != value.integer) {
+                --index;
             }
             const auto count = int(descriptor.steps.size());
             index = descriptor.wrap ? (index + direction + count) % count

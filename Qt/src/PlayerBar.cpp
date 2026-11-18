@@ -4,6 +4,46 @@
 #include <cmath>
 
 namespace PlayerBar {
+/** 共用播放键绘制，桌面和窄屏使用同一组变形顶点。中心和尺寸使用各自的 HUD 坐标。 */
+void appendPlayButton(QJsonArray &commands, const State &state, QPointF center, double size,
+                      const QJsonArray &ink, const QJsonArray &paper) {
+    commands.append(QJsonArray{"save"});
+    commands.append(QJsonArray{"translate", center.x(), center.y()});
+    if (state.boxedPlayButton) {
+        commands.append(QJsonArray{"fill", ink, -size / 2, -size / 2, size, size});
+    }
+    const auto &color = state.boxedPlayButton ? paper : ink;
+    const double glyphScale = size / 46 * (state.loading || state.boxedPlayButton ? 1 : 1.25);
+    commands.append(QJsonArray{"scale", glyphScale, glyphScale});
+    const double morph = state.playMorph >= 0 ? std::clamp(state.playMorph, 0.0, 1.0)
+                                              : (state.playing ? 1.0 : 0.0);
+    if (state.loading) {
+        for (const double x : {-11., -2., 7.}) {
+            commands.append(QJsonArray{"fill", color, x, -2, 4, 4});
+        }
+    } else if (morph == 0) {
+        commands.append(QJsonArray{"fill-path", "M -5 -10 L 9 0 L -5 10 Z", color});
+    } else {
+        // 沿 x = 2 切分三角，两块四边形分别向暂停竖杠插值。
+        static constexpr QPointF play[2][4] = {{{-5, -10}, {2, -5}, {2, 5}, {-5, 10}},
+                                                {{2, -5}, {9, 0}, {9, 0}, {2, 5}}};
+        static constexpr QPointF pause[2][4] = {{{-6, -9}, {-3, -9}, {-3, 9}, {-6, 9}},
+                                                 {{3, -9}, {6, -9}, {6, 9}, {3, 9}}};
+        QString path;
+        for (int part = 0; part < 2; ++part) {
+            for (int corner = 0; corner < 4; ++corner) {
+                const auto start = play[part][corner];
+                const auto vertex = start + (pause[part][corner] - start) * morph;
+                path += corner == 0 ? QStringLiteral("M ") : QStringLiteral(" L ");
+                path += QString::number(vertex.x(), 'f', 2) + ' ' + QString::number(vertex.y(), 'f', 2);
+            }
+            path += QStringLiteral(" Z ");
+        }
+        commands.append(QJsonArray{"fill-path", path, color});
+    }
+    commands.append(QJsonArray{"restore"});
+}
+
 namespace {
 QString clock(double milliseconds) {
     const auto seconds = int(std::max(0.0, milliseconds) / 1000);
@@ -64,44 +104,13 @@ class Painter {
         label(value, center.x() - bounds["x"].toDouble() - bounds["width"].toDouble() / 2,
               center.y() - bounds["y"].toDouble() - bounds["height"].toDouble() / 2, size, 100, weight);
     }
-    /**
-     * 播放三角与暂停双竖杠之间的变形：三角按 x = 2 切成左右两块四边形，
-     * 每块的四个顶点线性插值到对应竖杠的四个角，t = 0 为三角、t = 1 为双竖杠。
-     * 坐标保留两位小数，避免动画期间每帧生成大量不同的路径字符串挤占路径缓存。
-     */
-    void playPauseGlyph(double t, double scale, const QJsonArray &color) {
-        static constexpr double play[2][4][2] = {{{-5, -10}, {2, -5}, {2, 5}, {-5, 10}},
-                                                 {{2, -5}, {9, 0}, {9, 0}, {2, 5}}};
-        static constexpr double pause[2][4][2] = {{{-6, -9}, {-3, -9}, {-3, 9}, {-6, 9}},
-                                                  {{3, -9}, {6, -9}, {6, 9}, {3, 9}}};
-        for (int part = 0; part < 2; ++part) {
-            QString value;
-            for (int corner = 0; corner < 4; ++corner) {
-                const double px = (play[part][corner][0] + (pause[part][corner][0] - play[part][corner][0]) * t) * scale;
-                const double py = (play[part][corner][1] + (pause[part][corner][1] - play[part][corner][1]) * t) * scale;
-                value += (corner == 0 ? QStringLiteral("M ") : QStringLiteral(" L ")) + QString::number(px, 'f', 2) +
-                         QLatin1Char(' ') + QString::number(py, 'f', 2);
-            }
-            path(value + QStringLiteral(" Z"), color, true);
-        }
-    }
     void controls(const State &state, double x, double y) {
         drawing.commands.append(QJsonArray{"save"});
         drawing.commands.append(QJsonArray{"translate", x, y});
         path("M -57 -9 L -69 0 L -57 9 Z M -73 -10 L -73 10", ink);
         path("M 57 -9 L 69 0 L 57 9 Z M 73 -10 L 73 10", ink);
-        // 主播放键不再画实心底块：深色主题下那块高亮方块与两侧细线图标反差过大。
-        // 改为放大 1.25 倍的墨色图标，命中区仍是原来的 46×46。
-        if (state.loading) {
-            fill({-11, -2, 4, 4}, ink);
-            fill({-2, -2, 4, 4}, ink);
-            fill({7, -2, 4, 4}, ink);
-        } else {
-            const double morph = state.playMorph >= 0 ? std::clamp(state.playMorph, 0.0, 1.0)
-                                                      : (state.playing ? 1.0 : 0.0);
-            playPauseGlyph(morph, 1.25, ink);
-        }
         drawing.commands.append(QJsonArray{"restore"});
+        appendPlayButton(drawing.commands, state, {x, y}, 46, ink, paper);
         hit({x - 89, y - 24, 44, 48}, "player:prev", "上一首");
         hit({x - 23, y - 23, 46, 46}, "player:toggle", state.playing ? "暂停" : "播放");
         hit({x + 45, y - 24, 44, 48}, "player:next", "下一首");

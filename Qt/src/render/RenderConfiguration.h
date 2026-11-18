@@ -1,5 +1,6 @@
 #pragma once
 
+#include "render/RenderModePolicy.h"
 #include <QMutex>
 #include <QMutexLocker>
 #include <QSize>
@@ -24,13 +25,13 @@ struct Settings {
     bool nativeInterpolationAvailable = false;
 
     bool frameGeneration() const {
-        return interpolation && nativeInterpolationAvailable && supersample * renderPercent <= 100;
+        return interpolation && nativeInterpolationAvailable && !supersamplingEnabled(renderPercent, supersample);
     }
 #endif
 
     bool temporal() const {
         return modeName == QLatin1String("metalfx") && nativeTemporalAvailable &&
-               supersample * renderPercent <= 100;
+               !supersamplingEnabled(renderPercent, supersample);
     }
     QSize renderSize(QSize display) const {
         const double scale = qMin(2.0, supersample * renderPercent / 100.0);
@@ -133,9 +134,9 @@ class RenderConfiguration {
                 return false;
             }
             if (key == QLatin1String("render-scale")) {
-                m_settings.renderPercent = qBound(50, number, 200);
+                m_settings.renderPercent = normalizedRenderPercent(number);
             } else if (key == QLatin1String("supersample")) {
-                m_settings.supersample = qBound(1, number, 2);
+                m_settings.supersample = normalizedSupersample(number);
             } else {
                 return false;
             }

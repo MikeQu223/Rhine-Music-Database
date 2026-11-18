@@ -10,6 +10,7 @@
 #include "../fg/FgConfig.h"
 #include "../fg/FgFrameTap.h"
 #include "PresentationWindow.h"
+#include "RenderModePolicy.h"
 #include "SceneLayerHost.h"
 
 #include "../Engine.h"
@@ -188,9 +189,11 @@ bool PresentationShell::supportsBackend(const QString &name) {
 
 bool PresentationShell::requested() const {
 #ifdef Q_OS_DARWIN
-    return m_backend->renderConfiguration.snapshot().interpolation;
+    return m_backend->renderConfiguration.snapshot().frameGeneration();
 #else
-    return FgConfig::fromEnvironment().enabled;
+    const bool frameGenerationRequested = FgConfig::fromEnvironment().enabled;
+    return RhineRender::currentRenderMode(qEnvironmentVariable("RHINE_AA_MODE"), frameGenerationRequested)
+        .frameGeneration;
 #endif
 }
 
@@ -484,15 +487,9 @@ bool PresentationShell::armFrameGeneration() {
     const RhineFg::FrameInputs &inputs = currentFrameInputs();
     if (!inputs.depth || !inputs.motionVectors || inputs.renderSize.isEmpty() ||
         inputs.displaySize.isEmpty()) {
+        m_fgArmed = false;
         return false;
     }
-    // 只有场景真的重渲了才有新的光流输入；相机参数（列表页与详情页 near/far 不同）
-    // 每帧都要写，纹理新鲜度用 serial 判断。
-    if (inputs.serial == m_lastTapSerial && m_fg->available()) {
-        return m_fgArmed;
-    }
-    m_lastTapSerial = inputs.serial;
-
     // 注意：resize() 会销毁/重建 GPU 资源并等设备空闲，必须在任何 QRhi 帧之外调用，
     // 不能在 beginOffscreenFrame 之后——那样会卡死在设备等待上。
     // SceneLayerHost 的场景纹理是 RGBA8（Qt 的渲染目标格式），FG 的三张主纹理格式必须一致，
@@ -502,8 +499,10 @@ bool PresentationShell::armFrameGeneration() {
     // 那是运动矢量/深度的分辨率，跟着 3D 渲染尺寸走，与设备像素比无关。
     const QSize fgDisplaySize = pixelSize().isEmpty() ? inputs.displaySize : pixelSize();
     if (!m_fg->resize(m_rhi, inputs.renderSize, fgDisplaySize, QRhiTexture::RGBA8)) {
+        m_fgArmed = false;
         return false;
     }
+    // 相机参数随内容变化，即使尺寸相同也要更新。
     m_fg->setCamera(inputs.nearPlane, inputs.farPlane, inputs.fovYRadians, inputs.frameTimeMs);
     m_fg->setJitter(float(inputs.jitter.x()), float(inputs.jitter.y()));
     if (inputs.reset) {
@@ -849,6 +848,11 @@ void PresentationShell::step() {
     }
     const bool idle = m_backend->performance().value(QStringLiteral("idle")).toBool();
     const bool interpolationWanted = requested();
+    if (!interpolationWanted && m_fg) {
+        // 降回原生倍率后，第一帧应重建历史，避免和进入超采样前的旧画面插值。
+        m_fg->requestReset();
+        m_fgArmed = false;
+    }
     // Vulkan and D3D12 both need the engine-driven render cadence, including
     // polling for completed asynchronous model/texture uploads.
     const bool engineDriven = m_backendName != QLatin1String("metal");
@@ -958,9 +962,6 @@ void PresentationShell::step() {
         return;
     }
 
-    if (engineDriven) {
-        armFrameGeneration();
-    }
     RhineRender::PresentationBackend::Frame frame;
     m_probe.start();
     const auto acquired = m_presenter->acquire(&frame);
@@ -1017,6 +1018,7 @@ void PresentationShell::step() {
 #endif
     const auto previousSceneFrames = m_host->sceneRenderCount();
     const auto previousOverlayFrames = m_host->overlayRenderCount();
+    const auto previousInputSerial = currentFrameInputs().serial;
     const bool sceneRendered = m_host->renderFrame();
     m_stats.sceneMs = blend(m_stats.sceneMs, tookMs());
     // A02：QML 场景层/UI 层每次真正渲染都是一次 QQuickRenderControl 的 beginFrame/endFrame。
@@ -1036,10 +1038,10 @@ void PresentationShell::step() {
     bool interpolated = false;
     // 重建后的前两帧只呈现真实帧：那时 QML 可能还在按旧尺寸排版、交换链也是全新的，
     // 跨尺寸插出来的帧就是满屏错色（改窗口大小时"闪一下"的来源）。
-    // 在离屏提交结束后读取这一帧输入；UI 单独更新不能再次插值同一帧场景。
+    // 离屏提交结束后，从刚完成的场景读取尺寸和输入。倍率变动时旧帧的尺寸可能不同。
     const bool interpolationAllowed = newScene && !idle && interpolationWanted &&
-                                      m_framesSinceRecreate >= 2 &&
-                                      (engineDriven || armFrameGeneration());
+                                      currentFrameInputs().serial != previousInputSerial &&
+                                      m_framesSinceRecreate >= 2 && armFrameGeneration();
     if (!presentOne(frame, interpolationAllowed, &interpolated)) {
         qWarning().noquote() << "FG: present 失败" << m_presenter->lastError();
         m_needRecreate = true;

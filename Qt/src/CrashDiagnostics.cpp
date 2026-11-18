@@ -1,5 +1,6 @@
 #include "CrashDiagnostics.h"
 #include "DiagnosticsDirectory.h"
+#include "render/RenderModePolicy.h"
 
 #include <QCoreApplication>
 #include <QDateTime>
@@ -548,6 +549,7 @@ void CrashDiagnostics::setRenderContext(QRhi *rhi, QSize render, QSize display, 
         return;
     }
     const auto device = rhi ? rhi->driverInfo() : QRhiDriverInfo{};
+    const auto renderMode = RhineRender::currentRenderMode(qEnvironmentVariable("RHINE_AA_MODE"), false);
     const QJsonObject context{
         {"thread_id", qint64(slot->threadId)},
         {"backend", rhi ? rhi->backendName() : "unknown"},
@@ -560,6 +562,8 @@ void CrashDiagnostics::setRenderContext(QRhi *rhi, QSize render, QSize display, 
         {"display_width", display.width()},
         {"display_height", display.height()},
         {"aa", mode.isEmpty() ? "none" : mode},
+        {"aa_requested", renderMode.requestedAaMode},
+        {"supersampling", renderMode.supersampling},
         {"fsr_quality_requested", qEnvironmentVariable("RHINE_FSR_QUALITY")},
         {"msaa_requested", qEnvironmentVariableIntValue("RHINE_MSAA")},
         {"supersample_requested", qEnvironmentVariableIntValue("RHINE_SUPERSAMPLE")},

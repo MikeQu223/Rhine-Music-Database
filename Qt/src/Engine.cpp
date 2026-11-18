@@ -8,6 +8,7 @@
 #include "fg/FgCapability.h"
 #include "fg/FgStats.h"
 #include "render/MemoryProbe.h"
+#include "render/RenderModePolicy.h"
 #if defined(Q_OS_ANDROID)
 #include "render/HudDirtyRect.h"
 #endif
@@ -1225,7 +1226,7 @@ void Engine::step(double time) {
         m_temporalResetPending = true;
     }
 #else
-    const auto aaMode = qEnvironmentVariable("RHINE_AA_MODE");
+    const auto aaMode = RhineRender::currentRenderMode(qEnvironmentVariable("RHINE_AA_MODE"), false).aaMode;
     // 空间 FSR 回退不累积历史，不能继续投影抖动，否则静止画面会逐帧闪动。
     const bool computeFsr =
         (aaMode == "fsr" || aaMode == "fsr3") && qEnvironmentVariable("RHINE_FSR_ENGINE") == "fsr3";

@@ -1197,6 +1197,7 @@ int main(int argc, char **argv) {
     // 直接挤掉了引擎节拍。不开插帧时它没有收益，只有成本。
     // 代价：切换插帧从此需要重启应用才生效（呈现层在启动时决定是否接管）。
     const bool fgForced = qEnvironmentVariable("RHINE_FG_LAYER").compare("on", Qt::CaseInsensitive) == 0;
+    // 即使启动时超采样暂时屏蔽插帧，仍按请求准备呈现层，降回原生倍率时才能热恢复。
     const bool interpolationWanted = fgForced || RhineFg::parseBool(qgetenv("RHINE_FG"), false);
 #endif
     const bool fgCandidate =

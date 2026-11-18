@@ -310,16 +310,16 @@ void ResponsiveHudLayout::player(ResponsiveHudCanvas &c, bool immersive, const Q
                "regular", c.muted);
         c.text(MusicData::time(QJsonObject{{"duration", m_player.durationMs}}), 337, top + 32, 10, 40,
                "regular", c.muted);
-        const QStringList icons{m_player.liked ? "heart-filled" : "heart", "prev",
-                                m_player.playing ? "pause" : "play", "next", "queue"};
+        const QStringList icons{m_player.liked ? "heart-filled" : "heart", "prev", {}, "next", "queue"};
         const QStringList routes{"music:like-current", "player:prev", "player:toggle", "player:next",
                                  "player:open"};
         for (int index = 0; index < 5; ++index) {
             const double x = 26 + index * 73;
             if (index == 2) {
-                c.fill({x - 4, top + 64, 52, 52}, c.amber);
+                PlayerBar::appendPlayButton(c.commands, m_player, {x + 22, top + 90}, 52, c.ink, c.paper);
+            } else {
+                c.icon(icons[index], x + 10, top + 79, 23, c.ink);
             }
-            c.icon(icons[index], x + 10, top + 79, 23, index == 2 ? c.paper : c.ink);
             if (index != 0 || m_player.canLike) {
                 c.hit({x, top + 65, 44, 52}, routes[index],
                       QStringList{"喜欢", "上一首", m_player.playing ? "暂停" : "播放", "下一首",
@@ -338,7 +338,7 @@ void ResponsiveHudLayout::player(ResponsiveHudCanvas &c, bool immersive, const Q
         c.text(m_player.loading || m_player.failed ? m_player.status : m_player.artist, 65, top + 35, 10, 202,
                "regular", c.muted);
         c.hit({60, top + 8, 207, 48}, "player:detail", "打开当前歌曲播放页面");
-        c.icon(m_player.loading ? "more" : m_player.playing ? "pause" : "play", 285, top + 24, 20);
+        PlayerBar::appendPlayButton(c.commands, m_player, {295, top + 34}, 40, c.ink, c.paper);
         c.hit({273, top + 12, 44, 44}, "player:toggle", m_player.playing ? "暂停" : "播放");
         c.icon("next", 341, top + 24, 20);
         c.hit({329, top + 12, 44, 44}, "player:next", "下一首");

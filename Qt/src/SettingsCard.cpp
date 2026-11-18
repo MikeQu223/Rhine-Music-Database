@@ -115,15 +115,18 @@ void drawStepper(const RowLayout &layout, const RowModel &row, const Colors &col
         const auto track =
             QRectF(minus.right() + 12, control.center().y() - 2, plus.left() - minus.right() - 24, 4);
         canvas.fill(track.left(), track.top(), track.width(), track.height(), colors.faint);
-        int selected = 0;
-        int count = 0;
-        for (int value : row.numericValues) {
-            if (value == row.value.integer) {
-                selected = count;
+        const int count = int(row.numericValues.size());
+        double selected = count - 1;
+        for (int index = 1; index < count; ++index) {
+            const int upper = row.numericValues.at(index);
+            if (row.value.integer <= upper) {
+                const int lower = row.numericValues.at(index - 1);
+                const double progress = double(std::clamp(row.value.integer, lower, upper) - lower);
+                selected = index - 1 + progress / (upper - lower);
+                break;
             }
-            ++count;
         }
-        const auto fraction = count <= 1 ? 0. : double(selected) / double(count - 1);
+        const double fraction = selected / (count - 1);
         canvas.fill(track.left(), track.top(), track.width() * fraction, track.height(), colors.gold);
         const auto knobX = track.left() + track.width() * fraction - 4;
         canvas.fill(knobX, track.top() - 5, 8, 14, colors.ink);

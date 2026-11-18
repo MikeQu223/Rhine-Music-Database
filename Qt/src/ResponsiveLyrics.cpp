@@ -73,14 +73,12 @@ void ResponsiveHudLayout::progressRow(ResponsiveHudCanvas &c, double y, bool cur
         c.centered(quality, 196.5, y + 14.5, 9, "regular", c.muted);
     }
 }
-/** 上一首 / 播放 / 下一首：沿用原图标，按歌词页参考图放大并居中。 */
+/** 上一首 / 播放 / 下一首，沿用歌词页的尺寸与命中区。 */
 void ResponsiveHudLayout::transportRow(ResponsiveHudCanvas &c, double y, bool current) {
     c.icon("prev", 99, y + 2, 26);
     c.hit({89, y - 10, 44, 44}, "player:prev", "上一首");
-    c.icon(current && m_player.loading   ? "more"
-           : current && m_player.playing ? "pause"
-                                         : "play",
-           176.5, y - 4, 40);
+    const auto button = current ? m_player : PlayerBar::State{.boxedPlayButton = m_player.boxedPlayButton};
+    PlayerBar::appendPlayButton(c.commands, button, {196.5, y + 16}, 56, c.ink, c.paper);
     c.hit({164, y - 16, 64, 64}, current ? "player:toggle" : "music:play",
           current && m_player.playing ? "暂停" : "播放");
     c.icon("next", 264.5, y + 2, 26);

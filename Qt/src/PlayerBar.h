@@ -20,6 +20,7 @@ struct State {
     bool playing = false;
     /// 播放键形态：0 = 播放三角，1 = 暂停双竖杠，中间值为变形过渡；小于 0 时按 playing 直接取端点。
     double playMorph = -1;
+    bool boxedPlayButton = false;
     bool loading = false;
     bool failed = false;
     bool hasTrack = false;
@@ -45,6 +46,8 @@ struct Drawing {
 constexpr double RowHeight = 96;
 constexpr double HeaderHeight = 44;
 constexpr double FooterHeight = 28;
+void appendPlayButton(QJsonArray &commands, const State &state, QPointF center, double size,
+                      const QJsonArray &ink, const QJsonArray &paper);
 Drawing render(const State &state, const QRectF &bounds, bool dark, Glyphs &glyphs,
                Surface surface = Surface::Embedded);
 }

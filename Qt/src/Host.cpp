@@ -2708,6 +2708,7 @@ const QStringList &preferenceKeys() {
     static const QStringList keys{
         "search-history", "play-history", "local-cover-cache", "theme", "motion", "startup-animation",
         "detail-autoplay", "skip-detail-on-switch", "single-play-mode", "disc-rotation", "scene-enhancement",
+        "play-button-style",
         "archive-mask-strength", "debug-mode", "audio-exclusive", "graphics-backend", "mv-auto", "mv-opacity",
         "mv-screen", "mv-offsets", "mv-versions", "mv-mode", "global-shortcuts", "global-shortcuts-enabled",
         // Linux 显卡选择：存的是 /sys/class/drm 里 cardN 的序号（0 基），不是型号。

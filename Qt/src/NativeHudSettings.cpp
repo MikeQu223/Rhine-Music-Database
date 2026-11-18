@@ -9,6 +9,7 @@
 #include "PlatformFeatures.h"
 #include "SettingsCard.h"
 #include "SettingsSchema.h"
+#include "render/RenderModePolicy.h"
 #include <QHash>
 #include <QPointer>
 #include <algorithm>
@@ -485,6 +486,9 @@ void NativeHud::applySettingValue(const QString &id, const QString &value) {
     }
     if (id == "fg") {
 #ifdef Q_OS_DARWIN
+        if (RhineRender::currentRenderMode(qEnvironmentVariable("RHINE_AA_MODE"), false).supersampling) {
+            return;
+        }
         m_host->setPreference("fg", target);
 #endif
         return;
@@ -553,7 +557,18 @@ void NativeHud::restoreSettingsDefaults() {
             m_host->setPreference("gpu-index", QString());
             continue;
         }
-        applySettingValue(descriptor.id, SettingsSchema::resolvedDefault(descriptor, context));
+        const auto defaultValue = SettingsSchema::resolvedDefault(descriptor, context);
+        // 超采样只临时屏蔽 AA 和帧生成。恢复默认须同时重置保留的请求值。
+        if (descriptor.id == "aa-mode") {
+            m_host->setPreference(descriptor.binding.preferenceKey, defaultValue);
+            qputenv("RHINE_AA_MODE", defaultValue.toUtf8());
+        } else if (descriptor.id == "fg") {
+            m_host->setPreference(descriptor.binding.preferenceKey, defaultValue);
+        } else if (descriptor.id == "render-scale") {
+            action("render-scale:" + defaultValue);
+        } else {
+            applySettingValue(descriptor.id, defaultValue);
+        }
     }
     // 唱片旋转与自动更新由自定义区块绘制，不在 descriptor 表中，单独恢复默认。
     if (discRotation) {
