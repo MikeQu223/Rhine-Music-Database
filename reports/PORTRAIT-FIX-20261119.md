@@ -242,6 +242,9 @@ flutter test test/hud/t33/track_ruler_test.dart \
 | `30-landscape-regression.png` | **修后**横屏回归（pid 22486） | `0232075798cca3cabc2ed8eaae0acb36a9d4b18ef08283228cf88b28cf46a901` |
 | `31-final-portrait-restored.png` | 旋转还原后竖屏（pid 23351） | `7d45e8c9d72abd5d9e335c83fd8923754389b3e2d46b6bdde691cb1ecc7b78e3` |
 | `40-portrait-before-after.png` | 左修前 / 右修后 对比（930×750） | `343e08a8c4b1c373e3b794c7f4b6ac03dd882e7a2ba0e705f425ec73a9ba3e48` |
+| `49-device-had-other-apk-19-48.png` | 19:48 设备上是别人的包（缺陷现场，见 §11） | `8f3e8b05ef584c91ad5652f3450ebd48f6a3201f1df95d1efa837a0f408215c3` |
+| `50-portrait-reinstall-verified.png` | 19:49:19 装回本分支后复验（pid 30321） | `52474ddf284ca5472dab345fc11f064d288696dfa95a92b7575df3806188bbf5` |
+| `51-device-apk-exchange-before-after.png` | 两个包的列表带对照（1562×587） | `75d5c04e62b4d34a48e1735f56ee56f857a3f4d80ff53ae3cad41a17fa6b34b5` |
 
 ---
 
@@ -265,3 +268,32 @@ flutter test test/hud/t33/track_ruler_test.dart \
 5. 只跑了 `flutter analyze lib/`（676 issues / 0 error）与三个受影响测试文件（33 passed）；**没有跑全量测试**（未要求，改动只涉及两个常量与窗口锚点）。
 6. 3D 场景的合成路径（SurfaceView / TextureView）与舞台尺寸 1080×1080 没有独立的 SurfaceFlinger layer 可直接证实（竖屏只有一个全窗 BLAST SurfaceView），结论依赖像素实测（1800×1800 方块）+ 代码矩形 + SF 中无异常 layer 三点。
 7. 截图（约 13 MB）留在 worktree 的 `builds/PORTRAIT-FIX-20261119/` **未入库**（仓库目前没有任何 `builds/`、`reports/` 被跟踪的先例），哈希即上表；报告本身随分支提交。
+
+---
+
+## 11. 复核：「设备上不是我的包」（2026-11-18 19:48—19:50）
+
+复验时先查设备，发现 19:12 装的包在 19:25:56 被**另一个 APK 覆盖**了：
+
+| 项 | 19:48 现场（覆盖方） | 19:49:19 之后（本分支构建） |
+| --- | --- | --- |
+| `lastUpdateTime` | 2026-11-18 **19:25:56** | 2026-11-18 **19:49:19** |
+| `base.apk` 大小 | 219,499,416 B | 185,748,659 B |
+| `base.apk` sha256 | `339c536c14a97dd7c167d1180428df50f2fb63366d978a7e2855edd61e237dad` | `e6658135c193d652c6a8df36067c8bd9d27fcd7db5d4be4890fee72dea875b7a` |
+| `kernel_blob.bin` 内 `basicPortraitListShift` / `trackRulerWindowTop` 命中数 | **0 / 0** | 4 / 10 |
+| 进程 pid | 25105 | 30321 |
+| 竖屏列表带文本行（物理 px） | **只有 1 行**（2658..2707，压播放条） | 2293..2342 / 2439..2479 / 2527..2566 / 2615..2656 / 2701..2739（第 5 行被播放条切） |
+
+即：19:25:56 装进去的那个 219 MB 包**不含本次修复**（kernel blob 里连标识符都没有），所以那个时间点看竖屏仍然是「只有一行、压在播放条上」。19:49:19 用 `install -r -t` 装回本分支构建后（回执 `Success`，拉回 `base.apk` 的 sha256 与产物一致），冷启动 pid 30321（COLD 2761 ms）实测：
+
+```
+列表带文本行（物理 px → 舞台）：2293..2342→1376..1405(选中) / 2439..2479→1463..1487 /
+2527..2566→1516..1540 / 2615..2656→1569..1594 / 2701..2739→1621..1643(被播放条 2720 切)
+= 4 整行 + 1 行露上沿
+```
+
+与 §6 在同一设备、同一密度下的结果逐像素一致（±1 px 扫描差）。
+
+- 证据：`49-device-had-other-apk-19-48.png`（覆盖方展示的缺陷现场）、`50-portrait-reinstall-verified.png`（装回本分支后）、`51-device-apk-exchange-before-after.png`（两图列表带对照）
+- 结论：缺陷可复现、修复可复现；期间「看不出修好」的原因是设备上跑的**不是本分支的包**。
+- 后续复验前先核对包：`adb shell dumpsys package rhine.music.database | grep lastUpdateTime` 与 `adb shell pm path … | xargs adb pull` 后 `sha256sum` == `e6658135…875b7a`。
