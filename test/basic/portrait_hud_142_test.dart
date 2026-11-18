@@ -243,8 +243,8 @@ void main() {
       const Duration(seconds: 10),
     );
 
-    // 竖屏列表在舞台 y=1299..1909；1080 逻辑宽下 stageScale=1，坐标一致。
-    final TestGesture gesture = await tester.startGesture(const Offset(700, 1700));
+    // 竖屏列表窗口上沿对齐带顶：舞台 y=1080..1690；1080 逻辑宽下 stageScale=1，坐标一致。
+    final TestGesture gesture = await tester.startGesture(const Offset(700, 1400));
     await tester.pump(const Duration(milliseconds: 16));
     // 第一次 move 会被 VerticalDragGestureRecognizer 的 touch slop（18px）吃掉，
     // 不产生 onUpdate（interaction_133_native_test.dart:547-554 有同源说明）；
@@ -298,8 +298,8 @@ void main() {
       const Duration(seconds: 10),
     );
 
-    // stageScale = 720/1080 = 0.6667：屏幕 (600,1200) → 舞台 (900,1800)，落在列表内。
-    final TestGesture gesture = await tester.startGesture(const Offset(600, 1200));
+    // stageScale = 720/1080 = 0.6667：屏幕 (600,933) → 舞台 (900,1400)，落在列表内。
+    final TestGesture gesture = await tester.startGesture(const Offset(600, 933));
     await tester.pump(const Duration(milliseconds: 16));
     // 与其它拖动用例同规则：第一次 move 被 touch slop 吃掉（只 _checkStart），
     // 所以发两次 move 才有 start + 1 次有效 update = 2 次连续位置。

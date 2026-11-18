@@ -583,10 +583,10 @@ void main() {
         (WidgetTester tester) async {
       final List<Rect> owned = ownedOf(_libraryState(lane: 3), portrait: true);
       final Rect list = basicLibraryListStageRect(portrait: true, width: portraitWidth);
-      expect(list.top, basicPortraitListOffset + 509 - 290);
+      expect(list.top, basicPortraitListOffset);
       expect(basicHudOwnsStagePoint(list.center, regions: owned), isTrue);
       // 竖屏场景是 0..1080 设计高度（basicSceneStageRect），列表带在它下面。
-      // 取 (200,600)：在场景矩形内、在列表带(1299..1909)之上、在左栏控制
+      // 取 (200,600)：在场景矩形内、在列表带(1080..1690)之上、在左栏控制
       // (y≤335)、底部箭头带(y≥884)、ruler(y≥509, x≥1131)之外。
       const Offset scenePoint = Offset(200, 600);
       final Rect? scene = basicSceneStageRect(

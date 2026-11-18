@@ -34,6 +34,17 @@ const String basicLibraryName = '塞壬唱片';
 /// 竖屏重排时，曲目列从 1080 设计高度之后开始（stage unit）。
 const double basicPortraitListOffset = 1080.0;
 
+/// 竖屏列表块的位移（stage unit）：让 ruler 裁剪窗口的上沿
+/// （[ruler.trackRulerWindowTop] = 219）正好落在 [basicPortraitListOffset] 那条带顶线上，
+/// 也就是「曲目列从 1080 开始」这句注释的字面含义。
+///
+/// 直接平移 [basicPortraitListOffset]（旧实现）会把整块 610 高的窗口从 219 挪到 1299：
+/// 选中行 titleY 509→1589，正好压到播放条上沿（stageHeight-96），窗口只露出选区一行。
+/// 真机 1800×2880 → 舞台 1080×1728：可见带只有 1080..1632，1299..1909 里有 4 行
+/// 藏在播放条下面、带顶还空出 219 高的空档。
+const double basicPortraitListShift =
+    basicPortraitListOffset - ruler.trackRulerWindowTop;
+
 /// 侧栏起点：Qt NativeHud.cpp:408 `navigationLeft(width) = width - 789`。
 double basicNavigationLeft(double width) => width - 789;
 
@@ -284,7 +295,7 @@ class BasicHudFrame {
     }
 
     if (portrait) {
-      if (!singleItemForm) sink.shifted(0, basicPortraitListOffset, drawList);
+      if (!singleItemForm) sink.shifted(0, basicPortraitListShift, drawList);
     } else {
       if (!singleItemForm) drawList(sink);
     }
@@ -421,8 +432,8 @@ class BasicHudFrame {
 ///    984)`），不是场景视口——把它当场景矩形会把 1080 高的舞台压成 984/1080 的
 ///    比例，再靠改 fov/eye 去"修"，那是掩盖视口错，不是修；
 
-///  - 竖屏：顶部 1080 设计高度（曲目列从 [basicPortraitListOffset] 开始，
-///    所以这块区域本来就是空的，正好给 3D 场景）。
+///  - 竖屏：顶部 1080 设计高度（曲目列的裁剪窗口上沿正好落在
+///    [basicPortraitListOffset]=1080，所以这块区域本来就是空的，正好给 3D 场景）。
 ///
 /// 只有尺寸退化（<320）时不挂载；是否选中曲目、是否已联网都不参与判断。
 Rect? basicSceneStageRect({
@@ -446,17 +457,19 @@ Rect? basicSceneStageRect({
 
 /// 曲目列在 stage 坐标里的手势区域（拖动/点选只在这块参与手势竞技场）。
 ///
-/// 常量取自 ruler 自己的裁剪窗口（lib/hud/widgets/track_ruler.dart 的 titleY=509、
-/// 上下各 290、高 610），绘制与手势共用一处，手势层不再自己拍一套坐标。
+/// 常量取自 ruler 自己的裁剪窗口（`ruler.trackRulerTitleY` / `ruler.trackRulerWindowTop`
+/// / `ruler.trackRulerWindowHeight`），绘制与手势共用一处，手势层不再自己拍一套坐标。
+/// 竖屏窗口上沿就是带顶 [basicPortraitListOffset]——与 [basicPortraitListShift] 同一个
+/// 换算，绘制平移多少、命中就从哪里开始。
 Rect basicLibraryListStageRect({required bool portrait, required double width}) {
   final double rawLeft = basicNavigationLeft(width) - 4;
   final double left = rawLeft < 0 ? 0 : rawLeft;
   final double right = width < left ? left : width;
   return Rect.fromLTWH(
     left,
-    509 - 290 + (portrait ? basicPortraitListOffset : 0),
+    portrait ? basicPortraitListOffset : ruler.trackRulerWindowTop,
     right - left,
-    610,
+    ruler.trackRulerWindowHeight,
   );
 }
 
