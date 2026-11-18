@@ -154,6 +154,14 @@ class _TrackingController extends BasicController {
     openedAlbums.add(album.id);
   }
 
+  /// 进专辑 = 换列（Qt/src/MusicLibrary.cpp:863-869 的 enterDirectory），不抽唱片。
+  final List<String> enteredAlbums = <String>[];
+
+  @override
+  Future<void> enterAlbumColumn(SirenAlbum album, {bool play = false}) async {
+    enteredAlbums.add(album.id);
+  }
+
   /// 控制键回车走 NativeHudController.cpp:905-907 的 m_music->play()：
   /// 真实 controller.play()（幂等，已播不暂停），不是 toggle。
   @override
@@ -992,7 +1000,8 @@ void main() {
       expect(controller.selectedRows, <int>[1, 0]);
       expect(controller.openedAlbums, isEmpty, reason: '点专辑行也不打开');
 
-      // 真正打开走 'open'（Qt `music:open`），按当前选中身份分派到 openAlbum。
+      // 真正打开走 'open'（Qt `music:open`）。专辑行不是 song：Qt
+      // MusicLibrary.cpp:863-869 只进目录（enterDirectory），**不抽唱片**。
       controller.stateOverride = BasicViewState(
         phase: BasicPhase.library,
         selectedLane: 4,
@@ -1004,7 +1013,8 @@ void main() {
       await tester.pump();
       fire(tester, 'open');
       await tester.pump();
-      expect(controller.openedAlbums, <String>['album-1']);
+      expect(controller.enteredAlbums, <String>['album-1']);
+      expect(controller.openedAlbums, isEmpty, reason: '进专辑列不抽唱片');
       expect(controller.openedSongs, isEmpty);
 
       await tester.pumpWidget(const SizedBox());

@@ -385,6 +385,91 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     _publish();
   }
 
+  /// 进入专辑（换列）：把专辑当成**目录**打开，留在资料库里显示它的曲目。
+  ///
+  /// Qt 的目录语义（Qt/src/MusicLibrary.cpp:843-869 `selectResult(index, lane, open=true)`）：
+  /// ```
+  /// const auto mode = open && lists[lane].at(index).toObject()["kind"] == "song" ? "detail" : "archive";
+  /// emit modeRequested(mode);
+  /// if (open && current.value("kind") != "song") enterDirectory(current);
+  /// ```
+  /// 也就是说**点专辑行 = 留在 archive 模式并进入该专辑目录**，只有点曲目行才进
+  /// 详情（抽唱片）。旧实现把专辑行交给 [openAlbum]：相位跳到 detail、3D 抽出唱片、
+  /// 列表变成「01 / 01」——正是用户 2026-11-19 报的「进入专辑内应该切换列而不是抽出
+  /// 唱片」，同时也让单曲专辑的详情页一进去就只有一个当前行（用户报的「必然触发
+  /// 自动打开详情」）。
+  ///
+  /// [play] 为 true（HUD 的『播放全部』）时只多一步：进列后按目录队列从第一首起播
+  /// （Qt 的 `MusicLibrary::play()` 也是 replaceQueue + 从当前行播）。
+  Future<void> enterAlbumColumn(SirenAlbum album, {bool play = false}) async {
+    if (_disposed) {
+      return;
+    }
+    final int generation = ++_detailGeneration;
+    _status = sirenAlbumLoadingStatus;
+    _loading = true;
+    _publish();
+    SirenAlbum detailed = album;
+    try {
+      final SirenAlbum fetched = await _repository.albumDetail(album);
+      if (generation != _detailGeneration) {
+        return;
+      }
+      if (fetched.songs.isNotEmpty) {
+        detailed = fetched;
+      }
+    } on Object {
+      // 详情拉不到就用曲库阶段按 albumCid 归组的那份（album.songs）：进列是浏览
+      // 动作，不该因为一次网络失败把整页变成错误页。
+    }
+    if (generation != _detailGeneration) {
+      return;
+    }
+    final List<SirenSong> songs = detailed.songs;
+    for (final SirenSong song in songs) {
+      _songById[song.id] = song;
+    }
+    ++_songGeneration;
+    final String cover = detailed.cover.isNotEmpty
+        ? detailed.cover
+        : (songs.isEmpty ? '' : songs.first.cover);
+    _directory = BasicDirectory(
+      provider: sirenProvider,
+      kind: 'album',
+      id: detailed.id,
+      key: detailed.key,
+      title: detailed.name,
+      artist: detailed.artist,
+      cover: cover,
+      // 上游专辑没有独立简介字段（siren.mjs:426-431 只回 songs/name/artist/cover），
+      // 目录副标题就用同样的「艺人 / N 首」，不编造文案。
+      description: detailed.artist,
+      trackCount: songs.length,
+      virtual: false,
+      songs: songs,
+      ids: <String>[for (final SirenSong song in songs) song.id],
+      cursor: songs.length,
+      index: 0,
+      parent: _directory,
+      parentLane: _selectedLane,
+      parentSelection: _selection,
+    );
+    _album = null;
+    _phase = BasicPhase.library;
+    _query = '';
+    _loading = false;
+    _error = '';
+    _status = '$sirenOpenedPrefix${detailed.name}';
+    // 与 openAllSirenSongs 同一条：只选中第一首，不自动播（除非显式 play）。
+    _song = songs.isEmpty ? null : songs.first;
+    _selection = songs.isEmpty ? null : BasicSelection(kind: 'song', id: songs.first.id);
+    _listPosition = 0;
+    _publish();
+    if (play && songs.isNotEmpty) {
+      await openSong(songs.first);
+    }
+  }
+
   /// 打开专辑详情：GET /api/album/<id>/detail（siren.mjs:298-307）。
   Future<void> openAlbum(SirenAlbum album) async {
     if (_disposed) {

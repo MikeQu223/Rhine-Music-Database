@@ -41,6 +41,10 @@ void paintPortraitCollectionPage(
   required int index,
   required bool canPlayAll,
   required String emptyNotice,
+  // 滚动窗口（条目单位，可为小数）：专辑/歌单目录里曲目多于可视行时必须能滚。
+  // 旧实现按 `i * _rowHeight` 从 listTop 硬排，超出裁剪区的行直接被裁掉且无法滚动，
+  // 于是进一张 10 首的专辑只看得到头 4 首。
+  double position = 0,
 }) {
   final double h = c.height;
   final int total = rows.length;
@@ -117,15 +121,20 @@ void paintPortraitCollectionPage(
         c.text(emptyNotice, _left, listTop + 12, size: 11, width: _pageWidth, color: c.muted);
       }
     } else {
-      final (int first, int last) = c.visibleRows(listTop, _rowHeight, total);
+      // 与主页列表同一套窗口语义（见 portrait_layout.dart 的 `_list()`）：当前行钉在
+      // 首槽，位置连续增长；行窗口是相对当前 -1 .. +3，多一点余量给亚像素滑动。
+      final double slotY = listTop + _rowHeight * position.clamp(0.0, 1.0);
+      final int first = math.max(0, position.floor() - 1);
+      final int last = math.min(total, position.ceil() + 4);
+      final int currentRow = position.round().clamp(0, math.max(0, total - 1));
       for (int i = first; i < last; i++) {
         if (i < 0 || i >= total) {
           continue;
         }
         final (String rowTitle, String artist, String stamp, String kind) = rows[i];
-        final bool current = i == index;
+        final bool current = i == currentRow;
         c.row(
-          listTop + i * _rowHeight,
+          slotY + (i - position) * _rowHeight,
           title: rowTitle,
           artist: artist,
           // 时长缺失时用真实 kind 兜底，不伪造时长。

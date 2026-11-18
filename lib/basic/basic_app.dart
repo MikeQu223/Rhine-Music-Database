@@ -1860,7 +1860,12 @@ class _BasicShellState extends State<_BasicShell>
     if (item.index < 0 || item.index >= state.albums.length) {
       return basicUnimplementedPrefix + 'music:index:$index';
     }
-    unawaited(controller.openAlbum(state.albums[item.index]));
+    // 点专辑行 = **换列**（进入该专辑目录），不是抽唱片。
+    // Qt/src/MusicLibrary.cpp:863-869：`mode = open && kind == "song" ? "detail" : "archive"`
+    // 且 `if (open && current.kind != "song") enterDirectory(current)`。旧实现在这里调
+    // openAlbum → 相位跳到 detail、3D 抽唱片（用户 2026-11-19 第 1 条）；顺带让单曲
+    // 专辑一进去就只有一个当前行、任何点击都命中 'open'（第 2 条「必然触发」）。
+    unawaited(controller.enterAlbumColumn(state.albums[item.index], play: play));
     return null;
   }
 

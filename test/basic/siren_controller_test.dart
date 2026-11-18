@@ -873,4 +873,84 @@ void main() {
       expect(audio.calls, isEmpty);
     });
   });
+
+  // Qt/src/MusicLibrary.cpp:843-869 `selectResult(index, lane, open=true)`：
+  //   mode = open && kind == "song" ? "detail" : "archive";
+  //   if (open && current.kind != "song") enterDirectory(current);
+  // 即「点专辑行 = 换列（进该专辑目录）」，只有曲目行才进详情抽唱片。
+  // 用户 2026-11-19 报：进入专辑应换列而不是抽出唱片。
+  group('进入专辑 = 换列（不抽唱片）', () {
+    test('enterAlbumColumn：留在 library 相位，directory 就是这张专辑', () async {
+      final _Server server = _Server();
+      final _FakeAudio audio = _FakeAudio();
+      final BasicController controller = _controller(server, audio);
+      addTearDown(controller.dispose);
+      await controller.boot();
+      await _settle();
+      audio.clearCalls();
+
+      await controller.enterAlbumColumn(controller.state.albums.first);
+      await _settle();
+
+      expect(controller.state.phase, BasicPhase.library, reason: '不推进详情相位');
+      expect(controller.state.album, isNull, reason: '没有抽唱片，就没有「当前专辑详情」');
+      expect(controller.state.directory?.kind, 'album');
+      expect(controller.state.directory?.id, 'a1');
+      expect(controller.state.directory?.title, 'Album One');
+      expect(
+        controller.state.directory?.songs.map((SirenSong song) => song.id).toList(),
+        <String>['s1', 's2'],
+        reason: '目录曲目来自 /api/album/a1/detail',
+      );
+      expect(controller.state.directory?.index, 0);
+      expect(controller.state.song?.id, 's1', reason: '只选中第一首');
+      expect(controller.state.queue, isEmpty, reason: '换列不 replaceQueue');
+      expect(audio.calls, isEmpty, reason: '换列不出声（Qt 的 enterDirectory 不 play）');
+    });
+
+    test('单曲专辑：进列后仍是曲库相位，不自动打开详情', () async {
+      final _Server server = _Server();
+      final _FakeAudio audio = _FakeAudio();
+      final BasicController controller = _controller(server, audio);
+      addTearDown(controller.dispose);
+      await controller.boot();
+      await _settle();
+      audio.clearCalls();
+
+      final SirenAlbum single =
+          controller.state.albums.firstWhere((SirenAlbum album) => album.id == 'a2');
+      await controller.enterAlbumColumn(single);
+      await _settle();
+
+      expect(controller.state.phase, BasicPhase.library);
+      expect(controller.state.directory?.songs.length, 1);
+      expect(controller.state.song?.id, 's3');
+      expect(
+        controller.state.phase == BasicPhase.detail,
+        isFalse,
+        reason: '单曲专辑也必须停在列上——详情只由点曲目行的 open 打开',
+      );
+      expect(audio.calls, isEmpty);
+    });
+
+    test('enterAlbumColumn(play: true)：进列后从第一首起播，队列是专辑曲目', () async {
+      final _Server server = _Server();
+      final _FakeAudio audio = _FakeAudio();
+      final BasicController controller = _controller(server, audio);
+      addTearDown(controller.dispose);
+      await controller.boot();
+      await _settle();
+      audio.clearCalls();
+
+      await controller.enterAlbumColumn(
+        controller.state.albums.firstWhere((SirenAlbum album) => album.id == 'a2'),
+        play: true,
+      );
+      await _settle();
+
+      expect(controller.state.queue.map((SirenSong song) => song.id).toList(), <String>['s3']);
+      expect(audio.calls, contains('prepare:https://file.test/s3.flac:1'));
+      expect(audio.calls, contains('play:1'));
+    });
+  });
 }

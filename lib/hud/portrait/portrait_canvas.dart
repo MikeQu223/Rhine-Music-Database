@@ -326,11 +326,14 @@ class PortraitCanvas {
     }
     final double titleRight = playAction.isEmpty && remove.isEmpty ? 333 : 300;
     final double titleWidth = titleRight - left - 8;
+    // 当前行标题用主色（与参考图「我的歌单 / 专辑内页」一致）。旧值写死成
+    // [.455,.333,.098] 那支亮色稿的深赭，压到暗色 raised 上几乎读不出字（实机
+    // device6/p1-big-album.png 的「Kernel Overflow」）。
     text(title, left, y + 12,
         size: 14,
         width: titleWidth,
         weight: 'demibold',
-        color: current ? <Object?>[.455, .333, .098, 1] : ink);
+        color: current ? amber : ink);
     text(artist, left, y + 36, size: 11, width: titleRight - left, color: muted);
     if (remove.isEmpty) {
       if (playAction.isEmpty) {

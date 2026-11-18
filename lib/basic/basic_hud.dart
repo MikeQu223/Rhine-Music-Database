@@ -316,6 +316,8 @@ class BasicHudFrame {
         index: selected,
         canPlayAll: items.isNotEmpty,
         emptyNotice: emptyNotice,
+        // 目录内页与主页同一份滚动窗口真值（拖动中的 listPosition 优先）。
+        position: listPosition ?? state.listPosition ?? selected.toDouble(),
       );
     } else {
       final List<PortraitTab> tabs = <PortraitTab>[

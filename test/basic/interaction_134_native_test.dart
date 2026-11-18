@@ -177,6 +177,16 @@ class _RouteController extends BasicController {
     openedAlbums.add(album.id);
   }
 
+  /// 进专辑 = 换列（Qt/src/MusicLibrary.cpp:863-869 的 enterDirectory），不抽唱片。
+  final List<String> enteredAlbums = <String>[];
+  final List<bool> enteredAlbumPlays = <bool>[];
+
+  @override
+  Future<void> enterAlbumColumn(SirenAlbum album, {bool play = false}) async {
+    enteredAlbums.add(album.id);
+    enteredAlbumPlays.add(play);
+  }
+
   @override
   Future<void> openAllSirenSongs() async {
     allSirenOpens += 1;
@@ -364,7 +374,7 @@ void main() {
       await tester.pumpWidget(const SizedBox());
     });
 
-    testWidgets('music:play-loaded 打开**当前列**第一条：歌曲列=曲目，专辑列=专辑',
+    testWidgets('music:play-loaded 打开**当前列**第一条：歌曲列=曲目，专辑列=进该专辑列',
         (WidgetTester tester) async {
       final _RouteController songs = await _pumpShell(tester, _libraryState(lane: 3));
 
@@ -378,7 +388,11 @@ void main() {
       final _RouteController albums = await _pumpShell(tester, _libraryState(lane: 4));
       _fire(tester, 'music:play-loaded');
       await tester.pump();
-      expect(albums.openedAlbums, <String>['album-1'], reason: '全部专辑列第一条是专辑');
+      // Qt/src/MusicLibrary.cpp:863-869：kind 不是 song 时只换目录（enterDirectory），
+      // 不抽唱片，所以这里是「进专辑列 + 起播」，不是 openAlbum。
+      expect(albums.enteredAlbums, <String>['album-1'], reason: '全部专辑列第一条进该专辑列');
+      expect(albums.enteredAlbumPlays, <bool>[true], reason: 'play-loaded 要起播');
+      expect(albums.openedAlbums, isEmpty, reason: '进列不抽唱片');
       expect(albums.openedSongs, isEmpty);
 
       await tester.pumpWidget(const SizedBox());
