@@ -516,12 +516,12 @@ void applySceneState(const QString &json, const ProducerOrigin &origin)
     // 两条路必须都走，否则就是假开关：
     //  * 能当场生效的（唱片旋转、右侧画面遮罩）写 NativeHud 的字段：Engine::step()
     //    每帧读 hud.discRotation（Engine.cpp:1296）与 hud.archiveMaskStrength，不用重启；
-    //  * 只能在启动时决定的（图形后端/垂直同步/渲染分辨率/抗锯齿/超采样/MSAA）写进
-    //    QSettings 的 panel/<key>：Qt/src/main.cpp:680(panel/graphics-backend)、
-    //    :725(panel/vsync)、:738(panel/supersample)、:749(panel/aa-mode/:aa-scale)、
-    //    :767(panel/msaa)、:809(panel/render-scale) 下次启动读的是同一份文件。
+    //  * 渲染分辨率/抗锯齿/超采样/MSAA 既写 QSettings 的 panel/<key>（下次进程启动的基线），
+    //    也当场 qputenv：渲染器每帧读环境变量，下一帧就按新尺寸/采样数重建目标，不用重启。
+    //  * 图形后端与垂直同步只能在启动时决定，只写 QSettings：Qt/src/main.cpp:680(panel/graphics-
+    //    backend)、:725(panel/vsync) 下次进程启动读的是同一份文件。
     //    Flutter 自己落的是另一个 SharedPreferences 文件（rhine_basic_settings），Qt 读不到，
-    //    所以这一步不是重复：它是"下次启动真的换了"的唯一凭据。
+    //    所以这一步不是重复：它是"下次进程启动真的是新设置"的唯一凭据。
     const QJsonObject settings = payload.value("settings").toObject();
     if (!settings.isEmpty() && settings != g_appliedSettings) {
         g_appliedSettings = settings;
@@ -588,11 +588,18 @@ void applySceneState(const QString &json, const ProducerOrigin &origin)
         // FSR 档位/锐化：用户 m03406 暂缓，本阶段不接。快照里即使出现 fsrQuality /
         // fsrSharpness 也不写偏好、不 qputenv，渲染器继续走 ScenePostProcess.cpp
         // 自己的缺省（未知档位=1.0 倍，锐化 50）。
-        qInfo("RHINE_QT_SCENE_SETTINGS disc=%d mask=%d vsync=%s scale=%d backend=%s aa=%s/%d msaa=%d ss=%d",
+        // 这行同时打出「渲染器实际会读到的环境变量」，现场用它确认即时应用真的落下去了。
+        const QByteArray liveScale = qgetenv("RHINE_RENDER_SCALE");
+        const QByteArray liveAa = qgetenv("RHINE_AA_MODE");
+        const QByteArray liveMsaa = qgetenv("RHINE_MSAA");
+        const QByteArray liveSupersample = qgetenv("RHINE_SUPERSAMPLE");
+        qInfo("RHINE_QT_SCENE_SETTINGS disc=%d mask=%d vsync=%s scale=%d backend=%s aa=%s/%d msaa=%d ss=%d "
+              "live(scale=%s aa=%s msaa=%s ss=%s)",
               int(disc), mask, qPrintable(settings.value("vsync").toString()),
               settings.value("renderScale").toInt(75), qPrintable(settings.value("backend").toString()),
               qPrintable(settings.value("aa").toString()), settings.value("aaScale").toInt(125),
-              settings.value("msaa").toInt(0), settings.value("supersample").toInt(1));
+              settings.value("msaa").toInt(0), settings.value("supersample").toInt(1),
+              liveScale.constData(), liveAa.constData(), liveMsaa.constData(), liveSupersample.constData());
         applied = true;
     }
 
