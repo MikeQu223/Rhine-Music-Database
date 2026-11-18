@@ -879,8 +879,10 @@ class _BasicShellState extends State<_BasicShell>
       // 父链（PortraitStage ↔ 直挂 Stack），只有把 key 抬到上层，PlatformView 的
       // element 才能被移动而非重建。
       sceneKey: _sceneKey,
-      // 渲染参数投影：disc/mask 逐帧生效，其余四项（后端/vsync/渲染分辨率/AA）
-      // 在 Android 上是"写进 Qt 的 panel/* 偏好、下次启动生效"（main.cpp 启动读）。
+      // 渲染参数投影：disc/mask 逐帧生效；渲染分辨率、AA 模式/倍率、MSAA、超采样
+      // 在 Android 上是"写进 Qt 的 panel/* 偏好 + 当场 qputenv"，渲染器每帧读环境变量、
+      // 下一帧就重建目标（Qt/src/EmbeddedSceneHost.cpp 设置块）；只有图形后端与
+      // 垂直同步仍要下次进程启动（main.cpp 里在 main() 决定）。
       sceneSettings: _sceneSettings(),
       // 曲目列手指拖动的落点（条目单位）：只**选中**落到的那一项，
       // 不播放、不换队列（Qt/src/MusicLibrary.cpp:616-643 open=false 的选中语义）。

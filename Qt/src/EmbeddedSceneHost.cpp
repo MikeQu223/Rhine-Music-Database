@@ -18,8 +18,10 @@
 #include <QQuickWindow>
 #include <QDateTime>
 #include <QTimer>
+#include <algorithm>
 #include <cmath>
 #include <limits>
+#include <QStringList>
 
 #if defined(Q_OS_ANDROID)
 #include <QJniEnvironment>
@@ -548,6 +550,41 @@ void applySceneState(const QString &json, const ProducerOrigin &origin)
         writeNextLaunch("aaScale", "aa-scale");
         writeNextLaunch("msaa", "msaa");
         writeNextLaunch("supersample", "supersample");
+        // 立即生效的项：桌面端 NativeHudController 选完就 qputenv，渲染器每帧读环境变量
+        // （RhiScene::resize 会按新尺寸/采样数重建目标，不需要重启）。Android 内嵌路径原来
+        // 只写偏好：唯一把偏好翻成环境变量的 applyRenderScaleSetting() 在 main() 里，一个
+        // 进程只跑一次，而 Qt 运行时跨 Activity 常驻，所以改完永远不会生效。这里补上与
+        // 桌面一致的即时应用；graphics-backend / vsync 仍只能下次进程启动生效。
+        const auto liveScaledPercent = [&](const char *key, const char *envName, int low, int high) {
+            if (!settings.contains(QLatin1String(key)))
+                return;
+            bool valid = false;
+            const int value = settings.value(QLatin1String(key)).toVariant().toInt(&valid);
+            if (!valid || value <= 0)
+                return;
+            qputenv(envName, QByteArray::number(std::clamp(value, low, high)));
+        };
+        liveScaledPercent("renderScale", "RHINE_RENDER_SCALE", 50, 100);
+        liveScaledPercent("aaScale", "RHINE_AA_SCALE", 100, 200);
+        if (settings.contains(QLatin1String("aa"))) {
+            // FSR 档位按用户 m03406 暂缓，这里只接受非 FSR 的抗锯齿模式。
+            const QString mode = settings.value(QLatin1String("aa")).toVariant().toString();
+            static const QStringList kLiveAaModes{"off", "fxaa", "ssaa", "msaa", "taa"};
+            if (kLiveAaModes.contains(mode))
+                qputenv("RHINE_AA_MODE", mode.toUtf8());
+        }
+        if (settings.contains(QLatin1String("msaa"))) {
+            const int samples = settings.value(QLatin1String("msaa")).toVariant().toInt();
+            if (samples == 2 || samples == 4 || samples == 8)
+                qputenv("RHINE_MSAA", QByteArray::number(samples));
+        }
+        if (settings.contains(QLatin1String("supersample"))) {
+            const int sample = settings.value(QLatin1String("supersample")).toVariant().toInt();
+            if (sample > 1)
+                qputenv("RHINE_SUPERSAMPLE", QByteArray::number(qMin(sample, 2)));
+            else
+                qunsetenv("RHINE_SUPERSAMPLE");
+        }
         // FSR 档位/锐化：用户 m03406 暂缓，本阶段不接。快照里即使出现 fsrQuality /
         // fsrSharpness 也不写偏好、不 qputenv，渲染器继续走 ScenePostProcess.cpp
         // 自己的缺省（未知档位=1.0 倍，锐化 50）。
