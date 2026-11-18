@@ -407,52 +407,13 @@ void Engine::recomputeLedgerPeaks() {
 }
 /** 仅在画面变化时通知唯一场景，静止时保留按需休眠。 */
 void Engine::notifySceneRenderers(bool visualChanged) {
-    if (!visualChanged) {
-        return;
+    if (visualChanged) {
+        // A03：版本只在真的推进内容时自增。呈现层拿它当"这一帧有没有新内容"的唯一判据，
+        // 重复推同一个值不会造成重复重渲；而信号是没法这么用的——同一个内容变化会被
+        // 场景帧、HUD、异步资源到达各触发一次。
+        m_sceneRevision.fetch_add(1, std::memory_order_relaxed);
+        emit sceneUpdated();
     }
-    // A03：版本只在真的推进内容时自增。呈现层拿它当"这一帧有没有新内容"的唯一判据，
-    // 重复推同一个值不会造成重复重渲；而信号是没法这么用的——同一个内容变化会被
-    // 场景帧、HUD、异步资源到达各触发一次。
-    m_sceneRevision.fetch_add(1, std::memory_order_relaxed);
-    // 在途上限 1（真机实证 2026-11-19）：Android 上 Qt 的 Surface 被 Flutter 的
-    // hybrid composition 消费，生产者比消费者快时 queueBuffer 会阻塞 250–460ms
-    // （GPU busy 99%+、900MHz 满频，见 reports/GPU-FENCE-STALL-20261118.md），
-    // 拖住整条呈现链。这里不再"每拍都发一帧"，而是上一帧真 swap 过才发下一帧：
-    // 中间状态被丢弃，最后一份状态由 m_sceneFrameWanted 在 frameSwapped 后补发，
-    // 所以画面既不会停在上一次内容，也不会堆在队列里等。
-    if (m_sceneFramePending.exchange(true, std::memory_order_acq_rel)) {
-        m_sceneFrameWanted.store(true, std::memory_order_release);
-        return;
-    }
-    m_sceneFramePendingNs.store(clock.nsecsElapsed(), std::memory_order_relaxed);
-    emit sceneUpdated();
-}
-
-/** 渲染线程在信号槽里调用（frameSwapped）：清在途位，有积压就补发一帧。 */
-void Engine::noteSceneFrameSwapped() {
-    m_sceneFramePending.store(false, std::memory_order_release);
-    if (!m_sceneFrameWanted.exchange(false, std::memory_order_acq_rel)) {
-        return;
-    }
-    if (m_sceneFramePending.exchange(true, std::memory_order_acq_rel)) {
-        return;
-    }
-    // frameSwapped 在渲染线程：QQuickItem::update() 必须回 GUI 线程排一次。
-    QMetaObject::invokeMethod(
-        this,
-        [this] {
-            if (m_sceneFramePending.load(std::memory_order_relaxed)) {
-                emit sceneUpdated();
-            }
-        },
-        Qt::QueuedConnection);
-}
-
-/** 场景不可见 / 重建时清掉在途位，否则隐藏期间攒下的 pending 会吃掉下一次真实变化。 */
-void Engine::resetSceneFramePipeline() {
-    m_sceneFramePending.store(false, std::memory_order_release);
-    m_sceneFrameWanted.store(false, std::memory_order_release);
-    m_sceneFramePendingNs.store(0, std::memory_order_relaxed);
 }
 
 /** A03：渲染线程上报"新资源已就位"。语义与一次真实的视觉变化相同，只是触发者不是帧字段。 */
@@ -895,8 +856,6 @@ void Engine::setVisible(bool value) {
         m_wheelRemainingDistance = 0;
         timer.stop();
         m_sleeping = true;
-        // 隐藏期间不会再有 frameSwapped：不清在途位，恢复后第一帧会被当成"已有一帧"吞掉。
-        resetSceneFramePipeline();
         // 隐藏期间不创建 GPU 资源：作废"等到一半"的等待，恢复后重新计时。
         m_admission.setVisible(false, clock.elapsed());
         m_admissionScheduler.stop();
@@ -912,7 +871,6 @@ void Engine::setVisible(bool value) {
         }
 #endif
         wake(false);
-        resetSceneFramePipeline();
         notifySceneRenderers(true);
         m_hudRevision.fetch_add(1, std::memory_order_relaxed);
         // 重新显示时纹理可能已经被丢弃，命令流没有差异也必须整块重画。
@@ -1022,17 +980,6 @@ void Engine::publishHudFrame() {
 }
 void Engine::tick() {
     const qint64 enterNs = clock.nsecsElapsed();
-#if defined(Q_OS_ANDROID)
-    // 在途位看门狗：frameSwapped 只在真的交出帧时发。窗口未暴露、被系统暂停或
-    // Surface 重建期间它可能不来，不能因此把整条场景呈现永久锁死——超过 400ms
-    // 就当这一帧没交出去，放开重新发。
-    if (m_sceneFramePending.load(std::memory_order_relaxed)) {
-        const qint64 since = m_sceneFramePendingNs.load(std::memory_order_relaxed);
-        if (since != 0 && enterNs - since > 400000000LL) {
-            resetSceneFramePipeline();
-        }
-    }
-#endif
     if (m_paceEnterNs != 0) {
         const qint64 gap = enterNs - m_paceEnterNs;
         m_paceGapSum += gap;

@@ -745,12 +745,6 @@ void createSceneView(const QJniObject &javaView, jlong parentWindowReference, ji
     if (Engine *engine = RhineEmbedded::engine()) {
         engine->setWindow(view);
         view->installEventFilter(engine);
-        // 场景帧在途上限 1：真机实证（reports/GPU-FENCE-STALL-20261118.md）Android 上
-        // Qt 的 Surface 由 Flutter hybrid composition 消费，生产者快过消费者时
-        // queueBuffer 阻塞 250–460ms。frameSwapped 是"这一帧真的交出去了"的唯一
-        // 可靠信号，直连即可（回调只碰原子量 + 一次排队调用）。
-        QObject::connect(view, &QQuickWindow::frameSwapped, engine,
-                         &Engine::noteSceneFrameSwapped, Qt::DirectConnection);
         // 拾取选中回传 Flutter 的通道已经接好（RhineQtViews.emitSceneAction →
         // MethodChannel('rhine.music/qt_scene').action → QtSceneActions.onAction），
         // 但**暂时不发**任何动作：场景里的槽位来自 Assets/android-3d/slots.json 的

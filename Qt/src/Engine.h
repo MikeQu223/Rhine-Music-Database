@@ -246,15 +246,6 @@ class Engine : public QObject {
     /// 回到主线程调用这里。这类变化在场景帧字段里看不出来，notifySceneRenderers 的
     /// 自然触发点（帧签名比较）捕捉不到，只能由发现者自己上报一次。
     Q_INVOKABLE void requestSceneContent();
-    /// 渲染线程在 frameSwapped 里调用（直连）：清「场景帧在途」位，有积压就补发一帧。
-    /// 只碰两个原子量 + 一次排队调用，所以可以安全地在渲染线程同步执行。
-    void noteSceneFrameSwapped();
-    /// 场景隐藏 / 重建时清在途位，避免隐藏期间攒下的 pending 吃掉下一次真实变化。
-    void resetSceneFramePipeline();
-    /// 是否还有一帧已发布、但渲染线程还没 swap 完成（诊断与节拍让出用）。
-    bool sceneFramePending() const {
-        return m_sceneFramePending.load(std::memory_order_relaxed);
-    }
     /// C01：渲染线程在 synchronize() 里量到的"自定义快照同步"耗时。它不是 Qt Quick 的
     /// sync 总时长，只是我们自己那一段，单独记才能分清钱花在哪。
     void recordSceneSync(double ms) {
@@ -368,13 +359,6 @@ class Engine : public QObject {
     quint64 m_changedSteps = 0;
     /// A03：内容版本，只在内容真的变了时自增（见 notifySceneRenderers/requestSceneContent）。
     std::atomic<quint64> m_sceneRevision{0};
-    /// 场景帧在途上限 1（见 Engine::notifySceneRenderers）：true = 已发一帧、还没 swap 回来。
-    std::atomic<bool> m_sceneFramePending{false};
-    /// 在途期间又来了新内容：swap 回来后补发一帧，保证最终状态一定被画出来。
-    std::atomic<bool> m_sceneFrameWanted{false};
-    /// 在途位的发布时刻（clock.nsecsElapsed）：tick() 用它做看门狗，frameSwapped
-    /// 因窗口未暴露 / 被系统暂停而没来时不至于永久锁死渲染。
-    std::atomic<qint64> m_sceneFramePendingNs{0};
     std::atomic<quint64> m_hudRevision{0};
     std::atomic<quint64> m_renderFrames{0}, m_gpuResources{0};
 #ifdef Q_OS_DARWIN
