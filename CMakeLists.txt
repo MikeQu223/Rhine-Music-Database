@@ -636,6 +636,7 @@ if(APPLE)
     target_sources(
         RhineMusicDatabase
         PRIVATE Qt/src/render/MetalFxBackend.mm Qt/src/render/MetalFxBackend.h
+                Qt/src/render/MetalRenderDiagnostics.mm Qt/src/render/MetalRenderDiagnostics.h
                 Qt/src/render/MetalTemporalResolve.cpp Qt/src/render/MetalTemporalResolve.h
                 Qt/src/render/FrameGenerator.h Qt/src/render/SceneResources.h)
     target_link_libraries(RhineMusicDatabase PRIVATE "-framework Metal")

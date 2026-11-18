@@ -1,5 +1,6 @@
 #include "MetalFxBackend.h"
 #include "MetalFrameQueue.h"
+#include "MetalRenderDiagnostics.h"
 #include <array>
 #include <atomic>
 #include <deque>
@@ -485,6 +486,7 @@ void encodeMetalQueue(const std::shared_ptr<MetalQueueState> &shared, int index)
               state->inFlight.fetch_sub(1);
           }
         }];
+        observeMetalInterpolation((__bridge void *)buffer);
         [buffer commit];
     }
 }

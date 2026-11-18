@@ -15,7 +15,7 @@ Item {
         anchors.top: parent.top
         anchors.right: parent.right
         anchors.margins: 12
-        width: 366
+        width: profiler.sharesReports ? Math.min(366, Math.max(0, panel.width - 24)) : 366
         height: content.height + 24
         radius: 8
         color: "#ed151b20"
@@ -77,9 +77,13 @@ Item {
                 }
             }
             Row {
+                width: parent.width
                 spacing: 6
                 Rectangle {
-                    width: 140
+                    width: profiler.sharesReports
+                           ? Math.max(0, parent.width - reportAction.width - expandAction.width
+                                      - closeAction.width - parent.spacing * 3)
+                           : 140
                     height: 30
                     radius: 4
                     color: profiler.recording ? "#9f3830" : "#314f47"
@@ -100,27 +104,41 @@ Item {
                     }
                 }
                 Rectangle {
+                    id: reportAction
                     width: 82
                     height: 30
                     radius: 4
                     color: "#303b43"
+                    enabled: !profiler.sharesReports || profiler.reportShareEnabled
+                    opacity: enabled ? 1 : 0.45
+                    function activate() {
+                        if (!enabled) {
+                            return;
+                        }
+                        if (profiler.sharesReports) {
+                            profiler.shareReport();
+                        } else {
+                            profiler.openReportFolder();
+                        }
+                    }
                     Text {
                         anchors.centerIn: parent
-                        text: "诊断目录"
+                        text: profiler.sharesReports ? "分享报告" : "诊断目录"
                         color: "white"
                         font.pixelSize: 12
                     }
                     Accessible.role: Accessible.Button
-                    Accessible.name: "打开诊断目录"
-                    Accessible.onPressAction: profiler.openReportFolder()
+                    Accessible.name: profiler.sharesReports ? "分享性能诊断报告" : "打开诊断目录"
+                    Accessible.onPressAction: reportAction.activate()
                     MouseArea {
                         anchors.fill: parent
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: profiler.openReportFolder()
+                        onClicked: reportAction.activate()
                     }
                 }
                 Rectangle {
-                    width: 50
+                    id: expandAction
+                    width: profiler.sharesReports ? 42 : 50
                     height: 30
                     radius: 4
                     color: "#303b43"
@@ -140,7 +158,8 @@ Item {
                     }
                 }
                 Rectangle {
-                    width: 50
+                    id: closeAction
+                    width: profiler.sharesReports ? 42 : 50
                     height: 30
                     radius: 4
                     color: "#303b43"
@@ -159,6 +178,15 @@ Item {
                         onClicked: profiler.toggleVisible()
                     }
                 }
+            }
+            Text {
+                width: parent.width
+                visible: profiler.sharesReports && text.length > 0
+                text: profiler.status
+                color: "#e1e6eb"
+                font.family: rhineFontFamily
+                font.pixelSize: 12
+                wrapMode: Text.Wrap
             }
         }
     }

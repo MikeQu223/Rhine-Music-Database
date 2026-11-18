@@ -29,6 +29,8 @@ class FrameProfiler : public QObject {
     Q_PROPERTY(QString transitionDetails READ transitionDetails NOTIFY transitionDetailsChanged)
     Q_PROPERTY(QString status READ status NOTIFY statusChanged)
     Q_PROPERTY(QString recordingAction READ recordingAction NOTIFY recordingChanged)
+    Q_PROPERTY(bool sharesReports READ sharesReports CONSTANT)
+    Q_PROPERTY(bool reportShareEnabled READ reportShareEnabled NOTIFY recordingChanged)
     Q_PROPERTY(QVariantMap metrics READ metrics NOTIFY metricsChanged)
     /// 面板收起（精简模式）时置 false：完全不重建 details，长文本连布局都不做。
     Q_PROPERTY(bool detailsEnabled READ detailsEnabled WRITE setDetailsEnabled NOTIFY detailsEnabledChanged)
@@ -64,12 +66,15 @@ class FrameProfiler : public QObject {
         }
         return m_samples.isEmpty() ? QStringLiteral("开始收集") : QStringLiteral("重试导出");
     }
+    bool sharesReports() const;
+    bool reportShareEnabled() const;
     QVariantMap metrics() const {
         return m_metrics;
     }
     Q_INVOKABLE void toggleVisible();
     Q_INVOKABLE void toggleRecording();
     Q_INVOKABLE void openReportFolder();
+    Q_INVOKABLE void shareReport();
     bool startRecording();
     bool saveRecording();
     // 测试和原生命令行入口可指定目录；正常界面使用文稿目录。
@@ -126,6 +131,10 @@ class FrameProfiler : public QObject {
     /// 而长文本重排的次数直接减半。`RHINE_PROFILER_DETAILS_MS` 可改，0 = 每次都刷。
     int m_detailsIntervalMs = 1000;
     QString m_directory;
+#ifdef Q_OS_IOS
+    QString m_reportPath;
+    bool m_sharingReport = false;
+#endif
     QVariantMap m_metrics;
     QJsonArray m_samples;
     QJsonObject m_audioReport;

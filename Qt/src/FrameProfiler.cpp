@@ -3,12 +3,18 @@
 #include "AppleTransitionPlan.h"
 #include "AudioOutputFormat.h"
 #include "DiagnosticsDirectory.h"
+#ifdef Q_OS_IOS
+#include "IOSWindow.h"
+#endif
 
 #include "fg/FgCapability.h"
 #include "fg/FgConfig.h"
 #include "Engine.h"
 #include "ProcessMetrics.h"
 #include "render/RenderModePolicy.h"
+#ifdef Q_OS_DARWIN
+#include "render/MetalRenderDiagnostics.h"
+#endif
 #if defined(Q_OS_ANDROID)
 #include "render/HudPaintStats.h"
 #endif
@@ -33,6 +39,14 @@
 #include <QQuickWindow>
 
 namespace {
+#ifdef Q_OS_IOS
+/** 与崩溃报告共用目录，只枚举性能面板生成的文件。 */
+QFileInfoList performanceReports(const QDir &directory) {
+    return directory.entryInfoList({QStringLiteral("rhine-performance-*.json")},
+                                   QDir::Files | QDir::NoSymLinks, QDir::Time);
+}
+#endif
+
 QString transitionTime(qint64 ms) {
     return QStringLiteral("%1:%2.%3")
         .arg(ms / 60000, 2, 10, QLatin1Char('0'))
@@ -181,7 +195,7 @@ FrameProfiler::FrameProfiler(Engine *engine, const QString &path, QObject *paren
     : QObject(parent), m_engine(engine), file(path), stream(&file) {
     clock.start();
     epochMs = QDateTime::currentMSecsSinceEpoch();
-    m_directory = diagnosticsDirectory();
+    setReportDirectory(diagnosticsDirectory());
     m_sampleTimer.setInterval(500);
     // 详情默认 1 s 重建一次：headline（一行）保持 500 ms，长文本的布局次数减半。
     // 设成 0 表示每次采样都重建，用于排查"数字跳得太慢"。
@@ -265,9 +279,14 @@ void FrameProfiler::attach(QQuickWindow *window) {
         Qt::DirectConnection);
     connect(
         window, &QQuickWindow::afterRendering, this,
-        [this] {
+        [this, window] {
             if (m_enabled.load(std::memory_order_relaxed) && renderTimer.isValid()) {
                 submitNs.store(renderTimer.nsecsElapsed(), std::memory_order_relaxed);
+#ifdef Q_OS_DARWIN
+                RhineRender::observeMetalWindow(window);
+#else
+                Q_UNUSED(window);
+#endif
             }
         },
         Qt::DirectConnection);
@@ -354,6 +373,12 @@ void FrameProfiler::collectStep() {
 
 FrameProfiler::~FrameProfiler() {
     m_enabled.store(false, std::memory_order_relaxed);
+#ifdef Q_OS_DARWIN
+    RhineRender::setMetalDiagnosticsEnabled(false);
+    if (m_recording) {
+        RhineRender::markMetalDiagnosticsRecording(false);
+    }
+#endif
     m_capture.store(false, std::memory_order_relaxed);
     if (file.isOpen()) {
         stream.flush();
@@ -378,15 +403,64 @@ void FrameProfiler::toggleRecording() {
 }
 
 void FrameProfiler::setReportDirectory(const QString &directory) {
-    if (!m_recording) {
-        m_directory = directory;
+    if (m_recording) {
+        return;
     }
+    m_directory = directory;
+#ifdef Q_OS_IOS
+    const auto reports = performanceReports(QDir(m_directory));
+    m_reportPath = reports.isEmpty() ? QString() : reports.first().absoluteFilePath();
+    emit recordingChanged();
+#endif
+}
+
+bool FrameProfiler::sharesReports() const {
+#ifdef Q_OS_IOS
+    return true;
+#else
+    return false;
+#endif
+}
+
+bool FrameProfiler::reportShareEnabled() const {
+#ifdef Q_OS_IOS
+    return !m_recording && !m_sharingReport && !m_reportPath.isEmpty();
+#else
+    return false;
+#endif
 }
 
 void FrameProfiler::openReportFolder() {
+#ifndef Q_OS_IOS
     if (QDir().mkpath(m_directory)) {
         QDesktopServices::openUrl(QUrl::fromLocalFile(m_directory));
     }
+#endif
+}
+
+void FrameProfiler::shareReport() {
+#ifdef Q_OS_IOS
+    if (!reportShareEnabled()) {
+        return;
+    }
+    if (!QFileInfo(m_reportPath).isFile()) {
+        m_reportPath.clear();
+        m_status = QStringLiteral("诊断报告已不存在，请重新收集。");
+    } else {
+        // 分享扩展可能延后读取文件；系统回调结束之前保留本次报告。
+        m_sharingReport = shareIOSFile(m_reportPath, [profiler = QPointer(this)] {
+            if (profiler) {
+                profiler->m_sharingReport = false;
+                emit profiler->recordingChanged();
+            }
+        });
+        m_status = m_sharingReport ? QStringLiteral("诊断收集已完成，可以分享报告。")
+                                   : QStringLiteral("无法打开系统分享面板，请重试。");
+    }
+    emit recordingChanged();
+    emit statusChanged();
+    emit changed();
+#endif
 }
 
 /** 只在需要时开启原生计时，重置统计基线，避免把暂停期间的时间当成卡顿。 */
@@ -403,6 +477,9 @@ bool FrameProfiler::windowShown() const {
 void FrameProfiler::updateSampling() {
     const bool shown = windowShown();
     const bool enabled = (m_visible && shown) || m_recording || file.isOpen();
+#ifdef Q_OS_DARWIN
+    RhineRender::setMetalDiagnosticsEnabled((m_visible && shown) || m_recording);
+#endif
     m_engine->host.enablePlaybackDiagnostics((m_visible && shown) || m_recording);
     const bool previous = m_enabled.exchange(enabled, std::memory_order_relaxed);
     if (enabled != previous) {
@@ -521,6 +598,9 @@ void FrameProfiler::sample() {
     m_metrics.insert("gpuTimeMs", resources.value("gpuTimeMs"));
     // 状态与数值分开透传：面板要在"没有样本"时说明是没样本、没请求还是设备不支持。
     m_metrics.insert("gpuTimingStatus", resources.value("gpuTimingStatus"));
+#ifdef Q_OS_DARWIN
+    m_metrics.insert("metalDiagnostics", RhineRender::takeMetalDiagnostics());
+#endif
     {
         QMutexLocker lock(&m_gapMutex);
         m_metrics.insert("gpuAdapter", m_adapterName);
@@ -916,6 +996,32 @@ void FrameProfiler::formatMetrics(bool withDetails) {
                             .arg(gpuTiming.isEmpty() ? QStringLiteral("没有状态字段") : gpuTiming);
     }
     m_details += QStringLiteral("\n\nGPU 时间  %1").arg(gpuTimingText);
+#ifdef Q_OS_DARWIN
+    const auto metal = m_metrics.value("metalDiagnostics").toMap();
+    const auto describeMetal = [](const QVariantMap &samples) {
+        const int count = samples.value("samples").toInt();
+        const int missing = samples.value("missing").toInt();
+        if (!count) {
+            return missing ? QStringLiteral("无有效时间戳（%1 次缺样）").arg(missing)
+                           : QStringLiteral("无样本");
+        }
+        return QStringLiteral("中位数 %1 ms · P95 %2 ms · %3 个样本 · %4 次缺样")
+            .arg(samples.value("medianMs").toDouble(), 0, 'f', 2)
+            .arg(samples.value("p95Ms").toDouble(), 0, 'f', 2)
+            .arg(count)
+            .arg(missing);
+    };
+    const QStringList thermalLevels{
+        QStringLiteral("正常"), QStringLiteral("偏高"), QStringLiteral("严重"), QStringLiteral("危急"),
+    };
+    m_details += QStringLiteral("\nMetal 渲染命令  %1\nMetal 异步插帧命令  %2"
+                                "\n系统热状态  %3 · 低电量模式 %4"
+                                "\n应用 GPU 功率（W）  Apple 未开放应用级读数")
+                     .arg(describeMetal(metal.value("rendering").toMap()),
+                          describeMetal(metal.value("asyncInterpolation").toMap()),
+                          thermalLevels.value(metal.value("thermalState", -1).toInt(), QStringLiteral("未知")),
+                          metal.value("lowPowerMode").toBool() ? QStringLiteral("开") : QStringLiteral("关"));
+#endif
     const auto audio = m_metrics.value("audio").toMap();
     if (audio.value("outputBackend").toInt() == 2) {
         const auto codec = quint32(audio.value("sourceCodecFourCC").toDouble());
@@ -1150,14 +1256,36 @@ bool FrameProfiler::startRecording() {
     if (m_recording || !m_samples.isEmpty()) {
         return false;
     }
+#ifdef Q_OS_IOS
+    if (m_sharingReport) {
+        return false;
+    }
+#endif
     if (!QDir().mkpath(m_directory)) {
         m_status = QStringLiteral("无法创建诊断目录，请检查文稿目录权限。");
         emit statusChanged();
         emit changed();
         return false;
     }
+#ifdef Q_OS_IOS
+    m_reportPath.clear();
+    const auto reports = performanceReports(QDir(m_directory));
+    for (const auto &report : reports) {
+        if (!QFile::remove(report.absoluteFilePath())) {
+            m_status = QStringLiteral("无法清除旧的性能诊断报告，请重试。");
+            emit recordingChanged();
+            emit statusChanged();
+            emit changed();
+            return false;
+        }
+    }
+#endif
     // 丢弃打开面板时已有的半个采样区间，让录制从用户按下按钮时开始。
     sample();
+#ifdef Q_OS_DARWIN
+    RhineRender::setMetalDiagnosticsEnabled(false);
+    RhineRender::markMetalDiagnosticsRecording(true);
+#endif
     m_recordStartedMs = clock.elapsed();
     m_recordStoppedMs = 0;
     presentNs.store(0, std::memory_order_relaxed);
@@ -1190,6 +1318,9 @@ bool FrameProfiler::saveRecording() {
     m_saving = true;
     if (m_recording) {
         sample();
+#ifdef Q_OS_DARWIN
+        RhineRender::markMetalDiagnosticsRecording(false);
+#endif
         m_recordStoppedMs = clock.elapsed();
         m_engine->host.playbackDiagnostics.record("snapshot", m_engine->host.playbackSnapshot());
         m_engine->host.playbackDiagnostics.stop();
@@ -1244,7 +1375,12 @@ bool FrameProfiler::saveRecording() {
         QMutexLocker lock(&m_gapMutex);
         QList<FrameEvent>().swap(m_trace);
     }
+#ifdef Q_OS_IOS
+    m_reportPath = report.fileName();
+    m_status = QStringLiteral("诊断收集已完成，可以分享报告。");
+#else
     m_status = QStringLiteral("已保存：%1").arg(QFileInfo(report.fileName()).fileName());
+#endif
     updateSampling();
     emit statusChanged();
     emit recordingChanged();

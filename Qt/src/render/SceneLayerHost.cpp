@@ -1,6 +1,9 @@
 #include <QtGlobal>
 #include "SceneLayerHost.h"
 #include "../CrashDiagnostics.h"
+#ifdef Q_OS_DARWIN
+#include "MetalRenderDiagnostics.h"
+#endif
 
 #include <QColor>
 #include <QDebug>
@@ -405,6 +408,11 @@ bool SceneLayerHost::renderLayer(Layer &layer, const char *name) {
 #ifdef Q_OS_LINUX
     layer.recordMs = blendMs(layer.recordMs, stage.nsecsElapsed());
     stage.restart();
+#endif
+#ifdef Q_OS_DARWIN
+    if (m_rhi->backend() == QRhi::Metal) {
+        RhineRender::observeMetalCommands(control->commandBuffer());
+    }
 #endif
     control->endFrame();
 #ifdef Q_OS_LINUX

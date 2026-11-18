@@ -1,5 +1,8 @@
 #include "PresentationBackend.h"
 #include "PresentationWindow.h"
+#ifdef Q_OS_DARWIN
+#include "MetalRenderDiagnostics.h"
+#endif
 #ifdef Q_OS_WIN
 #include "../WindowsRoundedCorners.h"
 #endif
@@ -132,6 +135,11 @@ class RhiPresentationBackend final : public PresentationBackend {
         // 进程死亡连带前台服务消失，是全部后台症状（被杀/冻结/控件失灵）的根源。
         // 未暴露就 SkipPresent：本帧白渲，下一帧由 acquire 的 isExposed 门控接手。
         const auto presentable = rendered && m_window->isExposed();
+#ifdef Q_OS_DARWIN
+        if (m_rhi->backend() == QRhi::Metal) {
+            observeMetalCommands(m_swapchain->currentFrameCommandBuffer());
+        }
+#endif
         const auto result =
             m_rhi->endFrame(m_swapchain.get(), presentable ? QRhi::EndFrameFlags{} : QRhi::SkipPresent);
         return result == QRhi::FrameOpSuccess;
