@@ -14,26 +14,34 @@
 // → androiddeployqt → Gradle assembleDebug）产出的都是纯 Qt 包——没有 libflutter.so、没有
 // flutter_assets，装到设备上跑的是 Qt ConsentActivity。构建代码按用户要求保留，但绝不能再被跑通。
 // 失败点放在**任何**动作之前：不读签名凭据、不准备 Node/资源、不配置 CMake、不动 Gradle。
+// 例外只有 `--prepare-only`：它只准备 Flutter 构建要用的 Node 运行时与资源，然后退出，
+// 不会走到 CMake/Gradle 打包链，因此不违反「Android 包只能由 Flutter 产出」。
 // 同一条封堵还在 Qt/android/build.gradle（Gradle 层）与 Qt/Android.cmake（RHINE_FLUTTER_HOST_ONLY，
 // 默认 fail-closed）里各有一道，任何一道单独被绕过都不会出包。
 // ============================================================================
-console.error(
-    [
-        '纯 Qt 的 Android 打包已停用（FLUTTER-ONLY-ANDROID-20261117）。',
-        '',
-        'Android 包必须由 Flutter 工程构建：',
-        '    flutter build apk --debug --target-platform android-arm64',
-        '  入口 lib/main.dart，Gradle 工程 android/app/build.gradle.kts。',
-        '',
-        'Qt 侧只提供 native 产物（不走本脚本）：',
-        '    qt-cmake -DRHINE_FLUTTER_HOST_ONLY=ON 配置 → 编 libRhineMusicDatabase_arm64-v8a.so',
-        '    androiddeployqt --input <build>/Qt/android-RhineMusicDatabase-deployment-settings.json \\',
-        '                    --output <staging> --no-build（只生成 libs/jar/assets/libs.xml）',
-        '',
-        '本脚本的打包链（cmake --build --target apk / aab + Gradle assembleDebug）已封堵：',
-        '代码保留，不执行，未读取签名凭据，未准备任何资源或构建目录。',
-    ].join('\n'));
-process.exit(1);
+if (!process.argv.includes('--prepare-only')) {
+    console.error(
+        [
+            '纯 Qt 的 Android 打包已停用（FLUTTER-ONLY-ANDROID-20261117）。',
+            '',
+            'Android 包必须由 Flutter 工程构建：',
+            '    flutter build apk --debug --target-platform android-arm64',
+            '  入口 lib/main.dart，Gradle 工程 android/app/build.gradle.kts。',
+            '',
+            'Qt 侧只提供 native 产物（不走本脚本）：',
+            '    qt-cmake -DRHINE_FLUTTER_HOST_ONLY=ON 配置 → 编 libRhineMusicDatabase_arm64-v8a.so',
+            '    androiddeployqt --input <build>/Qt/android-RhineMusicDatabase-deployment-settings.json \\',
+            '                    --output <staging> --no-build（只生成 libs/jar/assets/libs.xml）',
+            '',
+            '本脚本的打包链（cmake --build --target apk / aab + Gradle assembleDebug）已封堵：',
+            '代码保留，不执行，未读取签名凭据，未准备任何资源或构建目录。',
+            '',
+            '只准备 Flutter 构建所需的 Node 运行时与资源（不打包）：',
+            '    node scripts/build-android.cjs --prepare-only',
+        ].join('\n'),
+    );
+    process.exit(1);
+}
 
 const fs = require('node:fs');
 const os = require('node:os');
@@ -382,6 +390,7 @@ if (!gradleTemplateInSync()) {
 prepareNodeMobile();
 prepareResources();
 if (prepareOnly) {
+    console.log('Android Node 运行时与资源已准备好（Flutter 构建用）。');
     process.exit(0);
 }
 
