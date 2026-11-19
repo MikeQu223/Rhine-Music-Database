@@ -3,130 +3,9 @@
 #include <algorithm>
 #include <cmath>
 
-namespace {
-QString stamp(double milliseconds) {
-    const double value = std::max(0., milliseconds);
-    return MusicData::pad(int(value / 60000)) + ":" + MusicData::pad(int(value / 1000) % 60);
-}
-QString qualityLabel(const QString &value) {
-    if (value == "lossless" || value == "flac") {
-        return "无损";
-    }
-    if (value == "hires") {
-        return "Hi-Res";
-    }
-    if (value == "exhigh" || value == "higher" || value == "hq") {
-        return "高品质";
-    }
-    if (value == "master" || value == "jymaster") {
-        return "母带";
-    }
-    if (value == "jyeffect") {
-        return "高品质";
-    }
-    if (value == "sky") {
-        return "Hi-Res";
-    }
-    if (value == "auto" || value == "best") {
-        return "自动";
-    }
-    if (value == "original") {
-        return "原始";
-    }
-    if (value == "sq") {
-        return "SQ 无损";
-    }
-    if (value == "standard") {
-        return "标准";
-    }
-    if (value == "320k" || value == "128k") {
-        return value;
-    }
-    return value;
-}
-}
-/** 进度、时间与音质：手机播放页和歌词页共用同一套行高与命中区。 */
-void ResponsiveHudLayout::progressRow(ResponsiveHudCanvas &c, double y, bool current,
-                                      const QJsonObject &source, QString idleDuration) {
-    const double fraction = current && m_player.durationMs > 0
-                                ? std::clamp(m_player.positionMs / m_player.durationMs, 0., 1.)
-                                : 0;
-    c.fill({20, y, 353, 2.5}, c.line);
-    c.fill({20, y, 353 * fraction, 2.5}, c.amber);
-    for (int tick = 0; tick <= 20; ++tick) {
-        c.fill({20 + tick * 17.6, y + 5, .6, tick % 5 == 0 ? 6. : 3.}, c.line);
-    }
-    if (current && m_player.seekable) {
-        c.field("seek", {20, y - 9, 353, 22});
-    }
-    c.text(current ? stamp(m_player.positionMs) : "00:00", 20, y + 10, 10, 120, "regular", c.muted);
-    const bool hasDuration = current ? m_player.durationMs > 0 : !idleDuration.isEmpty();
-    const double shownDuration = current ? m_player.durationMs : 0;
-    const QString right = !current      ? idleDuration
-                          : hasDuration ? "-" + stamp(shownDuration - m_player.positionMs)
-                                        : "暂无";
-    c.rightText(right, 373, y + 10, 10, "regular", c.muted);
-    const QString quality = current ? qualityLabel(source["playerQuality"].toString()) : QString();
-    if (!quality.isEmpty()) {
-        const double width = c.measure(quality, 9, "regular") + 24;
-        c.fill({196.5 - width / 2, y + 6, width, 17}, c.raised);
-        c.centered(quality, 196.5, y + 14.5, 9, "regular", c.muted);
-    }
-}
-/** 上一首 / 播放 / 下一首，沿用歌词页的尺寸与命中区。 */
-void ResponsiveHudLayout::transportRow(ResponsiveHudCanvas &c, double y, bool current) {
-    c.icon("prev", 99, y + 2, 26);
-    c.hit({89, y - 10, 44, 44}, "player:prev", "上一首");
-    const auto button = current ? m_player : PlayerBar::State{.boxedPlayButton = m_player.boxedPlayButton};
-    PlayerBar::appendPlayButton(c.commands, button, {196.5, y + 16}, 56, c.ink, c.paper);
-    c.hit({164, y - 16, 64, 64}, current ? "player:toggle" : "music:play",
-          current && m_player.playing ? "暂停" : "播放");
-    c.icon("next", 264.5, y + 2, 26);
-    c.hit({255, y - 10, 44, 44}, "player:next", "下一首");
-}
-/** 音量行：两端小喇叭与细滑杆，滑杆命中区比视觉高度更宽。 */
-void ResponsiveHudLayout::volumeRow(ResponsiveHudCanvas &c, double y) {
-    c.icon("volume", 20, y, 16, c.muted);
-    c.icon("volume", 357, y, 16, c.muted);
-    const double fraction = std::clamp(m_player.volume, 0., 1.);
-    c.fill({46, y + 7, 301, 2.5}, c.line);
-    c.fill({46, y + 7, 301 * fraction, 2.5}, c.muted);
-    c.field("volume", {46, y - 3, 301, 22});
-}
-/** 底部三个入口：歌词、播放模式、队列，位置与歌词页参考图对齐。 */
-void ResponsiveHudLayout::utilityRow(ResponsiveHudCanvas &c, double y, bool current) {
-    c.centered("词", 114, y + 10, 18, "demibold", current ? c.ink : c.muted);
-    if (current) {
-        c.hit({92, y - 12, 44, 44}, "player:lyrics", "打开全屏歌词");
-    }
-    c.icon(m_player.mode == "shuffle" ? "shuffle"
-           : m_player.mode == "off"   ? "right"
-                                      : "repeat",
-           186.5, y, 20);
-    if (m_player.mode == "one") {
-        c.centered("1", 196.5, y + 10, 8, "bold");
-    }
-    c.hit({174.5, y - 12, 44, 44}, "player:mode", "切换播放模式");
-    c.icon("queue", 271, y, 20);
-    c.hit({259, y - 12, 44, 44}, "player:open", "播放队列");
-}
-
-/** 歌词页底部控制区：位置按设计参考固定，滚动只影响歌词区。 */
-void ResponsiveHudLayout::lyricsPlayer(ResponsiveHudCanvas &c, const QJsonObject &source) {
-    const double top = c.contentBottom;
-    progressRow(c, top + 34, m_player.hasTrack, source, {});
-    transportRow(c, top + 84, m_player.hasTrack);
-    if (m_player.applicationVolume) {
-        volumeRow(c, top + 148);
-    }
-    utilityRow(c, top + 194, m_player.hasTrack);
-    c.field("playerBounds", {0, top, 393, m_height - top});
-}
-
 /** 歌词阅读：复用桌面歌词面板的字号、行距、强调与滚动曲线，只把宽度换成手机画布。 */
-double ResponsiveHudLayout::lyrics(ResponsiveHudCanvas &c, const QJsonObject &source) {
-    constexpr double viewTop = 158;
-    const double viewBottom = c.contentBottom;
+double ResponsiveHudLayout::lyrics(ResponsiveHudCanvas &c, const QJsonObject &source, double viewTop,
+                                   double viewBottom) {
     const double width = 353;
     const auto document = source["lyricDocument"].toObject();
     const auto lines = document["lines"].toArray();
@@ -143,9 +22,6 @@ double ResponsiveHudLayout::lyrics(ResponsiveHudCanvas &c, const QJsonObject &so
                 c.text(row, 20, y, 15, width, "regular", c.muted);
             }
             y += 26;
-        }
-        if (!source["lyricMessage"].toString().isEmpty()) {
-            c.button({20, viewBottom - 52, 353, 42}, "重新查找歌词", "player:lyrics-retry");
         }
         return y + m_scroll + 40;
     }
@@ -164,19 +40,33 @@ double ResponsiveHudLayout::lyrics(ResponsiveHudCanvas &c, const QJsonObject &so
             row.text = c.wrap(original, width, 22, "bold");
             const auto translation = line["translation"].toString();
             if (!translation.isEmpty()) {
-                row.translation = c.wrap(translation, width, 11, "regular");
+                row.translation = c.wrap(translation, width, 15, "bold");
             }
-            y += std::max(1, int(row.text.size())) * 30 + int(row.translation.size()) * 17 + 22;
+            y += std::max(1, int(row.text.size())) * 30 + int(row.translation.size()) * 20 + 22;
             m_lyricRows.append(row);
         }
         m_lyricContentHeight = y;
+        m_lyricLastIndex = source["lyricIndex"].toInt(-1);
+        m_lyricLineUpdates = 0;
         m_lyricTarget.reset();
         m_lyricCurve.reset();
         m_lyricScroll = 0;
     }
     const int active = source["lyricIndex"].toInt(-1);
-    constexpr double focusOffset = 100.;
-    const double maximum = std::max(0., m_lyricContentHeight - (viewBottom - viewTop) + 60);
+    if (active != m_lyricLastIndex) {
+        m_lyricLastIndex = active;
+        if (!m_followLyrics && active >= 0 && ++m_lyricLineUpdates >= 2) {
+            m_lyricLineUpdates = 0;
+            m_followLyrics = true;
+            m_lyricTarget.reset();
+            m_lyricCurve.reset();
+        }
+    }
+    constexpr double focusOffset = 32.;
+    const double activeTop = active >= 0 && active < m_lyricRows.size() ? m_lyricRows[active].top : 0.;
+    const double normalMaximum = std::max(0., m_lyricContentHeight - (viewBottom - viewTop) + 60);
+    // 末尾没有后续歌词时仍允许继续滚动，让当前句停在阅读区首行。
+    const double maximum = std::max(normalMaximum, activeTop);
     if (m_followLyrics) {
         const double target = active >= 0 && active < m_lyricRows.size() ? m_lyricRows[active].top : 0;
         if (!m_lyricTarget || target != *m_lyricTarget) {
@@ -202,7 +92,7 @@ double ResponsiveHudLayout::lyrics(ResponsiveHudCanvas &c, const QJsonObject &so
     for (int index = 0; index < m_lyricRows.size(); ++index) {
         const auto &row = m_lyricRows[index];
         const double y = viewTop + row.top - scroll + focusOffset;
-        const double height = std::max(1, int(row.text.size())) * 30 + int(row.translation.size()) * 17;
+        const double height = std::max(1, int(row.text.size())) * 30 + int(row.translation.size()) * 20;
         if (y + height < viewTop - 12 || y > viewBottom + 12) {
             continue;
         }
@@ -211,14 +101,24 @@ double ResponsiveHudLayout::lyrics(ResponsiveHudCanvas &c, const QJsonObject &so
             std::clamp(std::min((y + height - viewTop) / 36., (viewBottom - y) / 36.), 0., 1.);
         auto color = c.ink;
         color[3] = (isActive ? 1. : .28) * edge;
+        const bool future = active >= 0 && index > active;
         for (int lineIndex = 0; lineIndex < row.text.size(); ++lineIndex) {
-            c.text(row.text[lineIndex], 20, y + lineIndex * 30, 22, width, "bold", color);
+            if (future) {
+                c.blurText(row.text[lineIndex], 20, y + lineIndex * 30, 22, width, "bold", color, 1.8);
+            } else {
+                c.text(row.text[lineIndex], 20, y + lineIndex * 30, 22, width, "bold", color);
+            }
         }
         auto translated = color;
         translated[3] = color.at(3).toDouble() * .65;
         for (int lineIndex = 0; lineIndex < row.translation.size(); ++lineIndex) {
-            c.text(row.translation[lineIndex], 20, y + row.text.size() * 30 + lineIndex * 17, 11, width,
-                   "regular", translated);
+            if (future) {
+                c.blurText(row.translation[lineIndex], 20, y + row.text.size() * 30 + lineIndex * 20, 15,
+                           width, "bold", translated, 1.2);
+            } else {
+                c.text(row.translation[lineIndex], 20, y + row.text.size() * 30 + lineIndex * 20, 15, width,
+                       "bold", translated);
+            }
         }
         if (m_player.seekable) {
             const double hitTop = std::max(viewTop, y - 7);
@@ -246,7 +146,6 @@ void ResponsiveHudLayout::optionsSheet(ResponsiveHudCanvas &c, const QJsonObject
         actions.append(SongDetailCard::Action{"歌词提前 0.2s", "player:lyrics-earlier"});
         actions.append(SongDetailCard::Action{"歌词延后 0.2s", "player:lyrics-later"});
         actions.append(SongDetailCard::Action{"重置歌词偏移", "player:lyrics-reset"});
-        actions.append(SongDetailCard::Action{"重新查找歌词", "player:lyrics-retry"});
         if (m_player.hasTrack && source["provider"] == "local") {
             actions.append(SongDetailCard::Action{"歌词来源", "player:lyrics-sources"});
         }

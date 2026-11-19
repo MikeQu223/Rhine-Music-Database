@@ -24,7 +24,8 @@ class ReelCurve {
 class SurfaceMotion {
   public:
     void sample(double time);
-    void set(bool shown, double time, bool reduced = false);
+    void set(bool shown, double time, bool reduced = false, double enterDuration = .3,
+             double exitDuration = .2);
     bool finished() const {
         return duration == 0;
     }

@@ -137,8 +137,10 @@ Item {
 
     // 歌词滚动与页头下拉各自占有手势，滚动正文不会误关闭整页。
     Item {
-        visible: !root.stage.android && root.stage.compactLayout && (root.backend.state.lyricsMode || root.backend.state.commentsMode) && !root.backend.state.modal
-        y: 158 * root.stage.stageScale * (root.backend.state.compactUnit || 1)
+        visible: !root.stage.android && root.stage.compactLayout &&
+                 ((root.backend.state.lyricsMode && (root.backend.state.playerModeProgress || 0) > .001) ||
+                  root.backend.state.commentsMode) && !root.backend.state.modal
+        y: (root.backend.state.lyricsContentTop || 0) * root.stage.stageScale
         width: root.width
         height: Math.max(0, ((root.backend.state.playerBounds || {}).y || 0) * root.stage.stageScale - y)
         DragHandler {

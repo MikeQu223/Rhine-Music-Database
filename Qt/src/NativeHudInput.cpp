@@ -12,8 +12,12 @@ void NativeHud::wheel(double x, double y, double delta, std::optional<int> steps
         return;
     }
     if (m_responsive.compact()) {
+        if (lyricsMode && modal.isEmpty() &&
+            (delta != 0 || steps.value_or(0) != 0 || distance.value_or(0.) != 0)) {
+            revealLyricsControls();
+        }
         const auto bounds = m_responsive.state(sourceState())["playerBounds"].toObject();
-        if (y >= bounds["y"].toDouble()) {
+        if (!bounds.isEmpty() && y >= bounds["y"].toDouble()) {
             return;
         }
         if (delta == 0 && steps.value_or(0) == 0 && distance.value_or(0.) == 0) {

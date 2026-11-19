@@ -70,6 +70,39 @@ NativeHud::NativeHud(Host *host, Glyphs *glyphs, MusicLibrary *music, HudSceneAc
     connect(music, &MusicLibrary::invalidated, this, &NativeHud::ensureSavedFilled);
     connect(music, &MusicLibrary::invalidated, this,
             [this] { QTimer::singleShot(0, this, &NativeHud::continueSort); });
+    m_lyricsControlsTimer.setSingleShot(true);
+    m_lyricsControlsTimer.setTimerType(Qt::CoarseTimer);
+    connect(&m_lyricsControlsTimer, &QTimer::timeout, this, [this] {
+        if (!lyricsMode || !m_responsive.compact() || !modal.isEmpty() || !lyricsControlsVisible) {
+            return;
+        }
+        lyricsControlsVisible = false;
+        m_lyricsControlsMotion.set(false, lastTime, reduced);
+        m_host->invalidate();
+    });
+}
+
+/** 歌词模式复用共享播放控制；滚动或操作后重新显示，并重新开始无操作计时。 */
+void NativeHud::revealLyricsControls() {
+    if (!m_responsive.compact() || !lyricsMode) {
+        return;
+    }
+    const bool wasHidden = !lyricsControlsVisible;
+    lyricsControlsVisible = true;
+    if (wasHidden) {
+        m_lyricsControlsMotion.set(true, lastTime, reduced);
+    }
+    m_lyricsControlsTimer.start(LyricsControlsHideMs);
+    if (wasHidden) {
+        m_host->invalidate();
+    }
+}
+
+/** 页面离开歌词、打开 modal 或窗口隐藏时停止迟到回调。 */
+void NativeHud::suspendLyricsControls() {
+    m_lyricsControlsTimer.stop();
+    lyricsControlsVisible = false;
+    m_lyricsControlsMotion.set(false, lastTime, true);
 }
 
 void NativeHud::openModal(QString kind) {
@@ -94,6 +127,9 @@ void NativeHud::openModal(QString kind) {
         m_scene.pointer("pointerleave", 0, 0, 0);
     }
     modal = kind;
+    if (lyricsMode) {
+        suspendLyricsControls();
+    }
     if (kind == "player") {
         // 仅唤起时定位当前音轨；后续绘制不抢回用户手动滚动的位置。
         queueOffset = std::max(0, m_music->player.queue.indexOf(m_music->player.current));
@@ -163,6 +199,9 @@ void NativeHud::closeModal() {
     editingSettingText.clear();
     editingSettingRect = QRectF();
     closing = true;
+    if (lyricsMode && m_responsive.compact()) {
+        revealLyricsControls();
+    }
     const bool directNavigation =
         m_responsive.compact() && QStringList{"search", "discover", "settings", "saved"}.contains(modal);
     motion.set(false, lastTime, reduced || directNavigation);
@@ -361,7 +400,14 @@ void NativeHud::playerAction(const QStringList &parts) {
         if (!player.current.isEmpty()) {
             modal.clear();
             closing = false;
-            lyricsMode = name == "lyrics";
+            commentsMode = false;
+            lyricsMode = name == "lyrics" ? !lyricsMode : false;
+            if (lyricsMode) {
+                lyricsControlsVisible = true;
+                m_lyricsControlsMotion.set(true, lastTime, reduced);
+            } else {
+                suspendLyricsControls();
+            }
             m_lyricsBrowse.reset();
             music.followPlayback(player.current);
             m_scene.mode("detail");
@@ -369,6 +415,7 @@ void NativeHud::playerAction(const QStringList &parts) {
         }
     } else if (name == "lyrics-close") {
         lyricsMode = false;
+        suspendLyricsControls();
     } else if (name == "lyrics-follow") {
         m_lyricsBrowse.reset();
     } else if (name == "lyrics-offset") {
@@ -447,6 +494,10 @@ void NativeHud::action(QString value) {
         !PlatformFeatures::discRotationAvailable()) {
         return;
     }
+    if (m_responsive.compact() && lyricsMode && modal.isEmpty() &&
+        (value.startsWith("player:") || value.startsWith("mobile:lyrics"))) {
+        revealLyricsControls();
+    }
     if (m_responsive.compact() && value.startsWith("mobile:play-collection:")) {
         const auto json =
             QUrl::fromPercentEncoding(value.mid(QString("mobile:play-collection:").size()).toUtf8());
@@ -488,6 +539,9 @@ void NativeHud::action(QString value) {
         commentsTrackKey = CommentsController::trackKey(m_music->current);
         commentsScroll = 0;
         commentsContentBottom = 0;
+        lyricsMode = false;
+        m_lyricsControlsTimer.stop();
+        lyricsControlsVisible = false;
         if (!m_responsive.compact() && tab != "comments") {
             commentsReturnTab = tab;
             tab = "comments";
@@ -555,6 +609,7 @@ void NativeHud::action(QString value) {
     }
     if (value == "home") {
         lyricsMode = false;
+        suspendLyricsControls();
         commentsMode = false;
         playlistSearchActive = false;
         detailQuery.clear();
@@ -969,6 +1024,7 @@ void NativeHud::action(QString value) {
     }
     if (value == "back") {
         lyricsMode = false;
+        suspendLyricsControls();
         commentsMode = false;
         playlistSearchActive = false;
         detailQuery.clear();
@@ -1344,9 +1400,12 @@ bool NativeHud::animating(double time) const {
                         time - m_lyricsCurve->start < m_lyricsCurve->duration;
     const bool trackList = trackListMode && frame["mode"] == "archive" && modal.isEmpty() &&
                            m_trackListCurve && time - m_trackListCurve->start < m_trackListCurve->duration;
+    const bool adaptiveColors = m_lyricsColorStart >= 0 && time - m_lyricsColorStart < .34;
     // 播放键变形期间保持出帧，否则引擎休眠会让图标停在半变形状态。
     const bool playMorphing = m_playMorphStart >= 0 && time - m_playMorphStart < PlayMorphDuration;
-    if (!motion.finished() || lyrics || trackList || playMorphing || closing || time - m_resultStart < 0.5) {
+    if (!motion.finished() || !m_playerModeMotion.finished() || !m_lyricsControlsMotion.finished() || lyrics ||
+        adaptiveColors || trackList || playMorphing ||
+        closing || time - m_resultStart < 0.5) {
         return true;
     }
     return std::any_of(m_rolling.cbegin(), m_rolling.cend(),

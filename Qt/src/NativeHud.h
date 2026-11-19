@@ -11,6 +11,7 @@
 #include <QCache>
 #include <QPointF>
 #include <QRectF>
+#include <QTimer>
 #include <QtGlobal>
 #include <map>
 #include <optional>
@@ -175,6 +176,8 @@ class NativeHud : public QObject {
     int archiveMaskStrength = 50;
     bool closing = false;
     bool lyricsMode = false;
+    bool lyricsControlsVisible = true;
+    static constexpr int LyricsControlsHideMs = 3400;
     bool commentsMode = false;
     QString commentsReturnTab = "overview";
     QString commentsTrackKey;
@@ -195,6 +198,9 @@ class NativeHud : public QObject {
     /// frame["detail"]：那个值来自 m_animationTime 伪时钟，引擎休眠时会永久停住。
     qint64 m_detailEnterWallMs = -1;
     UiMotion::SurfaceMotion motion;
+    UiMotion::SurfaceMotion m_playerModeMotion;
+    UiMotion::SurfaceMotion m_lyricsControlsMotion;
+    bool m_playerModeTarget = false;
     std::optional<QRectF> playerBounds;
     std::optional<QRectF> playerSeekRect;
     std::optional<QRectF> playerVolumeRect;
@@ -271,6 +277,7 @@ class NativeHud : public QObject {
     QString m_playlistFeedbackKey;
     QHash<QString, QString> m_playlistFeedback;
     QHash<QString, QTimer *> m_playlistFeedbackTimers;
+    QTimer m_lyricsControlsTimer;
     QString m_sortContainerKey;
     QJsonArray m_sortTracks;
     QString m_sortField;

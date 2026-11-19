@@ -410,7 +410,11 @@ QJsonObject NativeHud::sourceState() const {
     const bool playbackActive = !player.current.isEmpty() && player.state["playing"].toBool() &&
                                 !player.state["buffering"].toBool() && !player.loading && !player.failed;
     return {{"lyricsMode", lyricsMode},
+            {"playerModeProgress", m_playerModeMotion.opacity},
             {"lyricsColors", m_lyricsColors},
+            {"lyricsControlsVisible", lyricsControlsVisible},
+            {"lyricsControlsOpacity", m_lyricsControlsMotion.opacity},
+            {"lyricsControlsOffset", m_lyricsControlsMotion.offset},
             {"playbackActive", playbackActive},
             {"commentsMode", commentsMode},
             {"commentsAvailable", m_music->commentsAvailable()},
@@ -513,6 +517,32 @@ void NativeHud::draw(QJsonObject next, double stageWidth, double time) {
         m_scene.theme(dark);
     }
     m_responsive.resize(stageWidth);
+    if (lyricsMode != m_playerModeTarget) {
+        m_playerModeTarget = lyricsMode;
+        m_playerModeMotion.set(lyricsMode, time, reduced, .36, .32);
+        if (lyricsMode) {
+            // 进入歌词模式时共享控制区已经是页面的一部分，
+            // 不额外做一次入场动画。
+            lyricsControlsVisible = true;
+            m_lyricsControlsMotion.set(true, time, true);
+            if (m_responsive.compact()) {
+                m_lyricsControlsTimer.start(LyricsControlsHideMs);
+            }
+        } else {
+            m_lyricsControlsTimer.stop();
+            lyricsControlsVisible = false;
+            m_lyricsControlsMotion.set(false, time, true);
+        }
+    }
+    if (!lyricsMode || !m_responsive.compact() || !modal.isEmpty()) {
+        m_lyricsControlsTimer.stop();
+        if (!lyricsMode) {
+            lyricsControlsVisible = false;
+        }
+    } else if (lyricsControlsVisible && !m_lyricsControlsTimer.isActive()) {
+        // 从弹层返回后重新开始无操作计时；弹层打开期间计时被暂停。
+        m_lyricsControlsTimer.start(LyricsControlsHideMs);
+    }
     m_music->followPlaybackDetails = !m_responsive.compact();
     m_music->followPlaybackForLyrics = lyricsMode;
     const double actualStageWidth = stageWidth;
@@ -543,6 +573,8 @@ void NativeHud::draw(QJsonObject next, double stageWidth, double time) {
         m_trackListScope.clear();
     }
     motion.sample(time);
+    m_playerModeMotion.sample(time);
+    m_lyricsControlsMotion.sample(time);
     if (closing && motion.finished()) {
         modal.clear();
         closing = false;
@@ -551,10 +583,9 @@ void NativeHud::draw(QJsonObject next, double stageWidth, double time) {
         const auto scope = modal + ":" + frame["mode"].toString() + ":" +
                            m_music->current.value("kind").toString() + ":" +
                            m_music->current.value("id").toString() + ":" + tab + ":" +
-                           (lyricsMode ? QStringLiteral("lyrics")
-                                       : commentsMode ? QStringLiteral("comments:") + m_music->comments.sort + ":" +
-                                                            m_music->comments.status
-                                                      : QStringLiteral("info")) +
+                           (commentsMode ? QStringLiteral("comments:") + m_music->comments.sort + ":" +
+                                              m_music->comments.status
+                                        : QStringLiteral("info")) +
                            ":" + m_music->discover->tab + ":" + QString::number(musicCollection) + ":" + artistTab +
                            ":" + query;
         const bool home = modal.isEmpty() && frame["mode"] == "archive" && !lyricsMode && !commentsMode;
@@ -569,7 +600,7 @@ void NativeHud::draw(QJsonObject next, double stageWidth, double time) {
             } else if (!modal.isEmpty() && modal != "search" && modal != "saved" && modal != "provider" &&
                        modal != "plugins" && modal != "plugin-detail") {
                 m_responsive.setAuxiliary(auxiliaryContent());
-            } else if (modal.isEmpty() && frame["mode"] == "detail" && !lyricsMode && !commentsMode &&
+            } else if (modal.isEmpty() && frame["mode"] == "detail" && !commentsMode &&
                        !m_music->current.isEmpty()) {
                 detail(width, frame["detail"].toDouble());
             }
@@ -741,12 +772,13 @@ void NativeHud::drawMobile(double time, const QString &scope, double stageWidth)
     }
     m_responsive.arrange(commands, hits, mobile, scope, *m_glyphs);
     QString pageKey = modal + ":" + frame["mode"].toString();
-    if (lyricsMode && modal.isEmpty()) {
-        pageKey = "lyrics";
-    } else if (commentsMode && modal.isEmpty()) {
+    if (commentsMode && modal.isEmpty()) {
         pageKey = "comments";
     } else if (modal.isEmpty() && frame["mode"] == "detail") {
-        pageKey += ":" + m_music->current["key"].toString();
+        // 歌曲详情与歌词是同一个播放器页面的两种模式；
+        // 切歌只更新内容，不触发整页换页动画。
+        const bool playerPage = m_music->current.value("kind").toString() == "song";
+        pageKey += ":" + (playerPage ? QStringLiteral("player") : m_music->current["key"].toString());
     }
     if (!lyricsMode && modal.isEmpty() && frame["mode"] == "archive") {
         pageKey += ":" + QString::number(mobile["archiveColumnIndex"].toInt()) + ":" + m_music->libraryName();
@@ -754,11 +786,6 @@ void NativeHud::drawMobile(double time, const QString &scope, double stageWidth)
         pageKey += ":" + m_music->discover->tab;
     } else if (modal == "search") {
         pageKey += ":" + m_music->searchKind;
-    }
-    QJsonArray paper;
-    if (pageKey == "lyrics" || pageKey == "comments") {
-        // 整页滑动露出的区域使用当前主题底色，资料库纹理已经隐藏。
-        paper = {"fill", ResponsiveHudCanvas::paperColor(dark), 0, 0, stageWidth, 1080};
     }
     using ScenePage = ResponsiveHudTransition::ScenePage;
     auto scenePage = ScenePage::Other;
@@ -768,8 +795,12 @@ void NativeHud::drawMobile(double time, const QString &scope, double stageWidth)
                !lyricsMode && !commentsMode) {
         scenePage = ScenePage::Archive;
     }
+    QJsonArray pageBackground;
+    if (m_mobileTransition.needsBackground(pageKey)) {
+        pageBackground = {"fill", ResponsiveHudCanvas::paperColor(dark), 0, 0, stageWidth, 1080};
+    }
     m_mobileTransition.apply(
-        commands, hits, pageKey, time, 1080, reduced, scenePage, frame["detail"].toDouble(), paper);
+        commands, hits, pageKey, time, 1080, reduced, scenePage, frame["detail"].toDouble(), pageBackground);
 
     // 列表滚动把固定槽位上的歌曲交给原有选择流程；下一帧再绘制新的选中状态。
     if (const int selection = m_responsive.takeArchiveSelection(); selection >= 0) {

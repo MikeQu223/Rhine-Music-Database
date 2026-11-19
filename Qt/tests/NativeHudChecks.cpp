@@ -1208,14 +1208,12 @@ bool checkResponsiveHud(const QString &root, Glyphs &glyphs, const QJsonObject &
     }
     hud.draw({{"mode", "detail"}, {"detail", 1}}, width, 100);
     capture("song");
-    const auto closeSong = getHit(hud.hits, "back");
-    const auto moreSong = getHit(hud.hits, "mobile:song-options");
     const auto queueSong = getHit(hud.hits, "player:open");
-    if (closeSong["label"] != "关闭播放页面" || closeSong["width"].toDouble() < 56 * width / 393 ||
-        moreSong["y"] != queueSong["y"] || moreSong["x"].toDouble() <= queueSong["x"].toDouble()) {
-        qCritical() << "Song close and bottom more actions lost their requested placement";
-        return false;
-    }
+    const auto modeSong = getHit(hud.hits, "player:mode");
+    const auto lyricsSong = getHit(hud.hits, "player:lyrics");
+    const auto prevSong = getHit(hud.hits, "player:prev");
+    const auto toggleSong = getHit(hud.hits, "player:toggle");
+    const auto nextSong = getHit(hud.hits, "player:next");
     if (!validHits()) {
         return false;
     }
@@ -1225,6 +1223,10 @@ bool checkResponsiveHud(const QString &root, Glyphs &glyphs, const QJsonObject &
             qCritical() << "Full player dropped a control" << route;
             return false;
         }
+    }
+    if (hud.state()["commentsAvailable"].toBool() && !hasAction(hud.hits, "music:comments")) {
+        qCritical() << "Available comments entry was not exposed in the bottom function row";
+        return false;
     }
     if (hasAction(hud.hits, "home") || hud.state()["seek"].toObject().isEmpty()) {
         return false;
@@ -1262,12 +1264,12 @@ bool checkResponsiveHud(const QString &root, Glyphs &glyphs, const QJsonObject &
     hud.action("player:lyrics");
     hud.draw({{"mode", "detail"}, {"detail", 1}}, width, 100);
     capture("lyrics");
-    bool opaqueLyrics = false;
+    bool opaqueLyricsBackground = false;
     for (const auto &value : hud.commands) {
         const auto op = value.toArray();
         if (op[0] == "fill" && op[2] == 0 && op[3] == 0 && op[4] == 393 &&
             std::abs(op[5].toDouble() - 852) < .01 && op[1].toArray()[3] == 1) {
-            opaqueLyrics = true;
+            opaqueLyricsBackground = true;
         }
     }
     for (const auto &value : hud.hits) {
@@ -1276,10 +1278,64 @@ bool checkResponsiveHud(const QString &root, Glyphs &glyphs, const QJsonObject &
             return false;
         }
     }
-    if (!opaqueLyrics || !hasAction(hud.hits, "player:lyrics-close") || !validHits()) {
+    if (opaqueLyricsBackground || !hasAction(hud.hits, "back") ||
+        !hasAction(hud.hits, "mobile:song-options") || hud.state()["playerBounds"].isNull() ||
+        hud.state()["playerModeProgress"].toDouble() < .99 || !validHits()) {
         return false;
     }
-    hud.action("player:lyrics-close");
+    if (hud.state()["lyricsControlsTop"].toDouble() <= 0) {
+        qCritical() << "Lyrics controls top was not published for the backdrop";
+        return false;
+    }
+    bool firstLyricVisible = false;
+    for (const auto &value : hud.commands) {
+        const auto op = value.toArray();
+        if (op[0] == "text" && op[1].toString() == "第一句测试歌词") {
+            firstLyricVisible = true;
+        }
+    }
+    if (!firstLyricVisible) {
+        qCritical() << "Lyrics content missing after entering the shared player page";
+        return false;
+    }
+    const auto sameHit = [](const QJsonObject &left, const QJsonObject &right) {
+        return left["x"] == right["x"] && left["y"] == right["y"] && left["width"] == right["width"] &&
+               left["height"] == right["height"];
+    };
+    if (!sameHit(prevSong, getHit(hud.hits, "player:prev")) ||
+        !sameHit(toggleSong, getHit(hud.hits, "player:toggle")) ||
+        !sameHit(nextSong, getHit(hud.hits, "player:next")) ||
+        !sameHit(modeSong, getHit(hud.hits, "player:mode")) ||
+        !sameHit(queueSong, getHit(hud.hits, "player:open")) ||
+        !sameHit(lyricsSong, getHit(hud.hits, "player:lyrics"))) {
+        qCritical() << "Shared player controls moved when entering lyrics";
+        return false;
+    }
+    music->player.lyrics.index = 1;
+    hud.draw({{"mode", "detail"}, {"detail", 1}}, width, 100.5);
+    bool lastLineAtTop = false;
+    const double lyricsTop = hud.state()["lyricsContentTop"].toDouble() * 393. / width;
+    for (const auto &value : hud.commands) {
+        const auto op = value.toArray();
+        if (op[0] == "text" && op[1].toString() == "第二句测试歌词" &&
+            std::abs(op[3].toDouble() - (lyricsTop + 32.)) < .5) {
+            lastLineAtTop = true;
+        }
+    }
+    if (!lastLineAtTop) {
+        qCritical() << "Last active lyric did not stay near the lyric viewport top";
+        return false;
+    }
+    hud.wheel(200, 400, -120, 1);
+    hud.draw({{"mode", "detail"}, {"detail", 1}}, width, 102);
+    if (!hasAction(hud.hits, "player:toggle") || !validHits()) {
+        return false;
+    }
+    hud.action("player:lyrics");
+    if (hud.lyricsMode || hud.frame.value("mode").toString() != "detail") {
+        qCritical() << "Second lyrics button press did not exit lyrics presentation";
+        return false;
+    }
     for (const QString &kind : {QString("album"), QString("playlist"), QString("artist")}) {
         music->current =
             MusicData::item(kind, "42", kind == "artist" ? "塞壬唱片-MSR" : "音乐档案", "塞壬唱片-MSR");
@@ -1394,7 +1450,7 @@ bool checkResponsiveHud(const QString &root, Glyphs &glyphs, const QJsonObject &
 }
 }
 
-/** 验证普通切页保留内容与命中区，歌词拖动仅在超过阈值后请求关闭。 */
+/** 验证普通切页保留内容与命中区，评论页拖动保留固定纸色底并按阈值关闭。 */
 static bool checkResponsiveTransitions() {
     ResponsiveHudTransition transition;
     // 显式追加命令，避免单个嵌套数组的构造重载歧义。
@@ -1411,15 +1467,33 @@ static bool checkResponsiveTransitions() {
         qCritical() << "Tab switch lost its content or actions";
         return false;
     }
-    transition.apply(commands, hits, "lyrics", 12, 1080, false);
+    commands = {};
+    commands.append(QJsonArray{"text", "comments"});
+    const QJsonArray background{"fill", "paper", 0, 0, 1080, 1080};
+    transition.apply(commands, hits, "comments", 12, 1080, false, ResponsiveHudTransition::ScenePage::Other,
+                     0, background);
+    bool oldDetailVisible = false;
+    bool newCommentsVisible = false;
+    for (const auto &value : commands) {
+        const auto op = value.toArray();
+        if (op[0] != "text") {
+            continue;
+        }
+        oldDetailVisible |= op[1].toString() == "detail";
+        newCommentsVisible |= op[1].toString() == "comments";
+    }
+    if (oldDetailVisible || !newCommentsVisible || commands.first().toArray() != background) {
+        qCritical() << "Opening comments lost its page content or fixed paper background";
+        return false;
+    }
     transition.drag(40);
     if (transition.release()) {
-        qCritical() << "Short lyric drag unexpectedly dismissed the page";
+        qCritical() << "Short comments drag unexpectedly dismissed the page";
         return false;
     }
     transition.drag(120);
     if (!transition.release()) {
-        qCritical() << "Long lyric drag did not request dismissal";
+        qCritical() << "Long comments drag did not request dismissal";
         return false;
     }
     return true;

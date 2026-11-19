@@ -89,10 +89,12 @@ Item {
         darkTheme: rhine.state.dark === true
         controlsOpacity: {
             const value = rhine.state.lyricsControlsOpacity;
-            return value === undefined ? 0 : value;
+            return value === undefined ? 1 : value;
         }
         controlsTop: (rhine.state.lyricsControlsTop || 0) / 1080
-        visible: overlay.compactLayout && rhine.state.modal === "" && rhine.state.lyricsMode === true
+        opacity: rhine.state.playerModeProgress || 0
+        visible: overlay.compactLayout && rhine.state.modal === "" &&
+                 (rhine.state.playerModeProgress || 0) > 0.001
     }
     Hud {
         anchors.fill: parent

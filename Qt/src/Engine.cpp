@@ -1415,7 +1415,8 @@ void Engine::step(double time) {
     }
     const bool wasRotating = m_discRotating;
     m_discRotating = m_visible && app->hud.discRotation && PlatformFeatures::discRotationAvailable() &&
-                     !app->hud.reduced && app->hud.modal.isEmpty() && (!compact || compactSong) &&
+                     !app->hud.reduced && app->hud.modal.isEmpty() &&
+                     (!compact || (compactSong && !app->hud.lyricsMode)) &&
                      m_frame.value("mode") == "detail" && !m_frame.value("viewer").toBool() &&
                      current["kind"] == "song" && PlaybackQueue::identity(current) == identity &&
                      !player.loading && !player.failed && player.state["playing"].toBool();

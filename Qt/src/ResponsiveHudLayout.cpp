@@ -44,12 +44,17 @@ void ResponsiveHudLayout::arrange(QJsonArray &commands, QJsonArray &hits, const 
     }
     const auto modal = source["modal"].toString();
     const bool lyric = source["lyricsMode"].toBool() && modal.isEmpty();
+    const double playerModeProgress = std::clamp(source["playerModeProgress"].toDouble(0.), 0., 1.);
+    const bool lyricVisual = lyric || playerModeProgress > .001;
     const bool comments = source["commentsMode"].toBool() && modal.isEmpty();
     const bool home = modal.isEmpty() && source["mode"] == "archive" && !lyric && !comments;
     prepare(scope, home);
     const bool newScope = m_scopeChanged;
     m_scopeChanged = false;
     ResponsiveHudCanvas c(glyphs, m_unit, m_height, source["dark"].toBool());
+    if (lyricVisual) {
+        c.setForeground(source["lyricsColors"].toObject().value("top").toObject());
+    }
     if (source["viewer"].toBool()) {
         c.header("封面查看", true);
         for (int index = 0; index < c.hits.size(); ++index) {
@@ -80,17 +85,19 @@ void ResponsiveHudLayout::arrange(QJsonArray &commands, QJsonArray &hits, const 
     }
     if (newScope) {
         m_followLyrics = true;
+        m_lyricLastIndex = -1;
+        m_lyricLineUpdates = 0;
         m_lyricTarget.reset();
         m_lyricCurve.reset();
         m_lyricScroll = 0;
     }
-    const bool songPage = m_song.has_value() && modal.isEmpty() && !lyric && !comments;
+    const bool songPage = m_song.has_value() && modal.isEmpty() && !comments;
     const bool immersive = modal == "player" || lyric;
-    c.contentBottom = songPage ? m_height
-                               : m_height - BottomGestureInset -
-                                     (lyric       ? 250
-                                      : immersive ? 172
-                                                  : 110);
+    double bottomInset = 110;
+    if (immersive) {
+        bottomInset = 172;
+    }
+    c.contentBottom = songPage ? m_height : m_height - BottomGestureInset - bottomInset;
     const bool terminalPage = modal == "discover" || modal == "search" || modal == "settings";
 
     // 歌词页由独立的 LyricsBackdrop 提供纸色底和色彩流动，HUD 不再整页盖住它。
@@ -127,26 +134,33 @@ void ResponsiveHudLayout::arrange(QJsonArray &commands, QJsonArray &hits, const 
         title = source["collectionTitle"].toString("我的音乐");
     }
     if (songPage) {
-        c.icon("close", 181.5, 62, 30);
-        c.hit({168.5, 49, 56, 56}, "back", "关闭播放页面");
+        m_songLayout = songLayout(glyphs);
+    }
+    const double infoTop = m_song ? m_songLayout.infoTop : TopSafeInset + 56.;
+    const double lyricsTop = m_song ? m_songLayout.lyricsTop : infoTop + 56.;
+    if (songPage) {
+        auto navigationMeta = c.ink;
+        navigationMeta[3] = .82;
+        c.icon("down", 18, TopSafeInset + 6, 26, c.ink);
+        c.hit({10, TopSafeInset, NavigationHitHeight, NavigationHitHeight}, "back", "收起播放页面");
+        c.centered("TRACK RECORD / 唱片档案", 196.5, TopSafeInset + 20, 10, "demibold", navigationMeta);
+        c.rightText(MusicData::pad(source["archiveIndex"].toInt() + 1) + " / " +
+                        QString::number(source["archiveTotal"].toInt()),
+                    376, TopSafeInset + 16, 10, "regular", navigationMeta);
     } else if (lyric) {
         c.fill({176, 64, 41, 4}, c.line);
         c.hit({160, 60, 73, 20}, "player:lyrics-close", "关闭歌词");
-        const QRectF cover{20, 86, 56, 56};
+        const QRectF cover{20, infoTop, 56, 56};
         if (!m_player.cover.isEmpty()) {
-            c.image(m_player.cover, cover);
+            c.roundedImage(m_player.cover, cover, 10);
         } else {
             c.fill(cover, c.raised);
             c.border(cover, c.line);
         }
-        c.text(m_player.title, 88, 90, 17, 208, "demibold");
-        c.text(m_player.artist, 88, 114, 11, 208, "regular", c.muted);
-        c.icon(m_player.liked ? "heart-filled" : "heart", 310, 98, 20, m_player.liked ? c.ink : c.muted);
-        if (m_player.canLike) {
-            c.hit({298, 86, 44, 44}, "music:like-current", m_player.liked ? "取消喜欢" : "喜欢");
-        }
-        c.icon("more", 352, 98, 20);
-        c.hit({340, 86, 44, 44}, "mobile:song-options", "歌曲更多操作");
+        c.text(m_player.title, 88, infoTop + 4., 17, 260, "demibold");
+        c.text(m_player.artist, 88, infoTop + 28., 11, 260, "regular", c.muted);
+        c.icon("more", 352, infoTop + 12., 20);
+        c.hit({340, infoTop, 44, 44}, "mobile:song-options", "歌曲更多操作");
     } else if (terminalPage) {
         // 左右品牌信息与主页相同，中央为灵动岛保留完整留白。
         c.text("RHINE LAB", 23, 22, 17, 115, "bold");
@@ -193,9 +207,7 @@ void ResponsiveHudLayout::arrange(QJsonArray &commands, QJsonArray &hits, const 
         for (int i = 0; i < c.hits.size(); ++i) {
             auto h = c.hits[i].toObject();
             if (h["action"] == "close-modal") {
-                h["action"] = lyric ? "player:lyrics-close"
-                              : comments ? "music:comments-close"
-                                         : "back";
+                h["action"] = lyric ? "player:lyrics-close" : comments ? "music:comments-close" : "back";
                 c.hits[i] = h;
             }
         }
@@ -206,7 +218,11 @@ void ResponsiveHudLayout::arrange(QJsonArray &commands, QJsonArray &hits, const 
         m_maximum = std::max(0., end - c.contentBottom);
         m_scroll = std::clamp(m_scroll, 0., m_maximum);
     } else {
-        c.beginContent(terminalPage ? 130 : lyric || comments ? 158 : songPage ? 118 : 158);
+        c.beginContent(terminalPage ? 130
+                       : comments   ? 158
+                       : songPage   ? (lyricVisual ? 60. : m_songLayout.panelTop - 12.)
+                       : lyric      ? lyricsTop
+                                    : 158);
         if (modal == "player") {
             end = queue(c, newScope, source);
         } else if (m_settings && modal == "settings") {
@@ -219,8 +235,6 @@ void ResponsiveHudLayout::arrange(QJsonArray &commands, QJsonArray &hits, const 
             end = pluginDetailPage(c, source);
         } else if (modal == "search" || modal == "saved") {
             end = library(c, source);
-        } else if (lyric) {
-            end = lyrics(c, source);
         } else if (comments) {
             end = commentsPage(c, source);
         } else if (m_discover && modal == "discover") {
@@ -255,10 +269,10 @@ void ResponsiveHudLayout::arrange(QJsonArray &commands, QJsonArray &hits, const 
         m_scroll = std::clamp(m_scroll, 0., m_maximum);
     }
     if (songPage) {
-        const double visibleTop = c.fields.value("songPanelTop").toDouble() * m_height;
-        c.field("playerBounds", {0, visibleTop, 393, m_height - visibleTop});
-    } else if (lyric) {
-        lyricsPlayer(c, source);
+        if (!lyricVisual) {
+            const double visibleTop = m_songLayout.panelTop;
+            c.field("playerBounds", {0, visibleTop, 393, m_height - visibleTop});
+        }
     } else {
         player(c, immersive,
                home                  ? "home"
@@ -355,6 +369,9 @@ QJsonObject ResponsiveHudLayout::state(QJsonObject s) const {
     }
     s["compactLayout"] = true;
     s["compactUnit"] = m_unit;
+    s["lyricsControlsTop"] =
+        (m_song ? m_songLayout.progressTop : m_height - BottomGestureInset - 250.) * m_unit;
+    s["lyricsContentTop"] = (m_song ? m_songLayout.lyricsTop : TopSafeInset + 112.) * m_unit;
     s["archiveListY"] = m_archiveListY;
     s["songPanelTop"] = m_fields.value("songPanelTop");
     s["songPanelTransition"] = m_fields.value("songPanelTransition");
@@ -417,9 +434,12 @@ bool ResponsiveHudLayout::scroll(double distance) {
         return true;
     }
     // 跟随播放时先接管当前动画位置，拖动不会跳回旧偏移。
-    if (m_lyricsPage && m_followLyrics) {
-        m_scroll = m_lyricScroll;
-        m_followLyrics = false;
+    if (m_lyricsPage) {
+        m_lyricLineUpdates = 0;
+        if (m_followLyrics) {
+            m_scroll = m_lyricScroll;
+            m_followLyrics = false;
+        }
     }
     const double next = std::clamp(m_scroll + distance / m_unit, 0., m_maximum);
     m_scroll = next;
@@ -482,6 +502,7 @@ bool ResponsiveHudLayout::handleAction(const QString &action) {
     }
     if (action == "player:lyrics-follow") {
         m_followLyrics = true;
+        m_lyricLineUpdates = 0;
         m_lyricTarget.reset();
     }
     return false;

@@ -169,32 +169,91 @@ double ResponsiveHudLayout::archive(ResponsiveHudCanvas &c, const QJsonObject &s
     c.endContent();
     return c.contentBottom;
 }
-/** 以确认的控制区为基准布局，标题换行时整体上移，保持底部入口的完整命中区。 */
+/** 测量歌曲页的标题与底部固定区域，剩余空间交给 3D 展示区。 */
+ResponsiveHudLayout::SongLayout ResponsiveHudLayout::songLayout(Glyphs &glyphs) const {
+    SongLayout layout;
+    if (!m_song) {
+        return layout;
+    }
+    const int titleLines = std::clamp(int(glyphs.wrap(m_song->title, 310, 30, "demibold").size()), 1, 2);
+    // 两行标题预留固定空间，避免切歌时把共享控制区整体上推。
+    constexpr double titleReserve = 36.;
+    layout.bodyOffset = titleLines > 1 ? titleReserve : 0.;
+    layout.infoTop = TopSafeInset + NavigationHitHeight + SongInfoGap;
+    layout.lyricsTop = layout.infoTop + SongInfoHeight + SongInfoGap;
+    // 保持现有歌曲页比例，只在当前面板内部优化信息、进度与控制区。
+    layout.panelTop = std::max(260., m_height - BottomGestureInset - 354. - titleReserve);
+    // 播放控制区整体上移，同时把进度行比播放键多上移 10pt，
+    // 让播放键上下两侧都获得更充足的呼吸空间。
+    layout.progressTop = layout.panelTop + titleReserve + 110.;
+    layout.transportTop = layout.panelTop + titleReserve + 183.;
+    layout.utilityTop = layout.panelTop + titleReserve + 309.;
+    layout.panelTransition = std::clamp(m_height * .052, 40., 56.);
+    return layout;
+}
+
+/** 以固定的底部功能区为基准布局，标题换行时只压缩 3D 区域。 */
 double ResponsiveHudLayout::song(ResponsiveHudCanvas &c, const QJsonObject &s) {
     const auto &model = *m_song;
+    double resultBottom = c.contentBottom;
     const bool current = s["selectedSongIsCurrent"].toBool();
-    const double extra = c.wrap(model.title, 310, 30, "demibold").size() > 1 ? 36. : 0.;
-    const double top = std::max(260., m_height - BottomGestureInset - 354. - extra);
-    const double body = top + extra;
+    const auto &layout = m_songLayout;
+    const double top = layout.panelTop;
+    const double lyricProgress = std::clamp(s["playerModeProgress"].toDouble(0.), 0., 1.);
+    const bool lyricTarget = s["lyricsMode"].toBool();
+    const auto colorGroups = s["lyricsColors"].toObject();
+    const auto useGroup = [&](const char *name) {
+        if (lyricTarget || lyricProgress > .001) {
+            c.setForeground(colorGroups.value(QLatin1String(name)).toObject());
+        }
+    };
+    useGroup("top");
+    const double controlsOpacity = lyricTarget
+                                        ? std::clamp(s["lyricsControlsOpacity"].toDouble(1.), 0., 1.)
+                                        : 1.;
+    const double controlsOffset = lyricTarget ? s["lyricsControlsOffset"].toDouble(0.) : 0.;
+    const auto smooth = [](double value) {
+        const double clamped = std::clamp(value, 0., 1.);
+        return clamped * clamped * (3. - 2. * clamped);
+    };
+    const double infoEase = smooth((lyricProgress - .02) / .78);
+    const double infoOut = 1. - smooth((lyricProgress - .02) / .58);
+    const double infoIn = smooth((lyricProgress - .28) / .62);
     c.fields["songPanelTop"] = top / m_height;
-    c.fields["songPanelTransition"] = 32. / m_height;
-    c.fill({15, top + 3, 5, 5}, c.amber);
-    c.text("TRACK RECORD / 唱片档案", 28, top + 2, 7, 250, "regular", c.muted);
-    c.rightText(MusicData::pad(s["archiveIndex"].toInt() + 1) + " / " +
-                    QString::number(s["archiveTotal"].toInt()),
-                376, top + 2, 7, "regular", c.muted);
-    c.paragraph(model.title, 15, top + 27, 30, 310, {}, "demibold", 2, 1.2);
-    c.text(model.artist + "   /   " + model.album, 15, body + 69, 11, 296, "regular", c.muted);
+    c.fields["songPanelTransition"] = layout.panelTransition / m_height;
+    const double body = top + layout.bodyOffset;
+    const double titleTop = top + 27.;
+    c.save();
+    c.alpha(infoOut);
+    const double titleX = 15. + 65. * infoEase;
+    const double titleY = titleTop + (layout.infoTop + 4. - titleTop) * infoEase;
+    const double titleSize = 30. + (17. - 30.) * infoEase;
+    const double titleWidth = 310. + (252. - 310.) * infoEase;
+    c.paragraph(model.title, titleX, titleY, titleSize, titleWidth, {}, "demibold", 2, 1.2);
     const auto liked = s["selectedSongLiked"];
-    c.border({343, top + 35, 33, 35}, c.line);
-    c.icon(liked.toBool() ? "song-heart-filled" : "song-heart", 352, top + 45, 15);
-    for (const auto &action : model.primaryActions) {
-        if (action.route == "music:like") {
-            c.hit({337, top + 30, 44, 44}, action.route, action.label);
+    const double likeSize = 20. + 2. * infoEase;
+    const double likeTop = titleY + (titleSize - likeSize) * .5;
+    c.icon(liked.toBool() ? "heart-filled" : "heart", 345, likeTop, likeSize,
+           liked.toBool() ? c.amber : c.ink);
+    if (infoOut > .05) {
+        for (const auto &action : model.primaryActions) {
+            if (action.route == "music:like") {
+                c.hit({327, likeTop - 17., 52, 52}, action.route, action.label);
+            }
         }
     }
+    const double metaTop = body + 69.;
+    const double artistX = 15. + 65. * infoEase;
+    const double artistY = metaTop + (layout.infoTop + 28. - metaTop) * infoEase;
+    const double artistSize = 12. + (11. - 12.) * infoEase;
+    const double artistWidth = 310. + (252. - 310.) * infoEase;
+    c.text(model.artist, artistX, artistY, artistSize, artistWidth, "regular", c.ink);
+    if (!model.album.isEmpty()) {
+        c.text(model.album, 15, metaTop + 16, 9, 310, "regular", c.muted);
+    }
     const bool playing = current && m_player.playing;
-    c.commands.append(QJsonArray{"ellipse", c.amber, 15, body + 99, 4, 4});
+    const double statusTop = body + 97.;
+    c.commands.append(QJsonArray{"ellipse", c.amber, 15, statusTop + 4, 4, 4});
     QString playbackState = "尚未播放";
     if (current) {
         playbackState = "已暂停";
@@ -204,9 +263,6 @@ double ResponsiveHudLayout::song(ResponsiveHudCanvas &c, const QJsonObject &s) {
             playbackState = "正在播放";
         }
     }
-    c.text(playbackState, 24, body + 97, 8, 180, "regular", c.muted);
-    c.rightText("STEREO", 376, body + 97, 8, "regular", c.ink);
-    c.rightText("/", 334, body + 97, 8, "regular", c.muted);
     const auto quality = [&] {
         if (!current) {
             return model.quality;
@@ -219,72 +275,155 @@ double ResponsiveHudLayout::song(ResponsiveHudCanvas &c, const QJsonObject &s) {
         }
         return label;
     }();
-    c.rightText(quality, 320, body + 97, 8, "regular", c.amber);
-    const auto time = [](double ms) {
-        const int seconds = int(std::max(0., ms) / 1000);
-        return MusicData::pad(seconds / 60) + ":" + MusicData::pad(seconds % 60);
-    };
-    c.text(current ? time(m_player.positionMs) : "00:00", 15, body + 130, 12, 100);
-    c.centered("PLAYBACK POSITION", 196.5, body + 137, 7, "regular", c.muted);
-    c.rightText(current ? "−" + time(m_player.durationMs - m_player.positionMs) : model.duration, 376,
-                body + 130, 12, "regular", c.ink);
-    const double fraction = current && m_player.durationMs > 0
-                                ? std::clamp(m_player.positionMs / m_player.durationMs, 0., 1.)
-                                : 0.;
-    c.fill({15, body + 155, 361, 2}, c.line);
-    c.fill({15, body + 155, 361 * fraction, 2}, c.amber);
-    c.fill({13.5 + 361 * fraction, body + 151, 3, 10}, c.ink);
-    for (int tick = 0; tick <= 20; ++tick) {
-        c.fill({15 + tick * 18.05, body + 162, .6, 7}, c.line);
-        if (tick % 5 == 0) {
-            c.text(MusicData::pad(tick / 5), 15 + tick * 17.7, body + 175, 6, 20, "regular", c.muted);
+    c.text(playbackState, 24, statusTop, 8, 180, "regular", c.muted);
+    c.rightText("STEREO", 376, statusTop, 8, "regular", c.muted);
+    c.rightText(quality, 320, statusTop, 8, "regular", c.amber);
+    c.restore();
+
+    // 歌词模式端点：封面、标题与歌手移动到顶部；专辑和状态信息淡出。
+    if (infoIn > .001) {
+        c.save();
+        c.alpha(infoIn);
+        c.translate(0, 10. * (1. - infoIn));
+        if (!m_player.cover.isEmpty()) {
+            c.roundedImage(m_player.cover, {20, layout.infoTop, 48, 48}, 8);
+        } else {
+            c.fill({20, layout.infoTop, 48, 48}, c.raised);
+            c.border({20, layout.infoTop, 48, 48}, c.line);
         }
+        c.text(model.title, 80, layout.infoTop + 4., 17, 252, "demibold", c.ink);
+        c.text(model.artist, 80, layout.infoTop + 28., 11, 252, "regular", c.muted);
+            c.icon(liked.toBool() ? "heart-filled" : "heart", 345, layout.infoTop + 1., 22,
+               liked.toBool() ? c.amber : c.ink);
+        if (infoIn > .5) {
+            for (const auto &action : model.primaryActions) {
+                if (action.route == "music:like") {
+                    c.hit({329, layout.infoTop - 4., 52, 52}, action.route, action.label);
+                }
+            }
+        }
+        c.restore();
     }
-    if (current && m_player.seekable) {
-        c.field("seek", {15, body + 146, 361, 25});
+    const double lyricsIn = smooth((lyricProgress - .28) / .72);
+    const double controlsTop = layout.progressTop - 14.;
+    const double lyricsBottom = controlsTop + (m_height - controlsTop) * (1. - controlsOpacity);
+    useGroup("lyrics");
+    if (lyricsIn > .001) {
+        const double lyricsTop = layout.lyricsTop;
+        c.save();
+        c.alpha(lyricsIn);
+        c.translate(0, 8. * (1. - lyricsIn));
+        c.clip({0, lyricsTop, 393, std::max(0., lyricsBottom - lyricsTop)});
+        const double lyricsEnd = lyrics(c, s, lyricsTop, lyricsBottom);
+        c.restore();
+        resultBottom = m_height + std::max(0., lyricsEnd - lyricsBottom);
     }
-    const double centerY = body + 249;
-    c.text("TRANSPORT", 15, centerY - 10, 7, 80, "regular", c.muted);
-    c.text("播放控制", 15, centerY + 5, 8, 80, "regular", c.muted);
-    c.rightText(playing ? "PLAYING" : "PAUSED", 376, centerY - 10, 7, "regular", c.muted);
-    c.rightText("音频输出正常", 376, centerY + 5, 8, "regular", c.muted);
-    for (const auto &ring : {QRectF(156.5, centerY - 40, 80, 80), QRectF(161.5, centerY - 35, 70, 70)}) {
-        c.commands.append(QJsonArray{"ellipse", c.line, ring.x(), ring.y(), ring.width(), ring.height()});
-        c.commands.append(QJsonArray{"ellipse", c.paper, ring.x() + .6, ring.y() + .6, ring.width() - 1.2,
-                                     ring.height() - 1.2});
+    if (lyricTarget || lyricProgress > .001) {
+        // 控制区完全隐藏时 field() 仍需保留非空边界，
+        // 供触摸层把歌词滚动区延伸到屏幕底部。
+        const double boundsTop = std::min(lyricsBottom, m_height - .5);
+        c.field("playerBounds", {0, boundsTop, 393, std::max(.5, m_height - boundsTop)});
     }
-    const auto button = current ? m_player : PlayerBar::State{.boxedPlayButton = m_player.boxedPlayButton};
-    PlayerBar::appendPlayButton(c.commands, button, {196.5, centerY}, 46, c.ink, c.paper);
-    c.commands.append(QJsonArray{"ellipse", c.amber, 210.5, centerY - 33, 5, 5});
-    c.icon("transport-prev", 126, centerY - 8, 17);
-    c.icon("transport-next", 250, centerY - 8, 17);
-    c.hit({112, centerY - 22, 44, 44}, "player:prev", "上一首");
-    c.hit({164.5, centerY - 32, 64, 64}, current ? "player:toggle" : "music:play", playing ? "暂停" : "播放");
-    c.hit({236, centerY - 22, 44, 44}, "player:next", "下一首");
-    // 音量整行移除，分隔线后直接进入三个带文字的工具入口。
-    c.fill({15, body + 301, 361, .6}, c.line);
-    c.icon("lyrics-lines", 15, body + 321, 15, c.muted);
-    c.text("歌词", 36, body + 321, 11, 55, "regular", c.muted);
-    if (current) {
-        c.hit({10, body + 309, 82, 44}, "player:lyrics", "打开全屏歌词");
+    if (controlsOpacity > .001) {
+        useGroup("controls");
+        c.save();
+        c.alpha(controlsOpacity);
+        c.translate(0, controlsOffset);
+        const auto time = [](double ms) {
+            const int seconds = int(std::max(0., ms) / 1000);
+            return MusicData::pad(seconds / 60) + ":" + MusicData::pad(seconds % 60);
+        };
+        const double progressTop = layout.progressTop;
+        const auto utilityInk = c.ink;
+        c.text(current ? time(m_player.positionMs) : "00:00", 15, progressTop, 13, 100, "demibold", c.ink);
+        auto progressCaption = c.ink;
+        progressCaption[3] = .72;
+        c.centered("PLAYBACK POSITION", 196.5, progressTop + 5, 8, "demibold", progressCaption);
+        c.rightText(current ? time(m_player.durationMs) : model.duration, 376, progressTop, 13, "demibold",
+                    c.ink);
+        const double fraction = current && m_player.durationMs > 0
+                                    ? std::clamp(m_player.positionMs / m_player.durationMs, 0., 1.)
+                                    : 0.;
+        const double trackY = progressTop + 28.;
+        auto trackColor = c.ink;
+        trackColor[3] = .38;
+        c.fill({15, trackY, 361, 2}, trackColor);
+        c.fill({15, trackY, 361 * fraction, 2}, c.amber);
+        c.fill({13.5 + 361 * fraction, trackY - 4, 3, 10}, c.ink);
+        auto tickColor = c.ink;
+        tickColor[3] = .55;
+        auto tickLabel = c.ink;
+        tickLabel[3] = .78;
+        for (int tick = 0; tick <= 20; ++tick) {
+            const bool major = tick % 5 == 0;
+            c.fill({15 + tick * 18.05, trackY + 7, .6, major ? 8. : 4.}, tickColor);
+            const int labelIndex = tick / 5;
+            if (major && labelIndex > 0 && labelIndex < 4 && current && m_player.durationMs > 0) {
+                const double tickMs = m_player.durationMs * (tick / 20.);
+                c.centered(time(tickMs), 15 + 361 * (tick / 20.), trackY + 23, 7, "demibold", tickLabel);
+            }
+        }
+        if (current && m_player.seekable) {
+            c.field("seek", {15, trackY - 18, 361, 44});
+        }
+        // 进度刻度与底部分割线之间的净空间重新取中，避免播放键偏下。
+        const double centerY = layout.transportTop + 47.;
+        auto ringLine = c.ink;
+        ringLine[3] = .72;
+        auto ringInner = ringLine;
+        ringInner[3] = .56;
+        for (const auto &ring : {QRectF(152.5, centerY - 44, 88, 88), QRectF(157.5, centerY - 39, 78, 78)}) {
+            const auto color = ring.width() > 80 ? ringLine : ringInner;
+            c.ellipseOutline(ring, color, ring.width() > 80 ? 1. : .8);
+        }
+        auto button = current ? m_player : PlayerBar::State{.boxedPlayButton = m_player.boxedPlayButton};
+        // 统一播放页始终使用透明双环，方框播放键偏好只影响桌面播放栏。
+        button.boxedPlayButton = false;
+        PlayerBar::appendPlayButton(c.commands, button, {196.5, centerY}, 52, c.ink, c.paper);
+        c.commands.append(QJsonArray{"ellipse", c.amber, 210.5, centerY - 39, 5, 5});
+        c.icon("transport-prev", 101, centerY - 12, 24, c.ink);
+        c.icon("transport-next", 268, centerY - 12, 24, c.ink);
+        c.hit({92, centerY - 24, 48, 48}, "player:prev", "上一首");
+        c.hit({160, centerY - 32, 73, 68}, current ? "player:toggle" : "music:play",
+              playing ? "暂停" : "播放");
+        c.hit({256, centerY - 24, 48, 48}, "player:next", "下一首");
+        const double utilityTop = layout.utilityTop;
+        auto divider = c.ink;
+        divider[3] = .25;
+        c.fill({20, utilityTop - 10, 353, .6}, divider);
+        constexpr double ColumnWidth = 353. / 5.;
+        const auto utility = [&](int index, const QString &title, const QString &accessibilityLabel,
+                                 const QString &route, bool available, const QJsonArray &color) {
+            const double x = 20. + index * ColumnWidth;
+            const double centerX = x + ColumnWidth / 2.;
+            // 五个二字节入口使用同一字号、字重和光学中心。
+            c.centered(title, centerX, utilityTop + 22., 14., "demibold", color);
+            if (available) {
+                c.hit({x, utilityTop, ColumnWidth, 44}, route, accessibilityLabel);
+            }
+        };
+        const bool commentsAvailable = s["commentsAvailable"].toBool();
+        utility(0, "歌词", "歌词", "player:lyrics", current,
+                lyricProgress > .01 ? c.amber : utilityInk);
+        utility(1, "评论", "评论", "music:comments", commentsAvailable, utilityInk);
+        QString modeTitle = "顺序";
+        QString modeLabel = "顺序播放";
+        if (m_player.mode == "shuffle") {
+            modeTitle = "随机";
+            modeLabel = "随机播放";
+        } else if (m_player.mode == "all") {
+            modeTitle = "循环";
+            modeLabel = "列表循环";
+        } else if (m_player.mode == "one") {
+            modeTitle = "单曲";
+            modeLabel = "单曲循环";
+        }
+        utility(2, modeTitle, modeLabel, "player:mode", true, m_player.mode == "off" ? utilityInk : c.amber);
+        utility(3, "队列", "播放队列", "player:open", true, utilityInk);
+        utility(4, "更多", "更多操作", "mobile:song-options", true, utilityInk);
+        c.restore();
     }
-    c.icon(m_player.mode == "shuffle" ? "shuffle" : "repeat", 104, body + 321, 15, c.muted);
-    QString playbackMode = "顺序播放";
-    if (m_player.mode == "shuffle") {
-        playbackMode = "随机播放";
-    } else if (m_player.mode == "one") {
-        playbackMode = "单曲循环";
-    }
-    c.text(playbackMode, 125, body + 321, 10, 69, "regular", c.muted);
-    c.hit({98, body + 309, 100, 44}, "player:mode", "切换播放模式");
-    c.icon("queue-note", 210, body + 321, 15, c.muted);
-    c.text("播放队列", 231, body + 321, 10, 50, "regular", c.muted);
-    c.rightText(QString::number(s["playerQueueCount"].toInt()), 302, body + 322, 8, "regular", c.muted);
-    c.hit({204, body + 309, 103, 44}, "player:open", "播放队列");
-    c.icon("more", 322, body + 321, 15, c.muted);
-    c.text("更多", 343, body + 321, 10, 36, "regular", c.muted);
-    c.hit({316, body + 309, 67, 44}, "mobile:song-options", "歌曲更多操作");
-    return c.contentBottom;
+    return resultBottom;
 }
 double ResponsiveHudLayout::collection(ResponsiveHudCanvas &c) {
     const auto &m = *m_collection;

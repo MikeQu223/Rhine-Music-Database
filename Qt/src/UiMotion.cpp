@@ -98,7 +98,7 @@ void SurfaceMotion::sample(double time) {
 }
 
 /** 在改变目标前先采样旧过渡，快速开关弹窗时接续当前透明度和偏移。 */
-void SurfaceMotion::set(bool shown, double time, bool reduced) {
+void SurfaceMotion::set(bool shown, double time, bool reduced, double enterDuration, double exitDuration) {
     sample(time);
     m_fromOpacity = opacity;
     m_fromOffset = offset;
@@ -109,9 +109,9 @@ void SurfaceMotion::set(bool shown, double time, bool reduced) {
     if (reduced) {
         duration = 0;
     } else if (shown) {
-        duration = 0.3;
+        duration = enterDuration;
     } else {
-        duration = 0.2;
+        duration = exitDuration;
     }
     if (reduced) {
         opacity = m_targetOpacity;

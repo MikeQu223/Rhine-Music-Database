@@ -18,6 +18,8 @@ Item {
         objectName: "rhiScene"
         anchors.fill: parent
         engine: rhine
-        visible: rhine.sceneLayerVisible
+        visible: rhine.sceneLayerVisible &&
+                 (!rhine.state.compactLayout || (rhine.state.playerModeProgress || 0) < 0.999)
+        opacity: rhine.state.compactLayout ? 1 - (rhine.state.playerModeProgress || 0) : 1
     }
 }

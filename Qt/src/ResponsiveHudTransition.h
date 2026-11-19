@@ -20,11 +20,12 @@ class ResponsiveHudTransition {
     bool active(double time) const {
         return time < m_start + .46 || m_sceneRunning || (m_returning && m_drag > .5);
     }
+    bool needsBackground(const QString &key) const {
+        return isFullPage(key) || isFullPage(m_key);
+    }
     void apply(QJsonArray &commands, QJsonArray &hits, QString key, double time, double height, bool reduced,
-               ScenePage scenePage = ScenePage::Other, double sceneProgress = 0, const QJsonArray &paper = {}) {
-        const auto fullPage = [](const QString &value) {
-            return value == "lyrics" || value == "comments";
-        };
+               ScenePage scenePage = ScenePage::Other, double sceneProgress = 0,
+               const QJsonArray &background = {}) {
         if (reduced) {
             if (key != m_key || m_returning) {
                 m_drag = 0;
@@ -37,10 +38,12 @@ class ResponsiveHudTransition {
             m_followScene = false;
             m_old = {};
             if (m_drag > 0) {
-                QJsonArray moved{QJsonArray{"save"}, QJsonArray{"translate", 0, m_drag}};
-                if (fullPage(key) && !paper.isEmpty()) {
-                    moved.prepend(paper);
+                QJsonArray moved;
+                if (!background.isEmpty()) {
+                    moved.append(background);
                 }
+                moved.append(QJsonArray{"save"});
+                moved.append(QJsonArray{"translate", 0, m_drag});
                 for (const auto &command : commands) {
                     moved.append(command);
                 }
@@ -62,9 +65,8 @@ class ResponsiveHudTransition {
             m_enteringScene = m_scenePage == ScenePage::Archive && scenePage == ScenePage::Song;
             m_followScene = m_enteringScene || (m_scenePage == ScenePage::Song && scenePage == ScenePage::Archive);
             m_old = m_last;
-            m_fromPage = fullPage(m_key);
-            m_toPage = fullPage(key);
-            m_fromDrag = m_drag;
+            m_fromPage = isFullPage(m_key);
+            m_toPage = isFullPage(key);
             m_drag = 0;
             m_returning = false;
             m_key = key;
@@ -101,8 +103,9 @@ class ResponsiveHudTransition {
         }
         const double eased = 1 - std::pow(1 - progress, 3);
         QJsonArray result;
-        if (fullPage(m_key) && !paper.isEmpty()) {
-            result.append(paper);
+        // 整页切换和拖动时先铺固定纸色底，避免页面位移后露出下层 3D 场景。
+        if (!background.isEmpty()) {
+            result.append(background);
         }
         const auto layer = [&](const QJsonArray &content, double opacity, double offset) {
             result.append(QJsonArray{"save"});
@@ -113,12 +116,9 @@ class ResponsiveHudTransition {
             }
             result.append(QJsonArray{"restore"});
         };
-        if (progress < 1 && m_fromPage) {
-            layer(commands, 1, 0);
-            layer(m_old, 1, m_fromDrag + (height - m_fromDrag) * eased);
-        } else if (progress < 1 && m_toPage) {
-            layer(m_old, 1, 0);
-            layer(commands, 1, height * (1 - eased));
+        if (progress < 1 && (m_fromPage || m_toPage)) {
+            // 评论整页只动画目标页，静态纸色底仍固定在下方。
+            layer(commands, eased, m_toPage ? height * (1 - eased) : 18 * (1 - eased));
         } else if (progress < 1) {
             layer(m_old, 1 - eased, -18 * eased);
             layer(commands, eased, 24 * (1 - eased));
@@ -134,13 +134,16 @@ class ResponsiveHudTransition {
     }
 
   private:
+    static bool isFullPage(const QString &key) {
+        return key == "comments";
+    }
+
     QString m_key;
     ScenePage m_scenePage = ScenePage::Other;
     QJsonArray m_last;
     QJsonArray m_old;
     double m_start = -1;
     double m_drag = 0;
-    double m_fromDrag = 0;
     double m_lastTime = 0;
     bool m_fromPage = false;
     bool m_toPage = false;

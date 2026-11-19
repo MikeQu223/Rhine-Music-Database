@@ -14,6 +14,10 @@
 class ResponsiveHudLayout {
   public:
     static constexpr double BottomGestureInset = 34;
+    static constexpr double TopSafeInset = 60;
+    static constexpr double NavigationHitHeight = 48;
+    static constexpr double SongInfoGap = 8;
+    static constexpr double SongInfoHeight = 48;
     static constexpr double SourceWidth = 1920;
     void resize(double stageWidth);
     bool compact() const {
@@ -112,6 +116,8 @@ class ResponsiveHudLayout {
         QStringList translation;
     };
     QJsonObject m_lyricDocument;
+    int m_lyricLastIndex = -1;
+    int m_lyricLineUpdates = 0;
     QVector<LyricRow> m_lyricRows;
     double m_lyricContentHeight = 0;
     // 复用的歌词滚动：与桌面歌词面板相同的曲线，不逐帧重排。
@@ -128,12 +134,19 @@ class ResponsiveHudLayout {
     std::optional<SettingsCard::Model> m_settings;
     QVector<ResponsiveHudContent::Item> m_auxiliary;
     QHash<QString, QVector<ResponsiveHudContent::Item>> m_settingsCustom;
+    struct SongLayout {
+        double panelTop = 260;
+        double panelTransition = 32;
+        double infoTop = 116;
+        double lyricsTop = 172;
+        double progressTop = 382;
+        double transportTop = 458;
+        double utilityTop = 570;
+        double bodyOffset = 0;
+    };
+    SongLayout songLayout(Glyphs &glyphs) const;
+    SongLayout m_songLayout;
     void player(ResponsiveHudCanvas &c, bool immersive, const QString &active);
-    void progressRow(ResponsiveHudCanvas &c, double y, bool current, const QJsonObject &source,
-                     QString idleDuration);
-    void transportRow(ResponsiveHudCanvas &c, double y, bool current);
-    void volumeRow(ResponsiveHudCanvas &c, double y);
-    void utilityRow(ResponsiveHudCanvas &c, double y, bool current);
     void optionsSheet(ResponsiveHudCanvas &c, const QJsonObject &source);
     double archive(ResponsiveHudCanvas &c, const QJsonObject &source);
     double archiveListTop() const;
@@ -146,7 +159,6 @@ class ResponsiveHudLayout {
     double pluginsPage(ResponsiveHudCanvas &c, const QJsonObject &source);
     double pluginDetailPage(ResponsiveHudCanvas &c, const QJsonObject &source);
     double library(ResponsiveHudCanvas &c, const QJsonObject &source);
-    void lyricsPlayer(ResponsiveHudCanvas &c, const QJsonObject &source);
-    double lyrics(ResponsiveHudCanvas &c, const QJsonObject &source);
+    double lyrics(ResponsiveHudCanvas &c, const QJsonObject &source, double viewTop, double viewBottom);
     double commentsPage(ResponsiveHudCanvas &c, const QJsonObject &source);
 };
