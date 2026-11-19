@@ -72,8 +72,7 @@ function npmRemoteArgs() {
 }
 
 function npmCi(folder) {
-    run(process.execPath, [
-        process.env.npm_execpath,
+    const args = [
         'ci',
         '--prefix',
         folder,
@@ -82,7 +81,15 @@ function npmCi(folder) {
         '--no-audit',
         '--no-fund',
         ...npmRemoteArgs(),
-    ]);
+    ];
+    // 直接 `node scripts/...` 调用时没有 npm_execpath，旧写法会把 undefined 当脚本路径
+    // 交给 node（Cannot find module '.../undefined'）。退回 PATH 里的 npm。
+    const cli = process.env.npm_execpath;
+    if (cli) {
+        run(process.execPath, [cli, ...args]);
+    } else {
+        run('npm', args);
+    }
 }
 /**
  * 准备字体、模型、锁定桥接依赖和运行时资源；保持原有导出与检查顺序。

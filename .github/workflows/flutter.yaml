@@ -3,7 +3,7 @@ name: Flutter Android arm64-v8a
 # 只出 Android arm64-v8a 的 Flutter APK。
 #
 # Android 包由 Flutter 工程产出，但 Qt 场景运行时是 Gradle 的硬依赖：
-#   1) 六个 Qt 子模块 → Qt for Android kit（重活，走缓存）；
+#   1) 五个 Qt 子模块 → Qt for Android kit（重活，走缓存）；
 #   2) 准备 nodejs-mobile 的 libnode.so 与 Android 资源；
 #   3) 用 RHINE_FLUTTER_HOST_ONLY 编 native 库，androiddeployqt --no-build 落 staging；
 #   4) flutter build apk --target-platform android-arm64。
@@ -90,11 +90,18 @@ jobs:
 
       - name: Install Android platform, build-tools and NDK
         shell: bash
-        # 版本与 Gradle/NDK 的 pin 对齐（android/app/build.gradle.kts）。
+        # 两套 NDK 各有用处：
+        #   * 30.0.16248370 —— 编译 Qt native 库（与本地/output 真值一致）；
+        #   * 28.2.13676358 —— Flutter Gradle 的 flutter.ndkVersion（android/app/build.gradle.kts
+        #     的 ndkVersion = flutter.ndkVersion），缺了 AGP 会在 Gradle 阶段临时下载或失败。
         run: |
           set -euo pipefail
           yes | sdkmanager --licenses > /dev/null || true
-          sdkmanager --install "platforms;android-36" "build-tools;36.0.0" "ndk;30.0.16248370"
+          sdkmanager --install \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "ndk;30.0.16248370" \
+            "ndk;28.2.13676358"
 
       - name: Install Qt for Android build dependencies
         run: |
@@ -171,7 +178,11 @@ jobs:
           QT_KIT: output/dependencies/qt-android
         run: |
           set -euo pipefail
-          cmake -S Qt -B output/qt-android-flutter -G Ninja \
+          # 必须从仓库根配置：Qt/CMakeLists.txt 只是 add_subdirectory(Qt) 的片段，
+          # 直接 -S Qt 会找不到 project()/RHINE_APP_SOURCES/Android.cmake，
+          # 也会把 deploy staging 落到 output/qt-android-flutter/android-build
+          # （Gradle 默认读的是 .../Qt/android-build）。
+          cmake -S . -B output/qt-android-flutter -G Ninja \
             -DCMAKE_TOOLCHAIN_FILE="$QT_KIT/lib/cmake/Qt6/qt.toolchain.cmake" \
             -DQT_HOST_PATH="$QT_ROOT_DIR" \
             -DQT_HOST_PATH_CMAKE_DIR="$QT_ROOT_DIR/lib/cmake" \

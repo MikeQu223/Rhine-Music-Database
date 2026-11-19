@@ -161,7 +161,8 @@ dependencies { testImplementation("junit:junit:4.13.2") }
 // ---------------------------------------------------------------------------
 // 默认目录 = 本仓库内的 Qt 侧 staging，不写死绝对路径：
 //   rootProject.projectDir = <repo>/android → parentFile = <repo>
-//   cmake -S Qt -B output/qt-android-flutter + ninja apk（androiddeployqt --no-build）
+//   cmake -S . -B output/qt-android-flutter -DRHINE_FLUTTER_HOST_ONLY=ON
+//   + 构建 ALL（androiddeployqt --no-build 落 staging）
 //   会在 output/qt-android-flutter/Qt/android-build 下落出 libs/ 与 res/values/libs.xml。
 // 只指向**本树自己的** Qt staging：旧卡 builds/QT-OVERLAY-128 与
 // builds/DEVICE-VISUAL-131 是冻结产物，默认回落到它们会让"改了 Qt 源码却装到旧 .so"
@@ -223,7 +224,7 @@ if (!qtAndroidAbiDir.isDirectory) {
     throw org.gradle.api.GradleException(
         "Qt 场景运行时不在 " + qtAndroidDeployDir.absolutePath + "（缺 libs/arm64-v8a）。" +
             "先用源码重建本分支的 Qt 运行时：" +
-            " cmake -S Qt -B output/qt-android-flutter" +
+            " cmake -S . -B output/qt-android-flutter" +
             " -G Ninja -DCMAKE_TOOLCHAIN_FILE=<qt-android>/lib/cmake/Qt6/qt.toolchain.cmake" +
             " -DQT_HOST_PATH=<qt-host> -DQT_HOST_PATH_CMAKE_DIR=<qt-host>/lib/cmake" +
             " -DQT_QMAKE_TARGET_MKSPEC=android-clang -DANDROID_ABI=arm64-v8a" +
