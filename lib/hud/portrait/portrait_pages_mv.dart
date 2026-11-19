@@ -25,9 +25,9 @@ import 'dart:ui' show Rect;
 
 import 'portrait_canvas.dart';
 
-/// 版本行（映射自 `ProviderMvVersion`）。
-class PortraitMvVersionRow {
-  const PortraitMvVersionRow({
+/// 版本行（映射自 `ProviderMvVersion`）。竖屏页与横屏弹层共用这一份视图模型。
+class MvPanelVersionRow {
+  const MvPanelVersionRow({
     required this.id,
     required this.label,
     required this.associated,
@@ -44,14 +44,17 @@ class PortraitMvVersionRow {
 }
 
 /// MV 面板的只读视图模型（映射自 `MvState`）。
-class PortraitMvModel {
-  const PortraitMvModel({
+///
+/// 竖屏页（本文件）与横屏弹层（`lib/hud/modals/mv_modal.dart`）共用：两边都只读
+/// 这几个字段，没有理由为方向再复制一份。
+class MvPanelModel {
+  const MvPanelModel({
     this.status = '',
     this.title = '',
     this.trackId = '',
     this.resolution = 0,
     this.versionStatus = '',
-    this.versions = const <PortraitMvVersionRow>[],
+    this.versions = const <MvPanelVersionRow>[],
     this.selectedVersionId = '',
     this.auto = true,
     this.decodable = false,
@@ -73,7 +76,7 @@ class PortraitMvModel {
   final String versionStatus;
 
   /// 版本列表。
-  final List<PortraitMvVersionRow> versions;
+  final List<MvPanelVersionRow> versions;
 
   /// 当前选中的版本 id。
   final String selectedVersionId;
@@ -103,7 +106,7 @@ double _contentWidth(PortraitCanvas c) => c.gridWidth - 40;
 /// 竖屏「关联 MV」面板。返回前必须调用 `c.finish()`。
 void paintPortraitMvPage(
   PortraitCanvas c, {
-  required PortraitMvModel model,
+  required MvPanelModel model,
   // 版本列表的滚动窗口（条目单位，可为小数），语义同
   // `paintPortraitCollectionPage` 的 `position`。
   double position = 0,
@@ -200,7 +203,7 @@ void paintPortraitMvPage(
 }
 
 /// 一行版本：`indexRow` 的同款排版 + 当前选中标记 + `mv:version:<id>` 命中。
-void _versionRow(PortraitCanvas c, double y, PortraitMvVersionRow row, {required bool current}) {
+void _versionRow(PortraitCanvas c, double y, MvPanelVersionRow row, {required bool current}) {
   final double rowWidth = _contentWidth(c);
   if (current) {
     c.fill(Rect.fromLTWH(_gutter, y, rowWidth, 67), c.raised);
