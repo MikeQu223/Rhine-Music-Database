@@ -66,10 +66,10 @@ override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
 
 | 事实 | 文件:行 |
 |---|---|
-| `FlutterActivity.configureFlutterEngine` 是子类配置引擎的官方 hook；基类实现自动注册 pubspec 插件（engine 由 host 显式注入时跳过，见 FlutterActivity.java:1348-1352） | /home/aibeto/flutter/engine/src/flutter/shell/platform/android/io/flutter/embedding/android/FlutterActivity.java:1335-1356（:1347 方法，:1355 registerGeneratedPlugins） |
-| 该方法由 delegate 在 Activity 启动路径中、`provideFlutterEngine` 之后调用 | /home/aibeto/flutter/engine/src/flutter/shell/platform/android/io/flutter/embedding/android/FlutterActivityAndFragmentDelegate.java:228（`host.configureFlutterEngine(flutterEngine)`） |
-| 引擎已就绪后才能取 `PlatformViewsController` | /home/aibeto/flutter/engine/src/flutter/shell/platform/android/io/flutter/embedding/engine/FlutterEngine.java:688-695 |
-| 工厂注册的真实 API 是 `PlatformViewRegistry.registerViewFactory(viewTypeId, factory)` | /home/aibeto/flutter/engine/src/flutter/shell/platform/android/io/flutter/plugin/platform/PlatformViewRegistry.java:14-23 |
+| `FlutterActivity.configureFlutterEngine` 是子类配置引擎的官方 hook；基类实现自动注册 pubspec 插件（engine 由 host 显式注入时跳过，见 FlutterActivity.java:1348-1352） | <flutter-sdk>/engine/src/flutter/shell/platform/android/io/flutter/embedding/android/FlutterActivity.java:1335-1356（:1347 方法，:1355 registerGeneratedPlugins） |
+| 该方法由 delegate 在 Activity 启动路径中、`provideFlutterEngine` 之后调用 | <flutter-sdk>/engine/src/flutter/shell/platform/android/io/flutter/embedding/android/FlutterActivityAndFragmentDelegate.java:228（`host.configureFlutterEngine(flutterEngine)`） |
+| 引擎已就绪后才能取 `PlatformViewsController` | <flutter-sdk>/engine/src/flutter/shell/platform/android/io/flutter/embedding/engine/FlutterEngine.java:688-695 |
+| 工厂注册的真实 API 是 `PlatformViewRegistry.registerViewFactory(viewTypeId, factory)` | <flutter-sdk>/engine/src/flutter/shell/platform/android/io/flutter/plugin/platform/PlatformViewRegistry.java:14-23 |
 | 本项目已按此形态写好实现 | android/.../QtPlatformViewHost.kt:700-703 的 snippet 与 :711-717 的实现 |
 
 **禁止**放在 `Application.onCreate`：那时 FlutterEngine 尚未创建，`registerWith` 没有合法实参；强接只会把未初始化引擎带进注册路径。这不是风格问题。
