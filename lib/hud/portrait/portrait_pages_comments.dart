@@ -330,7 +330,10 @@ PortraitCommentsLayout paintPortraitCommentsPage(
       contentY += portraitCommentBodyLine;
     }
     double metaY = contentY + 5;
-    c.text('♥ ${item.likedLabel}', 58, metaY, size: 12, width: 90, color: c.muted);
+    // Qt `"♥ " + item["likedLabel"]`，而 likedLabel 恒为 `compactCount(likedCount)`
+    // （CommentsController.cpp:668-712 的 state()），即最小值是 "0"，不会是空串。
+    final String liked = item.likedLabel.isEmpty ? '0' : item.likedLabel;
+    c.text('♥ $liked', 58, metaY, size: 12, width: 90, color: c.muted);
 
     if (item.replyCount > 0) {
       final String label = item.repliesExpanded ? '收起回复 ↑' : '${item.replyCount} 条回复 ↓';
