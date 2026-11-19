@@ -37,7 +37,10 @@ export 'basic_models.dart' show BasicListItem, basicLibraryItems, basicSelectedI
 /// 资料库名（Qt NativeHud.cpp:380 的 "MUSIC DATABASE / <libraryName>"）。
 const String basicLibraryName = '塞壬唱片';
 
-/// 竖屏重排时，曲目列从 1080 设计高度之后开始（stage unit）。
+/// 竖屏重排时曲目列的旧固定带顶（stage unit）。
+///
+/// 现在竖屏 3D/列表按 1:1 分割（[portraitListTop] 与 [basicSceneStageRect] 都取
+/// 舞台高的一半）；这个常量只留给拿不到可视高度时的旧调用点兜底。
 const double basicPortraitListOffset = 1080.0;
 
 /// 竖屏列表块的位移（stage unit）：让 ruler 裁剪窗口的上沿
@@ -740,8 +743,8 @@ class BasicHudFrame {
 ///    984)`），不是场景视口——把它当场景矩形会把 1080 高的舞台压成 984/1080 的
 ///    比例，再靠改 fov/eye 去"修"，那是掩盖视口错，不是修；
 
-///  - 竖屏：顶部 1080 设计高度（曲目列的裁剪窗口上沿正好落在
-///    [basicPortraitListOffset]=1080，所以这块区域本来就是空的，正好给 3D 场景）。
+///  - 竖屏：上半屏（`height / 2`）。列表从同一条分割线开始
+///    （[portraitListTop] = `h * .5`），3D 与列表各占一半。
 ///
 /// 只有尺寸退化（<320）时不挂载；是否选中曲目、是否已联网都不参与判断。
 Rect? basicSceneStageRect({
@@ -750,12 +753,7 @@ Rect? basicSceneStageRect({
   required double height,
 }) {
   final Rect rect = portrait
-      ? Rect.fromLTWH(
-          0,
-          0,
-          width,
-          height < basicPortraitListOffset ? height : basicPortraitListOffset,
-        )
+      ? Rect.fromLTWH(0, 0, width, height * .5)
       : Rect.fromLTWH(0, 0, width, height);
   if (rect.width < 320 || rect.height < 320) {
     return null;
@@ -767,7 +765,8 @@ Rect? basicSceneStageRect({
 ///
 /// 常量取自 ruler 自己的裁剪窗口（`ruler.trackRulerTitleY` / `ruler.trackRulerWindowTop`
 /// / `ruler.trackRulerWindowHeight`），绘制与手势共用一处，手势层不再自己拍一套坐标。
-/// 竖屏窗口上沿就是带顶 [basicPortraitListOffset]——与 [basicPortraitListShift] 同一个
+/// 竖屏窗口上沿就是带顶 [basicPortraitListOffset]（拿不到可视高度时的兜底）——与
+/// [basicPortraitListShift] 同一个
 /// 换算，绘制平移多少、命中就从哪里开始。
 Rect basicLibraryListStageRect({
   required bool portrait,
@@ -775,16 +774,18 @@ Rect basicLibraryListStageRect({
   double? height,
   double stageScale = 0,
 }) {
-  // 竖屏 compact 版：列表带就是「第二行对齐的那块 4 行窗口」，
-  // 顶边 = portraitListTop（随可视高度伸缩），高 = 4 行。
+  // 竖屏 compact 版：列表区就是 1:1 分割线以下的整个下半屏（到播放条上沿），
+  // 不再只算四行；绘制、拖动/点选与 ownership 共用这一份高度。
   if (portrait && height != null) {
     final double unit = portraitUnit(width, stageScale: stageScale);
-    final double top = portraitListTop(portraitGridHeight(height, unit)) * unit;
+    final double gridHeight = portraitGridHeight(height, unit);
+    final double top = portraitListTop(gridHeight);
+    final double bottom = math.max(top, gridHeight - portraitFooterHeight);
     return Rect.fromLTWH(
       0,
-      top,
+      top * unit,
       portraitGridWidth(width, stageScale: stageScale) * unit,
-      portraitRowHeight * 4 * unit,
+      (bottom - top) * unit,
     );
   }
   final double rawLeft = basicNavigationLeft(width) - 4;
@@ -1261,7 +1262,7 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
     // （抽唱片、搜索等）保持原样，不受这条规则影响。
     //
     // 3D 直触区就是场景自己的矩形：横屏是整窗（Qt Engine 的 1080 高舞台铺满），
-    // 竖屏是顶部 1080（曲目列从 basicPortraitListOffset 开始）。尺寸退化时
+    // 竖屏是上半屏（高的一半，3D 与列表 1:1）。尺寸退化时
     // basicSceneStageRect 返回 null，此时不扩展、不拦截，回到旧行为。
     final Rect? directTouchStageRect = state.phase == BasicPhase.library
         ? basicSceneStageRect(

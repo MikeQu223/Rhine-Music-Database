@@ -1,5 +1,3 @@
-import 'dart:math' as math;
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -7,6 +5,8 @@ import 'package:rhine_music_database/basic/basic_hud.dart';
 import 'package:rhine_music_database/basic/basic_hud_resources.dart';
 import 'package:rhine_music_database/basic/basic_models.dart';
 import 'package:rhine_music_database/hud/input/hit_layer.dart';
+import 'package:rhine_music_database/hud/portrait/portrait_layout.dart'
+    show portraitListTop;
 import 'package:rhine_music_database/hud/protocol/hud_hit.dart';
 import 'package:rhine_music_database/hud/protocol/hud_frame.dart';
 import 'package:rhine_music_database/hud/text/glyph_font.dart';
@@ -58,7 +58,7 @@ void main() {
       );
       final double unit = 1080 / 393;
       final double gridHeight = 1920 / unit;
-      final double listTop = math.max(gridHeight * .5, gridHeight - 34 - 110 - 48 * 4);
+      final double listTop = portraitListTop(gridHeight);
 
       // 五个来源 tab 全部有命中（顺序由 basicSirenSourceOrder 决定，不是 0..4）。
       final Iterable<HudHit> lanes =
@@ -117,8 +117,7 @@ void main() {
       // 底栏又在播放条下面，且整块不出舞台。
       final double unit = 1080 / 393;
       final double gridHeight = 1920 / unit;
-      final double listBottom =
-          math.max(gridHeight * .5, gridHeight - 34 - 110 - 48 * 4) + 48 * 4;
+      final double listBottom = portraitListTop(gridHeight) + 48 * 4;
       final HudHit toggle = _hit(portrait, 'player:toggle');
       expect(toggle.y, greaterThanOrEqualTo(listBottom * unit));
       expect(_hit(portrait, 'open').y, lessThan(toggle.y));

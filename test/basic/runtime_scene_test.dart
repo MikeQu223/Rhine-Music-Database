@@ -56,14 +56,14 @@ Widget _landscapeHarness({required Size size, required BasicViewState state}) {
 }
 
 void main() {
-  test('竖屏场景占满顶部 1080 设计高度（曲目列以下留白之前）', () {
+  test('竖屏场景占上半屏（3D 与列表 1:1）', () {
     expect(
       basicSceneStageRect(portrait: true, width: 1080, height: 1920),
-      const Rect.fromLTWH(0, 0, 1080, 1080),
+      const Rect.fromLTWH(0, 0, 1080, 960),
     );
     expect(
       basicSceneStageRect(portrait: true, width: 1080, height: 900),
-      const Rect.fromLTWH(0, 0, 1080, 900),
+      const Rect.fromLTWH(0, 0, 1080, 450),
     );
   });
 
@@ -134,7 +134,7 @@ void main() {
     }
   });
 
-  testWidgets('竖屏首页同样挂载场景，尺寸正好 1080 设计高度', (WidgetTester tester) async {
+  testWidgets('竖屏首页同样挂载场景，尺寸是上半屏', (WidgetTester tester) async {
     tester.view.physicalSize = const Size(1080, 1920);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -153,7 +153,7 @@ void main() {
       ));
       await tester.pump();
       expect(find.byType(QtSceneView), findsOneWidget);
-      expect(tester.getSize(find.byType(QtSceneView)), const Size(1080, 1080));
+      expect(tester.getSize(find.byType(QtSceneView)), const Size(1080, 960));
       expect(tester.takeException(), isNull);
     } finally {
       debugDefaultTargetPlatformOverride = null;

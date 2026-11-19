@@ -49,6 +49,7 @@ class BasicSettingsWindow extends StatefulWidget {
     required this.dark,
     required this.onAction,
     this.portrait = false,
+    this.pluginsEntry = false,
     this.scrollStorage,
     this.scrollMaximumStorage,
   });
@@ -66,6 +67,12 @@ class BasicSettingsWindow extends StatefulWidget {
 
   /// 竖屏时本层已在 stage 单位里（PortraitStage 负责缩放）。
   final bool portrait;
+
+  /// 末尾追加「插件管理」入口卡（竖屏设置页末尾那张的横屏等价物）。
+  ///
+  /// Qt 横屏设置面板里没有这个入口；但插件页在横屏已经是独立 modal，
+  /// 没有入口就进不去，所以在横屏设置末尾补一张同义的整宽卡片。
+  final bool pluginsEntry;
 
   /// 可选：把滚动偏移存到宿主，重开面板时接上（null = 每次从 0 开始）。
   ///
@@ -212,8 +219,23 @@ class _BasicSettingsWindowState extends State<BasicSettingsWindow> {
       y: bounds.top,
       width: bounds.width,
     );
-    final SettingsCardLayout layout =
+    final SettingsCardLayout baseLayout =
         layoutSettingsCard(viewport: viewport, model: widget.model.sections);
+    // 末尾入口卡不在 settings 模型里：把内容高度补一行链接的高度，
+    // 滚动上界用同一份 contentHeight 重算，否则卡片会被裁在可视区外。
+    final double pluginsEntryHeight =
+        widget.pluginsEntry ? SettingsRowMetrics.linkRowHeight : 0;
+    final SettingsCardLayout layout = pluginsEntryHeight == 0
+        ? baseLayout
+        : SettingsCardLayout(
+            viewport: baseLayout.viewport,
+            sections: baseLayout.sections,
+            contentHeight: baseLayout.contentHeight + pluginsEntryHeight,
+            maximumScroll: SettingsRowMetrics.maximumScroll(
+              baseLayout.contentHeight + pluginsEntryHeight,
+              baseLayout.viewport.height,
+            ),
+          );
     // 真实可滚动距离公布给宿主：键盘上下键的 clamp 上界（NativeHudController.cpp:891-897）
     // 必须与这条 SingleChildScrollView 的实际内容一致，不能拍一个 1600 常数。
     final ValueNotifier<double>? maximum = widget.scrollMaximumStorage;
@@ -475,7 +497,51 @@ class _BasicSettingsWindowState extends State<BasicSettingsWindow> {
     for (final SettingsSectionLayout section in layout.sections) {
       children.addAll(_sectionWidgets(section, viewport, palette));
     }
+    if (widget.pluginsEntry) {
+      final double top = (layout.sections.isEmpty
+                  ? viewport.top
+                  : layout.sections.last.body.bottom) -
+              viewport.top +
+          SettingsRowMetrics.sectionGap;
+      children.add(Positioned(
+        left: SettingsRowMetrics.contentInset,
+        top: top,
+        width: viewport.width - SettingsRowMetrics.contentInset * 2,
+        height: SettingsRowMetrics.linkRowHeight,
+        child: _pluginsEntry(palette),
+      ));
+    }
     return children;
+  }
+
+  /// 横屏设置末尾的「插件管理」入口（与项目链接同一种整宽卡片）。
+  Widget _pluginsEntry(SettingsPalette palette) {
+    return Semantics(
+      button: true,
+      link: true,
+      label: '插件管理',
+      child: InkWell(
+        key: const ValueKey<String>('settings-plugins-entry'),
+        onTap: () => _handle('plugins'),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: _color(palette.soft),
+            border: Border.all(color: _color(palette.line)),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Row(
+              children: <Widget>[
+                Expanded(
+                  child: _text('插件管理', 14, palette.ink),
+                ),
+                _text('↗', 13, palette.ink),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   List<Widget> _sectionWidgets(
@@ -672,7 +738,9 @@ class _BasicSettingsWindowState extends State<BasicSettingsWindow> {
                 border: Border.all(color: _color(palette.line)),
               ),
               child: Padding(
-                padding: const EdgeInsets.only(left: 12, top: 15),
+                // 只留左右内缩，行高由 Row 的 crossAxisAlignment.center 垂直居中；
+                // 原来 top: 15 会让文字压在视觉中心下方。
+                padding: const EdgeInsets.symmetric(horizontal: 12),
                 child: Row(
                   children: <Widget>[
                     Expanded(
