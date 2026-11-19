@@ -1,4 +1,4 @@
-// T37-C18-A2-W — 设置模态：七区布局 / 五类自定义区渲染 / 模态框架 / 滚动 / 编辑浮层几何
+//  — 设置模态：七区布局 / 五类自定义区渲染 / 模态框架 / 滚动 / 编辑浮层几何
 //
 // 证据（全部来自 Qt 源，不使用旧 Flutter UI，不凭记忆）：
 //   Qt/src/SettingsSchema.cpp:693-703     七区定义（id / order / 中英标题 / 自定义渲染器 / 高度）
@@ -19,19 +19,16 @@
 //   Qt/src/HudScroll.h:1-100              maximum / clampOffset / applyWheel / rail / clipHits
 //   Qt/qml/Overlay.qml:563-602            设置编辑浮层外观与位置
 //   Qt/qml/PerformancePanel.qml:1-150     性能面板本体（标题 / 详情 / 四按钮）
-//   T06/docs/flutter-migration/contracts/settings-platform.md §1/§4/§5/§8/§10/§13（冻结契约）
+//   /docs/flutter-migration/contracts/settings-platform.md §1/§4/§5/§8/§10/§13（冻结契约）
 //
 // 直接复用 A1 冻结原子 package:rhine_music_database/hud/widgets/settings_row.dart，不复制其常量。
-// 本轮禁止执行 dart analyze / dart test / flutter test / build / pub get：RED 与 GREEN 均未执行。
 
 import 'dart:math' as math;
 import 'dart:ui' show Offset, Rect, Size;
 
 import 'package:rhine_music_database/hud/widgets/settings_row.dart';
 
-// ---------------------------------------------------------------------------
 // 1. 平台能力矩阵 —— 契约 §8 / Qt/src/PlatformFeatures.h:1-25
-// ---------------------------------------------------------------------------
 
 /// 契约 §8 的五项平台能力。默认值刻意不写成单一平台常量：
 /// 每个命名构造器逐条对齐 PlatformFeatures.h 的宏分支，调用方按平台选择。
@@ -151,9 +148,7 @@ class PlatformCapabilities {
       ')';
 }
 
-// ---------------------------------------------------------------------------
 // 2. 七区定义（契约 §1 硬冻结；SettingsSchema.cpp:693-703）
-// ---------------------------------------------------------------------------
 
 /// 七区 id（顺序即契约 §1 的枚举顺序）。
 enum SettingsSectionId { provider, preferences, performance, storage, update, project, footer }
@@ -309,9 +304,7 @@ SettingsSectionSpec? settingsSectionById(SettingsSectionId id) {
   return null;
 }
 
-// ---------------------------------------------------------------------------
 // 3. 模态/面板几何常量（契约 §5；NativeHud.h:114-139；NativeHudInput.cpp:9-36）
-// ---------------------------------------------------------------------------
 
 class SettingsModalMetrics {
   const SettingsModalMetrics._();
@@ -442,11 +435,9 @@ class SettingsModalMetrics {
   static SettingsRgba modalButtonTint(bool dark) => dark ? modalButtonDark : modalButtonLight;
 }
 
-// ---------------------------------------------------------------------------
 // 4. 平台候选与 provider 卡片
 //    NativeHudModal.cpp:5-24（候选表）、259-291（选择器几何）
 //    NativeHudSettings.cpp:242-254（actionBlock）、256-308（provider-card 自定义区）
-// ---------------------------------------------------------------------------
 
 /// 本地音乐候选 id（NativeHudModal.cpp:18）。
 const String localMusicProviderId = 'local';
@@ -773,9 +764,7 @@ String providerAccountNote(SettingsProviderState state) {
   return '各平台账号独立保存';
 }
 
-// ---------------------------------------------------------------------------
 // 5. 卡片布局（SettingsCard.cpp:239-292 逐条；复用 A1 的 placeSettingsRow / placeProjectLink）
-// ---------------------------------------------------------------------------
 
 /// 一个分区的模型：分区定义 + 该区普通行（自定义区为空表）。
 class SettingsSectionModel {
@@ -905,10 +894,8 @@ SettingsCardLayout layoutSettingsCard({
   );
 }
 
-// ---------------------------------------------------------------------------
 // 6. 面板视口 / 滚动轨道 / 滚轮
 //    NativeHudSettings.cpp:164-165, 205-224；HudScroll.h:13-26, 50-86；NativeHudInput.cpp:29-33
-// ---------------------------------------------------------------------------
 
 class SettingsPanelGeometry {
   const SettingsPanelGeometry._();
@@ -1017,11 +1004,9 @@ bool settingsWheelHits({
       localY <= bounds.top + SettingsModalMetrics.viewportBottom;
 }
 
-// ---------------------------------------------------------------------------
 // 7. 绘制：自定义区 / 表头 / 整卡 / 面板 / 模态框架 / 编辑浮层 / 性能面板规格
 //    NativeHudSettings.cpp:227-380；SettingsCard.cpp:36-45,294-327；
 //    NativeHudModal.cpp:188-202；Overlay.qml:563-602；PerformancePanel.qml:1-150
-// ---------------------------------------------------------------------------
 
 /// NativeHudSettings.cpp:236-241 与 :195-200 的 stroke 不是"描边框线"，而是 4 条 1px 填充：
 /// 上 / 下 / 左 / 右，其中下边用 bottom-1、右边用 right-1 内缩。
@@ -1230,13 +1215,7 @@ class SettingsPerformanceSectionMetrics {
 class SettingsPerformanceContent {
   const SettingsPerformanceContent._();
 
-  // 用户 m10082：性能面板不是用户要求的功能 —— PERFORMANCE 第一行专用文案整体停用，
-  // 连同其 action（performance:toggle）与帮助文案一起注释（原文保留，不删）。
-  // static const String firstTitleEn = 'PERFORMANCE';
-  // static const String firstTitleZh = '性能面板';
-  // static const String firstAction = 'performance:toggle';
-  // static const String firstHitLabel = '性能面板';
-  // static const String firstHelp = '在性能面板内手动收集、导出诊断文件。';
+  // 性能面板停用：第一行 PERFORMANCE 的文案 / action / 帮助均不再提供。
 
   static const String secondTitleEn = 'DISC ROTATION';
   static const String secondTitleZh = '唱片旋转';
@@ -1246,9 +1225,7 @@ class SettingsPerformanceContent {
   static const String secondLabelOff = '关闭 / 点击了解风险';
   static const String secondHelp = '默认关闭；开启会增加持续渲染、耗电和发热。';
 
-  // 用户 m10082：性能面板停用 —— 其固定 label 一并注释。
-  // /// :320 row(4, ...) 的 label 是固定文案 "显示 / 隐藏 · F10"。
-  // static const String firstLabel = '显示 / 隐藏 · F10';
+  // 性能面板停用：PERFORMANCE 行的固定 label 不再声明。
 }
 
 /// NativeHudSettings.cpp:310-330。
@@ -1284,7 +1261,7 @@ void paintPerformanceSection({
         body.width, 1, palette.line);
   }
 
-  // 用户 m10082：「注释掉所有性能面板相关的代码，我他妈就没让你做这个」——第一行
+  // 「注释掉所有性能面板相关的代码，我他妈就没让你做这个」——第一行
   // （PERFORMANCE / 性能面板 → performance:toggle）是性能面板的显示入口，注释掉；
   // 第二行（DISC ROTATION / 唱片旋转）是用户指定设置项，保留。
   // row(SettingsPerformanceSectionMetrics.firstRowTop, SettingsPerformanceContent.firstTitleEn,
@@ -1979,170 +1956,43 @@ class SettingsEditOverlayMetrics {
   static SettingsRgba textColor(bool dark) => dark ? textDark : textLight;
 }
 
-// ---------------------------------------------------------------------------
 // 8. 性能面板本体规格（PerformancePanel.qml:1-150）—— 保留，不在设置七区内渲染
-// ---------------------------------------------------------------------------
 
-// 用户 m10082：性能面板不是用户要求的功能 —— 整块规格注释掉（保留原文，不删）。
-// /// PerformancePanel.qml 的尺寸与文案常量。
-// class PerformancePanelMetrics {
-//   const PerformancePanelMetrics._();
+// 面板已停用；以下仅保留关键尺寸供恢复参考。
 
 //   /// :16-17 anchors.top/right parent, margins 12；:18 width 366；:19 height content.height + 24。
-//   static const double cardMargin = 12;
-//   static const double cardWidth = 366;
-//   static const double cardHeightPadding = 24;
 
 //   /// :20 radius 8；:21-22 底色与描边。
-//   static const double cardRadius = 8;
-//   static const String cardColor = '#ed151b20';
-//   static const String cardBorderColor = '#54616b';
 
 //   /// :32-35 content x/y 12，spacing 9。
-//   static const double contentInset = 12;
-//   static const double contentSpacing = 9;
 
 //   /// :39-41 headline 21pt bold。
-//   static const double headlineSize = 21;
-//   static const String headlineColor = '#8fe3bb';
 
 //   /// :50-61 details 12pt / lineHeight 1.35 / 可视高 min(h, max(80, panel.height - 210))。
-//   static const double detailsSize = 12;
-//   static const double detailsLineHeight = 1.35;
-//   static const double detailsMinHeight = 80;
-//   static const double detailsHeightReserve = 210;
 
 //   /// :64-147 四按钮：高 30、radius 4、文字 12pt、间距 6。
-//   static const double buttonHeight = 30;
-//   static const double buttonRadius = 4;
-//   static const double buttonSpacing = 6;
-//   static const double buttonTextSize = 12;
-//   static const String buttonTextColor = '#ffffff';
-//   static const double recordButtonWidth = 140;
-//   static const double folderButtonWidth = 82;
-//   static const double compactButtonWidth = 50;
-//   static const double closeButtonWidth = 50;
-//   static const String recordActiveColor = '#9f3830';
-//   static const String recordIdleColor = '#314f47';
-//   static const String buttonColor = '#303b43';
 
 //   /// objectName / 文案 / Accessible.name 逐字。
-//   static const String cardObjectName = 'performanceCard';
-//   static const String headlineObjectName = 'performanceHeadline';
-//   static const String recordObjectName = 'performanceRecordButton';
-//   static const String folderLabel = '诊断目录';
-//   static const String compactLabelExpanded = '精简';
-//   static const String compactLabelCollapsed = '展开';
-//   static const String closeLabel = '关闭';
-//   static const String recordAccessibleName = '收集或导出性能诊断';
-//   static const String folderAccessibleName = '打开诊断目录';
-//   static const String compactAccessibleName = '展开或精简性能面板';
-//   static const String closeAccessibleName = '关闭性能面板';
 
 //   /// :19 卡片高 = content.height + 24。
-//   static double cardHeight(double contentHeight) => contentHeight + cardHeightPadding;
 
 //   /// :48 height = min(details.height, max(80, panel.height - 210))。
-//   static double detailsHeight({
-//     required double panelHeight,
-//     required double detailsContentHeight,
-//   }) =>
-//       math.min(detailsContentHeight,
-//           math.max(detailsMinHeight, panelHeight - detailsHeightReserve));
 
 //   /// :66 Row 四按钮的顺序与宽度。
-//   static List<double> buttonWidths() => <double>[
-//         recordButtonWidth,
-//         folderButtonWidth,
-//         compactButtonWidth,
-//         closeButtonWidth,
-//       ];
-// }
 
 // /// 性能面板按钮：文案 + 矩形 + 底色 + 无障碍名。
-// class PerformancePanelButton {
-//   const PerformancePanelButton({
-//     required this.label,
-//     required this.rect,
-//     required this.color,
-//     required this.accessibleName,
-//     required this.objectName,
-//   });
 
 //   final String label;
-//   final Rect rect;
-//   final String color;
-//   final String accessibleName;
-//   final String objectName;
 
 //   @override
-//   String toString() => 'PerformancePanelButton(' + label + ', ' + rect.toString() + ')';
-// }
 
 // /// PerformancePanel.qml:64-147 的横向按钮行（起点 x/y 为按钮行左缘与顶缘）。
-// List<PerformancePanelButton> performancePanelButtons({
-//   required double left,
-//   required double top,
-//   required bool expanded,
-//   required bool recording,
-//   required String recordingAction,
-// }) {
-//   final List<PerformancePanelButton> out = <PerformancePanelButton>[];
-//   double x = left;
-//   final List<double> widths = PerformancePanelMetrics.buttonWidths();
-//   for (int index = 0; index < 4; index++) {
-//     final double width = widths[index];
-//     String label;
-//     String color;
-//     String accessibleName;
-//     String objectName;
-//     if (index == 0) {
-//       // :66-84 录制/导出按钮
-//       label = recordingAction;
-//       color = recording
-//           ? PerformancePanelMetrics.recordActiveColor
-//           : PerformancePanelMetrics.recordIdleColor;
-//       accessibleName = PerformancePanelMetrics.recordAccessibleName;
-//       objectName = PerformancePanelMetrics.recordObjectName;
-//     } else if (index == 1) {
-//       // :85-97 诊断目录
-//       label = PerformancePanelMetrics.folderLabel;
-//       color = PerformancePanelMetrics.buttonColor;
-//       accessibleName = PerformancePanelMetrics.folderAccessibleName;
-//       objectName = '';
-//     } else if (index == 2) {
-//       // :98-117 精简 / 展开
-//       label = expanded
-//           ? PerformancePanelMetrics.compactLabelExpanded
-//           : PerformancePanelMetrics.compactLabelCollapsed;
-//       color = PerformancePanelMetrics.buttonColor;
-//       accessibleName = PerformancePanelMetrics.compactAccessibleName;
-//       objectName = '';
-//     } else {
-//       // :118-145 关闭
-//       label = PerformancePanelMetrics.closeLabel;
-//       color = PerformancePanelMetrics.buttonColor;
-//       accessibleName = PerformancePanelMetrics.closeAccessibleName;
-//       objectName = '';
-//     }
-//     out.add(PerformancePanelButton(
-//       label: label,
-//       rect: Rect.fromLTWH(x, top, width, PerformancePanelMetrics.buttonHeight),
-//       color: color,
-//       accessibleName: accessibleName,
-//       objectName: objectName,
-//     ));
-//     x += width + PerformancePanelMetrics.buttonSpacing;
-//   }
-//   return out;
-// }
 
 // // ---------------------------------------------------------------------------
 // 9. 偏好 descriptor 注册表（Qt/src/SettingsSchema.cpp:347-691）
 //    以及 Host::preferenceKeys() 的 53 个 key 白名单（Qt/src/Host.cpp:1041-1059）。
 //    Qt 用 Q_OS_* 宏与 PlatformFeatures 做平台门；Flutter 侧把平台身份和五项能力
 //    都显式放进 SettingsPreferenceContext，避免读全局状态。
-// ---------------------------------------------------------------------------
 
 /// Qt 的 Q_OS_* 身份（SettingsSchema.cpp:96-244 的 #ifdef 分支）。
 enum SettingsOperatingSystem { android, iOS, windows, macOS, linux }
@@ -2339,10 +2189,8 @@ typedef SettingsPredicate = bool Function(SettingsPreferenceContext context);
 typedef SettingsChoicesResolver = List<SettingsChoice> Function(SettingsPreferenceContext context);
 typedef SettingsLabelResolver = String Function(SettingsPreferenceContext context, SettingsPreferenceValue value);
 
-// ---------------------------------------------------------------------------
 // 9.1 Host::preferenceKeys() 白名单：Qt/src/Host.cpp:1041-1059 的 53 个 key。
 //     Host::preference() 对白名单外的 key 一律返回空串；写入落在 panel/<key>。
-// ---------------------------------------------------------------------------
 
 const List<String> settingsPreferenceKeys = <String>[
   'search-history',
@@ -2405,9 +2253,7 @@ final Set<String> settingsPreferenceKeySet = Set<String>.unmodifiable(settingsPr
 /// SettingsSchema::validateRegistry() 用它拒绝不在 Host 白名单里的偏好 key。
 bool isSettingsPreferenceKey(String key) => settingsPreferenceKeySet.contains(key);
 
-// ---------------------------------------------------------------------------
 // 9.2 选项表（SettingsSchema.cpp:16-60）。值与文案逐字。
-// ---------------------------------------------------------------------------
 
 const List<SettingsChoice> settingsOnOffChoices = <SettingsChoice>[
   SettingsChoice(value: 'off', label: '关闭'),
@@ -2448,9 +2294,7 @@ const List<SettingsChoice> settingsFsrChoices = <SettingsChoice>[
   SettingsChoice(value: 'super', label: '超级性能'),
 ];
 
-// ---------------------------------------------------------------------------
 // 9.3 平台门（SettingsSchema.cpp:96-244）与派生选项/标签。
-// ---------------------------------------------------------------------------
 
 bool settingsDesktopWindowVisible(SettingsPreferenceContext context) =>
     context.capabilities.desktopWindowControls;
@@ -2652,10 +2496,8 @@ String settingsChoiceLabel(
   return value.canonical;
 }
 
-// ---------------------------------------------------------------------------
 // 9.4 descriptor 表：23 条偏好（SettingsSchema.cpp:352-687）+ 8 条项目链接
 //     （:664-687）。顺序即 Qt 的 add() 调用顺序。
-// ---------------------------------------------------------------------------
 
 final List<SettingsDescriptor> _settingsDescriptorTable = <SettingsDescriptor>[
   SettingsDescriptor(
@@ -3160,10 +3002,8 @@ String settingsDefaultValue(SettingsDescriptor descriptor, SettingsPreferenceCon
   return descriptor.defaultValue;
 }
 
-// ---------------------------------------------------------------------------
 // 9.5 SettingsSchema 的纯函数：choices / normalize / read / displayLabel /
 //     visible / enabled / switchTarget / nextValue / numericValues。
-// ---------------------------------------------------------------------------
 
 List<SettingsChoice> settingsChoicesFor(
         SettingsDescriptor descriptor, SettingsPreferenceContext context) =>
@@ -3400,9 +3240,7 @@ String settingsNextValue(
   return value.canonical;
 }
 
-// ---------------------------------------------------------------------------
 // 9.6 行模型组装（NativeHudSettings.cpp:39-77 buildSettingsModel）。
-// ---------------------------------------------------------------------------
 
 SettingsRowSpec settingsRowSpecFor(
   SettingsDescriptor descriptor, {
@@ -3474,9 +3312,7 @@ List<SettingsRowSpec> settingsProjectRows({
         settingsRowSpecFor(descriptor, context: context, snapshot: snapshot),
     ];
 
-// ---------------------------------------------------------------------------
 // 9.7 SettingsSchema::validateRegistry()：与 settings_row 无关的静态自检。
-// ---------------------------------------------------------------------------
 
 List<String> settingsValidateRegistry() {
   final List<String> errors = <String>[];
@@ -3552,9 +3388,7 @@ List<String> settingsValidateRegistry() {
   return errors;
 }
 
-// ---------------------------------------------------------------------------
 // 9.8 恢复默认设置（NativeHudSettings.cpp:492-525）的纯计划。
-// ---------------------------------------------------------------------------
 
 class SettingsDefaultResetStep {
   const SettingsDefaultResetStep({

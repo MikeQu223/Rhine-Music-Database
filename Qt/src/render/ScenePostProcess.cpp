@@ -43,7 +43,7 @@ bool postProbe() {
     return enabled;
 }
 /**
- * A07 的回滚开关，默认开启。本轮唯一的运行时行为变化是“RHINE_FSR_ENGINE 只在值变化时写”，
+ * 回滚开关，默认开启。本轮唯一的运行时行为变化是“RHINE_FSR_ENGINE 只在值变化时写”，
  * 设 RHINE_POST_REUSE=0 即恢复原来的每帧无条件 qputenv，便于 A/B 对比或出事时一键回到旧路径。
  * 两条全屏拷贝（taa→history→destination、m_output→destination）已证明在允许改动的文件内无法
  * 等价合并，所以这里没有对应的“新路径”需要开关。
@@ -298,14 +298,14 @@ void ScenePostProcess::resolve(QRhiCommandBuffer *commands, QRhiRenderTarget *de
             quad(commands, "copyColor", destination, {m_input.texture});
             return;
         }
-        // A07 复查结论：这两次全屏 pass（taa→history、copyColor→destination）没法合并成
+        // 复查结论：这两次全屏 pass（taa→history、copyColor→destination）没法合并成
         // “taa 直接写 destination”，三点原因缺一不可：
         //   1) m_history[next] 要留下**尚未呈现**的 16F 结果当下一帧的重投影历史，而 destination
         //      是调用方（RhiScene::composite）交进来的呈现目标，跨帧内容不保证保留，当不了历史；
         //   2) destination 是 8 位目标，拿它当历史会把 TAA 的多帧累积精度压回 8 位；
         //   3) taa 这个 pass 读 m_input、写 m_history[next]，两者不能别名。
         // 真要把这次拷贝收掉，只能让下游（呈现侧）直接采 m_history，那是 RhiScene 的接线，
-        // 不在 A07 允许改动的文件里。第一帧多出来的那次 copyColor 同样必要：它就是历史初始化。
+        // 不在允许改动的文件里。第一帧多出来的那次 copyColor 同样必要：它就是历史初始化。
         if (!m_historyValid) {
             quad(commands, "copyColor", m_history[m_historyIndex].target, {m_input.texture});
             probe("taa-init", "首帧：copyColor→history 初始化 + copyColor→destination，2 次全屏 pass");
@@ -327,7 +327,7 @@ void ScenePostProcess::resolve(QRhiCommandBuffer *commands, QRhiRenderTarget *de
                                        m_output.texture);
             commands->endExternal();
         }
-        // A07：这个环境变量是 Engine/FrameProfiler 读的进程级开关，值只由 resolved 决定，而
+        // 这个环境变量是 Engine/FrameProfiler 读的进程级开关，值只由 resolved 决定，而
         // resolved 在稳态下每帧都一样。原来每帧 qputenv 一次（QByteArray 堆分配 + 环境变量锁），
         // 现在只在值变化时写：跳过写入与重复写同一个值对读方完全等价，只在“能力翻转”时有一次
         // 额外写入，反而少了跨线程改环境的机会。回滚：RHINE_POST_REUSE=0 恢复每帧无条件写。
@@ -340,7 +340,7 @@ void ScenePostProcess::resolve(QRhiCommandBuffer *commands, QRhiRenderTarget *de
             m_fsrEngine = engine;
         }
         if (resolved) {
-            // A07 复查结论：这次 copyColor 也省不掉。FSR3 的 compute 派发必须写进带
+            // 复查结论：这次 copyColor 也省不掉。FSR3 的 compute 派发必须写进带
             // UsedWithLoadStore 的 16F 纹理（m_output），而 destination 是 8 位呈现目标：Vulkan 下
             // copyImage 跨格式是未定义数据（copyColor.frag 头注释记着实测整屏粉红），所以必须有一次
             // 采样式格式转换；m_output 也不能和 dispatch 的输出别名。让下游直接采 m_output 同样要改

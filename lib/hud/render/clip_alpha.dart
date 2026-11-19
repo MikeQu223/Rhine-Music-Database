@@ -1,4 +1,4 @@
-// T30 · native HUD render atoms — accumulated opacity and intersected clip.
+// native HUD render operations — accumulated opacity and intersected clip.
 //
 // Single source of truth is the Qt painter dispatch in
 // `Qt/src/Glyphs.cpp:637-829`, a flat JSON array walk: element 0
@@ -41,12 +41,12 @@ import 'dart:ui' as ui;
 /// pure product and clamps nothing. For factors already inside [0, 1] the pure
 /// product and the clamped product are identical.
 ///
-/// Known residual divergence (review F2). Qt clamps **before storing**, so
+/// Known residual divergence. Qt clamps **before storing**, so
 /// later `alpha` ops multiply the clamped value: `alpha(2.0)` then
 /// `alpha(0.4)` is 0.4 in Qt (1.0 clamped, then * 0.4) but 0.8 here, and
 /// clamping only at consumption still gives 0.8. The frozen API mandates the
-/// pure product, so this file cannot close that gap alone — it is escalated to
-/// the T30 API owner (clamp in accumulation, or clamp in the painter and accept
+/// pure product, so this file cannot close that gap alone; clamping belongs at
+/// the API boundary (either in accumulation, or in the painter while accepting
 /// the residual). Every producer in Qt feeds an animation/detail opacity whose
 /// intended range is [0, 1] (NativeHudBoot.cpp:164-166, NativeHudDetail.cpp:64,
 /// :507, NativeHudModal.cpp:84, NativeHud.cpp:583, :601 — the only
@@ -116,7 +116,7 @@ ui.Rect intersectHudClip(ui.Rect current, ui.Rect next) {
   );
 }
 
-/// Immutable snapshot of the painter state this atom owns.
+/// Immutable snapshot of the painter state this file owns.
 ///
 /// One instance is pushed per [HudPaintStateStack.save]; it is a copy, exactly
 /// like the `QPainterState` Qt allocates in `QPainter::save()`
@@ -231,7 +231,7 @@ final class HudPaintStateStack {
   /// Returns false and leaves every field untouched when the stack is
   /// unbalanced (`depth == 0`), mirroring Qt's unbalanced branch
   /// (qpainter.cpp:1603-1606). The caller must record that as an issue; this
-  /// atom never swallows it silently.
+  /// 文件 never swallows it silently.
   bool restore() {
     if (_depth == 0 || _saved.isEmpty) return false;
     final HudPainterState previous = _saved.removeLast();

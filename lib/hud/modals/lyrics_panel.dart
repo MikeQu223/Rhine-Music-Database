@@ -5,10 +5,10 @@
 // 49 点样条），滚轮语义见 Qt/src/NativeHudInput.cpp:122-127。
 //
 // 本文件不依赖 Flutter Widget / Material，也不 import lib/hud/protocol/* 或
-// lib/domain/*：歌词加载、解析、网络与缓存属领域（T23），本文件只消费注入的
+// lib/domain/*：歌词加载、解析、网络与缓存属领域，本文件只消费注入的
 // document（lines[].startMs/text/translation + plainText）与已算好的 index。
 //
-// 边界：lyrics_offset / lyrics_source 两个弹层属 T40（Qt/src/NativeHudModal.cpp:85-161），
+// 边界：lyrics_offset / lyrics_source 两个弹层属 （Qt/src/NativeHudModal.cpp:85-161），
 // 本文件不创建、不绘制它们；面板只暴露 player:lyrics-offset / player:lyrics-sources
 // 两条动作，由宿主转给弹层。
 //
@@ -17,7 +17,7 @@
 import 'dart:math' as math;
 
 /// 面板动作接收器：宿主注入后，面板把「歌词来源 / 歌词偏移」按钮的 action 串
-/// 原样转出（Qt NativeHudController.cpp:324-345 把这两串分派到 T40 弹层）。
+/// 原样转出（Qt NativeHudController.cpp:324-345 把这两串分派到  弹层）。
 /// 面板不解释动作、不打开弹层、不写状态。
 typedef LyricsActionSink = void Function(String action);
 
@@ -461,7 +461,7 @@ LyricsFollowState followStep({
 /// 一帧的面板输入：领域快照（document/index/status/…）+ 视图状态（browse/scroll/curve/…）。
 ///
 /// 领域字段由宿主从播放快照原样填入；视图字段由宿主用上一帧
-/// [LyricsPanelDrawing.view] 回填。面板不自己算 activeLineIndex（领域语义归 T23）。
+/// [LyricsPanelDrawing.view] 回填。面板不自己算 activeLineIndex（领域语义不在本层）。
 class LyricsPanelModel {
   const LyricsPanelModel({
     this.x = 0,
@@ -517,7 +517,7 @@ class LyricsPanelModel {
   final String message;
 
   /// 偏移毫秒。面板绘制不消费它（Qt lyricsPanel 不读 offsetMs）；随模型带入，
-  /// 供宿主把同一份快照交给 T40 的 lyrics-offset 弹层，避免二次读取。
+  /// 供宿主把同一份快照交给  的 lyrics-offset 弹层，避免二次读取。
   final double offsetMs;
 
   /// 全局偏移毫秒（LyricsController::globalOffsetMs，LyricsController.cpp:60-64）。
@@ -931,7 +931,7 @@ class _Painter {
   }
 
   /// 绘制与 [button] 完全一致，随后把同一条 action 串交给宿主 sink。
-  /// 只用于会打开 T40 弹层的「歌词来源 / 歌词偏移」两键，其余命中不转出。
+  /// 只用于会打开  弹层的「歌词来源 / 歌词偏移」两键，其余命中不转出。
   void actionButton(String label, double x, double y, double width, double height, String action, double size) {
     button(label, x, y, width, height, action, size);
     onAction?.call(action);

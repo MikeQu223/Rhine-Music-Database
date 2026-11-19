@@ -15,10 +15,10 @@
 ///
 /// 归属表（谁实现哪段 QML 分支；本文件刻意不复制下面任何一条分支体）：
 ///   | QML 出处                       | 键           | 归属                                              |
-///   | Overlay.qml:118-120            | 全部键       | 本文件第 2、3 层（焦点在 inputLayer 时）           |
-///   | Overlay.qml:399-406 / :459-460 | Return/Esc   | TextInputOverlayLogic.handleKey（account/captcha） |
-///   | Overlay.qml:549-552            | Return/Esc   | TextInputOverlayLogic.handleKey（search）          |
-///   | Overlay.qml:600-601            | Return/Esc   | TextInputOverlayLogic.handleKey（settingEdit）     |
+///   Overlay.qml:118-120            | 全部键       | 本文件第 2、3 层（焦点在 inputLayer 时）           |
+///   Overlay.qml:399-406 / :459-460 | Return/Esc   | TextInputOverlayLogic.handleKey（account/captcha） |
+///   Overlay.qml:549-552            | Return/Esc   | TextInputOverlayLogic.handleKey（search）          |
+///   Overlay.qml:600-601            | Return/Esc   | TextInputOverlayLogic.handleKey（settingEdit）     |
 ///
 /// 输入框层与 inputLayer 在 QML 里是兄弟节点、不是祖先链：Keys 处理器只发给 activeFocus
 /// 项，所以输入框吃掉 Return/Escape 后事件不会继续冒泡到 inputLayer。本文件据此把
@@ -59,9 +59,7 @@ library;
 
 import 'wheel_router.dart' show HudScroll, HudScrollOffsets, HudWheelConstants;
 
-// ─────────────────────────────────────────────────────────────────────────────
 // 键的语义名与事件
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Engine 交给 NativeHud::key 的 value 字符串（Engine.cpp:974-995 的翻译结果），
 /// 以及由 event.text 直接透传的空格与 "/"。
@@ -192,9 +190,7 @@ class KeyCodec {
       KeySymbol.translated.contains(symbol) ? symbol : null;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // 第 1 层：QML 全局快捷键（Overlay.qml:158-178）
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Qt.ShortcutContext 的两个取值（Overlay.qml:158-163 只在这两者间取舍）。
 class ShortcutContext {
@@ -320,9 +316,7 @@ class ShortcutRouter {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // 第 2 层：Engine 的 keyEvent / searchAccepted（Engine.cpp:952-1012）
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Engine 侧的端口：Engine.cpp 里真正被调用的三处。
 abstract class EngineKeyPorts {
@@ -392,9 +386,7 @@ class EngineKeyRouter {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // 第 3 层：NativeHud::key（NativeHudController.cpp:887-943）
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// NativeHud 侧的端口：每个方法对应 Qt 里一处真正的调用。
 abstract class HudKeyPorts {
@@ -600,9 +592,7 @@ class HudKeySnapshot {
       'viewer=$viewer)';
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // 第 4 层：焦点层与按键分派（Overlay.qml:50-62、:87-120）
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// 焦点层：QML 里能接住按键的四个节点（id 或 objectName 原样保留）。
 class KeyFocusLayer {

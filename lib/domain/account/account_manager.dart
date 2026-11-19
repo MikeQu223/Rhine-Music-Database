@@ -1,4 +1,4 @@
-/// T24-S05 账号领域：来源选择、身份缓存、恢复与登出。
+///  账号领域：来源选择、身份缓存、恢复与登出。
 ///
 /// 契约来源：
 /// - Qt/src/MusicLibrary.cpp:16-40 构造（kugou-edition/provider 白名单/identityNames/restoreCachedAccount）、
@@ -7,7 +7,7 @@
 ///   :139-190 restoreAccount、:193-297 switchProvider、:670-717 logout。
 /// - Qt/src/Host.cpp:541-553 hasCredential、:557-574 setProvider、:579-597 setKugouEdition、:609-662 logout。
 ///
-/// 边界说明（T21 宿主接线未裁决）：Qt 的 MusicAccount 就是 MusicLibrary，账号流程会就地改库状态。
+/// 边界说明（ 宿主接线未裁决）：Qt 的 MusicAccount 就是 MusicLibrary，账号流程会就地改库状态。
 /// Flutter 侧把这些副作用收进 AccountEffects 端口（login_session.dart），由宿主在唯一写点执行；
 /// 宿主必须给 LoginSession 与 AccountManager 传同一个实现实例，Qt 的调用顺序才成立。
 /// Host 能力（凭据是否有效、QSettings 偏好、来源切换、登出落盘）通过 AccountHostPort 注入。
@@ -22,12 +22,12 @@
 /// 传入同一个 session 实例即可，不需要额外端口。
 ///
 /// 通知模型：Qt 在各处发 changed()；这里不发明通知端口，状态是拉取式（读字段），
-/// 由 T21 宿主接线决定何时刷新。登录面板自身的通知仍走 LoginSession.addListener。
+/// 由  宿主接线决定何时刷新。登录面板自身的通知仍走 LoginSession.addListener。
 library;
 
 import 'login_session.dart';
 
-/// Qt Host 的账号面端口（Host.cpp:541-662）。生产实现由 T21 接线提供。
+/// Qt Host 的账号面端口（Host.cpp:541-662）。生产实现由  接线提供。
 abstract class AccountHostPort {
   /// Host::authenticated()：Host.cpp:538-540，等价 hasCredential(provider)。
   bool get authenticated;
@@ -68,7 +68,7 @@ class AccountManager {
   /// 库级副作用端口；必须与 session.effects 是同一实例（Qt 里两者都是 MusicLibrary）。
   final AccountEffects effects;
 
-  /// PlatformFeatures::LocalMusic（MusicLibrary.cpp:23-25；本地库构造另见 :41）；T16 架构未裁决，先由宿主传入。
+  /// PlatformFeatures::LocalMusic（MusicLibrary.cpp:23-25；本地库构造另见 :41）； 架构未裁决，先由宿主传入。
   final bool localMusicAvailable;
 
   AccountProvider provider = AccountProvider.netease;

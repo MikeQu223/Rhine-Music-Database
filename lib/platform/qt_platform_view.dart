@@ -1,10 +1,10 @@
-// T11-S01 候选 A（PlatformView 切片）的 Flutter 半边：宿主契约 + 真实的 AndroidView 端口。
+//  候选 A（PlatformView 切片）的 Flutter 半边：宿主契约 + 真实的 AndroidView 端口。
 //
-// 设计铁律（来自本 atom 的任务约束与计划 T11 段）：
+// 设计铁律（来自本文件 的任务约束与计划  段）：
 //   1. 绝不用占位 View 假装 Qt。本文件在宿主未就绪时渲染的是「诊断面板」，不是任何
 //      看起来像 Qt 画面的东西；平台侧（QtPlatformViewHost.kt）在同一条约束下只画空白。
 //   2. 契约字段/阈值必须有 Qt 源证据，证据在注释里逐条给出（文件:行）。
-//   3. 不改 main/manifest/注册：本文件只提供可注入的端口，装配留给 T16。
+//   3. 不改 main/manifest/注册：本文件只提供可注入的端口，装配留给宿主。
 //
 // 证据（仓库内 Qt 源，行号为该文件真实行号）：
 //   QtView.java:19            abstract class QtView extends ViewGroup implements QtNative.AppStateDetailsListener
@@ -31,7 +31,7 @@
 //   Qt/src/AndroidWindow.cpp:63-71         Qt 无障碍桥默认关闭（前台 ANR 兜底）
 //   Qt/src/AndroidWindow.cpp:92-118        applicationStateChanged → setVisible / trimMemory
 //
-// ── T11-C18 补充证据（五个面逐项；行号按仓库真实文件核对过）──────────────────
+// ──  补充证据（五个面逐项；行号按仓库真实文件核对过）──────────────────
 //   触摸：QtWindow.java:246-266 onTouchEvent —— windowFocusChanged(true,getId())
 //         → m_inputConnectionListener.onEditTextChanged(m_editText)
 //         → QtInputDelegate.sendTouchEvent(event, getId())（:262）
@@ -527,7 +527,7 @@ QtAppState qtAppStateForFlutterLifecycle(AppLifecycleState state) {
   }
 }
 
-/// 宿主控制器：给上层（T16 装配、切片脚本）一个稳定的观测面。
+/// 宿主控制器：给上层（ 装配、切片脚本）一个稳定的观测面。
 class QtPlatformViewController extends ChangeNotifier {
   QtHostStatus _status = QtHostStatus.unknown;
   QtAppState _lastFlutterAppState = QtAppState.suspended;
@@ -961,7 +961,7 @@ bool qtCompositionMismatch(
 /// :1458-1488 _HybridAndroidViewControllerInternals 的 requiresViewComposition => true）。
 ///
 /// 注意：这条函数只说「组合模式与观测到的容器不匹配」，**不**声称切换后画面就一定
-/// 正确——像素与性能只有真机才能裁决（本卡不执行任何设备验证）。
+/// 正确——像素与性能只有真机才能裁决。
 String? qtCompositionWarning(
   QtPlatformCompositionMode mode,
   QtHostStatus status,

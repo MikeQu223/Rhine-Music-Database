@@ -1,4 +1,3 @@
-// ===========================================================================
 // FINAL-ACCEPTANCE-155  settings window = real Flutter widget layer
 //
 // m03428（LATEST_DIRECT_USER_FLUTTER_SETTINGS4）把设置页从"HUD 命令/命中
@@ -23,7 +22,6 @@
 //
 // 不做：持久化、生效、native 调用、路由。模态壳/返回键由 BasicApp 的
 // PopScope 负责（_modal 非空时 Back 只收模态）。
-// ===========================================================================
 library;
 
 import 'dart:math' as math;
@@ -365,9 +363,7 @@ class _BasicSettingsWindowState extends State<BasicSettingsWindow> {
     );
   }
 
-  // -------------------------------------------------------------------------
   // 框架（类别 / 标题 / 副标题 / 返回）
-  // -------------------------------------------------------------------------
   Widget _frame(
     BasicSettingsPanelModel model,
     Rect bounds,
@@ -469,9 +465,7 @@ class _BasicSettingsWindowState extends State<BasicSettingsWindow> {
     );
   }
 
-  // -------------------------------------------------------------------------
   // 卡片内容
-  // -------------------------------------------------------------------------
   List<Widget> _cardChildren(
     SettingsCardLayout layout,
     Rect viewport,
@@ -649,9 +643,7 @@ class _BasicSettingsWindowState extends State<BasicSettingsWindow> {
     return null;
   }
 
-  // -------------------------------------------------------------------------
   // 普通行
-  // -------------------------------------------------------------------------
   List<Widget> _rowWidgets(
     SettingsRowLayout layout,
     int index,
@@ -847,7 +839,7 @@ class _BasicSettingsWindowState extends State<BasicSettingsWindow> {
     final double trackRight = w - 40 - 12;
     final double trackWidth = trackRight - trackLeft;
     final int selected = _selectedIndex(row);
-    // LEAF-159 MUST-1：与 Qt 画家同一套映射（lib/hud/widgets/settings_row.dart:744
+    // 与 Qt 画家同一套映射（lib/hud/widgets/settings_row.dart:744
     // 的 `count <= 1 ? 0 : selected / (count - 1)`）。用 (selected+1)/count 会把
     // 首档画到 1/count 处，knob 永远贴不到左端，和分段命中也对不上。
     final int count = row.numericValues.length;
@@ -1091,9 +1083,7 @@ class _BasicSettingsWindowState extends State<BasicSettingsWindow> {
     return children;
   }
 
-  // -------------------------------------------------------------------------
   // 文本 helpers（尺寸/字重/字距照 Qt；颜色走 SettingsPalette）
-  // -------------------------------------------------------------------------
   Widget _text(
     String text,
     double size,

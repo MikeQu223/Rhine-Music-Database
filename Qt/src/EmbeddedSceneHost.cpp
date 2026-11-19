@@ -60,7 +60,7 @@ int g_appliedLane = -1;
 QJsonArray g_cellSemantics;
 // 手势期间被压下的选中：不能丢（Dart 侧快照去重不会重发），commit 之后补一次。
 int g_pendingIndex = -1;
-// 语义表的 (lane,row) -> {kind,id} 索引，供点选回传正确身份（MUST-4 的消费者）。
+// 语义表的 (lane,row) -> {kind,id} 索引，供点选回传正确身份（ 的消费者）。
 QHash<int, QPair<QString, QString>> g_cellIdentity;
 int g_windowSlot = -1;
 
@@ -277,7 +277,7 @@ void scrollTick();
 // 绝对场景行：轨道条目 item 的卡片在 NativeScene 里是 cell.row = 12 + item
 // （cellPosition 的 z = (row-15.5)*0.62 与投影的 -2.17-(row-15.5)*0.62 同一个坐标系）。
 // 早期这里用 `12 + pos%8` 把 actor 钉在 item∈[0,7]，导致静止 0.5s 后轨道被回吸到
-// 8 行窗口（审查 MUST-2'）。
+// 8 行窗口（审查 '）。
 int absoluteRowFor(double pos)
 {
     if (!std::isfinite(pos))
@@ -348,7 +348,7 @@ void scrollTick()
     if (g_scrollTicker)
         g_scrollTicker->stop();
     emitScroll("commit", step.delta, step.origin);
-    // 手势期间压下的选中在这里补应用：否则列表显示 A、3D 高亮停在 B（MUST-3）。
+    // 手势期间压下的选中在这里补应用：否则列表显示 A、3D 高亮停在 B。
     flushPendingSelection(engine);
 }
 
@@ -444,7 +444,7 @@ void applySceneState(const QString &json, const ProducerOrigin &origin)
     if (index >= 0 && index != g_appliedIndex) {
         if (gestureDriving) {
             // 手势期间不 select（!m_navigating 会 resetPointer 打断捕获），但也不能丢：
-            // 记成 pending，commit 之后由 scrollTick 补一次（MUST-3）。
+            // 记成 pending，commit 之后由 scrollTick 补一次。
             g_appliedIndex = index;
             g_pendingIndex = index;
         } else {
@@ -453,7 +453,7 @@ void applySceneState(const QString &json, const ProducerOrigin &origin)
             // 显式几何槽位：index 是 Flutter 的列表行号，不再是 slots.json 的占位记录号。
             // 物理行由连续窗口真值 pos 决定（(round(pos)/8)*8 的基址 + pos%8），
             // 交给 NativeScene 的 navigation["cell"] 分支直接用，绕开 fileLocation 的
-            // 占位域与 nearest 夹取（MUST-1：第 18 行/第 936 行都必须落在本列真实行）。
+            // 占位域与 nearest 夹取（第 18 行/第 936 行都必须落在本列真实行）。
             scene.select(index,
                          QJsonObject{{QStringLiteral("cell"),
                                       QJsonObject{{QStringLiteral("lane"), indexLane},
@@ -631,7 +631,7 @@ void applySceneState(const QString &json, const ProducerOrigin &origin)
         }
     }
 
-    // 封面身份投影（FINAL-RECOVERY-138 / 决策：URL 优先，选中身份不是播放身份）。
+    // 封面身份投影（ / 决策：URL 优先，选中身份不是播放身份）。
     // 快照带 cover 就用 cover；没有 cover 键或键为空一律清空——不能留着上一首的图。
     // 这里只**记录**，真正的下载在 Engine 的异步路径里（Host::loadCover 回调返回的
     // cache key 才是 host.image() 能命中的那个键）。
@@ -781,7 +781,7 @@ void createSceneView(const QJniObject &javaView, jlong parentWindowReference, ji
     QQmlEngine *engine = view->engine();
     engine->rootContext()->setContextProperty(QStringLiteral("rhineFontFamily"), RhineEmbedded::fontFamily());
     engine->rootContext()->setContextProperty(QStringLiteral("rhine"), RhineEmbedded::engine());
-    // 用户 m10082：性能面板不是用户要求的功能 —— 不再向 QML 暴露 profiler。
+    // 性能面板不是用户要求的功能 —— 不再向 QML 暴露 profiler。
     // engine->rootContext()->setContextProperty(QStringLiteral("profiler"), RhineEmbedded::profiler());
     QObject::connect(engine, &QQmlEngine::quit, QCoreApplication::instance(), &QCoreApplication::quit);
 
@@ -798,12 +798,10 @@ void createSceneView(const QJniObject &javaView, jlong parentWindowReference, ji
         // records 全是 "音乐槽位"），没有 Siren 曲目身份，而曲库权威在 Flutter。
         // 早先发 "music:index:<i>" 会被 HUD 当成列表下标（basic_app.dart 的
         // music:index 分支），越界就弹“预览中尚未实现”，属于假映射。
-        // 真正的动作词表等 lead / 133 定（需要能表达“归档槽位”而不是曲目下标）。
+        // 真正的动作词表待后续确定（需要能表达“归档槽位”而不是曲目下标）。
         Q_UNUSED(engine);
     }
-    // 用户 m10082：性能面板采样链停用 —— 不再把 profiler 挂到内嵌场景窗口。
-    // if (RhineEmbedded::profiler())
-    //     RhineEmbedded::profiler()->attach(view);
+    // 性能面板停用：不再把 profiler 挂到内嵌场景窗口。
 
     QJniEnvironment env;
     jclass viewClass = env->GetObjectClass(javaView.object());
@@ -1020,7 +1018,7 @@ Java_org_qtproject_qt_android_RhineQtViews_nativePushScenePointer(
                     } else {
                         g_gesture.end();
                         RhineEmbedded::emitScroll("commit", 0.0, origin);
-                        // 点选路径同样要补发被压下的选中（审查 MUST-3'）。
+                        // 点选路径同样要补发被压下的选中（审查 '）。
                         RhineEmbedded::flushPendingSelection(engine);
                     }
                 }

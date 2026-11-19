@@ -17,7 +17,7 @@ import rhine.music.database.porting.MediaSessionChannel
 import rhine.music.database.porting.MediaSessionHost
 
 /**
- * BASIC-89 lane B：真实音频播放的 Android 端（系统 MediaPlayer，唯一播放权威）。
+ *  真实音频播放的 Android 端（系统 MediaPlayer，唯一播放权威）。
  *
  * 真值源：
  *  - Qt/src/AudioPlayer.cpp:382-429  control(action, value)：pause / resume / stop / seek / volume；
@@ -34,7 +34,7 @@ import rhine.music.database.porting.MediaSessionHost
  *    它的 playing/position/duration 是**被喂进来的展示状态**，本身不产生声音。
  *  - 本文件是唯一的音频权威：只有这里 new MediaPlayer() / start() / pause()。它不碰 MediaSession，
  *    也不申请音频焦点；把 BasicAudioState 摘要喂给 MediaSessionChannel.update 是 Dart 侧调用方
- *    （lane A 的 BasicController）的职责，本文件不反向调用。
+ *    （BasicController）的职责，本文件不反向调用。
  *
  * 通道（名字是跨语言契约，Dart 侧 lib/basic/platform_playback.dart 同名常量逐字对应）：
  *  - MethodChannel "rhine.music.database/basic_audio"
@@ -222,7 +222,7 @@ class BasicAudioChannel private constructor(
                 // 所以本回调通常不会触发）。真触发时同样必须一起收尾媒体会话，
                 // 否则会留下"没有播放器却可点"的通知。
                 //
-                // 必须和 uninstall() 逐项对齐（FINAL-REVIEW-141 SHOULD S-b）：只放播放器
+                // 必须和 uninstall() 逐项对齐：只放播放器
                 // 而不摘通道，`current` 仍然握着 messenger → FlutterEngine → 平台视图，
                 // 外加 contextProvider 闭包捕获的 Activity —— 那条链会把刚销毁的宿主钉住，
                 // 正是本类注释自己警告过的形态。

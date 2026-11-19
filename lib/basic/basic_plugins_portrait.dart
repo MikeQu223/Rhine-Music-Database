@@ -1,4 +1,3 @@
-// ===========================================================================
 // 竖屏「插件管理」/「插件详情」整页（Qt compact `ResponsiveHudPages.cpp:683-852`）
 //
 // 为什么是真实 widget 而不是命令流：插件列表要能被手指拖动滚动、按钮要有按压态，
@@ -19,7 +18,6 @@
 // 动作串沿用 Qt 契约，不新造：`plugin:refresh`、`plugin:market:<id>`、
 // `plugin:detail:<id>`、`plugin:uninstall:<id>`、`plugin:toggle:<id>`、
 // `plugin:rollback:<id>`；详情页返回 `close-modal`（HUD 侧的 `back` 语义）。
-// ===========================================================================
 library;
 
 import 'dart:math' as math;

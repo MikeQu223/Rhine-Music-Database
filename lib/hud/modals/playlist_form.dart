@@ -1,7 +1,7 @@
 // lib/hud/modals/playlist_form.dart
 //
-// T36 / PAGE-LIBRARY —— 个人库「创建/重命名歌单」写操作浮层（playlist-form）。
-// 计划映射：docs/superpowers/plans/2026-11-09-qt-to-flutter-parity-plan.md:630-633（T36 第 1 条
+//  / PAGE-LIBRARY —— 个人库「创建/重命名歌单」写操作浮层（playlist-form）。
+// 计划映射：docs/superpowers/plans/2026-11-09-qt-to-flutter-parity-plan.md:630-633（ 第 1 条
 // 「创建歌单」写操作 + 表格写路径）。
 // 本文件属于 public-only 提交 "feat(hud): port Qt library and playlist modals"；
 // login panel / login QR 不在本提交，也不被本文件 import。
@@ -39,12 +39,12 @@
 //
 // 竖屏：横屏几何逐值取自 Qt 源；竖屏是新增响应式全语义，源码无竖屏像素证据，相关段落已逐处标注。
 //
-// 弹层框架分两段 owner，均不属于本层（plan:180：3D → HUD → modal 遮罩 → hits → chrome）：
+// 弹层框架分两段，均不属于本层（3D → HUD → modal 遮罩 → hits → chrome）：
 //   - 遮挡层（modal 遮罩槽，必须在内容之前）：全屏遮罩 + 弹层不透明底
 //     （Qt/src/NativeHudModal.cpp:163-165、:171-172）；
 //   - chrome 层（hits 之后）：RHINE LAB 行 / 标题 / 副标题 / "← 返回"
-//     （Qt/src/NativeHudModal.cpp:198-202）与唯一 close-modal hit，owner 是
-//     计划中的 lib/hud/pages/chrome.dart（PAGE-ARCHIVE）。
+//     （Qt/src/NativeHudModal.cpp:198-202）与唯一 close-modal hit，由
+//     lib/hud/pages/chrome.dart 负责。
 // 本层只画 playlist-form 的表单内容（标签/字段/提示/状态/提交），不画底、不画前景框架，
 // 也不发第二个 close-modal 命中；字段的 Escape 仍按 Overlay.qml:406 发 close-modal 动作。
 
@@ -83,7 +83,7 @@ abstract final class PlaylistFormSpec {
   static const String hintPlain = '按 ENTER 提交'; // NativeHudModal.cpp:242
   static const String hintQq = '1–20 字 / 按 ENTER 提交'; // NativeHudModal.cpp:242
   // 以下三项与 layout.backButton 是 chrome 层的几何/文案契约；本层不绘制，
-  // 由 lib/hud/pages/chrome.dart（PAGE-ARCHIVE）统一 owner。
+  // 由 lib/hud/pages/chrome.dart 统一负责。
   static const String panelTitle = 'PLAYLIST EDITOR'; // NativeHudModal.cpp:35
   static const String panelSubtitle = '编辑我的歌单'; // NativeHudModal.cpp:60
   static const String panelHeader = 'RHINE LAB / MUSIC DATABASE / MUSIC DIRECTORY'; // NativeHudModal.cpp:198

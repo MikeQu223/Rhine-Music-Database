@@ -3,13 +3,13 @@ package org.qtproject.qt.android;
 import android.content.Context;
 
 /**
- * Flutter 内嵌路径上的 Qt 场景视图（PARITY QT-OVERLAY-128）。
+ * Flutter 内嵌路径上的 Qt 场景视图。
  *
  * 为什么必须是这个包里的类：Qt 的 `QtView` 与它的 `addQtWindow(QtWindow, long, long)`
  * 都是包内可见（third_party/qt/qtbase/src/android/jar/src/org/qtproject/qt/android/QtView.java）。
  * 只有同包子类才能复用 Qt 自己的内嵌机制——父窗口由 Qt 的 `createRootWindow` 送进来，
  * `addQtWindow` 把 QQuickView 的 Java 对端（QtWindow）挂进这个 ViewGroup。换包就只能
- * 自己拼一套 SurfaceView，那等于绕开 Qt 的平台适配，本卡不做。
+ * 自己拼一套 SurfaceView，那等于绕开 Qt 的平台适配，这里不做。
  *
  * 与 Qt 自带 `QtQuickView` 的差异只有一处：`createWindow` 不调用 Qt 的
  * `createQuickView`（它硬编码 qmlUri 且 QAndroidQuickView 没有导出符号），而是回调本库

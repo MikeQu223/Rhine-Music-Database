@@ -10,7 +10,7 @@ import java.lang.ref.WeakReference
 private const val TAG = "QtSceneChannel"
 
 /**
- * Dart ↔ Qt 场景的通道（PARITY NATIVE-RECOVERY-132R / FINAL-INTEGRATION-150）。
+ * Dart ↔ Qt 场景的通道。
  *
  * 方法/回调：
  *   Dart → 原生 `state`   {viewId:int, ctx:int, json:String}：渲染状态快照（主题/模式/选中行/身份键）。
@@ -200,7 +200,7 @@ object QtSceneChannel {
      * （不是这里猜的"当前前台"）。
      *
      * fail-closed：origin 未登记（viewId<0，老调用点/错误包装）**不再**退回"当前前台视图"——
-     * 那等于用"此刻谁是前台"给迟到动作补标签，正是本卡要根除的 fail-open；视图已 retired、
+     * 那等于用"此刻谁是前台"给迟到动作补标签，正是这里要根除的 fail-open；视图已 retired、
      * 视图还没绑定代次、代次不相等，也一律丢弃。
      */
     private fun dispatchAction(viewId: Int, context: Long, action: String) {

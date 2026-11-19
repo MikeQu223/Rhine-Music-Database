@@ -15,7 +15,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Kotlin 侧的取用入口（PARITY QT-OVERLAY-128 / DEVICE-VISUAL-131）。
+ * Kotlin 侧的取用入口。
  *
  * Kotlin 拒绝把"父类是包内可见类"的 Java 类型放进自己的签名——它会尝试解析
  * org.qtproject.qt.android.QtView 并报无法访问。所以创建动作收成一个返回 {@link View}
@@ -52,7 +52,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * 进程里"重启 Qt"在这套 Qt 里走不通，所以本类改成**不拆运行时**：Qt 运行时按进程存活，
  * 只把场景视图挂到新 Activity 上。
  *
- * 三、销毁后的引用释放（DEVICE-VISUAL-131 seq5：泄漏必须收口，不是"已知代价"）
+ * 三、销毁后的引用释放（seq5：泄漏必须收口，不是"已知代价"）
  * 只把 isStarted 置 false 会连 Qt 自己的注销分支一起跳过：QtEmbeddedDelegate 在
  * 构造函数里注册的匿名 Application.ActivityLifecycleCallbacks 只有它自己的
  * onActivityDestroyed 拿得到（unregisterActivityLifecycleCallbacks(this)），于是每轮
@@ -386,7 +386,7 @@ public final class RhineQtViews {
             sHostActivity = new WeakReference<>(null);
         }
         QtEmbeddedViewInterfaceFactory.remove(activity);
-        // MUST-4：可复用 delegate 的静态弱引用也必须断，否则重挂的 QtView 可能把死宿主的
+        // 可复用 delegate 的静态弱引用也必须断，否则重挂的 QtView 可能把死宿主的
         // delegate 拿去 addView（弱引用未回收的窗口期内）。
         org.qtproject.qt.android.QtView.clearReusableInterface();
         // isStarted 仍是 false，setActivity 不会打到原生侧；只是松开 Java 侧的 Activity 引用。

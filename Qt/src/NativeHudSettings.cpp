@@ -355,7 +355,7 @@ void NativeHud::paintSettingsCustomSection(const QString &renderer, const QRectF
     }
 
     if (renderer == "performance") {
-        // 用户 m10082：性能面板不是用户要求的功能 —— PERFORMANCE 行与其帮助文案注释掉
+        // 性能面板不是用户要求的功能 —— PERFORMANCE 行与其帮助文案注释掉
         // （保留原文，不删）；DISC ROTATION 行是用户指定设置项，保留。
         // sectionRow(4, "PERFORMANCE", QStringLiteral("性能面板"), QStringLiteral("显示 / 隐藏 · F10"),
         //            "performance:toggle", QStringLiteral("性能面板"),

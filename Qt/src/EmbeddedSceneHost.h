@@ -14,14 +14,14 @@ class FrameProfiler;
  * 与默认启动路径的唯一区别：Qt 不创建自己的 Window，也不加载 Main.qml。
  * 场景仍然由这一份 Qt 进程持有——Engine（材质/模型/相机/归档布局）、
  * 节点桥在 main() 里照常启动，QML 注册也照常完成；
- * （用户 m10082：性能面板停用，FrameProfiler 实例不再创建、不再采样。）
+ * （性能面板停用：FrameProfiler 实例不再创建、不再采样。）
  * 之后由宿主（Flutter PlatformView）通过 RhineQtView 的 native 入口
  * 在自己的父窗口上创建 QQuickView，并把 Embedded.qml 作为场景根。
  *
  * 之所以要经过 publish()：上下文属性 rhine / rhineFontFamily
  * 只在 main() 里算得出来（Engine 与字体族都是进程级单例），而 QQuickView
  * 的引擎是后来才创建的，只能从这里取。
- * （用户 m10082：性能面板停用，profiler 上下文属性不再注册，指针恒为空。）
+ * （性能面板停用：profiler 上下文属性不再注册，指针恒为空。）
  */
 namespace RhineEmbedded {
 /** 环境变量 RHINE_QT_EMBEDDED=1 时为真。宿主在构造 QtView 之前设置。 */

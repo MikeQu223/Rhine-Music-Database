@@ -1,102 +1,27 @@
 package rhine.music.database.porting
 
 /**
- * T21-C19-A3｜引擎传输 · Android 分支 Node 运行时宿主编配候选（条件性平台 port：只实现、不注册）。
+ * 引擎传输 · Android 分支 Node 运行时宿主候选（条件性平台 port：只实现、不注册）。
  *
- * 计划卡：docs/superpowers/plans/2026-11-09-qt-to-flutter-parity-plan.md:524-531（T21
- * 「引擎传输与 Node 生命周期」）。:525 把本文件列为 T21 的 Create 目标；:527 规定
- * 「JNI 内嵌 libnode」与「Qt 宿主」两条路线由 ADR 裁决，本卡只做候选实现面。
- * 基线 8ed3067b0812eb2612f7841ec127a6e8ca93231b；分支 flutter/p2-t21-engine-transport。
+ * 这里不裁决「JNI 内嵌 libnode」还是「Qt 宿主」，因此只提供候选实现面。
+ * [NodeRuntimeHostCandidate.prepare] 一律返回 prepared=false + ARCH_BLOCKED，
+ * 不假装已接线。真正的栈设置、libnode.so 加载、`node::Start` 调用与 argv 构造/释放
+ * 全部属于 native/JNI 层；[NodeRuntimeNativeStarter] 只声明这个接缝，本树没有实现，
+ * 也没有任何注册。
  *
- * ## 唯一权威源与逐条证据
- * Qt/src/BridgeProcessAndroid.cpp（281 行）是唯一权威；本文件对齐以下证据行：
- *  - :19-24  Android 的 libnode.so 只导出 `namespace node { int Start(int, char**); }`
- *            （`_ZN4node5StartEiPPc`），没有 iOS 的 `extern "C" node_start` 包装。
- *            → 本 port 的调用契约是 argc/argv 形式，不是 iOS 的零参包装。
- *  - :47     token 是 NodeRuntime 的成员初值（QUuid::createUuid，无花括号），进程级生成一次。
- *  - :98-100 launch 幂等：launched 为真时只回报「未退出且连接仍活」，绝不第二次启动。
- *  - :103    server.listen(QHostAddress::LocalHost, 0) 只调一次（属 node_runtime.dart，不在本文件）。
- *  - :107-109 script = root + "/MusicBridge/ios-runtime.cjs"；port = server.serverPort()；
- *            secret = token.toUtf8()。
- *  - :110-113 argv 必须是同一个可写缓冲区 "node\\0" + script + '\\0' + port + '\\0' +
- *            secret + '\\0'，共 **4 项**，且必须活过 node::Start 全程
- *            （挂在堆上的 NodeThreadStart 里，不能是 launch() 的局部变量）。
- *  - :116-121 V8 在 Android 的原生 pthread 默认栈（约 1 MB）不够，必须
- *            pthread_attr_setstacksize(&attributes, 8 * 1024 * 1024)。
- *  - :141-149 线程入口：char *values[5]{}、按 std::strlen 逐段切 4 个指针，
- *            argv[4] 天然为 nullptr。
- *  - :152     code = node::Start(4, values)。
- *  - :153-154 返回后 exited = true，并用 qWarning 打出 code 与 script
- *            （设备上没有控制台，logcat 是唯一失败现场）。
- *  - :155-159 QMetaObject::invokeMethod 回投 GUI 线程 → owner->accept({type: runtime-error})。
- *  - :160     node::Start 返回之后才 delete start（argv 缓冲在运行时结束前绝不释放）。
- *  - :164-168 static auto instance = new NodeRuntime; —— 进程级单例、永不释放，
- *            也不在 Host 析构时释放仍被 Node 使用的内存。
+ * 关键契约（与 Qt/src/BridgeProcessAndroid.cpp 对齐）：
+ *  - argv 是同一个可写缓冲区 "node\\0" + script + "\\0" + port + "\\0" + token + "\\0"，
+ *    共 4 项，必须活过 node::Start 全程；
+ *  - Android 原生 pthread 默认栈（约 1 MB）不够，必须设 8 MiB；
+ *  - launch 幂等：已启动时只回报状态，绝不第二次 node::Start；
+ *  - RUNTIME_EXITED 的 reason 字符串必须与 Dart 侧逐字节相同，否则 Dart 的
+ *    `status.reason == 'runtime_exited'` 分支永远不成立；
+ *  - NodeRuntime 方法全在 GUI 线程，唯一跨线程值是 std::atomic exited；
+ *  - 宿主发现的运行时终态只能靠下一次 prepare 报告（端口没有事件流）。
  *
- * ## Dart 侧冻结接口（只读对齐，本文件不改它）
- * lib/bridge/node_runtime.dart（行号随实现演进，按符号核对）：
- *  - NodeRuntimeHost { prepare / startRuntime / dispose }
- *  - NodeRuntimeStartSpec(argv, stackBytes)
- *  - NodeRuntimeHostStatus(prepared, root, reason)
- *  - _hostReasonRuntimeExited = 'runtime_exited'
- *             → 本文件 [NodeRuntimeHostReason.RUNTIME_EXITED] 必须与它逐字节相同，否则
- *               Dart 侧 `status.reason == _hostReasonRuntimeExited` 的分支永远不成立，
- *               `_exited` 也不会置真。
- *  - NodeRuntime.launch：prepare 返回 prepared=false 且 reason=='runtime_exited' 时 Dart 把
- *             _exited 置真；端口没有事件流，宿主发现的运行时终态只能走这条路（:33-35 已登记该限制）。
- *  - NodeRuntime.launch 的 scriptPath = root + '/MusicBridge/ios-runtime.cjs'。
- *  - NodeRuntime.launch 交给宿主的正是 argv=["node", scriptPath, "<port>", "<token>"]、
- *             stackBytes=NodeWire.runtimeStackBytes。
- *  - NodeWire.maxFrameBytes = 48 MiB、NodeWire.runtimeStackBytes = 8 * 1024 * 1024
- *             （= 本文件 STACK_BYTES）。
- *  - NodeRuntime 在宿主边界用 `on Object` 兜底、绝不上抛；本文件对应 `catch (Throwable)`。
- *
- * ## 本文件能做什么、不能做什么（关键限制，必须与 report 一致）
- * JVM/Kotlin **无法设置 pthread 栈**：`pthread_attr_setstacksize`（Qt:118）是 native 调用。
- * 因此 [NodeRuntimeHostLimits.STACK_BYTES] / [NodeRuntimeStartSpec.stackBytes] 在本文件里
- * 只是**被校验、被原样承载的契约值**；真实的栈设置、libnode.so 的加载、`node::Start` 的调用、
- * argv 缓冲区的构造与释放全部属于 native/JNI 层。[NodeRuntimeNativeStarter] 只**声明**这个接缝，
- * 本树里没有任何实现，也没有任何注册（无 System.loadLibrary、无 external fun、
- * 无 RegisterNatives、无 @JvmStatic 入口、无 CMake/Gradle 改动）。
- *
- * 本卡不裁决「JNI 内嵌 libnode」还是「Qt 宿主」（plan:526-527）：
- *  - 若 ADR 选 Flutter 进程内嵌：由后续卡实现 [NodeRuntimeNativeStarter]（JNI + cpp/CMakeLists.txt），
- *    并把 [NodeRuntimeHost] 接到 MethodChannel；
- *  - 若 ADR 选 Qt 宿主：本文件整体等价于「保留同一协议的空实现」。
- * 在此之前，[NodeRuntimeHostCandidate.prepare] 一律返回 prepared=false +
- * reason=[NodeRuntimeHostReason.ARCH_BLOCKED] —— **最终路线接线状态即 ARCH_BLOCKED**，
- * 本文件不假装已接线。
- *
- * ## 与 T21-C14-CONTRACT.json 的核对
- * 逐条核对 qtEvidence.{argv,stackBytes,singleton,stackLifecycle,nodeEntry,token} 与
- * platformDivergence.nodeEntry：**无冲突**（契约未规定 Kotlin 面）。契约之外新增的面如下，
- * 供独立审查逐条判定：
- *  1. [NodeRuntimeLifecycleState] + [NodeRuntimeHostCandidate] 是 Dart 三个方法的状态化承载物
- *     （Dart 把 launched/exited 放在 NodeRuntime 内部，宿主端口本身无状态）。
- *  2. [NodeRuntimeNativeStarter] 是「调用契约」的显式声明：本树无实现、无注册。
- *  3. 除 [NodeRuntimeHostReason.RUNTIME_EXITED] 必须与 Dart 逐字节相同外，其余 reason 都是
- *     本 port 的自检码：Qt 侧没有对应字符串，只有 bool 返回值与 logcat 文案
- *     （Qt:122-125、:154、:250-251、:273-275）。
- *  4. [NodeRuntimeHostCandidate.notifyRuntimeExited] 是 Qt:153/:157 的公开回调面，本卡无调用方；
- *     它不向 Dart 推事件（端口无事件流），只让**下一次** prepare() 报告 runtime_exited。
- *  5. [NodeRuntimeHostCandidate.retainedStartSpec] 用强引用镜像 Qt:110-113 的「argv 必须活过
- *     node::Start」义务（Qt:160 才 delete）；Java 引用只能保证 Java 对象不被回收，
- *     C 侧单块缓冲区仍由 native 层负责。
- *
- * ## 路线裁决后接线方必须补的清单（本卡明确不做）
- *  1. JNI 侧实现 [NodeRuntimeNativeStarter]：加载 libnode.so、解析 `node::Start(int,char**)`、
- *     把 argv 拷成一个连续可写缓冲（"node\\0script\\0port\\0token\\0"，末尾再补 nullptr，
- *     即 Qt:144-149 的 values[5]），用 pthread_attr_setstacksize(8 MiB) 起线程跑
- *     `node::Start(4, argv)`，返回后回调 notifyRuntimeExited(code)。
- *  2. 条件 Create android/app/src/main/cpp/CMakeLists.txt + externalNativeBuild（plan:525/:527）。
- *  3. MethodChannel：把 Dart 的 prepare/startRuntime/dispose 转到本类；MainActivity 注册。
- *  4. logcat：把 [NodeRuntimeHostCandidate.lastDiagnostic] 与 lastExitCode 写进 logcat
- *     （Qt:154/:250-251 的 qWarning 对应面；本文件不引 android.util.Log，保持纯 Kotlin 标准库）。
- *  5. 线程约束：Qt 的 NodeRuntime 方法全在 GUI 线程，唯一跨线程值是 std::atomic exited（Qt:50）；
- *     接线方必须保持同样的「方法只在主线程调用、回调只在 notifyRuntimeExited」约束。
- *
- * ## 本卡未执行的验证
- * 禁跑 gradle / kotlinc / 编译 / 设备 / adb：本文件只经人工静态审查，RED/GREEN **均未执行**。
+ * 路线裁决后接线方需补：JNI 实现（加载 libnode.so、解析 node::Start、构造连续可写
+ * argv 缓冲、8 MiB 线程栈）、cpp/CMakeLists + externalNativeBuild、MethodChannel 与
+ * MainActivity 注册、logcat 诊断。本文件不引 android.util.Log，保持纯 Kotlin 标准库。
  */
 object NodeRuntimeHostLimits {
     /** argv 项数：Qt:113 的缓冲区里正好 4 段 NUL 分隔串；Qt:152 `node::Start(4, values)`。 */
@@ -136,7 +61,7 @@ object NodeRuntimeHostReason {
     const val RUNTIME_EXITED: String = "runtime_exited"
 
     /**
-     * 本卡未接线：没有 native 接缝（plan:526-527 的路线未裁决）。
+     * 这里未接线：没有 native 接缝（路线未裁决）。
      * 这是本树里 prepare() 唯一会返回的失败原因。
      */
     const val ARCH_BLOCKED: String = "arch_blocked"
@@ -150,7 +75,7 @@ object NodeRuntimeHostReason {
     /** 未 prepare 就 startRuntime：本 port 自检（Qt 的 launch 只有 launched 一个闸门，:99）。 */
     const val NOT_PREPARED: String = "not_prepared"
 
-    /** 已经启动过：Qt:99-100 只回报状态、绝不第二次 `node::Start`（plan:528/:530）。 */
+    /** 已经启动过：Qt:99-100 只回报状态、绝不第二次 `node::Start`。 */
     const val ALREADY_STARTED: String = "already_started"
 
     /** argv 布局不合 Qt:113/:152 的契约（长度/argv[0]/NUL/script 后缀/端口/令牌）。 */
@@ -209,7 +134,7 @@ class NodeRuntimeStartSpec(
  * 状态迁移（[NodeRuntimeHostCandidate]）：
  * ```
  * idle --prepare()--> prepared --startRuntime()--> running --notifyRuntimeExited()--> exited
- *   |                    |                            |
+ *   |                            |
  *   +--prepare()失败----> failed <----startRuntime()失败
  * ```
  * dispose 不改这些状态（Qt 没有 shutdown 路径，Qt:164-168 的实例永不释放），只置
@@ -233,9 +158,9 @@ enum class NodeRuntimeLifecycleState {
 }
 
 /**
- * 原生启动接缝（**仅声明；本卡不实现、不注册、不加载 so**）。
+ * 原生启动接缝（**仅声明；这里不实现、不注册、不加载 so**）。
  *
- * 对应 Qt:98-128 的 launch 与 Qt:142-162 的线程入口。实现方（后续卡）必须做到：
+ * 对应 Qt:98-128 的 launch 与 Qt:142-162 的线程入口。实现方（后续接线）必须做到：
  *  1. 加载 libnode.so 并解析 `node::Start(int, char**)`（Qt:22-24 只导出这一个符号）；
  *  2. 把 [NodeRuntimeStartSpec.argv] 拷贝成**单个连续可写缓冲区**，段间用 NUL 分隔、末尾补
  *     nullptr（Qt:113 的 "node\\0script\\0port\\0token\\0" + Qt:144-149 的 values[5]）；
@@ -256,7 +181,7 @@ interface NodeRuntimeNativeStarter {
  *
  * 三个方法与 Dart 一一对应；差别只在 async 表达：Dart 的 `Future` 来自平台通道往返
  * （旧实现 lib/bootstrap/node_host_bridge_channel.dart），进程内 Kotlin 直调没有跨通道握手，
- * 所以同步返回。若后续改由 MethodChannel 承载，由接线层负责包成 Future（本卡不写接线）。
+ * 所以同步返回。若后续改由 MethodChannel 承载，由接线层负责包成 Future（这里不写接线）。
  */
 interface NodeRuntimeHost {
     /**
@@ -278,7 +203,7 @@ interface NodeRuntimeHost {
 /**
  * Android 分支的条件性宿主端口候选实现：**只实现、不注册**。
  *
- * 本卡唯一会走到的运行路径是：`prepare()` → prepared=false + reason=arch_blocked
+ * 这里唯一会走到的运行路径是：`prepare` → prepared=false + reason=arch_blocked
  * （因为构造时没有 native 接缝）。其余分支是为路线裁决后准备的完整契约面，
  * 只有注入 [NodeRuntimeNativeStarter] 才会被执行。
  *
@@ -362,7 +287,7 @@ class NodeRuntimeHostCandidate(
                 reason = failureReason ?: NodeRuntimeHostReason.ARCH_BLOCKED,
             )
 
-            // 本卡唯一会走到的分支：没有 native 接缝 → ARCH_BLOCKED，绝不假装已接线。
+            // 这里唯一会走到的分支：没有 native 接缝 → ARCH_BLOCKED，绝不假装已接线。
             nativeStarter == null -> {
                 state = NodeRuntimeLifecycleState.failed
                 failureReason = NodeRuntimeHostReason.ARCH_BLOCKED
@@ -462,7 +387,7 @@ class NodeRuntimeHostCandidate(
     /**
      * `node::Start` 返回后的唯一回调面（Qt:152-159）：由 native/宿主线程调用一次。
      *
-     * 本卡**没有调用方**、也没有 JNI 注册；它存在的意义是把 Qt:153 的
+     * 这里**没有调用方**、也没有 JNI 注册；它存在的意义是把 Qt:153 的
      * `runtime->exited = true` 与 Qt:157 的 `accept({type: runtime-error})` 落成可审查的契约：
      * 置 [state] = exited、记录退出码与脚本路径（Qt:154 的 logcat 文案），并让**下一次**
      * [prepare] 报 [NodeRuntimeHostReason.RUNTIME_EXITED] —— Dart 的 _exited 分支 据此把 `_exited` 置真。
@@ -505,7 +430,7 @@ class NodeRuntimeHostCandidate(
             )
         }
         if (state == NodeRuntimeLifecycleState.running || state == NodeRuntimeLifecycleState.exited) {
-            // Qt:99-100：launched 后只回报状态，绝不第二次 node::Start（plan:528/:530 的 Fail 条件）。
+            // Qt:99-100：launched 后只回报状态，绝不第二次 node::Start。
             return StartRejection(
                 NodeRuntimeHostReason.ALREADY_STARTED,
                 "node runtime host: startRuntime ignored, runtime already started (Qt:99-100)",

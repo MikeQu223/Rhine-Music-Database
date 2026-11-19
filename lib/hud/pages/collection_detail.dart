@@ -1,6 +1,6 @@
 /// Qt 专辑 / 歌单 / 歌手详情页（stage 单位）的纯数据构建器。
 ///
-/// 真值来源（逐字移植，行号对应 /home/aibeto/code/Rhine-Music-Database/Qt/src）：
+/// 真值来源（逐字移植，行号对应 Qt/src）：
 /// - NativeHudDetail.cpp:340-511  container() 整页命令序列与卡片模型构建
 /// - CollectionDetailCard.cpp:11-262 卡片内部排版（sheet/header/toolbar/table/sidebar/footer）
 /// - CollectionDetailCard.h:11-64    Model/Choice/Fact/Row 字段与默认值
@@ -312,9 +312,7 @@ class CollectionDetailState {
 /// Qt CollectionDetailCard::Amber（CollectionDetailCard.cpp:50）。
 const List<Object?> collectionDetailAmber = <Object?>[0.835, 0.639, 0.282, 1];
 
-// ---------------------------------------------------------------------------
 // 版式与纯函数助手
-// ---------------------------------------------------------------------------
 
 /// Qt NativeHud::containerLayout（NativeHud.cpp:160-166）+ Layout 默认值（NativeHud.h:37-47）。
 CollectionDetailLayout collectionDetailLayout(double width) {
@@ -359,9 +357,7 @@ String collectionDetailTime(double durationMs) {
   return '${collectionDetailPad(durationMs ~/ 60000)}:${collectionDetailPad(seconds % 60)}';
 }
 
-// ---------------------------------------------------------------------------
 // 调色板（CollectionDetailCard.cpp:16-50，四元素、无 calibrated 标记）
-// ---------------------------------------------------------------------------
 
 class _Palette {
   _Palette(bool dark)
@@ -394,9 +390,7 @@ List<Object?> _withAlpha(List<Object?> color, double alpha) {
   return result;
 }
 
-// ---------------------------------------------------------------------------
 // 绘制累加器（Qt NativeHud 的 op/fill/text/fit/hit/button/rule/image）
-// ---------------------------------------------------------------------------
 
 class _Painter {
   _Painter({required this.glyphs, required this.dark});
@@ -481,9 +475,7 @@ class _Painter {
   }
 }
 
-// ---------------------------------------------------------------------------
 // 卡片模型（Qt CollectionDetailCard::Model 的可绘制子集）
-// ---------------------------------------------------------------------------
 
 /// 单行渲染数据。Qt 在 container() 里一次性算好 number/stamp/current/action/label
 /// （NativeHudDetail.cpp:460-482），卡片只负责排版。
@@ -785,9 +777,7 @@ CollectionDetailCardModel collectionDetailCardModel(CollectionDetailState state,
   );
 }
 
-// ---------------------------------------------------------------------------
 // 卡片绘制（CollectionDetailCard.cpp:27-262）
-// ---------------------------------------------------------------------------
 
 class _CardPainter {
   /// Qt Painter 的构造初始化（CollectionDetailCard.cpp:13-15）：
@@ -1042,9 +1032,7 @@ class _CardPainter {
   }
 }
 
-// ---------------------------------------------------------------------------
 // 入口
-// ---------------------------------------------------------------------------
 
 /// 产出整页命令：先 save/alpha，再返回按钮，再卡片本体，最后 restore
 /// （NativeHudDetail.cpp:503-510 的顺序）。

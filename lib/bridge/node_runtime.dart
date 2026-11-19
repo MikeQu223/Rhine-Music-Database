@@ -1,7 +1,7 @@
-/// T21-C19-W2（atom T21-C19-A2，接管 T21-C14 草稿）｜引擎传输 · Node 运行时宿主端口
+/// 引擎传输 · Node 运行时宿主端口
 /// （Android 分支 1:1）。
 ///
-/// 计划卡：docs/superpowers/plans/2026-11-09-qt-to-flutter-parity-plan.md:524-531（T21
+/// 计划卡：docs/superpowers/plans/2026-11-09-qt-to-flutter-parity-plan.md:524-531（
 /// 「引擎传输与 Node 生命周期」）。
 /// 唯一权威源：Qt/src/BridgeProcessAndroid.cpp（281 行；Android 的 libnode.so 只导出
 /// node::Start(int, char**)，没有 iOS 的 C 包装 node_start —— 见该文件 :19-24）。
@@ -18,9 +18,9 @@
 /// 握手排队与 flush :559-591/:938-953、常量时间令牌比较 :1198-1207）。
 /// 差异（逐条，便于独立审查）：
 ///   1. 宿主端口由 MethodChannel（node_host_platform.dart / NodeHost.kt，未随本树携带）
-///      改为冻结契约的 NodeRuntimeHost：本卡不裁决「JNI 内嵌 Node」还是「Qt 宿主」，
+///      改为冻结契约的 NodeRuntimeHost：这里不裁决「JNI 内嵌 Node」还是「Qt 宿主」，
 ///      所以本文件只描述 argv/栈/端口，绝不自己起 native 线程、绝不写 JNI/CMake/gradle/
-///      MainActivity（plan:527）。
+///      MainActivity。
 ///   2. token 在实例构造时生成一次（BridgeProcessAndroid.cpp:47 是成员初值 QUuid::createUuid()，
 ///      进程级而不是每会话；每会话 id 在 BridgeProcessAndroid.cpp:184）。
 ///   3. 只允许一个控制连接：第二个候选直接销毁（Qt:55-60）；复用源是有界多候选。
@@ -31,7 +31,7 @@
 ///   6. 读缓冲用 Uint8List 线性队列而不是 List<int>：48 MiB 的越界帧会在 List<int> 里
 ///      膨胀成数亿字节的对象图，而 Qt 的 QByteArray 是连续字节。
 ///
-/// 已知限制（冻结接口决定，已登记在 W1 报告里）：NodeRuntimeHost 没有事件流，所以
+/// 已知限制（冻结接口决定）：NodeRuntimeHost 没有事件流，所以
 /// 「成功启动之后」宿主才发现的运行时退出，只能经控制连接断开（Qt:63-67 的等价路径）
 /// 或下一次 launch 的 prepare() 反馈被感知。
 ///
@@ -39,7 +39,7 @@
 ///   7. import 基线之外多一个 dart:math：令牌是回环端口上唯一的认证凭据（Qt:47
 ///      QUuid::createUuid 走 QRandomGenerator::system()，是 CSPRNG），所以这里必须用
 ///      Random.secure() 而不是时钟/序号派生。契约的 imports 是基线集合，此处为唯一例外，
-///      已在 T21-C19-W2 报告 deviations[0] 登记。
+///      已在  报告 deviations[0] 登记。
 ///   8. 读缓冲与出站队列用「起始游标 + 结束游标」的 _ByteQueue，而不是原地 setRange
 ///      位移：Qt 的 QByteArray::remove(0, n) 是 memmove 语义，Dart 的
 ///      Uint8List.setRange 在源/目标同缓冲时未在语言规范里承诺重叠安全，48 MiB 级别的
@@ -51,7 +51,7 @@
 ///      情形（_abortConnection 先显式走一遍失败路径，随后 socket 的 onDone 又回调一次），
 ///      跨会话绝不抑制：启动失败之后重新 launch 成功的断链、以及每次独立的启动尝试，都各自
 ///      上报。仍然保留的差异只有一条——launch 在 launched 之后只回报状态、不重复上报
-///      （等价 plan:528「旋转不重复启动」，避免 UI 收到重复崩溃通知）。
+///      （等价 「旋转不重复启动」，避免 UI 收到重复崩溃通知）。
 ///   10. send/flush 对已 abort 的 socket 做 try/catch：Qt 的 socket->write() 在已断开的
 ///      QTcpSocket 上静默返回 -1，而 Dart 的 Socket.add 在销毁后会抛 StateError；
 ///      为保持「认证后写失败不崩溃调用方」这一 Qt 行为，这里吞掉该异常。
@@ -118,7 +118,7 @@ final class NodeRuntimeHostStatus {
 
 /// 宿主端口：Node 运行时的准备、启动与释放。
 ///
-/// 本卡不裁决宿主形态（plan:527），因此这里只定义 port；不出现任何 JNI/CMake/
+/// 这里不裁决宿主形态，因此这里只定义 port；不出现任何 JNI/CMake/
 /// Gradle/MainActivity 相关内容。
 abstract interface class NodeRuntimeHost {
   /// 幂等准备；失败以 [NodeRuntimeHostStatus.prepared] == false 表达，不抛异常。
@@ -239,7 +239,7 @@ final class NodeRuntime {
   /// 会话推进点与 Qt 的真实状态点一一对应：真正开始一次 launch 尝试（Qt:186-189 每次
   /// start() 失败都单独合成一次 runtime-error），以及接受一个控制连接（Qt:63-67 每次
   /// disconnected 都单独 accept）。用会话号比较而不是进程级 bool，是为了让「启动失败 →
-  /// 重新 launch 成功 → 断链」这条路径上的后续失败不会被前一次吞掉（DEDUP-24）。
+  /// 重新 launch 成功 → 断链」这条路径上的后续失败不会被前一次吞掉。
   int _failureSession = 0;
 
   /// 最近一次真正上报过 runtime-error 的会话号；null 表示本实例尚未上报。
@@ -260,7 +260,7 @@ final class NodeRuntime {
   bool get authenticated => _authenticated;
 
   /// 运行时是否已终止（Qt:50 std::atomic<bool> exited：node::Start 返回，或宿主
-  /// 报告 runtime_exited）。为 true 时本进程内不再启动（plan:528 旋转不重复启动）。
+  /// 报告 runtime_exited）。为 true 时本进程内不再启动（ 旋转不重复启动）。
   bool get exited => _exited;
 
   /// 读缓冲里还没切出完整帧的字节数（Qt:45 input.size() 的对应值）。
@@ -280,7 +280,7 @@ final class NodeRuntime {
   /// 首次招标 + 幂等启动。
   ///
   /// 已 launched 时只回报「未退出且连接仍活」，绝不第二次启动 Node（Qt:99-100，
-  /// 对应 plan:528「旋转不重复启动」与 plan:530 的 Fail 条件「重复 node::Start」）。
+  /// 对应 「旋转不重复启动」与  的 Fail 条件「重复 node::Start」）。
   /// 并发调用共享同一次尝试，避免出现两条 Node 启动路径。
   Future<bool> launch(String root, NodeRuntimeHost host) {
     final Future<bool>? pending = _launchFuture;
@@ -616,8 +616,8 @@ final class NodeRuntime {
   /// QUuid WithoutBraces 等价物：小写 UUIDv4（8-4-4-4-12），无花括号。
   ///
   /// 冻结契约的 import 列表里没有 dart:math；这里显式引入并用 Random.secure() 生成
-  /// 128 位随机量（否则只能用时间戳，回环端口上的可猜令牌等于没有认证）。该偏差已登记
-  /// 在 W1 报告里。
+  /// 128 位随机量（否则只能用时间戳，回环端口上的可猜令牌等于没有认证）。该偏差在实现说明中登记。
+  /// 该偏差在实现说明中登记。
   static String _generateToken() {
     final Random random = Random.secure();
     final Uint8List bytes = Uint8List(16);

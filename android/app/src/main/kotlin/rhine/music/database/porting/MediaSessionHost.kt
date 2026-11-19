@@ -49,7 +49,7 @@ import android.util.Log
  *      Java 把"静态帧状态"和"Service 实例"塞在同一个类里；这里把帧状态收进本 object
  *      作为单一真源，Service 侧只保留本来就靠 this 才能拿到的对象与方法。
  *
- * ARCH_BLOCKED：Dart ↔ Kotlin 的通道接线属 T21；本文件只暴露 install / ensureStarted /
+ * ARCH_BLOCKED：Dart ↔ Kotlin 的通道接线不在本文件；本文件只暴露 install / ensureStarted /
  * update / stop 四个门面与内部 enqueue，不含任何 MethodChannel，也不改 MainActivity。
  *
  * 线程约定（Java:26-28）：所有入口、MediaSession 回调、通知按钮与音频焦点回调都在主线程，
@@ -230,7 +230,7 @@ object MediaSessionHost {
      * 版本分支①（API 26；minSdk 28 下不可达，保留对照 Java 源）：API 26 起必须
      * startForegroundService，否则随后 startForeground 会抛异常。
      *
-     * DEDUP-40：Android 12（API 31）起，从非前台上下文调用 startForegroundService 会抛
+     * Android 12（API 31）起，从非前台上下文调用 startForegroundService 会抛
      * ForegroundServiceStartNotAllowedException。它不是"通知没显示"级别的噪音：异常穿出
      * ensureStarted 会一路冒到调用方（Activity 启动链或媒体状态上报链），把一次保活失败
      * 放大成启动路径崩溃。所以必须就地拦住。

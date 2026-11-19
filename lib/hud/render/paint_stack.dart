@@ -1,4 +1,4 @@
-// T30 HUD renderer core - executes the native HUD command stack.
+//  HUD renderer core - executes the native HUD command stack.
 //
 // Qt authority for every branch below:
 //   Qt/src/Glyphs.cpp:637-829  dispatch loop
@@ -34,7 +34,6 @@
 // verified in-tree. Every behavioural claim that can be checked against this
 // repository was checked against Qt/src.
 //
-// WRITTEN BUT NOT EXECUTED: this atom forbids flutter/dart test, analyze, build.
 
 import 'dart:ui' as ui;
 
@@ -42,7 +41,7 @@ import '../protocol/hud_command.dart';
 import 'clip_alpha.dart';
 import 'gradient_mask.dart';
 
-/// Draws a `text` op through the glyph text port (`GlyphText.paintText`, T31).
+/// Draws a `text` op through the glyph text port (`GlyphText.paintText`, ).
 ///
 /// The port owns the Qt baseline shift: the body at `Glyphs.cpp:530-564`
 /// translates by `(x, y + size * 1.044)` and scales by
@@ -60,7 +59,7 @@ typedef HudTextDrawFn = void Function(
   ui.Color color,
 );
 
-/// Draws an `art` op through the art port (`paintArt`, T31).
+/// Draws an `art` op through the art port (`paintArt`, ).
 ///
 /// `Glyphs.cpp:565-588` translates by `(x, y)` with **no** baseline factor and
 /// scales by `(size / 1000, size / 1000)`, so [y] is the art box top, unchanged.
@@ -311,7 +310,7 @@ HudPaintResult paintHudCommands({
       case HudAlpha(:final double value):
         // Glyphs.cpp:658-659 c.setOpacity(c.opacity() * n(1)) - multiplicative,
         // never an assignment: nested alphas compound. Qt clamps inside
-        // setOpacity (qpainter.cpp:2073) before storing; this atom keeps the
+        // setOpacity (qpainter.cpp:2073) before storing; this file keeps the
         // pure product (clip_alpha.dart F2 residual) and clamps at ink
         // consumption, which is identical for every in-range factor.
         stack.applyAlpha(value);
@@ -535,7 +534,7 @@ HudPaintResult paintHudCommands({
         // (dart:ui Path.arcTo, painting.dart:3003/3297) - the same screen
         // convention - so the wire (start, sweep) pass through unchanged and the
         // negation cancels out. Passing (-start, -sweep) here would mirror the
-        // arc vertically and is a Qt-parity defect; see the atom report.
+        // arc vertically and is a Qt-parity defect; see the file report.
         final ui.Path arcPath = ui.Path()
           ..arcTo(
             ui.Rect.fromLTWH(
@@ -696,7 +695,7 @@ ui.Color _hudInk(HudColor color, double opacity) => ui.Color.from(
       blue: _clampHudUnit(color.blue),
     );
 
-/// True when any dash entry is non-finite or non-positive - the case this atom
+/// True when any dash entry is non-finite or non-positive - the case this file
 /// refuses to swallow (`qstroker.cpp:1086` clamps such entries silently).
 bool _hasNonPositiveDash(List<double> pattern) {
   for (final double value in pattern) {

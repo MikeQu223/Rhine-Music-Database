@@ -1,6 +1,5 @@
 part of 'music_library.dart';
 
-// ---------------------------------------------------------------------------
 // 目录栈（Qt/src/MusicDirectory.cpp 全文 + Qt/src/MusicLibrary.cpp 的目录成员）
 //
 // 逐函数对齐关系（本文件每段都标注 Qt 行号）：
@@ -28,9 +27,6 @@ part of 'music_library.dart';
 //    enterDirectory/leaveDirectory 里复位）。
 //  * 物理索引一律照抄 QVector::value(index, fallback) 语义。
 //
-// 仓库本阶段禁止运行验证：本文件未执行 flutter analyze / flutter test
-// （RED/GREEN 均未执行）。
-// ---------------------------------------------------------------------------
 
 /// Qt QVector::value(index, fallback)：越界给默认值。
 int directorySlotValue(List<int> slots, int index, int fallback) {

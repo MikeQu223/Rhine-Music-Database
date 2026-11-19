@@ -1,6 +1,5 @@
 part of 'music_library.dart';
 
-// ---------------------------------------------------------------------------
 // 搜索控制器（Qt MusicLibrary::search / suggest / loadMoreSource(0) / 取消）
 //
 // 逐函数对齐（引用用「文件 + 符号名」，不写行号：根文件仍在追加片段，行号必漂）：
@@ -21,8 +20,6 @@ part of 'music_library.dart';
 // 取消语义映射（唯一）：cancelSearch ≡ Qt NativeHud::closeModal 的搜索部分——
 // 只作废 HUD 层排队动作，**不动** MusicLibrary::m_generation，因此在途应答仍会回调。
 //
-// 仓库本阶段禁止运行验证：本文件未执行 flutter analyze / flutter test。
-// ---------------------------------------------------------------------------
 
 /// Qt NativeHud::setQuery 的检索合并窗口（Qt/src/NativeHudController.cpp 的 setQuery）。
 ///
@@ -65,9 +62,7 @@ void _librarySearchInvalidatePending(MusicLibrary lib) {
   pending.token++;
 }
 
-// ---------------------------------------------------------------------------
 // 冻结入口 1/3：Qt MusicLibrary::search(QString text, QString kind, bool more)
-// ---------------------------------------------------------------------------
 
 /// 检索入口（根文件 MusicLibrary.search 的委托目标）。
 ///
@@ -283,9 +278,7 @@ void _librarySearchRemember(MusicLibrary lib, String query) {
   lib.preferences.write('search-history', jsonEncode(lib.searchHistory));
 }
 
-// ---------------------------------------------------------------------------
 // 冻结入口 2/3：Qt MusicLibrary::suggest(QString text)
-// ---------------------------------------------------------------------------
 
 /// 检索联想（根文件 MusicLibrary.suggest 的委托目标）。
 ///
@@ -332,9 +325,7 @@ Future<void> _librarySuggestRequest(MusicLibrary lib, String text, int token, bo
   lib.changed();
 }
 
-// ---------------------------------------------------------------------------
 // 冻结入口 3/3：取消检索（Qt 以 HUD 层代数作废排队动作）
-// ---------------------------------------------------------------------------
 
 /// 取消当前检索（根文件 MusicLibrary.cancelSearch 的委托目标）。
 ///

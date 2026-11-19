@@ -1,7 +1,7 @@
-/// 塞壬唱片（monster-siren）真实网络仓库：lane A 的唯一网络出口。
+/// 塞壬唱片（monster-siren）真实网络仓库：唯一网络出口。
 ///
 /// 真值来源（只读）：
-/// - /home/aibeto/code/Rhine-Music-Database/MusicBridge/client/siren.mjs
+/// - MusicBridge/client/siren.mjs
 ///   request :89-111（User-Agent / Accept / 20s 超时 / HTTP 与 code 错误文案）、
 ///   getText :56-74、load :114-187、songDetail :282-291、freshSong :294-296、
 ///   albumDetail :298-307、detail :414-439、playback :482-495、lyrics :497-513。
@@ -264,9 +264,7 @@ class SirenRepository {
     _ownClient = null;
   }
 
-  // ---------------------------------------------------------------------------
   // wire 解码
-  // ---------------------------------------------------------------------------
 
   Future<Object?> _requestJson(Uri uri) async {
     final SirenHttpResult result = await _fetch(uri);
@@ -339,9 +337,7 @@ class SirenRepository {
     return rows;
   }
 
-  // ---------------------------------------------------------------------------
   // 传输
-  // ---------------------------------------------------------------------------
 
   Future<SirenHttpResult> _fetch(Uri uri) async {
     if (_closed) {
@@ -396,9 +392,7 @@ class SirenRepository {
     return builder.takeBytes();
   }
 
-  // ---------------------------------------------------------------------------
   // 字段清洗（siren.mjs 的 trimmed/text/array 语义）
-  // ---------------------------------------------------------------------------
 
   Uri _uri(String path) {
     final String base = baseUri.toString();

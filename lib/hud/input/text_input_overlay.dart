@@ -3,7 +3,7 @@
 ///
 /// ## 位置契约（state → 逻辑矩形）
 /// 舞台坐标恒由 state 给出，逻辑坐标 = 舞台坐标 * stageScale。
-/// DEDUP-13：这个 stageScale 由 PortraitStage 唯一注入（PortraitBands.stageScale），
+/// 这个 stageScale 由 PortraitStage 唯一注入（PortraitBands.stageScale），
 /// 本层只消费、绝不按 height / 1080 重新推导。
 /// 四类输入框的每一条边都有唯一来源，不得由 Widget 自算，也不得用 hit 反推：
 /// - search：x=(inputX||0)*s、y=((inputY||302)+(modalOffset||0))*s、w=(inputWidth||0)*s、
@@ -65,8 +65,8 @@
 /// - 无障碍节点形状（合并成单节点）需 a11y inspector 在设备上核对，本层按 MergeSemantics
 ///   合并 RenderEditable 自己发布的 textField 节点（rendering/editable.dart:1380-1384）。
 /// - 本文件 import key_router.dart（仅 HudAction）→ wheel_router.dart → hit_layer.dart →
-///   ../protocol/hud_hit.dart；后者只存在于 T30 树、本树未集成，故整条导入链在本树预期
-///   不可解析，属跨树 integration dependency，不是本层缺陷（禁止把 hud_hit.dart 复制进 T32）。
+///   ../protocol/hud_hit.dart；后者只存在于  树、本树未集成，故整条导入链在本树预期
+///   不可解析，属跨树 integration dependency，不是本层缺陷（禁止把 hud_hit.dart 复制进本层）。
 library;
 
 import 'dart:math' as math;
@@ -145,7 +145,7 @@ class TextInputStageState {
     this.formInputFormatters,
   });
 
-  /// 用唯一 [StageGeometry] 构造 state（DEDUP-13）。
+  /// 用唯一 [StageGeometry] 构造 state。
   ///
   /// stageScale 只从 geometry 读一次，调用方不再自行计算 height / 1080；
   /// 这样 TextInputStageState、HitLayer、PointerRouter 消费的是同一个 scale。

@@ -1,4 +1,4 @@
-/// T13-S01 - Dart-side HUD command executor (spike, isolated).
+///  - Dart-side HUD command executor (spike, isolated).
 ///
 /// Scope: translate the seventeen production HUD operations into an inspectable
 /// record stream. This file never draws, never imports Flutter (no widgets, no
@@ -14,25 +14,25 @@
 ///
 /// Op table (seventeen ops), fields exactly as decoded by the protocol:
 ///
-/// | op          | wire fields (array index)                                  | protocol |
-/// |-------------|------------------------------------------------------------|----------|
-/// | save        | -                                                          | :19      |
-/// | restore     | -                                                          | :27      |
-/// | alpha       | 1 value                                                    | :33      |
-/// | translate   | 1 x, 2 y                                                   | :40      |
-/// | scale       | 1 sx, 2 sy                                                 | :48      |
-/// | rotate      | 1 radians                                                  | :60      |
-/// | clip        | 1 x, 2 y, 3 width, 4 height                                | :68      |
-/// | fill        | 1 color, 2 x, 3 y, 4 width, 5 height                       | :79      |
-/// | ellipse     | 1 color, 2 x, 3 y, 4 width, 5 height                       | :107     |
-/// | text        | 1 value, 2 x, 3 y, 4 size, 5 weight, 6 tracking, 7 color   | :126     |
-/// | art         | 1 key, 2 x, 3 y, 4 size, 5 count, 6 tracking, 7 color      | :152     |
-/// | fill-path   | 1 key, 2 color                                             | :177     |
-/// | path        | 1 key, 2 penWidth, 3 color, 4 dashPattern, 5 dashOffset    | :191     |
-/// | arc         | 1 cx, 2 cy, 3 radius, 4 start, 5 sweep, 6 penWidth, 7 color | :221    |
-/// | right-mask  | 1 color, 2 start, 3 span, 4 right, 5 height                | :249     |
-/// | gradient    | 1 dark                                                     | :268     |
-/// | image       | 1 key, 2 x, 3 y, 4 width, 5 height                         | :276     |
+/// op          | wire fields (array index)                                  | protocol |
+/// -------------|------------------------------------------------------------|----------|
+/// save        | -                                                          | :19      |
+/// restore     | -                                                          | :27      |
+/// alpha       | 1 value                                                    | :33      |
+/// translate   | 1 x, 2 y                                                   | :40      |
+/// scale       | 1 sx, 2 sy                                                 | :48      |
+/// rotate      | 1 radians                                                  | :60      |
+/// clip        | 1 x, 2 y, 3 width, 4 height                                | :68      |
+/// fill        | 1 color, 2 x, 3 y, 4 width, 5 height                       | :79      |
+/// ellipse     | 1 color, 2 x, 3 y, 4 width, 5 height                       | :107     |
+/// text        | 1 value, 2 x, 3 y, 4 size, 5 weight, 6 tracking, 7 color   | :126     |
+/// art         | 1 key, 2 x, 3 y, 4 size, 5 count, 6 tracking, 7 color      | :152     |
+/// fill-path   | 1 key, 2 color                                             | :177     |
+/// path        | 1 key, 2 penWidth, 3 color, 4 dashPattern, 5 dashOffset    | :191     |
+/// arc         | 1 cx, 2 cy, 3 radius, 4 start, 5 sweep, 6 penWidth, 7 color | :221    |
+/// right-mask  | 1 color, 2 start, 3 span, 4 right, 5 height                | :249     |
+/// gradient    | 1 dark                                                     | :268     |
+/// image       | 1 key, 2 x, 3 y, 4 width, 5 height                         | :276     |
 ///
 /// The executor reproduces only the painter-state slice that does not need a
 /// canvas: save/restore snapshots, multiplicative alpha and clip intersection.
@@ -312,7 +312,7 @@ final class SpikeHudExecution {
 
 /// Executes [commands] in order and returns the translation record stream.
 ///
-/// This is the whole T13-S01 surface: no canvas, no widgets, no drawing. The
+/// This is the whole  surface: no canvas, no widgets, no drawing. The
 /// executor is stateless between calls (a fresh one is created per call).
 SpikeHudExecution executeSpikeHudCommands(List<HudCommand> commands) =>
     SpikeHudExecutor().execute(commands);

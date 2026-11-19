@@ -1,17 +1,16 @@
 // GUI session snapshot (session.json) reading and writing.
 //
-// 1:1 port of the Qt behaviour at the frozen baseline 8ed3067 (T07 sections 2,
-// 2.5 and 3; the section headings are quoted in the comments below):
-//   Qt/src/MusicSession.cpp:33-86     MusicLibrary::sessionState()          (library shape)
-//   Qt/src/MusicSession.cpp:88-213    MusicLibrary::restoreSessionState()   (identity gate + clamps)
-//   Qt/src/MusicSession.cpp:215-235   NativeApplication::sessionState()     (top level + 16 view fields)
+// 1:1 port of the Qt behaviour in sections 2, 2.5 and 3:
+//   Qt/src/MusicSession.cpp:33-86     MusicLibrary::sessionState
+//   Qt/src/MusicSession.cpp:88-213    MusicLibrary::restoreSessionState
+//   Qt/src/MusicSession.cpp:215-235   NativeApplication::sessionState
 //   Qt/src/MusicSession.cpp:237-267   NativeApplication::restoreSessionState()
 //   Qt/src/MusicSession.cpp:269-284   NativeApplication::saveSession()
 //   Qt/src/NativeApplication.cpp:64-69   read gate (openable && size <= 64 MiB)
 //   Qt/src/NativeHud.h:115-135        settingsScrollMaximum() layout function
 //
 // PURE Dart: dart:convert only, no Flutter import and no package:path. Every path
-// is resolved by the injected AppStorage (T26-S01, lib/data/storage/app_storage.dart)
+// is resolved by the injected AppStorage (lib/data/storage/app_storage.dart)
 // and every byte goes through the injected FileSystemPort.
 //
 // Ownership: the returned library map is restored state in exactly the
@@ -22,15 +21,15 @@
 // them the same way and clear them.
 //
 // The 64 MiB write cap plus the atomic same-directory-temp replace are
-// AppStorage.writeJsonAtomic's frozen responsibility (T26-S01); this atom proves
-// that it hands over the 64 MiB limit and that nothing is deleted on any failure.
+// AppStorage.writeJsonAtomic's responsibility; this file proves that it hands over
+// the 64 MiB limit and that nothing is deleted on any failure.
 
 import 'dart:convert';
 
 import 'app_storage.dart';
 import 'playback_store.dart';
 
-/// Every failureReason this atom can produce, in the evaluation order of the read
+/// Every failureReason this file can produce, in the evaluation order of the read
 /// gate followed by the library identity gate.
 const List<String> kSessionFailureReasons = <String>[
   'missing',
@@ -68,7 +67,7 @@ class SessionIdentity {
   final String uid;
 }
 
-/// One view snapshot: exactly the 16 fields of T07 section 2.3.
+/// One view snapshot: exactly the 16 fields of  section 2.3.
 ///
 /// Field order here, in [toJson] and in [restore] is the frozen order of
 /// MusicSession.cpp:215-235 (write) and :237-267 (read).
@@ -133,7 +132,7 @@ class ViewState {
   final String mode;
 
   /// Global physical slot 0..39; NOT library.selectedPhysical
-  /// (MusicSession.cpp:260 and the T07 section 2.3 note).
+  /// (MusicSession.cpp:260 and the  section 2.3 note).
   final int selected;
 
   final String tab;
@@ -163,7 +162,7 @@ class ViewState {
   final bool trackListMode;
   final bool lyricsMode;
 
-  /// Restore path (MusicSession.cpp:241-260, T07 section 2.3).
+  /// Restore path (MusicSession.cpp:241-260,  section 2.3).
   ///
   /// [currentNonEmpty] is library.current.isNotEmpty: it is the only input that
   /// can turn mode into 'detail'. [settingsScrollMaximum] is the injected runtime
@@ -268,7 +267,7 @@ class SessionRestoreTriggers {
 /// Outcome of [SessionStore.loadForRestore].
 ///
 /// On any failure [loaded] is false, [view] and [player] are null and the file is
-/// left untouched on disk (T07 sections 2.1 and 2.5).
+/// left untouched on disk ( sections 2.1 and 2.5).
 class SessionRestoreResult {
   const SessionRestoreResult({
     required this.loaded,
@@ -320,7 +319,7 @@ class SessionRestoreResult {
   final SessionRestoreTriggers triggers;
 }
 
-/// Reads and writes <data>/session.json (T07 sections 2, 2.5 and 3).
+/// Reads and writes <data>/session.json ( sections 2, 2.5 and 3).
 ///
 /// The store is isolated common code: every path comes from the injected
 /// [AppStorage] and the runtime layout is injected, so nothing here is wired to a
@@ -402,7 +401,7 @@ class SessionStore {
   /// and uid must equal the injected [identity], sources must be exactly 5 lanes,
   /// the selected lane and physical slot must be valid, and directories must not
   /// exceed 64. Any failure keeps the file and restores neither the view nor the
-  /// player (NativeApplication.cpp:237-240, T07 section 2.1).
+  /// player (NativeApplication.cpp:237-240,  section 2.1).
   Future<SessionRestoreResult> loadForRestore(
     SessionIdentity identity, {
     required bool playbackConnection,
@@ -410,7 +409,7 @@ class SessionStore {
     final path = storage.sessionPath;
     final files = storage.files;
 
-    // T07 0.7 puts the offline gate in the application layer, so the read is not
+    //  0.7 puts the offline gate in the application layer, so the read is not
     // gated on storage.offline here; this method is only called when not offline.
     if (!await files.exists(path)) {
       return SessionRestoreResult.failure('missing');
@@ -503,7 +502,7 @@ class SessionStore {
   /// Offline writes nothing and returns false. Otherwise it writes
   /// {version: 1, library, player, view} as compact UTF-8 through the capped,
   /// same-directory-temp and atomic-rename writer. Over 64 MiB the writer returns
-  /// false and the old file is untouched (T07 section 2.5).
+  /// false and the old file is untouched ( section 2.5).
   Future<bool> save(
     Map<String, Object?> library,
     PlayerState player,

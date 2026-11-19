@@ -61,12 +61,12 @@ class PresentationBackend {
     virtual quint64 resizeSkips() const {
         return 0;
     }
-    /// A02：累计离屏提交次数——beginFrame 成功进入的离屏帧数（每个都对应一次 endFrame）。
+    /// 累计离屏提交次数——beginFrame 成功进入的离屏帧数（每个都对应一次 endFrame）。
     /// 在真正提交的后端里计数，而不是在调用方计数：这样以后多一个呈现层调用者也不会漏。
     virtual quint64 offscreenSubmits() const {
         return 0;
     }
-    /// A02：最近一次 beginFrame 的耗时（毫秒）＝**帧槽等待**（等上一帧命令缓冲/围栏归还）。
+    /// 最近一次 beginFrame 的耗时（毫秒）＝**帧槽等待**（等上一帧命令缓冲/围栏归还）。
     /// 与 beginMs 的区别：beginMs 是呈现层的 EMA，这里是后端自己量到的原始样本。
     /// 返回负数表示该后端不提供这项测量，呈现层会退回自己的计时。
     virtual double slotWaitMs() const {

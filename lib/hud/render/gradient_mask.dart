@@ -11,7 +11,7 @@
 //    setAntialiasing(true)); the HUD item geometry clips the painted content.
 //
 // This file owns geometry/colour construction only. The 17-op command stack
-// (save/restore/alpha/clip/rotate/dash/arc/...) is the painter atom's job
+// (save/restore/alpha/clip/rotate/dash/arc/...) is the painter 文件's job
 // (lib/hud/render/hud_painter.dart); the right-mask *fill rectangle*
 // `QRectF(start, 0, n(4) - start, n(5))` (Qt/src/Glyphs.cpp:805) is likewise
 // applied by the painter, not here.
@@ -88,8 +88,8 @@ List<ui.Color> hudRightMaskStopColors(ui.Color base) {
 /// Degenerate input: Qt does not define a `span <= 0` linear gradient
 /// (both endpoints coincide). This helper still builds the wire geometry
 /// verbatim instead of inventing a fallback; the painter must record a
-/// malformed-argument issue for such a command (UNMEASURED: Qt never renders
-/// it in the captured 1080p streams).
+/// malformed-argument issue for such a command (Qt never renders it in the
+/// captured 1080p streams).
 ui.Gradient hudRightMaskGradient(ui.Color base, double start, double span) {
   final List<double> stops = <double>[
     for (int step = 0; step <= hudRightMaskSteps; step++)

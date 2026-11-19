@@ -1,6 +1,4 @@
-// ===========================================================================
-// SETTINGS-145 / W1   atomic = W1   file = lib/basic/basic_settings_surface.dart
-// scope = ONLY14 设置面板绘制适配器（纯 Dart，命令 + 命中注入，不依赖 Flutter widget）
+// 设置面板的渲染与命中面（纯 Dart，命令 + 命中注入，不依赖 Flutter widget）。
 // 源：Qt/src/NativeHudSettings.cpp（:163-225 面板 / :310-330 performance / :344-370 update）
 //     + Qt/src/SettingsCard.cpp（:36-45 表头 / :294-327 卡片循环）
 //     + Qt/src/NativeHud.cpp:80-85（centeredText）
@@ -15,10 +13,8 @@
 //   恢复默认等**未授权项**一起画出来。ONLY14 只需要 performance 的第二行与
 //   update 的版本行，因此在这里用自有 renderer 名单独绘制。
 //
-// 不做（明确归属 141）：持久化、真实生效、native 调用、路由、模态壳、
+// 不做：持久化、真实生效、native 调用、路由、模态壳、
 //   键盘/hit 归属、滚动状态存储、版本/平台链接注入。
-// 只做源码编写；本文件不执行任何构建 / 测试 / 分析（141 统一执行）。
-// ===========================================================================
 library;
 
 import 'dart:ui' show Rect;

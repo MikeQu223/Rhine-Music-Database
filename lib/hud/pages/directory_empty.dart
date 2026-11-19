@@ -1,7 +1,5 @@
-// ===========================================================================
-// T33-C14 / W3   atomic id = W3   file = lib/hud/pages/directory_empty.dart
-// plan 映射 = T33「空态」+ 目录返回上一级 + 未登录/来源分派
-// 横屏 1:1 真值源：/home/aibeto/code/Rhine-Music-Database/Qt/src/NativeHud.cpp
+// 空态 + 目录返回上一级 + 未登录/来源分派
+// 横屏 1:1 真值源：Qt/src/NativeHud.cpp
 //   empty            374-403      三分支 + 标题三分支 + 描述行 + 底部按钮
 //   control          121-124      命中 x-10 / width+20 / 54 + aligned(y+14, 20, demibold)
 //   limited          77-79        fit 后 text，weight 透传
@@ -11,11 +9,9 @@
 //   button           110-119      m_modalControls = false（NativeHud.h:222 默认 false，archive 页不置 true）
 //                                 -> 只发 hit(x, y, width, height) + text(...)，不发 fill
 //   navigationLeft   342-344      width - 789
-// 纯 Dart：仅相对导入 './chrome.dart'，不 import 任何 UI 框架 / 渲染框架 / 第三方包；
-// 只做源码编写，不执行任何构建 / 测试 / 分析。
+// 纯 Dart：仅相对导入 './chrome.dart'，不 import 任何 UI 框架 / 渲染框架 / 第三方包。
 // 命令与命中按 Qt 发射顺序 append（不排序、不去重、不合并），顺序即语义。
-// 公共契约块由 W1 持有（lib/hud/pages/chrome.dart 顶部），本文件只 import 复用，不重定义。
-// ===========================================================================
+// 公共契约块见 lib/hud/pages/chrome.dart 顶部，本文件只 import 复用，不重定义。
 import 'chrome.dart';
 
 /// Qt NativeHud::empty() 读取的 MusicLibrary 状态切片（只读快照）。

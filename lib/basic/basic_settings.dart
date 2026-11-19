@@ -1,6 +1,4 @@
-// ===========================================================================
-// SETTINGS-145 / W1   atomic = W1   file = lib/basic/basic_settings.dart
-// scope = ONLY14 设置模型（typed，纯 Dart，无 UI / 无持久化 / 无副作用）
+// 设置模型（typed，纯 Dart，无 UI / 无持久化 / 无副作用）
 // 源：Qt/src/SettingsSchema.cpp（descriptor 表）+ Qt/src/NativeHudSettings.cpp
 //     （performance / update 自定义区）+ Qt/src/NativeHudMusic.cpp:271-280（项目链接）
 //     + Qt/src/MusicPlayer.cpp:104-124（音质选项）
@@ -14,11 +12,8 @@
 //   4. 真值来源：版本必须由宿主用真实 source 构造；项目链接逐字取 Qt 表；
 //      音质只承认 provider 真实支持的选项（Siren 仅 lossless）。
 //
-// 不做（明确归属 141）：持久化、真实生效、native 调用、BasicApp 路由、
+// 不做：持久化、真实生效、native 调用、BasicApp 路由、
 // 模态壳、键盘/hit 归属、版本与平台链接的注入。
-//
-// 只做源码编写；本文件不执行任何构建 / 测试 / 分析（141 统一执行）。
-// ===========================================================================
 library;
 
 import '../hud/modals/settings_modal.dart';
@@ -153,9 +148,7 @@ BasicSettingId? basicSettingForDescriptor(String descriptorId) {
   return null;
 }
 
-// ===========================================================================
 // 当前版本（ONLY14 第 13 项）
-// ===========================================================================
 
 /// 版本真值。**必须由宿主用真实 source 构造**（pubspec / 构建期注入 / 平台包信息）；
 /// 面板不提供默认值、不猜测版本号、不读网络。
@@ -185,9 +178,7 @@ class BasicSettingsVersion {
   String get secondaryLabel => releaseBuild ? '' : commitTitle;
 }
 
-// ===========================================================================
 // 音质真值（ONLY14 第 4 项）
-// ===========================================================================
 
 /// 已持久化值不在 provider 真实支持列表里时追加的后缀。
 /// 例：Siren 只支持 lossless，而快照里残留旧值 exhigh —— 面板必须说真话，
@@ -258,9 +249,7 @@ BasicSettingsQualityTruth basicSettingsQualityTruth({
   );
 }
 
-// ===========================================================================
 // 项目与开源参考（ONLY14 第 14 项）
-// ===========================================================================
 
 /// Qt/src/NativeHudMusic.cpp:271-280 的真实链接表，键 = descriptor id。
 /// 面板不显示 URL，只把它交给宿主的 open-url 端口。
@@ -278,9 +267,7 @@ const Map<String, String> basicSettingsProjectUrls = <String, String>{
 /// 项目链接真值；未知 id 返回 null（命令层据此报 missingProjectUrl，不编 URL）。
 String? basicSettingsProjectUrl(String descriptorId) => basicSettingsProjectUrls[descriptorId];
 
-// ===========================================================================
 // 面板分区（原 Qt 区块 / 表头文案逐字，只保留 ONLY14 需要的四个区块）
-// ===========================================================================
 
 /// 唱片旋转只画 performance 区块的第二行，因此用自己的 renderer 名：
 /// 绝不能落到 SettingsCustomRenderers.performance（那会连帧生成/诊断一起画出来）。
@@ -342,9 +329,7 @@ List<SettingsSectionSpec> basicSettingsSections() => const <SettingsSectionSpec>
       basicProjectSection,
     ];
 
-// ===========================================================================
 // 面板模型
-// ===========================================================================
 
 /// 交给绘制层的最小面板模型：四个区块 + 两个自定义区真值 + 音质真值。
 class BasicSettingsPanelModel {
@@ -445,9 +430,7 @@ BasicSettingsPanelModel basicSettingsPanelModel({
   );
 }
 
-// ===========================================================================
 // 命中动作串 -> typed 命令
-// ===========================================================================
 
 /// 写入后是否需要重启才生效（Qt 各行 restartHint 为“重启生效”）。
 enum BasicSettingsRestart { none, nextLaunch }

@@ -1,4 +1,4 @@
-/// T33-C14 / W4 - archive track list and track ruler (曲目表 + 刻度标尺).
+///  / W4 - archive track list and track ruler (曲目表 + 刻度标尺).
 ///
 /// 1:1 port of the Qt Android reference implementation:
 ///   * Qt/src/NativeHud.h:168-173    - struct TrackRulerRow
@@ -8,7 +8,7 @@
 ///   * Qt/src/UiMotion.h:12-22 and Qt/src/UiMotion.cpp:58-84 - UiMotion::ReelCurve
 ///   * Qt/src/Glyphs.cpp:312-338     - Glyphs::bounds (vertical metrics, see HudGlyphBoundsPort)
 ///
-/// Contract: chrome.dart (W1) owns HudWireCommand (wire alias) / HudHit (re-exported from
+/// Contract: chrome.dart owns HudWireCommand (wire alias) / HudHit (re-exported from
 /// protocol/hud_hit.dart) / HudSurfaceSink / HudTextPort /
 /// hudInk / hudFill / hudPath. This library only consumes them; nothing here is re-declared
 /// and no Material widget, no Flutter widget and no texture is used.
@@ -20,7 +20,7 @@
 /// Hits are emitted in the same loop as the drawing, in source order, and are never
 /// reordered or deduplicated (parity plan 4.3).
 ///
-/// Known integration requirements (also recorded in the W4 report):
+/// Known integration requirements:
 ///   N1. Vertical glyph metrics: HudTextPort carries only horizontal metrics, while Qt needs
 ///       bounds(...).y/.height. Inject HudGlyphBoundsPort (constructor argument, else the text
 ///       port itself if it implements the interface). Without it the ruler anchors on the
@@ -32,9 +32,7 @@ import 'dart:math' as math;
 
 import '../pages/chrome.dart';
 
-// ---------------------------------------------------------------------------
 // UiMotion::ReelCurve
-// ---------------------------------------------------------------------------
 
 /// Qt UiMotion::ReelCurve (UiMotion.h:12-22, UiMotion.cpp:58-84).
 ///
@@ -89,9 +87,7 @@ class ReelCurve {
   double sample(double time) => samplePair(time)[0];
 }
 
-// ---------------------------------------------------------------------------
 // Glyphs::bounds - vertical text metrics
-// ---------------------------------------------------------------------------
 
 /// Qt Glyphs::bounds() result (Glyphs.cpp:312-338): the outline bounding box of one laid
 /// out run in the run local frame, y relative to the baseline origin (negative above it).
@@ -119,9 +115,7 @@ abstract class HudGlyphBoundsPort {
   GlyphBounds glyphBounds(String value, double size, [String weight = 'regular']);
 }
 
-// ---------------------------------------------------------------------------
 // Data types
-// ---------------------------------------------------------------------------
 
 /// Qt NativeHud::TrackRulerRow (NativeHud.h:168-173).
 class TrackRulerRow {
@@ -172,9 +166,7 @@ class TrackListScope {
       '$provider:$directoryIdentity:${hasDirectory ? '' : selectedLane}:$groupName';
 }
 
-// ---------------------------------------------------------------------------
 // HudTrackRuler
-// ---------------------------------------------------------------------------
 
 /// 列表裁剪窗口（也是可拖动/可点选窗口）的锚点，Qt `NativeHud.cpp:543-555` 的常量：
 /// 选中行基线上移到 `titleY`，窗口上沿在 `titleY - trackRulerWindowTopOffset`，
@@ -414,9 +406,7 @@ class HudTrackRuler {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Local helpers
-// ---------------------------------------------------------------------------
 
 /// C++17 std::clamp, used verbatim at NativeHud.cpp:559 and UiMotion.cpp:67 and :77.
 /// Mirrors the standard rather than num.clamp (which throws when low > high).

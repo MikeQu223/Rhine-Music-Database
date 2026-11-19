@@ -1,40 +1,19 @@
-// T42 —— Consent 门槛页（Qt ConsentActivity 的 1:1 presentation 层）。
+// Consent 门槛页（对应 Qt ConsentActivity 的 presentation 层）。
 //
-// Qt 侧证据（唯一真值，Qt/android/src/rhine/music/database/）：
-// - ConsentActivity.java:22-24 清单里 ConsentActivity 是 LAUNCHER、QtActivity 不对外暴露：
-//   同意之前 Qt/Clarity/Bugly 一个都没起来，不是「先加载界面再补弹窗」。
-// - ConsentActivity.java:69-72 已同意 → 直接按持久 region 放行，不再判定地区、不再弹窗。
-// - ConsentActivity.java:76-107 未同意 → 判定地区（3 秒硬闸门）→ CN/EU 弹窗；
-//   其他/超时/异常直接放行，且不写持久标记（:101-104）。
-// - ConsentActivity.java:116-141 弹窗：标题/正文/按钮按地区取值、setCancelable(false)、
-//   返回键无效、隐私链接可点。
-// - ConsentActivity.java:143-156 放行：先启动 SDK，再进业务页（CLEAR_TOP | SINGLE_TOP）。
-// - ConsentActivity.java:158-164 系统返回键只在已同意时有效。
-// - Qt/android/res/values/styles.xml:8-14 RhineConsent 主题：windowBackground=black、
-//   windowDisablePreview=true —— 这一屏是纯黑承载页，弹窗路径不会闪白。
+// Qt 行为（Qt/android/src/rhine/music/database/ConsentActivity.java）：
+// - 清单里 ConsentActivity 是 LAUNCHER，同意之前 Qt/Clarity/Bugly 一个都不启动。
+// - 已同意 → 直接按持久 region 放行；未同意 → 判定地区（3 秒硬闸门）→ CN/EU 弹窗，
+//   其他/超时/异常直接放行，且不写持久标记。
+// - 弹窗 setCancelable(false)，返回键无效，隐私链接可点；放行时先启动 SDK 再进业务页。
+// - RhineConsent 主题为纯黑（windowDisablePreview），避免弹窗路径闪白。
 //
-// ── 流程 owner（X20-LIFECYCLE；adjudication-handover-26.json decisions[2]）──
-// 唯一流程 / 持久化 / SDK starter owner 是 T27 的 lib/app/consent_gate.dart：
-//   ConsentGate（start/approve/decline/backPressed/terminate + phase/snapshot/计数）
-//   ConsentPorts（readRecord/writeGrant/probeRegion/startSdks/enterBusiness/exitApp）
-//   ConsentSdkStarter（Clarity 与 Bugly 两个分开的幂等标志）
-//   ConsentRegion / ConsentPhase / ConsentDialogCopy / CN|EU 文案常量 / 3000ms。
-// 本文件**不实现**任何流程、不复制地区判定、不复制文案、不建第二个 SDK starter；
-// 它只做三件事：渲染弹窗、把两个按钮与返回键翻译成一次 T27 调用、把「已放行」
-// 通知给宿主导航钩子。
+// 唯一流程/持久化/SDK starter 在 lib/app/consent_gate.dart（ConsentGate /
+// ConsentPorts / ConsentSdkStarter）。本文件不实现流程、不复制地区判定与文案、
+// 不建第二个 SDK starter；只负责渲染弹窗、把按钮与返回键翻译成一次流程调用、
+// 把「已放行」通知宿主导航钩子。
 //
-// ── 待集成依赖（精确给出，不越 scope 复制第三份）──
-// import 'package:rhine_music_database/app/consent_gate.dart';
-// 该文件由 T27 在 commit e46b08cf 引入（blob 87aecd0c4717b7e2022f173d7863ed2028407255，
-// 658 行），本 T42 基线（8ed3067）尚未包含它：T42 只写依赖与所需接口，合并时由
-// 主集成把 T27 的这一个文件带入即可，双方都不需要第二套实现。
-// 待决地区读数：T27 的 commit b9fcffc（"已落盘授权失败不再死锁并暴露 pendingRegion"）
-// 已交付 `ConsentRegion? get pendingRegion => _phase == ConsentPhase.awaitingConsent
-// ? _pendingRegion : null;`（consent_gate.dart:406-407）。本页直接读这个 getter：
-// 它只在 awaitingConsent 时非 null，正好就是「还有一次决定没答」的窗口；回答失败时
-// T27 在 rethrow 前恢复 _pendingRegion（consent_gate.dart:513-552），这里读到的就是
-// 恢复后的真实读数。原先「host 注入 regionOfPendingDecision」的方案已删除：那会留下
-// 第二份待决状态副本，失败重试时更容易与流程机脱节。
+// 待决地区直接读 ConsentGate.pendingRegion：它只在 awaitingConsent 时非 null；
+// 回答失败时流程机在 rethrow 前恢复该值，因此这里读到的是恢复后的真实读数。
 
 import 'dart:async';
 
@@ -42,17 +21,15 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:rhine_music_database/app/consent_gate.dart';
 
-// ============================================================================
 // 页面
-// ============================================================================
 
 /// 谁执行 ConsentActivity.java:148-155 的「startActivity(QtActivity)」。
 ///
-/// Qt 只有一处导航；Flutter 有两个天然落点：T27 的 [ConsentPorts.enterBusiness]
+/// Qt 只有一处导航；Flutter 有两个天然落点：流程机的 [ConsentPorts.enterBusiness]
 /// （流程机内部）与页面的 [ConsentPage.onProceed]（宿主钩子）。两者同时生效会叠出
 /// 第二个业务页，所以这里把它变成构造期必须声明的类型，而不是注释里的君子协定。
 enum BusinessEntryOwner {
-  /// T27 的 ConsentPorts.enterBusiness 负责导航；页面不再调 onProceed。
+  /// 流程机的 ConsentPorts.enterBusiness 负责导航；页面不再调 onProceed。
   ports,
 
   /// 宿主在 onProceed 里导航；ConsentPorts.enterBusiness 必须实现成空操作。
@@ -78,7 +55,7 @@ class ConsentPage extends StatefulWidget {
           'BusinessEntryOwner.host 时必须传 onProceed。两者只允许一个生效。',
         );
 
-  /// T27 的唯一流程机。本页只调用 start/approve/decline/backPressed 并读 phase。
+  /// 流程机的唯一流程机。本页只调用 start/approve/decline/backPressed 并读 phase。
   final ConsentGate gate;
 
   /// 导航归属（见 [BusinessEntryOwner]）：默认由宿主在 [onProceed] 里导航。
@@ -93,7 +70,7 @@ class ConsentPage extends StatefulWidget {
   /// 视图无法呈现当前流程状态（或无法把一次回答交给流程机）时的上报口。
   ///
   /// 触发点（全部是「不变量被破坏」，本层既不猜也不静默）：
-  /// - T27 说 phase==awaitingConsent，但 `gate.pendingRegion` 为 null/other；
+  /// -  说 phase==awaitingConsent，但 `gate.pendingRegion` 为 null/other；
   /// - 一次回答被流程机拒绝（approve/decline 抛错）：弹窗已关、错误已上报，
   ///   但只要流程仍停在 awaitingConsent，页面会重新弹窗让人再答（见 [_showConsentDialogLoop]）；
   /// - 弹窗既不是同意也不是退出被关掉（外部 pop）：无法判断意图。
@@ -116,10 +93,10 @@ class _ConsentPageState extends State<ConsentPage> {
 
   /// 当前这一轮弹窗是否已经收下一次回答（防重复 pop / 重复 approve）。
   ///
-  /// T27 的 approve()/decline() 只在 ConsentPhase.awaitingConsent 合法，
+  /// 流程机的 approve/decline 只在 ConsentPhase.awaitingConsent 合法，
   /// 否则抛 StateError；视图层的重复点击必须在这里挡住，不能靠流程机兜底。
   /// **只挡「同一轮弹窗」**：每轮展示前 [_showConsentDialogLoop] 都会复位它，
-  /// 否则一次失败的回答会把页面永久锁死（T42 原缺陷：_decisionTaken 在
+  /// 否则一次失败的回答会把页面永久锁死（ 原缺陷：_decisionTaken 在
   /// gate.approve() 抛错前就置 true 且再无人复位）。
   bool _decisionTaken = false;
 
@@ -177,13 +154,13 @@ class _ConsentPageState extends State<ConsentPage> {
       return;
     }
     _proceedNotified = true;
-    // ports 模式：导航已由 T27 的 enterBusiness 完成，这里绝不重复导航。
+    // ports 模式：导航已由 流程机的 enterBusiness 完成，这里绝不重复导航。
     widget.onProceed?.call();
   }
 
   /// 展示待决同意弹窗；一次回答失败后必须能重来。
   ///
-  /// T27 的 approve() 在 writeGrant/startSdks/enterBusiness 抛错时会恢复 _pendingRegion
+  /// 流程机的 approve 在 writeGrant/startSdks/enterBusiness 抛错时会恢复 _pendingRegion
   /// 并 rethrow（consent_gate.dart:513-552），phase 仍是 awaitingConsent：流程机还在等人
   /// 回答，视图却已经把弹窗关掉了。所以这里按流程机的**真实阶段**循环：
   ///
@@ -192,7 +169,7 @@ class _ConsentPageState extends State<ConsentPage> {
   ///   不能变成「失败一次就永久锁死」；
   /// - proceeded 才通知宿主；declined/terminated 由 while 条件自然退出。
   ///
-  /// 已落盘的 grant 不会被重复写：重试仍走 T27 的 approve()，它用 _recordPersisted
+  /// 已落盘的 grant 不会被重复写：重试仍走 流程机的 approve，它用 _recordPersisted
   /// 判别，只有写盘失败过才会再 writeGrant（consent_gate.dart:513-552）。
   Future<void> _showConsentDialogLoop() async {
     if (_dialogLoopActive) {
@@ -203,9 +180,9 @@ class _ConsentPageState extends State<ConsentPage> {
       while (mounted && widget.gate.phase == ConsentPhase.awaitingConsent) {
         final ConsentRegion? region = widget.gate.pendingRegion;
         if (region == null || region == ConsentRegion.other) {
-          // 没有待决地区（或读数给了 other）却进了 awaitingConsent：T27 不变量被破坏。
+          // 没有待决地区（或读数给了 other）却进了 awaitingConsent： 不变量被破坏。
           // 不弹空窗、不猜地区（ConsentDialogCopy.forRegion(other) 会抛），但也不能静默：
-          // 上报宿主。T27 会停在 awaitingConsent，本页不伪造放行。
+          // 上报宿主。 会停在 awaitingConsent，本页不伪造放行。
           final String broken = region == null ? 'null' : region.name;
           widget.onPresentationBroken?.call(
             'awaitingConsent without a pending region: ' + broken,
@@ -280,13 +257,13 @@ class _ConsentPageState extends State<ConsentPage> {
 
   /// 回答弹窗（ConsentActivity.java:122-125 同意 / :126-128 退出）。
   ///
-  /// 副作用全部由 T27 的流程机完成（writeGrant / startSdks / enterBusiness / exitApp），
+  /// 副作用全部由 流程机的流程机完成（writeGrant / startSdks / enterBusiness / exitApp），
   /// 这里只调用一次并关掉弹窗。
   void _answer(BuildContext dialogContext, {required bool agreed}) {
     if (_decisionTaken) {
       return;
     }
-    // T27 只允许在 awaitingConsent 回答；否则 approve/decline 抛 StateError。
+    //  只允许在 awaitingConsent 回答；否则 approve/decline 抛 StateError。
     if (widget.gate.phase != ConsentPhase.awaitingConsent) {
       return;
     }
@@ -313,7 +290,7 @@ class _ConsentPageState extends State<ConsentPage> {
     }
   }
 
-  /// 文案 span：文本逐字节等于 T27 常量（= Qt text block）；正文里的隐私 URL
+  /// 文案 span：文本逐字节等于  常量（= Qt text block）；正文里的隐私 URL
   /// 单独成 span 并可点（ConsentActivity.java:136-140 给正文装 LinkMovementMethod）。
   ///
   /// URL 从文案里现场定位，不在本层再抄一份字面量：文案只有一个真值。
@@ -366,7 +343,7 @@ class _ConsentPageState extends State<ConsentPage> {
   @override
   Widget build(BuildContext context) {
     // Qt 侧 ConsentActivity 没有自己的界面（只有对话框），这里给一个空承载页；
-    // 返回键语义由 PopScope 复刻 ConsentActivity.java:158-164（T27 backPressed 是权威读数）。
+    // 返回键语义由 PopScope 复刻 ConsentActivity.java:158-164（backPressed 是权威读数）。
     //
     // 底色必须是黑的：Qt 的 RhineConsent 主题是 Theme.DeviceDefault.NoActionBar +
     // android:windowBackground=black + android:windowDisablePreview=true

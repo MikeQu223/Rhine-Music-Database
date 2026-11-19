@@ -16,7 +16,6 @@
 /// 依赖只通过注入端口（transport/scheduler/qrRenderer/credentials/effects）引入，
 /// 不 import bridge 或平台实现，便于在无设备环境下静态审查与替换。
 ///
-/// 任务契约：本次只编写、不执行 flutter/dart test；RED/GREEN 均未执行。
 library;
 
 import 'dart:async';

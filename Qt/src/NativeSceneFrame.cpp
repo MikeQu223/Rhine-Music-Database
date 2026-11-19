@@ -79,7 +79,7 @@ void NativeScene::emitFrame(double time) {
         drawBuffers[id] = instanceBytes;
         draws.append(draw);
     }
-    // MUST-C：这一格有真实业务身份时，给它加两条「只属于这一格」的覆盖绘制——封面板与标签面。
+    // 这一格有真实业务身份时，给它加两条「只属于这一格」的覆盖绘制——封面板与标签面。
     // 底下的档案壳仍然是上面那条共享实例缓冲：几何、材质、机位、惯性、数量一律不动，
     // 这里只往同一格的世界矩阵上加薄薄一层贴面，所以不会变成 40 个 detail actor。
     QSet<quint32> embeddedCells;

@@ -1,6 +1,6 @@
 /// Qt 查看器 HUD（stage 单位）的纯数据构建器。
 ///
-/// 真值来源（逐字移植，行号对应 /home/aibeto/code/Rhine-Music-Database/Qt/src）：
+/// 真值来源（逐字移植，行号对应 Qt/src）：
 /// - NativeHudDetail.cpp:513-529  viewer() 整页命令序列（11 条 text、6 条 hit，无 save/alpha/restore）
 /// - NativeHudDetail.cpp:514-516  空 current 早退：item.isEmpty() 时零命令零命中
 /// - NativeHud.cpp:267-268        分派：frame["viewer"].toBool() 为真时只画 viewer()，
@@ -29,7 +29,7 @@
 ///    11 条 text 与 6 条 hit 是全部输出。
 /// 4. 文字颜色全部走 NativeHud::ink()（带 calibrated 标记）；消费端负责 Gamma 1.8 -> sRGB。
 /// 5. 不得把 HUD 画进 3D 纹理：本页只输出 2D 舞台命令。查看器的封面与展厅由场景 draw 通道
-///    渲染（NativeCards.cpp），HUD 命令流永远不是 3D 贴图来源（plan T34 的 Fail 条款）。
+///    渲染（NativeCards.cpp），HUD 命令流永远不是 3D 贴图来源。
 /// 6. opening / closing / reset / clarity / frosted 是 viewerState 的状态字段，对绘制没有任何
 ///    影响 —— NativeHud::viewer() 根本不读它们；任何 transition / surface / clarity 组合下，
 ///    本页都产出同样的 11 条命令与 6 条命中。宿主用这些字段 + [viewerHudActionAccepted]
@@ -218,9 +218,7 @@ class ViewerHudDrawing {
   bool get isEmpty => commands.isEmpty && hits.isEmpty;
 }
 
-// ---------------------------------------------------------------------------
 // 常量（文案 / 动作 / 状态字面量，逐字对应 Qt）
-// ---------------------------------------------------------------------------
 
 const String viewerHudCloseLabel = '← 返回音乐   ESC'; // NativeHudDetail.cpp:518
 const String viewerHudHeading = 'RHINE LAB / MUSIC DATABASE / COVER'; // :519
@@ -246,12 +244,10 @@ const String viewerHudTransitionClosing = 'closing'; // NativeViewer.cpp:115
 const String viewerHudSurfaceClear = 'clear'; // NativeViewer.h:63
 const String viewerHudSurfaceFrosted = 'frosted'; // NativeViewer.cpp:124
 
-/// 查看器 HUD 只走 2D 舞台通道；3D 封面由场景 draw 通道生成（plan T34 Fail 条款）。
+/// 查看器 HUD 只走 2D 舞台通道；3D 封面由场景 draw 通道生成。
 const String viewerHudChannel = 'hud-stage';
 
-// ---------------------------------------------------------------------------
 // 调色板（逐字对应 Qt）
-// ---------------------------------------------------------------------------
 
 /// Qt NativeHud::ink()（NativeHud.cpp:10-15）：带 calibrated 标记。
 List<Object?> _hudInk(bool dark) => dark
@@ -283,9 +279,7 @@ bool viewerHudActionAccepted(ViewerHudState state, String action) {
       action == viewerHudResetAction;
 }
 
-// ---------------------------------------------------------------------------
 // 绘制（NativeHud 助手的 viewer 子集）
-// ---------------------------------------------------------------------------
 
 class _ViewerHudPainter {
   _ViewerHudPainter({required this.glyphs, required this.dark});

@@ -1,5 +1,5 @@
 /// Rotation continuity — the "engine/session objects live outside the widget
-/// tree" half of T44 (plan 2026-11-09-qt-to-flutter-parity-plan.md:369, 373-376,
+/// tree" half of  (plan 2026-11-09-qt-to-flutter-parity-plan.md:369, 373-376,
 /// 692-698).
 ///
 /// Scope boundary: this library owns *runtime continuity only*. It never touches
@@ -13,7 +13,7 @@
 /// statically testable with \`flutter_test\` (the repo has no \`package:test\`).
 ///
 /// Why a tree-external object at all: rotation may only rebuild MediaQuery and
-/// recompute the stage (plan:369). It must not \`runApp\`, dispose the player,
+/// recompute the stage . It must not \`runApp\`, dispose the player,
 /// clear the lists, log in again, restart Node, or rebuild the media source.
 /// Anything that has to survive rotation therefore has to live here, outside the
 /// widget tree, and be *handed in* to the rebuilt tree.
@@ -21,11 +21,7 @@
 /// Evidence discipline: state fields mirror Qt and cite their Qt source line.
 /// Instrumentation counters (request/key/open counts), the resource ledger and
 /// the host are test harness constructs, not Qt fields. Fields added by the plan
-/// are labelled with their plan line; none impersonates a Qt field.
-///
-/// RED/GREEN: NOT EXECUTED. No \`flutter test\`, no \`dart test\`, no \`dart
-/// analyze\` was run for this file (hard prohibition for this task). The test in
-/// \`test/rotation_continuity_test.dart\` is written, not executed.
+/// are labelled with their source; none impersonates a Qt field.
 ///
 /// Fixture: \`test/fixtures/rotation_state.json\` is synthetic (\`"synthetic":
 /// true\`, \`"not_device_evidence": true\`). It is NOT a record of device rotation
@@ -36,9 +32,7 @@ import 'dart:math' as math;
 
 import 'orientation_state.dart';
 
-// ---------------------------------------------------------------------------
 // 0. Shared constants
-// ---------------------------------------------------------------------------
 
 /// The seven modal names that may be restored (and therefore re-opened after a
 /// rotation) — Qt/src/MusicSession.cpp:243.
@@ -53,9 +47,7 @@ import 'orientation_state.dart';
 /// Qt/src/MusicSession.cpp:243 — membership test used by the restore path.
 bool isRestorableModal(String? modal) => modal != null && restorableModalNames.contains(modal);
 
-// ---------------------------------------------------------------------------
 // 1. QR login: wall clock + generation + cancel completion barrier
-// ---------------------------------------------------------------------------
 
 /// Login phase literals, verbatim from Qt/src/MusicLibrary.h:174 (default
 /// \`"idle"\`) and MusicAccount.cpp:311 (\`"failed"\`), :357 (\`"idle"\`),
@@ -255,7 +247,7 @@ class QrLoginContinuity {
   bool isExpired() => validity.isExpiredAt(_nowMs);
 
   /// Advances the injected wall clock. Never a ticker: rotation must not move
-  /// it (that is exactly the failure mode plan:373 calls out).
+  /// it (that is exactly the failure mode  calls out).
   void observeWallClock(int nowMs) {
     _nowMs = nowMs;
   }
@@ -442,9 +434,7 @@ class QrLoginContinuity {
   }
 }
 
-// ---------------------------------------------------------------------------
 // 2. Playback / queue / lyrics
-// ---------------------------------------------------------------------------
 
 /// Legal playback modes — Qt/src/MusicPlayer.cpp:647 (setMode) and :766
 /// (restoreSessionState).
@@ -546,7 +536,7 @@ enum PlaybackRestoreOutcome {
 /// Every field mirrors a member of MusicPlayer (MusicPlayer.h) or a field of its
 /// session archive (MusicPlayer.cpp:749-758). No playback semantics are invented
 /// here, and nothing here touches pixels: the point is that the object lives
-/// outside the widget tree, so a rotation never rebuilds it (plan:369).
+/// outside the widget tree, so a rotation never rebuilds it .
 class PlaybackContinuity {
   PlaybackContinuity({this.provider = 'netease'});
 
@@ -836,7 +826,7 @@ class PlaybackContinuity {
   }
 }
 
-/// Lyrics state that must outlive a rotation (plan:374).
+/// Lyrics state that must outlive a rotation .
 ///
 /// Mirrors LyricsController.cpp:639-649 field for field, plus the HUD flag
 /// lyricsMode (NativeHud.h:147, archived in MusicSession.cpp:234/:259).
@@ -970,11 +960,9 @@ class LyricsContinuity {
   }
 }
 
-// ---------------------------------------------------------------------------
 // 3. 3D scene / viewer
-// ---------------------------------------------------------------------------
 
-/// 3D camera, clock and viewer state that must outlive a rotation (plan:375).
+/// 3D camera, clock and viewer state that must outlive a rotation .
 ///
 /// Initial values are copied from NativeScene.h:123-161, and applyViewport is a
 /// faithful copy of the only rotation path Qt has: NativeScene.cpp:217-224.
@@ -1215,11 +1203,9 @@ class ViewerContinuity {
   }
 }
 
-// ---------------------------------------------------------------------------
 // 4. Drag cancellation
-// ---------------------------------------------------------------------------
 
-/// Pointer/drag state and its cancellation on rotation (plan:375).
+/// Pointer/drag state and its cancellation on rotation .
 ///
 /// Field set copied from NativeScene.h:175-180 and NativeSceneInput.cpp:9-23.
 class DragContinuity {
@@ -1289,11 +1275,9 @@ class DragContinuity {
   }
 }
 
-// ---------------------------------------------------------------------------
 // 5. Resource identity ledger
-// ---------------------------------------------------------------------------
 
-/// Resource identity ledger (plan:696).
+/// Resource identity ledger .
 ///
 /// This is a STATIC bookkeeping device: it proves by identity tokens and
 /// counters that a rotation does not re-login, does not restart the Node
@@ -1409,9 +1393,7 @@ class ResourceLedger {
       };
 }
 
-// ---------------------------------------------------------------------------
 // 6. Viewport frame + host
-// ---------------------------------------------------------------------------
 
 /// Plain insets (no Flutter EdgeInsets, so this file stays dependency free).
 class ViewportInsets {
@@ -1547,7 +1529,7 @@ class ViewportFrame {
 /// The rotation entry point.
 ///
 /// Everything here exists outside the widget tree, so applying a viewport only
-/// recomputes what the viewport derives (plan:369). The host never rebuilds the
+/// recomputes what the viewport derives . The host never rebuilds the
 /// app, never disposes playback, never clears a list, never logs in again and
 /// never restarts Node.
 class RotationContinuityHost {

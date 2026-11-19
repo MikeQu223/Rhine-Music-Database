@@ -1,33 +1,25 @@
 /// 旋转/窗口变化的「几何 + 视图状态」（纯 Dart，不 import Flutter）。
 ///
-/// 责任边界（docs/superpowers/plans/2026-11-09-qt-to-flutter-parity-plan.md:369-376）：
-/// * 只做两件事：方向判定 + stage 重算（[StageMetrics.compute] / [recomputeStage]），
-///   以及跨旋转视图状态的 capture/restore（[captureOrientationState] /
-///   [restoreOrientationState]）。
-/// * 不持有引擎、播放器、网络、Widget 或单例；本文件没有任何可变全局状态，也没有
-///   可以 dispose/清空引擎的入口，所以「旋转只允许 MediaQuery 重建与 stage 重算」
-///   不依赖调用方自觉（plan:369）。
-/// * 所有跨旋转持久量都活在**方向无关域**：行域（item index / row）、舞台单位、
-///   文本域（字符下标）。绝对像素只在 [ScrollAnchor.pixelOffsetFor] 与
-///   [resolveScrollOffsets] 的出口出现 —— 这正是方向翻转不需要「换算旧像素」的原因，
-///   也是 plan:371「item key + 相对滚动偏移（不是绝对 offset）」的落法。
+/// 只做两件事：方向判定 + stage 重算（[StageMetrics.compute] / [recomputeStage]），
+/// 以及跨旋转视图状态的 capture/restore（[captureOrientationState] /
+/// [restoreOrientationState]）。本文件不持有引擎、播放器、网络、Widget 或单例，
+/// 也没有可变全局状态，所以「旋转只允许 MediaQuery 重建与 stage 重算」不依赖调用方自觉。
 ///
-/// 字段分两类，注释逐条标明出处：
-/// * Qt 持久化/运行时已有的量（stage 几何、lane、目录游标、settingsScroll、queueOffset、
-///   modal、offset）给出 Qt 源行号；
-/// * plan:369-376 要求、但 Qt `sessionState()`（Qt/src/MusicSession.cpp:215-234）
-///   不存的量（[ScrollAnchor.withinItem]、itemKey、[CurveToken]、输入
-///   selection/composing/focus）在字段注释写 plan 行，不冒充 Qt 字段；
-///   [StageInsets] 来自 plan:364（安全区避让只作用于新增纵向容器），
-///   devicePixelRatio 不是 plan 字段，是 Qt 运行时环境量（Qt/src/NativeSceneCamera.cpp:57
-///   的物理宽判定）。
+/// 所有跨旋转持久量都活在**方向无关域**：行域（item index / row）、舞台单位、
+/// 文本域（字符下标）。绝对像素只在 [ScrollAnchor.pixelOffsetFor] 与
+/// [resolveScrollOffsets] 的出口出现，因此方向翻转不需要「换算旧像素」。
+///
+/// 字段分两类：Qt 持久化/运行时已有的量（stage 几何、lane、目录游标、settingsScroll、
+/// queueOffset、modal、offset）在注释中给出 Qt 源；Qt `sessionState`
+/// （Qt/src/MusicSession.cpp:215-234）不存的量（[ScrollAnchor.withinItem]、itemKey、
+/// [CurveToken]、输入 selection/composing/focus）单独说明来源。[StageInsets] 对应
+/// 「安全区避让只作用于新增纵向容器」；devicePixelRatio 是 Qt 运行时环境量
+/// （Qt/src/NativeSceneCamera.cpp:57 的物理宽判定）。
 library;
 
 import 'dart:math' as math;
 
-// ---------------------------------------------------------------------------
-// 常量（逐条带 Qt 证据；不得凭手感改数值）
-// ---------------------------------------------------------------------------
+// 常量（均对应 Qt 源；不得凭手感改数值）
 
 /// Qt 横屏舞台**高**不变量（舞台单位）。
 /// Qt/qml/Main.qml:32 "property real stageScale: height / 1080"。
@@ -38,10 +30,8 @@ const double qtStageHeightUnits = 1080;
 const double qtStageWidthFallbackUnits = 1920;
 
 /// 竖屏舞台**宽**不变量（舞台单位）。
-/// T43 lib/ui/layout/portrait_bands.dart:32 "portraitStageWidthConstant = 1080"；
-/// T02 docs/flutter-migration/contracts/layout.md:281（§6）与 :290-292 给出同一常量与公式；
-/// plan:362。这里只固定「舞台盒」的宽，不裁决 Portrait-W/Band/Hybrid
-/// 谁是样板（T43 同文件:20-22 明确不裁决）。
+/// 与 lib/ui/layout/portrait_bands.dart:32 的 portraitStageWidthConstant 同值（1080）。
+/// 这里只固定「舞台盒」的宽，不裁决 Portrait-W/Band/Hybrid 谁是样板。
 const double portraitStageWidthUnits = 1080;
 
 /// 竖屏判定阈值：aspect < 1.05 即竖屏。
@@ -79,16 +69,14 @@ const double settingsViewportBottom = 836;
 /// 设置内容初始底边（舞台单位）：Qt/src/NativeHud.h:117 "settingsContentBottom = 1600"。
 const double defaultSettingsContentBottom = 1600;
 
-/// 几何浮点比较容差（与 T43 lib/ui/layout/portrait_bands.dart:38 同值）。
-/// 集成收敛项（T44-82）：1080 与 1e-6 在 T43/T44 各有一份，集成后由共享常量模块做
-/// 唯一真源；本值以 Qt/qml/Main.qml:32 的 1080 为准，不得各自漂移。
+/// 几何浮点比较容差。与 lib/ui/layout/portrait_bands.dart:38 同值；
+/// 1080 与 1e-6 以本集合为唯一真源（Qt/qml/Main.qml:32 的 1080），不得各自漂移。
 const double stageGeometryTolerance = 1e-6;
 
 /// 可跨旋转恢复的 modal 白名单，恰好七项。
 /// Qt/src/MusicSession.cpp:243
 /// QStringList{"saved","search","discover","queue","settings","player","local"}。
-/// 唯一真源（T44-82）：lib/app/rotation_continuity.dart 必须 import 本集合，不得再写一份
-/// 字面量；以后若拆共享常量模块，以本文件为迁移源。
+/// 唯一真源：lib/app/rotation_continuity.dart 必须 import 本集合，不得再写一份字面量。
 const Set<String> restorableModalNames = <String>{
   'saved',
   'search',
@@ -99,9 +87,7 @@ const Set<String> restorableModalNames = <String>{
   'local',
 };
 
-// ---------------------------------------------------------------------------
 // 夹取工具（Qt 侧是 std::clamp / std::max(0, x)，这里逐条对应）
-// ---------------------------------------------------------------------------
 
 int _clampInt(int value, int minimum, int maximum) {
   if (maximum < minimum) {
@@ -135,9 +121,7 @@ double hudScrollClamp(double offset, double contentHeight, double viewportHeight
 double settingsScrollMaximumFor(double contentBottom) =>
     hudScrollMaximum(contentBottom - settingsViewportTop, settingsViewportBottom - settingsViewportTop);
 
-// ---------------------------------------------------------------------------
 // 方向
-// ---------------------------------------------------------------------------
 
 /// 方向分类。只有两种取值：Qt 的 compact 分支不是第三种方向，而是横屏内的相机子分支
 /// （Qt/src/NativeSceneCamera.cpp:57），见 [StageMetrics.cameraCompact]。
@@ -145,7 +129,7 @@ enum OrientationKind { landscape, portrait }
 
 /// 纯方向判定，不需要 dpr、不需要 inset（两者都不改变宽高比）。
 ///
-/// 证据 Qt/src/NativeSceneCamera.cpp:55-56。退化窗口（任一维 <= 0）按横屏处理，
+/// 见 Qt/src/NativeSceneCamera.cpp:55-56。退化窗口（任一维 <= 0）按横屏处理，
 /// 与 [StageMetrics.compute] 的退化分支保持一致。
 OrientationKind classifyOrientation({required double logicalWidth, required double logicalHeight}) {
   if (!(logicalWidth > 0) || !(logicalHeight > 0)) {
@@ -156,19 +140,16 @@ OrientationKind classifyOrientation({required double logicalWidth, required doub
       : OrientationKind.landscape;
 }
 
-// ---------------------------------------------------------------------------
 // stage 度量
-// ---------------------------------------------------------------------------
 
 /// 四边安全区 + IME 高度，单位统一按**逻辑像素**接收。
 ///
-/// Qt 横屏完全没有 inset 处理（T43 lib/ui/layout/portrait_bands.dart:14-15 已核对）；
-/// plan:364 要求「安全区避让只作用于新增纵向容器；IME 不缩放 stage」。扣减层因此固定为：
+/// Qt 横屏完全没有 inset 处理（Qt/qml/Main.qml:32 用全高）；
+/// 安全区避让只作用于新增纵向容器，IME 不缩放 stage。扣减层因此固定为：
 /// * IME 永不参与 stageScale/stageWidth/stageHeight，只经 [StageMetrics.imeStageInset]
 ///   与 [StageMetrics.safeTopStage]/[StageMetrics.safeBottomStage] 供新增纵向容器使用；
-/// * 竖屏的可用高度由调用方在**进入 compute 之前**按 T02
-///   docs/flutter-migration/contracts/layout.md:287/:299 扣好 safe.top/safe.bottom
-///   （layoutH），或用 [StageInputs.portraitFromWindow] 做这一步；
+/// * 竖屏的可用高度由调用方在**进入 compute 之前**按 layout.md §6 扣好
+///   safe.top/safe.bottom（layoutH），或用 [StageInputs.portraitFromWindow] 做这一步；
 /// * 横屏沿用 Qt 全窗口高（Qt/qml/Main.qml:32），不做安全区扣减。
 /// 本类只承载数值，不隐式改几何，避免同一个 inset 被扣两次。
 class StageInsets {
@@ -221,14 +202,13 @@ class StageInputs {
     this.insets = StageInsets.zero,
   });
 
-  /// 竖屏场景的可用窗口高工厂（T02
-  /// docs/flutter-migration/contracts/layout.md:287/:299）。
+  /// 竖屏场景的可用窗口高工厂（layoutH = windowHeight - safe.top - safe.bottom）。
   ///
   /// 只用于竖屏：layoutH = windowHeight - safe.top - safe.bottom，再交给
   /// [StageMetrics.compute]。横屏必须继续传完整窗口高（Qt/qml/Main.qml:32 用全高），
   /// 不要把本工厂的产物拿去算横屏，否则会把 Qt 的 1080 高基线缩掉安全区。
   ///
-  /// 本工厂只做 §6 的减法，不碰 IME（plan:364：IME 不缩放 stage）。
+  /// 本工厂只做 §6 的减法，不碰 IME（IME 不缩放 stage）。
   factory StageInputs.portraitFromWindow({
     required double logicalWidth,
     required double windowHeight,
@@ -249,9 +229,8 @@ class StageInputs {
 
   /// 参与舞台几何的高度（逻辑像素）。
   ///
-  /// 横屏传 MediaQuery.size.height（Qt 全窗口高）；竖屏传 T02
-  /// docs/flutter-migration/contracts/layout.md:287 定义的 layoutH —— 已扣
-  /// safe.top/safe.bottom。可直接用 [StageInputs.portraitFromWindow] 生成。
+  /// 横屏传 MediaQuery.size.height（Qt 全窗口高）；竖屏传 layoutH —— 已扣
+  /// safe.top/safe.bottom，可直接用 [StageInputs.portraitFromWindow] 生成。
   final double logicalHeight;
 
   /// MediaQuery.devicePixelRatio。
@@ -281,15 +260,15 @@ class StageMetrics {
   ///   stageWidth = logicalWidth / stageScale（Qt/qml/Main.qml:32-33；
   ///   Qt/src/Engine.cpp:1353 用物理像素算同一比值）。
   /// * 竖屏是新语义：舞台宽恒 1080，stageScale = logicalWidth / 1080，
-  ///   stageHeight = logicalHeight / stageScale（plan:362 Portrait-W 几何；
-  ///   T43 portrait_bands.dart 同式；T02 docs/flutter-migration/contracts/layout.md:290-292
-  ///   同式）。三种候选样板的**舞台盒**一致，差别只在盒内分带，故此处不构成样板裁决。
-  /// * 竖屏的 logicalHeight 必须是 §6 的 layoutH（已扣 safe.top/safe.bottom，
-  ///   layout.md:287/:299），用 [StageInputs.portraitFromWindow] 生成；本函数不再扣一次。
+  ///   stageHeight = logicalHeight / stageScale（Portrait-W 几何，与
+  ///   lib/ui/layout/portrait_bands.dart 同式）。三种候选样板的**舞台盒**一致，
+  ///   差别只在盒内分带，故此处不构成样板裁决。
+  /// * 竖屏的 logicalHeight 必须是 layoutH（已扣 safe.top/safe.bottom），
+  ///   用 [StageInputs.portraitFromWindow] 生成；本函数不再扣一次。
   ///   横屏 logicalHeight 保持 Qt 全窗口高（Qt/qml/Main.qml:32）。
   /// * dpr 不参与换算：物理像素下的 stageScale 恰好是逻辑值乘 dpr，比值不变；
   ///   dpr 只用于 [cameraCompact] 的物理像素阈值。
-  /// * IME 不参与换算（plan:364「IME 不缩放 stage」）；安全区扣减已在输入层完成，
+  /// * IME 不参与换算；安全区扣减已在输入层完成，
   ///   本函数不接收 MediaQuery 原始全高再自行猜测扣减。
   factory StageMetrics.compute(StageInputs inputs) {
     final double width = inputs.logicalWidth;
@@ -362,7 +341,7 @@ class StageMetrics {
   double get safeBottomStage => stageOf(insets.bottom);
 
   /// 只比较「stage 几何」是否真的变了：方向/缩放/宽/高。
-  /// 旋转后调用方用它决定是否重排，而不是拿它去重启引擎（plan:369）。
+  /// 旋转后调用方用它决定是否重排，而不是拿它去重启引擎。
   bool geometryEquals(StageMetrics other, {double tolerance = stageGeometryTolerance}) =>
       orientation == other.orientation &&
       (stageScale - other.stageScale).abs() <= tolerance &&
@@ -394,9 +373,7 @@ class StageMetrics {
 /// 「stage 重算入口」的具名别名：MediaQuery 变化后唯一该调的函数。
 StageMetrics recomputeStage(StageInputs inputs) => StageMetrics.compute(inputs);
 
-// ---------------------------------------------------------------------------
 // 相对滚动锚（item key + 相对偏移，绝不放绝对像素）
-// ---------------------------------------------------------------------------
 
 /// 一个滚动区的行域度量。
 class ScrollExtent {
@@ -435,11 +412,11 @@ class ScrollExtent {
 
 /// 滚动锚：锚定 item 的 key + 该项内部已越过的比例。
 ///
-/// plan:371 要求「item key + **相对**滚动偏移（不是绝对 offset）」；Qt 侧持久化的是
+/// 锚点是 item key + **相对**滚动偏移（不是绝对 offset）。Qt 侧持久化的是
 /// 行域整数（Qt/src/MusicSession.cpp:229-231 listOffset/trackOffset/bodyOffset，
 /// 恢复时 nonnegative 夹取 :254-256；行域证据 Qt/src/NativeHudController.cpp:301、
-/// Qt/src/NativeHudInput.cpp:57 都是「行号 + 行数」运算），行内细粒度不在 Qt 状态里 ——
-/// 故这里补的是行内比例（plan:371），方向换算完全落在行域，跨旋转只需换 itemExtent。
+/// Qt/src/NativeHudInput.cpp:57 都是「行号 + 行数」运算）。行内细粒度不在 Qt 状态里，
+/// 故这里补的是行内比例；方向换算完全落在行域，跨旋转只需换 itemExtent。
 ///
 /// 夹取上界：Qt 恢复只做 nonnegative（:254-256）；本实现的 capture/[pixelOffsetFor] 额外
 /// 夹到 [0, extent.maximum]，与 HudScroll::clampOffset（Qt/src/HudScroll.h:17-19）同向，
@@ -552,9 +529,7 @@ class ResolvedScrollOffsets {
       queue.toString() + ', settings: ' + settings.toString() + ')';
 }
 
-// ---------------------------------------------------------------------------
 // 视图状态中的各个块
-// ---------------------------------------------------------------------------
 
 /// 目录栈的一层：字段与夹取逐条对应 Qt MusicDirectory
 /// （Qt/src/MusicLibrary.h:12-34）与恢复逻辑（Qt/src/MusicSession.cpp:127-135）。
@@ -637,7 +612,7 @@ class DirectoryFrame {
       ', albumCursor: ' + albumCursor.toString() + ')';
 }
 
-/// 输入框状态：文本、selection、composing、focus（plan:372）。
+/// 输入框状态：文本、selection、composing、focus。
 ///
 /// composing 对应 QML 的 preeditText（Qt/qml/Overlay.qml:555 用它决定 placeholder），
 /// 无 composing 时 start/end 均为 -1。selection 用 base+extent 表达，
@@ -702,7 +677,7 @@ class TextInputState {
       focused.toString() + ')';
 }
 
-/// 设置页通用文本编辑中的那一行：key + 文本 + 光标（plan:372）。
+/// 设置页通用文本编辑中的那一行：key + 文本 + 光标。
 ///
 /// Qt 用 editingSettingId 是否为空表示「没有在编辑」（Qt/src/NativeHud.h:103-106
 /// 注释「清空 id 即隐藏」），文本经 settingEditText() 回写
@@ -741,7 +716,7 @@ class SettingEditState {
       ', cursor: ' + cursor.toString() + ')';
 }
 
-/// modal 名 + 关闭中标志 + 当前动画位置 modalOffset（plan:376）。
+/// modal 名 + 关闭中标志 + 当前动画位置 modalOffset。
 ///
 /// 白名单七项见 [restorableModalNames]（Qt/src/MusicSession.cpp:243）。
 /// 旋转路径**保留** closing 与 offset：Qt 运行时只有关闭动画走完才清 modal
@@ -773,10 +748,9 @@ class ModalState {
     if (current == null || current.isEmpty || !restorableModalNames.contains(current)) {
       return none;
     }
-    // offset 是舞台单位（方向无关），也是当前动画位置（plan:376）；closing 只是关闭中
-    // 标志。restore 侧必须从 offset 续播、不得从 0 重启；关闭动画的 owner 在 Widget
-    // 树之外（plan:369），列为 A2/A3 集成项，集成时由该 owner 消费本 offset 作为起点。
-    // 两者都原样保留。
+    // offset 是舞台单位（方向无关），也是当前动画位置；closing 只是关闭中标志。
+    // restore 侧必须从 offset 续播、不得从 0 重启；关闭动画发生在 Widget 树之外，
+    // 由外部以本 offset 作为起点。两者都原样保留。
     return ModalState(name: current, closing: closing, offset: offset);
   }
 
@@ -797,7 +771,7 @@ class ModalState {
       ', offset: ' + offset.toString() + ')';
 }
 
-/// 滚动数字/滚动曲线的代次标识（plan:376「滚动数字曲线不重启」）。
+/// 滚动数字/滚动曲线的代次标识（滚动数字曲线跨旋转不重启）。
 ///
 /// 旋转只做 resume：代次原样带走。只有真正的重新启动才允许 [nextGeneration]，
 /// 这样「旋转后曲线从头开始」在类型层就写不出来。
@@ -831,11 +805,9 @@ class CurveToken {
   String toString() => 'CurveToken(' + id + '#' + generation.toString() + ')';
 }
 
-// ---------------------------------------------------------------------------
 // 总状态 + capture/restore
-// ---------------------------------------------------------------------------
 
-/// 必须跨旋转保留的视图状态（plan:371-372、376 的 A1 侧子集）。
+/// 必须跨旋转保留的视图状态。
 ///
 /// 全部字段方向无关：lane 行号、目录游标、相对锚、文本下标、舞台单位偏移。
 class OrientationViewState {
@@ -879,7 +851,7 @@ class OrientationViewState {
 
   /// 队列弹层锚：Qt queueOffset（Qt/src/NativeHud.h:113；写出
   /// Qt/src/MusicSession.cpp:223，恢复 :246 nonnegative；运行时上界
-  /// Qt/src/NativeHudPlayer.cpp:47）。plan:374 要求队列跨旋转不丢。
+  /// Qt/src/NativeHudPlayer.cpp:47）。队列必须跨旋转不丢。
   final ScrollAnchor queueAnchor;
 
   /// 3D 场景选中卡，夹到 [0,39]（Qt/src/MusicSession.cpp:260）。
@@ -1025,7 +997,7 @@ class OrientationSnapshot {
       sourceStageScale.toString() + ')';
 }
 
-/// 旋转前捕获：夹取 + 白名单过滤 + 栈截断一次做完，产出方向无关的快照（plan:369）。
+/// 旋转前捕获：夹取 + 白名单过滤 + 栈截断一次做完，产出方向无关的快照。
 OrientationSnapshot captureOrientationState(OrientationViewState state, StageMetrics metrics) =>
     OrientationSnapshot(
       state: state.sanitized(),
@@ -1050,8 +1022,8 @@ OrientationSnapshot captureOrientationState(OrientationViewState state, StageMet
 ///
 /// 为什么这里不按 metrics 改任何数值：状态里的每个量都在行域/文本域/舞台单位，
 /// 舞台单位在横竖屏都由同一套 1080 基准定义（Qt/qml/Main.qml:32、
-/// T43 portrait_bands.dart:32），所以没有「旧像素 -> 新像素」这一步。
-/// 绝对偏移由 [resolveScrollOffsets] 在需要绘制时按新 extent 现算（plan:371）。
+/// lib/ui/layout/portrait_bands.dart:32），所以没有「旧像素 -> 新像素」这一步。
+/// 绝对偏移由 [resolveScrollOffsets] 在需要绘制时按新 extent 现算。
 OrientationViewState restoreOrientationState(OrientationSnapshot snapshot, StageMetrics metrics) {
   // 退化帧不抛错：Engine::resize 静默保留上一有效尺寸（Qt/src/Engine.cpp:841-843），
   // 这里对应地静默保留上一有效状态。StageMetrics.compute 对不可度量输入给出
@@ -1078,9 +1050,7 @@ ResolvedScrollOffsets resolveScrollOffsets(
   );
 }
 
-// ---------------------------------------------------------------------------
 // 比较工具
-// ---------------------------------------------------------------------------
 
 bool _listEquals<T>(List<T> a, List<T> b) {
   if (identical(a, b)) {

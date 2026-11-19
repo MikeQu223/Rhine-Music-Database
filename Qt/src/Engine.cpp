@@ -318,12 +318,12 @@ QVariantMap Engine::performance() const {
         result.insert("gpuTimeMs", gpuMicros / 1000.0);
     }
     // 状态无条件发布：没有样本时它正是唯一能说明"为什么没有"的信息，而 gpuTimeMs 的
-    // 缺省只表示"这次没测到"。两者语义不同，不能让前者被后者吞掉（A01）。
+    // 缺省只表示"这次没测到"。两者语义不同，不能让前者被后者吞掉。
     result.insert("gpuTimingStatus",
                   QString::fromLatin1(RhineRender::gpuTimingStatusName(
                       RhineRender::GpuTimingStatus(m_gpuTiming.load(std::memory_order_relaxed)))));
 
-    // ---- A11 整帧资源账本 ----
+    // 整帧资源账本
     // 下面这些键和上面的"当前快照"不是同一口径，命名与 CSV 列都带 ledger/peak 前缀，
     // 避免分析脚本把"窗口峰值"当成"本帧值"。峰值窗口 = 最近 kLedgerWindow 个渲染帧。
     const quint64 renderFrames = m_renderFrames.load(std::memory_order_relaxed);
@@ -356,7 +356,7 @@ quint64 Engine::resourceBudgetBytes() {
     return bytes;
 }
 
-/** A11：渲染线程每帧调用一次，维护滚动窗口峰值、本帧增量与封面上传速率。 */
+/** 渲染线程每帧调用一次，维护滚动窗口峰值、本帧增量与封面上传速率。 */
 void Engine::noteFrameLedger(quint64 resources, quint64 bindings, quint64 textureBytes,
                              quint64 coverUploads) {
     // frame 已经是 ++ 之后的值：对外的帧号口径与 renderFrames 一致（1 基）。
@@ -431,7 +431,7 @@ void Engine::recomputeLedgerPeaks() {
 /** 仅在画面变化时通知唯一场景，静止时保留按需休眠。 */
 void Engine::notifySceneRenderers(bool visualChanged) {
     if (visualChanged) {
-        // A03：版本只在真的推进内容时自增。呈现层拿它当"这一帧有没有新内容"的唯一判据，
+        // 版本只在真的推进内容时自增。呈现层拿它当"这一帧有没有新内容"的唯一判据，
         // 重复推同一个值不会造成重复重渲；而信号是没法这么用的——同一个内容变化会被
         // 场景帧、HUD、异步资源到达各触发一次。
         m_sceneRevision.fetch_add(1, std::memory_order_relaxed);
@@ -439,7 +439,7 @@ void Engine::notifySceneRenderers(bool visualChanged) {
     }
 }
 
-/** A03：渲染线程上报"新资源已就位"。语义与一次真实的视觉变化相同，只是触发者不是帧字段。 */
+/** 渲染线程上报"新资源已就位"。语义与一次真实的视觉变化相同，只是触发者不是帧字段。 */
 void Engine::requestSceneContent() {
     ++m_sceneRequests;
     notifySceneRenderers(true);
@@ -642,7 +642,7 @@ void Engine::submitTextureAdmission(const QString &musicKey) {
     m_admissionScheduler.stop();
 }
 /**
- * MUST-C 的主入口：把一份"真的 apply 过的" Flutter 快照投影成原生可见格的业务资源。
+ *  的主入口：把一份"真的 apply 过的" Flutter 快照投影成原生可见格的业务资源。
  *
  * 三条边界写在这里，别在别处偷偷放宽：
  *   - 只有解析出真实身份（siren:<kind>:<id>）的格才会被投影；没身份的格继续是占位档案壳。
@@ -1179,11 +1179,7 @@ void Engine::resize(double width, double height) {
     wake();
 }
 void Engine::action(QString value) {
-    // 用户 m10082：性能面板不是用户要求的功能 —— 其专用动作入口注释掉（保留原文，不删）。
-    // if (value == "performance:toggle") {
-    //     emit performanceRequested();
-    //     return;
-    // }
+    // 性能面板停用：performance:toggle 动作不再分发。
     // 窗口模式由 Qt 原生窗口处理，不进入音乐状态或场景动画。
     if (value == "window:fullscreen") {
         toggleFullscreen();
@@ -1671,7 +1667,7 @@ void Engine::step(double time) {
             ++it;
         }
     }
-    // MUST-C：可见格的准入上报与封面泵。放在 prune 之后：只给真正留下来的条目做事。
+    // 可见格的准入上报与封面泵。放在 prune 之后：只给真正留下来的条目做事。
     pumpEmbeddedCells(retainedKeys, m_embeddedCellScrolling);
     publishEmbeddedCells(retainedKeys);
 #if defined(Q_OS_ANDROID)

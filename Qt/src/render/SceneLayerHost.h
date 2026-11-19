@@ -97,7 +97,7 @@ class SceneLayerHost {
 
 #endif
     /**
-     * 引擎内容版本（A03）：把"引擎侧内容变化"归纳成两个单调计数器，每帧推一次。
+     * 引擎内容版本：把"引擎侧内容变化"归纳成两个单调计数器，每帧推一次。
      *
      * 为什么需要它：requestSceneContent()/requestOverlayContent() 是按信号触发的，一次内容
      * 变化往往伴随多个信号（场景帧 + HUD + 异步资源到达），重复置脏不会多画一帧，但拿不到
@@ -204,7 +204,7 @@ class SceneLayerHost {
     QWindow *m_visibleWindow = nullptr;
     quint64 m_sceneRenders = 0;
     quint64 m_overlayRenders = 0;
-    /// A03：最近一次被消费的内容版本。只有版本前进才置脏一次；重复推同一个值直接返回。
+    /// 最近一次被消费的内容版本。只有版本前进才置脏一次；重复推同一个值直接返回。
     /// 跨平台保留（非 Linux 分支只记录、不改变置脏策略），这样上层代码不必再套 ifdef。
     quint64 m_resourceRevision = 0;
     quint64 m_hudResourceRevision = 0;
@@ -221,7 +221,7 @@ class SceneLayerHost {
     quint64 m_dirtyScene = 0;
     quint64 m_dirtyOverlay = 0;
     quint64 m_dirtySafety = 0;
-    /// A03：版本推进驱动的置脏次数（与信号驱动的分列，才看得出谁在主导）
+    /// 版本推进驱动的置脏次数（与信号驱动的分列，才看得出谁在主导）
     quint64 m_dirtyRevision = 0;
     quint64 m_probeFrames = 0;
     bool m_layerProbe = false;

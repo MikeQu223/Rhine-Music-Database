@@ -1,6 +1,6 @@
-/// T34-S01-M12-W3 —— 动作行（三列按钮行）的纯数据构建器。
+///  —— 动作行（三列按钮行）的纯数据构建器。
 ///
-/// 真值来源（逐行对照 /home/aibeto/code/Rhine-Music-Database/Qt/src，行号即证据）：
+/// 真值来源（逐行对照 Qt/src，行号即证据）：
 /// - SongDetailCard.cpp:17-46    actions()：gap=12、height=44、width=(model.width-gap*2)/3、
 ///                               route 为空整格跳过、primaryRow && index==0 用前景实心填充、
 ///                               否则四条 1px 边框（alpha 0.2）、hit(...)、text(label,x+12,y+12,14,...)

@@ -24,9 +24,7 @@ import '../hud/text/glyph_font.dart';
 import '../ui/pages/boot_page.dart';
 import 'basic_hud_resources.dart';
 
-// ---------------------------------------------------------------------------
 // 1) logo 轮廓（Qt/src/NativeHudBoot.cpp:12-149 的 contour / contourSegment）
-// ---------------------------------------------------------------------------
 
 /// Qt/src/NativeHudBoot.cpp:16-19 的闭合轮廓（RHINE 的 R 与 H 连成的那条）。
 const String _kLogoContour =
@@ -185,9 +183,7 @@ String _contourSegment(double startFraction, double lengthFraction) {
   return path.toString();
 }
 
-// ---------------------------------------------------------------------------
 // 2) boot glyph 命令流（Qt/src/NativeHudBoot.cpp:155-311 `boot()`）
-// ---------------------------------------------------------------------------
 
 /// `NativeHud::ink()`：Qt/src/NativeHud.cpp:10-15。
 List<Object?> _ink(bool dark) => <Object?>[
@@ -467,7 +463,7 @@ class BasicBootGlyphLayer extends StatelessWidget {
               }),
               // 显式声明舞台：本轮子树已经在 stage 坐标系里（宿主给过一次
               // Transform.scale），命令流本身就是 stage 单位，painter 绝不能再用
-              // HudStage.fromLogicalSize 折一次高度（那是 DEDUP-13 禁止的第二次缩放：
+              // HudStage.fromLogicalSize 折一次高度（那是 禁止的第二次缩放：
               // 横屏 1080 高恰好等于 1、竖屏 stageHeight≠1080 时会把 glyph 整体缩水）。
               stage: HudStage(
                 scale: 1.0,
@@ -495,9 +491,7 @@ class BasicBootGlyphLayer extends StatelessWidget {
   }
 }
 
-// ---------------------------------------------------------------------------
 // 3) 页面：门槛层（boot_page.dart）+ glyph 层 + 35s 闸门 / skip 交割
-// ---------------------------------------------------------------------------
 
 /// 初始化页面：真实门槛页 + glyph 层，交割（35s 到点或 ENTER SYSTEM）回调宿主收页。
 ///

@@ -1,4 +1,4 @@
-/// T40-S03 · 共享弹层外壳（modal shell）：frame / mask / motion / close / title 五段管线。
+///  · 共享弹层外壳（modal shell）：frame / mask / motion / close / title 五段管线。
 ///
 /// 归属（native 对照 Qt/src/NativeHudModal.cpp；本文件是这五段在 Flutter 侧的唯一 owner）：
 ///   - 绘制栈与整体透明度   ← NativeHudModal.cpp:83-84（save / alpha(opacity)）
@@ -34,9 +34,7 @@ library;
 import 'package:rhine_music_database/hud/pages/chrome.dart'
     show HudHit, HudSurfaceSink, HudTextPort, hudFill, hudHitRegion, hudOp, hudText;
 
-// ===========================================================================
-// T40-S03 冻结字面量（逐字对照 Qt 源码；改动即破坏 1:1）
-// ===========================================================================
+//  冻结字面量（逐字对照 Qt 源码；改动即破坏 1:1）
 
 /// 舞台高度：Qt 的遮罩与舞台级命中直接写 1080（NativeHudModal.cpp:128 / :163）。
 /// HudStage.fromLogicalSize 已把任意窗口归一化到高 1080（lib/hud/protocol/hud_frame.dart:340-366），
@@ -138,9 +136,7 @@ const String kModalShellLyricsOffsetModal = 'lyrics-offset';
 const String kModalShellLyricsSourceModal = 'lyrics-source';
 const String kModalShellDetailSortModal = 'detail-sort';
 
-// ===========================================================================
 // 颜色（Qt 的 QJsonArray 复合色原样搬，不做 gamma 变换）
-// ===========================================================================
 
 /// 遮罩色：NativeHudModal.cpp:163-165。search 更淡（0.15 / 0.12 对 0.6 / 0.45）。
 List<Object?> modalShellScrimColor({required bool dark, required bool search}) => dark
@@ -158,9 +154,7 @@ List<Object?> modalShellPanelColor({required bool dark, required bool tagged}) =
 List<Object?> modalShellControlTint({required bool dark}) =>
     dark ? <Object?>[0.55, 0.59, 0.46, 0.13] : <Object?>[0.44, 0.49, 0.36, 0.1];
 
-// ===========================================================================
 // 边界
-// ===========================================================================
 
 /// 弹层矩形（舞台坐标，未叠加 motion.offset）。相当于 Qt 的 QRectF。
 final class ModalShellBounds {
@@ -281,9 +275,7 @@ ModalShellBounds modalShellBounds({required String modalId, required double stag
   ); // :158
 }
 
-// ===========================================================================
 // 管线策略
-// ===========================================================================
 
 /// 一个弹层的管线策略：外壳只回答"哪几段要画"，不回答"内容长什么样"。
 final class ModalShellPolicy {
@@ -378,9 +370,7 @@ String _categoryFor(String modalId) {
   return kModalShellCategoryDefault;
 }
 
-// ===========================================================================
 // 位移动画（SurfaceMotion 1:1）
-// ===========================================================================
 
 /// Qt UiMotion::SurfaceMotion 的逐行移植（UiMotion.h:24-42 / UiMotion.cpp:86-120）。
 ///
@@ -471,9 +461,7 @@ double _clamp(double value, double lower, double upper) {
   return value;
 }
 
-// ===========================================================================
 // 输入 / 输出
-// ===========================================================================
 
 /// 一次弹层绘制的输入。外壳只消费它，不读任何全局状态、不查音乐模型。
 final class ModalShellSpec {
@@ -594,9 +582,7 @@ final class ModalShellHitTable implements HudSurfaceSink {
   }
 }
 
-// ===========================================================================
 // 外壳
-// ===========================================================================
 
 /// 共享弹层外壳：一次 [build] 恰好发一轮
 /// save → alpha → [遮罩] → translate → 面板底 → [舞台关闭命中] → [标题区] → 内容 → restore，

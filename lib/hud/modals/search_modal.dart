@@ -1,18 +1,18 @@
-// Rhine Qt -> Flutter parity, card T35 / atom T35-C19-A1-search_modal.
+// Rhine Qt -> Flutter parity, card  / 文件 -search_modal.
 //
 // This file is the search modal CHROME layer only: modal frame geometry, the
 // search toolbar (bar / kind tabs / group tabs / table header / group-back
 // entry), the footer status line, the input-layer geometry and the pure
 // state/action semantics that belong to the modal frame. The result viewport
 // rows, scroll rail and auto-fill scroll state are owned by
-// lib/hud/modals/search_results.dart (W2); this file only imports the four
+// lib/hud/modals/search_results.dart; this file only imports the four
 // frozen constants and the single SearchColor type defined there, and never
 // constructs its layer.
 //
 // Qt evidence (only source of truth for every number below):
 //   Qt/src/NativeHud.cpp:140-158     modalBounds / search modalWidth formula
 //   Qt/src/NativeHud.cpp:184-191     input + search list stage geometry (state())
-//   Qt/src/NativeHud.h:96-98         ResultListTop/Bottom/RowHeight (frozen, W2)
+//   Qt/src/NativeHud.h:96-98         ResultListTop/Bottom/RowHeight (frozen)
 //   Qt/src/NativeHudSearch.cpp:8-18   toolbar constants
 //   Qt/src/NativeHudSearch.cpp:20-42  accent / mutedInk / faintInk / bars
 //   Qt/src/NativeHudSearch.cpp:52-129 searchToolbar draw + hit order
@@ -40,9 +40,7 @@ import 'package:rhine_music_database/hud/modals/search_results.dart'
         kSearchResultListBottom,
         kSearchResultRowHeight;
 
-// ---------------------------------------------------------------------------
 // (a) Frozen cross-module constants (imported, never redefined)
-// ---------------------------------------------------------------------------
 // kSearchInset           = 53  (Qt NativeHudSearch.cpp:8  SearchInset)
 // kSearchResultListTop   = 328 (Qt NativeHud.h:96)
 // kSearchResultListBottom = 758 (Qt NativeHud.h:97)
@@ -52,9 +50,7 @@ import 'package:rhine_music_database/hud/modals/search_results.dart'
 // is never built here and this file must not be imported by search_results.dart
 // (no cycle).
 
-// ---------------------------------------------------------------------------
 // (b) Toolbar constants, one to one with Qt/src/NativeHudSearch.cpp:8-18
-// ---------------------------------------------------------------------------
 /// Qt SearchInset = 53 (NativeHudSearch.cpp:8).
 ///
 /// Named kSearchToolbarInset because the frozen cross-module constant
@@ -175,9 +171,7 @@ const String kSearchEscapeAction = 'close-modal';
 const String kSearchInputHintLocal = '检索本地歌曲、歌手、专辑或文件夹';
 const String kSearchInputHintOnline = '搜索歌曲、歌手、专辑或歌单';
 
-// ---------------------------------------------------------------------------
 // (c) Modal frame geometry - Qt/src/NativeHud.cpp:153-158
-// ---------------------------------------------------------------------------
 
 /// Search modal width, exactly Qt NativeHud.cpp:154-156:
 /// min(stageWidth - 100, max(760, min(1000, stageWidth * 0.5 - 59))).
@@ -215,9 +209,7 @@ Rect searchModalBounds(double stageWidth) => Rect.fromLTWH(
       kSearchModalHeight,
     );
 
-// ---------------------------------------------------------------------------
 // (d) Input layer / result viewport geometry - NativeHud.cpp:184-191
-// ---------------------------------------------------------------------------
 
 /// Overlay.qml:520-566 input rectangle on the stage:
 /// x = bounds.x + 53, y = bounds.y + 180 (= 302),
@@ -252,9 +244,7 @@ Rect searchListRect(double stageWidth) {
 double searchUsableWidth(double stageWidth) =>
     searchModalWidth(stageWidth) - 2 * kSearchToolbarInset;
 
-// ---------------------------------------------------------------------------
 // (e) Kind tabs - NativeHudSearch.cpp:63-83
-// ---------------------------------------------------------------------------
 
 /// Qt label list for the four kind tabs (NativeHudSearch.cpp:64-65).
 List<String> searchKindLabels({required bool localMusic}) =>
@@ -277,9 +267,7 @@ String searchKindAction(int index) => 'music:kind:$index';
 /// (NativeHudSearch.cpp:105).
 String searchGroupAction(int index) => 'music:group:$index';
 
-// ---------------------------------------------------------------------------
 // Draw-op model: one ordered list, so hit order == draw order, like Qt.
-// ---------------------------------------------------------------------------
 
 /// Qt accent() (NativeHudSearch.cpp:20-22) and theme ink().
 class SearchPalette {
@@ -394,9 +382,7 @@ typedef SearchGlyphWidth = double Function(
   String weight,
 );
 
-// ---------------------------------------------------------------------------
 // (e/f/g/h) Toolbar layout builder, same order as NativeHudSearch.cpp:52-129
-// ---------------------------------------------------------------------------
 
 /// Builds the search toolbar ops in Qt draw order:
 /// bar fill + gold bar + QUERY label -> four kind tabs (hit, text, underline)
@@ -605,9 +591,7 @@ SearchModalLayout buildSearchToolbarLayout({
   return SearchModalLayout(ops: List<SearchDrawOp>.unmodifiable(ops));
 }
 
-// ---------------------------------------------------------------------------
 // (j) Footer - NativeHudSearch.cpp:232-253
-// ---------------------------------------------------------------------------
 
 /// Qt footer label; null means the whole loaded/total block is not drawn
 /// (loaded == 0 && !sourceLoading, NativeHudSearch.cpp:238-241).
@@ -694,9 +678,7 @@ SearchModalLayout buildSearchFooterLayout({
   return SearchModalLayout(ops: List<SearchDrawOp>.unmodifiable(ops));
 }
 
-// ---------------------------------------------------------------------------
 // (k) Query length limits - Qt/src/MusicLibrary.cpp:435-455
-// ---------------------------------------------------------------------------
 
 /// Qt provider == "qq" ? 60 : 100 (MusicLibrary.cpp:440).
 int searchQueryLimit(String provider) => provider == 'qq' ? 60 : 100;
@@ -716,9 +698,7 @@ String searchQueryOverflowStatus(int maximum) =>
 bool searchQueryEmptyOrOverflow(String query, int maximum) =>
     query.trim().isEmpty || searchQueryLength(query) > maximum;
 
-// ---------------------------------------------------------------------------
 // (l) Input layer semantics - Overlay.qml:520-566 + Engine.cpp:1006-1012
-// ---------------------------------------------------------------------------
 
 /// Overlay.qml: input is visible when modal == search or modal == saved.
 bool searchInputVisibleForModal(String modal) =>
@@ -756,10 +736,8 @@ SearchAcceptedCommand searchAccepted(String text, bool controlModifier) =>
         ? const SearchAcceptedCommand.key('Enter', command: true)
         : SearchAcceptedCommand.query(text);
 
-// ---------------------------------------------------------------------------
 // Auto-fill gate only (NativeHudSearch.cpp:268-281). The scroll/row-count state
 // itself is owned by search_results.dart; this predicate never mutates it.
-// ---------------------------------------------------------------------------
 
 /// Qt ensureSearchFilled gate conditions (NativeHudSearch.cpp:269-276).
 bool shouldAutoFillSearch({
@@ -787,9 +765,7 @@ bool searchAutoFillNeedsMore(int rowCount) =>
     rowCount * kSearchResultRowHeight <
     kSearchResultListBottom - kSearchResultListTop;
 
-// ---------------------------------------------------------------------------
 // (m/n) Painter adapter: all text + hits through injectable ports
-// ---------------------------------------------------------------------------
 
 /// Ports the host must provide. Glyph advance and text drawing must be real
 /// (host glyph table / Skia), and hit collection must preserve the six-field

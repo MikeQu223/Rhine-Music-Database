@@ -13,7 +13,7 @@ import org.qtproject.qt.android.RhineQtViews
 private const val TAG = "QtSceneView"
 
 /**
- * Flutter 页面里的 Qt 场景视图（PARITY QT-OVERLAY-128）。
+ * Flutter 页面里的 Qt 场景视图。
  *
  * 结构：
  *   FrameLayout（本类持有，Flutter 的宿主 View）

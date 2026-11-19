@@ -40,9 +40,6 @@
 /// literals. Qt sites that are genuinely undefined (division by a zero period,
 /// `QVector::at` out of range) are reported as Dart errors instead of being
 /// given an invented mapping.
-///
-/// STATUS: written, deliberately NOT executed. The build/test gates for this
-/// atom are NOT_RUN by contract.
 library;
 
 import 'dart:convert';
@@ -51,9 +48,7 @@ import 'dart:math' as math;
 import 'package:rhine_music_database/scene/scene_math.dart'
     show Mat4, SceneCell, Vec3, kCellBaseY, kLanePitch, kLaneRowOrigin, kRowCentre, kRowPitch;
 
-// ---------------------------------------------------------------------------
 // Qt literals.
-// ---------------------------------------------------------------------------
 
 /// NativeScene.h:109-110 — both arrays are exactly five lanes wide, so every
 /// lane wrap is modulo five (NativeScene.cpp:73,112,158).
@@ -105,9 +100,7 @@ const String kSceneAxisRow = 'row';
 /// lane holds, and the actor's default cell (NativeScene.h:85).
 const SceneCell kSceneFallbackCell = SceneCell(2, kLaneRowOrigin);
 
-// ---------------------------------------------------------------------------
 // NativeScene.cpp:11-16 — the two integer helpers every address goes through.
-// ---------------------------------------------------------------------------
 
 /// NativeScene.cpp:11-13 — `wrap()`: Euclidean wrap into `[0, count)`, and 0
 /// for a non-positive count instead of dividing.
@@ -136,9 +129,7 @@ int sceneNearest(int value, int center, int period) {
   return value + offset.floor() * period;
 }
 
-// ---------------------------------------------------------------------------
 // NativeSceneInput.cpp:172,183-185,191 — tap versus drag.
-// ---------------------------------------------------------------------------
 
 /// NativeSceneInput.cpp:172 — `std::hypot(x - m_down.x, y - m_down.y) > 7`.
 ///
@@ -173,9 +164,7 @@ bool sceneTapSelects({
   return captured && browsing && canBrowse && !dragActive && !moved;
 }
 
-// ---------------------------------------------------------------------------
 // NativeSceneInput.cpp:201-230 — rebase.
-// ---------------------------------------------------------------------------
 
 /// NativeSceneInput.cpp:201-210 — the shift `rebase()` subtracts from a cell,
 /// or null when Qt returns early because the shift is zero.
@@ -203,9 +192,7 @@ SceneCell? sceneRebaseShift(SceneCell cell) {
   return SceneCell(lane, row);
 }
 
-// ---------------------------------------------------------------------------
 // Track <-> plane — NativeSceneInput.cpp:116-134.
-// ---------------------------------------------------------------------------
 
 /// The two scroll counters: `m_columnCamera.value` and `m_rail.value`
 /// (NativeScene.h:118,121). Both springs start at zero, i.e. [origin].
@@ -324,9 +311,7 @@ List<SceneCell> sceneDragPath({
   return scenePlanePath(from: from, target: sceneTrackPlane(track));
 }
 
-// ---------------------------------------------------------------------------
 // Drag projection — NativeSceneInput.cpp:24-33.
-// ---------------------------------------------------------------------------
 
 /// One `QPointF` of `SceneMotion::DragProjection` (SceneDrag.h:12-15): the
 /// screen-space step produced by one plane unit of motion.
@@ -397,9 +382,7 @@ SceneDragProjection sceneDragProjection({
   );
 }
 
-// ---------------------------------------------------------------------------
 // slots.json -> columns — NativeScene.cpp:28-47.
-// ---------------------------------------------------------------------------
 
 /// Sentinel for an absent JSON key, so that `"category": null` and a
 /// missing `category` stay distinguishable the way `QJsonValue`'s Null
@@ -565,7 +548,7 @@ class SceneGrid {
 
   /// The `slots.json` half of NativeScene.cpp:44-47's asset gate
   /// (`m_columns[0].isEmpty()`). The `actorTemplate` half belongs to the
-  /// appearance atom, so this only reports whether lane 0 has records.
+  /// appearance 文件, so this only reports whether lane 0 has records.
   bool get isUsable => lanes[0].isNotEmpty;
 
   /// NativeScene.cpp:76-78 — the canonical card position: lane pitch around
@@ -611,9 +594,7 @@ class SceneGrid {
       'lanes: $lanes)';
 }
 
-// ---------------------------------------------------------------------------
 // Selection — NativeScene.cpp:87-164.
-// ---------------------------------------------------------------------------
 
 /// The selection state `select` and `navigate` write: Qt's `m_selected`
 /// (NativeScene.h:159), `m_actor.cell` and `m_memories` (NativeScene.h:110).

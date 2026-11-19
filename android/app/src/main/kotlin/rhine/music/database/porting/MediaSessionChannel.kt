@@ -8,7 +8,7 @@ import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 
 /**
- * Dart 与 Android 的媒体会话桥（T25-S02）。
+ * Dart 与 Android 的媒体会话桥。
  *
  * 真值源：Qt/src/AndroidMediaSession.cpp:50-68（setCommandCallback / ensureStarted / update /
  * stop 四个入口）与 MediaSessionHost.kt（静态状态、前台服务、通知、音频焦点的唯一实现）。

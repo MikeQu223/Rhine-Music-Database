@@ -176,13 +176,7 @@ Item {
         enabled: overlay.hostShortcutsEnabled
         onActivated: rhine.toggleFullscreen()
     }
-    // 用户 m10082：性能面板不是用户要求的功能 —— F10 切换入口停用，
-    // 且 profiler 上下文属性已不再注册，保留会变成未定义引用。
-    // Shortcut {
-    //     sequence: "F10"
-    //     context: overlay.shortcutContext
-    //     onActivated: profiler.toggleVisible()
-    // }
+    // 性能面板停用：F10 入口随之移除（profiler 上下文属性已不再注册）。
     Item {
         id: controls
         width: overlay.stageWidth
@@ -666,8 +660,5 @@ Item {
             dark: rhine.state.dark === true
         }
     }
-    // 用户 m10082：性能面板不是用户要求的功能 —— 显示实例注释掉（保留原文，不删）。
-    // PerformancePanel {
-    //     z: 1000
-    // }
+    // 性能面板停用，不再实例化。
 }

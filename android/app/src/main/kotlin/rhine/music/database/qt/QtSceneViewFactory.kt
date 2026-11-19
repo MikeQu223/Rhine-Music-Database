@@ -6,7 +6,7 @@ import io.flutter.plugin.platform.PlatformView
 import io.flutter.plugin.platform.PlatformViewFactory
 
 /**
- * 真实 Qt 场景层的 PlatformView 工厂（PARITY QT-OVERLAY-128）。
+ * 真实 Qt 场景层的 PlatformView 工厂。
  *
  * 这里注册的是一个**Qt 原生子视图**（QQuickView 挂在宿主 Activity 的窗口上），不是
  * WebView、不是截图、也不是 startActivity 起另一个 Qt 页面：视图的父子关系、触摸事件、

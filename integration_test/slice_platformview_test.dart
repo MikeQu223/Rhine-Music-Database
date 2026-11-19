@@ -1,50 +1,33 @@
-// T11-C18-W3：T11 候选 A（PlatformView 切片）的宿主契约 + 「没有假 Qt」不变量 + 真机切片门。
+// 候选 A（PlatformView 切片）的宿主契约 + 「没有假 Qt」不变量 + 真机切片门。
 //
-// 未执行声明（用户禁令：本 atom 禁止 flutter build/test/analyze、dart test/analyze、
-// Gradle/gradlew、pub get、formatter、Qt 编译、adb、装包与任何验证脚本）：
-// 本文件的每一行断言在本原子内**一次都没跑过**。RED 未验证 / GREEN 未验证；
-// 结论只能来自静态阅读，不许在报告或对话里写成「测试通过」。
+// 前置依赖（未落地前无法按设备命令真机运行）：
+//   pubspec.yaml 的 dev_dependencies 需增加 integration_test: sdk: flutter，
+//   并把 flutter_test import 换成 integration_test、在 main 首行加
+//   IntegrationTestWidgetsFlutterBinding.ensureInitialized。pubspec.yaml 是共享
+//   文件、不属本文件改动范围，留给装配方；在那之前本文件用 flutter_test 即可运行。
 //
-// INTEGRATION-DEP GAP（必须先补齐才能按计划 T11 的命令真机运行）：
-//   1. pubspec.yaml 的 dev_dependencies 增加
-//        integration_test:
-//          sdk: flutter
-//   2. 把下面的 flutter_test import 换成
-//        import 'package:integration_test/integration_test.dart';
-//      并在 main() 第一行加 IntegrationTestWidgetsFlutterBinding.ensureInitialized();
-//   pubspec.yaml 是共享文件、不在本 atom 独占写域，所以这两步留给装配方（T16）。
-//   在那之前本文件用 flutter_test 即可运行（不会加载 Qt、也不会假装加载）。
+// 契约 v2 依赖：本文件按冻结契约 v2 引用下列符号，实现位于
+// lib/platform/qt_platform_view.dart 与
+// android/app/src/main/kotlin/rhine/music/database/porting/QtPlatformViewHost.kt：
+//   QtPlatformCompositionMode / wireName / fromWire、
+//   qtPlatformCompositionTextureLayer / qtPlatformCompositionViewComposition、
+//   QtProbeKeys 的 8 个新 key、QtHostStatus 的 8 个新字段、
+//   QtPlatformView.compositionMode、QtPlatformViewController.compositionMode /
+//   applyCompositionMode。
+//   本文件只做契约锁定：断言 key 名、词表、verdict 语义与「不发布像素」的形状，
+//   不复制实现，也不替代实现侧的静态核对。行号随实现漂移，复核以函数名重查。
 //
-// 契约 v2 依赖（本文件是三个产品文件里唯一在 W3 写域内的一个）：
-//   本文件按冻结契约 v2 引用下列符号，它们的**实现**落在
-//   lib/platform/qt_platform_view.dart（W1 写域）与
-//   android/app/src/main/kotlin/rhine/music/database/porting/QtPlatformViewHost.kt（W2 写域）：
-//     QtPlatformCompositionMode / wireName / fromWire、
-//     qtPlatformCompositionTextureLayer / qtPlatformCompositionViewComposition、
-//     QtProbeKeys 的 8 个新 key、QtHostStatus 的 8 个新字段、
-//     QtPlatformView.compositionMode、QtPlatformViewController.compositionMode /
-//     applyCompositionMode。
-//   实现侧已落地（QtPlatformViewHost.kt 的 probe()/archNotes()/registerWith()、Dart 的
-//   QtHostStatus/QtProbeKeys 都在），本文件只做**契约锁定**：断言 key 名、词表、verdict
-//   语义与「不发布像素」的形状，不复制实现，也不替代实现侧的静态核对。
-//   行号在实现变更后会漂移，引用给的是「函数名 + 当前行区间」，复核以函数名重查。
-//   本文件自身的改动只落在 integration_test/slice_platformview_test.dart；实现侧改动在
-//   Dart 宿主、Kotlin 宿主与 Kotlin 纯 JVM 合同测试里。
-//
-// MainActivity / 引擎注册 patch 建议（T16 接线，候选隔离；本 atom **不落地**）：
-//   1. MainActivity.configureFlutterEngine(FlutterEngine engine) 里调用
-//        QtPlatformViewHost.registerWith(engine)
-//      即 engine.platformViewsController.registry.registerViewFactory(VIEW_TYPE, factory)。
-//      该函数已存在于 QtPlatformViewHost.kt 的 registerWith()（本 atom 不调用它：MainActivity 是共享文件，
-//      不在写域）。
-//   2. Flutter 的 plugin 自动注册**不会**注册 PlatformViewFactory —— 必须显式注册，否则
-//      AndroidView/PlatformViewLink 会以 MissingPluginException 结束（那正是「假可用」的来源）。
-//   3. view composition 只改 Dart 侧的创建 API（PlatformViewLink + initExpensiveAndroidView，
-//      Flutter SDK packages/flutter/lib/src/services/platform_views.dart:193-194 明确写着
-//      "Always creates a Hybrid Composition (HC) view"），viewType 与注册方式都不变。
-//   4. Context 必须能剥到 Activity：QtLoader.java:73-76 要求 baseContext 是 Activity/Service，
-//      否则 QtLoader 构造器抛 IllegalArgumentException，QtView.loadQtLibraries 捕获后放弃启动
-//      （QtView.java:144-148）——视图会建出来但 Qt 起不来；不要传 Application context。
+// MainActivity / 引擎注册 patch（候选隔离；本文件不落地）：
+//   1. MainActivity.configureFlutterEngine 里调用 QtPlatformViewHost.registerWith(engine)。
+//      MainActivity 是共享文件，不在本文件改动范围。
+//   2. Flutter 的 plugin 自动注册不会注册 PlatformViewFactory —— 必须显式注册，
+//      否则 AndroidView/PlatformViewLink 会以 MissingPluginException 结束。
+//   3. view composition 只改 Dart 侧的创建 API（PlatformViewLink +
+//      initExpensiveAndroidView，Flutter SDK platform_views.dart:193-194 注明
+//      "Always creates a Hybrid Composition (HC) view"），viewType 与注册方式不变。
+//   4. Context 必须能剥到 Activity：QtLoader.java:73-76 要求 baseContext 是
+//      Activity/Service，否则构造器抛 IllegalArgumentException、QtView 捕获后放弃
+//      启动（QtView.java:144-148）——视图会建出来但 Qt 起不来。不要传 Application context。
 
 import 'dart:convert';
 
@@ -54,7 +37,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:rhine_music_database/platform/qt_platform_view.dart';
 
 /// 真机切片门。默认关闭：没有 Qt android jar / qt_libs 清单 / Qt 的 .so 时
-/// 切片只能证明 archBlocked，不能证明画面与性能（T16 才能裁决）。
+/// 切片只能证明 archBlocked，不能证明画面与性能（ 才能裁决）。
 const bool qtSliceDeviceGate =
     bool.fromEnvironment('QT_SLICE_DEVICE', defaultValue: false);
 
@@ -738,7 +721,7 @@ void main() {
     testWidgets(
       '宿主探针 + 输入回执 + 生命周期对账（DEVICE_BLOCKED 前不得宣称可用）',
       (WidgetTester tester) async {
-        // 本原子未执行（见文件头的未执行声明）。补齐 integration_test 依赖与 Qt 产物后
+        // 补齐 integration_test 依赖与 Qt 产物后
         // 按下列顺序跑；每一步都必须在报告里留下**观测值**，不许用截图或「编译通过」代替。
         //
         //   1. touch：tester.dragFrom 在平台视图区域内拖动。

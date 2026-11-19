@@ -1,65 +1,32 @@
-/// Named route table for the Qt to Flutter port: the pages of plan §6.1 and the
-/// modal layers of plan §6.2, as plain strings.
+/// Qt→Flutter 迁移的路由表：§6.1 的页面与 §6.2 的弹层，均为纯字符串。
 ///
-/// This file imports nothing. A route is a kind, a name and a path, so the same
-/// table can drive a Flutter Navigator, an offline test, or a host that is not
-/// Flutter at all. No Flutter type appears on purpose: the file owns names, not
-/// widgets, and says nothing about how a page renders.
+/// 本文件不 import 任何东西。一条路由只是 kind + name + path，因此同一张表既能
+/// 驱动 Flutter Navigator，也能在离线测试或非 Flutter 宿主里使用。这里刻意不出现
+/// 任何 Flutter 类型：它只负责命名，不负责渲染。
 ///
-/// Sources, both in
-/// docs/superpowers/plans/2026-11-09-qt-to-flutter-parity-plan.md:
+/// 页面 19 行、弹层 16 项；路径分别是 '/' + name 和 '/modal/' + name。其中八个弹层
+/// 名带 `modal-` 前缀，用来和同名页面区分（§6.2 自己也写 "saved/个人库"）。
+/// 前缀只属于本表：引擎的 `modal` 值与协议字符串必须保持裸 §6.2 字面量，因为 Qt
+/// 把 `kind` 原样拷进 `modal`（Qt/src/NativeHudController.cpp:64-88），再按 'search'、
+/// 'saved'、'player'、'queue'、'settings'、'discover'、'login'、'desktop-lyrics'
+/// 比较（见同文件及 NativeHudMusic.cpp:284、NativeHudDesktopLyrics.cpp:130）。
+/// 不允许把 `modal-` 名字发过桥。
 ///
-/// * Pages — the nineteen rows of §6.1, kept in row order (:331-349). A page's
-///   path is '/' plus its name.
-/// * Modals — the sixteen entries of §6.2 (:351-353), where "player/queue" is
-///   one entry but two modals here. A modal's path is '/modal/' plus its name;
-///   for the eight prefixed names that is literally '/modal/modal-...', and the
-///   doubling is the rule, not a typo.
-///
-/// Eight of the seventeen modals carry a `modal-` prefix: a §6.2 name that
-/// would also be a page name (`search`, `login`, `settings`, `discover`,
-/// `player`, `queue`, `desktop-lyrics`) or that names the same surface under
-/// another word (`saved` is the page `library`; §6.2 itself writes "saved/
-/// 个人库") has to be told apart from the page it opens above. The prefix
-/// belongs to this table alone. The engine's `modal` value and every protocol
-/// string keep the bare §6.2 literal, because Qt copies the `kind` argument
-/// straight into `modal` (Qt/src/NativeHudController.cpp:64-88) and compares
-/// it with 'search' (:626), 'saved' (:106, :684), 'player' (:363), 'queue'
-/// (:381), 'settings' (:408, :721), 'discover' (:678), 'login'
-/// (Qt/src/NativeHudMusic.cpp:284) and 'desktop-lyrics'
-/// (Qt/src/NativeHudDesktopLyrics.cpp:130). Nothing may send a `modal-` name
-/// across the bridge.
-///
-/// T16 is undecided. docs/flutter-migration/02-adjudication.md records
-/// 未裁决 (PENDING_DEVICE_EVIDENCE) with every metric UNMEASURED; plan:167
-/// forbids filling metrics for a candidate that never ran, plan:168 forbids
-/// naming a winner in advance, and plan:170 with :510 stops P2 page work if all
-/// five candidates fail. A route table is not evidence for any candidate, so
-/// this one selects none: in particular it does not choose candidate A (Flutter
-/// host carrying the Qt view through a PlatformView, plan:135) and introduces
-/// no host class, QtPlatformView or lib/platform/qt_platform_view.dart
-/// included (plan:463), because naming one would decide T16 from a file that
-/// only records names.
-///
-/// Two invariants are carried here:
-///
-/// * Back is adjudicated outside Flutter routing. Qt derives the return key
-///   from its own state, and T20 keeps that decision (plan:518); these routes
-///   are names, not a pop stack.
-/// * A name is rotation-stable identity, not layout. Rotation keeps the modal
-///   name and the close progress unchanged (plan:376,
-///   docs/flutter-migration/contracts/layout.md:365), so these strings are
-///   fixed identifiers and are never renamed per orientation.
+/// 两条不变量：
+/// * 返回键在 Flutter 路由之外裁决。Qt 从自身状态推导返回，这些路由只是名字，
+///   不是 pop 栈。
+/// * 名字是跨旋转稳定的身份，不是布局。旋转保留 modal 名与关闭进度，因此这些
+///   字符串是固定标识，不能按方向改名。
 library;
 
 /// Which namespace a [RhineRoute] belongs to.
 enum RhineRouteKind {
-  /// A page: one row of plan §6.1, path '/name'.
+  /// A page: one row of §6.1, path '/name'.
   page,
 
-  /// A modal layer above the current page: one entry of plan §6.2, path
+  /// A modal layer above the current page: one entry of §6.2, path
   /// '/modal/name'. The page beneath keeps rendering; the modal is a layer,
-  /// not a replacement (plan:180).
+  /// not a replacement.
   modal,
 }
 
@@ -91,7 +58,7 @@ class RhineRoute {
 /// The port's single route table, as const data.
 ///
 /// Pages keep §6.1 row order and modals keep §6.2 entry order, so this file
-/// can be read against the plan without a sorting step. [all] is [pages] then
+/// can be read against the spec without a sorting step. [all] is [pages] then
 /// [modals], and every name and every path in it is unique. The two path
 /// prefixes ('/' and '/modal/') keep the namespaces disjoint before the
 /// `modal-` rename even applies, so [byPath] never has to prefer a kind.
@@ -99,62 +66,56 @@ class RhineRoute {
 /// A namespace only: every member is static and nothing here is instantiated,
 /// hence `abstract final`.
 abstract final class RhineRoutes {
-  /// The nineteen pages of plan §6.1 (:331-349), in row order.
+  /// The nineteen pages of §6.1 (:331-349), in row order.
   static const List<RhineRoute> pages = [
-    // Consent 隐私门槛 (plan:331).
+    // Consent 隐私门槛.
     RhineRoute(kind: RhineRouteKind.page, name: 'consent', path: '/consent'),
-    // Boot (plan:332).
+    // Boot.
     RhineRoute(kind: RhineRouteKind.page, name: 'boot', path: '/boot'),
-    // Archive/首页, five lanes and the directory stack (plan:333).
+    // Archive/首页, five lanes and the directory stack.
     RhineRoute(kind: RhineRouteKind.page, name: 'archive', path: '/archive'),
-    // 目录空态, the empty directory state (plan:334).
+    // 目录空态, the empty directory state.
     RhineRoute(
       kind: RhineRouteKind.page,
       name: 'directory-empty',
       path: '/directory-empty',
     ),
-    // 歌曲详情, one song (plan:335).
+    // 歌曲详情, one song.
     RhineRoute(
       kind: RhineRouteKind.page,
       name: 'song-detail',
       path: '/song-detail',
     ),
-    // 歌单/专辑/歌手详情 (plan:336).
+    // 歌单/专辑/歌手详情.
     RhineRoute(
       kind: RhineRouteKind.page,
       name: 'collection-detail',
       path: '/collection-detail',
     ),
-    // 3D 查看器, the cover viewer (plan:337).
+    // 3D 查看器, the cover viewer.
     RhineRoute(kind: RhineRouteKind.page, name: 'viewer', path: '/viewer'),
-    // 搜索, the full search page (plan:338).
+    // 搜索, the full search page.
     RhineRoute(kind: RhineRouteKind.page, name: 'search', path: '/search'),
-    // 个人库/收藏 (plan:339).
+    // 个人库/收藏.
     RhineRoute(kind: RhineRouteKind.page, name: 'library', path: '/library'),
-    // 登录面板 (plan:340).
+    // 登录面板.
     RhineRoute(kind: RhineRouteKind.page, name: 'login', path: '/login'),
-    // 设置 (plan:341).
+    // 设置.
     RhineRoute(kind: RhineRouteKind.page, name: 'settings', path: '/settings'),
-    // 发现 (plan:342).
+    // 发现.
     RhineRoute(kind: RhineRouteKind.page, name: 'discover', path: '/discover'),
-    // 播放栏, the player bar page (plan:343).
+    // 播放栏, the player bar page.
     RhineRoute(kind: RhineRouteKind.page, name: 'player', path: '/player'),
-    // 播放队列 (plan:344).
+    // 播放队列.
     RhineRoute(kind: RhineRouteKind.page, name: 'queue', path: '/queue'),
-    // 歌词 (plan:345).
+    // 歌词.
     RhineRoute(kind: RhineRouteKind.page, name: 'lyrics', path: '/lyrics'),
-    // 更新 (plan:346).
+    // 更新.
     RhineRoute(kind: RhineRouteKind.page, name: 'update', path: '/update'),
-    // 诊断/性能面板 (plan:347)。
-    // 用户 m10082：性能面板是助手自作主张的功能，路由注释掉（保留原文，不删）。
-    // RhineRoute(
-    //   kind: RhineRouteKind.page,
-    //   name: 'diagnostics',
-    //   path: '/diagnostics',
-    // ),
-    // Tab Mode (plan:348).
+    // 性能面板已停用（不属于产品需求），保留路由位但不注册。
+    // Tab Mode.
     RhineRoute(kind: RhineRouteKind.page, name: 'tab-mode', path: '/tab-mode'),
-    // 桌面歌词 — 仅桌面，Android 不实施; matrix row only (plan:349).
+    // 桌面歌词 — 仅桌面，Android 不实施; matrix row only.
     RhineRoute(
       kind: RhineRouteKind.page,
       name: 'desktop-lyrics',
@@ -162,7 +123,7 @@ abstract final class RhineRoutes {
     ),
   ];
 
-  /// The seventeen modal layers of plan §6.2 (:353), in entry order.
+  /// The seventeen modal layers of §6.2 (:353), in entry order.
   ///
   /// 'player/queue' is one §6.2 entry and two routes here, because the player
   /// bar and the queue are separate layers in Qt (NativeHudController.cpp:363,
@@ -272,7 +233,7 @@ abstract final class RhineRoutes {
     ),
     // §6.2 'desktop-lyrics' over the page; Qt modal
     // 'desktop-lyrics' (NativeHudDesktopLyrics.cpp:130).
-    // 仅桌面，Android 不实施 (plan:349).
+    // 仅桌面，Android 不实施.
     RhineRoute(
       kind: RhineRouteKind.modal,
       name: 'modal-desktop-lyrics',

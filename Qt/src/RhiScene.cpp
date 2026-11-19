@@ -107,7 +107,7 @@ static_assert(sizeof(Instance) == 80);
 #endif
 // 与主渲染路径一致：封面最高 1024²，带 mip 后单张约 5.3 MiB，预算需按此放宽。
 static constexpr qint64 MUSIC_TEXTURE_BUDGET_BYTES = 64 * 1024 * 1024;
-// A08：封面合成与 mip 链生成搬到工作线程后的三个上限。
+// 封面合成与 mip 链生成搬到工作线程后的三个上限。
 //  · COVER_PREP_MAX_INFLIGHT：同时在算的封面数。切歌很快时若无上限，会瞬间堆出十几份
 //    5 MiB 的中间图；超过上限就让这一帧先不算，下一帧再发（不降级成同步）。
 //  · COVER_UPLOAD_QUEUE_LIMIT：已经算完、等上传预算的成品条数上限，超出丢最旧的。
@@ -309,7 +309,7 @@ class Renderer {
     bool memoryProbe = qEnvironmentVariableIntValue("RHINE_MEMORY_PROBE") == 1;
     int memoryFrames = 0;
     quint64 vkCreatesMark = 0;
-    // A05：运动矢量附件当前是否真的分配了。它是目标形状的一部分，必须和尺寸/采样数/
+    // 运动矢量附件当前是否真的分配了。它是目标形状的一部分，必须和尺寸/采样数/
     // AA 模式一起参与 resize() 的早退比较，否则切换 AA 模式后会沿用旧目标。
     bool motionTarget = false;
 #if defined(Q_OS_ANDROID)
@@ -522,7 +522,7 @@ class Renderer {
     QRhiTexture *labelTexture = nullptr, *coverTexture = nullptr;
     QStringList textureOrder;
     QSet<QString> activeTextureKeys;
-    // ── A08 封面预处理：线程模型见 CoverPrepareTask；这里只有渲染线程可见的状态 ──────
+    // 封面预处理：线程模型见 CoverPrepareTask；这里只有渲染线程可见的状态
     /** 发起预处理的结果。Busy 只是"这一帧不排队"，绝不能因此退回同步路径。 */
     enum class PrepStart { Started, Busy, Unavailable };
     struct CoverPrepRequest {
@@ -834,7 +834,7 @@ class Renderer {
         discBodyCount = body.count();
         discHubCount = hub.count();
         musicLabelPlane = plane(-.83, .07, -.03, .29, 0, -.83, .07, .8, .22);
-        // MUST-C：可见格的封面贴面。取档案正面纸张范围（Internal_Ceramic 的
+        // 可见格的封面贴面。取档案正面纸张范围（Internal_Ceramic 的
         // x[-1.821,1.930] y[0.379,3.349]）里的正方形画心：正方形是为了让方形封面不被拉扁，
         // 高度只到 2.959 是为了给上方 y[3.04,3.26] 的印刷标签让位——标签不许压在封面上。
         // z=0.25 在纸张（0.2464）之前、磨砂壳（0.206）之前，封面纸贴在壳外侧。
@@ -1301,7 +1301,7 @@ class Renderer {
         const int nextSamples = postProcess->samples();
         const auto nextMode =
             RhineRender::currentRenderMode(qEnvironmentVariable("RHINE_AA_MODE"), false).aaMode;
-        // A05：只有确实有人读时才挂运动矢量附件。
+        // 只有确实有人读时才挂运动矢量附件。
         //   · 多采样目标本来就没有第二个 draw buffer 可写，维持原来的让路策略；
         //   · 单采样时看配置（AA 模式 + FG 开关）而不是 FSR 运行期可用性，否则能力
         //     探测翻一次就重建整帧目标；重投影探针也要读矢量图，不能一并裁掉。
@@ -1699,7 +1699,7 @@ class Renderer {
         }
         retire(texture);
     }
-    /** 同步路径（A08 之前的原样实现）：合成、逐层生成 mip、上传、换绑，一帧内完成。 */
+    /** 同步路径（工作线程化之前的原样实现）：合成、逐层生成 mip、上传、换绑，一帧内完成。 */
     void uploadCoverSync(const QString &key, const QImage &image) {
         const qint64 coverRevision = image.cacheKey();
         // 高分辨率封面直接进入贴图
@@ -2692,7 +2692,7 @@ class Renderer {
                 // empty→回落 currentCover、selected→查 covers[selectedKey]、other→placeholderCover。
                 // 只数总数分不清是"没建封面"还是"key 对不上"，所以三类分开记。
                 int discEmptyKey = 0, discSelectedKey = 0, discOtherKey = 0;
-                // MUST-C：可见格的真实/占位拆分。cellReal 才有"这一格贴了自己的封面"的像素证据。
+                // 可见格的真实/占位拆分。cellReal 才有"这一格贴了自己的封面"的像素证据。
                 int cellPlates = 0, cellReal = 0, cellPlaceholder = 0, cellLabels = 0;
                 QString firstDiscKey = QStringLiteral("-");
                 for (const auto &d : draws) {
@@ -2844,7 +2844,7 @@ class Renderer {
             // 查看封面页的绘制来自装配体，key 不是曲目 key（空），仍回落当前曲目封面；
             // 归位卡片则不许借：不是当前曲目就绑定占位纹理。
             const auto coverFallback = key.isEmpty() || key == selectedKey ? currentCover : placeholderCover;
-            // MUST-C：封面贴面（-8）与盘面（-2）是仅有的两条读封面纹理的通道。
+            // 封面贴面（-8）与盘面（-2）是仅有的两条读封面纹理的通道。
             const auto cover =
                 mesh == -2 || mesh == -8 ? covers.value(key, coverFallback) : placeholderCover;
             QRhiShaderResourceBindings *drawBindings = nullptr;
@@ -4184,7 +4184,7 @@ class ItemRenderer : public QQuickRhiItemRenderer {
 #endif
             // GPU 耗时和"这个耗时可不可信"必须一起上报：只报数值时，0 既可能是设备
             // 不支持、也可能是创建 QRhi 时没请求时间戳、还可能是这一帧查询结果没回来，
-            // 三种情况的排查方向完全不同（A01）。
+            // 三种情况的排查方向完全不同。
             const bool gpuTimingSupported = rhi()->isFeatureSupported(QRhi::Timestamps);
             const double gpuTimeMs =
                 gpuTimingSupported ? cb->lastCompletedGpuTime() * 1000.0 : 0.0;
@@ -4199,7 +4199,7 @@ class ItemRenderer : public QQuickRhiItemRenderer {
 #ifdef Q_OS_DARWIN
             }
 #endif
-            // A03：本帧新建过 SRB，说明有新资源真的落地了（异步封面/模型上传完成，或
+            // 本帧新建过 SRB，说明有新资源真的落地了（异步封面/模型上传完成，或
             // 渲染目标重建后重新绑定）。这类变化在引擎的帧字段里看不出来，主线程的
             // 帧签名比较永远判不到，只能由发现它的渲染线程回报一次；否则 3D 层要等
             // 兜底间隔（20 帧）才重画，表现就是"封面比歌名慢半拍"。
