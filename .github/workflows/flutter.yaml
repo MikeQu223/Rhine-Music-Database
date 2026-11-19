@@ -2,12 +2,11 @@ name: Flutter Android arm64-v8a
 
 # 只出 Android arm64-v8a 的 Flutter APK。
 #
-# Android 包由 Flutter 工程产出，但 Qt 场景运行时是 Gradle 的硬依赖：
-#   1) 五个 Qt 子模块 → Qt for Android kit（重活，走缓存）；
-#   2) 准备 nodejs-mobile 的 libnode.so 与 Android 资源；
-#   3) 用 RHINE_FLUTTER_HOST_ONLY 编 native 库，androiddeployqt --aux-mode 落 staging；
-#   4) flutter build apk --target-platform android-arm64。
-# kit 命中缓存后只跑第 2-4 步；冷启动要从源码交叉编译 Qt（约 1.5-2 小时）。
+# 出包链路与本地完全共用 scripts/build-flutter-android.cjs（npm run build:flutter:android）：
+#   1) 五个 Qt 子模块 → Qt for Android kit（重活，走缓存，仅 CI 环境准备）；
+#   2) 脚本内部：准备 nodejs-mobile/资源 → RHINE_FLUTTER_HOST_ONLY 编 native →
+#      androiddeployqt --aux-mode 落 staging → flutter build apk。
+# kit 命中缓存后只跑第 2 步；冷启动要从源码交叉编译 Qt（约 1.5-2 小时）。
 
 on:
   push:
@@ -27,9 +26,6 @@ env:
   ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
   ANDROID_HOME: /usr/local/lib/android/sdk
   ANDROID_NDK_ROOT: /usr/local/lib/android/sdk/ndk/30.0.16248370
-  # Gradle 的 RHINE_QT_ANDROID_DEPLOY_DIR 用 rootProject.file() 解析，
-  # 相对路径会落到 android/ 下，所以这里给绝对路径。
-  RHINE_QT_ANDROID_DEPLOY_DIR: ${{ github.workspace }}/output/qt-android-flutter/Qt/android-build
   RHINE_BUILD_JOBS: '4'
 
 jobs:
@@ -176,56 +172,6 @@ jobs:
             output/dependencies/openssl-android
           key: qt-android-kit-${{ steps.qt-kit-key.outputs.signature }}
 
-      - name: Prepare nodejs-mobile runtime and Android resources
-        # --prepare-only 只做 Flutter 构建要用的 Node/资源准备，不进入纯 Qt 打包链。
-        run: node scripts/build-android.cjs --prepare-only
-
-      - name: Configure Qt native host for Flutter
-        shell: bash
-        env:
-          QT_KIT: output/dependencies/qt-android
-        run: |
-          set -euo pipefail
-          cmake -S . -B output/qt-android-flutter -G Ninja \
-            -DCMAKE_TOOLCHAIN_FILE="$QT_KIT/lib/cmake/Qt6/qt.toolchain.cmake" \
-            -DQT_HOST_PATH="$QT_ROOT_DIR" \
-            -DQT_HOST_PATH_CMAKE_DIR="$QT_ROOT_DIR/lib/cmake" \
-            -DQT_QMAKE_TARGET_MKSPEC=android-clang \
-            -DANDROID_ABI=arm64-v8a \
-            -DANDROID_PLATFORM=android-28 \
-            -DANDROID_NDK_ROOT="$ANDROID_NDK_ROOT" \
-            -DANDROID_SDK_ROOT="$ANDROID_SDK_ROOT" \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_MAKE_PROGRAM="$(command -v ninja)" \
-            -DRHINE_FLUTTER_HOST_ONLY=ON \
-            -DQT_NO_GLOBAL_APK_TARGET_PART_OF_ALL=ON \
-            -DRHINE_ANDROID_NODE_ROOT="$PWD/output/dependencies/node-mobile" \
-            -DRHINE_ANDROID_RESOURCES="$PWD/output/android-resources"
-
-      - name: Build Qt native library and deploy staging
-        shell: bash
-        # 纯 Qt APK target 已封堵：只编 native 并复制 .so，再用 androiddeployqt 的
-        # aux 模式补 Qt 依赖/rcc/libs.xml，不跑 Gradle。
-        run: |
-          set -euo pipefail
-          # _prepare_apk_dir 负责把 libRhineMusicDatabase_arm64-v8a.so 放进
-          # staging/libs/arm64-v8a；aux 模式要求应用库已经在那里。
-          cmake --build output/qt-android-flutter --target RhineMusicDatabase_prepare_apk_dir -- -j"${RHINE_BUILD_JOBS}"
-          SETTINGS=$(find output/qt-android-flutter -name 'android-*deployment-settings.json' -print -quit)
-          test -n "$SETTINGS"
-          DEPLOYQT="$QT_ROOT_DIR/bin/androiddeployqt"
-          [ -x "$DEPLOYQT" ] || DEPLOYQT="output/dependencies/qt-android/bin/androiddeployqt"
-          test -x "$DEPLOYQT"
-          "$DEPLOYQT" \
-            --input "$SETTINGS" \
-            --output "$RHINE_QT_ANDROID_DEPLOY_DIR" \
-            --aux-mode
-          test -d "$RHINE_QT_ANDROID_DEPLOY_DIR/libs/arm64-v8a"
-          test -f "$RHINE_QT_ANDROID_DEPLOY_DIR/libs/arm64-v8a/libRhineMusicDatabase_arm64-v8a.so"
-          # patchQtAndroidJar 与 Flutter Gradle 都直接消费这两份产物。
-          test -f "$RHINE_QT_ANDROID_DEPLOY_DIR/libs/Qt6Android.jar"
-          test -f "$RHINE_QT_ANDROID_DEPLOY_DIR/res/values/libs.xml"
-
       - name: Register Gradle repositories for every build
         shell: bash
         run: |
@@ -233,18 +179,16 @@ jobs:
           cp .github/gradle/ci-repositories.gradle \
              "$HOME/.gradle/init.d/rhine-repositories.gradle"
 
-      - name: Build Flutter APK (arm64-v8a only)
+      - name: Build Android APK (shared with local)
         shell: bash
         env:
           # 只传给 Gradle 的 patchQtAndroidJar；JAVA_HOME 仍是 21，Gradle/AGP 不跑在 27 上。
           JDK27_HOME: ${{ env.JAVA_HOME_27_X64 }}
+        # 与本地同一个入口：准备资源 → CMake 配置/编 native → androiddeployqt --aux-mode
+        # → flutter build apk。CI 不再内联这些命令，避免两边参数走偏。
         # 不提供签名材料：Gradle 会产出未签名 release，Flutter 工具再复制成
         # build/app/outputs/flutter-apk/app-release.apk。
-        run: |
-          set -euo pipefail
-          test -x "$JDK27_HOME/bin/javac"
-          flutter build apk --release --target-platform android-arm64 \
-            --android-project-arg="rhineJavacHome=$JDK27_HOME"
+        run: npm run build:flutter:android
 
       - name: Upload APK
         uses: actions/upload-artifact@v4

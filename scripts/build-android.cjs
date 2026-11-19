@@ -7,8 +7,9 @@
 // 纯 Qt 的 Android 打包入口已封堵（FLUTTER-ONLY-ANDROID-20261117）。
 //
 // Android 交付只走 Flutter 宿主：入口 lib/main.dart，Gradle 工程 android/app/build.gradle.kts，
-// 出包命令 `flutter build apk --debug --target-platform android-arm64`。Qt 侧只负责 native：
-// libRhineMusicDatabase_arm64-v8a.so，以及 androiddeployqt --aux-mode 生成的 libs/jar/assets/libs.xml。
+// 出包入口 `npm run build:flutter:android`（scripts/build-flutter-android.cjs，CI 与本地共用）。
+// Qt 侧只负责 native：libRhineMusicDatabase_arm64-v8a.so，以及 androiddeployqt --aux-mode
+// 生成的 libs/jar/assets/libs.xml。
 //
 // 为什么在这里硬失败而不是删代码：这个脚本整条链（qt-cmake 配置 → `cmake --build --target apk`
 // → androiddeployqt → Gradle assembleDebug）产出的都是纯 Qt 包——没有 libflutter.so、没有
@@ -24,8 +25,9 @@ if (!process.argv.includes('--prepare-only')) {
         [
             '纯 Qt 的 Android 打包已停用（FLUTTER-ONLY-ANDROID-20261117）。',
             '',
-            'Android 包必须由 Flutter 工程构建：',
-            '    flutter build apk --debug --target-platform android-arm64',
+            'Android 包必须由 Flutter 工程构建，CI 与本地共用同一个入口：',
+            '    npm run build:flutter:android            # release（与 CI 一致）',
+            '    npm run build:flutter:android -- --debug # debug',
             '  入口 lib/main.dart，Gradle 工程 android/app/build.gradle.kts。',
             '',
             'Qt 侧只提供 native 产物（不走本脚本）：',

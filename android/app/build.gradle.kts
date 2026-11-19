@@ -129,6 +129,10 @@ android {
             if (releaseSigningProblem == null) {
                 signingConfig = signingConfigs.getByName("release")
             }
+            // Flutter 的 Gradle 插件会为 release 打开 R8 与资源压缩（FlutterPlugin.kt:218-219）。
+            // Qt 的 Java 桥与 QtLoader 按名字读取的资源都没有静态引用，必须显式保活，否则
+            // release 包会在启动时停在 "Use local Qt libs is false" 并抛 UnsatisfiedLinkError。
+            proguardFiles("proguard-rules.pro")
         }
     }
 }

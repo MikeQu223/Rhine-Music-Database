@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  QtLoader 通过 getIdentifier() 按名字读取这些资源（QtLoader.class 里的 qt_libs /
+  bundled_libs / load_local_libs / use_local_qt_libs / bundle_local_qt_libs /
+  system_libs_prefix）。它们没有任何静态引用，release 的资源压缩器会把它们判成
+  "不可达"删掉；结果是 QtLoader 走 "Use local Qt libs is false" 分支，Qt 库一个都
+  不加载，Java 侧所有 native 方法随后都是 UnsatisfiedLinkError。
+
+  这里显式保留。新增 QtLoader 按名字读取的资源时，必须同步加进 tools:keep。
+-->
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@array/qt_libs,@array/bundled_libs,@array/load_local_libs,@string/use_local_qt_libs,@string/bundle_local_qt_libs,@string/system_libs_prefix" />

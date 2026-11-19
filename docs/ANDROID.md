@@ -58,40 +58,37 @@ npm run build:android -- --check
 
 2026-11-17（`83cdb2b`）起纯 Qt 的 APK 打包被堵死（`scripts/build-android.cjs` 直接拒绝），Android 包只由 Flutter 工程产出。Qt 侧的 `build:qt:android` 仍然负责编 kit（§1.2），但不再直接出包：
 
-先编 Qt 侧运行时，再由 Flutter 出包：
+先编 Qt 侧运行时，再由 Flutter 出包。CI 与本地共用同一个入口脚本（`scripts/build-flutter-android.cjs`），不要再手拼下面的命令：
 
 ```sh
-# 1) Qt 运行时：编 so，并只跑 androiddeployqt --aux-mode 落出 staging
-#    必须从仓库根配置：Qt/CMakeLists.txt 是 add_subdirectory(Qt) 的片段，
-#    直接 -S Qt 会缺 project()/RHINE_APP_SOURCES，staging 路径也会错。
-cmake -S . -B output/qt-android-flutter \
-  -G Ninja -DCMAKE_TOOLCHAIN_FILE=<qt-android>/lib/cmake/Qt6/qt.toolchain.cmake \
-  -DQT_HOST_PATH=/usr -DQT_HOST_PATH_CMAKE_DIR=/usr/lib/cmake \
-  -DQT_QMAKE_TARGET_MKSPEC=android-clang -DANDROID_ABI=arm64-v8a \
-  -DANDROID_PLATFORM=android-28 -DANDROID_NDK_ROOT=<ndk> -DANDROID_SDK_ROOT=<sdk> \
-  -DCMAKE_BUILD_TYPE=Release -DCMAKE_MAKE_PROGRAM=/usr/bin/ninja \
-  -DRHINE_FLUTTER_HOST_ONLY=ON \
-  -DRHINE_ANDROID_NODE_ROOT=<node-mobile> -DRHINE_ANDROID_RESOURCES=<android-resources>
-cmake --build output/qt-android-flutter --target RhineMusicDatabase_prepare_apk_dir -- -j20
-<host-qt>/bin/androiddeployqt \
-  --input output/qt-android-flutter/Qt/android-RhineMusicDatabase-deployment-settings.json \
-  --output output/qt-android-flutter/Qt/android-build --aux-mode
+# release（与 CI 完全一致）
+npm run build:flutter:android
 
-# 2) Flutter 出包（缺省就读上面的 staging）
-flutter build apk --debug --target-platform android-arm64
+# debug
+npm run build:flutter:android -- --debug
 ```
 
-- 部署目录读取顺序：`-PrhineQtAndroidDeployDir` > `RHINE_QT_ANDROID_DEPLOY_DIR` > 缺省 `output/qt-android-flutter/Qt/android-build`（`android/app/build.gradle.kts:203-210`）。缺 `libs/arm64-v8a` 或 `res/values/libs.xml` 时**配置阶段**直接失败，不允许静默产出没有 Qt 运行时的空场景包。
+脚本按顺序执行：
+
+1. `node scripts/build-android.cjs --prepare-only` 准备 nodejs-mobile 与 Android 资源；
+2. 配置 `output/qt-android-flutter`（`RHINE_FLUTTER_HOST_ONLY=ON` + `QT_NO_GLOBAL_APK_TARGET_PART_OF_ALL=ON`），构建 `RhineMusicDatabase_prepare_apk_dir`；
+3. 用宿主 Qt 的 `androiddeployqt --aux-mode` 落 staging（libs / jar / assets / `res/values/libs.xml`）；
+4. `flutter build apk --<mode> --target-platform android-arm64 --android-project-arg=rhineJavacHome=<javac 27>`。
+
+依赖定位与 JDK 选择也由脚本统一处理：Gradle 用 JDK 17–25（`RHINE_GRADLE_JDK` > `JAVA_HOME` > Android Studio JBR），`patchQtAndroidJar` 单独用 javac 27（`RHINE_JAVAC_HOME` / `JDK27_HOME`），两者互不干扰。CI 只额外负责装 SDK/NDK/宿主 Qt 与缓存 kit，出包命令与本地相同。
+
+- 部署目录读取顺序：`-PrhineQtAndroidDeployDir` > `RHINE_QT_ANDROID_DEPLOY_DIR` > 缺省 `output/qt-android-flutter/Qt/android-build`（`android/app/build.gradle.kts:158-184`）。缺 `libs/arm64-v8a` 或 `res/values/libs.xml` 时**配置阶段**直接失败，不允许静默产出没有 Qt 运行时的空场景包。
 - `npm run build:android` 自 2026-11-17 起在任何动作前 `process.exit(1)`（`scripts/build-android.cjs:23-37`），**不再产出** `output/android-build`；旧文档若让你指向它，那是封堵前的路径。
-- Gradle 任务 `patchQtAndroidJar`（`android/app/build.gradle.kts:221`，实际调用 `apply.sh` 在 `:225`）在打包前用 `android/app/javapatch/apply.sh` 按 class 内容 sha256 校验并替换 `QtEmbeddedDelegate`、`QtView`、`QtClipboardManager` 三个类。
+- Gradle 任务 `patchQtAndroidJar`（`android/app/build.gradle.kts:201`，实际调用 `apply.sh`）在打包前用 `android/app/javapatch/apply.sh` 按 class 内容 sha256 校验并替换 `QtEmbeddedDelegate`、`QtView`、`QtClipboardManager` 三个类。
+- release 会启用 R8 与资源压缩（Flutter Gradle 插件的默认行为）。Qt 的 Java 桥与 QtLoader 按名字读取的资源没有静态引用，必须靠 `android/app/proguard-rules.pro`（保留 `org.qtproject.qt.android.**`）和 `android/app/src/main/res/raw/keep.xml`（保留 `qt_libs` / `use_local_qt_libs` 等）保活；否则设备上会停在 `QtLoader: Use local Qt libs is false`，随后全部 JNI 方法 `UnsatisfiedLinkError`。
 - Impeller 关闭：`android/app/src/main/AndroidManifest.xml:37` 写 `io.flutter.embedding.android.EnableImpeller=false`，实际走 Skia(OpenGL)；崩溃链与量化结论见 `docs/flutter-migration/archive/qt-flutter-state-2026-11-19.md`。
-- 产物是 `android/app/build/outputs/apk/debug/app-debug.apk`，每次构建覆盖：必须另存独立文件名并记 sha256 与字节数，文件名本身不是证据。
+- 产物是 `build/app/outputs/flutter-apk/app-release.apk`（debug 为 `app-debug.apk`），每次构建覆盖：必须另存独立文件名并记 sha256 与字节数，文件名本身不是证据。
 
 ### 1.4 CI
 
 Android 构建是 `.github/workflows/desktop.yml` 里一个独立的 `android` job，与其他平台完全隔离。它失败不会影响同一工作流里的桌面和 iOS 构建，反过来也一样。
 
-- 与本机走同一套脚本（`build:qt:android` → `build:android`），没有第二套流程。
+- 与本机走同一套脚本：CI 只准备环境与缓存 Qt kit，出包调用 `npm run build:flutter:android`（`scripts/build-flutter-android.cjs`），没有第二套流程。
 - Qt kit 从五个 `third_party/qt` 子模块现场交叉编译。产物（`output/dependencies/qt-android` 与 `output/dependencies/openssl-android`）按「子模块提交 + 构建/补丁脚本内容 + NDK 与宿主 Qt 版本」做缓存键。缓存命中后几分钟出包，冷启动约两小时。
 - 构建期补丁（`scripts/qt-android-patches.cjs`）在 CI 里同样按内容锚点生效，子模块保持干净。
 - 产物默认用 `keytool` 现场生成的调试密钥签名，密钥不入库，所以每次运行的 APK 签名不同。要出可覆盖升级的发布包，在项目根放发布密钥即可，这两个文件不入库，CI 里不存在。
