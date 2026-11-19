@@ -535,7 +535,7 @@ class _BasicSettingsWindowState extends State<BasicSettingsWindow> {
             border: Border.all(color: _color(palette.line)),
           ),
           child: Padding(
-            padding: const EdgeInsets.only(left: 12, top: 15),
+            padding: const EdgeInsets.symmetric(horizontal: 12),
             child: Row(
               children: <Widget>[
                 Expanded(
@@ -746,7 +746,9 @@ class _BasicSettingsWindowState extends State<BasicSettingsWindow> {
                 border: Border.all(color: _color(palette.line)),
               ),
               child: Padding(
-                padding: const EdgeInsets.only(left: 12, top: 15),
+                // 只留左右内缩，行高由 Row 的 crossAxisAlignment.center 垂直居中；
+                // 原来 top: 15 会让文字压在视觉中心下方。
+                padding: const EdgeInsets.symmetric(horizontal: 12),
                 child: Row(
                   children: <Widget>[
                     Expanded(
