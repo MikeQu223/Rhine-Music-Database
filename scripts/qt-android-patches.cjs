@@ -214,13 +214,50 @@ function pendingQtAndroidPatches(root = path.resolve(__dirname, '..')) {
     return walkQtAndroidPatches(root, false);
 }
 
-module.exports = { applyQtAndroidPatches, pendingQtAndroidPatches };
+/**
+ * 把补丁触及的文件从 git 还原，submodule 工作树恢复干净。
+ *
+ * 子模块**不允许保持 dirty**：patch 只在编译期存在于树上（构建器按源码内容
+ * 编译，产物进 kit 之后源码状态就无关了），构建结束（成功或失败）都必须
+ * 还原，否则 `git status` 永远挂着 -dirty，上游更新锚点时会静默失效。
+ * 用 git checkout 而不是反向文本替换：还原语义交给 git，锚点再变也不会把
+ * 半新半旧的文件留在树上。
+ */
+function restoreQtAndroidPatches(root = path.resolve(__dirname, '..')) {
+    const { spawnSync } = require('node:child_process');
+    const submodule = path.join(root, 'third_party', 'qt', 'qtbase');
+    if (!fs.existsSync(path.join(submodule, '.git'))) {
+        throw new Error('third_party/qt/qtbase 不是 git 工作树，无法自动还原补丁');
+    }
+    const files = [...new Set(patches.map((patch) => patch.file.replace(/^qtbase\//, '')))];
+    const result = spawnSync('git', ['-C', submodule, 'checkout', '--', ...files], {
+        encoding: 'utf8',
+    });
+    if (result.status !== 0) {
+        throw new Error(
+            `git checkout 还原补丁文件失败：${(result.stderr || result.stdout || '').trim()}`,
+        );
+    }
+    const dirty = spawnSync('git', ['-C', submodule, 'status', '--porcelain', '--', ...files], {
+        encoding: 'utf8',
+    });
+    if ((dirty.stdout || '').trim().length > 0) {
+        throw new Error(`补丁文件还原后仍有改动：\n${dirty.stdout}`);
+    }
+    return files;
+}
+
+module.exports = { applyQtAndroidPatches, pendingQtAndroidPatches, restoreQtAndroidPatches };
 
 if (require.main === module) {
     const applied = applyQtAndroidPatches();
-    if (applied.length === 0) {
-        console.log('qt-android patches: already applied');
-    } else {
-        console.log('qt-android patches applied:', applied.join(', '));
-    }
+    console.log(
+        applied.length === 0
+            ? 'qt-android patches: already applied'
+            : `qt-android patches applied: ${applied.join(', ')}`,
+    );
+    // 独立运行仅做演练：应用后立即还原，真正的"应用→构建→还原"由
+    // build-qt-android.cjs 的 try/finally 管理。
+    const reverted = restoreQtAndroidPatches();
+    console.log('qt-android patches reverted:', reverted.join(', '));
 }

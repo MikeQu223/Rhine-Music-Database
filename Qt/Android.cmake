@@ -146,6 +146,42 @@ else()
     message(STATUS "Android LTO: off")
 endif()
 
+# 体积档位（PERF-APK-SLIM）：Release 下用 -Oz 换更小的代码段，链接侧用 ICF 合并
+# 等价函数。主 so 的 .text 只有约 6.5 MB（LTO full 之后），-Oz 相对 NDK toolchain 的
+# 默认 -O3 再省 5-15%，ICF 再叠 1-3%——量不大，但这是纯编译参数，没有运行时行为
+# 变化。Qt 库不动：kit 是预编译的，重编 kit 才能吃到同一档位（那是另一个量级的活）。
+#
+#   RHINE_ANDROID_SIZE_OPT = oz（默认）| os | off
+#     oz  ：-Oz，比 -Os 更激进地压缩体积（不循环展开、更激进的寄存器分配）。
+#     os  ：-Os，优化尺寸但保持一部分速度形态。
+#     off ：跟随 toolchain 默认（NDK Release 是 -O3）。
+#
+#   ICF 用 safe 而不是 all：all 允许合并"地址不同但内容相同"的函数，Qt 代码里
+#   大量按虚函数地址比较的分支（qobject_cast / 接口判等）可能被合并改变语义；
+#   safe 只合并可以证明不取地址的等价函数。收益差几个百分点，正确性优先。
+#
+# target_compile_options 是追加语义，-Oz 排在 toolchain 默认 -O3 之后，Clang 按
+# "最后一个 -O 生效"裁决，所以这里必须始终挂在编译选项的最末端。
+set(RHINE_ANDROID_SIZE_OPT
+    "oz"
+    CACHE STRING "Android Release size optimization: oz (default) | os | off")
+set_property(CACHE RHINE_ANDROID_SIZE_OPT PROPERTY STRINGS oz os off)
+if(NOT RHINE_ANDROID_SIZE_OPT STREQUAL "off")
+    if(RHINE_ANDROID_SIZE_OPT STREQUAL "oz")
+        set(RHINE_ANDROID_SIZE_COMPILE -Oz)
+    else()
+        set(RHINE_ANDROID_SIZE_COMPILE -Os)
+    endif()
+    target_compile_options(RhineCore PRIVATE $<$<CONFIG:Release>:${RHINE_ANDROID_SIZE_COMPILE}>)
+    target_compile_options(
+        RhineMusicDatabase PRIVATE $<$<CONFIG:Release>:${RHINE_ANDROID_SIZE_COMPILE}>)
+    # ICF 在链接期做：safe 模式只合并"确定无人按地址区分"的等价函数。
+    target_link_options(RhineMusicDatabase PRIVATE $<$<CONFIG:Release>:-Wl,--icf=safe>)
+    message(STATUS "Android size opt: ${RHINE_ANDROID_SIZE_COMPILE} + -Wl,--icf=safe")
+else()
+    message(STATUS "Android size opt: off (toolchain default)")
+endif()
+
 target_sources(RhineMusicDatabase PRIVATE "${CMAKE_SOURCE_DIR}/Qt/src/AndroidWindow.cpp"
     "${CMAKE_SOURCE_DIR}/Qt/src/AndroidWindow.h")
 

@@ -77,6 +77,10 @@ async function main() {
                 target: 'node18',
                 logLevel: 'warning',
                 logOverride: { 'require-resolve-not-external': 'silent' },
+                // 与 bundle-bridge.cjs 同一档位：空白+语法压缩，不开
+                // minifyIdentifiers（jsdom 按函数名/类名查找，见其注释）。
+                minifyWhitespace: true,
+                minifySyntax: true,
             });
         }
         const unblockModules = path.join(directory, 'unblock-modules.cjs');

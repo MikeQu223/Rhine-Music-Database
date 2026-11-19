@@ -11,10 +11,21 @@ Android 版本只支持一个 ABI：`arm64-v8a`。目标设备是 Android 9（AP
 | Qt 6.12.0 Android kit | 两选一：Qt 在线安装器的 `Android` 组件（`android_arm64_v8a`，默认找 `~/Qt/6.12.0/android_arm64_v8a`），或用仓库里的 `third_party/qt` 自行构建（见 1.2） |
 | Android SDK           | 至少一套 `platforms/android-*`（Qt 的 Java 库按最高版本编）和一套 `build-tools`；默认找 `~/Android/Sdk`                                                 |
 | Android NDK           | r27 及以上；默认用 `$ANDROID_SDK_ROOT/ndk` 下版本号最大的那一套                                                                                         |
-| JDK                   | 17 到 25（Gradle 9 的运行上限，推荐 21）。系统的 JDK 27 会让 Groovy 报 `Unsupported class file major version 71`；默认找 `output/android-work/jdk`      |
+| JDK                   | **三个用途三个区间**：① `build:qt:android` 的 Qt 交叉编译要求 **17–21**（Qt 的 `find_package(Java Development)` 不认 22+，系统 JDK 27 与 Android Studio jbr 25 都不行）；② Gradle 9 出包要求 17–25；③ javapatch 的 sha256 门禁要求 **javac 27.0.x**。默认找 `output/android-work/jdk/`——**放一份 JDK 21 即同时满足 ①②**，③ 用系统 javac 或把上游 JDK 27 也解压进去。JDK 缺失时脚本会 fail-fast 并给出放置命令（此前是静默拿不存在的路径，错误要等到 qtbase configure 才炸且不含 JDK 字样） |
 | Node.js               | 构建脚本与桥接打包使用，版本要求与桌面构建相同                                                                                                          |
 
 路径可以用环境变量覆盖：`RHINE_ANDROID_QT`、`JAVA_HOME`、`ANDROID_SDK_ROOT`、`ANDROID_NDK_ROOT`。Gradle 缓存默认用标准的 `~/.gradle`；搬进工作区会让 wrapper 与 AGP 依赖重新下载几百 MB。要让构建完全落在工作区里，把 `RHINE_GRADLE_HOME` 指到任意目录即可。
+
+JDK 21 就位的标准操作（2026-11-20 在本机踩过：`JAVA_HOME` 未设且 `output/android-work/jdk/` 为空，`toolchain.jdkHome` 静默返回不存在路径，qtbase configure 阶段才炸且报错不含 JDK 字样；已加 fail-fast）：
+
+```sh
+mkdir -p output/android-work/jdk
+curl -L --fail -o output/android-work/jdk/temurin21.tar.gz \
+  "https://api.adoptium.net/v3/binary/latest/21/ga/linux/x64/jdk/hotspot/normal/eclipse"
+tar xzf output/android-work/jdk/temurin21.tar.gz -C output/android-work/jdk/
+```
+
+`--check` 会把 JDK 项列为 `ok/MISS`，先跑一次比盲跑省事：`npm run build:qt:android -- --check`。
 
 ### 1.2 从固定提交构建 Qt kit
 
@@ -26,6 +37,8 @@ npm run build:qt:android          # 只体检：npm run build:qt:android -- --ch
 ```
 
 脚本按 `OpenSSL（静态）→ qtbase → qtshadertools → qtdeclarative → qtsvg → qtmultimedia` 的顺序交叉编译，产物装到 `output/dependencies/qt-android`，中间构建树在 `output/qt-android-build`。换 Qt 版本时改 `.gitmodules` 里的 `branch` / `pinned-commit` 和脚本里的 `qtVersion`，再带 `--force` 重跑。
+
+submodule 的源码补丁（Vulkan surface 竞态修复等，见 `scripts/qt-android-patches.cjs`）按内容锚点在构建期应用到 `third_party/qt/qtbase` 工作树，构建结束（成功或失败）在 `finally` 里 `git checkout` 还原——**submodule 始终保持干净**，`git status` 不会挂 `-dirty`；构建中断遗留的 dirty 也会被下次运行的 finally 收拾。补丁只存在于编译期，装出来的 kit 已包含补丁产物。
 
 host 侧工具（moc、rcc、qsb、qmlcachegen）用系统 Qt 6.12（`RHINE_HOST_QT`，默认 `/usr`）。版本必须与目标一致，否则 Qt 的 configure 会直接报错。
 
@@ -696,6 +709,10 @@ TEXDIAG 现在多几栏：`mt`（`musicTextures` 条数）、`adm` / `gated`（�
 
 三种形态都由同一个 generator expression 限制在 Release。IPO 的关闭是无条件的，任何形态下都不能让 `-flto=thin` 与 `-flto` 出现在同一条命令行上。桌面与 iOS 保持 CMake 默认的 thin。
 
+两条 Android 链路都显式钉住档位，防 cache 漂移（§5.5 的教训：CMake 不会用源码新默认覆盖已有 cache）：`scripts/build-android.cjs` 与 `scripts/build-flutter-android.cjs`（2026-11-20 起）都在 configure 时传 `-DRHINE_ANDROID_LTO=${RHINE_ANDROID_LTO || 'full'}`、`-DRHINE_ANDROID_SIZE_OPT=${RHINE_ANDROID_SIZE_OPT || 'oz'}` 与 `-DRHINE_ANDROID_NORMAL_RGBA8=ON`（最后一个与烘焙硬编码 `RHINE_BAKE_NORMAL_RGBA8=1` 强绑定）。
+
+**Qt kit 本身**（`build-qt-android.cjs` 交叉编译的 `libQt6*.so`）2026-11-20 起也开 LTO：qtbase 的 configure 传 `-ltcg yes`（经 `QtProcessConfigureArgs.cmake` 落成 `CMAKE_INTERPROCEDURAL_OPTIMIZATION_<CONFIG>=ON`），其余模块在 `buildModule()` 直接传 `-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON`。注意 Qt 的 ltcg 走 CMake IPO，Clang 上是 **thin** 而非 full——Qt 没有暴露 full 的入口，手工塞 `-flto` 脱离官方路径，不做。shared 库的导出符号拦掉跨库 DCE，收益主要是各库内部的死代码消除与 ICF（Qt modules 约 43 MB 原始，估 5-8%）；代价是每个模块的大链接显著变慢，且 Qt 官方 Android 包同样不开 ltcg，属冷门组合，kit 重建后需真机回归。
+
 ### 5.2 APK 体积构成
 
 168 MB、`a6724e5` 那一版的构成：
@@ -713,7 +730,7 @@ TEXDIAG 现在多几栏：`mt`（`musicTextures` 条数）、`adm` / `gated`（�
 已做的裁剪与压缩：
 
 1. QuickControls2 样式包曾按「QML 没有 import QtQuick.Controls」排除，现已全部恢复。这个判据是错的，原因见下文 QtLoader 的教训。
-2. qmltooling 调试插件约 1 MB，是唯一还保留的 `.so` 排除项，它不在部署清单里。
+2. qmltooling 调试插件约 1 MB，是唯一还保留的 `.so` 排除项，它不在部署清单里。Qt 打包链路经 `scripts/android-gradle-sync.cjs` 注入 excludes；Flutter 链路的 `android/app/build.gradle.kts`（`packaging.jniLibs.excludes`）2026-11-19 起补齐了同一条规则。
 3. Android 包不再带 `archive-baked-surface-bc7.bin`（1.4 MB）。GLES 上 `isTextureFormatSupported(BC7)` 恒为 false，RhiScene 直接跳过。
 4. ETC2 产物不再烘焙也不再打包（699 KB，每次省十几秒）。编码器有缺陷，已默认关闭，见 T1。
 5. `.so` 压缩存储（`RHINE_ANDROID_LEGACY_PACKAGING`，默认 `1`）。Qt 模板的 `useLegacyPackaging=false` 把 152 MB 的 `.so` 原样塞进 APK，九成体积都在这。改成 `true` 后 AGP 用 deflate 压缩，下载体积大约降到六成。代价是安装时解压到 `/data/app/.../lib/`，首次启动多一次解压。对 sideload 分发，下载体积比安装后占用重要，所以默认开；改回用 `RHINE_ANDROID_LEGACY_PACKAGING=0`。
@@ -741,7 +758,14 @@ scripts/optimize-apk.py output/android-work/aligned.apk
 ### 5.4 还剩两块大的
 
 - 字体 28 MB：4 个字重各约 7 MB，是整个 `.rodata` 的最大头。可行方向是减少字重（light 与 demibold 交给 `QFont::setWeight` 匹配到 regular 与 bold），或按常用字子集化。两者都会改变界面观感，且中文歌名与歌手是动态文本，子集必须覆盖任意汉字。
-- Node bundle 20 MB（`worker.cjs` 14 MB 加 `xhr-sync-worker.js` 6.4 MB）：`scripts/bundle-bridge.cjs` 的 esbuild 没有开 `minify`。加 `minifyWhitespace` 与 `minifySyntax`（不开 `minifyIdentifiers`，jsdom 依赖函数名与类名）预计能砍掉四成，但需要真机验证桥接与歌词、登录链路，不是纯格式改动。
+- Node bundle 20 MB（`worker.cjs` 14 MB 加 `xhr-sync-worker.js` 6.4 MB）：2026-11-19 起 `scripts/bundle-bridge.cjs` 与 `scripts/bundle-plugins.cjs`（xhr-sync-worker 的 build）的 esbuild 已开 `minifyWhitespace` 与 `minifySyntax`（不开 `minifyIdentifiers`，jsdom 依赖函数名与类名），预计砍掉四成。仍需真机验证桥接与歌词、登录链路。
+
+其余常见体积手段在 AGP 9.1.0 下核实过现状（2026-11-20，结论同时钉在 `android/gradle.properties` 注释里）：
+
+- **R8 已是 full mode**：AGP 8 起 full mode 是唯一行为且不可关，`android.enableR8*` flag 已废弃（写上只会有 unknown-property 警告）。full mode 的高危点排查过：app 侧 Kotlin 无 native 方法、无 Parcelable，enum 全部编译期静态引用；按名查找的类只有 `org.qtproject.qt.android.*`（`proguard-rules.pro` 已整体 keep）与 manifest 声明的 `MediaPlaybackService`（入口组件 R8 自动保留）。现有 release 包即 full mode 产物，真机已验证。
+- **AAPT2 optimize**：`enableResourceOptimizations` 与资源名混淆/路径缩短在 release + `minifyEnabled` 下默认开启；本包 `res/` + `resources.arsc` 压缩后合计 0.08 MB，没有再压的空间。
+- **AndResGuard 不接入**：项目停更（最后版本支持 AGP 7，对 AGP 9 兼容性存疑），且它只处理 `res/arsc`——收益上限就是上面那 0.08 MB，换一个停更插件不成立。
+- **主 so 体积档位**：`Qt/Android.cmake` 的 `RHINE_ANDROID_SIZE_OPT`（默认 `oz`）给 RhineCore/RhineMusicDatabase 的 Release 挂 `-Oz`，链接侧 `-Wl,--icf=safe`（safe 而非 all：Qt 大量按虚函数地址比较的分支经不起 all 的合并）。只影响 app 自己的 so，Qt kit 仍是预编译档位。
 
 ### 5.5 CI 与本机的一致性
 

@@ -20,7 +20,9 @@ const force = process.argv.includes('--force');
 const jobs = process.env.RHINE_BUILD_JOBS || String(Math.max(4, Math.min(8, os.cpus().length)));
 
 const toolchain = require('./android-toolchain.cjs');
-const { applyQtAndroidPatches, pendingQtAndroidPatches } = require('./qt-android-patches.cjs');
+const { applyQtAndroidPatches, pendingQtAndroidPatches, restoreQtAndroidPatches } = require(
+    './qt-android-patches.cjs',
+);
 const sdk = toolchain.sdkRoot();
 const kit = process.env.RHINE_ANDROID_QT || path.resolve('output/dependencies/qt-android');
 const buildRoot = path.resolve('output/qt-android-build');
@@ -46,6 +48,41 @@ const ndk = toolchain.ndkRoot(sdk);
 // Qt 的 Android 平台分支会 find_package(Java Development)，必须给出 JDK 17–21；
 // 系统那套是 27，AGP 和 Qt 的 Java 步骤都不认。
 const jdk = toolchain.jdkHome(path.resolve('output/android-work'));
+// fail-fast 校验（PERF-APK-SLIM 期间踩坑后补）：toolchain.jdkHome 找不到候选时
+// **静默**返回 workDirectory/jdk 这个不存在的路径，错误要等到 qtbase configure 的
+// find_package(Java Development) 才炸，报错里没有任何 JDK 字样，无从排查。
+// 区间是 17–21（Qt 的 Java 探测不认 22+）：系统 JDK 27 与 Android Studio jbr 25
+// 都不合格，所以本机必须往 output/android-work/jdk/ 里放一份 JDK 21。
+{
+    const javaBin = path.join(jdk, 'bin', 'java');
+    if (!fs.existsSync(javaBin)) {
+        console.error(
+            'JDK 缺失：Qt kit 交叉编译需要 JDK 17–21，但既没有 JAVA_HOME，\n' +
+                `  也没有在 output/android-work/jdk/ 下找到可用的 JDK（当前解析到 ${jdk}）。\n` +
+                '  系统的 JDK 27 与 Android Studio jbr 25 都超出 Qt 的探测区间，不能直接用。\n' +
+                '  放一份 JDK 21 即可（Gradle 出包也用它）：\n' +
+                '    mkdir -p output/android-work/jdk\n' +
+                '    curl -L --fail -o output/android-work/jdk/temurin21.tar.gz \\\n' +
+                '      "https://api.adoptium.net/v3/binary/latest/21/ga/linux/x64/jdk/hotspot/normal/eclipse"\n' +
+                '    tar xzf output/android-work/jdk/temurin21.tar.gz -C output/android-work/jdk/\n' +
+                '  详见 docs/ANDROID.md §1.1 的 JDK 行。',
+        );
+        process.exit(1);
+    }
+    const versionText = [
+        spawnSync(javaBin, ['-version'], { encoding: 'utf8' }).stderr,
+        spawnSync(javaBin, ['-version'], { encoding: 'utf8' }).stdout,
+    ].join('');
+    const major = Number((/version "(\d+)/.exec(versionText) || [])[1]);
+    if (!(major >= 17 && major <= 21)) {
+        console.error(
+            `JDK 版本不合适：${jdk} 是 Java ${major}，Qt kit 交叉编译要求 17–21\n` +
+                '（find_package(Java Development) 不认 22+；系统 JDK 27 与 jbr 25 都不行）。\n' +
+                '  按 docs/ANDROID.md §1.1 往 output/android-work/jdk/ 放一份 JDK 21。',
+        );
+        process.exit(1);
+    }
+}
 
 function run(command, args, options = {}) {
     const started = Date.now();
@@ -323,6 +360,16 @@ function buildQtBase() {
             'examples',
             '-nomake',
             'tests',
+            // LTO（PERF-APK-SLIM）：本分支前提是"大量时间换体积"。Qt 的 -ltcg 经
+            // QtProcessConfigureArgs.cmake:1396 落成 CMAKE_INTERPROCEDURAL_OPTIMIZATION_<CONFIG>=ON，
+            // Clang 上是 thin LTO（CMake IPO 的默认形态；Qt 没有暴露 full 的入口，
+            // 手工塞 -flto 脱离官方路径，不做）。shared 库的导出符号拦掉了跨库 DCE，
+            // 收益主要是各库内部的死代码消除与 ICF，预计 Qt modules 压缩后省 1-1.5 MB。
+            // 代价：每个模块的大链接显著变慢；Qt 官方 Android 包同样不开 ltcg，
+            // 属于冷门组合，kit 重建后需真机回归。其余 4 个模块见 buildModule()
+            // 里的同款 IPO 传参。
+            '-ltcg',
+            'yes',
             // '--' 之后的参数原样交给 CMake（QtProcessConfigureArgs.cmake:228）。
             // 不能用 '-D变量=值'：configure 会把它塞进 QT_EXTRA_DEFINES（编译器宏），
             // 结果 CMAKE_TOOLCHAIN_FILE 根本没进缓存，CMake 就报"没指定 Android 工具链"。
@@ -374,6 +421,11 @@ function buildModule(name) {
             `-DQT_HOST_PATH=${hostQt}`,
             `-DCMAKE_INSTALL_PREFIX=${kit}`,
             '-DCMAKE_BUILD_TYPE=Release',
+            // 与 qtbase 的 -ltcg 对齐（PERF-APK-SLIM）：qtbase 经 Qt configure 落
+            // CMAKE_INTERPROCEDURAL_OPTIMIZATION_<CONFIG>=ON，这里直接用 CMake 原生
+            // 变量达到同一形态（Clang 上 thin LTO）。模块只配 Release，目录级变量
+            // 不会波及 Debug。收益与风险说明见 buildQtBase() 的注释。
+            '-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON',
             '-DQT_BUILD_EXAMPLES=OFF',
             '-DQT_BUILD_TESTS=OFF',
         ],
@@ -387,7 +439,9 @@ function buildModule(name) {
 
 // 自建 kit 的源码补丁必须在编译 qtbase 之前应用：锚点是文件内容片段，不依赖
 // 行号，上游文件挪位置也不影响；重复构建幂等，锚点失配会直接失败而不是静默跳过。
-// 子模块平时保持干净，改动只存在于构建期。--check 只做干跑，不写子模块。
+// 子模块**不允许保持 dirty**：改动只存在于编译期，构建结束（成功或失败）都
+// 在 finally 里还原——中断遗留的 dirty 也会被下次运行的 finally 收拾。
+// --check 只做干跑，不写子模块。
 if (checkOnly) {
     const pending = pendingQtAndroidPatches(root);
     console.log(
@@ -396,24 +450,29 @@ if (checkOnly) {
             : 'qt-android patches: up to date',
     );
 } else {
-    const patched = applyQtAndroidPatches(root);
-    if (patched.length > 0) {
-        console.log(`qt-android patches applied: ${patched.join(', ')}`);
+    try {
+        const patched = applyQtAndroidPatches(root);
+        if (patched.length > 0) {
+            console.log(`qt-android patches applied: ${patched.join(', ')}`);
+        }
+
+        buildOpenSsl();
+        buildQtBase();
+        for (const name of modules.slice(1)) {
+            buildModule(name);
+        }
+
+        // 收尾检查：没有 Qt6Multimedia 与 Qt6ShaderTools 的 kit 是半成品，宁可在这里失败，
+        // 也不要等到配置应用时才发现。
+        for (const name of ['Qt6', 'Qt6Qml', 'Qt6ShaderTools', 'Qt6Multimedia']) {
+            const directory = path.join(kit, 'lib', 'cmake', name);
+            if (!fs.existsSync(directory)) {
+                throw new Error(`Qt kit is incomplete, missing ${directory}`);
+            }
+        }
+        console.log(`Qt for Android kit ready: ${kit} (Qt ${qtVersion})`);
+    } finally {
+        const reverted = restoreQtAndroidPatches(root);
+        console.log(`qt-android patches reverted: ${reverted.join(', ')}`);
     }
 }
-
-buildOpenSsl();
-buildQtBase();
-for (const name of modules.slice(1)) {
-    buildModule(name);
-}
-
-// 收尾检查：没有 Qt6Multimedia 与 Qt6ShaderTools 的 kit 是半成品，宁可在这里失败，
-// 也不要等到配置应用时才发现。
-for (const name of ['Qt6', 'Qt6Qml', 'Qt6ShaderTools', 'Qt6Multimedia']) {
-    const directory = path.join(kit, 'lib', 'cmake', name);
-    if (!fs.existsSync(directory)) {
-        throw new Error(`Qt kit is incomplete, missing ${directory}`);
-    }
-}
-console.log(`Qt for Android kit ready: ${kit} (Qt ${qtVersion})`);
