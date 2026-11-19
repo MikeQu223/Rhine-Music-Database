@@ -72,7 +72,7 @@ cmake -S Qt -B output/qt-android-flutter \
 cmake --build output/qt-android-flutter --target apk -j20
 
 # 2) Flutter 出包（缺省就读上面的 staging）
-/home/aibeto/flutter/bin/flutter build apk --debug --target-platform android-arm64
+flutter build apk --debug --target-platform android-arm64
 ```
 
 - 部署目录读取顺序：`-PrhineQtAndroidDeployDir` > `RHINE_QT_ANDROID_DEPLOY_DIR` > 缺省 `output/qt-android-flutter/Qt/android-build`（`android/app/build.gradle.kts:203-210`）。缺 `libs/arm64-v8a` 或 `res/values/libs.xml` 时**配置阶段**直接失败，不允许静默产出没有 Qt 运行时的空场景包。
