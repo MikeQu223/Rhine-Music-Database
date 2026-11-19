@@ -409,7 +409,10 @@ CommentPanelDrawing paintCommentsPanel(
 
       // 元信息行（:157-186）。
       final double metaY = rowY + 12;
-      final String liked = '♥ ${item.likedLabel}';
+      // Qt `"♥ " + compactCount(item["likedCount"])` —— likedLabel 恒非空，
+      // 这里对空串仍兜成 "0"，避免页面画出孤零零的 "♥ "。
+      final String likedLabel = item.likedLabel.isEmpty ? '0' : item.likedLabel;
+      final String liked = '♥ $likedLabel';
       p.text(liked, x + cmtContentX, metaY, cmtMetaSize, 'regular', secondary);
       if (item.replyCount > 0) {
         final String label =
