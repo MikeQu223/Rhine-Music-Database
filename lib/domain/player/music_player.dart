@@ -41,12 +41,22 @@ abstract class MediaHostPort {
 }
 
 /// 偏好端口，对齐 Qt Host::preference / Host::setPreference。
-/// 播放侧只读写 play-history（Qt/src/MusicPlayer.cpp:188、:421-422、:667）。
+/// 播放侧读写 play-history（Qt/src/MusicPlayer.cpp:188、:421-422、:667）与
+/// play-mode（本分支新增：Qt 的 mode 只经 sessionState 持久化，见下方注释）。
 abstract class PreferencePort {
   String read(String key);
 
   void write(String key, String value);
 }
+
+/// 播放模式的偏好键。
+///
+/// Qt 的 mode 只有 `sessionState()` / `restoreSessionState()` 一条持久化路径
+/// （Qt/src/MusicPlayer.cpp:749-780），而 Flutter 侧的会话恢复
+/// （`lib/app/rotation_continuity.dart`）尚未接进生产，所以模式切换在重启后
+/// 会丢。这里补一个独立偏好键：写入走 [PreferencePort]（同步端口），不经过
+/// `PreferenceStore` 的 `panel/` 白名单（那份白名单被测试逐项锁死，不能加键）。
+const String kPlayModePreference = 'play-mode';
 
 /// 音源准备端口：Qt MusicPlayer::prepare（:301-443）中依赖 API、解码、封面与歌词的部分。
 ///
@@ -206,6 +216,7 @@ class MusicPlayer {
         queue = PlaybackQueue(queueApi, random: random) {
     queue.addListener(_emit);
     _seedHistory(_preferences.read('play-history'));
+    _seedMode(_preferences.read(kPlayModePreference));
   }
 
   static String _defaultProvider() => 'netease';
@@ -538,13 +549,45 @@ class MusicPlayer {
     _emit();
   }
 
+  /// [kPlayModePreference] 的回填：白名单外的取值（含缺键的空串、旧版遗留串）一律
+  /// 忽略，保持构造默认的 `all`（与 Qt `restoreSessionState` 的 `_modes.contains` 同口径）。
+  void _seedMode(String raw) {
+    if (_modes.contains(raw)) {
+      _mode = raw;
+    }
+  }
+
+  /// 偏好加载晚于构造时（生产：`BasicSettingsRuntime.load()` 是异步的）再回填一次。
+  ///
+  /// 只重放两条**只读**的回填路径（play-history / play-mode），不碰当前曲目、队列、
+  /// 播放状态：偏好是"上次会话的存档"，不能覆盖本会话里已经发生的事。
+  /// 典型时序：[MusicPlayer] 先建（端口镜像还是空的），随后设置加载完成 → 本方法。
+  ///
+  /// 历史只在还是空的时候回填：本会话已经播过歌时 [_history] 里有真实顺序，
+  /// 再灌一次存档会重复。
+  void resyncPreferences() {
+    if (_history.isEmpty) {
+      _seedHistory(_preferences.read('play-history'));
+    }
+    final String mode = _preferences.read(kPlayModePreference);
+    if (_modes.contains(mode) && mode != _mode) {
+      _mode = mode;
+      _emit();
+    }
+  }
+
   /// :643-651。白名单外取值被忽略且不发 changed（:647-650）。
   /// 返回是否接受：false 代表取值非法且状态未变；这是 Qt `player:mode:<x>` 的公开入口。
+  /// 与 Qt 的差异只有一处：合法且真正切换时额外落 [kPlayModePreference]，
+  /// 让模式跨重启保留（Qt 靠 sessionState，Flutter 侧该链路尚未接进生产）。
   bool setMode(String value) {
     if (!_modes.contains(value)) {
       return false;
     }
-    _mode = value;
+    if (value != _mode) {
+      _mode = value;
+      _preferences.write(kPlayModePreference, value);
+    }
     _emit();
     return true;
   }
