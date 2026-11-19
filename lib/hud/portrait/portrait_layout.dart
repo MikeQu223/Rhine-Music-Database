@@ -172,12 +172,12 @@ class PortraitFrame {
   final double listTop;
 }
 
-/// 列表带顶（Qt `archiveListTop()`）：
-/// `max(h*.5, h - 34 - 110 - 48*4)`。
-double portraitListTop(double height) => math.max(
-      height * .5,
-      height - portraitGestureInset - 110 - portraitRowHeight * 4,
-    );
+/// 列表带顶：竖屏内容区按 1:1 切成 3D 区与列表区。
+///
+/// 上半屏（`h * .5`）留给 3D 场景与列表滚动窗口，下半屏给列表行与播放条；
+/// [BasicHudSurface] 的竖屏场景矩形用同一条分割线（`stageHeight * .5`），
+/// 绘制与命中不会各算一份。
+double portraitListTop(double height) => height * .5;
 
 /// 画一帧竖屏主页（含播放条与底栏）。
 PortraitFrame paintPortraitHome(
@@ -193,7 +193,9 @@ PortraitFrame paintPortraitHome(
   final double position =
       (listPosition ?? archive.index.toDouble()).clamp(0.0, math.max(0.0, total - 1.0));
 
-  canvas.contentBottom = listTop + portraitRowHeight * 4;
+  // 播放条/底栏永远贴在舞台底部（与 paintPortraitShell 同源）；列表带只决定
+  // 上半屏的 3D/列表分割线，二者不能再用「listTop + 四行」联动。
+  canvas.contentBottom = math.max(0, h - portraitFooterHeight);
 
   _brand(canvas);
   _tabs(canvas, archive);
@@ -335,7 +337,7 @@ void _list(
   double position,
   int total,
 ) {
-  final double bottom = listTop + portraitRowHeight * 4;
+  final double bottom = c.height - portraitFooterHeight;
   // 3D 场景的原生矩形在竖屏只到 1080 舞台单位（网格 393），正好落在列表带中间：
   // 不在列表带铺纸色就会看到场景下沿一条硬切边（v101 实机截图里的黑缝）。
   // 先在索引行下沿做一个 26 单位的透明→纸色渐变过渡，再从 listTop 起整块铺实纸色，
