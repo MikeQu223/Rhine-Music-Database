@@ -73,7 +73,7 @@ npm run build:flutter:android -- --debug
 1. `node scripts/build-android.cjs --prepare-only` 准备 nodejs-mobile 与 Android 资源；
 2. 配置 `output/qt-android-flutter`（`RHINE_FLUTTER_HOST_ONLY=ON` + `QT_NO_GLOBAL_APK_TARGET_PART_OF_ALL=ON`），构建 `RhineMusicDatabase_prepare_apk_dir`；
 3. 用宿主 Qt 的 `androiddeployqt --aux-mode` 落 staging（libs / jar / assets / `res/values/libs.xml`）；
-4. `flutter build apk --<mode> --target-platform android-arm64 --android-project-arg=rhineJavacHome=<javac 27>`。
+4. `flutter build apk --<mode> --split-per-abi --target-platform android-arm64 --android-project-arg=rhineJavacHome=<javac 27>`。
 
 依赖定位与 JDK 选择也由脚本统一处理：Gradle 用 JDK 17–25（`RHINE_GRADLE_JDK` > `JAVA_HOME` > Android Studio JBR），`patchQtAndroidJar` 单独用 javac 27（`RHINE_JAVAC_HOME` / `JDK27_HOME`），两者互不干扰。CI 只额外负责装 SDK/NDK/宿主 Qt 与缓存 kit，出包命令与本地相同。
 
@@ -82,7 +82,7 @@ npm run build:flutter:android -- --debug
 - Gradle 任务 `patchQtAndroidJar`（`android/app/build.gradle.kts:201`，实际调用 `apply.sh`）在打包前用 `android/app/javapatch/apply.sh` 按 class 内容 sha256 校验并替换 `QtEmbeddedDelegate`、`QtView`、`QtClipboardManager` 三个类。
 - release 会启用 R8 与资源压缩（Flutter Gradle 插件的默认行为）。Qt 的 Java 桥与 QtLoader 按名字读取的资源没有静态引用，必须靠 `android/app/proguard-rules.pro`（保留 `org.qtproject.qt.android.**`）和 `android/app/src/main/res/raw/keep.xml`（保留 `qt_libs` / `use_local_qt_libs` 等）保活；否则设备上会停在 `QtLoader: Use local Qt libs is false`，随后全部 JNI 方法 `UnsatisfiedLinkError`。
 - Impeller 关闭：`android/app/src/main/AndroidManifest.xml:37` 写 `io.flutter.embedding.android.EnableImpeller=false`，实际走 Skia(OpenGL)；崩溃链与量化结论见 `docs/flutter-migration/archive/qt-flutter-state-2026-11-19.md`。
-- 产物是 `build/app/outputs/flutter-apk/app-release.apk`（debug 为 `app-debug.apk`），每次构建覆盖：必须另存独立文件名并记 sha256 与字节数，文件名本身不是证据。
+- 产物是 `build/app/outputs/flutter-apk/app-arm64-v8a-release.apk`（debug 为 `app-arm64-v8a-debug.apk`）——`--split-per-abi` 让文件名带 ABI，且只切 arm64-v8a 一片，没有 universal APK；每次构建覆盖：必须另存独立文件名并记 sha256 与字节数，文件名本身不是证据。分片后 Flutter 会把 versionCode 改成 `ABI 系数*1000 + pubspec build number`（arm64-v8a 系数 2，即 +2000），所以 APK 里的 versionCode 比 `pubspec.yaml` 的 `+N` 大 2000。
 
 ### 1.4 CI
 

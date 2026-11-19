@@ -50,7 +50,7 @@ jobs:
             third_party/qt/qtsvg \
             third_party/qt/qtshadertools
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: '26.11.1'
           cache: npm
@@ -185,17 +185,53 @@ jobs:
           # 只传给 Gradle 的 patchQtAndroidJar；JAVA_HOME 仍是 21，Gradle/AGP 不跑在 27 上。
           JDK27_HOME: ${{ env.JAVA_HOME_27_X64 }}
         # 与本地同一个入口：准备资源 → CMake 配置/编 native → androiddeployqt --aux-mode
-        # → flutter build apk。CI 不再内联这些命令，避免两边参数走偏。
-        # 不提供签名材料：Gradle 会产出未签名 release，Flutter 工具再复制成
-        # build/app/outputs/flutter-apk/app-release.apk。
+        # → flutter build apk --split-per-abi。CI 不再内联这些命令，避免两边参数走偏。
+        # 不提供签名材料：Gradle 会产出未签名 release，Flutter 工具再按 ABI 复制成
+        # build/app/outputs/flutter-apk/app-arm64-v8a-release.apk（只此一片）。
         run: npm run build:flutter:android
+
+      # 只留一个 APK，并按 RMD-<versionCode>-android-arm64-v8a-unsigned 命名：
+      # 产物名既是 apk 文件名，也是 artifact 名，下载下来的 zip 因此同名
+      # （GitHub 的 artifact zip 一律是 <artifact-name>.zip）。
+      - name: Stage APK as RMD-<versionCode>-android-arm64-v8a-unsigned
+        id: apk
+        shell: bash
+        run: |
+          set -euo pipefail
+          # --split-per-abi 后产物按 ABI 命名：Flutter 工具把 Gradle 的
+          # app-arm64-v8a-release(-unsigned).apk 复制成这个固定名字。
+          # 不存在时退回 Gradle 的原始输出，只认 arm64-v8a 那一片。
+          apk=build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+          if [[ ! -f "$apk" ]]; then
+            apk="$(find android/app/build/outputs/apk/release -maxdepth 1 \
+              -name 'app-arm64-v8a-release*.apk' -print -quit)"
+          fi
+          [[ -n "$apk" && -f "$apk" ]] || { echo "找不到 arm64-v8a release APK"; exit 1; }
+
+          # versionCode 以 APK 自身为准：分 ABI 后 Flutter 会把 versionCode 改成
+          # ABI 系数*1000 + pubspec 的 build number（arm64-v8a 系数是 2，即 +2000），
+          # 只有 badging 拿到的是最终真值。
+          aapt2="$(find "$ANDROID_SDK_ROOT/build-tools" -mindepth 2 -maxdepth 2 -name aapt2 -type f | sort -V | tail -n1)"
+          [[ -n "$aapt2" ]] || aapt2="$(command -v aapt2 || true)"
+          [[ -n "$aapt2" ]] || { echo "找不到 aapt2（build-tools 未安装？）"; exit 1; }
+          version_code="$("$aapt2" dump badging "$apk" \
+            | sed -n "s/^package:.*versionCode='\([0-9]*\)'.*/\1/p" | head -n1)"
+          [[ -n "$version_code" ]] || { echo "从 APK 读不到 versionCode"; exit 1; }
+
+          name="RMD-${version_code}-android-arm64-v8a-unsigned"
+          # 放在已被 .gitignore 忽略的 build/ 下，不额外占一个新目录。
+          out="build/ci-artifacts/${name}.apk"
+          mkdir -p "$(dirname "$out")"
+          cp "$apk" "$out"
+          echo "name=${name}" >> "$GITHUB_OUTPUT"
+          ls -l "$out"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: rhine-music-database-android-arm64-v8a-unsigned
-          path: |
-            build/app/outputs/flutter-apk/app-release.apk
-            build/app/outputs/apk/release/*.apk
-            android/app/build/outputs/apk/release/*.apk
+          # 单文件路径 → zip 根目录直接是 apk，不会再套一层 build/… 目录。
+          name: ${{ steps.apk.outputs.name }}
+          path: build/ci-artifacts/${{ steps.apk.outputs.name }}.apk
           if-no-files-found: error
+          # APK 内部已经是压缩流，artifact 再压一遍几乎没有收益，只白烧 CPU。
+          compression-level: 0

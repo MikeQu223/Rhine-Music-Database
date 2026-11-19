@@ -16,7 +16,8 @@
 //   * 宿主 Qt（moc/rcc/qmlcachegen）：QT_ROOT_DIR / RHINE_HOST_QT，缺省 /usr；
 //   * Gradle 用的 JDK 17–25；javac 27（javapatch 的 EXPECTED.sha256 由 27.0.1 录制）。
 //
-// 输出：build/app/outputs/flutter-apk/app-<buildType>.apk
+// 输出：build/app/outputs/flutter-apk/app-arm64-v8a-<buildType>.apk
+//       （--split-per-abi 按 ABI 分片命名；--target-platform android-arm64 保证只有 arm64-v8a 这一片）
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -291,12 +292,15 @@ for (const file of [
 
 // 5) Flutter 出包。release 的 R8/资源压缩规则由 android/app/proguard-rules.pro 与
 //    android/app/src/main/res/raw/keep.xml 保活 Qt 的反射入口，CI 与本地完全一致。
+//    --split-per-abi + 单个 --target-platform：AGP 只切出 arm64-v8a 一片，不再出
+//    universal APK（isUniversalApk=false）。README/CI 拿到的永远是 ABI 明确的包。
 run(
     flutter,
     [
         'build',
         'apk',
         modeFlag,
+        '--split-per-abi',
         '--target-platform',
         'android-arm64',
         '--android-project-arg',
@@ -305,6 +309,44 @@ run(
     { env: environment },
 );
 
-const apk = path.resolve(`build/app/outputs/flutter-apk/app-${debug ? 'debug' : 'release'}.apk`);
-assertFile(apk, 'Flutter 构建结束但没有找到 APK。');
-console.log(`\nAPK: ${apk}`);
+// --split-per-abi 后产物按 ABI 命名（flutter_tools listApkPaths: app-<abi>-<buildType>.apk）。
+const apkDirectory = path.resolve('build/app/outputs/flutter-apk');
+const apk = path.join(apkDirectory, `app-arm64-v8a-${debug ? 'debug' : 'release'}.apk`);
+assertFile(apk, 'Flutter 构建结束但没有找到 arm64-v8a 分片 APK。');
+
+// 从产物本身确认"只有 arm64-v8a"：分 ABI 后 AGP 按 .so 目录切分片，依赖里混进别的 ABI
+// 就会多出分片。查目录有没有残留文件会误判历史产物，所以直接读 APK 的 native-code。
+// 找不到 aapt2 时只告警：这条是护栏，不该成为本地出包的硬依赖。
+function readNativeCode(file) {
+    const buildTools = path.join(sdk, 'build-tools');
+    if (!fs.existsSync(buildTools)) {
+        return null;
+    }
+    const candidates = fs
+        .readdirSync(buildTools)
+        .filter((version) => fs.existsSync(path.join(buildTools, version, 'aapt2')))
+        .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    if (candidates.length === 0) {
+        return null;
+    }
+    const badging = spawnSync(path.join(buildTools, candidates.pop(), 'aapt2'), ['dump', 'badging', file], {
+        encoding: 'utf8',
+        maxBuffer: 8 << 20,
+    });
+    if (badging.status !== 0) {
+        return null;
+    }
+    const line = /^native-code:(.*)$/m.exec(badging.stdout || '');
+    return line ? [...line[1].matchAll(/'([^']+)'/g)].map((match) => match[1]) : [];
+}
+
+const nativeCode = readNativeCode(apk);
+if (nativeCode === null) {
+    console.warn('  跳过 ABI 校验：build-tools 里找不到可用的 aapt2。');
+} else if (nativeCode.length !== 1 || nativeCode[0] !== 'arm64-v8a') {
+    throw new Error(
+        `APK 的 native-code 不是单一 arm64-v8a：${nativeCode.join(', ') || '(空)'}——检查依赖或 staging 里的 .so ABI。`,
+    );
+}
+
+console.log(`\nAPK: ${apk}${nativeCode ? ` (native-code ${nativeCode.join(', ')})` : ''}`);
