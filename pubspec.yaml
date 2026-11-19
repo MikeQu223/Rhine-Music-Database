@@ -77,6 +77,9 @@ flutter:
     - Assets/animation/
     - Assets/fonts/
     - Resources/
+    # 平台 descriptor（schemaVersion 2，Qt ProviderRegistry 的真值文件）。
+    # Flutter 侧只读这两份 JSON 来建平台表；插件 manifest 走插件目录，不进包。
+    - MusicBridge/plugins/descriptors/
 
   # To add assets to your application, add an assets section, like this:
   # assets:
