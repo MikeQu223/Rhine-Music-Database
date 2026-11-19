@@ -42,6 +42,9 @@ const Key basicPortraitPluginDetailPageKey =
 /// 内容区起点：Qt `c.beginContent(158)`（158 之前是 HUD 画的通用页头）。
 const double basicPortraitPluginsContentTop = 158;
 
+/// 页末镜像信息块（当前域名 / 未响应域名）的 key，测试与截图定位用。
+const Key basicPortraitPluginsMirrorFooterKey = ValueKey<String>('plugins-mirror-footer');
+
 /// 分区头高（Qt `terminalSection` 推进 `y += 26`）。
 const double _sectionHeight = 26;
 
@@ -229,6 +232,11 @@ class _BasicPortraitPluginsPageState extends State<BasicPortraitPluginsPage> {
         children.add(_installedRow(ink, plugin, gridWidth));
       }
     }
+    // 页面末尾：镜像链路的当前域名与未响应域名（用户要求能直接看到卡在哪一级）。
+    children.add(Padding(
+      padding: const EdgeInsets.only(top: 18),
+      child: _mirrorFooter(ink, snapshot),
+    ));
     children.add(Padding(
       padding: const EdgeInsets.only(top: 16, bottom: 24),
       child: Text(
@@ -239,6 +247,52 @@ class _BasicPortraitPluginsPageState extends State<BasicPortraitPluginsPage> {
       ),
     ));
     return children;
+  }
+
+  /// 页末镜像信息：当前使用的域名 + 本轮未响应（或直接失败）的域名。
+  ///
+  /// 顺序固定按镜像链（`pluginMarketMirrorPrefixes`），方便用户对照自己给的顺序。
+  Widget _mirrorFooter(_PluginInk ink, PluginSnapshot snapshot) {
+    final String active = snapshot.activeHost.isNotEmpty
+        ? snapshot.activeHost
+        : (snapshot.probingHost.isNotEmpty
+            ? '正在尝试 ${snapshot.probingHost}…'
+            : '尚未连接');
+    final String dead =
+        snapshot.deadHosts.isEmpty ? '无' : snapshot.deadHosts.join('、');
+    return Container(
+      key: basicPortraitPluginsMirrorFooterKey,
+      padding: const EdgeInsets.fromLTRB(13, 12, 13, 12),
+      color: ink.surface,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text('网络', style: ink.sectionTrailing),
+          const SizedBox(height: 8),
+          Text('当前域名  $active', style: ink.paragraph),
+          const SizedBox(height: 6),
+          Text('未响应域名  $dead', style: ink.paragraph),
+          if (snapshot.mirrors.isNotEmpty) ...<Widget>[
+            const SizedBox(height: 6),
+            Text(
+              '回退顺序  ${snapshot.mirrors.join(' → ')}',
+              style: ink.paragraph,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// 字节 → `12.3 MB` / `812 KB`（页脚与进度都按这个口径）。
+  static String _megabytes(double bytes) {
+    if (bytes >= 1024 * 1024) {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
+    if (bytes >= 1024) {
+      return '${(bytes / 1024).toStringAsFixed(0)} KB';
+    }
+    return '${bytes.toStringAsFixed(0)} B';
   }
 
   Widget _section(_PluginInk ink, String code, String title, String trailing) {
@@ -442,15 +496,19 @@ class _BasicPortraitPluginsPageState extends State<BasicPortraitPluginsPage> {
   }
 
   Widget _progressBar(_PluginInk ink, PluginInstallProgress progress) {
+    final String file = progress.file.isEmpty ? '准备中…' : progress.file;
+    final String meta = <String>[
+      '${progress.filesDone}/${progress.filesTotal} 文件',
+      _megabytes(progress.bytes.toDouble()),
+      if (progress.speed > 0) '${_megabytes(progress.speed)}/s',
+    ].join(' · ');
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
-        if (progress.file.isNotEmpty)
-          Text(
-            '${progress.file}  ${progress.filesDone}/${progress.filesTotal}',
-            style: ink.paragraph,
-          ),
+        Text(file, style: ink.title),
         const SizedBox(height: 4),
+        Text(meta, style: ink.paragraph),
+        const SizedBox(height: 8),
         SizedBox(
           height: 3,
           child: Stack(

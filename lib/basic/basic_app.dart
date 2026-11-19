@@ -1112,6 +1112,10 @@ class _BasicShellState extends State<_BasicShell>
                       dark: state.dark,
                       pendingUninstall: _pendingPluginUninstall,
                       stageScale: stageScale,
+                      // 进度条与「安装中…」按钮都靠这两个字段（之前没传，
+                      // 真机上只看得到状态行、看不到进度）。
+                      installing: snapshot.progress.installing,
+                      installLabel: snapshot.progress.id,
                       onAction: (String action) =>
                           unawaited(_onPluginAction(action)),
                     );

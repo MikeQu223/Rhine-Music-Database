@@ -119,6 +119,38 @@ void main() {
     });
   });
 
+  group('镜像回退链（用户指定顺序）', () {
+    test('六级顺序固定：直连 → gh-proxy → v4 → v6 → cdn → axisnow', () {
+      expect(pluginMarketMirrorPrefixes, <String>[
+        '',
+        'https://gh-proxy.org/',
+        'https://v4.gh-proxy.org/',
+        'https://v6.gh-proxy.org/',
+        'https://cdn.gh-proxy.org/',
+        'https://axisnow.gh-proxy.org/',
+      ]);
+    });
+
+    test('域名标签：直连写成 github.com（直连），代理去掉协议与尾斜杠', () {
+      expect(pluginMirrorLabel(''), 'github.com（直连）');
+      expect(pluginMirrorLabel('https://gh-proxy.org/'), 'gh-proxy.org');
+      expect(pluginMirrorLabel('https://axisnow.gh-proxy.org/'), 'axisnow.gh-proxy.org');
+    });
+
+    test('回退窗口是 200ms（用户要求「每 200ms 无响应回退到下一级」）', () {
+      expect(pluginMirrorResponseWindow, const Duration(milliseconds: 200));
+    });
+
+    test('初始快照没有当前域名也没有未响应域名', () async {
+      final PluginManager manager = _manager(root);
+      await manager.initialize();
+      final PluginSnapshot snapshot = manager.snapshot();
+      expect(snapshot.activeHost, isEmpty);
+      expect(snapshot.deadHosts, isEmpty);
+      expect(snapshot.mirrors, hasLength(pluginMarketMirrorPrefixes.length));
+    });
+  });
+
   group('磁盘状态', () {
     test('扫目录认出已装插件，禁用写进 plugins-state.json 且重启后仍禁用', () async {
       await _pluginDir(root, 'netease', _manifest('netease', '2.1.1'));

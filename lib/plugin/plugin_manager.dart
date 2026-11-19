@@ -35,12 +35,37 @@ import 'plugin_paths.dart';
 const String defaultPluginMarketplaceUrl =
     'https://raw.githubusercontent.com/MikeQu223/Rhine-Plugin-Market/main/index.json';
 
-/// 镜像前缀（按顺序尝试；空串 = 直连）。
+/// 镜像前缀（**用户指定的顺序**，空串 = github.com 直连）。
+///
+/// 用法是「在 GitHub 原始链接前加 `https://<proxy>/`」，所以这些前缀都带尾斜杠，
+/// 拼出来的就是 `https://v6.gh-proxy.org/https://raw.githubusercontent.com/...`。
 const List<String> pluginMarketMirrorPrefixes = <String>[
   '',
-  'https://v6.gh-proxy.org/',
   'https://gh-proxy.org/',
+  'https://v4.gh-proxy.org/',
+  'https://v6.gh-proxy.org/',
+  'https://cdn.gh-proxy.org/',
+  'https://axisnow.gh-proxy.org/',
 ];
+
+/// 单级镜像的响应窗口：200ms 内没拿到响应就同时发下一级（不等前一级失败）。
+///
+/// 串行「先等一级彻底失败再换下一级」在真机上要等满 30s 超时，用户看到的是
+/// 「一直读不出来」；这里改成**对冲**：第 i 级在 `i * 200ms` 起跑，谁先返回响应
+/// 谁就赢，其余丢弃。慢但能用的镜像仍然会被采用（只要它比后面的快），
+/// 彻底不通的域名同样会被记录下来给用户看。
+const Duration pluginMirrorResponseWindow = Duration(milliseconds: 200);
+
+/// 镜像前缀的人类可读名字（页脚展示用）。
+String pluginMirrorLabel(String prefix) {
+  if (prefix.isEmpty) {
+    return 'github.com（直连）';
+  }
+  return prefix
+      .replaceFirst('https://', '')
+      .replaceFirst('http://', '')
+      .replaceAll(RegExp(r'/+$'), '');
+}
 
 /// 尺寸上限：索引 8 MiB、单文件 64 MiB（`Host.cpp:1640`、`:1786`）。
 const int pluginIndexLimitBytes = 8 * 1024 * 1024;
@@ -48,6 +73,25 @@ const int pluginFileLimitBytes = 64 * 1024 * 1024;
 
 /// 单次请求超时（Qt 用 30s：`Host.cpp:1790`）。
 const Duration pluginRequestTimeout = Duration(seconds: 30);
+
+/// 一次探路的结果：赢家前缀 + 这轮里明确失败 / 太慢没回话的级别。
+class _ProbeResult {
+  const _ProbeResult(this.prefix, this.failed, this.slow);
+
+  final String prefix;
+  final Set<String> failed;
+
+  /// 赢家先回话时还在飞行中、被强行断掉的级别（「未响应」的判定口径）。
+  final Set<String> slow;
+}
+
+/// 一次对冲抓取的赢家：实际用的前缀 + 内容。
+class _FetchWin {
+  const _FetchWin(this.prefix, this.bytes);
+
+  final String prefix;
+  final Uint8List bytes;
+}
 
 /// 安装进度（`pluginMarketplaceState()` 的 install* 字段）。
 class PluginInstallProgress {
@@ -108,6 +152,10 @@ class PluginSnapshot {
     required this.progress,
     required this.rootPath,
     required this.updates,
+    this.activeHost = '',
+    this.probingHost = '',
+    this.deadHosts = const <String>[],
+    this.mirrors = const <String>[],
   });
 
   final String marketUrl;
@@ -123,6 +171,18 @@ class PluginSnapshot {
   final PluginInstallProgress progress;
   final String rootPath;
   final int updates;
+
+  /// 当前（最近一次成功）使用的域名，空串 = 还没成功过。
+  final String activeHost;
+
+  /// 正在探路的域名，空串 = 没在探路。
+  final String probingHost;
+
+  /// 本次会话里未响应/失败的域名（已去重、按镜像链顺序）。
+  final List<String> deadHosts;
+
+  /// 完整镜像链（用于页脚「按顺序尝试」的展示）。
+  final List<String> mirrors;
 
   InstalledPlugin? installedById(String id) {
     for (final InstalledPlugin plugin in installed) {
@@ -174,8 +234,30 @@ class PluginManager extends ChangeNotifier {
   bool _loading = false;
   bool _initialized = false;
 
+  void _notifyProgressThrottled() {
+    final int now = DateTime.now().millisecondsSinceEpoch;
+    if (now - _lastProgressNotifyMs < 200) {
+      return;
+    }
+    _lastProgressNotifyMs = now;
+    notifyListeners();
+  }
+
   /// 市场索引里本次用成功的前缀（直连=空串）；下载文件时优先用它。
   String _workingPrefix = '';
+
+  /// 最近一次成功的前缀（页脚「当前域名」）。
+  String _activePrefix = '';
+  bool _activeKnown = false;
+
+  /// 本次会话里没在窗口内响应的前缀（页脚「未响应域名」）。
+  final Set<String> _deadPrefixes = <String>{};
+
+  /// 正在探路的级别（页脚在还没成功时显示「正在尝试 …」）。
+  String _probingPrefix = '';
+
+  /// 下载进度节流：每 200ms 最多通知一次（12MB 文件逐块通知会拖慢 UI）。
+  int _lastProgressNotifyMs = 0;
 
   /// 插件根目录绝对路径（未解析成功时为空串）。
   String get rootPath => _root?.path ?? '';
@@ -205,6 +287,15 @@ class PluginManager extends ChangeNotifier {
       progress: _progress,
       rootPath: rootPath,
       updates: updates,
+      activeHost: _activeKnown ? pluginMirrorLabel(_activePrefix) : '',
+      probingHost: _probingPrefix.isEmpty ? '' : pluginMirrorLabel(_probingPrefix),
+      deadHosts: <String>[
+        for (final String prefix in pluginMarketMirrorPrefixes)
+          if (_deadPrefixes.contains(prefix)) pluginMirrorLabel(prefix),
+      ],
+      mirrors: <String>[
+        for (final String prefix in pluginMarketMirrorPrefixes) pluginMirrorLabel(prefix),
+      ],
     );
   }
 
@@ -315,6 +406,8 @@ class PluginManager extends ChangeNotifier {
     _loading = true;
     _status = '正在读取插件市场…';
     _message = '';
+    // 每次刷新重新记「未响应域名」：页脚要反映这一轮，不是上次的历史。
+    _deadPrefixes.clear();
     notifyListeners();
     try {
       final Uint8List bytes = await _fetchWithMirrors(_marketUrl, pluginIndexLimitBytes);
@@ -402,7 +495,22 @@ class PluginManager extends ChangeNotifier {
         _progress = _progress.copyWith(file: name);
         notifyListeners();
         final Uri fileUri = Uri.parse('$_marketBase/$folder/$name');
-        final Uint8List bytes = await _fetchWithMirrors(fileUri.toString(), pluginFileLimitBytes);
+        final int baseBytes = downloaded;
+        final Uint8List bytes = await _fetchWithMirrors(
+          fileUri.toString(),
+          pluginFileLimitBytes,
+          onProgress: (int received) {
+            // 字节与速度按「已下载总量」算，单文件 12MB 时进度条也能动。
+            final int totalBytes = baseBytes + received;
+            final int elapsed = clock.elapsedMilliseconds < 1 ? 1 : clock.elapsedMilliseconds;
+            _progress = _progress.copyWith(
+              bytes: totalBytes,
+              speed: totalBytes * 1000.0 / elapsed,
+              progress: ((i + _fileFraction(received, totalBytes)) / unique.length).clamp(0.0, 1.0),
+            );
+            _notifyProgressThrottled();
+          },
+        );
         final File out = File('${staging.path}/$name');
         await out.parent.create(recursive: true);
         await out.writeAsBytes(bytes, flush: true);
@@ -440,6 +548,16 @@ class PluginManager extends ChangeNotifier {
       _status = '插件安装失败';
       notifyListeners();
     }
+  }
+
+  /// 单文件阶段的进度小数：市场索引没有文件大小，只能用已下载量与速度做一个
+  /// 单调递增的软估计（不保证到 1，最后以「文件完成」为准跳一格）。
+  double _fileFraction(int received, int totalBytes) {
+    if (received <= 0) {
+      return 0;
+    }
+    // 12MB 级别的常见插件入口文件：按 16MB 估；超过就贴 0.99，完成时由 filesDone 补齐。
+    return (received / (16 * 1024 * 1024)).clamp(0.0, 0.99);
   }
 
   /// staging → 备份旧目录 → 提交 → 失败回滚（`Host.cpp:1875-1899`）。
@@ -577,28 +695,157 @@ class PluginManager extends ChangeNotifier {
     return _marketUrl.substring(0, slash);
   }
 
-  /// 先试当前可用前缀，再按 [pluginMarketMirrorPrefixes] 顺序逐个试。
-  Future<Uint8List> _fetchWithMirrors(String url, int limit) async {
-    final List<String> prefixes = <String>[
-      if (_workingPrefix.isNotEmpty) _workingPrefix,
-      ...pluginMarketMirrorPrefixes,
-    ];
+  /// 对冲探路 + 单连接下载（用户要求：每 200ms 无响应就推进到下一级）。
+  ///
+  /// 两段式，避免「6 个镜像同时下一份 12MB」把流量翻六倍：
+  /// 1. 探路：第 i 级在 `i * 200ms` 起跑，只要 HTTP 头（不读 body）。谁先返回 200
+  ///    谁就是这一轮的镜像，其余连接立刻强制关闭（服务端跟着断）。
+  /// 2. 下载：只在这一个镜像上开一条连接读 body，按块回报进度。
+  ///
+  /// 探路阶段没在窗口内响应的级别记进「未响应域名」，页面末尾展示给用户。
+  /// 下载阶段失败会把这个镜像拉黑并重新探路（最多把整条链走完）。
+  Future<Uint8List> _fetchWithMirrors(
+    String url,
+    int limit, {
+    void Function(int received)? onProgress,
+  }) async {
+    final List<String> tried = <String>[];
     Object? lastError;
-    for (final String prefix in prefixes) {
-      final String candidate = prefix.isEmpty ? url : '$prefix$url';
+    while (true) {
+      final List<String> candidates = <String>[
+        if (_workingPrefix.isNotEmpty || _activeKnown) _workingPrefix,
+        ...pluginMarketMirrorPrefixes,
+      ].where((String prefix) => !tried.contains(prefix)).toList();
+      if (candidates.isEmpty) {
+        throw lastError ?? const HttpException('插件市场读取失败');
+      }
+      final _ProbeResult probe = await _probeMirror(url, candidates);
+      final String prefix = probe.prefix;
+      _workingPrefix = prefix;
+      _activePrefix = prefix;
+      _activeKnown = true;
+      _probingPrefix = '';
+      // 「未响应」= 明确失败或太慢被断掉的级别；赢家自己绝不进这个列表。
+      _deadPrefixes.addAll(probe.failed);
+      _deadPrefixes.addAll(probe.slow);
+      _deadPrefixes.remove(prefix);
+      notifyListeners();
       try {
-        final Uint8List bytes = await _get(candidate, limit);
-        _workingPrefix = prefix;
-        return bytes;
+        return await _getBody(
+          prefix.isEmpty ? url : '$prefix$url',
+          limit,
+          onProgress,
+        );
       } on Object catch (error) {
+        // 这个镜像头能通但正文不通：拉黑后换下一级。
         lastError = error;
+        tried.add(prefix);
+        _deadPrefixes.add(prefix);
+        notifyListeners();
       }
     }
-    throw lastError ?? const HttpException('插件市场读取失败');
   }
 
-  /// 单次 GET：30s 超时、只认 200、有上限（`Host.cpp:1786-1795`）。
-  Future<Uint8List> _get(String url, int limit) async {
+  /// 起跑窗口内谁先回 200 就用谁；返回胜出前缀（直连是空串）与失败情况。
+  Future<_ProbeResult> _probeMirror(String url, List<String> candidates) async {
+    final Completer<String> winner = Completer<String>();
+    final Set<String> failed = <String>{};
+    final Set<String> slow = <String>{};
+    final List<Timer> timers = <Timer>[];
+    final List<HttpClient> clients = <HttpClient>[];
+    final Set<int> started = <int>{};
+    Object? lastError;
+    int settled = 0;
+
+    void launch(int index) {
+      if (winner.isCompleted || index >= candidates.length || started.contains(index)) {
+        return;
+      }
+      started.add(index);
+      final String prefix = candidates[index];
+      _probingPrefix = prefix;
+      notifyListeners();
+      final String candidate = prefix.isEmpty ? url : '$prefix$url';
+      final HttpClient client = _httpClient()
+        ..connectionTimeout = pluginRequestTimeout
+        ..userAgent = 'RhineMusic/1.0 (+plugin-manager)';
+      clients.add(client);
+      () async {
+        final HttpClientRequest request = await client.getUrl(Uri.parse(candidate));
+        final HttpClientResponse response = await request.close();
+        if (response.statusCode != HttpStatus.ok) {
+          // 非 200 也是「通了但不可用」，直接记死。
+          throw HttpException('HTTP ${response.statusCode}', uri: Uri.parse(candidate));
+        }
+        // 只要头：把 body 扔掉，连接由胜者之外的 client.close 断掉。
+        unawaited(response.drain<void>().catchError((Object _) {}));
+        if (!winner.isCompleted) {
+          winner.complete(prefix);
+        }
+      }()
+          .catchError((Object error) {
+        lastError = error;
+        settled += 1;
+        failed.add(prefix);
+        if (!winner.isCompleted) {
+          if (started.length < candidates.length) {
+            for (int i = 0; i < candidates.length; i += 1) {
+              if (!started.contains(i)) {
+                launch(i);
+                break;
+              }
+            }
+          } else if (settled >= candidates.length) {
+            winner.completeError(lastError!, StackTrace.current);
+          }
+        }
+      });
+    }
+
+    launch(0);
+    for (int i = 1; i < candidates.length; i += 1) {
+      final int index = i;
+      timers.add(Timer(pluginMirrorResponseWindow * i, () {
+        if (winner.isCompleted || started.contains(index)) {
+          return;
+        }
+        // 到点了还没轮到这一级：前面起跑过但没回话的，就是「未响应」。
+        for (int k = 0; k < index; k += 1) {
+          if (started.contains(k) && !winner.isCompleted) {
+            slow.add(candidates[k]);
+          }
+        }
+        launch(index);
+      }));
+    }
+
+    try {
+      final String prefix = await winner.future;
+      // 赢家出现时仍在飞行中的级别：它们「没在窗口内响应」，算慢。
+      for (int k = 0; k < candidates.length; k += 1) {
+        if (started.contains(k) && candidates[k] != prefix && !failed.contains(candidates[k])) {
+          slow.add(candidates[k]);
+        }
+      }
+      slow.remove(prefix);
+      failed.remove(prefix);
+      return _ProbeResult(prefix, failed, slow);
+    } finally {
+      for (final Timer timer in timers) {
+        timer.cancel();
+      }
+      for (final HttpClient client in clients) {
+        client.close(force: true);
+      }
+    }
+  }
+
+  /// 单连接下载：30s 超时、只认 200、有上限（`Host.cpp:1786-1795`），按块回报进度。
+  Future<Uint8List> _getBody(
+    String url,
+    int limit, [
+    void Function(int received)? onProgress,
+  ]) async {
     final HttpClient client = _httpClient()
       ..connectionTimeout = pluginRequestTimeout
       ..userAgent = 'RhineMusic/1.0 (+plugin-manager)';
@@ -612,6 +859,7 @@ class PluginManager extends ChangeNotifier {
       final BytesBuilder builder = BytesBuilder(copy: false);
       await for (final List<int> chunk in response.timeout(pluginRequestTimeout)) {
         builder.add(chunk);
+        onProgress?.call(builder.length);
         if (builder.length > limit) {
           throw HttpException('响应超过上限', uri: Uri.parse(url));
         }
