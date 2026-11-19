@@ -368,8 +368,13 @@ function buildQtBase() {
             // 代价：每个模块的大链接显著变慢；Qt 官方 Android 包同样不开 ltcg，
             // 属于冷门组合，kit 重建后需真机回归。其余 4 个模块见 buildModule()
             // 里的同款 IPO 传参。
+            // 只能裸传 -ltcg：ltcg 在 qt_cmdline.cmake:88 注册为 boolean，而
+            // qt_commandline_boolean 完全忽略 nextok——val 为空时直接默认 "yes"，
+            // 从不读下一个 argv。写成 '-ltcg yes' 的 yes 会留在参数队列，下一轮
+            // 循环落进裸参数分支，报 "Invalid command line parameter 'yes'"
+            // （QtProcessConfigureArgs.cmake:1139）。裸传默认 yes，经
+            // INPUT_ltcg 触发 IPO（QtProcessConfigureArgs.cmake:1396）。
             '-ltcg',
-            'yes',
             // '--' 之后的参数原样交给 CMake（QtProcessConfigureArgs.cmake:228）。
             // 不能用 '-D变量=值'：configure 会把它塞进 QT_EXTRA_DEFINES（编译器宏），
             // 结果 CMAKE_TOOLCHAIN_FILE 根本没进缓存，CMake 就报"没指定 Android 工具链"。

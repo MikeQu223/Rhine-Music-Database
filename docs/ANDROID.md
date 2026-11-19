@@ -712,7 +712,7 @@ TEXDIAG 现在多几栏：`mt`（`musicTextures` 条数）、`adm` / `gated`（�
 
 两条 Android 链路都显式钉住档位，防 cache 漂移（§5.5 的教训：CMake 不会用源码新默认覆盖已有 cache）：`scripts/build-android.cjs` 与 `scripts/build-flutter-android.cjs`（2026-11-20 起）都在 configure 时传 `-DRHINE_ANDROID_LTO=${RHINE_ANDROID_LTO || 'full'}`、`-DRHINE_ANDROID_SIZE_OPT=${RHINE_ANDROID_SIZE_OPT || 'oz'}` 与 `-DRHINE_ANDROID_NORMAL_RGBA8=ON`（最后一个与烘焙硬编码 `RHINE_BAKE_NORMAL_RGBA8=1` 强绑定）。
 
-**Qt kit 本身**（`build-qt-android.cjs` 交叉编译的 `libQt6*.so`）2026-11-20 起也开 LTO：qtbase 的 configure 传 `-ltcg yes`（经 `QtProcessConfigureArgs.cmake` 落成 `CMAKE_INTERPROCEDURAL_OPTIMIZATION_<CONFIG>=ON`），其余模块在 `buildModule()` 直接传 `-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON`。注意 Qt 的 ltcg 走 CMake IPO，Clang 上是 **thin** 而非 full——Qt 没有暴露 full 的入口，手工塞 `-flto` 脱离官方路径，不做。shared 库的导出符号拦掉跨库 DCE，收益主要是各库内部的死代码消除与 ICF（Qt modules 约 43 MB 原始，估 5-8%）；代价是每个模块的大链接显著变慢，且 Qt 官方 Android 包同样不开 ltcg，属冷门组合，kit 重建后需真机回归。
+**Qt kit 本身**（`build-qt-android.cjs` 交叉编译的 `libQt6*.so`）2026-11-20 起也开 LTO：qtbase 的 configure 传裸 `-ltcg`（boolean 类型选项不消费下一个参数，`qt_commandline_boolean` 对空 val 默认取 yes；写成 `-ltcg yes` 会让 `yes` 留在参数队列报 `Invalid command line parameter 'yes'`），经 `QtProcessConfigureArgs.cmake` 落成 `CMAKE_INTERPROCEDURAL_OPTIMIZATION_<CONFIG>=ON`，其余模块在 `buildModule()` 直接传 `-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON`。注意 Qt 的 ltcg 走 CMake IPO，Clang 上是 **thin** 而非 full——Qt 没有暴露 full 的入口，手工塞 `-flto` 脱离官方路径，不做。shared 库的导出符号拦掉跨库 DCE，收益主要是各库内部的死代码消除与 ICF（Qt modules 约 43 MB 原始，估 5-8%）；代价是每个模块的大链接显著变慢，且 Qt 官方 Android 包同样不开 ltcg，属冷门组合，kit 重建后需真机回归。
 
 ### 5.2 APK 体积构成
 
