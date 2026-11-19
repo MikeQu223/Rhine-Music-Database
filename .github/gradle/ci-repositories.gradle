@@ -1,0 +1,24 @@
+// CI 专用 Gradle init 脚本（由 .github/workflows/flutter.yaml 拷进 ~/.gradle/init.d/）。
+//
+// 背景：Flutter 的 includeBuild(`${FLUTTER_ROOT}/packages/flutter_tools/gradle`)
+// 自身的 settings.gradle.kts 没有声明 pluginManagement 仓库，buildscript classpath
+// 只会查 gradlePluginPortal。Gradle 9.3.1 的 Kotlin DSL 需要 Kotlin 2.2.21，
+// 该版本只在 Maven Central 有，plugin portal 没有代理，于是干净环境解析失败。
+//
+// 这里给所有 settings / project（包括 included build 和 buildscript classpath）
+// 补齐官方仓库；项目自己的 settings/build.gradle 仍然可以声明更靠前的镜像。
+
+def addRepositories = { repositoryHandler ->
+    repositoryHandler.mavenCentral()
+    repositoryHandler.google()
+    repositoryHandler.gradlePluginPortal()
+}
+
+gradle.beforeSettings { settings ->
+    addRepositories(settings.pluginManagement.repositories)
+    addRepositories(settings.dependencyResolutionManagement.repositories)
+}
+
+gradle.beforeProject { project ->
+    addRepositories(project.buildscript.repositories)
+}

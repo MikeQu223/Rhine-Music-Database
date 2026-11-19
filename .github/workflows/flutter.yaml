@@ -218,6 +218,13 @@ jobs:
           test -f "$RHINE_QT_ANDROID_DEPLOY_DIR/libs/Qt6Android.jar"
           test -f "$RHINE_QT_ANDROID_DEPLOY_DIR/res/values/libs.xml"
 
+      - name: Register Gradle repositories for every build
+        shell: bash
+        run: |
+          mkdir -p "$HOME/.gradle/init.d"
+          cp .github/gradle/ci-repositories.gradle \
+             "$HOME/.gradle/init.d/rhine-repositories.gradle"
+
       - name: Build Flutter APK (arm64-v8a only)
         # 不提供签名材料：Gradle 会产出未签名 release，Flutter 工具再复制成
         # build/app/outputs/flutter-apk/app-release.apk。
