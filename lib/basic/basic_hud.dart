@@ -774,16 +774,18 @@ Rect basicLibraryListStageRect({
   double? height,
   double stageScale = 0,
 }) {
-  // 竖屏 compact 版：列表带就是「第二行对齐的那块 4 行窗口」，
-  // 顶边 = portraitListTop（随可视高度伸缩），高 = 4 行。
+  // 竖屏 compact 版：列表区就是 1:1 分割线以下的整个下半屏（到播放条上沿），
+  // 不再只算四行；绘制、拖动/点选与 ownership 共用这一份高度。
   if (portrait && height != null) {
     final double unit = portraitUnit(width, stageScale: stageScale);
-    final double top = portraitListTop(portraitGridHeight(height, unit)) * unit;
+    final double gridHeight = portraitGridHeight(height, unit);
+    final double top = portraitListTop(gridHeight);
+    final double bottom = math.max(top, gridHeight - portraitFooterHeight);
     return Rect.fromLTWH(
       0,
-      top,
+      top * unit,
       portraitGridWidth(width, stageScale: stageScale) * unit,
-      portraitRowHeight * 4 * unit,
+      (bottom - top) * unit,
     );
   }
   final double rawLeft = basicNavigationLeft(width) - 4;

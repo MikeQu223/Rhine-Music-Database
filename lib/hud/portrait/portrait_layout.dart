@@ -338,9 +338,8 @@ void _list(
   int total,
 ) {
   final double bottom = c.height - portraitFooterHeight;
-  // 3D 场景的原生矩形在竖屏只到 1080 舞台单位（网格 393），正好落在列表带中间：
-  // 不在列表带铺纸色就会看到场景下沿一条硬切边（v101 实机截图里的黑缝）。
-  // 先在索引行下沿做一个 26 单位的透明→纸色渐变过渡，再从 listTop 起整块铺实纸色，
+  // 3D 场景矩形在 1:1 分割线处结束；不在列表带铺纸色就会看到场景下沿一条硬切边。
+  // 先在索引行下沿做一个 44 单位的透明→纸色渐变过渡，再从 listTop 起整块铺实纸色，
   // 行永远画在实纸上；场景只留在渐变上方可见。
   const double fadeHeight = 44;
   final double fadeTop = listTop - fadeHeight;
@@ -367,16 +366,19 @@ void _list(
     // （用户 2026-11-18 就是在说这个「只显示三个」）。所以槽位偏移随 position 从 0
     // 连续长到一整行：顶端四行铺满，往下滚之后恢复「上一行在上方」的原始外观。
     final double slotY = listTop + portraitRowHeight * position.clamp(0.0, 1.0);
-    // 可见行区间必须跟着滚动位置走：槽位固定在第二行，一屏最多 4 行。
+    // 可见行区间必须跟着滚动位置走。
     // 旧写法用 `c.visibleRows(slotY, …)`，first 恒被算成 0（slotY 比裁剪顶低一行），
     // 于是永远只画 0..2 三行；位置一滚走，这三行被裁掉就剩一片空列表
     // （用户 2026-11-18：「列表只显示三个，再往下滑动就黑了」）。
-    // 行窗口：当前槽固定在第二行，可视区是 [listTop, listTop + 48*4]，即相对当前
-    // 位置 -1 .. +3。上界多留两行给亚像素滑动，下界按同一窗口截断——
-    // 之前按 `visibleRows(slotY, …)` 求上界，slotY 比 clipTop 低一行会恒为 0，
-    // 结果只画 3 行（第一个位置时第 4 行明明在可视区里却不画）。
+    // 行窗口下界比当前行多留一行（上一首），上界按实际列表高度补齐。
+    // 可见行数由「分割线到播放条上沿」的实际高度决定：1:1 之后列表区高于四行，
+    // 仍写死 +4 会在最后一行与播放条之间留下一条空白纸带（用户 2026-11-19）。
+    final int visibleRows = math.max(
+      1,
+      ((bottom - listTop) / portraitRowHeight).ceil(),
+    );
     final int first = math.max(0, position.floor() - 1);
-    final int last = math.min(total, position.ceil() + 4);
+    final int last = math.min(total, position.ceil() + visibleRows);
     final int current = position.round().clamp(0, math.max(0, total - 1));
     for (int row = first; row < last; row++) {
       if (row < 0 || row >= total) {
