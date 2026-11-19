@@ -496,6 +496,24 @@ class MusicPlayer {
     queue.remove(index);
   }
 
+  /// Qt `player:remove:<i>` 的公开入口：越界与当前项一律直接返回，不对队列产生副作用
+  /// （判定在 PlaybackQueue::remove 内，PlaybackQueue.cpp:173-183）。
+  void removeFromQueue(int index) {
+    if (index < 0 || index >= queue.size) {
+      return;
+    }
+    queue.remove(index);
+  }
+
+  /// 队列长度（Qt public 字段 queue 的 size）。
+  int get queueLength => queue.size;
+
+  /// 当前项行号，-1 表示无当前项（Qt public 字段 index）。
+  int get queueIndex => queue.index;
+
+  /// 队列是否非空（Qt public 字段 queue 是否为空的直读）。
+  bool get hasQueue => queue.items.isNotEmpty;
+
   /// :596-601。只保留当前项。
   void clearUpcoming() {
     queue.clearUpcoming(_current);
@@ -521,11 +539,14 @@ class MusicPlayer {
   }
 
   /// :643-651。白名单外取值被忽略且不发 changed（:647-650）。
-  void setMode(String value) {
-    if (_modes.contains(value)) {
-      _mode = value;
-      _emit();
+  /// 返回是否接受：false 代表取值非法且状态未变；这是 Qt `player:mode:<x>` 的公开入口。
+  bool setMode(String value) {
+    if (!_modes.contains(value)) {
+      return false;
     }
+    _mode = value;
+    _emit();
+    return true;
   }
 
   /// :662-669。清空历史并写回 "[]"。
