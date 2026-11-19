@@ -178,10 +178,6 @@ jobs:
           QT_KIT: output/dependencies/qt-android
         run: |
           set -euo pipefail
-          # 必须从仓库根配置：Qt/CMakeLists.txt 只是 add_subdirectory(Qt) 的片段，
-          # 直接 -S Qt 会找不到 project()/RHINE_APP_SOURCES/Android.cmake，
-          # 也会把 deploy staging 落到 output/qt-android-flutter/android-build
-          # （Gradle 默认读的是 .../Qt/android-build）。
           cmake -S . -B output/qt-android-flutter -G Ninja \
             -DCMAKE_TOOLCHAIN_FILE="$QT_KIT/lib/cmake/Qt6/qt.toolchain.cmake" \
             -DQT_HOST_PATH="$QT_ROOT_DIR" \
@@ -194,6 +190,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_MAKE_PROGRAM="$(command -v ninja)" \
             -DRHINE_FLUTTER_HOST_ONLY=ON \
+            -DQT_NO_GLOBAL_APK_TARGET_PART_OF_ALL=ON \
             -DRHINE_ANDROID_NODE_ROOT="$PWD/output/dependencies/node-mobile" \
             -DRHINE_ANDROID_RESOURCES="$PWD/output/android-resources"
 
@@ -203,8 +200,7 @@ jobs:
         # 生成 Flutter Gradle 需要的 libs/、jar 与 res/values/libs.xml。
         run: |
           set -euo pipefail
-          # 编 ALL：Qt 插件与 _prepare_apk_dir 都在其中；纯 Qt APK target 不参与 ALL。
-          cmake --build output/qt-android-flutter -- -j"${RHINE_BUILD_JOBS}"
+          cmake --build output/qt-android-flutter --target RhineMusicDatabase -- -j"${RHINE_BUILD_JOBS}"
           SETTINGS=$(find output/qt-android-flutter -name 'android-*deployment-settings.json' -print -quit)
           test -n "$SETTINGS"
           output/dependencies/qt-android/bin/androiddeployqt \
