@@ -60,13 +60,22 @@ flutter:
 
   # Real bundled assets ported from the Qt application. Flutter does not list a
   # directory recursively, so every shipped asset directory is declared here.
+  #
+  # 这里每一条都会原样打进入 APK，所以只声明**运行时真的会读**的目录。
+  # 下面四个目录的源文件仍然留在仓库里（构建期还要用），但不进包：
+  #
+  #   Assets/android-3d/  构建期输入：scripts/build-android.cjs 以它为 RHINE_3D_SOURCE
+  #                       重新导出+烘焙到 output/android-3d，Qt 运行时读的是烘焙后的
+  #                       .bin（经 Qt/Android.cmake 的 /rhine-assets 编进 .so）。
+  #                       .glb 从不被运行时读取，且与 Assets/models/ 逐字节相同。
+  #   Assets/models/      同上，只是桌面/iOS 侧的同一份 .glb 源。
+  #   Assets/previews/    9 张界面截图（17 MB），只用于 docs/flutter-migration/ 的
+  #                       迁移对照，lib/ 与 test/ 里零引用。
+  #   Assets/icons/       桌面/Windows 图标（含 .ico），Android 图标走
+  #                       android/app/src/main/res/mipmap-*，这里用不上。
   assets:
-    - Assets/android-3d/
     - Assets/animation/
     - Assets/fonts/
-    - Assets/icons/
-    - Assets/models/
-    - Assets/previews/
     - Resources/
 
   # To add assets to your application, add an assets section, like this:
