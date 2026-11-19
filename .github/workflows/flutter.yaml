@@ -208,8 +208,9 @@ jobs:
           fi
           [[ -n "$apk" && -f "$apk" ]] || { echo "找不到 arm64-v8a release APK"; exit 1; }
 
-          # versionCode 以 APK 自身为准：分 ABI 后 Flutter 会把 versionCode 改成
-          # ABI 系数*1000 + pubspec 的 build number（arm64-v8a 系数是 2，即 +2000），
+          # versionCode 以 APK 自身为准：出包脚本已用
+          # --android-project-arg=force-version-code-ignoring-abi=true 关掉 ABI 偏移，
+          # 所以这里的号码就是 pubspec.yaml 的 `+N`（arm64-v8a 不会再多出 2000）。
           # 只有 badging 拿到的是最终真值。
           aapt2="$(find "$ANDROID_SDK_ROOT/build-tools" -mindepth 2 -maxdepth 2 -name aapt2 -type f | sort -V | tail -n1)"
           [[ -n "$aapt2" ]] || aapt2="$(command -v aapt2 || true)"

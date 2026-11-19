@@ -294,6 +294,11 @@ for (const file of [
 //    android/app/src/main/res/raw/keep.xml 保活 Qt 的反射入口，CI 与本地完全一致。
 //    --split-per-abi + 单个 --target-platform：AGP 只切出 arm64-v8a 一片，不再出
 //    universal APK（isUniversalApk=false）。README/CI 拿到的永远是 ABI 明确的包。
+//    force-version-code-ignoring-abi：分 ABI 构建时 Flutter 会把 versionCode 改写成
+//    `ABI 系数*1000 + pubspec build number`（arm64-v8a 系数 2，即 +2000，
+//    FlutterPlugin.kt:659-676）。本项目只出 arm64 一片，不需要 ABI 区分码，
+//    显式关掉后 APK 的 versionCode 就是 pubspec.yaml 里写的 `+N`——否则
+//    `+79900` 会被写成 81900，和版本口径对不上。
 run(
     flutter,
     [
@@ -305,6 +310,8 @@ run(
         'android-arm64',
         '--android-project-arg',
         `rhineJavacHome=${javacHome}`,
+        '--android-project-arg',
+        'force-version-code-ignoring-abi=true',
     ],
     { env: environment },
 );
@@ -317,7 +324,7 @@ assertFile(apk, 'Flutter 构建结束但没有找到 arm64-v8a 分片 APK。');
 // 从产物本身确认"只有 arm64-v8a"：分 ABI 后 AGP 按 .so 目录切分片，依赖里混进别的 ABI
 // 就会多出分片。查目录有没有残留文件会误判历史产物，所以直接读 APK 的 native-code。
 // 找不到 aapt2 时只告警：这条是护栏，不该成为本地出包的硬依赖。
-function readNativeCode(file) {
+function readBadging(file) {
     const buildTools = path.join(sdk, 'build-tools');
     if (!fs.existsSync(buildTools)) {
         return null;
@@ -333,20 +340,49 @@ function readNativeCode(file) {
         encoding: 'utf8',
         maxBuffer: 8 << 20,
     });
-    if (badging.status !== 0) {
-        return null;
-    }
-    const line = /^native-code:(.*)$/m.exec(badging.stdout || '');
+    return badging.status === 0 ? badging.stdout || '' : null;
+}
+
+function nativeCodeOf(badging) {
+    const line = /^native-code:(.*)$/m.exec(badging);
     return line ? [...line[1].matchAll(/'([^']+)'/g)].map((match) => match[1]) : [];
 }
 
-const nativeCode = readNativeCode(apk);
-if (nativeCode === null) {
-    console.warn('  跳过 ABI 校验：build-tools 里找不到可用的 aapt2。');
-} else if (nativeCode.length !== 1 || nativeCode[0] !== 'arm64-v8a') {
-    throw new Error(
-        `APK 的 native-code 不是单一 arm64-v8a：${nativeCode.join(', ') || '(空)'}——检查依赖或 staging 里的 .so ABI。`,
-    );
+function versionCodeOf(badging) {
+    const match = /versionCode='(\d+)'/.exec(badging);
+    return match ? Number(match[1]) : null;
 }
 
-console.log(`\nAPK: ${apk}${nativeCode ? ` (native-code ${nativeCode.join(', ')})` : ''}`);
+const badging = readBadging(apk);
+const nativeCode = badging === null ? null : nativeCodeOf(badging);
+const versionCode = badging === null ? null : versionCodeOf(badging);
+if (badging === null) {
+    console.warn('  跳过 ABI / versionCode 校验：build-tools 里找不到可用的 aapt2。');
+} else {
+    if (nativeCode.length !== 1 || nativeCode[0] !== 'arm64-v8a') {
+        throw new Error(
+            `APK 的 native-code 不是单一 arm64-v8a：${nativeCode.join(', ') || '(空)'}——检查依赖或 staging 里的 .so ABI。`,
+        );
+    }
+    // versionCode 必须**等于** pubspec 的 build number：分 ABI 时 Flutter 会再加
+    // `ABI 系数*1000`（arm64-v8a = +2000），本项目用 force-version-code-ignoring-abi
+    // 关掉了它。这条断言把"偏移又生效"挡在出包这一步，而不是等发版时才发现版本号对不上。
+    const pubspec = fs.readFileSync(path.resolve('pubspec.yaml'), 'utf8');
+    const buildNumberMatch = /^version:\s*[^\s+]+\+(\d+)\s*$/m.exec(pubspec);
+    const buildNumber = buildNumberMatch ? Number(buildNumberMatch[1]) : NaN;
+    if (!Number.isInteger(buildNumber)) {
+        throw new Error('pubspec.yaml 的 version 缺少 +<build number>，无法核对 APK 的 versionCode。');
+    }
+    if (versionCode !== buildNumber) {
+        throw new Error(
+            `APK 的 versionCode ${versionCode} ≠ pubspec.yaml 的 +${buildNumber}——ABI 偏移又生效了` +
+                '（Flutter 分片会给 versionCode 加 ABI 系数*1000，arm64-v8a 是 +2000）。' +
+                '检查 --android-project-arg force-version-code-ignoring-abi=true 是否还在。',
+        );
+    }
+    console.log(`  versionCode ${versionCode} = pubspec +${buildNumber}（ABI 偏移已关闭）`);
+}
+
+console.log(
+    `\nAPK: ${apk}${nativeCode ? ` (native-code ${nativeCode.join(', ')}${versionCode === null ? '' : `, versionCode ${versionCode}`})` : ''}`,
+);
