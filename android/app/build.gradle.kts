@@ -188,11 +188,20 @@ val qtAndroidDeployDir: File =
 // 幂等（已打成期望字节就跳过），并且**编译出的 class 内容 sha256 必须等于
 // android/app/javapatch/EXPECTED.sha256**，否则构建失败。
 val javapatchDir = File(project.projectDir, "javapatch")
+// javac 版本必须与录制 EXPECTED.sha256 的一致，但它不必是跑 Gradle 的那套 JDK。
+// 通过 -PrhineJavacHome=<jdk> 显式传入；Gradle 的 Exec 会把它写进子进程环境，
+// 不依赖 PATH（CI 里 PATH/Gradle daemon 环境都不可靠）。
+val rhineJavacHome: String? =
+    (project.findProperty("rhineJavacHome")?.toString()
+        ?: System.getenv("RHINE_JAVAC_HOME"))?.trim()?.takeIf { it.isNotEmpty() }
 val patchQtAndroidJar = tasks.register<Exec>("patchQtAndroidJar") {
     description = "把 android/app/javapatch 的局部补丁打进本卡 Qt deploy 的 Qt6Android.jar 并校验字节"
     group = "qt"
     workingDir = javapatchDir
     commandLine("bash", File(javapatchDir, "apply.sh").absolutePath, qtAndroidDeployDir.absolutePath)
+    if (rhineJavacHome != null) {
+        environment("RHINE_JAVAC", File(rhineJavacHome, "bin/javac").absolutePath)
+    }
     // 幂等脚本，跳过时只有几百毫秒；不做 up-to-date 缓存，避免"jar 被 androiddeployqt 换掉
     // 但 gradle 认为没变化"这一类假通过。
     outputs.upToDateWhen { false }

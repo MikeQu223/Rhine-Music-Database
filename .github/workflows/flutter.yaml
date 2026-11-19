@@ -236,15 +236,15 @@ jobs:
       - name: Build Flutter APK (arm64-v8a only)
         shell: bash
         env:
-          # 只给 PATH 用；JAVA_HOME 仍是 21，Gradle/AGP 不会看到 27。
+          # 只传给 Gradle 的 patchQtAndroidJar；JAVA_HOME 仍是 21，Gradle/AGP 不跑在 27 上。
           JDK27_HOME: ${{ env.JAVA_HOME_27_X64 }}
         # 不提供签名材料：Gradle 会产出未签名 release，Flutter 工具再复制成
         # build/app/outputs/flutter-apk/app-release.apk。
         run: |
           set -euo pipefail
           test -x "$JDK27_HOME/bin/javac"
-          export PATH="$JDK27_HOME/bin:$PATH"
-          flutter build apk --release --target-platform android-arm64
+          flutter build apk --release --target-platform android-arm64 \
+            --android-project-arg="rhineJavacHome=$JDK27_HOME"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4

@@ -79,8 +79,13 @@ fi
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
+# 录制 EXPECTED.sha256 的 javac 版本与 Gradle 运行期不一定是同一套 JDK：
+# CI 用 JDK 21 跑 Gradle，但补丁字节是 javac 27 录的。调用方（Gradle 的
+# patchQtAndroidJar）用 RHINE_JAVAC 指定编译器绝对路径，避免依赖 PATH。
+javac_bin="${RHINE_JAVAC:-javac}"
+
 echo "android  : $android_jar"
-echo "javac    : $(javac -version 2>&1)"
+echo "javac    : $("$javac_bin" -version 2>&1)"
 echo "src sha  :"
 ( cd "$here/src" && find . -name '*.java' -print0 | sort -z | xargs -0 sha256sum )
 echo "before   : sha256=$(sha256sum "$jar" | cut -d' ' -f1) entries=$(unzip -l "$jar" | awk 'END{print $2}')"
@@ -88,7 +93,7 @@ echo "before   : sha256=$(sha256sum "$jar" | cut -d' ' -f1) entries=$(unzip -l "
 # 三份被替换的类；其余 entry 原样保留。QtClipboardManager 换成用 application context
 # 取系统剪贴板，否则框架的 ClipboardManager.mContext 会永久钉住每进程第一个宿主 Activity
 # （真机根链：jni_global QtClipboardManager -> ClipboardManager.mContext -> cold-first MainActivity）。
-javac -nowarn -Xlint:-options --release 17 \
+"$javac_bin" -nowarn -Xlint:-options --release 17 \
       -cp "$android_jar:$jar" \
       -d "$work/classes" \
       "$here/src/org/qtproject/qt/android/QtEmbeddedDelegate.java" \
