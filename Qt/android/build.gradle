@@ -21,7 +21,7 @@ Android 包只能由 Flutter 工程构建：
 入口 lib/main.dart，Gradle 工程 android/app/build.gradle.kts。
 
 Qt 侧只提供 native 产物：
-  编 libRhineMusicDatabase_arm64-v8a.so + androiddeployqt --no-build 的 libs/jar/assets/libs.xml
+  编 libRhineMusicDatabase_arm64-v8a.so + androiddeployqt --aux-mode 的 libs/jar/assets/libs.xml
 本文件（纯 Qt 部署工程的 Gradle 脚本）保留但不再可执行。
 '''.stripIndent())
 

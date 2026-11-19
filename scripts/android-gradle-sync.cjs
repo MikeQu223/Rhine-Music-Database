@@ -27,7 +27,7 @@ const bootstrapGuard = `${guardMarker} (FLUTTER-ONLY-ANDROID-20261117) =====
 // 纯 Qt 的 Android Gradle 打包已封堵：Android 包只能由 Flutter 工程产出
 // （入口 lib/main.dart，Gradle 工程 android/app/build.gradle.kts，flutter build apk）。
 // 本文件保留完整构建代码，但在这里直接失败；Qt 侧只提供 native 产物
-// （libRhineMusicDatabase_arm64-v8a.so + androiddeployqt --no-build 的 libs/jar/assets）。
+// （libRhineMusicDatabase_arm64-v8a.so + androiddeployqt --aux-mode 的 libs/jar/assets）。
 // CMake 侧同一道封堵见 Qt/Android.cmake 的 RHINE_FLUTTER_HOST_ONLY。
 throw new GradleException(
     '纯 Qt 的 Android Gradle 打包已停用（FLUTTER-ONLY-ANDROID-20261117）：'

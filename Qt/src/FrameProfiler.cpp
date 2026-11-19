@@ -534,6 +534,7 @@ void FrameProfiler::sample() {
         m_metrics.insert("gpuBackend", m_backendName);
     }
     const RhineFg::Stats fg = RhineFg::stats();
+#ifdef Q_OS_DARWIN
     // 实际渲染尺寸必须是数值字段；QSize 直接放进 QVariantMap 会被 QJsonValue 转成 null。
     const auto renderer = m_engine->renderTelemetry.snapshot();
     const int renderWidth = renderer.value("renderWidth").toInt();
@@ -545,7 +546,6 @@ void FrameProfiler::sample() {
     m_metrics.insert("displayWidth", displayWidth);
     m_metrics.insert("displayHeight", displayHeight);
     m_metrics.insert("effectiveRenderScale", displayWidth > 0 ? double(renderWidth) / displayWidth : 0.);
-#ifdef Q_OS_DARWIN
     const auto renderSettings = m_engine->renderConfiguration.snapshot();
     const auto renderMode = RhineRender::resolveRenderMode(
         renderSettings.renderPercent, renderSettings.supersample, renderSettings.modeName,

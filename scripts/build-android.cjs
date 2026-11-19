@@ -8,7 +8,7 @@
 //
 // Android 交付只走 Flutter 宿主：入口 lib/main.dart，Gradle 工程 android/app/build.gradle.kts，
 // 出包命令 `flutter build apk --debug --target-platform android-arm64`。Qt 侧只负责 native：
-// libRhineMusicDatabase_arm64-v8a.so，以及 androiddeployqt --no-build 生成的 libs/jar/assets/libs.xml。
+// libRhineMusicDatabase_arm64-v8a.so，以及 androiddeployqt --aux-mode 生成的 libs/jar/assets/libs.xml。
 //
 // 为什么在这里硬失败而不是删代码：这个脚本整条链（qt-cmake 配置 → `cmake --build --target apk`
 // → androiddeployqt → Gradle assembleDebug）产出的都是纯 Qt 包——没有 libflutter.so、没有
@@ -31,7 +31,7 @@ if (!process.argv.includes('--prepare-only')) {
             'Qt 侧只提供 native 产物（不走本脚本）：',
             '    qt-cmake -DRHINE_FLUTTER_HOST_ONLY=ON 配置 → 编 libRhineMusicDatabase_arm64-v8a.so',
             '    androiddeployqt --input <build>/Qt/android-RhineMusicDatabase-deployment-settings.json \\',
-            '                    --output <staging> --no-build（只生成 libs/jar/assets/libs.xml）',
+            '                    --output <staging> --aux-mode（只生成 libs/jar/assets/libs.xml）',
             '',
             '本脚本的打包链（cmake --build --target apk / aab + Gradle assembleDebug）已封堵：',
             '代码保留，不执行，未读取签名凭据，未准备任何资源或构建目录。',

@@ -11,7 +11,7 @@
 #
 # Android 交付只走 Flutter 宿主：入口 lib/main.dart，Gradle 工程 android/app/build.gradle.kts，
 # 出包命令 `flutter build apk --debug --target-platform android-arm64`。Qt 侧只提供 native：
-# libRhineMusicDatabase_arm64-v8a.so，以及 androiddeployqt --no-build 生成的 libs/jar/assets/libs.xml.
+# libRhineMusicDatabase_arm64-v8a.so，以及 androiddeployqt --aux-mode 生成的 libs/jar/assets/libs.xml.
 #
 # 所以 Android 配置默认 fail-closed：不给 RHINE_FLUTTER_HOST_ONLY=ON 就 configure 直接失败。
 # 打开该选项后仍然只产 native 产物——Qt 终结器照样会建 *_make_apk / *_make_aab 等 target，

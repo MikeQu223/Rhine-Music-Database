@@ -162,7 +162,7 @@ dependencies { testImplementation("junit:junit:4.13.2") }
 // 默认目录 = 本仓库内的 Qt 侧 staging，不写死绝对路径：
 //   rootProject.projectDir = <repo>/android → parentFile = <repo>
 //   cmake -S . -B output/qt-android-flutter -DRHINE_FLUTTER_HOST_ONLY=ON
-//   + 构建 ALL（androiddeployqt --no-build 落 staging）
+//   + 构建 RhineMusicDatabase_prepare_apk_dir（androiddeployqt --aux-mode 落 staging）
 //   会在 output/qt-android-flutter/Qt/android-build 下落出 libs/ 与 res/values/libs.xml。
 // 只指向**本树自己的** Qt staging：旧卡 builds/QT-OVERLAY-128 与
 // builds/DEVICE-VISUAL-131 是冻结产物，默认回落到它们会让"改了 Qt 源码却装到旧 .so"

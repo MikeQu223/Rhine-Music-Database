@@ -61,7 +61,7 @@ npm run build:android -- --check
 先编 Qt 侧运行时，再由 Flutter 出包：
 
 ```sh
-# 1) Qt 运行时：编 so，并只跑 androiddeployqt --no-build 落出 staging
+# 1) Qt 运行时：编 so，并只跑 androiddeployqt --aux-mode 落出 staging
 #    必须从仓库根配置：Qt/CMakeLists.txt 是 add_subdirectory(Qt) 的片段，
 #    直接 -S Qt 会缺 project()/RHINE_APP_SOURCES，staging 路径也会错。
 cmake -S . -B output/qt-android-flutter \
@@ -72,10 +72,10 @@ cmake -S . -B output/qt-android-flutter \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_MAKE_PROGRAM=/usr/bin/ninja \
   -DRHINE_FLUTTER_HOST_ONLY=ON \
   -DRHINE_ANDROID_NODE_ROOT=<node-mobile> -DRHINE_ANDROID_RESOURCES=<android-resources>
-cmake --build output/qt-android-flutter -- -j20
+cmake --build output/qt-android-flutter --target RhineMusicDatabase_prepare_apk_dir -- -j20
 <qt-android>/bin/androiddeployqt \
   --input output/qt-android-flutter/Qt/android-RhineMusicDatabase-deployment-settings.json \
-  --output output/qt-android-flutter/Qt/android-build --no-build
+  --output output/qt-android-flutter/Qt/android-build --aux-mode
 
 # 2) Flutter 出包（缺省就读上面的 staging）
 flutter build apk --debug --target-platform android-arm64
