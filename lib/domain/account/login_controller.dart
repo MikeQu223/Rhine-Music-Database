@@ -575,7 +575,13 @@ class LoginController {
     }
   }
 
-  /// Qt `accountKey()`（MusicLibrary.cpp:169-171）：平台上再加变体后缀。
+  /// Qt `accountKey()`（MusicLibrary.cpp:363-365）：
+  /// `providerVariant.isEmpty() ? provider : provider + "-" + providerVariant`。
+  ///
+  /// 已知差异：[LoginState] 不持有 `providerVariant`（本功能只按平台粒度登录），
+  /// 所以这里只回落平台 id；带变体的平台（如酷狗概念版）会共用同一个
+  /// `account-id-<provider>` 偏好键，与 Qt 的 `<provider>-<variant>` 不同键不一致。
+  /// 变体态由 `ProviderSwitcher`/平台弹层持有，接线时若需要分离账号，应把变体传进来。
   String _accountKey(ProviderDescriptor descriptor) => descriptor.id;
 
   /// Qt `reportLoginFailure(details, fallback)` :338-352 的公开入口。
