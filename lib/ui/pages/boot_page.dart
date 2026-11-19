@@ -1,4 +1,4 @@
-/// T42-C18 Boot 门槛页（Qt Android → Flutter 1:1 迁移，boot 阶段叠加层）。
+///  Boot 门槛页（Qt Android → Flutter 1:1 迁移，boot 阶段叠加层）。
 ///
 /// 证据（Qt/ 只读源，行号即证据）：
 /// - Qt/src/NativeScene.h:161            默认 `m_mode = "boot"`
@@ -26,7 +26,7 @@
 /// 不伪造声明（职责边界）：
 /// - 真实 HUD 绘制（glyph 真 advance/path、baseline 1.044、art 零偏移、Gamma1.8→sRGB）由共享 HUD 层负责，
 ///   经 [BootPage.hudBuilder] 注入；本页绝不自绘 boot glyph 文本。
-/// - 门槛层（`gradient` / `fill` / `arc`）在 DEDUP-18 后由本页的**命令生产者**产出 [HudCommand]，
+/// - 门槛层（`gradient` / `fill` / `arc`）在 后由本页的**命令生产者**产出 [HudCommand]，
 ///   再交给共享 [paintHudCommands] 执行：页面不再用 `DecoratedBox`/`RadialGradient`/`ColoredBox`
 ///   自绘渐变或白闪，也不再自己算渐变几何（中心/半径/色标/填充矩形归 lib/hud/render/gradient_mask.dart）。
 /// - track 驱动量（logo 描边、scan 弧、orbit 卫星、brand 行、highlightKeys、ringOpacity、permissionOpacity 尾段）
@@ -46,9 +46,7 @@ import 'boot_track_source.dart';
 
 export 'boot_track_source.dart';
 
-// ---------------------------------------------------------------------------
 // 1) 数值常量（全部带 Qt 证据注释；语义/数值不得改）
-// ---------------------------------------------------------------------------
 
 /// boot 起始偏移（秒）：Qt/src/NativeScene.cpp:178 `m_bootStart = m_clock - 1.76;`
 ///
@@ -234,7 +232,7 @@ const double kPermissionFadeEndSeconds = 19.88;
 
 /// 背景径向渐变（op == "gradient"）：Qt/src/Glyphs.cpp:806-812。
 ///
-/// DEDUP-18 起本页**不再自绘**渐变：中心 979.2/518.4、半径 1100、色标 [0, .76, 1]、填充矩形
+/// 起本页**不再自绘**渐变：中心 979.2/518.4、半径 1100、色标 [0, .76, 1]、填充矩形
 /// -4096..4096 的唯一权威在共享命令层 —— `hudBackgroundGradientCenterX` /
 /// `hudBackgroundGradientCenterY` / `hudBackgroundGradientRadius` /
 /// `hudBackgroundGradientStops` / `hudBackgroundGradientColor` / `hudBackgroundGradientRect`
@@ -274,9 +272,7 @@ const Key kBootBackgroundLayerKey = Key('boot.background');
 const Key kBootFlashLayerKey = Key('boot.flash');
 const Key kBootScanLayerKey = Key('boot.scan');
 
-// ---------------------------------------------------------------------------
 // 2) 纯函数（与 Qt 逐字等价，可独立测试）
-// ---------------------------------------------------------------------------
 
 /// `std::clamp(value, 0.0, 1.0)`（Qt/src/BootTimeline.cpp:17、Qt/src/SceneMotion.cpp:47）。
 double bootClampUnit(double value) {
@@ -310,9 +306,7 @@ String bootTyped(String text, double frame, double start, double end) {
   return text.substring(0, math.min(text.length, count));
 }
 
-// ---------------------------------------------------------------------------
 // 3) seam：track 曲线注入（生产默认载入 Assets/animation/boot-tracks.json）
-// ---------------------------------------------------------------------------
 //
 // [BootTrackSource] / [ZeroBootTrackSource] / [AssetBootTrackSource] 定义在
 // boot_track_source.dart（本文件 re-export，既有注入点与 [BootController.tracks] 不变）：
@@ -320,9 +314,7 @@ String bootTyped(String text, double frame, double start, double end) {
 // - 未命中→0：Qt/src/BootTimeline.cpp:64-67；
 // - 单调 Hermite 插值：Qt/src/SceneMotion.cpp:52-95。
 
-// ---------------------------------------------------------------------------
 // 4) 时间轴采样（Qt/src/BootTimeline.cpp:126-214 的等价实现）
-// ---------------------------------------------------------------------------
 
 /// step（Qt/src/BootTimeline.cpp:129-138 的字符串，同名枚举）。
 enum BootStep { access, logo, auth, scan, welcome }
@@ -604,9 +596,7 @@ BootFrame sampleBootFrame(
   return sampleBootTimeline(elapsedSeconds + kTimelineStartOffsetSeconds, tracks: tracks);
 }
 
-// ---------------------------------------------------------------------------
 // 5) 时钟与控制器（可测状态机）
-// ---------------------------------------------------------------------------
 
 /// 单调时钟抽象（产品用 [StopwatchBootClock]，测试用 Fake）。
 abstract class BootClock {
@@ -644,7 +634,7 @@ enum BootHandoff {
 
 /// Boot 门槛状态机：时间锚点 + 35s 闸门 + skip/restart 交割。
 ///
-/// 只负责状态与回调：**不 push 路由**（路由归 host，共享 router 不在本卡写域）。
+/// 只负责状态与回调：**不 push 路由**（路由归 host，共享 router 不在这里改动范围）。
 class BootController extends ChangeNotifier {
   BootController({
     required BootClock clock,
@@ -782,9 +772,7 @@ class BootController extends ChangeNotifier {
   }
 }
 
-// ---------------------------------------------------------------------------
 // 6) 布局（横屏 1:1 Qt；竖屏新增响应式语义）
-// ---------------------------------------------------------------------------
 
 /// 布局解析结果（纯数据，便于静态核对）。
 class BootLayout {
@@ -842,11 +830,9 @@ BootLayout resolveBootLayout(Size size, {EdgeInsets safeArea = EdgeInsets.zero})
   );
 }
 
-// ---------------------------------------------------------------------------
-// 7) 门槛层命令生产者（gradient / fill / arc —— DEDUP-18）
-// ---------------------------------------------------------------------------
+// 7) 门槛层命令生产者（gradient / fill / arc）
 
-// 门槛层命令生产者（DEDUP-18）：把 Qt `NativeHud::boot()` / `NativeHud::scan()` 里那几条
+// 门槛层命令生产者：把 Qt `NativeHud::boot` / `NativeHud::scan` 里那几条
 // `gradient` / `fill` / `arc` op 在 Dart 侧等价产出，页面再交给共享 paintHudCommands 执行。
 //
 // 三条验收约束：
@@ -989,7 +975,7 @@ List<HudCommand> buildBootFlashCommands({
 /// - 顺序即语义：:162-163 的 `translate(offset, 0)` → :330-336 的 scale/alpha →
 ///   :337-343 四条主弧 → :344-350 两条侧弧 → :370 `restore()`。
 /// - 范围外（不生产）：scan() 还画 orbit 圆点与 ornament 核心（:351-369 的 `dot()` → `ellipse`
-///   op）以及 :371-377 的 permission art；它们不属于 DEDUP-18 的 `gradient`/`arc` 两个 op，
+///   op）以及 :371-377 的 permission art；它们不属于 的 `gradient`/`arc` 两个 op，
 ///   本节只覆盖弧线。真正补 ellipse/art 生产者需另立原子（RESIDUAL_RISK，见报告）。
 List<HudCommand> buildBootScanCommands({
   required BootFrame frame,
@@ -1110,9 +1096,7 @@ class BootHudCommandPainter extends CustomPainter {
       oldDelegate.commands != commands;
 }
 
-// ---------------------------------------------------------------------------
 // 8) 页面（透明叠加层）
-// ---------------------------------------------------------------------------
 
 /// Boot 门槛页：透明叠加层（门槛层命令流 + ENTER SYSTEM 按钮；真 HUD glyph 由 [hudBuilder] 注入）。
 ///

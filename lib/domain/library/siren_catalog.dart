@@ -1,6 +1,5 @@
 part of 'music_library.dart';
 
-// ---------------------------------------------------------------------------
 // 塞壬唱片目录与本地检索（Qt/src/MusicSiren.cpp 全文，1-335 行）
 //
 // 逐函数对齐关系（每个函数头都标注 Qt 行号）：
@@ -27,10 +26,6 @@ part of 'music_library.dart';
 // 所以这里凡是"Qt 里是同步调用"的位置一律用 unawaited(...) 触发，
 // 保证 changed()/状态写入的先后与 Qt 相同。
 //
-// 仓库本阶段禁止运行验证：本文件仅编写、未执行（RED/GREEN 均未执行；
-// 依赖的根文件 music_library.dart 仍在追加后续片段）。
-// 计划执行入口（待授权）：flutter test test/domain/siren_catalog_test.dart
-// ---------------------------------------------------------------------------
 
 /// Qt MusicSiren.cpp:7-23 MusicLibrary::reloadSirenCollections。
 ///

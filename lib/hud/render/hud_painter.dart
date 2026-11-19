@@ -1,4 +1,4 @@
-// T30 · native HUD render entry — the CustomPainter that replays one decoded
+//  · native HUD render entry — the CustomPainter that replays one decoded
 // snapshot onto the stage.
 //
 // Ownership split (must not blur):
@@ -75,15 +75,15 @@ import 'paint_stack.dart';
 ///   scales by `size / 1000` with a flipped y axis, so **the port receives the
 ///   em-box top-left corner** and the 1.044 baseline shift belongs to the text
 ///   implementation, never to this port. Signature provenance (read-only,
-///   another atom): `GlyphText.paintText(canvas, text, x, y, size, {weight,
-///   tracking, required ui.Paint ink})` in T31 `lib/hud/text/glyph_run.dart:494`.
+///   another 文件): `GlyphText.paintText(canvas, text, x, y, size, {weight,
+///   tracking, required ui.Paint ink})` in  `lib/hud/text/glyph_run.dart:494`.
 ///   This port takes a resolved [ui.Color]; the binding layer turns it into
-///   that `ui.Paint` (T31 paints through an ink paint, not a colour).
+///   that `ui.Paint` ( paints through an ink paint, not a colour).
 /// * `art` — `art(c, a[1].toString(), n2, n3, n4, letters, n6)` with
 ///   `const int letters = a[5].toInt(-1)` (Qt/src/Glyphs.cpp:718,726-727) and a
 ///   brush already set from `color(a[7])`. Its body (Qt/src/Glyphs.cpp:565-588)
 ///   translates to `(x, y)` with **no** baseline factor, so `y` is the top of
-///   the art box. Signature provenance: T31 `lib/hud/text/art_run.dart:118`,
+///   the art box. Signature provenance:  `lib/hud/text/art_run.dart:118`,
 ///   `paintArt(canvas, fonts, key, x, y, size, {count, tracking, color})` - the
 ///   font set is bound by the widget layer, so this port exposes the same
 ///   arguments minus the fonts it cannot own.

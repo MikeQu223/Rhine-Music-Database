@@ -1018,15 +1018,7 @@ int main(int argc, char **argv) {
         Engine direct(root, offline);
         return direct.selfTest();
     }
-    // 用户 m10082：性能面板不是用户要求的功能 —— 帧采样 CSV 参数随性能面板停用。
-    // QString profilePath;
-    // if (args.contains("--frame-profile")) {
-    //     profilePath = args.value(args.indexOf("--frame-profile") + 1);
-    //     if (profilePath.isEmpty() || profilePath.startsWith("--")) {
-    //         qWarning() << "--frame-profile requires an output CSV path";
-    //         return 1;
-    //     }
-    // }
+    // 性能面板停用：--frame-profile 帧采样 CSV 参数不再接收。
     // 桌面版：音频、账号与播放队列由独立后台服务持有，界面进程只负责渲染。
     // 服务随界面启动并与其生命周期绑定：界面退出或崩溃都会停止播放并结束服务。
     std::unique_ptr<PlaybackConnection> playback;
@@ -1081,13 +1073,9 @@ int main(int argc, char **argv) {
     }
     auto backend = std::make_unique<Engine>(root, offline, nullptr, playback.get(),
                                             renderCache ? &*renderCache : nullptr);
-    // 用户 m10082：性能面板专用采样链整体停用 —— 不再创建 FrameProfiler 实例、
-    // 不再连接 performanceRequested、不再挂到窗口上采样/更新。
-    // FrameProfiler.h/.cpp 本体（共用环境/指标显示内容）保留，但不执行其性能面板逻辑。
+    // 性能面板停用：不再创建 FrameProfiler、不连接 performanceRequested、不挂窗口采样。
+    // FrameProfiler.h/.cpp 本体（共用环境/指标显示内容）保留，但不执行性能面板逻辑。
     std::unique_ptr<FrameProfiler> profiler;
-    // auto profiler = std::make_unique<FrameProfiler>(backend.get(), profilePath);
-    // QObject::connect(backend.get(), &Engine::performanceRequested, profiler.get(),
-    //                  &FrameProfiler::toggleVisible);
     backend->start();
     // main 新增：设置页的调试模式开关直接驱动采集生命周期；关闭会同时清空已有诊断数据。
     QObject::connect(
@@ -1106,7 +1094,7 @@ int main(int argc, char **argv) {
             }
         });
 #ifdef Q_OS_ANDROID
-    // Flutter 内嵌路径（PARITY QT-OVERLAY-128）：宿主 Activity 是 FlutterActivity，
+    // Flutter 内嵌路径：宿主 Activity 是 FlutterActivity，
     // 场景视图由 Java 侧的 RhineQtView 在自己的父窗口上创建。所以这里只做进程级准备：
     // QML 类型注册、场景字体、把 Engine/FrameProfiler 发布给后来的 QQuickView。
     // 不创建 QQmlApplicationEngine，不加载 Main.qml，也就不存在第二个 Qt 窗口、
@@ -1148,8 +1136,7 @@ int main(int argc, char **argv) {
     engine.rootContext()->setContextProperty("rhineFontFamily",
                                              families.isEmpty() ? QString("sans-serif") : families.first());
     engine.rootContext()->setContextProperty("rhine", backend.get());
-    // 用户 m10082：性能面板停用 —— 不再向 QML 暴露 profiler（FrameProfiler 实例也未创建）。
-    // engine.rootContext()->setContextProperty("profiler", profiler.get());
+    // 性能面板停用：不再向 QML 暴露 profiler。
 #if !RHINE_MOBILE
     MvController mv(&backend->host, &backend->app->music.player);
     engine.rootContext()->setContextProperty("rhineMv", &mv);
@@ -1286,8 +1273,6 @@ int main(int argc, char **argv) {
                     backend->setWindow(fallbackWindow);
                     fallbackWindow->installEventFilter(backend.get());
                     configureIOSWindow(fallbackWindow, backend.get());
-                    // 用户 m10082：性能面板采样链停用 —— 不再把 profiler 挂到窗口。
-                    // profiler->attach(fallbackWindow);
                     QObject::connect(
                         fallbackWindow, &QQuickWindow::sceneGraphInvalidated, backend.get(),
                         [raw = backend.get()] { raw->recordResourceRelease(); }, Qt::DirectConnection);
@@ -1384,8 +1369,6 @@ int main(int argc, char **argv) {
     configureAndroidWindow(window, backend.get());
 #endif
     window->installEventFilter(backend.get());
-    // 用户 m10082：性能面板采样链停用 —— 不再把 profiler 挂到窗口。
-    // profiler->attach(window);
 #if !RHINE_MOBILE
     if (playbackGuiTest) {
         qInfo("PLAYBACK_GUI_READY");

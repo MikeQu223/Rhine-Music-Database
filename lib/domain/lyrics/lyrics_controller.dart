@@ -1,4 +1,4 @@
-/// Qt -> Flutter 迁移 · DEDUP-04 歌词侧的运行时（DEDUP-27 的依赖）。
+/// Qt -> Flutter 迁移 · 歌词侧的运行时（的依赖）。
 ///
 /// Qt 移植源：Qt/src/LyricsController.cpp（全局偏移 → 当前偏移 → 活动行这三条主线）
 ///   :60-65    构造：读 'lyrics-global-offset-ms' → clamp ±10000 → offsetMs = m_globalOffsetMs

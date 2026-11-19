@@ -1,4 +1,4 @@
-/// T38-C18-W1 —— 「发现音乐」卡片（DiscoverMusicCard）的 1:1 Dart 移植。
+///  —— 「发现音乐」卡片（DiscoverMusicCard）的 1:1 Dart 移植。
 ///
 /// 唯一真值源：Qt Android 横屏实现（行号即证据，勿凭记忆改数）：
 /// - Qt/src/DiscoverMusicCard.h:10-15    Choice{label,action,selected}
@@ -59,7 +59,7 @@
 /// - Qt/src/NativeHudDiscover.cpp:12-122 宿主装配：bounds=modalBounds、loadedCount=items.size、
 ///                                       scroll 已 clamp、entries 只含 visibleIndices 的项、
 ///                                       imageAspect=cover.width/cover.height
-/// - Qt/tests/NativeHudChecks.cpp:1159-1331 本卡必须满足的断言（五列同行/不重叠/hit 收进 viewport/
+/// - Qt/tests/NativeHudChecks.cpp:1159-1331 这里必须满足的断言（五列同行/不重叠/hit 收进 viewport/
 ///                                       滚轮 75 精确累计/0.0872664626 旋转/居中 tab/aspect 保持/分类 40 分页）
 ///
 /// 边界（与宿主/兄弟原子的契约）：
@@ -751,7 +751,7 @@ class _Painter {
     for (int index = 0; index < model.categories.length; index++) {
       final double left = x + (index % columns) * (cell + 8);
       // 285 是 double 上下文里的 int 表达式：整数字面量只能逐字转换，
-      // 285 + int 的结果类型是 int，所以必须写成 285.0（T34 同类编译错误）。
+      // 285 + int 的结果类型是 int，所以必须写成 285.0（ 同类编译错误）。
       final double top = 285.0 + (index ~/ columns) * 44;
       final DiscoverChoice choice = model.categories[index];
       button(choice, left, top, cell, 36);

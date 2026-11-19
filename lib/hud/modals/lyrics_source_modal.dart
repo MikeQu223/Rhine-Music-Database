@@ -15,9 +15,7 @@
 /// the emitted coordinates stay exactly the Qt 1920x1080 stage coordinates.
 library;
 
-// ---------------------------------------------------------------------------
 // Injected hooks — contract rules 4 and 5
-// ---------------------------------------------------------------------------
 
 /// Measures [text] at [size] / [weight] with [tracking], in stage pixels.
 ///
@@ -59,9 +57,7 @@ double _clamp(double value, double lower, double upper) {
 /// std::min(10.0, width / 8) — Qt/src/NativeHud.cpp:113.
 double _minimum(double a, double b) => a < b ? a : b;
 
-// ---------------------------------------------------------------------------
 // Colours, exactly as the Qt sources build them
-// ---------------------------------------------------------------------------
 
 /// panelFill, dark — Qt/src/NativeHudModal.cpp:146.
 const List<Object?> _darkPanelFill = <Object?>[
@@ -93,9 +89,7 @@ const List<Object?> _lightInk = <Object?>[
   'calibratedRGB',
 ];
 
-// ---------------------------------------------------------------------------
 // Motion — contract rule 6, Qt/src/UiMotion.h:24-42 and UiMotion.cpp:86-120
-// ---------------------------------------------------------------------------
 
 /// UiMotion::SurfaceMotion: the fade/slide every HUD surface shares.
 ///
@@ -198,9 +192,7 @@ double _bezierComponent(double t, double a, double b) =>
     3.0 * (1.0 - t) * t * t * b +
     t * t * t;
 
-// ---------------------------------------------------------------------------
 // Action + key table — Qt/src/NativeHudController.cpp:336-345, :913-925
-// ---------------------------------------------------------------------------
 
 /// "player:lyrics-source:" + sources[index] — Qt/src/NativeHudModal.cpp:156.
 const String lyricsSourceSelectPrefix = 'player:lyrics-source:';
@@ -289,9 +281,7 @@ String lyricsSourceSelectId(String action) {
 String? lyricsSourceKeyAction(String key) =>
     key == 'Escape' ? lyricsSourceCloseAction : null;
 
-// ---------------------------------------------------------------------------
 // Frame — contract rule 7
-// ---------------------------------------------------------------------------
 
 /// One frame of the popover: the Qt op stream plus the hit table.
 class LyricsSourceModalFrame {
@@ -304,9 +294,7 @@ class LyricsSourceModalFrame {
   final List<List<Object?>> hits;
 }
 
-// ---------------------------------------------------------------------------
 // The modal — contract rule 7 entry point
-// ---------------------------------------------------------------------------
 
 /// The Qt "lyrics-source" popover (NativeHud::modalDraw branch at
 /// Qt/src/NativeHudModal.cpp:142-161).

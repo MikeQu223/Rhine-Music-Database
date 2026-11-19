@@ -47,9 +47,7 @@ import 'dart:ui' show Offset, Rect;
 
 import 'hit_layer.dart';
 
-// ─────────────────────────────────────────────────────────────────────────────
 // 第 1 层：QML 事件层
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// 滚轮事件来自哪一层，便于宿主断言与测试。字符串与 QML 的 id/objectName 对齐。
 class WheelSurface {
@@ -217,7 +215,7 @@ class OverlayWheelRouter {
 /// - onPressed（:236-243）：closing 时不进入拖动，dragOriginY = lastDragY = mouse.y，
 ///   dragged = false。
 /// - onPositionChanged（:244-261）：!pressed || closing 直接返回；
-///   |mouse.y - dragOriginY| > 6 才置 dragged；dragged 后取 p 与 previous 两点在 inputLayer
+///   mouse.y - dragOriginY| > 6 才置 dragged；dragged 后取 p 与 previous 两点在 inputLayer
 ///   的 y 差，delta != 0 才 wheelInput(p.x/scale, p.y/scale, delta, 0)，并且只在发出时把
 ///   lastDragY 更新成当前 mouse.y。
 /// - onReleased（:262-278）：closing 或 dragged 时不发命中（命中判定属 hit_layer，不在本层）。
@@ -353,9 +351,7 @@ class TouchDragRouter {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // 第 2 层：Engine 累积器（Engine.cpp:1013-1015、:1062-1086、:752-766、:569-572）
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Engine.cpp:171-185 的编译期常量。
 class EngineWheelConstants {
@@ -522,14 +518,12 @@ class EngineWheelAccumulator {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // 第 3 层：NativeHud::wheel（NativeHudInput.cpp:9-179）
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Qt/src/HudScroll.h:11-26 的滚动数学。只迁移输入消费侧用到的三个函数。
 ///
 /// clipHits（HudScroll.h:67-86）属 hit 产出侧（各卡片绘制时裁剪命中表），不在输入消费侧，
-/// 因此不在此实现，避免与 T30 的命中模型产生第二份真相。
+/// 因此不在此实现，避免与  的命中模型产生第二份真相。
 class HudScroll {
   const HudScroll._();
 

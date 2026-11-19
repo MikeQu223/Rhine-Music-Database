@@ -1,8 +1,6 @@
-// ===========================================================================
-// T33-C18 / A2   atomic id = A2   file = lib/hud/pages/archive_page.dart
-// plan 映射 = T33「品牌 / 导航 / 页脚 / 遮罩；五 lane、目录栈、列游标、Tab Mode、mask、曲目表」
-//             + 「播放全部、返回上一级、open、column-prev/next；空态」
-// 横屏 1:1 真值源：/home/aibeto/code/Rhine-Music-Database/Qt/src/NativeHud.cpp
+// 覆盖「品牌 / 导航 / 页脚 / 遮罩；五 lane、目录栈、列游标、Tab Mode、mask、曲目表」
+//      + 「播放全部、返回上一级、open、column-prev/next；空态」
+// 横屏 1:1 真值源：Qt/src/NativeHud.cpp
 //   archive             404-497  目录栈返回 / 详情入口 / 播放全部 / 标题或曲目表 /
 //                                编号 / 上下槽位 / 左右列游标 / 底部提示行
 //   archiveTabButton    500-514  Tab Mode 命中 + 文案 + keycap/symbol 两条路径
@@ -18,12 +16,10 @@
 //   MusicData::pad      Qt/src/MusicData.cpp:148-150  QString::number(v).rightJustified(w,'0')
 //   五 lane 模型         Qt/src/NativeHudController.cpp:183-185  rows(lane): lane<0 || lane>=5
 //   supportsTrackList   Qt/src/NativeHudController.cpp:945-948（注入谓词表达，本页不判断）
-// 纯 Dart：仅相对导入 './chrome.dart'（W1 持有契约块），不 import 任何 UI / 渲染框架。
+// 纯 Dart：仅相对导入 './chrome.dart'（契约块见 chrome.dart），不 import 任何 UI / 渲染框架。
 // 命令与命中按 Qt 发射顺序 append（不排序、不去重、不合并），顺序即语义。
-// 外部依赖：lib/hud/protocol/{hud_command,hud_hit,hud_frame}.dart（T30 唯一 shared types）
-//   与本页注入的 HudSurfaceSink / HudTextPort 的适配由宿主接线（ARCH_BLOCKED，见报告）。
-// 只做源码编写，不执行任何构建 / 测试 / 分析。
-// ===========================================================================
+// 外部依赖：lib/hud/protocol/{hud_command,hud_hit,hud_frame}.dart（唯一 shared types）
+//   与本页注入的 HudSurfaceSink / HudTextPort 的适配由宿主接线。
 import 'dart:math' as math;
 
 import 'chrome.dart';
@@ -155,15 +151,13 @@ class HudArchivePage {
   /// 注入出口：命令与命中按 Qt 发射顺序 append（chrome.dart 契约）。
   final HudSurfaceSink sink;
 
-  /// 注入的 glyph / 文本端口（T31）。本页自身不做任何字形度量。
+  /// 注入的 glyph / 文本端口。本页自身不做任何字形度量。
   final HudTextPort text;
 
   /// Qt dark 主题标志（NativeHud.cpp:470）。
   final bool dark;
 
-  // -------------------------------------------------------------------------
   // Qt 私有 helper 的等价薄封装（只使用 chrome.dart 已冻结的契约）
-  // -------------------------------------------------------------------------
 
   /// Qt NativeHud::text() (NativeHud.cpp:40-43)。
   void _text(String value, double x, double y, double size, [String weight = 'regular', double tracking = 0]) {
@@ -205,16 +199,14 @@ class HudArchivePage {
   }
 
   /// Qt NativeHud::roll() (NativeHud.cpp:97-101)：fit 后交给 rolling 端口，
-  /// 端口负责滚动动画与命令发射（T31 HudTextPort.rolling）。
+  /// 端口负责滚动动画与命令发射（HudTextPort.rolling）。
   void _roll(String key, String value, double x, double y, double size, double width,
       [String weight = 'regular', bool numeric = false]) {
     final String shown = text.fit(value, size, width, weight);                                        // :99
     text.rolling(key, shown, x - text.glyphInset(shown, size, weight), y, size, weight, 0, numeric);  // :100
   }
 
-  // -------------------------------------------------------------------------
   // Qt NativeHud::archive() (NativeHud.cpp:404-497)
-  // -------------------------------------------------------------------------
 
   /// 画资料库页。drawTrackList / drawEmpty 为注入委托：
   ///   drawTrackList(width, s)  == Qt archiveTrackList(x, width)（track_ruler.dart）

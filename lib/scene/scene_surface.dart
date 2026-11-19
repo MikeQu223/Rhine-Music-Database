@@ -24,7 +24,7 @@
 /// Coordinate contract used by the drag:
 ///  * pointer coordinates are viewport pixels;
 ///  * pointer deltas are treated as lane/row deltas (the inverse-projection
-///    raycast of NativeSceneInput.cpp:24-33 needs the BVH, which this atom
+///    raycast of NativeSceneInput.cpp:24-33 needs the BVH, which this file
 ///    deliberately excludes), then converted with the Qt pitches:
 ///    lane += dx * 5.2, row -= dy * 0.62 (NativeSceneInput.cpp:129-130);
 ///  * the accumulated offset is the camera displacement from the frame
@@ -38,9 +38,7 @@ import 'dart:math' as math;
 import 'scene_frame.dart';
 import 'scene_math.dart';
 
-// ---------------------------------------------------------------------------
 // Tuning constants. Every one cites the Qt line it mirrors.
-// ---------------------------------------------------------------------------
 
 /// Camera pursuit rate — NativeSceneCamera.cpp:89
 /// (blend = 1 - exp(-seconds * 5)).
@@ -91,17 +89,15 @@ const double kSurfaceSampleMinimum = 0.008;
 /// 1.85 m card centre of NativeSceneInput.cpp:25.
 const double kSurfaceCardCentreY = kCellBaseY + 1.85;
 
-// ---------------------------------------------------------------------------
 // Camera snapshot.
-// ---------------------------------------------------------------------------
 
 /// Immutable camera state at one instant.
 ///
 /// The view matrix is always rebuilt from eye/aim with Mat4.camera (:317-337)
 /// and then inverted, exactly like NativeSceneCamera.cpp:106
 /// (m_view = Matrix::camera(m_eye, m_aim).inverse()). The projection is the
-/// frame projection: this atom does not re-derive the archive/detail framing
-/// because that is the camera atom's job, not the surface's.
+/// frame projection: this file does not re-derive the archive/detail framing
+/// because that is the camera file's job, not the surface's.
 final class SceneCamera {
   const SceneCamera({
     required this.eye,
@@ -251,9 +247,7 @@ final class SceneCamera {
       ', fov: ' + fov.toString() + ')';
 }
 
-// ---------------------------------------------------------------------------
 // Surface.
-// ---------------------------------------------------------------------------
 
 /// The numeric surface behind a 3D scene viewport.
 ///
@@ -466,7 +460,7 @@ final class SceneSurface {
         _resetPointer(stopMomentum: true);
         return;
       case 'pointerleave':
-        // The wall has no hover state in this atom; a captured gesture keeps
+        // The wall has no hover state in this file; a captured gesture keeps
         // its capture, exactly like NativeSceneInput.cpp:143-146.
         return;
       default:
@@ -755,7 +749,7 @@ final class SceneSurface {
   ///
   /// This is a ray/plane intersection with the card-centre plane, not the Qt
   /// BVH picker (NativeSceneInput.cpp:36-97 needs the native meshes). It is the
-  /// deterministic nearest-cell fallback the atom asks for: project the pointer,
+  /// deterministic nearest-cell fallback the file asks for: project the pointer,
   /// intersect y = card centre, then round lane/row with the 5.2 / 0.62 grid.
   SceneCell? _pickCell(double x, double y) {
     if (_size.isEmpty) {
@@ -838,9 +832,7 @@ final class SceneSurface {
       ')';
 }
 
-// ---------------------------------------------------------------------------
 // Small value / helper types.
-// ---------------------------------------------------------------------------
 
 final class _DragSample {
   const _DragSample(this.lane, this.row, this.time);

@@ -1,4 +1,3 @@
-// ===========================================================================
 // 竖屏设置整页（Qt compact `ResponsiveHudLayout::settings()`）
 //
 // 为什么不再复用 BasicSettingsWindow：那套几何是给 1080 舞台 + 1260 面板设计的
@@ -15,7 +14,6 @@
 // 动作串沿用既有契约（'expand:<id>'、'setting-edit:<id>'、
 // `<actionPrefix><value>`、row.action、'disc-rotation'），全部回灌 BasicApp 的
 // _onSettingsAction → _settings.apply(...)，不新建状态、不做持久化。
-// ===========================================================================
 library;
 
 import 'dart:math' as math;
@@ -198,9 +196,7 @@ class _BasicPortraitSettingsPageState extends State<BasicPortraitSettingsPage> {
     );
   }
 
-  // -------------------------------------------------------------------------
   // 内容排版
-  // -------------------------------------------------------------------------
 
   List<Widget> _content(_PortraitInk ink) {
     final List<Widget> children = <Widget>[];

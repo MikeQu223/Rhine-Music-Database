@@ -1,4 +1,4 @@
-// T35-C19-W2 (PAGE-SEARCH) — Qt 检索结果层：纯几何/状态 + 可注入端口的 CustomPainter 适配。
+//  (PAGE-SEARCH) — Qt 检索结果层：纯几何/状态 + 可注入端口的 CustomPainter 适配。
 //
 // Qt 真源：
 //   Qt/src/NativeHudSearch.cpp:131-211 结果列表 / 行内容 / 标题匹配
@@ -15,7 +15,7 @@
 //      字形 advance 与 1.044 baseline 全部由端口实现方负责，本文件不伪造任何字体度量。
 //
 // 为什么本文件不 import package:flutter/material.dart：
-//   T35 卡片明令禁止用 Material 组件搭旧 Flutter 界面，并禁止纯几何/状态层 import material。
+//    卡片明令禁止用 Material 组件搭旧 Flutter 界面，并禁止纯几何/状态层 import material。
 //   两个约束落在同一文件里时强制项优先；因此适配层改用 package:flutter/rendering.dart
 //   提供的 CustomPainter（不含 Material 设计系统），绘制本身仍走端口。
 
@@ -25,9 +25,7 @@ import 'dart:ui' show Canvas, Color, Offset, Rect, Size;
 
 import 'package:flutter/rendering.dart' show CustomPainter;
 
-// ---------------------------------------------------------------------------
-// a) 冻结导出：W1 逐字引用，禁止改名 / 改值。
-// ---------------------------------------------------------------------------
+// a) 冻结导出：逐字引用，禁止改名 / 改值。
 
 /// Qt/src/NativeHudSearch.cpp:8 SearchInset。
 const double kSearchInset = 53;
@@ -194,9 +192,7 @@ SearchColor searchMutedInk(SearchColor ink) => ink.withAlpha(0.55);
 /// faintInk(ink, alpha)（Qt/src/NativeHudSearch.cpp:30-34）。
 SearchColor searchFaintInk(SearchColor ink, double alpha) => ink.withAlpha(alpha);
 
-// ---------------------------------------------------------------------------
 // QJsonValue 取值语义（Qt 的 toString()/toDouble() 只在类型匹配时给值）。
-// ---------------------------------------------------------------------------
 
 /// 等价 QJsonValue::toString()：非 string 类型返回空串（Qt 行为，不做 toString 泛化）。
 String searchQtString(Object? value) => value is String ? value : '';
@@ -219,9 +215,7 @@ String searchQtNumberFixed0(double value) {
   return rounded.toStringAsFixed(0);
 }
 
-// ---------------------------------------------------------------------------
 // c) 视口 / 可见范围 / 行矩形 / 滚动。
-// ---------------------------------------------------------------------------
 
 /// 结果视口：Rect(originX+53, originY+328, modalWidth-106, 430)。
 /// Qt/src/NativeHudSearch.cpp:132-134 + Qt/src/NativeHud.cpp:188-191（state 的 searchList*）。
@@ -340,9 +334,7 @@ Rect searchRowSeparator(Rect rowRect) {
   );
 }
 
-// ---------------------------------------------------------------------------
 // d) 滚动轨（Qt/src/NativeHudSearch.cpp:163-172 + Qt/src/HudScroll.h:43-64）。
-// ---------------------------------------------------------------------------
 
 /// 轨道 + 可能为空的 thumb。
 class SearchScrollRail {
@@ -401,9 +393,7 @@ SearchScrollRail searchScrollRail({
   );
 }
 
-// ---------------------------------------------------------------------------
 // e) 空态（Qt/src/NativeHudSearch.cpp:141-148）。
-// ---------------------------------------------------------------------------
 
 /// 空态提示文案：local 与非 local 两个分支逐字取自 Qt 源码。
 String searchEmptyHint({required bool localMusic}) {
@@ -418,9 +408,7 @@ Offset searchEmptyMessagePosition(Rect viewport) =>
 Offset searchEmptyHintPosition(Rect viewport) =>
     Offset(viewport.left, viewport.top + kSearchEmptyHintOffsetY);
 
-// ---------------------------------------------------------------------------
 // f) 行内容（Qt/src/NativeHudSearch.cpp:175-211）。
-// ---------------------------------------------------------------------------
 
 /// titleWidth = modalWidth - 308（Qt/src/NativeHudSearch.cpp:179）。
 double searchRowTitleWidth(double modalWidth) => modalWidth - 308;
@@ -523,9 +511,7 @@ Rect? searchClipRowHit(Rect hitRect, Rect viewport) {
   return clipped.isEmpty ? null : clipped;
 }
 
-// ---------------------------------------------------------------------------
 // h) 百分号编码（QUrl::toPercentEncoding / fromPercentEncoding）。
-// ---------------------------------------------------------------------------
 
 /// QUrl::toPercentEncoding 等价：仅 A-Z a-z 0-9 - _ . ~ 不编码，其余按 UTF-8
 /// 逐字节 %XX（十六进制大写），空格必须是 %20 而不是 +。
@@ -594,9 +580,7 @@ int _hexValue(int unit) {
   return -1;
 }
 
-// ---------------------------------------------------------------------------
 // g) 行动作（Qt/src/NativeHudSearch.cpp:206-210）。
-// ---------------------------------------------------------------------------
 
 /// group 行 → music:expand:<percentEncode(key)>；其余 → music:result:<lane>:<index>。
 String searchRowAction(SearchRow row, int lane) {
@@ -607,9 +591,7 @@ String searchRowAction(SearchRow row, int lane) {
   return 'music:result:$lane:${row.index}';
 }
 
-// ---------------------------------------------------------------------------
 // i) 标题匹配下划线（Qt/src/NativeHudSearch.cpp:213-230）。
-// ---------------------------------------------------------------------------
 
 /// 标题匹配结果；index < 0 表示未命中。
 class SearchTitleMatch {
@@ -705,9 +687,7 @@ Rect? searchTitleUnderline({
   );
 }
 
-// ---------------------------------------------------------------------------
 // j) 分组派生（Qt/src/NativeHudController.cpp:183-260）。
-// ---------------------------------------------------------------------------
 
 /// 一个分组：key 是 value['key']，indices 是按原始 index 顺序保留的行号。
 class SearchGroup {
@@ -889,9 +869,7 @@ List<SearchRow> deriveSearchRows({
   ).rows;
 }
 
-// ---------------------------------------------------------------------------
 // k) 滚动状态与自动补载（Qt/src/NativeHudSearch.cpp:259-281）。
-// ---------------------------------------------------------------------------
 
 /// ensureSearchFilled 的判定结果。
 class SearchAutoFillDecision {
@@ -1001,9 +979,7 @@ class SearchResultsState {
   }
 }
 
-// ---------------------------------------------------------------------------
 // l) 绘制适配层：可注入端口 + CustomPainter。
-// ---------------------------------------------------------------------------
 
 /// 绘制端口。所有字形宽度、截断与文字绘制都在实现方完成（真实 advance / 1.044 baseline），
 /// 命中回调保持 Qt hit 六字段原序 (x, y, width, height, action, label)。

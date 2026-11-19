@@ -1,4 +1,4 @@
-/// T13-S02 - glyph atlas reader for the Dart HUD spike (isolated, fail-closed).
+///  - glyph atlas reader for the Dart HUD spike (isolated, fail-closed).
 ///
 /// This loader only *reads* `Assets/fonts/misans-glyphs.json` and probes the
 /// presence/size of the shipped font files. It never parses an OTF/TTF, never

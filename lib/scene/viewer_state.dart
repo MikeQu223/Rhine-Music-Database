@@ -18,7 +18,7 @@
 ///    ported as `Spring` in `lib/scene/scene_math.dart`; this file only drives
 ///    it with Qt's rates and rest thresholds.
 ///
-/// Time sources, the point of this atom
+/// Time sources, the point of this file
 ///  * The **frame clock** (`AnimationClock`) is the pseudo clock the scene is
 ///    sampled with. Its per-frame delta is
 ///    `std::min(m_last != 0 ? time - m_last : 1.0 / 60, 0.05)`
@@ -47,9 +47,7 @@ import 'dart:convert';
 import 'scene_frame.dart';
 import 'scene_math.dart';
 
-// ---------------------------------------------------------------------------
 // Timing constants — every value cites the Qt line it was taken from.
-// ---------------------------------------------------------------------------
 
 /// `open` pending window (`NativeViewer.cpp:47`:
 /// `m_pendingUntil = m_reduced ? time : time + 0.38`).
@@ -161,9 +159,7 @@ enum ViewerAction {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Frame clock.
-// ---------------------------------------------------------------------------
 
 /// The scene's pseudo clock and Qt's per-frame delta rule.
 ///
@@ -221,9 +217,7 @@ final class AnimationClock {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Wall-clock detail fade.
-// ---------------------------------------------------------------------------
 
 /// The 500 ms wall-clock hand-over of the detail page fade.
 ///
@@ -244,7 +238,7 @@ final class AnimationClock {
 /// The normal path is therefore entirely pseudo-clock driven; the wall clock
 /// only takes over when the frame clock was truncated (a frozen scene, a
 /// backgrounded app), which is exactly the "墙钟与伪时钟取 max" rule of this
-/// atom. The ramp shape is the same smoothstep as `SceneMotion::smooth`
+/// 文件. The ramp shape is the same smoothstep as `SceneMotion::smooth`
 /// (`SceneMotion.cpp:42-49`), spelled out here because Qt spells it out too.
 final class DetailFadeClock {
   /// `m_detailEnterWallMs`; `-1` means "not in the detail page".
@@ -295,9 +289,7 @@ final class DetailFadeClock {
   static double _smoothStep(double value) => value * value * (3 - 2 * value);
 }
 
-// ---------------------------------------------------------------------------
 // Close outcome.
-// ---------------------------------------------------------------------------
 
 /// What the HUD must show once `close` finished fading.
 ///
@@ -322,9 +314,7 @@ final class ViewerCloseOutcome {
       'ViewerCloseOutcome(resumeMode: ' + resumeMode + ', time: ' + time.toString() + ')';
 }
 
-// ---------------------------------------------------------------------------
 // Viewer state.
-// ---------------------------------------------------------------------------
 
 /// The Qt viewer overlay state machine.
 ///
@@ -463,7 +453,7 @@ final class ViewerState {
   ///
   /// Only the parts this machine reports are modelled: `resetting` and
   /// `resetElapsed`. Qt also snaps or re-aims the camera here; the camera is
-  /// outside this atom. A non-animated reset (or one under reduced motion)
+  /// outside this file. A non-animated reset (or one under reduced motion)
   /// finishes immediately, exactly like the `else` branch of the C++.
   void reset({required bool animated}) {
     if (animated && !_reduced) {
@@ -547,7 +537,7 @@ final class ViewerState {
     return true;
   }
 
-  /// `NativeViewer::key` — `:131-166`, restricted to the keys this atom owns.
+  /// `NativeViewer::key` — `:131-166`, restricted to the keys this file owns.
   ///
   /// `Escape` closes even when the meshes never loaded (`:132-134`); every other
   /// key requires a ready, non-closing overlay (`:136-138`). `Home` performs an

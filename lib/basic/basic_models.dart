@@ -1,12 +1,12 @@
-/// Qt → Flutter 迁移 · BASIC-89（塞壬唱片基本版）的冻结数据契约。
+/// 塞壬唱片基本版的冻结数据契约（Qt → Flutter 迁移）。
 ///
-/// owner：lane A。本文件是跨 lane 契约 v1 的唯一写者，改名必须先报 BASIC-89 协调者。
-/// 真值来源（只读）：
-/// - /home/aibeto/code/Rhine-Music-Database/MusicBridge/client/siren.mjs
+/// 本文件是跨 lane 契约 v1 的唯一写者；改名必须先通知其他 lane。
+/// 对应实现（只读）：
+/// - MusicBridge/client/siren.mjs
 ///   songItem :189-216、albumItem :218-255、detail :414-439、playback :482-495、lyrics :497-513
-/// - /home/aibeto/code/Rhine-Music-Database/Qt/src/MusicSiren.cpp
+/// - Qt/src/MusicSiren.cpp
 ///   曲库读取 :46-88、本地搜索匹配字段 :105-124、文案 :50/:63/:78-79/:181-183
-/// - /home/aibeto/code/Rhine-Music-Database/MusicBridge/lyrics-format.cjs
+/// - MusicBridge/lyrics-format.cjs
 ///   parseLrc :35-53、normalizeLyrics :128-213（LRC 行/翻译/偏移规则）
 library;
 
@@ -646,7 +646,7 @@ class BasicLocalPlaylist {
 ///
 /// 冻结契约要求的 getter（phase/loading/error/status/query/songs/albums/album/song/playing/
 /// buffering/positionMs/durationMs/playbackError/lyrics/lyricIndex/dark）在这里都是 final 字段，
-/// 读取方式与 getter 完全一致；其余字段是 lane A 追加的空态/播放辅助信息。
+/// 读取方式与 getter 完全一致；其余字段是 追加的空态/播放辅助信息。
 class BasicViewState {
   const BasicViewState({
     this.phase = BasicPhase.boot,

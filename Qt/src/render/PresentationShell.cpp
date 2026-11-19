@@ -66,7 +66,7 @@ quint64 bindingKey(const QRhiTexture *a, const QRhiTexture *b) {
     return (quint64(quintptr(a)) * 0x9E3779B97F4A7C15ull) ^ quint64(quintptr(b));
 }
 
-/// 已排序样本取分位。呈现间隔（gapP*）与 A02 的 begin/end 分位共用同一套取整规则，
+/// 已排序样本取分位。呈现间隔（gapP*）与 begin/end 分位共用同一套取整规则，
 /// 避免两处"分位"因为四舍五入/向下取整不同而对不上。
 double sortedQuantile(const QList<double> &sorted, double quantile) {
     const int last = sorted.size() - 1;
@@ -465,7 +465,7 @@ void PresentationShell::syncSizes() {
     // recreateSwapchain()，只有那里才允许真正重建——它会作废跨尺寸的插值历史并强制
     // 重画一帧，抢在这里重建就会拿到按旧尺寸插出来的帧（画面闪一下）。所以这里只在
     // "没有待重建"且 presenter 的交换链尺寸已等于目标尺寸时把请求推下去；后端在这种
-    // 情况下只做尺寸比较（A10 的 resizeSkips），一次 finish 都不会发生。
+    // 情况下只做尺寸比较（resizeSkips），一次 finish 都不会发生。
     // 这一句同时是"去重生效"在 CSV 里的证据：跳过数应随帧数增长，设备等待数不增长。
     if (m_presenter && !m_needRecreate && m_presenter->extent() == pixelSize()) {
         m_presenter->resize(pixelSize(), false);
@@ -656,11 +656,11 @@ void PresentationShell::publishStats(bool interpolatedThisStep) {
     m_stats.displaySize = m_presenter ? m_presenter->extent() : QSize();
     m_stats.imageReuseMs = m_presenter ? m_presenter->imageReuseMs() : 0.0;
     // 交换链重建/设备等待/尺寸去重是计数器，每帧都要带上：只靠帧率看不出
-    // "这一帧慢是因为又等了 GPU 空闲"，而那正是 A10 要证明的事。
+    // "这一帧慢是因为又等了 GPU 空闲"，而那正是本次要证明的事。
     m_stats.swapchainRecreates = m_presenter ? m_presenter->swapchainRecreates() : 0;
     m_stats.deviceIdleWaits = m_presenter ? m_presenter->deviceIdleWaits() : 0;
     m_stats.resizeSkips = m_presenter ? m_presenter->resizeSkips() : 0;
-    // A02：离屏提交按"实际调用"计——呈现层取后端累计数（在真正 begin 成功处 +1），
+    // 离屏提交按"实际调用"计——呈现层取后端累计数（在真正 begin 成功处 +1），
     // QML 场景层/UI 层由 step() 对 SceneLayerHost 的两个公开计数取差分后累加。
     // 发布值 = 自上次 publishStats 以来发生的 beginFrame/endFrame 对数：正常一帧 3 次
     // （场景层 + UI 层 + 呈现层），空闲跳帧 0 次；失败步的计数顺延到下一次发布。
@@ -742,7 +742,7 @@ bool PresentationShell::presentOne(const RhineRender::PresentationBackend::Frame
         CrashRenderScope stage("presentation.beginFrame");
         return m_presenter->beginFrame(frame, &cb);
     }();
-    // A02：beginMs 的语义是"帧槽等待"——beginFrame 要等上一帧的命令缓冲/围栏归还。
+    // beginMs 的语义是"帧槽等待"——beginFrame 要等上一帧的命令缓冲/围栏归还。
     // EMA 只能看趋势，原始样本单独留在 slotWaitMs/分位环里作为证据。
     const double beginSample = tookMs();
     m_stats.beginMs = blend(m_stats.beginMs, beginSample);
@@ -754,7 +754,7 @@ bool PresentationShell::presentOne(const RhineRender::PresentationBackend::Frame
         m_error = QStringLiteral("beginOffscreenFrame 失败（%1）").arg(int(begun));
         return false;
     }
-    // A02：begin 成功即计一次离屏提交（与后端 offscreenSubmits() 同一判据）。
+    // begin 成功即计一次离屏提交（与后端 offscreenSubmits() 同一判据）。
     ++m_presenterSubmits;
 
     // FG 的算法命令必须和合成落在同一个离屏帧里：先插值、再合成、最后注入信号量，
@@ -769,7 +769,7 @@ bool PresentationShell::presentOne(const RhineRender::PresentationBackend::Frame
         CrashRenderScope stage("presentation.endFrame");
         return m_presenter->endFrame(frame, composed);
     }();
-    // A02：endMs 的语义是"离屏收尾"——只做提交与呈现，没有读回时不应有同步等待。
+    // endMs 的语义是"离屏收尾"——只做提交与呈现，没有读回时不应有同步等待。
     const double endSample = tookMs();
     m_stats.endMs = blend(m_stats.endMs, endSample);
     // 成对样本只记 begin/end 都走完的帧：失败的 begin 没有 end，混进分位会把
@@ -792,7 +792,7 @@ bool PresentationShell::presentOne(const RhineRender::PresentationBackend::Frame
         // 整帧 = 从 beginFrame 之前到 endFrame 返回之后。以前这里记的是"上屏耗时"，
         // 但它在 endFrame 之后重新起表，只有几条记账语句那么长（恒≈0），
         // 白白占掉一列指标；换成全程耗时后，"帧间隔 30ms 但分项都是 1ms"这类
-        // 缺口才有唯一可对的数（A01 的计时去重）。
+        // 缺口才有唯一可对的数（计时去重）。
         m_stats.frameMs = blend(m_stats.frameMs, m_frameProbe.nsecsElapsed() / 1e6);
         ++m_stats.frameId;
         if (m_presentClock.isValid()) {
@@ -996,7 +996,7 @@ void PresentationShell::step() {
     }
 
     m_probe.restart();
-    // A03：把引擎侧内容版本推进到本帧。必须在 renderFrame() 之前——脏标记是在那一刻
+    // 把引擎侧内容版本推进到本帧。必须在 renderFrame() 之前——脏标记是在那一刻
     // 被消费的，晚一行就要等到下一帧才生效。默认（RHINE_LAYER_REVISION 未开）这里只
     // 记录版本，置脏仍由 sceneUpdated/hudUpdated 信号驱动，行为与优化前一致。
     m_host->setResourceRevision(m_backend->sceneRevision(), m_backend->hudRevision());
@@ -1021,7 +1021,7 @@ void PresentationShell::step() {
     const auto previousInputSerial = currentFrameInputs().serial;
     const bool sceneRendered = m_host->renderFrame();
     m_stats.sceneMs = blend(m_stats.sceneMs, tookMs());
-    // A02：QML 场景层/UI 层每次真正渲染都是一次 QQuickRenderControl 的 beginFrame/endFrame。
+    // QML 场景层/UI 层每次真正渲染都是一次 QQuickRenderControl 的 beginFrame/endFrame。
     // SceneLayerHost 没有提交计数接口（不在本次改动范围），只能对两个公开计数取差分；
     // 立即累加，后面的早退路径（渲染失败/呈现失败）也能把它们算进去。
     m_layerSubmits += (m_host->sceneRenderCount() - previousSceneFrames) +
@@ -1097,15 +1097,15 @@ void PresentationShell::reportStats() {
         << QString::number(m_stats.compositeMs, 'f', 2) << "整帧"
         << QString::number(m_stats.frameMs, 'f', 2) << "复用"
         << QString::number(m_stats.imageReuseMs, 'f', 1)
-        // A02 语义写死：begin = 帧槽等待（等上一帧提交的槽），end = 离屏收尾。
+        // 语义写死：begin = 帧槽等待（等上一帧提交的槽），end = 离屏收尾。
         << "帧槽" << QString::number(m_stats.beginMs, 'f', 2)
         << "离屏收尾" << QString::number(m_stats.endMs, 'f', 2) << "空档"
         << QString::number(m_stats.idleGapMs, 'f', 2) << "跳过" << m_skippedSteps
-        // 重建 / 设备等待 / 尺寸去重：A10 的现场证据，一行看得出有没有白等 GPU。
+        // 重建 / 设备等待 / 尺寸去重：现场证据，一行看得出有没有白等 GPU。
         << "重建" << m_stats.swapchainRecreates << "等待" << m_stats.deviceIdleWaits << "尺寸跳过"
         << m_stats.resizeSkips
         << (m_frameClock.isValid() ? m_frameClock.restart() / double(m_presentedFrames - m_statsBase) : 0.0);
-    // A02：把两个"离屏边界"的语义写成一行，避免以后又把帧槽等待和收尾等待混成一个数。
+    // 把两个"离屏边界"的语义写成一行，避免以后又把帧槽等待和收尾等待混成一个数。
     qWarning().noquote()
         << "FG 提交/等待: 提交" << m_stats.submitsPerFrame
         << "次/帧（QML 场景层 + UI 层 + 呈现层，各一次 beginFrame/endFrame）" << "帧槽等待"

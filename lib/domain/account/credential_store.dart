@@ -1,4 +1,4 @@
-/// T24-S04 账号凭据存储：对齐 Qt 的 cookie 会话文件与逐来源登出。
+///  账号凭据存储：对齐 Qt 的 cookie 会话文件与逐来源登出。
 ///
 /// 契约来源（逐条带 Qt 行号）：
 /// - Qt/src/PlatformAndroid.cpp:10-46：account.credential 的路径、读、写（空串=成功）、
@@ -9,7 +9,6 @@
 /// - Qt/src/Host.cpp:609-662：logout 逐来源清理；清理后 cookies 为空才删文件，否则重写。
 /// - Qt/src/Host.cpp:517-530：cookie 更新后若任一来源仍已认证则立即持久化。
 ///
-/// 任务契约禁止执行 flutter/dart test/analyze；本文件只编写、不运行，RED/GREEN 均未执行。
 library;
 
 import 'dart:convert';
@@ -126,7 +125,7 @@ class CredentialStore implements CredentialPort {
   /// Host.cpp:586 kugouEdition；hasCredential("kugou") 依赖当前版本。
   KugouEdition edition = KugouEdition.standard;
 
-  /// Host.cpp:600/603 offline 与远端分支在本卡不接线，默认离线直写文件。
+  /// Host.cpp:600/603 offline 与远端分支在这里不接线，默认离线直写文件。
   bool offline = false;
 
   /// PlatformAndroid.cpp:11 的 credentialPath()。
@@ -148,7 +147,7 @@ class CredentialStore implements CredentialPort {
     cookies = decoded is Map ? Map<String, Object?>.from(decoded) : <String, Object?>{};
   }
 
-  /// Host.cpp:541-553 hasCredential（remote 分支不属本卡）。
+  /// Host.cpp:541-553 hasCredential（remote 分支不属这里）。
   @override
   bool hasCredential(AccountProvider source) {
     switch (source) {

@@ -25,7 +25,7 @@
 /// - Qt/src/NativeHudInput.cpp:23-26      滚轮：编辑中先取消编辑
 /// - Qt/src/NativeHudController.cpp:394-402 setting-edit: 派发与前置取消
 /// - Qt/src/NativeHudController.cpp:774-780 expand: 单一展开项
-/// - 契约 .agents/parity-20261109/worktrees/T06/docs/flutter-migration/contracts/settings-platform.md
+/// - 契约 .agents/parity-20261109/worktrees//docs/flutter-migration/contracts/settings-platform.md
 ///
 /// 边界：本文件只负责「行」。卡片级组装（七区顺序、表头绘制、滚动轨道、
 /// settings_modal 视口与 modalBounds）属于 settings_modal 原子，不在这里实现。
@@ -396,7 +396,7 @@ SettingsRowLayout placeProjectLink({
 
 /// 文本截断钩子，对应 Canvas::fit（Qt/src/SettingsCard.h:73）。
 ///
-/// 真实测量由注入的实现给出（T31 lib/hud/text/text_fitter.dart）；本模块只负责
+/// 真实测量由注入的实现给出（见 lib/hud/text/text_fitter.dart）；本模块只负责
 /// 把 Qt 逐字一致的 maxWidth 传下去，因此测试断言的是参数而不是字形宽度。
 typedef SettingsTextFit = String Function(String value, double size, double maxWidth, SettingsFontWeight weight);
 

@@ -549,7 +549,7 @@ class BasicHudFrame {
       drawEmpty: (double _, HudArchiveState __) {},
       // Qt NativeHudController.cpp:945-948 supportsTrackList()：只有当前条目是
       // 曲目（kind == "song"）时才给 Tab Mode 按钮。原来这里恒 false，按钮因此
-      // 永远不出现（用户 m10322-2 的现象）。
+      // 永远不出现。
       supportsTrackList: (HudArchiveState s) => s.current?.kind == 'song',
     );
 
@@ -1258,7 +1258,7 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       stageScale: geometry.stageScale,
     );
     // 资料库列表页：把列表拖动的手势域从「仅右侧曲目列」扩到「右侧曲目列 ∪ 左侧
-    // 3D 直触区」（用户 m10322-1）。只在列表阶段扩展——详情/歌词页的 3D 操作
+    // 3D 直触区」。只在列表阶段扩展——详情/歌词页的 3D 操作
     // （抽唱片、搜索等）保持原样，不受这条规则影响。
     //
     // 3D 直触区就是场景自己的矩形：横屏是整窗（Qt Engine 的 1080 高舞台铺满），

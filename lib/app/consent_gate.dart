@@ -1,4 +1,4 @@
-/// Start-up consent gate (plan T27, slice S01).
+/// Start-up consent gate .
 ///
 /// This file imports nothing but `dart:async`: the machine knows only the events
 /// a host delivers and the ports a host injects, so the same transitions drive an

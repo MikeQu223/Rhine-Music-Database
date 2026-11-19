@@ -19,9 +19,7 @@ library;
 import 'dart:math' as math;
 import 'dart:typed_data';
 
-// ---------------------------------------------------------------------------
 // Projection constants. Every value cites the Qt line it was taken from.
-// ---------------------------------------------------------------------------
 
 /// Scene (3D wall) main projection clip planes — NativeSceneCamera.cpp:98.
 const double kSceneNear = 5.0;
@@ -84,9 +82,7 @@ const double kCardMaxZ = 1.2;
 /// Row index of the first record inside a lane — NativeScene.cpp:67.
 const int kLaneRowOrigin = 12;
 
-// ---------------------------------------------------------------------------
 // Scalar helpers — SceneMotion.cpp:9-14, 42-49.
-// ---------------------------------------------------------------------------
 
 /// `clamp(v, 0, 1)` — SceneMotion.cpp:9-11.
 double clamp01(double value) => value < 0 ? 0 : (value > 1 ? 1 : value);
@@ -110,9 +106,7 @@ double bellCurve(double value, double width) => math.exp(-0.5 * (value / width) 
 /// Linear interpolation — SceneMath.cpp:30-32 / NativeSceneCamera.cpp lerp.
 double lerpDouble(double from, double to, double amount) => from + (to - from) * amount;
 
-// ---------------------------------------------------------------------------
 // Motion primitives — SceneMotion.h:20-32, SceneMotion.cpp:52-122.
-// ---------------------------------------------------------------------------
 
 /// One control point of a Qt `SceneMotion::Curve` (QVector<QPair<double,double>>).
 class CurveKey {
@@ -188,9 +182,7 @@ class Spring {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Vector / matrix / frustum — SceneMath.h:7-44, SceneMath.cpp:8-217.
-// ---------------------------------------------------------------------------
 
 /// Qt `SceneMath::Vector`.
 class Vec3 {
@@ -488,9 +480,7 @@ class Frustum {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Wall geometry — NativeScene.cpp:63-78, NativeSceneCamera.cpp:109-171.
-// ---------------------------------------------------------------------------
 
 /// A lane/row address on the 3D wall — Qt `SceneMath::Cell` / NativeScene::Cell.
 class SceneCell {
@@ -659,9 +649,7 @@ List<SceneCell> visibleCells({
   return result;
 }
 
-// ---------------------------------------------------------------------------
 // Projections — NativeSceneCamera.cpp:98-121, NativeViewer.cpp:283-292.
-// ---------------------------------------------------------------------------
 
 /// NativeSceneCamera.cpp:100-101 — the archive/browse projection offset.
 double archiveOffsetFor({required bool cinema, required String mode, required double detail}) =>

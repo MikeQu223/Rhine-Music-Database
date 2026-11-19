@@ -98,7 +98,7 @@ const List<String> hudQtFrameKeysRemovedByCardsExpand = <String>[
 
 /// The 33 top-level frame keys a delivered frame actually carries.
 ///
-/// Derivation (`T30-V5-I2-frame-evidence.json`): `NativeScene::emitFrame`
+/// Derivation (`.json`): `NativeScene::emitFrame`
 /// builds 31 keys literally (`Qt/src/NativeSceneFrame.cpp:87-119`), then adds
 /// actorTemplate/appearanceRevision/actors (`:164-166`) and stats (`:195`);
 /// `NativeCards::expand` removes actorTemplate and actors again
@@ -110,7 +110,7 @@ const List<String> hudQtFrameKeysRemovedByCardsExpand = <String>[
 /// so reports and diffs stay stable, not because
 /// the wire preserves it - `QJsonObject` serialises keys sorted, so only
 /// membership is a protocol fact. Unknown top-level keys stay readable through
-/// [HudFrameView.raw] and must be ignored (contract §4.1, in the T03 worktree
+/// [HudFrameView.raw] and must be ignored (contract §4.1, in the  worktree
 /// at `docs/flutter-migration/contracts/hud-protocol.md`; this worktree has no
 /// contracts directory), never used to change HUD layout.
 const List<String> hudDeliveredFrameKeys = <String>[
@@ -135,7 +135,7 @@ const List<String> hudDeliveredFrameKeys = <String>[
 ///   `BootTimeline::sample` returns QJsonObject
 ///   (`Qt/src/SceneMotion.h:84`, emitted at `Qt/src/NativeSceneFrame.cpp:117`).
 ///   Contract §4.1 types it as a number; the Qt source and
-///   `reports/T30-V5-I2-frame-evidence.json` (D2) both say object, and
+///   `reports/.json` (D2) both say object, and
 ///   `toObject()` on a scalar would silently read an empty object.
 /// - `selected`: read with `toInt()` at every site (`Qt/src/NativeHud.cpp:469`,
 ///   `Qt/src/MusicLibrary.cpp:682`, `Qt/src/MusicDirectory.cpp:59,167,462`,
@@ -165,7 +165,7 @@ final class HudFrameView {
   ///
   /// Qt truncates towards zero at each read site, so a fractional producer
   /// value truncates here too instead of keeping its fraction. The fractional
-  /// case is UNMEASURED on device; the truncation is semantic, the magnitude
+  /// case is untested on device; the truncation is semantic, the magnitude
   /// is not.
   double get selected {
     final value = raw['selected'];
@@ -355,7 +355,7 @@ final class HudStage {
 
   /// Full-window landscape conversion: derive scale from the logical height.
   ///
-  /// DEDUP-13 forbids calling this inside a subtree that PortraitStage has
+  /// forbids calling this inside a subtree that PortraitStage has
   /// already scaled. Portrait must consume the single injected stage instead:
   /// HudStage(scale: 1.0, width: 1080, height: PortraitBands.stageHeight).
   /// Kept for the legacy HudStagePainter fallback (lib/hud/render/hud_painter.dart:221),

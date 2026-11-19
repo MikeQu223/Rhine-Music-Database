@@ -10,7 +10,6 @@
 /// 本库以 part 拆分为四片，保持 Qt 源文件边界并共享私有状态：
 /// music_library.dart（本文件）、directory_stack.dart、search_controller.dart、siren_catalog.dart。
 ///
-/// 仓库本阶段禁止运行验证：本文件未执行 flutter analyze / flutter test（RED/GREEN 均未执行）。
 library;
 
 import 'dart:async';
@@ -30,9 +29,7 @@ const String _staleReply = '\u0000stale';
 
 bool isStale(MusicReply reply) => reply.error == _staleReply;
 
-// ---------------------------------------------------------------------------
 // 宿主端口（Qt Host 接口中本层实际使用的部分）
-// ---------------------------------------------------------------------------
 
 /// 宿主 JSON 请求端口。Qt 侧为 Host::requestJson(route, params, callback)。
 abstract class HostRequestPort {
@@ -327,9 +324,7 @@ class NullPlayback implements PlaybackPort {
   void Function(JsonMap value)? onTrackSelected;
 }
 
-// ---------------------------------------------------------------------------
 // 远端应答与 API 适配（Qt MusicApi.{h,cpp}）
-// ---------------------------------------------------------------------------
 
 /// Qt MusicReply：value 是 QJsonValue（任意类型，可能是数组或对象）。
 class MusicReply {
@@ -543,9 +538,7 @@ class MusicApiClient {
 
 }
 
-// ---------------------------------------------------------------------------
 // JSON 与条目辅助（Qt MusicData.cpp）
-// ---------------------------------------------------------------------------
 
 /// Qt wrap：((value % count) + count) % count（Qt/src/MusicLibrary.cpp:10-12）。
 int wrapIndex(int value, int count) {
@@ -748,7 +741,7 @@ List<JsonMap> uniqueItems(List<JsonMap> existing, List<JsonMap> values) {
 /// （Qt/src/MusicData.cpp:98-114 的 song["id"].toString() 只认字符串）。
 /// 字符串 id 与 Qt 结果逐位一致；数字 id 在 Qt 的 toString() 下得空串而落空，
 /// 这里归一成整数字符串，才能命中 id 为 "7" 的规范曲目 —— 这是规范要求的
-/// 修复（OPS78 DEDUP-14），不是 Qt 的数值匹配行为。
+/// 修复，不是 Qt 的数值匹配行为。
 /// 输出顺序完全由 ids 决定：缺失 id 跳过，重复 id 重复输出，曲目侧重复 id
 /// 先到先得（Qt 的 entries.contains 守卫）。
 List<JsonMap> orderedItems(List<Object?> ids, List<JsonMap> songs) {
@@ -1001,9 +994,7 @@ int slotValue(List<int> slots, int index, int fallback) {
   return (index >= 0 && index < slots.length) ? slots[index] : fallback;
 }
 
-// ---------------------------------------------------------------------------
 // 目录节点（Qt MusicLibrary.h 的 MusicDirectory + MusicDirectory.cpp）
-// ---------------------------------------------------------------------------
 
 /// 目录栈节点。父指针构成返回链，anchor 让选中项在 5 列 8 行网格中保持物理位置。
 class DirectoryFolder {

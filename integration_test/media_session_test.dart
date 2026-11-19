@@ -1,14 +1,10 @@
-// DEVICE_BLOCKED / EXECUTION STATUS: NOT EXECUTED.
-//
-// This is the device slice for T25. It needs a real Android device or emulator
-// with the app installed, so it is skipped by default and must not be reported
-// as a pass. Planned command:
+// 媒体会话的设备切片测试：需要已安装应用的 Android 真机或模拟器，默认跳过，
+// 不得报告为通过。计划命令：
 //
 //   flutter test integration_test/media_session_test.dart -d <device-id>
 //
-// The skeleton only proves the facade is constructible and the channel names
-// are the fixed cross-language contract. It does not start a foreground
-// service, does not post a notification, and does not assert media buttons.
+// 骨架只证明 facade 可构造、通道名是固定的跨语言契约；不启动前台服务、
+// 不投递通知、不断言媒体按键。
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';

@@ -14,7 +14,7 @@ import io.flutter.plugin.common.MethodChannel
  * 设置通道的纯决策（无 android.* 依赖，供 JVM 合同测试直接调用）。
  *
  * 为什么把「要不要卸载」提出来：uninstall 的三条早退以前分散在 if 里，任何一条改了都没有
- * 可执行断言兜底；159 就曾在 uninstall(null) 上退化成"拆当前 owner"。把决策收敛成枚举后，
+ * 可执行断言兜底；uninstall(null) 就曾退化成"拆当前 owner"。把决策收敛成枚举后，
  * install/uninstall 只负责执行，测试直接钉住"old/null/unknown 不得清 CURRENT"。
  */
 internal enum class SettingsChannelTeardown {
@@ -52,13 +52,13 @@ internal fun settingsChannelTeardown(
 }
 
 /**
- * SETTINGS-148：Flutter 基本版设置面板的真实持久化 / 版本真值 / 外链通道。
+ * Flutter 基本版设置面板的真实持久化 / 版本真值 / 外链通道。
  *
  * 为什么需要这条通道：
  *  - Qt 侧设置落在 QSettings（Qt/src/Host.cpp:1061-1106 的 panel/<key>），Flutter 基本版
- *    不能在 Dart 里猜 QSettings 的 Android 绝对路径（T07 契约 §5.1 把它列为 DEVICE_BLOCKED），
- *    也不引入 shared_preferences 之外的新依赖。因此宿主自己开一个 SharedPreferences 文件，
- *    由 Dart 侧 PreferencePort 逐键读写——这是**真实落盘**，进程重启后读回同一份值。
+ *    不能在 Dart 里猜 QSettings 的 Android 绝对路径，也不引入 shared_preferences 之外的
+ *    新依赖。因此宿主自己开一个 SharedPreferences 文件，由 Dart 侧 PreferencePort 逐键
+ *    读写——这是**真实落盘**，进程重启后读回同一份值。
  *  - 键空间与 Qt 完全一致：Dart 侧始终传 `<prefix><panel key>`（Host.cpp:1075 的 "panel/" + key），
  *    本文件不加工、不改写、不补默认值，只做存取。缺键返回 null，与 Host::preference 的
  *    「缺键 = 空」在 Dart 侧 PreferenceStore 里统一收敛。

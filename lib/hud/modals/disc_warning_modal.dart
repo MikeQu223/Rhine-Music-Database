@@ -1,6 +1,4 @@
-// ===========================================================================
-// T40-S02 / A51   atomic = A51   file = lib/hud/modals/disc_warning_modal.dart
-// scope = 唱片旋转风险弹层（视觉与静态动作串）
+// 唱片旋转风险弹层（视觉与静态动作串）
 // 横屏 1:1 源：Qt/src/NativeHudModal.cpp
 //   :83-84 save / alpha | :163-165 scrim | :166 translate
 //   :167-172 通用面板 {left, 122, min(1260, width - 100), 836}
@@ -10,10 +8,9 @@
 // （Qt/src/NativeHudController.cpp:711-723）；本类只把一次采样后的
 // opacity / offset 画成一帧，不持有计时器、不读全局、不写存储。
 //
-// 2026-11-12 A51 说明：T40 的未跟踪同名文件是纯 Dart 的独立绘制器，内含
+// 同名文件（纯 Dart 独立绘制器）内含
 // motion / state / painter 副本；本文件按 modal_shell 契约重写为薄端口，
 // 不复制其状态机，也不改变任何字符串、坐标或命中。
-// ===========================================================================
 
 import 'package:rhine_music_database/hud/modals/modal_shell.dart';
 import 'package:rhine_music_database/hud/pages/chrome.dart';

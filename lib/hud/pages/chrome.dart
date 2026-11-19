@@ -15,7 +15,7 @@ abstract class HudSurfaceSink {
   void hit(HudHit hit);
 }
 
-/// T31 glyph/text port. Injected; this library never measures glyphs itself.
+///  glyph/text port. Injected; this library never measures glyphs itself.
 abstract class HudTextPort {
   double glyphWidth(String value, double size, [String weight = 'regular']);
   double glyphInset(String value, double size, [String weight = 'regular']);
@@ -28,22 +28,18 @@ List<Object?> hudInk(bool dark) => dark
     ? <Object?>[0.92, 0.92, 0.92, 1, 'calibratedWhite']
     : <Object?>[0.08, 0.085, 0.075, 1, 'calibratedRGB'];
 
-// ===========================================================================
-// T33-C14 / W1   atomic = W1   file = lib/hud/pages/chrome.dart
-// scope = 品牌 / 导航 / 页脚 / 遮罩 (chrome)
+// 品牌 / 导航 / 页脚 / 遮罩（chrome）
 // 横屏 1:1 源：Qt/src/NativeHud.cpp
 //   archiveMask 313-327 | brand 328-331 | brandLine 332-341 | navigationLeft 342-344
 //   navigation 345-356 | footer 357-373 | control 121-124 | hit 102-109 | rule 125-129
 //   fill 37-39 | text 40-43 | aligned 44-46 | roll 97-101 | op 16-18 | draw(chrome 段) 272-277
 //   默认值：Qt/src/NativeHud.h:140-150 / 145 / 254-261 / 265-270
-// 纯 Dart（仅 import 协议层 hud_hit.dart 并 re-export HudHit；不 import 任何 UI / 渲染框架）；
-// 只做源码编写，不执行任何构建 / 测试 / 分析。
-// 契约块位于本文件顶部，由 W1 持有并逐字保留；W2/W3/W4 只 import 复用。
+// 纯 Dart（仅 import 协议层 hud_hit.dart 并 re-export HudHit；不 import 任何 UI / 渲染框架）。
+// 契约块位于本文件顶部，由本文件持有并逐字保留；其他文件只 import 复用。
 // 附加说明：契约列出的 helper 中 hudText / hudAligned / hudControl / hudFill 增加了
 //   可选命名参数 dark（默认 false），用于复刻 Qt ink() 对成员 dark 的依赖
 //   （NativeHud.cpp:11-14）。契约规定的全部参数、位置与默认值保持不变，
 //   任何按契约书写的调用都与加 dark 之前完全等价。
-// ===========================================================================
 
 /// Qt NativeHud::op() (NativeHud.cpp:16-18)：命令按发射顺序 append，不重排、不去重。
 void hudOp(HudSurfaceSink sink, HudWireCommand command) {
@@ -104,7 +100,7 @@ void hudControl(HudSurfaceSink sink, HudTextPort text, String label, double x, d
 
 /// 通用路径命令 helper：['path', d, strokeWidth, color]
 /// （Qt 对应写法 op({"path", d, strokeWidth, color})，见 NativeHud.cpp:507 / 513 / 619）。
-/// chrome 的任何调用点都不使用它；提供给 W2/W3/W4 复用，避免各自重定义。
+/// chrome 的任何调用点都不使用它；提供给其他文件复用，避免各自重定义。
 void hudPath(HudSurfaceSink sink, String d, double strokeWidth, List<Object?> color) {
   sink.op(<Object?>['path', d, strokeWidth, color]);
 }

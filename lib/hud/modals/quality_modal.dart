@@ -3,7 +3,7 @@
 /// This library owns **content only**. The shared frame pipeline — save(),
 /// alpha(motion.opacity), the full-stage scrim, translate(0, motion.offset),
 /// the panel base, the title band and the close-modal hit — comes from
-/// lib/hud/modals/modal_shell.dart (card T40-S03). Nothing here re-emits any of
+/// lib/hud/modals/modal_shell.dart (card ). Nothing here re-emits any of
 /// those commands, and nothing here reads storage, starts I/O, touches the
 /// network, resolves an account or selects a production host: every value below
 /// is injected by the caller, and every command is written to the caller's
@@ -38,9 +38,7 @@ library;
 import 'package:rhine_music_database/hud/modals/modal_shell.dart';
 import 'package:rhine_music_database/hud/pages/chrome.dart';
 
-// ---------------------------------------------------------------------------
 // Literal tables copied from Qt (NativeHudModal.cpp:307-323)
-// ---------------------------------------------------------------------------
 
 /// One row of Qt's qualityDescriptions table
 /// (Qt/src/NativeHudModal.cpp:308-313).
@@ -192,9 +190,7 @@ final class QualityModalBadge {
 /// host has none. Implementations must be pure lookups: no decoding, no I/O.
 typedef QualityModalBadgeResolver = QualityModalBadge? Function(String key);
 
-// ---------------------------------------------------------------------------
 // Frame result
-// ---------------------------------------------------------------------------
 
 /// One build() worth of Qt commands plus the shell's hit table.
 final class QualityModalFrame {
@@ -218,9 +214,7 @@ final class QualityModalFrame {
   final ModalShellPolicy policy;
 }
 
-// ---------------------------------------------------------------------------
 // Modal
-// ---------------------------------------------------------------------------
 
 /// The quality modal body, drawn inside the shared [ModalShell].
 final class QualityModal {

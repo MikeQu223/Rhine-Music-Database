@@ -340,7 +340,7 @@ class _BasicAppState extends State<BasicApp> {
   Widget build(BuildContext context) {
     // 生产入口（lib/main.dart，commit 89493eb）目前仍是 flutter create 的计数器 demo：
     // BasicApp 还没有被任何生产调用点挂载（lib/ 里零引用，只有测试引用）。
-    // 挂载是入口 lane（父/94 集成）的一件事，本原子只交付这个组合根；
+    // 挂载由生产入口负责，本文件只交付这个组合根；
     // MaterialApp 由本 widget 提供，所以挂上去即可直接 runApp(const BasicApp())。
     return MaterialApp(
       debugShowCheckedModeBanner: false,
@@ -433,7 +433,7 @@ class _BasicShellState extends State<_BasicShell>
 
   /// 当前弹层（'' = 无，'search' = 检索）。Qt 的 modal 由 NativeHud 自己持有
   /// （Qt/src/NativeHudController.cpp:64-130 openModal / :132-143 closeModal /
-  /// :145-163 setQuery），BasicViewState 没有这个字段，也不在本原子写域
+  /// :145-163 setQuery），BasicViewState 没有这个字段，也不在本文件的改动范围
   /// （basic_models.dart 不可改），所以它落在外壳里。
   ///
   /// 只有 '' 与 'search'：登录表单 / 歌单表单 / 设置编辑在本预览里没有入口
@@ -496,7 +496,7 @@ class _BasicShellState extends State<_BasicShell>
   ///
   /// 实例由 PortraitStage 在 Transform.scale 内部造（lib/ui/layout/portrait_stage.dart:34-150），
   /// 这里只【接管】同一实例，绝不自己调 computePortraitBands / withScale 再推一份
-  /// （DEDUP-13：scale 只允许一个来源）。接管发生在首帧后，所以竖屏首帧不铺输入层。
+  /// （scale 只允许一个来源）。接管发生在首帧后，所以竖屏首帧不铺输入层。
   StageGeometry? _portraitGeometry;
 
   /// 场景层（Qt platform view）的身份键。
@@ -836,7 +836,7 @@ class _BasicShellState extends State<_BasicShell>
                 listenable: controller,
                 builder: (BuildContext context, Widget? child) {
                   final BasicViewState state = controller.state;
-                  // 横屏：几何体每帧现造一份，绘制 / 命中 / 输入层共用这一个实例（DEDUP-13）。
+                  // 横屏：几何体每帧现造一份，绘制 / 命中 / 输入层共用这一个实例。
                   final StageGeometry? landscape = portrait
                       ? null
                       : StageGeometry.landscape(logicalWidth: width, logicalHeight: height);
@@ -1006,7 +1006,7 @@ class _BasicShellState extends State<_BasicShell>
                 // 1219x762），子树按 logical 布局后再被 Transform.scale(0.70556) 缩一次，
                 // 画面只剩左上 1219*0.70556 ≈ 860 logical（= 2032 物理，70.5%）。
                 // OverflowBox 放开紧约束，让 stage 子树真实按 stage 尺寸（1728x1080）
-                // 布局，缩放只发生这一次（DEDUP-13；同 basic_settings_window.dart:176-199）。
+                // 布局，缩放只发生这一次（同 basic_settings_window.dart:176-199）。
                 // stage.scale == 1 时（竖屏 PortraitStage 的 stageHeight 舞台 / 1080 高窗口）
                 // min/max 与父级紧约束完全一致，是零差异的 no-op。
                 return ClipRect(
@@ -1216,7 +1216,7 @@ class _BasicShellState extends State<_BasicShell>
   /// 为什么不复用 [BasicHudSurface]：它会画详情/资料库的整页 HUD（brand、导航、
   /// 曲目列、播放条），而 Qt 的 viewer 页把这些全部让给查看器
   /// （NativeHud.cpp:267-268 只调 viewer()，:306-311 只补 modal 与播放条）。
-  /// 这里也不去改 basic_hud.dart（source_A 的写域），免得两路同时改同一个文件。
+  /// 这里也不去改 basic_hud.dart（source_A 的改动范围），免得两路同时改同一个文件。
   Widget _coverViewerSurface(
     BasicViewState state,
     ViewerState viewer, {
@@ -1366,9 +1366,7 @@ class _BasicShellState extends State<_BasicShell>
   }
 
   /// 设置浮层的唯一动作入口：命中串 -> typed 命令 -> 真实落盘 -> 真实效果。
-  // ---------------------------------------------------------------------------
   // 插件（Qt/src/Host.cpp 的插件子系统 + ResponsiveHudPages.cpp:683-852 的竖屏页）
-  // ---------------------------------------------------------------------------
 
   /// 管理器状态变化（安装进度、市场载入、启停）只推一帧重建。
   void _onPluginsChanged() {
@@ -2089,10 +2087,10 @@ class _BasicShellState extends State<_BasicShell>
     // MusicLibrary::openSirenAllSongs()（Qt/src/MusicSiren.cpp:193-246）：把**全部已加载曲目**
     // 当成虚拟歌单 'siren-all'/'siren:playlist:all'（title「全部歌曲」）打开，仅选中第一首，
     // 不替换播放队列、不开始播放。
-    // 94 当年没有目录 API，用 openSirenLibrary() 做近似（只回完整曲库、不开目录）；98 交付了
-    // 逐字照抄 Qt 的 openAllSirenSongs()（siren_controller.dart:360），二者在「回曲库 + 不动
-    // 播放队列」上一致，但只有后者真的开出目录，所以这里按 Qt 指向后者，94 的近似不再被调用
-    // （openSirenLibrary 仍留在 98 的 controller 里，由它的 owner 处置，不在本整合改写）。
+    // 早期实现没有目录 API，用 openSirenLibrary 做近似（只回完整曲库、不开目录）；
+    // 后来交付了逐字照抄 Qt 的 openAllSirenSongs（siren_controller.dart:360），二者在
+    // 「回曲库 + 不动播放队列」上一致，但只有后者真的开出目录，所以这里按 Qt 指向后者，
+    // 旧近似不再被调用（openSirenLibrary 仍留在 controller 里，由调用方处置，本次不改写）。
     if (action == 'music:open-all-siren') {
       unawaited(controller.openAllSirenSongs());
       return null;

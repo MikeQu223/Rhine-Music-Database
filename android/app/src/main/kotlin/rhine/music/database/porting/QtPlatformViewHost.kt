@@ -73,7 +73,7 @@ internal fun planHostInit(
  *
  * 共享 MethodChannel/EventChannel 只能有一个 handler：
  *  - 参数非法：不装；
- *  - 抢单例失败（已有 owner）：不装——这是 MF-D14-2 要钉死的"第二个实例不许换掉第一个"；
+ *  - 抢单例失败（已有 owner）：不装——"第二个实例不许换掉第一个"；
  *  - 构造失败：不装（所有权已释放，视图是死的）；
  *  - 抢到单例并构造成功：装；
  *  - 从未抢单例的诊断实例（probe 未 ready / 没有 Activity）：仅当进程里既没有 Qt owner、
@@ -98,7 +98,7 @@ internal fun shouldInstallChannels(
 }
 
 /**
- * T11-S01 候选 A：真实的 Qt/Flutter 平台宿主端口（Android 侧）。
+ *  候选 A：真实的 Qt/Flutter 平台宿主端口（Android 侧）。
  *
  * 这份代码只做两件事，且都是真的：
  *   1. 用反射去问"本进程里到底有没有 Qt 的 Android 层"，把结果结构化报给 Dart；
@@ -108,7 +108,7 @@ internal fun shouldInstallChannels(
  * 它**不会**在 Qt 缺失时创建一个"看起来像 Qt"的 View 去糊弄上层。未就绪时容器是空的
  * （透明、不绘制、contentDescription 明说不是 Qt 表面），由 Dart 侧渲染诊断面板。
  *
- * 为什么 QtActivity 不能直接塞进来（计划 T11 第一条要求"证明"）：
+ * 为什么 QtActivity 不能直接塞进来（计划  第一条要求"证明"）：
  *   - android.app.Activity 是窗口宿主，不是 View；QtActivity 只在 Qt 自己的启动流程里成立。
  *   - Qt 官方给"把 Qt 塞进别人的 View 树"准备的是 QtQuickView（public，继承包内可见的
  *     QtView，两者都在 Qt 的 android jar 里）——见 QtView.java:19 / QtQuickView.java:27。
@@ -163,7 +163,7 @@ internal fun shouldInstallChannels(
 object QtPlatformViewHost {
 
     /**
-     * back 询问的兜底时限（DEDUP-37）。平台通道的回复是异步的：engine 已 detach 或
+     * back 询问的兜底时限。平台通道的回复是异步的：engine 已 detach 或
      * Dart 侧正卡在别处时可能永远不回，而返回键不能一直悬着，超时即按"未认领"回落。
      */
     const val BACK_VERB_TIMEOUT_MS = 250L
@@ -177,7 +177,7 @@ object QtPlatformViewHost {
     const val EVENT_CHANNEL = "rhine.music.database/qt_platform_view/events"
 
     /**
-     * 出站 back verb 的方法名（DEDUP-37），与 hostStatus / surfaceSize 同一套控制通道协议：
+     * 出站 back verb 的方法名，与 hostStatus / surfaceSize 同一套控制通道协议：
      * 宿主 Activity 的返回路由在 IME 之后调用 [dispatchBackVerb]，把"这次返回是否属于
      * Qt 视图"作为一次**询问**发给 Dart 侧，由 Dart 决定送进 Qt 输入层并显式回 true 认领；
      * 只回 null/false/error 或干脆不回，都算未认领，Activity 会回落 Flutter 默认返回。
@@ -284,7 +284,7 @@ object QtPlatformViewHost {
      *  - 合法 owner 构造成功后可以直接接管通道（把先前诊断实例的 handler 换掉）；
      *  - 诊断实例只在没有任何通道 owner 时装 handler，避免互相顶掉；
      *  - dispose 只允许**当前**通道 owner 清 handler，否则一个早已被接管的诊断实例
-     *    会在析构时把后来合法实例的通道拆掉（MF-D14-2 的同一类泄漏）。
+     *    会在析构时把后来合法实例的通道拆掉（同一类泄漏）。
      */
     private var channelOwner: QtPlatformView? = null
 
@@ -304,7 +304,7 @@ object QtPlatformViewHost {
     internal fun hasChannelOwner(): Boolean = synchronized(this) { channelOwner != null }
 
     /**
-     * 宿主 Activity 的返回键入口（DEDUP-37）：向当前通道归属的宿主视图发一次"back 询问"。
+     * 宿主 Activity 的返回键入口：向当前通道归属的宿主视图发一次"back 询问"。
      *
      * [onResult] 保证在主线程上**恰好被调用一次**，且 true 只代表一件事：对面明确认领了
      * 这次返回（Dart 侧回了 Boolean true）。false 的每种来源都意味着"这次返回不属于 Qt"，
@@ -687,15 +687,15 @@ object QtPlatformViewHost {
         view
     }
 
-    /** 平台视图工厂。装配（注册进 FlutterEngine）由宿主 owner 在 T16 做，本 atom 不调。 */
+    /** 平台视图工厂。装配（注册进 FlutterEngine）由宿主 owner 在接线时做，本文件不调。 */
     fun createFactory(messenger: BinaryMessenger): PlatformViewFactory =
         QtPlatformViewFactory(messenger)
 
     /**
-     * 装配入口（候选隔离，**本 atom 不调用**）。
+     * 装配入口（候选隔离，**本文件不调用**）。
      *
-     * MainActivity / FlutterEngine 的注册属 T16 接线，不在本 atom 的写域里（MainActivity.kt 是共享文件，
-     * 本卡只读）。这里保留实现是为了给 T16 一份可直接落地的 patch 建议：
+     * MainActivity / FlutterEngine 的注册属宿主接线，不在本文件的改动范围里（MainActivity.kt 是共享文件，
+     * 这里只读）。这里保留实现是为了给宿主侧一份可直接落地的 patch 建议：
      *
      *   engine.platformViewsController.registry.registerViewFactory(
      *       QtPlatformViewHost.VIEW_TYPE,
@@ -941,7 +941,7 @@ class QtPlatformView(
     }
 
     /**
-     * 把 back 作为一次"询问"发给控制通道（DEDUP-37），并用 [onResult] 带回对面是否认领。
+     * 把 back 作为一次"询问"发给控制通道，并用 [onResult] 带回对面是否认领。
      *
      * 只有真的挂着 Qt 视图、且探针判定 ready 的实例才发问：被拒/构造失败/已被接管的诊断
      * 实例没有可返回的 Qt 内容，必须立即回 false 让 Activity 回落 Flutter，而不是发一个

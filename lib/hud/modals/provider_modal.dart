@@ -2,7 +2,7 @@
 ///
 /// Content only. The shared frame — save(), alpha(motion.opacity), the full-stage
 /// scrim, translate(0, motion.offset), the panel base, the title band and the
-/// close-modal hit — comes from lib/hud/modals/modal_shell.dart (card T40-S03).
+/// close-modal hit — comes from lib/hud/modals/modal_shell.dart (card ).
 /// This file adds the platform cards and the one contextual button; it never
 /// draws a scrim, a panel base, a title band or a close hit of its own.
 ///
@@ -36,9 +36,7 @@ library;
 import 'package:rhine_music_database/hud/modals/modal_shell.dart';
 import 'package:rhine_music_database/hud/pages/chrome.dart';
 
-// ---------------------------------------------------------------------------
 // Literal table copied from Qt (NativeHudModal.cpp:12-24)
-// ---------------------------------------------------------------------------
 
 /// One row of the anonymous 'providers' table
 /// (Qt/src/NativeHudModal.cpp:13-18).
@@ -130,9 +128,7 @@ String providerModalDisplayName(String provider, {bool kugouLite = false}) {
   return '网易云音乐';
 }
 
-// ---------------------------------------------------------------------------
 // Frame result
-// ---------------------------------------------------------------------------
 
 /// One build() worth of Qt commands plus the shell's hit table.
 final class ProviderModalFrame {
@@ -157,9 +153,7 @@ final class ProviderModalFrame {
   final ModalShellPolicy policy;
 }
 
-// ---------------------------------------------------------------------------
 // Modal
-// ---------------------------------------------------------------------------
 
 /// The provider modal body, drawn inside the shared [ModalShell].
 final class ProviderModal {

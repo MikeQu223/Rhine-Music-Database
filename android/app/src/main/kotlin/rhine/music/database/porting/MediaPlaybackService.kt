@@ -44,7 +44,7 @@ import android.util.Log
  *      newNotificationBuilder / startForegroundCompat）；API 26 的分支已不可达但保留对照 Java 源，
  *      API 29 的前台服务类型分支是活路径。
  *
- * ARCH_BLOCKED：Dart ↔ Kotlin 的通道接线属 T21；本文件不含 MethodChannel，也不改 MainActivity。
+ * ARCH_BLOCKED：Dart ↔ Kotlin 的通道接线不在本文件；本文件不含 MethodChannel，也不改 MainActivity。
  *
  * 线程：入口、通知按钮、会话回调与焦点回调都在主线程（Java:26-28 的约定），不加锁。
  */

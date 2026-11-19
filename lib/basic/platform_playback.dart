@@ -1,4 +1,4 @@
-/// BASIC-89 lane B：真实音频播放的 Dart 端口（唯一实现：Android 系统 MediaPlayer）。
+///  真实音频播放的 Dart 端口（唯一实现：Android 系统 MediaPlayer）。
 ///
 /// 分工（与既有 lib/platform/media_session.dart 的边界）：
 ///  - 本文件是**播放权威的 Dart 面**：prepare / play / pause / seekTo / stop / dispose 直接落到
@@ -6,7 +6,7 @@
 ///    推上来，Dart 不产生任何播放状态。
 ///  - lib/platform/media_session.dart 是**系统媒体控件的上报面**：MediaSession、通知、音频焦点。
 ///    它不产生声音，也不接收本文件的命令。把 BasicAudioState 摘要（playing/position/duration）
-///    交给 MediaSessionChannel.update 是调用方（lane A 的 BasicController）的事，本文件不反向
+///    交给 MediaSessionChannel.update 是调用方（BasicController）的事，本文件不反向
 ///    调用 MediaSessionChannel——否则一条暂停会有两次写（收到 pause 再上报 pause）。
 ///
 /// 真值源（Qt）：

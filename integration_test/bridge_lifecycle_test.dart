@@ -1,25 +1,15 @@
-// T21-C19-W2（atom T21-C19-A2）｜桥接生命周期集成测试（接管 T21-C14 草稿）
+// 桥接生命周期集成测试。
 //
-// 计划卡：docs/superpowers/plans/2026-11-09-qt-to-flutter-parity-plan.md:524-531（T21）
-// 唯一权威源：Qt/src/BridgeProcessAndroid.cpp（281 行）+ Qt/src/BridgeProcess.h
-// 协议对端：MusicBridge/ios-runtime.cjs（:7 argv[2]=port、:16 首帧 {token}、:24-90 帧分派）
-// 复用源（只读，最小修复后内联，不整份搬运）：sourceSha=2cb83d1ac48c09286e911b691f6a31c39c0a1a4a
-//   lib/bootstrap/bridge_frame_decoder.dart（0x0a 分帧、会话过滤先于 base64 解码）
+// 权威源：Qt/src/BridgeProcessAndroid.cpp + Qt/src/BridgeProcess.h；
+// 协议对端：MusicBridge/ios-runtime.cjs。
 //
-// RED/GREEN 未执行：T21 全程禁止 flutter test / dart test / analyze / 设备执行，本文件只写了断言。
-// 本文件按计划卡以 integration_test 形态编写（T21 pass 判据之一：
-//   flutter test integration_test/bridge_lifecycle_test.dart，见 plan:530-531）。
-// 依赖（NR-10 纠正）：integration_test 是**真实依赖**，不是要删的东西——主集成 root 的
-// pubspec.yaml 已在提交 7f3439e2→9aec047 加入 `integration_test: sdk: flutter`，现在仍然存在。
-// 因此本文件保留 package:integration_test 的真实导入与 IntegrationTestWidgetsFlutterBinding。
-// 【隔离树状态】本 T21 树的基线 8ed3067b 早于 9aec047，隔离树的 pubspec.yaml 里暂时看不到该
-// 声明；这属于共享配置（pubspec 不在本卡写域），不改 pubspec、不跑 pub get，仅登记
-// DEPENDENCY_ON_SHARED_CONFIG，由唯一集成 owner 应用已审配置（详见报告 NR-10 条目）。
-// 仿真器部分只用内存内的确定性对端；跨模块部分用真实回环 socket 驱动真实 NodeRuntime，
-// 但宿主仍是本地假宿主（plan:527 不自嵌 Node），绝不启动真实 Node、不申请设备权限。
+// integration_test 是真实依赖：宿主 pubspec 已加入 `integration_test: sdk: flutter`，
+// 因此本文件保留 package:integration_test 与 IntegrationTestWidgetsFlutterBinding。
+// 真正的 NodeRuntime 由内存假宿主或真实回环 socket 驱动，绝不启动真实 Node、
+// 不申请设备权限。
 //
 // 覆盖：Qt 宿主 ↔ ios-runtime.cjs 的完整会话生命周期，跨 engine_transport.dart 与
-// node_runtime.dart 两个模块的冻结契约（wire keys / 握手排队 / 会话过滤 / 崩溃回传 / 旋转不重启）：
+// node_runtime.dart 两个模块的契约（wire keys / 握手排队 / 会话过滤 / 崩溃回传 / 旋转不重启）：
 //   A 线路级仿真（_EmulatedNodeRuntime）＋ B 真实回环（真 NodeRuntime + 真 socket + 真 link）。
 
 import 'dart:async';
@@ -29,7 +19,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
-// 用户 m10088：lib/app/lifecycle.dart（68b4d60）已整体撤回，本文件不再依赖它。
+// lib/app/lifecycle.dart（68b4d60）已整体撤回，本文件不再依赖它。
 // import 'package:rhine_music_database/app/lifecycle.dart';
 import 'package:rhine_music_database/bridge/engine_transport.dart';
 import 'package:rhine_music_database/bridge/node_runtime.dart';
@@ -165,7 +155,7 @@ class _Harness {
 
 String _b64(String text) => base64Encode(utf8.encode(text));
 
-/// 本地假宿主：只记录 startRuntime 的入参，绝不启动 Node（plan:527）。
+/// 本地假宿主：只记录 startRuntime 的入参，绝不启动 Node。
 ///
 /// 同时验证 NR-3 的 argv 生命周期要求：spec.argv 被保留在这里，等价 Qt:110-113
 /// 把 argv 缓冲挂在堆上的 NodeThreadStart 里（必须活过 node::Start 全程）。
@@ -191,84 +181,7 @@ final class _RecordingHost implements NodeRuntimeHost {
   }
 }
 
-// 用户 m10088：以下 LifecyclePorts 假端口依赖已撤回的 lib/app/lifecycle.dart，整块停用。
-// 保留原文，不删；NodeRuntime 相关断言不受影响。
-// /// T21-S08 的 foreground 端口：只记录 AppLifecycle 的 host 调用，不碰 Node。
-// ///
-// /// MainActivity.kt:68-74 目前只重放沉浸式窗口，尚未把 Activity.onResume/onPause
-// /// 接到 AppLifecycle；这里直接驱动已落地的 real lifecycle port
-// /// (lib/app/lifecycle.dart:402 hostActivityChanged)，不新建 EngineTransport。
-// final class _LifecyclePortsFake implements LifecyclePorts {
-//   int attachCount = 0;
-//   int saveCount = 0;
-//   final List<bool> visibility = <bool>[];
-//
-//   @override
-//   bool get offline => false;
-//
-//   @override
-//   bool get playbackConnection => false;
-//
-//   @override
-//   String preference(String key) => '';
-//
-//   @override
-//   void setPreference(String key, String value) {}
-//
-//   @override
-//   EngineAttachment attachEngine() {
-//     attachCount += 1;
-//     return const EngineAttachment(
-//       nodeRuntimeId: 'node-process-singleton',
-//       loginSessionId: 'login-session',
-//       playerId: 'player',
-//     );
-//   }
-//
-//   @override
-//   void applyPresentationPreferences() {}
-//
-//   @override
-//   StoredSession? loadSession() => null;
-//
-//   @override
-//   bool restoreSession(StoredSession session, {required bool restorePlayer}) =>
-//       true;
-//
-//   @override
-//   void restoreAccount() {}
-//
-//   @override
-//   void restoreIdentityName() {}
-//
-//   @override
-//   void setVolume(double volume) {}
-//
-//   @override
-//   void setSceneModeArchive() {}
-//
-//   @override
-//   void replayStartupAnimation() {}
-//
-//   @override
-//   void saveSession() {
-//     saveCount += 1;
-//   }
-//
-//   @override
-//   void applyWindowShape() {}
-//
-//   @override
-//   void showFullScreen() {}
-//
-//   @override
-//   void setEngineVisible(bool visible) {
-//     visibility.add(visible);
-//   }
-//
-//   @override
-//   void trimMemory() {}
-// }
+// AppLifecycle 已撤回，原来的 LifecyclePorts 假实现随之移除；NodeRuntime 相关断言不受影响。
 
 /// 轮询等待条件成立：真实回环 socket 是内核异步投递的，pumpEventQueue 不保证已到达。
 Future<void> _waitFor(
@@ -679,11 +592,9 @@ void main() {
     });
   });
 
-  // ————————————————————————————————————————————————————————————————
   // B. 跨模块真实回环：真 NodeRuntime（隔离实例）+ 真回环 socket + 真 EngineTransport。
   // 覆盖 Qt:103 的单次 bind、:81-91 的握手与握手前排队 flush、:63-67 的断链回传、
-  // :99-100 / plan:528 的旋转幂等。宿主是本地假宿主，绝不启动 Node（plan:527）。
-  // ————————————————————————————————————————————————————————————————
+  // :99-100 的旋转幂等。宿主是本地假宿主，绝不启动 Node。
   group('跨模块真实回环：NodeRuntime ↔ 回环 socket ↔ EngineTransport', () {
     late Directory tempRoot;
     late NodeRuntime runtime;
@@ -894,34 +805,7 @@ void main() {
       expect(errors, isEmpty);
     });
 
-    // 用户 m10088：该用例驱动已撤回的 AppLifecycle/HostActivity，整块停用（保留原文）。
-    // 前后台/旋转不重启 Node 的宿主断言仍由上面的 transport 用例覆盖。
-//     test('前后台/旋转：real LifecyclePort 的 inactive→active 不重启 Node', () async {
-//       expect(await runtime.launch(tempRoot.path, host), isTrue);
-//       final _LifecyclePortsFake ports = _LifecyclePortsFake();
-//       final AppLifecycle lifecycle = AppLifecycle(ports)..grantConsent();
-//       expect(ports.attachCount, 1, reason: '进程级 EngineAttachment 只构建一次');
-//
-//       lifecycle.hostActivityChanged(HostActivity.active);
-//       lifecycle.hostActivityChanged(HostActivity.inactive);
-//       lifecycle.hostActivityChanged(HostActivity.active);
-//       lifecycle.rotation();
-//       lifecycle.activityReattached();
-//
-//       expect(lifecycle.snapshot.foregroundCount, 2);
-//       expect(lifecycle.snapshot.backgroundCount, 1);
-//       expect(ports.saveCount, 1, reason: 'inactive 保存一次会话');
-//       expect(ports.visibility, <bool>[true, false, true],
-//           reason: 'Qt AndroidWindow.cpp:100：非 active 隐藏引擎，active 恢复');
-//       expect(ports.attachCount, 1);
-//       expect(host.starts, hasLength(1),
-//           reason: '前后台/旋转不得第二次 node::Start');
-//       expect(host.prepareCount, 1);
-//
-//       expect(await runtime.launch(tempRoot.path, host), isTrue);
-//       expect(host.starts, hasLength(1),
-//           reason: 'Qt:99-100：已 launched 且连接仍活 → true，不重复启动');
-//     });
+// 前后台/旋转不重启 Node 的宿主断言已随 AppLifecycle 撤回移除，由上面的 transport 用例覆盖。
 
   });
 }

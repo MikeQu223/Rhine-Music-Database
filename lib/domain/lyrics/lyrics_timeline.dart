@@ -1,4 +1,4 @@
-/// Qt -> Flutter 迁移 · DEDUP-04 歌词侧的纯函数部分（DEDUP-27 的运行时依赖）。
+/// Qt -> Flutter 迁移 · 歌词侧的纯函数部分（的运行时依赖）。
 ///
 /// Qt 移植源：Qt/src/LyricsController.cpp
 ///   :60-64    全局偏移的读取与夹取（preference("lyrics-global-offset-ms") → toDouble → isfinite → clamp）

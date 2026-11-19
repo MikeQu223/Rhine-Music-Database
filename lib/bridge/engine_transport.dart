@@ -1,66 +1,27 @@
-// T21-C19-W1 · lib/bridge/engine_transport.dart
+// 会话传输层：与原生侧的单条回环控制连接，对齐 Qt/src/BridgeProcessAndroid.cpp:171-281
+// 与 BridgeProcess.h:13-46 的状态机；协议对端是 MusicBridge/ios-runtime.cjs。
 //
-// 计划卡：docs/superpowers/plans/2026-11-09-qt-to-flutter-parity-plan.md:524-531（T21 引擎传输与 Node 生命周期）
-// 唯一行为权威：Qt/src/BridgeProcessAndroid.cpp:171-281（会话状态机）+ Qt/src/BridgeProcess.h:13-46（状态/错误/信号）
-// 协议对端：MusicBridge/ios-runtime.cjs（output/stderr/started/error/finished 的真实发出者）
-// 协议对照（只对照、绝不移植）：Qt/src/BridgeProcessIOS.cpp:70-78（iOS 的 system-trust 通道）
-// 冻结契约：reports/T21-C14-CONTRACT.json frozenApi["engine_transport.dart"]（签名逐条对齐）
-//
-// 接管说明（T21-C19-W1）：复用 T21-C14-W2 草稿，逐条对照冻结契约与 Qt 源后做最小修正，未重写模块结构。
-//
-// 复用源（只读，最小修复后内联，未整份搬运文件本体）：
-//   sourceSha = 2cb83d1ac48c09286e911b691f6a31c39c0a1a4a
-//   lib/bootstrap/bridge_frame_decoder.dart
-//   保留：会话过滤先于 base64 解码 / base64 数据帧解码 / 类型分派 / 非法 data（非 String、
-//        非法 base64）与非法 detail/exitCode 的拒绝语义。
-//   删除（属 lib/bridge/node_runtime.dart 职责）：0x0a 字节分帧、48MiB 单帧上限、首帧 {token}
-//        握手与认证、terminal/abort/排队缓冲、BridgeFrame* 帧类型体系；本层不按行切分 NDJSON。
-//
-// 本层边界（契约 rules 2）：不开 socket、不生成 token、不做 0x0a 分帧、不管 48MiB 上限与握手排队；
+// 本层边界：不开 socket、不生成 token、不做 0x0a 分帧、不管 48MiB 上限与握手排队，
 // 这些由 node_runtime.dart 通过 EngineRuntimeLink（send / messages / isLive）承担。
-// 本文件定义 EngineRuntimeLink，node_runtime.dart 反向 import 本文件；本文件绝不 import node_runtime.dart（避免环）。
+// 本文件定义 EngineRuntimeLink，node_runtime.dart 反向 import 本文件；本文件绝不
+// import node_runtime.dart（避免环）。
 //
-// error 初值：Qt/src/BridgeProcess.h:43 把 m_error 初始化为 UnknownError，frozenApi 也写作
-//   「EngineProcessError get error;」（非空）。本实现逐字对齐：未出错时是 unknownError，不是 null。
+// error 初值是 unknownError 而不是 null：与 Qt 的 m_error（BridgeProcess.h:43）一致。
 //
-// 与 Qt 源的可观测差异（全部有据，逐条列在下方与 reports/T21-C19-W1.json）：
-//   D1 环境路径是近似值，不是 Qt 真值：Qt:194-200 的 TMPDIR 取 QStandardPaths::CacheLocation
-//      （空则 AppStorage::temporaryDirectory()），Qt:204-205 的两个 device-state 取
-//      AppStorage::dataDirectory()/qq-device.json|kugou-device.json；Qt:182 明确 Q_UNUSED(temporary)。
-//      Flutter 侧没有 AppStorage 单例，冻结签名（root/temporary/edition）也没有 data/cache 注入缝，
-//      故本层只能用 temporary 近似 TMPDIR、用 root 近似 dataDirectory。完整 gap 见报告 exactGap。
-//      同一原因，Qt:201 的 QDir().mkpath(tmpRoot)（保证 TMPDIR 存在）本层不执行：冻结 imports
-//      只有 dart:async/convert/typed_data，无 dart:io，目录创建责任留在宿主与调用方。
-//   D2 extraEnv 只能追加、不得覆盖 Qt 的四键：Qt:202-206 的四个环境变量是权威值（临时目录/设备态/版本），
-//      契约签名也只给 extraEnv 这一条扩展缝；故 extraEnv 只追加新键、绝不覆盖 Qt 的四键（「Qt 键优先」）。
-//   D3 kill() 与 start() 会取消上一次的 30s 定时器：Qt:213-217 只依赖 m_session/m_state 自守卫、从不取消。
-//      取消不可观测——被取消的定时器在 Qt 语义下必然守卫失败（对应会话已被换掉或已 notRunning）；
-//      而 Dart 侧留下悬挂 Timer 会让 flutter_test 判 pending timer 失败。守卫条件仍逐字保留作第二道防线。
-//   D4 launch 不在本层，且不能拿 isLive 代替：Qt:186-189 在 start() 内调 runtime().launch(root)，
-//      返回 false 才用 QTimer::singleShot(0, ...)（Qt:187，事件循环下一轮，start() 已返回）合成
-//      runtime-error；返回 true 时不要求已连接——Qt:99-100 的判据是 !exited && (!socket || 已连接)，
-//      「尚未建立控制连接」也算存活，start 帧进握手队列（Qt:130-137）。冻结的 EngineRuntimeLink 只有
-//      send/messages/isLive（契约 frozenApi.mustExport，本卡不改协议），没有 launch 能力；而
-//      isLive ≡ _launched && !_exited && !_shutdown && (_socket == null || _socketLive)
-//      （node_runtime.dart:256-258），未 launch 的健康运行时同样是 false，与 Qt 的 launch 失败不等价。
-//      故装配顺序必须由调用方保证：先 NodeRuntime.launch(root, host)，成功后再 start()；launch 失败
-//      不得 start，其失败以 NodeRuntime 合成的入站 runtime-error 帧体现（node_runtime.dart:545-565，
-//      对应 Qt:186-189 以及 :63-67、:152-159 三处合成点）。漏调 launch 时 start 帧只会留在认证前队列
-//      （node_runtime.dart:348-361），直到 30s 超时 kill，不会像 Qt 那样报 runtime-error——记
-//      RESIDUAL_RISK（见报告）。
-//   D5 stderr 日志只记正文：Qt:248-253 写 logcat 时带 "node worker:" 前缀（呈现层），本层把正文交给 log 回调。
-//   D6 stderr 的 base64 解码用严格 base64Decode，失败时回退原文：Qt 的 QByteArray::fromBase64 是宽容解码
-//      （忽略非法字符）。两者都绝不抛异常到调用方，且 stderr 只用于日志、不影响状态机。
-//   D7 入站帧没有 owner 通道：Qt:185 每次 start 把 runtime().owner 指向最新 BridgeProcess，旧对象
-//      从此收不到入站帧（Qt:64-66、:92-93 只投给 owner）。本层的 link.messages 是广播流，只能靠
-//      session 过滤，而过滤前还有两条旁路：stderr 先于会话过滤（Qt:248-253，其 session 被忽略），
-//      runtime-error 不带 session 字段（node_runtime.dart:560-565）。因此带 session 的
-//      started/output/error/finished 不会串扰（session 不匹配即丢弃），但任何存活实例都会各自处理
-//      一份 stderr 与 runtime-error（Qt 只交给 owner；stderr 由 ios-runtime.cjs:63 发出时带 session，
-//      仍走旁路）。冻结 API 无 dispose()，订阅永不取消；单实例装配下不可观测，多实例并存
-//      记 RESIDUAL_RISK。
-//
-// RED/GREEN 未执行：本卡禁止 flutter test / dart test / analyze / 设备执行（见 CONTRACT.notExecuted）。
+// 与 Qt 的可观测差异：
+//   D1 环境路径只能近似：Flutter 侧没有 AppStorage 单例，冻结签名也没有 data/cache
+//      注入缝，故用 temporary 近似 TMPDIR、用 root 近似 dataDirectory；Qt:201 的
+//      QDir.mkpath 也不执行（本层无 dart:io，目录创建留给宿主）。
+//   D2 extraEnv 只追加、不覆盖 Qt 的四键（临时目录/设备态/版本），Qt 键优先。
+//   D3 kill/start 会取消上一次的 30s 定时器；Qt 靠 m_session/m_state 自守卫且不取消。
+//      守卫条件仍逐字保留作第二道防线，取消只为避免 flutter_test 的 pending timer。
+//   D4 launch 不在本层，且 isLive 不能代替它：launch 失败需由 NodeRuntime 合成
+//      runtime-error；装配顺序必须是先 launch 成功再 start，否则 start 帧会留在
+//      认证前队列直到 30s 超时。
+//   D5 stderr 日志只记正文，前缀由呈现层加。
+//   D6 stderr 的 base64 用严格解码，失败回退原文；两者都不向调用方抛异常。
+//   D7 入站帧没有 owner 语义：link.messages 是广播流，靠 session 过滤；stderr 与
+//      runtime-error 走旁路，多实例并存时会各处理一份（单实例下不可观测）。
 
 import 'dart:async';
 import 'dart:convert';
@@ -185,7 +146,7 @@ final class EngineTransport {
 
   EngineProcessState get state => _state;
 
-  /// Qt/src/BridgeProcess.h:43 的 m_error 初值 UnknownError；frozenApi 为非空 getter。
+  /// Qt/src/BridgeProcess.h:43 的 m_error 初值 UnknownError；契约规定为非空 getter。
   EngineProcessError get error => _error;
 
   Stream<void> get started => _startedController.stream;

@@ -1,6 +1,4 @@
-// ===========================================================================
-// T40-S02 / A51   atomic = A51   file = lib/hud/modals/detail_sort_modal.dart
-// scope = 详情页排序弹层（视觉与静态动作串）
+// 详情页排序弹层（视觉与静态动作串）
 // 横屏 1:1 源：Qt/src/NativeHudModal.cpp
 //   :122-141 detail-sort 分支 | :124 translate | :125 hits 清空
 //   :128 舞台级关闭命中 | :129-130 面板（dark 色不带 calibratedWhite 标签）
@@ -9,10 +7,9 @@
 // 状态机不在此文件：打开守卫、排序动作解析与清理属于宿主
 // （Qt/src/NativeHudMusic.cpp:40-60）；本类只画一次采样后的帧。
 //
-// 2026-11-12 A51 说明：T40 的未跟踪同名文件是纯 Dart 的独立绘制器，内含
+// 同名文件（纯 Dart 独立绘制器）内含
 // motion / cleanup / action-effect / painter 副本；本文件按 modal_shell
 // 契约重写为薄端口，不复制其状态机，也不改变字符串、坐标、命中或面板色。
-// ===========================================================================
 
 import 'package:rhine_music_database/hud/modals/modal_shell.dart';
 import 'package:rhine_music_database/hud/pages/chrome.dart';

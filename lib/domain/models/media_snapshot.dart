@@ -1,7 +1,7 @@
-// Qt -> Flutter 迁移 · 共享模型 SHARED-S4：媒体状态共同值对象（MediaSnapshot）。
+// Qt -> Flutter 迁移 · 媒体状态共同值对象（MediaSnapshot）。
 //
-// owner: SHARED —— 本文件是全仓唯一的「媒体状态共同元组」值对象。
-// T25 的 MediaSessionPort.update() 只把它当类型使用（不读字段），因此字段命名可自定；
+// 本文件是全仓唯一的「媒体状态共同元组」值对象。
+// MediaSessionPort.update 只把它当类型使用（不读字段），因此字段命名可自定；
 // 本类型不构成第二份队列 / session 状态，也不持有或替换任何播放器状态——
 // 它只是 Qt platformMediaInfo() 一次上报所用的那七个值的不可变载体。
 //

@@ -26,7 +26,7 @@ import rhine.music.database.qt.QtSceneViewFactory
 private const val TAG = "RhineMainActivity"
 
 /**
- * Android 宿主 Activity：返回键路由（DEDUP-37）。
+ * Android 宿主 Activity：返回键路由。
  *
  * 为什么返回键必须由宿主自己排序：
  *  - Qt 的返回处理在 QtInputDelegate.onKeyDown（QtInputDelegate.java:503、:524、:544），
@@ -43,10 +43,9 @@ private const val TAG = "RhineMainActivity"
  * 默认返回（delegate → engine → Dart Navigator）。返回动作从不盲消费，也从不自行
  * 结束 Activity：业务页只能由 Flutter 的 Navigator 关闭。
  *
- * 现状（本原子交付时）：Dart 侧还没有 METHOD_BACK 的 handler（lib/platform/qt_platform_view.dart
- * 不在本原子的文件域，按 ARCH 候选 A 另开原子接）。平台通道对没有 handler 的方法回
- * "成功 + null"，按认领协议等于未认领，所以端到端行为是安全回落 Flutter 默认返回；
- * Qt 认领分支在 Dart 落地前不可达，本原子不声称端到端验证过。
+ * 现状：Dart 侧还没有 METHOD_BACK 的 handler（lib/platform/qt_platform_view.dart 不在
+ * 本文件的改动范围）。平台通道对没有 handler 的方法回"成功 + null"，按认领协议等于
+ * 未认领，所以端到端行为是安全回落 Flutter 默认返回；Qt 认领分支在 Dart 落地前不可达。
  */
 class MainActivity : FlutterActivity() {
 
@@ -86,7 +85,7 @@ class MainActivity : FlutterActivity() {
     }
 
     /**
-     * 媒体会话通道接线（T25）。
+     * 媒体会话通道接线。
      *
      * 必须在 super 之后：FlutterActivity.configureFlutterEngine 会先让 engine 完成
      * 默认插件装配，这里再挂自己的两个通道，避免被后续装配覆盖。传给 install 的是
@@ -111,7 +110,7 @@ class MainActivity : FlutterActivity() {
         BasicAudioChannel.install(flutterEngine.dartExecutor.binaryMessenger) { this }
         //  状态通道先装：视图创建后 Dart 会立刻推首个快照（主题/模式/选中行），
         //  通道晚一步就会丢掉第一次 state 直到下一次状态变化。
-        //  SETTINGS-148 的通道：版本真值（PackageManager）与外链（ACTION_VIEW）走它。
+        //  设置通道：版本真值（PackageManager）与外链（ACTION_VIEW）走它。
         //  真机实测：不装这条通道时，面板的版本行显示「未知版本」，设置写入也一律失败
         //  （2026-11-16 21:0x，526f6b6d）。持久化本身按用户指示改走 Flutter 官方
         //  shared_preferences（见 lib/basic/basic_settings_store.dart），这条通道只留
@@ -254,18 +253,18 @@ class MainActivity : FlutterActivity() {
     }
 
     /**
-     * DEDUP-39：沉浸式全屏窗口形态。
+     * 沉浸式全屏窗口形态。
      *
      * 对照 Qt/src/AndroidWindow.cpp:18 的 kWindowFlags（FLAG_FULLSCREEN |
      * FLAG_KEEP_SCREEN_ON）、:22 的 kImmersiveSticky，以及 :44-47 的
      * window.addFlags + decorView.setSystemUiVisibility。
      *
      * 与 Qt 的两点差异都是刻意的：
-     *  1. 不搬 :38 的 setRequestedOrientation(kSensorLandscape)：DEDUP-39 bindingRuling
-     *     要求竖屏响应式，方向锁会把竖屏 UI 拧成横屏。这里只有窗口形态，没有任何方向
+     *  1. 不搬 :38 的 setRequestedOrientation(kSensorLandscape)：竖屏响应式是产品要求，
+     *     方向锁会把竖屏 UI 拧成横屏。这里只有窗口形态，没有任何方向
      *     请求，Manifest 也不写 android:screenOrientation。
      *  2. API 30+ 走 WindowInsetsController（Qt 注释里承认这是官方推荐，只是它选了不分叉）。
-     *     本卡按 SDK 分支，两条分支都不引第三方依赖。
+     *     这里按 SDK 分支，两条分支都不引第三方依赖。
      */
     private fun applyImmersiveSticky() {
         // Qt kWindowFlags 里的 KEEP_SCREEN_ON：播放页常亮属于窗口形态的一部分。

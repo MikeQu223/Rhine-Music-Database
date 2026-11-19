@@ -21,10 +21,6 @@
 ///    vertex, `2` also accepts back faces, any other value only front faces
 ///    (NativePicking.cpp:152-169). The single Qt caller passes `2`
 ///    (NativeSceneInput.cpp:77).
-///
-/// STATUS: written, deliberately NOT executed. `dart analyze`, `dart test`,
-/// `flutter test` and the repository verifiers are forbidden for this atom, so
-/// RED and GREEN are both unverified (RED/GREEN not run).
 library;
 
 import 'dart:convert';
@@ -33,9 +29,7 @@ import 'dart:typed_data';
 
 import 'scene_math.dart';
 
-// ---------------------------------------------------------------------------
 // Local helpers. Each mirrors one `std::` or `QJsonValue` call from the C++.
-// ---------------------------------------------------------------------------
 
 // `std::array<double, 3>` component access (NativePicking.cpp:30-33, 42-50).
 double _component(Vec3 vector, int axis) {
@@ -179,9 +173,7 @@ Uint8List? _readBytes(String path) {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Box / node / mesh — NativePicking.cpp:26-193.
-// ---------------------------------------------------------------------------
 
 /// Axis aligned bounds with the Qt `Box` sentinels.
 ///
@@ -541,9 +533,7 @@ class PickingMesh {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Picker — NativePicking.cpp:196-249.
-// ---------------------------------------------------------------------------
 
 /// Point picker over the `archive-cassette` collision trees.
 ///

@@ -5,7 +5,7 @@
 /// Qt/src/NativeHud.cpp:224-256）。
 ///
 /// 证据约束（逐条可查 Qt 源码）：
-/// * 竖屏舞台宽恒 1080 舞台单位 —— 依据 T02
+/// * 竖屏舞台宽恒 1080 舞台单位 —— 依据 
 ///   docs/flutter-migration/contracts/layout.md §6（portraitStageWidth = 1080），
 ///   不是 Qt 横屏常量：
 ///   Qt 的不变量是舞台**高** 1080（Qt/qml/Main.qml:32 stageScale = height / 1080），
@@ -31,7 +31,7 @@ import 'package:flutter/foundation.dart' show FlutterError;
 
 /// 竖屏舞台宽恒定值（舞台单位）。
 ///
-/// 依据 T02 docs/flutter-migration/contracts/layout.md §6 portraitStageWidth = 1080。
+/// 依据  docs/flutter-migration/contracts/layout.md §6 portraitStageWidth = 1080。
 /// Qt 侧没有这个常量：Qt 的不变量是舞台高 1080（Qt/qml/Main.qml:32），
 /// 舞台宽 = width / stageScale 随窗口变化（Qt/qml/Main.qml:33，真机横屏 1728）。
 /// 竖屏舞台的**设计宽**（1080）。实际舞台宽见 `computePortraitBands` 里按
@@ -173,7 +173,7 @@ class StageRect {
 /// imeBottom 只为源码兼容保留：清单是 adjustResize，几何计算**不读取**它；
 /// 只有未来改 adjustNothing 时才允许把它作为输入去压容器。
 ///
-/// 唯一读法（DEDUP-19/20）：
+/// 唯一读法：
 /// * stageScale = layoutWidth / 1080，只由窗口宽决定；
 /// * stageHeight = (layoutHeight - safe.top - safe.bottom) / stageScale，
 ///   上下安全区在舞台高度里只扣这一次；
@@ -185,7 +185,7 @@ class StageRect {
 ///   所以几何计算**不读** imeBottom（imeStage 恒 0），绝不二次扣减。
 ///
 /// 1080x2400 既可以读作逻辑窗口（本实现的默认读法，stageScale = 1.0），
-/// 也可以读作某 density 下的物理像素（T02 草案的读法，density 420 时
+/// 也可以读作某 density 下的物理像素（ 草案的读法，density 420 时
 /// stageScale = 0.380952）。两种读法都未被裁决；实现只认传入的数值，不做 density 猜测。
 class PortraitInputs {
   const PortraitInputs({
@@ -264,7 +264,7 @@ class PortraitBands {
 
   /// IME 高度在舞台单位下的值。
   ///
-  /// 清单保持 adjustResize，平台已缩小窗口；DEDUP-20 之后本字段恒为 0，
+  /// 清单保持 adjustResize，平台已缩小窗口； 之后本字段恒为 0，
   /// 仅为旧调用方的源码兼容保留，几何计算不得再读 viewInsets。
   final double imeStage;
 
@@ -543,7 +543,7 @@ class QtStageGeometry {
   /// 不含 984 字面量：top 抬到 978，bottom 仍是 1080。
   static const double inputShieldTop = 978;
 
-  /// 底栏输入层高 = 1080 - 978。T02 草案写成 96 并把 bottom 记成 1074，是错的。
+  /// 底栏输入层高 = 1080 - 978。 草案写成 96 并把 bottom 记成 1074，是错的。
   static const double inputBoundsHeight = stageHeightLandscape - inputShieldTop;
 
   /// 进度条区顶边 = 984 - 6。Qt/src/PlayerBar.cpp:148-151。
@@ -763,11 +763,11 @@ StageRect expandForTouchVertical(StageRect hit, bool android) => hit.expandVerti
 ///   上下安全区在舞台高度里只扣一次，playerBar 随之抬到手势区之上。
 /// * containerTop = safe.top / stageScale：舞台在窗口中的原点，widget 层
 ///   用它做 Padding.top，底栏底边因此落在 layoutHeight - safe.bottom。
-/// * content 是 stage 本地坐标，不再扣 safe.top/safe.bottom（DEDUP-23）。
+/// * content 是 stage 本地坐标，不再扣 safe.top/safe.bottom。
 /// * 左右安全区只收窄内容宽，舞台始终 1080 宽。
 /// * 清单保持 adjustResize：平台已按键盘缩小窗口，本函数不读 imeBottom。
 /// * 退化情况进 degeneracies 显式暴露；content 高 <= 0 时抛 FlutterError，
-///   绝不把负高度交给 Positioned（DEDUP-21）。
+///   绝不把负高度交给 Positioned。
 PortraitBands computePortraitBands(
   PortraitInputs inputs,
   PortraitBandMode mode, {
@@ -807,15 +807,15 @@ PortraitBands computePortraitBands(
   final double safeLeft = inset(inputs.safe.left, 'safe.left');
   final double safeRight = inset(inputs.safe.right, 'safe.right');
 
-  // DEDUP-19 唯一公式：上下安全区在舞台高度里只扣一次。
+  // 唯一公式：上下安全区在舞台高度里只扣一次。
   final double stageHeight = (layoutHeight - safeTop - safeBottom) / stageScale;
-  // DEDUP-23：safe.top 只作为舞台在窗口中的原点（乘以 stageScale 后交给
+  // safe.top 只作为舞台在窗口中的原点（乘以 stageScale 后交给
   // widget 层做偏移），不再折成 content 的内缩。
   final double containerTop = safeTop / stageScale;
   final double safeLeftStage = safeLeft / stageScale;
   final double safeRightStage = safeRight / stageScale;
 
-  // DEDUP-20：清单保持 adjustResize，平台已按键盘缩小 layoutHeight；
+  // 清单保持 adjustResize，平台已按键盘缩小 layoutHeight；
   // 这里不再读 inputs.imeBottom，imeStage/imeConsumed/inputShift 恒为 0。
   const double imeStage = 0.0;
 
@@ -837,7 +837,7 @@ PortraitBands computePortraitBands(
   final double bandHeight = qtStageHeightLandscape;
   int bandCount = 1;
   List<StageRect> bands = <StageRect>[];
-  // DEDUP-23：content 用 stage 本地坐标；安全区不再出现在这里。
+  // content 用 stage 本地坐标；安全区不再出现在这里。
   StageRect content = StageRect(contentX, 0, contentWidth, stageHeight - barHeight);
 
   switch (mode) {
@@ -898,7 +898,7 @@ PortraitBands computePortraitBands(
     notes: notes,
   );
 
-  // DEDUP-21：绝不把非正高度的 Positioned 矩形交给框架。
+  // 绝不把非正高度的 Positioned 矩形交给框架。
   // 先构造 result，让 degeneracy note 保留在异常消息里供诊断。
   if (result.content.height <= 0) {
     throw FlutterError(

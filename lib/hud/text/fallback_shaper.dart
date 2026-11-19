@@ -1,6 +1,6 @@
 // Faithful Dart port of Glyphs::needsLayout (Qt/src/Glyphs.cpp:108-139).
 //
-// Atom A4 of T31. This file answers exactly one question and nothing else:
+// Atom A4 of . This file answers exactly one question and nothing else:
 // "does this string have to leave the per-character outline path and be shaped
 // by a real text engine?" It does not shape, measure, wrap, or draw; A1
 // (glyph_font.dart) owns the outlines, A2 (glyph_run.dart) owns placement and
@@ -32,9 +32,7 @@
 // Every term is preserved in the same order, so a reviewer can diff the two
 // side by side. Qt short-circuits on the first hit and so does this port.
 //
-// ---------------------------------------------------------------------------
 // Why Unicode data is injected instead of imported
-// ---------------------------------------------------------------------------
 // The Dart SDK exposes no direct general-category, script, or bidi-class call
 // for a code point. String.runes gives scalar values, String.codeUnits gives
 // UTF-16 units, package:characters gives grapheme clusters. RegExp does
@@ -71,9 +69,7 @@
 // resource-only path in glyph_run.dart fails fast on the structural and
 // Unicode-property cases it can decide and documents the rest.
 //
-// ---------------------------------------------------------------------------
 // What [GlyphFontSet.hasOutline] really means (term 7)
-// ---------------------------------------------------------------------------
 // Qt asks the mapped QRawFont (QRawFont::supportsCharacter), i.e. the actual
 // cmap of RhineMiSans-<weight>.otf. The Dart port asks the resource table of
 // the same weight in misans-glyphs.json. Those are not the same set, and the
@@ -85,7 +81,7 @@
 //      80 Greek, 54 General Punctuation, ...)
 //   misans-glyphs.json, per weight ................ 1007 code points
 //     (a strict subset of the cmap above, with 0 resource entries missing from
-//      the OTF, as measured offline by A1/T31-V4; this phase forbids running
+//      the OTF, as measured offline by A1/; this phase forbids running
 //      anything, so that measurement is not reproducible here)
 //   NotoSansSymbols2-Regular.ttf cmap ............ 2955 code points
 //     (813 emoji-range, 145 dingbats, 121 misc symbols, 96 geometric shapes,
@@ -96,13 +92,11 @@
 // Qt reports false, because the Dart fast path can only draw outlines that
 // exist in the resource. That is a deliberate superset -- those characters get
 // shaped instead of silently disappearing -- and it is invisible only when
-// the JSON carries the whole cmap. A1/T31-V4 decide whether the resource is
+// the JSON carries the whole cmap. A1/ decide whether the resource is
 // regenerated to full coverage; until then this predicate is the conservative
 // answer, never the permissive one.
 //
-// ---------------------------------------------------------------------------
 // Script_Unknown is contextual, literally like Qt
-// ---------------------------------------------------------------------------
 // Qt applies term (4) to QChar::Script_Unknown too, because Script_Unknown is
 // outside the whitelist of {Common, Inherited, Latin, Han, Hiragana, Katakana,
 // Hangul}. Private-use, noncharacter and unassigned code points therefore count
@@ -132,8 +126,7 @@ const int kCategorySpacingCombiningMark = 2;
 /// Mirrors QChar::Mark_Enclosing (Me).
 const int kCategoryEnclosingMark = 3;
 
-// ---------------------------------------------------------------------------
-// PRIVATE CONTRACT: the kScript* numbers below are T31's own compact enum.
+// PRIVATE CONTRACT: the kScript* numbers below are 's own compact enum.
 // They are NOT QChar::Script values (Qt numbers Unknown 0, Inherited 1,
 // Common 2 and then the remaining scripts in its own order). A classifier must
 // translate a real Unicode script into these numbers; handing QChar::Script
@@ -142,7 +135,6 @@ const int kCategoryEnclosingMark = 3;
 // shape every string instead of raising an error. The whitelist is what the
 // predicate needs, not the identity of the script, so a compact enum is
 // enough as long as the translation is explicit.
-// ---------------------------------------------------------------------------
 
 /// Script slot for unassigned, private-use and noncharacter code points, and
 /// also what a port without table data reports.
@@ -193,7 +185,7 @@ abstract class UnicodeClassifier {
   int category(int codePoint);
 
   /// Unicode script of [codePoint], translated into one of the kScript*
-  /// slots (T31's private numbering, not QChar::Script; see the note above
+  /// slots ('s private numbering, not QChar::Script; see the note above
   /// kScriptUnknown). Qt: QChar::script (Glyphs.cpp:120).
   int script(int codePoint);
 

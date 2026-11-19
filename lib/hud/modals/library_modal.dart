@@ -1,4 +1,4 @@
-/// T36 · 个人库（saved）横屏 1:1 移植 + 竖屏响应式全语义。
+///  · 个人库（saved）横屏 1:1 移植 + 竖屏响应式全语义。
 ///
 /// 证据（只读引用，逐条对应，禁止凭猜）：
 /// - 几何常量：Qt/src/NativeHudLibrary.cpp:7-18
@@ -25,20 +25,18 @@
 ///
 /// 竖屏：Qt Android 只有横屏证据，本文件新增的竖屏布局是新规格，不是 Qt 竖屏像素。
 ///
-/// 弹层框架分两段 owner，均不属于本层（docs/.../2026-11-09-qt-to-flutter-parity-plan.md:180）：
+/// 弹层框架分两段，均不属于本层：
 /// - 遮挡层（modal 遮罩槽，必须在内容之前）：全屏遮罩 + 弹层不透明底
 ///   （Qt/src/NativeHudModal.cpp:163-165、:171-172）；
 /// - chrome 层（hits 之后）：RHINE LAB 行 / 标题 / 副标题 / "← 返回"
-///   （Qt/src/NativeHudModal.cpp:198-202）与唯一 close-modal hit；owner 是计划中的
-///   lib/hud/pages/chrome.dart（PAGE-ARCHIVE）。
+///   （Qt/src/NativeHudModal.cpp:198-202）与唯一 close-modal hit；由
+///   lib/hud/pages/chrome.dart 负责。
 /// 本层只产出 saved 面板内容，绝不画底、画前景框架或造第二个 close-modal。
 library;
 
 import 'dart:math' as math;
 
-// ---------------------------------------------------------------------------
 // 1. 颜色（Qt/src/NativeHudLibrary.cpp:20-42, Qt/src/NativeHud.cpp:10-15）
-// ---------------------------------------------------------------------------
 
 /// HUD 颜色。Qt 的 ink() 带色彩空间标记（calibratedWhite / calibratedRGB），
 /// 其余颜色为 4 元素 RGBA。
@@ -90,9 +88,7 @@ abstract final class HudPalette {
       : const HudColor(0.929, 0.922, 0.894, 1);
 }
 
-// ---------------------------------------------------------------------------
 // 2. 几何矩形（QRectF 语义）
-// ---------------------------------------------------------------------------
 
 /// 与 QRectF 对齐的矩形语义：right()/bottom() 为 x+width / y+height，
 /// 相交为空时宽高为负，isEmpty 判真。@see Qt/src/HudScroll.h:67-86
@@ -127,9 +123,7 @@ class HudRectF {
 double _clamp(double value, double low, double high) =>
     value < low ? low : (value > high ? high : value);
 
-// ---------------------------------------------------------------------------
 // 3. 绘制命令（Qt op() 的逐字段等价物）
-// ---------------------------------------------------------------------------
 
 /// HUD 绘制命令基类。toFlatArray 与 Qt op() 的位置参数逐项一致。
 sealed class HudCommand {
@@ -228,9 +222,7 @@ final class HudImageCommand extends HudCommand {
       <Object?>['image', key, rect.left, rect.top, rect.width, rect.height];
 }
 
-// ---------------------------------------------------------------------------
 // 4. 命中（hits 原序六字段：x, y, width, height, action, label）
-// ---------------------------------------------------------------------------
 
 /// 命中矩形。字段名与顺序即契约：x, y, width, height, action, label。
 /// @see Qt/src/NativeHud.cpp:102-109
@@ -280,9 +272,7 @@ class HudHit {
       'HudHit($x, $y, $width, $height, $action, $label)';
 }
 
-// ---------------------------------------------------------------------------
 // 5. 文本度量端口（对应 Qt Glyphs：width / bounds / NativeHud::fit）
-// ---------------------------------------------------------------------------
 
 /// 文本包围盒，对应 Glyphs::bounds() 的 x/y/width/height。
 /// @see Qt/src/Glyphs.h:26
@@ -338,9 +328,7 @@ abstract class LibraryTextMetrics {
   }
 }
 
-// ---------------------------------------------------------------------------
 // 6. 行绘制端口（Qt 的共享 resultListRow 在 NativeHudSearch.cpp:175，非本文件职责）
-// ---------------------------------------------------------------------------
 
 /// 结果行引用，对应 Qt NativeHud::Row{index, value, indices}。
 /// @see Qt/src/NativeHud.h:32-36
@@ -377,9 +365,7 @@ abstract class LibraryRowPainter {
   });
 }
 
-// ---------------------------------------------------------------------------
 // 7. 写操作端口（动作字符串 → 端口方法，一一对应）
-// ---------------------------------------------------------------------------
 
 /// 写操作 / 交互端口。库面板只通过这些方法触发副作用，不直连网络、不直连模型。
 ///
@@ -404,9 +390,7 @@ abstract class LibraryModalPorts {
   void loadMoreSaved();
 }
 
-// ---------------------------------------------------------------------------
 // 8. 几何规格（横屏，逐常量对齐 Qt）
-// ---------------------------------------------------------------------------
 
 /// 横屏个人库几何。全部来自 Qt 源码常量，不可改数。
 /// @see Qt/src/NativeHudLibrary.cpp:7-18
@@ -520,9 +504,7 @@ abstract final class LibraryGeometry {
       savedRowCount * rowHeight;
 }
 
-// ---------------------------------------------------------------------------
 // 9. 快照 / 状态
-// ---------------------------------------------------------------------------
 
 /// 一次渲染所需的只读快照。字段名与 Qt 模型字段一一对应。
 /// 不引入 Qt 没有的阶段枚举：面板状态直接由 sourceLoading / rows / hasMore /
@@ -667,9 +649,7 @@ class LibraryModalSnapshot {
   static const List<String> groupLabels = <String>['原序', '歌手分组', '专辑分组'];
 }
 
-// ---------------------------------------------------------------------------
 // 10. 帧输出
-// ---------------------------------------------------------------------------
 
 /// 一次构建的产物：命令 + 命中同代（同一 build 调用内生成）。
 class LibraryModalFrame {
@@ -714,7 +694,7 @@ class LibraryModalFrame {
       hits.where((HudHit h) => h.action == action).toList();
 }
 
-/// 搜索面板委托（T35 归属）。本文件不实现搜索面板，缺失即抛错。
+/// 搜索面板委托（ 归属）。本文件不实现搜索面板，缺失即抛错。
 /// @see Qt/src/NativeHudLibrary.cpp:46-49
 abstract class LibrarySearchPanelDelegate {
   LibraryModalFrame buildSearchPanel({
@@ -725,9 +705,7 @@ abstract class LibrarySearchPanelDelegate {
   });
 }
 
-// ---------------------------------------------------------------------------
 // 11. 横屏个人库布局（1:1）
-// ---------------------------------------------------------------------------
 
 /// 横屏 saved 面板。savedPanel = toolbar → resultList → footer（顺序固定）。
 /// @see Qt/src/NativeHudLibrary.cpp:54-58
@@ -1383,9 +1361,7 @@ class _Rail {
   final HudRectF thumb;
 }
 
-// ---------------------------------------------------------------------------
 // 12. 控制器：自动补页去重 + 动作分派
-// ---------------------------------------------------------------------------
 
 /// 面板控制器。ensureSavedFilled 逐行照搬 Qt 的去重语义。
 /// @see Qt/src/NativeHudLibrary.cpp:256-268
@@ -1476,9 +1452,7 @@ class LibraryModalController {
   }
 }
 
-// ---------------------------------------------------------------------------
 // 13. 竖屏响应式（新规格；Qt Android 无竖屏证据）
-// ---------------------------------------------------------------------------
 
 /// 竖屏形态断点。
 enum LibraryPortraitForm {

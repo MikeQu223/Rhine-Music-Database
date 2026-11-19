@@ -1,6 +1,6 @@
 /// Qt 歌曲详情页（stage 单位）的纯数据构建器。
 ///
-/// 真值来源（逐字移植，行号对应 /home/aibeto/code/Rhine-Music-Database/Qt/src）：
+/// 真值来源（逐字移植，行号对应 Qt/src）：
 /// - NativeHudDetail.cpp:8-43    body() 正文四分支
 /// - NativeHudDetail.cpp:45-215  detail() 整页命令序列（x=width*0.56、usable、detailBounds）
 /// - SongDetailCard.cpp:11-111   卡片、动作行、四字段、三 tabs
@@ -11,12 +11,12 @@
 /// 契约：
 /// 1. 纯 Dart：不依赖 Flutter（Widget/Material/dart:ui），也不 import 本仓其它 HUD 文件。
 ///    命令与命中以普通 JSON 形态返回，宿主按同代规则追加进整帧与命中表：不排序、不去重、
-///    不合并，顺序即语义（与 worktrees/T30/lib/hud/protocol 的 wire 说明一致）。
+///    不合并，顺序即语义（与 worktrees//lib/hud/protocol 的 wire 说明一致）。
 /// 2. 命中一律六字段 x/y/width/height/action/label（NativeHud.cpp:102-108），绝不输出 fixed：
 ///    fixed 只属于 PlayerBar（PlayerBar.cpp:46-53）。
 /// 3. 3D 封面与 2D 卡片是两条通道：本页只产出平面命令与 "viewer" 动作；真实 3D 封面由场景
 ///    draw 通道生成（NativeCards.cpp expand -> frame["draws"]）。把 SongDetailCard/本页命令流
-///    当作 3D 贴图是 plan T34 明列的 Fail 条件。
+///    当作 3D 贴图是 plan  明列的 Fail 条件。
 /// 4. 颜色：NativeHud::ink() 带 calibrated 标记（NativeHud.cpp:10-15），消费端做 Gamma 1.8->sRGB；
 ///    卡片自己的 ink() 不带标记（SongDetailCard.cpp:7-9）。两者不可混用。
 /// 5. limited() 不接受颜色参数，因此它产出的 text 命令一律使用 calibrated ink（NativeHud.cpp:77-79），
@@ -312,12 +312,10 @@ const double songDetailAlbumTrackRowHeight = 48.0;
 /// 三 tabs 的键与命中前缀（SongDetailCard.cpp:94-105）。
 const List<String> songDetailTabKeys = <String>['overview', 'notes', 'history'];
 
-/// 3D 封面只走场景 draw 通道；本页永不输出封面贴图命令（plan T34 Fail 条款）。
+/// 3D 封面只走场景 draw 通道；本页永不输出封面贴图命令。
 const String songDetailCoverChannel = 'scene-draw';
 
-// ---------------------------------------------------------------------------
 // 调色板（逐字对应 Qt）
-// ---------------------------------------------------------------------------
 
 /// Qt NativeHud::ink()（NativeHud.cpp:10-15）：带 calibrated 标记。
 List<Object?> _hudInk(bool dark) => dark
@@ -363,9 +361,7 @@ SongDetailRect songDetailPanelBounds(double width) {
   return SongDetailRect(left, 260, width - left - 35, 696);
 }
 
-// ---------------------------------------------------------------------------
 // 绘制累加器（Qt NativeHud 的 op/fill/text/limited/hit/button/rule/image）
-// ---------------------------------------------------------------------------
 
 class _Painter {
   _Painter({required this.glyphs, required this.dark});

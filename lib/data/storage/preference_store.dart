@@ -17,7 +17,7 @@
 //     interpret bool/number. No type is ever written into the store.
 //
 // The real landing point of QSettings on Android (absolute path, file name,
-// INI escaping) is DEVICE_BLOCKED: T07 contract section 5.1 forbids guessing
+// INI escaping) is not decided here: contract section 5.1 forbids guessing
 // it, and a self-built JSON or shared_preferences replacement would not see
 // Qt's keys at all - which is equivalent to losing every setting. The store is
 // therefore platform-agnostic and PURE Dart: the persistence backend is
@@ -25,7 +25,7 @@
 // never guesses the Android sandbox path, and must be round-tripped against a
 // real Qt-generated store before any production wiring is claimed.
 //
-// Identity coupling (T07 section 5.4): panel/provider, panel/kugou-edition and
+// Identity coupling ( section 5.4): panel/provider, panel/kugou-edition and
 // panel/account-id-* feed the session library identity gate. Qt only falls back
 // to 'netease' IN MEMORY and never persists that fallback, so a missing
 // provider MUST stay missing here as well. 'kugou' uids live in
@@ -76,7 +76,7 @@ class PreferenceStore {
   static const int maxValueCodeUnits = 262144;
 
   /// The 53 whitelisted panel keys in the EXACT frozen order of
-  /// Qt/src/Host.cpp:1042-1057 (T07 contract section 5.2).
+  /// Qt/src/Host.cpp:1042-1057 ( contract section 5.2).
   ///
   /// ONE list serves both read and write, because a split list makes a saved
   /// setting bounce back immediately (Qt/src/Host.cpp:1039-1040).
@@ -156,7 +156,7 @@ class PreferenceStore {
       // Qt maps a failed QSettings read onto an empty QVariant -> ''. An
       // unreadable key is therefore reported exactly like an absent one; the
       // caller - not this store - decides that unreadable identity keys are
-      // BLOCKED (T07 section 5.4).
+      // BLOCKED ( section 5.4).
       return '';
     }
   }
@@ -188,7 +188,7 @@ class PreferenceStore {
   /// ever read or written (Qt/src/Host.cpp:1075,1095). This method exists for
   /// the injected port contract and future use; Qt parity code must not call
   /// it, and it must never be used to reset settings to defaults, which would
-  /// violate "no first-launch default writing" (T07 section 10.3).
+  /// violate "no first-launch default writing" ( section 10.3).
   Future<void> remove(String key) async {
     if (offline || !isPanelKey(key)) {
       return;

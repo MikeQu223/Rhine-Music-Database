@@ -1,21 +1,16 @@
-/// T44 旋转端到端测试（plan 2026-11-09-qt-to-flutter-parity-plan.md:369-376, 692-698）。
+/// 旋转端到端测试。
 ///
 /// 为什么是 flutter_test 而不是 integration_test：
-///   pubspec.yaml 是被本任务禁改的共享文件，它只有 flutter_test（pubspec.yaml:38-40），
-///   没有 integration_test 依赖，所以本文件不能使用
-///   IntegrationTestWidgetsFlutterBinding。这里用 flutter_test 的
-///   tester.view.physicalSize + MediaQuery.fromView 通道模拟设备旋转：
-///   旋转在 Flutter 侧就是一次 MediaQuery 重建，这正是 plan:369 允许的唯一动作。
-///   真机上把本文件跑成 integration_test（宿主接线、真实传感器旋转、真实 Node/媒体源
-///   存活）属于 ARCH_BLOCKED；设备上的像素/性能证据属于 DEVICE_BLOCKED（T16）。
+///   pubspec.yaml 是共享文件，只声明 flutter_test（pubspec.yaml:38-40），没有
+///   integration_test 依赖，因此本文件不能用 IntegrationTestWidgetsFlutterBinding。
+///   这里用 flutter_test 的 tester.view.physicalSize + MediaQuery.fromView 模拟设备旋转：
+///   旋转在 Flutter 侧就是一次 MediaQuery 重建。
+///   真机上跑成 integration_test 需要宿主接线、真实传感器与真实 Node/媒体源；
+///   设备上的像素/性能需真机验证。
 ///
-/// RED/GREEN: NOT EXECUTED。本任务硬禁 flutter test / dart test / dart analyze /
-/// flutter build / flutter run / adb，因此这里的所有断言没有跑过。断言按 Qt 语义
-/// 编写，是否通过必须由后续获准执行验证的环节判定，本文件不宣称任何 PASS。
-///
-/// 覆盖的 Qt 证据：
+/// 覆盖的 Qt 语义：
 ///   * 白名单七项 modal：Qt/src/MusicSession.cpp:243；磁盘序列化时 closing 存空串：:222。
-///     旋转不是落盘，closing 中的 modal 必须保留名字与关闭进度（plan:376）。
+///     旋转不是落盘，closing 中的 modal 必须保留名字与关闭进度。
 ///   * 夹取：selected [0,39]（:260）/ musicCollection [1,4]（:257）/
 ///     settingsScroll [0, settingsScrollMaximum]（:247 + NativeHud.h:132-135）/
 ///     rowMemory [0,7]（:111）。
@@ -43,9 +38,7 @@ const Size _landscape = Size(2400, 1080);
 /// 竖屏样机：1080x2400（竖屏舞台宽 1080 -> stageScale=1）。
 const Size _portrait = Size(1080, 2400);
 
-// ---------------------------------------------------------------------------
 // 测试宿主：所有必须跨旋转存活的东西都活在这里，也就是 Widget 树之外
-// ---------------------------------------------------------------------------
 
 /// 旋转宿主：把 A1（几何 + 视图状态）与 A2（运行时连续性）接在一起。
 ///
@@ -63,7 +56,7 @@ class RotationHarness {
   final FocusNode focusNode;
   final ScrollController scrollController;
 
-  /// 输入框文本（plan:372）。
+  /// 输入框文本。
   String queryText = '';
 
   /// 跨旋转的视图状态（A1）。
@@ -88,7 +81,7 @@ class RotationHarness {
 
   /// 滚动区度量：行高/视口按方向不同，resolveNow 必须按当前
   /// metrics.orientation 选择。若两个方向共用一套 extent，
-  /// 「portrait == landscape」只是恒真，无法证明 plan:371。
+  /// 「portrait == landscape」只是恒真，无法证明两个方向真的分开。
   ScrollExtent _listExtentFor(OrientationKind orientation) =>
       orientation == OrientationKind.portrait
           ? const ScrollExtent(itemExtent: 32, itemCount: 40, viewportExtent: 720)
@@ -169,9 +162,9 @@ class RotationHarness {
     }
     final OrientationSnapshot snapshot = captureOrientationState(view, previous);
     lastSnapshot = snapshot;
-    // 还原是方向无关的：没有任何「旧像素 -> 新像素」的换算（plan:371）。
+    // 还原是方向无关的：没有任何「旧像素 -> 新像素」的换算。
     view = restoreOrientationState(snapshot, next);
-    // 运行时连续性侧：只 resize，绝不重建（plan:369）。
+    // 运行时连续性侧：只 resize，绝不重建。
     host.applyViewport(ViewportFrame(
       logicalWidth: next.logicalWidth,
       logicalHeight: next.logicalHeight,
@@ -240,9 +233,7 @@ class RotationRoot extends StatelessWidget {
   }
 }
 
-// ---------------------------------------------------------------------------
 // 测试工具
-// ---------------------------------------------------------------------------
 
 Future<void> _pumpRoot(WidgetTester tester, RotationHarness harness) async {
   await tester.pumpWidget(
@@ -311,9 +302,7 @@ Map<String, Object?> _track(String id) => <String, Object?>{
     };
 
 void main() {
-  // -------------------------------------------------------------------------
   // 1. stage 重算 + 视图状态跨旋转
-  // -------------------------------------------------------------------------
   testWidgets('横屏 -> 竖屏：stage 按 Qt 重算，视图状态逐字段保持', (WidgetTester tester) async {
     _useViewport(tester, _landscape);
     final RotationHarness harness = RotationHarness();
@@ -340,7 +329,7 @@ void main() {
 
     expect(harness.metrics!.orientation, OrientationKind.portrait);
     expect(harness.orientationChanges, 1);
-    // 竖屏舞台宽不变量（plan:362；T43 lib/ui/layout/portrait_bands.dart:32）。
+    // 竖屏舞台宽不变量（见 lib/ui/layout/portrait_bands.dart:32）。
     expect(harness.metrics!.stageWidth, closeTo(portraitStageWidthUnits, _tol));
     expect(harness.metrics!.stageScale, closeTo(1.0, _tol));
 
@@ -366,7 +355,7 @@ void main() {
     );
     expect(harness.view.curve, const CurveToken(id: 'settings-scroll', generation: 7));
 
-    // 相对锚不变，绝对像素按「新方向自己的 extent」现算（plan:371）。
+    // 相对锚不变，绝对像素按「新方向自己的 extent」现算。
     // 竖屏行高与横屏不同，若两方向共用 extent，这些断言会退化为恒真。
     final ResolvedScrollOffsets portraitOffsets = harness.resolveNow();
     expect(portraitOffsets.list, closeTo(5.25 * 32, 1e-9));
@@ -392,7 +381,7 @@ void main() {
     expect(harness.view, seeded);
 
     // 竖屏安全区：portrait 必须在 compute 前用 layoutH 扣除 safe.top/bottom
-    //（T02 layout.md:287/:299；plan:364），且 IME 不参与 stage。
+    //（见 layout.md:287/:299），且 IME 不参与 stage。
     await _rotate(tester, _portrait);
     tester.view.padding = const FakeViewPadding(top: 40, bottom: 24);
     addTearDown(tester.view.resetPadding);
@@ -404,9 +393,7 @@ void main() {
     expect(harness.metrics!.stageHeight, isNot(2400));
   });
 
-  // -------------------------------------------------------------------------
   // 2. modal 白名单与 closing
-  // -------------------------------------------------------------------------
   testWidgets('白名单外 modal 不恢复；closing 中的 modal 保留名字与关闭进度，仅落盘名为空', (WidgetTester tester) async {
     _useViewport(tester, _landscape);
     final RotationHarness harness = RotationHarness();
@@ -422,7 +409,7 @@ void main() {
     expect(harness.view.modal, ModalState.none);
 
     // Qt 只在磁盘序列化时把 closing 写成空串（MusicSession.cpp:222）；
-    // 运行时旋转必须保留 modal 名、closing 标志和关闭动画位置（plan:376）。
+    // 运行时旋转必须保留 modal 名、closing 标志和关闭动画位置。
     harness.view = _withModal(harness.view, const ModalState(name: 'queue', closing: true, offset: 12));
     await tester.pump();
     await _rotate(tester, _landscape);
@@ -448,9 +435,7 @@ void main() {
     }
   });
 
-  // -------------------------------------------------------------------------
   // 3. 10 次往返：不重复登录 / 不重启 Node / 不重建媒体源 / 无泄漏
-  // -------------------------------------------------------------------------
   testWidgets('10 次横竖往返：login/Node/媒体源各一次，监听器无泄漏', (WidgetTester tester) async {
     _useViewport(tester, _landscape);
     final RotationHarness harness = RotationHarness();
@@ -469,7 +454,7 @@ void main() {
 
     expect(harness.orientationChanges, 20);
     expect(harness.observedOrientations.length, 21);
-    // 旋转没有重新登录、没有重启 Node、没有重建媒体源（plan:373-375）。
+    // 旋转没有重新登录、没有重启 Node、没有重建媒体源。
     expect(ledger.loginCount, 1);
     expect(ledger.loginAttempts, 1);
     expect(ledger.nodeStartCount, 1);
@@ -489,9 +474,7 @@ void main() {
     expect(ledger.balanced, isTrue);
   });
 
-  // -------------------------------------------------------------------------
   // 4. QR：墙钟 + generation + cancel 屏障
-  // -------------------------------------------------------------------------
   testWidgets('QR 跨旋转：generation/二维码/相位/剩余墙钟不变，旋转不取消登录', (WidgetTester tester) async {
     _useViewport(tester, _landscape);
     // production wiring 传 providerIsQq: provider == 'qq'；本用例覆盖 QQ
@@ -549,9 +532,7 @@ void main() {
     expect(login.generation, banner);
   });
 
-  // -------------------------------------------------------------------------
   // 5. 播放 / 队列 / 歌词
-  // -------------------------------------------------------------------------
   testWidgets('播放队列与歌词偏移跨旋转保留，不重新加载', (WidgetTester tester) async {
     _useViewport(tester, _landscape);
     final RotationHarness harness = RotationHarness();
@@ -617,9 +598,7 @@ void main() {
     expect(lyrics.positionMs, 6000);
   });
 
-  // -------------------------------------------------------------------------
   // 6. 3D 场景 / viewer / 拖拽
-  // -------------------------------------------------------------------------
   testWidgets('3D 相机/时钟/boot/viewer 不重置；拖拽被取消而动量与选中卡保留', (WidgetTester tester) async {
     _useViewport(tester, _landscape);
     final RotationHarness harness = RotationHarness();
@@ -669,7 +648,7 @@ void main() {
     expect(drag.hasMomentum, isTrue);
     expect(drag.velocityX, 1.5);
     expect(drag.velocityY, -0.5);
-    // 选中卡属于 SceneContinuity，resetPointer 不碰它（plan:375）。
+    // 选中卡属于 SceneContinuity，resetPointer 不碰它。
     expect(scene.selected, 7);
 
     // NativeScene.cpp:217-224：只换 viewport，不碰相机/时钟/boot/viewer。
@@ -701,9 +680,7 @@ void main() {
     expect(drag.cancelCount, 1);
   });
 
-  // -------------------------------------------------------------------------
   // 7. 树内焦点/滚动控制器跨旋转仍在
-  // -------------------------------------------------------------------------
   testWidgets('焦点与滚动控制器住在树外，旋转后不丢', (WidgetTester tester) async {
     _useViewport(tester, _landscape);
     final RotationHarness harness = RotationHarness();
@@ -723,9 +700,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  // -------------------------------------------------------------------------
   // 8. fixture 与 ARCH_BLOCKED 的静态记录
-  // -------------------------------------------------------------------------
   test('rotation_state.json 是合成 fixture，不是设备证据', () {
     final File file = File('test/fixtures/rotation_state.json');
     expect(file.existsSync(), isTrue, reason: 'T44 fixture 必须存在');

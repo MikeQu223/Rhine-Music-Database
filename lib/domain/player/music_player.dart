@@ -1,6 +1,6 @@
 /// Qt 移植源：Qt/src/MusicPlayer.h、Qt/src/MusicPlayer.cpp
 ///
-/// 播放传输状态机（DEDUP-04 播放器侧）。只移植可静态判定的传输状态与队列推进：
+/// 播放传输状态机（播放器侧）。只移植可静态判定的传输状态与队列推进：
 /// 入队/播放的队列插入与 current 选择、tick 时间推进、播放与暂停切换、seek(fraction)、
 /// next(direction, ended)、remove/clearUpcoming/stop、mode 取值、history 与
 /// sessionState/restoreSessionState 的纯数据子集。

@@ -70,14 +70,14 @@
 /// - iOS 抬起未建模 QQuickMouseArea 的 start-drag 阈值（位移超过平台 start-drag 距离后 Qt 不再发
 ///   clicked）。dragThreshold <= 0 表示不建模；宿主可注入
 ///   QGuiApplication::styleHints()->startDragDistance() 打开该判定。
-/// - iOS「是否仍在同一命中」用 HudHit 的**六字段**值相等（T30 hud_hit.dart:21-29 只有
+/// - iOS「是否仍在同一命中」用 HudHit 的**六字段**值相等（hud_hit.dart:21-29 只有
 ///   x/y/width/height/action/label；fixed 不是字段，只是 PlayerBar 序列化键），Qt 比较的是
 ///   活着的 delegate 对象（Overlay.qml:208-212）；命中在按下与抬起之间被重建、或两个命中的
 ///   六字段完全相同（几何+动作+文案一致）时无法区分，会吞掉或误发动作。
 /// - 触摸按下是否让 Qt 合成 onEntered（决定 shield 与命中的 leave 是否会在触屏上发出）需真机取证；
 ///   本层取「触屏按入 shield 区域也立刻取消一次」的假设，见 _down 的 shield 分支。
 ///
-/// 依赖：T30 共享命中模型 lib/hud/protocol/hud_hit.dart，与同目录 hit_layer.dart（几何/坐标换算）。
+/// 依赖： 共享命中模型 lib/hud/protocol/hud_hit.dart，与同目录 hit_layer.dart（几何/坐标换算）。
 library;
 
 import 'dart:ui' show Offset, Rect;
@@ -222,7 +222,7 @@ class PointerRouter {
     this.dragThreshold = 0.0,
   });
 
-  /// 从唯一 [StageGeometry] 构造路由（DEDUP-13）。
+  /// 从唯一 [StageGeometry] 构造路由。
   ///
   /// 与绘制层使用同一个 geometry；本工厂只把它交给 HitLayer，不再另算 scale。
   factory PointerRouter.fromGeometry({
@@ -649,7 +649,7 @@ class PointerRouter {
       return PointerOutcome(
           consumed: true, layer: PointerLayer.inputLayer, forwards: flushed);
     }
-    // DEDUP-13：这里只消费唯一注入的 geometry.stageScale（PortraitStage 那一份），
+    // 这里只消费唯一注入的 geometry.stageScale（PortraitStage 那一份），
     // 不在路由层按窗口高度重新推导，也不乘第二次。
     final scale = geometry.stageScale;
     ports.pointer(PointerPhase.pan, dx / scale, dy / scale);

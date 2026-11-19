@@ -20,7 +20,7 @@ import 'portrait_bands.dart';
 /// 绘制时整体按 PortraitBands.stageScale 从左上角缩放
 /// （Qt/qml/Overlay.qml:179-184 transformOrigin: Item.TopLeft）。
 ///
-/// DEDUP-23：舞台在窗口中的原点是 (0, containerTop * stageScale) == (0, safe.top)。
+/// 舞台在窗口中的原点是 (0, containerTop * stageScale) == (0, safe.top)。
 /// stageHeight 已经不含上下安全区，所以整个缩放舞台必须下移这一段；否则底栏
 /// 底边会停在 layoutHeight - safe.top - safe.bottom。缩放后舞台高
 /// = layoutHeight - safe.top - safe.bottom，底边恰好在 layoutHeight - safe.bottom。
@@ -30,7 +30,7 @@ import 'portrait_bands.dart';
 /// 反向平移回舞台坐标。二者都由 bands.containerTop 算出，任何子树不得再自己加 safe.top。
 ///
 /// mode 仍是未裁决候选：默认值只为让宿主可编译、可预览，不代表赢家。
-/// imePolicy 在 adjustResize 下不参与几何（DEDUP-20），仅为源码兼容保留。
+/// imePolicy 在 adjustResize 下不参与几何，仅为源码兼容保留。
 class PortraitStage extends StatelessWidget {
   const PortraitStage({
     super.key,
@@ -70,17 +70,17 @@ class PortraitStage extends StatelessWidget {
               left: media.padding.left,
               right: media.padding.right,
             ),
-            // DEDUP-20：清单保持 adjustResize，平台已按键盘缩小窗口；
+            // 清单保持 adjustResize，平台已按键盘缩小窗口；
             // 这里不读 media.viewInsets.bottom，避免二次扣除。
             android: defaultTargetPlatform == TargetPlatform.android,
           ),
           mode,
           imePolicy: imePolicy,
         );
-        // DEDUP-13：唯一一份 StageGeometry 由 PortraitStage 生成并注入。
+        // 唯一一份 StageGeometry 由 PortraitStage 生成并注入。
         // 绘制（Transform.scale）与命中（HitLayer/PointerRouter）都消费这一份；
         // 子树不得再用 logicalHeight / 1080 推导第二个 scale。
-        // A36 hit-origin follow-up：originY 与下面 Padding(top: containerTop * stageScale) 同源——
+        // originY 与下面 Padding(top: containerTop * stageScale) 同源——
         // 绘制下移多少，命中/语义就平移多少；横屏 containerTop = 0，originY 退化为 0。
         final StageGeometry geometry = StageGeometry.withScale(
           stageScale: bands.stageScale,
@@ -109,7 +109,7 @@ class PortraitStage extends StatelessWidget {
                 maxWidth: double.infinity,
                 minHeight: 0,
                 maxHeight: double.infinity,
-                // DEDUP-23：舞台原点 = (0, safe.top)。stageHeight 已不含上下安全区，
+                // 舞台原点 = (0, safe.top)。stageHeight 已不含上下安全区，
                 // 这里把整个缩放舞台下移 containerTop * stageScale；OverflowBox 给的是
                 // 自由约束，Padding 不会压缩舞台，缩放仍只有 Transform 这一处。
                 child: Padding(
@@ -120,7 +120,7 @@ class PortraitStage extends StatelessWidget {
                     child: SizedBox(
                       width: bands.stageWidth,
                       height: bands.stageHeight,
-                      // DEDUP-13：全链路只保留 PortraitStage 这一次缩放。
+                      // 全链路只保留 PortraitStage 这一次缩放。
                       // 子树拿到单位缩放的舞台（1080 x stageHeight），绘制与命中
                       // 都从这一份 HudStage 读尺寸，禁止再调 HudStage.fromLogicalSize。
                       child: StageGeometryScope(
@@ -173,7 +173,7 @@ class PortraitStageScope extends InheritedWidget {
   bool updateShouldNotify(PortraitStageScope oldWidget) => oldWidget.bands != bands;
 }
 
-/// 把唯一一份单位缩放舞台交给绘制/命中子树（DEDUP-13）。
+/// 把唯一一份单位缩放舞台交给绘制/命中子树。
 ///
 /// 必须挂在 [PortraitStage] 的缩放子树内部：stage.scale 恒为 1.0，
 /// stage.width 恒为 1080，stage.height 为 PortraitBands.stageHeight。
@@ -207,11 +207,11 @@ class HudStageScope extends InheritedWidget {
       oldWidget.stage.height != stage.height;
 }
 
-/// 把唯一一份 [StageGeometry] 注入绘制/命中子树（DEDUP-13）。
+/// 把唯一一份 [StageGeometry] 注入绘制/命中子树。
 ///
 /// 与 [HudStageScope] 同源：geometry.stageScale == PortraitBands.stageScale，
 /// geometry.logicalWidth/Height == LayoutBuilder 的完整可用窗口，
-/// geometry.originY == PortraitBands.containerTop（A36 hit-origin follow-up 的唯一平移来源）。HitLayer、
+/// geometry.originY == PortraitBands.containerTop（唯一平移来源）。HitLayer、
 /// PointerRouter、TextInputStageState 只能消费这里的 scale 与 origin，禁止在子树内重算，
 /// 也禁止各自再补一次 safe.top。
 class StageGeometryScope extends InheritedWidget {
@@ -240,7 +240,7 @@ class StageGeometryScope extends InheritedWidget {
       oldWidget.geometry.stageScale != geometry.stageScale ||
       oldWidget.geometry.logicalWidth != geometry.logicalWidth ||
       oldWidget.geometry.logicalHeight != geometry.logicalHeight ||
-      // A36 hit-origin follow-up：只改 originY（例如 inset 变化但 scale 不变）时也必须重发，
+      // 只改 originY（例如 inset 变化但 scale 不变）时也必须重发，
       // 否则命中/语义会继续读到上一帧的平移量。
       oldWidget.geometry.originY != geometry.originY;
 }

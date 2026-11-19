@@ -27,13 +27,13 @@
 /// 换算成舞台坐标再交给 Engine（Overlay.qml:96-103、Qt/src/Engine.cpp:1042-1061），
 /// NativeApplication::pointer 再用舞台坐标与 playerBounds 比较
 /// （Qt/src/NativeApplication.cpp:216-222）。本文件同名同义：几何是舞台坐标，指针入口是逻辑坐标。
-/// 窗口→舞台除了除以 scale 还有一次平移：竖屏缩放舞台整体下移 safe.top（A36 hit-origin follow-up），
+/// 窗口→舞台除了除以 scale 还有一次平移：竖屏缩放舞台整体下移 safe.top，
 /// 所以 [StageGeometry.toStage] 先除 scale 再减 [StageGeometry.originY]，
 /// toLogical/rectToLogical 反向加回；origin 只允许来自 StageGeometry。
 /// 唯一例外是 HitLayer.firstResultHit：它的入参是**不含 modalOffset 的舞台坐标**，
 /// 理由见该方法注释（与 Qt 的 px/py 空间一致）。
 ///
-/// 依赖：T30 共享命中模型 lib/hud/protocol/hud_hit.dart（T30 拥有，临时接口，freeze 后重审）。
+/// 依赖： 共享命中模型 lib/hud/protocol/hud_hit.dart（ 拥有，临时接口，freeze 后重审）。
 /// 本文件不重定义平行模型，也不复制该类。
 library;
 
@@ -44,11 +44,11 @@ import '../scale/hud_scale.dart';
 
 /// 舞台几何：Qt/qml/Overlay.qml:22-23。
 ///
-/// DEDUP-13：竖屏全链路只允许一个 scale。挂进 PortraitStage 的缩放子树后，
+/// 竖屏全链路只允许一个 scale。挂进 PortraitStage 的缩放子树后，
 /// 命中层必须用 [StageGeometry.withScale] 注入 PortraitBands 那一组
 /// stageScale/logicalWidth/logicalHeight/originY，不得再按逻辑高度推导一次。
 ///
-/// A36 hit-origin follow-up：窗口→舞台是「先除 scale、再减 [originY]」的一次仿射映射，两段都收在本类里。
+/// 窗口→舞台是「先除 scale、再减 [originY]」的一次仿射映射，两段都收在本类里。
 /// [originY] 是缩放舞台原点相对窗口顶的**舞台偏移**（stage unit）：竖屏等于
 /// PortraitBands.containerTop（= safe.top / stageScale），与 PortraitStage 里
 /// Padding(top: containerTop * stageScale) 同源；横屏恒为 0。
@@ -99,7 +99,7 @@ class StageGeometry {
     );
   }
 
-  /// 显式注入唯一 scale（DEDUP-13）；竖屏唯一合法构造。
+  /// 显式注入唯一 scale；竖屏唯一合法构造。
   ///
   /// [originY] 必须由调用方从 PortraitBands.containerTop 注入（横屏留默认 0）：
   /// 它和绘制侧 Padding(top: containerTop * stageScale) 是同一份平移，不接受第二份推导。
@@ -291,7 +291,7 @@ class HitLayer {
   /// 非 iOS（Android，以及 Overlay.qml:27-37 里存在的 desktop windows/osx）按下即发。
   ///
   /// 判据取「非 ios」而不是「android」：Qt 的条件就是 !overlay.ios，桌面同理按下即发；
-  /// 当前 Flutter 树只有 android/ 平台目录，故本卡只支持 Android。
+  /// 当前 Flutter 树只有 android/ 平台目录，故这里只支持 Android。
   static bool firesOnPress({required bool ios}) => !ios;
 
   /// seek/volume 的 x/width 不做触摸外扩，仅 y/height 外扩（Overlay.qml:492-497）。

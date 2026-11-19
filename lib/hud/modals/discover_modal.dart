@@ -12,8 +12,7 @@
 /// * Qt/src/MusicLibrary.h:103-105,234                               accountGeneration
 ///
 /// 边界：本树没有 lib/domain/**、lib/hud/protocol/**、lib/hud/text/**，因此平台请求、
-/// 资料库、播放器、封面解码全部以本文件内的 abstract 端口注入；宿主真实接线一律记
-/// ARCH_BLOCKED（见 reports/T38-C18-W2.json），不得伪造实现。
+/// 资料库、播放器、封面解码全部以本文件内的 abstract 端口注入；宿主真实接线不在此层。
 library;
 
 import 'dart:convert' show utf8;
@@ -77,10 +76,8 @@ int _int(Object? value, [int fallback = 0]) {
   return value is num ? value.toInt() : fallback;
 }
 
-// ---------------------------------------------------------------------------
 // 百分号编解码：QUrl::toPercentEncoding / QUrl::fromPercentEncoding
 // （Qt/src/NativeHudDiscover.cpp:57、Qt/src/NativeHudController.cpp:23-25）
-// ---------------------------------------------------------------------------
 
 bool _isHexUnit(int unit) {
   return (unit >= 0x30 && unit <= 0x39) ||
@@ -137,9 +134,7 @@ String percentDecode(String value) {
   return utf8.decode(bytes, allowMalformed: true);
 }
 
-// ---------------------------------------------------------------------------
 // 注入端口
-// ---------------------------------------------------------------------------
 
 /// Qt MusicReply（Qt/src/MusicApi.h:7-14）：error 为空即 ok。
 class DiscoverReply {
@@ -237,9 +232,7 @@ abstract class DiscoverCoverProbe {
   DiscoverCover? cover(String key);
 }
 
-// ---------------------------------------------------------------------------
 // 封面：Qt DiscoverArtwork（Qt/src/DiscoverArtwork.cpp:9-39）
-// ---------------------------------------------------------------------------
 
 /// 复刻 DiscoverArtwork：scope/urls 相同则早退；scope 或 urls 变化时递增 generation，
 /// 旧回调作废；失败封面保持空字符串占位，不在同一 scope 内重试。
@@ -312,9 +305,7 @@ class DiscoverArtwork {
   }
 }
 
-// ---------------------------------------------------------------------------
 // MusicDiscover 等价状态机（Qt/src/MusicDiscover.h:5-28、.cpp:1-211）
-// ---------------------------------------------------------------------------
 
 class MusicDiscoverState {
   MusicDiscoverState({
@@ -614,16 +605,14 @@ int categoryPageCount(String provider, int rawCount) {
 }
 
 /// Qt NativeHud::modalBounds 的 discover 分支（Qt/src/NativeHud.cpp:140-159）。
-/// 这是宿主外框的只读镜像；真实外框仍由 HUD 宿主绘制（ARCH_BLOCKED）。
+/// 这是宿主外框的只读镜像；真实外框仍由 HUD 宿主绘制。
 Rect discoverModalBounds(double stageWidth) {
   final modalWidth = math.min(discoverModalMaxWidth, stageWidth - 100);
   final left = (stageWidth - modalWidth) / 2;
   return Rect.fromLTWH(left, discoverModalTop, modalWidth, discoverModalHeight);
 }
 
-// ---------------------------------------------------------------------------
 // discoverPanel：Qt/src/NativeHudDiscover.cpp:9-148
-// ---------------------------------------------------------------------------
 
 /// Qt NativeHud::discoverPanel 的等价函数：只装配只读显示模型，不改平台数据。
 DiscoverModel buildDiscoverPanel({
@@ -759,9 +748,7 @@ DiscoverModel buildDiscoverPanel({
   return model;
 }
 
-// ---------------------------------------------------------------------------
 // 滚轮：Qt/src/NativeHudInput.cpp:60-74 + Qt/src/HudScroll.h:13-26
-// ---------------------------------------------------------------------------
 
 /// QRectF::contains：四边闭区间（Dart Rect.contains 是半开区间，这里显式复刻 Qt）。
 bool _contains(Rect rectangle, double x, double y) {
@@ -851,9 +838,7 @@ double discoverWheel({
   return panel.scroll;
 }
 
-// ---------------------------------------------------------------------------
 // discover: 动作分发：Qt/src/NativeHudController.cpp:576-619
-// ---------------------------------------------------------------------------
 
 /// 动作执行结果；closeModal 等价于控制器在动作分支里调用 closeModal()。
 class DiscoverActionResult {
@@ -924,12 +909,10 @@ DiscoverActionResult handleDiscoverAction(
   return const DiscoverActionResult();
 }
 
-// ---------------------------------------------------------------------------
-// 与文件 A 的适配层（lib/hud/widgets/discover_card.dart，owner W1）
+// 与文件 A 的适配层（lib/hud/widgets/discover_card.dart）
 //
 // 依赖 A 侧形状：无参构造 + 可变字段，字段名严格按冻结契约。全部构造点集中在
 // 这三个函数，A 侧若调整构造签名只改这里。
-// ---------------------------------------------------------------------------
 
 DiscoverModel _newModel() {
   return DiscoverModel();

@@ -5,7 +5,7 @@ import '../data/storage/preference_store.dart';
 import '../hud/modals/settings_modal.dart';
 import 'basic_settings.dart';
 
-/// SETTINGS-148 跨语言契约：Android 侧 porting/BasicSettingsChannel.kt 的 CHANNEL 逐字相同。
+/// 跨语言契约：Android 侧 porting/BasicSettingsChannel.kt 的 CHANNEL 逐字相同。
 const String basicSettingsChannelName = 'rhine.music.database/basic_settings';
 
 /// 本 APK 的真实版本真值（PackageManager 读出来的，不是写死的）。

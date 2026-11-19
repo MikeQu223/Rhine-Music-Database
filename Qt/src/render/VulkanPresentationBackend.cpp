@@ -105,7 +105,7 @@ class VulkanPresentationBackend final : public PresentationBackend {
         // 尺寸没变时必须只做判断、不碰 GPU：每重建一次都要 m_rhi->finish()（等设备空闲）
         // 并重扫全部交换链包装目标，而 VulkanPresenter::resize 内部的"同尺寸就返回"是在
         // finish() 之后才被调用，省不掉那次硬同步。呈现层在没有尺寸变化时也会一路把尺寸
-        // 同步下来，所以这层去重必须放在 finish() 之前，否则去重形同虚设（A10）。
+        // 同步下来，所以这层去重必须放在 finish() 之前，否则去重形同虚设。
         if (!force && m_presenter && !m_swapTargets.empty() && size == m_size &&
             m_swapSize == m_presenter->extent()) {
             ++m_resizeSkips;
@@ -142,7 +142,7 @@ class VulkanPresentationBackend final : public PresentationBackend {
         }
     }
     QRhi::FrameOpResult beginFrame(const Frame &, QRhiCommandBuffer **commands) override {
-        // A02：帧槽等待只在这里量。beginOffscreenFrame 内部要等上一帧的命令缓冲/围栏
+        // 帧槽等待只在这里量。beginOffscreenFrame 内部要等上一帧的命令缓冲/围栏
         // 归还，以前这段时间被算进 beginMs 却没人说清它在等什么。计时只读时钟，
         // 不插入额外同步，也不改变提交顺序或队列/信号量逻辑。
         QElapsedTimer slotTimer;
@@ -354,7 +354,7 @@ class VulkanPresentationBackend final : public PresentationBackend {
         // EnablePipelineCacheDataSave：让 QRhi 暴露 pipelineCacheData()/setPipelineCacheData()，
         // 否则每次启动都要重新编译全部场景管线（核显上单次编译可达数百毫秒）。
         // EnableTimestamps：不请求的话 isFeatureSupported(QRhi::Timestamps) 直接是 false，
-        // 渲染器只能在"设备不支持"和"没开"之间瞎猜，面板永远给不出可信的 GPU 耗时（A01）。
+        // 渲染器只能在"设备不支持"和"没开"之间瞎猜，面板永远给不出可信的 GPU 耗时。
         m_rhi.reset(QRhi::create(QRhi::Vulkan, &params,
                                  QRhi::EnablePipelineCacheDataSave | QRhi::EnableTimestamps));
         if (!m_rhi) {
@@ -494,7 +494,7 @@ class VulkanPresentationBackend final : public PresentationBackend {
     quint64 m_swapchainRecreates = 0;
     quint64 m_deviceIdleWaits = 0;
     quint64 m_resizeSkips = 0;
-    // A02：只做观测。m_offscreenSubmitCount 在 beginFrame 成功后 +1；m_lastSlotWaitMs 是
+    // 只做观测。m_offscreenSubmitCount 在 beginFrame 成功后 +1；m_lastSlotWaitMs 是
     // 最近一次 beginFrame 的原始耗时（帧槽等待），两者都不参与任何提交/同步决策。
     quint64 m_offscreenSubmitCount = 0;
     double m_lastSlotWaitMs = 0.0;

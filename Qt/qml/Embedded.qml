@@ -44,7 +44,7 @@ Item {
         anchors.fill: parent
     }
 
-    // 原始输入层（PARITY：对齐 Overlay.qml 的 inputLayer）。
+    // 原始输入层（对齐 Overlay.qml 的 inputLayer）。
     //
     // 为什么必须有：Embedded.qml 之前完全没有输入层，rhine.pointer 一次都不会被调用，
     // NativeSceneInput 里已经实现的"归档拖拽"与"唱片左右拖旋转

@@ -1,4 +1,4 @@
-/// T13-S04 - one slice state, four HUD command streams (spike, no network/storage).
+///  - one slice state, four HUD command streams (spike, no network/storage).
 ///
 /// This probe **does not draw**. It feeds one [SliceState] snapshot through the
 /// production page builders and captures the wire commands they emit, so the
@@ -39,7 +39,7 @@ import '../../hud/protocol/hud_command.dart';
 import 'glyph_loader.dart';
 import 'hud_painter.dart';
 
-/// The four slice pages covered by T13-S04.
+/// The four slice pages covered by .
 enum SlicePage { archive, detail, search, queue }
 
 /// Immutable input snapshot for all four producers.
@@ -156,7 +156,7 @@ final class PageCommandStream {
           command.isNotEmpty && command.first is String ? command.first! as String : '',
       ];
 
-  /// Runs the T13-S01 executor over [decoded]; useful for state assertions.
+  /// Runs the  executor over [decoded]; useful for state assertions.
   SpikeHudExecution get execution => executeSpikeHudCommands(decoded);
 
   @override
@@ -327,9 +327,7 @@ Map<SlicePage, PageCommandStream> buildSlicePageStreams(SliceState state, {Glyph
   };
 }
 
-// ---------------------------------------------------------------------------
 // Slice fixture -> production state objects
-// ---------------------------------------------------------------------------
 
 HudArchiveState _archiveState(SliceState state) => HudArchiveState(
       libraryName: 'SLICE',
@@ -421,9 +419,7 @@ List<search_results.SearchRow> _searchRows(SliceState state) => <search_results.
       ),
     ];
 
-// ---------------------------------------------------------------------------
 // Injected ports (atlas-backed, no invented outlines)
-// ---------------------------------------------------------------------------
 
 /// Advance-only measurement over the atlas. A missing glyph contributes zero
 /// advance and an empty fit; no width is invented for it.

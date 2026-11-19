@@ -1,18 +1,13 @@
-// T13-S05：Dart HUD spike 的切片级集成断言（authored only / DEVICE_BLOCKED，未执行）。
+// Dart HUD spike 的切片级集成断言。当前无法在设备上运行，原因有三。
 //
-// 未执行声明（用户禁令：本 atom 禁止 flutter build/test/analyze、dart test/analyze、
-// Gradle/gradlew、pub get、formatter、generator、golden、Qt 编译、adb、装包与任何
-// 验证脚本）：本文件从未运行，RED/GREEN 均未验证。任何报告不得写「集成测试通过」。
-//
-// DEVICE_BLOCKED（为什么现在跑不了）：
-//   1. T13-S03 的宿主（T12 NativeSceneFrame/scene_surface Dart 侧）尚未落地，spike
-//      没有接进 lib/main.dart，也没有可 pump 的页面；本文件只验证数据面（命令流），
-//      不做首帧/黑屏的视觉断言 —— 也正因如此，它**不会**把静态首帧或黑屏当作 PASS。
-//   2. glyph 加载器按仓库相对路径用 dart:io 读取 Assets/fonts/**（T13-S02 契约：
-//      不接生产字体、不改 pubspec）；设备沙箱里没有该目录，加载结果必须是
-//      fail-closed（paintable=false + missingFiles），本文件按此断言，不伪造通过。
-//   3. 设备运行命令（flutter test integration_test/... -d <device>）属于本 atom 禁令，
-//      留给装配方在 T12/T13-S03 接线后执行。
+// 1. NativeSceneFrame/scene_surface 的 Dart 侧宿主尚未落地，spike 未接进
+//    lib/main.dart，也没有可 pump 的页面；本文件只验证数据面（命令流），
+//    不做首帧/黑屏的视觉断言 —— 因此它不会把静态首帧或黑屏当作通过。
+// 2. glyph 加载器按仓库相对路径用 dart:io 读取 Assets/fonts/**（不接生产字体、
+//    不改 pubspec）；设备沙箱里没有该目录，加载结果必须是 fail-closed
+//    （paintable=false + missingFiles），本文件按此断言，不伪造通过。
+// 3. 设备运行命令（flutter test integration_test/... -d <device>）需由装配方
+//    在宿主接线后执行。
 //
 // 契约来源：
 //   - 17 op 名称/索引：lib/hud/protocol/hud_command.dart:399-417、:11-16、

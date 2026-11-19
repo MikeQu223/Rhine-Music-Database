@@ -46,7 +46,7 @@
 // （minSdk=28，android/app/build.gradle.kts:116）上 HIDE_NAVIGATION 与
 // LAYOUT_HIDE_NAVIGATION 就此丢失。Dart 侧调一次 SystemChrome 之后 mEnabledOverlays 变成
 // 5894，引擎的重放才与原生一致，所以这一行不是装饰。（更干净的宿主侧兜底是给
-// MainActivity 加 onPostResume 覆写，但那属于 android/ 写域，超出本次整合范围，已上报。）
+// MainActivity 加 onPostResume 覆写，但那属于 android/ 改动范围，超出本次整合范围，已上报。）
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';

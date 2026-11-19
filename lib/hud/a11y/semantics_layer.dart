@@ -28,7 +28,7 @@
 /// 只有「未提供 label」（null）才回落 action；显式空串原样保留。也就是说空 label 的命中在
 /// Qt 里就是一个没有名字的 Button（Accessible.name 为空），而不是「label 为空就显示 action」。
 /// 本层逐字透传 [HudHit.label]：不回落、不 trim、不补默认文案。wire 缺字段时的回落发生在
-/// T30 的 decodeHudHits（hud_hit.dart），本层不重复也不改写。
+///  的 decodeHudHits（hud_hit.dart），本层不重复也不改写。
 ///
 /// ## 顶部导航就是 hits，不是另一套节点
 /// NativeHud.cpp:121-124 的 control() 直接 hit(x - 10, y, width + 20, 54, action, label)，
@@ -421,7 +421,7 @@ class RhineSemanticsLayer extends StatelessWidget {
 /// ANR）。[forceEnv] 对应 RHINE_ANDROID_ACCESSIBILITY=1 的保留原行为路径，非 Android 恒开。
 ///
 /// 只表达「策略上是否该暴露语义」：Flutter 没有 QAccessible::setActive(false) 的等价运行时
-/// 开关，SemanticsBinding 会自行桥接语义树，真正等价关闭要在引擎层屏蔽语义树，超出本卡范围
+/// 开关，SemanticsBinding 会自行桥接语义树，真正等价关闭要在引擎层屏蔽语义树，超出这里范围
 /// （TBD，不臆造实现，也不据此在本层偷偷隐藏节点）。
 class AndroidAccessibilityBridge {
   const AndroidAccessibilityBridge._();

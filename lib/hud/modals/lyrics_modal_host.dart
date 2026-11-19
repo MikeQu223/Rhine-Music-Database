@@ -1,5 +1,5 @@
 /// LyricsModalHost: the runtime receiver that connects the HUD lyric panel's
-/// action strings to the two T40 popovers and turns user gestures into domain
+/// action strings to the two  popovers and turns user gestures into domain
 /// suggestions.
 ///
 /// Qt evidence:
@@ -15,7 +15,7 @@
 ///
 /// The host never mutates [LyricsPanelModel], never writes preferences and never
 /// starts I/O: every offset result is a suggestion for the composition root
-/// (A10's LyricsController owns the clamp + persistence). `sameTrack` semantics
+/// (LyricsController owns the clamp + persistence). `sameTrack` semantics
 /// stay with the caller: the host only reads the offset values it is given.
 ///
 /// No Flutter widget/material imports: this file is pure Dart, like the two
@@ -135,7 +135,7 @@ class LyricsModalFrame {
 /// Typical wiring: paint with a sink that records the action strings published
 /// with the frame (the sink fires while composing the frame, not on a tap),
 /// then forward the tapped hit's action to [handleAction], render [build] on
-/// top of the panel, and apply non-null results through A10. Do not pass
+/// top of the panel, and apply non-null results through LyricsController. Do not pass
 /// [handleAction] itself as the sink: it would toggle the popover on every
 /// repaint.
 class LyricsModalHost {
@@ -217,7 +217,7 @@ class LyricsModalHost {
     _openAction = null;
   }
 
-  /// Builds the open popover through the T40 port, or [LyricsModalFrame.closed].
+  /// Builds the open popover through the  port, or [LyricsModalFrame.closed].
   LyricsModalFrame build() {
     final String? action = _openAction;
     if (action == null) {

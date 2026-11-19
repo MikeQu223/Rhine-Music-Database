@@ -1,7 +1,7 @@
 #ifndef RHINE_EMBEDDED_SCENE_ORIGIN_H
 #define RHINE_EMBEDDED_SCENE_ORIGIN_H
 
-// 嵌入式场景的**产出者身份**与生命周期判据（ORIGIN-LIFECYCLE-153）。
+// 嵌入式场景的**产出者身份**与生命周期判据。
 //
 // 这个头文件刻意只有 QtCore 依赖、没有 Engine / QQuickView / JNI：场景宿主
 // (EmbeddedSceneHost.cpp) 与离线测试 (Qt/tests/EmbeddedSceneOrigin153Test.cpp) 用的是

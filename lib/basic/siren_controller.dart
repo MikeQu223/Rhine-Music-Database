@@ -1,8 +1,8 @@
-/// BASIC-89 lane A：Siren 基本版的唯一业务 authority（导航 / 播放队列 / 歌词跟随）。
+///  Siren 基本版的唯一业务 authority（导航 / 播放队列 / 歌词跟随）。
 ///
 /// 分工（冻结契约 v1）：
 ///  - 本文件是**唯一**持有播放队列与当前曲的地方；UI 只读 [state]、只调这里的方法。
-///  - 播放进度**只**来自 lane B 的 BasicAudioPort（android.media.MediaPlayer 的真实读数）：
+///  - 播放进度**只**来自 BasicAudioPort（android.media.MediaPlayer 的真实读数）：
 ///    经由 MusicPlayer.state 的 position/duration 进入 [state]；本文件从不 position += dt。
 ///  - 播放传输状态机复用 lib/domain/player/music_player.dart（MusicPlayer::tick 的移植），
 ///    这里只提供三个端口实现：MediaHostPort / PreferencePort / PlaybackEnginePort。
@@ -10,7 +10,7 @@
 ///    位置同样只吃 native 读数。
 ///  - seekToFraction 只有两步：把比例命令下发 native（MusicPlayer.seek → mediaControl('seek')），
 ///    再用「native 已报的真实时长 × 比例」调一次 lyrics.sync 立即重算活动行；
-///    绝不在本地先把 position 改成目标值，进度只认 native 回报（BASIC-89 协调者 seq5 裁决 3b）。
+///    绝不在本地先把 position 改成目标值，进度只认 native 回报（ 协调者 seq5 裁决 3b）。
 ///  - ticker 只在 boot() 启动一次（Timer.periodic 100ms），dispose() 必 cancel；
 ///    _pump 在 _lyrics 尚未创建时（LyricsController.create 是异步的）只跑 MusicPlayer.tick，
 ///    不碰歌词控制器，因此不会空引用（裁决 3a）。
@@ -88,7 +88,7 @@ const String sirenProviderLabel = '塞壬唱片';
 
 /// Siren 基本版的单一 authority。
 ///
-/// 构造注入 lane B 的 [BasicAudioPort]；[repository] 可注入（测试/替换 baseUri），
+/// 构造注入 [BasicAudioPort]；[repository] 可注入（测试/替换 baseUri），
 /// [dark] 只影响 [state].dark（基础版不做主题切换）。
 class BasicController extends ChangeNotifier implements BasicMediaSessionCommands {
   BasicController({
@@ -693,9 +693,7 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     _publish();
   }
 
-  // ---------------------------------------------------------------------------
   // 列表选中 / 滚动 / 列切换（archive 手势与键盘的落点；一律不自动播放）
-  // ---------------------------------------------------------------------------
 
   /// 选中列表第 [row] 行：只改选中与滚动窗口，不播放、不换队列。
   ///
@@ -1349,9 +1347,7 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     super.dispose();
   }
 
-  // ---------------------------------------------------------------------------
   // 曲库
-  // ---------------------------------------------------------------------------
 
   Future<void> _loadCatalog() async {
     final int generation = ++_catalogGeneration;
@@ -1711,7 +1707,7 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
   ///
   /// 只数长度抓不到「同长度替换」（一首收藏换另一首、歌单里换一首歌但 trackCount 不变），
   /// 那样 [_laneItemTable] 会命中旧缓存，把旧行对象继续发出去，场景身份/epoch 也就不会
-  /// 因真实内容变化而递增（ORIGIN-LIFECYCLE-153 的 apiAsks.for152_noSourceWritesBy153[0]）。
+  /// 因真实内容变化而递增（ 的 apiAsks.for152_noSourceWritesBy153[0]）。
   String _collectionsDigest() {
     final StringBuffer buffer = StringBuffer();
     for (final SirenSong song in _likedSongs) {
@@ -1803,9 +1799,7 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     return <SirenSong>[song];
   }
 
-  // ---------------------------------------------------------------------------
   // 播放：engine 端口实现（fresh 详情 → native prepare/play → playbackStarted）
-  // ---------------------------------------------------------------------------
 
   Future<void> _startPlayback(Map<String, Object?> track, int generation) async {
     _activeGeneration = generation;
@@ -1945,9 +1939,7 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     return controller;
   }
 
-  // ---------------------------------------------------------------------------
   // 轮询与状态发布
-  // ---------------------------------------------------------------------------
 
   void _startTicker() {
     if (_ticker != null) {
@@ -2098,7 +2090,7 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
   }
 }
 
-/// MusicPlayer 的媒体宿主端口：命令转发给 lane B，状态读 lane B 的真实快照。
+/// MusicPlayer 的媒体宿主端口：命令转发给底层音频端口，状态读它的真实快照。
 class _BasicMediaHost implements MediaHostPort {
   _BasicMediaHost(this._owner);
 
@@ -2131,7 +2123,7 @@ class _BasicMediaHost implements MediaHostPort {
 
   @override
   void mediaMetadata(String title, String artist, String album, String cover) {
-    // 通知栏/MediaSession 的上报归 lane B（platform_playback.dart 文件头已约定）；
+    // 通知栏/MediaSession 的上报归 （platform_playback.dart 文件头已约定）；
     // 这里不做第二次上报，避免一条暂停写两次。
   }
 }

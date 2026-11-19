@@ -218,7 +218,7 @@ class Engine : public QObject {
     /// 缓存写入由 Host::loadCover 负责；这里只负责解码完成后唤醒一帧，让纹理真的上传。
     void prefetchCover(const QString &url);
     /**
-     * MUST-C：归档可见格的业务资源。由宿主在**真正 apply 完**一份 Flutter 快照之后调用
+     * 归档可见格的业务资源。由宿主在**真正 apply 完**一份 Flutter 快照之后调用
      * （不是每帧）：cells 就是快照里的 [{l,r,k,i,t[,c,a,b]}]；contextGeneration 是交互/
      * 所属/目录/窗口的稳定代次（同一份窗口内容重复 apply 必须给同一个值）；scrolling 是
      * 调用方看到的"列表正在快速移动"，会与原生轨道自身的拖动/惯性取并集。
@@ -234,7 +234,7 @@ class Engine : public QObject {
     int embeddedCellAdmittedCount() const {
         return m_embeddedCellAdmitted;
     }
-    /// A03：内容版本。呈现层用它代替"按信号重复置脏"——版本前进一次只重渲一层，
+    /// 内容版本。呈现层用它代替"按信号重复置脏"——版本前进一次只重渲一层，
     /// 重复推同一个值只在两个整数上比较一次。主线程写、渲染线程读，用 relaxed 原子
     /// 即可：这里要的是"值变了/没变"，不是用它同步任何内存。
     quint64 sceneRevision() const {
@@ -243,7 +243,7 @@ class Engine : public QObject {
     quint64 hudRevision() const {
         return m_hudRevision.load(std::memory_order_relaxed);
     }
-    /// A03：渲染线程发现"新 GPU 资源已就位"（异步封面/模型上传完成）时，经队列连接
+    /// 渲染线程发现"新 GPU 资源已就位"（异步封面/模型上传完成）时，经队列连接
     /// 回到主线程调用这里。这类变化在场景帧字段里看不出来，notifySceneRenderers 的
     /// 自然触发点（帧签名比较）捕捉不到，只能由发现者自己上报一次。
     Q_INVOKABLE void requestSceneContent();
@@ -270,7 +270,7 @@ class Engine : public QObject {
         m_coverUploads.fetch_add(coverUploads, std::memory_order_relaxed);
         m_lastDrawCalls.store(drawCalls, std::memory_order_relaxed);
         // 状态与数值必须分开传：同一个 0 ms 可能是"没请求""没样本"或"真的很快"，
-        // 只靠数值无法区分，而面板与 CSV 的诊断结论完全取决于这个区分（A01）。
+        // 只靠数值无法区分，而面板与 CSV 的诊断结论完全取决于这个区分。
         m_gpuTiming.store(int(gpuTiming), std::memory_order_relaxed);
         // 数值保留原有语义：0 不当作一次测量，避免用 0 覆盖掉上一个可信样本。
         if (gpuTimeMs > 0) {
@@ -278,7 +278,7 @@ class Engine : public QObject {
             // C01：数值与样本数分开记——0 不是一次测量，窗口均值要用样本数做分母。
             ++m_gpuSamples;
         }
-        // A11：整帧资源账本必须在这里聚合。performance() 只看得到"最近一次快照"，
+        // 整帧资源账本必须在这里聚合。performance() 只看得到"最近一次快照"，
         // 既无法判断峰值出现在哪一帧，也无法把"本帧新增绑定/上传"与累计值分开；
         // 而 recordRender 是唯一同时拿到本帧全部资源入参的地方（渲染线程调用）。
         noteFrameLedger(resources, bindings, textureBytes, coverUploads);
@@ -296,8 +296,7 @@ class Engine : public QObject {
     void stateChanged();
     void hitsChanged();
     void clearCredentials();
-    // 用户 m10082：性能面板不是用户要求的功能 —— 该信号与其采样接线一并停用。
-    // void performanceRequested();
+    // 性能面板停用：performanceRequested 信号不再声明。
     void localImportRequested(bool folder);
     void pluginImportRequested();
     void mvRequested();
@@ -323,7 +322,7 @@ class Engine : public QObject {
     bool m_inputPending = false;
     /// C03：准入状态随 musicTextures 一起在 GUI 线程生成，渲染线程只读这份快照。
     MusicTextures m_musicTextureSnapshot;
-    // MUST-C：可见格的身份投影与准入。与选中焦点通道（m_admission）完全分开：
+    // 可见格的身份投影与准入。与选中焦点通道（m_admission）完全分开：
     // 焦点只有一个，可见格是一组，且滚动中一律不新建资源。
     QVector<RhineRender::EmbeddedCell> m_embeddedCells;
     QHash<QString, RhineRender::EmbeddedCell> m_embeddedCellByKey;
@@ -359,7 +358,7 @@ class Engine : public QObject {
     /// 探针：唤醒次数与"场景真的变了"的拍数。空闲仍空转时，这两条决定往哪查。
     quint64 m_wakes = 0;
     quint64 m_changedSteps = 0;
-    /// A03：内容版本，只在内容真的变了时自增（见 notifySceneRenderers/requestSceneContent）。
+    /// 内容版本，只在内容真的变了时自增（见 notifySceneRenderers/requestSceneContent）。
     std::atomic<quint64> m_sceneRevision{0};
     std::atomic<quint64> m_hudRevision{0};
     std::atomic<quint64> m_renderFrames{0}, m_gpuResources{0};
@@ -377,7 +376,7 @@ class Engine : public QObject {
     std::atomic<quint64> m_syncMicros{0};
     std::atomic<quint64> m_syncSamples{0};
 
-    // ---- A11 整帧资源账本 ----
+    // 整帧资源账本
     // 口径（不要混用）：
     //   resources   = 本帧驻留资源**个数**（RhiScene 把 resources/sized/transient 相加）；
     //   textureBytes= 本帧驻留音乐纹理**字节**快照（不是本帧增量，见 RhiScene.cpp:1865）；

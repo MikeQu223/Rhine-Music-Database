@@ -63,9 +63,7 @@ import 'dart:math' as math;
 
 import 'scene_math.dart';
 
-// ---------------------------------------------------------------------------
 // Frame vocabulary — every literal cites the Qt line it was copied from.
-// ---------------------------------------------------------------------------
 
 /// Scene modes a frame can report (`NativeSceneFrame.cpp:98`).
 const String kFrameModeBoot = 'boot';
@@ -134,9 +132,7 @@ class SceneFrameFormatException implements Exception {
   String toString() => 'SceneFrameFormatException: ' + message;
 }
 
-// ---------------------------------------------------------------------------
 // Sizes.
-// ---------------------------------------------------------------------------
 
 /// An offscreen viewport, or the HUD stage derived from it.
 ///
@@ -186,9 +182,7 @@ final class SceneSize {
       'SceneSize(' + width.toString() + ', ' + height.toString() + ')';
 }
 
-// ---------------------------------------------------------------------------
 // Linear colour.
-// ---------------------------------------------------------------------------
 
 /// One linear-RGB colour, alpha-free.
 ///
@@ -327,9 +321,7 @@ final class LinearRgb {
       'LinearRgb(' + r.toString() + ', ' + g.toString() + ', ' + b.toString() + ')';
 }
 
-// ---------------------------------------------------------------------------
 // Identities.
-// ---------------------------------------------------------------------------
 
 /// One entry of the frame's `actors` array — `NativeSceneFrame.cpp:143-146`:
 ///
@@ -451,9 +443,7 @@ final class SceneCurrent {
       ')';
 }
 
-// ---------------------------------------------------------------------------
 // Palette helpers — NativeSceneFrame.cpp:110-113.
-// ---------------------------------------------------------------------------
 
 /// `background` for a theme amount — `NativeSceneFrame.cpp:110-111`:
 ///
@@ -466,9 +456,7 @@ LinearRgb sceneBackground(double theme) =>
 LinearRgb sceneFogColor(double theme) =>
     LinearRgb.fogLight.blend(LinearRgb.fogDark, theme);
 
-// ---------------------------------------------------------------------------
 // The frame.
-// ---------------------------------------------------------------------------
 
 /// The typed half of the Qt scene frame.
 ///
@@ -783,9 +771,7 @@ final class SceneFrame {
       ')';
 }
 
-// ---------------------------------------------------------------------------
 // Parsing helpers.
-// ---------------------------------------------------------------------------
 
 /// Render a value's shape for an error message without echoing its contents.
 String _shape(Object? value) {

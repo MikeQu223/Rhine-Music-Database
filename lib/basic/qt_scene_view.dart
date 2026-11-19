@@ -19,7 +19,7 @@ import 'package:flutter/services.dart'
 
 import 'basic_models.dart';
 
-/// PARITY QT-OVERLAY-128 — 把本仓库 **Qt 自己的场景层**挂进 Flutter 页面。
+///   — 把本仓库 **Qt 自己的场景层**挂进 Flutter 页面。
 ///
 /// 这里不是近似重写，也不是"看起来像 3D"的东西：
 ///  * 原生实现是 Qt 的 `QQuickView`（材质、改过的模型、相机、归档布局、抽出返回、
@@ -458,7 +458,7 @@ String qtSceneStateSnapshot(
 /// 唯一真值是连续的 `listPosition`：窗口基址 = `round(pos) ~/ 8 * 8`，于是
 /// `round(pos) % 8` 就是选中条目所在的物理槽位（0..7）。`laneOffsets` 只是 HUD
 /// 的松手记忆（8 的倍数），**不能**拿来做连续拖动的基准——那样 pos 为小数时
-/// 反向折行会整体偏移（审查 MUST-5）。非当前列没有连续位置，退回记忆值。
+/// 反向折行会整体偏移。非当前列没有连续位置，退回记忆值。
 int qtSceneWindowBase(BasicViewState state, int lane) {
   final List<int> offsets = state.laneOffsets;
   final int memory = lane >= 0 && lane < offsets.length ? offsets[lane] : 0;
@@ -493,7 +493,7 @@ List<Map<String, Object?>> qtSceneCellsOf(BasicViewState state) {
         'l': lane,
         // 绝对行域：`12 + 轨道条目` 的行键偏移（= 窗口基址 + 窗口内行）。
         // 必须与原生 pick 的绝对场景行同一个域，否则 pos≥8 时身份查表必然 miss，
-        // 退化分支还会把行号放大一个基址（审查 MUST-1'/MUST-5'）。
+        // 退化分支还会把行号放大一个基址（审查 '/'）。
         'r': offset + row,
         'k': item.kind,
         'i': item.id,
@@ -645,7 +645,7 @@ int? qtSceneRowOfCell(BasicViewState state, QtSceneCellRef cell) {
     }
   }
   // 2) 退化到几何：`cell.row` 是**绝对场景行**（原生 pick 返回 12+轨道条目），
-  //    减去 12 就是条目行本身，不能再叠加窗口基址（审查 MUST-1' 反例：pos=87 时
+  //    减去 12 就是条目行本身，不能再叠加窗口基址（审查 ' 反例：pos=87 时
   //    叠加会得到 167）。
   final int raw = cell.row - 12;
   return ((raw % items.length) + items.length) % items.length;

@@ -15,7 +15,7 @@ namespace RhineRender {
  *
  * 面板上的“0.000 ms”有三种互不相同的含义：后端不支持时间戳、支持但本次没有请求、
  * 请求了但这一帧还没拿到已完成样本。混成一个 0 会让“GPU 到底占多少”这个问题
- * 无法回答（docs/vulkan-3d-fullchain-performance-report.md 的 A01），
+ * 无法回答（见 docs/vulkan-3d-fullchain-performance-report.md），
  * 所以状态与数值分开传递：数值只表示测量结果，状态表示这个结果能不能用。
  */
 enum class GpuTimingStatus {

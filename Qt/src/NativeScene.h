@@ -55,7 +55,7 @@ class NativeScene {
     void energyIdle(bool value);
     void musicIdentity(QString key);
     void musicClear();
-    // MUST-C：把每一格真实的业务 key 绑到它自己的位置上。键是 cellInstanceId(lane,row)，
+    // 把每一格真实的业务 key 绑到它自己的位置上。键是 cellInstanceId(lane,row)，
     // 值是 siren:<kind>:<id>。只影响"这一格画不画封面/标签"，不动矩阵、实例缓冲与选中态。
     // 传空表即恢复纯占位档案壳。
     void projectEmbeddedCellKeys(const QHash<quint32, QString> &keys);
@@ -216,7 +216,7 @@ class NativeScene {
     SceneMotion::DragPosition m_startTrack;
     std::optional<SceneMotion::ArchivePlaneMomentum> m_momentum;
     // 外部窗口（Flutter 列表真值）刚投影过的时间戳；有效期内不要再把轨道
-    // damp 回选中卡，否则"列表推到第 300 行、3D 停在选中行"（MUST-2）。
+    // damp 回选中卡，否则"列表推到第 300 行、3D 停在选中行"。
     double m_externalUntil = -1;
     double m_momentumTime = 0;
     void update(double time, std::optional<Cinema> cinema);
