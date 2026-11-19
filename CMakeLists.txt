@@ -776,6 +776,23 @@ if(APPLE
         COMMENT "Packaging standalone music panel resources and Qt runtime"
         VERBATIM)
 endif()
+if(ANDROID AND RHINE_FLUTTER_HOST_ONLY)
+    # Qt 6.12 的 finalizer 在根目录执行，但 _qt_internal_expose_android_package_source_dir_to_ide
+    # 会把包源目录相对 target SOURCE_DIR（Qt/）求成 `android/...`；这个相对路径从根目录
+    # 解析不到（根下 android/ 是 Flutter 工程），generate 阶段直接报
+    # "Cannot find source file: android/AndroidManifest.xml"。
+    # 该函数只把 Android 包源文件挂到 IDE target，不参与 androiddeployqt；这里用绝对路径重写。
+    function(_qt_internal_expose_android_package_source_dir_to_ide target)
+        get_target_property(android_package_source_dir ${target} QT_ANDROID_PACKAGE_SOURCE_DIR)
+        if(NOT android_package_source_dir OR NOT EXISTS "${android_package_source_dir}")
+            return()
+        endif()
+        file(GLOB_RECURSE android_package_sources ABSOLUTE "${android_package_source_dir}/*")
+        foreach(android_package_source IN LISTS android_package_sources)
+            _qt_internal_expose_source_file_to_ide(${target} "${android_package_source}")
+        endforeach()
+    endfunction()
+endif()
 qt_finalize_executable(RhineMusicDatabase)
 # Android（FLUTTER-ONLY-ANDROID-20261117）：Android 包只由 Flutter 工程产出，Qt 侧只编 native。
 # RHINE_FLUTTER_HOST_ONLY=ON 时终结器仍会建出 ${target}_make_apk / _make_aab 等打包 target，
