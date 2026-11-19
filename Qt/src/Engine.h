@@ -6,9 +6,9 @@
 #include "render/EmbeddedCellResources.h"
 #include "render/FramePacingPolicy.h"
 #include "render/MusicTextureAdmission.h"
+#include "render/RenderConfiguration.h"
 #include "render/RenderPolicy.h"
 #ifdef Q_OS_DARWIN
-#include "render/RenderConfiguration.h"
 #include "fg/FgFrameTap.h"
 #endif
 #include <QElapsedTimer>
@@ -163,9 +163,11 @@ class Engine : public QObject {
         return m_admission.delayMs();
     }
     void trimMemory();
+    // 渲染遥测在桌面/Android 也会被 RhiScene 发布（非 Darwin 分支），
+    // 只有 RenderConfiguration 与 MetalFX 输入是 Darwin 专属。
+    RhineRender::RenderTelemetry renderTelemetry;
 #ifdef Q_OS_DARWIN
     RhineRender::RenderConfiguration renderConfiguration;
-    RhineRender::RenderTelemetry renderTelemetry;
     RhineFg::FrameInputs metalFxInputs;
 #endif
 #ifdef Q_OS_DARWIN
