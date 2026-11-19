@@ -286,10 +286,27 @@ run('cmake', ['--build', buildDirectory, '--target', 'RhineMusicDatabase_prepare
 // 4) androiddeployqt --aux-mode：只补 Qt 依赖、qt_libs 资源与 jar，不跑 Gradle。
 const settings = findDeploymentSettings(buildDirectory);
 assertFile(settings, '找不到 androiddeployqt 的 deployment-settings.json。');
-const hostDeployQt = path.join(hostQt, 'bin/androiddeployqt');
-const kitDeployQt = path.join(kit, 'bin/androiddeployqt');
-const deployQt = fs.existsSync(hostDeployQt) ? hostDeployQt : kitDeployQt;
-assertFile(deployQt, '找不到 androiddeployqt（宿主 Qt 或 Android kit 的 bin 目录）。');
+// androiddeployqt 是宿主侧工具，交叉编译的 kit 不产出它（qtbase 的工具门控
+// qt_internal_return_unless_building_tools，-qt-host-path 模式下宿主工具全部
+// 复用宿主 Qt）。官方安装器布局在 <host>/bin；发行版包会拆开：Fedora 在
+// /usr/lib/qt6/bin，有的发行版在 /usr/lib64/qt6/bin——都不在 <host>/bin。
+// PATH 兜底可能命中别的版本，所以排在显式路径之后；kit 的 bin 最后。
+const deployQtCandidates = [
+    path.join(hostQt, 'bin/androiddeployqt'),
+    path.join(hostQt, 'lib/qt6/bin/androiddeployqt'),
+    path.join(hostQt, 'lib64/qt6/bin/androiddeployqt'),
+    executable('androiddeployqt'),
+    path.join(kit, 'bin/androiddeployqt'),
+];
+const deployQt = deployQtCandidates.find(
+    (candidate) => candidate !== '' && fs.existsSync(candidate),
+);
+if (!deployQt) {
+    throw new Error(
+        '找不到 androiddeployqt（宿主 Qt 或 Android kit 的 bin 目录）。\n' +
+            `  已查：\n    ${deployQtCandidates.join('\n    ')}`,
+    );
+}
 run(deployQt, ['--input', settings, '--output', deployDirectory, '--aux-mode'], { env: environment });
 
 for (const file of [

@@ -85,7 +85,7 @@ npm run build:flutter:android -- --debug
 
 1. `node scripts/build-android.cjs --prepare-only` 准备 nodejs-mobile 与 Android 资源；
 2. 配置 `output/qt-android-flutter`（`RHINE_FLUTTER_HOST_ONLY=ON` + `QT_NO_GLOBAL_APK_TARGET_PART_OF_ALL=ON`），构建 `RhineMusicDatabase_prepare_apk_dir`；
-3. 用宿主 Qt 的 `androiddeployqt --aux-mode` 落 staging（libs / jar / assets / `res/values/libs.xml`）；
+3. 用宿主 Qt 的 `androiddeployqt --aux-mode` 落 staging（libs / jar / assets / `res/values/libs.xml`）。脚本按 `<host>/bin` → `<host>/lib/qt6/bin` → `<host>/lib64/qt6/bin` → PATH → kit 的 `bin` 顺序找它：发行版包（如 Fedora）把它放 `lib/qt6/bin` 而非官方安装器的 `bin/`，交叉编译的 kit 也不产出该工具（qtbase 的工具门控 `qt_internal_return_unless_building_tools`）；
 4. `flutter build apk --<mode> --split-per-abi --target-platform android-arm64 --android-project-arg=rhineJavacHome=<javac 27> --android-project-arg=force-version-code-ignoring-abi=true`。
 
 依赖定位与 JDK 选择也由脚本统一处理：Gradle 用 JDK 17–25（`RHINE_GRADLE_JDK` > `JAVA_HOME` > Android Studio JBR），`patchQtAndroidJar` 单独用 javac 27（`RHINE_JAVAC_HOME` / `JDK27_HOME`），两者互不干扰。CI 只额外负责装 SDK/NDK/宿主 Qt 与缓存 kit，出包命令与本地相同。
