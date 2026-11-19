@@ -3,3 +3,5 @@
 本仓库行为要求：除用户明确要求外不自行 git commit/push；构建用 `cmake --build output/qt-build -j$(nproc)`，C++ 测试用 `ctest --test-dir output/qt-build --output-on-failure`；每次构建后 `git restore --source=HEAD -- generated/`（FFX 着色器生成器每次构建重写 14 个 *.h 的 include 顺序/IndirectionTable 索引）；`npm test` 首步 scripts/check-repository.cjs 必然失败（Unexpected public documentation，白名单只允许 README.md、tools/perf/README.md），绕过时逐条跑 check-qt-project.py、check-music-upstream.cjs、ctest、audit-qt.py、check-packaged-app.cjs；不要用 GUI 方式跑 RhineMusicDatabase 取性能数据（弹窗 + 自动恢复网络播放 + CSV 不落盘）；hindsight 401 不可用，记忆写入用 mnemon_runtime_memory。
 §
 Rhine-Music-Database 的 Git 提交铁律：用户禁止显式指定 Author 信息，必须沿用本机已有默认身份 Aibeto；工具作者选项留空或选 no 回退默认，不另行填写作者身份。
+§
+Rhine-Music-Database 的 `.agents/`（66G 控制面：227 个 git worktree、控制面报告/日志）已于 2026-11-19 删除；知识沉淀在 docs/flutter-migration/archive/2026-11-19-control-plane.md 与同目录 qt-flutter-state-2026-11-19.md，未提交补丁与未跟踪源码在 worktree-salvage-2026-11-19.tar.gz；`.gitignore` 不再忽略 `/.agents/`；252 个本地分支保留。feat/flutter 历史当天被 filter-branch 反复重写，同一 subject 的 commit hash 会变（65af97b→061300a→4beb444），定位提交要按 subject 不要按 hash。

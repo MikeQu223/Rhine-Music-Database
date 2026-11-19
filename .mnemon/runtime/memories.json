@@ -21,6 +21,13 @@
       "updated_at": "2026-11-15T23:15:15.779Z",
       "target": "memory",
       "importance": "critical"
+    },
+    {
+      "content": "Rhine-Music-Database 的 `.agents/`（66G 控制面：227 个 git worktree、控制面报告/日志）已于 2026-11-19 删除；知识沉淀在 docs/flutter-migration/archive/2026-11-19-control-plane.md 与同目录 qt-flutter-state-2026-11-19.md，未提交补丁与未跟踪源码在 worktree-salvage-2026-11-19.tar.gz；`.gitignore` 不再忽略 `/.agents/`；252 个本地分支保留。feat/flutter 历史当天被 filter-branch 反复重写，同一 subject 的 commit hash 会变（65af97b→061300a→4beb444），定位提交要按 subject 不要按 hash。",
+      "created_at": "2026-11-19T02:44:44.369Z",
+      "updated_at": "2026-11-19T03:05:37.564Z",
+      "target": "memory",
+      "importance": "normal"
     }
   ]
 }

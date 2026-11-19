@@ -1,5 +1,7 @@
 # T53 发布签名、数据升级与回滚门（源码态冻结）
 
+> 归档说明（2026-11-19）：本文引用的 `.agents/` 目录已删除（含 227 个 worktree、控制面报告与日志）。文中的 `.agents/...` 路径仅作历史出处；控制面摘要、实测数字与残留材料见 `docs/flutter-migration/archive/2026-11-19-control-plane.md` 与 `docs/flutter-migration/archive/qt-flutter-state-2026-11-19.md`。
+
 状态：**SOURCE_ONLY / 未执行**。本文件与 `tool/release/verify_signing.sh` 只做源码编写与独立逻辑审查；
 本树**未运行**任何构建、签名核对、adb、APK 安装/卸载/清数据。T16 生产宿主接线 `ARCH_BLOCKED`、
 像素/性能设备门 `DEVICE_BLOCKED` 保持原样，本文件不解除、不代替它们。
