@@ -263,10 +263,12 @@ run(
         // 新默认覆盖已有 cache，本机 build 树曾停在旧档位上静默漂移；显式传值让
         // 本机增量构建与 CI 干净构建永远同档）。
         //   LTO：与 build-android.cjs 同款写法，可用 RHINE_ANDROID_LTO 覆盖；
+        //   SIZE_OPT：-Oz 体积档位（Qt/Android.cmake），同理钉死；
         //   NORMAL_RGBA8：必须与烘焙硬编码 RHINE_BAKE_NORMAL_RGBA8=1 同步，两者
         //   错位就是启动 qFatal（2026-11-06 的启动崩溃即此根因），option 默认 ON
         //   但不依赖它，显式传死。
         `-DRHINE_ANDROID_LTO=${process.env.RHINE_ANDROID_LTO || 'full'}`,
+        `-DRHINE_ANDROID_SIZE_OPT=${process.env.RHINE_ANDROID_SIZE_OPT || 'oz'}`,
         '-DRHINE_ANDROID_NORMAL_RGBA8=ON',
         '-DRHINE_FLUTTER_HOST_ONLY=ON',
         '-DQT_NO_GLOBAL_APK_TARGET_PART_OF_ALL=ON',
