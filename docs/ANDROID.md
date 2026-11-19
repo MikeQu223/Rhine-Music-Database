@@ -713,7 +713,7 @@ TEXDIAG 现在多几栏：`mt`（`musicTextures` 条数）、`adm` / `gated`（�
 已做的裁剪与压缩：
 
 1. QuickControls2 样式包曾按「QML 没有 import QtQuick.Controls」排除，现已全部恢复。这个判据是错的，原因见下文 QtLoader 的教训。
-2. qmltooling 调试插件约 1 MB，是唯一还保留的 `.so` 排除项，它不在部署清单里。
+2. qmltooling 调试插件约 1 MB，是唯一还保留的 `.so` 排除项，它不在部署清单里。Qt 打包链路经 `scripts/android-gradle-sync.cjs` 注入 excludes；Flutter 链路的 `android/app/build.gradle.kts`（`packaging.jniLibs.excludes`）2026-11-19 起补齐了同一条规则。
 3. Android 包不再带 `archive-baked-surface-bc7.bin`（1.4 MB）。GLES 上 `isTextureFormatSupported(BC7)` 恒为 false，RhiScene 直接跳过。
 4. ETC2 产物不再烘焙也不再打包（699 KB，每次省十几秒）。编码器有缺陷，已默认关闭，见 T1。
 5. `.so` 压缩存储（`RHINE_ANDROID_LEGACY_PACKAGING`，默认 `1`）。Qt 模板的 `useLegacyPackaging=false` 把 152 MB 的 `.so` 原样塞进 APK，九成体积都在这。改成 `true` 后 AGP 用 deflate 压缩，下载体积大约降到六成。代价是安装时解压到 `/data/app/.../lib/`，首次启动多一次解压。对 sideload 分发，下载体积比安装后占用重要，所以默认开；改回用 `RHINE_ANDROID_LEGACY_PACKAGING=0`。

@@ -284,6 +284,15 @@ android {
             // 与 imageformats/multimedia/tls 插件），必须真实解包到 nativeLibraryDir，
             // 不能只映射 APK 内的未压缩项。等价于 android:extractNativeLibs="true"。
             useLegacyPackaging = true
+            // qmltooling 的 qmldbg_*（12 个，约 2.4 MB 未压缩）是 QML 调试器插件，
+            // 不在 QtLoader 的部署清单（qt_libs / bundled_libs / load_local_libs）
+            // 里，运行时从不被加载，release 包不需要。与 Qt 打包链路的规则一致：
+            // scripts/android-gradle-sync.cjs「体积裁剪一」注入的同款 excludes。
+            // 判据提醒：只排清单外的库。qt_libs 里的库（含五套 QQC2 样式与
+            // Qt6LabsFolderListModel）一个都不能排——QtLoader 按 qt_libs 逐个
+            // System.load，缺一个就是启动即崩，教训见 docs/ANDROID.md §5.2
+            // 「排除清单的教训」。
+            excludes.add("**/libplugins_qmltooling_*.so")
         }
     }
 }
