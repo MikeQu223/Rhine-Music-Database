@@ -93,7 +93,8 @@ void ResponsiveHudLayout::arrange(QJsonArray &commands, QJsonArray &hits, const 
                                                   : 110);
     const bool terminalPage = modal == "discover" || modal == "search" || modal == "settings";
 
-    if (!home && !songPage) {
+    // 歌词页由独立的 LyricsBackdrop 提供纸色底和色彩流动，HUD 不再整页盖住它。
+    if (!home && !songPage && !lyric) {
         c.fill({0, 0, 393, m_height}, c.paper);
     }
     QString title = modal == "player"          ? "播放队列"

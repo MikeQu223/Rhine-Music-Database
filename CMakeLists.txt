@@ -261,6 +261,8 @@ set(RHINE_APP_SOURCES
     Qt/src/DeferredWindowTransition.h
     Qt/src/Hud.cpp
     Qt/src/Hud.h
+    Qt/src/LyricsBackdrop.cpp
+    Qt/src/LyricsBackdrop.h
     Qt/src/RhiScene.cpp
     Qt/src/RhiScene.h
     Qt/src/render/MotionPass.cpp
@@ -316,7 +318,7 @@ endif()
 # Core/Gui/Network/Concurrent/Multimedia。
 set(RHINE_CORE_SOURCES ${RHINE_APP_SOURCES})
 list(FILTER RHINE_CORE_SOURCES EXCLUDE REGEX
-     "/(main|Engine|Icon|RhiScene|Hud|FrameProfiler)\\.(cpp|h)$|/tests/|/fsr/|/fg/|/render/")
+     "/(main|Engine|Icon|RhiScene|Hud|LyricsBackdrop|FrameProfiler)\\.(cpp|h)$|/tests/|/fsr/|/fg/|/render/")
 list(REMOVE_ITEM RHINE_APP_SOURCES ${RHINE_CORE_SOURCES})
 # 桌面后台只链接播放源码；场景、字形、资料库与 HUD 不进入服务二进制。
 set(RHINE_SYSTEM_CORE RhineCore)
@@ -472,6 +474,8 @@ qt_add_shaders(
     FILES
     Qt/shaders/quad.vert
     Qt/shaders/copyColor.frag
+    Qt/shaders/lyricsBackdrop.vert
+    Qt/shaders/lyricsBackdrop.frag
     Qt/shaders/aaFragment.frag
     Qt/shaders/taa.frag
     Qt/shaders/motion.vert

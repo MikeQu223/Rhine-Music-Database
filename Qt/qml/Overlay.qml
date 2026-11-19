@@ -79,6 +79,21 @@ Item {
             backend: rhine
         }
     }
+    // 竖屏歌词页的封面色彩背景独立于 HUD，避免背景动画触发整张 HUD 重绘。
+    LyricsBackdrop {
+        id: lyricsBackdrop
+        anchors.fill: parent
+        engine: rhine
+        playbackActive: rhine.state.playbackActive === true
+        reducedMotion: rhine.state.reduced === true
+        darkTheme: rhine.state.dark === true
+        controlsOpacity: {
+            const value = rhine.state.lyricsControlsOpacity;
+            return value === undefined ? 0 : value;
+        }
+        controlsTop: (rhine.state.lyricsControlsTop || 0) / 1080
+        visible: overlay.compactLayout && rhine.state.modal === "" && rhine.state.lyricsMode === true
+    }
     Hud {
         anchors.fill: parent
         engine: rhine

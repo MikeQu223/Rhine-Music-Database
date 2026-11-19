@@ -262,7 +262,11 @@ QJsonObject NativeHud::sourceState() const {
         inputWidth = 230;
         inputHeight = 44;
     }
+    const auto &player = m_music->player;
+    const bool playbackActive = !player.current.isEmpty() && player.state["playing"].toBool() &&
+                                !player.state["buffering"].toBool() && !player.loading && !player.failed;
     return {{"lyricsMode", lyricsMode},
+            {"playbackActive", playbackActive},
             {"commentsMode", commentsMode},
             {"commentsAvailable", m_music->commentsAvailable()},
             {"archiveName", m_music->libraryName()},

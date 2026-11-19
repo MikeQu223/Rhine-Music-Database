@@ -465,6 +465,7 @@ void rhineOpenSignalDiagFile() {
 #include "FrameProfiler.h"
 #include "GraphicsBackend.h"
 #include "Hud.h"
+#include "LyricsBackdrop.h"
 #if RHINE_LINUX_DESKTOP
 #include "LinuxGraphics.h"
 #include "LinuxX11.h"
@@ -1104,6 +1105,7 @@ int main(int argc, char **argv) {
     QQmlApplicationEngine engine;
     qmlRegisterType<RhiScene>("Rhine.Native", 1, 0, "RhiScene");
     qmlRegisterType<Hud>("Rhine.Native", 1, 0, "Hud");
+    qmlRegisterType<LyricsBackdrop>("Rhine.Native", 1, 0, "LyricsBackdrop");
     qmlRegisterUncreatableType<Engine>("Rhine.Native", 1, 0, "Engine", "Provided by application");
     // 无边框
     if (qEnvironmentVariableIntValue("RHINE_FRAMELESS_PREVIEW") == 1) {
