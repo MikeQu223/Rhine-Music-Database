@@ -617,6 +617,18 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     _player.clearUpcoming();
   }
 
+  /// 偏好异步加载完成后的再次回填（play-history / play-mode）。
+  ///
+  /// 生产时序：[MusicPlayer] 比 `BasicSettingsRuntime.load()` 先建，构造时端口镜像
+  /// 还是空的；设置读完再调这里，播放模式与历史才会是上次会话的存档。
+  void resyncPreferences() {
+    if (_disposed) {
+      return;
+    }
+    _player.resyncPreferences();
+    _publish();
+  }
+
   Future<void> openSong(SirenSong song, {bool play = true}) async {
     if (_disposed) {
       return;

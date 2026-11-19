@@ -557,6 +557,25 @@ class MusicPlayer {
     }
   }
 
+  /// 偏好加载晚于构造时（生产：`BasicSettingsRuntime.load()` 是异步的）再回填一次。
+  ///
+  /// 只重放两条**只读**的回填路径（play-history / play-mode），不碰当前曲目、队列、
+  /// 播放状态：偏好是"上次会话的存档"，不能覆盖本会话里已经发生的事。
+  /// 典型时序：[MusicPlayer] 先建（端口镜像还是空的），随后设置加载完成 → 本方法。
+  ///
+  /// 历史只在还是空的时候回填：本会话已经播过歌时 [_history] 里有真实顺序，
+  /// 再灌一次存档会重复。
+  void resyncPreferences() {
+    if (_history.isEmpty) {
+      _seedHistory(_preferences.read('play-history'));
+    }
+    final String mode = _preferences.read(kPlayModePreference);
+    if (_modes.contains(mode) && mode != _mode) {
+      _mode = mode;
+      _emit();
+    }
+  }
+
   /// :643-651。白名单外取值被忽略且不发 changed（:647-650）。
   /// 返回是否接受：false 代表取值非法且状态未变；这是 Qt `player:mode:<x>` 的公开入口。
   /// 与 Qt 的差异只有一处：合法且真正切换时额外落 [kPlayModePreference]，

@@ -327,7 +327,35 @@ class BasicHudFrame {
       positionMs: bar.positionMs,
       durationMs: bar.durationMs,
     );
-    if (songPage) {
+    if (modal == 'queue') {
+      // Qt compact `queue()`（ResponsiveHudPages.cpp:468-533）：通用页头（只有返回
+      // 箭头 + close-modal，没有设置齿轮）+ 内容自 158 起；播放条与底栏由 shell 画
+      // （Qt 队列页的底栏 active=""，所以 nav 传 null）。
+      paintPortraitShell(
+        canvas,
+        player: portraitPlayer,
+        nav: null,
+        header: (PortraitCanvas c) => c.header(
+          '播放队列',
+          back: true,
+          backAction: 'close-modal',
+          showSettings: false,
+        ),
+        content: (PortraitCanvas c, double pageBottom) => paintPortraitQueuePage(
+          c,
+          title: bar.title,
+          artist: bar.artist,
+          tracks: _portraitQueueRows(state),
+          currentIndex: state.queueIndex,
+          mode: state.queueMode,
+          modesExpanded: queueModesExpanded,
+          // Android/iOS 的 PlatformFeatures::ApplicationVolume 恒 false（见 _playerState）。
+          applicationVolume: bar.applicationVolume,
+          volume: 0,
+          scroll: queueScroll,
+        ),
+      );
+    } else if (songPage) {
       // Qt compact：song() / lyrics() 是两页，共用「档案 + 封面 + 进度 + 传输」骨架。
       _paintPortraitSongPage(canvas, state, song, items.length, selected);
     } else if (modal == 'settings') {
@@ -358,34 +386,6 @@ class BasicHudFrame {
         total: items.length,
         notice: emptyNotice,
         loading: state.loading,
-      );
-    } else if (modal == 'queue') {
-      // Qt compact `queue()`（ResponsiveHudPages.cpp:468-533）：通用页头（只有返回
-      // 箭头 + close-modal，没有设置齿轮）+ 内容自 158 起；播放条与底栏由 shell 画
-      // （Qt 队列页的底栏 active=""，所以 nav 传 null）。
-      paintPortraitShell(
-        canvas,
-        player: portraitPlayer,
-        nav: null,
-        header: (PortraitCanvas c) => c.header(
-          '播放队列',
-          back: true,
-          backAction: 'close-modal',
-          showSettings: false,
-        ),
-        content: (PortraitCanvas c, double pageBottom) => paintPortraitQueuePage(
-          c,
-          title: bar.title,
-          artist: bar.artist,
-          tracks: _portraitQueueRows(state),
-          currentIndex: state.queueIndex,
-          mode: state.queueMode,
-          modesExpanded: queueModesExpanded,
-          // Android/iOS 的 PlatformFeatures::ApplicationVolume 恒 false（见 _playerState）。
-          applicationVolume: bar.applicationVolume,
-          volume: 0,
-          scroll: queueScroll,
-        ),
       );
     } else if (modal == 'plugins' || modal == 'plugin-detail') {
       // Qt compact 插件页：通用页头（不是终端页头）+ 内容区由真实 widget 承担，
@@ -1138,6 +1138,9 @@ class BasicHudSurface extends StatefulWidget {
     this.onTrackListModeChanged,
     this.sceneSettings,
     this.modal = '',
+    this.queueOffset = 0,
+    this.queueScroll,
+    this.queueModesExpanded = false,
     this.plugins,
     this.pluginDetail,
     this.pluginDetailEnabled = true,
@@ -1181,9 +1184,18 @@ class BasicHudSurface extends StatefulWidget {
   /// 只影响 Qt 渲染，不构成第二份真值。null = 不下发，Qt 用自己的默认。
   final BasicSceneSettings? sceneSettings;
 
-  /// 宿主当前的弹层（'' / 'search' / 'settings' / 'plugins' / 'plugin-detail'）：
-  /// 只给竖屏排版决定画哪一页，不参与横屏绘制，也不改任何真值。
+  /// 宿主当前的弹层（'' / 'search' / 'settings' / 'plugins' / 'plugin-detail' / 'queue'）：
+  /// 竖屏用它决定画哪一页；横屏只有 'queue' 会额外叠一层播放队列面板。
   final String modal;
+
+  /// 横屏队列面板的首行下标（Qt `queueOffset`，行单位；面板自己 clamp）。
+  final int queueOffset;
+
+  /// 竖屏队列页的滚动量（网格单位）；null = 页面按 Qt 规则用当前行置顶。
+  final double? queueScroll;
+
+  /// 竖屏队列页的模式 chip 是否展开（Qt `m_queueModesExpanded`）。
+  final bool queueModesExpanded;
 
   /// 插件管理页的数据（[PluginManager.snapshot]）；null = 还没初始化完，页面画空态。
   final PluginSnapshot? plugins;
@@ -1376,6 +1388,9 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       archiveMaskStrength: widget.archiveMaskStrength,
       trackListMode: _trackListMode,
       modal: widget.modal,
+      queueOffset: widget.queueOffset,
+      queueScroll: widget.queueScroll,
+      queueModesExpanded: widget.queueModesExpanded,
       stageScale: geometry.stageScale,
       plugins: widget.plugins,
       pluginDetail: widget.pluginDetail,

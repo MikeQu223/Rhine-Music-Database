@@ -30,7 +30,9 @@ import '../hud/modals/settings_modal.dart'
         SettingsOperatingSystem,
         SettingsPreferenceContext,
         SettingsPreferenceSnapshot;
+import '../hud/modals/queue_modal.dart' show queueModalMaximumOffset;
 import '../hud/player/player_bar.dart' show playerBarHeaderHeight, playerBarRowHeight;
+import '../hud/portrait/portrait_pages_queue.dart' show portraitQueueModes;
 import '../hud/pages/viewer_hud.dart';
 import '../hud/scale/hud_scale.dart';
 import '../hud/protocol/hud_frame.dart';
@@ -44,6 +46,7 @@ import 'basic_hud.dart';
 import 'basic_plugins_portrait.dart';
 import 'basic_hud_resources.dart';
 import 'basic_models.dart';
+import 'basic_player_preferences.dart';
 import 'basic_settings.dart';
 import 'basic_settings_runtime.dart';
 import 'basic_settings_store.dart';
@@ -95,6 +98,21 @@ const String basicPortraitLaneActionPrefix = 'mobile:lane:';
 
 /// 竖屏检索页四列 tab 的命中前缀：`mobile:search-tab:<0..3>`。
 const String basicPortraitSearchTabActionPrefix = 'mobile:search-tab:';
+
+/// 竖屏队列页模式区展开/收起（Qt `mobile:queue-modes`，ResponsiveHudLayout.cpp:430-490）。
+const String basicQueueModesAction = 'mobile:queue-modes';
+
+/// 队列行载荷前缀：`player:queue:<i>`（选中并播放该行，Qt NativeHudController.cpp 的 "queue"）。
+const String basicQueueRowActionPrefix = 'player:queue:';
+
+/// 队列移除载荷前缀：`player:remove:<i>`（Qt NativeHudController.cpp 的 "remove"）。
+const String basicQueueRemoveActionPrefix = 'player:remove:';
+
+/// 播放模式载荷前缀：`player:mode:<off|all|one|shuffle>`（Qt NativeHudController.cpp 的 "mode"）。
+const String basicQueueModeActionPrefix = 'player:mode:';
+
+/// 清空待播（Qt NativeHudController.cpp 的 "clear" → player.clearUpcoming()）。
+const String basicQueueClearAction = 'player:clear';
 
 /// 音量载荷前缀：`player:volume-fraction:<0..1>`（player_bar.dart:529）。
 /// 本版没有音量 API，命中必须给可见反馈，不能静默吃掉。
@@ -183,6 +201,11 @@ class _BasicAppState extends State<BasicApp> {
   /// 面板偏好存储：与设置页是同一份（`panel/<key>` 命名空间），跨旋转不重建。
   late final BasicSettingsStore _settingsStore;
 
+  /// 播放器窄偏好（play-history / play-mode）：同步镜像 + 异步落盘。
+  /// 必须在造 [BasicController] 之前就有实例（MusicPlayer 构造时同步读回模式）。
+  late final BasicPlayerPreferences _playerPreferences =
+      BasicPlayerPreferences(_settingsStore.port);
+
   BasicHudResources? _resources;
   Object? _resourceError;
   Object? _bootError;
@@ -212,8 +235,15 @@ class _BasicAppState extends State<BasicApp> {
         (widget.controller == null && widget.audio == null
             ? (kIsWeb ? null : MethodChannelMediaSession())
             : null);
-    _controller =
-        widget.controller ?? BasicController(audio: _audio, mediaSessionPort: mediaPort);
+    _controller = widget.controller ??
+        BasicController(
+          audio: _audio,
+          mediaSessionPort: mediaPort,
+          // 播放器的窄偏好（play-history / play-mode）与设置页共用 `panel/` 键空间：
+          // 这里的端口在 [_attachPlayerPreferences] 里灌入已存值，之后同步内存镜像
+          // + 异步落盘（MusicPlayer 的 PreferencePort 是同步契约）。
+          preferences: _playerPreferences,
+        );
     // 封面像素：控制器那份"URL → 私有目录里的真实图片文件"缓存同时供 HUD 使用，
     // 不新开第二条下载链路；解码完成的回调让宿主重绘一次（这一帧先画空槽）。
     final BasicArtCache? artCache = _controller.artCache;
@@ -398,6 +428,7 @@ class _BasicAppState extends State<BasicApp> {
       controller: _controller,
       resources: resources,
       settingsStore: _settingsStore,
+      playerPreferences: _playerPreferences,
     );
   }
 }
@@ -412,6 +443,7 @@ class _BasicShell extends StatefulWidget {
     required this.controller,
     required this.resources,
     required this.settingsStore,
+    required this.playerPreferences,
   });
 
   final BasicController controller;
@@ -419,6 +451,10 @@ class _BasicShell extends StatefulWidget {
 
   /// 面板偏好的唯一存储（`panel/<key>`）。设置页写、启动读、效果读的都是它。
   final BasicSettingsStore settingsStore;
+
+  /// 播放器的窄偏好（play-history / play-mode）同步镜像：偏好加载完成后由
+  /// [_BasicShellState._loadSettings] 灌入，再回填播放模式。
+  final BasicPlayerPreferences playerPreferences;
 
   @override
   State<_BasicShell> createState() => _BasicShellState();
@@ -450,6 +486,14 @@ class _BasicShellState extends State<_BasicShell>
   /// 只有 '' 与 'search'：登录表单 / 歌单表单 / 设置编辑在本预览里没有入口
   /// （账号三平台暂停、设置页未接入），不伪造第三态。
   String _modal = '';
+
+  /// 竖屏播放队列页的模式 chip 是否展开（Qt `m_queueModesExpanded`，由
+  /// `mobile:queue-modes` 翻转；点任一 `player:mode:<x>` 后收起）。
+  bool _queueModesExpanded = false;
+
+  /// 横屏队列面板的首行下标（Qt `queueOffset`）。每次打开队列时重置为
+  /// 「当前曲目置顶」（NativeHudController 的 openModal("player") 语义）。
+  int _queueOffset = 0;
 
   /// 插件管理器（市场索引 / 安装 / 卸载 / 启用状态）。它是唯一真值来源：
   /// 页面只读 [PluginManager.snapshot]，动作回灌它的方法，不在外壳里存第二份。
@@ -594,6 +638,10 @@ class _BasicShellState extends State<_BasicShell>
     } on Object {
       // 读偏好失败不阻断启动：运行时自己退到默认值，面板照常可打开。
     }
+    // 播放器的窄偏好与设置页共用 `panel/` 键空间：先把已存值灌进同步镜像，
+    // 再让播放器按白名单回填模式（play-history 的 JSON 历史同理）。
+    widget.playerPreferences.seed(_settings.raw);
+    controller.resyncPreferences();
     if (!mounted) {
       return;
     }
@@ -958,8 +1006,13 @@ class _BasicShellState extends State<_BasicShell>
       geometry: geometry,
       stage: stage,
       archiveMaskStrength: _archiveMaskStrength,
-      // 竖屏排版按弹层选页（检索页/设置/插件）；横屏这一项不参与绘制。
+      // 竖屏排版按弹层选页（检索页/设置/插件/播放队列）；横屏只有 'queue'
+      // 会在同一帧里叠一层队列面板。
       modal: _modal,
+      // 队列面板的首行下标与竖屏滚动量：只有打开队列时才看这两项，
+      // 其它弹层下 HUD 不会读它们，所以不必逐帧清空。
+      queueOffset: _queueOffset,
+      queueModesExpanded: _queueModesExpanded,
       // 插件页的数据快照与详情（HUD 只画 chrome，内容在 widget 层）。
       plugins: _plugins.snapshot(),
       pluginDetail: _pluginDetailManifest(),
@@ -1650,10 +1703,51 @@ class _BasicShellState extends State<_BasicShell>
       setState(() => _actionNotice = '歌手 / 专辑 / 歌单检索尚未接入：本版只有歌曲检索');
       return;
     }
-    // 竖屏详情页的「随机播放 / 更多」：播放模式与选项面板本仓库没有真值可写，
-    // 命中必须给可见反馈（player:mode 不能被当成已实现）。
+    // 竖屏详情页的「随机播放 / 更多」：模式本身已在下方按词表接入
+    // （player:mode:<x>），这枚旧的无载荷 'player:mode' 命中按 Qt 的
+    // `NativeHudController.cpp` "mode" 分支循环切到下一个模式。
     if (action == 'player:mode') {
-      setState(() => _actionNotice = '播放模式切换尚未接入：本版只有顺序播放');
+      final int next = (portraitQueueModes.indexOf(controller.queueMode) + 1) %
+          portraitQueueModes.length;
+      controller.setQueueMode(portraitQueueModes[next]);
+      setState(() => _queueModesExpanded = false);
+      return;
+    }
+    // 播放队列（Qt ResponsiveHudLayout::handleAction :430-490 与
+    // NativeHudController.cpp 的 player 动作分派）：模式区展开/收起、四模式切换。
+    if (action == basicQueueModesAction) {
+      setState(() => _queueModesExpanded = !_queueModesExpanded);
+      return;
+    }
+    if (action.startsWith(basicQueueModeActionPrefix)) {
+      final String mode = action.substring(basicQueueModeActionPrefix.length);
+      if (controller.setQueueMode(mode)) {
+        // Qt handleAction：点模式 chip 后收起展开区（:486-489）。
+        setState(() => _queueModesExpanded = false);
+      }
+      return;
+    }
+    // 队列行：选中并播放该行（Qt "queue" → player.play(queue.at(index), index=i)）。
+    if (action.startsWith(basicQueueRowActionPrefix)) {
+      final int? index = int.tryParse(action.substring(basicQueueRowActionPrefix.length));
+      if (index == null) {
+        return;
+      }
+      unawaited(controller.playQueueIndex(index));
+      return;
+    }
+    // 移除待播行（Qt "remove" → player.remove(index)；当前曲目由播放器拒绝）。
+    if (action.startsWith(basicQueueRemoveActionPrefix)) {
+      final int? index = int.tryParse(action.substring(basicQueueRemoveActionPrefix.length));
+      if (index == null) {
+        return;
+      }
+      controller.removeFromQueue(index);
+      return;
+    }
+    // 清空待播（Qt "clear" → player.clearUpcoming()；当前曲目继续播放）。
+    if (action == basicQueueClearAction) {
+      controller.clearUpcoming();
       return;
     }
     if (action == 'mobile:song-options') {
@@ -1675,6 +1769,25 @@ class _BasicShellState extends State<_BasicShell>
     }
     // 只动动作槽：资源失败横幅不受点击影响（见 _resourceNotice 的注释）。
     setState(() => _actionNotice = notice);
+  }
+
+  /// 打开播放队列（Qt `openModal("player")`，NativeHudController.cpp）。
+  ///
+  /// 每次打开都把面板首行重置到当前曲目（Qt `queueOffset = max(0, queue.indexOf(current))`，
+  /// 再 clamp 到 maximumOffset）；竖屏的滚动量交给页面按同一规则推算。
+  void _openQueue() {
+    if (!mounted) {
+      return;
+    }
+    final int current = controller.state.queueIndex;
+    final int count = controller.state.queue.length;
+    setState(() {
+      _queueOffset = current < 0 ? 0 : current;
+      _queueOffset = _queueOffset.clamp(0, queueModalMaximumOffset(count));
+      // Qt openModal("player") 不展开模式区（那是 `mobile:queue-modes` 的态）。
+      _queueModesExpanded = false;
+    });
+    _setModal('queue');
   }
 
   /// 弹层开关。Qt 打开检索弹层时把 m_music->keyword 灌进输入框且【不】发检索
@@ -2018,9 +2131,19 @@ class _BasicShellState extends State<_BasicShell>
       unawaited(controller.stepLibrarySelection(action == 'next' ? 1 : -1));
       return null;
     }
-    // 本版没有独立的“正在播放”浮层：player:open / player:lyrics 都落到歌词面板。
-    if (action == 'player:open' || action == 'player:lyrics') {
+    // player:lyrics 仍是歌词面板；player:open 改开播放队列（Qt
+    // NativeHudController.cpp 的 "open"：已经在队列页就关闭，否则打开并把
+    // 当前曲目置顶）。竖屏点播放条、横屏点播放条中部都命中这一枚。
+    if (action == 'player:lyrics') {
       unawaited(controller.openLyrics());
+      return null;
+    }
+    if (action == 'player:open') {
+      if (_modal == 'queue') {
+        _setModal('');
+        return null;
+      }
+      _openQueue();
       return null;
     }
     if (action == 'player:lyrics-close') {
