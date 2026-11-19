@@ -120,7 +120,8 @@ void paintPortraitSongPage(
   if (meta.isNotEmpty) {
     c.text(meta, _gutter, y, size: 11, width: (c.gridWidth - 40) - 56, color: c.muted);
   }
-  c.icon(favourite ? 'heart-filled' : 'heart', 350, y - 4,
+  // 设计稿里心在 350（393 - 43）：必须跟着页宽贴右缘，写死会漂到页面中间。
+  c.icon(favourite ? 'heart-filled' : 'heart', c.gridWidth - 43, y - 4,
       size: 18, color: favourite ? c.ink : c.muted);
   y += 24;
 
@@ -169,7 +170,7 @@ void _songProgressRow(
       c.line,
     );
   }
-  c.field('seek', Rect.fromLTWH(15, barY - 12, 361, 26));
+  c.field('seek', Rect.fromLTWH(15, barY - 12, c.gridWidth - 30, 26));
   c.text(_clock(positionMs), _gutter, barY + 16, size: 11, width: 120, color: c.muted);
   final double remaining =
       durationMs.isFinite && durationMs > positionMs ? durationMs - positionMs : 0;
@@ -230,8 +231,11 @@ void paintPortraitLyricsPage(
   c.fill(Rect.fromLTWH(0, 0, c.gridWidth, math.max(0, h)), c.paper);
   // 顶部：只有一枚居中把手（下拉/点击收起），没有「RHINE LAB / 歌词」页头——
   // 参考图的歌词页是沉浸式全屏歌词，标题区只有封面 + 曲名 + 艺人 + 收藏/更多。
-  c.fill(const Rect.fromLTWH(160, 16, 73, 3), c.line);
-  c.hit(const Rect.fromLTWH(120, 4, 153, 40), 'player:lyrics-close', '收起歌词');
+  // 把手本来就该在页面正中（设计稿 160..233 的中心是 196.5 ≈ 393/2），
+  // 页宽变宽后必须按 gridWidth 居中，否则会明显偏左。
+  final double handleLeft = (c.gridWidth - 73) / 2;
+  c.fill(Rect.fromLTWH(handleLeft, 16, 73, 3), c.line);
+  c.hit(Rect.fromLTWH(handleLeft - 40, 4, 153, 40), 'player:lyrics-close', '收起歌词');
 
   const Rect strip = Rect.fromLTWH(_gutter, 40, 44, 44);
   c.fill(strip, c.surface);
@@ -239,10 +243,12 @@ void paintPortraitLyricsPage(
     c.image(cover, strip);
   }
   c.border(strip, c.line);
-  c.text(title, 76, 44, size: 13, width: 250, weight: 'demibold');
-  c.text(artist, 76, 63, size: 10, width: 250, color: c.muted);
-  c.icon('heart', 344, 50, size: 18, color: c.muted);
-  c.icon('more', 370, 52, size: 14, color: c.muted);
+  // 曲名/艺人右界让给两枚图标（设计稿 250 = 393 - 76 - 67）。
+  final double lyricTitleWidth = c.gridWidth - 76 - 96;
+  c.text(title, 76, 44, size: 13, width: lyricTitleWidth, weight: 'demibold');
+  c.text(artist, 76, 63, size: 10, width: lyricTitleWidth, color: c.muted);
+  c.icon('heart', c.gridWidth - 49, 50, size: 18, color: c.muted);
+  c.icon('more', c.gridWidth - 23, 52, size: 14, color: c.muted);
 
   // 阅读区：118 起，下沿让给沉浸条。
   //
@@ -339,7 +345,7 @@ void _lyricsRows(
     final double hitTop = math.max(top, y - 8);
     final double hitBottom = math.min(bottom, y + rowHeight + 10);
     if (hitBottom - hitTop > 8) {
-      c.hit(Rect.fromLTWH(12, hitTop, 369, hitBottom - hitTop), 'player:lyric-line:$index',
+      c.hit(Rect.fromLTWH(12, hitTop, c.gridWidth - 24, hitBottom - hitTop), 'player:lyric-line:$index',
           body.join(' '));
     }
   }

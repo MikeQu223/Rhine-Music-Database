@@ -127,16 +127,18 @@ class PortraitCanvas {
     double x,
     double y, {
     double size = 14,
-    double width = 353,
+    double? width,
     String weight = 'regular',
     List<Object?>? color,
   }) {
-    if ((_content && (y + size < _clipTop || y > contentBottom)) || v.isEmpty || width <= 0) {
+    // 默认宽度跟着页宽走：设计稿的 353 就是「左右各 20」，写死会让长文本在宽页上提前截断。
+    final double limit = width ?? (gridWidth - 40);
+    if ((_content && (y + size < _clipTop || y > contentBottom)) || v.isEmpty || limit <= 0) {
       return;
     }
     String value = v;
-    if (_metrics.width(value, size, weight) > width) {
-      while (value.isNotEmpty && _metrics.width('$value…', size, weight) > width) {
+    if (_metrics.width(value, size, weight) > limit) {
+      while (value.isNotEmpty && _metrics.width('$value…', size, weight) > limit) {
         value = value.substring(0, value.length - 1);
       }
       value = '$value…';
@@ -161,19 +163,20 @@ class PortraitCanvas {
     double x,
     double y, {
     double size = 13,
-    double width = 353,
+    double? width,
     List<Object?>? color,
     String weight = 'regular',
     int maximumLines = 0,
     double lineSpacing = 1.5,
   }) {
-    final List<String> lines = _metrics.wrap(v, width, size, weight);
+    final double limit = width ?? (gridWidth - 40);
+    final List<String> lines = _metrics.wrap(v, limit, size, weight);
     final int count = maximumLines > 0 ? math.min(maximumLines, lines.length) : lines.length;
     double cursor = y;
     for (int index = 0; index < count; index++) {
       final bool truncated = index == count - 1 && count < lines.length;
       text(lines[index] + (truncated ? '…' : ''), x, cursor,
-          size: size, width: width, weight: weight, color: color);
+          size: size, width: limit, weight: weight, color: color);
       cursor += size * lineSpacing;
     }
     return cursor;
@@ -302,7 +305,8 @@ class PortraitCanvas {
 
   void section(double y, String title, String subtitle) {
     text(title, 20, y, size: 17, width: 220, weight: 'demibold');
-    text(subtitle, 245, y + 5, size: 9, width: 128, color: muted);
+    // 设计稿副标题起于 245、收在 373（离右缘 20）：页宽变宽后必须跟着右移。
+    text(subtitle, gridWidth - 148, y + 5, size: 9, width: 128, color: muted);
   }
 
   /// 收藏/列表行（Qt/src/ResponsiveHudCanvas.cpp:171-204）。
@@ -319,8 +323,10 @@ class PortraitCanvas {
     String image = '',
     bool hasImage = false,
   }) {
+    // 设计稿行宽 353 = 393 - 左右各 20；页宽随 DPI 变（本机 586）。
+    final double rowWidth = gridWidth - 40;
     if (current) {
-      fill(Rect.fromLTWH(20, y, 353, 68), raised);
+      fill(Rect.fromLTWH(20, y, rowWidth, 68), raised);
       fill(Rect.fromLTWH(20, y, 2, 68), amber);
     }
     double left = number.isEmpty ? 20 : 54;
@@ -337,7 +343,7 @@ class PortraitCanvas {
     } else {
       text(number, 25, y + 24, size: 11, width: 26, color: muted);
     }
-    final double titleRight = playAction.isEmpty && remove.isEmpty ? 333 : 300;
+    final double titleRight = gridWidth - (playAction.isEmpty && remove.isEmpty ? 60 : 93);
     final double titleWidth = titleRight - left - 8;
     // 当前行标题用主色（与参考图「我的歌单 / 专辑内页」一致）。旧值写死成
     // [.455,.333,.098] 那支亮色稿的深赭，压到暗色 raised 上几乎读不出字（实机
@@ -350,27 +356,30 @@ class PortraitCanvas {
     text(artist, left, y + 36, size: 11, width: titleRight - left, color: muted);
     if (remove.isEmpty) {
       if (playAction.isEmpty) {
-        text(stamp, 333, y + 26, size: 10, width: 40, color: muted);
+        text(stamp, gridWidth - 60, y + 26, size: 10, width: 40, color: muted);
       }
     } else {
-      icon('close', 342, y + 25, size: 16);
-      hit(Rect.fromLTWH(329, y + 12, 44, 44), remove, '移除 $title');
+      icon('close', gridWidth - 51, y + 25, size: 16);
+      hit(Rect.fromLTWH(gridWidth - 64, y + 12, 44, 44), remove, '移除 $title');
     }
-    fill(Rect.fromLTWH(20, y + 67, 353, .6), line);
-    hit(Rect.fromLTWH(20, y, remove.isEmpty ? 353 : 305, 67), action, title);
+    fill(Rect.fromLTWH(20, y + 67, rowWidth, .6), line);
+    hit(Rect.fromLTWH(20, y, remove.isEmpty ? rowWidth : gridWidth - 88, 67), action, title);
     if (playAction.isNotEmpty) {
-      text('▶ 全部', 309, y + 24, size: 10, width: 64);
-      hit(Rect.fromLTWH(302, y + 12, 71, 44), playAction, '播放全部 $title');
+      text('▶ 全部', gridWidth - 84, y + 24, size: 10, width: 64);
+      hit(Rect.fromLTWH(gridWidth - 91, y + 12, 71, 44), playAction, '播放全部 $title');
     }
   }
 
   void indexRow(double y, String title, String subtitle, String action, String iconName) {
+    // 文本宽 287 = 393 - 52 - 54（右侧 34 给「>」图标 + 20 边距）。
+    final double rowWidth = gridWidth - 40;
+    final double textWidth = gridWidth - 52 - 54;
     icon(iconName, 20, y + 24);
-    text(title, 52, y + 12, size: 14, width: 287, weight: 'demibold');
-    text(subtitle, 52, y + 36, size: 11, width: 287, color: muted);
-    icon('right', 352, y + 25, size: 16);
-    fill(Rect.fromLTWH(20, y + 67, 353, .6), line);
-    hit(Rect.fromLTWH(20, y, 353, 67), action, title);
+    text(title, 52, y + 12, size: 14, width: textWidth, weight: 'demibold');
+    text(subtitle, 52, y + 36, size: 11, width: textWidth, color: muted);
+    icon('right', gridWidth - 41, y + 25, size: 16);
+    fill(Rect.fromLTWH(20, y + 67, rowWidth, .6), line);
+    hit(Rect.fromLTWH(20, y, rowWidth, 67), action, title);
   }
 
   void beginContent(double top) {
@@ -402,18 +411,20 @@ class PortraitCanvas {
         size: 8, width: libraryBack ? 175 : 240, color: muted);
     text(title, x, 87, size: 25, width: libraryBack ? 185 : (back ? 246 : 300), weight: 'demibold');
     if (libraryBack) {
-      fill(Rect.fromLTWH(269, 60, 104, 42), raised);
-      border(Rect.fromLTWH(269, 60, 104, 42), line);
-      icon('left', 281, 71, size: 18);
-      text('返回', 305, 71, size: 14, width: 60, weight: 'demibold');
-      hit(Rect.fromLTWH(263, 54, 116, 54), 'back', '返回资料库');
+      // 右锚：设计稿里这张「返回资料库」卡离右缘 20（393-373），页宽随 DPI 变。
+      final double cardLeft = gridWidth - 124;
+      fill(Rect.fromLTWH(cardLeft, 60, 104, 42), raised);
+      border(Rect.fromLTWH(cardLeft, 60, 104, 42), line);
+      icon('left', cardLeft + 12, 71, size: 18);
+      text('返回', cardLeft + 36, 71, size: 14, width: 60, weight: 'demibold');
+      hit(Rect.fromLTWH(cardLeft - 6, 54, 116, 54), 'back', '返回资料库');
       return;
     }
     if (!showSettings) {
       return;
     }
-    icon(title == '设置' ? 'user' : 'settings', 341, 79);
-    hit(Rect.fromLTWH(329, 66, 44, 44), title == '设置' ? 'saved' : 'settings',
+    icon(title == '设置' ? 'user' : 'settings', gridWidth - 52, 79);
+    hit(Rect.fromLTWH(gridWidth - 64, 66, 44, 44), title == '设置' ? 'saved' : 'settings',
         title == '设置' ? '我的音乐' : '设置');
   }
 
