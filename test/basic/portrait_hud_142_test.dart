@@ -305,8 +305,9 @@ void main() {
       const Duration(seconds: 10),
     );
 
-    // stageScale = 720/1080 = 0.6667：屏幕 (600,933) → 舞台 (900,1400)，落在列表内。
-    final TestGesture gesture = await tester.startGesture(const Offset(600, 933));
+    // stageScale = 720/1080 = 0.6667：屏幕 (600,800) → 舞台 (900,1200)，落在
+    // 1:1 分割后的列表带（listTop=960，四行到 1334）内。
+    final TestGesture gesture = await tester.startGesture(const Offset(600, 800));
     await tester.pump(const Duration(milliseconds: 16));
     // 与其它拖动用例同规则：第一次 move 被 touch slop 吃掉（只 _checkStart），
     // 所以发两次 move 才有 start + 1 次有效 update = 2 次连续位置。

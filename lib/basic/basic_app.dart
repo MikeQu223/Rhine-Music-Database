@@ -1068,6 +1068,8 @@ class _BasicShellState extends State<_BasicShell>
                     BasicSettingsWindow(
                       stage: resolved,
                       portrait: false,
+                      // 横屏设置末尾补「插件管理」入口（竖屏设置页末尾那张同义卡）。
+                      pluginsEntry: true,
                       model: _settingsPanelModel(),
                       dark: state.dark,
                       scrollStorage: _settingsScroll,
@@ -1087,47 +1089,83 @@ class _BasicShellState extends State<_BasicShell>
               );
             },
           ),
-        // 插件列表页 / 详情页：与设置页同构（HUD 画纸色 + 通用页头 + 播放条 + 底栏，
-        // 内容是真 widget 层）。页面自己按 393 网格 + Transform.scale(unit) 排版，
-        // 所以这里只对齐左上角，不再二次缩放。
+        // 插件列表页 / 详情页：与设置页同构（竖屏 HUD 画纸色 + 通用页头 + 播放条 + 底栏；
+        // 横屏由页面自己画遮罩 + modalBounds 面板）。竖屏页面按 393 网格 +
+        // Transform.scale(unit) 排版，只对齐左上角；横屏页面按舞台坐标排版并自带缩放。
         if (pluginsOpen)
           Builder(
             builder: (BuildContext inner) {
               final HudStage resolved = stage ?? HudStageScope.of(inner);
+              final bool landscape = geometry != null;
               // 与竖屏画布同一口径：PortraitBands 的 stageScale = 逻辑宽/1080。
               final double stageScale =
                   MediaQuery.sizeOf(inner).width / HudScale.designStageHeight;
               final PluginSnapshot snapshot = _plugins.snapshot();
               final PluginManifest? detail = _pluginDetailManifest();
-              final Widget page = _modal == 'plugin-detail' && detail != null
-                  ? BasicPortraitPluginDetailPage(
-                      stage: resolved,
-                      plugin: detail,
-                      enabled: _pluginDetailEnabled,
-                      userInstalled: _pluginDetailUserInstalled,
-                      // `.backup-<id>` 存在才可回滚（Qt 重装/升级后才有）。
-                      canRollback: _pluginDetailCanRollback,
-                      pendingUninstall: _pendingPluginUninstall,
-                      dark: state.dark,
-                      stageScale: stageScale,
-                      message: snapshot.message,
-                      onAction: (String action) =>
-                          unawaited(_onPluginAction(action)),
-                    )
-                  : BasicPortraitPluginsPage(
-                      stage: resolved,
-                      snapshot: snapshot,
-                      dark: state.dark,
-                      pendingUninstall: _pendingPluginUninstall,
-                      stageScale: stageScale,
-                      // 进度条与「安装中…」按钮都靠这两个字段（之前没传，
-                      // 真机上只看得到状态行、看不到进度）。
-                      installing: snapshot.progress.installing,
-                      installLabel: snapshot.progress.id,
-                      onAction: (String action) =>
-                          unawaited(_onPluginAction(action)),
-                    );
-              return Align(alignment: Alignment.topLeft, child: page);
+              void onAction(String action) {
+                // 横屏页自己的返回键发 settings / close-modal；这两个都是弹层
+                // 开关，走 _onAction（settings 回设置面板、close-modal 回主界面），
+                // 不进 plugin:* 处理器。
+                if (action == HudAction.closeModal || action == 'settings') {
+                  _onAction(action);
+                  return;
+                }
+                unawaited(_onPluginAction(action));
+              }
+              final Widget page;
+              if (_modal == 'plugin-detail' && detail != null) {
+                page = landscape
+                    ? BasicLandscapePluginDetailPage(
+                        stage: resolved,
+                        plugin: detail,
+                        enabled: _pluginDetailEnabled,
+                        userInstalled: _pluginDetailUserInstalled,
+                        canRollback: _pluginDetailCanRollback,
+                        pendingUninstall: _pendingPluginUninstall,
+                        dark: state.dark,
+                        message: snapshot.message,
+                        onAction: onAction,
+                      )
+                    : BasicPortraitPluginDetailPage(
+                        stage: resolved,
+                        plugin: detail,
+                        enabled: _pluginDetailEnabled,
+                        userInstalled: _pluginDetailUserInstalled,
+                        // `.backup-<id>` 存在才可回滚（Qt 重装/升级后才有）。
+                        canRollback: _pluginDetailCanRollback,
+                        pendingUninstall: _pendingPluginUninstall,
+                        dark: state.dark,
+                        stageScale: stageScale,
+                        message: snapshot.message,
+                        onAction: onAction,
+                      );
+              } else {
+                page = landscape
+                    ? BasicLandscapePluginsPage(
+                        stage: resolved,
+                        snapshot: snapshot,
+                        dark: state.dark,
+                        pendingUninstall: _pendingPluginUninstall,
+                        installing: snapshot.progress.installing,
+                        installLabel: snapshot.progress.id,
+                        onAction: onAction,
+                      )
+                    : BasicPortraitPluginsPage(
+                        stage: resolved,
+                        snapshot: snapshot,
+                        dark: state.dark,
+                        pendingUninstall: _pendingPluginUninstall,
+                        stageScale: stageScale,
+                        // 进度条与「安装中…」按钮都靠这两个字段（之前没传，
+                        // 真机上只看得到状态行、看不到进度）。
+                        installing: snapshot.progress.installing,
+                        installLabel: snapshot.progress.id,
+                        onAction: onAction,
+                      );
+              }
+              return landscape
+                  ? page
+                  : Align(alignment: Alignment.topLeft, child: page);
             },
           ),
       ],

@@ -1,0 +1,238 @@
+name: Flutter Android arm64-v8a
+
+# 只出 Android arm64-v8a 的 Flutter APK。
+#
+# Android 包由 Flutter 工程产出，但 Qt 场景运行时是 Gradle 的硬依赖：
+#   1) 六个 Qt 子模块 → Qt for Android kit（重活，走缓存）；
+#   2) 准备 nodejs-mobile 的 libnode.so 与 Android 资源；
+#   3) 用 RHINE_FLUTTER_HOST_ONLY 编 native 库，androiddeployqt --no-build 落 staging；
+#   4) flutter build apk --target-platform android-arm64。
+# kit 命中缓存后只跑第 2-4 步；冷启动要从源码交叉编译 Qt（约 1.5-2 小时）。
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: flutter-android-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FLUTTER_VERSION: '3.47.8'
+  # 固定 SDK / NDK 根，setup-android 与 Gradle 读同一份。
+  ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+  ANDROID_HOME: /usr/local/lib/android/sdk
+  ANDROID_NDK_ROOT: /usr/local/lib/android/sdk/ndk/30.0.16248370
+  # Gradle 的 RHINE_QT_ANDROID_DEPLOY_DIR 用 rootProject.file() 解析，
+  # 相对路径会落到 android/ 下，所以这里给绝对路径。
+  RHINE_QT_ANDROID_DEPLOY_DIR: ${{ github.workspace }}/output/qt-android-flutter/Qt/android-build
+  RHINE_BUILD_JOBS: '4'
+
+jobs:
+  build:
+    name: Android arm64-v8a (APK)
+    runs-on: ubuntu-24.04
+    # 冷启动要交叉编译 Qt kit；缓存命中后出包只要几分钟。
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Check out Qt sources for the Android kit
+        shell: bash
+        # Qt 6.12 没有公开的 Android 预编译包，kit 只能从这五个子模块现场编。
+        run: |
+          git submodule update --init --depth 1 \
+            third_party/qt/qtbase \
+            third_party/qt/qtdeclarative \
+            third_party/qt/qtmultimedia \
+            third_party/qt/qtsvg \
+            third_party/qt/qtshadertools
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26.11.1'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # AGP 只接受 JDK 17-21；runner 默认较新的 JDK 会被直接拒绝。
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Free disk space
+        shell: bash
+        # Qt kit 构建树 + kit 本身约 6-8 GB；预装 NDK 随后按固定版本重装。
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          sudo rm -rf "${ANDROID_SDK_ROOT}"/ndk/* || true
+          df -h /
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
+
+      - name: Install Android platform, build-tools and NDK
+        shell: bash
+        # 版本与 Gradle/NDK 的 pin 对齐（android/app/build.gradle.kts）。
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager --install "platforms;android-36" "build-tools;36.0.0" "ndk;30.0.16248370"
+
+      - name: Install Qt for Android build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            cmake ninja-build g++ perl file unzip
+
+      # 宿主 Qt 供交叉编译用（moc/rcc/qmlcachegen）；Android kit 要求
+      # $RHINE_HOST_QT/lib/cmake/Qt6HostInfo 存在，必须装一份 6.12.0 桌面 kit。
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.12.0'
+          arch: linux_gcc_64
+          aqtsource: git+https://github.com/miurahr/aqtinstall.git@076e1659807d0b362a3ed684d54c2e9c775eb9c7
+          modules: qtshadertools qtmultimedia
+          cache: true
+
+      - name: Install npm dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Compute Qt kit cache key
+        id: qt-kit-key
+        shell: bash
+        # 缓存签名覆盖一切会影响 kit 产物的输入：子模块提交、构建/补丁脚本、
+        # OpenSSL 锁定版本、NDK 与宿主 Qt 版本。
+        run: |
+          set -euo pipefail
+          {
+            for module in qtbase qtdeclarative qtmultimedia qtsvg qtshadertools; do
+              echo "$module $(git -C third_party/qt/$module rev-parse HEAD)"
+            done
+            sha256sum scripts/build-qt-android.cjs scripts/qt-android-patches.cjs \
+              scripts/android-toolchain.cjs vendor/openssl/source.json
+            echo "host-qt 6.12.0 linux_gcc_64"
+            echo "ndk 30.0.16248370"
+            echo "platform android-36 build-tools 36.0.0"
+          } > "$RUNNER_TEMP/qt-kit-signature.txt"
+          echo "signature=$(sha256sum "$RUNNER_TEMP/qt-kit-signature.txt" | cut -c1-24)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Qt for Android kit
+        id: qt-kit-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            output/dependencies/qt-android
+            output/dependencies/openssl-android
+          key: qt-android-kit-${{ steps.qt-kit-key.outputs.signature }}
+
+      - name: Build Qt for Android kit
+        if: steps.qt-kit-cache.outputs.cache-hit != 'true'
+        env:
+          RHINE_HOST_QT: ${{ env.QT_ROOT_DIR }}
+        run: npm run build:qt:android
+
+      - name: Save Qt for Android kit
+        # 显式保存：job 被 timeout 掐掉时 post 步骤不会执行，
+        # 会出现"编完了没存上、下次再编一遍"的死循环。
+        if: steps.qt-kit-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            output/dependencies/qt-android
+            output/dependencies/openssl-android
+          key: qt-android-kit-${{ steps.qt-kit-key.outputs.signature }}
+
+      - name: Prepare nodejs-mobile runtime and Android resources
+        # --prepare-only 只做 Flutter 构建要用的 Node/资源准备，不进入纯 Qt 打包链。
+        run: node scripts/build-android.cjs --prepare-only
+
+      - name: Configure Qt native host for Flutter
+        shell: bash
+        env:
+          QT_KIT: output/dependencies/qt-android
+        run: |
+          set -euo pipefail
+          cmake -S Qt -B output/qt-android-flutter -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$QT_KIT/lib/cmake/Qt6/qt.toolchain.cmake" \
+            -DQT_HOST_PATH="$QT_ROOT_DIR" \
+            -DQT_HOST_PATH_CMAKE_DIR="$QT_ROOT_DIR/lib/cmake" \
+            -DQT_QMAKE_TARGET_MKSPEC=android-clang \
+            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=android-28 \
+            -DANDROID_NDK_ROOT="$ANDROID_NDK_ROOT" \
+            -DANDROID_SDK_ROOT="$ANDROID_SDK_ROOT" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_MAKE_PROGRAM="$(command -v ninja)" \
+            -DRHINE_FLUTTER_HOST_ONLY=ON \
+            -DRHINE_ANDROID_NODE_ROOT="$PWD/output/dependencies/node-mobile" \
+            -DRHINE_ANDROID_RESOURCES="$PWD/output/android-resources"
+
+      - name: Build Qt native library and deploy staging
+        shell: bash
+        # 纯 Qt APK target 已封堵，这里只编 .so，再手动跑 androiddeployqt --no-build
+        # 生成 Flutter Gradle 需要的 libs/、jar 与 res/values/libs.xml。
+        run: |
+          set -euo pipefail
+          # 编 ALL：Qt 插件与 _prepare_apk_dir 都在其中；纯 Qt APK target 不参与 ALL。
+          cmake --build output/qt-android-flutter -- -j"${RHINE_BUILD_JOBS}"
+          SETTINGS=$(find output/qt-android-flutter -name 'android-*deployment-settings.json' -print -quit)
+          test -n "$SETTINGS"
+          output/dependencies/qt-android/bin/androiddeployqt \
+            --input "$SETTINGS" \
+            --output "$RHINE_QT_ANDROID_DEPLOY_DIR" \
+            --no-build
+          test -d "$RHINE_QT_ANDROID_DEPLOY_DIR/libs/arm64-v8a"
+          test -f "$RHINE_QT_ANDROID_DEPLOY_DIR/res/values/libs.xml"
+
+      - name: Prepare CI signing key
+        shell: bash
+        # 仓库不保存发布密钥；CI 生成一次性 keystore，只为让 fail-closed 的
+        # release 签名配置通过。产物只用于 CI 验证，不能覆盖安装到已有设备。
+        run: |
+          set -euo pipefail
+          PASSWORD=$(openssl rand -hex 16)
+          KEYSTORE="$RUNNER_TEMP/rhine-ci.jks"
+          keytool -genkeypair \
+            -keystore "$KEYSTORE" \
+            -storepass "$PASSWORD" \
+            -keypass "$PASSWORD" \
+            -alias rhine-ci \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "CN=Rhine Music Database CI, OU=Android, O=Rhine, C=CN"
+          {
+            echo "storeFile=$KEYSTORE"
+            echo "storePassword=$PASSWORD"
+            echo "keyAlias=rhine-ci"
+            echo "keyPassword=$PASSWORD"
+          } > android/keystore.properties
+
+      - name: Build Flutter APK (arm64-v8a only)
+        run: flutter build apk --release --target-platform android-arm64
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: rhine-music-database-android-arm64-v8a
+          path: android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
