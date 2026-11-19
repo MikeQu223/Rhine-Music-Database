@@ -1005,7 +1005,8 @@ class _BasicLandscapePluginsPageState extends State<BasicLandscapePluginsPage> {
         ink: ink,
         title: '插件管理',
         subtitle: '插件市场 / 下载与启用',
-        backAction: 'close-modal',
+        // 横屏插件页的入口在设置面板末尾，返回键回设置而不是直接回主界面。
+        backAction: 'settings',
         onAction: widget.onAction,
         body: (Rect bounds) => _body(ink, bounds),
         overlay: widget.pendingUninstall.isEmpty

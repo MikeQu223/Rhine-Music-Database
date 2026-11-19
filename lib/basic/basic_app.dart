@@ -1103,9 +1103,10 @@ class _BasicShellState extends State<_BasicShell>
               final PluginSnapshot snapshot = _plugins.snapshot();
               final PluginManifest? detail = _pluginDetailManifest();
               void onAction(String action) {
-                // 横屏页自己的返回键发 close-modal；它走全局弹层开关
-                // （_onAction 的 closeModal 分支），不进 plugin:* 处理器。
-                if (action == HudAction.closeModal) {
+                // 横屏页自己的返回键发 settings / close-modal；这两个都是弹层
+                // 开关，走 _onAction（settings 回设置面板、close-modal 回主界面），
+                // 不进 plugin:* 处理器。
+                if (action == HudAction.closeModal || action == 'settings') {
                   _onAction(action);
                   return;
                 }
