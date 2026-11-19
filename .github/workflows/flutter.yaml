@@ -1,4 +1,4 @@
-name: Flutter Android arm64-v8a
+name: Flutter Build
 
 # 只出 Android arm64-v8a 的 Flutter APK。
 #
@@ -30,7 +30,7 @@ env:
 
 jobs:
   build:
-    name: Android arm64-v8a (APK)
+    name: Android arm64-v8a unsigned
     runs-on: ubuntu-24.04
     # 冷启动要交叉编译 Qt kit；缓存命中后出包只要几分钟。
     timeout-minutes: 300
