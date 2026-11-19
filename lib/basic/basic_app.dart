@@ -1624,7 +1624,7 @@ class _BasicShellState extends State<_BasicShell>
       return;
     }
     if (action == 'mobile:nav:discover') {
-      setState(() => _actionNotice = '发现页尚未接入：本版只有资料库、搜索与设置');
+      setState(() => _actionNotice = '发现页尚未接入');
       return;
     }
     // 竖屏检索页的四列 tab：只有「歌曲」这一列有真集合（BasicController 的搜索列
@@ -1986,6 +1986,17 @@ class _BasicShellState extends State<_BasicShell>
     }
     if (action == 'player:next') {
       unawaited(controller.next());
+      return null;
+    }
+    // 竖屏详情页的传输键（详情曲目 ≠ 正在播放曲目时）：按**详情页所在列表**换曲，
+    // 而不是推进播放队列。单曲详情页的控制带必须始终作用在页面上那首（用户
+    // 2026-11-19：「详情页的控制始终是控制详情页对应曲目的」）。
+    if (action == 'music:detail-prev') {
+      unawaited(controller.playDetailSibling(-1));
+      return null;
+    }
+    if (action == 'music:detail-next') {
+      unawaited(controller.playDetailSibling(1));
       return null;
     }
     // HUD 的 ↑/↓ 是**逐项选曲**，不是播放器换曲（Qt/src/NativeHud.cpp:465/478 →
