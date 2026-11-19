@@ -9,8 +9,9 @@
 //
 // 几何真值取自 Qt（网格单位、y 为屏幕 y、内容自 158 起）：
 //  - 分区头 26 高：墨块 {20,y,23,18} + 编号 8pt + 标题 13pt + 右缘 7pt 英文；
-//  - 市场行 78 高：名称 (20,y+10) 14pt、元信息 (20,y+32) 9pt、
-//    按钮 {261,y+10,112,40}、分隔线 {20,y+76,353,.6}；
+//  - 市场行 78 高：名称 (20,y+19) 14pt、元信息 (20,y+41) 9pt、
+//    按钮 {261,y+19,112,40}、分隔线 {20,y+76,353,.6}；
+//    （Qt 基线内容自 y+10 起，下留白 28 明显大于上留白 10，这里上下各留 19。）
 //  - 已安装行 106 高：名称 (20,y+10) 14pt、状态文字右对齐、状态方块 5×5、
 //    元信息 (20,y+31) 9pt、按钮行 y+50 高 44、分隔线 {20,y+104,353,.6}；
 //  - 三键分支（用户安装）详情/卸载/禁用-启用，0 间隙；内置插件两键（详情/禁用）。
@@ -51,6 +52,11 @@ const double _sectionHeight = 26;
 /// 市场行高 / 已安装行高（Qt 78 / 106）。
 const double _marketRowHeight = 78;
 const double _installedRowHeight = 106;
+
+/// 市场行内容起始 y：行高 78、内容 40，上下留白均分后为 19（Qt 基线是 10，下留白 28）。
+const double _marketRowTop = (_marketRowHeight - 40) / 2;
+/// 市场行名称与元信息的行距（沿用 Qt 的 22）。
+const double _marketRowLineGap = 22;
 
 /// 竖屏插件管理页：市场列表 + 已安装列表。
 class BasicPortraitPluginsPage extends StatefulWidget {
@@ -239,12 +245,12 @@ class _BasicPortraitPluginsPageState extends State<BasicPortraitPluginsPage> {
     ));
     children.add(Padding(
       padding: const EdgeInsets.only(top: 16, bottom: 24),
-      child: Text(
-        snapshot.message.isNotEmpty
-            ? snapshot.message
-            : '插件下载到应用数据目录；禁用后不会加载。',
-        style: ink.paragraph,
-      ),
+      // child: Text(
+        // snapshot.message.isNotEmpty
+            // ? snapshot.message
+            // : '插件下载到应用数据目录；禁用后不会加载。',
+        // style: ink.paragraph,
+      // ),
     ));
     return children;
   }
@@ -269,16 +275,16 @@ class _BasicPortraitPluginsPageState extends State<BasicPortraitPluginsPage> {
         children: <Widget>[
           Text('网络', style: ink.sectionTrailing),
           const SizedBox(height: 8),
-          Text('当前域名  $active', style: ink.paragraph),
+          Text('连接地址  $active', style: ink.paragraph),
           const SizedBox(height: 6),
-          Text('未响应域名  $dead', style: ink.paragraph),
-          if (snapshot.mirrors.isNotEmpty) ...<Widget>[
-            const SizedBox(height: 6),
-            Text(
-              '回退顺序  ${snapshot.mirrors.join(' → ')}',
-              style: ink.paragraph,
-            ),
-          ],
+          // Text('未响应域名  $dead', style: ink.paragraph),
+          // if (snapshot.mirrors.isNotEmpty) ...<Widget>[
+            // const SizedBox(height: 6),
+            // Text(
+              // '回退顺序  ${snapshot.mirrors.join(' → ')}',
+              // style: ink.paragraph,
+            // ),
+          // ],
         ],
       ),
     );
@@ -343,13 +349,13 @@ class _BasicPortraitPluginsPageState extends State<BasicPortraitPluginsPage> {
         children: <Widget>[
           Positioned(
             left: 0,
-            top: 10,
+            top: _marketRowTop,
             width: math.max(80, gridWidth - 40 - 132),
             child: Text(entry.label, style: ink.rowTitle, maxLines: 1, overflow: TextOverflow.ellipsis),
           ),
           Positioned(
             left: 0,
-            top: 32,
+            top: _marketRowTop + _marketRowLineGap,
             width: math.max(80, gridWidth - 40 - 130),
             child: Text(
               _marketMeta(entry, installed),
@@ -360,7 +366,7 @@ class _BasicPortraitPluginsPageState extends State<BasicPortraitPluginsPage> {
           ),
           Positioned(
             right: 0,
-            top: 10,
+            top: _marketRowTop,
             child: _PluginButton(
               label: label,
               primary: installed == null,

@@ -612,7 +612,7 @@ class PluginManager extends ChangeNotifier {
       _disabled.remove(id);
       await _writeState();
       await _scanInstalled();
-      _message = '已卸载 $id';
+      // _message = '已卸载 $id';
       notifyListeners();
       return '';
     } on FileSystemException {
