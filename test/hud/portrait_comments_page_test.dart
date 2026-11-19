@@ -122,7 +122,7 @@ void main() {
       expect(actions, isNot(contains('settings')), reason: 'comments 页不画设置键');
     });
 
-    test('宿主自画页头时不重复画页头，但仍出排序/刷新命中', () {
+    test('宿主自画页头时不重复画页头（副标题仍画），且仍有排序/刷新命中', () {
       final PortraitCanvas c = _canvas();
       paintPortraitCommentsPage(
         c,
@@ -130,6 +130,9 @@ void main() {
         header: false,
       );
       expect(_texts(c), isNot(contains('歌曲评论')));
+      // Qt 里 "COMMENT ARCHIVE" 与 c.header 是并列调用（ResponsiveHudLayout.cpp:187-188），
+      // 宿主自画页头时这行仍然要出。
+      expect(_texts(c), contains('COMMENT ARCHIVE / 评论档案'));
       final List<String> actions = _actions(c);
       expect(actions, contains('comments:sort:hot'));
       expect(actions, contains('comments:sort:new'));

@@ -210,8 +210,11 @@ class PortraitCommentsLayout {
 /// 画一页竖屏歌曲评论（返回滚动上界，宿主据此夹 [scroll]）。
 ///
 /// [scroll]：当前滚动偏移（Qt `m_scroll`），页面只做"整体上移"，不自己夹取。
-/// [header]：是否画页头与 "COMMENT ARCHIVE / 评论档案" 副标题（宿主用
-/// `paintPortraitShell(header: ...)` 时应当传 false，由 shell 的 header 负责）。
+/// [header]：是否画页头（`c.header('歌曲评论', back: true, showSettings: false)`）。
+/// 宿主用 `paintPortraitShell(header: ...)` 自己画同一个页头时传 false，避免画两遍。
+/// [subtitle]："COMMENT ARCHIVE / 评论档案" 这行英文小标。Qt 的在
+/// ResponsiveHudLayout.cpp:187-188 是与 `c.header` 并列的两个独立调用，
+/// 所以它**不跟** [header] 走（默认恒画），宿主自画页头时也照样需要它。
 ///
 /// 与 Qt 的差异（全部因为宿主分层不同，不是语义差异）：
 /// - Qt 由 `ResponsiveHudLayout::arrange` 先 `c.beginContent(...)` 再调本页、
@@ -223,6 +226,7 @@ PortraitCommentsLayout paintPortraitCommentsPage(
   required PortraitCommentsModel model,
   double scroll = 0,
   bool header = true,
+  bool subtitle = true,
   String backAction = 'close-modal',
 }) {
   final double w = c.gridWidth;
@@ -234,6 +238,8 @@ PortraitCommentsLayout paintPortraitCommentsPage(
     // ResponsiveHudLayout.cpp:195：comments 页 `c.header(title, true, ..., !comments)`
     // ⇒ 画返回箭头、但不画右上设置键。
     c.header('歌曲评论', back: true, showSettings: false, backAction: backAction);
+  }
+  if (subtitle) {
     // ResponsiveHudLayout.cpp:187-188：标题区下沿的一行英文小标。
     c.text('COMMENT ARCHIVE / 评论档案', left, 126, size: 8, width: contentWidth, color: c.muted);
   }
