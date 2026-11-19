@@ -5,3 +5,7 @@
 Rhine-Music-Database 的 Git 提交铁律：用户禁止显式指定 Author 信息，必须沿用本机已有默认身份 Aibeto；工具作者选项留空或选 no 回退默认，不另行填写作者身份。
 §
 Rhine-Music-Database 的 `.agents/`（66G 控制面：227 个 git worktree、控制面报告/日志）已于 2026-11-19 删除；知识沉淀在 docs/flutter-migration/archive/2026-11-19-control-plane.md 与同目录 qt-flutter-state-2026-11-19.md，未提交补丁与未跟踪源码在 worktree-salvage-2026-11-19.tar.gz；`.gitignore` 不再忽略 `/.agents/`；252 个本地分支保留。feat/flutter 历史当天被 filter-branch 反复重写，同一 subject 的 commit hash 会变（65af97b→061300a→4beb444），定位提交要按 subject 不要按 hash。
+§
+Rhine-Music-Database feat/flutter 现状（2026-11-20）：tip 64f3a15，2026-11-19/20 追加 56 个提交全是构建/CI/性能工作（LTO、-Oz+ICF、esbuild 压缩、R8、按 ABI 分片、Clarity SDK、亮色主题默认），竖屏 UI 侧自 4beb444 后只落 6616fd3（列表显示不全/底部空白）与 2de9a95（3D 与列表 1:1 分割）、679a76a（资料库亮色）。正式构建入口自 11-19 改为 `npm run build:flutter:android`（scripts/build-flutter-android.cjs，产物 build/app/outputs/flutter-apk/app-arm64-v8a-<mode>.apk，versionCode=pubspec +N=79900）；旧「四 env + 裸 flutter build apk」命令与 `.agents/parity-20261109/builds/…` 路径已失效（.agents 已于 11-19 删除，截图/报告迁到 docs/flutter-migration/archive/）。
+§
+Rhine-Music-Database 竖屏迁移遗留（2026-11-20 核实）：①检索页仍缺 Qt compact 的 `02 SEARCH / 档案检索` 终端页头与时长/编号列（`lib/hud/portrait/portrait_pages_library.dart:157-265` 现用 `c.header('音乐检索', back: true)` + tab 行 + 「检索结果」行）；②插件系统的竖屏页（`lib/basic/basic_plugins_portrait.dart`）是唯一实现，横屏只有设置页里的入口行（`lib/basic/basic_settings_window.dart:52,75,226-228` 的 `pluginsEntry`），横屏插件页未做；③`docs/flutter-migration/acceptance/portrait.md` 仍是 11-10 的计划态（WAIT-CANDIDATE/WAIT-GOLDEN/DEVICE_BLOCKED，未执行、未取证），不代表当前实现状态。
