@@ -13,7 +13,7 @@
 #   verify_signing.sh apk <apk>                    只读读出 APK 指纹/包名/versionCode 并比对 Qt 证书
 #   verify_signing.sh keystore <keystore>          用 RHINE_KEYSTORE_PASSWORD 只读列出别名与证书指纹
 #   verify_signing.sh session <old.apk> <new.apk>  校验同签名且 versionCode 单调递增
-#   verify_signing.sh gradle <build.gradle.kts>    校验 release 不复用 debug 签名，且 fail-closed 断言齐全
+#   verify_signing.sh gradle <build.gradle.kts>    校验 release 不复用 debug 签名，且「缺材料 → 未签名」策略显式在场
 #
 # 退出码:
 #   0 PASS | 1 用法/IO 错误 | 2 证书未知或不匹配 | 3 缺少只读工具 | 4 两个 APK 签名不同
@@ -29,11 +29,11 @@ QT_APK_VERSIONCODE_REF=1
 # gradle 模式静态断言用的 POSIX ERE（只面向 android/app/build.gradle.kts 的 Kotlin DSL 文本）。
 # 负向：只认赋值形式，不认注释或字符串里的字面量，避免假阳性/假阴性。
 RE_DEBUG_SIGNING_CONFIG='signingConfig[[:space:]]*=[[:space:]]*signingConfigs\.(getByName\([[:space:]]*"debug"[[:space:]]*\)|debug)'
-# 正向：release 签名配置、指向 release 的赋值、fail-closed 守卫必须同时在场，缺一即非零退出。
+# 正向：release 签名配置、指向 release 的赋值、以及「缺材料时允许未签名」的显式策略必须同时在场。
 RE_CREATE_RELEASE='create\([[:space:]]*"release"[[:space:]]*\)'
 RE_GETBYNAME_RELEASE='getByName\([[:space:]]*"release"[[:space:]]*\)'
 RE_RELEASE_SIGNING_CONFIG='signingConfig[[:space:]]*=[[:space:]]*signingConfigs\.getByName\([[:space:]]*"release"[[:space:]]*\)'
-RE_GRADLE_FAILCLOSED='GradleException'
+RE_UNSIGNED_ALLOWED='release 未配置签名，将产出未签名 APK'
 
 log() { printf '%s\n' "$*"; }
 die() { code=$1; shift; log "ERROR[$code] $*"; exit "$code"; }
@@ -44,7 +44,7 @@ usage: verify_signing.sh <mode> ...
   apk <apk>                     APK SHA256 + 证书指纹 + 包名 + versionCode，并比对 Qt 证书
   keystore <keystore>           只读列出 keystore 别名与证书指纹（口令从 RHINE_KEYSTORE_PASSWORD 读）
   session <old.apk> <new.apk>   同签名 + versionCode 单调递增（覆盖安装前提）
-  gradle <build.gradle.kts>     release 不得复用 debug signingConfig；fail-closed 断言缺失即非零退出
+  gradle <build.gradle.kts>     release 不得复用 debug signingConfig；未签名策略缺失即非零退出
 只读脚本：不联网、不下载、不安装/卸载、不改数据、不签名、不构建。
 USAGE
     exit 1
@@ -274,16 +274,16 @@ mode_gradle() {
         die 7 "release 构建类型仍用 debug 签名：该 APK 无法覆盖 Qt 安装，发布门未满足"
     fi
 
-    # 正向断言：四项缺一即 fail-closed，绝不静默放行。
+    # 正向断言：四项缺一即视为静态判定力缺失。
     missing=
     printf '%s\n' "$stripped" | grep -qE "$RE_CREATE_RELEASE" || missing="$missing create-release-config"
     printf '%s\n' "$stripped" | grep -qE "$RE_GETBYNAME_RELEASE" || missing="$missing getByName-release"
-    printf '%s\n' "$stripped" | grep -qE "$RE_GRADLE_FAILCLOSED" || missing="$missing GradleException-guard"
     printf '%s\n' "$stripped" | grep -qE "$RE_RELEASE_SIGNING_CONFIG" || missing="$missing release-signingConfig-assignment"
+    printf '%s\n' "$stripped" | grep -qE "$RE_UNSIGNED_ALLOWED" || missing="$missing unsigned-release-policy"
     if [ -n "$missing" ]; then
-        log "RELEASE_SIGNING=FAIL_CLOSED_VERIFY_GAP"
-        log "缺少 fail-closed 静态断言:$missing"
-        die 8 "release 签名 fail-closed 断言不成立：静态判定力缺失即视为不放行"
+        log "RELEASE_SIGNING=SIGNING_POLICY_VERIFY_GAP"
+        log "缺少签名策略静态断言:$missing"
+        die 8 "release 签名策略断言不成立：静态判定力缺失即视为不放行"
     fi
 
     log "RELEASE_SIGNING=NOT_DEBUG_CONFIGURED（仍需核对实际证书指纹，见 apk/keystore 模式）"
