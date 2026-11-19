@@ -696,6 +696,8 @@ TEXDIAG 现在多几栏：`mt`（`musicTextures` 条数）、`adm` / `gated`（�
 
 三种形态都由同一个 generator expression 限制在 Release。IPO 的关闭是无条件的，任何形态下都不能让 `-flto=thin` 与 `-flto` 出现在同一条命令行上。桌面与 iOS 保持 CMake 默认的 thin。
 
+两条 Android 链路都显式钉住档位，防 cache 漂移（§5.5 的教训：CMake 不会用源码新默认覆盖已有 cache）：`scripts/build-android.cjs` 与 `scripts/build-flutter-android.cjs`（2026-11-20 起）都在 configure 时传 `-DRHINE_ANDROID_LTO=${RHINE_ANDROID_LTO || 'full'}` 与 `-DRHINE_ANDROID_NORMAL_RGBA8=ON`（后者与烘焙硬编码 `RHINE_BAKE_NORMAL_RGBA8=1` 强绑定）。
+
 ### 5.2 APK 体积构成
 
 168 MB、`a6724e5` 那一版的构成：
@@ -742,6 +744,13 @@ scripts/optimize-apk.py output/android-work/aligned.apk
 
 - 字体 28 MB：4 个字重各约 7 MB，是整个 `.rodata` 的最大头。可行方向是减少字重（light 与 demibold 交给 `QFont::setWeight` 匹配到 regular 与 bold），或按常用字子集化。两者都会改变界面观感，且中文歌名与歌手是动态文本，子集必须覆盖任意汉字。
 - Node bundle 20 MB（`worker.cjs` 14 MB 加 `xhr-sync-worker.js` 6.4 MB）：2026-11-19 起 `scripts/bundle-bridge.cjs` 与 `scripts/bundle-plugins.cjs`（xhr-sync-worker 的 build）的 esbuild 已开 `minifyWhitespace` 与 `minifySyntax`（不开 `minifyIdentifiers`，jsdom 依赖函数名与类名），预计砍掉四成。仍需真机验证桥接与歌词、登录链路。
+
+其余常见体积手段在 AGP 9.1.0 下核实过现状（2026-11-20，结论同时钉在 `android/gradle.properties` 注释里）：
+
+- **R8 已是 full mode**：AGP 8 起 full mode 是唯一行为且不可关，`android.enableR8*` flag 已废弃（写上只会有 unknown-property 警告）。full mode 的高危点排查过：app 侧 Kotlin 无 native 方法、无 Parcelable，enum 全部编译期静态引用；按名查找的类只有 `org.qtproject.qt.android.*`（`proguard-rules.pro` 已整体 keep）与 manifest 声明的 `MediaPlaybackService`（入口组件 R8 自动保留）。现有 release 包即 full mode 产物，真机已验证。
+- **AAPT2 optimize**：`enableResourceOptimizations` 与资源名混淆/路径缩短在 release + `minifyEnabled` 下默认开启；本包 `res/` + `resources.arsc` 压缩后合计 0.08 MB，没有再压的空间。
+- **AndResGuard 不接入**：项目停更（最后版本支持 AGP 7，对 AGP 9 兼容性存疑），且它只处理 `res/arsc`——收益上限就是上面那 0.08 MB，换一个停更插件不成立。
+- **主 so 体积档位**：`Qt/Android.cmake` 的 `RHINE_ANDROID_SIZE_OPT`（默认 `oz`）给 RhineCore/RhineMusicDatabase 的 Release 挂 `-Oz`，链接侧 `-Wl,--icf=safe`（safe 而非 all：Qt 大量按虚函数地址比较的分支经不起 all 的合并）。只影响 app 自己的 so，Qt kit 仍是预编译档位。
 
 ### 5.5 CI 与本机的一致性
 
