@@ -3,6 +3,8 @@
 #include "ProviderRegistry.h"
 #include <QDateTime>
 #include <QDebug>
+#include <QColor>
+#include <QImage>
 #include <QJsonDocument>
 #include <QUrl>
 #include "MusicDiscover.h"
@@ -10,6 +12,135 @@
 #include <QtGlobal>
 #include <algorithm>
 #include <cmath>
+
+namespace {
+QJsonArray colorArray(const QColor &color) {
+    return {color.redF(), color.greenF(), color.blueF(), color.alphaF()};
+}
+
+double relativeLuminance(const QColor &color) {
+    const auto channel = [](double value) {
+        return value <= .03928 ? value / 12.92 : std::pow((value + .055) / 1.055, 2.4);
+    };
+    return .2126 * channel(color.redF()) + .7152 * channel(color.greenF()) + .0722 * channel(color.blueF());
+}
+
+double contrastRatio(const QColor &left, const QColor &right) {
+    const double first = relativeLuminance(left);
+    const double second = relativeLuminance(right);
+    return (std::max(first, second) + .05) / (std::min(first, second) + .05);
+}
+
+QColor blendColor(const QColor &first, const QColor &second, double amount) {
+    const double t = std::clamp(amount, 0., 1.);
+    return QColor::fromRgbF(first.redF() * (1. - t) + second.redF() * t,
+                            first.greenF() * (1. - t) + second.greenF() * t,
+                            first.blueF() * (1. - t) + second.blueF() * t);
+}
+
+QColor readablePrimary(const QColor &background) {
+    const QColor dark(13, 20, 15);
+    const QColor light(244, 245, 235);
+    return contrastRatio(dark, background) >= contrastRatio(light, background) ? dark : light;
+}
+
+QJsonObject semanticColors(const QColor &background) {
+    const auto primary = readablePrimary(background);
+    auto muted = blendColor(primary, background, .28);
+    if (contrastRatio(muted, background) < 3.) {
+        muted = blendColor(primary, background, .12);
+    }
+    auto line = blendColor(primary, background, .38);
+    if (contrastRatio(line, background) < 3.) {
+        line = blendColor(primary, background, .22);
+        if (contrastRatio(line, background) < 3.) {
+            line = primary;
+        }
+    }
+    const QColor darkGold(154, 108, 22);
+    const QColor lightGold(238, 191, 83);
+    const auto amber =
+        contrastRatio(darkGold, background) >= contrastRatio(lightGold, background) ? darkGold : lightGold;
+    return {{"ink", colorArray(primary)},
+            {"muted", colorArray(muted)},
+            {"line", colorArray(line)},
+            {"amber", colorArray(amber)}};
+}
+
+QColor averageBand(const QImage &image, double start, double end) {
+    if (image.isNull()) {
+        return {};
+    }
+    auto source = image;
+    if (source.width() != source.height()) {
+        const int side = std::min(source.width(), source.height());
+        source = source.copy((source.width() - side) / 2, (source.height() - side) / 2, side, side);
+    }
+    source = source.scaled(32, 32, Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
+                 .convertToFormat(QImage::Format_RGB32);
+    const int first = std::clamp(int(std::floor(start * source.height())), 0, source.height() - 1);
+    const int last = std::clamp(int(std::ceil(end * source.height())), first + 1, source.height());
+    double red = 0;
+    double green = 0;
+    double blue = 0;
+    double total = 0;
+    for (int y = first; y < last; ++y) {
+        for (int x = 0; x < source.width(); ++x) {
+            const auto color = source.pixelColor(x, y);
+            const double weight = .15 + 1.85 * color.saturationF();
+            red += color.redF() * weight;
+            green += color.greenF() * weight;
+            blue += color.blueF() * weight;
+            total += weight;
+        }
+    }
+    if (total <= 0) {
+        return QColor(128, 128, 128);
+    }
+    return QColor::fromRgbF(red / total, green / total, blue / total);
+}
+
+QJsonObject adaptiveColorGroups(const QImage &image) {
+    if (image.isNull()) {
+        return {};
+    }
+    return {{"top", semanticColors(averageBand(image, 0., .28))},
+            {"lyrics", semanticColors(averageBand(image, .24, .74))},
+            {"controls", semanticColors(averageBand(image, .62, 1.))}};
+}
+
+QJsonArray blendColorArrays(const QJsonArray &first, const QJsonArray &second, double amount) {
+    if (first.size() < 3 || second.size() < 3) {
+        return amount < .5 ? first : second;
+    }
+    QJsonArray result;
+    for (int index = 0; index < 4; ++index) {
+        const double left = first.at(index).toDouble(1.);
+        const double right = second.at(index).toDouble(left);
+        result.append(left + (right - left) * amount);
+    }
+    return result;
+}
+
+QJsonObject blendColorGroups(const QJsonObject &first, const QJsonObject &second, double amount) {
+    if (first.isEmpty() || second.isEmpty()) {
+        return amount < .5 ? first : second;
+    }
+    QJsonObject result;
+    for (const auto &group : {"top", "lyrics", "controls"}) {
+        const auto left = first.value(QLatin1String(group)).toObject();
+        const auto right = second.value(QLatin1String(group)).toObject();
+        QJsonObject colors;
+        for (const auto &key : {"ink", "muted", "line", "amber"}) {
+            colors.insert(QLatin1String(key),
+                          blendColorArrays(left.value(QLatin1String(key)).toArray(),
+                                           right.value(QLatin1String(key)).toArray(), amount));
+        }
+        result.insert(QLatin1String(group), colors);
+    }
+    return result;
+}
+}
 
 QJsonArray NativeHud::ink() const {
     if (dark) {
@@ -51,6 +182,14 @@ void NativeHud::text(QString value, double x, double y, double size, QString wei
     }
     op({"text", value, x, y, size, weight, tracking, color.isEmpty() ? ink() : color});
 }
+void NativeHud::blurText(QString value, double x, double y, double size, QString weight, double tracking,
+                         QJsonArray color, double radius) {
+    if (m_contentSink) {
+        m_contentSink->text(value);
+        return;
+    }
+    op({"blur-text", value, x, y, size, weight, tracking, color.isEmpty() ? ink() : color, radius});
+}
 void NativeHud::aligned(QString value, double x, double y, double size, QString weight, double tracking) {
     if (m_contentSink) {
         m_contentSink->text(value);
@@ -86,7 +225,12 @@ QString NativeHud::fit(QString value, double size, double width, QString weight)
     }
     auto result = value;
     if (length != value.size()) {
-        result = value.left(std::max(qsizetype(0), length - 1)) + "…";
+        auto prefix = value.left(std::max(qsizetype(0), length - 1));
+        const auto boundary = prefix.lastIndexOf(' ');
+        if (boundary > 0) {
+            prefix = prefix.left(boundary).trimmed();
+        }
+        result = prefix + "…";
     }
     m_fitCache.insert(key, new QString(result));
     return result;
@@ -266,6 +410,7 @@ QJsonObject NativeHud::sourceState() const {
     const bool playbackActive = !player.current.isEmpty() && player.state["playing"].toBool() &&
                                 !player.state["buffering"].toBool() && !player.loading && !player.failed;
     return {{"lyricsMode", lyricsMode},
+            {"lyricsColors", m_lyricsColors},
             {"playbackActive", playbackActive},
             {"commentsMode", commentsMode},
             {"commentsAvailable", m_music->commentsAvailable()},
@@ -314,6 +459,43 @@ QJsonObject NativeHud::sourceState() const {
             {"status", m_music->status}};
 }
 
+/** 根据当前封面分区域生成前景语义色；封面切换时平滑过渡，避免控件闪烁。 */
+void NativeHud::updateLyricsColors(double time) {
+    QString coverKey = m_music->coverImage;
+    if (coverKey.isEmpty()) {
+        coverKey = m_music->player.coverImage;
+    }
+    if (!coverKey.isEmpty() && coverKey != m_lyricsColorCoverKey) {
+        const QImage image = m_host->image(coverKey);
+        const auto target = adaptiveColorGroups(image);
+        if (!target.isEmpty()) {
+            m_lyricsColorCoverKey = coverKey;
+            m_lyricsColorFrom = m_lyricsColors;
+            m_lyricsColorTarget = target;
+            if (m_lyricsColors.isEmpty() || reduced) {
+                m_lyricsColors = target;
+                m_lyricsColorStart = -1;
+            } else {
+                m_lyricsColorStart = time;
+            }
+        }
+    }
+    if (m_lyricsColorStart >= 0) {
+        if (reduced) {
+            m_lyricsColors = m_lyricsColorTarget;
+            m_lyricsColorStart = -1;
+            return;
+        }
+        const double progress = std::clamp((time - m_lyricsColorStart) / .34, 0., 1.);
+        const double eased = progress * progress * (3. - 2. * progress);
+        m_lyricsColors = blendColorGroups(m_lyricsColorFrom, m_lyricsColorTarget, eased);
+        if (progress >= 1.) {
+            m_lyricsColors = m_lyricsColorTarget;
+            m_lyricsColorStart = -1;
+        }
+    }
+}
+
 /** 每帧清空绘制与命中数组，再按原顺序生成；文字动画由原生曲线维护。 */
 void NativeHud::draw(QJsonObject next, double stageWidth, double time) {
     // 探针（RHINE_HUD_PROBE=1）：HUD 的舞台宽度必须等于"离屏层实际宽度 / (高度/1080)"，
@@ -338,6 +520,7 @@ void NativeHud::draw(QJsonObject next, double stageWidth, double time) {
     frame = next;
     width = stageWidth;
     lastTime = time;
+    updateLyricsColors(time);
     m_responsive.setMotion(time, reduced);
     // 真实墙钟记录进入详情的时刻。frame["detail"] 来自 m_detail，而 m_detail 挂在
     // m_animationTime 这个「每帧最多 +50ms、引擎休眠即停」的伪时钟上；一旦引擎在

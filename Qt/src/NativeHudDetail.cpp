@@ -69,9 +69,6 @@ void NativeHud::detail(double width, double opacity) {
         }
     }
     const auto x = width * 0.56;
-    if (lyricsMode && PlaybackQueue::identity(item) != PlaybackQueue::identity(music.player.current)) {
-        lyricsMode = false;
-    }
     const auto usable = width - x - 59;
     constexpr double gap = 12;
     const auto buttonWidth = (usable - gap * 2) / 3;
@@ -321,10 +318,10 @@ void NativeHud::lyricsPanel(double x, double width) {
             const auto translation = line["translation"].toString();
             QStringList translated;
             if (!translation.isEmpty()) {
-                translated = m_glyphs->wrap(translation, width - 24, 17);
+                translated = m_glyphs->wrap(translation, width - 24, 23, "bold");
             }
             m_lyricsLayout.append({height, wrapped, translated});
-            height += std::max(1, int(wrapped.size())) * 47 + translated.size() * 26 + 32;
+            height += std::max(1, int(wrapped.size())) * 47 + translated.size() * 30 + 32;
         }
         m_lyricsBrowse.reset();
         m_lyricsLastIndex = lyrics.index;
@@ -364,21 +361,31 @@ void NativeHud::lyricsPanel(double x, double width) {
         const auto line = lines.at(index).toObject();
         const auto &row = m_lyricsLayout.at(index);
         const auto y = focusY + row.top - m_lyricsScroll;
-        const double height = row.text.size() * 47 + row.translation.size() * 26;
+        const double height = row.text.size() * 47 + row.translation.size() * 30;
         if (y + height < top || y > bottom) {
             continue;
         }
         auto color = ink();
         const bool isActive = lyrics.index >= 0 && line["startMs"] == activeTime;
+        const bool future = lyrics.index >= 0 && index > lyrics.index;
         const auto edge = std::clamp(std::min((y + height - top) / 55, (bottom - y) / 55), 0.0, 1.0);
         color[3] = (isActive ? 1 : 0.28) * edge;
         for (int rowIndex = 0; rowIndex < row.text.size(); ++rowIndex) {
-            text(row.text.at(rowIndex), x, y + rowIndex * 47, size, "bold", 0, color);
+            if (future) {
+                blurText(row.text.at(rowIndex), x, y + rowIndex * 47, size, "bold", 0, color, 2.0);
+            } else {
+                text(row.text.at(rowIndex), x, y + rowIndex * 47, size, "bold", 0, color);
+            }
         }
         color[3] = color.at(3).toDouble() * 0.65;
         for (int rowIndex = 0; rowIndex < row.translation.size(); ++rowIndex) {
-            text(row.translation.at(rowIndex), x, y + row.text.size() * 47 + rowIndex * 26, 17, "regular", 0,
-                 color);
+            if (future) {
+                blurText(row.translation.at(rowIndex), x, y + row.text.size() * 47 + rowIndex * 30, 23,
+                         "bold", 0, color, 1.4);
+            } else {
+                text(row.translation.at(rowIndex), x, y + row.text.size() * 47 + rowIndex * 30, 23, "bold", 0,
+                     color);
+            }
         }
         if (player.state["seekable"].toBool()) {
             const auto hitY = std::max(top, y);

@@ -52,6 +52,12 @@ int main(int argc, char **argv) {
         glyphs.text(painter, text, 30, 20 + row * 65, 32, "regular", 0, Qt::black);
     }
     painter.end();
+    QImage blurred(500, 90, QImage::Format_ARGB32_Premultiplied);
+    blurred.fill(Qt::transparent);
+    QPainter blurredPainter(&blurred);
+    glyphs.blurredText(blurredPainter, QStringLiteral("未来歌词"), 20, 20, 32, "bold", 0,
+                       QColor(28, 43, 34, 180), 1.8);
+    blurredPainter.end();
     int koreanInk = 0;
     for (int y = 150; y < 210; ++y) {
         for (int x = 30; x < 800; ++x) {
@@ -59,12 +65,23 @@ int main(int argc, char **argv) {
         }
     }
     check(koreanInk > 100, "Korean lyrics paint visible pixels");
+    int blurredInk = 0;
+    for (int y = 0; y < blurred.height(); ++y) {
+        for (int x = 0; x < blurred.width(); ++x) {
+            blurredInk += blurred.pixelColor(x, y).alpha() > 0;
+        }
+    }
+    check(blurredInk > 100, "blurred lyrics paint visible pixels");
     check(std::abs(glyphs.width(korean, 32) -
                    glyphs.width(korean.normalized(QString::NormalizationForm_D), 32)) < 0.001,
           "composed and decomposed Hangul use consistent metrics");
     const QString clusters = QStringLiteral("e\u0301か\u3099𠮷가");
     const auto lines = glyphs.wrap(clusters, 25, 32);
     check(lines.join(QString()) == clusters, "wrapping preserves all Unicode content");
+    const auto whitespaceLines =
+        glyphs.wrap(QStringLiteral("A  B\tC\u00a0D\r\nE"), 1000, 32, "regular");
+    check(whitespaceLines == QStringList{QStringLiteral("A  B\tC\u00a0D"), QStringLiteral("E")},
+          "wrapping preserves whitespace and normalizes CRLF");
     for (const auto &line : lines) {
         check(!line.isEmpty() && !line.front().isLowSurrogate() && !line.back().isHighSurrogate() &&
                   !line.front().isMark(),

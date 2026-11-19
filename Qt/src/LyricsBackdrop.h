@@ -7,6 +7,7 @@
 #include <QQuickRhiItem>
 #include <QTimer>
 #include <QVector4D>
+#include <algorithm>
 #include <array>
 
 class Engine;
@@ -57,7 +58,18 @@ class LyricsBackdrop : public QQuickRhiItem {
         return m_coverRevision;
     }
     std::array<QVector4D, 4> palette() const {
-        return m_palette;
+        if (!m_paletteTransitionClock.isValid() ||
+            m_paletteTransitionClock.elapsed() >= PaletteTransitionMs) {
+            return m_palette;
+        }
+        const double progress =
+            std::clamp(m_paletteTransitionClock.elapsed() / double(PaletteTransitionMs), 0., 1.);
+        const double eased = progress * progress * (3. - 2. * progress);
+        std::array<QVector4D, 4> result{};
+        for (int index = 0; index < 4; ++index) {
+            result[index] = m_paletteFrom[index] * (1. - eased) + m_paletteTarget[index] * eased;
+        }
+        return result;
     }
     double phase() const {
         return m_phase;
@@ -80,10 +92,12 @@ class LyricsBackdrop : public QQuickRhiItem {
     void refreshCover();
     void refreshTimer();
     bool shouldAnimate() const;
+    bool shouldAdvancePalette() const;
     void tick();
     void requestWindowFrame();
     void updateColorBufferSize();
 
+    static constexpr int PaletteTransitionMs = 340;
     Engine *m_engine = nullptr;
     QPointer<QQuickWindow> m_observedWindow;
     QMetaObject::Connection m_windowActiveConnection;
@@ -91,6 +105,10 @@ class LyricsBackdrop : public QQuickRhiItem {
     QImage m_coverImage;
     qint64 m_coverRevision = 0;
     std::array<QVector4D, 4> m_palette{};
+    std::array<QVector4D, 4> m_paletteFrom{};
+    std::array<QVector4D, 4> m_paletteTarget{};
+    QElapsedTimer m_paletteTransitionClock;
+    bool m_paletteTransitionActive = false;
     QElapsedTimer m_phaseClock;
     double m_phase = 0;
     QTimer m_timer;

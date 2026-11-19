@@ -17,6 +17,18 @@ ResponsiveHudCanvas::ResponsiveHudCanvas(Glyphs &glyphs, double scale, double h,
 QJsonArray ResponsiveHudCanvas::paperColor(bool dark) {
     return dark ? QJsonArray{.075, .110, .094, 1} : QJsonArray{.933, .925, .894, 1};
 }
+void ResponsiveHudCanvas::setForeground(const QJsonObject &colors) {
+    const auto assign = [&](const char *key, QJsonArray &target) {
+        const auto value = colors.value(QLatin1String(key));
+        if (value.isArray() && value.toArray().size() >= 3) {
+            target = value.toArray();
+        }
+    };
+    assign("ink", ink);
+    assign("muted", muted);
+    assign("line", line);
+    assign("amber", amber);
+}
 QPair<int, int> ResponsiveHudCanvas::visibleRows(double top, double stride, int count) const {
     const int first = std::clamp(int(std::floor((m_clipTop - top) / stride)), 0, count);
     const int last = std::clamp(int(std::ceil((contentBottom - top) / stride)), first, count);
@@ -28,11 +40,29 @@ void ResponsiveHudCanvas::fill(QRectF r, QJsonArray c) {
     }
     commands.append(QJsonArray{"fill", c, r.x(), r.y(), r.width(), r.height()});
 }
+void ResponsiveHudCanvas::ellipseOutline(QRectF r, QJsonArray c, double width) {
+    commands.append(QJsonArray{"ellipse-stroke", c, r.x(), r.y(), r.width(), r.height(), width});
+}
 void ResponsiveHudCanvas::border(QRectF r, QJsonArray c) {
     fill({r.x(), r.y(), r.width(), .7}, c);
     fill({r.x(), r.bottom(), r.width(), .7}, c);
     fill({r.x(), r.y(), .7, r.height()}, c);
     fill({r.right(), r.y(), .7, r.height()}, c);
+}
+void ResponsiveHudCanvas::save() {
+    commands.append(QJsonArray{"save"});
+}
+void ResponsiveHudCanvas::restore() {
+    commands.append(QJsonArray{"restore"});
+}
+void ResponsiveHudCanvas::alpha(double opacity) {
+    commands.append(QJsonArray{"alpha", opacity});
+}
+void ResponsiveHudCanvas::translate(double x, double y) {
+    commands.append(QJsonArray{"translate", x, y});
+}
+void ResponsiveHudCanvas::clip(QRectF rect) {
+    commands.append(QJsonArray{"clip", rect.x(), rect.y(), rect.width(), rect.height()});
 }
 void ResponsiveHudCanvas::text(QString v, double x, double y, double size, double width, QString weight,
                                QJsonArray c) {
@@ -41,12 +71,39 @@ void ResponsiveHudCanvas::text(QString v, double x, double y, double size, doubl
     }
 
     if (m_glyphs.width(v, size, weight) > width) {
+        const auto original = v;
         while (!v.isEmpty() && m_glyphs.width(v + "…", size, weight) > width) {
             v.chop(1);
         }
-        v += "…";
+        if (v != original) {
+            const auto boundary = v.lastIndexOf(' ');
+            if (boundary > 0) {
+                v = v.left(boundary).trimmed();
+            }
+            v += "…";
+        }
     }
     commands.append(QJsonArray{"text", v, x, y, size, weight, 0, c.isEmpty() ? ink : c});
+}
+void ResponsiveHudCanvas::blurText(QString v, double x, double y, double size, double width, QString weight,
+                                   QJsonArray c, double radius) {
+    if ((m_content && (y + size < m_clipTop || y > contentBottom)) || v.isEmpty() || width <= 0) {
+        return;
+    }
+    if (m_glyphs.width(v, size, weight) > width) {
+        const auto original = v;
+        while (!v.isEmpty() && m_glyphs.width(v + "…", size, weight) > width) {
+            v.chop(1);
+        }
+        if (v != original) {
+            const auto boundary = v.lastIndexOf(' ');
+            if (boundary > 0) {
+                v = v.left(boundary).trimmed();
+            }
+            v += "…";
+        }
+    }
+    commands.append(QJsonArray{"blur-text", v, x, y, size, weight, 0, c.isEmpty() ? ink : c, radius});
 }
 void ResponsiveHudCanvas::rightText(QString v, double right, double y, double size, QString weight,
                                     QJsonArray color) {
@@ -98,6 +155,9 @@ void ResponsiveHudCanvas::icon(QString name, double x, double y, double size, QJ
         {"song-heart", "M 12 21 C 8 18 2 14 2 8 C 2 2 9 1 12 5 C 15 1 22 2 22 8 C 22 14 16 18 12 21 Z"},
         {"queue-note",
          "M 2 5 L 18 5 M 2 12 L 13 12 M 2 19 L 10 19 M 21 5 L 21 17 C 21 23 13 23 13 19 C 13 15 19 15 21 17"},
+        {"comment",
+         "M 4 3 H 20 Q 22 3 22 5 V 15 Q 22 17 20 17 H 10 L 5 21 V 17 H 4 Q 2 17 2 15 V 5 Q 2 3 4 3 "
+         "Z M 7 8 H 17 M 7 12 H 14"},
         {"lyrics-lines", "M 3 5 L 21 5 M 3 11 L 15 11 M 3 17 L 18 17"},
         {"queue", "M 3 5 L 21 5 M 3 10 L 21 10 M 3 15 L 12 15 M 17 14 L 22 18 L 17 22 Z"},
         {"volume", "M 3 9 L 7 9 L 12 4 L 12 20 L 7 15 L 3 15 Z M 15 8 C 17 10 17 14 15 16 M 18 5 C 22 9 22 "
@@ -125,6 +185,11 @@ void ResponsiveHudCanvas::icon(QString name, double x, double y, double size, QJ
 void ResponsiveHudCanvas::image(QString key, QRectF r) {
     if (!key.isEmpty() && (!m_content || (r.bottom() > m_clipTop && r.top() < contentBottom))) {
         commands.append(QJsonArray{"image", key, r.x(), r.y(), r.width(), r.height()});
+    }
+}
+void ResponsiveHudCanvas::roundedImage(QString key, QRectF r, double radius) {
+    if (!key.isEmpty() && (!m_content || (r.bottom() > m_clipTop && r.top() < contentBottom))) {
+        commands.append(QJsonArray{"rounded-image", key, r.x(), r.y(), r.width(), r.height(), radius});
     }
 }
 void ResponsiveHudCanvas::hit(QRectF r, QString action, QString label) {

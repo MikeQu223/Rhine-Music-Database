@@ -29,6 +29,8 @@ class Glyphs : public QObject {
     Q_INVOKABLE double artWidth(QString key, double size, double tracking = 0, int count = -1);
     void text(QPainter &ctx, QString text, double x, double y, double size, QString weight, double tracking,
               QColor color);
+    void blurredText(QPainter &ctx, QString text, double x, double y, double size, QString weight,
+                     double tracking, QColor color, double radius);
     void art(QPainter &ctx, QString key, double x, double y, double size, int count, double tracking);
     QPainterPath path(const QString &svg);
     void commands(QPainter &ctx, const QJsonArray &commands, std::function<QImage(QString)> image);
@@ -40,6 +42,7 @@ class Glyphs : public QObject {
     quint64 rasterCacheHits();
 #endif
     QImage label(const QJsonObject &item);
+    void clearBlurCache();
 
   private:
     // 字体只读映射必须晚于 QRawFont 析构，避免后端仍引用输入字节。
@@ -52,6 +55,11 @@ class Glyphs : public QObject {
     QCache<QString, QPainterPath> paths{1024};
     QCache<QString, double> widths{1024};
     QCache<QString, QStringList> wrapped{128 * 1024};
+    struct BlurredText {
+        QImage image;
+        QRectF localRect;
+    };
+    QCache<QString, BlurredText> blurredTexts{8 * 1024 * 1024};
     QList<int> applicationFonts;
     QHash<QString, QString> layoutFamilies;
     QCache<QString, Glyph> shapedText{32 * 1024};

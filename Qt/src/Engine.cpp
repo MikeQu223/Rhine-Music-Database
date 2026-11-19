@@ -685,6 +685,7 @@ void Engine::trimMemory() {
     // 否则回到前台后这些唱片再也不会去补图。
     m_coverRequests.clear();
     scene.trimMemory();
+    m_glyphs.clearBlurCache();
 #ifdef Q_OS_DARWIN
     m_glyphs.clearRasterCache();
 #endif

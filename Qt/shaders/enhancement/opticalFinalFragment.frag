@@ -84,7 +84,7 @@ vec4 effect() {
         float fade = smoothstep(backend.y - transition, backend.y, v_uv.y);
         if (fade > 0.0) {
             // 采样半径随渐变带增长，上缘不会出现一条硬边的模糊起止线。
-            vec2 radius = vec2(20.0 * fade * g.viewport.x / 393.0) / vec2(textureSize(color, 0));
+            vec2 radius = vec2(28.0 * fade * g.viewport.x / 393.0) / vec2(textureSize(color, 0));
             vec3 frosted = vec3(0.0);
             float total = 0.0;
             for (int y = -2; y <= 2; ++y) {
@@ -101,7 +101,7 @@ vec4 effect() {
             float body = smoothstep(backend.y - transition * .35, backend.y + transition, v_uv.y);
             vec3 tint = mix(vec3(.933, .925, .894), vec3(.075, .110, .094), theme);
             float grain = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) - .5;
-            vec3 acrylic = mix(frosted, tint, mix(.38, .8, body)) + grain * .004;
+            vec3 acrylic = mix(frosted, tint, mix(.46, .82, body)) + grain * .002;
             rgb = mix(rgb, acrylic, fade);
         }
     }

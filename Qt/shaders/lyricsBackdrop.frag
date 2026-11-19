@@ -73,7 +73,7 @@ void main() {
             frosted += colorField(clamp(v_uv - vec2(sampleStep.x, 0.0), 0.0, 1.0)) * .15;
             frosted += colorField(clamp(v_uv + vec2(0.0, sampleStep.y), 0.0, 1.0)) * .15;
             frosted += colorField(clamp(v_uv - vec2(0.0, sampleStep.y), 0.0, 1.0)) * .15;
-            color = mix(color, frosted, frost * .78);
+            color = mix(color, frosted, frost * .86);
         }
     }
 
@@ -81,7 +81,7 @@ void main() {
     color *= mix(.90, 1.03, vignette);
     float amount = viewport.w > .5 ? paper.w : 0.0;
     vec3 result = mix(paperColor, color, amount);
-    result = mix(result, paperColor, frost * (parameters.x > .5 ? .035 : .075));
+    result = mix(result, paperColor, frost * (parameters.x > .5 ? .055 : .11));
 
     // 极轻的静态抖动只用于打破大面积色带，不参与流动形状。
     float dither = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) - .5;

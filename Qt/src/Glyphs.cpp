@@ -47,6 +47,58 @@ static QColor color(const QJsonValue &value) {
     };
     return QColor::fromRgbF(channel(0), channel(1), channel(2), a.size() > 3 ? a[3].toDouble() : 1);
 }
+
+/** 对带 alpha 的像素做三次盒式模糊，得到接近高斯的平滑边缘。 */
+static void blurPremultiplied(QImage &image, int radius) {
+    if (image.isNull() || image.width() < 2 || image.height() < 2) {
+        return;
+    }
+    constexpr int PassCount = 3;
+    QImage buffer(image.size(), image.format());
+    const auto blurLine = [&](const QImage &source, QImage &target, bool horizontal) {
+        const int count = horizontal ? source.width() : source.height();
+        const int lineCount = horizontal ? source.height() : source.width();
+        for (int line = 0; line < lineCount; ++line) {
+            const auto *sourceLine = horizontal ? source.constScanLine(line) : source.scanLine(0) + line * 4;
+            auto *targetLine = horizontal ? target.scanLine(line) : target.scanLine(0) + line * 4;
+            const int sourceStride = horizontal ? 4 : source.bytesPerLine();
+            const int targetStride = horizontal ? 4 : target.bytesPerLine();
+            int sum[4]{};
+            for (int offset = -radius; offset <= radius; ++offset) {
+                const int index = std::clamp(offset, 0, count - 1);
+                const auto *pixel = sourceLine + index * sourceStride;
+                for (int channel = 0; channel < 4; ++channel) {
+                    sum[channel] += pixel[channel];
+                }
+            }
+            const int window = radius * 2 + 1;
+            for (int index = 0; index < count; ++index) {
+                auto *pixel = targetLine + index * targetStride;
+                for (int channel = 0; channel < 4; ++channel) {
+                    pixel[channel] = uchar(sum[channel] / window);
+                }
+                const int remove = index - radius;
+                const int add = index + radius + 1;
+                if (remove >= 0) {
+                    const auto *oldPixel = sourceLine + remove * sourceStride;
+                    for (int channel = 0; channel < 4; ++channel) {
+                        sum[channel] -= oldPixel[channel];
+                    }
+                }
+                if (add < count) {
+                    const auto *newPixel = sourceLine + add * sourceStride;
+                    for (int channel = 0; channel < 4; ++channel) {
+                        sum[channel] += newPixel[channel];
+                    }
+                }
+            }
+        }
+    };
+    for (int pass = 0; pass < PassCount; ++pass) {
+        blurLine(image, buffer, true);
+        blurLine(buffer, image, false);
+    }
+}
 /** 直接映射字体源，避免每次重建字体时把四份大型字体文件复制到堆中。 */
 QRawFont Glyphs::loadFont(const QString &filename) {
     auto file = std::make_unique<QFile>(filename);
@@ -356,46 +408,48 @@ QStringList Glyphs::wrap(QString value, double limit, double size, QString weigh
     if (const auto cached = wrapped.object(key)) {
         return *cached;
     }
-    QStringList lines;
-    QString line;
-    if (needsLayout(value, weight)) {
-        QTextBoundaryFinder finder(QTextBoundaryFinder::Grapheme, value);
+    const auto clusters = [](const QString &text) {
+        QStringList result;
+        QTextBoundaryFinder finder(QTextBoundaryFinder::Grapheme, text);
         int start = 0;
         for (int end = finder.toNextBoundary(); end >= 0; end = finder.toNextBoundary()) {
-            const auto cluster = value.mid(start, end - start);
+            result.append(text.mid(start, end - start));
             start = end;
-            if (cluster.contains('\n')) {
-                lines.append(line);
-                line.clear();
-            } else if (!line.isEmpty() && width(line + cluster, size, weight) > limit) {
-                lines.append(line);
-                line = cluster;
-            } else {
-                line += cluster;
+        }
+        return result;
+    };
+    const auto isBreakableSpace = [](const QString &cluster) {
+        return cluster.size() == 1 && cluster.front() != QChar(0x00a0) && cluster.front().isSpace();
+    };
+
+    // 换行只规范 CRLF，不动段落内部的空白字符，避免破坏评论、标题和歌词原文。
+    QString text = value;
+    text.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
+    text.replace(QChar('\r'), QChar('\n'));
+    QStringList lines;
+    const auto paragraphs = text.split('\n');
+    for (const auto &paragraph : paragraphs) {
+        QString line;
+        qsizetype lastBreak = -1;
+        for (const auto &cluster : clusters(paragraph)) {
+            if (!line.isEmpty() && width(line + cluster, size, weight) > limit) {
+                // 普通空白之后优先断词，否则退回到按字素断开超长单词。
+                if (lastBreak > 0 && lastBreak < line.size()) {
+                    lines.append(line.left(lastBreak));
+                    line = line.mid(lastBreak);
+                } else {
+                    lines.append(line);
+                    line.clear();
+                }
+                lastBreak = -1;
+            }
+            line += cluster;
+            if (isBreakableSpace(cluster)) {
+                lastBreak = line.size();
             }
         }
         lines.append(line);
-        wrapped.insert(key, new QStringList(lines), qMax(1, value.size()));
-        return lines;
     }
-    double length = 0;
-    for (auto ch : value) {
-        if (ch == '\n') {
-            lines << line;
-            line.clear();
-            length = 0;
-            continue;
-        }
-        double advance = width(QString(ch), size, weight);
-        if (!line.isEmpty() && length + advance > limit) {
-            lines << line;
-            line.clear();
-            length = 0;
-        }
-        line += ch;
-        length += advance;
-    }
-    lines << line;
     // 有界缓存包含完整布局参数；窗口缩放和内容变化使用不同 key。
     wrapped.insert(key, new QStringList(lines), qMax(1, value.size()));
     return lines;
@@ -562,6 +616,84 @@ void Glyphs::text(QPainter &c, QString value, double x, double y, double size, Q
         x += g.advance * size + tracking;
     }
 }
+
+/** 把文字先栅格化再做平滑模糊，供歌词未来行使用；缓存按文字和颜色分离。 */
+void Glyphs::blurredText(QPainter &c, QString value, double x, double y, double size, QString weight,
+                         double tracking, QColor ink, double radius) {
+    QMutexLocker lock(&mutex);
+    if (value.isEmpty() || size <= 0 || ink.alphaF() <= .001) {
+        return;
+    }
+    const double blurRadius = std::max(.25, radius);
+    const QTransform transform = c.deviceTransform();
+    const double scaleX = std::hypot(transform.m11(), transform.m12());
+    const double scaleY = std::hypot(transform.m21(), transform.m22());
+    const double requestedScale = std::max(scaleX, scaleY);
+    // 按四分之一像素量化，窗口缩放过程中不会为每一帧生成一份新缓存。
+    const double sourceScale = std::isfinite(requestedScale) && requestedScale > 0
+                                   ? std::clamp(std::round(requestedScale * 4.) / 4., 1., 3.)
+                                   : 2.;
+    const auto colorKey = QString::number(qRgb(ink.red(), ink.green(), ink.blue()), 16);
+    const auto key = QStringLiteral("blur-v2") + QChar(0x1f) + colorKey + QChar(0x1f) +
+                     QString::number(size, 'g', 17) + QChar(0x1f) + weight + QChar(0x1f) +
+                     QString::number(tracking, 'g', 17) + QChar(0x1f) + QString::number(blurRadius, 'g', 17) +
+                     QChar(0x1f) + QString::number(sourceScale, 'g', 17) + QChar(0x1f) + value;
+    if (const auto *cached = blurredTexts.object(key)) {
+        c.save();
+        c.setRenderHint(QPainter::SmoothPixmapTransform, true);
+        c.setOpacity(c.opacity() * ink.alphaF());
+        c.drawImage(QRectF(x + cached->localRect.x(), y + cached->localRect.y(), cached->localRect.width(),
+                           cached->localRect.height()),
+                    cached->image);
+        c.restore();
+        return;
+    }
+
+    const auto bounds = this->bounds(value, size, weight);
+    const int blurPixels = std::clamp(int(std::lround(blurRadius * sourceScale * .75)), 1, 8);
+    const double padding = (3. * blurPixels + 2.) / sourceScale;
+    const QRectF local(bounds["x"].toDouble() - padding, bounds["y"].toDouble() - padding,
+                       bounds["width"].toDouble() + padding * 2, bounds["height"].toDouble() + padding * 2);
+    if (local.width() <= 0 || local.height() <= 0) {
+        return;
+    }
+
+    QImage image(qMax(1, int(std::ceil(local.width() * sourceScale))),
+                 qMax(1, int(std::ceil(local.height() * sourceScale))), QImage::Format_ARGB32_Premultiplied);
+    image.fill(Qt::transparent);
+    QPainter painter(&image);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.scale(sourceScale, sourceScale);
+    painter.translate(-local.left(), -local.top());
+    auto tint = ink;
+    tint.setAlpha(255);
+    text(painter, value, 0, 0, size, weight, tracking, tint);
+    painter.end();
+    blurPremultiplied(image, blurPixels);
+
+    // 局部矩形随缓存图保存，避免把字形边界或屏幕位置误当成绘制原点。
+    auto rendered = std::make_unique<BlurredText>();
+    rendered->image = std::move(image);
+    rendered->localRect = local;
+    const auto draw = [&](const BlurredText &entry) {
+        c.save();
+        c.setRenderHint(QPainter::SmoothPixmapTransform, true);
+        c.setOpacity(c.opacity() * ink.alphaF());
+        c.drawImage(QRectF(x + entry.localRect.x(), y + entry.localRect.y(), entry.localRect.width(),
+                           entry.localRect.height()),
+                    entry.image);
+        c.restore();
+    };
+    const int cost = qMax(1, int(rendered->image.sizeInBytes() + key.size()));
+    if (cost < blurredTexts.maxCost()) {
+        blurredTexts.insert(key, rendered.release(), cost);
+        if (const auto *cached = blurredTexts.object(key)) {
+            draw(*cached);
+            return;
+        }
+    }
+    draw(*rendered);
+}
 void Glyphs::art(QPainter &c, QString key, double x, double y, double size, int count, double tracking) {
     QMutexLocker lock(&mutex);
 #if defined(Q_OS_ANDROID)
@@ -699,6 +831,20 @@ void Glyphs::renderCommands(QPainter &c, const QJsonArray &commands, std::functi
             c.setPen(Qt::NoPen);
             c.setBrush(color(a[1]));
             c.drawEllipse(QRectF(n(2), n(3), n(4), n(5)));
+        } else if (op == "ellipse-stroke") {
+#ifdef Q_OS_ANDROID
+            if (outside(QRectF(n(2), n(3), n(4), n(5)))) {
+                ++culled;
+                continue;
+            }
+#endif
+            QPen pen(color(a[1]));
+            pen.setWidthF(std::max(.5, n(6)));
+            const auto rect = QRectF(n(2), n(3), n(4), n(5)).adjusted(pen.widthF() * .5, pen.widthF() * .5,
+                                                                       -pen.widthF() * .5, -pen.widthF() * .5);
+            c.setPen(pen);
+            c.setBrush(Qt::NoBrush);
+            c.drawEllipse(rect);
         } else if (op == "text") {
 #ifdef Q_OS_ANDROID
             // 越界参数交给原路径处理：这里只判相交，不改语义。
@@ -714,6 +860,17 @@ void Glyphs::renderCommands(QPainter &c, const QJsonArray &commands, std::functi
             if (!rasterized) {
                 text(c, a[1].toString(), n(2), n(3), n(4), a[5].toString(), n(6), color(a[7]));
             }
+        } else if (op == "blur-text") {
+            const double radius = a.size() > 8 ? n(8) : 1.6;
+#ifdef Q_OS_ANDROID
+            const double cullMargin = radius * 3. + 2.;
+            if (n(4) > 0 && outside(textBox(int(a[1].toString().size()), n(2), n(3), n(4), n(6))
+                                        .adjusted(-cullMargin, -cullMargin, cullMargin, cullMargin))) {
+                ++culled;
+                continue;
+            }
+#endif
+            blurredText(c, a[1].toString(), n(2), n(3), n(4), a[5].toString(), n(6), color(a[7]), radius);
         } else if (op == "art") {
             const int letters = a[5].toInt(-1);
 #ifdef Q_OS_ANDROID
@@ -822,6 +979,32 @@ void Glyphs::renderCommands(QPainter &c, const QJsonArray &commands, std::functi
             if (!img.isNull()) {
                 c.drawImage(QRectF(n(2), n(3), n(4), n(5)), img);
             }
+        } else if (op == "rounded-image") {
+            const QRectF rect(n(2), n(3), n(4), n(5));
+            const double radius = n(6);
+#ifdef Q_OS_ANDROID
+            if (outside(rect.adjusted(-8, -8, 8, 8))) {
+                ++culled;
+                continue;
+            }
+#endif
+            const auto img = image(a[1].toString());
+            if (img.isNull()) {
+                continue;
+            }
+            QPainterPath shape;
+            shape.addRoundedRect(rect, radius, radius);
+            c.save();
+            c.setPen(Qt::NoPen);
+            auto shadow = rect.translated(0, 2);
+            QPainterPath shadowPath;
+            shadowPath.addRoundedRect(shadow, radius, radius);
+            c.fillPath(shadowPath, QColor(0, 0, 0, 28));
+            c.restore();
+            c.save();
+            c.setClipPath(shape);
+            c.drawImage(rect, img);
+            c.restore();
         }
         if (opTiming) {
             opMs[op] += double(opClock.nsecsElapsed()) / 1e6;
@@ -1105,3 +1288,8 @@ void Glyphs::commands(QPainter &c, const QJsonArray &commands, std::function<QIm
     renderCommands(c, commands, std::move(image), cacheText);
 }
 #endif
+
+void Glyphs::clearBlurCache() {
+    QMutexLocker lock(&mutex);
+    blurredTexts.clear();
+}

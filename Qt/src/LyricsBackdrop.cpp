@@ -366,6 +366,10 @@ void LyricsBackdrop::setReducedMotion(bool value) {
         return;
     }
     m_reducedMotion = value;
+    if (m_reducedMotion) {
+        m_paletteTransitionActive = false;
+        m_paletteTransitionClock.invalidate();
+    }
     refreshTimer();
     update();
     requestWindowFrame();
@@ -438,14 +442,28 @@ void LyricsBackdrop::refreshCover() {
     }
     m_coverImage = image;
     m_coverRevision = revision;
-    m_palette = extractPalette(image);
+    const auto nextPalette = extractPalette(image);
+    if (m_paletteTarget == std::array<QVector4D, 4>{}) {
+        m_palette = nextPalette;
+        m_paletteFrom = nextPalette;
+        m_paletteTarget = nextPalette;
+        m_paletteTransitionActive = false;
+        m_paletteTransitionClock.invalidate();
+    } else {
+        m_paletteFrom = palette();
+        m_paletteTarget = nextPalette;
+        m_palette = nextPalette;
+        m_paletteTransitionClock.restart();
+        m_paletteTransitionActive = !m_reducedMotion;
+    }
     update();
+    refreshTimer();
     requestWindowFrame();
 }
 
-/** 只有目标页可见、有效播放且应用可见时，低频定时器才推进背景相位。 */
+/** 目标页可见时推进背景相位，并在暂停状态下也完成有限的调色板过渡。 */
 void LyricsBackdrop::refreshTimer() {
-    if (!shouldAnimate()) {
+    if (!shouldAnimate() && !shouldAdvancePalette()) {
         m_timer.stop();
         return;
     }
@@ -465,18 +483,34 @@ bool LyricsBackdrop::shouldAnimate() const {
     return RhineRender::lyricsBackdropShouldAnimate(true, m_playbackActive, m_reducedMotion, engineVisible);
 }
 
-/** 15Hz 推进一次相位；背景静止或掉出可视状态后不再请求新帧。 */
+bool LyricsBackdrop::shouldAdvancePalette() const {
+    if (!m_engine || !m_paletteTransitionActive || !isVisible()) {
+        return false;
+    }
+    return m_engine->performance().value(QStringLiteral("visible"), true).toBool();
+}
+
+/** 15Hz 推进背景相位或调色板过渡；两者都静止后不再请求新帧。 */
 void LyricsBackdrop::tick() {
-    if (!shouldAnimate()) {
+    const bool animate = shouldAnimate();
+    const bool paletteTransition = shouldAdvancePalette();
+    if (!animate && !paletteTransition) {
         m_timer.stop();
         return;
     }
-    const qint64 elapsed = m_phaseClock.isValid() ? m_phaseClock.restart() : 0;
-    // 页面短暂停顿后不补跳；背景运动本身足够慢，一次最多推进 120ms。
-    m_phase += std::clamp(double(elapsed) / 1000.0, 0.0, .12);
+    if (animate) {
+        const qint64 elapsed = m_phaseClock.isValid() ? m_phaseClock.restart() : 0;
+        // 页面短暂停顿后不补跳；背景运动本身足够慢，一次最多推进 120ms。
+        m_phase += std::clamp(double(elapsed) / 1000.0, 0.0, .12);
+    }
     update();
     requestWindowFrame();
-    m_timer.start(RhineRender::LyricsBackdropIntervalMs);
+    if (paletteTransition && m_paletteTransitionClock.elapsed() >= PaletteTransitionMs) {
+        m_paletteTransitionActive = false;
+    }
+    if (shouldAnimate() || shouldAdvancePalette()) {
+        m_timer.start(RhineRender::LyricsBackdropIntervalMs);
+    }
 }
 
 void LyricsBackdrop::requestWindowFrame() {

@@ -8,6 +8,7 @@ class ResponsiveHudCanvas {
   public:
     ResponsiveHudCanvas(Glyphs &glyphs, double unit, double height, bool dark);
     static QJsonArray paperColor(bool dark);
+    void setForeground(const QJsonObject &colors);
     QJsonArray commands;
     QJsonArray hits;
     QJsonObject fields;
@@ -23,9 +24,17 @@ class ResponsiveHudCanvas {
     QJsonArray amber;
     QPair<int, int> visibleRows(double top, double stride, int count) const;
     void fill(QRectF rect, QJsonArray color);
+    void ellipseOutline(QRectF rect, QJsonArray color, double width = 1.);
     void border(QRectF rect, QJsonArray color);
+    void save();
+    void restore();
+    void alpha(double opacity);
+    void translate(double x, double y);
+    void clip(QRectF rect);
     void text(QString value, double x, double y, double size = 14, double width = 353,
               QString weight = "regular", QJsonArray color = {});
+    void blurText(QString value, double x, double y, double size = 14, double width = 353,
+                  QString weight = "regular", QJsonArray color = {}, double radius = 1.6);
     void rightText(QString value, double right, double y, double size, QString weight, QJsonArray color);
     QStringList wrap(QString value, double width, double size, QString weight = "regular");
     double measure(QString value, double size, QString weight = "regular");
@@ -35,6 +44,7 @@ class ResponsiveHudCanvas {
                   QJsonArray color = {});
     void icon(QString name, double x, double y, double size = 20, QJsonArray color = {});
     void image(QString key, QRectF rect);
+    void roundedImage(QString key, QRectF rect, double radius);
     void hit(QRectF rect, QString action, QString label);
     void field(QString name, QRectF rect);
     void button(QRectF rect, QString title, QString action, bool primary = false, bool selected = false);

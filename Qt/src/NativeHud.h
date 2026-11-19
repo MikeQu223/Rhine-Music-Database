@@ -291,6 +291,11 @@ class NativeHud : public QObject {
     void modalBody(double x, double y, double usable);
     bool m_modalControls = false;
     QJsonObject m_lyricsDocument;
+    QJsonObject m_lyricsColors;
+    QJsonObject m_lyricsColorFrom;
+    QJsonObject m_lyricsColorTarget;
+    QString m_lyricsColorCoverKey;
+    double m_lyricsColorStart = -1;
     double m_lyricsWidth = 0;
     QVector<LyricRow> m_lyricsLayout;
     double m_lyricsScroll = 0;
@@ -301,6 +306,9 @@ class NativeHud : public QObject {
     std::optional<UiMotion::ReelCurve> m_lyricsCurve;
     int m_lyricsPlainOffset = 0;
     void finishPage();
+    void updateLyricsColors(double time);
+    void revealLyricsControls();
+    void suspendLyricsControls();
     void musicAction(const QStringList &parts, const QString &action);
     void playerAction(const QStringList &parts);
     QJsonArray ink() const;
@@ -314,6 +322,8 @@ class NativeHud : public QObject {
     void fill(double x, double y, double width, double height, QJsonArray color = {});
     void text(QString value, double x, double y, double size, QString weight = "regular", double tracking = 0,
               QJsonArray color = {});
+    void blurText(QString value, double x, double y, double size, QString weight = "regular",
+                  double tracking = 0, QJsonArray color = {}, double radius = 1.6);
     void aligned(QString value, double x, double y, double size, QString weight = "regular",
                  double tracking = 0);
     QString fit(QString value, double size, double width, QString weight = "regular");
