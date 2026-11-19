@@ -1,13 +1,5 @@
 name: Flutter Build
 
-# 只出 Android arm64-v8a 的 Flutter APK。
-#
-# 出包链路与本地完全共用 scripts/build-flutter-android.cjs（npm run build:flutter:android）：
-#   1) 五个 Qt 子模块 → Qt for Android kit（重活，走缓存，仅 CI 环境准备）；
-#   2) 脚本内部：准备 nodejs-mobile/资源 → RHINE_FLUTTER_HOST_ONLY 编 native →
-#      androiddeployqt --aux-mode 落 staging → flutter build apk。
-# kit 命中缓存后只跑第 2 步；冷启动要从源码交叉编译 Qt（约 1.5-2 小时）。
-
 on:
   push:
   pull_request:
