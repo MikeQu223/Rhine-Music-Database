@@ -28,9 +28,9 @@ environment:
 # the latest version available on pub.dev. To see which dependencies have newer
 # versions available, run `flutter pub outdated`.
 dependencies:
+  clarity_flutter: ^1.10.1
   flutter:
     sdk: flutter
-
   shared_preferences: ^2.5.6
 
 dev_dependencies:

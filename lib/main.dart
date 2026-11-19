@@ -12,20 +12,17 @@
 // rootContext 属性后进业务界面。main() 体内没有任何 Consent 分支；与遥测有关的动作只有
 // :1078-1084 的 `if (!offline && RHINE_RELEASE_BUILD)` 分支里 8 秒后 updater.check()
 // （:1079 QTimer::singleShot，还要 auto-update 偏好不是 off）。Bugly 的记录读取发生在
-// ConsentStore 的 JNI 侧（见 Qt/src/main.cpp:3 的说明）；Clarity 则在所有放行路径上启动
-// （Qt/android/src/rhine/music/database/ConsentStore.java:20-21）——两者都不在 Dart 组合根里。
+// ConsentStore 的 JNI 侧（见 Qt/src/main.cpp:3 的说明）；Qt 版的 Clarity 在放行路径上由
+// ConsentStore.java:20-21 启动。Flutter 版没有这层宿主逻辑，Clarity 直接在下面的 Dart 入口启动。
 //
-// Flutter 基本版没有捆绑 Clarity / Bugly（pubspec.yaml 的 dependencies 只有 flutter 与
-// shared_preferences 这两个官方包，android/app/build.gradle.kts 的 dependencies 只有
-// testImplementation junit），也就没有要征求同意的 SDK。所以入口不挂 ConsentGate，只做一件事：把 root 交给
-// BasicApp。
+// Flutter 基本版捆绑 clarity_flutter（pubspec.yaml），入口用 ClarityWidget 包一层 BasicApp；
+// Bugly 仍未接入。入口不挂 ConsentGate，只负责把 root 交给 BasicApp。
 //
 // 挂的是 BasicApp（RUNTIME-STARTUP-96 的交付，lib/basic/basic_app.dart）：它自带
 // MaterialApp（lib/basic/basic_app.dart:226 build → MaterialApp(theme: dark, home: _home())），
 // 入口再套一层只会把主题与 home 拆成两份，所以这里不建第二个。构造参数全部留空：
 // 生产入口必须走真实端口（MethodChannelBasicAudio 背后的 MediaPlayer，platform_playback.dart），
-// 不注入任何测试替身；gate 也不传 —— BasicApp 不读它，而本入口没有要征求同意的 SDK，
-// 不会弹出、也没有可弹的无授权遥测窗。
+// 不注入任何测试替身；gate 也不传 —— BasicApp 不读它，入口也不挂 ConsentGate。
 //
 // 原先 flutter create 的计数器 demo（MyApp / MyHomePage / _counter / FloatingActionButton）
 // 已整份删除：它是假首屏，而且会让「入口挂的是哪个 App」在测试与审阅时产生歧义。
@@ -53,9 +50,18 @@ import 'package:flutter/services.dart';
 
 import 'basic/basic_app.dart';
 
+import 'package:clarity_flutter/clarity_flutter.dart';
+
 void main() {
-  // runApp 自己会 ensureInitialized，但下面的 SystemChrome 调用需要 ServicesBinding。
+  final config = ClarityConfig(
+    projectId: "z8vbz4b078",
+    logLevel: LogLevel.Info, // Note: Use "LogLevel.Verbose" value while testing to debug initialization issues.
+  );
+
   WidgetsFlutterBinding.ensureInitialized();
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-  runApp(const BasicApp());
+  runApp(ClarityWidget(
+    app: const BasicApp(),
+    clarityConfig: config,
+  ));
 }

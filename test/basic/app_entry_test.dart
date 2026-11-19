@@ -12,13 +12,14 @@
 //   Qt/src/main.cpp:1078-1084    唯一的遥测动作：非 offline 的 release 构建才在 8s 后
 //                                updater.check()
 //   Qt/src/main.cpp:3            Bugly 由 ConsentStore 的 JNI 侧接管，不在 Dart 组合根
-//   lib/basic/basic_app.dart:226 BasicApp 自带 MaterialApp，入口只负责 runApp
+//   lib/basic/basic_app.dart:226 BasicApp 自带 MaterialApp，入口用 ClarityWidget 包住它
 //   lib/app/consent_gate.dart    ConsentGate 要宿主注入端口；入口不构造它就没有弹窗可弹
 //
 // 这些断言只读源码文本（与 test/app/android_host_contract_test.dart 同一手法）：本 worktree
 // 禁止执行验证，**RED/GREEN 均未执行**，文件头如实声明，不写成「已验证通过」。
 //
-// 不 pump 真实入口的理由：runApp(const BasicApp()) 会真的启动 BasicApp —— boot 会去取曲库，
+// 不 pump 真实入口的理由：runApp(ClarityWidget(app: BasicApp())) 会真的启动 BasicApp 和
+// Clarity —— boot 会去取曲库，
 // 资源装载要读随包字体与字形表（清单见 lib/hud/text/glyph_font.dart:5-10）：Assets/fonts 下
 // 4 个字重（合计 27,002,376 B）、符号字体 1,233,128 B 与 Assets/fonts/misans-glyphs.json
 // （1,683,324 B），既超出「只写不执行」的边界，也不是本原子要证明的东西（首屏行为由
@@ -73,35 +74,43 @@ void main() {
   final String code = _stripDartComments(entry);
 
   group('生产入口挂的是 BasicApp（CLOSURE-1）', () {
-    test('main() 只做两件事：钉住宿主沉浸位，然后 runApp(const BasicApp())', () {
+    test('main() 的顺序：建 Clarity 配置、钉住宿主沉浸位、runApp(ClarityWidget(BasicApp))', () {
       // 合并 APP-ENTRY-108 时的取舍：108 的 main() 原本只有 runApp 一句，但那样会丢掉
       // RUNTIME-STARTUP-94 的沉浸位 —— 宿主 MainActivity.kt:220-228 只在 onCreate/onResume
       // 写 IMMERSIVE_STICKY_FLAGS(5894)，而引擎的 FlutterActivity.onPostResume →
       // PlatformPlugin.updateSystemUiOverlays() 会在没有 Dart 侧设置时把
       // mEnabledOverlays(=DEFAULT_SYSTEM_UI 1280) 重放回去，API 28/29 上导航栏与
       // LAYOUT_HIDE_NAVIGATION 就回来了。所以允许（也只允许）这一条前置语句。
+      // Clarity 配置必须建在 runApp 之前，并且只包一层 ClarityWidget。
       expect(
         RegExp(
-          r'void main\(\)\s*\{\s*WidgetsFlutterBinding\.ensureInitialized\(\);\s*'
+          r'void main\(\)\s*\{\s*final config = ClarityConfig\(\s*projectId: "z8vbz4b078",'
+          r'\s*logLevel: LogLevel\.Info,?\s*\);\s*'
+          r'WidgetsFlutterBinding\.ensureInitialized\(\);\s*'
           r'SystemChrome\.setEnabledSystemUIMode\(SystemUiMode\.immersiveSticky\);\s*'
-          r'runApp\(const BasicApp\(\)\);\s*\}',
+          r'runApp\(ClarityWidget\(\s*app: const BasicApp\(\),\s*clarityConfig: config,?\s*\)\);'
+          r'\s*\}',
         ).hasMatch(code),
         isTrue,
-        reason: '入口的整个 main() 必须是 ensureInitialized + immersiveSticky + runApp，此外不写别的副作用',
+        reason: '入口的 main() 必须按顺序完成 Clarity 配置、沉浸位与 ClarityWidget 包裹的 BasicApp 挂载',
       );
       expect(_occurrences(code, 'runApp('), 1, reason: '一个入口只能有一个 root 挂载点');
       expect(_occurrences(code, 'void main('), 1, reason: '一个入口只能有一个 main()');
       expect(_occurrences(code, 'SystemChrome.setEnabledSystemUIMode('), 1,
           reason: '沉浸位只钉一次；多一次就是多一条没被审的窗口状态写入');
+      expect(_occurrences(code, 'ClarityConfig('), 1, reason: 'Clarity 配置只能创建一个');
+      expect(code.contains('projectId: "z8vbz4b078"'), isTrue,
+          reason: 'Clarity 项目 ID 必须显式写在入口，不能从环境或测试注入');
     });
 
-    test('import 面只有 material、services 与 basic/basic_app.dart', () {
+    test('import 面只有 material、services、basic/basic_app.dart 与 clarity_flutter', () {
       expect(
         _imports(entry),
         <String>[
           "import 'package:flutter/material.dart';",
           "import 'package:flutter/services.dart';",
           "import 'basic/basic_app.dart';",
+          "import 'package:clarity_flutter/clarity_flutter.dart';",
         ],
         reason: '入口不拉 application 层、不拉 ui/pages：多一个 import 就是多一条没被审的启动路径',
       );
@@ -136,8 +145,8 @@ void main() {
     });
   });
 
-  group('启动序列不弹无授权的遥测弹窗', () {
-    test('入口不构造 ConsentGate / ConsentPage，也不自己起 SDK', () {
+  group('启动序列只接入 Clarity，不构造 ConsentGate / 其它 SDK', () {
+    test('入口不构造 ConsentGate / ConsentPage，也不自己起 Bugly 或 updater', () {
       _expectAbsent(
         code,
         <String>[
@@ -147,13 +156,12 @@ void main() {
           'ConsentRegion',
           'startSdks',
           'Bugly',
-          'Clarity',
           'updater',
           'MethodChannel',
         ],
         '许可闸门在 Android 的 ConsentActivity（Qt/android/AndroidManifest.xml:78-96），'
-            'Qt/src/main.cpp 的 main() 体内没有 Consent 分支；Flutter 基本版未捆绑 Clarity/Bugly，'
-            'Dart 入口不该自己造一个弹窗',
+            'Qt/src/main.cpp 的 main() 体内没有 Consent 分支；Flutter 版只在入口用 ClarityWidget 接入 Clarity，'
+            'Bugly/updater 仍不该出现在 Dart 入口',
       );
     });
 
