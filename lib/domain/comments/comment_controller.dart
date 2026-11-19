@@ -37,6 +37,7 @@ class CommentRepliesState {
     this.comments = const <ProviderComment>[],
     this.hasMore = false,
     this.expanded = true,
+    this.pages = 1,
   });
 
   /// 阶段。
@@ -54,6 +55,9 @@ class CommentRepliesState {
   /// 回复区是否展开（已加载后只切这个开关，不再请求）。
   final bool expanded;
 
+  /// 已加载的回复页数（下一页就是它的值）。
+  final int pages;
+
   /// 复制并替换字段；**没有**"设回默认值"的语义，`expanded` 一律显式给。
   CommentRepliesState copyWith({
     CommentPhase? phase,
@@ -61,6 +65,7 @@ class CommentRepliesState {
     List<ProviderComment>? comments,
     bool? hasMore,
     bool? expanded,
+    int? pages,
   }) {
     return CommentRepliesState(
       phase: phase ?? this.phase,
@@ -68,6 +73,7 @@ class CommentRepliesState {
       comments: comments ?? this.comments,
       hasMore: hasMore ?? this.hasMore,
       expanded: expanded ?? this.expanded,
+      pages: pages ?? this.pages,
     );
   }
 }
@@ -155,6 +161,10 @@ class CommentController {
   CommentState _state = const CommentState();
   String _trackId = '';
   String _trackLabel = '';
+
+  /// 正在追加后续页的评论 id（回复区的"正在读取回复…"不换 phase，
+  /// 否则 [toggleReplies] 会把加载中误判成未加载而重放首屏）。
+  final Set<String> _replyLoading = <String>{};
 
   /// 当前快照。
   CommentState get state => _state;
@@ -330,6 +340,55 @@ class CommentController {
           ),
         },
       ));
+    }
+  }
+
+  /// 追加某条评论的后续回复（`comments:replies-more:<id>`）。
+  ///
+  /// 只有已加载过、且 `hasMore` 为真时才发请求；追加期间 [CommentRepliesState.phase]
+  /// 保持不变（只把 `status` 换成"正在读取回复…"），已有的回复照旧显示。
+  Future<void> loadMoreReplies(String commentId) async {
+    final CommentRepliesState? current = _state.replyState[commentId];
+    if (current == null || !current.hasMore || _replyLoading.contains(commentId)) {
+      return;
+    }
+    final int page = current.pages;
+    _replyLoading.add(commentId);
+    _set(_state.copyWith(
+      replyState: <String, CommentRepliesState>{
+        ..._state.replyState,
+        commentId: current.copyWith(status: '正在读取回复…'),
+      },
+    ));
+    try {
+      final ProviderRepliesPage pageData =
+          await gateway.replies(commentId: commentId, page: page);
+      final List<ProviderComment> merged = <ProviderComment>[
+        ...current.comments,
+        ...pageData.comments,
+      ];
+      _set(_state.copyWith(
+        replyState: <String, CommentRepliesState>{
+          ..._state.replyState,
+          commentId: CommentRepliesState(
+            phase: merged.isEmpty ? CommentPhase.empty : CommentPhase.loaded,
+            status: merged.isEmpty ? '暂无回复' : '找到 ${merged.length} 条回复',
+            comments: merged,
+            hasMore: pageData.hasMore,
+            expanded: current.expanded,
+            pages: page + 1,
+          ),
+        },
+      ));
+    } catch (_) {
+      _set(_state.copyWith(
+        replyState: <String, CommentRepliesState>{
+          ..._state.replyState,
+          commentId: current.copyWith(status: '回复加载失败，点击重试'),
+        },
+      ));
+    } finally {
+      _replyLoading.remove(commentId);
     }
   }
 
