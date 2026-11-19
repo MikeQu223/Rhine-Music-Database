@@ -73,7 +73,7 @@ cmake -S . -B output/qt-android-flutter \
   -DRHINE_FLUTTER_HOST_ONLY=ON \
   -DRHINE_ANDROID_NODE_ROOT=<node-mobile> -DRHINE_ANDROID_RESOURCES=<android-resources>
 cmake --build output/qt-android-flutter --target RhineMusicDatabase_prepare_apk_dir -- -j20
-<qt-android>/bin/androiddeployqt \
+<host-qt>/bin/androiddeployqt \
   --input output/qt-android-flutter/Qt/android-RhineMusicDatabase-deployment-settings.json \
   --output output/qt-android-flutter/Qt/android-build --aux-mode
 

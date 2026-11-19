@@ -205,8 +205,10 @@ jobs:
           cmake --build output/qt-android-flutter --target RhineMusicDatabase_prepare_apk_dir -- -j"${RHINE_BUILD_JOBS}"
           SETTINGS=$(find output/qt-android-flutter -name 'android-*deployment-settings.json' -print -quit)
           test -n "$SETTINGS"
-          # --aux-mode：只复制依赖并更新 XML 模板，不构建/安装 Qt 包。
-          output/dependencies/qt-android/bin/androiddeployqt \
+          DEPLOYQT="$QT_ROOT_DIR/bin/androiddeployqt"
+          [ -x "$DEPLOYQT" ] || DEPLOYQT="output/dependencies/qt-android/bin/androiddeployqt"
+          test -x "$DEPLOYQT"
+          "$DEPLOYQT" \
             --input "$SETTINGS" \
             --output "$RHINE_QT_ANDROID_DEPLOY_DIR" \
             --aux-mode
