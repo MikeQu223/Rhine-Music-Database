@@ -199,15 +199,20 @@ final class MvModal {
     _contentButton(body, '归零', left + (buttonWidth + gap) * 3, buttonTop, buttonWidth, 40,
         'mv:offset:reset', 13);
 
-    // 自动查找开关（Qt :182-199 的 setEnabled 槽位；桌面侧叫 mv-auto）。
-    final double toggleTop = buttonTop + 48;
-    if (toggleTop + 36 <= y + body.bounds.height) {
-      _limited(body, model.auto ? '自动查找：开' : '自动查找：关', left, toggleTop + 10, 12,
-          contentWidth * 0.5);
-      _contentButton(body, model.auto ? '关闭自动查找' : '打开自动查找',
-          left + contentWidth * 0.52, toggleTop, contentWidth * 0.48, 34,
-          model.auto ? 'mv:auto:off' : 'mv:auto:on', 12);
-    }
+    // 自动查找开关（Qt :182-199 的 setEnabled 槽位；桌面侧偏好叫 mv-auto）。
+    // 与「画面偏移」同一行右侧，底行只剩那一排按钮，不再往下挤。
+    _limited(body, model.auto ? '自动查找：开' : '自动查找：关', left + contentWidth * 0.46, rowY + 2,
+        11, contentWidth * 0.22);
+    _contentButton(
+      body,
+      model.auto ? '关闭' : '打开',
+      left + contentWidth * 0.72,
+      rowY - 6,
+      contentWidth * 0.28,
+      30,
+      model.auto ? 'mv:auto:off' : 'mv:auto:on',
+      11,
+    );
   }
 
   /// Qt MvWindow.qml:566 的 `(rhineMv.offset / 1000).toFixed(1)`。
