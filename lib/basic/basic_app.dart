@@ -960,7 +960,15 @@ class _BasicShellState extends State<_BasicShell>
         _modal == 'settings' || _modal == DiscWarningModal.kind;
     // 插件列表页/详情页与设置页同构：chrome 由 HUD 画，内容是真 widget 层，
     // 所以这里要把它们一起纳入「需要叠 widget 层」的判断（否则只有 HUD 页头）。
-    final bool pluginsOpen = _modal == 'plugins' || _modal == 'plugin-detail';
+    //
+    // 但**歌曲页/歌词页在 HUD 里优先级高于弹层**（basic_hud.dart 的 `songPage`
+    // 分支先于 `modal == 'plugins'`）：在插件页点底部播放条会把 phase 切成 lyrics，
+    // HUD 立刻画歌词页，而 widget 层若还按 modal 判断就会继续画插件页 ⇒ 两页重叠。
+    // 所以 widget 层必须跟 HUD 用同一个前提：只有 HUD 真的在画插件页时才叠。
+    final bool hudPaintsSongPage = state.song != null &&
+        (state.phase == BasicPhase.detail || state.phase == BasicPhase.lyrics);
+    final bool pluginsOpen =
+        !hudPaintsSongPage && (_modal == 'plugins' || _modal == 'plugin-detail');
     final bool startupOpen = _startupPageOpen;
     // 初始化页面在场时不再叠黑幕：那时整页 boot HUD 自己就是画面
     // （NativeHudBoot::boot 的 gradient/flash 门槛层），底下留真实场景当背景。

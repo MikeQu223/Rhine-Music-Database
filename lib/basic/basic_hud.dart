@@ -713,6 +713,10 @@ class BasicHudFrame {
       title: song?.title ?? '',
       artist: song?.artist ?? '',
       album: song?.album ?? '',
+      // 封面必须带上：竖屏 shell 的播放条左槽、横屏的 PlayerBar 封面都读这个字段；
+      // 少传一次，整条播放条的封面就永远是空槽（Qt `PlayerBar.cpp` 的 cover 同理）。
+      cover: song?.cover ?? '',
+
       status: state.playbackError.isNotEmpty ? state.playbackError : state.playerStatus,
       positionMs: state.positionMs,
       durationMs: state.durationMs,
