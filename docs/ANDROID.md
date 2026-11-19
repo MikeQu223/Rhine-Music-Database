@@ -741,7 +741,7 @@ scripts/optimize-apk.py output/android-work/aligned.apk
 ### 5.4 还剩两块大的
 
 - 字体 28 MB：4 个字重各约 7 MB，是整个 `.rodata` 的最大头。可行方向是减少字重（light 与 demibold 交给 `QFont::setWeight` 匹配到 regular 与 bold），或按常用字子集化。两者都会改变界面观感，且中文歌名与歌手是动态文本，子集必须覆盖任意汉字。
-- Node bundle 20 MB（`worker.cjs` 14 MB 加 `xhr-sync-worker.js` 6.4 MB）：`scripts/bundle-bridge.cjs` 的 esbuild 没有开 `minify`。加 `minifyWhitespace` 与 `minifySyntax`（不开 `minifyIdentifiers`，jsdom 依赖函数名与类名）预计能砍掉四成，但需要真机验证桥接与歌词、登录链路，不是纯格式改动。
+- Node bundle 20 MB（`worker.cjs` 14 MB 加 `xhr-sync-worker.js` 6.4 MB）：2026-11-19 起 `scripts/bundle-bridge.cjs` 与 `scripts/bundle-plugins.cjs`（xhr-sync-worker 的 build）的 esbuild 已开 `minifyWhitespace` 与 `minifySyntax`（不开 `minifyIdentifiers`，jsdom 依赖函数名与类名），预计砍掉四成。仍需真机验证桥接与歌词、登录链路。
 
 ### 5.5 CI 与本机的一致性
 

@@ -43,6 +43,12 @@ async function main() {
         target: mobileRuntime ? 'node18' : 'node22',
         logLevel: 'warning',
         logOverride: { 'require-resolve-not-external': 'silent' },
+        // 体积（docs/ANDROID.md §5.4）：bundle 进 /rhine-assets 的 worker.cjs 约
+        // 14 MB，开空白与语法压缩预计砍掉四成。刻意不开 minifyIdentifiers——
+        // jsdom 依赖函数名与类名（原型方法按名字查找），改标识符会崩；两个语法级
+        // 开关不改导出名与属性名，语义等价。
+        minifyWhitespace: true,
+        minifySyntax: true,
         plugins: [...(mobileRuntime ? [require('./mobile-bridge-plugin.cjs')(webApisFile, '')] : [])],
     });
     failOnDynamicRequires(result);
