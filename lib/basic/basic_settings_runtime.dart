@@ -56,12 +56,12 @@ class BasicSettingsRuntime {
   bool _dark;
   bool _detailAutoplay = false;
   bool _singlePlayAppend = false;
-  int _archiveMaskStrength = 55;
+  int _archiveMaskStrength = 0;
   bool _discRotation = false;
   bool _startupAnimation = false;
   String _quality = 'lossless';
   String _graphicsBackend = '';
-  bool _vsync = true;
+  bool _vsync = false;
   String _renderScale = '';
   String _aaMode = '';
   String _aaScale = '';
@@ -136,7 +136,7 @@ class BasicSettingsRuntime {
   String get effectiveGraphicsBackend =>
       _bootRaw['${basicSettingsPreferencePrefix}graphics-backend'] ?? '';
   bool get effectiveVsync =>
-      (_bootRaw['${basicSettingsPreferencePrefix}vsync'] ?? '') != 'off';
+      (_bootRaw['${basicSettingsPreferencePrefix}vsync'] ?? '') == 'on';
   String get renderScale => _renderScale;
   String get aaMode => _aaMode;
   String get aaScale => _aaScale;
@@ -172,13 +172,14 @@ class BasicSettingsRuntime {
     _dark = rawValue('theme') == 'dark';
     _detailAutoplay = rawValue('detail-autoplay') == 'on';
     _singlePlayAppend = rawValue('single-play-mode') == 'append';
-    _archiveMaskStrength = int.tryParse(rawValue('archive-mask-strength')) ?? 55;
+    _archiveMaskStrength = int.tryParse(rawValue('archive-mask-strength')) ?? 0;
     _discRotation = rawValue('disc-rotation') == 'on';
     _startupAnimation = rawValue('startup-animation') == 'on';
     final String quality = rawValue('quality');
     _quality = quality.isEmpty ? 'lossless' : quality;
     _graphicsBackend = rawValue('graphics-backend');
-    _vsync = rawValue('vsync') != 'off';
+    // 垂直同步默认关闭：只有显式存过 'on' 才算开。
+    _vsync = rawValue('vsync') == 'on';
     _renderScale = rawValue('render-scale');
     _aaMode = rawValue('aa-mode');
     _aaScale = rawValue('aa-scale');
@@ -193,7 +194,7 @@ class BasicSettingsRuntime {
   /// 宿主构造 [SettingsPreferenceContext] 用的"已生效"读数（Qt 是 host->preference
   /// 与 RhineGraphics::activeBackend()）。
   String get appliedGraphicsBackend => rawValue('graphics-backend');
-  bool get appliedVsync => rawValue('vsync') != 'off';
+  bool get appliedVsync => rawValue('vsync') == 'on';
 
   void setExpanded(String rowId) {
     _expandedId = rowId;

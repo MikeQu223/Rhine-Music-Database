@@ -367,12 +367,16 @@ class _BasicPortraitSettingsPageState extends State<BasicPortraitSettingsPage> {
               ),
             ),
             _stepButton(
+              rowId: row.id,
+              direction: 'dec',
               left: _pageWidth - 115,
               glyph: '−',
               action: row.enabled ? route + row.decrementValue : '',
               ink: ink,
             ),
             _stepButton(
+              rowId: row.id,
+              direction: 'inc',
               left: _pageWidth - 65,
               glyph: '+',
               action: row.enabled ? route + row.incrementValue : '',
@@ -405,14 +409,20 @@ class _BasicPortraitSettingsPageState extends State<BasicPortraitSettingsPage> {
               ),
             ),
           ],
-          _tapArea(
-            left: _pageWidth - 198,
-            top: 4,
-            width: 178,
-            height: 44,
-            action: hitAction,
-            label: row.titleZh,
-          ),
+          // Slider / Stepper 的命中只有 ± 两个按钮（Qt `settings()` 的
+          // Slider|Stepper 分支只发 `row.decrementValue` / `row.incrementValue`）。
+          // 这里若再叠一层行级热区，它会画在 ± 之上、把点击吞掉；而这两行本来就没有
+          // `binding.action`（archive-mask / render-scale），于是整行点什么都没反应
+          // ——用户 2026-11-19「右侧遮罩和渲染分辨率无法调整」。
+          if (!stepper)
+            _tapArea(
+              left: _pageWidth - 198,
+              top: 4,
+              width: 178,
+              height: 44,
+              action: hitAction,
+              label: row.titleZh,
+            ),
           Positioned(
             left: 20,
             top: 55,
@@ -424,7 +434,6 @@ class _BasicPortraitSettingsPageState extends State<BasicPortraitSettingsPage> {
       ),
     );
   }
-
   /// 展开后的选项（Qt `chip({20, y, 353, 40})`，步进 48）。
   Widget _choiceChip(
     SettingsRowSpec row,
@@ -586,13 +595,19 @@ class _BasicPortraitSettingsPageState extends State<BasicPortraitSettingsPage> {
   }
 
   /// ± 按钮（Qt `button({279|329, y+4, 44, 44})`）。
+  ///
+  /// [rowId] / [direction] 只用于给命中区一个稳定的 Key：竖屏页没有横屏那套
+  /// `settings-control-<id>` key，测试要能区分不同行的 ±。
   Widget _stepButton({
+    required String rowId,
+    required String direction,
     required double left,
     required String glyph,
     required String action,
     required _PortraitInk ink,
   }) {
     return Positioned(
+      key: ValueKey<String>('settings-portrait-step-$rowId-$direction'),
       left: left,
       top: 4,
       child: SizedBox(

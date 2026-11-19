@@ -123,8 +123,10 @@ class HudChrome {
   static const double maskClipHeight = 984.0;
   /// Qt NativeHud.cpp:343 return width - 789;
   static const double navigationRightInset = 789.0;
-  /// Qt NativeHud.h:145 int archiveMaskStrength = 50;
-  static const int defaultArchiveMaskStrength = 50;
+  /// Qt NativeHud.h:145 `int archiveMaskStrength = 50`。
+  ///
+  /// 本项目出厂默认改成 0（关闭）：曲库页不压暗右侧 3D 画面（用户 2026-11-19 指定）。
+  static const int defaultArchiveMaskStrength = 0;
 
   /// Qt NativeHud::navigationLeft() (NativeHud.cpp:342-344)。
   double navigationLeft(double width) => width - navigationRightInset;

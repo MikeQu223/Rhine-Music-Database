@@ -322,8 +322,9 @@ SettingsPreferenceSnapshot basicSettingsSnapshotFrom(
     reducedMotion: flag('motion', fallback: false),
     startupAnimation: flag('startup-animation', fallback: false),
     discRotation: flag('disc-rotation', fallback: false),
-    vsync: flag('vsync', fallback: true),
-    archiveMaskStrength: intValue('archive-mask-strength', 55),
+    // 垂直同步默认关闭、右侧画面遮罩默认 0（用户 2026-11-19 指定的出厂默认）。
+    vsync: flag('vsync', fallback: false),
+    archiveMaskStrength: intValue('archive-mask-strength', 0),
     quality: quality.isEmpty ? 'lossless' : quality,
     alternative: flag('alternative', fallback: false),
     officialPlayerActive: false,

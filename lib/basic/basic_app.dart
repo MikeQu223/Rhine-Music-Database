@@ -500,8 +500,9 @@ class _BasicShellState extends State<_BasicShell>
   int _viewerCommandSeq = 0;
   String _viewerCommand = '';
 
-  /// 设置项“右侧画面遮罩”的强度真值（0..100）。默认即 Qt 常量，装载后取偏好值。
-  double _archiveMaskStrength = 55;
+  /// 设置项“右侧画面遮罩”的强度真值（0..100）。出厂默认 0（关闭），
+  /// 装载后取偏好值——偏好缺键时也是 0，不再是 Qt 的 50/55。
+  double _archiveMaskStrength = 0;
 
   /// 竖屏唯一 [StageGeometry] 的引用（横屏不用）。
   ///

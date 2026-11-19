@@ -177,8 +177,8 @@ class NativeHud : public QObject {
     bool startupAnimation = false;
     bool discRotation = false;
     bool skipDetailOnSwitch = false;
-    bool vsync = true;
-    int archiveMaskStrength = 50;
+    bool vsync = false;
+    int archiveMaskStrength = 0;
     bool closing = false;
     bool lyricsMode = false;
     bool commentsMode = false;

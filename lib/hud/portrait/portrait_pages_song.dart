@@ -62,6 +62,19 @@ String _metaLine(String artist, String album) {
 /// 没有标题栏；下面是方形唱片卡、档案行、两行大标题、艺人/专辑、状态行，
 /// 再往下从底往上锚定「进度条 → 传输三键 → 四入口」。短屏（本机 629）按比例收卡、
 /// 收间距，不出现负高度。
+///
+/// [current] 是本页最重要的一处身份判断：详情页曲目**是否就是**正在播放的曲目
+/// （Qt compact `song()` 的 `selectedSongIsCurrent`，`Qt/src/ResponsiveHudPages.cpp:165`）。
+/// 它为 false 时整条控制带只服务于**详情页曲目**：
+///  - 进度归零、右侧读数显示本曲目时长而不是「-剩余」；
+///  - seek 不产生热区（否则一拖就把另一首歌拖走了）；
+///  - 播放键发 `music:play`（切到本曲目并播放），不是 `player:toggle`；
+///  - 上一首/下一首发 `music:detail-prev/next`（按详情页所在列表换曲），
+///    不是播放队列的 `player:prev/next`；
+///  - 歌词入口不出现（歌词属于播放曲目，不是本页曲目）。
+///
+/// 为 true 时全部读真实播放态（[playing]/[buffering]/[positionMs]/[durationMs]），
+/// 与主页迷你播放条完全一致。控制带本身**始终绘制**，不因换曲目而消失。
 void paintPortraitSongPage(
   PortraitCanvas c, {
   required String title,
@@ -70,7 +83,9 @@ void paintPortraitSongPage(
   required String kind,
   required String stamp,
   required String cover,
+  required bool current,
   required bool playing,
+  required bool buffering,
   required bool favourite,
   required double positionMs,
   required double durationMs,
@@ -125,18 +140,38 @@ void paintPortraitSongPage(
       size: 18, color: favourite ? c.ink : c.muted);
   y += 24;
 
-  // 状态行：琥珀圆点 + 正在播放/已暂停；右侧音频规格本版无真值，留空不编造。
+  // 状态行：琥珀圆点 + 播放状态。非当前曲目说「尚未播放」（Qt 的同一句），
+  // 不能拿另一首歌的「正在播放」来冒充本页曲目。
   c.commands.add(<Object?>['ellipse', c.amber, _gutter + 2, y + 5, 5, 5]);
-  c.text(playing ? '正在播放' : '已暂停', _gutter + 12, y, size: 8, width: 160, color: c.muted);
+  // 只有本曲目在播才配「正在播放 / 暂停」：另一首在播时本页曲目仍是「尚未播放」，
+  // 播放键也必须画成 ▶（点它 = 切到本曲目），不能沿用那首的暂停图标。
+  final bool trackPlaying = current && playing;
+  final String playbackState = !current
+      ? '尚未播放'
+      : (buffering ? '正在载入' : (playing ? '正在播放' : '已暂停'));
+  c.text(playbackState, _gutter + 12, y, size: 8, width: 160, color: c.muted);
   y += 18;
 
-  _songFooterRow(c, top: math.max(y + 40, h - 12) - 32);
-  _songTransportRow(c, center: math.max(y + 40, h - 12) - 76, playing: playing);
+  // 歌词入口只在**本曲目**上出现：歌词属于播放曲目，非当前曲目开出来是别人的歌词。
+  _songFooterRow(
+    c,
+    top: math.max(y + 40, h - 12) - 32,
+    lyricsAvailable: current && lyricsAvailable,
+  );
+  _songTransportRow(
+    c,
+    center: math.max(y + 40, h - 12) - 76,
+    current: current,
+    playing: trackPlaying,
+  );
   final double barY = math.max(y + 8, math.max(y + 40, h - 12) - 76 - 52);
   _songProgressRow(
     c,
     barY: barY,
-    lyricPreview: lyricPreview,
+    current: current,
+    // 歌词预览取自**当前播放曲目**的时间轴：详情页是另一首时预览会指错歌，
+    // 所以非当前曲目直接不显示（Qt 的 song() 本来就没有这一行）。
+    lyricPreview: current ? lyricPreview : '',
     positionMs: positionMs,
     durationMs: durationMs,
   );
@@ -145,9 +180,13 @@ void paintPortraitSongPage(
 }
 
 /// 进度行：歌词预览 + 轨道/已播/游标 + 刻度 + 两端时间（左已播、右剩余）。
+///
+/// [current] = false 时轨道为空、游标停在最左、右侧显示本曲目的**总时长**
+/// （Qt: `current ? "−" + time(rest) : model.duration`），且不产出 `seek` 字段。
 void _songProgressRow(
   PortraitCanvas c, {
   required double barY,
+  required bool current,
   required String lyricPreview,
   required double positionMs,
   required double durationMs,
@@ -157,8 +196,9 @@ void _songProgressRow(
     c.text(lyricPreview, _gutter + 18, barY - 21,
         size: 10, width: (c.gridWidth - 40) - 18, color: c.muted);
   }
-  final double fraction =
-      durationMs.isFinite && durationMs > 0 ? _unit(positionMs / durationMs) : 0;
+  final double fraction = current && durationMs.isFinite && durationMs > 0
+      ? _unit(positionMs / durationMs)
+      : 0;
   c.fill(Rect.fromLTWH(_gutter, barY, (c.gridWidth - 40), 2), c.line);
   if (fraction > 0) {
     c.fill(Rect.fromLTWH(_gutter, barY, (c.gridWidth - 40) * fraction, 2), c.amber);
@@ -170,23 +210,54 @@ void _songProgressRow(
       c.line,
     );
   }
-  c.field('seek', Rect.fromLTWH(15, barY - 12, c.gridWidth - 30, 26));
-  c.text(_clock(positionMs), _gutter, barY + 16, size: 11, width: 120, color: c.muted);
-  final double remaining =
-      durationMs.isFinite && durationMs > positionMs ? durationMs - positionMs : 0;
-  c.rightText('-${_clock(remaining)}', c.gridWidth - 20, barY + 16, 11, 'regular', c.muted);
+  // 只有本曲目真的在播时才给拖动热区：否则拖一下就把别的曲目的播放位置改了。
+  if (current) {
+    c.field('seek', Rect.fromLTWH(15, barY - 12, c.gridWidth - 30, 26));
+  }
+  c.text(_clock(current ? positionMs : 0), _gutter, barY + 16, size: 11, width: 120, color: c.muted);
+  final String right;
+  if (current) {
+    final double remaining =
+        durationMs.isFinite && durationMs > positionMs ? durationMs - positionMs : 0;
+    right = '-${_clock(remaining)}';
+  } else {
+    // 曲库阶段时长可能还是 0（siren.mjs 只在播放时给时长），那就老实显示 00:00。
+    right = _clock(durationMs);
+  }
+  c.rightText(right, c.gridWidth - 20, barY + 16, 11, 'regular', c.muted);
 }
 
 /// 传输三键：上一首 / 居中的圆环播放键 / 下一首。
-void _songTransportRow(PortraitCanvas c, {required double center, required bool playing}) {
+///
+/// 非当前曲目：播放键 = `music:play`（切到本曲目并播放），上一首/下一首按
+/// **详情页所在列表**换曲（`music:detail-prev/next`），不发播放队列的
+/// `player:*`——那会控制到另一首歌身上，正是本次要修的缺陷。
+void _songTransportRow(
+  PortraitCanvas c, {
+  required double center,
+  required bool current,
+  required bool playing,
+}) {
   final double cx = c.gridWidth / 2;
   c.commands.add(<Object?>['arc', cx, center, 26, 0, math.pi * 2 - .02, 1.2, c.ink]);
   c.icon(playing ? 'pause' : 'play', cx - 11, center - 11, size: 22, color: c.ink);
   c.icon('prev', cx - 104, center - 12, size: 24, color: c.ink);
   c.icon('next', cx + 80, center - 12, size: 24, color: c.ink);
-  c.hit(Rect.fromLTWH(cx - 128, center - 26, 48, 52), 'player:prev', '上一首');
-  c.hit(Rect.fromLTWH(cx - 34, center - 34, 68, 68), 'player:toggle', playing ? '暂停' : '播放');
-  c.hit(Rect.fromLTWH(cx + 56, center - 26, 48, 52), 'player:next', '下一首');
+  c.hit(
+    Rect.fromLTWH(cx - 128, center - 26, 48, 52),
+    current ? 'player:prev' : 'music:detail-prev',
+    '上一首',
+  );
+  c.hit(
+    Rect.fromLTWH(cx - 34, center - 34, 68, 68),
+    current ? 'player:toggle' : 'music:play',
+    playing ? '暂停' : '播放',
+  );
+  c.hit(
+    Rect.fromLTWH(cx + 56, center - 26, 48, 52),
+    current ? 'player:next' : 'music:detail-next',
+    '下一首',
+  );
 }
 
 /// 底部四入口：歌词 / 随机播放 / 播放队列 / 更多。

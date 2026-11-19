@@ -2149,8 +2149,8 @@ class SettingsPreferenceSnapshot {
     this.reducedMotion = false,
     this.startupAnimation = false,
     this.discRotation = false,
-    this.vsync = true,
-    this.archiveMaskStrength = 50,
+    this.vsync = false,
+    this.archiveMaskStrength = 0,
     this.quality = 'exhigh',
     this.alternative = false,
     this.officialPlayerActive = false,
@@ -2663,7 +2663,9 @@ final List<SettingsDescriptor> _settingsDescriptorTable = <SettingsDescriptor>[
     order: 210,
     titleEn: 'RIGHT MASK',
     titleZh: '右侧画面遮罩',
-    defaultValue: '50',
+    // Qt SettingsSchema.cpp 的出厂默认是 50；本项目按用户要求改成 0（关闭）。
+    // 曲库页因此默认不压暗右侧 3D 画面，用户可在设置里自行调高。
+    defaultValue: '0',
     minimum: 0,
     maximum: 100,
     step: 10,
@@ -2714,7 +2716,8 @@ final List<SettingsDescriptor> _settingsDescriptorTable = <SettingsDescriptor>[
     titleEn: 'V-SYNC',
     titleZh: '垂直同步',
     restartHint: '重启生效',
-    defaultValue: 'on',
+    // Qt SettingsSchema.cpp 的出厂默认是 on；本项目按用户要求改成 off。
+    defaultValue: 'off',
     action: 'vsync',
     actionPrefix: 'setting:vsync:',
     choices: settingsOnOffChoices,

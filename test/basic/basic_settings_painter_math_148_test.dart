@@ -70,13 +70,13 @@ Future<BasicSettingsRuntime> _runtime({
 
 void main() {
   group('持久化真值链', () {
-    test('空存储 -> Qt 默认真值（暗色 / lossless / 遮盖 55 / vsync on）', () async {
+    test('空存储 -> 出厂默认（亮色 / lossless / 遮罩 0 / vsync off）', () async {
       final BasicSettingsRuntime runtime = await _runtime();
       final SettingsPreferenceSnapshot snapshot = runtime.snapshot;
       expect(snapshot.themeMode, 'light', reason: '出厂默认亮色；「跟随系统」已移除');
       expect(snapshot.quality, 'lossless');
-      expect(snapshot.archiveMaskStrength, 55);
-      expect(snapshot.vsync, isTrue);
+      expect(snapshot.archiveMaskStrength, 0);
+      expect(snapshot.vsync, isFalse);
       expect(snapshot.discRotation, isFalse);
       expect(runtime.detailAutoplay, isFalse);
       expect(runtime.singlePlayAppend, isFalse);

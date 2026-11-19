@@ -367,9 +367,10 @@ void main() {
     });
 
     test('垂直同步：走同名动作派发，Windows 上提示重启', () {
+      // 出厂默认关闭，所以"改成开启"才是真实变化。
       final BasicSettingsWriteCommand write =
-          command('setting:vsync:off') as BasicSettingsWriteCommand;
-      expect(write.value, 'off');
+          command('setting:vsync:on') as BasicSettingsWriteCommand;
+      expect(write.value, 'on');
       expect(write.dispatchAction, 'vsync');
       expect(write.restart, BasicSettingsRestart.nextLaunch);
     });

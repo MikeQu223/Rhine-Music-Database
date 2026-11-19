@@ -290,8 +290,8 @@ class QtSceneIdentityTracker {
 class BasicSceneSettings {
   const BasicSceneSettings({
     this.discRotation = false,
-    this.archiveMaskStrength = 55,
-    this.vsync = true,
+    this.archiveMaskStrength = 0,
+    this.vsync = false,
     this.renderScale = 75,
     this.graphicsBackend = '',
     this.aaMode = 'off',

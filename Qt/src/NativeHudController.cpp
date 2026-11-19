@@ -46,7 +46,8 @@ NativeHud::NativeHud(Host *host, Glyphs *glyphs, MusicLibrary *music, HudSceneAc
         host->setPreference("graphics-backend", "metal");
     }
 #else
-    vsync = host->preference("vsync") != "off";
+    // 垂直同步出厂默认关闭：只有显式存过 "on" 才算开。
+    vsync = host->preference("vsync") == "on";
 #endif
     discRotation = host->preference("disc-rotation") == "on";
     m_boxedPlayButton = host->preference("play-button-style") == "boxed";

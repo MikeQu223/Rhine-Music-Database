@@ -729,7 +729,8 @@ static void applyVSyncSetting() {
     if (!qEnvironmentVariableIsEmpty("RHINE_VSYNC")) {
         return;
     }
-    if (graphicsSettings().value("panel/vsync").toString() != "off") {
+    // 垂直同步出厂默认关闭：只有显式存过 panel/vsync=on 才保留默认交换间隔。
+    if (graphicsSettings().value("panel/vsync").toString() == "on") {
         return;
     }
     auto format = QSurfaceFormat::defaultFormat();
@@ -797,7 +798,7 @@ static void applyFrameGenerationSetting() {
     // 呈现层的垂直同步也来自设置页：只有关掉 vsync，呈现层才会去选 MAILBOX。
     // 实测这台机器上 FIFO 只给到约半个刷新率（47.4fps），MAILBOX 能到 125fps。
     if (qEnvironmentVariableIsEmpty("RHINE_FG_VSYNC")) {
-        const auto vsync = graphicsSettings().value("panel/vsync", "on").toString();
+        const auto vsync = graphicsSettings().value("panel/vsync", "off").toString();
         qputenv("RHINE_FG_VSYNC", vsync.compare("off", Qt::CaseInsensitive) == 0 ? "off" : "on");
     }
 #endif

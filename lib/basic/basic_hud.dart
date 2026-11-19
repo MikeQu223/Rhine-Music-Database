@@ -114,7 +114,7 @@ class BasicHudFrame {
     String modal = '',
     /// 右栏遮罩强度（0..100，Qt `archive-mask-strength` / 设置页“右侧画面遮罩”）。
     /// 默认就是 Qt 常量 [HudChrome.defaultArchiveMaskStrength]；注入只来自设置页真值。
-    double archiveMaskStrength = 55, // = HudChrome.defaultArchiveMaskStrength（int 常量转 double）
+    double archiveMaskStrength = 0, // = HudChrome.defaultArchiveMaskStrength（int 常量转 double）
     /// 资料库列表页的「列表形式」真值（Qt `NativeHud::trackListMode`）：
     /// true = 右栏是曲目列表；false = 右栏是当前条目的单条面板（Tab Mode 切换）。
     /// 只影响资料库列表页的绘制分支，不参与选中/滚动真值。
@@ -416,12 +416,21 @@ class BasicHudFrame {
     int total,
     int selected,
   ) {
+    // 详情页曲目与播放曲目是**两个身份**（Qt compact `song()` 的
+    // `selectedSongIsCurrent`，ResponsiveHudPages.cpp:165）：打开另一首的详情时，
+    // 控制带必须服从详情页曲目，不能把在播那首的进度/播放态/传输键搬过来。
+    final SirenSong? playingTrack = state.playingTrack;
+    final bool current = playingTrack != null && playingTrack.id == song.id;
     if (state.phase == BasicPhase.lyrics) {
+      // 歌词页画的就是**正在播放**的那首：标题/艺人/封面取 playingTrack。
+      // 取 state.song（选中行）会让从底栏进来的歌词页挂错歌名——歌词属于播放曲目，
+      // 标题却属于选中行，是同一类身份串台。
+      final SirenSong shown = playingTrack ?? song;
       paintPortraitLyricsPage(
         canvas,
-        title: song.title,
-        artist: song.artist,
-        cover: song.cover,
+        title: shown.title,
+        artist: shown.artist,
+        cover: shown.cover,
         playing: state.playing,
         positionMs: state.positionMs,
         durationMs: state.durationMs,
@@ -441,13 +450,20 @@ class BasicHudFrame {
       kind: 'song',
       stamp: total <= 0 ? '' : _portraitStamp(selected, total),
       cover: song.cover,
+      current: current,
+      // playing/buffering 传**播放器真值**，由画布按 current 决定显不显示：
+      // 非当前曲目在画布内部会显示「尚未播放」并画空进度。
       playing: state.playing,
+      buffering: state.buffering,
       // 收藏列没有本地写入通道（liked 集合只在 lane 1 只读解析），这里不假装已收藏。
       favourite: false,
       positionMs: state.positionMs,
-      durationMs: state.durationMs,
+      // 非当前曲目拿不到 native 的时长（那是播放器在报的），回落曲库里的本曲目时长；
+      // 曲库阶段该值可能还是 0，画布会显示 00:00，不编造数字。
+      durationMs: current ? state.durationMs : song.durationMs,
       lyricPreview: _portraitLyricPreview(state),
-      lyricsAvailable: state.lyrics.isNotEmpty,
+      // 歌词入口只在当前曲目上出现：state.lyrics 是播放曲目的歌词。
+      lyricsAvailable: current && state.lyrics.isNotEmpty,
     );
   }
 
@@ -976,7 +992,7 @@ class BasicHudSurface extends StatefulWidget {
     this.geometry,
     this.stage,
     this.sceneKey,
-    this.archiveMaskStrength = 55, // = HudChrome.defaultArchiveMaskStrength
+    this.archiveMaskStrength = 0, // = HudChrome.defaultArchiveMaskStrength
     this.trackListMode = true,
     this.onTrackListModeChanged,
     this.sceneSettings,

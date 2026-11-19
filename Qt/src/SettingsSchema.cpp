@@ -699,7 +699,8 @@ const QVector<SettingDescriptor> &descriptors() {
              .order = 110,
              .titleEn = "RIGHT MASK",
              .titleZh = "右侧画面遮罩",
-             .defaultValue = "50",
+             // 出厂默认 0（关闭）：曲库页不压暗右侧画面（用户 2026-11-19 指定）。
+             .defaultValue = "0",
              .minimum = 0,
              .maximum = 100,
              .step = 10,
@@ -751,7 +752,8 @@ const QVector<SettingDescriptor> &descriptors() {
              .titleEn = "V-SYNC",
              .titleZh = "垂直同步",
              .restartHint = QStringLiteral("重启生效"),
-             .defaultValue = On,
+             // 出厂默认关闭（用户 2026-11-19 指定）。
+             .defaultValue = Off,
              .choices = onOffChoices(),
              .visible = vsyncVisible});
         add({.id = "render-scale",

@@ -7,9 +7,11 @@ import 'package:rhine_music_database/basic/basic_app.dart';
 import 'package:rhine_music_database/basic/basic_hud.dart';
 import 'package:rhine_music_database/basic/basic_hud_resources.dart';
 import 'package:rhine_music_database/basic/basic_models.dart';
+import 'package:rhine_music_database/basic/basic_settings_portrait.dart';
 import 'package:rhine_music_database/basic/basic_settings_store.dart';
 import 'package:rhine_music_database/basic/basic_settings_view.dart';
 import 'package:rhine_music_database/basic/basic_settings_window.dart';
+import 'package:rhine_music_database/basic/basic_startup_view.dart';
 import 'package:rhine_music_database/basic/platform_playback.dart';
 import 'package:rhine_music_database/basic/siren_controller.dart';
 import 'package:rhine_music_database/hud/modals/disc_warning_modal.dart';
@@ -114,7 +116,10 @@ Future<({_ShellController controller, MemoryBasicSettingsPort port})> pumpShell(
   final _FakeAudio audio = _FakeAudio();
   final _ShellController controller = _ShellController(audio: audio);
   final MemoryBasicSettingsPort port = MemoryBasicSettingsPort(
-    values: values,
+    // 这些用例要的是「启动完成后的 HUD」：显式关掉首启 boot 幕布。
+    // 偏好里没有 startup-animation 时 shell 会按首启播一次初始化页，
+    // 那时整页 BasicStartupView 占住画面，BasicHudSurface 根本不在树里。
+    values: <String, String>{'panel/startup-animation': 'off', ...values},
     package: package,
     failWrites: failWrites,
   );
@@ -330,13 +335,11 @@ void main() {
 
     await tapVisible(tester, rowControl('replay'), what: '手动重放动作行');
     await tester.pump(const Duration(milliseconds: 60));
-    // 幕布真的在动：透明度不是 0 也不是 1，且还在走动画。
-    final Iterable<Opacity> opacities = tester.widgetList<Opacity>(find.byType(Opacity));
-    expect(
-      opacities.any((Opacity o) => o.opacity > 0.0 && o.opacity < 1.0),
-      isTrue,
-      reason: '手动重放必须真的播一段可见动效，而不是只弹提示',
-    );
+    // 重放真的把整页初始化界面重新打开（Qt 的 replay → m_scene.mode("boot")）：
+    // 现在走的是 BasicStartupView 这层真实 widget 页，不再是命令流黑幕，
+    // 所以判据是"初始化页在场"，不是找某个中间透明度。
+    expect(find.byType(BasicStartupView), findsOneWidget,
+        reason: '手动重放必须真的打开初始化页，而不是只弹提示');
     await tester.pump(const Duration(milliseconds: 1400));
     await tester.pumpWidget(const SizedBox());
   });
@@ -407,8 +410,11 @@ void main() {
       (WidgetTester tester) async {
     final _FakeAudio audio = _FakeAudio();
     final _ShellController controller = _ShellController(audio: audio);
-    final MemoryBasicSettingsPort port =
-        MemoryBasicSettingsPort(failWrites: true);
+    final MemoryBasicSettingsPort port = MemoryBasicSettingsPort(
+      // 只关首启 boot 幕布，其它写入仍然按 failWrites 失败。
+      values: <String, String>{'panel/startup-animation': 'off'},
+      failWrites: true,
+    );
     await tester.pumpWidget(BasicApp(
       controller: controller,
       audio: audio,
@@ -457,9 +463,9 @@ void main() {
 
     // 开关型 hudState 行（垂直同步）：面板里是一次真实的控件命中（choice 行
     // 展开成 on/off 两个真控件，Qt 侧是 toggle）——两条路径都落到同一个
-    // panel/vsync 写入口，这里只断言真实落盘值。
-    await activate(tester, 'vsync', 'off');
-    expect(shell.port.values['panel/vsync'], 'off');
+    // panel/vsync 写入口，这里只断言真实落盘值。出厂默认是 off，所以改成 on。
+    await activate(tester, 'vsync', 'on');
+    expect(shell.port.values['panel/vsync'], 'on');
 
     // Android 上 AA 档位里没有 MetalFX（那是 Darwin 专用），选 fxaa 才是真值。
     expect(await activate(tester, 'aa-mode', 'fxaa'), isTrue);
@@ -589,14 +595,16 @@ void main() {
     tester.view.physicalSize = const Size(1080, 1920);
     await tester.pump();
     await tester.pump();
-    expect(find.byType(BasicSettingsWindow), findsOneWidget);
-    final BasicSettingsWindow rotated =
-        tester.widget<BasicSettingsWindow>(find.byType(BasicSettingsWindow));
-    expect(rotated.portrait, isTrue);
+    // 竖屏设置页是 BasicPortraitSettingsPage（393 网格的 compact 版式），
+    // 不再是带 portrait 标志的横屏 BasicSettingsWindow。
+    expect(find.byType(BasicPortraitSettingsPage), findsOneWidget);
+    final BasicPortraitSettingsPage rotated =
+        tester.widget<BasicPortraitSettingsPage>(find.byType(BasicPortraitSettingsPage));
     expect(rotated.model.rowIds, contains('archive-mask'));
     expect(shell.port.values['panel/archive-mask-strength'], '80');
-    // 竖屏下控件仍然是真控件（不是回到命中画布）。
-    expect(rowControl('archive-mask'), findsOneWidget);
+    // 竖屏下这一行仍是真实控件（真 Text，不是命中画布）：竖屏页没有横屏那套
+    // `settings-control-<id>` key，用行标题的真文本作为判据。
+    expect(find.text('右侧画面遮罩'), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox());
   });

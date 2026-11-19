@@ -1308,6 +1308,35 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     _publish();
   }
 
+  /// 竖屏详情页的「上一首 / 下一首」：在**详情页曲目所在的列表**里换曲并播放。
+  ///
+  /// 与 [previous]/[next]（推进播放队列，Qt 的 `player:prev/next`）刻意分开：
+  /// 详情页展示的曲目不一定是当前队列的成员——用户在另一列或搜索结果里打开详情时，
+  /// 队列还是上一次播放的那列。此时推进队列换掉的是**另一首歌的邻居**，与页面上
+  /// 看到的曲目无关。详情页曲目同样是播放曲目时（当前曲目），页面仍走 [next]/
+  /// [previous]，保留队列的随机/单曲循环语义。
+  Future<void> playDetailSibling(int direction) async {
+    if (_disposed || direction == 0) {
+      return;
+    }
+    final SirenSong? song = _song;
+    if (song == null) {
+      return;
+    }
+    // 队列来源与「点播放」完全同一份：目录内是目录曲目、专辑内是专辑曲目、
+    // 其余是当前可见列表（见 [_queueFor]）。两边用不同来源就会出现
+    // 「页面上的下一首」与「播放后的下一首」对不上的怪象。
+    final List<SirenSong> source = _queueFor(song);
+    if (source.isEmpty) {
+      return;
+    }
+    final int index = source.indexWhere((SirenSong item) => item.id == song.id);
+    final int next = index < 0
+        ? 0
+        : ((index + direction) % source.length + source.length) % source.length;
+    await openSong(source[next]);
+  }
+
   /// 测试钩子：注入一拍时间，走 Timer.periodic 完全相同的链路。
   ///
   /// 生产 ticker 是 100ms 的真实 Timer；测试里 Timer 不会自己走，所以留这一个入口。

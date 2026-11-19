@@ -638,6 +638,36 @@ void main() {
       expect(controller.state.playingTrack?.id, 's1');
     });
 
+    test('playDetailSibling 按详情页所在列表换曲，而不是推进播放队列', () async {
+      final _Server server = _Server();
+      final _FakeAudio audio = _FakeAudio();
+      final BasicController controller = await started(server, audio);
+      addTearDown(controller.dispose);
+
+      // 只浏览到第二首的详情（play: false）：播放身份仍是 s1，页面上是 s2。
+      await controller.openSong(controller.state.songs[1], play: false);
+      await _settle();
+      expect(controller.state.song?.id, 's2');
+      expect(controller.state.playingTrack?.id, 's1');
+
+      await controller.playDetailSibling(1);
+      await _settle();
+      expect(controller.state.song?.id, 's3', reason: '详情页的下一首是列表里的下一首');
+      expect(controller.state.playingTrack?.id, 's3', reason: '并且它真的开始播放');
+      expect(controller.state.phase, BasicPhase.detail);
+
+      // 列表末尾再下一首回到开头：与列表导航（stepLibrarySelection）同一条环绕规则。
+      await controller.playDetailSibling(1);
+      await _settle();
+      expect(controller.state.song?.id, 's1');
+      expect(controller.state.playingTrack?.id, 's1');
+
+      await controller.playDetailSibling(-1);
+      await _settle();
+      expect(controller.state.song?.id, 's3');
+      expect(controller.state.playingTrack?.id, 's3');
+    });
+
     test('dispose 后不再响应 native 状态，也不 dispose B 的音频端口', () async {
       final _Server server = _Server();
       final _FakeAudio audio = _FakeAudio();
