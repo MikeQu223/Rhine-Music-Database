@@ -234,20 +234,23 @@ function prepareResources() {
 
 /**
  * 包源目录的 build.gradle 是「Qt 模板副本 + 末尾追加段」：Qt 升级换了模板就必须重新生成，
- * 否则新模板里的字段再也进不了包，而构建会安静地沿用旧配置。这里只比对前缀，
- * 追加段（第三方依赖）随仓库自由演进。
+ * 否则新模板里的字段再也进不了包，而构建会安静地沿用旧配置。
+ *
+ * 注意：纯 Qt 打包封堵段（FLUTTER-ONLY-ANDROID-20261117）被 android-gradle-sync.cjs
+ * 放在模板**之前**，所以不能再比「文件是否以模板开头」——那样只要 kit 自带模板就恒为 false。
+ * 这里改为「文件里逐字节包含当前模板」，追加段与封堵段都不影响判定。
  */
 function gradleTemplateInSync() {
-    const template = path.join(kit, 'src/android/templates/build.gradle');
+    const templatePath = path.join(kit, 'src/android/templates/build.gradle');
     const ours = path.resolve('Qt/android/build.gradle');
-    if (!fs.existsSync(template)) {
+    if (!fs.existsSync(templatePath)) {
         // 少数发行套件不带模板源码，没法比对，放行即可（构建时 androiddeployqt 仍会用它自己的）。
         return true;
     }
     if (!fs.existsSync(ours)) {
         return false;
     }
-    return fs.readFileSync(ours, 'utf8').startsWith(fs.readFileSync(template, 'utf8'));
+    return fs.readFileSync(ours, 'utf8').includes(fs.readFileSync(templatePath, 'utf8'));
 }
 
 /** 调试签名用的密钥只生成一次，落在工作区里：与 AGP 自动生成到 ~/.android 的那份等价，
