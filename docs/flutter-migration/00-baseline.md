@@ -1,5 +1,7 @@
 # Qt Android 基线出处与证据台账（T01）
 
+> 归档说明（2026-11-19）：本文引用的 `.agents/` 目录已删除（含 227 个 worktree、控制面报告与日志）。文中的 `.agents/...` 路径仅作历史出处；控制面摘要、实测数字与残留材料见 `docs/flutter-migration/archive/2026-11-19-control-plane.md` 与 `docs/flutter-migration/archive/qt-flutter-state-2026-11-19.md`。
+
 状态：**G1 CLOSED（artifact-level 证据链）**。出处基线可用；像素参考当前不可用，须由 T50 从同一 APK 重采。
 fixture 与测试代码随 **T01-F01** 原子步骤落盘（字段契约见 §12）；本轮**未执行** `flutter test`，不得把“已编写”写成“已通过”。
 

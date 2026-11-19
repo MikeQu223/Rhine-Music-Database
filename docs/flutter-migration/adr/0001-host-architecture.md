@@ -1,5 +1,7 @@
 # ADR 0001：Qt → Flutter 宿主架构（pending-evidence）
 
+> 归档说明（2026-11-19）：本文引用的 `.agents/` 目录已删除（含 227 个 worktree、控制面报告与日志）。文中的 `.agents/...` 路径仅作历史出处；控制面摘要、实测数字与残留材料见 `docs/flutter-migration/archive/2026-11-19-control-plane.md` 与 `docs/flutter-migration/archive/qt-flutter-state-2026-11-19.md`。
+
 - 状态：**PROPOSED / PENDING_DEVICE_EVIDENCE — 未裁决**。赢家字段 UNASSIGNED。
 - 计划卡：T16 架构裁决（docs/superpowers/plans/2026-11-09-qt-to-flutter-parity-plan.md:506-512）
 - 本文件原子：T16-D02、T16-D03（输出 docs/flutter-migration/adr/0001-host-architecture.md）
@@ -7,7 +9,7 @@
 - 依赖：T11-T15 候选源码与 T10 切片规格“存在即可起草”；结论必须等 T16-D01 真机数据（GRAPH-V2-REVIEW.json next_wave W1b）。
 - 日期：2026-11-10
 - 本版：证据冻结（T16-D02 / T16-D03 起草）。只固定程序、契约与边界证据，不含赢家；未来裁决提交按 §7.6 另起 commit。
-- 证据口径：本文所称 `reports/<名>` 一律指控制面目录 `.agents/parity-20261109/reports/<名>`（`.gitignore:17` 的 `/.agents/` 已忽略该目录，仓库根无 `reports/`）；它们是控制面报告（非仓库内实现证据）；审计基线为冻结 SHA bf6743e8486d62964cc27a4b8573533fc00f2eb4（OPS78-FINAL-DEDUP.json:3 auditSha），但各报告自报的 baseSha/asOfSha 可不同（例：OPS78-COVERAGE.json:8/:9/:10 记 baseSha 8ed3067b…、asOfSha 2623b1c5…、rootMoving=true），以各报告自报字段为准。下文凡仅以 reports/ 为出处的计数与状态，均属控制面口径，未在仓库内验证。
+- 证据口径：本文所称 `reports/<名>` 一律指控制面目录 `.agents/parity-20261109/reports/<名>`（`.gitignore:17` 的 `/.agents/` 当时已忽略该目录，仓库根当时无 `reports/`；2026-11-19 起仓库根已有**未跟踪**的 `reports/`，但只放 11-19 的三份报告，历史控制面报告不在此列）；它们是控制面报告（非仓库内实现证据）；审计基线为冻结 SHA bf6743e8486d62964cc27a4b8573533fc00f2eb4（OPS78-FINAL-DEDUP.json:3 auditSha），但各报告自报的 baseSha/asOfSha 可不同（例：OPS78-COVERAGE.json:8/:9/:10 记 baseSha 8ed3067b…、asOfSha 2623b1c5…、rootMoving=true），以各报告自报字段为准。下文凡仅以 reports/ 为出处的计数与状态，均属控制面口径，未在仓库内验证。
 
 ## 1. 背景与问题
 
