@@ -555,12 +555,13 @@ void main() {
       expect(recorder.textAt(_version.commitTitle), isNull);
     });
 
-    test('展开选项区后产出真实选项命中（theme 三项）', () {
+    test('展开选项区后产出真实选项命中（theme 两项）', () {
       final SettingsRowRecorder recorder = paintModel(_model(expandedId: 'theme'));
       expect(recorder.hasHit('expand:theme'), isTrue);
       expect(recorder.hasHit('setting:theme:light'), isTrue);
       expect(recorder.hasHit('setting:theme:dark'), isTrue);
-      expect(recorder.hasHit('setting:theme:system'), isTrue);
+      // 「跟随系统」已按用户要求移除：这条命中必须彻底消失，不能只改文案。
+      expect(recorder.hasHit('setting:theme:system'), isFalse);
     });
 
     test('滚动：内容高于视口，clamp 到 [0, maximumScroll]', () {

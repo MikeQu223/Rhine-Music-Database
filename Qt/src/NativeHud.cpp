@@ -322,10 +322,6 @@ void NativeHud::draw(QJsonObject next, double stageWidth, double time) {
             qWarning().noquote() << "HUD 探针: 舞台宽度" << stageWidth << "模式" << next["mode"].toString();
         }
     }
-    if (themeMode == "system" && dark != m_host->systemDark()) {
-        dark = m_host->systemDark();
-        m_scene.theme(dark);
-    }
     m_responsive.resize(stageWidth);
     m_music->followPlaybackDetails = !m_responsive.compact();
     m_music->followPlaybackForLyrics = lyricsMode;

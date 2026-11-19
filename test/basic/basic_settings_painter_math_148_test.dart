@@ -73,7 +73,7 @@ void main() {
     test('空存储 -> Qt 默认真值（暗色 / lossless / 遮盖 55 / vsync on）', () async {
       final BasicSettingsRuntime runtime = await _runtime();
       final SettingsPreferenceSnapshot snapshot = runtime.snapshot;
-      expect(snapshot.themeMode, 'dark', reason: '基本版默认暗色，面板不能写着浅色而画面是暗的');
+      expect(snapshot.themeMode, 'light', reason: '出厂默认亮色；「跟随系统」已移除');
       expect(snapshot.quality, 'lossless');
       expect(snapshot.archiveMaskStrength, 55);
       expect(snapshot.vsync, isTrue);
@@ -103,15 +103,16 @@ void main() {
     test('界面配色写入后：端口里有值、快照与行文案立刻是新值', () async {
       final MemoryBasicSettingsPort port = MemoryBasicSettingsPort(package: _androidPackage);
       final BasicSettingsRuntime runtime = await _runtime(port: port);
+      // 出厂默认是亮色，所以这里切到暗色才是有效写入（写 light 会命中 unchanged）。
       final BasicSettingsApplyResult result =
-          await runtime.apply('setting:theme:light', context: _context());
+          await runtime.apply('setting:theme:dark', context: _context());
       expect(result.persisted, isTrue);
-      expect(result.persistedValue, 'light');
-      expect(port.values['panel/theme'], 'light');
-      expect(runtime.snapshot.themeMode, 'light');
-      // 读回同值：新会话（重新 load）必须还是 light，证明写的是真存储。
+      expect(result.persistedValue, 'dark');
+      expect(port.values['panel/theme'], 'dark');
+      expect(runtime.snapshot.themeMode, 'dark');
+      // 读回同值：新会话（重新 load）必须还是 dark，证明写的是真存储。
       final BasicSettingsRuntime reloaded = await _runtime(port: port);
-      expect(reloaded.snapshot.themeMode, 'light');
+      expect(reloaded.snapshot.themeMode, 'dark');
     });
 
     test('进入详情页自动播放 / 点击播放单曲 落到真实偏好键', () async {
@@ -194,11 +195,11 @@ void main() {
           MemoryBasicSettingsPort(package: _androidPackage, failWrites: true);
       final BasicSettingsRuntime runtime = await _runtime(port: port);
       final BasicSettingsApplyResult result =
-          await runtime.apply('setting:theme:light', context: _context());
+          await runtime.apply('setting:theme:dark', context: _context());
       expect(result.persisted, isFalse);
       expect(result.notice, contains('写入失败'));
       expect(port.values, isEmpty);
-      expect(runtime.snapshot.themeMode, 'dark');
+      expect(runtime.snapshot.themeMode, 'light', reason: '写失败不许假装改成暗色');
     });
   });
 

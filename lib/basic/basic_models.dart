@@ -666,7 +666,7 @@ class BasicViewState {
     this.playbackError = '',
     this.lyrics = const <BasicLyricLine>[],
     this.lyricIndex = -1,
-    this.dark = true,
+    this.dark = false,
     this.queue = const <SirenSong>[],
     this.queueIndex = -1,
     this.lyricStatus = 'idle',

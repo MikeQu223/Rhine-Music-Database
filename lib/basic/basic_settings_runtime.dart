@@ -41,7 +41,9 @@ class BasicSettingsApplyResult {
 /// 只在宿主外壳里持有一份（BasicApp）。面板模型每次按当前快照重建，
 /// 因此"写进去 -> 立刻读回 -> 行显示新值"是同一条真值链，不是两份状态。
 class BasicSettingsRuntime {
-  BasicSettingsRuntime({required this._store, this._dark = true});
+  /// [dark] 只在**没有任何偏好**时兜底：本项目出厂默认亮色（用户 2026-11-19 指定），
+  /// 读到 `theme=dark` 才会变暗；没有"跟随系统"这一档。
+  BasicSettingsRuntime({required this._store, this._dark = false});
 
 
   final BasicSettingsStore _store;
@@ -165,12 +167,9 @@ class BasicSettingsRuntime {
   void _applyFromSnapshot() {
     // 配色是唯一一个"值就是主题本身"的偏好：写进去的 'light'/'dark' 必须
     // 反映到 host 的深色开关（Qt 里是 theme -> dark + 场景主题）。
-    final String theme = rawValue('theme');
-    if (theme == 'light') {
-      _dark = false;
-    } else if (theme == 'dark') {
-      _dark = true;
-    }
+    // 只有显式 'dark' 才是暗色；缺键与旧版本残留的 'system' 都落到亮色
+    // （项目默认配色，不再做系统亮度检测）。
+    _dark = rawValue('theme') == 'dark';
     _detailAutoplay = rawValue('detail-autoplay') == 'on';
     _singlePlayAppend = rawValue('single-play-mode') == 'append';
     _archiveMaskStrength = int.tryParse(rawValue('archive-mask-strength')) ?? 55;

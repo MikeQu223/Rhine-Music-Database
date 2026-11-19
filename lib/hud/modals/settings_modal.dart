@@ -2249,7 +2249,6 @@ const List<SettingsChoice> settingsOnOffChoices = <SettingsChoice>[
 const List<SettingsChoice> settingsThemeChoices = <SettingsChoice>[
   SettingsChoice(value: 'light', label: '亮色'),
   SettingsChoice(value: 'dark', label: '暗色'),
-  SettingsChoice(value: 'system', label: '跟随系统'),
 ];
 
 const List<SettingsChoice> settingsMotionChoices = <SettingsChoice>[
@@ -3030,9 +3029,12 @@ String settingsNormalizeValue(
     case SettingsStorageType.reducedFull:
       return raw == 'reduced' || raw == 'full' ? raw : (fallback.isEmpty ? 'full' : fallback);
     case SettingsStorageType.theme:
-      return raw == 'light' || raw == 'dark' || raw == 'system'
-          ? raw
-          : (fallback.isEmpty ? 'light' : fallback);
+      // 只有亮/暗两档：「跟随系统」已按用户要求移除，旧偏好里残留的 'system'
+      // 也在这里归到亮色（默认配色），不再有任何系统亮度检测。
+      if (raw == 'light' || raw == 'dark') {
+        return raw;
+      }
+      return fallback == 'dark' ? 'dark' : 'light';
     case SettingsStorageType.trayQuit:
       return raw == 'tray' || raw == 'quit' ? raw : (fallback.isEmpty ? 'quit' : fallback);
     case SettingsStorageType.appendReplace:

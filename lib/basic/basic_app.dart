@@ -342,10 +342,22 @@ class _BasicAppState extends State<BasicApp> {
     // BasicApp 还没有被任何生产调用点挂载（lib/ 里零引用，只有测试引用）。
     // 挂载由生产入口负责，本文件只交付这个组合根；
     // MaterialApp 由本 widget 提供，所以挂上去即可直接 runApp(const BasicApp())。
-    return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(brightness: Brightness.dark, scaffoldBackgroundColor: Colors.black),
-      home: _home(),
+    // 主题跟着真实配色走（出厂默认亮色）：Flutter 控件层与 HUD 命令流不能一暗一亮。
+    // MaterialApp 必须自己听 controller：设置页改配色时 BasicApp 不会因为
+    // 子树的 ListenableBuilder 重建而重跑 build，否则 theme 会一直停在上一次的值。
+    return ListenableBuilder(
+      listenable: _controller,
+      builder: (BuildContext context, Widget? _) {
+        final bool dark = _controller.state.dark;
+        return MaterialApp(
+          debugShowCheckedModeBanner: false,
+          theme: ThemeData(
+            brightness: dark ? Brightness.dark : Brightness.light,
+            scaffoldBackgroundColor: dark ? Colors.black : const Color(0xFFEFEDE4),
+          ),
+          home: _home(),
+        );
+      },
     );
   }
 

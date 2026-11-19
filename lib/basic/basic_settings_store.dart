@@ -316,9 +316,9 @@ SettingsPreferenceSnapshot basicSettingsSnapshotFrom(
         if (entry.key.startsWith(basicSettingsPreferencePrefix))
           entry.key.substring(basicSettingsPreferencePrefix.length): entry.value,
     },
-    // 面板显示"当前生效"的配色：缺键时跟随真实 HUD（基本版默认暗色），
-    // 不能让面板写着"浅色"而画面是暗的。
-    themeMode: theme == 'light' ? 'light' : 'dark',
+    // 面板显示"当前生效"的配色：只有显式存过 'dark' 才是暗色，缺键（以及旧版本
+    // 残留的 'system'）一律算亮色——这是本项目的默认配色，没有系统亮度检测。
+    themeMode: theme == 'dark' ? 'dark' : 'light',
     reducedMotion: flag('motion', fallback: false),
     startupAnimation: flag('startup-animation', fallback: false),
     discRotation: flag('disc-rotation', fallback: false),
@@ -341,7 +341,7 @@ class BasicSettingsStore {
 
   BasicSettingsPort get port => _port;
 
-  Future<BasicSettingsLoad> load({bool dark = true}) async {
+  Future<BasicSettingsLoad> load({bool dark = false}) async {
     final Map<String, String> raw = await _port.readAll();
     return BasicSettingsLoad(
       snapshot: basicSettingsSnapshotFrom(raw, dark: dark),

@@ -16,9 +16,10 @@
 
 // 1. 值域（白名单）—— 全部来自 Qt 的 normalize 分派（SettingsSchema.cpp:718-787）。
 
-/// 主题值域：StorageType::Theme 只认 light/dark/system，其它值回落 light
-/// （Qt/src/SettingsSchema.cpp:732-733；选项表 :25-29）。
-const List<String> settingsThemeValues = <String>['light', 'dark', 'system'];
+/// 主题值域：只有亮/暗两档，其它值回落 light
+/// （「跟随系统」已按用户要求移除，旧值 'system' 由 settings_modal.dart 的
+/// normalize 归到亮色，本层不再接受）。
+const List<String> settingsThemeValues = <String>['light', 'dark'];
 
 /// 音质值域：Qt 按 provider 动态给选项（SettingsSchema.cpp:181-190、:738-743；
 /// MusicPlayer.cpp:104-124），本层取四个分支的并集作为平台门：
@@ -389,10 +390,10 @@ class SettingsActionRouter {
     if (value == null) {
       // 裸串 theme 在 Qt 里是「循环到下一个主题」（NativeHudController.cpp:724-729），
       // 属于调用方的选择逻辑；缺值即拒绝，不替调用方猜。
-      return const SettingsActionIgnored('theme 需要显式值：light / dark / system');
+      return const SettingsActionIgnored('theme 需要显式值：light / dark');
     }
     if (!settingsThemeValues.contains(value)) {
-      return SettingsActionIgnored('theme 值 $value 不在白名单 light/dark/system 内');
+      return SettingsActionIgnored('theme 值 $value 不在白名单 light/dark 内');
     }
     ports.setTheme(value);
     return SettingsActionApplied(state: state.copyWith(themeMode: value), message: 'theme=$value');

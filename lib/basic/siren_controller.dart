@@ -90,11 +90,13 @@ const String sirenProviderLabel = '塞壬唱片';
 ///
 /// 构造注入 [BasicAudioPort]；[repository] 可注入（测试/替换 baseUri），
 /// [dark] 只影响 [state].dark（基础版不做主题切换）。
+///
+/// 出厂默认**亮色**（用户 2026-11-19 指定；偏好里显式写了 dark 才会变暗）。
 class BasicController extends ChangeNotifier implements BasicMediaSessionCommands {
   BasicController({
     required this._audio,
     SirenRepository? repository,
-    bool dark = true,
+    bool dark = false,
     this._collections,
     MediaSessionPort? mediaSessionPort,
     BasicArtCache? artCache,

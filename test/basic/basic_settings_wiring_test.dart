@@ -302,16 +302,19 @@ void main() {
       (WidgetTester tester) async {
     final ({_ShellController controller, MemoryBasicSettingsPort port}) shell =
         await pumpShell(tester);
-    expect(shell.controller.dark, isTrue, reason: '默认深色');
+    expect(shell.controller.dark, isFalse, reason: '出厂默认亮色');
 
     await openSettings(tester);
-    expect(await activate(tester, 'theme', 'light'), isTrue,
+    expect(await activate(tester, 'theme', 'dark'), isTrue,
         reason: '配色是 choice 行，必须点开再点真实选项');
 
     // 真实落盘（bare panel key，PreferenceStore 自己加 panel/ 前缀）。
-    expect(shell.port.values['panel/theme'], 'light');
+    expect(shell.port.values['panel/theme'], 'dark');
     // 真实效果：controller 的深色开关被改，HUD 配色随之换。
-    expect(shell.controller.dark, isFalse);
+    expect(shell.controller.dark, isTrue);
+    // Flutter 控件层也得跟着换，否则 HUD 亮、设置页文字还按暗色画。
+    final MaterialApp app = tester.widget<MaterialApp>(find.byType(MaterialApp));
+    expect(app.theme?.brightness, Brightness.dark);
 
     await tester.pumpWidget(const SizedBox());
   });
@@ -416,9 +419,9 @@ void main() {
     await tester.pump();
 
     await openSettings(tester);
-    await activate(tester, 'theme', 'light');
+    await activate(tester, 'theme', 'dark');
 
-    expect(controller.dark, isTrue, reason: '写失败不许假装改成浅色');
+    expect(controller.dark, isFalse, reason: '写失败不许假装改成暗色');
     expect(find.textContaining('写入失败'), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox());

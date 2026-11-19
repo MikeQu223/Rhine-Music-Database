@@ -32,9 +32,10 @@ NativeHud::NativeHud(Host *host, Glyphs *glyphs, MusicLibrary *music, HudSceneAc
     : QObject(parent), m_host(host), m_glyphs(glyphs), m_music(music), m_scene(std::move(scene)) {
     themeMode = host->preference("theme");
     if (themeMode.isEmpty()) {
-        themeMode = "system";
+        // 出厂默认亮色：不再有「跟随系统」，缺键直接落到 light（用户 2026-11-19 指定）。
+        themeMode = "light";
     }
-    dark = themeMode == "system" ? host->systemDark() : themeMode == "dark";
+    dark = themeMode == "dark";
     reduced = host->preference("motion") == "reduced";
     startupAnimation = host->preference("startup-animation") == "on";
 #ifdef Q_OS_DARWIN
@@ -1049,8 +1050,8 @@ void NativeHud::action(QString value) {
     } else if (value == "disc-rotation:cancel") {
         openModal("settings");
     } else if (value == "theme") {
-        themeMode = cycle({"light", "dark", "system"}, themeMode);
-        dark = themeMode == "system" ? m_host->systemDark() : themeMode == "dark";
+        themeMode = cycle({"light", "dark"}, themeMode);
+        dark = themeMode == "dark";
         m_scene.theme(dark);
         m_host->setPreference("theme", themeMode);
     } else if (value.startsWith("archive-mask:")) {
