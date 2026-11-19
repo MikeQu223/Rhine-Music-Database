@@ -9,12 +9,15 @@ import 'package:flutter/scheduler.dart' show Ticker;
 
 import '../hud/input/hit_layer.dart';
 import '../hud/modals/lyrics_panel.dart' as lyrics;
+import '../hud/modals/modal_shell.dart';
+import '../hud/modals/queue_modal.dart' as queue_modal;
 import '../hud/pages/archive_page.dart';
 import '../hud/pages/chrome.dart';
 import '../hud/pages/song_detail.dart' as detail;
 import '../hud/portrait/portrait_canvas.dart';
 import '../hud/portrait/portrait_layout.dart';
 import '../hud/portrait/portrait_pages_library.dart';
+import '../hud/portrait/portrait_pages_queue.dart';
 import '../hud/portrait/portrait_pages_song.dart';
 import '../hud/player/player_bar.dart' as player;
 import '../plugin/plugin_models.dart';
@@ -109,9 +112,19 @@ class BasicHudFrame {
     /// 同形的单条 text 命令（如整条歌名），不能因为它们不推进时间就把文字拆成
     /// 逐字槽或整段不画。宿主 [BasicHudSurface] 有 ticker，显式传 true。
     bool animateText = false,
-    /// 当前弹层（'' = 无，'search' = 检索，'settings' = 设置）。竖屏用它决定画哪一页：
-    /// 设置窗是真实 Flutter widget 层（不走命令流），检索页是命令流页面。
+    /// 当前弹层（'' = 无，'search' = 检索，'settings' = 设置，'queue' = 播放队列）。
+    /// 竖屏用它决定画哪一页：设置窗是真实 Flutter widget 层（不走命令流），
+    /// 检索页与播放队列页是命令流页面；横屏队列面板由本帧叠加（见下）。
     String modal = '',
+    /// 横屏队列面板的滚动偏移（Qt `queueOffset`，行单位）。
+    /// 调用方负责 clamp 到 [queue_modal.queueModalMaximumOffset]。
+    int queueOffset = 0,
+    /// 竖屏队列页的滚动量（Qt `m_scroll`，网格单位）。null = 按 Qt 的
+    /// `newScope` 缺省规则「当前行置顶」（当前行 > 0 时 251 + index*68）。
+    double? queueScroll,
+    /// 竖屏队列页的播放模式 chip 是否展开（Qt `m_queueModesExpanded`，
+    /// 由 `mobile:queue-modes` 翻转）。横屏面板不用它（四模式按钮常驻）。
+    bool queueModesExpanded = false,
     /// 右栏遮罩强度（0..100，Qt `archive-mask-strength` / 设置页“右侧画面遮罩”）。
     /// 默认就是 Qt 常量 [HudChrome.defaultArchiveMaskStrength]；注入只来自设置页真值。
     double archiveMaskStrength = 0, // = HudChrome.defaultArchiveMaskStrength（int 常量转 double）
@@ -147,6 +160,8 @@ class BasicHudFrame {
         animateText: animateText,
         modal: modal,
         stageScale: stageScale,
+        queueScroll: queueScroll,
+        queueModesExpanded: queueModesExpanded,
         plugins: plugins,
         pluginDetail: pluginDetail,
         pluginDetailEnabled: pluginDetailEnabled,
@@ -211,6 +226,12 @@ class BasicHudFrame {
       );
     }
 
+    // 横屏播放队列面板（Qt `modal == "player"`）：宿主先画全舞台遮罩 + 836 面板底，
+    // 面板内容由 queue_modal 产出（NativeHudModal.cpp:163-186 对 player 不走标题区）。
+    if (modal == 'queue') {
+      _paintQueueModal(sink, ports, state, width, height, dark, queueOffset);
+    }
+
     final player.PlayerBarDrawing bar = player.renderPlayerBar(
       _playerState(state),
       player.PlayerBarRect(0, height - player.playerBarRowHeight, width, player.playerBarRowHeight),
@@ -244,6 +265,8 @@ class BasicHudFrame {
     bool animateText = false,
     String modal = '',
     double stageScale = 0,
+    double? queueScroll,
+    bool queueModesExpanded = false,
     PluginSnapshot? plugins,
     PluginManifest? pluginDetail,
     bool pluginDetailEnabled = true,
@@ -335,6 +358,34 @@ class BasicHudFrame {
         total: items.length,
         notice: emptyNotice,
         loading: state.loading,
+      );
+    } else if (modal == 'queue') {
+      // Qt compact `queue()`（ResponsiveHudPages.cpp:468-533）：通用页头（只有返回
+      // 箭头 + close-modal，没有设置齿轮）+ 内容自 158 起；播放条与底栏由 shell 画
+      // （Qt 队列页的底栏 active=""，所以 nav 传 null）。
+      paintPortraitShell(
+        canvas,
+        player: portraitPlayer,
+        nav: null,
+        header: (PortraitCanvas c) => c.header(
+          '播放队列',
+          back: true,
+          backAction: 'close-modal',
+          showSettings: false,
+        ),
+        content: (PortraitCanvas c, double pageBottom) => paintPortraitQueuePage(
+          c,
+          title: bar.title,
+          artist: bar.artist,
+          tracks: _portraitQueueRows(state),
+          currentIndex: state.queueIndex,
+          mode: state.queueMode,
+          modesExpanded: queueModesExpanded,
+          // Android/iOS 的 PlatformFeatures::ApplicationVolume 恒 false（见 _playerState）。
+          applicationVolume: bar.applicationVolume,
+          volume: 0,
+          scroll: queueScroll,
+        ),
       );
     } else if (modal == 'plugins' || modal == 'plugin-detail') {
       // Qt compact 插件页：通用页头（不是终端页头）+ 内容区由真实 widget 承担，
@@ -465,6 +516,96 @@ class BasicHudFrame {
       // 歌词入口只在当前曲目上出现：state.lyrics 是播放曲目的歌词。
       lyricsAvailable: current && state.lyrics.isNotEmpty,
     );
+  }
+
+  /// 竖屏队列页的行投影：标题/艺人/时长 + 封面 key，与横屏面板同一份 [state.queue]。
+  static List<PortraitQueueRow> _portraitQueueRows(BasicViewState state) {
+    return <PortraitQueueRow>[
+      for (final SirenSong song in state.queue)
+        (
+          title: song.title,
+          artist: song.artist,
+          // Qt queue() 用 MusicData::time(track)：毫秒 → mm:ss，<= 0 显示「暂无」。
+          stamp: queue_modal.queueModalTime(_queueModalTrack(song)),
+          image: song.cover,
+        ),
+    ];
+  }
+
+  /// [SirenSong] → 横屏面板条目（时长取毫秒，供 `queueModalTime` 同口径取整）。
+  static queue_modal.QueueModalTrack _queueModalTrack(SirenSong song) =>
+      queue_modal.QueueModalTrack(
+        title: song.title,
+        artist: song.artist,
+        duration: song.durationMs,
+      );
+
+  /// 横屏播放队列面板：外壳（遮罩 + 836 面板底 + 返回按钮）走共享 [ModalShell]，
+  /// 内容走 `queue_modal.renderQueueModal`。
+  ///
+  /// Qt 对应 NativeHudModal.cpp:163-186 的 `modal == "player"` 分支：全舞台遮罩 +
+  /// `{left,122,width,836}` 面板底，然后 `playerPanel()` 直接画卡片，**不走标题区**。
+  static void _paintQueueModal(
+    _HudSink sink,
+    BasicGlyphPorts ports,
+    BasicViewState state,
+    double width,
+    double height,
+    bool dark,
+    int queueOffset,
+  ) {
+    final int count = state.queue.length;
+    final int offset = queueOffset.clamp(0, queue_modal.queueModalMaximumOffset(count));
+    final SirenSong? playing = state.playingTrack;
+    final _QueueModalGlyphs glyphs = _QueueModalGlyphs(ports);
+    // 外壳（遮罩 + 面板底 + 返回按钮）走共享 ModalShell；面板矩形由它算
+    // （Qt NativeHud::modalBounds 通用分支 = 顶 122 / 高 836 / 居中 1260）。
+    // 内容用真实矩形重算卡片：queue_modal 内部再按 bounds.x+53 / width-106 收缩。
+    final ModalShellResult result = ModalShell(
+      sink: sink,
+      text: ports,
+      spec: ModalShellSpec(
+        modalId: kModalShellPlayerModal,
+        stageWidth: width,
+        stageHeight: kModalShellStageHeight,
+        dark: dark,
+        content: (ModalShellBody body) {
+          final ModalShellBounds bounds = body.bounds;
+          final queue_modal.QueueModalDrawing drawing = queue_modal.renderQueueModal(
+            queue_modal.QueueModalState(
+              bounds: queue_modal.QueueModalRect(
+                bounds.left,
+                bounds.top,
+                bounds.width,
+                bounds.height,
+              ),
+              tracks: <queue_modal.QueueModalTrack>[
+                for (final SirenSong song in state.queue) _queueModalTrack(song),
+              ],
+              // Qt 的 current 是空对象时才显示「暂无播放歌曲」（PlaybackQueueCard.cpp:51）。
+              current: playing == null ? null : _queueModalTrack(playing),
+              cover: playing?.cover ?? '',
+              mode: state.queueMode,
+              status: state.playerStatus,
+              currentIndex: state.queueIndex,
+              offset: offset,
+              playing: state.playing,
+              dark: dark,
+            ),
+            glyphs,
+          );
+          for (final List<Object?> command in drawing.commands) {
+            body.sink.op(command);
+          }
+          // 卡片命中是六键 map（无 fixed）：解码成 HudHit 后并入外壳的命中表，
+          // 保持与 Qt hits 相同的 append 顺序。
+          for (final HudHit hit in decodeHudHits(drawing.hits).hits) {
+            body.hits.hit(hit);
+          }
+        },
+      ),
+    ).build();
+    sink.hits.addAll(result.hits);
   }
 
   /// 竖屏序号（Qt 的 `pad()`：两位，超过 99 自然变三位）。
@@ -1799,4 +1940,15 @@ class _HudSink implements HudSurfaceSink {
       ));
     }
   }
+}
+
+/// `queue_modal.QueueModalGlyphs` 适配：队列卡片只量宽度（Qt Canvas::fit）。
+class _QueueModalGlyphs implements queue_modal.QueueModalGlyphs {
+  const _QueueModalGlyphs(this.ports);
+
+  final BasicGlyphPorts ports;
+
+  @override
+  double width(String value, double size, String weight) =>
+      ports.width(value, size, weight);
 }
