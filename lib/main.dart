@@ -16,8 +16,8 @@
 // （Qt/android/src/rhine/music/database/ConsentStore.java:20-21）——两者都不在 Dart 组合根里。
 //
 // Flutter 基本版没有捆绑 Clarity / Bugly（pubspec.yaml 的 dependencies 只有 flutter 与
-// cupertino_icons，android/app/build.gradle.kts 的 dependencies 只有 testImplementation
-// junit），也就没有要征求同意的 SDK。所以入口不挂 ConsentGate，只做一件事：把 root 交给
+// shared_preferences 这两个官方包，android/app/build.gradle.kts 的 dependencies 只有
+// testImplementation junit），也就没有要征求同意的 SDK。所以入口不挂 ConsentGate，只做一件事：把 root 交给
 // BasicApp。
 //
 // 挂的是 BasicApp（RUNTIME-STARTUP-96 的交付，lib/basic/basic_app.dart）：它自带

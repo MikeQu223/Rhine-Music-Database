@@ -12,7 +12,8 @@
 /// （本地 Qt HostReply 桥接归一形态，来源 Qt/src/MusicApi.cpp，不是官网 wire）。
 /// 冻结契约 v1 原文里的 {code:200,value} 已被协调者作废，不得作为默认主分支。
 ///
-/// 依赖限制：pubspec 只有 flutter + cupertino_icons，所以只能用 dart:io.HttpClient。
+/// 依赖限制：pubspec 只有 flutter 与 shared_preferences（都是官方包，没有 http/dio），
+/// 所以只能用 dart:io.HttpClient。
 library;
 
 import 'dart:async';
