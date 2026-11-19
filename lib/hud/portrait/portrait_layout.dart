@@ -344,16 +344,17 @@ void _list(
   const double fadeHeight = 44;
   final double fadeTop = listTop - fadeHeight;
   const int steps = 13;
+  List<Object?> wash(double alpha) =>
+      <Object?>[c.paper[0], c.paper[1], c.paper[2], alpha];
   for (int step = 0; step < steps; step++) {
     final double t = (step + 1) / steps;
     c.fill(
       Rect.fromLTWH(0, fadeTop + step * (fadeHeight / steps),
           c.gridWidth, fadeHeight / steps + .5),
-      <Object?>[.075, .110, .094, t],
+      wash(t),
     );
   }
-  c.fill(Rect.fromLTWH(0, listTop, c.gridWidth, math.max(0, c.height - listTop)),
-      <Object?>[.075, .110, .094, 1]);
+  c.fill(Rect.fromLTWH(0, listTop, c.gridWidth, math.max(0, c.height - listTop)), wash(1));
   c.beginContent(listTop);
   if (archive.rows.isEmpty) {
     if (archive.emptyNotice.isNotEmpty) {
@@ -393,7 +394,9 @@ void _list(
         c.fill(Rect.fromLTWH(23, y, 2, portraitRowHeight - 2), c.amber);
       }
       final double alpha = (.85 - distance * .13).clamp(.2, .85);
-      final List<Object?> color = <Object?>[.925, .933, .886, alpha];
+      // 行标题跟着主题走（原来钉死暗色 ink 的奶油色）：亮色主题下必须换成深墨，
+      // 否则浅底浅字同样读不出来。
+      final List<Object?> color = <Object?>[c.ink[0], c.ink[1], c.ink[2], alpha];
       c.text(_pad(row + 1), 27, y + 19, size: 8, width: 24, color: c.muted);
       c.text(archive.rows[row].title, 56, y + 14,
           size: isCurrent ? 14 : 13, width: rowWidth - 55, weight: 'regular', color: color);
