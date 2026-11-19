@@ -11,11 +11,10 @@ account.dpapi
 *.dSYM/
 node-*
 */__pycache__/
+/.gradle/
 
 # 本地会话和临时工作文件
 /.codex/
-/.agents/
-# /.mnemon/
 /.dsh-progress/
 
 # 本地凭据和机器配置
@@ -58,7 +57,6 @@ Thumbs.db
 # /memories/
 /.claude/
 /.workbuddy/
-# /.mnemon/
 
 # FSR 着色器预编译产物：只保留 .h 头文件（供无 dxc/glslang 的环境直接构建），
 # 依赖文件 .d 与临时编译脚本 .cmake 每次构建都会重写，不入库。

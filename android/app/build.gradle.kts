@@ -184,18 +184,15 @@ dependencies { testImplementation("junit:junit:4.13.2") }
 // 目录缺失时**配置阶段就失败**：没有 Qt 运行时的 APK 里，场景视图在运行时找不到
 // QtNative 只能退化成空白——那正是本卡要取消的"假内嵌"，不允许静默产出。
 // ---------------------------------------------------------------------------
-// 默认目录按本卡的布局推导，不写死绝对路径：
-//   rootProject.projectDir = <parity>/worktrees/NATIVE-RECOVERY-132/android
-//   parentFile             = <parity>/worktrees/NATIVE-RECOVERY-132
-//   parentFile.parentFile  = <parity>/worktrees
-//   parentFile.parentFile.parentFile = <parity>
+// 默认目录 = 本仓库内的 Qt 侧 staging，不写死绝对路径：
+//   rootProject.projectDir = <repo>/android → parentFile = <repo>
+//   cmake -S Qt -B output/qt-android-flutter + ninja apk（androiddeployqt --no-build）
+//   会在 output/qt-android-flutter/Qt/android-build 下落出 libs/ 与 res/values/libs.xml。
 // 只指向**本树自己的** Qt staging：旧卡 builds/QT-OVERLAY-128 与
 // builds/DEVICE-VISUAL-131 是冻结产物，默认回落到它们会让"改了 Qt 源码却装到旧 .so"
 // 静默发生（那是假验证）。
-val qtOverlayWorktreeDir: File = rootProject.projectDir.parentFile
-val qtOverlayParityRootDir: File = qtOverlayWorktreeDir.parentFile.parentFile
 val qtOverlayDefaultDeployDir: File =
-    File(qtOverlayParityRootDir, "builds/NATIVE-RECOVERY-132/qt-build/Qt/android-build")
+    File(rootProject.projectDir.parentFile, "output/qt-android-flutter/Qt/android-build")
 
 val qtAndroidDeployDir: File =
     (project.findProperty("rhineQtAndroidDeployDir") as String?)
@@ -233,7 +230,7 @@ if (!qtAndroidAbiDir.isDirectory) {
     throw org.gradle.api.GradleException(
         "Qt 场景运行时不在 " + qtAndroidDeployDir.absolutePath + "（缺 libs/arm64-v8a）。" +
             "先用源码重建本分支的 Qt 运行时：" +
-            " cmake -S <worktree> -B .agents/parity-20261109/builds/QT-OVERLAY-128/qt-build-release" +
+            " cmake -S Qt -B output/qt-android-flutter" +
             " -G Ninja -DCMAKE_TOOLCHAIN_FILE=<qt-android>/lib/cmake/Qt6/qt.toolchain.cmake" +
             " -DQT_HOST_PATH=/usr -DQT_HOST_PATH_CMAKE_DIR=/usr/lib/cmake" +
             " -DQT_QMAKE_TARGET_MKSPEC=android-clang -DANDROID_ABI=arm64-v8a" +

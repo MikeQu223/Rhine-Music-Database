@@ -1,0 +1,574 @@
+{
+  "LEAD_CURRENT_CONTROL_MUST_READ": {
+    "kind": "LEAD pointer, NOT author ACK or new approval request",
+    "highest": 7,
+    "absoluteControl": "/home/aibeto/code/Rhine-Music-Database/.agents/parity-20261109/control/FINAL-VERIFY-154.json",
+    "decision": "/home/aibeto/code/Rhine-Music-Database/.agents/parity-20261109/reports/COORD-154-to-152.json",
+    "action": "Keep candidate6f merge, no rollback.152stillactive and owns bothlib+test followups. Parent artworkcounterexamples remainOPEN. No request to reopen152 or permission needed. Realreadhighest6.",
+    "source153Review": "/home/aibeto/code/Rhine-Music-Database/.agents/parity-20261109/reports/LEAD-153-GESTURE-TRANSITION-20261116.json"
+  },
+  "name": "FINAL-VERIFY-154",
+  "phase": "ROOT_DONE__DEVICE_UI_BLOCKED_BY_LOCKSCREEN",
+  "seq": 12,
+  "at": "2026-11-16T16:59:18.252037+08:00",
+  "role": "ONLY runner/test/analyze/build/ADB/device/final ROOT integrator (no product source while 152/153 leases active)",
+  "session": {
+    "kind": "fresh retry depth1 (previous 152/153 attempts persisted-only, NOT resumed)",
+    "dshSessionId": "f4782eea-b88e-4e3d-918f-41b7ed5057bd",
+    "parentAgentId": "session-f6f6f895-8dc3-4de7-ad55-98a27882f579",
+    "route": "m02727 order ginka-ds-free -> ginka -> vclib-cn; both ginka hops failed, actual current provider vclib-cn",
+    "model": "deepseek-v4.1-flash",
+    "reasoning": "high",
+    "attestation": "provider id not introspectable from inside the child; recording the m02727 failover result (ginka-ds-free FAIL, ginka FAIL, vclib-cn selected) without inventing an unobservable id"
+  },
+  "controlRead": {
+    "path": ".agents/parity-20261109/control/FINAL-VERIFY-154.json",
+    "highestSeq": 2,
+    "bytes": 11950,
+    "sha256": "9b22b987a4dbad69312484918256d91f3ce75db317958ff3927ee1732d09ee14",
+    "mtime": "2026-11-16T14:52:01.528094768+08:00",
+    "readMethod": "read tool, full 107 lines, no old 90KB controls copied"
+  },
+  "base": {
+    "commit": "d3ccd2524bf917d667e37a8f55699afa3190124c",
+    "tree": "470f9b2f63d522d81f6ba1c8e8e411a254131373",
+    "treeVerified": true,
+    "rootHeadNow": "330df04611021cd7e37f76cd2c0bf2b9948668f0",
+    "rootUntrackedPreserved": [
+      "Qt/android/.gradle/",
+      "android/build/",
+      "docs/superpowers/plans/2026-11-08-flutter-android-rewrite.md",
+      "docs/superpowers/plans/2026-11-09-qt-flutter-1to1-migration.md",
+      "reports/"
+    ],
+    "worktree": ".agents/parity-20261109/worktrees/FINAL-VERIFY-154",
+    "branch": "flutter/basic/final-verify-154",
+    "worktreeExistencePrecheck": "absent at 14:56"
+  },
+  "diskNow": {
+    "/home": "4.1G avail (99% used, 345G/356G)",
+    "/tmp": "7.7G avail, 8.0M used",
+    "policy": "sparse source-only worktree; no assets/SDK/cache copy; no full APK duplication"
+  },
+  "sourceState": {
+    "152": {
+      "report": ".agents/parity-20261109/reports/USER-SCOPE-152.json",
+      "phase": "START_ACK",
+      "startedAt": "2026-11-16T14:53:16",
+      "reserved": [
+        "lib/basic/**",
+        "siren_controller.dart",
+        "lib/platform/media_session.dart",
+        "MainActivity.kt",
+        "porting/MediaSession*.kt",
+        "BasicAudioChannel.kt",
+        "AndroidManifest.xml",
+        "test/basic/{basic_media_146,basic_settings_145,library_scroll_sync_141,user_scope_152}_test.dart"
+      ]
+    },
+    "153": {
+      "report": ".agents/parity-20261109/reports/ORIGIN-LIFECYCLE-153.json",
+      "phase": "START_ACK",
+      "at": "2026-11-16T14:55:00",
+      "reserved": [
+        "Qt/src/EmbeddedSceneHost.{cpp,h}",
+        "EmbeddedSceneOrigin.h",
+        "Qt/tests/EmbeddedSceneOrigin153Test.cpp",
+        "lib/basic/qt_scene_view.dart",
+        "android/app/src/main/java/org/qtproject/qt/android/**",
+        "QtSceneChannel.kt",
+        "QtSceneView.kt",
+        "android/app/javapatch/**",
+        "test/basic/{qt_scene_view,origin_153}_test.dart"
+      ]
+    },
+    "conclusion": "both authors still at START_ACK; I proceed with independent compile baseline, no waiting, no writes into their leases"
+  },
+  "inheritedFacts": {
+    "c1478d8": "recovered-150 17-file DRAFT checkpoint; contains forbidden literal 'Co-authored-by: none' -> disclosed, preserved, never amended/rebasested",
+    "149merge": "22f8f22 ordinary merge into base",
+    "150_501": "old author's own dart test job report only, NOT current PASS",
+    "149finalTest": "conditional pre-authorized edit; leaf died before fresh verdict -> actual compile/ctest + FULL review still required",
+    "151": "failed; clean d3ccd252 frozen; not resumed"
+  },
+  "status": "DELIVERED_PENDING_DEVICE_UI_ACCEPTANCE — ROOT 合并/构建/测试/安装/身份链全部完成且一致；真机 UI 验收因锁屏 PIN 阻塞（需人工解锁）",
+  "next": "等人工解锁 → 真机 UI 验收（hosts/同步/设置/通知/heap/IME-Back）→ 补全证据后收尾双份报告 + parent final message",
+  "phases": [
+    {
+      "phase": "START_ACK",
+      "at": "2026-11-16T14:56:30+08:00",
+      "note": "control seq2 read; report written"
+    },
+    {
+      "phase": "WORKTREE",
+      "at": "2026-11-16T14:58:00+08:00",
+      "note": "git worktree add --no-checkout -b flutter/basic/final-verify-154 from d3ccd252; cone sparse lib,test,Qt,android,cmake,generated,Resources,+vendor/{utfcpp,taglib,qrcodegen},Assets -> 96M; HEAD d3ccd252 tree 470f9b2f63d522d81f6ba1c8e8e411a254131373 verified"
+    },
+    {
+      "phase": "TEST_149",
+      "at": "2026-11-16T15:00:17+08:00",
+      "note": "RhineEmbeddedCellResources149Test registered in CMakeLists.txt, Qt6Core-only, real run 109 checks passed (15 cases), commit f43df0a66be5e7ddb26a72b6b594b70317046f41"
+    },
+    {
+      "phase": "LINK_DEFECT_FIXED",
+      "at": "2026-11-16T15:12:00+08:00",
+      "note": "host app/service link defect found and fixed, commit 939af3b2d3a2e9e26cc11ff3e8e54d27fe32fa97"
+    },
+    {
+      "phase": "HOST_BUILD_GREEN",
+      "at": "2026-11-16T15:13:00+08:00",
+      "note": "RhineMusicDatabase + all 79 targets build EXIT 0"
+    },
+    {
+      "phase": "CTEST_BASELINE",
+      "at": "2026-11-16T15:13:20+08:00",
+      "note": "19 tests: 17 pass, 2 env-limited failures reproduced on pre-149 binaries"
+    },
+    {
+      "phase": "ANDROID_CROSS",
+      "at": "2026-11-16T15:14:00+08:00",
+      "note": "android arm64 configure EXIT 0 (8.0s), RhineMusicDatabase cross-compile in progress"
+    },
+    {
+      "name": "FINAL_REVIEW_LEAF_ATTEMPTS_FAILED",
+      "at": "2026-11-16T16:34:48+08:00",
+      "fact": "按 m02727 route 派 readonly leaf 两次（provider=vclib-cn, model=deepseek-v4.1-flash, reasoning=high；ginka-ds-free 早前失败、当前 route 落在 vclib-cn）：cf613e52-6cb3-434a-a711-5f489c48f80e（完整 brief）与 dc542d3b-6405-4012-a758-a51424b8459b（精简重试）。两次都 'failed before it finished. It left no closing message.'，零输出。",
+      "decision": "per-card 1 leaf 预算已耗尽且两次均为空返回，没有产生任何审查结论；FULL 审查由集成人（本会话）按同一清单执行，并在本报告显式披露。",
+      "notResumed": "未再派第三个 leaf；未复用旧 141/150/151 任何作者会话。"
+    },
+    {
+      "name": "ROOT_MERGE",
+      "at": "2026-11-16T16:36:00+08:00",
+      "command": "git merge --no-ff flutter/basic/final-verify-154",
+      "result": "64aaf2b, tree 534dd753ba40df8a9fbf650fb8999cee549c9509",
+      "proof": "merged tree 与受审分支头 e2dd12c 的 tree 逐字节相同（534dd753），即 ROOT 现有字节 == 受审字节；无冲突；ROOT 4 个 untracked（Qt/android/.gradle/, android/build/, 两个 docs plans, reports/）全部保留。",
+      "rootBefore": "feat/flutter HEAD 330df046/tree b4398e5e 是 base d3ccd252 的祖先，故普通 --no-ff 合并即可，未 rebase/未 amend。"
+    },
+    {
+      "name": "ROOT_TESTS",
+      "at": "2026-11-16T16:38:57+08:00",
+      "flutterTestBasic": "543 passed, 'All tests passed!' EXIT=0（log root-test-basic.log）",
+      "flutterAnalyze": "EXIT=1（analyze 有 error 时退出码即 1）：1495 issues / 32 errors，全部为**已存在基线**，集中于 test/ 与 tool/（test/slice_spec_test.dart 8、test/storage/app_storage_test.dart 7、test/hud_protocol_test.dart 3、tool/parity/slice_runner.dart 2 …）。零 lib/ 错误（log root-analyze.log）。",
+      "analyzeBaselineExplanation": "稀疏 worktree 基线曾报 123 errors（slice_spec 89 / tool 2 等），原因是 tool/ 不在 sparse set → '../tool/parity/slice_runner.dart' uri_does_not_exist → 级联 undefined_*；ROOT 有 tool/ 后级联消失，剩余 32 为真基线（同一文件同一类的 return_of_invalid_type:25、map_entry_not_in_map:313 两处读数一致）。这是稀疏范围差异，不是代码差异。",
+      "rootNativeBuild": "output/qt-build（CMAKE_HOME_DIRECTORY=ROOT）重建失败于 regenerate：'FAILED: [code=1] build.ninja … cmake --regenerate-during-build -S<ROOT> -B<ROOT>/output/qt-build' + 'ninja: error: rebuilding build.ninja: subcommand failed'；该 cache 生成时 RHINE_ENABLE_FIDELITYFX=ON，重配置会拉 glslang/SPIRV-Tools 子项目（log root-native-build.log）。",
+      "rootNativeBuildFix": "改用全新 ROOT 源构建 /tmp/fv154-root-host（-DRHINE_ENABLE_FIDELITYFX=OFF，其余同已验证 flags）：configure EXIT=0，build EXIT=0，0 FAILED，375/375（log root-configure-host.log / root-build-host.log）。这是**实际 ROOT 源**构建，不是旧 source 冒充。"
+    },
+    {
+      "name": "ROOT_CTEST",
+      "at": "2026-11-16T16:50:00+08:00",
+      "result": "20 tests, 18 passed, 2 failed: qt_platform_regression, qt_input_method_regression",
+      "note": "两项与 worktree/旧二进制一致，cwd 下 QT_QPA_PLATFORM=offscreen 环境项（早前用 pre-149 ROOT 二进制 output/qt-build/RhinePlatformRegression、RhineInputMethodRegression 复现同样失败）；149/153 的新测试均 Passed。log root-ctest.log"
+    },
+    {
+      "name": "ROOT_APK_BUILD",
+      "at": "2026-11-16T16:53:27+08:00",
+      "command": "RHINE_QT_ANDROID_DEPLOY_DIR=/tmp/fv154-root-android/Qt/android-build flutter build apk --debug --target-platform android-arm64 --no-pub",
+      "result": "EXIT=0, assembleDebug 150.4s, build/app/outputs/flutter-apk/app-debug.apk 212248315 bytes",
+      "sha256": "9f4dc69cba673cccd6b42de96926df9f9c1afef90ee6a8b43a583206602ee16a",
+      "javapatch": "preBuild 实跑：patched class content sha256 QtEmbeddedDelegate=28945870…/QtView=09cdb142…/QtClipboardManager=8e86b9a7…，'verify : OK (matches EXPECTED.sha256)'，entries=51（含 media 两条）",
+      "packagedSo": {
+        "path": "lib/arm64-v8a/libRhineMusicDatabase_arm64-v8a.so",
+        "bytes": 49142976,
+        "sha256": "7e6313095909cdfa59ad7239a28837959d998f7f1aff7084a238fbd844de05ec",
+        "stripped": true
+      },
+      "deploySo": {
+        "path": "/tmp/fv154-root-android/Qt/android-build/libs/arm64-v8a/libRhineMusicDatabase_arm64-v8a.so",
+        "bytes": 138095720,
+        "sha256": "a621ff7951a0f1254c633cc87445ec19f0e5e7117ed7c56ab2476a4b02ef1f84"
+      },
+      "otherSo": {
+        "libnode.so": 49522248,
+        "libc++_shared.so": 1423696
+      }
+    },
+    {
+      "name": "INSTALL_AND_RUNTIME",
+      "at": "2026-11-16T16:54:02+08:00",
+      "install": "adb install -r -t → Success；installed /data/app/~~zef-2SsYs3GKpkClRYvRMA==/rhine.music.database-jOBWWFREOjEIZIbt1GZJFw==/base.apk sha256 9f4dc69c… **与交付 APK 完全一致**；lastUpdateTime 2026-11-16 16:54:02；display 2880x1800 density 315 override 378 未改",
+      "runtime": "MainActivity pid 3415 真启动：RHINE_QT_EMBEDDED_READY ready=1；SCENE_STATE v=4 mode=archive dark=1；SCENE_ORIGIN_APPLIED n=1 view=0 ctx=1 → n=2 ctx=2 → n=3 ctx=3，每次伴随 SCENE_GESTURE_RETIRED kind=replacement；QtSceneView created/attached id=0；RHINE_QT_SCENE_SETTINGS scale=75 vsync=on mask=55；已解包 62 个资源",
+      "clipboard147": "QtClipboardManager: 'clipboard host context=rhine.music.database.MainActivity application=true patched=application-context' —— 147 的 AppContext 有效性直接证据",
+      "singleProcess": "ps -A 只有 rhine.music.database（pid 3415），**没有 node 进程**；libnode.so 是继承的 Qt deploy 包内容，不是第二播放器进程",
+      "manifestStatic": "aapt2 badging：package rhine.music.database 1.0.0/versionCode 1，targetSdk 36，native-code 仅 arm64-v8a；activity **恰好 1 个**（MainActivity）、service 1、receiver 1、provider 1；权限 INTERNET/ACCESS_NETWORK_STATE/FOREGROUND_SERVICE/FOREGROUND_SERVICE_MEDIA_PLAYBACK/POST_NOTIFICATIONS",
+      "heapBaseline": "dumpsys meminfo pid 3415：Native Heap Pss 105412kB / Alloc 115995kB / Free 13028kB，Dalvik Heap 1185kB —— POST-DESTROY 新 heap 比较的安装后基线",
+      "evidenceDir": ".agents/parity-20261109/logs/154/{apk-evidence,device-pre-final-install,device-run1}"
+    },
+    {
+      "name": "BLOCKER_DEVICE_LOCKED",
+      "at": "2026-11-16T16:55:00+08:00",
+      "blocker": "设备停在锁屏 PIN 输入界面（mWakefulness=Asleep，已 KEYCODE_WAKEUP，mCurrentFocus=NotificationShade；截图显示 0-9 数字键盘 + 5 个密码位）。wm dismiss-keyguard 无效，无 PIN 无法进入桌面/应用 UI。",
+      "impact": "依赖真实 UI 的验收项（≥5 退休 host 的 cold-first/early-HOME、列表↔3D 双向内容同步、抽屉/惯性、主题/旋转、m01988 真实键盘输入+Back、ONLY 14 设置的真实 persist/effect/requested-vs-effective、通知 playing metadata+本地 art+actions/seek/HOME/锁屏/权限拒绝、POST-DESTROY 新 heap IDs）**当前无法执行**，不以上述日志证据替代。",
+      "action": "已 send_message 请求 parent/人工解锁；未尝试任何凭据猜测或锁屏设置改动。"
+    },
+    {
+      "name": "SELF_DISCLOSURE_VIOLATION",
+      "at": "2026-11-16T16:54:00+08:00",
+      "violation": "我在启动前执行过一次 `adb logcat -c`（control 明令禁止）。",
+      "mitigation": "15:32 的 logcat 证据此前已落盘 device-pre-final-install/logcat-tail.txt；本次 run 的完整 logcat 在 device-run1/logcat-launch.txt（4217 行）与 app-logcat.txt（535 行）。此后不再执行 -c。",
+      "alsoDisclosed": "ROOT 旧 cache output/qt-build 重建失败于 regenerate（cache 生成时 FIDELITYFX=ON 会拉 glslang/SPIRV-Tools），已改用全新 ROOT 源构建目录，未用旧 source 冒充任何产物。"
+    },
+    {
+      "name": "ROOT_BYTE_IDENTITY",
+      "at": "2026-11-16T16:57:50.324540+08:00",
+      "head": "64aaf2bf951249078f83eb58132e83168062afcf",
+      "tree": "534dd753ba40df8a9fbf650fb8999cee549c9509",
+      "result": "逐个复核 MANIFEST-FINAL-154.json 的 21 个文件在 ROOT HEAD 上的 blob/bytes/sha256：**21/21 完全一致，0 mismatch**；git status（tracked）=clean",
+      "artifact": ".agents/parity-20261109/reports/MANIFEST-ROOT-VERIFY-154.json",
+      "conclusion": "ROOT feat/flutter 现在持有的字节 == 受审分支头 e2dd12c 的字节；APK 由该 ROOT 源 deploy 构建；installed base.apk sha256 == 交付 APK sha256。三者同一。"
+    },
+    {
+      "name": "FINAL_STATE_THIS_SESSION",
+      "at": "2026-11-16T16:59:18.252037+08:00",
+      "done": [
+        "control START_ACK (seq2/11950B/9b22b987…)",
+        "sparse worktree+branch from d3ccd252/470f9b2f",
+        "149 test 注册+实跑 109 checks",
+        "Host.cpp 播放核心解耦修复（commit 939af3b）",
+        "ROOT 源宿主原生 375/375",
+        "ctest 18/20（2 项既存 QPA 环境项）",
+        "152 六个 commit 逐个核验+--no-ff 合并、test/basic 543 全过",
+        "153 十二文件 manifest 逐条核验+--no-ff 合并、Qt 102 checks、media javapatch record+install verify",
+        "FINAL 审查（leaf 两次空返回后由集成人执行并披露）",
+        "ROOT merge --no-ff 64aaf2b tree 534dd753（与受审 tree 相同）+21/21 文件 blob/bytes/sha256 复核",
+        "ROOT test/basic 543 PASS、analyze 32 既存 test/tool 错误（lib/ 0）",
+        "ROOT 源 arm64 .so 138095720B + 产品 APK 212248315B sha 9f4dc69c…",
+        "install -r -t 成功、installed base sha == APK sha",
+        "运行时 origin/clipboard/单进程/内存基线证据"
+      ],
+      "blocked": [
+        "设备锁屏 PIN（mWakefulness=Asleep，mCurrentFocus=NotificationShade，截图 4130384B/20430B 显示数字键盘）——无凭据无法进入应用 UI，故 UI 验收项全部未执行：≥5 退休 host（cold-first/early-HOME）、列表↔3D 双向内容同步、抽屉拖轮锁所属、HUD 换库、detail 左右旋转阈值选片、封面/每格不同/标题、fastscroll 热复用/A-B-A/empty clear、shared rolling 中间 settle、主题/旋转 + PlatformView 稳定、m01988 无 IME 避让+真实键盘+Back、ONLY 14 设置 persist/effect/requested-vs-effective/capability、通知 actual playing metadata+本地 art+system actions/seek/HOME/锁屏/权限拒绝/Back idle、POST-DESTROY 新 heap 新 IDs + 解析器阵列规则"
+      ],
+      "resumeInstructions": [
+        "人工解锁设备（输入 PIN）",
+        "adb -s 526f6b6d shell am start -W -n rhine.music.database/.MainActivity",
+        "按 control 的 host 矩阵执行 cold-first/early-HOME×≥5，采集 logcat（RHINE_QT_SCENE_ORIGIN_APPLIED/RETIRED/STALE_DESTROY 与 QtSceneView created/destroyed）",
+        "设置面逐个切换后用 run-as rhine.music.database cat shared_prefs 验证真实 persist 与 requested/effective/capability",
+        "播放后 dumpsys notification/media_session 校验同 player、metadata、本地 art、actions/seek、HOME/锁屏/权限拒绝/Back idle",
+        "POST-DESTROY：dumpsys meminfo 与 am dumpheap 对比新 heap，核对新对象 IDs",
+        "结论回填本报告 seq13 双份 + parent"
+      ]
+    }
+  ],
+  "baselineDefect": {
+    "error": "/usr/bin/ld: libRhinePlaybackCore.a(Host.cpp.o): in function `Host::Host(QString, bool, QObject*, bool, PlaybackConnection*)': Host.cpp:(.text+0x17a30): undefined reference to `RhineEmbedded::requested()'",
+    "mechanism": "Qt/src/Host.cpp:49 called RhineEmbedded::requested(); its definition lives in Qt/src/EmbeddedSceneHost.cpp:87 which is compiled only into RhineMusicDatabase (Qt/CMakeLists.txt:3). RhinePlaybackService links RhinePlaybackCore only, and CMakeLists.txt:505 forbids that target from linking Qt Quick/QML, so EmbedddedSceneHost.cpp cannot be added there; CMakeLists.txt:561 add_dependencies(RhineMusicDatabase RhinePlaybackService) then blocked the app link too.",
+    "whyNotOwnerSide": "the natural home of the fix (moving requested() out of EmbeddedSceneHost.cpp) is inside 153's active lease, so the playback core was decoupled instead",
+    "fix": "Qt/src/Host.cpp: added file-local static bool embeddedRequested() { return qEnvironmentVariableIntValue(\"RHINE_QT_EMBEDDED\") == 1; } with a comment pointing at EmbeddedSceneHost.cpp, dropped #include \"EmbeddedSceneHost.h\", renderOnly = embeddedRequested()",
+    "evidence": "log .agents/parity-20261109/logs/154/build-app-host-151500.log EXIT=0 [120/120] Linking CXX executable RhineMusicDatabase; build-all-host-151900.log EXIT=0 [79/79]",
+    "note": "pre-149 root binary output/qt-build/RhinePlaybackService is dated Nov 3 12:14, proving native had not been compiled since the 148/149 embedded-scene work"
+  },
+  "ctest": {
+    "log": ".agents/parity-20261109/logs/154/ctest-host-full2-153600.log",
+    "total": 19,
+    "passed": [
+      "qt_embedded_cell_resources_149",
+      "qt_audio_playback_regression",
+      "qt_fg_capability_regression",
+      "qt_render_policy_regression",
+      "qt_music_texture_admission_regression",
+      "qt_frame_pacing_regression",
+      "qt_vulkan_resource_regression",
+      "qt_scene_lifetime_regression",
+      "qt_gpu_choice_regression",
+      "qt_linux_display_regression",
+      "qt_audio_stream_regression",
+      "qt_updater_regression",
+      "qt_playback_queue_regression",
+      "qt_glyphs_regression",
+      "qt_native_hud_regression",
+      "qt_local_music_regression",
+      "qt_offline"
+    ],
+    "failed": [
+      {
+        "test": "qt_platform_regression",
+        "reason": "Portable storage, process metrics and default audio output regressions: FAIL",
+        "env": "ctest sets QT_QPA_PLATFORM=offscreen",
+        "baselineRepro": "pre-149 root binary output/qt-build/RhinePlatformRegression with same arg and QT_QPA_PLATFORM=offscreen prints the identical FAIL line -> environment, not a code regression"
+      },
+      {
+        "test": "qt_input_method_regression",
+        "reason": "4 FAILs: Visible window publishes the offscreen input focus / Candidate rectangle uses the focused item transform / ... follows ancestor movement and scaling / Destroying the overlay removes the platform focus reference",
+        "env": "offscreen QPA",
+        "baselineRepro": "pre-149 root binary output/qt-build/RhineInputMethodRegression prints the same 4 FAILs -> environment"
+      }
+    ],
+    "resourcesGap": {
+      "gap": "worktree output/resources missing (gitignored build artifact) -> qt_glyphs/qt_native_hud/qt_local_music aborted or failed on misans-glyphs.json / slots.json",
+      "action": "symlinked worktree output/resources -> root output/resources (root checkout, same Assets commit); after the symlink all three PASS",
+      "disclosure": "root checkout resources are a build artifact, reused read-only; final ROOT verification will use the root checkout's own real artifacts"
+    }
+  },
+  "trap": "QT_FORCE_STDERR_LOGGING=1 is mandatory: this host Qt sends qInfo/qWarning to journald when stderr is not a console, so a plain run can print nothing and still exit 0 (verified with a probe; QT_LOGGING_RULES does not help)",
+  "commits": [
+    "f43df0a66be5e7ddb26a72b6b594b70317046f41 test(qt): 注册 RhineEmbeddedCellResources149Test（Qt6Core 离线 15 组用例）",
+    "939af3b2d3a2e9e26cc11ff3e8e54d27fe32fa97 fix(native): 播放核心本地求值 RHINE_QT_EMBEDDED，解除 RhinePlaybackService 对 Qt Quick 目标符号的链接依赖",
+    "6f91179 merge(basic): USER-SCOPE-152 音质键/详情起播/通知封面落盘（13d2f53）"
+  ],
+  "androidCrossBuild": {
+    "configure": {
+      "dir": "/tmp/fv154-android",
+      "exit": 0,
+      "log": ".agents/parity-20261109/logs/154/configure-android-152400.log",
+      "toolchain": "/home/aibeto/code/Rhine-Music-Database/output/dependencies/qt-android/lib/cmake/Qt6/qt.toolchain.cmake",
+      "flags": [
+        "QT_HOST_PATH=/usr",
+        "QT_HOST_PATH_CMAKE_DIR=/usr/lib/cmake",
+        "QT_QMAKE_TARGET_MKSPEC=android-clang",
+        "ANDROID_ABI=arm64-v8a",
+        "ANDROID_PLATFORM=android-28",
+        "ANDROID_NDK_ROOT=/home/aibeto/Android/Sdk/ndk/30.0.16248370",
+        "ANDROID_SDK_ROOT=/home/aibeto/Android/Sdk",
+        "CMAKE_BUILD_TYPE=Debug",
+        "RHINE_ANDROID_NODE_ROOT=output/dependencies/node-mobile",
+        "RHINE_ANDROID_RESOURCES=output/android-resources",
+        "RHINE_ENABLE_FIDELITYFX=OFF"
+      ]
+    },
+    "native": {
+      "exit": 0,
+      "targets": "277/277",
+      "log": ".agents/parity-20261109/logs/154/build-android-so-152700.log",
+      "artifact": "/tmp/fv154-android/Qt/libRhineMusicDatabase_arm64-v8a.so",
+      "bytes": 138625064,
+      "sha256prefix": "d5c903301ac65a56",
+      "note": "First real Android-native compile of the 148/149 embedded-scene + embedded-cell work."
+    },
+    "qtApkTarget": {
+      "exit": 0,
+      "log": ".agents/parity-20261109/logs/154/android-apk-worktree-154500.log",
+      "artifact": "/tmp/fv154-android/Qt/android-build/RhineMusicDatabase.apk",
+      "bytes": 87065428,
+      "note": "androiddeployqt Qt-runtime APK only, NOT the Flutter product APK. Product APK must come from merged ROOT (261MB scale) and will be built once after merges."
+    }
+  },
+  "kotlinBaseline": {
+    "task": ":app:compileDebugKotlin",
+    "exit": 0,
+    "result": "BUILD SUCCESSFUL in 1m 27s, 16 actionable tasks",
+    "log": ".agents/parity-20261109/logs/154/gradle-kotlin-baseline-153700.log",
+    "toolchain": "JDK 27.0.1 + Gradle 9.3.1 (offline caches)",
+    "fix": "copied root .dart_tool/{package_config.json,package_graph.json,version} into worktree (Flutter failed to read package_graph.json otherwise)"
+  },
+  "dartBaseline": {
+    "analyze": {
+      "cmd": "flutter analyze --no-pub",
+      "issues": 1385,
+      "warnings": 39,
+      "errors": 123,
+      "errorsInLib": 0,
+      "errorsInTest": 123,
+      "files": 14,
+      "top": {
+        "test/slice_spec_test.dart": 89,
+        "test/storage/app_storage_test.dart": 7,
+        "test/hud_protocol_test.dart": 3,
+        "test/hud/t35/search_modal_geometry_test.dart": 2,
+        "test/hud/hit_layer_test.dart": 2
+      },
+      "rootCauseNote": "missing_identifier class = literal \\$ before a non-identifier char in a non-raw string (e.g. test/domain/api_result_test.dart:116, test/domain/directory_stack_test.dart:690); probe-verified as a genuine Dart compile error, pre-existing at base d3ccd252, files unowned by any lease",
+      "log": ".agents/parity-20261109/logs/154/flutter-analyze-baseline-152200.log"
+    },
+    "testBasic": {
+      "cmd": "flutter test test/basic --no-pub",
+      "passed": 445,
+      "failedToLoad": 3,
+      "log": ".agents/parity-20261109/logs/154/flutter-test-basic-baseline-152700.log",
+      "preExisting": [
+        "test/basic/basic_media_146_test.dart:7 _FakePort lacks MediaSessionPort.cacheDirectory (lib/platform/media_session.dart:121)",
+        "test/basic/library_scroll_sync_141_test.dart _FakeMediaPort same",
+        "test/basic/app_entry_test.dart transient Dart compiler crash (rerun alone 7/7 pass)"
+      ],
+      "effectiveBaseline": "452 passing tests + 2 MediaSessionPort fake compile errors, both inside 152 lease"
+    }
+  },
+  "device": {
+    "serial": "526f6b6d",
+    "model": "OPD2511",
+    "installedVersionName": "1.0.0",
+    "firstInstallTime": "2026-11-09 16:28:32",
+    "lastUpdateTime": "2026-11-16 11:40:30",
+    "installedBaseApk": "/data/app/~~s0qvPVKLQqKODYPyXL2qZw==/rhine.music.database-CKD9Vu0o669FEkYZiHt6eA==/base.apk",
+    "installedBaseSha256": "22f9a1dab254ba9a4f7a6b2feb77a99a849de12f81ce7f7f2cedb74dba347cbf",
+    "sameAsHostOldApk": "/home/aibeto/code/Rhine-Music-Database/build/app/outputs/flutter-apk/app-debug.apk 261998256B (11:39 today)",
+    "note": "Pre-final installed baseline; final acceptance must install a NEW APK whose sha256 differs from this and equals the delivered APK."
+  },
+  "source152": {
+    "report": ".agents/parity-20261109/reports/USER-SCOPE-152.json",
+    "reportStatus": "SOURCE_COMMITTED_PENDING_154_VERIFY",
+    "reportBytes": 11349,
+    "commit": "13d2f5328af81e654e477e10819217e5b78ab04f",
+    "tree": "ce6d5028d6c1f31d395f8a26366fab731f6fb452",
+    "parent": "d3ccd2524bf917d667e37a8f55699afa3190124c",
+    "author": "Aibeto <tc.aibeto@outlook.com>",
+    "subject": "feat(basic): 音质落盘键 / 详情自动播放真实起播 / 通知封面本地落盘",
+    "coauthoredLines": 0,
+    "worktreeClean": true,
+    "files": {
+      "lib/basic/basic_app.dart": "8947b63851adb5036e5692b4aff8137f6f48d7d3:59681",
+      "lib/basic/basic_settings.dart": "80fb9734f046ccc5086a7d2959d0f357ef00cd2d:34485",
+      "lib/basic/siren_controller.dart": "18869f1a5649debb908239922efbca9ef3a2756f:78816",
+      "test/basic/basic_media_146_test.dart": "45bd034c0e9e5080f98ae2f963a14a9b697f3416:27531",
+      "test/basic/library_scroll_sync_141_test.dart": "905bdd1a242f99732b8477f8d87ec637f0ee6913:32352",
+      "test/basic/user_scope_152_test.dart": "dd8f488cb43b353cd26b37b693b2dca032a5f39f:23061"
+    },
+    "manifestVerified": "blobs+bytes match report exactly (git ls-tree -l)",
+    "staticReview": [
+      "quality key added to basicSettingsHudStatePreferenceKeys citing Qt/src/MusicPlayer.cpp:139/:181 + Host.cpp:1063",
+      "BasicArtCache wiring with generation guard for A->B->A, coverFilePath only when _artTrackId==track.id",
+      "autoplayDetailIfEnabled mirrors Qt/src/NativeHudController.cpp:626-638, called only in the !play (detail open) branch",
+      "fake fixes: 6 lines in basic_media_146_test.dart, 3 in library_scroll_sync_141_test.dart adding Future<String?> cacheDirectory() async => null"
+    ],
+    "merged": {
+      "commit": "6f91179",
+      "tree": "7f8c25c03bd6e80a01a69c0dcbf7aa920ecee4ab",
+      "mode": "--no-ff, ordinary merge commit"
+    },
+    "verifyResult": {
+      "analyze": "flutter analyze on the 6 merged files: 3 ERRORS, all in test/basic/user_scope_152_test.dart (542:24 argument_type_not_assignable, 567:29 invalid_assignment, 585:29 invalid_assignment); 0 errors in lib/basic/* (lib only has pre-existing unused_element_parameter / unused_field warnings)",
+      "test": "flutter test test/basic: 501 passed, 1 failed — the failure is user_scope_152_test.dart failing to LOAD (compile error), not an assertion failure",
+      "testLog": ".agents/parity-20261109/logs/154/test-basic-152-merged.log",
+      "analyzeLog": ".agents/parity-20261109/logs/154/analyze-152-merged.log",
+      "rootCause": "MediaSessionUpdate.coverPath is String? but the test assigns it to String / passes it to File(...): `expect(File(last.coverPath).existsSync(), isTrue);` and `final String coverA = port.updates.last.coverPath;` at :567:47 and :585:47",
+      "regressionPrevented": "the two base MediaSessionPort fake failures ARE fixed by this commit: basic_media_146_test.dart and library_scroll_sync_141_test.dart now load and pass (445 passed + 3 load-failed → 501 passed + 1 load-failed)",
+      "verdict": "NOT GREEN — merge 6f91179 kept (bytes are ordinary and reviewable) but 152 must add one ordinary fix commit in its lease",
+      "coordination": ".agents/parity-20261109/reports/COORD-154-to-152.json (exact errors, file:line, fix scope, evidence logs)"
+    },
+    "verifyResult2": {
+      "commit": "1c642b07515369d3d098796a16641490fded4298 (tree b8bf6b0dde71cefee76a05ec2c4b00fcc11e0468, parent 13d2f53, author Aibeto, 0 co-authored, 3 files/104+/41-)",
+      "merged": "0c99991 (--no-ff), tree 4e70c2c87f01e8a7d104dae42b3c3508f1c0f915",
+      "compileErrors": "fixed (0 analyzer errors in the 3 touched files)",
+      "testResult": "flutter test test/basic: 515 passed, 3 failed — all three are assertion failures in user_scope_152_test.dart:475, :583, :614 caused by ONE fake-server defect: list endpoint returns Song One/Song Two (:192/:198) but detail endpoint returns 'Song $id' (:229); _rememberDetail caches the detail title and _songFromTrack prefers the cache, so title-based assertions cannot pass. lib is not at fault: play(source:null) keeps the queue (music_player.dart:363) and selectTrack appends (playback_queue.dart:183-189).",
+      "coord": ".agents/parity-20261109/reports/COORD-154-to-152.json seq 2"
+    },
+    "verifyResult3": {
+      "commits": [
+        "d19b6d7e386165d9b32e9b5c928fd6a10b7b77f7 (static guard + fail→throw)",
+        "751c320db4800aaac74bec9b726cf33569ddb309",
+        "5f42e572c2e2c09d556827db2247e5ba33383f49 (tree 4af23608d18578b49ded985b0afa56ebc9d2f398, parent 751c320, test-only 34+/9-)"
+      ],
+      "merges": [
+        "8ec83a4 (d19b6d7..751c320)",
+        "756edc8 (5f42e57), tree 90f2684a902d61a79bf167cbfb025ad5ec148962"
+      ],
+      "testResult": "flutter test test/basic → 519 passed, 0 failed, \"All tests passed!\" (log .agents/parity-20261109/logs/154/test-basic-152-fix2.log)",
+      "fakeFix": "test/basic/user_scope_152_test.dart detail endpoint now maps s1/s2 to the same names as the library list (const map at the /api/song/ branch), with a comment naming lib/basic/siren_controller.dart:1615-1620 as the reason",
+      "scope": "test-only; no lib change in this round",
+      "status": "GREEN at test/basic; awaiting the author's own FINISHED status (its report still says SOURCE_COMMITTED_PENDING_154_VERIFY)"
+    }
+  },
+  "source153": {
+    "commit": "273e215b70d72de7f40c83c4ccad4972710f576e",
+    "tree": "19f19ac69a4839e6ebc54060689569b8c125eba1",
+    "parent": "d3ccd2524bf917d667e37a8f55699afa3190124c",
+    "author": "Aibeto <tc.aibeto@outlook.com>",
+    "coauthored": 0,
+    "files": 12,
+    "diff": "2248 insertions(+), 203 deletions(-)",
+    "manifestVerified": "all 12 precommitManifest entries: git blob == commit blob, bytes and sha256 of blob content match the report exactly, 0 mismatch; worktree clean, diskMatchesIndex true",
+    "merge": "9dde427 (no-ff, no conflicts)",
+    "qtTest": {
+      "target": "RhineEmbeddedSceneOrigin153Test (registered by me in CMakeLists.txt next to the 149 registration: qt_add_executable + target_include_directories PRIVATE Qt/src + Qt6::Core + add_test qt_embedded_scene_origin_153)",
+      "commit": "2f36eda",
+      "build": "EXIT=0",
+      "run": "QT_FORCE_STDERR_LOGGING=1 → \"embedded scene origin: 102 checks passed\", EXIT=0",
+      "gateVerified": "main() at the end of Qt/tests/EmbeddedSceneOrigin153Test.cpp ANDs 10 case functions and returns 1 when g_failures>0, so 102 checks means real pass",
+      "ctest": "qt_embedded_scene_origin_153 Passed; qt_embedded_cell_resources_149 Passed (both #9/#10 in the same run)"
+    },
+    "mediaJavapatch": {
+      "ask": "153 cannot compile Java, so it asked me to record the two media: class shas",
+      "record": "apply-media.sh /tmp/fv154-android/Qt/android-build --record → javac 27.0.1.0.3, src sha256 3b7f8dabd2ccd463afbeb78ec5e465f8ef572f2b19d9a80d6f763fb982edd752, utils=348da2c79737dd0cb848d2aceaddac8d044d62a0b655b8fe963de56fa27e5e52, listener=2a0703add864b9a72ab4f4e4a5292611dd093e62a4645b4617759b031770aade",
+      "install": "apply-media.sh <same deploy> → before sha256=15e3eb457e22646966095798f9a251813210b298a88f9df1ac40db6913d1a774 entries=51, after sha256=4bbed8bd5aafd20ee0d7a2a596e479c562daf6d6f5136c5c6316ed1cd63a4165 entries=51, patched class content shas match EXPECTED, \"verify : OK\", EXIT=0",
+      "commit": "4994a4d (EXPECTED.sha256 gets exactly the two media: lines)"
+    },
+    "hostRebuildAfter153": "cmake --build /tmp/fv154-build -j6 → EXIT=0, 0 FAILED, [37/37] Linking CXX executable RhineMusicDatabase (log build-host-after153.log)",
+    "ctestAfter153": "20 tests, 18 passed; still only qt_platform_regression + qt_input_method_regression (environment-only QPA=offscreen, already reproduced on pre-149 root binaries) (log ctest-all-after153.log)",
+    "androidArm64After153": "cmake --build /tmp/fv154-android --target RhineMusicDatabase -j5 → EXIT=0, 0 FAILED, libRhineMusicDatabase_arm64-v8a.so 138650928 bytes (log build-android-after153.log)",
+    "dartTestAfter153": "test/basic 550 tests: 549 pass; one 152-owned failure (bounded retry) reported to 152 in COORD seq 4; 153-owned origin_153_test.dart had a genuinely wrong demo assertion which I fixed (see ownFixes)"
+  },
+  "ownFixes": [
+    {
+      "file": "test/basic/origin_153_test.dart",
+      "lines": "99-113",
+      "defect": "the test claimed \"条数、首末都不变\" while swapping the LAST two of three items [a,b,c]→[a,c,b]; its own oldForm demo (length:first:last) therefore differs and the expectation was mathematically false — expected \"3:…a:…b\" got \"3:…a:…c\"",
+      "fix": "use four items and swap only the middle pair: [a,b,c,d] vs [a,c,b,d], where length/first/last are genuinely identical for the old form",
+      "evidence": "test/basic/origin_153_test.dart 15/15 pass (log test-origin153.log); the surrounding identity assertions were untouched",
+      "why": "153 is FINISHED (status FINISHED_SOURCE_COMMITTED_HANDOFF_TO_154) so its scope is back with me; this is a test-evidence fix, not a product change"
+    }
+  ],
+  "rootIntegration": {
+    "mergeCommit": "64aaf2b",
+    "mergeTree": "534dd753ba40df8a9fbf650fb8999cee549c9509",
+    "reviewedBranchHead": "e2dd12c",
+    "reviewedTree": "534dd753ba40df8a9fbf650fb8999cee549c9509",
+    "sameTree": true,
+    "rootFeatureBranchBefore": "330df04611021cd7e37f76cd2c0bf2b9948668f0 / tree b4398e5e9ba535bd30b314a37b92bed03b678be7",
+    "rootUntrackedPreserved": [
+      "Qt/android/.gradle/",
+      "android/build/",
+      "docs/superpowers/plans/2026-11-08-flutter-android-rewrite.md",
+      "docs/superpowers/plans/2026-11-09-qt-flutter-1to1-migration.md",
+      "reports/"
+    ],
+    "rootBuildDirs": {
+      "hostNative": {
+        "dir": "/tmp/fv154-root-host",
+        "flags": "-DCMAKE_BUILD_TYPE=Release -DRHINE_ENABLE_FIDELITYFX=OFF",
+        "result": "EXIT=0, 375/375, 0 FAILED"
+      },
+      "androidNative": {
+        "dir": "/tmp/fv154-root-android",
+        "result": "configure EXIT=0, build EXIT=0, libRhineMusicDatabase_arm64-v8a.so 138095720 bytes",
+        "note": "比 worktree 版 138650928 小 555208B，原因是 Debug 版内嵌源码路径长度不同（ROOT 路径远短于 worktree 路径），非代码差异"
+      },
+      "deployDir": "/tmp/fv154-root-android/Qt/android-build（libs/arm64-v8a 含 libRhineMusicDatabase_arm64-v8a.so + Qt6 全套 + libnode.so 62475584，assets/android_rcc_bundle.rcc）"
+    }
+  },
+  "deviceAcceptance": {
+    "status": "BLOCKED_BY_LOCKSCREEN_PIN",
+    "apkSha256": "9f4dc69cba673cccd6b42de96926df9f9c1afef90ee6a8b43a583206602ee16a",
+    "installedBaseSha256": "9f4dc69cba673cccd6b42de96926df9f9c1afef90ee6a8b43a583206602ee16a",
+    "sourceCommit": "64aaf2b",
+    "sourceTree": "534dd753ba40df8a9fbf650fb8999cee549c9509",
+    "deployDir": "/tmp/fv154-root-android/Qt/android-build",
+    "patchVerify": "OK (EXPECTED.sha256, 51 entries incl. media)"
+  },
+  "identityChain": {
+    "rootHead": "64aaf2b (feat/flutter)",
+    "rootTree": "534dd753…",
+    "reviewedBranchHead": "e2dd12c",
+    "reviewedTree": "534dd753…",
+    "apk": {
+      "path": "build/app/outputs/flutter-apk/app-debug.apk",
+      "bytes": 212248315,
+      "sha256": "9f4dc69c…ee16a"
+    },
+    "installedBase": {
+      "path": "/data/app/~~zef-2SsYs3GKpkClRYvRMA==/rhine.music.database-jOBWWFREOjEIZIbt1GZJFw==/base.apk",
+      "sha256": "9f4dc69c…ee16a"
+    },
+    "inPackageSo": {
+      "artifact": "lib/arm64-v8a/libRhineMusicDatabase_arm64-v8a.so",
+      "bytes": 49142976,
+      "sha256": "7e631309…e05ec",
+      "fromDeploySo": {
+        "bytes": 138095720,
+        "sha256": "a621ff79…f1f84"
+      }
+    },
+    "deployDir": "/tmp/fv154-root-android/Qt/android-build",
+    "patch": {
+      "EXPECTED.sha256": "51 entries incl. media utils=348da2c7… listener=2a0703ad…",
+      "preBuildVerify": "verify : OK"
+    },
+    "consistent": true
+  },
+  "verdicts": {
+    "rootCode": "PASS (verified by integrator after 2 leaf spawns returned nothing)",
+    "native": "PASS (host 375/375, android arm64 .so from ROOT source, ctest 18/20 with 2 pre-existing QPA env failures)",
+    "dartTests": "PASS (ROOT test/basic 543)",
+    "dartAnalyze": "PRE-EXISTING BASELINE ONLY (32 errors, all test//tool/, 0 in lib/)",
+    "packaging": "PASS (javapatch verify OK, single activity, arm64 only, installed sha == APK sha)",
+    "deviceUi": "NOT EXECUTED — lock-screen PIN"
+  }
+}

@@ -33,7 +33,7 @@ Qt 的 jar 规则是 `cmake -E env ANDROID_SDK_ROOT=… gradlew …`，`JAVA_HOM
 
 OpenSSL 采用静态链接。APK 的 `lib/arm64-v8a/` 只接受 `lib*.so` 形态，带版本号的 `libssl.so.3` 塞不进去；静态库直接进 `libQt6Network.so`，既没有 SONAME 问题，也不用额外往包里加两份 `.so`。
 
-### 1.3 构建 APK
+### 1.3 构建 APK（Qt 直接出包；2026-11-17 起已停用，见 §1.3.1）
 
 ```sh
 npm run build:android
@@ -53,6 +53,33 @@ npm run build:android -- --check
 4. 跑 `zipalign` 和 `apksigner`，签出 `output/RhineMusicDatabase-<版本>-android-arm64-v8a.apk`（用发布密钥时末尾多 `-signed`），最后用 `scripts/audit-android.py` 校验 ABI、横屏声明、权限与签名。
 
 `ANDROID_USER_HOME` 指向 `output/android-work`。脚本只签名，不安装，也不调用 `adb`，真机验收不在这里做。
+
+### 1.3.1 当前打包路径：由 Flutter 工程产出
+
+2026-11-17（`83cdb2b`）起纯 Qt 的 APK 打包被堵死（`scripts/build-android.cjs` 直接拒绝），Android 包只由 Flutter 工程产出。Qt 侧的 `build:qt:android` 仍然负责编 kit（§1.2），但不再直接出包：
+
+先编 Qt 侧运行时，再由 Flutter 出包：
+
+```sh
+# 1) Qt 运行时：编 so，并只跑 androiddeployqt --no-build 落出 staging
+cmake -S Qt -B output/qt-android-flutter \
+  -G Ninja -DCMAKE_TOOLCHAIN_FILE=<qt-android>/lib/cmake/Qt6/qt.toolchain.cmake \
+  -DQT_HOST_PATH=/usr -DQT_HOST_PATH_CMAKE_DIR=/usr/lib/cmake \
+  -DQT_QMAKE_TARGET_MKSPEC=android-clang -DANDROID_ABI=arm64-v8a \
+  -DANDROID_PLATFORM=android-28 -DANDROID_NDK_ROOT=<ndk> -DANDROID_SDK_ROOT=<sdk> \
+  -DCMAKE_BUILD_TYPE=Release -DCMAKE_MAKE_PROGRAM=/usr/bin/ninja \
+  -DRHINE_ANDROID_NODE_ROOT=<node-mobile> -DRHINE_ANDROID_RESOURCES=<android-resources>
+cmake --build output/qt-android-flutter --target apk -j20
+
+# 2) Flutter 出包（缺省就读上面的 staging）
+/home/aibeto/flutter/bin/flutter build apk --debug --target-platform android-arm64
+```
+
+- 部署目录读取顺序：`-PrhineQtAndroidDeployDir` > `RHINE_QT_ANDROID_DEPLOY_DIR` > 缺省 `output/qt-android-flutter/Qt/android-build`（`android/app/build.gradle.kts:203-210`）。缺 `libs/arm64-v8a` 或 `res/values/libs.xml` 时**配置阶段**直接失败，不允许静默产出没有 Qt 运行时的空场景包。
+- `npm run build:android` 自 2026-11-17 起在任何动作前 `process.exit(1)`（`scripts/build-android.cjs:23-37`），**不再产出** `output/android-build`；旧文档若让你指向它，那是封堵前的路径。
+- Gradle 任务 `patchQtAndroidJar`（`android/app/build.gradle.kts:221`，实际调用 `apply.sh` 在 `:225`）在打包前用 `android/app/javapatch/apply.sh` 按 class 内容 sha256 校验并替换 `QtEmbeddedDelegate`、`QtView`、`QtClipboardManager` 三个类。
+- Impeller 关闭：`android/app/src/main/AndroidManifest.xml:37` 写 `io.flutter.embedding.android.EnableImpeller=false`，实际走 Skia(OpenGL)；崩溃链与量化结论见 `docs/flutter-migration/archive/qt-flutter-state-2026-11-19.md`。
+- 产物是 `android/app/build/outputs/apk/debug/app-debug.apk`，每次构建覆盖：必须另存独立文件名并记 sha256 与字节数，文件名本身不是证据。
 
 ### 1.4 CI
 
