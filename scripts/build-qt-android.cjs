@@ -46,6 +46,41 @@ const ndk = toolchain.ndkRoot(sdk);
 // Qt 的 Android 平台分支会 find_package(Java Development)，必须给出 JDK 17–21；
 // 系统那套是 27，AGP 和 Qt 的 Java 步骤都不认。
 const jdk = toolchain.jdkHome(path.resolve('output/android-work'));
+// fail-fast 校验（PERF-APK-SLIM 期间踩坑后补）：toolchain.jdkHome 找不到候选时
+// **静默**返回 workDirectory/jdk 这个不存在的路径，错误要等到 qtbase configure 的
+// find_package(Java Development) 才炸，报错里没有任何 JDK 字样，无从排查。
+// 区间是 17–21（Qt 的 Java 探测不认 22+）：系统 JDK 27 与 Android Studio jbr 25
+// 都不合格，所以本机必须往 output/android-work/jdk/ 里放一份 JDK 21。
+{
+    const javaBin = path.join(jdk, 'bin', 'java');
+    if (!fs.existsSync(javaBin)) {
+        console.error(
+            'JDK 缺失：Qt kit 交叉编译需要 JDK 17–21，但既没有 JAVA_HOME，\n' +
+                `  也没有在 output/android-work/jdk/ 下找到可用的 JDK（当前解析到 ${jdk}）。\n` +
+                '  系统的 JDK 27 与 Android Studio jbr 25 都超出 Qt 的探测区间，不能直接用。\n' +
+                '  放一份 JDK 21 即可（Gradle 出包也用它）：\n' +
+                '    mkdir -p output/android-work/jdk\n' +
+                '    curl -L --fail -o output/android-work/jdk/temurin21.tar.gz \\\n' +
+                '      "https://api.adoptium.net/v3/binary/latest/21/ga/linux/x64/jdk/hotspot/normal/eclipse"\n' +
+                '    tar xzf output/android-work/jdk/temurin21.tar.gz -C output/android-work/jdk/\n' +
+                '  详见 docs/ANDROID.md §1.1 的 JDK 行。',
+        );
+        process.exit(1);
+    }
+    const versionText = [
+        spawnSync(javaBin, ['-version'], { encoding: 'utf8' }).stderr,
+        spawnSync(javaBin, ['-version'], { encoding: 'utf8' }).stdout,
+    ].join('');
+    const major = Number((/version "(\d+)/.exec(versionText) || [])[1]);
+    if (!(major >= 17 && major <= 21)) {
+        console.error(
+            `JDK 版本不合适：${jdk} 是 Java ${major}，Qt kit 交叉编译要求 17–21\n` +
+                '（find_package(Java Development) 不认 22+；系统 JDK 27 与 jbr 25 都不行）。\n' +
+                '  按 docs/ANDROID.md §1.1 往 output/android-work/jdk/ 放一份 JDK 21。',
+        );
+        process.exit(1);
+    }
+}
 
 function run(command, args, options = {}) {
     const started = Date.now();

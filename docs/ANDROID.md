@@ -11,10 +11,21 @@ Android 版本只支持一个 ABI：`arm64-v8a`。目标设备是 Android 9（AP
 | Qt 6.12.0 Android kit | 两选一：Qt 在线安装器的 `Android` 组件（`android_arm64_v8a`，默认找 `~/Qt/6.12.0/android_arm64_v8a`），或用仓库里的 `third_party/qt` 自行构建（见 1.2） |
 | Android SDK           | 至少一套 `platforms/android-*`（Qt 的 Java 库按最高版本编）和一套 `build-tools`；默认找 `~/Android/Sdk`                                                 |
 | Android NDK           | r27 及以上；默认用 `$ANDROID_SDK_ROOT/ndk` 下版本号最大的那一套                                                                                         |
-| JDK                   | 17 到 25（Gradle 9 的运行上限，推荐 21）。系统的 JDK 27 会让 Groovy 报 `Unsupported class file major version 71`；默认找 `output/android-work/jdk`      |
+| JDK                   | **三个用途三个区间**：① `build:qt:android` 的 Qt 交叉编译要求 **17–21**（Qt 的 `find_package(Java Development)` 不认 22+，系统 JDK 27 与 Android Studio jbr 25 都不行）；② Gradle 9 出包要求 17–25；③ javapatch 的 sha256 门禁要求 **javac 27.0.x**。默认找 `output/android-work/jdk/`——**放一份 JDK 21 即同时满足 ①②**，③ 用系统 javac 或把上游 JDK 27 也解压进去。JDK 缺失时脚本会 fail-fast 并给出放置命令（此前是静默拿不存在的路径，错误要等到 qtbase configure 才炸且不含 JDK 字样） |
 | Node.js               | 构建脚本与桥接打包使用，版本要求与桌面构建相同                                                                                                          |
 
 路径可以用环境变量覆盖：`RHINE_ANDROID_QT`、`JAVA_HOME`、`ANDROID_SDK_ROOT`、`ANDROID_NDK_ROOT`。Gradle 缓存默认用标准的 `~/.gradle`；搬进工作区会让 wrapper 与 AGP 依赖重新下载几百 MB。要让构建完全落在工作区里，把 `RHINE_GRADLE_HOME` 指到任意目录即可。
+
+JDK 21 就位的标准操作（2026-11-20 在本机踩过：`JAVA_HOME` 未设且 `output/android-work/jdk/` 为空，`toolchain.jdkHome` 静默返回不存在路径，qtbase configure 阶段才炸且报错不含 JDK 字样；已加 fail-fast）：
+
+```sh
+mkdir -p output/android-work/jdk
+curl -L --fail -o output/android-work/jdk/temurin21.tar.gz \
+  "https://api.adoptium.net/v3/binary/latest/21/ga/linux/x64/jdk/hotspot/normal/eclipse"
+tar xzf output/android-work/jdk/temurin21.tar.gz -C output/android-work/jdk/
+```
+
+`--check` 会把 JDK 项列为 `ok/MISS`，先跑一次比盲跑省事：`npm run build:qt:android -- --check`。
 
 ### 1.2 从固定提交构建 Qt kit
 
