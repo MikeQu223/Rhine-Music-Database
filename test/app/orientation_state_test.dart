@@ -368,7 +368,7 @@ void main() {
       ]) {
         expect(restorableModalNames.contains(name), isTrue, reason: name);
         final ModalState restored = ModalState(name: name, offset: 24).sanitized();
-        expect(restored.name, name, reason: '白名单项必须恢复：' + name);
+        expect(restored.name, name, reason: '白名单项必须恢复：$name');
         expect(restored.offset, closeTo(24, 1e-12), reason: 'modalOffset 是舞台单位，方向无关');
         expect(restored.isOpen, isTrue);
       }
@@ -384,7 +384,7 @@ void main() {
         'toast',
       ]) {
         final ModalState restored = ModalState(name: name, offset: 24).sanitized();
-        expect(restored.name, isNull, reason: '非白名单不得恢复：' + name);
+        expect(restored.name, isNull, reason: '非白名单不得恢复：$name');
         expect(restored.isOpen, isFalse);
         expect(restored, ModalState.none);
       }
@@ -531,7 +531,7 @@ void main() {
     test('目录栈超过 64 层时保留最深 64 层（Qt:43/100）', () {
       final List<DirectoryFrame> deep = <DirectoryFrame>[];
       for (int i = 0; i < 70; i++) {
-        deep.add(DirectoryFrame(itemKey: 'dir-' + i.toString(), cursor: i, idCount: 100, songCount: 200));
+        deep.add(DirectoryFrame(itemKey: 'dir-$i', cursor: i, idCount: 100, songCount: 200));
       }
       final OrientationViewState state = OrientationViewState(directoryStack: deep).sanitized();
       expect(state.directoryStack.length, directoryStackLimit);
@@ -704,7 +704,7 @@ void main() {
       for (int i = 0; i < full.directoryStack.length; i++) {
         final DirectoryFrame before = full.directoryStack[i].sanitized();
         final DirectoryFrame after = restored.directoryStack[i];
-        expect(after, before, reason: '第 ' + i.toString() + ' 层必须逐字段相等');
+        expect(after, before, reason: '第 $i 层必须逐字段相等');
         expect(after.itemKey, before.itemKey);
         expect(after.cursor, before.cursor);
         expect(after.index, before.index);

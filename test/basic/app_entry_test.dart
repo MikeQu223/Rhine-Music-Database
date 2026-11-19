@@ -64,7 +64,7 @@ List<String> _imports(String text) => <String>[
 /// 逐个断言 [tokens] 不在 [code] 里。
 void _expectAbsent(String code, List<String> tokens, String why) {
   for (final String token in tokens) {
-    expect(code.contains(token), isFalse, reason: '入口不该再出现 ' + token + '：' + why);
+    expect(code.contains(token), isFalse, reason: '入口不该再出现 $token：$why');
   }
 }
 

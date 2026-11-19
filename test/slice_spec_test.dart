@@ -20,7 +20,7 @@ const String fixturePath = 'test/fixtures/slice_cases.json';
 String fixtureText() {
   final file = File(fixturePath);
   if (!file.existsSync()) {
-    fail('missing fixture: ' + fixturePath);
+    fail('missing fixture: $fixturePath');
   }
   return file.readAsString();
 }
@@ -41,9 +41,9 @@ SliceError sliceErrorOf(void Function() body, String what) {
     if (error is SliceError) {
       return error;
     }
-    fail(what + ': expected SliceError, got ' + error.runtimeType.toString());
+    fail('$what: expected SliceError, got ${error.runtimeType}');
   }
-  fail(what + ': expected SliceError, but the call returned normally');
+  fail('$what: expected SliceError, but the call returned normally');
 }
 
 Map<String, Object?> unitJson({
@@ -89,7 +89,7 @@ Map<String, Object?> unitJson({
 }
 
 String jsonl(List<Map<String, Object?>> units) =>
-    units.map(jsonEncode).join('\n') + '\n';
+    '${units.map(jsonEncode).join('\n')}\n';
 
 CandidateCapture captureOf(
   SliceFixture fixture,
@@ -149,7 +149,7 @@ void main() {
         candidate[field] = <Object?>[];
         final error = sliceErrorOf(
           () => parseFixture(json, sourcePath: fixturePath),
-          'candidate.' + field,
+          'candidate.$field',
         );
         expect(error.code, 'oneSliceRule.candidateForbiddenField');
       }
@@ -736,7 +736,7 @@ void main() {
       final fixture = loadFixtureForTest();
       final directory = Directory.systemTemp.createTempSync('slice_spec');
       addTearDown(() => directory.deleteSync(recursive: true));
-      final captureFile = File(directory.path + '/A-S1.jsonl');
+      final captureFile = File('${directory.path}/A-S1.jsonl');
       captureFile.writeAsStringSync(jsonl(<Map<String, Object?>>[
         unitJson(step: 'S1', unit: 0),
         unitJson(step: 'S1', unit: 1),
@@ -750,7 +750,7 @@ void main() {
           '--fixture',
           fixturePath,
           '--capture',
-          'A=' + captureFile.path,
+          'A=${captureFile.path}',
         ],
         out: out,
         err: err,

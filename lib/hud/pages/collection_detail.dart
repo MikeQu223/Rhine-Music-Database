@@ -32,6 +32,7 @@
 ///    路由（/playlist/subscribe、/<kind>/sub）只由宿主 canMutate 判定，不进入动作串。
 /// 10. Model.loadedCount 在 CollectionDetailCard 的绘制里从未被读取（全 262 行无引用），
 ///     因此这里不建模它，避免给出无消费者的字段。
+library;
 
 // 本文件只依赖 dart:math（min/max），不引入任何 Flutter 依赖。
 import 'dart:math' as math;
@@ -441,7 +442,7 @@ class _Painter {
       length = low;
     }
     if (length != value.length) {
-      return value.substring(0, math.max(0, length - 1)) + '…';
+      return '${value.substring(0, math.max(0, length - 1))}…';
     }
     return value;
   }
@@ -587,7 +588,7 @@ class CollectionDetailCardModel {
 /// Qt CollectionDetailCard::archiveId 的前缀表（NativeHudDetail.cpp:387-393）。
 String collectionDetailArchiveId(CollectionDetailState state) {
   if (state.virtual) {
-    return state.providerName + ' / ' + state.title;
+    return '${state.providerName} / ${state.title}';
   }
   const Map<String, String> prefixes = <String, String>{
     'qq': 'QQ MID / ',
@@ -651,7 +652,7 @@ CollectionDetailCardModel collectionDetailCardModel(CollectionDetailState state,
       title: song.title,
       artist: song.artist,
       stamp: stamp,
-      action: (state.albums ? 'music:artist-album:' : 'music:track:') + '$rawIndex',
+      action: '${state.albums ? 'music:artist-album:' : 'music:track:'}$rawIndex',
       label: song.title,
       current: isCurrent,
     ));
@@ -698,24 +699,24 @@ CollectionDetailCardModel collectionDetailCardModel(CollectionDetailState state,
       final String label;
       bool selected = false;
       if (status == 'subscribed') {
-        label = '✓ 已收藏' + subject;
+        label = '✓ 已收藏$subject';
         selected = true;
       } else if (status == 'not-subscribed') {
-        label = '＋ 收藏' + subject;
+        label = '＋ 收藏$subject';
       } else {
         label = '＋ 收藏 / 核实';
       }
       subscribe = CollectionDetailAction(label, 'music:subscribe', selected: selected);
     } else if (state.subscribed) {
-      subscribe = CollectionDetailAction('✓ 已收藏' + subject, 'music:subscribe', selected: true);
+      subscribe = CollectionDetailAction('✓ 已收藏$subject', 'music:subscribe', selected: true);
     } else {
-      subscribe = CollectionDetailAction('＋ 收藏' + subject, 'music:subscribe');
+      subscribe = CollectionDetailAction('＋ 收藏$subject', 'music:subscribe');
     }
   }
 
   // 来源 / 更多（NativeHudDetail.cpp:442-449）。
   final CollectionDetailAction source = (!state.local && !state.virtual && !state.localCollection)
-      ? CollectionDetailAction(state.providerName + ' ↗', 'music:source')
+      ? CollectionDetailAction('${state.providerName} ↗', 'music:source')
       : const CollectionDetailAction('', '');
   // 可见性不在模型里重复存：卡片 footer 用 !more.isEmpty 判定（CollectionDetailCard.cpp:248）。
   CollectionDetailAction more = const CollectionDetailAction('', '');
@@ -904,7 +905,7 @@ class _CardPainter {
 
   /// CollectionDetailCard.cpp:132-141。
   void header() {
-    final String kicker = (model.provider.isEmpty ? 'RHINE LAB' : model.provider) + ' / ' + model.record;
+    final String kicker = '${model.provider.isEmpty ? 'RHINE LAB' : model.provider} / ${model.record}';
     label(kicker, x, 268, 11, palette.muted, 'regular', 0.8);
     // Qt 这一行直接调 canvas.text（不是 fitted），所以只有标题保留 tracking -0.6（CollectionDetailCard.cpp:137-138）。
     painter.text(painter.fit(model.title, 32, contentRight - x - 190, 'bold'), x, 284, 32, 'bold', -0.6,
@@ -977,7 +978,7 @@ class _CardPainter {
   /// CollectionDetailCard.cpp:200-244 的侧栏（封面 / 档案 / 事实 / 简介 / 编辑 / 收藏）。
   void sidebar() {
     final double sideWidth = model.sideWidth;
-    label('03 / ' + model.record, sx, 322, 11, palette.muted, 'regular', 0.8);
+    label('03 / ${model.record}', sx, 322, 11, palette.muted, 'regular', 0.8);
     final double artSize = math.min(model.coverSize, sideWidth - 16);
     final double artX = sx + (sideWidth - artSize) / 2;
     const double artTop = 352;

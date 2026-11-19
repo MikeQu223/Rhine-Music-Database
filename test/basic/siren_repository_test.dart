@@ -91,7 +91,7 @@ Future<SirenHttpResult> _catalogHandler(Uri uri) async {
   if (uri.path == '/api/albums') {
     return _json(_albumsPayload());
   }
-  throw StateError('unexpected path: ' + uri.path);
+  throw StateError('unexpected path: ${uri.path}');
 }
 
 void main() {
@@ -144,7 +144,7 @@ void main() {
       expect(a2.songCount, 1);
       expect(a2.songs.single.id, 's3');
 
-      expect(catalog.songs.every((SirenSong song) => song.key == 'siren:song:' + song.id), isTrue);
+      expect(catalog.songs.every((SirenSong song) => song.key == 'siren:song:${song.id}'), isTrue);
       expect(a1.key, 'siren:album:a1');
     });
 
@@ -321,7 +321,7 @@ void main() {
       Future<SirenHttpResult> prefixed(Uri uri) {
         final String path = uri.path;
         if (!path.startsWith('/base/')) {
-          throw StateError('baseUri 子路径被吃掉：' + path);
+          throw StateError('baseUri 子路径被吃掉：$path');
         }
         return _catalogHandler(uri.replace(path: path.substring('/base'.length)));
       }
@@ -358,7 +358,7 @@ void main() {
           'code': 0,
           'data': <String, Object?>{
             'name': ' Song One ',
-            'sourceUrl': ' https://file.test/1.flac?sign=' + call.toString(),
+            'sourceUrl': ' https://file.test/1.flac?sign=$call',
             'lyricUrl': 'https://file.test/1.lrc',
           },
         });

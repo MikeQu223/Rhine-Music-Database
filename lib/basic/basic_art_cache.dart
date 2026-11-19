@@ -31,14 +31,13 @@ const int kBasicArtMaxEntryBytes = 4 * 1024 * 1024;
 /// 把远端封面 URL 落成本地可解码文件的最小缓存。
 class BasicArtCache {
   BasicArtCache({
-    required Future<String?> Function() directory,
-    HttpClient? client,
+    required this._directory,
+    this._client,
     this.maxEntries = kBasicArtMaxEntries,
     this.maxTotalBytes = kBasicArtMaxTotalBytes,
     this.maxEntryBytes = kBasicArtMaxEntryBytes,
     this.timeout = const Duration(seconds: 12),
-  })  : _directory = directory,
-        _client = client;
+  });
 
   /// 平台缓存目录的来源（Application.cacheDir）。返回 null 表示这一平台没有可写
   /// 目录，此时所有请求都如实返回 null。

@@ -24,7 +24,6 @@ import 'package:rhine_music_database/basic/basic_settings.dart';
 import 'package:rhine_music_database/basic/basic_settings_surface.dart';
 import 'package:rhine_music_database/hud/modals/settings_modal.dart';
 import 'package:rhine_music_database/hud/pages/chrome.dart';
-import 'package:rhine_music_database/hud/protocol/hud_hit.dart';
 import 'package:rhine_music_database/hud/settings/settings_actions.dart';
 import 'package:rhine_music_database/hud/widgets/settings_row.dart';
 
@@ -119,7 +118,7 @@ void main() {
 
     test('项目链接真值的键与 settings_actions 的 id 表逐条对齐', () {
       final List<String> expected =
-          settingsProjectLinkIds.map((String id) => 'project-' + id).toList();
+          settingsProjectLinkIds.map((String id) => 'project-$id').toList();
       expect(basicSettingsProjectUrls.keys.toList(), expected);
       expect(basicSettingsProjectUrl('project-home'),
           'https://github.com/MikeQu223/Rhine-Music-Database');
@@ -246,7 +245,7 @@ void main() {
       expect(truth.stored, 'exhigh');
       expect(truth.supported, isFalse);
       expect(truth.value, 'lossless');
-      expect(truth.label, 'exhigh' + basicSettingsUnsupportedValueSuffix);
+      expect(truth.label, 'exhigh$basicSettingsUnsupportedValueSuffix');
     });
 
     test('Siren 存了 lossless 时如实显示', () {
@@ -283,7 +282,7 @@ void main() {
       );
       final SettingsRowSpec row =
           model.sections[0].rows.firstWhere((SettingsRowSpec r) => r.id == 'quality');
-      expect(row.label, 'exhigh' + basicSettingsUnsupportedValueSuffix);
+      expect(row.label, 'exhigh$basicSettingsUnsupportedValueSuffix');
     });
   });
 

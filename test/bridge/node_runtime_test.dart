@@ -188,7 +188,7 @@ Future<void> _waitFor(
   final DateTime deadline = DateTime.now().add(timeout);
   while (!predicate()) {
     if (DateTime.now().isAfter(deadline)) {
-      fail('等待超时：' + reason);
+      fail('等待超时：$reason');
     }
     await Future<void>.delayed(const Duration(milliseconds: 10));
   }
@@ -197,8 +197,8 @@ Future<void> _waitFor(
 void main() {
   setUp(() {
     _root = Directory.systemTemp.createTempSync('t21c14_node_runtime_');
-    Directory(_rootPath + '/MusicBridge').createSync();
-    File(_rootPath + '/MusicBridge/ios-runtime.cjs').writeAsStringSync('// fake script: this test never starts Node');
+    Directory('$_rootPath/MusicBridge').createSync();
+    File('$_rootPath/MusicBridge/ios-runtime.cjs').writeAsStringSync('// fake script: this test never starts Node');
   });
 
   tearDown(() {
@@ -273,7 +273,7 @@ void main() {
         host.starts.single.argv,
         <String>[
           'node',
-          _rootPath + '/MusicBridge/ios-runtime.cjs',
+          '$_rootPath/MusicBridge/ios-runtime.cjs',
           runtime.port.toString(),
           runtime.token,
         ],
@@ -370,7 +370,7 @@ void main() {
       expect(await runtime.launch(_rootPath, host), isTrue);
 
       final _LoopbackClient client = await _LoopbackClient.connect(runtime.port);
-      client.sendRaw(utf8.encode('not-json' + String.fromCharCode(NodeWire.delimiter)));
+      client.sendRaw(utf8.encode('not-json${String.fromCharCode(NodeWire.delimiter)}'));
       await _waitFor(() => client.closed, reason: '非法首帧必须 abort');
       expect(runtime.authenticated, isFalse);
 
@@ -383,7 +383,7 @@ void main() {
       final _FakeNodeRuntimeHost host = _FakeNodeRuntimeHost();
       final List<Map<String, Object?>> frames = <Map<String, Object?>>[];
       runtime.messages.listen(frames.add);
-      File(_rootPath + '/MusicBridge/ios-runtime.cjs').deleteSync();
+      File('$_rootPath/MusicBridge/ios-runtime.cjs').deleteSync();
 
       expect(await runtime.launch(_rootPath, host), isFalse);
       expect(runtime.launched, isFalse);
@@ -650,7 +650,7 @@ void main() {
       runtime.messages.listen(frames.add);
 
       // 会话 1：脚本不在 → launch false + runtime-error（Qt:102-105，经 :186-189 合成）。
-      File(_rootPath + '/MusicBridge/ios-runtime.cjs').deleteSync();
+      File('$_rootPath/MusicBridge/ios-runtime.cjs').deleteSync();
       expect(await runtime.launch(_rootPath, host), isFalse);
       expect(runtime.launched, isFalse);
       await _waitFor(() => failures.isNotEmpty);
@@ -659,7 +659,7 @@ void main() {
       expect(frames.single[NodeWire.type], NodeWire.runtimeError);
 
       // 会话 2：补齐脚本后重试成功——Qt 的 launched 直到 :106 才置位，失败不是终态。
-      File(_rootPath + '/MusicBridge/ios-runtime.cjs')
+      File('$_rootPath/MusicBridge/ios-runtime.cjs')
           .writeAsStringSync('// fake script: this test never starts Node');
       expect(await runtime.launch(_rootPath, host), isTrue);
       expect(runtime.launched, isTrue);
@@ -696,10 +696,10 @@ void main() {
       final _FakeNodeRuntimeHost host = _FakeNodeRuntimeHost();
       final List<void> failures = <void>[];
       runtime.runtimeFailed.listen(failures.add);
-      File(_rootPath + '/MusicBridge/ios-runtime.cjs').deleteSync();
+      File('$_rootPath/MusicBridge/ios-runtime.cjs').deleteSync();
 
       expect(await runtime.launch(_rootPath, host), isFalse);
-      await _waitFor(() => failures.length >= 1);
+      await _waitFor(() => failures.isNotEmpty);
       expect(failures, hasLength(1));
 
       // Qt:186-189：每次失败的 start() 都会再合成一次 runtime-error，两次失败就是两条。

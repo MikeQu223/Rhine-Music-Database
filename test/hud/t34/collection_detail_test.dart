@@ -33,7 +33,7 @@ import 'package:rhine_music_database/hud/pages/collection_detail.dart';
 /// 故意让 tracking 参与宽度：一旦 rightLabel 误用带 tracking 的度量，
 /// 右对齐 x 就会差 len*tracking，断言立刻暴露（Qt 见 CollectionDetailCard.cpp:62-66）。
 class _FakeGlyphs implements CollectionDetailGlyphsPort {
-  const _FakeGlyphs({this.charWidth = 0.5});
+  const _FakeGlyphs() : charWidth = 0.5;
 
   final double charWidth;
 
@@ -113,10 +113,10 @@ List<CollectionDetailTrack> _songs(int count) {
     for (int i = 0; i < count; i++)
       CollectionDetailTrack(
         id: (i + 1).toString(),
-        title: '曲目 ' + (i + 1).toString().padLeft(2, '0'),
-        artist: '歌手 ' + (i + 1).toString().padLeft(2, '0'),
+        title: '曲目 ${(i + 1).toString().padLeft(2, '0')}',
+        artist: '歌手 ${(i + 1).toString().padLeft(2, '0')}',
         durationMs: 225000.0 + i * 1000,
-        date: '2024-01-' + (i + 1).toString().padLeft(2, '0'),
+        date: '2024-01-${(i + 1).toString().padLeft(2, '0')}',
       ),
   ];
 }

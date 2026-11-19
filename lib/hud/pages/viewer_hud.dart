@@ -313,7 +313,7 @@ class _ViewerHudPainter {
       length = low;
     }
     if (length != value.length) {
-      return value.substring(0, math.max(0, length - 1)) + '…';
+      return '${value.substring(0, math.max(0, length - 1))}…';
     }
     return value;
   }

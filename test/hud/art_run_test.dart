@@ -16,8 +16,8 @@ import 'dart:ui' as ui;
 
 import 'package:flutter_test/flutter_test.dart';
 
-import '../../lib/hud/text/art_run.dart';
-import '../../lib/hud/text/glyph_font.dart';
+import 'package:rhine_music_database/hud/text/art_run.dart';
+import 'package:rhine_music_database/hud/text/glyph_font.dart';
 
 /// Two-letter lettering fixture with the same shape as boot-lettering-art.json:
 /// letters carry an em advance plus a y-DOWN outline in a 1000 unit em box.
@@ -57,7 +57,7 @@ class _RecordingCanvas implements ui.Canvas {
 
   @override
   dynamic noSuchMethod(Invocation invocation) =>
-      throw UnsupportedError('unstubbed canvas call: ' + invocation.memberName.toString());
+      throw UnsupportedError('unstubbed canvas call: ${invocation.memberName}');
 
   List<String> get shape =>
       ops.map((List<Object?> op) => op.first.toString()).toList();

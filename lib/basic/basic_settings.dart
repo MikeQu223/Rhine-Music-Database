@@ -450,7 +450,7 @@ final class BasicSettingsExpandCommand extends BasicSettingsCommand {
   final String rowId;
 
   @override
-  String toString() => 'BasicSettingsExpandCommand(' + rowId + ')';
+  String toString() => 'BasicSettingsExpandCommand($rowId)';
 }
 
 /// 写入一个值：宿主负责持久化 + 真实生效 + native 副作用。
@@ -497,13 +497,7 @@ final class BasicSettingsWriteCommand extends BasicSettingsCommand {
   final BasicSettingsRestart restart;
 
   @override
-  String toString() => 'BasicSettingsWriteCommand(' +
-      descriptorId +
-      ': ' +
-      currentValue +
-      ' -> ' +
-      value +
-      ')';
+  String toString() => 'BasicSettingsWriteCommand($descriptorId: $currentValue -> $value)';
 }
 
 /// 唱片旋转切换。开启前必须先过风险确认（Qt NativeHudController.cpp:711-722
@@ -522,7 +516,7 @@ final class BasicSettingsDiscRotationCommand extends BasicSettingsCommand {
 
   @override
   String toString() =>
-      'BasicSettingsDiscRotationCommand(setOn: ' + setOn.toString() + ')';
+      'BasicSettingsDiscRotationCommand(setOn: $setOn)';
 }
 
 /// 只有动作、没有值的行（ONLY14 里只有 replay “手动显示初始化页面”）。
@@ -539,7 +533,7 @@ final class BasicSettingsActionRowCommand extends BasicSettingsCommand {
   final String dispatchAction;
 
   @override
-  String toString() => 'BasicSettingsActionRowCommand(' + descriptorId + ')';
+  String toString() => 'BasicSettingsActionRowCommand($descriptorId)';
 }
 
 /// 打开一个项目/开源参考链接（URL 来自 Qt 真值表，不是硬编码猜测）。
@@ -554,7 +548,7 @@ final class BasicSettingsOpenProjectCommand extends BasicSettingsCommand {
   final String url;
 
   @override
-  String toString() => 'BasicSettingsOpenProjectCommand(' + descriptorId + ')';
+  String toString() => 'BasicSettingsOpenProjectCommand($descriptorId)';
 }
 
 /// 命令被明确拒绝的原因（**不是**静默 no-op：宿主需要能把真话说出来）。
@@ -622,7 +616,7 @@ final class BasicSettingsUnavailableCommand extends BasicSettingsCommand {
 
   @override
   String toString() =>
-      'BasicSettingsUnavailableCommand(' + rejection.name + ': ' + action + ')';
+      'BasicSettingsUnavailableCommand(${rejection.name}: $action)';
 }
 
 /// 全部 descriptor（ONLY14 + 被拒绝项），仅用于动作分类，不用于暴露。

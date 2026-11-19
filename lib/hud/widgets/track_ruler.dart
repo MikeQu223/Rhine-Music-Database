@@ -27,6 +27,7 @@
 ///       baseline - see HudTrackRuler.glyphBoundsAvailable.
 ///   N2. ReelCurve.samplePair mirrors Qt std::array<double,2> (value, velocity); the W4
 ///       contract also requires the value-only form ReelCurve.sample(double) -> double.
+library;
 
 import 'dart:math' as math;
 

@@ -353,7 +353,7 @@ class _BasicAppState extends State<BasicApp> {
     final Object? bootError = _bootError;
     if (bootError != null) {
       return _BasicMessage(
-        text: basicBootFailurePrefix + '$bootError',
+        text: '$basicBootFailurePrefix$bootError',
         actionLabel: '重试',
         onAction: () => unawaited(_retryBoot()),
       );
@@ -361,7 +361,7 @@ class _BasicAppState extends State<BasicApp> {
     final Object? resourceError = _resourceError;
     if (resourceError != null) {
       return _BasicMessage(
-        text: basicResourceFailurePrefix + '$resourceError',
+        text: '$basicResourceFailurePrefix$resourceError',
         actionLabel: '重试',
         onAction: _retryResources,
       );
@@ -397,7 +397,6 @@ class _BasicAppState extends State<BasicApp> {
 /// 各 HUD 页面自己决定，本类不复制它们的状态。
 class _BasicShell extends StatefulWidget {
   const _BasicShell({
-    super.key,
     required this.controller,
     required this.resources,
     required this.settingsStore,
@@ -2123,7 +2122,7 @@ class _BasicShellState extends State<_BasicShell>
   String? _openAt(BasicViewState state, int index, {bool play = false}) {
     final List<BasicListItem> items = basicLibraryItems(state);
     if (index < 0 || index >= items.length) {
-      return basicUnimplementedPrefix + 'music:index:$index';
+      return '${basicUnimplementedPrefix}music:index:$index';
     }
     final BasicListItem item = items[index];
     final SirenAlbum? album = state.album;
@@ -2131,7 +2130,7 @@ class _BasicShellState extends State<_BasicShell>
       final List<SirenSong> tracks =
           (state.phase == BasicPhase.detail && album != null) ? album.songs : state.songs;
       if (item.index < 0 || item.index >= tracks.length) {
-        return basicUnimplementedPrefix + 'music:index:$index';
+        return '${basicUnimplementedPrefix}music:index:$index';
       }
       unawaited(controller.openSong(tracks[item.index], play: play));
       if (!play) {
@@ -2147,10 +2146,10 @@ class _BasicShellState extends State<_BasicShell>
       // 歌单行是**目录**，不是专辑（Qt/src/MusicSiren.cpp:251-335 的 playlists 分支走
       // selectDirectory）。把歌单行当专辑打开会显示一张不相干的专辑——这正是 132R 的
       // D2 缺陷。基础版没有本机歌单端口时不编造目录内容，如实标记未接入。
-      return basicUnimplementedPrefix + 'music:playlist:${item.id.isEmpty ? item.index : item.id}';
+      return '${basicUnimplementedPrefix}music:playlist:${item.id.isEmpty ? item.index : item.id}';
     }
     if (item.index < 0 || item.index >= state.albums.length) {
-      return basicUnimplementedPrefix + 'music:index:$index';
+      return '${basicUnimplementedPrefix}music:index:$index';
     }
     // 点专辑行 = **换列**（进入该专辑目录），不是抽唱片。
     // Qt/src/MusicLibrary.cpp:863-869：`mode = open && kind == "song" ? "detail" : "archive"`
@@ -2170,7 +2169,7 @@ class _BasicShellState extends State<_BasicShell>
   String? _selectAt(BasicViewState state, int index) {
     final List<BasicListItem> items = basicLibraryItems(state);
     if (index < 0 || index >= items.length) {
-      return basicUnimplementedPrefix + 'music:index:$index';
+      return '${basicUnimplementedPrefix}music:index:$index';
     }
     unawaited(controller.selectLibraryRow(index));
     return null;
@@ -2241,7 +2240,6 @@ class _BasicShellState extends State<_BasicShell>
 /// 启动阶段的可见状态页：装载中 / 失败 + 可选重试。
 class _BasicMessage extends StatelessWidget {
   const _BasicMessage({
-    super.key,
     required this.text,
     this.actionLabel,
     this.onAction,
@@ -2285,7 +2283,7 @@ class _BasicMessage extends StatelessWidget {
 
 /// 未接入动作的可见反馈条：只显示文案，不吃命中、不伪装成设置/账号界面。
 class _BasicNotice extends StatelessWidget {
-  const _BasicNotice({super.key, required this.text});
+  const _BasicNotice({required this.text});
 
   final String text;
 
@@ -2317,7 +2315,7 @@ class _BasicHudKeyPorts implements HudKeyPorts {
   void play() => unawaited(_app.controller.play());
 
   @override
-  void viewerKey(String value) => _app._onAction('viewer:' + value);
+  void viewerKey(String value) => _app._onAction('viewer:$value');
 
   @override
   void action(String action) => _app._onAction(action);

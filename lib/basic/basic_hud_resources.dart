@@ -1,4 +1,3 @@
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/services.dart';
@@ -263,7 +262,7 @@ class BasicGlyphPorts
     }
     final List<int> runes = value.runes.toList(growable: false);
     for (var length = runes.length - 1; length > 0; length--) {
-      final String candidate = String.fromCharCodes(runes.take(length)) + '…';
+      final String candidate = '${String.fromCharCodes(runes.take(length))}…';
       if (_width(candidate, size, weight, 0) <= width) {
         return candidate;
       }

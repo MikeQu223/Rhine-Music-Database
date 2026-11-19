@@ -62,7 +62,7 @@ final class _Metrics implements HudTextPort {
         high = middle - 1;
       }
     }
-    return value.substring(0, low - 1) + '\u2026';
+    return '${value.substring(0, low - 1)}\u2026';
   }
 
   @override
@@ -91,7 +91,7 @@ List<String> _texts(List<List<Object?>> commands) => _ofType(commands, 'text')
 List<Object?> _textCommand(List<List<Object?>> commands, String value) =>
     commands.firstWhere(
       (List<Object?> command) => command[0] == 'text' && command[1] == value,
-      orElse: () => throw StateError('missing text command: ' + value),
+      orElse: () => throw StateError('missing text command: $value'),
     );
 
 List<Object?> _fillOf(
@@ -103,10 +103,7 @@ List<Object?> _fillOf(
         command[3] == y &&
         command[4] == w &&
         command[5] == h,
-    orElse: () => throw StateError('missing fill at ' +
-        x.toString() +
-        ',' +
-        y.toString()),
+    orElse: () => throw StateError('missing fill at $x,$y'),
   );
 }
 
@@ -118,7 +115,7 @@ int _countActions(List<HudHit> hits, String action) =>
 
 HudHit _hitWithAction(List<HudHit> hits, String action) => hits.firstWhere(
       (HudHit hit) => hit.action == action,
-      orElse: () => throw StateError('missing hit action: ' + action),
+      orElse: () => throw StateError('missing hit action: $action'),
     );
 
 double _measure(String text, double size, String? weight, double tracking) =>
@@ -596,7 +593,7 @@ void main() {
         ];
         expect(
           row.label,
-          index == 0 ? '✓ ' + labels[index] : labels[index],
+          index == 0 ? '✓ ${labels[index]}' : labels[index],
         );
       }
     });

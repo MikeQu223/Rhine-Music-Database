@@ -186,9 +186,8 @@ final class HudPainterState {
 /// calls `canvas.restore()`; an uneven pair drifts from Qt silently and nothing
 /// in this file can detect it.
 final class HudPaintStateStack {
-  HudPaintStateStack({double opacity = 1.0, ui.Rect? clip})
-      : _opacity = opacity,
-        _clip = _normalizeOptionalRect(clip);
+  HudPaintStateStack({this._opacity = 1.0, ui.Rect? clip})
+      : _clip = _normalizeOptionalRect(clip);
 
   final List<HudPainterState> _saved = <HudPainterState>[];
 

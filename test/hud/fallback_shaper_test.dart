@@ -64,8 +64,8 @@
 
 import 'package:flutter_test/flutter_test.dart';
 
-import '../../lib/hud/text/fallback_shaper.dart';
-import '../../lib/hud/text/glyph_font.dart';
+import 'package:rhine_music_database/hud/text/fallback_shaper.dart';
+import 'package:rhine_music_database/hud/text/glyph_font.dart';
 
 // ---------------------------------------------------------------------------
 // Resource fixtures
@@ -179,14 +179,10 @@ final class _FakeClassifier extends UnicodeClassifier {
     Map<int, int>? categories,
     Map<int, int>? scripts,
     Map<int, int>? directions,
-    this.defaultCategory = kCategoryOther,
     this.defaultScript = kScriptLatin,
-    this.defaultDirection = kDirectionLeftToRight,
-    bool hasData = true,
-  })  : _categories = categories ?? <int, int>{},
+  })  : _hasData = true, defaultCategory = kCategoryOther, defaultDirection = kDirectionLeftToRight, _categories = categories ?? <int, int>{},
         _scripts = scripts ?? <int, int>{},
-        _directions = directions ?? <int, int>{},
-        _hasData = hasData;
+        _directions = directions ?? <int, int>{};
 
   final Map<int, int> _categories;
   final Map<int, int> _scripts;
@@ -467,7 +463,7 @@ void main() {
         expect(
           requiresFallback(entry.key, fonts: fonts, classifier: classifier),
           isTrue,
-          reason: 'U+' + entry.value.toRadixString(16).toUpperCase(),
+          reason: 'U+${entry.value.toRadixString(16).toUpperCase()}',
         );
       }
     });
@@ -519,7 +515,7 @@ void main() {
         expect(
           requiresFallback(entry.key, fonts: fonts, classifier: classifier),
           isFalse,
-          reason: 'U+' + entry.value.toRadixString(16).toUpperCase(),
+          reason: 'U+${entry.value.toRadixString(16).toUpperCase()}',
         );
       }
     });
@@ -899,7 +895,7 @@ void main() {
               fonts: fonts,
               classifier: classifier,
             ),
-            reason: weight + ':' + text,
+            reason: '$weight:$text',
           );
         }
       }

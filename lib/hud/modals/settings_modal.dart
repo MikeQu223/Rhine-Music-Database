@@ -135,17 +135,7 @@ class PlatformCapabilities {
       desktopWindowControls, desktopLyrics);
 
   @override
-  String toString() => 'PlatformCapabilities(officialPlayback: ' +
-      officialPlayback.toString() +
-      ', localMusic: ' +
-      localMusic.toString() +
-      ', applicationVolume: ' +
-      applicationVolume.toString() +
-      ', desktopWindowControls: ' +
-      desktopWindowControls.toString() +
-      ', desktopLyrics: ' +
-      desktopLyrics.toString() +
-      ')';
+  String toString() => 'PlatformCapabilities(officialPlayback: $officialPlayback, localMusic: $localMusic, applicationVolume: $applicationVolume, desktopWindowControls: $desktopWindowControls, desktopLyrics: $desktopLyrics)';
 }
 
 // 2. 七区定义（契约 §1 硬冻结；SettingsSchema.cpp:693-703）
@@ -205,10 +195,10 @@ class SettingsSectionSpec {
   String get numberText => number.toString().padLeft(2, '0');
 
   /// SettingsCard.cpp:42：titleEn + ' / ' + titleZh。
-  String get titleText => titleEn + ' / ' + titleZh;
+  String get titleText => '$titleEn / $titleZh';
 
   @override
-  String toString() => 'SettingsSectionSpec(' + id.toString() + ', ' + numberText + ', ' + titleText + ')';
+  String toString() => 'SettingsSectionSpec($id, $numberText, $titleText)';
 }
 
 /// 七区表，逐字来自 SettingsSchema.cpp:693-703。
@@ -474,7 +464,7 @@ class SettingsProviderDefinition {
   bool get isSiren => id == sirenProviderId;
 
   @override
-  String toString() => 'SettingsProviderDefinition(' + id + ', ' + name + ')';
+  String toString() => 'SettingsProviderDefinition($id, $name)';
 }
 
 /// NativeHudModal.cpp:14-18 的五个候选，顺序固定不可重排。
@@ -645,7 +635,7 @@ class ProviderChoicePlacement {
       : ProviderChooserMetrics.nameSizeCollapsed;
 
   @override
-  String toString() => 'ProviderChoicePlacement(' + definition.id + ', ' + bounds.toString() + ')';
+  String toString() => 'ProviderChoicePlacement(${definition.id}, $bounds)';
 }
 
 /// :262-264 逐卡布局；x 已是 platformChoices 的左缘（platformPanel 传 x + 53）。
@@ -711,7 +701,7 @@ class SettingsProviderState {
   String get providerCode => providerId.toUpperCase();
 
   @override
-  String toString() => 'SettingsProviderState(' + providerId + ', uid: ' + uid + ')';
+  String toString() => 'SettingsProviderState($providerId, uid: $uid)';
 }
 
 /// 账号行：label + action（action 为空表示纯文本行）。
@@ -724,7 +714,7 @@ class ProviderAccountRow {
   bool get isText => action.isEmpty;
 
   @override
-  String toString() => 'ProviderAccountRow(' + label + ', ' + action + ')';
+  String toString() => 'ProviderAccountRow($label, $action)';
 }
 
 /// NativeHudSettings.cpp:276-288 的四分支。
@@ -739,10 +729,10 @@ ProviderAccountRow providerAccountRow(SettingsProviderState state) {
   }
   if (state.uid.isEmpty) {
     // :282-284
-    return ProviderAccountRow(label: '登录 / ' + state.providerName, action: 'music:login');
+    return ProviderAccountRow(label: '登录 / ${state.providerName}', action: 'music:login');
   }
   // :285-288
-  return ProviderAccountRow(label: '退出登录 / ' + state.nickname, action: 'music:logout');
+  return ProviderAccountRow(label: '退出登录 / ${state.nickname}', action: 'music:logout');
 }
 
 /// NativeHudSettings.cpp:296-299 的会员态表。
@@ -774,7 +764,7 @@ class SettingsSectionModel {
   final List<SettingsRowSpec> rows;
 
   @override
-  String toString() => 'SettingsSectionModel(' + spec.id.toString() + ', rows: ' + rows.length.toString() + ')';
+  String toString() => 'SettingsSectionModel(${spec.id}, rows: ${rows.length})';
 }
 
 /// 一个分区的布局（对应 SettingsCard::SectionLayout）。
@@ -803,7 +793,7 @@ class SettingsSectionLayout {
       );
 
   @override
-  String toString() => 'SettingsSectionLayout(' + section.id.toString() + ', ' + header.toString() + ')';
+  String toString() => 'SettingsSectionLayout(${section.id}, $header)';
 }
 
 /// 整卡布局（对应 SettingsCard::Layout）。
@@ -823,11 +813,7 @@ class SettingsCardLayout {
   double get viewportHeight => viewport.height;
 
   @override
-  String toString() => 'SettingsCardLayout(contentHeight: ' +
-      contentHeight.toString() +
-      ', maximumScroll: ' +
-      maximumScroll.toString() +
-      ')';
+  String toString() => 'SettingsCardLayout(contentHeight: $contentHeight, maximumScroll: $maximumScroll)';
 }
 
 /// NativeHudSettings.cpp:66：row.expanded = expandedId == descriptor.id && row.enabled。
@@ -947,7 +933,7 @@ class SettingsScrollRail {
   final Rect thumb;
 
   @override
-  String toString() => 'SettingsScrollRail(visible: ' + visible.toString() + ', ' + thumb.toString() + ')';
+  String toString() => 'SettingsScrollRail(visible: $visible, $thumb)';
 }
 
 /// HudScroll.h:50-64 rail() 逐字：无滚动余量时不返回 thumb。
@@ -1556,7 +1542,7 @@ class SettingsCustomSectionState {
   final bool updateAvailable;
 
   @override
-  String toString() => 'SettingsCustomSectionState(' + provider.providerId + ')';
+  String toString() => 'SettingsCustomSectionState(${provider.providerId})';
 }
 
 /// NativeHudSettings.cpp:227-380 的 custom() 分发。:228 Q_UNUSED(scroll)：
@@ -1900,7 +1886,7 @@ class SettingsEditOverlayGeometry {
   final double fontSize;
 
   @override
-  String toString() => 'SettingsEditOverlayGeometry(' + background.toString() + ')';
+  String toString() => 'SettingsEditOverlayGeometry($background)';
 }
 
 /// :564-602 的编辑浮层几何纯函数（无 Flutter widget 依赖）。
@@ -2085,7 +2071,7 @@ class SettingsDescriptor {
   final SettingsLabelResolver? label;
 
   @override
-  String toString() => 'SettingsDescriptor(' + id + ', order: ' + order.toString() + ')';
+  String toString() => 'SettingsDescriptor($id, order: $order)';
 }
 
 /// 行解析用的一次读取结果（Qt SettingsValue：raw / canonical / boolean / integer / valid / isDefault）。
@@ -2107,7 +2093,7 @@ class SettingsPreferenceValue {
   final bool isDefault;
 
   @override
-  String toString() => 'SettingsPreferenceValue(' + canonical + ', ' + integer.toString() + ')';
+  String toString() => 'SettingsPreferenceValue($canonical, $integer)';
 }
 
 /// 平台身份 + 平台能力 + 派生状态（Qt SettingsContext 的可见部分）。
@@ -2380,7 +2366,7 @@ List<SettingsChoice> settingsGpuChoices(SettingsPreferenceContext context) {
     const SettingsChoice(value: '', label: '默认'),
   ];
   for (int index = 0; index < context.gpuDeviceCount; index++) {
-    out.add(SettingsChoice(value: index.toString(), label: '显卡 ' + index.toString()));
+    out.add(SettingsChoice(value: index.toString(), label: '显卡 $index'));
   }
   return out;
 }
@@ -2414,16 +2400,16 @@ String settingsThemeLabel(SettingsPreferenceContext context, SettingsPreferenceV
 }
 
 String settingsArchiveMaskLabel(SettingsPreferenceContext context, SettingsPreferenceValue value) =>
-    value.integer == 0 ? '0 · 关闭' : value.integer.toString() + '%';
+    value.integer == 0 ? '0 · 关闭' : '${value.integer}%';
 
 String settingsRenderScaleLabel(SettingsPreferenceContext context, SettingsPreferenceValue value) =>
-    value.integer == 100 ? '100% · 原生' : value.integer.toString() + '%';
+    value.integer == 100 ? '100% · 原生' : '${value.integer}%';
 
 String settingsPercentLabel(SettingsPreferenceContext context, SettingsPreferenceValue value) =>
-    value.integer.toString() + '%';
+    '${value.integer}%';
 
 String settingsMsaaLabel(SettingsPreferenceContext context, SettingsPreferenceValue value) =>
-    value.integer.toString() + 'x';
+    '${value.integer}x';
 
 String settingsGraphicsBackendLabel(SettingsPreferenceContext context, SettingsPreferenceValue value) {
   if (context.isDarwin) {
@@ -2442,10 +2428,10 @@ String settingsGraphicsBackendLabel(SettingsPreferenceContext context, SettingsP
   }
   final String appliedName = names[applied] ?? applied;
   if (saved.isEmpty) {
-    return appliedName + '（自动）';
+    return '$appliedName（自动）';
   }
   if (applied != saved) {
-    return appliedName + '（下次启动：' + pending + '）';
+    return '$appliedName（下次启动：$pending）';
   }
   return appliedName;
 }
@@ -2454,13 +2440,13 @@ String settingsGpuIndexLabel(SettingsPreferenceContext context, SettingsPreferen
   final String saved = value.raw.trim();
   final int? index = int.tryParse(saved);
   if (index != null && index >= 0 && index < context.gpuDeviceCount) {
-    return '显卡 ' + index.toString();
+    return '显卡 $index';
   }
   if (saved.isNotEmpty) {
-    return '默认（序号 ' + saved + ' 不存在）';
+    return '默认（序号 $saved 不存在）';
   }
   if (context.gpuAppliedIndex >= 0) {
-    return '显卡 ' + context.gpuAppliedIndex.toString() + '（RHINE_GPU_INDEX）';
+    return '显卡 ${context.gpuAppliedIndex}（RHINE_GPU_INDEX）';
   }
   return '默认';
 }
@@ -3319,69 +3305,69 @@ List<String> settingsValidateRegistry() {
   final Set<int> sectionIds = <int>{};
   for (final SettingsSectionSpec section in settingsSections) {
     if (!sectionIds.add(section.id.index)) {
-      errors.add('重复的分区 id: ' + section.id.index.toString());
+      errors.add('重复的分区 id: ${section.id.index}');
     }
     if (section.titleEn.isEmpty || section.number <= 0) {
-      errors.add('分区缺少标题或编号: ' + section.titleEn);
+      errors.add('分区缺少标题或编号: ${section.titleEn}');
     }
   }
   final Set<String> ids = <String>{};
   final Set<String> actions = <String>{};
   for (final SettingsDescriptor descriptor in _settingsDescriptorTable) {
     if (descriptor.id.isEmpty || !ids.add(descriptor.id)) {
-      errors.add('空或重复的 descriptor id: ' + descriptor.id);
+      errors.add('空或重复的 descriptor id: ${descriptor.id}');
     }
     if (settingsSectionById(descriptor.section) == null) {
-      errors.add(descriptor.id + ': 引用了不存在的分区');
+      errors.add('${descriptor.id}: 引用了不存在的分区');
     }
     if (descriptor.titleEn.isEmpty) {
-      errors.add(descriptor.id + ': 缺少标题');
+      errors.add('${descriptor.id}: 缺少标题');
     }
     if (descriptor.bindingKind == SettingsBindingKind.preference &&
         !isSettingsPreferenceKey(descriptor.preferenceKey)) {
-      errors.add(descriptor.id + ': 偏好 key 不在 Host::preferenceKeys() 中: ' + descriptor.preferenceKey);
+      errors.add('${descriptor.id}: 偏好 key 不在 Host::preferenceKeys() 中: ${descriptor.preferenceKey}');
     }
     if (descriptor.kind == SettingsRowKind.action && descriptor.action.isEmpty) {
-      errors.add(descriptor.id + ': Action 缺少 action');
+      errors.add('${descriptor.id}: Action 缺少 action');
     }
     if ((descriptor.kind == SettingsRowKind.choice ||
             descriptor.kind == SettingsRowKind.stepper ||
             descriptor.kind == SettingsRowKind.slider) &&
         descriptor.action.isEmpty &&
         descriptor.actionPrefix.isEmpty) {
-      errors.add(descriptor.id + ': 可编辑控件缺少 action/actionPrefix');
+      errors.add('${descriptor.id}: 可编辑控件缺少 action/actionPrefix');
     }
     final String actionKey = descriptor.actionPrefix.isEmpty ? descriptor.action : descriptor.actionPrefix;
     if (actionKey.isNotEmpty && !actions.add(actionKey)) {
-      errors.add(descriptor.id + ': 重复的 action: ' + actionKey);
+      errors.add('${descriptor.id}: 重复的 action: $actionKey');
     }
     final Set<String> choiceValues = <String>{};
     for (final SettingsChoice choice in descriptor.choices) {
       if (choice.value.isEmpty || !choiceValues.add(choice.value)) {
-        errors.add(descriptor.id + ': 选项值为空或重复: ' + choice.value);
+        errors.add('${descriptor.id}: 选项值为空或重复: ${choice.value}');
       }
     }
     if (descriptor.choices.isNotEmpty &&
         descriptor.defaultValue.isNotEmpty &&
         !choiceValues.contains(descriptor.defaultValue)) {
-      errors.add(descriptor.id + ': 默认值不在静态选项中: ' + descriptor.defaultValue);
+      errors.add('${descriptor.id}: 默认值不在静态选项中: ${descriptor.defaultValue}');
     }
     if (descriptor.minimum > descriptor.maximum) {
-      errors.add(descriptor.id + ': minimum 大于 maximum');
+      errors.add('${descriptor.id}: minimum 大于 maximum');
     }
     if (descriptor.step < 0) {
-      errors.add(descriptor.id + ': step 为负数');
+      errors.add('${descriptor.id}: step 为负数');
     }
     if (descriptor.steps.isNotEmpty) {
       for (int i = 1; i < descriptor.steps.length; i++) {
         if (descriptor.steps[i] <= descriptor.steps[i - 1]) {
-          errors.add(descriptor.id + ': steps 未排序');
+          errors.add('${descriptor.id}: steps 未排序');
           break;
         }
       }
       final int? fallback = int.tryParse(descriptor.defaultValue);
       if (fallback != null && !descriptor.steps.contains(fallback)) {
-        errors.add(descriptor.id + ': 默认值不在 steps 中');
+        errors.add('${descriptor.id}: 默认值不在 steps 中');
       }
     }
   }
@@ -3407,7 +3393,7 @@ class SettingsDefaultResetStep {
 
   @override
   String toString() =>
-      'SettingsDefaultResetStep(' + id + ', ' + value + ', ' + outcome.toString() + ')';
+      'SettingsDefaultResetStep($id, $value, $outcome)';
 }
 
 class SettingsDefaultsResetPlan {

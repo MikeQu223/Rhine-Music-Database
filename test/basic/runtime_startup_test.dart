@@ -623,7 +623,7 @@ void main() {
         (WidgetTester tester) async {
       final _TrackingController controller = await pumpShell(tester);
 
-      fire(tester, '${basicSearchActionPrefix}周杰伦');
+      fire(tester, '$basicSearchActionPrefix周杰伦');
       await tester.pump();
 
       // setQuery 是 controller 的真实过滤入口（Qt/src/MusicSiren.cpp:91-124）。
@@ -812,7 +812,7 @@ void main() {
 
       fire(tester, 'music:like');
       await tester.pump();
-      expect(find.textContaining(basicUnimplementedPrefix + 'music:like'), findsOneWidget);
+      expect(find.textContaining('${basicUnimplementedPrefix}music:like'), findsOneWidget);
 
       // 音量条有真实热区（player_bar.dart:529），但 BasicController 没有音量 API。
       fire(tester, 'player:volume-fraction:0.5');

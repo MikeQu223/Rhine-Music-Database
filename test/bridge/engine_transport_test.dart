@@ -109,7 +109,7 @@ Map<String, Object?> _workerCommand(
 /// ios-runtime.cjs:84-86 把 input.data 原样写进 worker.stdin；断行符 0x0a。
 Uint8List _commandBytes(List<Map<String, Object?>> commands) =>
     Uint8List.fromList(utf8.encode(
-      commands.map((Map<String, Object?> command) => jsonEncode(command) + '\n').join(),
+      commands.map((Map<String, Object?> command) => '${jsonEncode(command)}\n').join(),
     ));
 
 /// 按 worker.cjs:430-464 的 readline 语义切行；每行必须是一个独立 JSON 对象。
@@ -446,21 +446,21 @@ void main() {
       h.transport.start(root: root, temporary: temporary, edition: edition);
       final String session = h.transport.session!;
       final Map<String, Object?> ok = _frame(EngineWire.output, session, <String, Object?>{
-        'data': _b64(jsonEncode(<String, Object?>{
+        'data': _b64('${jsonEncode(<String, Object?>{
           'id': 'cmd-1',
           'body': <String, Object?>{'code': 200, 'data': <String, Object?>{'ok': true}},
           'cookies': <Object?>['a=1'],
-        }) + '\n'),
+        })}\n'),
       });
       final Map<String, Object?> failure = _frame(EngineWire.output, session, <String, Object?>{
-        'data': _b64(jsonEncode(<String, Object?>{
+        'data': _b64('${jsonEncode(<String, Object?>{
           'id': 'cmd-2',
           'body': <String, Object?>{
             'code': 503,
             'message': '音乐请求失败，请重试',
           },
           'cookies': <Object?>[],
-        }) + '\n'),
+        })}\n'),
       });
       h.link.emit(ok);
       h.link.emit(failure);

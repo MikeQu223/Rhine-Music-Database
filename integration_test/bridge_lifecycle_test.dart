@@ -303,7 +303,7 @@ void main() {
       final Map<String, Object?> frame = runtime.sent.single;
       expect(frame[EngineWire.type], 'start');
       expect(frame[EngineWire.session], harness.transport.session);
-      expect(frame['script'], root + '/MusicBridge/worker.cjs');
+      expect(frame['script'], '$root/MusicBridge/worker.cjs');
       expect(frame['stderrLog'], true);
 
       // 键名/键数逐字对齐 Qt；TMPDIR 与两个 device-state 是 D1 近似值：Qt:194-200 的 TMPDIR
@@ -312,9 +312,9 @@ void main() {
       final Map<String, Object?> env = frame['env']! as Map<String, Object?>;
       expect(env['TMPDIR'], temporary);
       expect(env['RHINE_QQ_DEVICE_STATE_PATH'],
-          root + '/qq-device.json');
+          '$root/qq-device.json');
       expect(env['RHINE_KUGOU_DEVICE_STATE_PATH'],
-          root + '/kugou-device.json');
+          '$root/kugou-device.json');
       expect(env['RHINE_KUGOU_EDITION'], edition);
       expect(env.length, 4, reason: 'env 恰好四键，不得夹带');
     });
@@ -670,7 +670,7 @@ void main() {
 
       peer = await openControlConnection();
       peer!.add(utf8.encode(
-        jsonEncode(<String, Object?>{NodeWire.token: runtime.token}) + '\n',
+        '${jsonEncode(<String, Object?>{NodeWire.token: runtime.token})}\n',
       ));
       await _waitFor(() => runtime.authenticated, reason: '首帧 {token} 握手未完成');
       await _waitFor(
@@ -699,22 +699,20 @@ void main() {
           '${tempRoot.path}/qq-device.json');
 
       // started → running；output 的 base64 要能穿过两模块还原成字节。
-      peer!.add(utf8.encode(jsonEncode(<String, Object?>{
+      peer!.add(utf8.encode('${jsonEncode(<String, Object?>{
         EngineWire.type: EngineWire.started,
         EngineWire.session: transport.session,
-      }) +
-          '\n'));
+      })}\n'));
       await _waitFor(
         () => transport.state == EngineProcessState.running,
         reason: 'started 未把会话推进到 running（Qt:264-266）',
       );
 
-      peer!.add(utf8.encode(jsonEncode(<String, Object?>{
+      peer!.add(utf8.encode('${jsonEncode(<String, Object?>{
         EngineWire.type: EngineWire.output,
         EngineWire.session: transport.session,
         EngineWire.data: base64Encode(utf8.encode('hello')),
-      }) +
-          '\n'));
+      })}\n'));
       await _waitFor(() => outputs.isNotEmpty, reason: 'output 未到达（Qt:267-269）');
       expect(utf8.decode(transport.readAllStandardOutput()), 'hello');
 
@@ -742,7 +740,7 @@ void main() {
       );
       peer = await openControlConnection();
       peer!.add(utf8.encode(
-        jsonEncode(<String, Object?>{NodeWire.token: runtime.token}) + '\n',
+        '${jsonEncode(<String, Object?>{NodeWire.token: runtime.token})}\n',
       ));
       await _waitFor(() => runtime.authenticated);
       expect(runtime.isLive, isTrue);
@@ -770,7 +768,7 @@ void main() {
       );
       peer = await openControlConnection();
       peer!.add(utf8.encode(
-        jsonEncode(<String, Object?>{NodeWire.token: runtime.token}) + '\n',
+        '${jsonEncode(<String, Object?>{NodeWire.token: runtime.token})}\n',
       ));
       await _waitFor(() => runtime.authenticated);
       await _waitFor(() => _decodeFrames(received).isNotEmpty);

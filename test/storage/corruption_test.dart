@@ -115,9 +115,9 @@ void main() {
     storage = AppStorage(
       paths: AppStoragePaths(
         dataDirectory: temp.path,
-        cacheDirectory: temp.path + '/cache',
-        temporaryDirectory: temp.path + '/tmp',
-        executableDirectory: temp.path + '/exe',
+        cacheDirectory: '${temp.path}/cache',
+        temporaryDirectory: '${temp.path}/tmp',
+        executableDirectory: '${temp.path}/exe',
       ),
       files: files,
     );

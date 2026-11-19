@@ -51,12 +51,15 @@ class _FakeAudio implements BasicAudioPort {
   final List<void Function(BasicAudioState)> _listeners =
       <void Function(BasicAudioState)>[];
 
+  @override
   BasicAudioState get state => _state;
 
+  @override
   void addListener(void Function(BasicAudioState) listener) {
     _listeners.add(listener);
   }
 
+  @override
   void removeListener(void Function(BasicAudioState) listener) {
     _listeners.remove(listener);
   }
@@ -69,27 +72,33 @@ class _FakeAudio implements BasicAudioPort {
     }
   }
 
+  @override
   Future<void> prepare(String url, {required int generation}) async {
     calls.add('prepare:$url:$generation');
     emit(BasicAudioState(buffering: true, generation: generation));
   }
 
+  @override
   Future<void> play({required int generation}) async {
     calls.add('play:$generation');
   }
 
+  @override
   Future<void> pause({required int generation}) async {
     calls.add('pause:$generation');
   }
 
+  @override
   Future<void> seekTo(double positionMs, {required int generation}) async {
     calls.add('seek:${positionMs.toStringAsFixed(0)}:$generation');
   }
 
+  @override
   Future<void> stop() async {
     calls.add('stop');
   }
 
+  @override
   Future<void> dispose() async {
     calls.add('dispose');
   }
@@ -104,23 +113,29 @@ class _FakeMediaPort implements MediaSessionPort {
   int disposes = 0;
   int ensureStarts = 0;
 
+  @override
   Future<bool> ensureStarted() async {
     ensureStarts += 1;
     return true;
   }
 
+  @override
   Future<void> update(MediaSessionState state) async {
     updates.add(state);
   }
 
+  @override
   Future<void> stop() async {
     stops += 1;
   }
 
+  @override
   Stream<String> get actions => const Stream<String>.empty();
 
+  @override
   Future<String?> cacheDirectory() async => directory;
 
+  @override
   Future<void> dispose() async {
     disposes += 1;
   }
@@ -352,11 +367,7 @@ void main() {
         }
         await Future<void>.delayed(Duration.zero);
       }
-      throw StateError('封面请求没有发出：' +
-          url +
-          '（已请求 ' +
-          client.requested.join(', ') +
-          '）');
+      throw StateError('封面请求没有发出：$url（已请求 ${client.requested.join(', ')}）');
     }
 
     Future<MediaSessionState> waitForCover(int fromIndex,

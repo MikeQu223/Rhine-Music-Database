@@ -10,7 +10,7 @@ import 'package:rhine_music_database/basic/siren_repository.dart';
 class _SilentAudio implements BasicAudioPort {
   final List<void Function(BasicAudioState)> _listeners =
       <void Function(BasicAudioState)>[];
-  BasicAudioState _state = BasicAudioState.idle;
+  final BasicAudioState _state = BasicAudioState.idle;
 
   @override
   BasicAudioState get state => _state;

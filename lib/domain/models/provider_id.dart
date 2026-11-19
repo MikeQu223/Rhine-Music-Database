@@ -100,14 +100,14 @@ class ProviderId {
   }
 
   /// Qt/src/MusicApi.cpp:80-82：netease 走裸路由（前缀为空串），其它身份前置 "/" + wire。
-  String get routePrefix => isNetease ? '' : '/' + wire;
+  String get routePrefix => isNetease ? '' : '/$wire';
 
   /// Qt/src/MusicApi.cpp:68："/native/" + provider + "/" + operation。
   ///
   /// 调用方在该路由上的固定包络是 {{"args": arguments}}、adapted = true、allowed = {200}。
   /// 注意：provider == "local" 时 Qt 根本不会构造该路由（先失败，见 Qt/src/MusicApi.cpp:62-67），
   /// 这个守卫由调用方完成（见 api_result.dart 的 ApiResult.localModeDisabled）。
-  String nativeOperationRoute(String operation) => '/native/' + wire + '/' + operation;
+  String nativeOperationRoute(String operation) => '/native/$wire/$operation';
 
   /// 与 Qt 直接比较 QString provider 的写法一致：字符串本身即身份。
   @override

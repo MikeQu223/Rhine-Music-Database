@@ -135,7 +135,7 @@ class AccountManager {
     provider = selected;
     identityNames['netease'] = host.preference('welcome-name-netease');
     identityNames['qq'] = host.preference('welcome-name-qq');
-    identityNames['kugou'] = host.preference('welcome-name-kugou-' + edition.wire);
+    identityNames['kugou'] = host.preference('welcome-name-kugou-${edition.wire}');
     if (isSiren) {
       // MusicLibrary.cpp:26-30：塞壬的列头与 LocalCollections 在发布来源之前建立。
       effects.reloadSiren();
@@ -166,7 +166,7 @@ class AccountManager {
       return;
     }
     final bool authenticated = host.authenticated;
-    uid = authenticated ? host.preference('account-id-' + accountKey) : '';
+    uid = authenticated ? host.preference('account-id-$accountKey') : '';
     nickname = authenticated ? (identityNames[provider.wire] ?? '') : '未登录';
     if (authenticated && nickname.isEmpty) {
       nickname = '正在恢复登录…';
@@ -181,9 +181,9 @@ class AccountManager {
     }
     identityNames[source.wire] = normalized;
     final String key = source == AccountProvider.kugou ? accountKey : source.wire;
-    host.setPreference('welcome-name-' + key, normalized);
+    host.setPreference('welcome-name-$key', normalized);
     if (source == provider && uid.isNotEmpty) {
-      host.setPreference('account-id-' + key, uid);
+      host.setPreference('account-id-$key', uid);
     }
   }
 
@@ -261,7 +261,7 @@ class AccountManager {
       if (expired) {
         uid = '';
         nickname = '登录已失效';
-        host.setPreference('account-id-' + accountKey, '');
+        host.setPreference('account-id-$accountKey', '');
         status = '登录已失效，请重新登录';
       } else {
         status = '账号验证暂不可用，已保留本机登录记录';
@@ -299,7 +299,7 @@ class AccountManager {
       this.edition = requested;
       host.setKugouEdition(requested);
       host.setPreference('kugou-edition', requested.wire);
-      identityNames['kugou'] = host.preference('welcome-name-' + accountKey);
+      identityNames['kugou'] = host.preference('welcome-name-$accountKey');
     }
     host.setProvider(source);
     host.setPreference('provider', source.wire);
@@ -327,7 +327,7 @@ class AccountManager {
       effects.reloadSiren();
       effects.loadSirenCatalog();
     }
-    status = '已切换至' + providerName;
+    status = '已切换至$providerName';
     return restoreAccount();
   }
 
@@ -349,7 +349,7 @@ class AccountManager {
     effects.resetAccountFlags();
     accountError = '';
     host.logout();
-    host.setPreference('account-id-' + accountKey, '');
+    host.setPreference('account-id-$accountKey', '');
     uid = '';
     nickname = '未登录';
     effects.clearLanes();

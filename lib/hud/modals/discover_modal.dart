@@ -507,7 +507,7 @@ class MusicDiscoverState {
         }
       }
       more = _bool(page['more']);
-      status = items.isEmpty ? '暂无内容' : '已载入 ' + items.length.toString() + ' 条';
+      status = items.isEmpty ? '暂无内容' : '已载入 ${items.length} 条';
     }
     loading = false;
     host.changed();
@@ -652,7 +652,7 @@ DiscoverModel buildDiscoverPanel({
   tabs.add(<String>['history', '历史']);
   for (final entry in tabs) {
     model.tabs.add(
-      _choice(entry[1], 'discover:tab:' + entry[0], discover.tab == entry[0]),
+      _choice(entry[1], 'discover:tab:${entry[0]}', discover.tab == entry[0]),
     );
   }
 
@@ -678,7 +678,7 @@ DiscoverModel buildDiscoverPanel({
         model.categories.add(
           _choice(
             _string(entry['name']),
-            'discover:category:' + percentEncode(id),
+            'discover:category:${percentEncode(id)}',
             id == discover.category,
           ),
         );
@@ -691,7 +691,7 @@ DiscoverModel buildDiscoverPanel({
           break;
         }
       }
-      model.tools.add(_choice('分类：' + name + ' ↓', 'discover:categories', false));
+      model.tools.add(_choice('分类：$name ↓', 'discover:categories', false));
     }
   } else if (discover.tab == 'guess') {
     model.tools.add(_choice('换一批推荐 ↻', 'discover:tab:guess', false));
@@ -701,7 +701,7 @@ DiscoverModel buildDiscoverPanel({
     for (final value in discover.newSongAreas) {
       final id = _int(value['id']).toString();
       model.tools.add(
-        _choice(_string(value['name']), 'discover:area:' + id, id == discover.newSongArea),
+        _choice(_string(value['name']), 'discover:area:$id', id == discover.newSongArea),
       );
     }
   } else if (discover.tab == 'playlists') {
@@ -709,7 +709,7 @@ DiscoverModel buildDiscoverPanel({
   }
 
   final scrollScope =
-      host.provider + ':' + host.accountGeneration.toString() + ':' + discover.tab;
+      '${host.provider}:${host.accountGeneration}:${discover.tab}';
   if (panel.scrollScope != scrollScope) {
     panel.scroll = 0;
     panel.scrollScope = scrollScope;
@@ -724,11 +724,7 @@ DiscoverModel buildDiscoverPanel({
   final urls = <String>[
     for (final index in indices) _string(discover.items[index]['cover']),
   ];
-  final scope = host.provider +
-      ':' +
-      host.accountGeneration.toString() +
-      ':' +
-      discover.generation.toString();
+  final scope = '${host.provider}:${host.accountGeneration}:${discover.generation}';
   artwork.show(scope, urls);
   for (var position = 0; position < urls.length; position++) {
     final item = discover.items[indices[position]];

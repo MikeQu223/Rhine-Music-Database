@@ -96,8 +96,8 @@ class WeightGlyphs {
     required this.units,
     required this.ascent,
     required this.descent,
-    required Map<String, Glyph> glyphs,
-  }) : _glyphs = glyphs;
+    required this._glyphs,
+  });
 
   final String weight;
   final double units;
@@ -167,12 +167,10 @@ class Lettering {
 /// Everything the glyph engine needs at run time.
 class GlyphFontSet {
   GlyphFontSet({
-    required Map<String, WeightGlyphs> weights,
-    required Map<String, Lettering> lettering,
-    SymbolCoverage symbols = SymbolCoverage.none,
-  })  : _weights = weights,
-        _lettering = lettering,
-        _symbols = symbols;
+    required this._weights,
+    required this._lettering,
+    this._symbols = SymbolCoverage.none,
+  });
 
   final Map<String, WeightGlyphs> _weights;
   final Map<String, Lettering> _lettering;

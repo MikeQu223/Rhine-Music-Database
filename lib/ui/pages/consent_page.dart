@@ -185,7 +185,7 @@ class _ConsentPageState extends State<ConsentPage> {
           // 上报宿主。 会停在 awaitingConsent，本页不伪造放行。
           final String broken = region == null ? 'null' : region.name;
           widget.onPresentationBroken?.call(
-            'awaitingConsent without a pending region: ' + broken,
+            'awaitingConsent without a pending region: $broken',
           );
           return;
         }
@@ -286,7 +286,7 @@ class _ConsentPageState extends State<ConsentPage> {
       }
     }
     if (failure != null) {
-      widget.onPresentationBroken?.call('consent decision rejected: ' + failure.toString());
+      widget.onPresentationBroken?.call('consent decision rejected: $failure');
     }
   }
 

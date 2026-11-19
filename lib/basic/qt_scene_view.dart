@@ -413,7 +413,7 @@ String qtSceneStateSnapshot(
     // Native 侧（EmbeddedSceneHost）把它们记成"最后应用的那一份"，之后所有排队中的
     // pointer/wheel/scroll/action 都带着自己的 origin 回来对——对不上就丢，
     // 而不是把旧视图（或同视图的旧目录）的事件贴到当前场景上。
-    if (viewId != null) 'view': viewId,
+    'view': ?viewId,
     'ctx': contextGeneration,
     'dark': state.dark,
     // boot 相位由宿主的外壳状态决定（Flutter 是唯一相位真值）：初始化页面在场时
@@ -431,7 +431,7 @@ String qtSceneStateSnapshot(
     // 去重后执行一次，不会因为快照重复下发而二次打开/关闭。
     if (settings != null && settings.hasViewerCommand)
       'coverViewer': settings.viewerCommandJson,
-    if (current != null) 'current': current,
+    'current': ?current,
     if (song != null && song.key.isNotEmpty) 'key': song.key,
   };
   return jsonEncode(payload);
@@ -794,8 +794,8 @@ class QtSceneActions {
 /// Dart → 原生：把快照推给 Qt 场景。
 class QtSceneStateSender {
   QtSceneStateSender({
-    MethodChannel channel = const MethodChannel(qtSceneChannelName),
-  }) : _channel = channel;
+    this._channel = const MethodChannel(qtSceneChannelName),
+  });
 
   final MethodChannel _channel;
 
@@ -872,8 +872,8 @@ class QtSceneStateSender {
 /// 同时转发。
 class QtScenePointerSender {
   QtScenePointerSender({
-    MethodChannel channel = const MethodChannel(qtSceneChannelName),
-  }) : _channel = channel;
+    this._channel = const MethodChannel(qtSceneChannelName),
+  });
 
   final MethodChannel _channel;
 

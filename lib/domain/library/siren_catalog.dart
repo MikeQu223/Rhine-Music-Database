@@ -103,7 +103,7 @@ Future<void> librarySirenLoadCatalog(MusicLibrary lib) async {
     lib.sourceErrors[4] = reply.error ?? '';
     lib.hasMore[3] = true;
     lib.hasMore[4] = true;
-    lib.status = '塞壬唱片曲库读取失败：' + (reply.error ?? '');
+    lib.status = '塞壬唱片曲库读取失败：${reply.error ?? ''}';
     lib.changed();
     return;
   }
@@ -120,11 +120,7 @@ Future<void> librarySirenLoadCatalog(MusicLibrary lib) async {
   lib.hasMore[4] = false;
   lib.sourceErrors[3] = '';
   lib.sourceErrors[4] = '';
-  lib.status = '已加载塞壬唱片曲库：' +
-      lib.totals[3].toString() +
-      ' 首 / ' +
-      lib.totals[4].toString() +
-      ' 张专辑';
+  lib.status = '已加载塞壬唱片曲库：${lib.totals[3]} 首 / ${lib.totals[4]} 张专辑';
   if (lib.pendingSirenSearch) {
     lib.pendingSirenSearch = false;
     unawaited(librarySearch(lib, lib.keyword, kind: lib.searchKind));
@@ -250,7 +246,7 @@ Future<void> librarySirenSearchLocal(
   lib.searchLoading = false;
   lib.status = page.isEmpty
       ? (kind == 'playlist' ? '没有匹配的本地歌单' : '没有匹配的音乐')
-      : '找到 ' + total.toString() + ' 条结果';
+      : '找到 $total 条结果';
   if (!more) {
     // Qt: showSource(0); emit modeRequested("archive"); frame["mode"] = "archive";
     lib.showSource(0);

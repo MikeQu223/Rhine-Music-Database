@@ -763,7 +763,7 @@ void main() {
         final player = newPlayer();
         player.setMode('shuffle');
         final saved = <String, Object?>{
-          if (bad != null) 'position': bad,
+          'position': ?bad,
           'mode': 'one',
           'current': song('a'),
           'queue': <Object?>[song('a')],

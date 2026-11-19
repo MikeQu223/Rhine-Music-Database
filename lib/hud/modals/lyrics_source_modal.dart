@@ -490,7 +490,7 @@ class LyricsSourceModal {
       return value;
     }
     final int keep = length - 1 < 0 ? 0 : length - 1;
-    return value.substring(0, keep) + '…';
+    return '${value.substring(0, keep)}…';
   }
 }
 

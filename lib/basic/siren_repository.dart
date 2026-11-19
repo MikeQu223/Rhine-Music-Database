@@ -50,12 +50,10 @@ typedef SirenHttpGet = Future<SirenHttpResult> Function(Uri uri);
 class SirenRepository {
   SirenRepository({
     Uri? baseUri,
-    HttpClient? client,
-    SirenHttpGet? get,
+    this._client,
+    this._get,
     this.timeout = const Duration(seconds: 20),
-  })  : baseUri = baseUri ?? Uri.parse(sirenOrigin),
-        _client = client,
-        _get = get;
+  })  : baseUri = baseUri ?? Uri.parse(sirenOrigin);
 
   /// 站点根地址（默认 [sirenOrigin]）；末段路径会被保留，便于测试注入子路径。
   final Uri baseUri;

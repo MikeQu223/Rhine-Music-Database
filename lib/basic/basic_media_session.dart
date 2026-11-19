@@ -11,6 +11,7 @@
 /// 播放状态机、位置推算器、UI 选中行。位置只来自 native 读数，节流只决定"这次要不要
 /// 把最新真实读数再报一次"，绝不外推；playing 严格等于 audio.playing，从不用
 /// buffering/requested 冒充。
+library;
 
 import 'dart:async';
 import 'dart:math' as math;
@@ -83,14 +84,11 @@ abstract interface class BasicMediaSessionCommands {
 /// ```
 class BasicMediaSessionAdapter {
   BasicMediaSessionAdapter({
-    required MediaSessionPort port,
-    required BasicMediaSessionCommands commands,
-    Duration positionRefreshInterval = const Duration(milliseconds: 1000),
+    required this._port,
+    required this._commands,
+    this._positionRefreshInterval = const Duration(milliseconds: 1000),
     DateTime Function()? clock,
-  })  : _port = port,
-        _commands = commands,
-        _positionRefreshInterval = positionRefreshInterval,
-        _clock = clock ?? DateTime.now {
+  })  : _clock = clock ?? DateTime.now {
     // 构造即订阅：ensureStarted 之前平台也可能已经排了动作（pendingActions）。
     _actions = _port.actions.listen(
       _onAction,

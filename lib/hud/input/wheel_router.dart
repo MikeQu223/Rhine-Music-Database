@@ -118,8 +118,7 @@ class WheelForward {
 
   @override
   String toString() =>
-      'WheelForward(' + surface + ' ' + x.toString() + ',' + y.toString() +
-      ' pixel=' + pixelDeltaY.toString() + ' angle=' + angleDeltaY.toString() + ')';
+      'WheelForward($surface $x,$y pixel=$pixelDeltaY angle=$angleDeltaY)';
 }
 
 /// 滚轮侧的副作用端口：只有「把一次滚轮交给引擎」这一个入口
@@ -408,9 +407,7 @@ class HudWheelEvent {
 
   @override
   String toString() =>
-      'HudWheelEvent(' + x.toString() + ',' + y.toString() + ' delta=' +
-      delta.toString() + ' steps=' + steps.toString() + ' distance=' +
-      distance.toString() + ')';
+      'HudWheelEvent($x,$y delta=$delta steps=$steps distance=$distance)';
 }
 
 /// Engine.cpp:1062-1086 的 wheel() 累积 + :752-766 的 tick 衰减下发。
@@ -896,8 +893,7 @@ class HudWheelOutcome {
 
   @override
   String toString() =>
-      'HudWheelOutcome(' + region + ' consumed=' + consumed.toString() +
-      ' effects=' + effects.toString() + ')';
+      'HudWheelOutcome($region consumed=$consumed effects=$effects)';
 }
 
 /// NativeHud::wheel（NativeHudInput.cpp:9-179）的 1:1 迁移。

@@ -407,7 +407,7 @@ class _LyricsOffsetBuilder {
     }
     final direction = offsetMs > 0 ? '已提前 ' : '已延后 ';
     final seconds = (offsetMs < 0 ? -offsetMs : offsetMs) / 1000;
-    return direction + seconds.toStringAsFixed(1) + 's';
+    return '$direction${seconds.toStringAsFixed(1)}s';
   }
 
   List<Object?> _ink() => _state.dark
@@ -519,6 +519,6 @@ class _LyricsOffsetBuilder {
       return value;
     }
     final end = keep - 1 < 0 ? 0 : keep - 1;
-    return value.substring(0, end) + '…';
+    return '${value.substring(0, end)}…';
   }
 }

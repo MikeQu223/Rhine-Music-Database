@@ -296,8 +296,7 @@ Future<BootTrackLoad> loadBootTrackCurves({
 /// 载入完成（成功或降级）notifyListeners 一次，BootController 转发后页面重绘；
 /// 不重置 BootController 的 35s 锚点，也不新增 ticker。
 class AssetBootTrackSource extends BootTrackSource with ChangeNotifier {
-  AssetBootTrackSource({AssetBundle? bundle, this.assetPath = kBootTracksAssetPath})
-      : _bundle = bundle;
+  AssetBootTrackSource({this._bundle, this.assetPath = kBootTracksAssetPath});
 
   final AssetBundle? _bundle;
   final String assetPath;

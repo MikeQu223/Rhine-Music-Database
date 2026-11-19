@@ -73,8 +73,8 @@ class _Server {
       return _json(<String, Object?>{
         'code': 0,
         'data': <String, Object?>{
-          'name': 'Song ' + id,
-          'sourceUrl': 'https://file.test/' + id + '.flac',
+          'name': 'Song $id',
+          'sourceUrl': 'https://file.test/$id.flac',
           'lyricUrl': '',
         },
       });
@@ -127,18 +127,18 @@ class _FakeAudio implements BasicAudioPort {
 
   @override
   Future<void> prepare(String url, {required int generation}) async {
-    calls.add('prepare:' + url + ':' + generation.toString());
+    calls.add('prepare:$url:$generation');
   }
 
   @override
-  Future<void> play({required int generation}) async => calls.add('play:' + generation.toString());
+  Future<void> play({required int generation}) async => calls.add('play:$generation');
 
   @override
-  Future<void> pause({required int generation}) async => calls.add('pause:' + generation.toString());
+  Future<void> pause({required int generation}) async => calls.add('pause:$generation');
 
   @override
   Future<void> seekTo(double positionMs, {required int generation}) async =>
-      calls.add('seek:' + positionMs.toStringAsFixed(0));
+      calls.add('seek:${positionMs.toStringAsFixed(0)}');
 
   @override
   Future<void> stop() async => calls.add('stop');
@@ -419,7 +419,7 @@ void main() {
             album: '专辑',
             albumId: 'album-1',
             cover: '',
-            sourceUrl: 'https://example.invalid/' + id + '.mp3',
+            sourceUrl: 'https://example.invalid/$id.mp3',
             lyricUrl: '',
             durationMs: 180000,
           );
@@ -530,7 +530,7 @@ void main() {
       // 自由点的手势层不得包含 HUD 的输入区域，否则 Qt 的 PlatformView 根本拿不到
       // 这次触摸（这正是"唱片区域拖不动、点不动"的机理）。
       final List<String> targets =
-          tester.hitTestOnBinding(free!).path.map((e) => e.target.runtimeType.toString()).toList();
+          tester.hitTestOnBinding(free).path.map((e) => e.target.runtimeType.toString()).toList();
       expect(
         targets.where((t) => t.contains('_RenderHudGestureRegion')),
         isEmpty,

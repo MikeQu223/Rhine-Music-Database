@@ -105,7 +105,7 @@ double decodeNumber(Object? value) {
       return parsed;
     }
   }
-  throw ArgumentError('expected a number, got ' + value.toString());
+  throw ArgumentError('expected a number, got $value');
 }
 
 /// 舞台坐标系里的轴对齐矩形。
@@ -410,7 +410,7 @@ class PortraitBands {
 
   @override
   String toString() =>
-      'PortraitBands(' + mode.name + ', scale: $stageScale, stage: $stageWidth x $stageHeight, bands: $bandCount, degeneracies: $degeneracies)';
+      'PortraitBands(${mode.name}, scale: $stageScale, stage: $stageWidth x $stageHeight, bands: $bandCount, degeneracies: $degeneracies)';
 }
 
 /// 分带视口：把「内容高 vs 舞台高」的越界变成可测的纯几何。
@@ -792,11 +792,11 @@ PortraitBands computePortraitBands(
 
   double inset(double value, String name) {
     if (!value.isFinite) {
-      degeneracies.add(name + ' is not finite; treated as 0');
+      degeneracies.add('$name is not finite; treated as 0');
       return 0;
     }
     if (value < 0) {
-      degeneracies.add(name + ' is negative; treated as 0');
+      degeneracies.add('$name is negative; treated as 0');
       return 0;
     }
     return value;
@@ -871,8 +871,7 @@ PortraitBands computePortraitBands(
   final double finalContentHeight = content.height;
   if (finalContentHeight <= 0) {
     degeneracies.add(
-      '[' + mode.name + '] content height is not positive (' + finalContentHeight.toString() +
-          '); the window is shorter than the fixed bars, or the safe area leaves no room',
+      '[${mode.name}] content height is not positive ($finalContentHeight); the window is shorter than the fixed bars, or the safe area leaves no room',
     );
   }
 
@@ -902,11 +901,7 @@ PortraitBands computePortraitBands(
   // 先构造 result，让 degeneracy note 保留在异常消息里供诊断。
   if (result.content.height <= 0) {
     throw FlutterError(
-      'PortraitBands refused a non-positive content rect for ' + mode.name + ': ' +
-          result.content.toString() + ' in a ' + stageWidth.toString() + ' x ' +
-          stageHeight.toString() + ' stage. DEDUP-21 forbids handing a non-positive ' +
-          'Positioned rect to the framework. Degeneracies: ' +
-          result.degeneracies.join('; '),
+      'PortraitBands refused a non-positive content rect for ${mode.name}: ${result.content} in a $stageWidth x $stageHeight stage. DEDUP-21 forbids handing a non-positive Positioned rect to the framework. Degeneracies: ${result.degeneracies.join('; ')}',
     );
   }
   return result;

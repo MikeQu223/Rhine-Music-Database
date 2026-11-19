@@ -5,6 +5,7 @@
 ///
 /// 本任务禁止执行任何构建/测试命令，因此本文件的 RED/GREEN 均为"未执行"，
 /// 只作为待执行的源码证据提交（报告里记录 validationExecuted=false）。
+library;
 
 import 'dart:math' as math;
 
@@ -13,7 +14,7 @@ import 'package:rhine_music_database/hud/pages/song_detail.dart';
 
 /// 字形端口替身：等宽近似，字符宽 = size * charWidth。
 class _FakeGlyphs implements SongDetailGlyphsPort {
-  const _FakeGlyphs({this.charWidth = 0.5});
+  const _FakeGlyphs() : charWidth = 0.5;
   final double charWidth;
 
   @override

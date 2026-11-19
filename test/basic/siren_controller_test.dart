@@ -72,23 +72,23 @@ class _FakeAudio implements BasicAudioPort {
 
   @override
   Future<void> prepare(String url, {required int generation}) async {
-    calls.add('prepare:' + url + ':' + generation.toString());
+    calls.add('prepare:$url:$generation');
     emit(BasicAudioState(buffering: true, generation: generation));
   }
 
   @override
   Future<void> play({required int generation}) async {
-    calls.add('play:' + generation.toString());
+    calls.add('play:$generation');
   }
 
   @override
   Future<void> pause({required int generation}) async {
-    calls.add('pause:' + generation.toString());
+    calls.add('pause:$generation');
   }
 
   @override
   Future<void> seekTo(double positionMs, {required int generation}) async {
-    calls.add('seek:' + positionMs.toStringAsFixed(0) + ':' + generation.toString());
+    calls.add('seek:${positionMs.toStringAsFixed(0)}:$generation');
   }
 
   @override
@@ -114,8 +114,8 @@ class _Server {
   String Function(String id) sourceFor = _defaultSource;
   String Function(String id) lyricFor = _defaultLyric;
 
-  static String _defaultSource(String id) => 'https://file.test/' + id + '.flac';
-  static String _defaultLyric(String id) => 'https://file.test/' + id + '.lrc';
+  static String _defaultSource(String id) => 'https://file.test/$id.flac';
+  static String _defaultLyric(String id) => 'https://file.test/$id.lrc';
 
   /// 覆盖整条路径（迟到响应/世代测试用）。
   Future<SirenHttpResult> Function(Uri uri)? override;
@@ -168,7 +168,7 @@ class _Server {
       return _json(<String, Object?>{
         'code': 0,
         'data': <String, Object?>{
-          'name': 'Song ' + id,
+          'name': 'Song $id',
           'sourceUrl': sourceFor(id),
           'lyricUrl': lyricFor(id),
         },

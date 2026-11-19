@@ -13,9 +13,9 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 
-import '../../lib/data/storage/app_storage.dart';
-import '../../lib/data/storage/playback_store.dart';
-import '../../lib/data/storage/session_store.dart';
+import 'package:rhine_music_database/data/storage/app_storage.dart';
+import 'package:rhine_music_database/data/storage/playback_store.dart';
+import 'package:rhine_music_database/data/storage/session_store.dart';
 
 const SessionIdentity _identity =
     SessionIdentity(provider: 'kugou', edition: 'standard', uid: '');
@@ -225,7 +225,7 @@ void main() {
           currentNonEmpty: false,
           settingsScrollMaximum: 764,
         );
-        expect(view.modal, '', reason: 'modal input: ' + bad.toString());
+        expect(view.modal, '', reason: 'modal input: $bad');
         expect(view.toJson()['modal'], '');
       }
       for (final good in ViewState.modals) {

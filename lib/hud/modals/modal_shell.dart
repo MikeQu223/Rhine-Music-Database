@@ -185,8 +185,7 @@ final class ModalShellBounds {
   int get hashCode => Object.hash(left, top, width, height);
 
   @override
-  String toString() => 'ModalShellBounds(' + left.toString() + ', ' + top.toString() + ', '
-      + width.toString() + 'x' + height.toString() + ')';
+  String toString() => 'ModalShellBounds($left, $top, ${width}x$height)';
 }
 
 /// containerLayout 的结果（只有外壳与 detail-sort 需要，故不暴露 top / rowsY 等列布局字段）。
@@ -578,7 +577,7 @@ final class ModalShellHitTable implements HudSurfaceSink {
 
   @override
   void op(List<Object?> command) {
-    throw UnsupportedError('ModalShellHitTable 只接收命中，命令请写宿主 sink：' + command.toString());
+    throw UnsupportedError('ModalShellHitTable 只接收命中，命令请写宿主 sink：$command');
   }
 }
 

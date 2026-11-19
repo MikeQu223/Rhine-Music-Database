@@ -596,7 +596,7 @@ void main() {
     test('real port leaves no temp file behind when the write cannot start',
         () async {
       const fs = IoFileSystemPort();
-      final target = root.path + '/missing/dir/session.json';
+      final target = '${root.path}/missing/dir/session.json';
 
       // The parent directory does not exist, so the temporary file can never
       // be created; the failure must not leave the target or any *.rhine-tmp-*

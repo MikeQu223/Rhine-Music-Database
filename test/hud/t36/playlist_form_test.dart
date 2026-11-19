@@ -38,7 +38,7 @@ class _FakePort implements PlaylistFormPort {
 
   @override
   Future<PlaylistFormResult> createPlaylist({required String name}) {
-    calls.add('create:' + name);
+    calls.add('create:$name');
     final Completer<PlaylistFormResult>? inFlight = pending;
     if (inFlight != null) {
       return inFlight.future;
@@ -50,7 +50,7 @@ class _FakePort implements PlaylistFormPort {
 
   @override
   Future<PlaylistFormResult> renamePlaylist({required String id, required String name}) {
-    calls.add('rename:' + id + ':' + name);
+    calls.add('rename:$id:$name');
     final Completer<PlaylistFormResult>? inFlight = pending;
     if (inFlight != null) {
       return inFlight.future;
@@ -188,7 +188,7 @@ void main() {
       final String one = 'a';
       final String hundred = List<String>.filled(100, 'a').join();
       final String hundredOne = List<String>.filled(101, 'a').join();
-      expect(PlaylistFormValidator.validateName(rawName: '  ' + one + '  ', provider: 'netease').accepted,
+      expect(PlaylistFormValidator.validateName(rawName: '  $one  ', provider: 'netease').accepted,
           isTrue);
       expect(PlaylistFormValidator.validateName(rawName: hundred, provider: 'netease').accepted, isTrue);
       final PlaylistFormValidation tooLong =

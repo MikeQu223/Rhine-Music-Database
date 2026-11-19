@@ -95,15 +95,14 @@ void expectCommands(QueueModalDrawing drawing, List<List<Object?>> expected) {
   expect(drawing.commands.length, expected.length, reason: 'command count');
   for (int i = 0; i < expected.length; i += 1) {
     expect(_sameList(drawing.commands[i], expected[i]), isTrue,
-        reason: 'command #' + i.toString() + ' expected ' + expected[i].toString() +
-            ' actual ' + drawing.commands[i].toString());
+        reason: 'command #$i expected ${expected[i]} actual ${drawing.commands[i]}');
   }
 }
 
 void expectHits(QueueModalDrawing drawing, List<Map<String, Object?>> expected) {
   expect(drawing.hits.length, expected.length, reason: 'hit count');
   for (int i = 0; i < expected.length; i += 1) {
-    expect(drawing.hits[i], expected[i], reason: 'hit #' + i.toString());
+    expect(drawing.hits[i], expected[i], reason: 'hit #$i');
   }
 }
 
@@ -320,7 +319,7 @@ void main() {
           bounds: const QueueModalRect(0.0, 50.0, 1006.0, 836.0),
           tracks: List<QueueModalTrack>.generate(
             3,
-            (int index) => QueueModalTrack(title: 'T' + index.toString(), duration: 1000),
+            (int index) => QueueModalTrack(title: 'T$index', duration: 1000),
           ),
         ),
         const UnitGlyphs(),
@@ -484,8 +483,8 @@ void main() {
     List<QueueModalTrack> tracks(int count) => List<QueueModalTrack>.generate(
           count,
           (int index) => QueueModalTrack(
-            title: '曲目' + (index + 1).toString(),
-            artist: '歌手' + (index + 1).toString(),
+            title: '曲目${index + 1}',
+            artist: '歌手${index + 1}',
             duration: 60000.0 + index * 1000,
           ),
         );
@@ -728,7 +727,7 @@ void main() {
         QueueModalState(bounds: panel, tracks: <QueueModalTrack>[QueueModalTrack(title: title)]),
         const UnitGlyphs(),
       );
-      expect(hitOf(drawing, 'player:queue:0')['label'], '播放 ' + title);
+      expect(hitOf(drawing, 'player:queue:0')['label'], '播放 $title');
     });
   });
 
@@ -788,7 +787,7 @@ void main() {
           bounds: panel,
           tracks: List<QueueModalTrack>.generate(
             3,
-            (int index) => QueueModalTrack(title: 'T' + index.toString()),
+            (int index) => QueueModalTrack(title: 'T$index'),
           ),
           currentIndex: 1,
         ),

@@ -268,7 +268,7 @@ JsonMap _song(String id, {String title = '曲'}) {
     'artist': '歌手',
     'artists': <Object?>[],
     'provider': 'netease',
-    'key': 'netease:song:' + id,
+    'key': 'netease:song:$id',
   };
 }
 
@@ -456,7 +456,7 @@ void main() {
       final built = _build();
       built.wire.auto = (String route, JsonMap params) => _page(<String>['x']);
       for (var index = 1; index <= 13; index++) {
-        await built.library.search('q' + index.toString());
+        await built.library.search('q$index');
         await built.scheduler.flush();
       }
 

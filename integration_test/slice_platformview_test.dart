@@ -244,7 +244,7 @@ void main() {
       for (final QtPlatformCompositionMode mode
           in QtPlatformCompositionMode.values) {
         expect(QtPlatformCompositionMode.fromWire(mode.wireName), mode,
-            reason: 'wireName/fromWire 必须自分自洽：' + mode.name);
+            reason: 'wireName/fromWire 必须自分自洽：${mode.name}');
       }
       // 容错方向只落一个安全值：textureLayer 是「不额外要求 view composition」的既有分支，
       // 未知输入绝不能升级成 viewComposition（那等于悄悄换渲染路径）。
@@ -391,7 +391,7 @@ void main() {
       // toMap 必须全量写出这 8 个 key（少写一个，切片报告就丢一条证据）。
       final Map<String, Object?> round = texture.toMap();
       for (final String key in _v2ProbeKeyNames) {
-        expect(round.containsKey(key), isTrue, reason: 'toMap 必须写出 ' + key);
+        expect(round.containsKey(key), isTrue, reason: 'toMap 必须写出 $key');
       }
       expect(round[QtProbeKeys.surfaceContainerKind], _surfaceTextureView);
       expect(round[QtProbeKeys.imeOwner], _imeOwnerQt);
@@ -412,7 +412,7 @@ void main() {
             QtProbeKeys.surfaceContainerKind: kind,
           }).surfaceContainerKind,
           kind,
-          reason: '词表值必须逐字透传：' + kind,
+          reason: '词表值必须逐字透传：$kind',
         );
       }
 
@@ -580,7 +580,7 @@ void main() {
       await tester.pumpWidget(MaterialApp(
         home: Scaffold(
           body: QtPlatformViewUnavailablePanel(
-            title: 'Qt 宿主未就绪（' + parsed.verdict.name + '）',
+            title: 'Qt 宿主未就绪（${parsed.verdict.name}）',
             verdict: parsed.verdict,
             detail: parsed.reason,
             missing: parsed.missing,

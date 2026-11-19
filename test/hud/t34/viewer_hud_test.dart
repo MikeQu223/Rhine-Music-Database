@@ -14,13 +14,14 @@
 /// 只作为待执行的源码证据提交（报告里记录 validationExecuted=false）。
 /// 任务书写的是 package:test，但仓库 dev_dependencies 实际只有 flutter_test，
 /// 按父裁决 B 统一使用 package:flutter_test（不改 pubspec、不加依赖）。
+library;
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:rhine_music_database/hud/pages/viewer_hud.dart';
 
 /// 字形端口替身：等宽近似，字符宽 = size * charWidth + tracking。
 class _FakeGlyphs implements ViewerHudGlyphsPort {
-  const _FakeGlyphs({this.charWidth = 0.5});
+  const _FakeGlyphs() : charWidth = 0.5;
   final double charWidth;
 
   @override
@@ -354,21 +355,21 @@ void main() {
       final String title = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
       final List<Object?> command = _texts(_render(_state(item: ViewerHudItem(id: '1', title: title))).commands)[2];
       // 完整串 = 26 + " / 封面"(5) = 31 字符；截到 20 后再砍 1 位并加 "…"。
-      expect(command[1], title.substring(0, 19) + '…');
+      expect(command[1], '${title.substring(0, 19)}…');
     });
 
     test('1728 时限宽 614：43 字符可容纳，不截断', () {
       expect(const ViewerHudGeometry(1728).titleLimit, 614);
       final String title = _repeat('A', 30); // 30 + 5 = 35 字符 * 14 = 490 <= 614
       final List<Object?> command = _texts(_render(_state(item: ViewerHudItem(id: '1', title: title)), 1728).commands)[2];
-      expect(command[1], '${title} / 封面');
+      expect(command[1], '$title / 封面');
     });
 
     test('截断阈值边界：恰好 20 字符的完整串不截断', () {
       // 15 + 5 = 20 字符 * 14 = 280 <= 290。
       final String title = _repeat('A', 15);
       final List<Object?> command = _texts(_render(_state(item: ViewerHudItem(id: '1', title: title))).commands)[2];
-      expect(command[1], '${title} / 封面');
+      expect(command[1], '$title / 封面');
     });
 
     test('限宽与 tracking 无关：limited 不带 tracking', () {

@@ -284,7 +284,7 @@ final class ProviderModal {
     } else {
       _button(
         body,
-        '账号登录 / ' + providerModalDisplayName(currentProvider, kugouLite: kugouLite),
+        '账号登录 / ${providerModalDisplayName(currentProvider, kugouLite: kugouLite)}',
         left,
         y + 660,
         330,
@@ -330,7 +330,7 @@ final class ProviderModal {
         cardWidth,
         height,
       );
-      body.hit(left, y, cardWidth, height, 'provider:' + entry.id, entry.name); // :271
+      body.hit(left, y, cardWidth, height, 'provider:${entry.id}', entry.name); // :271
       if (selected) {
         // :272-274
         hudFill(

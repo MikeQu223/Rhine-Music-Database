@@ -21,9 +21,9 @@ void main() {
     storage = AppStorage(
       paths: AppStoragePaths(
         dataDirectory: temp.path,
-        cacheDirectory: temp.path + '/cache',
-        temporaryDirectory: temp.path + '/tmp',
-        executableDirectory: temp.path + '/exe',
+        cacheDirectory: '${temp.path}/cache',
+        temporaryDirectory: '${temp.path}/tmp',
+        executableDirectory: '${temp.path}/exe',
       ),
     );
     // settingsScrollMaximum is a RUNTIME LAYOUT FUNCTION in Qt (NativeHud.h:115-135),
@@ -261,7 +261,7 @@ void main() {
       // (Qt/src/MusicSession.cpp:128) and then recomputes page = index / 40 * 40 (:130),
       // so the fixture needs 84 rows for index 83 to survive and yield page 80.
       final List<Object?> songs =
-          List<Object?>.generate(84, (int i) => <String, Object?>{'id': 's' + i.toString()});
+          List<Object?>.generate(84, (int i) => <String, Object?>{'id': 's$i'});
       await writeSession(sessionJson(
         library: libraryJson(
           directories: <Object?>[directory(index: 83, page: 999, songs: songs)],

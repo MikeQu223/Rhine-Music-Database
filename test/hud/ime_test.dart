@@ -44,24 +44,24 @@ class RecordingPorts implements TextInputPorts {
   void clear() => calls.clear();
 
   @override
-  void action(String action) => calls.add('action:' + action);
+  void action(String action) => calls.add('action:$action');
 
   @override
-  void query(String text) => calls.add('query:' + text);
+  void query(String text) => calls.add('query:$text');
 
   @override
   void searchAccepted(String text, {required bool control}) =>
-      calls.add('searchAccepted:' + text + ':' + control.toString());
+      calls.add('searchAccepted:$text:$control');
 
   @override
   void submitForm(String account, String captcha) =>
-      calls.add('submitForm:' + account + ':' + captcha);
+      calls.add('submitForm:$account:$captcha');
 
   @override
-  void sendLoginCode(String phone) => calls.add('sendLoginCode:' + phone);
+  void sendLoginCode(String phone) => calls.add('sendLoginCode:$phone');
 
   @override
-  void settingEditText(String text) => calls.add('settingEditText:' + text);
+  void settingEditText(String text) => calls.add('settingEditText:$text');
 
   @override
   void settingEditAccepted() => calls.add('settingEditAccepted');
@@ -84,7 +84,7 @@ void expectRect(Rect actual, Rect expected) {
 String describeEffect(TextInputEffect effect) {
   final String field =
       effect.field == null ? '-' : effect.field!.objectName;
-  return effect.kind + ':' + field + ':' + (effect.text ?? '');
+  return '${effect.kind}:$field:${effect.text ?? ''}';
 }
 
 List<String> describeEffects(List<TextInputEffect> effects) =>
@@ -150,7 +150,7 @@ void main() {
       // Qt: InputMethodChecks.cpp 断言连续两次提交得到 "测试测试"。
       TextEditingValue value = valueForText('测试');
       value = TextEditingValue(
-        text: value.text + '测试',
+        text: '${value.text}测试',
         selection: const TextSelection.collapsed(offset: 4),
       );
       expect(value.text, '测试测试');
@@ -1153,7 +1153,7 @@ void main() {
       final List<HudSemanticsNode> nodes = hitNodes(layer, hits);
       expect(nodes.length, hits.length);
       for (int i = 0; i < hits.length; i++) {
-        expect(nodes[i].id, 'hit:' + i.toString());
+        expect(nodes[i].id, 'hit:$i');
         expect(nodes[i].role, SemanticsRole.button);
         expect(nodes[i].isButton, isTrue);
         expect(nodes[i].label, hits[i].label);

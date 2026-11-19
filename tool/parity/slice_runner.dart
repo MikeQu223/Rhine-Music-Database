@@ -201,7 +201,7 @@ class SliceError implements Exception {
   /// JSON-pointer-ish location inside the input.
   final List<String> path;
 
-  String get pointer => path.isEmpty ? '' : ' at ' + path.join('/');
+  String get pointer => path.isEmpty ? '' : ' at ${path.join('/')}';
 
   Map<String, Object?> toJson() => <String, Object?>{
         'code': code,
@@ -210,7 +210,7 @@ class SliceError implements Exception {
       };
 
   @override
-  String toString() => 'SliceError(' + code + '): ' + message + pointer;
+  String toString() => 'SliceError($code): $message$pointer';
 }
 
 Never _fail(
@@ -356,8 +356,7 @@ class StageRect {
       maxDelta(other) <= tolerance;
 
   @override
-  String toString() => '[' + x.toString() + ',' + y.toString() + ',' +
-      width.toString() + ',' + height.toString() + ']';
+  String toString() => '[$x,$y,$width,$height]';
 }
 
 // ---------------------------------------------------------------------------
@@ -386,7 +385,7 @@ class TokenDiff {
       };
 
   @override
-  String toString() => kind + ' at ' + path;
+  String toString() => '$kind at $path';
 }
 
 /// Ordered, type-strict token equality for `commands` and `hits`.
@@ -406,19 +405,19 @@ TokenDiff? firstTokenDifference(
   if (left is Map && right is Map) {
     for (final key in left.keys) {
       if (!right.containsKey(key)) {
-        return TokenDiff('missingRight', path + '.' + key.toString(), left[key], null);
+        return TokenDiff('missingRight', '$path.$key', left[key], null);
       }
     }
     for (final key in right.keys) {
       if (!left.containsKey(key)) {
-        return TokenDiff('missingLeft', path + '.' + key.toString(), null, right[key]);
+        return TokenDiff('missingLeft', '$path.$key', null, right[key]);
       }
     }
     for (final key in left.keys) {
       final diff = firstTokenDifference(
         left[key],
         right[key],
-        path: path + '.' + key.toString(),
+        path: '$path.$key',
       );
       if (diff != null) {
         return diff;
@@ -428,13 +427,13 @@ TokenDiff? firstTokenDifference(
   }
   if (left is List && right is List) {
     if (left.length != right.length) {
-      return TokenDiff('length', path + '.length', left.length, right.length);
+      return TokenDiff('length', '$path.length', left.length, right.length);
     }
     for (var i = 0; i < left.length; i++) {
       final diff = firstTokenDifference(
         left[i],
         right[i],
-        path: path + '[' + i.toString() + ']',
+        path: '$path[$i]',
       );
       if (diff != null) {
         return diff;
@@ -487,13 +486,13 @@ TokenDiff? firstFrameDifference(
     for (final key in left.keys) {
       if (!right.containsKey(key)) {
         return TokenDiff(
-            'missingRight', path + '.' + key.toString(), left[key], null);
+            'missingRight', '$path.$key', left[key], null);
       }
     }
     for (final key in right.keys) {
       if (!left.containsKey(key)) {
         return TokenDiff(
-            'missingLeft', path + '.' + key.toString(), null, right[key]);
+            'missingLeft', '$path.$key', null, right[key]);
       }
     }
     for (final key in left.keys) {
@@ -501,7 +500,7 @@ TokenDiff? firstFrameDifference(
         left[key],
         right[key],
         tolerance,
-        path: path + '.' + key.toString(),
+        path: '$path.$key',
       );
       if (diff != null) {
         return diff;
@@ -511,14 +510,14 @@ TokenDiff? firstFrameDifference(
   }
   if (left is List && right is List) {
     if (left.length != right.length) {
-      return TokenDiff('length', path + '.length', left.length, right.length);
+      return TokenDiff('length', '$path.length', left.length, right.length);
     }
     for (var i = 0; i < left.length; i++) {
       final diff = firstFrameDifference(
         left[i],
         right[i],
         tolerance,
-        path: path + '[' + i.toString() + ']',
+        path: '$path[$i]',
       );
       if (diff != null) {
         return diff;
@@ -567,7 +566,7 @@ List<HitViolation> validateHits(Object? hits, {String path = 'hits'}) {
   }
   for (var i = 0; i < hits.length; i++) {
     final hit = hits[i];
-    final hitPath = path + '[' + i.toString() + ']';
+    final hitPath = '$path[$i]';
     if (hit is! Map) {
       violations.add(HitViolation(
           'hit.notObject', i, hitPath, 'a hit must be a JSON object'));
@@ -579,8 +578,8 @@ List<HitViolation> validateHits(Object? hits, {String path = 'hits'}) {
         violations.add(HitViolation(
           'hit.missingKey',
           i,
-          hitPath + '.' + field,
-          'missing hit field ' + field,
+          '$hitPath.$field',
+          'missing hit field $field',
         ));
       }
     }
@@ -591,8 +590,8 @@ List<HitViolation> validateHits(Object? hits, {String path = 'hits'}) {
       violations.add(HitViolation(
         'hit.extraKey',
         i,
-        hitPath + '.' + key,
-        'seventh key on a hit: ' + key,
+        '$hitPath.$key',
+        'seventh key on a hit: $key',
       ));
     }
     final action = hit['action'];
@@ -600,7 +599,7 @@ List<HitViolation> validateHits(Object? hits, {String path = 'hits'}) {
       violations.add(HitViolation(
         'hit.action.type',
         i,
-        hitPath + '.action',
+        '$hitPath.action',
         'action must be a non-empty string',
       ));
     }
@@ -609,7 +608,7 @@ List<HitViolation> validateHits(Object? hits, {String path = 'hits'}) {
       violations.add(HitViolation(
         'hit.label.type',
         i,
-        hitPath + '.label',
+        '$hitPath.label',
         'label must be a string (null must already fall back to action; an '
             'explicit empty string is preserved)',
       ));
@@ -619,8 +618,8 @@ List<HitViolation> validateHits(Object? hits, {String path = 'hits'}) {
         violations.add(HitViolation(
           'hit.rect.numeric',
           i,
-          hitPath + '.' + field,
-          field + ' must be numeric',
+          '$hitPath.$field',
+          '$field must be numeric',
         ));
       }
     }
@@ -632,14 +631,14 @@ List<HitViolation> validateHits(Object? hits, {String path = 'hits'}) {
         violations.add(HitViolation(
           'hit.fixed.notBoolean',
           i,
-          hitPath + '.fixed',
+          '$hitPath.fixed',
           'fixed must be a boolean (Qt only writes true)',
         ));
       } else if (!fixed) {
         violations.add(HitViolation(
           'hit.fixed.notTrue',
           i,
-          hitPath + '.fixed',
+          '$hitPath.fixed',
           'fixed, when present, must be true',
         ));
       }
@@ -647,7 +646,7 @@ List<HitViolation> validateHits(Object? hits, {String path = 'hits'}) {
         violations.add(HitViolation(
           'hit.fixedNotPlayerBar',
           i,
-          hitPath + '.fixed',
+          '$hitPath.fixed',
           'fixed is only allowed on PlayerBar hits '
               '(player:* / music:like-current)',
         ));
@@ -657,7 +656,7 @@ List<HitViolation> validateHits(Object? hits, {String path = 'hits'}) {
       violations.add(HitViolation(
         'hit.playerBarLabelEmpty',
         i,
-        hitPath + '.label',
+        '$hitPath.label',
         'PlayerBar hit labels must be non-empty (PlayerBar::hit does not fall '
             'back to action)',
       ));
@@ -740,10 +739,10 @@ class GenerationStamp {
       return const <String>[];
     }
     final out = <String>[
-      'generation=' + _stampText(envelope),
+      'generation=${_stampText(envelope)}',
     ];
     components.forEach((name, value) {
-      out.add(name + '=' + _stampText(value));
+      out.add('$name=${_stampText(value)}');
     });
     return out;
   }
@@ -790,7 +789,7 @@ class SliceUnit {
 
   GenerationStamp get stamp => GenerationStamp.of(this);
 
-  String get label => candidate + '/' + stepId + '/' + unitIndex.toString();
+  String get label => '$candidate/$stepId/$unitIndex';
 }
 
 /// Parses one unit record. Field names and types come from slice-unit/v1.
@@ -799,11 +798,11 @@ SliceUnit parseUnit(
   required String source,
   int line = 0,
 }) {
-  final path = <String>[source + ':' + line.toString()];
+  final path = <String>['$source:$line'];
   final map = asObject(value, 'unit.type', path);
   final schema = asText(map['schema'], 'unit.schema', <String>[...path, 'schema']);
   if (schema != unitSchemaId) {
-    _fail('unit.schema', 'expected ' + unitSchemaId + ', found ' + schema, path);
+    _fail('unit.schema', 'expected $unitSchemaId, found $schema', path);
   }
   final candidate =
       asText(map['candidate'], 'unit.candidate', <String>[...path, 'candidate']);
@@ -812,7 +811,7 @@ SliceUnit parseUnit(
   }
   final stepId = asText(map['step'], 'unit.step', <String>[...path, 'step']);
   if (!_stepIdPattern.hasMatch(stepId)) {
-    _fail('unit.step.format', 'step must match S<digits>; found ' + stepId,
+    _fail('unit.step.format', 'step must match S<digits>; found $stepId',
         <String>[...path, 'step']);
   }
   final unitIndex =
@@ -870,7 +869,7 @@ List<SliceUnit> parseUnitsJsonl(String text, {required String source}) {
       decoded = jsonDecode(line);
     } on FormatException catch (error) {
       _fail('unit.json.invalid',
-          source + ':' + lineNumber.toString() + ': ' + error.message);
+          '$source:$lineNumber: ${error.message}');
     }
     units.add(parseUnit(decoded, source: source, line: lineNumber));
   }
@@ -916,7 +915,7 @@ List<SliceUnit> dropIncoherentUnits(
     discards?.add(UnitDiscard(
       unit: unit,
       code: 'unit.generationMismatch',
-      detail: 'commands/hits/frame/state 不同代: ' + stamp.conflicts.join(', '),
+      detail: 'commands/hits/frame/state 不同代: ${stamp.conflicts.join(', ')}',
     ));
   }
   return kept;
@@ -1040,17 +1039,13 @@ CandidateCapture buildCandidateCapture({
       if (unit.candidate != candidateId) {
         _fail(
           'capture.candidateMismatch',
-          source.path +
-              ': unit candidate is ' +
-              unit.candidate +
-              ', but --capture said ' +
-              candidateId,
+          '${source.path}: unit candidate is ${unit.candidate}, but --capture said $candidateId',
         );
       }
       if (fixture.stepById(unit.stepId) == null) {
         _fail(
           'capture.unknownStep',
-          source.path + ': unit step ' + unit.stepId + ' is not in the fixture',
+          '${source.path}: unit step ${unit.stepId} is not in the fixture',
         );
       }
     }
@@ -1154,7 +1149,7 @@ RoiManifest parseRoiManifest(Object? decoded, {String sourcePath = '<inline>'}) 
   final schema = asText(root['schema'], 'roiManifest.schema', const <String>['schema']);
   if (schema != roiManifestSchemaId) {
     _fail('roiManifest.schema',
-        'expected ' + roiManifestSchemaId + ', found ' + schema);
+        'expected $roiManifestSchemaId, found $schema');
   }
   _rejectUnknownKeys(
     root,
@@ -1282,7 +1277,7 @@ void _rejectUnknownKeys(
   for (final key in map.keys) {
     if (!allowed.contains(key)) {
       _fail('roiManifest.unknownKey',
-          'unexpected ROI manifest key: ' + key, <String>[...path, key]);
+          'unexpected ROI manifest key: $key', <String>[...path, key]);
     }
   }
 }
@@ -1294,7 +1289,7 @@ void _rejectAggregateScore(Object? value, List<String> path) {
       if (_aggregateScoreKeys.contains(name.toLowerCase())) {
         _fail(
           'roiManifest.aggregateScore',
-          'ROI manifest must not carry a global score / aggregate: ' + name,
+          'ROI manifest must not carry a global score / aggregate: $name',
           <String>[...path, name],
         );
       }
@@ -1315,7 +1310,7 @@ RoiManifest loadRoiManifest(String path) {
   try {
     decoded = jsonDecode(text);
   } on FormatException catch (error) {
-    _fail('roiManifest.json.invalid', path + ': ' + error.message);
+    _fail('roiManifest.json.invalid', '$path: ${error.message}');
   }
   return parseRoiManifest(decoded, sourcePath: path);
 }
@@ -1448,13 +1443,12 @@ RoiEvaluation evaluateRoi({
   if (roi.expr.toUpperCase().contains('UNMEASURED')) {
     notes.add('fixture 已把该 ROI 几何标为 UNMEASURED（expr 注明），不得当作已测量值');
   }
-  final crop = manifestStep == null ? null : manifestStep.present.contains(roi.id);
+  final crop = manifestStep?.present.contains(roi.id);
   RoiCondition? condition;
   if (roi.conditional != null) {
     condition = manifestStep == null ? null : manifestStep.conditions[roi.id];
     if (condition == null) {
-      notes.add('conditional ROI 未记录条件值（"' + roi.conditional! +
-          '"）：不得静默跳过，本 ROI 判 UNMEASURED');
+      notes.add('conditional ROI 未记录条件值（"${roi.conditional!}"）：不得静默跳过，本 ROI 判 UNMEASURED');
       return RoiEvaluation(
         stepId: step.id,
         roiId: roi.id,
@@ -1467,7 +1461,7 @@ RoiEvaluation evaluateRoi({
       );
     }
     if (!condition.holds) {
-      notes.add('条件不成立（"' + roi.conditional! + '"），不采像素；条件值已记录');
+      notes.add('条件不成立（"${roi.conditional!}"），不采像素；条件值已记录');
       return RoiEvaluation(
         stepId: step.id,
         roiId: roi.id,
@@ -1480,7 +1474,7 @@ RoiEvaluation evaluateRoi({
         notes: notes,
       );
     }
-    notes.add('条件成立（"' + roi.conditional! + '"）');
+    notes.add('条件成立（"${roi.conditional!}"）');
   }
   switch (roi.compare) {
     case 'layout':
@@ -1519,8 +1513,7 @@ RoiEvaluation evaluateRoi({
       final verdict =
           delta <= tolerance ? SliceVerdict.pass : SliceVerdict.fail;
       if (verdict == SliceVerdict.fail) {
-        notes.add('rect 偏差 ' + delta.toString() + ' 超出 th.stage.metric=' +
-            tolerance.toString());
+        notes.add('rect 偏差 $delta 超出 th.stage.metric=$tolerance');
       }
       return RoiEvaluation(
         stepId: step.id,
@@ -1554,7 +1547,7 @@ RoiEvaluation evaluateRoi({
       final problems = <String>[];
       for (final unit in units) {
         for (final problem in scene3dProblems(unit.frame)) {
-          problems.add('unit ' + unit.unitIndex.toString() + ': ' + problem);
+          problems.add('unit ${unit.unitIndex}: $problem');
         }
       }
       if (problems.isEmpty) {
@@ -1572,7 +1565,7 @@ RoiEvaluation evaluateRoi({
         );
       }
       notes.addAll(problems.take(6));
-      notes.add('共 ' + problems.length.toString() + ' 处 3D 结构问题');
+      notes.add('共 ${problems.length} 处 3D 结构问题');
       return RoiEvaluation(
         stepId: step.id,
         roiId: roi.id,
@@ -1614,7 +1607,7 @@ RoiEvaluation evaluateRoi({
         notes: notes,
       );
     default:
-      notes.add('未知 compare 类型 ' + roi.compare + '：UNMEASURED');
+      notes.add('未知 compare 类型 ${roi.compare}：UNMEASURED');
       return RoiEvaluation(
         stepId: step.id,
         roiId: roi.id,
@@ -1673,20 +1666,13 @@ class CandidateSpec {
       if (oneSliceForbiddenCandidateFields.contains(key)) {
         _fail(
           'oneSliceRule.candidateForbiddenField',
-          'candidate ' +
-              asText(map['id'], 'fixture.candidate.id', <String>[...path, 'id']) +
-              ' carries the slice field "' +
-              key +
-              '": candidates must not own steps/rois/checks/thresholds/'
-                  'unmeasured/overrides/tolerance',
+          'candidate ${asText(map['id'], 'fixture.candidate.id', <String>[...path, 'id'])} carries the slice field "$key": candidates must not own steps/rois/checks/thresholds/unmeasured/overrides/tolerance',
           <String>[...path, key],
         );
       }
       _fail(
         'oneSliceRule.candidateUnknownField',
-        'candidate carries an unlisted field "' +
-            key +
-            '" (oneSliceRule.allowedCandidateFields)',
+        'candidate carries an unlisted field "$key" (oneSliceRule.allowedCandidateFields)',
         <String>[...path, key],
       );
     }
@@ -1803,7 +1789,7 @@ class SliceStep {
     final id = asText(map['id'], 'fixture.step.id', <String>[...path, 'id']);
     if (!_stepIdPattern.hasMatch(id)) {
       _fail('fixture.step.id.format',
-          'step id must match S<digits>; found ' + id, <String>[...path, 'id']);
+          'step id must match S<digits>; found $id', <String>[...path, 'id']);
     }
     final inputs = <Map<String, Object?>>[];
     final inputsValue = map['inputs'];
@@ -1889,15 +1875,14 @@ class SliceRoi {
     final id = asText(map['id'], 'fixture.roi.id', <String>[...path, 'id']);
     if (!id.startsWith('roi.')) {
       _fail('fixture.roi.id.format',
-          'roi id must start with "roi."; found ' + id, <String>[...path, 'id']);
+          'roi id must start with "roi."; found $id', <String>[...path, 'id']);
     }
     final compare =
         asText(map['compare'], 'fixture.roi.compare', <String>[...path, 'compare']);
     if (!roiCompareKinds.contains(compare)) {
       _fail(
         'fixture.roi.compare.unknown',
-        'roi ' + id + ' has unknown compare "' + compare + '" (expected ' +
-            roiCompareKinds.join('|') + ')',
+        'roi $id has unknown compare "$compare" (expected ${roiCompareKinds.join('|')})',
         <String>[...path, 'compare'],
       );
     }
@@ -1948,7 +1933,7 @@ class SliceCheck {
     final id = asText(map['id'], 'fixture.check.id', <String>[...path, 'id']);
     if (!id.startsWith('chk.')) {
       _fail('fixture.check.id.format',
-          'check id must start with "chk."; found ' + id, <String>[...path, 'id']);
+          'check id must start with "chk."; found $id', <String>[...path, 'id']);
     }
     return SliceCheck(
       id: id,
@@ -1998,7 +1983,7 @@ class SliceThreshold {
     final id = asText(map['id'], 'fixture.threshold.id', <String>[...path, 'id']);
     if (!id.startsWith('th.')) {
       _fail('fixture.threshold.id.format',
-          'threshold id must start with "th."; found ' + id,
+          'threshold id must start with "th."; found $id',
           <String>[...path, 'id']);
     }
     final status = asText(
@@ -2006,19 +1991,19 @@ class SliceThreshold {
     if (!thresholdStatuses.contains(status)) {
       _fail(
         'fixture.threshold.status.unknown',
-        'threshold ' + id + ' has unknown status "' + status + '"',
+        'threshold $id has unknown status "$status"',
         <String>[...path, 'status'],
       );
     }
     final rawValue = map['value'];
     if (rawValue != null && rawValue is! num) {
       _fail('fixture.threshold.value',
-          'threshold ' + id + ' value must be numeric or null',
+          'threshold $id value must be numeric or null',
           <String>[...path, 'value']);
     }
     if (status == 'FROZEN' && rawValue == null) {
       _fail('fixture.threshold.frozenWithoutValue',
-          'FROZEN threshold ' + id + ' must carry a numeric value',
+          'FROZEN threshold $id must carry a numeric value',
           <String>[...path, 'value']);
     }
     return SliceThreshold(
@@ -2082,7 +2067,7 @@ class CaptureSpec {
     if (unitSchema != unitSchemaId) {
       _fail(
         'fixture.capture.unitSchema',
-        'expected unit schema ' + unitSchemaId + ', found ' + unitSchema,
+        'expected unit schema $unitSchemaId, found $unitSchema',
         <String>[...path, 'unitSchema'],
       );
     }
@@ -2093,8 +2078,7 @@ class CaptureSpec {
         !declaredSet.containsAll(unitFields)) {
       _fail(
         'fixture.capture.unitFields',
-        'unitFields must equal the 13 fields of slice-unit/v1; found ' +
-            declaredFields.join(','),
+        'unitFields must equal the 13 fields of slice-unit/v1; found ${declaredFields.join(',')}',
         <String>[...path, 'unitFields'],
       );
     }
@@ -2282,10 +2266,7 @@ void _validateOneSliceRule(Map<String, Object?> rule) {
       !allowedSet.containsAll(oneSliceAllowedCandidateFields)) {
     _fail(
       'fixture.oneSliceRule.allowedMismatch',
-      'allowedCandidateFields must be exactly ' +
-          oneSliceAllowedCandidateFields.join(',') +
-          '; found ' +
-          allowed.join(','),
+      'allowedCandidateFields must be exactly ${oneSliceAllowedCandidateFields.join(',')}; found ${allowed.join(',')}',
     );
   }
   final forbidden = asTextList(
@@ -2297,7 +2278,7 @@ void _validateOneSliceRule(Map<String, Object?> rule) {
     if (!forbidden.contains(key)) {
       _fail(
         'fixture.oneSliceRule.forbiddenIncomplete',
-        'forbiddenCandidateFields is missing "' + key + '"',
+        'forbiddenCandidateFields is missing "$key"',
       );
     }
   }
@@ -2305,7 +2286,7 @@ void _validateOneSliceRule(Map<String, Object?> rule) {
     if (forbidden.contains(key)) {
       _fail(
         'fixture.oneSliceRule.contradiction',
-        'field "' + key + '" is both allowed and forbidden',
+        'field "$key" is both allowed and forbidden',
       );
     }
   }
@@ -2317,7 +2298,7 @@ SliceFixture parseFixture(Object? decoded, {String sourcePath = '<inline>'}) {
   final schema = asText(root['schema'], 'fixture.schema', const <String>['schema']);
   if (schema != fixtureSchemaId) {
     _fail('fixture.schema',
-        'expected ' + fixtureSchemaId + ', found ' + schema, const <String>['schema']);
+        'expected $fixtureSchemaId, found $schema', const <String>['schema']);
   }
   final oneSliceRule = asObject(
       root['oneSliceRule'], 'fixture.oneSliceRule',
@@ -2355,14 +2336,14 @@ SliceFixture parseFixture(Object? decoded, {String sourcePath = '<inline>'}) {
   final stepIds = <String>{for (final step in steps) step.id};
   for (final step in steps) {
     if (step.roiIds.isEmpty) {
-      _fail('fixture.step.rois.empty', 'step ' + step.id + ' has no ROI',
+      _fail('fixture.step.rois.empty', 'step ${step.id} has no ROI',
           <String>['steps', step.id, 'rois']);
     }
     for (final roiId in step.roiIds) {
       if (!roiIds.contains(roiId)) {
         _fail(
           'fixture.step.rois.unknown',
-          'step ' + step.id + ' references unknown ROI ' + roiId,
+          'step ${step.id} references unknown ROI $roiId',
           <String>['steps', step.id, 'rois'],
         );
       }
@@ -2381,7 +2362,7 @@ SliceFixture parseFixture(Object? decoded, {String sourcePath = '<inline>'}) {
       if (!stepIds.contains(stepId)) {
         _fail(
           'fixture.check.steps.unknown',
-          'check ' + check.id + ' references unknown step ' + stepId,
+          'check ${check.id} references unknown step $stepId',
           <String>['checks', check.id, 'steps'],
         );
       }
@@ -2400,7 +2381,7 @@ SliceFixture parseFixture(Object? decoded, {String sourcePath = '<inline>'}) {
     if (!stepIds.contains(stepId)) {
       _fail(
         'fixture.capture.extraUnits.unknown',
-        'extraUnits references unknown step ' + stepId,
+        'extraUnits references unknown step $stepId',
         <String>['capture', 'extraUnits', stepId],
       );
     }
@@ -2465,7 +2446,7 @@ void _requireUnique(List<String> values, String code, String label) {
     }
   }
   if (duplicates.isNotEmpty) {
-    _fail(code, 'duplicate ' + label + ': ' + duplicates.join(', '));
+    _fail(code, 'duplicate $label: ${duplicates.join(', ')}');
   }
 }
 
@@ -2561,33 +2542,24 @@ StepEvaluation evaluateStep({
   final unitCount = capture.unitCountFor(step.id);
   final recordCount = capture.recordCountFor(step.id);
   if (candidate.isUnsupported(step.id)) {
-    reasons.add('candidate ' + candidate.id + ' 标记 ' + step.id +
-        ' unsupported：' + (candidate.unsupportedReason(step.id) ?? ''));
+    reasons.add('candidate ${candidate.id} 标记 ${step.id} unsupported：${candidate.unsupportedReason(step.id) ?? ''}');
   }
   if (recordCount == 0) {
-    reasons.add('没有 ' + step.id + ' 的采集 unit（candidate ' + candidate.id + '）');
+    reasons.add('没有 ${step.id} 的采集 unit（candidate ${candidate.id}）');
   } else if (unitCount < required) {
-    reasons.add('采样不足：' + unitCount.toString() + '/' +
-        required.toString() + ' 个不同 unit（minUnitsPerStep=' +
-        fixture.capture.minUnitsPerStep.toString() +
-        (fixture.capture.extraUnits[step.id] == null
+    reasons.add('采样不足：$unitCount/$required 个不同 unit（minUnitsPerStep=${fixture.capture.minUnitsPerStep}${fixture.capture.extraUnits[step.id] == null
             ? ''
-            : ' + extraUnits=' +
-                fixture.capture.extraUnits[step.id].toString()) +
-        '）');
+            : ' + extraUnits=${fixture.capture.extraUnits[step.id]}'}）');
   }
   final discarded = capture.discardsFor(step.id);
   for (final discard in discarded) {
-    reasons.add('整快照丢弃：' + discard.unit.stepId + ' unit ' +
-        discard.unit.unitIndex.toString() + ' 第 ' +
-        discard.unit.line.toString() + ' 行 [' + discard.code + '] ' +
-        discard.detail);
+    reasons.add('整快照丢弃：${discard.unit.stepId} unit ${discard.unit.unitIndex} 第 ${discard.unit.line} 行 [${discard.code}] ${discard.detail}');
   }
   final rois = <RoiEvaluation>[];
   for (final roiId in step.roiIds) {
     final roi = fixture.roiById(roiId);
     if (roi == null) {
-      _fail('step.rois.unknown', 'step ' + step.id + ' references unknown ROI ' + roiId);
+      _fail('step.rois.unknown', 'step ${step.id} references unknown ROI $roiId');
     }
     rois.add(evaluateRoi(
       fixture: fixture,
@@ -2741,8 +2713,7 @@ CheckEvaluation evaluateCandidateCheck(
     return _unmeasuredCheck(
       candidate,
       check,
-      'candidate ' + candidate.id + ' 标记 ' + unsupportedSteps.join(',') +
-          ' unsupported：对应 check 无法测量',
+      'candidate ${candidate.id} 标记 ${unsupportedSteps.join(',')} unsupported：对应 check 无法测量',
     );
   }
   if (check.id == 'chk.hit.sixFields' || check.id == 'chk.hit.fixedOnlyPlayerBar') {
@@ -2756,16 +2727,13 @@ CheckEvaluation evaluateCandidateCheck(
           if (fixedOnly && !_isFixityViolation(violation.code)) {
             continue;
           }
-          details.add(stepId + ' unit ' + unit.unitIndex.toString() + ' 第 ' +
-              unit.line.toString() + ' 行: ' + violation.code + ' at ' +
-              violation.path +
-              (violation.detail.isEmpty ? '' : ' (' + violation.detail + ')'));
+          details.add('$stepId unit ${unit.unitIndex} 第 ${unit.line} 行: ${violation.code} at ${violation.path}${violation.detail.isEmpty ? '' : ' (${violation.detail})'}');
         }
       }
     }
     if (units == 0) {
       return _unmeasuredCheck(candidate, check,
-          '没有 ' + check.steps.join(',') + ' 的采集 unit，check 无法判定');
+          '没有 ${check.steps.join(',')} 的采集 unit，check 无法判定');
     }
     return CheckEvaluation(
       candidateId: candidate.id,
@@ -2785,13 +2753,13 @@ CheckEvaluation evaluateCandidateCheck(
       for (final unit in capture.unitsFor(stepId)) {
         units += 1;
         for (final problem in scene3dProblems(unit.frame)) {
-          details.add(stepId + ' unit ' + unit.unitIndex.toString() + ': ' + problem);
+          details.add('$stepId unit ${unit.unitIndex}: $problem');
         }
       }
     }
     if (units == 0) {
       return _unmeasuredCheck(candidate, check,
-          '没有 ' + check.steps.join(',') + ' 的采集 unit，3D 结构无法判定');
+          '没有 ${check.steps.join(',')} 的采集 unit，3D 结构无法判定');
     }
     return CheckEvaluation(
       candidateId: candidate.id,
@@ -2810,13 +2778,12 @@ CheckEvaluation evaluateCandidateCheck(
     for (final stepId in check.steps) {
       records += capture.recordCountFor(stepId);
       for (final discard in capture.discardsFor(stepId)) {
-        details.add(stepId + ' unit ' + discard.unit.unitIndex.toString() +
-            ' 第 ' + discard.unit.line.toString() + ' 行: ' + discard.detail);
+        details.add('$stepId unit ${discard.unit.unitIndex} 第 ${discard.unit.line} 行: ${discard.detail}');
       }
     }
     if (records == 0) {
       return _unmeasuredCheck(candidate, check,
-          '没有 ' + check.steps.join(',') + ' 的采集 unit，generation 一致性无法判定');
+          '没有 ${check.steps.join(',')} 的采集 unit，generation 一致性无法判定');
     }
     return CheckEvaluation(
       candidateId: candidate.id,
@@ -2937,8 +2904,7 @@ String _renderToken(Object? value) {
 }
 
 String _renderDiff(TokenDiff diff) =>
-    diff.path + ' [' + diff.kind + '] left=' + _renderToken(diff.left) +
-    ' right=' + _renderToken(diff.right);
+    '${diff.path} [${diff.kind}] left=${_renderToken(diff.left)} right=${_renderToken(diff.right)}';
 
 /// Compares captures of several candidates for one slice. The first candidate
 /// id is the reference. Alignment is by step, then unit index, then round —
@@ -2967,69 +2933,62 @@ EquivalenceReport evaluateEquivalence(
     var frameDiffs = 0;
     var stateDivergences = 0;
     if (referenceCapture == null) {
-      stepReasons.add('缺少参照候选 ' + reference + ' 的采集');
+      stepReasons.add('缺少参照候选 $reference 的采集');
     }
     for (final candidateId in candidateIds.skip(1)) {
       final capture = captures[candidateId];
       if (capture == null) {
-        stepReasons.add('缺少候选 ' + candidateId + ' 的采集');
+        stepReasons.add('缺少候选 $candidateId 的采集');
         continue;
       }
       final groups = capture.groupsFor(step.id);
       if (groups.length != referenceGroups.length) {
-        stepReasons.add(step.id + ': ' + reference + ' 有 ' +
-            referenceGroups.length.toString() + ' 个 unit，' + candidateId +
-            ' 有 ' + groups.length.toString() + ' 个 unit');
+        stepReasons.add('${step.id}: $reference 有 ${referenceGroups.length} 个 unit，$candidateId 有 ${groups.length} 个 unit');
       }
       for (final entry in referenceGroups.entries) {
         final left = entry.value;
         final right = groups[entry.key];
         if (right == null) {
-          stepReasons.add(step.id + ' unit ' + entry.key.toString() + ': ' +
-              candidateId + ' 缺少该 unit');
+          stepReasons.add('${step.id} unit ${entry.key}: $candidateId 缺少该 unit');
           continue;
         }
         final rounds = left.length < right.length ? left.length : right.length;
         if (left.length != right.length) {
-          stepReasons.add(step.id + ' unit ' + entry.key.toString() + ': ' +
-              reference + ' ' + left.length.toString() + ' 轮，' + candidateId +
-              ' ' + right.length.toString() + ' 轮，只比较前 ' + rounds.toString() +
-              ' 轮');
+          stepReasons.add('${step.id} unit ${entry.key}: $reference ${left.length} 轮，$candidateId ${right.length} 轮，只比较前 $rounds 轮');
         }
         for (var round = 0; round < rounds; round += 1) {
           final a = left[round];
           final b = right[round];
-          final label = step.id + ' unit ' + entry.key.toString() + ' round ' +
-              round.toString() + ' (' + reference + ' vs ' + candidateId + ')';
+          final label = '${step.id} unit ${entry.key} round $round ($reference vs $candidateId)';
           if (!tokenEquals(a.state, b.state)) {
             stateDivergences += 1;
-            details.add(label + ': state 不同 generation/内容，按契约丢弃该对比');
+            details.add('$label: state 不同 generation/内容，按契约丢弃该对比');
             continue;
           }
           pairs += 1;
           final commandsDiff = firstTokenDifference(a.commands, b.commands, path: r'$commands');
           if (commandsDiff != null) {
             commandsDiffs += 1;
-            details.add(label + ': commands ' + _renderDiff(commandsDiff));
+            details.add('$label: commands ${_renderDiff(commandsDiff)}');
           }
           final hitsDiff = firstTokenDifference(a.hits, b.hits, path: r'$hits');
           if (hitsDiff != null) {
             hitsDiffs += 1;
-            details.add(label + ': hits ' + _renderDiff(hitsDiff));
+            details.add('$label: hits ${_renderDiff(hitsDiff)}');
           }
           if (frameTolerance != null) {
             final frameDiff =
                 firstFrameDifference(a.frame, b.frame, frameTolerance);
             if (frameDiff != null) {
               frameDiffs += 1;
-              details.add(label + ': frame ' + _renderDiff(frameDiff));
+              details.add('$label: frame ${_renderDiff(frameDiff)}');
             }
           }
         }
       }
     }
     if (referenceCapture == null) {
-      reasons.add(step.id + ': 缺少参照候选采集');
+      reasons.add('${step.id}: 缺少参照候选采集');
     }
     final stepVerdict = (commandsDiffs + hitsDiffs + frameDiffs) > 0
         ? SliceVerdict.fail
@@ -3153,12 +3112,12 @@ SliceReport compareCaptures(
   for (final id in candidateIds) {
     final candidate = fixture.candidateById(id);
     if (candidate == null) {
-      _fail('capture.unknownCandidate', 'fixture has no candidate "' + id + '"');
+      _fail('capture.unknownCandidate', 'fixture has no candidate "$id"');
     }
     candidateSpecs.add(candidate);
     final sources = captureSources[id] ?? const <CaptureSource>[];
     if (sources.isEmpty) {
-      _fail('capture.noSources', 'candidate ' + id + ' has no capture files');
+      _fail('capture.noSources', 'candidate $id has no capture files');
     }
   }
   final resolvedManifest = manifest ?? RoiManifest.empty();
@@ -3373,7 +3332,7 @@ RunCommand parseInvocation(List<String> argv) {
   }
   if (command != 'export' && command != 'compare') {
     _fail('cli.unknownCommand',
-        'unknown command "' + command + '" (expected export|compare|help)');
+        'unknown command "$command" (expected export|compare|help)');
   }
   String? fixturePath;
   String? outPath;
@@ -3392,22 +3351,21 @@ RunCommand parseInvocation(List<String> argv) {
     if (rejectedCode != null) {
       _fail(
         rejectedCode,
-        'thresholds and criteria come from the fixture only: the CLI rejects ' +
-            name,
+        'thresholds and criteria come from the fixture only: the CLI rejects $name',
       );
     }
     if (!knownCliFlags.contains(name)) {
-      _fail('cli.unknownFlag', 'unknown flag "' + name + '"');
+      _fail('cli.unknownFlag', 'unknown flag "$name"');
     }
     String takeValue() {
       if (inline != null) {
         if (inline.isEmpty) {
-          _fail('cli.missingValue', name + ' needs a non-empty value');
+          _fail('cli.missingValue', '$name needs a non-empty value');
         }
         return inline;
       }
       if (index + 1 >= argv.length) {
-        _fail('cli.missingValue', name + ' is missing its value');
+        _fail('cli.missingValue', '$name is missing its value');
       }
       index += 1;
       return argv[index];
@@ -3433,7 +3391,7 @@ RunCommand parseInvocation(List<String> argv) {
       final equals = value.indexOf('=');
       if (equals <= 0 || equals == value.length - 1) {
         _fail('cli.captureFormat',
-            '--capture expects <candidate>=<unit.jsonl>, got "' + value + '"');
+            '--capture expects <candidate>=<unit.jsonl>, got "$value"');
       }
       captures.add(CaptureArg(
         value.substring(0, equals),
@@ -3469,7 +3427,7 @@ RunCommand parseInvocation(List<String> argv) {
 String _readText(String path) {
   final file = File(path);
   if (!file.existsSync()) {
-    _fail('io.missingFile', 'file not found: ' + path);
+    _fail('io.missingFile', 'file not found: $path');
   }
   return file.readAsStringSync();
 }
@@ -3480,7 +3438,7 @@ SliceFixture loadFixture(String path) {
   try {
     decoded = jsonDecode(text);
   } on FormatException catch (error) {
-    _fail('fixture.json.invalid', path + ': ' + error.message);
+    _fail('fixture.json.invalid', '$path: ${error.message}');
   }
   return parseFixture(decoded, sourcePath: path);
 }
@@ -3493,8 +3451,8 @@ void _emit(Map<String, Object?> report, String? outPath, StringSink sink) {
   }
   final file = File(outPath);
   file.parent.createSync(recursive: true);
-  file.writeAsStringSync(text + '\n');
-  sink.writeln('wrote ' + outPath);
+  file.writeAsStringSync('$text\n');
+  sink.writeln('wrote $outPath');
 }
 
 const String usageText = 'slice-runner: fixture-driven slice executor (slice-cases/v1)\n'
@@ -3550,15 +3508,13 @@ int runCli(List<String> argv, {StringSink? out, StringSink? err}) {
     }
     _fail('cli.unreachable', 'no command matched');
   } on SliceError catch (error) {
-    errSink.writeln('slice-runner: error [' + error.code + ']: ' + error.message +
-        error.pointer);
+    errSink.writeln('slice-runner: error [${error.code}]: ${error.message}${error.pointer}');
     return 3;
   } on FileSystemException catch (error) {
-    errSink.writeln('slice-runner: io error: ' + error.message + ' (' +
-        error.path.toString() + ')');
+    errSink.writeln('slice-runner: io error: ${error.message} (${error.path})');
     return 3;
   } on FormatException catch (error) {
-    errSink.writeln('slice-runner: json error: ' + error.message);
+    errSink.writeln('slice-runner: json error: ${error.message}');
     return 3;
   }
 }

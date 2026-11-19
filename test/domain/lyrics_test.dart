@@ -58,7 +58,7 @@ Map<String, Object?> lyricsDoc({
     'offsetMs': offsetMs,
     'lines': <Map<String, Object?>>[
       for (var i = 0; i < starts.length; i++)
-        <String, Object?>{'startMs': starts[i], 'text': 'L' + i.toString()},
+        <String, Object?>{'startMs': starts[i], 'text': 'L$i'},
     ],
   };
 }
@@ -72,7 +72,7 @@ Map<String, Object?> track(
     'kind': 'song',
     'id': id,
     'provider': provider,
-    if (fingerprint != null) 'fingerprint': fingerprint,
+    'fingerprint': ?fingerprint,
   };
 }
 

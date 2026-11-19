@@ -108,7 +108,7 @@ final class HudPaintIssue {
 
   @override
   String toString() =>
-      'HudPaintIssue(#' + index.toString() + ' ' + op + ' ' + kind.name + ': ' + detail + ')';
+      'HudPaintIssue(#$index $op ${kind.name}: $detail)';
 
   @override
   bool operator ==(Object other) =>
@@ -132,11 +132,7 @@ final class HudPaintResult {
   bool get hasIssues => issues.isNotEmpty;
 
   @override
-  String toString() => 'HudPaintResult(issues: ' +
-      issues.length.toString() +
-      ', depth: ' +
-      state.depth.toString() +
-      ')';
+  String toString() => 'HudPaintResult(issues: ${issues.length}, depth: ${state.depth})';
 }
 
 /// The pen-unit floor Qt uses: `qMax(penWidth, .0001)` (`Glyphs.cpp:751-752`,
@@ -431,7 +427,7 @@ HudPaintResult paintHudCommands({
             index,
             'fill-path',
             HudPaintIssueKind.missingPath,
-            'no path registered for key "' + key + '"',
+            'no path registered for key "$key"',
           );
           break;
         }
@@ -450,7 +446,7 @@ HudPaintResult paintHudCommands({
             index,
             'path',
             HudPaintIssueKind.missingPath,
-            'no path registered for key "' + key + '"',
+            'no path registered for key "$key"',
           );
           break;
         }
@@ -469,12 +465,7 @@ HudPaintResult paintHudCommands({
             index,
             'path',
             HudPaintIssueKind.nonPositiveDash,
-            'dash pattern ' +
-                dashPattern.toString() +
-                ' has a non-positive entry; Qt clamps it to 0 '
-                '(qstroker.cpp:1086) and would draw nothing for an all-zero '
-                'pattern (:1092-1093); this atom draws a defined solid line '
-                'instead',
+            'dash pattern $dashPattern has a non-positive entry; Qt clamps it to 0 (qstroker.cpp:1086) and would draw nothing for an all-zero pattern (:1092-1093); this atom draws a defined solid line instead',
           );
           canvas.drawPath(strokeShape, stroke);
           break;
@@ -616,7 +607,7 @@ HudPaintResult paintHudCommands({
             HudPaintIssueKind.missingImage,
             image == null
                 ? 'no image port; Glyphs.cpp:813-824 cannot draw the raster'
-                : 'no image registered for key "' + key + '"',
+                : 'no image registered for key "$key"',
           );
           break;
         }

@@ -200,19 +200,14 @@ class RotationRoot extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
-            Text('orientation:' + metrics.orientation.name),
-            Text('stage:' +
-                metrics.stageWidth.toStringAsFixed(1) +
-                'x' +
-                metrics.stageHeight.toStringAsFixed(1) +
-                '@' +
-                metrics.stageScale.toStringAsFixed(3)),
+            Text('orientation:${metrics.orientation.name}'),
+            Text('stage:${metrics.stageWidth.toStringAsFixed(1)}x${metrics.stageHeight.toStringAsFixed(1)}@${metrics.stageScale.toStringAsFixed(3)}'),
             // 焦点住在树外：旋转不该丢焦点。
             Focus(
               focusNode: harness.focusNode,
               child: SizedBox(
                 height: 24,
-                child: Text('query:' + harness.queryText),
+                child: Text('query:${harness.queryText}'),
               ),
             ),
             // 滚动控制器住在树外：旋转不该跳回顶部。
@@ -222,7 +217,7 @@ class RotationRoot extends StatelessWidget {
                 itemCount: 40,
                 itemBuilder: (BuildContext context, int index) => SizedBox(
                   height: 24,
-                  child: Text('row ' + index.toString()),
+                  child: Text('row $index'),
                 ),
               ),
             ),
@@ -298,7 +293,7 @@ OrientationViewState _seededView() => const OrientationViewState(
 Map<String, Object?> _track(String id) => <String, Object?>{
       'provider': 'netease',
       'id': id,
-      'title': 'track ' + id,
+      'title': 'track $id',
     };
 
 void main() {
@@ -549,7 +544,7 @@ void main() {
     playback.loading = false;
     playback.preview = false;
     for (int i = 0; i < 5; i++) {
-      playback.history.add(_track('hist-' + i.toString()));
+      playback.history.add(_track('hist-$i'));
     }
 
     final LyricsContinuity lyrics = harness.host.lyrics;

@@ -196,7 +196,7 @@ class HudChrome {
     }
     const double fadeWidth = archiveMaskFadeWidth;                                                          // :318 FadeWidth = 300
     final double opacity = strength / 100.0;                                                                // :319 strength / 100.
-    final List<Object?> color = this.dark
+    final List<Object?> color = dark
         ? <Object?>[0.055, 0.075, 0.08, opacity]
         : <Object?>[0.9, 0.89, 0.86, opacity];                                                              // :320
     final double fadeEnd = navigationLeft(width);                                                           // :321

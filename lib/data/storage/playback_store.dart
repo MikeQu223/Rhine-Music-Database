@@ -121,7 +121,7 @@ bool jsonBool(Object? value) => value is bool ? value : false;
 /// Queue identity: provider + ":" + id (Qt/src/PlaybackQueue.cpp:36-38).
 String trackIdentity(Object? track) {
   final map = asJsonObject(track);
-  return jsonString(map['provider'], kDefaultTrackProvider) + ':' + jsonString(map['id']);
+  return '${jsonString(map['provider'], kDefaultTrackProvider)}:${jsonString(map['id'])}';
 }
 
 /// The player object persisted inside session.json and, verbatim, as

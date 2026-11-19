@@ -17,14 +17,14 @@ class _EngineRec implements EngineKeyPorts {
   final List<String> calls = <String>[];
 
   @override
-  void action(String action) => calls.add('action:' + action);
+  void action(String action) => calls.add('action:$action');
 
   @override
   void key(String value, bool command) =>
-      calls.add('key:' + value + ':' + command.toString());
+      calls.add('key:$value:$command');
 
   @override
-  void query(String text) => calls.add('query:' + text);
+  void query(String text) => calls.add('query:$text');
 }
 
 /// NativeHud 端口的记录器（:906 / :910 / :915-919 / :931）。
@@ -35,10 +35,10 @@ class _HudRec implements HudKeyPorts {
   void play() => calls.add('play');
 
   @override
-  void viewerKey(String value) => calls.add('viewerKey:' + value);
+  void viewerKey(String value) => calls.add('viewerKey:$value');
 
   @override
-  void action(String action) => calls.add('action:' + action);
+  void action(String action) => calls.add('action:$action');
 
   @override
   void togglePlayer() => calls.add('togglePlayer');
@@ -67,7 +67,7 @@ class _FieldRec implements FieldKeySink {
 
   @override
   bool fieldKey(KeyFocusTarget target, HudKeyEvent event) {
-    calls.add(target.layer + '|' + target.field + '|' + event.symbol);
+    calls.add('${target.layer}|${target.field}|${event.symbol}');
     return answer;
   }
 }
@@ -418,8 +418,8 @@ void main() {
       ]) {
         final outcome = router.key(snapshot, HudScrollOffsets(),
             value: value, command: false);
-        expect(outcome.consumed, isTrue, reason: '键被吞掉: ' + value);
-        expect(outcome.effects, isEmpty, reason: '无副作用: ' + value);
+        expect(outcome.consumed, isTrue, reason: '键被吞掉: $value');
+        expect(outcome.effects, isEmpty, reason: '无副作用: $value');
         expect(outcome.region, 'none');
       }
     });

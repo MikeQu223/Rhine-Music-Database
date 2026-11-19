@@ -62,7 +62,7 @@ String joinPath(String base, String leaf) {
   if (trimmedLeaf.isEmpty) {
     return normalized;
   }
-  return '${normalized}/${trimmedLeaf}';
+  return '$normalized/$trimmedLeaf';
 }
 
 /// Runtime directories resolved by the host wiring layer.
@@ -240,7 +240,7 @@ class IoFileSystemPort implements FileSystemPort {
 
   static String _nextToken() {
     _tokens += 1;
-    return '${DateTime.now().microsecondsSinceEpoch}-${_tokens}';
+    return '${DateTime.now().microsecondsSinceEpoch}-$_tokens';
   }
 }
 

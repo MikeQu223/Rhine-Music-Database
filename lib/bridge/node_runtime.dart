@@ -94,11 +94,7 @@ final class NodeRuntimeStartSpec {
   final int stackBytes;
 
   @override
-  String toString() => 'NodeRuntimeStartSpec(argv: <' +
-      argv.length.toString() +
-      ' 项>, stackBytes: ' +
-      stackBytes.toString() +
-      ')';
+  String toString() => 'NodeRuntimeStartSpec(argv: <${argv.length} 项>, stackBytes: $stackBytes)';
 }
 
 /// 宿主对 Node 运行时的准备状态（[NodeRuntimeHost.prepare] 的返回）。
@@ -320,7 +316,7 @@ final class NodeRuntime {
         _failLaunch();
         return false;
       }
-      final String scriptPath = root + '/MusicBridge/ios-runtime.cjs'; // Qt:102
+      final String scriptPath = '$root/MusicBridge/ios-runtime.cjs'; // Qt:102
       if (!File(scriptPath).existsSync()) {
         _failLaunch();
         return false;
@@ -678,7 +674,7 @@ final class _ByteQueue {
     final int live = _end - _start;
     final int required = live + chunk.length;
     if (_end + chunk.length > _bytes.length) {
-      int capacity = _bytes.length == 0 ? 256 : _bytes.length;
+      int capacity = _bytes.isEmpty ? 256 : _bytes.length;
       while (capacity < required) {
         capacity *= 2;
       }

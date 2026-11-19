@@ -574,7 +574,7 @@ String playerRestoreBranch(Map<String, Object?> saved, {required String provider
 
 /// storage.md §3: PlaybackQueue.cpp:36-38.
 String queueIdentity(Map<String, Object?> track) =>
-    _strOr(track['provider'], 'netease') + ':' + _str(track['id']);
+    '${_strOr(track['provider'], 'netease')}:${_str(track['id'])}';
 
 /// storage.md §3: PlaybackQueue.cpp:14-30. Only complete songs survive, and the
 /// provider:id identity removes repeats.
@@ -828,7 +828,7 @@ Map<String, String> logoutPreferences(
 ) {
   final Map<String, String> next = Map<String, String>.from(store);
   next[panelStorageKey('play-history')] = '[]';
-  next[panelStorageKey('account-id-' + accountKeyFor(provider, edition))] = '';
+  next[panelStorageKey('account-id-${accountKeyFor(provider, edition)}')] = '';
   return next;
 }
 
@@ -861,7 +861,7 @@ List<String> _keys(Map<String, Object?> value) => value.keys.toList();
 
 /// storage.md §2.2: MusicLibrary::sessionState writes kugou <-> edition.
 String accountKeyFor(String provider, String edition) =>
-    provider == 'kugou' ? 'kugou-' + edition : provider;
+    provider == 'kugou' ? 'kugou-$edition' : provider;
 
 /// storage.md §6.2: MusicAccount.cpp:105-110, uid mirrors the account preference
 /// and is empty unless the host reports an authenticated credential.
@@ -874,7 +874,7 @@ String accountUid({
   if (!authenticated) {
     return '';
   }
-  return preferences[panelStorageKey('account-id-' + accountKeyFor(provider, edition))] ?? '';
+  return preferences[panelStorageKey('account-id-${accountKeyFor(provider, edition)}')] ?? '';
 }
 
 void main() {

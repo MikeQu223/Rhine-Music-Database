@@ -113,10 +113,10 @@ class _Recorder implements DiscoverCanvas {
       return value;
     }
     String result = value;
-    while (result.isNotEmpty && measure(result + '…', size, weight) > available) {
+    while (result.isNotEmpty && measure('$result…', size, weight) > available) {
       result = result.substring(0, result.length - 1);
     }
-    return result.isEmpty ? '…' : result + '…';
+    return result.isEmpty ? '…' : '$result…';
   }
 
   @override
@@ -125,7 +125,7 @@ class _Recorder implements DiscoverCanvas {
     final List<String> words = value.split(' ');
     String current = '';
     for (final String word in words) {
-      final String candidate = current.isEmpty ? word : current + ' ' + word;
+      final String candidate = current.isEmpty ? word : '$current $word';
       if (current.isNotEmpty && measure(candidate, size, weight) > width) {
         lines.add(current);
         current = word;
@@ -182,8 +182,8 @@ List<DiscoverChoice> _tabs({int selected = 0}) => <DiscoverChoice>[
 
 DiscoverEntry _entry(int index, {String kind = 'playlist', String image = '', double imageAspect = 1}) =>
     DiscoverEntry(
-      title: 'Archive ' + index.toString(),
-      artist: 'Artist ' + index.toString(),
+      title: 'Archive $index',
+      artist: 'Artist $index',
       kind: kind,
       image: image,
       imageAspect: imageAspect,
@@ -235,15 +235,15 @@ List<_FillRecord> _fillsAt(_Recorder recorder, double x, double y) =>
 
 _FillRecord _onlyFillAt(_Recorder recorder, double x, double y) {
   final List<_FillRecord> matches = _fillsAt(recorder, x, y);
-  expect(matches.length, 1, reason: 'expected exactly one fill at ' + x.toString() + ',' + y.toString());
+  expect(matches.length, 1, reason: 'expected exactly one fill at $x,$y');
   return matches.single;
 }
 
 _TextRecord _text(_Recorder recorder, String value) => recorder.texts
-    .firstWhere((_TextRecord record) => record.value == value, orElse: () => throw StateError('missing text ' + value));
+    .firstWhere((_TextRecord record) => record.value == value, orElse: () => throw StateError('missing text $value'));
 
 _HitRecord _hitAction(_Recorder recorder, String action) => recorder.hits
-    .firstWhere((_HitRecord record) => record.action == action, orElse: () => throw StateError('missing hit ' + action));
+    .firstWhere((_HitRecord record) => record.action == action, orElse: () => throw StateError('missing hit $action'));
 
 List<_HitRecord> _itemHits(_Recorder recorder) =>
     recorder.hits.where((_HitRecord record) => record.action.startsWith('discover:item:')).toList();
@@ -908,7 +908,7 @@ void main() {
 
     test('every visible hit stays inside the viewport and none overlap', () {
       final List<DiscoverEntry> entries = <DiscoverEntry>[
-        for (int index = 0; index < 12; index++) _entry(index, image: 'art-' + index.toString()),
+        for (int index = 0; index < 12; index++) _entry(index, image: 'art-$index'),
       ];
       final _Recorder recorder = _paint(_model(entries: entries, loadedCount: 12));
       final List<_HitRecord> hits = _itemHits(recorder);
@@ -923,7 +923,7 @@ void main() {
         for (int b = a + 1; b < hits.length; b++) {
           final Rect left = Rect.fromLTWH(hits[a].x, hits[a].y, hits[a].width, hits[a].height);
           final Rect right = Rect.fromLTWH(hits[b].x, hits[b].y, hits[b].width, hits[b].height);
-          expect(left.intersect(right).isEmpty, isTrue, reason: 'hit ' + a.toString() + ' overlaps ' + b.toString());
+          expect(left.intersect(right).isEmpty, isTrue, reason: 'hit $a overlaps $b');
         }
       }
       // Qt/tests/NativeHudChecks.cpp: no discover:next / discover:prev in this card.
@@ -933,7 +933,7 @@ void main() {
 
     test('scrolled to the end: special cards are gone, ten tiles are clipped in', () {
       final List<DiscoverEntry> entries = <DiscoverEntry>[
-        for (int index = 0; index < 12; index++) _entry(index, image: 'art-' + index.toString()),
+        for (int index = 0; index < 12; index++) _entry(index, image: 'art-$index'),
       ];
       final _Recorder recorder = _paint(_model(
         entries: entries,
@@ -979,7 +979,7 @@ void main() {
   group('paint: scroll indicator (Qt/src/DiscoverMusicCard.cpp:312-324)', () {
     test('count 12 draws a 2px track at 1553 and a proportional thumb', () {
       final List<DiscoverEntry> entries = <DiscoverEntry>[
-        for (int index = 0; index < 12; index++) _entry(index, image: 'art-' + index.toString()),
+        for (int index = 0; index < 12; index++) _entry(index, image: 'art-$index'),
       ];
       final _Recorder recorder = _paint(_model(entries: entries, loadedCount: 12));
       final List<_FillRecord> stack = _fillsAt(recorder, 1553.0, 352.0);
@@ -996,7 +996,7 @@ void main() {
 
     test('the thumb slides with scroll: count 7, scroll 44.2 -> y 389.7566', () {
       final _Recorder recorder = _paint(_model(
-        entries: <DiscoverEntry>[for (int index = 0; index < 7; index++) _entry(index, image: 'art-' + index.toString())],
+        entries: <DiscoverEntry>[for (int index = 0; index < 7; index++) _entry(index, image: 'art-$index')],
         loadedCount: 7,
         scroll: 44.2,
       ));
@@ -1022,8 +1022,8 @@ void main() {
       final List<DiscoverChoice> categories = <DiscoverChoice>[
         for (int index = 0; index < 7; index++)
           DiscoverChoice(
-            label: '分类 ' + index.toString(),
-            action: 'discover:category:' + index.toString(),
+            label: '分类 $index',
+            action: 'discover:category:$index',
             selected: index == 0,
           ),
       ];
@@ -1056,8 +1056,8 @@ void main() {
       final List<DiscoverChoice> categories = <DiscoverChoice>[
         for (int index = 0; index < 3; index++)
           DiscoverChoice(
-            label: '分类 ' + index.toString(),
-            action: 'discover:category:' + index.toString(),
+            label: '分类 $index',
+            action: 'discover:category:$index',
             selected: index == 1,
           ),
       ];

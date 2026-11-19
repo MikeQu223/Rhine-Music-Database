@@ -21,8 +21,8 @@ Map<String, Object?> song(
     'kind': 'song',
     'id': id,
     'provider': provider,
-    'title': title ?? ('T' + id),
-    if (extra != null) ...extra,
+    'title': title ?? ('T$id'),
+    ...?extra,
   };
 }
 
@@ -149,9 +149,9 @@ void main() {
     test('回填最多 200 条，先追加后判断（:194-196）', () {
       final entries = <String>[];
       for (var i = 0; i < 205; i++) {
-        entries.add('{"kind":"song","id":"s' + i.toString() + '"}');
+        entries.add('{"kind":"song","id":"s$i"}');
       }
-      final h = Harness(history: '[' + entries.join(',') + ']');
+      final h = Harness(history: '[${entries.join(',')}]');
       expect(h.player.history.length, 200);
       expect(h.player.history.first['id'], 's0');
       expect(h.player.history.last['id'], 's199');
@@ -746,9 +746,9 @@ void main() {
     test('playbackStarted 截断到 200 条（:414-419）', () {
       final entries = <String>[];
       for (var i = 0; i < 200; i++) {
-        entries.add('{"kind":"song","id":"h' + i.toString() + '"}');
+        entries.add('{"kind":"song","id":"h$i"}');
       }
-      final h = Harness(history: '[' + entries.join(',') + ']');
+      final h = Harness(history: '[${entries.join(',')}]');
       h.player.play(song('a'), source: <Map<String, Object?>>[song('a')]);
       h.player.playbackStarted();
       expect(h.player.history.length, 200);

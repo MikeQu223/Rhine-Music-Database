@@ -7,7 +7,6 @@ import 'package:rhine_music_database/basic/basic_app.dart';
 import 'package:rhine_music_database/basic/basic_hud.dart';
 import 'package:rhine_music_database/basic/basic_hud_resources.dart';
 import 'package:rhine_music_database/basic/basic_models.dart';
-import 'package:rhine_music_database/basic/basic_settings.dart';
 import 'package:rhine_music_database/basic/basic_settings_store.dart';
 import 'package:rhine_music_database/basic/basic_settings_view.dart';
 import 'package:rhine_music_database/basic/basic_settings_window.dart';

@@ -9,7 +9,6 @@
 // source text (File.readAsStringSync: what is on disk now, not what is in git HEAD), so it
 // needs no engine, platform channel, or device.
 
-import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/services.dart';

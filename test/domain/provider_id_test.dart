@@ -147,7 +147,7 @@ void main() {
     test('R4 netease → 空前缀（裸路由）', () {
       // MusicApi.cpp:80 if (provider != "netease") 之外的分支：路由原样
       expect(ProviderId.netease.routePrefix, '');
-      expect(ProviderId.netease.routePrefix + '/api/account', '/api/account');
+      expect('${ProviderId.netease.routePrefix}/api/account', '/api/account');
     });
 
     test('R4 qq / kugou / siren / local → "/" + wire', () {
@@ -159,8 +159,8 @@ void main() {
     });
 
     test('R4 前缀合成不产生双斜杠（Qt 直接拼接 route）', () {
-      expect(ProviderId.qq.routePrefix + '/api/account', '/qq/api/account');
-      expect(ProviderId.kugou.routePrefix + '/native/kugou/search', '/kugou/native/kugou/search');
+      expect('${ProviderId.qq.routePrefix}/api/account', '/qq/api/account');
+      expect('${ProviderId.kugou.routePrefix}/native/kugou/search', '/kugou/native/kugou/search');
     });
 
     test('R4 parse("") 归一到 netease（裸路由）；裸空串身份 provider != "netease"，故前缀为 "/"', () {

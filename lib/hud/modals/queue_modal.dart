@@ -38,7 +38,7 @@ String queueModalTime(QueueModalTrack track) {
   }
   final int minutes = (track.duration / 60000).truncate();
   final int seconds = (track.duration / 1000).truncate() % 60;
-  return queueModalPad(minutes) + ':' + queueModalPad(seconds);
+  return '${queueModalPad(minutes)}:${queueModalPad(seconds)}';
 }
 
 /// 播放队列条目（Qt 的 song QJsonObject 中本绘制器用到的三个字段）。
@@ -56,7 +56,7 @@ class QueueModalTrack {
   final double duration;
 
   @override
-  String toString() => 'QueueModalTrack(' + title + ', ' + artist + ', ' + duration.toString() + ')';
+  String toString() => 'QueueModalTrack($title, $artist, $duration)';
 }
 
 /// Qt QRectF 的值等价物（只读）。
@@ -86,8 +86,7 @@ class QueueModalRect {
 
   @override
   String toString() =>
-      'QueueModalRect(' + x.toString() + ', ' + y.toString() + ', ' + width.toString() +
-      ', ' + height.toString() + ')';
+      'QueueModalRect($x, $y, $width, $height)';
 }
 
 /// 展示快照（Qt PlaybackQueueCard::Model，PlaybackQueueCard.h:13-25）。
@@ -337,7 +336,7 @@ class _Painter {
     label(titleText, copyX, y + 116, 18, copyWidth, weight: 'demibold');
     label(artistText, copyX, y + 143, 11, copyWidth, secondary: true);
 
-    label('播放队列  ' + count.toString(), x, y + 194, 20, width - 160, weight: 'demibold');
+    label('播放队列  $count', x, y + 194, 20, width - 160, weight: 'demibold');
     if (count > 0) {
       action(QueueModalRect(x + width - 130, y + 185, 130, 40), '清空队列', 'player:clear');
     }
@@ -351,7 +350,7 @@ class _Painter {
       action(
         QueueModalRect(x + index * (modeWidth + 8), y + 269, modeWidth, 40),
         names[index],
-        'player:mode:' + modes[index],
+        'player:mode:${modes[index]}',
         active: state.mode == modes[index],
       );
     }
@@ -378,11 +377,11 @@ class _Painter {
       label(song.artist, x + 44, top + 32, 11, width - 175, secondary: true);
       label(queueModalTime(song), x + width - 100, top + 18, 12, 55, secondary: true);
       // 曲目与移除按钮使用独立命中区域，避免点击移除时触发播放（:89 注释）。
-      hit(QueueModalRect(x + 5, top, width - 50, 55), 'player:queue:' + index.toString(),
-          '播放 ' + song.title);
+      hit(QueueModalRect(x + 5, top, width - 50, 55), 'player:queue:$index',
+          '播放 ${song.title}');
       if (!isCurrent) {
         action(QueueModalRect(x + width - 38, top + 6, 38, 42), '×',
-            'player:remove:' + index.toString());
+            'player:remove:$index');
       }
       fill(x, top + 55, width, 1, line);
     }
@@ -400,12 +399,7 @@ class _Painter {
         ? offset + queueModalVisibleRows
         : count;
     label(
-      rangeStart.toString() +
-          '–' +
-          rangeEnd.toString() +
-          ' / ' +
-          count.toString() +
-          '  · 滚轮浏览',
+      '$rangeStart–$rangeEnd / $count  · 滚轮浏览',
       x + width * 0.68,
       y + 768,
       11,

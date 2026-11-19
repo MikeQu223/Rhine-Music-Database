@@ -7,7 +7,6 @@ library;
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart' show FlutterError;
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:rhine_music_database/hud/input/hit_layer.dart';
@@ -28,7 +27,7 @@ Map<String, Object?> asMap(Object? value) {
   if (value is Map) {
     return value.map((Object? key, Object? v) => MapEntry<String, Object?>(key.toString(), v));
   }
-  throw StateError('expected a map, got ' + value.toString());
+  throw StateError('expected a map, got $value');
 }
 
 double asDouble(Object? value) {
@@ -38,12 +37,12 @@ double asDouble(Object? value) {
   if (value is String) {
     return double.parse(value);
   }
-  throw StateError('expected a number, got ' + value.toString());
+  throw StateError('expected a number, got $value');
 }
 
 List<Map<String, Object?>> asMapList(Object? value) {
   if (value is! List) {
-    throw StateError('expected a list, got ' + value.toString());
+    throw StateError('expected a list, got $value');
   }
   return value.map(asMap).toList();
 }
@@ -388,8 +387,8 @@ void main() {
         expect(w.playerBar.width, closeTo(asDouble(wBar[2]), kTol), reason: id);
         expect(w.playerBar.height, closeTo(asDouble(wBar[3]), kTol), reason: id);
         expect(w.contentHeight, closeTo(asDouble(expected['wContentHeight']), kTol), reason: id);
-        expect(w.content.bottom, closeTo(w.playerBar.y, kTol), reason: id + ' content must stop at the bar');
-        expect(w.isDegenerate, isFalse, reason: id + ' must not be degenerate');
+        expect(w.content.bottom, closeTo(w.playerBar.y, kTol), reason: '$id content must stop at the bar');
+        expect(w.isDegenerate, isFalse, reason: '$id must not be degenerate');
 
         final PortraitBands band = computePortraitBands(
           PortraitInputs(layoutWidth: width, layoutHeight: height),
@@ -399,7 +398,7 @@ void main() {
         expect(band.bands, hasLength(band.bandCount), reason: id);
         expect(band.bandRatio, closeTo(asDouble(expected['bandRatio']), kTol), reason: id);
         expect(band.bandHeight, closeTo(1080, kTol), reason: id);
-        expect(band.content.bottom, closeTo(band.stageHeight, kTol), reason: id + ' bar overlays the last band');
+        expect(band.content.bottom, closeTo(band.stageHeight, kTol), reason: '$id bar overlays the last band');
 
         final PortraitBands hybrid = computePortraitBands(
           PortraitInputs(layoutWidth: width, layoutHeight: height),
@@ -407,7 +406,7 @@ void main() {
         );
         expect(hybrid.contentHeight, closeTo(asDouble(expected['hybridContentHeight']), kTol), reason: id);
         expect(hybrid.content.y, closeTo(96, kTol), reason: id);
-        expect(hybrid.isDegenerate, isFalse, reason: id + ' must not be degenerate');
+        expect(hybrid.isDegenerate, isFalse, reason: '$id must not be degenerate');
       }
     });
 
@@ -648,7 +647,7 @@ void main() {
         );
         for (final Object? rawCase in cases) {
           final Map<String, Object?> entry = asMap(rawCase);
-          final String id = tierId + '/' + entry['id'].toString();
+          final String id = '$tierId/${entry['id']}';
           final PortraitInsets safe = PortraitInsets.fromJson(asMap(entry['safe']));
           final double ime = asDouble(entry['imeBottom']);
           final PortraitImePolicy policy =
@@ -810,7 +809,7 @@ void main() {
           PortraitInputs(layoutWidth: width, layoutHeight: height),
           PortraitBandMode.w,
         );
-        final String id = width.toString() + 'x' + height.toString();
+        final String id = '${width}x$height';
         expect(hybrid.stageScale, closeTo(tier[2], kTol), reason: id);
         expect(hybrid.stageHeight, closeTo(tier[3], kTol), reason: id);
         expect(w.content.height, closeTo(tier[4], kTol), reason: id);
@@ -1013,15 +1012,15 @@ void main() {
         for (final List<Map<String, Object?>> group in <List<Map<String, Object?>>>[proven, blocked, noHit, absent]) {
           actual += group.where((Map<String, Object?> record) => record['face'] == total.key).length;
         }
-        expect(actual, total.value, reason: 'registry face total: ' + total.key);
+        expect(actual, total.value, reason: 'registry face total: ${total.key}');
       }
       final Set<String> keys = <String>{};
       for (final List<Map<String, Object?>> group in <List<Map<String, Object?>>>[proven, blocked, noHit, absent]) {
         for (final Map<String, Object?> record in group) {
-          expect(expectedFaceTotals.containsKey(record['face']), isTrue, reason: 'unknown face: ' + record['face'].toString());
+          expect(expectedFaceTotals.containsKey(record['face']), isTrue, reason: 'unknown face: ${record['face']}');
           final String key =
               <Object?>[record['face'], record['action'], record['source'], record['region'] ?? '', record['rect'] ?? ''].join('|');
-          expect(keys.add(key), isTrue, reason: 'duplicate registry record: ' + key);
+          expect(keys.add(key), isTrue, reason: 'duplicate registry record: $key');
         }
       }
     });
@@ -1031,20 +1030,20 @@ void main() {
       final List<Map<String, Object?>> proven = asMapList(registry['proven']);
       for (final Map<String, Object?> record in proven) {
         expect(record['action'].toString(), isNotEmpty);
-        expect(record['action'].toString().startsWith('—'), isFalse, reason: 'proven must be an action: ' + record.toString());
-        expect(record['source'].toString().startsWith('Qt/'), isTrue, reason: 'source must be a Qt path: ' + record.toString());
-        expect(_numberCount(record['rect']), greaterThanOrEqualTo(2), reason: 'rect must carry two numbers: ' + record.toString());
-        expect(_hasRectPlaceholder(record['rect']), isFalse, reason: 'rect must not be a placeholder: ' + record.toString());
+        expect(record['action'].toString().startsWith('—'), isFalse, reason: 'proven must be an action: $record');
+        expect(record['source'].toString().startsWith('Qt/'), isTrue, reason: 'source must be a Qt path: $record');
+        expect(_numberCount(record['rect']), greaterThanOrEqualTo(2), reason: 'rect must carry two numbers: $record');
+        expect(_hasRectPlaceholder(record['rect']), isFalse, reason: 'rect must not be a placeholder: $record');
       }
       final List<Map<String, Object?>> blocked = asMapList(registry['sourceDependencyBlocked']);
       const Set<String> owners = <String>{'T33', 'T34', 'T35', 'T36', 'T37', 'T39'};
       for (final Map<String, Object?> record in blocked) {
         expect(record['status'], 'SOURCE_DEPENDENCY_BLOCKED');
-        expect(owners.contains(record['blockedBy']), isTrue, reason: 'blockedBy must name a T33-T40 face owner: ' + record.toString());
+        expect(owners.contains(record['blockedBy']), isTrue, reason: 'blockedBy must name a T33-T40 face owner: $record');
         expect(
           _numberCount(record['rect']) < 2 || _hasRectPlaceholder(record['rect']),
           isTrue,
-          reason: 'blocked rect must stay non-portable: ' + record.toString(),
+          reason: 'blocked rect must stay non-portable: $record',
         );
       }
     });
@@ -1286,7 +1285,7 @@ void main() {
             y: rect.y,
             width: rect.width,
             height: rect.height,
-            action: 'music:' + key,
+            action: 'music:$key',
             label: key,
           );
           final Rect hitRect = hitLayer.effectiveRect(probe);
@@ -1301,7 +1300,7 @@ void main() {
             logical.bottomLeft + const Offset(1, -1),
             logical.bottomRight + const Offset(-1, -1),
           ]) {
-            expect(hitLayer.hitAt(<HudHit>[probe], point)?.action, 'music:' + key);
+            expect(hitLayer.hitAt(<HudHit>[probe], point)?.action, 'music:$key');
           }
         }
 

@@ -137,11 +137,11 @@ void main() {
         final LinearRgb colour = LinearRgb.fromHex(hex);
         final int packed = int.parse(hex.substring(1), radix: 16);
         expect(colour.r, closeTo(_srgbToLinear((packed >> 16) & 0xff), 1e-12),
-            reason: 'red of ' + hex);
+            reason: 'red of $hex');
         expect(colour.g, closeTo(_srgbToLinear((packed >> 8) & 0xff), 1e-12),
-            reason: 'green of ' + hex);
+            reason: 'green of $hex');
         expect(colour.b, closeTo(_srgbToLinear(packed & 0xff), 1e-12),
-            reason: 'blue of ' + hex);
+            reason: 'blue of $hex');
       }
     });
 
@@ -248,7 +248,7 @@ void main() {
       // index = column * 4 + row
       for (int index = 0; index < 16; index += 1) {
         final double expected = (index % 5 == 0) ? 1.0 : 0.0;
-        expect(frame.projection.values[index], expected, reason: 'index ' + index.toString());
+        expect(frame.projection.values[index], expected, reason: 'index $index');
       }
     });
 
@@ -287,7 +287,7 @@ void main() {
       final SceneFrame frame =
           SceneFrame.fromQtFrame(source, viewport: const SceneSize(1920, 1080));
       for (int index = 0; index < 16; index += 1) {
-        expect(frame.projection.values[index], values[index], reason: 'index ' + index.toString());
+        expect(frame.projection.values[index], values[index], reason: 'index $index');
       }
       final List<Object?> wire = frame.toQtFrame()['projection']! as List<Object?>;
       expect(wire.length, 16);
@@ -411,7 +411,7 @@ void main() {
           SceneFrame.fromQtFrame(source, viewport: const SceneSize(1920, 1080));
       final Map<String, Object?> wire = frame.toQtFrame();
       for (final String key in source.keys) {
-        expect(wire.containsKey(key), isTrue, reason: 'lost ' + key);
+        expect(wire.containsKey(key), isTrue, reason: 'lost $key');
       }
       expect(wire['aperture'], 0.4);
       expect(wire['boot'], 1.0);
@@ -615,7 +615,7 @@ void main() {
         final double wall = elapsed / 500;
         final double eased = wall * wall * (3 - 2 * wall);
         expect(fade.opacity(0, wallMs: elapsed), closeTo(eased, 1e-12),
-            reason: 'elapsed ' + elapsed.toString());
+            reason: 'elapsed $elapsed');
       }
     });
 

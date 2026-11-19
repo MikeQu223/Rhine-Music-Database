@@ -164,7 +164,7 @@ Future<void> _librarySearchRun(
     lib.hasMore[0] = false;
     lib.rowMemory[0] = 0;
     lib.searchCursor = 0;
-    lib.status = '请输入 1–' + maximum.toString() + ' 字关键词';
+    lib.status = '请输入 1–$maximum 字关键词';
     lib.changed();
     return;
   }
@@ -212,7 +212,7 @@ Future<void> _librarySearchRun(
   }
   lib.searchLoading = false;
   if (!reply.ok) {
-    lib.status = '检索失败：' + (reply.error ?? '');
+    lib.status = '检索失败：${reply.error ?? ''}';
     lib.changed();
     return;
   }
@@ -229,7 +229,7 @@ Future<void> _librarySearchRun(
   lib.totals[0] = total > lib.lists[0].length ? total : lib.lists[0].length;
   lib.status = textOf(page['notice']);
   if (lib.status.isEmpty) {
-    lib.status = items.isEmpty ? '没有匹配的音乐' : '找到 ' + lib.totals[0].toString() + ' 条结果';
+    lib.status = items.isEmpty ? '没有匹配的音乐' : '找到 ${lib.totals[0]} 条结果';
   }
   if (!more) {
     // Qt：首屏结果替换后再回到搜索栏并进入归档态。
@@ -261,7 +261,7 @@ Future<void> _librarySearchLocal(MusicLibrary lib, String text, String kind) asy
   lib.offsets[0] = 0;
   lib.rowMemory[0] = 0;
   lib.showSource(0);
-  lib.status = '本地检索：' + lib.totals[0].toString() + ' 条结果';
+  lib.status = '本地检索：${lib.totals[0]} 条结果';
   lib.modeRequests.add('archive');
   lib.changed();
 }

@@ -92,19 +92,17 @@ const String sirenProviderLabel = '塞壬唱片';
 /// [dark] 只影响 [state].dark（基础版不做主题切换）。
 class BasicController extends ChangeNotifier implements BasicMediaSessionCommands {
   BasicController({
-    required BasicAudioPort audio,
+    required this._audio,
     SirenRepository? repository,
     bool dark = true,
-    BasicLocalCollections? collections,
+    this._collections,
     MediaSessionPort? mediaSessionPort,
     BasicArtCache? artCache,
     PreferencePort? preferences,
-  })  : _audio = audio,
-        _preferencesPort = preferences,
+  })  : _preferencesPort = preferences,
         _repository = repository ?? SirenRepository(),
         _ownsRepository = repository == null,
-        _dark = dark,
-        _collections = collections {
+        _dark = dark {
     _state = BasicViewState(dark: dark);
     _player = MusicPlayer(
       media: _BasicMediaHost(this),
@@ -1271,6 +1269,7 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
   }
 
   /// 按比例定位（0..1）：命令下发给 native，位置由 native 回报，绝不在这里推算。
+  @override
   Future<void> seekToFraction(double fraction) async {
     if (_disposed || _player.current.isEmpty) {
       return;
@@ -1288,6 +1287,7 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
   }
 
   /// 下一首（队列由 MusicPlayer::next 推进，音源由引擎 fresh 读取）。
+  @override
   Future<void> next() async {
     if (_disposed) {
       return;
@@ -1297,6 +1297,7 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
   }
 
   /// 上一首。
+  @override
   Future<void> previous() async {
     if (_disposed) {
       return;

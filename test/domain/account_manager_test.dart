@@ -35,7 +35,7 @@ class _FakeAccountHost implements AccountHostPort {
 
   @override
   bool hasCredential(AccountProvider source) {
-    calls.add('hasCredential:' + source.wire);
+    calls.add('hasCredential:${source.wire}');
     return credentials.contains(source);
   }
 
@@ -45,19 +45,19 @@ class _FakeAccountHost implements AccountHostPort {
   @override
   void setPreference(String key, String value) {
     prefs[key] = value;
-    calls.add('pref:' + key + '=' + value);
+    calls.add('pref:$key=$value');
   }
 
   @override
   void setProvider(AccountProvider provider) {
     lastProvider = provider;
-    calls.add('provider:' + provider.wire);
+    calls.add('provider:${provider.wire}');
   }
 
   @override
   void setKugouEdition(KugouEdition edition) {
     lastEdition = edition;
-    calls.add('edition:' + edition.wire);
+    calls.add('edition:${edition.wire}');
   }
 
   @override
@@ -88,7 +88,7 @@ class _FakeAccountTransport implements LoginTransport {
   @override
   Future<LoginResult> account({AccountProvider? provider}) async {
     // Qt 的 m_identityApi 只换 provider，不改请求体（MusicAccount.cpp:82-84）。
-    routes.add(provider == null ? 'account' : 'account:' + provider.wire);
+    routes.add(provider == null ? 'account' : 'account:${provider.wire}');
     final Completer<LoginResult>? pending = gate;
     if (pending != null) {
       gate = null;
@@ -139,13 +139,13 @@ class _RecordingEffects extends AccountEffects {
 
   @override
   void rememberIdentity(AccountProvider provider, String nickname) =>
-      calls.add('rememberIdentity:' + provider.wire + ':' + nickname);
+      calls.add('rememberIdentity:${provider.wire}:$nickname');
 
   @override
   void refreshQqFeatures() => calls.add('refreshQqFeatures');
 
   @override
-  void loadMore(int lane) => calls.add('loadMore:' + lane.toString());
+  void loadMore(int lane) => calls.add('loadMore:$lane');
 
   @override
   void cancelDiscover() => calls.add('cancelDiscover');

@@ -646,9 +646,7 @@ class ConsentGate {
   void _beginAnswer(String event) {
     if (_answering) {
       throw StateError(
-        event +
-            ' is already being answered by the port it called; '
-            'the gate answers one decision at a time',
+        '$event is already being answered by the port it called; the gate answers one decision at a time',
       );
     }
     _answering = true;
@@ -657,11 +655,7 @@ class ConsentGate {
   void _require(ConsentPhase expected, String event) {
     if (_phase != expected) {
       throw StateError(
-        event +
-            ' is only valid in ' +
-            expected.name +
-            ', machine is in ' +
-            _phase.name,
+        '$event is only valid in ${expected.name}, machine is in ${_phase.name}',
       );
     }
   }

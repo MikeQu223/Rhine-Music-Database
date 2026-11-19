@@ -51,7 +51,7 @@ class _Server {
   final int songCount;
 
   static final List<String> songIds = <String>[
-    for (int i = 1; i <= 20; i += 1) 's' + i.toString().padLeft(2, '0'),
+    for (int i = 1; i <= 20; i += 1) 's${i.toString().padLeft(2, '0')}',
   ];
 
   Future<SirenHttpResult> handle(Uri uri) async {
@@ -62,7 +62,7 @@ class _Server {
           for (final String id in songIds.take(songCount))
             <String, Object?>{
               'cid': id,
-              'name': 'Song ' + id,
+              'name': 'Song $id',
               'albumCid': 'a1',
               'artists': <Object?>['A'],
             },
@@ -75,8 +75,8 @@ class _Server {
         'data': <Object?>[
           for (int i = 1; i <= albumCount; i += 1)
             <String, Object?>{
-              'cid': 'a' + i.toString(),
-              'name': 'Album ' + i.toString(),
+              'cid': 'a$i',
+              'name': 'Album $i',
               'artistes': <Object?>['A'],
               'coverUrl': '',
             },
@@ -88,8 +88,8 @@ class _Server {
       return _json(<String, Object?>{
         'code': 0,
         'data': <String, Object?>{
-          'name': 'Song ' + id,
-          'sourceUrl': 'https://file.test/' + id + '.flac',
+          'name': 'Song $id',
+          'sourceUrl': 'https://file.test/$id.flac',
           'lyricUrl': '',
         },
       });
@@ -103,7 +103,7 @@ class _Server {
 
 /// 假 BasicAudioPort：记录一切调用，供“浏览不该出声”的断言用。
 class _FakeAudio implements BasicAudioPort {
-  BasicAudioState _state = const BasicAudioState();
+  final BasicAudioState _state = const BasicAudioState();
   final List<String> calls = <String>[];
   final List<void Function(BasicAudioState)> _listeners = <void Function(BasicAudioState)>[];
 
@@ -121,18 +121,18 @@ class _FakeAudio implements BasicAudioPort {
 
   @override
   Future<void> prepare(String url, {required int generation}) async {
-    calls.add('prepare:' + url + ':' + generation.toString());
+    calls.add('prepare:$url:$generation');
   }
 
   @override
-  Future<void> play({required int generation}) async => calls.add('play:' + generation.toString());
+  Future<void> play({required int generation}) async => calls.add('play:$generation');
 
   @override
-  Future<void> pause({required int generation}) async => calls.add('pause:' + generation.toString());
+  Future<void> pause({required int generation}) async => calls.add('pause:$generation');
 
   @override
   Future<void> seekTo(double positionMs, {required int generation}) async =>
-      calls.add('seek:' + positionMs.toStringAsFixed(0));
+      calls.add('seek:${positionMs.toStringAsFixed(0)}');
 
   @override
   Future<void> stop() async => calls.add('stop');

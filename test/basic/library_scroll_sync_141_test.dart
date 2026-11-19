@@ -644,16 +644,16 @@ void main() {
       expect(wired, isNotNull, reason: 'BasicApp.initState 必须挂上回执接收面');
       final ValueChanged<QtSceneScrollEvent> handler = wired!;
 
-      handler!(const QtSceneScrollEvent(deltaRows: 0, started: true));
+      handler(const QtSceneScrollEvent(deltaRows: 0, started: true));
       await tester.pump();
       expect(controller.state.listPosition, closeTo(0, 1e-9),
           reason: 'start 只记 origin，不动窗口');
-      handler!(const QtSceneScrollEvent(deltaRows: 2.4));
+      handler(const QtSceneScrollEvent(deltaRows: 2.4));
       await tester.pump();
       expect(controller.state.listPosition, closeTo(2.4, 1e-9));
       expect(controller.state.selection?.id, 's3', reason: '3D 拖动中途越过即进入（行 2）');
 
-      handler!(const QtSceneScrollEvent(deltaRows: 2.4, committed: true));
+      handler(const QtSceneScrollEvent(deltaRows: 2.4, committed: true));
       await tester.pump();
       await tester.pump();
       expect(controller.state.selection?.id, 's3');

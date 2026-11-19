@@ -188,9 +188,7 @@ class StageInsets {
 
   @override
   String toString() =>
-      'StageInsets(top: ' + top.toString() + ', bottom: ' + bottom.toString() +
-      ', left: ' + left.toString() + ', right: ' + right.toString() +
-      ', imeBottom: ' + imeBottom.toString() + ')';
+      'StageInsets(top: $top, bottom: $bottom, left: $left, right: $right, imeBottom: $imeBottom)';
 }
 
 /// stage 重算的全部输入：媒体查询里真正参与几何的那几项。
@@ -366,8 +364,7 @@ class StageMetrics {
       logicalHeight, devicePixelRatio, insets, cameraCompact);
 
   @override
-  String toString() => 'StageMetrics(' + orientation.name + ', scale: ' + stageScale.toString() +
-      ', stage: ' + stageWidth.toString() + 'x' + stageHeight.toString() + ')';
+  String toString() => 'StageMetrics(${orientation.name}, scale: $stageScale, stage: ${stageWidth}x$stageHeight)';
 }
 
 /// 「stage 重算入口」的具名别名：MediaQuery 变化后唯一该调的函数。
@@ -406,8 +403,7 @@ class ScrollExtent {
 
   @override
   String toString() =>
-      'ScrollExtent(itemExtent: ' + itemExtent.toString() + ', count: ' + itemCount.toString() +
-      ', viewport: ' + viewportExtent.toString() + ')';
+      'ScrollExtent(itemExtent: $itemExtent, count: $itemCount, viewport: $viewportExtent)';
 }
 
 /// 滚动锚：锚定 item 的 key + 该项内部已越过的比例。
@@ -491,8 +487,7 @@ class ScrollAnchor {
 
   @override
   String toString() =>
-      'ScrollAnchor(' + itemKey + ', index: ' + itemIndex.toString() +
-      ', within: ' + withinItem.toString() + ')';
+      'ScrollAnchor($itemKey, index: $itemIndex, within: $withinItem)';
 }
 
 /// 一次解析出来的绝对偏移（像素或舞台单位，取决于传入 extent 的单位）。
@@ -524,9 +519,7 @@ class ResolvedScrollOffsets {
   int get hashCode => Object.hash(list, track, body, queue, settings);
 
   @override
-  String toString() => 'ResolvedScrollOffsets(list: ' + list.toString() + ', track: ' +
-      track.toString() + ', body: ' + body.toString() + ', queue: ' +
-      queue.toString() + ', settings: ' + settings.toString() + ')';
+  String toString() => 'ResolvedScrollOffsets(list: $list, track: $track, body: $body, queue: $queue, settings: $settings)';
 }
 
 // 视图状态中的各个块
@@ -607,9 +600,7 @@ class DirectoryFrame {
       parentLane, idCount, songCount);
 
   @override
-  String toString() => 'DirectoryFrame(' + itemKey + ', cursor: ' + cursor.toString() +
-      ', index: ' + index.toString() + ', anchor: ' + anchor.toString() +
-      ', albumCursor: ' + albumCursor.toString() + ')';
+  String toString() => 'DirectoryFrame($itemKey, cursor: $cursor, index: $index, anchor: $anchor, albumCursor: $albumCursor)';
 }
 
 /// 输入框状态：文本、selection、composing、focus。
@@ -672,9 +663,7 @@ class TextInputState {
       composingEnd, focused);
 
   @override
-  String toString() => 'TextInputState(len: ' + text.length.toString() + ', selection: ' +
-      selectionStart.toString() + '..' + selectionEnd.toString() + ', focused: ' +
-      focused.toString() + ')';
+  String toString() => 'TextInputState(len: ${text.length}, selection: $selectionStart..$selectionEnd, focused: $focused)';
 }
 
 /// 设置页通用文本编辑中的那一行：key + 文本 + 光标。
@@ -712,8 +701,7 @@ class SettingEditState {
   int get hashCode => Object.hash(settingKey, text, cursor);
 
   @override
-  String toString() => 'SettingEditState(' + settingKey + ', textLen: ' + text.length.toString() +
-      ', cursor: ' + cursor.toString() + ')';
+  String toString() => 'SettingEditState($settingKey, textLen: ${text.length}, cursor: $cursor)';
 }
 
 /// modal 名 + 关闭中标志 + 当前动画位置 modalOffset。
@@ -767,8 +755,7 @@ class ModalState {
 
   @override
   String toString() =>
-      'ModalState(' + (name ?? 'none') + ', closing: ' + closing.toString() +
-      ', offset: ' + offset.toString() + ')';
+      'ModalState(${name ?? 'none'}, closing: $closing, offset: $offset)';
 }
 
 /// 滚动数字/滚动曲线的代次标识（滚动数字曲线跨旋转不重启）。
@@ -802,7 +789,7 @@ class CurveToken {
   int get hashCode => Object.hash(id, generation);
 
   @override
-  String toString() => 'CurveToken(' + id + '#' + generation.toString() + ')';
+  String toString() => 'CurveToken($id#$generation)';
 }
 
 // 总状态 + capture/restore
@@ -947,11 +934,7 @@ class OrientationViewState {
       );
 
   @override
-  String toString() => 'OrientationViewState(lane: ' + currentLane.toString() + ', rows: ' +
-      laneRowMemory.toString() + ', stack: ' + directoryStack.length.toString() + ', list: ' +
-      listAnchor.toString() + ', track: ' + trackAnchor.toString() + ', body: ' +
-      bodyAnchor.toString() + ', queue: ' + queueAnchor.toString() + ', modal: ' +
-      modal.toString() + ', curve: ' + curve.toString() + ')';
+  String toString() => 'OrientationViewState(lane: $currentLane, rows: $laneRowMemory, stack: ${directoryStack.length}, list: $listAnchor, track: $trackAnchor, body: $bodyAnchor, queue: $queueAnchor, modal: $modal, curve: $curve)';
 }
 
 /// capture 的产物：规范化后的状态 + 当时的 stage 签名。
@@ -993,8 +976,7 @@ class OrientationSnapshot {
       sourceStageHeight);
 
   @override
-  String toString() => 'OrientationSnapshot(' + sourceOrientation.name + ', scale: ' +
-      sourceStageScale.toString() + ')';
+  String toString() => 'OrientationSnapshot(${sourceOrientation.name}, scale: $sourceStageScale)';
 }
 
 /// 旋转前捕获：夹取 + 白名单过滤 + 栈截断一次做完，产出方向无关的快照。

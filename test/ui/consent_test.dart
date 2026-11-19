@@ -172,7 +172,7 @@ class _Gate {
 /// 真实 ConsentGate 的 pendingRegion（consent_gate.dart:406-407）在这种情况下恒非 null，
 /// 所以只能用子类（ConsentGate 是具体类）走页面的防御分支。
 class _NullRegionGate extends ConsentGate {
-  _NullRegionGate(ConsentPorts ports) : super(ports);
+  _NullRegionGate(super.ports);
 
   @override
   ConsentRegion? get pendingRegion => null;

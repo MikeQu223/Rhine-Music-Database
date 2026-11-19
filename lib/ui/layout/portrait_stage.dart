@@ -96,7 +96,7 @@ class PortraitStage extends StatelessWidget {
           // 防止亚像素溢出糊到相邻区域。它不是内容裁切：舞台内所有入口/动作矩形原样保留，
           // 这里不做隐藏、不裁切可用区、也不二次缩放。
           child: ClipRect(
-            key: debugLabel == null ? null : ValueKey<String>('portrait-stage-' + debugLabel!),
+            key: debugLabel == null ? null : ValueKey<String>('portrait-stage-${debugLabel!}'),
             child: SizedBox(
               width: layoutWidth,
               height: layoutHeight,
@@ -256,10 +256,7 @@ class PortraitStageSlot extends StatelessWidget {
   Widget build(BuildContext context) {
     if (!rect.isPositive() || !rect.x.isFinite || !rect.y.isFinite) {
       throw FlutterError(
-        'PortraitStageSlot refused a non-positive or non-finite rect: ' +
-            rect.toString() +
-            '. DEDUP-21 forbids handing it to Positioned; fix the band/content '
-            'geometry instead of clamping silently.',
+        'PortraitStageSlot refused a non-positive or non-finite rect: $rect. DEDUP-21 forbids handing it to Positioned; fix the band/content geometry instead of clamping silently.',
       );
     }
     return Positioned(

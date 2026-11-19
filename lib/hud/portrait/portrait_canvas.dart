@@ -44,12 +44,12 @@ class PortraitGlyphBounds {
 /// 网格画布：命令流以网格为单位，`scale(unit, unit)` 换成舞台像素。
 class PortraitCanvas {
   PortraitCanvas({
-    required PortraitMetrics metrics,
+    required this._metrics,
     required this.unit,
     required this.height,
     required this.dark,
     this.gridWidth = 393,
-  }) : _metrics = metrics {
+  }) {
     ink = dark ? <Object?>[.925, .933, .886, 1] : <Object?>[.082, .110, .090, 1];
     muted = dark ? <Object?>[.63, .68, .60, 1] : <Object?>[.404, .431, .388, 1];
     line = dark ? <Object?>[.23, .28, .24, 1] : <Object?>[.741, .753, .702, 1];

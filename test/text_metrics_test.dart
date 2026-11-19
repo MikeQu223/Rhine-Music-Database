@@ -23,7 +23,7 @@ const String ellipsis = '…';
 Map<String, dynamic> loadFixture() {
   final File file = File(fixturePath);
   if (!file.existsSync()) {
-    fail('fixture missing: ' + fixturePath);
+    fail('fixture missing: $fixturePath');
   }
   return jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
 }
@@ -191,7 +191,7 @@ void main() {
         final List<double> expected = doubles(group['expected']);
         for (int i = 0; i < 4; i++) {
           expect(actual[i], closeTo(expected[i], 1e-9),
-              reason: group['id'].toString() + ' channel ' + i.toString());
+              reason: '${group['id']} channel $i');
         }
       }
     });

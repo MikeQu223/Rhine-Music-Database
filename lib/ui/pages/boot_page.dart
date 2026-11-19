@@ -637,13 +637,12 @@ enum BootHandoff {
 /// 只负责状态与回调：**不 push 路由**（路由归 host，共享 router 不在这里改动范围）。
 class BootController extends ChangeNotifier {
   BootController({
-    required BootClock clock,
+    required this._clock,
     BootTrackSource? tracks,
     this.gateSeconds = kBootGateSeconds,
     this.startOffsetSeconds = kBootStartOffsetSeconds,
     this.themeDark = true,
-  })  : _clock = clock,
-        _tracks = tracks ?? AssetBootTrackSource(),
+  })  : _tracks = tracks ?? AssetBootTrackSource(),
         _ownsTrackSource = tracks == null {
     final BootTrackSource source = _tracks;
     if (source is AssetBootTrackSource) {
@@ -1054,7 +1053,7 @@ List<HudCommand> buildBootScanCommands({
   if (measured >= kOrbitSideVisibleFrame) {
     final List<double> column = <double>[
       for (int i = 0; i < 9; i++)
-        tracks.value('orbit.column' + i.toString(), measured),
+        tracks.value('orbit.column$i', measured),
     ];
     arc(
       column[4],
@@ -1280,7 +1279,7 @@ class _BootPageState extends State<BootPage> with SingleTickerProviderStateMixin
             // z 序：三层都在 hud 之下。Qt 顺序是 scan(:252-254) → welcome(:255-291) → brand，
             // 弧线压在 welcome 面板之下是对的；而 access/logo/auth 细字在 scan 之前绘制，
             // 会被弧线覆盖 —— 跨 seam 的层间 z 序无法用一条命令流表达（RESIDUAL_RISK，见报告）。
-            if (hud != null) hud,
+            ?hud,
             // 按钮：NativeHudBoot.cpp:310 在所有 opacity 之外无条件绘制 ⇒ 淡出后仍在、仍可点。
             Positioned.fromRect(rect: layout.buttonRect, child: _buildEnterSystemButton()),
           ],

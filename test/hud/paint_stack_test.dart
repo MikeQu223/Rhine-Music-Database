@@ -225,7 +225,7 @@ class _RecordingCanvas implements ui.Canvas {
 
   @override
   dynamic noSuchMethod(Invocation invocation) {
-    calls.add('other:' + invocation.memberName.toString());
+    calls.add('other:${invocation.memberName}');
     return null;
   }
 }

@@ -332,7 +332,7 @@ Map<String, Object?> testDocument({
     'lines': lines ??
         <Object?>[
           for (var i = 0; i < starts.length; i += 1)
-            <String, Object?>{'startMs': starts[i], 'text': 'line' + i.toString()},
+            <String, Object?>{'startMs': starts[i], 'text': 'line$i'},
         ],
   };
 }
@@ -355,7 +355,7 @@ Map<String, Object?> testDocumentWithLineCount(int count) {
     'offsetMs': 0,
     'lines': <Object?>[
       for (var i = 0; i < count; i += 1)
-        <String, Object?>{'startMs': i.toDouble(), 'text': 'l' + i.toString()},
+        <String, Object?>{'startMs': i.toDouble(), 'text': 'l$i'},
     ],
   };
 }

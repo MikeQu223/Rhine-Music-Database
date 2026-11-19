@@ -30,7 +30,7 @@ int portraitBandCount(num stageHeight) => (stageHeight / 1080.0).ceil();
 Map<String, dynamic> _loadFixture() {
   final file = File(_fixturePath);
   if (!file.existsSync()) {
-    fail('missing fixture: ' + file.absolute.path + ' (run from package root)');
+    fail('missing fixture: ${file.absolute.path} (run from package root)');
   }
   return jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
 }
@@ -46,10 +46,10 @@ void _near(num actual, num expected, String reason) {
 }
 
 void _mask(List<dynamic> rgba, double red, double green, double blue, double alpha, String reason) {
-  _near(_asDouble(rgba[0]), red, reason + ' red');
-  _near(_asDouble(rgba[1]), green, reason + ' green');
-  _near(_asDouble(rgba[2]), blue, reason + ' blue');
-  _near(_asDouble(rgba[3]), alpha, reason + ' alpha');
+  _near(_asDouble(rgba[0]), red, '$reason red');
+  _near(_asDouble(rgba[1]), green, '$reason green');
+  _near(_asDouble(rgba[2]), blue, '$reason blue');
+  _near(_asDouble(rgba[3]), alpha, '$reason alpha');
 }
 
 void main() {
@@ -68,7 +68,7 @@ void main() {
     expect(portraitBaseline['status'], 'PROPOSED_ARITHMETIC_NOT_DEVICE');
     final topInsets = portraitBaseline['insets'] as Map<String, dynamic>;
     for (final side in <String>['top', 'right', 'bottom', 'left']) {
-      _near(_asDouble(topInsets[side]), 0.0, 'fixture portrait inset assumption ' + side);
+      _near(_asDouble(topInsets[side]), 0.0, 'fixture portrait inset assumption $side');
     }
     for (final group in _groups(fixture)) {
       expect(group['kind'], anyOf('landscape', 'portrait'));

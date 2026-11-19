@@ -41,7 +41,7 @@ List<dynamic> _array(Map<String, dynamic> parent, String key) {
 }
 
 String _text(Map<String, dynamic> parent, String key, {String label = ''}) {
-  final String where = label.isEmpty ? key : label + '.' + key;
+  final String where = label.isEmpty ? key : '$label.$key';
   final Object? value = parent[key];
   expect(value, isA<String>(), reason: '$where 必须是字符串');
   final String text = value! as String;
@@ -50,14 +50,14 @@ String _text(Map<String, dynamic> parent, String key, {String label = ''}) {
 }
 
 int _int(Map<String, dynamic> parent, String key, {String label = ''}) {
-  final String where = label.isEmpty ? key : label + '.' + key;
+  final String where = label.isEmpty ? key : '$label.$key';
   final Object? value = parent[key];
   expect(value, isA<int>(), reason: '$where 必须是整数');
   return value! as int;
 }
 
 bool _bool(Map<String, dynamic> parent, String key, {String label = ''}) {
-  final String where = label.isEmpty ? key : label + '.' + key;
+  final String where = label.isEmpty ? key : '$label.$key';
   final Object? value = parent[key];
   expect(value, isA<bool>(), reason: '$where 必须是布尔');
   return value! as bool;
@@ -65,12 +65,12 @@ bool _bool(Map<String, dynamic> parent, String key, {String label = ''}) {
 
 void _matches(String value, RegExp pattern, String label) {
   expect(pattern.hasMatch(value), isTrue,
-      reason: label + ' 格式不符：' + value);
+      reason: '$label 格式不符：$value');
 }
 
 Map<String, dynamic> _loadFixture() {
   final File file = File(_fixturePath);
-  expect(file.existsSync(), isTrue, reason: 'fixture 缺失：' + _fixturePath);
+  expect(file.existsSync(), isTrue, reason: 'fixture 缺失：$_fixturePath');
   final Object? decoded = jsonDecode(file.readAsStringSync());
   expect(decoded, isA<Map>(), reason: 'fixture 顶层必须是 JSON 对象');
   return (decoded! as Map).cast<String, dynamic>();
@@ -115,7 +115,7 @@ void main() {
         'testExecution',
       ];
       for (final String key in required) {
-        expect(manifest.containsKey(key), isTrue, reason: '缺少顶层键 ' + key);
+        expect(manifest.containsKey(key), isTrue, reason: '缺少顶层键 $key');
       }
     });
 
@@ -282,10 +282,10 @@ void main() {
 
       for (final Map<String, dynamic> stage in chain) {
         final String label =
-            'nativeChain[' + (stage['stage']! as String) + ']';
+            'nativeChain[${stage['stage']! as String}]';
         _text(stage, 'path', label: label);
         expect(_int(stage, 'sizeBytes', label: label), greaterThan(0));
-        _matches(_text(stage, 'sha256', label: label), _hex64, label + '.sha256');
+        _matches(_text(stage, 'sha256', label: label), _hex64, '$label.sha256');
       }
     });
 
@@ -409,7 +409,7 @@ void main() {
             isNotEmpty);
         expect(_int(item, 'bytes', label: 'screenshots.items'), greaterThan(0));
         _matches(_text(item, 'sha256Prefix16', label: 'screenshots.items'),
-            _hex16, 'screenshots.items[' + id.toString() + '].sha256Prefix16');
+            _hex16, 'screenshots.items[$id].sha256Prefix16');
       }
       expect(ids, List<int>.generate(12, (int i) => i + 1),
           reason: '12 图 id 必须恰为 1..12 且不重复');
@@ -444,8 +444,8 @@ void main() {
       const List<String> ids = <String>['G1', 'G2', 'G3', 'G4', 'G5', 'G6',
           'G7', 'G8'];
       for (final String id in ids) {
-        expect(gaps.containsKey(id), isTrue, reason: '缺少 ' + id);
-        _text(_object(gaps, id), 'status', label: 'gaps.' + id);
+        expect(gaps.containsKey(id), isTrue, reason: '缺少 $id');
+        _text(_object(gaps, id), 'status', label: 'gaps.$id');
       }
 
       final Map<String, dynamic> g1 = _object(gaps, 'G1');

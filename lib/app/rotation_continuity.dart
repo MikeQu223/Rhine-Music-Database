@@ -485,7 +485,7 @@ String trackIdentity(Map<String, Object?> track) {
   final Object? id = track['id'];
   final String resolved =
       provider is String && provider.isNotEmpty ? provider : 'netease';
-  return resolved + ':' + (id is String ? id : '');
+  return '$resolved:${id is String ? id : ''}';
 }
 
 /// PlaybackQueue::sanitized (Qt/src/PlaybackQueue.cpp:14-30): songs with a

@@ -17,7 +17,6 @@ import 'package:flutter/foundation.dart' show FlutterError;
 import 'package:flutter/services.dart' show AssetBundle;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:rhine_music_database/ui/pages/boot_page.dart';
-import 'package:rhine_music_database/ui/pages/boot_track_source.dart';
 
 class _StringBundle extends AssetBundle {
   _StringBundle(this.source);

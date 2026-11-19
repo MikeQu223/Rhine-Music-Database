@@ -100,12 +100,11 @@ abstract final class EngineWire {
 /// 一个实例对应 Qt 侧一个 BridgeProcess 对象：kill 后可再次 start，共享同一进程级 runtime 连接
 /// （Qt:164-168 的单例）。start() 的前置条件见该方法文档。
 final class EngineTransport {
-  /// [log] 对应 Qt 的 logcat 输出（stderr 正文与 error.detail / finished.exitCode）。
+  /// [_log] 对应 Qt 的 logcat 输出（stderr 正文与 error.detail / finished.exitCode）。
   EngineTransport({
-    required EngineRuntimeLink link,
-    void Function(String)? log,
-  })  : _link = link,
-        _log = log {
+    required this._link,
+    this._log,
+  }) {
     // 订阅在构造期建立且刻意永不取消：Qt 的 NodeRuntime 是进程级单例（Qt:164-168），连接跨会话
     // 复用，且 Qt:185 每次 start 把 owner 换成最新 BridgeProcess；本层没有 owner 通道（D7），
     // 冻结 API 也没有 dispose()，故订阅永久保留、靠 session 过滤隔离。

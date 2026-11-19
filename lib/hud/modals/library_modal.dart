@@ -58,7 +58,7 @@ class HudColor {
   HudColor withAlpha(double value) => HudColor(r, g, b, value, space);
 
   @override
-  String toString() => 'HudColor(${r}, ${g}, ${b}, ${a}${space == null ? '' : ', $space'})';
+  String toString() => 'HudColor($r, $g, $b, $a${space == null ? '' : ', $space'})';
 }
 
 /// 个人库面板用到的取色函数，逐条对应 Qt 源码。

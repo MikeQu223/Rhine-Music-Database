@@ -133,7 +133,7 @@ String fitGlyphText(
   }
   if (length != value.length) {
     final int keep = length - 1 < 0 ? 0 : length - 1;
-    return value.substring(0, keep) + '\u2026';
+    return '${value.substring(0, keep)}\u2026';
   }
   return value;
 }

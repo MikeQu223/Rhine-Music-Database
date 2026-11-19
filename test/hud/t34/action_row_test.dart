@@ -10,6 +10,7 @@
 ///
 /// 本任务禁止执行任何构建或测试命令，因此本文件的 RED/GREEN 均为“未执行”，
 /// 只作为待执行的源码证据提交（报告里记录 validationExecuted=false）。
+library;
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:rhine_music_database/hud/widgets/action_row.dart';
@@ -19,7 +20,7 @@ import 'package:rhine_music_database/hud/widgets/action_row.dart';
 /// Qt 的 Glyphs::width 同样按 code unit 计长（QString::left 切的是 code unit），
 /// 所以这里用 value.length 而不是 runes.length，才能覆盖代理对被切开的边界。
 class _MonoGlyphs implements GlyphsPort {
-  _MonoGlyphs({this.charWidth = 0.5});
+  _MonoGlyphs() : charWidth = 0.5;
 
   final double charWidth;
   int calls = 0;

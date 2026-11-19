@@ -78,13 +78,13 @@ class RecordingHudWheelPorts implements HudWheelPorts {
 
   @override
   void sceneWheel(double x, double y, double delta) =>
-      calls.add('sceneWheel(' + x.toString() + ',' + y.toString() + ',' + delta.toString() + ')');
+      calls.add('sceneWheel($x,$y,$delta)');
 
   @override
   void loadDiscoverMore() => calls.add('loadDiscoverMore');
 
   @override
-  void loadMoreSource(int collection) => calls.add('loadMoreSource(' + collection.toString() + ')');
+  void loadMoreSource(int collection) => calls.add('loadMoreSource($collection)');
 
   @override
   void loadArtistAlbums() => calls.add('loadArtistAlbums');
@@ -93,10 +93,10 @@ class RecordingHudWheelPorts implements HudWheelPorts {
   void loadDirectoryPage() => calls.add('loadDirectoryPage');
 
   @override
-  void loadTrackPage(int offset) => calls.add('loadTrackPage(' + offset.toString() + ')');
+  void loadTrackPage(int offset) => calls.add('loadTrackPage($offset)');
 
   @override
-  void musicNext(int step) => calls.add('musicNext(' + step.toString() + ')');
+  void musicNext(int step) => calls.add('musicNext($step)');
 }
 
 HudWheelSnapshot discoverSnapshot({

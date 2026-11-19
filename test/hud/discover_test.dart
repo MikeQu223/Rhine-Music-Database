@@ -192,7 +192,7 @@ class FakeData implements DiscoverDataPort {
       'artist': raw['artist'] is String ? raw['artist'] : '',
       'cover': raw['cover'] is String ? raw['cover'] : '',
       'provider': provider,
-      'key': provider + ':' + kind + ':' + id,
+      'key': '$provider:$kind:$id',
     };
   }
 }
@@ -237,8 +237,8 @@ DiscoverJson item(
 }) {
   return <String, Object?>{
     'id': id.toString(),
-    'name': title.isEmpty ? 'item-' + id.toString() : title,
-    'artist': 'artist-' + id.toString(),
+    'name': title.isEmpty ? 'item-$id' : title,
+    'artist': 'artist-$id',
     'cover': cover,
     'provider': provider,
   };
@@ -919,7 +919,7 @@ void main() {
       harness.state.tab = 'categories';
       harness.state.categories = <DiscoverJson>[
         for (var index = 0; index < 40; index++)
-          <String, Object?>{'id': 'edge-' + index.toString(), 'name': 'edge-' + index.toString()},
+          <String, Object?>{'id': 'edge-$index', 'name': 'edge-$index'},
       ];
       harness.panel.categoryPicker = true;
       final model = harness.panelModel();
@@ -940,7 +940,7 @@ void main() {
       harness.state.tab = 'categories';
       harness.state.categories = <DiscoverJson>[
         for (var index = 0; index < 40; index++)
-          <String, Object?>{'id': 'edge-' + index.toString(), 'name': 'edge-' + index.toString()},
+          <String, Object?>{'id': 'edge-$index', 'name': 'edge-$index'},
       ];
       harness.panel.categoryPicker = true;
       harness.panelModel();
@@ -1461,7 +1461,7 @@ void main() {
       final harness = Harness();
       harness.state.categories = <DiscoverJson>[
         for (var index = 0; index < 3; index++)
-          <String, Object?>{'id': 'k' + index.toString(), 'name': 'k' + index.toString()},
+          <String, Object?>{'id': 'k$index', 'name': 'k$index'},
       ];
       for (var index = 0; index < 5; index++) {
         handleDiscoverAction(
@@ -1487,7 +1487,7 @@ void main() {
       final harness = Harness();
       harness.state.categories = <DiscoverJson>[
         for (var index = 0; index < 40; index++)
-          <String, Object?>{'id': 'edge-' + index.toString(), 'name': 'edge-' + index.toString()},
+          <String, Object?>{'id': 'edge-$index', 'name': 'edge-$index'},
       ];
       harness.panel.categoryPage = 0;
       handleDiscoverAction(

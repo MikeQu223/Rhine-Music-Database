@@ -7,6 +7,7 @@
 /// 生产接线：ARCH_BLOCKED。设备画面/手感证据：DEVICE_BLOCKED。
 ///
 /// 本文件与产出它的同一轮内**不执行**（未运行 flutter test）。
+library;
 
 import 'dart:convert';
 import 'dart:io';
@@ -47,7 +48,7 @@ List<Map<String, dynamic>> _maps(Object? value) =>
 Map<String, dynamic> _readJson(String path) {
   final File file = File(path);
   expect(file.existsSync(), isTrue,
-      reason: '缺少 ' + path + '（请在包根目录运行 flutter test）');
+      reason: '缺少 $path（请在包根目录运行 flutter test）');
   return jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
 }
 
@@ -108,9 +109,9 @@ void main() {
       for (final Map<String, dynamic> row in rows) {
         final String id = _text(row, 'id');
         expect(id, isNotEmpty);
-        expect(ids.add(id), isTrue, reason: '重复行 id: ' + id);
+        expect(ids.add(id), isTrue, reason: '重复行 id: $id');
         final int order = row['order'] as int;
-        expect(order, greaterThan(previous), reason: 'order 未递增: ' + id);
+        expect(order, greaterThan(previous), reason: 'order 未递增: $id');
         previous = order;
       }
     });
@@ -130,7 +131,7 @@ void main() {
         final String action = _text(row, 'action');
         final String prefix = _text(row, 'actionPrefix');
         expect(action.isNotEmpty || prefix.isNotEmpty, isTrue,
-            reason: _text(row, 'id') + ' 缺少 action/actionPrefix');
+            reason: '${_text(row, 'id')} 缺少 action/actionPrefix');
       }
     });
 
@@ -154,7 +155,7 @@ void main() {
         final String key = _text(row, 'preferenceKey');
         expect(key, isNotEmpty, reason: _text(row, 'id'));
         expect(keys.contains(key), isTrue,
-            reason: _text(row, 'id') + ' 的偏好键不在白名单: ' + key);
+            reason: '${_text(row, 'id')} 的偏好键不在白名单: $key');
       }
     });
 
@@ -168,7 +169,7 @@ void main() {
         final List<String> values =
             _maps(options).map((o) => _text(o, 'value')).toList();
         expect(values.contains(defaultValue), isTrue,
-            reason: _text(row, 'id') + ' 默认值不在选项中: ' + defaultValue);
+            reason: '${_text(row, 'id')} 默认值不在选项中: $defaultValue');
       }
     });
 
@@ -397,7 +398,7 @@ void main() {
           (fixture['desktopLyrics'] as Map<String, dynamic>)['defaults']
               as Map<String, dynamic>;
       for (final String key in defaults.keys) {
-        expect(whitelist.contains(key), isTrue, reason: '未知键: ' + key);
+        expect(whitelist.contains(key), isTrue, reason: '未知键: $key');
       }
     });
   });
@@ -446,7 +447,7 @@ void main() {
       int cursor = -1;
       for (final String id in _sectionOrder) {
         final int index = text.indexOf(tick + id + tick);
-        expect(index, greaterThan(cursor), reason: '契约缺少或乱序: ' + id);
+        expect(index, greaterThan(cursor), reason: '契约缺少或乱序: $id');
         cursor = index;
       }
     });

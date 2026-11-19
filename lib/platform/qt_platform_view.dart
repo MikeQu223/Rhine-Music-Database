@@ -972,15 +972,7 @@ String? qtCompositionWarning(
   if (mode == QtPlatformCompositionMode.viewComposition) {
     return null;
   }
-  return '当前 compositionMode=' +
-      mode.wireName +
-      '，但 Qt 侧表面容器是 surfaceContainerKind=' +
-      status.surfaceContainerKind +
-      '：QtSurface 是 SurfaceView（QtWindow.java:303-325 / QtSurface.java:14），'
-          'Flutter 的 initAndroidView 只走 TLHC/纹理（platform_views.dart:131-133），'
-          'SurfaceView 无法被纹理化；必须切到 viewComposition'
-          '（initExpensiveAndroidView 恒为 Hybrid Composition，platform_views.dart:193-194）。'
-          '在切换并经过真机验证之前，这里保持「不可用」，不会把空白当作 Qt 画面。';
+  return '当前 compositionMode=${mode.wireName}，但 Qt 侧表面容器是 surfaceContainerKind=${status.surfaceContainerKind}：QtSurface 是 SurfaceView（QtWindow.java:303-325 / QtSurface.java:14），Flutter 的 initAndroidView 只走 TLHC/纹理（platform_views.dart:131-133），SurfaceView 无法被纹理化；必须切到 viewComposition（initExpensiveAndroidView 恒为 Hybrid Composition，platform_views.dart:193-194）。在切换并经过真机验证之前，这里保持「不可用」，不会把空白当作 Qt 画面。';
 }
 
 /// 明确的「不可用」面板。它就是反幌子的实现：文案里带裁决与缺失项，
@@ -1030,16 +1022,16 @@ class QtPlatformViewUnavailablePanel extends StatelessWidget {
           children: <Widget>[
             Text(title, style: const TextStyle(color: _fg, fontSize: 16)),
             const SizedBox(height: 8),
-            Text('[' + verdict.name + '] ' + detail,
+            Text('[${verdict.name}] $detail',
                 style: const TextStyle(color: _muted, fontSize: 13)),
             if (missing.isNotEmpty) ...<Widget>[
               const SizedBox(height: 8),
-              Text('缺失项：' + missing.join('、'),
+              Text('缺失项：${missing.join('、')}',
                   style: const TextStyle(color: _warn, fontSize: 13)),
             ],
             for (final String note in archNotes) ...<Widget>[
               const SizedBox(height: 6),
-              Text('· ' + note, style: const TextStyle(color: _muted, fontSize: 12)),
+              Text('· $note', style: const TextStyle(color: _muted, fontSize: 12)),
             ],
             ..._compositionSection(),
           ],
@@ -1074,13 +1066,13 @@ class QtPlatformViewUnavailablePanel extends StatelessWidget {
       _kvRow('activityIsQtActivityBase', status.activityIsQtActivityBase.toString()),
       if (warning != null) ...<Widget>[
         const SizedBox(height: 8),
-        Text('⚠ ' + warning, style: const TextStyle(color: _warn, fontSize: 12)),
+        Text('⚠ $warning', style: const TextStyle(color: _warn, fontSize: 12)),
       ],
     ];
   }
 
   Widget _kvRow(String key, String value) => Text(
-        key + ': ' + value,
+        '$key: $value',
         style: const TextStyle(color: _muted, fontSize: 12),
       );
 }
@@ -1098,14 +1090,7 @@ String qtLifecycleReconciliationLine(
 ) {
   final QtAppState expected = qtAppStateForFlutterLifecycle(flutterState);
   final String verdict = expected == observed ? 'MATCH' : 'MISMATCH';
-  return 'flutter=' +
-      flutterState.name +
-      ' expectedQt=0x' +
-      expected.wireValue.toRadixString(16) +
-      ' observedQt=0x' +
-      observed.wireValue.toRadixString(16) +
-      ' ' +
-      verdict;
+  return 'flutter=${flutterState.name} expectedQt=0x${expected.wireValue.toRadixString(16)} observedQt=0x${observed.wireValue.toRadixString(16)} $verdict';
 }
 
 /// 方便集成测试断言「没有假 Qt」：面板必须是这个 key。

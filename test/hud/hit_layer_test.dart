@@ -143,7 +143,7 @@ void main() {
         Offset(1079.5, 2399.25),
       ]) {
         final Offset back = mixed.toStage(mixed.toLogical(stage));
-        expect((back - stage).distance, lessThan(1e-9), reason: 'stage ' + stage.toString());
+        expect((back - stage).distance, lessThan(1e-9), reason: 'stage $stage');
       }
       for (final Offset logical in const <Offset>[
         Offset(0, 0),
@@ -152,7 +152,7 @@ void main() {
         Offset(1619.5, 2399.5),
       ]) {
         final Offset back = mixed.toLogical(mixed.toStage(logical));
-        expect((back - logical).distance, lessThan(1e-9), reason: 'logical ' + logical.toString());
+        expect((back - logical).distance, lessThan(1e-9), reason: 'logical $logical');
       }
       // 语义 rect 与点映射同一平移：top/bottom 都经过 (y + originY) * scale。
       final Rect logicalRect = mixed.rectToLogical(const Rect.fromLTWH(100, 0, 200, 100));

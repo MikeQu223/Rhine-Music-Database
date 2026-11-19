@@ -42,7 +42,7 @@ List<Object?> _ids(List<JsonMap> items) =>
     <Object?>[for (final JsonMap item in items) item['id']];
 
 List<String> _likedIds(int count) =>
-    <String>[for (int i = 0; i < count; i++) 'id' + i.toString()];
+    <String>[for (int i = 0; i < count; i++) 'id$i'];
 
 JsonMap _song(
   String id, {
@@ -54,7 +54,7 @@ JsonMap _song(
   String artistName = '',
 }) {
   final String name = artistName.isEmpty ? artist : artistName;
-  final String aid = artistId.isEmpty ? 'a' + id : artistId;
+  final String aid = artistId.isEmpty ? 'a$id' : artistId;
   return <String, Object?>{
     'kind': 'song',
     'id': id,
@@ -66,7 +66,7 @@ JsonMap _song(
     'duration': 0,
     'trackCount': 0,
     'provider': 'siren',
-    'key': 'siren:song:' + id,
+    'key': 'siren:song:$id',
     'artists': <Object?>[
       <String, Object?>{'id': aid, 'name': name},
     ],
@@ -82,7 +82,7 @@ JsonMap _album(String id, {String title = '专辑', String artist = '塞壬唱�
     'cover': 'cover',
     'trackCount': 1,
     'provider': 'siren',
-    'key': 'siren:album:' + id,
+    'key': 'siren:album:$id',
   };
 }
 
@@ -93,7 +93,7 @@ JsonMap _playlistItem(String id, String title) {
     'id': id,
     'title': title,
     'provider': 'netease',
-    'key': 'siren:playlist:' + id,
+    'key': 'siren:playlist:$id',
   };
 }
 
@@ -166,10 +166,10 @@ class _Host implements LibraryHostPort {
   }
 
   @override
-  String qr(String key) => 'qr:' + key;
+  String qr(String key) => 'qr:$key';
 
   @override
-  String qrImage(String data) => 'img:' + data;
+  String qrImage(String data) => 'img:$data';
 
   @override
   bool hasCredential(String provider) => false;
@@ -199,7 +199,7 @@ class _Host implements LibraryHostPort {
 typedef _Call = ({String route, JsonMap params});
 
 class _Wire implements HostRequestPort {
-  _Wire({this.handler});
+  _Wire() : handler = null;
 
   HostReply Function(String route, JsonMap params)? handler;
   final List<_Call> calls = <_Call>[];
@@ -577,7 +577,7 @@ void main() {
 
     test('song：30 条一页、hasMore 与 searchCursor 正确', () async {
       final _Env env = await _readyEnv(
-        songs: <JsonMap>[for (int i = 0; i < 45; i++) _song('s' + i.toString(), title: '歌' + i.toString())],
+        songs: <JsonMap>[for (int i = 0; i < 45; i++) _song('s$i', title: '歌$i')],
       );
 
       await librarySirenSearchLocal(env.library, '歌', 'song', 0, false);
@@ -1140,7 +1140,7 @@ void main() {
         'librarySirenLoadSource',
       ];
       for (final String name in functions) {
-        expect(RegExp('Future<(void|bool)> ' + name + '[(]').hasMatch(text), isTrue,
+        expect(RegExp('Future<(void|bool)> $name[(]').hasMatch(text), isTrue,
             reason: name);
       }
 
@@ -1162,7 +1162,7 @@ void main() {
         if (line.trimLeft().startsWith('//')) {
           continue;
         }
-        offenders.add((i + 1).toString() + ': ' + line);
+        offenders.add('${i + 1}: $line');
       }
       // 933 只是 Qt UI 的颜色常量（[0.973, 0.969, 0.933]），与曲库数量无关；
       // 曲库数量完全由上游 /api/songs、/api/albums 决定。

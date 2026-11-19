@@ -77,9 +77,7 @@
 /// QAccessible::setActive(false) 的等价运行时开关）。
 library;
 
-import 'dart:ui' show TextRange;
 
-import 'package:flutter/services.dart' show TextEditingValue, TextSelection;
 import 'package:flutter/widgets.dart';
 
 import '../input/hit_layer.dart';
@@ -194,7 +192,7 @@ class HudSemanticsNode {
   bool get isTextField => role == SemanticsRole.textField;
 
   @override
-  String toString() => 'HudSemanticsNode(' + id + ', ' + role + ', ' + label + ')';
+  String toString() => 'HudSemanticsNode($id, $role, $label)';
 }
 
 /// hits 列表的语义节点：Accessible.role / name / onPressAction 的 1:1 投影
@@ -211,7 +209,7 @@ List<HudSemanticsNode> hitNodes(HitLayer layer, List<HudHit> hits) {
     final HudHit hit = hits[index];
     nodes.add(
       HudSemanticsNode(
-        id: 'hit:' + index.toString(),
+        id: 'hit:$index',
         rect: layer.geometry.rectToLogical(layer.effectiveRect(hit)),
         role: SemanticsRole.button,
         label: hit.label,
@@ -237,7 +235,7 @@ List<HudSemanticsNode> navigationNodes(HitLayer layer, List<HudHit> hits) {
     }
     nodes.add(
       HudSemanticsNode(
-        id: 'nav:' + hit.action,
+        id: 'nav:${hit.action}',
         rect: layer.geometry.rectToLogical(layer.effectiveRect(hit)),
         role: SemanticsRole.button,
         label: hit.label,
@@ -285,7 +283,7 @@ List<HudSemanticsNode> inputNodes(
     final TextEditingValue? editing = values[kind];
     nodes.add(
       HudSemanticsNode(
-        id: 'input:' + kind.objectName,
+        id: 'input:${kind.objectName}',
         rect: layout.rect,
         role: SemanticsRole.textField,
         label: layout.accessibilityName,
@@ -309,7 +307,7 @@ List<HudSemanticsNode> inputNodes(
     }
     nodes.add(
       HudSemanticsNode(
-        id: 'form:' + (kind == FormButtonKind.sendCode ? 'send-code' : 'submit'),
+        id: 'form:${kind == FormButtonKind.sendCode ? 'send-code' : 'submit'}',
         rect: layout.rect,
         role: SemanticsRole.button,
         label: layout.accessibilityName,

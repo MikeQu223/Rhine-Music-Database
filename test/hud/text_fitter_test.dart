@@ -11,8 +11,8 @@ import 'dart:ui' as ui;
 
 import 'package:flutter_test/flutter_test.dart';
 
-import '../../lib/hud/text/glyph_font.dart';
-import '../../lib/hud/text/text_fitter.dart';
+import 'package:rhine_music_database/hud/text/glyph_font.dart';
+import 'package:rhine_music_database/hud/text/text_fitter.dart';
 
 /// A width function that charges one unit per UTF-16 code unit times a factor,
 /// so the size loop and the truncation loop can be driven deterministically.
@@ -70,7 +70,7 @@ void main() {
         width: (String text, double size) => text.length * 20.0,
         limit: 45,
       );
-      expect(result, 'A' + kEllipsis);
+      expect(result, 'A$kEllipsis');
     });
 
     test('counts UTF-16 code units, not graphemes', () {
@@ -127,7 +127,7 @@ void main() {
       // ellipsis unit. Qt hardcodes 954 for both loops; this case holds only
       // because the limit is injectable.
       expect(label.size, kLabelMinSize);
-      expect(label.text, 'AB' + kEllipsis);
+      expect(label.text, 'AB$kEllipsis');
     });
 
     test('keeps the Qt default limit in both loops', () {

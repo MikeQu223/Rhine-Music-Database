@@ -156,8 +156,8 @@ void main() {
       ];
       for (final pair in pairs) {
         final result = intersectHudClip(pair[0], pair[1]);
-        expect(result.width >= 0, isTrue, reason: 'width of ' + result.toString());
-        expect(result.height >= 0, isTrue, reason: 'height of ' + result.toString());
+        expect(result.width >= 0, isTrue, reason: 'width of $result');
+        expect(result.height >= 0, isTrue, reason: 'height of $result');
       }
     });
   });
@@ -200,7 +200,7 @@ void main() {
       );
       expect(
         clipped.toString(),
-        contains('clip: ' + qrect(0, 0, 10, 20).toString()),
+        contains('clip: ${qrect(0, 0, 10, 20)}'),
       );
     });
   });

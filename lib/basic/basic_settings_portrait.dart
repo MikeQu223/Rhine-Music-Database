@@ -316,9 +316,9 @@ class _BasicPortraitSettingsPageState extends State<BasicPortraitSettingsPage> {
     final String hitAction = !row.enabled
         ? ''
         : isChoice
-            ? 'expand:' + row.id
+            ? 'expand:${row.id}'
             : row.kind == SettingsRowKind.textInput
-                ? 'setting-edit:' + row.id
+                ? 'setting-edit:${row.id}'
                 : row.action;
     final String controlText =
         row.actionLabel.isEmpty ? row.label : row.actionLabel;

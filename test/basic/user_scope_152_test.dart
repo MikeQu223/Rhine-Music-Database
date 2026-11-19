@@ -312,7 +312,7 @@ class _FakeRequest implements HttpClientRequest {
 }
 
 class _FakeResponse implements HttpClientResponse {
-  _FakeResponse(this._bytes, {this.status = 200});
+  _FakeResponse(this._bytes) : status = 200;
 
   final List<int> _bytes;
   final int status;
@@ -601,13 +601,7 @@ void main() {
       }
       // 用 throw 而不是 fail()：不依赖 test 包里 fail 的返回类型
       // （若它声明成 void，这个 Future<Completer<…>> 的 async 函数就编译不过）。
-      throw StateError('封面请求没有发出：' +
-          url +
-          '（第 ' +
-          (nth + 1).toString() +
-          ' 次；已请求 ' +
-          client.requested.join(', ') +
-          '）');
+      throw StateError('封面请求没有发出：$url（第 ${nth + 1} 次；已请求 ${client.requested.join(', ')}）');
     }
 
     /// 等到"带本地封面文件的上报"真的出现。
@@ -625,7 +619,7 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 2));
       }
       throw StateError(
-          '没有等到带本地封面的上报（累计 ' + port.updates.length.toString() + ' 次上报）');
+          '没有等到带本地封面的上报（累计 ${port.updates.length} 次上报）');
     }
 
     test('封面 URL 真的落成本地 img，上报的是文件路径而不是 URL', () async {

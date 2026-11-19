@@ -86,10 +86,9 @@ const List<String> kQtPanelKeysInOrder = <String>[
 class RecordingPort implements PreferencePort {
   RecordingPort({
     Map<String, String>? initial,
-    Set<String> failOnKeys = const <String>{},
+    this._failOnKeys = const <String>{},
     this.readFails = false,
-  })  : _values = <String, String>{...?initial},
-        _failOnKeys = failOnKeys;
+  })  : _values = <String, String>{...?initial};
 
   final Map<String, String> _values;
   final Set<String> _failOnKeys;
@@ -473,7 +472,7 @@ void main() {
       expect(port.persistedPaths, isNotEmpty);
       expect(
         port.persistedPaths
-            .every((String p) => p.startsWith(portRoot.path + '/')),
+            .every((String p) => p.startsWith('${portRoot.path}/')),
         isTrue,
         reason: 'the port must never be steered outside its own root',
       );

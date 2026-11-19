@@ -157,9 +157,9 @@ class LyricsController {
     }
     final provider = lyricsTextValue(track['provider'], fallback: 'netease');
     final id = lyricsTextValue(track['id']);
-    final key = provider + ':' + id;
+    final key = '$provider:$id';
     return track['provider'] == 'local'
-        ? key + ':' + lyricsTextValue(track['fingerprint'])
+        ? '$key:${lyricsTextValue(track['fingerprint'])}'
         : key;
   }
 

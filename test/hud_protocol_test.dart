@@ -28,7 +28,7 @@ const String _baseline = '8ed3067b0812eb2612f7841ec127a6e8ca93231b';
 // 这里取一个必须编码的 key（中文原样透传是错的）。
 const String _expandKeyRaw = '全部歌曲';
 const String _expandKeyEncoded = '%E5%85%A8%E9%83%A8%E6%AD%8C%E6%9B%B2';
-const String _expandAction = 'music:expand:' + _expandKeyEncoded;
+const String _expandAction = 'music:expand:$_expandKeyEncoded';
 
 // ---------------------------------------------------------------------------
 // 冻结表：17 个 op 的数组形状（含 a[0]）。
@@ -100,11 +100,11 @@ bool _isFlatCommand(Object? candidate) =>
 Map<String, dynamic> _loadFixture(String relativePath) {
   final file = File(relativePath);
   if (!file.existsSync()) {
-    throw StateError('fixture 不存在：' + relativePath + '（请从包根运行）');
+    throw StateError('fixture 不存在：$relativePath（请从包根运行）');
   }
   final decoded = jsonDecode(file.readAsStringSync());
   if (decoded is! Map<String, dynamic>) {
-    throw StateError(relativePath + ' 顶层必须是对象');
+    throw StateError('$relativePath 顶层必须是对象');
   }
   return decoded;
 }
@@ -112,7 +112,7 @@ Map<String, dynamic> _loadFixture(String relativePath) {
 String _loadContractDoc() {
   final file = File(_contractDocPath);
   if (!file.existsSync()) {
-    throw StateError('契约文档不存在：' + _contractDocPath);
+    throw StateError('契约文档不存在：$_contractDocPath');
   }
   return file.readAsStringSync();
 }
@@ -271,49 +271,49 @@ HudFrameInput _readHudFrame(Map<String, dynamic> frame) => HudFrameInput(
 void _expectToken(String token, Object? value, String where) {
   switch (token) {
     case 'num':
-      expect(value, isA<num>(), reason: where + ' 期望 number');
+      expect(value, isA<num>(), reason: '$where 期望 number');
       break;
     case 'int':
-      expect(value, isA<num>(), reason: where + ' 期望整数值 number');
+      expect(value, isA<num>(), reason: '$where 期望整数值 number');
       expect(
         (value! as num).toDouble(),
         (value as num).truncateToDouble(),
-        reason: where + ' 期望整数值',
+        reason: '$where 期望整数值',
       );
       break;
     case 'str':
-      expect(value, isA<String>(), reason: where + ' 期望 string');
+      expect(value, isA<String>(), reason: '$where 期望 string');
       break;
     case 'bool':
-      expect(value, isA<bool>(), reason: where + ' 期望 bool');
+      expect(value, isA<bool>(), reason: '$where 期望 bool');
       break;
     case 'dash':
-      expect(value, isA<List<dynamic>>(), reason: where + ' 期望 number 数组');
+      expect(value, isA<List<dynamic>>(), reason: '$where 期望 number 数组');
       for (final dynamic item in value! as List<dynamic>) {
-        expect(item, isA<num>(), reason: where + ' 的每一项都必须是 number');
+        expect(item, isA<num>(), reason: '$where 的每一项都必须是 number');
       }
       break;
     case 'color':
-      expect(value, isA<List<dynamic>>(), reason: where + ' 期望 RGBA 数组');
+      expect(value, isA<List<dynamic>>(), reason: '$where 期望 RGBA 数组');
       final List<dynamic> color = value! as List<dynamic>;
-      expect(color.length, greaterThanOrEqualTo(3), reason: where + ' 至少 RGB 三项');
-      expect(color.length, lessThanOrEqualTo(5), reason: where + ' 至多 5 项');
+      expect(color.length, greaterThanOrEqualTo(3), reason: '$where 至少 RGB 三项');
+      expect(color.length, lessThanOrEqualTo(5), reason: '$where 至多 5 项');
       for (int i = 0; i < 3; i++) {
-        expect(color[i], isA<num>(), reason: where + ' 的 RGB 通道必须是 number');
+        expect(color[i], isA<num>(), reason: '$where 的 RGB 通道必须是 number');
       }
       if (color.length > 3) {
-        expect(color[3], isA<num>(), reason: where + ' a[3] 是 alpha，必须是 number');
+        expect(color[3], isA<num>(), reason: '$where a[3] 是 alpha，必须是 number');
       }
       if (color.length > 4) {
         expect(
           color[4],
           isA<String>(),
-          reason: where + ' 第 5 项是色彩空间标记，必须是字符串',
+          reason: '$where 第 5 项是色彩空间标记，必须是字符串',
         );
       }
       break;
     default:
-      fail('未知的位置标签 ' + token + '（' + where + '）');
+      fail('未知的位置标签 $token（$where）');
   }
 }
 
@@ -322,23 +322,23 @@ void _expectToken(String token, Object? value, String where) {
 void _expectCommandShape(List<dynamic> command, String where) {
   final String op = command.first as String;
   final List<String>? spec = _opShape[op];
-  expect(spec, isNotNull, reason: where + '：未知 op ' + op);
+  expect(spec, isNotNull, reason: '$where：未知 op $op');
   final List<String> shape = spec!;
   final List<dynamic> args = command.sublist(1);
   final int required = shape.where((String t) => !t.endsWith('?')).length;
   expect(
     args.length,
     greaterThanOrEqualTo(required),
-    reason: where + '：' + op + ' 缺少必需参数',
+    reason: '$where：$op 缺少必需参数',
   );
   expect(
     args.length,
     lessThanOrEqualTo(shape.length),
-    reason: where + '：' + op + ' 参数过多',
+    reason: '$where：$op 参数过多',
   );
   for (int i = 0; i < args.length; i++) {
     final String token = shape[i].replaceAll('?', '');
-    _expectToken(token, args[i], where + ' a[' + (i + 1).toString() + ']');
+    _expectToken(token, args[i], '$where a[${i + 1}]');
   }
 }
 
@@ -372,7 +372,7 @@ void main() {
         expect(
           _isFlatCommand(commands[i]),
           isTrue,
-          reason: 'commands[' + i.toString() + '] 必须是非空数组且 a[0] 是字符串',
+          reason: 'commands[$i] 必须是非空数组且 a[0] 是字符串',
         );
         final List<dynamic> command = commands[i] as List<dynamic>;
         names.add(command.first as String);
@@ -419,7 +419,7 @@ void main() {
       for (int i = 0; i < commands.length; i++) {
         _expectCommandShape(
           commands[i] as List<dynamic>,
-          'commands[' + i.toString() + ']',
+          'commands[$i]',
         );
       }
     });
@@ -441,7 +441,7 @@ void main() {
         expect(
           colorPositions,
           <int>[entry.value],
-          reason: entry.key + ' 只有 a[' + entry.value.toString() + '] 是颜色数组',
+          reason: '${entry.key} 只有 a[${entry.value}] 是颜色数组',
         );
       }
     });
@@ -639,24 +639,24 @@ void main() {
         expect(
           keys.containsAll(_hitRequiredFields),
           isTrue,
-          reason: 'hits[' + i.toString() + '] 缺少六字段之一',
+          reason: 'hits[$i] 缺少六字段之一',
         );
         if (isPlayerBar) {
           expect(keys, _hitRequiredFields.union(<String>{'fixed'}),
-              reason: 'hits[' + i.toString() + '] 是 PlayerBar hit');
+              reason: 'hits[$i] 是 PlayerBar hit');
           expect(hit['fixed'], isTrue);
         } else {
           expect(keys, _hitRequiredFields,
-              reason: 'hits[' + i.toString() + '] 不是 PlayerBar hit，不得带 fixed');
+              reason: 'hits[$i] 不是 PlayerBar hit，不得带 fixed');
           expect(hit.containsKey('fixed'), isFalse);
         }
         expect(hit.containsKey('z'), isFalse, reason: '契约 1.4：hits 没有 z');
         // 契约 3.1：action 与 label 都不得为空；Qt/src/NativeHud.cpp:102-109 在 label 缺失时
         // 回落到 action，所以空 label 说明产生了非法 hit。
         expect((hit['action'] as String).isNotEmpty,
-            reason: 'hits[' + i.toString() + '] 的 action 不得为空');
+            reason: 'hits[$i] 的 action 不得为空');
         expect((hit['label'] as String).isNotEmpty,
-            reason: 'hits[' + i.toString() + '] 的 label 不得为空');
+            reason: 'hits[$i] 的 label 不得为空');
       }
     });
 
@@ -746,7 +746,7 @@ void main() {
       // hit(left, y, usable, ResultRowHeight, action, title)。
       for (final int i in <int>[1, 2]) {
         expect(_rectOf(hits[i] as Map<String, dynamic>).height, 72,
-            reason: 'hits[' + i.toString() + '] 是结果行，高 72');
+            reason: 'hits[$i] 是结果行，高 72');
       }
 
       // Qt/src/NativeHud.cpp:310 playerBar(0, 984, width) → Qt/src/PlayerBar.h:42
@@ -816,7 +816,7 @@ void main() {
     test('文档冻结了 17 个 op 名称与关键常量', () {
       final String doc = _loadContractDoc();
       for (final String op in _opShape.keys) {
-        expect(doc.contains(op), isTrue, reason: '文档缺少 op ' + op);
+        expect(doc.contains(op), isTrue, reason: '文档缺少 op $op');
       }
       expect(_opShape.length, 17);
       for (final String token in <String>[
@@ -830,7 +830,7 @@ void main() {
         'PlayerBar',
         'fixed',
       ]) {
-        expect(doc.contains(token), isTrue, reason: '文档缺少 ' + token);
+        expect(doc.contains(token), isTrue, reason: '文档缺少 $token');
       }
     });
   });

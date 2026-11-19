@@ -34,7 +34,7 @@ List<HudWireCommand> textsAt(List<HudWireCommand> ops, double y) =>
     ops.where((HudWireCommand c) => c[0] == 'text' && c[3] == y).toList();
 
 List<TrackListItem> songs(int n) => <TrackListItem>[
-  for (int i = 0; i < n; i++) TrackListItem(title: 'T' + i.toString(), kind: 'song'),
+  for (int i = 0; i < n; i++) TrackListItem(title: 'T$i', kind: 'song'),
 ];
 
 TrackListScope scope({String provider = 'netease', String identity = '7', bool dir = false, int lane = 0, String group = 'g'}) =>
@@ -174,7 +174,7 @@ void main() {
   test('non-song rows are skipped (NativeHud.cpp:560)', () {
     final FakeSink s = FakeSink();
     final List<TrackListItem> values = <TrackListItem>[
-      for (int i = 0; i < 40; i++) TrackListItem(title: 'T' + i.toString(), kind: i.isEven ? 'song' : 'album'),
+      for (int i = 0; i < 40; i++) TrackListItem(title: 'T$i', kind: i.isEven ? 'song' : 'album'),
     ];
     HudTrackRuler(s, FakeText()).archiveTrackList(x: 1131, width: 1920, values: values, selected: 20,
         selectedTitle: 'T20', position: 20);

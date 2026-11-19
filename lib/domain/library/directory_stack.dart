@@ -121,7 +121,7 @@ Future<void> libraryEnterDirectory(MusicLibrary lib, JsonMap value) async {
   final int destination = (lib.selectedLane + 1) % 5;
   next.anchor = destination * 8 + lib.rowMemory[destination];
   lib.selectedPhysical = -1;
-  lib.status = '正在打开：' + textOf(value['title']);
+  lib.status = '正在打开：${textOf(value['title'])}';
   lib.changed();
 
   if (lib.isLocal) {
@@ -170,7 +170,7 @@ Future<void> libraryEnterDirectory(MusicLibrary lib, JsonMap value) async {
   }
   if (!reply.ok) {
     lib.directoryLoading = false;
-    lib.status = '读取失败：' + (reply.error ?? '');
+    lib.status = '读取失败：${reply.error ?? ''}';
     lib.changed();
     return;
   }
@@ -186,7 +186,7 @@ Future<void> libraryEnterDirectory(MusicLibrary lib, JsonMap value) async {
   next.cursor = cursorOf(songs, ids);
   lib.details[itemKeyOf(item)] = item;
   lib.directoryLoading = false;
-  lib.status = '已打开：' + textOf(item['title']);
+  lib.status = '已打开：${textOf(item['title'])}';
   if (itemKindOf(value) == 'artist') {
     await libraryShowDirectoryInfo(lib);
   } else if (songs.isNotEmpty) {
@@ -219,7 +219,7 @@ Future<bool> libraryOpenDaily(MusicLibrary lib) async {
     'kind': 'playlist',
     'virtual': true,
     'id': 'daily',
-    'key': lib.provider + ':playlist:daily',
+    'key': '${lib.provider}:playlist:daily',
     'title': lib.provider == 'qq' ? '每日 30 首' : '每日推荐',
     'artist': lib.providerName(),
     // Qt MusicDirectory.cpp:178 songs.first().toObject()["cover"].toString()：
@@ -255,7 +255,7 @@ Future<bool> libraryOpenDaily(MusicLibrary lib) async {
   final int destination = (lib.selectedLane + 1) % 5;
   next.anchor = destination * 8 + lib.rowMemory[destination];
   lib.selectedPhysical = -1;
-  lib.status = '已打开：' + textOf(item['title']);
+  lib.status = '已打开：${textOf(item['title'])}';
   next.index = 0;
   await lib.choose(songs.first);
   return true;
@@ -289,7 +289,7 @@ Future<void> libraryLoadArtistAlbums(MusicLibrary lib) async {
     folder.albumCursor += intOf(page['rawCount']);
     folder.albumsMore = boolOf(page['more']);
   } else {
-    lib.status = '专辑读取失败：' + (reply.error ?? '');
+    lib.status = '专辑读取失败：${reply.error ?? ''}';
   }
   folder.albumsLoading = false;
   lib.changed();
@@ -306,7 +306,7 @@ Future<void> libraryOpenSongArtist(MusicLibrary lib, [int index = 0]) async {
       'provider': 'local',
       'kind': 'artist',
       'id': artist['id'],
-      'key': 'local:artist:' + textOf(artist['id']),
+      'key': 'local:artist:${textOf(artist['id'])}',
       'title': artist['name'],
     });
     return;
@@ -558,7 +558,7 @@ Future<void> libraryLeaveDirectory(MusicLibrary lib, {bool restore = true}) asyn
     final DirectoryFolder? parent = lib.directory;
     if (parent != null) {
       await librarySelectDirectory(lib, parent.index, 'archive');
-      lib.status = '已返回：' + textOf(parent.item['title']);
+      lib.status = '已返回：${textOf(parent.item['title'])}';
       lib.changed();
       return;
     }
@@ -567,7 +567,7 @@ Future<void> libraryLeaveDirectory(MusicLibrary lib, {bool restore = true}) asyn
       unawaited(lib.loadCover(lib.current));
     }
   }
-  lib.status = '已返回：' + directoryColumnValue(lib.columns, lib.selectedLane);
+  lib.status = '已返回：${directoryColumnValue(lib.columns, lib.selectedLane)}';
   lib.changed();
 }
 

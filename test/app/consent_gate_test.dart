@@ -45,13 +45,12 @@ class _Recorder {
 /// Host stand-in that records every call the gate makes.
 class _FakeConsentPorts implements ConsentPorts {
   _FakeConsentPorts({
-    ConsentRecord record = const ConsentRecord.empty(),
-    Future<ConsentRegion>? probe,
+    this._record = const ConsentRecord.empty(),
+    this._probe,
     this.grantFailures = 0,
     this.sdkFailures = 0,
     this.businessFailures = 0,
-  }) : _record = record,
-       _probe = probe;
+  });
 
   final _Recorder recorder = _Recorder();
   ConsentRecord _record;

@@ -540,7 +540,7 @@ void main() {
         expect(d.bindingKind, SettingsBindingKind.action, reason: d.id);
         expect(d.storage, SettingsStorageType.none, reason: d.id);
         expect(d.order, 10 + index, reason: d.id);
-        expect(d.action, 'music:' + ids[index], reason: d.id);
+        expect(d.action, 'music:${ids[index]}', reason: d.id);
         expect(d.actionLabel, d.titleEn, reason: d.id);
         expect(d.titleZh, d.titleEn, reason: d.id);
       }
@@ -1449,7 +1449,7 @@ void main() {
           palette: darkPalette(),
         );
         expect(recorder.centeredOps.any((SettingsCenteredOp op) => op.value == '发布说明 ↗'), isTrue,
-            reason: 'busy=' + busy.toString());
+            reason: 'busy=$busy');
         final List<SettingsHitRegion> notesHits = recorder.hits
             .where((SettingsHitRegion h) =>
                 h.action == 'update:release' && h.label == '发布说明')

@@ -97,7 +97,7 @@ class LyricsPanelBounds {
   int get hashCode => Object.hash(top, bottom);
 
   @override
-  String toString() => 'LyricsPanelBounds(' + top.toString() + ', ' + bottom.toString() + ')';
+  String toString() => 'LyricsPanelBounds($top, $bottom)';
 }
 
 /// 字形度量端口（Qt Glyphs::width 与 Glyphs::wrap 的只读两面）。
@@ -913,7 +913,7 @@ class _Painter {
     }
     if (length != value.length) {
       final int keep = length - 1 < 0 ? 0 : length - 1;
-      return value.substring(0, keep) + '…';
+      return '${value.substring(0, keep)}…';
     }
     return value;
   }
@@ -1139,7 +1139,7 @@ LyricsPanelDrawing paintLyricsPanel(
         hitY,
         width,
         math.max(0.0, math.min(bottom, y + height + 20) - hitY),
-        'player:lyric-line:' + index.toString(),
+        'player:lyric-line:$index',
         label.isEmpty ? '间奏' : label,
       );
     }

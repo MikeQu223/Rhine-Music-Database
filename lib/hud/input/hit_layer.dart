@@ -121,10 +121,7 @@ class StageGeometry {
         logicalWidth <= 0 ||
         logicalHeight <= 0) {
       throw ArgumentError(
-        'StageGeometry.withScale needs positive finite logical size, got ' +
-            logicalWidth.toString() +
-            ' x ' +
-            logicalHeight.toString(),
+        'StageGeometry.withScale needs positive finite logical size, got $logicalWidth x $logicalHeight',
       );
     }
   }
@@ -309,7 +306,7 @@ class HitLayer {
       return null;
     }
     final fraction = (x / width).clamp(0.0, 1.0).toDouble();
-    return 'player:' + control + '-fraction:' + formatG16(fraction);
+    return 'player:$control-fraction:${formatG16(fraction)}';
   }
 
   /// 与 Qt 的 QString::number(v, 'g', 16) 对齐：16 位有效数字、去掉尾随零，
@@ -343,19 +340,19 @@ class HitLayer {
     digits = digits.substring(0, end);
     final sign = negative ? '-' : '';
     if (exponent < -4 || exponent >= 16) {
-      final tail = digits.length > 1 ? '.' + digits.substring(1) : '';
+      final tail = digits.length > 1 ? '.${digits.substring(1)}' : '';
       final expSign = exponent < 0 ? '-' : '+';
       final expDigits = exponent.abs().toString().padLeft(2, '0');
-      return sign + digits.substring(0, 1) + tail + 'e' + expSign + expDigits;
+      return '$sign${digits.substring(0, 1)}${tail}e$expSign$expDigits';
     }
     if (exponent >= 0) {
       final intDigits = exponent + 1;
       if (digits.length <= intDigits) {
         return sign + digits.padRight(intDigits, '0');
       }
-      return sign + digits.substring(0, intDigits) + '.' + digits.substring(intDigits);
+      return '$sign${digits.substring(0, intDigits)}.${digits.substring(intDigits)}';
     }
     final zeros = '0' * (-exponent - 1);
-    return sign + '0.' + zeros + digits;
+    return '${sign}0.$zeros$digits';
   }
 }

@@ -33,6 +33,7 @@
 ///
 /// 竖屏：Qt 没有竖屏设置页，这里不发明竖屏像素；响应式编排由调用方在
 /// viewport/bounds 上完成，本文件的几何全部是 viewport 的函数。
+library;
 
 import 'dart:math' as math;
 import 'dart:ui' show Rect;
@@ -74,7 +75,7 @@ class SettingsRgba {
   int get hashCode => Object.hash(r, g, b, a);
 
   @override
-  String toString() => 'SettingsRgba(' + r.toString() + ', ' + g.toString() + ', ' + b.toString() + ', ' + a.toString() + ')';
+  String toString() => 'SettingsRgba($r, $g, $b, $a)';
 }
 
 /// 行配色（Qt/src/NativeHudSettings.cpp:172-179）。
@@ -429,7 +430,7 @@ class SettingsHitRegion {
   const SettingsHitRegion(this.rect, this.action, this.label);
 
   @override
-  String toString() => 'SettingsHitRegion(' + rect.toString() + ', ' + action + ', ' + label + ')';
+  String toString() => 'SettingsHitRegion($rect, $action, $label)';
 }
 
 /// Qt/src/HudScroll.h:67-86：命中区与可见区域求交；无重叠即丢弃，
@@ -693,7 +694,7 @@ void paintSettingsChoice({
   if (!row.enabled) {
     return;
   }
-  canvas.hit(control.left, control.top, control.width, control.height, 'expand:' + row.id, row.titleZh);
+  canvas.hit(control.left, control.top, control.width, control.height, 'expand:${row.id}', row.titleZh);
   if (desktopTitleLoopHit && row.action.isNotEmpty) {
     final double labelLeft = layout.bounds.left + 30;
     final double labelWidth = control.left - labelLeft - 8;
@@ -800,7 +801,7 @@ void paintSettingsTextInput({
   canvas.text('✎', control.right - 24, control.top + 14, 14, SettingsFontWeight.regular, 0,
       row.enabled ? palette.muted : palette.muted.fade(0.3));
   if (row.enabled) {
-    canvas.hit(control.left, control.top, control.width, control.height, 'setting-edit:' + row.id,
+    canvas.hit(control.left, control.top, control.width, control.height, 'setting-edit:${row.id}',
         row.titleZh);
   }
 }
@@ -1042,9 +1043,7 @@ class SettingsApplyPlan {
   const SettingsApplyPlan(this.outcome, {this.preferenceKey, this.action, this.updatesSceneTheme = false});
 
   @override
-  String toString() => 'SettingsApplyPlan(' + outcome.toString() + ', preferenceKey: ' +
-      preferenceKey.toString() + ', action: ' + action.toString() + ', updatesSceneTheme: ' +
-      updatesSceneTheme.toString() + ')';
+  String toString() => 'SettingsApplyPlan($outcome, preferenceKey: $preferenceKey, action: $action, updatesSceneTheme: $updatesSceneTheme)';
 }
 
 /// 直接写偏好、不派发动作的特例（:395-409）。
@@ -1104,7 +1103,7 @@ SettingsApplyPlan planSettingsApply({
     return const SettingsApplyPlan(SettingsCommitOutcome.applied, action: 'music:activate');
   }
   if (id == 'quality') {
-    return SettingsApplyPlan(SettingsCommitOutcome.applied, action: 'quality:set:' + target);
+    return SettingsApplyPlan(SettingsCommitOutcome.applied, action: 'quality:set:$target');
   }
   final String? sameName = settingsSameNameActionIds[id];
   if (sameName != null) {

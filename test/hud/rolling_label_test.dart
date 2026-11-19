@@ -9,7 +9,7 @@
 // These tests are written but deliberately NOT executed in this phase.
 import 'package:flutter_test/flutter_test.dart';
 
-import '../../lib/hud/text/rolling_label.dart';
+import 'package:rhine_music_database/hud/text/rolling_label.dart';
 
 double _measureUnit(String text, double size, String weight, double tracking) =>
     text.isEmpty ? 0 : 0.5 * size + tracking;

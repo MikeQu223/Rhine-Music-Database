@@ -243,8 +243,7 @@ final class SceneCamera {
 
   @override
   String toString() =>
-      'SceneCamera(eye: ' + eye.toString() + ', aim: ' + aim.toString() +
-      ', fov: ' + fov.toString() + ')';
+      'SceneCamera(eye: $eye, aim: $aim, fov: $fov)';
 }
 
 // Surface.
@@ -265,12 +264,11 @@ final class SceneSurface {
     required SceneFrame frame,
     required SceneSize size,
     double reducedMotion = 0,
-    SceneCell? selectedCell,
+    this._selectedCell,
     SceneCell? originCell,
   })  : _frame = frame,
         _size = _initialSize(size, frame),
         _reducedMotion = _reducedAmount(reducedMotion),
-        _selectedCell = selectedCell,
         _originCell = originCell ?? const SceneCell(2, 12),
         _camera = SceneCamera.fromFrame(frame) {
     _baseCamera = _camera;
@@ -819,17 +817,7 @@ final class SceneSurface {
   }
 
   @override
-  String toString() => 'SceneSurface(mode: ' +
-      _frame.mode +
-      ', selectedCell: ' +
-      _selectedCell.toString() +
-      ', offset: (' +
-      _laneOffset.toString() +
-      ', ' +
-      _rowOffset.toString() +
-      '), dragging: ' +
-      _captured.toString() +
-      ')';
+  String toString() => 'SceneSurface(mode: ${_frame.mode}, selectedCell: $_selectedCell, offset: ($_laneOffset, $_rowOffset), dragging: $_captured)';
 }
 
 // Small value / helper types.

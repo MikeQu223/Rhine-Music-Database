@@ -3,7 +3,6 @@
 //
 // RED/GREEN 未执行：本卡只允许写测试，禁止 dart/flutter test/analyze。
 // 每条断言上方注释给出 Qt 源证据（文件:行），断言必须能体现该语义。
-import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -44,10 +43,8 @@ class _Cancel implements Cancelable {
 class _Host implements LibraryHostPort {
   _Host({
     this.localEnabled = false,
-    this.authenticated = false,
-    this.offline = false,
-    this.saveCredentialError = '',
-  });
+  }) : authenticated = false : @override
+  offline = false : saveCredentialError = '';
 
   @override
   final bool localEnabled;
@@ -100,10 +97,10 @@ class _Host implements LibraryHostPort {
   }
 
   @override
-  String qr(String key) => 'qr:' + key;
+  String qr(String key) => 'qr:$key';
 
   @override
-  String qrImage(String data) => 'img:' + data;
+  String qrImage(String data) => 'img:$data';
 
   @override
   bool hasCredential(String provider) => true;
@@ -160,7 +157,7 @@ class _Playback implements PlaybackPort {
   String _cover = '';
   List<JsonMap> _items = <JsonMap>[];
   List<String> _ids = <String>[];
-  int _index = -1;
+  final int _index = -1;
   List<JsonMap> _history = <JsonMap>[];
   final List<JsonMap> played = <JsonMap>[];
   final List<List<JsonMap>?> playedSources = <List<JsonMap>?>[];
@@ -232,7 +229,7 @@ class _Playback implements PlaybackPort {
 }
 
 class _Collections implements SirenCollectionsPort {
-  _Collections({this.creatorId = 'creator-1'});
+  _Collections() : creatorId = 'creator-1';
 
   @override
   final String creatorId;
@@ -271,7 +268,7 @@ class _Collections implements SirenCollectionsPort {
 
   @override
   String createPlaylist(String name) {
-    final id = 'p' + _next.toString();
+    final id = 'p$_next';
     _next++;
     byId[id] = <String, Object?>{
       'kind': 'playlist',
@@ -403,7 +400,7 @@ JsonMap _song(String id, {String title = '歌', String album = '', String artist
     'title': title,
     'artist': artist,
     'album': album,
-    'key': 'netease:song:' + id,
+    'key': 'netease:song:$id',
   };
 }
 
@@ -769,7 +766,7 @@ void main() {
 
   group('最近搜索白名单（最多 12 条）', () {
     test('超过 12 条截断，空串与非字符串丢弃', () {
-      final many = <Object?>[for (var index = 0; index < 15; index++) 'k' + index.toString()];
+      final many = <Object?>[for (var index = 0; index < 15; index++) 'k$index'];
       final lib = _build(prefs: <String, String>{'search-history': jsonEncode(many)});
       expect(lib.searchHistory.length, 12);
       expect(lib.searchHistory.first, 'k0');
@@ -849,7 +846,7 @@ void main() {
       final folders = <JsonMap>[
         for (var index = 0; index < 65; index++)
           <String, Object?>{
-            'item': <String, Object?>{'kind': 'folder', 'id': 'f' + index.toString()},
+            'item': <String, Object?>{'kind': 'folder', 'id': 'f$index'},
           },
       ];
       expect(_build().restoreSessionState(_session(directories: folders)), isFalse);

@@ -854,7 +854,7 @@ class TextInputOverlayLogic {
           opacity: _clampOpacity(state.modalOpacity) * (enabled ? 1.0 : 0.5),
           // Overlay.qml:419
           label: state.smsRetrySeconds > 0
-              ? state.smsRetrySeconds.toString() + ' 秒后重发'
+              ? '${state.smsRetrySeconds} 秒后重发'
               : '发送验证码',
           // Overlay.qml:420
           labelColor: const Color(0xFFF0EEE5),
@@ -1123,7 +1123,7 @@ class _TextInputOverlayState extends State<TextInputOverlay> {
     for (final kind in TextFieldKind.values) {
       _controllers[kind] = TextEditingController();
       _focusNodes[kind] = FocusNode(
-        debugLabel: 'text_input_overlay.' + kind.objectName,
+        debugLabel: 'text_input_overlay.${kind.objectName}',
       );
       _trackers[kind] = TextCommitTracker();
     }

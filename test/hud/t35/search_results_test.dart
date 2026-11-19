@@ -20,7 +20,7 @@ double fakeGlyph(String text, double size, String weight) {
 double zeroGlyph(String text, double size, String weight) => 0;
 
 String _rectText(Rect rect) =>
-    'Rect(' + rect.left.toString() + ', ' + rect.top.toString() + ', ' + rect.width.toString() + ', ' + rect.height.toString() + ')';
+    'Rect(${rect.left}, ${rect.top}, ${rect.width}, ${rect.height})';
 
 /// 记录端口调用，验证绘制顺序、op 参数与命中六字段原序。
 class RecordingPort implements SearchResultsPort {
@@ -38,7 +38,7 @@ class RecordingPort implements SearchResultsPort {
 
   @override
   double glyphWidth(String text, double size, String weight) {
-    glyphs.add(text + '@' + size.toString() + '@' + weight);
+    glyphs.add('$text@$size@$weight');
     return fakeGlyph(text, size, weight);
   }
 
@@ -56,7 +56,7 @@ class RecordingPort implements SearchResultsPort {
   @override
   void clip(Rect rect) {
     clips.add(rect);
-    ops.add('clip ' + _rectText(rect));
+    ops.add('clip ${_rectText(rect)}');
   }
 
   @override
@@ -66,19 +66,19 @@ class RecordingPort implements SearchResultsPort {
 
   @override
   void fill(Rect rect, SearchColor color) {
-    ops.add('fill ' + _rectText(rect) + ' ' + color.toString());
+    ops.add('fill ${_rectText(rect)} $color');
   }
 
   @override
   void text(String text, double x, double y, double size, String weight, double letterSpacing,
       SearchColor color) {
-    ops.add('text ' + text + ' @' + x.toString() + ',' + y.toString());
+    ops.add('text $text @$x,$y');
   }
 
   @override
   void hit(double x, double y, double width, double height, String action, String label) {
     hits.add(<Object?>[x, y, width, height, action, label]);
-    ops.add('hit ' + action);
+    ops.add('hit $action');
   }
 }
 
@@ -937,8 +937,8 @@ void main() {
         for (var index = 0; index < 10; index++)
           row(index, <String, Object?>{
             'kind': 'song',
-            'id': 'id' + index.toString(),
-            'title': 'Title' + index.toString(),
+            'id': 'id$index',
+            'title': 'Title$index',
             'artist': 'Artist',
           }),
       ];
@@ -1014,7 +1014,7 @@ void main() {
       final port = RecordingPort();
       final rows = <SearchRow>[
         for (var index = 0; index < 10; index++)
-          row(index, <String, Object?>{'kind': 'song', 'title': 'T' + index.toString()}),
+          row(index, <String, Object?>{'kind': 'song', 'title': 'T$index'}),
       ];
       final layer = SearchResultsLayer(
         port: port,

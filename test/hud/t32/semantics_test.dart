@@ -20,10 +20,8 @@
 /// - AndroidWindow.cpp:62-71 Android 默认关桥
 library;
 
-import 'dart:ui' show TextRange;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:rhine_music_database/hud/a11y/semantics_layer.dart';
@@ -36,24 +34,24 @@ class RecordingPorts implements TextInputPorts {
   final List<String> calls = <String>[];
 
   @override
-  void action(String action) => calls.add('action:' + action);
+  void action(String action) => calls.add('action:$action');
 
   @override
-  void query(String text) => calls.add('query:' + text);
+  void query(String text) => calls.add('query:$text');
 
   @override
   void searchAccepted(String text, {required bool control}) =>
-      calls.add('searchAccepted:' + text + ':' + control.toString());
+      calls.add('searchAccepted:$text:$control');
 
   @override
   void submitForm(String account, String captcha) =>
-      calls.add('submitForm:' + account + ':' + captcha);
+      calls.add('submitForm:$account:$captcha');
 
   @override
-  void sendLoginCode(String phone) => calls.add('sendLoginCode:' + phone);
+  void sendLoginCode(String phone) => calls.add('sendLoginCode:$phone');
 
   @override
-  void settingEditText(String text) => calls.add('settingEditText:' + text);
+  void settingEditText(String text) => calls.add('settingEditText:$text');
 
   @override
   void settingEditAccepted() => calls.add('settingEditAccepted');
@@ -139,7 +137,7 @@ void main() {
 
       expect(nodes.length, hits.length);
       for (int i = 0; i < hits.length; i++) {
-        expect(nodes[i].id, 'hit:' + i.toString());
+        expect(nodes[i].id, 'hit:$i');
         expect(nodes[i].role, SemanticsRole.button);
         expect(nodes[i].isButton, isTrue);
         expect(nodes[i].isTextField, isFalse);
@@ -377,9 +375,9 @@ void main() {
       final HitLayer layer = stageLayer();
       final List<HudHit> hits = navHits();
       final RhineSemanticsLayer widget = RhineSemanticsLayer.fromHits(
-        child: const SizedBox.expand(),
         layer: layer,
         hits: hits,
+        child: const SizedBox.expand(),
       );
       final List<HudSemanticsNode> expected = hitNodes(layer, hits);
       expect(widget.nodes.length, expected.length);
@@ -397,8 +395,8 @@ void main() {
       final HudSemanticsNode field = inputNodes(logic, searchState, accountLength: 0).single;
       expect(field.isTextField, isTrue);
       final RhineSemanticsLayer widget = RhineSemanticsLayer(
-        child: const SizedBox.expand(),
         nodes: <HudSemanticsNode>[field],
+        child: const SizedBox.expand(),
       );
       expect(widget.includeTextFieldNodes, isFalse);
     });
@@ -413,14 +411,14 @@ void main() {
         Directionality(
           textDirection: TextDirection.ltr,
           child: RhineSemanticsLayer.fromHits(
-            child: const SizedBox.expand(),
             layer: stageLayer(),
             hits: hits,
+            child: const SizedBox.expand(),
           ),
         ),
       );
       for (int i = 0; i < hits.length; i++) {
-        expect(find.bySemanticsIdentifier('hit:' + i.toString()), findsOneWidget);
+        expect(find.bySemanticsIdentifier('hit:$i'), findsOneWidget);
       }
       expect(find.bySemanticsLabel('发现音乐 ↗'), findsOneWidget);
       expect(find.bySemanticsLabel('音乐检索  /'), findsOneWidget);
@@ -436,10 +434,10 @@ void main() {
         Directionality(
           textDirection: TextDirection.ltr,
           child: RhineSemanticsLayer.fromHits(
-            child: const SizedBox.expand(),
             layer: stageLayer(android: false),
             hits: <HudHit>[hit],
             onActivate: activated.add,
+            child: const SizedBox.expand(),
           ),
         ),
       );
@@ -457,8 +455,8 @@ void main() {
         Directionality(
           textDirection: TextDirection.ltr,
           child: RhineSemanticsLayer(
-            child: const SizedBox.expand(),
             nodes: <HudSemanticsNode>[field],
+            child: const SizedBox.expand(),
           ),
         ),
       );
@@ -468,9 +466,9 @@ void main() {
         Directionality(
           textDirection: TextDirection.ltr,
           child: RhineSemanticsLayer(
-            child: const SizedBox.expand(),
             nodes: <HudSemanticsNode>[field],
             includeTextFieldNodes: true,
+            child: const SizedBox.expand(),
           ),
         ),
       );

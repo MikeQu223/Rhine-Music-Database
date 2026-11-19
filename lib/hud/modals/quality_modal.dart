@@ -352,7 +352,7 @@ final class QualityModal {
         : (qualityModalDescriptions[selectedQuality]?.title ?? '');
     _limited(
       body,
-      '已选偏好：' + preference,
+      '已选偏好：$preference',
       left + width * 0.52,
       y + 219,
       14,
@@ -412,7 +412,7 @@ final class QualityModal {
       const List<String> extraBadges = <String>['jyeffect', 'sky'];
       for (int index = 0; index < extraBadges.length; index += 1) {
         final String id = extraBadges[index];
-        final String key = 'quality:' + provider + '-' + id;
+        final String key = 'quality:$provider-$id';
         final QualityModalBadge? pixels = badges?.call(key);
         final double badgeX = left + 130 + index * 235; // :434
         if (pixels != null) {
@@ -487,10 +487,10 @@ final class QualityModal {
     if (selected) {
       hudFill(body.sink, accent, x, y, 3, height); // :341-343
     }
-    body.hit(x, y, width, height, 'quality:set:' + id, description.title); // :344
+    body.hit(x, y, width, height, 'quality:set:$id', description.title); // :344
 
     final String index = number.toString().padLeft(2, '0'); // :345
-    final String key = 'quality:' + provider + '-' + description.badge; // :346
+    final String key = 'quality:$provider-${description.badge}'; // :346
     final QualityModalBadge? pixels =
         description.badge.isEmpty ? null : badges?.call(key); // :347
     final double badgeX = featured ? x + width - 104 : x + 30; // :348
@@ -540,7 +540,7 @@ final class QualityModal {
       // :366-370
       hudText(
         body.sink,
-        index + ' / ' + description.caption,
+        '$index / ${description.caption}',
         x + 22,
         y + 22,
         11,

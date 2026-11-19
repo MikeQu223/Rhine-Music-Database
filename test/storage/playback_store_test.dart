@@ -81,7 +81,7 @@ String playbackPath = '/runtime-data/playback-session.json';
 List<int> encode(Object? value) => utf8.encode(jsonEncode(value));
 
 Map<String, Object?> song(String id, {String provider = 'netease', String kind = 'song'}) =>
-    <String, Object?>{'kind': kind, 'id': id, 'provider': provider, 'title': 't-' + id};
+    <String, Object?>{'kind': kind, 'id': id, 'provider': provider, 'title': 't-$id'};
 
 Map<String, Object?> player({
   Object? current = const <String, Object?>{},

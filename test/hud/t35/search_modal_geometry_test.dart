@@ -98,7 +98,7 @@ void main() {
         expect(
           searchModalWidth(width),
           closeTo(expected, 1e-9),
-          reason: 'stageWidth ' + width.toString(),
+          reason: 'stageWidth $width',
         );
       }
     });

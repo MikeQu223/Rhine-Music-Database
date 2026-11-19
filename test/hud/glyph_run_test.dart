@@ -24,8 +24,8 @@ import 'dart:ui' as ui;
 
 import 'package:flutter_test/flutter_test.dart';
 
-import '../../lib/hud/text/glyph_font.dart';
-import '../../lib/hud/text/glyph_run.dart';
+import 'package:rhine_music_database/hud/text/glyph_font.dart';
+import 'package:rhine_music_database/hud/text/glyph_run.dart';
 
 /// Lettering fixture: irrelevant to this file, but the loader wants a valid
 /// document (same shape as boot-lettering-art.json).
@@ -89,7 +89,7 @@ class _RecordingCanvas implements ui.Canvas {
 
   @override
   dynamic noSuchMethod(Invocation invocation) =>
-      throw UnsupportedError('unstubbed canvas call: ' + invocation.memberName.toString());
+      throw UnsupportedError('unstubbed canvas call: ${invocation.memberName}');
 
   List<String> get shape =>
       ops.map((List<Object?> op) => op.first.toString()).toList();

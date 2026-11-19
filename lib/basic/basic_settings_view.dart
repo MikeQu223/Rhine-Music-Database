@@ -6,7 +6,6 @@ import '../hud/modals/modal_shell.dart';
 import '../hud/modals/settings_modal.dart';
 import '../hud/pages/chrome.dart';
 import '../hud/protocol/hud_frame.dart';
-import '../hud/protocol/hud_hit.dart';
 import '../hud/render/hud_painter.dart';
 import '../hud/widgets/settings_row.dart';
 import 'basic_hud_resources.dart';

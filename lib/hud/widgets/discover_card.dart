@@ -118,7 +118,7 @@ class DiscoverChoice {
   bool selected;
 
   @override
-  String toString() => 'DiscoverChoice(' + label + ', ' + action + ', selected=' + selected.toString() + ')';
+  String toString() => 'DiscoverChoice($label, $action, selected=$selected)';
 }
 
 /// 一条发现条目（Qt/src/DiscoverMusicCard.h:16-23）。
@@ -151,19 +151,7 @@ class DiscoverEntry {
   int index;
 
   @override
-  String toString() => 'DiscoverEntry(' +
-      index.toString() +
-      ', ' +
-      title +
-      ', ' +
-      artist +
-      ', ' +
-      kind +
-      ', ' +
-      image +
-      ', ' +
-      imageAspect.toString() +
-      ')';
+  String toString() => 'DiscoverEntry($index, $title, $artist, $kind, $image, $imageAspect)';
 }
 
 /// 发现页只读显示模型（Qt/src/DiscoverMusicCard.h:24-39）。
@@ -224,19 +212,7 @@ class DiscoverModel {
   int loadedCount;
 
   @override
-  String toString() => 'DiscoverModel(' +
-      bounds.toString() +
-      ', dark=' +
-      dark.toString() +
-      ', tab=' +
-      tab +
-      ', loadedCount=' +
-      loadedCount.toString() +
-      ', scroll=' +
-      scroll.toString() +
-      ', categoryPicker=' +
-      categoryPicker.toString() +
-      ')';
+  String toString() => 'DiscoverModel($bounds, dark=$dark, tab=$tab, loadedCount=$loadedCount, scroll=$scroll, categoryPicker=$categoryPicker)';
 }
 
 /// 档案网格几何（Qt/src/DiscoverMusicCard.h:54-59）。
@@ -261,15 +237,7 @@ class DiscoverLayout {
   final double maximumScroll;
 
   @override
-  String toString() => 'DiscoverLayout(' +
-      viewport.toString() +
-      ', tileSize=' +
-      tileSize.toString() +
-      ', rowStride=' +
-      rowStride.toString() +
-      ', maximumScroll=' +
-      maximumScroll.toString() +
-      ')';
+  String toString() => 'DiscoverLayout($viewport, tileSize=$tileSize, rowStride=$rowStride, maximumScroll=$maximumScroll)';
 }
 
 /// Qt/src/DiscoverMusicCard.h:40-50 的 Canvas 回调面。
@@ -632,7 +600,7 @@ class _Painter {
   /// Qt cpp:218-221。
   void open(DiscoverEntry entry) {
     contentHit(DiscoverCard.entryBounds(model.bounds, entry.index),
-        'discover:item:' + entry.index.toString(), entry.title);
+        'discover:item:${entry.index}', entry.title);
   }
 
   /// Qt cpp:223-233：以装裱中心旋转 5°，阴影 +5/+8、纸面、封面内缩 7；不改变封面宽高比。
@@ -778,9 +746,9 @@ class _Painter {
     rule(756);
     String status = model.status;
     if (model.categoryPicker) {
-      status = (model.categoryPage + 1).toString() + ' / ' + model.categoryPages.toString();
+      status = '${model.categoryPage + 1} / ${model.categoryPages}';
     } else if (!model.loading && model.loadedCount > 0) {
-      status = '已载入 ' + model.loadedCount.toString() + ' 条 / 滚轮浏览';
+      status = '已载入 ${model.loadedCount} 条 / 滚轮浏览';
     }
     label(status, x, 779, 11, width - 350, 'regular', muted);
     if (model.categoryPicker) {

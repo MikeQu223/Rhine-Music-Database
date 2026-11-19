@@ -100,7 +100,7 @@ abstract final class PlaylistFormSpec {
 
   /// 校验文案：MusicMutation.cpp:414「请输入 1–」+ maximum + 「 字歌单名称」（U+2013 连字号）。
   static String nameInvalidMessage(int maximum) =>
-      '请输入 1–' + maximum.toString() + ' 字歌单名称';
+      '请输入 1–$maximum 字歌单名称';
 
   static const String statusRenameNotOwned = '只能编辑自己创建的歌单'; // MusicMutation.cpp:459
   static const String statusSirenCreatedPrefix = '已创建歌单：'; // MusicMutation.cpp:434

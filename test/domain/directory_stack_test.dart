@@ -19,10 +19,10 @@ JsonMap _song(String id, {String title = '', String artist = '', String category
   return <String, Object?>{
     'kind': 'song',
     'id': id,
-    'title': title.isEmpty ? ('曲' + id) : title,
+    'title': title.isEmpty ? ('曲$id') : title,
     'artist': artist,
     'category': category,
-    'key': 'netease:song:' + id,
+    'key': 'netease:song:$id',
   };
 }
 
@@ -30,9 +30,9 @@ JsonMap _playlist(String id, {String title = '', String provider = 'netease'}) {
   return <String, Object?>{
     'kind': 'playlist',
     'id': id,
-    'title': title.isEmpty ? ('单' + id) : title,
+    'title': title.isEmpty ? ('单$id') : title,
     'artist': '',
-    'key': provider + ':playlist:' + id,
+    'key': '$provider:playlist:$id',
   };
 }
 
@@ -211,7 +211,7 @@ class _Collections implements SirenCollectionsPort {
   bool addTrack(String id, String trackId) => true;
 
   @override
-  String createPlaylist(String name) => 'playlist-' + name;
+  String createPlaylist(String name) => 'playlist-$name';
 
   @override
   bool deletePlaylist(String id) => true;
@@ -879,7 +879,7 @@ void _groupsRest() {
     test('每页 100 条、游标推进、selectAfter 落在新页内（Qt Directory.cpp:343-377）', () async {
       final b = _build();
       final lib = b.library;
-      final ids = List<String>.generate(120, (int i) => 'x' + i.toString());
+      final ids = List<String>.generate(120, (int i) => 'x$i');
       final folder = _folder(
         songs: <JsonMap>[_song('s1'), _song('s2')],
         ids: <String>['s1', 's2', ...ids],
@@ -935,7 +935,7 @@ void _groupsRest() {
     test('selectAfter 超过本页时递归补多页（Qt Directory.cpp:366-372）', () async {
       final b = _build();
       final lib = b.library;
-      final List<String> rest = List<String>.generate(200, (int i) => 'y' + i.toString());
+      final List<String> rest = List<String>.generate(200, (int i) => 'y$i');
       final folder = _folder(
         songs: <JsonMap>[_song('s1'), _song('s2')],
         ids: <String>['s1', 's2', ...rest],

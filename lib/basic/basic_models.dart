@@ -1289,7 +1289,7 @@ BasicLyricsDocument parseBasicLyrics(String raw) {
       final int minutes = int.tryParse(stamp.group(1) ?? '') ?? 0;
       final int seconds = int.tryParse(stamp.group(2) ?? '') ?? 0;
       final String fractionText = stamp.group(3) ?? '';
-      final double fraction = fractionText.isEmpty ? 0 : (double.tryParse('0.' + fractionText) ?? 0);
+      final double fraction = fractionText.isEmpty ? 0 : (double.tryParse('0.$fractionText') ?? 0);
       final double startMs = ((minutes * 60) + seconds) * 1000 + (fraction * 1000);
       lines.add(BasicLyricLine(startMs: startMs.roundToDouble(), text: content, translation: translation));
     }

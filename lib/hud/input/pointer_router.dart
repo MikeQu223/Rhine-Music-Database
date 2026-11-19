@@ -127,7 +127,7 @@ class PointerForward {
   int get hashCode => Object.hash(phase, x, y);
 
   @override
-  String toString() => 'PointerForward(' + phase + ' ' + x.toString() + ',' + y.toString() + ')';
+  String toString() => 'PointerForward($phase $x,$y)';
 }
 
 /// 事件最终落在哪一层，便于测试与宿主断言。

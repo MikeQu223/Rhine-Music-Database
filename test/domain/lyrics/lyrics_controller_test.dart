@@ -564,9 +564,9 @@ class FakeLyricsPreferencePort implements LyricsPreferencePort {
 
 Map<String, Object?> track(String id, {String? provider, String? fingerprint}) {
   return <String, Object?>{
-    if (provider != null) 'provider': provider,
+    'provider': ?provider,
     'id': id,
-    if (fingerprint != null) 'fingerprint': fingerprint,
+    'fingerprint': ?fingerprint,
   };
 }
 
@@ -578,7 +578,7 @@ Map<String, Object?> lyricsDoc(List<double> starts, {double offsetMs = 0}) {
     'offsetMs': offsetMs,
     'lines': <Object?>[
       for (var i = 0; i < starts.length; i += 1)
-        <String, Object?>{'startMs': starts[i], 'text': 'line' + i.toString()},
+        <String, Object?>{'startMs': starts[i], 'text': 'line$i'},
     ],
   };
 }

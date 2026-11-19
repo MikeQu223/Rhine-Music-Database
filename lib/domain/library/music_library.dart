@@ -402,7 +402,7 @@ class MusicApiClient {
       return Future<MusicReply>.value(const MusicReply.fail(_staleReply));
     }
     return _send(
-      '/native/' + provider + '/' + operation,
+      '/native/$provider/$operation',
       <String, Object?>{'args': arguments},
       adapted: true,
       valid: valid,
@@ -424,7 +424,7 @@ class MusicApiClient {
       }
       return Future<MusicReply>.value(const MusicReply.fail(_staleReply));
     }
-    final target = provider == 'netease' ? route : '/' + provider + route;
+    final target = provider == 'netease' ? route : '/$provider$route';
     return _send(
       target,
       params,
@@ -465,7 +465,7 @@ class MusicApiClient {
       return MusicReply.fail(
         adapted
             ? message
-            : musicProviderName(source) + '返回 ' + code.toString() + '：' + message,
+            : '${musicProviderName(source)}返回 $code：$message',
         safeFailure(body),
       );
     }
@@ -648,7 +648,7 @@ JsonMap musicItem({
     'duration': 0,
     'trackCount': 0,
     'provider': provider,
-    'key': provider + ':' + kind + ':' + id,
+    'key': '$provider:$kind:$id',
   };
 }
 
@@ -715,9 +715,9 @@ JsonMap musicItemParse(JsonMap raw, String kind) {
 
 String _dateOf(int millis) {
   final time = DateTime.fromMillisecondsSinceEpoch(millis);
-  final month = time.month < 10 ? '0' + time.month.toString() : time.month.toString();
-  final day = time.day < 10 ? '0' + time.day.toString() : time.day.toString();
-  return time.year.toString() + '-' + month + '-' + day;
+  final month = time.month < 10 ? '0${time.month}' : time.month.toString();
+  final day = time.day < 10 ? '0${time.day}' : time.day.toString();
+  return '${time.year}-$month-$day';
 }
 
 /// Qt MusicData::unique：按 key 去重追加；空 key 同样只保留第一个
@@ -1165,7 +1165,7 @@ class LibraryNavigation {
 class MusicLibrary {
   MusicLibrary({
     required LibraryHostPort host,
-    required LibraryPreferencesPort preferences,
+    required this.preferences,
     required HostRequestPort requests,
     JsonMap? content,
     this.collections,
@@ -1173,7 +1173,6 @@ class MusicLibrary {
     SchedulerPort? scheduler,
     this.local,
   })  : host = host,
-        preferences = preferences,
         api = MusicApiClient(requests, host: host),
         player = player ?? NullPlayback(),
         scheduler = scheduler ?? TimerScheduler(),
@@ -1325,7 +1324,7 @@ class MusicLibrary {
     _buildPhysicalSlots();
     identityNames['netease'] = _pref('welcome-name-netease');
     identityNames['qq'] = _pref('welcome-name-qq');
-    identityNames['kugou'] = _pref('welcome-name-kugou-' + kugouEdition);
+    identityNames['kugou'] = _pref('welcome-name-kugou-$kugouEdition');
     _loadSearchHistory();
     restoreCachedAccount();
     if (isLocal && local != null) {
@@ -1425,7 +1424,7 @@ class MusicLibrary {
 
   String providerName() => musicProviderName(provider);
 
-  String accountKey() => isKugou ? 'kugou-' + kugouEdition : provider;
+  String accountKey() => isKugou ? 'kugou-$kugouEdition' : provider;
 
   String identityName() {
     if (isSiren) {
@@ -1553,11 +1552,11 @@ class MusicLibrary {
         return '正在读取塞壬唱片曲库…';
       }
       if (personalLoading) {
-        return '正在读取' + column + '，请稍候…';
+        return '正在读取$column，请稍候…';
       }
       final error = lane < sourceErrors.length ? sourceErrors[lane] : '';
       if (error.isNotEmpty) {
-        return error + '，可点击加载更多重试';
+        return '$error，可点击加载更多重试';
       }
       if (lane == 1) {
         return '暂无喜欢的歌曲，在歌曲详情或播放栏点击红心即可加入';
@@ -1565,10 +1564,10 @@ class MusicLibrary {
       if (lane == 2) {
         return '暂无本地歌单，点击上方“创建歌单”开始整理';
       }
-      return '暂无' + column;
+      return '暂无$column';
     }
     if (restoringAccount) {
-      return '正在恢复' + providerName() + '登录，请稍候…';
+      return '正在恢复${providerName()}登录，请稍候…';
     }
     if (mAccountError.isNotEmpty) {
       return mAccountError;
@@ -1577,13 +1576,13 @@ class MusicLibrary {
       return '登录后查看个人音乐';
     }
     if (personalLoading) {
-      return '正在读取' + column + '，请稍候…';
+      return '正在读取$column，请稍候…';
     }
     final error = lane < sourceErrors.length ? sourceErrors[lane] : '';
     if (error.isNotEmpty) {
       return error;
     }
-    return '暂无' + column;
+    return '暂无$column';
   }
 
   // ── 栏目切换（Qt showSource 556-588） ────────────────────────────────
@@ -1615,7 +1614,7 @@ class MusicLibrary {
       if (restoringAccount) {
         unawaited(loadMoreSource(lane));
       } else if (uid.isEmpty) {
-        status = '登录后查看' + columns[lane];
+        status = '登录后查看${columns[lane]}';
       } else if (lists[lane].isEmpty) {
         unawaited(loadMoreSource(lane));
       }
@@ -1733,7 +1732,7 @@ class MusicLibrary {
     }
     if (!reply.ok) {
       detailLoading = false;
-      status = '读取失败：' + (reply.error ?? '');
+      status = '读取失败：${reply.error ?? ''}';
       changed();
       return;
     }
@@ -1775,7 +1774,7 @@ class MusicLibrary {
     trackCursor = cursorOf(tracks, trackIds);
     detailLoading = false;
     if (status == '正在读取链接…') {
-      status = '已读取：' + textOf(value['title']);
+      status = '已读取：${textOf(value['title'])}';
     }
     unawaited(loadCover(value));
     changed();
@@ -1792,7 +1791,7 @@ class MusicLibrary {
           changed();
         }
       } else {
-        status = '百科暂时无法读取：' + (wikiReply.error ?? '');
+        status = '百科暂时无法读取：${wikiReply.error ?? ''}';
         changed();
       }
     }
@@ -1854,7 +1853,7 @@ class MusicLibrary {
       }
       return;
     }
-    status = '百科暂不可读取：' + (reply.error ?? '');
+    status = '百科暂不可读取：${reply.error ?? ''}';
     changed();
   }
 
@@ -2067,7 +2066,7 @@ class MusicLibrary {
     final rawProvider = item['provider'];
     final source = rawProvider is String ? rawProvider : provider;
     if (source == 'netease') {
-      return 'https://music.163.com/#/' + kind + '?id=' + id;
+      return 'https://music.163.com/#/$kind?id=$id';
     }
     if (source == 'kugou') {
       return 'https://www.kugou.com/';
@@ -2088,7 +2087,7 @@ class MusicLibrary {
     if (path.isEmpty) {
       return '';
     }
-    return 'https://y.qq.com/n/ryqq/' + path + '/' + Uri.encodeComponent(id).replaceAll('%21', '!').replaceAll('%28', '(').replaceAll('%29', ')').replaceAll('%2A', '*');
+    return 'https://y.qq.com/n/ryqq/$path/${Uri.encodeComponent(id).replaceAll('%21', '!').replaceAll('%28', '(').replaceAll('%29', ')').replaceAll('%2A', '*')}';
   }
 
   /// Qt MusicData::pageOf 的等价解析：既接受 List payload，也接受 {items,total,more,...} 对象。
@@ -2262,7 +2261,7 @@ class MusicLibrary {
       return;
     }
     if (uid.isEmpty) {
-      status = '请登录' + providerName();
+      status = '请登录${providerName()}';
       changed();
       return;
     }
@@ -2573,8 +2572,7 @@ class MusicLibrary {
       return;
     }
     final qq = provider == 'qq';
-    final context = provider + ':' + uid + ':' + accountGeneration.toString() + ':' +
-        (qq ? itemKeyOf(track) : 'likedIDs');
+    final context = '$provider:$uid:$accountGeneration:${qq ? itemKeyOf(track) : 'likedIDs'}';
     // Qt MusicMutation.cpp:140：songLiked(track) 已有确定答案（含 lists[1] 命中）就不再读。
     if (songLiked(track) != null) {
       return;
@@ -2648,7 +2646,7 @@ class MusicLibrary {
       final id = textOf(values['id']);
       final ok = source != null && source.deletePlaylist(id);
       if (ok) {
-        lists[2] = source!.playlists();
+        lists[2] = source.playlists();
         totals[2] = lists[2].length;
         status = '已删除歌单';
         // Qt 237-239：本地删除成功也要回传 {id}，上层据此收束目录。
@@ -2661,9 +2659,9 @@ class MusicLibrary {
     }
     if (!canMutate(route) || writeLoading || uid.isEmpty) {
       if (!editable) {
-        status = providerName() + '当前支持读取与播放';
+        status = '${providerName()}当前支持读取与播放';
       } else if (uid.isEmpty) {
-        status = '请先登录' + providerName();
+        status = '请先登录${providerName()}';
       } else if (!canMutate(route)) {
         // Qt 195-198：writeLoading 占用时不改 status，只有路由确实不可写才提示。
         status = '当前 QQ 服务未开放此编辑功能';
@@ -2705,11 +2703,11 @@ class MusicLibrary {
     if (ok && nested != 200) {
       // Qt 217-220：嵌套失败不改写本地集合，也不失效元数据。
       ok = false;
-      status = providerName() + '返回 ' + nested.toString();
+      status = '${providerName()}返回 $nested';
     } else if (ok) {
       await host.invalidateMetadata();
       success?.call(body);
-      status = '已同步至' + providerName();
+      status = '已同步至${providerName()}';
     } else {
       status = reply.error ?? '';
       if (provider == 'qq') {
@@ -2760,7 +2758,7 @@ class MusicLibrary {
       return;
     }
     if (uid.isEmpty) {
-      status = '请先登录' + providerName();
+      status = '请先登录${providerName()}';
       changed();
       return;
     }
@@ -2838,7 +2836,7 @@ class MusicLibrary {
       return;
     }
     final lane = kind == 'album' ? 4 : 3;
-    final route = kind == 'playlist' ? '/playlist/subscribe' : '/' + kind + '/sub';
+    final route = kind == 'playlist' ? '/playlist/subscribe' : '/$kind/sub';
     final id = textOf(item['id']);
     await mutate(route, <String, Object?>{'id': id, 't': subscribed ? 2 : 1}, success: (JsonMap body) {
       final enabled = provider == 'qq' ? boolOf(body['subscribed']) : !subscribed;
@@ -2873,7 +2871,7 @@ class MusicLibrary {
     final maximum = provider == 'qq' ? 20 : 100;
     // Qt 413 `name.toUcs4().size()`：按码点计数，代理对只算一个字。
     if (trimmed.isEmpty || trimmed.runes.length > maximum) {
-      status = '请输入 1–' + maximum.toString() + ' 字歌单名称';
+      status = '请输入 1–$maximum 字歌单名称';
       changed();
       return false;
     }
@@ -2892,7 +2890,7 @@ class MusicLibrary {
         }
         lists[2] = source.playlists();
         totals[2] = lists[2].length;
-        status = '已创建歌单：' + trimmed;
+        status = '已创建歌单：$trimmed';
         changed();
         return true;
       }
@@ -3279,9 +3277,9 @@ class MusicLibrary {
     }
     identityNames[source] = trimmed;
     final key = source == 'kugou' ? accountKey() : source;
-    _setPref('welcome-name-' + key, trimmed);
+    _setPref('welcome-name-$key', trimmed);
     if (source == provider && uid.isNotEmpty) {
-      _setPref('account-id-' + key, uid);
+      _setPref('account-id-$key', uid);
     }
   }
 
@@ -3293,7 +3291,7 @@ class MusicLibrary {
     if ((identityNames[source] ?? '').isNotEmpty) {
       return;
     }
-    if (!await host.hasCredential(source)) {
+    if (!host.hasCredential(source)) {
       return;
     }
     _identityApi.provider = source;
@@ -3325,7 +3323,7 @@ class MusicLibrary {
       return;
     }
     final key = accountKey();
-    uid = host.authenticated ? _pref('account-id-' + key) : '';
+    uid = host.authenticated ? _pref('account-id-$key') : '';
     nickname = host.authenticated ? (identityNames[provider] ?? '') : '未登录';
     if (host.authenticated && nickname.isEmpty) {
       nickname = '正在恢复登录…';
@@ -3406,7 +3404,7 @@ class MusicLibrary {
       if (expired) {
         uid = '';
         nickname = '登录已失效';
-        _setPref('account-id-' + accountKey(), '');
+        _setPref('account-id-${accountKey()}', '');
         status = '登录已失效，请重新登录';
       } else {
         status = '账号验证暂不可用，已保留本机登录记录';
@@ -3456,7 +3454,7 @@ class MusicLibrary {
       kugouEdition = edition;
       await host.setKugouEdition(edition);
       _setPref('kugou-edition', edition);
-      identityNames['kugou'] = _pref('welcome-name-' + accountKey());
+      identityNames['kugou'] = _pref('welcome-name-${accountKey()}');
     }
     await host.setProvider(source);
     _setPref('provider', source);
@@ -3523,7 +3521,7 @@ class MusicLibrary {
       columns = List<String>.from(_onlineColumns);
     }
     _buildPhysicalSlots();
-    status = '已切换至' + providerName();
+    status = '已切换至${providerName()}';
     changed();
     return restoreAccount();
   }
@@ -3647,8 +3645,8 @@ class MusicLibrary {
       return;
     }
     final seconds = loginRetrySeconds();
-    if (provider == this.provider && loginPhase == 'failed') {
-      loginStatus = seconds > 0 ? cooldown.message + '（请等待 ' + seconds.toString() + ' 秒）' : cooldown.message + '，可重新生成';
+    if (provider == provider && loginPhase == 'failed') {
+      loginStatus = seconds > 0 ? '${cooldown.message}（请等待 $seconds 秒）' : '${cooldown.message}，可重新生成';
       status = loginStatus;
     }
     if (seconds > 0) {
@@ -3813,7 +3811,7 @@ class MusicLibrary {
     uid = nextUid;
     nickname = values.length > 1 ? textOf(values[1]) : '';
     rememberIdentityName(provider, nickname);
-    loginStatus = '已登录：' + nickname;
+    loginStatus = '已登录：$nickname';
     unawaited(refreshQQFeatures());
     status = captcha ? loginStatus : '已登录，可读取我的音乐';
     if (!captcha) {
@@ -3837,7 +3835,7 @@ class MusicLibrary {
       if (seconds > 0) {
         final message = _cooldowns[provider]?.message ?? loginStatus;
         loginPhase = 'failed';
-        loginStatus = message + '（请等待 ' + seconds.toString() + ' 秒）';
+        loginStatus = '$message（请等待 $seconds 秒）';
         status = loginStatus;
         changed();
       }
@@ -3893,14 +3891,14 @@ class MusicLibrary {
     if (provider == 'qq') {
       loginPhase = 'waiting';
       final scanner = loginMethod == 'wechat' ? '微信' : '手机 QQ';
-      loginStatus = '请用' + scanner + '扫描并确认登录';
+      loginStatus = '请用$scanner扫描并确认登录';
       status = loginStatus;
       accountLoading = false;
       changed();
       unawaited(_pollQR(token, 0));
       return;
     }
-    final image = await host.qr(qrKey);
+    final image = host.qr(qrKey);
     if (token != _loginGeneration) {
       return;
     }
@@ -3923,16 +3921,16 @@ class MusicLibrary {
     }
     final data = textOf(mapOf(mapOf(create.value)['data'])['qrimg']);
     if (!RegExp('^data:image/(png|jpeg|gif|webp);base64,').hasMatch(data)) {
-      reportLoginFailure(<String, Object?>{}, providerName() + '二维码格式无效');
+      reportLoginFailure(<String, Object?>{}, '${providerName()}二维码格式无效');
       accountLoading = false;
       return;
     }
-    final rendered = await host.qrImage(data);
+    final rendered = host.qrImage(data);
     if (token != _loginGeneration) {
       return;
     }
     if (rendered.isEmpty) {
-      reportLoginFailure(<String, Object?>{}, providerName() + '二维码读取失败');
+      reportLoginFailure(<String, Object?>{}, '${providerName()}二维码读取失败');
       accountLoading = false;
       return;
     }
@@ -4021,7 +4019,7 @@ class MusicLibrary {
     mAccountError = '';
     sourceErrors = List<String>.filled(5, '');
     await host.logout();
-    _setPref('account-id-' + accountKey(), '');
+    _setPref('account-id-${accountKey()}', '');
     uid = '';
     nickname = '未登录';
     likedIds = null;
@@ -4140,7 +4138,7 @@ class MusicLibrary {
     offsets[0] = 0;
     rowMemory[0] = 0;
     showSource(0);
-    status = '本地检索：' + totals[0].toString() + ' 条结果';
+    status = '本地检索：${totals[0]} 条结果';
     modeRequests.add('archive');
     changed();
   }
@@ -4300,7 +4298,7 @@ class MusicLibrary {
       }
       state.more = boolOf(page['more']);
       state.status =
-          state.items.isEmpty ? '暂无内容' : '已载入 ' + state.items.length.toString() + ' 条';
+          state.items.isEmpty ? '暂无内容' : '已载入 ${state.items.length} 条';
     }
     state.loading = false;
     changed();

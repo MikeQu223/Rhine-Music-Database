@@ -196,16 +196,13 @@ class MusicPlayer {
   /// queue.changed 直连 changed（:162）、play-history 历史回填（:188-198）。
   /// 远程服务分支（:163-179）与音质/封面偏好（:181-187）不建模。
   MusicPlayer({
-    required MediaHostPort media,
-    required PreferencePort preferences,
-    required PlaybackEnginePort engine,
+    required this._media,
+    required this._preferences,
+    required this._engine,
     QueueMetadataPort? queueApi,
     String Function()? provider,
     math.Random? random,
-  })  : _media = media,
-        _preferences = preferences,
-        _engine = engine,
-        _provider = provider ?? _defaultProvider,
+  })  : _provider = provider ?? _defaultProvider,
         queue = PlaybackQueue(queueApi, random: random) {
     queue.addListener(_emit);
     _seedHistory(_preferences.read('play-history'));
@@ -377,7 +374,7 @@ class MusicPlayer {
     _loading = true;
     _failed = false;
     _trial = false;
-    _status = '正在准备：' + _text(track['title']);
+    _status = '正在准备：${_text(track['title'])}';
     _emit();
     _engine.prepare(_current, generation);
   }
@@ -613,7 +610,7 @@ class MusicPlayer {
     _history = recent;
     _preferences.write('play-history', jsonEncode(_history));
     _trial = trial;
-    _status = trial ? '当前音源为试听片段' : '正在播放：' + _text(_current['title']);
+    _status = trial ? '当前音源为试听片段' : '正在播放：${_text(_current['title'])}';
     _loading = false;
     _emit();
   }
@@ -641,7 +638,7 @@ class MusicPlayer {
     _resumePaused = !_flag(_state['requested']);
     _loading = true;
     _failed = false;
-    _status = '正在恢复播放（' + _recoveryAttempts.toString() + '/2）…';
+    _status = '正在恢复播放（$_recoveryAttempts/2）…';
     _media.mediaControl('stop');
     _emit();
     _engine.prepare(_current, generation, reload: true);

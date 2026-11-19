@@ -129,7 +129,7 @@ class SceneFrameFormatException implements Exception {
   final String message;
 
   @override
-  String toString() => 'SceneFrameFormatException: ' + message;
+  String toString() => 'SceneFrameFormatException: $message';
 }
 
 // Sizes.
@@ -179,7 +179,7 @@ final class SceneSize {
 
   @override
   String toString() =>
-      'SceneSize(' + width.toString() + ', ' + height.toString() + ')';
+      'SceneSize($width, $height)';
 }
 
 // Linear colour.
@@ -221,13 +221,13 @@ final class LinearRgb {
     final String digits = hex.startsWith('#') ? hex.substring(1) : hex;
     if (digits.length != 6) {
       throw SceneFrameFormatException(
-        'linear colour needs a 6-digit #rrggbb literal, got ' + hex,
+        'linear colour needs a 6-digit #rrggbb literal, got $hex',
       );
     }
     final int? packed = int.tryParse(digits, radix: 16);
     if (packed == null) {
       throw SceneFrameFormatException(
-        'linear colour has non-hex digits: ' + hex,
+        'linear colour has non-hex digits: $hex',
       );
     }
     return LinearRgb(
@@ -244,13 +244,12 @@ final class LinearRgb {
   factory LinearRgb.fromJson(Object? json) {
     if (json is! List) {
       throw SceneFrameFormatException(
-        'linear colour must be an array, got ' + _shape(json),
+        'linear colour must be an array, got ${_shape(json)}',
       );
     }
     if (json.length != 3) {
       throw SceneFrameFormatException(
-        'linear colour must have exactly 3 components, got ' +
-            json.length.toString(),
+        'linear colour must have exactly 3 components, got ${json.length}',
       );
     }
     return LinearRgb(
@@ -305,7 +304,7 @@ final class LinearRgb {
       return value.toDouble();
     }
     throw SceneFrameFormatException(
-      'linear colour component ' + name + ' must be numeric, got ' + _shape(value),
+      'linear colour component $name must be numeric, got ${_shape(value)}',
     );
   }
 
@@ -318,7 +317,7 @@ final class LinearRgb {
 
   @override
   String toString() =>
-      'LinearRgb(' + r.toString() + ', ' + g.toString() + ', ' + b.toString() + ')';
+      'LinearRgb($r, $g, $b)';
 }
 
 // Identities.
@@ -348,13 +347,13 @@ final class SceneActorIdentity {
     final Object? id = json['id'];
     if (id is! num) {
       throw SceneFrameFormatException(
-        'actor id must be numeric, got ' + _shape(id),
+        'actor id must be numeric, got ${_shape(id)}',
       );
     }
     final Object? musicKey = json['musicKey'];
     if (musicKey != null && musicKey is! String) {
       throw SceneFrameFormatException(
-        'actor musicKey must be a string or null, got ' + _shape(musicKey),
+        'actor musicKey must be a string or null, got ${_shape(musicKey)}',
       );
     }
     return SceneActorIdentity(
@@ -398,15 +397,7 @@ final class SceneActorIdentity {
 
   @override
   String toString() =>
-      'SceneActorIdentity(' +
-      id.toString() +
-      ', musicKey: ' +
-      musicKey.toString() +
-      ', selected: ' +
-      selected.toString() +
-      ', shadowOnly: ' +
-      shadowOnly.toString() +
-      ')';
+      'SceneActorIdentity($id, musicKey: $musicKey, selected: $selected, shadowOnly: $shadowOnly)';
 }
 
 /// Which record a frame is about, when the caller knows it out of band.
@@ -436,11 +427,7 @@ final class SceneCurrent {
   int get hashCode => Object.hash(musicKey, index);
 
   @override
-  String toString() => 'SceneCurrent(musicKey: ' +
-      musicKey.toString() +
-      ', index: ' +
-      index.toString() +
-      ')';
+  String toString() => 'SceneCurrent(musicKey: $musicKey, index: $index)';
 }
 
 // Palette helpers — NativeSceneFrame.cpp:110-113.
@@ -758,17 +745,7 @@ final class SceneFrame {
   }
 
   @override
-  String toString() => 'SceneFrame(mode: ' +
-      mode +
-      ', selected: ' +
-      selected.toString() +
-      ', viewport: ' +
-      viewport.toString() +
-      ', viewer: ' +
-      viewer.toString() +
-      ', extensions: ' +
-      extensions.length.toString() +
-      ')';
+  String toString() => 'SceneFrame(mode: $mode, selected: $selected, viewport: $viewport, viewer: $viewer, extensions: ${extensions.length})';
 }
 
 // Parsing helpers.
@@ -776,7 +753,7 @@ final class SceneFrame {
 /// Render a value's shape for an error message without echoing its contents.
 String _shape(Object? value) {
   if (value is List) {
-    return value.length.toString() + '-element list';
+    return '${value.length}-element list';
   }
   if (value == null) {
     return 'null';
@@ -790,7 +767,7 @@ Mat4 _matrix(Object? json, String key) {
   }
   if (json is! List || json.length != 16) {
     throw SceneFrameFormatException(
-      key + ' must be a 16-element column-major array, got ' + _shape(json),
+      '$key must be a 16-element column-major array, got ${_shape(json)}',
     );
   }
   final List<double> values = <double>[];
@@ -798,7 +775,7 @@ Mat4 _matrix(Object? json, String key) {
     final Object? value = json[index];
     if (value is! num) {
       throw SceneFrameFormatException(
-        key + '[' + index.toString() + '] must be numeric, got ' + _shape(value),
+        '$key[$index] must be numeric, got ${_shape(value)}',
       );
     }
     values.add(value.toDouble());
@@ -812,7 +789,7 @@ Vec3 _vector(Object? json, String key) {
   }
   if (json is! List || json.length != 3) {
     throw SceneFrameFormatException(
-      key + ' must be a 3-element array, got ' + _shape(json),
+      '$key must be a 3-element array, got ${_shape(json)}',
     );
   }
   final List<double> values = <double>[];
@@ -820,7 +797,7 @@ Vec3 _vector(Object? json, String key) {
     final Object? value = json[index];
     if (value is! num) {
       throw SceneFrameFormatException(
-        key + '[' + index.toString() + '] must be numeric, got ' + _shape(value),
+        '$key[$index] must be numeric, got ${_shape(value)}',
       );
     }
     values.add(value.toDouble());
@@ -834,14 +811,14 @@ List<SceneActorIdentity> _actors(Object? json) {
   }
   if (json is! List) {
     throw SceneFrameFormatException(
-      'actors must be an array, got ' + _shape(json),
+      'actors must be an array, got ${_shape(json)}',
     );
   }
   final List<SceneActorIdentity> actors = <SceneActorIdentity>[];
   for (final Object? entry in json) {
     if (entry is! Map) {
       throw SceneFrameFormatException(
-        'actor entry must be an object, got ' + _shape(entry),
+        'actor entry must be an object, got ${_shape(entry)}',
       );
     }
     actors.add(SceneActorIdentity.fromJson(Map<String, Object?>.from(entry)));
@@ -857,7 +834,7 @@ double _number(Object? json, String key, double fallback) {
     return json.toDouble();
   }
   throw SceneFrameFormatException(
-    key + ' must be numeric, got ' + _shape(json),
+    '$key must be numeric, got ${_shape(json)}',
   );
 }
 
@@ -869,7 +846,7 @@ int _integer(Object? json, String key, int fallback) {
     return json.toInt();
   }
   throw SceneFrameFormatException(
-    key + ' must be numeric, got ' + _shape(json),
+    '$key must be numeric, got ${_shape(json)}',
   );
 }
 
@@ -881,7 +858,7 @@ String _string(Object? json, String key, String fallback) {
     return json;
   }
   throw SceneFrameFormatException(
-    key + ' must be a string, got ' + _shape(json),
+    '$key must be a string, got ${_shape(json)}',
   );
 }
 
@@ -893,6 +870,6 @@ bool _boolean(Object? json, String key) {
     return json;
   }
   throw SceneFrameFormatException(
-    key + ' must be a boolean, got ' + _shape(json),
+    '$key must be a boolean, got ${_shape(json)}',
   );
 }

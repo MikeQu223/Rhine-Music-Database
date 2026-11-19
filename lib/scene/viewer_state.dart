@@ -178,7 +178,7 @@ enum ViewerAction {
 /// bookkeeping; `reset` deliberately never touches it either, so resetting the
 /// camera cannot make the springs jump.
 final class AnimationClock {
-  AnimationClock({double time = 0}) : _time = time;
+  AnimationClock({this._time = 0});
 
   double _time;
   double _last = 0;
@@ -311,7 +311,7 @@ final class ViewerCloseOutcome {
 
   @override
   String toString() =>
-      'ViewerCloseOutcome(resumeMode: ' + resumeMode + ', time: ' + time.toString() + ')';
+      'ViewerCloseOutcome(resumeMode: $resumeMode, time: $time)';
 }
 
 // Viewer state.
@@ -338,12 +338,11 @@ final class ViewerCloseOutcome {
 ///    playback cannot re-time the animation.
 final class ViewerState {
   ViewerState({
-    bool reduced = false,
+    this._reduced = false,
     this.ready = false,
     this.resumeMode = kFrameModeDetail,
     AnimationClock? clock,
-  })  : _reduced = reduced,
-        clock = clock ?? AnimationClock();
+  })  : clock = clock ?? AnimationClock();
 
   /// The pseudo clock this machine reads and advances.
   final AnimationClock clock;
@@ -650,15 +649,5 @@ final class ViewerState {
   }
 
   @override
-  String toString() => 'ViewerState(open: ' +
-      _open.toString() +
-      ', transition: ' +
-      _transition.wire +
-      ', surface: ' +
-      _surface.wire +
-      ', clarity: ' +
-      clarity.toStringAsFixed(4) +
-      ', spread: ' +
-      spread.toStringAsFixed(4) +
-      ')';
+  String toString() => 'ViewerState(open: $_open, transition: ${_transition.wire}, surface: ${_surface.wire}, clarity: ${clarity.toStringAsFixed(4)}, spread: ${spread.toStringAsFixed(4)})';
 }

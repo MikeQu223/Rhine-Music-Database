@@ -154,7 +154,7 @@ void main() {
         final ApiFailure failure = ApiFailure.fromJson(<String, dynamic>{
           'failureStage': value,
         })!;
-        expect(failure.failureStage, isNull, reason: '非法诊断串必须被丢弃：' + value.toString());
+        expect(failure.failureStage, isNull, reason: '非法诊断串必须被丢弃：$value');
         expect(failure.toJson().containsKey('failureStage'), isFalse, reason: value.toString());
       }
     });
@@ -202,7 +202,7 @@ void main() {
       for (final String field in _numberFields) {
         for (final Object? value in invalid) {
           final ApiFailure failure = ApiFailure.fromJson(<String, dynamic>{field: value})!;
-          expect(failure.toJson().containsKey(field), isFalse, reason: field + '=' + value.toString());
+          expect(failure.toJson().containsKey(field), isFalse, reason: '$field=$value');
         }
       }
     });
@@ -217,7 +217,7 @@ void main() {
       for (final String field in _numberFields) {
         for (final double value in notFinite) {
           final ApiFailure failure = ApiFailure.fromJson(<String, dynamic>{field: value})!;
-          expect(failure.toJson().containsKey(field), isFalse, reason: field + '=' + value.toString());
+          expect(failure.toJson().containsKey(field), isFalse, reason: '$field=$value');
         }
       }
     });
@@ -240,7 +240,7 @@ void main() {
       for (final String field in _boolFields) {
         for (final Object? value in invalid) {
           final ApiFailure failure = ApiFailure.fromJson(<String, dynamic>{field: value})!;
-          expect(failure.toJson().containsKey(field), isFalse, reason: field + '=' + value.toString());
+          expect(failure.toJson().containsKey(field), isFalse, reason: '$field=$value');
         }
       }
     });

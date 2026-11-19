@@ -393,7 +393,7 @@ class MethodChannelBasicAudio implements BasicAudioPort {
       _setError('平台未实现 $basicAudioStateChannel 状态通道');
     } else if (error is PlatformException) {
       final String? message = error.message;
-      _setError(message == null ? error.code : error.code + ': ' + message);
+      _setError(message == null ? error.code : '${error.code}: $message');
     } else {
       _setError('音频状态通道失败：$error');
     }
@@ -425,7 +425,7 @@ class MethodChannelBasicAudio implements BasicAudioPort {
       _setError('平台未实现 $basicAudioChannel 通道（$method）');
     } on PlatformException catch (error) {
       final String? message = error.message;
-      _setError(message == null ? error.code : error.code + ': ' + message);
+      _setError(message == null ? error.code : '${error.code}: $message');
     } catch (error) {
       _setError('音频通道调用失败（$method）：$error');
     }

@@ -307,7 +307,7 @@ class ApiResult {
     if (adapted) {
       return message;
     }
-    return source.displayName + '返回 ' + codeOf(body).toString() + '：' + message;
+    return '${source.displayName}返回 ${codeOf(body)}：$message';
   }
 
   /// Qt/src/MusicApi.cpp:98-123 send() 收到宿主响应之后的形状判定

@@ -252,7 +252,7 @@ class HudArchivePage {
 
       // :429-431 非曲目表态：来源滚动标题
       if (!showTrackList) {
-        _roll('music-source', 'MUSIC DATABASE / ' + s.libraryName, x, 471, 12, width - x - 59);
+        _roll('music-source', 'MUSIC DATABASE / ${s.libraryName}', x, 471, 12, width - x - 59);
       }
 
       if (showTrackList) {
@@ -265,7 +265,7 @@ class HudArchivePage {
         _rule(x, 601, width - x - 59);                                                // :437
         _fill(const <Object?>[], x - 12, 598, 6, 6);                                  // :438 ink()
         final String kind = item.kind;                                                // :439
-        _roll('music-id', kind.toUpperCase() + ' ID: ' + item.id + ' / ' + item.artist, x, 624, 16,
+        _roll('music-id', '${kind.toUpperCase()} ID: ${item.id} / ${item.artist}', x, 624, 16,
             width - x - 210);                                                         // :440-442
         _text(kind.toUpperCase(), width - 170, 627, 11);                              // :443
         String label = '打开歌单资料库 →';                                              // :444
@@ -300,8 +300,8 @@ class HudArchivePage {
       color[3] = index == row ? 1 : 0.45;                                             // :471
       _fill(color, x, index == row ? 909 : 920, 2, index == row ? 33 : 12);           // :472
       if (!s.libraryItemsEmpty) {                                                     // :473
-        _hit(x - 6, 900, 26, 50, 'music:slot:' + index.toString(),
-            '选曲 ' + (index + 1).toString());                                        // :474-475
+        _hit(x - 6, 900, 26, 50, 'music:slot:$index',
+            '选曲 ${index + 1}');                                        // :474-475
       }
     }
     _button('↓', nav + 320, 903, 46, 46, 'next', 28);                                 // :478
@@ -309,11 +309,11 @@ class HudArchivePage {
     final double col = width * 0.5234375;                                             // :479
     _button('←', col, 903, 46, 46, 'column-prev', 28);                                // :480
     if (!s.directory) {                                                               // :481
-      _text('COLLECTION ' + _pad(s.sourceOrderIndex + 1) + ' / ' + _pad(s.provider == 'kugou' ? 4 : 5),
+      _text('COLLECTION ${_pad(s.sourceOrderIndex + 1)} / ${_pad(s.provider == 'kugou' ? 4 : 5)}',
           col + 70, 904, 10);                                                         // :482-484
       _roll('music-column', s.libraryName, col + 70, 925, 15, width - col - 360);     // :485
     } else {
-      final String label = 'TRACK COLUMN ' + _pad(s.selectedLane + 1) + ' / 05';      // :487
+      final String label = 'TRACK COLUMN ${_pad(s.selectedLane + 1)} / 05';      // :487
       _text(label, col + 62 + (171 - text.glyphWidth(label, 15)) / 2, 916, 15);       // :488
     }
     _button('→', col + 310, 903, 46, 46, 'column-next', 28);                          // :490

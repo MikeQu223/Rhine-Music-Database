@@ -545,8 +545,8 @@ class BasicHudFrame {
         selectedPhysicalRow: selected,
         sourceMessage: state.status,
       ),
-      drawTrackList: (double _, HudArchiveState __) {},
-      drawEmpty: (double _, HudArchiveState __) {},
+      drawTrackList: (double _, HudArchiveState _) {},
+      drawEmpty: (double _, HudArchiveState _) {},
       // Qt NativeHudController.cpp:945-948 supportsTrackList()：只有当前条目是
       // 曲目（kind == "song"）时才给 Tab Mode 按钮。原来这里恒 false，按钮因此
       // 永远不出现。
@@ -938,7 +938,7 @@ class _RenderHudGestureRegion extends RenderProxyBox {
 
 /// 只允许从曲目列开始的竖直拖动（其它位置不参与竞技场，也就不会跟 Qt 抢手势）。
 class _LibraryDragRecognizer extends VerticalDragGestureRecognizer {
-  _LibraryDragRecognizer({this.allows, super.debugOwner});
+  _LibraryDragRecognizer({super.debugOwner}) : allows = null;
 
   bool Function(Offset local)? allows;
 
@@ -1333,7 +1333,7 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
         : <Rect>[for (final Rect rect in stageRegions) geometry.rectToLogical(rect)];
     return Stack(
       children: <Widget>[
-        if (scene != null) scene,
+        ?scene,
         Positioned.fill(
           child: CustomPaint(
             painter: HudStagePainter(

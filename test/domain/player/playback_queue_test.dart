@@ -14,7 +14,7 @@ Map<String, Object?> song(String id, {String provider = 'netease'}) {
     'kind': 'song',
     'id': id,
     'provider': provider,
-    'title': 'T' + id,
+    'title': 'T$id',
   };
 }
 

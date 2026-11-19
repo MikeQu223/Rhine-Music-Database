@@ -138,12 +138,12 @@ class RecordingPorts implements LibraryModalPorts {
 
 LibraryRowRef songRow(int index) => LibraryRowRef(
       index: index,
-      value: <String, Object?>{'kind': 'song', 'title': 't${index}'},
+      value: <String, Object?>{'kind': 'song', 'title': 't$index'},
     );
 
 LibraryRowRef albumRow(int index) => LibraryRowRef(
       index: index,
-      value: <String, Object?>{'kind': 'album', 'title': 'a${index}'},
+      value: <String, Object?>{'kind': 'album', 'title': 'a$index'},
     );
 
 LibraryModalSnapshot snapshot({
@@ -200,7 +200,7 @@ LibraryModalSnapshot snapshot({
 HudHit onlyHit(List<HudHit> hits, String action) {
   final List<HudHit> matched =
       hits.where((HudHit h) => h.action == action).toList();
-  expect(matched, hasLength(1), reason: 'action ${action} 应恰好一个命中');
+  expect(matched, hasLength(1), reason: 'action $action 应恰好一个命中');
   return matched.single;
 }
 
@@ -209,7 +209,7 @@ HudTextCommand textCommand(List<HudCommand> commands, String value) {
       commands.whereType<HudTextCommand>();
   final List<HudTextCommand> matched =
       all.where((HudTextCommand c) => c.value == value).toList();
-  expect(matched, hasLength(1), reason: '文案 ${value} 应恰好一条 text 命令');
+  expect(matched, hasLength(1), reason: '文案 $value 应恰好一条 text 命令');
   return matched.single;
 }
 

@@ -100,8 +100,8 @@ void main() {
       expect(streams.keys.toSet(), SlicePage.values.toSet());
       for (final SlicePage page in SlicePage.values) {
         final PageCommandStream stream = streams[page]!;
-        expect(stream.wire, isNotEmpty, reason: '${page} 在设备上必须产出命令');
-        expect(stream.issues, isEmpty, reason: '${page} 解码 issue：${stream.issues}');
+        expect(stream.wire, isNotEmpty, reason: '$page 在设备上必须产出命令');
+        expect(stream.issues, isEmpty, reason: '$page 解码 issue：${stream.issues}');
         expect(stream.decoded, hasLength(stream.wire.length));
         expect(stream.operations.every(hudKnownOperationNames.contains), isTrue);
         expect(stream.execution.records, hasLength(stream.decoded.length));
@@ -120,7 +120,7 @@ void main() {
       expect(streams[SlicePage.queue]!.operations, containsAll(<String>['fill', 'text']));
       // 命中区域是命令流的伴随产物，四页都必须给出（否则点击面为空）。
       for (final SlicePage page in SlicePage.values) {
-        expect(streams[page]!.hits, isNotEmpty, reason: '${page} 无命中');
+        expect(streams[page]!.hits, isNotEmpty, reason: '$page 无命中');
       }
     });
   });

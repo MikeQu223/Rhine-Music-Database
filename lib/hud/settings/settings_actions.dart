@@ -159,17 +159,7 @@ class SettingsActionAvailability {
       desktopWindowControls, desktopLyrics);
 
   @override
-  String toString() => 'SettingsActionAvailability(officialPlayback: '
-      + officialPlayback.toString() +
-      ', localMusic: ' +
-      localMusic.toString() +
-      ', applicationVolume: ' +
-      applicationVolume.toString() +
-      ', desktopWindowControls: ' +
-      desktopWindowControls.toString() +
-      ', desktopLyrics: ' +
-      desktopLyrics.toString() +
-      ')';
+  String toString() => 'SettingsActionAvailability(officialPlayback: $officialPlayback, localMusic: $localMusic, applicationVolume: $applicationVolume, desktopWindowControls: $desktopWindowControls, desktopLyrics: $desktopLyrics)';
 }
 
 // 4. 不可变状态镜像
@@ -260,23 +250,7 @@ class SettingsActionState {
       cacheBusy, updateBusy, updateAvailable, statusMessage);
 
   @override
-  String toString() => 'SettingsActionState(themeMode: ' +
-      themeMode +
-      ', motionEnabled: ' +
-      motionEnabled.toString() +
-      ', startupAnimationEnabled: ' +
-      startupAnimationEnabled.toString() +
-      ', quality: ' +
-      quality +
-      ', cacheBusy: ' +
-      cacheBusy.toString() +
-      ', updateBusy: ' +
-      updateBusy.toString() +
-      ', updateAvailable: ' +
-      updateAvailable.toString() +
-      ', statusMessage: ' +
-      statusMessage +
-      ')';
+  String toString() => 'SettingsActionState(themeMode: $themeMode, motionEnabled: $motionEnabled, startupAnimationEnabled: $startupAnimationEnabled, quality: $quality, cacheBusy: $cacheBusy, updateBusy: $updateBusy, updateAvailable: $updateAvailable, statusMessage: $statusMessage)';
 }
 
 // 5. 端口：真实副作用的唯一出口
@@ -346,7 +320,7 @@ final class SettingsActionApplied extends SettingsActionResult {
   final String message;
 
   @override
-  String toString() => 'SettingsActionApplied(' + message + ')';
+  String toString() => 'SettingsActionApplied($message)';
 }
 
 /// 被入参/状态门拒绝：端口没有被调用。
@@ -356,7 +330,7 @@ final class SettingsActionIgnored extends SettingsActionResult {
   final String reason;
 
   @override
-  String toString() => 'SettingsActionIgnored(' + reason + ')';
+  String toString() => 'SettingsActionIgnored($reason)';
 }
 
 /// 被平台门拒绝：该动作在当前能力下不可见，端口没有被调用。
@@ -366,7 +340,7 @@ final class SettingsActionUnavailable extends SettingsActionResult {
   final String reason;
 
   @override
-  String toString() => 'SettingsActionUnavailable(' + reason + ')';
+  String toString() => 'SettingsActionUnavailable($reason)';
 }
 
 // 7. 路由
@@ -395,7 +369,7 @@ class SettingsActionRouter {
   SettingsActionResult dispatch(SettingsActionKind kind, {String? value}) {
     if (!availability.isVisible(kind)) {
       return SettingsActionUnavailable(
-        kind.name + ' 在当前平台能力下不可见（PlatformFeatures 对应项为 false）',
+        '${kind.name} 在当前平台能力下不可见（PlatformFeatures 对应项为 false）',
       );
     }
     return switch (kind) {
@@ -418,24 +392,23 @@ class SettingsActionRouter {
       return const SettingsActionIgnored('theme 需要显式值：light / dark / system');
     }
     if (!settingsThemeValues.contains(value)) {
-      return SettingsActionIgnored('theme 值 ' + value + ' 不在白名单 light/dark/system 内');
+      return SettingsActionIgnored('theme 值 $value 不在白名单 light/dark/system 内');
     }
     ports.setTheme(value);
-    return SettingsActionApplied(state: state.copyWith(themeMode: value), message: 'theme=' + value);
+    return SettingsActionApplied(state: state.copyWith(themeMode: value), message: 'theme=$value');
   }
 
   SettingsActionResult _motion(String? value) {
     final bool? enabled = _parseOnOff(value, acceptReducedFull: true);
     if (enabled == null) {
       return SettingsActionIgnored(
-        'motion 只接受 on/off（Qt ReducedFull 的 full/reduced 亦接受），收到 ' +
-            (value ?? 'null'),
+        'motion 只接受 on/off（Qt ReducedFull 的 full/reduced 亦接受），收到 ${value ?? 'null'}',
       );
     }
     ports.setMotion(enabled);
     return SettingsActionApplied(
       state: state.copyWith(motionEnabled: enabled),
-      message: 'motion=' + (enabled ? 'on' : 'off'),
+      message: 'motion=${enabled ? 'on' : 'off'}',
     );
   }
 
@@ -443,19 +416,19 @@ class SettingsActionRouter {
     final bool? enabled = _parseOnOff(value);
     if (enabled == null) {
       return SettingsActionIgnored(
-        'startup-animation 只接受 on/off，收到 ' + (value ?? 'null'),
+        'startup-animation 只接受 on/off，收到 ${value ?? 'null'}',
       );
     }
     ports.setStartupAnimation(enabled);
     return SettingsActionApplied(
       state: state.copyWith(startupAnimationEnabled: enabled),
-      message: 'startup-animation=' + (enabled ? 'on' : 'off'),
+      message: 'startup-animation=${enabled ? 'on' : 'off'}',
     );
   }
 
   SettingsActionResult _reinitialize(String? value) {
     if (value != null) {
-      return SettingsActionIgnored('replay 不接受值，收到 ' + value);
+      return SettingsActionIgnored('replay 不接受值，收到 $value');
     }
     ports.reinitialize();
     // 没有字段变化的分支也返回新的 state 实例，免得调用方以为能原地改旧对象。
@@ -465,20 +438,18 @@ class SettingsActionRouter {
   SettingsActionResult _quality(String? value) {
     if (value == null || !settingsQualityValues.contains(value)) {
       return SettingsActionIgnored(
-        'quality 值 ' +
-            (value ?? 'null') +
-            ' 不在平台允许的音质值域内（MusicPlayer.cpp:104-124）',
+        'quality 值 ${value ?? 'null'} 不在平台允许的音质值域内（MusicPlayer.cpp:104-124）',
       );
     }
     ports.setQuality(value);
-    return SettingsActionApplied(state: state.copyWith(quality: value), message: 'quality=' + value);
+    return SettingsActionApplied(state: state.copyWith(quality: value), message: 'quality=$value');
   }
 
   // 性能面板处理函数已停用。
 
   SettingsActionResult _cache(String? value) {
     if (value != null) {
-      return SettingsActionIgnored('cache:clear 不接受值，收到 ' + value);
+      return SettingsActionIgnored('cache:clear 不接受值，收到 $value');
     }
     if (state.cacheBusy) {
       return const SettingsActionIgnored('缓存清理进行中，忽略重复触发');
@@ -522,7 +493,7 @@ class SettingsActionRouter {
         return SettingsActionApplied(state: state.copyWith(), message: 'update:release');
       default:
         return SettingsActionIgnored(
-          'update 需要显式值 check/cancel/release，收到 ' + (value ?? 'null'),
+          'update 需要显式值 check/cancel/release，收到 ${value ?? 'null'}',
         );
     }
   }
@@ -532,18 +503,18 @@ class SettingsActionRouter {
       return const SettingsActionIgnored('projectLinks 需要链接 id（music:project-<id> 的后缀）');
     }
     if (!settingsProjectLinkIds.contains(value)) {
-      return SettingsActionIgnored('未知 project 链接 id ' + value);
+      return SettingsActionIgnored('未知 project 链接 id $value');
     }
     ports.openProjectLink(value);
     return SettingsActionApplied(
       state: state.copyWith(),
-      message: 'music:project-' + value,
+      message: 'music:project-$value',
     );
   }
 
   SettingsActionResult _restoreDefaults(String? value) {
     if (value != null) {
-      return SettingsActionIgnored('settings:restore-defaults 不接受值，收到 ' + value);
+      return SettingsActionIgnored('settings:restore-defaults 不接受值，收到 $value');
     }
     // 唯一出口，参数就是平台事实；本层不写任何键，也不清账号/平台/更新状态。
     ports.restoreDefaults(includeDesktopLyrics: availability.desktopLyrics);
@@ -560,9 +531,7 @@ class SettingsActionRouter {
         // 更新检查结果与限流状态（契约 :274）。
         statusMessage: '已恢复默认设置',
       ),
-      message: 'settings:restore-defaults(includeDesktopLyrics: ' +
-          (availability.desktopLyrics ? 'true' : 'false') +
-          ')',
+      message: 'settings:restore-defaults(includeDesktopLyrics: ${availability.desktopLyrics ? 'true' : 'false'})',
     );
   }
 }
@@ -617,7 +586,7 @@ String actionKey(SettingsActionKind kind) => switch (kind) {
 
 /// 单个 Project 链接的命中串（Qt/src/SettingsSchema.cpp:664-687 的
 /// music:project-<id>）。
-String projectLinkAction(String id) => 'music:project-' + id;
+String projectLinkAction(String id) => 'music:project-$id';
 
 /// actionKey / parseActionKey 的结果：动作种类 + 该串携带的值（没有值时 null）。
 class SettingsActionRoute {
@@ -634,7 +603,7 @@ class SettingsActionRoute {
   int get hashCode => Object.hash(kind, value);
 
   @override
-  String toString() => 'SettingsActionRoute(' + kind.name + ', ' + (value ?? 'null') + ')';
+  String toString() => 'SettingsActionRoute(${kind.name}, ${value ?? 'null'})';
 }
 
 /// 把 Qt 命中串解析成动作。只做词法映射，不做值域校验（值域在 dispatch 里）；

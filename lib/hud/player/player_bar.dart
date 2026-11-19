@@ -110,15 +110,7 @@ class PlayerBarRect {
 
   @override
   String toString() =>
-      'PlayerBarRect(' +
-      x.toString() +
-      ', ' +
-      y.toString() +
-      ', ' +
-      width.toString() +
-      ', ' +
-      height.toString() +
-      ')';
+      'PlayerBarRect($x, $y, $width, $height)';
 }
 
 /// 文本包围盒（Qt Glyphs::bounds 的 x/y/width/height 四键）。
@@ -148,15 +140,7 @@ class GlyphBounds {
 
   @override
   String toString() =>
-      'GlyphBounds(' +
-      x.toString() +
-      ', ' +
-      y.toString() +
-      ', ' +
-      width.toString() +
-      ', ' +
-      height.toString() +
-      ')';
+      'GlyphBounds($x, $y, $width, $height)';
 }
 
 /// 字形度量端口（Qt Glyphs::width 与 Glyphs::bounds 的只读两面）。
@@ -236,7 +220,7 @@ String _twoDigits(int value) => value.toString().padLeft(2, '0');
 String playerBarClock(double milliseconds) {
   final double nonNegative = milliseconds < 0 ? 0.0 : milliseconds;
   final int seconds = (nonNegative / 1000).floor();
-  return _twoDigits(seconds ~/ 60) + ':' + _twoDigits(seconds % 60);
+  return '${_twoDigits(seconds ~/ 60)}:${_twoDigits(seconds % 60)}';
 }
 
 /// 单帧绘制累加器（Qt PlayerBar::Painter，PlayerBar.cpp:15-104）。
@@ -417,7 +401,7 @@ void _song(_Painter paint, PlayerBarState state, double x, double y, double widt
   );
   String detail = state.artist;
   if (state.album.isNotEmpty) {
-    detail = detail + ' / ' + state.album;
+    detail = '$detail / ${state.album}';
   }
   if (detail.isEmpty) {
     detail = 'RHINE LAB / MUSIC DATABASE';
@@ -501,7 +485,7 @@ void _playbackMode(_Painter paint, PlayerBarState state, double x, double y) {
     paint.path(_orderPath, paint.ink);
   }
   paint.commands.add(<Object?>['restore']);
-  paint.hit(PlayerBarRect(x - 24, y - 24, 48, 48), 'player:mode', label + '，点击切换播放模式');
+  paint.hit(PlayerBarRect(x - 24, y - 24, 48, 48), 'player:mode', '$label，点击切换播放模式');
 }
 
 /// 歌词入口（PlayerBar.cpp:201-206）。

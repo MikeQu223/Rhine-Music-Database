@@ -23,7 +23,7 @@ import 'package:flutter_test/flutter_test.dart';
 /// 取第一个匹配到的元素文本（属性里不含 '>'，所以截到 '>' 为止是安全的）。
 String _element(String text, String open) {
   final int start = text.indexOf(open);
-  expect(start, isNot(-1), reason: 'missing ' + open);
+  expect(start, isNot(-1), reason: 'missing $open');
   final int end = text.indexOf('>', start);
   return text.substring(start, end + 1);
 }
@@ -31,7 +31,7 @@ String _element(String text, String open) {
 /// [needle] 在 [text] 中、[from] 之后的下标；找不到时失败并给出可读理由。
 int _indexAfter(String text, String needle, {int from = 0, String? reason}) {
   final int index = text.indexOf(needle, from);
-  expect(index, isNot(-1), reason: reason ?? ('missing ' + needle));
+  expect(index, isNot(-1), reason: reason ?? ('missing $needle'));
   return index;
 }
 

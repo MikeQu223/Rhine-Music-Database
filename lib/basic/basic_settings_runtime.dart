@@ -41,9 +41,7 @@ class BasicSettingsApplyResult {
 /// 只在宿主外壳里持有一份（BasicApp）。面板模型每次按当前快照重建，
 /// 因此"写进去 -> 立刻读回 -> 行显示新值"是同一条真值链，不是两份状态。
 class BasicSettingsRuntime {
-  BasicSettingsRuntime({required BasicSettingsStore store, bool dark = true})
-      : _store = store,
-        _dark = dark;
+  BasicSettingsRuntime({required this._store, this._dark = true});
 
 
   final BasicSettingsStore _store;
