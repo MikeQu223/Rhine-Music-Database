@@ -1,21 +1,27 @@
-// 本机收藏（喜欢 + 歌单）存储的领域层测试。
+// 本机收藏（喜欢的歌曲 + 我的歌单）数据层测试。
 //
-// 存储后端是注入的 PreferencePort，所以这里只用一个内存 Map 假实现：不碰文件
-// 系统、不碰 Flutter，纯 Dart 逻辑。覆盖：喜欢写入/取消/去重、歌单 id 递增、
-// 重命名、删除、加歌去重、移除计数、损坏 JSON 容错、跨实例持久化、标题校验。
+// 存储后端是注入的 `PreferencePort`，所以这里只用一个内存 Map 替身：不碰文件系统、
+// 不碰 Flutter，纯 Dart 逻辑。每条断言的语义都对齐 Qt/src/LocalCollections.cpp 的
+// 对应行为（注释里给出依据），覆盖任务书要求的六类场景，外加落盘文档形状与容错载入。
+library;
+
+import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
-
+import 'package:rhine_music_database/basic/basic_models.dart';
 import 'package:rhine_music_database/data/storage/preference_store.dart';
 import 'package:rhine_music_database/domain/collection/local_collection_store.dart';
 
-/// 内存 PreferencePort：与真实后端一样按 key 读写字符串。
+/// 内存 [PreferencePort]：与真实后端一样按 key 读写字符串，并记录写次数，
+/// 用来断言「幂等操作不重复落盘」。
 class MemoryPort implements PreferencePort {
-  MemoryPort({Map<String, String>? initial})
+  MemoryPort([Map<String, String>? initial])
       : values = <String, String>{...?initial};
 
   final Map<String, String> values;
   final List<String> writes = <String>[];
+
+  int get writeCount => writes.length;
 
   @override
   Future<String?> read(String key) async => values[key];
@@ -32,235 +38,297 @@ class MemoryPort implements PreferencePort {
   }
 }
 
-Future<LocalCollectionStore> loadedStore(MemoryPort port) async {
-  final store = LocalCollectionStore(preferences: port);
+/// 递增时钟：让 `createdAt` 严格递增，歌单顺序可断言（Qt 用
+/// `QDateTime::currentMSecsSinceEpoch()`，LocalCollections.cpp:185）。
+DateTime Function() _ticking(int start) {
+  int current = start;
+  return () {
+    current += 1000;
+    return DateTime.fromMillisecondsSinceEpoch(current);
+  };
+}
+
+Future<LocalCollectionStore> _loaded(
+  MemoryPort port, {
+  DateTime Function()? clock,
+}) async {
+  final LocalCollectionStore store = LocalCollectionStore(
+    port: port,
+    clock: clock ?? _ticking(1700000000000),
+  );
   await store.load();
   return store;
 }
 
+Map<String, Object?> _document(MemoryPort port) {
+  final String? raw = port.values[LocalCollectionStore.keyPrefix + 'siren.json'];
+  expect(raw, isNotNull, reason: '写入后必须存在 collections/siren.json 这个键');
+  return jsonDecode(raw!) as Map<String, Object?>;
+}
+
 void main() {
   group('喜欢', () {
-    test('写入后 isLiked 为真且列表有序，取消后移除', () async {
-      final port = MemoryPort();
-      final store = await loadedStore(port);
+    test('like/unlike 往返：likedIds 从新到旧，likedCount 同步，status 用 Qt 文案', () async {
+      final MemoryPort port = MemoryPort();
+      final LocalCollectionStore store = await _loaded(port);
 
-      await store.setLiked('track-a', true);
-      await store.setLiked('track-b', true);
-      expect(store.likedIds, <String>['track-a', 'track-b']);
-      expect(store.isLiked('track-a'), isTrue);
-      expect(store.isLiked('track-z'), isFalse);
+      expect(await store.toggleLike('song-a'), isTrue);
+      expect(await store.toggleLike('song-b'), isTrue);
+      expect(store.isLiked('song-a'), isTrue);
+      expect(store.likedCount, 2);
+      // LocalCollections.cpp:87-94：存储按添加顺序，读取反转为新→旧。
+      expect(store.likedIds(), <String>['song-b', 'song-a']);
+      expect(store.status, '已加入喜欢的歌曲');
 
-      await store.setLiked('track-a', false);
-      expect(store.likedIds, <String>['track-b']);
-      expect(store.isLiked('track-a'), isFalse);
+      expect(await store.toggleLike('song-a'), isFalse);
+      expect(store.isLiked('song-a'), isFalse);
+      expect(store.likedIds(), <String>['song-b']);
+      expect(store.likedCount, 1);
+      expect(store.status, '已从喜欢的歌曲移除');
+
+      await store.unlike('song-b');
+      expect(store.likedIds(), isEmpty);
+      expect(store.likedCount, 0);
     });
 
-    test('重复喜欢同一个 id 不产生重复项', () async {
-      final port = MemoryPort();
-      final store = await loadedStore(port);
+    test('重复 like / 重复 unlike 幂等：不产生重复项，也不重复写盘', () async {
+      final MemoryPort port = MemoryPort();
+      final LocalCollectionStore store = await _loaded(port);
 
-      await store.setLiked('track-x', true);
-      await store.setLiked('track-x', true);
-      expect(store.likedIds, <String>['track-x']);
+      await store.like('song-a');
+      final int afterFirst = port.writeCount;
+      await store.like('song-a');
+      expect(store.likedIds(), <String>['song-a']);
+      // LocalCollections.cpp:109-119：已存在且 liked 直接 return true，不 save()。
+      expect(port.writeCount, afterFirst);
 
-      await store.setLiked('track-x', false);
-      expect(store.likedIds, isEmpty);
+      await store.unlike('song-a');
+      final int afterRemove = port.writeCount;
+      await store.unlike('song-a');
+      expect(store.likedIds(), isEmpty);
+      // LocalCollections.cpp:120-122：不存在且 !liked 也直接 return true。
+      expect(port.writeCount, afterRemove);
     });
 
-    test('持久化为 JSON 字符串数组', () async {
-      final port = MemoryPort();
-      final store = await loadedStore(port);
-      await store.setLiked('track-1', true);
+    test('空 id 写不进收藏，并留下 Qt 的失败文案', () async {
+      final MemoryPort port = MemoryPort();
+      final LocalCollectionStore store = await _loaded(port);
 
-      expect(port.values[LocalCollectionStore.likedIdsKey], '["track-1"]');
-    });
-
-    test('损坏的喜欢 JSON 容错为空', () async {
-      final port = MemoryPort(
-        initial: <String, String>{
-          LocalCollectionStore.likedIdsKey: '{"not": "a list"',
-        },
-      );
-      final store = await loadedStore(port);
-
-      expect(store.likedIds, isEmpty);
-      expect(store.isLiked('anything'), isFalse);
+      expect(await store.toggleLike(''), isFalse);
+      expect(store.likedIds(), isEmpty);
+      // MusicMutation.cpp：setLiked 返回 false 时 status = 无法写入本地收藏。
+      expect(store.status, '无法写入本地收藏');
+      expect(port.writeCount, 0);
     });
   });
 
   group('歌单', () {
-    test('创建歌单 id 序号递增且标题 trim', () async {
-      final port = MemoryPort();
-      final store = await loadedStore(port);
+    test('创建/改名/删除：新歌单在最前，trackCount 归零，status 逐条对齐', () async {
+      final MemoryPort port = MemoryPort();
+      final LocalCollectionStore store = await _loaded(port);
 
-      final first = await store.createPlaylist('  夜跑  ');
-      expect(first.id, 'local-playlist-1');
-      expect(first.title, '夜跑');
+      final BasicLocalPlaylist first = await store.createPlaylist(' 第一张 ');
+      expect(first.id, isNotEmpty);
+      expect(first.title, '第一张', reason: '名称要去掉首尾空白（Qt trims）');
       expect(first.trackCount, 0);
+      expect(store.status, '已创建歌单：第一张');
 
-      final second = await store.createPlaylist('通勤');
-      expect(second.id, 'local-playlist-2');
-      expect(store.playlists.map((p) => p.id), <String>[
-        'local-playlist-1',
-        'local-playlist-2',
-      ]);
-    });
-
-    test('标题 trim 后为空抛 ArgumentError', () async {
-      final port = MemoryPort();
-      final store = await loadedStore(port);
-
-      await expectLater(store.createPlaylist('   '), throwsArgumentError);
-      await expectLater(
-        store.renamePlaylist('missing', '  '),
-        throwsArgumentError,
-      );
-    });
-
-    test('重命名只改标题并保持顺序', () async {
-      final port = MemoryPort();
-      final store = await loadedStore(port);
-      await store.createPlaylist('旧名');
-      await store.createPlaylist('另一个');
-
-      await store.renamePlaylist('local-playlist-1', ' 新名 ');
-      expect(store.playlists.first.title, '新名');
-      expect(store.playlists.first.id, 'local-playlist-1');
-      expect(store.playlists.last.title, '另一个');
-    });
-
-    test('删除返回 true 且未知 id 返回 false', () async {
-      final port = MemoryPort();
-      final store = await loadedStore(port);
-      await store.createPlaylist('可删');
-
-      expect(await store.removePlaylist('local-playlist-1'), isTrue);
-      expect(store.playlists, isEmpty);
-      expect(await store.removePlaylist('local-playlist-1'), isFalse);
-    });
-
-    test('加歌去重：已存在的不重复加，含批内重复', () async {
-      final port = MemoryPort();
-      final store = await loadedStore(port);
-      await store.createPlaylist('列表');
-
-      await store.addToPlaylist(
-        playlistId: 'local-playlist-1',
-        trackIds: <String>['t1', 't2'],
-      );
-      await store.addToPlaylist(
-        playlistId: 'local-playlist-1',
-        trackIds: <String>['t2', 't3', 't3'],
-      );
-
-      expect(store.playlists.single.trackIds, <String>['t1', 't2', 't3']);
-      expect(store.playlists.single.trackCount, 3);
-    });
-
-    test('移除返回真实移除条数', () async {
-      final port = MemoryPort();
-      final store = await loadedStore(port);
-      await store.createPlaylist('列表');
-      await store.addToPlaylist(
-        playlistId: 'local-playlist-1',
-        trackIds: <String>['t1', 't2', 't3'],
-      );
-
+      final BasicLocalPlaylist second = await store.createPlaylist('第二张');
+      // LocalCollections.cpp:187：新记录 prepend 到头部。
       expect(
-        await store.removeFromPlaylist(
-          playlistId: 'local-playlist-1',
-          trackIds: <String>['t1', 't3', 'absent'],
-        ),
-        2,
+        store.playlists().map((BasicLocalPlaylist p) => p.title),
+        <String>['第二张', '第一张'],
       );
-      expect(store.playlists.single.trackIds, <String>['t2']);
 
+      await store.renamePlaylist(first.id, '改过了');
+      expect(store.status, '已重命名歌单');
       expect(
-        await store.removeFromPlaylist(
-          playlistId: 'local-playlist-1',
-          trackIds: <String>['t2', 't2'],
-        ),
-        1,
+        store.playlists().map((BasicLocalPlaylist p) => p.title),
+        <String>['第二张', '改过了'],
       );
-      expect(store.playlists.single.trackIds, isEmpty);
-      expect(
-        await store.removeFromPlaylist(
-          playlistId: 'missing',
-          trackIds: <String>['t1'],
-        ),
-        0,
-      );
+
+      await store.deletePlaylist(second.id);
+      expect(store.status, '已删除歌单');
+      expect(store.playlists().single.title, '改过了');
     });
 
-    test('损坏的歌单 JSON 或错误形状容错为空', () async {
-      final port = MemoryPort(
-        initial: <String, String>{
-          LocalCollectionStore.playlistsKey: '[{"id": 1,',
-        },
-      );
-      final store = await loadedStore(port);
+    test('加曲/移曲：playlistTrackIds 从新到旧，playlists() 的 trackCount 跟着变', () async {
+      final MemoryPort port = MemoryPort();
+      final LocalCollectionStore store = await _loaded(port);
+      final BasicLocalPlaylist playlist = await store.createPlaylist('混音');
 
-      expect(store.playlists, isEmpty);
+      await store.addTrack(playlist.id, 'song-1');
+      await store.addTrack(playlist.id, 'song-2');
+      // LocalCollections.cpp:164-176：曲目也按加入顺序存、读取反转为新→旧。
+      expect(store.playlistTrackIds(playlist.id), <String>['song-2', 'song-1']);
+      expect(store.playlists().single.trackCount, 2);
+
+      await store.removeTrack(playlist.id, 'song-1');
+      expect(store.playlistTrackIds(playlist.id), <String>['song-2']);
+      expect(store.playlists().single.trackCount, 1);
+
+      // LocalCollections.cpp:241-250：找不到曲目也返回 true（不算失败）。
+      await store.removeTrack(playlist.id, 'song-missing');
+      expect(store.playlistTrackIds(playlist.id), <String>['song-2']);
     });
 
-    test('歌单数组里非对象条目被跳过', () async {
-      final port = MemoryPort(
-        initial: <String, String>{
-          LocalCollectionStore.playlistsKey:
-              '[42, {"id":"local-playlist-3","title":"保留","trackIds":["t1",2]}]',
-        },
-      );
-      final store = await loadedStore(port);
+    test('非法 id / 重复操作：不抛异常、不编数据，status 记 Qt 失败文案', () async {
+      final MemoryPort port = MemoryPort();
+      final LocalCollectionStore store = await _loaded(port);
+      final BasicLocalPlaylist playlist = await store.createPlaylist('列表');
 
-      expect(store.playlists.length, 1);
-      expect(store.playlists.single.title, '保留');
-      expect(store.playlists.single.trackIds, <String>['t1']);
-      // 新 id 序号接在最大的 local-playlist-3 之后。
-      final created = await store.createPlaylist('新增');
-      expect(created.id, 'local-playlist-4');
+      // 未知歌单：加曲/移曲都不该写盘也不该出现内容。
+      await store.addTrack('no-such-playlist', 'song-1');
+      expect(store.status, '无法写入本地歌单');
+      await store.removeTrack('no-such-playlist', 'song-1');
+      expect(store.status, '无法写入本地歌单');
+      expect(store.playlistTrackIds('no-such-playlist'), isEmpty);
+
+      // trackId 为空：LocalCollections.cpp:217 直接 false。
+      await store.addTrack(playlist.id, '');
+      expect(store.status, '无法写入本地歌单');
+      expect(store.playlistTrackIds(playlist.id), isEmpty);
+
+      // 重复加曲幂等：不产生第二份。
+      await store.addTrack(playlist.id, 'song-1');
+      final int afterFirst = port.writeCount;
+      await store.addTrack(playlist.id, 'song-1');
+      expect(store.playlistTrackIds(playlist.id), <String>['song-1']);
+      expect(port.writeCount, afterFirst);
+
+      // 未知 id 的改名/删除：不写盘，留下失败文案。
+      await store.renamePlaylist('no-such-playlist', '新名字');
+      expect(store.status, '无法重命名歌单');
+      await store.deletePlaylist('no-such-playlist');
+      expect(store.status, '无法删除歌单');
+      expect(store.playlists().single.title, '列表');
+    });
+
+    test('名称上限 100 码点、歌单上限 200 张：拒绝返回空 id（Qt 返回空对象）', () async {
+      final MemoryPort port = MemoryPort();
+      final LocalCollectionStore store = await _loaded(port);
+
+      expect(await store.createPlaylist('   '), LocalCollectionStore.emptyPlaylist);
+      expect(store.status, '请输入 1–100 字歌单名称');
+      expect(await store.createPlaylist('名' * 101), LocalCollectionStore.emptyPlaylist);
+      expect(await store.createPlaylist('名' * 100), isNot(LocalCollectionStore.emptyPlaylist));
+      expect(store.playlists().single.title.runes.length, 100);
+
+      for (int i = 1; i < LocalCollectionStore.maxPlaylists; i++) {
+        await store.createPlaylist('批量 $i');
+      }
+      expect(store.playlists().length, LocalCollectionStore.maxPlaylists);
+      // LocalCollections.cpp:180：m_playlists.size() >= 200 时拒绝。
+      expect(await store.createPlaylist('第 201 张'), LocalCollectionStore.emptyPlaylist);
+      expect(store.playlists().length, LocalCollectionStore.maxPlaylists);
     });
   });
 
   group('持久化', () {
-    test('跨实例：同一内存 port 重建 store 后状态一致', () async {
-      final port = MemoryPort();
-      final first = await loadedStore(port);
-      await first.setLiked('track-1', true);
-      await first.createPlaylist('跨实例');
-      await first.addToPlaylist(
-        playlistId: 'local-playlist-1',
-        trackIds: <String>['track-1', 'track-2'],
-      );
+    test('写盘文档与 Qt 逐字段同形：version / provider / liked / playlists', () async {
+      final MemoryPort port = MemoryPort();
+      final LocalCollectionStore store = await _loaded(port);
+      await store.like('song-a');
+      final BasicLocalPlaylist playlist = await store.createPlaylist('清晨');
+      await store.addTrack(playlist.id, 'song-a');
 
-      final second = await loadedStore(port);
-      expect(second.likedIds, <String>['track-1']);
-      expect(second.playlists.length, 1);
-      expect(second.playlists.single.id, 'local-playlist-1');
-      expect(second.playlists.single.title, '跨实例');
-      expect(second.playlists.single.trackIds, <String>['track-1', 'track-2']);
+      expect(store.storageKey, 'collections/siren.json');
+      final Map<String, Object?> document = _document(port);
+      // LocalCollections.cpp:81-82：{"version":1,"provider":…,"liked":…,"playlists":…}
+      expect(document.keys.toList(), <String>['version', 'provider', 'liked', 'playlists']);
+      expect(document['version'], 1);
+      expect(document['provider'], sirenProvider);
+      expect(document['liked'], <Object?>['song-a']);
+      final Map<String, Object?> record =
+          (document['playlists']! as List<Object?>).single! as Map<String, Object?>;
+      // LocalCollections.cpp:48-58 的字段名：id / name / createdAt / trackIDs。
+      expect(record.keys.toList(), <String>['id', 'name', 'createdAt', 'trackIDs']);
+      expect(record['id'], playlist.id);
+      expect(record['name'], '清晨');
+      expect(record['createdAt'], isA<int>());
+      expect(record['trackIDs'], <Object?>['song-a']);
     });
 
-    test('LocalPlaylist toJson/fromJson 往返与 copyWith', () {
-      const original = LocalPlaylist(
-        id: 'local-playlist-7',
-        title: '往返',
-        trackIds: <String>['a', 'b'],
+    test('跨实例：同一 port 重新 load 后收藏与歌单仍在', () async {
+      final MemoryPort port = MemoryPort();
+      final DateTime Function() clock = _ticking(1700000000000);
+      final LocalCollectionStore first = await _loaded(port, clock: clock);
+      await first.like('song-a');
+      final BasicLocalPlaylist created = await first.createPlaylist('跨实例');
+      await first.addTrack(created.id, 'song-a');
+      await first.addTrack(created.id, 'song-b');
+
+      final LocalCollectionStore second = await _loaded(port, clock: clock);
+      expect(second.likedIds(), <String>['song-a']);
+      expect(second.likedCount, 1);
+      expect(second.playlists().single.id, created.id);
+      expect(second.playlists().single.title, '跨实例');
+      expect(second.playlists().single.trackCount, 2);
+      expect(second.playlistTrackIds(created.id), <String>['song-b', 'song-a']);
+    });
+
+    test('载入 Qt 写的文档：去重、跳过空 name、按 createdAt 降序、坏数据当空', () async {
+      final MemoryPort port = MemoryPort(<String, String>{
+        'collections/siren.json': jsonEncode(<String, Object?>{
+          'version': 1,
+          'provider': 'siren',
+          'liked': <Object?>['song-a', '', 'song-a', 'song-b'],
+          'playlists': <Object?>[
+            <String, Object?>{
+              'id': 'old',
+              'name': '旧歌单',
+              'createdAt': 1000,
+              'trackIDs': <Object?>['t1', 't1', 't2'],
+            },
+            <String, Object?>{'id': '', 'name': '没有 id', 'createdAt': 2000},
+            <String, Object?>{'id': 'blank', 'name': '   ', 'createdAt': 2000},
+            <String, Object?>{
+              'id': 'new',
+              'name': ' 新歌单 ',
+              'createdAt': 3000,
+              'trackIDs': <Object?>[],
+            },
+          ],
+        }),
+      });
+      final LocalCollectionStore store = await _loaded(port);
+
+      // strings()：过滤空串并去重（LocalCollections.cpp:23-34）。
+      expect(store.likedIds(), <String>['song-b', 'song-a']);
+      // id/name 空的条目被跳过；name 去空白；createdAt 降序。
+      expect(
+        store.playlists().map((BasicLocalPlaylist p) => p.title),
+        <String>['新歌单', '旧歌单'],
       );
-      final roundTrip = LocalPlaylist.fromJson(original.toJson());
+      expect(store.playlistTrackIds('old'), <String>['t2', 't1']);
 
-      expect(roundTrip.id, original.id);
-      expect(roundTrip.title, original.title);
-      expect(roundTrip.trackIds, original.trackIds);
-      expect(roundTrip.trackCount, 2);
+      // 坏 JSON / 版本不符 / provider 不符：静默当空，不抛、不回写。
+      for (final String raw in <String>[
+        'not json',
+        jsonEncode(<String, Object?>{'version': 2, 'provider': 'siren'}),
+        jsonEncode(<String, Object?>{'version': 1, 'provider': 'netease'}),
+      ]) {
+        final MemoryPort broken = MemoryPort(<String, String>{
+          'collections/siren.json': raw,
+        });
+        final LocalCollectionStore empty = await _loaded(broken);
+        expect(empty.likedIds(), isEmpty);
+        expect(empty.playlists(), isEmpty);
+        expect(broken.writeCount, 0, reason: '载入失败不得回写');
+      }
+    });
 
-      expect(original.copyWith(title: '新').id, 'local-playlist-7');
-      expect(original.copyWith().trackIds, original.trackIds);
+    test('空状态：全新 store 的读数与 status 都是空', () async {
+      final MemoryPort port = MemoryPort();
+      final LocalCollectionStore store = await _loaded(port);
 
-      // 缺失/错误类型字段降级为空值而不是抛异常。
-      final broken = LocalPlaylist.fromJson(<Object?, Object?>{'id': 1});
-      expect(broken.id, '');
-      expect(broken.title, '');
-      expect(broken.trackIds, isEmpty);
+      expect(store.likedIds(), isEmpty);
+      expect(store.likedCount, 0);
+      expect(store.playlists(), isEmpty);
+      expect(store.isLiked('song-a'), isFalse);
+      expect(store.playlistTrackIds('anything'), isEmpty);
+      expect(store.status, '');
+      expect(port.writeCount, 0);
     });
   });
 }
