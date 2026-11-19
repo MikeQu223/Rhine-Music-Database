@@ -226,17 +226,35 @@ val qtAndroidLibsDir = File(qtAndroidDeployDir, "libs")
 val qtAndroidAbiDir = File(qtAndroidLibsDir, "arm64-v8a")
 val qtRuntimeLibsXml = File(qtAndroidDeployDir, "res/values/libs.xml")
 
+// 提示文案里的 SDK/NDK 必须在运行时推导，不能写死本机路径：
+//   SDK：ANDROID_SDK_ROOT > ANDROID_HOME > AGP 自己解析出的 android.sdkDirectory；
+//   NDK：ANDROID_NDK_ROOT，否则给 <sdk>/ndk/<已安装版本> 占位符（AGP 按版本号到那里找）。
+// 宿主 Qt 与 ninja 无法可靠猜测，统一给 <qt-host> / <ninja> 占位符。都不传时用占位符，
+// 命令仍是可直接照抄替换的形态。
+val androidSdkForHint: String =
+    (System.getenv("ANDROID_SDK_ROOT") ?: System.getenv("ANDROID_HOME"))
+        ?.takeIf { it.isNotBlank() }
+        ?: runCatching {
+            (project.extensions.getByName("android") as com.android.build.gradle.BaseExtension)
+                .sdkDirectory.absolutePath
+        }.getOrNull()?.takeIf { it.isNotBlank() }
+        ?: "<android-sdk>"
+
+val androidNdkForHint: String =
+    System.getenv("ANDROID_NDK_ROOT")?.takeIf { it.isNotBlank() }
+        ?: "<sdk>/ndk/<installed-version>"
+
 if (!qtAndroidAbiDir.isDirectory) {
     throw org.gradle.api.GradleException(
         "Qt 场景运行时不在 " + qtAndroidDeployDir.absolutePath + "（缺 libs/arm64-v8a）。" +
             "先用源码重建本分支的 Qt 运行时：" +
             " cmake -S Qt -B output/qt-android-flutter" +
             " -G Ninja -DCMAKE_TOOLCHAIN_FILE=<qt-android>/lib/cmake/Qt6/qt.toolchain.cmake" +
-            " -DQT_HOST_PATH=/usr -DQT_HOST_PATH_CMAKE_DIR=/usr/lib/cmake" +
+            " -DQT_HOST_PATH=<qt-host> -DQT_HOST_PATH_CMAKE_DIR=<qt-host>/lib/cmake" +
             " -DQT_QMAKE_TARGET_MKSPEC=android-clang -DANDROID_ABI=arm64-v8a" +
-            " -DANDROID_PLATFORM=android-28 -DANDROID_NDK_ROOT=/home/aibeto/Android/Sdk/ndk/30.0.16248370" +
-            " -DANDROID_SDK_ROOT=/home/aibeto/Android/Sdk -DCMAKE_BUILD_TYPE=Release" +
-            " -DCMAKE_MAKE_PROGRAM=/usr/bin/ninja" +
+            " -DANDROID_PLATFORM=android-28 -DANDROID_NDK_ROOT=" + androidNdkForHint +
+            " -DANDROID_SDK_ROOT=" + androidSdkForHint + " -DCMAKE_BUILD_TYPE=Release" +
+            " -DCMAKE_MAKE_PROGRAM=<ninja>" +
             " -DRHINE_ANDROID_NODE_ROOT=<node-mobile> -DRHINE_ANDROID_RESOURCES=<android-resources>" +
             " 然后 ninja -j20 apk；或用 -PrhineQtAndroidDeployDir=<path> /" +
             " RHINE_QT_ANDROID_DEPLOY_DIR=<path> 指向已有产物。",

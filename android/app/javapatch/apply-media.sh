@@ -20,12 +20,13 @@
 #
 # 用法：
 #   android/app/javapatch/apply-media.sh [deploy-dir] [--record]
-# deploy-dir 缺省 = $RHINE_QT_ANDROID_DEPLOY_DIR，再缺省 = 本卡 qt-build 的 staging。
+# deploy-dir 缺省 = $RHINE_QT_ANDROID_DEPLOY_DIR，再缺省 = 本仓库内
+# output/qt-android-flutter 的 staging（与 android/app/build.gradle.kts 的
+# qtOverlayDefaultDeployDir 默认一致）。
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 card_root="$(cd "$here/../../.." && pwd)"
-parity_root="$(cd "$card_root/../.." && pwd)"
 
 deploy=""
 record=0
@@ -36,7 +37,7 @@ for arg in "$@"; do
         *) deploy="$arg" ;;
     esac
 done
-deploy="${deploy:-${RHINE_QT_ANDROID_DEPLOY_DIR:-$parity_root/builds/NATIVE-RECOVERY-132/qt-build/Qt/android-build}}"
+deploy="${deploy:-${RHINE_QT_ANDROID_DEPLOY_DIR:-$card_root/output/qt-android-flutter/Qt/android-build}}"
 
 # androiddeployqt 只把实际链接到的 Qt 模块的 jar 放进 libs/。本工程链接 Qt6::Multimedia
 # （Qt/src/AudioPlayer.cpp 用 QMediaPlayer），所以正常构建里它一定在；如果这一版构建确实

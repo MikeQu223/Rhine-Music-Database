@@ -20,14 +20,15 @@
 #
 # 用法：
 #   android/app/javapatch/apply.sh [deploy-dir]
-# deploy-dir 缺省 = $RHINE_QT_ANDROID_DEPLOY_DIR，再缺省 = 本卡 qt-build 的 staging。
+# deploy-dir 缺省 = $RHINE_QT_ANDROID_DEPLOY_DIR，再缺省 = 本仓库内
+# output/qt-android-flutter 的 staging（与 android/app/build.gradle.kts 的
+# qtOverlayDefaultDeployDir 默认一致）。
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 card_root="$(cd "$here/../../.." && pwd)"
-parity_root="$(cd "$card_root/../.." && pwd)"
 
-deploy="${1:-${RHINE_QT_ANDROID_DEPLOY_DIR:-$parity_root/builds/NATIVE-RECOVERY-132/qt-build/Qt/android-build}}"
+deploy="${1:-${RHINE_QT_ANDROID_DEPLOY_DIR:-$card_root/output/qt-android-flutter/Qt/android-build}}"
 jar="$deploy/libs/Qt6Android.jar"
 # android.jar 只用来给 javac 提供 bootclasspath：先认环境变量，再认这台机器上的默认位置，
 # 两者都没有就明确报错（不猜路径，避免编到一半才发现 classpath 是空的）。
