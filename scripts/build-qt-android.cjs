@@ -323,6 +323,16 @@ function buildQtBase() {
             'examples',
             '-nomake',
             'tests',
+            // LTO（PERF-APK-SLIM）：本分支前提是"大量时间换体积"。Qt 的 -ltcg 经
+            // QtProcessConfigureArgs.cmake:1396 落成 CMAKE_INTERPROCEDURAL_OPTIMIZATION_<CONFIG>=ON，
+            // Clang 上是 thin LTO（CMake IPO 的默认形态；Qt 没有暴露 full 的入口，
+            // 手工塞 -flto 脱离官方路径，不做）。shared 库的导出符号拦掉了跨库 DCE，
+            // 收益主要是各库内部的死代码消除与 ICF，预计 Qt modules 压缩后省 1-1.5 MB。
+            // 代价：每个模块的大链接显著变慢；Qt 官方 Android 包同样不开 ltcg，
+            // 属于冷门组合，kit 重建后需真机回归。其余 4 个模块见 buildModule()
+            // 里的同款 IPO 传参。
+            '-ltcg',
+            'yes',
             // '--' 之后的参数原样交给 CMake（QtProcessConfigureArgs.cmake:228）。
             // 不能用 '-D变量=值'：configure 会把它塞进 QT_EXTRA_DEFINES（编译器宏），
             // 结果 CMAKE_TOOLCHAIN_FILE 根本没进缓存，CMake 就报"没指定 Android 工具链"。
@@ -374,6 +384,11 @@ function buildModule(name) {
             `-DQT_HOST_PATH=${hostQt}`,
             `-DCMAKE_INSTALL_PREFIX=${kit}`,
             '-DCMAKE_BUILD_TYPE=Release',
+            // 与 qtbase 的 -ltcg 对齐（PERF-APK-SLIM）：qtbase 经 Qt configure 落
+            // CMAKE_INTERPROCEDURAL_OPTIMIZATION_<CONFIG>=ON，这里直接用 CMake 原生
+            // 变量达到同一形态（Clang 上 thin LTO）。模块只配 Release，目录级变量
+            // 不会波及 Debug。收益与风险说明见 buildQtBase() 的注释。
+            '-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON',
             '-DQT_BUILD_EXAMPLES=OFF',
             '-DQT_BUILD_TESTS=OFF',
         ],
