@@ -572,6 +572,51 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     _publish();
   }
 
+  /// 播放模式（Qt 动作 `player:mode:<off|all|one|shuffle>` 的落点）。
+  ///
+  /// 真值在 [MusicPlayer.mode]（白名单校验 + 落 play-mode 偏好），这里只把结果
+  /// 同步进 [state] 供 HUD 选中态使用；非法取值由播放器拒绝并保持原样。
+  String get queueMode => _player.mode;
+
+  bool setQueueMode(String value) {
+    if (_disposed) {
+      return false;
+    }
+    bool accepted = _player.setMode(value);
+    if (accepted) {
+      _publish();
+    }
+    return accepted;
+  }
+
+  /// 选中队列第 [index] 行并播放（Qt 动作 `player:queue:<i>` → player.play(queue.at(i), index=i)）。
+  Future<void> playQueueIndex(int index) async {
+    if (_disposed) {
+      return;
+    }
+    final List<Map<String, Object?>> items = _player.queue.items;
+    if (index < 0 || index >= items.length) {
+      return;
+    }
+    _player.play(items[index], queueIndex: index);
+  }
+
+  /// 移除队列第 [index] 行（Qt 动作 `player:remove:<i>`；当前曲目由播放器拒绝）。
+  void removeFromQueue(int index) {
+    if (_disposed) {
+      return;
+    }
+    _player.removeFromQueue(index);
+  }
+
+  /// 清空待播（Qt 动作 `player:clear`；当前曲目继续播放）。
+  void clearUpcoming() {
+    if (_disposed) {
+      return;
+    }
+    _player.clearUpcoming();
+  }
+
   Future<void> openSong(SirenSong song, {bool play = true}) async {
     if (_disposed) {
       return;
@@ -2051,6 +2096,7 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
         for (final Map<String, Object?> track in _player.queue.items) _songFromTrack(track),
       ],
       queueIndex: _player.queue.index,
+      queueMode: _player.mode,
       lyricStatus: lyrics?.status ?? 'idle',
       lyricMessage: lyrics?.message ?? '',
       playerStatus: _player.status,

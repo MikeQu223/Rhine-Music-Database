@@ -669,6 +669,7 @@ class BasicViewState {
     this.dark = false,
     this.queue = const <SirenSong>[],
     this.queueIndex = -1,
+    this.queueMode = 'all',
     this.lyricStatus = 'idle',
     this.lyricMessage = '',
     this.playerStatus = '',
@@ -746,6 +747,9 @@ class BasicViewState {
 
   /// 队列中当前行（-1 = 空队列）。
   final int queueIndex;
+
+  /// 播放模式（'off' / 'all' / 'one' / 'shuffle'，对齐 MusicPlayer.mode）。
+  final String queueMode;
 
   /// 歌词状态：'idle' / 'ready' / 'plain' / 'empty'（对齐 LyricsController.status 词表）。
   final String lyricStatus;
@@ -848,6 +852,7 @@ class BasicViewState {
     bool? dark,
     List<SirenSong>? queue,
     int? queueIndex,
+    String? queueMode,
     String? lyricStatus,
     String? lyricMessage,
     String? playerStatus,
@@ -888,6 +893,7 @@ class BasicViewState {
       dark: dark ?? this.dark,
       queue: queue ?? this.queue,
       queueIndex: queueIndex ?? this.queueIndex,
+      queueMode: queueMode ?? this.queueMode,
       lyricStatus: lyricStatus ?? this.lyricStatus,
       lyricMessage: lyricMessage ?? this.lyricMessage,
       playerStatus: playerStatus ?? this.playerStatus,
