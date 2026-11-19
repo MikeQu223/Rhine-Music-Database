@@ -20,7 +20,9 @@ const force = process.argv.includes('--force');
 const jobs = process.env.RHINE_BUILD_JOBS || String(Math.max(4, Math.min(8, os.cpus().length)));
 
 const toolchain = require('./android-toolchain.cjs');
-const { applyQtAndroidPatches, pendingQtAndroidPatches } = require('./qt-android-patches.cjs');
+const { applyQtAndroidPatches, pendingQtAndroidPatches, restoreQtAndroidPatches } = require(
+    './qt-android-patches.cjs',
+);
 const sdk = toolchain.sdkRoot();
 const kit = process.env.RHINE_ANDROID_QT || path.resolve('output/dependencies/qt-android');
 const buildRoot = path.resolve('output/qt-android-build');
@@ -437,7 +439,9 @@ function buildModule(name) {
 
 // 自建 kit 的源码补丁必须在编译 qtbase 之前应用：锚点是文件内容片段，不依赖
 // 行号，上游文件挪位置也不影响；重复构建幂等，锚点失配会直接失败而不是静默跳过。
-// 子模块平时保持干净，改动只存在于构建期。--check 只做干跑，不写子模块。
+// 子模块**不允许保持 dirty**：改动只存在于编译期，构建结束（成功或失败）都
+// 在 finally 里还原——中断遗留的 dirty 也会被下次运行的 finally 收拾。
+// --check 只做干跑，不写子模块。
 if (checkOnly) {
     const pending = pendingQtAndroidPatches(root);
     console.log(
@@ -446,24 +450,29 @@ if (checkOnly) {
             : 'qt-android patches: up to date',
     );
 } else {
-    const patched = applyQtAndroidPatches(root);
-    if (patched.length > 0) {
-        console.log(`qt-android patches applied: ${patched.join(', ')}`);
+    try {
+        const patched = applyQtAndroidPatches(root);
+        if (patched.length > 0) {
+            console.log(`qt-android patches applied: ${patched.join(', ')}`);
+        }
+
+        buildOpenSsl();
+        buildQtBase();
+        for (const name of modules.slice(1)) {
+            buildModule(name);
+        }
+
+        // 收尾检查：没有 Qt6Multimedia 与 Qt6ShaderTools 的 kit 是半成品，宁可在这里失败，
+        // 也不要等到配置应用时才发现。
+        for (const name of ['Qt6', 'Qt6Qml', 'Qt6ShaderTools', 'Qt6Multimedia']) {
+            const directory = path.join(kit, 'lib', 'cmake', name);
+            if (!fs.existsSync(directory)) {
+                throw new Error(`Qt kit is incomplete, missing ${directory}`);
+            }
+        }
+        console.log(`Qt for Android kit ready: ${kit} (Qt ${qtVersion})`);
+    } finally {
+        const reverted = restoreQtAndroidPatches(root);
+        console.log(`qt-android patches reverted: ${reverted.join(', ')}`);
     }
 }
-
-buildOpenSsl();
-buildQtBase();
-for (const name of modules.slice(1)) {
-    buildModule(name);
-}
-
-// 收尾检查：没有 Qt6Multimedia 与 Qt6ShaderTools 的 kit 是半成品，宁可在这里失败，
-// 也不要等到配置应用时才发现。
-for (const name of ['Qt6', 'Qt6Qml', 'Qt6ShaderTools', 'Qt6Multimedia']) {
-    const directory = path.join(kit, 'lib', 'cmake', name);
-    if (!fs.existsSync(directory)) {
-        throw new Error(`Qt kit is incomplete, missing ${directory}`);
-    }
-}
-console.log(`Qt for Android kit ready: ${kit} (Qt ${qtVersion})`);

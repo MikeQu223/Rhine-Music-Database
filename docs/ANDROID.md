@@ -38,6 +38,8 @@ npm run build:qt:android          # 只体检：npm run build:qt:android -- --ch
 
 脚本按 `OpenSSL（静态）→ qtbase → qtshadertools → qtdeclarative → qtsvg → qtmultimedia` 的顺序交叉编译，产物装到 `output/dependencies/qt-android`，中间构建树在 `output/qt-android-build`。换 Qt 版本时改 `.gitmodules` 里的 `branch` / `pinned-commit` 和脚本里的 `qtVersion`，再带 `--force` 重跑。
 
+submodule 的源码补丁（Vulkan surface 竞态修复等，见 `scripts/qt-android-patches.cjs`）按内容锚点在构建期应用到 `third_party/qt/qtbase` 工作树，构建结束（成功或失败）在 `finally` 里 `git checkout` 还原——**submodule 始终保持干净**，`git status` 不会挂 `-dirty`；构建中断遗留的 dirty 也会被下次运行的 finally 收拾。补丁只存在于编译期，装出来的 kit 已包含补丁产物。
+
 host 侧工具（moc、rcc、qsb、qmlcachegen）用系统 Qt 6.12（`RHINE_HOST_QT`，默认 `/usr`）。版本必须与目标一致，否则 Qt 的 configure 会直接报错。
 
 Qt 的 jar 规则是 `cmake -E env ANDROID_SDK_ROOT=… gradlew …`，`JAVA_HOME` 只能靠继承调用方的环境。脚本给 configure、build、install 每一步都注入 `JAVA_HOME`（指向 JDK 21），并在生成的 `build.ninja` 里给这些 Gradle 规则补上同一个 `JAVA_HOME`。构建被打断后直接重跑 `ninja`，也不会退回系统默认的 Java 27。
