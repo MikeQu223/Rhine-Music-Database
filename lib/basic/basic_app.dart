@@ -59,6 +59,8 @@ import '../platform/media_session.dart';
 import 'basic_art_cache.dart';
 import 'basic_cover_images.dart';
 import 'basic_cover_viewer.dart';
+import '../hud/portrait/portrait_discover_page.dart';
+import 'basic_discover_mapper.dart';
 import 'basic_hud.dart';
 import 'basic_plugins_portrait.dart';
 import 'basic_hud_resources.dart';
@@ -909,6 +911,36 @@ class _BasicShellState extends State<_BasicShell>
   /// 「我的音乐」总览页的滚动偏移（Qt `m_scroll`）。
   double _savedScroll = 0;
 
+  /// 发现页的当前 tab（Qt `m_discover->tab`；空串 = 还没选中过，首次打开取默认）。
+  String _discoverTab = '';
+
+  /// 发现页的滚动偏移（Qt `m_scroll`）。
+  double _discoverScroll = 0;
+
+  /// 发现页快照：tab 表来自 descriptor 的 `discover.tabs`，`history` tab 用本地
+  /// 播放历史（Qt 的 `mobile:history` 也走 `discover:tab:history`），其余 tab 在
+  /// 没有网关数据时诚实给状态行。
+  BasicDiscoverSnapshot _discoverSnapshot() {
+    final ProviderDescriptor? descriptor = _currentDescriptor;
+    final String tab = _discoverTab.isEmpty
+        ? basicDiscoverInitialTab(descriptor)
+        : _discoverTab;
+    final List<PortraitDiscoverEntry> entries = tab == basicDiscoverHistoryTab
+        ? basicDiscoverHistoryEntries(controller.playHistory)
+        : const <PortraitDiscoverEntry>[];
+    return BasicDiscoverSnapshot(
+      tabs: basicDiscoverTabs(descriptor, selectedTab: tab),
+      tab: tab,
+      entries: entries,
+      status: basicDiscoverStatus(
+        descriptor: descriptor,
+        tab: tab,
+        entryCount: entries.length,
+      ),
+      scroll: _discoverScroll,
+    );
+  }
+
   /// 总览页的索引行（Qt `library()` 的 `for (lane = 1; lane < columns.size(); ++lane)`）。
   List<PortraitSavedOverviewRow> _savedOverviewRows() {
     final List<String> columns = _currentDescriptor?.columns ?? basicSirenColumns;
@@ -1457,6 +1489,7 @@ class _BasicShellState extends State<_BasicShell>
       savedOverviewRows: _savedOverviewRows(),
       savedShowArtists: false,
       savedScroll: _savedScroll,
+      discover: _discoverSnapshot(),
       savedNotice: _savedNotice(),
     );
     final bool settingsOpen =
@@ -2252,8 +2285,67 @@ class _BasicShellState extends State<_BasicShell>
       _setModal('');
       return;
     }
+    // 竖屏底栏「发现」+ 收藏总览里的「播放历史」：Qt 都开发现页
+    // （`NativeHudController.cpp:524-527` 先把 modal 切成 discover，再转发
+    // `discover:tab:history`/`discover:tab:artists`）。
     if (action == 'mobile:nav:discover') {
-      setState(() => _actionNotice = '发现页尚未接入');
+      setState(() {
+        _discoverScroll = 0;
+        if (_discoverTab.isEmpty) {
+          _discoverTab = basicDiscoverInitialTab(_currentDescriptor);
+        }
+      });
+      _setModal('discover');
+      return;
+    }
+    if (action == 'mobile:history') {
+      setState(() {
+        _discoverTab = basicDiscoverHistoryTab;
+        _discoverScroll = 0;
+      });
+      _setModal('discover');
+      return;
+    }
+    if (action.startsWith(basicDiscoverTabPrefix)) {
+      setState(() {
+        _discoverTab = action.substring(basicDiscoverTabPrefix.length);
+        _discoverScroll = 0;
+      });
+      if (_modal.isEmpty) _setModal('discover');
+      return;
+    }
+    if (action == basicDiscoverMoreAction) {
+      setState(() => _actionNotice = '暂时没有更多内容');
+      return;
+    }
+    if (action.startsWith(basicDiscoverItemPrefix)) {
+      final int? index = int.tryParse(
+        action.substring(basicDiscoverItemPrefix.length),
+      );
+      final List<PortraitDiscoverEntry> entries =
+          _discoverSnapshot().entries;
+      if (index == null || index < 0 || index >= entries.length) {
+        setState(() => _actionNotice = '该条目已不在列表里');
+        return;
+      }
+      final List<SirenSong> songs = controller.playHistory;
+      if (index >= songs.length) {
+        setState(() => _actionNotice = '该条目已不在列表里');
+        return;
+      }
+      unawaited(controller.openSong(songs[index]));
+      return;
+    }
+    if (action.startsWith(basicPlayDiscoverPrefix)) {
+      final int? index = int.tryParse(
+        action.substring(basicPlayDiscoverPrefix.length),
+      );
+      final List<SirenSong> songs = controller.playHistory;
+      if (index == null || index < 0 || index >= songs.length) {
+        setState(() => _actionNotice = '该条目已不在列表里');
+        return;
+      }
+      unawaited(controller.openSong(songs[index]));
       return;
     }
     // 竖屏检索页的四列 tab = Qt 的四种检索分类（`music:kind:<i>`，i 是

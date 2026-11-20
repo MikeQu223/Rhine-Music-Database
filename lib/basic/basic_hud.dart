@@ -24,6 +24,7 @@ import '../hud/portrait/portrait_pages_library.dart';
 import '../hud/portrait/portrait_pages_provider.dart';
 import '../hud/portrait/portrait_playlist_picker.dart';
 import '../hud/portrait/portrait_saved_overview.dart';
+import '../hud/portrait/portrait_discover_page.dart';
 import '../hud/portrait/portrait_pages_queue.dart';
 import '../hud/portrait/portrait_pages_search_kinds.dart';
 import '../hud/portrait/portrait_pages_song.dart';
@@ -46,6 +47,7 @@ import '../hud/render/hud_painter.dart';
 import '../hud/widgets/track_ruler.dart' as ruler;
 import '../ui/layout/portrait_stage.dart';
 import 'basic_hud_resources.dart';
+import 'basic_discover_mapper.dart';
 import 'basic_models.dart';
 import 'library_gesture_adapter.dart';
 import 'qt_scene_view.dart';
@@ -235,6 +237,9 @@ class BasicHudFrame {
     List<PortraitSavedOverviewRow> savedOverviewRows = const <PortraitSavedOverviewRow>[],
     bool savedShowArtists = false,
     double savedScroll = 0,
+    /// 发现页（`modal == 'discover'`）：tab chip、条目、状态行与「加载更多」。
+    /// 发现页（`modal == 'discover'`）的一帧快照；null = 不进发现页。
+    BasicDiscoverSnapshot? discover,
     bool localMusicEnabled = true,
   }) {
     final bool dark = state.dark;
@@ -293,6 +298,7 @@ class BasicHudFrame {
         savedUserName: savedUserName,
         savedOverviewRows: savedOverviewRows,
         savedShowArtists: savedShowArtists,
+        discover: discover,
         savedScroll: savedScroll,
       );
     }
@@ -494,6 +500,9 @@ class BasicHudFrame {
     List<PortraitSavedOverviewRow> savedOverviewRows = const <PortraitSavedOverviewRow>[],
     bool savedShowArtists = false,
     double savedScroll = 0,
+    /// 发现页（`modal == 'discover'`）：tab chip、条目、状态行与「加载更多」。
+    /// 发现页（`modal == 'discover'`）的一帧快照；null = 不进发现页。
+    BasicDiscoverSnapshot? discover,
   }) {
     final _HudSink sink = _HudSink();
     ports.beginFrame(sink: sink, time: animationTime, ink: hudInk(dark), animate: animateText);
@@ -658,6 +667,24 @@ class BasicHudFrame {
         playlists: pickerPlaylists,
         notice: pickerNotice,
         canCreate: canCreatePlaylist,
+      );
+    } else if (modal == 'discover') {
+      // Qt compact 的发现页是终端页（`ResponsiveHudLayout.cpp:150-176` 的
+      // `modal == "discover"` ⇒ `01 DISCOVER / 音乐观察`），内容按
+      // `ResponsiveHudPages.cpp:376-470` 的三分支择一。
+      final BasicDiscoverSnapshot page = discover ?? BasicDiscoverSnapshot.empty;
+      paintPortraitDiscoverPage(
+        canvas,
+        tabs: page.tabs,
+        tab: page.tab,
+        tools: page.tools,
+        categories: page.categories,
+        categoryPicker: page.categoryPicker,
+        entries: page.entries,
+        status: page.status,
+        more: page.more,
+        loadingMore: page.loadingMore,
+        scroll: page.scroll,
       );
     } else if (modal == 'saved') {
       // Qt compact 的 `saved` 是**三态**（`ResponsiveHudLayout.cpp:455-464` 与
@@ -1725,6 +1752,7 @@ class BasicHudSurface extends StatefulWidget {
     this.savedOverviewRows = const <PortraitSavedOverviewRow>[],
     this.savedShowArtists = false,
     this.savedScroll = 0,
+    this.discover,
     this.savedNotice = '',
     this.mv,
     this.mvPositionMs = 0,
@@ -1860,6 +1888,9 @@ class BasicHudSurface extends StatefulWidget {
 
   /// 总览页的滚动偏移（Qt `m_scroll`）。
   final double savedScroll;
+
+  /// 发现页的一帧快照（`modal == 'discover'` 时由宿主算好）。
+  final BasicDiscoverSnapshot? discover;
 
   /// 收藏页状态文案。
   final String savedNotice;
@@ -2100,6 +2131,7 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       savedOverviewRows: widget.savedOverviewRows,
       savedShowArtists: widget.savedShowArtists,
       savedScroll: widget.savedScroll,
+      discover: widget.discover,
       mv: widget.mv,
       mvPositionMs: widget.mvPositionMs,
     );

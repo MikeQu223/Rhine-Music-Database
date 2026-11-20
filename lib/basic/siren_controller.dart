@@ -423,6 +423,16 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
   /// 本机自建歌单（`LocalCollections` 的只读视图）。
   List<BasicLocalPlaylist> get localPlaylists => _localPlaylists;
 
+  /// 播放历史（Qt `MobileMusic::history`，上限 200、最近在前）。
+  ///
+  /// Qt 的「播放历史」页由 `discover:tab:history` 承载，但数据本体就是播放器
+  /// 里那份 `play-history`（`MusicPlayer.cpp:188-198` 回填、`:667-675` 落盘），
+  /// 所以这里直接读播放器，不另建缓存。
+  List<SirenSong> get playHistory => <SirenSong>[
+        for (final Map<String, Object?> track in _player.history)
+          _songFromTrack(track),
+      ];
+
   /// [songId] 是否在「喜欢的歌曲」里（空 id 恒 false，与 Qt `isLiked` 同）。
   bool isLiked(String songId) =>
       _collectionStore?.isLiked(songId) ?? (_collections?.likedIds().contains(songId) ?? false);
