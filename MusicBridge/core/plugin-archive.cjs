@@ -144,8 +144,11 @@ async function openRegularFile(filename) {
 }
 
 function sameFile(before, after) {
+    // Windows 的 lstat 可能把 st_dev 报为 0，打开后的 fstat 才返回卷序列号。
+    // 仅忽略这种缺失值；两侧均为非零时仍要求设备号一致。
+    const missingDevice = process.platform === 'win32' && (before.dev === 0 || after.dev === 0);
     return (
-        before.dev === after.dev &&
+        (before.dev === after.dev || missingDevice) &&
         before.ino === after.ino &&
         before.size === after.size &&
         before.mtimeMs === after.mtimeMs &&
