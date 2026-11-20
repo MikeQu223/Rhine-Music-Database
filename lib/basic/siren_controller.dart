@@ -526,6 +526,24 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
   /// `NativeHudMusic.cpp:483-520`：先查重、再写、反馈落在按钮/状态行）。
   /// 返回状态文案：本地平台没有「已在当前歌单」那种目录上下文，查重只按歌单内容。
   Future<String> addToPlaylist(String playlistId, String songId) async {
+    final ProviderGateway? gateway = _remoteSearch;
+    if (gateway != null) {
+      if (playlistId.isEmpty || songId.isEmpty) {
+        return '无法写入歌单';
+      }
+      try {
+        // 插件 `/playlist/tracks` 参数是 `{pid, tracks, op}`，tracks 用逗号分隔。
+        await gateway.mutate('/playlist/tracks', <String, Object?>{
+          'pid': playlistId,
+          'tracks': songId,
+          'op': 'add',
+        });
+        await refreshServerPlaylists();
+        return '✓ 已加入歌单';
+      } on Object catch (error) {
+        return remoteErrorMessage(error);
+      }
+    }
     final LocalCollectionStore? store = _collectionStore;
     if (store == null) {
       return '本地收藏尚未接入';
@@ -549,6 +567,18 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
   /// 创建本机歌单并刷新收藏列（Qt `music:create-playlist` 的 siren 分支，
   /// `MusicMutation.cpp:421-455`：校验名称 → 写文档 → 状态文案）。返回状态文案。
   Future<String> createPlaylist(String title) async {
+    final ProviderGateway? gateway = _remoteSearch;
+    if (gateway != null) {
+      // 插件平台：Qt 走 `mutate("/playlist/create", {name})`（`MusicDirectory.cpp` 的歌单
+      // 写操作），成功后刷新服务端歌单表。
+      try {
+        await gateway.mutate('/playlist/create', <String, Object?>{'name': title});
+        await refreshServerPlaylists();
+        return '已创建歌单：$title';
+      } on Object catch (error) {
+        return remoteErrorMessage(error);
+      }
+    }
     final LocalCollectionStore? store = _collectionStore;
     if (store == null) {
       return '本地收藏尚未接入';
@@ -561,6 +591,16 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
 
   /// 重命名本机歌单（Qt `music:rename-playlist`），返回状态文案。
   Future<String> renamePlaylist(String id, String title) async {
+    final ProviderGateway? gateway = _remoteSearch;
+    if (gateway != null) {
+      try {
+        await gateway.mutate('/playlist/name/update', <String, Object?>{'id': id, 'name': title});
+        await refreshServerPlaylists();
+        return '已重命名歌单：$title';
+      } on Object catch (error) {
+        return remoteErrorMessage(error);
+      }
+    }
     final LocalCollectionStore? store = _collectionStore;
     if (store == null) {
       return '本地收藏尚未接入';
@@ -573,6 +613,16 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
 
   /// 删除本机歌单（Qt `music:delete-playlist`），返回状态文案。
   Future<String> deletePlaylist(String id) async {
+    final ProviderGateway? gateway = _remoteSearch;
+    if (gateway != null) {
+      try {
+        await gateway.mutate('/playlist/delete', <String, Object?>{'id': id});
+        await refreshServerPlaylists();
+        return '已删除歌单';
+      } on Object catch (error) {
+        return remoteErrorMessage(error);
+      }
+    }
     final LocalCollectionStore? store = _collectionStore;
     if (store == null) {
       return '本地收藏尚未接入';

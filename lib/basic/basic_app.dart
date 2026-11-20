@@ -2625,7 +2625,12 @@ class _BasicShellState extends State<_BasicShell>
     // `music:create-playlist` 入口见 NativeHudMusic.cpp:314-317、rename :346-351）。
     // siren 是本地歌单，不需要登录；其它平台当前没有真网关，给可见反馈不伪造。
     if (action == 'music:create-playlist') {
-      if (_providerId != 'siren') {
+      // 插件平台走服务端 `mutate("/playlist/create")`（网关有账号能力时）；
+      // 塞壬仍走本机集合。两者都需要表单输入名字，所以都开同一个表单。
+      final bool canCreate = controller.remoteSearchActive
+          ? (_currentDescriptor?.capability('userPlaylists', fallback: true) ?? true)
+          : _providerId == 'siren';
+      if (!canCreate) {
         setState(() => _actionNotice = '当前平台不支持创建歌单');
         return;
       }
@@ -2639,7 +2644,7 @@ class _BasicShellState extends State<_BasicShell>
     }
     if (action.startsWith('music:rename-playlist:')) {
       final String id = action.substring('music:rename-playlist:'.length);
-      if (_providerId != 'siren') {
+      if (_providerId != 'siren' && !controller.remoteSearchActive) {
         setState(() => _actionNotice = '当前平台不支持重命名歌单');
         return;
       }

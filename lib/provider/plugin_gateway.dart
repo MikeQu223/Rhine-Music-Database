@@ -293,6 +293,11 @@ class PluginGateway implements ProviderGateway {
   }
 
   @override
+  Future<Map<String, Object?>> mutate(String route, Map<String, Object?> values) async {
+    final Map<String, Object?>? value = await _call('mutate', <Object?>[route, values]);
+    return value ?? const <String, Object?>{};
+  }
+
   Future<List<Map<String, Object?>>> detailSongs(Map<String, Object?> item) async {
     final List<Object?> value = await _callList('detail', <Object?>[item]);
     if (value.length < 2 || value[1] is! List) {

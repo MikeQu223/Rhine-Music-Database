@@ -392,6 +392,14 @@ abstract class ProviderGateway {
     throw const ProviderUnavailableError('当前来源不支持账号收藏');
   }
 
+  /// 服务端写操作（Qt `MusicMutation.cpp` 的 `mutate(route, values)`）。
+  ///
+  /// 插件允许的 route 见 `manifest.operations.mutate`：`/like`、`/playlist/create`、
+  /// `/playlist/name/update`、`/playlist/delete`、`/playlist/tracks`、订阅类。
+  Future<Map<String, Object?>> mutate(String route, Map<String, Object?> values) async {
+    throw const ProviderUnavailableError('当前来源不支持写操作');
+  }
+
   /// 读取一个集合（歌单/专辑/歌手）的曲目（Qt `MusicDirectory.cpp:88-150` 的 `detail`，
   /// 插件返回 `[item, songs, ids]`，这里只要 songs）。
   Future<List<Map<String, Object?>>> detailSongs(Map<String, Object?> item) async {
@@ -545,6 +553,11 @@ class UnavailableProviderGateway implements ProviderGateway {
 
   @override
   Future<List<Map<String, Object?>>> detailSongs(Map<String, Object?> item) async {
+    throw ProviderUnavailableError(reason);
+  }
+
+  @override
+  Future<Map<String, Object?>> mutate(String route, Map<String, Object?> values) async {
     throw ProviderUnavailableError(reason);
   }
 
