@@ -26,7 +26,12 @@ import '../hud/player/player_bar.dart' as player;
 import '../plugin/plugin_models.dart';
 import '../plugin/plugin_manager.dart';
 import '../provider/provider_descriptor.dart';
-import '../provider/provider_gateway.dart' show ProviderAccount;
+import '../domain/account/login_controller.dart'
+    show LoginState;
+import '../hud/portrait/portrait_pages_comments.dart';
+import '../hud/portrait/portrait_pages_mv.dart';
+import '../hud/portrait/portrait_pages_login.dart';
+import '../provider/provider_gateway.dart' show ProviderAccount, ProviderLoginMethod;
 import '../hud/protocol/hud_frame.dart';
 import '../hud/protocol/hud_hit.dart';
 import '../hud/render/hud_painter.dart';
@@ -152,6 +157,9 @@ class BasicHudFrame {
     /// 竖屏「歌曲操作」面板是否展开（Qt `m_songOptionsExpanded`，
     /// `mobile:song-options` 翻转；任何 `music:`/`tab:` 动作都会收起）。
     bool songOptionsExpanded = false,
+    /// 「关联 MV」是否可用（当前平台 descriptor 声明 `capabilities.mv` 或
+    /// `operations.mvVersions`；Qt 移动端该路径恒关，见 `PlatformFeatures.h:23-27`）。
+    bool mvAvailable = false,
     /// 「查看评论」是否可用（Qt `commentsAvailable` = 非 local 且评论 provider 非空；
     /// siren 在 descriptor 里 `operations.comments` 为 false，因此这里是 false）。
     bool commentsAvailable = false,
@@ -170,6 +178,30 @@ class BasicHudFrame {
     /// `PlatformFeatures::LocalMusic`：关掉时 `local` 平台不进列表
     /// （Qt `providerCardsState()` 跳过 `id == "local"`；过滤是调用方的事，
     /// `paintPortraitProviderPage` 不重复判断）。
+    /// 当前帧的评论页数据（`modal == 'comments'`）：由宿主把
+    /// `CommentState` 经 `basic_comment_mapper` 映射成竖屏只读视图模型。
+    PortraitCommentsModel? comments,
+    /// 评论页滚动位置（Qt `NativeHudController.cpp:483` 打开时归零，拖动改它）。
+    double commentsScroll = 0,
+    /// 登录页状态（`modal == 'login'`，Qt `music:login` 打开的那一层）。
+    LoginState? loginState,
+    /// 当前平台的登录方式（Qt `loginMethods`，未 open 时为空表）。
+    List<ProviderLoginMethod> loginMethods = const <ProviderLoginMethod>[],
+    /// 登录页的平台名（Qt `providerName()`）。
+    String loginProviderName = '',
+    /// 平台 `strings.scanHint`（空则用 Qt 兜底串）。
+    String loginScanHint = '',
+    /// 平台 `strings.deviceNotice`（空则不画）。
+    String loginDeviceNotice = '',
+    /// 冷却文案（Qt `loginPanel` 现算：`请等待 N 秒后重新生成` / `正在处理扫码登录…`）。
+    String loginCooldownLabel = '',
+    /// 短信重发剩余秒数（Qt `smsRetrySeconds()`）。
+    int loginSmsRetrySeconds = 0,
+    /// MV 面板数据（`modal == 'mv'`）：由宿主把 `MvState` 经 `basic_mv_mapper`
+    /// 映射成面板视图模型；null = 没有可展示的 MV 态。
+    MvPanelModel? mv,
+    /// MV 面板播放位置（毫秒；面板只用来画 `静音跟随音乐 · Np` 那句附注）。
+    double mvPositionMs = 0,
     bool localMusicEnabled = true,
   }) {
     final bool dark = state.dark;
@@ -197,6 +229,7 @@ class BasicHudFrame {
         pluginMessage: pluginMessage,
         songOptionsExpanded: songOptionsExpanded,
         commentsAvailable: commentsAvailable,
+        mvAvailable: mvAvailable,
         songOptionsDetail: songOptionsDetail,
         songOptionsDetailBody: songOptionsDetailBody,
         providers: providers,
@@ -204,6 +237,17 @@ class BasicHudFrame {
         providerAccounts: providerAccounts,
         providerUserName: providerUserName,
         localMusicEnabled: localMusicEnabled,
+        comments: comments,
+        commentsScroll: commentsScroll,
+        loginState: loginState,
+        loginMethods: loginMethods,
+        loginProviderName: loginProviderName,
+        loginScanHint: loginScanHint,
+        loginDeviceNotice: loginDeviceNotice,
+        loginCooldownLabel: loginCooldownLabel,
+        loginSmsRetrySeconds: loginSmsRetrySeconds,
+        mv: mv,
+        mvPositionMs: mvPositionMs,
       );
     }
     final _HudSink sink = _HudSink();
@@ -347,6 +391,7 @@ class BasicHudFrame {
     String pluginMessage = '',
     bool songOptionsExpanded = false,
     bool commentsAvailable = false,
+    bool mvAvailable = false,
     String songOptionsDetail = '',
     String songOptionsDetailBody = '',
     List<ProviderDescriptor> providers = const <ProviderDescriptor>[],
@@ -354,6 +399,17 @@ class BasicHudFrame {
     Map<String, ProviderAccount?> providerAccounts = const <String, ProviderAccount?>{},
     String providerUserName = '',
     bool localMusicEnabled = true,
+    PortraitCommentsModel? comments,
+    double commentsScroll = 0,
+    LoginState? loginState,
+    List<ProviderLoginMethod> loginMethods = const <ProviderLoginMethod>[],
+    String loginProviderName = '',
+    String loginScanHint = '',
+    String loginDeviceNotice = '',
+    String loginCooldownLabel = '',
+    int loginSmsRetrySeconds = 0,
+    MvPanelModel? mv,
+    double mvPositionMs = 0,
   }) {
     final _HudSink sink = _HudSink();
     ports.beginFrame(sink: sink, time: animationTime, ink: hudInk(dark), animate: animateText);
@@ -468,6 +524,35 @@ class BasicHudFrame {
           userName: providerUserName,
         ),
       );
+    } else if (modal == 'comments' && comments != null) {
+      // Qt compact 的评论页（ResponsiveHudLayout.cpp:186-205）：与歌词页同级，
+      // 页头自己画（`c.header('歌曲评论', back: true, showSettings: false)`）+
+      // 「COMMENT ARCHIVE / 评论档案」小标，内容自 158 起。
+      // 与 Qt 同一分工：页面不夹取滚动，宿主把 scroll 夹在 [0, maximumScroll]
+      // （Qt `ResponsiveHudLayout.cpp:238-244` 同一处夹取）。
+      paintPortraitCommentsPage(
+        canvas,
+        model: comments,
+        scroll: commentsScroll,
+      );
+    } else if (modal == 'login' && loginState != null) {
+      // Qt compact 的登录页（NativeHud::loginPanel 的竖屏对应实现）：整页纸色 +
+      // 通用页头（返回箭头 + close-modal），内容由 portrait_pages_login 排布。
+      paintPortraitLoginPage(
+        canvas,
+        state: loginState,
+        methods: loginMethods,
+        providerName: loginProviderName,
+        scanHint: loginScanHint,
+        deviceNotice: loginDeviceNotice,
+        cooldownLabel: loginCooldownLabel,
+        smsRetrySeconds: loginSmsRetrySeconds,
+      );
+    } else if (modal == 'mv' && mv != null) {
+      // 竖屏 MV 页（`lib/hud/portrait/portrait_pages_mv.dart`）：Qt 移动端从不进
+      // MV（`Qt/src/PlatformFeatures.h:23-27` 的 `MusicVideo = !RHINE_MOBILE && …`），
+      // 所以这一屏没有 Qt 版式真值，几何按竖屏 393 网格自拟（页面文件头已写明）。
+      paintPortraitMvPage(canvas, model: mv, position: mvPositionMs);
     } else if (modal == 'settings') {
       // Qt compact 的设置是「终端页」：页头（品牌/标题/编号块/校准刻度）+ 内容
       // 由一页铺到 h-144，底下播放条与底栏照旧。内容本身是真实 widget 层
@@ -562,7 +647,11 @@ class BasicHudFrame {
     if (songOptionsExpanded && (song != null || state.phase == BasicPhase.lyrics)) {
       paintPortraitSongOptions(
         canvas,
-        actions: _portraitSongOptionsActions(state, commentsAvailable: commentsAvailable),
+        actions: _portraitSongOptionsActions(
+          state,
+          commentsAvailable: commentsAvailable,
+          mvAvailable: mvAvailable,
+        ),
         detail: songOptionsDetail,
         detailBody: songOptionsDetailBody,
       );
@@ -587,6 +676,7 @@ class BasicHudFrame {
   static List<(String label, String action)> _portraitSongOptionsActions(
     BasicViewState state, {
     required bool commentsAvailable,
+    required bool mvAvailable,
   }) {
     if (state.phase == BasicPhase.lyrics) {
       return <(String, String)>[
@@ -601,6 +691,9 @@ class BasicHudFrame {
       ('＋ 加入队列', 'music:enqueue'),
       ('▷ 下一首播放', 'music:play-next'),
       if (commentsAvailable) ('查看评论', 'music:comments'),
+      // 动作串由 `MvAction.open`（`lib/domain/mv/mv_controller.dart:662`）定义；
+      // hud 层不 import domain，所以这里写字面量并在测试里与 MvAction 对表。
+      if (mvAvailable) ('关联 MV', 'mv:open'),
     ];
   }
 
@@ -1294,6 +1387,7 @@ class BasicHudSurface extends StatefulWidget {
     this.pluginMessage = '',
     this.songOptionsExpanded = false,
     this.commentsAvailable = false,
+    this.mvAvailable = false,
     this.songOptionsDetail = '',
     this.songOptionsDetailBody = '',
     this.providers = const <ProviderDescriptor>[],
@@ -1301,6 +1395,17 @@ class BasicHudSurface extends StatefulWidget {
     this.providerAccounts = const <String, ProviderAccount?>{},
     this.providerUserName = '',
     this.localMusicEnabled = true,
+    this.comments,
+    this.commentsScroll = 0,
+    this.loginState,
+    this.loginMethods = const <ProviderLoginMethod>[],
+    this.loginProviderName = '',
+    this.loginScanHint = '',
+    this.loginDeviceNotice = '',
+    this.loginCooldownLabel = '',
+    this.loginSmsRetrySeconds = 0,
+    this.mv,
+    this.mvPositionMs = 0,
   });
 
   final BasicViewState state;
@@ -1360,6 +1465,9 @@ class BasicHudSurface extends StatefulWidget {
   /// 「查看评论」入口是否可用（Qt `commentsAvailable`）。
   final bool commentsAvailable;
 
+  /// 「关联 MV」入口是否可用（平台 descriptor 声明 MV 能力）。
+  final bool mvAvailable;
+
   /// 选项面板末尾的「专辑 / 时长」摘要与详情正文。
   final String songOptionsDetail;
   final String songOptionsDetailBody;
@@ -1371,6 +1479,39 @@ class BasicHudSurface extends StatefulWidget {
   final Map<String, ProviderAccount?> providerAccounts;
   final String providerUserName;
   final bool localMusicEnabled;
+
+  /// 评论页数据（`modal == 'comments'`）；null = 该来源没有评论能力。
+  final PortraitCommentsModel? comments;
+
+  /// 评论页滚动位置。
+  final double commentsScroll;
+
+  /// 登录页状态（`modal == 'login'`）；null = 尚未装载平台。
+  final LoginState? loginState;
+
+  /// 登录方式表。
+  final List<ProviderLoginMethod> loginMethods;
+
+  /// 登录页平台名。
+  final String loginProviderName;
+
+  /// 平台 `strings.scanHint`。
+  final String loginScanHint;
+
+  /// 平台 `strings.deviceNotice`。
+  final String loginDeviceNotice;
+
+  /// 冷却文案。
+  final String loginCooldownLabel;
+
+  /// 短信重发剩余秒数。
+  final int loginSmsRetrySeconds;
+
+  /// MV 面板数据（`modal == 'mv'`）；null = 没有可展示的 MV 态。
+  final MvPanelModel? mv;
+
+  /// MV 面板播放位置（毫秒）。
+  final double mvPositionMs;
 
   /// 插件详情页的 manifest（modal == 'plugin-detail' 时用）。
   final PluginManifest? pluginDetail;
@@ -1572,6 +1713,7 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       pluginMessage: widget.pluginMessage,
       songOptionsExpanded: widget.songOptionsExpanded,
       commentsAvailable: widget.commentsAvailable,
+      mvAvailable: widget.mvAvailable,
       songOptionsDetail: widget.songOptionsDetail,
       songOptionsDetailBody: widget.songOptionsDetailBody,
       providers: widget.providers,
@@ -1579,6 +1721,17 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       providerAccounts: widget.providerAccounts,
       providerUserName: widget.providerUserName,
       localMusicEnabled: widget.localMusicEnabled,
+      comments: widget.comments,
+      commentsScroll: widget.commentsScroll,
+      loginState: widget.loginState,
+      loginMethods: widget.loginMethods,
+      loginProviderName: widget.loginProviderName,
+      loginScanHint: widget.loginScanHint,
+      loginDeviceNotice: widget.loginDeviceNotice,
+      loginCooldownLabel: widget.loginCooldownLabel,
+      loginSmsRetrySeconds: widget.loginSmsRetrySeconds,
+      mv: widget.mv,
+      mvPositionMs: widget.mvPositionMs,
     );
     // 共享滚动文字有字符槽还在 kReelDuration 内 -> 续帧；静止后停 ticker。
     // 松手惯性期间也必须续帧（同一个 ticker 兼职推进列表动量）。

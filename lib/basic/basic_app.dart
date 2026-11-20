@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 
 import '../data/storage/preference_store.dart' show PreferencePort;
 import '../domain/collection/local_collection_store.dart';
+import '../domain/mv/mv_controller.dart';
 import '../app/consent_gate.dart';
 import '../app/orientation_state.dart';
 import '../hud/input/hit_layer.dart';
@@ -56,6 +57,7 @@ import 'basic_hud.dart';
 import 'basic_plugins_portrait.dart';
 import 'basic_hud_resources.dart';
 import 'basic_models.dart';
+import 'basic_mv_mapper.dart';
 import 'basic_player_preferences.dart';
 import 'basic_settings.dart';
 import 'basic_settings_runtime.dart';
@@ -67,6 +69,15 @@ import 'basic_startup_view.dart';
 import '../plugin/plugin_models.dart';
 import '../plugin/plugin_manager.dart';
 import '../provider/provider_assets.dart';
+import '../domain/account/login_controller.dart';
+import '../domain/comments/comment_controller.dart';
+import '../provider/provider_gateway.dart'
+    show ProviderAccount, UnavailableProviderGateway;
+import '../provider/provider_service.dart';
+import '../hud/portrait/portrait_pages_comments.dart' show PortraitCommentsModel;
+import '../hud/portrait/portrait_pages_login.dart' show kPortraitLoginMethodPrefix;
+import '../domain/comments/comment_actions.dart' show commentSortActionPrefix;
+import 'basic_comment_mapper.dart';
 import '../provider/provider_descriptor.dart';
 import '../provider/provider_gateway.dart';
 import '../provider/provider_registry.dart';
@@ -529,7 +540,16 @@ class _BasicShellState extends State<_BasicShell>
 
   /// 当前来源是否支持歌曲评论（Qt `commentsAvailable`）。siren 的 descriptor 里
   /// `operations.comments` 为 false ⇒ 面板里不会出现「查看评论」。
-  bool get _commentsAvailable => false;
+  bool get _commentsAvailable {
+    // Qt `commentsAvailable = !isLocal() && !CommentsController::commentsProvider(provider).isEmpty()`
+    // （Qt/src/MusicMutation.cpp:23）：判断的是 descriptor 的 `operations.comments`。
+    // siren 的 descriptor 没有该键 ⇒ false（面板里不会出现「查看评论」）；插件平台
+    // 声明了 `operations.comments` 时这里自动为真。
+    if (_providerId == 'local') {
+      return false;
+    }
+    return _currentDescriptor?.operation('comments', fallback: false) ?? false;
+  }
 
   /// 已装载的平台表（`display.order` 升序，见 [ProviderRegistry.ids]）。
   /// 装载完成前是空表：音乐平台页画空态，不伪造平台行。
@@ -550,6 +570,20 @@ class _BasicShellState extends State<_BasicShell>
   /// （Qt `providerCardsState()` 跳过 `id == "local"`；过滤由调用方做，页面
   /// 自己不再判断）。宿主当前恒为开，将来按平台特性裁定后从这里改一次。
   final bool _localMusicEnabled = true;
+
+  /// 平台服务（Qt `MusicAccount` 的数据面）：按 id 给网关，缺省退回
+  /// `UnavailableProviderGateway`（本预览没有 Node 运行时，页面照样可画）。
+  ProviderService? _providerService;
+
+  /// 评论控制器（Qt `CommentsController`）；网关不支持评论时它只给状态串。
+  CommentController? _commentController;
+  MvController? _mvController;
+
+  /// 登录控制器（Qt `MusicAccount` 的登录状态机）。
+  LoginController? _loginController;
+
+  /// 评论页滚动位置（Qt `commentsScroll`，`music:comments` 打开时归零）。
+  double _commentsScroll = 0;
 
   /// 当前弹层（'' = 无，'search' = 检索）。Qt 的 modal 由 NativeHud 自己持有
   /// （Qt/src/NativeHudController.cpp:64-130 openModal / :132-143 closeModal /
@@ -739,11 +773,117 @@ class _BasicShellState extends State<_BasicShell>
             ? registryDefault
             : (_providers.isEmpty ? 'siren' : _providers.first.id);
       });
+      if (!mounted) {
+        return;
+      }
+      _installProviderService(registry);
     } on Object catch (error) {
       if (!mounted) {
         return;
       }
       setState(() => _actionNotice = '读取平台列表失败：$error');
+    }
+  }
+
+  /// 装平台服务与两条会话控制器（评论 / 登录）。
+  ///
+  /// 网关工厂恒返回 [UnavailableProviderGateway]：Flutter 侧没有接 Node 运行时
+  /// （`NodeRuntimeHost.kt` 无调用点），所以评论与登录的真实调用会以
+  /// `当前来源不支持该功能` 收尾。**这是诚实降级**：页面、状态机、动作分发
+  /// 全链路可走通，只在最后一步由网关报不支持，绝不伪造数据。
+  void _installProviderService(ProviderRegistry registry) {
+    final ProviderService service = ProviderService(
+      registry: registry,
+      initialProvider: _providerId,
+      gatewayFactory: (ProviderDescriptor descriptor) => UnavailableProviderGateway(
+        descriptor,
+        reason: '当前来源不支持该功能',
+      ),
+    );
+    _providerService = service;
+    _commentController = CommentController(
+      gateway: service.gateway,
+      onChanged: () {
+        if (mounted) setState(() {});
+      },
+    );
+    final LoginController login = LoginController(
+      preferences: widget.playerPreferences,
+    );
+    login.addListener(() {
+      if (mounted) setState(() {});
+    });
+    _loginController = login;
+    final MvController mv = MvController(
+      preferences: widget.playerPreferences,
+      onChanged: (MvState state) {
+        if (mounted) setState(() {});
+      },
+    );
+    _mvController = mv;
+  }
+
+  /// 评论页的竖屏视图模型（没有控制器时 null ⇒ HUD 不画评论页）。
+  /// 绑定 MW 网关：平台切换或播放曲目变化后由 [_syncMv] 调起。
+  Future<void> _syncMv() async {
+    final MvController? mv = _mvController;
+    final ProviderService? service = _providerService;
+    final ProviderDescriptor? descriptor = _currentDescriptor;
+    if (mv == null || service == null || descriptor == null) {
+      return;
+    }
+    await mv.attach(
+      service.gateway,
+      providerSupportsMv: descriptor.capability('mv', fallback: false),
+      providerSupportsMvVersions: descriptor.operation('mvVersions', fallback: false),
+    );
+  }
+
+  PortraitCommentsModel? _commentsModel() {
+    final CommentController? controller = _commentController;
+    if (controller == null) {
+      return null;
+    }
+    return portraitCommentsModelOf(
+      controller.state,
+      sourceName: _currentDescriptor?.name ?? '',
+      providerId: _providerId,
+      providerName: _currentDescriptor?.name ?? '',
+    );
+  }
+
+  /// 当前平台的 descriptor（平台页/登录页共读）。
+  ProviderDescriptor? get _currentDescriptor {
+    for (final ProviderDescriptor descriptor in _providers) {
+      if (descriptor.id == _providerId) {
+        return descriptor;
+      }
+    }
+    return null;
+  }
+
+  /// 打开登录页：先 [LoginController.open] 装载 descriptor + 网关，
+  /// 再按 Qt `NativeHudMusic.cpp:405-437` 的顺序在扫码方式上自动 [LoginController.start]。
+  Future<void> _openLogin() async {
+    final ProviderDescriptor? descriptor = _currentDescriptor;
+    final ProviderService? service = _providerService;
+    if (descriptor == null || service == null) {
+      setState(() => _actionNotice = '尚未装载音乐平台，无法登录');
+      return;
+    }
+    final LoginController? login = _loginController;
+    if (login == null) {
+      setState(() => _actionNotice = '登录功能尚未接入');
+      return;
+    }
+    _setModal('login');
+    await login.open(descriptor, service.gateway);
+    if (!mounted) {
+      return;
+    }
+    // Qt：默认方式若是扫码，打开面板后立即 start()（先生成二维码）。
+    if (login.state.methodId.isNotEmpty && !login.state.loggedIn) {
+      await login.start();
     }
   }
 
@@ -1161,6 +1301,21 @@ class _BasicShellState extends State<_BasicShell>
       providerAccounts: _providerAccounts,
       providerUserName: _providerUserName,
       localMusicEnabled: _localMusicEnabled,
+      // 评论页（modal == 'comments'）：领域层 CommentState 经映射层转成竖屏
+      // 只读视图模型（lib/basic/basic_comment_mapper.dart）。
+      comments: _commentsModel(),
+      mvAvailable: _currentDescriptor?.capability('mv', fallback: false) ?? false,
+      commentsScroll: _commentsScroll,
+      // 登录页（modal == 'login'）。
+      loginState: _loginController?.state,
+      loginMethods: _loginController?.methods ?? const <ProviderLoginMethod>[],
+      loginProviderName: _currentDescriptor?.name ?? '',
+      loginScanHint: _currentDescriptor?.text('scanHint') ?? '',
+      loginDeviceNotice: _currentDescriptor?.text('deviceNotice') ?? '',
+      loginCooldownLabel: _loginController?.cooldownLabel ?? '',
+      loginSmsRetrySeconds: _loginController?.smsRetrySeconds ?? 0,
+      mv: _mvController == null ? null : basicMvPanelModelOf(_mvController!.state),
+      mvPositionMs: _mvController?.videoPositionMs ?? 0,
     );
     final bool settingsOpen =
         _modal == 'settings' || _modal == DiscWarningModal.kind;
@@ -2144,10 +2299,23 @@ class _BasicShellState extends State<_BasicShell>
   /// TextInputStageState.formVisible），而本预览只有 '' 与 'search' 两个 modal，
   /// 账号三平台保持暂停。空实现是“不可达”，不是伪造动作；将来接登录必须换真实调用。
   @override
-  void submitForm(String account, String captcha) {}
+  void submitForm(String account, String captcha) {
+    // 登录弹层（modal == 'login'）打开时 `formVisible` 为真，这个入口才可达。
+    final LoginController? login = _loginController;
+    if (login == null) {
+      return;
+    }
+    unawaited(login.submitCode(account, captcha));
+  }
 
   @override
-  void sendLoginCode(String phone) {}
+  void sendLoginCode(String phone) {
+    final LoginController? login = _loginController;
+    if (login == null) {
+      return;
+    }
+    unawaited(login.sendCode(phone));
+  }
 
   /// 设置编辑框同理不可达（editingSetting 恒为 false，设置页未接入）。
   @override
@@ -2527,15 +2695,131 @@ class _BasicShellState extends State<_BasicShell>
     // 「登录 / 退出登录」）：本步只做**开关分发**——登录开登录弹层
     //（`modal == 'login'`，面板本身另属后续步骤），退出登录因为没有会话实现
     // 只给可见反馈。都不伪造登录态（`_providerAccounts` 恒为空）。
+    // 登录/退出（Qt/src/MusicAccount.cpp:549 startLogin / :676 logout）。
+    // 无账号可实测：入口、状态机、动作分发全部可走通，最后一步由
+    // `UnavailableProviderGateway` 报「当前来源不支持该功能」，绝不伪造登录态。
     if (action == 'music:login') {
-      _setModal('login');
+      unawaited(_openLogin());
       return null;
     }
     if (action == 'music:logout') {
-      return '当前平台没有登录会话';
+      final LoginController? login = _loginController;
+      if (login == null) {
+        return '当前平台没有登录会话';
+      }
+      unawaited(login.logout());
+      _setModal('');
+      return null;
     }
     if (action == 'music:qr') {
-      return '账号功能尚未接入：预览不伪造登录态';
+      final LoginController? login = _loginController;
+      if (login == null) {
+        return '账号功能尚未接入：预览不伪造登录态';
+      }
+      unawaited(login.regenerate());
+      return null;
+    }
+    if (action.startsWith(kPortraitLoginMethodPrefix)) {
+      final LoginController? login = _loginController;
+      if (login == null) {
+        return null;
+      }
+      unawaited(login.chooseMethod(
+          action.substring(kPortraitLoginMethodPrefix.length)));
+      return null;
+    }
+    // 评论页（Qt/src/NativeHudController.cpp:483-499 的 music:comments 与
+    // ResponsiveComments.cpp 的全部动作串）。
+    if (action == 'music:comments') {
+      final CommentController? comments = _commentController;
+      final BasicViewState state = controller.state;
+      final String trackId = state.song?.id ?? '';
+      if (comments == null || trackId.isEmpty) {
+        return '当前来源不支持歌曲评论';
+      }
+      _commentsScroll = 0;
+      _setModal('comments');
+      unawaited(comments.load(
+        trackId: trackId,
+        trackLabel: state.song?.title ?? '',
+      ));
+      return null;
+    }
+    if (action == 'music:comments-close' || action == 'comments:close') {
+      _commentController?.close();
+      _setModal('');
+      return null;
+    }
+    if (action == commentSortActionPrefix + 'hot' ||
+        action == commentSortActionPrefix + 'new') {
+      final String sort = action.substring(commentSortActionPrefix.length);
+      unawaited(_commentController?.setSort(
+          sort == 'new' ? ProviderCommentSort.newest : ProviderCommentSort.hot));
+      return null;
+    }
+    if (action == 'comments:refresh' || action == 'comments:retry') {
+      unawaited(_commentController?.refresh());
+      return null;
+    }
+    if (action == 'comments:load-more') {
+      unawaited(_commentController?.loadMore());
+      return null;
+    }
+    if (action.startsWith('comments:expand:')) {
+      _commentController
+          ?.toggleExpanded(action.substring('comments:expand:'.length));
+      setState(() {});
+      return null;
+    }
+    if (action.startsWith('comments:replies-more:')) {
+      unawaited(_commentController
+          ?.loadMoreReplies(action.substring('comments:replies-more:'.length)));
+      return null;
+    }
+    if (action.startsWith('comments:replies:')) {
+      unawaited(_commentController
+          ?.toggleReplies(action.substring('comments:replies:'.length)));
+      return null;
+    }
+    // MV（`MvAction` 是 `mv:*` 动作串的唯一作者，见 domain/mv/mv_controller.dart:662+）。
+    if (action == MvAction.open) {
+      final MvController? mv = _mvController;
+      if (mv == null) {
+        return 'MV 尚未接入：播放服务未就绪';
+      }
+      unawaited(_syncMv());
+      _setModal('mv');
+      unawaited(mv.refresh(trackId: state.song?.id ?? '', force: true));
+      return null;
+    }
+    if (action == MvAction.close) {
+      _mvController?.close();
+      _setModal('');
+      return null;
+    }
+    if (action == MvAction.retry) {
+      unawaited(_mvController?.reload());
+      return null;
+    }
+    if (action == MvAction.autoOn || action == MvAction.autoOff) {
+      unawaited(_mvController?.setAuto(action == MvAction.autoOn));
+      return null;
+    }
+    if (action == MvAction.offsetReset) {
+      _mvController?.resetOffset();
+      return null;
+    }
+    if (action.startsWith(MvAction.versionPrefix)) {
+      unawaited(_mvController
+          ?.selectVersion(action.substring(MvAction.versionPrefix.length)));
+      return null;
+    }
+    if (action.startsWith(MvAction.offsetPrefix)) {
+      final int? delta = int.tryParse(action.substring(MvAction.offsetPrefix.length));
+      if (delta != null) {
+        _mvController?.adjustOffset(delta);
+      }
+      return null;
     }
     return basicUnimplementedPrefix + action;
   }
