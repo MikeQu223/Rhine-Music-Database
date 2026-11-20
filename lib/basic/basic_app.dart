@@ -1481,6 +1481,13 @@ class _BasicShellState extends State<_BasicShell>
                         dark: state.dark,
                         scrollStorage: _settingsScroll,
                         scrollMaximumStorage: _settingsScrollMaximum,
+                        // 设置页第一屏的「ACCESS / 音乐平台」卡：Qt compact
+                        // `ResponsiveHudPages.cpp:527-544` 把它画在 y=130 起，
+                        // 竖屏这里作为设置内容的第一个 widget（与行网格同一单位）。
+                        providerName: _currentDescriptor?.name ?? '',
+                        providerLoggedIn: (_loginController?.state.accountId ?? '').isNotEmpty,
+                        providerUserName: _loginController?.state.nickname ?? '',
+                        onProviderAction: (String action) => _onAction(action),
                         onAction: (String action) =>
                             unawaited(_onSettingsAction(action)),
                       ),

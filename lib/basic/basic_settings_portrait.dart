@@ -25,6 +25,7 @@ import '../hud/portrait/portrait_layout.dart'
     show portraitDesignWidth, portraitFooterHeight, portraitGridWidth, portraitUnit;
 import '../hud/protocol/hud_frame.dart' show HudStage;
 import '../hud/widgets/settings_row.dart';
+import 'basic_provider_access_card.dart';
 import 'basic_settings.dart';
 
 /// 设置整页的 root key（测试用 finder）。
@@ -48,6 +49,10 @@ class BasicPortraitSettingsPage extends StatefulWidget {
     this.scrollStorage,
     this.scrollMaximumStorage,
     this.stageScale = 0,
+    this.providerName = '',
+    this.providerLoggedIn = false,
+    this.providerUserName = '',
+    this.onProviderAction,
   });
 
   /// 竖屏舞台：width 恒 1080，height 为舞台高，scale 恒 1（缩放在 PortraitStage）。
@@ -70,6 +75,20 @@ class BasicPortraitSettingsPage extends StatefulWidget {
   /// 竖屏窗口缩放比（逻辑 dp / 舞台像素，= PortraitBands.stageScale）。
   /// 用来和 HUD 画布同一口径把 393 网格压进 clamp 后的 dp 带；0 = 不压缩。
   final double stageScale;
+
+  /// 「ACCESS / 音乐平台」卡：平台显示名（空 = 没有平台可显示，卡不出现）。
+  final String providerName;
+
+  /// 平台卡：是否已登录。
+  final bool providerLoggedIn;
+
+  /// 平台卡：已登录昵称。
+  final String providerUserName;
+
+  /// 平台卡的动作出口（`provider` / `music:login` / `music:logout`）。
+  ///
+  /// 与设置行分开：这些动作不属于设置项，走的是 BasicApp 的通用 `_onAction`。
+  final ValueChanged<String>? onProviderAction;
 
   @override
   State<BasicPortraitSettingsPage> createState() =>
@@ -200,6 +219,18 @@ class _BasicPortraitSettingsPageState extends State<BasicPortraitSettingsPage> {
 
   List<Widget> _content(_PortraitInk ink) {
     final List<Widget> children = <Widget>[];
+    // 平台卡（Qt compact 设置页第一屏，`ResponsiveHudPages.cpp:527-544`）。
+    final ValueChanged<String>? providerAction = widget.onProviderAction;
+    if (widget.providerName.isNotEmpty && providerAction != null) {
+      children.add(BasicProviderAccessCard(
+        pageWidth: _pageWidth,
+        providerName: widget.providerName,
+        loggedIn: widget.providerLoggedIn,
+        userName: widget.providerUserName,
+        dark: widget.dark,
+        onAction: providerAction,
+      ));
+    }
     for (final SettingsSectionModel section in widget.model.sections) {
       children.add(_sectionHeader(section.spec, ink));
       final String renderer = section.spec.customRenderer;
