@@ -10,6 +10,10 @@ import 'package:flutter/scheduler.dart' show Ticker;
 import '../hud/input/hit_layer.dart';
 import '../hud/modals/lyrics_panel.dart' as lyrics;
 import '../hud/modals/modal_shell.dart';
+import '../hud/modals/comments_modal.dart' as comments_modal;
+import '../hud/modals/login_modal.dart' as login_modal;
+import '../hud/modals/mv_modal.dart' as mv_modal;
+import '../hud/modals/provider_modal.dart' as provider_modal;
 import '../hud/modals/queue_modal.dart' as queue_modal;
 import '../hud/pages/archive_page.dart';
 import '../hud/pages/chrome.dart';
@@ -330,6 +334,16 @@ class BasicHudFrame {
     // 面板内容由 queue_modal 产出（NativeHudModal.cpp:163-186 对 player 不走标题区）。
     if (modal == 'queue') {
       _paintQueueModal(sink, ports, state, width, height, dark, queueOffset);
+    } else if (modal == 'comments' && comments != null) {
+      _paintCommentsPanel(sink, ports, comments, width, height, dark, commentsScroll);
+    } else if (modal == 'mv' && mv != null) {
+      _paintMvModal(sink, ports, mv, width, mvPositionMs, dark);
+    } else if (modal == 'login' && loginState != null) {
+      _paintLoginModal(sink, ports, loginState, loginMethods, loginProviderName, loginScanHint,
+          loginDeviceNotice, loginCooldownLabel, width, dark);
+    } else if (modal == 'provider') {
+      _paintProviderModal(sink, ports, providers, providerId, providerAccounts, width, dark,
+          localMusicEnabled);
     }
 
     final player.PlayerBarDrawing bar = player.renderPlayerBar(
@@ -893,6 +907,179 @@ class BasicHudFrame {
       ),
     ).build();
     sink.hits.addAll(result.hits);
+  }
+
+  /// 横屏评论面板（Qt `NativeHudComments.cpp` 的 `commentsPanel(x, usable)`，
+  /// 唯一调用点 `Qt/src/NativeHudDetail.cpp:45-100`：x = width*0.56、
+  /// usable = width - x - 59，走 save/alpha/.../restore 自己管透明度）。
+  static void _paintCommentsPanel(
+    _HudSink sink,
+    BasicGlyphPorts ports,
+    PortraitCommentsModel model,
+    double width,
+    double height,
+    bool dark,
+    double scroll,
+  ) {
+    final double x = width * 0.56;
+    final double usable = width - x - 59;
+    final comments_modal.CommentPanelDrawing drawing = comments_modal.paintCommentsPanel(
+      _commentPanelModel(model, x: x, width: usable, dark: dark),
+      _CommentPanelGlyphs(ports),
+      scroll: comments_modal.cmtClampPanelScroll(scroll, _commentsContentBottom),
+    );
+    _commentsContentBottom = drawing.contentBottom;
+    sink.addDrawing(drawing.commands, drawing.hits);
+  }
+
+  /// 上一帧评论内容的总高（Qt 成员 `commentsContentBottom`，每帧由面板回存，
+  /// 下一帧据此夹取滚动；不存会让越滚可滚范围越小、滚轮抽搐）。
+  static double _commentsContentBottom = 0;
+
+  /// 领域层的竖屏视图模型 → 横屏面板模型（字段一一同名，只是面板多了
+  /// x/width/dark 三个宿主上下文）。
+  static comments_modal.CommentPanelModel _commentPanelModel(
+    PortraitCommentsModel model, {
+    required double x,
+    required double width,
+    required bool dark,
+  }) {
+    return comments_modal.CommentPanelModel(
+      x: x,
+      width: width,
+      dark: dark,
+      status: model.status,
+      message: model.message,
+      sort: model.sort,
+      totalLabel: model.totalLabel,
+      hasMore: model.hasMore,
+      loadingMore: model.loadingMore,
+      sourceName: model.sourceName,
+      sourceLabel: model.sourceLabel,
+      providerId: model.providerId,
+      items: <comments_modal.CommentPanelItem>[
+        for (final PortraitCommentRow row in model.items)
+          comments_modal.CommentPanelItem(
+            id: row.id,
+            nickname: row.nickname,
+            content: row.content,
+            avatarKey: row.avatarKey,
+            timeLabel: row.timeLabel,
+            likedLabel: row.likedLabel,
+            replyCount: row.replyCount,
+            expanded: row.expanded,
+            inlineReplies: <comments_modal.CommentPanelReply>[
+              for (final PortraitCommentReply reply in row.inlineReplies)
+                _commentPanelReply(reply),
+            ],
+            replies: <comments_modal.CommentPanelReply>[
+              for (final PortraitCommentReply reply in row.replies) _commentPanelReply(reply),
+            ],
+            repliesExpanded: row.repliesExpanded,
+            repliesHasMore: row.repliesHasMore,
+            repliesLoading: row.repliesLoading,
+            repliesError: row.repliesError,
+          ),
+      ],
+    );
+  }
+
+  static comments_modal.CommentPanelReply _commentPanelReply(PortraitCommentReply reply) =>
+      comments_modal.CommentPanelReply(
+        id: reply.id,
+        nickname: reply.nickname,
+        content: reply.content,
+        replyTo: reply.replyTo,
+      );
+
+  /// 横屏 MV 弹层（Qt 移动端从不进 MV，几何按桌面 `MvWindow.qml` 的等价实现）。
+  static void _paintMvModal(
+    _HudSink sink,
+    BasicGlyphPorts ports,
+    MvPanelModel model,
+    double width,
+    double positionMs,
+    bool dark,
+  ) {
+    final ModalShellResult result = mv_modal.MvModal(
+      width: width,
+      dark: dark,
+      model: model,
+      position: positionMs,
+      pictureOffsetMs: positionMs.round(),
+    ).build(sink, ports);
+    sink.hits.addAll(result.hits);
+  }
+
+  /// 横屏登录弹层（Qt `NativeHud::loginPanel`，`NativeHudLibrary.cpp:271-330`）。
+  static void _paintLoginModal(
+    _HudSink sink,
+    BasicGlyphPorts ports,
+    LoginState state,
+    List<ProviderLoginMethod> methods,
+    String providerName,
+    String scanHint,
+    String deviceNotice,
+    String cooldownLabel,
+    double width,
+    bool dark,
+  ) {
+    final login_modal.LoginModalFrame frame = login_modal.LoginModal(
+      textPort: ports,
+      stageWidth: width,
+      state: state,
+      text: <String, String>{
+        if (scanHint.isNotEmpty) 'scanHint': scanHint,
+        if (deviceNotice.isNotEmpty) 'deviceNotice': deviceNotice,
+      },
+      methods: methods,
+      cooldownLabel: cooldownLabel,
+      title: login_modal.loginModalTitle(providerName),
+      subtitle: login_modal.loginModalSubtitle(scanHint),
+      dark: dark,
+    ).build();
+    sink.commands.addAll(frame.commands);
+    sink.hits.addAll(frame.hits);
+  }
+
+  /// 横屏平台弹层（Qt `NativeHud::platformPanel`，`NativeHudModal.cpp:400-419`）。
+  static void _paintProviderModal(
+    _HudSink sink,
+    BasicGlyphPorts ports,
+    List<ProviderDescriptor> providers,
+    String providerId,
+    Map<String, ProviderAccount?> accounts,
+    double width,
+    bool dark,
+    bool localMusicEnabled,
+  ) {
+    final provider_modal.ProviderModalFrame frame = provider_modal.ProviderModal(
+      textPort: ports,
+      stageWidth: width,
+      dark: dark,
+      opacity: 1,
+      offset: 0,
+      currentProvider: providerId,
+      credentials: <String>{
+        for (final MapEntry<String, ProviderAccount?> entry in accounts.entries)
+          if (entry.value?.loggedIn ?? false) entry.key,
+      },
+      localMusicEnabled: localMusicEnabled,
+      entries: providers.isEmpty
+          ? null
+          : <provider_modal.ProviderModalEntry>[
+              for (final ProviderDescriptor descriptor in providers)
+                if (localMusicEnabled || descriptor.id != 'local')
+                  provider_modal.ProviderModalEntry(
+                    id: descriptor.id,
+                    name: descriptor.name,
+                    label: descriptor.label,
+                    detail: descriptor.detail,
+                  ),
+            ],
+    ).build();
+    sink.commands.addAll(frame.commands);
+    sink.hits.addAll(frame.hits);
   }
 
   /// 竖屏序号（Qt 的 `pad()`：两位，超过 99 自然变三位）。
@@ -2366,6 +2553,19 @@ class _HudSink implements HudSurfaceSink {
 }
 
 /// `queue_modal.QueueModalGlyphs` 适配：队列卡片只量宽度（Qt Canvas::fit）。
+class _CommentPanelGlyphs implements comments_modal.CommentPanelGlyphs {
+  const _CommentPanelGlyphs(this.ports);
+
+  final BasicGlyphPorts ports;
+
+  @override
+  double width(String value, double size, String weight) => ports.width(value, size, weight);
+
+  @override
+  List<String> wrap(String value, double limit, double size, String weight) =>
+      ports.wrap(value, limit, size, weight);
+}
+
 class _QueueModalGlyphs implements queue_modal.QueueModalGlyphs {
   const _QueueModalGlyphs(this.ports);
 

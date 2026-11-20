@@ -169,6 +169,7 @@ final class ProviderModal {
     this.kugouLite = false,
     this.title = 'MUSIC PLATFORM',
     this.subtitle = '直接选择音乐平台 / 各平台账号独立保存',
+    this.entries,
   });
 
   /// Injected glyph metrics (HudTextPort), used by fit(), limited() and wrap().
@@ -206,6 +207,11 @@ final class ProviderModal {
 
   /// modalSubtitle('provider') (Qt/src/NativeHudModal.cpp:53).
   final String subtitle;
+
+  /// 平台表：null = Qt 静态 `providers` 表（`NativeHudModal.cpp:13-18`）；
+  /// 非 null 时由宿主按插件注册表（`ProviderRegistry.ids()`）注入，多出来的
+  /// 平台（插件声明的）才能出现在卡片行里。过滤 `local` 仍由调用方负责。
+  final List<ProviderModalEntry>? entries;
 
   /// Paints one frame. Pure: no I/O, no mutation, no global state.
   ProviderModalFrame build() {
@@ -254,7 +260,7 @@ final class ProviderModal {
       left,
       y + 258,
       width,
-      providerModalVisibleEntries(localMusicEnabled),
+      entries ?? providerModalVisibleEntries(localMusicEnabled),
     ); // :294
 
     hudRule(body.sink, dark, left, y + 490, width, 0.2); // :295
