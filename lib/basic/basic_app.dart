@@ -926,6 +926,12 @@ class _BasicShellState extends State<_BasicShell>
       setState(() => _actionNotice = '尚未装载音乐平台，无法登录');
       return;
     }
+    // Qt `Qt/src/MusicMutation.cpp` 对 siren/local 早退禁止登入（`capabilities.login`
+    // 为 false 的平台压根没有登录流程）：不能靠「面板画出来但没有方式」蒙混。
+    if (!descriptor.capability('login', fallback: false)) {
+      setState(() => _actionNotice = '${descriptor.name}不支持账号登录');
+      return;
+    }
     final LoginController? login = _loginController;
     if (login == null) {
       setState(() => _actionNotice = '登录功能尚未接入');
