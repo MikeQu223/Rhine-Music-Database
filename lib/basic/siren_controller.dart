@@ -456,6 +456,43 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     return toggleLiked(current == null ? '' : _text(current['id']));
   }
 
+  /// 创建本机歌单并刷新收藏列（Qt `music:create-playlist` 的 siren 分支，
+  /// `MusicMutation.cpp:421-455`：校验名称 → 写文档 → 状态文案）。返回状态文案。
+  Future<String> createPlaylist(String title) async {
+    final LocalCollectionStore? store = _collectionStore;
+    if (store == null) {
+      return '本地收藏尚未接入';
+    }
+    await store.createPlaylist(title);
+    _refreshLocalCollections();
+    _publish();
+    return store.status;
+  }
+
+  /// 重命名本机歌单（Qt `music:rename-playlist`），返回状态文案。
+  Future<String> renamePlaylist(String id, String title) async {
+    final LocalCollectionStore? store = _collectionStore;
+    if (store == null) {
+      return '本地收藏尚未接入';
+    }
+    await store.renamePlaylist(id, title);
+    _refreshLocalCollections();
+    _publish();
+    return store.status;
+  }
+
+  /// 删除本机歌单（Qt `music:delete-playlist`），返回状态文案。
+  Future<String> deletePlaylist(String id) async {
+    final LocalCollectionStore? store = _collectionStore;
+    if (store == null) {
+      return '本地收藏尚未接入';
+    }
+    await store.deletePlaylist(id);
+    _refreshLocalCollections();
+    _publish();
+    return store.status;
+  }
+
   /// 切换检索分类（Qt `NativeHudMusic.cpp:218-236` 的 `kind` 分支）。
   ///
   /// Qt 的语义是：`text = query.isEmpty ? keyword : query`，

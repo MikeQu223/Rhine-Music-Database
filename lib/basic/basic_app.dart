@@ -27,6 +27,9 @@ import '../hud/input/key_router.dart'
 import '../hud/input/text_input_overlay.dart';
 import '../hud/input/wheel_router.dart' show HudScrollOffsets, HudWheelConstants;
 import '../hud/modals/disc_warning_modal.dart';
+import '../hud/modals/playlist_form.dart'
+    show PlaylistFormCommit, PlaylistFormKind, PlaylistFormLayer, PlaylistFormPort, PlaylistFormResult,
+        PlaylistFormRow, PlaylistFormSpec, PlaylistFormView;
 import '../hud/modals/settings_modal.dart'
     show
         PlatformCapabilities,
@@ -846,6 +849,13 @@ class _BasicShellState extends State<_BasicShell>
   }
 
   /// 收藏列（`modal == 'saved'`）当前列：1 = 喜欢、2 = 我的歌单；0 = 总览。
+  /// 歌单表单（Qt `playlist-form`）的当前形态；null = 表单没开。
+  PlaylistFormKind? _playlistFormKind;
+  /// 正在重命名的歌单 id（create 时为空）。
+  String _playlistFormId = '';
+  /// 表单同帧错误文案（承接 PlaylistFormLayer 的 rejected 结果）。
+  String _playlistFormStatus = '';
+
   int _savedLane = 1;
 
   /// 收藏列是否停在「我的音乐」总览（Qt `m_savedOverview`）。
@@ -1579,6 +1589,49 @@ class _BasicShellState extends State<_BasicShell>
                   : Align(alignment: Alignment.topLeft, child: page);
             },
           ),
+        // 歌单表单（Qt modal == 'playlist-form'，NativeHudModal.cpp:240-243）：
+        // 面板框由 HUD 画（这里只挂真实 widget 层：标签/输入框/提交/状态行）。
+        if (_playlistFormKind != null)
+          Builder(
+            builder: (BuildContext inner) {
+              final bool landscape = geometry != null;
+              return PlaylistFormLayer(
+                view: PlaylistFormView(
+                  formKind: _playlistFormKind!,
+                  provider: _providerId,
+                  providerName: _currentDescriptor?.name ?? '',
+                  status: _playlistFormStatus,
+                  uid: _loginController?.state.accountId ?? '',
+                  writeLoading: false,
+                  formPid: _playlistFormId,
+                  dark: state.dark,
+                  stageWidth: MediaQuery.sizeOf(inner).width /
+                      HudScale.designStageHeight *
+                      HudScale.stageUnit,
+                  stageScale: MediaQuery.sizeOf(inner).width / HudScale.designStageHeight,
+                  portrait: !landscape,
+                  viewport: Size(MediaQuery.sizeOf(inner).width,
+                      MediaQuery.sizeOf(inner).height),
+                ),
+                port: _PlaylistFormPortAdapter(controller: controller),
+                table: null,
+                onCloseModal: () => setState(() {
+                  _playlistFormKind = null;
+                  _playlistFormId = '';
+                  _playlistFormStatus = '';
+                }),
+                onCommitted: (PlaylistFormCommit commit) {
+                  setState(() {
+                    _playlistFormStatus = '';
+                    _playlistFormKind = null;
+                    _playlistFormId = '';
+                  });
+                  _notice('${commit.kind == PlaylistFormKind.create ? '已创建歌单' : '已重命名歌单'}：'
+                      '${commit.verifiedTitle}');
+                },
+              );
+            },
+          ),
       ],
     );
   }
@@ -2220,6 +2273,46 @@ class _BasicShellState extends State<_BasicShell>
       _switchProvider(found);
       return;
     }
+    // 歌单表单（Qt `music:create-playlist` / `music:rename-playlist` →
+    // `music:create-playlist` 入口见 NativeHudMusic.cpp:314-317、rename :346-351）。
+    // siren 是本地歌单，不需要登录；其它平台当前没有真网关，给可见反馈不伪造。
+    if (action == 'music:create-playlist') {
+      if (_providerId != 'siren') {
+        setState(() => _actionNotice = '当前平台不支持创建歌单');
+        return;
+      }
+      setState(() {
+        _playlistFormKind = PlaylistFormKind.create;
+        _playlistFormId = '';
+        _playlistFormStatus = '';
+        _modal = PlaylistFormSpec.modalKind;
+      });
+      return;
+    }
+    if (action.startsWith('music:rename-playlist:')) {
+      final String id = action.substring('music:rename-playlist:'.length);
+      if (_providerId != 'siren') {
+        setState(() => _actionNotice = '当前平台不支持重命名歌单');
+        return;
+      }
+      setState(() {
+        _playlistFormKind = PlaylistFormKind.rename;
+        _playlistFormId = id;
+        _playlistFormStatus = '';
+        _modal = PlaylistFormSpec.modalKind;
+      });
+      return;
+    }
+    if (action.startsWith('music:delete-playlist:')) {
+      final String id = action.substring('music:delete-playlist:'.length);
+      unawaited(controller.deletePlaylist(id).then((String notice) {
+        if (!mounted) {
+          return;
+        }
+        setState(() => _actionNotice = notice);
+      }));
+      return;
+    }
     // Qt `ResponsiveHudLayout::handle`（ResponsiveHudLayout.cpp:457-462）：
     // `mobile:song-options` 只翻转面板，任何 `music:`/`tab:` 动作都会把它收起。
     if (action == 'mobile:song-options') {
@@ -2457,6 +2550,12 @@ class _BasicShellState extends State<_BasicShell>
     bool portrait = false,
   }) {
     if (geometry == null) {
+      return null;
+    }
+    // playlist-form（创建/重命名歌单）的输入框几何来自 `PlaylistFormLayout`
+    // （Overlay.qml:355-484 的 formFields），不是检索框；这里退回 null 让
+    // `PlaylistFormLayer` 自己挂那份 TextInputOverlay（它已内置）。
+    if (_modal == PlaylistFormSpec.modalKind) {
       return null;
     }
     final Rect rect = _searchInputStageRect(geometry, portrait: portrait);
@@ -3244,6 +3343,32 @@ class _BasicEngineKeyPorts implements EngineKeyPorts {
 /// 前缀与 `SharedPreferencesBasicSettingsPort.write` 的前缀校验一致，所以能真正
 /// 落到 SharedPreferences，绕开的只是 `PreferenceStore.panelKeys` 白名单
 /// （那张表逐项被设置页测试锁死，不能为了收藏往里加键）。
+/// `PlaylistFormLayer` 的提交端口：siren 走本机收藏存储
+/// （`MusicMutation.cpp:421-455` 的本地分支），其它平台当前没有真网关，回「不支持」。
+class _PlaylistFormPortAdapter implements PlaylistFormPort {
+  const _PlaylistFormPortAdapter({required this.controller});
+
+  final BasicController controller;
+
+  @override
+  Future<PlaylistFormResult> createPlaylist({required String name}) async {
+    final String status = await controller.createPlaylist(name);
+    final bool ok = status.startsWith('已创建歌单');
+    return ok
+        ? PlaylistFormResult.accepted(verifiedTitle: name.trim())
+        : PlaylistFormResult.rejected(status: status);
+  }
+
+  @override
+  Future<PlaylistFormResult> renamePlaylist({required String id, required String name}) async {
+    final String status = await controller.renamePlaylist(id, name);
+    final bool ok = status.startsWith('已重命名歌单');
+    return ok
+        ? PlaylistFormResult.accepted(verifiedTitle: name.trim())
+        : PlaylistFormResult.rejected(status: status);
+  }
+}
+
 class _BasicSettingsPreferencePort implements PreferencePort {
   _BasicSettingsPreferencePort(this._store);
 
