@@ -23,6 +23,7 @@ import '../hud/portrait/portrait_layout.dart';
 import '../hud/portrait/portrait_pages_library.dart';
 import '../hud/portrait/portrait_pages_provider.dart';
 import '../hud/portrait/portrait_playlist_picker.dart';
+import '../hud/portrait/portrait_saved_overview.dart';
 import '../hud/portrait/portrait_pages_queue.dart';
 import '../hud/portrait/portrait_pages_search_kinds.dart';
 import '../hud/portrait/portrait_pages_song.dart';
@@ -228,6 +229,12 @@ class BasicHudFrame {
         const <(String, String, int)>[],
     String pickerNotice = '',
     bool canCreatePlaylist = false,
+    /// 「我的音乐」总览（Qt `m_savedOverview`）用的平台名/用户名与收藏列行。
+    String savedProviderName = '',
+    String savedUserName = '',
+    List<PortraitSavedOverviewRow> savedOverviewRows = const <PortraitSavedOverviewRow>[],
+    bool savedShowArtists = false,
+    double savedScroll = 0,
     bool localMusicEnabled = true,
   }) {
     final bool dark = state.dark;
@@ -282,6 +289,11 @@ class BasicHudFrame {
         pickerPlaylists: pickerPlaylists,
         pickerNotice: pickerNotice,
         canCreatePlaylist: canCreatePlaylist,
+        savedProviderName: savedProviderName,
+        savedUserName: savedUserName,
+        savedOverviewRows: savedOverviewRows,
+        savedShowArtists: savedShowArtists,
+        savedScroll: savedScroll,
       );
     }
     final _HudSink sink = _HudSink();
@@ -477,6 +489,11 @@ class BasicHudFrame {
         const <(String, String, int)>[],
     String pickerNotice = '',
     bool canCreatePlaylist = false,
+    String savedProviderName = '',
+    String savedUserName = '',
+    List<PortraitSavedOverviewRow> savedOverviewRows = const <PortraitSavedOverviewRow>[],
+    bool savedShowArtists = false,
+    double savedScroll = 0,
   }) {
     final _HudSink sink = _HudSink();
     ports.beginFrame(sink: sink, time: animationTime, ink: hudInk(dark), animate: animateText);
@@ -645,10 +662,22 @@ class BasicHudFrame {
     } else if (modal == 'saved') {
       // Qt compact 的 `saved` 是**三态**（`ResponsiveHudLayout.cpp:455-464` 与
       // `ResponsiveHudPages.cpp:845-1010`）：总览（`m_savedOverview`）、喜欢列
-      // （`musicCollection == 1`）、歌单列（其它）。总览的版式本仓库还没有实现
-      // （`portrait_layout.dart` 只给了主页/收藏两页），这里先画两列的实页，
-      // 总览退化成喜欢列 —— 并在宿主侧用 `mobile:mine` 直接进喜欢列。
-      if (savedLane == 2) {
+      // （`musicCollection == 1`）、歌单列（其它）。总览由
+      // `portrait_saved_overview.dart` 按 `library()` 的总览分支实现，
+      // 另两列复用收藏页。
+      if (savedOverview) {
+        // Qt compact `library()` 的总览分支（ResponsiveHudPages.cpp:858-892）：
+        // 平台卡 + 「收藏与档案」索引行（四个收藏列 + 播放历史 + 设置 + 创建歌单）。
+        paintPortraitSavedOverview(
+          canvas,
+          providerName: savedProviderName,
+          userName: savedUserName,
+          collectionRows: savedOverviewRows,
+          showArtists: savedShowArtists,
+          canCreatePlaylist: canCreatePlaylist,
+          scroll: savedScroll,
+        );
+      } else if (savedLane == 2) {
         paintPortraitPlaylistsPage(
           canvas,
           rows: playlistRows,
@@ -1691,6 +1720,11 @@ class BasicHudSurface extends StatefulWidget {
     this.pickerPlaylists = const <(String, String, int)>[],
     this.pickerNotice = '',
     this.canCreatePlaylist = false,
+    this.savedProviderName = '',
+    this.savedUserName = '',
+    this.savedOverviewRows = const <PortraitSavedOverviewRow>[],
+    this.savedShowArtists = false,
+    this.savedScroll = 0,
     this.savedNotice = '',
     this.mv,
     this.mvPositionMs = 0,
@@ -1815,6 +1849,17 @@ class BasicHudSurface extends StatefulWidget {
 
   /// 是否给「＋ 创建歌单」入口（Qt `canCreatePlaylist`）。
   final bool canCreatePlaylist;
+
+  /// 「我的音乐」总览的平台名 / 用户名 / 索引行（Qt `providerName`、`userName`）。
+  final String savedProviderName;
+  final String savedUserName;
+  final List<PortraitSavedOverviewRow> savedOverviewRows;
+
+  /// 是否给「收藏歌手」行（Qt 只在 `discoverTabs` 含 `artists` 时才给）。
+  final bool savedShowArtists;
+
+  /// 总览页的滚动偏移（Qt `m_scroll`）。
+  final double savedScroll;
 
   /// 收藏页状态文案。
   final String savedNotice;
@@ -2050,6 +2095,11 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       pickerPlaylists: widget.pickerPlaylists,
       pickerNotice: widget.pickerNotice,
       canCreatePlaylist: widget.canCreatePlaylist,
+      savedProviderName: widget.savedProviderName,
+      savedUserName: widget.savedUserName,
+      savedOverviewRows: widget.savedOverviewRows,
+      savedShowArtists: widget.savedShowArtists,
+      savedScroll: widget.savedScroll,
       mv: widget.mv,
       mvPositionMs: widget.mvPositionMs,
     );
