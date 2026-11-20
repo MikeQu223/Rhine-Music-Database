@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
@@ -82,6 +83,8 @@ import '../domain/comments/comment_controller.dart';
 import '../provider/provider_gateway.dart'
     show ProviderAccount, ProviderCommentSort, ProviderLoginMethod, UnavailableProviderGateway;
 import '../provider/platform_switcher.dart' show PlatformSwitcher;
+import '../provider/plugin_bridge.dart';
+import '../provider/plugin_gateway.dart';
 import '../provider/provider_service.dart';
 import '../hud/portrait/portrait_pages_collection_likes.dart' show PortraitLikesRow;
 import '../hud/portrait/portrait_pages_collection_playlists.dart'
@@ -596,6 +599,8 @@ class _BasicShellState extends State<_BasicShell>
   /// 平台服务（Qt `MusicAccount` 的数据面）：按 id 给网关，缺省退回
   /// `UnavailableProviderGateway`（本预览没有 Node 运行时，页面照样可画）。
   ProviderService? _providerService;
+  /// 插件通道客户端（首次请求时才把内嵌 Node 拉起来）。
+  final PluginBridgeClient _pluginBridge = PluginBridgeClient();
 
   /// 评论控制器（Qt `CommentsController`）；网关不支持评论时它只给状态串。
   CommentController? _commentController;
@@ -779,6 +784,43 @@ class _BasicShellState extends State<_BasicShell>
   ///
   /// 顺序与 `ProviderAssetLoader.load` 一致：读 assets → `ProviderRegistry.load`。
   /// 失败不阻断启动：平台页退回空表（画空态），原因进动作槽。
+  /// 读回持久化的插件会话 cookie（JSON 对象 `{name: value}`；坏数据当空）。
+  static Map<String, String> _decodePluginCookies(String raw) {
+    if (raw.isEmpty) {
+      return const <String, String>{};
+    }
+    try {
+      final Object? decoded = jsonDecode(raw);
+      if (decoded is Map) {
+        return <String, String>{
+          for (final MapEntry<Object?, Object?> entry in decoded.entries)
+            '${entry.key}': '${entry.value}',
+        };
+      }
+      if (decoded is List) {
+        // 兼容早期版本写下的 `Set-Cookie` 行数组：解析成 `name -> value`。
+        final Map<String, String> jar = <String, String>{};
+        for (final Object? line in decoded) {
+          final RegExpMatch? match =
+              RegExp(r'^\s*([^=;]+)=([^;]*)').firstMatch('$line');
+          if (match == null) {
+            continue;
+          }
+          final String name = match.group(1)!.trim();
+          if ('$line'.toLowerCase().contains('max-age=0')) {
+            jar.remove(name);
+          } else {
+            jar[name] = match.group(2) ?? '';
+          }
+        }
+        return jar;
+      }
+    } on FormatException {
+      return const <String, String>{};
+    }
+    return const <String, String>{};
+  }
+
   Future<void> _loadProviders() async {
     try {
       // 平台来源有两类：内置 descriptor（assets 里的 siren.json）与插件
@@ -837,18 +879,31 @@ class _BasicShellState extends State<_BasicShell>
 
   /// 装平台服务与两条会话控制器（评论 / 登录）。
   ///
-  /// 网关工厂恒返回 [UnavailableProviderGateway]：Flutter 侧没有接 Node 运行时
-  /// （`NodeRuntimeHost.kt` 无调用点），所以评论与登录的真实调用会以
-  /// `当前来源不支持该功能` 收尾。**这是诚实降级**：页面、状态机、动作分发
-  /// 全链路可走通，只在最后一步由网关报不支持，绝不伪造数据。
+  /// 网关按平台分派：**用户安装的插件**（`netease`/`qq`/`kugou`/…）走
+  /// [PluginGateway] → Kotlin `PluginBridge` → 内嵌 Node 运行时跑插件 worker，
+  /// 登录二维码、账号、检索都是插件的真实返回；内置平台（`siren`/`local`）与
+  /// 没有插件运行时的构建仍退回 [UnavailableProviderGateway]（`当前来源不支持该功能`），
+  /// 绝不伪造数据。
   void _installProviderService(ProviderRegistry registry) {
     final ProviderService service = ProviderService(
       registry: registry,
       initialProvider: _providerId,
-      gatewayFactory: (ProviderDescriptor descriptor) => UnavailableProviderGateway(
-        descriptor,
-        reason: '当前来源不支持该功能',
-      ),
+      gatewayFactory: (ProviderDescriptor descriptor) {
+        if (descriptor.userInstalled) {
+          // 插件平台：真实数据面在插件的 Node worker 里（`/native/<id>/<op>`）。
+          final String cookieKey = 'plugin-cookies-${descriptor.id}';
+          return PluginGateway(
+            descriptor: descriptor,
+            bridge: _pluginBridge,
+            cookies: _decodePluginCookies(widget.playerPreferences.read(cookieKey)),
+            // 会话 cookie 落偏好：重启后 `account()` 仍能认出已登录（Qt 用钥匙串）。
+            onCookies: (Map<String, String> cookies) =>
+                widget.playerPreferences.write(cookieKey, jsonEncode(cookies)),
+            onDiagnostic: (String message) => debugPrint('[plugin] $message'),
+          );
+        }
+        return UnavailableProviderGateway(descriptor, reason: '当前来源不支持该功能');
+      },
     );
     _providerService = service;
     _commentController = CommentController(

@@ -123,6 +123,16 @@ android {
         }
     }
 
+    // 内嵌 Node 运行时宿主（cpp/node_host.cpp）：Flutter 侧要跑 MusicBridge 的
+    // ios-runtime.cjs，就必须自己把 libnode.so 的 node::Start 拉起来。只编这一个
+    // 很小的 JNI 库，不接管 Qt 的 CMake 工程。
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
+
     buildTypes {
         release {
             // DEDUP-09：仍不回退 debug 签名；材料完整就签，缺失则保持未签名。

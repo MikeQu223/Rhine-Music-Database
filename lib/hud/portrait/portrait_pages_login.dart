@@ -21,6 +21,8 @@ library;
 import 'dart:math' as math;
 import 'dart:ui' show Rect;
 
+import 'package:qr/qr.dart';
+
 import '../../domain/account/login_controller.dart' show LoginState;
 import '../../provider/provider_gateway.dart' show ProviderLoginMethod;
 import 'portrait_canvas.dart';
@@ -209,17 +211,20 @@ double _paintQrBranch(
   if (state.qrImage.isNotEmpty) {
     c.image(state.qrImage, box.deflate(12));
   } else if (state.qrText.isNotEmpty) {
-    // 文本二维码（Qt 的 `qr(text)` 分支）：居中直接画文本，让扫码器认这一串。
-    final String value = state.qrText;
-    c.paragraph(
-      value,
-      box.left + 12,
-      box.top + math.max(12, side / 2 - 18),
-      size: 10,
-      width: side - 24,
-      color: c.ink,
-      maximumLines: math.max(1, (side - 24).floor() ~/ 8),
-    );
+    // 文本二维码（Qt 的 `qr(text)` 分支）：**真的把内容编成二维码**再画模块。
+    // 插件（netease 等）只回 `qrText`（登录 URL），宿主必须自己渲染，扫码器才认。
+    if (!_paintQr(c, state.qrText, box)) {
+      // 编码失败（内容过长/非法）才退回纯文本，绝不画假二维码。
+      c.paragraph(
+        state.qrText,
+        box.left + 12,
+        box.top + math.max(12, side / 2 - 18),
+        size: 10,
+        width: side - 24,
+        color: c.ink,
+        maximumLines: math.max(1, (side - 24).floor() ~/ 8),
+      );
+    }
   } else {
     c.icon('database', box.left + side / 2 - 16, box.top + side / 2 - 16,
         size: 32, color: c.muted);
@@ -326,4 +331,43 @@ bool _isQrMethod(String methodId, List<ProviderLoginMethod> methods) {
 double _pageBottom(PortraitCanvas c, double top) {
   final double limit = math.max(0.0, math.min(c.contentBottom, c.height) - 6);
   return math.max(top + 60, limit);
+}
+
+
+/// 把文本编成二维码并逐模块填色；成功返回 true。
+///
+/// 插件只回 `qrText`（`netease` 的 `loginBegin` 返回
+/// `https://music.163.com/login?codekey=<token>`），Qt 侧是宿主渲染的
+/// `qr(text)`，这里用 `qr` 包做同样的事：纸色底 + 墨色模块，四周留 12 网格静区。
+bool _paintQr(PortraitCanvas c, String data, Rect box) {
+  try {
+    final QrCode code = QrCode(
+      payload: QrPayload.fromString(data),
+      errorCorrectLevel: QrErrorCorrectLevel.medium,
+    );
+    final QrImage image = QrImage(code);
+    final int count = image.moduleCount;
+    if (count <= 0) {
+      return false;
+    }
+    final double inset = 12;
+    final double usable = math.min(box.width, box.height) - inset * 2;
+    final double cell = usable / count;
+    final double left = box.left + (box.width - usable) / 2;
+    final double top = box.top + (box.height - usable) / 2;
+    for (int row = 0; row < count; row++) {
+      for (int col = 0; col < count; col++) {
+        if (!image.isDark(row, col)) {
+          continue;
+        }
+        c.fill(
+          Rect.fromLTWH(left + col * cell, top + row * cell, cell + .2, cell + .2),
+          c.ink,
+        );
+      }
+    }
+    return true;
+  } on Object {
+    return false;
+  }
 }

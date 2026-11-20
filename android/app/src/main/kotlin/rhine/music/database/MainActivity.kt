@@ -18,6 +18,7 @@ import io.flutter.plugin.common.BinaryMessenger
 import rhine.music.database.porting.BasicSettingsChannel
 import rhine.music.database.basic.BasicAudioChannel
 import rhine.music.database.porting.MediaSessionChannel
+import rhine.music.database.porting.PluginBridgeChannel
 import rhine.music.database.porting.QtPlatformViewHost
 import rhine.music.database.qt.QT_SCENE_VIEW_TYPE
 import rhine.music.database.qt.QtSceneChannel
@@ -121,6 +122,10 @@ class MainActivity : FlutterActivity() {
         //  这里不再有捕获 MainActivity 的 lambda（旧写法 { applicationContext } 在字节码里
         //  编译成 configureFlutterEngine$lambda$2(MainActivity) 并送进通道存储）。
         BasicSettingsChannel.install(settingsMessenger, applicationContext)
+        //  插件平台通道：用户安装的插件（netease/qq/kugou/…）要通过内嵌 Node 运行时
+        //  取数据（登录二维码、账号、检索）。协议真值是 MusicBridge/ios-runtime.cjs，
+        //  Kotlin 侧见 porting/PluginBridge.kt，原生侧见 cpp/node_host.cpp。
+        PluginBridgeChannel.install(flutterEngine.dartExecutor.binaryMessenger, applicationContext)
         QtSceneChannel.install(flutterEngine, this)
         flutterEngine.platformViewsController.registry.registerViewFactory(
             QT_SCENE_VIEW_TYPE,

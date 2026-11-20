@@ -846,6 +846,7 @@ class BasicHudFrame {
     }
     sink.commands.addAll(canvas.commands);
     sink.hits.addAll(canvas.hits);
+    // ignore: avoid_print
     final bool animating = ports.endFrame();
     _generation += 1;
     return BasicHudFrame(
