@@ -799,16 +799,18 @@ void main() {
         (WidgetTester tester) async {
       final _TrackingController controller = await pumpShell(tester);
 
-      fire(tester, 'music:login');
+      fire(tester, 'music:unknown-action');
       await tester.pump();
-      // 账号功能确实没接：给可见反馈，且绝不假装登录成功。
-      expect(find.textContaining('账号功能尚未接入'), findsOneWidget);
+      // 未接入的动作必须给可见反馈、绝不静默 no-op。
+      // （`music:login` 已改为开登录弹层（provider/登录接线），所以这里换一个
+      //  仍未接入的动作，守住同一条契约。）
+      expect(find.textContaining(basicUnimplementedPrefix), findsOneWidget);
 
       fire(tester, 'player:next');
       await tester.pump();
       // 已接入的动作真的到 controller，并且清掉上一条反馈。
       expect(controller.nextCalls, 1);
-      expect(find.textContaining('账号功能尚未接入'), findsNothing);
+      expect(find.textContaining(basicUnimplementedPrefix), findsNothing);
 
       fire(tester, 'music:like');
       await tester.pump();
@@ -1089,15 +1091,15 @@ void main() {
 
       // 资源失败是状态，不是一次性提示：动作反馈出现时它必须还在，
       // 动作反馈消失后它也必须还在（否则一次点击就把失败静默抹掉了）。
-      fire(tester, 'music:login');
+      fire(tester, 'music:unknown-action');
       await tester.pump();
-      expect(find.textContaining('账号功能尚未接入'), findsOneWidget);
+      expect(find.textContaining(basicUnimplementedPrefix), findsOneWidget);
       expect(find.textContaining(basicResourceFailurePrefix), findsOneWidget);
 
       fire(tester, 'player:next');
       await tester.pump();
       expect(controller.nextCalls, 1);
-      expect(find.textContaining('账号功能尚未接入'), findsNothing);
+      expect(find.textContaining(basicUnimplementedPrefix), findsNothing);
       expect(find.textContaining(basicResourceFailurePrefix), findsOneWidget);
 
       await tester.pumpWidget(const SizedBox());
