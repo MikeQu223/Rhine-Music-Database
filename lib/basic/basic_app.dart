@@ -926,6 +926,33 @@ class _BasicShellState extends State<_BasicShell>
       },
     );
     _mvController = mv;
+    // Qt `MusicAccount::restoreCachedAccount()`：启动就把落盘会话读回来，
+    // 否则设置页 ACCESS 卡在用户手动打开登录页之前一直显示「未登录」。
+    unawaited(_restoreAccount());
+  }
+
+  /// 用落盘会话恢复账号昵称（Qt `MusicAccount::restoreCachedAccount`）。
+  ///
+  /// 只对声明了 `login` 能力的平台做：`siren`/`local` 没有账号体系，调用会白白
+  /// 起一次 Node 运行时。插件平台首次恢复要等运行时冷启（约 90s），所以放后台。
+  Future<void> _restoreAccount() async {
+    final LoginController? login = _loginController;
+    final ProviderService? service = _providerService;
+    final ProviderDescriptor? descriptor = _currentDescriptor;
+    if (login == null || service == null || descriptor == null) {
+      return;
+    }
+    if (!descriptor.capability('login', fallback: false)) {
+      return;
+    }
+    if (login.state.accountId.isNotEmpty) {
+      return;
+    }
+    try {
+      await login.open(descriptor, service.gatewayFor(descriptor.id));
+    } on Object catch (error) {
+      debugPrint('[plugin] restore account failed: $error');
+    }
   }
 
   /// 评论页的竖屏视图模型（没有控制器时 null ⇒ HUD 不画评论页）。

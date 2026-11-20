@@ -73,7 +73,8 @@ void paintPortraitLoginPage(
   final double height = c.height;
   // 整页纸色（与资料库内页同源，ResponsiveHudLayout.cpp:96-98）。
   c.fill(Rect.fromLTWH(0, 0, c.gridWidth, height), c.paper);
-  c.header('账号登录', back: true);
+  // 登录层是弹层：返回键必须关层，不能落回 `back`（那会把目录栈弹掉、层还留着）。
+  c.header('账号登录', back: true, backAction: 'close-modal');
 
   final double top = math.min(126.0, height * .22);
   final double bottom = _pageBottom(c, top);
