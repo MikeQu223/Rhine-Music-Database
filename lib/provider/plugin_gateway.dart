@@ -37,7 +37,7 @@ class PluginGateway implements ProviderGateway {
   /// **必须是对象而不是 `Set-Cookie` 行数组**：`MusicBridge/core/host.cjs:8` 是
   /// `{...message.cookies}`，数组会被摊成 `{"0": "MUSIC_U=…"}`，于是插件永远
   /// 认为未登录（真机表现为扫码成功后 `account` 仍回「请登录网易云」）。
-  Map<String, String> _cookies;
+  final Map<String, String> _cookies;
 
   /// cookie 变更回调（宿主把它写进偏好）。
   final void Function(Map<String, String> cookies)? onCookies;
@@ -251,6 +251,68 @@ class PluginGateway implements ProviderGateway {
       for (final Object? item in raw)
         if (item is Map) item.map((Object? key, Object? value) => MapEntry<String, Object?>('$key', value)),
     ];
+  }
+
+  @override
+  Future<List<String>> likedTrackIds({String uid = ''}) async {
+    // 插件签名 `likedIDs(uid)`：uid 空串时插件用会话里的账号（真机验证过，
+    // 传账号 id 或空串都能拿到同一份列表）。
+    final List<Object?> raw = await _callList('likedIDs', <Object?>[uid]);
+    return <String>[for (final Object? id in raw) _text(id)];
+  }
+
+  @override
+  Future<List<Map<String, Object?>>> userPlaylists({String uid = ''}) async {
+    final Map<String, Object?> value = await _call('userPlaylists', <Object?>[uid]);
+    final List<Object?> raw = value['items'] is List ? value['items'] as List<Object?> : const <Object?>[];
+    return <Map<String, Object?>>[
+      for (final Object? item in raw)
+        if (item is Map) item.map((Object? key, Object? value) => MapEntry<String, Object?>('$key', value)),
+    ];
+  }
+
+  @override
+  Future<List<String>> likedState(List<String> trackIds) async {
+    // 插件签名 `likedState(ids, uid)`：返回已喜欢的 id 列表（Qt 把它当集合用）。
+    final List<Object?> raw = await _callList('likedState', <Object?>[trackIds, '']);
+    return <String>[for (final Object? id in raw) _text(id)];
+  }
+
+  @override
+  Future<bool> setTrackLiked({required String trackId, required bool liked}) async {
+    // 插件签名 `mutate(route, values)`；Qt 的 `/like` 语义见 `MusicMutation.cpp:337`。
+    final Map<String, Object?> value = await _call('mutate', <Object?>[
+      '/like',
+      <String, Object?>{'id': trackId, 'like': liked},
+    ]);
+    final String state = _text(value['state']);
+    if (state.isNotEmpty) {
+      return state == 'subscribed';
+    }
+    return liked;
+  }
+
+  @override
+  Future<List<Map<String, Object?>>> songsByIds(List<String> ids) async {
+    // 插件签名 `songs(ids, valid)`：`body.value` **直接是数组**（不是 `items` 包一层，
+    // 真机探针 `{"id":1,"body":{"code":200,"value":[{...}]}}` 确认）。
+    final List<Object?> raw = await _callList('songs', <Object?>[ids]);
+    return <Map<String, Object?>>[
+      for (final Object? item in raw)
+        if (item is Map) item.map((Object? key, Object? value) => MapEntry<String, Object?>('$key', value)),
+    ];
+  }
+
+  /// 取「列表型」响应（`body.value` 直接是数组时）。
+  Future<List<Object?>> _callList(String operation, List<Object?> args) async {
+    final PluginBridgeReply reply =
+        await bridge.request(providerId, operation, args, <String, String>{..._cookies});
+    _applyCookies(reply.cookies);
+    if (!reply.ok) {
+      throw ProviderRequestError(reply.error);
+    }
+    final Object? value = reply.value;
+    return value is List ? value : const <Object?>[];
   }
 
   /// 当前 cookie 罐（宿主首次打开登录页时回读持久化值用）。

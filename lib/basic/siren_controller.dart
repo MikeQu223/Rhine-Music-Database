@@ -464,8 +464,14 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
       ];
 
   /// [songId] 是否在「喜欢的歌曲」里（空 id 恒 false，与 Qt `isLiked` 同）。
-  bool isLiked(String songId) =>
-      _collectionStore?.isLiked(songId) ?? (_collections?.likedIds().contains(songId) ?? false);
+  bool isLiked(String songId) {
+    // 插件平台（有服务端账号）优先读服务端集合：Qt `NativeHud.cpp:472` 的
+    // `selectedLiked` 就是 `MusicLibrary` 里那份 `likedIDs`，本地集合只是塞壬的替身。
+    if (_remoteSearch != null && _serverLikedIds.isNotEmpty) {
+      return _serverLikedIds.contains(songId);
+    }
+    return _collectionStore?.isLiked(songId) ?? (_collections?.likedIds().contains(songId) ?? false);
+  }
 
   /// 切换一首歌的喜欢状态并刷新收藏列，返回结果文案（Qt `music:like` 的 status）。
   ///
@@ -474,12 +480,32 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
   /// 塞壬是本地集合（LocalCollections.cpp），所以这里直接 toggle 并落盘，
   /// 成功后 [_refreshLocalCollections] 把 liked 列表解析成曲目行并重建列缓存。
   Future<String> toggleLiked(String songId) async {
+    if (songId.isEmpty) {
+      return '无法写入本地收藏';
+    }
+    // 插件平台：喜欢状态在服务端（Qt `MusicMutation.cpp:337` 的 `mutate("/like")`）。
+    final ProviderGateway? remote = _remoteSearch;
+    if (remote != null) {
+      final bool liked = !isLiked(songId);
+      try {
+        final bool nowLiked = await remote.setTrackLiked(trackId: songId, liked: liked);
+        if (_disposed) {
+          return '';
+        }
+        if (nowLiked) {
+          _serverLikedIds.add(songId);
+        } else {
+          _serverLikedIds.remove(songId);
+        }
+        _publish();
+        return nowLiked ? '已加入喜欢的歌曲' : '已从喜欢的歌曲移除';
+      } on Object catch (error) {
+        return remoteErrorMessage(error);
+      }
+    }
     final LocalCollectionStore? store = _collectionStore;
     if (store == null) {
       return '本地收藏尚未接入';
-    }
-    if (songId.isEmpty) {
-      return '无法写入本地收藏';
     }
     await store.toggleLike(songId);
     _refreshLocalCollections();
@@ -671,6 +697,67 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
       _publish();
     }
   }
+
+  /// 远端「喜欢的歌曲」id 集合（插件平台走服务端 `likedIDs`，本地平台为空）。
+  ///
+  /// Qt 的等价点：`MusicLibrary.cpp:969` 拉 `likedIDs` 后填 `likedIDs` 集合，
+  /// 详情页心形与 immerse 条的 `music:like-current` 都读它。
+  Set<String> get serverLikedIds => _serverLikedIds;
+  Set<String> _serverLikedIds = <String>{};
+
+  /// 远端喜欢的曲目行（拉 id 后按需 `songs(ids)` 解析成可画的行）。
+  List<SirenSong> get serverLikedSongs => _serverLikedSongs;
+  List<SirenSong> _serverLikedSongs = <SirenSong>[];
+
+  /// 从服务端刷新「喜欢的歌曲」（插件平台才需要；本地平台直接返回）。
+  ///
+  /// 只在登录且有账号时调用：网易云的 `likedIDs(uid)` 需要一个 uid，
+  /// 未登录会被上游回 400（真机探针确认过）。
+  Future<void> refreshServerLiked({String uid = ''}) async {
+    final ProviderGateway? gateway = _remoteSearch;
+    if (gateway == null || _disposed) {
+      return;
+    }
+    final int seq = ++_serverLikedSeq;
+    try {
+      final List<String> ids = await gateway.likedTrackIds(uid: uid);
+      if (_disposed || seq != _serverLikedSeq) {
+        return;
+      }
+      _serverLikedIds = <String>{for (final String id in ids) if (id.isNotEmpty) id};
+      // 只解析前 200 条：`songs(ids)` 一次传太多会被上游拒（Qt 也分批拉）。
+      final List<Map<String, Object?>> rows =
+          ids.isEmpty ? const <Map<String, Object?>>[] : await gateway.songsByIds(ids.take(200).toList());
+      if (_disposed || seq != _serverLikedSeq) {
+        return;
+      }
+      _serverLikedSongs = <SirenSong>[
+        for (final Map<String, Object?> row in rows) _songFromRemoteRow(row),
+      ];
+      _publish();
+    } on Object catch (error) {
+      if (_disposed) {
+        return;
+      }
+      _status = remoteErrorMessage(error);
+      _publish();
+    }
+  }
+
+  int _serverLikedSeq = 0;
+
+  /// 远端曲目行 → `SirenSong`（插件字段没有 `durationMs`，`duration` 已经是毫秒）。
+  SirenSong _songFromRemoteRow(Map<String, Object?> row) => SirenSong(
+        id: _text(row['id']),
+        title: _text(row['title']),
+        artist: _text(row['artist']),
+        album: _text(row['album']),
+        albumId: _text(row['albumID']),
+        cover: _text(row['cover']),
+        sourceUrl: '',
+        lyricUrl: '',
+        durationMs: (row['duration'] is num ? (row['duration'] as num).toDouble() : 0),
+      );
 
   /// 跑一次远端检索（结果/失败原因都进 `_status`，与 Qt 的 `status` 一致）。
   Future<void> _runRemoteSearch() async {
@@ -2255,6 +2342,11 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     }
     if (selected == 1) {
       // 「喜欢的歌曲」列：本机 likedIDs 经曲库解析出的曲目（Qt lists[1]）。
+      // 插件平台走服务端收藏：Qt `MusicLibrary` 在 `likedIDs` 回来之后同样把它
+      // 填进 `lists[1]`（`MusicLibrary.cpp:969-990`），所以这里分岔到服务端行。
+      if (_remoteSearch != null) {
+        return _serverLikedSongs;
+      }
       return _likedSongs;
     }
     if (selected == 2) {

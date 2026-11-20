@@ -964,6 +964,28 @@ class _BasicShellState extends State<_BasicShell>
     } on Object catch (error) {
       debugPrint('[plugin] restore account failed: $error');
     }
+    // 会话恢复成功后把服务端收藏拉一遍（Qt `MusicAccount::confirmLogin` 末尾
+    // 也会 `refreshAccountFeatures()` + `loadMoreSource`，喜欢列随之可用）。
+    if (!mounted) {
+      return;
+    }
+    debugPrint('[plugin] account restored: ${login.state.accountId} / ${login.state.nickname}');
+    await _refreshServerLiked();
+  }
+
+  /// 拉一次服务端「喜欢的歌曲」（插件平台 + 已登录才有效）。
+  Future<void> _refreshServerLiked() async {
+    final ProviderDescriptor? descriptor = _currentDescriptor;
+    final LoginController? login = _loginController;
+    if (descriptor == null || login == null || !login.state.loggedIn) {
+      return;
+    }
+    try {
+      await controller.refreshServerLiked(uid: login.state.accountId);
+      debugPrint('[plugin] liked refreshed: ${controller.serverLikedIds.length} ids');
+    } on Object catch (error) {
+      debugPrint('[plugin] liked refresh failed: $error');
+    }
   }
 
   /// 评论页的竖屏视图模型（没有控制器时 null ⇒ HUD 不画评论页）。
@@ -1049,10 +1071,15 @@ class _BasicShellState extends State<_BasicShell>
   }
 
   /// 喜欢列的行（真数据：控制器里 likedIDs 解析出的曲目，空 = 还没读到）。
-  List<PortraitLikesRow> _likedRows() => <PortraitLikesRow>[
-        for (final SirenSong song in controller.likedSongs)
-          (song.title, song.artist, song.durationMs > 0 ? _mmss(song.durationMs.round()) : ''),
-      ];
+  List<PortraitLikesRow> _likedRows() {
+    // 插件平台读服务端收藏（`refreshServerLiked` 拉回来的行），本地平台读本机集合。
+    final List<SirenSong> songs =
+        controller.remoteSearchActive ? controller.serverLikedSongs : controller.likedSongs;
+    return <PortraitLikesRow>[
+      for (final SirenSong song in songs)
+        (song.title, song.artist, song.durationMs > 0 ? _mmss(song.durationMs.round()) : ''),
+    ];
+  }
 
   /// 我的歌单列的行（真数据：本机集合存储里的歌单）。
   List<PortraitPlaylistRow> _playlistRows() => <PortraitPlaylistRow>[

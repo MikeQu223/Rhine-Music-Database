@@ -360,6 +360,37 @@ abstract class ProviderGateway {
     String quality = '',
     bool alternative = false,
   });
+
+  /// 服务端「喜欢的歌曲」id 列表（Qt `MusicLibrary.cpp:969` 的 `likedIDs(uid)`；
+  /// 插件侧签名 `likedIDs(uid)`，uid 为空时插件用会话里的账号）。
+  ///
+  /// 默认实现抛 [ProviderUnavailableError]：只有真正有账号的平台（插件网关）覆盖它，
+  /// 塞壬这类没有服务端账号的来源不需要实现，控制器会把异常翻成可见状态串。
+  Future<List<String>> likedTrackIds({String uid = ''}) async {
+    throw const ProviderUnavailableError('当前来源不支持账号收藏');
+  }
+
+  /// 服务端收藏歌单（Qt `userPlaylists(uid)`；插件返回 `items`，`kind` 为 `playlist`）。
+  Future<List<Map<String, Object?>>> userPlaylists({String uid = ''}) async {
+    throw const ProviderUnavailableError('当前来源不支持账号歌单');
+  }
+
+  /// 服务端收藏状态（Qt `likedState(ids)`，返回哪些 id 已喜欢）。
+  Future<List<String>> likedState(List<String> trackIds) async {
+    throw const ProviderUnavailableError('当前来源不支持账号收藏');
+  }
+
+  /// 服务端「喜欢/取消喜欢」（Qt `MusicMutation.cpp:337` 的 `mutate("/like", {id, like})`，
+  /// 返回 `state` 为 `subscribed`/`not-subscribed`）。
+  Future<bool> setTrackLiked({required String trackId, required bool liked}) async {
+    throw const ProviderUnavailableError('当前来源不支持账号收藏');
+  }
+
+  /// 按 id 批量取曲目（Qt `MusicLibrary.cpp:947` 的 `songs(ids)`），
+  /// 用于把服务端 `likedIDs` 的裸 id 变成可画的曲目行。
+  Future<List<Map<String, Object?>>> songsByIds(List<String> ids) async {
+    throw const ProviderUnavailableError('当前来源不支持账号收藏');
+  }
 }
 
 /// 检索分类（`SearchKind` in `port.d.ts`）。
@@ -483,6 +514,31 @@ class UnavailableProviderGateway implements ProviderGateway {
     String quality = '',
     bool alternative = false,
   }) async {
+    throw ProviderUnavailableError(reason);
+  }
+
+  @override
+  Future<List<String>> likedTrackIds({String uid = ''}) async {
+    throw ProviderUnavailableError(reason);
+  }
+
+  @override
+  Future<List<Map<String, Object?>>> userPlaylists({String uid = ''}) async {
+    throw ProviderUnavailableError(reason);
+  }
+
+  @override
+  Future<List<String>> likedState(List<String> trackIds) async {
+    throw ProviderUnavailableError(reason);
+  }
+
+  @override
+  Future<bool> setTrackLiked({required String trackId, required bool liked}) async {
+    throw ProviderUnavailableError(reason);
+  }
+
+  @override
+  Future<List<Map<String, Object?>>> songsByIds(List<String> ids) async {
     throw ProviderUnavailableError(reason);
   }
 }

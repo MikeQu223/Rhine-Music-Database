@@ -70,6 +70,17 @@ Map<String, Object?> remoteSearchRow(Map<String, Object?> item) {
 ///
 /// 失败**不抛**：插件回非 200（未登录、限流、平台不支持）时把原因做成状态串，
 /// 页面照常显示空列表——与 Qt 一致（`MusicLibrary` 把失败写进 `status`）。
+/// 远端调用失败时的可显示原因（检索、收藏、歌单、播放地址共用一套口径）。
+String remoteErrorMessage(Object error) {
+  if (error is ProviderUnavailableError) {
+    return error.message;
+  }
+  if (error is ProviderRequestError) {
+    return error.message;
+  }
+  return '插件调用失败：$error';
+}
+
 Future<RemoteSearchResult> runRemoteSearch({
   required ProviderGateway gateway,
   required String kind,
