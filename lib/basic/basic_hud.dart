@@ -17,6 +17,7 @@ import '../hud/pages/song_detail.dart' as detail;
 import '../hud/portrait/portrait_canvas.dart';
 import '../hud/portrait/portrait_layout.dart';
 import '../hud/portrait/portrait_pages_library.dart';
+import '../hud/portrait/portrait_pages_provider.dart';
 import '../hud/portrait/portrait_pages_queue.dart';
 import '../hud/portrait/portrait_pages_search_kinds.dart';
 import '../hud/portrait/portrait_pages_song.dart';
@@ -24,6 +25,8 @@ import '../hud/portrait/portrait_song_options.dart';
 import '../hud/player/player_bar.dart' as player;
 import '../plugin/plugin_models.dart';
 import '../plugin/plugin_manager.dart';
+import '../provider/provider_descriptor.dart';
+import '../provider/provider_gateway.dart' show ProviderAccount;
 import '../hud/protocol/hud_frame.dart';
 import '../hud/protocol/hud_hit.dart';
 import '../hud/render/hud_painter.dart';
@@ -155,6 +158,19 @@ class BasicHudFrame {
     /// 当前详情曲目的「专辑 / 时长」摘要与详情正文（Qt `optionsSheet` 末尾两行）。
     String songOptionsDetail = '',
     String songOptionsDetailBody = '',
+    /// 音乐平台页的数据真值（`modal == 'provider'` 时用）：平台表已按
+    /// `display.order` 排好（见 `ProviderRegistry.ids`）。
+    List<ProviderDescriptor> providers = const <ProviderDescriptor>[],
+    /// 当前平台 id（`music.provider`，决定平台行高亮与 ACCOUNT 段分支）。
+    String providerId = '',
+    /// 平台 id → 已恢复的账号；null / 未登录即「未登录」。
+    Map<String, ProviderAccount?> providerAccounts = const <String, ProviderAccount?>{},
+    /// `music.nickname`（仅登录态使用）。
+    String providerUserName = '',
+    /// `PlatformFeatures::LocalMusic`：关掉时 `local` 平台不进列表
+    /// （Qt `providerCardsState()` 跳过 `id == "local"`；过滤是调用方的事，
+    /// `paintPortraitProviderPage` 不重复判断）。
+    bool localMusicEnabled = true,
   }) {
     final bool dark = state.dark;
     // 竖屏（compact）走独立排版：393 网格、归档主页 + 迷你播放条 + 底栏，
@@ -183,6 +199,11 @@ class BasicHudFrame {
         commentsAvailable: commentsAvailable,
         songOptionsDetail: songOptionsDetail,
         songOptionsDetailBody: songOptionsDetailBody,
+        providers: providers,
+        providerId: providerId,
+        providerAccounts: providerAccounts,
+        providerUserName: providerUserName,
+        localMusicEnabled: localMusicEnabled,
       );
     }
     final _HudSink sink = _HudSink();
@@ -328,6 +349,11 @@ class BasicHudFrame {
     bool commentsAvailable = false,
     String songOptionsDetail = '',
     String songOptionsDetailBody = '',
+    List<ProviderDescriptor> providers = const <ProviderDescriptor>[],
+    String providerId = '',
+    Map<String, ProviderAccount?> providerAccounts = const <String, ProviderAccount?>{},
+    String providerUserName = '',
+    bool localMusicEnabled = true,
   }) {
     final _HudSink sink = _HudSink();
     ports.beginFrame(sink: sink, time: animationTime, ink: hudInk(dark), animate: animateText);
@@ -413,6 +439,35 @@ class BasicHudFrame {
     } else if (songPage) {
       // Qt compact：song() / lyrics() 是两页，共用「档案 + 封面 + 进度 + 传输」骨架。
       _paintPortraitSongPage(canvas, state, song, items.length, selected);
+    } else if (modal == 'provider') {
+      // Qt compact `providerPage`（ResponsiveHudPages.cpp:612-701）：通用页头
+      // （只有返回箭头 + close-modal，没有设置齿轮）+ 内容自 158 起。播放条与底栏
+      // 由 shell 画（Qt 平台页的底栏 active=""，所以 nav 传 null）。
+      paintPortraitShell(
+        canvas,
+        player: portraitPlayer,
+        nav: null,
+        header: (PortraitCanvas c) => c.header(
+          '音乐平台',
+          back: true,
+          backAction: 'close-modal',
+          showSettings: false,
+        ),
+        content: (PortraitCanvas c, double pageBottom) => paintPortraitProviderPage(
+          c,
+          // Qt `providerCardsState()`：`PlatformFeatures::LocalMusic` 关掉时 `local`
+          // 不进列表。过滤在调用方做（页面文档明确不重复判断）。
+          providers: localMusicEnabled
+              ? providers
+              : providers
+                  .where((ProviderDescriptor d) => d.id != 'local')
+                  .toList(growable: false),
+          currentId: providerId,
+          accounts: providerAccounts,
+          scrollOffset: '',
+          userName: providerUserName,
+        ),
+      );
     } else if (modal == 'settings') {
       // Qt compact 的设置是「终端页」：页头（品牌/标题/编号块/校准刻度）+ 内容
       // 由一页铺到 h-144，底下播放条与底栏照旧。内容本身是真实 widget 层
@@ -1241,6 +1296,11 @@ class BasicHudSurface extends StatefulWidget {
     this.commentsAvailable = false,
     this.songOptionsDetail = '',
     this.songOptionsDetailBody = '',
+    this.providers = const <ProviderDescriptor>[],
+    this.providerId = '',
+    this.providerAccounts = const <String, ProviderAccount?>{},
+    this.providerUserName = '',
+    this.localMusicEnabled = true,
   });
 
   final BasicViewState state;
@@ -1303,6 +1363,14 @@ class BasicHudSurface extends StatefulWidget {
   /// 选项面板末尾的「专辑 / 时长」摘要与详情正文。
   final String songOptionsDetail;
   final String songOptionsDetailBody;
+
+  /// 音乐平台页的数据真值（`modal == 'provider'` 时用），见
+  /// [BasicHudFrame.build] 的同名参数。
+  final List<ProviderDescriptor> providers;
+  final String providerId;
+  final Map<String, ProviderAccount?> providerAccounts;
+  final String providerUserName;
+  final bool localMusicEnabled;
 
   /// 插件详情页的 manifest（modal == 'plugin-detail' 时用）。
   final PluginManifest? pluginDetail;
@@ -1506,6 +1574,11 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       commentsAvailable: widget.commentsAvailable,
       songOptionsDetail: widget.songOptionsDetail,
       songOptionsDetailBody: widget.songOptionsDetailBody,
+      providers: widget.providers,
+      providerId: widget.providerId,
+      providerAccounts: widget.providerAccounts,
+      providerUserName: widget.providerUserName,
+      localMusicEnabled: widget.localMusicEnabled,
     );
     // 共享滚动文字有字符槽还在 kReelDuration 内 -> 续帧；静止后停 ticker。
     // 松手惯性期间也必须续帧（同一个 ticker 兼职推进列表动量）。

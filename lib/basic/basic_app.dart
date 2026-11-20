@@ -66,6 +66,10 @@ import 'basic_settings_window.dart';
 import 'basic_startup_view.dart';
 import '../plugin/plugin_models.dart';
 import '../plugin/plugin_manager.dart';
+import '../provider/provider_assets.dart';
+import '../provider/provider_descriptor.dart';
+import '../provider/provider_gateway.dart';
+import '../provider/provider_registry.dart';
 import 'platform_playback.dart';
 import 'qt_scene_view.dart';
 import 'siren_controller.dart';
@@ -138,6 +142,10 @@ const String basicLyricLineActionPrefix = 'player:lyric-line:';
 
 /// 选曲槽载荷前缀：`music:slot:<i>`（archive_page.dart:311，与 music:index: 同一份下标）。
 const String basicMusicSlotActionPrefix = 'music:slot:';
+
+/// 音乐平台行载荷前缀：`provider:<id>`（`lib/hud/portrait/portrait_pages_provider.dart`
+/// 的平台行命中，切到该平台；找不到 id 时给可见反馈，不猜）。
+const String basicProviderSwitchPrefix = 'provider:';
 
 /// 组合根：唯一 [BasicController] + 字形资源 → HUD 业务外壳。
 ///
@@ -457,6 +465,7 @@ class _BasicAppState extends State<BasicApp> {
       settingsStore: _settingsStore,
       playerPreferences: _playerPreferences,
       collections: _collections,
+      bundle: widget.bundle,
     );
   }
 }
@@ -473,6 +482,7 @@ class _BasicShell extends StatefulWidget {
     required this.settingsStore,
     required this.playerPreferences,
     required this.collections,
+    this.bundle,
   });
 
   final BasicController controller;
@@ -487,6 +497,9 @@ class _BasicShell extends StatefulWidget {
 
   /// 本机收藏（喜欢 / 自建歌单）的持久化实现，与 controller 共用同一实例。
   final LocalCollectionStore collections;
+
+  /// 平台 descriptor 的 asset 源（测试注入；生产 null = rootBundle）。
+  final AssetBundle? bundle;
 
   @override
   State<_BasicShell> createState() => _BasicShellState();
@@ -517,6 +530,21 @@ class _BasicShellState extends State<_BasicShell>
   /// 当前来源是否支持歌曲评论（Qt `commentsAvailable`）。siren 的 descriptor 里
   /// `operations.comments` 为 false ⇒ 面板里不会出现「查看评论」。
   bool get _commentsAvailable => false;
+
+  /// 已装载的平台表（`display.order` 升序，见 [ProviderRegistry.ids]）。
+  /// 装载完成前是空表：音乐平台页画空态，不伪造平台行。
+  List<ProviderDescriptor> _providers = const <ProviderDescriptor>[];
+
+  /// 当前平台 id（Qt `music.provider`）。缺省 siren，装载成功后换成
+  /// 注册表的 `defaultId`（Qt `ProviderRegistry::defaultId`）。
+  String _providerId = 'siren';
+
+  /// 平台 id → 已恢复的账号（Qt `providerCardsState()` 的 authenticated 面）。
+  /// 本预览没有账号恢复通道，恒为空表 ⇒ ACCOUNT 段一律「未登录」，不伪造登录态。
+  final Map<String, ProviderAccount?> _providerAccounts = const <String, ProviderAccount?>{};
+
+  /// 当前平台昵称（Qt `music.nickname`）。
+  String get _providerUserName => _providerAccounts[_providerId]?.nickname ?? '';
 
   /// 当前弹层（'' = 无，'search' = 检索）。Qt 的 modal 由 NativeHud 自己持有
   /// （Qt/src/NativeHudController.cpp:64-130 openModal / :132-143 closeModal /
@@ -653,6 +681,8 @@ class _BasicShellState extends State<_BasicShell>
     // 收藏落盘读取与曲库并行：控制器要的是「已装载的 liked 集合」，所以先读
     // 盘再 refresh（后者在曲库装载后还会再跑一次，见 _refreshLocalCollections）。
     unawaited(_loadCollections());
+    // 平台表（音乐平台页的数据真值）：与曲库并行装载，失败只进动作槽。
+    unawaited(_loadProviders());
     // Overlay.qml:541-548：输入框隐藏时 inputLayer.forceActiveFocus()。Qt 在启动
     // 完成时就把焦点交给 HUD 输入层；这里晚一帧做同一件事，否则硬件键盘没有任何
     // 节点接收——设备上「ENTER 查看 / 方向键」会全部静默（161 补的键盘入口要靠它）。
@@ -679,6 +709,34 @@ class _BasicShellState extends State<_BasicShell>
       return;
     }
     controller.refreshLocalCollections();
+  }
+
+  /// 读取内置平台 descriptor 并装成注册表（音乐平台页的数据真值）。
+  ///
+  /// 顺序与 `ProviderAssetLoader.load` 一致：读 assets → `ProviderRegistry.load`。
+  /// 失败不阻断启动：平台页退回空表（画空态），原因进动作槽。
+  Future<void> _loadProviders() async {
+    final ProviderAssetLoader loader = ProviderAssetLoader(bundle: widget.bundle);
+    try {
+      final List<Map<String, Object?>> builtins = await loader.readBuiltins();
+      final ProviderRegistry registry = ProviderRegistry.load(builtins: builtins);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _providers = <ProviderDescriptor>[
+          for (final String id in registry.ids)
+            if (registry.descriptor(id) != null) registry.descriptor(id)!,
+        ];
+        final String defaultId = registry.defaultId ?? '';
+        _providerId = defaultId.isNotEmpty ? defaultId : 'siren';
+      });
+    } on Object catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() => _actionNotice = '读取平台列表失败：$error');
+    }
   }
 
   void _onStartupStatus(AnimationStatus status) {
@@ -1089,6 +1147,11 @@ class _BasicShellState extends State<_BasicShell>
       commentsAvailable: _commentsAvailable,
       songOptionsDetail: _songOptionsDetail(state),
       songOptionsDetailBody: _songOptionsDetailBody(state),
+      // 音乐平台页（modal == 'provider'）的数据真值。
+      providers: _providers,
+      providerId: _providerId,
+      providerAccounts: _providerAccounts,
+      providerUserName: _providerUserName,
     );
     final bool settingsOpen =
         _modal == 'settings' || _modal == DiscWarningModal.kind;
@@ -1875,6 +1938,30 @@ class _BasicShellState extends State<_BasicShell>
     }
     if (action.startsWith(basicSearchArtistActionPrefix)) {
       setState(() => _actionNotice = '歌手页尚未接入');
+      return;
+    }
+    // 音乐平台页（Qt `providerPage`）的入口与平台切换：`provider` 打开弹层，
+    // `provider:<id>` 切到该平台。找不到就留可见反馈，不猜、不静默。
+    if (action == 'provider') {
+      _setModal('provider');
+      return;
+    }
+    if (action.startsWith(basicProviderSwitchPrefix)) {
+      final String id = action.substring(basicProviderSwitchPrefix.length);
+      ProviderDescriptor? target;
+      for (final ProviderDescriptor descriptor in _providers) {
+        if (descriptor.id == id) {
+          target = descriptor;
+          break;
+        }
+      }
+      final ProviderDescriptor? found = target;
+      if (found == null) {
+        setState(() => _actionNotice = '未知平台：$id');
+        return;
+      }
+      setState(() => _actionNotice = '已切换至 ${found.name}');
+      _setModal('');
       return;
     }
     // Qt `ResponsiveHudLayout::handle`（ResponsiveHudLayout.cpp:457-462）：
