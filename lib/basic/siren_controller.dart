@@ -711,6 +711,77 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
   List<BasicLocalPlaylist> _serverPlaylists = const <BasicLocalPlaylist>[];
   int _serverPlaylistSeq = 0;
 
+  /// 打开服务端歌单（插件平台）：Qt 走 `MusicDirectory.cpp:88-150` 的 `detail`，
+  /// 返回 `[item, songs, ids]`，Flutter 只取 songs 并把它建成一个目录。
+  ///
+  /// 塞壬/本地平台的歌单仍走本机集合（`_localPlaylists`），不进这条路径。
+  Future<String> enterRemotePlaylist(BasicLocalPlaylist playlist) async {
+    final ProviderGateway? gateway = _remoteSearch;
+    if (gateway == null || _disposed) {
+      return '当前来源不支持歌单';
+    }
+    final int generation = ++_detailGeneration;
+    _status = '正在打开：${playlist.title}';
+    _loading = true;
+    _publish();
+    try {
+      final List<Map<String, Object?>> rows = await gateway.detailSongs(<String, Object?>{
+        'kind': 'playlist',
+        'id': playlist.id,
+        'title': playlist.title,
+        'provider': _remoteProviderId,
+        'key': '$_remoteProviderId:playlist:${playlist.id}',
+      });
+      if (generation != _detailGeneration || _disposed) {
+        return '';
+      }
+      final List<SirenSong> songs = <SirenSong>[
+        for (final Map<String, Object?> row in rows) _songFromRemoteRow(row),
+      ];
+      for (final SirenSong song in songs) {
+        _songById[song.id] = song;
+      }
+      _directory = BasicDirectory(
+        provider: _remoteProviderId.isEmpty ? sirenProvider : _remoteProviderId,
+        kind: 'playlist',
+        id: playlist.id,
+        key: '$_remoteProviderId:playlist:${playlist.id}',
+        title: playlist.title,
+        artist: '',
+        cover: songs.isEmpty ? '' : songs.first.cover,
+        description: '${songs.length} 首',
+        trackCount: songs.length,
+        virtual: false,
+        songs: songs,
+        ids: <String>[for (final SirenSong song in songs) song.id],
+        cursor: songs.length,
+        index: 0,
+        parent: _directory,
+        parentLane: _selectedLane,
+        parentSelection: _selection,
+      );
+      _album = null;
+      _phase = BasicPhase.library;
+      _query = '';
+      _loading = false;
+      _error = '';
+      _status = songs.isEmpty ? '歌单暂无可播放曲目' : '已打开：${playlist.title}';
+      _song = songs.isEmpty ? null : songs.first;
+      _selection = songs.isEmpty ? null : BasicSelection(kind: 'song', id: songs.first.id);
+      _listPosition = 0;
+      _publish();
+      return _status;
+    } on Object catch (error) {
+      if (generation != _detailGeneration || _disposed) {
+        return '';
+      }
+      _loading = false;
+      _status = remoteErrorMessage(error);
+      _publish();
+      return _status;
+    }
+  }
+
   /// 拉一次服务端歌单（插件平台 + 已登录才有效；塞壬/本地平台直接返回）。
   Future<void> refreshServerPlaylists({String uid = ''}) async {
     final ProviderGateway? gateway = _remoteSearch;

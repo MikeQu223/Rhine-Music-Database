@@ -3519,9 +3519,22 @@ class _BasicShellState extends State<_BasicShell>
       return null;
     }
     if (item.kind == 'playlist') {
-      // 歌单行是**目录**，不是专辑（Qt/src/MusicSiren.cpp:251-335 的 playlists 分支走
-      // selectDirectory）。把歌单行当专辑打开会显示一张不相干的专辑——这正是 132R 的
-      // D2 缺陷。基础版没有本机歌单端口时不编造目录内容，如实标记未接入。
+      // 歌单行是**目录**，不是专辑（Qt/src/MusicDirectory.cpp:88-150 对 playlist 走
+      // `detail` 拿 songs）。插件平台读服务端歌单；塞壬/本机歌单仍没有目录实现，
+      // 如实标记未接入而不是编造内容。
+      if (controller.remoteSearchActive) {
+        final String playlistId = item.id.isEmpty ? '' : item.id;
+        for (final BasicLocalPlaylist playlist in controller.serverPlaylists) {
+          if (playlist.id == playlistId) {
+            unawaited(controller.enterRemotePlaylist(playlist).then((String notice) {
+              if (!mounted || notice.isEmpty) return;
+              setState(() => _actionNotice = notice);
+            }));
+            return null;
+          }
+        }
+        return '歌单已不在当前列表里';
+      }
       return '${basicUnimplementedPrefix}music:playlist:${item.id.isEmpty ? item.index : item.id}';
     }
     if (item.index < 0 || item.index >= state.albums.length) {

@@ -391,6 +391,12 @@ abstract class ProviderGateway {
   Future<List<Map<String, Object?>>> songsByIds(List<String> ids) async {
     throw const ProviderUnavailableError('当前来源不支持账号收藏');
   }
+
+  /// 读取一个集合（歌单/专辑/歌手）的曲目（Qt `MusicDirectory.cpp:88-150` 的 `detail`，
+  /// 插件返回 `[item, songs, ids]`，这里只要 songs）。
+  Future<List<Map<String, Object?>>> detailSongs(Map<String, Object?> item) async {
+    throw const ProviderUnavailableError('当前来源不支持集合详情');
+  }
 }
 
 /// 检索分类（`SearchKind` in `port.d.ts`）。
@@ -534,6 +540,11 @@ class UnavailableProviderGateway implements ProviderGateway {
 
   @override
   Future<bool> setTrackLiked({required String trackId, required bool liked}) async {
+    throw ProviderUnavailableError(reason);
+  }
+
+  @override
+  Future<List<Map<String, Object?>>> detailSongs(Map<String, Object?> item) async {
     throw ProviderUnavailableError(reason);
   }
 
