@@ -282,7 +282,6 @@ function buildQt() {
         '-DRHINE_PACKAGE_APP=OFF',
         `-DRHINE_VERSION=${version.version}`,
         `-DRHINE_RELEASE_BUILD=${version.release ? 'ON' : 'OFF'}`,
-        `-DRHINE_PLUGIN_CLIENT_VERSION=${process.env.RHINE_PLUGIN_CLIENT_VERSION || ''}`,
     ];
     if (win || mac) {
         // CMake 生成符号时使用当前运行的 Node，避免依赖 PATH 里的系统安装。

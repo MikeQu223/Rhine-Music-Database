@@ -20,7 +20,8 @@ QString clientVersion() {
 #if RHINE_RELEASE_BUILD
     return QStringLiteral(RHINE_VERSION);
 #else
-    return QStringLiteral(RHINE_PLUGIN_CLIENT_VERSION);
+    // 开发版不做客户端版本识别，避免未知版本被误判为不兼容。
+    return {};
 #endif
 }
 

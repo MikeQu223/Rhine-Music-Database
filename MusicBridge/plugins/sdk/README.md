@@ -537,8 +537,8 @@ plugins/<id>/...
 | `runtime.platforms` / `runtime.requiresVersion` | 可选的平台列表与 Node 运行时版本范围 |
 
 版本范围使用 `=`、`<`、`<=`、`>`、`>=`，同组比较符以空格连接，`||` 连接可替代的组。预发布版本需在对应版本组显式声明，
-`+build` 元数据不参与排序。普通发布使用正式客户端版本。开发构建可用
-`RHINE_PLUGIN_CLIENT_VERSION=1.3.25+dev.local npm run build` 设置用于兼容性校验的版本。
+`+build` 元数据不参与排序。只有正式发布客户端才会执行 `requiresClient` 判断；开发版、未知版本以及带预发布或
+构建元数据的开发标识会跳过该判断，但 manifest、SDK、平台和运行时检查仍然执行。
 依赖新接口的插件用 `PluginHost.context` 读取宿主版本、平台、运行时和能力，用 `host.checkCompatibility()` 获取与
 静态校验一致的结果。校验发生在入口运行前，确认启用后再做独立初始化验证。加载失败会在插件管理中显示并保留原有配置。
 

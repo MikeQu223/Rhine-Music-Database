@@ -80,6 +80,7 @@ bool checkLocalPluginPackage(Host &host) {
                          {"apiVersion", "2.0"},
                          {"id", id},
                          {"version", "1.0.0"},
+                         {"requiresHost", ">=9999.0.0"},
                          {"requiresClient", "=9999.0.0"},
                          {"entry", QJsonObject{
                               {"file", "plugin.cjs"},
@@ -109,10 +110,8 @@ bool checkLocalPluginPackage(Host &host) {
         return false;
     }
     const auto client = PluginInstaller::clientVersion();
-    if (client.isEmpty()) {
-        return true;
-    }
-    manifest["requiresClient"] = "=" + client;
+    manifest.remove("requiresHost");
+    manifest["requiresClient"] = client.isEmpty() ? QStringLiteral("=9999.0.0") : "=" + client;
     failure.clear();
     if (!write() || !host.importPluginPackage(url).isEmpty() ||
         !waitFor([&] { return !preview.isEmpty(); }) || preview["format"] != "zip" ||
@@ -171,7 +170,7 @@ bool checkLocalPluginPackage(Host &host) {
     ok &= PluginInstaller::recover(pluginRoot.path()).isEmpty() &&
           !journal.exists() && javascript == read(directory + "/plugin.cjs");
     QFile installed(localManifest);
-    manifest["requiresClient"] = "=9999.0.0";
+    manifest["requiresHost"] = ">=9999.0.0";
     ok &= installed.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
           installed.write(QJsonDocument(manifest).toJson()) > 0;
     installed.close();

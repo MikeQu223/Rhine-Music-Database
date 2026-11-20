@@ -7,7 +7,7 @@
         "MusicBridge/plugins/sdk/port.d.ts": "14339cc29cc5de0add087147b16b34c2eb8e3707e4dc5a5a57fb051db829c55f",
         "MusicBridge/plugins/sdk/registry.d.ts": "831ae08a56631a0279c0479f2163668fe33d80a494d8587cceee69edcb398f71",
         "MusicBridge/plugins/sdk/manifest.schema.json": "69593ae723512b56ea05a811aa6d6fa6501befbcc59b46484a89f49fc4695694",
-        "MusicBridge/plugins/sdk/compatibility.cjs": "11713dd53e318d9553259143026d8140299015727c63727c458ab10376544a9f",
+        "MusicBridge/plugins/sdk/compatibility.cjs": "8709b5b52a9c42057e233ba0032181a59059e1574bfbd7c03ec83c841f0d9fae",
         "MusicBridge/plugins/sdk/manifest-validation.cjs": "2970fd81b119328fbf8c1f1b78df985693b5b1d5e62de3f8f5c24087a1e81b13",
         "MusicBridge/plugins/sdk/descriptor.schema.json": "e17eca76c9b62c1a0df6672c981437e17280d227e79a7e8c125520322f3f01d9",
         "MusicBridge/plugins/sdk/models.schema.json": "8efa445d75461c23b1a177b368f48be54c2c5ceab90262d7af6877f4798d0671",

@@ -150,7 +150,6 @@ run(path.join(kit, 'bin/qt-cmake'), [
     '-DRHINE_PACKAGE_APP=OFF',
     `-DRHINE_VERSION=${version.version}`,
     `-DRHINE_RELEASE_BUILD=${version.release ? 'ON' : 'OFF'}`,
-    `-DRHINE_PLUGIN_CLIENT_VERSION=${process.env.RHINE_PLUGIN_CLIENT_VERSION || ''}`,
 ]);
 run('cmake', [
     '--build',

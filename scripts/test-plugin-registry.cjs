@@ -354,13 +354,37 @@ test('matches client, SDK and runtime constraints and verifies platform features
             runtime: { platforms: ['ios'], requiresVersion: '>=18.0.0 <19.0.0', hosting: ['module'] },
         },
     );
-    const accepted = { clientVersion: '1.4.0-rc.2+dev.sha', platform: 'ios', runtimeVersion: '18.20.4' };
+    const accepted = { clientVersion: '1.4.1', platform: 'ios', runtimeVersion: '18.20.4' };
     const check = (values) => checkCompatibility(declared, createHostContext({ ...accepted, ...values }));
     assert.equal(check({}).compatible, true);
-    assert.equal(check({ clientVersion: '1.4.0-rc.1' }).compatible, false);
-    assert.equal(check({ clientVersion: '1.4.1-rc.2' }).compatible, false);
+    assert.equal(check({ clientVersion: '1.4.0-rc.1' }).compatible, true);
+    assert.equal(check({ clientVersion: '1.4.0-rc.2+dev.sha' }).compatible, true);
+    assert.equal(check({ clientVersion: '1.3.9' }).compatible, false);
     assert.equal(check({ clientVersion: '1.6.9' }).compatible, true);
-    assert.equal(check({ clientVersion: 'commitSHA' }).compatible, false);
+    assert.equal(check({ clientVersion: 'commitSHA' }).compatible, true);
+    assert.equal(createHostContext({ clientVersion: '1.4.0-rc.2+dev.sha' }).clientVersion, null);
+    assert.equal(check({ clientVersion: '', platform: 'macos' }).code, 'plugin.platform');
+    assert.equal(
+        checkCompatibility(
+            { ...declared, requiresClient: 'not-a-range' },
+            createHostContext({ clientVersion: '' }),
+        ).code,
+        'manifest.invalid',
+    );
+    assert.equal(
+        checkCompatibility(
+            { ...declared, requiresClient: undefined },
+            createHostContext({ clientVersion: '' }),
+        ).compatible,
+        false,
+    );
+    assert.equal(
+        checkCompatibility(
+            { ...declared, requiresHost: '>=9999.0' },
+            createHostContext({ clientVersion: '' }),
+        ).code,
+        'plugin.incompatible',
+    );
     assert.equal(check({ apiVersion: '2.0' }).code, 'plugin.incompatible');
     assert.equal(check({ platform: 'macos' }).code, 'plugin.platform');
     assert.equal(check({ runtimeVersion: '26.8.1' }).code, 'plugin.runtime');
@@ -381,6 +405,23 @@ test('matches client, SDK and runtime constraints and verifies platform features
     );
     declared.requiresHostFeatures.operations.push('futureOperation');
     assert.equal(check({}).code, 'plugin.features');
+});
+
+test('discovers plugins without enforcing requiresClient on development builds', (t) => {
+    const registry = createRegistry(
+        t,
+        {
+            plugin: {
+                manifest: manifest('plugin', {}, { apiVersion: '2.1', requiresClient: '>=9999.0.0' }),
+            },
+        },
+        { context: createHostContext({ clientVersion: '1.4.1+dev.sha' }) },
+    );
+    assert.deepEqual(
+        registry.list().map((entry) => entry.id),
+        ['plugin'],
+    );
+    assert.deepEqual(registry.getProblems(), []);
 });
 
 test('rejects unknown legacy contracts and skips their top-level code during discovery', (t) => {

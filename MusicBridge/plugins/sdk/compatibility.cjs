@@ -9,6 +9,7 @@ const LEGACY_API_VERSION = '2.0.0';
 const SUPPORTED_PLATFORMS = ['windows', 'macos', 'linux', 'ios', 'android'];
 const SEMVER =
     /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
+const RELEASE_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const SHORT_SDK_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const NUMERIC = /^\d+$/;
 const PROVIDER_ID = /^[a-z0-9-]{1,40}$/;
@@ -317,7 +318,9 @@ function createHostContext({
           })
         : HOST_FEATURES;
     return Object.freeze({
-        clientVersion: parseVersion(clientVersion) ? clientVersion : null,
+        // 只有正式发布版本参与 requiresClient 判断；开发版、未知版本和预发布标识都按未知处理。
+        clientVersion:
+            typeof clientVersion === 'string' && RELEASE_VERSION.test(clientVersion) ? clientVersion : null,
         apiVersion,
         platform: SUPPORTED_PLATFORMS.includes(platform) ? platform : 'unknown',
         runtime: Object.freeze({ name: 'node', version: runtimeVersion, hosting }),
@@ -351,9 +354,14 @@ function checkCompatibility(manifest, host, options) {
             `宿主 SDK API ${host.apiVersion}；插件要求 ${manifest.requiresHost}`,
         );
     }
+    const releaseClientVersion =
+        typeof host.clientVersion === 'string' && RELEASE_VERSION.test(host.clientVersion)
+            ? parseVersion(host.clientVersion)
+            : null;
     if (
         manifest.requiresClient &&
-        !satisfies(parseVersion(host.clientVersion), parseRange(manifest.requiresClient))
+        releaseClientVersion &&
+        !satisfies(releaseClientVersion, parseRange(manifest.requiresClient))
     ) {
         return result(
             'plugin.incompatible',
@@ -389,7 +397,7 @@ function checkCompatibility(manifest, host, options) {
         if (missing.length) {
             return result(
                 'plugin.features',
-                `客户端 ${host.clientVersion ?? '未知'}（SDK ${host.apiVersion}）缺少插件要求的 ${kind}：${missing.join('、')}`,
+                `客户端 ${host.clientVersion ?? '开发版或未发布版本'}（SDK ${host.apiVersion}）缺少插件要求的 ${kind}：${missing.join('、')}`,
             );
         }
     }

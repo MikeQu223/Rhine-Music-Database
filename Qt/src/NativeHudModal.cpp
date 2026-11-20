@@ -642,8 +642,7 @@ QStringList NativeHud::pluginInstallLines() const {
                       .arg(pluginInstall["clientVersion"].toString(QStringLiteral("开发版")),
                            manifest["requiresClient"].toString(QStringLiteral("旧版 SDK 兼容模式")));
     if (pluginInstall["clientVersion"].toString().isEmpty()) {
-        client = QStringLiteral("开发版客户端 · ") +
-                 manifest["requiresClient"].toString(QStringLiteral("旧版 SDK 兼容模式"));
+        client = QStringLiteral("开发版客户端 · 已跳过客户端版本识别");
     }
     return {
         QStringLiteral("作者 / ") + manifest["publisher"].toString(QStringLiteral("未声明")),

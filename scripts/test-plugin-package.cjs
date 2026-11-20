@@ -18,7 +18,7 @@ const {
 } = require('../MusicBridge/plugin-package.cjs');
 const { createHostContext } = require('../MusicBridge/plugins/sdk/compatibility.cjs');
 
-const HOST = createHostContext({ clientVersion: '1.3.25+local' });
+const HOST = createHostContext({ clientVersion: '1.3.25' });
 const ENTRY = Buffer.from("throw new Error('入口在静态预检时不得执行');\n");
 const LICENSE = Buffer.from('Fixture license\n');
 const execFileAsync = promisify(execFile);
@@ -164,7 +164,7 @@ test('ZIP 预检拒绝版本不兼容、市场身份不一致或损坏并清理�
     const archive = await packPlugin(plugin);
     const staged = path.join(root, 'staging');
     const prepare = (options) => preparePackage(archive, staged, { kind: 'package', host: HOST, ...options });
-    await assert.rejects(prepare({ host: createHostContext({ clientVersion: '1.3.25-rc.1' }) }), {
+    await assert.rejects(prepare({ host: createHostContext({ clientVersion: '1.3.24' }) }), {
         code: 'plugin.incompatible',
     });
     await assert.rejects(fs.stat(staged), { code: 'ENOENT' });
@@ -176,6 +176,18 @@ test('ZIP 预检拒绝版本不兼容、市场身份不一致或损坏并清理�
     await fs.writeFile(path.join(staged, 'keep'), 'Existing directory');
     await assert.rejects(prepare({}), { code: 'EEXIST' });
     assert.equal(await fs.readFile(path.join(staged, 'keep'), 'utf8'), 'Existing directory');
+});
+
+test('ZIP 预检在开发版客户端跳过 requiresClient 判断', async (t) => {
+    const root = await setup(t);
+    const archive = await packPlugin(await createPlugin(root));
+    const staged = path.join(root, 'dev-staging');
+    const prepared = await preparePackage(archive, staged, {
+        kind: 'package',
+        host: createHostContext({ clientVersion: '1.3.25+dev.sha' }),
+    });
+    assert.equal(prepared.manifest.id, 'fixture');
+    assert.equal(prepared.manifest.requiresClient, '>=1.3.25 <2.0.0');
 });
 
 test('ZIP 支持 Store，拒绝路径穿越、冲突、链接与重复本地头', async (t) => {
