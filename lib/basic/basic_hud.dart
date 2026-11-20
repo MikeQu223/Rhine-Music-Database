@@ -372,6 +372,33 @@ class BasicHudFrame {
     } else if (modal == 'provider') {
       _paintProviderModal(sink, ports, providers, providerId, providerAccounts, width, dark,
           localMusicEnabled);
+    } else if (modal == 'saved' || modal == 'discover' || modal == 'playlist-picker') {
+      // 我的音乐 / 发现页 / 加入歌单只有 393 网格的竖屏排版（Qt 桌面端用 library
+      // 模态承载，本仓库还没有横屏稿）。横屏下不能什么都不画：这里用同一套 painter
+      // 按舞台高度重采样（unit = 高度 / 852），保证内容与动作都可达。
+      _paintPortraitPageInLandscape(
+        sink,
+        ports: ports,
+        state: state,
+        width: width,
+        height: height,
+        dark: dark,
+        modal: modal,
+        savedLane: savedLane,
+        savedOverview: savedOverview,
+        likedRows: likedRows,
+        playlistRows: playlistRows,
+        savedNotice: savedNotice,
+        savedProviderName: savedProviderName,
+        savedUserName: savedUserName,
+        savedOverviewRows: savedOverviewRows,
+        savedShowArtists: savedShowArtists,
+        savedScroll: savedScroll,
+        discover: discover,
+        pickerPlaylists: pickerPlaylists,
+        pickerNotice: pickerNotice,
+        canCreatePlaylist: canCreatePlaylist,
+      );
     }
 
     final player.PlayerBarDrawing bar = player.renderPlayerBar(
@@ -506,20 +533,7 @@ class BasicHudFrame {
   }) {
     final _HudSink sink = _HudSink();
     ports.beginFrame(sink: sink, time: animationTime, ink: hudInk(dark), animate: animateText);
-    final PortraitMetrics metrics = PortraitMetrics(
-      width: (String value, double size, String weight) => ports.width(value, size, weight),
-      wrap: (String value, double limit, double size, String weight) =>
-          ports.wrap(value, limit, size, weight),
-      bounds: (String value, double size, String weight) {
-        final player.GlyphBounds bounds = ports.bounds(value, size, weight);
-        return PortraitGlyphBounds(
-          x: bounds.x,
-          y: bounds.y,
-          width: bounds.width,
-          height: bounds.height,
-        );
-      },
-    );
+    final PortraitMetrics metrics = _portraitMetrics(ports);
     final double unit = portraitUnit(width, stageScale: stageScale);
     // 页面铺满舞台：网格宽度 = 舞台宽 / unit（元素按 1.3dp 缩小，页宽跟着变宽），
     // 页面里的右缘常量都读 canvas.gridWidth，不能再写死 393。
@@ -823,6 +837,117 @@ class BasicHudFrame {
       hits: sink.hits,
       animating: animating,
     );
+  }
+
+  /// 竖屏页面用的字形度量端口（同一份 `ports`，竖屏与横屏重采样共用）。
+  static PortraitMetrics _portraitMetrics(BasicGlyphPorts ports) {
+    return PortraitMetrics(
+      width: (String value, double size, String weight) => ports.width(value, size, weight),
+      wrap: (String value, double limit, double size, String weight) =>
+          ports.wrap(value, limit, size, weight),
+      bounds: (String value, double size, String weight) {
+        final player.GlyphBounds bounds = ports.bounds(value, size, weight);
+        return PortraitGlyphBounds(
+          x: bounds.x,
+          y: bounds.y,
+          width: bounds.width,
+          height: bounds.height,
+        );
+      },
+    );
+  }
+
+  /// 把竖屏专属页面（我的音乐 / 发现 / 加入歌单）重采样后叠进横屏帧。
+  ///
+  /// 这三页在 Qt 桌面端由 library 模态承载（`NativeHudLibrary.cpp` 的 saved 面板），
+  /// 本仓库只实现了 compact 稿。横屏按 852 参考高度等比重采样，页面宽度跟随舞台，
+  /// 右缘元素仍然贴边（painter 都读 `canvas.gridWidth`）。
+  static void _paintPortraitPageInLandscape(
+    _HudSink sink, {
+    required BasicGlyphPorts ports,
+    required BasicViewState state,
+    required double width,
+    required double height,
+    required bool dark,
+    required String modal,
+    required int savedLane,
+    required bool savedOverview,
+    required List<PortraitLikesRow> likedRows,
+    required List<PortraitPlaylistRow> playlistRows,
+    required String savedNotice,
+    required String savedProviderName,
+    required String savedUserName,
+    required List<PortraitSavedOverviewRow> savedOverviewRows,
+    required bool savedShowArtists,
+    required double savedScroll,
+    BasicDiscoverSnapshot? discover,
+    List<(String, String, int)> pickerPlaylists = const <(String, String, int)>[],
+    String pickerNotice = '',
+    bool canCreatePlaylist = false,
+  }) {
+    const double referenceHeight = 852;
+    final double unit = height / referenceHeight;
+    final PortraitCanvas canvas = PortraitCanvas(
+      metrics: _portraitMetrics(ports),
+      unit: unit,
+      gridWidth: width / unit,
+      height: referenceHeight,
+      dark: dark,
+    );
+    // 横屏帧没有迷你播放条与底栏，内容一直铺到页面底部再留一点余量。
+    canvas.contentBottom = referenceHeight - 40;
+    if (modal == 'discover') {
+      final BasicDiscoverSnapshot page = discover ?? BasicDiscoverSnapshot.empty;
+      paintPortraitDiscoverPage(
+        canvas,
+        tabs: page.tabs,
+        tab: page.tab,
+        tools: page.tools,
+        categories: page.categories,
+        categoryPicker: page.categoryPicker,
+        entries: page.entries,
+        status: page.status,
+        more: page.more,
+        loadingMore: page.loadingMore,
+        scroll: page.scroll,
+      );
+    } else if (modal == 'playlist-picker') {
+      paintPortraitPlaylistPicker(
+        canvas,
+        playlists: pickerPlaylists,
+        notice: pickerNotice,
+        canCreate: canCreatePlaylist,
+      );
+    } else if (savedOverview) {
+      paintPortraitSavedOverview(
+        canvas,
+        providerName: savedProviderName,
+        userName: savedUserName,
+        collectionRows: savedOverviewRows,
+        showArtists: savedShowArtists,
+        canCreatePlaylist: canCreatePlaylist,
+        scroll: savedScroll,
+      );
+    } else if (savedLane == 2) {
+      paintPortraitPlaylistsPage(
+        canvas,
+        rows: playlistRows,
+        selectedIndex: state.selectedLane == 2 ? 0 : -1,
+        loading: state.loading,
+        notice: savedNotice,
+        canCreate: true,
+      );
+    } else {
+      paintPortraitLikesPage(
+        canvas,
+        rows: likedRows,
+        selectedIndex: state.selectedLane == 1 ? 0 : -1,
+        loading: state.loading,
+        notice: savedNotice,
+      );
+    }
+    sink.commands.addAll(canvas.commands);
+    sink.hits.addAll(canvas.hits);
   }
 
   /// 竖屏「歌曲操作 / 歌词操作」面板的按钮表（Qt `ResponsiveLyrics.cpp:246-272`）。
