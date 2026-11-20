@@ -35,6 +35,7 @@ import 'dart:math' as math;
 import 'dart:ui' show Rect;
 
 import 'portrait_canvas.dart';
+import 'portrait_layout.dart';
 
 /// 竖屏 tab 的标签顺序（Qt `ResponsiveHudPages.cpp:948-950` 的 `labels`）。
 ///
@@ -129,11 +130,14 @@ void paintPortraitSearchKindsPage(
 }) {
   final double h = c.height;
 
-  // 检索是终端页：整页铺纸色（Qt `paperPage` → `fill({0,0,393,height}, paper)`）。
+  // 检索是**终端页**（`Qt/src/ResponsiveHudLayout.cpp:150-176` 的 `terminalPage` 分支）：
+  // 整页铺纸色 + 终端页头（`RHINE LAB` / `AUDIO TERMINAL` / `RL–004` / 标题 /
+  // 琥珀块 `02` / `SEARCH / 档案检索` / 墨线 / 左缘刻度），而不是通用 `header`。
+  // 页头自带返回命中（`close-modal`），内容起点按 Qt 的 `c.beginContent(130)`。
   c.fill(Rect.fromLTWH(0, 0, c.gridWidth, h), c.paper);
-  c.header('音乐检索', back: true, backAction: 'close-modal');
+  paintPortraitTerminalHeader(c, title: '音乐检索', code: '02', identifier: 'SEARCH / 档案检索');
 
-  final double top = math.min(126.0, h * .22);
+  final double top = math.min(130.0, h * .22);
   final double bottom = _pageBottom(c, top);
   double y = top;
 

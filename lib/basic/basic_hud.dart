@@ -380,11 +380,13 @@ class BasicHudFrame {
       final String detail = artist.isNotEmpty
           ? artist
           : (item['album'] ?? '').toString();
+      // 曲目行右侧是时长（Qt `MusicData::time(value)`），专辑/歌手是曲目数，
+      // 歌单没有右列（参考图 m13779 的 `03:21` 就是这一列）。
       final String stamp = switch (kind) {
         'album' => '${item['trackCount'] ?? 0} 首',
         'artist' => '${item['trackCount'] ?? 0} 首',
         'playlist' => '歌单',
-        _ => '',
+        _ => _trackTime(item['durationMs']),
       };
       // 行点击按分类分派：曲目只选中（`music:index:<i>`，与 Qt 的行下标同义）；
       // 专辑进专辑列（Qt `selectResult(open=true)` 对非 song 走 enterDirectory）；
@@ -398,6 +400,18 @@ class BasicHudFrame {
       rows.add((title: title, artist: detail, stamp: stamp, action: action));
     }
     return rows;
+  }
+
+  /// 毫秒 → `mm:ss`（Qt `MusicData::time`；未知时长回空串，行右列留白）。
+  static String _trackTime(Object? durationMs) {
+    final double ms = durationMs is num ? durationMs.toDouble() : 0;
+    if (ms <= 0) {
+      return '';
+    }
+    final int seconds = ms.round() ~/ 1000;
+    final int minutes = seconds ~/ 60;
+    final int rest = seconds % 60;
+    return '${minutes.toString().padLeft(2, '0')}:${rest.toString().padLeft(2, '0')}';
   }
 
   /// 竖屏一帧：`Qt/src/ResponsiveHudPages.cpp` 的 archive 页。

@@ -49,7 +49,10 @@ void main() {
       );
 
       final List<String> actions = _actions(c);
-      expect(actions, contains('close-modal'));
+      // 终端页（`Qt/src/ResponsiveHudLayout.cpp:150-176`）不画返回箭头：退出走底栏
+      // ARCHIVE（`mobile:nav:archive` → 宿主清空 modal），页内不登记 `close-modal`
+      // ——参考图 m13779 的检索页同样没有返回键。
+      expect(actions, isNot(contains('close-modal')));
       expect(actions, contains('mobile:search-submit'));
       // 四个分类 tab：竖屏下标 0..3 → music:kind:{0,3,1,2}
       expect(actions, contains('music:kind:0'));
@@ -61,6 +64,12 @@ void main() {
 
       final List<String> texts = _texts(c);
       expect(texts, contains('音乐检索'));
+      // 终端页头三件套 + 琥珀编号 `02` + `SEARCH / 档案检索`
+      expect(texts, contains('RHINE LAB'));
+      expect(texts, contains('AUDIO TERMINAL'));
+      expect(texts, contains('RL–004'));
+      expect(texts, contains('02'));
+      expect(texts, contains('SEARCH / 档案检索'));
       expect(texts, contains('检索音乐档案'), reason: 'query.trim().isEmpty');
       expect(texts, contains('输入歌曲、歌手、专辑或歌单名称'));
       expect(texts, contains('检索结果'));
