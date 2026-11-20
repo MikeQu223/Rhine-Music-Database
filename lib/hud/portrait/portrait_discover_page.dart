@@ -86,13 +86,16 @@ double paintPortraitDiscoverPage(
   double y = portraitDiscoverContentTop - scroll;
   c.beginContent(y);
 
-  // tab 行：4 列 × 90 步进，83×44（选中态由 indexTab 自己画指示条）。
+  // tab 行：4 列，步进按页宽算（Qt 固定 90/83 是 393 设计稿口径，DPI 适配后
+  // 页宽变宽，照抄固定值会挤在左侧一窄条，和检索页/设置页的观感不一致）。
+  final double tabStep = (w - 40) / 4;
+  final double tabWidth = tabStep - 7;
   int selectedTab = 0;
   for (int i = 0; i < tabs.length; i += 1) {
     if (tabs[i].selected) selectedTab = i;
     _indexTab(
       c,
-      Rect.fromLTWH(20 + (i % 4) * 90, y + (i ~/ 4) * 44, 83, 44),
+      Rect.fromLTWH(20 + (i % 4) * tabStep, y + (i ~/ 4) * 44, tabWidth, 44),
       tabs[i].label,
       tabs[i].action,
       tabs[i].selected,
@@ -101,9 +104,9 @@ double paintPortraitDiscoverPage(
   if (tabs.isNotEmpty) {
     c.fill(
       Rect.fromLTWH(
-        20 + (selectedTab % 4) * 90,
+        20 + (selectedTab % 4) * tabStep,
         y + (selectedTab ~/ 4) * 44 + 39,
-        76,
+        tabWidth - 7,
         2,
       ),
       c.amber,
@@ -112,9 +115,10 @@ double paintPortraitDiscoverPage(
   y += ((tabs.length + 3) ~/ 4) * 44 + 12;
 
   if (categoryPicker) {
+    final double chipStep = (w - 40) / 3;
     for (int i = 0; i < categories.length; i += 1) {
       c.chip(
-        Rect.fromLTWH(20 + (i % 3) * 120, y + (i ~/ 3) * 44, 113, 36),
+        Rect.fromLTWH(20 + (i % 3) * chipStep, y + (i ~/ 3) * 44, chipStep - 7, 36),
         categories[i].label,
         categories[i].action,
         selected: categories[i].selected,
@@ -155,9 +159,11 @@ double paintPortraitDiscoverPage(
       final int i = tile.index;
       final int col = (i - 1) % 2;
       final int row = (i - 1) ~/ 2;
-      final double x = 20 + col * 184;
+      final double tileStep = (w - 40) / 2;
+      final double x = 20 + col * tileStep;
       final double top = y + row * 196;
-      c.fill(Rect.fromLTWH(x, top, 169, 144), c.surface);
+      final double tileWidth = tileStep - 15;
+      c.fill(Rect.fromLTWH(x, top, tileWidth, 144), c.surface);
       if (tile.image.isNotEmpty) {
         c.image(tile.image, Rect.fromLTWH(x, top, 144, 144));
       }
@@ -180,9 +186,10 @@ double paintPortraitDiscoverPage(
     }
     y += (entries.length ~/ 2) * 196;
   } else {
+    final double toolStep = (w - 40) / 2;
     for (int i = 0; i < tools.length; i += 1) {
       c.chip(
-        Rect.fromLTWH(20 + (i % 2) * 181, y + (i ~/ 2) * 44, 172, 36),
+        Rect.fromLTWH(20 + (i % 2) * toolStep, y + (i ~/ 2) * 44, toolStep - 9, 36),
         tools[i].label,
         tools[i].action,
         selected: tools[i].selected,

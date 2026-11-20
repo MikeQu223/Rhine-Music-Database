@@ -104,7 +104,9 @@ List<PortraitDiscoverEntry> basicDiscoverHistoryEntries(List<SirenSong> songs) {
         index: index,
         title: songs[index].title,
         artist: songs[index].artist,
-        image: songs[index].cover,
+        // 行列表不带封面（Qt `ResponsiveHudPages.cpp:462-469` 的 discover 行只给
+        // 序号 + 标题 + 艺人；带图会让 row() 把序号列让出去）。
+        image: '',
       ),
   ];
 }
