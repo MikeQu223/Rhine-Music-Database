@@ -414,6 +414,15 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
   /// 本机是否已接上收藏存储（`LocalCollectionStore`）。
   bool get collectionsWritable => _collectionStore != null;
 
+  /// 「喜欢的歌曲」列的曲目（`_refreshLocalCollections` 解析后的结果）。
+  ///
+  /// 只读视图：`saved` 页要画喜欢列时宿主直接取它，不必先把 `selectedLane` 切到 1
+  /// （切列会连带改列表滚动位置与音轨选择，Qt 里 saved 页的列表是独立的）。
+  List<SirenSong> get likedSongs => _likedSongs;
+
+  /// 本机自建歌单（`LocalCollections` 的只读视图）。
+  List<BasicLocalPlaylist> get localPlaylists => _localPlaylists;
+
   /// [songId] 是否在「喜欢的歌曲」里（空 id 恒 false，与 Qt `isLiked` 同）。
   bool isLiked(String songId) =>
       _collectionStore?.isLiked(songId) ?? (_collections?.likedIds().contains(songId) ?? false);

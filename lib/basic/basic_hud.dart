@@ -28,6 +28,8 @@ import '../plugin/plugin_manager.dart';
 import '../provider/provider_descriptor.dart';
 import '../domain/account/login_controller.dart'
     show LoginState;
+import '../hud/portrait/portrait_pages_collection_likes.dart';
+import '../hud/portrait/portrait_pages_collection_playlists.dart';
 import '../hud/portrait/portrait_pages_comments.dart';
 import '../hud/portrait/portrait_pages_mv.dart';
 import '../hud/portrait/portrait_pages_login.dart';
@@ -197,6 +199,19 @@ class BasicHudFrame {
     String loginCooldownLabel = '',
     /// 短信重发剩余秒数（Qt `smsRetrySeconds()`）。
     int loginSmsRetrySeconds = 0,
+    /// 收藏列（`modal == 'saved'`）要画哪一列：1 = 喜欢的歌曲、2 = 我的歌单；
+    /// 其它值（含 0）= 画「我的音乐」总览。Qt 的真值是两个布尔
+    /// `m_savedOverview` / `musicCollection`（`ResponsiveHudLayout.cpp:455-464`）。
+    int savedLane = 0,
+    /// 收藏列是否停在「我的音乐」总览（Qt `m_savedOverview`）。
+    bool savedOverview = true,
+    /// 收藏列数据：喜欢曲目（`BasicViewState` 没有单独的 likes 列，由宿主从
+    /// 控制器取；空表 = 还没读到）。
+    List<PortraitLikesRow> likedRows = const <PortraitLikesRow>[],
+    /// 收藏列数据：本机歌单。
+    List<PortraitPlaylistRow> playlistRows = const <PortraitPlaylistRow>[],
+    /// 收藏计数（`X 首` / `Y 个歌单` 的读数），空串 = 未知。
+    String savedNotice = '',
     /// MV 面板数据（`modal == 'mv'`）：由宿主把 `MvState` 经 `basic_mv_mapper`
     /// 映射成面板视图模型；null = 没有可展示的 MV 态。
     MvPanelModel? mv,
@@ -246,6 +261,11 @@ class BasicHudFrame {
         loginDeviceNotice: loginDeviceNotice,
         loginCooldownLabel: loginCooldownLabel,
         loginSmsRetrySeconds: loginSmsRetrySeconds,
+        savedLane: savedLane,
+        savedOverview: savedOverview,
+        likedRows: likedRows,
+        playlistRows: playlistRows,
+        savedNotice: savedNotice,
         mv: mv,
         mvPositionMs: mvPositionMs,
       );
@@ -408,6 +428,11 @@ class BasicHudFrame {
     String loginDeviceNotice = '',
     String loginCooldownLabel = '',
     int loginSmsRetrySeconds = 0,
+    int savedLane = 0,
+    bool savedOverview = true,
+    List<PortraitLikesRow> likedRows = const <PortraitLikesRow>[],
+    List<PortraitPlaylistRow> playlistRows = const <PortraitPlaylistRow>[],
+    String savedNotice = '',
     MvPanelModel? mv,
     double mvPositionMs = 0,
   }) {
@@ -565,6 +590,30 @@ class BasicHudFrame {
         code: '03',
         identifier: 'SETTINGS / 终端配置',
       );
+    } else if (modal == 'saved') {
+      // Qt compact 的 `saved` 是**三态**（`ResponsiveHudLayout.cpp:455-464` 与
+      // `ResponsiveHudPages.cpp:845-1010`）：总览（`m_savedOverview`）、喜欢列
+      // （`musicCollection == 1`）、歌单列（其它）。总览的版式本仓库还没有实现
+      // （`portrait_layout.dart` 只给了主页/收藏两页），这里先画两列的实页，
+      // 总览退化成喜欢列 —— 并在宿主侧用 `mobile:mine` 直接进喜欢列。
+      if (savedLane == 2) {
+        paintPortraitPlaylistsPage(
+          canvas,
+          rows: playlistRows,
+          selectedIndex: state.selectedLane == 2 ? 0 : -1,
+          loading: state.loading,
+          notice: savedNotice,
+          canCreate: true,
+        );
+      } else {
+        paintPortraitLikesPage(
+          canvas,
+          rows: likedRows,
+          selectedIndex: state.selectedLane == 1 ? 0 : -1,
+          loading: state.loading,
+          notice: savedNotice,
+        );
+      }
     } else if (modal == 'search') {
       // Qt compact `library()` 的 search 分支（ResponsiveHudPages.cpp:941-990）：
       // 检索框 + 四分类 tab + 歌曲分类才有的分组条 + `01 检索结果 INDEX / N` +
@@ -1404,6 +1453,11 @@ class BasicHudSurface extends StatefulWidget {
     this.loginDeviceNotice = '',
     this.loginCooldownLabel = '',
     this.loginSmsRetrySeconds = 0,
+    this.savedLane = 0,
+    this.savedOverview = true,
+    this.likedRows = const <PortraitLikesRow>[],
+    this.playlistRows = const <PortraitPlaylistRow>[],
+    this.savedNotice = '',
     this.mv,
     this.mvPositionMs = 0,
   });
@@ -1506,6 +1560,21 @@ class BasicHudSurface extends StatefulWidget {
 
   /// 短信重发剩余秒数。
   final int loginSmsRetrySeconds;
+
+  /// 收藏列要画哪一列（1 = 喜欢、2 = 歌单；其它 = 总览退化进喜欢列）。
+  final int savedLane;
+
+  /// 收藏列是否停在「我的音乐」总览（Qt `m_savedOverview`）。
+  final bool savedOverview;
+
+  /// 喜欢曲目行。
+  final List<PortraitLikesRow> likedRows;
+
+  /// 本机歌单行。
+  final List<PortraitPlaylistRow> playlistRows;
+
+  /// 收藏页状态文案。
+  final String savedNotice;
 
   /// MV 面板数据（`modal == 'mv'`）；null = 没有可展示的 MV 态。
   final MvPanelModel? mv;
@@ -1730,6 +1799,11 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       loginDeviceNotice: widget.loginDeviceNotice,
       loginCooldownLabel: widget.loginCooldownLabel,
       loginSmsRetrySeconds: widget.loginSmsRetrySeconds,
+      savedLane: widget.savedLane,
+      savedOverview: widget.savedOverview,
+      likedRows: widget.likedRows,
+      playlistRows: widget.playlistRows,
+      savedNotice: widget.savedNotice,
       mv: widget.mv,
       mvPositionMs: widget.mvPositionMs,
     );

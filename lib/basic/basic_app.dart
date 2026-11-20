@@ -74,6 +74,9 @@ import '../domain/comments/comment_controller.dart';
 import '../provider/provider_gateway.dart'
     show ProviderAccount, UnavailableProviderGateway;
 import '../provider/provider_service.dart';
+import '../hud/portrait/portrait_pages_collection_likes.dart' show PortraitLikesRow;
+import '../hud/portrait/portrait_pages_collection_playlists.dart'
+    show PortraitPlaylistRow;
 import '../hud/portrait/portrait_pages_comments.dart' show PortraitCommentsModel;
 import '../hud/portrait/portrait_pages_login.dart' show kPortraitLoginMethodPrefix;
 import '../domain/comments/comment_actions.dart' show commentSortActionPrefix;
@@ -157,6 +160,9 @@ const String basicMusicSlotActionPrefix = 'music:slot:';
 /// 音乐平台行载荷前缀：`provider:<id>`（`lib/hud/portrait/portrait_pages_provider.dart`
 /// 的平台行命中，切到该平台；找不到 id 时给可见反馈，不猜）。
 const String basicProviderSwitchPrefix = 'provider:';
+
+/// 收藏列切换前缀（Qt `music:collection:<lane>`，lane 1..4）。
+const String basicCollectionActionPrefix = 'music:collection:';
 
 /// 组合根：唯一 [BasicController] + 字形资源 → HUD 业务外壳。
 ///
@@ -839,6 +845,45 @@ class _BasicShellState extends State<_BasicShell>
     );
   }
 
+  /// 收藏列（`modal == 'saved'`）当前列：1 = 喜欢、2 = 我的歌单；0 = 总览。
+  int _savedLane = 1;
+
+  /// 收藏列是否停在「我的音乐」总览（Qt `m_savedOverview`）。
+  bool _savedOverview = false;
+
+  /// 喜欢列的行（真数据：控制器里 likedIDs 解析出的曲目，空 = 还没读到）。
+  List<PortraitLikesRow> _likedRows() => <PortraitLikesRow>[
+        for (final SirenSong song in controller.likedSongs)
+          (song.title, song.artist, song.durationMs > 0 ? _mmss(song.durationMs.round()) : ''),
+      ];
+
+  /// 我的歌单列的行（真数据：本机集合存储里的歌单）。
+  List<PortraitPlaylistRow> _playlistRows() => <PortraitPlaylistRow>[
+        for (final BasicLocalPlaylist playlist in controller.localPlaylists)
+          PortraitPlaylistRow(
+            id: playlist.id,
+            title: playlist.title,
+            trackCount: playlist.trackCount,
+          ),
+      ];
+
+  /// 收藏列的状态/空态文案（Qt `library()` 空分支的 `s["status"]`）。
+  String _savedNotice() {
+    if (controller.state.loading) {
+      return '正在读取…';
+    }
+    if (_savedLane == 2) {
+      return controller.localPlaylists.isEmpty ? '暂无本地歌单' : '';
+    }
+    return controller.likedSongs.isEmpty ? '暂无喜欢的歌曲' : '';
+  }
+
+  String _mmss(int ms) {
+    final int seconds = ms ~/ 1000;
+    return '${(seconds ~/ 60).toString().padLeft(2, '0')}:'
+        '${(seconds % 60).toString().padLeft(2, '0')}';
+  }
+
   PortraitCommentsModel? _commentsModel() {
     final CommentController? controller = _commentController;
     if (controller == null) {
@@ -1316,6 +1361,11 @@ class _BasicShellState extends State<_BasicShell>
       loginSmsRetrySeconds: _loginController?.smsRetrySeconds ?? 0,
       mv: _mvController == null ? null : basicMvPanelModelOf(_mvController!.state),
       mvPositionMs: _mvController?.videoPositionMs ?? 0,
+      savedLane: _savedLane,
+      savedOverview: _savedOverview,
+      likedRows: _likedRows(),
+      playlistRows: _playlistRows(),
+      savedNotice: _savedNotice(),
     );
     final bool settingsOpen =
         _modal == 'settings' || _modal == DiscWarningModal.kind;
@@ -2157,6 +2207,28 @@ class _BasicShellState extends State<_BasicShell>
         }
         setState(() => _actionNotice = notice);
       }));
+      return;
+    }
+    // 收藏列（Qt compact `saved`）：`mobile:mine` 进喜欢列，`music:collection:<lane>`
+    // 切列并清空滚动（`ResponsiveHudLayout.cpp:455-464`）。
+    if (action == 'mobile:mine' || action == 'saved') {
+      setState(() {
+        _savedLane = 1;
+        _savedOverview = false;
+      });
+      _setModal('saved');
+      return;
+    }
+    if (action.startsWith(basicCollectionActionPrefix)) {
+      final int? lane = int.tryParse(action.substring(basicCollectionActionPrefix.length));
+      if (lane != null && lane >= 1 && lane <= 4) {
+        setState(() {
+          _savedLane = lane >= 2 ? 2 : 1;
+          _savedOverview = false;
+        });
+        _setModal('saved');
+        unawaited(controller.selectLane(lane));
+      }
       return;
     }
     if (action == 'settings') {
