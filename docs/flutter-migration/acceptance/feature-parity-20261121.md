@@ -25,7 +25,17 @@
 - Flutter 落点：`lib/domain/account/login_controller.dart`、`lib/hud/portrait/portrait_pages_login.dart`、`lib/hud/modals/login_modal.dart`。
 - 动作：`music:login`、`music:logout`、`music:qr`、`music:login-method:<id>`、`music:login-send-code`、`music:login-submit`。
 - 验证：`test/domain/login_controller_test.dart` 28 条（含六相位、失败映射、冷却、短信、变体键 `account-id-<provider>-<variant>`）。
-- **边界**：无账号，网关恒回「当前来源不支持该功能」；`accountKey` 已按 Qt `MusicLibrary.cpp:363-365` 加变体后缀。
+- **边界**：内置平台（`siren`/`local`）没有账号体系，网关恒回「当前来源不支持该功能」；`accountKey` 已按 Qt `MusicLibrary.cpp:363-365` 加变体后缀。
+- **插件平台走真实数据面**（2026-11-21 补齐，提交 `bda7a27e6`）：用户安装的插件平台（`netease`/`qq`/`kugou`/`bodian`）不再落到 `UnavailableProviderGateway`，而是
+  `lib/provider/plugin_gateway.dart` → `lib/provider/plugin_bridge.dart` → Kotlin `porting/PluginBridgeChannel.kt` → `porting/PluginBridge.kt`（`ServerSocket` 行协议）→ `android/app/src/main/cpp/node_host.cpp`（JNI `dlopen("libnode.so")` + `node::Start`）→ `MusicBridge/ios-runtime.cjs` + `MusicBridge/worker.cjs` → 插件 `plugin.cjs`。
+  三条从真机失败里挖出来的契约（写在这里防回归）：
+  1. **插件方法参数是位置数组**，不是对象。`MusicBridge/worker.cjs:70` 调 `plugin.dispatchNative(operation, args)`，插件侧 `method.apply(api, args)`，传 `{qrKey: …}` 会让 `token` 变成对象、上游回 `400 参数错误`。
+  2. **会话 cookie 必须是 `{name: value}` 对象**。`MusicBridge/core/host.cjs:8` 是 `{...message.cookies}`，传 `Set-Cookie` 行数组会被摊成 `{"0": "MUSIC_U=…"}`，扫码成功后 `account` 仍回未登录。
+  3. **首帧必须 base64 套信封**：请求是 `{type:'input', session, data: base64(line)}`，响应是 `{type:'output', session, data: base64}`。
+  4. `ensureStarted` 必须阻塞到握手完成（`CountDownLatch`），否则并发进来的第一个请求会看到 `running=false` 被判「插件运行时不可用」。
+- 会话落盘：`plugin-cookies-<id>`（JSON 对象）写进设置偏好，重启后 `account()` 仍认得出；`_restoreAccount()` 在装配平台服务时后台恢复昵称（对应 Qt `MusicAccount::restoreCachedAccount`），所以设置页 ACCESS 卡不需要先打开登录页就能显示已登录账号。
+- 验证（真机 526f6b6d）：扫码 → `802 scanned` → `803 confirmed` → 登录页显示 `已登录 / Aibeto / 账号 id / 3349683307`；`am force-stop` 冷启后仍登录；切到「酷狗音乐」再切回「网易云音乐」后 ACCESS 卡直接显示 `Aibeto / 退出登录`。
+- **首启代价**：`node::Start` 冷启约 90 秒（`dlopen`/`dlsym` 各 0ms，慢在 node 自身初始化），期间登录页停在「准备二维码…」；同进程内后续请求秒回。
 
 ## 4. 评论
 
