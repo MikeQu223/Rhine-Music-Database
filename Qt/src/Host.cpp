@@ -1913,7 +1913,11 @@ const QStringList &preferenceKeys() {
         "desktop-lyrics-translation-size", "desktop-lyrics-opacity", "desktop-lyrics-line-color",
         "desktop-lyrics-translation-color", "desktop-lyrics-line-weight", "desktop-lyrics-translation-weight",
         "desktop-lyrics-line-outline", "desktop-lyrics-translation-outline",
-        "desktop-lyrics-line-outline-color", "desktop-lyrics-translation-outline-color"};
+        "desktop-lyrics-line-outline-color", "desktop-lyrics-translation-outline-color",
+#if defined(Q_OS_MACOS)
+        "menu-bar-layout",
+#endif
+    };
     return keys;
 }
 }

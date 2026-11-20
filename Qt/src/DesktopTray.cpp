@@ -4,6 +4,9 @@
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
 #include "DesktopLyricsSettings.h"
 #endif
+#ifdef Q_OS_MACOS
+#include "MacMenuBar.h"
+#endif
 #include <QAction>
 #include <QApplication>
 #include <QCloseEvent>
@@ -24,33 +27,41 @@ bool closesToTray() {
 /**
  * 建立驻留图标与退出菜单
  */
-DesktopTray::DesktopTray(QWindow *window, QObject *parent) : QObject(parent), m_window(window) {
-    m_icon.setObjectName("desktopTrayIcon");
-    m_icon.setParent(this);
-    m_icon.setIcon(rhineTrayIcon());
-    m_icon.setToolTip(QGuiApplication::applicationDisplayName());
+DesktopTray::DesktopTray(QWindow *window, Engine *engine, QObject *parent)
+    : QObject(parent), m_window(window) {
     auto quit = m_menu.addAction(QStringLiteral("退出"));
     m_quit = quit;
     connect(quit, &QAction::triggered, this, &DesktopTray::quitApplication);
 #ifdef Q_OS_WIN
+    m_icon.setObjectName("desktopTrayIcon");
+    m_icon.setParent(this);
+    m_icon.setIcon(rhineTrayIcon());
+    m_icon.setToolTip(QGuiApplication::applicationDisplayName());
     m_icon.setContextMenu(&m_menu);
-#endif
     connect(&m_icon, &QSystemTrayIcon::activated, this, [this](QSystemTrayIcon::ActivationReason reason) {
         if (reason == QSystemTrayIcon::Trigger || reason == QSystemTrayIcon::DoubleClick) {
             restoreWindow();
         }
-#ifdef Q_OS_MACOS
-        if (reason == QSystemTrayIcon::Context) {
-            m_menu.popup(QCursor::pos());
-        }
-#endif
     });
     m_icon.show();
-    if (QSystemTrayIcon::isSystemTrayAvailable()) {
+#endif
+#ifdef Q_OS_MACOS
+    m_menuBar = new MacMenuBarController(
+        engine, [this] { restoreWindow(); }, [this] { m_menu.popup(QCursor::pos()); }, this);
+#endif
+    if (residentAvailable()) {
         QGuiApplication::setQuitOnLastWindowClosed(false);
     }
     m_window->installEventFilter(this);
     qApp->installEventFilter(this);
+}
+
+bool DesktopTray::residentAvailable() const {
+#ifdef Q_OS_MACOS
+    return m_menuBar && m_menuBar->available();
+#else
+    return QSystemTrayIcon::isSystemTrayAvailable();
+#endif
 }
 
 /** 拦截普通窗口关闭 */
@@ -59,7 +70,7 @@ bool DesktopTray::eventFilter(QObject *watched, QEvent *event) {
         m_quitting = true;
     }
     if (watched == m_window && event->type() == QEvent::Close && !m_quitting && !qApp->isSavingSession()) {
-        if (closesToTray() && QSystemTrayIcon::isSystemTrayAvailable()) {
+        if (closesToTray() && residentAvailable()) {
             QGuiApplication::setQuitOnLastWindowClosed(false);
             static_cast<QCloseEvent *>(event)->ignore();
             m_window->hide();

@@ -1397,7 +1397,7 @@ int main(int argc, char **argv) {
 #endif
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
             std::unique_ptr<DesktopTray> tray;
-            tray = std::make_unique<DesktopTray>(shell->window(), &application);
+            tray = std::make_unique<DesktopTray>(shell->window(), backend.get(), &application);
             if (tray && desktopLyricsSettings) {
                 tray->attachDesktopLyrics(desktopLyricsSettings.get());
             }
@@ -1453,7 +1453,7 @@ int main(int argc, char **argv) {
     backend->setWindow(window);
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
     std::unique_ptr<DesktopTray> tray;
-    tray = std::make_unique<DesktopTray>(window, &application);
+    tray = std::make_unique<DesktopTray>(window, backend.get(), &application);
     if (tray && desktopLyricsSettings) {
         tray->attachDesktopLyrics(desktopLyricsSettings.get());
     }
