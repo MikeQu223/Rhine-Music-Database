@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -8,6 +9,7 @@ import 'package:rhine_music_database/basic/basic_app.dart';
 import 'package:rhine_music_database/basic/basic_hud.dart';
 import 'package:rhine_music_database/basic/basic_hud_resources.dart';
 import 'package:rhine_music_database/basic/basic_models.dart';
+import 'package:rhine_music_database/hud/scale/hud_scale.dart';
 import 'package:rhine_music_database/basic/platform_playback.dart';
 import 'package:rhine_music_database/basic/siren_controller.dart';
 import 'package:rhine_music_database/hud/input/hit_layer.dart';
@@ -777,15 +779,31 @@ void main() {
       expect(overlay.state.stageScale, closeTo(600 / 1080, 1e-12));
       // 竖屏舞台宽恒为 1080（portraitStageWidthConstant）→ 检索框 314 / 654；
       // y = Qt 的 302 + 舞台原点 originY（状态栏带），否则会盖到状态栏上。
-      expect(overlay.state.inputX, 314.0);
-      expect(overlay.state.inputWidth, 654.0);
+      // 竖屏检索框按 393 网格画（`portrait_pages_library.dart` 的
+      // `field('search', {58, top, gridWidth - 78, 44})`），再 × unit 折回舞台单位：
+      // 网格宽 393（无 DPI 适配时）⇒ x = 58 * 1080/393 ≈ 159.4、宽 = (393-78) * unit。
+      // 以前这里写死 314/654 是横屏模态框的绝对值，竖屏分支根本不适用。
+      // 用与绘制同源的 HudScale 折算，而不是写死数字：unit 会随 DPI 适配
+      // （stageWidth/393 × factor，factor = 1.3/natural）变化，本设备的
+      // natural = 1080 * (600/1080) / 393 = 1.5266 ⇒ unit ≈ 2.34、gridWidth ≈ 461.5。
+      final double unit =
+          HudScale.portraitUnit(geometry.stageWidth, geometry.stageScale);
+      final double gridWidth =
+          HudScale.portraitGridWidth(geometry.stageWidth, geometry.stageScale);
+      expect(overlay.state.inputX, closeTo(58.0 * unit, 0.01));
+      expect(overlay.state.inputWidth, closeTo((gridWidth - 78) * unit, 0.01));
       expect(geometry.originY, greaterThan(0));
-      expect(overlay.state.inputY, 302.0 + geometry.originY);
+      // 竖屏的检索框 y 是网格 top（min(126, gridHeight*.22)）× unit 再折 originY；
+      // 302 是 Qt 桌面/横屏那条分支的值（`NativeHud::inputY`），竖屏不适用。
+      expect(
+        overlay.state.inputY,
+        closeTo(math.min(126.0, 852.0) * unit + geometry.originY, 0.01),
+      );
 
       final double s = 600 / 1080;
       expect(
         tester.getRect(find.byType(EditableText)).left,
-        closeTo((314 + 18) * s, 0.5),
+        closeTo((58.0 * unit + 18) * s, 0.5),
       );
 
       await tester.enterText(find.byType(EditableText), '本地');
