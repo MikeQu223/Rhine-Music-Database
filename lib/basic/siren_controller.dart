@@ -705,6 +705,44 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
   Set<String> get serverLikedIds => _serverLikedIds;
   Set<String> _serverLikedIds = <String>{};
 
+  /// 服务端「我的歌单」（插件平台的 `userPlaylists(uid)`，Qt `MusicLibrary.cpp:1030-1070`
+  /// 把 `creatorID == uid` 的归属歌单放进 lists[2]）。
+  List<BasicLocalPlaylist> get serverPlaylists => _serverPlaylists;
+  List<BasicLocalPlaylist> _serverPlaylists = const <BasicLocalPlaylist>[];
+  int _serverPlaylistSeq = 0;
+
+  /// 拉一次服务端歌单（插件平台 + 已登录才有效；塞壬/本地平台直接返回）。
+  Future<void> refreshServerPlaylists({String uid = ''}) async {
+    final ProviderGateway? gateway = _remoteSearch;
+    if (gateway == null || _disposed || !gateway.operation('userPlaylists', fallback: false)) {
+      return;
+    }
+    final int seq = ++_serverPlaylistSeq;
+    try {
+      final List<Map<String, Object?>> rows = await gateway.userPlaylists(uid: uid);
+      if (_disposed || seq != _serverPlaylistSeq) {
+        return;
+      }
+      final List<BasicLocalPlaylist> playlists = <BasicLocalPlaylist>[
+        for (final Map<String, Object?> row in rows)
+          if (_text(row['kind']) != 'song')
+            BasicLocalPlaylist(
+              id: _text(row['id']),
+              title: _text(row['title']),
+              trackCount: row['trackCount'] is num ? (row['trackCount'] as num).toInt() : 0,
+            ),
+      ];
+      _serverPlaylists = List<BasicLocalPlaylist>.unmodifiable(playlists);
+      _publish();
+    } on Object catch (error) {
+      if (_disposed) {
+        return;
+      }
+      _status = remoteErrorMessage(error);
+      _publish();
+    }
+  }
+
   /// 远端喜欢的曲目行（拉 id 后按需 `songs(ids)` 解析成可画的行）。
   List<SirenSong> get serverLikedSongs => _serverLikedSongs;
   List<SirenSong> _serverLikedSongs = <SirenSong>[];
@@ -1558,6 +1596,7 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
         lane,
         localCollectionsAvailable: _localCollectionsAvailable,
         unresolvedLikedIds: _localUnresolvedLikedIds,
+        remote: _remoteSearch != null,
       );
       _publish();
       return;
@@ -2424,6 +2463,10 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
       _album?.id ?? '',
       _collectionsDigest(),
       _localCollectionsAvailable,
+      // 插件平台的服务端歌单/喜欢来自网络：它们不参与 `_collectionsDigest()`，
+      // 必须单独进签名，否则 lane 2 会一直命中上一份空表缓存。
+      _serverPlaylists.length,
+      _serverLikedSongs.length,
     ].join('|');
     if (signature == _laneItemsSignature && _laneItemsCache != null) {
       return _laneItemsCache!;
@@ -2453,6 +2496,9 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
       localCollectionsAvailable: _localCollectionsAvailable,
       localUnresolvedLikedIds: _localUnresolvedLikedIds,
       localPlaylists: _localPlaylists,
+      serverPlaylists: _serverPlaylists,
+      // 插件平台：`basicLibraryItems` 的 lane 1/2 与空态文案都按这一位选数据源。
+      searchRemote: _remoteSearch != null,
     );
   }
 
@@ -2709,6 +2755,9 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
       searchKind: _searchKind,
       searchGroup: _searchGroup,
       searchGroupKey: _searchGroupKey,
+      // 服务端歌单/喜欢也进真实快照：HUD 画的是 `_state`，只填 `_probeState`
+      // 会让 lane 2 有计数却没有行（真机现象：标题「我的歌单：30 项」、列表空白）。
+      serverPlaylists: _serverPlaylists,
       searchRemote: _remoteSearch != null,
       searchRows: _remoteSearch != null
           ? (_remoteSearchResult?.rows ?? const <Map<String, Object?>>[])

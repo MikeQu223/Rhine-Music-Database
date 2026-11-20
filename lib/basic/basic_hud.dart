@@ -561,6 +561,7 @@ class BasicHudFrame {
                 state.selectedLane,
                 localCollectionsAvailable: state.localCollectionsAvailable,
                 unresolvedLikedIds: state.localUnresolvedLikedIds,
+                remote: state.searchRemote,
               ));
     final SirenSong? song = state.song;
     final BasicDirectory? directory = state.directory;
@@ -1452,6 +1453,7 @@ class BasicHudFrame {
                     // 端口没接上 ≠ 收藏是空的（basic_models.dart:531-538）。
                     localCollectionsAvailable: state.localCollectionsAvailable,
                     unresolvedLikedIds: state.localUnresolvedLikedIds,
+                    remote: state.searchRemote,
                   )
                 : state.status),
         59,

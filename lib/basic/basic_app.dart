@@ -983,6 +983,8 @@ class _BasicShellState extends State<_BasicShell>
     try {
       await controller.refreshServerLiked(uid: login.state.accountId);
       debugPrint('[plugin] liked refreshed: ${controller.serverLikedIds.length} ids');
+      await controller.refreshServerPlaylists(uid: login.state.accountId);
+      debugPrint('[plugin] playlists refreshed: ${controller.serverPlaylists.length}');
     } on Object catch (error) {
       debugPrint('[plugin] liked refresh failed: $error');
     }
@@ -1083,7 +1085,11 @@ class _BasicShellState extends State<_BasicShell>
 
   /// 我的歌单列的行（真数据：本机集合存储里的歌单）。
   List<PortraitPlaylistRow> _playlistRows() => <PortraitPlaylistRow>[
-        for (final BasicLocalPlaylist playlist in controller.localPlaylists)
+        // 插件平台的歌单来自服务端 `userPlaylists(uid)`（Qt lane 2 的 lists[2]），
+        // 塞壬/本地平台才读本机集合。
+        for (final BasicLocalPlaylist playlist in controller.remoteSearchActive
+            ? controller.serverPlaylists
+            : controller.localPlaylists)
           PortraitPlaylistRow(
             id: playlist.id,
             title: playlist.title,

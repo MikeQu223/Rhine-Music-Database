@@ -541,7 +541,24 @@ String basicLaneEmptyNotice(
   int lane, {
   bool localCollectionsAvailable = false,
   int unresolvedLikedIds = 0,
+  bool remote = false,
 }) {
+  // 插件平台：收藏与歌单来自服务端（`likedIDs` / `userPlaylists`），本机集合端口
+  // 是否存在与这里无关；未登录时 Qt 上屏的是「请登录」+ 平台名。
+  if (remote) {
+    switch (lane) {
+      case basicSearchLane:
+        return '输入关键词检索音乐';
+      case 1:
+        return '暂无喜欢的歌曲';
+      case 2:
+        return '暂无歌单';
+      case 3:
+        return '来源曲库为空';
+      case 4:
+        return '暂无收藏专辑';
+    }
+  }
   switch (lane) {
     case basicSearchLane:
       return '输入关键词检索塞壬唱片曲库';
@@ -689,6 +706,7 @@ class BasicViewState {
     this.localCollectionsAvailable = false,
     this.localUnresolvedLikedIds = 0,
     this.localPlaylists = const <BasicLocalPlaylist>[],
+    this.serverPlaylists = const <BasicLocalPlaylist>[],
     this.laneItems = const <List<BasicListItem>>[],
     this.laneOffsets = const <int>[],
   });
@@ -834,6 +852,9 @@ class BasicViewState {
   /// （与 [selectedLane] 的投影同一份真值），见 [basicLibraryItems] 的 lane 1 分支。
   final List<BasicLocalPlaylist> localPlaylists;
 
+  /// 插件平台的服务端歌单（Qt lane 2 的 lists[2] 在插件平台下来自 `userPlaylists(uid)`）。
+  final List<BasicLocalPlaylist> serverPlaylists;
+
   /// 五列的条目投影（0..4 = [basicSirenColumns] 的顺序），给 Qt 的 40 格语义槽位用。
   ///
   /// 这是**同一份** [basicLibraryItems] 真值的按列展开，不是第二套业务状态：
@@ -905,6 +926,7 @@ class BasicViewState {
     bool? localCollectionsAvailable,
     int? localUnresolvedLikedIds,
     List<BasicLocalPlaylist>? localPlaylists,
+    List<BasicLocalPlaylist>? serverPlaylists,
     List<List<BasicListItem>>? laneItems,
     List<int>? laneOffsets,
     bool dropAlbum = false,
@@ -954,6 +976,7 @@ class BasicViewState {
       localCollectionsAvailable: localCollectionsAvailable ?? this.localCollectionsAvailable,
       localUnresolvedLikedIds: localUnresolvedLikedIds ?? this.localUnresolvedLikedIds,
       localPlaylists: localPlaylists ?? this.localPlaylists,
+      serverPlaylists: serverPlaylists ?? this.serverPlaylists,
       laneItems: laneItems ?? this.laneItems,
       laneOffsets: laneOffsets ?? this.laneOffsets,
     );
@@ -1157,20 +1180,23 @@ List<BasicListItem> basicLibraryItems(BasicViewState state) {
     ];
   }
   if (state.selectedLane == 2) {
-    // 「我的歌单」列（Qt lane 2 的 lists[2] = collections->playlists()）：
-    // 端口不可用时一条也不编（诚实空态），可用时列真实歌单行。
-    if (!state.localCollectionsAvailable) {
+    // 「我的歌单」列（Qt lane 2 的 lists[2]）。两个来源择一：
+    // - 插件平台：服务端 `userPlaylists(uid)` 归到 [BasicViewState.serverPlaylists]；
+    // - 塞壬/本地：collections->playlists()，端口不可用时一条也不编（诚实空态）。
+    final List<BasicLocalPlaylist> playlists =
+        state.searchRemote ? state.serverPlaylists : state.localPlaylists;
+    if (!state.searchRemote && !state.localCollectionsAvailable) {
       return const <BasicListItem>[];
     }
     return <BasicListItem>[
-      for (var index = 0; index < state.localPlaylists.length; index++)
+      for (var index = 0; index < playlists.length; index++)
         BasicListItem(
-          title: state.localPlaylists[index].title.isEmpty
+          title: playlists[index].title.isEmpty
               ? '未命名歌单'
-              : state.localPlaylists[index].title,
+              : playlists[index].title,
           kind: 'playlist',
           index: index,
-          id: state.localPlaylists[index].id,
+          id: playlists[index].id,
         ),
     ];
   }
