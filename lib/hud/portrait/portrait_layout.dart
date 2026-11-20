@@ -275,6 +275,9 @@ PortraitFrame paintPortraitShell(
     );
   }
   content?.call(canvas, top);
+  // 页面 painter 通常以 `finish()` 收尾（撤销构造时的 save+scale）；播放条与底栏
+  // 必须按网格画，所以这里补回缩放层（没调 finish 的 painter 不会被重复缩放）。
+  canvas.ensureScale();
   _playerAndNav(canvas, player: player, nav: nav, top: top);
   canvas.finish();
   return PortraitFrame(

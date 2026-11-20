@@ -428,8 +428,29 @@ class PortraitCanvas {
         title == '设置' ? '我的音乐' : '设置');
   }
 
+  /// 构造时已发出的 `save`+`scale(unit)` 是否仍然有效。
+  ///
+  /// 页面 painter 以 `finish()`（= `restore`）收尾，会把这一层撤销掉；之后如果还要
+  /// 在同一条命令流里画播放条/底栏（[paintPortraitShell]），就必须重新建立缩放层，
+  /// 否则后画的元素会按逻辑像素（unit=1）画成一小团。
+  bool _scaled = true;
+
+  /// 页面 painter 调用 [finish] 之后，重新建立 `save`+`scale(unit, unit)`。
+  ///
+  /// 只在缩放层真的被撤销时补一次，保证 save/restore 仍然配平；没调 `finish()`
+  /// 的 painter（如队列页）不会重复缩放。
+  void ensureScale() {
+    if (_scaled) {
+      return;
+    }
+    commands.add(<Object?>['save']);
+    commands.add(<Object?>['scale', unit, unit]);
+    _scaled = true;
+  }
+
   void finish() {
     commands.add(<Object?>['restore']);
+    _scaled = false;
   }
 }
 

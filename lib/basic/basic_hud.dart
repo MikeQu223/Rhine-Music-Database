@@ -687,18 +687,23 @@ class BasicHudFrame {
       // `modal == "discover"` ⇒ `01 DISCOVER / 音乐观察`），内容按
       // `ResponsiveHudPages.cpp:376-470` 的三分支择一。
       final BasicDiscoverSnapshot page = discover ?? BasicDiscoverSnapshot.empty;
-      paintPortraitDiscoverPage(
+      paintPortraitShell(
         canvas,
-        tabs: page.tabs,
-        tab: page.tab,
-        tools: page.tools,
-        categories: page.categories,
-        categoryPicker: page.categoryPicker,
-        entries: page.entries,
-        status: page.status,
-        more: page.more,
-        loadingMore: page.loadingMore,
-        scroll: page.scroll,
+        player: portraitPlayer,
+        nav: PortraitNav.discover,
+        content: (PortraitCanvas c, double bottom) => paintPortraitDiscoverPage(
+          c,
+          tabs: page.tabs,
+          tab: page.tab,
+          tools: page.tools,
+          categories: page.categories,
+          categoryPicker: page.categoryPicker,
+          entries: page.entries,
+          status: page.status,
+          more: page.more,
+          loadingMore: page.loadingMore,
+          scroll: page.scroll,
+        ),
       );
     } else if (modal == 'saved') {
       // Qt compact 的 `saved` 是**三态**（`ResponsiveHudLayout.cpp:455-464` 与
@@ -706,51 +711,63 @@ class BasicHudFrame {
       // （`musicCollection == 1`）、歌单列（其它）。总览由
       // `portrait_saved_overview.dart` 按 `library()` 的总览分支实现，
       // 另两列复用收藏页。
-      if (savedOverview) {
-        // Qt compact `library()` 的总览分支（ResponsiveHudPages.cpp:858-892）：
-        // 平台卡 + 「收藏与档案」索引行（四个收藏列 + 播放历史 + 设置 + 创建歌单）。
-        paintPortraitSavedOverview(
-          canvas,
-          providerName: savedProviderName,
-          userName: savedUserName,
-          collectionRows: savedOverviewRows,
-          showArtists: savedShowArtists,
-          canCreatePlaylist: canCreatePlaylist,
-          scroll: savedScroll,
-        );
-      } else if (savedLane == 2) {
-        paintPortraitPlaylistsPage(
-          canvas,
-          rows: playlistRows,
-          selectedIndex: state.selectedLane == 2 ? 0 : -1,
-          loading: state.loading,
-          notice: savedNotice,
-          canCreate: true,
-        );
-      } else {
-        paintPortraitLikesPage(
-          canvas,
-          rows: likedRows,
-          selectedIndex: state.selectedLane == 1 ? 0 : -1,
-          loading: state.loading,
-          notice: savedNotice,
-        );
-      }
+      paintPortraitShell(
+        canvas,
+        player: portraitPlayer,
+        nav: null,
+        content: (PortraitCanvas c, double bottom) {
+          if (savedOverview) {
+            // Qt compact `library()` 的总览分支（ResponsiveHudPages.cpp:858-892）：
+            // 平台卡 + 「收藏与档案」索引行（四个收藏列 + 播放历史 + 设置 + 创建歌单）。
+            paintPortraitSavedOverview(
+              c,
+              providerName: savedProviderName,
+              userName: savedUserName,
+              collectionRows: savedOverviewRows,
+              showArtists: savedShowArtists,
+              canCreatePlaylist: canCreatePlaylist,
+              scroll: savedScroll,
+            );
+          } else if (savedLane == 2) {
+            paintPortraitPlaylistsPage(
+              c,
+              rows: playlistRows,
+              selectedIndex: state.selectedLane == 2 ? 0 : -1,
+              loading: state.loading,
+              notice: savedNotice,
+              canCreate: true,
+            );
+          } else {
+            paintPortraitLikesPage(
+              c,
+              rows: likedRows,
+              selectedIndex: state.selectedLane == 1 ? 0 : -1,
+              loading: state.loading,
+              notice: savedNotice,
+            );
+          }
+        },
+      );
     } else if (modal == 'search') {
       // Qt compact `library()` 的 search 分支（ResponsiveHudPages.cpp:941-990）：
       // 检索框 + 四分类 tab + 歌曲分类才有的分组条 + `01 检索结果 INDEX / N` +
       // 结果行。行数据来自 `BasicViewState.searchRows`（分类检索索引的 items，
       // 每项是 Qt `MusicData::item` 形状的 Map），已按分组视图过滤。
-      paintPortraitSearchKindsPage(
+      paintPortraitShell(
         canvas,
-        query: state.query,
-        searchKind: state.searchKind,
-        groupBy: state.searchGroup,
-        activeGroup: state.searchGroupKey,
-        rows: _portraitSearchRows(state),
-        total: state.searchTotal,
-        status: state.searchStatus.isEmpty ? emptyNotice : state.searchStatus,
-        loading: state.loading,
+        player: portraitPlayer,
+        nav: PortraitNav.search,
+        content: (PortraitCanvas c, double bottom) => paintPortraitSearchKindsPage(
+          c,
+          query: state.query,
+          searchKind: state.searchKind,
+          groupBy: state.searchGroup,
+          activeGroup: state.searchGroupKey,
+          rows: _portraitSearchRows(state),
+          total: state.searchTotal,
+          status: state.searchStatus.isEmpty ? emptyNotice : state.searchStatus,
+          loading: state.loading,
+        ),
       );
     } else if (modal == 'plugins' || modal == 'plugin-detail') {
       // Qt compact 插件页：通用页头（不是终端页头）+ 内容区由真实 widget 承担，
