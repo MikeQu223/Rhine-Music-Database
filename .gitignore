@@ -79,3 +79,6 @@ Thumbs.db
 /android/app/profile/
 /android/app/release/
 
+
+# 本地设备截图与临时控制面（不入库）
+/.agents/
