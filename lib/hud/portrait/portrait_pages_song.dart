@@ -294,6 +294,7 @@ void paintPortraitLyricsPage(
   required double durationMs,
   required List<(int startMs, String text, String translation)> lines,
   required int activeLine,
+  bool liked = false,
 }) {
   final double h = c.height;
 
@@ -318,8 +319,13 @@ void paintPortraitLyricsPage(
   final double lyricTitleWidth = c.gridWidth - 76 - 96;
   c.text(title, 76, 44, size: 13, width: lyricTitleWidth, weight: 'demibold');
   c.text(artist, 76, 63, size: 10, width: lyricTitleWidth, color: c.muted);
-  c.icon('heart', c.gridWidth - 49, 50, size: 18, color: c.muted);
+  // Qt compact 歌词页右上两枚：收藏心（真态取 `selectedLiked`，命中
+  // `music:like-current`）与「更多」（打开歌曲操作面板）。
+  c.icon(liked ? 'heart-filled' : 'heart', c.gridWidth - 49, 50,
+      size: 18, color: liked ? c.ink : c.muted);
+  c.hit(Rect.fromLTWH(c.gridWidth - 63, 36, 44, 44), 'music:like-current', '喜欢这首歌');
   c.icon('more', c.gridWidth - 23, 52, size: 14, color: c.muted);
+  c.hit(Rect.fromLTWH(c.gridWidth - 37, 36, 44, 44), 'mobile:song-options', '歌曲更多操作');
 
   // 阅读区：118 起，下沿让给沉浸条。
   //
@@ -336,7 +342,14 @@ void paintPortraitLyricsPage(
   _lyricsRows(c, top: viewTop, bottom: bandTop, lines: lines, activeLine: activeLine);
   c.endContent();
 
-  _lyricsBar(c, top: bandTop, playing: playing, positionMs: positionMs, durationMs: durationMs);
+  _lyricsBar(
+    c,
+    top: bandTop,
+    playing: playing,
+    positionMs: positionMs,
+    durationMs: durationMs,
+    liked: liked,
+  );
   c.finish();
 }
 
@@ -429,6 +442,7 @@ void _lyricsBar(
   required bool playing,
   required double positionMs,
   required double durationMs,
+  required bool liked,
 }) {
   final double h = c.height;
   c.fill(Rect.fromLTWH(0, top, c.gridWidth, .6), c.line);
@@ -460,7 +474,16 @@ void _lyricsBar(
   c.rightText(_clock(durationMs), c.gridWidth - 26, top + 32, 10, 'regular', c.muted);
 
   const List<String> icons = <String>['heart', 'prev', '', 'next', 'queue'];
-  const List<String> routes = <String>['', 'player:prev', 'player:toggle', 'player:next', 'player:open'];
+  // Qt 沉浸条第 0 键是「喜欢」（`ResponsiveHudLayout.cpp:311-323` 的
+  // `liked ? heart-filled : heart` + 路由 `music:like-current`）；只有
+  // `m_player.canLike` 时才给命中，siren 的 descriptor `mutations.likeSong=true`。
+  const List<String> routes = <String>[
+    'music:like-current',
+    'player:prev',
+    'player:toggle',
+    'player:next',
+    'player:open',
+  ];
   final List<String> labels = <String>[
     '喜欢',
     '上一首',
@@ -482,8 +505,8 @@ void _lyricsBar(
       );
       c.icon(playing ? 'pause' : 'play', centerX - 11, rowCenter - 11, size: 22, color: c.ink);
     } else if (index == 0) {
-      // 喜欢状态不在本页入参里：只画空心，不发 music:like-current。
-      c.icon(icons[index], x + iconOffset, top + 79, size: 23, color: c.muted);
+      c.icon(liked ? 'heart-filled' : icons[index], x + iconOffset, top + 79,
+          size: 23, color: liked ? c.ink : c.muted);
     } else {
       c.icon(icons[index], x + iconOffset, top + 79, size: 23, color: c.ink);
     }

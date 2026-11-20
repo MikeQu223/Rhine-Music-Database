@@ -38,6 +38,7 @@ import '../hud/modals/settings_modal.dart'
         SettingsPreferenceSnapshot;
 import '../hud/modals/queue_modal.dart' show queueModalMaximumOffset;
 import '../hud/player/player_bar.dart' show playerBarHeaderHeight, playerBarRowHeight;
+import '../hud/portrait/portrait_playlist_picker.dart' show portraitPlaylistPickPrefix;
 import '../hud/portrait/portrait_pages_queue.dart' show portraitQueueModes;
 import '../hud/portrait/portrait_pages_search_kinds.dart'
     show
@@ -340,7 +341,12 @@ class _BasicAppState extends State<BasicApp> {
   Future<void> _loadResources() async {
     try {
       final BasicHudResources resources =
-          await BasicHudResources.load(bundle: widget.bundle, covers: _covers);
+          await BasicHudResources.load(
+            bundle: widget.bundle,
+            covers: _covers,
+            // 竖屏详情/歌词/沉浸条的心读这份真值（`BasicController.isLiked`）。
+            songLiked: (String songId) => _controller.isLiked(songId),
+          );
       if (!mounted) {
         return;
       }
@@ -892,6 +898,9 @@ class _BasicShellState extends State<_BasicShell>
   /// 收藏列是否停在「我的音乐」总览（Qt `m_savedOverview`）。
   bool _savedOverview = false;
 
+  /// 「加入歌单」选择器的状态行（Qt 用按钮/状态行回话，见 `NativeHudMusic.cpp:490-520`）。
+  String _playlistPickerNotice = '';
+
   /// 喜欢列的行（真数据：控制器里 likedIDs 解析出的曲目，空 = 还没读到）。
   List<PortraitLikesRow> _likedRows() => <PortraitLikesRow>[
         for (final SirenSong song in controller.likedSongs)
@@ -918,6 +927,12 @@ class _BasicShellState extends State<_BasicShell>
     }
     return controller.likedSongs.isEmpty ? '暂无喜欢的歌曲' : '';
   }
+
+  /// 选择器里可选的歌单（Qt `music.lists[2]` 的本机歌单列）。
+  List<(String, String, int)> _pickerPlaylists() => <(String, String, int)>[
+        for (final BasicLocalPlaylist playlist in controller.localPlaylists)
+          (playlist.id, playlist.title, playlist.trackCount),
+      ];
 
   String _mmss(int ms) {
     final int seconds = ms ~/ 1000;
@@ -1412,6 +1427,9 @@ class _BasicShellState extends State<_BasicShell>
       savedOverview: _savedOverview,
       likedRows: _likedRows(),
       playlistRows: _playlistRows(),
+      pickerPlaylists: _pickerPlaylists(),
+      pickerNotice: _playlistPickerNotice,
+      canCreatePlaylist: _currentDescriptor?.capability('playlistManagement', fallback: false) ?? false,
       savedNotice: _savedNotice(),
     );
     final bool settingsOpen =
@@ -2398,6 +2416,25 @@ class _BasicShellState extends State<_BasicShell>
       }));
       return;
     }
+    // 「加入歌单」选择器（Qt `NativeHudMusic.cpp:483-486`：先开
+    // `playlist-picker` 弹层，歌单列为空时再拉一次）。
+    if (action == 'music:add-to-playlist') {
+      setState(() => _playlistPickerNotice = '');
+      _setModal('playlist-picker');
+      return;
+    }
+    if (action.startsWith(portraitPlaylistPickPrefix)) {
+      final String playlistId = action.substring(portraitPlaylistPickPrefix.length);
+      final String songId = controller.selectedSongId;
+      unawaited(controller.addToPlaylist(playlistId, songId).then((String notice) {
+        if (!mounted) {
+          return;
+        }
+        setState(() => _playlistPickerNotice = notice);
+        _notice(notice);
+      }));
+      return;
+    }
     // Qt `ResponsiveHudLayout::handle`（ResponsiveHudLayout.cpp:457-462）：
     // `mobile:song-options` 只翻转面板，任何 `music:`/`tab:` 动作都会把它收起。
     if (action == 'mobile:song-options') {
@@ -2407,6 +2444,56 @@ class _BasicShellState extends State<_BasicShell>
     if (_songOptionsExpanded &&
         (action.startsWith('music:') || action.startsWith('tab:'))) {
       setState(() => _songOptionsExpanded = false);
+    }
+    // 喜欢开关（Qt `music:like` / `music:like-current`，
+    // `MusicMutation.cpp:337`：`enabled = !liked` 再落一次写入）。两者都走
+    // 控制器的本地收藏写入口，成功与否都以 `store.status` 回话上屏。
+    if (action == 'music:like-current') {
+      unawaited(controller.toggleLikeCurrent().then((String notice) {
+        if (!mounted) {
+          return;
+        }
+        setState(() => _actionNotice = notice);
+      }));
+      return;
+    }
+    if (action == 'music:like') {
+      // Qt 的 `music:like` 带的是选中曲目（`music.current`），不是播放曲目。
+      final SirenSong? selected = controller.state.song;
+      unawaited(controller.toggleLiked(selected?.id ?? '').then((String notice) {
+        if (!mounted) {
+          return;
+        }
+        setState(() => _actionNotice = notice);
+      }));
+      return;
+    }
+    // 歌词偏移三条（Qt `player:lyrics-earlier/later/reset`，
+    // `ResponsiveLyrics.cpp:246-252`：每步 0.2s）。状态行走控制器算好的文案。
+    if (action == 'player:lyrics-earlier' || action == 'player:lyrics-later') {
+      final double delta = action == 'player:lyrics-earlier' ? -200 : 200;
+      unawaited(controller.shiftLyricsOffset(delta).then((String notice) {
+        if (!mounted) {
+          return;
+        }
+        setState(() => _actionNotice = notice);
+      }));
+      return;
+    }
+    if (action == 'player:lyrics-reset') {
+      unawaited(controller.resetLyricsOffset().then((String notice) {
+        if (!mounted) {
+          return;
+        }
+        setState(() => _actionNotice = notice);
+      }));
+      return;
+    }
+    // 喜欢的歌曲整列开播（Qt `music:play-liked`，`NativeHudController.cpp:530-533`：
+    // `showSource(1)` + `playDirectory(true)`）。
+    if (action == 'mobile:play-liked') {
+      unawaited(_playLiked());
+      return;
     }
     if (action == 'music:enqueue' || action == 'music:play-next') {
       final bool next = action == 'music:play-next';
@@ -2523,6 +2610,25 @@ class _BasicShellState extends State<_BasicShell>
         _actionNotice = null;
       }
     });
+  }
+
+  /// 喜欢的歌曲整列开播（Qt `music:play-liked`：
+  /// `MusicLibrary::playDirectory(true)` 从该列第一个开始放）。
+  Future<void> _playLiked() async {
+    final BasicController active = controller;
+    if (active.state.directory != null) {
+      // 目录里没有「喜欢的歌曲」这一列，先退出去再切列（Qt 同序：
+      // `showSource(1)` 内部会 `leaveDirectory`）。
+      await active.back();
+    }
+    await active.selectLane(1);
+    final List<SirenSong> rows = active.likedSongs;
+    if (rows.isEmpty) {
+      _notice('还没有喜欢的歌曲');
+      return;
+    }
+    await active.openSong(rows.first, play: true);
+    _notice('开始播放喜欢的歌曲');
   }
 
   /// 动作反馈单写口（见 [_actionNotice] 的两槽说明）。

@@ -22,6 +22,7 @@ import '../hud/portrait/portrait_canvas.dart';
 import '../hud/portrait/portrait_layout.dart';
 import '../hud/portrait/portrait_pages_library.dart';
 import '../hud/portrait/portrait_pages_provider.dart';
+import '../hud/portrait/portrait_playlist_picker.dart';
 import '../hud/portrait/portrait_pages_queue.dart';
 import '../hud/portrait/portrait_pages_search_kinds.dart';
 import '../hud/portrait/portrait_pages_song.dart';
@@ -221,6 +222,12 @@ class BasicHudFrame {
     MvPanelModel? mv,
     /// MV 面板播放位置（毫秒；面板只用来画 `静音跟随音乐 · Np` 那句附注）。
     double mvPositionMs = 0,
+    /// 「加入歌单」选择器（Qt compact `playlist-picker`，`NativeHudMusic.cpp:483`）
+    /// 的可选歌单与状态行；空表时页面画空态。
+    List<(String, String, int)> pickerPlaylists =
+        const <(String, String, int)>[],
+    String pickerNotice = '',
+    bool canCreatePlaylist = false,
     bool localMusicEnabled = true,
   }) {
     final bool dark = state.dark;
@@ -272,6 +279,9 @@ class BasicHudFrame {
         savedNotice: savedNotice,
         mv: mv,
         mvPositionMs: mvPositionMs,
+        pickerPlaylists: pickerPlaylists,
+        pickerNotice: pickerNotice,
+        canCreatePlaylist: canCreatePlaylist,
       );
     }
     final _HudSink sink = _HudSink();
@@ -463,6 +473,10 @@ class BasicHudFrame {
     String savedNotice = '',
     MvPanelModel? mv,
     double mvPositionMs = 0,
+    List<(String, String, int)> pickerPlaylists =
+        const <(String, String, int)>[],
+    String pickerNotice = '',
+    bool canCreatePlaylist = false,
   }) {
     final _HudSink sink = _HudSink();
     ports.beginFrame(sink: sink, time: animationTime, ink: hudInk(dark), animate: animateText);
@@ -547,7 +561,7 @@ class BasicHudFrame {
       );
     } else if (songPage) {
       // Qt compact：song() / lyrics() 是两页，共用「档案 + 封面 + 进度 + 传输」骨架。
-      _paintPortraitSongPage(canvas, state, song, items.length, selected);
+      _paintPortraitSongPage(canvas, state, song, items.length, selected, ports);
     } else if (modal == 'provider') {
       // Qt compact `providerPage`（ResponsiveHudPages.cpp:612-701）：通用页头
       // （只有返回箭头 + close-modal，没有设置齿轮）+ 内容自 158 起。播放条与底栏
@@ -617,6 +631,16 @@ class BasicHudFrame {
         title: '设置',
         code: '03',
         identifier: 'SETTINGS / 终端配置',
+      );
+    } else if (modal == 'playlist-picker') {
+      // Qt compact `music:add-to-playlist` 打开的是通用列表弹层
+      // （`NativeHudMusic.cpp:483-486` + `NativeHudModal.cpp` 的列表分支），
+      // 393 网格下没有独立版式，这里按同一网格拟一页（页头 + 歌单行 + 空态）。
+      paintPortraitPlaylistPicker(
+        canvas,
+        playlists: pickerPlaylists,
+        notice: pickerNotice,
+        canCreate: canCreatePlaylist,
       );
     } else if (modal == 'saved') {
       // Qt compact 的 `saved` 是**三态**（`ResponsiveHudLayout.cpp:455-464` 与
@@ -781,6 +805,7 @@ class BasicHudFrame {
     SirenSong song,
     int total,
     int selected,
+    BasicGlyphPorts ports,
   ) {
     // 详情页曲目与播放曲目是**两个身份**（Qt compact `song()` 的
     // `selectedSongIsCurrent`，ResponsiveHudPages.cpp:165）：打开另一首的详情时，
@@ -805,6 +830,9 @@ class BasicHudFrame {
             (line.startMs.round(), line.text, line.translation),
         ],
         activeLine: state.lyricIndex,
+        // 收藏真态：Qt 用 `selectedLiked`（`NativeHud.cpp:472`），这里走同一个
+        // 字形端口，详情页/歌词页/沉浸条三处不会出现两套答案。
+        liked: ports.songLiked?.call((playingTrack ?? song).id) ?? false,
       );
       return;
     }
@@ -821,8 +849,10 @@ class BasicHudFrame {
       // 非当前曲目在画布内部会显示「尚未播放」并画空进度。
       playing: state.playing,
       buffering: state.buffering,
-      // 收藏列没有本地写入通道（liked 集合只在 lane 1 只读解析），这里不假装已收藏。
-      favourite: false,
+      // 收藏状态来自本机集合（`BasicController.isLiked`），不再写死 false：
+      // 竖屏详情页的心是唯一能看见「已喜欢」的地方（Qt `NativeHud.cpp:472` 的
+      // `selectedLiked` 同义）。
+      favourite: ports.songLiked?.call(song.id) ?? false,
       positionMs: state.positionMs,
       // 非当前曲目拿不到 native 的时长（那是播放器在报的），回落曲库里的本曲目时长；
       // 曲库阶段该值可能还是 0，画布会显示 00:00，不编造数字。
@@ -1658,6 +1688,9 @@ class BasicHudSurface extends StatefulWidget {
     this.savedOverview = true,
     this.likedRows = const <PortraitLikesRow>[],
     this.playlistRows = const <PortraitPlaylistRow>[],
+    this.pickerPlaylists = const <(String, String, int)>[],
+    this.pickerNotice = '',
+    this.canCreatePlaylist = false,
     this.savedNotice = '',
     this.mv,
     this.mvPositionMs = 0,
@@ -1773,6 +1806,15 @@ class BasicHudSurface extends StatefulWidget {
 
   /// 本机歌单行。
   final List<PortraitPlaylistRow> playlistRows;
+
+  /// 「加入歌单」选择器（Qt compact `playlist-picker`）的可选歌单。
+  final List<(String, String, int)> pickerPlaylists;
+
+  /// 选择器的状态行（空串 = 不画）。
+  final String pickerNotice;
+
+  /// 是否给「＋ 创建歌单」入口（Qt `canCreatePlaylist`）。
+  final bool canCreatePlaylist;
 
   /// 收藏页状态文案。
   final String savedNotice;
@@ -2005,6 +2047,9 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       likedRows: widget.likedRows,
       playlistRows: widget.playlistRows,
       savedNotice: widget.savedNotice,
+      pickerPlaylists: widget.pickerPlaylists,
+      pickerNotice: widget.pickerNotice,
+      canCreatePlaylist: widget.canCreatePlaylist,
       mv: widget.mv,
       mvPositionMs: widget.mvPositionMs,
     );

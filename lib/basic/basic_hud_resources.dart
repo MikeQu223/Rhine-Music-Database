@@ -53,6 +53,7 @@ class BasicHudResources {
   static Future<BasicHudResources> load({
     AssetBundle? bundle,
     BasicCoverImages? covers,
+    bool Function(String songId)? songLiked,
   }) async {
     final AssetBundle source = bundle ?? rootBundle;
     final List<String> failures = <String>[];
@@ -77,7 +78,12 @@ class BasicHudResources {
     return BasicHudResources(
       glyphs: glyphs,
       text: text,
-      ports: BasicGlyphPorts(glyphs: glyphs, text: text, covers: covers),
+      ports: BasicGlyphPorts(
+        glyphs: glyphs,
+        text: text,
+        covers: covers,
+        songLiked: songLiked,
+      ),
       families: families,
       failures: List<String>.unmodifiable(failures),
     );
@@ -141,13 +147,24 @@ class BasicGlyphPorts
         player.GlyphsPort,
         lyrics.GlyphsPort,
         detail.SongDetailGlyphsPort {
-  BasicGlyphPorts({required this.glyphs, required this.text, this.covers});
+  BasicGlyphPorts({
+    required this.glyphs,
+    required this.text,
+    this.covers,
+    this.songLiked,
+  });
 
   final GlyphFontSet glyphs;
   final GlyphText text;
 
   /// 真实封面像素来源（null = 未接线，页面画空槽而不是假图）。
   final BasicCoverImages? covers;
+
+  /// 某首歌是否已被本机收藏（null = 未接线，页面一律画空心）。
+  ///
+  /// 竖屏详情页/歌词页/沉浸播放条的心都读它（Qt 侧同一份真值来自
+  /// `NativeHud.cpp:472` 的 `selectedLiked` 与 `PlayerBarState.liked`）。
+  final bool Function(String songId)? songLiked;
 
   /// 记录 rolling 请求次数，便于测试断言“页面确实请求过滚动标签”。
   /// 实际绘制见 [beginFrame]/[rolling]：每次请求都按当前帧时钟落到命令流，

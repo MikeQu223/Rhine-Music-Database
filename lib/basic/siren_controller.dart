@@ -456,6 +456,30 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     return toggleLiked(current == null ? '' : _text(current['id']));
   }
 
+  /// 把一首歌加进本机歌单（Qt `music:playlist-pick` 的 siren 分支，
+  /// `NativeHudMusic.cpp:483-520`：先查重、再写、反馈落在按钮/状态行）。
+  /// 返回状态文案：本地平台没有「已在当前歌单」那种目录上下文，查重只按歌单内容。
+  Future<String> addToPlaylist(String playlistId, String songId) async {
+    final LocalCollectionStore? store = _collectionStore;
+    if (store == null) {
+      return '本地收藏尚未接入';
+    }
+    if (playlistId.isEmpty || songId.isEmpty) {
+      return '无法写入本地收藏';
+    }
+    if (store.playlistTrackIds(playlistId).contains(songId)) {
+      return '✓ 已在当前歌单';
+    }
+    await store.addTrack(playlistId, songId);
+    _refreshLocalCollections();
+    _searchOutcomeCache = null;
+    _publish();
+    return store.status;
+  }
+
+  /// 当前选中曲目 + 平台自建歌单列表（`music:add-to-playlist` 打开选择器时要的数据）。
+  String get selectedSongId => _song?.id ?? '';
+
   /// 创建本机歌单并刷新收藏列（Qt `music:create-playlist` 的 siren 分支，
   /// `MusicMutation.cpp:421-455`：校验名称 → 写文档 → 状态文案）。返回状态文案。
   Future<String> createPlaylist(String title) async {
@@ -1606,6 +1630,41 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
       lyrics.sync(clamped * duration);
     }
     _publish();
+  }
+
+  /// 歌词全局偏移的薄封装（Qt `player:lyrics-earlier/later/reset`，
+  /// `ResponsiveLyrics.cpp:236-278` 的选项面板四条动作里的三条）。
+  ///
+  /// 状态文案照 Qt `NativeHudLyrics.cpp` 的口径：偏移值直接写进状态行，
+  /// 让用户知道 0.2s 一次累计到了多少；底层夹取在 `LyricsController` 里。
+  Future<String> shiftLyricsOffset(double deltaMs) async {
+    final LyricsController? lyrics = _lyrics;
+    if (lyrics == null) {
+      return '歌词尚未加载';
+    }
+    lyrics.adjustOffset(deltaMs);
+    _publish();
+    return _lyricsOffsetStatus(lyrics);
+  }
+
+  /// 重置歌词偏移（Qt `player:lyrics-reset`）。
+  Future<String> resetLyricsOffset() async {
+    final LyricsController? lyrics = _lyrics;
+    if (lyrics == null) {
+      return '歌词尚未加载';
+    }
+    lyrics.resetOffset();
+    _publish();
+    return _lyricsOffsetStatus(lyrics);
+  }
+
+  static String _lyricsOffsetStatus(LyricsController lyrics) {
+    final int offset = lyrics.offsetMs.round();
+    if (offset == 0) {
+      return '歌词偏移已重置';
+    }
+    final String sign = offset > 0 ? '+' : '';
+    return '歌词偏移 $sign${offset}ms';
   }
 
   /// 下一首（队列由 MusicPlayer::next 推进，音源由引擎 fresh 读取）。
