@@ -266,6 +266,32 @@ void main() {
       expect(delays.every((Duration d) => d.inMilliseconds == 1000), isTrue);
     });
 
+    test('账号键带变体后缀：同一平台的标准版/轻量版互不覆盖', () async {
+      // Qt `accountKey()`（MusicLibrary.cpp:363-365）：
+      // `providerVariant.isEmpty ? provider : provider + "-" + variant`。
+      // 用 setUp 里的 `prefs`：`controllerFor` 拿的就是它，别在测试里新建一份。
+      final ProviderDescriptor descriptor = descriptorOf(
+        strings: const <String, String>{'scanHint': '请用 Alpha Music 扫码'},
+      );
+      final FakeGateway gateway = FakeGateway(
+        descriptor: descriptor,
+        accountValue: const ProviderAccount(id: 'uid-1', nickname: '小塞壬'),
+        polls: const <ProviderLoginPoll>[
+          ProviderLoginPoll(status: 'scanned', code: '802'),
+          ProviderLoginPoll(status: 'confirmed', code: '803'),
+        ],
+      );
+      final LoginController controller = controllerFor(gateway, descriptor);
+      await controller.open(descriptor, gateway, variant: 'lite');
+      await controller.start();
+
+      expect(controller.state.phase, LoginPhase.complete);
+      expect(prefs.read('account-id-alpha-lite'), 'uid-1');
+      expect(prefs.read('welcome-name-alpha-lite'), '小塞壬');
+      // 不带变体时保持旧行为（siren/local 没有变体）。
+      expect(prefs.read('account-id-alpha'), isEmpty);
+    });
+
     test('pollIntervalMs 夹到 100..60000，timeout 取 max(interval, value)', () async {
       final List<int> intervals = <int>[];
       for (final int raw in <int>[999999, 5, 1000]) {

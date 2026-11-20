@@ -180,6 +180,9 @@ class LoginController {
   LoginState _state = const LoginState();
   int _generation = 0;
   bool _closed = false;
+
+  /// 当前变体 id（Qt `providerVariant`）。空串 = 平台没有变体。
+  String _variant = '';
   final List<void Function()> _listeners = <void Function()>[];
 
   /// 当前状态（不可变快照）。
@@ -272,9 +275,11 @@ class LoginController {
     ProviderDescriptor descriptor,
     ProviderGateway gateway, {
     String? methodId,
+    String variant = '',
   }) async {
     _descriptor = descriptor;
     _gateway = gateway;
+    _variant = variant.trim();
     _closed = false;
     _generation += 1; // 旧平台的轮询立即失效（Qt 每次 cancelLogin 都 ++m_loginGeneration）
     String method = methodId ?? descriptor.defaultLoginMethod;
@@ -576,7 +581,13 @@ class LoginController {
   }
 
   /// Qt `accountKey()`（MusicLibrary.cpp:169-171）：平台上再加变体后缀。
-  String _accountKey(ProviderDescriptor descriptor) => descriptor.id;
+  ///
+  /// Qt 的键是 `providerVariant.isEmpty ? provider : provider + "-" + variant`
+  /// （`MusicLibrary.cpp:363-365`）。同一个平台的「标准版 / 轻量版」各有独立账号，
+  /// 键里不带变体就会互相覆盖。当前仓库内 siren/local 都没有变体，调用方传空串时
+  /// 行为与旧实现完全一致。
+  String _accountKey(ProviderDescriptor descriptor) =>
+      _variant.isEmpty ? descriptor.id : '${descriptor.id}-$_variant';
 
   /// Qt `reportLoginFailure(details, fallback)` :338-352 的公开入口。
   ///
