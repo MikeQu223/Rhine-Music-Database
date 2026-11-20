@@ -3689,13 +3689,18 @@ class _BasicSettingsPreferencePort implements PreferencePort {
 
   @override
   Future<String?> read(String key) async {
-    final String value = await _store.read(key);
-    return value.isEmpty ? null : value;
+    final Map<String, String> all = await _store.port.readAll();
+    final String? value = all['$_prefix$key'];
+    return (value == null || value.isEmpty) ? null : value;
   }
 
   @override
   Future<void> write(String key, String value) async {
-    final bool written = await _store.write(key, value);
+    // 收藏文档是**整份 JSON**，不是设置项：`PreferenceStore` 的白名单只认
+    // `Qt/src/Host.cpp:1107` 那批裸键，`collections/<provider>.json` 会被静默丢弃
+    // （真机实测：心形变实心、提示「已加入喜欢的歌曲」，但 shared_prefs 里没有该键）。
+    // 这里直接落到端口层（它只校验 `panel/` 前缀），与 Qt 把收藏存成独立文件同构。
+    final bool written = await _store.port.write('$_prefix$key', value);
     if (!written) {
       throw StateError('settings write rejected: $_prefix$key');
     }
@@ -3703,6 +3708,6 @@ class _BasicSettingsPreferencePort implements PreferencePort {
 
   @override
   Future<void> remove(String key) async {
-    await _store.remove(key);
+    await _store.port.remove('$_prefix$key');
   }
 }
