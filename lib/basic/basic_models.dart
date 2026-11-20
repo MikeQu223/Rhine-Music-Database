@@ -673,6 +673,7 @@ class BasicViewState {
     this.searchKind = 'song',
     this.searchGroup = 'none',
     this.searchGroupKey = '',
+    this.searchRemote = false,
     this.searchRows = const <Map<String, Object?>>[],
     this.searchTotal = 0,
     this.searchStatus = '',
@@ -768,6 +769,10 @@ class BasicViewState {
   final String searchGroupKey;
 
   /// 分类检索的命中行（Qt `MusicData::item` 形状的 Map），已按分组视图过滤。
+  /// 检索结果是否来自远端（插件平台）。行点击要换成 `music:search-open:<i>`，
+  /// 因为远端行不在本地 lane 里，`music:index:<i>` 会指到塞壬曲库。
+  final bool searchRemote;
+
   final List<Map<String, Object?>> searchRows;
 
   /// 分类检索的命中总数（`INDEX / <total>`）。
@@ -884,6 +889,7 @@ class BasicViewState {
     String? searchKind,
     String? searchGroup,
     String? searchGroupKey,
+    bool? searchRemote,
     List<Map<String, Object?>>? searchRows,
     int? searchTotal,
     String? searchStatus,
@@ -932,6 +938,7 @@ class BasicViewState {
       searchKind: searchKind ?? this.searchKind,
       searchGroup: searchGroup ?? this.searchGroup,
       searchGroupKey: searchGroupKey ?? this.searchGroupKey,
+      searchRemote: searchRemote ?? this.searchRemote,
       searchRows: searchRows ?? this.searchRows,
       searchTotal: searchTotal ?? this.searchTotal,
       searchStatus: searchStatus ?? this.searchStatus,

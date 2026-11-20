@@ -36,6 +36,9 @@ import '../domain/lyrics/lyrics_controller.dart';
 import '../domain/player/music_player.dart';
 import '../domain/collection/local_collection_store.dart';
 import '../domain/search/catalog_search.dart';
+import '../domain/search/remote_search.dart';
+import '../provider/plugin_gateway.dart' show ProviderRequestError;
+import '../provider/provider_gateway.dart';
 import 'basic_art_cache.dart';
 import 'basic_media_session.dart';
 import 'basic_models.dart';
@@ -260,6 +263,24 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
 
   /// [searchOutcome] 的签名缓存（见该方法的失效规则）。
   String _searchOutcomeSignature = '';
+
+  /// 远端（插件平台）检索网关；null = 当前平台用本地塞壬索引。
+  ///
+  /// 切到插件平台（`netease`/`qq`/…）后资料库仍是塞壬曲库，检索是唯一真正
+  /// 走插件数据面的入口（Qt 里 `MusicLibrary::search` 直接调 `api.call("search")`）。
+  ProviderGateway? _remoteSearch;
+
+  /// 当前远端检索结果；null = 还没有结果（或本地模式）。
+  RemoteSearchResult? _remoteSearchResult;
+
+  /// 远端检索代际：切词/切分类/切平台时自增，用来丢弃过期响应。
+  int _remoteSearchSeq = 0;
+
+  /// 远端检索所属平台 id（切平台要清空旧结果）。
+  String _remoteProviderId = '';
+
+  /// 远端平台的默认音质 id（descriptor 的 `quality.default`；空 = 让插件用默认）。
+  String _remoteQuality = '';
   SearchOutcome? _searchOutcomeCache;
   SirenAlbum? _album;
 
@@ -385,6 +406,15 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     _selectedLane = basicSearchLane;
     _listPosition = 0;
     _lanePositions[basicSearchLane] = 0;
+    if (_remoteSearch != null) {
+      // 插件平台：检索由插件回答，不依赖本地塞壬曲库是否装载。
+      _status = value.trim().isEmpty ? '请输入 1\u2013100 字关键词' : '正在检索…';
+      _publish();
+      if (value.trim().isNotEmpty) {
+        unawaited(_runRemoteSearch());
+      }
+      return;
+    }
     if (!_catalogLoaded) {
       if (!_loading) {
         _status = sirenLibraryUnloadedStatus;
@@ -611,6 +641,98 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
   /// 随播放 tick 跑一次，整库 936 首的分类检索（且歌手分类还要归并）不能每帧
   /// 重算——那会把播放中的帧率拖垮。签名里不含分组键：分组只是对同一份结果的
   /// 视图裁剪，不需要重建索引。
+  /// 是否走远端（插件）检索。
+  bool get remoteSearchActive => _remoteSearch != null;
+
+  /// 当前平台 id（远端检索结果按它隔离）。
+  String get remoteProviderId => _remoteProviderId;
+
+  /// 绑定远端检索网关：宿主在平台装配/切换时调用，null = 回本地塞壬索引。
+  ///
+  /// 换平台时清空旧结果并让在途响应失效（`_remoteSearchSeq++`），否则会把
+  /// 上一个平台的命中项画到新平台下。
+  void attachRemoteSearch(
+    ProviderGateway? gateway, {
+    required String providerId,
+    String quality = '',
+  }) {
+    if (identical(gateway, _remoteSearch) && providerId == _remoteProviderId) {
+      return;
+    }
+    _remoteSearch = gateway;
+    _remoteProviderId = providerId;
+    _remoteQuality = quality;
+    _remoteSearchResult = null;
+    ++_remoteSearchSeq;
+    if (gateway != null && _query.trim().isNotEmpty) {
+      unawaited(_runRemoteSearch());
+    }
+    if (!_disposed) {
+      _publish();
+    }
+  }
+
+  /// 跑一次远端检索（结果/失败原因都进 `_status`，与 Qt 的 `status` 一致）。
+  Future<void> _runRemoteSearch() async {
+    final ProviderGateway? gateway = _remoteSearch;
+    if (gateway == null) {
+      return;
+    }
+    final int seq = ++_remoteSearchSeq;
+    final String kind = _searchKind;
+    final String query = _query;
+    final RemoteSearchResult result =
+        await runRemoteSearch(gateway: gateway, kind: kind, query: query);
+    if (_disposed || seq != _remoteSearchSeq) {
+      return;
+    }
+    _remoteSearchResult = result;
+    _status = result.status;
+    _publish();
+  }
+
+  /// 打开远端检索结果的第 [index] 行：先向插件要播放地址，再走正常打开流程。
+  ///
+  /// 返回空串 = 已打开；非空 = 可直接上屏的原因（没有音源、插件报错、越界）。
+  Future<String> openRemoteSong(int index) async {
+    final List<Map<String, Object?>> rows =
+        _remoteSearchResult?.rows ?? const <Map<String, Object?>>[];
+    if (_disposed || index < 0 || index >= rows.length) {
+      return '该条目已不在列表里';
+    }
+    final Map<String, Object?> row = rows[index];
+    final SirenSong song = SirenSong(
+      id: _text(row['id']),
+      title: _text(row['title']),
+      artist: _text(row['artist']),
+      album: _text(row['album']),
+      albumId: _text(row['albumID']),
+      cover: _text(row['cover']),
+      sourceUrl: '',
+      lyricUrl: '',
+      durationMs: (row['durationMs'] as num?)?.toDouble() ?? 0,
+    );
+    final ProviderGateway? gateway = _remoteSearch;
+    if (gateway == null) {
+      return '当前平台不支持播放';
+    }
+    String source = '';
+    try {
+      source = await gateway.playback(trackId: song.id, quality: _remoteQuality);
+    } on ProviderUnavailableError catch (error) {
+      return error.message;
+    } on ProviderRequestError catch (error) {
+      return error.message;
+    } on Object catch (error) {
+      return '取播放地址失败：$error';
+    }
+    if (source.isEmpty) {
+      return '该曲目没有可用音源';
+    }
+    await openSong(song.copyWith(sourceUrl: source));
+    return '';
+  }
+
   SearchOutcome searchOutcome() {
     final String signature = <Object?>[
       _catalogGeneration,
@@ -2280,22 +2402,31 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
       return;
     }
     try {
-      final SirenSongDetail detail = await _repository.songDetail(id);
-      if (_activeGeneration != generation) {
-        return;
+      // 远端（插件平台）曲目：播放地址已经由宿主向插件要过、随 track 一起传进来。
+      // 这里**不能**再走 `_repository.songDetail`——那是塞壬的 id 空间，插件曲目
+      // 的 id 在那边必然 404，真机表现就是「详情页打开、状态一直已暂停」。
+      String sourceUrl = _text(track['sourceUrl']);
+      String lyricUrl = '';
+      if (sourceUrl.isEmpty) {
+        final SirenSongDetail detail = await _repository.songDetail(id);
+        if (_activeGeneration != generation) {
+          return;
+        }
+        _rememberDetail(detail);
+        sourceUrl = detail.sourceUrl;
+        lyricUrl = detail.lyricUrl;
       }
-      _rememberDetail(detail);
-      if (detail.sourceUrl.isEmpty) {
+      if (sourceUrl.isEmpty) {
         _player.fail(sirenNoSourceMessage, generation: generation);
         return;
       }
-      await _audio.prepare(detail.sourceUrl, generation: generation);
+      await _audio.prepare(sourceUrl, generation: generation);
       await _audio.play(generation: generation);
       // 真正开始播放（前台 Activity）时才拉起前台媒体服务；返回值只表示平台
       // 接受请求，通知是否可见取决于 POST_NOTIFICATIONS，失败不影响播放。
       unawaited(_mediaSession?.ensureStarted() ?? Future<bool>.value(false));
       _player.playbackStarted(generation: generation);
-      unawaited(_loadLyrics(track, LyricsController.trackKey(track), detail.lyricUrl));
+      unawaited(_loadLyrics(track, LyricsController.trackKey(track), lyricUrl));
     } on Object catch (error) {
       _player.fail(_messageOf(error), generation: generation);
     }
@@ -2486,9 +2617,14 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
       searchKind: _searchKind,
       searchGroup: _searchGroup,
       searchGroupKey: _searchGroupKey,
-      searchRows: searchOutcome().items,
-      searchTotal: searchOutcome().total,
-      searchStatus: searchOutcome().status,
+      searchRemote: _remoteSearch != null,
+      searchRows: _remoteSearch != null
+          ? (_remoteSearchResult?.rows ?? const <Map<String, Object?>>[])
+          : searchOutcome().items,
+      searchTotal:
+          _remoteSearch != null ? (_remoteSearchResult?.total ?? 0) : searchOutcome().total,
+      searchStatus:
+          _remoteSearch != null ? (_remoteSearchResult?.status ?? '') : searchOutcome().status,
       searchGroups: searchGroups(),
       lyricStatus: lyrics?.status ?? 'idle',
       lyricMessage: lyrics?.message ?? '',

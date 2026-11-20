@@ -175,6 +175,9 @@ const String basicProviderSwitchPrefix = 'provider:';
 /// 收藏列切换前缀（Qt `music:collection:<lane>`，lane 1..4）。
 const String basicCollectionActionPrefix = 'music:collection:';
 
+/// 远端（插件平台）检索结果的行点击前缀（见 `BasicController.openRemoteSong`）。
+const String basicSearchOpenPrefix = 'music:search-open:';
+
 /// 组合根：唯一 [BasicController] + 字形资源 → HUD 业务外壳。
 ///
 /// 责任边界（RUNTIME-STARTUP-96）：
@@ -926,6 +929,14 @@ class _BasicShellState extends State<_BasicShell>
       },
     );
     _mvController = mv;
+    // 检索是否走插件数据面：内置平台（siren/local）留在本地索引，用户安装的插件
+    // 平台把检索交给插件（Qt `MusicLibrary::search` → `api.call("search")`）。
+    final ProviderDescriptor? current = _currentDescriptor;
+    controller.attachRemoteSearch(
+      current != null && current.userInstalled ? service.gateway : null,
+      providerId: current?.id ?? '',
+      quality: current?.qualityDefault ?? '',
+    );
     // Qt `MusicAccount::restoreCachedAccount()`：启动就把落盘会话读回来，
     // 否则设置页 ACCESS 卡在用户手动打开登录页之前一直显示「未登录」。
     unawaited(_restoreAccount());
@@ -2964,10 +2975,14 @@ class _BasicShellState extends State<_BasicShell>
     // 会用 QML 的缺省 54 / 22，字小且贴在框上沿——用户 2026-11-19 报的「字小的小标题」。
     final double compactUnit =
         HudScale.portraitUnit(geometry.stageWidth, geometry.stageScale);
+    // 详情/歌词页是整页绘制，输入层必须退场：否则从检索结果点进详情后，
+    // 检索框会残留在详情页上（真机 `device21` 的 love 字样就压在封面上）。
+    final bool songPage = state.song != null &&
+        (state.phase == BasicPhase.detail || state.phase == BasicPhase.lyrics);
     return TextInputOverlay(
       state: TextInputStageState.fromGeometry(
         geometry,
-        modal: _modal,
+        modal: songPage ? '' : _modal,
         // Qt/src/NativeHud.cpp:184-186 的 inputX / inputY / inputWidth（舞台单位），
         // 检索分支见 :154-157（:158 是 bounds 返回）。
         inputX: rect.left,
@@ -3228,6 +3243,16 @@ class _BasicShellState extends State<_BasicShell>
     }
     // 行点击 = **纯选中**（Qt/src/NativeHudMusic.cpp:79-91 的 selectResult/selectDirectory
     // 都是 open=false：只写 current/index/highlight，不回放、不换队列、不进详情）。
+    if (action.startsWith(basicSearchOpenPrefix)) {
+      final int index = int.tryParse(action.substring(basicSearchOpenPrefix.length)) ?? -1;
+      unawaited(controller.openRemoteSong(index).then((String notice) {
+        if (!mounted || notice.isEmpty) {
+          return;
+        }
+        setState(() => _actionNotice = notice);
+      }));
+      return null;
+    }
     if (action.startsWith(basicMusicIndexActionPrefix)) {
       final int? index = int.tryParse(action.substring(basicMusicIndexActionPrefix.length));
       if (index == null) {

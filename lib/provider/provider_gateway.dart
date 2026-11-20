@@ -348,6 +348,18 @@ abstract class ProviderGateway {
     required ProviderSearchKind kind,
     required int start,
   });
+
+  /// 取曲目播放地址（对应 `playback(value, quality, alternative)`）。
+  ///
+  /// 三个参数都是位置参数：`value` 是 `{id}`，`quality` 是平台音质 id
+  /// （缺省用 descriptor 的 `quality.default`，网易云是 `exhigh`），`alternative`
+  /// 是「用替代音源兜底」。只传 `value` 会让插件拼出 `level=undefined`，
+  /// 上游直接回「暂无可用音源」——真机上踩过。
+  Future<String> playback({
+    required String trackId,
+    String quality = '',
+    bool alternative = false,
+  });
 }
 
 /// 检索分类（`SearchKind` in `port.d.ts`）。
@@ -461,6 +473,15 @@ class UnavailableProviderGateway implements ProviderGateway {
     required String query,
     required ProviderSearchKind kind,
     required int start,
+  }) async {
+    throw ProviderUnavailableError(reason);
+  }
+
+  @override
+  Future<String> playback({
+    required String trackId,
+    String quality = '',
+    bool alternative = false,
   }) async {
     throw ProviderUnavailableError(reason);
   }

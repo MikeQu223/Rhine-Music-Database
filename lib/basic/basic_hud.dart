@@ -447,7 +447,11 @@ class BasicHudFrame {
       // 专辑进专辑列（Qt `selectResult(open=true)` 对非 song 走 enterDirectory）；
       // 歌手/歌单本仓库还没有详情页，给可见反馈而不是静默吞掉。
       final String action = switch (kind) {
-        'song' => 'music:index:${rows.length}',
+        // 远端（插件平台）的行不在本地 lane 里：`music:index:<i>` 会指到塞壬曲库，
+        // 所以换成专用动作，由宿主向插件要播放地址再打开。
+        'song' => state.searchRemote
+            ? 'music:search-open:${rows.length}'
+            : 'music:index:${rows.length}',
         'album' => 'music:search-album:${Uri.encodeComponent(title)}',
         'playlist' => 'music:search-playlist:${Uri.encodeComponent(item['id']?.toString() ?? '')}',
         _ => 'music:search-artist:${Uri.encodeComponent(title)}',

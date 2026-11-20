@@ -221,6 +221,24 @@ class PluginGateway implements ProviderGateway {
   }
 
   @override
+  Future<String> playback({
+    required String trackId,
+    String quality = '',
+    bool alternative = false,
+  }) async {
+    // 插件签名 `playback(value, quality, alternative)`（`plugin.cjs` 里
+    // `async playback(value, quality, alternative, valid)`）：只传 value 会让
+    // `level=undefined`，上游一律回「暂无可用音源」。
+    final String level = quality.isNotEmpty ? quality : descriptor.qualityDefault;
+    final Map<String, Object?> value = await _call('playback', <Object?>[
+      <String, Object?>{'id': trackId},
+      level,
+      alternative,
+    ]);
+    return _text(value['url'] ?? value['src'] ?? value['source']);
+  }
+
+  @override
   Future<List<Map<String, Object?>>> search({
     required String query,
     required ProviderSearchKind kind,
