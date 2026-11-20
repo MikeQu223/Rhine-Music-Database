@@ -38,7 +38,8 @@ import 'package:rhine_music_database/hud/modals/search_results.dart'
         kSearchInset,
         kSearchResultListTop,
         kSearchResultListBottom,
-        kSearchResultRowHeight;
+        kSearchResultRowHeight,
+        percentDecode;
 
 // (a) Frozen cross-module constants (imported, never redefined)
 // kSearchInset           = 53  (Qt NativeHudSearch.cpp:8  SearchInset)
@@ -266,6 +267,264 @@ String searchKindAction(int index) => 'music:kind:$index';
 /// Qt hit action for a group tab: "music:group:" + index
 /// (NativeHudSearch.cpp:105).
 String searchGroupAction(int index) => 'music:group:$index';
+
+// (e2) 分类 / 分组动作语义 - Qt/src/NativeHudMusic.cpp:218-252
+//
+// 工具栏（本文件 e 段）只负责把四个分类 tab 与三个分组 tab 画出来并发出动作串；
+// 动作串被点中之后「该改哪些状态、要不要立刻重搜」由 Qt 的 NativeHudMusic
+// 分支定义，下面这组纯函数把那四个分支逐字移植成可测试的 reducers：
+//
+//   kind:       ++m_searchGeneration; listOffset=0; resetResultViews();
+//               activeGroup.clear();
+//               kind = QStringList{"song","album","playlist","artist"}.value(last,"song");
+//               text = query.isEmpty() ? music.keyword : query;
+//               if (text.isEmpty()) music.searchKind = kind;   // 只换选中态，不发检索
+//               else                music.search(text, kind);   // 立刻重搜
+//   group:      music.setGroupView({},{},…); ++generation;
+//               groupBy = QStringList{"none","artist","album"}.value(last,"none");
+//               activeGroup.clear(); listOffset=0; resetResultViews();
+//   expand:     ++generation; key = decode(value.mid(13)); activeGroup = key;
+//               listOffset=0; resetResultViews(); 随后按 key 找分组行并 setGroupView
+//   group-back: setGroupView({},{},…); ++generation; activeGroup.clear();
+//               listOffset=0; resetResultViews();
+//
+// 分组行（`music:expand:<key>`）的标题与下标由宿主从当前结果行里解析
+// （Qt 用 `std::find_if(value["key"] == key)` 找那一行，再 setGroupView(title,
+// indices, lane)）：那一步依赖结果列表，不属于「选中态」这一层。
+
+/// Qt `music:kind:<n>` / `music:group:<n>` / `music:expand:<key>` /
+/// `music:group-back` 解析后的命令。
+sealed class SearchSelectionCommand {
+  const SearchSelectionCommand();
+}
+
+/// 分类 tab：`music:kind:<kinds 下标>`（NativeHudMusic.cpp:218-229）。
+final class SearchKindCommand extends SearchSelectionCommand {
+  const SearchKindCommand(this.index);
+
+  /// 发出的下标原文（`music:kind:` 之后的整数）。
+  final int index;
+
+  /// Qt `QStringList{"song","album","playlist","artist"}.value(last,"song")`。
+  String get kind => searchKindKeyAt(index);
+}
+
+/// 分组 tab：`music:group:<groupKeys 下标>`（NativeHudMusic.cpp:230-237）。
+final class SearchGroupCommand extends SearchSelectionCommand {
+  const SearchGroupCommand(this.index);
+
+  final int index;
+
+  /// Qt `QStringList{"none","artist","album"}.value(last,"none")`。
+  String get groupBy => searchGroupKeyAt(index);
+}
+
+/// 分组行：`music:expand:<percentEncode(key)>`（NativeHudMusic.cpp:238-249）。
+final class SearchExpandCommand extends SearchSelectionCommand {
+  const SearchExpandCommand(this.key);
+
+  /// 解百分号编码之后的 group 行 key；解码失败时保留原文
+  /// （Qt 的 `QUrl::fromPercentEncoding` 宽容替换，从不失败）。
+  final String key;
+}
+
+/// 分组内返回：`music:group-back`（NativeHudMusic.cpp:250-256）。
+final class SearchGroupBackCommand extends SearchSelectionCommand {
+  const SearchGroupBackCommand();
+}
+
+/// Qt `kinds.value(index, "song")`：越界一律回落 song（不是抛错）。
+String searchKindKeyAt(int index) =>
+    index >= 0 && index < kSearchKinds.length ? kSearchKinds[index] : kSearchKinds.first;
+
+/// Qt `groupKeys.value(index, "none")`：越界回落原序。
+String searchGroupKeyAt(int index) =>
+    index >= 0 && index < kSearchGroupKeys.length
+        ? kSearchGroupKeys[index]
+        : kSearchGroupKeys.first;
+
+/// 解析分类/分组动作串；不是这四类动作时返回 null（调用方交给别的分支）。
+SearchSelectionCommand? searchSelectionCommand(String action) {
+  if (action == kSearchGroupBackAction) {
+    return const SearchGroupBackCommand();
+  }
+  const String expand = 'music:expand';
+  if (action.startsWith('$expand:')) {
+    final String encoded = action.substring(expand.length + 1);
+    String key = encoded;
+    try {
+      key = percentDecode(encoded);
+    } on FormatException {
+      // Qt 的 fromPercentEncoding 对坏转义宽容：保留原文，不丢点击。
+      key = encoded;
+    }
+    return SearchExpandCommand(key);
+  }
+  if (action.startsWith('music:kind:')) {
+    final int? index = int.tryParse(action.substring('music:kind:'.length));
+    return index == null ? null : SearchKindCommand(index);
+  }
+  if (action.startsWith('music:group:')) {
+    final int? index = int.tryParse(action.substring('music:group:'.length));
+    return index == null ? null : SearchGroupCommand(index);
+  }
+  return null;
+}
+
+/// HUD 层检索选中态（Qt NativeHudMusic 的 searchKind / groupBy / activeGroup /
+/// keyword / query / listOffset，以及 HUD 层的 m_searchGeneration）。
+class SearchSelectionState {
+  const SearchSelectionState({
+    this.searchKind = 'song',
+    this.groupBy = 'none',
+    this.activeGroup = '',
+    this.keyword = '',
+    this.query = '',
+    this.listOffset = 0,
+    this.generation = 0,
+  });
+
+  /// 当前分类（Qt `m_music->searchKind`）。
+  final String searchKind;
+
+  /// 当前分组键（Qt `groupBy`）。
+  final String groupBy;
+
+  /// 已展开分组的 key（Qt `activeGroup`；空 = 未展开，画「← 全部分组」的条件）。
+  final String activeGroup;
+
+  /// 已提交的检索词（Qt `music.keyword`）：分类点击在输入框为空时复用它。
+  final String keyword;
+
+  /// 输入框实时文本（Qt NativeHud 的 `query`）。
+  final String query;
+
+  /// 结果列表滚动偏移（Qt `listOffset`），动作一律归零。
+  final int listOffset;
+
+  /// HUD 层检索代次（Qt `m_searchGeneration`），动作一律递增，
+  /// 用来作废已排队但未执行的合并检索。
+  final int generation;
+
+  SearchSelectionState copyWith({
+    String? searchKind,
+    String? groupBy,
+    String? activeGroup,
+    String? keyword,
+    String? query,
+    int? listOffset,
+    int? generation,
+  }) =>
+      SearchSelectionState(
+        searchKind: searchKind ?? this.searchKind,
+        groupBy: groupBy ?? this.groupBy,
+        activeGroup: activeGroup ?? this.activeGroup,
+        keyword: keyword ?? this.keyword,
+        query: query ?? this.query,
+        listOffset: listOffset ?? this.listOffset,
+        generation: generation ?? this.generation,
+      );
+
+  @override
+  String toString() =>
+      'SearchSelectionState(kind: $searchKind, groupBy: $groupBy, '
+      'activeGroup: $activeGroup, keyword: $keyword, query: $query, '
+      'offset: $listOffset, generation: $generation)';
+}
+
+/// 分类点击要立刻发起的检索（Qt `music.search(text, kind)`）。
+class SearchKindRun {
+  const SearchKindRun({required this.kind, required this.text});
+
+  final String kind;
+  final String text;
+
+  @override
+  String toString() => 'SearchKindRun(kind: $kind, text: $text)';
+}
+
+/// 一个动作应用后的结果：新选中态 + （可选）立刻重搜 + 是否要复位结果视图。
+class SearchSelectionChange {
+  const SearchSelectionChange({
+    required this.state,
+    this.run,
+    this.resetViews = true,
+  });
+
+  final SearchSelectionState state;
+
+  /// 非 null 表示立刻检索（Qt 的 `music.search(text, kind)`）；
+  /// null 表示只改选中态（Qt 的 `music.searchKind = kind`）。
+  final SearchKindRun? run;
+
+  /// Qt 的 `resetResultViews()`：四个分类/分组分支都会调用，恢复滚动与行缓存。
+  final bool resetViews;
+}
+
+/// 把一个分类/分组动作应用到选中态（Qt NativeHudMusic.cpp:218-256 四个分支）。
+///
+/// 顺序与 Qt 相同：先作废排队检索并复位视图/滚动，再改选中态；
+/// `music:expand` 的 group 标题与 indices 由宿主在结果行里解析后自行 setGroupView，
+/// 本函数只负责 `activeGroup = key`。
+SearchSelectionChange searchApplySelection(
+  SearchSelectionState state,
+  SearchSelectionCommand command,
+) {
+  switch (command) {
+    case SearchKindCommand():
+      final String text = state.query.isEmpty ? state.keyword : state.query;
+      return SearchSelectionChange(
+        state: state.copyWith(
+          searchKind: command.kind,
+          activeGroup: '',
+          listOffset: 0,
+          generation: state.generation + 1,
+        ),
+        // text 为空时 Qt 只写 searchKind，不发检索。
+        run: text.isEmpty ? null : SearchKindRun(kind: command.kind, text: text),
+      );
+    case SearchGroupCommand():
+      return SearchSelectionChange(
+        state: state.copyWith(
+          groupBy: command.groupBy,
+          activeGroup: '',
+          listOffset: 0,
+          generation: state.generation + 1,
+        ),
+      );
+    case SearchExpandCommand():
+      return SearchSelectionChange(
+        state: state.copyWith(
+          activeGroup: command.key,
+          listOffset: 0,
+          generation: state.generation + 1,
+        ),
+      );
+    case SearchGroupBackCommand():
+      return SearchSelectionChange(
+        state: state.copyWith(
+          activeGroup: '',
+          listOffset: 0,
+          generation: state.generation + 1,
+        ),
+      );
+  }
+}
+
+/// Qt 分组 tab 的出场条件（NativeHudSearch.cpp:85-88）：
+/// `std::any_of(lists[0].begin(), lists[0].end(), 行["kind"] == "song")`。
+///
+/// 工具栏 builder 收的是现成的 `hasSongRows`；这个谓词是它的唯一来源，
+/// 免得宿主自己写一份近似判断（比如「分类是 song 就显示」——那在续页把歌曲
+/// 换成别的行、或 saved 页混合行时会画错）。
+bool searchHasSongRows(List<Map<String, Object?>> rows) {
+  for (final Map<String, Object?> row in rows) {
+    if (row['kind'] == 'song') {
+      return true;
+    }
+  }
+  return false;
+}
 
 // Draw-op model: one ordered list, so hit order == draw order, like Qt.
 

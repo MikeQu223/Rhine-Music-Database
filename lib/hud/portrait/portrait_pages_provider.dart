@@ -54,6 +54,10 @@ const double _numberCenter = 31.5;
 /// - [providers]：已经按 `display.order` 排好、并已按 `PlatformFeatures::LocalMusic`
 ///   过滤过的平台表（Qt 的 `providerCardsState()` 里 `id == "local"` 在关掉本地音乐
 ///   时被跳过；过滤是调用方的事，页面不重复判断）。
+///   ACCOUNT 段的三分支判据是 Qt 原文 `s["localMusic"]` / `s["provider"] == "siren"`
+///   （`Qt/src/ResponsiveHudPages.cpp:647-666`），其中 `localMusic` 是
+///   `m_music->isLocal()`（`Qt/src/NativeHud.cpp:286`），即「当前平台是本地音乐」，
+///   所以这里只看 [currentId]。
 /// - [currentId]：`music.provider`，决定哪一行高亮 + ACCOUNT 段走哪一支。
 /// - [accounts]：平台 id → 已恢复的账号；null 或未登录即「未登录」。`siren` / `local`
 ///   在 Qt 里恒为「无需账号」，这里同样不看账号表。
@@ -71,7 +75,6 @@ void paintPortraitProviderPage(
   required String scrollOffset,
   List<String> playlistEditors = const <String>[],
   String userName = '',
-  bool localMusicEnabled = true,
 }) {
   final double scroll = double.tryParse(scrollOffset.trim()) ?? 0;
   final double top = math.min(portraitProviderContentTop, math.max(0, c.height));
@@ -147,8 +150,9 @@ void paintPortraitProviderPage(
   final bool logged = account != null && account.loggedIn;
   final String name = userName.isEmpty ? (account?.nickname ?? '') : userName;
 
-  if (currentId == 'local' && localMusicEnabled) {
-    // :647-652 —— 本地音乐：无账号，只有文件夹管理。
+  if (currentId == 'local') {
+    // :647-652 —— 当前平台是本地音乐（Qt 判据是 `s["localMusic"]`，即
+    // `m_music->isLocal()`，不是 PlatformFeatures::LocalMusic）：无账号，只有文件夹管理。
     c.text(providerName, _gutter, y + 8, size: 15, width: _contentWidth(c), weight: 'demibold');
     c.text(
       '本地索引 / 无需账号，文件保留在原目录',

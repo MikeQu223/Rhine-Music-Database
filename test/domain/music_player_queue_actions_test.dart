@@ -131,6 +131,47 @@ void main() {
     });
   });
 
+  group('播放模式持久化（kPlayModePreference）', () {
+    test('合法切换落盘到 play-mode；重复设置同值不重复写', () {
+      final h = Harness();
+      expect(h.player.setMode('shuffle'), isTrue);
+      expect(h.preferences.values[kPlayModePreference], 'shuffle');
+      expect(h.preferences.writes.where((String k) => k == kPlayModePreference).length, 1);
+      // 同值重复：仍返回 true、仍 emit，但不重复写盘。
+      expect(h.player.setMode('shuffle'), isTrue);
+      expect(h.preferences.writes.where((String k) => k == kPlayModePreference).length, 1);
+    });
+
+    test('非法取值不落盘（绕过白名单校验的值不能被持久化）', () {
+      final h = Harness();
+      final int before = h.preferences.writes.length;
+      expect(h.player.setMode('repeat'), isFalse);
+      expect(h.preferences.writes.length, before);
+    });
+
+    test('构造时读回偏好：合法值生效，缺键或非法值回落 all', () {
+      final FakePreferences prefs = FakePreferences()..values[kPlayModePreference] = 'one';
+      final MusicPlayer restored = MusicPlayer(
+        media: FakeMedia(),
+        preferences: prefs,
+        engine: FakeEngine(),
+      );
+      expect(restored.mode, 'one');
+
+      final FakePreferences blank = FakePreferences();
+      expect(
+        MusicPlayer(media: FakeMedia(), preferences: blank, engine: FakeEngine()).mode,
+        'all',
+      );
+
+      final FakePreferences bad = FakePreferences()..values[kPlayModePreference] = 'repeat';
+      expect(
+        MusicPlayer(media: FakeMedia(), preferences: bad, engine: FakeEngine()).mode,
+        'all',
+      );
+    });
+  });
+
   group('队列动作（Qt MusicPlayer.cpp:589-601；PlaybackQueue.cpp:173-204）', () {
     test('clearUpcoming 只保留当前曲目，index 归 0', () {
       final h = Harness();

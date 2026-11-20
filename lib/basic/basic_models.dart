@@ -669,6 +669,14 @@ class BasicViewState {
     this.dark = false,
     this.queue = const <SirenSong>[],
     this.queueIndex = -1,
+    this.queueMode = 'all',
+    this.searchKind = 'song',
+    this.searchGroup = 'none',
+    this.searchGroupKey = '',
+    this.searchRows = const <Map<String, Object?>>[],
+    this.searchTotal = 0,
+    this.searchStatus = '',
+    this.searchGroups = const <String, List<int>>{},
     this.lyricStatus = 'idle',
     this.lyricMessage = '',
     this.playerStatus = '',
@@ -746,6 +754,30 @@ class BasicViewState {
 
   /// 队列中当前行（-1 = 空队列）。
   final int queueIndex;
+
+  /// 播放模式（'off' / 'all' / 'one' / 'shuffle'，对齐 MusicPlayer.mode）。
+  final String queueMode;
+
+  /// 当前检索分类（`song` / `album` / `playlist` / `artist`，Qt `searchKind`）。
+  final String searchKind;
+
+  /// 当前分组键（`none` / `artist` / `album`，Qt `groupBy`）。
+  final String searchGroup;
+
+  /// 已展开的分组标题（空串 = 未展开；Qt `groupView` 的键）。
+  final String searchGroupKey;
+
+  /// 分类检索的命中行（Qt `MusicData::item` 形状的 Map），已按分组视图过滤。
+  final List<Map<String, Object?>> searchRows;
+
+  /// 分类检索的命中总数（`INDEX / <total>`）。
+  final int searchTotal;
+
+  /// 分类检索的状态串（没有匹配的音乐 / 没有匹配的本地歌单 / 找到 N 条结果）。
+  final String searchStatus;
+
+  /// 分组名 → 该组在完整结果里的行下标（仅曲目分类 + 分组态非空）。
+  final Map<String, List<int>> searchGroups;
 
   /// 歌词状态：'idle' / 'ready' / 'plain' / 'empty'（对齐 LyricsController.status 词表）。
   final String lyricStatus;
@@ -848,6 +880,14 @@ class BasicViewState {
     bool? dark,
     List<SirenSong>? queue,
     int? queueIndex,
+    String? queueMode,
+    String? searchKind,
+    String? searchGroup,
+    String? searchGroupKey,
+    List<Map<String, Object?>>? searchRows,
+    int? searchTotal,
+    String? searchStatus,
+    Map<String, List<int>>? searchGroups,
     String? lyricStatus,
     String? lyricMessage,
     String? playerStatus,
@@ -888,6 +928,14 @@ class BasicViewState {
       dark: dark ?? this.dark,
       queue: queue ?? this.queue,
       queueIndex: queueIndex ?? this.queueIndex,
+      queueMode: queueMode ?? this.queueMode,
+      searchKind: searchKind ?? this.searchKind,
+      searchGroup: searchGroup ?? this.searchGroup,
+      searchGroupKey: searchGroupKey ?? this.searchGroupKey,
+      searchRows: searchRows ?? this.searchRows,
+      searchTotal: searchTotal ?? this.searchTotal,
+      searchStatus: searchStatus ?? this.searchStatus,
+      searchGroups: searchGroups ?? this.searchGroups,
       lyricStatus: lyricStatus ?? this.lyricStatus,
       lyricMessage: lyricMessage ?? this.lyricMessage,
       playerStatus: playerStatus ?? this.playerStatus,

@@ -9,13 +9,18 @@ import 'package:flutter/scheduler.dart' show Ticker;
 
 import '../hud/input/hit_layer.dart';
 import '../hud/modals/lyrics_panel.dart' as lyrics;
+import '../hud/modals/modal_shell.dart';
+import '../hud/modals/queue_modal.dart' as queue_modal;
 import '../hud/pages/archive_page.dart';
 import '../hud/pages/chrome.dart';
 import '../hud/pages/song_detail.dart' as detail;
 import '../hud/portrait/portrait_canvas.dart';
 import '../hud/portrait/portrait_layout.dart';
 import '../hud/portrait/portrait_pages_library.dart';
+import '../hud/portrait/portrait_pages_queue.dart';
+import '../hud/portrait/portrait_pages_search_kinds.dart';
 import '../hud/portrait/portrait_pages_song.dart';
+import '../hud/portrait/portrait_song_options.dart';
 import '../hud/player/player_bar.dart' as player;
 import '../plugin/plugin_models.dart';
 import '../plugin/plugin_manager.dart';
@@ -109,9 +114,19 @@ class BasicHudFrame {
     /// 同形的单条 text 命令（如整条歌名），不能因为它们不推进时间就把文字拆成
     /// 逐字槽或整段不画。宿主 [BasicHudSurface] 有 ticker，显式传 true。
     bool animateText = false,
-    /// 当前弹层（'' = 无，'search' = 检索，'settings' = 设置）。竖屏用它决定画哪一页：
-    /// 设置窗是真实 Flutter widget 层（不走命令流），检索页是命令流页面。
+    /// 当前弹层（'' = 无，'search' = 检索，'settings' = 设置，'queue' = 播放队列）。
+    /// 竖屏用它决定画哪一页：设置窗是真实 Flutter widget 层（不走命令流），
+    /// 检索页与播放队列页是命令流页面；横屏队列面板由本帧叠加（见下）。
     String modal = '',
+    /// 横屏队列面板的滚动偏移（Qt `queueOffset`，行单位）。
+    /// 调用方负责 clamp 到 [queue_modal.queueModalMaximumOffset]。
+    int queueOffset = 0,
+    /// 竖屏队列页的滚动量（Qt `m_scroll`，网格单位）。null = 按 Qt 的
+    /// `newScope` 缺省规则「当前行置顶」（当前行 > 0 时 251 + index*68）。
+    double? queueScroll,
+    /// 竖屏队列页的播放模式 chip 是否展开（Qt `m_queueModesExpanded`，
+    /// 由 `mobile:queue-modes` 翻转）。横屏面板不用它（四模式按钮常驻）。
+    bool queueModesExpanded = false,
     /// 右栏遮罩强度（0..100，Qt `archive-mask-strength` / 设置页“右侧画面遮罩”）。
     /// 默认就是 Qt 常量 [HudChrome.defaultArchiveMaskStrength]；注入只来自设置页真值。
     double archiveMaskStrength = 0, // = HudChrome.defaultArchiveMaskStrength（int 常量转 double）
@@ -131,6 +146,15 @@ class BasicHudFrame {
     bool pluginDetailUserInstalled = true,
     bool pluginDetailCanRollback = false,
     String pluginMessage = '',
+    /// 竖屏「歌曲操作」面板是否展开（Qt `m_songOptionsExpanded`，
+    /// `mobile:song-options` 翻转；任何 `music:`/`tab:` 动作都会收起）。
+    bool songOptionsExpanded = false,
+    /// 「查看评论」是否可用（Qt `commentsAvailable` = 非 local 且评论 provider 非空；
+    /// siren 在 descriptor 里 `operations.comments` 为 false，因此这里是 false）。
+    bool commentsAvailable = false,
+    /// 当前详情曲目的「专辑 / 时长」摘要与详情正文（Qt `optionsSheet` 末尾两行）。
+    String songOptionsDetail = '',
+    String songOptionsDetailBody = '',
   }) {
     final bool dark = state.dark;
     // 竖屏（compact）走独立排版：393 网格、归档主页 + 迷你播放条 + 底栏，
@@ -147,12 +171,18 @@ class BasicHudFrame {
         animateText: animateText,
         modal: modal,
         stageScale: stageScale,
+        queueScroll: queueScroll,
+        queueModesExpanded: queueModesExpanded,
         plugins: plugins,
         pluginDetail: pluginDetail,
         pluginDetailEnabled: pluginDetailEnabled,
         pluginDetailUserInstalled: pluginDetailUserInstalled,
         pluginDetailCanRollback: pluginDetailCanRollback,
         pluginMessage: pluginMessage,
+        songOptionsExpanded: songOptionsExpanded,
+        commentsAvailable: commentsAvailable,
+        songOptionsDetail: songOptionsDetail,
+        songOptionsDetailBody: songOptionsDetailBody,
       );
     }
     final _HudSink sink = _HudSink();
@@ -211,6 +241,12 @@ class BasicHudFrame {
       );
     }
 
+    // 横屏播放队列面板（Qt `modal == "player"`）：宿主先画全舞台遮罩 + 836 面板底，
+    // 面板内容由 queue_modal 产出（NativeHudModal.cpp:163-186 对 player 不走标题区）。
+    if (modal == 'queue') {
+      _paintQueueModal(sink, ports, state, width, height, dark, queueOffset);
+    }
+
     final player.PlayerBarDrawing bar = player.renderPlayerBar(
       _playerState(state),
       player.PlayerBarRect(0, height - player.playerBarRowHeight, width, player.playerBarRowHeight),
@@ -229,6 +265,42 @@ class BasicHudFrame {
     );
   }
 
+  /// 分类检索页的行：把 `BasicViewState.searchRows` 的 Map 投影成
+  /// [PortraitSearchKindsRow]（标题 / 明细行 / 右锚戳 / 点击动作）。
+  ///
+  /// 动作串按分类分派（Qt `NativeHudMusic.cpp` 的 `result` 与 `index` 两个分支）：
+  /// 曲目行用 `music:index:<i>`（只选中，进入详情由宿主再决定），专辑/歌单/歌手行
+  /// 用 `music:expand:<percentEncoded 标题>`，与 Qt `music:expand:` 同一个词表。
+  static List<PortraitSearchKindsRow> _portraitSearchRows(BasicViewState state) {
+    final List<PortraitSearchKindsRow> rows = <PortraitSearchKindsRow>[];
+    for (final Map<String, Object?> item in state.searchRows) {
+      final String kind = (item['kind'] ?? '').toString();
+      final String title = (item['title'] ?? '').toString();
+      final String artist = (item['artist'] ?? '').toString();
+      // Qt `searchRowDetail`：明细行优先艺人，否则专辑（本地歌单两者皆空）。
+      final String detail = artist.isNotEmpty
+          ? artist
+          : (item['album'] ?? '').toString();
+      final String stamp = switch (kind) {
+        'album' => '${item['trackCount'] ?? 0} 首',
+        'artist' => '${item['trackCount'] ?? 0} 首',
+        'playlist' => '歌单',
+        _ => '',
+      };
+      // 行点击按分类分派：曲目只选中（`music:index:<i>`，与 Qt 的行下标同义）；
+      // 专辑进专辑列（Qt `selectResult(open=true)` 对非 song 走 enterDirectory）；
+      // 歌手/歌单本仓库还没有详情页，给可见反馈而不是静默吞掉。
+      final String action = switch (kind) {
+        'song' => 'music:index:${rows.length}',
+        'album' => 'music:search-album:${Uri.encodeComponent(title)}',
+        'playlist' => 'music:search-playlist:${Uri.encodeComponent(item['id']?.toString() ?? '')}',
+        _ => 'music:search-artist:${Uri.encodeComponent(title)}',
+      };
+      rows.add((title: title, artist: detail, stamp: stamp, action: action));
+    }
+    return rows;
+  }
+
   /// 竖屏一帧：`Qt/src/ResponsiveHudPages.cpp` 的 archive 页。
   ///
   /// 页面集合当前只有归档主页这一屏；详情/歌词/检索/设置仍由既有 Flutter 层
@@ -244,12 +316,18 @@ class BasicHudFrame {
     bool animateText = false,
     String modal = '',
     double stageScale = 0,
+    double? queueScroll,
+    bool queueModesExpanded = false,
     PluginSnapshot? plugins,
     PluginManifest? pluginDetail,
     bool pluginDetailEnabled = true,
     bool pluginDetailUserInstalled = true,
     bool pluginDetailCanRollback = false,
     String pluginMessage = '',
+    bool songOptionsExpanded = false,
+    bool commentsAvailable = false,
+    String songOptionsDetail = '',
+    String songOptionsDetailBody = '',
   }) {
     final _HudSink sink = _HudSink();
     ports.beginFrame(sink: sink, time: animationTime, ink: hudInk(dark), animate: animateText);
@@ -304,7 +382,35 @@ class BasicHudFrame {
       positionMs: bar.positionMs,
       durationMs: bar.durationMs,
     );
-    if (songPage) {
+    if (modal == 'queue') {
+      // Qt compact `queue()`（ResponsiveHudPages.cpp:468-533）：通用页头（只有返回
+      // 箭头 + close-modal，没有设置齿轮）+ 内容自 158 起；播放条与底栏由 shell 画
+      // （Qt 队列页的底栏 active=""，所以 nav 传 null）。
+      paintPortraitShell(
+        canvas,
+        player: portraitPlayer,
+        nav: null,
+        header: (PortraitCanvas c) => c.header(
+          '播放队列',
+          back: true,
+          backAction: 'close-modal',
+          showSettings: false,
+        ),
+        content: (PortraitCanvas c, double pageBottom) => paintPortraitQueuePage(
+          c,
+          title: bar.title,
+          artist: bar.artist,
+          tracks: _portraitQueueRows(state),
+          currentIndex: state.queueIndex,
+          mode: state.queueMode,
+          modesExpanded: queueModesExpanded,
+          // Android/iOS 的 PlatformFeatures::ApplicationVolume 恒 false（见 _playerState）。
+          applicationVolume: bar.applicationVolume,
+          volume: 0,
+          scroll: queueScroll,
+        ),
+      );
+    } else if (songPage) {
       // Qt compact：song() / lyrics() 是两页，共用「档案 + 封面 + 进度 + 传输」骨架。
       _paintPortraitSongPage(canvas, state, song, items.length, selected);
     } else if (modal == 'settings') {
@@ -320,20 +426,19 @@ class BasicHudFrame {
         identifier: 'SETTINGS / 终端配置',
       );
     } else if (modal == 'search') {
-      // Qt compact `library()` 的 search 分支：检索框 + 四 tab + INDEX/N 结果区。
-      // 只有「歌曲」这一 tab 有真数据（BasicController 的搜索列是曲目列）；
-      // 歌手/专辑/歌单三列没有对应集合，画出来但不冒充有结果。
-      paintPortraitSearchPage(
+      // Qt compact `library()` 的 search 分支（ResponsiveHudPages.cpp:941-990）：
+      // 检索框 + 四分类 tab + 歌曲分类才有的分组条 + `01 检索结果 INDEX / N` +
+      // 结果行。行数据来自 `BasicViewState.searchRows`（分类检索索引的 items，
+      // 每项是 Qt `MusicData::item` 形状的 Map），已按分组视图过滤。
+      paintPortraitSearchKindsPage(
         canvas,
         query: state.query,
-        tabLabels: const <String>['歌曲', '歌手', '专辑', '歌单'],
-        selectedTab: 0,
-        rows: <(String, String, String)>[
-          for (final BasicListItem item in items)
-            (item.title, item.artist.isEmpty ? item.kind : item.artist, ''),
-        ],
-        total: items.length,
-        notice: emptyNotice,
+        searchKind: state.searchKind,
+        groupBy: state.searchGroup,
+        activeGroup: state.searchGroupKey,
+        rows: _portraitSearchRows(state),
+        total: state.searchTotal,
+        status: state.searchStatus.isEmpty ? emptyNotice : state.searchStatus,
         loading: state.loading,
       );
     } else if (modal == 'plugins' || modal == 'plugin-detail') {
@@ -396,6 +501,17 @@ class BasicHudFrame {
         listPosition: listPosition,
       );
     }
+    // Qt `ResponsiveHudLayout.cpp:270-272`：选项面板是最后一层覆盖
+    // （`if (m_songOptionsExpanded && (m_song || m_lyricsPage)) optionsSheet(c, source)`），
+    // 所以它在整页画完之后叠上来，且只画 sheet 本身（遮罩不动）。
+    if (songOptionsExpanded && (song != null || state.phase == BasicPhase.lyrics)) {
+      paintPortraitSongOptions(
+        canvas,
+        actions: _portraitSongOptionsActions(state, commentsAvailable: commentsAvailable),
+        detail: songOptionsDetail,
+        detailBody: songOptionsDetailBody,
+      );
+    }
     sink.commands.addAll(canvas.commands);
     sink.hits.addAll(canvas.hits);
     final bool animating = ports.endFrame();
@@ -406,6 +522,31 @@ class BasicHudFrame {
       hits: sink.hits,
       animating: animating,
     );
+  }
+
+  /// 竖屏「歌曲操作 / 歌词操作」面板的按钮表（Qt `ResponsiveLyrics.cpp:246-272`）。
+  ///
+  /// 歌词页固定四条（local 平台才有第五条 `歌词来源`）；详情页取 `primaryActions`
+  /// 去掉播放/喜欢、再加上 `secondaryActions`，末尾按能力补 `官方客户端 ↗` 与
+  /// `查看评论`。空 route 的条目 Qt 也会照画（画布会跳过它的热区）。
+  static List<(String label, String action)> _portraitSongOptionsActions(
+    BasicViewState state, {
+    required bool commentsAvailable,
+  }) {
+    if (state.phase == BasicPhase.lyrics) {
+      return <(String, String)>[
+        ('歌词提前 0.2s', 'player:lyrics-earlier'),
+        ('歌词延后 0.2s', 'player:lyrics-later'),
+        ('重置歌词偏移', 'player:lyrics-reset'),
+        ('重新查找歌词', 'player:lyrics-retry'),
+      ];
+    }
+    return <(String, String)>[
+      ('＋ 加入歌单', 'music:add-to-playlist'),
+      ('＋ 加入队列', 'music:enqueue'),
+      ('▷ 下一首播放', 'music:play-next'),
+      if (commentsAvailable) ('查看评论', 'music:comments'),
+    ];
   }
 
   /// 竖屏详情页 / 歌词页（Qt compact `ResponsiveHudPages.cpp` 的 `song()` / `lyrics()`）。
@@ -465,6 +606,96 @@ class BasicHudFrame {
       // 歌词入口只在当前曲目上出现：state.lyrics 是播放曲目的歌词。
       lyricsAvailable: current && state.lyrics.isNotEmpty,
     );
+  }
+
+  /// 竖屏队列页的行投影：标题/艺人/时长 + 封面 key，与横屏面板同一份 [state.queue]。
+  static List<PortraitQueueRow> _portraitQueueRows(BasicViewState state) {
+    return <PortraitQueueRow>[
+      for (final SirenSong song in state.queue)
+        (
+          title: song.title,
+          artist: song.artist,
+          // Qt queue() 用 MusicData::time(track)：毫秒 → mm:ss，<= 0 显示「暂无」。
+          stamp: queue_modal.queueModalTime(_queueModalTrack(song)),
+          image: song.cover,
+        ),
+    ];
+  }
+
+  /// [SirenSong] → 横屏面板条目（时长取毫秒，供 `queueModalTime` 同口径取整）。
+  static queue_modal.QueueModalTrack _queueModalTrack(SirenSong song) =>
+      queue_modal.QueueModalTrack(
+        title: song.title,
+        artist: song.artist,
+        duration: song.durationMs,
+      );
+
+  /// 横屏播放队列面板：外壳（遮罩 + 836 面板底 + 返回按钮）走共享 [ModalShell]，
+  /// 内容走 `queue_modal.renderQueueModal`。
+  ///
+  /// Qt 对应 NativeHudModal.cpp:163-186 的 `modal == "player"` 分支：全舞台遮罩 +
+  /// `{left,122,width,836}` 面板底，然后 `playerPanel()` 直接画卡片，**不走标题区**。
+  static void _paintQueueModal(
+    _HudSink sink,
+    BasicGlyphPorts ports,
+    BasicViewState state,
+    double width,
+    double height,
+    bool dark,
+    int queueOffset,
+  ) {
+    final int count = state.queue.length;
+    final int offset = queueOffset.clamp(0, queue_modal.queueModalMaximumOffset(count));
+    final SirenSong? playing = state.playingTrack;
+    final _QueueModalGlyphs glyphs = _QueueModalGlyphs(ports);
+    // 外壳（遮罩 + 面板底 + 返回按钮）走共享 ModalShell；面板矩形由它算
+    // （Qt NativeHud::modalBounds 通用分支 = 顶 122 / 高 836 / 居中 1260）。
+    // 内容用真实矩形重算卡片：queue_modal 内部再按 bounds.x+53 / width-106 收缩。
+    final ModalShellResult result = ModalShell(
+      sink: sink,
+      text: ports,
+      spec: ModalShellSpec(
+        modalId: kModalShellPlayerModal,
+        stageWidth: width,
+        stageHeight: kModalShellStageHeight,
+        dark: dark,
+        content: (ModalShellBody body) {
+          final ModalShellBounds bounds = body.bounds;
+          final queue_modal.QueueModalDrawing drawing = queue_modal.renderQueueModal(
+            queue_modal.QueueModalState(
+              bounds: queue_modal.QueueModalRect(
+                bounds.left,
+                bounds.top,
+                bounds.width,
+                bounds.height,
+              ),
+              tracks: <queue_modal.QueueModalTrack>[
+                for (final SirenSong song in state.queue) _queueModalTrack(song),
+              ],
+              // Qt 的 current 是空对象时才显示「暂无播放歌曲」（PlaybackQueueCard.cpp:51）。
+              current: playing == null ? null : _queueModalTrack(playing),
+              cover: playing?.cover ?? '',
+              mode: state.queueMode,
+              status: state.playerStatus,
+              currentIndex: state.queueIndex,
+              offset: offset,
+              playing: state.playing,
+              dark: dark,
+            ),
+            glyphs,
+          );
+          for (final List<Object?> command in drawing.commands) {
+            body.sink.op(command);
+          }
+          // 卡片命中是六键 map（无 fixed）：解码成 HudHit 后并入外壳的命中表，
+          // 保持与 Qt hits 相同的 append 顺序。
+          for (final HudHit hit in decodeHudHits(drawing.hits).hits) {
+            body.hits.hit(hit);
+          }
+        },
+      ),
+    ).build();
+    sink.hits.addAll(result.hits);
   }
 
   /// 竖屏序号（Qt 的 `pad()`：两位，超过 99 自然变三位）。
@@ -997,12 +1228,19 @@ class BasicHudSurface extends StatefulWidget {
     this.onTrackListModeChanged,
     this.sceneSettings,
     this.modal = '',
+    this.queueOffset = 0,
+    this.queueScroll,
+    this.queueModesExpanded = false,
     this.plugins,
     this.pluginDetail,
     this.pluginDetailEnabled = true,
     this.pluginDetailUserInstalled = true,
     this.pluginDetailCanRollback = false,
     this.pluginMessage = '',
+    this.songOptionsExpanded = false,
+    this.commentsAvailable = false,
+    this.songOptionsDetail = '',
+    this.songOptionsDetailBody = '',
   });
 
   final BasicViewState state;
@@ -1040,12 +1278,31 @@ class BasicHudSurface extends StatefulWidget {
   /// 只影响 Qt 渲染，不构成第二份真值。null = 不下发，Qt 用自己的默认。
   final BasicSceneSettings? sceneSettings;
 
-  /// 宿主当前的弹层（'' / 'search' / 'settings' / 'plugins' / 'plugin-detail'）：
-  /// 只给竖屏排版决定画哪一页，不参与横屏绘制，也不改任何真值。
+  /// 宿主当前的弹层（'' / 'search' / 'settings' / 'plugins' / 'plugin-detail' / 'queue'）：
+  /// 竖屏用它决定画哪一页；横屏只有 'queue' 会额外叠一层播放队列面板。
   final String modal;
+
+  /// 横屏队列面板的首行下标（Qt `queueOffset`，行单位；面板自己 clamp）。
+  final int queueOffset;
+
+  /// 竖屏队列页的滚动量（网格单位）；null = 页面按 Qt 规则用当前行置顶。
+  final double? queueScroll;
+
+  /// 竖屏队列页的模式 chip 是否展开（Qt `m_queueModesExpanded`）。
+  final bool queueModesExpanded;
 
   /// 插件管理页的数据（[PluginManager.snapshot]）；null = 还没初始化完，页面画空态。
   final PluginSnapshot? plugins;
+
+  /// 竖屏「歌曲操作」面板是否展开（Qt `m_songOptionsExpanded`）。
+  final bool songOptionsExpanded;
+
+  /// 「查看评论」入口是否可用（Qt `commentsAvailable`）。
+  final bool commentsAvailable;
+
+  /// 选项面板末尾的「专辑 / 时长」摘要与详情正文。
+  final String songOptionsDetail;
+  final String songOptionsDetailBody;
 
   /// 插件详情页的 manifest（modal == 'plugin-detail' 时用）。
   final PluginManifest? pluginDetail;
@@ -1235,6 +1492,9 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       archiveMaskStrength: widget.archiveMaskStrength,
       trackListMode: _trackListMode,
       modal: widget.modal,
+      queueOffset: widget.queueOffset,
+      queueScroll: widget.queueScroll,
+      queueModesExpanded: widget.queueModesExpanded,
       stageScale: geometry.stageScale,
       plugins: widget.plugins,
       pluginDetail: widget.pluginDetail,
@@ -1242,6 +1502,10 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       pluginDetailUserInstalled: widget.pluginDetailUserInstalled,
       pluginDetailCanRollback: widget.pluginDetailCanRollback,
       pluginMessage: widget.pluginMessage,
+      songOptionsExpanded: widget.songOptionsExpanded,
+      commentsAvailable: widget.commentsAvailable,
+      songOptionsDetail: widget.songOptionsDetail,
+      songOptionsDetailBody: widget.songOptionsDetailBody,
     );
     // 共享滚动文字有字符槽还在 kReelDuration 内 -> 续帧；静止后停 ticker。
     // 松手惯性期间也必须续帧（同一个 ticker 兼职推进列表动量）。
@@ -1799,4 +2063,15 @@ class _HudSink implements HudSurfaceSink {
       ));
     }
   }
+}
+
+/// `queue_modal.QueueModalGlyphs` 适配：队列卡片只量宽度（Qt Canvas::fit）。
+class _QueueModalGlyphs implements queue_modal.QueueModalGlyphs {
+  const _QueueModalGlyphs(this.ports);
+
+  final BasicGlyphPorts ports;
+
+  @override
+  double width(String value, double size, String weight) =>
+      ports.width(value, size, weight);
 }
