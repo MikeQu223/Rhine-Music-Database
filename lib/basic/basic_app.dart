@@ -72,7 +72,8 @@ import '../provider/provider_assets.dart';
 import '../domain/account/login_controller.dart';
 import '../domain/comments/comment_controller.dart';
 import '../provider/provider_gateway.dart'
-    show ProviderAccount, UnavailableProviderGateway;
+    show ProviderAccount, ProviderCommentSort, ProviderLoginMethod, UnavailableProviderGateway;
+import '../provider/platform_switcher.dart' show PlatformSwitcher;
 import '../provider/provider_service.dart';
 import '../hud/portrait/portrait_pages_collection_likes.dart' show PortraitLikesRow;
 import '../hud/portrait/portrait_pages_collection_playlists.dart'
@@ -82,7 +83,6 @@ import '../hud/portrait/portrait_pages_login.dart' show kPortraitLoginMethodPref
 import '../domain/comments/comment_actions.dart' show commentSortActionPrefix;
 import 'basic_comment_mapper.dart';
 import '../provider/provider_descriptor.dart';
-import '../provider/provider_gateway.dart';
 import '../provider/provider_registry.dart';
 import 'platform_playback.dart';
 import 'qt_scene_view.dart';
@@ -1983,6 +1983,40 @@ class _BasicShellState extends State<_BasicShell>
     }
   }
 
+  /// 切换音乐平台（Qt `MusicAccount::choose`）。
+  ///
+  /// 顺序照抄 Qt：先让播放器停下并丢掉队列/历史，再把 provider 真值换掉并落盘，
+  /// 然后重建 [ProviderService]（网关、评论、登录、MV 全部依赖它），最后把
+  /// 该平台的账号会话恢复出来。任何一步失败都只上屏提示，不半途切换。
+  void _switchProvider(ProviderDescriptor target) {
+    final ProviderService? old = _providerService;
+    // 1) 先停播 + 清队列：Qt 在同一处 `player.stop()` + `emit musicClearRequested()`。
+    unawaited(_providerSwitchReset());
+    // 2) 换真值并落盘（Qt `host->setPreference("provider", source)`）。
+    setState(() {
+      _providerId = target.id;
+      _actionNotice = '已切换至 ${target.name}';
+      // 上一个平台的评论/登录态不能跟着新平台走。
+      _loginController = null;
+      _mvController = null;
+      _commentsScroll = 0;
+    });
+    widget.playerPreferences.write(PlatformSwitcher.providerPreferenceKey, target.id);
+    _setModal('');
+    // 3) 重建服务（注册表不变，只是把 current 指到新平台）。
+    final ProviderService? service = old;
+    if (service != null) {
+      _installProviderService(service.registry);
+    }
+  }
+
+  /// 平台切换时的播放器清理（Qt `player.stop()` + 清 history 的那一段）。
+  Future<void> _providerSwitchReset() async {
+    final BasicController active = controller;
+    await active.pause();
+    active.clearUpcoming();
+  }
+
   void _onAction(String action) {
     // 详情页的「查看封面 ↗」（lib/hud/pages/song_detail.dart:710 的 'viewer' 命中）。
     // Qt 侧同一条：NativeHudController.cpp:688 value=="viewer" → scene.openViewer()。
@@ -2180,13 +2214,10 @@ class _BasicShellState extends State<_BasicShell>
         setState(() => _actionNotice = '未知平台：$id');
         return;
       }
-      // Qt `ProviderSwitcher::choose` 的本步只做「当前平台」这一个真值：
-      // 账号会话 / 平台服务例化留给后续步骤，这里不伪造登录态。
-      setState(() {
-        _providerId = id;
-        _actionNotice = '已切换至 ${found.name}';
-      });
-      _setModal('');
+      // Qt `MusicAccount::choose`（MusicAccount.cpp:200-330）：切换 = 停播 + 清空
+      // 列表/选中态 + 落盘 `provider` + 重建服务 + 恢复账号会话。这里按同一顺序收口，
+      // 少做一步就会出现「切了平台但列表还是上一个平台的」。
+      _switchProvider(found);
       return;
     }
     // Qt `ResponsiveHudLayout::handle`（ResponsiveHudLayout.cpp:457-462）：
