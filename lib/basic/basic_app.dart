@@ -621,6 +621,9 @@ class _BasicShellState extends State<_BasicShell>
   /// 不同——用户要求插件文件放在外部目录里能直接看到。
   late final PluginManager _plugins = PluginManager();
 
+  /// 平台表重读中：插件回调里连续触发（装→启→扫）时只跑一轮。
+  bool _providersLoading = false;
+
   /// 详情页正在看哪个插件（'' = 不在详情页）。列表页/详情页共用弹层栈：
   /// `_modal == 'plugins'` 是列表，`'plugin-detail'` 是详情。
   String _pluginDetailId = '';
@@ -768,8 +771,24 @@ class _BasicShellState extends State<_BasicShell>
   /// 失败不阻断启动：平台页退回空表（画空态），原因进动作槽。
   Future<void> _loadProviders() async {
     try {
-      final ProviderRegistry registry =
-          await ProviderAssetLoader(bundle: widget.bundle).load();
+      // 平台来源有两类：内置 descriptor（assets 里的 siren.json）与插件
+      // （`manifest.json` 本身就是 descriptor 的超集，见
+      // `Qt/src/ProviderRegistry.cpp` 的 `loadManifestFallback`）。插件那批由
+      // `PluginManager` 扫目录得到，禁用的不进表（= Qt 的 `disabled` 集合）。
+      final PluginSnapshot plugins = _plugins.snapshot();
+      final List<Map<String, Object?>> userManifests = <Map<String, Object?>>[
+        for (final InstalledPlugin plugin in plugins.installed)
+          if (plugin.enabled) plugin.manifest.raw,
+      ];
+      final ProviderRegistry registry = await ProviderAssetLoader(
+        bundle: widget.bundle,
+      ).load(
+        userManifests: userManifests,
+        disabled: <String>{
+          for (final InstalledPlugin plugin in plugins.installed)
+            if (!plugin.enabled) plugin.id,
+        },
+      );
       if (!mounted) {
         return;
       }
@@ -778,12 +797,21 @@ class _BasicShellState extends State<_BasicShell>
           for (final String id in registry.ids)
             if (registry.descriptor(id) != null) registry.descriptor(id)!,
         ];
-        // `ProviderRegistry.defaultId` 是 `String?`（空表时 null）：与 Qt 的
-        // `defaultId` 一样，空表才回落到外壳缺省 siren，否则取注册表口径。
+        // 优先级照 `Qt/src/MusicAccount.cpp:200-260` 的 `choose()`：先认
+        // 落盘的 `provider` 偏好（用户上次选的那个，平台可能已经卸载 → 校验
+        // `contains`），再认注册表 `defaultId`，最后才是表首项。
+        final String saved = widget.playerPreferences
+            .read(PlatformSwitcher.providerPreferenceKey)
+            .trim();
         final String? registryDefault = registry.defaultId;
-        _providerId = registryDefault != null && registryDefault.isNotEmpty
-            ? registryDefault
-            : (_providers.isEmpty ? 'siren' : _providers.first.id);
+        final String candidate = saved.isNotEmpty && registry.contains(saved)
+            ? saved
+            : registryDefault != null && registryDefault.isNotEmpty
+                ? registryDefault
+                : (_providers.isEmpty ? 'siren' : _providers.first.id);
+        _providerId = registry.contains(candidate)
+            ? candidate
+            : registry.fallbackId(exclude: <String>{}) ?? candidate;
       });
       if (!mounted) {
         return;
@@ -1854,6 +1882,45 @@ class _BasicShellState extends State<_BasicShell>
   void _onPluginsChanged() {
     if (mounted) {
       setState(() {});
+    }
+    // 插件装/卸/启停都会改变平台表（manifest 即 descriptor）：重读一次，
+    // 让「音乐平台」页与切换器立刻看到新平台（Qt `ProviderRegistry::load`
+    // 在宿主每次扫描后都会重建，见 `Qt/src/Host.cpp`）。
+    if (!_providersLoading) {
+      unawaited(_reloadProvidersFromPlugins());
+    }
+  }
+
+  /// 插件表变动后重建平台注册表，并尽量保留当前平台（当前平台消失时落到
+  /// `ProviderRegistry.fallbackId`，与 Qt `MusicAccount::refreshProviders` 同）。
+  Future<void> _reloadProvidersFromPlugins() async {
+    _providersLoading = true;
+    try {
+      final String previous = _providerId;
+      await _loadProviders();
+      if (!mounted) {
+        return;
+      }
+      final ProviderRegistry? registry = _providerService?.registry;
+      if (registry == null) {
+        return;
+      }
+      if (registry.contains(previous)) {
+        return;
+      }
+      final String fallback = registry.fallbackId(exclude: <String>{previous}) ?? 'siren';
+      if (!mounted) {
+        return;
+      }
+      setState(() => _providerId = fallback);
+      _installProviderService(registry);
+      setState(() => _actionNotice = '当前平台已不可用，已回到 ${_currentDescriptor?.name ?? fallback}');
+    } on Object catch (error) {
+      if (mounted) {
+        setState(() => _actionNotice = '刷新平台列表失败：$error');
+      }
+    } finally {
+      _providersLoading = false;
     }
   }
 
