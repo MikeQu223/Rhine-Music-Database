@@ -18,7 +18,9 @@ import '../hud/portrait/portrait_canvas.dart';
 import '../hud/portrait/portrait_layout.dart';
 import '../hud/portrait/portrait_pages_library.dart';
 import '../hud/portrait/portrait_pages_queue.dart';
+import '../hud/portrait/portrait_pages_search_kinds.dart';
 import '../hud/portrait/portrait_pages_song.dart';
+import '../hud/portrait/portrait_song_options.dart';
 import '../hud/player/player_bar.dart' as player;
 import '../plugin/plugin_models.dart';
 import '../plugin/plugin_manager.dart';
@@ -144,6 +146,15 @@ class BasicHudFrame {
     bool pluginDetailUserInstalled = true,
     bool pluginDetailCanRollback = false,
     String pluginMessage = '',
+    /// 竖屏「歌曲操作」面板是否展开（Qt `m_songOptionsExpanded`，
+    /// `mobile:song-options` 翻转；任何 `music:`/`tab:` 动作都会收起）。
+    bool songOptionsExpanded = false,
+    /// 「查看评论」是否可用（Qt `commentsAvailable` = 非 local 且评论 provider 非空；
+    /// siren 在 descriptor 里 `operations.comments` 为 false，因此这里是 false）。
+    bool commentsAvailable = false,
+    /// 当前详情曲目的「专辑 / 时长」摘要与详情正文（Qt `optionsSheet` 末尾两行）。
+    String songOptionsDetail = '',
+    String songOptionsDetailBody = '',
   }) {
     final bool dark = state.dark;
     // 竖屏（compact）走独立排版：393 网格、归档主页 + 迷你播放条 + 底栏，
@@ -168,6 +179,10 @@ class BasicHudFrame {
         pluginDetailUserInstalled: pluginDetailUserInstalled,
         pluginDetailCanRollback: pluginDetailCanRollback,
         pluginMessage: pluginMessage,
+        songOptionsExpanded: songOptionsExpanded,
+        commentsAvailable: commentsAvailable,
+        songOptionsDetail: songOptionsDetail,
+        songOptionsDetailBody: songOptionsDetailBody,
       );
     }
     final _HudSink sink = _HudSink();
@@ -250,6 +265,42 @@ class BasicHudFrame {
     );
   }
 
+  /// 分类检索页的行：把 `BasicViewState.searchRows` 的 Map 投影成
+  /// [PortraitSearchKindsRow]（标题 / 明细行 / 右锚戳 / 点击动作）。
+  ///
+  /// 动作串按分类分派（Qt `NativeHudMusic.cpp` 的 `result` 与 `index` 两个分支）：
+  /// 曲目行用 `music:index:<i>`（只选中，进入详情由宿主再决定），专辑/歌单/歌手行
+  /// 用 `music:expand:<percentEncoded 标题>`，与 Qt `music:expand:` 同一个词表。
+  static List<PortraitSearchKindsRow> _portraitSearchRows(BasicViewState state) {
+    final List<PortraitSearchKindsRow> rows = <PortraitSearchKindsRow>[];
+    for (final Map<String, Object?> item in state.searchRows) {
+      final String kind = (item['kind'] ?? '').toString();
+      final String title = (item['title'] ?? '').toString();
+      final String artist = (item['artist'] ?? '').toString();
+      // Qt `searchRowDetail`：明细行优先艺人，否则专辑（本地歌单两者皆空）。
+      final String detail = artist.isNotEmpty
+          ? artist
+          : (item['album'] ?? '').toString();
+      final String stamp = switch (kind) {
+        'album' => '${item['trackCount'] ?? 0} 首',
+        'artist' => '${item['trackCount'] ?? 0} 首',
+        'playlist' => '歌单',
+        _ => '',
+      };
+      // 行点击按分类分派：曲目只选中（`music:index:<i>`，与 Qt 的行下标同义）；
+      // 专辑进专辑列（Qt `selectResult(open=true)` 对非 song 走 enterDirectory）；
+      // 歌手/歌单本仓库还没有详情页，给可见反馈而不是静默吞掉。
+      final String action = switch (kind) {
+        'song' => 'music:index:${rows.length}',
+        'album' => 'music:search-album:${Uri.encodeComponent(title)}',
+        'playlist' => 'music:search-playlist:${Uri.encodeComponent(item['id']?.toString() ?? '')}',
+        _ => 'music:search-artist:${Uri.encodeComponent(title)}',
+      };
+      rows.add((title: title, artist: detail, stamp: stamp, action: action));
+    }
+    return rows;
+  }
+
   /// 竖屏一帧：`Qt/src/ResponsiveHudPages.cpp` 的 archive 页。
   ///
   /// 页面集合当前只有归档主页这一屏；详情/歌词/检索/设置仍由既有 Flutter 层
@@ -273,6 +324,10 @@ class BasicHudFrame {
     bool pluginDetailUserInstalled = true,
     bool pluginDetailCanRollback = false,
     String pluginMessage = '',
+    bool songOptionsExpanded = false,
+    bool commentsAvailable = false,
+    String songOptionsDetail = '',
+    String songOptionsDetailBody = '',
   }) {
     final _HudSink sink = _HudSink();
     ports.beginFrame(sink: sink, time: animationTime, ink: hudInk(dark), animate: animateText);
@@ -371,20 +426,19 @@ class BasicHudFrame {
         identifier: 'SETTINGS / 终端配置',
       );
     } else if (modal == 'search') {
-      // Qt compact `library()` 的 search 分支：检索框 + 四 tab + INDEX/N 结果区。
-      // 只有「歌曲」这一 tab 有真数据（BasicController 的搜索列是曲目列）；
-      // 歌手/专辑/歌单三列没有对应集合，画出来但不冒充有结果。
-      paintPortraitSearchPage(
+      // Qt compact `library()` 的 search 分支（ResponsiveHudPages.cpp:941-990）：
+      // 检索框 + 四分类 tab + 歌曲分类才有的分组条 + `01 检索结果 INDEX / N` +
+      // 结果行。行数据来自 `BasicViewState.searchRows`（分类检索索引的 items，
+      // 每项是 Qt `MusicData::item` 形状的 Map），已按分组视图过滤。
+      paintPortraitSearchKindsPage(
         canvas,
         query: state.query,
-        tabLabels: const <String>['歌曲', '歌手', '专辑', '歌单'],
-        selectedTab: 0,
-        rows: <(String, String, String)>[
-          for (final BasicListItem item in items)
-            (item.title, item.artist.isEmpty ? item.kind : item.artist, ''),
-        ],
-        total: items.length,
-        notice: emptyNotice,
+        searchKind: state.searchKind,
+        groupBy: state.searchGroup,
+        activeGroup: state.searchGroupKey,
+        rows: _portraitSearchRows(state),
+        total: state.searchTotal,
+        status: state.searchStatus.isEmpty ? emptyNotice : state.searchStatus,
         loading: state.loading,
       );
     } else if (modal == 'plugins' || modal == 'plugin-detail') {
@@ -447,6 +501,17 @@ class BasicHudFrame {
         listPosition: listPosition,
       );
     }
+    // Qt `ResponsiveHudLayout.cpp:270-272`：选项面板是最后一层覆盖
+    // （`if (m_songOptionsExpanded && (m_song || m_lyricsPage)) optionsSheet(c, source)`），
+    // 所以它在整页画完之后叠上来，且只画 sheet 本身（遮罩不动）。
+    if (songOptionsExpanded && (song != null || state.phase == BasicPhase.lyrics)) {
+      paintPortraitSongOptions(
+        canvas,
+        actions: _portraitSongOptionsActions(state, commentsAvailable: commentsAvailable),
+        detail: songOptionsDetail,
+        detailBody: songOptionsDetailBody,
+      );
+    }
     sink.commands.addAll(canvas.commands);
     sink.hits.addAll(canvas.hits);
     final bool animating = ports.endFrame();
@@ -457,6 +522,31 @@ class BasicHudFrame {
       hits: sink.hits,
       animating: animating,
     );
+  }
+
+  /// 竖屏「歌曲操作 / 歌词操作」面板的按钮表（Qt `ResponsiveLyrics.cpp:246-272`）。
+  ///
+  /// 歌词页固定四条（local 平台才有第五条 `歌词来源`）；详情页取 `primaryActions`
+  /// 去掉播放/喜欢、再加上 `secondaryActions`，末尾按能力补 `官方客户端 ↗` 与
+  /// `查看评论`。空 route 的条目 Qt 也会照画（画布会跳过它的热区）。
+  static List<(String label, String action)> _portraitSongOptionsActions(
+    BasicViewState state, {
+    required bool commentsAvailable,
+  }) {
+    if (state.phase == BasicPhase.lyrics) {
+      return <(String, String)>[
+        ('歌词提前 0.2s', 'player:lyrics-earlier'),
+        ('歌词延后 0.2s', 'player:lyrics-later'),
+        ('重置歌词偏移', 'player:lyrics-reset'),
+        ('重新查找歌词', 'player:lyrics-retry'),
+      ];
+    }
+    return <(String, String)>[
+      ('＋ 加入歌单', 'music:add-to-playlist'),
+      ('＋ 加入队列', 'music:enqueue'),
+      ('▷ 下一首播放', 'music:play-next'),
+      if (commentsAvailable) ('查看评论', 'music:comments'),
+    ];
   }
 
   /// 竖屏详情页 / 歌词页（Qt compact `ResponsiveHudPages.cpp` 的 `song()` / `lyrics()`）。
@@ -1147,6 +1237,10 @@ class BasicHudSurface extends StatefulWidget {
     this.pluginDetailUserInstalled = true,
     this.pluginDetailCanRollback = false,
     this.pluginMessage = '',
+    this.songOptionsExpanded = false,
+    this.commentsAvailable = false,
+    this.songOptionsDetail = '',
+    this.songOptionsDetailBody = '',
   });
 
   final BasicViewState state;
@@ -1199,6 +1293,16 @@ class BasicHudSurface extends StatefulWidget {
 
   /// 插件管理页的数据（[PluginManager.snapshot]）；null = 还没初始化完，页面画空态。
   final PluginSnapshot? plugins;
+
+  /// 竖屏「歌曲操作」面板是否展开（Qt `m_songOptionsExpanded`）。
+  final bool songOptionsExpanded;
+
+  /// 「查看评论」入口是否可用（Qt `commentsAvailable`）。
+  final bool commentsAvailable;
+
+  /// 选项面板末尾的「专辑 / 时长」摘要与详情正文。
+  final String songOptionsDetail;
+  final String songOptionsDetailBody;
 
   /// 插件详情页的 manifest（modal == 'plugin-detail' 时用）。
   final PluginManifest? pluginDetail;
@@ -1398,6 +1502,10 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       pluginDetailUserInstalled: widget.pluginDetailUserInstalled,
       pluginDetailCanRollback: widget.pluginDetailCanRollback,
       pluginMessage: widget.pluginMessage,
+      songOptionsExpanded: widget.songOptionsExpanded,
+      commentsAvailable: widget.commentsAvailable,
+      songOptionsDetail: widget.songOptionsDetail,
+      songOptionsDetailBody: widget.songOptionsDetailBody,
     );
     // 共享滚动文字有字符槽还在 kReelDuration 内 -> 续帧；静止后停 ticker。
     // 松手惯性期间也必须续帧（同一个 ticker 兼职推进列表动量）。

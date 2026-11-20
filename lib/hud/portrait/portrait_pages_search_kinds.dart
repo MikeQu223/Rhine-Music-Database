@@ -71,6 +71,12 @@ String portraitSearchKindAction(int index) =>
 /// 分组键对应的动作串 `music:group:<下标>`（Qt `NativeHudSearch.cpp:105`）。
 String portraitSearchGroupAction(int index) => 'music:group:$index';
 
+/// 分组条动作串的前缀（宿主按 `<前缀><下标>` 解析）。
+const String portraitSearchGroupActionPrefix = 'music:group:';
+
+/// 展开某个分组的动作前缀（Qt `music:expand:`，值是按 URL 百分号编码的分组标题）。
+const String portraitSearchExpandActionPrefix = 'music:expand:';
+
 /// 分组展开态的返回动作（Qt `NativeHudSearch.cpp:126`）。
 const String portraitSearchGroupBackAction = 'music:group-back';
 

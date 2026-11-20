@@ -34,6 +34,8 @@ import 'package:flutter/foundation.dart';
 
 import '../domain/lyrics/lyrics_controller.dart';
 import '../domain/player/music_player.dart';
+import '../domain/collection/local_collection_store.dart';
+import '../domain/search/catalog_search.dart';
 import 'basic_art_cache.dart';
 import 'basic_media_session.dart';
 import 'basic_models.dart';
@@ -98,6 +100,7 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     SirenRepository? repository,
     bool dark = false,
     this._collections,
+    this._collectionStore,
     MediaSessionPort? mediaSessionPort,
     BasicArtCache? artCache,
     PreferencePort? preferences,
@@ -185,6 +188,13 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
   /// UI 都不在基础版范围内，也没有任何登录/账号条件（Qt/src/MusicSiren.cpp:6-21）。
   final BasicLocalCollections? _collections;
 
+  /// 收藏的**写入口**（Qt `LocalCollections` 的写入面：toggleLike / like / unlike）。
+  ///
+  /// 与 [_collections] 分开：那是只读收窄端口（[BasicLocalCollections] 只有两个查询
+  /// 方法，模型层不持有写能力），这里是真正的持久化实现，由宿主注入。null = 没有
+  /// 本地存储（测试/桌面预览），此时喜欢开关回一句可见提示而不假装成功。
+  final LocalCollectionStore? _collectionStore;
+
   /// 本机集合是否真的接入并查询过（Qt `collections != nullptr` 同义）。
   bool _localCollectionsAvailable = false;
 
@@ -232,6 +242,25 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
   String _error = '';
   String _status = sirenCatalogLoadingStatus;
   String _query = '';
+
+  /// 检索分类（Qt `MusicLibrary::searchKind`，取值见 [catalogSearchKinds]）。
+  ///
+  /// Qt 一次只搜一类（MusicSiren.cpp:140-176 的四个 case），「搜索结果」列
+  /// （lane 0）只放该类的命中项；分类由 `music:kind:<i>` 切换（NativeHudMusic.cpp:218）。
+  String _searchKind = catalogSearchKinds.first;
+
+  /// 分组键（Qt `MusicLibrary::groupBy`：`none` / `artist` / `album`）。
+  ///
+  /// 只对「搜索结果」列里首条是曲目的情况生效（NativeHudSearch.cpp:85-88 的门控），
+  /// 由 `music:group:<i>` 切换、`music:group-back` 复位。
+  String _searchGroup = 'none';
+
+  /// 已展开分组的标题（Qt `MusicLibrary::groupView` 的键）；空串 = 未展开。
+  String _searchGroupKey = '';
+
+  /// [searchOutcome] 的签名缓存（见该方法的失效规则）。
+  String _searchOutcomeSignature = '';
+  SearchOutcome? _searchOutcomeCache;
   SirenAlbum? _album;
 
   /// 已打开的虚拟目录（null = 资料库根；Qt MusicLibrary::directory 的收窄投影）。
@@ -363,18 +392,15 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
       _publish();
       return;
     }
-    final int count =
-        value.trim().isEmpty ? 0 : _visibleSongs().length + _visibleAlbums().length;
+    // 计数与状态串走分类检索索引（Qt `searchSirenLocal` 的 status 原文）：
+    // 空关键词是 MusicLibrary::search 的早退（`请输入 1–<maximum> 字关键词`，宽 100），
+    // 非空时 total/status 由 CatalogSearchIndex 给出（没有匹配的音乐 / 没有匹配的
+    // 本地歌单 / 找到 N 条结果，见 catalog_search.dart 的 _outcome）。
+    final int count = value.trim().isEmpty ? 0 : searchOutcome().total;
     if (value.trim().isEmpty) {
-      // Qt MusicLibrary.cpp:409-486：空关键词清 lists[0]，只留提示文案。
-      // 状态栏那句是 MusicLibrary::search 的空/超长早退（:441-455
-      // `status = "请输入 1–<maximum> 字关键词"`；塞壬不是 qq，maximum = 100）；
-      // basicLaneEmptyNotice(0) 是列表区的空列提示，两者不是同一处文案。
       _status = '请输入 1\u2013100 字关键词';
-    } else if (count == 0) {
-      _status = '没有匹配的音乐';
     } else {
-      _status = '找到 $count 条结果';
+      _status = searchOutcome().status;
     }
     if (count > 0) {
       // Qt 的 showSource(0) 会 observe 该列的第一格（只选中，不播放）。
@@ -383,6 +409,197 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
       _status = status;
     }
     _publish();
+  }
+
+  /// 本机是否已接上收藏存储（`LocalCollectionStore`）。
+  bool get collectionsWritable => _collectionStore != null;
+
+  /// [songId] 是否在「喜欢的歌曲」里（空 id 恒 false，与 Qt `isLiked` 同）。
+  bool isLiked(String songId) =>
+      _collectionStore?.isLiked(songId) ?? (_collections?.likedIds().contains(songId) ?? false);
+
+  /// 切换一首歌的喜欢状态并刷新收藏列，返回结果文案（Qt `music:like` 的 status）。
+  ///
+  /// Qt 的等价点（MusicMutation.cpp:337）：`enabled = !liked` →
+  /// `mutate("/like", {id, like: enabled})`，成功按响应 `state` 覆盖本地集合。
+  /// 塞壬是本地集合（LocalCollections.cpp），所以这里直接 toggle 并落盘，
+  /// 成功后 [_refreshLocalCollections] 把 liked 列表解析成曲目行并重建列缓存。
+  Future<String> toggleLiked(String songId) async {
+    final LocalCollectionStore? store = _collectionStore;
+    if (store == null) {
+      return '本地收藏尚未接入';
+    }
+    if (songId.isEmpty) {
+      return '无法写入本地收藏';
+    }
+    await store.toggleLike(songId);
+    _refreshLocalCollections();
+    // 收藏列的内容签名变了（_collectionsDigest 参与 _laneItemTable 的签名），
+    // 但 categories 的检索结果也依赖它，所以一并失效。
+    _searchOutcomeCache = null;
+    _publish();
+    return store.status;
+  }
+
+  /// 切换「正在播放那首」的喜欢状态（Qt `music:like-current`）。
+  Future<String> toggleLikeCurrent() {
+    final Map<String, Object?>? current = _player.current;
+    return toggleLiked(current == null ? '' : _text(current['id']));
+  }
+
+  /// 切换检索分类（Qt `NativeHudMusic.cpp:218-236` 的 `kind` 分支）。
+  ///
+  /// Qt 的语义是：`text = query.isEmpty ? keyword : query`，
+  /// `text.isEmpty ? 只改 searchKind : search(text, kind)`——也就是**有词就立即重搜**
+  /// （重搜会把结果列 lane 0 的滚动窗口重置并重新选中第一行）；空词只换分类。
+  /// `music:kind:<i>` 的 i 是 [catalogSearchKinds] 的下标（song/album/playlist/artist）。
+  /// 返回是否真的切换了分类（越界或同值返回 false，宿主管文案）。
+  bool setSearchKind(String kind) {
+    if (_disposed) {
+      return false;
+    }
+    if (!catalogSearchKinds.contains(kind)) {
+      return false;
+    }
+    if (_searchKind == kind) {
+      return false;
+    }
+    _searchKind = kind;
+    _searchGroup = 'none';
+    _searchGroupKey = '';
+    if (_query.trim().isNotEmpty) {
+      // 立即重搜：与 setQuery 的副作用同源（切 lane 0、清窗口、重新选中首行）。
+      unawaited(setQuery(_query));
+    } else {
+      _publish();
+    }
+    return true;
+  }
+
+  /// 切换分组键（Qt `NativeHudMusic.cpp:238-250` 的 `group` 分支：只对曲目分类有效）。
+  bool setSearchGroup(String group) {
+    if (_disposed || _searchKind != catalogSearchKinds.first) {
+      return false;
+    }
+    const List<String> allowed = <String>['none', 'artist', 'album'];
+    if (!allowed.contains(group) || _searchGroup == group) {
+      return false;
+    }
+    _searchGroup = group;
+    _searchGroupKey = '';
+    _publish();
+    return true;
+  }
+
+  /// 展开某个分组（Qt `music:expand:<percentEncoded title>` → `setGroupView(title, indices, lane)`）。
+  ///
+  /// [value] 是分组标题原文（动作串里已解码）；空串等价于 [clearSearchGroup]。
+  bool expandSearchGroup(String title) {
+    if (_disposed || _searchKind != catalogSearchKinds.first || title.isEmpty) {
+      return false;
+    }
+    _searchGroupKey = title;
+    _publish();
+    return true;
+  }
+
+  /// `music:group-back`：Qt 清掉分组视图回到原序列表。
+  void clearSearchGroup() {
+    if (_disposed) {
+      return;
+    }
+    _searchGroupKey = '';
+    _publish();
+  }
+
+  /// 当前检索分类（`song` / `album` / `playlist` / `artist`）。
+  String get searchKind => _searchKind;
+
+  /// 当前分组键（`none` / `artist` / `album`）。
+  String get searchGroup => _searchGroup;
+
+  /// 已展开分组的标题（空串 = 未展开）。
+  String get searchGroupKey => _searchGroupKey;
+
+  /// 分类检索的完整结果（不分页；宿主按可视行裁剪）。
+  ///
+  /// 返回 [CatalogSearchIndex] 的口径：`{items,total,hasMore,status,kind,query,start}`，
+  /// `items` 里每项是 Qt `MusicData::item` 形状的 Map（kind/id/title/artist/album/cover…）。
+  /// 分类为 `playlist` 时列表来自本机歌单（`_localPlaylists`）。
+  ///
+  /// 结果按「曲库代际 / 检索词 / 分类 / 收藏摘要」缓存：`_publish()` 每 100ms
+  /// 随播放 tick 跑一次，整库 936 首的分类检索（且歌手分类还要归并）不能每帧
+  /// 重算——那会把播放中的帧率拖垮。签名里不含分组键：分组只是对同一份结果的
+  /// 视图裁剪，不需要重建索引。
+  SearchOutcome searchOutcome() {
+    final String signature = <Object?>[
+      _catalogGeneration,
+      _query,
+      _searchKind,
+      _collectionsDigest(),
+    ].join('|');
+    final SearchOutcome? cache = _searchOutcomeCache;
+    if (cache != null && signature == _searchOutcomeSignature) {
+      return cache;
+    }
+    final CatalogSearchIndex index = CatalogSearchIndex(
+      catalog: SirenCatalog(songs: _catalogSongs, albums: _catalogAlbums),
+      playlists: _localPlaylists,
+    );
+    final SearchOutcome outcome = index.search(kind: _searchKind, query: _query);
+    _searchOutcomeSignature = signature;
+    _searchOutcomeCache = outcome;
+    return outcome;
+  }
+
+  /// 分组的成员列表（Qt `MusicLibrary::groupTitles` / `groupIndices` 的收窄投影）。
+  ///
+  /// 只有「曲目分类 + 分组键非 none + 已展开某个标题」时才非空；键是分组名
+  /// （歌手名或专辑名），值是该组在 `searchOutcome().items` 里的**行下标**。
+  /// 排序与 Qt `NativeHudSearch.cpp` 一致：先按条目数降序，再按标题升序。
+  Map<String, List<int>> searchGroups() {
+    if (_searchKind != catalogSearchKinds.first || _searchGroup == 'none') {
+      return const <String, List<int>>{};
+    }
+    final SearchOutcome outcome = searchOutcome();
+    final String field = _searchGroup == 'artist' ? 'artist' : 'album';
+    final Map<String, List<int>> groups = <String, List<int>>{};
+    for (int index = 0; index < outcome.items.length; index++) {
+      final Map<String, Object?> item = outcome.items[index];
+      if (_text(item['kind']) != 'song') {
+        continue;
+      }
+      final String key = _text(item[field]);
+      if (key.isEmpty) {
+        continue;
+      }
+      groups.putIfAbsent(key, () => <int>[]).add(index);
+    }
+    final List<MapEntry<String, List<int>>> sorted = groups.entries.toList()
+      ..sort((MapEntry<String, List<int>> a, MapEntry<String, List<int>> b) {
+        final int byCount = b.value.length.compareTo(a.value.length);
+        return byCount != 0 ? byCount : a.key.compareTo(b.key);
+      });
+    return <String, List<int>>{for (final MapEntry<String, List<int>> entry in sorted) entry.key: entry.value};
+  }
+
+  /// 分组视图下要画的行（Qt `groupIndices` 生效时 `libraryItems()` 只返回该组）。
+  ///
+  /// 非分组态返回 null，宿主直接用 [searchOutcome]。
+  List<Map<String, Object?>>? searchGroupRows() {
+    final Map<String, List<int>> groups = searchGroups();
+    if (groups.isEmpty || _searchGroupKey.isEmpty) {
+      return null;
+    }
+    final List<int>? indices = groups[_searchGroupKey];
+    if (indices == null || indices.isEmpty) {
+      return null;
+    }
+    final SearchOutcome outcome = searchOutcome();
+    return <Map<String, Object?>>[
+      for (final int index in indices)
+        if (index >= 0 && index < outcome.items.length) outcome.items[index],
+    ];
   }
 
   /// 进入专辑（换列）：把专辑当成**目录**打开，留在资料库里显示它的曲目。
@@ -1394,6 +1611,27 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     await openSong(source[next]);
   }
 
+  /// 把当前详情曲目加入播放队列（Qt `music:enqueue` / `music:play-next`）。
+  ///
+  /// 真值：`Qt/src/NativeHudMusic.cpp:298-313` —— `music.player.enqueue(music.current,
+  /// name == "play-next")`，成功回 `✓ 已加入队列` / `✓ 已设为下一首`，失败回
+  /// `未能加入，请重试`。这里返回同一组文案，由宿主决定上屏。
+  Future<String> enqueueCurrent({bool next = false}) async {
+    if (_disposed) {
+      return '未能加入，请重试';
+    }
+    final SirenSong? song = _song;
+    if (song == null) {
+      return '未能加入，请重试';
+    }
+    final bool queued = _player.enqueue(song.toTrack(), next: next);
+    if (!queued) {
+      return '未能加入，请重试';
+    }
+    _publish();
+    return next ? '✓ 已设为下一首' : '✓ 已加入队列';
+  }
+
   /// 测试钩子：注入一拍时间，走 Timer.periodic 完全相同的链路。
   ///
   /// 生产 ticker 是 100ms 的真实 Timer；测试里 Timer 不会自己走，所以留这一个入口。
@@ -1674,6 +1912,18 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
   /// 只读：likedIds → 曲库解析成行（解析不到的 id 不造行），playlists → 行投影。
   /// 端口为 null（当前生产事实）或查询抛错时保持「不可用」，绝不把没查询过说成空库：
   /// 这两件事在界面上是两句不同的话（[basicLaneEmptyNotice]）。
+  /// 宿主读完本机收藏后调用（`LocalCollectionStore.load()` 是异步的，构造期读不到）。
+  ///
+  /// 等价于 Qt 的 `reloadSirenCollections()`：重新查询 liked/playlists 并重发状态。
+  void refreshLocalCollections() {
+    if (_disposed) {
+      return;
+    }
+    _refreshLocalCollections();
+    _searchOutcomeCache = null;
+    _publish();
+  }
+
   void _refreshLocalCollections() {
     final BasicLocalCollections? collections = _collections;
     if (collections == null) {
@@ -1758,7 +2008,12 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
       return _album!.songs;
     }
     if (selected == basicSearchLane) {
-      // 「搜索结果」列只列本次检索命中的曲目（Qt lists[0]）。
+      // 「搜索结果」列只放**当前分类**的命中项（Qt `lists[0]`）：
+      // 曲目分类才列曲目，其余分类的行由分类检索页（laneItems → searchOutcome）
+      // 承担，不能把全库曲目塞进歌单/歌手分类。
+      if (_searchKind != catalogSearchKinds.first) {
+        return const <SirenSong>[];
+      }
       return filterSirenSongs(_catalogSongs, _query);
     }
     if (selected == 1) {
@@ -1783,6 +2038,10 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
       return const <SirenAlbum>[];
     }
     if (selected == basicSearchLane) {
+      // 专辑分类才在「搜索结果」列列专辑行（Qt 的 lists[0] 只承载一类条目）。
+      if (_searchKind != 'album') {
+        return const <SirenAlbum>[];
+      }
       return filterSirenAlbums(_catalogAlbums, _query);
     }
     return _catalogAlbums;
@@ -2109,6 +2368,13 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
       ],
       queueIndex: _player.queue.index,
       queueMode: _player.mode,
+      searchKind: _searchKind,
+      searchGroup: _searchGroup,
+      searchGroupKey: _searchGroupKey,
+      searchRows: searchOutcome().items,
+      searchTotal: searchOutcome().total,
+      searchStatus: searchOutcome().status,
+      searchGroups: searchGroups(),
       lyricStatus: lyrics?.status ?? 'idle',
       lyricMessage: lyrics?.message ?? '',
       playerStatus: _player.status,
