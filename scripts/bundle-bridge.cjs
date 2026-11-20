@@ -46,6 +46,15 @@ async function main() {
         plugins: [...(mobileRuntime ? [require('./mobile-bridge-plugin.cjs')(webApisFile, '')] : [])],
     });
     failOnDynamicRequires(result);
+    await esbuild.build({
+        entryPoints: [path.join(source, 'plugin-control-cli.cjs')],
+        outfile: path.join(bridgeOutput, 'plugin-control-cli.cjs'),
+        bundle: true,
+        platform: 'node',
+        format: 'cjs',
+        target: mobileRuntime ? 'node18' : 'node22',
+        plugins: mobileRuntime ? [require('./mobile-bridge-plugin.cjs')(webApisFile)] : [],
+    });
     const size = fs.statSync(path.join(bridgeOutput, 'worker.cjs')).size;
     console.log(`Bridge bundle: ${(size / 1024 / 1024).toFixed(2)} MB`);
 }

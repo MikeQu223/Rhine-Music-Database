@@ -17,14 +17,16 @@
         },
         "apiVersion": {
             "type": "string",
-            "pattern": "^2\\.[0-9]+$"
+            "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?)?$",
+            "maxLength": 120
         },
         "id": {
             "$ref": "#/$defs/providerId"
         },
         "version": {
             "type": "string",
-            "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+([+-][0-9A-Za-z.-]+)?$"
+            "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$",
+            "maxLength": 120
         },
         "kind": {
             "enum": [
@@ -42,6 +44,26 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 120
+        },
+        "requiresClient": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+        },
+        "requiresHostFeatures": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "interfaces": {
+                    "$ref": "#/$defs/hostFeatures"
+                },
+                "operations": {
+                    "$ref": "#/$defs/hostFeatures"
+                },
+                "capabilities": {
+                    "$ref": "#/$defs/hostFeatures"
+                }
+            }
         },
         "entry": {
             "type": "object",
@@ -90,6 +112,25 @@
             "type": "object",
             "additionalProperties": true,
             "properties": {
+                "platforms": {
+                    "type": "array",
+                    "items": {
+                        "enum": [
+                            "windows",
+                            "macos",
+                            "linux",
+                            "ios",
+                            "android"
+                        ]
+                    },
+                    "minItems": 1,
+                    "uniqueItems": true
+                },
+                "requiresVersion": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120
+                },
                 "hosting": {
                     "type": "array",
                     "items": {
@@ -99,6 +140,7 @@
                             "process"
                         ]
                     },
+                    "minItems": 1,
                     "uniqueItems": true
                 },
                 "mobileBundled": {
@@ -134,7 +176,7 @@
                     "type": "array",
                     "items": {
                         "type": "string",
-                        "pattern": "^/[a-zA-Z0-9_-]+$"
+                        "pattern": "^/[a-zA-Z0-9_-]+(/[a-zA-Z0-9_-]+)*$"
                     },
                     "uniqueItems": true
                 },
@@ -327,6 +369,16 @@
         }
     },
     "$defs": {
+        "hostFeatures": {
+            "type": "array",
+            "items": {
+                "type": "string",
+                "pattern": "^[a-zA-Z][a-zA-Z0-9]*$",
+                "maxLength": 80
+            },
+            "maxItems": 128,
+            "uniqueItems": true
+        },
         "providerId": {
             "type": "string",
             "pattern": "^[a-z0-9-]{1,40}$"
@@ -490,6 +542,11 @@
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 80
+                },
+                "icon": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 240
                 },
                 "nameByVariant": {
                     "type": "object",

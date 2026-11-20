@@ -1,6 +1,7 @@
 #include "fg/FgConfig.h"
 #include "Host.h"
 #include "ProviderRegistry.h"
+#include "PluginInstaller.h"
 #include "AppStorage.h"
 #include <QBuffer>
 #include <QClipboard>
@@ -269,200 +270,7 @@ static QString routeProvider(const QString &route) {
     const auto id = ProviderRegistry::instance().providerForRoute(route);
     return id.isEmpty() ? QStringLiteral("other") : id;
 }
-static bool reservedPluginId(const QString &id) {
-    return id == "local" || id == "siren";
-}
-static bool validPluginId(const QString &id) {
-    static const QRegularExpression pattern("^[a-z0-9-]{1,40}$");
-    return pattern.match(id).hasMatch() && !reservedPluginId(id);
-}
-static bool pluginRelativeFile(const QString &file) {
-    return !file.isEmpty() && !QDir::isAbsolutePath(file) && !file.contains("..") && !file.contains('\\');
-}
-static bool compatiblePluginApi(const QString &version) {
-    static const QRegularExpression pattern("^(\\d+)\\.(\\d+)$");
-    const auto match = pattern.match(version);
-    return match.hasMatch() && match.captured(1).toInt() == 2 && match.captured(2).toInt() <= 0;
-}
 
-struct PluginVersion {
-    QList<qint64> core;
-    QStringList prerelease;
-    bool valid = false;
-};
-
-/** 解析市场常用的语义化版本；无法解析时调用方退化为按字符串顺序比较。 */
-static PluginVersion parsePluginVersion(QString value) {
-    value = value.trimmed();
-    if (value.startsWith('v', Qt::CaseInsensitive)) {
-        value.remove(0, 1);
-    }
-    const auto buildIndex = value.indexOf('+');
-    if (buildIndex >= 0) {
-        value.truncate(buildIndex);
-    }
-    PluginVersion result;
-    const auto prereleaseIndex = value.indexOf('-');
-    const auto coreText = prereleaseIndex >= 0 ? value.left(prereleaseIndex) : value;
-    if (prereleaseIndex >= 0) {
-        result.prerelease = value.mid(prereleaseIndex + 1).split('.', Qt::KeepEmptyParts);
-    }
-    const auto parts = coreText.split('.', Qt::KeepEmptyParts);
-    for (const auto &part : parts) {
-        bool valid = false;
-        const auto number = part.toLongLong(&valid);
-        if (!valid || number < 0) {
-            return {};
-        }
-        result.core.append(number);
-    }
-    result.valid = !result.core.isEmpty() && std::all_of(result.prerelease.begin(), result.prerelease.end(),
-                                                         [](const QString &part) { return !part.isEmpty(); });
-    return result;
-}
-
-static int comparePluginPrerelease(const QStringList &left, const QStringList &right) {
-    if (left.isEmpty() || right.isEmpty()) {
-        // 正式版高于同一核心版本的预发布版。
-        if (left.isEmpty() && right.isEmpty()) {
-            return 0;
-        }
-        return left.isEmpty() ? 1 : -1;
-    }
-    const auto count = std::min(left.size(), right.size());
-    for (qsizetype index = 0; index < count; ++index) {
-        bool leftNumeric = false;
-        bool rightNumeric = false;
-        const auto leftNumber = left[index].toLongLong(&leftNumeric);
-        const auto rightNumber = right[index].toLongLong(&rightNumeric);
-        if (leftNumeric && rightNumeric && leftNumber != rightNumber) {
-            return leftNumber < rightNumber ? -1 : 1;
-        }
-        if (leftNumeric != rightNumeric) {
-            return leftNumeric ? -1 : 1;
-        }
-        const auto compared = QString::compare(left[index], right[index], Qt::CaseSensitive);
-        if (compared != 0) {
-            return compared < 0 ? -1 : 1;
-        }
-    }
-    if (left.size() == right.size()) {
-        return 0;
-    }
-    return left.size() < right.size() ? -1 : 1;
-}
-
-static int comparePluginVersion(const QString &leftText, const QString &rightText) {
-    const auto left = parsePluginVersion(leftText);
-    const auto right = parsePluginVersion(rightText);
-    if (!left.valid || !right.valid) {
-        return QString::compare(leftText.trimmed(), rightText.trimmed(), Qt::CaseSensitive);
-    }
-    const auto count = std::max(left.core.size(), right.core.size());
-    for (qsizetype index = 0; index < count; ++index) {
-        const auto leftNumber = index < left.core.size() ? left.core[index] : 0;
-        const auto rightNumber = index < right.core.size() ? right.core[index] : 0;
-        if (leftNumber != rightNumber) {
-            return leftNumber < rightNumber ? -1 : 1;
-        }
-    }
-    return comparePluginPrerelease(left.prerelease, right.prerelease);
-}
-
-static bool pluginVersionNewer(const QString &candidate, const QString &installed) {
-    return !candidate.isEmpty() && !installed.isEmpty() && comparePluginVersion(candidate, installed) > 0;
-}
-
-/** 市场安装前按 worker Registry 的同一组硬性条件校验 manifest。 */
-static bool validPluginManifest(const QJsonObject &manifest) {
-    if (manifest["schemaVersion"].toInt() != 2) {
-        return false;
-    }
-    if (!validPluginId(manifest["id"].toString()) || manifest["version"].toString().isEmpty() ||
-        !compatiblePluginApi(manifest["apiVersion"].toString())) {
-        return false;
-    }
-    const auto display = manifest["display"].toObject();
-    if (display["name"].toString().isEmpty() || !manifest["capabilities"].isObject()) {
-        return false;
-    }
-    if (!pluginRelativeFile(manifest["entry"].toObject()["file"].toString())) {
-        return false;
-    }
-    const auto routes = manifest["routes"].toObject();
-    for (const auto *key : {"legacyRoutes", "prefixes"}) {
-        const auto values = routes[key];
-        if (values.isUndefined()) {
-            continue;
-        }
-        if (!values.isArray()) {
-            return false;
-        }
-        for (const auto &value : values.toArray()) {
-            if (!value.isString() || !value.toString().startsWith('/')) {
-                return false;
-            }
-        }
-    }
-    return true;
-}
-static bool copyPluginDirectory(const QString &source, const QString &destination) {
-    QDir sourceDirectory(source);
-    if (!QDir().mkpath(destination)) {
-        return false;
-    }
-    const auto entries = sourceDirectory.entryInfoList(
-        QDir::Dirs | QDir::Files | QDir::Hidden | QDir::NoDotAndDotDot, QDir::Name);
-    for (const auto &entry : entries) {
-        if (entry.fileName() == ".git") {
-            continue;
-        }
-        const auto target = destination + "/" + entry.fileName();
-        if (entry.isDir()) {
-            if (!copyPluginDirectory(entry.absoluteFilePath(), target)) {
-                return false;
-            }
-        } else if (entry.isFile() && !QFile::copy(entry.absoluteFilePath(), target)) {
-            return false;
-        }
-    }
-    return true;
-}
-
-/** 插件目录改名；Windows 上杀毒或索引服务可能短暂持有刚写入的文件，失败时重试。 */
-static bool movePluginDirectory(const QString &source, const QString &target) {
-    if (QDir().rename(source, target)) {
-        return true;
-    }
-    for (int attempt = 0; attempt < 20; ++attempt) {
-        QThread::msleep(100);
-        if (QDir().rename(source, target)) {
-            return true;
-        }
-    }
-    return false;
-}
-
-/** 提交 staging 目录；改名持续被占用时退化为逐文件复制，避免 Windows 上安装直接失败。 */
-static bool commitPluginDirectory(const QString &staging, const QString &target) {
-    if (movePluginDirectory(staging, target)) {
-        return true;
-    }
-    // 目录已存在时不能覆盖，交给上层保留原安装。
-    if (QDir(target).exists()) {
-        return false;
-    }
-    for (int attempt = 0; attempt < 5; ++attempt) {
-        QDir(target).removeRecursively();
-        if (copyPluginDirectory(staging, target)) {
-            QDir(staging).removeRecursively();
-            return true;
-        }
-        QThread::msleep(200);
-    }
-    QDir(target).removeRecursively();
-    return false;
-}
 namespace {
 QJsonValue jsonValueAt(const QJsonObject &root, const QString &path) {
     QJsonValue value(root);
@@ -672,7 +480,11 @@ Host::Host(QString path, bool test, QObject *parent, bool service, PlaybackConne
            QString isolatedCachePath)
     : QObject(parent), updater(test), root(path), offline(test), remote(test ? nullptr : connection),
       playbackOnly(service) {
-    ProviderRegistry::instance().load(root, AppStorage::dataDirectory() + "/plugins", disabledPlugins());
+    const auto recovery = remote ? QString() : PluginInstaller::recover(pluginRoot());
+    refreshPluginCatalog();
+    if (!recovery.isEmpty()) {
+        marketplaceStatus = recovery;
+    }
     provider = ProviderRegistry::instance().defaultId();
     if (provider.isEmpty()) {
         // core-only 时 local 也可能在 ids() 中排在最前；默认来源应优先非本地来源。
@@ -686,6 +498,7 @@ Host::Host(QString path, bool test, QObject *parent, bool service, PlaybackConne
     }
     connect(&updater, &AppUpdater::changed, this, &Host::invalidate);
     if (remote) {
+        connect(remote, &PlaybackConnection::pluginRuntimeFailed, this, &Host::markPluginRuntimeFailure);
         connect(remote, &PlaybackConnection::storageInvalidated, this, [this] {
             clearNetworkImages();
         });
@@ -1030,13 +843,17 @@ void Host::send(QString key) {
             finish(key, {}, "无法创建音乐服务临时目录");
             return;
         }
+        const auto installedPlugins = pluginRoot();
+        const auto userPlugins = QFileInfo(installedPlugins).isSymLink() ? QString() : installedPlugins;
 #if RHINE_MOBILE
         // 移动端由进程内的 Node 运行时执行同一个 worker，路径必须是真实文件系统路径
         // （Android 侧已把内嵌资源解包到应用私有目录，root 指向解包结果）。
         pending.insert(work.id, key);
         child.start(root, temporary->path(),
-                    {{"RHINE_USER_PLUGINS", AppStorage::dataDirectory() + "/plugins"},
-                     {"RHINE_DISABLED_PLUGINS", disabledPlugins().join(',')}});
+                    {{"RHINE_USER_PLUGINS", userPlugins},
+                     {"RHINE_DISABLED_PLUGINS", disabledPlugins().join(',')},
+                     {"RHINE_CLIENT_VERSION", PluginInstaller::clientVersion()},
+                     {"RHINE_PLATFORM", PluginInstaller::platform()}});
         return;
 #else
         QProcessEnvironment env;
@@ -1059,8 +876,10 @@ void Host::send(QString key) {
 #endif
         env.insert("TMPDIR", temporary->path());
         env.insert("LANG", "en_US.UTF-8");
-        env.insert("RHINE_USER_PLUGINS", AppStorage::dataDirectory() + "/plugins");
+        env.insert("RHINE_USER_PLUGINS", userPlugins);
         env.insert("RHINE_DISABLED_PLUGINS", disabledPlugins().join(','));
+        env.insert("RHINE_CLIENT_VERSION", PluginInstaller::clientVersion());
+        env.insert("RHINE_PLATFORM", PluginInstaller::platform());
         child.setProcessEnvironment(env);
         // 子进程的工作目录改到应用自己的系统临时目录
         child.setWorkingDirectory(temporary->path());
@@ -1119,6 +938,10 @@ void Host::finish(QString key, QJsonObject response, QString error) {
     }
     const auto work = flights.take(key);
     const auto service = routeProvider(work.route);
+    const auto failure = response.take("_pluginLoadFailure").toObject();
+    if (failure["provider"] == service && failure["errorKey"] == "plugin.load-failed") {
+        markPluginRuntimeFailure(service, failure["message"].toString());
+    }
     // 插件私有 secret 由 manifest 声明，只持久化到当前 provider 切片，不进入 UI 回调。
     const auto responseSecrets =
         ProviderRegistry::instance().credentialPolicy(service)["responseSecrets"].toObject();
@@ -1396,521 +1219,10 @@ void Host::setProviderVariant(QString variant) {
         child.waitForFinished(1000);
     }
 }
-QJsonArray Host::installedPluginManifests() const {
-    QMap<QString, QJsonObject> byId;
-    const QStringList roots{AppStorage::dataDirectory() + "/plugins",
-                            QDir(root).absoluteFilePath("MusicBridge/local-plugins")};
-    for (const auto &directory : roots) {
-        QDir plugins(directory);
-        if (!plugins.exists()) {
-            continue;
-        }
-        for (const auto &entry : plugins.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name)) {
-            if (entry.fileName().startsWith('.')) {
-                continue;
-            }
-            QFile manifestFile(entry.absoluteFilePath() + "/manifest.json");
-            if (!manifestFile.open(QIODevice::ReadOnly)) {
-                continue;
-            }
-            const auto manifest = QJsonDocument::fromJson(manifestFile.readAll()).object();
-            const auto id = manifest["id"].toString();
-            if (id.isEmpty() || id == "local" || id == "siren" || byId.contains(id)) {
-                continue;
-            }
-            byId.insert(id, manifest);
-        }
-    }
-    QJsonArray values;
-    for (const auto &manifest : byId) {
-        values.append(manifest);
-    }
-    return values;
-}
-QStringList Host::disabledPlugins() const {
-    QFile file(AppStorage::dataDirectory() + "/plugins-state.json");
-    if (!file.open(QIODevice::ReadOnly)) {
-        return {};
-    }
-    const auto document = QJsonDocument::fromJson(file.readAll()).object();
-    const auto disabled = document["disabled"].toArray();
-    QStringList values;
-    for (const auto &value : disabled) {
-        if (value.isString()) {
-            values.append(value.toString());
-        }
-    }
-    return values;
-}
-void Host::writeDisabledPlugins(const QStringList &disabled) {
-    const auto directory = AppStorage::dataDirectory();
-    if (!QDir().mkpath(directory)) {
-        return;
-    }
-    const auto path = directory + "/plugins-state.json";
-    QFile file(path);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        return;
-    }
-    file.write(QJsonDocument(QJsonObject{{"disabled", QJsonArray::fromStringList(disabled)}})
-                   .toJson(QJsonDocument::Compact));
-    file.close();
-    QFile::setPermissions(path, QFile::ReadOwner | QFile::WriteOwner);
-}
-QJsonArray Host::pluginManagerState() const {
-    const auto disabled = disabledPlugins();
-    QHash<QString, QString> marketVersions;
-    for (const auto &entry : marketplacePlugins) {
-        const auto value = entry.toObject();
-        marketVersions.insert(value["id"].toString(), value["version"].toString());
-    }
-    QJsonArray values;
-    for (const auto &manifest : installedPluginManifests()) {
-        const auto value = manifest.toObject();
-        const auto id = value["id"].toString();
-        const auto version = value["version"].toString();
-        const auto marketVersion = marketVersions.value(id);
-        values.append(QJsonObject{
-            {"id", id},
-            {"name", value["display"].toObject()["name"].toString(id)},
-            {"version", version},
-            {"marketVersion", marketVersion},
-            {"updateAvailable", pluginVersionNewer(marketVersion, version)},
-            {"publisher", value["publisher"].toString()},
-            {"license", value["license"].toString()},
-            {"enabled", !disabled.contains(id)},
-            {"userInstalled", QDir(AppStorage::dataDirectory() + "/plugins/" + id).exists()},
-        });
-    }
-    return values;
-}
-QJsonObject Host::pluginDetail(QString id) const {
-    for (const auto &manifest : installedPluginManifests()) {
-        const auto value = manifest.toObject();
-        if (value["id"].toString() == id) {
-            auto result = value;
-            result["enabled"] = !disabledPlugins().contains(id);
-            result["installed"] = true;
-            result["userInstalled"] = QDir(AppStorage::dataDirectory() + "/plugins/" + id).exists();
-            for (const auto &entry : marketplacePlugins) {
-                const auto market = entry.toObject();
-                if (market["id"].toString() == id) {
-                    result["marketVersion"] = market["version"].toString();
-                    result["updateAvailable"] =
-                        pluginVersionNewer(market["version"].toString(), value["version"].toString());
-                    break;
-                }
-            }
-            return result;
-        }
-    }
-    for (const auto &entry : marketplacePlugins) {
-        const auto value = entry.toObject();
-        if (value["id"].toString() == id) {
-            auto result = value;
-            result["enabled"] = true;
-            result["installed"] = false;
-            result["updateAvailable"] = false;
-            return result;
-        }
-    }
-    return {};
-}
-QString Host::marketplaceUrl() const {
-    static const QString fallback =
-        QStringLiteral("https://raw.githubusercontent.com/MikeQu223/Rhine-Plugin-Market/main/index.json");
-    const auto configured = qEnvironmentVariable("RHINE_PLUGIN_MARKETPLACE_URL");
-    return configured.isEmpty() ? fallback : configured;
-}
-QJsonObject Host::pluginMarketplaceState() const {
-    QHash<QString, QString> installedVersions;
-    for (const auto &manifest : installedPluginManifests()) {
-        const auto value = manifest.toObject();
-        installedVersions.insert(value["id"].toString(), value["version"].toString());
-    }
-    QJsonArray plugins;
-    int updatesAvailable = 0;
-    for (const auto &entry : marketplacePlugins) {
-        auto value = entry.toObject();
-        const auto id = value["id"].toString();
-        const auto installedVersion = installedVersions.value(id);
-        const auto updateAvailable = pluginVersionNewer(value["version"].toString(), installedVersion);
-        value["installedVersion"] = installedVersion;
-        value["updateAvailable"] = updateAvailable;
-        if (updateAvailable) {
-            ++updatesAvailable;
-        }
-        plugins.append(value);
-    }
-    return {{"url", marketplaceUrl()},
-            {"loading", marketplaceLoading},
-            {"installing", marketplaceInstalling},
-            {"installId", marketplaceInstallId},
-            {"installFile", marketplaceInstallFile},
-            {"installFilesDone", marketplaceInstallFilesDone},
-            {"installFilesTotal", marketplaceInstallFilesTotal},
-            {"installBytes", double(marketplaceInstallBytes)},
-            {"installSpeed", marketplaceInstallSpeed},
-            {"installProgress", marketplaceInstallProgress},
-            {"updatesAvailable", updatesAvailable},
-            {"status", marketplaceStatus},
-            {"plugins", plugins}};
-}
-void Host::updateMarketplaceInstallProgress(bool force) {
-    if (!marketplaceInstalling) {
-        return;
-    }
-    const auto now = QDateTime::currentMSecsSinceEpoch();
-    const auto elapsed = qMax<qint64>(1, now - marketplaceInstallStartedAt);
-    marketplaceInstallSpeed = marketplaceInstallBytes * 1000.0 / elapsed;
-    const double current =
-        marketplaceInstallFileTotal > 0
-            ? qBound(0.0, double(marketplaceInstallFileBytes) / marketplaceInstallFileTotal, 1.0)
-            : 0.0;
-    marketplaceInstallProgress =
-        marketplaceInstallFilesTotal > 0
-            ? qBound(0.0, (marketplaceInstallFilesDone + current) / marketplaceInstallFilesTotal, 1.0)
-            : 0.0;
-    if (force || now - marketplaceInstallLastEmit >= 200) {
-        marketplaceInstallLastEmit = now;
-        emit invalidated();
-    }
-}
-bool Host::pluginUpdateAvailable(QString id) const {
-    QString installedVersion;
-    for (const auto &manifest : installedPluginManifests()) {
-        const auto value = manifest.toObject();
-        if (value["id"].toString() == id) {
-            installedVersion = value["version"].toString();
-            break;
-        }
-    }
-    if (installedVersion.isEmpty()) {
-        return false;
-    }
-    for (const auto &entry : marketplacePlugins) {
-        const auto value = entry.toObject();
-        if (value["id"].toString() == id) {
-            return pluginVersionNewer(value["version"].toString(), installedVersion);
-        }
-    }
-    return false;
-}
-void Host::checkPluginUpdates() {
-    if (installedPluginManifests().isEmpty()) {
-        return;
-    }
-    refreshPluginMarketplace();
-}
-void Host::refreshPluginMarketplace() {
-    const auto url = marketplaceUrl();
-    if (url.isEmpty()) {
-        marketplaceStatus = QStringLiteral("未配置插件市场地址");
-        emit invalidated();
-        return;
-    }
-    if (marketplaceLoading) {
-        return;
-    }
-    marketplaceLoading = true;
-    marketplaceStatus = QStringLiteral("正在读取插件市场…");
-    emit invalidated();
-    const auto apply = [this](const QByteArray &bytes) {
-        const auto document = QJsonDocument::fromJson(bytes).object();
-        QJsonArray plugins;
-        for (const auto &entry : document["plugins"].toArray()) {
-            const auto value = entry.toObject();
-            const auto id = value["id"].toString();
-            const auto path = value["path"].toString();
-            if (!value["id"].isString() || !validPluginId(id) || !value["path"].isString() ||
-                !pluginRelativeFile(path)) {
-                continue;
-            }
-            plugins.append(value);
-        }
-        marketplacePlugins = plugins;
-        QHash<QString, QString> installedVersions;
-        for (const auto &manifest : installedPluginManifests()) {
-            const auto value = manifest.toObject();
-            installedVersions.insert(value["id"].toString(), value["version"].toString());
-        }
-        int updatesAvailable = 0;
-        for (const auto &entry : plugins) {
-            const auto value = entry.toObject();
-            if (pluginVersionNewer(value["version"].toString(),
-                                   installedVersions.value(value["id"].toString()))) {
-                ++updatesAvailable;
-            }
-        }
-        marketplaceStatus =
-            QStringLiteral("已载入 ") + QString::number(plugins.size()) + QStringLiteral(" 个插件");
-        if (updatesAvailable > 0) {
-            marketplaceStatus +=
-                QStringLiteral(" · 发现 ") + QString::number(updatesAvailable) + QStringLiteral(" 个更新");
-        }
-        marketplaceLoading = false;
-        emit invalidated();
-    };
-    if (url.startsWith("file:")) {
-        QFile file(QUrl(url).toLocalFile());
-        if (!file.open(QIODevice::ReadOnly)) {
-            marketplaceLoading = false;
-            marketplaceStatus = QStringLiteral("插件市场读取失败");
-            emit invalidated();
-            return;
-        }
-        apply(file.readAll());
-        return;
-    }
-    QNetworkRequest request{QUrl(url)};
-    request.setTransferTimeout(20000);
-    auto reply = network.get(request);
-    QTimer::singleShot(20000, reply, [reply] {
-        if (!reply->isFinished()) {
-            reply->abort();
-        }
-    });
-    connect(reply, &QNetworkReply::finished, this, [this, reply, apply] {
-        const auto bytes = reply->readAll();
-        const auto ok = reply->error() == QNetworkReply::NoError &&
-                        reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() == 200 &&
-                        bytes.size() < 8 * 1024 * 1024;
-        reply->deleteLater();
-        marketplaceLoading = false;
-        if (!ok) {
-            marketplaceStatus = QStringLiteral("插件市场读取失败");
-            emit invalidated();
-            return;
-        }
-        apply(bytes);
-    });
-}
-void Host::downloadPluginFile(const QString &url, const QString &path, std::function<void(QString)> done) {
-    if (url.startsWith("file:")) {
-        QFile source(QUrl(url).toLocalFile());
-        if (!source.open(QIODevice::ReadOnly)) {
-            done(QStringLiteral("插件文件缺失"));
-            return;
-        }
-        const auto bytes = source.readAll();
-        QDir().mkpath(QFileInfo(path).path());
-        QSaveFile file(path);
-        if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size() || !file.commit()) {
-            done(QStringLiteral("写入插件文件失败"));
-            return;
-        }
-        marketplaceInstallFileBytes = bytes.size();
-        marketplaceInstallFileTotal = bytes.size();
-        marketplaceInstallBytes += bytes.size();
-        updateMarketplaceInstallProgress(true);
-        done({});
-        return;
-    }
-    QNetworkRequest request{QUrl(url)};
-    request.setTransferTimeout(30000);
-    auto reply = network.get(request);
-    connect(reply, &QNetworkReply::downloadProgress, this, [this](qint64 received, qint64 total) {
-        if (!marketplaceInstalling) {
-            return;
-        }
-        if (total > 0) {
-            marketplaceInstallFileTotal = total;
-        }
-        if (received > marketplaceInstallFileBytes) {
-            marketplaceInstallBytes += received - marketplaceInstallFileBytes;
-            marketplaceInstallFileBytes = received;
-        }
-        updateMarketplaceInstallProgress();
-    });
-    connect(reply, &QNetworkReply::finished, this, [this, reply, path, done] {
-        const auto bytes = reply->readAll();
-        const auto code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-        const auto ok =
-            reply->error() == QNetworkReply::NoError && code == 200 && bytes.size() < 64 * 1024 * 1024;
-        reply->deleteLater();
-        if (!ok) {
-            done(QStringLiteral("下载失败：") + QUrl(path).fileName());
-            return;
-        }
-        if (bytes.size() > marketplaceInstallFileBytes) {
-            marketplaceInstallBytes += bytes.size() - marketplaceInstallFileBytes;
-            marketplaceInstallFileBytes = bytes.size();
-        }
-        updateMarketplaceInstallProgress(true);
-        QDir().mkpath(QFileInfo(path).path());
-        QSaveFile file(path);
-        if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size() || !file.commit()) {
-            done(QStringLiteral("写入插件文件失败"));
-            return;
-        }
-        done({});
-    });
-}
-void Host::downloadPluginFiles(QStringList files, QString base, QString directory, QString id,
-                               std::function<void(QString)> done) {
-    auto step = std::make_shared<std::function<void(int)>>();
-    auto finish = [step, done](const QString &error) {
-        done(error);
-        QTimer::singleShot(0, [step] { *step = nullptr; });
-    };
-    *step = [this, files = std::move(files), base = std::move(base), directory = std::move(directory),
-             id = std::move(id), step, finish](int index) {
-        if (index >= files.size()) {
-            finish({});
-            return;
-        }
-        Q_UNUSED(id)
-        const auto name = files.at(index);
-        if (name.isEmpty() || QDir::isAbsolutePath(name) || name.contains("..") || name.contains('\\')) {
-            finish(QStringLiteral("插件文件路径无效"));
-            return;
-        }
-        marketplaceInstallFile = name;
-        marketplaceInstallFileBytes = 0;
-        marketplaceInstallFileTotal = 0;
-        updateMarketplaceInstallProgress(true);
-        downloadPluginFile(base + "/" + name, directory + "/" + name,
-                           [this, step, finish, index](QString error) {
-                               if (!error.isEmpty()) {
-                                   finish(error);
-                               } else {
-                                   marketplaceInstallFileBytes = 0;
-                                   marketplaceInstallFileTotal = 0;
-                                   ++marketplaceInstallFilesDone;
-                                   updateMarketplaceInstallProgress(true);
-                                   (*step)(index + 1);
-                               }
-                           });
-    };
-    (*step)(0);
-}
-QString Host::installMarketplacePlugin(QString id) {
-    QJsonObject entry;
-    for (const auto &value : marketplacePlugins) {
-        if (value.toObject()["id"].toString() == id) {
-            entry = value.toObject();
-            break;
-        }
-    }
-    if (entry.isEmpty()) {
-        return QStringLiteral("插件市场中没有该插件");
-    }
-    if (marketplaceInstalling) {
-        return QStringLiteral("正在安装插件，请稍候");
-    }
-    const auto url = marketplaceUrl();
-    const auto base = url.left(url.lastIndexOf('/'));
-    const auto folder = entry["path"].toString("plugins/" + id);
-    QStringList files{QStringLiteral("manifest.json")};
-    const auto entryFile = entry["entry"].toObject()["file"].toString();
-    if (!entryFile.isEmpty()) {
-        files.append(entryFile);
-    }
-    for (const auto &value : entry["files"].toArray()) {
-        const auto name = value.isString() ? value.toString() : value.toObject()["path"].toString();
-        if (!name.isEmpty()) {
-            files.append(name);
-        }
-    }
-    files.removeDuplicates();
-    const auto userDirectory = AppStorage::dataDirectory() + "/plugins";
-    const auto staging = userDirectory + "/.staging-" + id + "-" + QUuid::createUuid().toString();
-    QDir().mkpath(staging);
-    marketplaceInstalling = true;
-    marketplaceInstallId = id;
-    marketplaceInstallFile.clear();
-    marketplaceInstallFilesDone = 0;
-    marketplaceInstallFilesTotal = files.size();
-    marketplaceInstallBytes = 0;
-    marketplaceInstallFileBytes = 0;
-    marketplaceInstallFileTotal = 0;
-    marketplaceInstallStartedAt = QDateTime::currentMSecsSinceEpoch();
-    marketplaceInstallLastEmit = 0;
-    marketplaceInstallSpeed = 0;
-    marketplaceInstallProgress = 0;
-    marketplaceStatus = QStringLiteral("正在安装 ");
-    marketplaceStatus += entry["name"].toString(id);
-    updateMarketplaceInstallProgress(true);
-    downloadPluginFiles(files, base + "/" + folder, staging, id,
-                        [this, id, staging, userDirectory, entry](QString error) {
-                            if (!error.isEmpty()) {
-                                marketplaceInstalling = false;
-                                QDir(staging).removeRecursively();
-                                marketplaceStatus = error;
-                                emit invalidated();
-                                return;
-                            }
-                            QFile manifestFile(staging + "/manifest.json");
-                            if (!manifestFile.open(QIODevice::ReadOnly)) {
-                                marketplaceInstalling = false;
-                                QDir(staging).removeRecursively();
-                                marketplaceStatus = QStringLiteral("插件 manifest 缺失");
-                                emit invalidated();
-                                return;
-                            }
-                            const auto manifest = QJsonDocument::fromJson(manifestFile.readAll()).object();
-                            const auto manifestEntry = manifest["entry"].toObject()["file"].toString();
-                            const auto indexEntry = entry["entry"].toObject()["file"].toString();
-                            if (manifest["id"].toString() != id || !validPluginManifest(manifest) ||
-                                (!indexEntry.isEmpty() && indexEntry != manifestEntry) ||
-                                !QFile::exists(staging + "/" + manifestEntry)) {
-                                marketplaceInstalling = false;
-                                QDir(staging).removeRecursively();
-                                marketplaceStatus = QStringLiteral("插件 manifest 与市场条目不一致");
-                                emit invalidated();
-                                return;
-                            }
-                            const auto target = userDirectory + "/" + id;
-                            const auto backup = userDirectory + "/.backup-" + id;
-                            QDir().mkpath(userDirectory);
-                            QDir(backup).removeRecursively();
-                            bool moved = false;
-                            if (QDir(target).exists()) {
-                                if (!movePluginDirectory(target, backup)) {
-                                    marketplaceInstalling = false;
-                                    QDir(staging).removeRecursively();
-                                    marketplaceStatus = QStringLiteral("无法替换已安装插件");
-                                    emit invalidated();
-                                    return;
-                                }
-                                moved = true;
-                            }
-                            if (!commitPluginDirectory(staging, target)) {
-                                if (moved) {
-                                    movePluginDirectory(backup, target);
-                                }
-                                marketplaceInstalling = false;
-                                QDir(staging).removeRecursively();
-                                marketplaceStatus = QStringLiteral("插件安装失败");
-                                emit invalidated();
-                                return;
-                            }
-                            marketplaceInstallProgress = 1;
-                            marketplaceInstallSpeed = 0;
-                            marketplaceInstalling = false;
-                            marketplaceStatus = QStringLiteral("已安装 ") + entry["name"].toString(id);
-                            reloadPlugins();
-                        });
-    return {};
-}
-bool Host::pluginEnabled(QString id) const {
-    return !disabledPlugins().contains(id);
-}
-void Host::setPluginEnabled(QString id, bool enabled) {
-    auto disabled = disabledPlugins();
-    if (enabled) {
-        disabled.removeAll(id);
-    } else if (!disabled.contains(id)) {
-        disabled.append(id);
-    }
-    writeDisabledPlugins(disabled);
-    reloadPlugins();
-}
 void Host::reloadPlugins() {
-    ProviderRegistry::instance().load(root, AppStorage::dataDirectory() + "/plugins", disabledPlugins());
-    if (remote) {
-        remote->call("host.reloadPlugins");
-    } else if (child.state() != BridgeProcess::NotRunning) {
+    refreshPluginCatalog(true);
+    updateMarketplaceComparisons();
+    if (!remote && child.state() != BridgeProcess::NotRunning) {
         child.kill();
         child.waitForFinished(1000);
     }
@@ -1954,130 +1266,6 @@ void Host::reloadPlugins() {
     ++metadataRevision;
     emit pluginsReloaded();
     emit invalidated();
-}
-QString Host::rollbackPlugin(QString id) {
-    if (!validPluginId(id)) {
-        return QStringLiteral("插件 id 无效");
-    }
-    const auto directory = AppStorage::dataDirectory() + "/plugins";
-    const auto target = directory + "/" + id;
-    const auto backup = directory + "/.backup-" + id;
-    const auto staging = directory + "/.rollback-" + id + "-" + QUuid::createUuid().toString();
-    if (!QDir(backup).exists()) {
-        return QStringLiteral("没有可回滚的版本");
-    }
-    const bool moved = QDir(target).exists() && movePluginDirectory(target, staging);
-    if (QDir(target).exists() && !moved) {
-        return QStringLiteral("插件回滚失败");
-    }
-    if (!commitPluginDirectory(backup, target)) {
-        if (moved) {
-            movePluginDirectory(staging, target);
-        }
-        return QStringLiteral("插件回滚失败");
-    }
-    QDir(staging).removeRecursively();
-    reloadPlugins();
-    return {};
-}
-QString Host::uninstallPlugin(QString id) {
-    if (marketplaceInstalling) {
-        return QStringLiteral("正在安装插件，请稍候");
-    }
-    if (!validPluginId(id)) {
-        return QStringLiteral("插件 id 无效");
-    }
-    if (id == provider) {
-        return QStringLiteral("请先切换到其他来源后再卸载插件");
-    }
-    const auto directory = AppStorage::dataDirectory() + "/plugins";
-    const auto target = directory + "/" + id;
-    if (!QDir(target).exists()) {
-        return QStringLiteral("内置插件不能卸载");
-    }
-    if (!QDir(target).removeRecursively()) {
-        return QStringLiteral("插件卸载失败");
-    }
-    QDir(directory + "/.backup-" + id).removeRecursively();
-    const auto staging = QDir(directory).entryInfoList({QStringLiteral(".staging-") + id + "-*"},
-                                                       QDir::Dirs | QDir::Hidden, QDir::Name);
-    for (const auto &entry : staging) {
-        QDir(entry.absoluteFilePath()).removeRecursively();
-    }
-    auto disabled = disabledPlugins();
-    disabled.removeAll(id);
-    writeDisabledPlugins(disabled);
-    marketplaceStatus = QStringLiteral("已卸载 ") + id;
-    reloadPlugins();
-    return {};
-}
-QString Host::importPlugin(QString directory) {
-    if (marketplaceInstalling) {
-        return QStringLiteral("正在安装插件，请稍候");
-    }
-    if (directory.isEmpty()) {
-        return QStringLiteral("插件目录无效");
-    }
-    const QFileInfo sourceInfo(directory);
-    if (!sourceInfo.isDir()) {
-        return QStringLiteral("插件目录无效");
-    }
-    const auto source = sourceInfo.canonicalFilePath();
-    if (source.isEmpty()) {
-        return QStringLiteral("插件目录无效");
-    }
-    QFile manifestFile(source + "/manifest.json");
-    if (!manifestFile.open(QIODevice::ReadOnly)) {
-        return QStringLiteral("插件 manifest 缺失");
-    }
-    const auto manifest = QJsonDocument::fromJson(manifestFile.readAll()).object();
-    if (!validPluginManifest(manifest)) {
-        return QStringLiteral("插件 manifest 无效");
-    }
-    const auto id = manifest["id"].toString();
-    const auto entry = manifest["entry"].toObject()["file"].toString();
-    if (!QFileInfo(source + "/" + entry).isFile()) {
-        return QStringLiteral("插件入口文件缺失");
-    }
-    const auto userDirectory = AppStorage::dataDirectory() + "/plugins";
-    const auto target = userDirectory + "/" + id;
-    const auto targetInfo = QFileInfo(target);
-    if (targetInfo.exists()) {
-        const auto targetPath = targetInfo.canonicalFilePath();
-        if (source == targetPath || source.startsWith(targetPath + "/") ||
-            targetPath.startsWith(source + "/")) {
-            return QStringLiteral("不能从当前安装目录导入插件");
-        }
-    }
-    const auto staging = userDirectory + "/.staging-" + id + "-" + QUuid::createUuid().toString();
-    if (!copyPluginDirectory(source, staging)) {
-        QDir(staging).removeRecursively();
-        return QStringLiteral("复制插件文件失败");
-    }
-    QDir().mkpath(userDirectory);
-    const auto backup = userDirectory + "/.backup-" + id;
-    QDir(backup).removeRecursively();
-    bool moved = false;
-    if (QDir(target).exists()) {
-        if (!movePluginDirectory(target, backup)) {
-            QDir(staging).removeRecursively();
-            return QStringLiteral("无法替换已安装插件");
-        }
-        moved = true;
-    }
-    if (!commitPluginDirectory(staging, target)) {
-        if (moved) {
-            movePluginDirectory(backup, target);
-        }
-        QDir(staging).removeRecursively();
-        return QStringLiteral("插件导入失败");
-    }
-    auto disabled = disabledPlugins();
-    disabled.removeAll(id);
-    writeDisabledPlugins(disabled);
-    marketplaceStatus = QStringLiteral("已导入 ") + manifest["display"].toObject()["name"].toString(id);
-    reloadPlugins();
-    return {};
 }
 QString Host::saveCredential() {
     if (remote) {
@@ -2362,7 +1550,7 @@ QImage Host::image(const QString &key) const {
         if (relative.isEmpty()) {
             relative = "assets/quality/" + badge + ".png";
         }
-        if (!pluginRelativeFile(relative)) {
+        if (!PluginInstaller::relativePath(relative)) {
             return {};
         }
         const QStringList roots{AppStorage::dataDirectory() + "/plugins/" + provider,

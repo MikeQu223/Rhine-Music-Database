@@ -90,6 +90,7 @@ stdenv.mkDerivation {
     ln -s ${lib.getLib ffmpeg}/lib/libavutil.so.* "$out/lib/"
     install -Dm644 ../Assets/icons/icon-256.png \
       "$out/share/icons/hicolor/256x256/apps/rhine-music-database.png"
+    install -Dm644 ../Resources/rhine-plugin.xml "$out/share/mime/packages/rhine-plugin.xml"
   '';
   preFixup = ''
     qtWrapperArgs+=(--set-default RHINE_RESOURCES "$out/share/rhine-music-database")
@@ -98,8 +99,9 @@ stdenv.mkDerivation {
   desktopItems = [ (makeDesktopItem {
     name = "rhine-music-database";
     desktopName = "Rhine Music Database";
-    exec = "RhineMusicDatabase";
+    exec = "RhineMusicDatabase --import-plugin %F";
     icon = "rhine-music-database";
+    mimeTypes = [ "application/x-rhineplugin" ];
     categories = [ "AudioVideo" "Audio" "Player" ];
   }) ];
 

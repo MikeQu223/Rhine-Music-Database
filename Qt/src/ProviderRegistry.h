@@ -3,7 +3,6 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QPair>
-#include <QSet>
 #include <QString>
 #include <QStringList>
 #include <QVector>
@@ -15,7 +14,7 @@
 class ProviderRegistry {
   public:
     static ProviderRegistry &instance();
-    void load(const QString &root, const QString &userRoot = {}, const QStringList &disabled = {});
+    void load(const QString &root, const QJsonArray &verified = {});
     bool loaded() const;
     QStringList ids() const;
     bool contains(const QString &id) const;
@@ -62,7 +61,6 @@ class ProviderRegistry {
 
   private:
     void loadDirectory(const QString &directory, bool overwrite = true);
-    void loadManifestFallback(const QString &directory);
     void indexRoutes();
     void addBuiltin(const QString &id, const QString &name, const QString &label, const QString &detail,
                     const QString &sessionLabel, int order);
@@ -70,7 +68,6 @@ class ProviderRegistry {
     QHash<QString, QJsonObject> m_manifests;
     QHash<QString, QString> m_legacy;
     QHash<QString, QString> m_prefixes;
-    QSet<QString> m_disabled;
     QString m_root;
     bool m_loaded = false;
 };

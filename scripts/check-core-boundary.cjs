@@ -2,7 +2,7 @@
 'use strict';
 
 /**
- * P0 core 边界扫描（report-only）。
+ * 使用显式提供的历史配置扫描 core 边界（默认只报告）。
  *
  * 目标：在迁移期持续量化 core 里还有多少平台协议代码/依赖/资产。
  * P0 只报告，不阻断；--enforce 时对 violations 返回 1（legacy 不计）。
@@ -21,11 +21,15 @@ const args = new Set(process.argv.slice(2));
 const json = args.has('--json');
 const enforce = args.has('--enforce');
 
-const configFile = path.join(root, 'docs/PLUGIN/config.json');
+const baseline = process.env.RHINE_PLUGIN_BASELINE;
+if (!baseline) {
+    console.log('历史边界检查需要 RHINE_PLUGIN_BASELINE。当前来源检查请运行 npm run check:provider-literals。');
+    process.exit(enforce ? 1 : 0);
+}
+const configFile = path.resolve(baseline, 'config.json');
 if (!fs.existsSync(configFile)) {
-    console.log('Local plugin boundary config not found: docs/PLUGIN/config.json');
-    console.log('This is expected on a clean checkout; core boundary checks are local-only in P0.');
-    process.exit(0);
+    console.error('历史基线缺少 config.json。');
+    process.exit(1);
 }
 const config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
 const PROVIDER_IDS = config.providerIds || [];

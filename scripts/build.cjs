@@ -111,6 +111,9 @@ function prepareResources() {
     }
     for (const file of [
         'worker.cjs',
+        'plugin-control.cjs',
+        'plugin-control-cli.cjs',
+        'plugin-package.cjs',
         'ios-runtime.cjs',
         'ios-web-apis.cjs',
         'ios-system-trust.cjs',
@@ -279,6 +282,7 @@ function buildQt() {
         '-DRHINE_PACKAGE_APP=OFF',
         `-DRHINE_VERSION=${version.version}`,
         `-DRHINE_RELEASE_BUILD=${version.release ? 'ON' : 'OFF'}`,
+        `-DRHINE_PLUGIN_CLIENT_VERSION=${process.env.RHINE_PLUGIN_CLIENT_VERSION || ''}`,
     ];
     if (win || mac) {
         // CMake 生成符号时使用当前运行的 Node，避免依赖 PATH 里的系统安装。
@@ -1100,15 +1104,19 @@ function prepareLinuxAppDir(app) {
             'Name=RHINE MUSIC DATABASE',
             'GenericName=Music Library',
             'Comment=原生音乐资料库',
-            'Exec=RhineMusicDatabase %U',
+            'Exec=RhineMusicDatabase --import-plugin %F',
             'Icon=rhine-music-database',
             'Terminal=false',
+            'MimeType=application/x-rhineplugin;',
             'Categories=AudioVideo;Audio;Player;',
             'StartupWMClass=RhineMusicDatabase',
             'X-AppImage-Name=RhineMusicDatabase',
             '',
         ].join('\n'),
     );
+    const mimePackages = path.join(app, 'usr/share/mime/packages');
+    fs.mkdirSync(mimePackages, { recursive: true });
+    fs.copyFileSync('Resources/rhine-plugin.xml', path.join(mimePackages, 'rhine-plugin.xml'));
     fs.copyFileSync('Assets/icons/icon-256.png', path.join(app, 'rhine-music-database.png'));
     fs.copyFileSync('Assets/icons/icon-256.png', path.join(app, '.DirIcon'));
     const appRun = path.join(app, 'AppRun');

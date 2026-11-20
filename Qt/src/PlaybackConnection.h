@@ -12,7 +12,7 @@
 class PlaybackConnection : public QObject {
     Q_OBJECT
   public:
-    static constexpr int ProtocolVersion = 4;
+    static constexpr int ProtocolVersion = 5;
     using Reply = std::function<void(QJsonObject, QString)>;
     explicit PlaybackConnection(QObject *parent = nullptr);
     ~PlaybackConnection() override;
@@ -25,8 +25,10 @@ class PlaybackConnection : public QObject {
     static QString serviceExecutable();
 
   signals:
+    void pluginRuntimeFailed(QString id, QString reason);
     void snapshotChanged();
     void activateRequested();
+    void pluginPackageOpened(QString path);
     void quitRequested();
 #ifdef Q_OS_LINUX
     /// 后台服务要求按新配置重建界面（图形后端切换）：

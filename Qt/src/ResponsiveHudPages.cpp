@@ -827,7 +827,14 @@ double ResponsiveHudLayout::pluginsPage(ResponsiveHudCanvas &c, const QJsonObjec
     const auto installed = s["pluginInstalled"].toArray();
     terminalSection(c, y, "01", "插件市场", "MARKETPLACE");
     y += 26;
-    if (s["pluginImportAvailable"].toBool()) {
+    if (s["pluginPackageAvailable"].toBool()) {
+        c.button({20, y, 172, 44}, "导入插件包", "plugin:import-package");
+        c.button({201, y, 172, 44}, "刷新", "plugin:refresh");
+        if (s["pluginImportAvailable"].toBool()) {
+            c.button({20, y + 50, 172, 44}, "导入文件夹", "plugin:import");
+            y += 50;
+        }
+    } else if (s["pluginImportAvailable"].toBool()) {
         c.button({20, y, 172, 44}, "导入文件夹", "plugin:import");
         c.button({201, y, 172, 44}, "刷新", "plugin:refresh");
     } else {
@@ -894,7 +901,7 @@ double ResponsiveHudLayout::pluginsPage(ResponsiveHudCanvas &c, const QJsonObjec
     y += 26;
     if (installed.isEmpty()) {
         c.text("尚未安装插件", 20, y + 4, 14, 353, "demibold");
-        c.paragraph("从上方市场安装，或使用“导入文件夹”添加本地插件。", 20, y + 28, 10, 353, muted, "regular",
+        c.paragraph("可从上方市场安装插件。", 20, y + 28, 10, 353, muted, "regular",
                     2);
         y += 76;
     }
@@ -904,8 +911,11 @@ double ResponsiveHudLayout::pluginsPage(ResponsiveHudCanvas &c, const QJsonObjec
         const bool enabled = entry["enabled"].toBool();
         const bool userInstalled = entry["userInstalled"].toBool();
         c.text(entry["name"].toString(id), 20, y + 10, 14, 250, "demibold");
-        c.rightText(enabled ? "已启用" : "已禁用", 373, y + 10, 9, "regular", enabled ? c.ink : muted);
-        c.fill({373 - c.measure(enabled ? "已启用" : "已禁用", 9) - 11, y + 14, 5, 5},
+        const auto state = enabled ? QStringLiteral("已启用") :
+                           entry["compatibilityProblem"].toString().isEmpty() ?
+                               QStringLiteral("已禁用") : QStringLiteral("暂停加载");
+        c.rightText(state, 373, y + 10, 9, "regular", enabled ? c.ink : muted);
+        c.fill({373 - c.measure(state, 9) - 11, y + 14, 5, 5},
                enabled ? c.amber : muted);
         c.text(id + " / " + entry["version"].toString() + " / " + entry["publisher"].toString(), 20, y + 31,
                9, 340, "regular", muted);
@@ -926,6 +936,32 @@ double ResponsiveHudLayout::pluginsPage(ResponsiveHudCanvas &c, const QJsonObjec
     }
     y = c.paragraph(footer, 20, y + 10, 10, 353, muted) + 20;
     return y + m_scroll + 20;
+}
+
+double ResponsiveHudLayout::pluginInstallPage(ResponsiveHudCanvas &c, const QJsonObject &s) {
+    double y = 158 - m_scroll;
+    const auto preview = s["pluginInstall"].toObject();
+    const auto manifest = preview["manifest"].toObject();
+    const auto id = manifest["id"].toString();
+    const auto name = manifest["display"].toObject()["name"].toString(id);
+    const QRectF artwork{20, y, 56, 56};
+    if (preview["icon"].toString().isEmpty()) {
+        c.fill(artwork, c.raised);
+        c.centered(name.left(1), artwork.center().x(), y + 25, 18, "demibold");
+    } else {
+        c.roundedImage(preview["icon"].toString(), artwork, 8);
+    }
+    c.text(name, 88, y + 6, 20, 285, "demibold");
+    c.text(id, 88, y + 36, 10, 285, "regular", c.muted);
+    y += 77;
+    for (const auto &line : s["pluginInstallLines"].toArray()) {
+        y = c.paragraph(line.toString(), 20, y, 13, 353, c.ink, "regular", 4) + 13;
+    }
+    const auto label = preview["willEnable"].toBool() ? QStringLiteral("确认安装并启用") :
+                                                       QStringLiteral("确认安装");
+    c.button({20, y + 6, 172, 44}, label, "plugin:confirm-install", true);
+    c.button({201, y + 6, 172, 44}, "取消", "close-modal");
+    return y + m_scroll + 70;
 }
 
 /** 竖屏插件详情：字段两列对齐，窄屏上仍保留完整版本、来源与操作。 */
@@ -972,6 +1008,9 @@ double ResponsiveHudLayout::pluginDetailPage(ResponsiveHudCanvas &c, const QJson
                     : QStringLiteral("未安装"),
           20, y, 353);
     y += 52;
+    if (!detail["compatibilityProblem"].toString().isEmpty()) {
+        y = c.paragraph(detail["compatibilityProblem"].toString(), 20, y, 12, 353, muted) + 12;
+    }
     if (installed) {
         c.button({20, y, 172, 44}, enabled ? "禁用插件" : "启用插件", "plugin:toggle:" + id);
         c.button({201, y, 172, 44}, "回滚上一版本", "plugin:rollback:" + id);

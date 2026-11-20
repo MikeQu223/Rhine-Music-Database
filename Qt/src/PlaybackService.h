@@ -6,6 +6,7 @@
 #include <QLocalSocket>
 #include <QTimer>
 #include <QPointer>
+#include <QStringList>
 #include <memory>
 
 /** 音频与协议的唯一所有者；此对象不创建窗口、QML 引擎、场景或图形设备。 */
@@ -31,6 +32,7 @@ class PlaybackService : public QObject {
     QLocalServer m_server;
     QHash<QLocalSocket *, Client> m_clients;
     QPointer<QLocalSocket> m_gui;
+    QStringList m_pendingPluginPackages;
 #ifdef Q_OS_LINUX
     /// 当前界面进程启动时解析出的图形后端；与本次启动的解析结果不同即需要重建界面。
     QString m_guiBackend;
@@ -47,6 +49,8 @@ class PlaybackService : public QObject {
     bool m_stopping = false;
     void read(QLocalSocket *socket);
     void dispatch(QLocalSocket *socket, const QJsonObject &request);
+    bool queuePluginPackages(const QJsonValue &value, QString &error);
+    void deliverPluginPackages();
     QJsonObject hostCommand(const QString &method, const QJsonObject &arguments, bool &known);
     bool playerCommand(const QString &method, const QJsonObject &arguments);
     bool lyricsCommand(const QString &method, const QJsonObject &arguments);

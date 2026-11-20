@@ -35,6 +35,16 @@ if mac:
     assert helper_info["CFBundleIdentifier"] != main_info["CFBundleIdentifier"], (
         "Shared application identity"
     )
+    plugin_type = "rhine.music.database.plugin-package"
+    assert any(
+        plugin_type in value.get("LSItemContentTypes", [])
+        for value in main_info.get("CFBundleDocumentTypes", [])
+    ), "Missing macOS plugin package document handler"
+    assert any(
+        value.get("UTTypeIdentifier") == plugin_type
+        and "rhineplugin" in value.get("UTTypeTagSpecification", {}).get("public.filename-extension", [])
+        for value in main_info.get("UTExportedTypeDeclarations", [])
+    ), "Missing macOS plugin package type declaration"
     assert not (executable.parent / "RhinePlaybackService").exists(), (
         "Obsolete unbundled helper"
     )
@@ -303,6 +313,11 @@ elif linux:
     assert (app / "AppRun").is_file() and (
         app / "rhine-music-database.desktop"
     ).is_file()
+    desktop = (app / "rhine-music-database.desktop").read_text(encoding="utf-8")
+    assert "MimeType=application/x-rhineplugin;" in desktop and "--import-plugin %F" in desktop
+    assert (app / "usr/share/mime/packages/rhine-plugin.xml").is_file(), (
+        "Missing Linux plugin package MIME declaration"
+    )
     assert not list(app.rglob("*.swift"))
     if list((app / "usr/lib").glob("libQt6Sql.so*")):
         assert (app / "usr/plugins/sqldrivers/libqsqlite.so").is_file(), "Missing QSQLITE driver"

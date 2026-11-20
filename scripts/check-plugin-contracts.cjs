@@ -2,7 +2,7 @@
 'use strict';
 
 /**
- * P0 契约自检（report-only）。
+ * 校验显式提供的历史 descriptor 和 fixture（默认只报告）。
  *
  * 校验：
  * - descriptor JSON 的基本形状、唯一 id、必填展示/能力字段
@@ -19,18 +19,20 @@ const fs = require('node:fs');
 const path = require('node:path');
 const models = require('../MusicBridge/plugins/sdk/models.cjs');
 
-const root = path.resolve(__dirname, '..');
-const localBaseline = path.join(root, 'docs/PLUGIN');
-const descriptorDir = path.join(localBaseline, 'descriptors');
-const fixtureDir = path.join(localBaseline, 'fixtures');
+const baseline = process.env.RHINE_PLUGIN_BASELINE;
 const args = new Set(process.argv.slice(2));
 const json = args.has('--json');
 const enforce = args.has('--enforce');
 
+if (!baseline) {
+    console.log('历史契约检查需要 RHINE_PLUGIN_BASELINE。当前契约请运行 npm run check:contract-freeze。');
+    process.exit(enforce ? 1 : 0);
+}
+const descriptorDir = path.resolve(baseline, 'descriptors');
+const fixtureDir = path.resolve(baseline, 'fixtures');
 if (!fs.existsSync(descriptorDir) || !fs.existsSync(fixtureDir)) {
-    console.log('Local plugin baseline not found: docs/PLUGIN (gitignored).');
-    console.log('P0 checks are local-only; nothing to validate on a clean checkout.');
-    process.exit(0);
+    console.error('历史基线缺少 descriptors 或 fixtures。');
+    process.exit(1);
 }
 
 const OPERATIONS = [
@@ -171,8 +173,8 @@ function validateFixture(fixture, file) {
 
 const descriptors = {};
 for (const name of fs.readdirSync(descriptorDir).filter((entry) => entry.endsWith('.json'))) {
-    const file = path.join('MusicBridge/plugins/sdk/descriptors', name);
-    const descriptor = readJson(path.join(descriptorDir, name));
+    const file = path.join(descriptorDir, name);
+    const descriptor = readJson(file);
     if (descriptors[descriptor.id]) {
         problem(file, 'duplicate descriptor id: ' + descriptor.id);
     }
@@ -188,8 +190,8 @@ for (const provider of fs.readdirSync(fixtureDir)) {
     }
     for (const name of fs.readdirSync(directory).filter((entry) => entry.endsWith('.json'))) {
         fixtureCount += 1;
-        const file = path.join('docs/PLUGIN/fixtures', provider, name);
-        validateFixture(readJson(path.join(directory, name)), file);
+        const file = path.join(directory, name);
+        validateFixture(readJson(file), file);
     }
 }
 

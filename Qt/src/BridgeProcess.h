@@ -7,6 +7,7 @@ using BridgeProcess = QProcess;
 #else
 #include <QJsonObject>
 #include <QObject>
+#include <functional>
 
 // 移动端没有可执行文件可以 fork：Node 以常驻运行时（iOS 为 NodeMobile.framework，
 // Android 为 libnode.so）编进进程，Worker 按会话创建、销毁，不共享模块与环境变量。
@@ -32,6 +33,9 @@ class BridgeProcess : public QObject {
         return m_error;
     }
     void accept(const QJsonObject &message);
+    using ControlReply = std::function<void(QJsonObject, QString)>;
+    static void runPluginControl(QObject *context, const QString &root, const QJsonObject &request,
+                                 int timeout, ControlReply reply);
 
   signals:
     void started();

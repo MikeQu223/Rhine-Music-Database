@@ -1,5 +1,6 @@
 #include <QtGlobal>
 #include "PlaybackConnection.h"
+#include "PluginOpenRequest.h"
 #include "MobileTarget.h"
 #include "AppStorage.h"
 #include <QCoreApplication>
@@ -172,6 +173,11 @@ void PlaybackConnection::readMessages() {
         }
         if (message["event"] == "activate") {
             emit activateRequested();
+        } else if (message["event"] == "interface.openPluginPackage") {
+            const auto path = message["path"].toString();
+            if (PluginOpenRequest::isPackagePath(path)) {
+                emit pluginPackageOpened(path);
+            }
         } else if (message["event"] == "quit") {
             emit quitRequested();
         } else if (message["event"] == "storage.invalidated") {
@@ -180,6 +186,8 @@ void PlaybackConnection::readMessages() {
         } else if (message["event"] == "restart") {
             emit restartRequested();
 #endif
+        } else if (message["event"] == "plugin-runtime-failed") {
+            emit pluginRuntimeFailed(message["provider"].toString(), message["reason"].toString());
         } else if (message["event"] == "diagnostic") {
             emit diagnosticEvent(message["name"].toString(), message["values"].toObject());
         } else if (message["event"] == "spectrum" && message["levels"].isArray() &&

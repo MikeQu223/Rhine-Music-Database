@@ -27,6 +27,8 @@ const CONTRACT_FILES = [
     'MusicBridge/plugins/sdk/port.d.ts',
     'MusicBridge/plugins/sdk/registry.d.ts',
     'MusicBridge/plugins/sdk/manifest.schema.json',
+    'MusicBridge/plugins/sdk/compatibility.cjs',
+    'MusicBridge/plugins/sdk/manifest-validation.cjs',
     'MusicBridge/plugins/sdk/descriptor.schema.json',
     'MusicBridge/plugins/sdk/models.schema.json',
     'MusicBridge/plugins/sdk/models.cjs',
@@ -43,11 +45,9 @@ function hash(file) {
 }
 
 if (write) {
+    const previous = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
     const lock = {
-        schemaVersion: 2,
-        apiVersion: '2.0',
-        frozenAt: '2026-11-09',
-        note: 'Any contract change must update this file and follow the version policy in docs/PLUGIN/P0-FREEZE.md.',
+        ...previous,
         files: Object.fromEntries(CONTRACT_FILES.map((file) => [file, hash(file)])),
     };
     fs.writeFileSync(lockPath, JSON.stringify(lock, null, 4) + '\n');

@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Window
+import QtQuick.Dialogs
 import Rhine.Native 1.0
 
 // UI 叠加层：HUD、透明输入层、表单、搜索框、窗口边框与性能面板。
@@ -79,6 +80,77 @@ Item {
             backend: rhine
         }
     }
+    Loader {
+        active: !overlay.android
+        sourceComponent: Item {
+            id: pluginDialogs
+
+            readonly property var nativeParent: overlay.controlledHost ? rhineHostWindow : overlay.hostWindow
+
+            function openDialog(dialog) {
+                dialog.parentWindow = nativeParent;
+                dialog.open();
+                // 受控 Linux 窗口只有 QWindow。桌面未提供原生文件框时，Qt Quick 回退需要 QQuickWindow。
+                if (Qt.platform.os === "linux" && overlay.controlledHost && !dialog.visible) {
+                    fallback.activeDialog = dialog;
+                    fallback.show();
+                    dialog.parentWindow = fallback;
+                    dialog.open();
+                }
+            }
+
+            function closeFallback() {
+                fallback.activeDialog = null;
+                fallback.hide();
+            }
+
+            Window {
+                id: fallback
+                property var activeDialog: null
+                title: "导入莱茵插件"
+                width: 720
+                height: 520
+                transientParent: pluginDialogs.nativeParent
+                modality: Qt.WindowModal
+                flags: Qt.Dialog
+                onClosing: {
+                    if (activeDialog) {
+                        activeDialog.close();
+                    }
+                }
+            }
+            FileDialog {
+                id: pluginPackageDialog
+                objectName: "pluginPackageDialog"
+                title: "导入插件包"
+                nameFilters: ["莱茵插件包 (*.rhineplugin)"]
+                onAccepted: {
+                    pluginDialogs.closeFallback();
+                    rhine.importPluginPackage(selectedFile);
+                }
+                onRejected: pluginDialogs.closeFallback()
+            }
+            FolderDialog {
+                id: pluginFolderDialog
+                objectName: "pluginFolderDialog"
+                title: "导入插件文件夹"
+                onAccepted: {
+                    pluginDialogs.closeFallback();
+                    rhine.importPluginFolder(selectedFolder);
+                }
+                onRejected: pluginDialogs.closeFallback()
+            }
+            Connections {
+                target: rhine
+                function onPluginPackageRequested() {
+                    pluginDialogs.openDialog(pluginPackageDialog);
+                }
+                function onPluginImportRequested() {
+                    pluginDialogs.openDialog(pluginFolderDialog);
+                }
+            }
+        }
+    }
     // 竖屏歌词页的封面色彩背景独立于 HUD，避免背景动画触发整张 HUD 重绘。
     LyricsBackdrop {
         id: lyricsBackdrop
@@ -93,8 +165,7 @@ Item {
         }
         controlsTop: (rhine.state.lyricsControlsTop || 0) / 1080
         opacity: rhine.state.playerModeProgress || 0
-        visible: overlay.compactLayout && rhine.state.modal === "" &&
-                 (rhine.state.playerModeProgress || 0) > 0.001
+        visible: overlay.compactLayout && rhine.state.modal === "" && (rhine.state.playerModeProgress || 0) > 0.001
     }
     Hud {
         anchors.fill: parent

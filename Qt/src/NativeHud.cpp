@@ -766,9 +766,15 @@ void NativeHud::drawMobile(double time, const QString &scope, double stageWidth)
         mobile["pluginInstalled"] = m_host->pluginManagerState();
         mobile["pluginMessage"] = pluginManagerMessage;
         mobile["pluginImportAvailable"] = !RHINE_MOBILE;
+#ifndef Q_OS_ANDROID
+        mobile["pluginPackageAvailable"] = true;
+#endif
     } else if (modal == "plugin-detail") {
         mobile["pluginDetail"] = m_host->pluginDetail(pluginDetailId);
         mobile["pluginMessage"] = pluginManagerMessage;
+    } else if (modal == "plugin-install") {
+        mobile["pluginInstall"] = pluginInstall;
+        mobile["pluginInstallLines"] = QJsonArray::fromStringList(pluginInstallLines());
     }
     m_responsive.arrange(commands, hits, mobile, scope, *m_glyphs);
     QString pageKey = modal + ":" + frame["mode"].toString();

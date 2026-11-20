@@ -154,7 +154,8 @@ function prepareResources() {
     });
     // 白名单与许可证闭包复用桌面脚本；它读 output/bridge-build 里的上游数据目录，
     // 该目录缺失时先生成一次（不改变内容，只是让冷仓库也能直接出包）。
-    if (!fs.existsSync(path.resolve('output/bridge-build/MusicBridge/worker.cjs'))) {
+    const bridgeFiles = ['worker.cjs', 'plugin-control-cli.cjs'];
+    if (bridgeFiles.some((name) => !fs.existsSync(path.resolve('output/bridge-build/MusicBridge', name)))) {
         run(process.execPath, ['scripts/bundle-bridge.cjs']);
     }
     fs.rmSync(resources, { recursive: true, force: true });
@@ -166,7 +167,7 @@ function prepareResources() {
     // package-resources 在 Android 下已经不复制 node 可执行文件；这里再删一刀，
     // 防的是将来有人把那个分支改回去——APK 里的 node 既不能执行也没人调用。
     fs.rmSync(path.join(bridge, 'node'), { force: true });
-    for (const name of ['worker.cjs']) {
+    for (const name of bridgeFiles) {
         fs.copyFileSync(path.join(bridgeBundle, 'MusicBridge', name), path.join(bridge, name));
     }
     // 进程内运行时的 IPC 与 iOS 完全一致，直接复用同一份脚本（见 BridgeProcessAndroid.cpp）。
@@ -388,6 +389,7 @@ run(
         `-DRHINE_PACKAGE_APP=OFF`,
         `-DRHINE_VERSION=${version.version}`,
         `-DRHINE_RELEASE_BUILD=${version.release ? 'ON' : 'OFF'}`,
+        `-DRHINE_PLUGIN_CLIENT_VERSION=${process.env.RHINE_PLUGIN_CLIENT_VERSION || ''}`,
     ],
     { env: toolEnvironment() },
 );
@@ -447,31 +449,31 @@ if (unsigned) {
 } else {
     // zipalign 必须在签名之前：签名后再对齐会破坏 v2/v3 签名块。
     run(path.join(buildTools, 'zipalign'), ['-p', '-f', '4', unsignedApk, aligned]);
-    console.log(
-        useReleaseKey
-            ? '使用项目根发布密钥签名（产物带 -signed 后缀）'
-            : '使用工作区调试密钥签名',
+    console.log(useReleaseKey ? '使用项目根发布密钥签名（产物带 -signed 后缀）' : '使用工作区调试密钥签名');
+    run(
+        path.join(buildTools, 'apksigner'),
+        [
+            'sign',
+            ...(useReleaseKey
+                ? releaseSignArgs()
+                : [
+                      '--ks',
+                      keystore,
+                      '--ks-key-alias',
+                      'rhine-debug',
+                      '--ks-pass',
+                      'pass:android',
+                      '--key-pass',
+                      'pass:android',
+                  ]),
+            '--min-sdk-version',
+            '26',
+            '--out',
+            signed,
+            aligned,
+        ],
+        { stdio: ['ignore', 'inherit', 'inherit'] },
     );
-    run(path.join(buildTools, 'apksigner'), [
-        'sign',
-        ...(useReleaseKey
-            ? releaseSignArgs()
-            : [
-                  '--ks',
-                  keystore,
-                  '--ks-key-alias',
-                  'rhine-debug',
-                  '--ks-pass',
-                  'pass:android',
-                  '--key-pass',
-                  'pass:android',
-              ]),
-        '--min-sdk-version',
-        '26',
-        '--out',
-        signed,
-        aligned,
-    ], { stdio: ['ignore', 'inherit', 'inherit'] });
     // stdin 给 EOF：万一发布密钥的私钥密码与库密码不同，apksigner 会想交互提示，
     // 构建脚本不能挂在那里等输入；它会读到 EOF 并给出明确的错误。
 }

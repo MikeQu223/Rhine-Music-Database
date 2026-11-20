@@ -12,5 +12,27 @@
         <key>LSMinimumSystemVersion</key><string>14.4</string>
         <key>NSHighResolutionCapable</key><true/>
         <key>LSApplicationCategoryType</key><string>public.app-category.music</string>
+        <key>CFBundleDocumentTypes</key>
+        <array>
+            <dict>
+                <key>CFBundleTypeName</key><string>Rhine Plugin Package</string>
+                <key>CFBundleTypeRole</key><string>Viewer</string>
+                <key>LSHandlerRank</key><string>Owner</string>
+                <key>LSItemContentTypes</key><array><string>@RHINE_APPLICATION_ID@.plugin-package</string></array>
+            </dict>
+        </array>
+        <key>UTExportedTypeDeclarations</key>
+        <array>
+            <dict>
+                <key>UTTypeIdentifier</key><string>@RHINE_APPLICATION_ID@.plugin-package</string>
+                <key>UTTypeDescription</key><string>Rhine Plugin Package</string>
+                <key>UTTypeConformsTo</key><array><string>public.data</string><string>public.content</string></array>
+                <key>UTTypeTagSpecification</key>
+                <dict>
+                    <key>public.filename-extension</key><array><string>rhineplugin</string></array>
+                    <key>public.mime-type</key><array><string>application/x-rhineplugin</string></array>
+                </dict>
+            </dict>
+        </array>
     </dict>
 </plist>

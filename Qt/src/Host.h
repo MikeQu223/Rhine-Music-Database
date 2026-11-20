@@ -14,6 +14,7 @@
 #include "storage/StorageCoordinator.h"
 #include "storage/CacheManager.h"
 #include <QQueue>
+#include <QLockFile>
 #include <QTemporaryDir>
 #include <QTimer>
 #include <functional>
@@ -57,10 +58,15 @@ class Host : public QObject {
     Q_INVOKABLE QString installMarketplacePlugin(QString id);
     Q_INVOKABLE bool pluginEnabled(QString id) const;
     Q_INVOKABLE bool pluginUpdateAvailable(QString id) const;
-    Q_INVOKABLE void setPluginEnabled(QString id, bool enabled);
+    Q_INVOKABLE QString setPluginEnabled(QString id, bool enabled);
     Q_INVOKABLE QString rollbackPlugin(QString id);
     Q_INVOKABLE QString uninstallPlugin(QString id);
     QString importPlugin(QString directory);
+    QString importPluginPackage(const QUrl &url);
+    void confirmPluginInstall();
+    void cancelPluginInstall();
+    bool pluginInstallPending() const { return bool(m_pluginStaging); }
+    QJsonObject pluginCatalog() const;
     void reloadPlugins();
     // v2 凭据封装：按 provider 隔离 cookie 与 secretState；旧扁平 jar 在加载时迁移。
     static QJsonObject migrateCredential(const QJsonObject &legacy);
@@ -143,6 +149,9 @@ class Host : public QObject {
     void playbackDiagnostic(QString event, QJsonObject values);
     void invalidated();
     void pluginsReloaded();
+    void pluginInstallConfirmation(QJsonObject details);
+    void pluginInstallFinished(QString error);
+    void pluginRuntimeFailed(QString id, QString reason);
 
   private:
     friend class AudioPlayerRegression;
@@ -184,6 +193,12 @@ class Host : public QObject {
     quint64 imageCacheGeneration = 0;
     mutable qint64 lastMediaUpdate = 0;
     QNetworkAccessManager network;
+    QJsonObject m_pluginCatalog;
+    QJsonObject m_pluginRuntimeProblems;
+    QJsonObject m_marketComparisons;
+    QJsonObject m_preparedPlugin;
+    std::unique_ptr<QTemporaryDir> m_pluginStaging;
+    std::unique_ptr<QLockFile> m_pluginStageLease;
     QJsonArray marketplacePlugins;
     QString marketplaceStatus;
     bool marketplaceLoading = false;
@@ -200,12 +215,22 @@ class Host : public QObject {
     double marketplaceInstallSpeed = 0;
     double marketplaceInstallProgress = 0;
     void updateMarketplaceInstallProgress(bool force = false);
+    QString pluginRoot() const;
+    QJsonObject pluginControlRequest(const QString &control) const;
+    void refreshPluginCatalog(bool reloadService = false);
+    void updateMarketplaceComparisons();
+    QString beginPluginInstall(const QString &id = {});
+    void preparePlugin(QString source, QString kind, QString origin, const QJsonObject &expected = {});
+    void finishPluginInstall(const QString &error);
+    QString pluginDirectory(const QString &id) const;
+    QString pluginProblem(const QString &id) const;
+    void markPluginRuntimeFailure(const QString &id, const QString &reason);
     QJsonArray installedPluginManifests() const;
     QStringList disabledPlugins() const;
-    void writeDisabledPlugins(const QStringList &disabled);
+    bool writeDisabledPlugins(const QStringList &disabled);
     QString marketplaceUrl() const;
-    void downloadPluginFile(const QString &url, const QString &path, std::function<void(QString)> done);
-    void downloadPluginFiles(QStringList files, QString base, QString directory, QString id,
+    void downloadPluginFile(const QUrl &url, const QString &path, qint64 limit, TextReply done);
+    void downloadPluginFiles(QStringList files, QUrl base, QString directory,
                              std::function<void(QString)> done);
     mutable QCache<QString, QImage> images{32 * 1024};
     mutable QCache<QString, QImage> thumbnailImages{8 * 1024};

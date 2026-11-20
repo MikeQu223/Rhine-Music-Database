@@ -10,6 +10,7 @@
 #ifdef Q_OS_DARWIN
 #include "fg/FgFrameTap.h"
 #endif
+#include <QQueue>
 #include <QElapsedTimer>
 #include <QSet>
 #include <QPointF>
@@ -94,6 +95,7 @@ class Engine : public QObject {
     }
     Q_INVOKABLE void importLocal(QList<QUrl> urls);
     Q_INVOKABLE void importPluginFolder(QUrl url);
+    Q_INVOKABLE void importPluginPackage(QUrl url);
     Q_INVOKABLE void resize(double width, double height);
     Q_INVOKABLE void action(QString action);
     Q_INVOKABLE void submitForm(QString account, QString captcha);
@@ -261,12 +263,15 @@ class Engine : public QObject {
     void performanceRequested();
     void localImportRequested(bool folder);
     void pluginImportRequested();
+    void pluginPackageRequested();
     void mvRequested();
 
   protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
 
   private:
+    QQueue<QUrl> m_pluginImports;
+    void startNextPluginImport();
     bool compactLayout() const;
     bool compactSceneObscured() const;
     bool compactScenePaused() const;

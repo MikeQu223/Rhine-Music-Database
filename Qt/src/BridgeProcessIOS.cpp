@@ -4,6 +4,7 @@
 #include <QCoreApplication>
 #include <QFileInfo>
 #include <QJsonDocument>
+#include <QHash>
 #include <QPointer>
 #include <QTcpServer>
 #include <QTcpSocket>
@@ -25,6 +26,7 @@ class NodeRuntime : public QObject {
     QTcpSocket *socket = nullptr;
     QByteArray input;
     QByteArray queued;
+    QHash<QString, BridgeProcess::ControlReply> controls;
     QString token = QUuid::createUuid().toString(QUuid::WithoutBraces);
     bool launched = false;
     bool authenticated = false;
@@ -76,6 +78,16 @@ class NodeRuntime : public QObject {
                           {"id", id},
                           {"trusted", trusted}});
                 });
+            } else if (message["type"] == "plugin-control-result") {
+                const auto id = message["requestId"].toString();
+                if (auto reply = controls.take(id)) {
+                    // 安装回调会同步发起复验。先退出 readyRead，才能收到下一条回复。
+                    const auto result = message["result"].toObject();
+                    const auto error = message["error"].toObject()["message"].toString();
+                    QMetaObject::invokeMethod(
+                        this, [reply = std::move(reply), result, error] { reply(result, error); },
+                        Qt::QueuedConnection);
+                }
             } else if (owner) {
                 owner->accept(message);
             }
@@ -129,6 +141,34 @@ NodeRuntime &runtime() {
     static auto instance = new NodeRuntime;
     return *instance;
 }
+}
+
+/** 校验任务独立于当前音乐 Worker，不替换正在运行的会话。 */
+void BridgeProcess::runPluginControl(QObject *context, const QString &root, const QJsonObject &request,
+                                     int timeout, ControlReply reply) {
+    auto &node = runtime();
+    if (!node.launch(root)) {
+        reply({}, QStringLiteral("无法启动本地插件校验器"));
+        return;
+    }
+    const auto id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    const QPointer<QObject> guard(context);
+    node.controls.insert(id, [guard, reply = std::move(reply)](QJsonObject result, QString error) {
+        if (guard) {
+            reply(std::move(result), std::move(error));
+        }
+    });
+    node.send({{"type", "plugin-control"},
+               {"requestId", id},
+               {"script", root + "/MusicBridge/plugin-control-cli.cjs"},
+               {"request", request}});
+    QTimer::singleShot(timeout, &node, [id] {
+        auto &pending = runtime();
+        if (auto callback = pending.controls.take(id)) {
+            pending.send({{"type", "plugin-control-cancel"}, {"requestId", id}});
+            callback({}, QStringLiteral("插件校验超时"));
+        }
+    });
 }
 
 BridgeProcess::BridgeProcess(QObject *parent) : QObject(parent) {

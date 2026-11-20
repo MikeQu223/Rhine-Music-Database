@@ -3,14 +3,54 @@ const net = require('node:net');
 const fs = require('node:fs');
 const path = require('node:path');
 const readline = require('node:readline');
-const { Worker } = require('node:worker_threads');
+const { MessageChannel, Worker } = require('node:worker_threads');
 const socket = net.connect(Number(process.argv[2]), '127.0.0.1');
 let worker;
 let session;
 let commands = Promise.resolve();
+const pluginControls = new Map();
 
 function send(message) {
     socket.write(JSON.stringify(message) + '\n');
+}
+
+/** 校验和初始化请求在独立 Worker 中执行，与当前音乐会话生命周期分离。 */
+function startPluginControl(message) {
+    const { requestId } = message;
+    if (pluginControls.has(requestId)) {
+        return;
+    }
+    const failed = { code: 'plugin.control', message: '插件校验运行时退出' };
+    let control;
+    try {
+        control = new Worker(message.script, { stdout: true, stderr: true });
+    } catch {
+        send({ type: 'plugin-control-result', requestId, error: failed });
+        return;
+    }
+    // 插件入口可以访问当前 Worker 的 parentPort，控制结果使用单独的回复端口。
+    const { port1, port2 } = new MessageChannel();
+    const stop = () => {
+        port1.close();
+        control.terminate().catch(() => {
+            // Worker 已退出时无需再次终止。
+        });
+    };
+    pluginControls.set(requestId, stop);
+    const finish = (value) => {
+        if (pluginControls.get(requestId) !== stop) {
+            return;
+        }
+        pluginControls.delete(requestId);
+        send({ type: 'plugin-control-result', requestId, result: value.result, error: value.error });
+        stop();
+    };
+    control.stdout.resume();
+    control.stderr.resume();
+    port1.once('message', finish);
+    control.once('exit', () => finish({ error: failed }));
+    control.once('error', () => finish({ error: failed }));
+    control.postMessage({ request: message.request, reply: port2 }, [port2]);
 }
 
 socket.on('connect', () => send({ token: process.argv[3] }));
@@ -22,7 +62,15 @@ setInterval(() => {}, 60000);
 
 /** 串行销毁旧 Worker 后才建立新会话，旧连接和模块全局状态不会进入新账号。 */
 async function execute(message) {
-    if (message.type === 'start') {
+    if (message.type === 'plugin-control') {
+        startPluginControl(message);
+    } else if (message.type === 'plugin-control-cancel') {
+        const stop = pluginControls.get(message.requestId);
+        if (stop) {
+            pluginControls.delete(message.requestId);
+            stop();
+        }
+    } else if (message.type === 'start') {
         if (worker) {
             await worker.terminate();
         }
@@ -42,8 +90,7 @@ async function execute(message) {
                     JSON.stringify(message.env || {}),
                     { flag: 'w' },
                 );
-            } catch {
-            }
+            } catch {}
         }
         worker = new Worker(message.script, {
             env: { ...process.env, ...message.env },
@@ -53,6 +100,16 @@ async function execute(message) {
             stderr: true,
         });
         const instance = worker;
+        const environment = message.env || {};
+        instance.stdin.write(
+            JSON.stringify({
+                control: 'plugins.configure',
+                clientVersion: environment.RHINE_CLIENT_VERSION,
+                platform: environment.RHINE_PLATFORM,
+                userRoot: environment.RHINE_USER_PLUGINS,
+                disabled: environment.RHINE_DISABLED_PLUGINS,
+            }) + '\n',
+        );
         instance.on('message', (message) => {
             if (message?.type === 'system-trust') {
                 send({ ...message, session: current });

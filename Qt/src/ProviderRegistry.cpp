@@ -1,9 +1,7 @@
 #include "ProviderRegistry.h"
 #include <QDir>
 #include <QFile>
-#include <QFileInfo>
 #include <QJsonDocument>
-#include <QRegularExpression>
 #include <algorithm>
 
 namespace {
@@ -17,42 +15,7 @@ bool validDescriptor(const QJsonObject &value) {
     return value["schemaVersion"].toInt(2) == 2 && !value["id"].toString().isEmpty() &&
            value["display"].isObject() && value["capabilities"].isObject();
 }
-bool compatiblePluginApi(const QString &version) {
-    static const QRegularExpression pattern("^(\\d+)\\.(\\d+)$");
-    const auto match = pattern.match(version);
-    return match.hasMatch() && match.captured(1).toInt() == 2 && match.captured(2).toInt() <= 0;
-}
-bool safePluginFile(const QString &file) {
-    return !file.isEmpty() && !QDir::isAbsolutePath(file) && !file.contains("..") &&
-           !file.contains('\\');
-}
-bool validManifest(const QJsonObject &manifest) {
-    if (manifest["schemaVersion"].toInt() != 2 || manifest["version"].toString().isEmpty() ||
-        !compatiblePluginApi(manifest["apiVersion"].toString())) {
-        return false;
-    }
-    const auto entry = manifest["entry"].toObject()["file"].toString();
-    if (!safePluginFile(entry) || !manifest["display"].isObject() ||
-        !manifest["capabilities"].isObject()) {
-        return false;
-    }
-    const auto routes = manifest["routes"].toObject();
-    for (const auto *key : {"legacyRoutes", "prefixes"}) {
-        const auto values = routes[key];
-        if (values.isUndefined()) {
-            continue;
-        }
-        if (!values.isArray()) {
-            return false;
-        }
-        for (const auto &value : values.toArray()) {
-            if (!value.isString() || !value.toString().startsWith('/')) {
-                return false;
-            }
-        }
-    }
-    return true;
-}
+
 }
 
 ProviderRegistry &ProviderRegistry::instance() {
@@ -60,7 +23,7 @@ ProviderRegistry &ProviderRegistry::instance() {
     return registry;
 }
 
-void ProviderRegistry::load(const QString &root, const QString &userRoot, const QStringList &disabled) {
+void ProviderRegistry::load(const QString &root, const QJsonArray &verified) {
     if (!root.isEmpty()) {
         m_root = root;
     }
@@ -68,15 +31,25 @@ void ProviderRegistry::load(const QString &root, const QString &userRoot, const 
     m_manifests.clear();
     m_legacy.clear();
     m_prefixes.clear();
-    m_disabled.clear();
-    for (const auto &id : disabled) {
-        m_disabled.insert(id);
-    }
     m_loaded = false;
-    // 已安装插件优先；构建期内置 descriptor 不覆盖用户目录中的同 id 插件。
-    loadManifestFallback(userRoot);
     loadDirectory(m_root + "/MusicBridge/plugins/descriptors", false);
-    loadManifestFallback(m_root + "/MusicBridge/local-plugins");
+    for (const auto &entry : verified) {
+        const auto manifest = entry.toObject()["manifest"].toObject();
+        const auto id = manifest["id"].toString();
+        if (id.isEmpty() || id == "local" || id == "siren" || m_manifests.contains(id)) {
+            continue;
+        }
+        QJsonObject descriptor;
+        for (const auto &field : descriptorFields) {
+            if (manifest.contains(field)) {
+                descriptor.insert(field, manifest[field]);
+            }
+        }
+        if (validDescriptor(descriptor)) {
+            m_manifests.insert(id, manifest);
+            m_descriptors.insert(id, descriptor);
+        }
+    }
     indexRoutes();
     // 构建产物缺失时仍保证 core 自带来源可用；插件 descriptor 存在时不会被覆盖。
     addBuiltin("siren", "塞壬唱片", "MONSTER SIREN", "官网曲库", "MONSTER SIREN", 0);
@@ -410,58 +383,10 @@ void ProviderRegistry::loadDirectory(const QString &directory, bool overwrite) {
             continue;
         }
         const auto id = value["id"].toString();
-        if (m_disabled.contains(id)) {
+        if (id != "local" && id != "siren") {
             continue;
         }
         if (overwrite || !m_descriptors.contains(id)) {
-            m_descriptors.insert(id, value);
-        }
-    }
-}
-
-void ProviderRegistry::loadManifestFallback(const QString &directory) {
-    if (directory.isEmpty()) {
-        return;
-    }
-    QDir dir(directory);
-    if (!dir.exists()) {
-        return;
-    }
-    const auto entries = dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
-    for (const auto &entry : entries) {
-        if (entry.fileName().startsWith('.') || entry.fileName() == "sdk" ||
-            entry.fileName() == "node_modules") {
-            continue;
-        }
-        QFile handle(entry.absoluteFilePath() + "/manifest.json");
-        if (!handle.open(QIODevice::ReadOnly)) {
-            continue;
-        }
-        const auto manifest = QJsonDocument::fromJson(handle.readAll()).object();
-        const auto id = manifest["id"].toString();
-        if (id.isEmpty() || id == "local" || id == "siren" || m_disabled.contains(id) ||
-            !validManifest(manifest) ||
-            !QFileInfo(entry.absoluteFilePath() + "/" + manifest["entry"].toObject()["file"].toString())
-                 .isFile()) {
-            continue;
-        }
-        if (m_descriptors.contains(id)) {
-            if (!m_manifests.contains(id)) {
-                m_manifests.insert(id, manifest);
-            }
-            continue;
-        }
-        if (!m_manifests.contains(id)) {
-            m_manifests.insert(id, manifest);
-        }
-        QJsonObject value;
-        for (const auto &field : descriptorFields) {
-            if (!manifest[field].isUndefined()) {
-                value[field] = manifest[field];
-            }
-        }
-        value["schemaVersion"] = 2;
-        if (validDescriptor(value)) {
             m_descriptors.insert(id, value);
         }
     }

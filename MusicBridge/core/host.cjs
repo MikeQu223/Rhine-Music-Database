@@ -1,5 +1,15 @@
 'use strict';
 
+/** 将已静态校验的宿主信息传给当前插件实例。 */
+function attachCompatibility(host, manifest, context, result) {
+    host.manifest = manifest;
+    const checked = Object.freeze(result);
+    Object.defineProperties(host, {
+        context: { value: context, enumerable: true, configurable: true },
+        checkCompatibility: { value: () => checked, enumerable: true, configurable: true },
+    });
+}
+
 /**
  * 通用插件 Host：把 worker 的 callback 风格 request 适配成插件 API。
  * 不包含平台语义；cookie/secretState 按请求透传。
@@ -61,4 +71,4 @@ function createHost(message, request, recordDiagnostic) {
     };
 }
 
-module.exports = { createHost };
+module.exports = { attachCompatibility, createHost };

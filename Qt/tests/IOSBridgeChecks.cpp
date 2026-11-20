@@ -1,4 +1,5 @@
 #include "BridgeProcess.h"
+#include "PluginInstaller.h"
 #include <QDir>
 #include <QDirIterator>
 #include <QEventLoop>
@@ -56,6 +57,33 @@ bool installFixturePlugin(const QString &root, const QString &plugins) {
     }
     return true;
 }
+
+/** 安装在初始化回调里同步复验，回环通道必须能接收下一条回复。 */
+bool checkPluginControlFollowup(const QString &root, const QString &plugins, const QString &scratch) {
+    QEventLoop loop;
+    const auto directory = plugins + "/alpha";
+    const QJsonObject initialize{{"control", "plugins.initialize"},
+                                 {"path", directory},
+                                 {"scratchPath", scratch}};
+    bool completed = false;
+    bool ok = false;
+    PluginInstaller::run(&loop, root, initialize, [&](QJsonObject result, QString error) {
+        if (error.isEmpty() && result["initialized"].toBool()) {
+            const auto inspected = PluginInstaller::runSynchronously(
+                root, {{"control", "plugins.inspect"}, {"path", directory}}, error);
+            ok = error.isEmpty() && inspected["manifest"].toObject()["id"] == "alpha";
+        }
+        if (!ok) {
+            qWarning().noquote() << "iOS plugin control follow-up failed:" << error;
+        }
+        completed = true;
+        loop.quit();
+    });
+    if (!completed) {
+        loop.exec();
+    }
+    return ok;
+}
 }
 
 /**
@@ -84,6 +112,7 @@ bool runIOSBridgeChecks(const QString &root) {
     QJsonObject pluginResponse;
     ok &= installFixturePlugin(root, plugins);
     if (ok) {
+        ok &= checkPluginControlFollowup(root, plugins, temporary.path());
         const QJsonObject pluginRequest{{"id", "plugin-check"},
                                         {"route", "/native/alpha/search"},
                                         {"params", QJsonObject{{"args", QJsonArray{"embedded", "song"}}}}};

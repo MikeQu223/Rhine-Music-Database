@@ -1,3 +1,4 @@
+#include <QEventLoop>
 #include "NativeHud.h"
 #include "AppStorage.h"
 #include "ProviderRegistry.h"
@@ -1820,6 +1821,32 @@ bool checkSkipDetailOnSwitch(const QString &root, Glyphs &glyphs, const QJsonObj
     return true;
 }
 
+QString importPluginForCheck(Host &host, const QString &directory) {
+    QEventLoop wait;
+    QString error;
+    const auto confirmation = QObject::connect(&host, &Host::pluginInstallConfirmation,
+                                               &wait, [&host] { host.confirmPluginInstall(); });
+    const auto finished = QObject::connect(&host, &Host::pluginInstallFinished,
+                                           &wait, [&](const QString &problem) {
+        error = problem;
+        wait.quit();
+    });
+    error = host.importPlugin(directory);
+    if (error.isEmpty()) {
+        QTimer timeout;
+        timeout.setSingleShot(true);
+        QObject::connect(&timeout, &QTimer::timeout, &wait, [&] {
+            error = QStringLiteral("插件安装回归超时");
+            wait.quit();
+        });
+        timeout.start(5000);
+        wait.exec();
+    }
+    QObject::disconnect(confirmation);
+    QObject::disconnect(finished);
+    return error;
+}
+
 /** 更新当前来源后 descriptor 与歌词来源必须立即重建，且无需用户再次切换平台。 */
 bool checkPluginReload(const QString &root, const QJsonObject &content) {
     const auto id = QStringLiteral("hud-plugin-reload-fixture");
@@ -1844,7 +1871,7 @@ bool checkPluginReload(const QString &root, const QJsonObject &content) {
         return manifestFile.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
                manifestFile.write(QJsonDocument(manifest).toJson()) > 0 &&
                entryFile.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
-               entryFile.write("module.exports = { create() { return {}; } };\n") > 0;
+               entryFile.write("module.exports = { create() { return { dispatchNative() {} }; } };\n") > 0;
     };
     bool ok = writeFixture("1.0.0", "旧列");
     if (!ok) {
@@ -1861,7 +1888,7 @@ bool checkPluginReload(const QString &root, const QJsonObject &content) {
                 {"body", QJsonObject{{"code", 200}, {"value", QJsonObject{{"items", QJsonArray{}}}}}}};
         };
         MusicLibrary music(&host, content);
-        const auto firstImport = host.importPlugin(directory);
+        const auto firstImport = importPluginForCheck(host, directory);
         if (!firstImport.isEmpty()) {
             qCritical() << "Initial plugin import failed" << firstImport;
             ok = false;
@@ -1876,7 +1903,7 @@ bool checkPluginReload(const QString &root, const QJsonObject &content) {
             qCritical() << "Cannot prepare plugin update fixture";
             ok = false;
         }
-        const auto secondImport = host.importPlugin(directory);
+        const auto secondImport = importPluginForCheck(host, directory);
         if (!secondImport.isEmpty()) {
             qCritical() << "Plugin update import failed" << secondImport;
             ok = false;
@@ -1907,7 +1934,7 @@ bool checkPluginReload(const QString &root, const QJsonObject &content) {
     const auto pluginRoot = AppStorage::dataDirectory() + "/plugins";
     QDir(pluginRoot + "/.backup-" + id).removeRecursively();
     QDir(pluginRoot + "/" + id).removeRecursively();
-    ProviderRegistry::instance().load(root, pluginRoot, {});
+    ProviderRegistry::instance().load(root);
     if (!ok) {
         qCritical() << "Plugin reload did not refresh the current provider or lyrics sources";
     }
@@ -2811,11 +2838,9 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
         QDir().mkpath(directory);
         QFile manifest(directory + "/manifest.json");
         QFile entry(directory + "/plugin.cjs");
-        const auto manifestValue = QJsonObject{{"schemaVersion", 1},
-                                               {"apiVersion", "1.0"},
-                                               {"id", id},
-                                               {"schemaVersion", 2},
+        const auto manifestValue = QJsonObject{{"schemaVersion", 2},
                                                {"apiVersion", "2.0"},
+                                               {"id", id},
                                                {"version", "1.0.0"},
                                                {"entry", QJsonObject{{"file", "plugin.cjs"}}},
                                                {"display", QJsonObject{{"name", "HUD Import Fixture"}}},
@@ -2825,10 +2850,10 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
             ok = false;
         } else {
             manifest.write(QJsonDocument(manifestValue).toJson());
-            entry.write("module.exports = { create() { return {}; } };\n");
+            entry.write("module.exports = { create() { return { dispatchNative() {} }; } };\n");
             manifest.close();
             entry.close();
-            const auto importError = host.importPlugin(directory);
+            const auto importError = importPluginForCheck(host, directory);
             const auto detail = host.pluginDetail(id);
             const auto uninstallError = host.uninstallPlugin(id);
             ok &= record("plugin folder import and uninstall",

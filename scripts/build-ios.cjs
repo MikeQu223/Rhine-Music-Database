@@ -66,7 +66,7 @@ function prepareResources() {
     run(process.execPath, ['scripts/package-resources.cjs', resources]);
     const bridge = path.join(resources, 'MusicBridge');
     fs.rmSync(path.join(bridge, 'node'), { force: true });
-    for (const name of ['worker.cjs']) {
+    for (const name of ['worker.cjs', 'plugin-control-cli.cjs']) {
         fs.copyFileSync(path.join(bundle, 'MusicBridge', name), path.join(bridge, name));
     }
     fs.copyFileSync('MusicBridge/ios-runtime.cjs', path.join(bridge, 'ios-runtime.cjs'));
@@ -150,6 +150,7 @@ run(path.join(kit, 'bin/qt-cmake'), [
     '-DRHINE_PACKAGE_APP=OFF',
     `-DRHINE_VERSION=${version.version}`,
     `-DRHINE_RELEASE_BUILD=${version.release ? 'ON' : 'OFF'}`,
+    `-DRHINE_PLUGIN_CLIENT_VERSION=${process.env.RHINE_PLUGIN_CLIENT_VERSION || ''}`,
 ]);
 run('cmake', [
     '--build',

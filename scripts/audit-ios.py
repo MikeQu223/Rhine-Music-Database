@@ -13,6 +13,17 @@ simulator = "--simulator" in sys.argv
 expected_platform = "IOSSIMULATOR" if simulator else "IOS"
 info = plistlib.loads((app / "Info.plist").read_bytes())
 assert info["CFBundleIdentifier"] == "rhine.music.database"
+plugin_type = "rhine.music.database.plugin-package"
+assert info.get("UISupportsDocumentBrowser") and info.get("LSSupportsOpeningDocumentsInPlace")
+assert any(
+    plugin_type in value.get("LSItemContentTypes", [])
+    for value in info.get("CFBundleDocumentTypes", [])
+), "Missing iOS plugin package document handler"
+assert any(
+    value.get("UTTypeIdentifier") == plugin_type
+    and "rhineplugin" in value.get("UTTypeTagSpecification", {}).get("public.filename-extension", [])
+    for value in info.get("UTExportedTypeDeclarations", [])
+), "Missing iOS plugin package type declaration"
 assert "audio" in info["UIBackgroundModes"]
 landscape_orientations = {"UIInterfaceOrientationLandscapeLeft", "UIInterfaceOrientationLandscapeRight"}
 phone_orientations = info["UISupportedInterfaceOrientations"]

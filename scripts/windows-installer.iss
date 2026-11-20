@@ -28,6 +28,7 @@ Compression=lzma2
 SolidCompression=yes
 CloseApplications=yes
 RestartApplications=no
+ChangesAssociations=yes
 Uninstallable=yes
 
 [Tasks]
@@ -39,6 +40,13 @@ Source: "{#AppSource}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs 
 [Icons]
 Name: "{autoprograms}\RHINE MUSIC DATABASE"; Filename: "{app}\RHINE MUSIC DATABASE.exe"; WorkingDir: "{app}"
 Name: "{autodesktop}\RHINE MUSIC DATABASE"; Filename: "{app}\RHINE MUSIC DATABASE.exe"; WorkingDir: "{app}"; Tasks: desktopicon
+
+[Registry]
+; 注册到当前用户的打开方式，保留用户在系统中选定的默认程序。
+Root: HKCU; Subkey: "Software\Classes\.rhineplugin\OpenWithProgids"; ValueType: string; ValueName: "rhine.music.database.PluginPackage"; ValueData: ""; Flags: uninsdeletevalue uninsdeletekeyifempty
+Root: HKCU; Subkey: "Software\Classes\rhine.music.database.PluginPackage"; ValueType: string; ValueData: "Rhine Plugin Package"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\rhine.music.database.PluginPackage\DefaultIcon"; ValueType: string; ValueData: """{app}\RHINE MUSIC DATABASE.exe"",0"
+Root: HKCU; Subkey: "Software\Classes\rhine.music.database.PluginPackage\shell\open\command"; ValueType: string; ValueData: """{app}\RHINE MUSIC DATABASE.exe"" --import-plugin ""%1"""
 
 [Run]
 Filename: "{app}\RHINE MUSIC DATABASE.exe"; Description: "Launch RHINE MUSIC DATABASE"; WorkingDir: "{app}"; Flags: nowait postinstall skipifsilent

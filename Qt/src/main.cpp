@@ -474,6 +474,11 @@ void rhineOpenSignalDiagFile() {
 #if !RHINE_MOBILE
 #include "PlaybackConnection.h"
 #endif
+#ifndef Q_OS_ANDROID
+#include "PluginOpenRequest.h"
+#include <QPointer>
+#include <utility>
+#endif
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
 #include "DesktopLyricsController.h"
 #include "DesktopLyricsSettings.h"
@@ -491,6 +496,9 @@ void rhineOpenSignalDiagFile() {
 #endif
 #include <QDir>
 #include <QFileInfo>
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+#include <QFileOpenEvent>
+#endif
 #include <QFontDatabase>
 #include <QGuiApplication>
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
@@ -831,6 +839,75 @@ static void activateWindow(QWindow *window) {
     window->raise();
     window->requestActivate();
 }
+
+#ifndef Q_OS_ANDROID
+/** 在首个窗口就绪前保存系统交付的 URL，保留 iOS 文件提供者分配的访问权限。 */
+class PluginFileOpenRequests final : public QObject {
+  public:
+    void enqueue(const QUrl &url) {
+        if (!PluginOpenRequest::isPackageUrl(url)) {
+            return;
+        }
+        if (m_backend) {
+#if !RHINE_MOBILE
+            if (m_window && (!m_window->isVisible() || m_window->visibility() == QWindow::Minimized)) {
+                activateWindow(m_window);
+            }
+#endif
+            m_backend->importPluginPackage(url);
+        } else if (m_pending.size() < PluginOpenRequest::MaxPendingFiles && !m_pending.contains(url)) {
+            m_pending.append(url);
+        }
+    }
+
+    void setReceiver(Engine *backend, QWindow *window) {
+        m_backend = backend;
+        m_window = window;
+        for (const auto &url : std::exchange(m_pending, {})) {
+            enqueue(url);
+        }
+    }
+
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+  protected:
+    bool eventFilter(QObject *watched, QEvent *event) override {
+        if (watched == QCoreApplication::instance() && event->type() == QEvent::FileOpen) {
+            const auto *request = static_cast<QFileOpenEvent *>(event);
+            const auto url = request->url();
+            if (PluginOpenRequest::isPackageUrl(url)) {
+                enqueue(url);
+                return true;
+            }
+        }
+        return QObject::eventFilter(watched, event);
+    }
+#endif
+
+  private:
+    QList<QUrl> m_pending;
+    QPointer<Engine> m_backend;
+    QPointer<QWindow> m_window;
+};
+
+#if !RHINE_MOBILE
+static QJsonArray pluginPackageArguments(const QStringList &arguments) {
+    QJsonArray paths;
+    bool readingPaths = false;
+    for (const auto &argument : arguments) {
+        if (argument.startsWith("--")) {
+            readingPaths = argument == "--import-plugin";
+        } else if (readingPaths && paths.size() < PluginOpenRequest::MaxPendingFiles) {
+            const auto absolutePath = QFileInfo(argument).absoluteFilePath();
+            if (PluginOpenRequest::isPackagePath(absolutePath)) {
+                paths.append(absolutePath);
+            }
+        }
+    }
+    return paths;
+}
+#endif
+#endif
+
 /**
  * 建立应用身份、Qt 引擎和原生窗口。
  * 离线测试与正式播放沿用同一入口，资源只从独立应用读取。
@@ -907,6 +984,12 @@ int main(int argc, char **argv) {
 #else
     QGuiApplication application(argc, argv);
 #endif
+#ifndef Q_OS_ANDROID
+    PluginFileOpenRequests pluginFileOpenRequests;
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+    application.installEventFilter(&pluginFileOpenRequests);
+#endif
+#endif
 #if defined(Q_OS_ANDROID)
     // 必须早于任何 QML 场景：系统无障碍服务一旦激活，Qt 会把每次对象显示/隐藏
     // 同步回主线程递归遍历可访问树，滑动时能把主线程打满并触发前台 ANR。
@@ -922,6 +1005,7 @@ int main(int argc, char **argv) {
     QGuiApplication::setApplicationDisplayName(AppIdentity::DisplayName);
     const auto args = application.arguments();
 #if !RHINE_MOBILE
+    const auto startupPackages = pluginPackageArguments(args);
     // 界面回归使用隔离的用户目录；必须在读取任何偏好之前建立。
     const bool playbackGuiTest = args.contains("--playback-gui-test");
     if (playbackGuiTest) {
@@ -1042,11 +1126,21 @@ int main(int argc, char **argv) {
             qCritical("GUI 回归只允许连接隔离的离线服务");
             return 1;
         }
+        QJsonObject attachArguments{{"pid", double(application.applicationPid())}};
+        if (!startupPackages.isEmpty()) {
+            attachArguments["pluginPackages"] = startupPackages;
+        }
 #ifdef Q_OS_LINUX
         // 带上本次已经解析出的后端：后台服务据此判断在跑的界面进程是否还符合当前配置。
-        const auto attached = playback->call("attach", {{"pid", double(application.applicationPid())},
-                                                        {"backend", RhineGraphics::activeBackend()}});
+        attachArguments["backend"] = RhineGraphics::activeBackend();
+#endif
+        const auto attached = playback->call("attach", attachArguments);
+        if (!playback->error().isEmpty()) {
+            qCritical().noquote() << playback->error();
+            return 1;
+        }
         if (attached["existing"].toBool()) {
+#ifdef Q_OS_LINUX
             // 这两条分支都只让本进程退出；不打日志的话，"点了没有窗口"与启动失败无法区分。
             if (attached["restarted"].toBool()) {
                 qInfo().noquote() << "图形后端已变更，后台服务正在按新配置重建界面进程。";
@@ -1054,14 +1148,14 @@ int main(int argc, char **argv) {
                 qInfo().noquote() << "已有界面进程在运行，本次启动只激活该窗口（后端"
                                   << RhineGraphics::activeBackend() << "）。";
             }
-            return 0;
-        }
-#else
-        const auto attached = playback->call("attach", {{"pid", double(application.applicationPid())}});
-        if (attached["existing"].toBool()) {
-            return 0;
-        }
 #endif
+            return 0;
+        }
+        QObject::connect(
+            playback.get(), &PlaybackConnection::pluginPackageOpened, &pluginFileOpenRequests,
+            [&pluginFileOpenRequests](const QString &path) {
+                pluginFileOpenRequests.enqueue(QUrl::fromLocalFile(path));
+            }, Qt::QueuedConnection);
         // 服务在界面连接断开时自行停止，退出流程里不再发送可能阻塞的同步命令。
         QObject::connect(playback.get(), &PlaybackConnection::quitRequested, &application,
                          &QCoreApplication::quit, Qt::QueuedConnection);
@@ -1072,7 +1166,10 @@ int main(int argc, char **argv) {
             playback.get(), &PlaybackConnection::restartRequested, &application,
             [] { QCoreApplication::quit(); }, Qt::QueuedConnection);
 #endif
-        QTimer::singleShot(0, playback.get(), [raw = playback.get()] { raw->call("interface.ready"); });
+    } else {
+        for (const auto &path : startupPackages) {
+            pluginFileOpenRequests.enqueue(QUrl::fromLocalFile(path.toString()));
+        }
     }
 #endif
     std::optional<RenderCacheStorage> renderCache;
@@ -1081,6 +1178,16 @@ int main(int argc, char **argv) {
     }
     auto backend = std::make_unique<Engine>(root, offline, nullptr, playback.get(),
                                             renderCache ? &*renderCache : nullptr);
+#ifndef Q_OS_ANDROID
+    const auto acceptPluginFileOpens = [&](QWindow *window) {
+        pluginFileOpenRequests.setReceiver(backend.get(), window);
+#if !RHINE_MOBILE
+        if (playback) {
+            QTimer::singleShot(0, playback.get(), [raw = playback.get()] { raw->call("interface.ready"); });
+        }
+#endif
+    };
+#endif
     auto profiler = std::make_unique<FrameProfiler>(backend.get(), profilePath);
     QObject::connect(backend.get(), &Engine::performanceRequested, profiler.get(),
                      &FrameProfiler::toggleVisible);
@@ -1301,6 +1408,9 @@ int main(int argc, char **argv) {
             // Establish the primary presentation window before an enabled MV can show.
             QTimer::singleShot(0, &engine, initializeMvWindows);
 #endif
+#ifndef Q_OS_ANDROID
+            acceptPluginFileOpens(shell->window());
+#endif
             return application.exec();
         }
         qWarning().noquote() << "FG: 呈现层启动失败，回退默认路径：" << shell->lastError();
@@ -1438,5 +1548,8 @@ int main(int argc, char **argv) {
         });
         poll->start();
     }
+#ifndef Q_OS_ANDROID
+    acceptPluginFileOpens(window);
+#endif
     return application.exec();
 }

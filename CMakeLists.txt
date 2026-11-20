@@ -7,6 +7,7 @@ set(RHINE_VERSION
     "0.0.0"
     CACHE STRING "Application release version")
 option(RHINE_RELEASE_BUILD "Build a versioned public release" OFF)
+set(RHINE_PLUGIN_CLIENT_VERSION "" CACHE STRING "Compatibility version for a development build")
 if(NOT RHINE_VERSION MATCHES "^(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)$")
     message(FATAL_ERROR "RHINE_VERSION must use major.minor.patch")
 endif()
@@ -155,6 +156,9 @@ set(RHINE_APP_SOURCES
     Qt/src/MusicApi.h
     Qt/src/ProviderRegistry.cpp
     Qt/src/ProviderRegistry.h
+    Qt/src/HostPlugins.cpp
+    Qt/src/PluginInstaller.cpp
+    Qt/src/PluginInstaller.h
     Qt/src/CommentsController.cpp
     Qt/src/CommentsController.h
     Qt/src/LyricsController.cpp
@@ -329,7 +333,7 @@ if(NOT RHINE_MOBILE_PLATFORM)
         RHINE_PLAYBACK_SOURCES
         INCLUDE
         REGEX
-        "/(AppUpdater|AppStorage|AudioPlayer|AudioSpectrum|HttpAudioStream|PlaybackDiagnostics|PlaybackConnection|Host|MusicApi|MusicPlayer|PlaybackQueue|LyricsController|Platform|ProviderRegistry)\\.(cpp|h)$|/storage/(CacheDatabase|CacheManager|StorageCoordinator)\\.(cpp|h)$|/qrcodegen\\.cpp$"
+        "/(AppUpdater|AppStorage|AudioPlayer|AudioSpectrum|HttpAudioStream|PlaybackDiagnostics|PlaybackConnection|Host|HostPlugins|MusicApi|MusicPlayer|PlaybackQueue|LyricsController|Platform|ProviderRegistry|PluginInstaller)\\.(cpp|h)$|/storage/(CacheDatabase|CacheManager|StorageCoordinator)\\.(cpp|h)$|/qrcodegen\\.cpp$"
     )
     list(REMOVE_ITEM RHINE_CORE_SOURCES ${RHINE_PLAYBACK_SOURCES})
     add_library(RhinePlaybackCore STATIC ${RHINE_PLAYBACK_SOURCES})
@@ -340,7 +344,8 @@ if(NOT RHINE_MOBILE_PLATFORM)
     target_compile_definitions(
         RhinePlaybackCore
         PUBLIC RHINE_APPLICATION_ID="${RHINE_APPLICATION_ID}" RHINE_VERSION="${PROJECT_VERSION}"
-               RHINE_RELEASE_BUILD=$<BOOL:${RHINE_RELEASE_BUILD}>)
+               RHINE_RELEASE_BUILD=$<BOOL:${RHINE_RELEASE_BUILD}>
+               RHINE_PLUGIN_CLIENT_VERSION="${RHINE_PLUGIN_CLIENT_VERSION}")
     target_link_libraries(
         RhinePlaybackCore
         PUBLIC RhineAudioOutput Qt6::Core Qt6::Gui Qt6::Network Qt6::Concurrent Qt6::Multimedia
@@ -358,7 +363,8 @@ target_include_directories(
             "${taglib_SOURCE_DIR}/taglib/toolkit" "${taglib_BINARY_DIR}")
 target_compile_definitions(
     RhineCore PUBLIC RHINE_APPLICATION_ID="${RHINE_APPLICATION_ID}" RHINE_VERSION="${PROJECT_VERSION}"
-                     RHINE_RELEASE_BUILD=$<BOOL:${RHINE_RELEASE_BUILD}>)
+                     RHINE_RELEASE_BUILD=$<BOOL:${RHINE_RELEASE_BUILD}>
+                     RHINE_PLUGIN_CLIENT_VERSION="${RHINE_PLUGIN_CLIENT_VERSION}")
 target_link_libraries(
     RhineCore
     PUBLIC RhineAudioOutput Qt6::Core Qt6::Gui Qt6::Network Qt6::Concurrent Qt6::Multimedia

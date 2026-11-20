@@ -158,6 +158,7 @@ class ResponsiveHudLayout {
     double providerPage(ResponsiveHudCanvas &c, const QJsonObject &source);
     double pluginsPage(ResponsiveHudCanvas &c, const QJsonObject &source);
     double pluginDetailPage(ResponsiveHudCanvas &c, const QJsonObject &source);
+    double pluginInstallPage(ResponsiveHudCanvas &c, const QJsonObject &source);
     double library(ResponsiveHudCanvas &c, const QJsonObject &source);
     double lyrics(ResponsiveHudCanvas &c, const QJsonObject &source, double viewTop, double viewBottom);
     double commentsPage(ResponsiveHudCanvas &c, const QJsonObject &source);

@@ -13,7 +13,7 @@ const tmpdirReplacement = '(globalThis.__rhineTmpdir || require("os").tmpdir())'
 module.exports = (webApis = 'ios-web-apis.cjs') => ({
     name: 'mobile-web-apis',
     setup(build) {
-        build.onLoad({ filter: /[\\/]MusicBridge[\\/]worker\.cjs$/ }, (args) => {
+        build.onLoad({ filter: /[\\/]MusicBridge[\\/](?:worker|plugin-control-cli)\.cjs$/ }, (args) => {
             const contents = fs.readFileSync(args.path, 'utf8').replace(tmpdirCall, tmpdirReplacement);
             return {
                 contents:

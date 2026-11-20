@@ -12,6 +12,7 @@ const check = (condition, message) => {
 };
 
 check(fs.existsSync(path.join(bridge, 'worker.cjs')), 'worker.cjs missing');
+check(fs.existsSync(path.join(bridge, 'plugin-control-cli.cjs')), 'plugin-control-cli.cjs missing');
 check(!fs.existsSync(path.join(bridge, 'local-plugins')), 'local-plugins directory must be absent');
 check(!fs.existsSync(path.join(bridge, 'node_modules')), 'node_modules must be absent');
 check(!fs.existsSync(path.join(bridge, 'upstream')), 'upstream directory must be absent');

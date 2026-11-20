@@ -15,11 +15,14 @@
 #endif
 #include <QCoreApplication>
 #include <QDir>
+#include <QDragEnterEvent>
+#include <QDropEvent>
 #include <QEvent>
 #include <QEventLoop>
 #include <QFile>
 #include <QGuiApplication>
 #include <QJsonDocument>
+#include <QMimeData>
 #include <QPainter>
 #include <QQuickWindow>
 #include <QScreen>
@@ -74,6 +77,10 @@ Engine::Engine(QString path, bool offline, QObject *parent, PlaybackConnection *
     connect(&app->music, &MusicLibrary::playbackInvalidated, this, &Engine::refreshPlayback);
     connect(&app->hud, &NativeHud::localImportRequested, this, &Engine::localImportRequested);
     connect(&app->hud, &NativeHud::pluginImportRequested, this, &Engine::pluginImportRequested);
+    connect(&app->hud, &NativeHud::pluginPackageRequested, this, &Engine::pluginPackageRequested);
+    connect(&host, &Host::pluginInstallFinished, this, [this] {
+        QTimer::singleShot(0, this, &Engine::startNextPluginImport);
+    });
     connect(&app->hud, &NativeHud::mvRequested, this, &Engine::mvRequested);
 #ifdef Q_OS_DARWIN
     renderConfiguration.initialize([this](const QString &key) { return host.preference(key); });
@@ -275,6 +282,29 @@ bool equivalent(const QByteArray &a, const QByteArray &b) {
 }
 }
 bool Engine::eventFilter(QObject *watched, QEvent *event) {
+#if !RHINE_MOBILE
+    if (event->type() == QEvent::DragEnter || event->type() == QEvent::DragMove ||
+        event->type() == QEvent::Drop) {
+        auto *drop = static_cast<QDropEvent *>(event);
+        const auto urls = drop->mimeData()->urls();
+        const auto isPackage = [](const QUrl &url) {
+            return url.isLocalFile() && url.fileName().endsWith(".rhineplugin", Qt::CaseInsensitive);
+        };
+        if (drop->possibleActions().testFlag(Qt::CopyAction) &&
+            std::any_of(urls.begin(), urls.end(), isPackage)) {
+            drop->setDropAction(Qt::CopyAction);
+            drop->accept();
+            if (event->type() == QEvent::Drop) {
+                for (const auto &url : urls) {
+                    if (isPackage(url)) {
+                        importPluginPackage(url);
+                    }
+                }
+            }
+            return true;
+        }
+    }
+#endif
     // 原生文本框和滑块也属于用户输入，不能只依赖资料库 MouseArea 的事件。
     switch (event->type()) {
     case QEvent::MouseButtonPress:
@@ -1730,7 +1760,32 @@ void Engine::importPluginFolder(QUrl url) {
         return;
     }
     const auto error = host.importPlugin(url.toLocalFile());
-    app->hud.pluginManagerMessage = error.isEmpty() ? QStringLiteral("插件已导入") : error;
+    app->hud.pluginManagerMessage = error;
     host.invalidate();
+    wake();
+}
+
+void Engine::importPluginPackage(QUrl url) {
+#ifndef Q_OS_ANDROID
+    if (!m_pluginImports.contains(url) && m_pluginImports.size() < 16) {
+        m_pluginImports.enqueue(std::move(url));
+        startNextPluginImport();
+    }
+#else
+    Q_UNUSED(url)
+#endif
+}
+
+void Engine::startNextPluginImport() {
+    if (host.pluginInstallPending() || m_pluginImports.isEmpty()) {
+        return;
+    }
+    const auto url = m_pluginImports.dequeue();
+    // 从系统打开文件时进入本地确认流程，无需刷新网络市场。
+    app->hud.openModal("plugins");
+    app->hud.pluginManagerMessage = host.importPluginPackage(url);
+    if (!app->hud.pluginManagerMessage.isEmpty()) {
+        QTimer::singleShot(0, this, &Engine::startNextPluginImport);
+    }
     wake();
 }

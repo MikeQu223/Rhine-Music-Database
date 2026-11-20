@@ -4,6 +4,11 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { PluginRegistry } = require('../MusicBridge/core/registry.cjs');
+const {
+    checkCompatibility,
+    compareVersions,
+    createHostContext,
+} = require('../MusicBridge/plugins/sdk/compatibility.cjs');
 
 const DEFAULT_ENTRY = `module.exports = {
     create(host) {
@@ -77,7 +82,7 @@ test('resolves default and capability only when unambiguous', (t) => {
                 'alpha',
                 {},
                 {
-                    display: { default: true },
+                    display: { name: 'Alpha', default: true },
                     operations: { search: true },
                     capabilities: { playback: true },
                 },
@@ -98,9 +103,10 @@ test('returns no default when none or several plugins claim it', (t) => {
     const none = createRegistry(t, { plugin: { manifest: manifest('plugin') } });
     assert.equal(none.default(), null);
     const several = createRegistry(t, {
-        first: { manifest: manifest('first', {}, { display: { default: true } }) },
-        second: { manifest: manifest('second', {}, { display: { default: true } }) },
+        first: { manifest: manifest('first', {}, { display: { name: 'First', default: true } }) },
+        second: { manifest: manifest('second', {}, { display: { name: 'Second', default: true } }) },
     });
+    assert.equal(several.list().length, 2);
     assert.equal(several.default(), null);
 });
 
@@ -190,15 +196,24 @@ test('rejects duplicate and overlapping routes', (t) => {
 });
 
 test('rejects incompatible schema and api versions', (t) => {
-    const registry = createRegistry(t, {
-        current: { manifest: manifest('current') },
-        'newer-minor': { manifest: manifest('newer-minor', {}, { apiVersion: '2.1' }) },
-        'newer-major': { manifest: manifest('newer-major', {}, { apiVersion: '3.0' }) },
-        'old-schema': { manifest: manifest('old-schema', {}, { schemaVersion: 1 }) },
-    });
+    const registry = createRegistry(
+        t,
+        {
+            current: { manifest: manifest('current') },
+            'api-2-1': {
+                manifest: manifest('api-2-1', {}, { apiVersion: '2.1', requiresClient: '>=1.4.0' }),
+            },
+            'newer-minor': {
+                manifest: manifest('newer-minor', {}, { apiVersion: '2.2', requiresClient: '>=1.4.0' }),
+            },
+            'newer-major': { manifest: manifest('newer-major', {}, { apiVersion: '3.0' }) },
+            'old-schema': { manifest: manifest('old-schema', {}, { schemaVersion: 1 }) },
+        },
+        { context: createHostContext({ clientVersion: '1.4.0' }) },
+    );
     assert.deepEqual(
         registry.list().map((entry) => entry.id),
-        ['current'],
+        ['api-2-1', 'current'],
     );
     assert.deepEqual(
         registry.getProblems().map(({ code }) => code),
@@ -237,6 +252,9 @@ test('loads each request with the current host and a fresh adapter', async (t) =
     assert.equal(secondAdapter.host, second);
     assert.equal(first.manifest.id, 'plugin');
     assert.equal(second.manifest.id, 'plugin');
+    assert.equal(first.context.apiVersion, '2.1');
+    assert.equal(first.checkCompatibility().legacy, true);
+    assert.equal(Object.isFrozen(first.context.features.interfaces), true);
     assert.equal(await registry.load('missing', first), null);
 });
 
@@ -270,10 +288,113 @@ test('reports broken entries as plugin.load-failed', async (t) => {
             entry: 'module.exports = { create() { throw new Error("boom"); } };',
         },
     });
-    for (const id of ['no-create', 'missing-file', 'throws']) {
+    assert.equal(registry.has('missing-file'), false);
+    assert.equal(
+        registry.getProblems().find((problem) => problem.id === 'missing-file').code,
+        'plugin.load-failed',
+    );
+    for (const id of ['no-create', 'throws']) {
         await assert.rejects(
             () => registry.load(id, {}),
             (error) => error.code === 503 && error.errorKey === 'plugin.load-failed',
         );
     }
+});
+
+test('pauses a plugin after create fails and keeps request errors local to a healthy adapter', async (t) => {
+    globalThis.__failedCreateCalls = 0;
+    const registry = createRegistry(t, {
+        failure: {
+            manifest: manifest('failure'),
+            entry: `module.exports = { create() {
+                globalThis.__failedCreateCalls += 1;
+                throw new Error('side effect must not repeat');
+            } };`,
+        },
+        healthy: {
+            manifest: manifest('healthy'),
+            entry: `module.exports = { create() { return {
+                dispatchNative() { throw new Error('provider request failed'); },
+            }; } };`,
+        },
+    });
+    await assert.rejects(
+        () => registry.load('failure', {}),
+        (error) => error === registry.loadFailure('failure'),
+    );
+    await assert.rejects(() => registry.load('failure', {}), { errorKey: 'plugin.load-failed' });
+    assert.equal(globalThis.__failedCreateCalls, 1);
+    await assert.rejects(
+        () => registry.dispatchNative('healthy', 'search', [], {}),
+        /provider request failed/,
+    );
+    assert.equal(registry.loadFailure('healthy'), undefined);
+    assert.ok(await registry.load('healthy', {}));
+});
+
+test('compares strict SemVer including pre-releases, large numeric components and build metadata', () => {
+    assert.equal(compareVersions('1.10.0', '1.9.0'), 1);
+    assert.equal(compareVersions('1.0.1-rc.10', '1.0.1-rc.9'), 1);
+    assert.equal(compareVersions('1.0.1-rc.10', '1.0.1'), -1);
+    assert.equal(compareVersions('1.0.1+sha.5', '1.0.1+sha.6'), 0);
+    assert.equal(compareVersions('1.0.1-rc.01', '1.0.1'), null);
+    assert.equal(compareVersions('1.0.1\n', '1.0.1'), null);
+    assert.equal(compareVersions('9007199254740993.0.0', '9007199254740992.0.0'), 1);
+});
+
+test('matches client, SDK and runtime constraints and verifies platform features', () => {
+    const declared = manifest(
+        'example',
+        {},
+        {
+            apiVersion: '2.1',
+            requiresHost: '>=2.1 <3.0',
+            requiresClient: '>=1.4.0-rc.2 <1.5.0 || >=1.6.0 <1.7.0',
+            requiresHostFeatures: { interfaces: ['compatibility'], operations: ['trackPage'] },
+            runtime: { platforms: ['ios'], requiresVersion: '>=18.0.0 <19.0.0', hosting: ['module'] },
+        },
+    );
+    const accepted = { clientVersion: '1.4.0-rc.2+dev.sha', platform: 'ios', runtimeVersion: '18.20.4' };
+    const check = (values) => checkCompatibility(declared, createHostContext({ ...accepted, ...values }));
+    assert.equal(check({}).compatible, true);
+    assert.equal(check({ clientVersion: '1.4.0-rc.1' }).compatible, false);
+    assert.equal(check({ clientVersion: '1.4.1-rc.2' }).compatible, false);
+    assert.equal(check({ clientVersion: '1.6.9' }).compatible, true);
+    assert.equal(check({ clientVersion: 'commitSHA' }).compatible, false);
+    assert.equal(check({ apiVersion: '2.0' }).code, 'plugin.incompatible');
+    assert.equal(check({ platform: 'macos' }).code, 'plugin.platform');
+    assert.equal(check({ runtimeVersion: '26.8.1' }).code, 'plugin.runtime');
+    assert.equal(
+        checkCompatibility(
+            { ...declared, requiresHostFeatures: { capabilities: ['officialPlayback'] } },
+            createHostContext(accepted),
+        ).code,
+        'plugin.features',
+    );
+    assert.equal(
+        checkCompatibility({ ...declared, id: 'example\n' }, createHostContext(accepted)).compatible,
+        false,
+    );
+    assert.equal(
+        checkCompatibility({ ...declared, apiVersion: '2.0.0-rc.1' }, createHostContext(accepted)).compatible,
+        false,
+    );
+    declared.requiresHostFeatures.operations.push('futureOperation');
+    assert.equal(check({}).code, 'plugin.features');
+});
+
+test('rejects unknown legacy contracts and skips their top-level code during discovery', (t) => {
+    globalThis.__legacyEntryEvaluated = false;
+    const entry = 'globalThis.__legacyEntryEvaluated = true;';
+    const registry = createRegistry(t, {
+        legacy: { manifest: manifest('legacy', {}, { requiresHost: '>=2.0 <3.0' }), entry },
+        unsupported: { manifest: manifest('unsupported', {}, { apiVersion: '2.1' }), entry },
+        malformed: { manifest: manifest('malformed', {}, { apiVersion: '' }), entry },
+    });
+    assert.deepEqual(
+        registry.list().map(({ id }) => id),
+        ['legacy'],
+    );
+    assert.equal(registry.catalog()[0].compatibility.legacy, true);
+    assert.equal(globalThis.__legacyEntryEvaluated, false);
 });

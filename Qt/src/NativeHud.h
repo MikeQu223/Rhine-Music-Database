@@ -92,6 +92,7 @@ class NativeHud : public QObject {
     QString modal;
     QString pluginManagerMessage;
     QString pluginDetailId;
+    QJsonObject pluginInstall;
     QString query;
     QString formKind;
     QString formPID;
@@ -208,6 +209,7 @@ class NativeHud : public QObject {
   signals:
     void localImportRequested(bool folder);
     void pluginImportRequested();
+    void pluginPackageRequested();
     void mvRequested();
 
   private:
@@ -408,6 +410,8 @@ class NativeHud : public QObject {
     void platformChoices(double x, double y, double width, bool expanded = false);
     void platformPanel(double x, double y, double width);
     void pluginsPanel(double x, double y, double width);
+    void pluginInstallPanel(double x, double y, double width);
+    QStringList pluginInstallLines() const;
     void pluginDetailPanel(double x, double y, double width);
     void settingsPanel(double x, double y, double width);
     void paintSettingsCustomSection(const QString &renderer, const QRectF &body, double scroll);

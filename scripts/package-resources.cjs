@@ -85,6 +85,10 @@ fs.copyFileSync(
     androidRuntime ? 'licenses/nodejs-mobile/LICENSE' : path.join(bridge, 'NODE-LICENSE'),
     path.join(target, 'NODE-LICENSE'),
 );
+fs.copyFileSync(
+    path.join(bundle, 'MusicBridge/plugin-control-cli.cjs'),
+    path.join(target, 'plugin-control-cli.cjs'),
+);
 if (!androidRuntime) {
     const nodeName = process.platform === 'win32' ? 'node.exe' : 'node';
     fs.copyFileSync(path.join(bridge, nodeName), path.join(target, nodeName));

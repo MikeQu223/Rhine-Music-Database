@@ -226,6 +226,57 @@ bool runPlaybackServiceChecks(const QString &sourceResources, const QString &exe
             service.waitForFinished();
         }
     }
+    // 文件关联只请求主窗口显示安装确认。服务应保留尚未就绪的窗口请求并过滤无效路径。
+    service.start(executable, {"--resources", resources, "--gui", gui, "--offline-test", directory.path()});
+    check(service.waitForStarted(), "playback service starts for file association");
+    PlaybackConnection packageReceiver;
+    PlaybackConnection secondLaunch;
+    check(waitFor([&] { return packageReceiver.connectToService(endpoint, 50); }) &&
+              secondLaunch.connectToService(endpoint, 1000),
+          "plugin package launchers connect to the playback service");
+    QStringList openedPackages;
+    QObject::connect(&packageReceiver, &PlaybackConnection::pluginPackageOpened, &packageReceiver,
+                     [&](const QString &path) { openedPackages.append(path); });
+    const auto coldPackage = directory.path() + "/Cold plugin.rhineplugin";
+    const auto beforeReady = directory.path() + "/Early second launch.rhineplugin";
+    const auto warmPackage = directory.path() + "/Warm plugin.RHINEPLUGIN";
+    const auto attached =
+        packageReceiver.call("attach", {{"pid", 100}, {"pluginPackages", QJsonArray{coldPackage}}});
+    check(!attached["existing"].toBool() && packageReceiver.error().isEmpty(),
+          "cold package launch owns the interface");
+    const auto early = secondLaunch.call("attach", {{"pid", 101}, {"pluginPackages", QJsonArray{beforeReady}}});
+    check(early["existing"].toBool() && secondLaunch.error().isEmpty(),
+          "second launch keeps the existing interface");
+    packageReceiver.call("hello");
+    check(openedPackages.isEmpty(), "package paths wait for the window to become ready");
+    packageReceiver.call("interface.ready");
+    check(openedPackages == QStringList{coldPackage, beforeReady},
+          "ready window receives both pending package paths in order");
+    secondLaunch.call("attach", {{"pid", 101}, {"pluginPackages", QJsonArray{"relative.rhineplugin"}}});
+    check(!secondLaunch.error().isEmpty(), "file association rejects a relative IPC path");
+
+    QProcess packageLauncher;
+    launchGui(packageLauncher, {"--import-plugin", warmPackage, warmPackage});
+    const bool forwarded = packageLauncher.waitForStarted() && packageLauncher.waitForFinished(10000) &&
+                           packageLauncher.exitCode() == 0;
+    check(forwarded, "real second invocation hands a package path to the active interface and exits");
+    if (!forwarded) {
+        qCritical() << packageLauncher.readAll();
+        if (packageLauncher.state() != QProcess::NotRunning) {
+            packageLauncher.kill();
+            packageLauncher.waitForFinished();
+        }
+    }
+    packageReceiver.call("hello");
+    check(openedPackages == QStringList{coldPackage, beforeReady, warmPackage},
+          "warm package launch forwards one path to the ready window");
+    packageReceiver.call("quit");
+    check(service.waitForFinished(10000) && service.exitCode() == 0,
+          "file association test releases the playback service");
+    if (service.state() != QProcess::NotRunning) {
+        service.kill();
+        service.waitForFinished();
+    }
     if (!ok) {
         qCritical().noquote() << service.readAll();
         qCritical().noquote() << panelLog;

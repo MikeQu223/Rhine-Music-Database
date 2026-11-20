@@ -24,7 +24,11 @@ export interface ProviderManifest {
     version: string;
     kind?: 'official' | 'third-party' | 'builtin';
     publisher?: string;
+    /** 宿主 SDK API 的 SemVer 范围。 */
     requiresHost?: string;
+    /** 客户端应用的 SemVer 范围。 */
+    requiresClient?: string;
+    requiresHostFeatures?: Partial<Record<keyof HostFeatures, string[]>>;
     entry: { file: string; sha256?: string; size?: number };
     files?: Array<{ path: string; sha256: string; size: number }>;
     routes?: {
@@ -60,7 +64,11 @@ export interface ProviderVariant {
 
 export type AuthPredicate =
     | { cookie: string; nonEmpty?: boolean }
-    | { secret: string; nonEmpty?: boolean; kind?: 'string' | 'number' | 'positiveInteger' | 'object' | 'array' | 'nonEmpty' }
+    | {
+          secret: string;
+          nonEmpty?: boolean;
+          kind?: 'string' | 'number' | 'positiveInteger' | 'object' | 'array' | 'nonEmpty';
+      }
     | { allOf: AuthPredicate[] }
     | { anyOf: AuthPredicate[] };
 
@@ -88,6 +96,8 @@ export interface ProviderCredentials {
 
 export interface ProviderRuntimeConfig {
     hosting?: Array<'module' | 'worker' | 'process'>;
+    platforms?: HostPlatform[];
+    requiresVersion?: string;
     mobileBundled?: boolean;
     sourceEntry?: string;
     bundled?: boolean;
@@ -107,6 +117,7 @@ export interface ExternalPlayback {
 
 export interface ProviderDisplay {
     name: string;
+    icon?: string;
     nameByVariant?: Record<string, string>;
     label: string;
     detail: string;
@@ -537,8 +548,33 @@ export interface NativeLoginPoll {
     message?: string;
 }
 
+export type HostPlatform = 'windows' | 'macos' | 'linux' | 'ios' | 'android';
+
+export interface HostFeatures {
+    readonly interfaces: readonly string[];
+    readonly operations: readonly string[];
+    readonly capabilities: readonly string[];
+}
+
+export interface HostContext {
+    readonly clientVersion: string | null;
+    readonly apiVersion: string;
+    readonly platform: HostPlatform | 'unknown';
+    readonly runtime: Readonly<{ name: 'node'; version: string; hosting: 'module' | 'worker' | 'process' }>;
+    readonly features: HostFeatures;
+}
+
+export interface CompatibilityResult {
+    readonly compatible: boolean;
+    readonly legacy: boolean;
+    readonly code: string;
+    readonly message: string;
+}
+
 export interface PluginHost {
     manifest: ProviderManifest;
+    readonly context: HostContext;
+    checkCompatibility(): CompatibilityResult;
     cookies(): Record<string, unknown>;
     acceptCookies(values: string): void;
     receivedCookies(): string[];
@@ -622,7 +658,13 @@ export interface ProviderAdapter {
 
     mutate?(route: string, values: Record<string, unknown>): Promise<MutationResult>;
 
-    comments?(track: Track, id: string, sort: 'hot' | 'new', page: number, cursor?: string): Promise<CommentsPage>;
+    comments?(
+        track: Track,
+        id: string,
+        sort: 'hot' | 'new',
+        page: number,
+        cursor?: string,
+    ): Promise<CommentsPage>;
     commentReplies?(
         track: Track,
         id: string,

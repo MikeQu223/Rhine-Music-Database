@@ -112,6 +112,7 @@ void ResponsiveHudLayout::arrange(QJsonArray &commands, QJsonArray &hits, const 
                     : modal == "provider"      ? "音乐平台"
                     : modal == "plugins"       ? "插件管理"
                     : modal == "plugin-detail" ? "插件详情"
+                    : modal == "plugin-install" ? "确认安装"
                     : lyric                    ? "歌词"
                     : comments                 ? "歌曲评论"
                     : m_song                   ? "歌曲档案"
@@ -233,6 +234,8 @@ void ResponsiveHudLayout::arrange(QJsonArray &commands, QJsonArray &hits, const 
             end = pluginsPage(c, source);
         } else if (modal == "plugin-detail") {
             end = pluginDetailPage(c, source);
+        } else if (modal == "plugin-install") {
+            end = pluginInstallPage(c, source);
         } else if (modal == "search" || modal == "saved") {
             end = library(c, source);
         } else if (comments) {

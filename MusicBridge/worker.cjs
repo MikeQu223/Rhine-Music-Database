@@ -1,5 +1,6 @@
 const { AsyncLocalStorage } = require('node:async_hooks');
 const playbackDiagnosticContext = new AsyncLocalStorage();
+const pluginLoadFailureResponses = new WeakMap();
 
 process.env.LOG_LEVEL = 'silent';
 process.env.JSON_LOG = 'true';
@@ -9,15 +10,29 @@ const readline = require('node:readline');
 const { PluginRegistry } = require('./core/registry.cjs');
 const { createHost } = require('./core/host.cjs');
 const { assertValid } = require('./plugins/sdk/models.cjs');
-const { errorBody, pluginMissing, providerUnsupported, routeInvalid, routeUnknown } = require(
-    './core/errors.cjs',
-);
-const pluginRegistry = new PluginRegistry(path.join(__dirname, 'local-plugins'), {
+const { createHostContext } = require('./plugins/sdk/compatibility.cjs');
+const {
+    errorBody,
+    pluginMissing,
+    providerUnsupported,
+    routeInvalid,
+    routeUnknown,
+} = require('./core/errors.cjs');
+function buildRegistry({ clientVersion, platform, userRoot, disabled }) {
+    return new PluginRegistry(path.join(__dirname, 'local-plugins'), {
+        context: createHostContext({ clientVersion, platform }),
+        userRoot,
+        disabled: typeof disabled === 'string' ? disabled.split(',').filter(Boolean) : disabled,
+    });
+}
+
+let pluginRegistry;
+let hostConfiguration = {
+    clientVersion: process.env.RHINE_CLIENT_VERSION,
+    platform: process.env.RHINE_PLATFORM,
     userRoot: process.env.RHINE_USER_PLUGINS,
-    disabled: String(process.env.RHINE_DISABLED_PLUGINS || '')
-        .split(',')
-        .filter(Boolean),
-});
+    disabled: process.env.RHINE_DISABLED_PLUGINS,
+};
 // 上游诊断可能包含 URL 或 Cookie，禁止混入 IPC 消息和日志。
 console.log = console.info = console.warn = console.error = console.debug = () => {};
 
@@ -44,6 +59,24 @@ function recordPluginDiagnostic(events, fields) {
     events.push(values);
 }
 
+function pluginDispatchFailure(provider, error, host) {
+    const failure = pluginRegistry.loadFailure(provider);
+    const response = {
+        body: errorBody(error),
+        cookies: host.receivedCookies(),
+        ...host.secretState(),
+    };
+    // 记录可信加载结果，插件的普通请求错误和 secretState 不能触发宿主停用。
+    if (failure && error === failure) {
+        pluginLoadFailureResponses.set(response, {
+            provider,
+            errorKey: failure.errorKey,
+            message: failure.message,
+        });
+    }
+    return response;
+}
+
 async function dispatchPluginNative(message, provider, operation, args) {
     const events = playbackDiagnosticContext.getStore();
     const host = createHost(
@@ -52,8 +85,7 @@ async function dispatchPluginNative(message, provider, operation, args) {
         events ? (fields) => recordPluginDiagnostic(events, fields) : undefined,
     );
     try {
-        const plugin = await pluginRegistry.load(provider, host);
-        if (!plugin) {
+        if (!pluginRegistry.has(provider)) {
             return {
                 body: pluginMissing(),
                 cookies: host.receivedCookies(),
@@ -67,6 +99,7 @@ async function dispatchPluginNative(message, provider, operation, args) {
                 ...host.secretState(),
             };
         }
+        const plugin = await pluginRegistry.load(provider, host);
         const value = await plugin.dispatchNative(operation, args);
         if (operation !== 'request') {
             assertValid(operation, value);
@@ -89,15 +122,11 @@ async function dispatchPluginNative(message, provider, operation, args) {
             recordPluginDiagnostic(events, {
                 operation: 4,
                 workerOffsetMs: 0,
-                serviceCode: typeof error.code === 'number' ? error.code : 503,
+                serviceCode: typeof error?.code === 'number' ? error.code : 503,
                 transportFailed: true,
             });
         }
-        return {
-            body: errorBody(error),
-            cookies: host.receivedCookies(),
-            ...host.secretState(),
-        };
+        return pluginDispatchFailure(provider, error, host);
     }
 }
 
@@ -116,11 +145,7 @@ async function dispatchPluginRoute(message, provider, route, params) {
         const body = await plugin.dispatchRoute(route, params || {});
         return { body, cookies: host.receivedCookies(), ...host.secretState() };
     } catch (error) {
-        return {
-            body: errorBody(error),
-            cookies: host.receivedCookies(),
-            ...host.secretState(),
-        };
+        return pluginDispatchFailure(provider, error, host);
     }
 }
 
@@ -311,6 +336,12 @@ readline
         let message;
         try {
             message = JSON.parse(line);
+            // 移动端 Worker 不保证继承 env。仅接受来自父进程的首帧配置，不通过插件音乐路由分派。
+            if (message.control === 'plugins.configure' && !pluginRegistry) {
+                hostConfiguration = message;
+                return;
+            }
+            pluginRegistry ||= buildRegistry(hostConfiguration);
             const collect =
                 message._collectPlaybackDiagnostics === true &&
                 String(message.route).startsWith('/native/') &&
@@ -323,6 +354,7 @@ readline
             send({
                 id: message.id,
                 ...result,
+                _pluginLoadFailure: pluginLoadFailureResponses.get(result),
                 ...(events
                     ? { _playbackDiagnostics: events, _playbackDiagnosticsOmitted: events.omitted || 0 }
                     : {}),
@@ -331,8 +363,9 @@ readline
             send({
                 id: message?.id,
                 body: errorBody(error, '音乐请求失败，请重试'),
-                cookies: error.cookies || error.cookie || [],
-                ...(error.secretState || {}),
+                cookies: error?.cookies || error?.cookie || [],
+                ...(error?.secretState || {}),
+                _pluginLoadFailure: undefined,
             });
         }
     })

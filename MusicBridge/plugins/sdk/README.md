@@ -1,12 +1,11 @@
 # Rhine 插件 SDK 与适配器指南
 
-本文件描述当前 core 与插件之间的真实契约。它同时是第三方插件的实现指南；平台特定的适配示例放在本地
-`docs/PLUGIN/`（已 gitignore），不进入主仓库。
+本文件是第三方插件的契约和适配指南。宿主实现与维护流程见 [插件系统](../../../docs/插件系统.md)，平台适配示例维护在独立插件仓库。
 
 当前契约版本：
 
 - manifest/descriptor schemaVersion：`2`
-- plugin API apiVersion：`2.0`
+- 宿主当前插件 API `2.1`，继续支持 API `2.0`
 - 运行时：桌面 bundled Node；移动端 libnode 18
 - 插件入口：CommonJS 单文件 `plugin.cjs`（源码可以是 ESM，由构建器打包）
 
@@ -59,8 +58,7 @@ Qt 侧播放服务、媒体策略和音频链路见
 | SDK    | Port 类型、manifest/descriptor schema、模型校验、通用工具       | 平台实现、运行时副作用                                    |
 | plugin | 适配器、transport、上游依赖、平台字段归一化、平台文案/资产      | 其他 provider 的凭据、core 内部类型、直接写 stdout/stderr |
 
-主仓库新增文件不得出现第三方平台名称。平台 descriptor、fixture、适配示例和平台特定构建资产放在
-`docs/PLUGIN/` 或独立插件仓库。
+平台 descriptor、fixture、适配示例和平台特定构建资产放在独立插件仓库。
 
 ### 1.2 core-only 与 full
 
@@ -68,7 +66,7 @@ Qt 侧播放服务、媒体策略和音频链路见
 - `--plugins=full` 会把构建期的第三方插件打进便利产物。
 - 用户安装的插件放在应用数据目录 `<data>/plugins/<id>`；用户目录中的同 id 插件优先于构建期插件。
 - `<data>/plugins-state.json` 的 `{ "disabled": ["id"] }` 控制启用/禁用；禁用的插件不会出现在 Registry。
-- 插件安装不验签、不建立信任链；只校验 id、manifest 结构、安全相对路径和入口存在性。
+- 安装前校验 manifest、兼容性、文件路径、体积和摘要。确认界面单独显示发布者身份未验证，摘要校验用于检验内容完整性。
 - Qt 渲染读 descriptor（构建期从 manifest 提取，或用户插件直接读 manifest）；worker 运行读同一份 `manifest.json`。
   两边必须保持一致，否则会出现“UI 显示支持、实际 dispatch 不支持”的状态。
 
@@ -160,9 +158,9 @@ Qt 侧播放服务、媒体策略和音频链路见
 | 字段                  | 作用                                                                                    |
 | --------------------- | --------------------------------------------------------------------------------------- |
 | `id`                  | provider 唯一标识；同时用于凭据切片、路由和 `Entity.provider`                           |
-| `apiVersion`          | 必须与 host 同 major 且 minor 不超过 host                                               |
-| `entry`               | 运行时入口；`sha256/size` 由构建器生成，客户端不做信任校验                              |
-| `files[]`             | 运行时文件清单；市场安装按 `index.json` 的 files 逐文件下载                             |
+| `apiVersion`          | 插件使用的最低 SDK 版本，与宿主同主版本且互相满足声明范围                                               |
+| `entry`               | 运行时入口。ZIP 安装验证文件大小和 SHA-256                              |
+| `files[]`             | 安装包内运行文件的相对路径、大小和 SHA-256                             |
 | `routes.prefixes`     | 前缀路由，例如 `/example`；Registry 负责去前缀后交给 `dispatchRoute`                    |
 | `routes.legacyRoutes` | 精确 legacy 路由；用于迁移期兼容                                                        |
 | `operations`          | 插件支持的 operation 白名单；插件入口应据此拒绝未声明 operation                         |
@@ -183,8 +181,7 @@ Qt 侧播放服务、媒体策略和音频链路见
 | `runtime`             | hosting、diagnosticsOrdinal、env（`$variant`/`$dataDir`）                              |
 | `cache`               | TTL、磁盘缓存 operation、版本、最大条目、失效事件                                       |
 
-id 必须匹配 `^[a-z0-9-]{1,40}$`，内置来源 id 为保留 id，第三方插件不能占用。`apiVersion` 目前是 `2.0`，
-新插件应声明 `"2.0"`，不要声明高于 host 的 minor。
+插件 ID 使用小写字母、数字和连字符，长度为 1–40。系统设备名与内置来源 `local`、`siren` 保留。实际使用 SDK 2.0 接口的插件可以继续声明 `"2.0"`。需要新宿主信息或保证旧客户端拒绝加载时，声明 `"2.1"`。
 
 当前运行时实际消费的字段并不等于 schema 全集：
 
@@ -517,11 +514,41 @@ plugins/<id>/plugin.cjs
 plugins/<id>/...
 ```
 
-`index.json` 的每个条目声明 `path`、`entry.file` 和 `files[]`。客户端按文件下载，不解析 tar、不验签；
-`scripts/check-marketplace.cjs <index>` 会反向遍历插件目录，拒绝未列入 `files` 的运行时文件。
+`index.json` 保留原有 `path`、`entry.file` 和 `files[]`。带 `package: { url, size, sha256 }` 的条目从指定地址下载整个包，
+校验索引的摘要、大小和插件身份后进入与本地文件相同的安装确认。缺少 `package` 的旧索引仍可按文件下载。
+市场仓库先发布版本化 Release 附件，再生成供维护者审核的索引。市场、系统打开方式、拖放和文件选择器均进入确认流程。
 
-安装流程：staging 目录 → 校验 manifest/entry → 原子替换 → 保留 `.backup-<id>` 供回滚。启用状态存
-`<data>/plugins-state.json`。
+### 9.3 插件包和兼容性
+
+新 `.rhineplugin` 使用标准 ZIP32，支持 Store 和 Deflate。根目录为 `manifest.json`，用现有 `entry` 和 `files[]` 枚举全部运行时文件。
+包内目录遵循可移植相对路径，拒绝绝对路径、父目录跳转、重复或大小写冲突的路径、符号链接、特殊文件和加密条目。
+客户端限制单文件 64 MiB、解压总量 256 MiB 和条目数 512。图标可通过 `display.icon` 引用清单中的小尺寸 PNG、JPEG 或 WebP。
+发布目录只含入口、已打包依赖、运行资源和许可证。排除 `node_modules`、开发环境配置、账号、Cookie 和访问密钥。
+旧确定性 USTAR 包仍按历史格式读取。旧目录和旧 TAR 中已知 schema 2 / API 2.0 的插件可按兼容模式校验，未知契约会报告不兼容。
+
+| 字段 | 声明 |
+| --- | --- |
+| `schemaVersion` | manifest 布局，目前为 `2` |
+| `version` | 插件自己的 SemVer，例如 `1.3.0-rc.1+build.7` |
+| `apiVersion` | 插件使用的最低 SDK 版本。历史 `2.0` 等同 `2.0.0` |
+| `requiresHost` | 可选的宿主 SDK 范围。沿用历史声明，例如 `>=2.0 <3.0` |
+| `requiresClient` | 新包必填的客户端范围，例如 `>=1.3.25 <2.0.0` |
+| `requiresHostFeatures` | 可选的 `interfaces`、`operations`、`capabilities` 名称列表 |
+| `runtime.platforms` / `runtime.requiresVersion` | 可选的平台列表与 Node 运行时版本范围 |
+
+版本范围使用 `=`、`<`、`<=`、`>`、`>=`，同组比较符以空格连接，`||` 连接可替代的组。预发布版本需在对应版本组显式声明，
+`+build` 元数据不参与排序。普通发布使用正式客户端版本。开发构建可用
+`RHINE_PLUGIN_CLIENT_VERSION=1.3.25+dev.local npm run build` 设置用于兼容性校验的版本。
+依赖新接口的插件用 `PluginHost.context` 读取宿主版本、平台、运行时和能力，用 `host.checkCompatibility()` 获取与
+静态校验一致的结果。校验发生在入口运行前，确认启用后再做独立初始化验证。加载失败会在插件管理中显示并保留原有配置。
+
+```bash
+npm run plugin:package -- pack path/to/plugin --out id-1.3.0.rhineplugin
+npm run plugin:package -- verify id-1.3.0.rhineplugin
+```
+
+打包工具校验 manifest、依赖闭包和文件摘要，发布前还需在干净目录测试入口运行和动态资源访问。
+已确认的安装通过同卷暂存目录和可恢复事务替换原版本，备份位于 `.backup-<id>`，启用状态位于 `<data>/plugins-state.json`。
 
 ---
 
@@ -530,7 +557,7 @@ plugins/<id>/...
 最小验证：
 
 ```bash
-node scripts/check-plugin-contracts.cjs
+node --test scripts/test-plugin-registry.cjs scripts/test-plugin-package.cjs
 node scripts/check-contract-freeze.cjs
 node scripts/bundle-plugins.cjs MusicBridge/local-plugins <id>
 node scripts/check-marketplace.cjs <market>/index.json
@@ -571,7 +598,7 @@ printf '%s\n' '{"id":"1","route":"/plugin/example/search","params":{"args":["hel
 11. 依赖 `host.authenticated()` 做安全判断；它不是凭据校验。
 12. 依赖 core 调用 `dispose()` 做每请求清理；当前 Registry 不会这样做。
 13. 在插件里读取其他 provider cookie 或把 token 写进错误消息。
-14. 把平台名称/文案/资产放进主仓库；应放在插件 descriptor 或 `docs/PLUGIN/`。
+14. 把平台名称、文案或资产放进主仓库。平台内容应归入独立插件仓库。
 
 ---
 
@@ -579,7 +606,7 @@ printf '%s\n' '{"id":"1","route":"/plugin/example/search","params":{"args":["hel
 
 - 插件以 module 形式运行在 worker 内，尚无 P9 的 supervisor/quarantine 隔离；卡死或 OOM 仍可能影响整个 worker。
 - worker 的 stdout 是 JSON-line 协议；core 会禁用插件 `console.*`，插件也不得直接写 stdout/stderr，否则会破坏 IPC。
-- 签名、撤销、anti-downgrade 不在当前最简市场范围内；安装只做结构/路径校验。
+- 安装确认分别展示内容校验与来源，当前没有可信发布者签名。用户可以明确确认安装较早的兼容版本。
 - `manifest.routes.rawRoutes` 尚未成为 worker 的放行表。
 - Host 的凭据、缓存、封面和播放 host/scheme 策略都由 manifest/descriptor 驱动：凭据需要声明
   `credentials.auth`（以及需要持久化时的 `inject`/`responseSecrets`），缓存读取 `cache.ttlByOperation/
@@ -592,4 +619,4 @@ printf '%s\n' '{"id":"1","route":"/plugin/example/search","params":{"args":["hel
 - Host 的 `authenticated()`/`hasCredential()` 和凭据落盘按 `credentials.auth` 对所有插件 id 生效；
   cookie 或 secret 需要跨重启保存时，务必声明对应凭据策略。
 - Qt 的试听判断读取播放结果里的 `trial` 或 `preview` 布尔值。
-- 移动端插件下载/安装尚未做真机 smoke；商店构建应使用构建期打包 flavor。
+- iOS / iPadOS 使用系统文档类型和选择器。Files 与来源应用的打开方式须按实际分发包做真机验收。

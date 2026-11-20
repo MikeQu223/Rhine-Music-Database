@@ -19,6 +19,7 @@ QString modalTitle(const QString &modal, const MusicLibrary &music) {
                                                 {"playlist-form", "PLAYLIST EDITOR"},
                                                 {"playlist-picker", "PLAYLIST DIRECTORY"},
                                                 {"plugins", "PLUGIN MANAGER"},
+                                                {"plugin-install", "PLUGIN INSTALLATION"},
                                                 {"plugin-detail", "PLUGIN DETAIL"},
                                                 {"confirm", "CONFIRM DELETE"}};
     if (modal == "local") {
@@ -42,6 +43,7 @@ QString modalSubtitle(const QString &modal, const MusicLibrary &music) {
                                                    {"playlist-form", "编辑我的歌单"},
                                                    {"playlist-picker", "添加到我的歌单"},
                                                    {"plugins", "插件市场 / 下载与启用"},
+                                                   {"plugin-install", "确认安装插件"},
                                                    {"plugin-detail", "插件详情 / 版本与能力"},
                                                    {"confirm", "删除确认"}};
     if (modal == "local") {
@@ -198,7 +200,7 @@ void NativeHud::modalDraw(double width) {
         category = "AUDIO TERMINAL";
     } else if (modal == "quality") {
         category = "AUDIO SPECIFICATION";
-    } else if (modal == "plugins" || modal == "plugin-detail") {
+    } else if (modal == "plugins" || modal == "plugin-detail" || modal == "plugin-install") {
         category = "PLUGIN MANAGEMENT";
     }
     const bool pluginPage = modal == "plugins" || modal == "plugin-detail";
@@ -234,6 +236,8 @@ void NativeHud::modalBody(double x, double y, double usable) {
         pluginsPanel(x, y, usable);
     } else if (modal == "plugin-detail") {
         pluginDetailPanel(x, y, usable);
+    } else if (modal == "plugin-install") {
+        pluginInstallPanel(x, y, usable);
     } else if (modal == "confirm") {
         limited(confirmTitle, x + 53, y + 260, 24, usable - 106, "demibold");
         const auto message =
@@ -465,7 +469,10 @@ void NativeHud::pluginsPanel(double x, double y, double width) {
     const auto installed = m_host->pluginManagerState();
     text("插件市场 / MARKETPLACE", left, y + 196, 15, "demibold", 0.6);
 #if !RHINE_MOBILE
-    pluginButton("导入文件夹", marketRight - 240, y + 188, 148, 38, "plugin:import", 13);
+    pluginButton("导入文件夹", marketRight - 335, y + 188, 116, 38, "plugin:import", 13);
+#endif
+#ifndef Q_OS_ANDROID
+    pluginButton("导入插件包", marketRight - 211, y + 188, 118, 38, "plugin:import-package", 13);
 #endif
     pluginButton("刷新", marketRight - 84, y + 188, 84, 38, "plugin:refresh", 13);
     const auto installing = marketplace["installing"].toBool();
@@ -562,7 +569,7 @@ void NativeHud::pluginsPanel(double x, double y, double width) {
     const auto firstInstalledHit = hits.size();
     if (installed.isEmpty()) {
         text("尚未安装插件", installedLeft, installedViewport.top(), 19, "demibold");
-        text(fit("从左侧市场安装，或使用“导入文件夹”添加本地插件。", 13, installedViewport.width()),
+        text(fit("可从插件市场安装，或导入分享给你的插件包。", 13, installedViewport.width()),
              installedLeft, installedViewport.top() + 32, 13, "regular", 0, muted);
     } else {
         save();
@@ -582,7 +589,10 @@ void NativeHud::pluginsPanel(double x, double y, double width) {
                      textWidth),
                  installedLeft, row + 27, 13, "regular", 0, muted);
             fill(installedLeft, row + 51, 7, 7, enabled ? accent : muted);
-            text(enabled ? "已启用" : "已禁用", installedLeft + 15, row + 44, 13, "regular", 0,
+            const auto status = enabled ? QStringLiteral("已启用") :
+                                value["compatibilityProblem"].toString().isEmpty() ?
+                                    QStringLiteral("已禁用") : QStringLiteral("暂停加载");
+            text(status, installedLeft + 15, row + 44, 13, "regular", 0,
                  enabled ? ink() : muted);
             if (userInstalled) {
                 pluginButton("详情", installedViewport.right() - 276, row + 18, 84, 38, "plugin:detail:" + id,
@@ -622,6 +632,56 @@ void NativeHud::pluginsPanel(double x, double y, double width) {
     }
     text(fit(footer, 13, usable), left, y + 802, 13, "regular", 0,
          pluginManagerMessage.isEmpty() ? muted : ink());
+}
+
+QStringList NativeHud::pluginInstallLines() const {
+    const auto manifest = pluginInstall["manifest"].toObject();
+    const auto installed = pluginInstall["installedVersion"].toString();
+    const auto version = manifest["version"].toString();
+    auto client = QStringLiteral("客户端 %1 · %2")
+                      .arg(pluginInstall["clientVersion"].toString(QStringLiteral("开发版")),
+                           manifest["requiresClient"].toString(QStringLiteral("旧版 SDK 兼容模式")));
+    if (pluginInstall["clientVersion"].toString().isEmpty()) {
+        client = QStringLiteral("开发版客户端 · ") +
+                 manifest["requiresClient"].toString(QStringLiteral("旧版 SDK 兼容模式"));
+    }
+    return {
+        QStringLiteral("作者 / ") + manifest["publisher"].toString(QStringLiteral("未声明")),
+        pluginInstall["action"].toString() + QStringLiteral(" / ") +
+            (installed.isEmpty() ? version : installed + QStringLiteral(" → ") + version),
+        QStringLiteral("插件 SDK / ") + manifest["apiVersion"].toString(),
+        QStringLiteral("兼容性检查通过 · ") + client,
+        QStringLiteral("来源 / ") + pluginInstall["origin"].toString(),
+        QStringLiteral("发布者身份未验证。仅安装你信任的来源，插件可在客户端运行代码。"),
+    };
+}
+
+void NativeHud::pluginInstallPanel(double x, double y, double width) {
+    const auto left = x + 53;
+    const auto usable = width - 106;
+    const auto icon = pluginInstall["icon"].toString();
+    const auto manifest = pluginInstall["manifest"].toObject();
+    const auto id = manifest["id"].toString();
+    const auto name = manifest["display"].toObject()["name"].toString(id);
+    if (icon.isEmpty()) {
+        auto background = ink();
+        background[3] = .1;
+        fill(left, y + 211, 66, 66, background);
+        text(name.left(1), left + 19, y + 224, 25, "demibold");
+    } else {
+        image(icon, left, y + 211, 66, 66);
+    }
+    limited(name, left + 84, y + 218, 30, usable - 84, "demibold");
+    limited(id, left + 84, y + 257, 13, usable - 84);
+    double row = y + 301;
+    for (const auto &line : pluginInstallLines()) {
+        limited(line, left, row, 16, usable);
+        row += 39;
+    }
+    const auto label = pluginInstall["willEnable"].toBool() ? QStringLiteral("确认安装并启用") :
+                                                             QStringLiteral("确认安装");
+    pluginButton(label, left, row + 18, 198, 46, "plugin:confirm-install", 15, true);
+    pluginButton("取消", left + 216, row + 18, 128, 46, "close-modal", 15);
 }
 
 void NativeHud::pluginDetailPanel(double x, double y, double width) {
@@ -668,6 +728,7 @@ void NativeHud::pluginDetailPanel(double x, double y, double width) {
         }
     }
     field("STATE / 状态", state, left, y + 460);
+    limited(detail["compatibilityProblem"].toString(), left, y + 532, 13, usable);
     field("SOURCE / 来源", userInstalled ? QStringLiteral("用户安装") : QStringLiteral("内置"),
           left + colWidth + 32, y + 460);
     if (installed) {

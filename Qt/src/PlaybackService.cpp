@@ -1,5 +1,6 @@
 #include <QtGlobal>
 #include "PlaybackService.h"
+#include "PluginOpenRequest.h"
 #include "ProviderRegistry.h"
 #include "AppStorage.h"
 #include <QCoreApplication>
@@ -153,6 +154,11 @@ PlaybackService::PlaybackService(QString root, QString guiExecutable, bool offli
         ++m_selectionSerial;
         m_selectedTrack = track;
     });
+    connect(&m_host, &Host::pluginRuntimeFailed, this, [this](QString provider, QString reason) {
+        if (m_gui) {
+            send(m_gui, {{"event", "plugin-runtime-failed"}, {"provider", provider}, {"reason", reason}});
+        }
+    });
     connect(&m_host, &Host::mediaAction, this, [this](QString action) {
         if (action == "resume" || action == "pause") {
             m_player.setPaused(action == "pause");
@@ -257,6 +263,49 @@ void PlaybackService::send(QLocalSocket *socket, const QJsonObject &message) {
     socket->flush();
 }
 
+bool PlaybackService::queuePluginPackages(const QJsonValue &value, QString &error) {
+    if (value.isUndefined()) {
+        return true;
+    }
+    const auto paths = value.toArray();
+    if (!value.isArray() || paths.size() > PluginOpenRequest::MaxPendingFiles) {
+        error = QStringLiteral("插件包打开请求无效或数量过多");
+        return false;
+    }
+    auto pending = m_pendingPluginPackages;
+    for (const auto &entry : paths) {
+        const auto path = entry.toString();
+        if (!PluginOpenRequest::isPackagePath(path)) {
+            error = QStringLiteral("插件包路径无效");
+            return false;
+        }
+        if (!pending.contains(path)) {
+            pending.append(path);
+        }
+    }
+    if (pending.size() > PluginOpenRequest::MaxPendingFiles) {
+        error = QStringLiteral("待打开的插件包过多，请稍后重试");
+        return false;
+    }
+    m_pendingPluginPackages = pending;
+    return true;
+}
+
+/** 保留等待窗口就绪的请求，Linux 重建界面时继续由服务持有。 */
+void PlaybackService::deliverPluginPackages() {
+    if (!m_gui || !m_interfaceSession.state().ready) {
+        return;
+    }
+#ifdef Q_OS_LINUX
+    if (m_restartingInterface) {
+        return;
+    }
+#endif
+    for (const auto &path : std::exchange(m_pendingPluginPackages, {})) {
+        send(m_gui, {{"event", "interface.openPluginPackage"}, {"path", path}});
+    }
+}
+
 void PlaybackService::read(QLocalSocket *socket) {
     m_clients[socket].buffer += socket->readAll();
     if (m_clients[socket].buffer.size() > 64 * 1024 * 1024) {
@@ -338,6 +387,10 @@ void PlaybackService::dispatch(QLocalSocket *socket, const QJsonObject &request)
                   {"version", QCoreApplication::applicationVersion()},
                   {"offlineTest", m_host.offline}};
     } else if (method == "attach") {
+        if (!queuePluginPackages(arguments["pluginPackages"], error)) {
+            send(socket, {{"id", id}, {"result", result}, {"error", error}});
+            return;
+        }
 #ifdef Q_OS_LINUX
         // 图形后端只在进程启动时生效，所以"切换后端后重新打开应用"必须换掉界面进程：
         // 只激活旧窗口等于让设置静默失效，用户看到的后端会永远停在第一次启动的那个。
@@ -371,8 +424,10 @@ void PlaybackService::dispatch(QLocalSocket *socket, const QJsonObject &request)
             m_interfaceSession.attach(arguments["pid"].toInteger());
             result["existing"] = false;
         }
+        deliverPluginPackages();
     } else if (method == "interface.ready" && m_gui == socket) {
         m_interfaceSession.ready();
+        deliverPluginPackages();
     } else if (method == "quit") {
         QTimer::singleShot(0, this, &PlaybackService::shutdown);
     } else if (method == "show") {
@@ -447,8 +502,11 @@ QJsonObject PlaybackService::hostCommand(const QString &method, const QJsonObjec
                              arguments["credentialKey"].toString(), arguments["provider"].toString());
     } else if (method == "bumpEpoch") {
         m_host.bumpEpoch();
+    } else if (method == "pluginCatalog") {
+        result = m_host.pluginCatalog();
     } else if (method == "reloadPlugins") {
         m_host.reloadPlugins();
+        result = m_host.pluginCatalog();
     } else if (method == "logout") {
         m_player.stop();
         m_player.clearHistory();

@@ -31,6 +31,17 @@ QString decode(const QString &value) {
 /** 建立原生界面状态与音乐通知；所有延迟动作都绑定控制器生命周期和查询代数。 */
 NativeHud::NativeHud(Host *host, Glyphs *glyphs, MusicLibrary *music, HudSceneActions scene, QObject *parent)
     : QObject(parent), m_host(host), m_glyphs(glyphs), m_music(music), m_scene(std::move(scene)) {
+    connect(host, &Host::pluginInstallConfirmation, this, [this](QJsonObject details) {
+        pluginInstall = std::move(details);
+        openModal("plugin-install");
+    });
+    connect(host, &Host::pluginInstallFinished, this, [this](const QString &error) {
+        pluginInstall = {};
+        pluginManagerMessage = error;
+        if (modal == "plugin-install" || !error.isEmpty()) {
+            openModal("plugins");
+        }
+    });
     themeMode = host->preference("theme");
     if (themeMode.isEmpty()) {
         themeMode = "system";
@@ -106,6 +117,10 @@ void NativeHud::suspendLyricsControls() {
 }
 
 void NativeHud::openModal(QString kind) {
+    if (modal == "plugin-install" && kind != modal && !pluginInstall.isEmpty()) {
+        pluginInstall = {};
+        m_host->cancelPluginInstall();
+    }
     m_sortRequest.reset();
     playlistSearchActive = false;
     if (m_music->isLocal() &&
@@ -187,6 +202,10 @@ void NativeHud::openModal(QString kind) {
 }
 
 void NativeHud::closeModal() {
+    if (modal == "plugin-install") {
+        m_host->cancelPluginInstall();
+        return;
+    }
     if (shortcuts && modal == "shortcuts") {
         shortcuts->cancelRecording();
     }
@@ -820,6 +839,16 @@ void NativeHud::action(QString value) {
         emit pluginImportRequested();
         return;
     }
+    if (value == "plugin:import-package") {
+        emit pluginPackageRequested();
+        return;
+    }
+    if (value == "plugin:confirm-install" && modal == "plugin-install") {
+        pluginInstall = {};
+        openModal("plugins");
+        m_host->confirmPluginInstall();
+        return;
+    }
     if (value.startsWith("plugin:market:")) {
         const auto error = m_host->installMarketplacePlugin(value.mid(QString("plugin:market:").size()));
         pluginManagerMessage = error;
@@ -837,8 +866,9 @@ void NativeHud::action(QString value) {
             m_host->invalidate();
             return;
         }
-        m_host->setPluginEnabled(id, !enabled);
-        pluginManagerMessage = enabled ? QStringLiteral("已禁用插件") : QStringLiteral("已启用插件");
+        const auto error = m_host->setPluginEnabled(id, !enabled);
+        pluginManagerMessage = !error.isEmpty() ? error :
+                               enabled ? QStringLiteral("已禁用插件") : QStringLiteral("已启用插件");
         m_host->invalidate();
         return;
     }
@@ -850,7 +880,7 @@ void NativeHud::action(QString value) {
     }
     if (value.startsWith("plugin:rollback:")) {
         const auto error = m_host->rollbackPlugin(value.mid(QString("plugin:rollback:").size()));
-        pluginManagerMessage = error.isEmpty() ? QStringLiteral("插件已回滚") : error;
+        pluginManagerMessage = error;
         m_host->invalidate();
         return;
     }

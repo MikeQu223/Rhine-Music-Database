@@ -1,9 +1,13 @@
 #include "Host.h"
 #include "AppStorage.h"
 #include "ProviderRegistry.h"
+#include "PluginInstaller.h"
 #include <QCoreApplication>
+#include <QCryptographicHash>
+#include <QDataStream>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonDocument>
 #include <QUrl>
 #include <QElapsedTimer>
@@ -24,6 +28,163 @@ bool waitFor(const std::function<bool()> &ready) {
     }
     return ready();
 }
+quint32 zipCrc(const QByteArray &bytes) {
+    quint32 crc = 0xffffffff;
+    for (const auto byte : bytes) {
+        crc ^= quint8(byte);
+        for (int index = 0; index < 8; ++index) {
+            crc = (crc >> 1) ^ ((crc & 1) ? 0xedb88320 : 0);
+        }
+    }
+    return ~crc;
+}
+
+QByteArray storedPluginZip(const QByteArray &manifest, const QByteArray &javascript) {
+    const QList<QPair<QByteArray, QByteArray>> files{{"manifest.json", manifest}, {"plugin.cjs", javascript}};
+    QByteArray contents;
+    QByteArray central;
+    QDataStream local(&contents, QIODevice::WriteOnly);
+    QDataStream directory(&central, QIODevice::WriteOnly);
+    local.setByteOrder(QDataStream::LittleEndian);
+    directory.setByteOrder(QDataStream::LittleEndian);
+    for (const auto &[name, data] : files) {
+        const auto offset = quint32(contents.size());
+        const auto size = quint32(data.size());
+        const auto crc = zipCrc(data);
+        local << quint32(0x04034b50) << quint16(20) << quint16(0) << quint16(0) << quint16(0)
+              << quint16(0) << crc << size << size << quint16(name.size()) << quint16(0);
+        local.writeRawData(name.constData(), name.size());
+        local.writeRawData(data.constData(), data.size());
+        directory << quint32(0x02014b50) << quint16(20) << quint16(20) << quint16(0) << quint16(0)
+                  << quint16(0) << quint16(0) << crc << size << size << quint16(name.size())
+                  << quint16(0) << quint16(0) << quint16(0) << quint16(0) << quint32(0) << offset;
+        directory.writeRawData(name.constData(), name.size());
+    }
+    const auto start = quint32(contents.size());
+    local.writeRawData(central.constData(), central.size());
+    local << quint32(0x06054b50) << quint16(0) << quint16(0) << quint16(files.size())
+          << quint16(files.size()) << quint32(central.size()) << start << quint16(0);
+    return contents;
+}
+
+bool checkLocalPluginPackage(Host &host) {
+    QTemporaryDir temporary;
+    if (!temporary.isValid()) {
+        return false;
+    }
+    const auto id = QStringLiteral("native-zip-fixture");
+    const auto directory = AppStorage::dataDirectory() + "/plugins/" + id;
+    const auto packagePath = temporary.filePath("local test.rhineplugin");
+    const QByteArray javascript = "module.exports = { create() { return { dispatchNative() {} }; } };\n";
+    QJsonObject manifest{{"schemaVersion", 2},
+                         {"apiVersion", "2.0"},
+                         {"id", id},
+                         {"version", "1.0.0"},
+                         {"requiresClient", "=9999.0.0"},
+                         {"entry", QJsonObject{
+                              {"file", "plugin.cjs"},
+                              {"size", javascript.size()},
+                              {"sha256", QString::fromLatin1(
+                                  QCryptographicHash::hash(javascript, QCryptographicHash::Sha256).toHex())},
+                          }},
+                         {"display", QJsonObject{{"name", "Offline ZIP"}, {"label", "ZIP"}, {"detail", ""}}},
+                         {"capabilities", QJsonObject{{"search", true}}}};
+    const auto write = [&] {
+        QFile package(packagePath);
+        const auto bytes = storedPluginZip(QJsonDocument(manifest).toJson(QJsonDocument::Compact), javascript);
+        return package.open(QIODevice::WriteOnly | QIODevice::Truncate) && package.write(bytes) == bytes.size();
+    };
+    QString failure;
+    QJsonObject preview;
+    QObject notifier;
+    QObject::connect(&host, &Host::pluginInstallConfirmation, &notifier,
+                     [&](QJsonObject prepared) { preview = std::move(prepared); });
+    QObject::connect(&host, &Host::pluginInstallFinished, &notifier,
+                     [&](const QString &error) { failure = error; });
+    const auto url = QUrl::fromLocalFile(packagePath);
+    if (!write() || !host.importPluginPackage(url).isEmpty() ||
+        !waitFor([&] { return !failure.isEmpty(); }) || !failure.contains("9999.0.0") ||
+        QFileInfo::exists(directory)) {
+        qCritical() << "Incompatible ZIP was not rejected before confirmation" << failure;
+        return false;
+    }
+    const auto client = PluginInstaller::clientVersion();
+    if (client.isEmpty()) {
+        return true;
+    }
+    manifest["requiresClient"] = "=" + client;
+    failure.clear();
+    if (!write() || !host.importPluginPackage(url).isEmpty() ||
+        !waitFor([&] { return !preview.isEmpty(); }) || preview["format"] != "zip" ||
+        QFileInfo::exists(directory)) {
+        qCritical() << "Offline ZIP did not reach confirmation" << failure;
+        return false;
+    }
+    host.cancelPluginInstall();
+    if (host.pluginInstallPending() || QFileInfo::exists(directory)) {
+        return false;
+    }
+    preview = {};
+    if (!host.importPluginPackage(url).isEmpty() || !waitFor([&] { return !preview.isEmpty(); })) {
+        return false;
+    }
+    host.confirmPluginInstall();
+    bool ok = waitFor([&] { return !host.pluginInstallPending(); }) && failure.isEmpty() &&
+              host.pluginEnabled(id) && QFileInfo::exists(directory + "/plugin.cjs");
+    const auto localManifest = directory + "/manifest.json";
+    const auto read = [](const QString &path) {
+        QFile file(path);
+        return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
+    };
+    const auto localBytes = read(localManifest);
+    const auto archive = read(packagePath);
+    const auto digest = QString::fromLatin1(QCryptographicHash::hash(archive, QCryptographicHash::Sha256).toHex());
+    const QJsonObject listing{{"id", id}, {"name", "Offline ZIP"}, {"path", "plugins/native-zip-fixture"},
+                              {"version", manifest["version"]}, {"entry", manifest["entry"]},
+                              {"package", QJsonObject{{"url", QUrl::fromLocalFile(packagePath).toString()},
+                                                      {"size", archive.size()}, {"sha256", digest}}}};
+    const auto indexPath = temporary.filePath("index.json");
+    QFile index(indexPath);
+    ok &= index.open(QIODevice::WriteOnly) &&
+          index.write(QJsonDocument(QJsonObject{{"schemaVersion", 1}, {"plugins", QJsonArray{listing}}})
+                          .toJson()) > 0;
+    index.close();
+    ok &= host.uninstallPlugin(id).isEmpty();
+    preview = {};
+    qputenv("RHINE_PLUGIN_MARKETPLACE_URL", QUrl::fromLocalFile(indexPath).toString().toUtf8());
+    host.refreshPluginMarketplace();
+    const auto marketError = host.installMarketplacePlugin(id);
+    qunsetenv("RHINE_PLUGIN_MARKETPLACE_URL");
+    ok &= marketError.isEmpty() && waitFor([&] { return !preview.isEmpty(); });
+    ok &= preview["format"] == "zip" && preview["origin"] == "插件市场";
+    host.confirmPluginInstall();
+    ok &= waitFor([&] { return !host.pluginInstallPending(); }) && failure.isEmpty() &&
+          host.pluginEnabled(id) && localBytes == read(localManifest) && javascript == read(directory + "/plugin.cjs");
+    // 模拟原版本已经改名，进程在候选提交前退出。
+    QDir pluginRoot(AppStorage::dataDirectory() + "/plugins");
+    const auto backup = ".backup-" + id;
+    QFile journal(pluginRoot.filePath(".install-transaction.json"));
+    const QJsonObject interrupted{{"id", id}, {"hadPlugin", true}, {"hadBackup", false}};
+    ok &= pluginRoot.rename(id, backup) && journal.open(QIODevice::WriteOnly) &&
+          journal.write(QJsonDocument(interrupted).toJson()) > 0;
+    journal.close();
+    ok &= PluginInstaller::recover(pluginRoot.path()).isEmpty() &&
+          !journal.exists() && javascript == read(directory + "/plugin.cjs");
+    QFile installed(localManifest);
+    manifest["requiresClient"] = "=9999.0.0";
+    ok &= installed.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
+          installed.write(QJsonDocument(manifest).toJson()) > 0;
+    installed.close();
+    host.reloadPlugins();
+    ok &= !host.pluginEnabled(id) && QFileInfo::exists(localManifest) &&
+          host.pluginDetail(id)["compatibilityProblem"].toString().contains("9999.0.0");
+    ok &= host.uninstallPlugin(id).isEmpty();
+    if (!ok) {
+        qCritical() << "Offline ZIP install or revalidation failed" << failure;
+    }
+    return ok;
+}
+
 }
 
 /** 不创建脚本引擎，验证原生业务可直接使用缓存、账号代数、封面和官方播放边界。 */
@@ -78,7 +239,7 @@ bool runNativeHostChecks(const QString &root) {
     {
         QFile file(market.path() + "/plugins/fixture/plugin.cjs");
         ok &= file.open(QIODevice::WriteOnly | QIODevice::Truncate);
-        ok &= file.write("module.exports = { create() { return {}; } };\n") > 0;
+        ok &= file.write("module.exports = { create() { return { dispatchNative() {} }; } };\n") > 0;
     }
     {
         const QJsonObject index{
@@ -100,6 +261,12 @@ bool runNativeHostChecks(const QString &root) {
             QUrl::fromLocalFile(market.path() + "/index.json").toString().toUtf8());
     Host marketplaceHost(root, true);
     int pluginReloads = 0;
+    QString marketInstallError;
+    QJsonObject installPreview;
+    QObject::connect(&marketplaceHost, &Host::pluginInstallConfirmation,
+                     [&installPreview](QJsonObject preview) { installPreview = std::move(preview); });
+    QObject::connect(&marketplaceHost, &Host::pluginInstallFinished,
+                     [&marketInstallError](const QString &error) { marketInstallError = error; });
     QObject::connect(&marketplaceHost, &Host::pluginsReloaded, [&] { ++pluginReloads; });
     marketplaceHost.refreshPluginMarketplace();
     ok &= waitFor([&] {
@@ -107,11 +274,16 @@ bool runNativeHostChecks(const QString &root) {
         return !state["loading"].toBool() && state["plugins"].toArray().size() == 1;
     });
     ok &= marketplaceHost.installMarketplacePlugin("fixture").isEmpty();
+    ok &= waitFor([&] { return !installPreview.isEmpty(); });
+    ok &= installPreview["action"] == "新安装";
+    ok &= !QFile::exists(AppStorage::dataDirectory() + "/plugins/fixture/plugin.cjs");
+    marketplaceHost.confirmPluginInstall();
     ok &= waitFor(
         [&] { return marketplaceHost.pluginMarketplaceState()["status"].toString().startsWith("已安装"); });
     ok &= QFile::exists(AppStorage::dataDirectory() + "/plugins/fixture/plugin.cjs");
     if (pluginReloads != 1) {
-        qCritical() << "Marketplace install reload count" << pluginReloads;
+        qCritical() << "Marketplace install reload count" << pluginReloads << marketInstallError
+                    << marketplaceHost.pluginMarketplaceState()["status"].toString();
         ok = false;
     }
     ok &= marketplaceHost.pluginEnabled("fixture");
@@ -158,20 +330,45 @@ bool runNativeHostChecks(const QString &root) {
                     << beforeUpdate["updatesAvailable"].toInt();
         ok = false;
     }
+    installPreview = {};
     ok &= marketplaceHost.installMarketplacePlugin("fixture").isEmpty();
+    ok &= waitFor([&] { return !installPreview.isEmpty(); });
+    ok &= installPreview["action"] == "升级";
+    marketplaceHost.confirmPluginInstall();
     ok &= waitFor([&] {
         return marketplaceHost.pluginMarketplaceState()["status"].toString().startsWith("已安装") &&
                ProviderRegistry::instance().manifest("fixture")["version"].toString() == "2.0.0";
     });
     if (pluginReloads != 4) {
-        qCritical() << "Marketplace update reload count" << pluginReloads;
+        qCritical() << "Marketplace update reload count" << pluginReloads << marketInstallError
+                    << marketplaceHost.pluginMarketplaceState()["status"].toString();
         ok = false;
+    }
+    {
+        QFile entry(market.path() + "/plugins/fixture/plugin.cjs");
+        ok &= entry.open(QIODevice::WriteOnly | QIODevice::Truncate);
+        ok &= entry.write("module.exports = { create() { throw Error('fixture failure'); } };\n") > 0;
+        entry.close();
+        installPreview = {};
+        ok &= marketplaceHost.installMarketplacePlugin("fixture").isEmpty();
+        ok &= waitFor([&] { return !installPreview.isEmpty(); });
+        ok &= installPreview["action"] == "覆盖安装";
+        QString installError;
+        const auto connection = QObject::connect(&marketplaceHost, &Host::pluginInstallFinished,
+                                                 [&installError](QString error) { installError = error; });
+        marketplaceHost.confirmPluginInstall();
+        ok &= waitFor([&] { return !installError.isEmpty(); });
+        QObject::disconnect(connection);
+        QFile current(AppStorage::dataDirectory() + "/plugins/fixture/plugin.cjs");
+        ok &= current.open(QIODevice::ReadOnly) && !current.readAll().contains("fixture failure");
+        ok &= ProviderRegistry::instance().manifest("fixture")["version"] == "2.0.0";
     }
     qInfo() << "market re-enabled" << ok << ProviderRegistry::instance().contains("fixture");
     qunsetenv("RHINE_PLUGIN_MARKETPLACE_URL");
     QDir(AppStorage::dataDirectory() + "/plugins/.backup-fixture").removeRecursively();
     QDir(AppStorage::dataDirectory() + "/plugins/fixture").removeRecursively();
     marketplaceHost.reloadPlugins();
+    ok &= checkLocalPluginPackage(marketplaceHost);
 #ifdef Q_OS_IOS
     ok &= runIOSBridgeChecks(root);
 #endif
