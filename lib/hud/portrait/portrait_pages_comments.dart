@@ -234,6 +234,10 @@ PortraitCommentsLayout paintPortraitCommentsPage(
   final double contentWidth = w - 40;
   final double bottom = math.max(portraitCommentsContentTop, c.contentBottom);
 
+  // Qt 的纸色是 `ResponsiveHudLayout::arrange` 在分派页面之前铺的
+  // （`!home && !songPage` ⇒ `c.fill(paper)`），本页被单独调用时必须自己铺，
+  // 否则 3D 场景（唱片机）会从页面上透出来，文字看起来像被冲淡了。
+  c.fill(Rect.fromLTWH(0, 0, c.gridWidth, c.height), c.paper);
   if (header) {
     // ResponsiveHudLayout.cpp:195：comments 页 `c.header(title, true, ..., !comments)`
     // ⇒ 画返回箭头、但不画右上设置键。

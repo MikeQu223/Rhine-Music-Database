@@ -564,7 +564,11 @@ class BasicHudFrame {
               ));
     final SirenSong? song = state.song;
     final BasicDirectory? directory = state.directory;
+    // Qt `ResponsiveHudLayout.cpp:40-60`：`songPage = m_song && modal.isEmpty() && !lyric && !comments`。
+    // 这里必须同样要求 `modal.isEmpty()`——否则从详情页打开的评论/登录/平台/MV
+    // 弹层会被歌曲页整个盖住（真机表现：点了「查看评论」，面板收起了但页面没换）。
     final bool songPage = song != null &&
+        modal.isEmpty &&
         (state.phase == BasicPhase.detail || state.phase == BasicPhase.lyrics);
     final PortraitPlayer portraitPlayer = PortraitPlayer(
       title: bar.title,
@@ -837,6 +841,10 @@ class BasicHudFrame {
     // （`if (m_songOptionsExpanded && (m_song || m_lyricsPage)) optionsSheet(c, source)`），
     // 所以它在整页画完之后叠上来，且只画 sheet 本身（遮罩不动）。
     if (songOptionsExpanded && (song != null || state.phase == BasicPhase.lyrics)) {
+      // 页面 painter 以 `c.finish()`（restore）收尾，会弹掉画布构造时的
+      // `save` + `scale(unit, unit)`；这里不补回来，面板就会按逻辑像素画成半尺寸，
+      // 命中矩形也跟着错位（真机上表现为「面板画出来了，但按钮点不动」）。
+      canvas.ensureScale();
       paintPortraitSongOptions(
         canvas,
         actions: _portraitSongOptionsActions(
