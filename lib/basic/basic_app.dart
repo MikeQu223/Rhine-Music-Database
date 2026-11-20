@@ -578,7 +578,10 @@ class _BasicShellState extends State<_BasicShell>
   /// `PlatformFeatures::LocalMusic`：关掉时 `local` 平台不进音乐平台页
   /// （Qt `providerCardsState()` 跳过 `id == "local"`；过滤由调用方做，页面
   /// 自己不再判断）。宿主当前恒为开，将来按平台特性裁定后从这里改一次。
-  final bool _localMusicEnabled = true;
+  // 本分支不做「本地音乐」（用户 2026-11-20 明确：没让做本地音乐）：
+  // Qt `PlatformFeatures::LocalMusic` 在移动端同样恒 false，这里对齐为 false，
+  // 平台页/平台弹层/切换器都不再列 local，`provider` 落盘也不会是 local。
+  final bool _localMusicEnabled = false;
 
   /// 平台服务（Qt `MusicAccount` 的数据面）：按 id 给网关，缺省退回
   /// `UnavailableProviderGateway`（本预览没有 Node 运行时，页面照样可画）。
