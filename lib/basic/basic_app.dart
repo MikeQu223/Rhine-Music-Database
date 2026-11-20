@@ -1493,6 +1493,8 @@ class _BasicShellState extends State<_BasicShell>
                         providerName: _currentDescriptor?.name ?? '',
                         providerLoggedIn: (_loginController?.state.accountId ?? '').isNotEmpty,
                         providerUserName: _loginController?.state.nickname ?? '',
+                        providerSupportsLogin:
+                            _currentDescriptor?.capability('login', fallback: false) ?? false,
                         onProviderAction: (String action) => _onAction(action),
                         onAction: (String action) =>
                             unawaited(_onSettingsAction(action)),

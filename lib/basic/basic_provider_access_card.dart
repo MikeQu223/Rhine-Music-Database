@@ -25,6 +25,7 @@ class BasicProviderAccessCard extends StatelessWidget {
     required this.pageWidth,
     required this.providerName,
     required this.loggedIn,
+    this.supportsLogin = false,
     this.userName = '',
     required this.onAction,
     this.dark = false,
@@ -38,6 +39,13 @@ class BasicProviderAccessCard extends StatelessWidget {
 
   /// 是否已登录（决定右下角是「退出登录 ↗」还是「登录账号 ↗」）。
   final bool loggedIn;
+
+  /// 该平台是否支持登录（`capabilities.login`）。
+  ///
+  /// 塞壬唱片没有账号体系（`MusicBridge/plugins/descriptors/siren.json` 的
+  /// `capabilities.account`/`login` 皆 false），Qt `MusicMutation.cpp` 对它的
+  /// `music:login` 直接早退 ⇒ 这里不画会点空的入口，改成一句状态说明。
+  final bool supportsLogin;
 
   /// 已登录时的昵称。
   final String userName;
@@ -119,35 +127,46 @@ class BasicProviderAccessCard extends StatelessWidget {
             left: basicProviderAccessInset + 13,
             top: 62,
             width: width * .62,
-            child: Text(loggedIn ? userName : '尚未登录',
+            child: Text(
+                !supportsLogin
+                    ? '公开曲库 · 无需账号'
+                    : loggedIn
+                        ? userName
+                        : '尚未登录',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: _style(10, ink.muted)),
           ),
-          // :537 —— 右下登录/退登入口。
+          // :537 —— 右下登录/退登入口；平台没有账号体系时只给状态说明。
           Positioned(
             right: basicProviderAccessInset + 1,
             top: 62,
-            width: 94,
+            width: supportsLogin ? 94 : 140,
             child: Align(
               alignment: Alignment.centerRight,
-              child: Text(loggedIn ? '退出登录 ↗' : '登录账号 ↗',
+              child: Text(
+                  !supportsLogin
+                      ? '无需登录'
+                      : loggedIn
+                          ? '退出登录 ↗'
+                          : '登录账号 ↗',
                   maxLines: 1,
                   overflow: TextOverflow.clip,
                   style: _style(10, ink.muted)),
             ),
           ),
-          // :538 —— 命中：269 / y+52 / 104×44。
-          Positioned(
-            right: basicProviderAccessInset - 2,
-            top: 52,
-            width: 104,
-            height: 44,
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: () => onAction(loggedIn ? 'music:logout' : 'music:login'),
+          // :538 —— 命中：269 / y+52 / 104×44（平台无账号体系时不给命中）。
+          if (supportsLogin)
+            Positioned(
+              right: basicProviderAccessInset - 2,
+              top: 52,
+              width: 104,
+              height: 44,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => onAction(loggedIn ? 'music:logout' : 'music:login'),
+              ),
             ),
-          ),
           // 上边距：Qt 里这张卡接着 y = 130 的内容起点，控件底对齐行网格。
           Positioned(
             left: 0,

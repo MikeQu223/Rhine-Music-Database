@@ -52,6 +52,7 @@ class BasicPortraitSettingsPage extends StatefulWidget {
     this.providerName = '',
     this.providerLoggedIn = false,
     this.providerUserName = '',
+    this.providerSupportsLogin = false,
     this.onProviderAction,
   });
 
@@ -84,6 +85,13 @@ class BasicPortraitSettingsPage extends StatefulWidget {
 
   /// 平台卡：已登录昵称。
   final String providerUserName;
+
+  /// 平台卡：该平台是否能登录（`capabilities.login`）。
+  ///
+  /// 塞壬唱片是公开曲库、没有账号体系（`siren.json` 的 `capabilities.account`
+  /// 与 `login` 都是 false），Qt 侧对它的登录动作直接早退 ⇒ 卡片不能画一个
+  /// 点了没效果的「登录账号 ↗」。
+  final bool providerSupportsLogin;
 
   /// 平台卡的动作出口（`provider` / `music:login` / `music:logout`）。
   ///
@@ -227,6 +235,7 @@ class _BasicPortraitSettingsPageState extends State<BasicPortraitSettingsPage> {
         providerName: widget.providerName,
         loggedIn: widget.providerLoggedIn,
         userName: widget.providerUserName,
+        supportsLogin: widget.providerSupportsLogin,
         dark: widget.dark,
         onAction: providerAction,
       ));
