@@ -2832,7 +2832,9 @@ class _BasicShellState extends State<_BasicShell>
     final List<String> parts = <String>[
       if (song.artist.isNotEmpty) song.artist,
       if (song.album.isNotEmpty) song.album,
-      '塞壬唱片',
+      // 平台名取自当前描述符（Qt 的详情页底注是 `providerName`，
+      // 插件平台下写死「塞壬唱片」会把曲目张冠李戴）。
+      _currentDescriptor?.name ?? '塞壬唱片',
     ];
     return parts.join(' · ');
   }
