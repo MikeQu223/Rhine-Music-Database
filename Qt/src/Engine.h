@@ -3,11 +3,11 @@
 #include "Glyphs.h"
 #include "Host.h"
 #include "NativeApplication.h"
+#include "render/RenderConfiguration.h"
 #include "render/FramePacingPolicy.h"
 #include "render/MusicTextureAdmission.h"
 #include "render/RenderPolicy.h"
 #ifdef Q_OS_DARWIN
-#include "render/RenderConfiguration.h"
 #include "fg/FgFrameTap.h"
 #endif
 #include <QElapsedTimer>
@@ -146,9 +146,10 @@ class Engine : public QObject {
         return m_admission.delayMs();
     }
     void trimMemory();
+    // 场景后端在所有平台都会发布遥测，诊断面板也需要跨平台读取。
+    RhineRender::RenderTelemetry renderTelemetry;
 #ifdef Q_OS_DARWIN
     RhineRender::RenderConfiguration renderConfiguration;
-    RhineRender::RenderTelemetry renderTelemetry;
     RhineFg::FrameInputs metalFxInputs;
 #endif
 #ifdef Q_OS_DARWIN
