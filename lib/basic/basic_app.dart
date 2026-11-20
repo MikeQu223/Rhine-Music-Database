@@ -546,6 +546,11 @@ class _BasicShellState extends State<_BasicShell>
   /// 当前平台昵称（Qt `music.nickname`）。
   String get _providerUserName => _providerAccounts[_providerId]?.nickname ?? '';
 
+  /// `PlatformFeatures::LocalMusic`：关掉时 `local` 平台不进音乐平台页
+  /// （Qt `providerCardsState()` 跳过 `id == "local"`；过滤由调用方做，页面
+  /// 自己不再判断）。宿主当前恒为开，将来按平台特性裁定后从这里改一次。
+  final bool _localMusicEnabled = true;
+
   /// 当前弹层（'' = 无，'search' = 检索）。Qt 的 modal 由 NativeHud 自己持有
   /// （Qt/src/NativeHudController.cpp:64-130 openModal / :132-143 closeModal /
   /// :145-163 setQuery），BasicViewState 没有这个字段，也不在本文件的改动范围
@@ -716,10 +721,9 @@ class _BasicShellState extends State<_BasicShell>
   /// 顺序与 `ProviderAssetLoader.load` 一致：读 assets → `ProviderRegistry.load`。
   /// 失败不阻断启动：平台页退回空表（画空态），原因进动作槽。
   Future<void> _loadProviders() async {
-    final ProviderAssetLoader loader = ProviderAssetLoader(bundle: widget.bundle);
     try {
-      final List<Map<String, Object?>> builtins = await loader.readBuiltins();
-      final ProviderRegistry registry = ProviderRegistry.load(builtins: builtins);
+      final ProviderRegistry registry =
+          await ProviderAssetLoader(bundle: widget.bundle).load();
       if (!mounted) {
         return;
       }
@@ -728,8 +732,12 @@ class _BasicShellState extends State<_BasicShell>
           for (final String id in registry.ids)
             if (registry.descriptor(id) != null) registry.descriptor(id)!,
         ];
-        final String defaultId = registry.defaultId ?? '';
-        _providerId = defaultId.isNotEmpty ? defaultId : 'siren';
+        // `ProviderRegistry.defaultId` 是 `String?`（空表时 null）：与 Qt 的
+        // `defaultId` 一样，空表才回落到外壳缺省 siren，否则取注册表口径。
+        final String? registryDefault = registry.defaultId;
+        _providerId = registryDefault != null && registryDefault.isNotEmpty
+            ? registryDefault
+            : (_providers.isEmpty ? 'siren' : _providers.first.id);
       });
     } on Object catch (error) {
       if (!mounted) {
@@ -1152,6 +1160,7 @@ class _BasicShellState extends State<_BasicShell>
       providerId: _providerId,
       providerAccounts: _providerAccounts,
       providerUserName: _providerUserName,
+      localMusicEnabled: _localMusicEnabled,
     );
     final bool settingsOpen =
         _modal == 'settings' || _modal == DiscWarningModal.kind;
@@ -1948,6 +1957,12 @@ class _BasicShellState extends State<_BasicShell>
     }
     if (action.startsWith(basicProviderSwitchPrefix)) {
       final String id = action.substring(basicProviderSwitchPrefix.length);
+      // 点当前平台那行 = 什么都不用换：只收起弹层（Qt `providerCardsState()`
+      // 的卡片点击对同一 id 只关窗，不重选、不重连）。
+      if (id == _providerId) {
+        _setModal('');
+        return;
+      }
       ProviderDescriptor? target;
       for (final ProviderDescriptor descriptor in _providers) {
         if (descriptor.id == id) {
@@ -1960,7 +1975,12 @@ class _BasicShellState extends State<_BasicShell>
         setState(() => _actionNotice = '未知平台：$id');
         return;
       }
-      setState(() => _actionNotice = '已切换至 ${found.name}');
+      // Qt `ProviderSwitcher::choose` 的本步只做「当前平台」这一个真值：
+      // 账号会话 / 平台服务例化留给后续步骤，这里不伪造登录态。
+      setState(() {
+        _providerId = id;
+        _actionNotice = '已切换至 ${found.name}';
+      });
       _setModal('');
       return;
     }
@@ -2503,7 +2523,18 @@ class _BasicShellState extends State<_BasicShell>
     if (action.startsWith(basicVolumeFractionActionPrefix)) {
       return '音量调节尚未接入：BasicController 还缺 setVolumeFraction（预览不伪造音量）';
     }
-    if (action == 'music:login' || action == 'music:qr' || action == 'music:logout') {
+    // 账号入口（音乐平台页 ACCOUNT 段的「登录账号 ↗」与设置页 ACCESS 卡的
+    // 「登录 / 退出登录」）：本步只做**开关分发**——登录开登录弹层
+    //（`modal == 'login'`，面板本身另属后续步骤），退出登录因为没有会话实现
+    // 只给可见反馈。都不伪造登录态（`_providerAccounts` 恒为空）。
+    if (action == 'music:login') {
+      _setModal('login');
+      return null;
+    }
+    if (action == 'music:logout') {
+      return '当前平台没有登录会话';
+    }
+    if (action == 'music:qr') {
       return '账号功能尚未接入：预览不伪造登录态';
     }
     return basicUnimplementedPrefix + action;
