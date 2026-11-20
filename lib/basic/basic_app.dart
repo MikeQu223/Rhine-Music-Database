@@ -39,6 +39,8 @@ import '../hud/modals/settings_modal.dart'
 import '../hud/modals/queue_modal.dart' show queueModalMaximumOffset;
 import '../hud/player/player_bar.dart' show playerBarHeaderHeight, playerBarRowHeight;
 import '../hud/portrait/portrait_playlist_picker.dart' show portraitPlaylistPickPrefix;
+import '../hud/portrait/portrait_saved_overview.dart'
+    show PortraitSavedOverviewRow;
 import '../hud/portrait/portrait_pages_queue.dart' show portraitQueueModes;
 import '../hud/portrait/portrait_pages_search_kinds.dart'
     show
@@ -896,10 +898,30 @@ class _BasicShellState extends State<_BasicShell>
   int _savedLane = 1;
 
   /// 收藏列是否停在「我的音乐」总览（Qt `m_savedOverview`）。
-  bool _savedOverview = false;
+  ///
+  /// 初值与 Qt 一致：`saved` 动作打开的就是总览（`ResponsiveHudLayout.cpp:461-463`
+  /// 只置 `m_savedOverview = true`），只有 `music:collection:<lane>` 才进具体列。
+  bool _savedOverview = true;
 
   /// 「加入歌单」选择器的状态行（Qt 用按钮/状态行回话，见 `NativeHudMusic.cpp:490-520`）。
   String _playlistPickerNotice = '';
+
+  /// 「我的音乐」总览页的滚动偏移（Qt `m_scroll`）。
+  double _savedScroll = 0;
+
+  /// 总览页的索引行（Qt `library()` 的 `for (lane = 1; lane < columns.size(); ++lane)`）。
+  List<PortraitSavedOverviewRow> _savedOverviewRows() {
+    final List<String> columns = _currentDescriptor?.columns ?? basicSirenColumns;
+    return <PortraitSavedOverviewRow>[
+      for (int lane = 1; lane < columns.length; lane += 1)
+        PortraitSavedOverviewRow(
+          title: columns[lane],
+          subtitle: lane == 1 ? 'PERSONAL TRACKS' : 'COLLECTION ARCHIVE',
+          action: '$basicCollectionActionPrefix$lane',
+          icon: lane == 1 ? 'heart' : 'folder',
+        ),
+    ];
+  }
 
   /// 喜欢列的行（真数据：控制器里 likedIDs 解析出的曲目，空 = 还没读到）。
   List<PortraitLikesRow> _likedRows() => <PortraitLikesRow>[
@@ -1430,6 +1452,11 @@ class _BasicShellState extends State<_BasicShell>
       pickerPlaylists: _pickerPlaylists(),
       pickerNotice: _playlistPickerNotice,
       canCreatePlaylist: _currentDescriptor?.capability('playlistManagement', fallback: false) ?? false,
+      savedProviderName: _currentDescriptor?.name ?? '塞壬唱片',
+      savedUserName: _loginController?.state.nickname ?? '',
+      savedOverviewRows: _savedOverviewRows(),
+      savedShowArtists: false,
+      savedScroll: _savedScroll,
       savedNotice: _savedNotice(),
     );
     final bool settingsOpen =
@@ -2508,9 +2535,10 @@ class _BasicShellState extends State<_BasicShell>
     // 收藏列（Qt compact `saved`）：`mobile:mine` 进喜欢列，`music:collection:<lane>`
     // 切列并清空滚动（`ResponsiveHudLayout.cpp:455-464`）。
     if (action == 'mobile:mine' || action == 'saved') {
+      // Qt 两个动作都只把 `m_savedOverview` 置真（`mobile:mine` 顺带清滚动）。
       setState(() {
-        _savedLane = 1;
-        _savedOverview = false;
+        _savedOverview = true;
+        _savedScroll = 0;
       });
       _setModal('saved');
       return;

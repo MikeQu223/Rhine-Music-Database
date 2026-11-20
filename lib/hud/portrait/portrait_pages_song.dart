@@ -138,6 +138,15 @@ void paintPortraitSongPage(
   // 设计稿里心在 350（393 - 43）：必须跟着页宽贴右缘，写死会漂到页面中间。
   c.icon(favourite ? 'heart-filled' : 'heart', c.gridWidth - 43, y - 4,
       size: 18, color: favourite ? c.ink : c.muted);
+  // 收藏热区 44×44（Qt `{337, top + 30, 44, 44}` 的相对版）：旧实现只画图标不给命中，
+  // 详情页点心等于没反应。
+  // 详情页喜欢的是「选中那首」（Qt `ResponsiveHudPages.cpp:188-194` 的路由就是
+  // `music:like`）；`music:like-current` 属于沉浸条那类「正在播放」的入口。
+  c.hit(
+    Rect.fromLTWH(c.gridWidth - 57, y - 22, 44, 44),
+    'music:like',
+    '喜欢这首歌',
+  );
   y += 24;
 
   // 状态行：琥珀圆点 + 播放状态。非当前曲目说「尚未播放」（Qt 的同一句），
