@@ -20,6 +20,7 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QRegularExpression>
+#include <QSettings>
 #include <QStringList>
 #include <QTimer>
 #include <QUrl>
@@ -40,7 +41,35 @@ bool attempted = false;
 const char *lastPage = nullptr;
 QJsonObject graphics;
 constexpr auto settingKey = "panel/sentry-consent";
+constexpr auto installationKey = "panel/sentry-installation-id";
 constexpr auto defaultPreference = "default";
+
+QString sentryPlatformName() {
+#if defined(Q_OS_IOS)
+    return QStringLiteral("cocoa");
+#else
+    return QStringLiteral("native");
+#endif
+}
+
+QString userIdForInstallation(const QUuid &installationId) {
+    const auto hash = QCryptographicHash::hash(
+        QByteArrayLiteral("rhine-sentry-user-v1:") + installationId.toRfc4122(), QCryptographicHash::Sha256);
+    return QString::fromLatin1(hash.toHex());
+}
+
+QUuid ensureInstallationId(QSettings &settings, const QUuid &legacyGeneration) {
+    auto installationId = QUuid::fromString(settings.value(QLatin1String(installationKey)).toString());
+    if (!installationId.isNull()) {
+        return installationId;
+    }
+    // 升级时沿用旧授权 UUID，避免现有安装被统计成新用户；
+    // 之后关闭再开启遥测保持同一安装身份。
+    installationId = legacyGeneration.isNull() ? QUuid::createUuid() : legacyGeneration;
+    settings.setValue(QLatin1String(installationKey), installationId.toString(QUuid::WithoutBraces));
+    settings.sync();
+    return installationId;
+}
 
 QString dsn() {
     return qEnvironmentVariable("SENTRY_DSN", QStringLiteral(RHINE_SENTRY_DSN)).trimmed();
@@ -140,25 +169,26 @@ QByteArray diagnosticEnvelope(const QString &endpoint, QString *eventIdOut) {
                          QStringLiteral(RHINE_COMMIT_SHA);
     const auto timestamp = QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
     const auto sdk = QJsonObject{{"name", "rhine.telemetry-diagnostic"}, {"version", version}};
-    QJsonObject event{{"event_id", eventId},
-                      {"timestamp", timestamp},
-                      {"platform", "native"},
-                      {"level", "info"},
-                      {"message", "Rhine telemetry diagnostic"},
-                      {"environment", environment},
-                      {"release", release},
-                      {"sdk", sdk},
-                      {"tags", QJsonObject{{"rhine.process", "interface"},
-                                           {"rhine.diagnostic", "connectivity"}}},
-                      {"contexts", QJsonObject{{"rhine", QJsonObject{{"process", "interface"}}}}}};
+    QJsonObject event{
+        {"event_id", eventId},
+        {"timestamp", timestamp},
+        {"platform", sentryPlatformName()},
+        {"level", "info"},
+        {"message", "Rhine telemetry diagnostic"},
+        {"environment", environment},
+        {"release", release},
+        {"sdk", sdk},
+        {"tags", QJsonObject{{"rhine.process", "interface"}, {"rhine.diagnostic", "connectivity"}}},
+        {"contexts", QJsonObject{{"rhine", QJsonObject{{"process", "interface"}}}}}};
 
     const auto generation = authorizedGeneration(preference(), endpoint);
     if (!generation.isNull()) {
-        const auto hash = QCryptographicHash::hash(QByteArrayLiteral("rhine-sentry-user-v1:") +
-                                                       generation.toRfc4122(), QCryptographicHash::Sha256)
-                              .toHex();
-        event["user"] = QJsonObject{
-            {"id", QString::fromLatin1(hash)}};
+        auto installationId =
+            QUuid::fromString(AppStorage::settings().value(QLatin1String(installationKey)).toString());
+        if (installationId.isNull()) {
+            installationId = generation;
+        }
+        event["user"] = QJsonObject{{"id", userIdForInstallation(installationId)}};
     }
 
     const auto payload = QJsonDocument(event).toJson(QJsonDocument::Compact);
@@ -345,6 +375,10 @@ void start(bool playbackService) {
     if (generation.isNull()) {
         return;
     }
+    const auto installationId = ensureInstallationId(settings, generation);
+    if (installationId.isNull() || settings.status() != QSettings::NoError) {
+        return;
+    }
     const QString role = playbackService ? QStringLiteral("playback-service") : QStringLiteral("interface");
     const auto cacheDirectory = AppStorage::cacheDirectory();
     if (cacheDirectory.isEmpty()) {
@@ -364,9 +398,8 @@ void start(bool playbackService) {
     if (validRate && configuredRate >= 0.0 && configuredRate <= 1.0) {
         traceRate = configuredRate;
     }
-    // 同一份授权在 GUI 和播放服务间共享，不依赖各自的 SDK 缓存。
-    const auto userId = QString::fromLatin1(QCryptographicHash::hash(
-        QByteArrayLiteral("rhine-sentry-user-v1:") + generation.toRfc4122(), QCryptographicHash::Sha256).toHex());
+    // 同一份安装身份在 GUI 和播放服务间共享，不依赖各自的 SDK 缓存。
+    const auto userId = userIdForInstallation(installationId);
     attempted = true;
     running = Platform::start({endpoint, environment.isEmpty() ? QStringLiteral("production") : environment,
                                release, version, databaseDirectory, role, userId, traceRate});

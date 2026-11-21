@@ -399,8 +399,8 @@ void NativeHud::paintSettingsCustomSection(const QString &renderer, const QRectF
 #else
         const int sentryTop = 112;
 #endif
-        sectionRow(sentryTop, "SENTRY", QStringLiteral("发送使用与诊断数据"),
-                   status, configured ? QString::fromLatin1(RhineSentry::ConsentKey) : QString(),
+        sectionRow(sentryTop, "SENTRY", QStringLiteral("发送使用与诊断数据"), status,
+                   configured ? QString::fromLatin1(RhineSentry::ConsentKey) : QString(),
                    QStringLiteral("Sentry 遥测"),
                    QStringLiteral("默认开启，可随时关闭。发送崩溃栈、启动耗时和白名单操作。"));
         auto diagnosticLabel = QStringLiteral("测试连接并激活端点");

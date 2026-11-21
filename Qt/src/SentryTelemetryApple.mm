@@ -2,15 +2,25 @@
 
 #include <QJsonDocument>
 #include <atomic>
+#include <mutex>
 #import <SentryObjC/SentryObjC.h>
 
 namespace RhineSentry::Platform {
 namespace {
 NSURLSession *transportSession = nil;
 std::atomic_bool discardReports = false;
+std::atomic_bool eventTracingEnabled = false;
+std::mutex eventMutex;
+NSString *processName = nil;
+NSString *userId = nil;
 
 NSDictionary<NSString *, id> *attributes(NSString *category, NSString *name) {
-    return @{@"rhine.category": category, @"rhine.name": name};
+    return @{
+        @"rhine.category" : category,
+        @"rhine.name" : name,
+        @"rhine.process" : processName,
+        @"user.id" : userId
+    };
 }
 
 SentryObjCEvent *filterEvent(SentryObjCEvent *event, NSString *userId) {
@@ -34,14 +44,15 @@ SentryObjCEvent *filterEvent(SentryObjCEvent *event, NSString *userId) {
 
 bool start(const Config &config) {
     discardReports.store(false, std::memory_order_relaxed);
+    eventTracingEnabled.store(config.tracesSampleRate > 0.0, std::memory_order_relaxed);
     NSURLSessionConfiguration *transport = NSURLSessionConfiguration.ephemeralSessionConfiguration;
     transport.HTTPCookieStorage = nil;
     transport.HTTPShouldSetCookies = NO;
     transport.URLCredentialStorage = nil;
     transport.timeoutIntervalForRequest = 5;
     transportSession = [NSURLSession sessionWithConfiguration:transport];
-    NSString *role = config.role.toNSString();
-    NSString *userId = config.userId.toNSString();
+    processName = config.role.toNSString();
+    userId = config.userId.toNSString();
     [SentryObjCSDK startWithConfigureOptions:^(SentryObjCOptions *options) {
         options.dsn = config.dsn.toNSString();
         options.environment = config.environment.toNSString();
@@ -77,10 +88,6 @@ bool start(const Config &config) {
         options.beforeSend = ^SentryObjCEvent *(SentryObjCEvent *event) {
             return filterEvent(event, userId);
         };
-        options.beforeSendLog = ^SentryObjCLog *(SentryObjCLog *log) {
-            [log setAttribute:nil forKey:@"user.id"];
-            return log;
-        };
         options.beforeSendMetric = ^SentryObjCMetric *(SentryObjCMetric *metric) {
             auto *attributes = [metric.attributes mutableCopy];
             [attributes removeObjectForKey:@"user.id"];
@@ -89,8 +96,8 @@ bool start(const Config &config) {
         };
         options.initialScope = ^SentryObjCScope *(SentryObjCScope *scope) {
             [scope setUser:[[SentryObjCUser alloc] initWithUserId:userId]];
-            [scope setTagValue:role forKey:@"rhine.process"];
-            [scope setAttributeValue:role forKey:@"rhine.process"];
+            [scope setTagValue:processName forKey:@"rhine.process"];
+            [scope setAttributeValue:processName forKey:@"rhine.process"];
             return scope;
         };
     }];
@@ -102,6 +109,7 @@ bool start(const Config &config) {
 }
 
 void stop(bool revoked) {
+    std::lock_guard<std::mutex> lock(eventMutex);
     if (revoked) {
         // 先取消专用会话的待发和在途请求，再让 SDK 关闭 crash handler 及缓存。
         discardReports.store(true, std::memory_order_relaxed);
@@ -121,10 +129,40 @@ void record(const char *category, const char *name) {
                                                      category:[@"rhine." stringByAppendingString:categoryName]];
     crumb.message = eventName;
     [SentryObjCSDK addBreadcrumb:crumb];
+
+    // 每条语义日志使用独立事件事务；强制采样并绑定到日志，
+    // 保证 Log 可跳转到对应 Trace 和 Span。
+    std::lock_guard<std::mutex> lock(eventMutex);
+    SentryObjCSpan *transaction = nil;
+    if (eventTracingEnabled.load(std::memory_order_relaxed)) {
+        NSString *traceName = [@"rhine." stringByAppendingFormat:@"%@.%@", categoryName, eventName];
+        NSString *operation = [@"rhine." stringByAppendingString:categoryName];
+        auto *context = [[SentryObjCTransactionContext alloc] initWithName:traceName
+                                                                 operation:operation
+                                                                   sampled:SentryObjCSampleDecisionYes
+                                                                sampleRate:nil
+                                                                sampleRand:nil];
+        transaction = [SentryObjCSDK startTransactionWithContext:context bindToScope:YES];
+    }
     [SentryObjCSDK.logger info:eventName attributes:attributes(categoryName, eventName)];
+    if (transaction) {
+        [transaction finishWithStatus:SentryObjCSpanStatusOk];
+    }
 }
 
 void failure() {
+    // 失败日志和异常事件共享同一条事件事务，
+    // 保留用户、日志、Span 与错误之间的关联。
+    std::lock_guard<std::mutex> lock(eventMutex);
+    SentryObjCSpan *transaction = nil;
+    if (eventTracingEnabled.load(std::memory_order_relaxed)) {
+        auto *context = [[SentryObjCTransactionContext alloc] initWithName:@"rhine.playback.failure"
+                                                                 operation:@"rhine.playback"
+                                                                   sampled:SentryObjCSampleDecisionYes
+                                                                sampleRate:nil
+                                                                sampleRand:nil];
+        transaction = [SentryObjCSDK startTransactionWithContext:context bindToScope:YES];
+    }
     [SentryObjCSDK.logger error:@"playback_failed" attributes:attributes(@"playback", @"failure")];
     auto *event = [[SentryObjCEvent alloc] initWithLevel:SentryObjCLevelError];
     auto *exception = [[SentryObjCException alloc] initWithValue:@"Playback failed" type:@"RhinePlaybackError"];
@@ -133,6 +171,9 @@ void failure() {
     exception.mechanism = mechanism;
     event.exceptions = @[exception];
     [SentryObjCSDK captureEvent:event];
+    if (transaction) {
+        [transaction finishWithStatus:SentryObjCSpanStatusInternalError];
+    }
 }
 
 void startup(qint64 milliseconds) {
