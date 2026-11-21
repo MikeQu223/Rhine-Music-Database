@@ -83,16 +83,16 @@ double basicNavigationLeft(double width) => width - 789;
 /// 资料库标题（Qt MusicLibrary::libraryName()，Qt/src/MusicLibrary.cpp:188-193）：
 /// 目录打开时是目录标题（'全部歌曲'），否则是**当前列名**（`columns.value(lane)`：
 /// 搜索结果 / 喜欢的歌曲 / 我的歌单 / 全部歌曲 / 全部专辑）。
-String basicLibraryTitle(BasicViewState state) {
+String basicLibraryTitle(BasicViewState state, {String providerName = basicLibraryName}) {
   final BasicDirectory? directory = state.directory;
   if (directory != null) {
     // Qt/src/MusicLibrary.cpp:189-193：目录内就是 directory->item["title"]。
     // 目录确实可能没标题（来源没给），那时回落到 provider 名——不编造标题，
     // 也不拿根列的列名冒充目录名（目录不是列）。
-    return directory.title.isEmpty ? basicLibraryName : directory.title;
+    return directory.title.isEmpty ? providerName : directory.title;
   }
   final String lane = state.laneName(state.selectedLane);
-  return lane.isEmpty ? basicLibraryName : lane;
+  return lane.isEmpty ? providerName : lane;
 }
 
 /// 一帧的扁平命令流 + 命中集合。绘制（HudStagePainter）与命中（HitLayer）
@@ -181,6 +181,12 @@ class BasicHudFrame {
     List<ProviderDescriptor> providers = const <ProviderDescriptor>[],
     /// 当前平台 id（`music.provider`，决定平台行高亮与 ACCOUNT 段分支）。
     String providerId = '',
+    /// 当前平台显示名（Qt `providerName()`）。切到插件平台后横屏页头/页脚、
+    /// 详情页的 provider 字段都必须跟着换，不能继续写死「塞壬唱片」。
+    String providerName = basicLibraryName,
+    /// 当前平台是否就是内置塞壬（Qt `isSiren()`）。false 时横屏页头的
+    /// 「＋ 塞壬曲库」应变成「＋ 我的音乐」、页脚 session 不再是 SIREN RECORDS。
+    bool isSirenProvider = true,
     /// 平台 id → 已恢复的账号；null / 未登录即「未登录」。
     Map<String, ProviderAccount?> providerAccounts = const <String, ProviderAccount?>{},
     /// `music.nickname`（仅登录态使用）。
@@ -272,6 +278,8 @@ class BasicHudFrame {
         songOptionsDetailBody: songOptionsDetailBody,
         providers: providers,
         providerId: providerId,
+        providerName: providerName,
+        isSirenProvider: isSirenProvider,
         providerAccounts: providerAccounts,
         providerUserName: providerUserName,
         localMusicEnabled: localMusicEnabled,
@@ -318,11 +326,11 @@ class BasicHudFrame {
       // 让 HudChrome 自己盖右栏遮罩（lib/hud/pages/chrome.dart:231 的 archiveMask，
       // fadeWidth 300 = 原 Qt 的 NativeHud.cpp:313-330 FadeWidth）。
       suppressMask: false,
-      libraryName: basicLibraryTitle(state),
+      libraryName: basicLibraryTitle(state, providerName: providerName),
       isLocal: false,
-      isSiren: true,
+      isSiren: isSirenProvider,
       uid: '',
-      provider: sirenProvider,
+      provider: providerId,
       archiveMaskStrength: archiveMaskStrength.round(),
       updaterAvailable: false,
     );
@@ -331,7 +339,12 @@ class BasicHudFrame {
         (state.phase == BasicPhase.detail || state.phase == BasicPhase.lyrics);
     if (songPage) {
       final detail.SongDetailDrawing drawing = detail.renderSongDetail(
-        _detailState(state),
+        _detailState(
+          state,
+          providerId: providerId,
+          providerName: providerName,
+          isSiren: isSirenProvider,
+        ),
         width,
         glyphs: ports,
         images: const _NoImages(),
@@ -355,6 +368,9 @@ class BasicHudFrame {
         portrait: portrait,
         listPosition: listPosition,
         trackListMode: trackListMode,
+        providerId: providerId,
+        providerName: providerName,
+        isSirenProvider: isSirenProvider,
       );
     }
 
@@ -503,6 +519,8 @@ class BasicHudFrame {
     String songOptionsDetailBody = '',
     List<ProviderDescriptor> providers = const <ProviderDescriptor>[],
     String providerId = '',
+    String providerName = basicLibraryName,
+    bool isSirenProvider = true,
     Map<String, ProviderAccount?> providerAccounts = const <String, ProviderAccount?>{},
     String providerUserName = '',
     bool localMusicEnabled = true,
@@ -798,7 +816,7 @@ class BasicHudFrame {
       // Qt compact `collection()`：目录（歌单/专辑）内页。
       paintPortraitCollectionPage(
         canvas,
-        title: basicLibraryTitle(state),
+        title: basicLibraryTitle(state, providerName: providerName),
         subtitle: _portraitCollectionSubtitle(directory, items.length),
         // 目录封面是真实 URL（siren.mjs:209），像素由 BasicCoverImages 解码；
         // 拿不到就留空槽，不编假图。
@@ -828,7 +846,7 @@ class BasicHudFrame {
         archive: PortraitArchive(
           tabs: tabs,
           selectedLane: state.selectedLane,
-          title: basicLibraryTitle(state),
+          title: basicLibraryTitle(state, providerName: providerName),
           rows: <PortraitRow>[
             for (final BasicListItem item in items)
               PortraitRow(title: item.title, kind: item.kind),
@@ -851,6 +869,16 @@ class BasicHudFrame {
       // `save` + `scale(unit, unit)`；这里不补回来，面板就会按逻辑像素画成半尺寸，
       // 命中矩形也跟着错位（真机上表现为「面板画出来了，但按钮点不动」）。
       canvas.ensureScale();
+      // 整屏遮罩：Qt `ResponsiveLyrics.cpp:238` 的 `hit({0,118,393,h-118},
+      // "mobile:song-options", "收起操作")` 就是"点面板外的任何地方收起"。
+      // 先发遮罩命中（后发者优先，所以它必须在按钮热区之后加入？不——命中按
+      // append-only 反向遍历，遮罩先加 ⇒ 按钮更晚 ⇒ 按钮优先，符合预期）。
+      canvas.hit(
+        Rect.fromLTWH(0, portraitSongOptionsMinTop, canvas.gridWidth,
+            canvas.height - portraitSongOptionsMinTop),
+        'mobile:song-options',
+        '收起操作',
+      );
       paintPortraitSongOptions(
         canvas,
         actions: _portraitSongOptionsActions(
@@ -1390,6 +1418,9 @@ class BasicHudFrame {
     required bool portrait,
     double? listPosition,
     bool trackListMode = true,
+    String providerId = sirenProvider,
+    String providerName = basicLibraryName,
+    bool isSirenProvider = true,
   }) {
     final List<BasicListItem> items = basicLibraryItems(state);
     final int rawSelected = basicSelectedItemIndex(state, items);
@@ -1406,7 +1437,7 @@ class BasicHudFrame {
     HudArchivePage(sink, ports, dark: state.dark).archive(
       width: width,
       s: HudArchiveState(
-        libraryName: basicLibraryTitle(state),
+        libraryName: basicLibraryTitle(state, providerName: providerName),
         libraryIndex: selected,
         libraryTotal: items.length,
         // 真实列：Qt `selectedLane` / `sourceOrder().indexOf(selectedLane)` /
@@ -1414,9 +1445,9 @@ class BasicHudFrame {
         selectedLane: state.selectedLane.clamp(0, basicSirenColumns.length - 1).toInt(),
         laneCount: basicSirenColumns.length,
         sourceOrderIndex: basicSourceOrderIndex(state.selectedLane),
-        provider: sirenProvider,
+        provider: providerId,
         isLocal: false,
-        isSiren: true,
+        isSiren: isSirenProvider,
         directory: state.directory != null,
         directoryKind: state.directory?.kind,
         uid: '',
@@ -1537,10 +1568,15 @@ class BasicHudFrame {
     return '';
   }
 
-  static detail.SongDetailState _detailState(BasicViewState state) {
+  static detail.SongDetailState _detailState(
+    BasicViewState state, {
+    String providerId = sirenProvider,
+    String providerName = basicLibraryName,
+    bool isSiren = true,
+  }) {
     final SirenSong? song = state.song;
     return detail.SongDetailState(
-      provider: sirenProvider,
+      provider: providerId,
       officialPlayback: false,
       item: song == null
           ? null
@@ -1552,12 +1588,12 @@ class BasicHudFrame {
               artists: song.artist.isEmpty ? const <String>[] : <String>[song.artist],
               album: song.album,
               durationMs: song.durationMs,
-              provider: sirenProvider,
+              provider: providerId,
             ),
       dark: state.dark,
       lyricsMode: state.phase == BasicPhase.lyrics,
-      isSiren: true,
-      providerName: basicLibraryName,
+      isSiren: isSiren,
+      providerName: providerName,
       uid: '',
       detailLoading: state.loading,
       player: detail.SongDetailPlayerState(
@@ -1577,7 +1613,12 @@ class BasicHudFrame {
     );
   }
 
-  static lyrics.LyricsPanelModel _lyricsModel(BasicViewState state, double x, double usable) {
+  static lyrics.LyricsPanelModel _lyricsModel(
+    BasicViewState state,
+    double x,
+    double usable, {
+    String providerId = sirenProvider,
+  }) {
     final SirenSong? song = state.song;
     final BasicLyricsDocument document = BasicLyricsDocument(
       lines: state.lyrics,
@@ -1595,7 +1636,7 @@ class BasicHudFrame {
       status: state.lyricStatus,
       message: state.lyricMessage,
       seekable: state.durationMs > 0,
-      provider: sirenProvider,
+      provider: providerId,
       isLocal: false,
       dark: state.dark,
     );
@@ -1890,6 +1931,8 @@ class BasicHudSurface extends StatefulWidget {
     this.songOptionsDetailBody = '',
     this.providers = const <ProviderDescriptor>[],
     this.providerId = '',
+    this.providerName = '',
+    this.isSirenProvider = true,
     this.providerAccounts = const <String, ProviderAccount?>{},
     this.providerUserName = '',
     this.localMusicEnabled = true,
@@ -1921,6 +1964,9 @@ class BasicHudSurface extends StatefulWidget {
   });
 
   final BasicViewState state;
+  /// 当前平台显示名与「是否内置塞壬」：竖屏/横屏页头、详情页 provider 字段都读它。
+  final String providerName;
+  final bool isSirenProvider;
   final BasicGlyphPorts ports;
   final ValueChanged<String> onAction;
 

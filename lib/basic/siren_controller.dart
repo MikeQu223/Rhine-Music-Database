@@ -57,6 +57,7 @@ const String sirenCatalogFailurePrefix = '塞壬唱片曲库读取失败：';
 const String sirenCatalogLoadedPrefix = '已加载塞壬唱片曲库：';
 
 /// 曲库尚未加载的状态文案（Qt/src/MusicSiren.cpp:195）。
+const String sirenProviderName = '塞壬唱片';
 const String sirenLibraryUnloadedStatus = '塞壬唱片曲库尚未加载';
 
 /// 详情读取失败的前缀（Qt/src/MusicLibrary.cpp:339）。
@@ -279,6 +280,7 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
 
   /// 远端检索所属平台 id（切平台要清空旧结果）。
   String _remoteProviderId = '';
+  String _remoteProviderName = '';
 
   /// 当前平台的列名（插件平台来自 manifest 的 `library.columns`，否则塞壬五列）。
   List<String> _laneColumns = basicSirenColumns;
@@ -742,17 +744,21 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     ProviderGateway? gateway, {
     required String providerId,
     String quality = '',
+    String providerName = '',
     List<String> columns = basicSirenColumns,
   }) {
     // 列名随平台走（Qt `registry.columns(provider)`）：插件平台的 manifest
     // `library.columns` 与塞壬五列不同名，标题/状态串都要跟着换。
     _laneColumns = columns.isEmpty ? basicSirenColumns : columns;
-    if (identical(gateway, _remoteSearch) && providerId == _remoteProviderId) {
+    if (identical(gateway, _remoteSearch) &&
+        providerId == _remoteProviderId &&
+        providerName == _remoteProviderName) {
       _publish();
       return;
     }
     _remoteSearch = gateway;
     _remoteProviderId = providerId;
+    _remoteProviderName = providerName;
     _remoteQuality = quality;
     _remoteSearchResult = null;
     ++_remoteSearchSeq;
@@ -2382,8 +2388,14 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
   }
 
   String _catalogLoadedStatus() {
-    return '$sirenCatalogLoadedPrefix${_catalogSongs.length} 首 / ${_catalogAlbums.length} 张专辑';
+    // 状态串里的平台名必须跟着当前平台走（Qt `providerName()`）：切到插件平台后
+    // 再显示「已加载塞壬唱片曲库」是错的。
+    final String name = _remoteSearch != null ? _providerDisplayName() : sirenProviderName;
+    return '已加载${name}曲库：${_catalogSongs.length} 首 / ${_catalogAlbums.length} 张专辑';
   }
+
+  /// 当前远端平台的显示名（无远端时回落到内置塞壬名）。
+  String _providerDisplayName() => _remoteProviderName.isEmpty ? sirenProviderName : _remoteProviderName;
 
   /// 资料库层的状态文案：目录打开时是目录标题（Qt MusicLibrary::libraryName()，
   /// Qt/src/MusicLibrary.cpp:189-194），否则是曲库加载结果。
@@ -2392,7 +2404,9 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     if (directory != null) {
       return '$sirenOpenedPrefix${directory.title}';
     }
-    return _catalogLoaded ? _catalogLoadedStatus() : sirenLibraryUnloadedStatus;
+    return _catalogLoaded
+        ? _catalogLoadedStatus()
+        : '${_remoteSearch != null ? _providerDisplayName() : sirenProviderName}曲库尚未加载';
   }
 
   /// 「全部歌曲」目录的 state 投影（Qt/src/MusicSiren.cpp:205-246）。

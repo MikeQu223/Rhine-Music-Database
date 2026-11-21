@@ -559,6 +559,13 @@ class _BasicShellState extends State<_BasicShell>
   /// （basic_hud_resources.dart:35-36 的契约），也不能被动作反馈挤掉。
   String? _resourceNotice;
 
+  /// 一次性动作反馈的自动消失计时器（Qt 的 cacheMessage 也是限时挂在 HUD 上，
+  /// 不是永久状态）。每次写新提示就重置；`_notice` / `_actionNotice = ...` 之后
+  /// 2.6 秒自动清空，避免「切界面之前提示一直挂着」。
+  Timer? _noticeTimer;
+
+  static const Duration _noticeResidence = Duration(milliseconds: 2600);
+
   /// 竖屏「歌曲操作」面板是否展开（Qt `m_songOptionsExpanded`，
   /// `mobile:song-options` 翻转；任何 `music:`/`tab:` 动作都会收起）。
   bool _songOptionsExpanded = false;
@@ -1392,6 +1399,7 @@ class _BasicShellState extends State<_BasicShell>
 
   @override
   void dispose() {
+    _noticeTimer?.cancel();
     _viewerTicker?.dispose();
     _startup.dispose();
     _hudFocusNode.dispose();
@@ -1593,6 +1601,10 @@ class _BasicShellState extends State<_BasicShell>
       providerAccounts: _providerAccounts,
       providerUserName: _providerUserName,
       localMusicEnabled: _localMusicEnabled,
+      // 当前平台的显示名与「是否内置塞壬」（Qt `isSiren()`）：页头/详情页的
+      // `provider` 与 `providerName` 都从这里走，切到插件平台后不再残留塞壬字样。
+      providerName: _currentDescriptor?.name ?? '',
+      isSirenProvider: _providerId == 'siren',
       // 评论页（modal == 'comments'）：领域层 CommentState 经映射层转成竖屏
       // 只读视图模型（lib/basic/basic_comment_mapper.dart）。
       comments: _commentsModel(),
@@ -2897,6 +2909,28 @@ class _BasicShellState extends State<_BasicShell>
       return;
     }
     setState(() => _actionNotice = text);
+    _scheduleNoticeDismiss();
+  }
+
+  /// 每次写动作反馈都重启一次消失计时器：连续点击时最后一条提示从头计时。
+  void _scheduleNoticeDismiss() {
+    _noticeTimer?.cancel();
+    _noticeTimer = Timer(_noticeResidence, () {
+      if (!mounted) {
+        return;
+      }
+      setState(() => _actionNotice = null);
+    });
+  }
+
+  /// 直接写 `_actionNotice` 的地方（`setState(() => _actionNotice = text)`）
+  /// 都走这里，保证与 [_notice] 一样的自动消失语义。
+  void _setNotice(String text) {
+    if (!mounted) {
+      return;
+    }
+    setState(() => _actionNotice = text);
+    _scheduleNoticeDismiss();
   }
 
   // ── TextInputPorts（lib/hud/input/text_input_overlay.dart:361-391）────────────
