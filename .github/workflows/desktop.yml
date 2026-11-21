@@ -28,6 +28,11 @@ on:
       plugin_flavors:
         required: false
         type: string
+    secrets:
+      RHINE_SENTRY_DSN:
+        required: false
+      SENTRY_AUTH_TOKEN:
+        required: false
 
 permissions:
   contents: read
@@ -417,6 +422,8 @@ jobs:
       - name: Restore core-only artifact
         env:
           QT_ROOT: ${{ env.QT_ROOT_DIR }}
+          RHINE_SENTRY_DSN: ${{ inputs.release_version != '' && (runner.os == 'Windows' || runner.os == 'macOS') && secrets.RHINE_SENTRY_DSN || '' }}
+          RHINE_SENTRY_ENVIRONMENT: ${{ vars.RHINE_SENTRY_ENVIRONMENT }}
         run: npm run build -- --plugins=core
       - name: Verify core-only artifact
         run: |
@@ -425,6 +432,15 @@ jobs:
       - name: Create distribution
         if: runner.os != 'Linux'
         run: npm run share
+      - name: Upload Sentry debug symbols
+        if: inputs.release_version != '' && (runner.os == 'Windows' || runner.os == 'macOS')
+        shell: bash
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+          SENTRY_URL: ${{ vars.SENTRY_URL }}
+        run: bash scripts/upload-sentry-symbols.sh
       - name: Upload distribution
         uses: actions/upload-artifact@v4
         with:
@@ -488,6 +504,17 @@ jobs:
         run: npm run build:ios
         env:
           RHINE_IOS_QT: ${{ env.QT_ROOT_DIR }}
+          RHINE_SENTRY_DSN: ${{ inputs.release_version != '' && secrets.RHINE_SENTRY_DSN || '' }}
+          RHINE_SENTRY_ENVIRONMENT: ${{ vars.RHINE_SENTRY_ENVIRONMENT }}
+      - name: Upload Sentry iOS debug symbols
+        if: inputs.release_version != ''
+        shell: bash
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+          SENTRY_URL: ${{ vars.SENTRY_URL }}
+        run: bash scripts/upload-sentry-symbols.sh --ios
       - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4
         with:

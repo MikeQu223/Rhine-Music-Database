@@ -1,5 +1,8 @@
 #include <QScopedValueRollback>
 #include "NativeHud.h"
+#if RHINE_SENTRY
+#include "SentryTelemetry.h"
+#endif
 #include "AppUpdater.h"
 #include "DesktopLyricsAppearance.h"
 #include "Host.h"
@@ -360,10 +363,42 @@ void NativeHud::paintSettingsCustomSection(const QString &renderer, const QRectF
                    QStringLiteral("在性能面板内手动收集、导出诊断文件。"));
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
         const bool debugMode = m_host->preference("debug-mode") == "on";
+#if RHINE_SENTRY
+        const auto debugDescription = QStringLiteral("仅保存本地诊断；从 Sentry 切换到本地调试需重启。");
+#else
+        const auto debugDescription = QStringLiteral("仅用于排查闪退与卡死；关闭后清空诊断数据，完全停止采集需重启。");
+#endif
         sectionRow(112, "DEBUG MODE", QStringLiteral("调试模式（原生崩溃诊断）"),
                    debugMode ? QStringLiteral("开启 / 点击关闭") : QStringLiteral("关闭 / 点击开启"),
-                   "debug-mode", QStringLiteral("调试模式"),
-                   QStringLiteral("仅用于排查闪退与卡死；关闭后清空诊断数据，完全停止采集需重启。"));
+                   "debug-mode", QStringLiteral("调试模式"), debugDescription);
+#endif
+#if RHINE_SENTRY
+        const auto consent = m_host->preference(QLatin1String(RhineSentry::ConsentKey));
+        const bool configured = RhineSentry::configured();
+        auto status = QStringLiteral("未配置服务");
+        if (configured) {
+            status = QStringLiteral("关闭 / 启用后需重启");
+            if (RhineSentry::preferenceEnabled(consent)) {
+                status = QStringLiteral("开启 / 点击关闭");
+                if (!RhineSentry::active()) {
+                    status = QStringLiteral("已开启 / 等待重启");
+#if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
+                    if (debugMode) {
+                        status = QStringLiteral("已开启 / 界面使用本地调试");
+                    }
+#endif
+                }
+            }
+        }
+#if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
+        const int sentryTop = 220;
+#else
+        const int sentryTop = 112;
+#endif
+        sectionRow(sentryTop, "SENTRY", QStringLiteral("发送使用与诊断数据"),
+                   status, configured ? QString::fromLatin1(RhineSentry::ConsentKey) : QString(),
+                   QStringLiteral("Sentry 遥测"),
+                   QStringLiteral("默认开启，可随时关闭。发送崩溃栈、启动耗时和白名单操作。"));
 #endif
         return;
     }

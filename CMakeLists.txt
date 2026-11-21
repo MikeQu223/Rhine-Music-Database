@@ -638,6 +638,9 @@ if(NOT RHINE_MOBILE_PLATFORM)
         install(TARGETS RhinePlaybackService RUNTIME DESTINATION bin)
     endif()
     add_dependencies(RhineMusicDatabase RhinePlaybackService)
+    if(WIN32 OR APPLE)
+        include(cmake/SentryTelemetry.cmake)
+    endif()
 endif()
 if(APPLE)
     target_sources(
@@ -700,6 +703,7 @@ if(IOS)
     # Xcode 不会把混合目标的 OBJCXX 专用编译选项传给 .mm 文件。
     set_target_properties(RhineCore RhineMusicDatabase PROPERTIES XCODE_ATTRIBUTE_CLANG_ENABLE_OBJC_ARC YES)
     include(Qt/IOS.cmake)
+    include(cmake/SentryTelemetryIOS.cmake)
 elseif(ANDROID)
     # 平台源码、Node 运行时、包元数据与内嵌资源都在 Qt/Android.cmake 里装配。 放在 APPLE/WIN32/UNIX 之前：Android 同时满足 UNIX，走错分支会把
     # PlatformLinux.cpp 编进来（它按桌面目录查找 orpheus:// 处理器）。

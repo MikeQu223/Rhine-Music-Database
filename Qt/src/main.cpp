@@ -11,6 +11,11 @@
 #include "AppStorage.h"
 #include "storage/RenderCacheStorage.h"
 #include "CrashDiagnostics.h"
+#if RHINE_SENTRY
+#include "SentryTelemetry.h"
+#include <QElapsedTimer>
+#include <QScopeGuard>
+#endif
 #include "Engine.h"
 #include "MvController.h"
 #include <QQmlComponent>
@@ -917,6 +922,10 @@ int main(int argc, char **argv) {
     // 段错误诊断链必须抢在一切组件（Qt 插件、Node、GPU 驱动）可能安装的处理之前。
     rhineInstallSignalDiag();
 #endif
+#if RHINE_SENTRY
+    QElapsedTimer sentryStartup;
+    sentryStartup.start();
+#endif
     // 诊断对象必须比应用实例更晚析构，保留窗口与 GPU 资源销毁阶段的崩溃采集。
     CrashDiagnostics crashDiagnostics;
 #ifdef Q_OS_WIN
@@ -1016,6 +1025,22 @@ int main(int argc, char **argv) {
     }
 #endif
     // 调试模式默认关闭；关闭时不注册 Crashpad，也不保留上次会话的诊断数据。
+#if RHINE_SENTRY
+    const auto sentryClose = qScopeGuard([] { RhineSentry::stop(); });
+    const bool sentryNormalStartup = !args.contains("--self-test") && !args.contains("--offline") &&
+                                     !args.contains("--playback-gui-test") && !args.contains("--taskbar-self-test") &&
+                                     !args.contains("--make-icon") && !args.contains("--capture") &&
+                                     qEnvironmentVariableIntValue("RHINE_OFFLINE") != 1;
+    if (sentryNormalStartup && AppStorage::settings().value("panel/debug-mode").toString() != "on") {
+        RhineSentry::start();
+        QObject::connect(&application, &QGuiApplication::applicationStateChanged, &application,
+                         [](Qt::ApplicationState state) {
+                             if (state == Qt::ApplicationActive) {
+                                 RhineSentry::foreground();
+                             }
+                         });
+    }
+#endif
     const bool debugMode = AppStorage::settings().value("panel/debug-mode").toString() == QLatin1String("on");
     if (debugMode && CrashDiagnostics::supported()) {
         crashDiagnostics.start(application);
@@ -1032,6 +1057,9 @@ int main(int argc, char **argv) {
     applyRenderScaleSetting();
     applyAntialiasingSetting();
     applyFrameGenerationSetting();
+#if RHINE_SENTRY
+    RhineSentry::renderSettings(RhineGraphics::activeBackend());
+#endif
     // 写给设置界面的能力快照：先按"没编进来"落盘，下面的 FG 分支真正接管后再改写。
     // 设置界面在 RhineCore 里，不能反向 include 依赖 vulkan.h 的实现，只能读这份结论。
 #if defined(Q_OS_IOS)
@@ -1178,6 +1206,11 @@ int main(int argc, char **argv) {
     }
     auto backend = std::make_unique<Engine>(root, offline, nullptr, playback.get(),
                                             renderCache ? &*renderCache : nullptr);
+#if RHINE_SENTRY
+    if (playback) {
+        RhineSentry::audioBackend(RhineSentry::AudioBackend::SeparateProcess);
+    }
+#endif
 #ifndef Q_OS_ANDROID
     const auto acceptPluginFileOpens = [&](QWindow *window) {
         pluginFileOpenRequests.setReceiver(backend.get(), window);
@@ -1196,10 +1229,29 @@ int main(int argc, char **argv) {
     QObject::connect(
         &backend->host, &Host::preferenceChanged, &application,
         [&crashDiagnostics, &application, host = &backend->host](const QString &key, const QString &value) {
+#if RHINE_SENTRY
+            if (key == QLatin1String(RhineSentry::ConsentKey) &&
+                value == QLatin1String(RhineSentry::DisabledPreference)) {
+                RhineSentry::revoke();
+                return;
+            }
+            if (key == "vsync" || key == "supersample" || key == "render-scale" || key == "aa-mode" ||
+                key == "msaa" || key == "fg") {
+                // HUD 在偏好通知后还可能写入生效的配置，等本次动作结束再取值。
+                QMetaObject::invokeMethod(&application, [] {
+                    RhineSentry::renderSettings(RhineGraphics::activeBackend());
+                }, Qt::QueuedConnection);
+            }
+#endif
             if (key != QLatin1String("debug-mode")) {
                 return;
             }
             if (value == QLatin1String("on")) {
+#if RHINE_SENTRY
+                if (RhineSentry::ownsCrashHandler()) {
+                    return;
+                }
+#endif
                 // 启动失败时回写关闭，避免界面显示已开启但实际没有采集。
                 if (!crashDiagnostics.start(application)) {
                     host->setPreference(QStringLiteral("debug-mode"), QStringLiteral("off"));
@@ -1411,6 +1463,9 @@ int main(int argc, char **argv) {
 #ifndef Q_OS_ANDROID
             acceptPluginFileOpens(shell->window());
 #endif
+#if RHINE_SENTRY
+            RhineSentry::startup(sentryStartup.elapsed());
+#endif
             return application.exec();
         }
         qWarning().noquote() << "FG: 呈现层启动失败，回退默认路径：" << shell->lastError();
@@ -1550,6 +1605,9 @@ int main(int argc, char **argv) {
     }
 #ifndef Q_OS_ANDROID
     acceptPluginFileOpens(window);
+#endif
+#if RHINE_SENTRY
+    RhineSentry::startup(sentryStartup.elapsed());
 #endif
     return application.exec();
 }

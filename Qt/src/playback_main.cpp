@@ -1,6 +1,10 @@
 #include "AppIdentity.h"
 #include "AppStorage.h"
 #include "PlaybackService.h"
+#if RHINE_SENTRY
+#include "SentryTelemetry.h"
+#include <QScopeGuard>
+#endif
 #include <QDir>
 #include <QGuiApplication>
 #include <QFileInfo>
@@ -76,6 +80,12 @@ int main(int argc, char **argv) {
         }
         return 0;
     }
+#if RHINE_SENTRY
+    const auto sentryClose = qScopeGuard([] { RhineSentry::stop(); });
+    if (!test && qEnvironmentVariableIntValue("RHINE_OFFLINE") != 1) {
+        RhineSentry::start(true);
+    }
+#endif
     PlaybackService service(root, gui, test);
     if (!service.listen(PlaybackConnection::endpoint())) {
         return 1;

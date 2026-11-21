@@ -1,4 +1,7 @@
 #include "AudioPlayer.h"
+#if RHINE_SENTRY
+#include "SentryTelemetry.h"
+#endif
 #include "PlatformFeatures.h"
 #include "AppStorage.h"
 #include "ProviderRegistry.h"
@@ -470,6 +473,10 @@ void AudioPlayer::checkPlaybackHealth() {
 
 /** 在线音源使用可续传的字节流 */
 void AudioPlayer::startMediaSource(const QUrl &url) {
+#if RHINE_SENTRY
+    RhineSentry::audioBackend(pcmEnabled ? RhineSentry::AudioBackend::QtFfmpeg
+                                         : RhineSentry::AudioBackend::QtMultimedia);
+#endif
 #ifdef Q_OS_ANDROID
     // Android 后端的 setMedia 会忽略 QIODevice、直接把 URL 交给系统播放器流式播放
     // （qandroidmediaplayer.cpp 的 setMedia 只取 URL）；若仍启动 HttpAudioStream 预下载，
@@ -1322,6 +1329,9 @@ bool AudioPlayer::startApplePlayback(const QUrl &source, bool paused) {
     if (!applePlayer) {
         return false;
     }
+#if RHINE_SENTRY && !defined(Q_OS_WIN)
+    RhineSentry::audioBackend(RhineSentry::AudioBackend::Apple);
+#endif
 #ifdef Q_OS_WIN
     applePlayer->setOutputPolicy(outputPolicy);
     applePlayer->enableDiagnostics(diagnosticsEnabled);
@@ -1734,6 +1744,9 @@ void AudioPlayer::commitAppleTransition() {
         stopWindowsDecoder();
     }
     useApplePlayback = true;
+#if RHINE_SENTRY
+    RhineSentry::audioBackend(RhineSentry::AudioBackend::WindowsTransition);
+#endif
 #endif
     applePlayer = std::move(transition.incoming);
 #ifdef Q_OS_WIN

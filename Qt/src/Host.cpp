@@ -1,5 +1,8 @@
 #include "fg/FgConfig.h"
 #include "Host.h"
+#if RHINE_SENTRY
+#include "SentryTelemetry.h"
+#endif
 #include "ProviderRegistry.h"
 #include "PluginInstaller.h"
 #include "AppStorage.h"
@@ -1656,7 +1659,14 @@ bool Host::mediaLoad(QString url, bool alternative, double position, bool paused
         audio->spectrumChanged = [this](QJsonArray levels) { emit audioSpectrumChanged(levels); };
         audio->enableSpectrum(audioSpectrumEnabled);
     }
+#if RHINE_SENTRY
+    auto *trace = RhineSentry::beginPlaybackPreparation();
+    const bool prepared = audio->load(url, offline, alternative, provider, position, paused);
+    RhineSentry::finishPlaybackPreparation(trace, prepared);
+    return prepared;
+#else
     return audio->load(url, offline, alternative, provider, position, paused);
+#endif
 }
 #if defined(Q_OS_MACOS) || defined(Q_OS_IOS) || defined(Q_OS_WIN)
 void Host::setAppleTransitionPreparation(AppleTransitionPreparation preparation) {
@@ -1894,6 +1904,9 @@ namespace {
 // 为空，界面上的表现就是"设置完立刻跳回原值"。
 const QStringList &preferenceKeys() {
     static const QStringList keys{
+#if RHINE_SENTRY
+        QString::fromLatin1(RhineSentry::ConsentKey),
+#endif
         "search-history", "play-history", "local-cover-cache", "theme", "motion", "startup-animation",
         "detail-autoplay", "skip-detail-on-switch", "single-play-mode", "disc-rotation", "scene-enhancement",
         "play-button-style",
@@ -1918,6 +1931,11 @@ const QStringList &preferenceKeys() {
 }
 }
 QString Host::preference(QString key) const {
+#if RHINE_SENTRY
+    if (key == QLatin1String(RhineSentry::ConsentKey)) {
+        return offline ? QString() : RhineSentry::preference();
+    }
+#endif
     if (remote) {
         if (!remotePreferences.contains(key)) {
             const auto value = remote->call("host.preference", {{"key", key}})["value"].toString();
@@ -1934,6 +1952,19 @@ QString Host::preference(QString key) const {
     return AppStorage::settings().value("panel/" + key).toString();
 }
 void Host::setPreference(QString key, QString value) {
+#if RHINE_SENTRY
+    if (key == QLatin1String(RhineSentry::ConsentKey)) {
+        if (offline || !RhineSentry::savePreference(value)) {
+            return;
+        }
+        // 先保存共享开关，后台连接中断也不能让遥测在下次启动时恢复。
+        if (remote && value == QLatin1String(RhineSentry::DisabledPreference)) {
+            remote->request("host.stopSentry", {}, [](QJsonObject, QString) {});
+        }
+        emit preferenceChanged(key, value);
+        return;
+    }
+#endif
     if (remote) {
         remote->call("host.setPreference", {{"key", key}, {"value", value}});
         if (!remote->error().isEmpty()) {

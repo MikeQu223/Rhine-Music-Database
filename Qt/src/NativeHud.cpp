@@ -1,4 +1,7 @@
 #include "NativeHud.h"
+#if RHINE_SENTRY
+#include "SentryTelemetry.h"
+#endif
 #include "MusicData.h"
 #include "ProviderRegistry.h"
 #include <QDateTime>
@@ -548,6 +551,12 @@ void NativeHud::draw(QJsonObject next, double stageWidth, double time) {
     const double actualStageWidth = stageWidth;
     stageWidth = m_responsive.sourceWidth(stageWidth);
     frame = next;
+#if RHINE_SENTRY
+    if (RhineSentry::active()) {
+        RhineSentry::page(frame.value("mode").toString(), modal, lyricsMode, commentsMode,
+                          frame.value("viewer").toBool());
+    }
+#endif
     width = stageWidth;
     lastTime = time;
     updateLyricsColors(time);

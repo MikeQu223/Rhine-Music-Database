@@ -11,6 +11,7 @@ process.chdir(root);
 const win = process.platform === 'win32';
 const mac = process.platform === 'darwin';
 const linux = process.platform === 'linux';
+const sentryEnabled = (win || mac) && (process.env.RHINE_ENABLE_SENTRY || 'ON').toUpperCase() !== 'OFF';
 if (!win && !mac && !linux) {
     throw Error('Supported platforms: macOS, Linux and Windows');
 }
@@ -286,6 +287,7 @@ function buildQt() {
     if (win || mac) {
         // CMake 生成符号时使用当前运行的 Node，避免依赖 PATH 里的系统安装。
         configure.push(`-DRHINE_CRASH_NODE=${process.execPath}`);
+        configure.push(`-DRHINE_ENABLE_SENTRY=${sentryEnabled ? 'ON' : 'OFF'}`);
     }
     run('cmake', configure);
     run('cmake', ['--build', 'output/qt-build']);
@@ -1148,7 +1150,7 @@ function prepareLinuxAppDir(app) {
 /**
  * 组装独立应用并执行平台部署和签名，所有文件沿用原资源清单。
  */
-function deployApp(qt, config, existingBundle = '') {
+function deployApp(qt, config, existingBundle = '', withSentry = sentryEnabled) {
     const app = path.resolve(existingBundle || defaultAppPath);
     if (!existingBundle && fs.existsSync(app)) {
         fs.renameSync(app, app + '.previous-' + Date.now());
@@ -1177,6 +1179,11 @@ function deployApp(qt, config, existingBundle = '') {
         for (const name of ['crashpad_handler.exe', 'RhineCrashReporter.exe', 'crashpad_wer.dll']) {
             fs.copyFileSync(path.join('output/qt-build', name), path.join(app, name));
         }
+        if (withSentry) {
+            for (const name of ['sentry-crash.exe', 'sentry-wer.dll', 'Sentry-LICENSE']) {
+                fs.copyFileSync(path.join('output/qt-build', name), path.join(app, name));
+            }
+        }
         for (const name of ['crash-tools', 'crash-symbols']) {
             fs.cpSync(path.join('output/qt-build', name), path.join(app, name), { recursive: true });
         }
@@ -1186,6 +1193,10 @@ function deployApp(qt, config, existingBundle = '') {
     if (process.platform === 'darwin') {
         // 清理旧布局的生成 helper，避免同一个包同时包含两种应用身份。
         fs.rmSync(path.join(app, 'Contents/MacOS/RhinePlaybackService'), { force: true });
+        if (!withSentry) {
+            fs.rmSync(path.join(app, 'Contents/MacOS/sentry-crash'), { force: true });
+            fs.rmSync(path.join(resources, 'Sentry-LICENSE'), { force: true });
+        }
     }
     if (mac) {
         fs.mkdirSync('output/qt-icon', {
@@ -1328,6 +1339,9 @@ function deployApp(qt, config, existingBundle = '') {
     }
     if (mac) {
         run('codesign', ['--force', '--sign', '-', path.join(resources, 'MusicBridge/node')]);
+        if (withSentry) {
+            run('codesign', ['--force', '--sign', '-', path.join(app, 'Contents/MacOS/sentry-crash')]);
+        }
         // 先封装 helper 的资源签名，再签外层应用，避免沿用链接器留下的裸可执行文件签名。
         run('codesign', [
             '--force',
@@ -1363,7 +1377,9 @@ if (process.argv[2] === '--resources-only') {
         buildDirectory = parent;
     }
     run('cmake', ['--build', buildDirectory, '--target', 'RhineCrashSymbols']);
-    console.log(deployApp(qt, config, path.resolve(bundle)));
+    const cache = fs.readFileSync(path.join(buildDirectory, 'CMakeCache.txt'), 'utf8');
+    const withSentry = /^RHINE_ENABLE_SENTRY:BOOL=(?:ON|YES|TRUE|Y|1)\r?$/im.test(cache);
+    console.log(deployApp(qt, config, path.resolve(bundle), withSentry));
 } else {
     const { qt, config } = buildQt();
     console.log(deployApp(qt, config));

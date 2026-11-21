@@ -1,4 +1,7 @@
 #include "Host.h"
+#if RHINE_SENTRY
+#include "SentryTelemetry.h"
+#endif
 #include "AppStorage.h"
 #include "PluginInstaller.h"
 #include "ProviderRegistry.h"
@@ -45,6 +48,9 @@ void Host::refreshPluginCatalog(bool reloadService) {
         m_pluginCatalog["error"] = error;
     }
     ProviderRegistry::instance().load(root, m_pluginCatalog["accepted"].toArray());
+#if RHINE_SENTRY
+    RhineSentry::pluginVersions();
+#endif
 }
 
 QJsonObject Host::pluginCatalog() const {

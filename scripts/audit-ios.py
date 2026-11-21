@@ -112,6 +112,18 @@ for name in [
     assert (frameworks / f"{name}.framework" / name).is_file(), (
         f"Missing framework: {name}"
     )
+sentry = frameworks / "SentryObjC.framework"
+if sentry.exists():
+    assert (app / "PrivacyInfo.xcprivacy").is_file(), "Missing iOS privacy manifest"
+    plistlib.loads((app / "PrivacyInfo.xcprivacy").read_bytes())
+    load_commands = subprocess.check_output(
+        ["otool", "-l", str(app / "RhineMusicDatabase")], text=True
+    )
+    assert any(
+        line.split()[:2] == ["path", "@executable_path/Frameworks"]
+        for line in load_commands.splitlines()
+    ), "Missing application framework runpath"
+swift_runtime_required = False
 executables = [app / "RhineMusicDatabase"] + [
     folder / folder.stem for folder in frameworks.glob("*.framework")
 ]
@@ -133,7 +145,12 @@ for executable in executables:
     ).splitlines()[1:]
     for dependency in dependencies:
         library = dependency.strip().split(" (", 1)[0]
-        assert "swift" not in library.lower(), f"Unexpected runtime: {library}"
+        if "swift" in library.lower():
+            assert executable == sentry / "SentryObjC" and (
+                library.startswith("/usr/lib/swift/libswift")
+                or library == "/System/Library/Frameworks/SwiftUI.framework/SwiftUI"
+            ), f"Unexpected Swift runtime: {executable}: {library}"
+            swift_runtime_required = True
         assert library.startswith(("@rpath/", "/usr/lib/", "/System/Library/")), library
         if library.startswith("@rpath/"):
             assert (frameworks / library.removeprefix("@rpath/")).is_file(), library
@@ -149,7 +166,7 @@ report = {
     "system_bundle_identifier": recognized_identifier,
     "architecture": "arm64",
     "frameworks_checked": len(executables) - 1,
-    "swift_runtime_required": False,
+    "swift_runtime_required": swift_runtime_required,
     "device_functionality_verified": False,
 }
 print(json.dumps(report, indent=4))

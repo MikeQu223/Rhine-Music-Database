@@ -1,6 +1,10 @@
 #include <QtGlobal>
 #include <QLibraryInfo>
 #include "RhiScene.h"
+#if RHINE_SENTRY
+#include "SentryTelemetry.h"
+#include <QCoreApplication>
+#endif
 #include "CrashDiagnostics.h"
 #ifdef Q_OS_DARWIN
 #include "render/MetalFxBackend.h"
@@ -681,6 +685,17 @@ class Renderer {
         updates->uploadTexture(target, description);
     }
     Renderer(QString path, QRhi *device) : rhi(device), root(path) {
+#if RHINE_SENTRY
+        if (RhineSentry::active()) {
+            const auto adapter = rhi->driverInfo();
+            const auto backendName = QString::fromLatin1(rhi->backendName());
+            // 设备创建时采样一次，使用界面线程更新 SDK 作用域。
+            QMetaObject::invokeMethod(QCoreApplication::instance(), [adapter, backendName] {
+                RhineSentry::renderDevice(backendName, adapter.vendorId, adapter.deviceId,
+                                          int(adapter.deviceType), QString::fromUtf8(adapter.deviceName));
+            }, Qt::QueuedConnection);
+        }
+#endif
 #ifndef Q_OS_DARWIN
         postProcess = std::make_unique<RhineRender::ScenePostProcess>(rhi);
 #endif

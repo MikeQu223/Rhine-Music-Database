@@ -2,6 +2,9 @@
 #include "fg/FgConfig.h"
 #include "GraphicsBackend.h"
 #include "NativeHud.h"
+#if RHINE_SENTRY
+#include "SentryTelemetry.h"
+#endif
 #include "PlatformFeatures.h"
 #include "MusicData.h"
 #include "MusicDiscover.h"
@@ -509,6 +512,21 @@ void NativeHud::playerAction(const QStringList &parts) {
 
 /** 动作字符串保持原有输入协议，控制器直接更新原生音乐状态和场景。 */
 void NativeHud::action(QString value) {
+#if RHINE_SENTRY
+    if (value == QLatin1String(RhineSentry::ConsentKey)) {
+        if (RhineSentry::preferenceEnabled(m_host->preference(value))) {
+            m_host->setPreference(value, QString::fromLatin1(RhineSentry::DisabledPreference));
+        } else {
+            const auto consent = RhineSentry::newConsent();
+            if (!consent.isEmpty()) {
+                m_host->setPreference(value, consent);
+            }
+        }
+        m_host->invalidate();
+        return;
+    }
+    RhineSentry::action(value);
+#endif
     if ((value == "disc-rotation" || value.startsWith("disc-rotation:")) &&
         !PlatformFeatures::discRotationAvailable()) {
         return;

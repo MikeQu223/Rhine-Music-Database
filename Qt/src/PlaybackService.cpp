@@ -1,5 +1,8 @@
 #include <QtGlobal>
 #include "PlaybackService.h"
+#if RHINE_SENTRY
+#include "SentryTelemetry.h"
+#endif
 #include "PluginOpenRequest.h"
 #include "ProviderRegistry.h"
 #include "AppStorage.h"
@@ -123,6 +126,14 @@ class PlaybackService::SessionWriter {
 PlaybackService::PlaybackService(QString root, QString guiExecutable, bool offline, QObject *parent)
     : QObject(parent), m_host(root, offline, nullptr, true), m_api(&m_host), m_player(&m_host, &m_api),
       m_interfaceSession(interfaceLaunch(root, guiExecutable, offline)) {
+#if RHINE_SENTRY
+    connect(&m_host, &Host::preferenceChanged, this, [](const QString &key, const QString &value) {
+        if (key == QLatin1String(RhineSentry::ConsentKey) &&
+                value == QLatin1String(RhineSentry::DisabledPreference)) {
+            RhineSentry::revoke();
+        }
+    });
+#endif
     m_player.registerStorageOperations(m_storage);
     connect(&m_interfaceSession, &InterfaceSession::activationRequested, this,
             [this] { send(m_gui, {{"event", "activate"}}); });
@@ -493,6 +504,10 @@ QJsonObject PlaybackService::hostCommand(const QString &method, const QJsonObjec
         result["value"] = m_host.offline && key == "provider" ? m_api.provider : m_host.preference(key);
     } else if (method == "setPreference") {
         m_host.setPreference(arguments["key"].toString(), arguments["value"].toString());
+#if RHINE_SENTRY
+    } else if (method == "stopSentry") {
+        RhineSentry::revoke();
+#endif
     } else if (method == "hasCredential") {
         result["value"] = m_host.hasCredential(arguments["provider"].toString());
     } else if (method == "saveCredential") {

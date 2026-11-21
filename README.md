@@ -216,6 +216,13 @@ npm run preview   # QML 实时预览（需对应 Qt 工具）
 
 项目使用 Qt RHI 私有接口，升级 Qt 后需重新编译并验证兼容性。
 
+### 配置 Sentry
+
+- 本地运行可用 `SENTRY_DSN` 和可选的 `SENTRY_ENVIRONMENT`。打包可通过 CMake 配置项或环境变量 `RHINE_SENTRY_DSN`、`RHINE_SENTRY_ENVIRONMENT` 提供默认值。环境默认是 `production`。客户端只接受有效的 HTTPS DSN，支持自托管端点，DSN 变更后需要在设置中重新开启。
+- 已开启遥测且配置 DSN 的客户端会对启动准备、音频加载提交记录 Sentry 事务，默认采样率为 10%。本地验证可用 `SENTRY_TRACES_SAMPLE_RATE=1`，设为 `0` 可关闭追踪。事务使用固定名称，追踪头不会转发给音乐服务。
+- Windows、macOS 使用 Sentry Native。iOS/iPadOS 链接官方预编译的 SentryObjC 动态框架及系统 Swift 运行时。使用 `-DRHINE_ENABLE_SENTRY=OFF` 可构建无 Sentry 版本。
+- 发布工作流的 Secrets 为 `RHINE_SENTRY_DSN` 和 `SENTRY_AUTH_TOKEN`。调试符号上传还需仓库变量 `SENTRY_ORG`、`SENTRY_PROJECT`，自托管可提供 `SENTRY_URL`。Sentry 项目的符号上传令牌只供 GitHub Actions 使用。
+
 ## 数据与隐私
 
 搜索、歌曲资料、扫码与个人音乐库请求发送至已安装音乐来源插件声明的 API 与图片域名。原始认证记录仅由 C++ 和 Node 桥处理：
@@ -224,7 +231,7 @@ npm run preview   # QML 实时预览（需对应 Qt 工具）
 - Windows：通过 DPAPI 加密。
 - Linux：保存在 `~/.local/share/RhineMusicDatabase/rhine.music.database/account.credential`，权限为 `0600`。
 
-本项目没有自建的数据收集服务器、分析 SDK 或自动上传诊断功能。
+Windows、macOS、iOS 与 iPadOS 的发行构建在配置 Sentry DSN 后默认开启诊断和使用统计。可在「设置 → 性能与诊断」关闭。关闭会立即停止新的采集，并在重启后保留。再次开启从下次启动生效。该功能发送崩溃调用栈、归类后的异常、启动耗时、会话状态、开始有效播放的活动信号，以及预先定义的页面和操作名称。登录凭据、搜索词、私人音乐库内容、截图、录像、原始 Qt 日志和桌面内存转储不包含在此功能的采集范围内。桌面本地调试模式启用时，界面进程优先使用只在本机保存报告的 Crashpad。Android 使用原有的 Clarity 与 Bugly 路径。
 
 登录为可选功能。应用不读取浏览器或官方客户端的登录信息。
 

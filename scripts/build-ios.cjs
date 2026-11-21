@@ -8,6 +8,7 @@ const root = path.resolve(__dirname, '..');
 process.chdir(root);
 const simulator = process.argv.includes('--simulator');
 const prepareOnly = process.argv.includes('--prepare-only');
+const sentryEnabled = !/^(0|off|false|no)$/i.test(process.env.RHINE_ENABLE_SENTRY || 'ON');
 const qtVersion = '6.12.0';
 const kit =
     process.env.RHINE_IOS_QT ||
@@ -133,6 +134,14 @@ fs.rmSync(path.join(build, 'Release/RhineMusicDatabase.app/RhineAssets/third-par
     recursive: true,
     force: true,
 });
+if (!sentryEnabled) {
+    fs.rmSync(path.join(build, 'Release/RhineMusicDatabase.app/PrivacyInfo.xcprivacy'), { force: true });
+    fs.rmSync(path.join(build, 'Release/RhineMusicDatabase.app/SentryCocoa-LICENSE.md'), { force: true });
+    fs.rmSync(path.join(build, 'Release/RhineMusicDatabase.app/Frameworks/SentryObjC.framework'), {
+        recursive: true,
+        force: true,
+    });
+}
 run(path.join(kit, 'bin/qt-cmake'), [
     '-S',
     '.',
@@ -148,6 +157,7 @@ run(path.join(kit, 'bin/qt-cmake'), [
     `-DRHINE_IOS_RESOURCES=${resources}`,
     `-DRHINE_IOS_FFMPEG_ROOT=${ffmpeg}`,
     '-DRHINE_PACKAGE_APP=OFF',
+    `-DRHINE_ENABLE_SENTRY=${sentryEnabled ? 'ON' : 'OFF'}`,
     `-DRHINE_VERSION=${version.version}`,
     `-DRHINE_RELEASE_BUILD=${version.release ? 'ON' : 'OFF'}`,
 ]);

@@ -1,4 +1,7 @@
 #include "MusicPlayer.h"
+#if RHINE_SENTRY
+#include "SentryTelemetry.h"
+#endif
 #include "ProviderRegistry.h"
 #include <QFileInfo>
 #include <QUrl>
@@ -288,6 +291,11 @@ void MusicPlayer::play(QJsonObject track, std::optional<QJsonArray> source, std:
         (m_api->provider != "local" && track["provider"] == "local")) {
         return;
     }
+#if RHINE_SENTRY
+    if (!resume) {
+        RhineSentry::playbackAction(RhineSentry::PlaybackAction::Play);
+    }
+#endif
 #if defined(Q_OS_MACOS) || defined(Q_OS_IOS) || defined(Q_OS_WIN)
     invalidateAppleTransition();
 #endif
@@ -473,6 +481,11 @@ void MusicPlayer::finishOnlinePlayback(const QJsonObject &track, const QJsonObje
 }
 
 void MusicPlayer::fail(QString error) {
+#if RHINE_SENTRY
+    if (!failed && !m_host->playbackConnection()) {
+        RhineSentry::playbackFailure();
+    }
+#endif
     if (!m_restoringSession) {
         m_resumePosition.reset();
     }
@@ -626,6 +639,12 @@ void MusicPlayer::tick(double time, bool force) {
             m_host->mediaControl("pause");
         }
     }
+#if RHINE_SENTRY
+    if (RhineSentry::active() && state["playing"].toBool() && !state["buffering"].toBool() &&
+        (!previous["playing"].toBool() || previous["buffering"].toBool())) {
+        RhineSentry::playbackActive();
+    }
+#endif
     lyrics.sync(state["position"].toDouble());
     // 播放结束或错误状态只在播放中或加载完成后触发
     if (!current.isEmpty() && !loading && state.contains("ended") &&
@@ -679,6 +698,12 @@ void MusicPlayer::setPaused(bool paused) {
     if (remoteCommand("pause", {{"paused", paused}})) {
         return;
     }
+#if RHINE_SENTRY
+    if (!current.isEmpty()) {
+        RhineSentry::playbackAction(paused ? RhineSentry::PlaybackAction::Pause
+                                         : RhineSentry::PlaybackAction::Resume);
+    }
+#endif
     if (m_resumePosition) {
         m_resumePaused = paused;
     }
@@ -726,6 +751,12 @@ void MusicPlayer::next(int direction, bool ended) {
         emit changed();
         return;
     }
+#if RHINE_SENTRY
+    if (!ended) {
+        RhineSentry::playbackAction(direction < 0 ? RhineSentry::PlaybackAction::Previous
+                                                  : RhineSentry::PlaybackAction::Next);
+    }
+#endif
     play(queue.at(selected), std::nullopt, selected);
 }
 

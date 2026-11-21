@@ -910,7 +910,11 @@ const QVector<SettingsSection> &sections() {
         {SectionId::Experimental, 6, 60, "EXPERIMENTAL FEATURES", "实验性功能", "experimental", 120,
          discRotationVisible},
         {SectionId::Storage, 7, 70, "STORAGE", "存储与缓存", "storage", 174, alwaysVisible},
-#if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
+#if RHINE_SENTRY && (defined(Q_OS_MACOS) || defined(Q_OS_WIN))
+        {SectionId::Performance, 8, 80, "PERFORMANCE", "性能与诊断", "performance", 328, alwaysVisible},
+#elif RHINE_SENTRY
+        {SectionId::Performance, 8, 80, "PERFORMANCE", "性能与诊断", "performance", 220, alwaysVisible},
+#elif defined(Q_OS_MACOS) || defined(Q_OS_WIN)
         {SectionId::Performance, 8, 80, "PERFORMANCE", "性能与诊断", "performance", 220, alwaysVisible},
 #else
         {SectionId::Performance, 8, 80, "PERFORMANCE", "性能与诊断", "performance", 120, alwaysVisible},
