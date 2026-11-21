@@ -218,10 +218,10 @@ npm run preview   # QML 实时预览（需对应 Qt 工具）
 
 ### 配置 Sentry
 
-- 本地运行可用 `SENTRY_DSN` 和可选的 `SENTRY_ENVIRONMENT`。打包可通过 CMake 配置项或环境变量 `RHINE_SENTRY_DSN`、`RHINE_SENTRY_ENVIRONMENT` 提供默认值。环境默认是 `production`。客户端只接受有效的 HTTPS DSN，支持自托管端点，DSN 变更后需要在设置中重新开启。
+- 本地打包可以把客户端 DSN 单独写入仓库根目录下已被 Git 忽略的 `.sentry-dsn`，之后直接运行 `npm run build` 或 `npm run build:ios`。打包时，环境变量 `RHINE_SENTRY_DSN` 优先于 CMake 缓存和本地文件，显式设为空可禁用打包时注入 DSN。也可用 `RHINE_SENTRY_ENVIRONMENT` 设置打包环境。本地运行时可用 `SENTRY_DSN` 和 `SENTRY_ENVIRONMENT` 覆盖，环境默认是 `production`。客户端只接受有效的 HTTPS DSN，支持自托管端点，DSN 变更后需要在设置中重新开启。
 - 已开启遥测且配置 DSN 的客户端会对启动准备、音频加载提交记录 Sentry 事务，默认采样率为 10%。本地验证可用 `SENTRY_TRACES_SAMPLE_RATE=1`，设为 `0` 可关闭追踪。事务使用固定名称，追踪头不会转发给音乐服务。
 - Windows、macOS 使用 Sentry Native。iOS/iPadOS 链接官方预编译的 SentryObjC 动态框架及系统 Swift 运行时。使用 `-DRHINE_ENABLE_SENTRY=OFF` 可构建无 Sentry 版本。
-- 发布工作流的 Secrets 为 `RHINE_SENTRY_DSN` 和 `SENTRY_AUTH_TOKEN`。调试符号上传还需仓库变量 `SENTRY_ORG`、`SENTRY_PROJECT`，自托管可提供 `SENTRY_URL`。Sentry 项目的符号上传令牌只供 GitHub Actions 使用。
+- GitHub Actions 用仓库 Secret `RHINE_SENTRY_DSN` 配置 Windows、macOS 和 iOS 产物。默认分支的推送和手动构建使用 `development` 环境，正式发布使用 `RHINE_SENTRY_ENVIRONMENT` 仓库变量或默认的 `production`。PR 产物不注入 DSN。正式发布上传调试符号还需 Secret `SENTRY_AUTH_TOKEN` 和仓库变量 `SENTRY_ORG`、`SENTRY_PROJECT`，自托管可提供 `SENTRY_URL`。
 
 ## 数据与隐私
 

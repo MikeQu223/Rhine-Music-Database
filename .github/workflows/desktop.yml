@@ -422,8 +422,14 @@ jobs:
       - name: Restore core-only artifact
         env:
           QT_ROOT: ${{ env.QT_ROOT_DIR }}
-          RHINE_SENTRY_DSN: ${{ inputs.release_version != '' && (runner.os == 'Windows' || runner.os == 'macOS') && secrets.RHINE_SENTRY_DSN || '' }}
-          RHINE_SENTRY_ENVIRONMENT: ${{ vars.RHINE_SENTRY_ENVIRONMENT }}
+          # 默认分支的验证包使用独立环境，PR 产物不注入项目 DSN。
+          RHINE_SENTRY_DSN: >-
+            ${{ (runner.os == 'Windows' || runner.os == 'macOS') &&
+                (inputs.release_version != '' ||
+                 ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+                  github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) &&
+                secrets.RHINE_SENTRY_DSN || '' }}
+          RHINE_SENTRY_ENVIRONMENT: ${{ inputs.release_version != '' && (vars.RHINE_SENTRY_ENVIRONMENT || 'production') || 'development' }}
         run: npm run build -- --plugins=core
       - name: Verify core-only artifact
         run: |
@@ -504,8 +510,12 @@ jobs:
         run: npm run build:ios
         env:
           RHINE_IOS_QT: ${{ env.QT_ROOT_DIR }}
-          RHINE_SENTRY_DSN: ${{ inputs.release_version != '' && secrets.RHINE_SENTRY_DSN || '' }}
-          RHINE_SENTRY_ENVIRONMENT: ${{ vars.RHINE_SENTRY_ENVIRONMENT }}
+          RHINE_SENTRY_DSN: >-
+            ${{ (inputs.release_version != '' ||
+                 ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+                  github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) &&
+                secrets.RHINE_SENTRY_DSN || '' }}
+          RHINE_SENTRY_ENVIRONMENT: ${{ inputs.release_version != '' && (vars.RHINE_SENTRY_ENVIRONMENT || 'production') || 'development' }}
       - name: Upload Sentry iOS debug symbols
         if: inputs.release_version != ''
         shell: bash

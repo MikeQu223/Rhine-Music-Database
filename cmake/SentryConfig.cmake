@@ -5,10 +5,15 @@ set(RHINE_SENTRY_DSN "" CACHE STRING "Default Sentry DSN (empty disables product
 set(RHINE_SENTRY_ENVIRONMENT "" CACHE STRING "Default Sentry environment")
 
 if(RHINE_ENABLE_SENTRY)
-    # 发布构建通过环境变量注入。读取每次配置的值，以免复用构建目录时保留上一次的 DSN。
+    # 每次配置都读取输入，避免本地 DSN 写入缓存后影响后续构建。
+    set(localDsnFile "${CMAKE_CURRENT_LIST_DIR}/../.sentry-dsn")
     foreach(setting RHINE_SENTRY_DSN RHINE_SENTRY_ENVIRONMENT)
         if(DEFINED ENV{${setting}})
             set(${setting} "$ENV{${setting}}")
+        elseif(setting STREQUAL "RHINE_SENTRY_DSN" AND RHINE_SENTRY_DSN STREQUAL ""
+               AND EXISTS "${localDsnFile}")
+            file(READ "${localDsnFile}" RHINE_SENTRY_DSN)
+            string(STRIP "${RHINE_SENTRY_DSN}" RHINE_SENTRY_DSN)
         endif()
         string(REPLACE "\\" "\\\\" ${setting}_LITERAL "${${setting}}")
         string(REPLACE "\"" "\\\"" ${setting}_LITERAL "${${setting}_LITERAL}")
