@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <stdlib.h>
 #include <unistd.h>
 
 namespace {
@@ -101,6 +102,10 @@ Java_rhine_music_database_porting_NodeHost_startNode(JNIEnv *env, jclass, jstrin
         __android_log_print(ANDROID_LOG_WARN, kTag, "chdir(%s) failed", cwdChars);
     }
     env->ReleaseStringUTFChars(cwd, cwdChars);
+
+    // 进程内 Node 只允许一份：把这个标记摆在 Qt 侧 `BridgeProcessAndroid::launch()` 能看见的
+    // 环境里，它就不会再起第二个 `node::Start`（v8 trap handler 二次初始化会 SIGTRAP）。
+    setenv("RHINE_NODE_IN_PROCESS", "1", 1);
 
     auto *args = new StartArgs{buffer, argv, 4};
     pthread_attr_t attributes;
