@@ -2391,6 +2391,10 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     // 状态串里的平台名必须跟着当前平台走（Qt `providerName()`）：切到插件平台后
     // 再显示「已加载塞壬唱片曲库」是错的。
     final String name = _remoteSearch != null ? _providerDisplayName() : sirenProviderName;
+    if (_remoteSearch != null) {
+      // 插件平台没有整库：说「已加载 936 首」会把塞壬的曲库数按到别的平台上。
+      return '${name}：用搜索查找曲目，收藏与歌单在左侧列';
+    }
     return '已加载${name}曲库：${_catalogSongs.length} 首 / ${_catalogAlbums.length} 张专辑';
   }
 
@@ -2659,6 +2663,13 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
       // 不能把整库曲目塞进 state.songs，否则 state.song/播放面会指到不相干的曲目。
       return const <SirenSong>[];
     }
+    if (_remoteSearch != null) {
+      // 插件平台没有「整库」这一层：Qt 的 `sourceItems(lane)` 在插件平台只填收藏
+      // （`lists[1]`）与歌单（`lists[2]`），其余列要么空、要么等 `loadMoreSource`。
+      // 此前这里无条件返回 `_catalogSongs`，于是切到网易云后「收藏歌单」列里
+      // 显示的是塞壬的 936 首曲目（用户报的「切平台后还有上一个平台的信息」）。
+      return const <SirenSong>[];
+    }
     return _catalogSongs;
   }
 
@@ -2677,6 +2688,10 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
         return const <SirenAlbum>[];
       }
       return filterSirenAlbums(_catalogAlbums, _query);
+    }
+    if (_remoteSearch != null) {
+      // 同 `_visibleSongs`：插件平台不投影塞壬曲库的专辑。
+      return const <SirenAlbum>[];
     }
     return _catalogAlbums;
   }

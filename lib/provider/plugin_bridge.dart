@@ -93,6 +93,19 @@ class PluginBridgeClient {
     }
   }
 
+  /// 应用私有 files 根（Qt 的 `AppStorage::dataDirectory()` 同源）。
+  ///
+  /// 只给「把插件 manifest 同步到 Qt 的扫描目录」用；拿不到时回空串，调用方跳过。
+  Future<String> filesDir() async {
+    try {
+      return await _channel.invokeMethod<String>('filesDir') ?? '';
+    } on PlatformException {
+      return '';
+    } on MissingPluginException {
+      return '';
+    }
+  }
+
   /// 发一条 `/native/<provider>/<operation>` 请求。
   Future<PluginBridgeReply> request(
     String provider,

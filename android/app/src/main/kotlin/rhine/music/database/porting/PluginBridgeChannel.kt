@@ -26,6 +26,10 @@ object PluginBridgeChannel {
         MethodChannel(messenger, channelName).setMethodCallHandler { call, result ->
             when (call.method) {
                 "status" -> result.success(PluginBridge.status(context))
+                // Qt 的 `ProviderRegistry` 只扫 `<files>/MusicBridge/local-plugins`，
+                // 而插件装在外部目录；Dart 侧要把 manifest 软链过去（封面域名白名单
+                // 由 Qt 的 descriptor 决定），所以这里把 files 根给出去。
+                "filesDir" -> result.success(context.filesDir.absolutePath)
                 "request" -> handleRequest(call, result, context)
                 else -> result.notImplemented()
             }

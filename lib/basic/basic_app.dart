@@ -86,6 +86,7 @@ import '../provider/platform_switcher.dart' show PlatformSwitcher;
 import '../provider/plugin_bridge.dart';
 import '../provider/plugin_gateway.dart';
 import '../provider/provider_service.dart';
+import '../provider/qt_plugin_descriptors.dart';
 import '../hud/portrait/portrait_pages_collection_likes.dart' show PortraitLikesRow;
 import '../hud/portrait/portrait_pages_collection_playlists.dart'
     show PortraitPlaylistRow;
@@ -870,6 +871,9 @@ class _BasicShellState extends State<_BasicShell>
       // `Qt/src/ProviderRegistry.cpp` 的 `loadManifestFallback`）。插件那批由
       // `PluginManager` 扫目录得到，禁用的不进表（= Qt 的 `disabled` 集合）。
       final PluginSnapshot plugins = _plugins.snapshot();
+      // 把插件 manifest 同步进 Qt 的扫描目录：Qt 用自己扫到的 descriptor 拼封面
+      // 域名白名单，不认识这些插件就会静默拒掉插件曲目的封面（3D 唱片灰盘）。
+      unawaited(_syncQtPluginDescriptors(plugins));
       final List<Map<String, Object?>> userManifests = <Map<String, Object?>>[
         for (final InstalledPlugin plugin in plugins.installed)
           if (plugin.enabled) plugin.manifest.raw,
@@ -937,6 +941,21 @@ class _BasicShellState extends State<_BasicShell>
     }
   }
 
+  /// 让 Qt 也认识已启用的插件平台（只写 descriptor，见
+  /// `lib/provider/qt_plugin_descriptors.dart`）。
+  Future<void> _syncQtPluginDescriptors(PluginSnapshot snapshot) async {
+    final String filesRoot = await _pluginBridge.filesDir();
+    if (filesRoot.isEmpty) {
+      return;
+    }
+    // Qt 的 registry root 是 `<files>/resources`（RHINE_RESOURCES），不是 files 本身。
+    await syncQtPluginDescriptors(
+      resourcesRoot: '$filesRoot/resources',
+      pluginRoot: snapshot.rootPath,
+      installed: snapshot.installed,
+    );
+  }
+
   /// 装平台服务与两条会话控制器（评论 / 登录）。
   ///
   /// 网关按平台分派：**用户安装的插件**（`netease`/`qq`/`kugou`/…）走
@@ -999,6 +1018,22 @@ class _BasicShellState extends State<_BasicShell>
     );
 
     controller.resetForProviderSwitch(current?.columns ?? basicSirenColumns);
+    // 归零后停在「搜索结果」列（Qt `choose()` 的 selectedLane = 0）：塞壬列 0 就是
+    // 搜索列，关键词为空时列表是空的，横屏下既没有行可点、ENTER 也只会报
+    // 「列表为空：当前没有可打开的条目」。Qt 桌面端有独立的 archive 概览页兜底，
+    // 本仓库没有，所以这里补一条：没有关键词时落到默认内容列（塞壬=全部歌曲）。
+    if (controller.state.query.trim().isEmpty &&
+        controller.state.selectedLane == basicSearchLane) {
+      // 塞壬有整库「全部歌曲」；插件平台没有整库（数据面只有收藏/歌单/搜索），
+      // 落到「喜欢的歌曲」列才有内容可看。
+      final int songsLane = controller.laneColumns.indexOf('全部歌曲');
+      final int target = songsLane > 0
+          ? songsLane
+          : (controller.laneColumns.length > 1 ? 1 : -1);
+      if (target > 0) {
+        unawaited(controller.selectLane(target));
+      }
+    }
     // Qt `MusicAccount::restoreCachedAccount()`：启动就把落盘会话读回来，
     // 否则设置页 ACCESS 卡在用户手动打开登录页之前一直显示「未登录」。
     unawaited(_restoreAccount());
