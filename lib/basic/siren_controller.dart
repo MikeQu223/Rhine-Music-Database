@@ -1735,10 +1735,52 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     if (_disposed || _directory != null || lane == _selectedLane) {
       return;
     }
-    if (lane < 0 || lane >= basicSirenColumns.length) {
+    if (lane < 0 || lane >= _laneColumns.length) {
       return;
     }
+
     _showSourceLane(lane);
+  }
+
+  /// 切平台后把视图状态归零（Qt `MusicAccount::choose`，Qt/src/MusicAccount.cpp:200-330）。
+  ///
+  /// 这条是「插件平台列名与内容不匹配」的根因修复：Qt 换平台时会把
+  /// `selectedLane` 归到 0（搜索结果列）、`searchKind` 回 `song`、`keyword` 清空、
+  /// 各列 cursor/offset/rowMemory 一起归零；本仓库此前只换网关与列名，于是
+  /// 插件平台仍停在塞壬的第 3 列，把塞壬曲库投影到「收藏歌单」上。
+  void resetForProviderSwitch(List<String> columns) {
+    if (_disposed) {
+      return;
+    }
+    _laneColumns = columns.isEmpty ? basicSirenColumns : columns;
+    final int laneCount = _laneColumns.length;
+    _selectedLane = 0;
+    _searchKind = catalogSearchKinds.first;
+    _searchGroup = 'none';
+    _searchGroupKey = '';
+    _searchOutcomeCache = null;
+    _searchOutcomeSignature = '';
+    _listPosition = 0;
+    _selection = null;
+    _lanePositions.replaceRange(
+        0, _lanePositions.length, List<double>.filled(_lanePositions.length, 0));
+    if (laneCount != _lanePositions.length) {
+      // 列数随平台走时，位置数组也按新长度重建（旧长度之后不会再被索引）。
+      _lanePositions
+        ..clear();
+      for (int lane = 0; lane < laneCount; lane++) {
+        _lanePositions.add(0);
+      }
+    }
+    _laneOffsets.replaceRange(
+        0, _laneOffsets.length, List<int>.filled(_laneOffsets.length, 0));
+    _rowMemory.replaceRange(
+        0, _rowMemory.length, List<int>.filled(_rowMemory.length, 0));
+    _serverLikedSongs = const <SirenSong>[];
+    _serverPlaylists = const <BasicLocalPlaylist>[];
+    _serverLikedCursor = 0;
+    _orderedServerLikedIds = const <String>[];
+    _publish();
   }
 
   /// 目录内 ±8 换页（Qt MusicDirectory::navigateDirectory，Qt/src/MusicDirectory.cpp:321-344）：
@@ -1795,7 +1837,9 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
   /// 集合的实现，所以这两列在端口为 null 时上屏「本地集合暂不可用」而不是发请求；
   /// 端口注入后投影的是真实本机数据，空才是真的空。
   void _showSourceLane(int lane) {
-    if (lane < 0 || lane >= basicSirenColumns.length) {
+    // 列数随平台走（插件 manifest 五列，塞壬五列）；用 _laneColumns.length 而不是
+    // basicSirenColumns.length，否则将来列数不同的平台会被这里直接挡掉。
+    if (lane < 0 || lane >= _laneColumns.length) {
       return;
     }
     _selectedLane = lane;

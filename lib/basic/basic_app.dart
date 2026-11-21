@@ -940,6 +940,8 @@ class _BasicShellState extends State<_BasicShell>
       // `library.columns` 与塞壬五列不同名（「收藏歌单」「收藏专辑」等）。
       columns: current?.columns ?? basicSirenColumns,
     );
+
+    controller.resetForProviderSwitch(current?.columns ?? basicSirenColumns);
     // Qt `MusicAccount::restoreCachedAccount()`：启动就把落盘会话读回来，
     // 否则设置页 ACCESS 卡在用户手动打开登录页之前一直显示「未登录」。
     unawaited(_restoreAccount());
@@ -2878,7 +2880,9 @@ class _BasicShellState extends State<_BasicShell>
       await active.back();
     }
     await active.selectLane(1);
-    final List<SirenSong> rows = active.likedSongs;
+    // 插件平台的「喜欢的歌曲」是服务端 likedIDs（`serverLikedSongs`），不能读本地集合。
+    final List<SirenSong> rows =
+        active.remoteSearchActive ? active.serverLikedSongs : active.likedSongs;
     if (rows.isEmpty) {
       _notice('还没有喜欢的歌曲');
       return;
