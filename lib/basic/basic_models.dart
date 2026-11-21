@@ -1351,6 +1351,48 @@ final RegExp _lrcTranslation = RegExp(r'【(.*)】\s*$');
 final RegExp _lrcOffsetTag = RegExp(r'^\s*\[offset:\s*([-+]?\d+)\s*\]\s*$', caseSensitive: false);
 final RegExp _lrcMetaTag = RegExp(r'^\s*\[[a-zA-Z]+:[^\]]*\]\s*$');
 
+/// 把插件返回的 lyrics-format 文档（Map）转成本地模型。
+///
+/// 形状见 `MusicBridge/lyrics-format.cjs` 的 `normalizeLyrics`：
+/// `{version, source, timing: line|word|none, offsetMs, lines[{startMs,text,translation}], plainText}`。
+/// 插件已经把 tlyric 合并进 `translation`，这里只做字段搬运，不重新解析 LRC。
+BasicLyricsDocument basicLyricsFromDocument(Object? document) {
+  if (document is! Map) {
+    return BasicLyricsDocument.empty;
+  }
+  final List<BasicLyricLine> lines = <BasicLyricLine>[];
+  final Object? rawLines = document['lines'];
+  if (rawLines is List) {
+    for (final Object? row in rawLines) {
+      if (row is! Map) {
+        continue;
+      }
+      final Object? start = row['startMs'];
+      final String text = row['text'] is String ? row['text']! as String : '';
+      final String translation =
+          row['translation'] is String ? row['translation']! as String : '';
+      if (text.isEmpty) {
+        continue;
+      }
+      lines.add(BasicLyricLine(
+        startMs: start is num ? start.toDouble() : 0,
+        text: text,
+        translation: translation,
+      ));
+    }
+  }
+  lines.sort((BasicLyricLine a, BasicLyricLine b) => a.startMs.compareTo(b.startMs));
+  final Object? offset = document['offsetMs'];
+  final String plainText =
+      document['plainText'] is String ? document['plainText']! as String : '';
+  return BasicLyricsDocument(
+    lines: lines,
+    offsetMs: offset is num ? offset.toDouble() : 0,
+    plainText: plainText,
+    timed: lines.isNotEmpty,
+  );
+}
+
 /// 解析 LRC 文本（对齐 MusicBridge/lyrics-format.cjs parseLrc :35-53 与
 /// normalizeLyrics :128-213）：多时间戳展开、【…】翻译、[offset:…] 偏移、按 startMs 排序。
 BasicLyricsDocument parseBasicLyrics(String raw) {

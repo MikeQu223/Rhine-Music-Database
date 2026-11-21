@@ -2812,6 +2812,9 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
       // 的 id 在那边必然 404，真机表现就是「详情页打开、状态一直已暂停」。
       String sourceUrl = _text(track['sourceUrl']);
       String lyricUrl = '';
+      // 插件平台的歌词走 `lyrics` operation（Qt/src/LyricsController.cpp:368-380 的
+      // `api(provider).call("lyrics", {track})`），不是塞壬的 lyricUrl。
+      Map<String, Object?>? remoteLyrics;
       if (sourceUrl.isEmpty) {
         final ProviderGateway? gateway = _remoteSearch;
         if (gateway != null) {
@@ -2819,6 +2822,7 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
           // 播放地址只能现向插件要；**不能**落到 `_repository.songDetail`——那是塞壬
           // 的 id 空间，插件 id 在那边必然 404（真机表现：详情页打开、状态「已暂停」）。
           sourceUrl = await gateway.playback(trackId: id, quality: _remoteQuality);
+          remoteLyrics = await _fetchRemoteLyrics(gateway, track);
         } else {
           final SirenSongDetail detail = await _repository.songDetail(id);
           if (_activeGeneration != generation) {
@@ -2839,7 +2843,11 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
       // 接受请求，通知是否可见取决于 POST_NOTIFICATIONS，失败不影响播放。
       unawaited(_mediaSession?.ensureStarted() ?? Future<bool>.value(false));
       _player.playbackStarted(generation: generation);
-      unawaited(_loadLyrics(track, LyricsController.trackKey(track), lyricUrl));
+      if (remoteLyrics != null) {
+        _applyRemoteLyrics(track, remoteLyrics);
+      } else {
+        unawaited(_loadLyrics(track, LyricsController.trackKey(track), lyricUrl));
+      }
     } on Object catch (error) {
       _player.fail(_messageOf(error), generation: generation);
     }
@@ -2870,6 +2878,46 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     if (_song?.id == detail.id) {
       _song = updated;
     }
+  }
+
+  /// 向插件要歌词；没有 `lyrics` 能力或出错时返回 null（走空态，不假装有词）。
+  Future<Map<String, Object?>?> _fetchRemoteLyrics(
+    ProviderGateway gateway,
+    Map<String, Object?> track,
+  ) async {
+    if (!gateway.operation('lyrics', fallback: false)) {
+      return null;
+    }
+    try {
+      return await gateway.lyricsByTrack(track);
+    } on Object catch (error) {
+      if (error is ProviderUnavailableError || error is ProviderRequestError) {
+        return null;
+      }
+      return null;
+    }
+  }
+
+  /// 把插件歌词文档灌进域控制器（含 `translation` 行，Qt 面板同样消费这个字段）。
+  void _applyRemoteLyrics(
+    Map<String, Object?> track,
+    Map<String, Object?> document,
+  ) {
+    final BasicLyricsDocument parsed = basicLyricsFromDocument(document);
+    if (parsed.isEmpty) {
+      final LyricsController? lyrics = _lyrics;
+      if (lyrics != null) {
+        _applyEmptyLyrics(lyrics);
+      }
+      return;
+    }
+    _lyricDoc = parsed;
+    final LyricsController? lyrics = _lyrics;
+    if (lyrics != null) {
+      lyrics.accept(parsed.toLyricsDocument(source: _providerDisplayName()), track);
+      lyrics.sync(_number(_player.state['position']));
+    }
+    _publish();
   }
 
   Future<void> _loadLyrics(

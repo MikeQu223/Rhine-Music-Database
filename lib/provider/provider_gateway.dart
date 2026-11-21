@@ -349,6 +349,15 @@ abstract class ProviderGateway {
     required int start,
   });
 
+  /// 取歌词文档（对应 `lyrics(track)`）。返回插件原样的 lyrics-format 文档：
+  /// `{version, source, timing, offsetMs, lines[{startMs,text,translation}], plainText}`。
+  ///
+  /// 默认实现表示「这个平台没有歌词能力」——`capabilities.lyrics` 为 false 或
+  /// `operations` 里没有 `lyrics` 时走这里，不能假装拿到了空文档。
+  Future<Map<String, Object?>> lyricsByTrack(Map<String, Object?> track) {
+    throw const ProviderUnavailableError('当前来源不支持歌词');
+  }
+
   /// 取曲目播放地址（对应 `playback(value, quality, alternative)`）。
   ///
   /// 三个参数都是位置参数：`value` 是 `{id}`，`quality` 是平台音质 id
@@ -529,6 +538,11 @@ class UnavailableProviderGateway implements ProviderGateway {
     bool alternative = false,
   }) async {
     throw ProviderUnavailableError(reason);
+  }
+
+  @override
+  Future<Map<String, Object?>> lyricsByTrack(Map<String, Object?> track) async {
+    throw ProviderUnavailableError('当前来源不支持歌词');
   }
 
   @override

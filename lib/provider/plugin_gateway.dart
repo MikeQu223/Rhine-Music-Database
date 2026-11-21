@@ -238,6 +238,17 @@ class PluginGateway implements ProviderGateway {
     return _text(value['url'] ?? value['src'] ?? value['source']);
   }
 
+  /// 歌词（插件签名 `lyrics(track)`，第一个位置参数就是整条 track）。
+  ///
+  /// 返回的是插件原样的 lyrics-format 文档；`lines[].translation` 在插件侧就
+  /// 已经拆好（网易云的 tlyric 合并、酷狗的逐行译文），这里不再解析。
+  @override
+  Future<Map<String, Object?>> lyricsByTrack(Map<String, Object?> track) async {
+    final Map<String, Object?> value =
+        await _call('lyrics', <Object?>[track]);
+    return value;
+  }
+
   @override
   Future<List<Map<String, Object?>>> search({
     required String query,
