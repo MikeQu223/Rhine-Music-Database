@@ -1753,7 +1753,6 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
       return;
     }
     _laneColumns = columns.isEmpty ? basicSirenColumns : columns;
-    final int laneCount = _laneColumns.length;
     _selectedLane = 0;
     _searchKind = catalogSearchKinds.first;
     _searchGroup = 'none';
@@ -1762,20 +1761,16 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     _searchOutcomeSignature = '';
     _listPosition = 0;
     _selection = null;
-    _lanePositions.replaceRange(
-        0, _lanePositions.length, List<double>.filled(_lanePositions.length, 0));
-    if (laneCount != _lanePositions.length) {
-      // 列数随平台走时，位置数组也按新长度重建（旧长度之后不会再被索引）。
-      _lanePositions
-        ..clear();
-      for (int lane = 0; lane < laneCount; lane++) {
-        _lanePositions.add(0);
-      }
+    // 同样是定长表：逐槽写零，列数变化时不重建（越界由 `_laneColumns.length` 守卫挡住）。
+    for (int lane = 0; lane < _lanePositions.length; lane++) {
+      _lanePositions[lane] = 0;
     }
-    _laneOffsets.replaceRange(
-        0, _laneOffsets.length, List<int>.filled(_laneOffsets.length, 0));
-    _rowMemory.replaceRange(
-        0, _rowMemory.length, List<int>.filled(_rowMemory.length, 0));
+    // `_laneOffsets`/`_rowMemory` 来自 `List<int>.filled`（定长，不能 remove/replaceRange），
+    // 所以只能逐槽写零。
+    for (int lane = 0; lane < _laneOffsets.length; lane++) {
+      _laneOffsets[lane] = 0;
+      _rowMemory[lane] = 0;
+    }
     _serverLikedSongs = const <SirenSong>[];
     _serverPlaylists = const <BasicLocalPlaylist>[];
     _serverLikedCursor = 0;
