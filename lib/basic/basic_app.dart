@@ -936,6 +936,9 @@ class _BasicShellState extends State<_BasicShell>
       current != null && current.userInstalled ? service.gateway : null,
       providerId: current?.id ?? '',
       quality: current?.qualityDefault ?? '',
+      // 列名随平台走（Qt `registry.columns(provider)`）：插件 manifest 的
+      // `library.columns` 与塞壬五列不同名（「收藏歌单」「收藏专辑」等）。
+      columns: current?.columns ?? basicSirenColumns,
     );
     // Qt `MusicAccount::restoreCachedAccount()`：启动就把落盘会话读回来，
     // 否则设置页 ACCESS 卡在用户手动打开登录页之前一直显示「未登录」。

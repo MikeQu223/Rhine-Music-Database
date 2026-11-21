@@ -505,8 +505,8 @@ const int basicDefaultLane = 3;
 
 /// 列名（越界回空串；Qt MusicLibrary::libraryName() 的 `columns.value(lane)` 分支，
 /// Qt/src/MusicLibrary.cpp:188-193）。
-String basicLaneName(int lane) =>
-    lane >= 0 && lane < basicSirenColumns.length ? basicSirenColumns[lane] : '';
+String basicLaneName(int lane, {List<String> columns = basicSirenColumns}) =>
+    lane >= 0 && lane < columns.length ? columns[lane] : '';
 
 /// 列在 sourceOrder 里的序号（界面 `COLLECTION xx / 05` 的 xx-1：
 /// Qt/src/NativeHud.cpp:479 `sourceOrder().indexOf(selectedLane)`）。
@@ -707,6 +707,7 @@ class BasicViewState {
     this.localUnresolvedLikedIds = 0,
     this.localPlaylists = const <BasicLocalPlaylist>[],
     this.serverPlaylists = const <BasicLocalPlaylist>[],
+    this.laneColumns = basicSirenColumns,
     this.laneItems = const <List<BasicListItem>>[],
     this.laneOffsets = const <int>[],
   });
@@ -855,6 +856,16 @@ class BasicViewState {
   /// 插件平台的服务端歌单（Qt lane 2 的 lists[2] 在插件平台下来自 `userPlaylists(uid)`）。
   final List<BasicLocalPlaylist> serverPlaylists;
 
+  /// 当前平台的列名（Qt `ProviderRegistry::columns(provider)`；塞壬/本地是
+  /// [basicSirenColumns]，插件平台来自 manifest 的 `library.columns`）。
+  ///
+  /// 只影响文案与顺序，不影响行内容：行内容仍由 [basicLibraryItems] 按 lane 投影。
+  final List<String> laneColumns;
+
+  /// 列名（越界回空串，Qt `MusicLibrary::libraryName()`）。
+  String laneName(int lane) =>
+      lane >= 0 && lane < laneColumns.length ? laneColumns[lane] : '';
+
   /// 五列的条目投影（0..4 = [basicSirenColumns] 的顺序），给 Qt 的 40 格语义槽位用。
   ///
   /// 这是**同一份** [basicLibraryItems] 真值的按列展开，不是第二套业务状态：
@@ -927,6 +938,7 @@ class BasicViewState {
     int? localUnresolvedLikedIds,
     List<BasicLocalPlaylist>? localPlaylists,
     List<BasicLocalPlaylist>? serverPlaylists,
+    List<String>? laneColumns,
     List<List<BasicListItem>>? laneItems,
     List<int>? laneOffsets,
     bool dropAlbum = false,
@@ -977,6 +989,7 @@ class BasicViewState {
       localUnresolvedLikedIds: localUnresolvedLikedIds ?? this.localUnresolvedLikedIds,
       localPlaylists: localPlaylists ?? this.localPlaylists,
       serverPlaylists: serverPlaylists ?? this.serverPlaylists,
+      laneColumns: laneColumns ?? this.laneColumns,
       laneItems: laneItems ?? this.laneItems,
       laneOffsets: laneOffsets ?? this.laneOffsets,
     );

@@ -91,7 +91,7 @@ String basicLibraryTitle(BasicViewState state) {
     // 也不拿根列的列名冒充目录名（目录不是列）。
     return directory.title.isEmpty ? basicLibraryName : directory.title;
   }
-  final String lane = basicLaneName(state.selectedLane);
+  final String lane = state.laneName(state.selectedLane);
   return lane.isEmpty ? basicLibraryName : lane;
 }
 
@@ -813,10 +813,15 @@ class BasicHudFrame {
         position: listPosition ?? state.listPosition ?? selected.toDouble(),
       );
     } else {
+      // 列名随平台走（Qt `registry.columns(provider)`）：插件 manifest 的五列是
+      // 「搜索结果 / 喜欢的歌曲 / 我的歌单 / 收藏歌单 / 收藏专辑」，与塞壬不同名。
+      final List<int> sourceOrder = state.laneColumns.length == basicSirenColumns.length
+          ? basicSirenSourceOrder
+          : <int>[for (int lane = 0; lane < state.laneColumns.length; lane++) lane];
       final List<PortraitTab> tabs = <PortraitTab>[
-        for (final int lane in basicSirenSourceOrder)
-          if (lane >= 0 && lane < basicSirenColumns.length)
-            PortraitTab(label: basicSirenColumns[lane], lane: lane),
+        for (final int lane in sourceOrder)
+          if (lane >= 0 && lane < state.laneColumns.length)
+            PortraitTab(label: state.laneColumns[lane], lane: lane),
       ];
       paintPortraitHome(
         canvas,

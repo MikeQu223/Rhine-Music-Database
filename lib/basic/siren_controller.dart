@@ -279,6 +279,16 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
   /// 远端检索所属平台 id（切平台要清空旧结果）。
   String _remoteProviderId = '';
 
+  /// 当前平台的列名（插件平台来自 manifest 的 `library.columns`，否则塞壬五列）。
+  List<String> _laneColumns = basicSirenColumns;
+
+  /// 供 HUD/宿主读的列名（Qt `registry.columns(provider)`）。
+  List<String> get laneColumns => _laneColumns;
+
+  /// 列名（越界回空串）。
+  String _laneName(int lane) =>
+      lane >= 0 && lane < _laneColumns.length ? _laneColumns[lane] : '';
+
   /// 远端平台的默认音质 id（descriptor 的 `quality.default`；空 = 让插件用默认）。
   String _remoteQuality = '';
   SearchOutcome? _searchOutcomeCache;
@@ -731,8 +741,13 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     ProviderGateway? gateway, {
     required String providerId,
     String quality = '',
+    List<String> columns = basicSirenColumns,
   }) {
+    // 列名随平台走（Qt `registry.columns(provider)`）：插件平台的 manifest
+    // `library.columns` 与塞壬五列不同名，标题/状态串都要跟着换。
+    _laneColumns = columns.isEmpty ? basicSirenColumns : columns;
     if (identical(gateway, _remoteSearch) && providerId == _remoteProviderId) {
+      _publish();
       return;
     }
     _remoteSearch = gateway;
@@ -1731,7 +1746,7 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     // Qt showSource（Qt/src/MusicLibrary.cpp:556-580）只恢复 selectedPhysical/observe，
     // 不改 offsets/rowMemory —— 恢复一条记忆不能把该列的滚动窗口重算成 row%8。
     _selectRow(items, row, recordWindow: false);
-    _status = '${basicLaneName(lane)}：${items.length} 项';
+    _status = '${_laneName(lane)}：${items.length} 项';
     _publish();
   }
 
@@ -2618,6 +2633,7 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
       localUnresolvedLikedIds: _localUnresolvedLikedIds,
       localPlaylists: _localPlaylists,
       serverPlaylists: _serverPlaylists,
+      laneColumns: _laneColumns,
       // 插件平台：`basicLibraryItems` 的 lane 1/2 与空态文案都按这一位选数据源。
       searchRemote: _remoteSearch != null,
     );
@@ -2887,6 +2903,7 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
       // 服务端歌单/喜欢也进真实快照：HUD 画的是 `_state`，只填 `_probeState`
       // 会让 lane 2 有计数却没有行（真机现象：标题「我的歌单：30 项」、列表空白）。
       serverPlaylists: _serverPlaylists,
+      laneColumns: _laneColumns,
       searchRemote: _remoteSearch != null,
       searchRows: _remoteSearch != null
           ? (_remoteSearchResult?.rows ?? const <Map<String, Object?>>[])
