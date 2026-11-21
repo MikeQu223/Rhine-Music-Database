@@ -628,7 +628,15 @@ class BasicHudFrame {
       );
     } else if (songPage) {
       // Qt compact：song() / lyrics() 是两页，共用「档案 + 封面 + 进度 + 传输」骨架。
-      _paintPortraitSongPage(canvas, state, song, items.length, selected, ports);
+      _paintPortraitSongPage(
+        canvas,
+        state,
+        song,
+        items.length,
+        selected,
+        ports,
+        commentsAvailable: commentsAvailable,
+      );
     } else if (modal == 'provider') {
       // Qt compact `providerPage`（ResponsiveHudPages.cpp:612-701）：通用页头
       // （只有返回箭头 + close-modal，没有设置齿轮）+ 内容自 158 起。播放条与底栏
@@ -1050,8 +1058,9 @@ class BasicHudFrame {
     SirenSong song,
     int total,
     int selected,
-    BasicGlyphPorts ports,
-  ) {
+    BasicGlyphPorts ports, {
+    bool commentsAvailable = false,
+  }) {
     // 详情页曲目与播放曲目是**两个身份**（Qt compact `song()` 的
     // `selectedSongIsCurrent`，ResponsiveHudPages.cpp:165）：打开另一首的详情时，
     // 控制带必须服从详情页曲目，不能把在播那首的进度/播放态/传输键搬过来。

@@ -91,6 +91,8 @@ void paintPortraitSongPage(
   required double durationMs,
   required String lyricPreview,
   required bool lyricsAvailable,
+  bool commentsAvailable = false,
+  String mode = 'all',
 }) {
   final double h = c.height;
 
@@ -162,18 +164,26 @@ void paintPortraitSongPage(
   y += 18;
 
   // 歌词入口只在**本曲目**上出现：歌词属于播放曲目，非当前曲目开出来是别人的歌词。
+  // 版式：内容自上而下流（参考图里进度条紧跟在状态行下面），底部只留一点
+  // 呼吸空间；旧实现把播放条/传输键/入口**钉在页面底部**，短标题时中间会空出
+  // 一大片，正是「间距不对、重心偏移」那条投诉的来源。
+  final double bottomAnchoredBarY = math.max(y + 8, math.max(y + 40, h - 12) - 76 - 52);
+  final double barY = math.min(y + 44, bottomAnchoredBarY);
+  final double transportCenter = barY + 54;
+  final double footerTop = math.min(transportCenter + 50, h - 44);
   _songFooterRow(
     c,
-    top: math.max(y + 40, h - 12) - 32,
+    top: footerTop,
     lyricsAvailable: current && lyricsAvailable,
+    commentsAvailable: current && commentsAvailable,
+    mode: mode,
   );
   _songTransportRow(
     c,
-    center: math.max(y + 40, h - 12) - 76,
+    center: transportCenter,
     current: current,
     playing: trackPlaying,
   );
-  final double barY = math.max(y + 8, math.max(y + 40, h - 12) - 76 - 52);
   _songProgressRow(
     c,
     barY: barY,
@@ -223,17 +233,28 @@ void _songProgressRow(
   if (current) {
     c.field('seek', Rect.fromLTWH(15, barY - 12, c.gridWidth - 30, 26));
   }
-  c.text(_clock(current ? positionMs : 0), _gutter, barY + 16, size: 11, width: 120, color: c.muted);
-  final String right;
-  if (current) {
-    final double remaining =
-        durationMs.isFinite && durationMs > positionMs ? durationMs - positionMs : 0;
-    right = '-${_clock(remaining)}';
-  } else {
-    // 曲库阶段时长可能还是 0（siren.mjs 只在播放时给时长），那就老实显示 00:00。
-    right = _clock(durationMs);
+  // 参考图版式：时间在轨道**上方**两侧（左已播 / 右总时长），中间是
+  // `PLAYBACK POSITION` 小标；轨道下方另给 1/4、1/2、3/4 三处时间刻度。
+  final double elapsed = current ? positionMs : 0;
+  c.text(_clock(elapsed), _gutter, barY - 20, size: 11, width: 100, color: c.muted);
+  c.rightText(_clock(durationMs), c.gridWidth - 20, barY - 20, 11, 'regular', c.muted);
+  final String positionLabel = 'PLAYBACK POSITION';
+  final double positionWidth = c.measure(positionLabel, 8, 'regular');
+  c.text(positionLabel, (c.gridWidth - positionWidth) / 2, barY - 19, size: 8, color: c.muted);
+  if (durationMs.isFinite && durationMs > 0) {
+    final double trackWidth = c.gridWidth - 40;
+    for (final double fraction in <double>[0.25, 0.5, 0.75]) {
+      final String caption = _clock(durationMs * fraction);
+      final double captionWidth = c.measure(caption, 9, 'regular');
+      c.text(
+        caption,
+        _gutter + trackWidth * fraction - captionWidth / 2,
+        barY + 18,
+        size: 9,
+        color: c.muted,
+      );
+    }
   }
-  c.rightText(right, c.gridWidth - 20, barY + 16, 11, 'regular', c.muted);
 }
 
 /// 传输三键：上一首 / 居中的圆环播放键 / 下一首。
@@ -269,25 +290,41 @@ void _songTransportRow(
   );
 }
 
-/// 底部四入口：歌词 / 随机播放 / 播放队列 / 更多。
-void _songFooterRow(PortraitCanvas c, {required double top, bool lyricsAvailable = true}) {
+/// 底部五入口：歌词 / 评论 / 模式 / 队列 / 更多（Qt 竖屏歌曲页同一行）。
+///
+/// 参考图（`docs/flutter-migration/archive` 外的设备截图）里这一行是**纯文字**、
+/// 等分页宽，当前模式那格用琥珀色；图标会把它挤成四格，所以不放图标。
+void _songFooterRow(
+  PortraitCanvas c, {
+  required double top,
+  bool lyricsAvailable = true,
+  bool commentsAvailable = false,
+  String mode = 'all',
+}) {
   c.fill(Rect.fromLTWH(_gutter, top, (c.gridWidth - 40), .6), c.line);
-  const List<String> labels = <String>['歌词', '随机播放', '播放队列', '更多'];
-  const List<String> icons = <String>['lyrics-lines', 'shuffle', 'queue-note', 'more'];
+  final String modeLabel = switch (mode) {
+    'shuffle' => '随机',
+    'one' => '单曲',
+    'off' => '单曲',
+    _ => '顺序',
+  };
+  final List<String> labels = <String>['歌词', '评论', modeLabel, '队列', '更多'];
   final List<String> actions = <String>[
     lyricsAvailable ? 'player:lyrics' : '',
+    commentsAvailable ? 'music:comments' : '',
     'player:mode',
     'player:open',
     'mobile:song-options',
   ];
-  const List<String> hitLabels = <String>['打开全屏歌词', '切换播放模式', '播放队列', '歌曲更多操作'];
-  final double cell = (c.gridWidth - 40) / 4;
+  const List<String> hitLabels = <String>['打开全屏歌词', '查看评论', '切换播放模式', '播放队列', '歌曲更多操作'];
+  final double cell = (c.gridWidth - 40) / 5;
   for (int index = 0; index < labels.length; index++) {
     final double x = _gutter + cell * index;
-    c.icon(icons[index], x + 4, top + 15, size: 14, color: c.muted);
-    c.text(labels[index], x + 24, top + 15, size: 10, width: cell - 26, color: c.muted);
+    // 模式那格是唯一带状态的：非顺序播放时用琥珀色标出来。
+    final bool active = index == 2 && mode != 'all';
+    c.text(labels[index], x, top + 14, size: 12, width: cell, color: active ? c.amber : c.muted);
     if (actions[index].isNotEmpty) {
-      c.hit(Rect.fromLTWH(x - 2, top + 4, cell - 4, 40), actions[index], hitLabels[index]);
+      c.hit(Rect.fromLTWH(x - 4, top + 4, cell - 4, 40), actions[index], hitLabels[index]);
     }
   }
 }
