@@ -50,9 +50,10 @@ void paintPortraitCollectionPage(
   final double h = c.height;
   final int total = rows.length;
 
-  // 内页沿用参考实现的纵向阅读渐变（ResponsiveHudLayout::arrange 的 stops
-  // .93/.86/.66/.95），否则 3D 场景会透过行间缝隙。
-  _pageWash(c);
+  // 整页铺纸色。**不要**在这里画纵向渐变：Qt 的 arrange 对内页只有一句
+  // `c.fill({0, 0, 393, m_height}, c.paper)`（ResponsiveHudLayout.cpp:96-98），
+  // 逐行 alpha 渐变会让页面从正中裂成上下两块（用户实测缺陷 8）。
+  c.fill(Rect.fromLTWH(0, 0, c.gridWidth, h), c.paper);
   c.header(title, back: true);
 
   final double top = math.min(126.0, h * .22);
@@ -268,31 +269,6 @@ double _pageBottom(PortraitCanvas c, double top) {
 }
 
 /// 内页遮罩：`ResponsiveHudLayout::arrange` 的纵向阅读渐变
-/// （stops 0→.93、.42→.86、.75→.66、1→.95，每 8 单位一条）。
-void _pageWash(PortraitCanvas c) {
-  const List<double> stops = <double>[0, .42, .75, 1];
-  const List<double> alpha = <double>[.93, .86, .66, .95];
-  final double h = c.height;
-  if (h <= 0) {
-    return;
-  }
-  for (double y = 0; y < h; y += 8) {
-    final double fraction = math.min(1.0, y / h);
-    double value = alpha.last;
-    for (int i = 1; i < stops.length; i++) {
-      if (fraction <= stops[i]) {
-        final double span = stops[i] - stops[i - 1];
-        final double blend = span <= 0 ? 1.0 : (fraction - stops[i - 1]) / span;
-        value = alpha[i - 1] + (alpha[i] - alpha[i - 1]) * blend;
-        break;
-      }
-    }
-    c.fill(
-      Rect.fromLTWH(0, y, c.gridWidth, 8),
-      <Object?>[c.paper[0], c.paper[1], c.paper[2], value],
-    );
-  }
-}
 
 /// 两位序号（Qt `MusicData::pad`）。
 String _pad(int value) => value.toString().padLeft(2, '0');
