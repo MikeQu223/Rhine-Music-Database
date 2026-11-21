@@ -29,6 +29,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../hud/modals/settings_modal.dart';
+import 'basic_provider_access_card.dart';
 import '../hud/protocol/hud_frame.dart' show HudStage;
 import '../hud/widgets/settings_row.dart';
 import 'basic_settings.dart';
@@ -52,7 +53,20 @@ class BasicSettingsWindow extends StatefulWidget {
     this.pluginsEntry = false,
     this.scrollStorage,
     this.scrollMaximumStorage,
+    this.providerName = '',
+    this.providerLoggedIn = false,
+    this.providerUserName = '',
+    this.providerSupportsLogin = false,
+    this.onProviderAction,
   });
+
+  /// 横屏设置第一屏的平台卡真值（Qt `SettingsCard.cpp:256-295` 的 providerCard）。
+  /// 空名 = 没有平台数据，那张卡就不画。
+  final String providerName;
+  final bool providerLoggedIn;
+  final String providerUserName;
+  final bool providerSupportsLogin;
+  final ValueChanged<String>? onProviderAction;
 
   /// 舞台几何：横屏用于换算逻辑像素，竖屏只读 width/height。
   final HudStage stage;
@@ -608,6 +622,29 @@ class _BasicSettingsWindowState extends State<BasicSettingsWindow> {
   ) {
     final Rect body = section.body;
     final String renderer = section.section.customRenderer;
+    if (renderer == SettingsCustomRenderers.providerCard) {
+      // 横屏第一屏的平台卡：竖向 stride 116（Qt SettingsCard.cpp 的 providerCard 体高）。
+      final ValueChanged<String>? onProviderAction = widget.onProviderAction;
+      if (widget.providerName.isEmpty || onProviderAction == null) {
+        return null;
+      }
+      final double left = body.left - viewport.left;
+      final double top = body.top - viewport.top;
+      return Positioned(
+        left: left,
+        top: top,
+        width: body.width,
+        child: BasicProviderAccessCard(
+          pageWidth: body.width,
+          providerName: widget.providerName,
+          loggedIn: widget.providerLoggedIn,
+          userName: widget.providerUserName,
+          supportsLogin: widget.providerSupportsLogin,
+          dark: widget.dark,
+          onAction: onProviderAction,
+        ),
+      );
+    }
     if (renderer == basicSettingsDiscRotationRenderer) {
       final double rowTop =
           body.top + SettingsPerformanceSectionMetrics.firstRowTop;

@@ -277,10 +277,24 @@ const String basicSettingsDiscRotationRenderer = 'basic-disc-rotation';
 /// 绝不能落到 SettingsCustomRenderers.update（那会连检查更新/前往更新一起画出来）。
 const String basicSettingsVersionRenderer = 'basic-version';
 
+/// 序号 0（原 01）PROVIDER ACCESS / 音乐平台：横屏设置第一屏的平台卡
+/// （Qt `SettingsCard.cpp:256-295` 的 providerCard）。竖屏设置页有自己那张
+/// widget 卡（`BasicPortraitSettingsPage` 的 ACCESS 卡），所以这个分区只在
+/// 横屏（`BasicSettingsWindow`）里出现——不然竖屏会画两遍。
+const SettingsSectionSpec basicProviderSection = SettingsSectionSpec(
+  id: SettingsSectionId.provider,
+  number: 1,
+  order: 10,
+  titleEn: 'PROVIDER ACCESS',
+  titleZh: '音乐平台',
+  customRenderer: SettingsCustomRenderers.providerCard,
+  customHeight: 160,
+);
+
 /// 序号 1（原 02）TERMINAL PREFERENCES / 终端偏好：ONLY14 的 15 行全在这里。
 const SettingsSectionSpec basicPreferencesSection = SettingsSectionSpec(
   id: SettingsSectionId.preferences,
-  number: 1,
+  number: 2,
   order: 20,
   titleEn: 'TERMINAL PREFERENCES',
   titleZh: '终端偏好',
@@ -291,7 +305,7 @@ const SettingsSectionSpec basicPreferencesSection = SettingsSectionSpec(
 /// 序号 2（原 03）PERFORMANCE / 性能与诊断：只保留唱片旋转那一行，体高 100。
 const SettingsSectionSpec basicPerformanceSection = SettingsSectionSpec(
   id: SettingsSectionId.performance,
-  number: 2,
+  number: 3,
   order: 30,
   titleEn: 'PERFORMANCE',
   titleZh: '性能与诊断',
@@ -302,7 +316,7 @@ const SettingsSectionSpec basicPerformanceSection = SettingsSectionSpec(
 /// 序号 3（原 05）SOFTWARE UPDATE / 软件更新：只保留当前版本两行文本，体高 52。
 const SettingsSectionSpec basicUpdateSection = SettingsSectionSpec(
   id: SettingsSectionId.update,
-  number: 3,
+  number: 5,
   order: 50,
   titleEn: 'SOFTWARE UPDATE',
   titleZh: '软件更新',
@@ -313,7 +327,7 @@ const SettingsSectionSpec basicUpdateSection = SettingsSectionSpec(
 /// 序号 4（原 06）PROJECT / 项目与开源参考：8 条链接（两列网格）。
 const SettingsSectionSpec basicProjectSection = SettingsSectionSpec(
   id: SettingsSectionId.project,
-  number: 4,
+  number: 6,
   order: 60,
   titleEn: 'PROJECT',
   titleZh: '项目与开源参考',
@@ -418,6 +432,7 @@ BasicSettingsPanelModel basicSettingsPanelModel({
 
   return BasicSettingsPanelModel(
     sections: <SettingsSectionModel>[
+      const SettingsSectionModel(spec: basicProviderSection),
       SettingsSectionModel(spec: basicPreferencesSection, rows: preferenceRows),
       const SettingsSectionModel(spec: basicPerformanceSection),
       const SettingsSectionModel(spec: basicUpdateSection),

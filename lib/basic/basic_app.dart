@@ -854,6 +854,13 @@ class _BasicShellState extends State<_BasicShell>
       if (!mounted) {
         return;
       }
+      // 插件被禁用/卸载后，落盘偏好里那个平台已经不在注册表里（Qt 的 `choose()`
+      // 会对失效 id 走 `fallbackId`）。这种情况必须显式回落到内置塞壬，并把落盘
+      // 偏好改回 `siren`——否则下次启动还会去找一个不存在的平台，界面上又会残留
+      // 上一个平台的信息（页头平台名、列名、检索数据面都还是它的）。
+      final String previousProvider = _providerId;
+      final bool providerFellBack =
+          previousProvider.isNotEmpty && !registry.contains(previousProvider);
       setState(() {
         _providers = <ProviderDescriptor>[
           for (final String id in registry.ids)
@@ -877,6 +884,17 @@ class _BasicShellState extends State<_BasicShell>
       });
       if (!mounted) {
         return;
+      }
+      if (providerFellBack) {
+        widget.playerPreferences.write(PlatformSwitcher.providerPreferenceKey, _providerId);
+        // 用户要求：插件平台不可用时回到塞壬的「全部专辑」列（不是搜索列）。
+        // `_installProviderService` 里的 `resetForProviderSwitch` 会把列归零到搜索，
+        // 所以这里再显式选一次；列名里找不到「全部专辑」时不动（保持 0 列）。
+        final int albumLane = controller.laneColumns.indexOf('全部专辑');
+        if (albumLane > 0) {
+          unawaited(controller.selectLane(albumLane));
+        }
+        _notice('插件平台已不可用，已切回 ${_currentDescriptor?.name ?? '塞壬唱片'}');
       }
       _installProviderService(registry);
     } on Object catch (error) {
@@ -1762,6 +1780,14 @@ class _BasicShellState extends State<_BasicShell>
                       dark: state.dark,
                       scrollStorage: _settingsScroll,
                       scrollMaximumStorage: _settingsScrollMaximum,
+                      // 横屏设置第一屏的平台卡（Qt SettingsCard.cpp 的 providerCard）。
+                      providerName: _currentDescriptor?.name ?? '',
+                      providerLoggedIn: _loginController?.state.loggedIn ?? false,
+                      providerUserName: _loginController?.state.nickname ?? '',
+                      providerSupportsLogin:
+                          _currentDescriptor?.capability('login', fallback: false) ?? false,
+                      onProviderAction: (String action) =>
+                          unawaited(_onSettingsAction(action)),
                       onAction: (String action) =>
                           unawaited(_onSettingsAction(action)),
                     ),
@@ -2298,6 +2324,13 @@ class _BasicShellState extends State<_BasicShell>
       // （与 PopScope 的同一条路径一致）。
       _setModal('');
       _hudFocusNode.requestFocus();
+      return;
+    }
+    // 横屏设置面板里的「切换平台 ▾ / 登录账号 / 退出登录」是 HUD 动作，不属于
+    // 设置项存储（`_settings.apply` 只认设置键）。不转给 `_onAction` 的话，
+    // 横屏点这两处没有任何反应（= 缺陷「横屏无法切换平台」）。
+    if (action == 'provider' || action == 'music:login' || action == 'music:logout') {
+      _onAction(action);
       return;
     }
     if (action == 'disc-rotation:cancel') {
