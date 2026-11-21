@@ -375,10 +375,14 @@ void NativeHud::paintSettingsCustomSection(const QString &renderer, const QRectF
 #if RHINE_SENTRY
         const auto consent = m_host->preference(QLatin1String(RhineSentry::ConsentKey));
         const bool configured = RhineSentry::configured();
+        const bool sentryDisabled = consent == QLatin1String(RhineSentry::DisabledPreference);
         auto status = QStringLiteral("未配置服务");
         if (configured) {
-            status = QStringLiteral("关闭 / 启用后需重启");
-            if (RhineSentry::preferenceEnabled(consent)) {
+            if (sentryDisabled) {
+                status = QStringLiteral("关闭 / 点击开启");
+            } else if (!RhineSentry::preferenceEnabled(consent)) {
+                status = QStringLiteral("端点已变更 / 运行诊断");
+            } else {
                 status = QStringLiteral("开启 / 点击关闭");
                 if (!RhineSentry::active()) {
                     status = QStringLiteral("已开启 / 等待重启");
@@ -399,6 +403,23 @@ void NativeHud::paintSettingsCustomSection(const QString &renderer, const QRectF
                    status, configured ? QString::fromLatin1(RhineSentry::ConsentKey) : QString(),
                    QStringLiteral("Sentry 遥测"),
                    QStringLiteral("默认开启，可随时关闭。发送崩溃栈、启动耗时和白名单操作。"));
+        auto diagnosticLabel = QStringLiteral("测试连接并激活端点");
+        auto diagnosticNote = QStringLiteral("发送最小诊断事件；随后重新绑定当前 DSN，"
+                                             "并在可能时立即恢复采集。");
+        if (!configured) {
+            diagnosticLabel = QStringLiteral("未配置端点");
+            diagnosticNote = QStringLiteral("当前构建未配置有效的遥测服务地址。");
+        } else if (sentryDisabled) {
+            diagnosticLabel = QStringLiteral("请先开启遥测");
+            diagnosticNote = QStringLiteral("遥测关闭时不会发送诊断事件。");
+        } else if (sentryDiagnosticBusy) {
+            diagnosticLabel = QStringLiteral("正在诊断…");
+        } else if (!sentryDiagnosticMessage.isEmpty()) {
+            diagnosticNote = sentryDiagnosticMessage;
+        }
+        sectionRow(sentryTop + 108, "TELEMETRY DIAGNOSTICS", QStringLiteral("遥测诊断"),
+                   diagnosticLabel, QStringLiteral("sentry:diagnose"), QStringLiteral("遥测诊断"),
+                   diagnosticNote);
 #endif
         return;
     }

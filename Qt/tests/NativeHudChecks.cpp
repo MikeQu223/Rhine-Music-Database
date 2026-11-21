@@ -7,6 +7,9 @@
 #include "fg/FgConfig.h"
 #include "NativeApplication.h"
 #include "NativeCards.h"
+#if RHINE_SENTRY
+#include "SentryTelemetry.h"
+#endif
 #include <cstring>
 #include "MusicData.h"
 #include "MusicDiscover.h"
@@ -2198,12 +2201,24 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
             // 帧生成开关仅 Apple 可见；能力可用时标题区应能命中切换动作。
             reachableSettings.append("fg");
 #endif
+#if RHINE_SENTRY
+            // 诊断行始终可点击，便于未配置或关闭遥测时在行内显示原因。
+            reachableSettings.append("sentry:diagnose");
+#endif
             QSet<QString> visibleSettings;
+#if RHINE_SENTRY
+            bool sentryDiagnosticLabelOk = false;
+#endif
             for (double offset = 0;; offset += 400) {
                 hud.settingsScroll = std::min(offset, hud.settingsScrollMaximum());
                 hud.draw(archiveFrame, 1920, 50);
                 for (const auto &value : hud.hits) {
-                    visibleSettings.insert(value.toObject()["action"].toString());
+                    const auto hit = value.toObject();
+                    visibleSettings.insert(hit["action"].toString());
+#if RHINE_SENTRY
+                    sentryDiagnosticLabelOk |= hit["action"].toString() == "sentry:diagnose" &&
+                                               hit["label"].toString() == "遥测诊断";
+#endif
                 }
                 if (hud.settingsScroll == hud.settingsScrollMaximum()) {
                     break;
@@ -2215,6 +2230,12 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
                     ok = false;
                 }
             }
+#if RHINE_SENTRY
+            if (!sentryDiagnosticLabelOk) {
+                qCritical() << "Telemetry diagnostic action lost its label" << provider << dark;
+                ok = false;
+            }
+#endif
 #ifdef Q_OS_DARWIN
             // Apple 默认同步呈现；设置页仍隐藏该行，诊断覆盖由启动配置负责。
             if (hud.vsync != RhineFg::metalVSyncEnabled() || visibleSettings.contains("vsync")) {

@@ -159,6 +159,9 @@ void NativeHud::openModal(QString kind) {
     // 换页时收起所有下拉块，避免展开状态跨页面残留。
     expandedPreference.clear();
     cacheMessage.clear();
+    if (!sentryDiagnosticBusy) {
+        sentryDiagnosticMessage.clear();
+    }
     motion.set(true, lastTime, reduced);
     query.clear();
     listOffset = 0;
@@ -513,6 +516,11 @@ void NativeHud::playerAction(const QStringList &parts) {
 /** 动作字符串保持原有输入协议，控制器直接更新原生音乐状态和场景。 */
 void NativeHud::action(QString value) {
 #if RHINE_SENTRY
+    if (value == "sentry:diagnose") {
+        RhineSentry::action(value);
+        runSentryDiagnostic();
+        return;
+    }
     if (value == QLatin1String(RhineSentry::ConsentKey)) {
         if (RhineSentry::preferenceEnabled(m_host->preference(value))) {
             m_host->setPreference(value, QString::fromLatin1(RhineSentry::DisabledPreference));
@@ -1348,6 +1356,79 @@ void NativeHud::action(QString value) {
         m_host->setPreference("motion", reduced ? "reduced" : "full");
     }
 }
+
+#if RHINE_SENTRY
+/** 诊断当前 DSN 的授权与 HTTP 链路，并在调试模式关闭时尝试即时恢复采集。 */
+void NativeHud::runSentryDiagnostic() {
+    if (sentryDiagnosticBusy) {
+        return;
+    }
+    if (!RhineSentry::configured()) {
+        sentryDiagnosticMessage = QStringLiteral("当前构建未配置有效的遥测端点");
+        m_host->invalidate();
+        return;
+    }
+    if (m_host->preference(QLatin1String(RhineSentry::ConsentKey)) ==
+        QLatin1String(RhineSentry::DisabledPreference)) {
+        sentryDiagnosticMessage = QStringLiteral("遥测已关闭，请先开启遥测");
+        m_host->invalidate();
+        return;
+    }
+
+    sentryDiagnosticBusy = true;
+    sentryDiagnosticMessage = QStringLiteral("正在测试连接并重新绑定当前端点…");
+    m_host->invalidate();
+    const bool debugMode = m_host->preference("debug-mode") == "on";
+    RhineSentry::diagnose(
+        !debugMode,
+        [owner = QPointer(this), debugMode](RhineSentry::DiagnosticResult result) {
+            if (!owner) {
+                return;
+            }
+            owner->sentryDiagnosticBusy = false;
+            if (result.connected) {
+                const auto eventNote = result.eventId.isEmpty()
+                                           ? QString()
+                                           : QStringLiteral(" · event_id: ") + result.eventId;
+                if (!result.activationError.isEmpty()) {
+                    owner->sentryDiagnosticMessage =
+                        QStringLiteral("连接正常（HTTP %1），但激活失败：%2%3")
+                            .arg(result.statusCode)
+                            .arg(result.activationError, eventNote);
+                } else if (result.captureStarted) {
+                    owner->sentryDiagnosticMessage =
+                        QStringLiteral("连接正常（HTTP %1），界面采集已恢复%2")
+                            .arg(result.statusCode)
+                            .arg(eventNote);
+                } else if (result.captureActive) {
+                    owner->sentryDiagnosticMessage =
+                        QStringLiteral("连接正常（HTTP %1），界面采集已激活%2")
+                            .arg(result.statusCode)
+                            .arg(eventNote);
+                } else if (debugMode) {
+                    owner->sentryDiagnosticMessage =
+                        QStringLiteral("连接正常（HTTP %1），端点已绑定；"
+                                       "关闭调试模式并重启后启用%2")
+                            .arg(result.statusCode)
+                            .arg(eventNote);
+                } else {
+                    owner->sentryDiagnosticMessage =
+                        QStringLiteral("连接正常（HTTP %1），端点已绑定；"
+                                       "请重启应用后启用采集%2")
+                            .arg(result.statusCode)
+                            .arg(eventNote);
+                }
+            } else {
+                auto detail = result.error;
+                if (result.statusCode > 0) {
+                    detail = QStringLiteral("HTTP %1 / %2").arg(result.statusCode).arg(detail);
+                }
+                owner->sentryDiagnosticMessage = QStringLiteral("诊断失败：") + detail;
+            }
+            owner->m_host->invalidate();
+        });
+}
+#endif
 
 void NativeHud::key(QString value, bool command) {
     // ！？ 325 ？！

@@ -10,11 +10,18 @@
 #include "fg/FgConfig.h"
 #include "render/RenderModePolicy.h"
 #include <QCryptographicHash>
+#include <QCoreApplication>
+#include <QDateTime>
 #include <QDir>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QLockFile>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
 #include <QRegularExpression>
 #include <QStringList>
+#include <QTimer>
 #include <QUrl>
 #include <QUuid>
 #include <algorithm>
@@ -95,12 +102,160 @@ constexpr Action hudActions[] = {
     {u"player:open", "open_player"},
     {u"music:comments", "open_comments"},
     {u"music:comments-close", "close_comments"},
+    {u"sentry:diagnose", "telemetry_diagnostic"},
 };
 
 QString graphicsBackendName(QStringView backend) {
     const auto name = backend.toString().toLower();
     static const QStringList names{"metal", "vulkan", "opengl", "opengles2", "d3d12", "d3d11", "null"};
     return names.contains(name) ? name : QStringLiteral("unknown");
+}
+
+QUrl diagnosticUrl(const QUrl &endpoint) {
+    const auto project = endpoint.path().section(u'/', -1);
+    auto prefix = endpoint.path();
+    prefix.chop(project.size() + 1);
+
+    auto target = endpoint;
+    target.setUserName({});
+    target.setPassword({});
+    target.setPath(prefix + u"/api/" + project + u"/envelope/");
+    target.setQuery({});
+    target.setFragment({});
+    return target;
+}
+
+QByteArray diagnosticEnvelope(const QString &endpoint, QString *eventIdOut) {
+    const auto eventId = QUuid::createUuid().toString(QUuid::WithoutBraces).remove(u'-');
+    if (eventIdOut) {
+        *eventIdOut = eventId;
+    }
+    auto environment =
+        qEnvironmentVariable("SENTRY_ENVIRONMENT", QStringLiteral(RHINE_SENTRY_ENVIRONMENT)).trimmed();
+    if (environment.isEmpty()) {
+        environment = QStringLiteral("production");
+    }
+    const auto version = AppUpdater::currentVersion();
+    const auto release = QString::fromLatin1(AppIdentity::Id) + u'@' + version + u'+' +
+                         QStringLiteral(RHINE_COMMIT_SHA);
+    const auto timestamp = QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
+    const auto sdk = QJsonObject{{"name", "rhine.telemetry-diagnostic"}, {"version", version}};
+    QJsonObject event{{"event_id", eventId},
+                      {"timestamp", timestamp},
+                      {"platform", "native"},
+                      {"level", "info"},
+                      {"message", "Rhine telemetry diagnostic"},
+                      {"environment", environment},
+                      {"release", release},
+                      {"sdk", sdk},
+                      {"tags", QJsonObject{{"rhine.process", "interface"},
+                                           {"rhine.diagnostic", "connectivity"}}},
+                      {"contexts", QJsonObject{{"rhine", QJsonObject{{"process", "interface"}}}}}};
+
+    const auto generation = authorizedGeneration(preference(), endpoint);
+    if (!generation.isNull()) {
+        const auto hash = QCryptographicHash::hash(QByteArrayLiteral("rhine-sentry-user-v1:") +
+                                                       generation.toRfc4122(), QCryptographicHash::Sha256)
+                              .toHex();
+        event["user"] = QJsonObject{
+            {"id", QString::fromLatin1(hash)}};
+    }
+
+    const auto payload = QJsonDocument(event).toJson(QJsonDocument::Compact);
+    const auto sentAt = QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
+    const auto header = QJsonDocument(QJsonObject{{"dsn", endpoint},
+                                                  {"event_id", eventId},
+                                                  {"sent_at", sentAt}})
+                            .toJson(QJsonDocument::Compact);
+    const auto item = QJsonDocument(QJsonObject{{"type", "event"},
+                                                {"content_type", "application/json"},
+                                                {"length", payload.size()}})
+                          .toJson(QJsonDocument::Compact);
+    return header + '\n' + item + '\n' + payload + '\n';
+}
+
+QString networkErrorText(QNetworkReply::NetworkError error, int statusCode) {
+    if (statusCode == 400) {
+        return QStringLiteral("遥测请求被拒绝");
+    }
+    if (statusCode == 401 || statusCode == 403) {
+        return QStringLiteral("认证或权限被拒绝");
+    }
+    if (statusCode == 404) {
+        return QStringLiteral("转发路径或项目 ID 不存在");
+    }
+    if (statusCode == 429) {
+        return QStringLiteral("遥测请求被限流");
+    }
+    if (statusCode >= 500) {
+        return QStringLiteral("遥测服务上游异常");
+    }
+    if (statusCode >= 300 && statusCode < 400) {
+        return QStringLiteral("遥测端点返回了重定向");
+    }
+    if (statusCode > 0) {
+        return QStringLiteral("遥测服务返回异常状态");
+    }
+
+    switch (error) {
+    case QNetworkReply::HostNotFoundError:
+        return QStringLiteral("DNS 解析失败");
+    case QNetworkReply::ConnectionRefusedError:
+        return QStringLiteral("连接被拒绝");
+    case QNetworkReply::RemoteHostClosedError:
+        return QStringLiteral("遥测服务提前断开连接");
+    case QNetworkReply::TimeoutError:
+    case QNetworkReply::OperationCanceledError:
+        return QStringLiteral("连接超时");
+    case QNetworkReply::SslHandshakeFailedError:
+        return QStringLiteral("TLS 握手失败");
+    case QNetworkReply::ProxyConnectionRefusedError:
+    case QNetworkReply::ProxyConnectionClosedError:
+    case QNetworkReply::ProxyNotFoundError:
+    case QNetworkReply::ProxyTimeoutError:
+    case QNetworkReply::ProxyAuthenticationRequiredError:
+        return QStringLiteral("代理连接失败");
+    default:
+        return QStringLiteral("网络连接失败");
+    }
+}
+
+struct EndpointActivation {
+    bool captureActive = false;
+    bool captureStarted = false;
+    QString error;
+};
+
+EndpointActivation activateDiagnosticEndpoint(bool allowCaptureStart) {
+    const auto endpoint = dsn();
+    if (!validDsn(endpoint)) {
+        return {false, false, QStringLiteral("当前构建未配置有效的遥测端点")};
+    }
+    const auto currentPreference = preference();
+    if (currentPreference == QLatin1String(DisabledPreference)) {
+        return {false, false, QStringLiteral("遥测已关闭，请先开启遥测")};
+    }
+
+    const bool wasRunning = running;
+    auto generation = authorizedGeneration(currentPreference, endpoint);
+    if (generation.isNull()) {
+        const auto consent = newConsent();
+        if (consent.isEmpty() || !savePreference(consent)) {
+            return {false, false, QStringLiteral("无法重新绑定当前遥测端点")};
+        }
+        generation = authorizedGeneration(consent, endpoint);
+        if (generation.isNull()) {
+            return {false, false, QStringLiteral("当前遥测端点授权无效")};
+        }
+        if (running) {
+            stop();
+        }
+    }
+
+    if (allowCaptureStart && !running && !ownsCrashHandler()) {
+        start(false);
+    }
+    return {running.load(), !wasRunning && running.load(), {}};
 }
 }
 
@@ -415,6 +570,82 @@ void pluginVersions() {
     }
     versions.sort();
     Platform::setContext("rhine_plugins", {{"versions", QJsonArray::fromStringList(versions.mid(0, 16))}});
+}
+
+/** 先发送最小 Envelope，服务端接受后才重新绑定并激活当前端点。 */
+void diagnose(bool allowCaptureStart, DiagnosticCallback callback) {
+    if (!callback) {
+        return;
+    }
+
+    DiagnosticResult result;
+    result.captureActive = running;
+    const auto endpoint = dsn();
+    if (!validDsn(endpoint)) {
+        result.error = QStringLiteral("当前构建未配置有效的遥测端点");
+        callback(result);
+        return;
+    }
+    if (preference() == QLatin1String(DisabledPreference)) {
+        result.error = QStringLiteral("遥测已关闭，请先开启遥测");
+        callback(result);
+        return;
+    }
+
+    const QUrl endpointUrl(endpoint, QUrl::StrictMode);
+    const auto target = diagnosticUrl(endpointUrl);
+    const auto application = QCoreApplication::instance();
+    if (!target.isValid() || !application) {
+        result.error = QStringLiteral("无法建立遥测诊断请求");
+        callback(result);
+        return;
+    }
+
+    QString eventId;
+    const auto envelope = diagnosticEnvelope(endpoint, &eventId);
+    auto *manager = new QNetworkAccessManager(application);
+    QNetworkRequest request(target);
+    request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/x-sentry-envelope"));
+    request.setHeader(QNetworkRequest::UserAgentHeader,
+                      QStringLiteral("RhineMusicDatabase/") + AppUpdater::currentVersion() +
+                          QStringLiteral(" telemetry-diagnostic"));
+    request.setRawHeader("X-Sentry-Auth",
+                         QByteArrayLiteral("Sentry sentry_version=7, "
+                                           "sentry_client=rhine-diagnostic/1.0, sentry_key=") +
+                             endpointUrl.userName().toUtf8());
+    // 不接受任何重定向，避免认证头被带到非预期主机。
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
+    request.setTransferTimeout(5000);
+    auto *reply = manager->post(request, envelope);
+    QTimer::singleShot(6000, reply, [reply] {
+        if (reply->isRunning()) {
+            reply->abort();
+        }
+    });
+    QObject::connect(
+        reply, &QNetworkReply::finished, manager,
+        [reply, manager, allowCaptureStart, eventId, callback = std::move(callback)] {
+            DiagnosticResult result;
+            result.captureActive = running;
+            result.eventId = eventId;
+            result.statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+            result.connected = reply->error() == QNetworkReply::NoError && result.statusCode >= 200 &&
+                               result.statusCode < 300;
+            if (!result.connected) {
+                result.error = networkErrorText(reply->error(), result.statusCode);
+            } else {
+                const auto activation = activateDiagnosticEndpoint(allowCaptureStart);
+                result.captureActive = activation.captureActive;
+                result.captureStarted = activation.captureStarted;
+                result.activationError = activation.error;
+                if (!result.activationError.isEmpty()) {
+                    result.error = result.activationError;
+                }
+            }
+            reply->deleteLater();
+            manager->deleteLater();
+            callback(result);
+        });
 }
 
 }

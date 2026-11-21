@@ -1,6 +1,8 @@
 #pragma once
 
+#include <QString>
 #include <QStringView>
+#include <functional>
 
 namespace RhineSentry {
 
@@ -22,6 +24,18 @@ enum class PlaybackAction {
     Next,
     Previous
 };
+
+struct DiagnosticResult {
+    bool connected = false;
+    bool captureActive = false;
+    bool captureStarted = false;
+    int statusCode = 0;
+    QString eventId;
+    QString error;
+    QString activationError;
+};
+
+using DiagnosticCallback = std::function<void(DiagnosticResult)>;
 
 bool configured();
 QString newConsent();
@@ -47,5 +61,6 @@ void renderDevice(QStringView backend, quint64 vendorId, quint64 deviceId, int d
                   QStringView appleModel);
 void audioBackend(AudioBackend backend);
 void pluginVersions();
+void diagnose(bool allowCaptureStart, DiagnosticCallback callback);
 
 }
