@@ -459,7 +459,9 @@ qt_add_resources(
     Assets/icons/icon-128.png
     Assets/icons/icon-256.png
     Assets/icons/icon-512.png
-    Assets/icons/icon-1024.png)
+    Assets/icons/icon-1024.png
+    Assets/icons/menubar-infinity.png
+    Assets/icons/menubar-infinity.svg)
 # 着色器按原通道顺序打包，所有后端使用同一份公式。 GLSL 130 兼容 Windows 随包的软件 OpenGL，其他后端仍保留原有版本。
 qt_add_shaders(
     RhineMusicDatabase
@@ -649,6 +651,9 @@ if(APPLE)
                 Qt/src/render/MetalRenderDiagnostics.mm Qt/src/render/MetalRenderDiagnostics.h
                 Qt/src/render/MetalTemporalResolve.cpp Qt/src/render/MetalTemporalResolve.h
                 Qt/src/render/FrameGenerator.h Qt/src/render/SceneResources.h)
+    if(NOT IOS)
+        target_sources(RhineMusicDatabase PRIVATE Qt/src/MacMenuBar.cpp Qt/src/MacMenuBar.h Qt/src/MacMenuBar.mm)
+    endif()
     target_link_libraries(RhineMusicDatabase PRIVATE "-framework Metal")
     if(NOT IOS)
         find_library(RHINE_METALFX_FRAMEWORK MetalFX)
@@ -869,6 +874,11 @@ if(APPLE)
     target_include_directories(RhineSceneTransformHistoryRegression PRIVATE Qt/src)
     target_link_libraries(RhineSceneTransformHistoryRegression PRIVATE Qt6::Core Qt6::Gui)
     add_test(NAME qt_scene_transform_history_regression COMMAND RhineSceneTransformHistoryRegression)
+
+    qt_add_executable(RhineMacMenuBarRegression Qt/tests/MacMenuBarChecks.cpp Qt/src/MacMenuBar.cpp)
+    target_include_directories(RhineMacMenuBarRegression PRIVATE Qt/src)
+    target_link_libraries(RhineMacMenuBarRegression PRIVATE Qt6::Core)
+    add_test(NAME qt_mac_menu_bar_regression COMMAND RhineMacMenuBarRegression)
 endif()
 
 # 快速滚动的冷纹理准入（B01）与封面需求账本（B03）是 header-only 纯逻辑，不碰 QRhi/窗口： 边界差 1ms、逻辑取消提前归还名额都不会崩，只会让界面变慢或并发慢慢失控，只能靠用例拦。

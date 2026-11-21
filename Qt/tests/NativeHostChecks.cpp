@@ -216,6 +216,9 @@ bool runNativeHostChecks(const QString &root) {
     ok &= ProviderRegistry::instance().defaultId().isEmpty();
     ok &= ProviderRegistry::instance().fallbackId() == "siren";
     ProviderRegistry::instance().load(root);
+#ifdef Q_OS_MACOS
+    ok &= Host::isPreferenceKey("menu-bar-layout");
+#endif
 
     // 插件市场：本地 file:// 索引、下载、安装与启用/禁用。
     QTemporaryDir market;
