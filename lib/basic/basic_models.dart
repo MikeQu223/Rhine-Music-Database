@@ -1175,7 +1175,8 @@ List<BasicListItem> basicLibraryItems(BasicViewState state) {
     // 曲目（Qt/src/MusicSiren.cpp:296-335 只按 id 取 songs，不产生账号请求）。
     // 没有本机集合端口时一条也不编：Qt 的 lists[1] 来自 LocalCollections.likedIDs()，
     // 端口不存在就等于「还没查询过」，把整库曲目当成「喜欢的歌曲」是假数据。
-    if (!state.localCollectionsAvailable) {
+    // 插件平台的服务端喜欢（`likedIDs`）同样进 `state.songs`，端口守卫对它不适用。
+    if (!state.searchRemote && !state.localCollectionsAvailable) {
       return const <BasicListItem>[];
     }
     return <BasicListItem>[

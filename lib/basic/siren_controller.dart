@@ -29,6 +29,7 @@
 library;
 
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 
@@ -763,6 +764,68 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     }
   }
 
+  /// 服务端喜欢的翻页游标：Qt `MusicLibrary::loadLikedIDs` 是
+  /// `songs(slice(ids, likedCursor, 100))` 逐段解析（`likedCursor += page.rawCount`），
+  /// 而不是一次性把 965 条全塞进 `songs`。这里只记游标，id 全量表已在
+  /// [_serverLikedIds] 里，翻页只补曲目行。
+  int get serverLikedCursor => _serverLikedCursor;
+  int _serverLikedCursor = 0;
+
+  /// 服务端喜欢的翻页页大小（Qt `slice(ids, handler, 100)`）。
+  static const int serverLikedPageSize = 100;
+
+  /// 是否还有更多服务端喜欢的曲目没解析（Qt `hasMore[1] = likedCursor < ids.size`）。
+  bool get serverLikedHasMore =>
+      _serverLikedCursor < _orderedServerLikedIds.length;
+
+  /// 按 id 全量表顺序取 id 切片（`_serverLikedIds` 是 Set，顺序不可依赖）。
+  List<String> _orderedServerLikedIds = const <String>[];
+
+  /// 续页：把下一页的裸 id 解析成曲目行并追加到 [_serverLikedSongs]。
+  ///
+  /// Qt `MusicLibrary::loadLikedIDs(lane, token, user)`（`Qt/src/MusicLibrary.cpp:1000-1030`）
+  /// 每页都会重新取 `likedIDs` 再 `songs(slice(...))`；这里首屏已经拿过全量 id，
+  /// 续页直接从本地那份顺序表切片，少一次往返。
+  Future<void> loadMoreServerLiked() async {
+    final ProviderGateway? gateway = _remoteSearch;
+    if (gateway == null || _disposed || !serverLikedHasMore) {
+      return;
+    }
+    final int seq = ++_serverLikedSeq;
+    try {
+      await _loadServerLikedPage(gateway, seq);
+      if (_disposed || seq != _serverLikedSeq) {
+        return;
+      }
+      _publish();
+    } on Object catch (error) {
+      if (_disposed) {
+        return;
+      }
+      _status = remoteErrorMessage(error);
+      _publish();
+    }
+  }
+
+  /// 拉一页并追加（调用方负责代际与 `_publish()`）。
+  Future<void> _loadServerLikedPage(ProviderGateway gateway, int seq) async {
+    final int start = _serverLikedCursor;
+    final int end = math.min(start + serverLikedPageSize, _orderedServerLikedIds.length);
+    if (end <= start) {
+      return;
+    }
+    final List<Map<String, Object?>> rows =
+        await gateway.songsByIds(_orderedServerLikedIds.sublist(start, end));
+    if (_disposed || seq != _serverLikedSeq) {
+      return;
+    }
+    _serverLikedSongs = <SirenSong>[
+      ..._serverLikedSongs,
+      for (final Map<String, Object?> row in rows) _songFromRemoteRow(row),
+    ];
+    _serverLikedCursor = end;
+  }
+
   /// 远端「喜欢的歌曲」id 集合（插件平台走服务端 `likedIDs`，本地平台为空）。
   ///
   /// Qt 的等价点：`MusicLibrary.cpp:969` 拉 `likedIDs` 后填 `likedIDs` 集合，
@@ -899,15 +962,12 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
         return;
       }
       _serverLikedIds = <String>{for (final String id in ids) if (id.isNotEmpty) id};
-      // 只解析前 200 条：`songs(ids)` 一次传太多会被上游拒（Qt 也分批拉）。
-      final List<Map<String, Object?>> rows =
-          ids.isEmpty ? const <Map<String, Object?>>[] : await gateway.songsByIds(ids.take(200).toList());
-      if (_disposed || seq != _serverLikedSeq) {
-        return;
-      }
-      _serverLikedSongs = <SirenSong>[
-        for (final Map<String, Object?> row in rows) _songFromRemoteRow(row),
-      ];
+      _orderedServerLikedIds = <String>[for (final String id in ids) if (id.isNotEmpty) id];
+      // 首批只解析 100 条（Qt `loadLikedIDs` 的 `slice(ids, likedCursor, 100)`）：
+      // `songs(ids)` 一次传太多上游会拒；后续由 [loadMoreServerLiked] 续页。
+      _serverLikedCursor = 0;
+      _serverLikedSongs = const <SirenSong>[];
+      await _loadServerLikedPage(gateway, seq);
       _publish();
     } on Object catch (error) {
       if (_disposed) {
@@ -1504,7 +1564,23 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     }
     final double max = (items.length - 1).toDouble();
     final int row = position.isNaN ? 0 : position.clamp(0.0, max).round();
+    _maybeLoadMoreServerLiked(row);
     await selectLibraryRow(row);
+  }
+
+  /// 滚到列表尾部附近就续页（Qt `MusicLibrary::loadMoreSource` 的滚动触发：
+  /// `selectResult` 里 `if (index >= totals[lane] - 8) loadMoreSource(lane)`）。
+  ///
+  /// 只对插件平台「喜欢的歌曲」列生效：塞壬的喜欢来自本地集合，没有分页概念。
+  void _maybeLoadMoreServerLiked(int row) {
+    if (_remoteSearch == null || _selectedLane != 1 || _directory != null) {
+      return;
+    }
+    final int total = _serverLikedSongs.length;
+    if (!serverLikedHasMore || row < total - 8) {
+      return;
+    }
+    unawaited(loadMoreServerLiked());
   }
 
   /// 列表拖动**过程中**的连续窗口位置（单位条目，可为小数）。
@@ -1555,6 +1631,7 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
       // 记忆的是"窗口停在哪"，不是吸附后的整行（Qt observe 只折 anchor，不改窗口）。
       _lanePositions[_selectedLane] = _listPosition;
     }
+    _maybeLoadMoreServerLiked(clamped.round());
     _publish();
   }
 
