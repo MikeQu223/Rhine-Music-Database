@@ -4,7 +4,7 @@ const path = require('node:path');
 const os = require('node:os');
 const { createHash } = require('node:crypto');
 const { app: defaultAppPath, resourceDirectory } = require('./app-layout.cjs');
-const { buildVersion, packageIdentity } = require('./release-version.cjs');
+const { buildVersion, packageIdentity, sentryEnvironment } = require('./release-version.cjs');
 const { spawnSync } = require('node:child_process');
 const root = path.resolve(__dirname, '..');
 process.chdir(root);
@@ -288,6 +288,7 @@ function buildQt() {
         // CMake 生成符号时使用当前运行的 Node，避免依赖 PATH 里的系统安装。
         configure.push(`-DRHINE_CRASH_NODE=${process.execPath}`);
         configure.push(`-DRHINE_ENABLE_SENTRY=${sentryEnabled ? 'ON' : 'OFF'}`);
+        configure.push(`-DRHINE_SENTRY_ENVIRONMENT=${sentryEnvironment(version)}`);
     }
     run('cmake', configure);
     run('cmake', ['--build', 'output/qt-build']);

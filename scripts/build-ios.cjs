@@ -3,7 +3,7 @@ const path = require('node:path');
 const os = require('node:os');
 const { createHash } = require('node:crypto');
 const { spawnSync } = require('node:child_process');
-const { buildVersion, packageIdentity } = require('./release-version.cjs');
+const { buildVersion, packageIdentity, sentryEnvironment } = require('./release-version.cjs');
 const root = path.resolve(__dirname, '..');
 process.chdir(root);
 const simulator = process.argv.includes('--simulator');
@@ -158,6 +158,7 @@ run(path.join(kit, 'bin/qt-cmake'), [
     `-DRHINE_IOS_FFMPEG_ROOT=${ffmpeg}`,
     '-DRHINE_PACKAGE_APP=OFF',
     `-DRHINE_ENABLE_SENTRY=${sentryEnabled ? 'ON' : 'OFF'}`,
+    `-DRHINE_SENTRY_ENVIRONMENT=${sentryEnvironment(version)}`,
     `-DRHINE_VERSION=${version.version}`,
     `-DRHINE_RELEASE_BUILD=${version.release ? 'ON' : 'OFF'}`,
 ]);

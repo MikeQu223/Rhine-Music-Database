@@ -37,4 +37,10 @@ function packageIdentity(version = buildVersion()) {
     return version.release ? `v${version.version}` : version.commitSha;
 }
 
-module.exports = { buildVersion, packageIdentity, distributionPlatforms };
+/** 正式版本默认进入 production，开发版和源码归档默认进入 development。 */
+function sentryEnvironment(version = buildVersion(), explicit = process.env.RHINE_SENTRY_ENVIRONMENT) {
+    const override = (explicit || '').trim();
+    return override || (version.release ? 'production' : 'development');
+}
+
+module.exports = { buildVersion, packageIdentity, sentryEnvironment, distributionPlatforms };

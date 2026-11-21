@@ -4,7 +4,12 @@ const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { createUpdateFeed } = require('../../scripts/create-update-feed.cjs');
-const { buildVersion, packageIdentity, distributionPlatforms } = require('../../scripts/release-version.cjs');
+const {
+    buildVersion,
+    packageIdentity,
+    sentryEnvironment,
+    distributionPlatforms,
+} = require('../../scripts/release-version.cjs');
 assert.deepEqual(buildVersion('v1.10.2'), { version: '1.10.2', release: true });
 assert.deepEqual(buildVersion('2.0.0'), { version: '2.0.0', release: true });
 assert.equal(buildVersion('').release, false);
@@ -12,6 +17,9 @@ const development = buildVersion('');
 assert.equal(development.version, '0.0.0');
 assert.match(packageIdentity(development), /^[0-9a-f]{12,40}$/);
 assert.equal(packageIdentity(buildVersion('v1.10.2')), 'v1.10.2');
+assert.equal(sentryEnvironment(development, ''), 'development');
+assert.equal(sentryEnvironment(buildVersion('v1.10.2'), ''), 'production');
+assert.equal(sentryEnvironment(development, 'staging'), 'staging');
 for (const invalid of ['v1.0', 'v01.0.0', 'v1.0.0-beta.1', '1.0.0\n', 'v65536.0.0', '$(touch bad)']) {
     assert.throws(() => buildVersion(invalid));
 }
