@@ -83,6 +83,20 @@
 ## 10. 仍未做 / 待裁决
 
 - 240Hz 3D 与列表卡顿本体（GPU fence stall，见 `docs/vulkan-igpu` 与 `reports/GPU-FENCE-STALL-20261118.md`）；Impeller→Skia 只是止血。
-- 封面查看器默认 SDK fault 0x28。
-- 两次 `git -c core.hooksPath=/dev/null` 历史违规（按 subject 定位 `99cd87c`、`8efaba8`）待用户裁决；本轮所有提交均为默认身份、subject-only、未使用 `git -c`。
 - 横屏插件管理页沿用竖屏 widget 页（Qt 桌面端是 `pluginsPage` 画布版），未做桌面专用版式。
+
+## 11. 后续补掉的两处（2026-11-21 下午）
+
+- **进程内只允许一份 Node 运行时**（`4422bf4fc`）。真机两次 `SIGTRAP`（07:53 / 08:03）栈都是
+  `v8::internal::trap_handler::EnableTrapHandler(bool)+40` ← `node::InitializeOncePerProcess` ←
+  `node::Start`：Qt 的 `BridgeProcessAndroid::launch()` 不知道 Flutter 的 JNI 已经起过 libnode。
+  修法是 JNI 里 `setenv("RHINE_NODE_IN_PROCESS","1",1)`，Qt 的 `launch()` 见到该变量直接返回 false
+  （日志 `embedded node runtime already owns the process; skipping second start`）。验证：冷启一次
+  `RhineNodeHost: node::Start(4)` + `handshake ok` + `RHINE_QT_EMBEDDED_SCENE_READY 2551x2041`，无第二次启动、无新崩溃。
+- **封面查看器（`viewer`）真机已验证**：竖屏与主线一致**不可达**（Qt compact 只在 `source["viewer"]` 为真时画 viewer 页，
+  `ResponsiveHudPages.cpp`/`ResponsiveLyrics.cpp` 里都没有发 `viewer` 的按钮），横屏详情页左下有 `查看封面 ↗`。
+  实测横屏点开后：`← 返回音乐 ESC | 致未来的花信 A Flower Letter for the Future / 封面 | 344567846 | 360° |
+  清晰 | 磨砂 | 原始视角 | 封面正面 | 复位视角 ↗`，`清晰`/`封面正面`/`原始视角` 都有可见响应，
+  进程 pid 全程存活、无 fault 0x28 ⇒ **该条旧账可结案**。
+- 横屏能力本次用 `adb shell wm size 2880x1800` 覆盖验证（`wm size reset` 还原）；临时给 Manifest 加
+  `android:screenOrientation="landscape"` 在该 ROM 上不生效，已还原，未提交。
