@@ -2667,13 +2667,21 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
       String sourceUrl = _text(track['sourceUrl']);
       String lyricUrl = '';
       if (sourceUrl.isEmpty) {
-        final SirenSongDetail detail = await _repository.songDetail(id);
-        if (_activeGeneration != generation) {
-          return;
+        final ProviderGateway? gateway = _remoteSearch;
+        if (gateway != null) {
+          // 插件平台的曲目（例如从「我的歌单」目录点进来的那一行）不带 sourceUrl，
+          // 播放地址只能现向插件要；**不能**落到 `_repository.songDetail`——那是塞壬
+          // 的 id 空间，插件 id 在那边必然 404（真机表现：详情页打开、状态「已暂停」）。
+          sourceUrl = await gateway.playback(trackId: id, quality: _remoteQuality);
+        } else {
+          final SirenSongDetail detail = await _repository.songDetail(id);
+          if (_activeGeneration != generation) {
+            return;
+          }
+          _rememberDetail(detail);
+          sourceUrl = detail.sourceUrl;
+          lyricUrl = detail.lyricUrl;
         }
-        _rememberDetail(detail);
-        sourceUrl = detail.sourceUrl;
-        lyricUrl = detail.lyricUrl;
       }
       if (sourceUrl.isEmpty) {
         _player.fail(sirenNoSourceMessage, generation: generation);
