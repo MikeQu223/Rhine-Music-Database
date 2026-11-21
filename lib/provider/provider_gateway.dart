@@ -349,6 +349,19 @@ abstract class ProviderGateway {
     required int start,
   });
 
+  /// 发现页数据（Qt `MusicDiscover.cpp:52-55` 的 `discover(tab, start, category|area)`）。
+  ///
+  /// 返回插件原样的页对象：`{items, rawCount, more, category?, areas?, area?}`。
+  /// 默认实现表示这个平台没有发现页——`discover.enabled` 为 false 时走这里。
+  Future<Map<String, Object?>> discover({
+    required String tab,
+    int start = 0,
+    String category = '',
+    String area = '',
+  }) async {
+    throw const ProviderUnavailableError('当前来源不支持发现页');
+  }
+
   /// 取歌词文档（对应 `lyrics(track)`）。返回插件原样的 lyrics-format 文档：
   /// `{version, source, timing, offsetMs, lines[{startMs,text,translation}], plainText}`。
   ///
@@ -527,6 +540,16 @@ class UnavailableProviderGateway implements ProviderGateway {
     required String query,
     required ProviderSearchKind kind,
     required int start,
+  }) async {
+    throw ProviderUnavailableError(reason);
+  }
+
+  @override
+  Future<Map<String, Object?>> discover({
+    required String tab,
+    int start = 0,
+    String category = '',
+    String area = '',
   }) async {
     throw ProviderUnavailableError(reason);
   }

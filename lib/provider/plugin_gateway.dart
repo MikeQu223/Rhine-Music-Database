@@ -265,6 +265,18 @@ class PluginGateway implements ProviderGateway {
   }
 
   @override
+  Future<Map<String, Object?>> discover({
+    required String tab,
+    int start = 0,
+    String category = '',
+    String area = '',
+  }) {
+    // 位置参数：插件签名 `discover(tab, start, category)`（Qt
+    // `MusicDiscover.cpp:52-55` 第三个参数在 `new-songs` 下换成曲风区）。
+    return _call('discover', <Object?>[tab, start, tab == 'new-songs' ? area : category]);
+  }
+
+  @override
   Future<List<String>> likedTrackIds({String uid = ''}) async {
     // 插件签名 `likedIDs(uid)`：uid 空串时插件用会话里的账号（真机验证过，
     // 传账号 id 或空串都能拿到同一份列表）。

@@ -81,7 +81,12 @@ import '../provider/provider_assets.dart';
 import '../domain/account/login_controller.dart';
 import '../domain/comments/comment_controller.dart';
 import '../provider/provider_gateway.dart'
-    show ProviderAccount, ProviderCommentSort, ProviderLoginMethod, UnavailableProviderGateway;
+    show
+        ProviderAccount,
+        ProviderCommentSort,
+        ProviderGateway,
+        ProviderLoginMethod,
+        UnavailableProviderGateway;
 import '../provider/platform_switcher.dart' show PlatformSwitcher;
 import '../provider/plugin_bridge.dart';
 import '../provider/plugin_gateway.dart';
@@ -1131,6 +1136,17 @@ class _BasicShellState extends State<_BasicShell>
   /// 发现页的滚动偏移（Qt `m_scroll`）。
   double _discoverScroll = 0;
 
+  /// 发现页已载入的原始条目（与 [_discoverEntries] 同序，点行时按它开）。
+  List<Map<String, Object?>> _discoverItems = const <Map<String, Object?>>[];
+  List<PortraitDiscoverEntry> _discoverEntries = const <PortraitDiscoverEntry>[];
+  String _discoverStatus = '';
+  bool _discoverMore = false;
+  bool _discoverLoading = false;
+  int _discoverRawCount = 0;
+  String _discoverCategory = '全部';
+  String _discoverArea = '5';
+  String _discoverLoadedTab = '';
+
   /// 发现页快照：tab 表来自 descriptor 的 `discover.tabs`，`history` tab 用本地
   /// 播放历史（Qt 的 `mobile:history` 也走 `discover:tab:history`），其余 tab 在
   /// 没有网关数据时诚实给状态行。
@@ -1139,20 +1155,107 @@ class _BasicShellState extends State<_BasicShell>
     final String tab = _discoverTab.isEmpty
         ? basicDiscoverInitialTab(descriptor)
         : _discoverTab;
-    final List<PortraitDiscoverEntry> entries = tab == basicDiscoverHistoryTab
+    final bool history = tab == basicDiscoverHistoryTab;
+    final List<PortraitDiscoverEntry> entries = history
         ? basicDiscoverHistoryEntries(controller.playHistory)
-        : const <PortraitDiscoverEntry>[];
+        : _discoverEntries;
+    final String fallback = basicDiscoverStatus(
+      descriptor: descriptor,
+      tab: tab,
+      entryCount: entries.length,
+    );
     return BasicDiscoverSnapshot(
       tabs: basicDiscoverTabs(descriptor, selectedTab: tab),
       tab: tab,
       entries: entries,
-      status: basicDiscoverStatus(
-        descriptor: descriptor,
-        tab: tab,
-        entryCount: entries.length,
-      ),
+      // 载入中的状态行优先（Qt `MusicDiscover::accept` 只在结束时写 status）。
+      status: _discoverLoading ? '正在读取…' : (_discoverStatus.isNotEmpty ? _discoverStatus : fallback),
+      more: !history && _discoverMore,
+      loadingMore: _discoverLoading && entries.isNotEmpty,
       scroll: _discoverScroll,
     );
+  }
+
+  /// 拉一页发现页数据（Qt `MusicDiscover.cpp:52-88`）。
+  ///
+  /// `history` tab 走本地播放历史（Qt 同样如此），`daily`/`guess`/`artists`
+  /// 在未登录时给登录提示（Qt `MusicDiscover.cpp:33-42` 的三条早退串）。
+  Future<void> _loadDiscover({bool append = false}) async {
+    final ProviderDescriptor? descriptor = _currentDescriptor;
+    final ProviderGateway? gateway = _providerService?.gateway;
+    final String tab = _discoverTab.isEmpty ? basicDiscoverInitialTab(descriptor) : _discoverTab;
+    if (descriptor == null || gateway == null || tab.isEmpty || tab == basicDiscoverHistoryTab) {
+      return;
+    }
+    if (!descriptor.discoverEnabled) {
+      setState(() => _discoverStatus = '${descriptor.name}不提供发现页');
+      return;
+    }
+    final bool needsAccount = tab == 'daily' || tab == 'guess' || tab == 'artists';
+    if (needsAccount && !(_loginController?.state.loggedIn ?? false)) {
+      setState(() {
+        _discoverEntries = const <PortraitDiscoverEntry>[];
+        _discoverItems = const <Map<String, Object?>>[];
+        _discoverMore = false;
+        _discoverStatus = tab == 'artists' ? '登录后查看收藏歌手' : '登录后查看每日推荐';
+      });
+      return;
+    }
+    setState(() {
+      _discoverLoading = true;
+      if (!append) {
+        _discoverStatus = '';
+        _discoverMore = false;
+        _discoverRawCount = 0;
+      }
+    });
+    try {
+      final Map<String, Object?> page = await gateway.discover(
+        tab: tab,
+        start: append ? _discoverRawCount : 0,
+        category: _discoverCategory,
+        area: _discoverArea,
+      );
+      if (!mounted) return;
+      final List<Map<String, Object?>> rows = <Map<String, Object?>>[
+        for (final Object? item in (page['items'] as List<Object?>? ?? const <Object?>[]))
+          if (item is Map) item.cast<String, Object?>(),
+      ];
+      setState(() {
+        _discoverItems = append
+            ? <Map<String, Object?>>[..._discoverItems, ...rows]
+            : rows;
+        _discoverEntries = <PortraitDiscoverEntry>[
+          for (int index = 0; index < _discoverItems.length; index += 1)
+            PortraitDiscoverEntry(
+              index: index,
+              title: '${_discoverItems[index]['title'] ?? ''}',
+              artist: '${_discoverItems[index]['artist'] ?? ''}',
+              kind: '${_discoverItems[index]['kind'] ?? 'song'}',
+              image: '${_discoverItems[index]['cover'] ?? ''}',
+            ),
+        ];
+        _discoverRawCount = append
+            ? _discoverRawCount + _intOf(page['rawCount'])
+            : _intOf(page['rawCount']);
+        _discoverMore = page['more'] == true;
+        _discoverLoading = false;
+        _discoverLoadedTab = tab;
+        _discoverStatus = _discoverItems.isEmpty ? '暂无内容' : '已载入 ${_discoverItems.length} 条';
+      });
+    } on Object catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _discoverLoading = false;
+        _discoverStatus = '$error'.replaceFirst('ProviderRequestError: ', '');
+      });
+    }
+  }
+
+  static int _intOf(Object? value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse('$value') ?? 0;
   }
 
   /// 总览页的索引行（Qt `library()` 的 `for (lane = 1; lane < columns.size(); ++lane)`）。
@@ -2542,6 +2645,7 @@ class _BasicShellState extends State<_BasicShell>
         }
       });
       _setModal('discover');
+      unawaited(_loadDiscover());
       return;
     }
     if (action == 'mobile:history') {
@@ -2556,12 +2660,17 @@ class _BasicShellState extends State<_BasicShell>
       setState(() {
         _discoverTab = action.substring(basicDiscoverTabPrefix.length);
         _discoverScroll = 0;
+        _discoverEntries = const <PortraitDiscoverEntry>[];
+        _discoverItems = const <Map<String, Object?>>[];
+        _discoverStatus = '';
+        _discoverMore = false;
       });
       if (_modal.isEmpty) _setModal('discover');
+      unawaited(_loadDiscover());
       return;
     }
     if (action == basicDiscoverMoreAction) {
-      setState(() => _actionNotice = '暂时没有更多内容');
+      unawaited(_loadDiscover(append: true));
       return;
     }
     if (action.startsWith(basicDiscoverItemPrefix)) {
@@ -2574,24 +2683,69 @@ class _BasicShellState extends State<_BasicShell>
         setState(() => _actionNotice = '该条目已不在列表里');
         return;
       }
-      final List<SirenSong> songs = controller.playHistory;
-      if (index >= songs.length) {
+      final String tab = _discoverSnapshot().tab;
+      if (tab == basicDiscoverHistoryTab) {
+        final List<SirenSong> songs = controller.playHistory;
+        if (index >= songs.length) {
+          setState(() => _actionNotice = '该条目已不在列表里');
+          return;
+        }
+        unawaited(controller.openSong(songs[index]));
+        return;
+      }
+      if (index >= _discoverItems.length) {
         setState(() => _actionNotice = '该条目已不在列表里');
         return;
       }
-      unawaited(controller.openSong(songs[index]));
+      final Map<String, Object?> row = _discoverItems[index];
+      if ('${row['kind'] ?? 'song'}' == 'playlist') {
+        unawaited(controller.enterRemotePlaylist(BasicLocalPlaylist(
+          id: '${row['id'] ?? ''}',
+          title: '${row['title'] ?? ''}',
+          trackCount: _intOf(row['trackCount']),
+        )));
+        return;
+      }
+      unawaited(controller.openRemoteTrack(row));
       return;
     }
     if (action.startsWith(basicPlayDiscoverPrefix)) {
       final int? index = int.tryParse(
         action.substring(basicPlayDiscoverPrefix.length),
       );
-      final List<SirenSong> songs = controller.playHistory;
-      if (index == null || index < 0 || index >= songs.length) {
+      if (index == null || index < 0) {
         setState(() => _actionNotice = '该条目已不在列表里');
         return;
       }
-      unawaited(controller.openSong(songs[index]));
+      final String tab = _discoverSnapshot().tab;
+      if (tab == basicDiscoverHistoryTab) {
+        final List<SirenSong> songs = controller.playHistory;
+        if (index >= songs.length) {
+          setState(() => _actionNotice = '该条目已不在列表里');
+          return;
+        }
+        unawaited(controller.openSong(songs[index]));
+        return;
+      }
+      if (index >= _discoverItems.length) {
+        setState(() => _actionNotice = '该条目已不在列表里');
+        return;
+      }
+      // 歌单行的「▶ 全部」：进目录再整列播放（Qt `playDiscover` 同序）。
+      final Map<String, Object?> row = _discoverItems[index];
+      unawaited(() async {
+        final String notice = await controller.enterRemotePlaylist(BasicLocalPlaylist(
+          id: '${row['id'] ?? ''}',
+          title: '${row['title'] ?? ''}',
+          trackCount: _intOf(row['trackCount']),
+        ));
+        if (!mounted) return;
+        if (notice.isNotEmpty) {
+          setState(() => _actionNotice = notice);
+          return;
+        }
+        await controller.play();
+      }());
       return;
     }
     // 竖屏检索页的四列 tab = Qt 的四种检索分类（`music:kind:<i>`，i 是

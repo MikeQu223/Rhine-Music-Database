@@ -1375,6 +1375,15 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     _publish();
   }
 
+  /// 打开一条远端（插件平台）条目：发现页行、服务端歌单行都走这里。
+  ///
+  /// 字段来自插件返回的 `{id,title,artist,album,albumID,cover,duration}`，
+  /// 播放地址在真正起播时由 `_startPlayback` 向网关现取（不在这里缓存）。
+  Future<void> openRemoteTrack(Map<String, Object?> row, {bool play = true}) async {
+    if (_disposed) return;
+    await openSong(_songFromRemoteRow(row), play: play);
+  }
+
   Future<void> openSong(SirenSong song, {bool play = true}) async {
     if (_disposed) {
       return;
