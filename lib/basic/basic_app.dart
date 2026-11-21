@@ -279,9 +279,7 @@ class _BasicAppState extends State<BasicApp> {
   late final bool _ownsController;
 
   /// 回执接收面的稳定句柄：方法掏出来的 tear-off 每次都是新闭包，
-  /// 直接拿 `_onSceneScroll` 做 identical() 判断永远不会相等，dispose 就摘不掉。
-  late final ValueChanged<QtSceneScrollEvent> _sceneScrollHandler =
-      _onSceneScroll;
+
 
   @override
   void initState() {
@@ -318,7 +316,8 @@ class _BasicAppState extends State<BasicApp> {
     }
     // 3D 场景的连续滚动回执（拖动/惯性/滚轮）落到同一个 controller 窗口真值上：
     // 方向 B（3D → 列表/ruler）因此不依赖 HUD 是否接了 onScroll 参数。
-    QtSceneScrollRouter.instance.handler = _sceneScrollHandler;
+    // 路由器的安装权归外壳（[_BasicShellState.initState]）：它要按弹层状态分流，
+    // 只有无弹层时才回到这里的资料库滚动。
     // 两路互不依赖：曲库走网络，字形走 asset。并行启动，任一失败都不会互相取消。
     unawaited(_boot());
     unawaited(_loadResources());
@@ -425,9 +424,7 @@ class _BasicAppState extends State<BasicApp> {
     // 解码后的封面像素是本 State 持有的 native 资源，必须自己放掉。
     _covers?.dispose();
     _covers = null;
-    if (identical(QtSceneScrollRouter.instance.handler, _sceneScrollHandler)) {
-      QtSceneScrollRouter.instance.handler = null;
-    }
+
     if (_ownsController) {
       _controller.dispose();
     }
@@ -501,6 +498,7 @@ class _BasicAppState extends State<BasicApp> {
       settingsStore: _settingsStore,
       playerPreferences: _playerPreferences,
       collections: _collections,
+      onLibrarySceneScroll: _onSceneScroll,
       bundle: widget.bundle,
     );
   }
@@ -518,6 +516,7 @@ class _BasicShell extends StatefulWidget {
     required this.settingsStore,
     required this.playerPreferences,
     required this.collections,
+    this.onLibrarySceneScroll,
     this.bundle,
   });
 
@@ -533,6 +532,10 @@ class _BasicShell extends StatefulWidget {
 
   /// 本机收藏（喜欢 / 自建歌单）的持久化实现，与 controller 共用同一实例。
   final LocalCollectionStore collections;
+
+  /// 无弹层时的原生滚动手势去向（[BasicApp] 的资料库滚动，唯一持有 controller）。
+  /// 弹层打开时由外壳自己吃掉，不再往这里转。
+  final ValueChanged<QtSceneScrollEvent>? onLibrarySceneScroll;
 
   /// 平台 descriptor 的 asset 源（测试注入；生产 null = rootBundle）。
   final AssetBundle? bundle;
@@ -618,6 +621,32 @@ class _BasicShellState extends State<_BasicShell>
 
   /// 登录控制器（Qt `MusicAccount` 的登录状态机）。
   LoginController? _loginController;
+
+  /// 原生滚动手势的分流：弹层打开时归弹层，否则给资料库。
+  ///
+  /// 横屏的 3D 场景铺满整窗、Z 序在 HUD 弹层之下；不拦的话「在播放队列上滑动」
+  /// 会去滑资料库列表（用户实测缺陷 2，`_onSceneScroll` 原来无条件喂给 controller）。
+  /// Qt 的分界在 `NativeHudController.cpp` 的 modal 早退：`m_modal` 非空就不动资料库。
+  void _onShellSceneScroll(QtSceneScrollEvent event) {
+    if (!mounted) {
+      return;
+    }
+    if (_modal.isNotEmpty) {
+      if (_modal == 'queue') {
+        final int delta = event.deltaRows.round();
+        if (delta != 0 || event.committed) {
+          setState(() {
+            final int count = controller.state.queue.length;
+            _queueOffset =
+                (_queueOffset - delta).clamp(0, queueModalMaximumOffset(count));
+          });
+        }
+      }
+      return;
+    }
+    // 无弹层：交回 [BasicApp] 的资料库滚动（它是唯一持有 controller 的滚动入口）。
+    widget.onLibrarySceneScroll?.call(event);
+  }
 
   /// 评论页滚动位置（Qt `commentsScroll`，`music:comments` 打开时归零）。
   double _commentsScroll = 0;
@@ -762,6 +791,9 @@ class _BasicShellState extends State<_BasicShell>
     unawaited(_loadCollections());
     // 平台表（音乐平台页的数据真值）：与曲库并行装载，失败只进动作槽。
     unawaited(_loadProviders());
+    // 原生滚动手势的分流器属于外壳：弹层打开时要在这里拦下来
+    //（横屏 3D 铺满整窗、弹层在其上，不拦就会「滑弹层却滑到资料库」）。
+    QtSceneScrollRouter.instance.handler = _onShellSceneScroll;
     // Overlay.qml:541-548：输入框隐藏时 inputLayer.forceActiveFocus()。Qt 在启动
     // 完成时就把焦点交给 HUD 输入层；这里晚一帧做同一件事，否则硬件键盘没有任何
     // 节点接收——设备上「ENTER 查看 / 方向键」会全部静默（161 补的键盘入口要靠它）。
@@ -1426,6 +1458,9 @@ class _BasicShellState extends State<_BasicShell>
     _settingsScrollMaximum.dispose();
     _plugins.removeListener(_onPluginsChanged);
     _plugins.dispose();
+    if (identical(QtSceneScrollRouter.instance.handler, _onShellSceneScroll)) {
+      QtSceneScrollRouter.instance.handler = null;
+    }
     super.dispose();
   }
 

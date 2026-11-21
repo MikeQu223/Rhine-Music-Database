@@ -830,9 +830,14 @@ void main() {
       expect(controller.nextCalls, 1);
       expect(find.textContaining(basicUnimplementedPrefix), findsNothing);
 
-      fire(tester, 'music:like');
+      // `music:like` 已接入（详情页心形与沉浸条第 0 键都会发它），所以换一个
+      // 目前确实没有接收方的动作，守住「绝不静默 no-op」这条契约。
+      fire(tester, 'music:artist:0');
       await tester.pump();
-      expect(find.textContaining('${basicUnimplementedPrefix}music:like'), findsOneWidget);
+      expect(
+        find.textContaining('${basicUnimplementedPrefix}music:artist:0'),
+        findsOneWidget,
+      );
 
       // 音量条有真实热区（player_bar.dart:529），但 BasicController 没有音量 API。
       fire(tester, 'player:volume-fraction:0.5');
