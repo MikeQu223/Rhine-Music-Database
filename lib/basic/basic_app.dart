@@ -150,6 +150,15 @@ const String basicPortraitLaneActionPrefix = 'mobile:lane:';
 /// 竖屏检索页四列 tab 的命中前缀：`mobile:search-tab:<0..3>`。
 const String basicPortraitSearchTabActionPrefix = 'mobile:search-tab:';
 
+/// Qt 原生检索分类动作串（`music:kind:<n>`，`Qt/src/NativeHudSearch.cpp:76`）。
+const String basicSearchKindActionPrefix = 'music:kind:';
+
+/// Qt 检索分类的**原生下标序**（`kinds` 数组：0=曲目、1=专辑、2=歌单、3=歌手）。
+///
+/// 与页面上那四列的显示序（歌曲/歌手/专辑/歌单）不是同一张表：页面拼动作串时
+/// 已经用 `portraitSearchKindActionOrder` 折算过，宿主只按下标查这张表。
+const List<String> basicSearchKindQtOrder = <String>['song', 'album', 'playlist', 'artist'];
+
 /// 竖屏队列页模式区展开/收起（Qt `mobile:queue-modes`，ResponsiveHudLayout.cpp:430-490）。
 const String basicQueueModesAction = 'mobile:queue-modes';
 
@@ -2904,6 +2913,19 @@ class _BasicShellState extends State<_BasicShell>
     // [portraitSearchKindActionOrder] 的下标：0=歌曲、1=歌手、2=专辑、3=歌单）。
     // Qt `NativeHudMusic.cpp:218-236`：有词立即重搜、空词只换分类（见
     // BasicController.setSearchKind）。
+    // 竖屏检索页自己发的是 Qt 原生词表 `music:kind:<n>`（`portraitSearchKindAction`
+    // 的拼法，n 直接是 [portraitSearchKindKeys] 的下标）。两套前缀都认，是因为
+    // 页面历史上有过 `mobile:search-tab:`，宿主不能因为换过一次拼法就丢命中。
+    if (action.startsWith(basicSearchKindActionPrefix)) {
+      final int? kindIndex = int.tryParse(action.substring(basicSearchKindActionPrefix.length));
+      if (kindIndex == null || kindIndex < 0 || kindIndex >= basicSearchKindQtOrder.length) {
+        return;
+      }
+      // `n` 是 Qt `kinds = {song, album, playlist, artist}` 的下标
+      // （`Qt/src/NativeHudSearch.cpp:66-76`），**不是**页面上那四列的显示序。
+      controller.setSearchKind(basicSearchKindQtOrder[kindIndex]);
+      return;
+    }
     if (action.startsWith(basicPortraitSearchTabActionPrefix)) {
       final int? tab = int.tryParse(action.substring(basicPortraitSearchTabActionPrefix.length));
       if (tab == null || tab < 0 || tab >= portraitSearchKindActionOrder.length) {
@@ -3008,11 +3030,48 @@ class _BasicShellState extends State<_BasicShell>
       return;
     }
     if (action.startsWith(basicSearchPlaylistActionPrefix)) {
-      setState(() => _actionNotice = '歌单详情尚未接入');
+      // 检索结果里的歌单行：插件平台把它当远端歌单打开（Qt `enterDirectory` 的
+      // playlist 分支），标题从当前检索行里取——动作串只带 id，标题是展示用的。
+      final String id = Uri.decodeComponent(action.substring(basicSearchPlaylistActionPrefix.length));
+      if (id.isEmpty) {
+        return;
+      }
+      String title = '';
+      int trackCount = 0;
+      for (final Map<String, Object?> row in controller.state.searchRows) {
+        if ('${row['id'] ?? ''}' != id) {
+          continue;
+        }
+        title = '${row['title'] ?? ''}';
+        trackCount = _intOf(row['trackCount']);
+        break;
+      }
+      if (title.isEmpty) {
+        setState(() => _actionNotice = '歌单已不在当前结果里');
+        return;
+      }
+      unawaited(() async {
+        final String notice = await controller.enterRemotePlaylist(
+          BasicLocalPlaylist(id: id, title: title, trackCount: trackCount),
+        );
+        if (!mounted) return;
+        if (notice.isNotEmpty) {
+          setState(() => _actionNotice = notice);
+          return;
+        }
+        _setModal('');
+      }());
       return;
     }
     if (action.startsWith(basicSearchArtistActionPrefix)) {
-      setState(() => _actionNotice = '歌手页尚未接入');
+      // 歌手行：本仓库没有独立歌手页（Qt 的 artist 页由 wiki/artistAlbums 支撑），
+      // 但「点歌手看他唱的歌」用现成的分类检索就能真给出来，不摆占位。
+      final String name = Uri.decodeComponent(action.substring(basicSearchArtistActionPrefix.length));
+      if (name.isEmpty) {
+        return;
+      }
+      controller.setSearchKind('song');
+      unawaited(controller.setQuery(name));
       return;
     }
     // 音乐平台页（Qt `providerPage`）的入口与平台切换：`provider` 打开弹层，
