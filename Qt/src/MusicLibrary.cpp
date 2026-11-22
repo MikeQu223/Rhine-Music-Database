@@ -155,6 +155,7 @@ MusicApi::Valid MusicLibrary::valid(quint64 token, const quint64 *counter) {
 }
 
 void MusicLibrary::changed() {
+    invalidateSongLikedCache();
     refreshPlaybackLike();
     ++revision;
     emit invalidated();
@@ -815,7 +816,7 @@ void MusicLibrary::refreshPersonal(int lane) {
     reset(lane);
     if (lane == 1) {
         likedCursor = 0;
-        likedIDs.reset();
+        clearLikedIDs();
     } else if (lane == 4) {
         albumCursor = 0;
     } else {
@@ -940,7 +941,7 @@ void MusicLibrary::loadLikedIDs(int lane, quint64 token, QString user) {
                     completePersonal(lane, result.error);
                     return;
                 }
-                likedIDs = ids;
+                replaceLikedIDs(ids);
                 likedCursor += chunk.size();
                 lists[1] = MusicData::unique(lists[1], MusicData::ordered(chunk, result.value.toArray()));
                 totals[1] = int(ids.size());
@@ -1050,7 +1051,7 @@ void MusicLibrary::loadMoreSource(int lane) {
                 for (const auto &value : lists[1]) {
                     ids.append(value.toObject()["id"]);
                 }
-                likedIDs = ids;
+                replaceLikedIDs(ids);
                 totals[1] = page["total"].toInt();
                 hasMore[1] = page["more"].toBool();
             } else if (lane == 4) {

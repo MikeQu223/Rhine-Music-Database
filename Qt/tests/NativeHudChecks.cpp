@@ -240,7 +240,7 @@ MusicLibrary *createTestMusicLibrary(Host *host, const QString &provider, const 
     music->keyword = "本地";
     music->loginStatus = "等待确认";
     music->coverImage.clear();
-    music->likedIDs = QJsonArray{"1"};
+    music->replaceLikedIDs(QJsonArray{"1"});
 
     QJsonArray songs;
     for (int index = 1; index <= 20; ++index) {

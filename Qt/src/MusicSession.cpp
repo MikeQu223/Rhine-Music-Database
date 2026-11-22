@@ -152,8 +152,11 @@ bool MusicLibrary::restoreSessionState(const QJsonObject &saved) {
     playlistCursor = nonnegative(saved["playlistCursor"]);
     albumCursor = nonnegative(saved["albumCursor"]);
     likedCursor = nonnegative(saved["likedCursor"]);
-    likedIDs =
-        saved["likedIDs"].isArray() ? std::optional<QJsonArray>(saved["likedIDs"].toArray()) : std::nullopt;
+    if (saved["likedIDs"].isArray()) {
+        replaceLikedIDs(saved["likedIDs"].toArray());
+    } else {
+        clearLikedIDs();
+    }
     groupName = saved["groupName"].toString();
     groupLane = std::clamp(saved["groupLane"].toInt(-1), -1, 4);
     groupIndices.clear();

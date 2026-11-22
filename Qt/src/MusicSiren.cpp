@@ -9,7 +9,7 @@ void MusicLibrary::reloadSirenCollections() {
         return;
     }
     const auto ids = collections->likedIDs();
-    likedIDs = QJsonArray::fromStringList(ids);
+    replaceLikedIDs(QJsonArray::fromStringList(ids));
     likedCursor = 0;
     lists[1] = {};
     totals[1] = int(ids.size());

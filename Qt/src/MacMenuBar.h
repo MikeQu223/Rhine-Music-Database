@@ -38,6 +38,7 @@ class MacMenuBarController : public QObject {
     void toggleFavorite();
 
   private:
+    void scheduleRefresh();
     void applyPreferences();
     void removeStatusItem();
 

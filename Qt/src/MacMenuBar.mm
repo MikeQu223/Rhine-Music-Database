@@ -1,8 +1,10 @@
 #include "MacMenuBar.h"
 #include "Engine.h"
 #include "MacMenuBarSettings.h"
+#include "PlaybackQueue.h"
 #import <AppKit/AppKit.h>
 #include <QFile>
+#include <QTimer>
 #include <algorithm>
 #include <cmath>
 
@@ -265,15 +267,13 @@ NSImage *rhineMenuBarIcon() {
 - (CGFloat)desiredWidth;
 - (void)statusItemClicked:(NSStatusBarButton *)sender;
 - (void)performClickAtPoint:(NSPoint)point;
-- (void)updateLyrics:(NSString *)lyrics
-             playing:(BOOL)playing
-             loading:(BOOL)loading
-            hasTrack:(BOOL)hasTrack
-         canPrevious:(BOOL)canPrevious
-             canNext:(BOOL)canNext
-             canLike:(BOOL)canLike
-               liked:(BOOL)liked
-             toolTip:(NSString *)toolTip;
+- (void)updateLyrics:(NSString *)lyrics toolTip:(NSString *)toolTip;
+- (void)updatePlayback:(BOOL)playing
+               loading:(BOOL)loading
+              hasTrack:(BOOL)hasTrack
+           canPrevious:(BOOL)canPrevious
+               canNext:(BOOL)canNext;
+- (void)updateFavorite:(BOOL)canLike liked:(BOOL)liked;
 @end
 
 @implementation RhineMacMenuBarView
@@ -402,17 +402,16 @@ NSImage *rhineMenuBarIcon() {
     }
 }
 
-- (void)updateLyrics:(NSString *)lyrics
-             playing:(BOOL)playing
-             loading:(BOOL)loading
-            hasTrack:(BOOL)hasTrack
-         canPrevious:(BOOL)canPrevious
-             canNext:(BOOL)canNext
-             canLike:(BOOL)canLike
-               liked:(BOOL)liked
-             toolTip:(NSString *)toolTip {
+- (void)updateLyrics:(NSString *)lyrics toolTip:(NSString *)toolTip {
     [_lyrics updateText:lyrics];
     _lyrics.toolTip = toolTip;
+}
+
+- (void)updatePlayback:(BOOL)playing
+               loading:(BOOL)loading
+              hasTrack:(BOOL)hasTrack
+           canPrevious:(BOOL)canPrevious
+               canNext:(BOOL)canNext {
     _previous.enabled = canPrevious;
     _next.enabled = canNext;
     _play.enabled = hasTrack && !loading;
@@ -425,12 +424,15 @@ NSImage *rhineMenuBarIcon() {
     }
     _play.toolTip = playLabel;
     _play.accessibilityLabel = playLabel;
+}
+
+- (void)updateFavorite:(BOOL)canLike liked:(BOOL)liked {
     _favorite.enabled = canLike;
     NSString *favoriteSymbol = liked ? @"heart.fill" : @"heart";
     if (![_favoriteSymbol isEqualToString:favoriteSymbol]) {
         _favoriteSymbol = [favoriteSymbol copy];
-        _favorite.image = symbolImage(favoriteSymbol, liked ? @"取消喜欢当前歌曲" : @"喜欢当前歌曲",
-                                      NSFontWeightSemibold);
+        _favorite.image =
+            symbolImage(favoriteSymbol, liked ? @"取消喜欢当前歌曲" : @"喜欢当前歌曲", NSFontWeightSemibold);
         [_favorite.image setTemplate:YES];
     }
     _favorite.toolTip = liked ? @"取消喜欢当前歌曲" : @"喜欢当前歌曲";
@@ -496,7 +498,7 @@ NSImage *rhineMenuBarIcon() {
     if (!NSPointInRect(point, self.bounds)) {
         return;
     }
-    for (RhineMacMenuBarButton *button in @[_previous, _play, _next, _favorite, _icon]) {
+    for (RhineMacMenuBarButton *button in @[ _previous, _play, _next, _favorite, _icon ]) {
         if (!button.isHiddenOrHasHiddenAncestor &&
             NSPointInRect([button convertPoint:point fromView:self], button.bounds)) {
             [button performClick:self];
@@ -512,6 +514,21 @@ NSImage *rhineMenuBarIcon() {
 struct MacMenuBarController::Impl {
     NSStatusItem *statusItem = nil;
     RhineMacMenuBarView *view = nil;
+    QString trackKey;
+    QString lyricText;
+    QString toolTip;
+    bool lyricInitialized = false;
+    bool playing = false;
+    bool loading = false;
+    bool hasTrack = false;
+    bool canPrevious = false;
+    bool canNext = false;
+    bool playbackInitialized = false;
+    bool canLike = false;
+    bool liked = false;
+    bool favoriteInitialized = false;
+    bool favoriteDirty = true;
+    bool refreshScheduled = false;
 };
 
 MacMenuBarController::MacMenuBarController(Engine *engine, Action activate, Action contextMenu,
@@ -519,9 +536,12 @@ MacMenuBarController::MacMenuBarController(Engine *engine, Action activate, Acti
     : QObject(parent), m_engine(engine), m_activate(std::move(activate)),
       m_contextMenu(std::move(contextMenu)), m_impl(new Impl) {
     auto &player = m_engine->player();
-    connect(&player, &MusicPlayer::changed, this, [this] { refresh(); });
-    connect(&player.lyrics, &LyricsController::changed, this, [this] { refresh(); });
-    connect(&m_engine->app->music, &MusicLibrary::invalidated, this, [this] { refresh(); });
+    connect(&player, &MusicPlayer::changed, this, [this] { scheduleRefresh(); });
+    connect(&player.lyrics, &LyricsController::changed, this, [this] { scheduleRefresh(); });
+    connect(&m_engine->app->music, &MusicLibrary::invalidated, this, [this] {
+        m_impl->favoriteDirty = true;
+        scheduleRefresh();
+    });
     connect(&m_engine->host, &Host::preferenceChanged, this, [this](const QString &key, const QString &) {
         if (key == QLatin1String(MacMenuBar::LayoutPreference) ||
             key == QLatin1String(MacMenuBar::EnabledPreference) ||
@@ -543,6 +563,18 @@ bool MacMenuBarController::available() const {
     return m_impl->statusItem != nil;
 }
 
+/** 合并同一轮事件循环内的播放、歌词和资料库通知，避免重复刷新。 */
+void MacMenuBarController::scheduleRefresh() {
+    if (!m_impl->view || m_impl->refreshScheduled) {
+        return;
+    }
+    m_impl->refreshScheduled = true;
+    QTimer::singleShot(0, this, [this] {
+        m_impl->refreshScheduled = false;
+        refresh();
+    });
+}
+
 void MacMenuBarController::removeStatusItem() {
     if (m_impl->statusItem) {
         [NSStatusBar.systemStatusBar removeStatusItem:m_impl->statusItem];
@@ -550,6 +582,10 @@ void MacMenuBarController::removeStatusItem() {
     [m_impl->view removeFromSuperview];
     m_impl->view = nil;
     m_impl->statusItem = nil;
+    m_impl->lyricInitialized = false;
+    m_impl->playbackInitialized = false;
+    m_impl->favoriteInitialized = false;
+    m_impl->favoriteDirty = true;
 }
 
 /** 实时调整原生状态项的布局和宽度，已有状态项在设置变动时保留原来的系统菜单栏位置。 */
@@ -557,9 +593,9 @@ void MacMenuBarController::applyPreferences() {
     const auto &host = m_engine->host;
     const auto storedLayout = MacMenuBar::parseLayout(host.preference(MacMenuBar::LayoutPreference));
     const bool enabled = MacMenuBar::isEnabled(host.preference(MacMenuBar::EnabledPreference));
-    const auto layout = MacMenuBar::effectiveLayout(storedLayout, enabled,
-                                                    host.preference(MacMenuBar::ControlsPreference),
-                                                    host.preference(MacMenuBar::IconPreference));
+    const auto layout =
+        MacMenuBar::effectiveLayout(storedLayout, enabled, host.preference(MacMenuBar::ControlsPreference),
+                                    host.preference(MacMenuBar::IconPreference));
     if (layout.isEmpty()) {
         removeStatusItem();
         return;
@@ -603,6 +639,25 @@ void MacMenuBarController::refresh() {
     const auto &player = music.player;
     const auto &track = player.current;
     const bool hasTrack = !track.isEmpty();
+    const auto trackKey = PlaybackQueue::identity(track) + '\n' + track["key"].toString();
+    if (trackKey != m_impl->trackKey) {
+        m_impl->trackKey = trackKey;
+        m_impl->favoriteDirty = true;
+    }
+
+    // 收藏数据可能遍历较大的 likedIDs；只在切歌或收藏数据失效时重新读取。
+    const bool favoriteWasInitialized = m_impl->favoriteInitialized;
+    const bool previousCanLike = m_impl->canLike;
+    const bool previousLiked = m_impl->liked;
+    if (m_impl->favoriteDirty || !m_impl->favoriteInitialized) {
+        m_impl->liked = music.songLiked(track).value_or(false);
+        m_impl->canLike = hasTrack && track["kind"] == "song" && (music.isSiren() || !music.uid.isEmpty()) &&
+                          !music.writeLoading && music.canMutate("/like") &&
+                          track.value("provider").toString(music.provider) == music.provider;
+        m_impl->favoriteDirty = false;
+        m_impl->favoriteInitialized = true;
+    }
+
     auto text = MacMenuBar::lyricText(player.lyrics.document(), player.lyrics.index);
     if (text.isEmpty()) {
         text = track["title"].toString().trimmed();
@@ -612,30 +667,46 @@ void MacMenuBarController::refresh() {
     }
     const auto position = player.state["position"].toDouble();
     const auto duration = player.state["duration"].toDouble();
-    const auto liked = music.songLiked(track);
-    const bool canLike = hasTrack && track["kind"] == "song" && (music.isSiren() || !music.uid.isEmpty()) &&
-                         !music.writeLoading && music.canMutate("/like") &&
-                         track.value("provider").toString(music.provider) == music.provider;
-    QString toolTip = track["title"].toString();
+    QString toolTipText = track["title"].toString();
     const auto artist = track["artist"].toString();
     if (!artist.isEmpty()) {
-        toolTip += (toolTip.isEmpty() ? QString() : QStringLiteral(" — ")) + artist;
+        toolTipText += (toolTipText.isEmpty() ? QString() : QStringLiteral(" — ")) + artist;
     }
     if (hasTrack) {
-        toolTip += "\n" + clock(position) + " / " + clock(duration);
+        toolTipText += "\n" + clock(position) + " / " + clock(duration);
     }
+
+    if (!m_impl->lyricInitialized || text != m_impl->lyricText || toolTipText != m_impl->toolTip) {
+        NSString *toolTip = toolTipText.toNSString();
+        [m_impl->view updateLyrics:text.toNSString() toolTip:toolTip];
+        m_impl->statusItem.button.toolTip = toolTip;
+        m_impl->lyricText = text;
+        m_impl->toolTip = toolTipText;
+        m_impl->lyricInitialized = true;
+    }
+
+    const bool playing = player.state["playing"].toBool();
+    const bool loading = player.loading;
     const bool canPrevious = hasTrack && !player.queue.isEmpty();
     const bool canNext = hasTrack && player.queue.nextIndex(player.mode) >= 0;
-    [m_impl->view updateLyrics:text.toNSString()
-                       playing:player.state["playing"].toBool()
-                       loading:player.loading
-                      hasTrack:hasTrack
-                  canPrevious:canPrevious
-                      canNext:canNext
-                       canLike:canLike
-                         liked:liked.value_or(false)
-                       toolTip:toolTip.toNSString()];
-    m_impl->statusItem.button.toolTip = toolTip.toNSString();
+    if (!m_impl->playbackInitialized || playing != m_impl->playing || loading != m_impl->loading ||
+        hasTrack != m_impl->hasTrack || canPrevious != m_impl->canPrevious || canNext != m_impl->canNext) {
+        [m_impl->view updatePlayback:playing
+                             loading:loading
+                            hasTrack:hasTrack
+                         canPrevious:canPrevious
+                             canNext:canNext];
+        m_impl->playing = playing;
+        m_impl->loading = loading;
+        m_impl->hasTrack = hasTrack;
+        m_impl->canPrevious = canPrevious;
+        m_impl->canNext = canNext;
+        m_impl->playbackInitialized = true;
+    }
+
+    if (!favoriteWasInitialized || m_impl->canLike != previousCanLike || m_impl->liked != previousLiked) {
+        [m_impl->view updateFavorite:m_impl->canLike liked:m_impl->liked];
+    }
 }
 
 void MacMenuBarController::activate() {
@@ -652,21 +723,22 @@ void MacMenuBarController::showContextMenu() {
 
 void MacMenuBarController::previous() {
     m_engine->player().next(-1);
-    refresh();
+    scheduleRefresh();
 }
 
 void MacMenuBarController::togglePlayback() {
     m_engine->player().toggle();
-    refresh();
+    scheduleRefresh();
 }
 
 void MacMenuBarController::next() {
     m_engine->player().next(1);
-    refresh();
+    scheduleRefresh();
 }
 
 void MacMenuBarController::toggleFavorite() {
     auto &music = m_engine->app->music;
+    m_impl->favoriteDirty = true;
     music.like(music.player.current);
-    refresh();
+    scheduleRefresh();
 }

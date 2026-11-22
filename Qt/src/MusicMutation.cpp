@@ -4,6 +4,8 @@
 #include <algorithm>
 
 namespace {
+constexpr int SongLikedCacheLimit = 8;
+
 QJsonArray without(const QJsonArray &values, const QString &field, const QJsonValue &key) {
     QJsonArray result;
     for (const auto &value : values) {
@@ -14,6 +16,46 @@ QJsonArray without(const QJsonArray &values, const QString &field, const QJsonVa
     }
     return result;
 }
+}
+
+void MusicLibrary::replaceLikedIDs(QJsonArray values) {
+    likedIDs = std::move(values);
+    m_likedIDIndex.clear();
+    for (const auto &value : *likedIDs) {
+        m_likedIDIndex.insert(value.toString());
+    }
+    invalidateSongLikedCache();
+}
+
+void MusicLibrary::clearLikedIDs() {
+    likedIDs.reset();
+    m_likedIDIndex.clear();
+    invalidateSongLikedCache();
+}
+
+void MusicLibrary::insertLikedID(QString id) {
+    if (likedIDs && !m_likedIDIndex.contains(id)) {
+        likedIDs->append(id);
+    }
+    m_likedIDIndex.insert(std::move(id));
+    invalidateSongLikedCache();
+}
+
+void MusicLibrary::removeLikedID(const QString &id) {
+    if (likedIDs) {
+        likedIDs = without(*likedIDs, {}, id);
+    }
+    m_likedIDIndex.remove(id);
+    invalidateSongLikedCache();
+}
+
+bool MusicLibrary::hasLikedID(const QString &id) const {
+    return m_likedIDIndex.contains(id);
+}
+
+void MusicLibrary::invalidateSongLikedCache() {
+    m_songLikedCache.clear();
+    m_songLikedCacheOrder.clear();
 }
 
 bool MusicLibrary::supportsOperation(const QString &operation) const {
@@ -105,7 +147,7 @@ void MusicLibrary::resetLikeState() {
     writeLoading = false;
     ++m_playbackLikeGeneration;
     m_playbackLikeContext.clear();
-    likedIDs.reset();
+    clearLikedIDs();
     lists[1] = {};
     totals[1] = 0;
     likedCursor = 0;
@@ -115,26 +157,42 @@ void MusicLibrary::resetLikeState() {
 
 /** 读取当前账号下的歌曲喜欢状态 */
 std::optional<bool> MusicLibrary::songLiked(const QJsonObject &value) const {
+    const auto cacheKey = value["kind"].toString() + '\n' + value.value("provider").toString(provider) +
+                          '\n' + value["id"].toString() + '\n' + value["key"].toString() + '\n' + uid + '\n' +
+                          QString::number(m_accountGeneration);
+    const auto hit = m_songLikedCache.constFind(cacheKey);
+    if (hit != m_songLikedCache.cend()) {
+        return *hit;
+    }
+    const auto remember = [this, &cacheKey](std::optional<bool> result) {
+        if (m_songLikedCacheOrder.size() >= SongLikedCacheLimit) {
+            m_songLikedCache.remove(m_songLikedCacheOrder.takeLast());
+        }
+        m_songLikedCacheOrder.removeOne(cacheKey);
+        m_songLikedCacheOrder.prepend(cacheKey);
+        m_songLikedCache.insert(cacheKey, result);
+        return result;
+    };
     if (value["kind"] != "song" || value.value("provider").toString(provider) != provider) {
-        return std::nullopt;
+        return remember(std::nullopt);
     }
     if (isSiren()) {
-        return likedIDs ? std::optional<bool>(MusicData::indexOf(*likedIDs, value["id"]) >= 0) : std::nullopt;
+        return remember(likedIDs ? std::optional<bool>(hasLikedID(value["id"].toString())) : std::nullopt);
     }
     if (uid.isEmpty() || !canMutate("/like")) {
-        return std::nullopt;
+        return remember(std::nullopt);
     }
     const auto state = subscriptionStates.value(value["key"].toString());
     if (state == "subscribed" || state == "not-subscribed") {
-        return state == "subscribed";
+        return remember(state == "subscribed");
     }
     if (likedIDs) {
-        return MusicData::indexOf(*likedIDs, value["id"]) >= 0;
+        return remember(hasLikedID(value["id"].toString()));
     }
     if (MusicData::indexOfId(lists[1], value["id"].toString()) >= 0) {
-        return true;
+        return remember(true);
     }
-    return std::nullopt;
+    return remember(std::nullopt);
 }
 
 /** 为正在播放的歌曲补齐喜欢状态 */
@@ -144,14 +202,17 @@ void MusicLibrary::refreshPlaybackLike() {
     }
     const auto track = player.current;
     if (writeLoading || uid.isEmpty() || track["kind"] != "song" ||
-        track.value("provider").toString(provider) != provider || !canMutate("/like")) {
+        track.value("provider").toString(provider) != provider) {
+        return;
+    }
+    if (songLiked(track).has_value() || !canMutate("/like")) {
         return;
     }
     const auto library = ProviderRegistry::instance().descriptor(provider)["library"].toObject();
     const auto likedModel = library["likedModel"].toString();
     const auto context = provider + ":" + uid + ":" + QString::number(m_accountGeneration) + ":" +
                          (likedModel == "likedIDs" ? QStringLiteral("likedIDs") : track["key"].toString());
-    if (songLiked(track).has_value() || m_playbackLikeContext == context) {
+    if (m_playbackLikeContext == context) {
         return;
     }
     m_playbackLikeContext = context;
@@ -163,7 +224,7 @@ void MusicLibrary::refreshPlaybackLike() {
             "likedIDs", {uid},
             [this](MusicReply result) {
                 if (result.ok() && result.value.isArray()) {
-                    likedIDs = result.value.toArray();
+                    replaceLikedIDs(result.value.toArray());
                     changed();
                 }
             },
@@ -276,7 +337,7 @@ void MusicLibrary::like(QJsonObject value) {
             return;
         }
         const auto ids = collections->likedIDs();
-        likedIDs = QJsonArray::fromStringList(ids);
+        replaceLikedIDs(QJsonArray::fromStringList(ids));
         if (enabled) {
             // 收藏列表从新到旧
             lists[1] = MusicData::unique(QJsonArray{value}, lists[1]);
@@ -304,12 +365,12 @@ void MusicLibrary::like(QJsonObject value) {
         if (!enabled) {
             lists[1] = without(lists[1], "id", value["id"]);
             if (likedIDs) {
-                *likedIDs = without(*likedIDs, {}, value["id"]);
+                removeLikedID(value["id"].toString());
             }
         } else {
             lists[1] = MusicData::unique(lists[1], {value});
-            if (likedIDs && MusicData::indexOf(*likedIDs, value["id"]) < 0) {
-                likedIDs->append(value["id"]);
+            if (likedIDs) {
+                insertLikedID(value["id"].toString());
             }
         }
         totals[1] = int(likedIDs ? likedIDs->size() : lists[1].size());
@@ -321,7 +382,7 @@ void MusicLibrary::like(QJsonObject value) {
             "likedIDs", {uid},
             [this, value](MusicReply result) {
                 if (result.ok()) {
-                    likedIDs = result.value.toArray();
+                    replaceLikedIDs(result.value.toArray());
                     like(value);
                 } else {
                     status = result.error;
@@ -331,8 +392,8 @@ void MusicLibrary::like(QJsonObject value) {
             valid(m_accountGeneration, &m_accountGeneration));
         return;
     }
-    const auto liked = (likedIDs && MusicData::indexOf(*likedIDs, value["id"]) >= 0) ||
-                       MusicData::indexOfId(lists[1], value["id"].toString()) >= 0;
+    const auto liked =
+        hasLikedID(value["id"].toString()) || MusicData::indexOfId(lists[1], value["id"].toString()) >= 0;
     const bool enabled = !liked;
     mutate("/like", {{"id", value["id"]}, {"like", enabled}},
            [update, enabled](QJsonObject body) {

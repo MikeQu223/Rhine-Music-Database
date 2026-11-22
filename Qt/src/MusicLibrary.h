@@ -207,6 +207,15 @@ class MusicLibrary : public QObject {
     int likedCursor = 0;
     int trackCursor = 0;
     std::optional<QJsonArray> likedIDs;
+    void replaceLikedIDs(QJsonArray values);
+    void clearLikedIDs();
+    void insertLikedID(QString id);
+    void removeLikedID(const QString &id);
+    bool hasLikedID(const QString &id) const;
+    // 播放与选中曲目会交替查询喜欢状态；保留少量曲目结果，避免缓存互相覆盖。
+    mutable QHash<QString, std::optional<bool>> m_songLikedCache;
+    mutable QStringList m_songLikedCacheOrder;
+    QSet<QString> m_likedIDIndex;
     QSet<QString> subscriptions;
     QHash<QString, QString> subscriptionStates;
     void loadSubscriptionStatus(const QJsonObject &value);
@@ -239,6 +248,7 @@ class MusicLibrary : public QObject {
   private:
     StorageCoordinator m_storage;
     void searchInternal(QString text, QString kind, bool more);
+    void invalidateSongLikedCache();
     struct Cooldown {
         qint64 deadline = 0;
         QString message;

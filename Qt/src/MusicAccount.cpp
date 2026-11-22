@@ -276,7 +276,7 @@ void MusicLibrary::switchProvider(QString source, QString variant, Completion do
     sirenOffsets.fill(0);
     hasMore.fill(true);
     rowMemory.fill(0);
-    likedIDs.reset();
+    clearLikedIDs();
     likedCursor = 0;
     sirenCatalogLoading = false;
     m_pendingSirenSearch = false;
@@ -706,7 +706,7 @@ void MusicLibrary::logout() {
     host->setPreference("account-id-" + accountKey(), "");
     uid.clear();
     nickname = QStringLiteral("未登录");
-    likedIDs.reset();
+    clearLikedIDs();
     likedCursor = 0;
     playlistCursor = 0;
     albumCursor = 0;
