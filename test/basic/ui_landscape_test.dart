@@ -395,4 +395,62 @@ void main() {
       expect(fraction, lessThan(0.65));
     });
   });
+
+  group('landscape detail like and comments', () {
+    /// 横屏歌曲详情页的主按钮行（Qt `NativeHudDetail.cpp:118-133`）必须有
+    /// 「♥ 已喜欢 / ♡ 喜欢」，并且要有「查看评论」入口
+    /// （Qt `card.comments`，动作 `music:comments`）。两个动作串宿主都支持。
+    test('详情页画出喜欢按钮与评论入口', () {
+      final SirenSong song = _song('s1', '第一首');
+      final BasicViewState state = _library().copyWith(
+        phase: BasicPhase.detail,
+        song: song,
+        playingTrack: song,
+      );
+      final GlyphFontSet fonts = GlyphFontSet.empty;
+      final BasicGlyphPorts ports = BasicGlyphPorts(
+        glyphs: fonts,
+        text: GlyphText.resourceOnly(fonts),
+        songLiked: (String id) => true,
+      );
+      final BasicHudFrame frame = BasicHudFrame.build(
+        state: state,
+        ports: ports,
+        width: 1920,
+        height: 1080,
+        portrait: false,
+        commentsAvailable: true,
+      );
+      final List<String> actions = <String>[
+        for (final HudHit hit in frame.hits) hit.action,
+      ];
+      expect(actions, contains('music:like'));
+      expect(actions, contains('music:comments'));
+      final List<String> labels = <String>[
+        for (final HudHit hit in frame.hits) hit.label,
+      ];
+      expect(labels, contains('♥ 已喜欢'));
+      expect(labels, contains('查看评论'));
+    });
+
+    test('平台不支持评论时不画评论入口', () {
+      final SirenSong song = _song('s1', '第一首');
+      final BasicViewState state = _library().copyWith(
+        phase: BasicPhase.detail,
+        song: song,
+        playingTrack: song,
+      );
+      final BasicHudFrame frame = BasicHudFrame.build(
+        state: state,
+        ports: _ports(),
+        width: 1920,
+        height: 1080,
+        portrait: false,
+      );
+      final List<String> actions = <String>[
+        for (final HudHit hit in frame.hits) hit.action,
+      ];
+      expect(actions, isNot(contains('music:comments')));
+    });
+  });
 }

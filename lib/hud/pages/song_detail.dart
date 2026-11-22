@@ -159,6 +159,7 @@ class SongDetailState {
     this.providerName = '',
     this.isSiren = false,
     this.canMutateLike = false,
+    this.commentsAvailable = false,
     this.likedInIds = false,
     this.likedInList = false,
     this.likeSubscriptionState,
@@ -212,6 +213,11 @@ class SongDetailState {
 
   /// Qt music.canMutate("/like")。
   final bool canMutateLike;
+
+  /// Qt `music.commentsAvailable()`（NativeHudDetail.cpp:121 `card.comments`）：
+  /// 只有「非 local 且该平台配了评论 provider」才为真。为真时页面给一个
+  /// 「查看评论」入口（动作 `music:comments`，宿主 basic_app 已支持）。
+  final bool commentsAvailable;
 
   /// likedIDs 是否包含当前 id（NativeHudDetail.cpp:120）。
   final bool likedInIds;
@@ -494,6 +500,7 @@ class _CardModel {
     this.quality = '',
     this.badgeKey = '',
     this.badgeWidth = 0,
+    this.comments = false,
   });
 
   final double x;
@@ -513,6 +520,7 @@ class _CardModel {
   final int trackCount;
   final List<SongDetailAction> primaryActions;
   final List<SongDetailAction> secondaryActions;
+  final bool comments;
 }
 
 /// Qt SongDetailCard::actions（SongDetailCard.cpp:17-46）。
@@ -704,6 +712,13 @@ SongDetailDrawing renderSongDetail(
   p.text('MUSIC DATABASE', 60, 893, 10, 'regular');
   p.text('DRAG TO INSPECT', 60, 917, 10, 'regular');
   p.button('查看封面 ↗', 60, 944, 260, 35, 'viewer', 14);
+  if (state.commentsAvailable) {
+    // Qt 横屏详情/歌词页的评论入口：`card.comments`（NativeHudDetail.cpp:121）
+    // 打开的是评论面板（`commentsMode`），动作串沿用 `music:comments`
+    // （宿主 basic_app.dart:4054 打开 modal == 'comments'）。放在左列按钮带里，
+    // 详情页与歌词页都能点到，不会压到右列卡片。
+    p.button('查看评论', 330, 944, 260, 35, 'music:comments', 14);
+  }
 
   if (lyricsMode) {
     // NativeHudDetail.cpp:75-79：右侧歌词面板属于歌词原子，本页只负责它之前的公共前缀。
@@ -806,6 +821,7 @@ SongDetailDrawing renderSongDetail(
     trackCount: state.tracks.length,
     primaryActions: primaryActions,
     secondaryActions: secondaryActions,
+    comments: state.commentsAvailable,
   );
   _paintCard(p, model);
 

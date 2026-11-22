@@ -383,6 +383,15 @@ class BasicHudFrame {
           providerId: providerId,
           providerName: providerName,
           isSiren: sirenPlatform,
+          commentsAvailable: commentsAvailable,
+          // 喜欢态与本机集合同源（Qt `NativeHud.cpp:472` 的 `selectedLiked`）：
+          // 端口没接上就当"未知/未喜欢"，不伪造已喜欢。
+          songLiked: state.song == null
+              ? false
+              : ports.songLiked?.call(state.song!.id) ?? false,
+          // 喜欢按钮的可点条件：有当前曲目且宿主的喜欢端口存在。平台不支持的
+          // 情况下宿主 `music:like` 会给可见提示（不静默），不会变成死按钮。
+          canMutateLike: state.song != null && ports.songLiked != null,
         ),
         width,
         glyphs: ports,
@@ -1675,6 +1684,12 @@ class BasicHudFrame {
     String providerId = sirenProvider,
     String providerName = basicLibraryName,
     bool isSiren = true,
+    /// 「查看评论」是否可用（Qt `music.commentsAvailable()`）。
+    bool commentsAvailable = false,
+    /// 当前曲目是否已在本机喜欢集合里（Qt `likedIDs` / `lists[1]`）。
+    bool songLiked = false,
+    /// 当前平台是否允许改喜欢态（Qt `music.canMutate("/like")`）。
+    bool canMutateLike = false,
   }) {
     final SirenSong? song = state.song;
     // 平台 id 可能没被宿主传下来（默认空串）：身份串必须是 `<provider>:<id>`，
@@ -1699,6 +1714,12 @@ class BasicHudFrame {
       dark: state.dark,
       lyricsMode: state.phase == BasicPhase.lyrics,
       isSiren: isSiren,
+      // 横屏详情页的主按钮行（Qt `primaryActions`，NativeHudDetail.cpp:118-133）：
+      // 少了这两项，「加入我喜欢的音乐」在横屏根本没有按钮（用户 2026-11-22 报的缺陷）。
+      canMutateLike: canMutateLike,
+      likedInIds: songLiked,
+      likedInList: songLiked,
+      commentsAvailable: commentsAvailable,
       providerName: providerName,
       uid: '',
       detailLoading: state.loading,
