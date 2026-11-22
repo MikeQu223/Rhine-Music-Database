@@ -674,6 +674,16 @@ const QVector<SettingDescriptor> &descriptors() {
              .titleZh = "桌面歌词",
              .actionLabel = "样式与同步",
              .visible = desktopLyricsVisible});
+#ifdef Q_OS_MACOS
+        add({.id = "menu-bar-lyrics",
+             .section = SectionId::Playback,
+             .kind = SettingKind::Action,
+             .binding = {.kind = BindingKind::Action, .action = "menu-bar-lyrics:open"},
+             .order = 105,
+             .titleEn = "MENU BAR LYRICS",
+             .titleZh = "菜单栏歌词",
+             .actionLabel = "显示与布局"});
+#endif
         add({.id = "global-shortcuts-settings",
              .section = SectionId::Playback,
              .kind = SettingKind::Action,

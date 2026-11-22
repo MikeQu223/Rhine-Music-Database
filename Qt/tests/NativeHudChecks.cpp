@@ -131,7 +131,11 @@ bool checkSettingsSchema() {
     const QVector<QPair<SettingsSchema::SectionId, QStringList>> expectedRows{
         {SettingsSchema::SectionId::Audio, audio},
         {SettingsSchema::SectionId::Playback,
-         {"desktop-lyrics", "global-shortcuts-settings", "single-play-mode", "detail-autoplay",
+         {"desktop-lyrics",
+#ifdef Q_OS_MACOS
+          "menu-bar-lyrics",
+#endif
+          "global-shortcuts-settings", "single-play-mode", "detail-autoplay",
           "skip-detail-on-switch"}},
         {SettingsSchema::SectionId::Preferences,
          {"theme", "archive-mask", "play-button-style", "window", "close-behavior", "startup-animation", "replay",

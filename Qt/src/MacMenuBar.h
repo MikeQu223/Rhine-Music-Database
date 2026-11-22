@@ -13,6 +13,8 @@ using Layout = QVector<Component>;
 
 Layout defaultLayout();
 Layout parseLayout(const QString &preference);
+Layout effectiveLayout(Layout layout, bool enabled, const QString &controlsPreference,
+                       const QString &iconPreference);
 QString serializeLayout(const Layout &layout);
 QString lyricText(const QJsonObject &document, int index);
 }
@@ -36,12 +38,12 @@ class MacMenuBarController : public QObject {
     void toggleFavorite();
 
   private:
-    void rebuild();
+    void applyPreferences();
+    void removeStatusItem();
 
     Engine *m_engine;
     Action m_activate;
     Action m_contextMenu;
-    MacMenuBar::Layout m_layout;
     struct Impl;
     Impl *m_impl;
 };

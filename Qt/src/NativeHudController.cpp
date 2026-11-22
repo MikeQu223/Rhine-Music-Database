@@ -671,6 +671,12 @@ void NativeHud::action(QString value) {
         applyDesktopLyricsAction(value);
         return;
     }
+#ifdef Q_OS_MACOS
+    if (value.startsWith("menu-bar-lyrics:")) {
+        applyMenuBarLyricsAction(value);
+        return;
+    }
+#endif
     if (value.startsWith("shortcuts:")) {
         applyShortcutAction(value);
         return;
@@ -1376,6 +1382,10 @@ void NativeHud::key(QString value, bool command) {
             action("shortcuts:back");
         } else if (modal == "desktop-lyrics") {
             action("desktop-lyrics:back");
+#ifdef Q_OS_MACOS
+        } else if (modal == "menu-bar-lyrics") {
+            action("menu-bar-lyrics:back");
+#endif
         } else if (modal.isEmpty()) {
             action("back");
         } else {
