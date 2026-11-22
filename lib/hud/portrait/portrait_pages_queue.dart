@@ -22,10 +22,30 @@ import 'portrait_canvas.dart';
 const double _left = 20;
 
 /// 行高（`Qt/src/ResponsiveHudCanvas.cpp` `row()` 的 68）。
+///
+/// 不随屏高缩放：`PortraitCanvas.row()` 是横竖共用的排版单元，行内偏移 12/36/67
+/// 与 44 的封面都写死在这个高度里，单独压缩会压字。
 const double _rowHeight = 68;
 
+/// 设计基准高度：16:9 舞台（1080×1920 舞台像素）换算成 393 宽的网格就是 393×698.67。
+///
+/// 队列页的纵向间距按 `c.height / _designHeight` 等比缩放：设计基准上
+/// 158 / 102 / 19 / 24 / 44 / 17 / 45 这一组数字逐像素等于参考图（也等于旧实现
+/// 的硬编码），矮屏按比例收，达到或超过基准就封顶在 1.0、不再拉大（富余高度留给
+/// 队列行）。选 698.67 而不是 854 是因为前者正是画布在 1080×1920 上给出的
+/// `gridHeight`（`BasicHudFrame.build(width: 1080, height: 1920, portrait: true)`），
+/// 长屏手机（网格高 ~900）与它共用同一套间距，短屏才按比例收。
+const double _designHeight = 698.6666666666666;
+
 /// 内容起点（`ResponsiveHudLayout::arrange` 的 `c.beginContent(158)`）。
-const double _contentTop = 158;
+const double _designContentTop = 158;
+
+/// 内容起点的下限：`PortraitCanvas.header()` 的标题底在 ≈117，再往上就压页头。
+const double _minContentTop = 118;
+
+/// 当前歌曲卡的高（参考图 102）与其下限（两行字 + 边距再小就挤）。
+const double _designCardHeight = 102;
+const double _minCardHeight = 84;
 
 /// 播放模式词表与中文标签（Qt `queue()` 的 modes / labels，顺序固定）。
 const List<String> portraitQueueModes = <String>['off', 'all', 'one', 'shuffle'];
@@ -72,38 +92,63 @@ double paintPortraitQueuePage(
   }) {
   final double w = c.gridWidth;
   final double content = w - 2 * _left;
-  final double resolvedScroll = scroll ??
-      (currentIndex > 0 ? 251 + currentIndex * _rowHeight : 0);
+
+  // 纵向比例：基准高（393×698.67，即 16:9 舞台）上恰好复现参考图的
+  // 158/102/19/24/44/17/45；矮屏按比例收，达到或超过基准直接取 1.0——不做
+  // 「高屏放大」，也避免 `698.6667/698.6667` 这类浮点差把卡片压成 101.99。
+  // 下限 .72 是「44 的按钮 + 36 的 chip 还得点得中」的经验底。
+  final double d =
+      c.height >= _designHeight ? 1.0 : (c.height / _designHeight).clamp(.72, 1.0);
+  final double contentTop = math.max(_minContentTop, _designContentTop * d);
+  final double cardHeight = math.max(_minCardHeight, _designCardHeight * d);
+  // 卡内三行文案按卡高同比缩，卡片收到下限时文字不会越过卡片下沿。
+  final double cardScale = cardHeight / _designCardHeight;
+  final double cardGap = 19 * d;
+  final double modeLabelRow = 24 * d;
+  final double modeButtonGap = 17 * d;
+  // chip 两行 = 36 + 44 行距 + 8 尾距；缩放不放低于这个实际需要。
+  final double chipBlock = modesExpanded ? math.max(88, 96 * d) : 0;
+  final double sectionRow = math.max(34, 45 * d);
+
+  // 队列行起点：卡片 → 模式标签 → 模式按钮 → chip → 分节标题，全部自上而下累加。
+  // 旧实现把 `158 / 121 / 61 / 45` 全部写死，矮屏（可用高不足 409-158+行）时
+  // 分节和行会顶到模式按钮上。
+  final double rowsTop =
+      contentTop + cardHeight + cardGap + modeLabelRow + 44 + modeButtonGap + chipBlock + sectionRow;
+
+  final double resolvedScroll =
+      scroll ?? (currentIndex > 0 ? (rowsTop - contentTop) + currentIndex * _rowHeight : 0);
 
   // 队列页把整页（含当前歌曲卡与模式按钮）一起上移：Qt 是 `y = 158 - m_scroll`。
-  double y = _contentTop - resolvedScroll;
+  double y = contentTop - resolvedScroll;
 
   // ── 当前歌曲卡 ────────────────────────────────────────────────────────
-  final Rect card = Rect.fromLTWH(_left, y, content, 102);
+  final Rect card = Rect.fromLTWH(_left, y, content, cardHeight);
   c.fill(card, c.surface);
   c.border(card, c.line);
-  c.text('ON AIR / 当前歌曲', _left + 17, y + 16,
+  c.text('ON AIR / 当前歌曲', _left + 17, y + 16 * cardScale,
       size: 9, width: content - 34, color: c.muted);
   c.text(
     title.isEmpty ? '等待音轨' : title,
     _left + 17,
-    y + 38,
+    y + 38 * cardScale,
     size: 18,
     width: content - 34,
     weight: 'demibold',
   );
-  c.text(artist, _left + 17, y + 72, size: 11, width: content - 34, color: c.muted);
-  y += 121;
+  c.text(artist, _left + 17, y + 72 * cardScale,
+      size: 11, width: content - 34, color: c.muted);
+  y = contentTop - resolvedScroll + cardHeight + cardGap;
 
   // ── 播放模式 ──────────────────────────────────────────────────────────
   c.text('PLAYBACK MODE / 播放模式', _left, y, size: 9, width: content, color: c.muted);
-  y += 24;
+  y += modeLabelRow;
   c.button(
     Rect.fromLTWH(_left, y, content, 44),
     '${portraitQueueModeLabel(mode)}  ▾',
     'mobile:queue-modes',
   );
-  y += 61;
+  y += 44 + modeButtonGap;
   if (modesExpanded) {
     // 四 chip 两列：Qt {20 + (i%2)*181, y + (i~/2)*44, 172, 36}，其中 172 + 9 + 172 = 353。
     final double chipWidth = (content - 9) / 2;
@@ -121,7 +166,7 @@ double paintPortraitQueuePage(
         selected: mode == value,
       );
     }
-    y += 96;
+    y += chipBlock;
   }
 
   // ── 队列分节 + 清空 ───────────────────────────────────────────────────
@@ -129,11 +174,11 @@ double paintPortraitQueuePage(
   // 「清空队列」贴右缘：Qt x=310（= 393-83）、宽 63；命中 {291, y-5, 82, 44}。
   c.text('清空队列', w - 83, y + 4, size: 12, width: 63, color: c.muted);
   c.hit(Rect.fromLTWH(w - 102, y - 5, 82, 44), 'player:clear', '清空队列');
-  y += 45;
+  y = rowsTop - resolvedScroll;
 
   // ── 队列行（只画可视区间，裁剪由 beginContent 承担）──────────────────
   final double restoreBottom = c.contentBottom;
-  c.beginContent(_contentTop);
+  c.beginContent(contentTop);
   final (int first, int last) = c.visibleRows(y, _rowHeight, tracks.length);
   for (int index = first; index < last; index++) {
     if (index < 0 || index >= tracks.length) {
@@ -195,9 +240,11 @@ double paintPortraitQueuePage(
   }
 
   // Qt: max(y + m_scroll + 20, 409 + max(0, size-1)*68 + contentBottom - 158)。
+  // 409/158 在这里换成随屏高算出来的 rowsTop/contentTop，「最后一首置顶」的封底
+  // 因此仍然等于「最后一行滚到内容区顶部时的总高」，矮屏不会少算。
   final double bottom = math.max(
     y + resolvedScroll + 20,
-    409 + math.max(0, tracks.length - 1) * _rowHeight + c.contentBottom - _contentTop,
+    rowsTop + math.max(0, tracks.length - 1) * _rowHeight + c.contentBottom - contentTop,
   );
   return bottom;
 }

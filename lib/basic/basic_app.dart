@@ -43,6 +43,8 @@ import '../hud/portrait/portrait_playlist_picker.dart' show portraitPlaylistPick
 import '../hud/portrait/portrait_saved_overview.dart'
     show PortraitSavedOverviewRow;
 import '../hud/portrait/portrait_pages_queue.dart' show portraitQueueModes;
+import '../hud/portrait/portrait_pages_song.dart'
+    show portraitSongHintComments, portraitSongHintLyrics;
 import '../hud/portrait/portrait_pages_search_kinds.dart'
     show
         portraitSearchExpandActionPrefix,
@@ -3870,6 +3872,41 @@ class _BasicShellState extends State<_BasicShell>
       }
       _openQueue();
       return null;
+    }
+    // 竖屏底栏播放条的**文字区**：Qt 发 `player:detail`（`Qt/src/ResponsiveHudLayout.cpp:340`，
+    // 标签「打开当前歌曲播放页面」，Qt 侧一直没有 handler）。这里补上：进**正在播放**
+    // 那首的详情页，但绝不打断播放——`openSong(play: false)` 只切相位 + 选中 + 发布，
+    // 不碰播放器。旧实现发的是 `player:open`，于是点播放条打开的是播放队列（用户
+    // 2026-11-19 的投诉：点底栏播放条应该进歌曲详情页）。队列改由播放条上独立的
+    // 队列键（`player:open`）负责。
+    if (action == 'player:detail') {
+      final SirenSong? track = state.playingTrack ?? state.song;
+      if (track == null) {
+        return '还没有可打开的曲目';
+      }
+      if (_modal.isNotEmpty) {
+        _setModal('');
+      }
+      unawaited(controller.openSong(track, play: false));
+      return null;
+    }
+    // 竖屏详情页底栏「歌词 / 评论」在不可用时发这两枚提示动作（页面不发 toast，
+    // 只有宿主知道「为什么不可用」）。旧实现这两格塞空串 `''`，
+    // `PortraitCanvas.hit` 对空动作直接 return ⇒ 点了完全没反应，就是实机上
+    // 「歌词/评论点了没反应」的死键（用户 2026-11-19）。
+    if (action == portraitSongHintLyrics || action == portraitSongHintComments) {
+      final bool wantLyrics = action == portraitSongHintLyrics;
+      final SirenSong? detail = state.song;
+      if (detail == null) {
+        return wantLyrics ? '先选一首曲目，再看歌词' : '先选一首曲目，再看评论';
+      }
+      final String playingId = state.playingTrack?.id ?? '';
+      if (playingId.isEmpty || playingId != detail.id) {
+        // 歌词/评论都挂在**正在播放**的曲目上（Qt compact `song()` 同样只在
+        // `selectedSongIsCurrent` 时给歌词入口），不是本页曲目的属性。
+        return wantLyrics ? '先播放这首曲目，再看歌词' : '先播放这首曲目，再看评论';
+      }
+      return wantLyrics ? '这首歌暂时没有歌词' : '当前平台不支持评论';
     }
     // 横屏播放条上的 MV 键（Qt `PlayerBar.cpp:277-282` 发 `player:mv`，Qt 侧由
     // `NativeHud::playerAction` 转成 `mvRequested`）。本仓库没有独立的 MV 窗口，

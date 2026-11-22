@@ -437,25 +437,38 @@ void _playerAndNav(
   }
   c.border(cover, c.line);
 
-  final double textWidth = math.max(120, w - 175);
+  // 右侧三键区：队列 / 播放 / 下一首，各占 44，从右缘 w-140 起排。
+  // 文字区右界因此让到 w-148（原来只有播放+下一首两键，文字宽 w-175）。
+  final double keysLeft = w - 140;
+  final double textWidth = math.max(96, keysLeft - 8 - 65);
   c.text(player.hasTrack ? player.title : '未在播放', 65, top + 13,
       size: 13, width: textWidth, weight: 'demibold');
   c.text(player.hasTrack ? player.artist : '选择一首曲目开始', 65, top + 35,
       size: 10, width: textWidth, color: c.muted);
-  c.hit(Rect.fromLTWH(60, top + 8, textWidth + 5, 48), 'player:open', '打开播放器');
+  // 封面+标题区 = 「打开当前歌曲详情页」：Qt 发的就是 `player:detail`
+  // （`Qt/src/ResponsiveHudLayout.cpp:340`，标签「打开当前歌曲播放页面」）。
+  // 旧实现发 `player:open`，宿主把它映射成打开播放队列，所以点播放条弹出的是
+  // 队列而不是详情页（用户 2026-11-19）。队列改由下面独立的队列键负责。
+  c.hit(Rect.fromLTWH(60, top + 8, math.max(0, keysLeft - 60), 48), 'player:detail',
+      '打开当前歌曲详情页');
+
+  // 队列键（图标 `queue`）：从播放条直接进播放队列（宿主 `player:open` → _openQueue）。
+  final double queueCx = w - 118;
+  c.icon('queue', queueCx - 9, top + 25, size: 18, color: c.ink);
+  c.hit(Rect.fromLTWH(w - 140, top + 8, 44, 48), 'player:open', '播放队列');
 
   // 播放/暂停圆钮（Qt PlayerBar::appendPlayButton 的圆形按钮）。
-  final double cx = w - 78;
+  final double cx = w - 73;
   final double cy = top + 34;
   // sweep 必须严格小于 2π：Flutter 的 Path.arcTo 在整圆（2π）时会退化成空路径，
   // 环就画不出来（v101 实机里只剩播放三角形）。
   c.commands.add(<Object?>['arc', cx, cy, 20, 0, math.pi * 2 - .02, 1.2, c.ink]);
   c.icon(player.playing ? 'pause' : 'play', cx - 7.5, cy - 7.5, size: 15, color: c.ink);
   // 播放钮命中刻意比「下一首」左一点：两者相邻，圆心必须只落在播放钮里。
-  c.hit(Rect.fromLTWH(w - 102, top + 10, 46, 46), 'player:toggle', player.playing ? '暂停' : '播放');
+  c.hit(Rect.fromLTWH(w - 96, top + 8, 46, 48), 'player:toggle', player.playing ? '暂停' : '播放');
 
-  c.icon('next', w - 52, cy - 10, size: 20, color: c.ink);
-  c.hit(Rect.fromLTWH(w - 58, top + 12, 44, 44), 'player:next', '下一首');
+  c.icon('next', w - 40, cy - 10, size: 20, color: c.ink);
+  c.hit(Rect.fromLTWH(w - 52, top + 10, 44, 46), 'player:next', '下一首');
 
   final double navTop = top + 67;
   final double navHeight = math.max(0, h - portraitGestureInset - navTop);
