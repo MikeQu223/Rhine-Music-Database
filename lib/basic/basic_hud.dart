@@ -2539,6 +2539,10 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       providerAccounts: widget.providerAccounts,
       providerUserName: widget.providerUserName,
       localMusicEnabled: widget.localMusicEnabled,
+      // 平台显示名与「是否内置塞壬」必须透到帧里：漏了这两项，横屏页头右上角
+      // 在网易云/QQ 渠道下会继续画默认值「＋ 塞壬曲库」（真机缺陷）。
+      providerName: widget.providerName,
+      isSirenProvider: widget.isSirenProvider,
       comments: widget.comments,
       commentsScroll: widget.commentsScroll,
       loginState: widget.loginState,
