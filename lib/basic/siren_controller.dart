@@ -276,6 +276,16 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
   /// 走插件数据面的入口（Qt 里 `MusicLibrary::search` 直接调 `api.call("search")`）。
   ProviderGateway? _remoteSearch;
 
+  /// 当前详情曲目的百科正文（Qt `NativeHudDetail.cpp:19-28` 的 `body()`：
+  /// song + overview 页优先显示 `item["wiki"]`，空则给「暂无歌曲百科」）。
+  /// 插件平台在打开详情时拉一次 `/native/<platform>/wiki`；塞壬平台没有百科。
+  String _songWiki = '';
+  bool _songWikiLoading = false;
+  int _songWikiGeneration = 0;
+
+  String get songWiki => _songWiki;
+  bool get songWikiLoading => _songWikiLoading;
+
   /// 当前远端检索结果；null = 还没有结果（或本地模式）。
   RemoteSearchResult? _remoteSearchResult;
 
@@ -2055,12 +2065,40 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     await openSong(_songFromRemoteRow(row), play: play);
   }
 
+  /// 拉当前曲目的歌曲百科（Qt `body()` 的 overview 分支）。
+  ///
+  /// 只有插件平台有这条 operation；塞壬/本地不请求，直接留空由页面显示
+  /// 「暂无歌曲百科」。过期回执按代数丢弃（连点两首时不能串台）。
+  Future<void> _loadSongWiki(SirenSong song) async {
+    final ProviderGateway? gateway = _remoteSearch;
+    if (gateway == null || _disposed) {
+      return;
+    }
+    final int generation = ++_songWikiGeneration;
+    try {
+      final Map<String, Object?> page = await gateway.wiki(trackId: song.id);
+      if (_disposed || generation != _songWikiGeneration) {
+        return;
+      }
+      _songWiki = _text(page['text']);
+    } on Object {
+      if (_disposed || generation != _songWikiGeneration) {
+        return;
+      }
+      _songWiki = '';
+    }
+    _songWikiLoading = false;
+    _publish();
+  }
+
   Future<void> openSong(SirenSong song, {bool play = true}) async {
     if (_disposed) {
       return;
     }
     ++_songGeneration;
     _song = song;
+    _songWiki = '';
+    _songWikiLoading = _remoteSearch != null;
     _selection = BasicSelection(kind: 'song', id: song.id);
     _syncDirectoryIndex(song);
     _phase = BasicPhase.detail;
@@ -2073,6 +2111,7 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
       return;
     }
     _status = '正在准备：${song.title}';
+    unawaited(_loadSongWiki(song));
     if (_singlePlayAppend) {
       // 仅添加当前单曲：不替换队列（PlaybackQueue.selectTrack 会先找同曲目，
       // 找不到才追加到队尾），已有队列原样保留。

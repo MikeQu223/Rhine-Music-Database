@@ -702,6 +702,8 @@ class BasicViewState {
     this.selection,
     this.playingTrack,
     this.listPosition,
+    this.songWiki = '',
+    this.songWikiLoading = false,
     this.selectedLane = basicDefaultLane,
     this.localCollectionsAvailable = false,
     this.localUnresolvedLikedIds = 0,
@@ -829,6 +831,12 @@ class BasicViewState {
   /// null = 没有独立的窗口位置，窗口跟随选中行（旧行为）；controller 每次都写绝对值。
   final double? listPosition;
 
+  /// 当前详情曲目的百科正文（插件平台 `/wiki` 回执；塞壬平台恒空）。
+  final String songWiki;
+
+  /// 百科正在读取（Qt `detailLoading`：正文空时页面显示「正在读取歌曲百科…」）。
+  final bool songWikiLoading;
+
   /// 当前资料库列（0..4，列名见 [basicSirenColumns]；Qt `MusicLibrary::selectedLane`）。
   ///
   /// 根页列表只承载这一列（Qt/src/MusicLibrary.cpp:195-207 sourceItems(lane)），
@@ -933,6 +941,8 @@ class BasicViewState {
     BasicSelection? selection,
     SirenSong? playingTrack,
     double? listPosition,
+    String? songWiki,
+    bool? songWikiLoading,
     int? selectedLane,
     bool? localCollectionsAvailable,
     int? localUnresolvedLikedIds,
@@ -984,6 +994,8 @@ class BasicViewState {
       selection: dropSelection ? null : (selection ?? this.selection),
       playingTrack: dropPlayingTrack ? null : (playingTrack ?? this.playingTrack),
       listPosition: listPosition ?? this.listPosition,
+      songWiki: songWiki ?? this.songWiki,
+      songWikiLoading: songWikiLoading ?? this.songWikiLoading,
       selectedLane: selectedLane ?? this.selectedLane,
       localCollectionsAvailable: localCollectionsAvailable ?? this.localCollectionsAvailable,
       localUnresolvedLikedIds: localUnresolvedLikedIds ?? this.localUnresolvedLikedIds,

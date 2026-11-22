@@ -28,7 +28,11 @@ import '../hud/portrait/portrait_saved_overview.dart';
 import '../hud/portrait/portrait_discover_page.dart';
 import '../hud/portrait/portrait_pages_queue.dart';
 import '../hud/portrait/portrait_pages_search_kinds.dart';
+import '../hud/portrait/portrait_pages_album_info.dart';
+import '../hud/portrait/portrait_pages_artist.dart';
 import '../hud/portrait/portrait_pages_song.dart';
+import '../hud/portrait/portrait_pages_wiki.dart';
+import 'basic_aux_pages.dart';
 import '../hud/portrait/portrait_song_options.dart';
 import '../hud/player/player_bar.dart' as player;
 import '../plugin/plugin_models.dart';
@@ -177,6 +181,8 @@ class BasicHudFrame {
     /// 横屏检索面板的行级滚动偏移（舞台像素，0 = 首行贴表头）。宿主拖动列表时
     /// 只改这一个临时量，不碰库表的 `listPosition`（那是资料库列的真值）。
     double searchScroll = 0,
+  /// 歌手页 / 歌曲百科 / 专辑信息的数据包（见 [BasicAuxPages]）。
+  BasicAuxPages? aux,
   /// 播放条音量滑轨的位置（0..1）。宿主快照里没有音量字段（`BasicViewState` 只有
   /// 播放位置），所以这份值由 surface 自己持有：横屏播放条右下角的输出模块在
   /// `applicationVolume` 时用它画滑轨，拖动/点击后由 `_dispatch` 回写。
@@ -294,6 +300,7 @@ class BasicHudFrame {
         width: width,
         height: height,
         dark: dark,
+        aux: aux,
         listPosition: listPosition,
         animationTime: animationTime,
         animateText: animateText,
@@ -571,6 +578,7 @@ class BasicHudFrame {
     bool animateText = false,
     String modal = '',
     double stageScale = 0,
+    BasicAuxPages? aux,
     double? queueScroll,
     bool queueModesExpanded = false,
     PluginSnapshot? plugins,
@@ -665,7 +673,55 @@ class BasicHudFrame {
       positionMs: bar.positionMs,
       durationMs: bar.durationMs,
     );
-    if (modal == 'queue') {
+    // 辅助页（歌手页 / 歌曲百科 / 专辑信息）：数据由宿主从 controller 装箱传进来
+    // （见 [BasicAuxPages]），三页自己 finish，不经 shell。
+    final BasicWikiPageModel? wikiPage = modal == 'wiki' ? aux?.wiki : null;
+    final BasicAlbumInfoPageModel? albumInfoPage =
+        modal == 'album-info' ? aux?.albumInfo : null;
+    final BasicArtistPageModel? artistPage =
+        modal.isEmpty && state.phase == BasicPhase.detail && directory?.kind == 'artist'
+            ? aux?.artist
+            : null;
+    if (wikiPage != null) {
+      paintPortraitWikiPage(
+        canvas,
+        title: wikiPage.title,
+        artist: wikiPage.artist,
+        cover: wikiPage.cover,
+        lines: wikiPage.lines,
+        status: wikiPage.status,
+        loading: wikiPage.loading,
+        backAction: 'close-modal',
+      );
+    } else if (albumInfoPage != null) {
+      paintPortraitAlbumInfoPage(
+        canvas,
+        title: albumInfoPage.title,
+        artist: albumInfoPage.artist,
+        cover: albumInfoPage.cover,
+        date: albumInfoPage.date,
+        description: albumInfoPage.description,
+        trackCount: albumInfoPage.trackCount,
+        songs: albumInfoPage.songs,
+        status: albumInfoPage.status,
+        loading: albumInfoPage.loading,
+        selectedIndex: albumInfoPage.selectedIndex,
+        backAction: 'close-modal',
+      );
+    } else if (artistPage != null) {
+      paintPortraitArtistPage(
+        canvas,
+        artist: artistPage.name,
+        cover: artistPage.cover,
+        tab: artistPage.tab,
+        tracks: artistPage.tracks,
+        albums: artistPage.albums,
+        status: artistPage.status,
+        loading: artistPage.loading,
+        selectedIndex: artistPage.selectedIndex,
+        backAction: 'back',
+      );
+    } else if (modal == 'queue') {
       // Qt compact `queue()`（ResponsiveHudPages.cpp:468-533）：通用页头（只有返回
       // 箭头 + close-modal，没有设置齿轮）+ 内容自 158 起；播放条与底栏由 shell 画
       // （Qt 队列页的底栏 active=""，所以 nav 传 null）。
@@ -1113,6 +1169,10 @@ class BasicHudFrame {
       ('＋ 加入队列', 'music:enqueue'),
       ('▷ 下一首播放', 'music:play-next'),
       if (commentsAvailable) ('查看评论', 'music:comments'),
+      // Qt 把百科/专辑信息画在详情正文里（`NativeHudDetail.cpp:19-40` 的 `body()`）；
+      // 本仓库正文只画一段，所以给两枚入口让它们还能被打开（两页数据来自插件）。
+      ('专辑信息', 'music:album-info'),
+      ('歌曲百科', 'music:wiki'),
       // 动作串由 `MvAction.open`（`lib/domain/mv/mv_controller.dart:662`）定义；
       // hud 层不 import domain，所以这里写字面量并在测试里与 MvAction 对表。
       if (mvAvailable) ('关联 MV', 'mv:open'),
@@ -1708,6 +1768,7 @@ class BasicHudFrame {
               artist: song.artist,
               artists: song.artist.isEmpty ? const <String>[] : <String>[song.artist],
               album: song.album,
+              wiki: state.songWiki,
               durationMs: song.durationMs,
               provider: identityProvider,
             ),
@@ -1722,7 +1783,7 @@ class BasicHudFrame {
       commentsAvailable: commentsAvailable,
       providerName: providerName,
       uid: '',
-      detailLoading: state.loading,
+      detailLoading: state.songWikiLoading,
       player: detail.SongDetailPlayerState(
         currentIdentity: song == null ? null : '$identityProvider:${song.id}',
         loading: state.buffering || state.loading,
@@ -2085,6 +2146,7 @@ class BasicHudSurface extends StatefulWidget {
     this.loginCooldownLabel = '',
     this.loginSmsRetrySeconds = 0,
     this.savedLane = 0,
+    this.aux,
     this.savedOverview = true,
     this.likedRows = const <PortraitLikesRow>[],
     this.playlistRows = const <PortraitPlaylistRow>[],
@@ -2213,6 +2275,9 @@ class BasicHudSurface extends StatefulWidget {
 
   /// 收藏列要画哪一列（1 = 喜欢、2 = 歌单；其它 = 总览退化进喜欢列）。
   final int savedLane;
+
+  /// 歌手页 / 歌曲百科 / 专辑信息的数据包（见 [BasicAuxPages]）。
+  final BasicAuxPages? aux;
 
   /// 收藏列是否停在「我的音乐」总览（Qt `m_savedOverview`）。
   final bool savedOverview;
@@ -2484,6 +2549,7 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       loginCooldownLabel: widget.loginCooldownLabel,
       loginSmsRetrySeconds: widget.loginSmsRetrySeconds,
       savedLane: widget.savedLane,
+      aux: widget.aux,
       savedOverview: widget.savedOverview,
       likedRows: widget.likedRows,
       playlistRows: widget.playlistRows,

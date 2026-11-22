@@ -102,6 +102,10 @@ import '../hud/portrait/portrait_pages_comments.dart' show PortraitCommentsModel
 import '../hud/portrait/portrait_pages_login.dart' show kPortraitLoginMethodPrefix;
 import '../domain/comments/comment_actions.dart' show commentSortActionPrefix;
 import 'basic_comment_mapper.dart';
+import 'basic_aux_pages.dart';
+import '../hud/portrait/portrait_pages_artist.dart'
+    show PortraitArtistRow, portraitArtistTabSongs;
+import '../hud/portrait/portrait_pages_album_info.dart' show PortraitAlbumInfoRow;
 import '../provider/provider_descriptor.dart';
 import '../provider/provider_registry.dart';
 import 'platform_playback.dart';
@@ -1464,6 +1468,84 @@ class _BasicShellState extends State<_BasicShell>
         '${(seconds % 60).toString().padLeft(2, '0')}';
   }
 
+  /// 歌手页 / 歌曲百科 / 专辑信息的数据包：三者的真值都在 controller 里，
+  /// `BasicViewState` 不承载它们，所以在这里装箱一次交给 HUD（见 [BasicAuxPages]）。
+  BasicAuxPages _auxPages() {
+    BasicArtistPageModel? artist;
+    if (controller.artistPageActive) {
+      final List<SirenSong> songs = controller.artistSongs;
+      final String currentId = controller.state.song?.id ?? '';
+      artist = BasicArtistPageModel(
+        name: controller.artistName,
+        cover: controller.artistCover,
+        tab: controller.artistTab,
+        tracks: <PortraitArtistRow>[
+          for (int index = 0; index < songs.length; index++)
+            (
+              title: songs[index].title,
+              artist: songs[index].artist,
+              stamp: _mmss(songs[index].durationMs.round()),
+              action: 'music:index:$index',
+            ),
+        ],
+        albums: <PortraitArtistRow>[
+          for (int index = 0; index < controller.artistAlbums.length; index++)
+            (
+              title: controller.artistAlbums[index].name,
+              artist: controller.artistAlbums[index].artist,
+              stamp: '${controller.artistAlbums[index].songCount} 首',
+              action: 'music:artist-album:$index',
+            ),
+        ],
+        status: controller.state.status,
+        loading: controller.state.loading,
+        selectedIndex: currentId.isEmpty
+            ? -1
+            : songs.indexWhere((SirenSong song) => song.id == currentId),
+      );
+    }
+    BasicWikiPageModel? wiki;
+    if (controller.wikiActive) {
+      final SirenSong? song = controller.state.song;
+      wiki = BasicWikiPageModel(
+        title: song?.title ?? '',
+        artist: song?.artist ?? '',
+        cover: song?.cover ?? '',
+        lines: controller.wikiLines,
+        status: controller.wikiStatus,
+        loading: controller.wikiLoading,
+      );
+    }
+    BasicAlbumInfoPageModel? albumInfo;
+    if (controller.albumInfoActive) {
+      final List<SirenSong> songs = controller.albumInfoSongs;
+      final String currentId = controller.state.song?.id ?? '';
+      albumInfo = BasicAlbumInfoPageModel(
+        title: controller.albumInfoTitle,
+        artist: controller.albumInfoArtist,
+        cover: controller.albumInfoCover,
+        date: controller.albumInfoDate,
+        description: controller.albumInfoDescription,
+        trackCount: controller.albumInfoTrackCount,
+        songs: <PortraitAlbumInfoRow>[
+          for (int index = 0; index < songs.length; index++)
+            (
+              title: songs[index].title,
+              artist: songs[index].artist,
+              stamp: _mmss(songs[index].durationMs.round()),
+              action: 'music:album-track:$index',
+            ),
+        ],
+        status: controller.albumInfoStatus,
+        loading: controller.albumInfoLoading,
+        selectedIndex: currentId.isEmpty
+            ? -1
+            : songs.indexWhere((SirenSong song) => song.id == currentId),
+      );
+    }
+    return BasicAuxPages(artist: artist, wiki: wiki, albumInfo: albumInfo);
+  }
+
   PortraitCommentsModel? _commentsModel() {
     final CommentController? controller = _commentController;
     if (controller == null) {
@@ -1965,6 +2047,7 @@ class _BasicShellState extends State<_BasicShell>
       mv: _mvController == null ? null : basicMvPanelModelOf(_mvController!.state),
       mvPositionMs: _mvController?.videoPositionMs ?? 0,
       savedLane: _savedLane,
+      aux: _auxPages(),
       savedOverview: _savedOverview,
       likedRows: _likedRows(),
       playlistRows: _playlistRows(),
@@ -2825,6 +2908,17 @@ class _BasicShellState extends State<_BasicShell>
         _setModal('settings');
         return;
       }
+      // 百科/专辑信息是叠加在详情页上的临时页：先关它们，别把底下的 modal 一起抹了。
+      if (controller.wikiActive) {
+        controller.closeSongWiki();
+        _setModal('');
+        return;
+      }
+      if (controller.albumInfoActive) {
+        controller.closeAlbumInfo();
+        _setModal('');
+        return;
+      }
       _setModal('');
       return;
     }
@@ -3160,9 +3254,54 @@ class _BasicShellState extends State<_BasicShell>
         return null;
       }
       final String name = names[index.clamp(0, names.length - 1)];
-      controller.setSearchKind('song');
-      unawaited(controller.setQuery(name));
+      // 真开歌手目录（Qt `MusicLibrary::openArtist` 的那条路）：插件平台按
+      // `artists[i].id` 取该歌手作品，塞壬平台在本地曲库里筛。
+      unawaited(controller.openArtistDirectory(name, artistIndex: index));
       _setModal('');
+      return null;
+    }
+    if (action == 'music:artist-tab:songs' || action == 'music:artist-tab:albums') {
+      controller.setArtistTab(
+        action.endsWith(':albums') ? 'albums' : 'songs',
+      );
+      return null;
+    }
+    if (action.startsWith('music:artist-album:')) {
+      final int index = int.tryParse(action.substring('music:artist-album:'.length)) ?? -1;
+      if (index >= 0) {
+        unawaited(controller.openArtistAlbum(index));
+      }
+      return null;
+    }
+    if (action == 'music:wiki') {
+      // Qt `ResponsiveHudLayout.cpp:455-470`：任何 `music:` 动作都收起操作面板。
+      // 这条分支在通用收起逻辑之前提前 return，必须自己收，否则百科页会被面板压住。
+      if (_songOptionsExpanded) {
+        setState(() => _songOptionsExpanded = false);
+      }
+      unawaited(controller.openSongWiki());
+      _setModal('wiki');
+      return null;
+    }
+    if (action == 'music:album-info') {
+      if (_songOptionsExpanded) {
+        setState(() => _songOptionsExpanded = false);
+      }
+      unawaited(controller.openAlbumInfo());
+      _setModal('album-info');
+      return null;
+    }
+    if (action.startsWith('music:album-track:')) {
+      if (_songOptionsExpanded) {
+        setState(() => _songOptionsExpanded = false);
+      }
+      final int index = int.tryParse(action.substring('music:album-track:'.length)) ?? -1;
+      final List<SirenSong> songs = controller.albumInfoSongs;
+      if (index >= 0 && index < songs.length) {
+        controller.closeAlbumInfo();
+        _setModal('');
+        unawaited(controller.openSong(songs[index]));
+      }
       return null;
     }
     if (action == 'music:official') {
