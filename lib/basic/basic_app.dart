@@ -1159,6 +1159,11 @@ class _BasicShellState extends State<_BasicShell>
   String _discoverArea = '5';
   String _discoverLoadedTab = '';
 
+  /// 分类页的分类名（Qt `MusicDiscover` 的 `categories`，来自 `discover` 返回的
+  /// `category`）与新歌页的地区（`areas`）。都是插件给的真值，不在这里编造。
+  List<String> _discoverCategories = const <String>[];
+  List<String> _discoverAreas = const <String>[];
+
   /// 发现页快照：tab 表来自 descriptor 的 `discover.tabs`，`history` tab 用本地
   /// 播放历史（Qt 的 `mobile:history` 也走 `discover:tab:history`），其余 tab 在
   /// 没有网关数据时诚实给状态行。
@@ -1179,6 +1184,26 @@ class _BasicShellState extends State<_BasicShell>
     return BasicDiscoverSnapshot(
       tabs: basicDiscoverTabs(descriptor, selectedTab: tab),
       tab: tab,
+      // 分类页给分类 chip、新歌页给地区 chip：Qt 的 `categoryPicker` 就是这两种
+      // 过滤轴（`MusicDiscover.cpp` 的 `category` / `newSongArea`），选中项压琥珀。
+      categoryPicker: tab == 'categories' && _discoverCategories.isNotEmpty,
+      categories: <PortraitDiscoverChip>[
+        for (final String name in _discoverCategories)
+          PortraitDiscoverChip(
+            label: name,
+            action: '$basicDiscoverCategoryPrefix${Uri.encodeComponent(name)}',
+            selected: name == _discoverCategory,
+          ),
+      ],
+      tools: <PortraitDiscoverChip>[
+        if (tab == 'new-songs')
+          for (final String area in _discoverAreas)
+            PortraitDiscoverChip(
+              label: '地区 $area',
+              action: '$basicDiscoverAreaPrefix$area',
+              selected: area == _discoverArea,
+            ),
+      ],
       entries: entries,
       // 载入中的状态行优先（Qt `MusicDiscover::accept` 只在结束时写 status）。
       status: _discoverLoading ? '正在读取…' : (_discoverStatus.isNotEmpty ? _discoverStatus : fallback),
@@ -1212,6 +1237,20 @@ class _BasicShellState extends State<_BasicShell>
         _discoverStatus = tab == 'artists' ? '登录后查看收藏歌手' : '登录后查看每日推荐';
       });
       return;
+    }
+    // 分类页的分类表是另一条操作（Qt `MusicDiscover::loadCategories` → api
+    // `categories`）：`discover` 只回当前分类名。拿不到不算失败，chip 行空着即可。
+    if (tab == 'categories' && _discoverCategories.isEmpty) {
+      try {
+        final List<String> names = await gateway.discoverCategories();
+        if (names.isNotEmpty && mounted) {
+          // 插件只列具体分类（netease 的 `/playlist/catlist` 没有「全部」），
+          // 但当前分类默认就是「全部」，所以这里补一项让用户能退回全量。
+          setState(() => _discoverCategories = <String>['全部', ...names]);
+        }
+      } on Object {
+        // 分类表失败不影响列表本身。
+      }
     }
     setState(() {
       _discoverLoading = true;
@@ -1253,6 +1292,22 @@ class _BasicShellState extends State<_BasicShell>
         _discoverMore = page['more'] == true;
         _discoverLoading = false;
         _discoverLoadedTab = tab;
+        // 分类/地区是插件随页返回的（Qt `accept()` 里的 `page["category"]` /
+        // `page["areas"]`），空页时保留上一次的列表，避免 chip 行闪没。
+        final List<Object?>? categoryRows = page['category'] as List<Object?>?;
+        if (categoryRows != null) {
+          _discoverCategories = <String>[
+            for (final Object? name in categoryRows)
+              if ('$name'.isNotEmpty) '$name',
+          ];
+        }
+        final List<Object?>? areaRows = page['areas'] as List<Object?>?;
+        if (areaRows != null) {
+          _discoverAreas = <String>[
+            for (final Object? area in areaRows)
+              if ('$area'.isNotEmpty) '$area',
+          ];
+        }
         _discoverStatus = _discoverItems.isEmpty ? '暂无内容' : '已载入 ${_discoverItems.length} 条';
       });
     } on Object catch (error) {
@@ -2719,6 +2774,38 @@ class _BasicShellState extends State<_BasicShell>
         _discoverScroll = 0;
       });
       _setModal('discover');
+      return;
+    }
+    if (action.startsWith(basicDiscoverCategoryPrefix)) {
+      final String name = Uri.decodeComponent(action.substring(basicDiscoverCategoryPrefix.length));
+      if (name.isEmpty || name == _discoverCategory) {
+        return;
+      }
+      setState(() {
+        _discoverCategory = name;
+        _discoverEntries = const <PortraitDiscoverEntry>[];
+        _discoverItems = const <Map<String, Object?>>[];
+        _discoverStatus = '';
+        _discoverMore = false;
+        _discoverRawCount = 0;
+      });
+      unawaited(_loadDiscover());
+      return;
+    }
+    if (action.startsWith(basicDiscoverAreaPrefix)) {
+      final String area = action.substring(basicDiscoverAreaPrefix.length);
+      if (area.isEmpty || area == _discoverArea) {
+        return;
+      }
+      setState(() {
+        _discoverArea = area;
+        _discoverEntries = const <PortraitDiscoverEntry>[];
+        _discoverItems = const <Map<String, Object?>>[];
+        _discoverStatus = '';
+        _discoverMore = false;
+        _discoverRawCount = 0;
+      });
+      unawaited(_loadDiscover());
       return;
     }
     if (action.startsWith(basicDiscoverTabPrefix)) {

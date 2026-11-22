@@ -362,6 +362,13 @@ abstract class ProviderGateway {
     throw const ProviderUnavailableError('当前来源不支持发现页');
   }
 
+  /// 发现页的分类名表（Qt `MusicDiscover::loadCategories` → api `categories`）。
+  ///
+  /// 插件返回 `[{id, name}]`，UI 只需要名字；空表表示该平台没有分类轴。
+  Future<List<String>> discoverCategories() async {
+    throw const ProviderUnavailableError('当前来源不支持发现页分类');
+  }
+
   /// 取歌词文档（对应 `lyrics(track)`）。返回插件原样的 lyrics-format 文档：
   /// `{version, source, timing, offsetMs, lines[{startMs,text,translation}], plainText}`。
   ///
@@ -551,6 +558,11 @@ class UnavailableProviderGateway implements ProviderGateway {
     String category = '',
     String area = '',
   }) async {
+    throw ProviderUnavailableError(reason);
+  }
+
+  @override
+  Future<List<String>> discoverCategories() async {
     throw ProviderUnavailableError(reason);
   }
 

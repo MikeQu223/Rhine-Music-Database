@@ -67,6 +67,16 @@ class PluginGateway implements ProviderGateway {
     String operation, [
     List<Object?> args = const <Object?>[],
   ]) async {
+    final PluginBridgeReply reply = await _request(operation, args);
+    return reply.map;
+  }
+
+  /// 与 [_call] 相同，但保留 `body.value` 的原始形状（`categories` 这类操作
+  /// 返回的是数组而不是对象，`reply.map` 会把它折成空表）。
+  Future<PluginBridgeReply> _request(
+    String operation, [
+    List<Object?> args = const <Object?>[],
+  ]) async {
     final PluginBridgeReply reply =
         await bridge.request(descriptor.id, operation, args, _cookies);
     if (reply.cookies.isNotEmpty && _applyCookies(reply.cookies)) {
@@ -76,7 +86,7 @@ class PluginGateway implements ProviderGateway {
       onDiagnostic?.call(reply.error);
       throw ProviderRequestError('${descriptor.name}：${reply.error}');
     }
-    return reply.map;
+    return reply;
   }
 
   @override
@@ -261,6 +271,20 @@ class PluginGateway implements ProviderGateway {
     return <Map<String, Object?>>[
       for (final Object? item in raw)
         if (item is Map) item.map((Object? key, Object? value) => MapEntry<String, Object?>('$key', value)),
+    ];
+  }
+
+  @override
+  Future<List<String>> discoverCategories() async {
+    final PluginBridgeReply reply = await _request('categories', const <Object?>[]);
+    final Object? value = reply.value;
+    if (value is! List) {
+      return const <String>[];
+    }
+    return <String>[
+      for (final Object? row in value)
+        if (row is Map && '${row['name'] ?? row['id'] ?? ''}'.isNotEmpty)
+          '${row['name'] ?? row['id']}',
     ];
   }
 

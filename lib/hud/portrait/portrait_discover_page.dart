@@ -125,7 +125,10 @@ double paintPortraitDiscoverPage(
       );
     }
     y += ((categories.length + 2) ~/ 3) * 44;
-  } else if (tab == 'playlists' && entries.isNotEmpty) {
+  }
+  // 分类页的 chip 行只是过滤轴，下面照样要把当前分类的歌单画出来（Qt 的
+  // `discover()` 里 chip 与瓦片是同一段流程，不是二选一）。
+  if (entries.isNotEmpty && (tab == 'playlists' || categoryPicker)) {
     final PortraitDiscoverEntry hero = entries.first;
     c.fill(Rect.fromLTWH(20, y, w - 40, 116), c.surface);
     c.fill(Rect.fromLTWH(20, y, 2, 116), c.amber);

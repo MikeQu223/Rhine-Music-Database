@@ -63,6 +63,12 @@ const String basicPlayDiscoverPrefix = 'mobile:play-discover:';
 /// 发现页的「加载更多」（Qt `discover:more`）。
 const String basicDiscoverMoreAction = 'discover:more';
 
+/// 分类页的分类 chip（Qt `MusicDiscover` 的 `category` 过滤轴）。
+const String basicDiscoverCategoryPrefix = 'discover:category:';
+
+/// 新歌页的地区 chip（Qt 的 `newSongArea`）。
+const String basicDiscoverAreaPrefix = 'discover:area:';
+
 /// 播放历史 tab 的 id（Qt `m_discover->tab == "history"`）。
 const String basicDiscoverHistoryTab = 'history';
 
