@@ -3226,8 +3226,12 @@ class _BasicShellState extends State<_BasicShell>
       setState(() => _songOptionsExpanded = !_songOptionsExpanded);
       return;
     }
+    // `mv:` 也要收起：MV 面板是从这张操作面板里打开的，不收就两层叠在一起
+    // （Qt 的 optionsSheet 只在 `m_song || m_lyricsPage` 时画，MV 打开后自然消失）。
     if (_songOptionsExpanded &&
-        (action.startsWith('music:') || action.startsWith('tab:'))) {
+        (action.startsWith('music:') ||
+            action.startsWith('tab:') ||
+            action.startsWith('mv:'))) {
       setState(() => _songOptionsExpanded = false);
     }
     // 喜欢开关（Qt `music:like` / `music:like-current`，
