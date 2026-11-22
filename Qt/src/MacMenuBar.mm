@@ -274,7 +274,8 @@ NSImage *rhineMenuBarIcon() {
              playing:(BOOL)playing
              loading:(BOOL)loading
             hasTrack:(BOOL)hasTrack
-             canSkip:(BOOL)canSkip
+         canPrevious:(BOOL)canPrevious
+             canNext:(BOOL)canNext
              canLike:(BOOL)canLike
                liked:(BOOL)liked
              toolTip:(NSString *)toolTip;
@@ -398,14 +399,15 @@ NSImage *rhineMenuBarIcon() {
              playing:(BOOL)playing
              loading:(BOOL)loading
             hasTrack:(BOOL)hasTrack
-             canSkip:(BOOL)canSkip
+         canPrevious:(BOOL)canPrevious
+             canNext:(BOOL)canNext
              canLike:(BOOL)canLike
                liked:(BOOL)liked
              toolTip:(NSString *)toolTip {
     [_lyrics updateText:lyrics];
     _lyrics.toolTip = toolTip;
-    _previous.enabled = canSkip;
-    _next.enabled = canSkip;
+    _previous.enabled = canPrevious;
+    _next.enabled = canNext;
     _play.enabled = hasTrack && !loading;
     NSString *playSymbol = loading ? @"ellipsis" : (playing ? @"pause.fill" : @"play.fill");
     NSString *playLabel = playing ? @"暂停" : @"播放";
@@ -553,11 +555,14 @@ void MacMenuBarController::refresh() {
     if (hasTrack) {
         toolTip += "\n" + clock(position) + " / " + clock(duration);
     }
+    const bool canPrevious = hasTrack && !player.queue.isEmpty();
+    const bool canNext = hasTrack && player.queue.nextIndex(player.mode) >= 0;
     [m_impl->view updateLyrics:text.toNSString()
                        playing:player.state["playing"].toBool()
                        loading:player.loading
                       hasTrack:hasTrack
-                       canSkip:hasTrack && !player.queue.isEmpty()
+                  canPrevious:canPrevious
+                      canNext:canNext
                        canLike:canLike
                          liked:liked.value_or(false)
                        toolTip:toolTip.toNSString()];
