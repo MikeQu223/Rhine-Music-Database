@@ -6,7 +6,9 @@
 #include <QDataStream>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QGuiApplication>
 #include <QJsonDocument>
+#include <QMediaDevices>
 #include <QThread>
 #include <QTemporaryDir>
 #include <QUrl>
@@ -28,6 +30,11 @@ bool waitFor(const std::function<bool()> &ready, int timeout = 3000) {
         QThread::msleep(1);
     }
     return ready();
+}
+
+bool audioPlaybackAvailable() {
+    return QGuiApplication::platformName() != QLatin1String("offscreen") &&
+           !QMediaDevices::defaultAudioOutput().isNull();
 }
 
 QString testProvider = "alpha";
@@ -386,22 +393,27 @@ bool runNativeMusicChecks(const QString &root) {
     trialPlaybackFrom = 1;
     library.player.play(queue.first().toObject(), queue);
     check(waitFor([&] { return !library.player.loading; }), "full playback starts");
-    const auto playbackStarted = waitFor([&] {
-        library.player.tick(0, true);
-        return library.player.state["playing"].toBool() && !library.player.state["buffering"].toBool();
-    });
-    check(playbackStarted, "full playback reaches playing state");
-    check(waitFor([&] {
-              library.player.tick(0, true);
-              return playbackRouteCount >= 2;
-          }),
-          "next source is resolved");
-    waitFor([&] { return false; }, 150);
-    const auto audio = host.playbackSnapshot();
-    check(playbackStarted &&
-              audio["transitionPreparation"].toInt() == int(AppleTransitionPreparation::Natural) &&
-              !audio.contains("transitionKind"),
-          "trial next track must not create a transition");
+    if (audioPlaybackAvailable()) {
+        const auto playbackStarted = waitFor([&] {
+            library.player.tick(0, true);
+            return library.player.state["playing"].toBool() && !library.player.state["buffering"].toBool();
+        });
+        check(playbackStarted, "full playback reaches playing state");
+        check(waitFor([&] {
+                  library.player.tick(0, true);
+                  return playbackRouteCount >= 2;
+              }),
+              "next source is resolved");
+        waitFor([&] { return false; }, 150);
+        const auto audio = host.playbackSnapshot();
+        check(playbackStarted &&
+                  audio["transitionPreparation"].toInt() == int(AppleTransitionPreparation::Natural) &&
+                  !audio.contains("transitionKind"),
+              "trial next track must not create a transition");
+    } else {
+        qInfo() << "SKIP: offscreen/no audio output; playback source resolution is covered without an "
+                   "audio device";
+    }
     trialPlaybackFrom = -1;
     library.player.stop();
 #endif
