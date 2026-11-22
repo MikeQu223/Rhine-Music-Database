@@ -102,12 +102,19 @@ class BasicHudFrame {
     required this.generation,
     required this.commands,
     required this.hits,
+    this.fields = const <String, Rect>{},
     this.animating = false,
   });
 
   final int generation;
   final List<List<Object?>> commands;
   final List<HudHit> hits;
+
+  /// 本帧的输入框矩形（舞台单位，键是 `field(name, rect)` 的 name）。
+  ///
+  /// 宿主在派发命中之前先查这张表：点中的若是输入框，就把焦点交给输入层，
+  /// 不再依赖输入层自己的命中面与 HUD 画出来的框完全重合。
+  final Map<String, Rect> fields;
 
   /// 本帧绘制结束后，共享滚动文字是否仍有字符槽在动。宿主
   /// （[BasicHudSurface]）据此续帧；静止帧为 false，不空转 ticker。
@@ -900,13 +907,14 @@ class BasicHudFrame {
     }
     sink.commands.addAll(canvas.commands);
     sink.hits.addAll(canvas.hits);
-    // ignore: avoid_print
+    final Map<String, Rect> fields = <String, Rect>{...canvas.fields};
     final bool animating = ports.endFrame();
     _generation += 1;
     return BasicHudFrame(
       generation: _generation,
       commands: sink.commands,
       hits: sink.hits,
+      fields: fields,
       animating: animating,
     );
   }
@@ -1917,6 +1925,7 @@ class BasicHudSurface extends StatefulWidget {
     required this.state,
     required this.ports,
     required this.onAction,
+    this.onFieldTap,
     this.onLibraryScroll,
     this.onLibraryScrollUpdate,
     this.geometry,
@@ -1981,6 +1990,9 @@ class BasicHudSurface extends StatefulWidget {
   final bool isSirenProvider;
   final BasicGlyphPorts ports;
   final ValueChanged<String> onAction;
+
+  /// 点中 HUD 画出来的输入框时回调字段名（`field(name, rect)` 的 name）。
+  final ValueChanged<String>? onFieldTap;
 
   /// 列表拖动结束的落点（条目单位，可含小数）；由 basic_app 接到
   /// BasicController.commitLibraryScroll。null = 只支持点选，不支持拖动。
@@ -2805,6 +2817,18 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       geometry: geometry,
       android: defaultTargetPlatform == TargetPlatform.android,
     );
+    // 输入框优先：HUD 画出来的框和输入层自己的命中面不一定完全重合，点框里
+    // 却弹不出键盘时由宿主兜底请求焦点（用户 2026-11-22 报的缺陷）。
+    final Offset stagePoint = geometry.toStage(logical);
+    // 只有文本输入框才由这条路径抢走命中：`fields` 里还登记着 `playerBounds`
+    // （整条播放条的指针归属矩形）之类非文本框，一起吞会让底栏、播放条全部失灵。
+    for (final MapEntry<String, Rect> field in frame.fields.entries) {
+      if (!_textFieldNames.contains(field.key) || !field.value.contains(stagePoint)) {
+        continue;
+      }
+      widget.onFieldTap?.call(field.key);
+      return;
+    }
     final HudHit? hit = layer.hitAt(frame.hits, logical);
     if (hit == null) {
       return;
@@ -2819,7 +2843,6 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
     final bool seek = hit.action.startsWith('player:seek-fraction:');
     final bool volume = hit.action.startsWith('player:volume-fraction:');
     if (seek || volume) {
-      final Offset stagePoint = geometry.toStage(logical);
       final String? action = HitLayer.playerFractionAction(
         control: seek ? 'seek' : 'volume',
         x: stagePoint.dx - hit.x,
@@ -2833,6 +2856,18 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
     widget.onAction(hit.action);
   }
 }
+
+/// HUD 里会登记成文本输入框的 `field` 名字（`PortraitCanvas.field`）。
+const Set<String> _textFieldNames = <String>{
+  'search',
+  'input',
+  'account',
+  'phone',
+  'captcha',
+  'code',
+  'settingEdit',
+  'setting-edit',
+};
 
 /// song_detail 的累加器按 Qt op 顺序把每条命令（本身是 List<Object?>）
 /// 追加进 List<Object?>，静态类型比 [_HudSink] 的命令表宽一层。

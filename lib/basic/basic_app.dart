@@ -695,6 +695,27 @@ class _BasicShellState extends State<_BasicShell>
   /// 键盘路径不经过 surface 的命中分发，所以由宿主在这里翻。
   bool _trackListMode = true;
 
+  /// 输入层的状态句柄：HUD 点中输入框时用它把焦点交给对应文本域。
+  final GlobalKey<TextInputOverlayState> _textInputKey = GlobalKey<TextInputOverlayState>();
+
+  /// HUD 画出来的输入框被点中（`field(name, rect)` 的 name）。
+  ///
+  /// 输入层自己也有命中面，但它的矩形和 HUD 画出来的框各有来源；两条路都通
+  /// 才能保证「点框里就弹键盘」（用户 2026-11-22 报的搜索框点不出键盘）。
+  void _onFieldTap(String name) {
+    final TextFieldKind? kind = switch (name) {
+      'search' || 'input' => TextFieldKind.search,
+      'account' || 'phone' => TextFieldKind.account,
+      'captcha' || 'code' => TextFieldKind.captcha,
+      'settingEdit' || 'setting-edit' => TextFieldKind.settingEdit,
+      _ => null,
+    };
+    if (kind == null) {
+      return;
+    }
+    _textInputKey.currentState?.focusKind(kind);
+  }
+
   /// 竖屏播放队列页的模式 chip 是否展开（Qt `m_queueModesExpanded`，由
   /// `mobile:queue-modes` 翻转；点任一 `player:mode:<x>` 后收起）。
   bool _queueModesExpanded = false;
@@ -1840,6 +1861,7 @@ class _BasicShellState extends State<_BasicShell>
       state: state,
       ports: widget.resources.ports,
       onAction: _onAction,
+      onFieldTap: _onFieldTap,
       trackListMode: _trackListMode,
       onTrackListModeChanged: (bool value) {
         if (!mounted) return;
@@ -3587,6 +3609,7 @@ class _BasicShellState extends State<_BasicShell>
     final bool songPage = state.song != null &&
         (state.phase == BasicPhase.detail || state.phase == BasicPhase.lyrics);
     return TextInputOverlay(
+      key: _textInputKey,
       state: TextInputStageState.fromGeometry(
         geometry,
         modal: songPage ? '' : _modal,

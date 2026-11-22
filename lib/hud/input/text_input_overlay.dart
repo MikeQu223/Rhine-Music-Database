@@ -1104,10 +1104,23 @@ class TextInputOverlay extends StatefulWidget {
   final Key? submitButtonKey;
 
   @override
-  State<TextInputOverlay> createState() => _TextInputOverlayState();
+  State<TextInputOverlay> createState() => TextInputOverlayState();
 }
 
-class _TextInputOverlayState extends State<TextInputOverlay> {
+class TextInputOverlayState extends State<TextInputOverlay> {
+  /// 宿主点中 HUD 画出来的输入框时把焦点交给对应文本域。
+  ///
+  /// 光靠输入层自己的命中面不够：HUD 的字段矩形和输入层的实际位置各有来源，
+  /// 点在画出来的框里可能落在输入层的空白上（用户 2026-11-22 报的「点搜索框
+  /// 弹不出键盘」）。所以由宿主按 HUD 的 `fields` 矩形兜底请求焦点。
+  void focusKind(TextFieldKind kind) {
+    final FocusNode? node = _focusNodes[kind];
+    if (node == null) {
+      return;
+    }
+    node.requestFocus();
+  }
+
   final Map<TextFieldKind, TextEditingController> _controllers =
       <TextFieldKind, TextEditingController>{};
   final Map<TextFieldKind, FocusNode> _focusNodes = <TextFieldKind, FocusNode>{};
@@ -1242,7 +1255,9 @@ class _TextInputOverlayState extends State<TextInputOverlay> {
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
               onTap: layout.enabled
-                  ? () => _focusNodes[kind]!.requestFocus()
+                  ? () {
+                      _focusNodes[kind]!.requestFocus();
+                    }
                   : null,
             ),
           ),

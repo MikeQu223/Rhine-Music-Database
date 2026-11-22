@@ -832,17 +832,21 @@ void main() {
 
       // `music:like` 已接入（详情页心形与沉浸条第 0 键都会发它），所以换一个
       // 目前确实没有接收方的动作，守住「绝不静默 no-op」这条契约。
-      fire(tester, 'music:artist:0');
+      fire(tester, 'music:unknown-action');
       await tester.pump();
       expect(
-        find.textContaining('${basicUnimplementedPrefix}music:artist:0'),
+        find.textContaining('${basicUnimplementedPrefix}music:unknown-action'),
         findsOneWidget,
       );
 
-      // 音量条有真实热区（player_bar.dart:529），但 BasicController 没有音量 API。
-      fire(tester, 'player:volume-fraction:0.5');
+      // 音量条已接入（`BasicAudioVolumePort` + Kotlin `setVolume`），所以这里
+      // 换一个仍未接入的动作，继续守「绝不静默 no-op」这条契约。
+      fire(tester, 'player:lyrics-sources');
       await tester.pump();
-      expect(find.textContaining('音量调节尚未接入'), findsOneWidget);
+      expect(
+        find.textContaining('${basicUnimplementedPrefix}player:lyrics-sources'),
+        findsOneWidget,
+      );
 
       await tester.pumpWidget(const SizedBox());
     });
