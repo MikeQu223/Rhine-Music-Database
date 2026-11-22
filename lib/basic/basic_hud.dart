@@ -388,7 +388,7 @@ class BasicHudFrame {
     } else if (modal == 'provider') {
       _paintProviderModal(sink, ports, providers, providerId, providerAccounts, width, dark,
           localMusicEnabled);
-    } else if (modal == 'saved' || modal == 'discover' || modal == 'playlist-picker') {
+    } else if (modal == 'discover' || modal == 'playlist-picker') {
       // 我的音乐 / 发现页 / 加入歌单只有 393 网格的竖屏排版（Qt 桌面端用 library
       // 模态承载，本仓库还没有横屏稿）。横屏下不能什么都不画：这里用同一套 painter
       // 按舞台高度重采样（unit = 高度 / 852），保证内容与动作都可达。

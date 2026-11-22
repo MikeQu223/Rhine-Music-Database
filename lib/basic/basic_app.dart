@@ -3038,6 +3038,10 @@ class _BasicShellState extends State<_BasicShell>
         _savedScroll = 0;
       });
       _setModal('saved');
+      // 横屏没有 393 竖屏稿：那一层直接复用横屏资料库骨架画当前收藏列。
+      // 不把列切过去的话，横屏点「我的音乐」看到的还是上一列（Qt 桌面端
+      // `openModal("saved")` 会同步 `musicCollection = selectedLane`）。
+      unawaited(controller.selectLane(_savedLane >= 2 ? 2 : 1));
       return;
     }
     if (action.startsWith(basicCollectionActionPrefix)) {
