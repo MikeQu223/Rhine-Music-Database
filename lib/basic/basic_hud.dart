@@ -177,6 +177,10 @@ class BasicHudFrame {
     /// 横屏检索面板的行级滚动偏移（舞台像素，0 = 首行贴表头）。宿主拖动列表时
     /// 只改这一个临时量，不碰库表的 `listPosition`（那是资料库列的真值）。
     double searchScroll = 0,
+  /// 播放条音量滑轨的位置（0..1）。宿主快照里没有音量字段（`BasicViewState` 只有
+  /// 播放位置），所以这份值由 surface 自己持有：横屏播放条右下角的输出模块在
+  /// `applicationVolume` 时用它画滑轨，拖动/点击后由 `_dispatch` 回写。
+  double volume = 1.0,
     /// 右栏遮罩强度（0..100，Qt `archive-mask-strength` / 设置页“右侧画面遮罩”）。
     /// 默认就是 Qt 常量 [HudChrome.defaultArchiveMaskStrength]；注入只来自设置页真值。
     double archiveMaskStrength = 0, // = HudChrome.defaultArchiveMaskStrength（int 常量转 double）
@@ -467,7 +471,12 @@ class BasicHudFrame {
     }
 
     final player.PlayerBarDrawing bar = player.renderPlayerBar(
-      _playerState(state, musicVideo: mvAvailable),
+      // 横屏播放条右下角必须有可用的输出模块（用户 2026-11-22 报的缺陷）：Qt 在
+      // 桌面端走 `PlatformFeatures::ApplicationVolume` 画滑轨（PlayerBar.cpp:238-246），
+      // 手机上那枚特性恒假、只剩「系统音量」四个字。本仓库的音量本就由
+      // `player:volume-fraction:<f>`（宿主 → controller.setVolumeFraction）驱动，
+      // 所以横屏直接按应用内音量画，滑轨与命中都出现。
+      _playerState(state, musicVideo: mvAvailable, volume: volume, applicationVolume: true),
       player.PlayerBarRect(0, height - player.playerBarRowHeight, width, player.playerBarRowHeight),
       dark,
       ports,
@@ -1739,7 +1748,12 @@ class BasicHudFrame {
     );
   }
 
-  static player.PlayerBarState _playerState(BasicViewState state, {bool musicVideo = false}) {
+  static player.PlayerBarState _playerState(
+    BasicViewState state, {
+    bool musicVideo = false,
+    double volume = 1.0,
+    bool applicationVolume = false,
+  }) {
     // 播放条只报**真正在播**的曲目（state.playingTrack），不拿选中曲目冒充：
     // 选中可以没有播放，播放条不该显示一首没在播的歌。
     final SirenSong? song = state.playingTrack;
@@ -1759,7 +1773,8 @@ class BasicHudFrame {
       failed: state.playbackError.isNotEmpty,
       hasTrack: song != null,
       seekable: state.durationMs > 0,
-      applicationVolume: false,
+      applicationVolume: applicationVolume,
+      volume: volume,
       // 横屏播放条的 MV 按钮（Qt `PlayerBar.cpp:277-282`）：Qt 用
       // `PlatformFeatures::MusicVideo`（Android 恒假，所以主线在手机上从不画这个键），
       // 本仓库的 MV 已经原生可播（`video_player`），所以改按平台 descriptor 的
@@ -2244,6 +2259,11 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
   /// 分开存：检索列表的滚动绝不能改到库表窗口。
   double _searchScroll = 0;
 
+  /// 播放条音量滑轨的本地位置（0..1）。宿主快照里没有音量（`BasicViewState` 只投影
+  /// 播放位置/状态），所以横屏输出模块的滑轨位置由 surface 记账：点击/拖动命中
+  /// `player:volume-fraction:<f>` 时先更新这里再转发宿主，滑轨才会跟着手指走。
+  double _volume = 1.0;
+
   // ---- 松手惯性（与 Qt/src/SceneDrag.cpp 的 ArchiveDrag / ArchiveMomentum 同构）----
   //
   // 只服务 HUD 自己拥有的列表行拖动：抬手时用最近一段毫秒采样估行速度，够快就按
@@ -2407,6 +2427,7 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       portrait: portrait,
       listPosition: _dragPosition,
       searchScroll: _searchScroll,
+      volume: _volume,
       animationTime: _animationTime,
       animateText: true,
       archiveMaskStrength: widget.archiveMaskStrength,
@@ -3047,6 +3068,15 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
         width: hit.width,
       );
       if (action != null) {
+        if (volume) {
+          // 滑轨位置落到本地状态：宿主那侧同时会收到同一个 fraction
+          // （`player:volume-fraction:<f>` → controller.setVolumeFraction）。
+          final double? fraction =
+              double.tryParse(action.substring('player:volume-fraction:'.length));
+          if (fraction != null && fraction.isFinite) {
+            setState(() => _volume = fraction.clamp(0.0, 1.0));
+          }
+        }
         widget.onAction(action);
         return;
       }
