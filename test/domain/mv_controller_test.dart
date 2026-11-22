@@ -11,6 +11,7 @@ import 'package:rhine_music_database/domain/mv/mv_controller.dart';
 import 'package:rhine_music_database/domain/mv/mv_track_validator.dart';
 import 'package:rhine_music_database/domain/player/music_player.dart' show PreferencePort;
 import 'package:rhine_music_database/provider/provider_gateway.dart';
+import 'provider_gateway_stub.dart';
 
 /// 内存偏好（Qt `Host::preference` 的等价物：缺键读空串、写即存）。
 class _MemoryPreferences implements PreferencePort {
@@ -39,7 +40,7 @@ class _FakeClock {
   void advance(int milliseconds) => now = now.add(Duration(milliseconds: milliseconds));
 }
 
-class _FakeGateway implements ProviderGateway {
+class _FakeGateway with ProviderGatewayStub implements ProviderGateway {
   _FakeGateway({
     this.versions = const <ProviderMvVersion>[],
     this.track = const ProviderMvTrack(id: 'mv1', title: 'MV', url: 'https://e.com/v.mp4', resolution: 720),
@@ -53,6 +54,7 @@ class _FakeGateway implements ProviderGateway {
   String? versionsError;
 
   final List<String> mvVersionIds = <String>[];
+  final List<String> mvTrackIds = <String>[];
   final List<String> versionTrackIds = <String>[];
   int mvCalls = 0;
   int versionsCalls = 0;
@@ -114,9 +116,10 @@ class _FakeGateway implements ProviderGateway {
   }
 
   @override
-  Future<ProviderMvTrack> mv({required String versionId}) async {
+  Future<ProviderMvTrack> mv({required String trackId, required String versionId}) async {
     mvCalls++;
     mvVersionIds.add(versionId);
+    mvTrackIds.add(trackId);
     if (mvError != null) {
       throw ProviderUnavailableError(mvError!);
     }
@@ -175,7 +178,10 @@ void main() {
     expect(seen.last, '静音跟随音乐 · 720p');
     expect(controller.state.phase, MvPhase.playing);
     // 没有选中版本时网关收到曲目 id（本侧契约的默认版本口径）。
-    expect(gateway.mvVersionIds.single, 't1');
+    // 没有选中版本时不再把曲目 id 冒充版本 id：插件签名是
+    // `mv({id: 曲目, videoID: 版本})`，videoID 留空由插件回落成 `song.mv`。
+    expect(gateway.mvVersionIds.single, '');
+    expect(gateway.mvTrackIds.single, 't1');
     expect(gateway.versionTrackIds.single, 't1');
   });
 
@@ -196,7 +202,8 @@ void main() {
     expect(controller.versions.length, 2);
     expect(controller.versions.first.label, '[搜索结果] 翻唱 · 某人 · #other');
     // 首项不是「歌曲关联」⇒ Qt :619-623 会拿首项再解析一次。
-    expect(gateway.mvVersionIds, <String>['t2', 'other']);
+    expect(gateway.mvVersionIds, <String>['', 'other']);
+    expect(gateway.mvTrackIds, <String>['t2', 't2']);
   });
 
   test('网关报错时状态串是「MV 加载失败：<原因>」（:648-649）', () async {

@@ -340,7 +340,10 @@ abstract class ProviderGateway {
   Future<List<ProviderMvVersion>> mvVersions({required String trackId});
 
   /// 取某个版本的播放地址（对应 `mv`）。
-  Future<ProviderMvTrack> mv({required String versionId});
+  /// 取 MV 播放地址。插件签名是 `mv({id: <曲目 id>, videoID: <版本 id>})`
+  /// （`netease/plugin.cjs` 的 `async mv(value)`），所以**两个 id 都要给**：
+  /// 只给版本 id 时插件会把它当曲目 id 去查 `/song/detail`，直接回「未找到当前歌曲」。
+  Future<ProviderMvTrack> mv({required String trackId, required String versionId});
 
   /// 分类检索（对应 `search(query, kind, start)`）。
   Future<List<Map<String, Object?>>> search({
@@ -538,7 +541,7 @@ class UnavailableProviderGateway implements ProviderGateway {
   }
 
   @override
-  Future<ProviderMvTrack> mv({required String versionId}) async {
+  Future<ProviderMvTrack> mv({required String trackId, required String versionId}) async {
     throw ProviderUnavailableError(reason);
   }
 

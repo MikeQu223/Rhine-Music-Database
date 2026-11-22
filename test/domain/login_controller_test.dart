@@ -9,6 +9,7 @@ import 'package:rhine_music_database/domain/account/login_controller.dart';
 import 'package:rhine_music_database/domain/player/music_player.dart' show PreferencePort;
 import 'package:rhine_music_database/provider/provider_descriptor.dart';
 import 'package:rhine_music_database/provider/provider_gateway.dart';
+import 'provider_gateway_stub.dart';
 
 /// 内存偏好（Qt `Host::setPreference`）。
 final class MemoryPreferences implements PreferencePort {
@@ -22,7 +23,7 @@ final class MemoryPreferences implements PreferencePort {
 }
 
 /// 假网关：按脚本回答 account/beginLogin/pollLogin/sendLoginCode/submitLoginCode。
-final class FakeGateway implements ProviderGateway {
+final class FakeGateway with ProviderGatewayStub implements ProviderGateway {
   FakeGateway({
     this.descriptor,
     this.polls,
@@ -136,7 +137,7 @@ final class FakeGateway implements ProviderGateway {
       const <ProviderMvVersion>[];
 
   @override
-  Future<ProviderMvTrack> mv({required String versionId}) async =>
+  Future<ProviderMvTrack> mv({required String trackId, required String versionId}) async =>
       const ProviderMvTrack(id: 'v', title: 't', url: 'https://example.invalid/mv.mp4');
 
   @override

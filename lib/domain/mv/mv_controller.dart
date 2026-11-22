@@ -374,8 +374,10 @@ class MvController {
     String failure = '';
     try {
       resolved = await gateway.mv(
-        // 没有选中版本时回落曲目 id（平台侧把它当"默认版本"）。
-        versionId: requestedId.isNotEmpty ? requestedId : track,
+        // 曲目 id 恒给：插件拿它查 `/song/detail` 找 `song.mv`；版本 id 留空时由插件
+        // 自己回落成曲目关联的那个 MV（`plugin.cjs` 的 `async mv(value)`）。
+        trackId: track,
+        versionId: requestedId,
       );
     } catch (error) {
       failure = error is ProviderUnavailableError ? error.message : '$error';

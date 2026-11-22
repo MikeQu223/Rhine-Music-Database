@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:rhine_music_database/domain/comments/comment_controller.dart';
 import 'package:rhine_music_database/provider/provider_gateway.dart';
+import 'provider_gateway_stub.dart';
 
 ProviderComment _comment(String id, {int replyCount = 0}) => ProviderComment(
       id: id,
@@ -16,7 +17,7 @@ ProviderComment _comment(String id, {int replyCount = 0}) => ProviderComment(
       replyCount: replyCount,
     );
 
-class _FakeGateway implements ProviderGateway {
+class _FakeGateway with ProviderGatewayStub implements ProviderGateway {
   _FakeGateway({
     this.commentsSupported = true,
     this.pages = const <ProviderCommentPage>[],
@@ -114,7 +115,7 @@ class _FakeGateway implements ProviderGateway {
       throw UnimplementedError();
 
   @override
-  Future<ProviderMvTrack> mv({required String versionId}) => throw UnimplementedError();
+  Future<ProviderMvTrack> mv({required String trackId, required String versionId}) => throw UnimplementedError();
 
   @override
   Future<List<Map<String, Object?>>> search({

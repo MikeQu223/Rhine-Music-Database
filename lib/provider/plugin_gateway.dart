@@ -219,7 +219,7 @@ class PluginGateway implements ProviderGateway {
   }
 
   @override
-  Future<ProviderMvTrack> mv({required String versionId}) async {
+  Future<ProviderMvTrack> mv({required String trackId, required String versionId}) async {
     final Map<String, Object?> value =
         await _call('mv', <Object?>[<String, Object?>{'id': versionId}]);
     return ProviderMvTrack(
