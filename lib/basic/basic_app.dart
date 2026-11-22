@@ -3849,10 +3849,16 @@ class _BasicShellState extends State<_BasicShell>
     if (action.startsWith(basicSearchOpenPrefix)) {
       final int index = int.tryParse(action.substring(basicSearchOpenPrefix.length)) ?? -1;
       unawaited(controller.openRemoteSong(index).then((String notice) {
-        if (!mounted || notice.isEmpty) {
+        if (!mounted) {
           return;
         }
-        setState(() => _actionNotice = notice);
+        if (notice.isNotEmpty) {
+          setState(() => _actionNotice = notice);
+          return;
+        }
+        // 打开成功就把检索弹层关掉：HUD 的 `modal == 'search'` 分支优先级高于
+        // 详情相位，不关的话界面停在检索页、看起来像「点了没反应」。
+        _setModal('');
       }));
       return null;
     }
