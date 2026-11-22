@@ -3287,8 +3287,30 @@ class _BasicShellState extends State<_BasicShell>
       if (_songOptionsExpanded) {
         setState(() => _songOptionsExpanded = false);
       }
-      unawaited(controller.openAlbumInfo());
-      _setModal('album-info');
+      // 专辑 id 只能从当前曲目拿：`openAlbumInfo()` 不传参时回落到
+      // `_album/_directory`，而详情页多半是从收藏列/检索结果进的，那两个都是空的，
+      // 会当场 early return（真机表现：点「专辑信息」直接掉回资料库首页）。
+      final SirenSong? song = controller.state.song;
+      final String albumId = song?.albumId ?? '';
+      if (albumId.isEmpty) {
+        setState(() => _actionNotice = '这首歌没有关联专辑');
+        return null;
+      }
+      unawaited(controller.openAlbumInfo(
+        albumId: albumId,
+        title: song?.album ?? '',
+        artist: song?.artist ?? '',
+        cover: song?.cover ?? '',
+      ).then((_) {
+        if (!mounted) {
+          return;
+        }
+        if (controller.albumInfoActive) {
+          _setModal('album-info');
+        } else {
+          setState(() => _actionNotice = controller.albumInfoStatus);
+        }
+      }));
       return null;
     }
     if (action.startsWith('music:album-track:')) {
