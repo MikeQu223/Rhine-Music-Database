@@ -205,7 +205,9 @@ class PluginGateway implements ProviderGateway {
     // 插件签名 `mvVersions(value)`，`value.id` 必须是曲目 id 字符串。
     final Map<String, Object?> value =
         await _call('mvVersions', <Object?>[<String, Object?>{'id': trackId}]);
-    final List<Object?> raw = value['items'] is List ? value['items'] as List<Object?> : const <Object?>[];
+    // 插件回 `{versions:[…], warning:''}`；旧实现只认 `items`，永远读成空表。
+    final Object? versionSource = value['versions'] ?? value['items'];
+    final List<Object?> raw = versionSource is List ? versionSource : const <Object?>[];
     return <ProviderMvVersion>[
       for (final Object? item in raw)
         if (item is Map)
@@ -220,8 +222,12 @@ class PluginGateway implements ProviderGateway {
 
   @override
   Future<ProviderMvTrack> mv({required String trackId, required String versionId}) async {
-    final Map<String, Object?> value =
-        await _call('mv', <Object?>[<String, Object?>{'id': versionId}]);
+    // 插件签名 `mv(value)`：`value.id` 是**曲目** id，`value.videoID` 才是版本 id；
+    // 只给一个 id 会被当成曲目 id 去查 `/song/detail`，报「歌曲标识无效」。
+    final Map<String, Object?> value = await _call(
+      'mv',
+      <Object?>[<String, Object?>{'id': trackId, 'videoID': versionId}],
+    );
     return ProviderMvTrack(
       id: _text(value['id'] ?? versionId),
       title: _text(value['title']),

@@ -1991,7 +1991,14 @@ class _BasicShellState extends State<_BasicShell>
     // 初始化页面在场时不再叠黑幕：那时整页 boot HUD 自己就是画面
     // （NativeHudBoot::boot 的 gradient/flash 门槛层），底下留真实场景当背景。
     final bool animating = !startupOpen && _startup.isAnimating;
-    if (!settingsOpen && !pluginsOpen && !startupOpen && !animating) {
+    // MV 视频面与歌单表单同样是「叠在 HUD 上的 widget 层」：只开它们时不能走
+    // 这条早退，否则 Stack 根本不建，`_mvOpen` 永远是 false ⇒ MV 面板画出来却没有视频。
+    if (!settingsOpen &&
+        !pluginsOpen &&
+        !startupOpen &&
+        !animating &&
+        !_mvOpen &&
+        _playlistFormKind == null) {
       return hud;
     }
     final double scale = stage?.scale ?? 1.0;

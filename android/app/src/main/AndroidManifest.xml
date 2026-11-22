@@ -17,7 +17,12 @@
         android:allowBackup="false"
         android:label="RHINE MUSIC DATABASE"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:usesCleartextTraffic="true">
+        <!-- usesCleartextTraffic：插件平台的 MV 直链是 http（网易云 CDN
+             vodkgeyttp8.vod.126.net/…mp4?wsSecret=…），Android 9+ 默认拒绝明文，
+             video_player(ExoPlayer) 会直接报「Cleartext HTTP traffic not permitted」。
+             Qt 侧用 QNetworkAccessManager 自己走 http，不受这条限制，故此处补齐。 -->
         <!-- CRASH-163：Impeller（Vulkan）在本机 Adreno 730 上会丢设备。
              复现日志（2026-11-19 01:02:28，pid 6231，滚动/翻页压力下必现）：
                flutter: [khr_swapchain_impl_vk.cc(492)] Could not wait on render
