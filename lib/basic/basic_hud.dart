@@ -1926,6 +1926,7 @@ class BasicHudSurface extends StatefulWidget {
     required this.ports,
     required this.onAction,
     this.onFieldTap,
+    this.onFields,
     this.onLibraryScroll,
     this.onLibraryScrollUpdate,
     this.geometry,
@@ -1993,6 +1994,10 @@ class BasicHudSurface extends StatefulWidget {
 
   /// 点中 HUD 画出来的输入框时回调字段名（`field(name, rect)` 的 name）。
   final ValueChanged<String>? onFieldTap;
+
+  /// 每帧把输入框矩形（舞台单位）交给宿主：登录页的手机号/验证码框要按
+  /// 画出来的位置摆输入层，否则输入层按横屏 QML 常量摆，竖屏里根本看不见。
+  final ValueChanged<Map<String, Rect>>? onFields;
 
   /// 列表拖动结束的落点（条目单位，可含小数）；由 basic_app 接到
   /// BasicController.commitLibraryScroll。null = 只支持点选，不支持拖动。
@@ -2367,6 +2372,8 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       mv: widget.mv,
       mvPositionMs: widget.mvPositionMs,
     );
+    // 输入框矩形回传宿主：登录页手机号/验证码框要按画出来的位置摆输入层。
+    widget.onFields?.call(frame.fields);
     // 共享滚动文字有字符槽还在 kReelDuration 内 -> 续帧；静止后停 ticker。
     // 松手惯性期间也必须续帧（同一个 ticker 兼职推进列表动量）。
     _scheduleRollingTicker(frame.animating || _scrollAnimating);

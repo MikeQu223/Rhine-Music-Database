@@ -139,6 +139,7 @@ class TextInputStageState {
     this.rhineFontFamily,
     this.formFieldRect,
     this.formFieldBackdropRect,
+    this.formCaptchaRect,
     this.formSubmitRect,
     this.formInitialText,
     this.formIdentity,
@@ -176,6 +177,7 @@ class TextInputStageState {
     this.rhineFontFamily,
     this.formFieldRect,
     this.formFieldBackdropRect,
+    this.formCaptchaRect,
     this.formSubmitRect,
     this.formInitialText,
     this.formIdentity,
@@ -261,6 +263,10 @@ class TextInputStageState {
   /// 非 null 时只覆盖 formFields 的 account 字段几何；可见性、键盘类型、maxLength、
   /// 提交语义仍走本类既有分支。默认 null 保持 Overlay.qml:387-390 的登录几何不变。
   final Rect? formFieldRect;
+
+  /// 竖屏登录页画出来的验证码框（舞台单位）。非空时输入层贴在它上面，
+  /// 否则按 QML 的 `Overlay.qml:447-450` 常量摆（横屏版式）。
+  final Rect? formCaptchaRect;
 
   /// 可选：playlist-form 的字段背景矩形（stage 单位）。null 时回落到 [formFieldRect]
   /// 或既有登录背景几何，避免调用方只给文字框时画出错位的背景。
@@ -724,12 +730,14 @@ class TextInputOverlayLogic {
       // Overlay.qml:456
       enabled: !state.loginBusy,
       // Overlay.qml:447-450
-      rect: Rect.fromLTWH(
-        ((state.inputX ?? 0) + 14) * s,
-        (state.modalOffset + 541) * s,
-        math.max(0.0, formWidth - 28 * s),
-        55 * s,
-      ),
+      rect: state.formCaptchaRect != null
+          ? _scaledRect(state.formCaptchaRect!, s)
+          : Rect.fromLTWH(
+              ((state.inputX ?? 0) + 14) * s,
+              (state.modalOffset + 541) * s,
+              math.max(0.0, formWidth - 28 * s),
+              55 * s,
+            ),
       // Overlay.qml:453
       fontSize: 19 * s,
       fontFamily: null,

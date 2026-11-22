@@ -695,6 +695,9 @@ class _BasicShellState extends State<_BasicShell>
   /// 键盘路径不经过 surface 的命中分发，所以由宿主在这里翻。
   bool _trackListMode = true;
 
+  /// 上一帧 HUD 画出来的输入框矩形（舞台单位）。
+  Map<String, Rect> _frameFields = const <String, Rect>{};
+
   /// 输入层的状态句柄：HUD 点中输入框时用它把焦点交给对应文本域。
   final GlobalKey<TextInputOverlayState> _textInputKey = GlobalKey<TextInputOverlayState>();
 
@@ -1862,6 +1865,7 @@ class _BasicShellState extends State<_BasicShell>
       ports: widget.resources.ports,
       onAction: _onAction,
       onFieldTap: _onFieldTap,
+      onFields: (Map<String, Rect> fields) => _frameFields = fields,
       trackListMode: _trackListMode,
       onTrackListModeChanged: (bool value) {
         if (!mounted) return;
@@ -3620,6 +3624,10 @@ class _BasicShellState extends State<_BasicShell>
         inputWidth: rect.width,
         inputHeight: portrait ? 44.0 * compactUnit : null,
         inputFontSize: portrait ? 14.0 * compactUnit : null,
+        // 竖屏登录页的短信两栏：按 HUD 画出来的矩形摆输入层，否则输入层用
+        // 横屏 QML 常量（Overlay.qml:387-390 / 447-450），竖屏里根本看不见。
+        formFieldRect: portrait && _modal == 'login' ? _frameFields['account'] : null,
+        formCaptchaRect: portrait && _modal == 'login' ? _frameFields['captcha'] : null,
         // 本预览不播 Qt 的 0.3s 淡入 / 0.2s 淡出（Qt/src/UiMotion.cpp:101-120，
         // SurfaceMotion::set：shown duration 0.3 :112、hidden 0.2 :114，reduced 时
         // duration 0 瞬变）：打开即全不透明，关闭即不可见，属明示的未实现动画。
