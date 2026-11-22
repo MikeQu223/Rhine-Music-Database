@@ -354,6 +354,10 @@ if(NOT RHINE_MOBILE_PLATFORM)
     set(RHINE_SYSTEM_CORE RhinePlaybackCore)
 endif()
 add_library(RhineCore STATIC ${RHINE_CORE_SOURCES})
+if(APPLE AND NOT IOS)
+    target_sources(RhineCore PRIVATE Qt/src/MacMenuBar.cpp Qt/src/MacMenuBar.h
+                                     Qt/src/MacMenuBarSettings.h Qt/src/NativeHudMenuBarLyrics.cpp)
+endif()
 target_include_directories(
     RhineCore
     PUBLIC Qt/src
@@ -652,7 +656,7 @@ if(APPLE)
                 Qt/src/render/MetalTemporalResolve.cpp Qt/src/render/MetalTemporalResolve.h
                 Qt/src/render/FrameGenerator.h Qt/src/render/SceneResources.h)
     if(NOT IOS)
-        target_sources(RhineMusicDatabase PRIVATE Qt/src/MacMenuBar.cpp Qt/src/MacMenuBar.h Qt/src/MacMenuBar.mm)
+        target_sources(RhineMusicDatabase PRIVATE Qt/src/MacMenuBar.mm)
     endif()
     target_link_libraries(RhineMusicDatabase PRIVATE "-framework Metal")
     if(NOT IOS)

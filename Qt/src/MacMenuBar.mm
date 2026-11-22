@@ -1,13 +1,12 @@
 #include "MacMenuBar.h"
 #include "Engine.h"
+#include "MacMenuBarSettings.h"
 #import <AppKit/AppKit.h>
 #include <QFile>
-#include <QGuiApplication>
 #include <algorithm>
 #include <cmath>
 
 namespace {
-constexpr CGFloat LyricMaximumWidth = 200;
 constexpr CGFloat LyricScrollSpeed = 36;
 constexpr NSTimeInterval LyricScrollHold = 1.4;
 
@@ -159,14 +158,9 @@ NSImage *rhineMenuBarIcon() {
     }
 }
 
-- (void)viewWillMoveToWindow:(NSWindow *)window {
-    [super viewWillMoveToWindow:window];
-    if (window) {
-        [self restartAnimation];
-    } else {
-        [_timer invalidate];
-        _timer = nil;
-    }
+- (void)viewDidMoveToWindow {
+    [super viewDidMoveToWindow];
+    [self restartAnimation];
 }
 
 - (void)drawRect:(NSRect)dirtyRect {
@@ -191,8 +185,6 @@ NSImage *rhineMenuBarIcon() {
 @end
 
 @interface RhineMacMenuBarButton : NSButton {
-  @public
-    MacMenuBarController *_controller;
     NSTrackingArea *_trackingArea;
     BOOL _hovered;
     BOOL _pressed;
@@ -231,10 +223,14 @@ NSImage *rhineMenuBarIcon() {
     [self updateFeedback];
 }
 
-- (void)mouseDown:(NSEvent *)event {
+- (void)performClick:(id)sender {
+    if (!self.enabled) {
+        return;
+    }
+
     _pressed = YES;
     [self updateFeedback];
-    [super mouseDown:event];
+    [super performClick:sender];
     _pressed = NO;
     [self updateFeedback];
 }
@@ -248,18 +244,12 @@ NSImage *rhineMenuBarIcon() {
     [super viewDidChangeEffectiveAppearance];
     [self updateFeedback];
 }
-
-- (void)rightMouseDown:(NSEvent *)event {
-    Q_UNUSED(event)
-    if (_controller) {
-        _controller->showContextMenu();
-    }
-}
 @end
 
 @interface RhineMacMenuBarView : NSView {
     MacMenuBarController *_controller;
     NSArray<NSString *> *_items;
+    CGFloat _lyricWidth;
     RhineMacMarqueeTextView *_lyrics;
     NSView *_controls;
     RhineMacMenuBarButton *_previous;
@@ -270,8 +260,11 @@ NSImage *rhineMenuBarIcon() {
     NSString *_playSymbol;
     NSString *_favoriteSymbol;
 }
-- (instancetype)initWithController:(MacMenuBarController *)controller items:(NSArray<NSString *> *)items;
+- (instancetype)initWithController:(MacMenuBarController *)controller;
+- (BOOL)updateItems:(NSArray<NSString *> *)items lyricWidth:(CGFloat)lyricWidth;
 - (CGFloat)desiredWidth;
+- (void)statusItemClicked:(NSStatusBarButton *)sender;
+- (void)performClickAtPoint:(NSPoint)point;
 - (void)updateLyrics:(NSString *)lyrics
              playing:(BOOL)playing
              loading:(BOOL)loading
@@ -288,7 +281,6 @@ NSImage *rhineMenuBarIcon() {
                                      action:(SEL)action
                                     toolTip:(NSString *)toolTip {
     auto *button = [[RhineMacMenuBarButton alloc] initWithFrame:NSMakeRect(0, 0, 24, 22)];
-    button->_controller = _controller;
     button.bordered = NO;
     button.wantsLayer = YES;
     button.layer.cornerRadius = 5;
@@ -307,13 +299,12 @@ NSImage *rhineMenuBarIcon() {
     return button;
 }
 
-- (instancetype)initWithController:(MacMenuBarController *)controller items:(NSArray<NSString *> *)items {
+- (instancetype)initWithController:(MacMenuBarController *)controller {
     self = [super initWithFrame:NSZeroRect];
     if (!self) {
         return nil;
     }
     _controller = controller;
-    _items = [items copy];
 
     _lyrics = [[RhineMacMarqueeTextView alloc] initWithFrame:NSZeroRect];
     [self addSubview:_lyrics];
@@ -339,9 +330,21 @@ NSImage *rhineMenuBarIcon() {
     return self;
 }
 
+- (BOOL)updateItems:(NSArray<NSString *> *)items lyricWidth:(CGFloat)lyricWidth {
+    if ([_items isEqualToArray:items] && _lyricWidth == lyricWidth) {
+        return NO;
+    }
+
+    _items = [items copy];
+    _lyricWidth = lyricWidth;
+    [self invalidateIntrinsicContentSize];
+    self.needsLayout = YES;
+    return YES;
+}
+
 - (CGFloat)widthForItem:(NSString *)item {
     if ([item isEqualToString:@"lyrics"]) {
-        return LyricMaximumWidth;
+        return _lyricWidth;
     }
     if ([item isEqualToString:@"controls"]) {
         return 78;
@@ -382,9 +385,11 @@ NSImage *rhineMenuBarIcon() {
 
 - (void)layout {
     [super layout];
-    const auto allViews = @[ _lyrics, _controls, _favorite, _icon ];
-    for (NSView *view in allViews) {
-        view.hidden = YES;
+    const auto allItems = @[ @"lyrics", @"controls", @"favorite", @"icon" ];
+    for (NSString *item in allItems) {
+        if (![_items containsObject:item]) {
+            [self viewForItem:item].hidden = YES;
+        }
     }
     CGFloat x = 6;
     const CGFloat height = self.bounds.size.height;
@@ -457,14 +462,50 @@ NSImage *rhineMenuBarIcon() {
     _controller->toggleFavorite();
 }
 
-- (void)mouseDown:(NSEvent *)event {
-    Q_UNUSED(event)
-    _controller->activate();
+- (NSView *)hitTest:(NSPoint)point {
+    Q_UNUSED(point)
+    // 整个状态项由系统按钮接收点击，子控件仍保留各自的无障碍动作。
+    return nil;
 }
 
-- (void)rightMouseDown:(NSEvent *)event {
-    Q_UNUSED(event)
-    _controller->showContextMenu();
+- (void)statusItemClicked:(NSStatusBarButton *)sender {
+    const auto event = NSApp.currentEvent;
+    const bool isLeftClick = event.type == NSEventTypeLeftMouseDown || event.type == NSEventTypeLeftMouseUp;
+    const bool isControlClick = isLeftClick && (event.modifierFlags & NSEventModifierFlagControl);
+    if (event.type == NSEventTypeRightMouseDown || event.type == NSEventTypeRightMouseUp || isControlClick) {
+        _controller->showContextMenu();
+        return;
+    }
+
+    if (event.type == NSEventTypeKeyDown || event.type == NSEventTypeKeyUp) {
+        // 键盘激活整个状态项时，打开主窗口。
+        _controller->activate();
+        return;
+    }
+
+    // macOS 27 转发的状态项事件可能带有错误的窗口内坐标。
+    const auto window = sender.window;
+    if (window) {
+        [self layoutSubtreeIfNeeded];
+        const auto windowPoint = [window convertPointFromScreen:NSEvent.mouseLocation];
+        [self performClickAtPoint:[self convertPoint:windowPoint fromView:nil]];
+    }
+}
+
+- (void)performClickAtPoint:(NSPoint)point {
+    if (!NSPointInRect(point, self.bounds)) {
+        return;
+    }
+    for (RhineMacMenuBarButton *button in @[_previous, _play, _next, _favorite, _icon]) {
+        if (!button.isHiddenOrHasHiddenAncestor &&
+            NSPointInRect([button convertPoint:point fromView:self], button.bounds)) {
+            [button performClick:self];
+            return;
+        }
+    }
+    if (!_lyrics.hidden && NSPointInRect(point, _lyrics.frame)) {
+        _controller->activate();
+    }
 }
 @end
 
@@ -476,30 +517,25 @@ struct MacMenuBarController::Impl {
 MacMenuBarController::MacMenuBarController(Engine *engine, Action activate, Action contextMenu,
                                            QObject *parent)
     : QObject(parent), m_engine(engine), m_activate(std::move(activate)),
-      m_contextMenu(std::move(contextMenu)),
-      m_layout(MacMenuBar::parseLayout(engine->host.preference(MacMenuBar::LayoutPreference))),
-      m_impl(new Impl) {
+      m_contextMenu(std::move(contextMenu)), m_impl(new Impl) {
     auto &player = m_engine->player();
     connect(&player, &MusicPlayer::changed, this, [this] { refresh(); });
     connect(&player.lyrics, &LyricsController::changed, this, [this] { refresh(); });
     connect(&m_engine->app->music, &MusicLibrary::invalidated, this, [this] { refresh(); });
     connect(&m_engine->host, &Host::preferenceChanged, this, [this](const QString &key, const QString &) {
-        if (key != QLatin1String(MacMenuBar::LayoutPreference)) {
-            return;
-        }
-        const auto layout = MacMenuBar::parseLayout(m_engine->host.preference(MacMenuBar::LayoutPreference));
-        if (layout != m_layout) {
-            m_layout = layout;
-            rebuild();
+        if (key == QLatin1String(MacMenuBar::LayoutPreference) ||
+            key == QLatin1String(MacMenuBar::EnabledPreference) ||
+            key == QLatin1String(MacMenuBar::ControlsPreference) ||
+            key == QLatin1String(MacMenuBar::IconPreference) ||
+            key == QLatin1String(MacMenuBar::WidthPreference)) {
+            applyPreferences();
         }
     });
-    rebuild();
+    applyPreferences();
 }
 
 MacMenuBarController::~MacMenuBarController() {
-    if (m_impl->statusItem) {
-        [NSStatusBar.systemStatusBar removeStatusItem:m_impl->statusItem];
-    }
+    removeStatusItem();
     delete m_impl;
 }
 
@@ -507,31 +543,56 @@ bool MacMenuBarController::available() const {
     return m_impl->statusItem != nil;
 }
 
-void MacMenuBarController::rebuild() {
+void MacMenuBarController::removeStatusItem() {
     if (m_impl->statusItem) {
         [NSStatusBar.systemStatusBar removeStatusItem:m_impl->statusItem];
-        m_impl->statusItem = nil;
-        m_impl->view = nil;
     }
-    if (m_layout.isEmpty()) {
+    [m_impl->view removeFromSuperview];
+    m_impl->view = nil;
+    m_impl->statusItem = nil;
+}
+
+/** 实时调整原生状态项的布局和宽度，已有状态项在设置变动时保留原来的系统菜单栏位置。 */
+void MacMenuBarController::applyPreferences() {
+    const auto &host = m_engine->host;
+    const auto storedLayout = MacMenuBar::parseLayout(host.preference(MacMenuBar::LayoutPreference));
+    const bool enabled = MacMenuBar::isEnabled(host.preference(MacMenuBar::EnabledPreference));
+    const auto layout = MacMenuBar::effectiveLayout(storedLayout, enabled,
+                                                    host.preference(MacMenuBar::ControlsPreference),
+                                                    host.preference(MacMenuBar::IconPreference));
+    if (layout.isEmpty()) {
+        removeStatusItem();
         return;
     }
-    NSMutableArray<NSString *> *items = [NSMutableArray arrayWithCapacity:m_layout.size()];
-    for (const auto item : m_layout) {
+
+    NSMutableArray<NSString *> *items = [NSMutableArray arrayWithCapacity:layout.size()];
+    for (const auto item : layout) {
         [items addObject:componentName(item)];
     }
-    m_impl->view = [[RhineMacMenuBarView alloc] initWithController:this items:items];
-    m_impl->statusItem = [NSStatusBar.systemStatusBar statusItemWithLength:[m_impl->view desiredWidth]];
-    NSStatusBarButton *button = m_impl->statusItem.button;
-    [button addSubview:m_impl->view];
-    button.accessibilityLabel = @"RHINE MUSIC DATABASE";
+
+    if (!m_impl->view) {
+        m_impl->view = [[RhineMacMenuBarView alloc] initWithController:this];
+    }
+    const auto lyricWidth = MacMenuBar::parseLyricWidth(host.preference(MacMenuBar::WidthPreference));
+    if (![m_impl->view updateItems:items lyricWidth:lyricWidth]) {
+        return;
+    }
+
     const auto width = [m_impl->view desiredWidth];
-    m_impl->statusItem.length = width;
+    if (!m_impl->statusItem) {
+        m_impl->statusItem = [NSStatusBar.systemStatusBar statusItemWithLength:width];
+        NSStatusBarButton *button = m_impl->statusItem.button;
+        [button addSubview:m_impl->view];
+        button.target = m_impl->view;
+        button.action = @selector(statusItemClicked:);
+        [button sendActionOn:NSEventMaskLeftMouseDown | NSEventMaskRightMouseDown];
+        button.accessibilityLabel = @"RHINE MUSIC DATABASE";
+    } else if (m_impl->statusItem.length != width) {
+        m_impl->statusItem.length = width;
+    }
     m_impl->view.frame = NSMakeRect(0, 0, width, NSStatusBar.systemStatusBar.thickness);
+    [m_impl->view layoutSubtreeIfNeeded];
     refresh();
-    m_impl->statusItem.length = [m_impl->view desiredWidth];
-    m_impl->view.frame = NSMakeRect(0, 0, m_impl->statusItem.length, NSStatusBar.systemStatusBar.thickness);
-    m_impl->view.needsLayout = YES;
 }
 
 void MacMenuBarController::refresh() {
@@ -575,11 +636,6 @@ void MacMenuBarController::refresh() {
                          liked:liked.value_or(false)
                        toolTip:toolTip.toNSString()];
     m_impl->statusItem.button.toolTip = toolTip.toNSString();
-    const auto width = [m_impl->view desiredWidth];
-    if (std::abs(m_impl->statusItem.length - width) > 0.5) {
-        m_impl->statusItem.length = width;
-        m_impl->view.frame = NSMakeRect(0, 0, width, NSStatusBar.systemStatusBar.thickness);
-    }
 }
 
 void MacMenuBarController::activate() {

@@ -6,6 +6,9 @@
 #include "AppUpdater.h"
 #include "DesktopLyricsAppearance.h"
 #include "Host.h"
+#ifdef Q_OS_MACOS
+#include "MacMenuBarSettings.h"
+#endif
 #include "MusicLibrary.h"
 #include "ProviderRegistry.h"
 #include "MusicPlayer.h"
@@ -641,6 +644,12 @@ void NativeHud::restoreSettingsDefaults() {
         DesktopLyrics::resetAppearance(m_host);
         desktopLyricsAppearanceLoaded = false;
     }
+#ifdef Q_OS_MACOS
+    m_host->setPreference(MacMenuBar::EnabledPreference, {});
+    m_host->setPreference(MacMenuBar::ControlsPreference, {});
+    m_host->setPreference(MacMenuBar::IconPreference, {});
+    m_host->setPreference(MacMenuBar::WidthPreference, {});
+#endif
     settingsScroll = 0;
     refreshSettingsLayout();
     m_music->status = QStringLiteral("已恢复默认设置");

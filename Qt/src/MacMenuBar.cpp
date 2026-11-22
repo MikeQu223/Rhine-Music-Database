@@ -60,6 +60,42 @@ Layout parseLayout(const QString &preference) {
     return layout;
 }
 
+Layout effectiveLayout(Layout layout, bool enabled, const QString &controlsPreference,
+                       const QString &iconPreference) {
+    if (layout.isEmpty()) {
+        return layout;
+    }
+    if (!enabled) {
+        layout = {Component::Icon};
+    } else if (controlsPreference == QLatin1String("off")) {
+        layout.removeAll(Component::Controls);
+        layout.removeAll(Component::Favorite);
+    } else if (controlsPreference == QLatin1String("on")) {
+        // 恢复缺少的控件时保留自定义布局已有组件的顺序。
+        if (!layout.contains(Component::Controls)) {
+            const auto lyricsIndex = layout.indexOf(Component::Lyrics);
+            const auto iconIndex = layout.indexOf(Component::Icon);
+            if (lyricsIndex >= 0) {
+                layout.insert(lyricsIndex + 1, Component::Controls);
+            } else if (iconIndex >= 0) {
+                layout.insert(iconIndex, Component::Controls);
+            } else {
+                layout.append(Component::Controls);
+            }
+        }
+        if (!layout.contains(Component::Favorite)) {
+            layout.insert(layout.indexOf(Component::Controls) + 1, Component::Favorite);
+        }
+    }
+
+    if (iconPreference == QLatin1String("off")) {
+        layout.removeAll(Component::Icon);
+    } else if (iconPreference == QLatin1String("on") && !layout.contains(Component::Icon)) {
+        layout.append(Component::Icon);
+    }
+    return layout;
+}
+
 QString serializeLayout(const Layout &layout) {
     QJsonArray values;
     for (const auto item : layout) {

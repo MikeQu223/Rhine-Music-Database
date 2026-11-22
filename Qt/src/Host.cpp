@@ -6,6 +6,9 @@
 #include "ProviderRegistry.h"
 #include "PluginInstaller.h"
 #include "AppStorage.h"
+#ifdef Q_OS_MACOS
+#include "MacMenuBarSettings.h"
+#endif
 #include <QBuffer>
 #include <QClipboard>
 #include <QCryptographicHash>
@@ -1929,6 +1932,8 @@ const QStringList &preferenceKeys() {
         "desktop-lyrics-line-outline-color", "desktop-lyrics-translation-outline-color",
 #if defined(Q_OS_MACOS)
         "menu-bar-layout",
+        MacMenuBar::EnabledPreference, MacMenuBar::ControlsPreference, MacMenuBar::IconPreference,
+        MacMenuBar::WidthPreference,
 #endif
     };
     return keys;

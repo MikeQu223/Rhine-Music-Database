@@ -425,6 +425,10 @@ class NativeHud : public QObject {
     void refreshDesktopLyricsAppearance();
     void desktopLyricsPanel(double x, double y, double width);
     void applyDesktopLyricsAction(const QString &value);
+#ifdef Q_OS_MACOS
+    void menuBarLyricsPanel(double x, double y, double width);
+    void applyMenuBarLyricsAction(const QString &value);
+#endif
     void qualityPanel(double x, double y, double width);
     void qualityChoice(const QString &id, int number, double x, double y, double width, bool featured);
     void logo(double x, double y, double width);

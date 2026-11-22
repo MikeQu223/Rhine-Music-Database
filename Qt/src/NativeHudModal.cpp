@@ -10,6 +10,7 @@ QString modalTitle(const QString &modal, const MusicLibrary &music) {
     static const QHash<QString, QString> titles{{"provider", "MUSIC PLATFORM"},
                                                 {"settings", "SYSTEM SETTINGS"},
                                                 {"desktop-lyrics", "DESKTOP LYRICS"},
+                                                {"menu-bar-lyrics", "MENU BAR LYRICS"},
                                                 {"shortcuts", "GLOBAL SHORTCUTS"},
                                                 {"quality", "AUDIO QUALITY"},
                                                 {"disc-rotation-warning", "DISC ROTATION"},
@@ -35,6 +36,7 @@ QString modalSubtitle(const QString &modal, const MusicLibrary &music) {
     static const QHash<QString, QString> subtitles{{"provider", "直接选择音乐平台 / 各平台账号独立保存"},
                                                    {"settings", "终端偏好设置"},
                                                    {"desktop-lyrics", "桌面歌词 / 样式与同步"},
+                                                   {"menu-bar-lyrics", "菜单栏歌词 / 显示与布局"},
                                                    {"shortcuts", "全局快捷键 / 后台播放控制"},
                                                    {"quality", "声音档案 / 播放音质"},
                                                    {"disc-rotation-warning", "开启前请确认资源与功耗风险"},
@@ -194,6 +196,8 @@ void NativeHud::modalDraw(double width) {
         category = "SYSTEM PREFERENCES";
     } else if (modal == "desktop-lyrics") {
         category = "DESKTOP LYRICS";
+    } else if (modal == "menu-bar-lyrics") {
+        category = "MENU BAR LYRICS";
     } else if (modal == "shortcuts") {
         category = "GLOBAL SHORTCUTS";
     } else if (modal == "player") {
@@ -208,6 +212,7 @@ void NativeHud::modalDraw(double width) {
          pluginPage ? 12 : (modal == "settings" ? 14 : 11));
     button("← 返回", x + usable - 220, y + 18, 167, 54,
            modal == "desktop-lyrics" ? "desktop-lyrics:back"
+           : modal == "menu-bar-lyrics" ? "menu-bar-lyrics:back"
            : modal == "shortcuts"    ? "shortcuts:back"
                                      : "close-modal",
            20, "demibold");
@@ -286,6 +291,10 @@ void NativeHud::modalBody(double x, double y, double usable) {
         settingsPanel(x, y, usable);
     } else if (modal == "desktop-lyrics") {
         desktopLyricsPanel(x, y, usable);
+#ifdef Q_OS_MACOS
+    } else if (modal == "menu-bar-lyrics") {
+        menuBarLyricsPanel(x, y, usable);
+#endif
     } else if (modal == "shortcuts") {
         shortcutsPanel(x, y, usable);
     } else if (modal == "login") {
