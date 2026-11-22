@@ -2621,6 +2621,7 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
           geometry,
           frame,
           portrait ? geometry.toLogical(details.localPosition) : details.localPosition,
+          portrait: portrait,
         ),
         child: RawGestureDetector(
           behavior: HitTestBehavior.opaque,
@@ -2922,7 +2923,51 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
     );
   }
 
-  void _dispatch(StageGeometry geometry, BasicHudFrame frame, Offset logical) {
+  /// 横屏播放条「歌词 / 点击进入详情」的兜底（见 [BasicHudFrame] 调用点注释）。
+  ///
+  /// 宿主已支持的动作：`player:lyrics`（打开歌词页）、`player:lyrics-follow`
+  /// （回到当前句）、`music:index:%3Ci%3E`（只选中当前行并进详情）。这里不改动作词表、
+  /// 不自己开页面，只保证每一次点击都有宿主认得的落点。
+  void _dispatchLandscapeLyrics() {
+    final BasicViewState state = widget.state;
+    if (state.phase == BasicPhase.lyrics) {
+      // 已经在歌词页：相位没有再可切的，改发「回到当前句」，点下去看得见滚动。
+      widget.onAction('player:lyrics-follow');
+      return;
+    }
+    if (state.song == null) {
+      final int row = _playingRowIndex(state);
+      if (row >= 0) {
+        // `music:index:<i>` 是宿主的"只选中 + 进详情"（basic_app `_selectAt` →
+        // `controller.selectLibraryRow`，整条路径同步，返回时 `_song` 已写好），
+        // 所以同一帧里随后发 `player:lyrics` 不会再被 `_song == null` 挡掉。
+        widget.onAction('music:index:$row');
+      }
+    }
+    widget.onAction('player:lyrics');
+  }
+
+  /// 在播曲目在当前可见列表里的行下标（落不到就 -1：远端检索行不在本地 lane 里）。
+  int _playingRowIndex(BasicViewState state) {
+    final SirenSong? track = state.playingTrack;
+    if (track == null) {
+      return -1;
+    }
+    final List<BasicListItem> items = basicLibraryItems(state);
+    for (int index = 0; index < items.length; index++) {
+      if (items[index].kind == 'song' && items[index].id == track.id) {
+        return index;
+      }
+    }
+    return -1;
+  }
+
+  void _dispatch(
+    StageGeometry geometry,
+    BasicHudFrame frame,
+    Offset logical, {
+    required bool portrait,
+  }) {
     final HitLayer layer = HitLayer(
       geometry: geometry,
       android: defaultTargetPlatform == TargetPlatform.android,
@@ -2948,6 +2993,24 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
     // 否则宿主没有这个动作的处理器，Tab 键/按钮就是空点。
     if (hit.action == 'archive:tab-mode') {
       _toggleTrackListMode();
+      return;
+    }
+    // 横屏播放条的「歌词」与「点击进入详情」两个热区都发 `player:lyrics`
+    // （Qt `PlayerBar.cpp:167-169` 的歌名区命中与 `:201-206` 的词键，
+    // Qt 桌面端没有 `player:detail`——那个动作只在竖屏 `ResponsiveHudLayout.cpp:340`），
+    // 所以要修的不是动作串，而是宿主 `openLyrics` 的两个**静默前提**：
+    //   1. controller 必须有当前曲目（`siren_controller.dart:1948` `_song == null` 直接
+    //      返回）。横屏在资料库里把选中行落到专辑/文件夹列时 controller 会清掉 `_song`
+    //      （`siren_controller.dart:1916`），纵使还有曲目在播，点歌词也是空点；
+    //   2. 相位已经是歌词页时 `openLyrics` 同样什么都不做，再点一次没有任何反馈。
+    // 这里补 HUD 侧的兜底，只用宿主已支持的动作：
+    //   * `_song` 为空时先把在播曲目落成当前行（`music:index:i` = 只选中 + 进详情，
+    //     宿主 `_selectAt` → `controller.selectLibraryRow` 同步写完状态），
+    //     紧随其后的 `player:lyrics` 就一定能拿到曲目；
+    //   * 已经在歌词页时改发 `player:lyrics-follow`（Qt 歌词面板的「回到当前句」），
+    //     让这一下点击有看得见的结果（列表滚回当前句）。
+    if (!portrait && hit.action == 'player:lyrics') {
+      _dispatchLandscapeLyrics();
       return;
     }
     final bool seek = hit.action.startsWith('player:seek-fraction:');

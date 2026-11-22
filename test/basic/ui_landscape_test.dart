@@ -184,4 +184,106 @@ void main() {
       expect(fraction, lessThan(0.6));
     });
   });
+
+  group('landscape player bar lyrics keys', () {
+    /// 播放条上的「词」键（Qt `PlayerBar.cpp:201-206`）与歌名区（`:167-169`）
+    /// 都发 `player:lyrics`；两者在横屏必须都点得动。
+    testWidgets('词键在没选中曲目时先把在播曲目落成当前行，再开歌词页',
+        (WidgetTester tester) async {
+      tester.view.physicalSize = const Size(1920, 1080);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      // 横屏浏览资料库时选中行可能落在专辑列上，controller 会把 `_song` 清空；
+      // 这时 `player:lyrics` 会被 `openLyrics()` 的 `_song == null` 静默挡掉。
+      final SirenSong playing = _song('s2', '第二首');
+      final BasicViewState state = _library().copyWith(
+        playingTrack: playing,
+        playing: true,
+        queue: <SirenSong>[playing],
+        queueIndex: 0,
+        durationMs: 180000,
+      );
+      final int row = basicLibraryItems(state)
+          .indexWhere((BasicListItem item) => item.kind == 'song' && item.id == 's2');
+      expect(row, isNonNegative);
+
+      final BasicHudFrame frame = BasicHudFrame.build(
+        state: state,
+        ports: _ports(),
+        width: 1920,
+        height: 1080,
+        portrait: false,
+      );
+      final HudHit key = frame.hits.firstWhere(
+        (HudHit hit) => hit.action == 'player:lyrics' && hit.width < 100,
+      );
+      final List<String> actions = <String>[];
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          backgroundColor: Colors.black,
+          body: BasicHudSurface(
+            state: state,
+            ports: _ports(),
+            onAction: actions.add,
+            geometry: const StageGeometry(logicalWidth: 1920.0, logicalHeight: 1080.0),
+            stage: const HudStage(scale: 1.0, width: 1920.0, height: 1080.0),
+          ),
+        ),
+      ));
+      await tester.pump();
+
+      await tester.tapAt(Offset(key.x + key.width / 2, key.y + key.height / 2));
+      await tester.pump();
+      expect(actions, equals(<String>['music:index:$row', 'player:lyrics']));
+    });
+
+    testWidgets('已在歌词页时再点词键发出「回到当前句」', (WidgetTester tester) async {
+      tester.view.physicalSize = const Size(1920, 1080);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final SirenSong current = _song('s1', '第一首');
+      final BasicViewState state = _library().copyWith(
+        phase: BasicPhase.lyrics,
+        song: current,
+        playingTrack: current,
+        playing: true,
+        queue: <SirenSong>[current],
+        queueIndex: 0,
+        durationMs: 180000,
+        positionMs: 30000,
+      );
+      final BasicHudFrame frame = BasicHudFrame.build(
+        state: state,
+        ports: _ports(),
+        width: 1920,
+        height: 1080,
+        portrait: false,
+      );
+      final HudHit key = frame.hits.firstWhere(
+        (HudHit hit) => hit.action == 'player:lyrics' && hit.width < 100,
+      );
+      final List<String> actions = <String>[];
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          backgroundColor: Colors.black,
+          body: BasicHudSurface(
+            state: state,
+            ports: _ports(),
+            onAction: actions.add,
+            geometry: const StageGeometry(logicalWidth: 1920.0, logicalHeight: 1080.0),
+            stage: const HudStage(scale: 1.0, width: 1920.0, height: 1080.0),
+          ),
+        ),
+      ));
+      await tester.pump();
+
+      await tester.tapAt(Offset(key.x + key.width / 2, key.y + key.height / 2));
+      await tester.pump();
+      expect(actions, equals(<String>['player:lyrics-follow']));
+    });
+  });
 }
