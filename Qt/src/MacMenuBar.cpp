@@ -104,12 +104,19 @@ QString serializeLayout(const Layout &layout) {
     return QString::fromUtf8(QJsonDocument(values).toJson(QJsonDocument::Compact));
 }
 
-QString lyricText(const QJsonObject &document, int index) {
+QString lyricText(const QJsonObject &document, int index, bool useTranslation) {
     const auto lines = document["lines"].toArray();
     if (index < 0 || index >= lines.size()) {
         return {};
     }
-    const auto text = lines.at(index).toObject()["text"].toString().trimmed();
+    const auto line = lines.at(index).toObject();
+    if (useTranslation) {
+        const auto translation = line["translation"].toString().trimmed();
+        if (!translation.isEmpty()) {
+            return translation;
+        }
+    }
+    const auto text = line["text"].toString().trimmed();
     return text.isEmpty() ? QStringLiteral("•••") : text;
 }
 }

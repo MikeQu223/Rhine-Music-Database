@@ -1,4 +1,5 @@
 #include "MacMenuBar.h"
+#include "MacMenuBarSettings.h"
 #include <QDebug>
 #include <QJsonArray>
 
@@ -37,11 +38,22 @@ int main() {
            "Non-string components must use defaults");
 
     const QJsonObject document{
-        {"lines", QJsonArray{QJsonObject{{"text", " 第一句 "}}, QJsonObject{{"text", "   "}}}}};
-    expect(MacMenuBar::lyricText(document, 0) == QStringLiteral("第一句"), "Current lyric text");
-    expect(MacMenuBar::lyricText(document, 1) == QStringLiteral("•••"), "Instrumental lyric placeholder");
-    expect(MacMenuBar::lyricText(document, -1).isEmpty(), "No active lyric before the first line");
-    expect(MacMenuBar::lyricText(document, 2).isEmpty(), "No active lyric after the document");
+        {"lines", QJsonArray{QJsonObject{{"text", " 第一句 "}, {"translation", " 第一句译文 "}},
+                             QJsonObject{{"text", "第二句"}, {"translation", "   "}},
+                             QJsonObject{{"text", "   "}}}}};
+    expect(MacMenuBar::lyricText(document, 0, false) == QStringLiteral("第一句"), "Current lyric text");
+    expect(MacMenuBar::lyricText(document, 0, true) == QStringLiteral("第一句译文"),
+           "Current translated lyric text");
+    expect(MacMenuBar::lyricText(document, 1, true) == QStringLiteral("第二句"),
+           "Missing translation must fall back to the original lyric");
+    expect(MacMenuBar::lyricText(document, 2, false) == QStringLiteral("•••"),
+           "Instrumental lyric placeholder");
+    expect(MacMenuBar::lyricText(document, -1, true).isEmpty(), "No active lyric before the first line");
+    expect(MacMenuBar::lyricText(document, 3, true).isEmpty(), "No active lyric after the document");
+    expect(!MacMenuBar::usesTranslation({}), "Original lyrics are the default");
+    expect(MacMenuBar::usesTranslation(QStringLiteral("on")), "Explicit translation preference");
+    expect(!MacMenuBar::usesTranslation(QStringLiteral("off")), "Explicit original preference");
+    expect(!MacMenuBar::usesTranslation(QStringLiteral("invalid")), "Invalid preference must use originals");
 
     if (ok) {
         qInfo() << "macOS menu-bar layout and lyric regressions passed";

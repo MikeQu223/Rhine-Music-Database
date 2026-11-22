@@ -7,6 +7,7 @@ inline constexpr auto EnabledPreference = "menu-bar-lyrics-enabled";
 inline constexpr auto ControlsPreference = "menu-bar-lyrics-controls";
 inline constexpr auto IconPreference = "menu-bar-lyrics-icon";
 inline constexpr auto WidthPreference = "menu-bar-lyrics-width";
+inline constexpr auto TranslationPreference = "menu-bar-lyrics-translation";
 
 // 菜单栏歌词的可见宽度以 macOS 逻辑点计。
 inline constexpr int DefaultLyricWidth = 200;
@@ -16,6 +17,10 @@ inline constexpr int LyricWidthStep = 10;
 
 inline bool isEnabled(const QString &preference) {
     return preference != QLatin1String("off");
+}
+
+inline bool usesTranslation(const QString &preference) {
+    return preference == QLatin1String("on");
 }
 
 inline int parseLyricWidth(const QString &preference) {

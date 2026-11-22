@@ -218,6 +218,7 @@ bool runNativeHostChecks(const QString &root) {
     ProviderRegistry::instance().load(root);
 #ifdef Q_OS_MACOS
     ok &= Host::isPreferenceKey("menu-bar-layout");
+    ok &= Host::isPreferenceKey("menu-bar-lyrics-translation");
 #endif
 
     // 插件市场：本地 file:// 索引、下载、安装与启用/禁用。

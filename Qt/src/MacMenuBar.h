@@ -16,7 +16,7 @@ Layout parseLayout(const QString &preference);
 Layout effectiveLayout(Layout layout, bool enabled, const QString &controlsPreference,
                        const QString &iconPreference);
 QString serializeLayout(const Layout &layout);
-QString lyricText(const QJsonObject &document, int index);
+QString lyricText(const QJsonObject &document, int index, bool useTranslation);
 }
 
 class Engine;

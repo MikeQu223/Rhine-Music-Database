@@ -1933,7 +1933,7 @@ const QStringList &preferenceKeys() {
 #if defined(Q_OS_MACOS)
         "menu-bar-layout",
         MacMenuBar::EnabledPreference, MacMenuBar::ControlsPreference, MacMenuBar::IconPreference,
-        MacMenuBar::WidthPreference,
+        MacMenuBar::WidthPreference, MacMenuBar::TranslationPreference,
 #endif
     };
     return keys;

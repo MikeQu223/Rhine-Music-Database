@@ -549,6 +549,8 @@ MacMenuBarController::MacMenuBarController(Engine *engine, Action activate, Acti
             key == QLatin1String(MacMenuBar::IconPreference) ||
             key == QLatin1String(MacMenuBar::WidthPreference)) {
             applyPreferences();
+        } else if (key == QLatin1String(MacMenuBar::TranslationPreference)) {
+            scheduleRefresh();
         }
     });
     applyPreferences();
@@ -658,7 +660,9 @@ void MacMenuBarController::refresh() {
         m_impl->favoriteInitialized = true;
     }
 
-    auto text = MacMenuBar::lyricText(player.lyrics.document(), player.lyrics.index);
+    const bool useTranslation = MacMenuBar::usesTranslation(
+        m_engine->host.preference(MacMenuBar::TranslationPreference));
+    auto text = MacMenuBar::lyricText(player.lyrics.document(), player.lyrics.index, useTranslation);
     if (text.isEmpty()) {
         text = track["title"].toString().trimmed();
     }

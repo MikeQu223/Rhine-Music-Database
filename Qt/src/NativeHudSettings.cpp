@@ -649,6 +649,7 @@ void NativeHud::restoreSettingsDefaults() {
     m_host->setPreference(MacMenuBar::ControlsPreference, {});
     m_host->setPreference(MacMenuBar::IconPreference, {});
     m_host->setPreference(MacMenuBar::WidthPreference, {});
+    m_host->setPreference(MacMenuBar::TranslationPreference, {});
 #endif
     settingsScroll = 0;
     refreshSettingsLayout();

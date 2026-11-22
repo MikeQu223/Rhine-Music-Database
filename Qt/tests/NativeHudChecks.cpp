@@ -7,6 +7,9 @@
 #include "fg/FgConfig.h"
 #include "NativeApplication.h"
 #include "NativeCards.h"
+#ifdef Q_OS_MACOS
+#include "MacMenuBarSettings.h"
+#endif
 #if RHINE_SENTRY
 #include "SentryTelemetry.h"
 #endif
@@ -2369,6 +2372,45 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
                 hud.wheel(bounds.center().x(), bounds.top() + 500, 120, -1, -10000.);
                 hud.draw(archiveFrame, 1920, 50);
             }
+
+#ifdef Q_OS_MACOS
+            {
+                const bool wasOffline = host.offline;
+                host.offline = false;
+                hud.action("menu-bar-lyrics:open");
+                hud.draw(archiveFrame, 1920, 50);
+                const auto translationOn = getHit(hud.hits, "menu-bar-lyrics:translation:on");
+                const auto translationOff = getHit(hud.hits, "menu-bar-lyrics:translation:off");
+                if (hud.modal != "menu-bar-lyrics" || translationOn.isEmpty() || translationOff.isEmpty() ||
+                    translationOn["label"].toString() != QStringLiteral("歌词显示 翻译") ||
+                    translationOff["label"].toString() != QStringLiteral("歌词显示 原文")) {
+                    qCritical() << "Menu-bar lyric translation controls are missing or mislabeled";
+                    ok = false;
+                }
+
+                hud.action("menu-bar-lyrics:translation:on");
+                if (!MacMenuBar::usesTranslation(host.preference(MacMenuBar::TranslationPreference))) {
+                    qCritical() << "Menu-bar lyric translation option was not persisted";
+                    ok = false;
+                }
+                hud.action("menu-bar-lyrics:translation:off");
+                if (MacMenuBar::usesTranslation(host.preference(MacMenuBar::TranslationPreference))) {
+                    qCritical() << "Menu-bar lyric original option was not persisted";
+                    ok = false;
+                }
+
+                host.setPreference(MacMenuBar::TranslationPreference, {});
+                hud.action("menu-bar-lyrics:back");
+                hud.draw(archiveFrame, 1920, 50);
+                const bool translationAfterReset =
+                    MacMenuBar::usesTranslation(host.preference(MacMenuBar::TranslationPreference));
+                if (hud.modal != "settings" || translationAfterReset) {
+                    qCritical() << "Menu-bar lyric settings did not restore the default original lyrics";
+                    ok = false;
+                }
+                host.offline = wasOffline;
+            }
+#endif
 
             // === 测试 3: 设置项切换功能 ===
             const bool initialStartupAnim = hud.startupAnimation;

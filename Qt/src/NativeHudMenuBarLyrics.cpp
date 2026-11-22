@@ -22,6 +22,8 @@ void NativeHud::menuBarLyricsPanel(double x, double y, double width) {
         enabled ? layout : MacMenuBar::effectiveLayout(storedLayout, false, controlsPreference, iconPreference);
     const bool showsIcon = visibleLayout.contains(MacMenuBar::Component::Icon);
     const int lyricWidth = MacMenuBar::parseLyricWidth(m_host->preference(MacMenuBar::WidthPreference));
+    const bool showsTranslation =
+        MacMenuBar::usesTranslation(m_host->preference(MacMenuBar::TranslationPreference));
 
     const double left = x + 54;
     const double right = x + width - 54;
@@ -47,13 +49,15 @@ void NativeHud::menuBarLyricsPanel(double x, double y, double width) {
         fill(left, top + RowHeight - 1, right - left, 1, line);
         top += RowStep;
     };
-    const auto segments = [&](const QRectF &control, const QString &name, const QString &title, bool isOn) {
+    const auto segments = [&](const QRectF &control, const QString &name, const QString &title, bool isOn,
+                              const QString &onLabel, const QString &offLabel, bool onLeft) {
         constexpr double gap = 6;
         const double segmentWidth = (control.width() - gap) / 2;
-        for (const bool on : {true, false}) {
+        for (const int position : {0, 1}) {
+            const bool on = onLeft ? position == 0 : position == 1;
             const double segmentX = on ? control.left() : control.left() + segmentWidth + gap;
             const QRectF rect(segmentX, control.top() + 4, segmentWidth, control.height() - 8);
-            const auto label = on ? QStringLiteral("开启") : QStringLiteral("关闭");
+            const auto label = on ? onLabel : offLabel;
             frame(rect);
             if (on == isOn) {
                 fill(rect.left(), rect.top(), 3, rect.height(), gold);
@@ -66,16 +70,25 @@ void NativeHud::menuBarLyricsPanel(double x, double y, double width) {
     };
 
     const auto enabledTitle = QStringLiteral("显示菜单栏歌词");
+    const auto translationTitle = QStringLiteral("歌词显示");
     const auto controlsTitle = QStringLiteral("显示播放控件");
     const auto iconTitle = QStringLiteral("显示 Logo");
     row(enabledTitle, QStringLiteral("关闭后仅在「显示 Logo」开启时保留图标"), [&](const QRectF &control) {
-        segments(control, QStringLiteral("enabled"), enabledTitle, enabled);
+        segments(control, QStringLiteral("enabled"), enabledTitle, enabled, QStringLiteral("开启"),
+                 QStringLiteral("关闭"), true);
     });
+    row(translationTitle, QStringLiteral("有翻译时显示所选内容，无翻译则回退原文"),
+        [&](const QRectF &control) {
+            segments(control, QStringLiteral("translation"), translationTitle, showsTranslation,
+                     QStringLiteral("翻译"), QStringLiteral("原文"), false);
+        });
     row(controlsTitle, QStringLiteral("上一首、播放 / 暂停、下一首、喜爱"), [&](const QRectF &control) {
-        segments(control, QStringLiteral("controls"), controlsTitle, showsControls);
+        segments(control, QStringLiteral("controls"), controlsTitle, showsControls, QStringLiteral("开启"),
+                 QStringLiteral("关闭"), true);
     });
     row(iconTitle, QStringLiteral("点击 Logo 可打开主窗口"), [&](const QRectF &control) {
-        segments(control, QStringLiteral("icon"), iconTitle, showsIcon);
+        segments(control, QStringLiteral("icon"), iconTitle, showsIcon, QStringLiteral("开启"),
+                 QStringLiteral("关闭"), true);
     });
     row(QStringLiteral("歌词宽度"), QStringLiteral("调整歌词文字在菜单栏占用的空间"), [&](const QRectF &control) {
         frame(control);
@@ -132,6 +145,8 @@ void NativeHud::applyMenuBarLyricsAction(const QString &value) {
             m_host->setPreference(MacMenuBar::ControlsPreference, argument);
         } else if (name == "icon") {
             m_host->setPreference(MacMenuBar::IconPreference, argument);
+        } else if (name == "translation") {
+            m_host->setPreference(MacMenuBar::TranslationPreference, argument);
         }
     }
     m_host->invalidate();
