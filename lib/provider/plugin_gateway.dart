@@ -372,6 +372,56 @@ class PluginGateway implements ProviderGateway {
     ];
   }
 
+  /// 歌曲百科：插件 `wiki(id, valid)` 的 `body.value` 是**纯文本**（真机确认），
+  /// 不是对象；这里包成 `{'text': …}`，空值也保留空串让页面显示诚实状态。
+  @override
+  Future<Map<String, Object?>> wiki({required String trackId}) async {
+    final PluginBridgeReply reply =
+        await _request('wiki', <Object?>[trackId]);
+    final Object? value = reply.value;
+    if (value is Map) {
+      return value.map((Object? key, Object? item) => MapEntry<String, Object?>('$key', item));
+    }
+    return <String, Object?>{'text': _text(value)};
+  }
+
+  /// 专辑信息：插件没有独立 `album` operation（真机回「插件不支持该接口：album」），
+  /// 用 `detail({kind:'album', id})` 的 `[item, songs, ids]` 组装。
+  @override
+  Future<Map<String, Object?>> albumInfo({required String albumId}) async {
+    final String id = albumId.trim();
+    if (id.isEmpty) {
+      throw const ProviderRequestError('专辑 id 为空');
+    }
+    final String key = '$providerId:album:$id';
+    final PluginBridgeReply reply = await _request('detail', <Object?>[
+      <String, Object?>{
+        'provider': providerId,
+        'kind': 'album',
+        'id': id,
+        'key': key,
+        'title': '',
+      },
+    ]);
+    final Object? value = reply.value;
+    if (value is! List || value.isEmpty || value[0] is! Map) {
+      throw ProviderRequestError('${descriptor.name}：没有返回专辑信息');
+    }
+    final Map<String, Object?> album = (value[0] as Map)
+        .map((Object? key, Object? item) => MapEntry<String, Object?>('$key', item));
+    final List<Map<String, Object?>> songs = value.length > 1 && value[1] is List
+        ? <Map<String, Object?>>[
+            for (final Object? row in value[1] as List)
+              if (row is Map)
+                row.map((Object? key, Object? item) => MapEntry<String, Object?>('$key', item)),
+          ]
+        : const <Map<String, Object?>>[];
+    final List<String> ids = value.length > 2 && value[2] is List
+        ? <String>[for (final Object? item in value[2] as List) _text(item)]
+        : <String>[for (final Map<String, Object?> row in songs) _text(row['id'])];
+    return <String, Object?>{'album': album, 'songs': songs, 'ids': ids};
+  }
+
   /// 取「列表型」响应（`body.value` 直接是数组时）。
   Future<List<Object?>> _callList(String operation, List<Object?> args) async {
     final PluginBridgeReply reply =

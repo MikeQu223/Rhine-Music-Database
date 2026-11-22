@@ -1311,6 +1311,273 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     return <SirenAlbum>[for (final SirenAlbum album in byKey.values) album];
   }
 
+  // ── 歌曲百科 / 专辑信息 ────────────────────────────────────────────────
+  //
+  // Qt 真值：`MusicLibrary.cpp:591-598` 在歌曲详情里补 `wiki`
+  // （`api.call("wiki", {id})`，结果是一段纯文本）；专辑页走 `detail` 的 album 分支。
+  // 塞壬平台没有百科接口，页面必须显示诚实状态串，不能编数据。
+
+  String _wikiTrackId = '';
+  String _wikiTitle = '';
+  String _wikiArtist = '';
+  String _wikiCover = '';
+  String _wikiText = '';
+  String _wikiStatus = '';
+  bool _wikiLoading = false;
+
+  /// 百科页是否已打开（`trackId` 非空）。
+  bool get wikiActive => _wikiTrackId.isNotEmpty;
+  String get wikiTrackId => _wikiTrackId;
+  String get wikiTitle => _wikiTitle;
+  String get wikiArtist => _wikiArtist;
+  String get wikiCover => _wikiCover;
+  String get wikiText => _wikiText;
+  String get wikiStatus => _wikiStatus;
+  bool get wikiLoading => _wikiLoading;
+
+  /// 百科正文按行切开（插件给的是 `标签：值` 的纯文本，一段一行）。
+  List<String> get wikiLines => <String>[
+        for (final String line in _wikiText.split('\n'))
+          if (line.trim().isNotEmpty) line.trim(),
+      ];
+
+  /// 打开「歌曲百科」页：有插件来源就问 `/native/<platform>/wiki`，
+  /// 塞壬/本地平台直接给诚实状态串（Qt 里 wiki 为空时显示「暂无歌曲百科」）。
+  Future<void> openSongWiki({
+    String trackId = '',
+    String title = '',
+    String artist = '',
+    String cover = '',
+  }) async {
+    if (_disposed) {
+      return;
+    }
+    final SirenSong? song = _song;
+    final String id = trackId.trim().isNotEmpty ? trackId.trim() : (song?.id ?? '');
+    if (id.isEmpty) {
+      _status = '没有选中的曲目';
+      _publish();
+      return;
+    }
+    _wikiTrackId = id;
+    _wikiTitle = title.isNotEmpty ? title : (song?.title ?? '');
+    _wikiArtist = artist.isNotEmpty ? artist : (song?.artist ?? '');
+    _wikiCover = cover.isNotEmpty ? cover : (song?.cover ?? '');
+    _wikiText = '';
+    _wikiLoading = false;
+    final ProviderGateway? gateway = _remoteSearch;
+    if (gateway == null) {
+      _wikiStatus = '$providerName不提供歌曲百科';
+      _publish();
+      return;
+    }
+    _wikiLoading = true;
+    _wikiStatus = '正在读取歌曲百科…';
+    _publish();
+    try {
+      final Map<String, Object?> value = await gateway.wiki(trackId: id);
+      if (_disposed || _wikiTrackId != id) {
+        return;
+      }
+      _wikiText = _text(value['text']);
+      _wikiLoading = false;
+      _wikiStatus = _wikiText.isEmpty ? '$providerName暂未收录这首歌的百科' : '';
+      _publish();
+    } on Object catch (error) {
+      if (_disposed || _wikiTrackId != id) {
+        return;
+      }
+      _wikiLoading = false;
+      _wikiText = '';
+      _wikiStatus = remoteErrorMessage(error);
+      _publish();
+    }
+  }
+
+  /// 关掉百科页（回到调用它的页面，不动播放/目录）。
+  void closeSongWiki() {
+    if (_disposed || _wikiTrackId.isEmpty) {
+      return;
+    }
+    _wikiTrackId = '';
+    _wikiText = '';
+    _wikiStatus = '';
+    _wikiLoading = false;
+    _publish();
+  }
+
+  String _albumInfoId = '';
+  String _albumInfoTitle = '';
+  String _albumInfoArtist = '';
+  String _albumInfoCover = '';
+  String _albumInfoDate = '';
+  String _albumInfoDescription = '';
+  int _albumInfoTrackCount = 0;
+  String _albumInfoStatus = '';
+  bool _albumInfoLoading = false;
+  List<SirenSong> _albumInfoSongs = const <SirenSong>[];
+
+  /// 专辑信息页是否已打开（`albumId` 非空）。
+  bool get albumInfoActive => _albumInfoId.isNotEmpty;
+  String get albumInfoId => _albumInfoId;
+  String get albumInfoTitle => _albumInfoTitle;
+  String get albumInfoArtist => _albumInfoArtist;
+  String get albumInfoCover => _albumInfoCover;
+  String get albumInfoDate => _albumInfoDate;
+  String get albumInfoDescription => _albumInfoDescription;
+  int get albumInfoTrackCount => _albumInfoTrackCount;
+  String get albumInfoStatus => _albumInfoStatus;
+  bool get albumInfoLoading => _albumInfoLoading;
+  List<SirenSong> get albumInfoSongs => _albumInfoSongs;
+
+  /// 打开「专辑信息」页（封面 + 专辑名 + 艺人 + 发行信息 + 同专辑曲目）。
+  ///
+  /// 插件平台用 `albumInfo`（网关内部走 `detail` 的 album 分支）；塞壬平台没有
+  /// 独立专辑信息接口，只填本地曲库确实有的字段，缺的留空并说明。
+  Future<void> openAlbumInfo({
+    String albumId = '',
+    String title = '',
+    String artist = '',
+    String cover = '',
+  }) async {
+    if (_disposed) {
+      return;
+    }
+    final String id = albumId.trim().isNotEmpty
+        ? albumId.trim()
+        : (_album?.id ?? _directory?.id ?? '');
+    if (id.isEmpty) {
+      _status = '没有选中的专辑';
+      _publish();
+      return;
+    }
+    _albumInfoId = id;
+    _albumInfoTitle = title;
+    _albumInfoArtist = artist;
+    _albumInfoCover = cover;
+    _albumInfoDate = '';
+    _albumInfoDescription = '';
+    _albumInfoTrackCount = 0;
+    _albumInfoSongs = const <SirenSong>[];
+    _albumInfoLoading = false;
+    final ProviderGateway? gateway = _remoteSearch;
+    if (gateway == null) {
+      await _openLocalAlbumInfo(id);
+      return;
+    }
+    _albumInfoLoading = true;
+    _albumInfoStatus = '正在读取专辑信息…';
+    _publish();
+    try {
+      final Map<String, Object?> value = await gateway.albumInfo(albumId: id);
+      if (_disposed || _albumInfoId != id) {
+        return;
+      }
+      final Map<String, Object?> album = value['album'] is Map
+          ? (value['album'] as Map)
+              .map((Object? key, Object? item) => MapEntry<String, Object?>('$key', item))
+          : const <String, Object?>{};
+      final List<SirenSong> songs = value['songs'] is List
+          ? <SirenSong>[
+              for (final Object? row in value['songs'] as List)
+                if (row is Map)
+                  _songFromRemoteRow(
+                      row.map((Object? key, Object? item) => MapEntry<String, Object?>('$key', item))),
+            ]
+          : const <SirenSong>[];
+      for (final SirenSong song in songs) {
+        _songById[song.id] = song;
+      }
+      if (_albumInfoTitle.isEmpty) {
+        _albumInfoTitle = _text(album['title'] ?? album['name']);
+      }
+      _albumInfoArtist = _text(album['artist']);
+      _albumInfoCover = _text(album['cover']);
+      _albumInfoDate = _text(album['date']);
+      _albumInfoDescription = _text(album['description']);
+      _albumInfoTrackCount =
+          album['trackCount'] is num ? (album['trackCount'] as num).toInt() : songs.length;
+      _albumInfoSongs = List<SirenSong>.unmodifiable(songs);
+      _albumInfoLoading = false;
+      _albumInfoStatus = '';
+      _publish();
+    } on Object catch (error) {
+      if (_disposed || _albumInfoId != id) {
+        return;
+      }
+      _albumInfoLoading = false;
+      _albumInfoStatus = remoteErrorMessage(error);
+      _publish();
+    }
+  }
+
+  /// 塞壬平台的专辑信息：本地曲库有这张专辑就填真字段，没有就直说不提供。
+  Future<void> _openLocalAlbumInfo(String id) async {
+    final SirenAlbum? local = _catalogAlbumById(id);
+    if (local == null) {
+      _albumInfoLoading = false;
+      _albumInfoStatus = '$providerName不提供专辑信息';
+      _publish();
+      return;
+    }
+    _albumInfoTitle = _albumInfoTitle.isEmpty ? local.name : _albumInfoTitle;
+    _albumInfoArtist = local.artist;
+    _albumInfoCover = local.cover;
+    _albumInfoTrackCount = local.songCount;
+    _albumInfoStatus = '正在读取专辑曲目…';
+    _albumInfoLoading = true;
+    _publish();
+    try {
+      final SirenAlbum detailed = await _repository.albumDetail(local);
+      if (_disposed || _albumInfoId != id) {
+        return;
+      }
+      for (final SirenSong song in detailed.songs) {
+        _songById[song.id] = song;
+      }
+      _albumInfoSongs = List<SirenSong>.unmodifiable(detailed.songs);
+      _albumInfoTrackCount =
+          detailed.songCount > 0 ? detailed.songCount : detailed.songs.length;
+      _albumInfoLoading = false;
+      _albumInfoStatus = '$providerName不提供发行信息';
+      _publish();
+    } on Object catch (error) {
+      if (_disposed || _albumInfoId != id) {
+        return;
+      }
+      _albumInfoLoading = false;
+      _albumInfoStatus = remoteErrorMessage(error);
+      _publish();
+    }
+  }
+
+  /// 关掉专辑信息页（回到调用它的页面，不动播放/目录）。
+  void closeAlbumInfo() {
+    if (_disposed || _albumInfoId.isEmpty) {
+      return;
+    }
+    _albumInfoId = '';
+    _albumInfoTitle = '';
+    _albumInfoArtist = '';
+    _albumInfoCover = '';
+    _albumInfoDate = '';
+    _albumInfoDescription = '';
+    _albumInfoTrackCount = 0;
+    _albumInfoStatus = '';
+    _albumInfoLoading = false;
+    _albumInfoSongs = const <SirenSong>[];
+    _publish();
+  }
+
+  SirenAlbum? _catalogAlbumById(String id) {
+    for (final SirenAlbum album in _catalogAlbums) {
+      if (album.id == id) {
+        return album;
+      }
+    }
+    return null;
+  }
+
   /// 拉一次服务端歌单（插件平台 + 已登录才有效；塞壬/本地平台直接返回）。
   Future<void> refreshServerPlaylists({String uid = ''}) async {
     final ProviderGateway? gateway = _remoteSearch;

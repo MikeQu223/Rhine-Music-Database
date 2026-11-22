@@ -437,6 +437,23 @@ abstract class ProviderGateway {
   Future<List<Map<String, Object?>>> detailSongs(Map<String, Object?> item) async {
     throw const ProviderUnavailableError('当前来源不支持集合详情');
   }
+
+  /// 歌曲百科（Qt `MusicLibrary.cpp:591-598` 的 `api.call("wiki", {id})`）。
+  ///
+  /// 插件返回一段纯文本（真机 netease：`曲风：…\n推荐标签：…\n来源：网易云音乐百科`），
+  /// 这里统一成 `{'text': <原文>}`；没有百科能力的平台默认抛 [ProviderUnavailableError]。
+  Future<Map<String, Object?>> wiki({required String trackId}) async {
+    throw const ProviderUnavailableError('当前来源不支持歌曲百科');
+  }
+
+  /// 专辑信息 + 同专辑曲目（Qt `MusicDirectory::enterDirectory` 的 album 分支）。
+  ///
+  /// 返回 `{'album': <item>, 'songs': <rows>, 'ids': <trackIds>}`。插件没有独立的
+  /// `album` operation（真机 netease 回「插件不支持该接口：album」），所以插件网关用
+  /// `detail({kind:"album", id})` 的 `[item, songs, ids]` 组装。
+  Future<Map<String, Object?>> albumInfo({required String albumId}) async {
+    throw const ProviderUnavailableError('当前来源不支持专辑信息');
+  }
 }
 
 /// 检索分类（`SearchKind` in `port.d.ts`）。
@@ -615,6 +632,16 @@ class UnavailableProviderGateway implements ProviderGateway {
 
   @override
   Future<List<Map<String, Object?>>> songsByIds(List<String> ids) async {
+    throw ProviderUnavailableError(reason);
+  }
+
+  @override
+  Future<Map<String, Object?>> wiki({required String trackId}) async {
+    throw ProviderUnavailableError(reason);
+  }
+
+  @override
+  Future<Map<String, Object?>> albumInfo({required String albumId}) async {
     throw ProviderUnavailableError(reason);
   }
 }
