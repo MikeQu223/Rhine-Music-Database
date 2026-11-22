@@ -43,6 +43,54 @@ void MusicLibrary::setDirectorySort(QString field) {
     changed();
 }
 
+/** 从当前歌单显示顺序播放指定曲目，沿用“单曲播放”对队列的替换或保留规则。 */
+bool MusicLibrary::playDirectoryIndex(int index, bool byUser) {
+    if (!directory) {
+        return false;
+    }
+    const auto songs = directory->orderedSongs();
+    if (index < 0 || index >= songs.size()) {
+        return false;
+    }
+    const auto source = directorySource();
+    const auto song = songs.at(index).toObject();
+    if (byUser && host->preference("single-play-mode") != "append") {
+        player.play(song, source.items);
+        player.loadQueue(source.ids, source.items);
+    } else {
+        player.play(song);
+    }
+    return true;
+}
+
+/** 从个人来源的当前数据顺序播放曲目；喜欢列表沿用完整的 likedIDs 队列。 */
+bool MusicLibrary::playSourceIndex(int lane, int index, bool byUser) {
+    if (lane < 1 || lane >= 5) {
+        return false;
+    }
+    const auto songs = lane == 1 ? lists[1] : sourceItems(lane);
+    if (index < 0 || index >= songs.size()) {
+        return false;
+    }
+    QueueSource source;
+    source.items = songs;
+    if (lane == 1 && likedIDs) {
+        source.ids = *likedIDs;
+    } else {
+        for (const auto &value : songs) {
+            source.ids.append(value.toObject()["id"]);
+        }
+    }
+    const auto song = songs.at(index).toObject();
+    if (byUser && host->preference("single-play-mode") != "append") {
+        player.play(song, source.items);
+        player.loadQueue(source.ids, source.items);
+    } else {
+        player.play(song);
+    }
+    return true;
+}
+
 /** 先建立可返回的目录状态，再加载内容；目录关闭或被替换后丢弃旧响应。 */
 void MusicLibrary::enterDirectory(QJsonObject value) {
     if (value.isEmpty()) {

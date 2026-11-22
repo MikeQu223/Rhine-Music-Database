@@ -134,6 +134,10 @@ void ResponsiveHudLayout::arrange(QJsonArray &commands, QJsonArray &hits, const 
     if (modal == "saved" && !m_savedOverview) {
         title = source["collectionTitle"].toString("我的音乐");
     }
+    const bool scopedPlaylistSearch = modal == "search" && source["playlistSearchScoped"].toBool();
+    if (scopedPlaylistSearch) {
+        title = "歌单内搜索";
+    }
     if (songPage) {
         m_songLayout = songLayout(glyphs);
     }
@@ -167,7 +171,11 @@ void ResponsiveHudLayout::arrange(QJsonArray &commands, QJsonArray &hits, const 
         c.text("RHINE LAB", 23, 22, 17, 115, "bold");
         c.text("AUDIO TERMINAL", 23, 43, 7, 115, "regular", c.muted);
         c.rightText("RL–004", 370, 29, 7, "regular", c.muted);
-        c.text(title, 20, 66, 23, 290, "demibold");
+        if (scopedPlaylistSearch) {
+            c.icon("back", 20, 66, 20);
+            c.hit({10, 55, 44, 44}, "close-modal", "返回歌单");
+        }
+        c.text(title, scopedPlaylistSearch ? 56 : 20, 66, 23, scopedPlaylistSearch ? 300 : 290, "demibold");
         QString code = "03";
         QString identifier = "SETTINGS / 终端配置";
         if (modal == "discover") {
@@ -175,7 +183,9 @@ void ResponsiveHudLayout::arrange(QJsonArray &commands, QJsonArray &hits, const 
             identifier = "DISCOVER / 音乐观察";
         } else if (modal == "search") {
             code = "02";
-            identifier = "SEARCH / 档案检索";
+            identifier = scopedPlaylistSearch
+                             ? "PLAYLIST SEARCH / " + source["playlistSearchTitle"].toString()
+                             : "SEARCH / 档案检索";
         }
         c.fill({20, 101, 25, 14}, c.amber);
         c.centered(code, 32.5, 108, 8, "demibold", c.ink);

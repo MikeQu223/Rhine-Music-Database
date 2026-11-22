@@ -45,15 +45,24 @@ double ResponsiveHudLayout::archiveListTop() const {
 /** 竖屏主界面：tab 列表取代资料卡与上下切换，收藏集导航移到页头右侧。 */
 double ResponsiveHudLayout::archive(ResponsiveHudCanvas &c, const QJsonObject &s) {
     const auto rows = s["archiveRows"].toArray();
+    const auto rawIndices = s["archiveRawIndices"].toArray();
+    m_archiveSourceIndices.clear();
+    for (const auto &value : rawIndices) {
+        m_archiveSourceIndices.append(value.toInt());
+    }
     const double listTop = archiveListTop();
+    const bool playlistDirectory = s["archivePlaylist"].toBool();
     m_archiveListY = listTop * c.unit;
     const int index = s["archiveIndex"].toInt(0);
     const int total = s["archiveTotal"].toInt(int(rows.size()));
     const int selected = rows.isEmpty() ? -1 : std::clamp(index, 0, int(rows.size()) - 1);
-    // 下方阅读区渐入纸色，上方保持真实渲染；不覆盖唱片展示区域。
-    for (double y = listTop - 32; y < m_height - BottomGestureInset - 110; y += 8) {
+    // 歌单工具栏需要更早进入纸色遮罩，避免复杂背景穿透按钮文字。
+    const double maskStart = listTop - (playlistDirectory ? 112. : 32.);
+    const double maskDistance = playlistDirectory ? 118. : 100.;
+    for (double y = maskStart; y < m_height - BottomGestureInset - 110; y += 8) {
         auto paper = c.paper;
-        paper[3] = std::clamp((y - listTop + 32) / 100., 0., .88);
+        paper[3] = playlistDirectory ? std::clamp((y - maskStart) / maskDistance, 0., 1.) * .88
+                                     : std::clamp((y - listTop + 32.) / 100., 0., .88);
         c.fill({0, y, 393, 8}, paper);
     }
     c.text("RHINE LAB", 23, 22, 17, 235, "bold");
@@ -77,23 +86,60 @@ double ResponsiveHudLayout::archive(ResponsiveHudCanvas &c, const QJsonObject &s
               source["label"].toString());
     }
     c.fill({tabIndicator("archive", selectedTabX), 98, tabWidth - 8, 2}, c.amber);
-    c.text(s["archiveName"].toString("音乐档案"), 23, 123, 23, 244, "bold");
-    if (s["canPlayArchive"].toBool()) {
+    const auto countBadge = QString::number(total);
+    const double countBadgeWidth =
+        playlistDirectory ? std::clamp(c.measure(countBadge, 10, "demibold") + 18., 34., 62.) : 0.;
+    const double countBadgeX = 370. - countBadgeWidth;
+    c.text(s["archiveName"].toString("音乐档案"), 23, 123, 23, playlistDirectory ? countBadgeX - 35. : 244,
+           "bold");
+    if (playlistDirectory) {
+        c.fill({countBadgeX, 121, countBadgeWidth, 24}, c.ink);
+        c.centered(countBadge, countBadgeX + countBadgeWidth / 2., 133, 10, "demibold", c.paper);
+    }
+    if (!playlistDirectory && s["canPlayArchive"].toBool()) {
         c.icon("play", 288, 126, 15);
         c.text("播放全部", 309, 127, 11, 65);
         c.hit({280, 114, 94, 44}, "mobile:play-archive", "播放全部");
     }
 
-    c.text("上下滑动浏览 / TRACK INDEX", 23, listTop - 18, 8, 270, "regular", c.muted);
-    c.rightText(total > 0 ? MusicData::pad(std::max(0, index + 1)) + " / " + QString::number(total)
-                          : QString("0 / 0"),
-                370, listTop - 18, 9, "regular", c.muted);
+    if (playlistDirectory) {
+        constexpr double actionHeight = 54.;
+        constexpr double actionGap = 6.;
+        constexpr double sideWidth = 90.;
+        const double actionTop = listTop - 68.;
+        const double playWidth = 353. - sideWidth * 2. - actionGap * 2.;
+        const auto sortField = s["archiveSort"].toString();
+        QString sortLabel = QStringLiteral("默认");
+        if (sortField == "title") {
+            sortLabel = QStringLiteral("歌名");
+        } else if (sortField == "artist") {
+            sortLabel = QStringLiteral("歌手");
+        } else if (sortField == "album") {
+            sortLabel = QStringLiteral("专辑");
+        }
+        const bool playEnabled = s["archivePlayEnabled"].toBool();
+        const auto playAction = playEnabled ? s["archivePlayAction"].toString() : QString();
+        c.actionButton({20, actionTop, playWidth, actionHeight}, "play", "播放全部", playAction, playEnabled,
+                       false, playEnabled);
+        c.actionButton({20 + playWidth + actionGap, actionTop, sideWidth, actionHeight}, "search", "搜索",
+                       "mobile:playlist-search");
+        c.actionButton(
+            {20 + playWidth + actionGap + sideWidth + actionGap, actionTop, sideWidth, actionHeight}, "sort",
+            sortLabel, "mobile:playlist-sort", false, sortField != "none");
+    } else {
+        const double trackLabelY = listTop - 18.;
+        c.text("上下滑动浏览 / TRACK INDEX", 23, trackLabelY, 8, 270, "regular", c.muted);
+        c.rightText(total > 0 ? MusicData::pad(std::max(0, index + 1)) + " / " + QString::number(total)
+                              : QString("0 / 0"),
+                    370, trackLabelY, 9, "regular", c.muted);
+    }
     c.fill({23, listTop - 4, 347, .7}, c.ink);
     // 四条槽位之外不绘制或接收列表输入；背景继续展示真实资料库。
     c.contentBottom = listTop + ArchiveRowHeight * 4;
     // 选中槽固定在第二行；内容按行吸附滚动，槽位上的选项立即切换。
     const double maximum = std::max(0., (rows.size() - 1) * ArchiveRowHeight);
-    const QString key = s["archiveName"].toString() + ":" + QString::number(s["archiveColumnIndex"].toInt());
+    const QString key = s["archiveKey"].toString(s["archiveName"].toString() + ":" +
+                                                 QString::number(s["archiveColumnIndex"].toInt()));
     if (key != m_archiveKey) {
         m_archiveKey = key;
         m_archiveSelection = -1;
@@ -169,6 +215,7 @@ double ResponsiveHudLayout::archive(ResponsiveHudCanvas &c, const QJsonObject &s
     c.endContent();
     return c.contentBottom;
 }
+
 /** 测量歌曲页的标题与底部固定区域，剩余空间交给 3D 展示区。 */
 ResponsiveHudLayout::SongLayout ResponsiveHudLayout::songLayout(Glyphs &glyphs) const {
     SongLayout layout;
@@ -1124,27 +1171,50 @@ double ResponsiveHudLayout::library(ResponsiveHudCanvas &c, const QJsonObject &s
     c.icon("right", 345, y + 15, 17);
     c.hit({329, y, 44, 47}, "mobile:search-submit", "检索");
     y += 54;
+    const bool scopedPlaylistSearch = search && s["playlistSearchScoped"].toBool();
+    if (scopedPlaylistSearch) {
+        c.fill({20, y, 353, 32}, c.surface);
+        c.border({20, y, 353, 32}, c.line);
+        c.fill({20, y, 3, 32}, c.amber);
+        c.text("PLAYLIST SCOPE / 歌单内搜索", 32, y + 6, 8, 226, "regular", c.muted);
+        c.text(s["playlistSearchTitle"].toString(), 32, y + 17, 10, 226, "demibold");
+        QString scopeState = QStringLiteral("部分载入");
+        if (s["playlistSearchLoading"].toBool()) {
+            scopeState = QStringLiteral("读取中 ") + QString::number(s["playlistSearchLoaded"].toInt()) +
+                         QStringLiteral(" / ") + QString::number(s["playlistSearchTotal"].toInt());
+        } else if (s["playlistSearchComplete"].toBool()) {
+            scopeState = QStringLiteral("完整歌单");
+        }
+        c.rightText(scopeState, 360, y + 12, 8, "regular", c.muted);
+        y += 53;
+    }
     const QStringList labels = search ? QStringList{"歌曲", "歌手", "专辑", "歌单"}
                                       : QStringList{columns[1].toString(), columns[2].toString(),
                                                     columns[3].toString(), columns[4].toString()};
     const QVector<int> order = search ? QVector<int>{0, 3, 1, 2} : QVector<int>{1, 2, 3, 4};
     int selectedType = 0;
-    for (int i = 0; i < 4; ++i) {
-        if (search && s["searchKind"] == QStringList{"song", "artist", "album", "playlist"}[i]) {
-            selectedType = i;
-        } else if (!search && s["musicCollection"].toInt() == order[i]) {
-            selectedType = i;
+    if (!scopedPlaylistSearch) {
+        for (int i = 0; i < 4; ++i) {
+            if (search && s["searchKind"] == QStringList{"song", "artist", "album", "playlist"}[i]) {
+                selectedType = i;
+            } else if (!search && s["musicCollection"].toInt() == order[i]) {
+                selectedType = i;
+            }
+            indexTab(c, {20 + i * 90., y, 83, 44}, labels[i],
+                     search ? "music:kind:" + QString::number(order[i])
+                            : "music:collection:" + QString::number(order[i]),
+                     search ? s["searchKind"] == QStringList{"song", "artist", "album", "playlist"}[i]
+                            : s["musicCollection"].toInt() == order[i]);
         }
-        indexTab(c, {20 + i * 90., y, 83, 44}, labels[i],
-                 search ? "music:kind:" + QString::number(order[i])
-                        : "music:collection:" + QString::number(order[i]),
-                 search ? s["searchKind"] == QStringList{"song", "artist", "album", "playlist"}[i]
-                        : s["musicCollection"].toInt() == order[i]);
+        c.fill({tabIndicator(search ? "search" : "collections", 20 + selectedType * 90.), y + 39, 76, 2},
+               c.amber);
+        y += 53;
     }
-    c.fill({tabIndicator(search ? "search" : "collections", 20 + selectedType * 90.), y + 39, 76, 2},
-           c.amber);
-    y += 53;
-    terminalSection(c, y, "01", search ? "检索结果" : "音乐档案", "INDEX / " + QString::number(resultCount));
+    terminalSection(c, y, "01", search ? "检索结果" : "音乐档案",
+                    (scopedPlaylistSearch && s["playlistSearchLoading"].toBool()
+                         ? QStringLiteral("SEARCHING / ")
+                         : QStringLiteral("INDEX / ")) +
+                        QString::number(resultCount));
     y += 29;
     for (int i = 0; i < entries.size(); ++i) {
         auto entry = entries[i].toObject();
@@ -1158,10 +1228,29 @@ double ResponsiveHudLayout::library(ResponsiveHudCanvas &c, const QJsonObject &s
         c.fill({20, y + 8, 353, .6}, c.line);
         c.icon("search", 20, y + 30, 24, c.muted);
         const bool emptyQuery = s["query"].toString().trimmed().isEmpty();
-        c.text(emptyQuery ? "检索音乐档案" : "暂无匹配档案", 60, y + 30, 16, 310, "demibold");
-        y = c.paragraph(emptyQuery ? "输入歌曲、歌手、专辑或歌单名称" : s["status"].toString(), 60, y + 60,
-                        11, 308, c.muted) +
-            24;
+        QString emptyTitle;
+        QString emptyDetail;
+        if (scopedPlaylistSearch) {
+            if (s["playlistSearchLoading"].toBool()) {
+                emptyTitle = QStringLiteral("正在检索完整歌单");
+            } else if (emptyQuery) {
+                emptyTitle = QStringLiteral("搜索当前歌单");
+            } else {
+                emptyTitle = QStringLiteral("没有匹配的歌曲");
+            }
+            emptyDetail = s["playlistSearchStatus"].toString(
+                emptyQuery ? QStringLiteral("输入歌曲、歌手或专辑名称") : QStringLiteral("没有匹配的歌曲"));
+        } else {
+            if (emptyQuery) {
+                emptyTitle = QStringLiteral("检索音乐档案");
+                emptyDetail = QStringLiteral("输入歌曲、歌手、专辑或歌单名称");
+            } else {
+                emptyTitle = QStringLiteral("暂无匹配档案");
+                emptyDetail = s["status"].toString();
+            }
+        }
+        c.text(emptyTitle, 60, y + 30, 16, 310, "demibold");
+        y = c.paragraph(emptyDetail, 60, y + 60, 11, 308, c.muted) + 24;
         if (!search && !s["loggedIn"].toBool()) {
             c.button({20, y, 353, 44}, "登录音乐平台 →", "music:login");
             y += 60;

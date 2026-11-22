@@ -11,6 +11,8 @@ ResponsiveHudCanvas::ResponsiveHudCanvas(Glyphs &glyphs, double scale, double h,
     surface = dark ? QJsonArray{.125, .165, .137, 1} : QJsonArray{.910, .902, .863, 1};
     raised = dark ? QJsonArray{.165, .208, .173, 1} : QJsonArray{.871, .875, .820, 1};
     amber = {.780, .608, .224, 1};
+    terminal = {.133, .165, .145, 1};
+    terminalText = {.929, .941, .875, 1};
     commands.append(QJsonArray{"save"});
     commands.append(QJsonArray{"scale", unit, unit});
 }
@@ -169,7 +171,8 @@ void ResponsiveHudCanvas::icon(QString name, double x, double y, double size, QJ
         {"heart", "M 12 24 L 0 12 L 0 5 L 5 0 L 10 0 L 12 3 L 14 0 L 19 0 L 24 5 L 24 12 Z"},
         {"close", "M 6 6 L 18 18 M 6 18 L 18 6"},
         {"user", "M 16 6 C 16 12 8 12 8 6 C 8 0 16 0 16 6 Z M 4 22 C 4 12 20 12 20 22"},
-        {"more", "M 5 12 L 6 12 M 11 12 L 12 12 M 17 12 L 18 12"}};
+        {"more", "M 5 12 L 6 12 M 11 12 L 12 12 M 17 12 L 18 12"},
+        {"sort", "M 4 6 L 20 6 M 7 12 L 17 12 M 10 18 L 14 18"}};
     commands.append(QJsonArray{"save"});
     commands.append(QJsonArray{"translate", x, y});
     commands.append(QJsonArray{"scale", size / 24, size / 24});
@@ -225,6 +228,27 @@ void ResponsiveHudCanvas::button(QRectF r, QString title, QString action, bool p
     text(title, r.x() + 12, r.y() + (r.height() - 13) / 2 - 1, 13, r.width() - 24,
          primary ? "demibold" : "regular", primary ? QJsonArray{.09, .125, .08, 1} : ink);
     hit(r, action, title);
+}
+void ResponsiveHudCanvas::actionButton(QRectF r, QString iconName, QString title, QString action,
+                                       bool primary, bool selected, bool enabled) {
+    if (primary && enabled) {
+        fill(r, terminal);
+    } else {
+        border(r, line);
+    }
+    if (selected && enabled) {
+        fill({r.x() + 8, r.bottom() - 2, r.width() - 16, 2}, amber);
+    }
+    QJsonArray contentColor = muted;
+    if (enabled) {
+        contentColor = primary ? terminalText : ink;
+    }
+    icon(iconName, r.x() + 14, r.y() + (r.height() - 16.) / 2., 16, contentColor);
+    text(title, r.x() + 38, r.y() + (r.height() - 12.) / 2. - 1, 12, std::max(0., r.width() - 48.),
+         primary && enabled ? "demibold" : "regular", contentColor);
+    if (enabled) {
+        hit(r, action, title);
+    }
 }
 void ResponsiveHudCanvas::chip(QRectF r, QString title, QString action, bool selected) {
     if (selected) {

@@ -110,7 +110,10 @@ void NativeHud::musicAction(const QStringList &parts, const QString &value) {
         if (!QStringList{"none", "title", "album", "artist"}.contains(field)) {
             return;
         }
-        if (parts.value(2) == "detail" && frame["mode"] == "detail" && music.current["kind"] == "playlist") {
+        const bool playlistDirectory = music.directory && music.directory->item["kind"] == "playlist";
+        const bool playlistPage = music.current["kind"] == "playlist" || playlistDirectory;
+        if (parts.value(2) == "detail" && (frame["mode"] == "detail" || frame["mode"] == "archive") &&
+            playlistPage) {
             // 先收起菜单再补页，排序请求才能绑定仍然打开的歌单详情。
             if (modal == "detail-sort") {
                 modal.clear();

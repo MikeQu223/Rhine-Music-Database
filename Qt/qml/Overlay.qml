@@ -620,6 +620,7 @@ Item {
         id: searchInput
         objectName: "musicSearchInput"
         readonly property bool playlistSearch: rhine.state.playlistSearchActive === true
+        readonly property bool playlistPageSearch: rhine.state.playlistSearchScoped === true
         readonly property bool modalSearch: rhine.state.modal === "search" || rhine.state.modal === "saved"
         readonly property real inputOffset: playlistSearch ? 0 : (rhine.state.modalOffset || 0)
         readonly property real searchFontSize: {
@@ -632,6 +633,9 @@ Item {
             return 22;
         }
         readonly property string searchPlaceholder: {
+            if (playlistPageSearch) {
+                return "搜索当前歌单中的歌曲、歌手或专辑";
+            }
             if (playlistSearch) {
                 return "搜索当前歌单内的歌曲";
             }
@@ -664,13 +668,25 @@ Item {
         cursorVisible: activeFocus && !rhine.performance.idle
         selectByMouse: true
         Accessible.name: searchPlaceholder
+        function syncTextFromState() {
+            if (playlistSearch) {
+                text = rhine.state.detailQuery || "";
+            } else {
+                text = rhine.state.query || "";
+            }
+        }
         onTextEdited: rhine.query(text)
         onVisibleChanged: {
             if (visible) {
-                text = playlistSearch ? (rhine.state.detailQuery || "") : (rhine.state.query || "");
+                syncTextFromState();
                 forceActiveFocus();
             } else {
                 inputLayer.forceActiveFocus();
+            }
+        }
+        onPlaylistPageSearchChanged: {
+            if (visible) {
+                syncTextFromState();
             }
         }
         Keys.onEscapePressed: {

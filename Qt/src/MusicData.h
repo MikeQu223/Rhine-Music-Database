@@ -11,6 +11,8 @@ QJsonArray unique(const QJsonArray &existing, const QJsonArray &values);
 QJsonArray ordered(const QJsonArray &ids, const QJsonArray &songs);
 QJsonArray slice(const QJsonArray &values, qsizetype start, qsizetype count);
 QVector<int> sortOrder(const QJsonArray &values, const QString &field);
+QVector<int> searchOrder(const QJsonArray &values, const QString &query, const QString &field = {},
+                         bool includeId = false);
 int cursor(const QJsonArray &songs, const QJsonArray &ids);
 int indexOf(const QJsonArray &values, const QJsonValue &value);
 int indexOfId(const QJsonArray &values, const QString &id);

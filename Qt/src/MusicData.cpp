@@ -186,3 +186,26 @@ QVector<int> MusicData::sortOrder(const QJsonArray &values, const QString &field
     });
     return indices;
 }
+
+/** 在稳定显示顺序上匹配歌名、歌手与专辑；空关键词返回完整顺序。 */
+QVector<int> MusicData::searchOrder(const QJsonArray &values, const QString &query, const QString &field,
+                                    bool includeId) {
+    const auto filter = query.trimmed();
+    QVector<int> indices;
+    for (const auto position : sortOrder(values, field)) {
+        const auto song = values.at(position).toObject();
+        if (filter.isEmpty()) {
+            indices.append(position);
+            continue;
+        }
+        auto searchable =
+            song["title"].toString() + " " + song["artist"].toString() + " " + song["album"].toString();
+        if (includeId) {
+            searchable += " " + song["id"].toString();
+        }
+        if (searchable.contains(filter, Qt::CaseInsensitive)) {
+            indices.append(position);
+        }
+    }
+    return indices;
+}

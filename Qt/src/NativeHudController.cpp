@@ -82,6 +82,12 @@ NativeHud::NativeHud(Host *host, Glyphs *glyphs, MusicLibrary *music, HudSceneAc
     connect(music, &MusicLibrary::invalidated, this, &NativeHud::finishPage);
     connect(music, &MusicLibrary::invalidated, this, &NativeHud::ensureSearchFilled);
     connect(music, &MusicLibrary::invalidated, this, &NativeHud::ensureSavedFilled);
+    connect(music, &MusicLibrary::invalidated, this, [this] {
+        m_likedArchiveCacheDirty = true;
+        refreshPlaylistSearchResults();
+        QTimer::singleShot(0, this, &NativeHud::ensurePlaylistSearchLoaded);
+        QTimer::singleShot(0, this, &NativeHud::continueLikedSort);
+    });
     connect(music, &MusicLibrary::invalidated, this,
             [this] { QTimer::singleShot(0, this, &NativeHud::continueSort); });
     m_lyricsControlsTimer.setSingleShot(true);
@@ -138,6 +144,9 @@ void NativeHud::openModal(QString kind) {
     }
     if (kind == "discover" && m_music->isSiren()) {
         return;
+    }
+    if (kind == "search") {
+        clearPlaylistSearchScope();
     }
     ++m_searchGeneration;
     if (m_scene.pointer) {
@@ -233,6 +242,15 @@ void NativeHud::closeModal() {
 }
 
 void NativeHud::setQuery(QString value) {
+    if (isPlaylistSearchScoped()) {
+        m_playlistSearchQuery = value;
+        listOffset = 0;
+        resetResultViews();
+        refreshPlaylistSearchResults();
+        ensurePlaylistSearchLoaded();
+        m_host->invalidate();
+        return;
+    }
     if (playlistSearchActive && frame["mode"] == "detail" && m_music->current["kind"] == "playlist") {
         detailQuery = value;
         m_detailSearchCursor = -1;
@@ -266,6 +284,222 @@ void NativeHud::setQuery(QString value) {
             }
         });
     }
+}
+
+bool NativeHud::isLikedArchive() const {
+    const bool supportsLikedSongs =
+        ProviderRegistry::instance().capability(m_music->provider, "likedSongs", false);
+    return modal.isEmpty() && !closing && supportsLikedSongs && !m_music->directory &&
+           m_music->selectedLane == 1 && m_music->groupLane != 1 && frame["mode"] == "archive";
+}
+
+/** 喜欢列表排序前顺序补齐个人分页；失败后停止，不把当前页冒充完整列表。 */
+void NativeHud::continueLikedSort() {
+    if (!m_likedSortLoading) {
+        return;
+    }
+    if (!isLikedArchive() || m_likedArchiveSort == "none") {
+        m_likedSortLoading = false;
+        m_likedSortRequestedCount = -1;
+        return;
+    }
+    if (m_music->sourceLoading()) {
+        return;
+    }
+    if (!m_music->hasMore[1]) {
+        m_likedSortLoading = false;
+        m_likedSortRequestedCount = -1;
+        m_host->invalidate();
+        return;
+    }
+    const auto cursor = m_music->likedCursor;
+    if (cursor == m_likedSortRequestedCount) {
+        m_likedSortLoading = false;
+        m_likedSortRequestedCount = -1;
+        m_host->invalidate();
+        return;
+    }
+    m_likedSortRequestedCount = cursor;
+    m_music->loadMoreSource(1);
+    m_host->invalidate();
+}
+
+bool NativeHud::isPlaylistSearchScoped() const {
+    return modal == "search" && m_playlistSearchScope.has_value();
+}
+
+/** 进入共享搜索页，但只把当前歌单目录作为数据边界。 */
+void NativeHud::openPlaylistSearch() {
+    const auto &music = *m_music;
+    const bool likedArchive = isLikedArchive();
+    if ((!music.directory || music.directory->item["kind"] != "playlist") && !likedArchive) {
+        return;
+    }
+    const auto directory = likedArchive ? nullptr : music.directory;
+    const auto item = likedArchive
+                          ? MusicData::item("playlist", "liked", music.columns.value(1), {}, music.provider)
+                          : directory->item;
+    const auto globalQuery = query;
+    openModal("search");
+    query = globalQuery;
+    m_playlistSearchScope = PlaylistSearchScope{item["key"].toString(item["id"].toString()),
+                                                item["id"].toString(),
+                                                item["title"].toString(),
+                                                directory,
+                                                likedArchive ? 1 : -1,
+                                                music.provider,
+                                                music.accountGeneration()};
+    m_playlistSearchQuery.clear();
+    m_playlistSearchRequestedCursor = -1;
+    m_playlistSearchPagePending = false;
+    m_playlistSearchLoadDispatched = false;
+    m_playlistSearchLoadFailed = false;
+    refreshPlaylistSearchResults();
+    ensurePlaylistSearchLoaded();
+    m_host->invalidate();
+}
+
+void NativeHud::clearPlaylistSearchScope() {
+    m_playlistSearchScope.reset();
+    m_playlistSearchOrder.clear();
+    m_playlistSearchQuery.clear();
+    m_playlistSearchStatus.clear();
+    m_playlistSearchRequestedCursor = -1;
+    m_playlistSearchLoaded = 0;
+    m_playlistSearchTotal = 0;
+    m_playlistSearchPagePending = false;
+    m_playlistSearchLoadDispatched = false;
+    m_playlistSearchLoadFailed = false;
+    m_playlistSearchLoading = false;
+    m_playlistSearchComplete = false;
+}
+
+/** 仅在歌单作用域内过滤，不写入全局搜索关键词、结果和历史。 */
+void NativeHud::refreshPlaylistSearchResults() {
+    if (!m_playlistSearchScope) {
+        return;
+    }
+    const auto directory = m_playlistSearchScope->directory;
+    const bool likedArchive = m_playlistSearchScope->lane == 1;
+    const bool valid = m_music->provider == m_playlistSearchScope->provider &&
+                       m_music->accountGeneration() == m_playlistSearchScope->account &&
+                       (likedArchive ? !m_music->directory && m_music->selectedLane == 1
+                                     : directory && m_music->directory == directory);
+    if (!valid) {
+        m_playlistSearchOrder.clear();
+        m_playlistSearchStatus = QStringLiteral("歌单上下文已变更，请返回后重试");
+        m_playlistSearchLoading = false;
+        m_playlistSearchComplete = false;
+        m_playlistSearchLoadFailed = true;
+        return;
+    }
+    const auto songs = likedArchive ? m_music->lists[1] : directory->orderedSongs();
+    const auto sortField = likedArchive ? m_likedArchiveSort : QStringLiteral("none");
+    m_playlistSearchOrder = MusicData::searchOrder(songs, m_playlistSearchQuery, sortField);
+    m_playlistSearchLoaded = int(songs.size());
+    if (likedArchive) {
+        const int likedIdCount = m_music->likedIDs ? int(m_music->likedIDs->size()) : 0;
+        m_playlistSearchTotal = std::max({m_music->totals[1], likedIdCount, m_playlistSearchLoaded});
+    } else {
+        m_playlistSearchTotal = std::max(
+            {directory->item["trackCount"].toInt(), int(directory->ids.size()), m_playlistSearchLoaded});
+    }
+    const bool hasMore = likedArchive ? m_music->hasMore[1] : directory->cursor < directory->ids.size();
+    bool metadataMissing = false;
+    if (likedArchive) {
+        const int likedIdCount = m_music->likedIDs ? int(m_music->likedIDs->size()) : 0;
+        const int expected = std::max({m_music->totals[1], likedIdCount, m_playlistSearchLoaded});
+        metadataMissing = !hasMore && m_playlistSearchLoaded < expected;
+    } else {
+        metadataMissing = !hasMore && m_playlistSearchLoaded < directory->ids.size();
+    }
+    m_playlistSearchComplete = !hasMore && !metadataMissing && !m_playlistSearchLoadFailed;
+    m_playlistSearchLoading = hasMore && !m_playlistSearchLoadFailed;
+    if (m_playlistSearchLoadFailed) {
+        m_playlistSearchStatus = QStringLiteral("已载入 ") + QString::number(m_playlistSearchLoaded) + " / " +
+                                 QString::number(m_playlistSearchTotal) +
+                                 QStringLiteral(" 首，未能补齐完整歌单");
+    } else if (hasMore) {
+        m_playlistSearchStatus =
+            (likedArchive ? QStringLiteral("正在读取喜欢的歌曲 ") : QStringLiteral("正在读取完整歌单 ")) +
+            QString::number(m_playlistSearchLoaded) + " / " + QString::number(m_playlistSearchTotal);
+    } else if (metadataMissing) {
+        m_playlistSearchStatus = QStringLiteral("已读取 ") + QString::number(m_playlistSearchLoaded) + " / " +
+                                 QString::number(m_playlistSearchTotal) +
+                                 QStringLiteral(" 首，部分曲目元数据不可用");
+    } else if (m_playlistSearchQuery.trimmed().isEmpty()) {
+        m_playlistSearchStatus = QStringLiteral("输入歌曲、歌手或专辑名称");
+    } else if (m_playlistSearchOrder.isEmpty()) {
+        m_playlistSearchStatus = QStringLiteral("没有匹配的歌曲");
+    } else {
+        m_playlistSearchStatus = QStringLiteral("找到 ") + QString::number(m_playlistSearchOrder.size()) +
+                                 QStringLiteral(" 首 · 共 ") + QString::number(m_playlistSearchLoaded) +
+                                 QStringLiteral(" 首");
+    }
+}
+
+/** 顺序补齐歌单 ID；同一游标失败后停止，避免空页或错误造成持续请求。 */
+void NativeHud::ensurePlaylistSearchLoaded() {
+    if (!isPlaylistSearchScoped() || !m_playlistSearchScope) {
+        return;
+    }
+    const auto directory = m_playlistSearchScope->directory;
+    const bool likedArchive = m_playlistSearchScope->lane == 1;
+    const bool valid = m_music->provider == m_playlistSearchScope->provider &&
+                       m_music->accountGeneration() == m_playlistSearchScope->account &&
+                       (likedArchive ? !m_music->directory && m_music->selectedLane == 1
+                                     : directory && m_music->directory == directory);
+    if (!valid || m_playlistSearchLoadFailed) {
+        return;
+    }
+    const bool hasMore = likedArchive ? m_music->hasMore[1] : directory->cursor < directory->ids.size();
+    if (!hasMore) {
+        m_playlistSearchPagePending = false;
+        m_playlistSearchLoadDispatched = false;
+        m_playlistSearchRequestedCursor = -1;
+        refreshPlaylistSearchResults();
+        return;
+    }
+    if (likedArchive ? m_music->sourceLoading() : m_music->directoryLoading) {
+        m_playlistSearchPagePending = true;
+        refreshPlaylistSearchResults();
+        return;
+    }
+    if (m_playlistSearchPagePending && !m_playlistSearchLoadDispatched) {
+        return;
+    }
+    const int progress = likedArchive ? m_music->likedCursor : directory->cursor;
+    if (m_playlistSearchPagePending && progress == m_playlistSearchRequestedCursor) {
+        m_playlistSearchLoadFailed = true;
+        m_playlistSearchPagePending = false;
+        m_playlistSearchLoadDispatched = false;
+        refreshPlaylistSearchResults();
+        m_host->invalidate();
+        return;
+    }
+    m_playlistSearchRequestedCursor = progress;
+    m_playlistSearchPagePending = true;
+    m_playlistSearchLoadDispatched = false;
+    const auto key = m_playlistSearchScope->key;
+    const auto provider = m_playlistSearchScope->provider;
+    const auto account = m_playlistSearchScope->account;
+    const QPointer<NativeHud> owner(this);
+    QTimer::singleShot(0, this, [owner, directory, key, provider, account, likedArchive] {
+        if (!owner || !owner->isPlaylistSearchScoped() || !owner->m_playlistSearchScope ||
+            owner->m_playlistSearchScope->key != key || owner->m_music->provider != provider ||
+            owner->m_music->accountGeneration() != account ||
+            (likedArchive ? owner->m_music->directory || owner->m_music->selectedLane != 1
+                          : owner->m_music->directory != directory || owner->m_music->directoryLoading)) {
+            return;
+        }
+        owner->m_playlistSearchLoadDispatched = true;
+        if (likedArchive) {
+            owner->m_music->loadMoreSource(1);
+        } else {
+            owner->m_music->loadDirectoryPage();
+        }
+    });
+    refreshPlaylistSearchResults();
 }
 
 // ！？ 325 ？！
@@ -542,6 +776,41 @@ void NativeHud::action(QString value) {
     if (m_responsive.compact() && lyricsMode && modal.isEmpty() &&
         (value.startsWith("player:") || value.startsWith("mobile:lyrics"))) {
         revealLyricsControls();
+    }
+    if (m_responsive.compact() && value == "mobile:playlist-search") {
+        openPlaylistSearch();
+        return;
+    }
+    if (m_responsive.compact() && value == "mobile:playlist-sort") {
+        if (m_music->directory && m_music->directory->item["kind"] == "playlist") {
+            const QStringList fields{"none", "title", "artist", "album"};
+            const auto current = fields.indexOf(m_music->directory->sortField);
+            action("music:sort:detail:" + fields.value((current + 1) % fields.size()));
+        } else if (isLikedArchive()) {
+            const QStringList fields{"none", "title", "artist", "album"};
+            const auto current = fields.indexOf(m_likedArchiveSort);
+            m_likedArchiveSort = fields.value((current + 1) % fields.size());
+            m_likedArchiveCacheDirty = true;
+            m_likedSortLoading = m_likedArchiveSort != "none";
+            m_likedSortRequestedCount = -1;
+            continueLikedSort();
+            m_host->invalidate();
+        }
+        return;
+    }
+    if (m_responsive.compact() && isPlaylistSearchScoped() && value.startsWith("music:result:")) {
+        const auto parts = value.split(':');
+        bool indexValid = false;
+        bool laneValid = false;
+        const auto lane = parts.value(2).toInt(&laneValid);
+        const auto index = parts.value(3).toInt(&indexValid);
+        const bool played = laneValid && indexValid &&
+                            (lane == 0 ? m_music->playDirectoryIndex(index)
+                                       : lane == 1 && m_music->playSourceIndex(1, index));
+        if (played) {
+            closeModal();
+        }
+        return;
     }
     if (m_responsive.compact() && value.startsWith("mobile:play-collection:")) {
         const auto json =

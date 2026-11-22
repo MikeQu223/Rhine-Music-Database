@@ -412,6 +412,21 @@ QJsonObject NativeHud::sourceState() const {
     const auto &player = m_music->player;
     const bool playbackActive = !player.current.isEmpty() && player.state["playing"].toBool() &&
                                 !player.state["buffering"].toBool() && !player.loading && !player.failed;
+    const bool likedArchive = isLikedArchive();
+    QString archiveKind;
+    QString archiveKey;
+    QString archiveSort;
+    if (m_music->directory) {
+        archiveKind = m_music->directory->item["kind"].toString();
+        archiveKey = m_music->directory->item["key"].toString(m_music->directory->item["id"].toString());
+        archiveSort = m_music->directory->sortField;
+    } else if (likedArchive) {
+        archiveKind = QStringLiteral("playlist");
+        archiveSort = m_likedArchiveSort;
+    } else {
+        archiveSort = detailSort;
+    }
+    const auto visibleQuery = isPlaylistSearchScoped() ? m_playlistSearchQuery : query;
     return {{"lyricsMode", lyricsMode},
             {"playerModeProgress", m_playerModeMotion.opacity},
             {"lyricsColors", m_lyricsColors},
@@ -424,6 +439,9 @@ QJsonObject NativeHud::sourceState() const {
             {"archiveName", m_music->libraryName()},
             {"archiveIndex", m_music->libraryIndex()},
             {"archiveTotal", m_music->libraryTotal()},
+            {"archiveKind", archiveKind},
+            {"archiveKey", archiveKey},
+            {"archiveSort", archiveSort},
             {"inputX", inputX},
             {"inputY", inputY},
             {"inputWidth", inputWidth},
@@ -443,7 +461,7 @@ QJsonObject NativeHud::sourceState() const {
             {"formKind", formKind},
             {"formPID", formPID},
             {"modal", modal},
-            {"query", query},
+            {"query", visibleQuery},
             {"closing", closing},
             {"modalOpacity", motion.opacity},
             {"modalOffset", motion.offset},
@@ -460,7 +478,15 @@ QJsonObject NativeHud::sourceState() const {
             {"detailSort", detailSort},
             {"detailQuery", detailQuery},
             {"playlistSearchActive", playlistSearchActive},
-            {"sortLoading", m_sortRequest.has_value()},
+            {"playlistSearchScoped", isPlaylistSearchScoped()},
+            {"playlistSearchTitle", m_playlistSearchScope ? m_playlistSearchScope->title : QString()},
+            {"playlistSearchStatus", m_playlistSearchStatus},
+            {"playlistSearchLoading", m_playlistSearchLoading},
+            {"playlistSearchComplete", m_playlistSearchComplete},
+            {"playlistSearchLoaded", m_playlistSearchLoaded},
+            {"playlistSearchTotal", m_playlistSearchTotal},
+            {"playlistSearchResultCount", m_playlistSearchOrder.size()},
+            {"sortLoading", m_sortRequest.has_value() || m_likedSortLoading},
             {"mode", frame["mode"]},
             {"viewer", frame["viewer"]},
             {"status", m_music->status}};
@@ -587,16 +613,20 @@ void NativeHud::draw(QJsonObject next, double stageWidth, double time) {
     if (closing && motion.finished()) {
         modal.clear();
         closing = false;
+        clearPlaylistSearchScope();
     }
     if (m_responsive.compact() && frame["mode"] != "boot") {
-        const auto scope = modal + ":" + frame["mode"].toString() + ":" +
-                           m_music->current.value("kind").toString() + ":" +
-                           m_music->current.value("id").toString() + ":" + tab + ":" +
-                           (commentsMode ? QStringLiteral("comments:") + m_music->comments.sort + ":" +
-                                              m_music->comments.status
-                                        : QStringLiteral("info")) +
-                           ":" + m_music->discover->tab + ":" + QString::number(musicCollection) + ":" + artistTab +
-                           ":" + query;
+        const auto searchViewScope = m_playlistSearchScope
+                                         ? QStringLiteral("playlist:") + m_playlistSearchScope->key
+                                         : QStringLiteral("global");
+        const auto scope =
+            modal + ":" + frame["mode"].toString() + ":" + m_music->current.value("kind").toString() + ":" +
+            m_music->current.value("id").toString() + ":" + tab + ":" +
+            (commentsMode
+                 ? QStringLiteral("comments:") + m_music->comments.sort + ":" + m_music->comments.status
+                 : QStringLiteral("info")) +
+            ":" + m_music->discover->tab + ":" + QString::number(musicCollection) + ":" + artistTab + ":" +
+            query + ":" + searchViewScope;
         const bool home = modal.isEmpty() && frame["mode"] == "archive" && !lyricsMode && !commentsMode;
         m_responsive.prepare(scope, home);
         if (!frame["viewer"].toBool()) {
@@ -726,12 +756,81 @@ void NativeHud::drawMobile(double time, const QString &scope, double stageWidth)
             {"lane", lane}, {"label", m_music->columns.value(lane)}, {"selected", lane == sourceLane}});
     }
     mobile["archiveSources"] = archiveSources;
-    const auto archiveItems =
-        modal.isEmpty() && frame["mode"] == "archive" && !lyricsMode ? m_music->libraryItems() : QJsonArray{};
+    const bool archiveVisible = modal.isEmpty() && frame["mode"] == "archive" && !lyricsMode;
+    QJsonArray archiveItems;
+    QJsonArray archiveRawIndices;
+    const bool likedArchive = isLikedArchive();
+    if (likedArchive) {
+        if (m_likedArchiveCacheDirty) {
+            const auto sourceRows = m_music->libraryItems();
+            const auto order = MusicData::sortOrder(sourceRows, m_likedArchiveSort);
+            m_likedArchiveRows = {};
+            m_likedArchiveRawIndices = {};
+            for (const auto position : order) {
+                m_likedArchiveRows.append(sourceRows.at(position));
+                m_likedArchiveRawIndices.append(position);
+            }
+            m_likedArchiveCacheDirty = false;
+        }
+        if (archiveVisible) {
+            archiveItems = m_likedArchiveRows;
+            archiveRawIndices = m_likedArchiveRawIndices;
+            const auto selectedRaw = m_music->libraryIndex();
+            mobile["archiveIndex"] = 0;
+            for (int index = 0; index < archiveRawIndices.size(); ++index) {
+                if (archiveRawIndices.at(index).toInt() == selectedRaw) {
+                    mobile["archiveIndex"] = index;
+                    break;
+                }
+            }
+        }
+    } else if (archiveVisible) {
+        archiveItems = m_music->libraryItems();
+    }
     mobile["archiveRows"] = archiveItems;
+    mobile["archiveRawIndices"] = archiveRawIndices;
     mobile["canPlayArchive"] = !archiveItems.isEmpty() && archiveItems.first().toObject()["kind"] == "song";
+    mobile["archivePlayEnabled"] = mobile["canPlayArchive"].toBool() || (likedArchive && m_music->hasMore[1]);
     mobile["archiveColumnIndex"] = columnIndex;
-    if (modal == "search" || modal == "saved") {
+    mobile["archiveLiked"] = likedArchive;
+    mobile["archivePlaylist"] = mobile["archiveKind"] == "playlist";
+    mobile["archivePlayAction"] =
+        likedArchive ? QStringLiteral("mobile:play-liked") : QStringLiteral("mobile:play-archive");
+    mobile["archiveKey"] = (likedArchive ? QStringLiteral("liked:") + m_music->provider + ":" +
+                                               QString::number(m_music->accountGeneration())
+                                         : mobile["archiveKey"].toString()) +
+                           ":" + mobile["archiveSort"].toString() + ":" + QString::number(columnIndex);
+    if (modal == "search" && isPlaylistSearchScoped()) {
+        QJsonArray entries;
+        const auto directory = m_playlistSearchScope->directory;
+        const bool likedSearch = m_playlistSearchScope->lane == 1;
+        QJsonArray songs;
+        if (likedSearch) {
+            songs = m_music->lists[1];
+        } else if (directory) {
+            songs = directory->orderedSongs();
+        }
+        const auto [first, last] =
+            m_responsive.resultWindow(int(m_playlistSearchOrder.size()), true, false, false);
+        mobile["resultTotalCount"] = m_playlistSearchOrder.size();
+        for (int index = first; index < last; ++index) {
+            const auto position = m_playlistSearchOrder.at(index);
+            if (position < 0 || position >= songs.size()) {
+                continue;
+            }
+            QString action;
+            if (m_playlistSearchComplete) {
+                const int resultLane = likedSearch ? 1 : 0;
+                action = "music:result:" + QString::number(resultLane) + ":" + QString::number(position);
+            }
+            entries.append(QJsonObject{
+                {"index", index},
+                {"value", songs.at(position)},
+                {"action", action},
+            });
+        }
+        mobile["resultRows"] = entries;
+    } else if (modal == "search" || modal == "saved") {
         QJsonArray entries;
         const int lane = modal == "search" ? 0 : musicCollection;
         const auto values = rows(lane);

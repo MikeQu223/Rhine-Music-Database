@@ -437,15 +437,7 @@ void NativeHud::container(double width, double opacity) {
         m_sortTracks = songs;
         m_sortField = sortField;
         m_trackFilter = filter;
-        m_trackOrder.clear();
-        for (const auto position : MusicData::sortOrder(songs, sortField)) {
-            const auto song = songs.at(position).toObject();
-            const auto searchable = song["title"].toString() + " " + song["artist"].toString() + " " +
-                                    song["album"].toString() + " " + song["id"].toString();
-            if (filter.isEmpty() || searchable.contains(filter, Qt::CaseInsensitive)) {
-                m_trackOrder.append(position);
-            }
-        }
+        m_trackOrder = MusicData::searchOrder(songs, filter, sortField, true);
     }
     const bool searching = item["kind"] == "playlist" && !filter.isEmpty();
     const int resultCount = m_trackOrder.size();
@@ -505,7 +497,7 @@ void NativeHud::container(double width, double opacity) {
     if (!albums) {
         card.playAll = {"▶  播放全部", "music:play-loaded"};
     }
-    if (item["kind"] == "playlist") {
+    if (item["kind"] == "playlist" && !m_responsive.compact()) {
         card.sort = {"排序方式 ▾", "music:sort-menu"};
         card.search = {detailQuery.isEmpty() ? QStringLiteral("搜索歌单曲目") : detailQuery,
                        "music:playlist-search"};

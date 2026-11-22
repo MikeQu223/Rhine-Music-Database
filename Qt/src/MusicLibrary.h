@@ -84,6 +84,8 @@ class MusicLibrary : public QObject {
     void loadSongWiki();
     void play(bool byUser = true);
     void playDirectory(bool includeAllSongSources = false);
+    bool playDirectoryIndex(int index, bool byUser = true);
+    bool playSourceIndex(int lane, int index, bool byUser = true);
     void playCollection(QJsonObject value);
     void playOfficial(QJsonObject value = {});
     struct QueueSource {

@@ -22,6 +22,8 @@ class ResponsiveHudCanvas {
     QJsonArray surface;
     QJsonArray raised;
     QJsonArray amber;
+    QJsonArray terminal;
+    QJsonArray terminalText;
     QPair<int, int> visibleRows(double top, double stride, int count) const;
     void fill(QRectF rect, QJsonArray color);
     void ellipseOutline(QRectF rect, QJsonArray color, double width = 1.);
@@ -48,6 +50,8 @@ class ResponsiveHudCanvas {
     void hit(QRectF rect, QString action, QString label);
     void field(QString name, QRectF rect);
     void button(QRectF rect, QString title, QString action, bool primary = false, bool selected = false);
+    void actionButton(QRectF rect, QString iconName, QString title, QString action, bool primary = false,
+                      bool selected = false, bool enabled = true);
     void chip(QRectF rect, QString title, QString action, bool selected = false);
     void section(double y, QString title, QString subtitle = {});
     void row(double y, QString title, QString artist, QString stamp, QString action, QString number = {},

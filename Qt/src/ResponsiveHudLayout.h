@@ -65,7 +65,7 @@ class ResponsiveHudLayout {
     double tabIndicator(const QString &group, double target);
     // 主界面滚动结束后把固定在第二行的选中项交给音乐层应用。
     int takeArchiveSelection() {
-        const int value = m_archiveSelection;
+        const int value = m_archiveSourceIndices.value(m_archiveSelection, m_archiveSelection);
         m_archiveSelection = -1;
         return value;
     }
@@ -86,6 +86,7 @@ class ResponsiveHudLayout {
     static constexpr double ArchiveRowHeight = 48.;
     bool m_archiveActive = false;
     int m_archiveCount = 0;
+    QVector<int> m_archiveSourceIndices;
     double m_archiveOffset = 0;
     bool m_archiveDragging = false;
     bool m_archiveReleaseRequested = false;

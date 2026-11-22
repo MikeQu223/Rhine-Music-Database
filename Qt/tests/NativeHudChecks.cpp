@@ -292,7 +292,9 @@ bool checkSorting(const QString &root, Glyphs &glyphs, const QJsonObject &conten
                               track(4, "A2", "", "A")};
     if (MusicData::sortOrder(original, "title") != QVector<int>{2, 3, 1, 0} ||
         MusicData::sortOrder(original, "album") != QVector<int>{1, 2, 0, 3} ||
-        MusicData::sortOrder(original, "artist") != QVector<int>{2, 3, 1, 0}) {
+        MusicData::sortOrder(original, "artist") != QVector<int>{2, 3, 1, 0} ||
+        MusicData::searchOrder(original, "A2") != QVector<int>{2, 3} ||
+        MusicData::searchOrder(original, "", "title") != QVector<int>{2, 3, 1, 0}) {
         qCritical() << "Stable natural sorting or missing-name placement failed";
         return false;
     }
@@ -432,6 +434,108 @@ bool checkSorting(const QString &root, Glyphs &glyphs, const QJsonObject &conten
     if (hud.state()["sortLoading"].toBool() || pages != beforeClose ||
         hasAction(hud.hits, "music:sort-menu") || hasAction(hud.hits, "music:sort:library:title")) {
         qCritical() << "Library exposed sorting controls or kept loading a closed detail page";
+        return false;
+    }
+    return true;
+}
+
+/** 竖屏歌单搜索只限定当前目录，结果播放沿用完整歌单队列并保持排序不改队列。 */
+bool checkMobilePlaylistActions(const QString &root, Glyphs &glyphs, const QJsonObject &content) {
+    Host host(root, true);
+    std::unique_ptr<MusicLibrary> music(createTestMusicLibrary(&host, hudTestProvider(), content));
+    const auto track = [](int id, QString title) {
+        auto value = song(id);
+        value["title"] = title;
+        value["album"] = "Archive";
+        value["artist"] = "Artist";
+        value["provider"] = hudTestProvider();
+        return value;
+    };
+    const QJsonArray songs{track(1, "Alpha"), track(2, "Remote Alpha"), track(3, "Last")};
+    QJsonArray ids;
+    for (const auto &value : songs) {
+        ids.append(value.toObject()["id"]);
+    }
+    auto directory = std::make_shared<MusicDirectory>();
+    directory->item = MusicData::item("playlist", "88", "核心歌单");
+    directory->item["trackCount"] = songs.size();
+    directory->songs = songs;
+    directory->ids = ids;
+    directory->cursor = ids.size();
+    directory->parentLane = 2;
+    music->directory = directory;
+    music->current = directory->item;
+    music->tracks = songs;
+    music->trackIDs = ids;
+    music->trackCursor = ids.size();
+    music->selectedLane = 2;
+    music->player.queue.replace(songs);
+    music->player.current = songs.first().toObject();
+    music->player.queue.select(0);
+    host.fixture = [songs](QString route, QJsonObject) {
+        QJsonValue value;
+        if (route.endsWith("/songs")) {
+            value = songs;
+        }
+        return QJsonObject{{"body", QJsonObject{{"code", 200}, {"value", value}}}};
+    };
+    HudSceneActions scene;
+    scene.mode = [](QString) {};
+    scene.pointer = [](QString, double, double, double) {};
+    NativeHud hud(&host, &glyphs, music.get(), scene);
+    hud.reduced = true;
+    const QJsonObject frame{{"mode", "archive"}, {"detail", 1}, {"selected", 0}};
+    music->frame = frame;
+    constexpr double width = 393. * 1080 / 852;
+    hud.draw(frame, width, 1);
+    if (hud.state()["archiveKind"].toString() != "playlist" || !hasAction(hud.hits, "mobile:play-archive") ||
+        !hasAction(hud.hits, "mobile:playlist-search") || !hasAction(hud.hits, "mobile:playlist-sort")) {
+        qCritical() << "Mobile playlist toolbar is incomplete";
+        return false;
+    }
+
+    const auto queueBeforeSort = music->player.queue.items();
+    hud.action("mobile:playlist-sort");
+    hud.draw(frame, width, 2);
+    if (music->directory->sortField != "title" || music->player.queue.items() != queueBeforeSort) {
+        qCritical() << "Playlist sorting changed playback queue";
+        return false;
+    }
+
+    music->keyword = "global";
+    const auto globalResults = music->lists[0];
+    hud.action("mobile:playlist-search");
+    hud.draw(frame, width, 3);
+    hud.setQuery("Remote");
+    hud.draw(frame, width, 4);
+    if (!hud.state()["playlistSearchScoped"].toBool() || !hud.state()["playlistSearchComplete"].toBool() ||
+        !hasAction(hud.hits, "music:result:0:2") || music->keyword != "global" ||
+        music->lists[0] != globalResults) {
+        qCritical() << "Playlist-scoped search leaked global state or missed its result";
+        return false;
+    }
+    const auto expectedQueue = music->directory->orderedSongs();
+    hud.action("music:result:0:2");
+    QCoreApplication::processEvents();
+    if (music->player.current["id"] != "2" || music->player.queue.items() != expectedQueue ||
+        music->player.queue.index() != 2) {
+        qCritical() << "Playlist search result did not use the complete playlist queue";
+        return false;
+    }
+
+    hud.draw(frame, width, 5);
+    music->directory.reset();
+    music->selectedLane = 1;
+    music->columns[1] = "收藏的歌曲";
+    music->lists[1] = songs;
+    music->totals[1] = songs.size();
+    music->hasMore[1] = false;
+    music->current = songs.first().toObject();
+    music->changed();
+    hud.draw(frame, width, 6);
+    if (!hasAction(hud.hits, "mobile:play-liked") || !hasAction(hud.hits, "mobile:playlist-search") ||
+        !hasAction(hud.hits, "mobile:playlist-sort")) {
+        qCritical() << "Liked archive depended on its display label";
         return false;
     }
     return true;
@@ -1964,6 +2068,7 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
     ok &= record("supersampling settings", checkSupersamplingSettings(host, glyphs, content));
     ok &= record("play button styles", checkPlayButtonStyles(glyphs));
     ok &= record("plugin reload", checkPluginReload(root, content));
+    ok &= record("mobile playlist actions", checkMobilePlaylistActions(root, glyphs, content));
     QStringList providers;
     for (const auto &id : ProviderRegistry::instance().ids()) {
         if (id != "local" && id != "siren") {
