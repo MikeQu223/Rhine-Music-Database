@@ -3055,11 +3055,16 @@ class _BasicShellState extends State<_BasicShell>
           BasicLocalPlaylist(id: id, title: title, trackCount: trackCount),
         );
         if (!mounted) return;
-        if (notice.isNotEmpty) {
-          setState(() => _actionNotice = notice);
+        // 打开成功时 controller 已经把 `directory` 建好，状态串是「已打开：<标题>」——
+        // 那也是非空 notice，不能拿它当失败信号；只有真没进目录才留在检索页。
+        if (controller.state.directory == null) {
+          setState(() => _actionNotice = notice.isEmpty ? '歌单暂无可播放曲目' : notice);
           return;
         }
         _setModal('');
+        if (notice.isNotEmpty) {
+          setState(() => _actionNotice = notice);
+        }
       }());
       return;
     }
