@@ -34,6 +34,7 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 
 import '../domain/lyrics/lyrics_controller.dart';
+import '../domain/models/provider_id.dart';
 import '../domain/player/music_player.dart';
 import '../domain/collection/local_collection_store.dart';
 import '../domain/search/catalog_search.dart';
@@ -81,8 +82,11 @@ const String sirenAllSongsId = 'siren-all';
 const String sirenAllSongsKey = 'siren:playlist:all';
 const String sirenAllSongsTitle = '全部歌曲';
 
-/// 「全部歌曲」目录的描述（Qt/src/MusicSiren.cpp:218）。
+/// 「全部歌曲」目录的描述（Qt/src/MusicSiren.cpp:218 的模板：`<平台名>全部歌曲`）。
 const String sirenAllSongsDescription = '塞壬唱片全部歌曲';
+
+/// 「全部歌曲」标题后缀：描述串 = 平台名 + 这个后缀（插件/本地平台同样成立）。
+const String sirenAllSongsTitleSuffix = '全部歌曲';
 
 /// 打开目录/详情后的状态文案前缀（Qt/src/MusicSiren.cpp:242、MusicDirectory.cpp:445）。
 const String sirenOpenedPrefix = '已打开：';
@@ -366,7 +370,7 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     _phase = BasicPhase.boot;
     _loading = true;
     _error = '';
-    _status = sirenCatalogLoadingStatus;
+    _status = _catalogLoadingStatus;
     _refreshLocalCollections();
     _publish();
     _startTicker();
@@ -430,7 +434,7 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     }
     if (!_catalogLoaded) {
       if (!_loading) {
-        _status = sirenLibraryUnloadedStatus;
+        _status = _libraryUnloadedStatus;
       }
       _publish();
       return;
@@ -736,6 +740,26 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
   /// 当前平台 id（远端检索结果按它隔离）。
   String get remoteProviderId => _remoteProviderId;
 
+  /// 当前平台的显示名（Qt/src/MusicApi.cpp:10-24 `providerName()` 的同一张表）。
+  ///
+  /// 状态串/目录文案里的平台名一律取这里，不许再写死「塞壬唱片」：
+  ///  - 还没绑定平台（`_remoteProviderId` 为空）→ 内置塞壬；
+  ///  - `local` → 「本地音乐」（Qt 同名字面）；
+  ///  - 插件平台优先用宿主传入的 manifest 显示名（[attachRemoteSearch] 的
+  ///    `providerName`），没有就按 provider id 映射（netease/qq/kugou/siren）。
+  String get providerName {
+    if (_remoteProviderId.isEmpty) {
+      return sirenProviderName;
+    }
+    if (_remoteProviderId == ProviderId.local.wire) {
+      return ProviderId.local.displayName;
+    }
+    if (_remoteProviderName.isNotEmpty) {
+      return _remoteProviderName;
+    }
+    return ProviderId.parse(_remoteProviderId).displayName;
+  }
+
   /// 绑定远端检索网关：宿主在平台装配/切换时调用，null = 回本地塞壬索引。
   ///
   /// 换平台时清空旧结果并让在途响应失效（`_remoteSearchSeq++`），否则会把
@@ -761,12 +785,33 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     _remoteProviderName = providerName;
     _remoteQuality = quality;
     _remoteSearchResult = null;
+    _refreshPlatformStatus();
     ++_remoteSearchSeq;
     if (gateway != null && _query.trim().isNotEmpty) {
       unawaited(_runRemoteSearch());
     }
     if (!_disposed) {
       _publish();
+    }
+  }
+
+  /// 平台切换后把仍是「塞壬唱片」字样的自动状态串翻成新平台名。
+  ///
+  /// 只改由曲库加载流程生成的那几条（插件/用户给的业务状态不动），否则切到
+  /// 网易云后首帧还会闪一条「正在读取塞壬唱片曲库…」。
+  void _refreshPlatformStatus() {
+    if (_status == sirenCatalogLoadingStatus ||
+        _status.startsWith('$sirenCatalogLoadingStatus（')) {
+      final String suffix = _status.substring(sirenCatalogLoadingStatus.length);
+      _status = '$_catalogLoadingStatus$suffix';
+    } else if (_status.startsWith(sirenCatalogFailurePrefix)) {
+      _status =
+          _catalogFailurePrefix + _status.substring(sirenCatalogFailurePrefix.length);
+    } else if (_status == sirenLibraryUnloadedStatus) {
+      _status = _libraryUnloadedStatus;
+    } else if (_status.startsWith(sirenCatalogLoadedPrefix) ||
+        _status.startsWith('$sirenProviderName：')) {
+      _status = _catalogLoadedStatus();
     }
   }
 
@@ -1451,7 +1496,7 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
       _error = '';
       _status = parent != null
           ? '$sirenReturnedPrefix${parent.title}'
-          : '$sirenReturnedPrefix$sirenProviderLabel';
+          : '$sirenReturnedPrefix$providerName';
       _publish();
     }
   }
@@ -1476,7 +1521,7 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     _listPosition = _rowOfSelection(_selection).toDouble();
     _loading = false;
     _error = '';
-    _status = _catalogLoaded ? _catalogLoadedStatus() : sirenLibraryUnloadedStatus;
+    _status = _catalogLoaded ? _catalogLoadedStatus() : _libraryUnloadedStatus;
     _publish();
   }
 
@@ -1497,7 +1542,7 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
       return;
     }
     if (!_catalogLoaded || _catalogSongs.isEmpty) {
-      _status = sirenLibraryUnloadedStatus;
+      _status = _libraryUnloadedStatus;
       _publish();
       return;
     }
@@ -2322,8 +2367,8 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     _loading = true;
     _error = '';
     _status = _catalogRetries > 0
-        ? '$sirenCatalogLoadingStatus（重试 $_catalogRetries/$maxCatalogRetries）'
-        : sirenCatalogLoadingStatus;
+        ? '$_catalogLoadingStatus（重试 $_catalogRetries/$maxCatalogRetries）'
+        : _catalogLoadingStatus;
     _phase = BasicPhase.boot;
     _publish();
     try {
@@ -2364,7 +2409,7 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
       _loading = false;
       _catalogLoaded = false;
       _error = _messageOf(error);
-      _status = sirenCatalogFailurePrefix + _error;
+      _status = _catalogFailurePrefix + _error;
       _phase = BasicPhase.library;
       _scheduleCatalogRetry();
     }
@@ -2408,8 +2453,8 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
 
   String _catalogLoadedStatus() {
     // 状态串里的平台名必须跟着当前平台走（Qt `providerName()`）：切到插件平台后
-    // 再显示「已加载塞壬唱片曲库」是错的。
-    final String name = _remoteSearch != null ? _providerDisplayName() : sirenProviderName;
+    // 再显示「已加载塞壬唱片曲库」是错的（用户报的「塞壬唱片：用搜索…」就是这一条）。
+    final String name = providerName;
     if (_remoteSearch != null) {
       // 插件平台没有整库：说「已加载 936 首」会把塞壬的曲库数按到别的平台上。
       return '${name}：用搜索查找曲目，收藏与歌单在左侧列';
@@ -2417,8 +2462,20 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     return '已加载${name}曲库：${_catalogSongs.length} 首 / ${_catalogAlbums.length} 张专辑';
   }
 
-  /// 当前远端平台的显示名（无远端时回落到内置塞壬名）。
-  String _providerDisplayName() => _remoteProviderName.isEmpty ? sirenProviderName : _remoteProviderName;
+  /// 曲库读取中的状态串（Qt/src/MusicSiren.cpp:50 的模板，平台名跟着走）。
+  String get _catalogLoadingStatus => '正在读取$providerName曲库…';
+
+  /// 曲库读取失败的前缀（Qt/src/MusicSiren.cpp:63 的模板）。
+  String get _catalogFailurePrefix => '$providerName曲库读取失败：';
+
+  /// 曲库尚未加载的状态串（Qt/src/MusicSiren.cpp:195 的模板）。
+  String get _libraryUnloadedStatus => '$providerName曲库尚未加载';
+
+  /// 上游没有可播放音源时的文案（MusicBridge/client/siren.mjs:485 的模板）。
+  String get _noSourceMessage => '$providerName未提供可播放音源';
+
+  /// 当前远端平台的显示名（保留旧调用点；等同于 [providerName]）。
+  String _providerDisplayName() => providerName;
 
   /// 资料库层的状态文案：目录打开时是目录标题（Qt MusicLibrary::libraryName()，
   /// Qt/src/MusicLibrary.cpp:189-194），否则是曲库加载结果。
@@ -2427,9 +2484,7 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     if (directory != null) {
       return '$sirenOpenedPrefix${directory.title}';
     }
-    return _catalogLoaded
-        ? _catalogLoadedStatus()
-        : '${_remoteSearch != null ? _providerDisplayName() : sirenProviderName}曲库尚未加载';
+    return _catalogLoaded ? _catalogLoadedStatus() : _libraryUnloadedStatus;
   }
 
   /// 「全部歌曲」目录的 state 投影（Qt/src/MusicSiren.cpp:205-246）。
@@ -2446,9 +2501,9 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
       id: sirenAllSongsId,
       key: sirenAllSongsKey,
       title: sirenAllSongsTitle,
-      artist: sirenProviderLabel,
+      artist: providerName,
       cover: songs.first.cover,
-      description: sirenAllSongsDescription,
+      description: '$providerName$sirenAllSongsTitleSuffix',
       trackCount: songs.length,
       virtual: true,
       songs: songs,
@@ -2837,7 +2892,7 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     _publish();
     final String id = _text(track['id']);
     if (id.isEmpty) {
-      _player.fail(sirenNoSourceMessage, generation: generation);
+      _player.fail(_noSourceMessage, generation: generation);
       return;
     }
     try {
@@ -2868,7 +2923,7 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
         }
       }
       if (sourceUrl.isEmpty) {
-        _player.fail(sirenNoSourceMessage, generation: generation);
+        _player.fail(_noSourceMessage, generation: generation);
         return;
       }
       await _audio.prepare(sourceUrl, generation: generation);
