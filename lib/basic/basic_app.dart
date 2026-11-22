@@ -3867,7 +3867,14 @@ class _BasicShellState extends State<_BasicShell>
       return null;
     }
     if (action.startsWith(basicVolumeFractionActionPrefix)) {
-      return '音量调节尚未接入：BasicController 还缺 setVolumeFraction（预览不伪造音量）';
+      final double? fraction = double.tryParse(
+        action.substring(basicVolumeFractionActionPrefix.length),
+      );
+      if (fraction == null) {
+        return null;
+      }
+      unawaited(controller.setVolumeFraction(fraction));
+      return null;
     }
     // 账号入口（音乐平台页 ACCOUNT 段的「登录账号 ↗」与设置页 ACCESS 卡的
     // 「登录 / 退出登录」）：本步只做**开关分发**——登录开登录弹层

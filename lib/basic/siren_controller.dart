@@ -2162,6 +2162,16 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
   ///
   /// 状态文案照 Qt `NativeHudLyrics.cpp` 的口径：偏移值直接写进状态行，
   /// 让用户知道 0.2s 一次累计到了多少；底层夹取在 `LyricsController` 里。
+  /// 应用内音量（0..1）：Qt 的 `player:volume-fraction:<f>` 直接落到 `QAudioOutput`，
+  /// 这里落到 MediaPlayer 的 setVolume——只改本应用，不动系统音量。
+  Future<void> setVolumeFraction(double fraction) async {
+    final BasicAudioPort audio = _audio;
+    if (_disposed || audio is! BasicAudioVolumePort) {
+      return;
+    }
+    await (audio as BasicAudioVolumePort).setVolume(fraction.clamp(0.0, 1.0));
+  }
+
   Future<String> shiftLyricsOffset(double deltaMs) async {
     final LyricsController? lyrics = _lyrics;
     if (lyrics == null) {

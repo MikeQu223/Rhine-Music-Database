@@ -176,6 +176,15 @@ class BasicAudioChannel private constructor(
                 result.success(authority.seekTo(positionMs, generation))
             }
 
+            METHOD_SET_VOLUME -> {
+                val fraction = (call.arguments as? Map<*, *>)?.get("fraction") as? Number
+                if (fraction == null) {
+                    result.error("invalid_arguments", "setVolume requires fraction(Number)", null)
+                    return
+                }
+                result.success(authority.setVolume(fraction.toDouble()))
+            }
+
             METHOD_STOP -> result.success(authority.stop())
             METHOD_DISPOSE -> result.success(authority.dispose())
             METHOD_GET_STATE -> result.success(authority.snapshot())
@@ -265,6 +274,7 @@ class BasicAudioChannel private constructor(
         private const val METHOD_PREPARE = "prepare"
         private const val METHOD_PLAY = "play"
         private const val METHOD_PAUSE = "pause"
+        private const val METHOD_SET_VOLUME = "setVolume"
         private const val METHOD_SEEK = "seekTo"
 
         /**
@@ -374,6 +384,9 @@ private class PlaybackAuthority {
     private var error = ""
     private var positionMs = 0L
     private var durationMs = 0L
+
+    /** 应用内音量（0..1）。MediaPlayer 重建后要重新贴上去，所以留一份真值。 */
+    private var volume = 1.0
 
     /** play 在 prepare 完成前到达时先记下意图，onPrepared 里真正 start（不做假播放）。 */
     private var playWhenPrepared = false
@@ -518,6 +531,8 @@ private class PlaybackAuthority {
         val created = MediaPlayer()
         player = created
         created.setAudioAttributes(AUDIO_ATTRIBUTES)
+        // 应用内音量是会话级真值：换曲重建实例后必须重新贴上去，否则滑到 0 再换歌会突然变响。
+        created.setVolume(volume.toFloat(), volume.toFloat())
         created.setOnPreparedListener { mp -> onPrepared(token, mp) }
         created.setOnCompletionListener { onCompletion(token) }
         created.setOnErrorListener { _, what, extra -> onError(token, what, extra) }
@@ -591,6 +606,12 @@ private class PlaybackAuthority {
         playing = false
         buffering = false
         emit()
+        return snapshot()
+    }
+
+    fun setVolume(fraction: Double): Map<String, Any?> {
+        volume = fraction.coerceIn(0.0, 1.0)
+        player?.setVolume(volume.toFloat(), volume.toFloat())
         return snapshot()
     }
 

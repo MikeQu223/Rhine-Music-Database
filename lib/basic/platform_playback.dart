@@ -188,6 +188,14 @@ class BasicAudioState {
 ///
 /// prepare 必须带上调用方自己的 generation（每次换曲递增）；play / pause / seekTo 也带同一代，
 /// 平台会丢弃旧代命令，Dart 侧在发出前就先丢一次。
+/// 音量是**可选能力**：只有真正带音频后端的实现（`MethodChannelBasicAudio`）才有，
+/// 测试替身与离线预览不该被迫补一个空入口。调用方按 `audio is BasicAudioVolumePort` 判定。
+abstract class BasicAudioVolumePort {
+  /// 应用内音量（0..1）。Qt 侧走 `QAudioOutput::setVolume`，这里走 MediaPlayer 的
+  /// `setVolume`——只影响本应用，不改系统音量。
+  Future<void> setVolume(double fraction);
+}
+
 abstract class BasicAudioPort {
   BasicAudioState get state;
 
@@ -203,6 +211,7 @@ abstract class BasicAudioPort {
 
   Future<void> seekTo(double positionMs, {required int generation});
 
+
   Future<void> stop();
 
   Future<void> dispose();
@@ -213,7 +222,7 @@ abstract class BasicAudioPort {
 /// 构造即订阅 EventChannel（receiveBroadcastStream() 会立刻发 listen），所以平台侧 onListen
 /// 补推的那一份快照不会漏掉。取消订阅（dispose）不会让平台释放播放实例——释放只由
 /// dispose()/stop() 触发。
-class MethodChannelBasicAudio implements BasicAudioPort {
+class MethodChannelBasicAudio implements BasicAudioPort, BasicAudioVolumePort {
   MethodChannelBasicAudio({
     MethodChannel? methodChannel,
     EventChannel? eventChannel,
@@ -293,6 +302,14 @@ class MethodChannelBasicAudio implements BasicAudioPort {
       'url': url,
       'generation': generation,
     });
+  }
+
+  @override
+  Future<void> setVolume(double fraction) async {
+    if (_disposed) {
+      return;
+    }
+    await _invoke('setVolume', <String, Object?>{'fraction': fraction.clamp(0.0, 1.0)});
   }
 
   @override
