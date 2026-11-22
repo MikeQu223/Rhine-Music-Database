@@ -40,6 +40,7 @@ class PlayerBarState {
     this.liked = false,
     this.likeKnown = false,
     this.canLike = false,
+    this.musicVideo = false,
   });
 
   final String title;
@@ -68,6 +69,11 @@ class PlayerBarState {
   final bool liked;
   final bool likeKnown;
   final bool canLike;
+
+  /// 是否画播放条上的 MV 按钮（Qt `PlayerBar::State::musicVideo`，
+  /// 由 `PlatformFeatures::MusicVideo` 决定；本仓库 Android 侧 MV 已原生可播，
+  /// 所以改由宿主按平台的 `capabilities.mv` 传入）。
+  final bool musicVideo;
 }
 
 /// 组合形态（Qt PlayerBar::Surface，PlayerBar.h:31）。
@@ -496,6 +502,14 @@ void _lyrics(_Painter paint, PlayerBarState state, double x, double y) {
   }
 }
 
+/// MV 入口（PlayerBar.cpp:277-282）：只有平台支持 MV 时才画，词按钮相应左移 20。
+void _mv(_Painter paint, PlayerBarState state, double x, double y) {
+  paint.centeredLabel('MV', x, y, 15, 'regular');
+  // Qt `PlayerBar.cpp:277-282` 的 label 与 hit 都不看 hasTrack：平台支持 MV 就画，
+  // 没有当前曲目时点下去由 `MvController` 自己忽略（本仓库 `MvAction.open` 同理）。
+  paint.hit(PlayerBarRect(x - 24, y - 24, 48, 48), 'player:mv', '打开 MV 播放窗口');
+}
+
 /// 输出区：音量与队列（PlayerBar.cpp:208-225）。
 void _output(_Painter paint, PlayerBarState state, double x, double y, double right) {
   paint.fill(PlayerBarRect(x - 22, y + 23, 1, 50), paint.line);
@@ -548,7 +562,10 @@ PlayerBarDrawing renderPlayerBar(
   final double centerY = y + playerBarRowHeight / 2;
   _favorite(paint, state, favoriteX, centerY);
   paint.controls(state, center, centerY);
-  _lyrics(paint, state, bounds.right - 470, centerY);
+  _lyrics(paint, state, bounds.right - (state.musicVideo ? 490 : 470), centerY);
+  if (state.musicVideo) {
+    _mv(paint, state, bounds.right - 435, centerY);
+  }
   _playbackMode(paint, state, bounds.right - 380, centerY);
   _timeline(paint, state, row);
   _output(paint, state, outputX, y, bounds.right);

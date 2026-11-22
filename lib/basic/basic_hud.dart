@@ -425,7 +425,7 @@ class BasicHudFrame {
     }
 
     final player.PlayerBarDrawing bar = player.renderPlayerBar(
-      _playerState(state),
+      _playerState(state, musicVideo: mvAvailable),
       player.PlayerBarRect(0, height - player.playerBarRowHeight, width, player.playerBarRowHeight),
       dark,
       ports,
@@ -576,7 +576,7 @@ class BasicHudFrame {
     );
     final List<BasicListItem> items = basicLibraryItems(state);
     final int selected = _selectedRow(state, items);
-    final player.PlayerBarState bar = _playerState(state);
+    final player.PlayerBarState bar = _playerState(state, musicVideo: mvAvailable);
     // 空列/未接入的诚实文案：端口没接上本地集合时不能说「这里本来是空的」。
     final String emptyNotice = state.error.isNotEmpty
         ? state.error
@@ -1663,7 +1663,7 @@ class BasicHudFrame {
     );
   }
 
-  static player.PlayerBarState _playerState(BasicViewState state) {
+  static player.PlayerBarState _playerState(BasicViewState state, {bool musicVideo = false}) {
     // 播放条只报**真正在播**的曲目（state.playingTrack），不拿选中曲目冒充：
     // 选中可以没有播放，播放条不该显示一首没在播的歌。
     final SirenSong? song = state.playingTrack;
@@ -1684,6 +1684,11 @@ class BasicHudFrame {
       hasTrack: song != null,
       seekable: state.durationMs > 0,
       applicationVolume: false,
+      // 横屏播放条的 MV 按钮（Qt `PlayerBar.cpp:277-282`）：Qt 用
+      // `PlatformFeatures::MusicVideo`（Android 恒假，所以主线在手机上从不画这个键），
+      // 本仓库的 MV 已经原生可播（`video_player`），所以改按平台 descriptor 的
+      // `capabilities.mv` 决定，与竖屏「更多 → 关联 MV」用同一个判据。
+      musicVideo: musicVideo,
     );
   }
 }

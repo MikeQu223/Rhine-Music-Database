@@ -3871,6 +3871,26 @@ class _BasicShellState extends State<_BasicShell>
       _openQueue();
       return null;
     }
+    // 横屏播放条上的 MV 键（Qt `PlayerBar.cpp:277-282` 发 `player:mv`，Qt 侧由
+    // `NativeHud::playerAction` 转成 `mvRequested`）。本仓库没有独立的 MV 窗口，
+    // 直接走与竖屏「更多 → 关联 MV」同一个弹层：先记下当前是否在播（MV 会抢音频
+    // 焦点），再按**正在播放**的曲目去取 MV 版本（播放条上的 MV 键属于当前音轨，
+    // 不是详情页选中的那一行）。
+    if (action == 'player:mv') {
+      final MvController? mv = _mvController;
+      if (mv == null) {
+        return 'MV 尚未接入：播放服务未就绪';
+      }
+      final String playingId = controller.state.playingTrack?.id ?? '';
+      if (playingId.isEmpty) {
+        return '当前没有正在播放的曲目';
+      }
+      _mvResumeAfterClose = controller.state.playing;
+      unawaited(_syncMv());
+      _setModal('mv');
+      unawaited(mv.refresh(trackId: playingId, force: true));
+      return null;
+    }
     if (action == 'player:lyrics-close') {
       unawaited(controller.closeLyrics());
       return null;
