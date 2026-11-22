@@ -96,6 +96,27 @@ String basicLibraryTitle(BasicViewState state, {String providerName = basicLibra
   return lane.isEmpty ? providerName : lane;
 }
 
+/// 当前平台是否内置塞壬（Qt `isSiren()`，`Qt/src/NativeHud.cpp:347-361` 的
+/// 「＋ 塞壬曲库」/ `SIREN RECORDS` 分支）。
+///
+/// **以平台显示名为准，布尔只作兜底**：宿主的 `isSirenProvider` 是
+/// `_providerId == 'siren'` 的快照（basic_app.dart:1949），一旦平台切换后这枚布尔
+/// 与真实平台不同步，横屏右上角就会在网易云/QQ 渠道下继续挂「＋ 塞壬曲库」。
+/// 平台名（[BasicHudSurface.providerName] / `_currentDescriptor.name`）是同一帧里
+/// 的真值，所以这里让名字优先：名字说不是塞壬，就不许再画塞壬专属字样。
+bool basicIsSirenPlatform(bool isSirenProvider, String providerName) {
+  if (!isSirenProvider) {
+    // 宿主已经明确"不是塞壬"：名字再像也不冒充内置平台（插件平台也可能自称塞壬）。
+    return false;
+  }
+  final String name = providerName.trim();
+  if (name.isEmpty) {
+    // 名字没给（descriptor 未装载）：只能信布尔，否则内置平台会丢自己的字样。
+    return true;
+  }
+  return name.contains('塞壬');
+}
+
 /// 一帧的扁平命令流 + 命中集合。绘制（HudStagePainter）与命中（HitLayer）
 /// 消费同一份，禁止各自再推导坐标。
 class BasicHudFrame {
@@ -330,6 +351,9 @@ class BasicHudFrame {
       ink: hudInk(dark),
       animate: animateText,
     );
+    // 塞壬专属字样（「＋ 塞壬曲库」/ `SIREN RECORDS`/「查看曲库 →」）一律按平台名判，
+    // 不只信宿主那枚布尔快照（见 [basicIsSirenPlatform]）。
+    final bool sirenPlatform = basicIsSirenPlatform(isSirenProvider, providerName);
     HudChrome(sink, ports, dark: dark).chromeView(
       width: width,
       archiveMode: state.phase == BasicPhase.library && !portrait,
@@ -339,7 +363,7 @@ class BasicHudFrame {
       suppressMask: false,
       libraryName: basicLibraryTitle(state, providerName: providerName),
       isLocal: false,
-      isSiren: isSirenProvider,
+      isSiren: sirenPlatform,
       uid: '',
       provider: providerId,
       archiveMaskStrength: archiveMaskStrength.round(),
@@ -354,7 +378,7 @@ class BasicHudFrame {
           state,
           providerId: providerId,
           providerName: providerName,
-          isSiren: isSirenProvider,
+          isSiren: sirenPlatform,
         ),
         width,
         glyphs: ports,
@@ -1490,6 +1514,7 @@ class BasicHudFrame {
     String providerName = basicLibraryName,
     bool isSirenProvider = true,
   }) {
+    final bool sirenPlatform = basicIsSirenPlatform(isSirenProvider, providerName);
     final List<BasicListItem> items = basicLibraryItems(state);
     final int rawSelected = basicSelectedItemIndex(state, items);
     final int selected = items.isEmpty ? 0 : rawSelected.clamp(0, items.length - 1).toInt();
@@ -1515,7 +1540,7 @@ class BasicHudFrame {
         sourceOrderIndex: basicSourceOrderIndex(state.selectedLane),
         provider: providerId,
         isLocal: false,
-        isSiren: isSirenProvider,
+        isSiren: sirenPlatform,
         directory: state.directory != null,
         directoryKind: state.directory?.kind,
         uid: '',

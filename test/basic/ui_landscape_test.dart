@@ -286,4 +286,50 @@ void main() {
       expect(actions, equals(<String>['player:lyrics-follow']));
     });
   });
+
+  group('landscape platform label', () {
+    /// 右上角「＋ 塞壬曲库 / ＋ 我的音乐」必须按**当前平台名**判：
+    /// 宿主那枚 `isSirenProvider` 布尔是 `_providerId == 'siren'` 的快照，
+    /// 平台切换后一旦不同步，网易云/QQ 渠道下就会继续挂塞壬字样（用户报的缺陷）。
+    test('平台名不是塞壬时不再出现「塞壬曲库」，即使布尔还残留 true', () {
+      final BasicHudFrame frame = BasicHudFrame.build(
+        state: _library(),
+        ports: _ports(),
+        width: 1920,
+        height: 1080,
+        portrait: false,
+        providerId: 'netease',
+        providerName: '网易云音乐',
+        isSirenProvider: true,
+      );
+      final List<String> labels = <String>[for (final HudHit hit in frame.hits) hit.label];
+      expect(labels, contains('＋ 我的音乐'));
+      expect(labels, isNot(contains('＋ 塞壬曲库')));
+      final List<String> texts = <String>[
+        for (final List<Object?> command in frame.commands)
+          if (command.isNotEmpty && command[0] == 'text') command[1]! as String,
+      ];
+      expect(texts, isNot(contains('SIREN RECORDS')));
+    });
+
+    test('内置塞壬平台仍然显示「＋ 塞壬曲库」与 SIREN RECORDS', () {
+      final BasicHudFrame frame = BasicHudFrame.build(
+        state: _library(),
+        ports: _ports(),
+        width: 1920,
+        height: 1080,
+        portrait: false,
+        providerId: 'siren',
+        providerName: '塞壬唱片',
+        isSirenProvider: true,
+      );
+      final List<String> labels = <String>[for (final HudHit hit in frame.hits) hit.label];
+      expect(labels, contains('＋ 塞壬曲库'));
+      final List<String> texts = <String>[
+        for (final List<Object?> command in frame.commands)
+          if (command.isNotEmpty && command[0] == 'text') command[1]! as String,
+      ];
+      expect(texts, contains('SIREN RECORDS'));
+    });
+  });
 }
