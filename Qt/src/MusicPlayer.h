@@ -1,6 +1,9 @@
 #pragma once
 #include "LyricsController.h"
 #include "PlaybackQueue.h"
+#include "SentryPlaybackFailure.h"
+#include <QElapsedTimer>
+#include <QString>
 #include <optional>
 
 class MusicPlayer : public QObject {
@@ -70,6 +73,8 @@ class MusicPlayer : public QObject {
     int m_recoveryAttempts = 0;
     int m_selectionSerial = 0;
     bool m_receivedSnapshot = false;
+    QString m_playAttemptId;
+    QElapsedTimer m_playAttemptClock;
     QString m_remoteCover;
     bool remoteCommand(const QString &method, QJsonObject arguments = {});
     void recoverPlayback();
@@ -78,7 +83,7 @@ class MusicPlayer : public QObject {
                  const QJsonObject &adoptedAudio = {});
     QString effectivePlaybackQuality() const;
     void finishOnlinePlayback(const QJsonObject &track, const QJsonObject &audio);
-    void fail(QString error);
+    void fail(QString error, RhineSentry::PlaybackFailure failure = {});
 #if defined(Q_OS_MACOS) || defined(Q_OS_IOS) || defined(Q_OS_WIN)
     bool m_appleTransitionsEnabled = false;
     bool m_appleTransitionAttempted = false;

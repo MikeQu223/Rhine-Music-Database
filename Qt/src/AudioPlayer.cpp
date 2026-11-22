@@ -754,6 +754,7 @@ bool AudioPlayer::load(QString input, bool offline, bool alternative, QString pr
     windowsAlternative = alternative;
 #endif
     ++sourceSerial;
+    errorCode = 0;
     backendFailureCategory = 0;
     reportedHttpStatus = 0;
     sourceKind = 0;
@@ -879,6 +880,9 @@ void AudioPlayer::control(QString action, double value) {
         recoveryPosition = -1;
         pendingSource.clear();
         error.clear();
+        errorCode = 0;
+        backendFailureCategory = 0;
+        reportedHttpStatus = 0;
         pendingFailure = false;
         failureRecoverable = false;
         progressClock.invalidate();
@@ -910,6 +914,18 @@ QVariantMap AudioPlayer::state() const {
     if (hasNativePlayback()) {
         const auto status = applePlayer->status();
         const auto duration = applePlayer->duration();
+        const bool buffering = error.isEmpty() &&
+                               (status == NativeTransitionPlayer::Status::Loading || recoveryPosition >= 0 ||
+                                applePlayer->isSeeking() ||
+                                (playbackRequested && !outputUnavailable && !applePlayer->isPlaying()));
+        auto mediaStatus = QMediaPlayer::LoadedMedia;
+        if (!error.isEmpty()) {
+            mediaStatus = QMediaPlayer::InvalidMedia;
+        } else if (sourceEnded) {
+            mediaStatus = QMediaPlayer::EndOfMedia;
+        } else if (buffering) {
+            mediaStatus = QMediaPlayer::LoadingMedia;
+        }
         return {{"playing", playbackRequested && !outputUnavailable && error.isEmpty() &&
                                 status == NativeTransitionPlayer::Status::Ready && applePlayer->isPlaying()},
                 {"position", recoveryPosition >= 0 && duration > 0 ? std::min(position, duration) : position},
@@ -919,11 +935,13 @@ QVariantMap AudioPlayer::state() const {
                 {"ended", ended},
                 {"error", error},
                 {"recoverable", failureRecoverable},
+                {"errorCode", errorCode},
+                {"backendFailureCategory", backendFailureCategory},
+                {"reportedHttpStatus", reportedHttpStatus},
+                {"mediaStatus", int(mediaStatus)},
+                {"sourceKind", sourceKind},
                 {"requested", playbackRequested},
-                {"buffering", error.isEmpty() &&
-                                  (status == NativeTransitionPlayer::Status::Loading ||
-                                   recoveryPosition >= 0 || applePlayer->isSeeking() ||
-                                   (playbackRequested && !outputUnavailable && !applePlayer->isPlaying()))}};
+                {"buffering", buffering}};
     }
 #endif
     return {{"playing", playbackRequested && !outputUnavailable && error.isEmpty() &&
@@ -935,6 +953,11 @@ QVariantMap AudioPlayer::state() const {
             {"ended", ended},
             {"error", error},
             {"recoverable", failureRecoverable},
+            {"errorCode", errorCode},
+            {"backendFailureCategory", backendFailureCategory},
+            {"reportedHttpStatus", reportedHttpStatus},
+            {"mediaStatus", int(player->mediaStatus())},
+            {"sourceKind", sourceKind},
             {"requested", playbackRequested},
             {"buffering", player->mediaStatus() == QMediaPlayer::LoadingMedia ||
                               (!pendingSource.isEmpty() && !outputUnavailable) ||
@@ -1008,7 +1031,7 @@ QJsonObject AudioPlayer::diagnosticState() const {
         {"provider", sourceProvider},
         {"mediaStatus", int(player->mediaStatus())},
         {"playbackState", int(player->playbackState())},
-        {"errorCode", int(player->error())},
+        {"errorCode", errorCode},
         {"backendFailureCategory", backendFailureCategory},
         {"reportedHttpStatus", reportedHttpStatus},
         {"playing", state()["playing"].toBool()},
@@ -1116,34 +1139,35 @@ QJsonObject AudioPlayer::diagnosticState() const {
 
 /** 将后端错误映射为有限类别；禁止把错误原文传入诊断记录。 */
 void AudioPlayer::diagnoseError(QMediaPlayer::Error code, const QString &message) {
-    if (diagnosticsEnabled && diagnosticEvent) {
-        // 原文可能包含签名链接或文件路径；只匹配固定故障类别，不保存原文。
-        const auto lower = message.toLower();
-        const QList<QStringList> categories{{"timed out", "timeout"},
-                                            {"resolve", "name or service not known"},
-                                            {"connection reset"},
-                                            {"invalid data"},
-                                            {"decoder", "codec"},
-                                            {"audio output", "audio device"},
-                                            {"permission denied", "access denied"},
-                                            {"ssl", "tls", "certificate"},
-                                            {"end of file", "eof"},
-                                            {"not found", "no such file"},
-                                            {"server returned", "http error"}};
-        backendFailureCategory = 0;
-        for (int i = 0; i < categories.size() && backendFailureCategory == 0; ++i) {
-            for (const auto &pattern : categories[i]) {
-                if (lower.contains(pattern)) {
-                    backendFailureCategory = i + 1;
-                    break;
-                }
+    // 原文可能包含签名链接或文件路径；只匹配固定故障类别，不保存原文。
+    const auto lower = message.toLower();
+    const QList<QStringList> categories{{"timed out", "timeout"},
+                                        {"resolve", "name or service not known"},
+                                        {"connection reset"},
+                                        {"invalid data"},
+                                        {"decoder", "codec"},
+                                        {"audio output", "audio device"},
+                                        {"permission denied", "access denied"},
+                                        {"ssl", "tls", "certificate"},
+                                        {"end of file", "eof"},
+                                        {"not found", "no such file"},
+                                        {"server returned", "http error"}};
+    errorCode = int(code);
+    backendFailureCategory = 0;
+    for (int i = 0; i < categories.size() && backendFailureCategory == 0; ++i) {
+        for (const auto &pattern : categories[i]) {
+            if (lower.contains(pattern)) {
+                backendFailureCategory = i + 1;
+                break;
             }
         }
-        const QRegularExpression httpStatus(
-            QStringLiteral("(?:http error|server returned)\\s+([45][0-9]{2})(?:\\D|$)"));
-        reportedHttpStatus = httpStatus.match(lower).captured(1).toInt();
+    }
+    const QRegularExpression httpStatus(
+        QStringLiteral("(?:http error|server returned)\\s+([45][0-9]{2})(?:\\D|$)"));
+    reportedHttpStatus = httpStatus.match(lower).captured(1).toInt();
+    if (diagnosticsEnabled && diagnosticEvent) {
         auto values = diagnosticState();
-        values["errorCode"] = int(code);
+        values["errorCode"] = errorCode;
         diagnosticEvent("error", values);
     }
 }
@@ -1227,6 +1251,9 @@ void AudioPlayer::completePlayback() {
     sourceEnded = true;
     pendingFailure = failureRecoverable = false;
     error.clear();
+    errorCode = 0;
+    backendFailureCategory = 0;
+    reportedHttpStatus = 0;
     playbackRequested = false;
     playbackWatchdog.stop();
     ++ended;

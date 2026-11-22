@@ -32,7 +32,9 @@ sentry_value_t filterBreadcrumb(sentry_value_t crumb, void *) {
         category && (std::strcmp(category, "rhine.page") == 0 ||
                      std::strcmp(category, "rhine.action") == 0 ||
                      std::strcmp(category, "rhine.playback") == 0 ||
-                     std::strcmp(category, "rhine.lifecycle") == 0)) {
+                     std::strcmp(category, "rhine.lifecycle") == 0 ||
+                     std::strcmp(category, "rhine.render") == 0 ||
+                     std::strcmp(category, "rhine.plugin") == 0)) {
         return crumb;
     }
     sentry_value_decref(crumb);
@@ -54,7 +56,21 @@ sentry_value_t filterMetricIdentity(sentry_value_t item, void *) {
     return item;
 }
 
-sentry_value_t attributes(const char *category, const char *name) {
+sentry_value_t attributeValue(const QJsonValue &value) {
+    if (value.isString()) {
+        const auto text = value.toString().toUtf8();
+        return sentry_value_new_attribute(sentry_value_new_string(text.constData()), nullptr);
+    }
+    if (value.isBool()) {
+        return sentry_value_new_attribute(sentry_value_new_bool(value.toBool()), nullptr);
+    }
+    if (value.isDouble()) {
+        return sentry_value_new_attribute(sentry_value_new_double(value.toDouble()), nullptr);
+    }
+    return sentry_value_new_null();
+}
+
+sentry_value_t attributes(const char *category, const char *name, const QJsonObject &extra = {}) {
     auto values = sentry_value_new_object();
     sentry_value_set_by_key(values, "rhine.category",
                             sentry_value_new_attribute(sentry_value_new_string(category), nullptr));
@@ -66,6 +82,13 @@ sentry_value_t attributes(const char *category, const char *name) {
     sentry_value_set_by_key(
         values, "os.name",
         sentry_value_new_attribute(sentry_value_new_string(operatingSystemName()), nullptr));
+    for (auto it = extra.begin(); it != extra.end(); ++it) {
+        const auto value = attributeValue(it.value());
+        if (!sentry_value_is_null(value)) {
+            const auto key = it.key().toUtf8();
+            sentry_value_set_by_key(values, key.constData(), value);
+        }
+    }
     return values;
 }
 
@@ -136,7 +159,7 @@ bool start(const Config &config) {
     sentry_options_set_handler_path(options, QFile::encodeName(handler).constData());
     sentry_options_set_database_path(options, QFile::encodeName(config.databaseDirectory).constData());
 #endif
-    sentry_options_set_require_user_consent(options, 1);
+    sentry_options_set_require_user_consent(options, config.requireUserConsent ? 1 : 0);
     sentry_options_set_traces_sample_rate(options, config.tracesSampleRate);
     sentry_options_set_auto_session_tracking(options, config.role == QStringLiteral("interface"));
     sentry_options_set_max_breadcrumbs(options, 40);
@@ -177,40 +200,102 @@ void record(const char *category, const char *name) {
     sentry_value_set_by_key(crumb, "category", sentry_value_new_string(qualifiedCategory.constData()));
     sentry_add_breadcrumb(crumb);
 
-    // 每条语义日志使用独立事件事务；强制采样并绑定到日志，
-    // 保证 Log 可跳转到对应 Trace 和 Span。
+    // 普通语义日志只保留可搜索记录，不为每个操作制造独立 Trace。
     std::lock_guard<std::mutex> lock(eventMutex);
-    const auto traceName = eventTraceName(category, name);
-    const auto operation = eventOperation(category);
-    auto *transaction = beginEventTrace(traceName, operation);
     auto *scope = sentry_scope_new();
-    configureEventScope(scope, transaction);
+    configureEventScope(scope, nullptr);
     if (scope) {
         sentry_scope_capture_log(scope, SENTRY_LEVEL_INFO, name, attributes(category, name));
         sentry_scope_free(scope);
     } else {
         sentry_log(SENTRY_LEVEL_INFO, name, attributes(category, name));
     }
-    finishEventTrace(transaction, true);
 }
 
-void failure() {
+void failure(const QString &stage, const QString &code, const QJsonObject &details) {
     // 失败日志和异常事件共享同一条事件事务，
     // 保留用户、日志、Span 与错误之间的关联。
     std::lock_guard<std::mutex> lock(eventMutex);
+    const auto stageUtf8 = stage.toUtf8();
+    const auto codeUtf8 = code.toUtf8();
+    const auto failureMessage = QByteArrayLiteral("Playback failed at ") + stageUtf8;
     const auto traceName = eventTraceName("playback", "failure");
     const auto operation = eventOperation("playback");
     auto *transaction = beginEventTrace(traceName, operation);
     auto *scope = sentry_scope_new();
     configureEventScope(scope, transaction);
+    if (transaction) {
+        sentry_transaction_set_status(transaction, SENTRY_SPAN_STATUS_INTERNAL_ERROR);
+    }
+    QJsonObject logAttributes{
+        {"rhine.playback.stage", stage},
+        {"rhine.playback.code", code},
+    };
     if (scope) {
+        sentry_scope_set_tag(scope, "rhine.playback.stage", stageUtf8.constData());
+        sentry_scope_set_tag(scope, "rhine.playback.code", codeUtf8.constData());
+        sentry_scope_set_fingerprint(scope, "rhine.playback", stageUtf8.constData(),
+                                     codeUtf8.constData(), NULL);
+        const auto contextJson = QJsonDocument(details).toJson(QJsonDocument::Compact);
+        sentry_scope_set_context(scope, "rhine_playback_failure",
+                                 sentry_value_from_json(contextJson.constData(), contextJson.size()));
         sentry_scope_capture_log(scope, SENTRY_LEVEL_ERROR, "playback_failed",
-                                 attributes("playback", "failure"));
+                                 attributes("playback", "failure", logAttributes));
     } else {
-        sentry_log(SENTRY_LEVEL_ERROR, "playback_failed", attributes("playback", "failure"));
+        sentry_log(SENTRY_LEVEL_ERROR, "playback_failed", attributes("playback", "failure", logAttributes));
     }
     auto event = sentry_value_new_event();
-    auto exception = sentry_value_new_exception("RhinePlaybackError", "Playback failed");
+    auto exception = sentry_value_new_exception("RhinePlaybackError", failureMessage.constData());
+    auto mechanism = sentry_value_new_object();
+    sentry_value_set_by_key(mechanism, "type", sentry_value_new_string("generic"));
+    sentry_value_set_by_key(mechanism, "handled", sentry_value_new_bool(true));
+    sentry_value_set_by_key(exception, "mechanism", mechanism);
+    sentry_value_set_stacktrace(exception, nullptr, 0);
+    sentry_event_set_level(event, SENTRY_LEVEL_ERROR);
+    sentry_event_add_exception(event, exception);
+    if (scope) {
+        sentry_scope_capture_event(scope, event, nullptr);
+        sentry_scope_free(scope);
+    } else {
+        sentry_capture_event(event);
+    }
+    finishEventTrace(transaction, false);
+}
+
+void pluginInstallFailure(const QString &phase, const QString &code, const QJsonObject &details) {
+    std::lock_guard<std::mutex> lock(eventMutex);
+    const auto phaseUtf8 = phase.toUtf8();
+    const auto codeUtf8 = code.toUtf8();
+    const auto failureMessage =
+        QByteArrayLiteral("Plugin installation failed at ") + phaseUtf8 + ": " + codeUtf8;
+    auto *transaction =
+        beginEventTrace("rhine.plugin.install.failure", "rhine.plugin.install");
+    auto *scope = sentry_scope_new();
+    configureEventScope(scope, transaction);
+    if (transaction) {
+        sentry_transaction_set_status(transaction, SENTRY_SPAN_STATUS_INTERNAL_ERROR);
+    }
+    QJsonObject logAttributes{
+        {"rhine.plugin.install.phase", phase},
+        {"rhine.plugin.install.code", code},
+    };
+    if (scope) {
+        sentry_scope_set_tag(scope, "rhine.plugin.install.phase", phaseUtf8.constData());
+        sentry_scope_set_tag(scope, "rhine.plugin.install.code", codeUtf8.constData());
+        sentry_scope_set_fingerprint(scope, "rhine.plugin.install", phaseUtf8.constData(),
+                                     codeUtf8.constData(), NULL);
+        const auto contextJson = QJsonDocument(details).toJson(QJsonDocument::Compact);
+        sentry_scope_set_context(scope, "rhine_plugin_install",
+                                 sentry_value_from_json(contextJson.constData(), contextJson.size()));
+        sentry_scope_capture_log(scope, SENTRY_LEVEL_ERROR, "plugin_install_failed",
+                                 attributes("plugin", "install_failure", logAttributes));
+    } else {
+        sentry_log(SENTRY_LEVEL_ERROR, "plugin_install_failed",
+                   attributes("plugin", "install_failure", logAttributes));
+    }
+    auto event = sentry_value_new_event();
+    auto exception =
+        sentry_value_new_exception("RhinePluginInstallError", failureMessage.constData());
     auto mechanism = sentry_value_new_object();
     sentry_value_set_by_key(mechanism, "type", sentry_value_new_string("generic"));
     sentry_value_set_by_key(mechanism, "handled", sentry_value_new_bool(true));

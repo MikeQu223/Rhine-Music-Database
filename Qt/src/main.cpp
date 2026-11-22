@@ -471,6 +471,7 @@ void rhineOpenSignalDiagFile() {
 #include "GraphicsBackend.h"
 #include "Hud.h"
 #include "LyricsBackdrop.h"
+#include "PluginInstaller.h"
 #if RHINE_LINUX_DESKTOP
 #include "LinuxGraphics.h"
 #include "LinuxX11.h"
@@ -520,7 +521,11 @@ void rhineOpenSignalDiagFile() {
 #include <QSettings>
 #include <QSGRendererInterface>
 #include <QStandardPaths>
+#include <QTemporaryDir>
+#include <QThread>
 #include <QTimer>
+#include <QUuid>
+#include <csignal>
 #include <cstdio>
 #include <cstring>
 #include <memory>
@@ -910,6 +915,17 @@ static QJsonArray pluginPackageArguments(const QStringList &arguments) {
     }
     return paths;
 }
+
+#if RHINE_SENTRY
+static void triggerSentryRenderCrashTest(RhineSentry::RenderTelemetryState state) {
+    state.phase = QStringLiteral("command_submit");
+    state.targetState = QStringLiteral("out_of_date");
+    RhineSentry::renderContext(state);
+    RhineSentry::renderEvent(u"command-submit");
+    std::raise(SIGSEGV);
+    std::abort();
+}
+#endif
 #endif
 #endif
 
@@ -1023,6 +1039,38 @@ int main(int argc, char **argv) {
             return 1;
         }
     }
+    const bool sentryCrashTest = args.contains("--sentry-crash-test");
+    const bool sentryPlaybackFailureTest = args.contains("--sentry-playback-failure-test");
+    const bool sentryRenderCrashTest = args.contains("--sentry-render-crash-test");
+    const bool sentryPluginInstallFailureTest = args.contains("--sentry-plugin-install-failure-test");
+    const int verificationModeCount = int(sentryCrashTest) + int(sentryPlaybackFailureTest) +
+                                      int(sentryRenderCrashTest) + int(sentryPluginInstallFailureTest);
+    if (verificationModeCount > 1) {
+        std::fprintf(stderr, "Sentry verification modes are mutually exclusive\n");
+        return 1;
+    }
+    if (verificationModeCount == 1) {
+#if RHINE_RELEASE_BUILD
+        std::fprintf(stderr, "Sentry verification modes are disabled in release builds\n");
+        return 1;
+#else
+        QString verificationFlag;
+        if (sentryCrashTest) {
+            verificationFlag = QStringLiteral("--sentry-crash-test");
+        } else if (sentryPlaybackFailureTest) {
+            verificationFlag = QStringLiteral("--sentry-playback-failure-test");
+        } else if (sentryPluginInstallFailureTest) {
+            verificationFlag = QStringLiteral("--sentry-plugin-install-failure-test");
+        } else {
+            verificationFlag = QStringLiteral("--sentry-render-crash-test");
+        }
+        const auto directory = args.value(args.indexOf(verificationFlag) + 1);
+        if (directory.isEmpty() || !AppStorage::initializePortable(directory).isEmpty()) {
+            std::fprintf(stderr, "Sentry verification requires an isolated writable directory\n");
+            return 1;
+        }
+#endif
+    }
 #endif
     // 调试模式默认关闭；关闭时不注册 Crashpad，也不保留上次会话的诊断数据。
 #if RHINE_SENTRY
@@ -1032,7 +1080,11 @@ int main(int argc, char **argv) {
                                      !args.contains("--make-icon") && !args.contains("--capture") &&
                                      qEnvironmentVariableIntValue("RHINE_OFFLINE") != 1;
     if (sentryNormalStartup && AppStorage::settings().value("panel/debug-mode").toString() != "on") {
+#if !RHINE_MOBILE
+        RhineSentry::start(false, verificationModeCount == 1);
+#else
         RhineSentry::start();
+#endif
         QObject::connect(&application, &QGuiApplication::applicationStateChanged, &application,
                          [](Qt::ApplicationState state) {
                              if (state == Qt::ApplicationActive) {
@@ -1059,6 +1111,131 @@ int main(int argc, char **argv) {
     applyFrameGenerationSetting();
 #if RHINE_SENTRY
     RhineSentry::renderSettings(RhineGraphics::activeBackend());
+#if !RHINE_MOBILE
+    if (sentryPluginInstallFailureTest) {
+        if (!RhineSentry::active()) {
+            std::fprintf(stderr, "Sentry SDK is not active; refusing plugin install failure test\n");
+            return 2;
+        }
+        RhineSentry::startup(0);
+        QTemporaryDir pluginFixture(AppStorage::cacheDirectory() + "/plugin-install-test-XXXXXX");
+        QDir pluginRoot(pluginFixture.path());
+        const auto existing = pluginRoot.filePath("telemetry-plugin");
+        const auto candidate = pluginRoot.filePath(".staging-telemetry/candidate");
+        if (!pluginFixture.isValid() || !pluginRoot.mkpath("telemetry-plugin") ||
+            !pluginRoot.mkpath(".staging-telemetry/candidate")) {
+            std::fprintf(stderr, "Unable to create isolated plugin install fixture\n");
+            return 3;
+        }
+        const auto installError = PluginInstaller::commit(
+            pluginRoot.path(), "telemetry-plugin", candidate,
+            [] { return QStringLiteral("provider route conflict"); });
+        if (installError.isEmpty() || !QDir(existing).exists()) {
+            std::fprintf(stderr, "Plugin install failure fixture did not fail transactionally\n");
+            return 4;
+        }
+        RhineSentry::PluginInstallFailure failure;
+        failure.phase = QStringLiteral("activation");
+        failure.code = QStringLiteral("provider_route_conflict");
+        failure.format = QStringLiteral("package");
+        failure.sourceKind = QStringLiteral("local_file");
+        failure.conflictKind = QStringLiteral("provider_route");
+        failure.rollbackResult = QStringLiteral("not_needed");
+        failure.candidateVersion = QStringLiteral("2.1.0");
+        failure.existingVersion = QStringLiteral("2.0.0");
+        failure.schemaVersion = 2;
+        failure.apiVersion = 2;
+        failure.fileCount = 14;
+        failure.packageBytes = 734003;
+        failure.compatibilityPassed = true;
+        failure.existingPluginPreserved = true;
+        failure.upgrade = true;
+        RhineSentry::pluginInstallContext(failure);
+        for (const auto event : {u"package-received", u"validation-started", u"compatibility-passed",
+                                 u"staging-completed", u"activation-started",
+                                 u"provider-route-conflict"}) {
+            RhineSentry::pluginInstallEvent(event);
+        }
+        RhineSentry::pluginInstallFailure(failure);
+        QThread::msleep(250);
+        return 0;
+    }
+    if (sentryPlaybackFailureTest) {
+        if (!RhineSentry::active()) {
+            std::fprintf(stderr, "Sentry SDK is not active; refusing playback failure test\n");
+            return 2;
+        }
+        RhineSentry::startup(0);
+        RhineSentry::action(u"sentry:playback-failure-test");
+        RhineSentry::PlaybackFailure failure;
+        failure.stage = RhineSentry::PlaybackFailureStage::MissingSource;
+        failure.code = QStringLiteral("provider_source_missing");
+        failure.attemptElapsedMs = 160;
+        failure.details = QJsonObject{
+            {QStringLiteral("failureStage"), QStringLiteral("provider")},
+            {QStringLiteral("failureReason"), QStringLiteral("empty_audio_url")},
+            {QStringLiteral("sourceKind"), QStringLiteral("unknown")},
+            {QStringLiteral("attemptId"),
+             QUuid::createUuid().toString(QUuid::WithoutBraces)},
+        };
+        RhineSentry::playbackFailure(failure);
+        QThread::msleep(250);
+        return 0;
+    }
+    if (sentryRenderCrashTest) {
+        if (!RhineSentry::active()) {
+            std::fprintf(stderr, "Sentry SDK is not active; refusing render crash test\n");
+            return 2;
+        }
+        // 让外部崩溃处理器完成启动并载入刚写入的授权文件。
+        QThread::msleep(2000);
+        RhineSentry::startup(0);
+        const auto backend = RhineGraphics::activeBackend().toLower();
+        RhineSentry::renderDevice(backend, 0, 0, -1, QString());
+        RhineSentry::RenderTelemetryState render;
+        render.backend = backend;
+        render.phase = QStringLiteral("frame_begin");
+        render.targetState = QStringLiteral("valid");
+        render.renderWidth = 2560;
+        render.renderHeight = 1440;
+        render.displayWidth = 2560;
+        render.displayHeight = 1440;
+        render.resourceGeneration = 7;
+        render.boundGeneration = 7;
+        render.resizeSerial = 6;
+        render.framesInFlight = 2;
+        RhineSentry::renderContext(render);
+        RhineSentry::renderEvent(u"frame-begin");
+
+        render.phase = QStringLiteral("resize");
+        render.targetState = QStringLiteral("out_of_date");
+        render.renderWidth = 1920;
+        render.renderHeight = 1080;
+        render.displayWidth = 1920;
+        render.displayHeight = 1080;
+        render.resourceGeneration = 8;
+        render.boundGeneration = 7;
+        render.resizeSerial = 7;
+        RhineSentry::renderContext(render);
+        RhineSentry::renderEvent(u"resize");
+        render.phase = QStringLiteral("pipeline_bind");
+        RhineSentry::renderContext(render);
+        RhineSentry::renderEvent(u"pipeline-bind");
+        triggerSentryRenderCrashTest(render);
+    }
+    if (sentryCrashTest) {
+        if (!RhineSentry::active()) {
+            std::fprintf(stderr, "Sentry SDK is not active; refusing crash test\n");
+            return 2;
+        }
+        // 让外部崩溃处理器完成启动并载入刚写入的授权文件。
+        QThread::msleep(2000);
+        RhineSentry::startup(0);
+        RhineSentry::action(u"sentry:crash-test");
+        std::raise(SIGSEGV);
+        std::abort();
+    }
+#endif
 #endif
     // 写给设置界面的能力快照：先按"没编进来"落盘，下面的 FG 分支真正接管后再改写。
     // 设置界面在 RhineCore 里，不能反向 include 依赖 vulkan.h 的实现，只能读这份结论。

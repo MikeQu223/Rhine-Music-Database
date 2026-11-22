@@ -132,6 +132,25 @@ constexpr Action hudActions[] = {
     {u"music:comments", "open_comments"},
     {u"music:comments-close", "close_comments"},
     {u"sentry:diagnose", "telemetry_diagnostic"},
+    {u"sentry:crash-test", "telemetry_crash_test"},
+    {u"sentry:playback-failure-test", "telemetry_playback_failure_test"},
+};
+
+constexpr Action renderEvents[] = {
+    {u"frame-begin", "frame_begin"},
+    {u"resize", "resize"},
+    {u"pipeline-bind", "pipeline_bind"},
+    {u"command-submit", "command_submit"},
+    {u"frame-end", "frame_end"},
+};
+
+constexpr Action pluginInstallEvents[] = {
+    {u"package-received", "package_received"},
+    {u"validation-started", "validation_started"},
+    {u"compatibility-passed", "compatibility_passed"},
+    {u"staging-completed", "staging_completed"},
+    {u"activation-started", "activation_started"},
+    {u"provider-route-conflict", "provider_route_conflict"},
 };
 
 QString graphicsBackendName(QStringView backend) {
@@ -341,7 +360,7 @@ bool ownsCrashHandler() {
 }
 
 /** 正常构建默认开启，已保存的关闭选择和旧版空值优先。 */
-void start(bool playbackService) {
+void start(bool playbackService, bool verificationMode) {
     if (attempted) {
         return;
     }
@@ -402,7 +421,8 @@ void start(bool playbackService) {
     const auto userId = userIdForInstallation(installationId);
     attempted = true;
     running = Platform::start({endpoint, environment.isEmpty() ? QStringLiteral("production") : environment,
-                               release, version, databaseDirectory, role, userId, traceRate});
+                               release, version, databaseDirectory, role, userId, traceRate,
+                               !verificationMode});
     if (running) {
         Platform::setContext("rhine", {{"process", role}});
         Platform::record("lifecycle", "started");
@@ -518,9 +538,53 @@ void action(QStringView value) {
     }
 }
 
-void playbackFailure() {
+void playbackFailure(const PlaybackFailure &failure) {
     if (running) {
-        Platform::failure();
+        Platform::failure(playbackFailureStageName(failure.stage), sanitizedPlaybackFailureCode(failure.code),
+                          playbackFailureContext(failure));
+    }
+}
+
+void pluginInstallFailure(const PluginInstallFailure &failure) {
+    if (running) {
+        const auto context = pluginInstallTelemetryContext(failure);
+        Platform::pluginInstallFailure(context["phase"].toString(), context["code"].toString(), context);
+    }
+}
+
+void pluginInstallEvent(QStringView value) {
+    if (!running) {
+        return;
+    }
+    for (const auto &entry : pluginInstallEvents) {
+        if (value == entry.input) {
+            Platform::record("plugin", entry.name);
+            return;
+        }
+    }
+}
+
+void pluginInstallContext(const PluginInstallFailure &failure) {
+    if (running) {
+        Platform::setContext("rhine_plugin_install", pluginInstallTelemetryContext(failure));
+    }
+}
+
+void renderEvent(QStringView value) {
+    if (!running) {
+        return;
+    }
+    for (const auto &entry : renderEvents) {
+        if (value == entry.input) {
+            Platform::record("render", entry.name);
+            return;
+        }
+    }
+}
+
+void renderContext(const RenderTelemetryState &state) {
+    if (running) {
+        Platform::setContext("rhine_render", renderTelemetryContext(state));
     }
 }
 

@@ -7,6 +7,7 @@
 #include <QUrl>
 #include <QJsonDocument>
 #include <QPointer>
+#include <QUuid>
 #include <QRegularExpression>
 #include <algorithm>
 #include <cmath>
@@ -19,6 +20,25 @@ bool isTrialPlayback(const QJsonObject &audio) {
            freeTrial.isArray() ||
            (freeTrial.isString() && !freeTrial.toString().isEmpty() && freeTrial.toString() != "null") ||
            (freeTrial.isBool() && freeTrial.toBool()) || (freeTrial.isDouble() && freeTrial.toDouble() != 0);
+}
+
+RhineSentry::PlaybackFailure makePlaybackFailure(RhineSentry::PlaybackFailureStage stage,
+                                                 const QString &code) {
+    RhineSentry::PlaybackFailure failure;
+    failure.stage = stage;
+    failure.code = code;
+    return failure;
+}
+
+QString providerFailureCode(const QJsonObject &failure) {
+    for (const auto &key : {"errorKey", "failureReason", "upstreamErrorKey"}) {
+        const auto rawCode = failure.value(QLatin1String(key)).toString();
+        const auto code = RhineSentry::sanitizedPlaybackFailureCode(rawCode);
+        if (code != "unknown") {
+            return code;
+        }
+    }
+    return QStringLiteral("provider_request_failed");
 }
 }
 
@@ -287,6 +307,8 @@ void MusicPlayer::play(QJsonObject track, std::optional<QJsonArray> source, std:
     if (remoteCommand("play", arguments)) {
         return;
     }
+    m_playAttemptId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    m_playAttemptClock.restart();
     if (track["kind"] != "song" || (m_api->provider == "local" && track["provider"] != "local") ||
         (m_api->provider != "local" && track["provider"] == "local")) {
         return;
@@ -341,7 +363,9 @@ void MusicPlayer::prepare(QJsonObject track, quint64 generation, bool reload, bo
         const QUrl source(track["url"].toString());
         if (m_api->provider != "local" || !source.isLocalFile() ||
             !QFileInfo(source.toLocalFile()).isReadable()) {
-            fail(QStringLiteral("本地文件无法访问，请检查文件位置或重新扫描"));
+            fail(QStringLiteral("本地文件无法访问，请检查文件位置或重新扫描"),
+                 makePlaybackFailure(RhineSentry::PlaybackFailureStage::LocalFileAccess,
+                                     QStringLiteral("local_file_unreadable")));
             return;
         }
     }
@@ -385,14 +409,18 @@ void MusicPlayer::prepare(QJsonObject track, quint64 generation, bool reload, bo
         const auto url = QUrl(track["url"].toString());
         if (!alreadyPlaying && (m_api->provider != "local" || !url.isLocalFile() ||
                                 !QFileInfo(url.toLocalFile()).isReadable())) {
-            fail(QStringLiteral("本地文件无法访问，请检查文件位置或重新扫描"));
+            fail(QStringLiteral("本地文件无法访问，请检查文件位置或重新扫描"),
+                 makePlaybackFailure(RhineSentry::PlaybackFailureStage::LocalFileAccess,
+                                     QStringLiteral("local_file_unreadable")));
             return;
         }
         m_host->mediaMetadata(track["title"].toString(), track["artist"].toString(),
                               track["album"].toString(), track["cover"].toString());
         if (!alreadyPlaying && !m_host->mediaLoad(url.toString(), false, m_resumePosition.value_or(0),
                                                   m_resumePosition && m_resumePaused)) {
-            fail(QStringLiteral("本地音频无法加载"));
+            fail(QStringLiteral("本地音频无法加载"),
+                 makePlaybackFailure(RhineSentry::PlaybackFailureStage::MediaLoad,
+                                     QStringLiteral("local_media_load_failed")));
             return;
         }
         m_resumePosition.reset();
@@ -413,20 +441,28 @@ void MusicPlayer::prepare(QJsonObject track, quint64 generation, bool reload, bo
         previewRequested ? "preview" : "playback", {track, effectivePlaybackQuality(), alternative},
         [this, track](MusicReply result) {
             if (!result.ok()) {
-                fail(result.error);
+                auto failure = makePlaybackFailure(RhineSentry::PlaybackFailureStage::ProviderRequest,
+                                                   providerFailureCode(result.failure));
+                failure.recoverable = result.failure.value(QStringLiteral("retryable")).toBool();
+                failure.details = result.failure;
+                fail(result.error, failure);
                 return;
             }
             const auto audio = result.value.toObject();
             const auto url = audio["url"].toString();
             if (url.isEmpty()) {
-                fail(QStringLiteral("此歌曲暂无可用音源，请检查登录和歌曲权限"));
+                fail(QStringLiteral("此歌曲暂无可用音源，请检查登录和歌曲权限"),
+                     makePlaybackFailure(RhineSentry::PlaybackFailureStage::MissingSource,
+                                         QStringLiteral("provider_source_missing")));
                 return;
             }
             m_host->mediaMetadata(track["title"].toString(), track["artist"].toString(),
                                   track["album"].toString(), track["cover"].toString());
             if (!m_host->mediaLoad(url, alternative, m_resumePosition.value_or(0),
                                    m_resumePosition && m_resumePaused)) {
-                fail(QStringLiteral("音频地址不可用"));
+                fail(QStringLiteral("音频地址不可用"),
+                     makePlaybackFailure(RhineSentry::PlaybackFailureStage::MediaLoad,
+                                         QStringLiteral("online_media_load_failed")));
                 return;
             }
             finishOnlinePlayback(track, audio);
@@ -480,11 +516,22 @@ void MusicPlayer::finishOnlinePlayback(const QJsonObject &track, const QJsonObje
     emit changed();
 }
 
-void MusicPlayer::fail(QString error) {
+void MusicPlayer::fail(QString error, RhineSentry::PlaybackFailure failure) {
+    failure.localSource = failure.localSource || current.value(QStringLiteral("provider")) == "local";
+    failure.trial = failure.trial || trial || previewRequested;
+    failure.recoveryAttempt = std::max(failure.recoveryAttempt, m_recoveryAttempts);
+    if (m_playAttemptClock.isValid()) {
+        failure.attemptElapsedMs = m_playAttemptClock.elapsed();
+    }
+    if (!m_playAttemptId.isEmpty()) {
+        failure.details.insert(QStringLiteral("attemptId"), m_playAttemptId);
+    }
 #if RHINE_SENTRY
     if (!failed && !m_host->playbackConnection()) {
-        RhineSentry::playbackFailure();
+        RhineSentry::playbackFailure(failure);
     }
+#else
+    Q_UNUSED(failure)
 #endif
     if (!m_restoringSession) {
         m_resumePosition.reset();
@@ -667,7 +714,22 @@ void MusicPlayer::tick(double time, bool force) {
             recoverPlayback();
             return;
         }
-        fail(playbackError);
+        const auto backendFailureCategory = state.value(QStringLiteral("backendFailureCategory")).toInt();
+        auto failure = makePlaybackFailure(
+            RhineSentry::playbackFailureStageForBackendCategory(backendFailureCategory),
+            RhineSentry::playbackFailureCodeForBackendCategory(backendFailureCategory));
+        failure.recoverable = state.value(QStringLiteral("recoverable")).toBool();
+        failure.details = QJsonObject{
+            {QStringLiteral("recoverable"), state.value(QStringLiteral("recoverable")).toBool()},
+            {QStringLiteral("errorCode"), state.value(QStringLiteral("errorCode")).toInt()},
+            {QStringLiteral("backendFailureCategory"), backendFailureCategory},
+            {QStringLiteral("reportedHttpStatus"),
+             state.value(QStringLiteral("reportedHttpStatus")).toInt()},
+            {QStringLiteral("mediaStatus"), state.value(QStringLiteral("mediaStatus")).toInt()},
+            {QStringLiteral("sourceKind"),
+             RhineSentry::playbackSourceKindName(state.value(QStringLiteral("sourceKind")).toInt())},
+        };
+        fail(playbackError, failure);
     } else if (state != previous) {
         emit changed();
     }

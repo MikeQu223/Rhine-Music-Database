@@ -5,6 +5,9 @@
 #include <QJsonDocument>
 #include <QJsonArray>
 #include "ProcessMetrics.h"
+#include "SentryPlaybackFailure.h"
+#include "SentryPluginTelemetry.h"
+#include "SentryRenderTelemetry.h"
 #include <QCoreApplication>
 #include <QDir>
 #include <QElapsedTimer>
@@ -52,6 +55,129 @@ bool processMetricsRegression() {
                     "Current process resident memory is available");
     ok &= check(first.cpuNanoseconds >= 0 && second.cpuNanoseconds >= first.cpuNanoseconds,
                 "Cumulative process CPU time is available and monotonic");
+    return ok;
+}
+
+bool sentryPlaybackFailureRegression() {
+    RhineSentry::PlaybackFailure failure;
+    failure.stage = RhineSentry::PlaybackFailureStage::ProviderRequest;
+    failure.code = QStringLiteral("HTTP 403 / private");
+    failure.recoverable = true;
+    failure.recoveryAttempt = 1;
+    failure.attemptElapsedMs = 160;
+    failure.details = QJsonObject{
+        {"failureReason", "auth.required"},
+        {"upstreamHttpStatus", 403},
+        {"reportedHttpStatus", 404},
+        {"sourceKind", "https"},
+        {"retryable", true},
+        {"rawMessage", "https://private.invalid/?token=secret"},
+        {"path", "C:/private/user/file.flac"},
+        {"attemptId", "123e4567-e89b-12d3-a456-426614174000"},
+        {"lastFailure", QJsonObject{{"errorKey", "network.timeout"}, {"rawBody", "secret"}}},
+    };
+    const auto context = RhineSentry::playbackFailureContext(failure);
+    bool ok = check(context["stage"].toString() == "provider_request",
+                    "Playback failure keeps its controlled stage");
+    ok &= check(context["code"].toString() == "unknown",
+                "Invalid playback failure codes fall back to unknown");
+    ok &= check(context["failureReason"].toString() == "auth.required" &&
+                    context["upstreamHttpStatus"].toInt() == 403 &&
+                    context["reportedHttpStatus"].toInt() == 404 &&
+                    context["sourceKind"].toString() == "https" && context["retryable"].toBool(),
+                "Playback failure keeps allowlisted diagnostic values");
+    ok &= check(!context.contains("rawMessage") && !context.contains("path") &&
+                    context["attemptId"].toString() == "123e4567-e89b-12d3-a456-426614174000",
+                "Playback failure drops arbitrary strings and unapproved fields");
+    const auto nested = context["lastFailure"].toObject();
+    ok &= check(nested["errorKey"].toString() == "network.timeout" && !nested.contains("rawBody"),
+                "Nested provider failure applies the same allowlist");
+
+    RhineSentry::PlaybackFailure normalized;
+    normalized.stage = RhineSentry::PlaybackFailureStage::MediaLoad;
+    normalized.code = QStringLiteral("Provider.Timeout");
+    ok &= check(RhineSentry::playbackFailureContext(normalized)["code"].toString() == "provider.timeout",
+                "Playback failure codes are normalized without changing their semantic value");
+    ok &= check(RhineSentry::playbackFailureStageForBackendCategory(6) ==
+                    RhineSentry::PlaybackFailureStage::Output &&
+                    RhineSentry::playbackFailureCodeForBackendCategory(6) == "output_failure" &&
+                    RhineSentry::playbackSourceKindName(3) == "local",
+                "Audio backend failure categories map to stable telemetry values");
+    return ok;
+}
+
+bool sentryRenderTelemetryRegression() {
+    RhineSentry::RenderTelemetryState state;
+    state.phase = QStringLiteral("resize");
+    state.targetState = QStringLiteral("out_of_date");
+    state.backend = QStringLiteral("metal");
+    state.renderWidth = 1920;
+    state.renderHeight = 1080;
+    state.displayWidth = 2560;
+    state.displayHeight = 1440;
+    state.resourceGeneration = 8;
+    state.boundGeneration = 7;
+    state.resizeSerial = 3;
+    state.framesInFlight = 2;
+    state.frameGeneration = true;
+    state.msaaResolve = true;
+    const auto context = RhineSentry::renderTelemetryContext(state);
+    bool ok = check(context["phase"].toString() == "resize" &&
+                        context["targetState"].toString() == "out_of_date" &&
+                        context["backend"].toString() == "metal",
+                    "Render telemetry keeps allowlisted lifecycle values");
+    ok &= check(context["resourceGeneration"].toInt() == 8 && context["boundGeneration"].toInt() == 7 &&
+                    context["framesInFlight"].toInt() == 2 && context["frameGeneration"].toBool(),
+                "Render telemetry preserves generation and frame state");
+
+    state.phase = QStringLiteral("../private");
+    state.backend = QStringLiteral("unknown-vendor");
+    state.renderWidth = -1;
+    state.framesInFlight = 99;
+    const auto normalized = RhineSentry::renderTelemetryContext(state);
+    ok &= check(normalized["phase"].toString() == "unknown" &&
+                    normalized["backend"].toString() == "unknown" && normalized["renderWidth"].toInt() == 0 &&
+                    normalized["framesInFlight"].toInt() == 16,
+                "Render telemetry normalizes invalid values");
+    return ok;
+}
+
+bool sentryPluginTelemetryRegression() {
+    RhineSentry::PluginInstallFailure failure;
+    failure.phase = QStringLiteral("activation");
+    failure.code = QStringLiteral("provider_route_conflict");
+    failure.format = QStringLiteral("package");
+    failure.sourceKind = QStringLiteral("local_file");
+    failure.conflictKind = QStringLiteral("provider_route");
+    failure.rollbackResult = QStringLiteral("not_needed");
+    failure.candidateVersion = QStringLiteral("2.1.0");
+    failure.existingVersion = QStringLiteral("2.0.0");
+    failure.schemaVersion = 2;
+    failure.apiVersion = 2;
+    failure.fileCount = 14;
+    failure.packageBytes = 734003;
+    failure.compatibilityPassed = true;
+    failure.existingPluginPreserved = true;
+    failure.upgrade = true;
+    const auto context = RhineSentry::pluginInstallTelemetryContext(failure);
+    bool ok = check(context["phase"].toString() == "activation" &&
+                        context["code"].toString() == "provider_route_conflict" &&
+                        context["conflictKind"].toString() == "provider_route" &&
+                        context["candidateVersion"].toString() == "2.1.0",
+                    "Plugin install telemetry keeps allowlisted transaction state");
+    ok &= check(context["compatibilityPassed"].toBool() && context["existingPluginPreserved"].toBool() &&
+                    context["fileCount"].toInt() == 14,
+                "Plugin install telemetry preserves compatibility and rollback outcome");
+
+    failure.phase = QStringLiteral("../private");
+    failure.conflictKind = QStringLiteral("raw provider message");
+    failure.candidateVersion = QStringLiteral("not-a-version");
+    failure.fileCount = 999;
+    const auto normalized = RhineSentry::pluginInstallTelemetryContext(failure);
+    ok &= check(normalized["phase"].toString() == "unknown" &&
+                    normalized["conflictKind"].toString() == "unknown" &&
+                    !normalized.contains("candidateVersion") && normalized["fileCount"].toInt() == 512,
+                "Plugin install telemetry rejects arbitrary values and caps counts");
     return ok;
 }
 
@@ -457,11 +583,16 @@ int main(int argc, char **argv) {
     }
     const bool storage = storageRegression(fixture.path());
     const bool metrics = processMetricsRegression();
+    const bool sentryFailure = sentryPlaybackFailureRegression();
+    const bool sentryRender = sentryRenderTelemetryRegression();
+    const bool sentryPlugin = sentryPluginTelemetryRegression();
     const bool audio =
         AudioPlayerRegression::diagnosticRegression() && AudioPlayerRegression::run() &&
         AudioPlayerRegression::layoutRegression() && AudioPlayerRegression::outputFormatProbeRegression() &&
         AudioPlayerRegression::sourceRegression() && AudioPlayerRegression::nativePlaybackRegression();
-    qInfo() << "Portable storage, process metrics and default audio output regressions:"
-            << (storage && metrics && audio ? "PASS" : "FAIL");
-    return storage && metrics && audio ? 0 : 1;
+    const bool passed = storage && metrics && sentryFailure && sentryRender && sentryPlugin && audio;
+    qInfo() << "Portable storage, process metrics, playback/render/plugin telemetry and default audio "
+               "output regressions:"
+            << (passed ? "PASS" : "FAIL");
+    return passed ? 0 : 1;
 }

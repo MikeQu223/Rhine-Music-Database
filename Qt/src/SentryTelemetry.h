@@ -1,5 +1,8 @@
 #pragma once
 
+#include "SentryPlaybackFailure.h"
+#include "SentryPluginTelemetry.h"
+#include "SentryRenderTelemetry.h"
 #include <QString>
 #include <QStringView>
 #include <functional>
@@ -44,7 +47,9 @@ bool preferenceEnabled(QStringView value);
 bool savePreference(const QString &value);
 bool active();
 bool ownsCrashHandler();
-void start(bool playbackService = false);
+/** verificationMode 仅用于隔离验证，跳过 SDK 重复授权闸门。
+ *  应用级授权仍由调用方保证。 */
+void start(bool playbackService = false, bool verificationMode = false);
 void stop();
 void revoke();
 void foreground();
@@ -55,7 +60,12 @@ void *beginPlaybackPreparation();
 void finishPlaybackPreparation(void *trace, bool prepared);
 void page(QStringView mode, QStringView modal, bool lyrics, bool comments, bool viewer);
 void action(QStringView value);
-void playbackFailure();
+void playbackFailure(const PlaybackFailure &failure);
+void pluginInstallFailure(const PluginInstallFailure &failure);
+void pluginInstallEvent(QStringView value);
+void pluginInstallContext(const PluginInstallFailure &failure);
+void renderEvent(QStringView value);
+void renderContext(const RenderTelemetryState &state);
 void renderSettings(QStringView backend);
 void renderDevice(QStringView backend, quint64 vendorId, quint64 deviceId, int deviceType,
                   QStringView appleModel);

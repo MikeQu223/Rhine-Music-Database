@@ -14,13 +14,35 @@ std::mutex eventMutex;
 NSString *processName = nil;
 NSString *userId = nil;
 
-NSDictionary<NSString *, id> *attributes(NSString *category, NSString *name) {
-    return @{
+NSDictionary<NSString *, id> *attributes(NSString *category, NSString *name,
+                                         NSDictionary<NSString *, id> *extra = nil) {
+    NSMutableDictionary<NSString *, id> *result = [@{
         @"rhine.category" : category,
         @"rhine.name" : name,
-        @"rhine.process" : processName,
-        @"user.id" : userId
-    };
+        @"rhine.process" : processName
+    } mutableCopy];
+    if (extra) {
+        [result addEntriesFromDictionary:extra];
+    }
+    return result;
+}
+
+NSString *safePlaybackFailureStage(NSString *stage) {
+    static NSSet<NSString *> *allowedStages =
+        [NSSet setWithObjects:@"local_file_access", @"provider_request", @"missing_source",
+                              @"media_load", @"transport", @"decode", @"output", @"native_backend",
+                              @"playback_state", @"unknown", nil];
+    if (stage && [allowedStages containsObject:stage]) {
+        return stage;
+    }
+    return @"unknown";
+}
+
+NSString *safePluginInstallToken(NSString *value, NSSet<NSString *> *allowed) {
+    if (value && [allowed containsObject:value]) {
+        return value;
+    }
+    return @"unknown";
 }
 
 SentryObjCEvent *filterEvent(SentryObjCEvent *event, NSString *userId) {
@@ -35,7 +57,22 @@ SentryObjCEvent *filterEvent(SentryObjCEvent *event, NSString *userId) {
     // 原生异常原因可能带入路径、HTTP 错误正文或用户输入，只保留异常类型与堆栈。
     for (SentryObjCException *exception in event.exceptions) {
         const bool isPlaybackFailure = [exception.type isEqualToString:@"RhinePlaybackError"];
-        exception.value = isPlaybackFailure ? @"Playback failed" : @"Native exception";
+        const bool isPluginInstallFailure = [exception.type isEqualToString:@"RhinePluginInstallError"];
+        if (isPlaybackFailure) {
+            // 播放失败正文只能由受控 stage 重建，不能信任第三方或系统异常正文。
+            NSString *stage = safePlaybackFailureStage(event.tags[@"rhine.playback.stage"]);
+            exception.value = [@"Playback failed at " stringByAppendingString:stage];
+        } else if (isPluginInstallFailure) {
+            static NSSet<NSString *> *phases =
+                [NSSet setWithObjects:@"package_received", @"validation", @"compatibility", @"staging",
+                                      @"activation", @"rollback", @"unknown", nil];
+            NSString *phase = safePluginInstallToken(event.tags[@"rhine.plugin.install.phase"], phases);
+            NSString *code = event.tags[@"rhine.plugin.install.code"] ?: @"unknown";
+            exception.value =
+                [NSString stringWithFormat:@"Plugin installation failed at %@: %@", phase, code];
+        } else {
+            exception.value = @"Native exception";
+        }
         exception.mechanism.data = nil;
     }
     return event;
@@ -130,30 +167,17 @@ void record(const char *category, const char *name) {
     crumb.message = eventName;
     [SentryObjCSDK addBreadcrumb:crumb];
 
-    // 每条语义日志使用独立事件事务；强制采样并绑定到日志，
-    // 保证 Log 可跳转到对应 Trace 和 Span。
+    // 普通语义日志只保留可搜索记录，不为每个操作制造独立 Trace。
     std::lock_guard<std::mutex> lock(eventMutex);
-    SentryObjCSpan *transaction = nil;
-    if (eventTracingEnabled.load(std::memory_order_relaxed)) {
-        NSString *traceName = [@"rhine." stringByAppendingFormat:@"%@.%@", categoryName, eventName];
-        NSString *operation = [@"rhine." stringByAppendingString:categoryName];
-        auto *context = [[SentryObjCTransactionContext alloc] initWithName:traceName
-                                                                 operation:operation
-                                                                   sampled:SentryObjCSampleDecisionYes
-                                                                sampleRate:nil
-                                                                sampleRand:nil];
-        transaction = [SentryObjCSDK startTransactionWithContext:context bindToScope:YES];
-    }
     [SentryObjCSDK.logger info:eventName attributes:attributes(categoryName, eventName)];
-    if (transaction) {
-        [transaction finishWithStatus:SentryObjCSpanStatusOk];
-    }
 }
 
-void failure() {
+void failure(const QString &stage, const QString &code, const QJsonObject &details) {
     // 失败日志和异常事件共享同一条事件事务，
     // 保留用户、日志、Span 与错误之间的关联。
     std::lock_guard<std::mutex> lock(eventMutex);
+    NSString *failureStage = stage.toNSString();
+    NSString *failureCode = code.toNSString();
     SentryObjCSpan *transaction = nil;
     if (eventTracingEnabled.load(std::memory_order_relaxed)) {
         auto *context = [[SentryObjCTransactionContext alloc] initWithName:@"rhine.playback.failure"
@@ -162,17 +186,79 @@ void failure() {
                                                                 sampleRate:nil
                                                                 sampleRand:nil];
         transaction = [SentryObjCSDK startTransactionWithContext:context bindToScope:YES];
+        transaction.status = SentryObjCSpanStatusInternalError;
     }
-    [SentryObjCSDK.logger error:@"playback_failed" attributes:attributes(@"playback", @"failure")];
+    NSDictionary<NSString *, id> *failureAttributes = @{
+        @"rhine.playback.stage" : failureStage,
+        @"rhine.playback.code" : failureCode
+    };
+    [SentryObjCSDK.logger error:@"playback_failed"
+                     attributes:attributes(@"playback", @"failure", failureAttributes)];
     auto *event = [[SentryObjCEvent alloc] initWithLevel:SentryObjCLevelError];
-    auto *exception = [[SentryObjCException alloc] initWithValue:@"Playback failed" type:@"RhinePlaybackError"];
+    NSString *failureMessage = [@"Playback failed at " stringByAppendingString:failureStage];
+    auto *exception = [[SentryObjCException alloc] initWithValue:failureMessage type:@"RhinePlaybackError"];
     auto *mechanism = [[SentryObjCMechanism alloc] initWithType:@"generic"];
     mechanism.handled = @YES;
     exception.mechanism = mechanism;
     event.exceptions = @[exception];
+    event.tags = @{
+        @"rhine.playback.stage" : failureStage,
+        @"rhine.playback.code" : failureCode
+    };
+    event.fingerprint = @[@"rhine.playback", failureStage, failureCode];
+    const auto detailJson = QJsonDocument(details).toJson(QJsonDocument::Compact);
+    NSData *detailData = [NSData dataWithBytes:detailJson.constData() length:detailJson.size()];
+    NSDictionary<NSString *, id> *failureContext =
+        [NSJSONSerialization JSONObjectWithData:detailData options:0 error:nil];
+    event.context = @{@"rhine_playback_failure" : failureContext ?: @{}};
     [SentryObjCSDK captureEvent:event];
     if (transaction) {
-        [transaction finishWithStatus:SentryObjCSpanStatusInternalError];
+        [transaction finish];
+    }
+}
+
+void pluginInstallFailure(const QString &phase, const QString &code, const QJsonObject &details) {
+    std::lock_guard<std::mutex> lock(eventMutex);
+    NSString *installPhase = phase.toNSString();
+    NSString *installCode = code.toNSString();
+    SentryObjCSpan *transaction = nil;
+    if (eventTracingEnabled.load(std::memory_order_relaxed)) {
+        auto *context = [[SentryObjCTransactionContext alloc] initWithName:@"rhine.plugin.install.failure"
+                                                                 operation:@"rhine.plugin.install"
+                                                                   sampled:SentryObjCSampleDecisionYes
+                                                                sampleRate:nil
+                                                                sampleRand:nil];
+        transaction = [SentryObjCSDK startTransactionWithContext:context bindToScope:YES];
+        transaction.status = SentryObjCSpanStatusInternalError;
+    }
+    NSDictionary<NSString *, id> *failureAttributes = @{
+        @"rhine.plugin.install.phase" : installPhase,
+        @"rhine.plugin.install.code" : installCode
+    };
+    [SentryObjCSDK.logger error:@"plugin_install_failed"
+                     attributes:attributes(@"plugin", @"install_failure", failureAttributes)];
+    auto *event = [[SentryObjCEvent alloc] initWithLevel:SentryObjCLevelError];
+    NSString *failureMessage =
+        [NSString stringWithFormat:@"Plugin installation failed at %@: %@", installPhase, installCode];
+    auto *exception =
+        [[SentryObjCException alloc] initWithValue:failureMessage type:@"RhinePluginInstallError"];
+    auto *mechanism = [[SentryObjCMechanism alloc] initWithType:@"generic"];
+    mechanism.handled = @YES;
+    exception.mechanism = mechanism;
+    event.exceptions = @[exception];
+    event.tags = @{
+        @"rhine.plugin.install.phase" : installPhase,
+        @"rhine.plugin.install.code" : installCode
+    };
+    event.fingerprint = @[@"rhine.plugin.install", installPhase, installCode];
+    const auto detailJson = QJsonDocument(details).toJson(QJsonDocument::Compact);
+    NSData *detailData = [NSData dataWithBytes:detailJson.constData() length:detailJson.size()];
+    NSDictionary<NSString *, id> *installContext =
+        [NSJSONSerialization JSONObjectWithData:detailData options:0 error:nil];
+    event.context = @{@"rhine_plugin_install" : installContext ?: @{}};
+    [SentryObjCSDK captureEvent:event];
+    if (transaction) {
+        [transaction finish];
     }
 }
 

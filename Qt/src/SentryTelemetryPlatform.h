@@ -14,12 +14,14 @@ struct Config {
     QString role;
     QString userId;
     double tracesSampleRate;
+    bool requireUserConsent = true;
 };
 
 bool start(const Config &config);
 void stop(bool revoked);
 void record(const char *category, const char *name);
-void failure();
+void failure(const QString &stage, const QString &code, const QJsonObject &details);
+void pluginInstallFailure(const QString &phase, const QString &code, const QJsonObject &details);
 void startup(qint64 milliseconds);
 void *beginTrace(const char *name, const char *operation);
 void finishTrace(void *trace, bool completed, bool successful);

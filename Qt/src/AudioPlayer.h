@@ -81,6 +81,7 @@ class AudioPlayer {
     int sourceSerial = 0;
     int sourceKind = 0;
     int sourceProvider = 0;
+    int errorCode = 0;
     int backendFailureCategory = 0;
     int reportedHttpStatus = 0;
     qint64 decodedBuffers = 0;
