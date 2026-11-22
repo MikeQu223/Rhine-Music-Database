@@ -10,6 +10,7 @@ import 'package:flutter/scheduler.dart' show Ticker;
 import '../hud/input/hit_layer.dart';
 import '../hud/modals/lyrics_panel.dart' as lyrics;
 import '../hud/modals/modal_shell.dart';
+import '../hud/modals/modal_shell.dart' as modal_shell;
 import '../hud/modals/comments_modal.dart' as comments_modal;
 import '../hud/modals/login_modal.dart' as login_modal;
 import '../hud/modals/mv_modal.dart' as mv_modal;
@@ -499,12 +500,28 @@ class BasicHudFrame {
     );
     sink.addDrawing(bar.commands, bar.hits);
 
+    // 横屏检索条也是一枚文本输入框：注册成 field 之后 `_dispatch` 的
+    // 「输入框优先」路径才会把点击交给宿主去要焦点。漏了这一步，横屏点检索条
+    // 弹不出键盘（`search_panel` 只画底色，输入文本在 Overlay 里）。
+    final Map<String, Rect> fields = <String, Rect>{};
+    if (modal == 'search') {
+      final search_panel.SearchPanelGeometry geometry =
+          search_panel.searchPanelGeometry(width);
+      final ModalShellBounds bounds = geometry.bounds;
+      fields['search'] = Rect.fromLTWH(
+        bounds.left + modal_shell.kModalShellHeaderInset,
+        geometry.barTop,
+        math.max(0.0, bounds.width - modal_shell.kModalShellHeaderInset * 2),
+        search_panel.kSearchPanelBarHeight,
+      );
+    }
     final bool animating = ports.endFrame();
     _generation += 1;
     return BasicHudFrame(
       generation: _generation,
       commands: sink.commands,
       hits: sink.hits,
+      fields: fields,
       animating: animating,
     );
   }
