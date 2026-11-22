@@ -666,6 +666,11 @@ class _BasicShellState extends State<_BasicShell>
   /// （账号三平台暂停、设置页未接入），不伪造第三态。
   String _modal = '';
 
+  /// 资料库列表形式（Qt `NativeHud::trackListMode`）：Tab Mode 按钮与 Tab 键
+  /// 共用这一份真值。surface 内部翻转后经 `onTrackListModeChanged` 回写；
+  /// 键盘路径不经过 surface 的命中分发，所以由宿主在这里翻。
+  bool _trackListMode = true;
+
   /// 竖屏播放队列页的模式 chip 是否展开（Qt `m_queueModesExpanded`，由
   /// `mobile:queue-modes` 翻转；点任一 `player:mode:<x>` 后收起）。
   bool _queueModesExpanded = false;
@@ -1743,6 +1748,11 @@ class _BasicShellState extends State<_BasicShell>
       state: state,
       ports: widget.resources.ports,
       onAction: _onAction,
+      trackListMode: _trackListMode,
+      onTrackListModeChanged: (bool value) {
+        if (!mounted) return;
+        setState(() => _trackListMode = value);
+      },
       // 场景层的身份键在 App 状态里（不在 surface 里）：横竖屏会换掉 surface 的
       // 父链（PortraitStage ↔ 直挂 Stack），只有把 key 抬到上层，PlatformView 的
       // element 才能被移动而非重建。
@@ -2587,6 +2597,22 @@ class _BasicShellState extends State<_BasicShell>
     // Qt 侧同一条：NativeHudController.cpp:688 value=="viewer" → scene.openViewer()。
     if (action == 'viewer') {
       _openCoverViewer();
+      return;
+    }
+    // Tab Mode：surface 自己消费命中后回写 `_trackListMode`；键盘路径（Tab 键）
+    // 走的是 key_router → ports.action，没有 surface 参与，所以在这里翻同一份真值。
+    // 守卫照 Qt `supportsTrackList()`（NativeHudController.cpp:1323）：无弹层、
+    // 当前条目必须是曲目，否则这个开关没有意义（专辑列本来就只走单条面板）。
+    if (action == HudAction.archiveTabMode) {
+      if (_modal.isNotEmpty) {
+        return;
+      }
+      final BasicViewState state = controller.state;
+      final List<BasicListItem> items = basicLibraryItems(state);
+      if (items.isEmpty || items[basicSelectedItemIndex(state, items)].kind != 'song') {
+        return;
+      }
+      setState(() => _trackListMode = !_trackListMode);
       return;
     }
     // 3D 归档里点到某一格：Qt 只回传**几何格**（lane+物理行），条目身份仍由这里的

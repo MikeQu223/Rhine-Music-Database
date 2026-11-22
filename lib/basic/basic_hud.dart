@@ -1863,7 +1863,6 @@ class _RenderHudGestureRegion extends RenderProxyBox {
   _RenderHudGestureRegion(this.regions);
 
   List<Rect> regions;
-
   @override
   bool hitTest(BoxHitTestResult result, {required Offset position}) {
     for (final Rect rect in regions) {
