@@ -64,6 +64,25 @@ BasicViewState _libraryState() => BasicViewState(
       selectedLane: basicDefaultLane,
     );
 
+/// 检索快照：行来自 `state.searchRows`（竖屏检索页与横屏面板共用同一份投影）。
+BasicViewState _searchState() => BasicViewState(
+      phase: BasicPhase.library,
+      query: 'love',
+      searchKind: 'song',
+      searchRemote: true,
+      searchTotal: 2,
+      searchStatus: '找到 2 条结果',
+      searchRows: <Map<String, Object?>>[
+        <String, Object?>{
+          'kind': 'song',
+          'title': 'Love Story',
+          'artist': '听众甲',
+          'durationMs': 201000,
+        },
+        <String, Object?>{'kind': 'album', 'title': 'Love Album', 'trackCount': 9},
+      ],
+    );
+
 BasicHudFrame _landscape(String modal, BasicGlyphPorts ports,
     {PortraitCommentsModel? comments,
     LoginState? loginState,
@@ -150,5 +169,54 @@ void main() {
     final Iterable<String> hits = frame.hits.map((HudHit hit) => hit.action);
     expect(hits, contains('provider:siren'));
     expect(frame.commands, isNotEmpty);
+  });
+
+  test('横屏 search：面板投影 state.searchRows，行点击发出既有动作串', () async {
+    final BasicGlyphPorts ports = await _realPorts();
+    final BasicHudFrame frame = BasicHudFrame.build(
+      state: _searchState(),
+      ports: ports,
+      width: 1920,
+      height: 1080,
+      portrait: false,
+      modal: 'search',
+    );
+    final Iterable<String> hits = frame.hits.map((HudHit hit) => hit.action);
+    // 分类 / 分组 tab（Qt NativeHudSearch.cpp:76 / :105 的动作串）。
+    for (int index = 0; index < 4; index++) {
+      expect(hits, contains('music:kind:$index'));
+    }
+    for (int index = 0; index < 3; index++) {
+      expect(hits, contains('music:group:$index'));
+    }
+    // 行：远端曲目走 music:search-open:<行下标>，专辑走 music:search-album:<编码标题>。
+    expect(hits, contains('music:search-open:0'));
+    expect(hits, contains('music:search-album:Love%20Album'));
+    // 外壳的返回键仍然是通用 close-modal。
+    expect(hits, contains('close-modal'));
+    // 行标题真的画出来了（不是空面板）。
+    final List<String> texts = <String>[
+      for (final List<Object?> command in frame.commands)
+        if (command.isNotEmpty && command[0] == 'text') command[1]! as String,
+    ];
+    expect(texts, contains('Love Story'));
+    expect(texts, contains('Love Album'));
+  });
+
+  test('横屏 search：没有检索行时画空态提示，而不是留一块空面板', () async {
+    final BasicGlyphPorts ports = await _realPorts();
+    final BasicHudFrame frame = BasicHudFrame.build(
+      state: const BasicViewState(phase: BasicPhase.library, query: '', searchStatus: ''),
+      ports: ports,
+      width: 1920,
+      height: 1080,
+      portrait: false,
+      modal: 'search',
+    );
+    final List<String> texts = <String>[
+      for (final List<Object?> command in frame.commands)
+        if (command.isNotEmpty && command[0] == 'text') command[1]! as String,
+    ];
+    expect(texts, contains('检索音乐档案'));
   });
 }

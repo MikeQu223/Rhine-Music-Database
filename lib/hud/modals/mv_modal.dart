@@ -33,6 +33,21 @@ const double mvModalRowHeight = 68;
 /// 内容左右内缩（对齐通用弹层的 kModalShellHeaderInset 53）。
 const double mvModalInset = 53;
 
+/// 内容起点：外壳标题带的底边（`modal_shell.dart` 的 categoryTop 37 / titleTop 91 /
+/// subtitleTop 147 + 15 号字 ≈ 162）再留 20 行距。内容必须从这里往下画，否则会与
+/// 外壳自己画的分类行/大标题/副标题互相压字——横屏 MV 面板「严重重叠」就是这个。
+const double mvModalBandEnd = 182;
+
+/// 版本表头距内容起点的距离（状态行 13 + 标题 17 + id 11 + 解码提示 38 全部让开）。
+const double mvModalVersionHeaderGap = 108;
+
+/// 版本列表从内容起点往下量的位移（表头 11 号字 + 9 行距）。
+const double mvModalVersionListGap = 128;
+
+/// 底部固定块的高度（分隔线 + 画面偏移/自动查找 + 36 高的四枚按钮 + 24 边距）。
+/// 版本列表的可视区底边 = 面板下沿 - 这个高度。
+const double mvModalFooterHeight = 106;
+
 /// 版本列表的上界（条目单位），宿主据此夹取 [MvModal.position]。
 double mvModalMaxScroll(double contentTop, double contentBottom, int total) {
   final double viewport = math.max(0, contentBottom - contentTop);
@@ -108,68 +123,75 @@ final class MvModal {
   }
 
   void _paint(ModalShellBody body) {
-    final double x = body.bounds.left;
-    final double y = body.bounds.top;
-    final double left = x + mvModalInset;
+    final double left = body.bounds.left + mvModalInset;
     final double contentWidth = body.bounds.width - mvModalInset * 2;
+    // 内容从外壳标题带**之下**开始：modal_shell.dart 的 _titleBand 在面板内绝对坐标画
+    // 分类行（top+37）、标题（top+91，字号 38）、副标题（top+147，字号 15），最下一行
+    // 底边约 top+162。之前内容从 top+24 起画，标题/状态直接压在分类与副标题上
+    // （横屏 MV 面板「严重重叠」的成因）。182 = 副标题底边 + 20 的行距。
+    final double contentTop = body.bounds.top + mvModalBandEnd;
 
     // 1) 状态行：Qt MvWindow.qml:560 的同一条串（status · versionStatus）。
     final String statusLine = model.versionStatus.isEmpty
         ? model.status
         : '${model.status} · ${model.versionStatus}';
-    _limited(body, statusLine, left, y + 24, 15, contentWidth, 'demibold');
+    _limited(body, statusLine, left, contentTop, 13, contentWidth, 'demibold');
 
     // 2) 已解析的 MV：标题 / id / 静音跟随串（Qt :664）。
-    double cursor = y + 56;
     if (model.title.isNotEmpty || model.trackId.isNotEmpty) {
-      _limited(body, model.title.isEmpty ? model.trackId : model.title, left, cursor, 17,
+      _limited(body, model.title.isEmpty ? model.trackId : model.title, left, contentTop + 22, 17,
           contentWidth * 0.6, 'demibold');
       if (model.resolution > 0) {
-        _limited(body, '静音跟随音乐 · ${model.resolution}p', left + contentWidth * 0.62, cursor + 2,
-            13, contentWidth * 0.38);
+        _limited(body, '静音跟随音乐 · ${model.resolution}p', left + contentWidth * 0.62,
+            contentTop + 24, 13, contentWidth * 0.38);
       }
-      cursor += 26;
       if (model.trackId.isNotEmpty) {
-        _limited(body, 'MV ${model.trackId} / ${model.resolution}p', left, cursor, 11, contentWidth * 0.5);
-        cursor += 18;
+        _limited(body, 'MV ${model.trackId} / ${model.resolution}p', left, contentTop + 46, 11,
+            contentWidth * 0.5);
       }
     }
 
     // 3) 诚实降级：没有解码器就不画播放面，只写清楚现状。
     if (!model.decodable) {
-      hudFill(body.sink, modalShellControlTint(dark: body.dark), left, cursor, contentWidth, 46);
+      hudFill(body.sink, modalShellControlTint(dark: body.dark), left, contentTop + 62,
+          contentWidth, 38);
       hudText(
         body.sink,
         body.text.fit('本机未接入视频解码 · 仅同步时间轴', 13, contentWidth - 24),
         left + 12,
-        cursor + 15,
+        contentTop + 72,
         13,
         dark: body.dark,
       );
-      cursor += 58;
     }
 
     // 4) 版本列表标题 + 行（Qt :474 的 `01 / VIDEO VERSION / 视频版本`）。
-    _limited(body, '01 / VIDEO VERSION / 视频版本', left, cursor, 11, contentWidth * 0.6, 'demibold');
+    _limited(
+        body, '01 / VIDEO VERSION / 视频版本', left, contentTop + mvModalVersionHeaderGap, 11,
+        contentWidth * 0.6, 'demibold');
     _limited(
       body,
       model.versions.isEmpty ? (model.versionStatus.isEmpty ? '未找到其他视频版本' : model.versionStatus) : '${model.versions.length} 个可用',
       left + contentWidth * 0.64,
-      cursor + 2,
+      contentTop + mvModalVersionHeaderGap + 2,
       11,
       contentWidth * 0.36,
     );
-    cursor += 20;
+    double cursor = contentTop + mvModalVersionListGap;
 
-    // 版本列表的可视区：底边让给底行（画面偏移 + 四枚按钮）。
-    final double bottom = y + body.bounds.height - 92;
+    // 版本列表的可视区：底边让给底行（画面偏移 + 自动查找 + 四枚按钮）。
+    final double bottom = body.bounds.bottom - mvModalFooterHeight;
     final double viewport = math.max(0, bottom - cursor);
     final List<MvPanelVersionRow> rows = model.versions;
     if (rows.isEmpty) {
       _limited(body, '当前来源没有可选的视频版本', left, cursor + 10, 12, contentWidth);
-    } else {
+    } else if (viewport > 0) {
       final double scroll = _clampScroll(position, rows.length, viewport);
       final int first = math.max(0, scroll.floor());
+      // 版本列表自带裁剪：滚动中行会越过视区上下沿，不裁就会压住版本表头与底部
+      // 分隔线（横屏 MV 面板的重叠之二）。
+      hudOp(body.sink, <Object?>['save']);
+      hudOp(body.sink, <Object?>['clip', left, cursor, contentWidth, viewport]);
       for (int index = first; index < rows.length; index++) {
         final double rowY = cursor + index * mvModalRowHeight - scroll;
         if (rowY >= bottom) {
@@ -181,38 +203,41 @@ final class MvModal {
         _versionRow(body, left, rowY, contentWidth, rows[index],
             current: rows[index].id == model.selectedVersionId);
       }
+      hudOp(body.sink, <Object?>['restore']);
     }
 
-    // 5) 底行：画面偏移 + 刷新版本 / −0.5s / +0.5s / 归零 + 自动查找开关
-    //    （Qt MvWindow.qml:566-583 的按钮组）。
-    final double rowY = y + body.bounds.height - 70;
-    hudRule(body.sink, body.dark, left, rowY - 14, contentWidth);
-    _limited(body, '画面偏移 ${offsetSeconds}s', left, rowY, 12, contentWidth * 0.42);
-    final double buttonTop = rowY + 20;
-    final double gap = 8;
-    final double buttonWidth = (contentWidth - gap * 3) / 4;
-    _contentButton(body, '刷新版本', left, buttonTop, buttonWidth, 40, 'mv:retry', 13);
-    _contentButton(
-        body, '−0.5s', left + (buttonWidth + gap), buttonTop, buttonWidth, 40, 'mv:offset:-500', 13);
-    _contentButton(body, '+0.5s', left + (buttonWidth + gap) * 2, buttonTop, buttonWidth, 40,
-        'mv:offset:+500', 13);
-    _contentButton(body, '归零', left + (buttonWidth + gap) * 3, buttonTop, buttonWidth, 40,
-        'mv:offset:reset', 13);
+    // 5) 底行：画面偏移 + 自动查找开关 + 刷新版本 / −0.5s / +0.5s / 归零
+    //    （Qt MvWindow.qml:566-583 的按钮组）。底行整体锚在面板下沿往上量，
+    //    与版本列表互不覆盖：分隔线在按钮行上方 34，按钮行高 36，面板留 24 边距。
+    final double buttonTop = body.bounds.bottom - mvModalFooterHeight + 46;
+    final double labelY = buttonTop - 26;
+    hudRule(body.sink, body.dark, left, labelY - 12, contentWidth);
+    _limited(body, '画面偏移 ${offsetSeconds}s', left, labelY, 12, contentWidth * 0.42);
 
     // 自动查找开关（Qt :182-199 的 setEnabled 槽位；桌面侧偏好叫 mv-auto）。
-    // 与「画面偏移」同一行右侧，底行只剩那一排按钮，不再往下挤。
-    _limited(body, model.auto ? '自动查找：开' : '自动查找：关', left + contentWidth * 0.46, rowY + 2,
-        11, contentWidth * 0.22);
+    // 与「画面偏移」同一行、按钮行之上，不再与四枚按钮抢同一块矩形。
+    _limited(body, model.auto ? '自动查找：开' : '自动查找：关', left + contentWidth * 0.46,
+        labelY + 1, 11, contentWidth * 0.22);
     _contentButton(
       body,
       model.auto ? '关闭' : '打开',
-      left + contentWidth * 0.72,
-      rowY - 6,
-      contentWidth * 0.28,
-      30,
+      left + contentWidth * 0.70,
+      labelY - 6,
+      contentWidth * 0.30,
+      28,
       model.auto ? 'mv:auto:off' : 'mv:auto:on',
       11,
     );
+
+    final double gap = 8;
+    final double buttonWidth = (contentWidth - gap * 3) / 4;
+    _contentButton(body, '刷新版本', left, buttonTop, buttonWidth, 36, 'mv:retry', 13);
+    _contentButton(
+        body, '−0.5s', left + (buttonWidth + gap), buttonTop, buttonWidth, 36, 'mv:offset:-500', 13);
+    _contentButton(body, '+0.5s', left + (buttonWidth + gap) * 2, buttonTop, buttonWidth, 36,
+        'mv:offset:+500', 13);
+    _contentButton(body, '归零', left + (buttonWidth + gap) * 3, buttonTop, buttonWidth, 36,
+        'mv:offset:reset', 13);
   }
 
   /// Qt MvWindow.qml:566 的 `(rhineMv.offset / 1000).toFixed(1)`。

@@ -15,6 +15,7 @@ import '../hud/modals/login_modal.dart' as login_modal;
 import '../hud/modals/mv_modal.dart' as mv_modal;
 import '../hud/modals/provider_modal.dart' as provider_modal;
 import '../hud/modals/queue_modal.dart' as queue_modal;
+import '../hud/modals/search_panel.dart' as search_panel;
 import '../hud/pages/archive_page.dart';
 import '../hud/pages/chrome.dart';
 import '../hud/pages/song_detail.dart' as detail;
@@ -95,6 +96,27 @@ String basicLibraryTitle(BasicViewState state, {String providerName = basicLibra
   return lane.isEmpty ? providerName : lane;
 }
 
+/// 当前平台是否内置塞壬（Qt `isSiren()`，`Qt/src/NativeHud.cpp:347-361` 的
+/// 「＋ 塞壬曲库」/ `SIREN RECORDS` 分支）。
+///
+/// **以平台显示名为准，布尔只作兜底**：宿主的 `isSirenProvider` 是
+/// `_providerId == 'siren'` 的快照（basic_app.dart:1949），一旦平台切换后这枚布尔
+/// 与真实平台不同步，横屏右上角就会在网易云/QQ 渠道下继续挂「＋ 塞壬曲库」。
+/// 平台名（[BasicHudSurface.providerName] / `_currentDescriptor.name`）是同一帧里
+/// 的真值，所以这里让名字优先：名字说不是塞壬，就不许再画塞壬专属字样。
+bool basicIsSirenPlatform(bool isSirenProvider, String providerName) {
+  if (!isSirenProvider) {
+    // 宿主已经明确"不是塞壬"：名字再像也不冒充内置平台（插件平台也可能自称塞壬）。
+    return false;
+  }
+  final String name = providerName.trim();
+  if (name.isEmpty) {
+    // 名字没给（descriptor 未装载）：只能信布尔，否则内置平台会丢自己的字样。
+    return true;
+  }
+  return name.contains('塞壬');
+}
+
 /// 一帧的扁平命令流 + 命中集合。绘制（HudStagePainter）与命中（HitLayer）
 /// 消费同一份，禁止各自再推导坐标。
 class BasicHudFrame {
@@ -152,6 +174,13 @@ class BasicHudFrame {
     /// 竖屏队列页的播放模式 chip 是否展开（Qt `m_queueModesExpanded`，
     /// 由 `mobile:queue-modes` 翻转）。横屏面板不用它（四模式按钮常驻）。
     bool queueModesExpanded = false,
+    /// 横屏检索面板的行级滚动偏移（舞台像素，0 = 首行贴表头）。宿主拖动列表时
+    /// 只改这一个临时量，不碰库表的 `listPosition`（那是资料库列的真值）。
+    double searchScroll = 0,
+  /// 播放条音量滑轨的位置（0..1）。宿主快照里没有音量字段（`BasicViewState` 只有
+  /// 播放位置），所以这份值由 surface 自己持有：横屏播放条右下角的输出模块在
+  /// `applicationVolume` 时用它画滑轨，拖动/点击后由 `_dispatch` 回写。
+  double volume = 1.0,
     /// 右栏遮罩强度（0..100，Qt `archive-mask-strength` / 设置页“右侧画面遮罩”）。
     /// 默认就是 Qt 常量 [HudChrome.defaultArchiveMaskStrength]；注入只来自设置页真值。
     double archiveMaskStrength = 0, // = HudChrome.defaultArchiveMaskStrength（int 常量转 double）
@@ -326,6 +355,9 @@ class BasicHudFrame {
       ink: hudInk(dark),
       animate: animateText,
     );
+    // 塞壬专属字样（「＋ 塞壬曲库」/ `SIREN RECORDS`/「查看曲库 →」）一律按平台名判，
+    // 不只信宿主那枚布尔快照（见 [basicIsSirenPlatform]）。
+    final bool sirenPlatform = basicIsSirenPlatform(isSirenProvider, providerName);
     HudChrome(sink, ports, dark: dark).chromeView(
       width: width,
       archiveMode: state.phase == BasicPhase.library && !portrait,
@@ -335,7 +367,7 @@ class BasicHudFrame {
       suppressMask: false,
       libraryName: basicLibraryTitle(state, providerName: providerName),
       isLocal: false,
-      isSiren: isSirenProvider,
+      isSiren: sirenPlatform,
       uid: '',
       provider: providerId,
       archiveMaskStrength: archiveMaskStrength.round(),
@@ -350,7 +382,16 @@ class BasicHudFrame {
           state,
           providerId: providerId,
           providerName: providerName,
-          isSiren: isSirenProvider,
+          isSiren: sirenPlatform,
+          commentsAvailable: commentsAvailable,
+          // 喜欢态与本机集合同源（Qt `NativeHud.cpp:472` 的 `selectedLiked`）：
+          // 端口没接上就当"未知/未喜欢"，不伪造已喜欢。
+          songLiked: state.song == null
+              ? false
+              : ports.songLiked?.call(state.song!.id) ?? false,
+          // 喜欢按钮的可点条件：有当前曲目且宿主的喜欢端口存在。平台不支持的
+          // 情况下宿主 `music:like` 会给可见提示（不静默），不会变成死按钮。
+          canMutateLike: state.song != null && ports.songLiked != null,
         ),
         width,
         glyphs: ports,
@@ -383,7 +424,21 @@ class BasicHudFrame {
 
     // 横屏播放队列面板（Qt `modal == "player"`）：宿主先画全舞台遮罩 + 836 面板底，
     // 面板内容由 queue_modal 产出（NativeHudModal.cpp:163-186 对 player 不走标题区）。
-    if (modal == 'queue') {
+    if (modal == 'search') {
+      // Qt `modal == "search"` 走通用弹层路径（`Qt/src/NativeHudModal.cpp:163-202`）：
+      // 遮罩 + 贴右的面板 + 标题带，内容由 NativeHudSearch 在面板内画
+      // （工具栏 / 分类 / 分组 / 表头 / 列表 / 页脚）。这里把同一套内容交给
+      // search_panel，行数据复用竖屏检索页已移植的投影（见 _portraitSearchRows）。
+      _paintSearchModal(
+        sink,
+        ports,
+        state,
+        width,
+        dark,
+        searchScroll,
+        localMusicEnabled,
+      );
+    } else if (modal == 'queue') {
       _paintQueueModal(sink, ports, state, width, height, dark, queueOffset);
     } else if (modal == 'comments' && comments != null) {
       _paintCommentsPanel(sink, ports, comments, width, height, dark, commentsScroll);
@@ -425,7 +480,12 @@ class BasicHudFrame {
     }
 
     final player.PlayerBarDrawing bar = player.renderPlayerBar(
-      _playerState(state, musicVideo: mvAvailable),
+      // 横屏播放条右下角必须有可用的输出模块（用户 2026-11-22 报的缺陷）：Qt 在
+      // 桌面端走 `PlatformFeatures::ApplicationVolume` 画滑轨（PlayerBar.cpp:238-246），
+      // 手机上那枚特性恒假、只剩「系统音量」四个字。本仓库的音量本就由
+      // `player:volume-fraction:<f>`（宿主 → controller.setVolumeFraction）驱动，
+      // 所以横屏直接按应用内音量画，滑轨与命中都出现。
+      _playerState(state, musicVideo: mvAvailable, volume: volume, applicationVolume: true),
       player.PlayerBarRect(0, height - player.playerBarRowHeight, width, player.playerBarRowHeight),
       dark,
       ports,
@@ -1317,6 +1377,39 @@ class BasicHudFrame {
     sink.hits.addAll(result.hits);
   }
 
+  /// 横屏检索弹层：面板外壳 + 检索条 + 分类/分组 tab + 结果行 + 页脚。
+  ///
+  /// 行来自 [BasicViewState.searchRows]（竖屏检索页同一份投影），因此横屏不再依赖
+  /// `basicLibraryItems` 的 lane 投影——远端检索时 lane 里没有命中行，这就是之前
+  /// 横屏检索列表恒空的原因。
+  static void _paintSearchModal(
+    _HudSink sink,
+    BasicGlyphPorts ports,
+    BasicViewState state,
+    double width,
+    bool dark,
+    double scroll,
+    bool localMusicEnabled,
+  ) {
+    final List<search_panel.SearchPanelRow> rows = <search_panel.SearchPanelRow>[
+      for (final PortraitSearchKindsRow row in _portraitSearchRows(state))
+        (title: row.title, detail: row.artist, stamp: row.stamp, action: row.action),
+    ];
+    final ModalShellResult result = search_panel.SearchPanel(
+      width: width,
+      dark: dark,
+      query: state.query,
+      searchKind: state.searchKind,
+      groupBy: state.searchGroup,
+      status: state.searchStatus,
+      total: state.searchTotal,
+      rows: rows,
+      localMusic: localMusicEnabled,
+      scroll: scroll,
+    ).build(sink, ports);
+    sink.hits.addAll(result.hits);
+  }
+
   /// 横屏登录弹层（Qt `NativeHud::loginPanel`，`NativeHudLibrary.cpp:271-330`）。
   static void _paintLoginModal(
     _HudSink sink,
@@ -1439,6 +1532,7 @@ class BasicHudFrame {
     String providerName = basicLibraryName,
     bool isSirenProvider = true,
   }) {
+    final bool sirenPlatform = basicIsSirenPlatform(isSirenProvider, providerName);
     final List<BasicListItem> items = basicLibraryItems(state);
     final int rawSelected = basicSelectedItemIndex(state, items);
     final int selected = items.isEmpty ? 0 : rawSelected.clamp(0, items.length - 1).toInt();
@@ -1464,7 +1558,7 @@ class BasicHudFrame {
         sourceOrderIndex: basicSourceOrderIndex(state.selectedLane),
         provider: providerId,
         isLocal: false,
-        isSiren: isSirenProvider,
+        isSiren: sirenPlatform,
         directory: state.directory != null,
         directoryKind: state.directory?.kind,
         uid: '',
@@ -1590,6 +1684,12 @@ class BasicHudFrame {
     String providerId = sirenProvider,
     String providerName = basicLibraryName,
     bool isSiren = true,
+    /// 「查看评论」是否可用（Qt `music.commentsAvailable()`）。
+    bool commentsAvailable = false,
+    /// 当前曲目是否已在本机喜欢集合里（Qt `likedIDs` / `lists[1]`）。
+    bool songLiked = false,
+    /// 当前平台是否允许改喜欢态（Qt `music.canMutate("/like")`）。
+    bool canMutateLike = false,
   }) {
     final SirenSong? song = state.song;
     // 平台 id 可能没被宿主传下来（默认空串）：身份串必须是 `<provider>:<id>`，
@@ -1614,6 +1714,12 @@ class BasicHudFrame {
       dark: state.dark,
       lyricsMode: state.phase == BasicPhase.lyrics,
       isSiren: isSiren,
+      // 横屏详情页的主按钮行（Qt `primaryActions`，NativeHudDetail.cpp:118-133）：
+      // 少了这两项，「加入我喜欢的音乐」在横屏根本没有按钮（用户 2026-11-22 报的缺陷）。
+      canMutateLike: canMutateLike,
+      likedInIds: songLiked,
+      likedInList: songLiked,
+      commentsAvailable: commentsAvailable,
       providerName: providerName,
       uid: '',
       detailLoading: state.loading,
@@ -1663,7 +1769,12 @@ class BasicHudFrame {
     );
   }
 
-  static player.PlayerBarState _playerState(BasicViewState state, {bool musicVideo = false}) {
+  static player.PlayerBarState _playerState(
+    BasicViewState state, {
+    bool musicVideo = false,
+    double volume = 1.0,
+    bool applicationVolume = false,
+  }) {
     // 播放条只报**真正在播**的曲目（state.playingTrack），不拿选中曲目冒充：
     // 选中可以没有播放，播放条不该显示一首没在播的歌。
     final SirenSong? song = state.playingTrack;
@@ -1683,7 +1794,8 @@ class BasicHudFrame {
       failed: state.playbackError.isNotEmpty,
       hasTrack: song != null,
       seekable: state.durationMs > 0,
-      applicationVolume: false,
+      applicationVolume: applicationVolume,
+      volume: volume,
       // 横屏播放条的 MV 按钮（Qt `PlayerBar.cpp:277-282`）：Qt 用
       // `PlatformFeatures::MusicVideo`（Android 恒假，所以主线在手机上从不画这个键），
       // 本仓库的 MV 已经原生可播（`video_player`），所以改按平台 descriptor 的
@@ -2164,6 +2276,15 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
   /// 拖动/惯性中的临时滚动位置（条目单位）；null = 跟随 state.listPosition。
   double? _dragPosition;
 
+  /// 横屏检索面板的行级滚动偏移（舞台像素）。与资料库的 [_dragPosition]
+  /// 分开存：检索列表的滚动绝不能改到库表窗口。
+  double _searchScroll = 0;
+
+  /// 播放条音量滑轨的本地位置（0..1）。宿主快照里没有音量（`BasicViewState` 只投影
+  /// 播放位置/状态），所以横屏输出模块的滑轨位置由 surface 记账：点击/拖动命中
+  /// `player:volume-fraction:<f>` 时先更新这里再转发宿主，滑轨才会跟着手指走。
+  double _volume = 1.0;
+
   // ---- 松手惯性（与 Qt/src/SceneDrag.cpp 的 ArchiveDrag / ArchiveMomentum 同构）----
   //
   // 只服务 HUD 自己拥有的列表行拖动：抬手时用最近一段毫秒采样估行速度，够快就按
@@ -2326,6 +2447,8 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       height: stage.height,
       portrait: portrait,
       listPosition: _dragPosition,
+      searchScroll: _searchScroll,
+      volume: _volume,
       animationTime: _animationTime,
       animateText: true,
       archiveMaskStrength: widget.archiveMaskStrength,
@@ -2452,15 +2575,30 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
             stage.width,
             player.playerBarRowHeight,
           );
+    // 横屏检索弹层：面板内的结果列表自己滚（Qt 的 search 列表是独立滚动区，
+    // 归 NativeHudSearch 而不是资料库列），所以手势域临时换成那块矩形。
+    final bool searchModal = widget.modal == 'search' && !portrait;
+    final search_panel.SearchPanelGeometry searchGeometry =
+        search_panel.searchPanelGeometry(stage.width);
+    final Rect searchListRect = geometry.rectToLogical(
+      Rect.fromLTWH(
+        searchGeometry.bounds.left + kModalShellHeaderInset,
+        searchGeometry.listTop,
+        searchGeometry.bounds.width - kModalShellHeaderInset * 2,
+        searchGeometry.listBottom - searchGeometry.listTop,
+      ),
+    );
     final LibraryDragDomain dragDomain = LibraryDragDomain(
-      listRect: listRect,
-      directTouchRect: directTouchRect,
-      controlRects: controlRects,
+      listRect: searchModal ? searchListRect : listRect,
+      directTouchRect: searchModal ? null : directTouchRect,
+      controlRects: searchModal ? const <Rect>[] : controlRects,
       // 播放条整行排除：它内部有大量间隙，只扣命中矩形会漏出一条「拖动即滚列表」
       // 的窄带。竖屏时播放条在本层底边，与顶部 1080 的直触区不相交。
-      excludedRects: <Rect>[
-        portrait ? playerBarStageRect : geometry.rectToLogical(playerBarStageRect),
-      ],
+      excludedRects: searchModal
+          ? const <Rect>[]
+          : <Rect>[
+              portrait ? playerBarStageRect : geometry.rectToLogical(playerBarStageRect),
+            ],
     );
     // 命中矩形（stage 单位，已含触控余量）+ 曲目列 + 3D 直触区；竖屏本层就在
     // stage 单位里，横屏本层是逻辑像素，统一在这里换算一次（HitLayer 内部同理
@@ -2550,6 +2688,7 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
           geometry,
           frame,
           portrait ? geometry.toLogical(details.localPosition) : details.localPosition,
+          portrait: portrait,
         ),
         child: RawGestureDetector(
           behavior: HitTestBehavior.opaque,
@@ -2580,6 +2719,15 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
   }
 
   void _dragStarted(BasicViewState state, DragStartDetails details) {
+    if (widget.modal == 'search') {
+      // 检索面板：从当前滚动量起手，不碰资料库窗口（[_dragPosition] 只是本次
+      // 手势的临时像素位置，抬手即写回 [_searchScroll] 并清空）。
+      setState(() {
+        _abortScrollMomentum();
+        _dragPosition = _searchScroll;
+      });
+      return;
+    }
     // 新手势立即接管：正在跑的滑行/吸行当场停下，并从**当前显示位置**起手（
     // 中途按住不会再跳回 state.listPosition）。
     final double start = _dragPosition ?? _windowOf(state);
@@ -2616,6 +2764,15 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
     if (current == null) {
       return;
     }
+    if (widget.modal == 'search') {
+      final int rows = BasicHudFrame._portraitSearchRows(widget.state).length;
+      final double scale = geometry.stageScale <= 0 ? 1 : geometry.stageScale;
+      final double max = search_panel.searchPanelMaxScroll(_stageSize.width, rows);
+      // 手指向下 = 内容下移 = 滚动量回退；像素单位（舞台），与绘制同源。
+      final double next = current - details.delta.dy / scale;
+      setState(() => _dragPosition = next < 0 ? 0 : (next > max ? max : next));
+      return;
+    }
     final int count = basicLibraryItems(widget.state).length;
     if (count == 0) {
       return;
@@ -2646,6 +2803,15 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
   void _dragEnded([DragEndDetails? details, Duration? releaseStamp]) {
     final double? ended = _dragPosition;
     if (ended == null) {
+      return;
+    }
+    if (widget.modal == 'search') {
+      // 检索列表只滚不选：不提交选中、不起惯性（Qt 的 search 列表没有吸行语义）。
+      setState(() {
+        _searchScroll = ended;
+        _dragPosition = null;
+      });
+      _scrollSamples.clear();
       return;
     }
     final int count = basicLibraryItems(widget.state).length;
@@ -2824,7 +2990,51 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
     );
   }
 
-  void _dispatch(StageGeometry geometry, BasicHudFrame frame, Offset logical) {
+  /// 横屏播放条「歌词 / 点击进入详情」的兜底（见 [BasicHudFrame] 调用点注释）。
+  ///
+  /// 宿主已支持的动作：`player:lyrics`（打开歌词页）、`player:lyrics-follow`
+  /// （回到当前句）、`music:index:%3Ci%3E`（只选中当前行并进详情）。这里不改动作词表、
+  /// 不自己开页面，只保证每一次点击都有宿主认得的落点。
+  void _dispatchLandscapeLyrics() {
+    final BasicViewState state = widget.state;
+    if (state.phase == BasicPhase.lyrics) {
+      // 已经在歌词页：相位没有再可切的，改发「回到当前句」，点下去看得见滚动。
+      widget.onAction('player:lyrics-follow');
+      return;
+    }
+    if (state.song == null) {
+      final int row = _playingRowIndex(state);
+      if (row >= 0) {
+        // `music:index:<i>` 是宿主的"只选中 + 进详情"（basic_app `_selectAt` →
+        // `controller.selectLibraryRow`，整条路径同步，返回时 `_song` 已写好），
+        // 所以同一帧里随后发 `player:lyrics` 不会再被 `_song == null` 挡掉。
+        widget.onAction('music:index:$row');
+      }
+    }
+    widget.onAction('player:lyrics');
+  }
+
+  /// 在播曲目在当前可见列表里的行下标（落不到就 -1：远端检索行不在本地 lane 里）。
+  int _playingRowIndex(BasicViewState state) {
+    final SirenSong? track = state.playingTrack;
+    if (track == null) {
+      return -1;
+    }
+    final List<BasicListItem> items = basicLibraryItems(state);
+    for (int index = 0; index < items.length; index++) {
+      if (items[index].kind == 'song' && items[index].id == track.id) {
+        return index;
+      }
+    }
+    return -1;
+  }
+
+  void _dispatch(
+    StageGeometry geometry,
+    BasicHudFrame frame,
+    Offset logical, {
+    required bool portrait,
+  }) {
     final HitLayer layer = HitLayer(
       geometry: geometry,
       android: defaultTargetPlatform == TargetPlatform.android,
@@ -2852,6 +3062,24 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       _toggleTrackListMode();
       return;
     }
+    // 横屏播放条的「歌词」与「点击进入详情」两个热区都发 `player:lyrics`
+    // （Qt `PlayerBar.cpp:167-169` 的歌名区命中与 `:201-206` 的词键，
+    // Qt 桌面端没有 `player:detail`——那个动作只在竖屏 `ResponsiveHudLayout.cpp:340`），
+    // 所以要修的不是动作串，而是宿主 `openLyrics` 的两个**静默前提**：
+    //   1. controller 必须有当前曲目（`siren_controller.dart:1948` `_song == null` 直接
+    //      返回）。横屏在资料库里把选中行落到专辑/文件夹列时 controller 会清掉 `_song`
+    //      （`siren_controller.dart:1916`），纵使还有曲目在播，点歌词也是空点；
+    //   2. 相位已经是歌词页时 `openLyrics` 同样什么都不做，再点一次没有任何反馈。
+    // 这里补 HUD 侧的兜底，只用宿主已支持的动作：
+    //   * `_song` 为空时先把在播曲目落成当前行（`music:index:i` = 只选中 + 进详情，
+    //     宿主 `_selectAt` → `controller.selectLibraryRow` 同步写完状态），
+    //     紧随其后的 `player:lyrics` 就一定能拿到曲目；
+    //   * 已经在歌词页时改发 `player:lyrics-follow`（Qt 歌词面板的「回到当前句」），
+    //     让这一下点击有看得见的结果（列表滚回当前句）。
+    if (!portrait && hit.action == 'player:lyrics') {
+      _dispatchLandscapeLyrics();
+      return;
+    }
     final bool seek = hit.action.startsWith('player:seek-fraction:');
     final bool volume = hit.action.startsWith('player:volume-fraction:');
     if (seek || volume) {
@@ -2861,6 +3089,15 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
         width: hit.width,
       );
       if (action != null) {
+        if (volume) {
+          // 滑轨位置落到本地状态：宿主那侧同时会收到同一个 fraction
+          // （`player:volume-fraction:<f>` → controller.setVolumeFraction）。
+          final double? fraction =
+              double.tryParse(action.substring('player:volume-fraction:'.length));
+          if (fraction != null && fraction.isFinite) {
+            setState(() => _volume = fraction.clamp(0.0, 1.0));
+          }
+        }
         widget.onAction(action);
         return;
       }
