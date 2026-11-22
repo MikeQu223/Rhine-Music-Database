@@ -33,7 +33,9 @@ void main() {
   );
   final BasicGlyphPorts ports = _realPorts();
 
-  test('横屏 modal=saved：画出我的音乐总览并给出收藏列动作', () {
+  // 横屏的「我的音乐」不再塞 393 竖屏窄栏：它复用横屏资料库骨架画当前收藏列
+  // （见 `fc64ae728`）。所以这里验的是「画出了资料库骨架、且不再有竖屏专属动作」。
+  test('横屏 modal=saved：走横屏资料库骨架，不再出现竖屏返回动作', () {
     final BasicHudFrame frame = BasicHudFrame.build(
       state: state,
       width: 1920,
@@ -53,11 +55,13 @@ void main() {
       ],
     );
     final Iterable<String> hits = frame.hits.map((HudHit hit) => hit.action);
-    expect(hits, contains('music:collection:1'));
     expect(frame.commands, isNotEmpty);
+    // 竖屏总览页的返回/收藏列动作不该出现在横屏骨架上。
+    expect(hits, isNot(contains('mobile:mine')));
+    expect(hits, isNot(contains('music:collection:1')));
   });
 
-  test('横屏 modal=saved 且 savedLane=2：画出我的歌单列并可创建', () {
+  test('横屏 modal=saved 且 savedLane=2：同样走横屏骨架', () {
     final BasicHudFrame frame = BasicHudFrame.build(
       state: state,
       width: 1920,
@@ -73,8 +77,8 @@ void main() {
       canCreatePlaylist: true,
     );
     final Iterable<String> hits = frame.hits.map((HudHit hit) => hit.action);
-    expect(hits, contains('music:result:2:0'));
-    expect(hits, contains('music:create-playlist'));
+    expect(frame.commands, isNotEmpty);
+    expect(hits, isNot(contains('music:result:2:0')));
   });
 
   test('横屏 modal=discover：tab 命中与空态都能画', () {

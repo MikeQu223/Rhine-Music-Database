@@ -163,30 +163,36 @@ void main() {
       expect(model.rowIds.contains('fsr-sharpness'), isFalse);
     });
 
-    test('四个区块沿用原 Qt 表头文案并重新编号 1..4', () {
+    test('区块沿用 Qt 表头文案与编号（平台卡 1，其余 2/3/5/6）', () {
       final BasicSettingsPanelModel model = _model();
+      // 横屏设置第一屏就是 Qt 的 PROVIDER ACCESS 卡；Qt 里它占 01，终端偏好是 02、
+      // 性能 03、软件更新 05、项目 06（`Qt/src/SettingsCard.cpp` 的编号）。
       expect(model.sections.map((SettingsSectionModel s) => s.spec.id).toList(), <SettingsSectionId>[
+        SettingsSectionId.provider,
         SettingsSectionId.preferences,
         SettingsSectionId.performance,
         SettingsSectionId.update,
         SettingsSectionId.project,
       ]);
       expect(model.sections.map((SettingsSectionModel s) => s.spec.number).toList(),
-          <int>[1, 2, 3, 4]);
-      expect(model.sections[0].spec.titleText, 'TERMINAL PREFERENCES / 终端偏好');
-      expect(model.sections[1].spec.titleText, 'PERFORMANCE / 性能与诊断');
-      expect(model.sections[2].spec.titleText, 'SOFTWARE UPDATE / 软件更新');
-      expect(model.sections[3].spec.titleText, 'PROJECT / 项目与开源参考');
+          <int>[1, 2, 3, 5, 6]);
+      expect(model.sections[1].spec.titleText, 'TERMINAL PREFERENCES / 终端偏好');
+      expect(model.sections[2].spec.titleText, 'PERFORMANCE / 性能与诊断');
+      expect(model.sections[3].spec.titleText, 'SOFTWARE UPDATE / 软件更新');
+      expect(model.sections[4].spec.titleText, 'PROJECT / 项目与开源参考');
       // 自定义区用自有 renderer 名，绝不能落到 Qt 整块 renderer（会画出未授权项）。
-      expect(model.sections[1].spec.customRenderer, basicSettingsDiscRotationRenderer);
-      expect(model.sections[2].spec.customRenderer, basicSettingsVersionRenderer);
-      expect(model.sections[1].spec.customRenderer,
+      expect(model.sections[2].spec.customRenderer, basicSettingsDiscRotationRenderer);
+      expect(model.sections[3].spec.customRenderer, basicSettingsVersionRenderer);
+      expect(model.sections[2].spec.customRenderer,
           isNot(SettingsCustomRenderers.performance));
-      expect(model.sections[2].spec.customRenderer, isNot(SettingsCustomRenderers.update));
-      // 被拒绝的区块（provider / storage / footer）整体不存在。
+      expect(model.sections[3].spec.customRenderer, isNot(SettingsCustomRenderers.update));
+      // 平台卡现在**存在**（横屏第一屏就是它），storage / footer 仍整体不存在。
+      expect(
+        model.sections.any((SettingsSectionModel s) => s.spec.id == SettingsSectionId.provider),
+        isTrue,
+      );
       expect(
         model.sections.any((SettingsSectionModel s) =>
-            s.spec.id == SettingsSectionId.provider ||
             s.spec.id == SettingsSectionId.storage ||
             s.spec.id == SettingsSectionId.footer),
         isFalse,
@@ -227,7 +233,7 @@ void main() {
     test('展开状态传给行模型（expandedId）', () {
       final BasicSettingsPanelModel model = _model(expandedId: 'aa-mode');
       final SettingsRowSpec row =
-          model.sections[0].rows.firstWhere((SettingsRowSpec r) => r.id == 'aa-mode');
+          model.sections[1].rows.firstWhere((SettingsRowSpec r) => r.id == 'aa-mode');
       expect(row.expanded, isTrue);
     });
   });
@@ -281,7 +287,7 @@ void main() {
         snapshot: const SettingsPreferenceSnapshot(quality: 'exhigh'),
       );
       final SettingsRowSpec row =
-          model.sections[0].rows.firstWhere((SettingsRowSpec r) => r.id == 'quality');
+          model.sections[1].rows.firstWhere((SettingsRowSpec r) => r.id == 'quality');
       expect(row.label, 'exhigh$basicSettingsUnsupportedValueSuffix');
     });
   });
@@ -600,7 +606,8 @@ void main() {
     test('表头滚过视口上沿后不再绘制（严格相交，= Qt SettingsCard 语义）', () {
       final SettingsRowRecorder gone = paintModel(_model(),
           scroll: SettingsRowMetrics.headerHeight, area: viewport);
-      expect(gone.textAt('TERMINAL PREFERENCES / 终端偏好'), isNull);
+      // 第一屏的表头现在是平台卡（provider 分区），滚过一个表头高度后它就不该再画。
+      expect(gone.textAt('PROVIDER ACCESS / 音乐平台'), isNull);
       // 但同一批内容里的行仍然照常绘制。
       expect(gone.textAt('COLOR THEME'), isNotNull);
     });

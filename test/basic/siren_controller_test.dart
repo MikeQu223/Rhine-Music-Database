@@ -315,8 +315,10 @@ void main() {
       // Qt/src/MusicSiren.cpp:110-116 的曲目匹配是 title/album/artist 三字段 contains；
       // 假曲库的 a2 名字是 'Album Two'，也含 album，所以三首都命中（不是两首）。
       expect(controller.state.songs.length, 3, reason: 'title/album/artist 三字段命中 s1/s2/s3');
-      expect(controller.state.albums.length, 2, reason: '专辑名/艺人命中 a1/a2');
-      expect(controller.state.status, '找到 5 条结果', reason: '3 首 + 2 张');
+      // 分类检索之后「歌曲」分类只给曲目行（Qt MusicSiren.cpp:91-190 的 kind 分支），
+      // 专辑行属于「专辑」分类，不再混在歌曲结果里。
+      expect(controller.state.albums, isEmpty);
+      expect(controller.state.status, '找到 3 条结果');
 
       await controller.setQuery('zzz');
       expect(controller.state.songs, isEmpty);
@@ -328,6 +330,7 @@ void main() {
       // '请输入 1–100 字关键词'（maximum 对非 qq 是 100），不是曲库加载结果文案。
       expect(controller.state.status, '请输入 1\u2013100 字关键词');
       expect(controller.state.songs.length, 3);
+      expect(controller.state.albums, isEmpty);
     });
   });
 

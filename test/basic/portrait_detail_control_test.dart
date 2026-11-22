@@ -156,7 +156,8 @@ void main() {
       final List<String> texts = _texts(c);
       expect(texts, contains('正在播放'));
       expect(texts, contains('01:00'));
-      expect(texts, contains('-02:00'));
+      // 参考图是「左已播 / 右总时长」，右侧不再带负号（原来是 `-02:00`）。
+      expect(texts, contains('03:00'));
     });
 
     test('当前曲目暂停 / 载入中的状态文案', () {

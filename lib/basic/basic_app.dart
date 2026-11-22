@@ -144,6 +144,10 @@ const String basicSearchAlbumActionPrefix = 'music:search-album:';
 const String basicSearchPlaylistActionPrefix = 'music:search-playlist:';
 const String basicSearchArtistActionPrefix = 'music:search-artist:';
 
+/// 详情页「歌手作品」的动作串前缀（`music:artist:<artists 下标>`，
+/// `Qt/src/NativeHudDetail.cpp:175`）。
+const String basicArtistActionPrefix = 'music:artist:';
+
 /// 竖屏顶部来源 tab 的命中前缀：`mobile:lane:<lane>`。
 const String basicPortraitLaneActionPrefix = 'mobile:lane:';
 
@@ -610,6 +614,10 @@ class _BasicShellState extends State<_BasicShell>
   /// 注册表的 `defaultId`（Qt `ProviderRegistry::defaultId`）。
   String _providerId = 'siren';
 
+  /// 上一次真正装进 `_installProviderService` 的平台 id：用来判断「换平台」，
+  /// 冷启动（空串）不能当成切换。
+  String _installedProviderId = '';
+
   /// 平台 id → 已恢复的账号（Qt `providerCardsState()` 的 authenticated 面）。
   /// 本预览没有账号恢复通道，恒为空表 ⇒ ACCOUNT 段一律「未登录」，不伪造登录态。
   final Map<String, ProviderAccount?> _providerAccounts = const <String, ProviderAccount?>{};
@@ -921,8 +929,12 @@ class _BasicShellState extends State<_BasicShell>
       // 偏好改回 `siren`——否则下次启动还会去找一个不存在的平台，界面上又会残留
       // 上一个平台的信息（页头平台名、列名、检索数据面都还是它的）。
       final String previousProvider = _providerId;
-      final bool providerFellBack =
-          previousProvider.isNotEmpty && !registry.contains(previousProvider);
+      // 只有「注册表读成功、但里面没有上次那个平台」才算插件失效。注册表为空
+      // （assets 缺 descriptor、测试替身没给 bundle）时不能当成平台消失——那会在
+      // 冷启动把列切到「全部专辑」并选到专辑行，3D 场景于是没有 current 曲目。
+      final bool providerFellBack = registry.ids.isNotEmpty &&
+          previousProvider.isNotEmpty &&
+          !registry.contains(previousProvider);
       setState(() {
         _providers = <ProviderDescriptor>[
           for (final String id in registry.ids)
@@ -1043,7 +1055,14 @@ class _BasicShellState extends State<_BasicShell>
       columns: current?.columns ?? basicSirenColumns,
     );
 
-    controller.resetForProviderSwitch(current?.columns ?? basicSirenColumns);
+    // 只有**真的换了平台**才归零视图状态。冷启动时 `_installedProviderId` 还是空，
+    // 无条件 reset 会把刚装载完的曲库选中清掉（3D 场景收不到 current → 封面不加载），
+    // 那是 Qt `choose()` 里没有的一步。
+    final String previousProviderId = _installedProviderId;
+    _installedProviderId = _providerId;
+    if (previousProviderId.isNotEmpty && previousProviderId != _providerId) {
+      controller.resetForProviderSwitch(current?.columns ?? basicSirenColumns);
+    }
     // 归零后停在「搜索结果」列（Qt `choose()` 的 selectedLane = 0）：塞壬列 0 就是
     // 搜索列，关键词为空时列表是空的，横屏下既没有行可点、ENTER 也只会报
     // 「列表为空：当前没有可打开的条目」。Qt 桌面端有独立的 archive 概览页兜底，
@@ -1672,7 +1691,9 @@ class _BasicShellState extends State<_BasicShell>
     _settingsScrollMaximum.dispose();
     _plugins.removeListener(_onPluginsChanged);
     _plugins.dispose();
-    if (identical(QtSceneScrollRouter.instance.handler, _onShellSceneScroll)) {
+    // 方法 tearoff 每次取值都是新对象，`identical` 恒为 false；用 `==`
+    // （Dart 对同一实例同一方法的 tearoff 定义了相等语义）才能正确摘掉回执。
+    if (QtSceneScrollRouter.instance.handler == _onShellSceneScroll) {
       QtSceneScrollRouter.instance.handler = null;
     }
     super.dispose();
@@ -3066,6 +3087,30 @@ class _BasicShellState extends State<_BasicShell>
           setState(() => _actionNotice = notice);
         }
       }());
+      return;
+    }
+    // 详情页「↗ 歌手作品」（Qt `NativeHudDetail.cpp:175` 的 `music:artist:<i>`）：
+    // i 是这首歌 `artists[]` 的下标。本仓库没有独立歌手页，用分类检索把该歌手的歌
+    // 真列出来——比留一句「尚未接入」有用，也不伪造页面。
+    if (action.startsWith(basicArtistActionPrefix)) {
+      final int index = int.tryParse(action.substring(basicArtistActionPrefix.length)) ?? 0;
+      final SirenSong? song = controller.state.song;
+      final List<String> names = song == null
+          ? const <String>[]
+          : <String>[for (final String part in song.artist.split(' / ')) if (part.trim().isNotEmpty) part.trim()];
+      if (names.isEmpty) {
+        return null;
+      }
+      final String name = names[index.clamp(0, names.length - 1)];
+      controller.setSearchKind('song');
+      unawaited(controller.setQuery(name));
+      _setModal('');
+      return null;
+    }
+    if (action == 'music:official') {
+      // Qt 只在 `capabilities.officialPlayback` 为真的平台给这个入口；Android 上没有
+      // 官方客户端可跳，直接说清楚，不做假跳转。
+      setState(() => _actionNotice = '本机没有官方客户端入口');
       return;
     }
     if (action.startsWith(basicSearchArtistActionPrefix)) {

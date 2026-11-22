@@ -1584,8 +1584,12 @@ class BasicHudFrame {
     bool isSiren = true,
   }) {
     final SirenSong? song = state.song;
+    // 平台 id 可能没被宿主传下来（默认空串）：身份串必须是 `<provider>:<id>`，
+    // 空 provider 会让 `item.identity`（`:s1`）与播放身份（`siren:s1`）不等，
+    // 歌词页于是被判成「不是同一首歌」而不走歌词面板。
+    final String identityProvider = providerId.isEmpty ? sirenProvider : providerId;
     return detail.SongDetailState(
-      provider: providerId,
+      provider: identityProvider,
       officialPlayback: false,
       item: song == null
           ? null
@@ -1597,7 +1601,7 @@ class BasicHudFrame {
               artists: song.artist.isEmpty ? const <String>[] : <String>[song.artist],
               album: song.album,
               durationMs: song.durationMs,
-              provider: providerId,
+              provider: identityProvider,
             ),
       dark: state.dark,
       lyricsMode: state.phase == BasicPhase.lyrics,
@@ -1606,7 +1610,7 @@ class BasicHudFrame {
       uid: '',
       detailLoading: state.loading,
       player: detail.SongDetailPlayerState(
-        currentIdentity: song == null ? null : 'siren:${song.id}',
+        currentIdentity: song == null ? null : '$identityProvider:${song.id}',
         loading: state.buffering || state.loading,
         failed: state.playbackError.isNotEmpty,
       ),
