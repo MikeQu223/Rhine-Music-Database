@@ -603,7 +603,9 @@ void main() {
         bundle: _StubBundle(),
       ));
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
+      // 曲库装载现在是多段异步（catalog → 收藏 → 平台/插件描述符），50ms 窗口不够稳；
+      // 这里给到 200ms，只影响「等到位」的快慢，不改任何断言口径。
+      await tester.pump(const Duration(milliseconds: 200));
 
       expect(controller.state.catalogLoaded, isTrue);
       expect(controller.state.songs.length, 3);
