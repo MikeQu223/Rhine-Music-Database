@@ -1108,6 +1108,19 @@ class _BasicShellState extends State<_BasicShell>
     unawaited(_restoreAccount());
   }
 
+  /// 会话恢复是否还在路上：插件平台首次恢复要等 Node 运行时冷启（约 90s），
+  /// 这期间 ACCESS 卡不该显示「未登录」，Qt 显示的是「正在恢复登录…」。
+  bool _accountRestoring = false;
+
+  /// ACCESS 卡 / 我的音乐页显示的账号名。
+  String get _accountName {
+    final String nickname = _loginController?.state.nickname ?? '';
+    if (nickname.isNotEmpty) {
+      return nickname;
+    }
+    return _accountRestoring ? '正在恢复登录…' : '';
+  }
+
   /// 用落盘会话恢复账号昵称（Qt `MusicAccount::restoreCachedAccount`）。
   ///
   /// 只对声明了 `login` 能力的平台做：`siren`/`local` 没有账号体系，调用会白白
@@ -1125,10 +1138,17 @@ class _BasicShellState extends State<_BasicShell>
     if (login.state.accountId.isNotEmpty) {
       return;
     }
+    if (mounted) {
+      setState(() => _accountRestoring = true);
+    }
     try {
       await login.open(descriptor, service.gatewayFor(descriptor.id));
     } on Object catch (error) {
       debugPrint('[plugin] restore account failed: $error');
+    } finally {
+      if (mounted) {
+        setState(() => _accountRestoring = false);
+      }
     }
     // 会话恢复成功后把服务端收藏拉一遍（Qt `MusicAccount::confirmLogin` 末尾
     // 也会 `refreshAccountFeatures()` + `loadMoreSource`，喜欢列随之可用）。
@@ -1947,7 +1967,7 @@ class _BasicShellState extends State<_BasicShell>
       pickerNotice: _playlistPickerNotice,
       canCreatePlaylist: _currentDescriptor?.capability('playlistManagement', fallback: false) ?? false,
       savedProviderName: _currentDescriptor?.name ?? '塞壬唱片',
-      savedUserName: _loginController?.state.nickname ?? '',
+      savedUserName: _accountName,
       savedOverviewRows: _savedOverviewRows(),
       savedShowArtists: false,
       savedScroll: _savedScroll,
@@ -2063,7 +2083,7 @@ class _BasicShellState extends State<_BasicShell>
                         // 竖屏这里作为设置内容的第一个 widget（与行网格同一单位）。
                         providerName: _currentDescriptor?.name ?? '',
                         providerLoggedIn: (_loginController?.state.accountId ?? '').isNotEmpty,
-                        providerUserName: _loginController?.state.nickname ?? '',
+                        providerUserName: _accountName,
                         providerSupportsLogin:
                             _currentDescriptor?.capability('login', fallback: false) ?? false,
                         onProviderAction: (String action) => _onAction(action),
@@ -2084,7 +2104,7 @@ class _BasicShellState extends State<_BasicShell>
                       // 横屏设置第一屏的平台卡（Qt SettingsCard.cpp 的 providerCard）。
                       providerName: _currentDescriptor?.name ?? '',
                       providerLoggedIn: _loginController?.state.loggedIn ?? false,
-                      providerUserName: _loginController?.state.nickname ?? '',
+                      providerUserName: _accountName,
                       providerSupportsLogin:
                           _currentDescriptor?.capability('login', fallback: false) ?? false,
                       onProviderAction: (String action) =>

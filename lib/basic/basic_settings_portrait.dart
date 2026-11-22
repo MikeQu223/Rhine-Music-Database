@@ -240,8 +240,14 @@ class _BasicPortraitSettingsPageState extends State<BasicPortraitSettingsPage> {
         onAction: providerAction,
       ));
     }
+    int ordinal = 0;
     for (final SettingsSectionModel section in widget.model.sections) {
-      children.add(_sectionHeader(section.spec, ink));
+      // 平台分区由上面的 ACCESS 卡承担（Qt compact 设置页里就是这一张卡，没有独立分区表头），
+      // 这里跳过：否则会出现「01 音乐平台 / 该分区尚未移植到竖屏」这种自相矛盾的半截内容。
+      if (section.spec.id == SettingsSectionId.provider) {
+        continue;
+      }
+      children.add(_sectionHeader(section.spec, ink, number: ++ordinal));
       final String renderer = section.spec.customRenderer;
       if (renderer == basicSettingsDiscRotationRenderer) {
         children.add(_discRotationRow(ink));
@@ -319,7 +325,9 @@ class _BasicPortraitSettingsPageState extends State<BasicPortraitSettingsPage> {
   }
 
   /// 分区头（Qt `terminalSection`）：墨块序号 + 中文标题 + 右对齐英文。
-  Widget _sectionHeader(SettingsSectionSpec spec, _PortraitInk ink) {
+  /// 竖屏分区表头。`number` 非空时用它（竖屏自己从 01 连续编号：Qt compact 的
+  /// 设置页没有「音乐平台」分区，编号从「终端偏好」起算，见参考图）。
+  Widget _sectionHeader(SettingsSectionSpec spec, _PortraitInk ink, {int? number}) {
     return SizedBox(
       height: 27,
       child: Stack(
@@ -333,7 +341,9 @@ class _BasicPortraitSettingsPageState extends State<BasicPortraitSettingsPage> {
               color: ink.ink,
               alignment: Alignment.center,
               child: Text(
-                spec.numberText,
+                number == null
+                    ? spec.numberText
+                    : number.toString().padLeft(2, '0'),
                 style: _style(8, ink.paper),
               ),
             ),
