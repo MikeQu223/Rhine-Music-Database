@@ -26,6 +26,16 @@ import 'portrait_canvas.dart';
 const double _gutter = 20;
 // 正文宽 = canvas.gridWidth - 40（左右各 20 网格）。
 
+/// 歌词入口不可用时发的动作：宿主按真实原因给一句提示，而不是留死键。
+///
+/// 为什么不让页面自己弹提示：命令流里没有 toast，页面也不知道「为什么不可用」
+/// （可能不是当前曲目，也可能当前曲目就是没歌词）。提示文案归宿主
+/// （`lib/basic/basic_app.dart` 的 `_route`），页面只负责「这一格被点了」。
+const String portraitSongHintLyrics = 'mobile:song-hint:lyrics';
+
+/// 评论入口不可用时发的动作（同上）。
+const String portraitSongHintComments = 'mobile:song-hint:comments';
+
 /// 毫秒 → mm:ss（Qt `MusicData::pad`，PlayerBar.cpp:8-12 的同款）。
 String _clock(double ms) {
   final double value = ms.isFinite && ms > 0 ? ms : 0;
@@ -60,8 +70,11 @@ String _metaLine(String artist, String album) {
 ///
 /// 几何对齐参考图（1206×2622 设备 = 393×854 网格）：顶部只有一枚居中的关闭 X，
 /// 没有标题栏；下面是方形唱片卡、档案行、两行大标题、艺人/专辑、状态行，
-/// 再往下从底往上锚定「进度条 → 传输三键 → 四入口」。短屏（本机 629）按比例收卡、
-/// 收间距，不出现负高度。
+/// 再往下依次是「进度条 → 传输三键 → 五入口」。
+///
+/// 纵向排布**自上而下累加**（见 [_songLayout]）：卡片吃剩下的高度，三段间距按富余
+/// 等比放大。旧实现把控制带从底往上锚定再 `min` 回来，长标题或矮屏时会和上面流下来
+/// 的内容撞在一起（用户 2026-11-19：「详情页元素互相压住」）。
 ///
 /// [current] 是本页最重要的一处身份判断：详情页曲目**是否就是**正在播放的曲目
 /// （Qt compact `song()` 的 `selectedSongIsCurrent`，`Qt/src/ResponsiveHudPages.cpp:165`）。
@@ -103,9 +116,19 @@ void paintPortraitSongPage(
   c.icon('close', c.gridWidth / 2 - 9, 34, size: 18, color: c.ink);
   c.hit(Rect.fromLTWH(c.gridWidth / 2 - 40, 16, 80, 52), 'back', '关闭');
 
-  // 唱片卡：正方形居中，最长边 312（参考值），短屏按 .38h 收。
-  final double side = math.max(120, math.min(312, h * .38));
-  final Rect card = Rect.fromLTWH((c.gridWidth - side) / 2, 84, side, side);
+  // 标题总共占几行：Qt `paragraph(maximumLines = 2)`、25pt × 1.2 行距 = 每行 30。
+  // 先算行数再排纵向预算，标题多一行就把唱片卡少收一行的高，不靠「钉底部」兜底。
+  int titleLines =
+      math.min(2, math.max(1, c.wrap(title, c.gridWidth - 40, 25, 'demibold').length));
+  if (h < _songFloorHeight(titleLines) + _songCardMin && titleLines > 1) {
+    // 矮屏先牺牲标题第二行（Qt 也是 2 行封顶，1 行是合法版式），再谈压卡片。
+    titleLines = 1;
+  }
+  final _SongLayout layout = _songLayout(c, titleLines: titleLines);
+
+  // 唱片卡：正方形居中，最长边 312（参考值），矮屏由 [_songLayout] 收到 96 甚至更小。
+  final double side = layout.cardSide;
+  final Rect card = Rect.fromLTWH((c.gridWidth - side) / 2, _cardTop, side, side);
   c.fill(card, c.surface);
   if (cover.isNotEmpty) {
     c.image(cover, card);
@@ -113,64 +136,60 @@ void paintPortraitSongPage(
   c.border(card, c.line);
 
   // 档案行：类型标签 + 右上序号，行下一道细线。
-  double y = card.bottom + 16;
-  c.text(_sectionLabel(kind), _gutter, y, size: 8, width: 240, color: c.muted);
+  final double labelTop = card.bottom + _gapAfterCard;
+  c.text(_sectionLabel(kind), _gutter, labelTop, size: 8, width: 240, color: c.muted);
   if (stamp.isNotEmpty) {
-    c.rightText(stamp, c.gridWidth - 20, y, 8, 'regular', c.ink);
+    c.rightText(stamp, c.gridWidth - 20, labelTop, 8, 'regular', c.ink);
   }
-  c.fill(Rect.fromLTWH(_gutter, y + 14, (c.gridWidth - 40), .6), c.line);
-  y += 26;
+  c.fill(Rect.fromLTWH(_gutter, labelTop + 14, (c.gridWidth - 40), .6), c.line);
 
   // 两行大标题（超出省略号）+ 艺人/专辑 + 收藏状态。
-  y = c.paragraph(
+  final double titleTop = labelTop + _labelRow;
+  c.paragraph(
     title,
     _gutter,
-    y,
+    titleTop,
     size: 25,
     width: (c.gridWidth - 40),
     weight: 'demibold',
     maximumLines: 2,
     lineSpacing: 1.2,
   );
+  final double metaTop = titleTop + _titleLine * titleLines + _gapTitleMeta;
   final String meta = _metaLine(artist, album);
-  y += 6;
   if (meta.isNotEmpty) {
-    c.text(meta, _gutter, y, size: 11, width: (c.gridWidth - 40) - 56, color: c.muted);
+    c.text(meta, _gutter, metaTop, size: 11, width: (c.gridWidth - 40) - 56, color: c.muted);
   }
   // 设计稿里心在 350（393 - 43）：必须跟着页宽贴右缘，写死会漂到页面中间。
-  c.icon(favourite ? 'heart-filled' : 'heart', c.gridWidth - 43, y - 4,
+  c.icon(favourite ? 'heart-filled' : 'heart', c.gridWidth - 43, metaTop - 4,
       size: 18, color: favourite ? c.ink : c.muted);
   // 收藏热区 44×44（Qt `{337, top + 30, 44, 44}` 的相对版）：旧实现只画图标不给命中，
   // 详情页点心等于没反应。
   // 详情页喜欢的是「选中那首」（Qt `ResponsiveHudPages.cpp:188-194` 的路由就是
   // `music:like`）；`music:like-current` 属于沉浸条那类「正在播放」的入口。
   c.hit(
-    Rect.fromLTWH(c.gridWidth - 57, y - 22, 44, 44),
+    Rect.fromLTWH(c.gridWidth - 57, metaTop - 22, 44, 44),
     'music:like',
     '喜欢这首歌',
   );
-  y += 24;
 
   // 状态行：琥珀圆点 + 播放状态。非当前曲目说「尚未播放」（Qt 的同一句），
   // 不能拿另一首歌的「正在播放」来冒充本页曲目。
-  c.commands.add(<Object?>['ellipse', c.amber, _gutter + 2, y + 5, 5, 5]);
+  final double stateTop = metaTop + _metaRow;
+  c.commands.add(<Object?>['ellipse', c.amber, _gutter + 2, stateTop + 5, 5, 5]);
   // 只有本曲目在播才配「正在播放 / 暂停」：另一首在播时本页曲目仍是「尚未播放」，
   // 播放键也必须画成 ▶（点它 = 切到本曲目），不能沿用那首的暂停图标。
   final bool trackPlaying = current && playing;
   final String playbackState = !current
       ? '尚未播放'
       : (buffering ? '正在载入' : (playing ? '正在播放' : '已暂停'));
-  c.text(playbackState, _gutter + 12, y, size: 8, width: 160, color: c.muted);
-  y += 18;
+  c.text(playbackState, _gutter + 12, stateTop, size: 8, width: 160, color: c.muted);
 
-  // 歌词入口只在**本曲目**上出现：歌词属于播放曲目，非当前曲目开出来是别人的歌词。
-  // 版式：内容自上而下流（参考图里进度条紧跟在状态行下面），底部只留一点
-  // 呼吸空间；旧实现把播放条/传输键/入口**钉在页面底部**，短标题时中间会空出
-  // 一大片，正是「间距不对、重心偏移」那条投诉的来源。
-  final double bottomAnchoredBarY = math.max(y + 8, math.max(y + 40, h - 12) - 76 - 52);
-  final double barY = math.min(y + 44, bottomAnchoredBarY);
-  final double transportCenter = barY + 54;
-  final double footerTop = math.min(transportCenter + 50, h - 44);
+  // 控制带三块全部取 [_songLayout] 自上而下算好的 y，块与块之间至少留
+  // [_minProgressGap]/[_minTransportGap]/[_minFooterGap]，任何高度都不叠。
+  final double barY = layout.barY;
+  final double transportCenter = layout.transportCenter;
+  final double footerTop = layout.footerTop;
   _songFooterRow(
     c,
     top: footerTop,
@@ -196,6 +215,110 @@ void paintPortraitSongPage(
   );
 
   c.finish();
+}
+
+// ── 详情页纵向预算（网格单位，全部与 `c.height` 同量纲）────────────────────
+// 每一块的高度都是常量：由 [_songLayout] 自上而下累加，任何页高都不重叠。
+
+/// 关闭键（命中 16..68）下方的卡片顶。
+const double _cardTop = 84;
+
+/// 卡片 → 档案行。
+const double _gapAfterCard = 16;
+
+/// 档案行（类型标签 + 细线）。
+const double _labelRow = 26;
+
+/// 标题一行的高（25pt × 1.2 行距）。
+const double _titleLine = 30;
+
+/// 标题末行 → 艺人/专辑行。
+const double _gapTitleMeta = 6;
+
+/// 艺人/专辑 + 收藏心（心与命中叠在这 24 里）。
+const double _metaRow = 24;
+
+/// 状态点 + 状态字。
+const double _stateRow = 18;
+
+/// 歌词预览(22) + 轨道/刻度/刻度时间(30)。[_songProgressRow] 从 `barY - 22` 起笔。
+const double _progressBlock = 52;
+
+/// 传输环直径（[_songTransportRow] 的 center ± 26）。
+const double _transportBlock = 52;
+
+/// 底部五入口的命中行。
+const double _footerBlock = 48;
+
+/// 三块之间的**最小**间距：矮屏时退到这里为止，再矮就只收卡片。
+const double _minProgressGap = 12;
+const double _minTransportGap = 14;
+const double _minFooterGap = 12;
+
+/// 底边呼吸空间（不含富余高度的分配）。
+const double _bottomInset = 12;
+
+/// 唱片卡的下限 / 上限（参考图 312）。
+const double _songCardMin = 96;
+const double _songCardMax = 312;
+
+/// 除唱片卡之外的全部固定高度（含最小间距与底边距）。
+double _songFloorHeight(int titleLines) =>
+    _cardTop +
+    _gapAfterCard +
+    _labelRow +
+    _titleLine * titleLines +
+    _gapTitleMeta +
+    _metaRow +
+    _stateRow +
+    _progressBlock +
+    _transportBlock +
+    _footerBlock +
+    _minProgressGap +
+    _minTransportGap +
+    _minFooterGap +
+    _bottomInset;
+
+/// [paintPortraitSongPage] 的纵向排布结果。
+typedef _SongLayout = ({
+  double cardSide,
+  double barY,
+  double transportCenter,
+  double footerTop,
+});
+
+/// 自上而下算一遍详情页的纵向排布。
+///
+/// 规则（顺序固定，所以任何 `c.height` 都不重叠、不超出可用高度）：
+///  1. 先算除卡片外的固定块高 [_songFloorHeight]；
+///  2. 剩下的高度给唱片卡，夹在 [_songCardMin]..[_songCardMax]；
+///  3. 卡片吃饱后多出来的高度 3/4 分给三段间距（进度→传输→底栏各 1/4），
+///     其余 1/4 留在底边，重心略偏下（接近参考图）。
+///
+/// 旧实现把 `{传输键, 底栏}` 从页面底部往回锚定（`max(y + 40, h - 12) - 76 - 52`）
+/// 再 `min` 回上方流下来的 y：长标题或矮屏时底部锚点会顶到进度条/状态行上，就是
+/// 用户说的「详情页元素互相压住」。
+_SongLayout _songLayout(PortraitCanvas c, {required int titleLines}) {
+  final double floor = _songFloorHeight(titleLines);
+  final double spare = math.max(0.0, c.height - floor);
+  final double cardSide =
+      spare <= _songCardMin ? spare : math.min(_songCardMax, spare);
+  final double extra = math.max(0.0, spare - cardSide);
+
+  final double labelTop = _cardTop + cardSide + _gapAfterCard;
+  final double titleTop = labelTop + _labelRow;
+  final double stateTop = titleTop + _titleLine * titleLines + _gapTitleMeta + _metaRow;
+  final double progressTop = stateTop + _stateRow + _minProgressGap + extra * .25;
+  final double transportTop =
+      progressTop + _progressBlock + _minTransportGap + extra * .25;
+  final double footerTop = transportTop + _transportBlock + _minFooterGap + extra * .25;
+  return (
+    cardSide: cardSide,
+    // [_songProgressRow] 的起笔在 `barY - 22`（歌词预览/已播时间）。
+    barY: progressTop + 22,
+    transportCenter: transportTop + _transportBlock / 2,
+    footerTop: footerTop,
+  );
 }
 
 /// 进度行：歌词预览 + 轨道/已播/游标 + 刻度 + 两端时间（左已播、右剩余）。
@@ -294,6 +417,11 @@ void _songTransportRow(
 ///
 /// 参考图（`docs/flutter-migration/archive` 外的设备截图）里这一行是**纯文字**、
 /// 等分页宽，当前模式那格用琥珀色；图标会把它挤成四格，所以不放图标。
+///
+/// **五格全部可点**：歌词/评论在「本曲目没在播」或「平台没有歌词/评论」时不留死键
+/// （旧实现塞空串 `''`，`PortraitCanvas.hit` 对空动作直接 return，点了毫无反馈），
+/// 而是发 [portraitSongHintLyrics] / [portraitSongHintComments]，由宿主
+/// （`lib/basic/basic_app.dart` 的 `_route`）按真实原因给一句可见提示。
 void _songFooterRow(
   PortraitCanvas c, {
   required double top,
@@ -310,22 +438,33 @@ void _songFooterRow(
   };
   final List<String> labels = <String>['歌词', '评论', modeLabel, '队列', '更多'];
   final List<String> actions = <String>[
-    lyricsAvailable ? 'player:lyrics' : '',
-    commentsAvailable ? 'music:comments' : '',
+    lyricsAvailable ? 'player:lyrics' : portraitSongHintLyrics,
+    commentsAvailable ? 'music:comments' : portraitSongHintComments,
     'player:mode',
     'player:open',
     'mobile:song-options',
   ];
   const List<String> hitLabels = <String>['打开全屏歌词', '查看评论', '切换播放模式', '播放队列', '歌曲更多操作'];
+  // 不可用那两格的热区文案要说清是「提示」而不是「已执行」，无障碍读屏才不撒谎。
+  final List<String> spoken = <String>[
+    lyricsAvailable ? hitLabels[0] : '歌词不可用',
+    commentsAvailable ? hitLabels[1] : '评论不可用',
+    hitLabels[2],
+    hitLabels[3],
+    hitLabels[4],
+  ];
   final double cell = (c.gridWidth - 40) / 5;
   for (int index = 0; index < labels.length; index++) {
     final double x = _gutter + cell * index;
     // 模式那格是唯一带状态的：非顺序播放时用琥珀色标出来。
     final bool active = index == 2 && mode != 'all';
-    c.text(labels[index], x, top + 14, size: 12, width: cell, color: active ? c.amber : c.muted);
-    if (actions[index].isNotEmpty) {
-      c.hit(Rect.fromLTWH(x - 4, top + 4, cell - 4, 40), actions[index], hitLabels[index]);
-    }
+    final bool mutedEntry = (index == 0 && !lyricsAvailable) || (index == 1 && !commentsAvailable);
+    c.text(labels[index], x, top + 14,
+        size: 12,
+        width: cell,
+        color: active ? c.amber : (mutedEntry ? c.line : c.muted));
+    // 命中铺满整格（旧实现左右各缩 4，小屏上五等分后每格只剩 ~66 宽，边缘很难点中）。
+    c.hit(Rect.fromLTWH(x, top, cell, _footerBlock), actions[index], spoken[index]);
   }
 }
 
