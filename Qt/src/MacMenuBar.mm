@@ -191,8 +191,6 @@ NSImage *rhineMenuBarIcon() {
 @end
 
 @interface RhineMacMenuBarButton : NSButton {
-  @public
-    MacMenuBarController *_controller;
     NSTrackingArea *_trackingArea;
     BOOL _hovered;
     BOOL _pressed;
@@ -231,10 +229,14 @@ NSImage *rhineMenuBarIcon() {
     [self updateFeedback];
 }
 
-- (void)mouseDown:(NSEvent *)event {
+- (void)performClick:(id)sender {
+    if (!self.enabled) {
+        return;
+    }
+
     _pressed = YES;
     [self updateFeedback];
-    [super mouseDown:event];
+    [super performClick:sender];
     _pressed = NO;
     [self updateFeedback];
 }
@@ -247,13 +249,6 @@ NSImage *rhineMenuBarIcon() {
 - (void)viewDidChangeEffectiveAppearance {
     [super viewDidChangeEffectiveAppearance];
     [self updateFeedback];
-}
-
-- (void)rightMouseDown:(NSEvent *)event {
-    Q_UNUSED(event)
-    if (_controller) {
-        _controller->showContextMenu();
-    }
 }
 @end
 
@@ -272,6 +267,8 @@ NSImage *rhineMenuBarIcon() {
 }
 - (instancetype)initWithController:(MacMenuBarController *)controller items:(NSArray<NSString *> *)items;
 - (CGFloat)desiredWidth;
+- (void)statusItemClicked:(NSStatusBarButton *)sender;
+- (void)performClickAtPoint:(NSPoint)point;
 - (void)updateLyrics:(NSString *)lyrics
              playing:(BOOL)playing
              loading:(BOOL)loading
@@ -288,7 +285,6 @@ NSImage *rhineMenuBarIcon() {
                                      action:(SEL)action
                                     toolTip:(NSString *)toolTip {
     auto *button = [[RhineMacMenuBarButton alloc] initWithFrame:NSMakeRect(0, 0, 24, 22)];
-    button->_controller = _controller;
     button.bordered = NO;
     button.wantsLayer = YES;
     button.layer.cornerRadius = 5;
@@ -457,14 +453,50 @@ NSImage *rhineMenuBarIcon() {
     _controller->toggleFavorite();
 }
 
-- (void)mouseDown:(NSEvent *)event {
-    Q_UNUSED(event)
-    _controller->activate();
+- (NSView *)hitTest:(NSPoint)point {
+    Q_UNUSED(point)
+    // 整个状态项由系统按钮接收点击，子控件仍保留各自的无障碍动作。
+    return nil;
 }
 
-- (void)rightMouseDown:(NSEvent *)event {
-    Q_UNUSED(event)
-    _controller->showContextMenu();
+- (void)statusItemClicked:(NSStatusBarButton *)sender {
+    const auto event = NSApp.currentEvent;
+    const bool isLeftClick = event.type == NSEventTypeLeftMouseDown || event.type == NSEventTypeLeftMouseUp;
+    const bool isControlClick = isLeftClick && (event.modifierFlags & NSEventModifierFlagControl);
+    if (event.type == NSEventTypeRightMouseDown || event.type == NSEventTypeRightMouseUp || isControlClick) {
+        _controller->showContextMenu();
+        return;
+    }
+
+    if (event.type == NSEventTypeKeyDown || event.type == NSEventTypeKeyUp) {
+        // 键盘激活整个状态项时，打开主窗口。
+        _controller->activate();
+        return;
+    }
+
+    // macOS 27 转发的状态项事件可能带有错误的窗口内坐标。
+    const auto window = sender.window;
+    if (window) {
+        [self layoutSubtreeIfNeeded];
+        const auto windowPoint = [window convertPointFromScreen:NSEvent.mouseLocation];
+        [self performClickAtPoint:[self convertPoint:windowPoint fromView:nil]];
+    }
+}
+
+- (void)performClickAtPoint:(NSPoint)point {
+    if (!NSPointInRect(point, self.bounds)) {
+        return;
+    }
+    for (RhineMacMenuBarButton *button in @[_previous, _play, _next, _favorite, _icon]) {
+        if (!button.isHiddenOrHasHiddenAncestor &&
+            NSPointInRect([button convertPoint:point fromView:self], button.bounds)) {
+            [button performClick:self];
+            return;
+        }
+    }
+    if (!_lyrics.hidden && NSPointInRect(point, _lyrics.frame)) {
+        _controller->activate();
+    }
 }
 @end
 
@@ -524,6 +556,9 @@ void MacMenuBarController::rebuild() {
     m_impl->statusItem = [NSStatusBar.systemStatusBar statusItemWithLength:[m_impl->view desiredWidth]];
     NSStatusBarButton *button = m_impl->statusItem.button;
     [button addSubview:m_impl->view];
+    button.target = m_impl->view;
+    button.action = @selector(statusItemClicked:);
+    [button sendActionOn:NSEventMaskLeftMouseDown | NSEventMaskRightMouseDown];
     button.accessibilityLabel = @"RHINE MUSIC DATABASE";
     const auto width = [m_impl->view desiredWidth];
     m_impl->statusItem.length = width;
