@@ -286,6 +286,19 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
   String _remoteProviderId = '';
   String _remoteProviderName = '';
 
+  /// 远端曲目 id → 插件原始行。
+  ///
+  /// `SirenSong` 只留得下 title/artist/album 这几个扁平字段，而
+  /// 「↗ 歌手作品」（Qt `MusicDirectory.cpp:242-272`）要的是原始行里的
+  /// `artists[{id,name}]`，所以把最近一次拿到的原始行按 id 存一份。
+  final Map<String, Map<String, Object?>> _remoteRows = <String, Map<String, Object?>>{};
+
+  /// 歌手页的标签：`songs`（曲目）/ `albums`（发行专辑），Qt `MusicDirectory::artistTab`。
+  String _artistTab = 'songs';
+
+  /// 歌手页「发行专辑」这一栏的行（Qt `MusicDirectory::albums`）。
+  List<SirenAlbum> _artistAlbums = const <SirenAlbum>[];
+
   /// 当前平台的列名（插件平台来自 manifest 的 `library.columns`，否则塞壬五列）。
   List<String> _laneColumns = basicSirenColumns;
 
@@ -961,6 +974,343 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     }
   }
 
+  /// 歌手页的标签（`songs` / `albums`）。
+  String get artistTab => _artistTab;
+
+  /// 歌手页「发行专辑」栏的行。
+  List<SirenAlbum> get artistAlbums => _artistAlbums;
+
+  /// 当前是否停在歌手页（`phase == detail` 且目录 kind 是 `artist`）。
+  ///
+  /// Qt 的歌手页是 detail 模式（`MusicDirectory::showDirectoryInfo()` 发
+  /// `modeRequested("detail")`），但目录本身仍然留着，所以宿主用这个组合判断，
+  /// 不要只看 `phase`。
+  bool get artistPageActive {
+    final BasicDirectory? directory = _directory;
+    return _phase == BasicPhase.detail && directory != null && directory.kind == 'artist';
+  }
+
+  /// 歌手页标题（非歌手页为空串）。
+  String get artistName => artistPageActive ? _directory!.title : '';
+
+  /// 歌手页封面（非歌手页为空串）。
+  String get artistCover => artistPageActive ? _directory!.cover : '';
+
+  /// 歌手页曲目（非歌手页为空列表）。
+  List<SirenSong> get artistSongs =>
+      artistPageActive ? _directory!.songs : const <SirenSong>[];
+
+  /// 切换歌手页标签：`songs` / `albums`（Qt `music:artist-tab:songs|albums`）。
+  ///
+  /// 只改视图，不重新请求、不动选中：Qt 的 artistTab 同样只是容器的取数开关。
+  void setArtistTab(String tab) {
+    if (_disposed || (tab != 'songs' && tab != 'albums') || _artistTab == tab) {
+      return;
+    }
+    _artistTab = tab;
+    _publish();
+  }
+
+  /// 「↗ 歌手作品」：进入该歌手的目录页（Qt `MusicDirectory::openSongArtist`）。
+  ///
+  /// Qt 真值（`Qt/src/MusicDirectory.cpp:242-272`）：
+  ///  - 插件平台取 `current["artists"][index]` 的 `{id,name}`，id 必须匹配
+  ///    `^[a-zA-Z0-9_-]{1,80}$`，否则**静默不打开**；
+  ///  - 本地平台（这里把塞壬曲库当本地库）用 `{provider:"local",kind:"artist",
+  ///    id,key:"local:artist:"+id,title:name}` 建目录；
+  ///  - 目录内容由 `enterDirectory` 的 `detail` 返回 `[item, songs, ids]`，
+  ///    状态串是「正在打开：<title>」→「已打开：<title>」。
+  ///
+  /// [artistIndex] 是歌曲行 `artists[]` 里的下标（动作 `music:artist:<i>` 的 i）；
+  /// [artistId] 是调用方已经解析好的 id（插件行里没有 artists 时才需要）。
+  Future<void> openArtistDirectory(
+    String name, {
+    int artistIndex = 0,
+    String artistId = '',
+  }) async {
+    if (_disposed) {
+      return;
+    }
+    final String artist = name.trim();
+    if (artist.isEmpty) {
+      _status = '歌手信息不完整，无法打开歌手页';
+      _publish();
+      return;
+    }
+    final ProviderGateway? gateway = _remoteSearch;
+    final int generation = ++_detailGeneration;
+    _status = '正在打开：$artist';
+    _loading = true;
+    _error = '';
+    _publish();
+    String provider = sirenProvider;
+    String id = artistId.trim();
+    String key = 'siren:artist:${id.isEmpty ? artist : id}';
+    List<SirenSong> songs = const <SirenSong>[];
+    List<SirenAlbum> albums = const <SirenAlbum>[];
+    try {
+      if (gateway != null) {
+        provider = _remoteProviderId.isEmpty ? sirenProvider : _remoteProviderId;
+        if (id.isEmpty) {
+          id = _artistIdFromCurrentSong(artist, artistIndex);
+        }
+        if (id.isEmpty) {
+          // Qt 对不合法/缺失的 artist id 是静默 no-op；这里给一条诚实原因，
+          // 免得用户点了「歌手作品」以后页面毫无反应。
+          _loading = false;
+          _status = '歌手信息不完整，无法打开歌手页';
+          _publish();
+          return;
+        }
+        key = '$provider:artist:$id';
+        final List<Map<String, Object?>> rows = await gateway.detailSongs(<String, Object?>{
+          'provider': provider,
+          'kind': 'artist',
+          'id': id,
+          'key': key,
+          'title': artist,
+          'artist': artist,
+        });
+        if (generation != _detailGeneration) {
+          return;
+        }
+        songs = <SirenSong>[
+          for (final Map<String, Object?> row in rows) _songFromRemoteRow(row),
+        ];
+      } else {
+        songs = <SirenSong>[
+          for (final SirenSong song in _catalogSongs)
+            if (_songMatchesArtist(song, artist)) song,
+        ];
+        albums = <SirenAlbum>[
+          for (final SirenAlbum album in _catalogAlbums)
+            if (_albumMatchesArtist(album, artist)) album,
+        ];
+      }
+    } on Object catch (error) {
+      if (generation != _detailGeneration || _disposed) {
+        return;
+      }
+      _loading = false;
+      _error = _messageOf(error);
+      _status = sirenDetailFailurePrefix + _error;
+      _publish();
+      return;
+    }
+    if (generation != _detailGeneration || _disposed) {
+      return;
+    }
+    for (final SirenSong song in songs) {
+      _songById[song.id] = song;
+    }
+    if (albums.isEmpty) {
+      albums = _albumsFromSongs(songs, artist);
+    }
+    final String cover = songs.isEmpty ? '' : songs.first.cover;
+    _artistAlbums = List<SirenAlbum>.unmodifiable(albums);
+    _artistTab = 'songs';
+    _directory = BasicDirectory(
+      provider: provider,
+      kind: 'artist',
+      // Qt 的目录 item id 就是歌手 id；本地/无 id 时退回 key，保持身份可比较。
+      id: id.isEmpty ? key : id,
+      key: key,
+      title: artist,
+      artist: artist,
+      cover: cover,
+      description: songs.isEmpty
+          ? '暂无该歌手的曲目'
+          : '${songs.length} 首曲目 · ${albums.length} 张专辑',
+      trackCount: songs.length,
+      virtual: false,
+      songs: songs,
+      ids: <String>[for (final SirenSong song in songs) song.id],
+      cursor: songs.length,
+      index: 0,
+      parent: _directory,
+      parentLane: _selectedLane,
+      parentSelection: _selection,
+    );
+    _album = null;
+    _phase = BasicPhase.detail;
+    _query = '';
+    _loading = false;
+    _error = '';
+    _status = songs.isEmpty && albums.isEmpty
+        ? '没有找到该歌手的作品'
+        : '$sirenOpenedPrefix$artist';
+    _song = songs.isEmpty ? null : songs.first;
+    _selection =
+        songs.isEmpty ? null : BasicSelection(kind: 'song', id: songs.first.id);
+    _listPosition = 0;
+    _publish();
+  }
+
+  /// 打开歌手页里第 [index] 张专辑（Qt `music:artist-album:<rawIndex>`）。
+  ///
+  /// 塞壬/本地平台复用 [enterAlbumColumn]（曲库里的专辑详情）；插件平台走
+  /// `detail` 的 `kind == "album"` 分支（`MusicDirectory::enterDirectory` 同义）。
+  Future<void> openArtistAlbum(int index) async {
+    if (_disposed) {
+      return;
+    }
+    final List<SirenAlbum> albums = _artistAlbums;
+    if (index < 0 || index >= albums.length) {
+      _status = '该专辑已不在列表里';
+      _publish();
+      return;
+    }
+    final SirenAlbum album = albums[index];
+    final ProviderGateway? gateway = _remoteSearch;
+    if (gateway == null) {
+      await enterAlbumColumn(album);
+      return;
+    }
+    final int generation = ++_detailGeneration;
+    _status = '正在打开：${album.name}';
+    _loading = true;
+    _error = '';
+    _publish();
+    try {
+      final List<Map<String, Object?>> rows = await gateway.detailSongs(<String, Object?>{
+        'provider': _remoteProviderId,
+        'kind': 'album',
+        'id': album.id,
+        'key': '$_remoteProviderId:album:${album.id}',
+        'title': album.name,
+        'artist': album.artist,
+      });
+      if (generation != _detailGeneration || _disposed) {
+        return;
+      }
+      final List<SirenSong> songs = <SirenSong>[
+        for (final Map<String, Object?> row in rows) _songFromRemoteRow(row),
+      ];
+      for (final SirenSong song in songs) {
+        _songById[song.id] = song;
+      }
+      _directory = BasicDirectory(
+        provider: _remoteProviderId.isEmpty ? sirenProvider : _remoteProviderId,
+        kind: 'album',
+        id: album.id,
+        key: '$_remoteProviderId:album:${album.id}',
+        title: album.name,
+        artist: album.artist,
+        cover: album.cover.isNotEmpty
+            ? album.cover
+            : (songs.isEmpty ? '' : songs.first.cover),
+        description: album.artist,
+        trackCount: songs.length,
+        virtual: false,
+        songs: songs,
+        ids: <String>[for (final SirenSong song in songs) song.id],
+        cursor: songs.length,
+        index: 0,
+        parent: _directory,
+        parentLane: _selectedLane,
+        parentSelection: _selection,
+      );
+      _album = null;
+      _phase = BasicPhase.library;
+      _query = '';
+      _loading = false;
+      _error = '';
+      _status = songs.isEmpty ? '专辑暂无可播放曲目' : '$sirenOpenedPrefix${album.name}';
+      _song = songs.isEmpty ? null : songs.first;
+      _selection =
+          songs.isEmpty ? null : BasicSelection(kind: 'song', id: songs.first.id);
+      _listPosition = 0;
+      _publish();
+    } on Object catch (error) {
+      if (generation != _detailGeneration || _disposed) {
+        return;
+      }
+      _loading = false;
+      _error = _messageOf(error);
+      _status = sirenDetailFailurePrefix + _error;
+      _publish();
+    }
+  }
+
+  /// 从当前选中曲目的插件原始行里取第 [index] 个歌手的 id。
+  String _artistIdFromCurrentSong(String name, int index) {
+    final SirenSong? song = _song;
+    if (song == null) {
+      return '';
+    }
+    final Map<String, Object?>? row = _remoteRows[song.id];
+    final Object? artists = row?['artists'];
+    if (artists is! List) {
+      return '';
+    }
+    final List<Map<String, Object?>> entries = <Map<String, Object?>>[
+      for (final Object? entry in artists)
+        if (entry is Map)
+          entry.map((Object? key, Object? value) =>
+              MapEntry<String, Object?>('$key', value)),
+    ];
+    if (index >= 0 && index < entries.length) {
+      final String id = _text(entries[index]['id']);
+      if (id.isNotEmpty) {
+        return id;
+      }
+    }
+    for (final Map<String, Object?> entry in entries) {
+      if (_text(entry['name']) == name) {
+        return _text(entry['id']);
+      }
+    }
+    return '';
+  }
+
+  /// 曲目是否属于歌手 [artist]（`artist` 可能是 `A / B` 形式的多歌手串）。
+  bool _songMatchesArtist(SirenSong song, String artist) {
+    if (song.artist == artist) {
+      return true;
+    }
+    for (final String part in song.artist.split(' / ')) {
+      if (part.trim() == artist) {
+        return true;
+      }
+    }
+    return song.artist.contains(artist);
+  }
+
+  /// 专辑是否属于歌手 [artist]（同上）。
+  bool _albumMatchesArtist(SirenAlbum album, String artist) {
+    if (album.artist == artist) {
+      return true;
+    }
+    for (final String part in album.artist.split(' / ')) {
+      if (part.trim() == artist) {
+        return true;
+      }
+    }
+    return album.artist.contains(artist);
+  }
+
+  /// 从歌手曲目里按 album/albumID 去重出专辑行（插件 `artistAlbums` 未接入时的
+  /// 诚实投影：只列这些曲目所属的专辑，不编造别处的发行）。
+  List<SirenAlbum> _albumsFromSongs(List<SirenSong> songs, String artist) {
+    final Map<String, SirenAlbum> byKey = <String, SirenAlbum>{};
+    for (final SirenSong song in songs) {
+      if (song.album.isEmpty) {
+        continue;
+      }
+      final String id = song.albumId.isEmpty ? song.album : song.albumId;
+      final SirenAlbum? existing = byKey[id];
+      byKey[id] = SirenAlbum(
+        id: id,
+        name: song.album,
+        artist: artist,
+        cover: song.cover,
+        songCount: (existing?.songCount ?? 0) + 1,
+        songs: const <SirenSong>[],
+      );
+    }
+    return <SirenAlbum>[for (final SirenAlbum album in byKey.values) album];
+  }
+
   /// 拉一次服务端歌单（插件平台 + 已登录才有效；塞壬/本地平台直接返回）。
   Future<void> refreshServerPlaylists({String uid = ''}) async {
     final ProviderGateway? gateway = _remoteSearch;
@@ -1032,17 +1382,26 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
   int _serverLikedSeq = 0;
 
   /// 远端曲目行 → `SirenSong`（插件字段没有 `durationMs`，`duration` 已经是毫秒）。
-  SirenSong _songFromRemoteRow(Map<String, Object?> row) => SirenSong(
-        id: _text(row['id']),
-        title: _text(row['title']),
-        artist: _text(row['artist']),
-        album: _text(row['album']),
-        albumId: _text(row['albumID']),
-        cover: _text(row['cover']),
-        sourceUrl: '',
-        lyricUrl: '',
-        durationMs: (row['duration'] is num ? (row['duration'] as num).toDouble() : 0),
-      );
+  ///
+  /// 同时把原始行按 id 记进 [_remoteRows]：「↗ 歌手作品」要读 `artists[{id,name}]`，
+  /// 那份嵌套字段落不进 [SirenSong] 的扁平结构。
+  SirenSong _songFromRemoteRow(Map<String, Object?> row) {
+    final String id = _text(row['id']);
+    if (id.isNotEmpty) {
+      _remoteRows[id] = row;
+    }
+    return SirenSong(
+      id: id,
+      title: _text(row['title']),
+      artist: _text(row['artist']),
+      album: _text(row['album']),
+      albumId: _text(row['albumID']),
+      cover: _text(row['cover']),
+      sourceUrl: '',
+      lyricUrl: '',
+      durationMs: (row['duration'] is num ? (row['duration'] as num).toDouble() : 0),
+    );
+  }
 
   /// 跑一次远端检索（结果/失败原因都进 `_status`，与 Qt 的 `status` 一致）。
   Future<void> _runRemoteSearch() async {
