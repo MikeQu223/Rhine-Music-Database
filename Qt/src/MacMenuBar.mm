@@ -102,7 +102,7 @@ NSImage *rhineMenuBarIcon() {
     _offset = 0;
     _cycleStart = NSDate.timeIntervalSinceReferenceDate;
     self.needsDisplay = YES;
-    if (_textWidth <= self.bounds.size.width || !self.window) {
+    if (self.isHiddenOrHasHiddenAncestor || _textWidth <= self.bounds.size.width || !self.window) {
         return;
     }
     _timer = [NSTimer timerWithTimeInterval:1.0 / 30
@@ -142,6 +142,19 @@ NSImage *rhineMenuBarIcon() {
     const bool changed = !NSEqualSizes(self.frame.size, size);
     [super setFrameSize:size];
     if (changed) {
+        [self restartAnimation];
+    }
+}
+
+- (void)setHidden:(BOOL)hidden {
+    const bool wasHidden = self.hidden;
+    [super setHidden:hidden];
+    if (hidden) {
+        [_timer invalidate];
+        _timer = nil;
+        return;
+    }
+    if (wasHidden) {
         [self restartAnimation];
     }
 }
