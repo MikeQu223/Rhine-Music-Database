@@ -424,8 +424,10 @@ class PluginGateway implements ProviderGateway {
       id: _text(item['id']),
       content: _text(item['content'] ?? item['text']),
       nickname: _text(item['nickname'] ?? item['user']),
-      avatarUrl: _text(item['avatar'] ?? item['avatarUrl']),
-      timeLabel: _text(item['time'] ?? item['timeLabel']),
+      avatarUrl: _absoluteUrl(_text(item['avatar'] ?? item['avatarUrl'])),
+      // Qt `CommentsController.cpp:665` 把平台返回的毫秒时间戳换算成「刚刚/N 分钟前/
+      // N 小时前/N 天前/yyyy-MM-dd」，不是把数字原样上屏（真机上曾显示 1709572042026）。
+      timeLabel: _commentTimeLabel(item['time'] ?? item['timeLabel']),
       likedCount: item['liked'] is num ? (item['liked'] as num).toInt() : 0,
       replyCount: item['replyCount'] is num ? (item['replyCount'] as num).toInt() : 0,
       replyTo: _text(item['replyTo']),
@@ -436,6 +438,44 @@ class PluginGateway implements ProviderGateway {
   }
 
   static String _text(Object? value) => value == null ? '' : '$value';
+
+  /// 平台给的 `//host/path` 或 `http://host/path` 统一成可直接请求的绝对 URL。
+  static String _absoluteUrl(String value) {
+    if (value.isEmpty) {
+      return '';
+    }
+    if (value.startsWith('//')) {
+      return 'https:$value';
+    }
+    return value;
+  }
+
+  /// 评论时间文案：`time` 是毫秒时间戳时按 Qt `CommentsController::relativeTime`
+  /// 的六档换算；已经是字符串文案时原样返回（部分插件直接给格式化结果）。
+  static String _commentTimeLabel(Object? raw) {
+    final double? milliseconds = raw is num
+        ? raw.toDouble()
+        : (raw is String ? double.tryParse(raw) : null);
+    if (milliseconds == null || !milliseconds.isFinite || milliseconds <= 0) {
+      return _text(raw);
+    }
+    final DateTime time = DateTime.fromMillisecondsSinceEpoch(milliseconds.toInt());
+    final Duration gap = DateTime.now().difference(time);
+    if (gap.isNegative || gap.inMinutes < 1) {
+      return '刚刚';
+    }
+    if (gap.inHours < 1) {
+      return '${gap.inMinutes} 分钟前';
+    }
+    if (gap.inDays < 1) {
+      return '${gap.inHours} 小时前';
+    }
+    if (gap.inDays < 30) {
+      return '${gap.inDays} 天前';
+    }
+    String two(int value) => value.toString().padLeft(2, '0');
+    return '${time.year}-${two(time.month)}-${two(time.day)}';
+  }
 }
 
 /// 插件请求失败（`body.code != 200` 或传输错误）。
