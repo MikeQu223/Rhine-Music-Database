@@ -67,6 +67,7 @@ import 'basic_plugins_portrait.dart';
 import 'basic_hud_resources.dart';
 import 'basic_models.dart';
 import 'basic_mv_mapper.dart';
+import 'basic_mv_player.dart';
 import 'basic_player_preferences.dart';
 import 'basic_settings.dart';
 import 'basic_settings_runtime.dart';
@@ -624,6 +625,12 @@ class _BasicShellState extends State<_BasicShell>
   /// 评论控制器（Qt `CommentsController`）；网关不支持评论时它只给状态串。
   CommentController? _commentController;
   MvController? _mvController;
+
+  /// 关联 MV 有可解码地址时，用 Flutter 原生视频面盖住整屏（Android 上 Qt 的 MV
+  /// 路径恒关，见 `Qt/src/PlatformFeatures.h:23-27`）。没有地址时仍由 HUD 画
+  /// 状态/版本页（`paintPortraitMvPage`），两者不并存。
+  bool get _mvOpen =>
+      _modal == 'mv' && (_mvController?.state.track?.url.isNotEmpty ?? false);
 
   /// 登录控制器（Qt `MusicAccount` 的登录状态机）。
   LoginController? _loginController;
@@ -2063,6 +2070,38 @@ class _BasicShellState extends State<_BasicShell>
               return landscape
                   ? page
                   : Align(alignment: Alignment.topLeft, child: page);
+            },
+          ),
+        if (_mvOpen)
+          Builder(
+            builder: (BuildContext inner) {
+              final MvController mv = _mvController!;
+              return Positioned.fill(
+                child: BasicMvPlayer(
+                  url: mv.state.track!.url,
+                  title: mv.state.track!.title,
+                  status: mv.state.status,
+                  targetPositionMs: mv.videoPositionMs,
+                  playing: controller.state.playing,
+                  offsetMs: mv.offset,
+                  onClose: () => _onAction(MvAction.close),
+                  onOffsetChanged: (int delta) {
+                    mv.adjustOffset(delta);
+                    mv.syncToMusic(
+                      controller.state.positionMs.toDouble(),
+                      playing: controller.state.playing,
+                    );
+                    setState(() {});
+                  },
+                  onSync: () {
+                    mv.syncToMusic(
+                      controller.state.positionMs.toDouble(),
+                      playing: controller.state.playing,
+                    );
+                    setState(() {});
+                  },
+                ),
+              );
             },
           ),
         // 歌单表单（Qt modal == 'playlist-form'，NativeHudModal.cpp:240-243）：
