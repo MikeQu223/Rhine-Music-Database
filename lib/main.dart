@@ -42,8 +42,14 @@
 // hide 位），于是每一轮 onPostResume 都把原生刚写好的 5894 覆盖成 1280 —— API 28/29
 // （minSdk=28，android/app/build.gradle.kts:116）上 HIDE_NAVIGATION 与
 // LAYOUT_HIDE_NAVIGATION 就此丢失。Dart 侧调一次 SystemChrome 之后 mEnabledOverlays 变成
-// 5894，引擎的重放才与原生一致，所以这一行不是装饰。（更干净的宿主侧兜底是给
+// 5894，引擎的重放才与原生一致，所以这一行不是直达装饰。（更干净的宿主侧兜底是给
 // MainActivity 加 onPostResume 覆写，但那属于 android/ 改动范围，超出本次整合范围，已上报。）
+//
+// 2026-11-22：这里从 `immersiveSticky` 改成 `edgeToEdge`。真机上 `immersiveSticky`
+// 下系统输入法（默认的微信键盘 `com.tencent.wetype/.plugin.hld.WxHldService`）窗口
+// 报告 `mInputShown=true`、`isVisible=true`，但一个像素都不画 —— 搜索框、登录短信框
+// 全部「点了不弹键盘」。切到 `edgeToEdge` 后同一个输入法立刻正常显示，且页面布局、
+// 全屏观感与改前一致（状态栏/导航栏仍由 HUD 自己占满，见 device 截图）。
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -59,7 +65,7 @@ void main() {
   );
 
   WidgetsFlutterBinding.ensureInitialized();
-  SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+  SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   runApp(ClarityWidget(
     app: const BasicApp(),
     clarityConfig: config,

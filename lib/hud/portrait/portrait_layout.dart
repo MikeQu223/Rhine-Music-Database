@@ -389,17 +389,17 @@ void _list(
         continue;
       }
       final double y = slotY + (row - position) * portraitRowHeight;
-      final double distance = (row - position).abs();
       final bool isCurrent = row == current;
       final double rowWidth = c.gridWidth - 46;
       if (isCurrent) {
         c.fill(Rect.fromLTWH(23, y, rowWidth, portraitRowHeight - 2), c.surface);
         c.fill(Rect.fromLTWH(23, y, 2, portraitRowHeight - 2), c.amber);
       }
-      final double alpha = (.85 - distance * .13).clamp(.2, .85);
       // 行标题跟着主题走（原来钉死暗色 ink 的奶油色）：亮色主题下必须换成深墨，
-      // 否则浅底浅字同样读不出来。
-      final List<Object?> color = <Object?>[c.ink[0], c.ink[1], c.ink[2], alpha];
+      // 否则浅底浅字同样读不出来。**不按距离淡出**：Qt 的档案列表每一行都是同样的
+      // 墨色，只有当前行有 surface 底与琥珀竖条；早先按 |row - position| 衰减会在
+      // 第 4 行之后把文字洗成浅灰（用户 2026-11-22 截图可见）。
+      final List<Object?> color = <Object?>[c.ink[0], c.ink[1], c.ink[2], .92];
       c.text(_pad(row + 1), 27, y + 19, size: 8, width: 24, color: c.muted);
       c.text(archive.rows[row].title, 56, y + 14,
           size: isCurrent ? 14 : 13, width: rowWidth - 55, weight: 'regular', color: color);
