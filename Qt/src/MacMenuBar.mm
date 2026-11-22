@@ -267,6 +267,8 @@ NSImage *rhineMenuBarIcon() {
     RhineMacMenuBarButton *_next;
     RhineMacMenuBarButton *_favorite;
     RhineMacMenuBarButton *_icon;
+    NSString *_playSymbol;
+    NSString *_favoriteSymbol;
 }
 - (instancetype)initWithController:(MacMenuBarController *)controller items:(NSArray<NSString *> *)items;
 - (CGFloat)desiredWidth;
@@ -411,18 +413,23 @@ NSImage *rhineMenuBarIcon() {
     _play.enabled = hasTrack && !loading;
     NSString *playSymbol = loading ? @"ellipsis" : (playing ? @"pause.fill" : @"play.fill");
     NSString *playLabel = playing ? @"暂停" : @"播放";
-    _play.image = playbackImage(playSymbol, playLabel);
-    [_play.image setTemplate:YES];
+    if (![_playSymbol isEqualToString:playSymbol]) {
+        _playSymbol = [playSymbol copy];
+        _play.image = playbackImage(playSymbol, playLabel);
+        [_play.image setTemplate:YES];
+    }
     _play.toolTip = playLabel;
     _play.accessibilityLabel = playLabel;
     _favorite.enabled = canLike;
-    _favorite.image = symbolImage(liked ? @"heart.fill" : @"heart",
-                                  liked ? @"取消喜欢当前歌曲" : @"喜欢当前歌曲", NSFontWeightSemibold);
-    [_favorite.image setTemplate:YES];
+    NSString *favoriteSymbol = liked ? @"heart.fill" : @"heart";
+    if (![_favoriteSymbol isEqualToString:favoriteSymbol]) {
+        _favoriteSymbol = [favoriteSymbol copy];
+        _favorite.image = symbolImage(favoriteSymbol, liked ? @"取消喜欢当前歌曲" : @"喜欢当前歌曲",
+                                      NSFontWeightSemibold);
+        [_favorite.image setTemplate:YES];
+    }
     _favorite.toolTip = liked ? @"取消喜欢当前歌曲" : @"喜欢当前歌曲";
     _favorite.accessibilityLabel = _favorite.toolTip;
-    [self invalidateIntrinsicContentSize];
-    self.needsLayout = YES;
 }
 
 - (void)activate:(id)sender {
@@ -524,6 +531,7 @@ void MacMenuBarController::rebuild() {
     refresh();
     m_impl->statusItem.length = [m_impl->view desiredWidth];
     m_impl->view.frame = NSMakeRect(0, 0, m_impl->statusItem.length, NSStatusBar.systemStatusBar.thickness);
+    m_impl->view.needsLayout = YES;
 }
 
 void MacMenuBarController::refresh() {
