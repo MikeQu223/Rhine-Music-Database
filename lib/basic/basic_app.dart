@@ -649,6 +649,9 @@ class _BasicShellState extends State<_BasicShell>
   bool get _mvOpen =>
       _modal == 'mv' && (_mvController?.state.track?.url.isNotEmpty ?? false);
 
+  /// 打开 MV 前音乐是否在播：视频面会抢音频焦点，关闭时要补回播放（见 `MvAction.close`）。
+  bool _mvResumeAfterClose = false;
+
   /// 登录控制器（Qt `MusicAccount` 的登录状态机）。
   LoginController? _loginController;
 
@@ -4085,6 +4088,10 @@ class _BasicShellState extends State<_BasicShell>
       if (mv == null) {
         return 'MV 尚未接入：播放服务未就绪';
       }
+      // 视频面会抢音频焦点，关掉之后系统不会把音乐还给我们（实测：关 MV 回来
+      // 音乐停在关掉那一刻的暂停态）。Qt 的 MV 是静音跟随音乐、音乐全程不停，
+      // 所以这里记住开 MV 前是否在播，关的时候补一次 resume。
+      _mvResumeAfterClose = controller.state.playing;
       unawaited(_syncMv());
       _setModal('mv');
       unawaited(mv.refresh(trackId: state.song?.id ?? '', force: true));
@@ -4093,6 +4100,10 @@ class _BasicShellState extends State<_BasicShell>
     if (action == MvAction.close) {
       _mvController?.close();
       _setModal('');
+      if (_mvResumeAfterClose && !controller.state.playing) {
+        unawaited(controller.play());
+      }
+      _mvResumeAfterClose = false;
       return null;
     }
     if (action == MvAction.retry) {
