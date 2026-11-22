@@ -15,6 +15,7 @@ import '../hud/modals/login_modal.dart' as login_modal;
 import '../hud/modals/mv_modal.dart' as mv_modal;
 import '../hud/modals/provider_modal.dart' as provider_modal;
 import '../hud/modals/queue_modal.dart' as queue_modal;
+import '../hud/modals/search_panel.dart' as search_panel;
 import '../hud/pages/archive_page.dart';
 import '../hud/pages/chrome.dart';
 import '../hud/pages/song_detail.dart' as detail;
@@ -152,6 +153,9 @@ class BasicHudFrame {
     /// 竖屏队列页的播放模式 chip 是否展开（Qt `m_queueModesExpanded`，
     /// 由 `mobile:queue-modes` 翻转）。横屏面板不用它（四模式按钮常驻）。
     bool queueModesExpanded = false,
+    /// 横屏检索面板的行级滚动偏移（舞台像素，0 = 首行贴表头）。宿主拖动列表时
+    /// 只改这一个临时量，不碰库表的 `listPosition`（那是资料库列的真值）。
+    double searchScroll = 0,
     /// 右栏遮罩强度（0..100，Qt `archive-mask-strength` / 设置页“右侧画面遮罩”）。
     /// 默认就是 Qt 常量 [HudChrome.defaultArchiveMaskStrength]；注入只来自设置页真值。
     double archiveMaskStrength = 0, // = HudChrome.defaultArchiveMaskStrength（int 常量转 double）
@@ -383,7 +387,21 @@ class BasicHudFrame {
 
     // 横屏播放队列面板（Qt `modal == "player"`）：宿主先画全舞台遮罩 + 836 面板底，
     // 面板内容由 queue_modal 产出（NativeHudModal.cpp:163-186 对 player 不走标题区）。
-    if (modal == 'queue') {
+    if (modal == 'search') {
+      // Qt `modal == "search"` 走通用弹层路径（`Qt/src/NativeHudModal.cpp:163-202`）：
+      // 遮罩 + 贴右的面板 + 标题带，内容由 NativeHudSearch 在面板内画
+      // （工具栏 / 分类 / 分组 / 表头 / 列表 / 页脚）。这里把同一套内容交给
+      // search_panel，行数据复用竖屏检索页已移植的投影（见 _portraitSearchRows）。
+      _paintSearchModal(
+        sink,
+        ports,
+        state,
+        width,
+        dark,
+        searchScroll,
+        localMusicEnabled,
+      );
+    } else if (modal == 'queue') {
       _paintQueueModal(sink, ports, state, width, height, dark, queueOffset);
     } else if (modal == 'comments' && comments != null) {
       _paintCommentsPanel(sink, ports, comments, width, height, dark, commentsScroll);
@@ -1317,6 +1335,39 @@ class BasicHudFrame {
     sink.hits.addAll(result.hits);
   }
 
+  /// 横屏检索弹层：面板外壳 + 检索条 + 分类/分组 tab + 结果行 + 页脚。
+  ///
+  /// 行来自 [BasicViewState.searchRows]（竖屏检索页同一份投影），因此横屏不再依赖
+  /// `basicLibraryItems` 的 lane 投影——远端检索时 lane 里没有命中行，这就是之前
+  /// 横屏检索列表恒空的原因。
+  static void _paintSearchModal(
+    _HudSink sink,
+    BasicGlyphPorts ports,
+    BasicViewState state,
+    double width,
+    bool dark,
+    double scroll,
+    bool localMusicEnabled,
+  ) {
+    final List<search_panel.SearchPanelRow> rows = <search_panel.SearchPanelRow>[
+      for (final PortraitSearchKindsRow row in _portraitSearchRows(state))
+        (title: row.title, detail: row.artist, stamp: row.stamp, action: row.action),
+    ];
+    final ModalShellResult result = search_panel.SearchPanel(
+      width: width,
+      dark: dark,
+      query: state.query,
+      searchKind: state.searchKind,
+      groupBy: state.searchGroup,
+      status: state.searchStatus,
+      total: state.searchTotal,
+      rows: rows,
+      localMusic: localMusicEnabled,
+      scroll: scroll,
+    ).build(sink, ports);
+    sink.hits.addAll(result.hits);
+  }
+
   /// 横屏登录弹层（Qt `NativeHud::loginPanel`，`NativeHudLibrary.cpp:271-330`）。
   static void _paintLoginModal(
     _HudSink sink,
@@ -2164,6 +2215,10 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
   /// 拖动/惯性中的临时滚动位置（条目单位）；null = 跟随 state.listPosition。
   double? _dragPosition;
 
+  /// 横屏检索面板的行级滚动偏移（舞台像素）。与资料库的 [_dragPosition]
+  /// 分开存：检索列表的滚动绝不能改到库表窗口。
+  double _searchScroll = 0;
+
   // ---- 松手惯性（与 Qt/src/SceneDrag.cpp 的 ArchiveDrag / ArchiveMomentum 同构）----
   //
   // 只服务 HUD 自己拥有的列表行拖动：抬手时用最近一段毫秒采样估行速度，够快就按
@@ -2326,6 +2381,7 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       height: stage.height,
       portrait: portrait,
       listPosition: _dragPosition,
+      searchScroll: _searchScroll,
       animationTime: _animationTime,
       animateText: true,
       archiveMaskStrength: widget.archiveMaskStrength,
@@ -2452,15 +2508,30 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
             stage.width,
             player.playerBarRowHeight,
           );
+    // 横屏检索弹层：面板内的结果列表自己滚（Qt 的 search 列表是独立滚动区，
+    // 归 NativeHudSearch 而不是资料库列），所以手势域临时换成那块矩形。
+    final bool searchModal = widget.modal == 'search' && !portrait;
+    final search_panel.SearchPanelGeometry searchGeometry =
+        search_panel.searchPanelGeometry(stage.width);
+    final Rect searchListRect = geometry.rectToLogical(
+      Rect.fromLTWH(
+        searchGeometry.bounds.left + kModalShellHeaderInset,
+        searchGeometry.listTop,
+        searchGeometry.bounds.width - kModalShellHeaderInset * 2,
+        searchGeometry.listBottom - searchGeometry.listTop,
+      ),
+    );
     final LibraryDragDomain dragDomain = LibraryDragDomain(
-      listRect: listRect,
-      directTouchRect: directTouchRect,
-      controlRects: controlRects,
+      listRect: searchModal ? searchListRect : listRect,
+      directTouchRect: searchModal ? null : directTouchRect,
+      controlRects: searchModal ? const <Rect>[] : controlRects,
       // 播放条整行排除：它内部有大量间隙，只扣命中矩形会漏出一条「拖动即滚列表」
       // 的窄带。竖屏时播放条在本层底边，与顶部 1080 的直触区不相交。
-      excludedRects: <Rect>[
-        portrait ? playerBarStageRect : geometry.rectToLogical(playerBarStageRect),
-      ],
+      excludedRects: searchModal
+          ? const <Rect>[]
+          : <Rect>[
+              portrait ? playerBarStageRect : geometry.rectToLogical(playerBarStageRect),
+            ],
     );
     // 命中矩形（stage 单位，已含触控余量）+ 曲目列 + 3D 直触区；竖屏本层就在
     // stage 单位里，横屏本层是逻辑像素，统一在这里换算一次（HitLayer 内部同理
@@ -2580,6 +2651,15 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
   }
 
   void _dragStarted(BasicViewState state, DragStartDetails details) {
+    if (widget.modal == 'search') {
+      // 检索面板：从当前滚动量起手，不碰资料库窗口（[_dragPosition] 只是本次
+      // 手势的临时像素位置，抬手即写回 [_searchScroll] 并清空）。
+      setState(() {
+        _abortScrollMomentum();
+        _dragPosition = _searchScroll;
+      });
+      return;
+    }
     // 新手势立即接管：正在跑的滑行/吸行当场停下，并从**当前显示位置**起手（
     // 中途按住不会再跳回 state.listPosition）。
     final double start = _dragPosition ?? _windowOf(state);
@@ -2616,6 +2696,15 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
     if (current == null) {
       return;
     }
+    if (widget.modal == 'search') {
+      final int rows = BasicHudFrame._portraitSearchRows(widget.state).length;
+      final double scale = geometry.stageScale <= 0 ? 1 : geometry.stageScale;
+      final double max = search_panel.searchPanelMaxScroll(_stageSize.width, rows);
+      // 手指向下 = 内容下移 = 滚动量回退；像素单位（舞台），与绘制同源。
+      final double next = current - details.delta.dy / scale;
+      setState(() => _dragPosition = next < 0 ? 0 : (next > max ? max : next));
+      return;
+    }
     final int count = basicLibraryItems(widget.state).length;
     if (count == 0) {
       return;
@@ -2646,6 +2735,15 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
   void _dragEnded([DragEndDetails? details, Duration? releaseStamp]) {
     final double? ended = _dragPosition;
     if (ended == null) {
+      return;
+    }
+    if (widget.modal == 'search') {
+      // 检索列表只滚不选：不提交选中、不起惯性（Qt 的 search 列表没有吸行语义）。
+      setState(() {
+        _searchScroll = ended;
+        _dragPosition = null;
+      });
+      _scrollSamples.clear();
       return;
     }
     final int count = basicLibraryItems(widget.state).length;
