@@ -893,7 +893,7 @@ class _BasicShellState extends State<_BasicShell>
       if (!mounted) {
         return;
       }
-      setState(() => _actionNotice = '本机收藏读取失败：$error');
+      _setNotice('本机收藏读取失败：$error');
       return;
     }
     if (!mounted) {
@@ -1020,7 +1020,7 @@ class _BasicShellState extends State<_BasicShell>
       if (!mounted) {
         return;
       }
-      setState(() => _actionNotice = '读取平台列表失败：$error');
+      _setNotice('读取平台列表失败：$error');
     }
   }
 
@@ -1587,18 +1587,18 @@ class _BasicShellState extends State<_BasicShell>
     final ProviderDescriptor? descriptor = _currentDescriptor;
     final ProviderService? service = _providerService;
     if (descriptor == null || service == null) {
-      setState(() => _actionNotice = '尚未装载音乐平台，无法登录');
+      _setNotice('尚未装载音乐平台，无法登录');
       return;
     }
     // Qt `Qt/src/MusicMutation.cpp` 对 siren/local 早退禁止登入（`capabilities.login`
     // 为 false 的平台压根没有登录流程）：不能靠「面板画出来但没有方式」蒙混。
     if (!descriptor.capability('login', fallback: false)) {
-      setState(() => _actionNotice = '${descriptor.name}不支持账号登录');
+      _setNotice('${descriptor.name}不支持账号登录');
       return;
     }
     final LoginController? login = _loginController;
     if (login == null) {
-      setState(() => _actionNotice = '登录功能尚未接入');
+      _setNotice('登录功能尚未接入');
       return;
     }
     _setModal('login');
@@ -2679,10 +2679,10 @@ class _BasicShellState extends State<_BasicShell>
       }
       setState(() => _providerId = fallback);
       _installProviderService(registry);
-      setState(() => _actionNotice = '当前平台已不可用，已回到 ${_currentDescriptor?.name ?? fallback}');
+      _setNotice('当前平台已不可用，已回到 ${_currentDescriptor?.name ?? fallback}');
     } on Object catch (error) {
       if (mounted) {
-        setState(() => _actionNotice = '刷新平台列表失败：$error');
+        _setNotice('刷新平台列表失败：$error');
       }
     } finally {
       _providersLoading = false;
@@ -2755,7 +2755,7 @@ class _BasicShellState extends State<_BasicShell>
         return;
       }
       if (refusal.isNotEmpty) {
-        setState(() => _actionNotice = refusal);
+        _setNotice(refusal);
       }
       return;
     }
@@ -2804,7 +2804,7 @@ class _BasicShellState extends State<_BasicShell>
         return;
       }
       if (refusal.isNotEmpty) {
-        setState(() => _actionNotice = refusal);
+        _setNotice(refusal);
         return;
       }
       // 卸载后详情页没有对象可看，退回列表（Qt 删完 reloadPlugins 后仍停在列表）。
@@ -2821,11 +2821,11 @@ class _BasicShellState extends State<_BasicShell>
       if (!mounted || refusal.isEmpty) {
         return;
       }
-      setState(() => _actionNotice = refusal);
+      _setNotice(refusal);
       return;
     }
     if (action == 'plugin:import') {
-      setState(() => _actionNotice = '从文件导入插件尚未接入：本版只从市场安装');
+      _setNotice('从文件导入插件尚未接入：本版只从市场安装');
     }
   }
 
@@ -2905,12 +2905,13 @@ class _BasicShellState extends State<_BasicShell>
     // 2) 换真值并落盘（Qt `host->setPreference("provider", source)`）。
     setState(() {
       _providerId = target.id;
-      _actionNotice = '已切换至 ${target.name}';
       // 上一个平台的评论/登录态不能跟着新平台走。
       _loginController = null;
       _mvController = null;
       _commentsScroll = 0;
     });
+    // 提示必须走单写口，否则「已切换至 …」会永久挂在底部（同 _notice 的契约）。
+    _setNotice('已切换至 ${target.name}');
     widget.playerPreferences.write(PlatformSwitcher.providerPreferenceKey, target.id);
     _setModal('');
     // 3) 重建服务（注册表不变，只是把 current 指到新平台）。
@@ -3094,21 +3095,21 @@ class _BasicShellState extends State<_BasicShell>
       final List<PortraitDiscoverEntry> entries =
           _discoverSnapshot().entries;
       if (index == null || index < 0 || index >= entries.length) {
-        setState(() => _actionNotice = '该条目已不在列表里');
+        _setNotice('该条目已不在列表里');
         return;
       }
       final String tab = _discoverSnapshot().tab;
       if (tab == basicDiscoverHistoryTab) {
         final List<SirenSong> songs = controller.playHistory;
         if (index >= songs.length) {
-          setState(() => _actionNotice = '该条目已不在列表里');
+          _setNotice('该条目已不在列表里');
           return;
         }
         unawaited(controller.openSong(songs[index]));
         return;
       }
       if (index >= _discoverItems.length) {
-        setState(() => _actionNotice = '该条目已不在列表里');
+        _setNotice('该条目已不在列表里');
         return;
       }
       final Map<String, Object?> row = _discoverItems[index];
@@ -3128,21 +3129,21 @@ class _BasicShellState extends State<_BasicShell>
         action.substring(basicPlayDiscoverPrefix.length),
       );
       if (index == null || index < 0) {
-        setState(() => _actionNotice = '该条目已不在列表里');
+        _setNotice('该条目已不在列表里');
         return;
       }
       final String tab = _discoverSnapshot().tab;
       if (tab == basicDiscoverHistoryTab) {
         final List<SirenSong> songs = controller.playHistory;
         if (index >= songs.length) {
-          setState(() => _actionNotice = '该条目已不在列表里');
+          _setNotice('该条目已不在列表里');
           return;
         }
         unawaited(controller.openSong(songs[index]));
         return;
       }
       if (index >= _discoverItems.length) {
-        setState(() => _actionNotice = '该条目已不在列表里');
+        _setNotice('该条目已不在列表里');
         return;
       }
       // 歌单行的「▶ 全部」：进目录再整列播放（Qt `playDiscover` 同序）。
@@ -3155,7 +3156,7 @@ class _BasicShellState extends State<_BasicShell>
         ));
         if (!mounted) return;
         if (notice.isNotEmpty) {
-          setState(() => _actionNotice = notice);
+          _setNotice(notice);
           return;
         }
         await controller.play();
@@ -3280,7 +3281,7 @@ class _BasicShellState extends State<_BasicShell>
         }
       }
       if (album == null) {
-        setState(() => _actionNotice = '专辑已不在当前列表里');
+        _setNotice('专辑已不在当前列表里');
         return;
       }
       unawaited(controller.enterAlbumColumn(album));
@@ -3305,7 +3306,7 @@ class _BasicShellState extends State<_BasicShell>
         break;
       }
       if (title.isEmpty) {
-        setState(() => _actionNotice = '歌单已不在当前结果里');
+        _setNotice('歌单已不在当前结果里');
         return;
       }
       unawaited(() async {
@@ -3316,12 +3317,12 @@ class _BasicShellState extends State<_BasicShell>
         // 打开成功时 controller 已经把 `directory` 建好，状态串是「已打开：<标题>」——
         // 那也是非空 notice，不能拿它当失败信号；只有真没进目录才留在检索页。
         if (controller.state.directory == null) {
-          setState(() => _actionNotice = notice.isEmpty ? '歌单暂无可播放曲目' : notice);
+          _setNotice(notice.isEmpty ? '歌单暂无可播放曲目' : notice);
           return;
         }
         _setModal('');
         if (notice.isNotEmpty) {
-          setState(() => _actionNotice = notice);
+          _setNotice(notice);
         }
       }());
       return;
@@ -3389,7 +3390,7 @@ class _BasicShellState extends State<_BasicShell>
       final SirenSong? song = controller.state.song;
       final String albumId = song?.albumId ?? '';
       if (albumId.isEmpty) {
-        setState(() => _actionNotice = '这首歌没有关联专辑');
+        _setNotice('这首歌没有关联专辑');
         return null;
       }
       unawaited(controller.openAlbumInfo(
@@ -3406,7 +3407,7 @@ class _BasicShellState extends State<_BasicShell>
           setState(() => _albumInfoScroll = 0);
           _setModal('album-info');
         } else {
-          setState(() => _actionNotice = controller.albumInfoStatus);
+          _setNotice(controller.albumInfoStatus);
         }
       }));
       return null;
@@ -3427,7 +3428,7 @@ class _BasicShellState extends State<_BasicShell>
     if (action == 'music:official') {
       // Qt 只在 `capabilities.officialPlayback` 为真的平台给这个入口；Android 上没有
       // 官方客户端可跳，直接说清楚，不做假跳转。
-      setState(() => _actionNotice = '本机没有官方客户端入口');
+      _setNotice('本机没有官方客户端入口');
       return;
     }
     if (action.startsWith(basicSearchArtistActionPrefix)) {
@@ -3464,7 +3465,7 @@ class _BasicShellState extends State<_BasicShell>
       }
       final ProviderDescriptor? found = target;
       if (found == null) {
-        setState(() => _actionNotice = '未知平台：$id');
+        _setNotice('未知平台：$id');
         return;
       }
       // Qt `MusicAccount::choose`（MusicAccount.cpp:200-330）：切换 = 停播 + 清空
@@ -3483,7 +3484,7 @@ class _BasicShellState extends State<_BasicShell>
           ? (_currentDescriptor?.capability('userPlaylists', fallback: true) ?? true)
           : _providerId == 'siren';
       if (!canCreate) {
-        setState(() => _actionNotice = '当前平台不支持创建歌单');
+        _setNotice('当前平台不支持创建歌单');
         return;
       }
       setState(() {
@@ -3497,7 +3498,7 @@ class _BasicShellState extends State<_BasicShell>
     if (action.startsWith('music:rename-playlist:')) {
       final String id = action.substring('music:rename-playlist:'.length);
       if (_providerId != 'siren' && !controller.remoteSearchActive) {
-        setState(() => _actionNotice = '当前平台不支持重命名歌单');
+        _setNotice('当前平台不支持重命名歌单');
         return;
       }
       setState(() {
@@ -3514,7 +3515,7 @@ class _BasicShellState extends State<_BasicShell>
         if (!mounted) {
           return;
         }
-        setState(() => _actionNotice = notice);
+        _setNotice(notice);
       }));
       return;
     }
@@ -3559,7 +3560,7 @@ class _BasicShellState extends State<_BasicShell>
         if (!mounted) {
           return;
         }
-        setState(() => _actionNotice = notice);
+        _setNotice(notice);
       }));
       return;
     }
@@ -3570,7 +3571,7 @@ class _BasicShellState extends State<_BasicShell>
         if (!mounted) {
           return;
         }
-        setState(() => _actionNotice = notice);
+        _setNotice(notice);
       }));
       return;
     }
@@ -3582,7 +3583,7 @@ class _BasicShellState extends State<_BasicShell>
         if (!mounted) {
           return;
         }
-        setState(() => _actionNotice = notice);
+        _setNotice(notice);
       }));
       return;
     }
@@ -3591,7 +3592,7 @@ class _BasicShellState extends State<_BasicShell>
         if (!mounted) {
           return;
         }
-        setState(() => _actionNotice = notice);
+        _setNotice(notice);
       }));
       return;
     }
@@ -3607,7 +3608,7 @@ class _BasicShellState extends State<_BasicShell>
         if (!mounted) {
           return;
         }
-        setState(() => _actionNotice = notice);
+        _setNotice(notice);
       }));
       return;
     }
@@ -3652,7 +3653,7 @@ class _BasicShellState extends State<_BasicShell>
       return;
     }
     // 只动动作槽：资源失败横幅不受点击影响（见 _resourceNotice 的注释）。
-    setState(() => _actionNotice = notice);
+    _setNotice(notice);
   }
 
   /// 打开播放队列（Qt `openModal("player")`，NativeHudController.cpp）。
@@ -3717,12 +3718,11 @@ class _BasicShellState extends State<_BasicShell>
     // Qt openModal 会 cacheMessage.clear()（Qt/src/NativeHudController.cpp:95）：
     // 开弹层时旧的动作反馈必须收起，否则「尚未接入」的提示会挂在搜索框上。
     // 资源失败横幅是另一槽（_resourceNotice），与弹层无关，不跟着清。
-    setState(() {
-      _modal = modal;
-      if (modal.isNotEmpty) {
-        _actionNotice = null;
-      }
-    });
+    setState(() => _modal = modal);
+    if (modal.isNotEmpty) {
+      // 收起提示时同时取消计时器：否则到点后还会再 setState 一次。
+      _clearNotice();
+    }
   }
 
   /// 喜欢的歌曲整列开播（Qt `music:play-liked`：
@@ -3747,13 +3747,11 @@ class _BasicShellState extends State<_BasicShell>
   }
 
   /// 动作反馈单写口（见 [_actionNotice] 的两槽说明）。
-  void _notice(String text) {
-    if (!mounted) {
-      return;
-    }
-    setState(() => _actionNotice = text);
-    _scheduleNoticeDismiss();
-  }
+  ///
+  /// 所有一次性提示都必须从这里走：直接 `setState(() => _actionNotice = ...)`
+  /// 会把提示永久挂在底部（用户报的「黑色 toast 不会自动消失」就是这么来的），
+  /// 因为它绕过了 [_scheduleNoticeDismiss]。
+  void _notice(String text) => _setNotice(text);
 
   /// 每次写动作反馈都重启一次消失计时器：连续点击时最后一条提示从头计时。
   void _scheduleNoticeDismiss() {
@@ -3762,18 +3760,30 @@ class _BasicShellState extends State<_BasicShell>
       if (!mounted) {
         return;
       }
-      setState(() => _actionNotice = null);
+      _clearNotice();
     });
   }
 
-  /// 直接写 `_actionNotice` 的地方（`setState(() => _actionNotice = text)`）
-  /// 都走这里，保证与 [_notice] 一样的自动消失语义。
-  void _setNotice(String text) {
+  /// 写一条一次性提示并重新计时。传 null 表示主动收起（不重启计时器）。
+  void _setNotice(String? text) {
     if (!mounted) {
       return;
     }
     setState(() => _actionNotice = text);
+    if (text == null) {
+      _noticeTimer?.cancel();
+      return;
+    }
     _scheduleNoticeDismiss();
+  }
+
+  /// 收起当前提示（计时器到点或界面切换时用）。
+  void _clearNotice() {
+    _noticeTimer?.cancel();
+    if (!mounted || _actionNotice == null) {
+      return;
+    }
+    setState(() => _actionNotice = null);
   }
 
   // ── TextInputPorts（lib/hud/input/text_input_overlay.dart:361-391）────────────
@@ -4250,7 +4260,7 @@ class _BasicShellState extends State<_BasicShell>
           return;
         }
         if (notice.isNotEmpty) {
-          setState(() => _actionNotice = notice);
+          _setNotice(notice);
           return;
         }
         // 打开成功就把检索弹层关掉：HUD 的 `modal == 'search'` 分支优先级高于
@@ -4514,7 +4524,7 @@ class _BasicShellState extends State<_BasicShell>
           if (playlist.id == playlistId) {
             unawaited(controller.enterRemotePlaylist(playlist).then((String notice) {
               if (!mounted || notice.isEmpty) return;
-              setState(() => _actionNotice = notice);
+              _setNotice(notice);
             }));
             return null;
           }
