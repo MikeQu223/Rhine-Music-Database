@@ -38,7 +38,7 @@ SirenSong _song() => SirenSong(
     );
 
 void main() {
-  test('映射层：status/title/trackId/auto 原样转发，decodable 恒 false', () {
+  test('映射层：status/title/trackId/auto 原样转发，decodable 看播放地址', () {
     final MvState state = const MvState(
       trackId: '880380',
       phase: MvPhase.playing,
@@ -55,8 +55,10 @@ void main() {
     expect(model.resolution, 720);
     expect(model.versionStatus, '1 个版本');
     expect(model.auto, isFalse);
-    // Android 不接视频解码（Qt/src/PlatformFeatures.h:23-27）：面板必须诚实降级。
-    expect(model.decodable, isFalse);
+    // 有播放地址就是可解码（本仓库已接 video_player，真机播过 Ave Mujica）。
+    expect(model.decodable, isTrue);
+    // 拿不到地址时才诚实降级（插件对无 MV 曲目回 null）。
+    expect(basicMvPanelModelOf(const MvState(trackId: '880380')).decodable, isFalse);
   });
 
   test('映射层：版本行带 id 与已拼好的标签', () {
