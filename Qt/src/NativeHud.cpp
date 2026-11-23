@@ -546,6 +546,16 @@ void NativeHud::draw(QJsonObject next, double stageWidth, double time) {
         m_scene.theme(dark);
     }
     m_responsive.resize(stageWidth);
+    const bool compactLayout = m_responsive.compact();
+    if (modal == "discover" && m_discoverCompactLayout.has_value() &&
+        *m_discoverCompactLayout != compactLayout) {
+        if (compactLayout) {
+            m_music->discover->loadSections();
+        } else {
+            m_music->discover->load();
+        }
+    }
+    m_discoverCompactLayout = compactLayout;
     if (lyricsMode != m_playerModeTarget) {
         m_playerModeTarget = lyricsMode;
         m_playerModeMotion.set(lyricsMode, time, reduced, .36, .32);
@@ -619,14 +629,16 @@ void NativeHud::draw(QJsonObject next, double stageWidth, double time) {
         const auto searchViewScope = m_playlistSearchScope
                                          ? QStringLiteral("playlist:") + m_playlistSearchScope->key
                                          : QStringLiteral("global");
+        const auto discoverScope =
+            m_music->provider + ":" + QString::number(m_music->accountGeneration()) + ":sections";
         const auto scope =
             modal + ":" + frame["mode"].toString() + ":" + m_music->current.value("kind").toString() + ":" +
             m_music->current.value("id").toString() + ":" + tab + ":" +
             (commentsMode
                  ? QStringLiteral("comments:") + m_music->comments.sort + ":" + m_music->comments.status
                  : QStringLiteral("info")) +
-            ":" + m_music->discover->tab + ":" + QString::number(musicCollection) + ":" + artistTab + ":" +
-            query + ":" + searchViewScope;
+            ":" + discoverScope + ":" + QString::number(musicCollection) + ":" + artistTab + ":" + query +
+            ":" + searchViewScope;
         const bool home = modal.isEmpty() && frame["mode"] == "archive" && !lyricsMode && !commentsMode;
         m_responsive.prepare(scope, home);
         if (!frame["viewer"].toBool()) {
@@ -896,8 +908,6 @@ void NativeHud::drawMobile(double time, const QString &scope, double stageWidth)
     }
     if (!lyricsMode && modal.isEmpty() && frame["mode"] == "archive") {
         pageKey += ":" + QString::number(mobile["archiveColumnIndex"].toInt()) + ":" + m_music->libraryName();
-    } else if (modal == "discover") {
-        pageKey += ":" + m_music->discover->tab;
     } else if (modal == "search") {
         pageKey += ":" + m_music->searchKind;
     }
@@ -905,16 +915,16 @@ void NativeHud::drawMobile(double time, const QString &scope, double stageWidth)
     auto scenePage = ScenePage::Other;
     if (m_responsive.showsSongPage()) {
         scenePage = ScenePage::Song;
-    } else if (frame["mode"] == "archive" && !frame["viewer"].toBool() && modal.isEmpty() &&
-               !lyricsMode && !commentsMode) {
+    } else if (frame["mode"] == "archive" && !frame["viewer"].toBool() && modal.isEmpty() && !lyricsMode &&
+               !commentsMode) {
         scenePage = ScenePage::Archive;
     }
     QJsonArray pageBackground;
     if (m_mobileTransition.needsBackground(pageKey)) {
         pageBackground = {"fill", ResponsiveHudCanvas::paperColor(dark), 0, 0, stageWidth, 1080};
     }
-    m_mobileTransition.apply(
-        commands, hits, pageKey, time, 1080, reduced, scenePage, frame["detail"].toDouble(), pageBackground);
+    m_mobileTransition.apply(commands, hits, pageKey, time, 1080, reduced, scenePage,
+                             frame["detail"].toDouble(), pageBackground);
 
     // 列表滚动把固定槽位上的歌曲交给原有选择流程；下一帧再绘制新的选中状态。
     if (const int selection = m_responsive.takeArchiveSelection(); selection >= 0) {

@@ -183,6 +183,9 @@ void NativeHud::openModal(QString kind) {
     artistTab = "songs";
     categoryPicker = false;
     categoryPage = 0;
+    if (kind == "discover" && m_responsive.compact()) {
+        m_music->discover->loadSections();
+    }
     if (kind == "saved") {
         musicCollection = std::max(1, m_music->selectedLane);
         if (!m_music->laneVisible(musicCollection)) {
@@ -819,9 +822,13 @@ void NativeHud::action(QString value) {
         return;
     }
     if (m_responsive.compact() && value.startsWith("mobile:play-discover:")) {
-        const int index = value.mid(QString("mobile:play-discover:").size()).toInt();
-        if (index >= 0 && index < m_music->discover->items.size()) {
-            m_music->playCollection(m_music->discover->items[index].toObject());
+        const auto target = value.mid(QString("mobile:play-discover:").size()).split(':');
+        if (target.size() >= 2) {
+            const auto displaySection = target.value(0);
+            const auto source = displaySection == "featured" || displaySection == "recommended"
+                                    ? QStringLiteral("playlists")
+                                    : displaySection;
+            m_music->discover->playSection(source, target.value(1).toInt());
         }
         return;
     }
@@ -890,8 +897,9 @@ void NativeHud::action(QString value) {
         return;
     }
     if (m_responsive.compact() && (value == "mobile:history" || value == "mobile:artists")) {
+        m_pendingDiscoverSection =
+            value == "mobile:history" ? QStringLiteral("history") : QStringLiteral("artists");
         openModal("discover");
-        action(value == "mobile:history" ? "discover:tab:history" : "discover:tab:artists");
         return;
     }
     if (m_responsive.compact() && value == "mobile:play-liked") {
@@ -1295,8 +1303,18 @@ void NativeHud::action(QString value) {
                 discover.loadCategories();
             }
         } else if (name == "item") {
-            discover.open(parts.value(2).toInt());
+            if (parts.size() >= 4) {
+                const auto displaySection = parts.value(2);
+                const auto source = displaySection == "featured" || displaySection == "recommended"
+                                        ? QStringLiteral("playlists")
+                                        : displaySection;
+                discover.openSection(source, parts.value(3).toInt());
+            } else {
+                discover.open(parts.value(2).toInt());
+            }
             closeModal();
+        } else if (name == "section-retry") {
+            discover.ensureSection(parts.value(2));
         } else if (name == "open") {
             if (music.openDaily()) {
                 closeModal();
@@ -1311,6 +1329,8 @@ void NativeHud::action(QString value) {
             if (categoryPicker && discover.categories.size() <= 1) {
                 discover.loadCategories();
             }
+        } else if (name == "categories-retry") {
+            discover.loadCategories();
         } else if (name == "category-page") {
             const bool hasAllCategory = std::any_of(
                 discover.categories.begin(), discover.categories.end(), [](const QJsonValue &value) {
@@ -1394,8 +1414,9 @@ void NativeHud::action(QString value) {
         if (music.isSiren()) {
             return;
         }
+        m_pendingDiscoverSection.clear();
         openModal("discover");
-        if (!music.isLocal()) {
+        if (!music.isLocal() && !m_responsive.compact()) {
             music.discover->load();
         }
     } else if (value == "skip" || value == "back") {

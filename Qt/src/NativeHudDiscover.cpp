@@ -18,6 +18,100 @@ void NativeHud::discoverPanel(double x, double y, double width) {
     model.loading = discover.loading;
     model.more = discover.more;
     model.loadedCount = discover.items.size();
+    if (m_responsive.compact()) {
+        model.onePage = true;
+        const auto makeSection = [&](const QString &id, const QString &source, const QString &title,
+                                     const QString &english, bool featured, int first, int count) {
+            const auto state = discover.sections.constFind(source);
+            if (state == discover.sections.cend()) {
+                return;
+            }
+            DiscoverMusicCard::Section section;
+            section.id = id;
+            section.source = source;
+            section.title = title;
+            section.english = english;
+            section.status = state->status;
+            section.loading = state->loading;
+            section.failed = state->failed;
+            section.featured = featured;
+            const int last = std::min(int(state->items.size()), first + count);
+            for (int index = first; index < last; ++index) {
+                const auto item = state->items.at(index).toObject();
+                DiscoverMusicCard::Entry entry;
+                entry.section = id;
+                entry.index = index;
+                entry.title = item["title"].toString();
+                entry.artist = item["artist"].toString();
+                entry.kind = item["kind"].toString();
+                entry.imageAspect = 1.;
+                section.entries.append(entry);
+            }
+            if (section.entries.isEmpty() && section.status.isEmpty() && !section.loading) {
+                section.status = QStringLiteral("暂无内容");
+            }
+            if (section.entries.isEmpty() && id == QStringLiteral("recommended")) {
+                section.status = QStringLiteral("暂无更多推荐");
+            }
+            model.sections.append(section);
+        };
+
+        makeSection("featured", "playlists", "精选推荐", "FEATURED / INDEX", true, 0, 4);
+        makeSection("daily", "daily", "每日推荐", "DAILY SELECTION", false, 0, 8);
+        makeSection("recommended", "playlists", "推荐歌单", "RECOMMENDED / INDEX", false, 4, 8);
+        makeSection("artists", "artists", "收藏歌手", "SAVED ARTISTS", false, 0, 8);
+        makeSection("charts", "charts", "排行榜", "CHART INDEX", false, 0, 8);
+        makeSection("albums", "albums", "新专辑", "NEW RELEASES", false, 0, 8);
+        makeSection("categories", "categories", "分类歌单", "PLAYLIST CATEGORIES", false, 0, 8);
+        makeSection("history", "history", "最近播放", "LISTENING HISTORY", false, 0, 8);
+
+        QStringList urls;
+        const auto visibleEntries = m_responsive.discoverVisibleEntries(model);
+        for (const auto &[sectionIndex, entryIndex] : visibleEntries) {
+            auto &section = model.sections[sectionIndex];
+            const auto state = discover.sections.constFind(section.source);
+            if (state == discover.sections.cend()) {
+                continue;
+            }
+            auto &entry = section.entries[entryIndex];
+            const auto item = state->items.at(entry.index).toObject();
+            const auto cover = item["cover"].toString();
+            entry.image = cover;
+            if (!cover.isEmpty() && !urls.contains(cover)) {
+                urls.append(cover);
+            }
+        }
+        if (!m_discoverArtwork) {
+            m_discoverArtwork = new DiscoverArtwork(m_host, this);
+        }
+        const auto scope = music.provider + ":" + QString::number(music.accountGeneration()) +
+                           ":sections:" + QString::number(discover.sectionsGeneration);
+        m_discoverArtwork->show(scope, urls);
+        for (const auto &[sectionIndex, entryIndex] : visibleEntries) {
+            auto &section = model.sections[sectionIndex];
+            auto &entry = section.entries[entryIndex];
+            const auto key = m_discoverArtwork->image(entry.image);
+            const auto cover = m_host->image(key);
+            entry.image = key;
+            if (!cover.isNull()) {
+                entry.imageAspect = double(cover.width()) / cover.height();
+            }
+        }
+        m_responsive.setDiscover(model);
+        if (!m_pendingDiscoverSection.isEmpty()) {
+            for (const auto &section : model.sections) {
+                if (section.id != m_pendingDiscoverSection) {
+                    continue;
+                }
+                if (!section.loading || !section.entries.isEmpty()) {
+                    m_responsive.focusDiscoverSection(section.id);
+                    m_pendingDiscoverSection.clear();
+                }
+                break;
+            }
+        }
+        return;
+    }
     QVector<QPair<QString, QString>> tabs;
     for (const auto &value : ProviderRegistry::instance().discoverTabs(music.provider)) {
         const auto tab = value.toObject();
@@ -27,12 +121,15 @@ void NativeHud::discoverPanel(double x, double y, double width) {
     }
     if (tabs.isEmpty()) {
         tabs = {{"playlists", "推荐歌单"}, {"daily", "每日推荐"},      {"charts", "排行榜"},
-                {"albums", "新专辑"},      {"categories", "分类歌单"}, {"history", "历史"}};
+                {"albums", "新专辑"},      {"categories", "分类歌单"}, {"artists", "收藏歌手"},
+                {"history", "历史"}};
     }
     for (const auto &[key, label] : tabs) {
         model.tabs.append(DiscoverMusicCard::Choice{label, "discover:tab:" + key, discover.tab == key});
     }
     if (discover.tab == "categories") {
+        model.categoriesLoading = discover.categoriesLoading;
+        model.categoryStatus = discover.categoryStatus;
         QJsonArray categories;
         if (discover.categories.isEmpty()) {
             categories.append(QJsonObject{{"id", "全部"}, {"name", "全部"}});
@@ -93,9 +190,8 @@ void NativeHud::discoverPanel(double x, double y, double width) {
         model.scroll = discoverScroll;
     }
     const auto indices =
-        model.categoryPicker ? QVector<int>{}
-        : m_responsive.compact()
-            ? m_responsive.discoverVisibleIndices(model)
+        model.categoryPicker
+            ? QVector<int>{}
             : DiscoverMusicCard::visibleIndices(model.bounds, model.loadedCount, model.scroll);
     QStringList urls;
     for (const auto index : indices) {

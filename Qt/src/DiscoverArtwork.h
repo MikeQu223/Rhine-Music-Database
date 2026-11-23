@@ -12,6 +12,7 @@ class DiscoverArtwork : public QObject {
     explicit DiscoverArtwork(Host *host, QObject *parent = nullptr, int maximumDimension = 512);
     void show(const QString &scope, const QStringList &urls);
     QString image(const QString &url);
+    bool hasCachedImage(const QString &url) const;
 
   private:
     void request(const QString &url);

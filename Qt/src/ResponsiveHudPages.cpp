@@ -561,93 +561,162 @@ double ResponsiveHudLayout::collection(ResponsiveHudCanvas &c) {
 }
 double ResponsiveHudLayout::discover(ResponsiveHudCanvas &c) {
     const auto &m = *m_discover;
-    double y = 130 - m_scroll;
-    int selectedTab = 0;
-    for (int i = 0; i < m.tabs.size(); ++i) {
-        if (m.tabs[i].selected) {
-            selectedTab = i;
+    // 发现页使用规范中的精确语义色；其它移动页继续沿用各自原有主题值。
+    const QJsonArray panel = m.dark ? c.surface : QJsonArray{248. / 255., 247. / 255., 238. / 255., 1.};
+    const QJsonArray secondary = m.dark ? c.raised : QJsonArray{229. / 255., 231. / 255., 218. / 255., 1.};
+    const QJsonArray ink = m.dark ? c.ink : QJsonArray{34. / 255., 42. / 255., 37. / 255., 1.};
+    const QJsonArray muted = m.dark ? c.muted : QJsonArray{98. / 255., 107. / 255., 96. / 255., 1.};
+    const QJsonArray line = m.dark ? c.line : QJsonArray{204. / 255., 206. / 255., 192. / 255., 1.};
+    const QJsonArray errorText = m.dark ? c.amber : QJsonArray{153. / 255., 67. / 255., 32. / 255., 1.};
+    auto separator = ink;
+    separator[3] = .3;
+    const QRectF contentClip{0, 130, 393, std::max(0., c.contentBottom - 130)};
+    const QRectF railViewport{20, 130, 353, std::max(0., c.contentBottom - 130)};
+    m_discoverSwipeZones = {};
+
+    const auto zone = [&](const QString &group, const QRectF &rect) {
+        const auto visible = rect.intersected(contentClip);
+        if (visible.width() >= 8 && visible.height() >= 8) {
+            m_discoverSwipeZones.append(QJsonObject{{"group", group},
+                                                    {"x", visible.x() * c.unit},
+                                                    {"y", visible.y() * c.unit},
+                                                    {"width", visible.width() * c.unit},
+                                                    {"height", visible.height() * c.unit}});
         }
-        indexTab(c, {20 + (i % 4) * 90., y + (i / 4) * 44., 83, 44}, m.tabs[i].label, m.tabs[i].action,
-                 m.tabs[i].selected);
-    }
-    c.fill({tabIndicator("discover-x", 20 + selectedTab % 4 * 90.),
-            y + tabIndicator("discover-y", selectedTab / 4 * 44.) + 39, 76, 2},
-           c.amber);
-    y += ((m.tabs.size() + 3) / 4) * 44 + 12;
-    if (m.categoryPicker) {
-        for (int i = 0; i < m.categories.size(); ++i) {
-            c.chip({20 + (i % 3) * 120., y + (i / 3) * 44., 113, 36}, m.categories[i].label,
-                   m.categories[i].action, m.categories[i].selected);
+    };
+    const auto visibleHit = [&](const QRectF &rect, const QRectF &clip, const QString &action,
+                                const QString &name) {
+        const auto target = rect.intersected(clip).intersected(contentClip);
+        if (target.width() >= 8 && target.height() >= 8) {
+            c.hit(target, action, name);
         }
-        y += ((m.categories.size() + 2) / 3) * 44;
-    } else if (m.tab == "playlists" && m.loadedCount > 0) {
-        const auto hero = std::find_if(m.entries.cbegin(), m.entries.cend(),
-                                       [](const auto &entry) { return entry.index == 0; });
-        if (hero != m.entries.cend()) {
-            const auto &entry = *hero;
-            c.fill({20, y, 353, 116}, c.surface);
-            c.fill({20, y, 2, 116}, c.amber);
-            c.text("FEATURED / 今日档案", 33, y + 12, 8, 225, "regular", c.muted);
-            c.paragraph(entry.title, 33, y + 34, 18, 162, {}, "demibold", 2, 1.25);
-            c.text(entry.artist, 33, y + 92, 10, 225, "regular", c.muted);
-            cover(c, entry.image, {279, y + 16, 80, 80});
-            c.hit({20, y, 353, 116}, "discover:item:" + QString::number(entry.index), entry.title);
-            if (entry.kind == "playlist") {
-                c.text("▶ 全部", 205, y + 45, 10, 62);
-                c.hit({199, y + 30, 70, 44}, "mobile:play-discover:" + QString::number(entry.index),
-                      "播放全部");
+    };
+    const auto horizontal = [&](const QString &group) -> double & { return m_discoverHorizontal[group]; };
+    const auto setMaximum = [&](const QString &group, double value) {
+        m_discoverHorizontalMaximum[group] = std::max(0., value);
+        horizontal(group) = std::clamp(horizontal(group), 0., m_discoverHorizontalMaximum[group]);
+    };
+    const auto kindName = [](const QString &kind) {
+        if (kind == "album") {
+            return QStringLiteral("ALBUM / 专辑");
+        }
+        if (kind == "artist") {
+            return QStringLiteral("ARTIST / 歌手");
+        }
+        if (kind == "song") {
+            return QStringLiteral("TRACK / 歌曲");
+        }
+        return QStringLiteral("PLAYLIST / 歌单");
+    };
+    const auto drawCover = [&](const DiscoverMusicCard::Entry &entry, const QRectF &frame) {
+        c.fill(frame, secondary);
+        if (!entry.image.isEmpty()) {
+            c.save();
+            c.clip(frame);
+            const double aspect = std::max(0.1, entry.imageAspect);
+            const double target = frame.width() / std::max(1., frame.height());
+            QRectF image = frame;
+            if (aspect > target) {
+                image.setWidth(frame.height() * aspect);
+            } else {
+                image.setHeight(frame.width() / aspect);
             }
+            image.moveCenter(frame.center());
+            c.image(entry.image, image);
+            c.restore();
+        } else {
+            c.text(kindName(entry.kind), frame.x() + 12, frame.y() + 12, 8, frame.width() - 24, "regular",
+                   muted);
+            c.text(MusicData::pad(entry.index + 1), frame.x() + 12, frame.bottom() - 34, 22,
+                   frame.width() - 24, "light", muted);
         }
-        y += 132;
-        terminalSection(c, y, "01", "音乐档案", "SELECTED / " + QString::number(m.loadedCount));
-        y += 25;
-        for (const auto &tile : m.entries) {
-            if (tile.index == 0) {
+    };
+    const auto sectionTitle = [&](double atY, const QString &title, const QString &english) {
+        c.text(title, 20, atY + 8, 17, 210, "demibold", ink);
+        c.rightText(english, 373, atY + 10, 8, "regular", muted);
+        c.fill({20, atY + 30, 353, .8}, line);
+    };
+    const auto wrapTitle = [&](const DiscoverMusicCard::Entry &entry, double x, double top, double width,
+                               double size, int maximum) {
+        const auto lines = c.wrap(entry.title, width, size, "demibold");
+        for (int index = 0; index < std::min(maximum, int(lines.size())); ++index) {
+            QString value = lines.at(index);
+            if (index == maximum - 1 && lines.size() > maximum) {
+                value += "…";
+            }
+            c.text(value, x, top + index * (size + 5.), size, width, "demibold", ink);
+        }
+    };
+
+    double y = 130 - m_scroll;
+    for (const auto &section : m.sections) {
+        sectionTitle(y, section.title, section.english);
+        y += 38;
+        if (section.entries.isEmpty()) {
+            const auto status = section.loading            ? QStringLiteral("正在读取…")
+                                : section.status.isEmpty() ? QStringLiteral("暂无内容")
+                                                           : section.status;
+            const bool failed = section.failed && !section.loading;
+            c.fill({20, y, 353, 52}, panel);
+            c.fill({20, y, 3, 52}, failed ? errorText : secondary);
+            c.text(status, 32, y + 18, 11, 325, "regular", muted);
+            if (failed) {
+                c.rightText(QStringLiteral("重试 ↗"), 365, y + 17, 10, "demibold", errorText);
+                c.hit({301, y + 4, 72, 44}, "discover:section-retry:" + section.source,
+                      QStringLiteral("重新读取") + section.title);
+            }
+            y += 70;
+            continue;
+        }
+
+        const double cardWidth = section.featured ? DiscoverFeatureWidth : DiscoverCardWidth;
+        const double coverHeight = cardWidth;
+        const double metadataHeight = section.featured ? 70. : 64.;
+        constexpr double playButtonSize = 44.;
+        const double cardHeight = coverHeight + metadataHeight;
+        const double gap = section.featured ? DiscoverFeatureGap : DiscoverCardGap;
+        const double stride = cardWidth + gap;
+        const double contentWidth = section.entries.size() * stride - gap;
+        setMaximum(section.id, std::max(0., contentWidth - railViewport.width()));
+        const double offset = horizontal(section.id);
+        const QRectF clip{20, y, 353, cardHeight};
+        c.save();
+        c.clip(railViewport);
+        for (int position = 0; position < section.entries.size(); ++position) {
+            const auto &entry = section.entries.at(position);
+            const QRectF card{20 + position * stride - offset, y, cardWidth, cardHeight};
+            if (card.right() < railViewport.left() || card.left() > railViewport.right()) {
                 continue;
             }
-            const int i = tile.index;
-            const int col = (i - 1) % 2;
-            const int row = (i - 1) / 2;
-            const double x = 20 + col * 184.;
-            const double top = y + row * 196.;
-            c.fill({x, top, 169, 144}, c.surface);
-            cover(c, tile.image, {x, top, 144, 144});
-            c.text(MusicData::pad(i + 1), x + 150, top + 8, 8, 19, "regular", c.muted);
-            c.text(tile.title, x, top + 153, 12, 104, "demibold");
-            c.text(tile.artist, x, top + 173, 9, 169, "regular", c.muted);
-            // 封面越过底栏时仍允许点击可见部分，命中区不得穿透播放栏。
-            const auto visibleTile =
-                QRectF(x, top, 169, 186).intersected(QRectF(20, 130, 353, c.contentBottom - 130));
-            if (visibleTile.height() >= 8) {
-                c.hit(visibleTile, "discover:item:" + QString::number(tile.index), tile.title);
-                if (tile.kind == "playlist") {
-                    c.text("▶ 全部", x + 114, top + 154, 9, 55);
-                    c.hit({x + 110, top + 144, 59, 42}, "mobile:play-discover:" + QString::number(tile.index),
-                          "播放全部");
-                }
+            c.fill(card, panel);
+            c.border(card, line);
+            drawCover(entry, {card.x(), card.y(), coverHeight, coverHeight});
+            c.fill({card.x(), card.y() + coverHeight - .5, card.width(), 1.2}, separator);
+            const double textWidth = card.width() - 60.;
+            c.text(kindName(entry.kind), card.x() + 12, card.y() + coverHeight + 8, 8, textWidth, "regular",
+                   muted);
+            wrapTitle(entry, card.x() + 12, card.y() + coverHeight + 21, textWidth,
+                      section.featured ? 14 : 12, 2);
+            if (entry.kind != "playlist" && !entry.artist.isEmpty()) {
+                c.text(entry.artist, card.x() + 12, card.y() + coverHeight + (section.featured ? 55 : 53), 9,
+                       textWidth, "regular", muted);
+            }
+            const auto itemAction = "discover:item:" + entry.section + ":" + QString::number(entry.index);
+            visibleHit(card, railViewport, itemAction, "打开 " + entry.title);
+            if (entry.kind == "playlist" || entry.kind == "album") {
+                const QRectF play{card.right() - playButtonSize - 12,
+                                  card.y() + coverHeight + (metadataHeight - playButtonSize) / 2.,
+                                  playButtonSize, playButtonSize};
+                c.fill({play.x() + 8, play.y() + 8, 28, 28}, secondary);
+                c.icon("play", play.x() + 14, play.y() + 14, 16, ink);
+                const auto playAction =
+                    "mobile:play-discover:" + entry.section + ":" + QString::number(entry.index);
+                visibleHit(play, railViewport, playAction, "播放全部 " + entry.title);
             }
         }
-        y += (m.loadedCount / 2) * 196;
-    } else {
-        for (int i = 0; i < m.tools.size(); ++i) {
-            c.chip({20 + (i % 2) * 181., y + (i / 2) * 44., 172, 36}, m.tools[i].label, m.tools[i].action,
-                   m.tools[i].selected);
-        }
-        y += ((m.tools.size() + 1) / 2) * 44 + 12;
-        for (const auto &entry : m.entries) {
-            c.row(y + entry.index * 68., entry.title, entry.artist, {},
-                  "discover:item:" + QString::number(entry.index), MusicData::pad(entry.index + 1), false, {},
-                  entry.kind == "playlist" ? "mobile:play-discover:" + QString::number(entry.index)
-                                           : QString());
-        }
-        y += m.loadedCount * 68.;
-    }
-    if (m.loadedCount == 0 && !m.categoryPicker) {
-        y = c.paragraph(m.status, 20, y + 15, 14, 353, c.muted) + 20;
-    }
-    if (m.more) {
-        c.button({20, y, 353, 44}, m.loading ? "载入中…" : "加载更多 ↓", "discover:more");
-        y += 56;
+        c.restore();
+        zone(section.id, clip);
+        y += cardHeight + 18;
     }
     return y + m_scroll + 20;
 }

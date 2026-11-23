@@ -268,6 +268,8 @@ class NativeHud : public QObject {
     DiscoverArtwork *m_detailArtwork = nullptr;
     DiscoverArtwork *m_queueArtwork = nullptr;
     QString m_discoverScrollScope;
+    std::optional<bool> m_discoverCompactLayout;
+    QString m_pendingDiscoverSection;
     QString m_songQueueFeedbackKey;
     QHash<QString, QString> m_songQueueFeedback;
     // 每个按钮独立计时，重复点击重启计时器；HUD 销毁时自动取消回调。

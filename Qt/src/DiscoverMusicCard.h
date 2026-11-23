@@ -13,12 +13,24 @@ struct Choice {
     bool selected = false;
 };
 struct Entry {
+    QString section;
     QString title;
     QString artist;
     QString kind;
     QString image;
     double imageAspect = 1;
     int index = 0;
+};
+struct Section {
+    QString id;
+    QString source;
+    QString title;
+    QString english;
+    QString status;
+    bool loading = false;
+    bool failed = false;
+    bool featured = false;
+    QVector<Entry> entries;
 };
 struct Model {
     QRectF bounds;
@@ -31,8 +43,12 @@ struct Model {
     QVector<Choice> tools;
     QVector<Choice> categories;
     QVector<Entry> entries;
+    QVector<Section> sections;
+    bool onePage = false;
     double scroll = 0;
     bool categoryPicker = false;
+    bool categoriesLoading = false;
+    QString categoryStatus;
     int categoryPage = 0;
     int categoryPages = 1;
     int loadedCount = 0;

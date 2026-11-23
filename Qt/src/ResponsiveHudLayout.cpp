@@ -18,6 +18,10 @@ void ResponsiveHudLayout::resize(double stageWidth) {
     if (next != m_compact) {
         m_scroll = 0;
         m_scope.clear();
+        m_discoverHorizontal.clear();
+        m_discoverHorizontalMaximum.clear();
+        m_discoverSwipeZones = {};
+        m_discoverTabKey.clear();
     }
     m_compact = next;
     m_unit = stageWidth / 393;
@@ -30,6 +34,10 @@ void ResponsiveHudLayout::prepare(const QString &scope, bool home) {
     }
     m_scope = scope;
     m_scopeChanged = true;
+    m_discoverHorizontal.clear();
+    m_discoverHorizontalMaximum.clear();
+    m_discoverSwipeZones = {};
+    m_discoverTabKey.clear();
     if (!home) {
         m_scroll = 0;
     }
@@ -43,6 +51,9 @@ void ResponsiveHudLayout::arrange(QJsonArray &commands, QJsonArray &hits, const 
         return;
     }
     const auto modal = source["modal"].toString();
+    if (modal != "discover") {
+        m_discoverSwipeZones = {};
+    }
     const bool lyric = source["lyricsMode"].toBool() && modal.isEmpty();
     const double playerModeProgress = std::clamp(source["playerModeProgress"].toDouble(0.), 0., 1.);
     const bool lyricVisual = lyric || playerModeProgress > .001;
@@ -102,35 +113,34 @@ void ResponsiveHudLayout::arrange(QJsonArray &commands, QJsonArray &hits, const 
 
     // 歌词页由独立的 LyricsBackdrop 提供纸色底和色彩流动，HUD 不再整页盖住它。
     if (!home && !songPage && !lyric) {
+        if (modal == "discover" && !source["dark"].toBool()) {
+            // 发现页浅色主题使用规范中的精确语义色，深色主题保留现有可读性配色。
+            c.paper = {241. / 255., 240. / 255., 231. / 255., 1.};
+            c.surface = {248. / 255., 247. / 255., 238. / 255., 1.};
+            c.raised = {229. / 255., 231. / 255., 218. / 255., 1.};
+            c.ink = {34. / 255., 42. / 255., 37. / 255., 1.};
+            c.muted = {98. / 255., 107. / 255., 96. / 255., 1.};
+            c.line = {204. / 255., 206. / 255., 192. / 255., 1.};
+            c.amber = {213. / 255., 163. / 255., 72. / 255., 1.};
+        }
         c.fill({0, 0, 393, m_height}, c.paper);
     }
-    QString title = modal == "player"          ? "播放队列"
-                    : modal == "search"        ? "音乐检索"
-                    : modal == "saved"         ? "我的音乐"
-                    : modal == "settings"      ? "设置"
-                    : modal == "discover"      ? "发现音乐"
-                    : modal == "provider"      ? "音乐平台"
-                    : modal == "plugins"       ? "插件管理"
-                    : modal == "plugin-detail" ? "插件详情"
+    QString title = modal == "player"           ? "播放队列"
+                    : modal == "search"         ? "音乐检索"
+                    : modal == "saved"          ? "我的音乐"
+                    : modal == "settings"       ? "设置"
+                    : modal == "discover"       ? "发现音乐"
+                    : modal == "provider"       ? "音乐平台"
+                    : modal == "plugins"        ? "插件管理"
+                    : modal == "plugin-detail"  ? "插件详情"
                     : modal == "plugin-install" ? "确认安装"
-                    : lyric                    ? "歌词"
-                    : comments                 ? "歌曲评论"
-                    : m_song                   ? "歌曲档案"
-                    : m_collection             ? (m_collection->kind == "album"    ? "专辑详情"
-                                                  : m_collection->kind == "artist" ? "歌手档案"
-                                                                                   : "歌单详情")
-                                               : "音乐档案";
-    if (modal == "discover" && m_discover) {
-        if (m_discover->tab == "history") {
-            title = "播放历史";
-        }
-        if (m_discover->tab == "daily") {
-            title = "每日推荐";
-        }
-        if (m_discover->tab == "artists") {
-            title = "收藏歌手";
-        }
-    }
+                    : lyric                     ? "歌词"
+                    : comments                  ? "歌曲评论"
+                    : m_song                    ? "歌曲档案"
+                    : m_collection              ? (m_collection->kind == "album"    ? "专辑详情"
+                                                   : m_collection->kind == "artist" ? "歌手档案"
+                                                                                    : "歌单详情")
+                                                : "音乐档案";
     if (modal == "saved" && !m_savedOverview) {
         title = source["collectionTitle"].toString("我的音乐");
     }
@@ -386,6 +396,12 @@ QJsonObject ResponsiveHudLayout::state(QJsonObject s) const {
         (m_song ? m_songLayout.progressTop : m_height - BottomGestureInset - 250.) * m_unit;
     s["lyricsContentTop"] = (m_song ? m_songLayout.lyricsTop : TopSafeInset + 112.) * m_unit;
     s["archiveListY"] = m_archiveListY;
+    s["discoverSwipeZones"] = m_discoverSwipeZones;
+    QJsonObject discoverOffsets;
+    for (auto it = m_discoverHorizontal.cbegin(); it != m_discoverHorizontal.cend(); ++it) {
+        discoverOffsets[it.key()] = it.value();
+    }
+    s["discoverHorizontalOffsets"] = discoverOffsets;
     s["songPanelTop"] = m_fields.value("songPanelTop");
     s["songPanelTransition"] = m_fields.value("songPanelTransition");
     s["modalOffset"] = 0;
@@ -477,6 +493,32 @@ bool ResponsiveHudLayout::handleAction(const QString &action) {
         }
         return true;
     }
+    // 分类或筛选切换会重建内容，先复位纵向与各横向轨道，再由原控制器加载。
+    if (action.startsWith("discover:tab:") || action.startsWith("discover:area:") ||
+        action.startsWith("discover:category:") || action == "discover:categories" ||
+        action == "discover:categories-retry" || action.startsWith("discover:category-page:")) {
+        m_scroll = 0;
+        m_discoverHorizontal.clear();
+        m_discoverHorizontalMaximum.clear();
+        m_discoverSwipeZones = {};
+        m_discoverTabKey.clear();
+    }
+    if (action.startsWith("mobile:discover-scroll:")) {
+        const auto parts = action.split(':');
+        const auto group = parts.value(2);
+        auto offset = m_discoverHorizontal.find(group);
+        if (offset == m_discoverHorizontal.end()) {
+            return true;
+        }
+        bool valid = false;
+        const double delta = parts.value(3).toDouble(&valid);
+        if (valid && std::isfinite(delta)) {
+            const double maximum = m_discoverHorizontalMaximum.value(group, 0.);
+            // 手指向左拖动（负位移）时轨道向右推进。
+            offset.value() = std::clamp(offset.value() - delta, 0., maximum);
+        }
+        return true;
+    }
     // 主界面列表点选：直接对齐到固定槽位，再由 takeArchiveSelection 交给音乐层。
     if (m_archiveActive && action.startsWith("mobile:archive:")) {
         const int index = action.mid(15).toInt();
@@ -532,38 +574,6 @@ QPair<int, int> ResponsiveHudLayout::resultWindow(int count, bool search, bool g
     return {first * columns, std::min(count, last * columns)};
 }
 
-QVector<int> ResponsiveHudLayout::discoverVisibleIndices(const DiscoverMusicCard::Model &model) const {
-    QVector<int> result;
-    const double start = 130 + ((model.tabs.size() + 3) / 4) * 44 + 12;
-    const double bottom = m_height - BottomGestureInset - 110;
-    const auto range = [&](double top, double stride, int count) {
-        const int first = std::clamp(int(std::floor((m_scroll + 130 - top) / stride)), 0, count);
-        const int last = std::clamp(int(std::ceil((m_scroll + bottom - top) / stride)), first, count);
-        return QPair<int, int>{first, last};
-    };
-    if (model.tab == "playlists") {
-        if (model.loadedCount > 0 && start + 116 >= m_scroll + 130 && start <= m_scroll + bottom) {
-            result.append(0);
-        }
-        const auto [first, last] = range(start + 157, 196, model.loadedCount / 2);
-        for (int row = first; row < last; ++row) {
-            for (int column = 0; column < 2; ++column) {
-                const int index = 1 + row * 2 + column;
-                if (index < model.loadedCount) {
-                    result.append(index);
-                }
-            }
-        }
-    } else {
-        const auto [first, last] =
-            range(start + ((model.tools.size() + 1) / 2) * 44 + 12, 68, model.loadedCount);
-        for (int index = first; index < last; ++index) {
-            result.append(index);
-        }
-    }
-    return result;
-}
-
 /** 指示条共享位置插值；再次点击时从当前画面位置接续，不会跳回上一格。 */
 double ResponsiveHudLayout::tabIndicator(const QString &group, double target) {
     if (!m_indicators.contains(group)) {
@@ -580,6 +590,57 @@ double ResponsiveHudLayout::tabIndicator(const QString &group, double target) {
         indicator.start = m_time;
     }
     return m_reduced ? target : sample();
+}
+
+/** 单页发现只预取纵向可见栏目中横向接近视口的封面，避免整页封面同时加载造成缓存抖动。 */
+QVector<QPair<int, int>>
+ResponsiveHudLayout::discoverVisibleEntries(const DiscoverMusicCard::Model &model) const {
+    QVector<QPair<int, int>> result;
+    if (!m_compact || !model.onePage) {
+        return result;
+    }
+    constexpr double contentTop = 130.;
+    constexpr double discoverBottomInset = 34. + 110.;
+    const double viewportTop = m_scroll;
+    const double viewportBottom = m_scroll + std::max(0., m_height - discoverBottomInset - contentTop);
+    double cursor = 0;
+    for (int index = 0; index < model.sections.size(); ++index) {
+        const auto &section = model.sections.at(index);
+        const double cardHeight = section.entries.isEmpty() ? 70. : (section.featured ? 306. : 210.) + 18.;
+        const double sectionHeight = 38. + cardHeight;
+        if (cursor + sectionHeight >= viewportTop && cursor <= viewportBottom) {
+            const double cardWidth = section.featured ? DiscoverFeatureWidth : DiscoverCardWidth;
+            const double stride = cardWidth + (section.featured ? DiscoverFeatureGap : DiscoverCardGap);
+            const double offset = m_discoverHorizontal.value(section.id);
+            const int first = std::max(0, int(std::floor(offset / stride)) - 1);
+            for (int position = first; position < section.entries.size(); ++position) {
+                const double left = position * stride - offset;
+                if (left >= 353.) {
+                    break;
+                }
+                if (left + cardWidth > 0.) {
+                    result.append({index, position});
+                }
+            }
+        }
+        cursor += sectionHeight;
+    }
+    return result;
+}
+
+void ResponsiveHudLayout::focusDiscoverSection(const QString &id) {
+    if (!m_discover) {
+        return;
+    }
+    double cursor = 0;
+    for (const auto &section : m_discover->sections) {
+        if (section.id == id) {
+            m_scroll = std::max(0., cursor - 8.);
+            return;
+        }
+        const double cardHeight = section.entries.isEmpty() ? 70. : (section.featured ? 306. : 210.) + 18.;
+        cursor += 38. + cardHeight;
+    }
 }
 
 bool ResponsiveHudLayout::animating(double time) const {

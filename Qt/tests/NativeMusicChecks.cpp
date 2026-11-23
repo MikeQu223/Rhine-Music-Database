@@ -489,6 +489,27 @@ bool runNativeMusicChecks(const QString &root) {
     library.discover->load("playlists");
     check(waitFor([&] { return !library.discover->loading; }), "discovery loads");
     check(library.discover->items.size() == 1, "discovery normalizes results");
+    library.uid = "42";
+    library.discover->loadSections();
+    check(waitFor([&] {
+              for (const auto &section : library.discover->sections) {
+                  if (section.loading) {
+                      return false;
+                  }
+              }
+              return !library.discover->sections.isEmpty();
+          }),
+          "discovery sections load independently");
+    check(library.discover->sections["playlists"].items.size() == 1 &&
+              library.discover->sections["daily"].items.size() == 1 &&
+              library.discover->sections["charts"].items.size() == 1,
+          "discovery section items remain isolated");
+    library.player.history = QJsonArray{song("11")};
+    library.discover->ensureSection("history", true);
+    check(library.discover->sections["history"].items.size() == 1, "discovery history initially refreshes");
+    library.player.history = QJsonArray{song("12"), song("13")};
+    library.discover->ensureSection("history", true);
+    check(library.discover->sections["history"].items.size() == 2, "discovery history refreshes on re-entry");
 
     // === 测试 10: 收藏加载 ===
     library.uid = "42";

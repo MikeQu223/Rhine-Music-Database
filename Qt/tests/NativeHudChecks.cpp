@@ -802,8 +802,8 @@ bool checkPlayButtonStyles(Glyphs &glyphs) {
         const auto play = draw(0);
         const auto transition = draw(0.5);
         const auto pause = draw(1);
-        if ((play.pixelColor(3, 3).alpha() == 255) != boxed || play == pause ||
-            transition == play || transition == pause) {
+        if ((play.pixelColor(3, 3).alpha() == 255) != boxed || play == pause || transition == play ||
+            transition == pause) {
             qCritical() << "Play button style, endpoints or in-between frame regressed" << boxed;
             return false;
         }
@@ -1065,9 +1065,41 @@ bool checkResponsiveHud(const QString &root, Glyphs &glyphs, const QJsonObject &
             return false;
         }
     }
+    ResponsiveHudLayout onePagePolicy;
+    onePagePolicy.resize(393. * 1080. / 852.);
+    DiscoverMusicCard::Model onePageModel;
+    onePageModel.onePage = true;
+    for (const auto &id : {"featured", "daily", "recommended", "artists", "charts"}) {
+        DiscoverMusicCard::Section section;
+        section.id = id;
+        section.featured = QString::fromLatin1(id) == "featured";
+        for (int index = 0; index < 8; ++index) {
+            DiscoverMusicCard::Entry entry;
+            entry.section = id;
+            entry.index = index;
+            section.entries.append(entry);
+        }
+        onePageModel.sections.append(section);
+    }
+    onePagePolicy.setDiscover(onePageModel);
+    const auto initialCoverEntries = onePagePolicy.discoverVisibleEntries(onePageModel);
+    if (initialCoverEntries.isEmpty() || std::any_of(initialCoverEntries.cbegin(), initialCoverEntries.cend(),
+                                                     [](const auto &entry) { return entry.first >= 3; })) {
+        qCritical() << "Discovery one-page cover prefetch escaped the visible sections";
+        return false;
+    }
 
     Host host(root, true);
     std::unique_ptr<MusicLibrary> music(createTestMusicLibrary(&host, hudTestProvider(), content));
+    auto discoverItems = music->discover->items;
+    auto firstPlaylist = discoverItems.at(0).toObject();
+    firstPlaylist["kind"] = "playlist";
+    firstPlaylist["artist"] = "暂无创建者";
+    discoverItems[0] = firstPlaylist;
+    auto secondPlaylist = discoverItems.at(1).toObject();
+    secondPlaylist["kind"] = "playlist";
+    discoverItems[1] = secondPlaylist;
+    music->discover->items = discoverItems;
     HudSceneActions scene;
     scene.mode = [](QString) {};
     scene.pointer = [](QString, double, double, double) {};
@@ -1255,9 +1287,29 @@ bool checkResponsiveHud(const QString &root, Glyphs &glyphs, const QJsonObject &
     // 后续检查仍以原选中项为基准，滚动验证后恢复。
     music->selectLibraryIndex(beforeScroll);
     hud.draw(frame, width, 70);
+    const QStringList discoverSectionIds = {"playlists",  "daily",   "charts", "albums",
+                                            "categories", "artists", "history"};
+    const auto seedDiscoverSections = [&] {
+        music->discover->sections.clear();
+        music->discover->sectionOrder = discoverSectionIds;
+        for (const auto &id : discoverSectionIds) {
+            MusicDiscover::SectionState section;
+            const int count = id == "categories" ? 2 : discoverItems.size();
+            for (int index = 0; index < count; ++index) {
+                section.items.append(discoverItems.at(index));
+            }
+            section.status = QStringLiteral("已载入 %1 条").arg(section.items.size());
+            section.attempted = true;
+            section.more = id != "history";
+            music->discover->sections.insert(id, section);
+        }
+    };
     for (const QString &page :
          {QString("search"), QString("settings"), QString("discover"), QString("player")}) {
         hud.openModal(page);
+        if (page == "discover") {
+            seedDiscoverSections();
+        }
         hud.draw(frame, width, 50);
         if (!validHits()) {
             qCritical() << "Out-of-bounds mobile target" << page;
@@ -1279,9 +1331,172 @@ bool checkResponsiveHud(const QString &root, Glyphs &glyphs, const QJsonObject &
                 return false;
             }
         }
-        if (page == "discover" && !hasAction(hud.hits, "discover:item:3")) {
-            qCritical() << "Visible discovery cover lost its clipped hit target";
-            return false;
+        if (page == "discover") {
+            seedDiscoverSections();
+            hud.draw(frame, width, 50.1);
+            const auto firstCard = getHit(hud.hits, "discover:item:featured:0");
+            const auto nextCard = getHit(hud.hits, "discover:item:featured:1");
+            const auto firstPlay = getHit(hud.hits, "mobile:play-discover:featured:0");
+            const auto hasText = [&](const QString &value, double minimumX) {
+                for (const auto &entry : hud.commands) {
+                    const auto command = entry.toArray();
+                    if (command.first() == "text" && command.at(1) == value &&
+                        (minimumX < 0. || command.at(2).toDouble() >= minimumX)) {
+                        return true;
+                    }
+                }
+                return false;
+            };
+            const double featuredTitleY = [&] {
+                for (const auto &entry : hud.commands) {
+                    const auto command = entry.toArray();
+                    if (command.first() == "text" && command.at(1) == QStringLiteral("精选推荐")) {
+                        return command.at(3).toDouble();
+                    }
+                }
+                return -1.;
+            }();
+            const double dailyTitleY = [&] {
+                for (const auto &entry : hud.commands) {
+                    const auto command = entry.toArray();
+                    if (command.first() == "text" && command.at(1) == QStringLiteral("每日推荐")) {
+                        return command.at(3).toDouble();
+                    }
+                }
+                return -1.;
+            }();
+            bool tabOrCategoryControls = false;
+            for (const auto &entry : hud.hits) {
+                const auto action = entry.toObject()["action"].toString();
+                tabOrCategoryControls =
+                    tabOrCategoryControls || action.startsWith("discover:tab:") ||
+                    action.startsWith("mobile:discover-step:tabs:") || action == "discover:categories" ||
+                    action.startsWith("discover:category-page:") || action == "discover:more";
+            }
+            for (const auto &entry : hud.state()["discoverSwipeZones"].toArray()) {
+                tabOrCategoryControls =
+                    tabOrCategoryControls || entry.toObject()["group"].toString() == "tabs";
+            }
+            const double previewLeft = nextCard["x"].toDouble() / unit;
+            const double previewWidth = nextCard["width"].toDouble() / unit;
+            const double featuredWidth = firstCard["width"].toDouble() / unit;
+            const QString firstTitle = music->discover->items[0].toObject()["title"].toString();
+            const QString secondTitle = music->discover->items[1].toObject()["title"].toString();
+            const QString secondArtist = music->discover->items[1].toObject()["artist"].toString();
+            if (firstCard.isEmpty() || nextCard.isEmpty() || firstPlay.isEmpty() || featuredTitleY < 0. ||
+                dailyTitleY <= featuredTitleY || tabOrCategoryControls || previewWidth <= 0. ||
+                previewWidth >= featuredWidth - .5 || firstCard["label"].toString() != "打开 " + firstTitle ||
+                hasText("暂无创建者", -1.) || hasText(secondArtist, previewLeft + 10.) ||
+                hasText("打开 ↗", -1.) || !hasText("PLAYLIST / 歌单", previewLeft + 10.) ||
+                !hasText(secondTitle, previewLeft + 10.)) {
+                qCritical() << "Discovery one-page layout lost its section order or card behavior";
+                return false;
+            }
+
+            constexpr double metadataHeight = 70.;
+            const double cardTop = firstCard["y"].toDouble();
+            const double cardHeight = firstCard["height"].toDouble();
+            const double metadataTop = cardTop + cardHeight - metadataHeight * unit;
+            const double metadataBottom = cardTop + cardHeight;
+            const double playCenter = firstPlay["y"].toDouble() + firstPlay["height"].toDouble() / 2.;
+            if (std::abs(firstPlay["width"].toDouble() - 44. * unit) >= .01 ||
+                std::abs(firstPlay["height"].toDouble() - 44. * unit) >= .01 ||
+                firstPlay["y"].toDouble() < metadataTop ||
+                firstPlay["y"].toDouble() + firstPlay["height"].toDouble() > metadataBottom ||
+                std::abs(playCenter - (metadataTop + metadataBottom) / 2.) > .5 * unit) {
+                qCritical() << "Discovery play button left the centered metadata area";
+                return false;
+            }
+
+            hud.action("mobile:discover-scroll:featured:-137.25");
+            hud.action("mobile:discover-scroll:daily:-53.4");
+            hud.action("mobile:discover-scroll:charts:-83.4");
+            hud.draw(frame, width, 50.2);
+            const auto draggedOffsets = hud.state()["discoverHorizontalOffsets"].toObject();
+            hud.draw(frame, width, 50.3);
+            const auto releasedOffsets = hud.state()["discoverHorizontalOffsets"].toObject();
+            if (std::abs(draggedOffsets["featured"].toDouble() - 137.25) > .5 ||
+                std::abs(draggedOffsets["daily"].toDouble() - 53.4) > .5 ||
+                std::abs(draggedOffsets["charts"].toDouble() - 83.4) > .5 ||
+                std::abs(releasedOffsets["featured"].toDouble() - draggedOffsets["featured"].toDouble()) >
+                    .01 ||
+                std::abs(releasedOffsets["daily"].toDouble() - draggedOffsets["daily"].toDouble()) > .01 ||
+                std::abs(releasedOffsets["charts"].toDouble() - draggedOffsets["charts"].toDouble()) > .01) {
+                qCritical() << "Discovery horizontal rails did not retain free scroll offsets";
+                return false;
+            }
+            hud.action("mobile:discover-scroll:categories:-200");
+            hud.draw(frame, width, 50.4);
+            if (std::abs(hud.state()["discoverHorizontalOffsets"].toObject()["categories"].toDouble()) >
+                .01) {
+                qCritical() << "Discovery short category rail scrolled into empty space";
+                return false;
+            }
+
+            const QStringList expectedSections = {"featured", "daily",  "recommended", "artists",
+                                                  "charts",   "albums", "categories",  "history"};
+            QStringList seenSections;
+            QJsonObject firstChart;
+            QJsonObject secondChart;
+            const auto collectSections = [&] {
+                for (const auto &entry : hud.hits) {
+                    const auto hit = entry.toObject();
+                    const auto action = hit["action"].toString();
+                    tabOrCategoryControls =
+                        tabOrCategoryControls || action.startsWith("discover:tab:") ||
+                        action.startsWith("mobile:discover-step:tabs:") || action == "discover:categories" ||
+                        action.startsWith("discover:category-page:") || action == "discover:more";
+                    if (!action.startsWith("discover:item:")) {
+                        continue;
+                    }
+                    const auto parts = action.split(':');
+                    const auto section = parts.value(2);
+                    if (!seenSections.contains(section)) {
+                        seenSections.append(section);
+                    }
+                    if (action == "discover:item:charts:0") {
+                        firstChart = hit;
+                    } else if (action == "discover:item:charts:1") {
+                        secondChart = hit;
+                    }
+                }
+            };
+            for (int step = 0; step < 14 && !seenSections.contains("history"); ++step) {
+                hud.draw(frame, width, 51 + step * .1);
+                collectSections();
+                hud.wheel(width / 2, 400, 0, 0, 220.);
+            }
+            if (!seenSections.contains("history")) {
+                hud.wheel(width / 2, 400, 0, 0, 10000.);
+                hud.draw(frame, width, 52.5);
+                collectSections();
+            }
+            if (seenSections != expectedSections || firstChart.isEmpty() || secondChart.isEmpty() ||
+                std::abs(firstChart["y"].toDouble() - secondChart["y"].toDouble()) > .01 ||
+                firstChart["x"].toDouble() >= secondChart["x"].toDouble() || tabOrCategoryControls) {
+                qCritical() << "Discovery single page missed a section or rendered charts vertically"
+                            << seenSections;
+                return false;
+            }
+            for (const auto &section : {QStringLiteral("history"), QStringLiteral("artists")}) {
+                hud.action("mobile:" + section);
+                seedDiscoverSections();
+                hud.draw(frame, width, 52 + (section == "history" ? 0.1 : 0.2));
+                if (!hasAction(hud.hits, "discover:item:" + section + ":0")) {
+                    qCritical() << "Discovery entry did not focus its target section" << section;
+                    return false;
+                }
+            }
+            music->discover->sections.clear();
+            hud.draw(frame, 1920, 53);
+            hud.draw(frame, width, 53.1);
+            if (music->discover->sections.isEmpty()) {
+                qCritical() << "Discovery orientation switch did not load the compact sections";
+                return false;
+            }
+            hud.wheel(width / 2, 400, 0, 0, -10000.);
+            hud.draw(frame, width, 51.5);
+            capture("discover-horizontal");
         }
         if (page == "search" &&
             (!hud.state()["compactInputVisible"].toBool() || hud.state()["inputWidth"].toDouble() <= 0)) {
@@ -2133,12 +2348,18 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
             QCoreApplication::processEvents();
             QThread::msleep(5);
         }
-        if (!artwork.image(first).isEmpty() || host.image(artwork.image(second)).isNull()) {
+        if (artwork.hasCachedImage(first) || !artwork.hasCachedImage(second) ||
+            host.image(artwork.image(second)).isNull()) {
             qCritical() << "Discovery artwork accepted stale data or lost the current image";
             ok = false;
         }
+        artwork.show("new-account", {second, first});
+        if (!artwork.hasCachedImage(second)) {
+            qCritical() << "Discovery artwork discarded an image that remained visible";
+            ok = false;
+        }
         artwork.show("new-account", {});
-        if (!artwork.image(second).isEmpty()) {
+        if (artwork.hasCachedImage(second)) {
             qCritical() << "Discovery artwork retained a hidden-page image";
             ok = false;
         }
@@ -2791,6 +3012,26 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
                 hud.wheel(viewport.center().x(), viewport.center().y(), 120, -1, -10000.);
             }
             music->discover->more = originalMore;
+            hud.categoryPicker = true;
+            music->discover->tab = "categories";
+            music->discover->categories = {};
+            music->discover->categoriesLoading = false;
+            music->discover->categoryStatus = QStringLiteral("网络不可用");
+            hud.draw(archiveFrame, 1920, 51);
+            bool desktopCategoryFailure = false;
+            for (const auto &value : hud.commands) {
+                const auto command = value.toArray();
+                desktopCategoryFailure =
+                    desktopCategoryFailure || (command.first() == "text" && command.at(1) == "分类读取失败");
+            }
+            if (!desktopCategoryFailure || !hasAction(hud.hits, "discover:categories-retry")) {
+                qCritical() << "Desktop discovery category failure lost its status or retry entry";
+                ok = false;
+            }
+            hud.categoryPicker = false;
+            music->discover->categoryStatus.clear();
+            music->discover->tab = "playlists";
+            hud.draw(archiveFrame, 1920, 51.1);
             const auto originalFirst = music->discover->items.first();
             const auto originalThird = music->discover->items.at(2);
             const QString coverKey = "file:///rhine-offline/discovery-cover.png";

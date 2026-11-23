@@ -48,7 +48,8 @@ class ResponsiveHudLayout {
         m_settings = v;
     }
     QPair<int, int> resultWindow(int count, bool search, bool gallery, bool liked) const;
-    QVector<int> discoverVisibleIndices(const DiscoverMusicCard::Model &model) const;
+    QVector<QPair<int, int>> discoverVisibleEntries(const DiscoverMusicCard::Model &model) const;
+    void focusDiscoverSection(const QString &id);
     void setAuxiliary(QVector<ResponsiveHudContent::Item> items) {
         m_auxiliary = std::move(items);
     }
@@ -110,6 +111,15 @@ class ResponsiveHudLayout {
     QString m_scope;
     bool m_scopeChanged = false;
     QJsonObject m_fields;
+    // 竖屏发现页的横向轨道状态只存在于移动布局；桌面共享卡片不读取这些字段。
+    static constexpr double DiscoverFeatureWidth = 236.;
+    static constexpr double DiscoverFeatureGap = 12.;
+    static constexpr double DiscoverCardWidth = 146.;
+    static constexpr double DiscoverCardGap = 12.;
+    QHash<QString, double> m_discoverHorizontal;
+    QHash<QString, double> m_discoverHorizontalMaximum;
+    QJsonArray m_discoverSwipeZones;
+    QString m_discoverTabKey;
     // 歌词排版缓存：文档或可用宽度变化时才重新换行。
     struct LyricRow {
         double top = 0;

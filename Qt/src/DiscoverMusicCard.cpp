@@ -336,8 +336,17 @@ class Painter {
                 canvas.fill(left, y + top + 35, cell, 2, amber);
             }
         }
-        if (model.categories.size() <= 1) {
-            label(model.status, x, 680, 14, width, "regular", muted);
+        if (model.categoriesLoading) {
+            label("正在读取分类…", x, 360, 14, width, "regular", muted);
+        } else if (model.categories.size() <= 1 && !model.categoryStatus.isEmpty()) {
+            const bool failed = model.categoryStatus != "暂无分类";
+            label(failed ? "分类读取失败" : "暂无分类", x, 360, 16, width, "demibold", failed ? amber : ink);
+            if (failed) {
+                label(model.categoryStatus, x, 388, 12, width, "regular", muted);
+                button({"重新读取", "discover:categories-retry"}, x, 420, 140, 36);
+            }
+        } else if (model.categories.size() <= 1) {
+            label(model.status, x, 360, 14, width, "regular", muted);
         }
     }
 

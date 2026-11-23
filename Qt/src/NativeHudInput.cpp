@@ -41,10 +41,7 @@ void NativeHud::wheel(double x, double y, double delta, std::optional<int> steps
             }
             if (movement > 0 && m_responsive.nearEnd() && !closing) {
                 auto &music = *m_music;
-                if (modal == "discover" && !categoryPicker && !music.discover->loading &&
-                    music.discover->more) {
-                    music.discover->load(music.discover->tab, true);
-                } else if (modal == "search" && isPlaylistSearchScoped()) {
+                if (modal == "search" && isPlaylistSearchScoped()) {
                     ensurePlaylistSearchLoaded();
                 } else if (modal == "search" && query.trimmed() == music.keyword && !music.sourceLoading() &&
                            music.hasMore[0]) {

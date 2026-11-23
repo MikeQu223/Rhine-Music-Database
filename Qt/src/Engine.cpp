@@ -1043,9 +1043,10 @@ void Engine::action(QString value) {
     }
     app->hud.action(value);
     // 连续拖动只更新页面位置，不反复同步查询后台播放服务。
-    const bool scrollGesture = value.startsWith("mobile:lyrics-") || value == "mobile:archive-begin" ||
-                               value == "mobile:archive-release" || value.startsWith("mobile:comments-drag:") ||
-                               value == "mobile:comments-release";
+    const bool scrollGesture =
+        value.startsWith("mobile:lyrics-") || value == "mobile:archive-begin" ||
+        value == "mobile:archive-release" || value.startsWith("mobile:comments-drag:") ||
+        value == "mobile:comments-release" || value.startsWith("mobile:discover-scroll");
     if (!app->hud.compactLayout() || !scrollGesture) {
         pollMedia();
     }
