@@ -16,6 +16,7 @@ library;
 import 'dart:math' as math;
 import 'dart:ui' show Rect;
 
+import '../scale/portrait_rhythm.dart';
 import 'portrait_canvas.dart';
 
 /// 页边距（Qt 全站 20 / 373）。
@@ -97,8 +98,10 @@ double paintPortraitQueuePage(
   // 158/102/19/24/44/17/45；矮屏按比例收，达到或超过基准直接取 1.0——不做
   // 「高屏放大」，也避免 `698.6667/698.6667` 这类浮点差把卡片压成 101.99。
   // 下限 .72 是「44 的按钮 + 36 的 chip 还得点得中」的经验底。
-  final double d =
-      c.height >= _designHeight ? 1.0 : (c.height / _designHeight).clamp(.72, 1.0);
+  // 与其余竖屏页共用同一条节奏线（[PortraitRhythm]：只收间距、字号不动、收到
+  // 0.78 为止）。原先这里自带一套 `h/698.67 clamp(.72,1)`，两套下限不同会让
+  // 同一块屏上的队列页比别的页更挤。
+  final double d = PortraitRhythm.of(c.height);
   final double contentTop = math.max(_minContentTop, _designContentTop * d);
   final double cardHeight = math.max(_minCardHeight, _designCardHeight * d);
   // 卡内三行文案按卡高同比缩，卡片收到下限时文字不会越过卡片下沿。
