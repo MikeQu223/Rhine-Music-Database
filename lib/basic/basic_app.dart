@@ -2875,6 +2875,16 @@ class _BasicShellState extends State<_BasicShell>
   }
 
   void _onAction(String action) {
+    // Qt `ResponsiveHudLayout.cpp:457-462`：任何 `music:`/`tab:`/`mv:` 动作都收起
+    // 「歌曲操作」面板。这条放在最前面——后面各分支都有自己的 `return null`，
+    // 只在末尾统一收会漏掉提前 return 的那些（真机缺陷：点「歌手作品」后歌手页
+    // 被面板压住半屏）。
+    if (_songOptionsExpanded &&
+        (action.startsWith('music:') ||
+            action.startsWith('tab:') ||
+            action.startsWith('mv:'))) {
+      setState(() => _songOptionsExpanded = false);
+    }
     // 详情页的「查看封面 ↗」（lib/hud/pages/song_detail.dart:710 的 'viewer' 命中）。
     // Qt 侧同一条：NativeHudController.cpp:688 value=="viewer" → scene.openViewer()。
     if (action == 'viewer') {
@@ -3271,6 +3281,11 @@ class _BasicShellState extends State<_BasicShell>
         return null;
       }
       final String name = names[index.clamp(0, names.length - 1)];
+      // 这条分支在通用收起逻辑之前提前 return，必须自己收操作面板，
+      // 否则歌手页会被「歌曲操作」压住半屏（真机缺陷）。
+      if (_songOptionsExpanded) {
+        setState(() => _songOptionsExpanded = false);
+      }
       // 真开歌手目录（Qt `MusicLibrary::openArtist` 的那条路）：插件平台按
       // `artists[i].id` 取该歌手作品，塞壬平台在本地曲库里筛。
       unawaited(controller.openArtistDirectory(name, artistIndex: index));

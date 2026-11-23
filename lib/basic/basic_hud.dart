@@ -1191,6 +1191,10 @@ class BasicHudFrame {
       ('＋ 加入歌单', 'music:add-to-playlist'),
       ('＋ 加入队列', 'music:enqueue'),
       ('▷ 下一首播放', 'music:play-next'),
+      // Qt `secondaryActions[2] = {"↗ 歌手作品","music:artist:0"}`（NativeHudDetail.cpp:180）：
+      // 只有拿得到艺人才给。本仓库没有 artists[] 数组，按 artist 串拆第一段走
+      // `openArtistDirectory`（无 artist id 时它自己回退按名字筛本地曲库）。
+      if (_firstArtistOf(state).isNotEmpty) ('↗ 歌手作品', 'music:artist:0'),
       if (commentsAvailable) ('查看评论', 'music:comments'),
       // Qt 把百科/专辑信息画在详情正文里（`NativeHudDetail.cpp:19-40` 的 `body()`）；
       // 本仓库正文只画一段，所以给两枚入口让它们还能被打开（两页数据来自插件）。
@@ -1200,6 +1204,21 @@ class BasicHudFrame {
       // hud 层不 import domain，所以这里写字面量并在测试里与 MvAction 对表。
       if (mvAvailable) ('关联 MV', 'mv:open'),
     ];
+  }
+
+  /// 详情页曲目的首位艺人（Qt 用 `item["artists"][0]["name"]`；塞壬负载只有
+  /// `artist` 串，按 ` / ` 拆）。
+  static String _firstArtistOf(BasicViewState state) {
+    final SirenSong? song = state.song;
+    if (song == null) {
+      return '';
+    }
+    final String artist = song.artist.trim();
+    if (artist.isEmpty) {
+      return '';
+    }
+    final int split = artist.indexOf(' / ');
+    return split <= 0 ? artist : artist.substring(0, split);
   }
 
   /// 竖屏详情页 / 歌词页（Qt compact `ResponsiveHudPages.cpp` 的 `song()` / `lyrics()`）。
