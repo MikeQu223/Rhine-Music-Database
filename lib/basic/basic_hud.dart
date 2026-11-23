@@ -1030,6 +1030,9 @@ class BasicHudFrame {
         emptyNotice: emptyNotice,
         // 目录内页与主页同一份滚动窗口真值（拖动中的 listPosition 优先）。
         position: listPosition ?? state.listPosition ?? selected.toDouble(),
+        // Qt 每一页末尾都有播放条 + 底栏；目录内页按「资料库」高亮。
+        player: portraitPlayer,
+        nav: PortraitNav.archive,
       );
     } else {
       // 列名随平台走（Qt `registry.columns(provider)`）：插件 manifest 的五列是

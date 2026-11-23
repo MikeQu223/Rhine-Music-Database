@@ -212,6 +212,18 @@ PortraitFrame paintPortraitHome(
   );
 }
 
+/// 画播放条 + 底栏（贴在 `h - portraitFooterHeight`），并把 `contentBottom` 收到
+/// 它们上方。目录内页（歌单/专辑）自己没有页脚，由这个入口补——否则进歌单后
+/// 底部整块是空的、也没法从内页直接播放或换 tab（真机缺陷）。
+void paintPortraitFooter(
+  PortraitCanvas canvas, {
+  required PortraitPlayer player,
+  PortraitNav? nav,
+}) {
+  canvas.contentBottom = math.max(0, canvas.height - portraitFooterHeight);
+  _playerAndNav(canvas, player: player, nav: nav, top: canvas.contentBottom);
+}
+
 /// 竖屏「终端页」页头（Qt `ResponsiveHudLayout.cpp:163-193` 的 terminalPage 分支）。
 ///
 /// 与主页品牌的差别：第二行写 `AUDIO TERMINAL`（主页是 `MUSIC ARCHIVE / 音乐资料库`），

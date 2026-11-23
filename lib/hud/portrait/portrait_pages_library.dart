@@ -19,6 +19,7 @@ import 'dart:math' as math;
 import 'dart:ui' show Rect;
 
 import 'portrait_canvas.dart';
+import 'portrait_layout.dart' show PortraitNav, PortraitPlayer, paintPortraitFooter, portraitFooterHeight;
 
 /// 曲目行行高（`Qt/src/ResponsiveHudCanvas.cpp` `row()` 的 68）。
 const double _rowHeight = 68;
@@ -46,8 +47,17 @@ void paintPortraitCollectionPage(
   // 旧实现按 `i * _rowHeight` 从 listTop 硬排，超出裁剪区的行直接被裁掉且无法滚动，
   // 于是进一张 10 首的专辑只看得到头 4 首。
   double position = 0,
+  // Qt 的 `arrange` 对**每一页**都在末尾画播放条与底栏（ResponsiveHudLayout.cpp
+  // 的 playerBar/navigation 是无条件收尾）。目录内页（歌单/专辑）漏了这一步，
+  // 真机上进歌单后底部整块空白，也不能从内页直接播放或换 tab。
+  PortraitPlayer? player,
+  PortraitNav? nav,
 }) {
   final double h = c.height;
+  // 先把内容底界让给播放条，后面的 `_pageBottom` 才会把列表裁在它上面。
+  if (player != null) {
+    c.contentBottom = math.max(0, h - portraitFooterHeight);
+  }
   final int total = rows.length;
 
   // 整页铺纸色。**不要**在这里画纵向渐变：Qt 的 arrange 对内页只有一句
@@ -151,6 +161,9 @@ void paintPortraitCollectionPage(
     c.contentBottom = restoreBottom;
   }
 
+  if (player != null) {
+    paintPortraitFooter(c, player: player, nav: nav);
+  }
   c.finish();
 }
 
