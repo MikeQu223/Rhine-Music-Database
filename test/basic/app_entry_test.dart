@@ -87,7 +87,11 @@ void main() {
           r'void main\(\)\s*\{\s*final config = ClarityConfig\(\s*projectId: "z8vbz4b078",'
           r'\s*logLevel: LogLevel\.Info,?\s*\);\s*'
           r'WidgetsFlutterBinding\.ensureInitialized\(\);\s*'
-          r'SystemChrome\.setEnabledSystemUIMode\(SystemUiMode\.immersiveSticky\);\s*'
+          // 2026-11-22 起入口钉的是 edgeToEdge，不再是 immersiveSticky：
+          // 真机上 immersiveSticky 与默认输入法（微信键盘）不兼容，
+          // mInputShown=true 却一个像素都不画（搜索框/短信框点了不弹键盘）。
+          // 换成 edgeToEdge 后布局与全屏观感不变、输入法正常，见 lib/main.dart 注释。
+          r'SystemChrome\.setEnabledSystemUIMode\(SystemUiMode\.edgeToEdge\);\s*'
           r'runApp\(ClarityWidget\(\s*app: const BasicApp\(\),\s*clarityConfig: config,?\s*\)\);'
           r'\s*\}',
         ).hasMatch(code),
