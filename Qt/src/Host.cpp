@@ -624,10 +624,45 @@ Host::Host(QString path, bool test, QObject *parent, bool service, PlaybackConne
         }
     });
     connect(&child, &BridgeProcess::finished, this, [this] {
+#ifdef Q_OS_IOS
+        const bool disconnected = child.error() == BridgeProcess::TransportDisconnected;
+#endif
         const auto keys = pending.values();
         pending.clear();
         buffer.clear();
         for (const auto &key : keys) {
+#ifdef Q_OS_IOS
+            auto request = flights.find(key);
+            if (disconnected && request != flights.end() && !request->retriedAfterDisconnect &&
+                !request->waiters.isEmpty() && request->waiters.first().epoch == epoch) {
+                const auto &route = request->route;
+                const auto operation = route.section('/', 3, 3);
+                const bool canRetry = route == "/local/lyrics" || route == "/song/url" ||
+                                      route == "/song/url/v1" ||
+                                      (route.startsWith("/native/") &&
+                                       QStringList{"playback", "preview", "search", "songs", "lyrics",
+                                                   "comments", "commentReplies"}.contains(operation));
+                if (canRetry) {
+                    // 新请求 ID 隔离旧连接上的超时定时器，原有等待者继续等待结果。
+                    request->retriedAfterDisconnect = true;
+                    request->id = QUuid::createUuid().toString();
+                    const auto requestId = request->id;
+                    const auto requestEpoch = epoch;
+                    QTimer::singleShot(0, this, [this, key, requestId, requestEpoch] {
+                        const auto current = flights.constFind(key);
+                        if (current == flights.cend() || current->id != requestId) {
+                            return;
+                        }
+                        if (requestEpoch == epoch) {
+                            send(key);
+                        } else {
+                            finish(key, {}, QStringLiteral("音乐服务已退出，请重试"));
+                        }
+                    });
+                    continue;
+                }
+            }
+#endif
             finish(key, {}, QStringLiteral("音乐服务已退出，请重试"));
         }
     });

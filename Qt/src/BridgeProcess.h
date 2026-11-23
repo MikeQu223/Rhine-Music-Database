@@ -15,7 +15,7 @@ class BridgeProcess : public QObject {
     Q_OBJECT
   public:
     enum ProcessState { NotRunning, Starting, Running };
-    enum ProcessError { FailedToStart, Crashed, UnknownError };
+    enum ProcessError { FailedToStart, Crashed, UnknownError, TransportDisconnected };
     explicit BridgeProcess(QObject *parent = nullptr);
     ~BridgeProcess() override;
     void start(const QString &root, const QString &temporary,

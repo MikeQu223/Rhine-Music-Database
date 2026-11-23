@@ -1,21 +1,24 @@
-// iOS 的 Node 主线程只负责传输；每个音乐会话使用独立 Worker，注销时彻底销毁。
+// 移动端的 Node 主线程只负责传输；每个音乐会话使用独立 Worker。
 const net = require('node:net');
+const { createHmac, randomUUID } = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const readline = require('node:readline');
 const { MessageChannel, Worker } = require('node:worker_threads');
-const socket = net.connect(Number(process.argv[2]), '127.0.0.1');
+const port = Number(process.argv[2]);
+const token = process.argv[3];
+const shouldReconnect = process.argv[4] === '--reconnect';
+const INITIAL_RECONNECT_DELAY_MS = 100;
+const MAX_RECONNECT_DELAY_MS = 2000;
+const HANDSHAKE_TIMEOUT_MS = 4000;
+let reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS;
 let worker;
 let session;
 let commands = Promise.resolve();
 const pluginControls = new Map();
 
-function send(message) {
-    socket.write(JSON.stringify(message) + '\n');
-}
-
 /** 校验和初始化请求在独立 Worker 中执行，与当前音乐会话生命周期分离。 */
-function startPluginControl(message) {
+function startPluginControl(message, send) {
     const { requestId } = message;
     if (pluginControls.has(requestId)) {
         return;
@@ -53,17 +56,10 @@ function startPluginControl(message) {
     control.postMessage({ request: message.request, reply: port2 }, [port2]);
 }
 
-socket.on('connect', () => send({ token: process.argv[3] }));
-// Qt 结束时保持运行时存活到进程终止，禁止 Node 的退出路径结束整个应用。
-socket.on('error', () => {
-    // Qt 已退出时保持静默，由宿主进程统一回收运行时。
-});
-setInterval(() => {}, 60000);
-
 /** 串行销毁旧 Worker 后才建立新会话，旧连接和模块全局状态不会进入新账号。 */
-async function execute(message) {
+async function execute(message, socket, send) {
     if (message.type === 'plugin-control') {
-        startPluginControl(message);
+        startPluginControl(message, send);
     } else if (message.type === 'plugin-control-cancel') {
         const stop = pluginControls.get(message.requestId);
         if (stop) {
@@ -73,6 +69,9 @@ async function execute(message) {
     } else if (message.type === 'start') {
         if (worker) {
             await worker.terminate();
+        }
+        if (socket.destroyed) {
+            return;
         }
         session = message.session;
         const current = session;
@@ -100,6 +99,9 @@ async function execute(message) {
             stderr: true,
         });
         const instance = worker;
+        instance.stdin.on('error', () => {
+            // Worker 退出时，已排队的 stdin 写入可能失败，宿主通过 exit 收到通知。
+        });
         const environment = message.env || {};
         instance.stdin.write(
             JSON.stringify({
@@ -150,11 +152,102 @@ async function execute(message) {
     }
 }
 
-readline.createInterface({ input: socket }).on('line', (line) => {
-    commands = commands
-        .then(() => execute(JSON.parse(line)))
-        .catch((error) => {
-            // start 阶段的同步异常（路径不存在、参数非法）在这里出现；不带详情就等于黑箱。
-            send({ type: 'error', session, detail: String(error?.stack || error) });
+/** 断线后终止旧会话和校验任务。新连接的命令排在这次清理之后。 */
+async function stopDisconnectedSession() {
+    for (const stop of pluginControls.values()) {
+        stop();
+    }
+    pluginControls.clear();
+    const previousWorker = worker;
+    worker = undefined;
+    session = undefined;
+    if (previousWorker) {
+        await previousWorker.terminate().catch(() => {
+            // 已结束的 Worker 无需再次终止。
         });
-});
+    }
+}
+
+/** 每条连接重新认证，所有回复只能写入产生该请求的连接。 */
+function connect() {
+    const socket = net.connect(port, '127.0.0.1');
+    let authenticated = !shouldReconnect;
+    let challenged = false;
+    const nonce = shouldReconnect ? randomUUID() : undefined;
+    const handshakeTimer = shouldReconnect
+        ? setTimeout(() => socket.destroy(), HANDSHAKE_TIMEOUT_MS)
+        : undefined;
+    const send = (message) => {
+        if (!socket.destroyed && socket.writable) {
+            socket.write(JSON.stringify(message) + '\n');
+        }
+    };
+    socket.on('connect', () => send(shouldReconnect ? { type: 'hello', nonce } : { token }));
+    socket.on('error', () => {
+        // readline 关闭后，socket 仍可能报告在途写入失败。
+    });
+    const reader = readline.createInterface({ input: socket });
+    reader.on('error', () => {
+        // readline 会把 socket 的错误重新发出。两个事件都由控制器处理。
+        socket.destroy();
+    });
+    reader.on('line', (line) => {
+        let message;
+        try {
+            message = JSON.parse(line);
+        } catch {
+            // 忽略不完整的指令，避免影响随后到达的控制消息。
+            return;
+        }
+        if (!authenticated) {
+            const proof = (role, value) =>
+                createHmac('sha256', token).update(`${role}:${value}`).digest('hex');
+            if (
+                !challenged &&
+                message?.type === 'challenge' &&
+                typeof message.nonce === 'string' &&
+                message.proof === proof('server', nonce)
+            ) {
+                challenged = true;
+                send({ type: 'proof', proof: proof('client', message.nonce) });
+            } else if (challenged && message?.type === 'ready') {
+                authenticated = true;
+                clearTimeout(handshakeTimer);
+            } else {
+                socket.destroy();
+            }
+            return;
+        }
+        reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS;
+        // 探测独立于 Worker 的启动和清理，回包只表示传输通道仍可用。
+        if (message?.type === 'ping') {
+            send({ type: 'pong', id: message.id });
+            return;
+        }
+        commands = commands
+            .then(() => {
+                if (!socket.destroyed) {
+                    return execute(message, socket, send);
+                }
+            })
+            .catch((error) => {
+                // 启动阶段出错时保留诊断，由宿主按当前会话处理。
+                send({ type: 'error', session, detail: String(error?.stack || error) });
+            });
+    });
+    socket.once('close', () => {
+        clearTimeout(handshakeTimer);
+        reader.close();
+        if (shouldReconnect) {
+            commands = commands.then(stopDisconnectedSession).catch(() => {
+                // 已断开的连接无需发送清理结果，后续仍可启动新会话。
+            });
+            setTimeout(connect, reconnectDelayMs);
+            reconnectDelayMs = Math.min(reconnectDelayMs * 2, MAX_RECONNECT_DELAY_MS);
+        }
+    });
+}
+
+// Qt 结束时由宿主统一回收运行时，避免 Node 的退出路径结束整个应用。
+setInterval(() => {}, 60000);
+connect();

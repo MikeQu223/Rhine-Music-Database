@@ -1,4 +1,5 @@
 #include "BridgeProcess.h"
+#include "Host.h"
 #include "PluginInstaller.h"
 #include <QDir>
 #include <QDirIterator>
@@ -7,8 +8,13 @@
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QPointer>
 #include <QTemporaryDir>
 #include <QTimer>
+#include <functional>
+
+bool disconnectIOSBridgeForTest();
+bool replaceIOSBridgeConnectionForTest(QEventLoop *loop, std::function<void(bool)> complete);
 
 namespace {
 /** 启动一次会话并发送单条请求；超时或传输失败时返回空对象。 */
@@ -42,6 +48,52 @@ QJsonObject exchange(BridgeProcess &bridge, const QString &root, const QString &
         return {};
     }
     return QJsonDocument::fromJson(output.trimmed()).object();
+}
+
+/** 保留旧的认证连接，让持有原令牌的新连接接管，再由真实 Node 恢复通信。 */
+bool checkTransportTakeover() {
+    QEventLoop loop;
+    bool completed = false;
+    bool replaced = false;
+    if (!replaceIOSBridgeConnectionForTest(&loop, [guard = QPointer(&loop), &completed, &replaced](bool ok) {
+            if (guard) {
+                completed = true;
+                replaced = ok;
+                guard->quit();
+            }
+        })) {
+        return false;
+    }
+    if (!completed) {
+        QTimer::singleShot(10000, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+    return replaced;
+}
+
+/** 通过 Host 打断已发送的只读请求，确认调用者直接收到重试结果。 */
+bool checkInterruptedHostRequest(const QString &root, const QString &temporary) {
+    Host host(root, false, nullptr, false, nullptr, temporary + "/reconnect-cache.sqlite");
+    const auto request = [&](const QString &content, bool reset) {
+        QEventLoop loop;
+        int replies = 0;
+        bool success = false;
+        host.requestJson("/local/lyrics", {{"content", content}}, [&](QJsonObject reply, QString error) {
+            ++replies;
+            success = error.isEmpty() && reply["body"].toObject()["code"].toInt() == 200;
+            loop.quit();
+        });
+        const bool disconnected = !reset || disconnectIOSBridgeForTest();
+        if (replies == 0) {
+            QTimer::singleShot(10000, &loop, &QEventLoop::quit);
+            loop.exec();
+        }
+        if (replies == 0) {
+            host.shutdown();
+        }
+        return disconnected && replies == 1 && success;
+    };
+    return request(QStringLiteral("启动"), false) && request(QStringLiteral("断线后重试"), true);
 }
 
 /** 把随包 fixture 插件复制进用户插件目录，复现市场安装后的目录布局。 */
@@ -107,6 +159,13 @@ bool runIOSBridgeChecks(const QString &root) {
             break;
         }
     }
+    if (ok) {
+        const bool replaced = checkTransportTakeover();
+        const auto response = exchange(bridge, root, temporary.path(), {}, lyricsRequest);
+        ok = replaced && response["id"] == "embedded-check" &&
+             response["body"].toObject()["code"].toInt() == 200;
+        qInfo() << "iOS embedded bridge authenticated takeover:" << (ok ? "passed" : "FAILED");
+    }
     // 市场插件装在数据目录；内嵌运行时必须按宿主传入的用户插件根发现并加载同一个包。
     const auto plugins = temporary.path() + "/plugins";
     QJsonObject pluginResponse;
@@ -120,6 +179,10 @@ bool runIOSBridgeChecks(const QString &root) {
             exchange(bridge, root, temporary.path(), {{"RHINE_USER_PLUGINS", plugins}}, pluginRequest);
         ok &= pluginResponse["id"] == "plugin-check" &&
               pluginResponse["body"].toObject()["code"].toInt() == 200;
+    }
+    if (ok) {
+        ok = checkInterruptedHostRequest(root, temporary.path());
+        qInfo() << "iOS Host request retry after disconnect:" << (ok ? "passed" : "FAILED");
     }
     if (!ok) {
         qInfo().noquote() << "iOS bridge response:"

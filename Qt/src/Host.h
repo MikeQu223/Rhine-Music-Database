@@ -170,6 +170,9 @@ class Host : public QObject {
         std::optional<CacheKey> diskKey;
         quint64 diskGeneration = 0;
         int cacheRevision = 0;
+#ifdef Q_OS_IOS
+        bool retriedAfterDisconnect = false;
+#endif
     };
     struct Entry {
         qint64 expiry;
