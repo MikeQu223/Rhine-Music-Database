@@ -690,6 +690,9 @@ class _BasicShellState extends State<_BasicShell>
   /// 评论页滚动位置（Qt `commentsScroll`，`music:comments` 打开时归零）。
   double _commentsScroll = 0;
 
+  /// 竖屏「专辑信息」页同专辑曲目列表的滚动量（网格单位）。
+  double _albumInfoScroll = 0;
+
   /// 当前弹层（'' = 无，'search' = 检索）。Qt 的 modal 由 NativeHud 自己持有
   /// （Qt/src/NativeHudController.cpp:64-130 openModal / :132-143 closeModal /
   /// :145-163 setQuery），BasicViewState 没有这个字段，也不在本文件的改动范围
@@ -2049,6 +2052,13 @@ class _BasicShellState extends State<_BasicShell>
       comments: _commentsModel(),
       mvAvailable: _currentDescriptor?.capability('mv', fallback: false) ?? false,
       commentsScroll: _commentsScroll,
+      albumInfoScroll: _albumInfoScroll,
+      onAlbumInfoScrollChanged: (double value) {
+        if (!mounted) {
+          return;
+        }
+        setState(() => _albumInfoScroll = value);
+      },
       // 登录页（modal == 'login'）。
       loginState: _loginController?.state,
       loginMethods: _loginController?.methods ?? const <ProviderLoginMethod>[],
@@ -3338,6 +3348,8 @@ class _BasicShellState extends State<_BasicShell>
           return;
         }
         if (controller.albumInfoActive) {
+          // 新开一页从顶部开始，不能沿用上一张专辑的滚动量。
+          setState(() => _albumInfoScroll = 0);
           _setModal('album-info');
         } else {
           setState(() => _actionNotice = controller.albumInfoStatus);

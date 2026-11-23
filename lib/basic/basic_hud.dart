@@ -173,6 +173,8 @@ class BasicHudFrame {
     /// 横屏队列面板的滚动偏移（Qt `queueOffset`，行单位）。
     /// 调用方负责 clamp 到 [queue_modal.queueModalMaximumOffset]。
     int queueOffset = 0,
+    /// 竖屏「专辑信息」页同专辑曲目列表的滚动量（网格单位）。
+    double albumInfoScroll = 0,
     /// 竖屏队列页的滚动量（Qt `m_scroll`，网格单位）。null = 按 Qt 的
     /// `newScope` 缺省规则「当前行置顶」（当前行 > 0 时 251 + index*68）。
     double? queueScroll,
@@ -296,6 +298,7 @@ class BasicHudFrame {
     // 与横屏的 1080 设计稿是两套几何，不能互相平移/缩放复用。
     if (portrait) {
       return _buildPortraitFrame(
+        albumInfoScroll: albumInfoScroll,
         state: state,
         ports: ports,
         width: width,
@@ -591,6 +594,7 @@ class BasicHudFrame {
   /// 页面集合当前只有归档主页这一屏；详情/歌词/检索/设置仍由既有 Flutter 层
   /// （弹层与 widget 窗口）负责，不在这一帧里画——竖屏移植只改「主页长什么样」。
   static BasicHudFrame _buildPortraitFrame({
+    double albumInfoScroll = 0,
     required BasicViewState state,
     required BasicGlyphPorts ports,
     required double width,
@@ -730,6 +734,7 @@ class BasicHudFrame {
         loading: albumInfoPage.loading,
         selectedIndex: albumInfoPage.selectedIndex,
         backAction: 'close-modal',
+        scroll: albumInfoScroll,
       );
     } else if (artistPage != null) {
       paintPortraitArtistPage(
@@ -2162,6 +2167,8 @@ class BasicHudSurface extends StatefulWidget {
     this.onLibraryScrollUpdate,
     this.onQueueOffsetChanged,
     this.onCommentsScrollChanged,
+    this.albumInfoScroll = 0,
+    this.onAlbumInfoScrollChanged,
     this.geometry,
     this.stage,
     this.sceneKey,
@@ -2248,6 +2255,12 @@ class BasicHudSurface extends StatefulWidget {
 
   /// 评论面板拖动时回给宿主的像素滚动量（Qt `commentsScroll`）。
   final ValueChanged<double>? onCommentsScrollChanged;
+
+  /// 竖屏「专辑信息」页同专辑曲目列表的滚动量（网格单位）。
+  final double albumInfoScroll;
+
+  /// 拖动专辑信息页列表时回写滚动量（与评论面板一样按像素换算）。
+  final ValueChanged<double>? onAlbumInfoScrollChanged;
 
 
   /// 横屏由调用方按逻辑尺寸构造；竖屏用 PortraitStage 注入的 scope。
@@ -2589,6 +2602,7 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       modal: widget.modal,
       queueOffset: widget.queueOffset,
       queueScroll: widget.queueScroll,
+      albumInfoScroll: widget.albumInfoScroll,
       queueModesExpanded: widget.queueModesExpanded,
       stageScale: geometry.stageScale,
       plugins: widget.plugins,
@@ -2736,6 +2750,11 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       );
       modalListRect = geometry.rectToLogical(
         Rect.fromLTWH(bounds.left, bounds.top + 340, bounds.width, bounds.height - 340),
+      );
+    } else if (widget.modal == 'album-info') {
+      // 专辑信息页的列表起点约在 55% 高处（封面+简介吃上半屏），下沿到内容底。
+      modalListRect = geometry.rectToLogical(
+        Rect.fromLTWH(0, stage.height * 0.52, stage.width, stage.height * 0.48),
       );
     } else if (widget.modal == 'comments') {
       modalListRect = geometry.rectToLogical(
@@ -2889,11 +2908,13 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       });
       return;
     }
-    if (widget.modal == 'comments') {
+    if (widget.modal == 'comments' || widget.modal == 'album-info') {
       setState(() {
         _abortScrollMomentum();
         _modalDragPixels = 0;
-        _modalDragStartScroll = widget.commentsScroll;
+        _modalDragStartScroll = widget.modal == 'album-info'
+            ? widget.albumInfoScroll
+            : widget.commentsScroll;
       });
       return;
     }
@@ -2965,6 +2986,16 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       widget.onCommentsScrollChanged?.call(next);
       return;
     }
+    if (widget.modal == 'album-info') {
+      final double scale = geometry.stageScale <= 0 ? 1 : geometry.stageScale;
+      _modalDragPixels += details.delta.dy;
+      // 网格单位：一屏约放 7 行，上界给到「曲目总高 - 一屏」，多拖的部分 painter 自己 clamp。
+      final int rows = widget.aux?.albumInfo?.songs.length ?? 0;
+      final double max = math.max(0.0, rows * 68.0 - 420.0);
+      final double next = (_modalDragStartScroll - _modalDragPixels / scale).clamp(0.0, max);
+      widget.onAlbumInfoScrollChanged?.call(next);
+      return;
+    }
     final double? current = _dragPosition;
     if (current == null) {
       return;
@@ -3006,7 +3037,9 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
   /// 速度快于 [_scrollCoastStart] 才起惯性（滑行 + 吸行，落定提交一次整数行）；
   /// 低速或取消仍走既有语义——立刻提交抬手位置，由宿主四舍五入到最近一行。
   void _dragEnded([DragEndDetails? details, Duration? releaseStamp]) {
-    if (widget.modal == 'queue' || widget.modal == 'comments') {
+    if (widget.modal == 'queue' ||
+        widget.modal == 'comments' ||
+        widget.modal == 'album-info') {
       _modalDragPixels = 0;
       return;
     }

@@ -32,6 +32,7 @@ void paintPortraitAlbumInfoPage(
   required bool loading,
   int selectedIndex = -1,
   String backAction = 'back',
+  double scroll = 0,
 }) {
   c.fill(Rect.fromLTWH(0, 0, c.gridWidth, c.height), c.paper);
   c.header(title.isEmpty ? '专辑信息' : title, back: true, backAction: backAction);
@@ -73,16 +74,24 @@ void paintPortraitAlbumInfoPage(
   c.section(sectionY, '同专辑曲目', 'INDEX / ${songs.length}');
   final double listTop = sectionY + 30;
 
+  // 同专辑曲目可以很长（20 首起），列表区必须能滚：窗口游标跟着 `scroll` 走，
+  // 行本身也整体上移同样的距离，否则长专辑只能看到前几首（真机缺陷）。
+  final double maximum = math.max(
+    0,
+    songs.length * portraitAlbumInfoRowStride - math.max(0, c.contentBottom - listTop),
+  );
+  final double offset = scroll.clamp(0.0, maximum);
+  final double cursor = listTop - offset;
   c.beginContent(listTop);
   if (songs.isEmpty) {
     c.paragraph(loading ? '正在读取专辑曲目…' : '这张专辑没有可显示的曲目', 20, listTop + 8,
         size: 12, width: c.gridWidth - 40, color: c.muted, maximumLines: 3);
   } else {
-    final (int first, int last) = c.visibleRows(listTop, portraitAlbumInfoRowStride, songs.length);
+    final (int first, int last) = c.visibleRows(cursor, portraitAlbumInfoRowStride, songs.length);
     for (int index = first; index < last; index++) {
       final PortraitAlbumInfoRow row = songs[index];
       c.row(
-        listTop + index * portraitAlbumInfoRowStride,
+        cursor + index * portraitAlbumInfoRowStride,
         title: row.title,
         artist: row.artist,
         stamp: row.stamp,
