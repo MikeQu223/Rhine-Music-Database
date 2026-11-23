@@ -10,6 +10,7 @@ library;
 import 'dart:math' as math;
 import 'dart:ui' show Rect;
 
+import '../scale/portrait_rhythm.dart';
 import 'portrait_canvas.dart';
 
 /// 「加入歌单」选择器的固定动作串（Qt `NativeHudMusic.cpp:487`）。
@@ -45,7 +46,8 @@ required List<(String, String, int)> playlists,
   if (notice.isNotEmpty) {
     c.text(notice, 20, 104, size: 10, width: w - 40, color: c.muted);
   }
-  double y = portraitPlaylistPickerContentTop;
+  // 起点按页高节奏收（矮屏上固定 158 + 每行 68 会把底部「创建歌单」按钮挤掉）。
+  double y = PortraitRhythm.below(110, portraitPlaylistPickerContentTop, c.height);
   if (playlists.isEmpty) {
     c.text('还没有本地歌单', 20, y + 8, size: 16, width: w - 40, weight: 'demibold');
     c.paragraph('先创建一个歌单，之后可以把曲目加进去。', 20, y + 40, size: 11, width: w - 40,

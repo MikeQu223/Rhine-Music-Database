@@ -28,6 +28,7 @@ import 'dart:ui' show Rect;
 
 import '../../provider/provider_descriptor.dart';
 import '../../provider/provider_gateway.dart';
+import '../scale/portrait_rhythm.dart';
 import 'portrait_canvas.dart';
 
 /// 页面内容起点（`Qt/src/ResponsiveHudPages.cpp:613` 的 `158 - m_scroll`）。
@@ -77,7 +78,11 @@ void paintPortraitProviderPage(
   String userName = '',
 }) {
   final double scroll = double.tryParse(scrollOffset.trim()) ?? 0;
-  final double top = math.min(portraitProviderContentTop, math.max(0, c.height));
+  // 起点按页高节奏收（矮屏上固定 158 会把最后一段平台按钮推出裁剪线）。
+  final double top = math.min(
+    PortraitRhythm.below(110, portraitProviderContentTop, c.height),
+    math.max(0, c.height),
+  );
   double y = top - scroll;
 
   // 行/按钮全部落在内容裁剪区内：`beginContent` 之后 fill/text/hit 都会夹到
