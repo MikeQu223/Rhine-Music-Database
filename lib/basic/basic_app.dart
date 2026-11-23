@@ -699,6 +699,9 @@ class _BasicShellState extends State<_BasicShell>
   /// 竖屏「歌手页」列表的滚动量（网格单位）。
   double _artistScroll = 0;
 
+  /// 竖屏分类检索结果列表的滚动量（网格单位）。
+  double _resultScroll = 0;
+
   /// 当前弹层（'' = 无，'search' = 检索）。Qt 的 modal 由 NativeHud 自己持有
   /// （Qt/src/NativeHudController.cpp:64-130 openModal / :132-143 closeModal /
   /// :145-163 setQuery），BasicViewState 没有这个字段，也不在本文件的改动范围
@@ -2092,6 +2095,13 @@ class _BasicShellState extends State<_BasicShell>
         }
         setState(() => _savedScroll = value);
       },
+      resultScroll: _resultScroll,
+      onResultScrollChanged: (double value) {
+        if (!mounted) {
+          return;
+        }
+        setState(() => _resultScroll = value);
+      },
       // 登录页（modal == 'login'）。
       loginState: _loginController?.state,
       loginMethods: _loginController?.methods ?? const <ProviderLoginMethod>[],
@@ -3166,6 +3176,7 @@ class _BasicShellState extends State<_BasicShell>
       }
       // `n` 是 Qt `kinds = {song, album, playlist, artist}` 的下标
       // （`Qt/src/NativeHudSearch.cpp:66-76`），**不是**页面上那四列的显示序。
+      _resetResultScroll();
       controller.setSearchKind(basicSearchKindQtOrder[kindIndex]);
       return;
     }
@@ -3178,6 +3189,7 @@ class _BasicShellState extends State<_BasicShell>
       if (!controller.setSearchKind(kind)) {
         return;
       }
+      _resetResultScroll();
       return;
     }
     // 分组条（Qt `music:group:<i>` = none/artist/album，只对曲目分类生效）。
@@ -3186,6 +3198,7 @@ class _BasicShellState extends State<_BasicShell>
       if (group == null || group < 0 || group >= portraitSearchGroupKeys.length) {
         return;
       }
+      _resetResultScroll();
       controller.setSearchGroup(portraitSearchGroupKeys[group]);
       return;
     }
@@ -3194,11 +3207,13 @@ class _BasicShellState extends State<_BasicShell>
       final String title = Uri.decodeComponent(
         action.substring(portraitSearchExpandActionPrefix.length),
       );
+      _resetResultScroll();
       controller.expandSearchGroup(title);
       return;
     }
     // 退出分组视图（Qt `music:group-back`）。
     if (action == portraitSearchGroupBackAction) {
+      _resetResultScroll();
       controller.clearSearchGroup();
       return;
     }
@@ -3791,6 +3806,14 @@ class _BasicShellState extends State<_BasicShell>
   }
 
   /// Overlay.qml:550-552 → Engine::searchAccepted（Qt/src/Engine.cpp:1006-1012）。
+  /// 新的一次检索（回车/点检索）→ 结果列表回到顶部。
+  void _resetResultScroll() {
+    if (_resultScroll == 0) {
+      return;
+    }
+    setState(() => _resultScroll = 0);
+  }
+
   @override
   void searchAccepted(String text, {required bool control}) {
     if (control) {
@@ -3800,6 +3823,7 @@ class _BasicShellState extends State<_BasicShell>
       unawaited(controller.play());
       return;
     }
+    _resetResultScroll();
     unawaited(controller.setQuery(text));
   }
 

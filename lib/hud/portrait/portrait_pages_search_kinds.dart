@@ -127,6 +127,10 @@ void paintPortraitSearchKindsPage(
 
   /// 载入中：只在列表顶部补一条「检索中…」。
   bool loading = false,
+
+  /// 结果列表的滚动量（网格单位）。检索结果常有 30 条以上，矮屏必须能滚，
+  /// 只有 `visibleRows` 裁剪等于「后面的永远看不到」。
+  double scroll = 0,
 }) {
   final double h = c.height;
 
@@ -139,6 +143,8 @@ void paintPortraitSearchKindsPage(
 
   final double top = math.min(130.0, h * .22);
   final double bottom = _pageBottom(c, top);
+  // 页头（检索框/tab/分组条）不滚，只有结果列表滚——与 Qt 一致
+  // （`m_scroll` 只影响 `library()` 的内容起点，`terminalSection` 之后的行整体平移）。
   double y = top;
 
   // --- 检索框（Qt compact `{20, y, 353, 47}`） ---
@@ -208,14 +214,16 @@ void paintPortraitSearchKindsPage(
   c.beginContent(listTop);
 
   // 载入态只在顶部补一条状态（Qt compact 没有，见文件头的差异说明）。
-  double cursor = listTop;
+  // 行整体上移 scroll；窗口游标同步上移，才不会有「空白一屏」或重复行。
+  final double cursor = listTop - scroll;
+  double head = cursor;
   if (loading) {
     c.text('检索中…', _left, cursor + 8, size: 11, width: _contentWidth(c), color: c.muted);
-    cursor += 22;
+    head += 22;
   }
 
   if (rows.isEmpty) {
-    _emptyState(c, cursor, emptyQuery: query.trim().isEmpty, status: status);
+    _emptyState(c, head, emptyQuery: query.trim().isEmpty, status: status);
   } else {
     final (int first, int last) = c.visibleRows(cursor, _rowHeight, rows.length);
     for (int i = first; i < last; i++) {
