@@ -37,6 +37,14 @@ const String portraitSongHintLyrics = 'mobile:song-hint:lyrics';
 const String portraitSongHintComments = 'mobile:song-hint:comments';
 
 /// 毫秒 → mm:ss（Qt `MusicData::pad`，PlayerBar.cpp:8-12 的同款）。
+/// 歌曲页两处时间标签的右缘内缩量（进度区 11 号 / 沉浸条 10 号）。
+///
+/// Qt compact 的沉浸条是 `c.text(time, 337, top + 32, 10, 40, ...)`：左锚 337、
+/// 宽 40，右缘落在 377 = 393 - 16。本仓库画布按 `gridWidth` 缩放（本机 586），
+/// 所以 16 设计单位 ≈ 24 网格单位。两处原本一个 -20 一个 -26，同页两个右缘
+/// 不齐（用户 2026-11-24 报「部分元素间距没有对齐」），这里统一成同一常量。
+const double _songRightInset = 24;
+
 String _clock(double ms) {
   final double value = ms.isFinite && ms > 0 ? ms : 0;
   final int seconds = (value / 1000).floor();
@@ -360,7 +368,8 @@ void _songProgressRow(
   // `PLAYBACK POSITION` 小标；轨道下方另给 1/4、1/2、3/4 三处时间刻度。
   final double elapsed = current ? positionMs : 0;
   c.text(_clock(elapsed), _gutter, barY - 20, size: 11, width: 100, color: c.muted);
-  c.rightText(_clock(durationMs), c.gridWidth - 20, barY - 20, 11, 'regular', c.muted);
+  c.rightText(_clock(durationMs), c.gridWidth - _songRightInset, barY - 20, 11,
+      'regular', c.muted);
   final String positionLabel = 'PLAYBACK POSITION';
   final double positionWidth = c.measure(positionLabel, 8, 'regular');
   c.text(positionLabel, (c.gridWidth - positionWidth) / 2, barY - 19, size: 8, color: c.muted);
@@ -656,7 +665,8 @@ void _lyricsBar(
   }
   c.field('seek', Rect.fromLTWH(trackLeft, top + 9, trackWidth, 24));
   c.text(_clock(positionMs), trackLeft, top + 32, size: 10, width: 100, color: c.muted);
-  c.rightText(_clock(durationMs), c.gridWidth - 26, top + 32, 10, 'regular', c.muted);
+  c.rightText(_clock(durationMs), c.gridWidth - _songRightInset, top + 32, 10,
+      'regular', c.muted);
 
   const List<String> icons = <String>['heart', 'prev', '', 'next', 'queue'];
   // Qt 沉浸条第 0 键是「喜欢」（`ResponsiveHudLayout.cpp:311-323` 的
