@@ -1065,28 +1065,43 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
           id = _artistIdFromCurrentSong(artist, artistIndex);
         }
         if (id.isEmpty) {
-          // Qt 对不合法/缺失的 artist id 是静默 no-op；这里给一条诚实原因，
-          // 免得用户点了「歌手作品」以后页面毫无反应。
-          _loading = false;
-          _status = '歌手信息不完整，无法打开歌手页';
-          _publish();
-          return;
+          // 拿不到 artist id（例如详情页停在塞壬曲库的曲目上：`_remoteRows` 里
+          // 没有它的原始行，插件也没给 `artists[]`）。这时不能像 Qt 那样静默
+          // no-op：回退成「按歌手名在本地曲库里筛」，页面至少能给出该歌手的
+          // 本地作品，而不是点了没反应。
+          songs = <SirenSong>[
+            for (final SirenSong song in _catalogSongs)
+              if (_songMatchesArtist(song, artist)) song,
+          ];
+          albums = <SirenAlbum>[
+            for (final SirenAlbum album in _catalogAlbums)
+              if (_albumMatchesArtist(album, artist)) album,
+          ];
+          if (songs.isEmpty && albums.isEmpty) {
+            _loading = false;
+            _status = '歌手信息不完整，无法打开歌手页';
+            _publish();
+            return;
+          }
+          provider = sirenProvider;
+          key = 'siren:artist:$artist';
+        } else {
+          key = '$provider:artist:$id';
+          final List<Map<String, Object?>> rows = await gateway.detailSongs(<String, Object?>{
+            'provider': provider,
+            'kind': 'artist',
+            'id': id,
+            'key': key,
+            'title': artist,
+            'artist': artist,
+          });
+          if (generation != _detailGeneration) {
+            return;
+          }
+          songs = <SirenSong>[
+            for (final Map<String, Object?> row in rows) _songFromRemoteRow(row),
+          ];
         }
-        key = '$provider:artist:$id';
-        final List<Map<String, Object?>> rows = await gateway.detailSongs(<String, Object?>{
-          'provider': provider,
-          'kind': 'artist',
-          'id': id,
-          'key': key,
-          'title': artist,
-          'artist': artist,
-        });
-        if (generation != _detailGeneration) {
-          return;
-        }
-        songs = <SirenSong>[
-          for (final Map<String, Object?> row in rows) _songFromRemoteRow(row),
-        ];
       } else {
         songs = <SirenSong>[
           for (final SirenSong song in _catalogSongs)

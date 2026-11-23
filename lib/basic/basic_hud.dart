@@ -382,7 +382,13 @@ class BasicHudFrame {
       updaterAvailable: false,
     );
 
+    // 歌手页是**目录**，不是曲目详情：`openArtistDirectory` 会把 phase 置成
+    // detail 并把第一首放进 `state.song`，若照 `songPage` 判就会画成那首歌的
+    // 详情卡（真机表现：点「↗ 歌手作品」后右栏是某首歌的 TRACK RECORD，
+    // 而不是这位歌手的作品列表）。目录优先，横屏直接走资料库列表。
+    final bool artistDirectory = state.directory?.kind == 'artist';
     final bool songPage = state.song != null &&
+        !artistDirectory &&
         (state.phase == BasicPhase.detail || state.phase == BasicPhase.lyrics);
     if (songPage) {
       final detail.SongDetailDrawing drawing = detail.renderSongDetail(
