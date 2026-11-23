@@ -12,6 +12,9 @@ account.dpapi
 node-*
 */__pycache__/
 
+# 本地 Filament 研究克隆，不参与构建
+/third_party/filament-src/
+
 # 本地会话和临时工作文件
 /.codex/
 /.agents/
