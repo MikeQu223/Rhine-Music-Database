@@ -388,8 +388,8 @@ class BasicHudFrame {
     // 而不是这位歌手的作品列表）。目录优先，横屏直接走资料库列表。
     final bool artistDirectory = state.directory?.kind == 'artist';
     final bool songPage = state.song != null &&
-        !artistDirectory &&
-        (state.phase == BasicPhase.detail || state.phase == BasicPhase.lyrics);
+        (state.phase == BasicPhase.lyrics ||
+            (!artistDirectory && state.phase == BasicPhase.detail));
     if (songPage) {
       final detail.SongDetailDrawing drawing = detail.renderSongDetail(
         _detailState(

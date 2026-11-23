@@ -4026,6 +4026,13 @@ class _BasicShellState extends State<_BasicShell>
       unawaited(controller.openLyrics());
       return null;
     }
+    if (action == 'player:lyrics-follow') {
+      // Qt `NativeHudController.cpp` 的「回到当前句」：把歌词滚动拉回当前行。
+      // 本仓库的歌词面板每帧都按 `activeLine` 居中重画（`paintLyricsPanel`
+      // 没有独立滚动量），所以它天然就在当前句上；这里只把动作收下，
+      // 不再落到「预览中尚未实现」的兜底串上。
+      return null;
+    }
     if (action == 'player:open') {
       if (_modal == 'queue') {
         _setModal('');
