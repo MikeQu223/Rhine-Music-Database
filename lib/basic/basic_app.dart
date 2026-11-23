@@ -2311,11 +2311,16 @@ class _BasicShellState extends State<_BasicShell>
                   : Align(alignment: Alignment.topLeft, child: page);
             },
           ),
+        // MV 视频面铺满整窗、压在最上层：Android 的场景是 PlatformView（独立
+        // surface，永远压在 Flutter 之上），垫到 HUD 之下会被场景整个盖掉；Qt 那边
+        // MvWindow 也是独立全屏窗口盖住 HUD。面板的版本/偏移按钮因此让位给视频面
+        // 自带的「画面 −0.5s / +0.5s / 重新对齐 / 关闭」。
         if (_mvOpen)
           Builder(
             builder: (BuildContext inner) {
               final MvController mv = _mvController!;
-              final Widget player = BasicMvPlayer(
+              return Positioned.fill(
+                child: BasicMvPlayer(
                   url: mv.state.track!.url,
                   title: mv.state.track!.title,
                   status: mv.state.status,
@@ -2338,20 +2343,7 @@ class _BasicShellState extends State<_BasicShell>
                     );
                     setState(() {});
                   },
-                );
-              // 横屏：视频只占左侧 3D 场景区，右侧留给 HUD 的 MV 面板；铺满整窗会把
-              // 面板上的「视频版本 / 画面偏移 / 关闭」全盖住（真机缺陷）。
-              // 竖屏没有并排空间，仍按整页播放。
-              if (geometry == null) {
-                return Positioned.fill(child: player);
-              }
-              final Size size = MediaQuery.sizeOf(inner);
-              return Positioned(
-                left: 0,
-                top: 0,
-                width: size.width * 0.56,
-                height: size.height,
-                child: player,
+                ),
               );
             },
           ),
