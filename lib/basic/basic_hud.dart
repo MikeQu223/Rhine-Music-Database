@@ -9,6 +9,7 @@ import 'package:flutter/scheduler.dart' show Ticker;
 
 import '../hud/input/hit_layer.dart';
 import '../hud/modals/lyrics_panel.dart' as lyrics;
+import '../hud/modals/lyrics_offset_modal.dart' as lyrics_offset;
 import '../hud/modals/modal_shell.dart';
 import '../hud/modals/modal_shell.dart' as modal_shell;
 import '../hud/modals/comments_modal.dart' as comments_modal;
@@ -300,6 +301,10 @@ class BasicHudFrame {
     /// 发现页（`modal == 'discover'`）的一帧快照；null = 不进发现页。
     BasicDiscoverSnapshot? discover,
     bool localMusicEnabled = true,
+    /// 横屏「歌词偏移」浮层是否打开（Qt `modal == "lyrics-offset"`，
+    /// `player:lyrics-offset` 翻转）。竖屏不走这一层：竖屏的
+    /// 歌词提前/延后/重置在「歌曲操作」面板里。
+    bool lyricsOffsetOpen = false,
   }) {
     final bool dark = state.dark;
     // 竖屏（compact）走独立排版：393 网格、归档主页 + 迷你播放条 + 底栏，
@@ -435,6 +440,40 @@ class BasicHudFrame {
           ports,
         );
         sink.addDrawing(panel.commands, panel.hits);
+        if (lyricsOffsetOpen) {
+          // Qt `modal == "lyrics-offset"`：浮层是**面板之上的独立一层**
+          // （`NativeHudModal.cpp:83-119`），自带面板底色与六个命中，
+          // 不铺遮罩、不抢外部点击。几何全在 lyrics_offset_modal 里按 1080 舞台。
+          final lyrics_offset.LyricsOffsetModalFrame popover =
+              lyrics_offset.LyricsOffsetModal(
+            lyrics_offset.LyricsOffsetModalState(
+              width: width,
+              opacity: 1,
+              offset: 0,
+              offsetMs: state.lyricsOffsetMs,
+              globalOffsetMs: state.lyricsGlobalOffsetMs,
+              measureText: (String value, double size, String? weight, double tracking) =>
+                  ports.glyphWidth(value, size, weight ?? 'regular'),
+              dark: dark,
+            ),
+          ).build();
+          // popover.hits 是六字段命中行（x,y,w,h,action,label），
+          // `addDrawing` 的第二参要的是 Map 形式；这里按同一契约解码。
+          sink.addDrawing(
+            _commandRows(popover.commands),
+            <Map<String, Object?>>[
+              for (final List<Object?> row in popover.hits)
+                <String, Object?>{
+                  'x': row[0],
+                  'y': row[1],
+                  'width': row[2],
+                  'height': row[3],
+                  'action': row[4],
+                  'label': row[5],
+                },
+            ],
+          );
+        }
       }
     } else {
       _paintLibrary(
@@ -1940,7 +1979,7 @@ class BasicHudFrame {
     final SirenSong? song = state.song;
     final BasicLyricsDocument document = BasicLyricsDocument(
       lines: state.lyrics,
-      offsetMs: 0,
+      offsetMs: state.lyricsOffsetMs,
       plainText: '',
       timed: state.lyrics.isNotEmpty,
     );
@@ -1951,6 +1990,10 @@ class BasicHudFrame {
       artist: song?.artist ?? '',
       document: document.toLyricsDocument(),
       index: state.lyricIndex,
+      // 偏移随模型带入：横屏「歌词偏移」浮层要用同一份快照判定
+      // 「重置 / 全局应用」是按钮还是灰字（Qt `NativeHudModal.cpp:106-117`）。
+      offsetMs: state.lyricsOffsetMs,
+      globalOffsetMs: state.lyricsGlobalOffsetMs,
       status: state.lyricStatus,
       message: state.lyricMessage,
       seekable: state.durationMs > 0,
@@ -2305,7 +2348,12 @@ class BasicHudSurface extends StatefulWidget {
     this.savedNotice = '',
     this.mv,
     this.mvPositionMs = 0,
+    this.lyricsOffsetOpen = false,
   });
+
+  /// 横屏「歌词偏移」浮层是否打开（Qt `modal == "lyrics-offset"`）。
+  /// 竖屏不消费：竖屏把提前/延后/重置放进「歌曲操作」面板。
+  final bool lyricsOffsetOpen;
 
   final BasicViewState state;
   /// 当前平台显示名与「是否内置塞壬」：竖屏/横屏页头、详情页 provider 字段都读它。
@@ -2763,6 +2811,7 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       discover: widget.discover,
       mv: widget.mv,
       mvPositionMs: widget.mvPositionMs,
+      lyricsOffsetOpen: widget.lyricsOffsetOpen,
     );
     // 输入框矩形回传宿主：登录页手机号/验证码框要按画出来的位置摆输入层。
     widget.onFields?.call(frame.fields);

@@ -696,6 +696,8 @@ class BasicViewState {
     this.searchStatus = '',
     this.searchGroups = const <String, List<int>>{},
     this.lyricStatus = 'idle',
+    this.lyricsOffsetMs = 0,
+    this.lyricsGlobalOffsetMs = 0,
     this.lyricMessage = '',
     this.playerStatus = '',
     this.catalogLoaded = false,
@@ -807,6 +809,15 @@ class BasicViewState {
 
   /// 歌词状态：'idle' / 'ready' / 'plain' / 'empty'（对齐 LyricsController.status 词表）。
   final String lyricStatus;
+
+  /// 当前曲目的歌词偏移（毫秒，`LyricsController::offsetMs`）。
+  /// 「歌词偏移」浮层要显示「已提前/已延后 N.Ns」，所以偏移值必须进视图状态，
+  /// 不能让画布自己猜。
+  final double lyricsOffsetMs;
+
+  /// 全局歌词偏移（毫秒，`LyricsController::globalOffsetMs`）：
+  /// 与当前偏移相等时浮层的「全局应用」只画灰字。
+  final double lyricsGlobalOffsetMs;
 
   /// 歌词空态/加载态文案（LyricsController.message）。
   final String lyricMessage;
@@ -935,6 +946,8 @@ class BasicViewState {
     String? searchStatus,
     Map<String, List<int>>? searchGroups,
     String? lyricStatus,
+    double? lyricsOffsetMs,
+    double? lyricsGlobalOffsetMs,
     String? lyricMessage,
     String? playerStatus,
     bool? catalogLoaded,
@@ -988,6 +1001,8 @@ class BasicViewState {
       searchStatus: searchStatus ?? this.searchStatus,
       searchGroups: searchGroups ?? this.searchGroups,
       lyricStatus: lyricStatus ?? this.lyricStatus,
+      lyricsOffsetMs: lyricsOffsetMs ?? this.lyricsOffsetMs,
+      lyricsGlobalOffsetMs: lyricsGlobalOffsetMs ?? this.lyricsGlobalOffsetMs,
       lyricMessage: lyricMessage ?? this.lyricMessage,
       playerStatus: playerStatus ?? this.playerStatus,
       catalogLoaded: catalogLoaded ?? this.catalogLoaded,

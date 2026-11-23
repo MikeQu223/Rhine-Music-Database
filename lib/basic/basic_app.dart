@@ -720,6 +720,10 @@ class _BasicShellState extends State<_BasicShell>
   Map<String, Rect> _frameFields = const <String, Rect>{};
 
   /// 输入层的状态句柄：HUD 点中输入框时用它把焦点交给对应文本域。
+  /// 横屏「歌词偏移」浮层是否打开（Qt `modal == "lyrics-offset"`）。
+  /// 竖屏没有这一层：竖屏把提前/延后/重置放进「歌曲操作」面板。
+  bool _lyricsOffsetOpen = false;
+
   final GlobalKey<TextInputOverlayState> _textInputKey = GlobalKey<TextInputOverlayState>();
 
   /// HUD 画出来的输入框被点中（`field(name, rect)` 的 name）。
@@ -2112,6 +2116,8 @@ class _BasicShellState extends State<_BasicShell>
       loginSmsRetrySeconds: _loginController?.smsRetrySeconds ?? 0,
       mv: _mvController == null ? null : basicMvPanelModelOf(_mvController!.state),
       mvPositionMs: _mvController?.videoPositionMs ?? 0,
+      // 横屏歌词面板上的「歌词偏移 ⌃」浮层（Qt `modal == "lyrics-offset"`）。
+      lyricsOffsetOpen: _lyricsOffsetOpen,
       savedLane: _savedLane,
       aux: _auxPages(),
       savedOverview: _savedOverview,
@@ -2985,6 +2991,12 @@ class _BasicShellState extends State<_BasicShell>
       return;
     }
     if (action == HudAction.closeModal) {
+      // 歌词偏移浮层自己的「关闭」（Qt `NativeHudModal.cpp:96` 的 close-modal）
+      // 只收这一层，不能把整个歌词页一起关掉。
+      if (_lyricsOffsetOpen) {
+        setState(() => _lyricsOffsetOpen = false);
+        return;
+      }
       if (_modal == DiscWarningModal.kind) {
         _setModal('settings');
         return;
@@ -3031,12 +3043,17 @@ class _BasicShellState extends State<_BasicShell>
       unawaited(_loadDiscover());
       return;
     }
-    if (action == 'mobile:history') {
+    if (action == 'mobile:history' || action == 'mobile:artists') {
+      // Qt `NativeHudController.cpp:521-524`：compact 下 history / artists 都先
+      // `openModal("discover")` 再切到对应 tab；artists 走的是远端收藏歌手。
       setState(() {
-        _discoverTab = basicDiscoverHistoryTab;
+        _discoverTab = action == 'mobile:artists' ? 'artists' : basicDiscoverHistoryTab;
         _discoverScroll = 0;
       });
       _setModal('discover');
+      if (action == 'mobile:artists') {
+        unawaited(_loadDiscover());
+      }
       return;
     }
     if (action.startsWith(basicDiscoverCategoryPrefix)) {
@@ -3587,6 +3604,32 @@ class _BasicShellState extends State<_BasicShell>
       }));
       return;
     }
+    // 横屏「歌词偏移」浮层（Qt `modal == "lyrics-offset"`，
+    // `NativeHudController.cpp:375-379`：同一条动作开/收）。浮层只挂在歌词面板上，
+    // 所以关面板或离开歌词页时由宿主自己收起（见 _setModal 的清理）。
+    if (action == 'player:lyrics-offset') {
+      setState(() => _lyricsOffsetOpen = !_lyricsOffsetOpen);
+      return;
+    }
+    // 「全局应用」把当前偏移写成默认（Qt `player:lyrics-apply-global`）。
+    if (action == 'player:lyrics-apply-global') {
+      unawaited(controller.applyGlobalLyricsOffset().then((String notice) {
+        if (!mounted) {
+          return;
+        }
+        _setNotice(notice);
+        setState(() {});
+      }));
+      return;
+    }
+    // 检索框右侧箭头（Qt `mobile:search-submit`，`NativeHudController.cpp:531-533`）：
+    // 用**当前**关键词重新检索一次并把结果列表回顶。输入层的每次击键已经
+    // 写进 `state.query`（见 _onSearchChanged），这里不再另取第二份文本。
+    if (action == 'mobile:search-submit') {
+      _resetResultScroll();
+      unawaited(controller.setQuery(controller.state.query));
+      return;
+    }
     if (action == 'player:lyrics-reset') {
       unawaited(controller.resetLyricsOffset().then((String notice) {
         if (!mounted) {
@@ -3718,7 +3761,14 @@ class _BasicShellState extends State<_BasicShell>
     // Qt openModal 会 cacheMessage.clear()（Qt/src/NativeHudController.cpp:95）：
     // 开弹层时旧的动作反馈必须收起，否则「尚未接入」的提示会挂在搜索框上。
     // 资源失败横幅是另一槽（_resourceNotice），与弹层无关，不跟着清。
-    setState(() => _modal = modal);
+    setState(() {
+      _modal = modal;
+      // 换页/关弹层时歌词偏移浮层必须跟着收：它只属于歌词面板那一层，
+      // 留在其它页面上会变成一个没有主人的浮块。
+      if (modal != 'lyrics') {
+        _lyricsOffsetOpen = false;
+      }
+    });
     if (modal.isNotEmpty) {
       // 收起提示时同时取消计时器：否则到点后还会再 setState 一次。
       _clearNotice();

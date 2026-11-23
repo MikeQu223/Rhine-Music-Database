@@ -2918,6 +2918,23 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     return _lyricsOffsetStatus(lyrics);
   }
 
+  /// 当前曲目的歌词偏移（毫秒）：「歌词偏移」浮层要按它决定按钮/灰字。
+  double get lyricsOffsetMs => _lyrics?.offsetMs ?? 0;
+
+  /// 全局歌词偏移（毫秒）：与当前偏移相等时「全局应用」只画灰字。
+  double get lyricsGlobalOffsetMs => _lyrics?.globalOffsetMs ?? 0;
+
+  /// 把当前偏移写成全局默认（Qt `player:lyrics-apply-global`）。
+  Future<String> applyGlobalLyricsOffset() async {
+    final LyricsController? lyrics = _lyrics;
+    if (lyrics == null) {
+      return '歌词尚未加载';
+    }
+    await lyrics.applyGlobalOffset();
+    _publish();
+    return '已应用到全局：${_lyricsOffsetStatus(lyrics)}';
+  }
+
   static String _lyricsOffsetStatus(LyricsController lyrics) {
     final int offset = lyrics.offsetMs.round();
     if (offset == 0) {
@@ -3862,6 +3879,8 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
       searchGroups: searchGroups(),
       lyricStatus: lyrics?.status ?? 'idle',
       lyricMessage: lyrics?.message ?? '',
+      lyricsOffsetMs: lyrics?.offsetMs ?? 0,
+      lyricsGlobalOffsetMs: lyrics?.globalOffsetMs ?? 0,
       playerStatus: _player.status,
       catalogLoaded: _catalogLoaded,
       localCollectionsAvailable: _localCollectionsAvailable,
