@@ -745,7 +745,19 @@ class BasicHudFrame {
         modal.isEmpty && state.phase == BasicPhase.detail && directory?.kind == 'artist'
             ? aux?.artist
             : null;
+    // Qt `ResponsiveHudLayout::arrange` 的收尾对**每一页**都画播放条与底栏
+    // （只有歌曲页改用 `playerBounds` 字段、歌词页换沉浸条）。百科/专辑信息/
+    // 歌手/登录/MV/选择器这几页是我们自己的页面，也照同一收尾画，否则进页后
+    // 底部整块空白、既看不到当前音轨也切不了 tab（真机缺陷）。
+    final double pageContentBottom = math.max(0, canvas.height - portraitFooterHeight);
+    void finishWithFooter(PortraitNav? nav) {
+      canvas.ensureScale();
+      paintPortraitFooter(canvas, player: portraitPlayer, nav: nav);
+      canvas.finish();
+    }
+
     if (wikiPage != null) {
+      canvas.contentBottom = pageContentBottom;
       paintPortraitWikiPage(
         canvas,
         title: wikiPage.title,
@@ -757,7 +769,9 @@ class BasicHudFrame {
         backAction: 'close-modal',
         scroll: wikiScroll,
       );
+      finishWithFooter(null);
     } else if (albumInfoPage != null) {
+      canvas.contentBottom = pageContentBottom;
       paintPortraitAlbumInfoPage(
         canvas,
         title: albumInfoPage.title,
@@ -773,7 +787,9 @@ class BasicHudFrame {
         backAction: 'close-modal',
         scroll: albumInfoScroll,
       );
+      finishWithFooter(null);
     } else if (artistPage != null) {
+      canvas.contentBottom = pageContentBottom;
       paintPortraitArtistPage(
         canvas,
         artist: artistPage.name,
@@ -787,6 +803,7 @@ class BasicHudFrame {
         backAction: 'back',
         scroll: artistScroll,
       );
+      finishWithFooter(PortraitNav.archive);
     } else if (modal == 'queue') {
       // Qt compact `queue()`（ResponsiveHudPages.cpp:468-533）：通用页头（只有返回
       // 箭头 + close-modal，没有设置齿轮）+ 内容自 158 起；播放条与底栏由 shell 画
@@ -861,14 +878,17 @@ class BasicHudFrame {
       // 「COMMENT ARCHIVE / 评论档案」小标，内容自 158 起。
       // 与 Qt 同一分工：页面不夹取滚动，宿主把 scroll 夹在 [0, maximumScroll]
       // （Qt `ResponsiveHudLayout.cpp:238-244` 同一处夹取）。
+      canvas.contentBottom = pageContentBottom;
       paintPortraitCommentsPage(
         canvas,
         model: comments,
         scroll: commentsScroll,
       );
+      finishWithFooter(null);
     } else if (modal == 'login' && loginState != null) {
       // Qt compact 的登录页（NativeHud::loginPanel 的竖屏对应实现）：整页纸色 +
       // 通用页头（返回箭头 + close-modal），内容由 portrait_pages_login 排布。
+      canvas.contentBottom = pageContentBottom;
       paintPortraitLoginPage(
         canvas,
         state: loginState,
@@ -879,11 +899,14 @@ class BasicHudFrame {
         cooldownLabel: loginCooldownLabel,
         smsRetrySeconds: loginSmsRetrySeconds,
       );
+      finishWithFooter(null);
     } else if (modal == 'mv' && mv != null) {
       // 竖屏 MV 页（`lib/hud/portrait/portrait_pages_mv.dart`）：Qt 移动端从不进
       // MV（`Qt/src/PlatformFeatures.h:23-27` 的 `MusicVideo = !RHINE_MOBILE && …`），
       // 所以这一屏没有 Qt 版式真值，几何按竖屏 393 网格自拟（页面文件头已写明）。
+      canvas.contentBottom = pageContentBottom;
       paintPortraitMvPage(canvas, model: mv, position: mvPositionMs);
+      finishWithFooter(null);
     } else if (modal == 'settings') {
       // Qt compact 的设置是「终端页」：页头（品牌/标题/编号块/校准刻度）+ 内容
       // 由一页铺到 h-144，底下播放条与底栏照旧。内容本身是真实 widget 层
@@ -900,12 +923,14 @@ class BasicHudFrame {
       // Qt compact `music:add-to-playlist` 打开的是通用列表弹层
       // （`NativeHudMusic.cpp:483-486` + `NativeHudModal.cpp` 的列表分支），
       // 393 网格下没有独立版式，这里按同一网格拟一页（页头 + 歌单行 + 空态）。
+      canvas.contentBottom = pageContentBottom;
       paintPortraitPlaylistPicker(
         canvas,
         playlists: pickerPlaylists,
         notice: pickerNotice,
         canCreate: canCreatePlaylist,
       );
+      finishWithFooter(null);
     } else if (modal == 'discover') {
       // Qt compact 的发现页是终端页（`ResponsiveHudLayout.cpp:150-176` 的
       // `modal == "discover"` ⇒ `01 DISCOVER / 音乐观察`），内容按
