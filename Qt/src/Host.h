@@ -278,6 +278,9 @@ void platformSetActivates(bool value);
 void platformMediaCommands(std::function<void(QString)> callback);
 void platformMediaInfo(QString title, QString artist, QString album, QVariantMap state,
                        const QString &coverPath = {});
+#ifdef Q_OS_IOS
+std::unique_ptr<QObject> beginIOSPlaybackBackgroundTask();
+#endif
 #ifdef Q_OS_MACOS
 void platformInterfaceMediaCommands(std::function<void(QString)> callback);
 void platformInterfaceMediaInfo(bool hasTrack);

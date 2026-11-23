@@ -4,6 +4,7 @@
 #include "SentryPlaybackFailure.h"
 #include <QElapsedTimer>
 #include <QString>
+#include <memory>
 #include <optional>
 
 class MusicPlayer : public QObject {
@@ -76,6 +77,9 @@ class MusicPlayer : public QObject {
     QString m_playAttemptId;
     QElapsedTimer m_playAttemptClock;
     QString m_remoteCover;
+#ifdef Q_OS_IOS
+    std::unique_ptr<QObject> m_playbackBackgroundTask;
+#endif
     bool remoteCommand(const QString &method, QJsonObject arguments = {});
     void recoverPlayback();
     MusicApi::Valid valid(quint64 generation);

@@ -2,6 +2,8 @@
 #include "Host.h"
 #include "PlatformFeatures.h"
 #include <QFileInfo>
+#include <QPointer>
+#include <utility>
 #import <AVFAudio/AVFAudio.h>
 #import <MediaPlayer/MediaPlayer.h>
 #import <Security/Security.h>
@@ -58,6 +60,35 @@ NSData *migrateLegacyCredential() {
 }
 NSMutableArray *mediaTargets;
 NSMutableArray *audioObservers;
+
+/** 为换曲期间没有音频输出的间隔申请有限执行时间。 */
+class PlaybackBackgroundTask final : public QObject {
+  public:
+    PlaybackBackgroundTask() {
+        const QPointer guard(this);
+        auto *application = [UIApplication sharedApplication];
+        m_task = [application beginBackgroundTaskWithName:@"Rhine playback preparation"
+                                        expirationHandler:^{
+                                          if (guard) {
+                                              guard->finish();
+                                          }
+                                        }];
+    }
+
+    ~PlaybackBackgroundTask() override {
+        finish();
+    }
+
+  private:
+    void finish() {
+        if (m_task != UIBackgroundTaskInvalid) {
+            const auto task = std::exchange(m_task, UIBackgroundTaskInvalid);
+            [[UIApplication sharedApplication] endBackgroundTask:task];
+        }
+    }
+
+    UIBackgroundTaskIdentifier m_task = UIBackgroundTaskInvalid;
+};
 
 // 系统媒体控件封面
 MPMediaItemArtwork *mediaArtwork(const QString &coverPath) {
@@ -121,6 +152,10 @@ void platformDeleteCredential() {
 }
 void platformPlay(const QString &, const QJsonObject &, bool, std::function<void(QString)> done) {
     done(QStringLiteral("iOS 仅支持面板内播放"));
+}
+
+std::unique_ptr<QObject> beginIOSPlaybackBackgroundTask() {
+    return std::make_unique<PlaybackBackgroundTask>();
 }
 
 /** 注册锁屏媒体操作和音频中断；销毁 Host 时移除全部目标，避免悬空回调。 */

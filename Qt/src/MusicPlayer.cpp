@@ -337,6 +337,10 @@ void MusicPlayer::play(QJsonObject track, std::optional<QJsonArray> source, std:
     m_restoringSession = resume.has_value();
     m_recoveryAttempts = 0;
     previewRequested = preview && ProviderRegistry::instance().capability(m_api->provider, "preview", false);
+#ifdef Q_OS_IOS
+    // 先申请后台执行时间，再停掉旧音频，覆盖锁屏换曲以及取址中途锁屏。
+    m_playbackBackgroundTask = beginIOSPlaybackBackgroundTask();
+#endif
     m_host->mediaControl("stop");
     current = track;
     actualQuality.clear();
@@ -540,6 +544,9 @@ void MusicPlayer::fail(QString error, RhineSentry::PlaybackFailure failure) {
     actualQuality.clear();
     status = error;
     loading = false;
+#ifdef Q_OS_IOS
+    m_playbackBackgroundTask.reset();
+#endif
     emit changed();
 }
 
@@ -556,6 +563,9 @@ void MusicPlayer::recoverPlayback() {
     failed = false;
     actualQuality.clear();
     status = QStringLiteral("正在恢复播放（%1/2）…").arg(m_recoveryAttempts);
+#ifdef Q_OS_IOS
+    m_playbackBackgroundTask = beginIOSPlaybackBackgroundTask();
+#endif
     m_host->mediaControl("stop");
     emit changed();
     prepare(current, generation, true);
@@ -678,6 +688,11 @@ void MusicPlayer::tick(double time, bool force) {
     for (auto it = update.begin(); it != update.end(); ++it) {
         state[it.key()] = it.value();
     }
+#ifdef Q_OS_IOS
+    if (m_playbackBackgroundTask && !loading && (state["playing"].toBool() || !state["requested"].toBool())) {
+        m_playbackBackgroundTask.reset();
+    }
+#endif
     if (m_resumePosition && !loading && state["seekable"].toBool()) {
         const auto position = std::clamp(*m_resumePosition, 0., state["duration"].toDouble());
         m_resumePosition.reset();
@@ -852,6 +867,9 @@ void MusicPlayer::stop() {
     coverImage.clear();
     current = {};
     queue.clear();
+#ifdef Q_OS_IOS
+    m_playbackBackgroundTask.reset();
+#endif
     m_host->mediaControl("stop");
     m_host->mediaMetadata({}, {}, {});
     state["playing"] = false;

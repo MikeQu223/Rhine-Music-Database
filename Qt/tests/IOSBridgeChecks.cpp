@@ -14,7 +14,8 @@
 #include <functional>
 
 bool disconnectIOSBridgeForTest();
-bool replaceIOSBridgeConnectionForTest(QEventLoop *loop, std::function<void(bool)> complete);
+bool replaceIOSBridgeConnectionForTest(QEventLoop *loop, bool recoverInBackground,
+                                       std::function<void(bool)> complete);
 
 namespace {
 /** 启动一次会话并发送单条请求；超时或传输失败时返回空对象。 */
@@ -50,18 +51,19 @@ QJsonObject exchange(BridgeProcess &bridge, const QString &root, const QString &
     return QJsonDocument::fromJson(output.trimmed()).object();
 }
 
-/** 保留旧的认证连接，让持有原令牌的新连接接管，再由真实 Node 恢复通信。 */
-bool checkTransportTakeover() {
+/** 确认新连接接管成功，或在保持后台时丢弃不响应的连接。 */
+bool checkTransportTakeover(bool recoverInBackground) {
     QEventLoop loop;
     bool completed = false;
     bool replaced = false;
-    if (!replaceIOSBridgeConnectionForTest(&loop, [guard = QPointer(&loop), &completed, &replaced](bool ok) {
-            if (guard) {
-                completed = true;
-                replaced = ok;
-                guard->quit();
-            }
-        })) {
+    const auto complete = [guard = QPointer(&loop), &completed, &replaced](bool ok) {
+        if (guard) {
+            completed = true;
+            replaced = ok;
+            guard->quit();
+        }
+    };
+    if (!replaceIOSBridgeConnectionForTest(&loop, recoverInBackground, complete)) {
         return false;
     }
     if (!completed) {
@@ -159,12 +161,17 @@ bool runIOSBridgeChecks(const QString &root) {
             break;
         }
     }
-    if (ok) {
-        const bool replaced = checkTransportTakeover();
+    for (const bool recoverInBackground : {false, true}) {
+        if (!ok) {
+            break;
+        }
+        const bool replaced = checkTransportTakeover(recoverInBackground);
         const auto response = exchange(bridge, root, temporary.path(), {}, lyricsRequest);
         ok = replaced && response["id"] == "embedded-check" &&
              response["body"].toObject()["code"].toInt() == 200;
-        qInfo() << "iOS embedded bridge authenticated takeover:" << (ok ? "passed" : "FAILED");
+        qInfo() << (recoverInBackground ? "iOS bridge recovery without foreground activation:"
+                                        : "iOS embedded bridge authenticated takeover:")
+                << (ok ? "passed" : "FAILED");
     }
     // 市场插件装在数据目录；内嵌运行时必须按宿主传入的用户插件根发现并加载同一个包。
     const auto plugins = temporary.path() + "/plugins";

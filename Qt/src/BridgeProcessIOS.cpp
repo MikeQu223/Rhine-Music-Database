@@ -103,7 +103,7 @@ class NodeRuntime : public QObject {
         });
     }
 
-    /** iOS 可能回收监听器而不通知应用，回前台时在原地址重建监听。 */
+    /** iOS 可能回收监听器而不通知应用，恢复时在原地址重建监听。 */
     void refreshListener() {
         if (listenPort == 0 || exited) {
             return;
@@ -113,6 +113,18 @@ class NodeRuntime : public QObject {
             listenerRetry.start(1000);
         } else {
             listenerRetry.stop();
+        }
+    }
+
+    /** 锁屏媒体控件和自然切歌可能在界面仍处于后台时请求 Worker。 */
+    void recoverForWorkerRequest(Qt::ApplicationState state) {
+        if (state == Qt::ApplicationActive) {
+            return;
+        }
+        if (socket) {
+            probeConnection();
+        } else if (!listenerRetry.isActive()) {
+            refreshListener();
         }
     }
 
@@ -170,14 +182,15 @@ class NodeRuntime : public QObject {
     /** 唤醒后主动检测半开连接，避免播放请求等到 Worker 启动超时。 */
     void probeConnection() {
         auto *peer = socket;
-        if (!peer) {
+        if (!peer || !pendingProbe.isEmpty()) {
             return;
         }
         pendingProbe = QUuid::createUuid().toString(QUuid::WithoutBraces);
         const auto probe = pendingProbe;
         QTimer::singleShot(HandshakeTimeoutMs, peer, [this, peer, probe] {
             if (socket == peer && pendingProbe == probe) {
-                os_log_error(OS_LOG_DEFAULT, "Rhine iOS bridge: foreground probe timed out");
+                os_log_error(OS_LOG_DEFAULT, "Rhine iOS bridge: transport probe timed out");
+                refreshListener();
                 peer->abort();
             }
         });
@@ -319,8 +332,9 @@ bool disconnectIOSBridgeForTest() {
     return !node.socket;
 }
 
-/** 用自检连接接管仍在线的旧 socket，再让真实 Node 重新连接。 */
-bool replaceIOSBridgeConnectionForTest(QEventLoop *loop, std::function<void(bool)> complete) {
+/** 用自检连接接管旧连接；后台场景还模拟失效的监听器和不响应探测的连接。 */
+bool replaceIOSBridgeConnectionForTest(QEventLoop *loop, bool recoverInBackground,
+                                       std::function<void(bool)> complete) {
     auto &node = runtime();
     if (!node.socket) {
         return false;
@@ -331,7 +345,8 @@ bool replaceIOSBridgeConnectionForTest(QEventLoop *loop, std::function<void(bool
     QObject::connect(peer, &QTcpSocket::connected, loop,
                      [peer, nonce] { NodeRuntime::write(peer, {{"type", "hello"}, {"nonce", nonce}}); });
     QObject::connect(
-        peer, &QTcpSocket::readyRead, loop, [peer, nonce, previous, complete = std::move(complete)] {
+        peer, &QTcpSocket::readyRead, loop,
+        [peer, loop, nonce, previous, recoverInBackground, complete = std::move(complete)] {
             while (peer->canReadLine()) {
                 const auto message = QJsonDocument::fromJson(peer->readLine()).object();
                 auto &current = runtime();
@@ -342,10 +357,18 @@ bool replaceIOSBridgeConnectionForTest(QEventLoop *loop, std::function<void(bool
                                               {"proof", bridgeProof(current.token, QStringLiteral("client"),
                                                                     message["nonce"].toString())}});
                 } else if (message["type"] == "ready") {
-                    complete((!previous || previous->state() == QAbstractSocket::UnconnectedState) &&
-                             disconnectIOSBridgeForTest());
+                    const bool replaced = !previous || previous->state() == QAbstractSocket::UnconnectedState;
+                    if (!recoverInBackground || !replaced) {
+                        complete(replaced && disconnectIOSBridgeForTest());
+                        return;
+                    }
+                    // 保持已认证连接但不回 pong。真实 Node 只有在监听恢复后才能回来。
+                    current.server.close();
+                    QObject::connect(peer, &QTcpSocket::disconnected, loop,
+                                     [complete] { complete(runtime().server.isListening()); });
+                    current.recoverForWorkerRequest(Qt::ApplicationSuspended);
                     return;
-                } else {
+                } else if (!recoverInBackground || message["type"] != "ping") {
                     complete(false);
                     return;
                 }
@@ -397,8 +420,10 @@ void BridgeProcess::start(const QString &root, const QString &temporary,
     m_error = UnknownError;
     m_state = Starting;
     m_session = QUuid::createUuid().toString(QUuid::WithoutBraces);
-    runtime().owner = this;
-    if (!runtime().launch(root)) {
+    auto &node = runtime();
+    node.owner = this;
+    node.recoverForWorkerRequest(QGuiApplication::applicationState());
+    if (!node.launch(root)) {
         QTimer::singleShot(0, this, [this] { accept({{"type", "runtime-error"}}); });
         return;
     }
@@ -406,10 +431,10 @@ void BridgeProcess::start(const QString &root, const QString &temporary,
     for (auto it = extraEnvironment.begin(); it != extraEnvironment.end(); ++it) {
         environment.insert(it.key(), it.value());
     }
-    runtime().send({{"type", "start"},
-                    {"session", m_session},
-                    {"script", root + "/MusicBridge/worker.cjs"},
-                    {"env", environment}});
+    node.send({{"type", "start"},
+               {"session", m_session},
+               {"script", root + "/MusicBridge/worker.cjs"},
+               {"env", environment}});
     const auto session = m_session;
     QTimer::singleShot(30000, this, [this, session] {
         if (m_session == session && m_state == Starting) {
@@ -420,8 +445,9 @@ void BridgeProcess::start(const QString &root, const QString &temporary,
     });
 }
 void BridgeProcess::write(const QByteArray &bytes) {
-    runtime().send(
-        {{"type", "input"}, {"session", m_session}, {"data", QString::fromLatin1(bytes.toBase64())}});
+    auto &node = runtime();
+    node.recoverForWorkerRequest(QGuiApplication::applicationState());
+    node.send({{"type", "input"}, {"session", m_session}, {"data", QString::fromLatin1(bytes.toBase64())}});
 }
 QByteArray BridgeProcess::readAllStandardOutput() {
     return std::exchange(m_output, {});
