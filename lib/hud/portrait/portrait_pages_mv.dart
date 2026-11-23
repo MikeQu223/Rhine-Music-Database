@@ -23,6 +23,7 @@ library;
 import 'dart:math' as math;
 import 'dart:ui' show Rect;
 
+import '../scale/portrait_rhythm.dart';
 import 'portrait_canvas.dart';
 
 /// 版本行（映射自 `ProviderMvVersion`）。竖屏页与横屏弹层共用这一份视图模型。
@@ -118,7 +119,8 @@ void paintPortraitMvPage(
 
   c.header('关联 MV', back: true, backAction: 'close-modal');
 
-  double y = portraitMvContentTop;
+  // 内容起点按页高节奏收（矮屏不再被固定 130 顶下去），下限就是页头下沿。
+  double y = PortraitRhythm.below(100, portraitMvContentTop, h);
 
   // 状态行：原样显示领域层给出的 Qt 串。
   if (model.status.isNotEmpty) {
@@ -157,7 +159,10 @@ void paintPortraitMvPage(
   c.section(y, '视频版本', model.versions.isEmpty ? '未找到' : '${model.versions.length} 个可用');
   y += 30;
 
-  final double barTop = math.max(y + 40, h - 34 - portraitMvBarHeight);
+  final double barTop = math.max(
+    y + PortraitRhythm.gap(40, h),
+    h - 34 - PortraitRhythm.gap(portraitMvBarHeight, h),
+  );
   final double bottom = math.max(y, barTop - 8);
   c.contentBottom = bottom;
   c.beginContent(y);

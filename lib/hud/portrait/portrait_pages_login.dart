@@ -25,6 +25,7 @@ import 'package:qr/qr.dart';
 
 import '../../domain/account/login_controller.dart' show LoginState;
 import '../../provider/provider_gateway.dart' show ProviderLoginMethod;
+import '../scale/portrait_rhythm.dart';
 import 'portrait_canvas.dart';
 
 /// 「发送验证码」按钮动作（Flutter 侧新增；Qt 由 QML overlay 直接调 `rhine.sendLoginCode`）。
@@ -76,7 +77,8 @@ void paintPortraitLoginPage(
   // 登录层是弹层：返回键必须关层，不能落回 `back`（那会把目录栈弹掉、层还留着）。
   c.header('账号登录', back: true, backAction: 'close-modal');
 
-  final double top = math.min(126.0, height * .22);
+  // 起点按页高节奏收：矮屏上固定 126 会把二维码下半截挤出裁剪线。
+  final double top = math.min(PortraitRhythm.below(90, 126.0, height), height * .22);
   final double bottom = _pageBottom(c, top);
 
   double y = top;
