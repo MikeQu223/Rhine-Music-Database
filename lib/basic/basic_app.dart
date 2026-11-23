@@ -1996,6 +1996,19 @@ class _BasicShellState extends State<_BasicShell>
       // snapshot 的 pos 因此每帧变化，Qt 侧 projectArchiveScroll 让原 3D 窗口跟着滚，
       // 不必等松手（松手仍由 onLibraryScroll 落行选中）。
       onLibraryScrollUpdate: controller.updateLibraryScroll,
+      // 弹层面板的拖动：队列按整行改 `_queueOffset`，评论按像素改 `_commentsScroll`。
+      onQueueOffsetChanged: (int value) {
+        if (!mounted) {
+          return;
+        }
+        setState(() => _queueOffset = value);
+      },
+      onCommentsScrollChanged: (double value) {
+        if (!mounted) {
+          return;
+        }
+        setState(() => _commentsScroll = value);
+      },
       geometry: geometry,
       stage: stage,
       archiveMaskStrength: _archiveMaskStrength,

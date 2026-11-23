@@ -2130,6 +2130,8 @@ class BasicHudSurface extends StatefulWidget {
     this.onFields,
     this.onLibraryScroll,
     this.onLibraryScrollUpdate,
+    this.onQueueOffsetChanged,
+    this.onCommentsScrollChanged,
     this.geometry,
     this.stage,
     this.sceneKey,
@@ -2210,6 +2212,13 @@ class BasicHudSurface extends StatefulWidget {
   /// 3D 层（BasicApp -> controller.listPosition -> Qt 场景）。只读位置：
   /// 不播放、不换队列、不改选中之外的任何状态；抬手落点仍走 [onLibraryScroll]。
   final ValueChanged<double>? onLibraryScrollUpdate;
+
+  /// 横屏队列面板拖动一行时回给宿主的新行号（Qt `queueOffset`）。
+  final ValueChanged<int>? onQueueOffsetChanged;
+
+  /// 评论面板拖动时回给宿主的像素滚动量（Qt `commentsScroll`）。
+  final ValueChanged<double>? onCommentsScrollChanged;
+
 
   /// 横屏由调用方按逻辑尺寸构造；竖屏用 PortraitStage 注入的 scope。
   final StageGeometry? geometry;
@@ -2363,6 +2372,12 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
     with SingleTickerProviderStateMixin {
   /// 拖动/惯性中的临时滚动位置（条目单位）；null = 跟随 state.listPosition。
   double? _dragPosition;
+
+  /// 弹层拖拽的临时像素累计（横屏队列面板 / 评论面板）：这两层不参与资料库
+  /// 的条目窗口，拖拽只换算成「行数 / 像素滚动量」回给宿主。
+  double _modalDragPixels = 0;
+  int _modalDragStartOffset = 0;
+  double _modalDragStartScroll = 0;
 
   /// 横屏检索面板的行级滚动偏移（舞台像素）。与资料库的 [_dragPosition]
   /// 分开存：检索列表的滚动绝不能改到库表窗口。
@@ -2681,13 +2696,35 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
         searchGeometry.listBottom - searchGeometry.listTop,
       ),
     );
+    // 弹层面板的可拖区：队列/评论面板自己不画在资料库列表里，但用户在上面
+    // 上下滑就是要滚它（缺陷：面板开着时滑不动、反而去滑下一层）。
+    Rect? modalListRect;
+    if (widget.modal == 'queue') {
+      final ModalShellBounds bounds = modal_shell.modalShellBounds(
+        modalId: modal_shell.kModalShellPlayerModal,
+        stageWidth: stage.width,
+      );
+      modalListRect = geometry.rectToLogical(
+        Rect.fromLTWH(bounds.left, bounds.top + 340, bounds.width, bounds.height - 340),
+      );
+    } else if (widget.modal == 'comments') {
+      modalListRect = geometry.rectToLogical(
+        Rect.fromLTWH(
+          stage.width * 0.56,
+          comments_modal.cmtListTop,
+          stage.width * 0.44 - 59,
+          comments_modal.cmtListBottom - comments_modal.cmtListTop,
+        ),
+      );
+    }
+    final bool panelModal = modalListRect != null;
     final LibraryDragDomain dragDomain = LibraryDragDomain(
-      listRect: searchModal ? searchListRect : listRect,
-      directTouchRect: searchModal ? null : directTouchRect,
-      controlRects: searchModal ? const <Rect>[] : controlRects,
+      listRect: panelModal ? modalListRect : (searchModal ? searchListRect : listRect),
+      directTouchRect: (searchModal || panelModal) ? null : directTouchRect,
+      controlRects: (searchModal || panelModal) ? const <Rect>[] : controlRects,
       // 播放条整行排除：它内部有大量间隙，只扣命中矩形会漏出一条「拖动即滚列表」
       // 的窄带。竖屏时播放条在本层底边，与顶部 1080 的直触区不相交。
-      excludedRects: searchModal
+      excludedRects: (searchModal || panelModal)
           ? const <Rect>[]
           : <Rect>[
               portrait ? playerBarStageRect : geometry.rectToLogical(playerBarStageRect),
@@ -2812,6 +2849,24 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
   }
 
   void _dragStarted(BasicViewState state, DragStartDetails details) {
+    if (widget.modal == 'queue') {
+      // 队列面板按整行滚动（Qt `queueOffset` 是行号）：起手记住当前行号，
+      // 位移在 [_dragUpdated] 里折算成行数回给宿主。
+      setState(() {
+        _abortScrollMomentum();
+        _modalDragPixels = 0;
+        _modalDragStartOffset = widget.queueOffset;
+      });
+      return;
+    }
+    if (widget.modal == 'comments') {
+      setState(() {
+        _abortScrollMomentum();
+        _modalDragPixels = 0;
+        _modalDragStartScroll = widget.commentsScroll;
+      });
+      return;
+    }
     if (widget.modal == 'search') {
       // 检索面板：从当前滚动量起手，不碰资料库窗口（[_dragPosition] 只是本次
       // 手势的临时像素位置，抬手即写回 [_searchScroll] 并清空）。
@@ -2853,6 +2908,33 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
     bool portrait,
     DragUpdateDetails details,
   ) {
+    if (widget.modal == 'queue') {
+      final double scale = geometry.stageScale <= 0 ? 1 : geometry.stageScale;
+      // 行高 56 是舞台单位（queue_modal.dart:367 的 `y + 358 + row * 56`）。
+      final double rowStage = 56.0 * scale;
+      _modalDragPixels += details.delta.dy;
+      final int rows = (_modalDragPixels / rowStage).round();
+      final int max = queue_modal.queueModalMaximumOffset(widget.state.queue.length);
+      final int next = (_modalDragStartOffset - rows).clamp(0, max);
+      if (next != widget.queueOffset) {
+        widget.onQueueOffsetChanged?.call(next);
+      }
+      return;
+    }
+    if (widget.modal == 'comments') {
+      final double scale = geometry.stageScale <= 0 ? 1 : geometry.stageScale;
+      _modalDragPixels += details.delta.dy;
+      // 上界用上一帧画出来的内容总高现算（`cmtClampPanelScroll` 传无穷大即得上限），
+      // 免得把「一屏放得下」的面板也拖出空白。
+      final double max = comments_modal.cmtClampPanelScroll(
+        double.infinity,
+        BasicHudFrame._commentsContentBottom,
+      );
+      final double next = (_modalDragStartScroll - _modalDragPixels / scale)
+          .clamp(0.0, math.max(0.0, max));
+      widget.onCommentsScrollChanged?.call(next);
+      return;
+    }
     final double? current = _dragPosition;
     if (current == null) {
       return;
@@ -2894,6 +2976,10 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
   /// 速度快于 [_scrollCoastStart] 才起惯性（滑行 + 吸行，落定提交一次整数行）；
   /// 低速或取消仍走既有语义——立刻提交抬手位置，由宿主四舍五入到最近一行。
   void _dragEnded([DragEndDetails? details, Duration? releaseStamp]) {
+    if (widget.modal == 'queue' || widget.modal == 'comments') {
+      _modalDragPixels = 0;
+      return;
+    }
     final double? ended = _dragPosition;
     if (ended == null) {
       return;
