@@ -20,6 +20,7 @@ library;
 import 'dart:math' as math;
 import 'dart:ui' show Rect;
 
+import '../scale/portrait_rhythm.dart';
 import 'portrait_canvas.dart';
 import 'portrait_layout.dart';
 
@@ -75,7 +76,11 @@ double paintPortraitSavedOverview(
   c.icon('back', 28, 88, size: 18, color: c.ink);
   c.hit(Rect.fromLTWH(16, 76, 44, 44), portraitSavedBackAction, '返回资料库');
 
-  double y = portraitSavedOverviewContentTop - scroll;
+  // 起点与各段推进量按页高节奏收（矮屏上 158 + 126 + 36 + 5×68 会直接把
+  // 「设置」那行推到裁剪线以下；高屏不收，保持参考图间距）。
+  final double h = c.height;
+  final double stride = PortraitRhythm.gap(68, h);
+  double y = PortraitRhythm.below(110, portraitSavedOverviewContentTop, h) - scroll;
   c.beginContent(y);
 
   // 卡：surface + line 边框，102 高。
@@ -85,23 +90,23 @@ double paintPortraitSavedOverview(
   c.text('我的音乐', 37, y + 38, size: 18, width: w - 74, weight: 'demibold');
   final String owner = userName.isEmpty ? providerName : '$providerName / $userName';
   c.text(owner, 37, y + 73, size: 11, width: w - 74, color: c.muted);
-  y += 126;
+  y += PortraitRhythm.gap(126, h);
 
   c.section(y, '收藏与档案', 'PERSONAL INDEX');
-  y += 36;
+  y += PortraitRhythm.gap(36, h);
 
   for (final PortraitSavedOverviewRow row in collectionRows) {
     c.indexRow(y, row.title, row.subtitle, row.action, row.icon);
-    y += 68;
+    y += stride;
   }
   if (showArtists) {
     c.indexRow(y, '收藏歌手', 'ARTIST RECORDS', portraitSavedArtistsAction, 'user');
-    y += 68;
+    y += stride;
   }
   c.indexRow(y, '播放历史', 'RECENT TRACKS', portraitSavedHistoryAction, 'compass');
-  y += 68;
+  y += stride;
   c.indexRow(y, '设置', 'TERMINAL PREFERENCES', 'settings', 'settings');
-  y += 68;
+  y += stride;
   if (canCreatePlaylist) {
     c.button(Rect.fromLTWH(20, y, w - 40, 44), '+ 创建歌单', portraitSavedCreatePlaylistAction);
     y += 60;
