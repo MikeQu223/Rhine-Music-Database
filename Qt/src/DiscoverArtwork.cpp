@@ -51,7 +51,10 @@ void DiscoverArtwork::request(const QString &url) {
             if (!owner || generation != owner->m_generation) {
                 return;
             }
-            if (!key.isEmpty() && owner->m_urls.contains(url)) {
+            // 队列和详情页通过 show(scope, {}) + image() 惰性请求，
+            // URL 不一定在 m_urls 中。m_requested 会随 show() 的可见集合裁剪，
+            // 仍能拒绝离开当前页面的迟到回调。
+            if (!key.isEmpty() && owner->m_requested.contains(url)) {
                 owner->m_images[url] = key;
                 owner->m_host->invalidate();
             }

@@ -1532,7 +1532,7 @@ void Engine::step(double time) {
     // 就是非当前唱片的盘面全是 placeholderCover（TEXDIAG: mt=7 adm=2 gated=5 discO=6
     // covers=2，C++ 侧补建因为 `!it->cover.isNull()` 一个都过不去）。
     //
-    // 不能只查 host.image()：缓存键是 loadCover 里加过 `param=NyN` 的改写 URL，拿
+    // 不能只查 host.image()：缓存键是 loadCover 里加过 `param=512y512` 的改写 URL，拿
     // item["cover"] 的原始地址去查永远 miss。所以要主动 loadCover，回调里再按返回的键取图。
     // 512 像素够远看，一张约 1 MB，是当前曲目 1024 封面的四分之一。
     // 放在 prune 之后：只给真正留下来的条目请求，别为马上就丢的 key 白下载。

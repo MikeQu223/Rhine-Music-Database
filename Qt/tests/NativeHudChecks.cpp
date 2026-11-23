@@ -2287,43 +2287,6 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
     ok &= record("play button styles", checkPlayButtonStyles(glyphs));
     ok &= record("plugin reload", checkPluginReload(root, content));
     ok &= record("mobile playlist actions", checkMobilePlaylistActions(root, glyphs, content));
-    QStringList providers;
-    for (const auto &id : ProviderRegistry::instance().ids()) {
-        if (id != "local" && id != "siren") {
-            providers.append(id);
-        }
-    }
-    if (providers.isEmpty()) {
-        qInfo() << "Native HUD checks skipped: no music source plugin installed";
-        return ok;
-    }
-    {
-        MusicLibrary qualityMusic(&host, content);
-        qualityMusic.provider = providers.first();
-        qualityMusic.api.provider = providers.first();
-        SettingsSchema::SettingsContext context;
-        context.music = &qualityMusic;
-        const auto *quality = SettingsSchema::find("quality");
-        const auto options = MusicPlayer::qualityOptions(providers.first());
-        if (!quality || options.isEmpty() ||
-            SettingsSchema::resolvedDefault(*quality, context) != options.last().first) {
-            qCritical() << "Quality default is not the provider's highest option";
-            ok = false;
-        }
-    }
-    ok &= record("responsive transitions", checkResponsiveTransitions());
-    ok &= record("playlist sorting", checkSorting(root, glyphs, content));
-    ok &= record("responsive hud", checkResponsiveHud(root, glyphs, content));
-    ok &= record("skip detail on switch", checkSkipDetailOnSwitch(root, glyphs, content));
-    ok &= record("song comments", checkSongComments(root, glyphs, content));
-    ok &= record("comments controller", checkCommentsController(root));
-#ifdef Q_OS_DARWIN
-    ok &= record("card material cache", checkCardMaterialCache());
-#endif
-    ok &= record("collection card", checkCollectionCard(root, glyphs, content));
-    ok &= record("album track selection", checkAlbumTrackSelection(root, glyphs, content));
-    ok &= record("player bar", checkPlayerBar(glyphs));
-    ok &= record("player input", checkPlayerInput(root, glyphs, content));
     {
         // 快速切换可见页时，迟到的封面不能重新写回新页；只保留当前页的键。
         QTemporaryDir directory;
@@ -2363,7 +2326,53 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
             qCritical() << "Discovery artwork retained a hidden-page image";
             ok = false;
         }
+        // 队列和详情页先传空可见列表，再通过 image() 惰性取图；
+        // 成功回调必须能写回。
+        DiscoverArtwork lazy(&host);
+        lazy.show("lazy-account", {});
+        const auto lazyKey = lazy.image(second);
+        if (lazyKey.isEmpty() || host.image(lazyKey).isNull()) {
+            qCritical() << "Discovery artwork dropped a lazy image result";
+            ok = false;
+        }
     }
+    QStringList providers;
+    for (const auto &id : ProviderRegistry::instance().ids()) {
+        if (id != "local" && id != "siren") {
+            providers.append(id);
+        }
+    }
+    if (providers.isEmpty()) {
+        qInfo() << "Native HUD checks skipped: no music source plugin installed";
+        return ok;
+    }
+    {
+        MusicLibrary qualityMusic(&host, content);
+        qualityMusic.provider = providers.first();
+        qualityMusic.api.provider = providers.first();
+        SettingsSchema::SettingsContext context;
+        context.music = &qualityMusic;
+        const auto *quality = SettingsSchema::find("quality");
+        const auto options = MusicPlayer::qualityOptions(providers.first());
+        if (!quality || options.isEmpty() ||
+            SettingsSchema::resolvedDefault(*quality, context) != options.last().first) {
+            qCritical() << "Quality default is not the provider's highest option";
+            ok = false;
+        }
+    }
+    ok &= record("responsive transitions", checkResponsiveTransitions());
+    ok &= record("playlist sorting", checkSorting(root, glyphs, content));
+    ok &= record("responsive hud", checkResponsiveHud(root, glyphs, content));
+    ok &= record("skip detail on switch", checkSkipDetailOnSwitch(root, glyphs, content));
+    ok &= record("song comments", checkSongComments(root, glyphs, content));
+    ok &= record("comments controller", checkCommentsController(root));
+#ifdef Q_OS_DARWIN
+    ok &= record("card material cache", checkCardMaterialCache());
+#endif
+    ok &= record("collection card", checkCollectionCard(root, glyphs, content));
+    ok &= record("album track selection", checkAlbumTrackSelection(root, glyphs, content));
+    ok &= record("player bar", checkPlayerBar(glyphs));
+    ok &= record("player input", checkPlayerInput(root, glyphs, content));
     int testCount = 0;
 
     for (const auto &provider : providers) {

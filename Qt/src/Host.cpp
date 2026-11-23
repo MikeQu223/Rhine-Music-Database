@@ -48,6 +48,8 @@ static QString hash(QByteArray value) {
 constexpr qint64 CoverCacheBudgetBytes = 256LL * 1024 * 1024;
 constexpr qint64 CoverThumbnailCacheBudgetBytes = 32LL * 1024 * 1024;
 constexpr qint64 CoverCacheEntryLimitBytes = 8LL * 1024 * 1024;
+constexpr int CoverListRequestDimension = 512;
+constexpr int CoverLargeRequestDimension = 1024;
 
 /**
  * 封面写任务与清除缓存共用的代数状态。
@@ -106,6 +108,24 @@ QString coverThumbnailCacheDirectory(int dimension) {
 QString coverCachePath(const QString &key, bool thumbnail, int dimension) {
     const auto directory = thumbnail ? coverThumbnailCacheDirectory(dimension) : coverCacheDirectory();
     return directory.isEmpty() ? QString() : directory + "/" + hash(key.toUtf8());
+}
+
+/** 网易云 CDN 支持 param 尺寸参数；其他来源保持插件返回的最终地址。 */
+static QUrl coverRequestUrl(const QUrl &url, int maximumDimension) {
+    const auto host = url.host();
+    if (host != QLatin1String("music.126.net") && !host.endsWith(QLatin1String(".music.126.net"))) {
+        return url;
+    }
+    const auto dimension = maximumDimension <= CoverListRequestDimension
+                               ? CoverListRequestDimension
+                               : CoverLargeRequestDimension;
+    auto requestUrl = url;
+    QUrlQuery query(requestUrl);
+    query.removeAllQueryItems(QStringLiteral("param"));
+    query.addQueryItem(QStringLiteral("param"),
+                       QString::number(dimension) + QLatin1Char('y') + QString::number(dimension));
+    requestUrl.setQuery(query);
+    return requestUrl;
 }
 
 void cleanupLegacyCoverCaches() {
@@ -1402,8 +1422,9 @@ void Host::loadCover(QString input, TextReply callback, int maximumDimension, bo
         callback({});
         return;
     }
-    // 封面尺寸由插件返回最终 URL；core 不再追加平台专用查询参数。
-    const auto urlKey = url.toString();
+    // 解码尺寸保持调用方要求；网易云网络请求统一使用 512/1024 两档缩略图。
+    const auto requestUrl = coverRequestUrl(url, dimension);
+    const auto urlKey = requestUrl.toString();
     const auto key =
         thumbnail ? "cover-thumb:" + hash(urlKey.toUtf8()) + ":" + QString::number(dimension) : urlKey;
     auto &memoryCache = thumbnail ? thumbnailImages : images;
@@ -1457,12 +1478,12 @@ void Host::loadCover(QString input, TextReply callback, int maximumDimension, bo
             }
         }
     };
-    const auto requestNetwork = [this, url, cachePath, dimension, failFlight, completeFlight] {
+    const auto requestNetwork = [this, requestUrl, cachePath, dimension, failFlight, completeFlight] {
         if (offline) {
             failFlight();
             return;
         }
-        QNetworkRequest request(url);
+        QNetworkRequest request(requestUrl);
         request.setTransferTimeout(20000);
         request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
                              QNetworkRequest::NoLessSafeRedirectPolicy);
