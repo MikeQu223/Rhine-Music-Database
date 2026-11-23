@@ -175,6 +175,12 @@ class BasicHudFrame {
     int queueOffset = 0,
     /// 竖屏「专辑信息」页同专辑曲目列表的滚动量（网格单位）。
     double albumInfoScroll = 0,
+    /// 竖屏「歌曲百科」正文的滚动量（网格单位）。
+    double wikiScroll = 0,
+    /// 竖屏「歌手页」曲目/专辑列表的滚动量（网格单位）。
+    double artistScroll = 0,
+    /// 竖屏「发现页」的滚动量（网格单位）。
+    double discoverScroll = 0,
     /// 竖屏队列页的滚动量（Qt `m_scroll`，网格单位）。null = 按 Qt 的
     /// `newScope` 缺省规则「当前行置顶」（当前行 > 0 时 251 + index*68）。
     double? queueScroll,
@@ -299,6 +305,9 @@ class BasicHudFrame {
     if (portrait) {
       return _buildPortraitFrame(
         albumInfoScroll: albumInfoScroll,
+        wikiScroll: wikiScroll,
+        artistScroll: artistScroll,
+        discoverScroll: discoverScroll,
         state: state,
         ports: ports,
         width: width,
@@ -541,6 +550,26 @@ class BasicHudFrame {
   /// 动作串按分类分派（Qt `NativeHudMusic.cpp` 的 `result` 与 `index` 两个分支）：
   /// 曲目行用 `music:index:<i>`（只选中，进入详情由宿主再决定），专辑/歌单/歌手行
   /// 用 `music:expand:<percentEncoded 标题>`，与 Qt `music:expand:` 同一个词表。
+  /// 百科正文的内容总高（网格单位，估算）：拖动的上界与绘制用同一套规则。
+  ///
+  /// 换行只取决于 `PortraitCanvas.wrappedLines`，但这里没有画布，只能按「每行
+  /// 约 N 个字符折一行」粗估——宁可比实际多一点（多出来的部分只是拖不到底）。
+  static double _wikiContentHeight(BasicWikiPageModel? page) {
+    if (page == null || page.lines.isEmpty) {
+      return 0;
+    }
+    // 393 网格下 13 号正文一行约 28 个汉字宽；按网格宽度换算成每行容量。
+    double total = 0;
+    for (final String line in page.lines) {
+      final int colon = line.indexOf('：');
+      final bool headed = colon > 0 && colon < line.length - 1;
+      final String body = headed ? line.substring(colon + 1) : line;
+      final int lines = math.max(1, (body.length / 26).ceil());
+      total += (headed ? 15.0 : 0.0) + lines * 13 * 1.5 + 16;
+    }
+    return total;
+  }
+
   static List<PortraitSearchKindsRow> _portraitSearchRows(BasicViewState state) {
     final List<PortraitSearchKindsRow> rows = <PortraitSearchKindsRow>[];
     for (final Map<String, Object?> item in state.searchRows) {
@@ -595,6 +624,9 @@ class BasicHudFrame {
   /// （弹层与 widget 窗口）负责，不在这一帧里画——竖屏移植只改「主页长什么样」。
   static BasicHudFrame _buildPortraitFrame({
     double albumInfoScroll = 0,
+    double wikiScroll = 0,
+    double artistScroll = 0,
+    double discoverScroll = 0,
     required BasicViewState state,
     required BasicGlyphPorts ports,
     required double width,
@@ -719,6 +751,7 @@ class BasicHudFrame {
         status: wikiPage.status,
         loading: wikiPage.loading,
         backAction: 'close-modal',
+        scroll: wikiScroll,
       );
     } else if (albumInfoPage != null) {
       paintPortraitAlbumInfoPage(
@@ -748,6 +781,7 @@ class BasicHudFrame {
         loading: artistPage.loading,
         selectedIndex: artistPage.selectedIndex,
         backAction: 'back',
+        scroll: artistScroll,
       );
     } else if (modal == 'queue') {
       // Qt compact `queue()`（ResponsiveHudPages.cpp:468-533）：通用页头（只有返回
@@ -888,7 +922,8 @@ class BasicHudFrame {
           status: page.status,
           more: page.more,
           loadingMore: page.loadingMore,
-          scroll: page.scroll,
+          // 拖动时用宿主传进来的实时滚动量（快照里的 scroll 只是 Reset 初值）。
+          scroll: discoverScroll,
         ),
       );
     } else if (modal == 'saved') {
@@ -2169,6 +2204,12 @@ class BasicHudSurface extends StatefulWidget {
     this.onCommentsScrollChanged,
     this.albumInfoScroll = 0,
     this.onAlbumInfoScrollChanged,
+    this.wikiScroll = 0,
+    this.onWikiScrollChanged,
+    this.artistScroll = 0,
+    this.onArtistScrollChanged,
+    this.discoverScroll = 0,
+    this.onDiscoverScrollChanged,
     this.geometry,
     this.stage,
     this.sceneKey,
@@ -2261,6 +2302,24 @@ class BasicHudSurface extends StatefulWidget {
 
   /// 拖动专辑信息页列表时回写滚动量（与评论面板一样按像素换算）。
   final ValueChanged<double>? onAlbumInfoScrollChanged;
+
+  /// 竖屏「歌曲百科」正文的滚动量（网格单位）。
+  final double wikiScroll;
+
+  /// 拖动百科正文时回写滚动量。
+  final ValueChanged<double>? onWikiScrollChanged;
+
+  /// 竖屏「歌手页」列表的滚动量（网格单位）。
+  final double artistScroll;
+
+  /// 拖动歌手页列表时回写滚动量。
+  final ValueChanged<double>? onArtistScrollChanged;
+
+  /// 竖屏「发现页」的滚动量（网格单位）。
+  final double discoverScroll;
+
+  /// 拖动发现页时回写滚动量。
+  final ValueChanged<double>? onDiscoverScrollChanged;
 
 
   /// 横屏由调用方按逻辑尺寸构造；竖屏用 PortraitStage 注入的 scope。
@@ -2603,6 +2662,9 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       queueOffset: widget.queueOffset,
       queueScroll: widget.queueScroll,
       albumInfoScroll: widget.albumInfoScroll,
+      wikiScroll: widget.wikiScroll,
+      artistScroll: widget.artistScroll,
+      discoverScroll: widget.discoverScroll,
       queueModesExpanded: widget.queueModesExpanded,
       stageScale: geometry.stageScale,
       plugins: widget.plugins,
@@ -2742,29 +2804,51 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
     );
     // 弹层面板的可拖区：队列/评论面板自己不画在资料库列表里，但用户在上面
     // 上下滑就是要滚它（缺陷：面板开着时滑不动、反而去滑下一层）。
+    // 弹层面板的可拖区：队列/评论面板自己不画在资料库列表里，但用户在上面
+    // 上下滑就是要滚它（缺陷：面板开着时滑不动、反而去滑下一层）。
+    //
+    // 注意坐标口径：竖屏手势层在**舞台单位**里工作（`listRect` 那条三目就是
+    // 这件事），所以竖屏的这些矩形必须保持 stage 单位，只有横屏才转逻辑像素。
+    // 之前这里无条件 `rectToLogical`，竖屏面板拖动永远判不中（真机缺陷）。
+    Rect stageOrLogical(double left, double top, double width, double height) {
+      final Rect rect = Rect.fromLTWH(left, top, width, height);
+      return portrait ? rect : geometry.rectToLogical(rect);
+    }
+
     Rect? modalListRect;
     if (widget.modal == 'queue') {
       final ModalShellBounds bounds = modal_shell.modalShellBounds(
         modalId: modal_shell.kModalShellPlayerModal,
         stageWidth: stage.width,
       );
-      modalListRect = geometry.rectToLogical(
-        Rect.fromLTWH(bounds.left, bounds.top + 340, bounds.width, bounds.height - 340),
-      );
+      modalListRect = stageOrLogical(
+          bounds.left, bounds.top + 340, bounds.width, bounds.height - 340);
+    } else if (widget.modal == 'discover') {
+      // 发现页内容区从 130 起（`portraitDiscoverContentTop`）。
+      modalListRect = stageOrLogical(
+          0, stage.height * 0.14, stage.width, stage.height * 0.86);
+    } else if (widget.modal == 'wiki') {
+      // 百科正文自 236 起；上半是封面/标题卡，拖它没有意义。
+      modalListRect = stageOrLogical(
+          0, stage.height * 0.32, stage.width, stage.height * 0.68);
     } else if (widget.modal == 'album-info') {
       // 专辑信息页的列表起点约在 55% 高处（封面+简介吃上半屏），下沿到内容底。
-      modalListRect = geometry.rectToLogical(
-        Rect.fromLTWH(0, stage.height * 0.52, stage.width, stage.height * 0.48),
-      );
+      modalListRect = stageOrLogical(
+          0, stage.height * 0.52, stage.width, stage.height * 0.48);
     } else if (widget.modal == 'comments') {
-      modalListRect = geometry.rectToLogical(
-        Rect.fromLTWH(
-          stage.width * 0.56,
-          comments_modal.cmtListTop,
-          stage.width * 0.44 - 59,
-          comments_modal.cmtListBottom - comments_modal.cmtListTop,
-        ),
+      modalListRect = stageOrLogical(
+        stage.width * 0.56,
+        comments_modal.cmtListTop,
+        stage.width * 0.44 - 59,
+        comments_modal.cmtListBottom - comments_modal.cmtListTop,
       );
+    }
+    // 歌手页不是弹层（modal 为空，靠 directory.kind 判定），单独一条通道；
+    // 它同样是一屏放不下的长列表，必须能拖（之前只能看到前十来行）。
+    final bool artistPage = widget.modal.isEmpty && (widget.aux?.artist != null);
+    if (artistPage && modalListRect == null) {
+      modalListRect = stageOrLogical(
+          0, stage.height * 0.42, stage.width, stage.height * 0.58);
     }
     final bool panelModal = modalListRect != null;
     final LibraryDragDomain dragDomain = LibraryDragDomain(
@@ -2908,13 +2992,21 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       });
       return;
     }
-    if (widget.modal == 'comments' || widget.modal == 'album-info') {
+    final bool artistPage = widget.modal.isEmpty && (widget.aux?.artist != null);
+    if (widget.modal == 'comments' ||
+        widget.modal == 'album-info' ||
+        widget.modal == 'wiki' ||
+        widget.modal == 'discover' ||
+        artistPage) {
       setState(() {
         _abortScrollMomentum();
         _modalDragPixels = 0;
-        _modalDragStartScroll = widget.modal == 'album-info'
-            ? widget.albumInfoScroll
-            : widget.commentsScroll;
+        _modalDragStartScroll = switch (widget.modal) {
+          'album-info' => widget.albumInfoScroll,
+          'wiki' => widget.wikiScroll,
+          'discover' => widget.discoverScroll,
+          _ => artistPage ? widget.artistScroll : widget.commentsScroll,
+        };
       });
       return;
     }
@@ -2996,6 +3088,33 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       widget.onAlbumInfoScrollChanged?.call(next);
       return;
     }
+    final bool artistPage = widget.modal.isEmpty && (widget.aux?.artist != null);
+    if (widget.modal == 'wiki' || widget.modal == 'discover' || artistPage) {
+      final double scale = geometry.stageScale <= 0 ? 1 : geometry.stageScale;
+      _modalDragPixels += details.delta.dy;
+      // 上界：内容总高 - 一屏（一屏按舞台高的 0.6/0.5 估，宁多给一点空白，
+      // 也不要把最末一行永远锁在裁剪线外）。
+      final double viewport = _stageSize.height * (widget.modal == 'wiki' ? 0.60 : 0.50);
+      final double content = switch (widget.modal) {
+        'wiki' => BasicHudFrame._wikiContentHeight(widget.aux?.wiki),
+        // 发现页内容总高由快照自报（`paintPortraitDiscoverPage` 的返回值），
+        // 这里只是拖动上界的估法：条目 196/两列 + 页头 260。
+        'discover' => (widget.discover?.entries.length ?? 0) * 196.0 / 2 + 260.0,
+        _ => (widget.aux?.artist?.tracks.length ?? 0) * 68.0,
+      };
+      final double max = math.max(0.0, content - viewport) / scale;
+      final double next = (_modalDragStartScroll - _modalDragPixels / scale)
+          .clamp(0.0, max);
+      switch (widget.modal) {
+        case 'wiki':
+          widget.onWikiScrollChanged?.call(next);
+        case 'discover':
+          widget.onDiscoverScrollChanged?.call(next);
+        default:
+          widget.onArtistScrollChanged?.call(next);
+      }
+      return;
+    }
     final double? current = _dragPosition;
     if (current == null) {
       return;
@@ -3039,7 +3158,10 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
   void _dragEnded([DragEndDetails? details, Duration? releaseStamp]) {
     if (widget.modal == 'queue' ||
         widget.modal == 'comments' ||
-        widget.modal == 'album-info') {
+        widget.modal == 'album-info' ||
+        widget.modal == 'wiki' ||
+        widget.modal == 'discover' ||
+        (widget.modal.isEmpty && widget.aux?.artist != null)) {
       _modalDragPixels = 0;
       return;
     }

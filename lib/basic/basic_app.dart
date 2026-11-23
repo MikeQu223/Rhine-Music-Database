@@ -693,6 +693,12 @@ class _BasicShellState extends State<_BasicShell>
   /// 竖屏「专辑信息」页同专辑曲目列表的滚动量（网格单位）。
   double _albumInfoScroll = 0;
 
+  /// 竖屏「歌曲百科」正文的滚动量（网格单位）。
+  double _wikiScroll = 0;
+
+  /// 竖屏「歌手页」列表的滚动量（网格单位）。
+  double _artistScroll = 0;
+
   /// 当前弹层（'' = 无，'search' = 检索）。Qt 的 modal 由 NativeHud 自己持有
   /// （Qt/src/NativeHudController.cpp:64-130 openModal / :132-143 closeModal /
   /// :145-163 setQuery），BasicViewState 没有这个字段，也不在本文件的改动范围
@@ -2059,6 +2065,27 @@ class _BasicShellState extends State<_BasicShell>
         }
         setState(() => _albumInfoScroll = value);
       },
+      wikiScroll: _wikiScroll,
+      onWikiScrollChanged: (double value) {
+        if (!mounted) {
+          return;
+        }
+        setState(() => _wikiScroll = value);
+      },
+      artistScroll: _artistScroll,
+      onArtistScrollChanged: (double value) {
+        if (!mounted) {
+          return;
+        }
+        setState(() => _artistScroll = value);
+      },
+      discoverScroll: _discoverScroll,
+      onDiscoverScrollChanged: (double value) {
+        if (!mounted) {
+          return;
+        }
+        setState(() => _discoverScroll = value);
+      },
       // 登录页（modal == 'login'）。
       loginState: _loginController?.state,
       loginMethods: _loginController?.methods ?? const <ProviderLoginMethod>[],
@@ -3298,11 +3325,15 @@ class _BasicShellState extends State<_BasicShell>
       }
       // 真开歌手目录（Qt `MusicLibrary::openArtist` 的那条路）：插件平台按
       // `artists[i].id` 取该歌手作品，塞壬平台在本地曲库里筛。
+      // 换歌手/新开一页都要回到列表顶部：沿用上一位歌手的滚动量会直接落到中段。
+      setState(() => _artistScroll = 0);
       unawaited(controller.openArtistDirectory(name, artistIndex: index));
       _setModal('');
       return null;
     }
     if (action == 'music:artist-tab:songs' || action == 'music:artist-tab:albums') {
+      // 曲目 / 发行专辑是两份不同的列表，滚动量不能串（串了会看到中段起头）。
+      setState(() => _artistScroll = 0);
       controller.setArtistTab(
         action.endsWith(':albums') ? 'albums' : 'songs',
       );
@@ -3322,6 +3353,8 @@ class _BasicShellState extends State<_BasicShell>
         setState(() => _songOptionsExpanded = false);
       }
       unawaited(controller.openSongWiki());
+      // 新开一首的百科从正文顶部起，不沿用上一首的滚动量。
+      setState(() => _wikiScroll = 0);
       _setModal('wiki');
       return null;
     }

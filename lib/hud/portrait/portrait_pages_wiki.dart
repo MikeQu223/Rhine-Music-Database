@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/rendering.dart';
 
+import '../scale/portrait_rhythm.dart';
 import 'portrait_canvas.dart';
 
 /// 歌曲百科页（竖屏；横屏由 `_paintPortraitPageInLandscape` 复用同一份命令流）。
@@ -34,6 +35,7 @@ void paintPortraitWikiPage(
   required bool loading,
   int startLine = 0,
   String backAction = 'back',
+  double scroll = 0,
 }) {
   c.fill(Rect.fromLTWH(0, 0, c.gridWidth, c.height), c.paper);
   c.header(title.isEmpty ? '歌曲百科' : title, back: true, backAction: backAction);
@@ -55,37 +57,62 @@ void paintPortraitWikiPage(
   c.paragraph(artist.isEmpty ? '未知歌手' : artist, textLeft, 190,
       size: 11, width: textWidth, color: c.muted, maximumLines: 1);
 
-  c.section(portraitWikiBodyTop - 34, '歌曲百科', 'WIKI / ${lines.length}');
+  // 正文起点跟着节奏走：页头封面的下沿是锚，设计稿的 236 只是基准页取值，
+  // 矮屏按 [PortraitRhythm] 收、高屏保持（不缩放字号，只收间距）。
+  final double bodyTop =
+      PortraitRhythm.below(artwork.bottom, portraitWikiBodyTop, c.height);
+  c.section(bodyTop - PortraitRhythm.gap(34, c.height), '歌曲百科',
+      'WIKI / ${lines.length}');
 
-  c.beginContent(portraitWikiBodyTop);
+  c.beginContent(bodyTop);
   if (lines.isEmpty) {
     // 诚实状态：没有正文就直说，不用占位数据凑版面。
-    c.paragraph(status.isEmpty ? '暂无歌曲百科' : status, 20, portraitWikiBodyTop + 8,
+    c.paragraph(status.isEmpty ? '暂无歌曲百科' : status, 20, bodyTop + 8,
         size: 12, width: c.gridWidth - 40, color: c.muted, maximumLines: 4);
     if (loading) {
-      c.text('正在读取…', 20, portraitWikiBodyTop + 70, size: 10, color: c.muted);
+      c.text('正在读取…', 20, bodyTop + 70, size: 10, color: c.muted);
     }
   } else {
-    double y = portraitWikiBodyTop + 4;
+    final double textWidth = c.gridWidth - 40;
+    final double gap = PortraitRhythm.gap(portraitWikiLineGap, c.height);
+    // 先量一遍每行的高度（换行只取决于 metrics.wrap，与 [PortraitCanvas.paragraph]
+    // 同源），才能算出滚动上限；不这样做就只能靠「画到裁剪线就 break 静默截断」，
+    // 长词条在矮屏上会直接看不到后半段。
+    final List<(String head, String body, double height)> blocks =
+        <(String head, String body, double height)>[];
+    double total = 0;
     for (int index = math.max(0, startLine); index < lines.length; index++) {
       final String line = lines[index];
-      if (y > c.contentBottom) {
-        break;
-      }
       final int colon = line.indexOf('：');
-      if (colon > 0 && colon < line.length - 1) {
-        c.text(line.substring(0, colon), 20, y,
-            size: 10, width: c.gridWidth - 40, weight: 'demibold', color: c.muted);
-        y = c.paragraph(line.substring(colon + 1), 20, y + 15,
-            size: 13, width: c.gridWidth - 40);
-      } else {
-        y = c.paragraph(line, 20, y, size: 13, width: c.gridWidth - 40);
-      }
-      y += portraitWikiLineGap;
+      final bool headed = colon > 0 && colon < line.length - 1;
+      final String head = headed ? line.substring(0, colon) : '';
+      final String body = headed ? line.substring(colon + 1) : line;
+      final double textHeight = c.wrappedLines(body, textWidth, 13) * 13 * 1.5;
+      final double height = (headed ? 15.0 : 0.0) + textHeight + gap;
+      blocks.add((head, body, height));
+      total += height;
     }
-    if (status.isNotEmpty) {
-      c.text(status, 20, math.min(y + 4, c.contentBottom - 14),
-          size: 10, width: c.gridWidth - 40, color: c.muted);
+    final double visible = math.max(1, c.contentBottom - bodyTop);
+    final double maximumScroll = math.max(0, total - visible + 4);
+    final double offset = scroll.clamp(0.0, maximumScroll);
+    double y = bodyTop + 4 - offset;
+    for (final (String head, String body, double height) in blocks) {
+      // 完全在裁剪线上方的段直接跳过（只是省命令流，裁切由 beginContent 负责）。
+      final bool below = y + height < bodyTop;
+      final bool above = y > c.contentBottom + 200;
+      if (!below && !above) {
+        if (head.isNotEmpty) {
+          c.text(head, 20, y, size: 10, width: textWidth,
+              weight: 'demibold', color: c.muted);
+          c.paragraph(body, 20, y + 15, size: 13, width: textWidth);
+        } else {
+          c.paragraph(body, 20, y, size: 13, width: textWidth);
+        }
+      }
+      y += height;
+    }
+    if (status.isNotEmpty && y + 4 < c.contentBottom) {
+      c.text(status, 20, y + 4, size: 10, width: textWidth, color: c.muted);
     }
   }
   c.endContent();

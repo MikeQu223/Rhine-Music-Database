@@ -22,6 +22,7 @@ library;
 import 'dart:math' as math;
 import 'dart:ui' show Rect;
 
+import '../scale/portrait_rhythm.dart';
 import 'portrait_canvas.dart';
 
 /// 歌手页一行（曲目行与专辑行同形：标题、副标题、行末戳、动作串）。
@@ -91,6 +92,9 @@ void paintPortraitArtistPage(
 
   /// 返回动作串。
   String backAction = 'back',
+
+  /// 列表滚动量（网格单位）。曲目列可能有几十首，矮屏上一屏放不下就必须能滚。
+  double scroll = 0,
 }) {
   final double width = c.gridWidth - 2 * _gutter;
   final double height = c.height;
@@ -150,7 +154,12 @@ void paintPortraitArtistPage(
   }
 
   // 两个 44 高标签（Qt 的 artist tabs）：按页宽折半，不写死 393。
-  double tabY = math.max(card.bottom + 16, 264);
+  // 标签行位置：设计稿 264 是「封面下沿 248 → 标签 264」的推进量，
+  // 矮屏按节奏收（[PortraitRhythm.below]），但绝不压到封面里。
+  double tabY = math.max(
+    card.bottom + PortraitRhythm.gap(16, height),
+    PortraitRhythm.below(card.bottom, 264, height),
+  );
   final double tabWidth = (width - 9) / 2;
   c.chip(
     Rect.fromLTWH(_gutter, tabY, tabWidth, 44),
@@ -164,7 +173,7 @@ void paintPortraitArtistPage(
     portraitArtistTabAlbumsAction,
     selected: tab == portraitArtistTabAlbums,
   );
-  tabY += 60;
+  tabY += PortraitRhythm.gap(60, height);
 
   final List<PortraitArtistRow> rows =
       tab == portraitArtistTabAlbums ? albums : tracks;
@@ -173,7 +182,7 @@ void paintPortraitArtistPage(
     tab == portraitArtistTabAlbums ? '发行专辑' : '曲目',
     'INDEX / ${rows.length}',
   );
-  final double listTop = tabY + 30;
+  final double listTop = tabY + PortraitRhythm.gap(30, height);
   final double bottom = math.max(listTop + 24, c.contentBottom);
   if (bottom - listTop < 24 || listTop >= height) {
     c.finish();
@@ -181,6 +190,14 @@ void paintPortraitArtistPage(
   }
 
   c.contentBottom = bottom;
+  // 行窗口 + 滚动：曲目列常有三五十首，不能只画一屏就算完（用户报的「挤压」
+  // 在矮屏上就是这条——内容被裁掉且拖不动）。
+  final double maximumScroll = math.max(
+    0,
+    rows.length * portraitArtistRowStride - math.max(0, bottom - listTop),
+  );
+  final double offset = scroll.clamp(0.0, maximumScroll);
+  final double cursor = listTop - offset;
   c.beginContent(listTop);
   if (rows.isEmpty) {
     c.text(
@@ -204,11 +221,11 @@ void paintPortraitArtistPage(
     }
   } else {
     final (int first, int last) =
-        c.visibleRows(listTop, portraitArtistRowStride, rows.length);
+        c.visibleRows(cursor, portraitArtistRowStride, rows.length);
     for (int index = first; index < last; index++) {
       final PortraitArtistRow row = rows[index];
       c.row(
-        listTop + index * portraitArtistRowStride,
+        cursor + index * portraitArtistRowStride,
         title: row.title,
         artist: row.artist,
         stamp: row.stamp,

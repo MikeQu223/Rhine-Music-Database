@@ -158,6 +158,14 @@ class PortraitCanvas {
   double measure(String v, double size, [String weight = 'regular']) =>
       _metrics.width(v, size, weight);
 
+  /// 折行后占几行（不含 `maximumLines` 截断）。
+  ///
+  /// 页面要按内容总高算滚动上限时用：`paragraph` 的换行只取决于
+  /// [`_metrics.wrap`]，所以这里与它同源，不会出现「估的高度和画出来的不一样」。
+  int wrappedLines(String v, double width, double size,
+      [String weight = 'regular']) =>
+      _metrics.wrap(v, width, size, weight).length;
+
   double paragraph(
     String v,
     double x,
