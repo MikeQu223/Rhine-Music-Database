@@ -73,6 +73,7 @@ void paintPortraitPlaylistsPage(
   required bool loading,
   required String notice,
   bool canCreate = false,
+  double scroll = 0,
 }) {
   final double width = c.gridWidth - 2 * _gutter;
   final double height = c.height;
@@ -83,7 +84,8 @@ void paintPortraitPlaylistsPage(
   final double top = _contentTop(c);
   final double bottom = _pageBottom(c, top);
 
-  double y = top;
+  // 歌单数量没有硬上限（`maxPlaylists = 200`），跟着滚动量整体上移才拖得动。
+  double y = top - scroll;
   // 终端式小标题（Qt terminalSection：03 黑底编号块 + 标题 + 右对齐 INDEX / N）。
   _terminalSection(c, y, '01', '音乐档案', 'INDEX / ${_pad(rows.length)}', width);
   y += 29;

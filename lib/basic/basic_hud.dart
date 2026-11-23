@@ -957,6 +957,7 @@ class BasicHudFrame {
               loading: state.loading,
               notice: savedNotice,
               canCreate: true,
+              scroll: savedScroll,
             );
           } else {
             paintPortraitLikesPage(
@@ -965,6 +966,7 @@ class BasicHudFrame {
               selectedIndex: state.selectedLane == 1 ? 0 : -1,
               loading: state.loading,
               notice: savedNotice,
+              scroll: savedScroll,
             );
           }
         },
@@ -1195,6 +1197,7 @@ class BasicHudFrame {
         loading: state.loading,
         notice: savedNotice,
         canCreate: true,
+        scroll: savedScroll,
       );
     } else {
       paintPortraitLikesPage(
@@ -1203,6 +1206,7 @@ class BasicHudFrame {
         selectedIndex: state.selectedLane == 1 ? 0 : -1,
         loading: state.loading,
         notice: savedNotice,
+        scroll: savedScroll,
       );
     }
     sink.commands.addAll(canvas.commands);
@@ -2210,6 +2214,7 @@ class BasicHudSurface extends StatefulWidget {
     this.onArtistScrollChanged,
     this.discoverScroll = 0,
     this.onDiscoverScrollChanged,
+    this.onSavedScrollChanged,
     this.geometry,
     this.stage,
     this.sceneKey,
@@ -2320,6 +2325,9 @@ class BasicHudSurface extends StatefulWidget {
 
   /// 拖动发现页时回写滚动量。
   final ValueChanged<double>? onDiscoverScrollChanged;
+
+  /// 拖动收藏页（喜欢/歌单）时回写滚动量。
+  final ValueChanged<double>? onSavedScrollChanged;
 
 
   /// 横屏由调用方按逻辑尺寸构造；竖屏用 PortraitStage 注入的 scope。
@@ -2835,6 +2843,10 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       // 专辑信息页的列表起点约在 55% 高处（封面+简介吃上半屏），下沿到内容底。
       modalListRect = stageOrLogical(
           0, stage.height * 0.52, stage.width, stage.height * 0.48);
+    } else if (widget.modal == 'saved') {
+      // 收藏列（喜欢/歌单）也是长列表（真机 100 首），列表区从卡片下沿起。
+      modalListRect = stageOrLogical(
+          0, stage.height * 0.42, stage.width, stage.height * 0.58);
     } else if (widget.modal == 'comments') {
       modalListRect = stageOrLogical(
         stage.width * 0.56,
@@ -2997,6 +3009,7 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
         widget.modal == 'album-info' ||
         widget.modal == 'wiki' ||
         widget.modal == 'discover' ||
+        widget.modal == 'saved' ||
         artistPage) {
       setState(() {
         _abortScrollMomentum();
@@ -3005,6 +3018,7 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
           'album-info' => widget.albumInfoScroll,
           'wiki' => widget.wikiScroll,
           'discover' => widget.discoverScroll,
+          'saved' => widget.savedScroll,
           _ => artistPage ? widget.artistScroll : widget.commentsScroll,
         };
       });
@@ -3089,7 +3103,10 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       return;
     }
     final bool artistPage = widget.modal.isEmpty && (widget.aux?.artist != null);
-    if (widget.modal == 'wiki' || widget.modal == 'discover' || artistPage) {
+    if (widget.modal == 'wiki' ||
+        widget.modal == 'discover' ||
+        widget.modal == 'saved' ||
+        artistPage) {
       final double scale = geometry.stageScale <= 0 ? 1 : geometry.stageScale;
       _modalDragPixels += details.delta.dy;
       // 上界：内容总高 - 一屏（一屏按舞台高的 0.6/0.5 估，宁多给一点空白，
@@ -3100,6 +3117,9 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
         // 发现页内容总高由快照自报（`paintPortraitDiscoverPage` 的返回值），
         // 这里只是拖动上界的估法：条目 196/两列 + 页头 260。
         'discover' => (widget.discover?.entries.length ?? 0) * 196.0 / 2 + 260.0,
+        'saved' => widget.state.selectedLane == 2
+            ? widget.state.localPlaylists.length * 68.0 + 120.0
+            : widget.state.songs.length * 68.0 + 320.0,
         _ => (widget.aux?.artist?.tracks.length ?? 0) * 68.0,
       };
       final double max = math.max(0.0, content - viewport) / scale;
@@ -3110,6 +3130,8 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
           widget.onWikiScrollChanged?.call(next);
         case 'discover':
           widget.onDiscoverScrollChanged?.call(next);
+        case 'saved':
+          widget.onSavedScrollChanged?.call(next);
         default:
           widget.onArtistScrollChanged?.call(next);
       }
@@ -3161,6 +3183,7 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
         widget.modal == 'album-info' ||
         widget.modal == 'wiki' ||
         widget.modal == 'discover' ||
+        widget.modal == 'saved' ||
         (widget.modal.isEmpty && widget.aux?.artist != null)) {
       _modalDragPixels = 0;
       return;

@@ -32,6 +32,7 @@ library;
 import 'dart:math' as math;
 import 'dart:ui' show Rect;
 
+import '../scale/portrait_rhythm.dart';
 import 'portrait_canvas.dart';
 
 /// 一行歌曲：标题、艺人、行末戳（时长；缺省给空串，不编造）。
@@ -65,6 +66,7 @@ void paintPortraitLikesPage(
   required int selectedIndex,
   required bool loading,
   required String notice,
+  double scroll = 0,
 }) {
   final double width = c.gridWidth - 2 * _gutter;
   final double height = c.height;
@@ -74,11 +76,14 @@ void paintPortraitLikesPage(
   // 返回命中走 mobile:mine。
   c.header('喜欢的歌曲', back: true, backAction: _savedBackAction);
 
-  // Qt `y = (search ? 130 : 158) - scroll`，这里没有滚动量；小视口按比例收。
+  // Qt `y = (search ? 130 : 158) - scroll`；小视口按比例收。
   final double top = _contentTop(c);
+  // 收藏列可能有上百首（真机 100 首），必须能滚：卡片与按钮跟着滚动量整体上移，
+  // 列表行自己再让出同样的距离。
+  final double headTop = top - scroll;
   final double bottom = _pageBottom(c, top);
 
-  double y = top;
+  double y = headTop;
   c.text(
     'PERSONAL ARCHIVE / ${rows.length} TRACKS',
     _gutter,

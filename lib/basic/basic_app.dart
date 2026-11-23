@@ -2086,6 +2086,12 @@ class _BasicShellState extends State<_BasicShell>
         }
         setState(() => _discoverScroll = value);
       },
+      onSavedScrollChanged: (double value) {
+        if (!mounted) {
+          return;
+        }
+        setState(() => _savedScroll = value);
+      },
       // 登录页（modal == 'login'）。
       loginState: _loginController?.state,
       loginMethods: _loginController?.methods ?? const <ProviderLoginMethod>[],
