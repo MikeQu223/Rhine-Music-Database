@@ -1372,6 +1372,17 @@ class BasicHudFrame {
   ) {
     final double x = width * 0.56;
     final double usable = width - x - 59;
+    // Qt `NativeHudDetail.cpp:80-100`：评论态先把详情卡整块底色铺掉再画评论面板
+    // （`fill(bounds, 0.973,0.969,0.933,0.96)`），否则评论文字会与底下 TRACK RECORD
+    // 的标题/字段互相透叠（真机缺陷）。这里照做：先铺纸色，再交给 comments_modal。
+    // Qt 那里 alpha 是 0.96，但它的卡片根本没画（`commentsPanel` 直接 return）；
+    // 我们是叠画，留 4% 透光会让底下的标题/字段隐约透出来，所以这里用不透明纸色。
+    final List<Object?> paper = dark
+        ? <Object?>[0.08, 0.095, 0.09, 1]
+        : <Object?>[0.973, 0.969, 0.933, 1];
+    sink.addDrawing(<List<Object?>>[
+      <Object?>['fill', paper, x - 24, 200, usable + 48, height - 200],
+    ], const <Map<String, Object?>>[]);
     final comments_modal.CommentPanelDrawing drawing = comments_modal.paintCommentsPanel(
       _commentPanelModel(model, x: x, width: usable, dark: dark),
       _CommentPanelGlyphs(ports),
