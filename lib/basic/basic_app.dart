@@ -2315,8 +2315,7 @@ class _BasicShellState extends State<_BasicShell>
           Builder(
             builder: (BuildContext inner) {
               final MvController mv = _mvController!;
-              return Positioned.fill(
-                child: BasicMvPlayer(
+              final Widget player = BasicMvPlayer(
                   url: mv.state.track!.url,
                   title: mv.state.track!.title,
                   status: mv.state.status,
@@ -2339,7 +2338,20 @@ class _BasicShellState extends State<_BasicShell>
                     );
                     setState(() {});
                   },
-                ),
+                );
+              // 横屏：视频只占左侧 3D 场景区，右侧留给 HUD 的 MV 面板；铺满整窗会把
+              // 面板上的「视频版本 / 画面偏移 / 关闭」全盖住（真机缺陷）。
+              // 竖屏没有并排空间，仍按整页播放。
+              if (geometry == null) {
+                return Positioned.fill(child: player);
+              }
+              final Size size = MediaQuery.sizeOf(inner);
+              return Positioned(
+                left: 0,
+                top: 0,
+                width: size.width * 0.56,
+                height: size.height,
+                child: player,
               );
             },
           ),
