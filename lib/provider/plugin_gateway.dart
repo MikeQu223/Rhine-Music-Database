@@ -84,7 +84,13 @@ class PluginGateway implements ProviderGateway {
     }
     if (!reply.ok) {
       onDiagnostic?.call(reply.error);
-      throw ProviderRequestError('${descriptor.name}：${reply.error}');
+      // 插件自己的错误串往往已经带平台名（`网易云音乐返回 405：…`），再拼一次
+      // 会变成「网易云音乐：网易云音乐返回 405：…」（真机出现过）。
+      throw ProviderRequestError(
+        reply.error.startsWith(descriptor.name)
+            ? reply.error
+            : '${descriptor.name}：${reply.error}',
+      );
     }
     return reply;
   }
