@@ -375,12 +375,6 @@ void _title(PortraitCanvas c, PortraitArchive archive, double listTop) {
     c.text('播放全部', w - 84, 127, size: 10, width: 74);
     c.hit(Rect.fromLTWH(w - 113, 114, 94, 44), 'music:play-loaded', '播放全部');
   }
-  c.text('上下滑动浏览 / TRACK INDEX', 23, listTop - 18, size: 8, width: 240, color: c.muted);
-  final String counter = archive.total == 0
-      ? '00 / 00'
-      : '${_pad(archive.index + 1)} / ${_pad(archive.total)}';
-  c.rightText(counter, w - 23, listTop - 18, 8, 'regular', c.ink);
-  c.fill(Rect.fromLTWH(23, listTop - 4, w - 46, .7), c.ink);
 }
 
 void _list(
@@ -408,6 +402,14 @@ void _list(
     );
   }
   c.fill(Rect.fromLTWH(0, listTop, c.gridWidth, math.max(0, c.height - listTop)), wash(1));
+  // 索引行画在渐变之后：Qt 这两行压在场景下沿上（`listTop - 18`），我们若先画再铺
+  // 渐变，文字会被 0.6 的纸色洗成灰（真机「上下滑动浏览 / TRACK INDEX」读不清）。
+  c.text('上下滑动浏览 / TRACK INDEX', 23, listTop - 18, size: 8, width: 240, color: c.muted);
+  final String counter = archive.total == 0
+      ? '00 / 00'
+      : '${_pad(archive.index + 1)} / ${_pad(archive.total)}';
+  c.rightText(counter, c.gridWidth - 23, listTop - 18, 8, 'regular', c.ink);
+  c.fill(Rect.fromLTWH(23, listTop - 4, c.gridWidth - 46, .7), c.ink);
   c.beginContent(listTop);
   if (archive.rows.isEmpty) {
     if (archive.emptyNotice.isNotEmpty) {
