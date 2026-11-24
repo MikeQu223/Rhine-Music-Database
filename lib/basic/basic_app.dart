@@ -26,11 +26,19 @@ import '../hud/input/key_router.dart'
         HudKeySnapshot,
         KeySymbol;
 import '../hud/input/text_input_overlay.dart';
-import '../hud/input/wheel_router.dart' show HudScrollOffsets, HudWheelConstants;
+import '../hud/input/wheel_router.dart'
+    show HudScrollOffsets, HudWheelConstants;
 import '../hud/modals/disc_warning_modal.dart';
 import '../hud/modals/playlist_form.dart'
-    show PlaylistFormCommit, PlaylistFormKind, PlaylistFormLayer, PlaylistFormPort, PlaylistFormResult,
-        PlaylistFormRow, PlaylistFormSpec, PlaylistFormView;
+    show
+        PlaylistFormCommit,
+        PlaylistFormKind,
+        PlaylistFormLayer,
+        PlaylistFormPort,
+        PlaylistFormResult,
+        PlaylistFormRow,
+        PlaylistFormSpec,
+        PlaylistFormView;
 import '../hud/modals/settings_modal.dart'
     show
         PlatformCapabilities,
@@ -38,8 +46,10 @@ import '../hud/modals/settings_modal.dart'
         SettingsPreferenceContext,
         SettingsPreferenceSnapshot;
 import '../hud/modals/queue_modal.dart' show queueModalMaximumOffset;
-import '../hud/player/player_bar.dart' show playerBarHeaderHeight, playerBarRowHeight;
-import '../hud/portrait/portrait_playlist_picker.dart' show portraitPlaylistPickPrefix;
+import '../hud/player/player_bar.dart'
+    show playerBarHeaderHeight, playerBarRowHeight;
+import '../hud/portrait/portrait_playlist_picker.dart'
+    show portraitPlaylistPickPrefix;
 import '../hud/portrait/portrait_saved_overview.dart'
     show PortraitSavedOverviewRow;
 import '../hud/portrait/portrait_pages_queue.dart' show portraitQueueModes;
@@ -95,17 +105,21 @@ import '../provider/plugin_bridge.dart';
 import '../provider/plugin_gateway.dart';
 import '../provider/provider_service.dart';
 import '../provider/qt_plugin_descriptors.dart';
-import '../hud/portrait/portrait_pages_collection_likes.dart' show PortraitLikesRow;
+import '../hud/portrait/portrait_pages_collection_likes.dart'
+    show PortraitLikesRow;
 import '../hud/portrait/portrait_pages_collection_playlists.dart'
     show PortraitPlaylistRow;
-import '../hud/portrait/portrait_pages_comments.dart' show PortraitCommentsModel;
-import '../hud/portrait/portrait_pages_login.dart' show kPortraitLoginMethodPrefix;
+import '../hud/portrait/portrait_pages_comments.dart'
+    show PortraitCommentsModel;
+import '../hud/portrait/portrait_pages_login.dart'
+    show kPortraitLoginMethodPrefix;
 import '../domain/comments/comment_actions.dart' show commentSortActionPrefix;
 import 'basic_comment_mapper.dart';
 import 'basic_aux_pages.dart';
 import '../hud/portrait/portrait_pages_artist.dart'
     show PortraitArtistRow, portraitArtistTabSongs;
-import '../hud/portrait/portrait_pages_album_info.dart' show PortraitAlbumInfoRow;
+import '../hud/portrait/portrait_pages_album_info.dart'
+    show PortraitAlbumInfoRow;
 import '../provider/provider_descriptor.dart';
 import '../provider/provider_registry.dart';
 import 'platform_playback.dart';
@@ -167,7 +181,12 @@ const String basicSearchKindActionPrefix = 'music:kind:';
 ///
 /// 与页面上那四列的显示序（歌曲/歌手/专辑/歌单）不是同一张表：页面拼动作串时
 /// 已经用 `portraitSearchKindActionOrder` 折算过，宿主只按下标查这张表。
-const List<String> basicSearchKindQtOrder = <String>['song', 'album', 'playlist', 'artist'];
+const List<String> basicSearchKindQtOrder = <String>[
+  'song',
+  'album',
+  'playlist',
+  'artist',
+];
 
 /// 竖屏队列页模式区展开/收起（Qt `mobile:queue-modes`，ResponsiveHudLayout.cpp:430-490）。
 const String basicQueueModesAction = 'mobile:queue-modes';
@@ -283,16 +302,18 @@ class _BasicAppState extends State<BasicApp> {
 
   /// 播放器窄偏好（play-history / play-mode）：同步镜像 + 异步落盘。
   /// 必须在造 [BasicController] 之前就有实例（MusicPlayer 构造时同步读回模式）。
-  late final BasicPlayerPreferences _playerPreferences =
-      BasicPlayerPreferences(_settingsStore.port);
+  late final BasicPlayerPreferences _playerPreferences = BasicPlayerPreferences(
+    _settingsStore.port,
+  );
 
   /// 本机收藏（喜欢 / 自建歌单）的持久化实现。
   ///
   /// 端口是设置页那套 `BasicSettingsPort` 的适配：`LocalCollectionStore` 要的是
   /// 异步 `PreferencePort`（read/write/remove），而设置端口只按 `panel/` 前缀
   /// 直接落盘，所以要包一层把键拼成 `panel/collections/<provider>.json`。
-  late final LocalCollectionStore _collections =
-      LocalCollectionStore(port: _BasicSettingsPreferencePort(_settingsStore));
+  late final LocalCollectionStore _collections = LocalCollectionStore(
+    port: _BasicSettingsPreferencePort(_settingsStore),
+  );
 
   BasicHudResources? _resources;
   Object? _resourceError;
@@ -306,22 +327,24 @@ class _BasicAppState extends State<BasicApp> {
 
   /// 回执接收面的稳定句柄：方法掏出来的 tear-off 每次都是新闭包，
 
-
   @override
   void initState() {
     super.initState();
-    _settingsStore =
-        BasicSettingsStore(port: widget.settingsPort ?? SharedPreferencesBasicSettingsPort());
+    _settingsStore = BasicSettingsStore(
+      port: widget.settingsPort ?? SharedPreferencesBasicSettingsPort(),
+    );
     _ownsAudio = widget.audio == null;
     _ownsController = widget.controller == null;
     _audio = widget.audio ?? MethodChannelBasicAudio();
     // 系统媒体控件端口：显式注入优先；否则只在"自己造 controller + 自己造 audio"
     // 的生产装配里接平台通道（widget 测试一律注入依赖，因此不会碰通道）。
-    final MediaSessionPort? mediaPort = widget.mediaSessionPort ??
+    final MediaSessionPort? mediaPort =
+        widget.mediaSessionPort ??
         (widget.controller == null && widget.audio == null
             ? (kIsWeb ? null : MethodChannelMediaSession())
             : null);
-    _controller = widget.controller ??
+    _controller =
+        widget.controller ??
         BasicController(
           audio: _audio,
           mediaSessionPort: mediaPort,
@@ -375,13 +398,12 @@ class _BasicAppState extends State<BasicApp> {
 
   Future<void> _loadResources() async {
     try {
-      final BasicHudResources resources =
-          await BasicHudResources.load(
-            bundle: widget.bundle,
-            covers: _covers,
-            // 竖屏详情/歌词/沉浸条的心读这份真值（`BasicController.isLiked`）。
-            songLiked: (String songId) => _controller.isLiked(songId),
-          );
+      final BasicHudResources resources = await BasicHudResources.load(
+        bundle: widget.bundle,
+        covers: _covers,
+        // 竖屏详情/歌词/沉浸条的心读这份真值（`BasicController.isLiked`）。
+        songLiked: (String songId) => _controller.isLiked(songId),
+      );
       if (!mounted) {
         return;
       }
@@ -477,7 +499,9 @@ class _BasicAppState extends State<BasicApp> {
           debugShowCheckedModeBanner: false,
           theme: ThemeData(
             brightness: dark ? Brightness.dark : Brightness.light,
-            scaffoldBackgroundColor: dark ? Colors.black : const Color(0xFFEFEDE4),
+            scaffoldBackgroundColor: dark
+                ? Colors.black
+                : const Color(0xFFEFEDE4),
           ),
           home: _home(),
         );
@@ -512,7 +536,8 @@ class _BasicAppState extends State<BasicApp> {
       // failures 逐条留在这里，不做静默 fallback（basic_hud_resources.dart:35-36 的契约）。
       final List<String> failures = resources.failures;
       return _BasicMessage(
-        text: basicGlyphMissingPrefix +
+        text:
+            basicGlyphMissingPrefix +
             (failures.isEmpty ? '字形表为空，且没有记录到失败项' : failures.join('\n')),
         actionLabel: '重试',
         onAction: _retryResources,
@@ -571,10 +596,11 @@ class _BasicShell extends StatefulWidget {
 }
 
 class _BasicShellState extends State<_BasicShell>
-    // 两条 ticker：初始化动画（AnimationController）与封面查看器的场景时钟
-    // （ViewerState.update 需要逐帧推进 transition/spring，见 lib/scene/viewer_state.dart:579）。
-    // Qt 侧这两条时钟也是各自独立的（NativeScene 的 m_clock + NativeViewer 的 update）。
-    with TickerProviderStateMixin
+        // 两条 ticker：初始化动画（AnimationController）与封面查看器的场景时钟
+        // （ViewerState.update 需要逐帧推进 transition/spring，见 lib/scene/viewer_state.dart:579）。
+        // Qt 侧这两条时钟也是各自独立的（NativeScene 的 m_clock + NativeViewer 的 update）。
+        with
+        TickerProviderStateMixin
     implements TextInputPorts {
   /// 未接入动作的可见反馈（null = 无）。这里绝不静默吞点击，也不假装有设置/
   /// 账号功能：真实缺口写进可见反馈，并在报告里点名缺少的 controller 契约。
@@ -627,7 +653,8 @@ class _BasicShellState extends State<_BasicShell>
   /// 平台 id → 已恢复的账号（Qt `providerCardsState()` 的 authenticated 面）。
   /// 冷启动能恢复的账号由插件侧 cookie 落盘决定，这里没有独立的恢复通道，
   /// 真实来源是 [LoginController] 的 `account()`；[_providerAccountsView] 负责折算。
-  final Map<String, ProviderAccount?> _providerAccounts = const <String, ProviderAccount?>{};
+  final Map<String, ProviderAccount?> _providerAccounts =
+      const <String, ProviderAccount?>{};
 
   /// 已登录账号的展示面：把 [LoginController] 的账号折进平台 id 表。
   ///
@@ -640,12 +667,16 @@ class _BasicShellState extends State<_BasicShell>
     }
     return <String, ProviderAccount?>{
       ..._providerAccounts,
-      _providerId: ProviderAccount(id: login.accountId, nickname: login.nickname),
+      _providerId: ProviderAccount(
+        id: login.accountId,
+        nickname: login.nickname,
+      ),
     };
   }
 
   /// 当前平台昵称（Qt `music.nickname`）。
-  String get _providerUserName => _providerAccountsView[_providerId]?.nickname ?? '';
+  String get _providerUserName =>
+      _providerAccountsView[_providerId]?.nickname ?? '';
 
   /// `PlatformFeatures::LocalMusic`：关掉时 `local` 平台不进音乐平台页
   /// （Qt `providerCardsState()` 跳过 `id == "local"`；过滤由调用方做，页面
@@ -658,6 +689,7 @@ class _BasicShellState extends State<_BasicShell>
   /// 平台服务（Qt `MusicAccount` 的数据面）：按 id 给网关，缺省退回
   /// `UnavailableProviderGateway`（本预览没有 Node 运行时，页面照样可画）。
   ProviderService? _providerService;
+
   /// 插件通道客户端（首次请求时才把内嵌 Node 拉起来）。
   final PluginBridgeClient _pluginBridge = PluginBridgeClient();
 
@@ -692,8 +724,10 @@ class _BasicShellState extends State<_BasicShell>
         if (delta != 0 || event.committed) {
           setState(() {
             final int count = controller.state.queue.length;
-            _queueOffset =
-                (_queueOffset - delta).clamp(0, queueModalMaximumOffset(count));
+            _queueOffset = (_queueOffset - delta).clamp(
+              0,
+              queueModalMaximumOffset(count),
+            );
           });
         }
       }
@@ -740,7 +774,8 @@ class _BasicShellState extends State<_BasicShell>
   /// 竖屏没有这一层：竖屏把提前/延后/重置放进「歌曲操作」面板。
   bool _lyricsOffsetOpen = false;
 
-  final GlobalKey<TextInputOverlayState> _textInputKey = GlobalKey<TextInputOverlayState>();
+  final GlobalKey<TextInputOverlayState> _textInputKey =
+      GlobalKey<TextInputOverlayState>();
 
   /// HUD 画出来的输入框被点中（`field(name, rect)` 的 name）。
   ///
@@ -793,6 +828,7 @@ class _BasicShellState extends State<_BasicShell>
     // 1.0 = 已播完：默认不盖黑幕，只有“初始化动画”开启或手动重放时才从 0 跑。
     value: 1,
   );
+
   /// 初始化页面是否正在显示（真实 boot 门槛页 + glyph 层，见 basic_startup_view.dart）。
   ///
   /// 与 [_startup] 分工：[_startup] 只是那一小段 1200ms 的交接淡出/舞台上移；
@@ -845,7 +881,9 @@ class _BasicShellState extends State<_BasicShell>
   /// inputLayer.forceActiveFocus()）；本外壳对应为 HUD 子树的这个节点，
   /// 关框后由 [focusInputLayer] 收回，避免「没有任何节点持焦点」导致
   /// 硬件键盘/遥控器导航断掉。
-  final FocusNode _hudFocusNode = FocusNode(debugLabel: 'basic-hud-input-layer');
+  final FocusNode _hudFocusNode = FocusNode(
+    debugLabel: 'basic-hud-input-layer',
+  );
 
   /// NativeHud::key 的两个成员：Qt 里 settingsScroll / desktopLyricsScroll 是
   /// NativeHud 的成员变量（Qt/src/NativeHudController.cpp:891-904 就地修改），这里同形。
@@ -861,8 +899,9 @@ class _BasicShellState extends State<_BasicShell>
   final ValueNotifier<double> _settingsScrollMaximum = ValueNotifier<double>(0);
 
   /// Engine.cpp:952-1012 的 keyEvent 层：媒体键 → 翻译键 → event.text → key(value)。
-  late final EngineKeyRouter _engineKeyRouter =
-      EngineKeyRouter(ports: _BasicEngineKeyPorts(this));
+  late final EngineKeyRouter _engineKeyRouter = EngineKeyRouter(
+    ports: _BasicEngineKeyPorts(this),
+  );
 
   /// NativeHud::key（Qt/src/NativeHudController.cpp:887-943）的 1:1 路由。
   ///
@@ -870,8 +909,9 @@ class _BasicShellState extends State<_BasicShell>
   /// 于是 Overlay.qml:118-120（`Keys.onPressed` → `rhine.keyEvent`）在 Flutter 侧
   /// 整层缺失——用户看得到 HUD 底部「←→ 切换来源 / ↑↓ 选曲 / ENTER 查看 / 检索」的
   /// 提示，按下去却没有动作。补的就是这一层：键 → [HudKeyRouter] → 既有 [_onAction]。
-  late final HudKeyRouter _keyRouter =
-      HudKeyRouter(ports: _BasicHudKeyPorts(this));
+  late final HudKeyRouter _keyRouter = HudKeyRouter(
+    ports: _BasicHudKeyPorts(this),
+  );
 
   BasicController get controller => widget.controller;
 
@@ -943,8 +983,8 @@ class _BasicShellState extends State<_BasicShell>
         // 兼容早期版本写下的 `Set-Cookie` 行数组：解析成 `name -> value`。
         final Map<String, String> jar = <String, String>{};
         for (final Object? line in decoded) {
-          final RegExpMatch? match =
-              RegExp(r'^\s*([^=;]+)=([^;]*)').firstMatch('$line');
+          final RegExpMatch? match = RegExp(r'^\s*([^=;]+)=([^;]*)')
+              .firstMatch('$line');
           if (match == null) {
             continue;
           }
@@ -977,15 +1017,14 @@ class _BasicShellState extends State<_BasicShell>
         for (final InstalledPlugin plugin in plugins.installed)
           if (plugin.enabled) plugin.manifest.raw,
       ];
-      final ProviderRegistry registry = await ProviderAssetLoader(
-        bundle: widget.bundle,
-      ).load(
-        userManifests: userManifests,
-        disabled: <String>{
-          for (final InstalledPlugin plugin in plugins.installed)
-            if (!plugin.enabled) plugin.id,
-        },
-      );
+      final ProviderRegistry registry =
+          await ProviderAssetLoader(bundle: widget.bundle).load(
+            userManifests: userManifests,
+            disabled: <String>{
+              for (final InstalledPlugin plugin in plugins.installed)
+                if (!plugin.enabled) plugin.id,
+            },
+          );
       if (!mounted) {
         return;
       }
@@ -997,7 +1036,8 @@ class _BasicShellState extends State<_BasicShell>
       // 只有「注册表读成功、但里面没有上次那个平台」才算插件失效。注册表为空
       // （assets 缺 descriptor、测试替身没给 bundle）时不能当成平台消失——那会在
       // 冷启动把列切到「全部专辑」并选到专辑行，3D 场景于是没有 current 曲目。
-      final bool providerFellBack = registry.ids.isNotEmpty &&
+      final bool providerFellBack =
+          registry.ids.isNotEmpty &&
           previousProvider.isNotEmpty &&
           !registry.contains(previousProvider);
       setState(() {
@@ -1015,8 +1055,8 @@ class _BasicShellState extends State<_BasicShell>
         final String candidate = saved.isNotEmpty && registry.contains(saved)
             ? saved
             : registryDefault != null && registryDefault.isNotEmpty
-                ? registryDefault
-                : (_providers.isEmpty ? 'siren' : _providers.first.id);
+            ? registryDefault
+            : (_providers.isEmpty ? 'siren' : _providers.first.id);
         _providerId = registry.contains(candidate)
             ? candidate
             : registry.fallbackId(exclude: <String>{}) ?? candidate;
@@ -1025,7 +1065,10 @@ class _BasicShellState extends State<_BasicShell>
         return;
       }
       if (providerFellBack) {
-        widget.playerPreferences.write(PlatformSwitcher.providerPreferenceKey, _providerId);
+        widget.playerPreferences.write(
+          PlatformSwitcher.providerPreferenceKey,
+          _providerId,
+        );
         // 用户要求：插件平台不可用时回到塞壬的「全部专辑」列（不是搜索列）。
         // `_installProviderService` 里的 `resetForProviderSwitch` 会把列归零到搜索，
         // 所以这里再显式选一次；列名里找不到「全部专辑」时不动（保持 0 列）。
@@ -1077,7 +1120,9 @@ class _BasicShellState extends State<_BasicShell>
           return PluginGateway(
             descriptor: descriptor,
             bridge: _pluginBridge,
-            cookies: _decodePluginCookies(widget.playerPreferences.read(cookieKey)),
+            cookies: _decodePluginCookies(
+              widget.playerPreferences.read(cookieKey),
+            ),
             // 会话 cookie 落偏好：重启后 `account()` 仍能认出已登录（Qt 用钥匙串）。
             onCookies: (Map<String, String> cookies) =>
                 widget.playerPreferences.write(cookieKey, jsonEncode(cookies)),
@@ -1196,7 +1241,9 @@ class _BasicShellState extends State<_BasicShell>
     if (!mounted) {
       return;
     }
-    debugPrint('[plugin] account restored: ${login.state.accountId} / ${login.state.nickname}');
+    debugPrint(
+      '[plugin] account restored: ${login.state.accountId} / ${login.state.nickname}',
+    );
     await _refreshServerLiked();
   }
 
@@ -1209,9 +1256,13 @@ class _BasicShellState extends State<_BasicShell>
     }
     try {
       await controller.refreshServerLiked(uid: login.state.accountId);
-      debugPrint('[plugin] liked refreshed: ${controller.serverLikedIds.length} ids');
+      debugPrint(
+        '[plugin] liked refreshed: ${controller.serverLikedIds.length} ids',
+      );
       await controller.refreshServerPlaylists(uid: login.state.accountId);
-      debugPrint('[plugin] playlists refreshed: ${controller.serverPlaylists.length}');
+      debugPrint(
+        '[plugin] playlists refreshed: ${controller.serverPlaylists.length}',
+      );
     } on Object catch (error) {
       debugPrint('[plugin] liked refresh failed: $error');
     }
@@ -1229,15 +1280,20 @@ class _BasicShellState extends State<_BasicShell>
     await mv.attach(
       service.gateway,
       providerSupportsMv: descriptor.capability('mv', fallback: false),
-      providerSupportsMvVersions: descriptor.operation('mvVersions', fallback: false),
+      providerSupportsMvVersions: descriptor.operation(
+        'mvVersions',
+        fallback: false,
+      ),
     );
   }
 
   /// 收藏列（`modal == 'saved'`）当前列：1 = 喜欢、2 = 我的歌单；0 = 总览。
   /// 歌单表单（Qt `playlist-form`）的当前形态；null = 表单没开。
   PlaylistFormKind? _playlistFormKind;
+
   /// 正在重命名的歌单 id（create 时为空）。
   String _playlistFormId = '';
+
   /// 表单同帧错误文案（承接 PlaylistFormLayer 的 rejected 结果）。
   String _playlistFormStatus = '';
 
@@ -1263,7 +1319,8 @@ class _BasicShellState extends State<_BasicShell>
 
   /// 发现页已载入的原始条目（与 [_discoverEntries] 同序，点行时按它开）。
   List<Map<String, Object?>> _discoverItems = const <Map<String, Object?>>[];
-  List<PortraitDiscoverEntry> _discoverEntries = const <PortraitDiscoverEntry>[];
+  List<PortraitDiscoverEntry> _discoverEntries =
+      const <PortraitDiscoverEntry>[];
   String _discoverStatus = '';
   bool _discoverMore = false;
   bool _discoverLoading = false;
@@ -1319,7 +1376,9 @@ class _BasicShellState extends State<_BasicShell>
       ],
       entries: entries,
       // 载入中的状态行优先（Qt `MusicDiscover::accept` 只在结束时写 status）。
-      status: _discoverLoading ? '正在读取…' : (_discoverStatus.isNotEmpty ? _discoverStatus : fallback),
+      status: _discoverLoading
+          ? '正在读取…'
+          : (_discoverStatus.isNotEmpty ? _discoverStatus : fallback),
       more: !history && _discoverMore,
       loadingMore: _discoverLoading && entries.isNotEmpty,
       scroll: _discoverScroll,
@@ -1333,15 +1392,21 @@ class _BasicShellState extends State<_BasicShell>
   Future<void> _loadDiscover({bool append = false}) async {
     final ProviderDescriptor? descriptor = _currentDescriptor;
     final ProviderGateway? gateway = _providerService?.gateway;
-    final String tab = _discoverTab.isEmpty ? basicDiscoverInitialTab(descriptor) : _discoverTab;
-    if (descriptor == null || gateway == null || tab.isEmpty || tab == basicDiscoverHistoryTab) {
+    final String tab = _discoverTab.isEmpty
+        ? basicDiscoverInitialTab(descriptor)
+        : _discoverTab;
+    if (descriptor == null ||
+        gateway == null ||
+        tab.isEmpty ||
+        tab == basicDiscoverHistoryTab) {
       return;
     }
     if (!descriptor.discoverEnabled) {
       setState(() => _discoverStatus = '${descriptor.name}不提供发现页');
       return;
     }
-    final bool needsAccount = tab == 'daily' || tab == 'guess' || tab == 'artists';
+    final bool needsAccount =
+        tab == 'daily' || tab == 'guess' || tab == 'artists';
     if (needsAccount && !(_loginController?.state.loggedIn ?? false)) {
       setState(() {
         _discoverEntries = const <PortraitDiscoverEntry>[];
@@ -1382,7 +1447,8 @@ class _BasicShellState extends State<_BasicShell>
       );
       if (!mounted) return;
       final List<Map<String, Object?>> rows = <Map<String, Object?>>[
-        for (final Object? item in (page['items'] as List<Object?>? ?? const <Object?>[]))
+        for (final Object? item
+            in (page['items'] as List<Object?>? ?? const <Object?>[]))
           if (item is Map) item.cast<String, Object?>(),
       ];
       setState(() {
@@ -1421,7 +1487,9 @@ class _BasicShellState extends State<_BasicShell>
               if ('$area'.isNotEmpty) '$area',
           ];
         }
-        _discoverStatus = _discoverItems.isEmpty ? '暂无内容' : '已载入 ${_discoverItems.length} 条';
+        _discoverStatus = _discoverItems.isEmpty
+            ? '暂无内容'
+            : '已载入 ${_discoverItems.length} 条';
       });
     } on Object catch (error) {
       if (!mounted) return;
@@ -1440,7 +1508,8 @@ class _BasicShellState extends State<_BasicShell>
 
   /// 总览页的索引行（Qt `library()` 的 `for (lane = 1; lane < columns.size(); ++lane)`）。
   List<PortraitSavedOverviewRow> _savedOverviewRows() {
-    final List<String> columns = _currentDescriptor?.columns ?? basicSirenColumns;
+    final List<String> columns =
+        _currentDescriptor?.columns ?? basicSirenColumns;
     return <PortraitSavedOverviewRow>[
       for (int lane = 1; lane < columns.length; lane += 1)
         PortraitSavedOverviewRow(
@@ -1455,27 +1524,33 @@ class _BasicShellState extends State<_BasicShell>
   /// 喜欢列的行（真数据：控制器里 likedIDs 解析出的曲目，空 = 还没读到）。
   List<PortraitLikesRow> _likedRows() {
     // 插件平台读服务端收藏（`refreshServerLiked` 拉回来的行），本地平台读本机集合。
-    final List<SirenSong> songs =
-        controller.remoteSearchActive ? controller.serverLikedSongs : controller.likedSongs;
+    final List<SirenSong> songs = controller.remoteSearchActive
+        ? controller.serverLikedSongs
+        : controller.likedSongs;
     return <PortraitLikesRow>[
       for (final SirenSong song in songs)
-        (song.title, song.artist, song.durationMs > 0 ? _mmss(song.durationMs.round()) : ''),
+        (
+          song.title,
+          song.artist,
+          song.durationMs > 0 ? _mmss(song.durationMs.round()) : '',
+        ),
     ];
   }
 
   /// 我的歌单列的行（真数据：本机集合存储里的歌单）。
   List<PortraitPlaylistRow> _playlistRows() => <PortraitPlaylistRow>[
-        // 插件平台的歌单来自服务端 `userPlaylists(uid)`（Qt lane 2 的 lists[2]），
-        // 塞壬/本地平台才读本机集合。
-        for (final BasicLocalPlaylist playlist in controller.remoteSearchActive
+    // 插件平台的歌单来自服务端 `userPlaylists(uid)`（Qt lane 2 的 lists[2]），
+    // 塞壬/本地平台才读本机集合。
+    for (final BasicLocalPlaylist playlist
+        in controller.remoteSearchActive
             ? controller.serverPlaylists
             : controller.localPlaylists)
-          PortraitPlaylistRow(
-            id: playlist.id,
-            title: playlist.title,
-            trackCount: playlist.trackCount,
-          ),
-      ];
+      PortraitPlaylistRow(
+        id: playlist.id,
+        title: playlist.title,
+        trackCount: playlist.trackCount,
+      ),
+  ];
 
   /// 收藏列的状态/空态文案（Qt `library()` 空分支的 `s["status"]`）。
   String _savedNotice() {
@@ -1490,9 +1565,9 @@ class _BasicShellState extends State<_BasicShell>
 
   /// 选择器里可选的歌单（Qt `music.lists[2]` 的本机歌单列）。
   List<(String, String, int)> _pickerPlaylists() => <(String, String, int)>[
-        for (final BasicLocalPlaylist playlist in controller.localPlaylists)
-          (playlist.id, playlist.title, playlist.trackCount),
-      ];
+    for (final BasicLocalPlaylist playlist in controller.localPlaylists)
+      (playlist.id, playlist.title, playlist.trackCount),
+  ];
 
   String _mmss(int ms) {
     final int seconds = ms ~/ 1000;
@@ -1633,7 +1708,8 @@ class _BasicShellState extends State<_BasicShell>
   }
 
   void _onStartupStatus(AnimationStatus status) {
-    if (status == AnimationStatus.completed || status == AnimationStatus.dismissed) {
+    if (status == AnimationStatus.completed ||
+        status == AnimationStatus.dismissed) {
       if (mounted) {
         setState(() {});
       }
@@ -1716,7 +1792,9 @@ class _BasicShellState extends State<_BasicShell>
     if (_coverViewer != null) {
       return;
     }
-    final ViewerState viewer = ViewerState(resumeMode: qtSceneModeOf(controller.state));
+    final ViewerState viewer = ViewerState(
+      resumeMode: qtSceneModeOf(controller.state),
+    );
     // ready 在 Flutter 侧只能是"HUD 按 Qt 版式画全"的意思：Qt 的 m_ready 取决于
     // archive-assembly.json 网格是否装载成功（NativeViewer::open 里 m_ready = !m_meshes.isEmpty()），
     // 而 Flutter→Qt 只有 state/pointer/wheel 三条单向通道，拿不到这个布尔值。
@@ -1776,7 +1854,8 @@ class _BasicShellState extends State<_BasicShell>
     }
     // 只有还在过渡/弹簧未收敛时才重建：查看器完全打开后 HUD 是静止的，
     // 每帧 setState 会把整个外壳（含 PlatformView 的父链）都刷一遍，白耗。
-    final bool animating = viewer.isClosing ||
+    final bool animating =
+        viewer.isClosing ||
         viewer.transition != ViewerTransition.open ||
         viewer.resetting ||
         (viewer.clarity - viewer.targetClarity).abs() > 0.001 ||
@@ -1812,7 +1891,9 @@ class _BasicShellState extends State<_BasicShell>
       _sendCoverViewerCommand('cover-front');
       return;
     }
-    final ViewerAction? parsed = ViewerAction.fromWire(action.replaceFirst('viewer:', ''));
+    final ViewerAction? parsed = ViewerAction.fromWire(
+      action.replaceFirst('viewer:', ''),
+    );
     if (parsed == null) {
       return;
     }
@@ -1882,8 +1963,9 @@ class _BasicShellState extends State<_BasicShell>
       return null;
     }
     final String head = failures.take(maxShown).join('；');
-    final String more =
-        failures.length > maxShown ? '；…共 ${failures.length} 项' : '';
+    final String more = failures.length > maxShown
+        ? '；…共 ${failures.length} 项'
+        : '';
     return basicResourceFailurePrefix + head + more;
   }
 
@@ -1949,8 +2031,11 @@ class _BasicShellState extends State<_BasicShell>
                 );
               }
               final bool portrait =
-                  classifyOrientation(logicalWidth: width, logicalHeight: height) ==
-                      OrientationKind.portrait;
+                  classifyOrientation(
+                    logicalWidth: width,
+                    logicalHeight: height,
+                  ) ==
+                  OrientationKind.portrait;
               return ListenableBuilder(
                 listenable: controller,
                 builder: (BuildContext context, Widget? child) {
@@ -1958,7 +2043,10 @@ class _BasicShellState extends State<_BasicShell>
                   // 横屏：几何体每帧现造一份，绘制 / 命中 / 输入层共用这一个实例。
                   final StageGeometry? landscape = portrait
                       ? null
-                      : StageGeometry.landscape(logicalWidth: width, logicalHeight: height);
+                      : StageGeometry.landscape(
+                          logicalWidth: width,
+                          logicalHeight: height,
+                        );
                   final Widget surface;
                   if (portrait) {
                     // 竖屏由 PortraitStage 注入唯一的 StageGeometry/HudStage 作用域；
@@ -1968,7 +2056,9 @@ class _BasicShellState extends State<_BasicShell>
                       PortraitStage(
                         child: Builder(
                           builder: (BuildContext inner) {
-                            _adoptPortraitGeometry(StageGeometryScope.of(inner));
+                            _adoptPortraitGeometry(
+                              StageGeometryScope.of(inner),
+                            );
                             return _surface(state);
                           },
                         ),
@@ -2037,7 +2127,8 @@ class _BasicShellState extends State<_BasicShell>
                   mainAxisSize: MainAxisSize.min,
                   children: <Widget>[
                     if (actionNotice != null) _BasicNotice(text: actionNotice),
-                    if (resourceNotice != null) _BasicNotice(text: resourceNotice),
+                    if (resourceNotice != null)
+                      _BasicNotice(text: resourceNotice),
                   ],
                 ),
               ),
@@ -2047,7 +2138,11 @@ class _BasicShellState extends State<_BasicShell>
     );
   }
 
-  Widget _surface(BasicViewState state, {StageGeometry? geometry, HudStage? stage}) {
+  Widget _surface(
+    BasicViewState state, {
+    StageGeometry? geometry,
+    HudStage? stage,
+  }) {
     // 竖屏窗口底部安全区（状态栏/手势条/三键栏）。画布高度已经扣过它，HUD 的
     // 播放条与底栏不能再按设计稿 34 网格留一遍，否则整块被顶高一个导航栏
     // （用户 2026-11-24：「底部组件离底部还有一段空间，抬太高了」）。
@@ -2057,7 +2152,12 @@ class _BasicShellState extends State<_BasicShell>
     // （_sceneKey 不变 → element 被移动而非重建，QQuickView 不重启）。
     final ViewerState? coverViewer = _coverViewer;
     if (coverViewer != null) {
-      return _coverViewerSurface(state, coverViewer, geometry: geometry, stage: stage);
+      return _coverViewerSurface(
+        state,
+        coverViewer,
+        geometry: geometry,
+        stage: stage,
+      );
     }
     final Widget hud = BasicHudSurface(
       state: state,
@@ -2139,7 +2239,8 @@ class _BasicShellState extends State<_BasicShell>
       // 评论页（modal == 'comments'）：领域层 CommentState 经映射层转成竖屏
       // 只读视图模型（lib/basic/basic_comment_mapper.dart）。
       comments: _commentsModel(),
-      mvAvailable: _currentDescriptor?.capability('mv', fallback: false) ?? false,
+      mvAvailable:
+          _currentDescriptor?.capability('mv', fallback: false) ?? false,
       commentsScroll: _commentsScroll,
       albumInfoScroll: _albumInfoScroll,
       onAlbumInfoScrollChanged: (double value) {
@@ -2190,7 +2291,9 @@ class _BasicShellState extends State<_BasicShell>
       loginDeviceNotice: _currentDescriptor?.text('deviceNotice') ?? '',
       loginCooldownLabel: _loginController?.cooldownLabel ?? '',
       loginSmsRetrySeconds: _loginController?.smsRetrySeconds ?? 0,
-      mv: _mvController == null ? null : basicMvPanelModelOf(_mvController!.state),
+      mv: _mvController == null
+          ? null
+          : basicMvPanelModelOf(_mvController!.state),
       mvPositionMs: _mvController?.videoPositionMs ?? 0,
       // 横屏歌词面板上的「歌词偏移 ⌃」浮层（Qt `modal == "lyrics-offset"`）。
       lyricsOffsetOpen: _lyricsOffsetOpen,
@@ -2202,7 +2305,12 @@ class _BasicShellState extends State<_BasicShell>
       playlistRows: _playlistRows(),
       pickerPlaylists: _pickerPlaylists(),
       pickerNotice: _playlistPickerNotice,
-      canCreatePlaylist: _currentDescriptor?.capability('playlistManagement', fallback: false) ?? false,
+      canCreatePlaylist:
+          _currentDescriptor?.capability(
+            'playlistManagement',
+            fallback: false,
+          ) ??
+          false,
       savedProviderName: _currentDescriptor?.name ?? '塞壬唱片',
       savedUserName: _accountName,
       savedOverviewRows: _savedOverviewRows(),
@@ -2220,10 +2328,12 @@ class _BasicShellState extends State<_BasicShell>
     // 分支先于 `modal == 'plugins'`）：在插件页点底部播放条会把 phase 切成 lyrics，
     // HUD 立刻画歌词页，而 widget 层若还按 modal 判断就会继续画插件页 ⇒ 两页重叠。
     // 所以 widget 层必须跟 HUD 用同一个前提：只有 HUD 真的在画插件页时才叠。
-    final bool hudPaintsSongPage = state.song != null &&
+    final bool hudPaintsSongPage =
+        state.song != null &&
         (state.phase == BasicPhase.detail || state.phase == BasicPhase.lyrics);
     final bool pluginsOpen =
-        !hudPaintsSongPage && (_modal == 'plugins' || _modal == 'plugin-detail');
+        !hudPaintsSongPage &&
+        (_modal == 'plugins' || _modal == 'plugin-detail');
     final bool startupOpen = _startupPageOpen;
     // 初始化页面在场时不再叠黑幕：那时整页 boot HUD 自己就是画面
     // （NativeHudBoot::boot 的 gradient/flash 门槛层），底下留真实场景当背景。
@@ -2257,7 +2367,9 @@ class _BasicShellState extends State<_BasicShell>
             child: Builder(
               builder: (BuildContext inner) {
                 final HudStage resolved = stage ?? HudStageScope.of(inner);
-                final double pageScale = resolved.scale > 0 ? resolved.scale : 1.0;
+                final double pageScale = resolved.scale > 0
+                    ? resolved.scale
+                    : 1.0;
                 // 初始化页整套坐标是 Qt 舞台坐标（1920 设计宽 / 1080 高，见
                 // boot_page.dart:1119 的约定）：门槛层命令与 ENTER SYSTEM 按钮都是
                 // stage 单位。logical→stage 的这一次缩放由宿主给，页内不再二次换算。
@@ -2316,7 +2428,8 @@ class _BasicShellState extends State<_BasicShell>
                       child: BasicPortraitSettingsPage(
                         stage: resolved,
                         // 与竖屏画布同一口径：PortraitBands 的 stageScale = 逻辑宽/1080。
-                        stageScale: MediaQuery.sizeOf(inner).width /
+                        stageScale:
+                            MediaQuery.sizeOf(inner).width /
                             HudScale.designStageHeight,
                         model: _settingsPanelModel(),
                         dark: state.dark,
@@ -2326,10 +2439,16 @@ class _BasicShellState extends State<_BasicShell>
                         // `ResponsiveHudPages.cpp:527-544` 把它画在 y=130 起，
                         // 竖屏这里作为设置内容的第一个 widget（与行网格同一单位）。
                         providerName: _currentDescriptor?.name ?? '',
-                        providerLoggedIn: (_loginController?.state.accountId ?? '').isNotEmpty,
+                        providerLoggedIn:
+                            (_loginController?.state.accountId ?? '')
+                                .isNotEmpty,
                         providerUserName: _accountName,
                         providerSupportsLogin:
-                            _currentDescriptor?.capability('login', fallback: false) ?? false,
+                            _currentDescriptor?.capability(
+                              'login',
+                              fallback: false,
+                            ) ??
+                            false,
                         onProviderAction: (String action) => _onAction(action),
                         onAction: (String action) =>
                             unawaited(_onSettingsAction(action)),
@@ -2347,10 +2466,15 @@ class _BasicShellState extends State<_BasicShell>
                       scrollMaximumStorage: _settingsScrollMaximum,
                       // 横屏设置第一屏的平台卡（Qt SettingsCard.cpp 的 providerCard）。
                       providerName: _currentDescriptor?.name ?? '',
-                      providerLoggedIn: _loginController?.state.loggedIn ?? false,
+                      providerLoggedIn:
+                          _loginController?.state.loggedIn ?? false,
                       providerUserName: _accountName,
                       providerSupportsLogin:
-                          _currentDescriptor?.capability('login', fallback: false) ?? false,
+                          _currentDescriptor?.capability(
+                            'login',
+                            fallback: false,
+                          ) ??
+                          false,
                       onProviderAction: (String action) =>
                           unawaited(_onSettingsAction(action)),
                       onAction: (String action) =>
@@ -2391,6 +2515,7 @@ class _BasicShellState extends State<_BasicShell>
                 }
                 unawaited(_onPluginAction(action));
               }
+
               final Widget page;
               if (_modal == 'plugin-detail' && detail != null) {
                 page = landscape
@@ -2499,13 +2624,18 @@ class _BasicShellState extends State<_BasicShell>
                   writeLoading: false,
                   formPid: _playlistFormId,
                   dark: state.dark,
-                  stageWidth: MediaQuery.sizeOf(inner).width /
+                  stageWidth:
+                      MediaQuery.sizeOf(inner).width /
                       HudScale.designStageHeight *
                       HudScale.stageUnit,
-                  stageScale: MediaQuery.sizeOf(inner).width / HudScale.designStageHeight,
+                  stageScale:
+                      MediaQuery.sizeOf(inner).width /
+                      HudScale.designStageHeight,
                   portrait: !landscape,
-                  viewport: Size(MediaQuery.sizeOf(inner).width,
-                      MediaQuery.sizeOf(inner).height),
+                  viewport: Size(
+                    MediaQuery.sizeOf(inner).width,
+                    MediaQuery.sizeOf(inner).height,
+                  ),
                 ),
                 port: _PlaylistFormPortAdapter(controller: controller),
                 table: null,
@@ -2520,8 +2650,10 @@ class _BasicShellState extends State<_BasicShell>
                     _playlistFormKind = null;
                     _playlistFormId = '';
                   });
-                  _notice('${commit.kind == PlaylistFormKind.create ? '已创建歌单' : '已重命名歌单'}：'
-                      '${commit.verifiedTitle}');
+                  _notice(
+                    '${commit.kind == PlaylistFormKind.create ? '已创建歌单' : '已重命名歌单'}：'
+                    '${commit.verifiedTitle}',
+                  );
                 },
               );
             },
@@ -2551,8 +2683,9 @@ class _BasicShellState extends State<_BasicShell>
       return const SizedBox.expand();
     }
     // 竖屏子树已经在 stage 坐标里，横屏才要 logical→stage（与 BasicHudSurface 同式）。
-    final Rect rawSceneRect =
-        landscape == null ? sceneStage : landscape.rectToLogical(sceneStage);
+    final Rect rawSceneRect = landscape == null
+        ? sceneStage
+        : landscape.rectToLogical(sceneStage);
     return Stack(
       fit: StackFit.expand,
       children: <Widget>[
@@ -2645,7 +2778,9 @@ class _BasicShellState extends State<_BasicShell>
       animation: _startup,
       child: child,
       builder: (BuildContext context, Widget? inner) {
-        final double t = Curves.easeOutCubic.transform(_startup.value.clamp(0.0, 1.0));
+        final double t = Curves.easeOutCubic.transform(
+          _startup.value.clamp(0.0, 1.0),
+        );
         return Stack(
           fit: StackFit.expand,
           children: <Widget>[
@@ -2666,26 +2801,26 @@ class _BasicShellState extends State<_BasicShell>
   /// 面板模型：每次按当前偏好快照重建（写进去 -> 立刻读回 -> 行显示新值的同一条链）。
   /// 原生渲染参数：唯一真值仍是 [_settings]，这里只是投影给 Qt 的那一份。
   BasicSceneSettings _sceneSettings() => BasicSceneSettings(
-        discRotation: _settings.discRotation,
-        archiveMaskStrength: _settings.archiveMaskStrength,
-        // vsync/后端/分辨率/AA 下发的是**当前请求值**：Qt 侧把它写进 panel/*，
-        // 下次启动由 main.cpp 读同一套偏好（所以"请求值 vs 生效值"仍然分得开）。
-        vsync: _settings.requestedVsync,
-        renderScale: _settings.renderScalePercent,
-        graphicsBackend: _settings.requestedGraphicsBackend,
-        aaMode: _settings.aaMode,
-        aaScale: _settings.aaScalePercent,
-        msaa: _settings.msaaSamples,
-        supersample: _settings.supersampleFactor,
-        // 封面查看器命令（不是偏好）：seq 单调，Qt 侧执行一次就记账，重复应用被丢掉。
-        viewerSeq: _viewerCommandSeq,
-        viewerAction: _viewerCommand,
-        // 初始化页面在场 → 场景走 "boot"（Qt 同相位），否则回到 detail/archive。
-        bootPhase: _startupPageOpen,
-        // FSR（fsr-quality / fsr-sharpness）按用户 m03406 暂缓：持久化契约里仍有这两项
-        // （basic_settings.dart 的 antiAliasing 细项），但本阶段既不出档位 UI，也不把
-        // 它们塞进场景快照/不 qputenv，渲染器继续按自己的缺省（native / 50）走。
-      );
+    discRotation: _settings.discRotation,
+    archiveMaskStrength: _settings.archiveMaskStrength,
+    // vsync/后端/分辨率/AA 下发的是**当前请求值**：Qt 侧把它写进 panel/*，
+    // 下次启动由 main.cpp 读同一套偏好（所以"请求值 vs 生效值"仍然分得开）。
+    vsync: _settings.requestedVsync,
+    renderScale: _settings.renderScalePercent,
+    graphicsBackend: _settings.requestedGraphicsBackend,
+    aaMode: _settings.aaMode,
+    aaScale: _settings.aaScalePercent,
+    msaa: _settings.msaaSamples,
+    supersample: _settings.supersampleFactor,
+    // 封面查看器命令（不是偏好）：seq 单调，Qt 侧执行一次就记账，重复应用被丢掉。
+    viewerSeq: _viewerCommandSeq,
+    viewerAction: _viewerCommand,
+    // 初始化页面在场 → 场景走 "boot"（Qt 同相位），否则回到 detail/archive。
+    bootPhase: _startupPageOpen,
+    // FSR（fsr-quality / fsr-sharpness）按用户 m03406 暂缓：持久化契约里仍有这两项
+    // （basic_settings.dart 的 antiAliasing 细项），但本阶段既不出档位 UI，也不把
+    // 它们塞进场景快照/不 qputenv，渲染器继续按自己的缺省（native / 50）走。
+  );
 
   /// 设置面板滚动偏移（跨越开关面板保持；由 BasicSettingsWindow 写回）。
   final ValueNotifier<double> _settingsScroll = ValueNotifier<double>(0);
@@ -2696,7 +2831,8 @@ class _BasicShellState extends State<_BasicShell>
       snapshot: _settings.snapshot,
       // 版本必须是真值：读到的包信息优先；平台没给（例如纯 Dart 预览）时
       // 如实显示“未知版本”，绝不编一个像版本号的串。
-      version: _settings.version ??
+      version:
+          _settings.version ??
           BasicSettingsVersion(
             version: basicSettingsUnknownVersion,
             releaseBuild: false,
@@ -2756,7 +2892,8 @@ class _BasicShellState extends State<_BasicShell>
       if (registry.contains(previous)) {
         return;
       }
-      final String fallback = registry.fallbackId(exclude: <String>{previous}) ?? 'siren';
+      final String fallback =
+          registry.fallbackId(exclude: <String>{previous}) ?? 'siren';
       if (!mounted) {
         return;
       }
@@ -2784,18 +2921,22 @@ class _BasicShellState extends State<_BasicShell>
       return installed.manifest;
     }
     final MarketPluginEntry? entry = snapshot.marketById(_pluginDetailId);
-    return entry == null ? null : BasicPortraitPluginDetailPage.fromMarket(entry);
+    return entry == null
+        ? null
+        : BasicPortraitPluginDetailPage.fromMarket(entry);
   }
 
   bool get _pluginDetailEnabled {
-    final InstalledPlugin? installed =
-        _plugins.snapshot().installedById(_pluginDetailId);
+    final InstalledPlugin? installed = _plugins.snapshot().installedById(
+      _pluginDetailId,
+    );
     return installed?.enabled ?? false;
   }
 
   bool get _pluginDetailUserInstalled {
-    final InstalledPlugin? installed =
-        _plugins.snapshot().installedById(_pluginDetailId);
+    final InstalledPlugin? installed = _plugins.snapshot().installedById(
+      _pluginDetailId,
+    );
     return installed?.userInstalled ?? false;
   }
 
@@ -2866,8 +3007,11 @@ class _BasicShellState extends State<_BasicShell>
       if (!mounted) {
         return;
       }
-      setState(() => _pendingPluginUninstall =
-          action.substring('plugin:uninstall:'.length));
+      setState(
+        () => _pendingPluginUninstall = action.substring(
+          'plugin:uninstall:'.length,
+        ),
+      );
       return;
     }
     if (action == 'plugin:uninstall-cancel') {
@@ -2930,7 +3074,9 @@ class _BasicShellState extends State<_BasicShell>
     // 横屏设置面板里的「切换平台 ▾ / 登录账号 / 退出登录」是 HUD 动作，不属于
     // 设置项存储（`_settings.apply` 只认设置键）。不转给 `_onAction` 的话，
     // 横屏点这两处没有任何反应（= 缺陷「横屏无法切换平台」）。
-    if (action == 'provider' || action == 'music:login' || action == 'music:logout') {
+    if (action == 'provider' ||
+        action == 'music:login' ||
+        action == 'music:logout') {
       _onAction(action);
       return;
     }
@@ -2939,8 +3085,10 @@ class _BasicShellState extends State<_BasicShell>
       _setModal('settings');
       return;
     }
-    final BasicSettingsApplyResult result =
-        await _settings.apply(action, context: _settingsContext());
+    final BasicSettingsApplyResult result = await _settings.apply(
+      action,
+      context: _settingsContext(),
+    );
     if (!mounted) {
       return;
     }
@@ -2957,7 +3105,8 @@ class _BasicShellState extends State<_BasicShell>
       _setModal('settings');
     }
     if (result.command is BasicSettingsActionRowCommand &&
-        (result.command as BasicSettingsActionRowCommand).dispatchAction == 'replay') {
+        (result.command as BasicSettingsActionRowCommand).dispatchAction ==
+            'replay') {
       // “手动显示初始化动画”：真的重放那一段动效，不弹 toast 了事。
       // 先收掉设置面板：Qt 侧 replay 就是场景相位切换（NativeHudController.cpp:698
       // → `m_scene.mode("boot")`），面板留在最上层会把整页初始化盖住——用户看不到
@@ -2995,7 +3144,10 @@ class _BasicShellState extends State<_BasicShell>
     });
     // 提示必须走单写口，否则「已切换至 …」会永久挂在底部（同 _notice 的契约）。
     _setNotice('已切换至 ${target.name}');
-    widget.playerPreferences.write(PlatformSwitcher.providerPreferenceKey, target.id);
+    widget.playerPreferences.write(
+      PlatformSwitcher.providerPreferenceKey,
+      target.id,
+    );
     _setModal('');
     // 3) 重建服务（注册表不变，只是把 current 指到新平台）。
     final ProviderService? service = old;
@@ -3038,7 +3190,8 @@ class _BasicShellState extends State<_BasicShell>
       }
       final BasicViewState state = controller.state;
       final List<BasicListItem> items = basicLibraryItems(state);
-      if (items.isEmpty || items[basicSelectedItemIndex(state, items)].kind != 'song') {
+      if (items.isEmpty ||
+          items[basicSelectedItemIndex(state, items)].kind != 'song') {
         return;
       }
       setState(() => _trackListMode = !_trackListMode);
@@ -3094,7 +3247,9 @@ class _BasicShellState extends State<_BasicShell>
     }
     // 竖屏（compact）顶部来源 tab：直接换列（只选中不播放，见 selectLane）。
     if (action.startsWith(basicPortraitLaneActionPrefix)) {
-      final int? lane = int.tryParse(action.substring(basicPortraitLaneActionPrefix.length));
+      final int? lane = int.tryParse(
+        action.substring(basicPortraitLaneActionPrefix.length),
+      );
       if (lane == null) {
         return;
       }
@@ -3124,7 +3279,9 @@ class _BasicShellState extends State<_BasicShell>
       // Qt `NativeHudController.cpp:521-524`：compact 下 history / artists 都先
       // `openModal("discover")` 再切到对应 tab；artists 走的是远端收藏歌手。
       setState(() {
-        _discoverTab = action == 'mobile:artists' ? 'artists' : basicDiscoverHistoryTab;
+        _discoverTab = action == 'mobile:artists'
+            ? 'artists'
+            : basicDiscoverHistoryTab;
         _discoverScroll = 0;
       });
       _setModal('discover');
@@ -3134,7 +3291,9 @@ class _BasicShellState extends State<_BasicShell>
       return;
     }
     if (action.startsWith(basicDiscoverCategoryPrefix)) {
-      final String name = Uri.decodeComponent(action.substring(basicDiscoverCategoryPrefix.length));
+      final String name = Uri.decodeComponent(
+        action.substring(basicDiscoverCategoryPrefix.length),
+      );
       if (name.isEmpty || name == _discoverCategory) {
         return;
       }
@@ -3186,8 +3345,7 @@ class _BasicShellState extends State<_BasicShell>
       final int? index = int.tryParse(
         action.substring(basicDiscoverItemPrefix.length),
       );
-      final List<PortraitDiscoverEntry> entries =
-          _discoverSnapshot().entries;
+      final List<PortraitDiscoverEntry> entries = _discoverSnapshot().entries;
       if (index == null || index < 0 || index >= entries.length) {
         _setNotice('该条目已不在列表里');
         return;
@@ -3208,11 +3366,15 @@ class _BasicShellState extends State<_BasicShell>
       }
       final Map<String, Object?> row = _discoverItems[index];
       if ('${row['kind'] ?? 'song'}' == 'playlist') {
-        unawaited(controller.enterRemotePlaylist(BasicLocalPlaylist(
-          id: '${row['id'] ?? ''}',
-          title: '${row['title'] ?? ''}',
-          trackCount: _intOf(row['trackCount']),
-        )));
+        unawaited(
+          controller.enterRemotePlaylist(
+            BasicLocalPlaylist(
+              id: '${row['id'] ?? ''}',
+              title: '${row['title'] ?? ''}',
+              trackCount: _intOf(row['trackCount']),
+            ),
+          ),
+        );
         return;
       }
       unawaited(controller.openRemoteTrack(row));
@@ -3243,11 +3405,13 @@ class _BasicShellState extends State<_BasicShell>
       // 歌单行的「▶ 全部」：进目录再整列播放（Qt `playDiscover` 同序）。
       final Map<String, Object?> row = _discoverItems[index];
       unawaited(() async {
-        final String notice = await controller.enterRemotePlaylist(BasicLocalPlaylist(
-          id: '${row['id'] ?? ''}',
-          title: '${row['title'] ?? ''}',
-          trackCount: _intOf(row['trackCount']),
-        ));
+        final String notice = await controller.enterRemotePlaylist(
+          BasicLocalPlaylist(
+            id: '${row['id'] ?? ''}',
+            title: '${row['title'] ?? ''}',
+            trackCount: _intOf(row['trackCount']),
+          ),
+        );
         if (!mounted) return;
         if (notice.isNotEmpty) {
           _setNotice(notice);
@@ -3265,8 +3429,12 @@ class _BasicShellState extends State<_BasicShell>
     // 的拼法，n 直接是 [portraitSearchKindKeys] 的下标）。两套前缀都认，是因为
     // 页面历史上有过 `mobile:search-tab:`，宿主不能因为换过一次拼法就丢命中。
     if (action.startsWith(basicSearchKindActionPrefix)) {
-      final int? kindIndex = int.tryParse(action.substring(basicSearchKindActionPrefix.length));
-      if (kindIndex == null || kindIndex < 0 || kindIndex >= basicSearchKindQtOrder.length) {
+      final int? kindIndex = int.tryParse(
+        action.substring(basicSearchKindActionPrefix.length),
+      );
+      if (kindIndex == null ||
+          kindIndex < 0 ||
+          kindIndex >= basicSearchKindQtOrder.length) {
         return;
       }
       // `n` 是 Qt `kinds = {song, album, playlist, artist}` 的下标
@@ -3276,11 +3444,16 @@ class _BasicShellState extends State<_BasicShell>
       return;
     }
     if (action.startsWith(basicPortraitSearchTabActionPrefix)) {
-      final int? tab = int.tryParse(action.substring(basicPortraitSearchTabActionPrefix.length));
-      if (tab == null || tab < 0 || tab >= portraitSearchKindActionOrder.length) {
+      final int? tab = int.tryParse(
+        action.substring(basicPortraitSearchTabActionPrefix.length),
+      );
+      if (tab == null ||
+          tab < 0 ||
+          tab >= portraitSearchKindActionOrder.length) {
         return;
       }
-      final String kind = portraitSearchKindKeys[portraitSearchKindActionOrder[tab]];
+      final String kind =
+          portraitSearchKindKeys[portraitSearchKindActionOrder[tab]];
       if (!controller.setSearchKind(kind)) {
         return;
       }
@@ -3289,8 +3462,12 @@ class _BasicShellState extends State<_BasicShell>
     }
     // 分组条（Qt `music:group:<i>` = none/artist/album，只对曲目分类生效）。
     if (action.startsWith(portraitSearchGroupActionPrefix)) {
-      final int? group = int.tryParse(action.substring(portraitSearchGroupActionPrefix.length));
-      if (group == null || group < 0 || group >= portraitSearchGroupKeys.length) {
+      final int? group = int.tryParse(
+        action.substring(portraitSearchGroupActionPrefix.length),
+      );
+      if (group == null ||
+          group < 0 ||
+          group >= portraitSearchGroupKeys.length) {
         return;
       }
       _resetResultScroll();
@@ -3316,7 +3493,8 @@ class _BasicShellState extends State<_BasicShell>
     // （player:mode:<x>），这枚旧的无载荷 'player:mode' 命中按 Qt 的
     // `NativeHudController.cpp` "mode" 分支循环切到下一个模式。
     if (action == 'player:mode') {
-      final int next = (portraitQueueModes.indexOf(controller.queueMode) + 1) %
+      final int next =
+          (portraitQueueModes.indexOf(controller.queueMode) + 1) %
           portraitQueueModes.length;
       controller.setQueueMode(portraitQueueModes[next]);
       setState(() => _queueModesExpanded = false);
@@ -3338,7 +3516,9 @@ class _BasicShellState extends State<_BasicShell>
     }
     // 队列行：选中并播放该行（Qt "queue" → player.play(queue.at(index), index=i)）。
     if (action.startsWith(basicQueueRowActionPrefix)) {
-      final int? index = int.tryParse(action.substring(basicQueueRowActionPrefix.length));
+      final int? index = int.tryParse(
+        action.substring(basicQueueRowActionPrefix.length),
+      );
       if (index == null) {
         return;
       }
@@ -3347,7 +3527,9 @@ class _BasicShellState extends State<_BasicShell>
     }
     // 移除待播行（Qt "remove" → player.remove(index)；当前曲目由播放器拒绝）。
     if (action.startsWith(basicQueueRemoveActionPrefix)) {
-      final int? index = int.tryParse(action.substring(basicQueueRemoveActionPrefix.length));
+      final int? index = int.tryParse(
+        action.substring(basicQueueRemoveActionPrefix.length),
+      );
       if (index == null) {
         return;
       }
@@ -3385,7 +3567,9 @@ class _BasicShellState extends State<_BasicShell>
     if (action.startsWith(basicSearchPlaylistActionPrefix)) {
       // 检索结果里的歌单行：插件平台把它当远端歌单打开（Qt `enterDirectory` 的
       // playlist 分支），标题从当前检索行里取——动作串只带 id，标题是展示用的。
-      final String id = Uri.decodeComponent(action.substring(basicSearchPlaylistActionPrefix.length));
+      final String id = Uri.decodeComponent(
+        action.substring(basicSearchPlaylistActionPrefix.length),
+      );
       if (id.isEmpty) {
         return;
       }
@@ -3425,11 +3609,15 @@ class _BasicShellState extends State<_BasicShell>
     // i 是这首歌 `artists[]` 的下标。本仓库没有独立歌手页，用分类检索把该歌手的歌
     // 真列出来——比留一句「尚未接入」有用，也不伪造页面。
     if (action.startsWith(basicArtistActionPrefix)) {
-      final int index = int.tryParse(action.substring(basicArtistActionPrefix.length)) ?? 0;
+      final int index =
+          int.tryParse(action.substring(basicArtistActionPrefix.length)) ?? 0;
       final SirenSong? song = controller.state.song;
       final List<String> names = song == null
           ? const <String>[]
-          : <String>[for (final String part in song.artist.split(' / ')) if (part.trim().isNotEmpty) part.trim()];
+          : <String>[
+              for (final String part in song.artist.split(' / '))
+                if (part.trim().isNotEmpty) part.trim(),
+            ];
       if (names.isEmpty) {
         return null;
       }
@@ -3447,16 +3635,16 @@ class _BasicShellState extends State<_BasicShell>
       _setModal('');
       return null;
     }
-    if (action == 'music:artist-tab:songs' || action == 'music:artist-tab:albums') {
+    if (action == 'music:artist-tab:songs' ||
+        action == 'music:artist-tab:albums') {
       // 曲目 / 发行专辑是两份不同的列表，滚动量不能串（串了会看到中段起头）。
       setState(() => _artistScroll = 0);
-      controller.setArtistTab(
-        action.endsWith(':albums') ? 'albums' : 'songs',
-      );
+      controller.setArtistTab(action.endsWith(':albums') ? 'albums' : 'songs');
       return null;
     }
     if (action.startsWith('music:artist-album:')) {
-      final int index = int.tryParse(action.substring('music:artist-album:'.length)) ?? -1;
+      final int index =
+          int.tryParse(action.substring('music:artist-album:'.length)) ?? -1;
       if (index >= 0) {
         unawaited(controller.openArtistAlbum(index));
       }
@@ -3487,30 +3675,35 @@ class _BasicShellState extends State<_BasicShell>
         _setNotice('这首歌没有关联专辑');
         return null;
       }
-      unawaited(controller.openAlbumInfo(
-        albumId: albumId,
-        title: song?.album ?? '',
-        artist: song?.artist ?? '',
-        cover: song?.cover ?? '',
-      ).then((_) {
-        if (!mounted) {
-          return;
-        }
-        if (controller.albumInfoActive) {
-          // 新开一页从顶部开始，不能沿用上一张专辑的滚动量。
-          setState(() => _albumInfoScroll = 0);
-          _setModal('album-info');
-        } else {
-          _setNotice(controller.albumInfoStatus);
-        }
-      }));
+      unawaited(
+        controller
+            .openAlbumInfo(
+              albumId: albumId,
+              title: song?.album ?? '',
+              artist: song?.artist ?? '',
+              cover: song?.cover ?? '',
+            )
+            .then((_) {
+              if (!mounted) {
+                return;
+              }
+              if (controller.albumInfoActive) {
+                // 新开一页从顶部开始，不能沿用上一张专辑的滚动量。
+                setState(() => _albumInfoScroll = 0);
+                _setModal('album-info');
+              } else {
+                _setNotice(controller.albumInfoStatus);
+              }
+            }),
+      );
       return null;
     }
     if (action.startsWith('music:album-track:')) {
       if (_songOptionsExpanded) {
         setState(() => _songOptionsExpanded = false);
       }
-      final int index = int.tryParse(action.substring('music:album-track:'.length)) ?? -1;
+      final int index =
+          int.tryParse(action.substring('music:album-track:'.length)) ?? -1;
       final List<SirenSong> songs = controller.albumInfoSongs;
       if (index >= 0 && index < songs.length) {
         controller.closeAlbumInfo();
@@ -3528,7 +3721,9 @@ class _BasicShellState extends State<_BasicShell>
     if (action.startsWith(basicSearchArtistActionPrefix)) {
       // 歌手行：本仓库没有独立歌手页（Qt 的 artist 页由 wiki/artistAlbums 支撑），
       // 但「点歌手看他唱的歌」用现成的分类检索就能真给出来，不摆占位。
-      final String name = Uri.decodeComponent(action.substring(basicSearchArtistActionPrefix.length));
+      final String name = Uri.decodeComponent(
+        action.substring(basicSearchArtistActionPrefix.length),
+      );
       if (name.isEmpty) {
         return;
       }
@@ -3575,7 +3770,8 @@ class _BasicShellState extends State<_BasicShell>
       // 插件平台走服务端 `mutate("/playlist/create")`（网关有账号能力时）；
       // 塞壬仍走本机集合。两者都需要表单输入名字，所以都开同一个表单。
       final bool canCreate = controller.remoteSearchActive
-          ? (_currentDescriptor?.capability('userPlaylists', fallback: true) ?? true)
+          ? (_currentDescriptor?.capability('userPlaylists', fallback: true) ??
+                true)
           : _providerId == 'siren';
       if (!canCreate) {
         _setNotice('当前平台不支持创建歌单');
@@ -3605,12 +3801,14 @@ class _BasicShellState extends State<_BasicShell>
     }
     if (action.startsWith('music:delete-playlist:')) {
       final String id = action.substring('music:delete-playlist:'.length);
-      unawaited(controller.deletePlaylist(id).then((String notice) {
-        if (!mounted) {
-          return;
-        }
-        _setNotice(notice);
-      }));
+      unawaited(
+        controller.deletePlaylist(id).then((String notice) {
+          if (!mounted) {
+            return;
+          }
+          _setNotice(notice);
+        }),
+      );
       return;
     }
     // 「加入歌单」选择器（Qt `NativeHudMusic.cpp:483-486`：先开
@@ -3621,15 +3819,19 @@ class _BasicShellState extends State<_BasicShell>
       return;
     }
     if (action.startsWith(portraitPlaylistPickPrefix)) {
-      final String playlistId = action.substring(portraitPlaylistPickPrefix.length);
+      final String playlistId = action.substring(
+        portraitPlaylistPickPrefix.length,
+      );
       final String songId = controller.selectedSongId;
-      unawaited(controller.addToPlaylist(playlistId, songId).then((String notice) {
-        if (!mounted) {
-          return;
-        }
-        setState(() => _playlistPickerNotice = notice);
-        _notice(notice);
-      }));
+      unawaited(
+        controller.addToPlaylist(playlistId, songId).then((String notice) {
+          if (!mounted) {
+            return;
+          }
+          setState(() => _playlistPickerNotice = notice);
+          _notice(notice);
+        }),
+      );
       return;
     }
     // Qt `ResponsiveHudLayout::handle`（ResponsiveHudLayout.cpp:457-462）：
@@ -3650,35 +3852,41 @@ class _BasicShellState extends State<_BasicShell>
     // `MusicMutation.cpp:337`：`enabled = !liked` 再落一次写入）。两者都走
     // 控制器的本地收藏写入口，成功与否都以 `store.status` 回话上屏。
     if (action == 'music:like-current') {
-      unawaited(controller.toggleLikeCurrent().then((String notice) {
-        if (!mounted) {
-          return;
-        }
-        _setNotice(notice);
-      }));
+      unawaited(
+        controller.toggleLikeCurrent().then((String notice) {
+          if (!mounted) {
+            return;
+          }
+          _setNotice(notice);
+        }),
+      );
       return;
     }
     if (action == 'music:like') {
       // Qt 的 `music:like` 带的是选中曲目（`music.current`），不是播放曲目。
       final SirenSong? selected = controller.state.song;
-      unawaited(controller.toggleLiked(selected?.id ?? '').then((String notice) {
-        if (!mounted) {
-          return;
-        }
-        _setNotice(notice);
-      }));
+      unawaited(
+        controller.toggleLiked(selected?.id ?? '').then((String notice) {
+          if (!mounted) {
+            return;
+          }
+          _setNotice(notice);
+        }),
+      );
       return;
     }
     // 歌词偏移三条（Qt `player:lyrics-earlier/later/reset`，
     // `ResponsiveLyrics.cpp:246-252`：每步 0.2s）。状态行走控制器算好的文案。
     if (action == 'player:lyrics-earlier' || action == 'player:lyrics-later') {
       final double delta = action == 'player:lyrics-earlier' ? -200 : 200;
-      unawaited(controller.shiftLyricsOffset(delta).then((String notice) {
-        if (!mounted) {
-          return;
-        }
-        _setNotice(notice);
-      }));
+      unawaited(
+        controller.shiftLyricsOffset(delta).then((String notice) {
+          if (!mounted) {
+            return;
+          }
+          _setNotice(notice);
+        }),
+      );
       return;
     }
     // 横屏「歌词偏移」浮层（Qt `modal == "lyrics-offset"`，
@@ -3690,13 +3898,15 @@ class _BasicShellState extends State<_BasicShell>
     }
     // 「全局应用」把当前偏移写成默认（Qt `player:lyrics-apply-global`）。
     if (action == 'player:lyrics-apply-global') {
-      unawaited(controller.applyGlobalLyricsOffset().then((String notice) {
-        if (!mounted) {
-          return;
-        }
-        _setNotice(notice);
-        setState(() {});
-      }));
+      unawaited(
+        controller.applyGlobalLyricsOffset().then((String notice) {
+          if (!mounted) {
+            return;
+          }
+          _setNotice(notice);
+          setState(() {});
+        }),
+      );
       return;
     }
     // 检索框右侧箭头（Qt `mobile:search-submit`，`NativeHudController.cpp:531-533`）：
@@ -3708,12 +3918,14 @@ class _BasicShellState extends State<_BasicShell>
       return;
     }
     if (action == 'player:lyrics-reset') {
-      unawaited(controller.resetLyricsOffset().then((String notice) {
-        if (!mounted) {
-          return;
-        }
-        _setNotice(notice);
-      }));
+      unawaited(
+        controller.resetLyricsOffset().then((String notice) {
+          if (!mounted) {
+            return;
+          }
+          _setNotice(notice);
+        }),
+      );
       return;
     }
     // 喜欢的歌曲整列开播（Qt `music:play-liked`，`NativeHudController.cpp:530-533`：
@@ -3724,12 +3936,14 @@ class _BasicShellState extends State<_BasicShell>
     }
     if (action == 'music:enqueue' || action == 'music:play-next') {
       final bool next = action == 'music:play-next';
-      unawaited(controller.enqueueCurrent(next: next).then((String notice) {
-        if (!mounted) {
-          return;
-        }
-        _setNotice(notice);
-      }));
+      unawaited(
+        controller.enqueueCurrent(next: next).then((String notice) {
+          if (!mounted) {
+            return;
+          }
+          _setNotice(notice);
+        }),
+      );
       return;
     }
     // 收藏列（Qt compact `saved`）：`mobile:mine` 进喜欢列，`music:collection:<lane>`
@@ -3748,7 +3962,9 @@ class _BasicShellState extends State<_BasicShell>
       return;
     }
     if (action.startsWith(basicCollectionActionPrefix)) {
-      final int? lane = int.tryParse(action.substring(basicCollectionActionPrefix.length));
+      final int? lane = int.tryParse(
+        action.substring(basicCollectionActionPrefix.length),
+      );
       if (lane != null && lane >= 1 && lane <= 4) {
         setState(() {
           _savedLane = lane >= 2 ? 2 : 1;
@@ -3810,7 +4026,7 @@ class _BasicShellState extends State<_BasicShell>
     final String duration = song.durationMs <= 0
         ? '--:--'
         : '${(song.durationMs ~/ 60000).toString().padLeft(2, '0')}:'
-            '${((song.durationMs ~/ 1000) % 60).toString().padLeft(2, '0')}';
+              '${((song.durationMs ~/ 1000) % 60).toString().padLeft(2, '0')}';
     return '$album / $duration';
   }
 
@@ -3821,8 +4037,11 @@ class _BasicShellState extends State<_BasicShell>
     if (song == null) {
       return '';
     }
+    // 插件平台的 artist 串常带尾随分隔符（真机「洛天依 / 闇闇 / · 辞欢 · …」），
+    // 与列表行共用同一套清洗，避免底注出现孤零零的「/ ·」。
+    final String artist = basicCleanArtist(song.artist);
     final List<String> parts = <String>[
-      if (song.artist.isNotEmpty) song.artist,
+      if (artist.isNotEmpty) artist,
       if (song.album.isNotEmpty) song.album,
       // 平台名取自当前描述符（Qt 的详情页底注是 `providerName`，
       // 插件平台下写死「塞壬唱片」会把曲目张冠李戴）。
@@ -3868,8 +4087,9 @@ class _BasicShellState extends State<_BasicShell>
     }
     await active.selectLane(1);
     // 插件平台的「喜欢的歌曲」是服务端 likedIDs（`serverLikedSongs`），不能读本地集合。
-    final List<SirenSong> rows =
-        active.remoteSearchActive ? active.serverLikedSongs : active.likedSongs;
+    final List<SirenSong> rows = active.remoteSearchActive
+        ? active.serverLikedSongs
+        : active.likedSongs;
     if (rows.isEmpty) {
       _notice('还没有喜欢的歌曲');
       return;
@@ -4048,11 +4268,14 @@ class _BasicShellState extends State<_BasicShell>
     // 的 `field('search', {58, y, 313, 44})`；字号取 Qt compact 的 14 网格，
     // Qt/src/ResponsiveHudPages.cpp:330 与 Qt/qml/Overlay.qml:542-543）。不传的话输入层
     // 会用 QML 的缺省 54 / 22，字小且贴在框上沿——用户 2026-11-19 报的「字小的小标题」。
-    final double compactUnit =
-        HudScale.portraitUnit(geometry.stageWidth, geometry.stageScale);
+    final double compactUnit = HudScale.portraitUnit(
+      geometry.stageWidth,
+      geometry.stageScale,
+    );
     // 详情/歌词页是整页绘制，输入层必须退场：否则从检索结果点进详情后，
     // 检索框会残留在详情页上（真机 `device21` 的 love 字样就压在封面上）。
-    final bool songPage = state.song != null &&
+    final bool songPage =
+        state.song != null &&
         (state.phase == BasicPhase.detail || state.phase == BasicPhase.lyrics);
     return TextInputOverlay(
       key: _textInputKey,
@@ -4068,8 +4291,12 @@ class _BasicShellState extends State<_BasicShell>
         inputFontSize: portrait ? 14.0 * compactUnit : null,
         // 竖屏登录页的短信两栏：按 HUD 画出来的矩形摆输入层，否则输入层用
         // 横屏 QML 常量（Overlay.qml:387-390 / 447-450），竖屏里根本看不见。
-        formFieldRect: portrait && _modal == 'login' ? _frameFields['account'] : null,
-        formCaptchaRect: portrait && _modal == 'login' ? _frameFields['captcha'] : null,
+        formFieldRect: portrait && _modal == 'login'
+            ? _frameFields['account']
+            : null,
+        formCaptchaRect: portrait && _modal == 'login'
+            ? _frameFields['captcha']
+            : null,
         // 本预览不播 Qt 的 0.3s 淡入 / 0.2s 淡出（Qt/src/UiMotion.cpp:101-120，
         // SurfaceMotion::set：shown duration 0.3 :112、hidden 0.2 :114，reduced 时
         // duration 0 瞬变）：打开即全不透明，关闭即不可见，属明示的未实现动画。
@@ -4095,17 +4322,27 @@ class _BasicShellState extends State<_BasicShell>
   /// （Qt/src/NativeHudLibrary.cpp:60-72），检索弹层恒为 0，所以 inputWidth 就是
   /// modalWidth - 106。height 54 是 QML 常量（Overlay.qml:531），由 Overlay 自己固定，
   /// 这里只填以保持矩形完整。
-  static Rect _searchInputStageRect(StageGeometry geometry, {required bool portrait}) {
+  static Rect _searchInputStageRect(
+    StageGeometry geometry, {
+    required bool portrait,
+  }) {
     final double stageWidth = geometry.stageWidth;
     if (portrait) {
       // 竖屏检索页（lib/hud/portrait/portrait_pages_library.dart 的
       // `field('search', Rect.fromLTWH(58, top, c.gridWidth - 78, 44))`）用的是网格坐标；
       // 这里把同一份网格矩形换回舞台单位，输入层就贴在画出来的框上。
       // 网格宽随 DPI 适配变化（比 393 宽），必须和绘制同源取 portraitGridWidth。
-      final double unit = HudScale.portraitUnit(stageWidth, geometry.stageScale);
-      final double gridWidth = HudScale.portraitGridWidth(stageWidth, geometry.stageScale);
-      final double stageHeight =
-          geometry.stageScale > 0 ? geometry.logicalHeight / geometry.stageScale : 852.0 * unit;
+      final double unit = HudScale.portraitUnit(
+        stageWidth,
+        geometry.stageScale,
+      );
+      final double gridWidth = HudScale.portraitGridWidth(
+        stageWidth,
+        geometry.stageScale,
+      );
+      final double stageHeight = geometry.stageScale > 0
+          ? geometry.logicalHeight / geometry.stageScale
+          : 852.0 * unit;
       final double gridHeight = unit > 0 ? stageHeight / unit : 852.0;
       final double top = math.min(126.0, gridHeight * .22);
       return Rect.fromLTWH(
@@ -4159,7 +4396,8 @@ class _BasicShellState extends State<_BasicShell>
     // 查看器开着时 HUD 键路由整块让位：Esc 只关查看器（NativeViewer.cpp:132-134
     // "Escape 即使在网格没装载时也关"），不往下走 HUD/settings 的键。
     if (_coverViewer != null) {
-      if (event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.escape) {
+      if (event is KeyDownEvent &&
+          event.logicalKey == LogicalKeyboardKey.escape) {
         _requestCloseCoverViewer();
         return KeyEventResult.handled;
       }
@@ -4215,9 +4453,9 @@ class _BasicShellState extends State<_BasicShell>
       // contentBottom = viewportTop + 真实内容高（= maxScrollExtent + 视口高）。
       settingsContentBottom: _settingsScrollMaximum.value > 0
           ? HudWheelConstants.settingsViewportTop +
-              _settingsScrollMaximum.value +
-              (HudWheelConstants.settingsViewportBottom -
-                  HudWheelConstants.settingsViewportTop)
+                _settingsScrollMaximum.value +
+                (HudWheelConstants.settingsViewportBottom -
+                    HudWheelConstants.settingsViewportTop)
           : 1600.0,
       desktopLyricsContentBottom: 0,
     );
@@ -4311,7 +4549,8 @@ class _BasicShellState extends State<_BasicShell>
     // 只有宿主知道「为什么不可用」）。旧实现这两格塞空串 `''`，
     // `PortraitCanvas.hit` 对空动作直接 return ⇒ 点了完全没反应，就是实机上
     // 「歌词/评论点了没反应」的死键（用户 2026-11-19）。
-    if (action == portraitSongHintLyrics || action == portraitSongHintComments) {
+    if (action == portraitSongHintLyrics ||
+        action == portraitSongHintComments) {
       final bool wantLyrics = action == portraitSongHintLyrics;
       final SirenSong? detail = state.song;
       if (detail == null) {
@@ -4371,8 +4610,9 @@ class _BasicShellState extends State<_BasicShell>
       return _openAt(state, 0, play: true);
     }
     if (action.startsWith(basicSeekFractionActionPrefix)) {
-      final double? fraction =
-          double.tryParse(action.substring(basicSeekFractionActionPrefix.length));
+      final double? fraction = double.tryParse(
+        action.substring(basicSeekFractionActionPrefix.length),
+      );
       // NaN/Infinity 也是 tryParse 的"成功"（如 'NaN'），落到 controller 会毁掉播放位置。
       if (fraction == null || !fraction.isFinite) {
         return basicUnimplementedPrefix + action;
@@ -4386,23 +4626,28 @@ class _BasicShellState extends State<_BasicShell>
     // 行点击 = **纯选中**（Qt/src/NativeHudMusic.cpp:79-91 的 selectResult/selectDirectory
     // 都是 open=false：只写 current/index/highlight，不回放、不换队列、不进详情）。
     if (action.startsWith(basicSearchOpenPrefix)) {
-      final int index = int.tryParse(action.substring(basicSearchOpenPrefix.length)) ?? -1;
-      unawaited(controller.openRemoteSong(index).then((String notice) {
-        if (!mounted) {
-          return;
-        }
-        if (notice.isNotEmpty) {
-          _setNotice(notice);
-          return;
-        }
-        // 打开成功就把检索弹层关掉：HUD 的 `modal == 'search'` 分支优先级高于
-        // 详情相位，不关的话界面停在检索页、看起来像「点了没反应」。
-        _setModal('');
-      }));
+      final int index =
+          int.tryParse(action.substring(basicSearchOpenPrefix.length)) ?? -1;
+      unawaited(
+        controller.openRemoteSong(index).then((String notice) {
+          if (!mounted) {
+            return;
+          }
+          if (notice.isNotEmpty) {
+            _setNotice(notice);
+            return;
+          }
+          // 打开成功就把检索弹层关掉：HUD 的 `modal == 'search'` 分支优先级高于
+          // 详情相位，不关的话界面停在检索页、看起来像「点了没反应」。
+          _setModal('');
+        }),
+      );
       return null;
     }
     if (action.startsWith(basicMusicIndexActionPrefix)) {
-      final int? index = int.tryParse(action.substring(basicMusicIndexActionPrefix.length));
+      final int? index = int.tryParse(
+        action.substring(basicMusicIndexActionPrefix.length),
+      );
       if (index == null) {
         return basicUnimplementedPrefix + action;
       }
@@ -4410,7 +4655,9 @@ class _BasicShellState extends State<_BasicShell>
     }
     // 'music:slot:<i>' 与 music:index:<i> 指向同一份列表下标（archive_page.dart:311）。
     if (action.startsWith(basicMusicSlotActionPrefix)) {
-      final int? index = int.tryParse(action.substring(action.lastIndexOf(':') + 1));
+      final int? index = int.tryParse(
+        action.substring(action.lastIndexOf(':') + 1),
+      );
       if (index == null) {
         return basicUnimplementedPrefix + action;
       }
@@ -4418,14 +4665,20 @@ class _BasicShellState extends State<_BasicShell>
     }
     // 歌词行点击：按歌词时间轴换算进度（94 已上线的真实跳转，player 面板热区）。
     if (action.startsWith(basicLyricLineActionPrefix)) {
-      final int? line = int.tryParse(action.substring(basicLyricLineActionPrefix.length));
+      final int? line = int.tryParse(
+        action.substring(basicLyricLineActionPrefix.length),
+      );
       if (line == null ||
           line < 0 ||
           line >= state.lyrics.length ||
           !(state.durationMs > 0)) {
         return basicUnimplementedPrefix + action;
       }
-      unawaited(controller.seekToFraction(state.lyrics[line].startMs / state.durationMs));
+      unawaited(
+        controller.seekToFraction(
+          state.lyrics[line].startMs / state.durationMs,
+        ),
+      );
       return null;
     }
     // ←/→：目录内 ±8 换页（始终取模）、目录外按 sourceOrder() 换资料库列，
@@ -4440,7 +4693,9 @@ class _BasicShellState extends State<_BasicShell>
     // （Qt/src/NativeHudController.cpp:684），承载文本走 TextInputOverlay 的
     // TextInputPorts.query，不再是“尚未接入”。
     if (action.startsWith(basicSearchActionPrefix)) {
-      unawaited(controller.setQuery(action.substring(basicSearchActionPrefix.length)));
+      unawaited(
+        controller.setQuery(action.substring(basicSearchActionPrefix.length)),
+      );
       return null;
     }
     // 'music:open-all-siren' 是 archive 页的「在资料库中打开 →」（archive_page.dart:255），
@@ -4499,8 +4754,9 @@ class _BasicShellState extends State<_BasicShell>
       if (login == null) {
         return null;
       }
-      unawaited(login.chooseMethod(
-          action.substring(kPortraitLoginMethodPrefix.length)));
+      unawaited(
+        login.chooseMethod(action.substring(kPortraitLoginMethodPrefix.length)),
+      );
       return null;
     }
     // 评论页（Qt/src/NativeHudController.cpp:483-499 的 music:comments 与
@@ -4514,10 +4770,9 @@ class _BasicShellState extends State<_BasicShell>
       }
       _commentsScroll = 0;
       _setModal('comments');
-      unawaited(comments.load(
-        trackId: trackId,
-        trackLabel: state.song?.title ?? '',
-      ));
+      unawaited(
+        comments.load(trackId: trackId, trackLabel: state.song?.title ?? ''),
+      );
       return null;
     }
     if (action == 'music:comments-close' || action == 'comments:close') {
@@ -4528,8 +4783,11 @@ class _BasicShellState extends State<_BasicShell>
     if (action == commentSortActionPrefix + 'hot' ||
         action == commentSortActionPrefix + 'new') {
       final String sort = action.substring(commentSortActionPrefix.length);
-      unawaited(_commentController?.setSort(
-          sort == 'new' ? ProviderCommentSort.newest : ProviderCommentSort.hot));
+      unawaited(
+        _commentController?.setSort(
+          sort == 'new' ? ProviderCommentSort.newest : ProviderCommentSort.hot,
+        ),
+      );
       return null;
     }
     if (action == 'comments:refresh' || action == 'comments:retry') {
@@ -4541,19 +4799,26 @@ class _BasicShellState extends State<_BasicShell>
       return null;
     }
     if (action.startsWith('comments:expand:')) {
-      _commentController
-          ?.toggleExpanded(action.substring('comments:expand:'.length));
+      _commentController?.toggleExpanded(
+        action.substring('comments:expand:'.length),
+      );
       setState(() {});
       return null;
     }
     if (action.startsWith('comments:replies-more:')) {
-      unawaited(_commentController
-          ?.loadMoreReplies(action.substring('comments:replies-more:'.length)));
+      unawaited(
+        _commentController?.loadMoreReplies(
+          action.substring('comments:replies-more:'.length),
+        ),
+      );
       return null;
     }
     if (action.startsWith('comments:replies:')) {
-      unawaited(_commentController
-          ?.toggleReplies(action.substring('comments:replies:'.length)));
+      unawaited(
+        _commentController?.toggleReplies(
+          action.substring('comments:replies:'.length),
+        ),
+      );
       return null;
     }
     // MV（`MvAction` 是 `mv:*` 动作串的唯一作者，见 domain/mv/mv_controller.dart:662+）。
@@ -4593,12 +4858,17 @@ class _BasicShellState extends State<_BasicShell>
       return null;
     }
     if (action.startsWith(MvAction.versionPrefix)) {
-      unawaited(_mvController
-          ?.selectVersion(action.substring(MvAction.versionPrefix.length)));
+      unawaited(
+        _mvController?.selectVersion(
+          action.substring(MvAction.versionPrefix.length),
+        ),
+      );
       return null;
     }
     if (action.startsWith(MvAction.offsetPrefix)) {
-      final int? delta = int.tryParse(action.substring(MvAction.offsetPrefix.length));
+      final int? delta = int.tryParse(
+        action.substring(MvAction.offsetPrefix.length),
+      );
       if (delta != null) {
         _mvController?.adjustOffset(delta);
       }
@@ -4632,7 +4902,9 @@ class _BasicShellState extends State<_BasicShell>
     final SirenAlbum? album = state.album;
     if (item.kind == 'song') {
       final List<SirenSong> tracks =
-          (state.phase == BasicPhase.detail && album != null) ? album.songs : state.songs;
+          (state.phase == BasicPhase.detail && album != null)
+          ? album.songs
+          : state.songs;
       if (item.index < 0 || item.index >= tracks.length) {
         return '${basicUnimplementedPrefix}music:index:$index';
       }
@@ -4654,10 +4926,12 @@ class _BasicShellState extends State<_BasicShell>
         final String playlistId = item.id.isEmpty ? '' : item.id;
         for (final BasicLocalPlaylist playlist in controller.serverPlaylists) {
           if (playlist.id == playlistId) {
-            unawaited(controller.enterRemotePlaylist(playlist).then((String notice) {
-              if (!mounted || notice.isEmpty) return;
-              _setNotice(notice);
-            }));
+            unawaited(
+              controller.enterRemotePlaylist(playlist).then((String notice) {
+                if (!mounted || notice.isEmpty) return;
+                _setNotice(notice);
+              }),
+            );
             return null;
           }
         }
@@ -4673,7 +4947,9 @@ class _BasicShellState extends State<_BasicShell>
     // 且 `if (open && current.kind != "song") enterDirectory(current)`。旧实现在这里调
     // openAlbum → 相位跳到 detail、3D 抽唱片（用户 2026-11-19 第 1 条）；顺带让单曲
     // 专辑一进去就只有一个当前行、任何点击都命中 'open'（第 2 条「必然触发」）。
-    unawaited(controller.enterAlbumColumn(state.albums[item.index], play: play));
+    unawaited(
+      controller.enterAlbumColumn(state.albums[item.index], play: play),
+    );
     return null;
   }
 
@@ -4756,11 +5032,7 @@ class _BasicShellState extends State<_BasicShell>
 
 /// 启动阶段的可见状态页：装载中 / 失败 + 可选重试。
 class _BasicMessage extends StatelessWidget {
-  const _BasicMessage({
-    required this.text,
-    this.actionLabel,
-    this.onAction,
-  });
+  const _BasicMessage({required this.text, this.actionLabel, this.onAction});
 
   final String text;
   final String? actionLabel;
@@ -4785,10 +5057,7 @@ class _BasicMessage extends StatelessWidget {
               ),
               if (label != null && action != null) ...<Widget>[
                 const SizedBox(height: 16),
-                TextButton(
-                  onPressed: action,
-                  child: Text(label),
-                ),
+                TextButton(onPressed: action, child: Text(label)),
               ],
             ],
           ),
@@ -4881,7 +5150,8 @@ String? basicHudKeySymbol(LogicalKeyboardKey key) {
   if (key == LogicalKeyboardKey.arrowDown) {
     return KeySymbol.arrowDown;
   }
-  if (key == LogicalKeyboardKey.enter || key == LogicalKeyboardKey.numpadEnter) {
+  if (key == LogicalKeyboardKey.enter ||
+      key == LogicalKeyboardKey.numpadEnter) {
     return KeySymbol.enter;
   }
   if (key == LogicalKeyboardKey.escape) {
@@ -4922,8 +5192,7 @@ class _BasicEngineKeyPorts implements EngineKeyPorts {
   void action(String action) => _app._onAction(action);
 
   @override
-  void key(String value, bool command) =>
-      _app._dispatchHudKey(value, command);
+  void key(String value, bool command) => _app._dispatchHudKey(value, command);
 
   @override
   void query(String text) => unawaited(_app.controller.setQuery(text));
@@ -4954,7 +5223,10 @@ class _PlaylistFormPortAdapter implements PlaylistFormPort {
   }
 
   @override
-  Future<PlaylistFormResult> renamePlaylist({required String id, required String name}) async {
+  Future<PlaylistFormResult> renamePlaylist({
+    required String id,
+    required String name,
+  }) async {
     final String status = await controller.renamePlaylist(id, name);
     final bool ok = status.startsWith('已重命名歌单');
     return ok

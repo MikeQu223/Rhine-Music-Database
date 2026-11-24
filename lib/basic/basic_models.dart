@@ -132,7 +132,17 @@ class SirenSong {
   }
 
   @override
-  int get hashCode => Object.hash(id, title, artist, album, albumId, cover, sourceUrl, lyricUrl, durationMs);
+  int get hashCode => Object.hash(
+    id,
+    title,
+    artist,
+    album,
+    albumId,
+    cover,
+    sourceUrl,
+    lyricUrl,
+    durationMs,
+  );
 
   @override
   String toString() => 'SirenSong($id, $title)';
@@ -395,7 +405,11 @@ class SirenException implements Exception {
 
 /// 一句歌词（LRC 的一行；translation 来自行尾【…】）。
 class BasicLyricLine {
-  const BasicLyricLine({required this.startMs, required this.text, this.translation = ''});
+  const BasicLyricLine({
+    required this.startMs,
+    required this.text,
+    this.translation = '',
+  });
 
   /// 行起始毫秒（MusicBridge/lyrics-format.cjs:35-53 的 startMs）。
   final double startMs;
@@ -519,7 +533,8 @@ int basicSourceOrderIndex(int lane) {
 int basicStepSourceLane(int lane, int direction) {
   final int count = basicSirenSourceOrder.length;
   final int step = direction >= 0 ? 1 : -1;
-  return basicSirenSourceOrder[(basicSourceOrderIndex(lane) + step + count) % count];
+  return basicSirenSourceOrder[(basicSourceOrderIndex(lane) + step + count) %
+      count];
 }
 
 /// 空列上屏的诚实空态：不编数据、不假装本机集合已经接上。
@@ -579,6 +594,22 @@ String basicLaneEmptyNotice(
     default:
       return '这一列没有内容';
   }
+}
+
+/// 插件平台的 `artist` 串常带尾随分隔符或孤立顿号（真机 `洛天依 / 阑阗 / 、薛钦`），
+/// 统一整理成「A / B / C」再显示与拼底注。
+String basicCleanArtist(String raw) {
+  final List<String> parts = <String>[];
+  for (final String chunk in raw.split('/')) {
+    String name = chunk.trim();
+    while (name.isNotEmpty && '、,，·;；'.contains(name[0])) {
+      name = name.substring(1).trim();
+    }
+    if (name.isNotEmpty) {
+      parts.add(name);
+    }
+  }
+  return parts.join(' / ');
 }
 
 /// 列表里“被选中”的那一项（Qt `music.current` 的单值投影：kind + id）。
@@ -1018,13 +1049,17 @@ class BasicViewState {
       playerStatus: playerStatus ?? this.playerStatus,
       catalogLoaded: catalogLoaded ?? this.catalogLoaded,
       selection: dropSelection ? null : (selection ?? this.selection),
-      playingTrack: dropPlayingTrack ? null : (playingTrack ?? this.playingTrack),
+      playingTrack: dropPlayingTrack
+          ? null
+          : (playingTrack ?? this.playingTrack),
       listPosition: listPosition ?? this.listPosition,
       songWiki: songWiki ?? this.songWiki,
       songWikiLoading: songWikiLoading ?? this.songWikiLoading,
       selectedLane: selectedLane ?? this.selectedLane,
-      localCollectionsAvailable: localCollectionsAvailable ?? this.localCollectionsAvailable,
-      localUnresolvedLikedIds: localUnresolvedLikedIds ?? this.localUnresolvedLikedIds,
+      localCollectionsAvailable:
+          localCollectionsAvailable ?? this.localCollectionsAvailable,
+      localUnresolvedLikedIds:
+          localUnresolvedLikedIds ?? this.localUnresolvedLikedIds,
       localPlaylists: localPlaylists ?? this.localPlaylists,
       serverPlaylists: serverPlaylists ?? this.serverPlaylists,
       laneColumns: laneColumns ?? this.laneColumns,
@@ -1118,7 +1153,9 @@ List<BasicListItem> basicLibraryItems(BasicViewState state) {
     return <BasicListItem>[
       for (var index = 0; index < state.songs.length; index++)
         BasicListItem(
-          title: state.songs[index].title.isEmpty ? sirenUnknownTitle : state.songs[index].title,
+          title: state.songs[index].title.isEmpty
+              ? sirenUnknownTitle
+              : state.songs[index].title,
           kind: 'song',
           index: index,
           id: state.songs[index].id,
@@ -1134,7 +1171,9 @@ List<BasicListItem> basicLibraryItems(BasicViewState state) {
     return <BasicListItem>[
       for (var index = 0; index < album.songs.length; index++)
         BasicListItem(
-          title: album.songs[index].title.isEmpty ? sirenUnknownTitle : album.songs[index].title,
+          title: album.songs[index].title.isEmpty
+              ? sirenUnknownTitle
+              : album.songs[index].title,
           kind: 'song',
           index: index,
           id: album.songs[index].id,
@@ -1150,7 +1189,9 @@ List<BasicListItem> basicLibraryItems(BasicViewState state) {
     return <BasicListItem>[
       for (var index = 0; index < state.albums.length; index++)
         BasicListItem(
-          title: state.albums[index].name.isEmpty ? '未命名专辑' : state.albums[index].name,
+          title: state.albums[index].name.isEmpty
+              ? '未命名专辑'
+              : state.albums[index].name,
           kind: 'album',
           index: index,
           id: state.albums[index].id,
@@ -1171,7 +1212,9 @@ List<BasicListItem> basicLibraryItems(BasicViewState state) {
     return <BasicListItem>[
       for (var index = 0; index < state.albums.length; index++)
         BasicListItem(
-          title: state.albums[index].name.isEmpty ? '未命名专辑' : state.albums[index].name,
+          title: state.albums[index].name.isEmpty
+              ? '未命名专辑'
+              : state.albums[index].name,
           kind: 'album',
           index: index,
           id: state.albums[index].id,
@@ -1181,7 +1224,9 @@ List<BasicListItem> basicLibraryItems(BasicViewState state) {
         ),
       for (var index = 0; index < state.songs.length; index++)
         BasicListItem(
-          title: state.songs[index].title.isEmpty ? sirenUnknownTitle : state.songs[index].title,
+          title: state.songs[index].title.isEmpty
+              ? sirenUnknownTitle
+              : state.songs[index].title,
           kind: 'song',
           index: index,
           id: state.songs[index].id,
@@ -1197,7 +1242,9 @@ List<BasicListItem> basicLibraryItems(BasicViewState state) {
     return <BasicListItem>[
       for (var index = 0; index < state.songs.length; index++)
         BasicListItem(
-          title: state.songs[index].title.isEmpty ? sirenUnknownTitle : state.songs[index].title,
+          title: state.songs[index].title.isEmpty
+              ? sirenUnknownTitle
+              : state.songs[index].title,
           kind: 'song',
           index: index,
           id: state.songs[index].id,
@@ -1220,7 +1267,9 @@ List<BasicListItem> basicLibraryItems(BasicViewState state) {
     return <BasicListItem>[
       for (var index = 0; index < state.songs.length; index++)
         BasicListItem(
-          title: state.songs[index].title.isEmpty ? sirenUnknownTitle : state.songs[index].title,
+          title: state.songs[index].title.isEmpty
+              ? sirenUnknownTitle
+              : state.songs[index].title,
           kind: 'song',
           index: index,
           id: state.songs[index].id,
@@ -1235,8 +1284,9 @@ List<BasicListItem> basicLibraryItems(BasicViewState state) {
     // 「我的歌单」列（Qt lane 2 的 lists[2]）。两个来源择一：
     // - 插件平台：服务端 `userPlaylists(uid)` 归到 [BasicViewState.serverPlaylists]；
     // - 塞壬/本地：collections->playlists()，端口不可用时一条也不编（诚实空态）。
-    final List<BasicLocalPlaylist> playlists =
-        state.searchRemote ? state.serverPlaylists : state.localPlaylists;
+    final List<BasicLocalPlaylist> playlists = state.searchRemote
+        ? state.serverPlaylists
+        : state.localPlaylists;
     if (!state.searchRemote && !state.localCollectionsAvailable) {
       return const <BasicListItem>[];
     }
@@ -1278,7 +1328,8 @@ int basicSelectedItemIndex(BasicViewState state, List<BasicListItem> items) {
   if (selection != null) {
     for (var position = 0; position < items.length; position++) {
       final BasicListItem item = items[position];
-      if (item.kind == selection.kind && _itemIdAt(state, item) == selection.id) {
+      if (item.kind == selection.kind &&
+          _itemIdAt(state, item) == selection.id) {
         return position;
       }
     }
@@ -1287,7 +1338,9 @@ int basicSelectedItemIndex(BasicViewState state, List<BasicListItem> items) {
   if (songId.isNotEmpty) {
     for (var position = 0; position < items.length; position++) {
       final BasicListItem item = items[position];
-      if (item.kind != 'song' || item.index < 0 || item.index >= state.songs.length) {
+      if (item.kind != 'song' ||
+          item.index < 0 ||
+          item.index >= state.songs.length) {
         continue;
       }
       if (state.songs[item.index].id == songId) {
@@ -1299,7 +1352,9 @@ int basicSelectedItemIndex(BasicViewState state, List<BasicListItem> items) {
   if (albumId.isNotEmpty) {
     for (var position = 0; position < items.length; position++) {
       final BasicListItem item = items[position];
-      if (item.kind != 'album' || item.index < 0 || item.index >= state.albums.length) {
+      if (item.kind != 'album' ||
+          item.index < 0 ||
+          item.index >= state.albums.length) {
         continue;
       }
       if (state.albums[item.index].id == albumId) {
@@ -1345,7 +1400,6 @@ BasicSelection? basicItemSelection(BasicViewState state, BasicListItem item) {
   return BasicSelection(kind: item.kind, id: id);
 }
 
-
 /// Qt MusicLibrary::searchSirenLocal 的歌曲匹配（MusicSiren.cpp:105-124）：
 /// 空词全匹配，否则 title / album / artist 任一包含即命中（大小写不敏感）。
 bool sirenSongMatches(SirenSong song, String query) {
@@ -1364,7 +1418,8 @@ bool sirenAlbumMatches(SirenAlbum album, String query) {
   if (text.isEmpty) {
     return true;
   }
-  return album.name.toLowerCase().contains(text) || album.artist.toLowerCase().contains(text);
+  return album.name.toLowerCase().contains(text) ||
+      album.artist.toLowerCase().contains(text);
 }
 
 List<SirenSong> filterSirenSongs(List<SirenSong> songs, String query) {
@@ -1372,7 +1427,10 @@ List<SirenSong> filterSirenSongs(List<SirenSong> songs, String query) {
   if (text.isEmpty) {
     return songs;
   }
-  return <SirenSong>[for (final SirenSong song in songs) if (sirenSongMatches(song, text)) song];
+  return <SirenSong>[
+    for (final SirenSong song in songs)
+      if (sirenSongMatches(song, text)) song,
+  ];
 }
 
 List<SirenAlbum> filterSirenAlbums(List<SirenAlbum> albums, String query) {
@@ -1380,13 +1438,19 @@ List<SirenAlbum> filterSirenAlbums(List<SirenAlbum> albums, String query) {
   if (text.isEmpty) {
     return albums;
   }
-  return <SirenAlbum>[for (final SirenAlbum album in albums) if (sirenAlbumMatches(album, text)) album];
+  return <SirenAlbum>[
+    for (final SirenAlbum album in albums)
+      if (sirenAlbumMatches(album, text)) album,
+  ];
 }
 
 final RegExp _lrcRow = RegExp(r'^\s*((?:\[[-+]?\d+:\d+(?:[.:]\d+)?\])+)(.*)$');
 final RegExp _lrcStamp = RegExp(r'\[([-+]?\d+):(\d+)(?:[.:](\d+))?\]');
 final RegExp _lrcTranslation = RegExp(r'【(.*)】\s*$');
-final RegExp _lrcOffsetTag = RegExp(r'^\s*\[offset:\s*([-+]?\d+)\s*\]\s*$', caseSensitive: false);
+final RegExp _lrcOffsetTag = RegExp(
+  r'^\s*\[offset:\s*([-+]?\d+)\s*\]\s*$',
+  caseSensitive: false,
+);
 final RegExp _lrcMetaTag = RegExp(r'^\s*\[[a-zA-Z]+:[^\]]*\]\s*$');
 
 /// 把插件返回的 lyrics-format 文档（Map）转成本地模型。
@@ -1407,22 +1471,28 @@ BasicLyricsDocument basicLyricsFromDocument(Object? document) {
       }
       final Object? start = row['startMs'];
       final String text = row['text'] is String ? row['text']! as String : '';
-      final String translation =
-          row['translation'] is String ? row['translation']! as String : '';
+      final String translation = row['translation'] is String
+          ? row['translation']! as String
+          : '';
       if (text.isEmpty) {
         continue;
       }
-      lines.add(BasicLyricLine(
-        startMs: start is num ? start.toDouble() : 0,
-        text: text,
-        translation: translation,
-      ));
+      lines.add(
+        BasicLyricLine(
+          startMs: start is num ? start.toDouble() : 0,
+          text: text,
+          translation: translation,
+        ),
+      );
     }
   }
-  lines.sort((BasicLyricLine a, BasicLyricLine b) => a.startMs.compareTo(b.startMs));
+  lines.sort(
+    (BasicLyricLine a, BasicLyricLine b) => a.startMs.compareTo(b.startMs),
+  );
   final Object? offset = document['offsetMs'];
-  final String plainText =
-      document['plainText'] is String ? document['plainText']! as String : '';
+  final String plainText = document['plainText'] is String
+      ? document['plainText']! as String
+      : '';
   return BasicLyricsDocument(
     lines: lines,
     offsetMs: offset is num ? offset.toDouble() : 0,
@@ -1456,7 +1526,9 @@ BasicLyricsDocument parseBasicLyrics(String raw) {
     final String stamps = match.group(1) ?? '';
     final String body = (match.group(2) ?? '').trim();
     final RegExpMatch? translationMatch = _lrcTranslation.firstMatch(body);
-    final String translation = translationMatch == null ? '' : (translationMatch.group(1) ?? '').trim();
+    final String translation = translationMatch == null
+        ? ''
+        : (translationMatch.group(1) ?? '').trim();
     final String content = translationMatch == null
         ? body
         : body.substring(0, translationMatch.start).trim();
@@ -1464,12 +1536,24 @@ BasicLyricsDocument parseBasicLyrics(String raw) {
       final int minutes = int.tryParse(stamp.group(1) ?? '') ?? 0;
       final int seconds = int.tryParse(stamp.group(2) ?? '') ?? 0;
       final String fractionText = stamp.group(3) ?? '';
-      final double fraction = fractionText.isEmpty ? 0 : (double.tryParse('0.$fractionText') ?? 0);
-      final double startMs = ((minutes * 60) + seconds) * 1000 + (fraction * 1000);
-      lines.add(BasicLyricLine(startMs: startMs.roundToDouble(), text: content, translation: translation));
+      final double fraction = fractionText.isEmpty
+          ? 0
+          : (double.tryParse('0.$fractionText') ?? 0);
+      final double startMs =
+          ((minutes * 60) + seconds) * 1000 + (fraction * 1000);
+      lines.add(
+        BasicLyricLine(
+          startMs: startMs.roundToDouble(),
+          text: content,
+          translation: translation,
+        ),
+      );
     }
   }
-  lines.sort((BasicLyricLine left, BasicLyricLine right) => left.startMs.compareTo(right.startMs));
+  lines.sort(
+    (BasicLyricLine left, BasicLyricLine right) =>
+        left.startMs.compareTo(right.startMs),
+  );
   return BasicLyricsDocument(
     lines: List<BasicLyricLine>.unmodifiable(lines),
     offsetMs: offsetMs,

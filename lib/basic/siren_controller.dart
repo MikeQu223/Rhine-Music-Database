@@ -103,7 +103,8 @@ const String sirenProviderLabel = '塞壬唱片';
 /// [dark] 只影响 [state].dark（基础版不做主题切换）。
 ///
 /// 出厂默认**亮色**（用户 2026-11-19 指定；偏好里显式写了 dark 才会变暗）。
-class BasicController extends ChangeNotifier implements BasicMediaSessionCommands {
+class BasicController extends ChangeNotifier
+    implements BasicMediaSessionCommands {
   BasicController({
     required this._audio,
     SirenRepository? repository,
@@ -113,10 +114,10 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     MediaSessionPort? mediaSessionPort,
     BasicArtCache? artCache,
     PreferencePort? preferences,
-  })  : _preferencesPort = preferences,
-        _repository = repository ?? SirenRepository(),
-        _ownsRepository = repository == null,
-        _dark = dark {
+  }) : _preferencesPort = preferences,
+       _repository = repository ?? SirenRepository(),
+       _ownsRepository = repository == null,
+       _dark = dark {
     _state = BasicViewState(dark: dark);
     _player = MusicPlayer(
       media: _BasicMediaHost(this),
@@ -183,6 +184,7 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
   final BasicAudioPort _audio;
   final SirenRepository _repository;
   final bool _ownsRepository;
+
   /// 真实面板偏好端口（可注入）。[BasicApp] 生产路径注入 SharedPreferences 端口，
   /// 于是 `single-play-mode` 等键与设置页写的是**同一份**存储，不是两份真值。
   final PreferencePort? _preferencesPort;
@@ -312,7 +314,8 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
   /// `SirenSong` 只留得下 title/artist/album 这几个扁平字段，而
   /// 「↗ 歌手作品」（Qt `MusicDirectory.cpp:242-272`）要的是原始行里的
   /// `artists[{id,name}]`，所以把最近一次拿到的原始行按 id 存一份。
-  final Map<String, Map<String, Object?>> _remoteRows = <String, Map<String, Object?>>{};
+  final Map<String, Map<String, Object?>> _remoteRows =
+      <String, Map<String, Object?>>{};
 
   /// 歌手页的标签：`songs`（曲目）/ `albums`（发行专辑），Qt `MusicDirectory::artistTab`。
   String _artistTab = 'songs';
@@ -375,7 +378,10 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
   ///
   /// 常规的换列恢复走 Qt showSource 的窗口语义 `wrap(offsets[lane]+rowMemory[lane], count)`，
   /// 见 [_showSourceLane]；这里保留的是「退出目录后没有父目录可复位」时的落点。
-  final List<double> _lanePositions = List<double>.filled(basicSirenColumns.length, 0);
+  final List<double> _lanePositions = List<double>.filled(
+    basicSirenColumns.length,
+    0,
+  );
   BasicPhase? _phaseBeforeLyrics;
   bool _catalogLoaded = false;
   bool _booted = false;
@@ -510,9 +516,9 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
   /// 里那份 `play-history`（`MusicPlayer.cpp:188-198` 回填、`:667-675` 落盘），
   /// 所以这里直接读播放器，不另建缓存。
   List<SirenSong> get playHistory => <SirenSong>[
-        for (final Map<String, Object?> track in _player.history)
-          _songFromTrack(track),
-      ];
+    for (final Map<String, Object?> track in _player.history)
+      _songFromTrack(track),
+  ];
 
   /// [songId] 是否在「喜欢的歌曲」里（空 id 恒 false，与 Qt `isLiked` 同）。
   bool isLiked(String songId) {
@@ -521,7 +527,8 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     if (_remoteSearch != null && _serverLikedIds.isNotEmpty) {
       return _serverLikedIds.contains(songId);
     }
-    return _collectionStore?.isLiked(songId) ?? (_collections?.likedIds().contains(songId) ?? false);
+    return _collectionStore?.isLiked(songId) ??
+        (_collections?.likedIds().contains(songId) ?? false);
   }
 
   /// 切换一首歌的喜欢状态并刷新收藏列，返回结果文案（Qt `music:like` 的 status）。
@@ -539,7 +546,10 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     if (remote != null) {
       final bool liked = !isLiked(songId);
       try {
-        final bool nowLiked = await remote.setTrackLiked(trackId: songId, liked: liked);
+        final bool nowLiked = await remote.setTrackLiked(
+          trackId: songId,
+          liked: liked,
+        );
         if (_disposed) {
           return '';
         }
@@ -623,7 +633,9 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
       // 插件平台：Qt 走 `mutate("/playlist/create", {name})`（`MusicDirectory.cpp` 的歌单
       // 写操作），成功后刷新服务端歌单表。
       try {
-        await gateway.mutate('/playlist/create', <String, Object?>{'name': title});
+        await gateway.mutate('/playlist/create', <String, Object?>{
+          'name': title,
+        });
         await refreshServerPlaylists();
         return '已创建歌单：$title';
       } on Object catch (error) {
@@ -645,7 +657,10 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     final ProviderGateway? gateway = _remoteSearch;
     if (gateway != null) {
       try {
-        await gateway.mutate('/playlist/name/update', <String, Object?>{'id': id, 'name': title});
+        await gateway.mutate('/playlist/name/update', <String, Object?>{
+          'id': id,
+          'name': title,
+        });
         await refreshServerPlaylists();
         return '已重命名歌单：$title';
       } on Object catch (error) {
@@ -840,7 +855,8 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
       _status = '$_catalogLoadingStatus$suffix';
     } else if (_status.startsWith(sirenCatalogFailurePrefix)) {
       _status =
-          _catalogFailurePrefix + _status.substring(sirenCatalogFailurePrefix.length);
+          _catalogFailurePrefix +
+          _status.substring(sirenCatalogFailurePrefix.length);
     } else if (_status == sirenLibraryUnloadedStatus) {
       _status = _libraryUnloadedStatus;
     } else if (_status.startsWith(sirenCatalogLoadedPrefix) ||
@@ -895,12 +911,16 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
   /// 拉一页并追加（调用方负责代际与 `_publish()`）。
   Future<void> _loadServerLikedPage(ProviderGateway gateway, int seq) async {
     final int start = _serverLikedCursor;
-    final int end = math.min(start + serverLikedPageSize, _orderedServerLikedIds.length);
+    final int end = math.min(
+      start + serverLikedPageSize,
+      _orderedServerLikedIds.length,
+    );
     if (end <= start) {
       return;
     }
-    final List<Map<String, Object?>> rows =
-        await gateway.songsByIds(_orderedServerLikedIds.sublist(start, end));
+    final List<Map<String, Object?>> rows = await gateway.songsByIds(
+      _orderedServerLikedIds.sublist(start, end),
+    );
     if (_disposed || seq != _serverLikedSeq) {
       return;
     }
@@ -938,13 +958,15 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     _loading = true;
     _publish();
     try {
-      final List<Map<String, Object?>> rows = await gateway.detailSongs(<String, Object?>{
-        'kind': 'playlist',
-        'id': playlist.id,
-        'title': playlist.title,
-        'provider': _remoteProviderId,
-        'key': '$_remoteProviderId:playlist:${playlist.id}',
-      });
+      final List<Map<String, Object?>> rows = await gateway.detailSongs(
+        <String, Object?>{
+          'kind': 'playlist',
+          'id': playlist.id,
+          'title': playlist.title,
+          'provider': _remoteProviderId,
+          'key': '$_remoteProviderId:playlist:${playlist.id}',
+        },
+      );
       if (generation != _detailGeneration || _disposed) {
         return '';
       }
@@ -980,7 +1002,9 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
       _error = '';
       _status = songs.isEmpty ? '歌单暂无可播放曲目' : '已打开：${playlist.title}';
       _song = songs.isEmpty ? null : songs.first;
-      _selection = songs.isEmpty ? null : BasicSelection(kind: 'song', id: songs.first.id);
+      _selection = songs.isEmpty
+          ? null
+          : BasicSelection(kind: 'song', id: songs.first.id);
       _listPosition = 0;
       _publish();
       return _status;
@@ -1008,7 +1032,9 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
   /// 不要只看 `phase`。
   bool get artistPageActive {
     final BasicDirectory? directory = _directory;
-    return _phase == BasicPhase.detail && directory != null && directory.kind == 'artist';
+    return _phase == BasicPhase.detail &&
+        directory != null &&
+        directory.kind == 'artist';
   }
 
   /// 歌手页标题（非歌手页为空串）。
@@ -1071,7 +1097,9 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     List<SirenAlbum> albums = const <SirenAlbum>[];
     try {
       if (gateway != null) {
-        provider = _remoteProviderId.isEmpty ? sirenProvider : _remoteProviderId;
+        provider = _remoteProviderId.isEmpty
+            ? sirenProvider
+            : _remoteProviderId;
         if (id.isEmpty) {
           id = _artistIdFromCurrentSong(artist, artistIndex);
         }
@@ -1098,19 +1126,22 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
           key = 'siren:artist:$artist';
         } else {
           key = '$provider:artist:$id';
-          final List<Map<String, Object?>> rows = await gateway.detailSongs(<String, Object?>{
-            'provider': provider,
-            'kind': 'artist',
-            'id': id,
-            'key': key,
-            'title': artist,
-            'artist': artist,
-          });
+          final List<Map<String, Object?>> rows = await gateway.detailSongs(
+            <String, Object?>{
+              'provider': provider,
+              'kind': 'artist',
+              'id': id,
+              'key': key,
+              'title': artist,
+              'artist': artist,
+            },
+          );
           if (generation != _detailGeneration) {
             return;
           }
           songs = <SirenSong>[
-            for (final Map<String, Object?> row in rows) _songFromRemoteRow(row),
+            for (final Map<String, Object?> row in rows)
+              _songFromRemoteRow(row),
           ];
         }
       } else {
@@ -1176,8 +1207,9 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
         ? '没有找到该歌手的作品'
         : '$sirenOpenedPrefix$artist';
     _song = songs.isEmpty ? null : songs.first;
-    _selection =
-        songs.isEmpty ? null : BasicSelection(kind: 'song', id: songs.first.id);
+    _selection = songs.isEmpty
+        ? null
+        : BasicSelection(kind: 'song', id: songs.first.id);
     _listPosition = 0;
     _publish();
   }
@@ -1208,14 +1240,16 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     _error = '';
     _publish();
     try {
-      final List<Map<String, Object?>> rows = await gateway.detailSongs(<String, Object?>{
-        'provider': _remoteProviderId,
-        'kind': 'album',
-        'id': album.id,
-        'key': '$_remoteProviderId:album:${album.id}',
-        'title': album.name,
-        'artist': album.artist,
-      });
+      final List<Map<String, Object?>> rows = await gateway.detailSongs(
+        <String, Object?>{
+          'provider': _remoteProviderId,
+          'kind': 'album',
+          'id': album.id,
+          'key': '$_remoteProviderId:album:${album.id}',
+          'title': album.name,
+          'artist': album.artist,
+        },
+      );
       if (generation != _detailGeneration || _disposed) {
         return;
       }
@@ -1253,8 +1287,9 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
       _error = '';
       _status = songs.isEmpty ? '专辑暂无可播放曲目' : '$sirenOpenedPrefix${album.name}';
       _song = songs.isEmpty ? null : songs.first;
-      _selection =
-          songs.isEmpty ? null : BasicSelection(kind: 'song', id: songs.first.id);
+      _selection = songs.isEmpty
+          ? null
+          : BasicSelection(kind: 'song', id: songs.first.id);
       _listPosition = 0;
       _publish();
     } on Object catch (error) {
@@ -1282,8 +1317,10 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     final List<Map<String, Object?>> entries = <Map<String, Object?>>[
       for (final Object? entry in artists)
         if (entry is Map)
-          entry.map((Object? key, Object? value) =>
-              MapEntry<String, Object?>('$key', value)),
+          entry.map(
+            (Object? key, Object? value) =>
+                MapEntry<String, Object?>('$key', value),
+          ),
     ];
     if (index >= 0 && index < entries.length) {
       final String id = _text(entries[index]['id']);
@@ -1373,9 +1410,9 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
 
   /// 百科正文按行切开（插件给的是 `标签：值` 的纯文本，一段一行）。
   List<String> get wikiLines => <String>[
-        for (final String line in _wikiText.split('\n'))
-          if (line.trim().isNotEmpty) line.trim(),
-      ];
+    for (final String line in _wikiText.split('\n'))
+      if (line.trim().isNotEmpty) line.trim(),
+  ];
 
   /// 打开「歌曲百科」页：有插件来源就问 `/native/<platform>/wiki`，
   /// 塞壬/本地平台直接给诚实状态串（Qt 里 wiki 为空时显示「暂无歌曲百科」）。
@@ -1389,7 +1426,9 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
       return;
     }
     final SirenSong? song = _song;
-    final String id = trackId.trim().isNotEmpty ? trackId.trim() : (song?.id ?? '');
+    final String id = trackId.trim().isNotEmpty
+        ? trackId.trim()
+        : (song?.id ?? '');
     if (id.isEmpty) {
       _status = '没有选中的曲目';
       _publish();
@@ -1510,15 +1549,21 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
         return;
       }
       final Map<String, Object?> album = value['album'] is Map
-          ? (value['album'] as Map)
-              .map((Object? key, Object? item) => MapEntry<String, Object?>('$key', item))
+          ? (value['album'] as Map).map(
+              (Object? key, Object? item) =>
+                  MapEntry<String, Object?>('$key', item),
+            )
           : const <String, Object?>{};
       final List<SirenSong> songs = value['songs'] is List
           ? <SirenSong>[
               for (final Object? row in value['songs'] as List)
                 if (row is Map)
                   _songFromRemoteRow(
-                      row.map((Object? key, Object? item) => MapEntry<String, Object?>('$key', item))),
+                    row.map(
+                      (Object? key, Object? item) =>
+                          MapEntry<String, Object?>('$key', item),
+                    ),
+                  ),
             ]
           : const <SirenSong>[];
       for (final SirenSong song in songs) {
@@ -1531,8 +1576,9 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
       _albumInfoCover = _text(album['cover']);
       _albumInfoDate = _text(album['date']);
       _albumInfoDescription = _text(album['description']);
-      _albumInfoTrackCount =
-          album['trackCount'] is num ? (album['trackCount'] as num).toInt() : songs.length;
+      _albumInfoTrackCount = album['trackCount'] is num
+          ? (album['trackCount'] as num).toInt()
+          : songs.length;
       _albumInfoSongs = List<SirenSong>.unmodifiable(songs);
       _albumInfoLoading = false;
       _albumInfoStatus = '';
@@ -1572,8 +1618,9 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
         _songById[song.id] = song;
       }
       _albumInfoSongs = List<SirenSong>.unmodifiable(detailed.songs);
-      _albumInfoTrackCount =
-          detailed.songCount > 0 ? detailed.songCount : detailed.songs.length;
+      _albumInfoTrackCount = detailed.songCount > 0
+          ? detailed.songCount
+          : detailed.songs.length;
       _albumInfoLoading = false;
       _albumInfoStatus = '$providerName不提供发行信息';
       _publish();
@@ -1617,12 +1664,16 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
   /// 拉一次服务端歌单（插件平台 + 已登录才有效；塞壬/本地平台直接返回）。
   Future<void> refreshServerPlaylists({String uid = ''}) async {
     final ProviderGateway? gateway = _remoteSearch;
-    if (gateway == null || _disposed || !gateway.operation('userPlaylists', fallback: false)) {
+    if (gateway == null ||
+        _disposed ||
+        !gateway.operation('userPlaylists', fallback: false)) {
       return;
     }
     final int seq = ++_serverPlaylistSeq;
     try {
-      final List<Map<String, Object?>> rows = await gateway.userPlaylists(uid: uid);
+      final List<Map<String, Object?>> rows = await gateway.userPlaylists(
+        uid: uid,
+      );
       if (_disposed || seq != _serverPlaylistSeq) {
         return;
       }
@@ -1632,7 +1683,9 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
             BasicLocalPlaylist(
               id: _text(row['id']),
               title: _text(row['title']),
-              trackCount: row['trackCount'] is num ? (row['trackCount'] as num).toInt() : 0,
+              trackCount: row['trackCount'] is num
+                  ? (row['trackCount'] as num).toInt()
+                  : 0,
             ),
       ];
       _serverPlaylists = List<BasicLocalPlaylist>.unmodifiable(playlists);
@@ -1665,8 +1718,14 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
       if (_disposed || seq != _serverLikedSeq) {
         return;
       }
-      _serverLikedIds = <String>{for (final String id in ids) if (id.isNotEmpty) id};
-      _orderedServerLikedIds = <String>[for (final String id in ids) if (id.isNotEmpty) id];
+      _serverLikedIds = <String>{
+        for (final String id in ids)
+          if (id.isNotEmpty) id,
+      };
+      _orderedServerLikedIds = <String>[
+        for (final String id in ids)
+          if (id.isNotEmpty) id,
+      ];
       // 首批只解析 100 条（Qt `loadLikedIDs` 的 `slice(ids, likedCursor, 100)`）：
       // `songs(ids)` 一次传太多上游会拒；后续由 [loadMoreServerLiked] 续页。
       _serverLikedCursor = 0;
@@ -1696,13 +1755,15 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     return SirenSong(
       id: id,
       title: _text(row['title']),
-      artist: _text(row['artist']),
+      artist: basicCleanArtist(_text(row['artist'])),
       album: _text(row['album']),
       albumId: _text(row['albumID']),
       cover: _text(row['cover']),
       sourceUrl: '',
       lyricUrl: '',
-      durationMs: (row['duration'] is num ? (row['duration'] as num).toDouble() : 0),
+      durationMs: (row['duration'] is num
+          ? (row['duration'] as num).toDouble()
+          : 0),
     );
   }
 
@@ -1715,8 +1776,11 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     final int seq = ++_remoteSearchSeq;
     final String kind = _searchKind;
     final String query = _query;
-    final RemoteSearchResult result =
-        await runRemoteSearch(gateway: gateway, kind: kind, query: query);
+    final RemoteSearchResult result = await runRemoteSearch(
+      gateway: gateway,
+      kind: kind,
+      query: query,
+    );
     if (_disposed || seq != _remoteSearchSeq) {
       return;
     }
@@ -1752,7 +1816,10 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     }
     String source = '';
     try {
-      source = await gateway.playback(trackId: song.id, quality: _remoteQuality);
+      source = await gateway.playback(
+        trackId: song.id,
+        quality: _remoteQuality,
+      );
     } on ProviderUnavailableError catch (error) {
       return error.message;
     } on ProviderRequestError catch (error) {
@@ -1782,7 +1849,10 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
       catalog: SirenCatalog(songs: _catalogSongs, albums: _catalogAlbums),
       playlists: _localPlaylists,
     );
-    final SearchOutcome outcome = index.search(kind: _searchKind, query: _query);
+    final SearchOutcome outcome = index.search(
+      kind: _searchKind,
+      query: _query,
+    );
     _searchOutcomeSignature = signature;
     _searchOutcomeCache = outcome;
     return outcome;
@@ -1816,7 +1886,10 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
         final int byCount = b.value.length.compareTo(a.value.length);
         return byCount != 0 ? byCount : a.key.compareTo(b.key);
       });
-    return <String, List<int>>{for (final MapEntry<String, List<int>> entry in sorted) entry.key: entry.value};
+    return <String, List<int>>{
+      for (final MapEntry<String, List<int>> entry in sorted)
+        entry.key: entry.value,
+    };
   }
 
   /// 分组视图下要画的行（Qt `groupIndices` 生效时 `libraryItems()` 只返回该组）。
@@ -1915,7 +1988,9 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     _status = '$sirenOpenedPrefix${detailed.name}';
     // 与 openAllSirenSongs 同一条：只选中第一首，不自动播（除非显式 play）。
     _song = songs.isEmpty ? null : songs.first;
-    _selection = songs.isEmpty ? null : BasicSelection(kind: 'song', id: songs.first.id);
+    _selection = songs.isEmpty
+        ? null
+        : BasicSelection(kind: 'song', id: songs.first.id);
     _listPosition = 0;
     _publish();
     if (play && songs.isNotEmpty) {
@@ -2086,7 +2161,10 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
   ///
   /// 字段来自插件返回的 `{id,title,artist,album,albumID,cover,duration}`，
   /// 播放地址在真正起播时由 `_startPlayback` 向网关现取（不在这里缓存）。
-  Future<void> openRemoteTrack(Map<String, Object?> row, {bool play = true}) async {
+  Future<void> openRemoteTrack(
+    Map<String, Object?> row, {
+    bool play = true,
+  }) async {
     if (_disposed) return;
     await openSong(_songFromRemoteRow(row), play: play);
   }
@@ -2150,7 +2228,9 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     _publish();
     _player.play(
       song.toTrack(),
-      source: <Map<String, Object?>>[for (final SirenSong item in source) item.toTrack()],
+      source: <Map<String, Object?>>[
+        for (final SirenSong item in source) item.toTrack(),
+      ],
       queueIndex: index < 0 ? null : index,
     );
   }
@@ -2256,8 +2336,9 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     if (items.isEmpty) {
       return;
     }
-    final int index =
-        row < 0 || row >= items.length ? basicSelectedItemIndex(_state, items) : row;
+    final int index = row < 0 || row >= items.length
+        ? basicSelectedItemIndex(_state, items)
+        : row;
     _selectRow(items, index);
     _publish();
   }
@@ -2378,7 +2459,9 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     if ((_listPosition - clamped).abs() > 1e-4) {
       _listPosition = clamped;
     }
-    if (_directory == null && _selectedLane >= 0 && _selectedLane < _lanePositions.length) {
+    if (_directory == null &&
+        _selectedLane >= 0 &&
+        _selectedLane < _lanePositions.length) {
       // 记忆的是"窗口停在哪"，不是吸附后的整行（Qt observe 只折 anchor，不改窗口）。
       _lanePositions[_selectedLane] = _listPosition;
     }
@@ -2404,8 +2487,12 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
       return;
     }
     final SirenSong? current = _song;
-    final int index = current == null ? -1 : songs.indexWhere((SirenSong s) => s.id == current.id);
-    final int next = index < 0 ? 0 : ((index + direction) % songs.length + songs.length) % songs.length;
+    final int index = current == null
+        ? -1
+        : songs.indexWhere((SirenSong s) => s.id == current.id);
+    final int next = index < 0
+        ? 0
+        : ((index + direction) % songs.length + songs.length) % songs.length;
     if (songs[next].id == current?.id) {
       return;
     }
@@ -2446,7 +2533,8 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
       _nativeScrollOrigin = _listPosition;
     }
     final double max = (items.length - 1).toDouble();
-    final double next = ((_nativeScrollOrigin ?? _listPosition) + deltaRows).clamp(0.0, max);
+    final double next = ((_nativeScrollOrigin ?? _listPosition) + deltaRows)
+        .clamp(0.0, max);
     if (committed) {
       _nativeScrollOrigin = null;
       unawaited(commitLibraryScroll(next));
@@ -2540,9 +2628,11 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     if (songs.isEmpty) {
       return;
     }
-    final int current =
-        directory.index < 0 || directory.index >= songs.length ? 0 : directory.index;
-    final int next = ((current + step) % songs.length + songs.length) % songs.length;
+    final int current = directory.index < 0 || directory.index >= songs.length
+        ? 0
+        : directory.index;
+    final int next =
+        ((current + step) % songs.length + songs.length) % songs.length;
     final SirenSong song = songs[next];
     // Qt MusicDirectory::selectDirectory（Qt/src/MusicDirectory.cpp:302-319）：
     // 先落 index，再用**目录自己的 anchor** 折列 ——
@@ -2609,7 +2699,8 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     //   → 绝对行 = wrap(offsets[lane] + rowMemory[lane], count)
     // 不是“上次记住的选中身份”（那个可能已被 openSong/step 挪到别的窗口行）。
     final int count = items.length;
-    final int row = (((_laneOffsets[lane] + _rowMemory[lane]) % count) + count) % count;
+    final int row =
+        (((_laneOffsets[lane] + _rowMemory[lane]) % count) + count) % count;
     // Qt showSource（Qt/src/MusicLibrary.cpp:556-580）只恢复 selectedPhysical/observe，
     // 不改 offsets/rowMemory —— 恢复一条记忆不能把该列的滚动窗口重算成 row%8。
     _selectRow(items, row, recordWindow: false);
@@ -2635,7 +2726,8 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
         // 歌曲行的下标指回哪份列表随相位变（与 [_openAt] 同一份真值）：
         // 专辑详情 → album.songs；其余 → 当前可见列表（目录/筛选/全部歌曲）。
         final SirenAlbum? album = _state.album;
-        final List<SirenSong> tracks = (_phase == BasicPhase.detail && album != null)
+        final List<SirenSong> tracks =
+            (_phase == BasicPhase.detail && album != null)
             ? album.songs
             : _visibleSongs();
         final SirenSong? song = item.index >= 0 && item.index < tracks.length
@@ -2653,7 +2745,9 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
       }
     }
     _listPosition = row.toDouble();
-    if (_directory == null && _selectedLane >= 0 && _selectedLane < _rowMemory.length) {
+    if (_directory == null &&
+        _selectedLane >= 0 &&
+        _selectedLane < _rowMemory.length) {
       // Qt MusicLibrary::observe（Qt/src/MusicLibrary.cpp:262-268）：root 列里选中一行时
       // 写 `rowMemory[selectedLane] = 页内行`（0..7）。openSirenAllSongs 用它拼目录
       // anchor（Qt/src/MusicSiren.cpp:239-240）；目录内部不写 rowMemory
@@ -2857,16 +2951,18 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     final bool artMatches =
         _artTrackId == track.id && _artUrl == track.cover.trim();
     final String cover = artMatches ? _artPath : '';
-    unawaited(media.sync(
-      identity: BasicMediaIdentity(
-        id: track.id,
-        title: track.title,
-        artist: track.artist,
-        album: track.album,
-        coverFilePath: cover,
+    unawaited(
+      media.sync(
+        identity: BasicMediaIdentity(
+          id: track.id,
+          title: track.title,
+          artist: track.artist,
+          album: track.album,
+          coverFilePath: cover,
+        ),
+        audio: _audio.state,
       ),
-      audio: _audio.state,
-    ));
+    );
   }
 
   /// 把当前播放曲目的远端封面落成本地文件，成功后补一次上报。
@@ -2990,7 +3086,9 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     if (_disposed || _player.current.isEmpty) {
       return;
     }
-    final double clamped = fraction.isNaN ? 0 : fraction.clamp(0.0, 1.0).toDouble();
+    final double clamped = fraction.isNaN
+        ? 0
+        : fraction.clamp(0.0, 1.0).toDouble();
     final double duration = _number(_player.state['duration']);
     final bool seekable = _player.state['seekable'] == true;
     _player.seek(clamped);
@@ -3260,12 +3358,15 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     // 失败文案保持**原文**（失败原因不被追加词污染）；"正在重试第几次"由下一轮
     // _loadCatalog 的 loading 文案如实给出。
     _catalogRetryTimer?.cancel();
-    _catalogRetryTimer = Timer(Duration(milliseconds: 400 * (1 << (attempt - 1))), () {
-      if (_disposed || _catalogLoaded || !_booted) {
-        return;
-      }
-      unawaited(_loadCatalog());
-    });
+    _catalogRetryTimer = Timer(
+      Duration(milliseconds: 400 * (1 << (attempt - 1))),
+      () {
+        if (_disposed || _catalogLoaded || !_booted) {
+          return;
+        }
+        unawaited(_loadCatalog());
+      },
+    );
   }
 
   String _catalogLoadedStatus() {
@@ -3395,8 +3496,9 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
       }
     }
     if (parent != null && parent.songs.isNotEmpty) {
-      final int index =
-          parent.index < 0 || parent.index >= parent.songs.length ? 0 : parent.index;
+      final int index = parent.index < 0 || parent.index >= parent.songs.length
+          ? 0
+          : parent.index;
       _song = parent.songs[index];
       _selection = BasicSelection(kind: 'song', id: _song!.id);
       // Qt :449 `selectDirectory(directory->index)`：父目录自己的 anchor 折算停留列
@@ -3420,8 +3522,9 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     if (directory == null) {
       return;
     }
-    final int index =
-        directory.songs.indexWhere((SirenSong item) => item.id == song.id);
+    final int index = directory.songs.indexWhere(
+      (SirenSong item) => item.id == song.id,
+    );
     if (index < 0) {
       return;
     }
@@ -3697,7 +3800,10 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
 
   // 播放：engine 端口实现（fresh 详情 → native prepare/play → playbackStarted）
 
-  Future<void> _startPlayback(Map<String, Object?> track, int generation) async {
+  Future<void> _startPlayback(
+    Map<String, Object?> track,
+    int generation,
+  ) async {
     _activeGeneration = generation;
     final LyricsController lyrics = await _ensureLyrics();
     if (_activeGeneration != generation) {
@@ -3728,7 +3834,10 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
           // 插件平台的曲目（例如从「我的歌单」目录点进来的那一行）不带 sourceUrl，
           // 播放地址只能现向插件要；**不能**落到 `_repository.songDetail`——那是塞壬
           // 的 id 空间，插件 id 在那边必然 404（真机表现：详情页打开、状态「已暂停」）。
-          sourceUrl = await gateway.playback(trackId: id, quality: _remoteQuality);
+          sourceUrl = await gateway.playback(
+            trackId: id,
+            quality: _remoteQuality,
+          );
           remoteLyrics = await _fetchRemoteLyrics(gateway, track);
         } else {
           final SirenSongDetail detail = await _repository.songDetail(id);
@@ -3753,7 +3862,9 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
       if (remoteLyrics != null) {
         _applyRemoteLyrics(track, remoteLyrics);
       } else {
-        unawaited(_loadLyrics(track, LyricsController.trackKey(track), lyricUrl));
+        unawaited(
+          _loadLyrics(track, LyricsController.trackKey(track), lyricUrl),
+        );
       }
     } on Object catch (error) {
       _player.fail(_messageOf(error), generation: generation);
@@ -3762,7 +3873,8 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
 
   void _rememberDetail(SirenSongDetail detail) {
     final SirenSong? cached = _songById[detail.id];
-    final SirenSong seed = cached ??
+    final SirenSong seed =
+        cached ??
         (_song != null && _song!.id == detail.id
             ? _song!
             : SirenSong(
@@ -3821,7 +3933,10 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     _lyricDoc = parsed;
     final LyricsController? lyrics = _lyrics;
     if (lyrics != null) {
-      lyrics.accept(parsed.toLyricsDocument(source: _providerDisplayName()), track);
+      lyrics.accept(
+        parsed.toLyricsDocument(source: _providerDisplayName()),
+        track,
+      );
       lyrics.sync(_number(_player.state['position']));
     }
     _publish();
@@ -3892,7 +4007,9 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
   }
 
   Future<LyricsController> _createLyrics() async {
-    final LyricsController controller = await LyricsController.create(_MemoryLyricsPreferences());
+    final LyricsController controller = await LyricsController.create(
+      _MemoryLyricsPreferences(),
+    );
     if (_disposed) {
       return controller;
     }
@@ -3983,7 +4100,8 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
       lyricsPreviewId: previewing ? _previewLyricId : '',
       dark: _dark,
       queue: <SirenSong>[
-        for (final Map<String, Object?> track in _player.queue.items) _songFromTrack(track),
+        for (final Map<String, Object?> track in _player.queue.items)
+          _songFromTrack(track),
       ],
       queueIndex: _player.queue.index,
       queueMode: _player.mode,
@@ -3998,12 +4116,16 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
       searchRows: _remoteSearch != null
           ? (_remoteSearchResult?.rows ?? const <Map<String, Object?>>[])
           : searchOutcome().items,
-      searchTotal:
-          _remoteSearch != null ? (_remoteSearchResult?.total ?? 0) : searchOutcome().total,
-      searchStatus:
-          _remoteSearch != null ? (_remoteSearchResult?.status ?? '') : searchOutcome().status,
+      searchTotal: _remoteSearch != null
+          ? (_remoteSearchResult?.total ?? 0)
+          : searchOutcome().total,
+      searchStatus: _remoteSearch != null
+          ? (_remoteSearchResult?.status ?? '')
+          : searchOutcome().status,
       searchGroups: searchGroups(),
-      lyricStatus: previewing ? _previewLyricStatus : (lyrics?.status ?? 'idle'),
+      lyricStatus: previewing
+          ? _previewLyricStatus
+          : (lyrics?.status ?? 'idle'),
       lyricMessage: previewing ? _previewLyricMessage : (lyrics?.message ?? ''),
       lyricsOffsetMs: lyrics?.offsetMs ?? 0,
       lyricsGlobalOffsetMs: lyrics?.globalOffsetMs ?? 0,
@@ -4025,7 +4147,9 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     }
     return SirenSong(
       id: id,
-      title: _text(track['title']).isEmpty ? sirenUnknownTitle : _text(track['title']),
+      title: _text(track['title']).isEmpty
+          ? sirenUnknownTitle
+          : _text(track['title']),
       artist: _text(track['artist']),
       album: _text(track['album']),
       albumId: _text(track['albumID']),
@@ -4121,7 +4245,11 @@ class _BasicPlaybackEngine implements PlaybackEnginePort {
   final BasicController _owner;
 
   @override
-  void prepare(Map<String, Object?> track, int generation, {bool reload = false}) {
+  void prepare(
+    Map<String, Object?> track,
+    int generation, {
+    bool reload = false,
+  }) {
     unawaited(_owner._startPlayback(track, generation));
   }
 }

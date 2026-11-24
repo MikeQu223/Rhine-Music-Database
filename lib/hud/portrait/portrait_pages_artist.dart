@@ -66,6 +66,7 @@ double _coverSide(PortraitCanvas c) =>
 /// 代替空态标题，避免首帧闪「暂无」。
 void paintPortraitArtistPage(
   PortraitCanvas c, {
+
   /// 歌手名（页头标题）。
   required String artist,
 
@@ -96,6 +97,11 @@ void paintPortraitArtistPage(
   /// 列表滚动量（网格单位）。曲目列可能有几十首，矮屏上一屏放不下就必须能滚。
   double scroll = 0,
 }) {
+  // 「已打开：<歌手>」和页头标题重复，不再上屏；其它状态串（读取失败、正在打开）
+  // 仍然要画，它们是唯一的失败反馈。
+  if (status.startsWith('已打开：')) {
+    status = '';
+  }
   final double width = c.gridWidth - 2 * _gutter;
   final double height = c.height;
 
@@ -175,8 +181,9 @@ void paintPortraitArtistPage(
   );
   tabY += PortraitRhythm.gap(60, height);
 
-  final List<PortraitArtistRow> rows =
-      tab == portraitArtistTabAlbums ? albums : tracks;
+  final List<PortraitArtistRow> rows = tab == portraitArtistTabAlbums
+      ? albums
+      : tracks;
   c.section(
     tabY,
     tab == portraitArtistTabAlbums ? '发行专辑' : '曲目',
@@ -220,8 +227,11 @@ void paintPortraitArtistPage(
       );
     }
   } else {
-    final (int first, int last) =
-        c.visibleRows(cursor, portraitArtistRowStride, rows.length);
+    final (int first, int last) = c.visibleRows(
+      cursor,
+      portraitArtistRowStride,
+      rows.length,
+    );
     for (int index = first; index < last; index++) {
       final PortraitArtistRow row = rows[index];
       c.row(
