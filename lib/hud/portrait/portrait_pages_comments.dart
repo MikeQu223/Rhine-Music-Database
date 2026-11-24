@@ -245,7 +245,14 @@ PortraitCommentsLayout paintPortraitCommentsPage(
   }
   if (subtitle) {
     // ResponsiveHudLayout.cpp:187-188：标题区下沿的一行英文小标。
-    c.text('COMMENT ARCHIVE / 评论档案', left, 126, size: 8, width: contentWidth, color: c.muted);
+    c.text(
+      'COMMENT ARCHIVE / 评论档案',
+      left,
+      126,
+      size: 8,
+      width: contentWidth,
+      color: c.muted,
+    );
   }
 
   c.beginContent(portraitCommentsContentTop);
@@ -272,23 +279,46 @@ PortraitCommentsLayout paintPortraitCommentsPage(
   final bool hot = model.sort == 'hot';
   final bool fresh = model.sort == 'new';
   c.chip(
-    Rect.fromLTWH(left, y, portraitCommentsChipWidth, portraitCommentsChipHeight),
+    Rect.fromLTWH(
+      left,
+      y,
+      portraitCommentsChipWidth,
+      portraitCommentsChipHeight,
+    ),
     '热门',
     'comments:sort:hot',
     selected: hot,
   );
   if (hot) {
-    c.fill(Rect.fromLTWH(left, y + portraitCommentsChipHeight, portraitCommentsChipWidth, 3), c.amber);
+    c.fill(
+      Rect.fromLTWH(
+        left,
+        y + portraitCommentsChipHeight,
+        portraitCommentsChipWidth,
+        3,
+      ),
+      c.amber,
+    );
   }
   c.chip(
-    Rect.fromLTWH(left + 90, y, portraitCommentsChipWidth, portraitCommentsChipHeight),
+    Rect.fromLTWH(
+      left + 90,
+      y,
+      portraitCommentsChipWidth,
+      portraitCommentsChipHeight,
+    ),
     '最新',
     'comments:sort:new',
     selected: fresh,
   );
   if (fresh) {
     c.fill(
-      Rect.fromLTWH(left + 90, y + portraitCommentsChipHeight, portraitCommentsChipWidth, 3),
+      Rect.fromLTWH(
+        left + 90,
+        y + portraitCommentsChipHeight,
+        portraitCommentsChipWidth,
+        3,
+      ),
       c.amber,
     );
   }
@@ -299,7 +329,16 @@ PortraitCommentsLayout paintPortraitCommentsPage(
   // ── 首屏：loading/idle（:64-71） ────────────────────────────────────────
   if (model.status == 'loading' || model.status == 'idle') {
     final String message = model.message.isEmpty ? '正在读取评论…' : model.message;
-    y = c.paragraph(message, left, y + 8, size: 13, width: contentWidth, color: c.muted) + 16;
+    y =
+        c.paragraph(
+          message,
+          left,
+          y + 8,
+          size: 13,
+          width: contentWidth,
+          color: c.muted,
+        ) +
+        16;
     c.endContent();
     return _layout(y, bottom, scroll);
   }
@@ -307,8 +346,21 @@ PortraitCommentsLayout paintPortraitCommentsPage(
   // ── 首屏：error/empty（:72-80） ─────────────────────────────────────────
   if (model.status == 'error' || model.status == 'empty') {
     final String message = model.message.isEmpty ? '暂无评论' : model.message;
-    y = c.paragraph(message, left, y + 8, size: 13, width: contentWidth, color: c.muted) + 16;
-    c.button(Rect.fromLTWH(left, y, contentWidth, 44), '重新加载', 'comments:retry');
+    y =
+        c.paragraph(
+          message,
+          left,
+          y + 8,
+          size: 13,
+          width: contentWidth,
+          color: c.muted,
+        ) +
+        16;
+    c.button(
+      Rect.fromLTWH(left, y, contentWidth, 44),
+      '重新加载',
+      'comments:retry',
+    );
     y += 60;
     c.endContent();
     return _layout(y, bottom, scroll);
@@ -316,14 +368,21 @@ PortraitCommentsLayout paintPortraitCommentsPage(
 
   // ── 每条评论（:82-171） ─────────────────────────────────────────────────
   for (final PortraitCommentRow item in model.items) {
-    final Rect avatar = Rect.fromLTWH(left, y, portraitCommentAvatarSize, portraitCommentAvatarSize);
+    final Rect avatar = Rect.fromLTWH(
+      left,
+      y,
+      portraitCommentAvatarSize,
+      portraitCommentAvatarSize,
+    );
     if (item.avatarKey.isNotEmpty) {
       c.image(item.avatarKey, avatar);
     } else {
       c.fill(avatar, c.raised);
       c.border(avatar, c.line);
       // Qt `nickname.left(1)`：UTF-16 首字符（与 Dart substring(0,1) 同义）。
-      final String initial = item.nickname.isEmpty ? '' : item.nickname.substring(0, 1);
+      final String initial = item.nickname.isEmpty
+          ? ''
+          : item.nickname.substring(0, 1);
       c.centered(initial, left + 15, y + 16, 12, 'demibold', c.ink);
     }
     c.text(item.nickname, 58, y + 1, size: 13, width: 220, weight: 'demibold');
@@ -332,7 +391,8 @@ PortraitCommentsLayout paintPortraitCommentsPage(
     }
 
     final List<String> lines = c.wrap(item.content, contentWidth - 38, 13);
-    final bool truncated = !item.expanded && lines.length > portraitCommentBodyLines;
+    final bool truncated =
+        !item.expanded && lines.length > portraitCommentBodyLines;
     final int shown = truncated ? portraitCommentBodyLines : lines.length;
     double contentY = y + 24;
     for (int index = 0; index < shown; index++) {
@@ -342,29 +402,49 @@ PortraitCommentsLayout paintPortraitCommentsPage(
     double metaY = contentY + 5;
     // Qt `"♥ " + item["likedLabel"]`，而 likedLabel 恒为 `compactCount(likedCount)`
     // （CommentsController.cpp:668-712 的 state()），即最小值是 "0"，不会是空串。
+    // 心形走图标而不是字面 `♥`：MiSans 缺 U+2665，真机会渲染成向下的三角
+    // （2026-11-24 评论页截图里一排「▽ 0」）。
     final String liked = item.likedLabel.isEmpty ? '0' : item.likedLabel;
-    c.text('♥ $liked', 58, metaY, size: 12, width: 90, color: c.muted);
+    c.icon('heart', 58, metaY - 2, size: 12, color: c.muted);
+    c.text(liked, 75, metaY, size: 12, width: 74, color: c.muted);
 
     if (item.replyCount > 0) {
-      final String label = item.repliesExpanded ? '收起回复 ↑' : '${item.replyCount} 条回复 ↓';
+      final String label = item.repliesExpanded
+          ? '收起回复 ↑'
+          : '${item.replyCount} 条回复 ↓';
       c.text(label, 152, metaY, size: 12, width: 130, color: c.muted);
-      c.hit(Rect.fromLTWH(144, metaY - 12, 150, 44), 'comments:replies:${item.id}', label);
+      c.hit(
+        Rect.fromLTWH(144, metaY - 12, 150, 44),
+        'comments:replies:${item.id}',
+        label,
+      );
     }
     if (truncated || item.expanded) {
       final String label = item.expanded ? '收起' : '展开全文';
       c.text(label, w - 80, metaY, size: 12, width: 60, color: c.muted);
-      c.hit(Rect.fromLTWH(w - 88, metaY - 12, 68, 44), 'comments:expand:${item.id}', label);
+      c.hit(
+        Rect.fromLTWH(w - 88, metaY - 12, 68, 44),
+        'comments:expand:${item.id}',
+        label,
+      );
     }
 
     double afterMeta = metaY + 24;
-    final List<PortraitCommentReply> replies =
-        item.repliesExpanded ? item.replies : item.inlineReplies;
-    if (replies.isNotEmpty || item.repliesLoading || item.repliesError.isNotEmpty) {
+    final List<PortraitCommentReply> replies = item.repliesExpanded
+        ? item.replies
+        : item.inlineReplies;
+    if (replies.isNotEmpty ||
+        item.repliesLoading ||
+        item.repliesError.isNotEmpty) {
       final double blockTop = afterMeta + 2;
       final List<List<String>> wrapped = <List<String>>[];
       double blockHeight = 12;
       for (final PortraitCommentReply reply in replies) {
-        final List<String> replyLines = c.wrap(reply.displayText, contentWidth - 56, 12);
+        final List<String> replyLines = c.wrap(
+          reply.displayText,
+          contentWidth - 56,
+          12,
+        );
         wrapped.add(replyLines);
         blockHeight += replyLines.length * portraitReplyLine + 6;
       }
@@ -385,19 +465,40 @@ PortraitCommentsLayout paintPortraitCommentsPage(
       if (statusText.isNotEmpty) {
         blockHeight += 24;
       }
-      c.fill(Rect.fromLTWH(58, blockTop, contentWidth - 38, blockHeight), c.surface);
+      c.fill(
+        Rect.fromLTWH(58, blockTop, contentWidth - 38, blockHeight),
+        c.surface,
+      );
       double replyY = blockTop + 8;
       for (final List<String> replyLines in wrapped) {
         for (final String line in replyLines) {
-          c.text(line, 68, replyY, size: 12, width: contentWidth - 56, color: c.muted);
+          c.text(
+            line,
+            68,
+            replyY,
+            size: 12,
+            width: contentWidth - 56,
+            color: c.muted,
+          );
           replyY += portraitReplyLine;
         }
         replyY += 6;
       }
       if (statusText.isNotEmpty) {
-        c.text(statusText, 68, replyY + 1, size: 12, width: contentWidth - 60, color: c.muted);
+        c.text(
+          statusText,
+          68,
+          replyY + 1,
+          size: 12,
+          width: contentWidth - 60,
+          color: c.muted,
+        );
         if (statusAction.isNotEmpty) {
-          c.hit(Rect.fromLTWH(58, replyY - 12, contentWidth - 38, 40), statusAction, statusText);
+          c.hit(
+            Rect.fromLTWH(58, replyY - 12, contentWidth - 38, 40),
+            statusAction,
+            statusText,
+          );
         }
       }
       afterMeta = blockTop + blockHeight + 10;
@@ -413,11 +514,22 @@ PortraitCommentsLayout paintPortraitCommentsPage(
     if (model.loadingMore) {
       c.centered('正在加载更多…', w / 2, y + 22, 12, 'regular', c.muted);
     } else {
-      c.button(Rect.fromLTWH(left, y, contentWidth, 44), '加载更多评论 ↓', 'comments:load-more');
+      c.button(
+        Rect.fromLTWH(left, y, contentWidth, 44),
+        '加载更多评论 ↓',
+        'comments:load-more',
+      );
     }
     y += 56;
   } else if (model.items.isNotEmpty) {
-    c.centered('END OF COMMENTS / 评论到底了', w / 2, y + 22, 10, 'regular', c.muted);
+    c.centered(
+      'END OF COMMENTS / 评论到底了',
+      w / 2,
+      y + 22,
+      10,
+      'regular',
+      c.muted,
+    );
     y += 56;
   }
 
@@ -431,6 +543,9 @@ PortraitCommentsLayout _layout(double y, double bottom, double scroll) {
   final double viewport = math.max(0, bottom - portraitCommentsContentTop);
   return PortraitCommentsLayout(
     contentBottom: contentBottom,
-    maximumScroll: math.max(0, contentBottom - portraitCommentsContentTop - viewport),
+    maximumScroll: math.max(
+      0,
+      contentBottom - portraitCommentsContentTop - viewport,
+    ),
   );
 }
