@@ -16,6 +16,7 @@ import '../hud/modals/comments_modal.dart' as comments_modal;
 import '../hud/modals/login_modal.dart' as login_modal;
 import '../hud/modals/mv_modal.dart' as mv_modal;
 import '../hud/modals/provider_modal.dart' as provider_modal;
+import '../hud/modals/settings_modal.dart' show PlatformCapabilities;
 import '../hud/modals/queue_modal.dart' as queue_modal;
 import '../hud/modals/search_panel.dart' as search_panel;
 import '../hud/pages/archive_page.dart';
@@ -550,13 +551,19 @@ class BasicHudFrame {
       );
     }
 
+    // 输出音量块的平台判据：Qt 桌面端走 `PlatformFeatures::ApplicationVolume` 画滑轨
+    // （PlayerBar.cpp:238-246），Android/iOS 那枚特性恒假、只剩「系统音量 / SYSTEM」字样。
+    // 2026-11-22 曾经为了「横屏必须有可用输出模块」硬写成 `true`，结果手机横屏右下角
+    // 一直显示本来只属于桌面的音量滑轨（用户 2026-11-25 报的第 5 条）。
+    // 现在统一读 `PlatformCapabilities.forTarget`，以后接桌面端不用再逐个改调用点。
     final player.PlayerBarDrawing bar = player.renderPlayerBar(
-      // 横屏播放条右下角必须有可用的输出模块（用户 2026-11-22 报的缺陷）：Qt 在
-      // 桌面端走 `PlatformFeatures::ApplicationVolume` 画滑轨（PlayerBar.cpp:238-246），
-      // 手机上那枚特性恒假、只剩「系统音量」四个字。本仓库的音量本就由
-      // `player:volume-fraction:<f>`（宿主 → controller.setVolumeFraction）驱动，
-      // 所以横屏直接按应用内音量画，滑轨与命中都出现。
-      _playerState(state, musicVideo: mvAvailable, volume: volume, applicationVolume: true),
+      _playerState(
+        state,
+        musicVideo: mvAvailable,
+        volume: volume,
+        applicationVolume:
+            PlatformCapabilities.forTarget(defaultTargetPlatform).applicationVolume,
+      ),
       player.PlayerBarRect(0, height - player.playerBarRowHeight, width, player.playerBarRowHeight),
       dark,
       ports,

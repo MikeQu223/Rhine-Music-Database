@@ -57,6 +57,12 @@ class SongDetailAction {
   String toString() => 'SongDetailAction($label, $route)';
 }
 
+/// 心形 SVG 路径（24×24 视口，与竖屏 `portrait_canvas.dart` 的 `song-heart` 同一形状）。
+///
+/// 用矢量路径而不是 `♥` 字符的理由见 `_cardActions` 里的注释：MiSans 缺这两个字形。
+const String _heartPath =
+    'M 12 21 C 8 18 2 14 2 8 C 2 2 9 1 12 5 C 15 1 22 2 22 8 C 22 14 16 18 12 21 Z';
+
 /// 同专辑曲目行所需的字段（Qt 用原始 JSON，这里显式建模）。
 class SongDetailTrack {
   const SongDetailTrack({
@@ -597,9 +603,27 @@ void _cardActions(
     }
     p.hit(x, y, width, height, item.route, item.label);
     final List<Object?> color = primary ? inverse : foreground;
+    final bool likeCell = item.route == 'music:like';
+    // Qt 的喜欢按钮文案自带 `♥ 已喜欢` / `♡ 喜欢` 前缀（NativeHudDetail.cpp:159），
+    // 但 MiSans 字形表里没有 U+2665/U+2661，真机回退字体把它们画成倒三角
+    // （2026-11-24 已从文案里摘掉）。这里改成画**矢量心形**，既补回符号又不依赖字形：
+    // 已喜欢 → `fill-path`（实心），未喜欢 → `path` 描边（空心）。
+    if (likeCell) {
+      final bool filled = item.label.startsWith('已喜欢');
+      p.save();
+      p.op(<Object?>['translate', x + 12, y + 15]);
+      final double heartScale = 14 / 24;
+      p.op(<Object?>['scale', heartScale, heartScale]);
+      if (filled) {
+        p.op(<Object?>['fill-path', _heartPath, color]);
+      } else {
+        p.op(<Object?>['path', _heartPath, 1.8, color]);
+      }
+      p.restore();
+    }
     p.text(
       item.label,
-      x + 12,
+      likeCell ? x + 31 : x + 12,
       y + 12,
       14,
       primary ? 'demibold' : 'regular',

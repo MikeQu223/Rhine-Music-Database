@@ -2841,11 +2841,14 @@ class _BasicShellState extends State<_BasicShell>
     );
   }
 
-  /// 面板上下文：Android 基本版的真实平台能力（没有桌面歌词 / 官方音源 / 应用音量）。
+  /// 面板上下文：当前平台的真实能力（没有桌面歌词 / 官方音源 / 应用音量）。
+  ///
+  /// 能力与操作系统都走 `PlatformCapabilities.forTarget` 的平台识别，不再写死
+  /// Android：接桌面端时这一处自动跟着走（用户 2026-11-25 要求提前准备）。
   SettingsPreferenceContext _settingsContext() {
     return SettingsPreferenceContext(
-      capabilities: const PlatformCapabilities.android(),
-      operatingSystem: SettingsOperatingSystem.android,
+      capabilities: PlatformCapabilities.forTarget(defaultTargetPlatform),
+      operatingSystem: PlatformCapabilities.operatingSystemFor(defaultTargetPlatform),
       providerId: sirenProvider,
       musicEnabled: true,
       providerIsLocal: false,

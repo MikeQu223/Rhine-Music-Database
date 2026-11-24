@@ -84,7 +84,9 @@ double paintPortraitDiscoverPage(
   );
 
   double y = portraitDiscoverContentTop - scroll;
-  c.beginContent(y);
+  // 裁剪区顶端固定在 130（Qt `ResponsiveHudLayout.cpp:227` 的 `c.beginContent(130)`）：
+  // 传 `y` 会把裁剪线跟着滚动上移，列表上滑后内容穿透页头（用户报「标题栏没有背景」）。
+  c.beginContent(portraitDiscoverContentTop);
 
   // tab 行：4 列，步进按页宽算（Qt 固定 90/83 是 393 设计稿口径，DPI 适配后
   // 页宽变宽，照抄固定值会挤在左侧一窄条，和检索页/设置页的观感不一致）。

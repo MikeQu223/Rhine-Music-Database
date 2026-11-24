@@ -26,6 +26,8 @@
 import 'dart:math' as math;
 import 'dart:ui' show Offset, Rect, Size;
 
+import 'package:flutter/foundation.dart' show TargetPlatform;
+
 import 'package:rhine_music_database/hud/widgets/settings_row.dart';
 
 // 1. 平台能力矩阵 —— 契约 §8 / Qt/src/PlatformFeatures.h:1-25
@@ -105,6 +107,49 @@ class PlatformCapabilities {
           desktopWindowControls: true,
           desktopLyrics: false,
         );
+
+  /// **平台识别入口**（Qt `PlatformFeatures.h:23-27` 的 Dart 侧对应实现）。
+  ///
+  /// 以前各调用点各自写死 `const PlatformCapabilities.android()`，接桌面端时得逐个
+  /// 找出来改。这里按 `TargetPlatform` 一次判完：移动端（Android/iOS）四项全关
+  /// （没有官方音源、本地音乐、应用音量、桌面窗口控件/歌词），桌面端三项全开；
+  /// Linux 另把 DesktopLyrics 关掉。未知平台按移动端保守处理。
+  ///
+  /// 用户 2026-11-25 报的「横屏右下角输出音量块在 Android 上没隐藏」就是这里
+  /// `applicationVolume` 被硬写成 true 造成的：改成读本工厂即可。
+  factory PlatformCapabilities.forTarget(TargetPlatform platform) {
+    switch (platform) {
+      case TargetPlatform.android:
+        return const PlatformCapabilities.android();
+      case TargetPlatform.iOS:
+        return const PlatformCapabilities.iOS();
+      case TargetPlatform.windows:
+        return const PlatformCapabilities.windows();
+      case TargetPlatform.macOS:
+        return const PlatformCapabilities.macOS();
+      case TargetPlatform.linux:
+        return const PlatformCapabilities.linux();
+      case TargetPlatform.fuchsia:
+        return const PlatformCapabilities.android();
+    }
+  }
+
+  /// 同 [PlatformCapabilities.forTarget] 的操作系统投影（设置面板按 OS 文案/默认值分叉）。
+  static SettingsOperatingSystem operatingSystemFor(TargetPlatform platform) {
+    switch (platform) {
+      case TargetPlatform.android:
+      case TargetPlatform.fuchsia:
+        return SettingsOperatingSystem.android;
+      case TargetPlatform.iOS:
+        return SettingsOperatingSystem.iOS;
+      case TargetPlatform.windows:
+        return SettingsOperatingSystem.windows;
+      case TargetPlatform.macOS:
+        return SettingsOperatingSystem.macOS;
+      case TargetPlatform.linux:
+        return SettingsOperatingSystem.linux;
+    }
+  }
 
   PlatformCapabilities copyWith({
     bool? officialPlayback,
