@@ -9,8 +9,8 @@
 #include <functional>
 #include <memory>
 
-// Control-thread-owned output queue. QAudioSink owns the platform render thread;
-// decoded buffers and control actions are serialized on the player's thread.
+// Decoded buffers and controls are serialized on the player's thread.
+// The platform backend services the device on its render thread.
 class AudioPcmOutput {
   public:
     AudioPcmOutput();
@@ -57,6 +57,8 @@ class AudioPcmOutput {
     std::unique_ptr<QAudioSink> sink;
 #ifdef Q_OS_WIN
     std::unique_ptr<WindowsAudioOutput> native;
+    int wasapiError = 0;
+    quint64 nativeSubmittedFrames = 0;
 #endif
     bool exclusive = false;
     QIODevice *writer = nullptr;

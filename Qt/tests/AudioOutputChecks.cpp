@@ -363,10 +363,8 @@ class AudioPlayerRegression {
             std::fprintf(stderr, "SKIP: no physical output; signal and policy checks still run\n");
             return true;
         }
-        AudioPlayer audio;
-#ifdef Q_OS_MACOS
-        audio.useApplePlayback = false;
-#endif
+        // Exercise the direct PCM path inspected by the assertions below.
+        AudioPlayer audio({}, false);
         // 静音跑生产路径，避免测试发出可听声音。
         audio.control("volume", 0);
         audio.enableDiagnostics(true);
@@ -378,6 +376,15 @@ class AudioPlayerRegression {
         ok &= check(measured["outputClientFormatStatus"].toInt() == 1 &&
                         measured["outputSampleRateHz"].toInt() > 0,
                     "Panel snapshot contains opened client format facts");
+#ifdef Q_OS_WIN
+        const bool exclusive = AppStorage::settings().value("panel/audio-exclusive") == "on";
+        const auto validBits = measured["outputValidBits"].toInt();
+        const auto containerBits = measured["outputContainerBits"].toInt();
+        ok &= check(measured["outputShareMode"].toInt() == (exclusive ? 2 : 1) &&
+                        measured["outputWasapiError"].toInt() == 0 && validBits > 0 &&
+                        validBits <= containerBits,
+                    "Windows reports the mode and PCM bit depth of the opened endpoint");
+#endif
         audio.control("pause");
         const auto paused = audio.pcm.position();
         QElapsedTimer clock;

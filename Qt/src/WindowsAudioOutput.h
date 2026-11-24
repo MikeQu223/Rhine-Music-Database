@@ -13,8 +13,12 @@ class WindowsAudioOutput {
   public:
     WindowsAudioOutput();
     ~WindowsAudioOutput();
-    bool open(const QByteArray &deviceId, bool exclusive, const QAudioFormat &requested = {});
+    bool open(const QByteArray &deviceId, bool exclusive, const QAudioFormat &requested = {},
+              const QAudioFormat &fallback = {}, bool preferSource = false);
     QAudioFormat format() const;
+    int shareMode() const;
+    int validBits() const;
+    int containerBits() const;
     void enqueue(const QAudioBuffer &buffer);
     void reset(bool paused = false);
     void setPaused(bool paused);

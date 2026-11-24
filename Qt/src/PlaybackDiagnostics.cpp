@@ -60,6 +60,8 @@ QJsonObject PlaybackDiagnostics::numericFields(const QJsonObject &values) {
                             "outputSampleRateHz",
                             "outputChannels",
                             "outputSampleFormat",
+                            "outputValidBits",
+                            "outputContainerBits",
                             "outputSystemFormatStatus",
                             "outputSystemSampleRateHz",
                             "outputSystemChannels",
@@ -75,12 +77,14 @@ QJsonObject PlaybackDiagnostics::numericFields(const QJsonObject &values) {
                             "outputBufferMs",
                             "outputUnderruns",
                             "outputError",
+                            "outputWasapiError",
                             "outputRebuilds",
                             "outputBackpressure",
                             "outputDraining",
                             "outputProcessedMs",
                             "outputFallback",
                             "outputBackend",
+                            "outputShareMode",
                             "sourceSampleRateHz",
                             "sourceChannels",
                             "sourceCodecFourCC",
@@ -240,8 +244,11 @@ QJsonObject PlaybackDiagnostics::report() const {
              {"outputBackend", "1=application PCM queue to QAudioSink,2=Apple AVPlayer,"
                                "3=event-driven WASAPI; fixed/head-tracked mode not observed; "
                                "DAC format not inferred"},
+             {"outputShareMode", "WASAPI session: 0=not open,1=shared,2=exclusive"},
              {"outputClientFormatStatus",
               "0=unavailable or not open,1=observed client submission format; not DAC format"},
+             {"outputValidBits", "WASAPI stream valid bits per sample; 0=unavailable"},
+             {"outputContainerBits", "WASAPI stream container bits per sample; 0=unavailable"},
              {"sourceCodecFourCC", "AudioStreamBasicDescription format ID; source track, not decoded PCM"},
              {"nativeErrorCode", "Numeric AVPlayer/AVPlayerItem error; 0=none"},
              {"transitionPhase", "0=analyzing,1=waiting,2=loading,3=seeking,4=prerolling,5=ready,6=armed,"
@@ -260,6 +267,7 @@ QJsonObject PlaybackDiagnostics::report() const {
               "-1=not-running,0=byte-exact bypass,1=SWR; filter_size=64; default phase/cutoff"},
              {"outputError", "0=none,1=no-supported-format,2=resampler,3=device-write,4=stream-format-change,"
                              "5=queue-limit,6=device-stalled"},
+             {"outputWasapiError", "Signed 32-bit WASAPI HRESULT; 0=none"},
              {"outputFallback",
               "source-preferred full format unsupported; negotiated system/preferred format instead"},
              {"outputDither",

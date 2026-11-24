@@ -1241,7 +1241,7 @@ qint64 AudioPlayer::playbackPosition() const {
         return applePlayer->position();
     }
 #endif
-    return pcmEnabled && pcm.active() ? pcm.position() : player->position();
+    return pcmEnabled && (pcm.active() || pcm.failed()) ? pcm.position() : player->position();
 }
 
 void AudioPlayer::completePlayback() {

@@ -36,6 +36,8 @@ void AudioPcmOutput::reset(const QAudioDevice &next, AudioOutputFormat::Policy n
     sink.reset();
 #ifdef Q_OS_WIN
     native.reset();
+    wasapiError = 0;
+    nativeSubmittedFrames = 0;
 #endif
     writer = nullptr;
     resampler.reset();
@@ -58,17 +60,29 @@ void AudioPcmOutput::reset(const QAudioDevice &next, AudioOutputFormat::Policy n
 
 bool AudioPcmOutput::open(const QAudioFormat &source) {
     input = source;
-    submitted = AudioOutputFormat::select(
-        source, system.format, device.preferredFormat(), policy,
-        [this](const QAudioFormat &format) { return device.isFormatSupported(format); });
+    const auto supported = [this](const QAudioFormat &format) {
+#ifdef Q_OS_WIN
+        // Exclusive capability belongs to the endpoint driver, not Qt's shared-mode query.
+        if (exclusive) {
+            return true;
+        }
+#endif
+        return device.isFormatSupported(format);
+    };
+    const auto preferred = device.preferredFormat();
+    submitted = AudioOutputFormat::select(source, system.format, preferred, policy, supported);
     if (!submitted.isValid()) {
         fail(1);
         return false;
     }
 #ifdef Q_OS_WIN
     native = std::make_unique<WindowsAudioOutput>();
-    if (!native->open(device.id(), exclusive, submitted)) {
-        native.reset();
+    const bool preferSource = policy == AudioOutputFormat::Policy::Source;
+    const auto fallback = exclusive && preferSource
+                              ? AudioOutputFormat::select(source, system.format, preferred,
+                                                          AudioOutputFormat::Policy::System, supported)
+                              : preferred;
+    if (!native->open(device.id(), exclusive, submitted, fallback, preferSource)) {
         fail(3);
         return false;
     }
@@ -255,7 +269,9 @@ void AudioPcmOutput::fail(int code) {
     timer.stop();
 #ifdef Q_OS_WIN
     if (native) {
-        native->setPaused(true);
+        wasapiError = int(native->error());
+        baseMs = position();
+        native.reset();
     }
 #endif
     if (sink) {
@@ -318,9 +334,14 @@ void AudioPcmOutput::pump() {
             offset = 0;
         }
         updatePressure();
-        const auto consumed = native->processedUSecs();
-        if (consumed != consumedUs || native->queuedBytes() == 0) {
-            consumedUs = consumed;
+        const auto playedUs = native->processedUSecs();
+        const auto submittedFrames = native->consumedFrames();
+        // The device clock can move even when the driver has stopped accepting packets.
+        const bool progressed = native->queuedBytes() > 0 ? submittedFrames != nativeSubmittedFrames
+                                                          : !ending || playedUs != consumedUs;
+        nativeSubmittedFrames = submittedFrames;
+        consumedUs = playedUs;
+        if (progressed) {
             consumptionClock.restart();
         } else if (consumptionClock.isValid() && consumptionClock.elapsed() > STALL_TIMEOUT_MS) {
             fail(6);
@@ -382,8 +403,7 @@ void AudioPcmOutput::pump() {
 QJsonObject AudioPcmOutput::snapshot() const {
     const bool open = active() && !failure && !drained;
     const bool rate = input.isValid() && submitted.isValid() && input.sampleRate() != submitted.sampleRate();
-    const bool format =
-        input.isValid() && submitted.isValid() && input.sampleFormat() != submitted.sampleFormat();
+    bool format = input.isValid() && submitted.isValid() && input.sampleFormat() != submitted.sampleFormat();
     const bool channels = input.isValid() && submitted.isValid() &&
                           (input.channelCount() != submitted.channelCount() ||
                            input.channelConfig() != submitted.channelConfig());
@@ -391,6 +411,7 @@ QJsonObject AudioPcmOutput::snapshot() const {
     auto buffered = sink ? sink->bufferSize() - sink->bytesFree() : qsizetype(0);
 #ifdef Q_OS_WIN
     if (native && submitted.isValid()) {
+        format = format || native->validBits() < submitted.bytesPerSample() * 8;
         const auto submittedBytes = native->consumedFrames() * submitted.bytesPerFrame();
         const auto playedBytes =
             native->processedUSecs() * submitted.sampleRate() / 1000000 * submitted.bytesPerFrame();
@@ -398,42 +419,46 @@ QJsonObject AudioPcmOutput::snapshot() const {
     }
 #endif
     const auto bytes = pending.size() - offset + buffered;
-    // outputBackend 只描述应用侧 QAudioSink 客户端，不推断平台服务选择。
-    return {{"outputPolicy", int(policy)},
-            {"outputClientFormatStatus", open ? 1 : 0},
-            {"outputSampleRateHz", open ? submitted.sampleRate() : 0},
-            {"outputChannels", open ? submitted.channelCount() : 0},
-            {"outputSampleFormat", open ? int(submitted.sampleFormat()) : 0},
-            {"outputSystemFormatStatus", system.status},
-            {"outputSystemSampleRateHz", system.format.sampleRate()},
-            {"outputSystemChannels", system.format.channelCount()},
-            {"outputSystemSampleFormat", int(system.format.sampleFormat())},
-            {"outputHardwareFormatStatus", 0},
-            {"outputSampleRateConverted", rate},
-            {"outputSampleFormatConverted", format},
-            {"outputChannelLayoutConverted", channels},
-            {"outputResampler", resampler ? (resampler->bypass() ? 0 : 1) : -1},
-            {"outputDither", resampler && resampler->dithering()},
-            {"outputResampleMeanMs", conversionCalls ? double(conversionNs) / conversionCalls / 1e6 : 0},
-            {"outputResampleMaxMs", double(conversionMaxNs) / 1e6},
-            {"outputBufferMs", submitted.isValid()
-                                   ? double(bytes) * 1000 / submitted.bytesPerFrame() / submitted.sampleRate()
-                                   : 0},
-            {"outputUnderruns",
+    return {
+        {"outputPolicy", int(policy)},
+        {"outputClientFormatStatus", open ? 1 : 0},
+        {"outputSampleRateHz", open ? submitted.sampleRate() : 0},
+        {"outputChannels", open ? submitted.channelCount() : 0},
+        {"outputSampleFormat", open ? int(submitted.sampleFormat()) : 0},
+        {"outputSystemFormatStatus", system.status},
+        {"outputSystemSampleRateHz", system.format.sampleRate()},
+        {"outputSystemChannels", system.format.channelCount()},
+        {"outputSystemSampleFormat", int(system.format.sampleFormat())},
+        {"outputHardwareFormatStatus", 0},
+        {"outputSampleRateConverted", rate},
+        {"outputSampleFormatConverted", format},
+        {"outputChannelLayoutConverted", channels},
+        {"outputResampler", resampler ? (resampler->bypass() ? 0 : 1) : -1},
+        {"outputDither", resampler && resampler->dithering()},
+        {"outputResampleMeanMs", conversionCalls ? double(conversionNs) / conversionCalls / 1e6 : 0},
+        {"outputResampleMaxMs", double(conversionMaxNs) / 1e6},
+        {"outputBufferMs",
+         submitted.isValid() ? double(bytes) * 1000 / submitted.bytesPerFrame() / submitted.sampleRate() : 0},
+        {"outputUnderruns",
 #ifdef Q_OS_WIN
-             native ? native->underrunCount() :
+         native ? native->underrunCount() :
 #endif
-                    underruns},
-            {"outputError", failure},
-            {"outputRebuilds", rebuilds},
-            {"outputBackpressure", pressured},
-            {"outputDraining", ending && !drained},
-            {"outputProcessedMs", double(position())},
-            {"outputFallback",
-             policy == AudioOutputFormat::Policy::Source && input.isValid() && submitted != input},
-            {"outputBackend",
+                underruns},
+        {"outputError", failure},
+        {"outputRebuilds", rebuilds},
+        {"outputBackpressure", pressured},
+        {"outputDraining", ending && !drained},
+        {"outputProcessedMs", double(position())},
+        {"outputFallback",
+         policy == AudioOutputFormat::Policy::Source && open && (rate || format || channels)},
 #ifdef Q_OS_WIN
-             native ? 3 :
+        {"outputBackend", 3},
+        {"outputShareMode", open && native ? native->shareMode() : 0},
+        {"outputValidBits", open && native ? native->validBits() : 0},
+        {"outputContainerBits", open && native ? native->containerBits() : 0},
+        {"outputWasapiError", native ? int(native->error()) : wasapiError}
+#else
+        {"outputBackend", 1}
 #endif
-                    1}};
+    };
 }
