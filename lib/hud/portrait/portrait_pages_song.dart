@@ -54,14 +54,15 @@ String _clock(double ms) {
 String _pad(int value) => value.toString().padLeft(2, '0');
 
 /// 0..1 夹取（`double.clamp` 返回 num，这里保持 double 口径）。
-double _unit(double value) => value.isNaN ? 0 : (value < 0 ? 0 : (value > 1 ? 1 : value));
+double _unit(double value) =>
+    value.isNaN ? 0 : (value < 0 ? 0 : (value > 1 ? 1 : value));
 
 /// 档案类型标签（Qt 的 “TRACK RECORD / 唱片档案”，按 kind 换抬头）。
 String _sectionLabel(String kind) => switch (kind) {
-      'album' => 'ALBUM ARCHIVE / 专辑档案',
-      'playlist' => 'PLAYLIST ARCHIVE / 播放列表',
-      _ => 'TRACK RECORD / 唱片档案',
-    };
+  'album' => 'ALBUM ARCHIVE / 专辑档案',
+  'playlist' => 'PLAYLIST ARCHIVE / 播放列表',
+  _ => 'TRACK RECORD / 唱片档案',
+};
 
 /// 艺人 / 专辑 次要信息，缺一项就不留多余分隔符。
 String _metaLine(String artist, String album) {
@@ -126,17 +127,31 @@ void paintPortraitSongPage(
 
   // 标题总共占几行：Qt `paragraph(maximumLines = 2)`、25pt × 1.2 行距 = 每行 30。
   // 先算行数再排纵向预算，标题多一行就把唱片卡少收一行的高，不靠「钉底部」兜底。
-  int titleLines =
-      math.min(2, math.max(1, c.wrap(title, c.gridWidth - 40, 25, 'demibold').length));
+  int titleLines = math.min(
+    2,
+    math.max(1, c.wrap(title, c.gridWidth - 40, 25, 'demibold').length),
+  );
   if (h < _songFloorHeight(titleLines) + _songCardMin && titleLines > 1) {
     // 矮屏先牺牲标题第二行（Qt 也是 2 行封顶，1 行是合法版式），再谈压卡片。
     titleLines = 1;
   }
-  final _SongLayout layout = _songLayout(c, titleLines: titleLines);
+  // 歌词预览取自**当前播放曲目**的时间轴：详情页是另一首时预览会指错歌，
+  // 所以非当前曲目直接不显示（Qt 的 song() 本来就没有这一行）。
+  final String preview = current ? lyricPreview : '';
+  final _SongLayout layout = _songLayout(
+    c,
+    titleLines: titleLines,
+    lyricPreview: preview.isNotEmpty,
+  );
 
   // 唱片卡：正方形居中，最长边 312（参考值），矮屏由 [_songLayout] 收到 96 甚至更小。
   final double side = layout.cardSide;
-  final Rect card = Rect.fromLTWH((c.gridWidth - side) / 2, _cardTop, side, side);
+  final Rect card = Rect.fromLTWH(
+    (c.gridWidth - side) / 2,
+    _cardTop,
+    side,
+    side,
+  );
   c.fill(card, c.surface);
   if (cover.isNotEmpty) {
     c.image(cover, card);
@@ -146,7 +161,14 @@ void paintPortraitSongPage(
   // 档案行：类型标签 + 右上序号，行下一道细线（y 由 [_songLayout] 给，卡片封顶后
   // 的余量会落在卡片与这一行之间）。
   final double labelTop = layout.labelTop;
-  c.text(_sectionLabel(kind), _gutter, labelTop, size: 8, width: 240, color: c.muted);
+  c.text(
+    _sectionLabel(kind),
+    _gutter,
+    labelTop,
+    size: 8,
+    width: 240,
+    color: c.muted,
+  );
   if (stamp.isNotEmpty) {
     c.rightText(stamp, c.gridWidth - 20, labelTop, 8, 'regular', c.ink);
   }
@@ -167,11 +189,23 @@ void paintPortraitSongPage(
   final double metaTop = titleTop + _titleLine * titleLines + _gapTitleMeta;
   final String meta = _metaLine(artist, album);
   if (meta.isNotEmpty) {
-    c.text(meta, _gutter, metaTop, size: 11, width: (c.gridWidth - 40) - 56, color: c.muted);
+    c.text(
+      meta,
+      _gutter,
+      metaTop,
+      size: 11,
+      width: (c.gridWidth - 40) - 56,
+      color: c.muted,
+    );
   }
   // 设计稿里心在 350（393 - 43）：必须跟着页宽贴右缘，写死会漂到页面中间。
-  c.icon(favourite ? 'heart-filled' : 'heart', c.gridWidth - 43, metaTop - 4,
-      size: 18, color: favourite ? c.ink : c.muted);
+  c.icon(
+    favourite ? 'heart-filled' : 'heart',
+    c.gridWidth - 43,
+    metaTop - 4,
+    size: 18,
+    color: favourite ? c.ink : c.muted,
+  );
   // 收藏热区 44×44（Qt `{337, top + 30, 44, 44}` 的相对版）：旧实现只画图标不给命中，
   // 详情页点心等于没反应。
   // 详情页喜欢的是「选中那首」（Qt `ResponsiveHudPages.cpp:188-194` 的路由就是
@@ -185,14 +219,28 @@ void paintPortraitSongPage(
   // 状态行：琥珀圆点 + 播放状态。非当前曲目说「尚未播放」（Qt 的同一句），
   // 不能拿另一首歌的「正在播放」来冒充本页曲目。
   final double stateTop = metaTop + _metaRow;
-  c.commands.add(<Object?>['ellipse', c.amber, _gutter + 2, stateTop + 5, 5, 5]);
+  c.commands.add(<Object?>[
+    'ellipse',
+    c.amber,
+    _gutter + 2,
+    stateTop + 5,
+    5,
+    5,
+  ]);
   // 只有本曲目在播才配「正在播放 / 暂停」：另一首在播时本页曲目仍是「尚未播放」，
   // 播放键也必须画成 ▶（点它 = 切到本曲目），不能沿用那首的暂停图标。
   final bool trackPlaying = current && playing;
   final String playbackState = !current
       ? '尚未播放'
       : (buffering ? '正在载入' : (playing ? '正在播放' : '已暂停'));
-  c.text(playbackState, _gutter + 12, stateTop, size: 8, width: 160, color: c.muted);
+  c.text(
+    playbackState,
+    _gutter + 12,
+    stateTop,
+    size: 8,
+    width: 160,
+    color: c.muted,
+  );
 
   // 控制带三块全部取 [_songLayout] 自上而下算好的 y，块与块之间至少留
   // [_minProgressGap]/[_minTransportGap]/[_minFooterGap]，任何高度都不叠。
@@ -218,9 +266,7 @@ void paintPortraitSongPage(
     c,
     barY: barY,
     current: current,
-    // 歌词预览取自**当前播放曲目**的时间轴：详情页是另一首时预览会指错歌，
-    // 所以非当前曲目直接不显示（Qt 的 song() 本来就没有这一行）。
-    lyricPreview: current ? lyricPreview : '',
+    lyricPreview: preview,
     positionMs: positionMs,
     durationMs: durationMs,
   );
@@ -252,8 +298,15 @@ const double _metaRow = 24;
 /// 状态点 + 状态字。
 const double _stateRow = 18;
 
-/// 歌词预览(22) + 轨道/刻度/刻度时间(30)。[_songProgressRow] 从 `barY - 22` 起笔。
+/// 轨道/刻度/刻度时间(30) + 两端时间与 PLAYBACK POSITION 标签(22)。
+/// [_songProgressRow] 从 `barY - 22` 起笔；歌词预览另外占 [_lyricPreviewBlock]。
 const double _progressBlock = 52;
+
+/// 歌词预览单独占的一条（预览行在时间标签**之上**）。
+///
+/// 之前预览和 `00:00 / 02:48` 都画在 `barY - 21` 一带，两者直接压在一起
+/// （用户 2026-11-24 截图可见「00:00」和歌词首句重叠）。
+const double _lyricPreviewBlock = 22;
 
 /// 传输环直径（[_songTransportRow] 的 center ± 26）。
 const double _transportBlock = 52;
@@ -318,17 +371,34 @@ typedef _SongLayout = ({
 /// 旧实现把三块按内容流自上而下堆、余量四等分（其中一份落到 footer 之下），页高
 /// 有富余时底部就被顶高一大截（用户 2026-11-24：「底部组件离底部还有一段空间，
 /// 抬太高了」）。
-_SongLayout _songLayout(PortraitCanvas c, {required int titleLines}) {
-  final double footerTop = math.max(0.0, c.height - _bottomInset - _footerBlock);
-  final double transportCenter = footerTop - _minFooterGap - _transportBlock / 2;
-  // 进度块整体高 [_progressBlock]（[_songProgressRow] 从 `barY - 22` 起笔，到刻度
-  // 时间 `barY + 30` 收），所以块顶 = 传输环顶 - 最小间距 - 块高。
+_SongLayout _songLayout(
+  PortraitCanvas c, {
+  required int titleLines,
+  required bool lyricPreview,
+}) {
+  final double footerTop = math.max(
+    0.0,
+    c.height - _bottomInset - _footerBlock,
+  );
+  final double transportCenter =
+      footerTop - _minFooterGap - _transportBlock / 2;
+  // 进度块整体高：`_progressBlock`（轨道到刻度时间）+ 可选的歌词预览条。
+  // [_songProgressRow] 从 `barY - 22` 起笔，到刻度时间 `barY + 30` 收，
+  // 所以块顶 = 传输环顶 - 最小间距 - 块高，`barY` 再把预览条的高度让出来。
+  final double previewBlock = lyricPreview ? _lyricPreviewBlock : 0;
   final double progressTop =
-      transportCenter - _transportBlock / 2 - _minTransportGap - _progressBlock;
-  final double barY = progressTop + 22;
+      transportCenter -
+      _transportBlock / 2 -
+      _minTransportGap -
+      (_progressBlock + previewBlock);
+  final double barY = progressTop + previewBlock + 22;
 
   final double textHeight =
-      _labelRow + _titleLine * titleLines + _gapTitleMeta + _metaRow + _stateRow;
+      _labelRow +
+      _titleLine * titleLines +
+      _gapTitleMeta +
+      _metaRow +
+      _stateRow;
   final double availForCard =
       progressTop - _minProgressGap - _cardTop - _gapAfterCard - textHeight;
   final double cardCap = math.max(_songCardMin, c.gridWidth * _songCardRatio);
@@ -356,19 +426,37 @@ void _songProgressRow(
   required double positionMs,
   required double durationMs,
 }) {
+  // 预览行在时间标签之上，独立一条（不能和 `_clock` 抢 `barY - 21`）。
   if (lyricPreview.isNotEmpty) {
-    c.icon('lyrics-lines', _gutter, barY - 22, size: 11, color: c.muted);
-    c.text(lyricPreview, _gutter + 18, barY - 21,
-        size: 10, width: (c.gridWidth - 40) - 18, color: c.muted);
+    c.icon('lyrics-lines', _gutter, barY - 44, size: 11, color: c.muted);
+    c.text(
+      lyricPreview,
+      _gutter + 18,
+      barY - 43,
+      size: 10,
+      width: (c.gridWidth - 40) - 18,
+      color: c.muted,
+    );
   }
   final double fraction = current && durationMs.isFinite && durationMs > 0
       ? _unit(positionMs / durationMs)
       : 0;
   c.fill(Rect.fromLTWH(_gutter, barY, (c.gridWidth - 40), 2), c.line);
   if (fraction > 0) {
-    c.fill(Rect.fromLTWH(_gutter, barY, (c.gridWidth - 40) * fraction, 2), c.amber);
+    c.fill(
+      Rect.fromLTWH(_gutter, barY, (c.gridWidth - 40) * fraction, 2),
+      c.amber,
+    );
   }
-  c.fill(Rect.fromLTWH(_gutter - 1.5 + (c.gridWidth - 40) * fraction, barY - 4, 3, 10), c.ink);
+  c.fill(
+    Rect.fromLTWH(
+      _gutter - 1.5 + (c.gridWidth - 40) * fraction,
+      barY - 4,
+      3,
+      10,
+    ),
+    c.ink,
+  );
   for (int tick = 0; tick <= 20; tick++) {
     c.fill(
       Rect.fromLTWH(_gutter + tick * 17.6, barY + 6, .6, tick % 5 == 0 ? 6 : 3),
@@ -382,12 +470,31 @@ void _songProgressRow(
   // 参考图版式：时间在轨道**上方**两侧（左已播 / 右总时长），中间是
   // `PLAYBACK POSITION` 小标；轨道下方另给 1/4、1/2、3/4 三处时间刻度。
   final double elapsed = current ? positionMs : 0;
-  c.text(_clock(elapsed), _gutter, barY - 20, size: 11, width: 100, color: c.muted);
-  c.rightText(_clock(durationMs), c.gridWidth - _songRightInset, barY - 20, 11,
-      'regular', c.muted);
+  c.text(
+    _clock(elapsed),
+    _gutter,
+    barY - 20,
+    size: 11,
+    width: 100,
+    color: c.muted,
+  );
+  c.rightText(
+    _clock(durationMs),
+    c.gridWidth - _songRightInset,
+    barY - 20,
+    11,
+    'regular',
+    c.muted,
+  );
   final String positionLabel = 'PLAYBACK POSITION';
   final double positionWidth = c.measure(positionLabel, 8, 'regular');
-  c.text(positionLabel, (c.gridWidth - positionWidth) / 2, barY - 19, size: 8, color: c.muted);
+  c.text(
+    positionLabel,
+    (c.gridWidth - positionWidth) / 2,
+    barY - 19,
+    size: 8,
+    color: c.muted,
+  );
   if (durationMs.isFinite && durationMs > 0) {
     final double trackWidth = c.gridWidth - 40;
     for (final double fraction in <double>[0.25, 0.5, 0.75]) {
@@ -416,8 +523,23 @@ void _songTransportRow(
   required bool playing,
 }) {
   final double cx = c.gridWidth / 2;
-  c.commands.add(<Object?>['arc', cx, center, 26, 0, math.pi * 2 - .02, 1.2, c.ink]);
-  c.icon(playing ? 'pause' : 'play', cx - 11, center - 11, size: 22, color: c.ink);
+  c.commands.add(<Object?>[
+    'arc',
+    cx,
+    center,
+    26,
+    0,
+    math.pi * 2 - .02,
+    1.2,
+    c.ink,
+  ]);
+  c.icon(
+    playing ? 'pause' : 'play',
+    cx - 11,
+    center - 11,
+    size: 22,
+    color: c.ink,
+  );
   c.icon('prev', cx - 104, center - 12, size: 24, color: c.ink);
   c.icon('next', cx + 80, center - 12, size: 24, color: c.ink);
   c.hit(
@@ -468,7 +590,13 @@ void _songFooterRow(
     'player:open',
     'mobile:song-options',
   ];
-  const List<String> hitLabels = <String>['打开全屏歌词', '查看评论', '切换播放模式', '播放队列', '歌曲更多操作'];
+  const List<String> hitLabels = <String>[
+    '打开全屏歌词',
+    '查看评论',
+    '切换播放模式',
+    '播放队列',
+    '歌曲更多操作',
+  ];
   // 不可用那两格的热区文案要说清是「提示」而不是「已执行」，无障碍读屏才不撒谎。
   final List<String> spoken = <String>[
     lyricsAvailable ? hitLabels[0] : '歌词不可用',
@@ -482,13 +610,22 @@ void _songFooterRow(
     final double x = _gutter + cell * index;
     // 模式那格是唯一带状态的：非顺序播放时用琥珀色标出来。
     final bool active = index == 2 && mode != 'all';
-    final bool mutedEntry = (index == 0 && !lyricsAvailable) || (index == 1 && !commentsAvailable);
-    c.text(labels[index], x, top + 14,
-        size: 12,
-        width: cell,
-        color: active ? c.amber : (mutedEntry ? c.line : c.muted));
+    final bool mutedEntry =
+        (index == 0 && !lyricsAvailable) || (index == 1 && !commentsAvailable);
+    c.text(
+      labels[index],
+      x,
+      top + 14,
+      size: 12,
+      width: cell,
+      color: active ? c.amber : (mutedEntry ? c.line : c.muted),
+    );
     // 命中铺满整格（旧实现左右各缩 4，小屏上五等分后每格只剩 ~66 宽，边缘很难点中）。
-    c.hit(Rect.fromLTWH(x, top, cell, _footerBlock), actions[index], spoken[index]);
+    c.hit(
+      Rect.fromLTWH(x, top, cell, _footerBlock),
+      actions[index],
+      spoken[index],
+    );
   }
 }
 
@@ -516,7 +653,11 @@ void paintPortraitLyricsPage(
   // 页宽变宽后必须按 gridWidth 居中，否则会明显偏左。
   final double handleLeft = (c.gridWidth - 73) / 2;
   c.fill(Rect.fromLTWH(handleLeft, 16, 73, 3), c.line);
-  c.hit(Rect.fromLTWH(handleLeft - 40, 4, 153, 40), 'player:lyrics-close', '收起歌词');
+  c.hit(
+    Rect.fromLTWH(handleLeft - 40, 4, 153, 40),
+    'player:lyrics-close',
+    '收起歌词',
+  );
 
   const Rect strip = Rect.fromLTWH(_gutter, 40, 44, 44);
   c.fill(strip, c.surface);
@@ -530,11 +671,24 @@ void paintPortraitLyricsPage(
   c.text(artist, 76, 63, size: 10, width: lyricTitleWidth, color: c.muted);
   // Qt compact 歌词页右上两枚：收藏心（真态取 `selectedLiked`，命中
   // `music:like-current`）与「更多」（打开歌曲操作面板）。
-  c.icon(liked ? 'heart-filled' : 'heart', c.gridWidth - 49, 50,
-      size: 18, color: liked ? c.ink : c.muted);
-  c.hit(Rect.fromLTWH(c.gridWidth - 63, 36, 44, 44), 'music:like-current', '喜欢这首歌');
+  c.icon(
+    liked ? 'heart-filled' : 'heart',
+    c.gridWidth - 49,
+    50,
+    size: 18,
+    color: liked ? c.ink : c.muted,
+  );
+  c.hit(
+    Rect.fromLTWH(c.gridWidth - 63, 36, 44, 44),
+    'music:like-current',
+    '喜欢这首歌',
+  );
   c.icon('more', c.gridWidth - 23, 52, size: 14, color: c.muted);
-  c.hit(Rect.fromLTWH(c.gridWidth - 37, 36, 44, 44), 'mobile:song-options', '歌曲更多操作');
+  c.hit(
+    Rect.fromLTWH(c.gridWidth - 37, 36, 44, 44),
+    'mobile:song-options',
+    '歌曲更多操作',
+  );
 
   // 阅读区：118 起，下沿让给沉浸条。
   //
@@ -547,12 +701,20 @@ void paintPortraitLyricsPage(
   // `top+65..117`），再留 8 网格呼吸。此前按 250 的固定带高铺，键位下面会空出
   // 130 多网格（真机看起来就是「底部组件抬太高」），所以改成按内容高贴底。
   const double barContentHeight = 125;
-  final double bandTop =
-      math.max(viewTop + 96, h - c.gestureInset - barContentHeight);
+  final double bandTop = math.max(
+    viewTop + 96,
+    h - c.gestureInset - barContentHeight,
+  );
 
   c.contentBottom = bandTop;
   c.beginContent(viewTop);
-  _lyricsRows(c, top: viewTop, bottom: bandTop, lines: lines, activeLine: activeLine);
+  _lyricsRows(
+    c,
+    top: viewTop,
+    bottom: bandTop,
+    lines: lines,
+    activeLine: activeLine,
+  );
   c.endContent();
 
   _lyricsBar(
@@ -577,12 +739,20 @@ void _lyricsRows(
   final double height = math.max(0, bottom - top);
   if (lines.isEmpty) {
     // 空状态摆阅读区正中，别贴着顶沿（否则歌词区看起来像没铺开）。
-    c.text('暂无歌词 / NO LYRICS', _gutter, top + height / 2 - 8,
-        size: 12, width: (c.gridWidth - 40), color: c.muted);
+    c.text(
+      '暂无歌词 / NO LYRICS',
+      _gutter,
+      top + height / 2 - 8,
+      size: 12,
+      width: (c.gridWidth - 40),
+      color: c.muted,
+    );
     return;
   }
 
-  final int active = activeLine >= 0 && activeLine < lines.length ? activeLine : -1;
+  final int active = activeLine >= 0 && activeLine < lines.length
+      ? activeLine
+      : -1;
   final List<double> tops = <double>[];
   final List<double> heights = <double>[];
   final List<List<String>> bodies = <List<String>>[];
@@ -593,12 +763,18 @@ void _lyricsRows(
     final double size = isActive ? 22 : 18;
     final double lineHeight = isActive ? 30 : 26;
     final String body = lines[index].$2.isEmpty ? '•••' : lines[index].$2;
-    final List<String> wrapped =
-        c.wrap(body, (c.gridWidth - 40), size, isActive ? 'demibold' : 'regular');
+    final List<String> wrapped = c.wrap(
+      body,
+      (c.gridWidth - 40),
+      size,
+      isActive ? 'demibold' : 'regular',
+    );
     final String source = lines[index].$3;
-    final List<String> translated =
-        source.isEmpty ? const <String>[] : c.wrap(source, (c.gridWidth - 40), 11);
-    final double rowHeight = wrapped.length * lineHeight + translated.length * 17;
+    final List<String> translated = source.isEmpty
+        ? const <String>[]
+        : c.wrap(source, (c.gridWidth - 40), 11);
+    final double rowHeight =
+        wrapped.length * lineHeight + translated.length * 17;
     tops.add(cursor);
     heights.add(rowHeight);
     bodies.add(wrapped);
@@ -608,7 +784,9 @@ void _lyricsRows(
 
   final double contentHeight = math.max(0, cursor - 20);
   // 没有滚动入参：把当前行摆到阅读区中线，越界时贴住两端（等价 Qt 的 follow 目标）。
-  double scroll = active >= 0 ? tops[active] + heights[active] / 2 - height / 2 : 0;
+  double scroll = active >= 0
+      ? tops[active] + heights[active] / 2 - height / 2
+      : 0;
   scroll = scroll.clamp(0, math.max(0, contentHeight - height + 24)).toDouble();
 
   for (int index = 0; index < lines.length; index++) {
@@ -628,22 +806,38 @@ void _lyricsRows(
     color[3] = (isActive ? 1.0 : .32) * edge;
     final List<String> body = bodies[index];
     for (int line = 0; line < body.length; line++) {
-      c.text(body[line], _gutter, y + line * lineHeight,
-          size: size, width: (c.gridWidth - 40), weight: isActive ? 'demibold' : 'regular', color: color);
+      c.text(
+        body[line],
+        _gutter,
+        y + line * lineHeight,
+        size: size,
+        width: (c.gridWidth - 40),
+        weight: isActive ? 'demibold' : 'regular',
+        color: color,
+      );
     }
     final List<Object?> translated = List<Object?>.of(color);
     translated[3] = (isActive ? 1.0 : .32) * edge * .7;
     final List<String> translation = translations[index];
     for (int line = 0; line < translation.length; line++) {
-      c.text(translation[line], _gutter, y + body.length * lineHeight + line * 17,
-          size: 11, width: (c.gridWidth - 40), color: translated);
+      c.text(
+        translation[line],
+        _gutter,
+        y + body.length * lineHeight + line * 17,
+        size: 11,
+        width: (c.gridWidth - 40),
+        color: translated,
+      );
     }
     // 下标必须是 lines 的真实下标：宿主用它换算真实 seek 目标。
     final double hitTop = math.max(top, y - 8);
     final double hitBottom = math.min(bottom, y + rowHeight + 10);
     if (hitBottom - hitTop > 8) {
-      c.hit(Rect.fromLTWH(12, hitTop, c.gridWidth - 24, hitBottom - hitTop), 'player:lyric-line:$index',
-          body.join(' '));
+      c.hit(
+        Rect.fromLTWH(12, hitTop, c.gridWidth - 24, hitBottom - hitTop),
+        'player:lyric-line:$index',
+        body.join(' '),
+      );
     }
   }
 }
@@ -665,8 +859,9 @@ void _lyricsBar(
   // 五个按键 top+65..117。整条高度由调用方给的 bandHeight 决定，
   // 多出来的空间留在最下方，歌词因此拿到其余全部高度。
   final double barY = top + 19;
-  final double fraction =
-      durationMs.isFinite && durationMs > 0 ? _unit(positionMs / durationMs) : 0;
+  final double fraction = durationMs.isFinite && durationMs > 0
+      ? _unit(positionMs / durationMs)
+      : 0;
   // 轨道宽度 = 页宽 - 左右各 26（设计稿 393 → 341）；DPI 适配后页宽比 393 宽。
   final double trackLeft = 26;
   final double trackWidth = math.max(60, c.gridWidth - 52);
@@ -674,18 +869,39 @@ void _lyricsBar(
   if (fraction > 0) {
     c.fill(Rect.fromLTWH(trackLeft, barY, trackWidth * fraction, 2), c.amber);
   }
-  c.fill(Rect.fromLTWH(trackLeft - 1.5 + trackWidth * fraction, barY - 5, 3, 12), c.ink);
+  c.fill(
+    Rect.fromLTWH(trackLeft - 1.5 + trackWidth * fraction, barY - 5, 3, 12),
+    c.ink,
+  );
   final double tickStep = trackWidth / 20;
   for (int tick = 0; tick <= 20; tick++) {
     c.fill(
-      Rect.fromLTWH(trackLeft + tick * tickStep, barY + 4, .6, tick % 5 == 0 ? 6 : 3),
+      Rect.fromLTWH(
+        trackLeft + tick * tickStep,
+        barY + 4,
+        .6,
+        tick % 5 == 0 ? 6 : 3,
+      ),
       c.line,
     );
   }
   c.field('seek', Rect.fromLTWH(trackLeft, top + 9, trackWidth, 24));
-  c.text(_clock(positionMs), trackLeft, top + 32, size: 10, width: 100, color: c.muted);
-  c.rightText(_clock(durationMs), c.gridWidth - _songRightInset, top + 32, 10,
-      'regular', c.muted);
+  c.text(
+    _clock(positionMs),
+    trackLeft,
+    top + 32,
+    size: 10,
+    width: 100,
+    color: c.muted,
+  );
+  c.rightText(
+    _clock(durationMs),
+    c.gridWidth - _songRightInset,
+    top + 32,
+    10,
+    'regular',
+    c.muted,
+  );
 
   const List<String> icons = <String>['heart', 'prev', '', 'next', 'queue'];
   // Qt 沉浸条第 0 键是「喜欢」（`ResponsiveHudLayout.cpp:311-323` 的
@@ -714,13 +930,31 @@ void _lyricsBar(
     final double centerX = x + cell / 2;
     if (index == 2) {
       // 整圆必须少画一点：sweep 恰好 2π 时 Path.arcTo 会退化，环画不出来。
-      c.commands.add(
-        <Object?>['arc', centerX, rowCenter, 26, 0, math.pi * 2 - .02, 1.2, c.line],
+      c.commands.add(<Object?>[
+        'arc',
+        centerX,
+        rowCenter,
+        26,
+        0,
+        math.pi * 2 - .02,
+        1.2,
+        c.line,
+      ]);
+      c.icon(
+        playing ? 'pause' : 'play',
+        centerX - 11,
+        rowCenter - 11,
+        size: 22,
+        color: c.ink,
       );
-      c.icon(playing ? 'pause' : 'play', centerX - 11, rowCenter - 11, size: 22, color: c.ink);
     } else if (index == 0) {
-      c.icon(liked ? 'heart-filled' : icons[index], x + iconOffset, top + 79,
-          size: 23, color: liked ? c.ink : c.muted);
+      c.icon(
+        liked ? 'heart-filled' : icons[index],
+        x + iconOffset,
+        top + 79,
+        size: 23,
+        color: liked ? c.ink : c.muted,
+      );
     } else {
       c.icon(icons[index], x + iconOffset, top + 79, size: 23, color: c.ink);
     }
@@ -728,5 +962,8 @@ void _lyricsBar(
       c.hit(Rect.fromLTWH(x, top + 65, cell, 52), routes[index], labels[index]);
     }
   }
-  c.field('playerBounds', Rect.fromLTWH(0, top, c.gridWidth, math.max(0, h - top)));
+  c.field(
+    'playerBounds',
+    Rect.fromLTWH(0, top, c.gridWidth, math.max(0, h - top)),
+  );
 }
