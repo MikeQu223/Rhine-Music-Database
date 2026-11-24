@@ -55,18 +55,20 @@ const int cmtContentMaxLines = 6;
 const List<Object?> cmtAmber = <Object?>[0.835, 0.639, 0.282, 1];
 
 /// Qt `inkColor(dark)`（NativeHudComments.cpp:21-24）。
-List<Object?> cmtInk(bool dark) => dark
-    ? <Object?>[0.92, 0.93, 0.88, 1]
-    : <Object?>[0.133, 0.165, 0.145, 1];
+List<Object?> cmtInk(bool dark) =>
+    dark ? <Object?>[0.92, 0.93, 0.88, 1] : <Object?>[0.133, 0.165, 0.145, 1];
 
 /// Qt `muted(value)`：直接把 alpha 改成 0.62（:26-30，赋值不是相乘）。
-List<Object?> cmtMuted(List<Object?> value) =>
-    <Object?>[value[0], value[1], value[2], 0.62];
+List<Object?> cmtMuted(List<Object?> value) => <Object?>[
+  value[0],
+  value[1],
+  value[2],
+  0.62,
+];
 
 /// Qt `soft(dark)`（:32-34）。
-List<Object?> cmtSoft(bool dark) => dark
-    ? <Object?>[0.18, 0.22, 0.18, 1]
-    : <Object?>[0.898, 0.906, 0.855, 1];
+List<Object?> cmtSoft(bool dark) =>
+    dark ? <Object?>[0.18, 0.22, 0.18, 1] : <Object?>[0.898, 0.906, 0.855, 1];
 
 // ── 字形度量端口（Qt Glyphs::width / wrap） ────────────────────────────────
 
@@ -259,8 +261,10 @@ class CommentPanelDrawing {
 /// `maximum = max(0, contentBottom - ListTop - (ListBottom - ListTop))`，
 /// `scroll = clamp(scroll, 0, maximum)`。
 double cmtClampPanelScroll(double scroll, double contentBottom) {
-  final double maximum =
-      math.max(0.0, contentBottom - cmtListTop - (cmtListBottom - cmtListTop));
+  final double maximum = math.max(
+    0.0,
+    contentBottom - cmtListTop - (cmtListBottom - cmtListTop),
+  );
   return math.min(math.max(scroll, 0.0), maximum);
 }
 
@@ -275,10 +279,7 @@ CommentPanelDrawing paintCommentsPanel(
   CommentPanelGlyphs glyphs, {
   double scroll = 0,
 }) {
-  final _CommentsPainter p = _CommentsPainter(
-    glyphs: glyphs,
-    dark: model.dark,
-  );
+  final _CommentsPainter p = _CommentsPainter(glyphs: glyphs, dark: model.dark);
   final double x = model.x;
   final double width = model.width;
   final List<Object?> foreground = cmtInk(model.dark);
@@ -294,8 +295,9 @@ CommentPanelDrawing paintCommentsPanel(
   p.button('关闭', x + width - 80, 276, 80, 48, 'comments:close', 18);
 
   // 来源行（:54-74）。
-  final String sourceHead =
-      model.sourceName.isEmpty ? model.providerName : model.sourceName;
+  final String sourceHead = model.sourceName.isEmpty
+      ? model.providerName
+      : model.sourceName;
   String sourceRest = '';
   if (model.providerId == 'siren') {
     if (model.sourceLabel.isNotEmpty) {
@@ -329,12 +331,23 @@ CommentPanelDrawing paintCommentsPanel(
   void chip(String label, String action, bool active, double cx) {
     const double chipWidth = 102.0;
     if (active) {
-      final List<Object?> tint = <Object?>[cmtAmber[0], cmtAmber[1], cmtAmber[2], 0.16];
+      final List<Object?> tint = <Object?>[
+        cmtAmber[0],
+        cmtAmber[1],
+        cmtAmber[2],
+        0.16,
+      ];
       p.fill(cx, 390, chipWidth, 40, tint);
       p.fill(cx, 427, chipWidth, 3, cmtAmber);
     }
-    p.text(label, cx + 12, 400, 18, active ? 'demibold' : 'regular',
-        active ? foreground : secondary);
+    p.text(
+      label,
+      cx + 12,
+      400,
+      18,
+      active ? 'demibold' : 'regular',
+      active ? foreground : secondary,
+    );
     p.hit(cx - 4, 386, chipWidth + 8, 48, action, label);
   }
 
@@ -342,7 +355,14 @@ CommentPanelDrawing paintCommentsPanel(
   chip('最新', 'comments:sort:new', model.sort == 'new', x + 110);
   final double refreshWidth = glyphs.width('刷新 ↻', 17, 'regular');
   p.text('刷新 ↻', x + width - refreshWidth, 400, 17, 'regular', secondary);
-  p.hit(x + width - refreshWidth - 10, 386, refreshWidth + 20, 48, 'comments:refresh', '刷新评论');
+  p.hit(
+    x + width - refreshWidth - 10,
+    386,
+    refreshWidth + 20,
+    48,
+    'comments:refresh',
+    '刷新评论',
+  );
 
   // 列表（:103-247）。
   p.save();
@@ -377,8 +397,9 @@ CommentPanelDrawing paintCommentsPanel(
           0.12,
         ];
         p.fill(x, y, cmtAvatarSize, cmtAvatarSize, placeholder);
-        final String initial =
-            item.nickname.trim().isEmpty ? '' : item.nickname.trim().substring(0, 1);
+        final String initial = item.nickname.trim().isEmpty
+            ? ''
+            : item.nickname.trim().substring(0, 1);
         // Qt `centeredText(initial, x + AvatarSize / 2, y + AvatarSize / 2, 18, "demibold", true)`
         // —— 颜色缺省即 ink（NativeHud.cpp:97-101）。
         p.centeredText(
@@ -390,20 +411,40 @@ CommentPanelDrawing paintCommentsPanel(
           foreground,
         );
       }
-      p.limited(item.nickname, x + cmtContentX, y - 2, 20, width - cmtContentX - 104, 'demibold');
+      p.limited(
+        item.nickname,
+        x + cmtContentX,
+        y - 2,
+        20,
+        width - cmtContentX - 104,
+        'demibold',
+      );
       if (item.timeLabel.isNotEmpty) {
         p.text(item.timeLabel, x + width - 92, y + 2, 16, 'regular', secondary);
       }
 
       // 正文（:148-156）。
-      List<String> lines = glyphs.wrap(item.content, width - cmtContentX, cmtContentSize, 'regular');
-      final bool truncated = !item.expanded && lines.length > cmtContentMaxLines;
+      List<String> lines = glyphs.wrap(
+        item.content,
+        width - cmtContentX,
+        cmtContentSize,
+        'regular',
+      );
+      final bool truncated =
+          !item.expanded && lines.length > cmtContentMaxLines;
       if (!item.expanded && lines.length > cmtContentMaxLines) {
         lines = lines.sublist(0, cmtContentMaxLines);
       }
       double rowY = y + 36;
       for (final String line in lines) {
-        p.text(line, x + cmtContentX, rowY, cmtContentSize, 'regular', foreground);
+        p.text(
+          line,
+          x + cmtContentX,
+          rowY,
+          cmtContentSize,
+          'regular',
+          foreground,
+        );
         rowY += cmtContentLine;
       }
 
@@ -412,25 +453,50 @@ CommentPanelDrawing paintCommentsPanel(
       // Qt `"♥ " + compactCount(item["likedCount"])` —— likedLabel 恒非空，
       // 这里对空串仍兜成 "0"，避免页面画出孤零零的 "♥ "。
       final String likedLabel = item.likedLabel.isEmpty ? '0' : item.likedLabel;
-      final String liked = '♥ $likedLabel';
+      // 同 song_detail：MiSans 缺 U+2665，字面 ♥ 真机会变成倒三角，改用「点赞 N」。
+      final String liked = '点赞 $likedLabel';
       p.text(liked, x + cmtContentX, metaY, cmtMetaSize, 'regular', secondary);
       if (item.replyCount > 0) {
-        final String label =
-            item.repliesExpanded ? '收起回复 ↑' : '${item.replyCount} 条回复 ↓';
-        final double replyX = x + cmtContentX + glyphs.width(liked, cmtMetaSize, 'regular') + 24;
-        p.limited(label, replyX, metaY, cmtMetaSize, width - (replyX - x) - 14, 'regular');
-        p.hit(replyX - 10, metaY - 14, 180, 48, 'comments:replies:${item.id}', label);
+        final String label = item.repliesExpanded
+            ? '收起回复 ↑'
+            : '${item.replyCount} 条回复 ↓';
+        final double replyX =
+            x + cmtContentX + glyphs.width(liked, cmtMetaSize, 'regular') + 24;
+        p.limited(
+          label,
+          replyX,
+          metaY,
+          cmtMetaSize,
+          width - (replyX - x) - 14,
+          'regular',
+        );
+        p.hit(
+          replyX - 10,
+          metaY - 14,
+          180,
+          48,
+          'comments:replies:${item.id}',
+          label,
+        );
       }
       if (truncated || item.expanded) {
         final String label = item.expanded ? '收起' : '展开全文';
         p.limited(label, x + width - 84, metaY, cmtMetaSize, 84, 'regular');
-        p.hit(x + width - 94, metaY - 14, 96, 48, 'comments:expand:${item.id}', label);
+        p.hit(
+          x + width - 94,
+          metaY - 14,
+          96,
+          48,
+          'comments:expand:${item.id}',
+          label,
+        );
       }
 
       // 回复块（:188-235）。
       double afterMeta = metaY + 36;
-      final List<CommentPanelReply> replies =
-          item.repliesExpanded ? item.replies : item.inlineReplies;
+      final List<CommentPanelReply> replies = item.repliesExpanded
+          ? item.replies
+          : item.inlineReplies;
       if (replies.isNotEmpty ||
           item.repliesLoading ||
           item.repliesError.isNotEmpty) {
@@ -441,13 +507,19 @@ CommentPanelDrawing paintCommentsPanel(
         double blockHeight = 32;
         for (final CommentPanelReply reply in replies) {
           final String prefix = reply.prefix;
-          final List<String> replyLines =
-              glyphs.wrap('$prefix${reply.content}', innerWidth, cmtReplySize, 'regular');
-          blocks.add(_ReplyBlock(
-            prefix: prefix,
-            prefixWidth: glyphs.width(prefix, cmtReplySize, 'demibold'),
-            lines: replyLines,
-          ));
+          final List<String> replyLines = glyphs.wrap(
+            '$prefix${reply.content}',
+            innerWidth,
+            cmtReplySize,
+            'regular',
+          );
+          blocks.add(
+            _ReplyBlock(
+              prefix: prefix,
+              prefixWidth: glyphs.width(prefix, cmtReplySize, 'demibold'),
+              lines: replyLines,
+            ),
+          );
           blockHeight += replyLines.length * cmtReplyLine + 10;
         }
         String statusText = '';
@@ -467,31 +539,67 @@ CommentPanelDrawing paintCommentsPanel(
         if (statusText.isNotEmpty) {
           blockHeight += 34;
         }
-        p.fill(x + cmtContentX, blockTop, width - cmtContentX, blockHeight, cmtSoft(model.dark));
+        p.fill(
+          x + cmtContentX,
+          blockTop,
+          width - cmtContentX,
+          blockHeight,
+          cmtSoft(model.dark),
+        );
         double replyY = blockTop + 16;
         for (final _ReplyBlock block in blocks) {
           // 前缀放得下时用 demibold 内联，首行首段切掉（:210-228）。
           final bool inlineName = block.prefixWidth < innerWidth - 48;
           if (inlineName) {
-            p.text(block.prefix, innerX, replyY, cmtReplySize, 'demibold', foreground);
+            p.text(
+              block.prefix,
+              innerX,
+              replyY,
+              cmtReplySize,
+              'demibold',
+              foreground,
+            );
           }
           for (int line = 0; line < block.lines.length; line++) {
             String value = block.lines[line];
             double lineX = innerX;
             if (inlineName && line == 0) {
-              value = value.substring(math.min(block.prefix.length, value.length));
+              value = value.substring(
+                math.min(block.prefix.length, value.length),
+              );
               lineX += block.prefixWidth;
             }
             if (value.isNotEmpty) {
-              p.text(value, lineX, replyY + line * cmtReplyLine, cmtReplySize, 'regular', secondary);
+              p.text(
+                value,
+                lineX,
+                replyY + line * cmtReplyLine,
+                cmtReplySize,
+                'regular',
+                secondary,
+              );
             }
           }
           replyY += block.lines.length * cmtReplyLine + 10;
         }
         if (statusText.isNotEmpty) {
-          p.limited(statusText, innerX, replyY + 4, cmtReplySize, innerWidth, 'regular');
+          p.limited(
+            statusText,
+            innerX,
+            replyY + 4,
+            cmtReplySize,
+            innerWidth,
+            'regular',
+          );
           if (statusAction.isNotEmpty) {
-            p.hit(x + cmtContentX, replyY - 6, width - cmtContentX, 42, statusAction, statusText);
+            p.hit(
+              x + cmtContentX,
+              replyY - 6,
+              width - cmtContentX,
+              42,
+              statusAction,
+              statusText,
+            );
           }
         }
         afterMeta = blockTop + blockHeight + 12;
@@ -512,14 +620,35 @@ CommentPanelDrawing paintCommentsPanel(
     // 翻页 / 到底（:244-254）。
     if (model.hasMore) {
       if (model.loadingMore) {
-        p.centeredText('正在加载更多…', x + width / 2, y + 26, 17, 'regular', secondary);
+        p.centeredText(
+          '正在加载更多…',
+          x + width / 2,
+          y + 26,
+          17,
+          'regular',
+          secondary,
+        );
       } else {
-        p.centeredText('加载更多评论 ↓', x + width / 2, y + 26, 17, 'regular', secondary);
+        p.centeredText(
+          '加载更多评论 ↓',
+          x + width / 2,
+          y + 26,
+          17,
+          'regular',
+          secondary,
+        );
         p.hit(x, y, width, 56, 'comments:load-more', '加载更多评论');
       }
       y += 64;
     } else if (model.items.isNotEmpty) {
-      p.centeredText('END OF COMMENTS / 评论到底了', x + width / 2, y + 26, 14, 'regular', secondary);
+      p.centeredText(
+        'END OF COMMENTS / 评论到底了',
+        x + width / 2,
+        y + 26,
+        14,
+        'regular',
+        secondary,
+      );
       y += 64;
     }
   }
@@ -577,11 +706,22 @@ class _CommentsPainter {
   void clip(double x, double y, double width, double height) =>
       commands.add(<Object?>['clip', x, y, width, height]);
 
-  void fill(double x, double y, double width, double height, List<Object?> color) =>
-      commands.add(<Object?>['fill', color, x, y, width, height]);
+  void fill(
+    double x,
+    double y,
+    double width,
+    double height,
+    List<Object?> color,
+  ) => commands.add(<Object?>['fill', color, x, y, width, height]);
 
-  void text(String value, double x, double y, double size, String weight, List<Object?> color) =>
-      commands.add(<Object?>['text', value, x, y, size, weight, 0, color]);
+  void text(
+    String value,
+    double x,
+    double y,
+    double size,
+    String weight,
+    List<Object?> color,
+  ) => commands.add(<Object?>['text', value, x, y, size, weight, 0, color]);
 
   void image(String key, double x, double y, double width, double height) {
     if (key.isEmpty) {
@@ -590,7 +730,14 @@ class _CommentsPainter {
     commands.add(<Object?>['image', key, x, y, width, height]);
   }
 
-  void hit(double x, double y, double width, double height, String action, String label) {
+  void hit(
+    double x,
+    double y,
+    double width,
+    double height,
+    String action,
+    String label,
+  ) {
     hits.add(<String, Object?>{
       'x': x,
       'y': y,
@@ -601,15 +748,28 @@ class _CommentsPainter {
     });
   }
 
-  void button(String label, double x, double y, double width, double height, String action,
-      double size) {
+  void button(
+    String label,
+    double x,
+    double y,
+    double width,
+    double height,
+    String action,
+    double size,
+  ) {
     hit(x, y, width, height, action, label);
     text(label, x, y + (height - size) / 2 - 4, size, 'regular', ink);
   }
 
   /// Qt NativeHud::centeredText（NativeHud.cpp:97-101）的 horizontal = true 分支。
-  void centeredText(String value, double cx, double cy, double size, String weight,
-      List<Object?> color) {
+  void centeredText(
+    String value,
+    double cx,
+    double cy,
+    double size,
+    String weight,
+    List<Object?> color,
+  ) {
     // Qt 用 Glyphs::bounds 居中墨迹；本引擎的 centered 语义见
     // lib/hud/portrait/portrait_canvas.dart:160-175（bounds 由宿主度量端口给）。
     // 横屏这里没有 bounds 端口，用省掉墨迹内缩的近似：以字宽居中，
@@ -641,7 +801,14 @@ class _CommentsPainter {
   }
 
   /// Qt NativeHud::limited（NativeHud.cpp:94-96）：fit 后单行绘制。
-  void limited(String value, double x, double y, double size, double width, String weight) {
+  void limited(
+    String value,
+    double x,
+    double y,
+    double size,
+    double width,
+    String weight,
+  ) {
     text(fit(value, size, width, weight), x, y, size, weight, ink);
   }
 }

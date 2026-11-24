@@ -4,7 +4,7 @@
 // - Qt/src/ResponsiveComments.cpp:19-39（来源行的四段拼接：来源名 / 塞壬三态 / 总条数）
 // - :41-49（热门/最新 chip + 选中下划线 + 刷新）
 // - :64-80（loading/idle 与 error/empty 两分支 + 重新加载）
-// - :82-171（单条：头像、昵称、时间、正文截 6 行、♥、回复标签、展开标签、回复块状态串、行底分隔线）
+// - :82-171（单条：头像、昵称、时间、正文截 6 行、心形图标、回复标签、展开标签、回复块状态串、行底分隔线）
 // - :173-180（加载更多 / END OF COMMENTS）
 // - Qt/src/ResponsiveHudLayout.cpp:186-189（页头下沿的 "COMMENT ARCHIVE / 评论档案"）
 // - ResponseiveHudLayout.cpp:238-244（end = commentsPage(...)，maximum = max(0, end - contentBottom)）
@@ -265,7 +265,7 @@ void main() {
         ),
       );
       expect(_texts(c), contains('听'), reason: '无头像时画昵称首字');
-      expect(_texts(c), contains('♥ 0'));
+      expect(_texts(c), contains('0'));
       expect(_actions(c), isNot(contains('comments:expand:c1')), reason: '一行正文不需要展开');
       expect(_actions(c), isNot(contains('comments:replies:c1')), reason: 'replyCount 为 0');
     });

@@ -264,7 +264,11 @@ abstract class SongDetailGlyphsPort {
 
 /// 宿主已解码的位图（Qt m_host->image(key) 的返回体，只用到宽高与键）。
 class SongDetailImage {
-  const SongDetailImage({required this.key, required this.width, required this.height});
+  const SongDetailImage({
+    required this.key,
+    required this.width,
+    required this.height,
+  });
   final String key;
   final int width;
   final int height;
@@ -287,11 +291,11 @@ class SongDetailDrawing {
 
   /// 该页不负责这一段（archive / container / lyrics-panel），宿主转交对应构建器。
   SongDetailDrawing.delegated(String to)
-      : commands = <Object?>[],
-        hits = <Map<String, Object?>>[],
-        delegatedTo = to,
-        trackOffset = null,
-        bodyOffset = null;
+    : commands = <Object?>[],
+      hits = <Map<String, Object?>>[],
+      delegatedTo = to,
+      trackOffset = null,
+      bodyOffset = null;
 
   final List<Object?> commands;
   final List<Map<String, Object?>> hits;
@@ -341,7 +345,8 @@ List<Object?> _cardInverse(bool dark) =>
 const List<Object?> songDetailAmber = <Object?>[0.835, 0.639, 0.282, 1];
 
 /// Qt MusicData::pad(value, width = 2)（MusicData.cpp:148-150）。
-String songDetailPad(int value, [int width = 2]) => value.toString().padLeft(width, '0');
+String songDetailPad(int value, [int width = 2]) =>
+    value.toString().padLeft(width, '0');
 
 /// Qt MusicData::time(track)（MusicData.cpp:152-158）。
 String songDetailTime(double durationMs) {
@@ -387,9 +392,16 @@ class _Painter {
   void alpha(double value) => op(<Object?>['alpha', value]);
 
   /// Qt NativeHud::fill（NativeHud.cpp:37-39）。
-  void fill(double x, double y, double width, double height, List<Object?>? color) {
-    final List<Object?> effective =
-        (color == null || color.isEmpty) ? _hudInk(dark) : List<Object?>.of(color);
+  void fill(
+    double x,
+    double y,
+    double width,
+    double height,
+    List<Object?>? color,
+  ) {
+    final List<Object?> effective = (color == null || color.isEmpty)
+        ? _hudInk(dark)
+        : List<Object?>.of(color);
     op(<Object?>['fill', effective, x, y, width, height]);
   }
 
@@ -403,8 +415,9 @@ class _Painter {
     double tracking = 0,
     List<Object?>? color,
   ]) {
-    final List<Object?> effective =
-        (color == null || color.isEmpty) ? _hudInk(dark) : List<Object?>.of(color);
+    final List<Object?> effective = (color == null || color.isEmpty)
+        ? _hudInk(dark)
+        : List<Object?>.of(color);
     op(<Object?>['text', value, x, y, size, weight, tracking, effective]);
   }
 
@@ -431,14 +444,28 @@ class _Painter {
   }
 
   /// Qt NativeHud::limited（NativeHud.cpp:77-79）：颜色固定为 calibrated ink，调用点无法覆盖。
-  void limited(String value, double x, double y, double size, double width, [String weight = 'regular']) {
+  void limited(
+    String value,
+    double x,
+    double y,
+    double size,
+    double width, [
+    String weight = 'regular',
+  ]) {
     text(fit(value, size, width, weight), x, y, size, weight);
   }
 
   /// Qt NativeHud::hit（NativeHud.cpp:102-109）：六字段，绝不写 fixed。
   /// Qt 里 label 缺省（isNull）时回落为 action；本页每个调用点都显式给出 label
   /// （如歌曲标题、tabs 文案），故这里把 label 固化为必填参数以保住该不变量。
-  void hit(double x, double y, double width, double height, String action, String label) {
+  void hit(
+    double x,
+    double y,
+    double width,
+    double height,
+    String action,
+    String label,
+  ) {
     hits.add(<String, Object?>{
       'x': x,
       'y': y,
@@ -451,8 +478,16 @@ class _Painter {
 
   /// Qt NativeHud::button（NativeHud.cpp:110-120）：detail 页 m_modalControls 为 false，
   /// 因此等价于 hit + text(label, x, y + (height - size) / 2 - 4, size, weight)。
-  void button(String label, double x, double y, double width, double height, String action, double size,
-      [String weight = 'regular']) {
+  void button(
+    String label,
+    double x,
+    double y,
+    double width,
+    double height,
+    String action,
+    double size, [
+    String weight = 'regular',
+  ]) {
     hit(x, y, width, height, action, label);
     text(label, x, y + (height - size) / 2 - 4, size, weight);
   }
@@ -474,7 +509,14 @@ class _Painter {
 }
 
 /// Qt SongDetailCard::rule（SongDetailCard.cpp:11-15）：使用卡片自己的 ink，不带 calibrated 标记。
-void _cardRule(_Painter p, double modelX, double modelWidth, bool dark, double y, double opacity) {
+void _cardRule(
+  _Painter p,
+  double modelX,
+  double modelWidth,
+  bool dark,
+  double y,
+  double opacity,
+) {
   final List<Object?> color = _cardInk(dark);
   color[3] = opacity;
   p.fill(modelX, y, modelWidth, 1, color);
@@ -524,7 +566,13 @@ class _CardModel {
 }
 
 /// Qt SongDetailCard::actions（SongDetailCard.cpp:17-46）。
-void _cardActions(_Painter p, _CardModel model, List<SongDetailAction> items, double y, bool primaryRow) {
+void _cardActions(
+  _Painter p,
+  _CardModel model,
+  List<SongDetailAction> items,
+  double y,
+  bool primaryRow,
+) {
   const double gap = 12;
   const double height = 44;
   final double width = (model.width - gap * 2) / 3;
@@ -549,7 +597,15 @@ void _cardActions(_Painter p, _CardModel model, List<SongDetailAction> items, do
     }
     p.hit(x, y, width, height, item.route, item.label);
     final List<Object?> color = primary ? inverse : foreground;
-    p.text(item.label, x + 12, y + 12, 14, primary ? 'demibold' : 'regular', 0, color);
+    p.text(
+      item.label,
+      x + 12,
+      y + 12,
+      14,
+      primary ? 'demibold' : 'regular',
+      0,
+      color,
+    );
   }
 }
 
@@ -564,11 +620,30 @@ void _paintCard(_Painter p, _CardModel model) {
   p.fill(model.x, 280, 24, 18, foreground);
   p.text('01', model.x + 4, 282, 10, 'regular', 0, inverse);
   p.text('TRACK RECORD / 歌曲档案', model.x + 36, 282, 11, 'regular', 0, muted);
-  p.limited('ID · ${model.id}', model.x + model.width * 0.65, 282, 10, model.width * 0.35);
+  p.limited(
+    'ID · ${model.id}',
+    model.x + model.width * 0.65,
+    282,
+    10,
+    model.width * 0.35,
+  );
   _cardRule(p, model.x, model.width, model.dark, 314, 0.18);
-  p.limited(model.album.isEmpty ? 'AUDIO ARCHIVE / 音频档案' : model.album, model.x, 332, 15, model.width);
+  p.limited(
+    model.album.isEmpty ? 'AUDIO ARCHIVE / 音频档案' : model.album,
+    model.x,
+    332,
+    15,
+    model.width,
+  );
   for (int index = 0; index < model.titleLines.length; index++) {
-    p.limited(model.titleLines[index], model.x, 366.0 + index * 40.0, 32, model.width, 'bold');
+    p.limited(
+      model.titleLines[index],
+      model.x,
+      366.0 + index * 40.0,
+      32,
+      model.width,
+      'bold',
+    );
   }
   final double artistY = model.titleLines.length > 1 ? 450.0 : 416.0;
   p.limited(model.artist, model.x, artistY, 18, model.width);
@@ -614,7 +689,14 @@ void _paintCard(_Painter p, _CardModel model) {
   for (int index = 0; index < songDetailTabKeys.length; index++) {
     final double x = model.x + index * model.width / 3;
     final double width = model.width / 3 - 12;
-    p.hit(x, tabsY, width, 38, 'tab:${songDetailTabKeys[index]}', labels[index]);
+    p.hit(
+      x,
+      tabsY,
+      width,
+      38,
+      'tab:${songDetailTabKeys[index]}',
+      labels[index],
+    );
     p.limited(labels[index], x, tabsY + 10, 14, width);
     if (model.tab == songDetailTabKeys[index]) {
       p.fill(x, tabsY + 41, 48, 3, songDetailAmber);
@@ -688,7 +770,8 @@ SongDetailDrawing renderSongDetail(
   // Qt：item 与 player.current 不同源时把 lyricsMode 复位为 false（NativeHudDetail.cpp:57-59），
   // 因此只有两者同源（identity 相等）时才继续走歌词面板（NativeHudDetail.cpp:75-79）。
   // 本函数是纯函数、不复位宿主状态：宿主收到非 lyrics-panel 的帧后应自行把 lyricsMode 置 false。
-  final bool lyricsMode = state.lyricsMode && item.identity == state.player.currentIdentity;
+  final bool lyricsMode =
+      state.lyricsMode && item.identity == state.player.currentIdentity;
   final double usable = width - x - 59;
   const double gap = 12;
   final double buttonWidth = (usable - gap * 2) / 3;
@@ -702,7 +785,9 @@ SongDetailDrawing renderSongDetail(
       bounds.y,
       bounds.width,
       bounds.height,
-      state.dark ? <Object?>[0.08, 0.095, 0.09, 0.96] : <Object?>[0.973, 0.969, 0.933, 0.96],
+      state.dark
+          ? <Object?>[0.08, 0.095, 0.09, 0.96]
+          : <Object?>[0.973, 0.969, 0.933, 0.96],
     );
   }
 
@@ -723,8 +808,11 @@ SongDetailDrawing renderSongDetail(
   if (lyricsMode) {
     // NativeHudDetail.cpp:75-79：右侧歌词面板属于歌词原子，本页只负责它之前的公共前缀。
     p.restore();
-    final SongDetailDrawing drawing =
-        SongDetailDrawing(commands: p.commands, hits: p.hits, delegatedTo: songDetailDelegateLyricsPanel);
+    final SongDetailDrawing drawing = SongDetailDrawing(
+      commands: p.commands,
+      hits: p.hits,
+      delegatedTo: songDetailDelegateLyricsPanel,
+    );
     return drawing;
   }
 
@@ -738,7 +826,8 @@ SongDetailDrawing renderSongDetail(
   // PlaybackQueue::identity 对空 current 得到 "netease:"（PlaybackQueue.cpp:36-38），
   // 因此宿主必须把"当前无播放项"映射为 currentIdentity == null（或字面量 "netease:"），
   // 否则会误判 isCurrent 并多取一次音质徽标位图。
-  final bool isCurrent = item.identity == state.player.currentIdentity &&
+  final bool isCurrent =
+      item.identity == state.player.currentIdentity &&
       !state.player.loading &&
       !state.player.failed;
   String quality = isCurrent ? state.player.actualQuality : '';
@@ -747,14 +836,21 @@ SongDetailDrawing renderSongDetail(
   }
   final String badgeProvider = state.local ? 'netease' : state.provider;
   final String badgeKey = 'quality:$badgeProvider-$quality';
-  final SongDetailImage? badge = quality.isEmpty ? null : images.image(badgeKey);
+  final SongDetailImage? badge = quality.isEmpty
+      ? null
+      : images.image(badgeKey);
   double badgeWidth = 0;
   // Qt 只判 !badge.isNull()（NativeHudDetail.cpp:112-114）；此处额外要求 height > 0，
   // 以免 22.0 * width / height 出现除零（防御性分歧，height 恒 >0 时行为一致）。
   if (badge != null && badge.height > 0) {
-    badgeWidth = math.min(22.0 * badge.width / badge.height, (usable - gap) / 2 - 12);
+    badgeWidth = math.min(
+      22.0 * badge.width / badge.height,
+      (usable - gap) / 2 - 12,
+    );
   }
-  final String qualityLabel = quality.isEmpty ? '' : (quality == 'standard' ? '标准' : '高品质');
+  final String qualityLabel = quality.isEmpty
+      ? ''
+      : (quality == 'standard' ? '标准' : '高品质');
 
   String playback = '面板内播放';
   if (state.officialPlayback) {
@@ -769,38 +865,56 @@ SongDetailDrawing renderSongDetail(
   ];
   if (state.canMutateLike && (!state.isSiren || item.kind == 'song')) {
     bool liked = state.likedInIds || state.likedInList;
-    String label = liked ? '♥ 已喜欢' : '♡ 喜欢';
+    // 不再带 ♥/♡ 字面：MiSans 字形表里没有 U+2665/U+2661（`misans-glyphs.json`
+    // 查不到），真机回退字体把它画成向下的三角（2026-11-24 截图）。
+    String label = liked ? '已喜欢' : '喜欢';
     if (state.provider == 'qq') {
       final String subscription = state.likeSubscriptionState ?? 'unknown';
       liked = subscription == 'subscribed';
-      label = liked ? '♥ 已喜欢' : '♡ 喜欢';
+      label = liked ? '已喜欢' : '喜欢';
       if (subscription == 'unknown') {
         label = '红心 / 核实后切换';
       }
     }
     primaryActions[1] = SongDetailAction(label, 'music:like');
-    primaryActions[2] = const SongDetailAction('＋ 加入歌单', 'music:add-to-playlist');
+    primaryActions[2] = const SongDetailAction(
+      '＋ 加入歌单',
+      'music:add-to-playlist',
+    );
   }
   final List<SongDetailAction> secondaryActions = <SongDetailAction>[
     const SongDetailAction('＋ 加入队列', 'music:enqueue'),
     const SongDetailAction('▷ 下一首播放', 'music:play-next'),
     const SongDetailAction('', ''),
   ];
-  if (state.queueFeedbackKey != null && state.queueFeedbackKey == '${state.uid}:${item.identity}') {
-    secondaryActions[0] = SongDetailAction(state.queueFeedbackEnqueueLabel, 'music:enqueue');
-    secondaryActions[1] = SongDetailAction(state.queueFeedbackPlayNextLabel, 'music:play-next');
+  if (state.queueFeedbackKey != null &&
+      state.queueFeedbackKey == '${state.uid}:${item.identity}') {
+    secondaryActions[0] = SongDetailAction(
+      state.queueFeedbackEnqueueLabel,
+      'music:enqueue',
+    );
+    secondaryActions[1] = SongDetailAction(
+      state.queueFeedbackPlayNextLabel,
+      'music:play-next',
+    );
   }
   if (item.artists.isNotEmpty) {
     secondaryActions[2] = const SongDetailAction('↗ 歌手作品', 'music:artist:0');
   }
   for (int index = 0; index < primaryActions.length; index++) {
-    final String weight = primaryActions[index].route == 'music:play' ? 'demibold' : 'regular';
+    final String weight = primaryActions[index].route == 'music:play'
+        ? 'demibold'
+        : 'regular';
     primaryActions[index] = SongDetailAction(
-        p.fit(primaryActions[index].label, 14, buttonWidth - 24, weight), primaryActions[index].route);
+      p.fit(primaryActions[index].label, 14, buttonWidth - 24, weight),
+      primaryActions[index].route,
+    );
   }
   for (int index = 0; index < secondaryActions.length; index++) {
     secondaryActions[index] = SongDetailAction(
-        p.fit(secondaryActions[index].label, 14, buttonWidth - 24, 'regular'), secondaryActions[index].route);
+      p.fit(secondaryActions[index].label, 14, buttonWidth - 24, 'regular'),
+      secondaryActions[index].route,
+    );
   }
 
   final _CardModel model = _CardModel(
@@ -830,40 +944,80 @@ SongDetailDrawing renderSongDetail(
   int? effectiveTrackOffset;
   int? effectiveBodyOffset;
   if (albumTracks) {
-    final int maxOffset = math.max(0, state.tracks.length - songDetailAlbumTrackRowCount);
+    final int maxOffset = math.max(
+      0,
+      state.tracks.length - songDetailAlbumTrackRowCount,
+    );
     final int trackOffset = state.trackOffset < 0
         ? 0
         : (state.trackOffset > maxOffset ? maxOffset : state.trackOffset);
     effectiveTrackOffset = trackOffset;
-    final List<SongDetailTrack> songs =
-        songDetailSlice<SongDetailTrack>(state.tracks, trackOffset, songDetailAlbumTrackRowCount);
+    final List<SongDetailTrack> songs = songDetailSlice<SongDetailTrack>(
+      state.tracks,
+      trackOffset,
+      songDetailAlbumTrackRowCount,
+    );
     for (int index = 0; index < songs.length; index++) {
       final SongDetailTrack song = songs[index];
-      final double yy = songDetailAlbumTrackTop + index * songDetailAlbumTrackRowHeight;
+      final double yy =
+          songDetailAlbumTrackTop + index * songDetailAlbumTrackRowHeight;
       p.text(songDetailPad(trackOffset + index + 1), x, yy, 11, 'regular');
       p.limited('${song.title} / ${song.artist}', x + 35, yy, 16, usable - 115);
-      p.text(songDetailTime(song.durationMs), x + usable - 65, yy, 12, 'regular');
+      p.text(
+        songDetailTime(song.durationMs),
+        x + usable - 65,
+        yy,
+        12,
+        'regular',
+      );
       p.rule(x, yy + 36, usable, 0.2);
-      p.hit(x, yy - 4, usable, 42, 'music:album-track:${trackOffset + index}', song.title);
+      p.hit(
+        x,
+        yy - 4,
+        usable,
+        42,
+        'music:album-track:${trackOffset + index}',
+        song.title,
+      );
     }
     if (state.tracks.length > songDetailAlbumTrackRowCount) {
-      final double height = songDetailAlbumTrackRowCount * songDetailAlbumTrackRowHeight - 12;
+      final double height =
+          songDetailAlbumTrackRowCount * songDetailAlbumTrackRowHeight - 12;
       final List<Object?> track = _hudInk(state.dark);
       track[3] = 0.12;
       p.fill(x + usable + 10, songDetailAlbumTrackTop - 4, 2, height, track);
-      final double thumb =
-          math.max(28.0, height * songDetailAlbumTrackRowCount / state.tracks.length);
+      final double thumb = math.max(
+        28.0,
+        height * songDetailAlbumTrackRowCount / state.tracks.length,
+      );
       final double fraction =
           trackOffset / (state.tracks.length - songDetailAlbumTrackRowCount);
       final List<Object?> handle = _hudInk(state.dark);
       handle[3] = 0.6;
-      p.fill(x + usable + 10, songDetailAlbumTrackTop - 4 + fraction * (height - thumb), 2, thumb, handle);
+      p.fill(
+        x + usable + 10,
+        songDetailAlbumTrackTop - 4 + fraction * (height - thumb),
+        2,
+        thumb,
+        handle,
+      );
     }
     if (state.tracks.isEmpty) {
-      p.text(state.detailLoading ? '正在载入曲目…' : '暂无曲目信息', x, songDetailAlbumTrackTop, 17, 'regular');
+      p.text(
+        state.detailLoading ? '正在载入曲目…' : '暂无曲目信息',
+        x,
+        songDetailAlbumTrackTop,
+        17,
+        'regular',
+      );
     }
   } else {
-    final List<String> lines = glyphs.wrap(songDetailBody(state), usable, 16, 'regular');
+    final List<String> lines = glyphs.wrap(
+      songDetailBody(state),
+      usable,
+      16,
+      'regular',
+    );
     final int maxOffset = math.max(0, lines.length - 3);
     // Qt 只有上界：bodyOffset = std::min(bodyOffset, std::max(0, int(lines.size()) - 3))
     // （NativeHudDetail.cpp:196）；此处额外把负值夹到 0，避免用负偏移切片（防御性分歧，
@@ -882,14 +1036,37 @@ SongDetailDrawing renderSongDetail(
   // NativeHudDetail.cpp:203-214：底部分隔线与三格状态按钮。
   p.rule(x, 898, usable, 0.18);
   if (state.officialPlayback && !state.local) {
-    p.button(state.provider != 'netease' ? '${state.providerName} ↗' : '官方客户端 ↗', x, 910, buttonWidth, 44,
-        'music:official', 13);
+    p.button(
+      state.provider != 'netease' ? '${state.providerName} ↗' : '官方客户端 ↗',
+      x,
+      910,
+      buttonWidth,
+      44,
+      'music:official',
+      13,
+    );
   }
   if (state.provider == 'qq') {
-    p.button('试听片段', x + buttonWidth + gap, 910, buttonWidth, 44, 'music:preview', 13);
+    p.button(
+      '试听片段',
+      x + buttonWidth + gap,
+      910,
+      buttonWidth,
+      44,
+      'music:preview',
+      13,
+    );
   }
   if (state.directory && state.canEditPlaylist) {
-    p.button('从歌单移除', x + (buttonWidth + gap) * 2, 910, buttonWidth, 44, 'music:remove-track', 13);
+    p.button(
+      '从歌单移除',
+      x + (buttonWidth + gap) * 2,
+      910,
+      buttonWidth,
+      44,
+      'music:remove-track',
+      13,
+    );
   }
   p.restore();
 

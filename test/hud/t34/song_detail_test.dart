@@ -253,7 +253,7 @@ void main() {
       expect(_hasHit(hits, 'music:add-to-playlist'), isTrue);
       expect(_hasHit(hits, 'music:artist:0'), isTrue);
       final Map<String, Object?> like = _hitByAction(hits, 'music:like');
-      expect(like['label'], '♥ 已喜欢');
+      expect(like['label'], '已喜欢');
     });
 
     test('QQ unknown 订阅态给出核实文案（NativeHudDetail.cpp:123-129）', () {

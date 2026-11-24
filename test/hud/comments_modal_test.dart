@@ -8,7 +8,7 @@
 // - :76-100（chip 宽 102 / 选中琥珀 16% 底 + 3 单位条 / 刷新右锚）
 // - :103-121（列表 clip 与 loading/idle 分支的行距 30）
 // - :122-131（error/empty 分支 + 重新加载）
-// - :133-186（单条：头像 46、昵称 limited、时间右锚、正文截 6 行、♥、回复/展开标签）
+// - :133-186（单条：头像 46、昵称 limited、时间右锚、正文截 6 行、点赞数、回复/展开标签）
 // - :188-235（回复块：blockHeight 32 起、状态串 +34、前缀内联）
 // - :237-242（行底分隔线 ink@0.14）
 // - :244-254（加载更多 / END OF COMMENTS）
@@ -414,13 +414,13 @@ void main() {
       expect(bodyLines, 7);
     });
 
-    test('♥ 文案在 x+62、大小 17', () {
+    test('点赞文案在 x+62、大小 17', () {
       final CommentPanelDrawing d = paintCommentsPanel(
         _model(items: <CommentPanelItem>[_item(likedLabel: '3')]),
         _Glyphs(),
       );
       final bool liked = _ops(d, 'text').any((List<Object?> text) =>
-          text[1] == '♥ 3' && text[2] == _x + cmtContentX && text[4] == cmtMetaSize);
+          text[1] == '点赞 3' && text[2] == _x + cmtContentX && text[4] == cmtMetaSize);
       expect(liked, isTrue);
     });
 
@@ -430,7 +430,7 @@ void main() {
         _model(items: <CommentPanelItem>[_item(replyCount: 3)]),
         glyphs,
       );
-      final double likedWidth = glyphs.width('♥ 3', cmtMetaSize, 'regular');
+      final double likedWidth = glyphs.width('点赞 3', cmtMetaSize, 'regular');
       final double replyX = _x + cmtContentX + likedWidth + 24;
       expect(_texts(d), contains('3 条回复 ↓'));
       final Map<String, Object?> hit = _hit(d, 'comments:replies:c1');
