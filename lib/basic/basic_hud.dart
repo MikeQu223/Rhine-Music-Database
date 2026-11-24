@@ -1258,12 +1258,29 @@ class BasicHudFrame {
     String pickerNotice = '',
     bool canCreatePlaylist = false,
   }) {
+    // 横屏：这些竖屏稿一律放进 Qt 桌面的模态外框里
+    // （`discoverModalBounds`：宽 min(1260, stage-100)、top 122、高 836），
+    // 外面先铺全舞台遮罩，再把整页内容整体平移到外框左上角。
+    //
+    // 2026-11-25 之前这里是「按舞台高整屏拉伸」：页头贴在屏幕 y=0，被状态栏
+    // 压住，标题与返回箭头互相重叠（真机截图为证）。放进外框后页头落在 y=122，
+    // 尺寸按外框高度算（unit = 836/852），底部也不会再压播放条。
+    final Rect panel = discoverModalBounds(width);
+    hudFill(sink, const <Object?>[0.0, 0.0, 0.0, 0.42], 0, 0, width, height);
+    hudFill(
+      sink,
+      dark ? const <Object?>[0.09, 0.115, 0.095, 1] : const <Object?>[0.973, 0.969, 0.933, 1],
+      panel.left,
+      panel.top,
+      panel.width,
+      panel.height,
+    );
     const double referenceHeight = 852;
-    final double unit = height / referenceHeight;
+    final double unit = panel.height / referenceHeight;
     final PortraitCanvas canvas = PortraitCanvas(
       metrics: _portraitMetrics(ports),
       unit: unit,
-      gridWidth: width / unit,
+      gridWidth: panel.width / unit,
       height: referenceHeight,
       dark: dark,
     );
@@ -1321,8 +1338,10 @@ class BasicHudFrame {
         scroll: savedScroll,
       );
     }
-    sink.commands.addAll(canvas.commands);
-    sink.hits.addAll(canvas.hits);
+    sink.shifted(panel.left, panel.top, (_HudSink target) {
+      target.commands.addAll(canvas.commands);
+      target.hits.addAll(canvas.hits);
+    });
   }
 
   /// 竖屏「歌曲操作 / 歌词操作」面板的按钮表（Qt `ResponsiveLyrics.cpp:246-272`）。
