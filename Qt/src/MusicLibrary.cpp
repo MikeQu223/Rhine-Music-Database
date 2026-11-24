@@ -1245,6 +1245,25 @@ void MusicLibrary::playCollection(QJsonObject value) {
         alive);
 }
 
+/** 从发现页档案卡片播放全部 */
+void MusicLibrary::playArchive(QJsonObject value) {
+    m_sourcePlayback.reset();
+    m_playLiked = false;
+    if (value["kind"] == "artist") {
+        enterDirectory(value, true);
+        return;
+    }
+    // 新的集合播放入口显式作废仍在分页的旧歌手请求，避免迟到结果覆盖当前队列。
+    if (directoryLoading) {
+        ++m_directoryGeneration;
+        if (directory) {
+            directory->playArtistWhenLoaded = false;
+        }
+        directoryLoading = false;
+    }
+    playCollection(value);
+}
+
 /** 当前单曲所在的歌曲列表；目录外优先使用选中上下文。 */
 MusicLibrary::QueueSource MusicLibrary::currentSource() const {
     auto source = directorySource();

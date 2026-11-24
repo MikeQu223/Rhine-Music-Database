@@ -168,6 +168,7 @@ void NativeHud::discoverPanel(double x, double y, double width) {
         model.tools.append(DiscoverMusicCard::Choice{"换一批推荐 ↻", "discover:tab:guess"});
     } else if (discover.tab == "daily") {
         model.tools.append(DiscoverMusicCard::Choice{"在资料库打开 ↗", "discover:open"});
+        model.tools.append(DiscoverMusicCard::Choice{"▶ 播放全部", "discover:play-daily"});
     } else if (discover.tab == "new-songs") {
         for (const auto &value : discover.newSongAreas) {
             const auto area = value.toObject();

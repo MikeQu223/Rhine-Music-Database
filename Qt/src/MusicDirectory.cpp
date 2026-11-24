@@ -92,7 +92,7 @@ bool MusicLibrary::playSourceIndex(int lane, int index, bool byUser) {
 }
 
 /** 先建立可返回的目录状态，再加载内容；目录关闭或被替换后丢弃旧响应。 */
-void MusicLibrary::enterDirectory(QJsonObject value) {
+void MusicLibrary::enterDirectory(QJsonObject value, bool playWhenLoaded) {
     if (value.isEmpty()) {
         return;
     }
@@ -116,6 +116,7 @@ void MusicLibrary::enterDirectory(QJsonObject value) {
     next->parentPhysical = physical;
     next->parentLane = selectedLane;
     next->parentItem = value;
+    next->playArtistWhenLoaded = playWhenLoaded && value["kind"] == "artist";
     directory = next;
     directoryInfo = false;
     directoryLoading = true;
@@ -189,6 +190,8 @@ void MusicLibrary::enterDirectory(QJsonObject value) {
                 showDirectoryInfo();
                 if (next->artistSongsPaged) {
                     loadDirectoryPage();
+                } else if (next->playArtistWhenLoaded) {
+                    playDirectory();
                 }
             } else if (!next->songs.isEmpty()) {
                 next->index = 0;
@@ -207,6 +210,8 @@ bool MusicLibrary::openDaily() {
     if (!discover) {
         return false;
     }
+    m_sourcePlayback.reset();
+    m_playLiked = false;
     QJsonArray songs;
     for (const auto &value : discover->items) {
         if (value.toObject()["kind"] == "song") {

@@ -87,6 +87,7 @@ class MusicLibrary : public QObject {
     bool playDirectoryIndex(int index, bool byUser = true);
     bool playSourceIndex(int lane, int index, bool byUser = true);
     void playCollection(QJsonObject value);
+    void playArchive(QJsonObject value);
     void playOfficial(QJsonObject value = {});
     struct QueueSource {
         QJsonArray ids;
@@ -133,7 +134,7 @@ class MusicLibrary : public QObject {
     void subscribe(QJsonObject value = {});
     void playlistForm(QString kind, QString name, QString id = {}, Completion done = {});
     void playlistTrack(QString id, QJsonObject value = {}, bool remove = false, Completion done = {});
-    void enterDirectory(QJsonObject value);
+    void enterDirectory(QJsonObject value, bool playWhenLoaded = false);
     bool openDaily();
     void loadArtistAlbums();
     void openSongArtist(int index = 0);

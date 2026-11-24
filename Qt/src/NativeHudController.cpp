@@ -1319,6 +1319,21 @@ void NativeHud::action(QString value) {
             if (music.openDaily()) {
                 closeModal();
             }
+        } else if (name == "play-daily") {
+            if (music.openDaily()) {
+                music.playDirectory();
+                closeModal();
+            }
+        } else if (name == "play") {
+            bool indexValid = false;
+            const auto index = parts.value(2).toInt(&indexValid);
+            if (indexValid && index >= 0 && index < discover.items.size()) {
+                const auto item = discover.items.at(index).toObject();
+                music.playArchive(item);
+                if (item["kind"] == "artist") {
+                    closeModal();
+                }
+            }
         } else if (name == "area") {
             discoverScroll = 0;
             discover.newSongArea = parts.value(2);

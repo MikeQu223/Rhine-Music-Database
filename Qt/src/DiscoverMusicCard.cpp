@@ -220,6 +220,25 @@ class Painter {
                    entry.title);
     }
 
+    bool canPlayAll(const Entry &entry) const {
+        return entry.kind == "playlist" || entry.kind == "album" || entry.kind == "artist";
+    }
+
+    void playAll(const Entry &entry, double left, double top, double available, bool darkSurface = false) {
+        if (!canPlayAll(entry)) {
+            return;
+        }
+        constexpr double height = 38;
+        constexpr double textSize = 13;
+        const auto background = darkSurface ? amber : ink;
+        const auto foreground = darkSurface ? night : paper;
+        canvas.fill(left, y + top, available, height, background);
+        label("▶ 播放全部", left + 14, top + (height - textSize) / 2 - 3, textSize, available - 28,
+              "demibold", foreground);
+        contentHit({left, y + top - 3, available, 44}, "discover:play:" + QString::number(entry.index),
+                   "播放全部 " + entry.title);
+    }
+
     void framedArtwork(const Entry &entry, double left, double top, double size) {
         // 以装裱中心旋转，阴影与浅色卡纸一同倾斜；不改变原始封面的宽高比。
         canvas.command({"save"});
@@ -236,6 +255,7 @@ class Painter {
         const auto rectangle = entryBounds(model.bounds, 0);
         const auto artSize = std::min(184.0, rectangle.width() * 0.4);
         const auto copyWidth = rectangle.width() - artSize - 80;
+        const bool playable = canPlayAll(entry);
         canvas.fill(rectangle.x(), rectangle.y(), rectangle.width(), rectangle.height(), soft);
         label("01", rectangle.right() - 120, 361, 94, 120, "light",
               model.dark ? QJsonArray{0.24, 0.29, 0.23, 1} : QJsonArray{0.788, 0.812, 0.737, 1});
@@ -243,9 +263,13 @@ class Painter {
         title(entry, x + 24, 288, 27, copyWidth);
         label(entry.artist.isEmpty() ? kind(entry) : entry.artist, x + 24, 382, 12, copyWidth, "regular",
               muted);
-        label(entry.kind == "song" ? "▶ 播放歌曲" : "打开音乐档案 ↗", x + 24, 432, 12, copyWidth);
+        label(entry.kind == "song" ? "▶ 播放歌曲" : "打开音乐档案 ↗", x + (playable ? 174 : 24),
+              playable ? 427.5 : 425, playable ? 13 : 12, copyWidth - (playable ? 150 : 0));
         framedArtwork(entry, rectangle.right() - artSize - 28, 257, artSize);
         open(entry);
+        if (playable) {
+            playAll(entry, x + 24, 418, 132);
+        }
     }
 
     void secondary(const Entry *entry) {
@@ -254,7 +278,7 @@ class Painter {
         const auto sideWidth = rectangle.width();
         canvas.fill(sideX, rectangle.y(), sideWidth, rectangle.height(), night);
         label("NEXT DISCOVERY / 继续探索", sideX + 20, 250, 10, sideWidth - 40, "regular", white);
-        const auto center = sideX + sideWidth / 2;
+        const auto center = sideX + sideWidth - 70;
         const QJsonArray ring{0.40, 0.46, 0.37, 1};
         canvas.circle(center, y + 310, 37, ring);
         canvas.circle(center, y + 310, 36, night);
@@ -262,13 +286,18 @@ class Painter {
         canvas.circle(center, y + 310, 27, night);
         canvas.circle(center + 25, y + 283, 3, amber);
         if (entry) {
+            const bool playable = canPlayAll(*entry);
             label("02", center - 18, 289, 30, sideWidth / 2, "light", amber);
-            title(*entry, sideX + 20, 355, 20, sideWidth - 40, white);
-            label(entry->artist.isEmpty() ? kind(*entry) : entry->artist, sideX + 20, 413, 11, sideWidth - 40,
+            title(*entry, sideX + 20, 333, 20, sideWidth - 40, white);
+            label(entry->artist.isEmpty() ? kind(*entry) : entry->artist, sideX + 20, 382, 11, sideWidth - 40,
                   "regular", white);
-            label(entry->kind == "song" ? "播放歌曲 ▶" : "打开档案 ↗", sideX + 20, 438, 11, sideWidth - 40,
-                  "regular", amber);
+            label(entry->kind == "song" ? "播放歌曲 ▶" : "打开档案 ↗", sideX + (playable ? 172 : 20),
+                  playable ? 427.5 : 430, playable ? 13 : 11, sideWidth - (playable ? 192 : 40), "regular",
+                  amber);
             open(*entry);
+            if (playable) {
+                playAll(*entry, sideX + 20, 418, 132, true);
+            }
         } else {
             label("＋", center - 10, 292, 24, sideWidth / 2, "light", amber);
             label("每日推荐", sideX + 20, 365, 23, sideWidth - 40, "demibold", white);
