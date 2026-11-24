@@ -1960,12 +1960,27 @@ class _BasicShellState extends State<_BasicShell>
                     );
                   } else {
                     // 横屏沿用 Qt 全窗口高（Main.qml:32），几何与命中读同一份。
+                    //
+                    // 但系统栏现在是「显示但透明」（2026-11-24 用户要求不全屏）：
+                    // 手势条压在最底部，播放条若按全窗口高落位就会被它压住。这里把
+                    // 舞台高度按底部安全区收一截（缩放比仍按全窗口高算，所以只影响
+                    // 底缘落点，不影响字号/线宽），顶部不动——状态栏在图标的空白带里。
+                    final EdgeInsets systemSafe = MediaQuery.paddingOf(context);
+                    final double stageScale = height / 1080.0;
+                    final double stageHeight = math.max(
+                      1.0,
+                      (height - systemSafe.bottom) / stageScale,
+                    );
                     surface = _popScope(
                       state,
                       _surface(
                         state,
                         geometry: landscape,
-                        stage: HudStage.fromLogicalSize(width: width, height: height),
+                        stage: HudStage(
+                          scale: stageScale,
+                          width: width / stageScale,
+                          height: stageHeight,
+                        ),
                       ),
                     );
                   }
