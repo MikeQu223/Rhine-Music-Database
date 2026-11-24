@@ -33,6 +33,9 @@ class AudioPlayer {
               double position = 0, bool paused = false);
     void control(QString action, double value = 0);
     QVariantMap state() const;
+    bool isPlaybackRequested() const {
+        return playbackRequested;
+    }
     QJsonObject diagnosticState() const;
     void enableDiagnostics(bool enabled);
     void enableSpectrum(bool enabled);

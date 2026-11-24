@@ -488,6 +488,22 @@ const QVector<SettingDescriptor> &descriptors() {
              .titleZh = "播放键样式",
              .defaultValue = "plain",
              .choices = {{"boxed", QStringLiteral("方块")}, {"plain", QStringLiteral("无方块")}}});
+        if constexpr (PlatformFeatures::InterfaceSounds) {
+            add({.id = "ui-sounds",
+                 .section = SectionId::Preferences,
+                 .kind = SettingKind::Choice,
+                 .binding = {.kind = BindingKind::Preference,
+                             .preferenceKey = "ui-sounds",
+                             .actionPrefix = "setting:ui-sounds:"},
+                 .storage = StorageType::OnOff,
+                 .order = 117,
+                 .titleEn = "INTERFACE SOUNDS",
+                 .titleZh = "界面音效",
+                 .description = "在音乐未播放时，为资料库唱片切换提供反馈。",
+                 .showDescription = true,
+                 .defaultValue = On,
+                 .choices = onOffChoices()});
+        }
         add({.id = "motion",
              .section = SectionId::Rendering,
              .kind = SettingKind::Choice,

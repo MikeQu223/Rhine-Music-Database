@@ -1825,6 +1825,16 @@ void Host::refreshMediaCover() {
         },
         512, true);
 }
+bool Host::isMusicPlaybackRequested() const {
+    if (remote) {
+        const auto &snapshot = remote->snapshot();
+        const auto state = snapshot.value("state").toObject();
+        return snapshot.value("loading").toBool() || state.value("playing").toBool() ||
+               state.value("requested").toBool();
+    }
+    return audio && audio->isPlaybackRequested();
+}
+
 QVariantMap Host::mediaState() const {
     if (remote) {
         return remote->snapshot()["state"].toObject().toVariantMap();
@@ -1968,7 +1978,7 @@ const QStringList &preferenceKeys() {
 #endif
         "search-history", "play-history", "local-cover-cache", "theme", "motion", "startup-animation",
         "detail-autoplay", "skip-detail-on-switch", "single-play-mode", "disc-rotation", "scene-enhancement",
-        "play-button-style",
+        "play-button-style", "ui-sounds",
         "archive-mask-strength", "debug-mode", "audio-exclusive", "graphics-backend", "mv-auto", "mv-opacity",
         "mv-screen", "mv-offsets", "mv-versions", "mv-mode", "global-shortcuts", "global-shortcuts-enabled",
         // Linux 显卡选择：存的是 /sys/class/drm 里 cardN 的序号（0 基），不是型号。
@@ -2016,6 +2026,25 @@ QString Host::preference(QString key) const {
     }
     return AppStorage::settings().value("panel/" + key).toString();
 }
+
+void Host::readPreferenceAsync(const QString &key, TextReply callback) {
+    if (!remote || remotePreferences.contains(key)) {
+        callback(preference(key));
+        return;
+    }
+    remote->request("host.preference", {{"key", key}},
+                    [owner = QPointer(this), key, callback = std::move(callback)](const QJsonObject &result,
+                                                                                const QString &error) {
+        if (!owner) {
+            return;
+        }
+        if (error.isEmpty() && !owner->remotePreferences.contains(key)) {
+            owner->remotePreferences.insert(key, result.value("value").toString());
+        }
+        callback(owner->remotePreferences.value(key));
+    });
+}
+
 void Host::setPreference(QString key, QString value) {
 #if RHINE_SENTRY
     if (key == QLatin1String(RhineSentry::ConsentKey)) {

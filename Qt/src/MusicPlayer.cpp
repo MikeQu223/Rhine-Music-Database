@@ -150,7 +150,7 @@ void MusicPlayer::setQuality(const QString &value) {
     actualQuality.clear();
     failed = false;
     trial = false;
-    loading = true;
+    setLoading(true);
     status = QStringLiteral("正在切换音质…");
     emit changed();
     prepare(current, generation, true);
@@ -187,7 +187,7 @@ MusicPlayer::MusicPlayer(Host *host, MusicApi *api, QObject *parent)
         connect(connection, &PlaybackConnection::snapshotChanged, this, &MusicPlayer::applyPlaybackSnapshot,
                 Qt::QueuedConnection);
         connect(connection, &PlaybackConnection::disconnected, this, [this] {
-            loading = false;
+            setLoading(false);
             failed = true;
             state["playing"] = false;
             status = QStringLiteral("后台播放服务已断开，请重新打开应用");
@@ -313,6 +313,7 @@ void MusicPlayer::play(QJsonObject track, std::optional<QJsonArray> source, std:
         (m_api->provider != "local" && track["provider"] == "local")) {
         return;
     }
+    emit playbackStarting();
 #if RHINE_SENTRY
     if (!resume) {
         RhineSentry::playbackAction(RhineSentry::PlaybackAction::Play);
@@ -346,7 +347,7 @@ void MusicPlayer::play(QJsonObject track, std::optional<QJsonArray> source, std:
     actualQuality.clear();
     lyrics.clear();
     coverImage.clear();
-    loading = true;
+    setLoading(true);
     failed = false;
     trial = false;
     status = QStringLiteral("正在准备：") + track["title"].toString();
@@ -431,7 +432,7 @@ void MusicPlayer::prepare(QJsonObject track, quint64 generation, bool reload, bo
         m_endSerial = m_host->mediaState().value("ended").toLongLong();
         actualQuality = localQuality(track);
         status = QStringLiteral("正在播放本地文件：") + track["format"].toString();
-        loading = false;
+        setLoading(false);
         emit changed();
         return;
     }
@@ -516,7 +517,7 @@ void MusicPlayer::finishOnlinePlayback(const QJsonObject &track, const QJsonObje
         status +=
             QStringLiteral("（已切换为") + audio["qualityFallback"].toString() + QStringLiteral("音质）");
     }
-    loading = false;
+    setLoading(false);
     emit changed();
 }
 
@@ -543,7 +544,7 @@ void MusicPlayer::fail(QString error, RhineSentry::PlaybackFailure failure) {
     failed = true;
     actualQuality.clear();
     status = error;
-    loading = false;
+    setLoading(false);
 #ifdef Q_OS_IOS
     m_playbackBackgroundTask.reset();
 #endif
@@ -559,7 +560,7 @@ void MusicPlayer::recoverPlayback() {
     const auto generation = ++m_generation;
     m_resumePosition = state["position"].toDouble();
     m_resumePaused = !state["requested"].toBool();
-    loading = true;
+    setLoading(true);
     failed = false;
     actualQuality.clear();
     status = QStringLiteral("正在恢复播放（%1/2）…").arg(m_recoveryAttempts);
@@ -784,6 +785,9 @@ void MusicPlayer::setPaused(bool paused) {
     if (m_resumePosition) {
         m_resumePaused = paused;
     }
+    if (!paused && !current.isEmpty()) {
+        emit playbackStarting();
+    }
     m_host->mediaControl(paused ? "pause" : "resume");
 }
 
@@ -860,7 +864,7 @@ void MusicPlayer::stop() {
     m_resumePosition.reset();
     m_recoveryAttempts = 0;
     lyrics.clear();
-    loading = false;
+    setLoading(false);
     failed = false;
     status.clear();
     actualQuality.clear();
@@ -884,6 +888,12 @@ bool MusicPlayer::remoteCommand(const QString &method, QJsonObject arguments) {
     if (!connection) {
         return false;
     }
+    const bool startsPlayback = method == "play" || (method == "next" && !queue.isEmpty()) ||
+                                (method == "toggle" && !current.isEmpty() && !state["playing"].toBool()) ||
+                                (method == "pause" && !current.isEmpty() && !arguments["paused"].toBool());
+    if (startsPlayback) {
+        emit playbackStarting();
+    }
     connection->call("player." + method, arguments);
     applyPlaybackSnapshot();
     if (!connection->error().isEmpty()) {
@@ -892,6 +902,13 @@ bool MusicPlayer::remoteCommand(const QString &method, QJsonObject arguments) {
         emit changed();
     }
     return true;
+}
+
+void MusicPlayer::setLoading(bool value) {
+    if (loading != value) {
+        loading = value;
+        emit loadingChanged();
+    }
 }
 
 void MusicPlayer::setMode(const QString &value) {
@@ -995,7 +1012,7 @@ void MusicPlayer::applyPlaybackSnapshot() {
     history = snapshot["history"].toArray();
     mode = snapshot["mode"].toString("all");
     state = snapshot["state"].toObject();
-    loading = snapshot["loading"].toBool();
+    setLoading(snapshot["loading"].toBool());
     failed = snapshot["failed"].toBool();
     trial = snapshot["trial"].toBool();
     previewRequested = snapshot["preview"].toBool();

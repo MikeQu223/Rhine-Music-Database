@@ -82,6 +82,7 @@ class Host : public QObject {
                                bool paused = false);
     Q_INVOKABLE void mediaControl(QString action, double value = 0);
     Q_INVOKABLE QVariantMap mediaState() const;
+    bool isMusicPlaybackRequested() const;
 #if defined(Q_OS_MACOS) || defined(Q_OS_IOS) || defined(Q_OS_WIN)
     void setAppleTransitionPreparation(AppleTransitionPreparation preparation);
     bool prepareAppleTransition(const QUrl &next, bool alternative);
@@ -102,6 +103,7 @@ class Host : public QObject {
     QJsonObject clearNetworkImages();
     void clearMetadata(StorageCoordinator::Completion done);
     Q_INVOKABLE QString preference(QString key) const;
+    void readPreferenceAsync(const QString &key, TextReply callback);
     Q_INVOKABLE void setPreference(QString key, QString value);
     QString writeStoragePreference(const QString &key, const QString &value);
     void forgetPreference(const QString &key);

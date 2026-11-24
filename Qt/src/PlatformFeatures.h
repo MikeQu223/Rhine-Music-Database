@@ -23,6 +23,11 @@ inline constexpr bool NativeAppleAudio = true;
 inline constexpr bool NativeAppleAudio = false;
 #endif
 inline constexpr bool SpatialAudio = NativeAppleAudio;
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS) || defined(Q_OS_WIN)
+inline constexpr bool InterfaceSounds = true;
+#else
+inline constexpr bool InterfaceSounds = false;
+#endif
 #ifdef Q_OS_WIN
 inline constexpr bool AutomaticTransition = true;
 #else

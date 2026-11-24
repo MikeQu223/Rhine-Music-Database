@@ -2,6 +2,7 @@
 #include "fg/FgConfig.h"
 #include "GraphicsBackend.h"
 #include "NativeHud.h"
+#include "UiSoundFeedback.h"
 #if RHINE_SENTRY
 #include "SentryTelemetry.h"
 #endif
@@ -34,6 +35,19 @@ QString decode(const QString &value) {
 /** 建立原生界面状态与音乐通知；所有延迟动作都绑定控制器生命周期和查询代数。 */
 NativeHud::NativeHud(Host *host, Glyphs *glyphs, MusicLibrary *music, HudSceneActions scene, QObject *parent)
     : QObject(parent), m_host(host), m_glyphs(glyphs), m_music(music), m_scene(std::move(scene)) {
+    if constexpr (PlatformFeatures::InterfaceSounds) {
+        if (!host->offline) {
+            auto *sounds = new UiSoundFeedback(host, &music->player, this);
+            connect(music, &MusicLibrary::musicIdentityRequested, sounds, [this, sounds](const QString &key) {
+                // 场景和移动列表都在原有选择流程发布唱片身份，重绘和指针位移无需查询音效。
+                const auto &selectionFrame = m_music->frame;
+                const bool inArchive = modal.isEmpty() && !lyricsMode && !commentsMode && !m_music->directoryInfo &&
+                                       selectionFrame.value("mode") == "archive" &&
+                                       !selectionFrame.value("viewer").toBool() && !m_music->wantsSongDetails;
+                sounds->observeSelection(key, inArchive);
+            });
+        }
+    }
     connect(host, &Host::pluginInstallConfirmation, this, [this](QJsonObject details) {
         pluginInstall = std::move(details);
         openModal("plugin-install");

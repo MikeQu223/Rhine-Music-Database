@@ -60,6 +60,8 @@ class MusicPlayer : public QObject {
 
   signals:
     void changed();
+    void loadingChanged();
+    void playbackStarting();
     void trackSelected(QJsonObject track);
 
   private:
@@ -81,6 +83,7 @@ class MusicPlayer : public QObject {
     std::unique_ptr<QObject> m_playbackBackgroundTask;
 #endif
     bool remoteCommand(const QString &method, QJsonObject arguments = {});
+    void setLoading(bool value);
     void recoverPlayback();
     MusicApi::Valid valid(quint64 generation);
     void prepare(QJsonObject track, quint64 generation, bool reload = false, bool alreadyPlaying = false,

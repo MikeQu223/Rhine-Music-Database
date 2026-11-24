@@ -198,6 +198,8 @@ set(RHINE_APP_SOURCES
     Qt/src/ResponsiveHudLayout.h
     Qt/src/NativeHud.cpp
     Qt/src/NativeHudController.cpp
+    Qt/src/UiSoundFeedback.cpp
+    Qt/src/UiSoundFeedback.h
     Qt/src/NativeHudMusic.cpp
     Qt/src/NativeHudInput.cpp
     Qt/src/NativeHudDetail.cpp
@@ -440,6 +442,17 @@ set_source_files_properties(Qt/qml/Main.qml TARGET_DIRECTORY RhineMusicDatabase 
 target_include_directories(RhineMusicDatabase PRIVATE vendor/qrcodegen Qt/src)
 target_sources(RhineMusicDatabase PRIVATE Qt/src/MvController.cpp Qt/src/MvController.h
                                           Qt/src/DesktopWallpaper.cpp Qt/src/DesktopWallpaper.h)
+if(WIN32 OR IOS OR (APPLE AND NOT RHINE_MOBILE_PLATFORM))
+    qt_add_resources(
+        RhineMusicDatabase
+        "rhine_ui_audio"
+        PREFIX
+        "/ui-audio"
+        BASE
+        "Assets/audio/ui"
+        FILES
+        Assets/audio/ui/archive-select.wav)
+endif()
 qt_add_resources(
     RhineMusicDatabase
     "rhine_animation"
@@ -669,7 +682,7 @@ if(APPLE)
 endif()
 if(WIN32)
     target_sources(RhineCore PRIVATE Qt/src/GlobalShortcutsWindows.cpp)
-    target_link_libraries(RhineCore PRIVATE user32)
+    target_link_libraries(RhineCore PRIVATE user32 winmm)
     add_library(
         RhineWindowsTransition STATIC
         Qt/src/TransitionPcm.cpp Qt/src/WindowsTransitionPlan.cpp Qt/src/WindowsTransitionAudio.cpp
@@ -681,6 +694,9 @@ if(WIN32)
     target_link_libraries(${RHINE_SYSTEM_CORE} PRIVATE RhineWindowsTransition)
 endif()
 if(APPLE)
+    target_sources(RhineCore PRIVATE Qt/src/UiSoundOutputApple.mm Qt/src/UiSoundOutputApple.h)
+    target_link_libraries(RhineCore PRIVATE "-framework AVFAudio")
+    target_compile_options(RhineCore PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
     add_library(
         RhineApplePlayback STATIC
         Qt/src/AppleAudioPlayer.mm Qt/src/AppleTransitionPlan.mm Qt/src/TransitionPcm.cpp
@@ -707,8 +723,7 @@ if(IOS)
     target_sources(RhineCore PRIVATE Qt/src/IOSDisplayLink.mm Qt/src/IOSDisplayLink.h Qt/src/PlatformIOS.mm
                                      Qt/src/BridgeProcessIOS.cpp Qt/src/BridgeProcess.h)
     target_link_libraries(RhineCore PRIVATE "-framework Security" "-framework UIKit" "-framework QuartzCore"
-                                            "-framework AVFAudio" "-framework MediaPlayer")
-    target_compile_options(RhineCore PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
+                                            "-framework MediaPlayer")
     # Xcode 不会把混合目标的 OBJCXX 专用编译选项传给 .mm 文件。
     set_target_properties(RhineCore RhineMusicDatabase PROPERTIES XCODE_ATTRIBUTE_CLANG_ENABLE_OBJC_ARC YES)
     include(Qt/IOS.cmake)

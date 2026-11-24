@@ -134,6 +134,11 @@ bool checkSettingsSchema() {
     audio.append("audio-exclusive");
 #endif
     audio.append("alternative");
+    QStringList preferences{"theme", "archive-mask", "play-button-style"};
+    if constexpr (PlatformFeatures::InterfaceSounds) {
+        preferences.append("ui-sounds");
+    }
+    preferences.append({"window", "close-behavior", "startup-animation", "replay", "official-player"});
     const QVector<QPair<SettingsSchema::SectionId, QStringList>> expectedRows{
         {SettingsSchema::SectionId::Audio, audio},
         {SettingsSchema::SectionId::Playback,
@@ -143,9 +148,7 @@ bool checkSettingsSchema() {
 #endif
           "global-shortcuts-settings", "single-play-mode", "detail-autoplay",
           "skip-detail-on-switch"}},
-        {SettingsSchema::SectionId::Preferences,
-         {"theme", "archive-mask", "play-button-style", "window", "close-behavior", "startup-animation", "replay",
-          "official-player"}},
+        {SettingsSchema::SectionId::Preferences, preferences},
         {SettingsSchema::SectionId::Rendering,
          {"graphics-backend", "gpu-index", "vsync", "render-scale", "aa-mode", "aa-scale", "msaa",
           "fsr-quality", "fsr-sharpness", "fg", "motion"}},
@@ -166,6 +169,25 @@ bool checkSettingsSchema() {
         (transition && SettingsSchema::resolvedDefault(*transition, context) != "on")) {
         qCritical() << "Settings defaults did not adopt system theme and enabled transitions";
         return false;
+    }
+    if constexpr (PlatformFeatures::InterfaceSounds) {
+        const auto *sounds = SettingsSchema::find("ui-sounds");
+        if (!sounds || SettingsSchema::displayLabel(*sounds, context) != QStringLiteral("开启")) {
+            qCritical() << "Interface sounds preference lost its enabled label";
+            return false;
+        }
+        const auto options = SettingsSchema::choices(*sounds, context);
+        if (options.size() != 2 || options.at(0).value != "off" ||
+            options.at(0).label != QStringLiteral("关闭") || options.at(1).value != "on" ||
+            options.at(1).label != QStringLiteral("开启")) {
+            qCritical() << "Interface sounds preference has missing or invalid dropdown choices";
+            return false;
+        }
+        if (!SettingsSchema::read(*sounds, context).boolean ||
+            SettingsSchema::switchTarget(*sounds, context) != "off" || !Host::isPreferenceKey("ui-sounds")) {
+            qCritical() << "Interface sounds preference did not default to on";
+            return false;
+        }
     }
 
     SettingsSchema::SettingDescriptor title;
