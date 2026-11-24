@@ -253,7 +253,10 @@ class HitLayer {
     HudHit? found;
     for (var index = 0; index < hits.length; index++) {
       final HudHit hit = hits[index];
-      if (containsClosed(Rect.fromLTWH(hit.x, hit.y, hit.width, hit.height), stagePoint)) {
+      if (containsClosed(
+        Rect.fromLTWH(hit.x, offsetY(hit), hit.width, hit.height),
+        stagePoint,
+      )) {
         found = hit;
       }
     }

@@ -1401,7 +1401,11 @@ class BasicHudFrame {
       // 非当前曲目拿不到 native 的时长（那是播放器在报的），回落曲库里的本曲目时长；
       // 曲库阶段该值可能还是 0，画布会显示 00:00，不编造数字。
       durationMs: current ? state.durationMs : song.durationMs,
-      lyricPreview: _portraitLyricPreview(state),
+      // 预览歌词属于 `state.lyricsPreviewId` 那首，不是本页曲目时不能借它的首行来
+      // 做「歌词预览」文案（否则选中 B 会看到 A 的歌词首句）。
+      lyricPreview: (current || state.lyricsPreviewId == song.id)
+          ? _portraitLyricPreview(state)
+          : '',
       // 歌词入口常开（用户 2026-11-24：歌词无需播放就能看）：点了才去取文本，
       // 取不到时歌词页自己画「暂无歌词 / NO LYRICS」，不靠把入口变灰来提前判断。
       lyricsAvailable: true,
