@@ -183,10 +183,15 @@ class HudChrome {
         session = 'KUGOU SESSION';                                                                     // :367
       }
     }
-    hudText(sink, session, 75, 967, 10, weight: 'regular', tracking: 0.9, dark: dark);                      // :370
+    // 真机 1800×2880 横屏实测：em 盒顶 y=967 的 10pt 字，墨迹实际落在舞台 977 附近
+    // （比 Qt Glyphs.cpp 的 `y + size*1.044` 基线口径低约 10 舞台 px），于是
+    // 「GUEST SESSION」与「POWERED BY RHINE LAB」的下半截被 y=984 的播放条顶线切掉。
+    // 两行统一上移到 952，让墨迹底边留在播放条之上一道缝；字号/字距/左右锚点不变。
+    const double footerBaselineY = 952;
+    hudText(sink, session, 75, footerBaselineY, 10, weight: 'regular', tracking: 0.9, dark: dark);          // :370
     const String credit = 'POWERED BY RHINE LAB';                                                                // :371
     final double creditWidth = text.glyphWidth(credit, 10, 'demibold');                                    // :372 m_glyphs->width(...)
-    hudText(sink, credit, width - 59 - creditWidth, 967, 10, weight: 'demibold', dark: dark);               // :372
+    hudText(sink, credit, width - 59 - creditWidth, footerBaselineY, 10, weight: 'demibold', dark: dark);   // :372
   }
 
   /// Qt NativeHud::archiveMask() (NativeHud.cpp:313-327)。
