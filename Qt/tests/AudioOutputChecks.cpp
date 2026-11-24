@@ -365,6 +365,9 @@ class AudioPlayerRegression {
         }
         // Exercise the direct PCM path inspected by the assertions below.
         AudioPlayer audio({}, false);
+#ifdef Q_OS_MACOS
+        audio.useApplePlayback = false;
+#endif
         // 静音跑生产路径，避免测试发出可听声音。
         audio.control("volume", 0);
         audio.enableDiagnostics(true);
