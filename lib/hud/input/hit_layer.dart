@@ -241,7 +241,25 @@ class HitLayer {
   /// 因此永远压过其它命中。
   HudHit? hitAt(List<HudHit> hits, Offset logicalPoint) {
     final stagePoint = geometry.toStage(logicalPoint);
+    // 两趟扫描：先只认**源矩形**包含该点的命中（同样「最后一个胜出」），
+    // 一个都没有才退回触摸外扩后的矩形。
+    //
+    // 原因是外扩 pad=16 相对相邻键的间距太大：播放条上「词」与「MV」两个 48 宽
+    // 的键中心只隔 55，外扩后各自的矩形互相侵入 25 单位，而 MV 在 wire 顺序里
+    // 更靠后 ⇒ 点「词」的右半格会打开 MV（用户 2026-11-23 报的「横屏底栏按钮
+    // 点了没反应」，实测 `player:lyrics` 的右缘被 `player:mv` 吃掉）。精确命中
+    // 优先只影响「两个键的外扩区重叠」这一种情形，手指落在哪个键的源矩形里就
+    // 算哪个键，落在外扩区时才沿用原来的最后胜出规则。
     HudHit? found;
+    for (var index = 0; index < hits.length; index++) {
+      final HudHit hit = hits[index];
+      if (containsClosed(Rect.fromLTWH(hit.x, hit.y, hit.width, hit.height), stagePoint)) {
+        found = hit;
+      }
+    }
+    if (found != null) {
+      return found;
+    }
     for (var index = 0; index < hits.length; index++) {
       if (containsClosed(effectiveRect(hits[index]), stagePoint)) {
         found = hits[index];
