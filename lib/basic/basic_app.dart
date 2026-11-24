@@ -3365,7 +3365,26 @@ class _BasicShellState extends State<_BasicShell>
         return;
       }
       final Map<String, Object?> row = _discoverItems[index];
-      if ('${row['kind'] ?? 'song'}' == 'playlist') {
+      // Qt `MusicDiscover::open`（`Qt/src/MusicDiscover.cpp:112-126`）：
+      // `kind == "song"` 才当曲目播；其余（`playlist` / `album` / `artist`）
+      // 都是 `enterDirectory(value)`。原先这里只认 `playlist`，专辑与歌手行会被
+      // 当成曲目播放（真机表现为播放条挂出艺人名、详情页空白）。
+      final String kind = '${row['kind'] ?? 'song'}';
+      if (kind == 'artist') {
+        final String name = '${row['title'] ?? ''}'.trim();
+        final String artistId = '${row['id'] ?? ''}'.trim();
+        if (name.isEmpty) {
+          _setNotice('该条目已不在列表里');
+          return;
+        }
+        setState(() => _artistScroll = 0);
+        _setModal('');
+        unawaited(
+          controller.openArtistDirectory(name, artistId: artistId),
+        );
+        return;
+      }
+      if (kind == 'playlist' || kind == 'album') {
         unawaited(
           controller.enterRemotePlaylist(
             BasicLocalPlaylist(
@@ -3373,6 +3392,8 @@ class _BasicShellState extends State<_BasicShell>
               title: '${row['title'] ?? ''}',
               trackCount: _intOf(row['trackCount']),
             ),
+            kind: kind,
+            cover: '${row['cover'] ?? ''}',
           ),
         );
         return;

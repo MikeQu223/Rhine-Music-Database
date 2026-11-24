@@ -948,7 +948,15 @@ class BasicController extends ChangeNotifier
   /// 返回 `[item, songs, ids]`，Flutter 只取 songs 并把它建成一个目录。
   ///
   /// 塞壬/本地平台的歌单仍走本机集合（`_localPlaylists`），不进这条路径。
-  Future<String> enterRemotePlaylist(BasicLocalPlaylist playlist) async {
+  ///
+  /// `kind` 只有发现页的「新专辑」用得上：Qt `MusicDiscover::open` 对
+  /// `kind != "song"` 一律 `enterDirectory(value)`（`MusicDiscover.cpp:112-126`），
+  /// 专辑条目就是 `{kind:"album"}` 的目录，插件 `detail` 同样按 `kind` 分派。
+  Future<String> enterRemotePlaylist(
+    BasicLocalPlaylist playlist, {
+    String kind = 'playlist',
+    String cover = '',
+  }) async {
     final ProviderGateway? gateway = _remoteSearch;
     if (gateway == null || _disposed) {
       return '当前来源不支持歌单';
@@ -960,11 +968,11 @@ class BasicController extends ChangeNotifier
     try {
       final List<Map<String, Object?>> rows = await gateway.detailSongs(
         <String, Object?>{
-          'kind': 'playlist',
+          'kind': kind,
           'id': playlist.id,
           'title': playlist.title,
           'provider': _remoteProviderId,
-          'key': '$_remoteProviderId:playlist:${playlist.id}',
+          'key': '$_remoteProviderId:$kind:${playlist.id}',
         },
       );
       if (generation != _detailGeneration || _disposed) {
@@ -978,12 +986,12 @@ class BasicController extends ChangeNotifier
       }
       _directory = BasicDirectory(
         provider: _remoteProviderId.isEmpty ? sirenProvider : _remoteProviderId,
-        kind: 'playlist',
+        kind: kind,
         id: playlist.id,
-        key: '$_remoteProviderId:playlist:${playlist.id}',
+        key: '$_remoteProviderId:$kind:${playlist.id}',
         title: playlist.title,
         artist: '',
-        cover: songs.isEmpty ? '' : songs.first.cover,
+        cover: songs.isEmpty ? cover : songs.first.cover,
         description: '${songs.length} 首',
         trackCount: songs.length,
         virtual: false,
