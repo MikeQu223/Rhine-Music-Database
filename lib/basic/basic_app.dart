@@ -2047,6 +2047,9 @@ class _BasicShellState extends State<_BasicShell>
                           logicalWidth: width,
                           logicalHeight: height,
                         );
+                  // 横屏的系统栏「显示但透明」，手势条占掉窗口底部一条；
+                  // 舞台保持 Qt 的 1080 高，整棵 HUD 按这个量上移（竖屏不用）。
+                  final EdgeInsets systemSafe = MediaQuery.paddingOf(context);
                   final Widget surface;
                   if (portrait) {
                     // 竖屏由 PortraitStage 注入唯一的 StageGeometry/HudStage 作用域；
@@ -2067,16 +2070,14 @@ class _BasicShellState extends State<_BasicShell>
                   } else {
                     // 横屏沿用 Qt 全窗口高（Main.qml:32），几何与命中读同一份。
                     //
-                    // 但系统栏现在是「显示但透明」（2026-11-24 用户要求不全屏）：
-                    // 手势条压在最底部，播放条若按全窗口高落位就会被它压住。这里把
-                    // 舞台高度按底部安全区收一截（缩放比仍按全窗口高算，所以只影响
-                    // 底缘落点，不影响字号/线宽），顶部不动——状态栏在图标的空白带里。
-                    final EdgeInsets systemSafe = MediaQuery.paddingOf(context);
+                    // 舞台高度**必须**是 Qt 的 1080（NativeHud.cpp 里所有 y 常量都按它写）。
+                    // 2026-11-24 为了不让系统手势条压住播放条，曾把高度收成
+                    // `(height - safe.bottom) / scale`（真机 1069.2），结果播放条顶线
+                    // 从 984 上移到 973.2：`chrome.footer()` 的 y=967（墨迹到 977.4）被切成
+                    // 半截，而页脚与 `01` 大号数字（墨迹底 962.6）之间只剩 10.6 的缝，
+                    // 抬页脚又变成压字。正确做法是保持 1080、把整棵 HUD 子树按底部安全区
+                    // 整体上移（见下面 Transform.translate），播放条底部因此留在手势条之上。
                     final double stageScale = height / 1080.0;
-                    final double stageHeight = math.max(
-                      1.0,
-                      (height - systemSafe.bottom) / stageScale,
-                    );
                     surface = _popScope(
                       state,
                       _surface(
@@ -2085,7 +2086,7 @@ class _BasicShellState extends State<_BasicShell>
                         stage: HudStage(
                           scale: stageScale,
                           width: width / stageScale,
-                          height: stageHeight,
+                          height: 1080,
                         ),
                       ),
                     );
@@ -2095,7 +2096,7 @@ class _BasicShellState extends State<_BasicShell>
                     geometry: portrait ? _portraitGeometry : landscape,
                     portrait: portrait,
                   );
-                  return Stack(
+                  final Widget hudStack = Stack(
                     fit: StackFit.expand,
                     children: <Widget>[
                       // HUD 子树持一个焦点节点：输入层收起时焦点回到这里
@@ -2111,6 +2112,17 @@ class _BasicShellState extends State<_BasicShell>
                       if (input != null) Positioned.fill(child: input),
                     ],
                   );
+                  if (portrait) {
+                    return hudStack;
+                  }
+                  // 横屏：系统栏是「显示但透明」（2026-11-24 用户要求不全屏），
+                  // 舞台保持 Qt 的 1080 高，整棵 HUD 连输入层一起上移底部安全区，
+                  // 底部留一条系统手势条的空白带。绘制与命中共用这一层 Transform
+                  // （Transform 的命中按逆矩阵换算，不需要另写一套坐标）。
+                  return Transform.translate(
+                    offset: Offset(0, -systemSafe.bottom),
+                    child: hudStack,
+                  );
                 },
               );
             },
@@ -2120,7 +2132,18 @@ class _BasicShellState extends State<_BasicShell>
               left: 0,
               right: 0,
               // 贴在播放条（品牌头 + 播放行）之上，不盖住播放控件。
-              bottom: playerBarHeaderHeight + playerBarRowHeight + 8,
+              // 横屏 HUD 整体上移了底部安全区（见 LayoutBuilder 里的 Transform），
+              // 反馈条跟着上移同一量，否则会压住播放条的品牌头。
+              bottom: playerBarHeaderHeight +
+                  playerBarRowHeight +
+                  8 +
+                  (classifyOrientation(
+                                logicalWidth: MediaQuery.sizeOf(context).width,
+                                logicalHeight: MediaQuery.sizeOf(context).height,
+                              ) ==
+                          OrientationKind.portrait
+                      ? 0.0
+                      : MediaQuery.paddingOf(context).bottom),
               // 反馈条不吃命中：HUD 的热区照旧按原坐标工作。
               child: IgnorePointer(
                 child: Column(
