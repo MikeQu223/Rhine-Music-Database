@@ -3287,6 +3287,26 @@ class _BasicShellState extends State<_BasicShell>
       _setModal('');
       return;
     }
+    // 横屏页头 / 设置页 / 平台弹层里的「发现音乐」按钮发的都是同一个 `discover`
+    // （`lib/hud/pages/chrome.dart:160/162`、`settings_modal.dart:769`、
+    // `provider_modal.dart:287`）。Qt 在 `NativeHudController.cpp:1003-1010` 里：
+    // 塞壬直接 return（内置平台没有发现页），其余 `openModal("discover")`。
+    // 此前这个动作没有分支，落到 `预览中尚未实现：discover`（用户 2026-11-25 报的第 7 条）。
+    if (action == 'discover') {
+      if (_providerId == 'siren') {
+        _notice('塞壬唱片不提供发现音乐');
+        return;
+      }
+      setState(() {
+        _discoverScroll = 0;
+        if (_discoverTab.isEmpty) {
+          _discoverTab = basicDiscoverInitialTab(_currentDescriptor);
+        }
+      });
+      _setModal('discover');
+      unawaited(_loadDiscover());
+      return;
+    }
     // 竖屏底栏「发现」+ 收藏总览里的「播放历史」：Qt 都开发现页
     // （`NativeHudController.cpp:524-527` 先把 modal 切成 discover，再转发
     // `discover:tab:history`/`discover:tab:artists`）。
@@ -3411,6 +3431,9 @@ class _BasicShellState extends State<_BasicShell>
         return;
       }
       if (kind == 'playlist' || kind == 'album') {
+        // Qt `NativeHudController.cpp:908-910`：`discover:item` 处理完一律 `closeModal()`，
+        // 否则弹层会盖住刚进去的歌单目录（2026-11-25 真机截图为证）。
+        _setModal('');
         unawaited(
           controller.enterRemotePlaylist(
             BasicLocalPlaylist(
@@ -3424,6 +3447,7 @@ class _BasicShellState extends State<_BasicShell>
         );
         return;
       }
+      _setModal('');
       unawaited(controller.openRemoteTrack(row));
       return;
     }

@@ -52,6 +52,8 @@ import '../provider/provider_gateway.dart' show ProviderAccount, ProviderLoginMe
 import '../hud/protocol/hud_frame.dart';
 import '../hud/protocol/hud_hit.dart';
 import '../hud/render/hud_painter.dart';
+import '../hud/modals/discover_modal.dart' show discoverModalBounds;
+import '../hud/widgets/discover_card.dart';
 import '../hud/widgets/track_ruler.dart' as ruler;
 import '../ui/layout/portrait_stage.dart';
 import 'basic_hud_resources.dart';
@@ -522,10 +524,21 @@ class BasicHudFrame {
     } else if (modal == 'provider') {
       _paintProviderModal(sink, ports, providers, providerId, providerAccounts, width, dark,
           localMusicEnabled);
-    } else if (modal == 'discover' || modal == 'playlist-picker') {
+    } else if (modal == 'discover') {
+      // 横屏发现页走 Qt 的桌面弹层：`discoverModalBounds` 的外框（宽 min(1260, stage-100)、
+      // top 122、高 836）里由 `DiscoverCard`（Qt `DiscoverMusicCard` 的 1:1 端口）自己画
+      // 面板底 + 页头 + tabs + 分类 + 两张特殊卡 + 五列档案网格 + 滚动条 + 页脚。
+      //
+      // 2026-11-25 之前这一支落到 `_paintPortraitPageInLandscape`：把 393 网格的竖屏稿按
+      // 舞台高整屏拉伸，页头与标题重叠、tabs 铺满 1728 宽（用户报第 7 条 / 审计 §1.4）。
+      _paintDiscoverPanel(sink, ports, width, height, dark, discover, discoverScroll);
+    } else if (modal == 'playlist-picker' || modal == 'saved') {
       // 我的音乐 / 发现页 / 加入歌单只有 393 网格的竖屏排版（Qt 桌面端用 library
       // 模态承载，本仓库还没有横屏稿）。横屏下不能什么都不画：这里用同一套 painter
       // 按舞台高度重采样（unit = 高度 / 852），保证内容与动作都可达。
+      //
+      // `saved` 必须走这一支：2026-11-25 之前它落到 `_paintLibrary`（普通资料库骨架），
+      // 横屏点「我的音乐」看不到任何弹层（用户报的第 7 条 / 审计 §1.3）。
       _paintPortraitPageInLandscape(
         sink,
         ports: ports,
@@ -3249,6 +3262,20 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
     bool portrait,
     DragUpdateDetails details,
   ) {
+    // 横屏发现页：面板内滚动量是**舞台 px**（`DiscoverCard` 的 scroll 直接用来
+    // `translate(0, -scroll)`），所以这里 1:1 跟着手指走，不折网格。
+    if (widget.modal == 'discover' && !portrait) {
+      _modalDragPixels += details.delta.dy;
+      final BasicDiscoverSnapshot page = widget.discover ?? BasicDiscoverSnapshot.empty;
+      final DiscoverLayout panel = DiscoverCard.layout(
+        discoverModalBounds(_stageSize.width <= 0 ? 1080 : _stageSize.width),
+        page.entries.length,
+      );
+      final double next = (_modalDragStartScroll - _modalDragPixels)
+          .clamp(0.0, panel.maximumScroll);
+      widget.onDiscoverScrollChanged?.call(next);
+      return;
+    }
     if (widget.modal == 'queue') {
       final double scale = geometry.stageScale <= 0 ? 1 : geometry.stageScale;
       // 行高 56 是舞台单位（queue_modal.dart:367 的 `y + 358 + row * 56`）。
@@ -3746,6 +3773,118 @@ class _ScrollSample {
 
   final double time;
   final double value;
+}
+
+/// 横屏发现页弹层（Qt `NativeHudDiscover` + `NativeHudModal`）。
+///
+/// 只做两件事：全舞台遮罩（Qt `NativeHudModal.cpp:163` 非检索弹层先铺一层暗罩），
+/// 以及把 [BasicDiscoverSnapshot] 折成 [DiscoverModel] 交给 [DiscoverCard] 画。
+/// 面板内的几何、配色、截断、命中全部由 `discover_card.dart` 负责，本函数不复制。
+void _paintDiscoverPanel(
+  _HudSink sink,
+  BasicGlyphPorts ports,
+  double width,
+  double height,
+  bool dark,
+  BasicDiscoverSnapshot? snapshot,
+  double scroll,
+) {
+  final BasicDiscoverSnapshot page = snapshot ?? BasicDiscoverSnapshot.empty;
+  final Rect bounds = discoverModalBounds(width);
+  // 遮罩：Qt 桌面端 0.42 黑，横屏点「发现音乐」后底下的资料库仍在原处。
+  hudFill(sink, const <Object?>[0.0, 0.0, 0.0, 0.42], 0, 0, width, height);
+  final int total = page.entries.length;
+  final DiscoverLayout geometry = DiscoverCard.layout(bounds, total);
+  final double offset = scroll.clamp(0.0, geometry.maximumScroll).toDouble();
+  final List<DiscoverEntry> entries = <DiscoverEntry>[];
+  for (final int index in DiscoverCard.visibleIndices(bounds, total, offset)) {
+    if (index < 0 || index >= total) {
+      continue;
+    }
+    final PortraitDiscoverEntry entry = page.entries[index];
+    entries.add(DiscoverEntry(
+      title: entry.title,
+      artist: entry.artist,
+      kind: entry.kind,
+      image: entry.image,
+      index: index,
+    ));
+  }
+  DiscoverCard.paint(
+    DiscoverModel(
+      bounds: bounds,
+      dark: dark,
+      tab: page.tab,
+      status: page.status,
+      loading: page.loadingMore,
+      more: page.more,
+      tabs: _discoverChoices(page.tabs),
+      tools: _discoverChoices(page.tools),
+      categories: _discoverChoices(page.categories),
+      entries: entries,
+      scroll: offset,
+      categoryPicker: page.categoryPicker,
+      loadedCount: total,
+    ),
+    _DiscoverCanvas(sink, ports, dark),
+  );
+}
+
+List<DiscoverChoice> _discoverChoices(List<PortraitDiscoverChip> chips) {
+  return <DiscoverChoice>[
+    for (final PortraitDiscoverChip chip in chips)
+      DiscoverChoice(label: chip.label, action: chip.action, selected: chip.selected),
+  ];
+}
+
+/// 把 [DiscoverCanvas] 接到 HUD 命令流：所有几何原样落 op，命中原样落 hit，
+/// 所以绘制与点击共用同一份坐标（Qt 的 `NativeHud::fill/text/hit/op` 语义）。
+class _DiscoverCanvas implements DiscoverCanvas {
+  _DiscoverCanvas(this.sink, this.ports, this.dark);
+
+  final _HudSink sink;
+  final BasicGlyphPorts ports;
+  final bool dark;
+
+  List<Object?> _color(List<double> value) => <Object?>[for (final double v in value) v];
+
+  @override
+  void fill(double x, double y, double width, double height, List<double> color) =>
+      hudFill(sink, _color(color), x, y, width, height, dark: dark);
+
+  @override
+  void text(String value, double x, double y, double size, String weight, List<double> color) =>
+      hudText(sink, value, x, y, size, weight: weight, color: _color(color), dark: dark);
+
+  @override
+  String fit(String value, double size, double available, String weight) =>
+      ports.fit(value, size, available, weight);
+
+  @override
+  List<String> wrap(String value, double width, double size, String weight) =>
+      ports.wrap(value, width, size, weight);
+
+  @override
+  void hit(double x, double y, double width, double height, String action, String label) =>
+      hudHitRegion(sink, x, y, width, height, action, label);
+
+  @override
+  void image(String key, double x, double y, double width, double height) {
+    if (key.isEmpty) {
+      return;
+    }
+    sink.op(<Object?>['image', key, x, y, width, height]);
+  }
+
+  @override
+  void circle(double cx, double cy, double radius, List<double> color) =>
+      sink.op(<Object?>['ellipse', _color(color), cx - radius, cy - radius, radius * 2, radius * 2]);
+
+  @override
+  double measure(String value, double size, String weight) => ports.glyphWidth(value, size, weight);
+
+  @override
+  void command(List<Object?> command) => sink.op(command);
 }
 
 class _HudSink implements HudSurfaceSink {
