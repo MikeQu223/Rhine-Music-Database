@@ -107,8 +107,9 @@ void main() {
       expect(actions.contains('player:next'), isFalse);
       // seek 不产生字段：否则拖动会把在播那首的位置改掉。
       expect(c.fields.containsKey('seek'), isFalse);
-      // 歌词入口不出现（state.lyrics 属于播放曲目）。
-      expect(actions.contains('player:lyrics'), isFalse);
+      // 歌词入口**仍然出现**：2026-11-24 用户要求「歌词无需播放就能看」，
+      // 选中未播放的曲目点歌词走控制器预览取词，不再把入口变灰。
+      expect(actions, contains('player:lyrics'));
     });
 
     test('详情曲目未在播放：进度归零、右侧读本曲目总时长、状态「尚未播放」', () {

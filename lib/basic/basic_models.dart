@@ -683,6 +683,7 @@ class BasicViewState {
     this.playbackError = '',
     this.lyrics = const <BasicLyricLine>[],
     this.lyricIndex = -1,
+    this.lyricsPreviewId = '',
     this.dark = false,
     this.queue = const <SirenSong>[],
     this.queueIndex = -1,
@@ -766,6 +767,14 @@ class BasicViewState {
 
   /// 当前曲目的歌词行（无歌词/未加载为空）。
   final List<BasicLyricLine> lyrics;
+
+  /// 歌词面板当前承载的是哪首曲目（空串 = 跟随正在播放的那首）。
+  ///
+  /// 用户要求「歌词无需播放就能看」：详情页停在未播放的曲目上时，歌词面板
+  /// 展示的是**选中曲目**的歌词，播放进度/高亮行不参与（没有在播就没有进度）。
+  /// 用 id 而不是 bool，是因为歌词文本与曲目必须同源——切换选中行后旧的
+  /// 歌词不许继续挂在新的标题下面。
+  final String lyricsPreviewId;
 
   /// 活动行下标（-1 = 未到第一行或没有时间轴）。
   final int lyricIndex;
@@ -946,6 +955,7 @@ class BasicViewState {
     String? searchStatus,
     Map<String, List<int>>? searchGroups,
     String? lyricStatus,
+    String? lyricsPreviewId,
     double? lyricsOffsetMs,
     double? lyricsGlobalOffsetMs,
     String? lyricMessage,
@@ -988,6 +998,7 @@ class BasicViewState {
       playbackError: playbackError ?? this.playbackError,
       lyrics: lyrics ?? this.lyrics,
       lyricIndex: lyricIndex ?? this.lyricIndex,
+      lyricsPreviewId: lyricsPreviewId ?? this.lyricsPreviewId,
       dark: dark ?? this.dark,
       queue: queue ?? this.queue,
       queueIndex: queueIndex ?? this.queueIndex,

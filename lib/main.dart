@@ -65,7 +65,25 @@ void main() {
   );
 
   WidgetsFlutterBinding.ensureInitialized();
+  // 边到边：系统栏（状态栏 + 手势/三键区）**保持可见**，但底色完全透明。
+  // 2026-11-22 之前用的是 immersiveSticky（把系统栏藏掉），两个问题：
+  //  1. 用户 2026-11-24 明确要求「竖屏时不全屏，显示状态栏和系统手势/三键操作区域，
+  //     最好完全透明底、不要灰色遮罩」；
+  //  2. 微信键盘在 immersiveSticky 下 mInputShown=true 却一个像素都不画（已改过一次）。
+  // 这里与 MainActivity.applyImmersiveSticky 同源：Flutter 侧给透明色 + 浅色图标，
+  // 原生侧负责 setDecorFitsSystemWindows(false) 与关掉导航栏对比度强制。
+  // 图标明暗随主题走：这里是首帧默认（浅色纸面 → 深色图标），运行中由
+  // `BasicApp` 的 AnnotatedRegion 按 `state.dark` 覆盖。
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+    statusBarColor: Color(0x00000000),
+    statusBarIconBrightness: Brightness.dark,
+    statusBarBrightness: Brightness.light,
+    systemNavigationBarColor: Color(0x00000000),
+    systemNavigationBarDividerColor: Color(0x00000000),
+    systemNavigationBarIconBrightness: Brightness.dark,
+    systemNavigationBarContrastEnforced: false,
+  ));
   runApp(ClarityWidget(
     app: const BasicApp(),
     clarityConfig: config,

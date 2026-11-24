@@ -201,8 +201,10 @@ void paintPortraitSongPage(
   _songFooterRow(
     c,
     top: footerTop,
-    lyricsAvailable: current && lyricsAvailable,
-    commentsAvailable: current && commentsAvailable,
+    // 歌词/评论都不再要求「本页曲目正在播放」（用户 2026-11-24：无需播放就能看）；
+    // 能不能取到由控制器按平台能力决定，页面只负责给入口。
+    lyricsAvailable: lyricsAvailable,
+    commentsAvailable: commentsAvailable,
     mode: mode,
   );
   _songTransportRow(

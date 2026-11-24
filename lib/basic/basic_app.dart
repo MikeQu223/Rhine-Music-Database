@@ -1876,7 +1876,15 @@ class _BasicShellState extends State<_BasicShell>
     final String? actionNotice = _actionNotice;
     final String? resourceNotice = _resourceNotice;
     return Scaffold(
-      backgroundColor: Colors.black,
+      // 系统栏区域（状态栏 / 手势条）铺的是**应用自己的纸色**，不是黑色。
+      // 2026-11-24 用户要求「竖屏时不全屏，显示状态栏和系统手势/三键操作区域，
+      // 最好完全透明底、不要灰色遮罩」：原生侧已把两块系统栏调成透明
+      // （MainActivity.applyImmersiveSticky），Flutter 侧再把窗口底色从黑改成纸色，
+      // 于是系统栏看到的既不是黑边也不是灰 scrim，而是与页面连续的纸面，
+      // 图标由系统按浅色绘制。竖屏舞台自己从 safe.top 起画，内容不会压到状态栏下。
+      // 这里只是首帧底色（深色纸面，避免启动白闪）；真正的纸色由下面 Stack 里
+      // 第一个子层按 controller 的明暗实时铺满整窗（含系统栏区域）。
+      backgroundColor: const Color(0xFF131C18),
       // 输入法不避让（真人要求 m01988）：弹出键盘不许把舞台/3D 视图顶上去，
       // 也不许缩窗。Manifest 的 windowSoftInputMode 同步是 adjustNothing，
       // 两侧一致才不会出现"Flutter 留白 + 原生窗口被压缩"的混搭。
@@ -1884,12 +1892,45 @@ class _BasicShellState extends State<_BasicShell>
       body: Stack(
         fit: StackFit.expand,
         children: <Widget>[
+          // 系统栏图标明暗跟随主题：透明系统栏上，浅色纸面要深色图标，深色纸面要浅色图标。
+          // 放在 body 最外层（整窗覆盖），任何页面/弹层都不需要再各自声明。
+          AnnotatedRegion<SystemUiOverlayStyle>(
+            value: controller.state.dark
+                ? SystemUiOverlayStyle.light.copyWith(
+                    statusBarColor: const Color(0x00000000),
+                    systemNavigationBarColor: const Color(0x00000000),
+                    systemNavigationBarDividerColor: const Color(0x00000000),
+                    systemNavigationBarContrastEnforced: false,
+                  )
+                : SystemUiOverlayStyle.dark.copyWith(
+                    statusBarColor: const Color(0x00000000),
+                    systemNavigationBarColor: const Color(0x00000000),
+                    systemNavigationBarDividerColor: const Color(0x00000000),
+                    systemNavigationBarContrastEnforced: false,
+                  ),
+            child: const SizedBox.expand(),
+          ),
+          // 整窗纸色：系统栏（状态栏 / 手势条）是透明的，透过来看见的就是这一层。
+          // 必须是 ListeneableBuilder 而不是 Scaffold 的 backgroundColor——后者只在
+          // 外壳重建时求值一次，明暗主题切换后系统栏区域会停在旧色上。
+          ListenableBuilder(
+            listenable: controller,
+            builder: (BuildContext context, Widget? child) => ColoredBox(
+              color: controller.state.dark
+                  ? const Color(0xFF131C18)
+                  : const Color(0xFFEEECE4),
+            ),
+          ),
           LayoutBuilder(
             builder: (BuildContext context, BoxConstraints constraints) {
               final double width = constraints.maxWidth;
               final double height = constraints.maxHeight;
               if (!(width > 0) || !(height > 0)) {
-                return const ColoredBox(color: Colors.black);
+                return ColoredBox(
+                  color: controller.state.dark
+                      ? const Color(0xFF131C18)
+                      : const Color(0xFFEEECE4),
+                );
               }
               final bool portrait =
                   classifyOrientation(logicalWidth: width, logicalHeight: height) ==

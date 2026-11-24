@@ -239,6 +239,17 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
   LyricsController? _lyrics;
   BasicLyricsDocument _lyricDoc = BasicLyricsDocument.empty;
 
+  /// 未播放曲目的歌词预览（用户 2026-11-24 要求「歌词和评论无需播放就能看」）。
+  ///
+  /// 与 [_lyricDoc] 分开存放是刻意的：那份是**播放曲目**的歌词，带进度高亮；
+  /// 预览没有播放就没有进度，只把文本摆出来。开播时预览会被清掉，否则会出现
+  /// 「标题是 A、歌词是 B」的身份串台。
+  BasicLyricsDocument _previewLyricDoc = BasicLyricsDocument.empty;
+  String _previewLyricId = '';
+  String _previewLyricStatus = 'idle';
+  String _previewLyricMessage = '';
+  int _previewLyricGeneration = 0;
+
   Timer? _ticker;
   final Stopwatch _clock = Stopwatch();
 
@@ -2670,6 +2681,9 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
   }
 
   /// 打开歌词页（Qt 的模态歌词面板语义；没有当前曲目时不打开）。
+  ///
+  /// 2026-11-24 用户要求「歌词无需播放就能看」：选中曲目还没开播时，这里按
+  /// [_ensurePreviewLyrics] 去取该曲目的歌词，面板画预览文本（无进度高亮）。
   Future<void> openLyrics() async {
     if (_disposed || _song == null) {
       return;
@@ -2679,6 +2693,112 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
       _phase = BasicPhase.lyrics;
       _publish();
     }
+    final SirenSong? song = _song;
+    if (song != null) {
+      unawaited(_ensurePreviewLyrics(song));
+    }
+  }
+
+  /// 取「未播放曲目」的歌词文本（预览）。
+  ///
+  /// 三条来源，顺序与播放路径一致：
+  ///  1. 插件平台曲目 → `lyrics` operation（`gateway.lyricsByTrack`，参数是插件原始行；
+  ///     没有原始行时退回 [SirenSong.toTrack]）；
+  ///  2. 塞壬曲库曲目 → 曲目自带的 `lyricUrl`；
+  ///  3. `lyricUrl` 为空（曲库列表行常常不带）→ 用 `songDetail` 现取一次。
+  /// 同一首已经在取的不会重复发请求（代数号保证旧回执不覆盖新曲目）。
+  Future<void> _ensurePreviewLyrics(SirenSong song) async {
+    if (_disposed || song.id.isEmpty) {
+      return;
+    }
+    if (_playingTrackOf()?.id == song.id) {
+      // 正在播放的那首：播放路径已经装好了歌词，不需要预览副本。
+      return;
+    }
+    if (_previewLyricId == song.id &&
+        (_previewLyricStatus == 'loading' || _previewLyricStatus == 'ready')) {
+      return;
+    }
+    final int generation = ++_previewLyricGeneration;
+    _previewLyricId = song.id;
+    _previewLyricDoc = BasicLyricsDocument.empty;
+    _previewLyricStatus = 'loading';
+    _previewLyricMessage = '';
+    _publish();
+    try {
+      final ProviderGateway? gateway = _remoteSearch;
+      Map<String, Object?>? document;
+      String lyricUrl = song.lyricUrl;
+      if (gateway != null) {
+        document = await _fetchRemoteLyrics(
+          gateway,
+          _remoteRows[song.id] ?? song.toTrack(),
+        );
+      } else if (lyricUrl.isEmpty) {
+        final SirenSongDetail detail = await _repository.songDetail(song.id);
+        if (generation != _previewLyricGeneration || _disposed) {
+          return;
+        }
+        _rememberDetail(detail);
+        lyricUrl = detail.lyricUrl;
+      }
+      if (generation != _previewLyricGeneration || _disposed) {
+        return;
+      }
+      BasicLyricsDocument parsed = BasicLyricsDocument.empty;
+      if (document != null) {
+        parsed = basicLyricsFromDocument(document);
+      } else if (lyricUrl.isNotEmpty) {
+        final String text = await _repository.lyricsText(lyricUrl);
+        if (generation != _previewLyricGeneration || _disposed) {
+          return;
+        }
+        if (text.trim().isNotEmpty && text.length <= sirenMaxLyricLength) {
+          parsed = parseBasicLyrics(text);
+        }
+      }
+      if (generation != _previewLyricGeneration || _disposed) {
+        return;
+      }
+      if (parsed.isEmpty) {
+        _previewLyricDoc = BasicLyricsDocument.empty;
+        _previewLyricStatus = 'empty';
+        _previewLyricMessage = sirenEmptyLyricsMessage;
+      } else {
+        _previewLyricDoc = parsed.lines.length > sirenMaxLyricLines
+            ? BasicLyricsDocument(
+                lines: parsed.lines.sublist(0, sirenMaxLyricLines),
+                offsetMs: parsed.offsetMs,
+                plainText: '',
+                timed: true,
+              )
+            : parsed;
+        _previewLyricStatus = 'ready';
+        _previewLyricMessage = '';
+      }
+      _publish();
+    } on Object catch (error) {
+      if (generation != _previewLyricGeneration || _disposed) {
+        return;
+      }
+      // 真实错误上屏（与播放路径同一口径），不吞成「无歌词」。
+      _previewLyricDoc = BasicLyricsDocument.empty;
+      _previewLyricStatus = 'empty';
+      _previewLyricMessage = _messageOf(error);
+      _publish();
+    }
+  }
+
+  /// 清掉歌词预览（开播/换曲目时调用，避免「标题 A、歌词 B」）。
+  void _clearPreviewLyrics() {
+    if (_previewLyricId.isEmpty && _previewLyricStatus == 'idle') {
+      return;
+    }
+    ++_previewLyricGeneration;
+    _previewLyricId = '';
+    _previewLyricDoc = BasicLyricsDocument.empty;
+    _previewLyricStatus = 'idle';
+    _previewLyricMessage = '';
   }
 
   /// 关闭歌词页，回到打开前的页面。
@@ -3586,6 +3706,7 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     }
     lyrics.load(track);
     _lyricDoc = BasicLyricsDocument.empty;
+    _clearPreviewLyrics();
     _publish();
     final String id = _text(track['id']);
     if (id.isEmpty) {
@@ -3831,6 +3952,9 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
     }
     final Map<String, Object?> playerState = _player.state;
     final LyricsController? lyrics = _lyrics;
+    // 预览态 = 面板上挂着某首**未播放**曲目的歌词；播放曲目自己的歌词走 _lyricDoc。
+    final bool previewing =
+        _previewLyricId.isNotEmpty && _playingTrackOf()?.id != _previewLyricId;
     _state = BasicViewState(
       phase: _phase,
       loading: _loading,
@@ -3853,8 +3977,10 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
       positionMs: _number(playerState['position']),
       durationMs: _number(playerState['duration']),
       playbackError: _player.failed ? _player.status : '',
-      lyrics: _lyricDoc.lines,
-      lyricIndex: lyrics?.index ?? -1,
+      lyrics: previewing ? _previewLyricDoc.lines : _lyricDoc.lines,
+      // 预览没有播放进度，高亮行恒为 -1（`_lyricsRows` 会按 -1 画成「无当前句」）。
+      lyricIndex: previewing ? -1 : (lyrics?.index ?? -1),
+      lyricsPreviewId: previewing ? _previewLyricId : '',
       dark: _dark,
       queue: <SirenSong>[
         for (final Map<String, Object?> track in _player.queue.items) _songFromTrack(track),
@@ -3877,8 +4003,8 @@ class BasicController extends ChangeNotifier implements BasicMediaSessionCommand
       searchStatus:
           _remoteSearch != null ? (_remoteSearchResult?.status ?? '') : searchOutcome().status,
       searchGroups: searchGroups(),
-      lyricStatus: lyrics?.status ?? 'idle',
-      lyricMessage: lyrics?.message ?? '',
+      lyricStatus: previewing ? _previewLyricStatus : (lyrics?.status ?? 'idle'),
+      lyricMessage: previewing ? _previewLyricMessage : (lyrics?.message ?? ''),
       lyricsOffsetMs: lyrics?.offsetMs ?? 0,
       lyricsGlobalOffsetMs: lyrics?.globalOffsetMs ?? 0,
       playerStatus: _player.status,

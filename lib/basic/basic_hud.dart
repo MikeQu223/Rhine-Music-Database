@@ -1352,19 +1352,23 @@ class BasicHudFrame {
     // 控制带必须服从详情页曲目，不能把在播那首的进度/播放态/传输键搬过来。
     final SirenSong? playingTrack = state.playingTrack;
     final bool current = playingTrack != null && playingTrack.id == song.id;
+    // 歌词预览：本页曲目没在播，但面板上挂的是**这首**的歌词（用户 2026-11-24
+    // 要求「歌词无需播放就能看」）。此时没有播放进度，位置/时长按 0 与曲库时长画。
+    final bool previewing = !current && state.lyricsPreviewId == song.id;
     if (state.phase == BasicPhase.lyrics) {
-      // 歌词页画的就是**正在播放**的那首：标题/艺人/封面取 playingTrack。
+      // 歌词页默认画**正在播放**的那首：标题/艺人/封面取 playingTrack。
       // 取 state.song（选中行）会让从底栏进来的歌词页挂错歌名——歌词属于播放曲目，
       // 标题却属于选中行，是同一类身份串台。
-      final SirenSong shown = playingTrack ?? song;
+      // 预览态则相反：歌词是选中曲目的，标题也必须跟着选中曲目走。
+      final SirenSong shown = previewing ? song : (playingTrack ?? song);
       paintPortraitLyricsPage(
         canvas,
         title: shown.title,
         artist: shown.artist,
         cover: shown.cover,
-        playing: state.playing,
-        positionMs: state.positionMs,
-        durationMs: state.durationMs,
+        playing: previewing ? false : state.playing,
+        positionMs: previewing ? 0 : state.positionMs,
+        durationMs: previewing ? shown.durationMs : state.durationMs,
         lines: <(int, String, String)>[
           for (final BasicLyricLine line in state.lyrics)
             (line.startMs.round(), line.text, line.translation),
@@ -1398,8 +1402,13 @@ class BasicHudFrame {
       // 曲库阶段该值可能还是 0，画布会显示 00:00，不编造数字。
       durationMs: current ? state.durationMs : song.durationMs,
       lyricPreview: _portraitLyricPreview(state),
-      // 歌词入口只在当前曲目上出现：state.lyrics 是播放曲目的歌词。
-      lyricsAvailable: current && state.lyrics.isNotEmpty,
+      // 歌词入口常开（用户 2026-11-24：歌词无需播放就能看）：点了才去取文本，
+      // 取不到时歌词页自己画「暂无歌词 / NO LYRICS」，不靠把入口变灰来提前判断。
+      lyricsAvailable: true,
+      // 评论入口同理：能不能取到由平台能力决定（`_commentsAvailable`），
+      // 页面只负责给入口。漏传会让底栏「评论」恒灰、点了没反应（真机缺陷）。
+      commentsAvailable: commentsAvailable,
+      mode: state.queueMode,
     );
   }
 

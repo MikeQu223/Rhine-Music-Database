@@ -258,16 +258,23 @@ class MainActivity : FlutterActivity() {
     }
 
     /**
-     * 沉浸式全屏窗口形态。
+     * 边到边窗口形态：**显示**状态栏与系统手势/三键区，但两块都完全透明。
      *
-     * 对照 Qt/src/AndroidWindow.cpp:18 的 kWindowFlags（FLAG_FULLSCREEN |
-     * FLAG_KEEP_SCREEN_ON）、:22 的 kImmersiveSticky，以及 :44-47 的
-     * window.addFlags + decorView.setSystemUiVisibility。
+     * 历史与取舍（2026-11-24 用户明确要求「竖屏时不全屏，显示状态栏和系统手势/三键操作
+     * 区域，最好完全透明底、不要灰色遮罩」）：
+     *  - 2026-11-22 之前这里是 Qt 的 kImmersiveSticky 逐位照搬（HIDE_NAVIGATION |
+     *    FULLSCREEN | IMMERSIVE_STICKY），系统栏被彻底藏掉，内容铺到屏幕物理边缘。
+     *  - 现在改成「不隐藏、只透明」：`setDecorFitsSystemWindows(false)` 让内容继续
+     *    铺到物理边缘（HUD 自己按 portraitGestureInset 留出底部手势带），系统栏叠在
+     *    内容之上但背景全透明，于是既看得见状态栏/手势条，又不会有黑或灰的遮罩带。
+     *  - `isNavigationBarContrastEnforced = false` 是「不要灰色遮罩」的关键：
+     *    Android 10+ 默认给透明导航栏补一层半透明 scrim，关掉它才是真透明。
+     *  - 图标用浅色（清掉 APPEARANCE_LIGHT_*）：本应用是深色纸面，深色图标会看不见。
      *
-     * 与 Qt 的两点差异都是刻意的：
-     *  1. 不搬 :38 的 setRequestedOrientation(kSensorLandscape)：竖屏响应式是产品要求，
-     *     方向锁会把竖屏 UI 拧成横屏。这里只有窗口形态，没有任何方向
-     *     请求，Manifest 也不写 android:screenOrientation。
+     * 与 Qt 的其它两点差异也是刻意的：
+     *  1. 不搬 Qt/src/AndroidWindow.cpp:38 的 setRequestedOrientation(kSensorLandscape)：
+     *     竖屏响应式是产品要求，方向锁会把竖屏 UI 拧成横屏。这里只有窗口形态，没有
+     *     任何方向请求，Manifest 也不写 android:screenOrientation。
      *  2. API 30+ 走 WindowInsetsController（Qt 注释里承认这是官方推荐，只是它选了不分叉）。
      *     这里按 SDK 分支，两条分支都不引第三方依赖。
      */
@@ -281,21 +288,44 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    /** API 30+：WindowInsetsController 取代 systemUiVisibility（平台能力，无新依赖）。 */
+    /**
+     * API 30+：WindowInsetsController 取代 systemUiVisibility（平台能力，无新依赖）。
+     *
+     * 三条都是「可见但透明」：show 让系统栏留在屏幕上，背景色置透明，
+     * 关掉对比度强制（Android 10+ 给透明导航栏补的半透明 scrim）。
+     */
     @Suppress("NewApi")
     private fun applyEdgeToEdgeImmersive() {
         window.setDecorFitsSystemWindows(false)
+        window.statusBarColor = android.graphics.Color.TRANSPARENT
+        window.navigationBarColor = android.graphics.Color.TRANSPARENT
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            window.isStatusBarContrastEnforced = false
+            window.isNavigationBarContrastEnforced = false
+        }
         val controller = window.insetsController ?: return
         controller.systemBarsBehavior =
             WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        controller.hide(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
+        // 清掉 LIGHT_* 就得到浅色图标（深色纸面上的状态栏/手势条文字与箭头要浅色）。
+        controller.setSystemBarsAppearance(
+            0,
+            WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or
+                WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS,
+        )
+        controller.show(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
     }
 
-    /** API 28-29：legacy systemUiVisibility 的 IMMERSIVE_STICKY 组合。 */
+    /**
+     * API 28-29：legacy systemUiVisibility 的「边到边但可见」组合。
+     *
+     * 只保留三个 LAYOUT_* 位（内容铺到物理边缘），不再带 HIDE_NAVIGATION / FULLSCREEN
+     * ——那两个才是把系统栏藏掉的原因。颜色同样置透明。
+     */
     @Suppress("DEPRECATION")
     private fun applyLegacyImmersiveSticky() {
-        window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
-        window.decorView.systemUiVisibility = IMMERSIVE_STICKY_FLAGS
+        window.statusBarColor = android.graphics.Color.TRANSPARENT
+        window.navigationBarColor = android.graphics.Color.TRANSPARENT
+        window.decorView.systemUiVisibility = EDGE_TO_EDGE_FLAGS
     }
 
     private companion object {
@@ -306,17 +336,13 @@ class MainActivity : FlutterActivity() {
         const val IME_HEIGHT_FRACTION = 0.15f
 
         /**
-         * Qt/src/AndroidWindow.cpp:22 kImmersiveSticky 的逐位对应：
-         * IMMERSIVE_STICKY | HIDE_NAVIGATION | FULLSCREEN | LAYOUT_STABLE |
-         * LAYOUT_HIDE_NAVIGATION | LAYOUT_FULLSCREEN。
+         * API 28-29 的边到边标志：只留 LAYOUT_*（内容铺满），**不含**
+         * HIDE_NAVIGATION / FULLSCREEN —— 系统栏保持可见，颜色由窗口置透明。
          */
-        const val IMMERSIVE_STICKY_FLAGS: Int =
-            View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
-                View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
+        const val EDGE_TO_EDGE_FLAGS: Int =
+            View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
                 View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or
-                View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
-                View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
-                View.SYSTEM_UI_FLAG_FULLSCREEN
+                View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
     }
 }
 
