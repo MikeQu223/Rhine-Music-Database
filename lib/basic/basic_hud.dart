@@ -929,11 +929,12 @@ class BasicHudFrame {
       // 与 Qt 同一分工：页面不夹取滚动，宿主把 scroll 夹在 [0, maximumScroll]
       // （Qt `ResponsiveHudLayout.cpp:238-244` 同一处夹取）。
       canvas.contentBottom = pageContentBottom;
-      paintPortraitCommentsPage(
+      final PortraitCommentsLayout commentsLayout = paintPortraitCommentsPage(
         canvas,
         model: comments,
         scroll: commentsScroll,
       );
+      BasicHudFrame._portraitCommentsMaxScroll = commentsLayout.maximumScroll;
       finishWithFooter(null);
     } else if (modal == 'login' && loginState != null) {
       // Qt compact 的登录页（NativeHud::loginPanel 的竖屏对应实现）：整页纸色 +
@@ -1562,6 +1563,10 @@ class BasicHudFrame {
   /// 上一帧评论内容的总高（Qt 成员 `commentsContentBottom`，每帧由面板回存，
   /// 下一帧据此夹取滚动；不存会让越滚可滚范围越小、滚轮抽搐）。
   static double _commentsContentBottom = 0;
+
+  /// 竖屏评论页上一次画出来的滚动上界（`PortraitCommentsLayout.maximumScroll`）。
+  /// 竖屏页自己算视口，宿主要用同一个值夹取，否则会拖出空白或拖不动。
+  static double _portraitCommentsMaxScroll = 0;
 
   /// 领域层的竖屏视图模型 → 横屏面板模型（字段一一同名，只是面板多了
   /// x/width/dark 三个宿主上下文）。
@@ -3210,6 +3215,28 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
     return items.isEmpty ? 0 : basicSelectedItemIndex(state, items).toDouble();
   }
 
+  /// 竖直页面里「1 个内容单位」等于多少个**手势**像素。
+  ///
+  /// 两套坐标的差别全在手指位移拿到的是什么单位：
+  /// * 横屏：手势层在逻辑 dp 里，页面内容按舞台 px 排 ⇒ 除以 `stageScale`。
+  /// * 竖屏：手势层在 `PortraitStage` 的 `Transform.scale(stageScale)` 内，
+  ///   `details.delta` 已经是**舞台 px**；而页面内容单位是**画布网格**
+  ///   （发现页 196 一卡、收藏/检索/歌手 68 一行、专辑信息 68 一行）
+  ///   ⇒ 只要除以 `unit`（舞台 px / 网格），不能再除一次 `stageScale`。
+  ///
+  /// 这是用户报「竖屏列表滚动速度远大于手指」的根因出口：旧代码一律只除以
+  /// `stageScale`，竖屏下滚动量被放大 `unit` 倍（本机 1.84）。
+  double _stageUnitsPerGrid(StageGeometry geometry, bool portrait) {
+    if (!portrait) {
+      return geometry.stageScale <= 0 ? 1 : geometry.stageScale;
+    }
+    final double stage = geometry.stageScale <= 0 ? 0 : geometry.stageScale;
+    return portraitUnit(
+      _stageSize.width <= 0 ? 1080 : _stageSize.width,
+      stageScale: stage,
+    );
+  }
+
   void _dragUpdated(
     StageGeometry geometry,
     bool portrait,
@@ -3231,6 +3258,17 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
     if (widget.modal == 'comments') {
       final double scale = geometry.stageScale <= 0 ? 1 : geometry.stageScale;
       _modalDragPixels += details.delta.dy;
+      if (portrait) {
+        // 竖屏评论页的滚动量是**画布网格**（`portrait_pages_comments.dart` 的 y 走
+        // `portraitCommentsContentTop - scroll`），上界用页面自己回存的
+        // `PortraitCommentsLayout.maximumScroll`；拖动像素是舞台 px，只除以 unit。
+        final double perGrid = _stageUnitsPerGrid(geometry, true);
+        final double max = math.max(0.0, BasicHudFrame._portraitCommentsMaxScroll);
+        final double next = (_modalDragStartScroll - _modalDragPixels / perGrid)
+            .clamp(0.0, max);
+        widget.onCommentsScrollChanged?.call(next);
+        return;
+      }
       // 上界用上一帧画出来的内容总高现算（`cmtClampPanelScroll` 传无穷大即得上限），
       // 免得把「一屏放得下」的面板也拖出空白。
       final double max = comments_modal.cmtClampPanelScroll(
@@ -3243,12 +3281,12 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       return;
     }
     if (widget.modal == 'album-info') {
-      final double scale = geometry.stageScale <= 0 ? 1 : geometry.stageScale;
+      final double perGrid = _stageUnitsPerGrid(geometry, portrait);
       _modalDragPixels += details.delta.dy;
       // 网格单位：一屏约放 7 行，上界给到「曲目总高 - 一屏」，多拖的部分 painter 自己 clamp。
       final int rows = widget.aux?.albumInfo?.songs.length ?? 0;
       final double max = math.max(0.0, rows * 68.0 - 420.0);
-      final double next = (_modalDragStartScroll - _modalDragPixels / scale).clamp(0.0, max);
+      final double next = (_modalDragStartScroll - _modalDragPixels / perGrid).clamp(0.0, max);
       widget.onAlbumInfoScrollChanged?.call(next);
       return;
     }
@@ -3259,9 +3297,14 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
         (widget.modal == 'search' && portrait) ||
         artistPage) {
       final double scale = geometry.stageScale <= 0 ? 1 : geometry.stageScale;
+      // 这些页面的滚动量以「画布网格」为单位（发现页 196 一卡、收藏/检索 68 一行、
+      // 歌手页 68 一行），所以拖动像素要先折成网格：网格→舞台 px 走 unit，舞台 px→
+      // 逻辑走 stageScale。原实现只除 stageScale，竖屏下滚动量被放大了 unit 倍
+      // （本机 unit 1.84 ⇒ 手指滑 100dp 列表跳 184 格，用户报「滚动速度远大于手指」）。
+      final double perGrid = _stageUnitsPerGrid(geometry, portrait);
       _modalDragPixels += details.delta.dy;
       // 上界：内容总高 - 一屏（一屏按舞台高的 0.6/0.5 估，宁多给一点空白，
-      // 也不要把最末一行永远锁在裁剪线外）。
+      // 也不要把最末一行永远锁在裁剪线外）。一屏是舞台 px，上界要折成网格。
       final double viewport = _stageSize.height * (widget.modal == 'wiki' ? 0.60 : 0.50);
       final double content = switch (widget.modal) {
         'wiki' => BasicHudFrame._wikiContentHeight(widget.aux?.wiki),
@@ -3274,8 +3317,11 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
             : widget.state.songs.length * 68.0 + 320.0,
         _ => (widget.aux?.artist?.tracks.length ?? 0) * 68.0,
       };
-      final double max = math.max(0.0, content - viewport) / scale;
-      final double next = (_modalDragStartScroll - _modalDragPixels / scale)
+      // 一屏是舞台 px：竖屏折成网格（除以 unit）后再和网格内容高相减；横屏沿用旧口径。
+      final double max = portrait
+          ? math.max(0.0, content - viewport / perGrid)
+          : math.max(0.0, content - viewport) / perGrid;
+      final double next = (_modalDragStartScroll - _modalDragPixels / perGrid)
           .clamp(0.0, max);
       switch (widget.modal) {
         case 'wiki':
