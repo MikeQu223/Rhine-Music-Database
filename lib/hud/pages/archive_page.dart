@@ -309,11 +309,14 @@ class HudArchivePage {
     final double col = width * 0.5234375;                                             // :479
     _button('←', col, 903, 46, 46, 'column-prev', 28);                                // :480
     if (!s.directory) {                                                               // :481
-      _text('COLLECTION ${_pad(s.sourceOrderIndex + 1)} / ${_pad(s.provider == 'kugou' ? 4 : 5)}',
+      // 分母是**当前平台真实列数**（Qt `NativeHud.cpp:482-484` 取
+      // `columns.size()`）：塞壬五列、酷狗四列、插件平台按 descriptor 声明。
+      // 之前这里按 `provider == 'kugou' ? 4 : 5` 写死，插件平台少一列时就会写错。
+      _text('COLLECTION ${_pad(s.sourceOrderIndex + 1)} / ${_pad(s.laneCount)}',
           col + 70, 904, 10);                                                         // :482-484
       _roll('music-column', s.libraryName, col + 70, 925, 15, width - col - 360);     // :485
     } else {
-      final String label = 'TRACK COLUMN ${_pad(s.selectedLane + 1)} / 05';      // :487
+      final String label = 'TRACK COLUMN ${_pad(s.selectedLane + 1)} / ${_pad(s.laneCount)}';      // :487
       _text(label, col + 62 + (171 - text.glyphWidth(label, 15)) / 2, 916, 15);       // :488
     }
     _button('→', col + 310, 903, 46, 46, 'column-next', 28);                          // :490

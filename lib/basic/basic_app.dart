@@ -2259,6 +2259,9 @@ class _BasicShellState extends State<_BasicShell>
       // `provider` 与 `providerName` 都从这里走，切到插件平台后不再残留塞壬字样。
       providerName: _currentDescriptor?.name ?? '',
       isSirenProvider: _providerId == 'siren',
+      // 页脚会话串的真值（Qt `uid` / `isLocal()`）：登录后不再恒显 GUEST SESSION。
+      accountUid: _loginController?.state.accountId ?? '',
+      localPlatform: _providerId == 'local',
       // 评论页（modal == 'comments'）：领域层 CommentState 经映射层转成竖屏
       // 只读视图模型（lib/basic/basic_comment_mapper.dart）。
       comments: _commentsModel(),

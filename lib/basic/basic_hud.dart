@@ -244,6 +244,11 @@ class BasicHudFrame {
     /// 当前平台是否就是内置塞壬（Qt `isSiren()`）。false 时横屏页头的
     /// 「＋ 塞壬曲库」应变成「＋ 我的音乐」、页脚 session 不再是 SIREN RECORDS。
     bool isSirenProvider = true,
+    /// 当前登录会话的用户 id（Qt `uid`）：页脚会话串来自它，空串才是 `GUEST SESSION`。
+    /// 2026-11-25 之前 HUD 侧写死 `uid: ''`，插件平台登录后页脚仍是 GUEST。
+    String accountUid = '',
+    /// 当前平台是否本地曲库（Qt `music.isLocal()`）：本地平台页脚与发现文案不同。
+    bool localPlatform = false,
     /// 平台 id → 已恢复的账号；null / 未登录即「未登录」。
     Map<String, ProviderAccount?> providerAccounts = const <String, ProviderAccount?>{},
     /// `music.nickname`（仅登录态使用）。
@@ -400,9 +405,9 @@ class BasicHudFrame {
       // fadeWidth 300 = 原 Qt 的 NativeHud.cpp:313-330 FadeWidth）。
       suppressMask: false,
       libraryName: basicLibraryTitle(state, providerName: providerName),
-      isLocal: false,
+      isLocal: localPlatform,
       isSiren: sirenPlatform,
-      uid: '',
+      uid: accountUid,
       provider: providerId,
       archiveMaskStrength: archiveMaskStrength.round(),
       updaterAvailable: false,
@@ -493,6 +498,8 @@ class BasicHudFrame {
         providerId: providerId,
         providerName: providerName,
         isSirenProvider: isSirenProvider,
+        accountUid: accountUid,
+        localPlatform: localPlatform,
       );
     }
 
@@ -722,6 +729,11 @@ class BasicHudFrame {
     String providerId = '',
     String providerName = basicLibraryName,
     bool isSirenProvider = true,
+    /// 当前登录会话的用户 id（Qt `uid`）：页脚会话串来自它，空串才是 `GUEST SESSION`。
+    /// 2026-11-25 之前 HUD 侧写死 `uid: ''`，插件平台登录后页脚仍是 GUEST（用户报第 7 条相关观感）。
+    String accountUid = '',
+    /// 当前平台是否本地曲库（Qt `music.isLocal()`）：本地平台页脚/发现文案不同。
+    bool localPlatform = false,
     Map<String, ProviderAccount?> providerAccounts = const <String, ProviderAccount?>{},
     String providerUserName = '',
     bool localMusicEnabled = true,
@@ -1836,6 +1848,8 @@ class BasicHudFrame {
     String providerId = sirenProvider,
     String providerName = basicLibraryName,
     bool isSirenProvider = true,
+    String accountUid = '',
+    bool localPlatform = false,
   }) {
     final bool sirenPlatform = basicIsSirenPlatform(isSirenProvider, providerName);
     final List<BasicListItem> items = basicLibraryItems(state);
@@ -1858,15 +1872,16 @@ class BasicHudFrame {
         libraryTotal: items.length,
         // 真实列：Qt `selectedLane` / `sourceOrder().indexOf(selectedLane)` /
         // columns.size()（Qt/src/NativeHud.cpp:479-490 的 COLLECTION xx / 05）。
-        selectedLane: state.selectedLane.clamp(0, basicSirenColumns.length - 1).toInt(),
-        laneCount: basicSirenColumns.length,
+        selectedLane: state.selectedLane.clamp(0, state.laneColumns.length - 1).toInt(),
+        // 列数是**平台真值**（`state.laneColumns` 由 descriptor 决定），不写死塞壬五列。
+        laneCount: state.laneColumns.length,
         sourceOrderIndex: basicSourceOrderIndex(state.selectedLane),
         provider: providerId,
-        isLocal: false,
+        isLocal: localPlatform,
         isSiren: sirenPlatform,
         directory: state.directory != null,
         directoryKind: state.directory?.kind,
-        uid: '',
+        uid: accountUid,
         restoringAccount: false,
         sourceLoading: state.loading,
         // 列表形式真值由 surface 持有（Tab Mode 切换），这里只投影当前值：
@@ -2405,6 +2420,8 @@ class BasicHudSurface extends StatefulWidget {
     this.providerId = '',
     this.providerName = '',
     this.isSirenProvider = true,
+    this.accountUid = '',
+    this.localPlatform = false,
     this.providerAccounts = const <String, ProviderAccount?>{},
     this.providerUserName = '',
     this.localMusicEnabled = true,
@@ -2450,6 +2467,12 @@ class BasicHudSurface extends StatefulWidget {
   /// 当前平台显示名与「是否内置塞壬」：竖屏/横屏页头、详情页 provider 字段都读它。
   final String providerName;
   final bool isSirenProvider;
+
+  /// 当前登录用户 id（空 = 未登录）。
+  final String accountUid;
+
+  /// 当前平台是否本地曲库。
+  final bool localPlatform;
   final BasicGlyphPorts ports;
   final ValueChanged<String> onAction;
 
@@ -2876,6 +2899,8 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       // 在网易云/QQ 渠道下会继续画默认值「＋ 塞壬曲库」（真机缺陷）。
       providerName: widget.providerName,
       isSirenProvider: widget.isSirenProvider,
+      accountUid: widget.accountUid,
+      localPlatform: widget.localPlatform,
       comments: widget.comments,
       commentsScroll: widget.commentsScroll,
       loginState: widget.loginState,
