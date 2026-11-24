@@ -599,13 +599,26 @@ String basicLaneEmptyNotice(
 /// 插件平台的 `artist` 串常带尾随分隔符或孤立顿号（真机 `洛天依 / 阑阗 / 、薛钦`），
 /// 统一整理成「A / B / C」再显示与拼底注。
 String basicCleanArtist(String raw) {
+  // 插件回来的串里常混着零宽空格（U+200B）与不换行空格（U+00A0），`trim()` 不认它们，
+  // 于是段首的「、」被零宽字符挡住、剥不掉（真机仍显示「、薛钦」）。
+  const String junk = '、,，·;；\u200B\uFEFF\u00A0\u3000';
   final List<String> parts = <String>[];
   for (final String chunk in raw.split('/')) {
-    String name = chunk.trim();
-    while (name.isNotEmpty && '、,，·;；'.contains(name[0])) {
-      name = name.substring(1).trim();
+    String name = chunk.replaceAll(RegExp('[\u200B\uFEFF\u00A0]'), ' ').trim();
+    // 两端都要剥：既可能是「、薛钦」，也可能是「薛钦、」。
+    bool changed = true;
+    while (changed && name.isNotEmpty) {
+      changed = false;
+      if (junk.contains(name[0])) {
+        name = name.substring(1).trim();
+        changed = true;
+      }
+      if (name.isNotEmpty && junk.contains(name[name.length - 1])) {
+        name = name.substring(0, name.length - 1).trim();
+        changed = true;
+      }
     }
-    if (name.isNotEmpty) {
+    if (name.isNotEmpty && RegExp(r'[^\s、,，·;；]').hasMatch(name)) {
       parts.add(name);
     }
   }

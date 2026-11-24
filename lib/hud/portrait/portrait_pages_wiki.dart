@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/rendering.dart';
 
+import '../../basic/basic_models.dart' show basicCleanArtist;
 import '../scale/portrait_rhythm.dart';
 import 'portrait_canvas.dart';
 
@@ -52,25 +53,60 @@ void paintPortraitWikiPage(
   final double textLeft = artwork.right + 16;
   final double textWidth = c.gridWidth - textLeft - 20;
   c.text('SONG WIKI', textLeft, 130, size: 8, width: textWidth, color: c.muted);
-  c.paragraph(title.isEmpty ? '未命名曲目' : title, textLeft, 144,
-      size: 20, width: textWidth, weight: 'demibold', maximumLines: 2);
-  c.paragraph(artist.isEmpty ? '未知歌手' : artist, textLeft, 190,
-      size: 11, width: textWidth, color: c.muted, maximumLines: 1);
+  c.paragraph(
+    title.isEmpty ? '未命名曲目' : title,
+    textLeft,
+    144,
+    size: 20,
+    width: textWidth,
+    weight: 'demibold',
+    maximumLines: 2,
+  );
+  c.paragraph(
+    artist.isEmpty ? '未知歌手' : basicCleanArtist(artist),
+    textLeft,
+    190,
+    size: 11,
+    width: textWidth,
+    color: c.muted,
+    maximumLines: 1,
+  );
 
   // 正文起点跟着节奏走：页头封面的下沿是锚，设计稿的 236 只是基准页取值，
   // 矮屏按 [PortraitRhythm] 收、高屏保持（不缩放字号，只收间距）。
-  final double bodyTop =
-      PortraitRhythm.below(artwork.bottom, portraitWikiBodyTop, c.height);
-  c.section(bodyTop - PortraitRhythm.gap(34, c.height), '歌曲百科',
-      'WIKI / ${lines.length}');
+  final double bodyTop = PortraitRhythm.below(
+    artwork.bottom,
+    portraitWikiBodyTop,
+    c.height,
+  );
+  // 小节头不能压到封面：高屏上 `bodyTop` 恒为 236，减 34 会落到 202，
+  // 正好盖在 128..224 的封面上（真机「歌曲百科」四个字糊在专辑图上）。
+  final double sectionY = math.max(
+    bodyTop - PortraitRhythm.gap(34, c.height),
+    artwork.bottom + PortraitRhythm.gap(14, c.height),
+  );
+  c.section(sectionY, '歌曲百科', 'WIKI / ${lines.length}');
+  // 正文必须落在小节头下方：`bodyTop`（236）在小节头（238）之上，
+  // 直接用会让第一行「曲风」压住「歌曲百科」四个字。
+  final double contentTop = math.max(
+    bodyTop,
+    sectionY + PortraitRhythm.gap(30, c.height),
+  );
 
-  c.beginContent(bodyTop);
+  c.beginContent(contentTop);
   if (lines.isEmpty) {
     // 诚实状态：没有正文就直说，不用占位数据凑版面。
-    c.paragraph(status.isEmpty ? '暂无歌曲百科' : status, 20, bodyTop + 8,
-        size: 12, width: c.gridWidth - 40, color: c.muted, maximumLines: 4);
+    c.paragraph(
+      status.isEmpty ? '暂无歌曲百科' : status,
+      20,
+      bodyTop + 8,
+      size: 12,
+      width: c.gridWidth - 40,
+      color: c.muted,
+      maximumLines: 4,
+    );
     if (loading) {
-      c.text('正在读取…', 20, bodyTop + 70, size: 10, color: c.muted);
+      c.text('正在读取…', 20, contentTop + 70, size: 10, color: c.muted);
     }
   } else {
     final double textWidth = c.gridWidth - 40;
@@ -92,18 +128,25 @@ void paintPortraitWikiPage(
       blocks.add((head, body, height));
       total += height;
     }
-    final double visible = math.max(1, c.contentBottom - bodyTop);
+    final double visible = math.max(1, c.contentBottom - contentTop);
     final double maximumScroll = math.max(0, total - visible + 4);
     final double offset = scroll.clamp(0.0, maximumScroll);
-    double y = bodyTop + 4 - offset;
+    double y = contentTop + 4 - offset;
     for (final (String head, String body, double height) in blocks) {
       // 完全在裁剪线上方的段直接跳过（只是省命令流，裁切由 beginContent 负责）。
-      final bool below = y + height < bodyTop;
+      final bool below = y + height < contentTop;
       final bool above = y > c.contentBottom + 200;
       if (!below && !above) {
         if (head.isNotEmpty) {
-          c.text(head, 20, y, size: 10, width: textWidth,
-              weight: 'demibold', color: c.muted);
+          c.text(
+            head,
+            20,
+            y,
+            size: 10,
+            width: textWidth,
+            weight: 'demibold',
+            color: c.muted,
+          );
           c.paragraph(body, 20, y + 15, size: 13, width: textWidth);
         } else {
           c.paragraph(body, 20, y, size: 13, width: textWidth);
