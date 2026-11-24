@@ -2032,6 +2032,10 @@ class _BasicShellState extends State<_BasicShell>
   }
 
   Widget _surface(BasicViewState state, {StageGeometry? geometry, HudStage? stage}) {
+    // 竖屏窗口底部安全区（状态栏/手势条/三键栏）。画布高度已经扣过它，HUD 的
+    // 播放条与底栏不能再按设计稿 34 网格留一遍，否则整块被顶高一个导航栏
+    // （用户 2026-11-24：「底部组件离底部还有一段空间，抬太高了」）。
+    final double safeBottomLogical = MediaQuery.paddingOf(context).bottom;
     // 封面查看器开着：Qt 侧只画 viewer 页（NativeHud.cpp:267-268），详情页的 HUD
     // 不能再画一份，所以整屏换成查看器那一支。3D 场景层仍是同一个 PlatformView
     // （_sceneKey 不变 → element 被移动而非重建，QQuickView 不重启）。
@@ -2174,6 +2178,7 @@ class _BasicShellState extends State<_BasicShell>
       mvPositionMs: _mvController?.videoPositionMs ?? 0,
       // 横屏歌词面板上的「歌词偏移 ⌃」浮层（Qt `modal == "lyrics-offset"`）。
       lyricsOffsetOpen: _lyricsOffsetOpen,
+      safeBottomLogical: safeBottomLogical,
       savedLane: _savedLane,
       aux: _auxPages(),
       savedOverview: _savedOverview,

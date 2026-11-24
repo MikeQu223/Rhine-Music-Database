@@ -14,6 +14,10 @@ import 'dart:ui' show Rect;
 
 import '../protocol/hud_hit.dart';
 
+/// 播放条 + 底栏（不含手势区）占的网格高度：播放条 67 + 导航条 43。
+/// 定义在画布这一层，`portrait_layout.dart` 与各页面都从这里取，避免各写一份。
+const double portraitFooterBarHeight = 110;
+
 /// 字形度量端口（Qt 侧是 `Glyphs`）。
 ///
 /// 注入而不是自己量：HUD 的文字宽度必须与绘制用同一套字形，
@@ -49,6 +53,7 @@ class PortraitCanvas {
     required this.height,
     required this.dark,
     this.gridWidth = 393,
+    this.gestureInset = 34,
   }) {
     ink = dark ? <Object?>[.925, .933, .886, 1] : <Object?>[.082, .110, .090, 1];
     muted = dark ? <Object?>[.63, .68, .60, 1] : <Object?>[.404, .431, .388, 1];
@@ -75,6 +80,17 @@ class PortraitCanvas {
 
   /// 页面可视高度（= 舞台高 / unit，网格单位）。
   final double height;
+
+  /// 画布底部还要留出的手势区（网格单位）。
+  ///
+  /// Qt compact 写死 34，但本仓库的画布高度已经扣掉了真实安全区（见
+  /// `PortraitBands.stageHeight`），再留一遍 34 会把播放条与底栏整体抬高
+  /// 近 30 网格（用户 2026-11-24 报的「底部组件抬太高」）。宿主用
+  /// `portraitGestureInsetOf` 按真实内缩算好传进来。
+  final double gestureInset;
+
+  /// 播放条 + 底栏 + 手势区占的高度（网格单位）。
+  double get footerHeight => portraitFooterBarHeight + gestureInset;
 
   final bool dark;
 

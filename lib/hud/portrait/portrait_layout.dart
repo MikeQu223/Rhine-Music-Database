@@ -42,12 +42,41 @@ double portraitGridHeight(double stageHeight, double unit) => stageHeight / unit
 const double portraitRowHeight = 48;
 const double portraitGestureInset = 34;
 
-/// 底部「迷你播放条 + 底栏 + 手势区」占的设计网格高度。
+/// 底部「迷你播放条 + 底栏 + 手势区」占的**设计**网格高度。
 ///
 /// Qt 里播放条顶 = `c.contentBottom`，导航条 = 顶 + 67，导航条高
 /// `max(0, h - 34 - 导航条)`（`ResponsiveHudLayout.cpp:329-420`）；三者相加
 /// 恒为 144，与 `m_height` 无关。设置/检索这类整页只铺到 `h - 144`。
+///
+/// 但本仓库的竖屏画布高度**已经扣掉了真实安全区**（`PortraitBands.stageHeight`
+/// 按 `layoutHeight - safe.top - safe.bottom` 算），所以手势区只该留一次。真实
+/// 内缩比设计值 34 小的时候（本机 7.6dp ≈ 5.9 网格），继续按 144 收就会把播放条
+/// 与底栏整体抬高近 30 网格 —— 用户 2026-11-24 报的「底部组件抬太高」。
+/// 运行时一律用 [portraitFooterHeightOf] 取当帧的真实值。
 const double portraitFooterHeight = 144;
+
+/// 当帧真实的页脚高度（网格单位）。
+double portraitFooterHeightOf(double gestureInset) =>
+    portraitFooterBarHeight + gestureInset;
+
+/// 画布底部要留出的手势区（网格单位）。
+///
+/// [safeBottomLogical] 是 `MediaQuery.paddingOf(context).bottom`；`unit` 是
+/// 网格→舞台像素的比例，`stageScale` 是舞台→逻辑像素的比例，二者相乘才是
+/// 「1 网格 = 多少逻辑像素」。返回真实内缩（夹在 0..[portraitGestureInset]）。
+double portraitGestureInsetOf({
+  required double unit,
+  required double stageScale,
+  required double safeBottomLogical,
+}) {
+  final double pxPerGrid = unit * stageScale;
+  // 拿不到安全区（离屏逐帧构造 / 测试）时退回设计稿值：默认必须是「和 Qt 一样
+  // 留 34」，否则没有宿主内缩信息的调用点会算出一个比设计稿更矮的页脚。
+  if (pxPerGrid <= 0 || safeBottomLogical <= 0) {
+    return portraitGestureInset;
+  }
+  return (safeBottomLogical / pxPerGrid).clamp(0.0, portraitGestureInset);
+}
 
 /// 底栏四项。
 enum PortraitNav { archive, discover, search, settings }
@@ -195,7 +224,7 @@ PortraitFrame paintPortraitHome(
 
   // 播放条/底栏永远贴在舞台底部（与 paintPortraitShell 同源）；列表带只决定
   // 上半屏的 3D/列表分割线，二者不能再用「listTop + 四行」联动。
-  canvas.contentBottom = math.max(0, h - portraitFooterHeight);
+  canvas.contentBottom = math.max(0, h - canvas.footerHeight);
 
   _brand(canvas);
   _tabs(canvas, archive);
@@ -220,7 +249,7 @@ void paintPortraitFooter(
   required PortraitPlayer player,
   PortraitNav? nav,
 }) {
-  canvas.contentBottom = math.max(0, canvas.height - portraitFooterHeight);
+  canvas.contentBottom = math.max(0, canvas.height - canvas.footerHeight);
   _playerAndNav(canvas, player: player, nav: nav, top: canvas.contentBottom);
 }
 
@@ -273,7 +302,7 @@ PortraitFrame paintPortraitShell(
   void Function(PortraitCanvas canvas, double pageBottom)? content,
 }) {
   final double h = canvas.height;
-  final double top = math.max(0, h - portraitFooterHeight);
+  final double top = math.max(0, h - canvas.footerHeight);
   canvas.contentBottom = top;
   canvas.fill(Rect.fromLTWH(0, 0, canvas.gridWidth, h), canvas.paper);
   if (header != null) {
@@ -352,7 +381,7 @@ void _list(
   double position,
   int total,
 ) {
-  final double bottom = c.height - portraitFooterHeight;
+  final double bottom = c.height - c.footerHeight;
   // 3D 场景矩形在 1:1 分割线处结束；不在列表带铺纸色就会看到场景下沿一条硬切边。
   // 先在索引行下沿做一个 44 单位的透明→纸色渐变过渡，再从 listTop 起整块铺实纸色，
   // 行永远画在实纸上；场景只留在渐变上方可见。
@@ -483,7 +512,7 @@ void _playerAndNav(
   c.hit(Rect.fromLTWH(w - 52, top + 10, 44, 46), 'player:next', '下一首');
 
   final double navTop = top + 67;
-  final double navHeight = math.max(0, h - portraitGestureInset - navTop);
+  final double navHeight = math.max(0, h - c.gestureInset - navTop);
   if (navHeight <= 0) {
     c.field('playerBounds', Rect.fromLTWH(0, top, w, math.max(0, h - top)));
     return;

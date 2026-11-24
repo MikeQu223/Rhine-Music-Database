@@ -143,8 +143,9 @@ void paintPortraitSongPage(
   }
   c.border(card, c.line);
 
-  // 档案行：类型标签 + 右上序号，行下一道细线。
-  final double labelTop = card.bottom + _gapAfterCard;
+  // 档案行：类型标签 + 右上序号，行下一道细线（y 由 [_songLayout] 给，卡片封顶后
+  // 的余量会落在卡片与这一行之间）。
+  final double labelTop = layout.labelTop;
   c.text(_sectionLabel(kind), _gutter, labelTop, size: 8, width: 240, color: c.muted);
   if (stamp.isNotEmpty) {
     c.rightText(stamp, c.gridWidth - 20, labelTop, 8, 'regular', c.ink);
@@ -268,9 +269,15 @@ const double _minFooterGap = 12;
 /// 底边呼吸空间（不含富余高度的分配）。
 const double _bottomInset = 12;
 
-/// 唱片卡的下限 / 上限（参考图 312）。
+/// 唱片卡的下限（网格单位）。
+///
+/// 上限不能写死 312：参考图的 312 是**393 宽设计稿**里的值（312/393 ≈ 79% 页宽），
+/// 而本仓库的竖屏网格随 DPI 变宽（本机 586），写死 312 会让唱片只占页宽 53%，
+/// 卡片封顶后的余量全堆到卡片下方变成一条空带。上限按页宽比例算。
 const double _songCardMin = 96;
-const double _songCardMax = 312;
+
+/// 唱片卡最大边长占页宽的比例（参考图 `312 / 393`）。
+const double _songCardRatio = .79;
 
 /// 除唱片卡之外的全部固定高度（含最小间距与底边距）。
 double _songFloorHeight(int titleLines) =>
@@ -292,41 +299,47 @@ double _songFloorHeight(int titleLines) =>
 /// [paintPortraitSongPage] 的纵向排布结果。
 typedef _SongLayout = ({
   double cardSide,
+  double labelTop,
   double barY,
   double transportCenter,
   double footerTop,
 });
 
-/// 自上而下算一遍详情页的纵向排布。
+/// 算一遍详情页的纵向排布：**控制带底锚、卡片吃余量**。
 ///
-/// 规则（顺序固定，所以任何 `c.height` 都不重叠、不超出可用高度）：
-///  1. 先算除卡片外的固定块高 [_songFloorHeight]；
-///  2. 剩下的高度给唱片卡，夹在 [_songCardMin]..[_songCardMax]；
-///  3. 卡片吃饱后多出来的高度 3/4 分给三段间距（进度→传输→底栏各 1/4），
-///     其余 1/4 留在底边，重心略偏下（接近参考图）。
+/// 规则：
+///  1. 底部五入口整块钉在 `c.height - _bottomInset - _footerBlock`，传输环与进度条
+///     按最小间距往上叠——Qt compact 的 `song()` 同样是拿 `m_height - 34` 往回排的。
+///  2. 档案行/标题/艺人/状态四块是固定高度，扣掉之后剩下的才是唱片卡，夹在
+///     [_songCardMin]..[页宽 × _songCardRatio]。
+///  3. 卡片封顶后仍有余量：七成放到卡片与档案行之间（参考图的留白在唱片下方），
+///     三成留在状态行与进度条之间，避免进度条贴住艺人行。
 ///
-/// 旧实现把 `{传输键, 底栏}` 从页面底部往回锚定（`max(y + 40, h - 12) - 76 - 52`）
-/// 再 `min` 回上方流下来的 y：长标题或矮屏时底部锚点会顶到进度条/状态行上，就是
-/// 用户说的「详情页元素互相压住」。
+/// 旧实现把三块按内容流自上而下堆、余量四等分（其中一份落到 footer 之下），页高
+/// 有富余时底部就被顶高一大截（用户 2026-11-24：「底部组件离底部还有一段空间，
+/// 抬太高了」）。
 _SongLayout _songLayout(PortraitCanvas c, {required int titleLines}) {
-  final double floor = _songFloorHeight(titleLines);
-  final double spare = math.max(0.0, c.height - floor);
-  final double cardSide =
-      spare <= _songCardMin ? spare : math.min(_songCardMax, spare);
-  final double extra = math.max(0.0, spare - cardSide);
+  final double footerTop = math.max(0.0, c.height - _bottomInset - _footerBlock);
+  final double transportCenter = footerTop - _minFooterGap - _transportBlock / 2;
+  // 进度块整体高 [_progressBlock]（[_songProgressRow] 从 `barY - 22` 起笔，到刻度
+  // 时间 `barY + 30` 收），所以块顶 = 传输环顶 - 最小间距 - 块高。
+  final double progressTop =
+      transportCenter - _transportBlock / 2 - _minTransportGap - _progressBlock;
+  final double barY = progressTop + 22;
 
-  final double labelTop = _cardTop + cardSide + _gapAfterCard;
-  final double titleTop = labelTop + _labelRow;
-  final double stateTop = titleTop + _titleLine * titleLines + _gapTitleMeta + _metaRow;
-  final double progressTop = stateTop + _stateRow + _minProgressGap + extra * .25;
-  final double transportTop =
-      progressTop + _progressBlock + _minTransportGap + extra * .25;
-  final double footerTop = transportTop + _transportBlock + _minFooterGap + extra * .25;
+  final double textHeight =
+      _labelRow + _titleLine * titleLines + _gapTitleMeta + _metaRow + _stateRow;
+  final double availForCard =
+      progressTop - _minProgressGap - _cardTop - _gapAfterCard - textHeight;
+  final double cardCap = math.max(_songCardMin, c.gridWidth * _songCardRatio);
+  final double cardSide = availForCard.clamp(_songCardMin, cardCap);
+  final double extra = math.max(0.0, availForCard - cardSide);
+  final double labelTop = _cardTop + cardSide + _gapAfterCard + extra * .7;
   return (
     cardSide: cardSide,
-    // [_songProgressRow] 的起笔在 `barY - 22`（歌词预览/已播时间）。
-    barY: progressTop + 22,
-    transportCenter: transportTop + _transportBlock / 2,
+    labelTop: labelTop,
+    barY: barY,
+    transportCenter: transportCenter,
     footerTop: footerTop,
   );
 }
@@ -530,8 +543,12 @@ void paintPortraitLyricsPage(
   // 一条缝（用户 2026-11-19：「歌词部分空间高度不足」）。所以改成按可用高度取
   // 比例：高屏逼近 Qt 的 250，矮屏最少让到 150，歌词永远拿到剩下的全部。
   const double viewTop = 118;
-  final double bandHeight = math.min(250, math.max(150, (h - 34) * .30));
-  final double bandTop = math.max(viewTop + 96, h - 34 - bandHeight);
+  // 沉浸条自身内容只画到 `top + 117`（Qt `player(c, immersive=true)` 的五键底沿
+  // `top+65..117`），再留 8 网格呼吸。此前按 250 的固定带高铺，键位下面会空出
+  // 130 多网格（真机看起来就是「底部组件抬太高」），所以改成按内容高贴底。
+  const double barContentHeight = 125;
+  final double bandTop =
+      math.max(viewTop + 96, h - c.gestureInset - barContentHeight);
 
   c.contentBottom = bandTop;
   c.beginContent(viewTop);

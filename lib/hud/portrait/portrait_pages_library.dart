@@ -19,7 +19,7 @@ import 'dart:math' as math;
 import 'dart:ui' show Rect;
 
 import 'portrait_canvas.dart';
-import 'portrait_layout.dart' show PortraitNav, PortraitPlayer, paintPortraitFooter, portraitFooterHeight;
+import 'portrait_layout.dart' show PortraitNav, PortraitPlayer, paintPortraitFooter;
 
 /// 曲目行行高（`Qt/src/ResponsiveHudCanvas.cpp` `row()` 的 68）。
 const double _rowHeight = 68;
@@ -56,7 +56,7 @@ void paintPortraitCollectionPage(
   final double h = c.height;
   // 先把内容底界让给播放条，后面的 `_pageBottom` 才会把列表裁在它上面。
   if (player != null) {
-    c.contentBottom = math.max(0, h - portraitFooterHeight);
+    c.contentBottom = math.max(0, h - c.footerHeight);
   }
   final int total = rows.length;
 

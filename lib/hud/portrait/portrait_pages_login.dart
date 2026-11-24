@@ -135,7 +135,7 @@ void paintPortraitLoginPage(
     c.paragraph(
       '凭据仅保存至本机钥匙串，不读取官方 App 的登录信息。',
       _gutter,
-      math.max(y + 8, bottom - 34),
+      math.max(y + 8, bottom - c.gestureInset),
       size: 10,
       width: width,
       color: c.muted,

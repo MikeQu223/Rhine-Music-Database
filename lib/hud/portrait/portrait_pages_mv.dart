@@ -161,7 +161,7 @@ void paintPortraitMvPage(
 
   final double barTop = math.max(
     y + PortraitRhythm.gap(40, h),
-    h - 34 - PortraitRhythm.gap(portraitMvBarHeight, h),
+    h - c.gestureInset - PortraitRhythm.gap(portraitMvBarHeight, h),
   );
   final double bottom = math.max(y, barTop - 8);
   c.contentBottom = bottom;
@@ -237,7 +237,8 @@ double portraitMvMaxScroll(double contentTop, double contentBottom, int total) {
 
 /// 版本列表的可视高度（供宿主算夹取上界），与 [paintPortraitMvPage] 同一公式。
 double portraitMvListViewport(PortraitCanvas c, double contentTopSoFar) {
-  final double barTop = math.max(contentTopSoFar + 40, c.height - 34 - portraitMvBarHeight);
+  final double barTop =
+      math.max(contentTopSoFar + 40, c.height - c.gestureInset - portraitMvBarHeight);
   return math.max(0, barTop - 8 - contentTopSoFar);
 }
 

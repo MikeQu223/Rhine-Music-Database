@@ -36,7 +36,8 @@ import '../hud/modals/settings_modal.dart'
 import '../hud/portrait/portrait_layout.dart'
     show
         portraitDesignWidth,
-        portraitFooterHeight,
+        portraitFooterHeightOf,
+        portraitGestureInsetOf,
         portraitGridWidth,
         portraitUnit;
 import '../hud/protocol/hud_frame.dart' show HudStage;
@@ -159,7 +160,16 @@ class _BasicPortraitPluginsPageState extends State<BasicPortraitPluginsPage> {
         ? widget.stage.height / unit
         : portraitDesignWidth;
     // 只铺到播放条顶（与 HUD 的 _playerAndNav 同源），底栏留给命令流。
-    final double pageBottom = math.max(0.0, gridHeight - portraitFooterHeight);
+    // 页脚高度按当帧真实安全区算：画布高度已经扣过它，不能再按设计稿留 144。
+    final double pageBottom = math.max(
+      0.0,
+      gridHeight -
+          portraitFooterHeightOf(portraitGestureInsetOf(
+            unit: unit,
+            stageScale: widget.stageScale,
+            safeBottomLogical: MediaQuery.paddingOf(context).bottom,
+          )),
+    );
     if (unit <= 0 || pageBottom <= basicPortraitPluginsContentTop) {
       return const SizedBox.shrink();
     }
@@ -745,7 +755,15 @@ class BasicPortraitPluginDetailPage extends StatelessWidget {
     final double gridHeight = unit > 0
         ? stage.height / unit
         : portraitDesignWidth;
-    final double pageBottom = math.max(0.0, gridHeight - portraitFooterHeight);
+    final double pageBottom = math.max(
+      0.0,
+      gridHeight -
+          portraitFooterHeightOf(portraitGestureInsetOf(
+            unit: unit,
+            stageScale: stageScale,
+            safeBottomLogical: MediaQuery.paddingOf(context).bottom,
+          )),
+    );
     if (unit <= 0 || pageBottom <= basicPortraitPluginsContentTop) {
       return const SizedBox.shrink();
     }

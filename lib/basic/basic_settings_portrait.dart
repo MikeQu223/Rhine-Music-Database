@@ -22,7 +22,12 @@ import 'package:flutter/material.dart';
 
 import '../hud/modals/settings_modal.dart';
 import '../hud/portrait/portrait_layout.dart'
-    show portraitDesignWidth, portraitFooterHeight, portraitGridWidth, portraitUnit;
+    show
+        portraitDesignWidth,
+        portraitFooterHeightOf,
+        portraitGestureInsetOf,
+        portraitGridWidth,
+        portraitUnit;
 import '../hud/protocol/hud_frame.dart' show HudStage;
 import '../hud/widgets/settings_row.dart';
 import 'basic_provider_access_card.dart';
@@ -172,7 +177,16 @@ class _BasicPortraitSettingsPageState extends State<BasicPortraitSettingsPage> {
     final double gridWidth = portraitGridWidth(widget.stage.width, stageScale: widget.stageScale);
     final double gridHeight =
         unit > 0 ? widget.stage.height / unit : portraitDesignWidth;
-    final double pageBottom = math.max(0.0, gridHeight - portraitFooterHeight);
+    // 页脚高度按当帧真实安全区算（画布高度已扣过它，不能再用设计稿的 144）。
+    final double pageBottom = math.max(
+      0.0,
+      gridHeight -
+          portraitFooterHeightOf(portraitGestureInsetOf(
+            unit: unit,
+            stageScale: widget.stageScale,
+            safeBottomLogical: MediaQuery.paddingOf(context).bottom,
+          )),
+    );
     if (unit <= 0 || pageBottom <= basicPortraitSettingsContentTop) {
       return const SizedBox.shrink();
     }

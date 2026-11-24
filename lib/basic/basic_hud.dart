@@ -305,6 +305,8 @@ class BasicHudFrame {
     /// `player:lyrics-offset` 翻转）。竖屏不走这一层：竖屏的
     /// 歌词提前/延后/重置在「歌曲操作」面板里。
     bool lyricsOffsetOpen = false,
+    /// 竖屏窗口底部安全区（逻辑像素，= `MediaQuery.paddingOf(context).bottom`）。
+    double safeBottomLogical = 0,
   }) {
     final bool dark = state.dark;
     // 竖屏（compact）走独立排版：393 网格、归档主页 + 迷你播放条 + 底栏，
@@ -327,6 +329,7 @@ class BasicHudFrame {
         animateText: animateText,
         modal: modal,
         stageScale: stageScale,
+        safeBottomLogical: safeBottomLogical,
         queueScroll: queueScroll,
         queueModesExpanded: queueModesExpanded,
         plugins: plugins,
@@ -680,6 +683,7 @@ class BasicHudFrame {
     bool animateText = false,
     String modal = '',
     double stageScale = 0,
+    double safeBottomLogical = 0,
     BasicAuxPages? aux,
     double? queueScroll,
     bool queueModesExpanded = false,
@@ -742,6 +746,13 @@ class BasicHudFrame {
       unit: unit,
       gridWidth: gridWidth,
       height: portraitGridHeight(height, unit),
+      // 底部手势区只留真实内缩：画布高度已经扣过安全区，再按设计稿 34 留一遍
+      // 会把播放条与底栏顶高近 30 网格（用户 2026-11-24 报「底部组件抬太高」）。
+      gestureInset: portraitGestureInsetOf(
+        unit: unit,
+        stageScale: stageScale,
+        safeBottomLogical: safeBottomLogical,
+      ),
       dark: dark,
     );
     final List<BasicListItem> items = basicLibraryItems(state);
@@ -788,7 +799,7 @@ class BasicHudFrame {
     // （只有歌曲页改用 `playerBounds` 字段、歌词页换沉浸条）。百科/专辑信息/
     // 歌手/登录/MV/选择器这几页是我们自己的页面，也照同一收尾画，否则进页后
     // 底部整块空白、既看不到当前音轨也切不了 tab（真机缺陷）。
-    final double pageContentBottom = math.max(0, canvas.height - portraitFooterHeight);
+    final double pageContentBottom = math.max(0, canvas.height - canvas.footerHeight);
     void finishWithFooter(PortraitNav? nav) {
       canvas.ensureScale();
       paintPortraitFooter(canvas, player: portraitPlayer, nav: nav);
@@ -2092,6 +2103,7 @@ Rect basicLibraryListStageRect({
   required double width,
   double? height,
   double stageScale = 0,
+  double safeBottomLogical = 0,
 }) {
   // 竖屏 compact 版：列表区就是 1:1 分割线以下的整个下半屏（到播放条上沿），
   // 不再只算四行；绘制、拖动/点选与 ownership 共用这一份高度。
@@ -2099,7 +2111,14 @@ Rect basicLibraryListStageRect({
     final double unit = portraitUnit(width, stageScale: stageScale);
     final double gridHeight = portraitGridHeight(height, unit);
     final double top = portraitListTop(gridHeight);
-    final double bottom = math.max(top, gridHeight - portraitFooterHeight);
+    final double bottom = math.max(
+        top,
+        gridHeight -
+            portraitFooterHeightOf(portraitGestureInsetOf(
+              unit: unit,
+              stageScale: stageScale,
+              safeBottomLogical: safeBottomLogical,
+            )));
     return Rect.fromLTWH(
       0,
       top * unit,
@@ -2136,6 +2155,7 @@ List<Rect> basicHudRegionRects(
   required double width,
   double? height,
   double stageScale = 0,
+  double safeBottomLogical = 0,
   Rect? directTouchStageRect,
 }) {
   return <Rect>[
@@ -2145,6 +2165,7 @@ List<Rect> basicHudRegionRects(
       width: width,
       height: height,
       stageScale: stageScale,
+      safeBottomLogical: safeBottomLogical,
     ),
     // 资料库列表页：左侧 3D 直触区也归 HUD（整串指针由 HUD 消费，3D 层不再
     // 二次解释这条手势）。非列表阶段/尺寸退化时传 null，行为与扩展前一致。
@@ -2362,11 +2383,16 @@ class BasicHudSurface extends StatefulWidget {
     this.mv,
     this.mvPositionMs = 0,
     this.lyricsOffsetOpen = false,
+    this.safeBottomLogical = 0,
   });
 
   /// 横屏「歌词偏移」浮层是否打开（Qt `modal == "lyrics-offset"`）。
   /// 竖屏不消费：竖屏把提前/延后/重置放进「歌曲操作」面板。
   final bool lyricsOffsetOpen;
+
+  /// 竖屏窗口底部安全区（逻辑像素）。画布用它把「设计稿 34 网格手势区」换成
+  /// 真实内缩，避免播放条/底栏被顶高一个导航栏。
+  final double safeBottomLogical;
 
   final BasicViewState state;
   /// 当前平台显示名与「是否内置塞壬」：竖屏/横屏页头、详情页 provider 字段都读它。
@@ -2825,6 +2851,7 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       mv: widget.mv,
       mvPositionMs: widget.mvPositionMs,
       lyricsOffsetOpen: widget.lyricsOffsetOpen,
+      safeBottomLogical: widget.safeBottomLogical,
     );
     // 输入框矩形回传宿主：登录页手机号/验证码框要按画出来的位置摆输入层。
     widget.onFields?.call(frame.fields);
@@ -2857,6 +2884,7 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       width: stage.width,
       height: stage.height,
       stageScale: geometry.stageScale,
+      safeBottomLogical: widget.safeBottomLogical,
     );
     // 资料库列表页：把列表拖动的手势域从「仅右侧曲目列」扩到「右侧曲目列 ∪ 左侧
     // 3D 直触区」。只在列表阶段扩展——详情/歌词页的 3D 操作
