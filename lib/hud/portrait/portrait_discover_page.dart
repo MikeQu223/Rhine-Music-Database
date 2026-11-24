@@ -156,38 +156,44 @@ double paintPortraitDiscoverPage(
     c.section(y, '音乐档案', 'SELECTED / ${entries.length}');
     y += 25;
 
-    // 瓦片：2 列，169×144 封面 + 标题/艺人，命中 169×186 并被内容区底界裁掉。
+    // 瓦片：2 列。Qt 的稿子是「卡片 169×144 + 封面 144×144 + 编号落在右侧 25 宽的
+    // 竖条里（x+150）」，全部按 393 页宽算。这里保留同一比例、只把宽度换成格子宽：
+    // 封面 = 格宽 - 25，编号贴在封面右侧。写死 144 在 DPI 放大后（本机格宽 273）
+    // 会让封面只占格子一半、右边留一大条空白（真机「间距不对、重心偏移」）。
     final double contentBottom = c.contentBottom;
+    final double tileStep = (w - 40) / 2;
+    final double cardWidth = tileStep - 15;
+    final double coverSize = math.max(72, cardWidth - 25);
+    final double tileStride = coverSize + 52;
     for (final PortraitDiscoverEntry tile in entries.skip(1)) {
       final int i = tile.index;
       final int col = (i - 1) % 2;
       final int row = (i - 1) ~/ 2;
-      final double tileStep = (w - 40) / 2;
       final double x = 20 + col * tileStep;
-      final double top = y + row * 196;
-      final double tileWidth = tileStep - 15;
-      c.fill(Rect.fromLTWH(x, top, tileWidth, 144), c.surface);
+      final double top = y + row * tileStride;
+      c.fill(Rect.fromLTWH(x, top, cardWidth, coverSize), c.surface);
       if (tile.image.isNotEmpty) {
-        c.image(tile.image, Rect.fromLTWH(x, top, 144, 144));
+        c.image(tile.image, Rect.fromLTWH(x, top, coverSize, coverSize));
       }
-      c.text(_pad(i + 1), x + 150, top + 8, size: 8, width: 19, color: c.muted);
-      c.text(tile.title, x, top + 153, size: 12, width: 104, weight: 'demibold');
-      c.text(tile.artist, x, top + 173, size: 9, width: 169, color: c.muted);
-      final Rect tileRect = Rect.fromLTWH(x, top, 169, 186);
+      c.text(_pad(i + 1), x + coverSize + 6, top + 8, size: 8, width: 19, color: c.muted);
+      c.text(tile.title, x, top + coverSize + 9, size: 12,
+          width: math.max(60, coverSize - 40), weight: 'demibold');
+      c.text(tile.artist, x, top + coverSize + 29, size: 9, width: coverSize, color: c.muted);
+      final Rect tileRect = Rect.fromLTWH(x, top, cardWidth, coverSize + 42);
       final Rect? visible = _intersect(tileRect, Rect.fromLTWH(20, 130, w - 40, contentBottom - 130));
       if (visible != null && visible.height >= 8) {
         c.hit(visible, '$portraitDiscoverItemPrefix$i', tile.title);
         if (tile.isPlaylist) {
-          c.text('▶ 全部', x + 114, top + 154, size: 9, width: 55);
+          c.text('▶ 全部', x + coverSize - 30, top + coverSize + 10, size: 9, width: 55);
           c.hit(
-            Rect.fromLTWH(x + 110, top + 144, 59, 42),
+            Rect.fromLTWH(x + coverSize - 34, top + coverSize, 59, 42),
             '$portraitPlayDiscoverPrefix$i',
             '播放全部',
           );
         }
       }
     }
-    y += (entries.length ~/ 2) * 196;
+    y += (entries.length ~/ 2) * tileStride;
   } else {
     final double toolStep = (w - 40) / 2;
     for (int i = 0; i < tools.length; i += 1) {
