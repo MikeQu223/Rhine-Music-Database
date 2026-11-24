@@ -1504,7 +1504,9 @@ void main() {
       host.update(
         const TextInputStageState(
           stageScale: 0.5,
-          modal: 'saved',
+          // 只有真正的检索页会让检索框重新可见并抢焦点；`saved` 不算（见
+          // TextInputStageState.searchVisible 的注释）。
+          modal: 'search',
           inputX: 100,
           inputY: 200,
           inputWidth: 800,

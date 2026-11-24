@@ -265,6 +265,11 @@ void paintPortraitTerminalHeader(
   required String title,
   required String code,
   required String identifier,
+  /// 右上角图标（Qt `ResponsiveHudCanvas::header` 的最后一枚）。设置页用它进
+  /// 「我的音乐」总览——没有这枚图标，`saved` 页在竖屏里就没有入口了。
+  String trailingIcon = '',
+  String trailingAction = '',
+  String trailingLabel = '',
 }) {
   c.text('RHINE LAB', 23, 22, size: 17, width: 115, weight: 'bold');
   c.text('AUDIO TERMINAL', 23, 43, size: 7, width: 115, color: c.muted);
@@ -274,6 +279,10 @@ void paintPortraitTerminalHeader(
   c.fill(Rect.fromLTWH(20, 101, 25, 14), c.amber);
   c.centered(code, 32.5, 108, 8, 'demibold', c.ink);
   c.text(identifier, 53, 104, size: 7, width: w - 128, color: c.muted);
+  if (trailingIcon.isNotEmpty) {
+    c.icon(trailingIcon, w - 52, 79);
+    c.hit(Rect.fromLTWH(w - 64, 66, 44, 44), trailingAction, trailingLabel);
+  }
   c.fill(Rect.fromLTWH(20, 120, w - 40, .6), c.ink);
   final List<Object?> calibration = <Object?>[...c.line]..[3] = .6;
   for (double tick = 132; tick < c.contentBottom; tick += 16) {

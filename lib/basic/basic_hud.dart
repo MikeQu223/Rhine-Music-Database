@@ -965,9 +965,17 @@ class BasicHudFrame {
         canvas,
         player: portraitPlayer,
         nav: PortraitNav.settings,
-        title: '设置',
-        code: '03',
-        identifier: 'SETTINGS / 终端配置',
+        // 页头右上角那枚「我的音乐」入口（Qt `header()` 在设置页画 user 图标、
+        // 路由 `saved`）；不画的话竖屏就没有进总览页的路径了。
+        header: (PortraitCanvas header) => paintPortraitTerminalHeader(
+          header,
+          title: '设置',
+          code: '03',
+          identifier: 'SETTINGS / 终端配置',
+          trailingIcon: 'user',
+          trailingAction: 'saved',
+          trailingLabel: '我的音乐',
+        ),
       );
     } else if (modal == 'playlist-picker') {
       // Qt compact `music:add-to-playlist` 打开的是通用列表弹层

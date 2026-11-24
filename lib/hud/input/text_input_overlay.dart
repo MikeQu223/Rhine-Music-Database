@@ -292,8 +292,12 @@ class TextInputStageState {
   bool get formVisible =>
       modal == 'playlist-form' || (loginMode && loginMethod == 'phone');
 
-  /// Overlay.qml:526 —— 检索框的可见条件。
-  bool get searchVisible => modal == 'search' || modal == 'saved';
+  /// 检索框的可见条件。Qt 原文是 `modal === "search" || modal === "saved"`
+  /// （Overlay.qml:526），但 Qt compact 的 `saved` 总览页没有检索框（`library()`
+  /// 的 savedOverview 分支只画平台卡与收藏索引），照抄会让一个没有归属的输入条
+  /// 浮在「我的音乐」页顶、并把软键盘也一起拉起来（真机 2026-11-24）。这里只认
+  /// 真正画了检索框的 `search`。
+  bool get searchVisible => modal == 'search';
 
   /// Overlay.qml:566 / 578 —— 设置文本编辑框的可见条件。
   bool get settingEditVisible => editingSetting;
@@ -1127,6 +1131,17 @@ class TextInputOverlayState extends State<TextInputOverlay> {
       return;
     }
     node.requestFocus();
+  }
+
+  /// 宿主离开需要输入法的页面（关检索弹层、切 tab）时收键盘。
+  ///
+  /// 不收的话输入层与软键盘会一直挂在新页面上：真机上「我的音乐」总览页打开时
+  /// 顶上还压着检索框的占位文字、下半屏被键盘吃掉（用户 2026-11-24 报的
+  /// 「界面被键盘挡住」现象之一）。
+  void unfocusAll() {
+    for (final FocusNode node in _focusNodes.values) {
+      node.unfocus();
+    }
   }
 
   final Map<TextFieldKind, TextEditingController> _controllers =

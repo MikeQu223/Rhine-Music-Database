@@ -3819,6 +3819,11 @@ class _BasicShellState extends State<_BasicShell>
     if (_modal == modal || !mounted) {
       return;
     }
+    // 离开检索页就收键盘：输入层是独立 overlay，不主动失焦会一直挂在新页面上
+    // （真机「我的音乐」总览页顶上压着检索框占位、下半屏被键盘盖住）。
+    if (modal != 'search') {
+      _textInputKey.currentState?.unfocusAll();
+    }
     // Qt openModal 会 cacheMessage.clear()（Qt/src/NativeHudController.cpp:95）：
     // 开弹层时旧的动作反馈必须收起，否则「尚未接入」的提示会挂在搜索框上。
     // 资源失败横幅是另一槽（_resourceNotice），与弹层无关，不跟着清。
