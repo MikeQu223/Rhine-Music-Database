@@ -625,11 +625,27 @@ class _BasicShellState extends State<_BasicShell>
   String _installedProviderId = '';
 
   /// 平台 id → 已恢复的账号（Qt `providerCardsState()` 的 authenticated 面）。
-  /// 本预览没有账号恢复通道，恒为空表 ⇒ ACCOUNT 段一律「未登录」，不伪造登录态。
+  /// 冷启动能恢复的账号由插件侧 cookie 落盘决定，这里没有独立的恢复通道，
+  /// 真实来源是 [LoginController] 的 `account()`；[_providerAccountsView] 负责折算。
   final Map<String, ProviderAccount?> _providerAccounts = const <String, ProviderAccount?>{};
 
+  /// 已登录账号的展示面：把 [LoginController] 的账号折进平台 id 表。
+  ///
+  /// 不做这一步时平台页的 ACCOUNT 段一律「未登录」、设置页却说「已登录 Aibeto」，
+  /// 同一份状态两个说法（真机 2026-11-24 的截图对比）。
+  Map<String, ProviderAccount?> get _providerAccountsView {
+    final LoginState? login = _loginController?.state;
+    if (login == null || login.accountId.isEmpty) {
+      return _providerAccounts;
+    }
+    return <String, ProviderAccount?>{
+      ..._providerAccounts,
+      _providerId: ProviderAccount(id: login.accountId, nickname: login.nickname),
+    };
+  }
+
   /// 当前平台昵称（Qt `music.nickname`）。
-  String get _providerUserName => _providerAccounts[_providerId]?.nickname ?? '';
+  String get _providerUserName => _providerAccountsView[_providerId]?.nickname ?? '';
 
   /// `PlatformFeatures::LocalMusic`：关掉时 `local` 平台不进音乐平台页
   /// （Qt `providerCardsState()` 跳过 `id == "local"`；过滤由调用方做，页面
@@ -2113,7 +2129,7 @@ class _BasicShellState extends State<_BasicShell>
       // 音乐平台页（modal == 'provider'）的数据真值。
       providers: _providers,
       providerId: _providerId,
-      providerAccounts: _providerAccounts,
+      providerAccounts: _providerAccountsView,
       providerUserName: _providerUserName,
       localMusicEnabled: _localMusicEnabled,
       // 当前平台的显示名与「是否内置塞壬」（Qt `isSiren()`）：页头/详情页的
