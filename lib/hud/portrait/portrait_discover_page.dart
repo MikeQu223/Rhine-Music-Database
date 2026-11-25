@@ -26,6 +26,17 @@ const String portraitDiscoverMoreAction = 'discover:more';
 const String portraitDiscoverTabPrefix = 'discover:tab:';
 const String portraitPlayDiscoverPrefix = 'mobile:play-discover:';
 
+/// 单卡最大宽度（网格）。393 设计稿两列时卡片约 262 宽，这里取 200：
+/// 本机竖屏（586 网格）算出来仍是 2 列，只有更宽的舞台（平板 / 横屏面板复用）
+/// 才会加列，避免卡片被拉成巨幅、同时满足「限制单卡最大宽度、按宽度动态列数」。
+const double portraitDiscoverTileMaxWidth = 200;
+
+/// 发现页瓦片列数：按页宽动态，2..6 列。
+int portraitDiscoverColumnsForWidth(double gridWidth) {
+  final double usable = math.max(1, gridWidth - 40);
+  return (usable / portraitDiscoverTileMaxWidth).floor().clamp(2, 6);
+}
+
 /// 一行发现条目（Qt `DiscoverEntry` 的竖屏投影）。
 class PortraitDiscoverEntry {
   const PortraitDiscoverEntry({
@@ -158,19 +169,21 @@ double paintPortraitDiscoverPage(
     c.section(y, '音乐档案', 'SELECTED / ${entries.length}');
     y += 25;
 
-    // 瓦片：2 列。Qt 的稿子是「卡片 169×144 + 封面 144×144 + 编号落在右侧 25 宽的
-    // 竖条里（x+150）」，全部按 393 页宽算。这里保留同一比例、只把宽度换成格子宽：
-    // 封面 = 格宽 - 25，编号贴在封面右侧。写死 144 在 DPI 放大后（本机格宽 273）
-    // 会让封面只占格子一半、右边留一大条空白（真机「间距不对、重心偏移」）。
+    // 瓦片列数按页宽动态（见 [portraitDiscoverColumnsForWidth]）。Qt 的稿子是
+    // 「卡片 169×144 + 封面 144×144 + 编号落在右侧 25 宽的竖条里（x+150）」，
+    // 全部按 393 页宽算；这里保留同一比例、只把宽度换成格子宽，封面 = 格宽 - 25，
+    // 编号贴在封面右侧。写死 144 在 DPI 放大后（本机格宽 273）会让封面只占格子一半、
+    // 右边留一大条空白（真机「间距不对、重心偏移」）。
     final double contentBottom = c.contentBottom;
-    final double tileStep = (w - 40) / 2;
+    final int columns = portraitDiscoverColumnsForWidth(w);
+    final double tileStep = (w - 40) / columns;
     final double cardWidth = tileStep - 15;
     final double coverSize = math.max(72, cardWidth - 25);
     final double tileStride = coverSize + 52;
     for (final PortraitDiscoverEntry tile in entries.skip(1)) {
       final int i = tile.index;
-      final int col = (i - 1) % 2;
-      final int row = (i - 1) ~/ 2;
+      final int col = (i - 1) % columns;
+      final int row = (i - 1) ~/ columns;
       final double x = 20 + col * tileStep;
       final double top = y + row * tileStride;
       c.fill(Rect.fromLTWH(x, top, cardWidth, coverSize), c.surface);
@@ -195,7 +208,9 @@ double paintPortraitDiscoverPage(
         }
       }
     }
-    y += (entries.length ~/ 2) * tileStride;
+    final int tileRows =
+        entries.length <= 1 ? 0 : ((entries.length - 1 + columns - 1) ~/ columns);
+    y += tileRows * tileStride;
   } else {
     final double toolStep = (w - 40) / 2;
     for (int i = 0; i < tools.length; i += 1) {
