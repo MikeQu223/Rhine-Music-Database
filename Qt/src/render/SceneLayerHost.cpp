@@ -234,9 +234,15 @@ bool SceneLayerHost::createLayerTargets(Layer &layer, const char *name) {
                         .arg(pixelSize().height()));
     }
 
-    // Qt Quick 的二维批次仍会启用深度测试，裁剪也可能使用模板；目标必须提供对应附件。
+    // Qt Quick 的不透明二维批次会使用深度测试，裁剪也可能使用模板。
     QRhiTextureRenderTargetDescription description{QRhiColorAttachment(layer.texture)};
-    if (m_rhi->backend() == QRhi::Metal) {
+    const auto backend = m_rhi->backend();
+#ifdef Q_OS_WIN
+    const bool overlayDepthStencil = &layer == &m_overlay && (backend == QRhi::D3D12 || backend == QRhi::Vulkan);
+#else
+    constexpr bool overlayDepthStencil = false;
+#endif
+    if (backend == QRhi::Metal || overlayDepthStencil) {
         layer.depthStencil = m_rhi->newRenderBuffer(QRhiRenderBuffer::DepthStencil, pixelSize());
         if (!layer.depthStencil->create()) {
             releaseLayerTargets(layer);
