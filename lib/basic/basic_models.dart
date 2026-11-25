@@ -1149,6 +1149,30 @@ class BasicListItem {
   }
 }
 
+/// Qt `MusicLibrary::libraryTotal()`（Qt/src/MusicLibrary.cpp:429-436）的真值。
+///
+/// 目录打开时取 `max(ids.size(), item["trackCount"], songs.size())`——三者可以不等：
+/// `ids` 是完整顺序，`songs` 可能只落了前段（增量补全未跑完），`trackCount` 由平台声明。
+/// 目录外就是当前列条目数（`sourceItems(selectedLane).size()`）；基础版没有分组，
+/// 所以没有 Qt 的 `totals[selectedLane]` 分支。
+///
+/// HUD 的 `TRACK / SELECT` 下方数字必须用它，不能用 `items.length`——目录分页时
+/// `items` 只是已落地的曲目，会把总数报小（`Qt/src/NativeHud.cpp:725`）。
+int basicLibraryTotal(BasicViewState state, List<BasicListItem> items) {
+  final BasicDirectory? directory = state.directory;
+  if (directory == null) {
+    return items.length;
+  }
+  var total = directory.ids.length;
+  if (directory.trackCount > total) {
+    total = directory.trackCount;
+  }
+  if (directory.songs.length > total) {
+    total = directory.songs.length;
+  }
+  return total;
+}
+
 /// 绘制与命中共用的一份列表真值。
 ///
 /// 根页**只列 selectedLane 这一列**（Qt/src/MusicLibrary.cpp:195-207 sourceItems(lane)：

@@ -1910,7 +1910,7 @@ class BasicHudFrame {
       s: HudArchiveState(
         libraryName: basicLibraryTitle(state, providerName: providerName),
         libraryIndex: selected,
-        libraryTotal: items.length,
+        libraryTotal: basicLibraryTotal(state, items),
         // 真实列：Qt `selectedLane` / `sourceOrder().indexOf(selectedLane)` /
         // columns.size()（Qt/src/NativeHud.cpp:479-490 的 COLLECTION xx / 05）。
         selectedLane: state.selectedLane.clamp(0, state.laneColumns.length - 1).toInt(),
