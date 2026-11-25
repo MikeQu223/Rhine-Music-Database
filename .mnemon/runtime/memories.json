@@ -30,9 +30,9 @@
       "importance": "normal"
     },
     {
-      "content": "Rhine-Music-Database feat/flutter 现状（2026-11-20）：tip 64f3a15，2026-11-19/20 追加 56 个提交全是构建/CI/性能工作（LTO、-Oz+ICF、esbuild 压缩、R8、按 ABI 分片、Clarity SDK、亮色主题默认），竖屏 UI 侧自 4beb444 后只落 6616fd3（列表显示不全/底部空白）与 2de9a95（3D 与列表 1:1 分割）、679a76a（资料库亮色）。正式构建入口自 11-19 改为 `npm run build:flutter:android`（scripts/build-flutter-android.cjs，产物 build/app/outputs/flutter-apk/app-arm64-v8a-<mode>.apk，versionCode=pubspec +N=79900）；旧「四 env + 裸 flutter build apk」命令与 `.agents/parity-20261109/builds/…` 路径已失效（.agents 已于 11-19 删除，截图/报告迁到 docs/flutter-migration/archive/）。",
+      "content": "Rhine-Music-Database 8 项功能迁移现状（2026-11-23）：集成分支 flutter/feature-parity（自 feat/flutter 的 64f3a15 切出），tip eb4499bf8；Flutter 构建配方 `RHINE_QT_ANDROID_DEPLOY_DIR=$PWD/output/qt-android-flutter/Qt/android-build JAVA_HOME=$PWD/output/android-work/jdk/jdk-21.0.13+9 ANDROID_HOME=/home/aibeto/Android/Sdk ANDROID_SDK_ROOT=/home/aibeto/Android/Sdk flutter build apk --debug --target-platform android-arm64 --no-pub`（20–30s）+ `adb -s 526f6b6d install -r -t build/app/outputs/flutter-apk/app-debug.apk`；门禁是 `flutter analyze lib/` 0 error；`test/basic` 仍 9 条基线失败（hud_text_142 5、interaction_133 2、interaction_134 1、runtime_startup 1），改动前后逐条比对不算回归。",
       "created_at": "2026-11-19T18:18:20.170Z",
-      "updated_at": "2026-11-19T18:18:20.170Z",
+      "updated_at": "2026-11-22T17:52:03.019Z",
       "target": "memory",
       "importance": "critical"
     },
@@ -40,6 +40,34 @@
       "content": "Rhine-Music-Database 竖屏迁移遗留（2026-11-20 核实）：①检索页仍缺 Qt compact 的 `02 SEARCH / 档案检索` 终端页头与时长/编号列（`lib/hud/portrait/portrait_pages_library.dart:157-265` 现用 `c.header('音乐检索', back: true)` + tab 行 + 「检索结果」行）；②插件系统的竖屏页（`lib/basic/basic_plugins_portrait.dart`）是唯一实现，横屏只有设置页里的入口行（`lib/basic/basic_settings_window.dart:52,75,226-228` 的 `pluginsEntry`），横屏插件页未做；③`docs/flutter-migration/acceptance/portrait.md` 仍是 11-10 的计划态（WAIT-CANDIDATE/WAIT-GOLDEN/DEVICE_BLOCKED，未执行、未取证），不代表当前实现状态。",
       "created_at": "2026-11-19T18:20:41.773Z",
       "updated_at": "2026-11-19T18:20:41.773Z",
+      "target": "memory",
+      "importance": "normal"
+    },
+    {
+      "content": "Rhine-Music-Database 竖屏/8 项功能（分支 flutter/feature-parity，2026-11-21 00:1x）：插件系统、平台切换、登录、评论、MV、喜欢/歌单、分类搜索、播放队列已全部接线（竖屏+横屏），真机验证喜欢可落盘（panel/collections/siren.json）、检索页终端页头、发现页/播放历史。已知边界：Flutter 侧无 Node 网关，插件平台的真实数据面仍由 Qt 承担，曲库恒为塞壬；登录/评论/MV 网关恒回「当前来源不支持该功能」。遗留：240Hz 卡顿本体、封面查看器 fault0x28、两次 git -c 违规待裁决。",
+      "created_at": "2026-11-20T16:12:48.220Z",
+      "updated_at": "2026-11-20T16:12:48.220Z",
+      "target": "memory",
+      "importance": "normal"
+    },
+    {
+      "content": "Rhine-Music-Database feat/flutter：插件平台的真实数据面已由 Flutter 侧自建 Node 桥打通（`android/app/src/main/cpp/node_host.cpp` JNI dlopen libnode.so 调 `node::Start`；`porting/PluginBridge.kt` 起 ServerSocket 行协议，业务请求必须 base64 套 `{type:'input'}` 信封；`lib/provider/plugin_gateway.dart` 的插件方法参数必须是**位置参数数组**（worker 走 `method.apply(api, args)`），会话 cookie 必须以 `{name:value}` 对象随每次请求回传（host.cjs 是 `{...message.cookies}`）。首启 node 约 90s。",
+      "created_at": "2026-11-20T18:18:56.629Z",
+      "updated_at": "2026-11-20T18:18:56.629Z",
+      "target": "memory",
+      "importance": "normal"
+    },
+    {
+      "content": "无人值守任务纪律（Rhine-Music-Database 本次 8 项功能）：用户要求全程不停手等指令、不提问；原话 m27968「我没有批准你中途停下来」、m28901「我没有让你停下来」、m20604 附近因用 ask_user_question 请示被明确斥责。只在真正被阻塞时才汇报，其余时间直接推进并边做边提交。",
+      "created_at": "2026-11-22T17:52:22.349Z",
+      "updated_at": "2026-11-22T17:52:22.349Z",
+      "target": "memory",
+      "importance": "critical"
+    },
+    {
+      "content": "Rhine-Music-Database 8 项功能交付状态（2026-11-23 核对）：插件系统、多平台切换、登录（扫码）、评论、MV、喜欢/歌单、分类检索、播放队列均已接线且多数真机验证。仍缺：①插件卸载二次确认弹层未移植、移动端无「从文件导入」；②短信登录未实测（需退出当前网易云会话）；③插件平台检索的「歌手分组/专辑分组」只按本地曲库算（`searchGroups()` 读 `_catalogSongs`），分组为空；④专辑/歌单行封面在插件平台为空；⑤横屏发现页与「加入歌单」选择器仍用竖屏 393 稿按高度重采样（窄栏），Qt 桌面端是横屏库页骨架；⑥MV 多版本切换与逐帧同步未核；⑦插件平台「我的歌单」列与歌单封面未核。",
+      "created_at": "2026-11-22T17:52:38.126Z",
+      "updated_at": "2026-11-22T17:52:38.126Z",
       "target": "memory",
       "importance": "normal"
     }
