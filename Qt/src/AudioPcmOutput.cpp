@@ -62,8 +62,8 @@ bool AudioPcmOutput::open(const QAudioFormat &source) {
     input = source;
     const auto supported = [this](const QAudioFormat &format) {
 #ifdef Q_OS_WIN
-        // Exclusive capability belongs to the endpoint driver, not Qt's shared-mode query.
-        if (exclusive) {
+        // WASAPI resolves the live system mix and probes exclusive formats itself.
+        if (exclusive || policy == AudioOutputFormat::Policy::System) {
             return true;
         }
 #endif

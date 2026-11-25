@@ -1,5 +1,6 @@
 #include <QtGlobal>
 #ifdef Q_OS_WIN
+#include "AudioOutputFormat.h"
 #include "WindowsAudioOutput.h"
 #endif
 #include <QAudioBufferOutput>
@@ -143,15 +144,34 @@ int main(int argc, char **argv) {
 #ifdef Q_OS_WIN
     const auto device = QMediaDevices::defaultAudioOutput();
     if (!device.isNull()) {
+        const auto mix = AudioOutputFormat::systemFormat(device).format;
+        QAudioFormat sharedHint;
+        if (mix.isValid()) {
+            sharedHint = mix;
+            sharedHint.setSampleRate(mix.sampleRate() == 44100 ? 48000 : 44100);
+            if (!device.isFormatSupported(sharedHint)) {
+                sharedHint = mix;
+                sharedHint.setSampleFormat(mix.sampleFormat() == QAudioFormat::Int16 ? QAudioFormat::Float
+                                                                                     : QAudioFormat::Int16);
+            }
+            if (!device.isFormatSupported(sharedHint)) {
+                std::fprintf(stderr, "SKIP: no alternate shared PCM type reported for this device\n");
+                sharedHint = {};
+            }
+        }
         for (bool exclusive : {false, true}) {
             WindowsAudioOutput output;
-            const bool opened = output.open(device.id(), exclusive);
+            const bool opened = output.open(device.id(), exclusive, exclusive ? QAudioFormat{} : sharedHint);
             ok &= check(opened, "WASAPI shared/exclusive endpoint must open");
             if (!opened) {
                 continue;
             }
             output.setVolume(0);
             const auto format = output.format();
+            if (!exclusive && sharedHint.isValid()) {
+                ok &= check(format == mix,
+                            "WASAPI shared default must use the live mix format over the PCM hint");
+            }
             // Shared WASAPI can queue a full device buffer before its clock starts.
             QAudioBuffer buffer(QByteArray(format.bytesForDuration(800000), '\0'), format);
             output.enqueue(buffer);
