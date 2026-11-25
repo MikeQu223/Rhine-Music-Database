@@ -454,6 +454,12 @@ if(WIN32 OR IOS OR (APPLE AND NOT RHINE_MOBILE_PLATFORM))
         Assets/audio/ui/archive-select.wav
         Assets/audio/ui/startup-voice-1.wav
         Assets/audio/ui/startup-voice-2.wav
+        Assets/audio/ui/startup-voice-3.wav
+        Assets/audio/ui/startup-voice-4.wav
+        Assets/audio/ui/startup-voice-5.wav
+        Assets/audio/ui/startup-voice-6.wav
+        Assets/audio/ui/startup-voice-7.wav
+        Assets/audio/ui/startup-voice-8.wav
         Assets/audio/ui/window-transition.wav)
 endif()
 qt_add_resources(

@@ -26,12 +26,31 @@ constexpr int MinimumCueIntervalMs = 52;
 constexpr int CueExpiryMs = 55;
 // 页面开合优先于资料库选中声，留出 261 ms 音频及线程调度的时间。
 constexpr int SurfaceQuietMs = 280;
-// 两段语音最长 1090 ms，期间保留单声道反馈优先权。
-constexpr int StartupQuietMs = 1110;
-enum class Clip { Selection, Surface, StartupVoice1, StartupVoice2, Count };
-constexpr std::array CueFiles{"archive-select.wav", "window-transition.wav",
-                              "startup-voice-1.wav", "startup-voice-2.wav"};
+// 八段语音最长约 6965 ms，期间保留单声道反馈优先权。
+constexpr int StartupQuietMs = 7000;
+constexpr int StartupProbabilityBucketCount = 100;
+constexpr int OriginalStartupVoiceProbabilityPercent = 35;
+constexpr int NewStartupVoiceProbabilityPercent = 5;
+enum class Clip {
+    Selection,
+    Surface,
+    StartupVoice1,
+    StartupVoice2,
+    StartupVoice3,
+    StartupVoice4,
+    StartupVoice5,
+    StartupVoice6,
+    StartupVoice7,
+    StartupVoice8,
+    Count
+};
+constexpr std::array CueFiles{"archive-select.wav",  "window-transition.wav", "startup-voice-1.wav",
+                              "startup-voice-2.wav", "startup-voice-3.wav",   "startup-voice-4.wav",
+                              "startup-voice-5.wav", "startup-voice-6.wav",   "startup-voice-7.wav",
+                              "startup-voice-8.wav"};
 static_assert(CueFiles.size() == size_t(Clip::Count));
+static_assert(2 * OriginalStartupVoiceProbabilityPercent + 6 * NewStartupVoiceProbabilityPercent ==
+              StartupProbabilityBucketCount);
 }
 
 class UiSoundFeedback::Output : public QObject {
@@ -198,8 +217,17 @@ void UiSoundFeedback::tryPlayStartup() {
         [this, output = m_output, generation] {
             const bool submitted = output->generation.load() == generation;
             if (submitted) {
-                const bool useFirstVoice = QRandomGenerator::global()->bounded(2) == 0;
-                output->play(useFirstVoice ? Clip::StartupVoice1 : Clip::StartupVoice2);
+                const int probabilityBucket =
+                    QRandomGenerator::global()->bounded(StartupProbabilityBucketCount);
+                int voiceIndex = 0;
+                if (probabilityBucket >= 2 * OriginalStartupVoiceProbabilityPercent) {
+                    voiceIndex = 2 + (probabilityBucket - 2 * OriginalStartupVoiceProbabilityPercent) /
+                                         NewStartupVoiceProbabilityPercent;
+                } else if (probabilityBucket >= OriginalStartupVoiceProbabilityPercent) {
+                    voiceIndex = 1;
+                }
+                const auto clip = static_cast<Clip>(static_cast<int>(Clip::StartupVoice1) + voiceIndex);
+                output->play(clip);
             }
             // 析构会等待音效线程退出，回执在 GUI 线程处理并随接收对象销毁。
             QMetaObject::invokeMethod(
