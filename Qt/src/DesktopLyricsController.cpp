@@ -12,10 +12,10 @@ namespace {
 DesktopLyrics::TextMetrics makeMetrics(Glyphs *glyphs) {
     return {
         [glyphs](const QString &text, double width, double size, const QString &weight) {
-            return glyphs->wrap(text, width, size, weight);
+            return glyphs->wrapAtSize(text, width, size, weight);
         },
         [glyphs](const QString &text, double size, const QString &weight) {
-            return glyphs->width(text, size, weight);
+            return glyphs->widthAtSize(text, size, weight);
         },
     };
 }

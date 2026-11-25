@@ -81,7 +81,8 @@ class Painter {
             }
             value += "…";
         }
-        drawing.commands.append(QJsonArray{"text", value, x, y, size, weight, 0, secondary ? muted : ink});
+        drawing.commands.append(
+            QJsonArray{"text", value, x, y, size * glyphs.textScale(), weight, 0, secondary ? muted : ink});
     }
     void hit(QRectF rect, QString action, QString label) {
         drawing.hits.append(QJsonObject{{"x", rect.x()},
@@ -118,8 +119,9 @@ class Painter {
     void chrome(const State &state, QRectF bounds) {
         const auto x = bounds.x() + 28;
         const auto width = bounds.width() - 56;
-        label("RHINE LAB", x, bounds.y() + 6, 17, width, "bold");
-        label("莱茵生命 / 音频终端", x + 145, bounds.y() + 10, 11, width - 145);
+        const auto brandWidth = 145 + 120 * (glyphs.textScale() - 1);
+        label("RHINE LAB", x, bounds.y() + 6, 17, brandWidth, "bold");
+        label("莱茵生命 / 音频终端", x + brandWidth, bounds.y() + 10, 11, width - brandWidth);
         fill({bounds.x(), bounds.y() + HeaderHeight - 1, bounds.width(), 1}, line);
         const auto bottom = bounds.y() + HeaderHeight + RowHeight;
         fill({bounds.x(), bottom, bounds.width(), 1}, line);
@@ -151,8 +153,12 @@ void song(Painter &paint, const State &state, double x, double y, double width) 
     } else if (state.loading) {
         caption = "BUFFERING / 正在缓冲";
     }
-    paint.label(caption, infoX, y + 13, 11, infoWidth, "regular", true);
-    paint.label(state.title.isEmpty() ? "尚未播放" : state.title, infoX, y + 32, 23, infoWidth, "demibold");
+    const auto scale = paint.glyphs.textScale();
+    const auto extra = scale - 1;
+    paint.label(caption, infoX, y + 13 - 12 * extra, 11, infoWidth, "regular", true);
+    const auto titleSize = std::min(23., 33. / scale);
+    paint.label(state.title.isEmpty() ? "尚未播放" : state.title, infoX, y + 32 - 5 * extra, titleSize,
+                infoWidth, "demibold");
     auto detail = state.artist;
     if (!state.album.isEmpty()) {
         detail += " / " + state.album;
@@ -179,8 +185,9 @@ void timeline(Painter &paint, const State &state, QRectF row) {
         paint.hit(*paint.drawing.seek, "player:seek-fraction:0", "播放进度");
     }
     const auto center = row.center().x();
-    paint.label(clock(state.positionMs), center - 157, row.y() + 42, 11, 50, "regular", true);
-    paint.label(clock(state.durationMs), center + 110, row.y() + 42, 11, 50, "regular", true);
+    const auto clockWidth = 50 + 22 * (paint.glyphs.textScale() - 1);
+    paint.label(clock(state.positionMs), center - 157, row.y() + 42, 11, clockWidth, "regular", true);
+    paint.label(clock(state.durationMs), center + 110, row.y() + 42, 11, clockWidth, "regular", true);
 }
 
 // 附加操作与播放键共用行中心，图标采用相同的细线、直角和倒角语言。
@@ -235,7 +242,9 @@ void lyrics(Painter &paint, const State &state, double x, double y) {
 void output(Painter &paint, const State &state, double x, double y, double right) {
     paint.fill({x - 22, y + 23, 1, 50}, paint.line);
     paint.label("OUTPUT / 输出", x, y + 29, 11, 180, "regular", true);
-    paint.label(state.applicationVolume ? "音量" : "系统音量", x, y + 53, 14, 78);
+    const auto scale = paint.glyphs.textScale();
+    const double volumeLabelWidth = state.applicationVolume && scale > 1 ? 54 : 78;
+    paint.label(state.applicationVolume ? "音量" : "系统音量", x, y + 53, 14, volumeLabelWidth);
     if (state.applicationVolume) {
         const auto volumeX = x + 58;
         paint.drawing.volume = QRectF(volumeX, y + 47, 100, 28);
@@ -243,7 +252,8 @@ void output(Painter &paint, const State &state, double x, double y, double right
         paint.fill({volumeX, y + 60, 100 * std::clamp(state.volume, 0.0, 1.0), 3}, paint.ink);
         paint.hit(*paint.drawing.volume, "player:volume-fraction:0", "音量");
         const auto volume = int(std::lround(std::clamp(state.volume, 0.0, 1.0) * 100));
-        paint.label(QString::number(volume) + "%", volumeX + 108, y + 53, 11, 42, "regular", true);
+        paint.label(QString::number(volume) + "%", volumeX + 108, y + 53, 11, 42 + 30 * (scale - 1),
+                    "regular", true);
     }
     const auto queueX = right - 65;
     paint.fill({queueX, y + 28, 19, 1.5}, paint.ink);

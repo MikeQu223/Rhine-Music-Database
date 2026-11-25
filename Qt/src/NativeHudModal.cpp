@@ -216,8 +216,18 @@ void NativeHud::modalDraw(double width) {
            : modal == "shortcuts"    ? "shortcuts:back"
                                      : "close-modal",
            20, "demibold");
-    text(modalTitle(modal, music), x + 53, y + 91, pluginPage ? 44 : 38, "demibold");
-    text(modalSubtitle(modal, music), x + 53, y + 147, pluginPage ? 17 : (modal == "settings" ? 18 : 15));
+    const auto extra = textScale() - 1;
+    const double titleSize = pluginPage ? 44. : 38.;
+    const double subtitleSize = pluginPage ? 17. : (modal == "settings" ? 18. : 15.);
+    if (extra > 0) {
+        limited(modalTitle(modal, music), x + 53, y + 91 - titleSize * extra, titleSize,
+                usable - 106, "demibold");
+        limited(modalSubtitle(modal, music), x + 53, y + 147 - subtitleSize * extra, subtitleSize,
+                usable - 106);
+    } else {
+        text(modalTitle(modal, music), x + 53, y + 91, titleSize, "demibold");
+        text(modalSubtitle(modal, music), x + 53, y + 147, subtitleSize);
+    }
     modalBody(x, y, usable);
     m_modalControls = false;
     restore();

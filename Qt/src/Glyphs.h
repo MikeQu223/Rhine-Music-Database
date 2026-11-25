@@ -22,10 +22,14 @@ class Glyphs : public QObject {
         double advance = 1;
         QPainterPath path;
     };
+    double textScale() const;
+    void setTextScale(double scale);
     Q_INVOKABLE double width(QString text, double size, QString weight = "regular", double tracking = 0);
     Q_INVOKABLE QVariantMap bounds(QString text, double size, QString weight = "regular");
     Q_INVOKABLE double inset(QString text, double size, QString weight = "regular");
     Q_INVOKABLE QStringList wrap(QString text, double width, double size, QString weight = "regular");
+    double widthAtSize(const QString &text, double size, const QString &weight, double tracking = 0);
+    QStringList wrapAtSize(const QString &text, double width, double size, const QString &weight);
     Q_INVOKABLE double artWidth(QString key, double size, double tracking = 0, int count = -1);
     void text(QPainter &ctx, QString text, double x, double y, double size, QString weight, double tracking,
               QColor color);
@@ -45,6 +49,9 @@ class Glyphs : public QObject {
     void clearBlurCache();
 
   private:
+    // 界面线程测量时读取倍率，绘制线程直接消费命令中的实际字号。
+    double m_textScale = 1.;
+    QVariantMap boundsAtSize(const QString &text, double size, const QString &weight);
     // 字体只读映射必须晚于 QRawFont 析构，避免后端仍引用输入字节。
     std::vector<std::unique_ptr<QFile>> mappedFonts;
     QRawFont loadFont(const QString &filename);

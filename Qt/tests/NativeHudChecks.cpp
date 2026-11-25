@@ -134,7 +134,7 @@ bool checkSettingsSchema() {
     audio.append("audio-exclusive");
 #endif
     audio.append("alternative");
-    QStringList preferences{"theme", "archive-mask", "play-button-style"};
+    QStringList preferences{"theme", "text-scale", "archive-mask", "play-button-style"};
     if constexpr (PlatformFeatures::InterfaceSounds) {
         preferences.append("ui-sounds");
     }
@@ -164,10 +164,20 @@ bool checkSettingsSchema() {
 
     SettingsSchema::SettingsContext context;
     const auto *theme = SettingsSchema::find("theme");
+    const auto *textScale = SettingsSchema::find("text-scale");
     const auto *transition = SettingsSchema::find("apple-smart-transition");
     if (!theme || SettingsSchema::resolvedDefault(*theme, context) != "system" ||
         (transition && SettingsSchema::resolvedDefault(*transition, context) != "on")) {
         qCritical() << "Settings defaults did not adopt system theme and enabled transitions";
+        return false;
+    }
+    if (!textScale || textScale->binding.preferenceKey != "text-scale" ||
+        SettingsSchema::resolvedDefault(*textScale, context) != "100" ||
+        SettingsSchema::choices(*textScale, context).size() != 4 ||
+        SettingsSchema::normalize(*textScale, context, "invalid") != "100" ||
+        SettingsSchema::normalize(*textScale, context, "200") != "130" ||
+        !Host::isPreferenceKey("text-scale")) {
+        qCritical() << "Interface scale preference is missing its default, choices, migration, or key";
         return false;
     }
     if constexpr (PlatformFeatures::InterfaceSounds) {

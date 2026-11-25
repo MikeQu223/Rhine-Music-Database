@@ -14,6 +14,11 @@ bool PlatformFeatures::discRotationAvailable() {
     return available;
 }
 
+bool PlatformFeatures::textScaleAvailable() {
+    static const bool available = [UIDevice currentDevice].userInterfaceIdiom != UIUserInterfaceIdiomPhone;
+    return available;
+}
+
 namespace {
 static NSString *const credentialAccount = @"credentials";
 NSDictionary *credentialQuery() {

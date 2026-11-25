@@ -200,6 +200,11 @@ class NativeHud : public QObject {
     bool m_playMorphTarget = false;
     bool m_playMorphReady = false;
     bool m_boxedPlayButton = false;
+    double m_interfaceScale = 1.;
+    double m_appliedInterfaceScale = 1.;
+    double textScale() const {
+        return m_appliedInterfaceScale;
+    }
     double playMorph(double time) const;
     /// 进入 detail 的真实墙钟时刻（QDateTime 毫秒）。HUD 淡入不能只依赖
     /// frame["detail"]：那个值来自 m_animationTime 伪时钟，引擎休眠时会永久停住。

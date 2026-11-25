@@ -34,6 +34,7 @@ QJsonArray soft(bool dark) {
 
 void NativeHud::commentsPanel(double x, double width) {
     auto &comments = m_music->comments;
+    const auto scale = textScale();
     const auto foreground = inkColor(dark);
     const auto secondary = muted(foreground);
     const auto maximum = std::max(0., commentsContentBottom - ListTop - (ListBottom - ListTop));
@@ -95,18 +96,18 @@ void NativeHud::commentsPanel(double x, double width) {
         const auto message = comments.message.isEmpty() ? QStringLiteral("正在读取评论…") : comments.message;
         const auto lines = m_glyphs->wrap(message, width - 24, 18);
         for (int index = 0; index < int(lines.size()); ++index) {
-            text(lines.at(index), x, y + 24 + index * 30, 18, "regular", 0, secondary);
+            text(lines.at(index), x, y + 24 * scale + index * 30 * scale, 18, "regular", 0, secondary);
         }
-        y += 24 + lines.size() * 30 + 16;
+        y += (24 + lines.size() * 30 + 16) * scale;
     } else if (comments.status == "error" || comments.status == "empty") {
         const auto message = comments.message.isEmpty() ? QStringLiteral("暂无评论") : comments.message;
         const auto lines = m_glyphs->wrap(message, width - 24, 18);
         for (int index = 0; index < int(lines.size()); ++index) {
-            text(lines.at(index), x, y + 24 + index * 30, 18, "regular", 0, secondary);
+            text(lines.at(index), x, y + 24 * scale + index * 30 * scale, 18, "regular", 0, secondary);
         }
-        y += 24 + lines.size() * 30 + 16;
+        y += (24 + lines.size() * 30 + 16) * scale;
         button("重新加载", x, y, 150, 48, "comments:retry", 18);
-        y += 66;
+        y += 66 * scale;
     } else {
         for (const auto &item : comments.items) {
             const auto id = item["id"].toString();
@@ -133,12 +134,12 @@ void NativeHud::commentsPanel(double x, double width) {
             if (!expanded && lines.size() > 6) {
                 lines = lines.mid(0, 6);
             }
-            double rowY = y + 36;
+            double rowY = y + 36 * scale;
             for (const auto &line : lines) {
                 text(line, x + ContentX, rowY, ContentSize, "regular");
-                rowY += ContentLine;
+                rowY += ContentLine * scale;
             }
-            const double metaY = rowY + 12;
+            const double metaY = rowY + 12 * scale;
             const auto liked = QStringLiteral("♥ ") + CommentsController::compactCount(item["likedCount"].toInt());
             text(liked, x + ContentX, metaY, MetaSize, "regular", 0, secondary);
             const auto replyCount = item["replyCount"].toInt();
@@ -156,7 +157,7 @@ void NativeHud::commentsPanel(double x, double width) {
                 limited(label, x + width - 84, metaY, MetaSize, 84, "regular");
                 hit(x + width - 94, metaY - 14, 96, 48, "comments:expand:" + id, label);
             }
-            double afterMeta = metaY + 36;
+            double afterMeta = metaY + 36 * scale;
             const auto replies = repliesExpanded ? item["replies"].toArray() : item["inlineReplies"].toArray();
             if (!replies.isEmpty() || item["repliesLoading"].toBool() ||
                 !item["repliesError"].toString().isEmpty()) {
@@ -169,7 +170,7 @@ void NativeHud::commentsPanel(double x, double width) {
                     QStringList lines;
                 };
                 QVector<ReplyBlock> blocks;
-                double blockHeight = 32;
+                double blockHeight = 32 * scale;
                 for (const auto &replyValue : replies) {
                     const auto reply = replyValue.toObject();
                     auto prefix = reply["nickname"].toString();
@@ -184,7 +185,7 @@ void NativeHud::commentsPanel(double x, double width) {
                     block.prefixWidth = m_glyphs->width(prefix, ReplySize, "demibold");
                     block.lines = m_glyphs->wrap(text, innerWidth, ReplySize);
                     blocks.append(block);
-                    blockHeight += block.lines.size() * ReplyLine + 10;
+                    blockHeight += (block.lines.size() * ReplyLine + 10) * scale;
                 }
                 QString statusText;
                 QString statusAction;
@@ -201,10 +202,10 @@ void NativeHud::commentsPanel(double x, double width) {
                     statusAction = "comments:replies-more:" + id;
                 }
                 if (!statusText.isEmpty()) {
-                    blockHeight += 34;
+                    blockHeight += 34 * scale;
                 }
                 fill(x + ContentX, blockTop, width - ContentX, blockHeight, soft(dark));
-                double replyY = blockTop + 16;
+                double replyY = blockTop + 16 * scale;
                 for (const auto &block : blocks) {
                     const bool inlineName = block.prefixWidth < innerWidth - 48;
                     if (inlineName) {
@@ -218,25 +219,25 @@ void NativeHud::commentsPanel(double x, double width) {
                             lineX += block.prefixWidth;
                         }
                         if (!value.isEmpty()) {
-                            text(value, lineX, replyY + line * ReplyLine, ReplySize, "regular", 0,
+                            text(value, lineX, replyY + line * ReplyLine * scale, ReplySize, "regular", 0,
                                  secondary);
                         }
                     }
-                    replyY += block.lines.size() * ReplyLine + 10;
+                    replyY += (block.lines.size() * ReplyLine + 10) * scale;
                 }
                 if (!statusText.isEmpty()) {
-                    limited(statusText, innerX, replyY + 4, ReplySize, innerWidth, "regular");
+                    limited(statusText, innerX, replyY + 4 * scale, ReplySize, innerWidth, "regular");
                     if (!statusAction.isEmpty()) {
                         hit(x + ContentX, replyY - 6, width - ContentX, 42, statusAction, statusText);
                     }
                 }
-                afterMeta = blockTop + blockHeight + 12;
+                afterMeta = blockTop + blockHeight + 12 * scale;
             }
-            const auto rowBottom = afterMeta + 10;
+            const auto rowBottom = afterMeta + 10 * scale;
             auto divider = foreground;
             divider[3] = 0.14;
             fill(x, rowBottom, width, 1, divider);
-            y = rowBottom + 28;
+            y = rowBottom + 28 * scale;
         }
         if (comments.hasMore) {
             if (comments.loadingMore) {

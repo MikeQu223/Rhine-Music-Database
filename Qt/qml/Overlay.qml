@@ -32,6 +32,7 @@ Item {
     property bool frameless: controlledHost && Qt.platform.os === "windows"
     readonly property bool ios: Qt.platform.os === "ios"
     readonly property bool compactLayout: rhine.state.compactLayout === true
+    readonly property real textScale: rhine.state.textScale || 1
     readonly property bool android: Qt.platform.os === "android"
 
     // 手指比鼠标指针粗：Android 上把每个命中矩形四周各外扩 touchHitPadding 个舞台像素。
@@ -491,7 +492,7 @@ Item {
             height: 55 * overlay.stageScale
             verticalAlignment: TextInput.AlignVCenter
             color: rhine.state.dark ? "#eeeeeb" : "#161914"
-            font.pixelSize: 19 * overlay.stageScale
+            font.pixelSize: 19 * overlay.stageScale * overlay.textScale
             cursorVisible: activeFocus && !rhine.performance.idle
             maximumLength: rhine.state.modal === "login" ? 11 : 100
             enabled: rhine.state.modal !== "login" || !rhine.state.loginBusy
@@ -519,7 +520,7 @@ Item {
                 anchors.centerIn: parent
                 text: rhine.state.smsRetrySeconds > 0 ? rhine.state.smsRetrySeconds + " 秒后重发" : "发送验证码"
                 color: "#f0eee5"
-                font.pixelSize: 14 * overlay.stageScale
+                font.pixelSize: 14 * overlay.stageScale * overlay.textScale
             }
             Accessible.role: Accessible.Button
             Accessible.name: "发送短信验证码"
@@ -551,7 +552,7 @@ Item {
             height: 55 * overlay.stageScale
             verticalAlignment: TextInput.AlignVCenter
             color: rhine.state.dark ? "#eeeeeb" : "#161914"
-            font.pixelSize: 19 * overlay.stageScale
+            font.pixelSize: 19 * overlay.stageScale * overlay.textScale
             cursorVisible: activeFocus && !rhine.performance.idle
             maximumLength: 8
             enabled: !rhine.state.loginBusy
@@ -573,7 +574,7 @@ Item {
                 anchors.centerIn: parent
                 text: rhine.state.modal === "login" ? "登录 →" : "保存 →"
                 color: "#f0eee5"
-                font.pixelSize: 14 * overlay.stageScale
+                font.pixelSize: 14 * overlay.stageScale * overlay.textScale
             }
             Accessible.role: Accessible.Button
             Accessible.name: "提交表单"
@@ -663,7 +664,8 @@ Item {
         width: (rhine.state.inputWidth || 0) * overlay.stageScale
         height: (rhine.state.inputHeight || 54) * overlay.stageScale
         font.family: rhineFontFamily
-        font.pixelSize: searchFontSize * overlay.stageScale
+        font.pixelSize: Math.min(searchFontSize * overlay.stageScale * overlay.textScale,
+                                 Math.max(searchFontSize * overlay.stageScale, height - 8 * overlay.stageScale))
         color: searchTextColor
         opacity: overlay.compactLayout || playlistSearch ? 1 : (rhine.state.modalOpacity || 0)
         clip: true
@@ -738,7 +740,7 @@ Item {
         height: settingEditBackground.height
         verticalAlignment: TextInput.AlignVCenter
         font.family: rhineFontFamily
-        font.pixelSize: 16 * overlay.stageScale
+        font.pixelSize: 16 * overlay.stageScale * overlay.textScale
         color: rhine.state.dark ? "#e9e7da" : "#222a25"
         clip: true
         selectByMouse: true

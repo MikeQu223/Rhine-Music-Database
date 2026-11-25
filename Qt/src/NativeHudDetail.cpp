@@ -104,6 +104,7 @@ void NativeHud::detail(double width, double opacity) {
     card.local = music.isLocal();
     card.id = item["id"].toString();
     card.title = item["title"].toString();
+    card.textScale = textScale();
     const auto titleLines =
         m_responsive.compact() ? QStringList{} : m_glyphs->wrap(card.title, usable, 32, "bold");
     card.titleLines = titleLines.mid(0, 2);
@@ -292,9 +293,12 @@ void NativeHud::lyricsPanel(double x, double width) {
         }
         const auto size = plain.isEmpty() ? 24 : 27;
         const auto rows = m_glyphs->wrap(message, width - 24, size);
-        m_lyricsPlainOffset = std::min(m_lyricsPlainOffset, std::max(0, int(rows.size()) - 9));
-        for (int index = 0; index < std::min(9, int(rows.size()) - m_lyricsPlainOffset); ++index) {
-            text(rows.at(m_lyricsPlainOffset + index), x, top + 55 + index * 48, size, "bold", 0, muted);
+        const auto lineStep = 48 * textScale();
+        const auto visibleRows = std::min(9, std::max(1, int((bottom - top - 55) / lineStep) + 1));
+        m_lyricsPlainOffset = std::min(m_lyricsPlainOffset, std::max(0, int(rows.size()) - visibleRows));
+        for (int index = 0; index < std::min(visibleRows, int(rows.size()) - m_lyricsPlainOffset); ++index) {
+            text(rows.at(m_lyricsPlainOffset + index), x, top + 55 + index * lineStep, size, "bold", 0,
+                 muted);
         }
         restore();
         if (lyrics.status == "error" || lyrics.status == "empty") {
@@ -321,7 +325,7 @@ void NativeHud::lyricsPanel(double x, double width) {
                 translated = m_glyphs->wrap(translation, width - 24, 23, "bold");
             }
             m_lyricsLayout.append({height, wrapped, translated});
-            height += std::max(1, int(wrapped.size())) * 47 + translated.size() * 30 + 32;
+            height += (std::max(1, int(wrapped.size())) * 47 + translated.size() * 30 + 32) * textScale();
         }
         m_lyricsBrowse.reset();
         m_lyricsLastIndex = lyrics.index;
@@ -361,7 +365,7 @@ void NativeHud::lyricsPanel(double x, double width) {
         const auto line = lines.at(index).toObject();
         const auto &row = m_lyricsLayout.at(index);
         const auto y = focusY + row.top - m_lyricsScroll;
-        const double height = row.text.size() * 47 + row.translation.size() * 30;
+        const double height = (row.text.size() * 47 + row.translation.size() * 30) * textScale();
         if (y + height < top || y > bottom) {
             continue;
         }
@@ -372,19 +376,21 @@ void NativeHud::lyricsPanel(double x, double width) {
         color[3] = (isActive ? 1 : 0.28) * edge;
         for (int rowIndex = 0; rowIndex < row.text.size(); ++rowIndex) {
             if (future) {
-                blurText(row.text.at(rowIndex), x, y + rowIndex * 47, size, "bold", 0, color, 2.0);
+                blurText(row.text.at(rowIndex), x, y + rowIndex * 47 * textScale(), size, "bold", 0, color,
+                         2.0);
             } else {
-                text(row.text.at(rowIndex), x, y + rowIndex * 47, size, "bold", 0, color);
+                text(row.text.at(rowIndex), x, y + rowIndex * 47 * textScale(), size, "bold", 0, color);
             }
         }
         color[3] = color.at(3).toDouble() * 0.65;
         for (int rowIndex = 0; rowIndex < row.translation.size(); ++rowIndex) {
             if (future) {
-                blurText(row.translation.at(rowIndex), x, y + row.text.size() * 47 + rowIndex * 30, 23,
-                         "bold", 0, color, 1.4);
+                blurText(row.translation.at(rowIndex), x,
+                         y + (row.text.size() * 47 + rowIndex * 30) * textScale(), 23, "bold", 0, color,
+                         1.4);
             } else {
-                text(row.translation.at(rowIndex), x, y + row.text.size() * 47 + rowIndex * 30, 23, "bold", 0,
-                     color);
+                text(row.translation.at(rowIndex), x,
+                     y + (row.text.size() * 47 + rowIndex * 30) * textScale(), 23, "bold", 0, color);
             }
         }
         if (player.state["seekable"].toBool()) {

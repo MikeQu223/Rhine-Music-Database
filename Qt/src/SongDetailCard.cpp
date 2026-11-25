@@ -1,4 +1,5 @@
 #include "SongDetailCard.h"
+#include <algorithm>
 
 namespace SongDetailCard {
 namespace {
@@ -41,7 +42,8 @@ void actions(const Model &model, const Canvas &canvas, const QVector<Action> &it
         canvas.hit(x, y, width, height, item.route, item.label);
         const auto color = primary ? inverse : foreground;
         // 文字也裁剪到按钮内，长平台名称不会覆盖相邻操作。
-        canvas.text(item.label, x + 12, y + 12, 14, primary ? "demibold" : "regular", color);
+        canvas.text(item.label, x + 12, y + 12 - 7 * (model.textScale - 1), 14,
+                    primary ? "demibold" : "regular", color);
     }
 }
 }
@@ -61,11 +63,16 @@ void paint(const Model &model, const Canvas &canvas) {
     canvas.limited(model.album.isEmpty() ? "AUDIO ARCHIVE / 音频档案" : model.album, model.x, 332, 15,
                    model.width, "regular");
     // 两行标题空间固定，长歌名不会推动下方布局或改变外框尺寸。
+    const auto extra = model.textScale - 1;
+    const auto titleSize = model.titleLines.size() > 1 ? std::min(32., 42. / model.textScale) : 32.;
+    const auto titleStride = 40 + (titleSize * model.textScale - 32);
     for (int index = 0; index < model.titleLines.size(); ++index) {
-        canvas.limited(model.titleLines.at(index), model.x, 366 + index * 40, 32, model.width, "bold");
+        canvas.limited(model.titleLines.at(index), model.x, 366 - 8 * extra + index * titleStride,
+                       titleSize, model.width, "bold");
     }
-    const double artistY = model.titleLines.size() > 1 ? 450 : 416;
-    canvas.limited(model.artist, model.x, artistY, 18, model.width, "regular");
+    const double artistY = model.titleLines.size() > 1 ? 450 : 416 + 12 * extra;
+    canvas.limited(model.artist, model.x, artistY, std::min(18., 26. / model.textScale), model.width,
+                   "regular");
     actions(model, canvas, model.primaryActions, 476, true);
     actions(model, canvas, model.secondaryActions, 532, false);
     const bool albumTracks = model.tab == "history";
@@ -84,7 +91,8 @@ void paint(const Model &model, const Canvas &canvas) {
                 canvas.image(model.badgeKey, x, y + 24, model.badgeWidth, 22);
             } else {
                 const auto value = fields.at(index).second;
-                canvas.limited(value.isEmpty() ? "暂无" : value, x, y + 22, 15, column - 12, "regular");
+                canvas.limited(value.isEmpty() ? "暂无" : value, x, y + 22 + 4 * extra, 15, column - 12,
+                               "regular");
             }
             if (index == 1 && !model.local && !model.quality.isEmpty()) {
                 canvas.hit(x, y + 18, column, 34, "quality:open", "音质说明与切换");

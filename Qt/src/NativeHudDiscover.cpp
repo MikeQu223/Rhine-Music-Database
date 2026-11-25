@@ -11,6 +11,7 @@ void NativeHud::discoverPanel(double x, double y, double width) {
     auto &music = *m_music;
     const auto &discover = *music.discover;
     DiscoverMusicCard::Model model;
+    model.textScale = textScale();
     model.bounds = {x, y, width, 836};
     model.dark = dark;
     model.tab = discover.tab;

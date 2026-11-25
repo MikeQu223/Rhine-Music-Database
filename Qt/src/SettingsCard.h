@@ -29,12 +29,14 @@ struct SectionModel {
 struct Model {
     QRectF viewport;
     double scroll = 0;
+    double textScale = 1;
     QString expandedId;
     QVector<SectionModel> sections;
 };
 
 struct RowLayout {
     const RowModel *row = nullptr;
+    double textScale = 1;
     QRectF bounds;
     QRectF control;
     QRectF options;
@@ -43,6 +45,7 @@ struct RowLayout {
 
 struct SectionLayout {
     const SectionModel *section = nullptr;
+    double textScale = 1;
     QRectF header;
     QRectF body;
     double height = 0;

@@ -186,7 +186,8 @@ class Painter {
             if (index == maximum - 1 && lines.size() > maximum) {
                 value += "…";
             }
-            label(value, left, top + index * (size + 6), size, available, "demibold", color);
+            label(value, left, top + index * (size * model.textScale + 6), size, available, "demibold",
+                  color);
         }
     }
 
@@ -233,7 +234,8 @@ class Painter {
         const auto background = darkSurface ? amber : ink;
         const auto foreground = darkSurface ? night : paper;
         canvas.fill(left, y + top, available, height, background);
-        label("▶ 播放全部", left + 14, top + (height - textSize) / 2 - 3, textSize, available - 28,
+        label("▶ 播放全部", left + 14, top + (height - textSize * model.textScale) / 2 - 3,
+              textSize, available - 28,
               "demibold", foreground);
         contentHit({left, y + top - 3, available, 44}, "discover:play:" + QString::number(entry.index),
                    "播放全部 " + entry.title);
@@ -260,7 +262,7 @@ class Painter {
         label("01", rectangle.right() - 120, 361, 94, 120, "light",
               model.dark ? QJsonArray{0.24, 0.29, 0.23, 1} : QJsonArray{0.788, 0.812, 0.737, 1});
         label("FEATURED ARCHIVE / 精选推荐", x + 24, 250, 10, copyWidth, "regular", muted);
-        title(entry, x + 24, 288, 27, copyWidth);
+        title(entry, x + 24, 288 - 10 * (model.textScale - 1), 27, copyWidth);
         label(entry.artist.isEmpty() ? kind(entry) : entry.artist, x + 24, 382, 12, copyWidth, "regular",
               muted);
         label(entry.kind == "song" ? "▶ 播放歌曲" : "打开音乐档案 ↗", x + (playable ? 174 : 24),
@@ -288,7 +290,9 @@ class Painter {
         if (entry) {
             const bool playable = canPlayAll(*entry);
             label("02", center - 18, 289, 30, sideWidth / 2, "light", amber);
-            title(*entry, sideX + 20, 333, 20, sideWidth - 40, white);
+            const double secondaryTitleSize = std::min(20., 23. / model.textScale);
+            title(*entry, sideX + 20, 333 - 7 * (model.textScale - 1), secondaryTitleSize, sideWidth - 40,
+                  white);
             label(entry->artist.isEmpty() ? kind(*entry) : entry->artist, sideX + 20, 382, 11, sideWidth - 40,
                   "regular", white);
             label(entry->kind == "song" ? "播放歌曲 ▶" : "打开档案 ↗", sideX + (playable ? 172 : 20),
@@ -309,7 +313,8 @@ class Painter {
     void recommendations() {
         if (model.loadedCount > 2) {
             label("音乐档案", x, 490, 17, 150, "demibold");
-            label("SELECTED PROGRAMS", x + 95, 495, 10, width - 100, "regular", muted);
+            const auto englishX = 95 + 58 * (model.textScale - 1);
+            label("SELECTED PROGRAMS", x + englishX, 495, 10, width - englishX - 5, "regular", muted);
         }
         for (const auto &entry : model.entries) {
             if (entry.index == 0) {
@@ -332,7 +337,7 @@ class Painter {
         const auto size = rectangle.width();
         artwork(entry, left, top, size, size);
         label(kind(entry), left, top + size + 12, 9, size, "regular", muted);
-        title(entry, left, top + size + 32, 14, size);
+        title(entry, left, top + size + 32, std::min(14., 18. / model.textScale), size);
         label(entry.artist.isEmpty() ? kind(entry) : entry.artist, left, top + size + 78, 10, size, "regular",
               muted);
         open(entry);

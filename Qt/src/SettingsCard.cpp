@@ -21,6 +21,10 @@ constexpr double LinkGap = 16.;
 constexpr double LinkRowHeight = 50.;
 constexpr double LinkRowStep = 60.;
 
+double scaled(double value, double textScale) {
+    return value * textScale;
+}
+
 QJsonArray fade(const QJsonArray &color, double alpha) {
     auto value = color;
     value[3] = alpha;
@@ -41,9 +45,10 @@ void drawSectionHeader(const SectionLayout &section, const Colors &colors, const
     const auto left = header.left() + ContentInset;
     const auto width = header.width() - ContentInset * 2;
     canvas.text(QString::number(section.section->meta->number).rightJustified(2, '0'), left,
-                header.top() + 12, 11, "regular", 0.05, colors.muted);
-    canvas.text(section.section->meta->titleEn + " / " + section.section->meta->titleZh, left + 26,
-                header.top() + 9, 14, "demibold", 0.06, colors.ink);
+                header.top() + scaled(12, section.textScale), 11, "regular", 0.05, colors.muted);
+    canvas.text(section.section->meta->titleEn + " / " + section.section->meta->titleZh,
+                left + scaled(26, section.textScale),
+                header.top() + scaled(9, section.textScale), 14, "demibold", 0.06, colors.ink);
     canvas.fill(left, header.bottom() - 1, width, 1, colors.line);
 }
 
@@ -51,16 +56,19 @@ void drawOptions(const RowLayout &layout, const RowModel &row, const Colors &col
     const auto options = layout.options;
     canvas.fill(options.left(), options.top(), options.width(), options.height(), colors.soft);
     canvas.stroke(options, colors.line);
+    const auto scale = layout.textScale;
+    const auto optionHeight = scaled(OptionHeight, scale);
     for (int index = 0; index < row.choices.size(); ++index) {
         const auto &choice = row.choices.at(index);
-        const auto rect = QRectF(options.left() + 2, options.top() + 2 + index * OptionHeight,
-                                 options.width() - 4, OptionHeight - 4);
+        const auto rect = QRectF(options.left() + scaled(2, scale),
+                                 options.top() + scaled(2, scale) + index * optionHeight,
+                                 options.width() - scaled(4, scale), optionHeight - scaled(4, scale));
         const bool active = choice.value == row.value.canonical;
         if (active) {
             canvas.fill(rect.left(), rect.top(), 3, rect.height(), colors.gold);
         }
         canvas.text(canvas.fit(choice.label, 15, rect.width() - 32, "regular"), rect.left() + 14,
-                    rect.top() + 15, 15, active ? "demibold" : "regular", 0, colors.ink);
+                    rect.top() + scaled(15, scale), 15, active ? "demibold" : "regular", 0, colors.ink);
         canvas.hit(rect.left(), rect.top(), rect.width(), rect.height(), actionFor(row) + choice.value,
                    choice.label);
     }
@@ -68,11 +76,13 @@ void drawOptions(const RowLayout &layout, const RowModel &row, const Colors &col
 
 void drawChoice(const RowLayout &layout, const RowModel &row, const Colors &colors, const Canvas &canvas) {
     const auto control = layout.control;
+    const auto scale = layout.textScale;
     canvas.fill(control.left(), control.top(), control.width(), control.height(), colors.soft);
     canvas.stroke(control, colors.line);
     canvas.text(canvas.fit(row.label, 15, control.width() - 48, "regular"), control.left() + 14,
-                control.top() + 15, 15, "regular", 0, row.enabled ? colors.ink : fade(colors.ink, 0.35));
-    canvas.text(row.expanded ? "▴" : "▾", control.right() - 24, control.top() + 14, 14, "regular", 0,
+                control.center().y() - scaled(7, scale), 15, "regular", 0,
+                row.enabled ? colors.ink : fade(colors.ink, 0.35));
+    canvas.text(row.expanded ? "▴" : "▾", control.right() - 24, control.center().y() - scaled(7, scale), 14, "regular", 0,
                 row.enabled ? colors.muted : fade(colors.muted, 0.3));
     if (row.enabled) {
         canvas.hit(control.left(), control.top(), control.width(), control.height(),
@@ -98,14 +108,19 @@ void drawChoice(const RowLayout &layout, const RowModel &row, const Colors &colo
 
 void drawStepper(const RowLayout &layout, const RowModel &row, const Colors &colors, const Canvas &canvas) {
     const auto control = layout.control;
+    const auto scale = layout.textScale;
     canvas.fill(control.left(), control.top(), control.width(), control.height(), colors.soft);
     canvas.stroke(control, colors.line);
 
     // 数值在减号左侧；进度条垂直居中并位于加减按钮之间。
-    canvas.text(canvas.fit(row.label, 15, 96, "demibold"), control.left() + 2, control.top() + 15, 15,
+    canvas.text(canvas.fit(row.label, 15, 96, "demibold"), control.left() + 2,
+                control.center().y() - scaled(7, scale), 15,
                 "demibold", 0, row.enabled ? colors.ink : fade(colors.ink, 0.35));
-    const auto minus = QRectF(control.left() + 100, control.top() + 8, 32, 32);
-    const auto plus = QRectF(control.right() - 40, control.top() + 8, 32, 32);
+    const auto buttonSize = scaled(32, scale);
+    const auto minus = QRectF(control.left() + 100, control.center().y() - buttonSize / 2,
+                              buttonSize, buttonSize);
+    const auto plus = QRectF(control.right() - 8 - buttonSize, control.center().y() - buttonSize / 2,
+                             buttonSize, buttonSize);
     canvas.stroke(minus, colors.line);
     canvas.stroke(plus, colors.line);
     canvas.centered("−", minus.center().x(), minus.center().y(), 19, "regular", true);
@@ -113,7 +128,8 @@ void drawStepper(const RowLayout &layout, const RowModel &row, const Colors &col
 
     if (row.numericValues.size() > 1) {
         const auto track =
-            QRectF(minus.right() + 12, control.center().y() - 2, plus.left() - minus.right() - 24, 4);
+            QRectF(minus.right() + scaled(12, scale), control.center().y() - scaled(2, scale),
+                   plus.left() - minus.right() - scaled(24, scale), scaled(4, scale));
         canvas.fill(track.left(), track.top(), track.width(), track.height(), colors.faint);
         const int count = int(row.numericValues.size());
         double selected = count - 1;
@@ -128,12 +144,14 @@ void drawStepper(const RowLayout &layout, const RowModel &row, const Colors &col
         }
         const double fraction = selected / (count - 1);
         canvas.fill(track.left(), track.top(), track.width() * fraction, track.height(), colors.gold);
-        const auto knobX = track.left() + track.width() * fraction - 4;
-        canvas.fill(knobX, track.top() - 5, 8, 14, colors.ink);
+        const auto knobSize = scaled(8, scale);
+        const auto knobX = track.left() + track.width() * fraction - knobSize / 2;
+        canvas.fill(knobX, track.top() - scaled(5, scale), knobSize, scaled(14, scale), colors.ink);
         if (row.enabled) {
             const auto segment = track.width() / std::max(1, count);
             for (int index = 0; index < count; ++index) {
-                canvas.hit(track.left() + index * segment, track.top() - 10, segment, 24,
+                canvas.hit(track.left() + index * segment, track.top() - scaled(10, scale), segment,
+                           scaled(24, scale),
                            actionFor(row) + QString::number(row.numericValues.at(index)),
                            row.descriptor->titleZh);
             }
@@ -153,12 +171,13 @@ void drawStepper(const RowLayout &layout, const RowModel &row, const Colors &col
 
 void drawAction(const RowLayout &layout, const RowModel &row, const Colors &colors, const Canvas &canvas) {
     const auto control = layout.control;
+    const auto scale = layout.textScale;
     canvas.fill(control.left(), control.top(), control.width(), control.height(), colors.soft);
     canvas.stroke(control, colors.line);
     canvas.text(canvas.fit(row.descriptor->actionLabel, 15, control.width() - 48, "regular"),
-                control.left() + 14, control.top() + 15, 15, "regular", 0,
+                control.left() + 14, control.center().y() - scaled(7, scale), 15, "regular", 0,
                 row.enabled ? colors.ink : fade(colors.ink, 0.35));
-    canvas.text("→", control.right() - 24, control.top() + 14, 14, "regular", 0,
+    canvas.text("→", control.right() - 24, control.center().y() - scaled(7, scale), 14, "regular", 0,
                 row.enabled ? colors.muted : fade(colors.muted, 0.3));
     if (row.enabled) {
         canvas.hit(control.left(), control.top(), control.width(), control.height(),
@@ -168,11 +187,13 @@ void drawAction(const RowLayout &layout, const RowModel &row, const Colors &colo
 
 void drawTextInput(const RowLayout &layout, const RowModel &row, const Colors &colors, const Canvas &canvas) {
     const auto control = layout.control;
+    const auto scale = layout.textScale;
     canvas.fill(control.left(), control.top(), control.width(), control.height(), colors.soft);
     canvas.stroke(control, colors.line);
     canvas.text(canvas.fit(row.label, 15, control.width() - 48, "regular"), control.left() + 14,
-                control.top() + 15, 15, "regular", 0, row.enabled ? colors.ink : fade(colors.ink, 0.35));
-    canvas.text("✎", control.right() - 24, control.top() + 14, 14, "regular", 0,
+                control.center().y() - scaled(7, scale), 15, "regular", 0,
+                row.enabled ? colors.ink : fade(colors.ink, 0.35));
+    canvas.text("✎", control.right() - 24, control.center().y() - scaled(7, scale), 14, "regular", 0,
                 row.enabled ? colors.muted : fade(colors.muted, 0.3));
     if (row.enabled) {
         canvas.hit(control.left(), control.top(), control.width(), control.height(),
@@ -182,11 +203,12 @@ void drawTextInput(const RowLayout &layout, const RowModel &row, const Colors &c
 
 void drawLink(const RowLayout &layout, const RowModel &row, const Colors &colors, const Canvas &canvas) {
     const auto rect = layout.bounds;
+    const auto scale = layout.textScale;
     canvas.fill(rect.left(), rect.top(), rect.width(), rect.height(), colors.soft);
     canvas.stroke(rect, colors.line);
     canvas.text(canvas.fit(row.descriptor->actionLabel, 14, rect.width() - 40, "regular"), rect.left() + 12,
-                rect.top() + 15, 14, "regular", 0, colors.ink);
-    canvas.text("↗", rect.right() - 22, rect.top() + 14, 13, "regular", 0, colors.muted);
+                rect.center().y() - scaled(7, scale), 14, "regular", 0, colors.ink);
+    canvas.text("↗", rect.right() - 22, rect.center().y() - scaled(6, scale), 13, "regular", 0, colors.muted);
     canvas.hit(rect.left(), rect.top(), rect.width(), rect.height(), row.descriptor->binding.action,
                row.descriptor->actionLabel);
 }
@@ -198,17 +220,19 @@ void drawRow(const RowLayout &layout, const RowModel &row, int index, const Colo
         return;
     }
     const auto rect = layout.bounds;
+    const auto scale = layout.textScale;
     const auto ink = row.enabled ? colors.ink : fade(colors.ink, 0.35);
     const auto muted = row.enabled ? colors.muted : fade(colors.muted, 0.28);
     canvas.fill(rect.left(), rect.bottom() - 1, rect.width(), 1, colors.line);
-    canvas.text(rowIndex(index), rect.left(), rect.top() + 25, 11, "regular", 0.04, muted);
-    canvas.text(row.descriptor->titleEn, rect.left() + 30, rect.top() + 10, 11, "regular", 0.08, muted);
-    canvas.text(row.descriptor->titleZh, rect.left() + 30, rect.top() + 25, RowTitleTextSize, "demibold",
+    canvas.text(rowIndex(index), rect.left(), rect.top() + scaled(25, scale), 11, "regular", 0.04, muted);
+    const auto titleLeft = rect.left() + scaled(30, scale);
+    canvas.text(row.descriptor->titleEn, titleLeft, rect.top() + scaled(10, scale), 11, "regular", 0.08, muted);
+    canvas.text(row.descriptor->titleZh, titleLeft, rect.top() + scaled(25, scale), RowTitleTextSize, "demibold",
                 -0.01, ink);
     const auto &hint =
         row.descriptor->showDescription ? row.descriptor->description : row.descriptor->restartHint;
     if (!hint.isEmpty()) {
-        canvas.text(hint, rect.left() + 30, rect.top() + 47, RowHintTextSize, "regular", 0.03, muted);
+        canvas.text(hint, titleLeft, rect.top() + scaled(47, scale), RowHintTextSize, "regular", 0.03, muted);
     }
 
     switch (row.descriptor->kind) {
@@ -247,53 +271,60 @@ void drawRow(const RowLayout &layout, const RowModel &row, int index, const Colo
 Layout layout(const Model &model) {
     Layout result;
     result.viewport = model.viewport;
+    const auto scale = std::max(1., model.textScale);
     const auto left = model.viewport.left() + ContentInset;
     const auto width = model.viewport.width() - ContentInset * 2;
     double cursor = model.viewport.top();
     for (const auto &section : model.sections) {
         SectionLayout sectionLayout;
         sectionLayout.section = &section;
-        sectionLayout.header = QRectF(model.viewport.left(), cursor, model.viewport.width(), HeaderHeight);
-        cursor += HeaderHeight;
+        sectionLayout.textScale = scale;
+        const auto headerHeight = scaled(HeaderHeight, scale);
+        sectionLayout.header = QRectF(model.viewport.left(), cursor, model.viewport.width(), headerHeight);
+        cursor += headerHeight;
         if (!section.meta->customRenderer.isEmpty()) {
-            const auto bodyHeight = std::max(0., section.meta->customHeight);
+            const auto bodyHeight = scaled(std::max(0., section.meta->customHeight), scale);
             sectionLayout.body = QRectF(left, cursor, width, bodyHeight);
-            sectionLayout.height = HeaderHeight + bodyHeight;
-            cursor += bodyHeight + SectionGap;
+            sectionLayout.height = headerHeight + bodyHeight;
+            cursor += bodyHeight + scaled(SectionGap, scale);
         } else if (section.meta->id == SettingsSchema::SectionId::Project) {
             const auto linkWidth = (width - LinkGap) / 2;
             for (int index = 0; index < section.rows.size(); ++index) {
                 RowLayout rowLayout;
                 rowLayout.row = &section.rows.at(index);
+                rowLayout.textScale = scale;
                 rowLayout.bounds = QRectF(left + (index % 2) * (linkWidth + LinkGap),
-                                          cursor + (index / 2) * LinkRowStep, linkWidth, LinkRowHeight);
+                                          cursor + (index / 2) * scaled(LinkRowStep, scale), linkWidth,
+                                          scaled(LinkRowHeight, scale));
                 sectionLayout.rows.append(rowLayout);
             }
-            const auto bodyHeight = ((section.rows.size() + 1) / 2) * LinkRowStep;
+            const auto bodyHeight = ((section.rows.size() + 1) / 2) * scaled(LinkRowStep, scale);
             sectionLayout.body = QRectF(left, cursor, width, bodyHeight);
-            sectionLayout.height = HeaderHeight + bodyHeight;
-            cursor += bodyHeight + SectionGap;
+            sectionLayout.height = headerHeight + bodyHeight;
+            cursor += bodyHeight + scaled(SectionGap, scale);
         } else {
             const auto bodyTop = cursor;
             for (auto &row : section.rows) {
                 const auto hasHint = row.descriptor->showDescription ? !row.descriptor->description.isEmpty()
                                                                      : !row.descriptor->restartHint.isEmpty();
-                const auto rowHeight = hasHint ? RowHeightWithHint : RowHeight;
+                const auto rowHeight = scaled(hasHint ? RowHeightWithHint : RowHeight, scale);
                 RowLayout rowLayout;
                 rowLayout.row = &row;
+                rowLayout.textScale = scale;
                 rowLayout.bounds = QRectF(left, cursor, width, rowHeight);
-                rowLayout.control = QRectF(left + width - ControlWidth, cursor + 9, ControlWidth, 48);
+                rowLayout.control = QRectF(left + width - ControlWidth, cursor + scaled(9, scale), ControlWidth,
+                                           scaled(48, scale));
                 if (row.expanded && row.enabled) {
-                    rowLayout.optionsHeight = row.choices.size() * OptionHeight + 4;
-                    rowLayout.options = QRectF(rowLayout.control.left(), cursor + rowHeight + 2, ControlWidth,
+                    rowLayout.optionsHeight = row.choices.size() * scaled(OptionHeight, scale) + scaled(4, scale);
+                    rowLayout.options = QRectF(rowLayout.control.left(), cursor + rowHeight + scaled(2, scale), ControlWidth,
                                                rowLayout.optionsHeight);
                 }
                 sectionLayout.rows.append(rowLayout);
-                cursor += rowHeight + RowGap + rowLayout.optionsHeight;
+                cursor += rowHeight + scaled(RowGap, scale) + rowLayout.optionsHeight;
             }
             sectionLayout.body = QRectF(left, bodyTop, width, cursor - bodyTop);
-            sectionLayout.height = HeaderHeight + (cursor - bodyTop);
-            cursor += SectionGap;
+            sectionLayout.height = headerHeight + (cursor - bodyTop);
+            cursor += scaled(SectionGap, scale);
         }
         result.sections.append(sectionLayout);
     }

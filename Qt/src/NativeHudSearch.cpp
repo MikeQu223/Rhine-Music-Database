@@ -196,11 +196,12 @@ void NativeHud::resultListRow(const Row &entry, double x, double y, double width
     if (value.contains("playCount")) {
         detail += " / " + QString::number(value["playCount"].toDouble(), 'f', 0) + QStringLiteral(" 次播放");
     }
+    const auto detailY = y + std::max(40., 11. + 18. * textScale() + 4.);
     const auto tagWidth = m_glyphs->width(kind, 8, "regular") + 10;
-    fill(left + SearchTitleX, y + 40, tagWidth, 14, searchTagFill(dark));
-    text(kind, left + SearchTitleX + 5, y + 41, 8, "regular", 0.06, muted);
-    text(fit(detail, 10, titleWidth - tagWidth - 8, "regular"), left + SearchTitleX + tagWidth + 8, y + 40,
-         10, "regular", 0, muted);
+    fill(left + SearchTitleX, detailY, tagWidth, 14, searchTagFill(dark));
+    text(kind, left + SearchTitleX + 5, detailY + 1, 8, "regular", 0.06, muted);
+    text(fit(detail, 10, titleWidth - tagWidth - 8, "regular"),
+         left + SearchTitleX + tagWidth + 8, detailY, 10, "regular", 0, muted);
     text("查看 ↗", x + width - SearchActionWidth, y + 20, 11, "regular", 0, muted);
 
     const auto action =

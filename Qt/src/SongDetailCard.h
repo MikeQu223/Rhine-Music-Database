@@ -31,6 +31,7 @@ struct Model {
     bool comments = false;
     QVector<Action> primaryActions;
     QVector<Action> secondaryActions;
+    double textScale = 1.;
 };
 // 绘图端口由宿主提供；卡片不依赖 HUD 控制器的状态和生命周期。
 struct Canvas {

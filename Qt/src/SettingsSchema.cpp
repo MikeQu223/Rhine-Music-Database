@@ -63,6 +63,10 @@ bool discRotationVisible(const SettingsContext &) {
     return PlatformFeatures::discRotationAvailable();
 }
 
+bool textScaleVisible(const SettingsContext &) {
+    return PlatformFeatures::textScaleAvailable();
+}
+
 bool desktopWindowVisible(const SettingsContext &) {
     return PlatformFeatures::DesktopWindowControls;
 }
@@ -476,6 +480,19 @@ const QVector<SettingDescriptor> &descriptors() {
              .defaultValue = "system",
              .choices = themeChoices(),
              .label = themeLabel});
+        add({.id = "text-scale",
+             .section = SectionId::Preferences,
+             .kind = SettingKind::Choice,
+             .binding = {.kind = BindingKind::Preference,
+                         .preferenceKey = "text-scale",
+                         .actionPrefix = "setting:text-scale:"},
+             .storage = StorageType::Enum,
+             .order = 105,
+             .titleEn = "TEXT SCALE",
+             .titleZh = "文本缩放",
+             .defaultValue = "100",
+             .choices = {{"100", "100%"}, {"110", "110%"}, {"120", "120%"}, {"130", "130%"}},
+             .visible = textScaleVisible});
         add({.id = "play-button-style",
              .section = SectionId::Preferences,
              .kind = SettingKind::Choice,
@@ -1025,6 +1042,11 @@ QString normalize(const SettingDescriptor &descriptor, const SettingsContext &co
     }
     case StorageType::Enum: {
         auto value = raw;
+        // 旧版放大档位沿用 130%，其中 125% 在相邻两档之间取较高档。
+        if (descriptor.id == "text-scale" &&
+            (value == "125" || value == "150" || value == "175" || value == "200")) {
+            value = "130";
+        }
         if (descriptor.id == "aa-mode" && (value == "fsr1" || value == "fsr3")) {
             value = "fsr";
         }

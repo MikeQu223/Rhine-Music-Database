@@ -50,10 +50,11 @@ QVector<int> numericValues(const SettingsSchema::SettingDescriptor &descriptor) 
 }
 
 SettingsCard::Model buildSettingsModel(const SettingsSchema::SettingsContext &context, const QRectF &viewport,
-                                       double scroll, const QString &expandedId) {
+                                       double scroll, const QString &expandedId, double textScale) {
     SettingsCard::Model model;
     model.viewport = viewport;
     model.scroll = scroll;
+    model.textScale = textScale;
     model.expandedId = expandedId;
     for (const auto &section : SettingsSchema::sections()) {
         if (section.visible && !section.visible(context)) {
@@ -112,7 +113,8 @@ void NativeHud::refreshSettingsLayout() {
     const auto bounds = modalBounds(width);
     const QRectF viewport(bounds.x() + 40, bounds.y() + SettingsViewportTop, bounds.width() - 80,
                           SettingsViewportBottom - SettingsViewportTop);
-    const auto model = buildSettingsModel(settingsContext(), viewport, settingsScroll, expandedPreference);
+    const auto model = buildSettingsModel(settingsContext(), viewport, settingsScroll, expandedPreference,
+                                          textScale());
     const auto layout = SettingsCard::layout(model);
     settingsContentBottom = SettingsViewportTop + layout.contentHeight;
     settingsScroll = HudScroll::clampOffset(settingsScroll, layout.contentHeight, viewport.height());
@@ -126,7 +128,7 @@ void NativeHud::beginSettingEdit(const QString &id) {
     const auto bounds = modalBounds(width);
     const QRectF viewport(bounds.x() + 40, bounds.y() + SettingsViewportTop, bounds.width() - 80,
                           SettingsViewportBottom - SettingsViewportTop);
-    auto model = buildSettingsModel(settingsContext(), viewport, settingsScroll, expandedPreference);
+    auto model = buildSettingsModel(settingsContext(), viewport, settingsScroll, expandedPreference, textScale());
     const auto layout = SettingsCard::layout(model);
     for (const auto &section : layout.sections) {
         for (const auto &row : section.rows) {
@@ -175,7 +177,7 @@ void NativeHud::cancelSettingEdit() {
 void NativeHud::settingsPanel(double x, double y, double width) {
     const QRectF viewport(x + 40, y + SettingsViewportTop, width - 80,
                           SettingsViewportBottom - SettingsViewportTop);
-    auto model = buildSettingsModel(settingsContext(), viewport, settingsScroll, expandedPreference);
+    auto model = buildSettingsModel(settingsContext(), viewport, settingsScroll, expandedPreference, textScale());
     if (m_responsive.compact()) {
         m_responsive.setSettings(model);
         for (const auto &section : model.sections) {
@@ -253,6 +255,7 @@ void NativeHud::settingsPanel(double x, double y, double width) {
 void NativeHud::paintSettingsCustomSection(const QString &renderer, const QRectF &body, double scroll) {
     Q_UNUSED(scroll);
     const auto baseInk = ink();
+    const auto vertical = [textScale = textScale()](double value) { return value * textScale; };
     const auto muted = fade(baseInk, 0.55);
     const auto line = fade(baseInk, 0.25);
     const auto soft = dark ? QJsonArray{1, 1, 1, 0.05} : QJsonArray{0, 0, 0, 0.04};
@@ -265,7 +268,7 @@ void NativeHud::paintSettingsCustomSection(const QString &renderer, const QRectF
         fill(rect.left(), rect.top(), 1, rect.height(), color);
         fill(rect.right() - 1, rect.top(), 1, rect.height(), color);
     };
-    auto actionBlock = [this, &stroke, &soft, &line, &baseInk](const QRectF &rect, const QString &label,
+    auto actionBlock = [this, &stroke, &soft, &line, &baseInk, &vertical](const QRectF &rect, const QString &label,
                                                                const QString &action, const QString &hitLabel,
                                                                bool centeredLabel = false) {
         if (m_contentSink) {
@@ -278,16 +281,16 @@ void NativeHud::paintSettingsCustomSection(const QString &renderer, const QRectF
         if (centeredLabel) {
             centeredText(shown, rect.center().x(), rect.center().y(), 14, "regular", true);
         } else {
-            text(shown, rect.left() + 12, rect.top() + 15, 14, "regular", 0, baseInk);
+            text(shown, rect.left() + 12, rect.top() + vertical(15), 14, "regular", 0, baseInk);
         }
         hit(rect.left(), rect.top(), rect.width(), rect.height(), action, hitLabel);
     };
 
     if (renderer == "provider-card") {
-        const auto card = QRectF(body.left(), body.top() + 4, body.width(), 80);
+        const auto card = QRectF(body.left(), body.top() + vertical(4), body.width(), vertical(80));
         fill(card.left(), card.top(), card.width(), card.height(), soft);
         fill(card.left(), card.top(), 3, card.height(), gold);
-        const auto mark = QRectF(card.left() + 14, card.top() + 17, 46, 46);
+        const auto mark = QRectF(card.left() + 14, card.top() + vertical(17), 46, 46);
         // 所有平台统一使用单色 Apple Music 图标，保持卡片配色一致。
         save();
         translate(mark.left(), mark.top());
@@ -295,10 +298,10 @@ void NativeHud::paintSettingsCustomSection(const QString &renderer, const QRectF
         op({"fill-path", QString::fromUtf8(AppleMusicIcon), baseInk});
         op({"fill-path", QString::fromUtf8(AppleMusicNote), panel});
         restore();
-        text("CURRENT PROVIDER / 当前平台", card.left() + 74, card.top() + 10, 10, "regular", 0.08, muted);
-        text(m_music->providerName(), card.left() + 74, card.top() + 24, 20, "demibold", -0.02, baseInk);
-        text(m_music->provider.toUpper(), card.left() + 74, card.top() + 52, 10, "regular", 0.07, muted);
-        const auto switchRect = QRectF(card.right() - 126, card.top() + 23, 110, 34);
+        text("CURRENT PROVIDER / 当前平台", card.left() + 74, card.top() + vertical(10), 10, "regular", 0.08, muted);
+        text(m_music->providerName(), card.left() + 74, card.top() + vertical(24), 20, "demibold", -0.02, baseInk);
+        text(m_music->provider.toUpper(), card.left() + 74, card.top() + vertical(52), 10, "regular", 0.07, muted);
+        const auto switchRect = QRectF(card.right() - 126, card.top() + vertical(23), 110, vertical(34));
         actionBlock(switchRect, QStringLiteral("切换平台 ▾"), "provider", QStringLiteral("切换平台"), true);
 
         QString accountLabel;
@@ -316,9 +319,9 @@ void NativeHud::paintSettingsCustomSection(const QString &renderer, const QRectF
             accountLabel = QStringLiteral("退出登录 / ") + m_music->nickname;
             accountAction = "music:logout";
         }
-        const auto account = QRectF(body.left(), body.top() + 98, 320, 46);
+        const auto account = QRectF(body.left(), body.top() + vertical(98), 320, vertical(46));
         if (accountAction.isEmpty()) {
-            text(fit(accountLabel, 15, account.width(), "regular"), account.left() + 2, account.top() + 15,
+            text(fit(accountLabel, 15, account.width(), "regular"), account.left() + 2, account.top() + vertical(15),
                  15, "regular", 0, baseInk);
         } else {
             actionBlock(account, accountLabel, accountAction, accountLabel);
@@ -335,21 +338,21 @@ void NativeHud::paintSettingsCustomSection(const QString &renderer, const QRectF
                        ? vipLabel
                        : (accountNote.isEmpty() ? QStringLiteral("各平台账号独立保存") : accountNote));
         text(fit(note, 15, body.right() - account.right() - 20, "regular"), account.right() + 16,
-             body.top() + 112, 15, "regular", 0, muted);
+             body.top() + vertical(112), 15, "regular", 0, muted);
         return;
     }
 
-    const auto sectionRow = [this, &body, &muted, &baseInk, &line, &actionBlock](
+    const auto sectionRow = [this, &body, &muted, &baseInk, &line, &actionBlock, &vertical](
                                 double top, const QString &en, const QString &zh, const QString &label,
                                 const QString &action, const QString &hitLabel, const QString &note) {
-        const auto control = QRectF(body.right() - 300, body.top() + top + 8, 300, 48);
-        text(en, body.left(), body.top() + top + 10, 11, "regular", 0.08, muted);
-        text(zh, body.left(), body.top() + top + 25, SettingTitleSize, "demibold", -0.01, baseInk);
+        const auto control = QRectF(body.right() - 300, body.top() + vertical(top + 8), 300, vertical(48));
+        text(en, body.left(), body.top() + vertical(top + 10), 11, "regular", 0.08, muted);
+        text(zh, body.left(), body.top() + vertical(top + 25), SettingTitleSize, "demibold", -0.01, baseInk);
         actionBlock(control, label, action, hitLabel);
         if (!note.isEmpty()) {
-            text(note, body.left(), body.top() + top + 78, SettingNoteSize, "regular", 0, muted);
+            text(note, body.left(), body.top() + vertical(top + 78), SettingNoteSize, "regular", 0, muted);
         }
-        fill(body.left(), body.top() + top + 100, body.width(), 1, line);
+        fill(body.left(), body.top() + vertical(top + 100), body.width(), 1, line);
     };
 
     if (renderer == "experimental") {
@@ -428,56 +431,56 @@ void NativeHud::paintSettingsCustomSection(const QString &renderer, const QRectF
     }
 
     if (renderer == "storage") {
-        const auto control = QRectF(body.right() - 300, body.top() + 8, 300, 48);
-        text("STORAGE", body.left(), body.top() + 10, 11, "regular", 0.08, muted);
-        text(QStringLiteral("存储与缓存"), body.left(), body.top() + 25, SettingTitleSize, "demibold", -0.01,
+        const auto control = QRectF(body.right() - 300, body.top() + vertical(8), 300, vertical(48));
+        text("STORAGE", body.left(), body.top() + vertical(10), 11, "regular", 0.08, muted);
+        text(QStringLiteral("存储与缓存"), body.left(), body.top() + vertical(25), SettingTitleSize, "demibold", -0.01,
              baseInk);
         actionBlock(control, QStringLiteral("清除缓存"), "cache:clear", QStringLiteral("清除缓存"));
-        text(cacheMessage.isEmpty() ? storageUsage : cacheMessage, body.left(), body.top() + 72,
+        text(cacheMessage.isEmpty() ? storageUsage : cacheMessage, body.left(), body.top() + vertical(72),
              SettingNoteSize, "regular", 0, muted);
-        fill(body.left(), body.top() + 100, body.width(), 1, line);
-        const auto historyControl = QRectF(body.right() - 300, body.top() + 110, 300, 48);
+        fill(body.left(), body.top() + vertical(100), body.width(), 1, line);
+        const auto historyControl = QRectF(body.right() - 300, body.top() + vertical(110), 300, vertical(48));
         actionBlock(historyControl, QStringLiteral("清除历史"), "history:clear", QStringLiteral("清除历史"));
-        text(QStringLiteral("搜索与播放历史"), body.left(), body.top() + 124, SettingTitleSize, "regular", 0,
+        text(QStringLiteral("搜索与播放历史"), body.left(), body.top() + vertical(124), SettingTitleSize, "regular", 0,
              baseInk);
-        fill(body.left(), body.top() + 162, body.width(), 1, line);
+        fill(body.left(), body.top() + vertical(162), body.width(), 1, line);
         return;
     }
 
     if (renderer == "update") {
         const auto buildLabel = RHINE_RELEASE_BUILD ? QString() : QStringLiteral(" · 开发版");
         text(QStringLiteral("当前版本 / ") + AppUpdater::currentVersion() + buildLabel, body.left(),
-             body.top() + 4, 18, "demibold", 0, baseInk);
+             body.top() + vertical(4), 18, "demibold", 0, baseInk);
         if (!RHINE_RELEASE_BUILD) {
-            text(AppUpdater::commitTitle(), body.left(), body.top() + 32, 12, "regular", 0, muted);
+            text(AppUpdater::commitTitle(), body.left(), body.top() + vertical(32), 12, "regular", 0, muted);
         }
-        const auto autoUpdate = QRectF(body.right() - 300, body.top() + 50, 300, 48);
+        const auto autoUpdate = QRectF(body.right() - 300, body.top() + vertical(50), 300, vertical(48));
         actionBlock(autoUpdate,
                     m_host->preference("auto-update") == "off" ? QStringLiteral("启动检查 / 关闭")
                                                                : QStringLiteral("启动检查 / 开启"),
                     "update:auto", QStringLiteral("启动检查"));
         text(fit(m_host->updater.status(), SettingNoteSize, body.width() - 340, "regular"), body.left(),
-             body.top() + 68, SettingNoteSize, "regular", 0, muted);
-        const auto check = QRectF(body.left(), body.top() + 112, 170, 46);
+             body.top() + vertical(68), SettingNoteSize, "regular", 0, muted);
+        const auto check = QRectF(body.left(), body.top() + vertical(112), 170, vertical(46));
         actionBlock(check, m_host->updater.busy() ? QStringLiteral("取消") : QStringLiteral("检查更新"),
                     m_host->updater.busy() ? "update:cancel" : "update:check", QStringLiteral("检查更新"));
         if (!m_host->updater.busy() && m_host->updater.available()) {
-            actionBlock(QRectF(body.left() + 186, body.top() + 112, 210, 46), QStringLiteral("前往更新 ↗"),
+            actionBlock(QRectF(body.left() + 186, body.top() + vertical(112), 210, vertical(46)), QStringLiteral("前往更新 ↗"),
                         "update:release", QStringLiteral("前往更新"));
         }
-        actionBlock(QRectF(body.right() - 210, body.top() + 112, 210, 46), QStringLiteral("发布说明 ↗"),
+        actionBlock(QRectF(body.right() - 210, body.top() + vertical(112), 210, vertical(46)), QStringLiteral("发布说明 ↗"),
                     "update:release", QStringLiteral("发布说明"));
         text(QStringLiteral("更新将打开 GitHub 发布页面，请在浏览器中下载并安装。"), body.left(),
-             body.top() + 176, SettingNoteSize, "regular", 0, muted);
+             body.top() + vertical(176), SettingNoteSize, "regular", 0, muted);
         return;
     }
 
     if (renderer == "defaults") {
-        const auto restore = QRectF(body.left(), body.top() + 6, 300, 46);
+        const auto restore = QRectF(body.left(), body.top() + vertical(6), 300, vertical(46));
         actionBlock(restore, QStringLiteral("恢复默认设置"), "settings:restore-defaults",
                     QStringLiteral("恢复默认设置"));
         text(QStringLiteral("仅重置终端偏好，平台、账号与更新状态保持不变。"), body.left() + 316,
-             body.top() + 18, 14, "regular", 0, muted);
+             body.top() + vertical(18), 14, "regular", 0, muted);
         return;
     }
 }
@@ -488,6 +491,9 @@ void NativeHud::applySettingValue(const QString &id, const QString &value) {
         return;
     }
     const auto context = settingsContext();
+    if (!SettingsSchema::visible(*descriptor, context)) {
+        return;
+    }
     const auto current = SettingsSchema::read(*descriptor, context);
     const auto target = SettingsSchema::normalize(*descriptor, context, value);
     if (target == current.canonical) {

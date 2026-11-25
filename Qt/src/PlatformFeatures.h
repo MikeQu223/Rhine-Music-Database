@@ -6,8 +6,12 @@
 namespace PlatformFeatures {
 #ifdef Q_OS_IOS
 bool discRotationAvailable();
+bool textScaleAvailable();
 #else
 inline constexpr bool discRotationAvailable() {
+    return true;
+}
+inline constexpr bool textScaleAvailable() {
     return true;
 }
 #endif

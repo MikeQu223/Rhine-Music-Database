@@ -183,7 +183,8 @@ void NativeHud::text(QString value, double x, double y, double size, QString wei
         m_contentSink->text(value);
         return;
     }
-    op({"text", value, x, y, size, weight, tracking, color.isEmpty() ? ink() : color});
+    const auto scale = textScale();
+    op({"text", value, x, y, size * scale, weight, tracking * scale, color.isEmpty() ? ink() : color});
 }
 void NativeHud::blurText(QString value, double x, double y, double size, QString weight, double tracking,
                          QJsonArray color, double radius) {
@@ -191,7 +192,9 @@ void NativeHud::blurText(QString value, double x, double y, double size, QString
         m_contentSink->text(value);
         return;
     }
-    op({"blur-text", value, x, y, size, weight, tracking, color.isEmpty() ? ink() : color, radius});
+    const auto scale = textScale();
+    op({"blur-text", value, x, y, size * scale, weight, tracking * scale,
+        color.isEmpty() ? ink() : color, radius});
 }
 void NativeHud::aligned(QString value, double x, double y, double size, QString weight, double tracking) {
     if (m_contentSink) {
@@ -253,10 +256,12 @@ void NativeHud::centeredText(QString value, double x, double cy, double size, QS
 }
 void NativeHud::rollingText(QString key, QString value, double x, double y, double size, QString weight,
                             double tracking, bool numeric) {
+    const auto scale = textScale();
     const auto result = m_rolling[key].render(
-        value, x, y, size, weight, tracking, lastTime, !reduced && frame["mode"] == "archive", numeric, ink(),
+        value, x, y, size * scale, weight, tracking * scale, lastTime,
+        !reduced && frame["mode"] == "archive", numeric, ink(),
         [this](const QString &text, double size, const QString &weight, double tracking) {
-            return m_glyphs->width(text, size, weight, tracking);
+            return m_glyphs->widthAtSize(text, size, weight, tracking);
         });
     for (const auto &command : result) {
         commands.append(command);
@@ -291,8 +296,14 @@ void NativeHud::button(QString label, double x, double y, double width, double h
         fill(x, y, width, height,
              dark ? QJsonArray{0.55, 0.59, 0.46, 0.13} : QJsonArray{0.44, 0.49, 0.36, 0.1});
     }
-    text(m_modalControls ? fit(label, size, width - inset * 2) : label, x + inset,
-         y + (height - size) / 2 - 4, size, weight);
+    const auto scale = textScale();
+    if (scale > 1) {
+        size = std::min(size, std::max(1., height - 10) / scale);
+    }
+    if (m_modalControls || scale > 1) {
+        label = fit(label, size, width - inset * 2, scale > 1 ? weight : QStringLiteral("regular"));
+    }
+    text(label, x + inset, y + (height - size * scale) / 2 - 4, size, weight);
 }
 
 /** 插件面板按钮：主操作用实底，其余用细线轮廓，避免整页灰色实底。 */
@@ -320,8 +331,12 @@ void NativeHud::pluginButton(const QString &label, double x, double y, double wi
         color =
             primary ? (dark ? QJsonArray{0.08, 0.085, 0.075, 1} : QJsonArray{0.96, 0.95, 0.91, 1}) : ink();
     }
-    text(fit(label, size, width - 16, "demibold"), x + 8, y + (height - size) / 2 - 4, size, "demibold", 0,
-         color);
+    const auto scale = textScale();
+    if (scale > 1) {
+        size = std::min(size, std::max(1., height - 10) / scale);
+    }
+    text(fit(label, size, width - 16, "demibold"), x + 8, y + (height - size * scale) / 2 - 4,
+         size, "demibold", 0, color);
 }
 void NativeHud::control(QString label, double x, double y, double width, QString action) {
     if (m_contentSink) {
@@ -329,7 +344,18 @@ void NativeHud::control(QString label, double x, double y, double width, QString
         return;
     }
     hit(x - 10, y, width + 20, 54, action, label);
-    aligned(label, x, y + 14, 20, "demibold");
+    constexpr double baseSize = 20.;
+    const auto scale = textScale();
+    auto size = baseSize;
+    if (scale > 1) {
+        const auto available = std::max(1., width - 6);
+        const auto measured = m_glyphs->width(label, baseSize, "demibold");
+        size = std::clamp(baseSize * available / std::max(1., measured), baseSize / scale, baseSize);
+        if (m_glyphs->width(label, size, "demibold") > width) {
+            label = fit(label, size, width, "demibold");
+        }
+    }
+    aligned(label, x, y + 14 - (size * scale - baseSize) / 2, size, "demibold");
 }
 void NativeHud::rule(double x, double y, double width, double opacity) {
     auto color = ink();
@@ -466,6 +492,8 @@ QJsonObject NativeHud::sourceState() const {
             {"modalOpacity", motion.opacity},
             {"modalOffset", motion.offset},
             {"dark", dark},
+            {"interfaceScale", m_interfaceScale},
+            {"textScale", textScale()},
             {"reduced", reduced},
             {"editingSetting", !editingSettingId.isEmpty()},
             {"editingSettingValue", editingSettingText},
@@ -547,6 +575,14 @@ void NativeHud::draw(QJsonObject next, double stageWidth, double time) {
     }
     m_responsive.resize(stageWidth);
     const bool compactLayout = m_responsive.compact();
+    const auto appliedScale = compactLayout || next["mode"] == "boot" ? 1. : m_interfaceScale;
+    if (appliedScale != textScale()) {
+        m_appliedInterfaceScale = appliedScale;
+        m_fitCache.clear();
+        m_rolling.clear();
+        m_lyricsWidth = 0;
+    }
+    m_glyphs->setTextScale(appliedScale);
     if (modal == "discover" && m_discoverCompactLayout.has_value() &&
         *m_discoverCompactLayout != compactLayout) {
         if (compactLayout) {
@@ -948,7 +984,8 @@ void NativeHud::archiveMask(double width) {
     restore();
 }
 void NativeHud::brand() {
-    roll("music-brand", m_music->libraryName(), 59, 115.425, 44, std::min(720.0, width * 0.45), "bold");
+    roll("music-brand", m_music->libraryName(), 59, 115.425 - 40 * (textScale() - 1), 44,
+         std::min(720.0, width * 0.45), "bold");
     aligned("RHINE LAB / MUSIC DATABASE", 59, 173, 14, "demibold", 1);
 }
 void NativeHud::brandLine(int index) {
@@ -985,9 +1022,10 @@ void NativeHud::footer(double width) {
     } else if (!m_music->uid.isEmpty()) {
         session = ProviderRegistry::instance().sessionLabel(m_music->provider);
     }
-    text(session, 75, 967, 10, "regular", 0.9);
+    const auto captionY = 967 - 10 * (textScale() - 1);
+    text(session, 75, captionY, 10, "regular", 0.9);
     const auto credit = QStringLiteral("POWERED BY RHINE LAB");
-    text(credit, width - 59 - m_glyphs->width(credit, 10, "demibold"), 967, 10, "demibold");
+    text(credit, width - 59 - m_glyphs->width(credit, 10, "demibold"), captionY, 10, "demibold");
 }
 void NativeHud::empty(double width) {
     const auto x = navigationLeft(width);
@@ -1073,7 +1111,8 @@ void NativeHud::archive(double width) {
         }
         text("TRACK / SELECT", 60, 865, 11);
         const auto number = MusicData::pad(music.libraryIndex() + 1);
-        const auto numberSize = std::min(58.0, 58.0 * 77 / std::max(1.0, m_glyphs->width(number, 58)));
+        const auto numberSize = std::min({58., 64. / textScale(),
+                                         58. * 77 / std::max(1., m_glyphs->width(number, 58))});
         rollingText("music-number", number, 60, 901.2, numberSize, "regular", 0, true);
         text("/", 141, 925, 32, "light");
         text(QString::number(music.libraryTotal()), 172, 932, 22);
@@ -1163,6 +1202,9 @@ void NativeHud::archiveTrackList(double x, double width) {
     const auto position = archiveTrackPosition(selected);
     constexpr double titleY = 509;
     constexpr double titleSize = 28;
+    const auto extraHeight = titleSize * (textScale() - 1);
+    const auto adjacentStep = 88 + extraHeight;
+    const auto rowStep = 52 + extraHeight;
     const auto bounds = m_glyphs->bounds("音乐", titleSize, "bold");
     const auto centerY = titleY + bounds["y"].toDouble() + bounds["height"].toDouble() / 2;
     // 标尺与指示使用固定锚点，长歌名只截断显示，不再推动标尺左右跳动。
@@ -1182,7 +1224,7 @@ void NativeHud::archiveTrackList(double x, double width) {
             continue;
         }
         // 第一段保留当前行两侧的大间隙，后续行按固定行距连续滑入和滑出。
-        const auto offset = distance <= 1 ? distance * 88 : 88 + (distance - 1) * 52;
+        const auto offset = distance <= 1 ? distance * adjacentStep : adjacentStep + (distance - 1) * rowStep;
         const auto rowY = titleY + std::copysign(offset, relative);
         const auto emphasis = std::max(0.0, 1 - distance);
         auto color = ink();
@@ -1205,7 +1247,7 @@ void NativeHud::archiveTrackList(double x, double width) {
         text(shown, left, rowY, titleSize, "bold", 0, color);
         restore();
         if (rowY >= titleY - 270 && rowY <= titleY + 270 && opacity > 0.5) {
-            hit(x, rowY - 4, textWidth, 44,
+            hit(x, rowY - 4, textWidth, 44 + extraHeight,
                 index == selected ? "open" : "music:index:" + QString::number(index), name);
         }
     }

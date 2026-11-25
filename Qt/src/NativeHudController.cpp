@@ -78,9 +78,19 @@ NativeHud::NativeHud(Host *host, Glyphs *glyphs, MusicLibrary *music, HudSceneAc
 #endif
     discRotation = PlatformFeatures::discRotationAvailable() && host->preference("disc-rotation") == "on";
     m_boxedPlayButton = host->preference("play-button-style") == "boxed";
-    connect(host, &Host::preferenceChanged, this, [this](const QString &key, const QString &value) {
+    const auto *textScaleSetting = SettingsSchema::find("text-scale");
+    m_interfaceScale = PlatformFeatures::textScaleAvailable()
+                           ? SettingsSchema::read(*textScaleSetting, settingsContext()).canonical.toInt() / 100.
+                           : 1.;
+    connect(host, &Host::preferenceChanged, this, [this, textScaleSetting](const QString &key,
+                                                                          const QString &value) {
         if (key == "play-button-style") {
             m_boxedPlayButton = value == "boxed";
+        } else if (key == textScaleSetting->binding.preferenceKey &&
+                   PlatformFeatures::textScaleAvailable()) {
+            const auto percent = SettingsSchema::normalize(*textScaleSetting, settingsContext(), value).toInt();
+            m_interfaceScale = percent / 100.;
+            m_host->invalidate();
         }
     });
     skipDetailOnSwitch = host->preference("skip-detail-on-switch") == "on";

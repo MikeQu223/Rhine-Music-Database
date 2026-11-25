@@ -52,6 +52,7 @@ struct Model {
     int categoryPage = 0;
     int categoryPages = 1;
     int loadedCount = 0;
+    double textScale = 1.;
 };
 struct Canvas {
     std::function<void(double, double, double, double, QJsonArray)> fill;

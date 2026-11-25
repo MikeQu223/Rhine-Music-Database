@@ -335,7 +335,19 @@ Glyphs::Glyph Glyphs::glyph(QString ch, QString weight) {
     auto outline = QTransform::fromScale(1, -1).map(font.pathForGlyph(ids.first()));
     return glyphs[key] = {advances.first().x() / 1000, outline};
 }
+double Glyphs::textScale() const {
+    return m_textScale;
+}
+
+void Glyphs::setTextScale(double scale) {
+    m_textScale = scale;
+}
+
 double Glyphs::width(QString text, double size, QString weight, double tracking) {
+    return widthAtSize(text, size * m_textScale, weight, tracking * m_textScale);
+}
+
+double Glyphs::widthAtSize(const QString &text, double size, const QString &weight, double tracking) {
     QMutexLocker lock(&mutex);
     // 缓存键原来是「把四个参数序列化成一份 JSON」。width() 在每帧的 fit / inset / 裁剪判断里
     // 被调很多次，JSON 序列化 + UTF-8 往返比查缓存本身还贵。改成定界符拼接：'g',17 保证
@@ -362,6 +374,10 @@ double Glyphs::width(QString text, double size, QString weight, double tracking)
     return result;
 }
 QVariantMap Glyphs::bounds(QString value, double size, QString weight) {
+    return boundsAtSize(value, size * m_textScale, weight);
+}
+
+QVariantMap Glyphs::boundsAtSize(const QString &value, double size, const QString &weight) {
     QMutexLocker lock(&mutex);
     if (needsLayout(value, weight)) {
         QTransform transform;
@@ -390,6 +406,7 @@ QVariantMap Glyphs::bounds(QString value, double size, QString weight) {
 }
 double Glyphs::inset(QString text, double size, QString weight) {
     QMutexLocker lock(&mutex);
+    size *= m_textScale;
     if (text.isEmpty()) {
         return 0;
     }
@@ -400,6 +417,10 @@ double Glyphs::inset(QString text, double size, QString weight) {
     return !g.path.isEmpty() ? g.path.boundingRect().x() * size / 1000 : 0;
 }
 QStringList Glyphs::wrap(QString value, double limit, double size, QString weight) {
+    return wrapAtSize(value, limit, size * m_textScale, weight);
+}
+
+QStringList Glyphs::wrapAtSize(const QString &value, double limit, double size, const QString &weight) {
     QMutexLocker lock(&mutex);
     // 同 width()：别再用「序列化成 JSON」当键。歌词整段文本做键时，序列化本身
     // 就比查缓存贵，而 wrap 在换行布局里是热路径。
@@ -432,7 +453,7 @@ QStringList Glyphs::wrap(QString value, double limit, double size, QString weigh
         QString line;
         qsizetype lastBreak = -1;
         for (const auto &cluster : clusters(paragraph)) {
-            if (!line.isEmpty() && width(line + cluster, size, weight) > limit) {
+            if (!line.isEmpty() && widthAtSize(line + cluster, size, weight) > limit) {
                 // 普通空白之后优先断词，否则退回到按字素断开超长单词。
                 if (lastBreak > 0 && lastBreak < line.size()) {
                     lines.append(line.left(lastBreak));
@@ -649,7 +670,7 @@ void Glyphs::blurredText(QPainter &c, QString value, double x, double y, double 
         return;
     }
 
-    const auto bounds = this->bounds(value, size, weight);
+    const auto bounds = boundsAtSize(value, size, weight);
     const int blurPixels = std::clamp(int(std::lround(blurRadius * sourceScale * .75)), 1, 8);
     const double padding = (3. * blurPixels + 2.) / sourceScale;
     const QRectF local(bounds["x"].toDouble() - padding, bounds["y"].toDouble() - padding,
@@ -1050,11 +1071,11 @@ QImage Glyphs::label(const QJsonObject &value) {
     c.fillRect(QRectF(12, 12, 1000, 6), ink);
     auto fit = [&](QString s, double y, double maximum, QString weight) {
         double size = maximum;
-        while (width(s, size, weight) > 954 && size > 34) {
+        while (widthAtSize(s, size, weight) > 954 && size > 34) {
             size -= 2;
         }
         QString shown = s;
-        while (width(shown, size, weight) > 954 && shown.size() > 1) {
+        while (widthAtSize(shown, size, weight) > 954 && shown.size() > 1) {
             shown.chop(1);
         }
         if (shown != s) {
