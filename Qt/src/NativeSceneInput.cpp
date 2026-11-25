@@ -235,6 +235,9 @@ void NativeScene::openViewer() {
 bool NativeScene::viewerOpen() const {
     return m_viewer->isOpen();
 }
+bool NativeScene::viewerTargetVisible() const {
+    return m_viewer->targetVisible();
+}
 void NativeScene::coverFront(bool front) {
     m_changed = true;
     m_viewer->coverFront(front);

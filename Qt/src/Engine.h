@@ -98,6 +98,7 @@ class Engine : public QObject {
     Q_INVOKABLE void importPluginPackage(QUrl url);
     Q_INVOKABLE void resize(double width, double height);
     Q_INVOKABLE void action(QString action);
+    Q_INVOKABLE void playSurfaceSound(bool opened);
     Q_INVOKABLE void submitForm(QString account, QString captcha);
     Q_INVOKABLE void sendLoginCode(QString phone);
     Q_INVOKABLE bool keyEvent(int key, int modifiers, QString text);

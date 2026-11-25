@@ -58,7 +58,7 @@ void NativeHud::applyShortcutAction(const QString &value) {
         openModal("shortcuts");
     } else if (rest == "back") {
         shortcuts->cancelRecording();
-        openModal("settings");
+        openModal("settings", true);
         settingsScroll = std::clamp(settingsReturnScroll, 0., settingsScrollMaximum());
     } else if (rest == "enabled") {
         shortcuts->setEnabled(!shortcuts->enabled());

@@ -19,6 +19,8 @@ std::unique_ptr<DesktopLyricsPlatform> createDesktopLyricsPlatform();
 
 // 管理 QQuickWindow 的生命周期、几何和视图
 class DesktopLyricsWindow : public QObject {
+    Q_OBJECT
+
   public:
     DesktopLyricsWindow(Glyphs *glyphs, std::unique_ptr<DesktopLyricsPlatform> platform,
                         QObject *parent = nullptr);
@@ -26,6 +28,9 @@ class DesktopLyricsWindow : public QObject {
     void show();
     void hide();
     void present(const DesktopLyrics::Frame &frame, const QPoint &topLeft);
+
+  signals:
+    void visibleChanged(bool visible);
 
   private:
     void ensureCreated();

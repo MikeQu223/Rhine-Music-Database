@@ -15,6 +15,7 @@ Item {
             value: dialogs.hostWindow
         }
         title: "导入本地音乐文件夹"
+        onVisibleChanged: backend.playSurfaceSound(visible)
         onAccepted: backend.importLocal([selectedFolder])
     }
     FileDialog {
@@ -27,6 +28,7 @@ Item {
         title: "导入本地音乐文件"
         fileMode: FileDialog.OpenFiles
         nameFilters: ["音乐文件 (*.mp3 *.flac *.m4a *.mp4 *.aac *.ogg *.opus *.ape *.wav *.aiff *.aif *.wv *.wma *.mpc)"]
+        onVisibleChanged: backend.playSurfaceSound(visible)
         onAccepted: backend.importLocal(selectedFiles)
     }
     Connections {

@@ -131,7 +131,7 @@ void NativeHud::applyDesktopLyricsAction(const QString &value) {
         return;
     }
     if (name == QLatin1String("back")) {
-        openModal("settings");
+        openModal("settings", true);
         settingsScroll = std::clamp(settingsReturnScroll, 0.0, settingsScrollMaximum());
         return;
     }

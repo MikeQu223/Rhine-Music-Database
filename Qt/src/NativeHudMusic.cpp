@@ -116,6 +116,7 @@ void NativeHud::musicAction(const QStringList &parts, const QString &value) {
             playlistPage) {
             // 先收起菜单再补页，排序请求才能绑定仍然打开的歌单详情。
             if (modal == "detail-sort") {
+                playSurfaceSound(false);
                 modal.clear();
                 closing = false;
                 ++m_searchGeneration;

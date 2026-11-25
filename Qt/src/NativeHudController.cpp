@@ -37,14 +37,14 @@ NativeHud::NativeHud(Host *host, Glyphs *glyphs, MusicLibrary *music, HudSceneAc
     : QObject(parent), m_host(host), m_glyphs(glyphs), m_music(music), m_scene(std::move(scene)) {
     if constexpr (PlatformFeatures::InterfaceSounds) {
         if (!host->offline) {
-            auto *sounds = new UiSoundFeedback(host, &music->player, this);
-            connect(music, &MusicLibrary::musicIdentityRequested, sounds, [this, sounds](const QString &key) {
+            m_uiSounds = new UiSoundFeedback(host, &music->player, this);
+            connect(music, &MusicLibrary::musicIdentityRequested, m_uiSounds, [this](const QString &key) {
                 // 场景和移动列表都在原有选择流程发布唱片身份，重绘和指针位移无需查询音效。
                 const auto &selectionFrame = m_music->frame;
                 const bool inArchive = modal.isEmpty() && !lyricsMode && !commentsMode && !m_music->directoryInfo &&
                                        selectionFrame.value("mode") == "archive" &&
                                        !selectionFrame.value("viewer").toBool() && !m_music->wantsSongDetails;
-                sounds->observeSelection(key, inArchive);
+                m_uiSounds->observeSelection(key, inArchive);
             });
         }
     }
@@ -56,7 +56,7 @@ NativeHud::NativeHud(Host *host, Glyphs *glyphs, MusicLibrary *music, HudSceneAc
         pluginInstall = {};
         pluginManagerMessage = error;
         if (modal == "plugin-install" || !error.isEmpty()) {
-            openModal("plugins");
+            openModal("plugins", modal == "plugin-install");
         }
     });
     themeMode = host->preference("theme");
@@ -139,7 +139,13 @@ void NativeHud::suspendLyricsControls() {
     m_lyricsControlsMotion.set(false, lastTime, true);
 }
 
-void NativeHud::openModal(QString kind) {
+void NativeHud::playSurfaceSound(bool opened) {
+    if (m_uiSounds && !frame.isEmpty() && !m_responsive.compact()) {
+        m_uiSounds->playSurface(opened);
+    }
+}
+
+void NativeHud::openModal(QString kind, bool returning) {
     if (modal == "plugin-install" && kind != modal && !pluginInstall.isEmpty()) {
         pluginInstall = {};
         m_host->cancelPluginInstall();
@@ -167,6 +173,7 @@ void NativeHud::openModal(QString kind) {
         m_scene.pointer("pointercancel", 0, 0, 0);
         m_scene.pointer("pointerleave", 0, 0, 0);
     }
+    const bool opening = modal != kind || closing;
     modal = kind;
     if (lyricsMode) {
         suspendLyricsControls();
@@ -186,6 +193,9 @@ void NativeHud::openModal(QString kind) {
         sentryDiagnosticMessage.clear();
     }
     motion.set(true, lastTime, reduced);
+    if (opening) {
+        playSurfaceSound(!returning);
+    }
     query.clear();
     listOffset = 0;
     resetResultViews();
@@ -238,6 +248,7 @@ void NativeHud::closeModal() {
         m_host->cancelPluginInstall();
         return;
     }
+    const bool wasOpen = !modal.isEmpty() && !closing;
     if (shortcuts && modal == "shortcuts") {
         shortcuts->cancelRecording();
     }
@@ -256,6 +267,9 @@ void NativeHud::closeModal() {
     const bool directNavigation =
         m_responsive.compact() && QStringList{"search", "discover", "settings", "saved"}.contains(modal);
     motion.set(false, lastTime, reduced || directNavigation);
+    if (wasOpen) {
+        playSurfaceSound(false);
+    }
 }
 
 void NativeHud::setQuery(QString value) {
@@ -674,6 +688,9 @@ void NativeHud::playerAction(const QStringList &parts) {
         emit mvRequested();
     } else if (name == "lyrics" || name == "detail") {
         if (!player.current.isEmpty()) {
+            const bool surfaceWasOpen = !modal.isEmpty() && !closing;
+            const bool previousLyrics = lyricsMode;
+            const bool previousComments = commentsMode;
             modal.clear();
             closing = false;
             commentsMode = false;
@@ -687,9 +704,17 @@ void NativeHud::playerAction(const QStringList &parts) {
             m_lyricsBrowse.reset();
             music.followPlayback(player.current);
             m_scene.mode("detail");
+            if (lyricsMode != previousLyrics) {
+                playSurfaceSound(lyricsMode);
+            } else if ((surfaceWasOpen || previousComments) && frame["mode"] == "detail") {
+                playSurfaceSound(false);
+            }
             frame["mode"] = "detail";
         }
     } else if (name == "lyrics-close") {
+        if (lyricsMode) {
+            playSurfaceSound(false);
+        }
         lyricsMode = false;
         suspendLyricsControls();
     } else if (name == "lyrics-follow") {
@@ -881,11 +906,17 @@ void NativeHud::action(QString value) {
             commentsReturnTab = tab;
             tab = "comments";
         }
+        if (!commentsMode) {
+            playSurfaceSound(true);
+        }
         commentsMode = true;
         m_music->comments.load(m_music->current);
         return;
     }
     if (value == "music:comments-close") {
+        if (commentsMode) {
+            playSurfaceSound(false);
+        }
         commentsMode = false;
         if (!m_responsive.compact()) {
             tab = commentsReturnTab.isEmpty() || commentsReturnTab == "comments" ? "overview"
@@ -1098,9 +1129,15 @@ void NativeHud::action(QString value) {
             commentsTrackKey = CommentsController::trackKey(music.current);
             commentsScroll = 0;
             commentsContentBottom = 0;
+            if (!commentsMode) {
+                playSurfaceSound(true);
+            }
             commentsMode = true;
             music.comments.load(music.current);
             return;
+        }
+        if (commentsMode) {
+            playSurfaceSound(false);
         }
         commentsMode = false;
         trackOffset = 0;
@@ -1112,6 +1149,9 @@ void NativeHud::action(QString value) {
         return;
     }
     if (value == "comments:close") {
+        if (commentsMode) {
+            playSurfaceSound(false);
+        }
         commentsMode = false;
         tab = commentsReturnTab.isEmpty() || commentsReturnTab == "comments" ? "overview" : commentsReturnTab;
         commentsScroll = 0;
@@ -1149,7 +1189,7 @@ void NativeHud::action(QString value) {
     }
     if (value == "plugins") {
         pluginManagerMessage.clear();
-        openModal("plugins");
+        openModal("plugins", modal == "plugin-detail");
         // 市场索引可能在应用运行期间更新，进入面板时总是重新读取，避免显示过期版本。
         m_host->refreshPluginMarketplace();
         return;
@@ -1487,9 +1527,9 @@ void NativeHud::action(QString value) {
     } else if (value == "disc-rotation:enable") {
         discRotation = true;
         m_host->setPreference("disc-rotation", "on");
-        openModal("settings");
+        openModal("settings", true);
     } else if (value == "disc-rotation:cancel") {
-        openModal("settings");
+        openModal("settings", true);
     } else if (value == "theme") {
         themeMode = cycle({"light", "dark", "system"}, themeMode);
         dark = themeMode == "system" ? m_host->systemDark() : themeMode == "dark";

@@ -1,40 +1,46 @@
 #include "UiSoundOutputApple.h"
 #import <AVFAudio/AVAudioPlayer.h>
+#include <vector>
 
 struct UiSoundOutputApple::State {
-    AVAudioPlayer *player = nil;
+    std::vector<AVAudioPlayer *> clips;
+    AVAudioPlayer *active = nil;
 };
 
-UiSoundOutputApple::UiSoundOutputApple() : m_state(std::make_unique<State>()) {
+UiSoundOutputApple::UiSoundOutputApple(size_t clipCount) : m_state(std::make_unique<State>()) {
+    m_state->clips.resize(clipCount);
 }
 
 UiSoundOutputApple::~UiSoundOutputApple() {
     stop();
 }
 
-void UiSoundOutputApple::load(const QByteArray &wave) {
+void UiSoundOutputApple::load(size_t index, const QByteArray &wave) {
     @autoreleasepool {
         auto *data = [NSData dataWithBytes:wave.constData() length:NSUInteger(wave.size())];
-        m_state->player = [[AVAudioPlayer alloc] initWithData:data error:nullptr];
+        m_state->clips[index] = [[AVAudioPlayer alloc] initWithData:data error:nullptr];
     }
 }
 
-void UiSoundOutputApple::play() {
+void UiSoundOutputApple::play(size_t index) {
     @autoreleasepool {
-        auto *player = m_state->player;
+        auto *player = m_state->clips[index];
         if (!player) {
             return;
         }
-        if (player.isPlaying) {
-            [player stop];
+        if (m_state->active.isPlaying) {
+            [m_state->active stop];
         }
         player.currentTime = 0;
-        [player play];
+        if ([player play]) {
+            m_state->active = player;
+        }
     }
 }
 
 void UiSoundOutputApple::stop() {
     @autoreleasepool {
-        [m_state->player stop];
+        [m_state->active stop];
+        m_state->active = nil;
     }
 }

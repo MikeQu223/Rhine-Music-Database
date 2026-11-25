@@ -120,7 +120,7 @@ void NativeHud::applyMenuBarLyricsAction(const QString &value) {
         return;
     }
     if (command == "back") {
-        openModal("settings");
+        openModal("settings", true);
         settingsScroll = std::clamp(settingsReturnScroll, 0.0, settingsScrollMaximum());
         return;
     }

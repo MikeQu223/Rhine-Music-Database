@@ -1,14 +1,15 @@
 #pragma once
 
 #include <QByteArray>
+#include <cstddef>
 #include <memory>
 
 class UiSoundOutputApple {
   public:
-    UiSoundOutputApple();
+    explicit UiSoundOutputApple(size_t clipCount);
     ~UiSoundOutputApple();
-    void load(const QByteArray &wave);
-    void play();
+    void load(size_t index, const QByteArray &wave);
+    void play(size_t index);
     void stop();
 
   private:

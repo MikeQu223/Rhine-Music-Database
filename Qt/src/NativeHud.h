@@ -29,6 +29,7 @@ struct HudSceneActions {
 };
 
 class DiscoverArtwork;
+class UiSoundFeedback;
 
 class NativeHud : public QObject {
     Q_OBJECT
@@ -64,8 +65,9 @@ class NativeHud : public QObject {
     void wheel(double x, double y, double delta, std::optional<int> steps = std::nullopt,
                std::optional<double> distance = std::nullopt);
     void form(QJsonObject fields);
-    void openModal(QString kind);
+    void openModal(QString kind, bool returning = false);
     void closeModal();
+    void playSurfaceSound(bool opened);
     void setQuery(QString value);
     // ！？ 325 ？！
     void openHiddenVideo();
@@ -248,6 +250,7 @@ class NativeHud : public QObject {
     Glyphs *m_glyphs;
     MusicLibrary *m_music;
     HudSceneActions m_scene;
+    UiSoundFeedback *m_uiSounds = nullptr;
     quint64 m_searchGeneration = 0;
     // ！？ 325 ？！
     QString m_secretKeys;

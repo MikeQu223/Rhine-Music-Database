@@ -10,6 +10,9 @@ class NativeViewer {
   public:
     explicit NativeViewer(QString root);
     bool isOpen() const;
+    bool targetVisible() const {
+        return m_open && !m_closing;
+    }
     bool pending() const;
     void open(double time);
     void action(QString action, double time);

@@ -1401,6 +1401,10 @@ int main(int argc, char **argv) {
     auto profiler = std::make_unique<FrameProfiler>(backend.get(), profilePath);
     QObject::connect(backend.get(), &Engine::performanceRequested, profiler.get(),
                      &FrameProfiler::toggleVisible);
+    QObject::connect(profiler.get(), &FrameProfiler::visibleChanged, backend.get(),
+                     [engineBackend = backend.get(), panel = profiler.get()] {
+        engineBackend->playSurfaceSound(panel->visible());
+    });
     backend->start();
     // 设置页的调试模式开关直接驱动采集生命周期；关闭会同时清空已有诊断数据。
     QObject::connect(
@@ -1472,6 +1476,7 @@ int main(int argc, char **argv) {
         if (auto window = qobject_cast<QWindow *>(mvWindow.get())) {
             QQmlEngine::setObjectOwnership(window, QQmlEngine::CppOwnership);
             mv.setWindow(window);
+            QObject::connect(window, &QWindow::visibleChanged, backend.get(), &Engine::playSurfaceSound);
         } else {
             qWarning() << "MV window:" << component.errors();
         }

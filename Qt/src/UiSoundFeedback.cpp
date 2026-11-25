@@ -17,12 +17,15 @@
 #include <QPointer>
 #include <QScopeGuard>
 #include <QTimer>
+#include <array>
 #include <atomic>
 
 namespace {
-// 音效长 29 ms，快速切换时保留间隔并丢弃迟到的反馈。
 constexpr int MinimumCueIntervalMs = 52;
 constexpr int CueExpiryMs = 55;
+// 页面开合优先于资料库选中声，留出 261 ms 音频及线程调度的时间。
+constexpr int SurfaceQuietMs = 280;
+constexpr std::array CueFiles{"archive-select.wav", "window-transition.wav"};
 }
 
 class UiSoundFeedback::Output : public QObject {
@@ -32,25 +35,30 @@ class UiSoundFeedback::Output : public QObject {
     }
 
     void preload() {
-        QFile wave(QStringLiteral(":/ui-audio/archive-select.wav"));
-        if (!wave.open(QIODevice::ReadOnly)) {
-            return;
-        }
+        for (size_t index = 0; index < CueFiles.size(); ++index) {
+            QFile wave(QStringLiteral(":/ui-audio/") + QLatin1String(CueFiles[index]));
+            if (!wave.open(QIODevice::ReadOnly)) {
+                continue;
+            }
 #if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
-        m_native.load(wave.readAll());
+            m_native.load(index, wave.readAll());
 #elif defined(Q_OS_WIN)
-        m_wave = wave.readAll();
+            m_waves[index] = wave.readAll();
 #endif
+        }
     }
 
-    void play() {
+    void play(Cue cue) {
 #if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
-        m_native.play();
+        m_native.play(cue == Cue::Selection ? 0 : 1);
 #elif defined(Q_OS_WIN)
-        if (!m_wave.isEmpty()) {
+        const auto &wave = m_waves[cue == Cue::Selection ? 0 : 1];
+        if (!wave.isEmpty()) {
             // 异步输出期间系统持有 WAV 指针，由线程在退出前停止并保留缓冲区。
-            PlaySoundA(m_wave.constData(), nullptr, SND_MEMORY | SND_ASYNC | SND_NODEFAULT);
+            PlaySoundA(wave.constData(), nullptr, SND_MEMORY | SND_ASYNC | SND_NODEFAULT);
         }
+#else
+        Q_UNUSED(cue);
 #endif
     }
 
@@ -68,9 +76,9 @@ class UiSoundFeedback::Output : public QObject {
 
   private:
 #if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
-    UiSoundOutputApple m_native;
+    UiSoundOutputApple m_native{CueFiles.size()};
 #elif defined(Q_OS_WIN)
-    QByteArray m_wave;
+    std::array<QByteArray, CueFiles.size()> m_waves;
 #endif
 };
 
@@ -141,25 +149,48 @@ void UiSoundFeedback::observeSelection(const QString &key, bool inArchive) {
     const bool hadSelection = !m_selectedKey.isEmpty();
     m_selectedKey = key;
     if (inArchive && hadSelection && !key.isEmpty()) {
-        play();
+        play(Cue::Selection);
     }
 }
 
+void UiSoundFeedback::playSurface(bool opened) {
+    play(opened ? Cue::SurfaceOpen : Cue::SurfaceClose);
+}
+
 /** 提交一次短音效。超频、过期或尚未预载完成的反馈直接丢弃。 */
-void UiSoundFeedback::play() {
-    if (!m_allowed || (m_lastCue.isValid() && m_lastCue.elapsed() < MinimumCueIntervalMs) ||
-        m_output->pending.exchange(true)) {
+void UiSoundFeedback::play(Cue cue) {
+    if (!m_allowed) {
         return;
     }
-    m_lastCue.start();
+    const bool isSelection = cue == Cue::Selection;
+    if (isSelection) {
+        if ((m_lastSurfaceCue.isValid() && m_lastSurfaceCue.elapsed() < SurfaceQuietMs) ||
+            (m_lastCue.isValid() && m_lastCue.elapsed() < MinimumCueIntervalMs) ||
+            m_output->pending.exchange(true)) {
+            return;
+        }
+        m_lastCue.start();
+    } else {
+        if (cue == m_lastSurface && m_lastSurfaceCue.isValid() &&
+            m_lastSurfaceCue.elapsed() < MinimumCueIntervalMs) {
+            return;
+        }
+        m_lastSurface = cue;
+        m_lastSurfaceCue.start();
+        ++m_output->generation;
+    }
     const auto generation = m_output->generation.load();
     const QDeadlineTimer expiry(CueExpiryMs, Qt::PreciseTimer);
     QMetaObject::invokeMethod(
         m_output,
-        [output = m_output, generation, expiry] {
-            const auto clearPending = qScopeGuard([output] { output->pending.store(false); });
+        [output = m_output, cue, isSelection, generation, expiry] {
+            const auto clearPending = qScopeGuard([output, isSelection] {
+                if (isSelection) {
+                    output->pending.store(false);
+                }
+            });
             if (output->generation.load() == generation && !expiry.hasExpired()) {
-                output->play();
+                output->play(cue);
             }
         },
         Qt::QueuedConnection);

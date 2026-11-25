@@ -14,14 +14,42 @@
 #include <cmath>
 
 HudSceneActions NativeApplication::sceneActions(NativeScene *scene) {
-    return {[scene](QString mode) { scene->setMode(mode); },
+    return {[this](QString mode) { setSceneMode(std::move(mode)); },
             [scene](bool dark) { scene->theme(dark); },
             [scene](bool reduced) { scene->reduced(reduced); },
             [scene](QString type, double x, double y, double delta) { scene->pointer(type, x, y, delta); },
-            [scene](QString action) { scene->viewerAction(action); },
-            [scene](QString key) { scene->viewerKey(key); },
-            [scene]() { scene->openViewer(); },
+            [this, scene](QString action) {
+                const bool wasVisible = scene->viewerTargetVisible();
+                scene->viewerAction(std::move(action));
+                playViewerTransition(wasVisible);
+            },
+            [this, scene](QString key) {
+                const bool wasVisible = scene->viewerTargetVisible();
+                scene->viewerKey(std::move(key));
+                playViewerTransition(wasVisible);
+            },
+            [this, scene]() {
+                const bool wasVisible = scene->viewerTargetVisible();
+                scene->openViewer();
+                playViewerTransition(wasVisible);
+            },
             [scene](bool front) { scene->coverFront(front); }};
+}
+
+void NativeApplication::setSceneMode(QString mode) {
+    const bool wasDetail = m_scene->mode() == "detail";
+    const bool isDetail = mode == "detail";
+    m_scene->setMode(std::move(mode));
+    if (wasDetail != isDetail) {
+        hud.playSurfaceSound(isDetail);
+    }
+}
+
+void NativeApplication::playViewerTransition(bool wasVisible) {
+    const bool visible = m_scene->viewerTargetVisible();
+    if (wasVisible != visible) {
+        hud.playSurfaceSound(visible);
+    }
 }
 
 // 与 RhineMediaService.ACTION_SEEK 对应；会话回调的动作串形如 rhine.media.SEEK:<毫秒>。
@@ -53,7 +81,7 @@ NativeApplication::NativeApplication(Host *host, Glyphs *glyphs, NativeScene *sc
     connect(&music, &MusicLibrary::invalidated, host, &Host::invalidate);
     connect(&music, &MusicLibrary::selectionRequested, this,
             [scene](int index, QJsonObject navigation) { scene->select(index, navigation); });
-    connect(&music, &MusicLibrary::modeRequested, this, [scene](QString mode) { scene->setMode(mode); });
+    connect(&music, &MusicLibrary::modeRequested, this, &NativeApplication::setSceneMode);
     connect(&music, &MusicLibrary::navigationRequested, this,
             [scene](QString axis, int direction) { scene->navigate(axis, direction); });
     connect(&music, &MusicLibrary::musicIdentityRequested, this,

@@ -451,7 +451,8 @@ if(WIN32 OR IOS OR (APPLE AND NOT RHINE_MOBILE_PLATFORM))
         BASE
         "Assets/audio/ui"
         FILES
-        Assets/audio/ui/archive-select.wav)
+        Assets/audio/ui/archive-select.wav
+        Assets/audio/ui/window-transition.wav)
 endif()
 qt_add_resources(
     RhineMusicDatabase

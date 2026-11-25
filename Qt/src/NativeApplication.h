@@ -26,5 +26,7 @@ class NativeApplication : public QObject {
     bool m_hudPointerSequence = false;
     bool m_moved = false;
     QPointF m_down;
-    static HudSceneActions sceneActions(NativeScene *scene);
+    HudSceneActions sceneActions(NativeScene *scene);
+    void setSceneMode(QString mode);
+    void playViewerTransition(bool wasVisible);
 };

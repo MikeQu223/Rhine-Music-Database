@@ -17,6 +17,7 @@ void DesktopLyricsWindow::ensureCreated() {
         return;
     }
     m_window = std::make_unique<QQuickWindow>();
+    connect(m_window.get(), &QWindow::visibleChanged, this, &DesktopLyricsWindow::visibleChanged);
     m_window->setFlags(Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint |
                        Qt::WindowDoesNotAcceptFocus | Qt::WindowTransparentForInput |
                        Qt::NoDropShadowWindowHint);

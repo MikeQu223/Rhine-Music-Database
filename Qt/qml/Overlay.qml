@@ -124,6 +124,7 @@ Item {
                 objectName: "pluginPackageDialog"
                 title: "导入插件包"
                 nameFilters: ["莱茵插件包 (*.rhineplugin)"]
+                onVisibleChanged: rhine.playSurfaceSound(visible)
                 onAccepted: {
                     pluginDialogs.closeFallback();
                     rhine.importPluginPackage(selectedFile);
@@ -134,6 +135,7 @@ Item {
                 id: pluginFolderDialog
                 objectName: "pluginFolderDialog"
                 title: "导入插件文件夹"
+                onVisibleChanged: rhine.playSurfaceSound(visible)
                 onAccepted: {
                     pluginDialogs.closeFallback();
                     rhine.importPluginFolder(selectedFolder);

@@ -1053,6 +1053,12 @@ void Engine::action(QString value) {
     // 所有 HUD 动作保留输入唤醒语义，横屏和移动布局都要退出场景休眠。
     wake();
 }
+
+void Engine::playSurfaceSound(bool opened) {
+    if (!compactLayout()) {
+        app->hud.playSurfaceSound(opened);
+    }
+}
 /**
  * 将输入控件的原始数据转换为原生业务操作
  */

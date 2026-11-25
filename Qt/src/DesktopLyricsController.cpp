@@ -31,6 +31,7 @@ DesktopLyricsController::DesktopLyricsController(Engine *engine, DesktopLyricsSe
     : QObject(parent), m_engine(engine), m_settings(settings), m_metrics(makeMetrics(engine->glyphs())),
       m_window(std::make_unique<DesktopLyricsWindow>(engine->glyphs(), createDesktopLyricsPlatform())),
       m_preview(qEnvironmentVariableIntValue("RHINE_DESKTOP_LYRICS_PREVIEW") == 1) {
+    connect(m_window.get(), &DesktopLyricsWindow::visibleChanged, m_engine, &Engine::playSurfaceSound);
     connect(m_settings, &DesktopLyricsSettings::enabledChanged, this, [this] { refresh(); });
     connect(m_settings, &DesktopLyricsSettings::appearanceChanged, this, [this] { refresh(); });
     auto &player = m_engine->player();

@@ -29,6 +29,7 @@ class NativeScene {
         return m_mode;
     }
     bool viewerOpen() const;
+    bool viewerTargetVisible() const;
     bool detailSettled() const;
     bool themeSettled() const {
         return m_theme.settled(m_clock);
