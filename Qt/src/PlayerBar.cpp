@@ -233,10 +233,13 @@ void lyrics(Painter &paint, const State &state, double x, double y) {
 }
 
 void output(Painter &paint, const State &state, double x, double y, double right) {
-    paint.fill({x - 22, y + 23, 1, 50}, paint.line);
-    paint.label("OUTPUT / 输出", x, y + 29, 11, 180, "regular", true);
-    paint.label(state.applicationVolume ? "音量" : "系统音量", x, y + 53, 14, 78);
+    // 移动端（applicationVolume 恒假）整块输出音量区都不画：用户 2026-11-26 要求
+    // Android 上不出现「OUTPUT / 输出 + 系统音量」，不是把滑轨换成别的文案。
+    // 右缘的队列入口不属于输出音量区，仍然照画。
     if (state.applicationVolume) {
+        paint.fill({x - 22, y + 23, 1, 50}, paint.line);
+        paint.label("OUTPUT / 输出", x, y + 29, 11, 180, "regular", true);
+        paint.label("音量", x, y + 53, 14, 78);
         const auto volumeX = x + 58;
         paint.drawing.volume = QRectF(volumeX, y + 47, 100, 28);
         paint.fill({volumeX, y + 60, 100, 3}, paint.line);

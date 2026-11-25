@@ -358,7 +358,7 @@ void main() {
       );
     }
 
-    test('Android：输出模块只写「系统音量」，不画滑轨也不发 volume 命中', () {
+    test('Android：输出音量块整块不画（用户 2026-11-26 要求，不是只换文案）', () {
       final BasicHudFrame frame = BasicHudFrame.build(
         state: playingState(),
         ports: _ports(),
@@ -366,11 +366,18 @@ void main() {
         height: 1080,
         portrait: false,
       );
-      expect(textsOf(frame), contains('系统音量'));
-      expect(textsOf(frame), isNot(contains('音量')));
+      const List<String> outputTexts = <String>['OUTPUT / 输出', '音量', '系统音量'];
+      for (final String text in outputTexts) {
+        expect(textsOf(frame), isNot(contains(text)), reason: 'Android 上不应画「$text」');
+      }
       expect(
         frame.hits.where((HudHit hit) => hit.action.startsWith('player:volume-fraction:')),
         isEmpty,
+      );
+      // 队列入口保留（属于播放条右缘，不是输出音量块）。
+      expect(
+        frame.hits.where((HudHit hit) => hit.action == 'player:open'),
+        isNotEmpty,
       );
     });
 

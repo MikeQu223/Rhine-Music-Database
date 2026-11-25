@@ -918,13 +918,18 @@ void main() {
           ]);
     });
 
-    test('applicationVolume=false：无 volume 矩形、无命中、无音量条', () {
+    test('applicationVolume=false：整块输出区不画（用户 2026-11-26 要求）', () {
       final PlayerBarDrawing drawing = render(const PlayerBarState(applicationVolume: false));
       expect(drawing.volume, isNull);
       expect(hitsOf(drawing, 'player:volume-fraction:0'), isEmpty);
-      expect(textValues(drawing), contains('系统音量'));
+      // 移动端不是「换成系统音量字样」，而是分隔线 / OUTPUT / 输出 / 音量全都不画。
+      expect(textValues(drawing), isNot(contains('系统音量')));
       expect(textValues(drawing), isNot(contains('音量')));
+      expect(textValues(drawing), isNot(contains('OUTPUT / 输出')));
       expect(commandsOf(drawing, 'fill').where((List<Object?> c) => c[2] == 758.0), isEmpty);
+      // 队列入口仍要画：那是播放条右缘的独立入口，不属于输出音量块。
+      expect(hitOf(drawing, 'player:open')['label'], '播放队列');
+      expect(textValues(drawing), contains('队列'));
     });
 
     test('volume 夹取到 0..1', () {

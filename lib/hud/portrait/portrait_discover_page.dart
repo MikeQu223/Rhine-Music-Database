@@ -26,10 +26,11 @@ const String portraitDiscoverMoreAction = 'discover:more';
 const String portraitDiscoverTabPrefix = 'discover:tab:';
 const String portraitPlayDiscoverPrefix = 'mobile:play-discover:';
 
-/// 单卡最大宽度（网格）。393 设计稿两列时卡片约 262 宽，这里取 200：
-/// 本机竖屏（586 网格）算出来仍是 2 列，只有更宽的舞台（平板 / 横屏面板复用）
-/// 才会加列，避免卡片被拉成巨幅、同时满足「限制单卡最大宽度、按宽度动态列数」。
-const double portraitDiscoverTileMaxWidth = 200;
+/// 单卡最大宽度（网格）。用户 2026-11-26 指定竖屏上限 120（原 200 太宽）：
+/// 本机竖屏 586 网格 ⇒ 4 列，更窄的 393 稿仍是 2 列（下限夹取 2），
+/// 平板等更宽舞台按 120 一列地加，上限 6 列。
+/// **横屏不受此常量影响**：横屏走 Qt 桌面弹层的 `DiscoverCard`（固定五列）。
+const double portraitDiscoverTileMaxWidth = 120;
 
 /// 发现页瓦片列数：按页宽动态，2..6 列。
 int portraitDiscoverColumnsForWidth(double gridWidth) {

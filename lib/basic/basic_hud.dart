@@ -2754,6 +2754,24 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
   bool _scrollCoasting = false;
   bool _scrollAnimating = false;
 
+  // ---- 弹层页（评论 / 百科 / 发现 / 收藏 / 检索 / 专辑信息 / 歌手 / 队列）的松手惯性 ----
+  //
+  // 这些页面的滚动量不是资料库的条目窗口，而是各自的一维标量（网格、舞台 px 或
+  // 队列行号），所以动量另存一套：数值单位 = 该页自己的单位，速度 = 单位/秒。
+  // 以前 `_dragEnded` 对这些页面直接 `return`，于是抬手即停（用户 2026-11-26 报
+  // 「部分页面没有适配物理滑动，脱手即停」）；现在与资料库同一套物理（摩擦 2.4、
+  // 收尾 0.6 进吸行、弹簧率 10），只是不再吸到整行、也没有 count 上界。
+  bool _modalDragActive = false;
+  double _modalScrollValue = 0;
+  double _modalScrollMax = 0;
+  double _modalTarget = 0;
+  double _modalVelocity = 0;
+  bool _modalAnimating = false;
+  bool _modalCoasting = false;
+  final List<_ScrollSample> _modalSamples = <_ScrollSample>[];
+  double _modalLastMotionMs = -1e100;
+  double _modalLastDelta = 0;
+
   /// Qt `m_lastMotion` / `m_motionDirection`：最后一次真实位移的毫秒时间戳与指针
   /// 位移方向。抬手时距最后一次位移 >80ms 视为已停手（速度 0）；反向移动重置采样
   /// 窗口，让释放速度按最后一段方向估计。
@@ -2847,6 +2865,11 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
     _scrollCoasting = false;
     _scrollVelocity = 0;
     _scrollSamples.clear();
+    _modalAnimating = false;
+    _modalCoasting = false;
+    _modalVelocity = 0;
+    _modalDragActive = false;
+    _modalSamples.clear();
     super.dispose();
   }
 
@@ -2866,6 +2889,9 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
     // 文字时钟照旧累加，列表动量按同一帧间隔独立积分。
     if (_scrollAnimating) {
       _stepScroll(delta);
+    }
+    if (_modalAnimating) {
+      _stepModal(delta);
     }
   }
 
@@ -2975,7 +3001,7 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
     widget.onFields?.call(frame.fields);
     // 共享滚动文字有字符槽还在 kReelDuration 内 -> 续帧；静止后停 ticker。
     // 松手惯性期间也必须续帧（同一个 ticker 兼职推进列表动量）。
-    _scheduleRollingTicker(frame.animating || _scrollAnimating);
+    _scheduleRollingTicker(frame.animating || _scrollAnimating || _modalAnimating);
     final HudFrameEnvelope envelope = HudFrameEnvelope.decode(<String, Object?>{
       'generation': frame.generation,
       'frame': <String, Object?>{},
@@ -3235,7 +3261,7 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
                 // 其它页面 = dragDomain 只有 listRect，与旧行为一致。
                 recognizer.allows = (Offset local) => dragDomain.allows(local);
                 recognizer.onStart = (DragStartDetails details) =>
-                    _dragStarted(widget.state, details);
+                    _dragStarted(widget.state, details, portrait);
                 recognizer.onUpdate = (DragUpdateDetails details) =>
                     _dragUpdated(geometry, portrait, details);
                 recognizer.onEnd = (DragEndDetails details) =>
@@ -3251,41 +3277,71 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
     );
   }
 
-  void _dragStarted(BasicViewState state, DragStartDetails details) {
+  /// 这个弹层页的拖动是否走「弹层滚动」通道（`_modalDragStartScroll` + 动量），
+  /// 而不是资料库的条目窗口（[_dragPosition]）。竖屏检索页是弹层滚动；
+  /// **横屏检索页必须是条目/像素滚动**，否则 `_dragStarted` 只记
+  /// `_modalDragStartScroll` 而不初始化 `_dragPosition`，横屏检索条根本拖不动。
+  bool _modalScrolls(BasicViewState state, bool portrait) {
+    final bool artistPage = widget.modal.isEmpty && (widget.aux?.artist != null);
+    if (artistPage) {
+      return true;
+    }
+    switch (widget.modal) {
+      case 'comments':
+      case 'album-info':
+      case 'wiki':
+      case 'discover':
+      case 'saved':
+        return true;
+      case 'search':
+        return portrait;
+      default:
+        return false;
+    }
+  }
+
+  void _dragStarted(BasicViewState state, DragStartDetails details, bool portrait) {
     if (widget.modal == 'queue') {
       // 队列面板按整行滚动（Qt `queueOffset` 是行号）：起手记住当前行号，
       // 位移在 [_dragUpdated] 里折算成行数回给宿主。
       setState(() {
         _abortScrollMomentum();
-        _modalDragPixels = 0;
+        _abortModalMomentum();
+        _modalDragActive = true;
+          _modalDragPixels = 0;
         _modalDragStartOffset = widget.queueOffset;
+        _modalScrollValue = widget.queueOffset.toDouble();
+        _modalScrollMax = queue_modal
+            .queueModalMaximumOffset(widget.state.queue.length)
+            .toDouble();
       });
+      _seedModalSamples(_modalScrollValue, details.sourceTimeStamp);
       return;
     }
-    final bool artistPage = widget.modal.isEmpty && (widget.aux?.artist != null);
-    if (widget.modal == 'comments' ||
-        widget.modal == 'album-info' ||
-        widget.modal == 'wiki' ||
-        widget.modal == 'discover' ||
-        widget.modal == 'saved' ||
-        widget.modal == 'search' ||
-        artistPage) {
+    if (_modalScrolls(state, portrait)) {
+      final double start = switch (widget.modal) {
+        'album-info' => widget.albumInfoScroll,
+        'wiki' => widget.wikiScroll,
+        'discover' => widget.discoverScroll,
+        'saved' => widget.savedScroll,
+        'search' => widget.resultScroll,
+        _ => widget.modal.isEmpty && (widget.aux?.artist != null)
+            ? widget.artistScroll
+            : widget.commentsScroll,
+      };
       setState(() {
         _abortScrollMomentum();
+        _abortModalMomentum();
+        _modalDragActive = true;
         _modalDragPixels = 0;
-        _modalDragStartScroll = switch (widget.modal) {
-          'album-info' => widget.albumInfoScroll,
-          'wiki' => widget.wikiScroll,
-          'discover' => widget.discoverScroll,
-          'saved' => widget.savedScroll,
-          'search' => widget.resultScroll,
-          _ => artistPage ? widget.artistScroll : widget.commentsScroll,
-        };
+        _modalDragStartScroll = start;
+        _modalScrollValue = start;
       });
+      _seedModalSamples(start, details.sourceTimeStamp);
       return;
     }
     if (widget.modal == 'search') {
-      // 检索面板：从当前滚动量起手，不碰资料库窗口（[_dragPosition] 只是本次
+      // 横屏检索面板：从当前滚动量起手，不碰资料库窗口（[_dragPosition] 只是本次
       // 手势的临时像素位置，抬手即写回 [_searchScroll] 并清空）。
       setState(() {
         _abortScrollMomentum();
@@ -3318,6 +3374,32 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
     }
     final List<BasicListItem> items = basicLibraryItems(state);
     return items.isEmpty ? 0 : basicSelectedItemIndex(state, items).toDouble();
+  }
+
+  /// 竖屏发现页的内容总高（网格单位，估算）：拖动上界与绘制用同一套排法。
+  ///
+  /// 绘制侧（`paintPortraitDiscoverPage`）是 `tileRows * tileStride`，其中
+  /// `tileStride = coverSize + 52`、`coverSize = max(72, cardWidth - 25)`、
+  /// `cardWidth = (w - 40)/columns - 15`。这里按同一公式推一遍，避免上界与画面对不上
+  /// （列数变了以后写死「196/两列」会把可拖范围高估一倍，拖出大片空白）。
+  double _discoverContentHeight(StageGeometry geometry, bool portrait) {
+    final int entries = widget.discover?.entries.length ?? 0;
+    if (entries <= 0) {
+      return 0;
+    }
+    final double gridWidth = portrait
+        ? portraitGridWidth(
+            _stageSize.width <= 0 ? 1080 : _stageSize.width,
+            stageScale: geometry.stageScale <= 0 ? 1 : geometry.stageScale,
+          )
+        : _stageSize.width;
+    final int columns = portraitDiscoverColumnsForWidth(gridWidth);
+    final double tileStep = (gridWidth - 40) / columns;
+    final double coverSize = math.max(72.0, tileStep - 15 - 25);
+    final double tileStride = coverSize + 52;
+    final double tileRows = (entries - 1 + columns - 1) / columns;
+    // 页头 130 + 标题/标签 + 一排分类 chip，再叠瓦片总高；末尾留一点余量。
+    return 130 + 190 + math.max(0.0, tileRows * tileStride) + 40;
   }
 
   /// 竖直页面里「1 个内容单位」等于多少个**手势**像素。
@@ -3356,8 +3438,9 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
         discoverModalBounds(_stageSize.width <= 0 ? 1080 : _stageSize.width),
         page.entries.length,
       );
-      final double next = (_modalDragStartScroll - _modalDragPixels)
-          .clamp(0.0, panel.maximumScroll);
+      final double max = panel.maximumScroll;
+      final double next = (_modalDragStartScroll - _modalDragPixels).clamp(0.0, max);
+      _trackModal(next, max, details);
       widget.onDiscoverScrollChanged?.call(next);
       return;
     }
@@ -3366,11 +3449,14 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       // 行高 56 是舞台单位（queue_modal.dart:367 的 `y + 358 + row * 56`）。
       final double rowStage = 56.0 * scale;
       _modalDragPixels += details.delta.dy;
-      final int rows = (_modalDragPixels / rowStage).round();
-      final int max = queue_modal.queueModalMaximumOffset(widget.state.queue.length);
-      final int next = (_modalDragStartOffset - rows).clamp(0, max);
-      if (next != widget.queueOffset) {
-        widget.onQueueOffsetChanged?.call(next);
+      // 队列的单位是**行号**：先把场内位置换成行（含小数），动量停稳时再四舍五入。
+      final int maxRows = queue_modal.queueModalMaximumOffset(widget.state.queue.length);
+      final double nextRows =
+          (_modalDragStartOffset - _modalDragPixels / rowStage).clamp(0.0, maxRows.toDouble());
+      _trackModal(nextRows, maxRows.toDouble(), details);
+      final int rows = nextRows.round();
+      if (rows != widget.queueOffset) {
+        widget.onQueueOffsetChanged?.call(rows);
       }
       return;
     }
@@ -3385,17 +3471,22 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
         final double max = math.max(0.0, BasicHudFrame._portraitCommentsMaxScroll);
         final double next = (_modalDragStartScroll - _modalDragPixels / perGrid)
             .clamp(0.0, max);
+        _trackModal(next, max, details);
         widget.onCommentsScrollChanged?.call(next);
         return;
       }
       // 上界用上一帧画出来的内容总高现算（`cmtClampPanelScroll` 传无穷大即得上限），
       // 免得把「一屏放得下」的面板也拖出空白。
-      final double max = comments_modal.cmtClampPanelScroll(
-        double.infinity,
-        BasicHudFrame._commentsContentBottom,
+      final double max = math.max(
+        0.0,
+        comments_modal.cmtClampPanelScroll(
+          double.infinity,
+          BasicHudFrame._commentsContentBottom,
+        ),
       );
-      final double next = (_modalDragStartScroll - _modalDragPixels / scale)
-          .clamp(0.0, math.max(0.0, max));
+      final double next =
+          (_modalDragStartScroll - _modalDragPixels / scale).clamp(0.0, max);
+      _trackModal(next, max, details);
       widget.onCommentsScrollChanged?.call(next);
       return;
     }
@@ -3406,6 +3497,7 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       final int rows = widget.aux?.albumInfo?.songs.length ?? 0;
       final double max = math.max(0.0, rows * 68.0 - 420.0);
       final double next = (_modalDragStartScroll - _modalDragPixels / perGrid).clamp(0.0, max);
+      _trackModal(next, max, details);
       widget.onAlbumInfoScrollChanged?.call(next);
       return;
     }
@@ -3427,8 +3519,9 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       final double content = switch (widget.modal) {
         'wiki' => BasicHudFrame._wikiContentHeight(widget.aux?.wiki),
         // 发现页内容总高由快照自报（`paintPortraitDiscoverPage` 的返回值），
-        // 这里只是拖动上界的估法：条目 196/两列 + 页头 260。
-        'discover' => (widget.discover?.entries.length ?? 0) * 196.0 / 2 + 260.0,
+        // 这里只是拖动上界的估法：一卡 196 高一排 + 页头 260。列数必须按当前页宽
+        // 现算（单卡限宽 120 之后本机是 4 列，写死两列会把上界高估一倍）。
+        'discover' => _discoverContentHeight(geometry, portrait),
         'search' => widget.state.searchTotal * 68.0 + 200.0,
         'saved' => widget.state.selectedLane == 2
             ? widget.state.localPlaylists.length * 68.0 + 120.0
@@ -3441,18 +3534,8 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
           : math.max(0.0, content - viewport) / perGrid;
       final double next = (_modalDragStartScroll - _modalDragPixels / perGrid)
           .clamp(0.0, max);
-      switch (widget.modal) {
-        case 'wiki':
-          widget.onWikiScrollChanged?.call(next);
-        case 'discover':
-          widget.onDiscoverScrollChanged?.call(next);
-        case 'saved':
-          widget.onSavedScrollChanged?.call(next);
-        case 'search':
-          widget.onResultScrollChanged?.call(next);
-        default:
-          widget.onArtistScrollChanged?.call(next);
-      }
+      _trackModal(next, max, details);
+      _emitModalScroll(next);
       return;
     }
     final double? current = _dragPosition;
@@ -3496,15 +3579,21 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
   /// 速度快于 [_scrollCoastStart] 才起惯性（滑行 + 吸行，落定提交一次整数行）；
   /// 低速或取消仍走既有语义——立刻提交抬手位置，由宿主四舍五入到最近一行。
   void _dragEnded([DragEndDetails? details, Duration? releaseStamp]) {
-    if (widget.modal == 'queue' ||
-        widget.modal == 'comments' ||
-        widget.modal == 'album-info' ||
-        widget.modal == 'wiki' ||
-        widget.modal == 'discover' ||
-        widget.modal == 'saved' ||
-        widget.modal == 'search' ||
-        (widget.modal.isEmpty && widget.aux?.artist != null)) {
+    // 弹层页：抬手后按采样速度起惯性（脱手逐渐减速停下），不是立刻停在原位。
+    // 被系统打断（[details] 为空）不起惯性，只停在当前值。
+    if (_modalDragActive) {
+      final double velocity =
+          details == null ? 0 : _modalVelocityAtRelease(releaseStamp);
       _modalDragPixels = 0;
+      _modalDragActive = false;
+      _modalLastMotionMs = -1e100;
+      _modalLastDelta = 0;
+      if (velocity.abs() < _scrollCoastStart) {
+        _samplesClearModal();
+        _emitModalScroll(_modalScrollValue);
+        return;
+      }
+      _startModalMomentum(velocity);
       return;
     }
     final double? ended = _dragPosition;
@@ -3512,7 +3601,7 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       return;
     }
     if (widget.modal == 'search') {
-      // 检索列表只滚不选：不提交选中、不起惯性（Qt 的 search 列表没有吸行语义）。
+      // 横屏检索列表只滚不选：不提交选中、不起惯性（Qt 的 search 列表没有吸行语义）。
       setState(() {
         _searchScroll = ended;
         _dragPosition = null;
@@ -3537,6 +3626,160 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
 
   static double _scrollMs(Duration? stamp) =>
       (stamp?.inMicroseconds ?? 0) / 1000;
+
+  /// 弹层页动量：记录一次位移采样（与资料库同一窗口口径），并记住当前值/上界。
+  void _trackModal(double value, double max, DragUpdateDetails details) {
+    _modalScrollValue = value;
+    _modalScrollMax = max;
+    _recordModalSample(value, details.delta.dy, details.sourceTimeStamp);
+  }
+
+  /// 弹层页动量：把当前值按所属页面派发出去（wiki/discover/saved/search/歌手）。
+  void _emitModalScroll(double value) {
+    switch (widget.modal) {
+      case 'wiki':
+        widget.onWikiScrollChanged?.call(value);
+      case 'discover':
+        widget.onDiscoverScrollChanged?.call(value);
+      case 'saved':
+        widget.onSavedScrollChanged?.call(value);
+      case 'search':
+        widget.onResultScrollChanged?.call(value);
+      case 'queue':
+        final int rows = value.round();
+        if (rows != widget.queueOffset) {
+          widget.onQueueOffsetChanged?.call(rows);
+        }
+      case 'comments':
+        widget.onCommentsScrollChanged?.call(value);
+      case 'album-info':
+        widget.onAlbumInfoScrollChanged?.call(value);
+      default:
+        if (widget.modal.isEmpty && widget.aux?.artist != null) {
+          widget.onArtistScrollChanged?.call(value);
+        }
+    }
+  }
+
+  void _samplesClearModal() {
+    _modalSamples.clear();
+    _modalLastMotionMs = -1e100;
+    _modalLastDelta = 0;
+  }
+
+  void _seedModalSamples(double value, Duration? stamp) {
+    _modalSamples
+      ..clear()
+      ..add(_ScrollSample(_scrollMs(stamp), value));
+    _modalLastMotionMs = -1e100;
+    _modalLastDelta = 0;
+  }
+
+  void _recordModalSample(double value, double deltaDy, Duration? stamp) {
+    final double now = _scrollMs(stamp);
+    if (deltaDy != 0) {
+      if (_modalLastDelta * deltaDy < 0 && _modalSamples.length > 1) {
+        _modalSamples.removeRange(0, _modalSamples.length - 1);
+      }
+      _modalLastDelta = deltaDy;
+      _modalLastMotionMs = now;
+    }
+    if (_modalSamples.isNotEmpty && _modalSamples.last.time == now) {
+      _modalSamples[_modalSamples.length - 1] = _ScrollSample(now, value);
+    } else {
+      _modalSamples.add(_ScrollSample(now, value));
+    }
+    _modalSamples.removeWhere(
+      (_ScrollSample sample) => now - sample.time > _scrollSampleWindowMs,
+    );
+    if (_modalSamples.length > _scrollSampleLimit) {
+      _modalSamples.removeRange(0, _modalSamples.length - _scrollSampleLimit);
+    }
+  }
+
+  double _modalVelocityAtRelease(Duration? stamp) {
+    if (_modalSamples.isEmpty) {
+      return 0;
+    }
+    final double now = _scrollMs(stamp);
+    if (now - _modalLastMotionMs > _scrollMotionGapMs) {
+      return 0;
+    }
+    final _ScrollSample first = _modalSamples.first;
+    final _ScrollSample last = _modalSamples.last;
+    final double span = last.time - first.time;
+    if (span < _scrollMinSampleSpanMs) {
+      return 0;
+    }
+    return (last.value - first.value) * (1000 / span);
+  }
+
+  /// 弹层页的松手惯性：够快才起滑行，慢速直接停在抬手位置。
+  void _startModalMomentum(double velocity) {
+    final double target =
+        (_modalScrollValue + velocity / _scrollFriction)
+            .clamp(0.0, math.max(0.0, _modalScrollMax));
+    setState(() {
+      _modalVelocity = velocity;
+      _modalTarget = target;
+      _modalCoasting = true;
+      _modalAnimating = true;
+    });
+  }
+
+  void _abortModalMomentum() {
+    _modalAnimating = false;
+    _modalCoasting = false;
+    _modalVelocity = 0;
+    _modalSamples.clear();
+  }
+
+  /// 一帧的弹层动量积分：与资料库同一套摩擦/吸行物理，但目标是连续标量（不吸整行）。
+  void _stepModal(double dt) {
+    double position = _modalScrollValue;
+    double velocity = _modalVelocity;
+    final double max = math.max(0.0, _modalScrollMax);
+    bool settled = false;
+    if (_modalCoasting) {
+      final double decay = math.exp(-_scrollFriction * dt);
+      position += velocity * (1 - decay) / _scrollFriction;
+      velocity *= decay;
+      if (velocity.abs() < _scrollCoastStop) {
+        _modalTarget = (position + velocity / _scrollFriction)
+            .clamp(0.0, max);
+        _modalCoasting = false;
+      }
+    } else {
+      final double delta = position - _modalTarget;
+      final double impulse = velocity + _scrollSnapRate * delta;
+      final double decay = math.exp(-_scrollSnapRate * dt);
+      position = _modalTarget + (delta + impulse * dt) * decay;
+      velocity = (velocity - _scrollSnapRate * impulse * dt) * decay;
+      settled = (position - _modalTarget).abs() < _scrollPositionEpsilon &&
+          velocity.abs() < _scrollVelocityEpsilon;
+    }
+    position = position < 0 ? 0 : (position > max ? max : position);
+    _modalVelocity = velocity;
+    _modalScrollValue = position;
+    if (settled) {
+      _finishModal();
+      return;
+    }
+    setState(() {});
+    _emitModalScroll(position);
+  }
+
+  void _finishModal() {
+    final double position = _modalScrollValue;
+    setState(() {
+      _modalAnimating = false;
+      _modalCoasting = false;
+      _modalVelocity = 0;
+    });
+    _emitModalScroll(position);
+    _modalSamples.clear();
+  }
+
 
   /// Qt `ArchiveDrag::move` 的采样部分：毫秒时间戳 + 条目位置。
   void _recordScrollSample(double value, Offset delta, Duration? stamp) {

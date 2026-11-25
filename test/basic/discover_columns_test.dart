@@ -1,8 +1,10 @@
 /// 发现页瓦片列数按页宽动态（用户第 8 条：单卡限制最大宽度、类似 tab 动态加列）。
 ///
-/// 393 设计稿与 586 的 DPI 放大竖屏都是两列；只有更宽的舞台（平板 / 复用同一页
-/// 的横屏面板）才加列，上限 6 列。列数一变，同一条目的列/行位置也要跟着换，
-/// 否则第三列会被挤到第一列的位置互相压住。
+/// 2026-11-26 用户把竖屏单卡上限从 200 收到 **120**：本机 586 网格从 2 列变 4 列，
+/// 393 稿仍是 2 列（列数下限夹取 2）。列数一变，同一条目的列/行位置也要跟着换，
+/// 否则后一列会被挤到第一列的位置互相压住。
+///
+/// 横屏不走这条路径（横屏是 Qt 桌面弹层的 `DiscoverCard`，固定五列）。
 library;
 
 
@@ -60,19 +62,18 @@ HudHit _tileHit(List<HudHit> hits, int index) => hits.firstWhere(
 );
 
 void main() {
-  test('列数按可用宽度除以单卡最大宽度，夹在 2..6', () {
-    expect(portraitDiscoverColumnsForWidth(393), 2);
-    expect(portraitDiscoverColumnsForWidth(586), 2);
-    expect(portraitDiscoverColumnsForWidth(760), 3);
-    expect(portraitDiscoverColumnsForWidth(900), 4);
-    expect(portraitDiscoverColumnsForWidth(1080), 5);
-    expect(portraitDiscoverColumnsForWidth(1280), 6);
-    expect(portraitDiscoverColumnsForWidth(2000), 6);
+  test('列数按可用宽度除以单卡最大宽度 120，夹在 2..6', () {
+    expect(portraitDiscoverColumnsForWidth(393), 2, reason: '393 稿两列（下限夹取）');
+    expect(portraitDiscoverColumnsForWidth(586), 4, reason: '本机 586 网格 4 列');
+    expect(portraitDiscoverColumnsForWidth(520), 4);
+    expect(portraitDiscoverColumnsForWidth(760), 6);
+    expect(portraitDiscoverColumnsForWidth(900), 6);
+    expect(portraitDiscoverColumnsForWidth(2000), 6, reason: '上限 6 列');
   });
 
-  test('四列页宽下第 3、4 条与第 1 条同一行，第 5 条落到下一行', () {
-    final List<HudHit> hits = _paintTiles(900);
-    final double step = (900 - 40) / 4;
+  test('本机竖屏格宽（586）四列：第 1..4 条同一行，第 5 条换行', () {
+    final List<HudHit> hits = _paintTiles(586);
+    final double step = (586 - 40) / 4;
     final HudHit first = _tileHit(hits, 1);
     final HudHit second = _tileHit(hits, 2);
     final HudHit third = _tileHit(hits, 3);
@@ -83,28 +84,35 @@ void main() {
     expect(third.x, closeTo(20 + step * 2, .01));
     expect(fourth.x, closeTo(20 + step * 3, .01));
     expect(fourth.y, first.y);
-    expect(fifth.x, first.x);
+    expect(fifth.x, first.x, reason: '五列时第 5 条必须换行');
     expect(fifth.y, greaterThan(first.y));
   });
 
-  test('本机竖屏格宽（586）仍是两列，与参考稿一致', () {
-    final List<HudHit> hits = _paintTiles(586);
-    final double step = (586 - 40) / 2;
+  test('393 稿仍是两列，第 3 条换行', () {
+    final List<HudHit> hits = _paintTiles(393);
+    final double step = (393 - 40) / 2;
     final HudHit first = _tileHit(hits, 1);
     final HudHit second = _tileHit(hits, 2);
     final HudHit third = _tileHit(hits, 3);
     expect(first.x, 20);
     expect(second.x, closeTo(20 + step, .01));
     expect(second.y, first.y);
-    expect(third.x, first.x, reason: '两列时第 3 条必须换行');
+    expect(third.x, first.x);
     expect(third.y, greaterThan(first.y));
   });
 
-  test('单卡宽度不超过上限（列再多封面也不会被拉成巨幅）', () {
-    for (final double width in <double>[900, 1080, 1280]) {
+  test('未触到列数上下限时单卡宽度不超过 120（触限时只能夹取）', () {
+    for (final double width in <double>[520, 586, 760, 900]) {
       final int columns = portraitDiscoverColumnsForWidth(width);
-      final double cardWidth = (width - 40) / columns - 15;
-      expect(cardWidth, lessThanOrEqualTo(portraitDiscoverTileMaxWidth + 40));
+      final bool clamped = columns <= 2 || columns >= 6;
+      final double tileStep = (width - 40) / columns;
+      if (!clamped) {
+        expect(
+          tileStep,
+          lessThanOrEqualTo(portraitDiscoverTileMaxWidth + 30),
+          reason: '$width 宽 / $columns 列时单卡 $tileStep 超出 120 上限',
+        );
+      }
     }
   });
 }
