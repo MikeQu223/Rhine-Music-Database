@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show TargetPlatform, debugDefaultTargetPlatformOverride;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:rhine_music_database/basic/basic_hud.dart';
@@ -334,65 +335,116 @@ void main() {
   });
 
   group('landscape output module', () {
-    /// 横屏播放条右下角的输出模块（Qt `PlayerBar.cpp:208-225`）：Android 上
-    /// 应用内音量可用，所以必须画出滑轨与命中，而不是只剩「系统音量」四个字。
-    testWidgets('横屏输出模块画出音量滑轨，点一下发出真实 fraction',
-        (WidgetTester tester) async {
-      tester.view.physicalSize = const Size(1920, 1080);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
+    /// 横屏播放条右下角的输出模块（Qt `PlayerBar.cpp:208-225` +
+    /// `Qt/src/PlatformFeatures.h:23-27`）：Android 上**没有**应用内音量，
+    /// 模块只写「系统音量」；桌面平台才有滑轨与 `player:volume-fraction:` 命中。
+    ///
+    /// 2026-11-25 用户第 5 条：横屏右下角输出音量块在 Android 上必须隐藏，
+    /// 且判断要走平台能力（`PlatformCapabilities.forTarget`）。本用例之前写反了
+    /// （断言 Android 必定有滑轨），是那条缺陷在测试里的镜像。
+    List<String> textsOf(BasicHudFrame frame) => <String>[
+          for (final List<Object?> command in frame.commands)
+            if (command.isNotEmpty && command[0] == 'text') command[1]! as String,
+        ];
 
+    BasicViewState playingState() {
       final SirenSong playing = _song('s1', '第一首');
-      final BasicViewState state = _library().copyWith(
+      return _library().copyWith(
         playingTrack: playing,
         playing: true,
         queue: <SirenSong>[playing],
         queueIndex: 0,
         durationMs: 180000,
       );
+    }
+
+    test('Android：输出模块只写「系统音量」，不画滑轨也不发 volume 命中', () {
       final BasicHudFrame frame = BasicHudFrame.build(
-        state: state,
+        state: playingState(),
         ports: _ports(),
         width: 1920,
         height: 1080,
         portrait: false,
       );
-      final List<String> texts = <String>[
-        for (final List<Object?> command in frame.commands)
-          if (command.isNotEmpty && command[0] == 'text') command[1]! as String,
-      ];
-      expect(texts, contains('音量'));
-      expect(texts, isNot(contains('系统音量')));
-      final HudHit volume =
-          frame.hits.firstWhere((HudHit hit) => hit.action == 'player:volume-fraction:0');
-
-      final List<String> actions = <String>[];
-      await tester.pumpWidget(MaterialApp(
-        home: Scaffold(
-          backgroundColor: Colors.black,
-          body: BasicHudSurface(
-            state: state,
-            ports: _ports(),
-            onAction: actions.add,
-            geometry: const StageGeometry(logicalWidth: 1920.0, logicalHeight: 1080.0),
-            stage: const HudStage(scale: 1.0, width: 1920.0, height: 1080.0),
-          ),
-        ),
-      ));
-      await tester.pump();
-
-      await tester.tapAt(
-        Offset(volume.x + volume.width * 0.5, volume.y + volume.height / 2),
+      expect(textsOf(frame), contains('系统音量'));
+      expect(textsOf(frame), isNot(contains('音量')));
+      expect(
+        frame.hits.where((HudHit hit) => hit.action.startsWith('player:volume-fraction:')),
+        isEmpty,
       );
-      await tester.pump();
-      expect(actions, isNotEmpty);
-      final String action = actions.last;
-      expect(action.startsWith('player:volume-fraction:'), isTrue);
-      final double fraction =
-          double.parse(action.substring('player:volume-fraction:'.length));
-      expect(fraction, greaterThan(0.35));
-      expect(fraction, lessThan(0.65));
+    });
+
+    test('桌面：输出模块按平台能力画滑轨', () {
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+      try {
+        final BasicHudFrame frame = BasicHudFrame.build(
+          state: playingState(),
+          ports: _ports(),
+          width: 1920,
+          height: 1080,
+          portrait: false,
+        );
+        expect(textsOf(frame), contains('音量'));
+        expect(
+          frame.hits.any((HudHit hit) => hit.action.startsWith('player:volume-fraction:')),
+          isTrue,
+        );
+      } finally {
+        debugDefaultTargetPlatformOverride = null;
+      }
+    });
+
+    testWidgets('桌面：滑轨点一下发出真实 fraction', (WidgetTester tester) async {
+      tester.view.physicalSize = const Size(1920, 1080);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final BasicViewState state = playingState();
+      // 这个 debug 变量必须在测试体结束前复原（框架收尾会断言它已复位），
+      // 所以整段包在 try/finally 里，不能只靠 addTearDown。
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+      try {
+        final BasicHudFrame frame = BasicHudFrame.build(
+          state: state,
+          ports: _ports(),
+          width: 1920,
+          height: 1080,
+          portrait: false,
+        );
+        expect(textsOf(frame), contains('音量'));
+        final HudHit volume =
+            frame.hits.firstWhere((HudHit hit) => hit.action == 'player:volume-fraction:0');
+
+        final List<String> actions = <String>[];
+        await tester.pumpWidget(MaterialApp(
+          home: Scaffold(
+            backgroundColor: Colors.black,
+            body: BasicHudSurface(
+              state: state,
+              ports: _ports(),
+              onAction: actions.add,
+              geometry: const StageGeometry(logicalWidth: 1920.0, logicalHeight: 1080.0),
+              stage: const HudStage(scale: 1.0, width: 1920.0, height: 1080.0),
+            ),
+          ),
+        ));
+        await tester.pump();
+
+        await tester.tapAt(
+          Offset(volume.x + volume.width * 0.5, volume.y + volume.height / 2),
+        );
+        await tester.pump();
+        expect(actions, isNotEmpty);
+        final String action = actions.last;
+        expect(action.startsWith('player:volume-fraction:'), isTrue);
+        final double fraction =
+            double.parse(action.substring('player:volume-fraction:'.length));
+        expect(fraction, greaterThan(0.35));
+        expect(fraction, lessThan(0.65));
+      } finally {
+        debugDefaultTargetPlatformOverride = null;
+      }
     });
   });
 

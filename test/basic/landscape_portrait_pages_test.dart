@@ -33,9 +33,14 @@ void main() {
   );
   final BasicGlyphPorts ports = _realPorts();
 
-  // 横屏的「我的音乐」不再塞 393 竖屏窄栏：它复用横屏资料库骨架画当前收藏列
-  // （见 `fc64ae728`）。所以这里验的是「画出了资料库骨架、且不再有竖屏专属动作」。
-  test('横屏 modal=saved：走横屏资料库骨架，不再出现竖屏返回动作', () {
+  // 横屏的「我的音乐」是**收藏列的模态弹层**（Qt `NativeHudModal.cpp:163-218` 的
+  // 遮罩 + 836 面板），不是把竖屏窄栏塞进 1080 骨架。2026-11-25 起它和
+  // `discover` / `playlist-picker` 一样放进 `discoverModalBounds` 的外框：
+  // 遮罩铺满舞台、纸底 1260×836、整页内容用 `_HudSink.shifted` 平移进去。
+  bool hasMask(BasicHudFrame frame) => frame.commands.any((List<Object?> c) =>
+      c.length >= 6 && c[0] == 'fill' && (c[1] as List<Object?>)[3] == 0.42);
+
+  test('横屏 modal=saved：遮罩 + 1260×836 面板，总览行可达', () {
     final BasicHudFrame frame = BasicHudFrame.build(
       state: state,
       width: 1920,
@@ -56,12 +61,20 @@ void main() {
     );
     final Iterable<String> hits = frame.hits.map((HudHit hit) => hit.action);
     expect(frame.commands, isNotEmpty);
-    // 竖屏总览页的返回/收藏列动作不该出现在横屏骨架上。
-    expect(hits, isNot(contains('mobile:mine')));
-    expect(hits, isNot(contains('music:collection:1')));
+    // 弹层存在：全舞台 42% 遮罩（Qt `NativeHudModal.cpp:163` 的 scrim）。
+    expect(hasMask(frame), isTrue);
+    // 外框纸底与 Qt 的模态几何一致：宽 min(1260, 舞台-100)、高 836。
+    expect(
+      frame.commands.any((List<Object?> c) =>
+          c.length >= 6 && c[0] == 'fill' && c[4] == 1260.0 && c[5] == 836.0),
+      isTrue,
+      reason: '收藏列面板应按 discoverModalBounds 铺 1260×836 纸底',
+    );
+    // 总览的行动作在平移后的坐标上仍然可点。
+    expect(hits, contains('music:collection:1'));
   });
 
-  test('横屏 modal=saved 且 savedLane=2：同样走横屏骨架', () {
+  test('横屏 modal=saved 且 savedLane=2：面板内画歌单列', () {
     final BasicHudFrame frame = BasicHudFrame.build(
       state: state,
       width: 1920,
@@ -76,9 +89,12 @@ void main() {
       ],
       canCreatePlaylist: true,
     );
-    final Iterable<String> hits = frame.hits.map((HudHit hit) => hit.action);
     expect(frame.commands, isNotEmpty);
-    expect(hits, isNot(contains('music:result:2:0')));
+    expect(hasMask(frame), isTrue);
+    // 歌单行与「新建歌单」在平移后的坐标上仍然可点。
+    final Iterable<String> hits = frame.hits.map((HudHit hit) => hit.action);
+    expect(hits, contains('music:result:2:0'));
+    expect(hits, contains('music:create-playlist'));
   });
 
   test('横屏 modal=discover：tab 命中与空态都能画', () {
