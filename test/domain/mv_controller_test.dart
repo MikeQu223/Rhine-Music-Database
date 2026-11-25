@@ -45,8 +45,7 @@ class _FakeGateway with ProviderGatewayStub implements ProviderGateway {
     this.versions = const <ProviderMvVersion>[],
     this.track = const ProviderMvTrack(id: 'mv1', title: 'MV', url: 'https://e.com/v.mp4', resolution: 720),
     this.mvError,
-    this.versionsError,
-  });
+  }) : versionsError = null;
 
   List<ProviderMvVersion> versions;
   ProviderMvTrack track;

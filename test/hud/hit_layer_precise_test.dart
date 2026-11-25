@@ -9,7 +9,6 @@
 /// 用未位移的 y 去比对会命中到屏幕别处——同一处改动引入过的回归）。
 library;
 
-import 'dart:ui' show Offset;
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:rhine_music_database/hud/input/hit_layer.dart';

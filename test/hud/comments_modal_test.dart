@@ -20,7 +20,7 @@ import 'package:rhine_music_database/hud/modals/comments_modal.dart';
 
 /// 宽度按字符数估算、折行按固定 chunk 切段（默认整段一行）。
 class _Glyphs implements CommentPanelGlyphs {
-  _Glyphs({this.chunk = 0, this.perChar = 0.6});
+  _Glyphs({this.chunk = 0}) : perChar = 0.6;
 
   /// 0 = 不折行（整段一行）；>0 = 每 chunk 个字符一行。
   final int chunk;

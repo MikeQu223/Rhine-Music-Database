@@ -13,7 +13,6 @@ import 'package:rhine_music_database/hud/portrait/portrait_canvas.dart';
 import 'package:rhine_music_database/hud/portrait/portrait_pages_collection_likes.dart';
 import 'package:rhine_music_database/hud/portrait/portrait_pages_collection_playlists.dart';
 import 'package:rhine_music_database/hud/protocol/hud_hit.dart';
-import 'package:rhine_music_database/hud/text/glyph_font.dart';
 
 /// 宽度按字符数估算：本组只关心「画了什么 / 发了什么动作」，不校验像素。
 PortraitCanvas _canvas() => PortraitCanvas(

@@ -353,10 +353,11 @@ class PluginGateway implements ProviderGateway {
 
   @override
   Future<Map<String, Object?>> mutate(String route, Map<String, Object?> values) async {
-    final Map<String, Object?>? value = await _call('mutate', <Object?>[route, values]);
+    final Map<String, Object?> value = await _call('mutate', <Object?>[route, values]);
     return value ?? const <String, Object?>{};
   }
 
+  @override
   Future<List<Map<String, Object?>>> detailSongs(Map<String, Object?> item) async {
     final List<Object?> value = await _callList('detail', <Object?>[item]);
     if (value.length < 2 || value[1] is! List) {
@@ -368,6 +369,7 @@ class PluginGateway implements ProviderGateway {
     ];
   }
 
+  @override
   Future<List<Map<String, Object?>>> songsByIds(List<String> ids) async {
     // 插件签名 `songs(ids, valid)`：`body.value` **直接是数组**（不是 `items` 包一层，
     // 真机探针 `{"id":1,"body":{"code":200,"value":[{...}]}}` 确认）。

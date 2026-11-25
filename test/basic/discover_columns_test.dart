@@ -5,7 +5,6 @@
 /// 否则第三列会被挤到第一列的位置互相压住。
 library;
 
-import 'dart:ui' show Rect;
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:rhine_music_database/hud/portrait/portrait_canvas.dart';

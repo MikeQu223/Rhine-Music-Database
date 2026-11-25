@@ -579,7 +579,7 @@ class BasicController extends ChangeNotifier
 
   /// 切换「正在播放那首」的喜欢状态（Qt `music:like-current`）。
   Future<String> toggleLikeCurrent() {
-    final Map<String, Object?>? current = _player.current;
+    final Map<String, Object?> current = _player.current;
     return toggleLiked(current == null ? '' : _text(current['id']));
   }
 
@@ -3383,9 +3383,9 @@ class BasicController extends ChangeNotifier
     final String name = providerName;
     if (_remoteSearch != null) {
       // 插件平台没有整库：说「已加载 936 首」会把塞壬的曲库数按到别的平台上。
-      return '${name}：用搜索查找曲目，收藏与歌单在左侧列';
+      return '$name：用搜索查找曲目，收藏与歌单在左侧列';
     }
-    return '已加载${name}曲库：${_catalogSongs.length} 首 / ${_catalogAlbums.length} 张专辑';
+    return '已加载$name曲库：${_catalogSongs.length} 首 / ${_catalogAlbums.length} 张专辑';
   }
 
   /// 曲库读取中的状态串（Qt/src/MusicSiren.cpp:50 的模板，平台名跟着走）。

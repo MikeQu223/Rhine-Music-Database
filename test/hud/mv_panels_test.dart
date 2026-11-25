@@ -16,7 +16,6 @@ import 'package:rhine_music_database/hud/modals/mv_modal.dart';
 import 'package:rhine_music_database/hud/pages/chrome.dart';
 import 'package:rhine_music_database/hud/portrait/portrait_canvas.dart';
 import 'package:rhine_music_database/hud/portrait/portrait_pages_mv.dart';
-import 'package:rhine_music_database/hud/protocol/hud_hit.dart';
 
 /// 宽度按字符数估算、折行按「整段一行」，只为断言文案与命中。
 PortraitCanvas _canvas({double gridWidth = 393, double height = 800}) => PortraitCanvas(

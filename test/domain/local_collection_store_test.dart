@@ -61,7 +61,7 @@ Future<LocalCollectionStore> _loaded(
 }
 
 Map<String, Object?> _document(MemoryPort port) {
-  final String? raw = port.values[LocalCollectionStore.keyPrefix + 'siren.json'];
+  final String? raw = port.values['${LocalCollectionStore.keyPrefix}siren.json'];
   expect(raw, isNotNull, reason: '写入后必须存在 collections/siren.json 这个键');
   return jsonDecode(raw!) as Map<String, Object?>;
 }

@@ -3704,7 +3704,7 @@ class _BasicShellState extends State<_BasicShell>
                 if (part.trim().isNotEmpty) part.trim(),
             ];
       if (names.isEmpty) {
-        return null;
+        return;
       }
       final String name = names[index.clamp(0, names.length - 1)];
       // 这条分支在通用收起逻辑之前提前 return，必须自己收操作面板，
@@ -3718,14 +3718,14 @@ class _BasicShellState extends State<_BasicShell>
       setState(() => _artistScroll = 0);
       unawaited(controller.openArtistDirectory(name, artistIndex: index));
       _setModal('');
-      return null;
+      return;
     }
     if (action == 'music:artist-tab:songs' ||
         action == 'music:artist-tab:albums') {
       // 曲目 / 发行专辑是两份不同的列表，滚动量不能串（串了会看到中段起头）。
       setState(() => _artistScroll = 0);
       controller.setArtistTab(action.endsWith(':albums') ? 'albums' : 'songs');
-      return null;
+      return;
     }
     if (action.startsWith('music:artist-album:')) {
       final int index =
@@ -3733,7 +3733,7 @@ class _BasicShellState extends State<_BasicShell>
       if (index >= 0) {
         unawaited(controller.openArtistAlbum(index));
       }
-      return null;
+      return;
     }
     if (action == 'music:wiki') {
       // Qt `ResponsiveHudLayout.cpp:455-470`：任何 `music:` 动作都收起操作面板。
@@ -3745,7 +3745,7 @@ class _BasicShellState extends State<_BasicShell>
       // 新开一首的百科从正文顶部起，不沿用上一首的滚动量。
       setState(() => _wikiScroll = 0);
       _setModal('wiki');
-      return null;
+      return;
     }
     if (action == 'music:album-info') {
       if (_songOptionsExpanded) {
@@ -3758,7 +3758,7 @@ class _BasicShellState extends State<_BasicShell>
       final String albumId = song?.albumId ?? '';
       if (albumId.isEmpty) {
         _setNotice('这首歌没有关联专辑');
-        return null;
+        return;
       }
       unawaited(
         controller
@@ -3781,7 +3781,7 @@ class _BasicShellState extends State<_BasicShell>
               }
             }),
       );
-      return null;
+      return;
     }
     if (action.startsWith('music:album-track:')) {
       if (_songOptionsExpanded) {
@@ -3795,7 +3795,7 @@ class _BasicShellState extends State<_BasicShell>
         _setModal('');
         unawaited(controller.openSong(songs[index]));
       }
-      return null;
+      return;
     }
     if (action == 'music:official') {
       // Qt 只在 `capabilities.officialPlayback` 为真的平台给这个入口；Android 上没有
@@ -4865,8 +4865,8 @@ class _BasicShellState extends State<_BasicShell>
       _setModal('');
       return null;
     }
-    if (action == commentSortActionPrefix + 'hot' ||
-        action == commentSortActionPrefix + 'new') {
+    if (action == '${commentSortActionPrefix}hot' ||
+        action == '${commentSortActionPrefix}new') {
       final String sort = action.substring(commentSortActionPrefix.length);
       unawaited(
         _commentController?.setSort(

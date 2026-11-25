@@ -306,7 +306,7 @@ void main() {
       // 7 段（140/20），只画前 6 段。
       expect(_ops(c, 'text').length, greaterThan(6));
       final bool hasSeventh =
-          _texts(c).any((String value) => value.startsWith('字' * 20) && value.length > 0);
+          _texts(c).any((String value) => value.startsWith('字' * 20) && value.isNotEmpty);
       expect(hasSeventh, isTrue);
       expect(_texts(c).where((String v) => v.length == 20).length, 6, reason: '正文只画 6 行');
     });

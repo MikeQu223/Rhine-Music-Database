@@ -32,7 +32,6 @@ library;
 import 'dart:math' as math;
 import 'dart:ui' show Rect;
 
-import '../scale/portrait_rhythm.dart';
 import 'portrait_canvas.dart';
 
 /// 一行歌曲：标题、艺人、行末戳（时长；缺省给空串，不编造）。

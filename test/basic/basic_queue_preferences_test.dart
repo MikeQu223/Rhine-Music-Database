@@ -87,7 +87,7 @@ void main() {
   });
 
   group('MusicPlayer.resyncPreferences（偏好晚到时回填）', () {
-    BasicPlayerPreferences _prefs(String mode) {
+    BasicPlayerPreferences prefs0(String mode) {
       final MemoryBasicSettingsPort port = MemoryBasicSettingsPort(
         values: <String, String>{
           if (mode.isNotEmpty) '${basicSettingsPreferencePrefix}play-mode': mode,
@@ -97,7 +97,7 @@ void main() {
     }
 
     test('构造时镜像为空 → resync 后模式变成存档值并 emit 一次', () {
-      final BasicPlayerPreferences prefs = _prefs('shuffle');
+      final BasicPlayerPreferences prefs = prefs0('shuffle');
       final player.MusicPlayer music = player.MusicPlayer(
         media: _Media(),
         preferences: prefs,
@@ -118,7 +118,7 @@ void main() {
     });
 
     test('resync 不覆盖本会话已切过的模式以外的东西：白名单外值被忽略', () {
-      final BasicPlayerPreferences prefs = _prefs('');
+      final BasicPlayerPreferences prefs = prefs0('');
       final player.MusicPlayer music = player.MusicPlayer(
         media: _Media(),
         preferences: prefs,
@@ -134,7 +134,7 @@ void main() {
     });
 
     test('resync 重复调用不重复 emit（值没变）', () {
-      final BasicPlayerPreferences prefs = _prefs('');
+      final BasicPlayerPreferences prefs = prefs0('');
       final player.MusicPlayer music = player.MusicPlayer(
         media: _Media(),
         preferences: prefs,
@@ -153,7 +153,7 @@ void main() {
     });
 
     test('切模式会双向同步：setMode 之后镜像里立刻是同一个值', () {
-      final BasicPlayerPreferences prefs = _prefs('');
+      final BasicPlayerPreferences prefs = prefs0('');
       final player.MusicPlayer music = player.MusicPlayer(
         media: _Media(),
         preferences: prefs,
