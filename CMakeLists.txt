@@ -1151,11 +1151,14 @@ endif()
 if(WIN32 AND RHINE_ENABLE_D3D12_BACKEND)
     qt_add_executable(
         RhinePresentationBackendRegression Qt/tests/PresentationBackendChecks.cpp
-        Qt/src/render/RhiPresentationBackend.cpp Qt/src/render/PresentationWindow.cpp
+        Qt/src/CrashDiagnostics.cpp Qt/src/render/RhiPresentationBackend.cpp
+        Qt/src/render/PresentationWindow.cpp Qt/src/render/SceneLayerHost.cpp
         Qt/src/WindowsRoundedCorners.cpp)
     set_target_properties(RhinePresentationBackendRegression PROPERTIES QT_QML_MODULE_NO_IMPORT_SCAN TRUE)
     target_include_directories(RhinePresentationBackendRegression PRIVATE Qt/src)
     target_link_libraries(RhinePresentationBackendRegression PRIVATE Qt6::Quick Qt6::GuiPrivate dwmapi)
     target_compile_options(RhinePresentationBackendRegression PRIVATE /utf-8)
     add_test(NAME qt_d3d12_presentation_regression COMMAND RhinePresentationBackendRegression)
+    add_test(NAME qt_windows_vulkan_overlay_regression COMMAND RhinePresentationBackendRegression --vulkan)
+    set_tests_properties(qt_windows_vulkan_overlay_regression PROPERTIES SKIP_RETURN_CODE 77)
 endif()

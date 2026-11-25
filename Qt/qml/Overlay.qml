@@ -34,6 +34,10 @@ Item {
     readonly property bool compactLayout: rhine.state.compactLayout === true
     readonly property real textScale: rhine.state.textScale || 1
     readonly property bool android: Qt.platform.os === "android"
+    readonly property bool phoneLogin: rhine.state.modal === "login" && rhine.state.loginMethod === "phone"
+    // 背景和原生按钮共用快捷键层。手机号表单可输入时，离屏宿主可以从该层补回焦点。
+    readonly property bool phoneLoginNeedsFocus: phoneLogin && accountField.visible && !accountField.readOnly &&
+        !accountField.activeFocus && !captchaField.activeFocus
 
     // 手指比鼠标指针粗：Android 上把每个命中矩形四周各外扩 touchHitPadding 个舞台像素。
     // 舞台坐标按 1080 高归一化，16 在常见手机上约 1~1.5 mm；按手感调这一个值即可。
@@ -55,7 +59,11 @@ Item {
             focusInputLayer();
             return;
         }
-        if (searchInput.visible && searchInput.enabled) {
+        if (phoneLogin && accountField.visible) {
+            if (!accountField.activeFocus && !captchaField.activeFocus) {
+                accountField.forceActiveFocus();
+            }
+        } else if (searchInput.visible && searchInput.enabled) {
             searchInput.forceActiveFocus();
         } else if (formFields.visible && accountField.enabled) {
             accountField.forceActiveFocus();
@@ -448,7 +456,7 @@ Item {
     // 验证码只在输入组件和单次登录请求中短暂存在，提交后立即清空。
     Item {
         id: formFields
-        visible: rhine.state.modal === "playlist-form" || (rhine.state.modal === "login" && rhine.state.loginMethod === "phone")
+        visible: rhine.state.modal === "playlist-form" || overlay.phoneLogin
         x: (rhine.state.inputX || 0) * overlay.stageScale
         y: (rhine.state.modalOffset || 0) * overlay.stageScale
         width: (rhine.state.inputWidth || 0) * overlay.stageScale
@@ -475,29 +483,32 @@ Item {
             captchaField.text = "";
         }
         Rectangle {
+            id: accountBackground
             visible: formFields.accountVisible
             x: 0
             y: formFields.accountTop * overlay.stageScale
             width: rhine.state.modal === "login" ? parent.width - 180 * overlay.stageScale : parent.width
             height: 55 * overlay.stageScale
             color: rhine.state.dark ? "#30312b" : "#d9d8ce"
+            border.width: 1
+            border.color: accountField.activeFocus ? "#929876" : (rhine.state.dark ? "#66675e" : "#a29f92")
         }
         TextInput {
             id: accountField
             objectName: "accountField"
             visible: formFields.accountVisible
-            x: 14 * overlay.stageScale
-            y: formFields.accountTop * overlay.stageScale
-            width: parent.width - (rhine.state.modal === "login" ? 208 : 28) * overlay.stageScale
-            height: 55 * overlay.stageScale
+            anchors.fill: accountBackground
+            leftPadding: 14 * overlay.stageScale
+            rightPadding: leftPadding
             verticalAlignment: TextInput.AlignVCenter
             color: rhine.state.dark ? "#eeeeeb" : "#161914"
             font.pixelSize: 19 * overlay.stageScale * overlay.textScale
             cursorVisible: activeFocus && !rhine.performance.idle
             maximumLength: rhine.state.modal === "login" ? 11 : 100
-            enabled: rhine.state.modal !== "login" || !rhine.state.loginBusy
+            readOnly: rhine.state.modal === "login" && rhine.state.loginBusy
             inputMethodHints: rhine.state.modal === "login" ? Qt.ImhDigitsOnly : Qt.ImhNone
             Accessible.name: rhine.state.modal === "playlist-form" ? "歌单名称" : "手机号码"
+            KeyNavigation.tab: captchaField.visible ? captchaField : null
             Keys.onReturnPressed: {
                 if (rhine.state.modal !== "login") {
                     formFields.submit();
@@ -535,29 +546,32 @@ Item {
             }
         }
         Rectangle {
+            id: captchaBackground
             visible: rhine.state.modal === "login" && formFields.captchaVisible
             x: 0
             y: formFields.captchaTop * overlay.stageScale
             width: parent.width
             height: 55 * overlay.stageScale
             color: rhine.state.dark ? "#30312b" : "#d9d8ce"
+            border.width: 1
+            border.color: captchaField.activeFocus ? "#929876" : (rhine.state.dark ? "#66675e" : "#a29f92")
         }
         TextInput {
             id: captchaField
             objectName: "captchaField"
             visible: rhine.state.modal === "login" && formFields.captchaVisible
-            x: 14 * overlay.stageScale
-            y: formFields.captchaTop * overlay.stageScale
-            width: parent.width - 28 * overlay.stageScale
-            height: 55 * overlay.stageScale
+            anchors.fill: captchaBackground
+            leftPadding: 14 * overlay.stageScale
+            rightPadding: leftPadding
             verticalAlignment: TextInput.AlignVCenter
             color: rhine.state.dark ? "#eeeeeb" : "#161914"
             font.pixelSize: 19 * overlay.stageScale * overlay.textScale
             cursorVisible: activeFocus && !rhine.performance.idle
             maximumLength: 8
-            enabled: !rhine.state.loginBusy
+            readOnly: rhine.state.loginBusy
             inputMethodHints: Qt.ImhDigitsOnly | Qt.ImhSensitiveData
             Accessible.name: "短信验证码"
+            KeyNavigation.backtab: accountField
             Keys.onReturnPressed: formFields.submit()
             Keys.onEscapePressed: rhine.action("close-modal")
         }

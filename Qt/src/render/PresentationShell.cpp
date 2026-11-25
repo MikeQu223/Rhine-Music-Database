@@ -1314,6 +1314,10 @@ bool PresentationShell::eventFilter(QObject *watched, QEvent *event) {
             // 焦点由"可见窗口"这唯一真实来源决定：启动时建立一次，按键到达时兜底。
             break;
         case QEvent::ShortcutOverride:
+#ifdef Q_OS_WIN
+            // 粘贴等组合键要在快捷键匹配之前发给当前输入框。
+            ensureOverlayFocus(overlay);
+#endif
             QCoreApplication::sendEvent(overlay, event);
             break;
         default:
@@ -1333,11 +1337,13 @@ void PresentationShell::ensureOverlayFocus(QQuickWindow *overlay) {
         return;
     }
 #ifdef Q_OS_WIN
-    auto *focusItem = overlay->activeFocusItem();
-    if (focusItem && focusItem != overlay->contentItem() && focusItem != m_host->overlayRootItem()) {
+    QQuickItem *root = m_host->overlayRootItem();
+    if (!root) {
         return;
     }
-    if (QQuickItem *root = m_host->overlayRootItem()) {
+    auto *focusItem = overlay->activeFocusItem();
+    if (!focusItem || focusItem == overlay->contentItem() || focusItem == root ||
+        root->property("phoneLoginNeedsFocus").toBool()) {
         QMetaObject::invokeMethod(root, "restoreInputFocus", Qt::DirectConnection);
     }
 #else
