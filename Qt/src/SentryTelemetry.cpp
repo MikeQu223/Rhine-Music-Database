@@ -330,6 +330,10 @@ bool preferenceEnabled(QStringView value) {
            (value == QLatin1String(defaultPreference) || !authorizedGeneration(value, endpoint).isNull());
 }
 
+bool enabled() {
+    return preferenceEnabled(preference());
+}
+
 bool savePreference(const QString &value) {
     const auto endpoint = dsn();
     if (value != QLatin1String(DisabledPreference) &&

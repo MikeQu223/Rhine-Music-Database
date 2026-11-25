@@ -121,7 +121,6 @@ bool checkSettingsSchema() {
             return false;
         }
     }
-
     QStringList audio{"quality"};
     if constexpr (PlatformFeatures::AutomaticTransition) {
         audio.append("apple-smart-transition");
@@ -178,6 +177,25 @@ bool checkSettingsSchema() {
         SettingsSchema::normalize(*textScale, context, "200") != "130" ||
         !Host::isPreferenceKey("text-scale")) {
         qCritical() << "Interface scale preference is missing its default, choices, migration, or key";
+        return false;
+    }
+    const auto *mask = SettingsSchema::find("archive-mask");
+    const auto *debug = SettingsSchema::find("debug-mode");
+#if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
+    constexpr bool debugModeVisible = true;
+#else
+    constexpr bool debugModeVisible = false;
+#endif
+#if RHINE_SENTRY
+    const bool debugModeEnabled = !RhineSentry::enabled();
+#else
+    constexpr bool debugModeEnabled = true;
+#endif
+    if (!mask || SettingsSchema::resolvedDefault(*mask, context) != "0" || context.archiveMaskStrength != 0 ||
+        !debug || SettingsSchema::resolvedDefault(*debug, context) != "off" ||
+        SettingsSchema::visible(*debug, context) != debugModeVisible ||
+        SettingsSchema::enabled(*debug, context) != debugModeEnabled) {
+        qCritical() << "Right mask default or telemetry-gated debug mode settings are invalid";
         return false;
     }
     if constexpr (PlatformFeatures::InterfaceSounds) {
@@ -809,7 +827,47 @@ bool checkSupersamplingSettings(Host &host, Glyphs &glyphs, const QJsonObject &c
     qputenv("RHINE_SUPERSAMPLE", "2");
     MusicLibrary music(&host, content);
     NativeHud hud(&host, &glyphs, &music, {});
+    if (hud.archiveMaskStrength != 0) {
+        qCritical() << "Right mask must start disabled without a saved preference";
+        return false;
+    }
+    hud.archiveMaskStrength = 50;
+    const bool wasOffline = host.offline;
+    host.offline = false;
+    const auto restoreOffline = qScopeGuard([&host, wasOffline] { host.offline = wasOffline; });
+    host.setPreference("debug-mode", "on");
     hud.action("settings:restore-defaults");
+    const bool debugModeDisabled = host.preference("debug-mode") == "off";
+    if (hud.archiveMaskStrength != 0) {
+        qCritical() << "Restoring defaults must disable the right mask";
+        return false;
+    }
+    if (!debugModeDisabled) {
+        qCritical() << "Restoring defaults must disable debug mode";
+        return false;
+    }
+#if RHINE_SENTRY
+    const auto *debugSetting = SettingsSchema::find("debug-mode");
+    SettingsSchema::SettingsContext debugContext;
+    debugContext.host = &host;
+    const bool debugModeEnabled = debugSetting && SettingsSchema::enabled(*debugSetting, debugContext);
+    if (!debugModeEnabled) {
+        host.setPreference("debug-mode", "on");
+        hud.action("debug-mode");
+        if (host.preference("debug-mode") != "off") {
+            qCritical() << "Enabled telemetry must force debug mode off";
+            return false;
+        }
+    } else {
+        host.setPreference("debug-mode", "off");
+        hud.action("debug-mode");
+        if (host.preference("debug-mode") != "on") {
+            qCritical() << "Disabled telemetry must leave debug mode editable";
+            return false;
+        }
+        host.setPreference("debug-mode", "off");
+    }
+#endif
     return qEnvironmentVariable("RHINE_RENDER_SCALE") == SettingsSchema::resolvedDefault(*scale, context) &&
            qgetenv("RHINE_AA_MODE") == "off";
 }
@@ -2604,6 +2662,17 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
                     ok = false;
                 }
             }
+#if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
+            SettingsSchema::SettingsContext debugContext;
+            debugContext.host = &host;
+            const auto *debugSetting = SettingsSchema::find("debug-mode");
+            const bool debugModeReachable =
+                debugSetting && SettingsSchema::enabled(*debugSetting, debugContext);
+            if (visibleSettings.contains("debug-mode") != debugModeReachable) {
+                qCritical() << "Debug mode reachability does not match telemetry state" << provider << dark;
+                ok = false;
+            }
+#endif
 #if RHINE_SENTRY
             if (!sentryDiagnosticLabelOk) {
                 qCritical() << "Telemetry diagnostic action lost its label" << provider << dark;

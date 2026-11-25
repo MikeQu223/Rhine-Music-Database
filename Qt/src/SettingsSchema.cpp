@@ -5,6 +5,9 @@
 #include "MusicPlayer.h"
 #include "PlatformFeatures.h"
 #include "ProviderRegistry.h"
+#if RHINE_SENTRY
+#include "SentryTelemetry.h"
+#endif
 #include "render/AndroidRenderPolicy.h"
 #include "render/RenderModePolicy.h"
 #include "fg/FgCapability.h"
@@ -88,6 +91,20 @@ bool debugModeVisible(const SettingsContext &) {
     return true;
 #else
     return false;
+#endif
+}
+
+bool debugModeEnabled(const SettingsContext &context) {
+#if RHINE_SENTRY
+    // 遥测开启时由远端诊断接管，本地调试模式必须保持关闭。
+    if (!context.host) {
+        return !RhineSentry::enabled();
+    }
+    const auto consent = context.host->preference(QLatin1String(RhineSentry::ConsentKey));
+    return !RhineSentry::preferenceEnabled(consent);
+#else
+    Q_UNUSED(context)
+    return true;
 #endif
 }
 
@@ -743,7 +760,8 @@ const QVector<SettingDescriptor> &descriptors() {
              .restartHint = QStringLiteral("关闭后完全停止底层采集需重启应用"),
              .defaultValue = Off,
              .choices = onOffChoices(),
-             .visible = debugModeVisible});
+             .visible = debugModeVisible,
+             .enabled = debugModeEnabled});
         add({.id = "archive-mask",
              .section = SectionId::Preferences,
              .kind = SettingKind::Stepper,
@@ -752,7 +770,7 @@ const QVector<SettingDescriptor> &descriptors() {
              .order = 110,
              .titleEn = "RIGHT MASK",
              .titleZh = "右侧画面遮罩",
-             .defaultValue = "50",
+             .defaultValue = "0",
              .minimum = 0,
              .maximum = 100,
              .step = 10,

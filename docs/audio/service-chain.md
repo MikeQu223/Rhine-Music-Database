@@ -458,7 +458,7 @@ notes 明确：解码帧不等于可听设备输出；不采集原始错误、UR
 
 ### 12.3 崩溃诊断
 
-Crashpad 只接入 GUI 进程（`RhineMusicDatabase`），由调试模式开关控制；播放服务进程不初始化 Crashpad。播放链路的可观测性以 `PlaybackDiagnostics` 为准。
+Crashpad 只接入 GUI 进程（`RhineMusicDatabase`），由 `panel/debug-mode` 偏好控制；Sentry 遥测开启时设置项置灰并强制关闭该偏好。播放服务进程不初始化 Crashpad。播放链路的可观测性以 `PlaybackDiagnostics` 为准。
 
 ## 13. 平台差异与打包
 

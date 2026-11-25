@@ -44,6 +44,7 @@ bool configured();
 QString newConsent();
 QString preference();
 bool preferenceEnabled(QStringView value);
+bool enabled();
 bool savePreference(const QString &value);
 bool active();
 bool ownsCrashHandler();

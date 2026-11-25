@@ -64,7 +64,7 @@ struct SettingsContext {
     bool reduced = false;
     bool startupAnimation = false;
     bool vsync = true;
-    int archiveMaskStrength = 50;
+    int archiveMaskStrength = 0;
     QString expandedId;
     QString cacheMessage;
 };

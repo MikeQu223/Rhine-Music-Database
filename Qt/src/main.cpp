@@ -1079,7 +1079,18 @@ int main(int argc, char **argv) {
                                      !args.contains("--playback-gui-test") && !args.contains("--taskbar-self-test") &&
                                      !args.contains("--make-icon") && !args.contains("--capture") &&
                                      qEnvironmentVariableIntValue("RHINE_OFFLINE") != 1;
-    if (sentryNormalStartup && AppStorage::settings().value("panel/debug-mode").toString() != "on") {
+    const bool sentryEnabled = RhineSentry::enabled();
+    const bool forceSentryOverDebug = sentryNormalStartup && sentryEnabled;
+    // 仅在正常启动且遥测启用时迁移旧的本地调试偏好；离线诊断模式不得改写配置。
+    if (forceSentryOverDebug) {
+        auto settings = AppStorage::settings();
+        if (settings.value("panel/debug-mode").toString() != QLatin1String("off")) {
+            settings.setValue("panel/debug-mode", QStringLiteral("off"));
+            settings.sync();
+        }
+    }
+    if (sentryNormalStartup &&
+        (forceSentryOverDebug || AppStorage::settings().value("panel/debug-mode").toString() != "on")) {
 #if !RHINE_MOBILE
         RhineSentry::start(false, verificationModeCount == 1);
 #else
@@ -1093,7 +1104,12 @@ int main(int argc, char **argv) {
                          });
     }
 #endif
-    const bool debugMode = AppStorage::settings().value("panel/debug-mode").toString() == QLatin1String("on");
+    bool debugMode = AppStorage::settings().value("panel/debug-mode").toString() == QLatin1String("on");
+#if RHINE_SENTRY
+    if (forceSentryOverDebug) {
+        debugMode = false;
+    }
+#endif
     if (debugMode && CrashDiagnostics::supported()) {
         crashDiagnostics.start(application);
     } else if (!debugMode) {
@@ -1406,7 +1422,7 @@ int main(int argc, char **argv) {
         engineBackend->playSurfaceSound(panel->visible());
     });
     backend->start();
-    // 设置页的调试模式开关直接驱动采集生命周期；关闭会同时清空已有诊断数据。
+    // 内部 debug-mode 偏好驱动采集生命周期；关闭会同时清空已有诊断数据。
     QObject::connect(
         &backend->host, &Host::preferenceChanged, &application,
         [&crashDiagnostics, &application, host = &backend->host](const QString &key, const QString &value) {

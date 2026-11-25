@@ -820,6 +820,8 @@ void NativeHud::action(QString value) {
             const auto consent = RhineSentry::newConsent();
             if (!consent.isEmpty()) {
                 m_host->setPreference(value, consent);
+                // 远端遥测与本地 Crashpad 互斥，开启遥测时强制关闭调试模式。
+                m_host->setPreference("debug-mode", QStringLiteral("off"));
             }
         }
         m_host->invalidate();
@@ -1569,6 +1571,14 @@ void NativeHud::action(QString value) {
         const bool toTray = m_host->preference("close-behavior") == "tray";
         m_host->setPreference("close-behavior", toTray ? "quit" : "tray");
     } else if (value == "debug-mode") {
+#if RHINE_SENTRY
+        const auto *debugSetting = SettingsSchema::find("debug-mode");
+        if (!debugSetting || !SettingsSchema::enabled(*debugSetting, settingsContext())) {
+            m_host->setPreference("debug-mode", QStringLiteral("off"));
+            m_host->invalidate();
+            return;
+        }
+#endif
         const bool enabled = m_host->preference("debug-mode") == "on";
         m_host->setPreference("debug-mode", enabled ? "off" : "on");
     } else if (value == "graphics-backend") {
@@ -1789,7 +1799,7 @@ void NativeHud::runSentryDiagnostic() {
                 } else if (debugMode) {
                     owner->sentryDiagnosticMessage =
                         QStringLiteral("连接正常（HTTP %1），端点已绑定；"
-                                       "关闭调试模式并重启后启用%2")
+                                       "当前由本地调试诊断接管，结束该状态并重启后启用%2")
                             .arg(result.statusCode)
                             .arg(eventNote);
                 } else {

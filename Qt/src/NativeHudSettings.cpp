@@ -268,11 +268,11 @@ void NativeHud::paintSettingsCustomSection(const QString &renderer, const QRectF
         fill(rect.left(), rect.top(), 1, rect.height(), color);
         fill(rect.right() - 1, rect.top(), 1, rect.height(), color);
     };
-    auto actionBlock = [this, &stroke, &soft, &line, &baseInk, &vertical](const QRectF &rect, const QString &label,
-                                                               const QString &action, const QString &hitLabel,
-                                                               bool centeredLabel = false) {
+    auto actionBlock = [this, &stroke, &soft, &line, &baseInk, &muted,
+                        &vertical](const QRectF &rect, const QString &label, const QString &action,
+                                   const QString &hitLabel, bool centeredLabel = false, bool enabled = true) {
         if (m_contentSink) {
-            m_contentSink->action(hitLabel + " / " + label, action);
+            m_contentSink->action(hitLabel + " / " + label, enabled ? action : QString());
             return;
         }
         fill(rect.left(), rect.top(), rect.width(), rect.height(), soft);
@@ -281,9 +281,12 @@ void NativeHud::paintSettingsCustomSection(const QString &renderer, const QRectF
         if (centeredLabel) {
             centeredText(shown, rect.center().x(), rect.center().y(), 14, "regular", true);
         } else {
-            text(shown, rect.left() + 12, rect.top() + vertical(15), 14, "regular", 0, baseInk);
+            text(shown, rect.left() + 12, rect.top() + vertical(15), 14, "regular", 0,
+                 enabled ? baseInk : muted);
         }
-        hit(rect.left(), rect.top(), rect.width(), rect.height(), action, hitLabel);
+        if (enabled) {
+            hit(rect.left(), rect.top(), rect.width(), rect.height(), action, hitLabel);
+        }
     };
 
     if (renderer == "provider-card") {
@@ -342,13 +345,15 @@ void NativeHud::paintSettingsCustomSection(const QString &renderer, const QRectF
         return;
     }
 
-    const auto sectionRow = [this, &body, &muted, &baseInk, &line, &actionBlock, &vertical](
-                                double top, const QString &en, const QString &zh, const QString &label,
-                                const QString &action, const QString &hitLabel, const QString &note) {
+    const auto sectionRow = [this, &body, &muted, &baseInk, &line, &actionBlock,
+                             &vertical](double top, const QString &en, const QString &zh,
+                                        const QString &label, const QString &action, const QString &hitLabel,
+                                        const QString &note, bool enabled = true) {
         const auto control = QRectF(body.right() - 300, body.top() + vertical(top + 8), 300, vertical(48));
         text(en, body.left(), body.top() + vertical(top + 10), 11, "regular", 0.08, muted);
-        text(zh, body.left(), body.top() + vertical(top + 25), SettingTitleSize, "demibold", -0.01, baseInk);
-        actionBlock(control, label, action, hitLabel);
+        text(zh, body.left(), body.top() + vertical(top + 25), SettingTitleSize, "demibold", -0.01,
+             enabled ? baseInk : muted);
+        actionBlock(control, label, action, hitLabel, false, enabled);
         if (!note.isEmpty()) {
             text(note, body.left(), body.top() + vertical(top + 78), SettingNoteSize, "regular", 0, muted);
         }
@@ -368,15 +373,29 @@ void NativeHud::paintSettingsCustomSection(const QString &renderer, const QRectF
                    "performance:toggle", QStringLiteral("性能面板"),
                    QStringLiteral("在性能面板内手动收集、导出诊断文件。"));
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
-        const bool debugMode = m_host->preference("debug-mode") == "on";
+        const auto *debugSetting = SettingsSchema::find("debug-mode");
+        const bool debugModeEnabled =
+            debugSetting && SettingsSchema::enabled(*debugSetting, settingsContext());
+        const bool debugMode = debugModeEnabled && m_host->preference("debug-mode") == "on";
+        QString debugLabel;
+        if (!debugModeEnabled) {
+            debugLabel = QStringLiteral("关闭 · 遥测开启");
+        } else if (debugMode) {
+            debugLabel = QStringLiteral("开启 / 点击关闭");
+        } else {
+            debugLabel = QStringLiteral("关闭 / 点击开启");
+        }
+        QString debugNote = QStringLiteral("遥测开启时强制关闭本地调试。");
+        if (debugModeEnabled) {
 #if RHINE_SENTRY
-        const auto debugDescription = QStringLiteral("仅保存本地诊断；从 Sentry 切换到本地调试需重启。");
+            debugNote = QStringLiteral("仅保存本地诊断；从 Sentry 切换到本地调试需重启。");
 #else
-        const auto debugDescription = QStringLiteral("仅用于排查闪退与卡死；关闭后清空诊断数据，完全停止采集需重启。");
+            debugNote = QStringLiteral("仅用于排查闪退与卡死；关闭后清空诊断数据，完全停止采集需重启。");
 #endif
-        sectionRow(112, "DEBUG MODE", QStringLiteral("调试模式（原生崩溃诊断）"),
-                   debugMode ? QStringLiteral("开启 / 点击关闭") : QStringLiteral("关闭 / 点击开启"),
-                   "debug-mode", QStringLiteral("调试模式"), debugDescription);
+        }
+        sectionRow(112, "DEBUG MODE", QStringLiteral("调试模式（原生崩溃诊断）"), debugLabel,
+                   debugModeEnabled ? QStringLiteral("debug-mode") : QString(), QStringLiteral("调试模式"),
+                   debugNote, debugModeEnabled);
 #endif
 #if RHINE_SENTRY
         const auto consent = m_host->preference(QLatin1String(RhineSentry::ConsentKey));
@@ -392,11 +411,6 @@ void NativeHud::paintSettingsCustomSection(const QString &renderer, const QRectF
                 status = QStringLiteral("开启 / 点击关闭");
                 if (!RhineSentry::active()) {
                     status = QStringLiteral("已开启 / 等待重启");
-#if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
-                    if (debugMode) {
-                        status = QStringLiteral("已开启 / 界面使用本地调试");
-                    }
-#endif
                 }
             }
         }
@@ -423,9 +437,8 @@ void NativeHud::paintSettingsCustomSection(const QString &renderer, const QRectF
         } else if (!sentryDiagnosticMessage.isEmpty()) {
             diagnosticNote = sentryDiagnosticMessage;
         }
-        sectionRow(sentryTop + 108, "TELEMETRY DIAGNOSTICS", QStringLiteral("遥测诊断"),
-                   diagnosticLabel, QStringLiteral("sentry:diagnose"), QStringLiteral("遥测诊断"),
-                   diagnosticNote);
+        sectionRow(sentryTop + 108, "TELEMETRY DIAGNOSTICS", QStringLiteral("遥测诊断"), diagnosticLabel,
+                   QStringLiteral("sentry:diagnose"), QStringLiteral("遥测诊断"), diagnosticNote);
 #endif
         return;
     }
@@ -492,6 +505,10 @@ void NativeHud::applySettingValue(const QString &id, const QString &value) {
     }
     const auto context = settingsContext();
     if (!SettingsSchema::visible(*descriptor, context)) {
+        return;
+    }
+    if (id == "debug-mode" && !SettingsSchema::enabled(*descriptor, context)) {
+        m_host->setPreference("debug-mode", QStringLiteral("off"));
         return;
     }
     const auto current = SettingsSchema::read(*descriptor, context);
@@ -640,6 +657,8 @@ void NativeHud::restoreSettingsDefaults() {
         action("disc-rotation");
     }
     m_host->setPreference("auto-update", QString());
+    // 调试模式仍是内部诊断偏好，但设置项已隐藏，恢复默认时必须显式关闭。
+    m_host->setPreference("debug-mode", "off");
     // 桌面歌词的样式行不在主表中，整组恢复到新的默认值并关闭悬浮层。
     if (PlatformFeatures::DesktopLyrics) {
         if (shortcuts) {

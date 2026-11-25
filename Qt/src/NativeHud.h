@@ -180,7 +180,7 @@ class NativeHud : public QObject {
     bool discRotation = false;
     bool skipDetailOnSwitch = false;
     bool vsync = true;
-    int archiveMaskStrength = 50;
+    int archiveMaskStrength = 0;
     bool closing = false;
     bool lyricsMode = false;
     bool lyricsControlsVisible = true;
