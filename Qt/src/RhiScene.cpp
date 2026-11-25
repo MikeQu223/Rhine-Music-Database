@@ -1492,25 +1492,15 @@ class Renderer {
         // 是最外那层透明光学包裹，丢掉它们外壳会少一层，必须保留。
         static const QStringList removed = {"Internal_Ceramic", "Amber_Optical_Inlay", "Champagne_Index",
                                             "Printed_Label"};
-        // Android 资料库（archive）阶段不显示封面与左上角印刷标签：逐格印刷面/标签，
-        // 以及焦点与归位卡由 Frosted_Polymer 派生出的封面盘面与标签都不进入本帧
-        // draw 列表。detail/boot/查看封面页与非 Android 平台保持原样；卡壳、唱片
-        // 实体（银盘/轴心）、frame/drawBuffers 与封面资源管线都不动。
-        const bool hideLibraryArtwork =
-#if defined(Q_OS_ANDROID)
-            f["mode"].toString() == QLatin1String("archive") && !f["viewer"].toBool();
-#else
-            false;
-#endif
+        // 封面与印刷标签在所有阶段都画：主线（origin/main）没有「资料库页隐藏封面」
+        // 这一支，那是迁移期为了绕开「封面纹理没建出来」而临时加的对冲，真机上表现
+        // 就是整页唱片全是空白盘面（用户 2026-11-26 报「还是不显示封面」）。
+        // 纹理准入泵已在 `1a2a622bc` 修好（滚动标记到期自失效），这里恢复主线行为。
         QList<QJsonObject> result;
         for (auto v : f["draws"].toArray()) {
             auto d = v.toObject();
             const auto name = d["name"].toString();
             if (removed.contains(name)) {
-                continue;
-            }
-            if (hideLibraryArtwork &&
-                (d["label"].toBool() || name == QLatin1String("Embedded_Cell_Print"))) {
                 continue;
             }
             const bool shell =
@@ -1573,9 +1563,7 @@ class Renderer {
             part["discAngle"] = d["musicSelected"].toBool() ? f["discAngle"].toDouble() : 0;
             part["name"] = "Music_Disc_Print";
             part["mesh"] = -2;
-            if (!hideLibraryArtwork) {
-                result << part;
-            }
+            result << part;
             part["name"] = "Music_Disc_Silver";
             part["mesh"] = -3;
             part["color"] = QJsonArray{.68, .72, .74};
@@ -1597,9 +1585,7 @@ class Renderer {
             part["transparent"] = true;
             part["label"] = true;
             part["order"] = 50;
-            if (!hideLibraryArtwork) {
-                result << part;
-            }
+            result << part;
         }
         return result;
     }
