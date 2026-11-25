@@ -331,6 +331,10 @@ class Engine : public QObject {
     QString m_embeddedCellSignature;
     quint64 m_embeddedCellContext = 0;
     bool m_embeddedCellScrolling = false;
+    // 宿主给的 scrolling 只描述"快照到达那一刻"：列表停下后 Flutter 不再推新位置，
+    // 也就不会再有下一份快照来把它改回 false。所以这里记一个到期时刻，让标记自己衰减，
+    // 否则准入窗口永远处于"滚动中"，可见格一个都进不来（封面停在占位）。
+    qint64 m_embeddedCellScrollingUntilMs = 0;
     int m_embeddedCellAdmitted = 0;
     int m_embeddedCellPending = 0;
     // 其中到期却因为名额被可见格占满而进不来的那些：它们只能等窗口变化，

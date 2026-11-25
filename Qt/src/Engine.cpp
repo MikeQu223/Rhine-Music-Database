@@ -654,6 +654,10 @@ void Engine::projectEmbeddedCells(const QJsonArray &cells, quint64 contextGenera
     const bool wasScrolling = m_embeddedCellScrolling;
     m_embeddedCellContext = contextGeneration;
     m_embeddedCellScrolling = scrolling;
+    if (scrolling) {
+        // 与宿主 payload 里的 450ms 判定同源：到期后自己失效，不需要下一份快照。
+        m_embeddedCellScrollingUntilMs = clock.elapsed() + 450;
+    }
     if (projection.signature == m_embeddedCellSignature) {
         // 同一份窗口内容重复上报（每次 apply 都会来一次）：不动准入，也不重置计时。
         // 但"滚动结束"是一次真实的边界事件：内容没变也要醒一次去结算待定项，否则
@@ -742,7 +746,10 @@ void Engine::pumpEmbeddedCells(const QSet<QString> &retained, bool scrolling) {
         visible.append(cell.key);
     }
     // 宿主给的 scrolling 与原生轨道自己的拖动/惯性取并集：任何一边在动都不新建资源。
-    const bool moving = scrolling || scene.archiveScrolling();
+    // 宿主那一侧带衰减：列表停下后不会再有快照来把标记改回 false，只靠它会让准入窗口
+    // 永远处于"滚动中"（真机现象：cellReal=0、全程只有 1 条 COVER_REQUEST）。
+    const bool hostScrolling = scrolling && clock.elapsed() < m_embeddedCellScrollingUntilMs;
+    const bool moving = hostScrolling || scene.archiveScrolling();
     const auto report =
         m_embeddedCellAdmission.report(visible, m_embeddedCellContext, moving, clock.elapsed());
     m_embeddedCellAdmitted = report.admitted;
