@@ -1032,7 +1032,8 @@ void FrameProfiler::formatMetrics(bool withDetails) {
                           metal.value("lowPowerMode").toBool() ? QStringLiteral("开") : QStringLiteral("关"));
 #endif
     const auto audio = m_metrics.value("audio").toMap();
-    if (audio.value("outputBackend").toInt() == 2) {
+    const int outputBackend = audio.value("outputBackend").toInt();
+    if (outputBackend == 2) {
         const auto codec = quint32(audio.value("sourceCodecFourCC").toDouble());
         const auto rate = audio.value("sourceSampleRateHz").toInt();
         const auto channels = audio.value("sourceChannels").toInt();
@@ -1091,6 +1092,37 @@ void FrameProfiler::formatMetrics(bool withDetails) {
                                                audio.value(format).toInt());
         };
         const bool outputKnown = audio.value("outputClientFormatStatus").toInt() == 1;
+        const bool wasapi = outputBackend == 3;
+        QString outputPath =
+            outputBackend == 1 ? QStringLiteral("QAudioSink / 系统音频路径") : QStringLiteral("未获取");
+        if (wasapi) {
+            switch (audio.value("outputShareMode").toInt()) {
+            case 1:
+                outputPath = QStringLiteral("WASAPI · 共享");
+                break;
+            case 2:
+                outputPath = QStringLiteral("WASAPI · 独占");
+                break;
+            default:
+                outputPath =
+                    outputKnown ? QStringLiteral("WASAPI · 模式未获取") : QStringLiteral("WASAPI · 未打开");
+                break;
+            }
+        }
+        QString submittedFormat = audioFormat("outputSampleRateHz", "outputChannels", "outputSampleFormat");
+        const int validBits = audio.value("outputValidBits").toInt();
+        const int containerBits = audio.value("outputContainerBits").toInt();
+        if (wasapi && outputKnown && validBits > 0 && containerBits >= validBits &&
+            audio.value("outputSampleFormat").toInt() != QAudioFormat::Float) {
+            const auto bits =
+                validBits == containerBits
+                    ? QStringLiteral("PCM %1 位").arg(validBits)
+                    : QStringLiteral("PCM %1 位有效 / %2 位容器").arg(validBits).arg(containerBits);
+            submittedFormat = QStringLiteral("%1 Hz / %2 / %3 声道")
+                                  .arg(audio.value("outputSampleRateHz").toInt())
+                                  .arg(bits)
+                                  .arg(audio.value("outputChannels").toInt());
+        }
         QStringList conversions;
         if (audio.value("outputSampleRateConverted").toBool()) {
             conversions << QStringLiteral("采样率");
@@ -1102,17 +1134,16 @@ void FrameProfiler::formatMetrics(bool withDetails) {
             conversions << QStringLiteral("声道布局");
         }
         const int resampler = audio.value("outputResampler", -1).toInt();
-        const auto outputMode = audio.value("outputPolicy").toInt() == 1 ? QStringLiteral("保留源格式")
-                                                                         : QStringLiteral("跟随系统");
+        const bool preferSource = audio.value("outputPolicy").toInt() == 1;
         m_details +=
-            QStringLiteral("\n\n音频输出链路 · %1\n解码 PCM  %2\n应用提交  %3\n系统当前  %4\n设备首选  "
-                           "%5\n硬件格式  未获取\n")
-                .arg(outputMode)
-                .arg(audioFormat("sampleRateHz", "channels", "sampleFormat"))
-                .arg(audioFormat("outputSampleRateHz", "outputChannels", "outputSampleFormat"))
-                .arg(audioFormat("outputSystemSampleRateHz", "outputSystemChannels",
-                                 "outputSystemSampleFormat"))
-                .arg(audioFormat("outputPreferredSampleRateHz", "outputPreferredChannels",
+            QStringLiteral("\n\n音频输出链路 · %1\n输出  %2\n解码 PCM  %3\n应用提交  %4\n%5  %6\n"
+                           "设备首选  %7\n硬件格式  未获取\n")
+                .arg(preferSource ? QStringLiteral("保留源格式") : QStringLiteral("跟随系统"), outputPath,
+                     audioFormat("sampleRateHz", "channels", "sampleFormat"), submittedFormat,
+                     wasapi ? QStringLiteral("系统混音格式") : QStringLiteral("系统当前"),
+                     audioFormat("outputSystemSampleRateHz", "outputSystemChannels",
+                                 "outputSystemSampleFormat"),
+                     audioFormat("outputPreferredSampleRateHz", "outputPreferredChannels",
                                  "outputPreferredSampleFormat"));
         if (audio.value("outputSystemFormatStatus").toInt() == 2) {
             m_details += QStringLiteral("系统路由采样率  %1 Hz / %2 声道（采样格式未知）\n")
@@ -1120,16 +1151,13 @@ void FrameProfiler::formatMetrics(bool withDetails) {
                              .arg(audio.value("outputSystemChannels").toInt());
         }
         m_details +=
-            QStringLiteral(
-                "输出  QAudioSink / 系统音频路径\n转换  %1 · %2%3\n重采样  %4 · 抖动 %5\n转换均值 / 峰值  %6 "
-                "/ "
-                "%7 ms\n"
-                "输出缓冲  %8 ms · 欠载 %9\n输出错误 / 重建  %10 / %11\n系统内部转换  未测量；有效位深未获取")
+            QStringLiteral("转换  %1 · %2%3\n重采样  %4 · 抖动 %5\n转换均值 / 峰值  %6 / %7 ms\n"
+                           "输出缓冲  %8 ms · 欠载 %9\n输出错误 / 重建  %10 / %11\n系统内部转换  未测量")
                 .arg(outputKnown
                          ? (conversions.isEmpty() ? QStringLiteral("PCM 格式保持") : conversions.join(" / "))
                          : QStringLiteral("未打开"))
-                .arg(audio.value("outputPolicy").toInt() == 1 ? QStringLiteral("优先保留音源格式")
-                                                              : QStringLiteral("匹配系统或设备首选格式"))
+                .arg(preferSource ? QStringLiteral("优先保留音源格式")
+                                  : QStringLiteral("匹配系统或设备首选格式"))
                 .arg(audio.value("outputFallback").toBool() ? QStringLiteral("（源格式不支持，已回退）")
                                                             : QString())
                 .arg(resampler < 0    ? QStringLiteral("未运行")
@@ -1142,6 +1170,10 @@ void FrameProfiler::formatMetrics(bool withDetails) {
                 .arg(audio.value("outputUnderruns").toInt())
                 .arg(audio.value("outputError").toInt())
                 .arg(audio.value("outputRebuilds").toInt());
+        const auto wasapiError = quint32(audio.value("outputWasapiError").toInt());
+        if (wasapiError != 0) {
+            m_details += QStringLiteral("\nWASAPI 错误  0x%1").arg(wasapiError, 8, 16, QLatin1Char('0'));
+        }
     }
     // 当前渲染配置：后端取自窗口实际使用的图形 API（不是启动时的选择，回退后也能看出来），
     // 其余取自运行时环境变量——RhiScene 读的是同一份值，所以这里显示的就是真正生效的配置。

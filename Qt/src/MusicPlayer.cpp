@@ -143,7 +143,7 @@ void MusicPlayer::setQuality(const QString &value) {
     }
     if (!m_resumePosition) {
         m_resumePosition = state["position"].toDouble();
-        m_resumePaused = !state["playing"].toBool();
+        m_resumePaused = !state["requested"].toBool();
     }
     const auto generation = ++m_generation;
     m_host->mediaControl("stop");

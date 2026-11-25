@@ -152,7 +152,8 @@ int main(int argc, char **argv) {
             }
             output.setVolume(0);
             const auto format = output.format();
-            QAudioBuffer buffer(QByteArray(format.bytesForDuration(300000), '\0'), format);
+            // Shared WASAPI can queue a full device buffer before its clock starts.
+            QAudioBuffer buffer(QByteArray(format.bytesForDuration(800000), '\0'), format);
             output.enqueue(buffer);
             // Deliberately block the GUI: native consumption must continue.
             QThread::msleep(180);
@@ -161,9 +162,11 @@ int main(int argc, char **argv) {
             output.setPaused(true);
             QThread::msleep(50);
             const auto paused = output.consumedFrames();
+            const auto queued = output.queuedBytes();
             output.enqueue(buffer);
             QThread::msleep(50);
-            ok &= check(output.consumedFrames() == paused, "Paused output discards late PCM");
+            ok &= check(queued > 0 && output.queuedBytes() == queued && output.consumedFrames() == paused,
+                        "Paused output keeps buffered PCM and discards late PCM");
             output.setPaused(false);
             ok &= check(waitFor([&] { return output.consumedFrames() > paused; }),
                         "WASAPI resumes with preserved buffered PCM");

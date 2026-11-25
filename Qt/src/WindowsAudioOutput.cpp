@@ -9,14 +9,61 @@
 #include <ksmedia.h>
 #include <avrt.h>
 #include <wrl/client.h>
+#include <QList>
+#include <QtEndian>
 #include <algorithm>
 #include <condition_variable>
 #include <chrono>
 #include <cstring>
 #include <mutex>
 #include <thread>
+#include <utility>
 
 using Microsoft::WRL::ComPtr;
+namespace {
+struct PcmEncoding {
+    QAudioFormat::SampleFormat type;
+    WORD containerBits;
+    WORD validBits;
+    bool operator==(const PcmEncoding &) const = default;
+};
+
+struct EventGuard {
+    HANDLE value = nullptr;
+    ~EventGuard() {
+        if (value) {
+            CloseHandle(value);
+        }
+    }
+};
+
+WAVEFORMATEXTENSIBLE describe(const QAudioFormat &format, PcmEncoding encoding) {
+    WAVEFORMATEXTENSIBLE description{};
+    auto &wave = description.Format;
+    wave.wFormatTag = WAVE_FORMAT_EXTENSIBLE;
+    wave.cbSize = sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX);
+    wave.nChannels = WORD(format.channelCount());
+    wave.wBitsPerSample = encoding.containerBits;
+    wave.nBlockAlign = WORD(format.channelCount() * encoding.containerBits / 8);
+    wave.nSamplesPerSec = DWORD(format.sampleRate());
+    wave.nAvgBytesPerSec = wave.nSamplesPerSec * wave.nBlockAlign;
+    description.Samples.wValidBitsPerSample = encoding.validBits;
+    auto channels = format.channelConfig();
+    if (channels == QAudioFormat::ChannelConfigUnknown && format.channelCount() <= 2) {
+        channels = QAudioFormat::defaultChannelConfigForChannelCount(format.channelCount());
+    }
+    const auto mask = quint32(channels) >> 1;
+    description.dwChannelMask = mask <= 0x3ffff ? mask : 0;
+    description.SubFormat =
+        encoding.type == QAudioFormat::Float ? KSDATAFORMAT_SUBTYPE_IEEE_FLOAT : KSDATAFORMAT_SUBTYPE_PCM;
+    return description;
+}
+
+bool rejectedFormat(HRESULT hr) {
+    return hr == S_FALSE || hr == AUDCLNT_E_UNSUPPORTED_FORMAT || hr == E_INVALIDARG;
+}
+}
+
 struct WindowsAudioOutput::State {
     std::thread thread;
     std::mutex mutex;
@@ -32,8 +79,12 @@ struct WindowsAudioOutput::State {
     bool finishing = false;
     std::chrono::steady_clock::time_point lastWrite{};
     std::chrono::milliseconds drainDelay{150};
+    quint64 lastPcmFrame = 0;
     quint64 generation = 0;
     QAudioFormat format;
+    int shareMode = 0;
+    int validBits = 0;
+    int containerBits = 0;
     QByteArray queue;
     qsizetype read = 0, size = 0;
     ~State() {
@@ -42,7 +93,8 @@ struct WindowsAudioOutput::State {
             thread.join();
         }
     }
-    void run(QByteArray deviceId, bool exclusive, QAudioFormat requested) {
+    void run(QByteArray deviceId, bool exclusive, QAudioFormat requested, QAudioFormat fallback,
+             bool preferSource) {
         const auto com = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
         if (FAILED(com)) {
             failure = com;
@@ -52,7 +104,7 @@ struct WindowsAudioOutput::State {
             return;
         }
         // All COM references are released before CoUninitialize, on this thread.
-        const auto result = render(deviceId, exclusive, requested);
+        const auto result = render(deviceId, exclusive, requested, fallback, preferSource);
         failure = result;
         {
             std::lock_guard lock(mutex);
@@ -61,7 +113,9 @@ struct WindowsAudioOutput::State {
         }
         CoUninitialize();
     }
-    HRESULT render(const QByteArray &deviceId, bool exclusive, const QAudioFormat &requested) {
+    HRESULT render(const QByteArray &deviceId, bool exclusive, QAudioFormat requested,
+                   const QAudioFormat &fallback, bool preferSource) {
+        EventGuard eventGuard;
         ComPtr<IMMDeviceEnumerator> enumerator;
         ComPtr<IMMDevice> device;
         ComPtr<IAudioClient> client;
@@ -77,104 +131,141 @@ struct WindowsAudioOutput::State {
             return hr;
         }
         auto activate = [&] {
+            client.Reset();
             return device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr,
                                     reinterpret_cast<void **>(client.GetAddressOf()));
         };
         if (FAILED(hr = activate())) {
             return hr;
         }
-        WAVEFORMATEXTENSIBLE description{};
-        auto &wave = description.Format;
-        QAudioFormat selected = requested;
-        if (!selected.isValid()) {
-            selected.setSampleRate(48000);
-            selected.setChannelConfig(QAudioFormat::ChannelConfigStereo);
-            selected.setSampleFormat(QAudioFormat::Float);
+        if (!requested.isValid()) {
+            requested.setSampleRate(48000);
+            requested.setChannelConfig(QAudioFormat::ChannelConfigStereo);
+            requested.setSampleFormat(QAudioFormat::Float);
         }
-        auto describe = [&] {
-            wave.wFormatTag = WAVE_FORMAT_EXTENSIBLE;
-            wave.cbSize = sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX);
-            wave.nChannels = WORD(selected.channelCount());
-            wave.wBitsPerSample = WORD(selected.bytesPerSample() * 8);
-            wave.nBlockAlign = WORD(selected.bytesPerFrame());
-            wave.nSamplesPerSec = DWORD(selected.sampleRate());
-            wave.nAvgBytesPerSec = wave.nSamplesPerSec * wave.nBlockAlign;
-            description.Samples.wValidBitsPerSample = wave.wBitsPerSample;
-            description.dwChannelMask = (quint32(selected.channelConfig()) >> 1) & 0x3ffff;
-            description.SubFormat = selected.sampleFormat() == QAudioFormat::Float
-                                        ? KSDATAFORMAT_SUBTYPE_IEEE_FLOAT
-                                        : KSDATAFORMAT_SUBTYPE_PCM;
-        };
-        describe();
         const auto mode = exclusive ? AUDCLNT_SHAREMODE_EXCLUSIVE : AUDCLNT_SHAREMODE_SHARED;
-        if (exclusive && client->IsFormatSupported(mode, &wave, nullptr) != S_OK) {
-            bool supported = false;
-            // Preserve the selected rate/layout first, then negotiate a portable stereo fallback.
-            for (auto type : {QAudioFormat::Float, QAudioFormat::Int32, QAudioFormat::Int16}) {
-                selected.setSampleFormat(type);
-                describe();
-                if (client->IsFormatSupported(mode, &wave, nullptr) == S_OK) {
-                    supported = true;
-                    break;
-                }
-            }
-            if (!supported) {
-                selected.setChannelConfig(QAudioFormat::ChannelConfigStereo);
-                for (auto type : {QAudioFormat::Float, QAudioFormat::Int32, QAudioFormat::Int16}) {
-                    selected.setSampleFormat(type);
-                    for (int rate : {48000, 44100, 96000, 192000}) {
-                        selected.setSampleRate(rate);
-                        describe();
-                        if (client->IsFormatSupported(mode, &wave, nullptr) == S_OK) {
-                            supported = true;
-                            break;
-                        }
-                    }
-                    if (supported) {
-                        break;
-                    }
-                }
-            }
-            if (!supported) {
-                return AUDCLNT_E_UNSUPPORTED_FORMAT;
-            }
-        }
-        HANDLE event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
-        if (!event) {
-            return HRESULT_FROM_WIN32(GetLastError());
-        }
-        struct EventGuard {
-            HANDLE value;
-            ~EventGuard() {
-                CloseHandle(value);
-            }
-        } eventGuard{event};
         const DWORD flags =
             AUDCLNT_STREAMFLAGS_EVENTCALLBACK |
             (exclusive ? 0 : AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY);
-        REFERENCE_TIME period = 1000000; // 100 ms device buffer tolerates scheduler jitter.
+        REFERENCE_TIME devicePeriod = 1000000; // 100 ms shared buffer tolerates scheduler jitter.
         if (exclusive) {
-            REFERENCE_TIME minimum = 0;
-            if (FAILED(hr = client->GetDevicePeriod(&period, &minimum))) {
+            if (FAILED(hr = client->GetDevicePeriod(&devicePeriod, nullptr))) {
                 return hr;
             }
-            period = std::max<REFERENCE_TIME>(period, 100000);
+            // Music playback can spend 40 ms per packet to tolerate scheduling jitter.
+            devicePeriod = std::max<REFERENCE_TIME>(devicePeriod, 400000);
         }
-        hr = client->Initialize(mode, flags, period, exclusive ? period : 0, &wave, nullptr);
-        if (hr == AUDCLNT_E_BUFFER_SIZE_NOT_ALIGNED && exclusive) {
-            UINT32 aligned = 0;
-            if (FAILED(hr = client->GetBufferSize(&aligned))) {
-                return hr;
+
+        bool attemptedInitialize = false;
+        auto initialize = [&](const WAVEFORMATEX &wave) -> HRESULT {
+            // A failed Initialize may leave the audio client unusable for the next attempt.
+            HRESULT result = S_OK;
+            if (attemptedInitialize && FAILED(result = activate())) {
+                return result;
             }
-            period = (10000000LL * aligned + wave.nSamplesPerSec / 2) / wave.nSamplesPerSec;
-            client.Reset();
-            if (FAILED(hr = activate())) {
-                return hr;
+            attemptedInitialize = false;
+            if (exclusive) {
+                const auto supported = client->IsFormatSupported(mode, &wave, nullptr);
+                if (supported != S_OK) {
+                    return rejectedFormat(supported) ? AUDCLNT_E_UNSUPPORTED_FORMAT : supported;
+                }
             }
-            hr = client->Initialize(mode, flags, period, period, &wave, nullptr);
+            attemptedInitialize = true;
+            auto period = devicePeriod;
+            result = client->Initialize(mode, flags, period, exclusive ? period : 0, &wave, nullptr);
+            if (result == AUDCLNT_E_BUFFER_SIZE_NOT_ALIGNED && exclusive) {
+                UINT32 aligned = 0;
+                if (FAILED(result = client->GetBufferSize(&aligned)) || FAILED(result = activate())) {
+                    return result;
+                }
+                period = (10000000LL * aligned + wave.nSamplesPerSec / 2) / wave.nSamplesPerSec;
+                result = client->Initialize(mode, flags, period, period, &wave, nullptr);
+            }
+            return result;
+        };
+
+        QAudioFormat selected = requested;
+        const WORD requestedBits = WORD(requested.bytesPerSample() * 8);
+        PcmEncoding encoding{requested.sampleFormat(), requestedBits, requestedBits};
+        auto description = describe(selected, encoding);
+        if (!exclusive) {
+            hr = initialize(description.Format);
+        } else {
+            QList<QAudioFormat> targets{requested};
+            auto addTarget = [&](QAudioFormat target) {
+                if (target.isValid() &&
+                    std::none_of(targets.cbegin(), targets.cend(), [&](const auto &other) {
+                        return target == other && target.channelConfig() == other.channelConfig();
+                    })) {
+                    targets.append(target);
+                }
+            };
+            auto stereo = requested;
+            stereo.setChannelConfig(QAudioFormat::ChannelConfigStereo);
+            if (requested.channelConfig() != QAudioFormat::ChannelConfigUnknown ||
+                requested.channelCount() != 2) {
+                addTarget(stereo);
+            }
+            addTarget(fallback);
+            if (fallback.isValid()) {
+                stereo.setSampleRate(fallback.sampleRate());
+                addTarget(stereo);
+            }
+            for (int rate : {48000, 44100, 96000, 88200, 192000, 176400}) {
+                stereo.setSampleRate(rate);
+                addTarget(stereo);
+            }
+
+            const auto negotiate = [&]() -> HRESULT {
+                for (const auto &target : std::as_const(targets)) {
+                    const WORD bits = WORD(target.bytesPerSample() * 8);
+                    // On source preference, preserve the decoded format when supported.
+                    // The system mix may be float even when the endpoint prefers integer PCM.
+                    QList<PcmEncoding> candidates{{QAudioFormat::Int32, 32, 24},
+                                                  {QAudioFormat::Int32, 24, 24},
+                                                  {QAudioFormat::Int32, 32, 32},
+                                                  {QAudioFormat::Int16, 16, 16},
+                                                  {QAudioFormat::Float, 32, 32}};
+                    if (target.sampleFormat() != QAudioFormat::Float ||
+                        (preferSource && &target == &targets.constFirst())) {
+                        const PcmEncoding exact{target.sampleFormat(), bits, bits};
+                        candidates.removeAll(exact);
+                        candidates.prepend(exact);
+                    }
+                    for (const auto &candidate : std::as_const(candidates)) {
+                        auto wire = describe(target, candidate);
+                        auto result = initialize(wire.Format);
+                        const auto mask = wire.dwChannelMask;
+                        if (rejectedFormat(result) && candidate.type != QAudioFormat::Float &&
+                            candidate.containerBits == candidate.validBits &&
+                            (mask == SPEAKER_FRONT_CENTER || mask == KSAUDIO_SPEAKER_STEREO)) {
+                            wire.Format.wFormatTag = WAVE_FORMAT_PCM;
+                            wire.Format.cbSize = 0;
+                            result = initialize(wire.Format);
+                        }
+                        if (result == S_OK) {
+                            selected = target;
+                            selected.setSampleFormat(candidate.type);
+                            encoding = candidate;
+                            description = wire;
+                            return result;
+                        }
+                        if (!rejectedFormat(result)) {
+                            return result;
+                        }
+                    }
+                }
+                return AUDCLNT_E_UNSUPPORTED_FORMAT;
+            };
+            hr = negotiate();
         }
         if (FAILED(hr)) {
             return hr;
+        }
+        const auto &wave = description.Format;
+        const auto event = eventGuard.value = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+        if (!event) {
+            return HRESULT_FROM_WIN32(GetLastError());
         }
         UINT32 frames = 0;
         if (FAILED(hr = client->GetBufferSize(&frames))) {
@@ -192,13 +283,21 @@ struct WindowsAudioOutput::State {
             FAILED(hr = clock->GetFrequency(&frequency)) || frequency == 0) {
             return FAILED(hr) ? hr : E_FAIL;
         }
+        const auto pcmFrameBytes = selected.bytesPerFrame();
+        const auto pcmBytesPerSecond = qsizetype(selected.sampleRate()) * pcmFrameBytes;
+        const auto packetMs = (quint64(frames) * 1000 + wave.nSamplesPerSec - 1) / wave.nSamplesPerSec;
+        const auto waitMs = exclusive ? DWORD(std::min<quint64>(packetMs + 10, 100)) : 20;
+        const bool packed24 = encoding.containerBits == 24;
+        const bool padded24 = encoding.containerBits == 32 && encoding.validBits == 24;
+        QByteArray unpacked(packed24 ? qsizetype(frames) * pcmFrameBytes : 0, Qt::Uninitialized);
         {
             std::lock_guard lock(mutex);
             format = selected;
-            queue.resize(wave.nAvgBytesPerSec * 2);
-            drainDelay = std::chrono::milliseconds((quint64(frames) * 1000 + wave.nSamplesPerSec - 1) /
-                                                       wave.nSamplesPerSec * (exclusive ? 2 : 1) +
-                                                   20);
+            shareMode = exclusive ? 2 : 1;
+            validBits = encoding.validBits;
+            containerBits = encoding.containerBits;
+            queue.resize(pcmBytesPerSecond * 2);
+            drainDelay = std::chrono::milliseconds(packetMs * (exclusive ? 2 : 1) + 20);
             ready = true;
             initialized.notify_one();
         }
@@ -214,17 +313,19 @@ struct WindowsAudioOutput::State {
         } taskGuard{mmcss};
         bool started = false;
         bool suspended = false;
+        bool readyBeforePause = false;
         bool underrunning = false;
         quint64 observed = 0;
+        quint64 deviceFrames = 0;
+        int unavailablePackets = 0;
         while (!quit) {
+            bool renderReady = true;
             if (started) {
-                const auto wait = WaitForSingleObject(event, 20);
-                if (wait == WAIT_TIMEOUT) {
-                    continue;
-                }
-                if (wait != WAIT_OBJECT_0) {
+                const auto wait = WaitForSingleObject(event, waitMs);
+                if (wait != WAIT_OBJECT_0 && wait != WAIT_TIMEOUT) {
                     return HRESULT_FROM_WIN32(GetLastError());
                 }
+                renderReady = wait == WAIT_OBJECT_0;
             } else {
                 std::this_thread::sleep_for(std::chrono::milliseconds(5));
             }
@@ -238,8 +339,13 @@ struct WindowsAudioOutput::State {
                 }
                 started = false;
                 suspended = false;
+                readyBeforePause = false;
+                ResetEvent(event);
                 observed = generation;
                 processed = 0;
+                deviceFrames = 0;
+                unavailablePackets = 0;
+                underrunning = false;
             }
             if (paused) {
                 if (started) {
@@ -247,7 +353,12 @@ struct WindowsAudioOutput::State {
                         return hr;
                     }
                     started = false;
-                    ResetEvent(event);
+                    // This wait may already have consumed an exclusive buffer notification.
+                    // Preserve that unserviced buffer across Stop/Start.
+                    readyBeforePause = exclusive && renderReady;
+                    if (!exclusive) {
+                        ResetEvent(event);
+                    }
                     suspended = true;
                 }
                 continue;
@@ -258,15 +369,18 @@ struct WindowsAudioOutput::State {
                 }
                 started = true;
                 suspended = false;
-                continue;
+                if (!std::exchange(readyBeforePause, false)) {
+                    continue;
+                }
+                renderReady = true;
             }
             UINT64 devicePosition = 0;
             if (SUCCEEDED(clock->GetPosition(&devicePosition, nullptr))) {
                 processed = qint64(devicePosition * 1000000 / frequency);
             }
-            if ((!started &&
-                 (size == 0 || (!finishing && size < std::max<qsizetype>(frames * wave.nBlockAlign,
-                                                                         wave.nAvgBytesPerSec / 4))))) {
+            if ((started && !renderReady) ||
+                (!started && (size == 0 || (!finishing && size < std::max(qsizetype(frames) * pcmFrameBytes,
+                                                                          pcmBytesPerSecond / 4))))) {
                 continue;
             }
             UINT32 available = frames;
@@ -281,10 +395,10 @@ struct WindowsAudioOutput::State {
                 // Shared mode allows partial packets. Leave queued device audio
                 // playing until the decoder supplies the next packet; padding
                 // every free frame with silence would insert gaps between packets.
-                available = std::min<UINT32>(available, UINT32(size / wave.nBlockAlign));
+                available = std::min<UINT32>(available, UINT32(size / pcmFrameBytes));
             }
             if (exclusive) {
-                underrun = started && size < qsizetype(frames * wave.nBlockAlign) && !finishing;
+                underrun = started && size < qsizetype(frames) * pcmFrameBytes && !finishing;
             }
             if (underrun && !underrunning) {
                 ++underruns;
@@ -294,16 +408,19 @@ struct WindowsAudioOutput::State {
                 continue;
             }
             BYTE *destination = nullptr;
-            if (FAILED(hr = output->GetBuffer(available, &destination))) {
+            hr = output->GetBuffer(available, &destination);
+            if (exclusive && started && hr == AUDCLNT_E_BUFFER_ERROR && ++unavailablePackets < 100) {
+                continue;
+            }
+            if (FAILED(hr)) {
                 return hr;
             }
-            const auto bytes = qsizetype(available * wave.nBlockAlign);
-            const auto copied = std::min(bytes, size);
+            unavailablePackets = 0;
+            auto *pcm = packed24 ? reinterpret_cast<BYTE *>(unpacked.data()) : destination;
+            const auto copied = std::min(qsizetype(available) * pcmFrameBytes, size);
             const auto first = std::min(copied, queue.size() - read);
-            std::memcpy(destination, queue.constData() + read, size_t(first));
-            std::memcpy(destination + first, queue.constData(), size_t(copied - first));
-            std::memset(destination + copied, format.sampleFormat() == QAudioFormat::UInt8 ? 128 : 0,
-                        size_t(bytes - copied));
+            std::memcpy(pcm, queue.constData() + read, size_t(first));
+            std::memcpy(pcm + first, queue.constData(), size_t(copied - first));
             read = (read + copied) % queue.size();
             size -= copied;
             const float gain = volume.load();
@@ -313,10 +430,19 @@ struct WindowsAudioOutput::State {
                     samples[i] *= gain;
                 }
             } else if (format.sampleFormat() == QAudioFormat::Int32) {
-                auto *samples = reinterpret_cast<qint32 *>(destination);
-                if (gain != 1.f) {
+                if (gain != 1.f || packed24 || padded24) {
                     for (qsizetype i = 0; i < copied / 4; ++i) {
-                        samples[i] = qint32(double(samples[i]) * gain);
+                        const auto sample = qFromLittleEndian<qint32>(pcm + i * 4);
+                        const auto scaled = quint32(qint32(double(sample) * gain));
+                        // WAVEFORMATEXTENSIBLE stores the valid bits at the high end of the container.
+                        if (packed24) {
+                            auto *packed = destination + i * 3;
+                            packed[0] = BYTE(scaled >> 8);
+                            packed[1] = BYTE(scaled >> 16);
+                            packed[2] = BYTE(scaled >> 24);
+                        } else {
+                            qToLittleEndian(padded24 ? scaled & 0xffffff00u : scaled, pcm + i * 4);
+                        }
                     }
                 }
             } else if (format.sampleFormat() == QAudioFormat::UInt8) {
@@ -329,13 +455,19 @@ struct WindowsAudioOutput::State {
                     samples[i] = qint16(samples[i] * gain);
                 }
             }
-            consumed += quint64(copied / wave.nBlockAlign);
-            if (copied) {
-                lastWrite = std::chrono::steady_clock::now();
-            }
+            const auto copiedFrames = copied / pcmFrameBytes;
+            std::memset(destination + copiedFrames * wave.nBlockAlign,
+                        format.sampleFormat() == QAudioFormat::UInt8 ? 128 : 0,
+                        size_t((available - copiedFrames) * wave.nBlockAlign));
             if (FAILED(hr = output->ReleaseBuffer(available, copied ? 0 : AUDCLNT_BUFFERFLAGS_SILENT))) {
                 return hr;
             }
+            consumed += quint64(copiedFrames);
+            if (copied) {
+                lastWrite = std::chrono::steady_clock::now();
+                lastPcmFrame = deviceFrames + quint64(copiedFrames);
+            }
+            deviceFrames += available;
             if (!started) {
                 if (FAILED(hr = client->Start())) {
                     return hr;
@@ -352,15 +484,26 @@ struct WindowsAudioOutput::State {
 WindowsAudioOutput::WindowsAudioOutput() : state(std::make_unique<State>()) {
 }
 WindowsAudioOutput::~WindowsAudioOutput() = default;
-bool WindowsAudioOutput::open(const QByteArray &id, bool exclusive, const QAudioFormat &requested) {
-    state->thread =
-        std::thread([s = state.get(), id, exclusive, requested] { s->run(id, exclusive, requested); });
+bool WindowsAudioOutput::open(const QByteArray &id, bool exclusive, const QAudioFormat &requested,
+                              const QAudioFormat &fallback, bool preferSource) {
+    state->thread = std::thread([s = state.get(), id, exclusive, requested, fallback, preferSource] {
+        s->run(id, exclusive, requested, fallback, preferSource);
+    });
     std::unique_lock lock(state->mutex);
     state->initialized.wait(lock, [this] { return state->ready; });
     return state->failure == 0 && state->format.isValid();
 }
 QAudioFormat WindowsAudioOutput::format() const {
     return state->format;
+}
+int WindowsAudioOutput::shareMode() const {
+    return state->shareMode;
+}
+int WindowsAudioOutput::validBits() const {
+    return state->validBits;
+}
+int WindowsAudioOutput::containerBits() const {
+    return state->containerBits;
 }
 void WindowsAudioOutput::enqueue(const QAudioBuffer &buffer) {
     if (!buffer.isValid() || buffer.format() != state->format) {
@@ -386,6 +529,7 @@ void WindowsAudioOutput::reset(bool paused) {
     state->read = state->size = 0;
     state->paused = paused;
     state->finishing = false;
+    state->lastPcmFrame = 0;
     ++state->generation;
 }
 void WindowsAudioOutput::setPaused(bool paused) {
@@ -407,7 +551,12 @@ void WindowsAudioOutput::finish() {
 }
 bool WindowsAudioOutput::drained() const {
     std::lock_guard lock(state->mutex);
-    return state->size == 0 && std::chrono::steady_clock::now() - state->lastWrite >= state->drainDelay;
+    if (state->size > 0 || std::chrono::steady_clock::now() - state->lastWrite < state->drainDelay) {
+        return false;
+    }
+    // Wait for the device clock to pass the final PCM frame, excluding trailing silence.
+    return state->lastPcmFrame == 0 || state->shareMode != 2 ||
+           state->processed >= qint64(state->lastPcmFrame * 1000000 / state->format.sampleRate());
 }
 int WindowsAudioOutput::underrunCount() const {
     return state->underruns;
