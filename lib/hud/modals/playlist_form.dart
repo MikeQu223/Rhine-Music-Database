@@ -39,14 +39,12 @@
 //
 // 竖屏：横屏几何逐值取自 Qt 源；竖屏是新增响应式全语义，源码无竖屏像素证据，相关段落已逐处标注。
 //
-// 弹层框架分两段，均不属于本层（3D → HUD → modal 遮罩 → hits → chrome）：
-//   - 遮挡层（modal 遮罩槽，必须在内容之前）：全屏遮罩 + 弹层不透明底
-//     （Qt/src/NativeHudModal.cpp:163-165、:171-172）；
-//   - chrome 层（hits 之后）：RHINE LAB 行 / 标题 / 副标题 / "← 返回"
-//     （Qt/src/NativeHudModal.cpp:198-202）与唯一 close-modal hit，由
-//     lib/hud/pages/chrome.dart 负责。
-// 本层只画 playlist-form 的表单内容（标签/字段/提示/状态/提交），不画底、不画前景框架，
-// 也不发第二个 close-modal 命中；字段的 Escape 仍按 Overlay.qml:406 发 close-modal 动作。
+// 弹层框架（遮罩 + 面板底 + RHINE LAB 行 / 标题 / 副标题 / "← 返回"）由本层的
+// `_shell` 绘制（Qt/src/NativeHudModal.cpp:163-202）。历史注释曾把这段推给
+// lib/hud/pages/chrome.dart，但 chrome 从未接 `playlist-form`（HUD 的 modal 分发
+// 里没有这一支），真机上表单只剩标签与输入框浮在资料库上；2026-11-25 收回本层。
+// 表单内容（标签/字段/提示/状态/提交）也归本层；字段的 Escape 仍按 Overlay.qml:406
+// 发 close-modal 动作（框架里的「← 返回」另有自己的命中，二者语义相同）。
 
 import 'dart:math' as math;
 
@@ -813,7 +811,13 @@ class _PlaylistFormLayerState extends State<PlaylistFormLayer> {
         child: Stack(
           key: PlaylistFormKeys.layer,
           children: <Widget>[
-            // 弹层框架由 chrome 层统一绘制（见文件头注释）；本层只画表单内容。
+            // 弹层框架（遮罩 / 面板底 / RHINE LAB 行 / 标题 / 副标题 / 「← 返回」）。
+            // 文件头曾写「由 chrome 层统一绘制」，但 chrome 从未接 `playlist-form`
+            // （HUD 的 modal 分发里没有这一支），真机上只剩标签与输入框浮在资料库
+            // 上、没有 836 面板也没有返回键（审计 §2.3 / 用户报第 7 条）。这里按
+            // layout 自带的 Qt 几何（NativeHudModal.cpp:163-202）在本层画齐。
+            ..._shell(layout, factor),
+            // 本层只画表单内容。
             _text(layout.fieldLabel, view.nameLabel, factor),
             _text(layout.hint, view.nameHint, factor),
             _statusLineWidget(layout, factor),
@@ -847,6 +851,63 @@ class _PlaylistFormLayerState extends State<PlaylistFormLayer> {
         ),
       ),
     );
+  }
+
+  /// 弹层框架。顺序同 Qt：遮罩 → 面板底 → 文字/返回。
+  ///
+  /// 遮罩把下层资料库压暗（Qt 规则弹层 0.6 / 0.45，见 `modalShellScrimColor`），
+  /// 面板底与标题区几何全部来自 [PlaylistFormLayout]（横屏 = `NativeHud.cpp:140-159`
+  /// 的 1260×836、top 122；竖屏 = 本层响应式全宽全高）。
+  List<Widget> _shell(PlaylistFormLayout layout, double factor) {
+    final bool dark = widget.view.dark;
+    final Color ink = dark ? PlaylistFormSpec.hudInkDark : PlaylistFormSpec.hudInkLight;
+    final Color panel = dark ? const Color(0xFF262626) : const Color(0xFFEDEBE4);
+    final Color scrim = dark ? const Color(0x9911181B) : const Color(0x73E3E0D7);
+    return <Widget>[
+      Positioned.fill(
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          // 点空白处不关表单（Qt 规则弹层只有 close-modal / ESC 会关），
+          // 但这层要吃掉指针，不能让下层资料库被误触。
+          onTap: () {},
+          child: ColoredBox(color: scrim),
+        ),
+      ),
+      Positioned(
+        left: layout.panel.left * factor,
+        top: layout.panel.top * factor,
+        width: layout.panel.width * factor,
+        height: layout.panel.height * factor,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () {},
+          child: ColoredBox(color: panel),
+        ),
+      ),
+      _text(layout.header, PlaylistFormSpec.panelHeader, factor),
+      _text(layout.title, PlaylistFormSpec.panelTitle, factor),
+      _text(layout.subtitle, PlaylistFormSpec.panelSubtitle, factor),
+      Positioned(
+        left: layout.backButton.left * factor,
+        top: layout.backButton.top * factor,
+        width: layout.backButton.width * factor,
+        height: layout.backButton.height * factor,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: widget.onCloseModal,
+          child: Center(
+            child: Text(
+              PlaylistFormSpec.backLabel,
+              style: TextStyle(
+                fontSize: PlaylistFormSpec.backFontSize * factor,
+                fontWeight: FontWeight.w600,
+                color: ink,
+              ),
+            ),
+          ),
+        ),
+      ),
+    ];
   }
 
   Widget _text(HudTextSlot slot, String value, double factor) {

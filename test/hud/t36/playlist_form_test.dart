@@ -329,10 +329,10 @@ void main() {
       expect(back.height, closeTo(27, 1e-9));
     });
 
-    test('本层不发命中：close-modal 归 chrome 层唯一 owner', () {
+    test('本层不发原生命中：close-modal 走浮层里的按钮手势', () {
       final PlaylistFormLayout layout = PlaylistFormLayout.stage(stageWidth: 1920, scale: 1);
-      // 返回按钮的几何仍作为 chrome 层契约保留（x+usable-220, y+18, 167x54），
-      // 但本层不画它、也不登记 close-modal；否则会与 chrome 层重复。
+      // 返回按钮几何（x+usable-220, y+18, 167x54）由本层 `_shell` 画成 widget 按钮；
+      // HUD 的 native hit 表里不再有第二个 close-modal（唯一 owner 仍是 chrome / 浮层）。
       expect(layout.backButton, const Rect.fromLTWH(1370, 140, 167, 54));
       expect(layout.nativeHits(), isEmpty);
     });
@@ -398,18 +398,19 @@ void main() {
       expect(find.byKey(PlaylistFormKeys.nameField), findsNothing);
     });
 
-    testWidgets('横屏渲染表单内容；弹层框架留给 chrome 层', (WidgetTester tester) async {
+    testWidgets('横屏渲染表单内容与弹层框架（遮罩/面板/标题/返回）', (WidgetTester tester) async {
       final _FakePort port = _FakePort();
       await tester.pumpWidget(_harness(
         view: const PlaylistFormView(formKind: PlaylistFormKind.create, provider: 'netease'),
         port: port,
       ));
       expect(find.byKey(PlaylistFormKeys.layer), findsOneWidget);
-      // 框架（RHINE LAB / 标题 / 副标题 / 返回）由 lib/hud/pages/chrome.dart 统一绘制。
-      expect(find.text(PlaylistFormSpec.panelHeader), findsNothing);
-      expect(find.text(PlaylistFormSpec.panelTitle), findsNothing);
-      expect(find.text(PlaylistFormSpec.panelSubtitle), findsNothing);
-      expect(find.text(PlaylistFormSpec.backLabel), findsNothing);
+      // 弹层框架（遮罩 + 面板底 + RHINE LAB 行 / 标题 / 副标题 / 返回）由本层 `_shell`
+      // 绘制：chrome 从未接 `playlist-form`，真机上表单曾只剩标签和输入框浮在资料库上。
+      expect(find.text(PlaylistFormSpec.panelHeader), findsOneWidget);
+      expect(find.text(PlaylistFormSpec.panelTitle), findsOneWidget);
+      expect(find.text(PlaylistFormSpec.panelSubtitle), findsOneWidget);
+      expect(find.text(PlaylistFormSpec.backLabel), findsOneWidget);
       expect(find.text(PlaylistFormSpec.labelCreate), findsOneWidget);
       expect(find.text(PlaylistFormSpec.hintPlain), findsOneWidget);
       expect(find.text(PlaylistFormSpec.submitLabel), findsOneWidget);

@@ -2650,13 +2650,24 @@ class _BasicShellState extends State<_BasicShell>
                   writeLoading: false,
                   formPid: _playlistFormId,
                   dark: state.dark,
-                  stageWidth:
-                      MediaQuery.sizeOf(inner).width /
-                      HudScale.designStageHeight *
-                      HudScale.stageUnit,
-                  stageScale:
-                      MediaQuery.sizeOf(inner).width /
-                      HudScale.designStageHeight,
+                  // 舞台口径：横屏 stage = 逻辑尺寸 / (逻辑高 / 1080)，scale = 逻辑高 / 1080
+                  // （本机横屏 1219×762 逻辑 ⇒ stage 1728×1080、scale 0.7055）。
+                  // 2026-11-25 之前这里写成 `宽 / 1080 * stageUnit` ≈ 3.1，导致
+                  // `PlaylistFormLayout.stage` 的 panelWidth 变成负数、面板底根本不画
+                  // （真机上只剩标签和输入框浮在资料库上，见审计 §2.3）。
+                  stageWidth: () {
+                    final Size screen = MediaQuery.sizeOf(inner);
+                    final double scale = landscape
+                        ? HudScale.landscapeStageScale(screen.height)
+                        : HudScale.designStageHeight;
+                    return screen.width / scale;
+                  }(),
+                  stageScale: () {
+                    final Size screen = MediaQuery.sizeOf(inner);
+                    return landscape
+                        ? HudScale.landscapeStageScale(screen.height)
+                        : 1.0;
+                  }(),
                   portrait: !landscape,
                   viewport: Size(
                     MediaQuery.sizeOf(inner).width,
