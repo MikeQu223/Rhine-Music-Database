@@ -68,6 +68,7 @@ class NativeHud : public QObject {
     void openModal(QString kind, bool returning = false);
     void closeModal();
     void playSurfaceSound(bool opened);
+    void playStartupSound();
     void setQuery(QString value);
     // ！？ 325 ？！
     void openHiddenVideo();

@@ -181,7 +181,17 @@ bool runNativeSessionChecks(const QString &root, const QString &audioURL) {
     QJsonObject playback{{"current", track}, {"queue", QJsonArray{track, nextTrack}},
                          {"index", 99},      {"mode", "shuffle"},
                          {"position", 2500}, {"requested", false}};
+    QJsonObject pausedLoading;
+    const auto observePaused = QObject::connect(&player, &MusicPlayer::loadingChanged, &playbackHost, [&] {
+        if (player.loading) {
+            pausedLoading = player.playbackSnapshot();
+        }
+    });
     player.restoreSessionState(playback);
+    QObject::disconnect(observePaused);
+    ok &= check(pausedLoading["loading"].toBool() && pausedLoading["preparingPlayback"].isBool() &&
+                    !pausedLoading["preparingPlayback"].toBool(),
+                "loading a paused session does not imply playback intent");
     // 设备可用性不能只采样一次：macOS runner 上 CoreAudio 会在恢复播放的瞬间短暂报
     // "无默认输出"，随后又回来。判定时重新采样，避免把设备抖动误报成播放回归。
     const auto audioOutputPresent = [] {
@@ -204,14 +214,16 @@ bool runNativeSessionChecks(const QString &root, const QString &audioURL) {
     // 在播放请求交给后端前检查恢复状态，输出设备与时钟由音频回归单独覆盖。
     playback["requested"] = true;
     QJsonObject pendingResume;
+    bool preparingPlayback = false;
     const auto observeResume = QObject::connect(&player, &MusicPlayer::changed, &playbackHost, [&] {
         if (player.loading && pendingResume.isEmpty()) {
             pendingResume = player.sessionState();
+            preparingPlayback = player.playbackSnapshot()["preparingPlayback"].toBool();
         }
     });
     player.restoreSessionState(playback);
     QObject::disconnect(observeResume);
-    ok &= check(pendingResume["requested"].toBool() &&
+    ok &= check(preparingPlayback && pendingResume["requested"].toBool() &&
                     pendingResume["position"].toInteger() == playback["position"].toInteger(),
                 "playing session retains saved position and playback intent");
     if (!audioOutputPresent()) {

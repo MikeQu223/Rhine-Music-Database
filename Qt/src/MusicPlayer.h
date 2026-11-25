@@ -36,6 +36,7 @@ class MusicPlayer : public QObject {
     QJsonObject clearPlayHistory();
     void registerStorageOperations(StorageCoordinator &storage);
     QJsonObject playbackSnapshot() const;
+    bool isPreparingPlayback() const;
     void applyPlaybackSnapshot();
     static QVector<QPair<QString, QString>> qualityOptions(const QString &provider);
     static QString localQuality(const QJsonObject &track);

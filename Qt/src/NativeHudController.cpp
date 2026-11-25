@@ -145,6 +145,12 @@ void NativeHud::playSurfaceSound(bool opened) {
     }
 }
 
+void NativeHud::playStartupSound() {
+    if (m_uiSounds) {
+        m_uiSounds->playStartup();
+    }
+}
+
 void NativeHud::openModal(QString kind, bool returning) {
     if (modal == "plugin-install" && kind != modal && !pluginInstall.isEmpty()) {
         pluginInstall = {};
@@ -1796,6 +1802,10 @@ void NativeHud::runSentryDiagnostic() {
 #endif
 
 void NativeHud::key(QString value, bool command) {
+    if (!command && value == "Enter" && frame["mode"] == "boot") {
+        action("skip");
+        return;
+    }
     // ！？ 325 ？！
     if (!m_responsive.compact() && !command && value.size() == 1 && value.at(0).isDigit()) {
         m_secretKeys.append(value);

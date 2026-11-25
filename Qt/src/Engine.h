@@ -451,6 +451,7 @@ class Engine : public QObject {
     /// 开唱片旋转能绕过，是因为 m_discRotating 让 workPending 恒真；这里把过渡本身
     /// 也纳入判据，不依赖那个设置。
     QString m_hudPageMode;
+    bool m_startupSoundPending = true;
     bool m_hudPageViewer = false;
     double m_hudPageDetail = -1;
     qint64 m_hudTransitionUntilMs = 0;

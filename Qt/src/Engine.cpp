@@ -1641,6 +1641,13 @@ void Engine::step(double time) {
     // 横屏保留 HUD 对呈现的原有联动；竖屏由 HUD 独立申请窗口合成。
     notifySceneRenderers(sceneLayerVisible() &&
                          (visualChanged || layerNeedsDraw || (!compact && (hudChanged || m_detailGrace))));
+    if constexpr (PlatformFeatures::InterfaceSounds) {
+        // 自然结束、跳过和关闭动画均从第一个已提交的内容帧触发。
+        if (m_startupSoundPending && m_started && m_visible && (pageMode == "archive" || pageMode == "detail")) {
+            m_startupSoundPending = false;
+            app->hud.playStartupSound();
+        }
+    }
     auto state = object["state"].toObject().toVariantMap();
     if (state != m_state) {
         m_state = state;

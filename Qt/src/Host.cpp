@@ -1829,7 +1829,8 @@ bool Host::isMusicPlaybackRequested() const {
     if (remote) {
         const auto &snapshot = remote->snapshot();
         const auto state = snapshot.value("state").toObject();
-        return snapshot.value("loading").toBool() || state.value("playing").toBool() ||
+        const bool preparing = snapshot.value("preparingPlayback").toBool(snapshot.value("loading").toBool());
+        return preparing || state.value("playing").toBool() ||
                state.value("requested").toBool();
     }
     return audio && audio->isPlaybackRequested();

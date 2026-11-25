@@ -313,7 +313,10 @@ void MusicPlayer::play(QJsonObject track, std::optional<QJsonArray> source, std:
         (m_api->provider != "local" && track["provider"] == "local")) {
         return;
     }
-    emit playbackStarting();
+    const bool resumePaused = resume && !resume->value("requested").toBool();
+    if (!resumePaused) {
+        emit playbackStarting();
+    }
 #if RHINE_SENTRY
     if (!resume) {
         RhineSentry::playbackAction(RhineSentry::PlaybackAction::Play);
@@ -334,7 +337,7 @@ void MusicPlayer::play(QJsonObject track, std::optional<QJsonArray> source, std:
     }
     const auto generation = ++m_generation;
     m_resumePosition = resume ? std::optional<double>(resume->value("position").toDouble()) : std::nullopt;
-    m_resumePaused = resume && !resume->value("requested").toBool();
+    m_resumePaused = resumePaused;
     m_restoringSession = resume.has_value();
     m_recoveryAttempts = 0;
     previewRequested = preview && ProviderRegistry::instance().capability(m_api->provider, "preview", false);
@@ -982,6 +985,10 @@ void MusicPlayer::registerStorageOperations(StorageCoordinator &storage) {
     });
 }
 
+bool MusicPlayer::isPreparingPlayback() const {
+    return loading && (!m_resumePosition || !m_resumePaused);
+}
+
 QJsonObject MusicPlayer::playbackSnapshot() const {
     return {{"current", current},
             {"queue", queue.toJson()},
@@ -990,6 +997,7 @@ QJsonObject MusicPlayer::playbackSnapshot() const {
             {"mode", mode},
             {"state", state},
             {"loading", loading},
+            {"preparingPlayback", isPreparingPlayback()},
             {"failed", failed},
             {"trial", trial},
             {"preview", previewRequested},

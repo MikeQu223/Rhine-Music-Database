@@ -2685,6 +2685,12 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
                     << "Manual initialization must close settings without changing startup preference";
                 ok = false;
             }
+            hud.draw({{"mode", "boot"}}, 1920, 50);
+            hud.key("Enter", false);
+            if (requestedMode != "archive" || !hud.modal.isEmpty()) {
+                qCritical() << "Enter must dismiss the startup animation and open the archive";
+                ok = false;
+            }
             hud.openModal("settings");
             hud.draw(archiveFrame, 1920, 50);
 
