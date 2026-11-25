@@ -336,6 +336,10 @@ class BasicHudFrame {
         animationTime: animationTime,
         animateText: animateText,
         modal: modal,
+        // 竖屏页脚也要按登录态/平台显示（`_buildPortraitFrame` 已经把这两项透到
+        // `paintPortraitShell` 的页脚），漏传就永远是 GUEST SESSION / 发现音乐。
+        accountUid: accountUid,
+        localPlatform: localPlatform,
         stageScale: stageScale,
         safeBottomLogical: safeBottomLogical,
         queueScroll: queueScroll,
@@ -598,11 +602,13 @@ class BasicHudFrame {
       final search_panel.SearchPanelGeometry geometry =
           search_panel.searchPanelGeometry(width);
       final ModalShellBounds bounds = geometry.bounds;
+      // 输入层（Qt/qml/Overlay.qml:563-565）用的是 `bounds.y + 180` 与高 54，
+      // 而画出来的条是 172..238（上下各留 8 的内边距），命中要跟输入层同源。
       fields['search'] = Rect.fromLTWH(
         bounds.left + modal_shell.kModalShellHeaderInset,
-        geometry.barTop,
+        geometry.barTop + 8,
         math.max(0.0, bounds.width - modal_shell.kModalShellHeaderInset * 2),
-        search_panel.kSearchPanelBarHeight,
+        54,
       );
     }
     final bool animating = ports.endFrame();
@@ -642,16 +648,60 @@ class BasicHudFrame {
     return total;
   }
 
+  /// 检索行的明细口径（Qt `NativeHudSearch.cpp:196-202` 的 `searchRowDetail`）：
+  /// 优先艺人，否则专辑；有条目播放数时追加 ` / N 次播放`。
+  static String _searchRowDetail(Map<String, Object?> item) {
+    final String artist = (item['artist'] ?? '').toString();
+    final String detail = artist.isNotEmpty
+        ? artist
+        : (item['album'] ?? '').toString();
+    final Object? playCount = item['playCount'];
+    if (playCount is num && playCount > 0) {
+      return '$detail / ${playCount.round()} 次播放';
+    }
+    return detail;
+  }
+
+  /// 检索行的动作串（Qt `NativeHudSearch.cpp:208-211` 的 `music:result` 分派，
+  /// 本仓库用语义动作替代 lane/index 二元组）。
+  static String _searchRowAction(BasicViewState state, Map<String, Object?> item, int index) {
+    final String kind = (item['kind'] ?? '').toString();
+    final String title = (item['title'] ?? '').toString();
+    return switch (kind) {
+      // 远端（插件平台）的行不在本地 lane 里：`music:index:<i>` 会指到塞壬曲库，
+      // 所以换成专用动作，由宿主向插件要播放地址再打开。
+      'song' => state.searchRemote
+          ? 'music:search-open:$index'
+          : 'music:index:$index',
+      'album' => 'music:search-album:${Uri.encodeComponent(title)}',
+      'playlist' => 'music:search-playlist:${Uri.encodeComponent(item['id']?.toString() ?? '')}',
+      _ => 'music:search-artist:${Uri.encodeComponent(title)}',
+    };
+  }
+
+  /// 横屏检索面板的行：Qt 的列式口径（编号 / 标题 / 分类标签 / 明细 / 查看），
+  /// 见 `Qt/src/NativeHudSearch.cpp:176-214` 的 `resultListRow`。
+  static List<search_panel.SearchPanelRow> _searchPanelRows(BasicViewState state) {
+    final List<search_panel.SearchPanelRow> rows = <search_panel.SearchPanelRow>[];
+    for (final Map<String, Object?> item in state.searchRows) {
+      final String kind = (item['kind'] ?? '').toString().toUpperCase();
+      rows.add((
+        id: (item['id'] ?? '').toString(),
+        title: (item['title'] ?? '').toString(),
+        detail: _searchRowDetail(item),
+        kind: kind.isEmpty ? 'SONG' : kind,
+        action: _searchRowAction(state, item, rows.length),
+      ));
+    }
+    return rows;
+  }
+
   static List<PortraitSearchKindsRow> _portraitSearchRows(BasicViewState state) {
     final List<PortraitSearchKindsRow> rows = <PortraitSearchKindsRow>[];
     for (final Map<String, Object?> item in state.searchRows) {
       final String kind = (item['kind'] ?? '').toString();
       final String title = (item['title'] ?? '').toString();
-      final String artist = (item['artist'] ?? '').toString();
-      // Qt `searchRowDetail`：明细行优先艺人，否则专辑（本地歌单两者皆空）。
-      final String detail = artist.isNotEmpty
-          ? artist
-          : (item['album'] ?? '').toString();
+      final String detail = _searchRowDetail(item);
       // 曲目行右侧是时长（Qt `MusicData::time(value)`），专辑/歌手是曲目数，
       // 歌单没有右列（参考图 m13779 的 `03:21` 就是这一列）。
       final String stamp = switch (kind) {
@@ -663,16 +713,7 @@ class BasicHudFrame {
       // 行点击按分类分派：曲目只选中（`music:index:<i>`，与 Qt 的行下标同义）；
       // 专辑进专辑列（Qt `selectResult(open=true)` 对非 song 走 enterDirectory）；
       // 歌手/歌单本仓库还没有详情页，给可见反馈而不是静默吞掉。
-      final String action = switch (kind) {
-        // 远端（插件平台）的行不在本地 lane 里：`music:index:<i>` 会指到塞壬曲库，
-        // 所以换成专用动作，由宿主向插件要播放地址再打开。
-        'song' => state.searchRemote
-            ? 'music:search-open:${rows.length}'
-            : 'music:index:${rows.length}',
-        'album' => 'music:search-album:${Uri.encodeComponent(title)}',
-        'playlist' => 'music:search-playlist:${Uri.encodeComponent(item['id']?.toString() ?? '')}',
-        _ => 'music:search-artist:${Uri.encodeComponent(title)}',
-      };
+      final String action = _searchRowAction(state, item, rows.length);
       rows.add((title: title, artist: detail, stamp: stamp, action: action));
     }
     return rows;
@@ -1708,10 +1749,7 @@ class BasicHudFrame {
     double scroll,
     bool localMusicEnabled,
   ) {
-    final List<search_panel.SearchPanelRow> rows = <search_panel.SearchPanelRow>[
-      for (final PortraitSearchKindsRow row in _portraitSearchRows(state))
-        (title: row.title, detail: row.artist, stamp: row.stamp, action: row.action),
-    ];
+    final List<search_panel.SearchPanelRow> rows = _searchPanelRows(state);
     final ModalShellResult result = search_panel.SearchPanel(
       width: width,
       dark: dark,
@@ -1722,6 +1760,9 @@ class BasicHudFrame {
       total: state.searchTotal,
       rows: rows,
       localMusic: localMusicEnabled,
+      // Qt `NativeHudSearch.cpp:85-88`：只有结果里含曲目才画分组 tab。
+      hasSongs: state.searchRows.any((Map<String, Object?> item) =>
+          (item['kind'] ?? '').toString() == 'song'),
       scroll: scroll,
     ).build(sink, ports);
     sink.hits.addAll(result.hits);
@@ -3374,7 +3415,6 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
         widget.modal == 'saved' ||
         (widget.modal == 'search' && portrait) ||
         artistPage) {
-      final double scale = geometry.stageScale <= 0 ? 1 : geometry.stageScale;
       // 这些页面的滚动量以「画布网格」为单位（发现页 196 一卡、收藏/检索 68 一行、
       // 歌手页 68 一行），所以拖动像素要先折成网格：网格→舞台 px 走 unit，舞台 px→
       // 逻辑走 stageScale。原实现只除 stageScale，竖屏下滚动量被放大了 unit 倍
