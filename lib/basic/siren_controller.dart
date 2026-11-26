@@ -91,6 +91,11 @@ const String sirenAllSongsTitleSuffix = '全部歌曲';
 /// 打开目录/详情后的状态文案前缀（Qt/src/MusicSiren.cpp:242、MusicDirectory.cpp:445）。
 const String sirenOpenedPrefix = '已打开：';
 
+/// 打开一张没有曲目的本机歌单时的状态串（Qt `LocalCollections` 空歌单进列后
+/// 目录 songs 为空，`status` 由 `MusicDirectory` 给「暂无曲目」；这里用同一句
+/// 可见文案，不编造“已打开”）。
+const String sirenEmptyPlaylistStatus = '该歌单暂无曲目';
+
 /// 返回上一级的状态文案前缀（Qt/src/MusicDirectory.cpp:447）。
 const String sirenReturnedPrefix = '已返回：';
 
@@ -1025,6 +1030,68 @@ class BasicController extends ChangeNotifier
       _publish();
       return _status;
     }
+  }
+
+  /// 打开**本机自建歌单**：把它当成目录（`kind: 'playlist'`）进列，留在资料库。
+  ///
+  /// Qt 真值（`Qt/src/MusicLibrary.cpp:829-869` 的 `selectResult(index, lane, open=true)`）：
+  /// 点歌单行时 `mode = "archive"`（因为 `kind != "song"`），随后
+  /// `if (open && current["kind"] != "song") enterDirectory(current)`；目录内容由
+  /// `MusicDirectory::enterDirectory` 的 `detail` 分支取回 `songs`（Qt/src/MusicDirectory.cpp:88-150）。
+  ///
+  /// 本机歌单的曲目 id 存在 [LocalCollectionStore] 里（`playlistTrackIds` 从新到旧），
+  /// 曲目本体来自曲库/详情缓存（[resolveSongById]）；解析不到的 id 只计数、不编曲目
+  /// （Qt 也是拿 id 再去请求 songs，拿不到就空目录）。插件平台的歌单不走这里，
+  /// 见 [enterRemotePlaylist]。
+  Future<String> enterLocalPlaylist(BasicLocalPlaylist playlist) async {
+    if (_disposed) {
+      return '';
+    }
+    final LocalCollectionStore? store = _collectionStore;
+    if (store == null) {
+      return '本地收藏尚未接入';
+    }
+    ++_detailGeneration;
+    ++_songGeneration;
+    final List<SirenSong> songs = <SirenSong>[
+      for (final String id in store.playlistTrackIds(playlist.id))
+        if (_resolveSongById(id) case final SirenSong song) song,
+    ];
+    for (final SirenSong song in songs) {
+      _songById[song.id] = song;
+    }
+    _directory = BasicDirectory(
+      provider: sirenProvider,
+      kind: 'playlist',
+      id: playlist.id,
+      key: '$sirenProvider:playlist:${playlist.id}',
+      title: playlist.title.isEmpty ? '未命名歌单' : playlist.title,
+      artist: providerName,
+      cover: songs.isEmpty ? '' : songs.first.cover,
+      // Qt `LocalCollections.cpp:144` 的 description 原文；本机歌单没有别的副标题。
+      description: '本地歌单 · 仅保存在本机',
+      trackCount: songs.length,
+      virtual: false,
+      songs: songs,
+      ids: <String>[for (final SirenSong song in songs) song.id],
+      cursor: songs.length,
+      index: 0,
+      parent: _directory,
+      parentLane: _selectedLane,
+      parentSelection: _selection,
+    );
+    _album = null;
+    _phase = BasicPhase.library;
+    _query = '';
+    _loading = false;
+    _error = '';
+    _status = songs.isEmpty ? sirenEmptyPlaylistStatus : '$sirenOpenedPrefix${_directory!.title}';
+    _song = songs.isEmpty ? null : songs.first;
+    _selection =
+        songs.isEmpty ? null : BasicSelection(kind: 'song', id: songs.first.id);
+    _listPosition = 0;
+    _publish();
+    return '';
   }
 
   /// 歌手页的标签（`songs` / `albums`）。

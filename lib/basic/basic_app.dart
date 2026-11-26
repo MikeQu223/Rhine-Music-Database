@@ -213,6 +213,14 @@ const String basicLyricLineActionPrefix = 'player:lyric-line:';
 /// 选曲槽载荷前缀：`music:slot:<i>`（archive_page.dart:311，与 music:index: 同一份下标）。
 const String basicMusicSlotActionPrefix = 'music:slot:';
 
+/// 收藏列/歌单列的行点击：`music:result:<lane>:<index>`（Qt
+/// `NativeHud.cpp:537` 的行动作，`NativeHudMusic.cpp:157-163` 的 `result` 分派）。
+///
+/// 与 `music:index:<i>` 的区别是**带 lane 且会打开**：Qt 的 `result` 分支是
+/// `selectResult(index, lane)`（默认 `open = true`）+ `closeModal()`，而
+/// `index` 分支是 `selectResult(raw, selectedLane, false)`（纯选中）。
+const String basicMusicResultActionPrefix = 'music:result:';
+
 /// 音乐平台行载荷前缀：`provider:<id>`（`lib/hud/portrait/portrait_pages_provider.dart`
 /// 的平台行命中，切到该平台；找不到 id 时给可见反馈，不猜）。
 const String basicProviderSwitchPrefix = 'provider:';
@@ -4748,6 +4756,14 @@ class _BasicShellState extends State<_BasicShell>
       }
       return _selectAt(state, index);
     }
+    // 收藏列/歌单列的行点击：`music:result:<lane>:<index>`。
+    // Qt 真值（`Qt/src/NativeHudMusic.cpp:157-163`）：`selectResult(index, lane)`（默认
+    // open=true，即曲目行进详情、歌单/专辑/歌手行进目录）+ 清 tab/trackOffset/bodyOffset
+    // + `closeModal()`。此前这里没有 handler，点歌单行只落到「尚未实现」提示，
+    // 表现为「面板里点歌单没反应」。
+    if (action.startsWith(basicMusicResultActionPrefix)) {
+      return _openResult(state, action);
+    }
     // 歌词行点击：按歌词时间轴换算进度（94 已上线的真实跳转，player 面板热区）。
     if (action.startsWith(basicLyricLineActionPrefix)) {
       final int? line = int.tryParse(
@@ -4957,6 +4973,63 @@ class _BasicShellState extends State<_BasicShell>
       if (delta != null) {
         _mvController?.adjustOffset(delta);
       }
+      return null;
+    }
+    return basicUnimplementedPrefix + action;
+  }
+
+  /// `music:result:<lane>:<index>` 的落地（Qt `NativeHudMusic.cpp:157-163` 的 `result`）。
+  ///
+  /// 面板里的行**不是** `state.songs` 的下标，而是这一列自己的行下标（[lane] 决定
+  /// 数据源）：1 = 喜欢的歌曲（本机 `likedSongs` / 插件 `serverLikedSongs`）、
+  /// 2 = 我的歌单（本机 `localPlaylists` / 插件 `serverPlaylists`）。所以不能复用
+  /// [_openAt] 的 `basicLibraryItems` 下标，必须按 lane 自己取行。
+  ///
+  /// Qt 在这个动作里同时做三件事：`selectResult(index, lane)`（默认 open=true，
+  /// 曲目行进详情、歌单/专辑/歌手行进目录）、`tab = "overview"`、`closeModal()`。
+  String? _openResult(BasicViewState state, String action) {
+    final List<String> parts = action.split(':');
+    if (parts.length < 4) {
+      return basicUnimplementedPrefix + action;
+    }
+    final int? lane = int.tryParse(parts[2]);
+    final int? index = int.tryParse(parts[3]);
+    if (lane == null || index == null || lane < 1 || index < 0) {
+      return basicUnimplementedPrefix + action;
+    }
+    // Qt 先 closeModal 再开目录/详情：面板不能留在已经换了列的资料库上面。
+    _setModal('');
+    if (lane == 1) {
+      final List<SirenSong> songs = controller.remoteSearchActive
+          ? controller.serverLikedSongs
+          : controller.likedSongs;
+      if (index >= songs.length) {
+        return '该曲目已不在喜欢的歌曲里';
+      }
+      final SirenSong song = songs[index];
+      unawaited(controller.openSong(song, play: false));
+      unawaited(controller.autoplayDetailIfEnabled(song));
+      return null;
+    }
+    if (lane == 2) {
+      final List<BasicLocalPlaylist> playlists = controller.remoteSearchActive
+          ? controller.serverPlaylists
+          : controller.localPlaylists;
+      if (index >= playlists.length) {
+        return '歌单已不在当前列表里';
+      }
+      final BasicLocalPlaylist playlist = playlists[index];
+      unawaited(
+        (controller.remoteSearchActive
+                ? controller.enterRemotePlaylist(playlist)
+                : controller.enterLocalPlaylist(playlist))
+            .then((String notice) {
+          if (!mounted || notice.isEmpty) {
+            return;
+          }
+          _setNotice(notice);
+        }),
+      );
       return null;
     }
     return basicUnimplementedPrefix + action;
