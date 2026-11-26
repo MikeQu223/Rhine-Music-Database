@@ -811,6 +811,10 @@ class _BasicShellState extends State<_BasicShell>
   /// 「当前曲目置顶」（NativeHudController 的 openModal("player") 语义）。
   int _queueOffset = 0;
 
+  /// 竖屏播放队列页的滚动量（画布网格，Qt compact 的 `m_scroll`）。
+  /// null = 页面按 Qt `newScope` 规则「当前行置顶」自算；用户拖动后才有真值。
+  double? _queueScroll;
+
   /// 插件管理器（市场索引 / 安装 / 卸载 / 启用状态）。它是唯一真值来源：
   /// 页面只读 [PluginManager.snapshot]，动作回灌它的方法，不在外壳里存第二份。
   ///
@@ -2219,12 +2223,19 @@ class _BasicShellState extends State<_BasicShell>
       // snapshot 的 pos 因此每帧变化，Qt 侧 projectArchiveScroll 让原 3D 窗口跟着滚，
       // 不必等松手（松手仍由 onLibraryScroll 落行选中）。
       onLibraryScrollUpdate: controller.updateLibraryScroll,
-      // 弹层面板的拖动：队列按整行改 `_queueOffset`，评论按像素改 `_commentsScroll`。
+      // 弹层面板的拖动：横屏队列按整行改 `_queueOffset`，竖屏队列按画布网格改
+      // `_queueScroll`（Qt compact 的 `m_scroll`），评论按像素改 `_commentsScroll`。
       onQueueOffsetChanged: (int value) {
         if (!mounted) {
           return;
         }
         setState(() => _queueOffset = value);
+      },
+      onQueueScrollChanged: (double value) {
+        if (!mounted) {
+          return;
+        }
+        setState(() => _queueScroll = value);
       },
       onCommentsScrollChanged: (double value) {
         if (!mounted) {
@@ -2241,6 +2252,7 @@ class _BasicShellState extends State<_BasicShell>
       // 队列面板的首行下标与竖屏滚动量：只有打开队列时才看这两项，
       // 其它弹层下 HUD 不会读它们，所以不必逐帧清空。
       queueOffset: _queueOffset,
+      queueScroll: _queueScroll,
       queueModesExpanded: _queueModesExpanded,
       // 插件页的数据快照与详情（HUD 只画 chrome，内容在 widget 层）。
       plugins: _plugins.snapshot(),
@@ -4098,6 +4110,9 @@ class _BasicShellState extends State<_BasicShell>
     setState(() {
       _queueOffset = current < 0 ? 0 : current;
       _queueOffset = _queueOffset.clamp(0, queueModalMaximumOffset(count));
+      // 竖屏滚动量交回 null，让页面按 Qt `newScope` 规则「当前行置顶」重算；
+      // 用户在本页拖过之后才用真值（关掉再开也归零，与 Qt openModal 一致）。
+      _queueScroll = null;
       // Qt openModal("player") 不展开模式区（那是 `mobile:queue-modes` 的态）。
       _queueModesExpanded = false;
     });

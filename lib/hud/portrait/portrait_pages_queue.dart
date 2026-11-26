@@ -90,6 +90,12 @@ double paintPortraitQueuePage(
     /// 滚动量（Qt `m_scroll`）。null = 按 Qt 的 `newScope` 规则从当前行推算，
     /// 让当前行落在内容区顶部；宿主有真实滚动真值时显式传入。
     double? scroll,
+    /// 回存本帧的排版真值，供宿主夹取与起手（Qt `m_scroll` / `m_maximum`）。
+    ///
+    /// [resolvedScroll] 是实际用上的滚动量（`scroll` 为 null 时就是推算值），
+    /// [maximumScroll] 是 Qt 的 `max(0, end - c.contentBottom)`——宿主拖动必须
+    /// 用同一个数，自己按行数估会把长队列最后几首锁死在裁剪线外。
+    void Function(double resolvedScroll, double maximumScroll)? onLayout,
   }) {
   final double w = c.gridWidth;
   final double content = w - 2 * _left;
@@ -249,6 +255,8 @@ double paintPortraitQueuePage(
     y + resolvedScroll + 20,
     rowsTop + math.max(0, tracks.length - 1) * _rowHeight + c.contentBottom - contentTop,
   );
+  // Qt 在布局收尾处统一夹取：`m_maximum = max(0., end - c.contentBottom)`。
+  onLayout?.call(resolvedScroll, math.max(0, bottom - c.contentBottom));
   return bottom;
 }
 

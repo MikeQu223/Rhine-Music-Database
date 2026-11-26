@@ -953,6 +953,12 @@ class BasicHudFrame {
           applicationVolume: bar.applicationVolume,
           volume: 0,
           scroll: queueScroll,
+          // Qt 布局收尾统一夹取（`m_maximum = max(0, end - c.contentBottom)`），
+          // 宿主拖动用同一帧的真值，不按行数另估。
+          onLayout: (double resolved, double maximum) {
+            _portraitQueueScroll = resolved;
+            _portraitQueueMaxScroll = maximum;
+          },
         ),
       );
     } else if (songPage) {
@@ -1659,6 +1665,19 @@ class BasicHudFrame {
   /// 竖屏评论页上一次画出来的滚动上界（`PortraitCommentsLayout.maximumScroll`）。
   /// 竖屏页自己算视口，宿主要用同一个值夹取，否则会拖出空白或拖不动。
   static double _portraitCommentsMaxScroll = 0;
+
+  /// 竖屏播放队列页上一次画出来的滚动上界。
+  ///
+  /// Qt 口径是 `m_maximum = max(0, end - c.contentBottom)`（`ResponsiveHudLayout.cpp`
+  /// 的收尾夹取）。`paintPortraitQueuePage` 的返回值就是 `end`（内容总高），所以
+  /// 宿主必须用「同一帧的 end」减去内容底才算上界；自己拿行数 × 行高估算会把
+  /// 长队列的上界算短，最后几首永远拖不出来。
+  static double _portraitQueueMaxScroll = 0;
+
+  /// 竖屏播放队列页上一次实际用上的滚动量（`paintPortraitQueuePage` 的
+  /// `resolvedScroll`：宿主没给真值时它就是「当前行置顶」的推算值）。
+  /// 拖动起手必须从这个值接续，否则按住的第一帧会跳回 0。
+  static double _portraitQueueScroll = 0;
 
   /// 领域层的竖屏视图模型 → 横屏面板模型（字段一一同名，只是面板多了
   /// x/width/dark 三个宿主上下文）。
@@ -2423,6 +2442,7 @@ class BasicHudSurface extends StatefulWidget {
     this.onLibraryScroll,
     this.onLibraryScrollUpdate,
     this.onQueueOffsetChanged,
+    this.onQueueScrollChanged,
     this.onCommentsScrollChanged,
     this.albumInfoScroll = 0,
     this.onAlbumInfoScrollChanged,
@@ -2536,6 +2556,9 @@ class BasicHudSurface extends StatefulWidget {
 
   /// 横屏队列面板拖动一行时回给宿主的新行号（Qt `queueOffset`）。
   final ValueChanged<int>? onQueueOffsetChanged;
+
+  /// 竖屏播放队列页的滚动量（画布网格）回写（Qt compact 的 `m_scroll`）。
+  final ValueChanged<double>? onQueueScrollChanged;
 
   /// 评论面板拖动时回给宿主的像素滚动量（Qt `commentsScroll`）。
   final ValueChanged<double>? onCommentsScrollChanged;
@@ -3101,12 +3124,25 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
 
     Rect? modalListRect;
     if (widget.modal == 'queue') {
-      final ModalShellBounds bounds = modal_shell.modalShellBounds(
-        modalId: modal_shell.kModalShellPlayerModal,
-        stageWidth: stage.width,
-      );
-      modalListRect = stageOrLogical(
-          bounds.left, bounds.top + 340, bounds.width, bounds.height - 340);
+      if (portrait) {
+        // 竖屏队列页是**整页滚动**（Qt compact `y = contentTop - m_scroll`，当前歌曲
+        // 卡与模式区都跟着走），所以可拖区是「页头之下、播放条之上」的整段，
+        // 而不是横屏面板内部那一条列表带（`modalShellBounds` 是 1080×1920 横屏舞台
+        // 的几何，套到竖屏会把可拖区压到屏幕中间一小条，用户拖不动）。
+        modalListRect = Rect.fromLTWH(
+          0,
+          stage.height * 0.18,
+          stage.width,
+          stage.height * 0.66,
+        );
+      } else {
+        final ModalShellBounds bounds = modal_shell.modalShellBounds(
+          modalId: modal_shell.kModalShellPlayerModal,
+          stageWidth: stage.width,
+        );
+        modalListRect = stageOrLogical(
+            bounds.left, bounds.top + 340, bounds.width, bounds.height - 340);
+      }
     } else if (widget.modal == 'discover') {
       // 发现页内容区从 130 起（`portraitDiscoverContentTop`）。
       modalListRect = stageOrLogical(
@@ -3302,8 +3338,22 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
 
   void _dragStarted(BasicViewState state, DragStartDetails details, bool portrait) {
     if (widget.modal == 'queue') {
-      // 队列面板按整行滚动（Qt `queueOffset` 是行号）：起手记住当前行号，
-      // 位移在 [_dragUpdated] 里折算成行数回给宿主。
+      // 竖屏队列页按**画布网格**滚动（Qt compact 的 `m_scroll`），起手接续上一帧
+      // 实际用上的滚动量；横屏面板按整行滚动（Qt `queueOffset` 是行号），起手
+      // 记住当前行号，位移在 [_dragUpdated] 里折算成行数回给宿主。
+      if (portrait) {
+        final double start = math.max(0.0, BasicHudFrame._portraitQueueScroll);
+        setState(() {
+          _abortScrollMomentum();
+          _abortModalMomentum();
+          _modalDragActive = true;
+          _modalDragPixels = 0;
+          _modalDragStartScroll = start;
+          _modalScrollValue = start;
+        });
+        _seedModalSamples(start, details.sourceTimeStamp);
+        return;
+      }
       setState(() {
         _abortScrollMomentum();
         _abortModalMomentum();
@@ -3445,6 +3495,20 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       return;
     }
     if (widget.modal == 'queue') {
+      // 竖屏队列页的滚动量是**画布网格**（`portrait_pages_queue.dart` 的
+      // `y = contentTop - resolvedScroll`），上界与起手都用页面自己回存的真值
+      // （Qt `m_scroll` / `m_maximum`）。原先这里只认横屏的行号，竖屏长队列
+      // 只能靠「当前行置顶」被动滚，用户拖不动。
+      if (portrait) {
+        final double perGrid = _stageUnitsPerGrid(geometry, true);
+        _modalDragPixels += details.delta.dy;
+        final double max = math.max(0.0, BasicHudFrame._portraitQueueMaxScroll);
+        final double next = (_modalDragStartScroll - _modalDragPixels / perGrid)
+            .clamp(0.0, max);
+        _trackModal(next, max, details);
+        widget.onQueueScrollChanged?.call(next);
+        return;
+      }
       final double scale = geometry.stageScale <= 0 ? 1 : geometry.stageScale;
       // 行高 56 是舞台单位（queue_modal.dart:367 的 `y + 358 + row * 56`）。
       final double rowStage = 56.0 * scale;
@@ -3646,9 +3710,14 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       case 'search':
         widget.onResultScrollChanged?.call(value);
       case 'queue':
-        final int rows = value.round();
-        if (rows != widget.queueOffset) {
-          widget.onQueueOffsetChanged?.call(rows);
+        // 竖屏是画布网格（页面自报真值），横屏面板才是行号（Qt `queueOffset`）。
+        if (widget.geometry == null) {
+          widget.onQueueScrollChanged?.call(value);
+        } else {
+          final int rows = value.round();
+          if (rows != widget.queueOffset) {
+            widget.onQueueOffsetChanged?.call(rows);
+          }
         }
       case 'comments':
         widget.onCommentsScrollChanged?.call(value);
