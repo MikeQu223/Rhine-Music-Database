@@ -104,10 +104,8 @@ const String sirenProviderLabel = '塞壬唱片';
 
 /// Siren 基本版的单一 authority。
 ///
-/// 构造注入 [BasicAudioPort]；[repository] 可注入（测试/替换 baseUri），
-/// [dark] 只影响 [state].dark（基础版不做主题切换）。
-///
-/// 出厂默认**亮色**（用户 2026-11-19 指定；偏好里显式写了 dark 才会变暗）。
+/// 构造注入 [BasicAudioPort]；[repository] 可注入，[dark] 只影响 [state].dark。
+/// 出厂默认亮色（偏好里显式写了 dark 才会变暗）。
 class BasicController extends ChangeNotifier
     implements BasicMediaSessionCommands {
   BasicController({
@@ -167,11 +165,7 @@ class BasicController extends ChangeNotifier
   /// 已落盘的封面绝对路径；只有 [_artTrackId] 与当前播放身份一致时才上报。
   String _artPath = '';
 
-  /// 同一 (id, url) 已经发过几次请求。
-  ///
-  /// 有界重试：瞬时失败（离线、目录暂时不可写、非 200）不该让这首曲子整个会话
-  /// 都永远没有封面，但也不能变成一个高频重试循环 —— 所以只给 2 次机会，
-  /// 用完就如实留空（LEAD 2026-11-16 的 M2 反例）。
+  /// 同一 (id, url) 已经发过几次请求。有界重试：只给 2 次机会，用完如实留空。
   int _artAttempts = 0;
 
   /// 首次请求 + 1 次重试。
@@ -246,11 +240,8 @@ class BasicController extends ChangeNotifier
   LyricsController? _lyrics;
   BasicLyricsDocument _lyricDoc = BasicLyricsDocument.empty;
 
-  /// 未播放曲目的歌词预览（用户 2026-11-24 要求「歌词和评论无需播放就能看」）。
-  ///
-  /// 与 [_lyricDoc] 分开存放是刻意的：那份是**播放曲目**的歌词，带进度高亮；
-  /// 预览没有播放就没有进度，只把文本摆出来。开播时预览会被清掉，否则会出现
-  /// 「标题是 A、歌词是 B」的身份串台。
+  /// 未播放曲目的歌词预览。与 [_lyricDoc] 分开存放：那份带进度高亮，预览只摆文本。
+  /// 开播时清掉，否则会出现「标题 A、歌词 B」。
   BasicLyricsDocument _previewLyricDoc = BasicLyricsDocument.empty;
   String _previewLyricId = '';
   String _previewLyricStatus = 'idle';
@@ -1778,10 +1769,7 @@ class BasicController extends ChangeNotifier
   List<SirenSong> get serverLikedSongs => _serverLikedSongs;
   List<SirenSong> _serverLikedSongs = <SirenSong>[];
 
-  /// 从服务端刷新「喜欢的歌曲」（插件平台才需要；本地平台直接返回）。
-  ///
-  /// 只在登录且有账号时调用：网易云的 `likedIDs(uid)` 需要一个 uid，
-  /// 未登录会被上游回 400（真机探针确认过）。
+  /// 从服务端刷新「喜欢的歌曲」（插件平台才需要）。未登录时上游会回 400。
   Future<void> refreshServerLiked({String uid = ''}) async {
     final ProviderGateway? gateway = _remoteSearch;
     if (gateway == null || _disposed) {
@@ -1986,22 +1974,10 @@ class BasicController extends ChangeNotifier
     ];
   }
 
-  /// 进入专辑（换列）：把专辑当成**目录**打开，留在资料库里显示它的曲目。
+  /// 进入专辑（换列）：把专辑当目录打开，留在资料库里显示它的曲目。
   ///
-  /// Qt 的目录语义（Qt/src/MusicLibrary.cpp:843-869 `selectResult(index, lane, open=true)`）：
-  /// ```
-  /// const auto mode = open && lists[lane].at(index).toObject()["kind"] == "song" ? "detail" : "archive";
-  /// emit modeRequested(mode);
-  /// if (open && current.value("kind") != "song") enterDirectory(current);
-  /// ```
-  /// 也就是说**点专辑行 = 留在 archive 模式并进入该专辑目录**，只有点曲目行才进
-  /// 详情（抽唱片）。旧实现把专辑行交给 [openAlbum]：相位跳到 detail、3D 抽出唱片、
-  /// 列表变成「01 / 01」——正是用户 2026-11-19 报的「进入专辑内应该切换列而不是抽出
-  /// 唱片」，同时也让单曲专辑的详情页一进去就只有一个当前行（用户报的「必然触发
-  /// 自动打开详情」）。
-  ///
-  /// [play] 为 true（HUD 的『播放全部』）时只多一步：进列后按目录队列从第一首起播
-  /// （Qt 的 `MusicLibrary::play()` 也是 replaceQueue + 从当前行播）。
+  /// 点专辑行 = 留在 archive 并进入该目录，只有曲目行才进详情抽唱片。
+  /// [play] 为 true 时进列后从第一首起播。
   Future<void> enterAlbumColumn(SirenAlbum album, {bool play = false}) async {
     if (_disposed) {
       return;
@@ -2371,18 +2347,11 @@ class BasicController extends ChangeNotifier
     _publish();
   }
 
-  /// 打开 Siren 的「全部歌曲」虚拟目录（Qt/src/MusicSiren.cpp:193-246
-  /// MusicLibrary::openSirenAllSongs 的移植）。
+  /// 打开「全部歌曲」虚拟目录（Qt `openSirenAllSongs` 的移植）。
   ///
-  /// 与 Qt 一致的三点：
-  ///  - 只**选中**第一首（Qt :244-245 `next->index = 0; choose(next->songs.first())`），
-  ///    不替换播放队列、不开始播放：真正播放要用户再点 '播放全部 →'
-  ///    （basic_app 的 'music:play-loaded' → 首行 openSong），Qt 的 play() 也只在
-  ///    用户按下播放时才 replaceQueue（Qt/src/MusicLibrary.cpp:943-957）。
-  ///  - 目录 item 逐字照抄 Qt :205-218：provider / kind 'playlist' / virtual /
-  ///    id 'siren-all' / key 'siren:playlist:all' / title '全部歌曲' /
-  ///    description / trackCount / songs = lists[3] / ids / cursor=ids.size() / index 0。
-  ///  - 曲库没加载成功时只上屏 '塞壬唱片曲库尚未加载'，不造空目录（Qt :194-197）。
+  /// 只选中第一首，不替换播放队列、不开始播放；目录 item 逐字照抄 Qt
+  /// （id 'siren-all' / key 'siren:playlist:all' / title「全部歌曲」）。
+  /// 曲库没加载成功时只上屏提示，不造空目录。
   Future<void> openAllSirenSongs() async {
     if (_disposed) {
       return;
@@ -2508,12 +2477,8 @@ class BasicController extends ChangeNotifier
     _observeWindow(position);
   }
 
-  /// 拖动中途的"越过即进入"：窗口保持小数（列表跟手），选中立刻落到最近一行。
-  ///
-  /// 与 [_selectRow] 的差别只有两处：`recordWindow: false`（不重算 8 行页偏移）和
-  /// `announce: false`（不刷"已选中：…"），并且写回时把 [_listPosition] 还原成小数
-  /// 位置，避免 `_selectRow` 的窗口吸附把列表钉在整行上（那正是"高亮跟着行跑、条目
-  /// 不跳格"的旧缺陷）。目录里同一份真值由 [_syncDirectoryIndex] 跟着走。
+  /// 拖动中途的「越过即进入」：窗口保持小数（列表跟手），选中立刻落到最近一行。
+  /// 与 [_selectRow] 的差别是不重算页偏移、不刷选中提示，且写回时还原小数位置。
   void _observeWindow(double position) {
     final List<BasicListItem> items = basicLibraryItems(_state);
     if (items.isEmpty) {
@@ -2544,10 +2509,7 @@ class BasicController extends ChangeNotifier
     _publish();
   }
 
-  /// 3D 手势是否正在进行（`start` 之后、`commit` 之前）。
-  ///
-  /// 手势期间的"点选身份"回执必须丢掉：拖动松手与惯性落点不是同一条，谁先到都
-  /// 不该改写列表选中，否则就是双消费（用户实测的"原地跳动一次"）。
+  /// 3D 手势是否正在进行。手势期间的点选回执必须丢掉，否则就是双消费。
   bool get nativeScrollActive => _nativeScrollOrigin != null;
 
   /// 详情页把唱片转到阈值以外：切到当前曲序里的相邻一张（[direction] = ±1）。
@@ -2584,13 +2546,8 @@ class BasicController extends ChangeNotifier
     await selectLibraryRow(row);
   }
 
-  /// Qt 3D 场景回写的 archive 连续滚动（条目增量，可为小数；见 NativeScene 的滚动出口）。
-  ///
-  /// 三个约束都来自 Qt 原始语义与用户 m01597 的补充：
-  ///  - 只动**当前列**的窗口：3D 手势不换所属列（换列只有显式 HUD ←/→）。
-  ///  - 中途就越过即进入（见 [updateLibraryScroll] 的同一份 observe 语义）：窗口保小数跟手，
-  ///    选中当帧落到最近一行；松手（[committed]）才落定整数行并吃掉惯性回执。
-  ///  - [started] 记下序列起点，之后同一位置回写被 `1e-4` 门限吃掉，不会回声。
+  /// Qt 3D 场景回写的 archive 连续滚动（条目增量，可为小数）。
+  /// 只动当前列的窗口；中途越过即进入，松手才落定整数行；同一位置的回写被门限吃掉。
   void applyNativeArchiveScroll(
     double deltaRows, {
     bool committed = false,
@@ -2656,12 +2613,9 @@ class BasicController extends ChangeNotifier
     _showSourceLane(lane);
   }
 
-  /// 切平台后把视图状态归零（Qt `MusicAccount::choose`，Qt/src/MusicAccount.cpp:200-330）。
-  ///
-  /// 这条是「插件平台列名与内容不匹配」的根因修复：Qt 换平台时会把
-  /// `selectedLane` 归到 0（搜索结果列）、`searchKind` 回 `song`、`keyword` 清空、
-  /// 各列 cursor/offset/rowMemory 一起归零；本仓库此前只换网关与列名，于是
-  /// 插件平台仍停在塞壬的第 3 列，把塞壬曲库投影到「收藏歌单」上。
+  /// 切平台后把视图状态归零（Qt `MusicAccount::choose`）：selectedLane 回 0、searchKind 回
+  /// song、keyword 清空、各列 cursor/offset/rowMemory 归零。不归零会把上一平台的曲库
+  /// 投影到新平台的列上。
   void resetForProviderSwitch(List<String> columns) {
     if (_disposed) {
       return;
@@ -2849,10 +2803,8 @@ class BasicController extends ChangeNotifier
     return basicSelectedItemIndex(probe, items);
   }
 
-  /// 打开歌词页（Qt 的模态歌词面板语义；没有当前曲目时不打开）。
-  ///
-  /// 2026-11-24 用户要求「歌词无需播放就能看」：选中曲目还没开播时，这里按
-  /// [_ensurePreviewLyrics] 去取该曲目的歌词，面板画预览文本（无进度高亮）。
+  /// 打开歌词页（没有当前曲目时不打开）。歌词无需播放就能看，
+  /// 未开播时按 [_ensurePreviewLyrics] 取该曲目的歌词。
   Future<void> openLyrics() async {
     if (_disposed || _song == null) {
       return;
@@ -3021,7 +2973,6 @@ class BasicController extends ChangeNotifier
     }
     // 先按当前 (id, url) 归位封面状态，再决定这次上报贴不贴图。
     // 反过来的话，同一身份把封面 URL 换成空时，这一次上报仍会把旧图带出去
-    // （LEAD 2026-11-16 的 M1 反例）。
     _requestArtwork(track);
     final bool artMatches =
         _artTrackId == track.id && _artUrl == track.cover.trim();
@@ -3175,13 +3126,9 @@ class BasicController extends ChangeNotifier
     _publish();
   }
 
-  /// 歌词全局偏移的薄封装（Qt `player:lyrics-earlier/later/reset`，
-  /// `ResponsiveLyrics.cpp:236-278` 的选项面板四条动作里的三条）。
-  ///
-  /// 状态文案照 Qt `NativeHudLyrics.cpp` 的口径：偏移值直接写进状态行，
-  /// 让用户知道 0.2s 一次累计到了多少；底层夹取在 `LyricsController` 里。
-  /// 应用内音量（0..1）：Qt 的 `player:volume-fraction:<f>` 直接落到 `QAudioOutput`，
-  /// 这里落到 MediaPlayer 的 setVolume——只改本应用，不动系统音量。
+  /// 歌词全局偏移的薄封装（Qt 的 `player:lyrics-earlier/later/reset`），偏移值直接写进
+  /// 状态行；底层夹取在 `LyricsController` 里。
+  /// 应用内音量（0..1）：只改本应用音量，不动系统音量。
   Future<void> setVolumeFraction(double fraction) async {
     final BasicAudioPort audio = _audio;
     if (_disposed || audio is! BasicAudioVolumePort) {
@@ -3257,13 +3204,8 @@ class BasicController extends ChangeNotifier
     _publish();
   }
 
-  /// 竖屏详情页的「上一首 / 下一首」：在**详情页曲目所在的列表**里换曲并播放。
-  ///
-  /// 与 [previous]/[next]（推进播放队列，Qt 的 `player:prev/next`）刻意分开：
-  /// 详情页展示的曲目不一定是当前队列的成员——用户在另一列或搜索结果里打开详情时，
-  /// 队列还是上一次播放的那列。此时推进队列换掉的是**另一首歌的邻居**，与页面上
-  /// 看到的曲目无关。详情页曲目同样是播放曲目时（当前曲目），页面仍走 [next]/
-  /// [previous]，保留队列的随机/单曲循环语义。
+  /// 竖屏详情页的上一首 / 下一首：在详情页曲目所在的列表里换曲并播放。
+  /// 与 [previous]/[next]（推进播放队列）刻意分开：详情页曲目不一定是队列成员。
   Future<void> playDetailSibling(int direction) async {
     if (_disposed || direction == 0) {
       return;
@@ -3384,10 +3326,8 @@ class BasicController extends ChangeNotifier
       _catalogRetryTimer = null;
       _status = _catalogLoadedStatus();
       _phase = BasicPhase.library;
-      // 冷启动默认选中：Qt 打开资料库时 MusicLibrary 里本来就有一条 current，
-      // 3D 场景靠它拿到 current{kind,id,key,cover} 才会 loadCover 并画出封面。
-      // 少了这一步，场景只收到 index=-1/count=936/key=（真机 06:28:28 日志），
-      // 于是永远没有 cover 请求 —— 这正是用户 P0 #2「封面还是不加载」的根因。
+      // 冷启动默认选中第一行：Qt 一进库 current 就有值，3D 靠它拿 current 才 loadCover。
+      // 少了这一步，场景只收到 index=-1，永远没有封面请求。
       _publish();
       if (_selection == null) {
         _selectInitialRow();
@@ -3895,9 +3835,8 @@ class BasicController extends ChangeNotifier
       return;
     }
     try {
-      // 远端（插件平台）曲目：播放地址已经由宿主向插件要过、随 track 一起传进来。
-      // 这里**不能**再走 `_repository.songDetail`——那是塞壬的 id 空间，插件曲目
-      // 的 id 在那边必然 404，真机表现就是「详情页打开、状态一直已暂停」。
+      // 远端曲目的播放地址已随 track 传进来；不能再走 `_repository.songDetail`，
+      // 那是塞壬的 id 空间，插件 id 必然 404。
       String sourceUrl = _text(track['sourceUrl']);
       String lyricUrl = '';
       // 插件平台的歌词走 `lyrics` operation（Qt/src/LyricsController.cpp:368-380 的
@@ -3906,9 +3845,7 @@ class BasicController extends ChangeNotifier
       if (sourceUrl.isEmpty) {
         final ProviderGateway? gateway = _remoteSearch;
         if (gateway != null) {
-          // 插件平台的曲目（例如从「我的歌单」目录点进来的那一行）不带 sourceUrl，
-          // 播放地址只能现向插件要；**不能**落到 `_repository.songDetail`——那是塞壬
-          // 的 id 空间，插件 id 在那边必然 404（真机表现：详情页打开、状态「已暂停」）。
+          // 插件曲目不带 sourceUrl，播放地址只能现向插件要；同样不能落到 `songDetail`。
           sourceUrl = await gateway.playback(
             trackId: id,
             quality: _remoteQuality,
@@ -4183,8 +4120,7 @@ class BasicController extends ChangeNotifier
       searchKind: _searchKind,
       searchGroup: _searchGroup,
       searchGroupKey: _searchGroupKey,
-      // 服务端歌单/喜欢也进真实快照：HUD 画的是 `_state`，只填 `_probeState`
-      // 会让 lane 2 有计数却没有行（真机现象：标题「我的歌单：30 项」、列表空白）。
+      // 服务端歌单/喜欢也进真实快照：HUD 画的是 `_state`，只填 `_probeState` 会有计数没有行。
       serverPlaylists: _serverPlaylists,
       laneColumns: _laneColumns,
       searchRemote: _remoteSearch != null,

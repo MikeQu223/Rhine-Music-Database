@@ -13,19 +13,10 @@ const String qtPluginDescriptorDirectory = 'MusicBridge/local-plugins';
 
 /// 把已启用插件的 manifest 同步进 Qt 的扫描目录，返回写成功的平台数。
 ///
-/// 为什么需要这一步：Qt 的 `Host::loadCover`（`Qt/src/Host.cpp:2205-2221`）用
-/// `ProviderRegistry::coverHosts()` 做封面域名白名单，而这份白名单来自 Qt 自己
-/// 扫到的 descriptor。Flutter 的插件装在 `<external>/file/plugin`，Qt 完全不知道
-/// 它们存在，于是插件曲目的封面被静默拒绝（真机日志 `RHINE_QT_COVER_RESULT
-/// len=0 key=`，3D 唱片只剩灰盘）。把 manifest 软链过去，Qt 就能拿到
-/// `media.coverHosts`、平台名与列定义。
+/// Qt 的封面域名白名单来自它自己扫到的 descriptor；插件装在 Flutter 的目录里，
+/// Qt 不知道它们存在，插件曲目的封面会被静默拒绝。软链 manifest 与入口文件过去即可。
 ///
-/// 只写 descriptor 需要的东西：`manifest.json` 与一个真实存在的入口文件
-/// （Qt `validManifest` 会校验 `entry.file` 能打开）。入口用软链，软链不被支持时
-/// 退回同名占位文件——Qt 只校验存在性，真正跑插件的是 Flutter 侧那份。
-///
-/// 注意：Qt 的 registry 只在引擎启动时装载一次，所以新增/禁用插件后需要重启
-/// 应用才会反映到封面白名单上。
+/// Qt 的 registry 只在引擎启动时装载一次，新增/禁用插件后要重启才生效。
 Future<int> syncQtPluginDescriptors({
   required String resourcesRoot,
   required String pluginRoot,

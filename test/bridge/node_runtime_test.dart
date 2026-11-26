@@ -1,26 +1,7 @@
-// T21-C19-W2（atom T21-C19-A2，接管 T21-C14 草稿）｜lib/bridge/node_runtime.dart 的
-// 宿主侧确定性单测（RED/GREEN 未执行）。OPS86-A8-BRIDGE 追加 DEDUP-24 的会话级去重用例。
+// lib/bridge/node_runtime.dart 的宿主侧确定性单测。
 //
-// RED/GREEN 未执行：T21-C14 与本次 OPS86-A8-BRIDGE（DEDUP-24）全程禁止 flutter test /
-// dart test / flutter analyze / dart analyze / 格式化 / 设备执行；本文件只写了断言，
-// 从未运行过（连一次都没有）。
-//
-// 计划卡：docs/superpowers/plans/2026-11-09-qt-to-flutter-parity-plan.md:524-531（T21）。
-// 权威源：Qt/src/BridgeProcessAndroid.cpp（:47 token、:55-60 单控制连接、:73 48 MiB
-// 读缓冲上限、:81-91 首帧 {token} + server.close + flush、:98-100 launch 幂等、
-// :102 脚本存在性、:118 8 MiB 栈、:130-137 compact JSON + 换行与握手排队、
-// :63-67/:157 崩溃回传 runtime-error）。
-// 复用源（只读）：sourceSha = 2cb83d1ac48c09286e911b691f6a31c39c0a1a4a
-// lib/bootstrap/node_host_bridge_channel.dart（回环绑定 / 候选销毁 / 握手排队）。
-//
-// 边界：所有用例都在宿主侧确定性复现，绝不启动真实 Node、不需要设备、不用 adb；
-// 只用回环 TCP 与系统临时目录（tearDown 递归清理）。假宿主 _FakeNodeRuntimeHost 只做
-// 计数与回执，不碰 Node/JNI/CMake。
-//
-// 冻结契约之外的两个附加面（都在 node_runtime.dart 里登记了理由）：
-//   1. NodeRuntime.createIsolatedForTest —— 进程级单例 NodeRuntime.instance 一旦
-//      launched/authenticated 就无法复位，用例之间必须隔离；
-//   2. NodeRuntime.isLive —— EngineRuntimeLink.isLive 的唯一实现来源（Qt:99-100 的判据）。
+// 全部在宿主侧复现，不启动真实 Node、不需要设备：只用回环 TCP 与系统临时目录。
+// 附加面：createIsolatedForTest（单例无法复位）与 isLive（EngineRuntimeLink 的唯一判据）。
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';

@@ -1,20 +1,8 @@
 // 双向连续滚动 + 冷启动封面闭合（FINAL-INTEGRATION-141）。
 //
-// 用户 m01578 的两条 P0 原话：
-//   1) 列表或者 3D 层被滚动时另一方没有同步滚动；
-//   2) 封面还是不加载。
-//
-// 本文件钉住的是**同一份窗口真值**的两半，而不是两半各自自证：
-//   * Flutter → Qt：state.listPosition（条目，可为小数）经 qtSceneStateSnapshot 的
-//     `pos`/`lane`/`cells` 投影过去，3D 在拖动**中途**就跟着滚；
-//   * Qt → Flutter：Qt 的 archive 轨道位置折成条目增量，经 `archive-scroll:*` 回执
-//     落到同一个 _listPosition 上（拖动/惯性每帧，松手才 commit 落行选中）；
-//   * 冷启动：曲库到位即默认选中第一行（Qt 一进库 current 就有值），否则 Qt 收到的
-//     永远是 index=-1/key=（真机 06:28:28 的 RHINE_QT_SCENE_STATE），
-//     prefetchCover 一次都不会被调用 —— 这就是"封面不加载"的根因。
-//
-// 真机侧还要证明的是像素与纹理（RHINE_QT_COVER_REQUEST/RESULT/READY + 盘面像素），
-// widget 测试只能证明状态/协议这一段；文件里不把两者混着说。
+// Flutter → Qt：listPosition 经快照的 pos/lane/cells 投影过去，拖动中途就跟着滚；
+// Qt → Flutter：archive-scroll 回执折成条目增量，落到同一个 _listPosition。
+// 冷启动必须默认选中第一行，否则 Qt 收到的永远是 index=-1，prefetchCover 一次都不调。
 
 import 'dart:async';
 import 'dart:convert';

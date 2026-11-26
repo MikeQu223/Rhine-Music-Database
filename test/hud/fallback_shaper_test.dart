@@ -1,66 +1,7 @@
-// Tests for the fallback predicate (atom A4, lib/hud/text/fallback_shaper.dart).
+// Tests for the fallback predicate (lib/hud/text/fallback_shaper.dart).
 //
-// Qt is the only authority. Every expectation below is derived from
-// Glyphs::needsLayout, quoted here as it stands (Qt/src/Glyphs.cpp:108-139):
-//
-//   bool Glyphs::needsLayout(const QString &text, const QString &weight) {
-//       const auto key = weight + ':' + text;
-//       if (const auto cached = layoutRequired.object(key)) return *cached;
-//       const auto font = fonts.value(weight, fonts["regular"]);
-//       const auto symbols = fonts["symbols"];
-//       bool required = false;
-//       for (char32_t point : text.toUcs4()) {
-//           const auto category  = QChar::category(point);
-//           const auto direction = QChar::direction(point);
-//           const auto script    = QChar::script(point);
-//           const bool combining = category == QChar::Mark_NonSpacing ||
-//                                  category == QChar::Mark_SpacingCombining ||
-//                                  category == QChar::Mark_Enclosing;
-//           const bool hangulJamo = script == QChar::Script_Hangul &&
-//                                   (point < 0xac00 || point > 0xd7a3);
-//           const bool contextual = script != QChar::Script_Common &&
-//                                   script != QChar::Script_Inherited &&
-//                                   script != QChar::Script_Latin &&
-//                                   script != QChar::Script_Han &&
-//                                   script != QChar::Script_Hiragana &&
-//                                   script != QChar::Script_Katakana &&
-//                                   script != QChar::Script_Hangul;
-//           if (point > 0xffff || combining || hangulJamo || contextual ||
-//               point == 0x200d || direction == QChar::DirR ||
-//               direction == QChar::DirAL ||
-//               (!font.supportsCharacter(point) && !symbols.supportsCharacter(point))) {
-//               required = true;
-//               break;
-//           }
-//       }
-//       if (text.size() <= 4096) layoutRequired.insert(key, new bool(required));
-//       return required;
-//   }
-//
-// Plan mapping (docs/superpowers/plans/2026-11-09-qt-to-flutter-parity-plan.md,
-// card T31): "fall back only for a missing glyph, a combining mark, a complex
-// script or RTL; NotoSansSymbols2 supplies symbols". That sentence is the seven
-// terms, so every term is pinned separately below.
-//
-// Coverage map, by the lettering of the task card:
-//   A  terms (1)..(7) one by one, plus the first-hit break (Glyphs.cpp:132)
-//   B  a data-less UnicodeClassifier is rejected, never answered false
-//   C  the empty string is answered before the port is validated
-//   D  requiresFallbackGate: wiring-time rejection, closure == direct call,
-//      and the captured GlyphFontSet
-//   E  kDefaultGlyphWeight == 'regular' and the weight default of the predicate
-//   F  the kScript* slots are T31's own numbering, not QChar::Script
-//   G  kScriptUnknown is contextual, literally like Qt
-//
-// Isolation discipline: a positive case masks the other six terms -- the
-// fixture declares the symbol face as covering the code point and the fake
-// classifier reports the remaining queries as plain -- so a true answer can
-// only come from the term the test names. The masking set is a fixture, NOT a
-// claim about the real NotoSansSymbols2 cmap; the real cmap question belongs to
-// glyph_font_test.
-//
-// WRITTEN, NOT EXECUTED: flutter test / dart test / dart analyze are forbidden
-// in this worktree, so both RED and GREEN are unexecuted here.
+// Qt 的 Glyphs::needsLayout 是唯一权威：缺字、组合标记、复杂脚本、RTL 等七项逐条钉住，
+// 命中即 break。正例只让被测那一项成立，其余用 fixture 屏蔽。
 
 import 'package:flutter_test/flutter_test.dart';
 

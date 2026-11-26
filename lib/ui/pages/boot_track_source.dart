@@ -1,15 +1,8 @@
-/// boot 实测曲线源：载入 Assets/animation/boot-tracks.json 并复刻 Qt 的采样语义。
+/// boot 曲线源：载入 Assets/animation/boot-tracks.json 并复刻 Qt 的采样语义。
 ///
-/// 证据（Qt/ 只读源，行号即证据）：
-/// - Qt/src/BootTimeline.cpp:26-62   载入：普通键逐行 [frame, value]；brandX 以数组下标为帧；
-///                                   logo.draw → logo.drawStart/logo.drawEnd；orbit.sides → orbit.column0..8；
-///                                   orbit.orbit → orbit.angle = atan2(y-539.5, x-959.5)、orbit.radius = hypot(...)。
-/// - Qt/src/BootTimeline.cpp:64-67   value(key, frame)：未命中返回 0，否则 track(curve, frame)。
-/// - Qt/src/BootTimeline.cpp:22      角度单位 degrees → radians = pi/180（消费方 scan()/orbit() 自行乘）。
-/// - Qt/src/SceneMotion.cpp:52-95    track()：单调 Hermite（非纯线性），端点保留斜率，内部斜率异号时切线归零。
-///
-/// 失败语义：资源缺失/JSON 结构不符/数值非法 → [BootTrackLoad] 携带 error，[AssetBootTrackSource]
-/// 保持 0 值并暴露诊断状态；本文件不抛到 UI，也不伪造任何曲线。
+/// 载入时做特殊键映射（brandX 按下标、logo.draw、orbit.sides/orbit），未命中 key 返回 0；
+/// track() 是单调 Hermite 插值，端点保留斜率、内部异号切线归零。
+/// 失败只记录 error 并保持 0 值，不抛到 UI。
 library;
 
 import 'dart:async';
@@ -22,12 +15,7 @@ import 'package:flutter/services.dart' show AssetBundle, rootBundle;
 /// boot 曲线资产路径（pubspec.yaml:65-67 已声明 `Assets/animation/`）。
 const String kBootTracksAssetPath = 'Assets/animation/boot-tracks.json';
 
-/// 实测曲线注入 seam。
-///
-/// Qt 侧这些量来自 Assets/animation/boot-tracks.json 的实测曲线（BootTimeline.cpp:26-62 载入，
-/// :192/:197/:205 等处消费）：logo 描边（logo.leftEdge / logo.movingCut / logo.drawStart / logo.drawEnd）、
-/// scan 弧与轨道（scan.* / scanTracking / orbit.*）、brand 行（brandX / brandOpacity）、
-/// highlightKeys、ringOpacity、permissionOpacity 尾段。
+/// 曲线注入 seam：logo 描边、scan 弧与轨道、brand 行、highlightKeys、ringOpacity 等。
 abstract class BootTrackSource {
   const BootTrackSource();
 
@@ -44,7 +32,7 @@ class ZeroBootTrackSource extends BootTrackSource {
   double value(String key, double frame) => 0;
 }
 
-/// 一条实测关键帧（Qt/src/SceneMotion.h 的 Curve 元素 {frame, value}）。
+/// 一条关键帧（Qt/src/SceneMotion.h 的 Curve 元素 {frame, value}）。
 class BootTrackKey {
   const BootTrackKey(this.frame, this.value);
 

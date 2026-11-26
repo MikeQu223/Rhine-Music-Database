@@ -27,11 +27,9 @@ class NativeScene {
     void select(int index, QJsonObject navigation = {});
     void navigate(QString axis, int direction);
     int selection() const;
-    // 详情页唱片被拖到的相对角度（-0.8..0.8）。过阈值就该翻到相邻唱片——这是原始 Qt
-    // 的"转到底换一张"行为，切哪一张由 Flutter 的列表真值决定，原生只报手势。
-    // 引擎自己的"这算不算点选"判据：既没有按压中的拖动，也没超过 7px 位移阈值。
-    // 3D 层的横滑被刻意锁在同一列（moveArchive 不改 lane），轨道几乎不动，所以宿主不能
-    // 只看轨道位移来判断"是不是点选"，必须问引擎。（真机：纯横滑松手曾发出 archive-select）
+    // 详情页唱片被拖到的相对角度（-0.8..0.8）；翻哪张由 Flutter 的列表真值决定。
+    // 引擎自己的点选判据：无按压拖动且位移未过 7px。横滑锁在同一列，
+    // 轨道几乎不动，宿主必须问引擎而不能只看轨道位移。
     bool tapLike() const { return !m_moved && !m_drag.active; }
 
     double rotationTarget() const { return m_targetRotation; }

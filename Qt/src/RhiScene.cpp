@@ -118,10 +118,8 @@ static constexpr int COVER_LATENCY_SAMPLES = 8;
 static QMatrix4x4 matrix(QJsonArray a, int offset = 0) {
     QMatrix4x4 m;
     for (int i = 0; i < 16; ++i) {
-        // 越界必须当成 0，不能让 QJsonArray::operator[] 交出空引用去 toDouble()：
-        // Qt 6 的 QJsonValueConstRef 一旦指向越界/缺失槽位，内部指针为空，
-        // toDouble() 直接对空指针 +0x30 取值 ⇒ 原生 SIGSEGV（FA-159 设备实测
-        // tombstone_04：RhineRendering::vector → QJsonValueConstRef::concreteDouble）。
+        // 越界必须当 0：QJsonValueConstRef 指向缺失槽位时内部指针为空，
+        // toDouble() 直接解引用空指针，SIGSEGV。
         const int k = offset + i;
         m.data()[i] = k >= 0 && k < a.size() ? float(a.at(k).toDouble()) : float(i % 5 == 0 ? 1 : 0);
     }
@@ -447,14 +445,10 @@ class Renderer {
     /// E02：本帧回收出来的槽位。优先复用它们，`used` 只在没有空闲槽时才前进，
     /// 历史键因此不会把 256 个槽位永久吃光。
     QList<quint32> freeSlots;
-    /// D02 开关：RHINE_VK_UNIFORM_ARENA=1 才走 arena；任何一步不满足就永久退回逐材质 buffer。
-    /// E01：请求值与生效值分开存——回退是永久的，日志只写"开了"会把回退读成还在走 arena。
+    /// D02 开关：RHINE_VK_UNIFORM_ARENA=1 才走 arena，任何一步不满足就永久退回逐材质 buffer。
+    /// 请求值与生效值分开存，否则回退读不出来。
     ///
-    /// Android（GLES）刻意不默认开：Qt 的 GLES2 后端把 QRhi::NonDynamicUniformBuffers
-    /// 报为 true，没有真正的 UBO，uniform 靠 glUniform 逐次下发；SRB 一旦带动态偏移，
-    /// 后端就跳过「相同 SRB 不重绑」的优化、每个 draw 都重设一遍 uniform。arena 的
-    /// 「一次绑定 + 动态偏移」收益在 GLES 上拿不到，甚至可能更慢。想实机 A/B 仍可显式
-    /// RHINE_VK_UNIFORM_ARENA=1（ensureMaterialArena 有能力探测，不满足会自动回退）。
+    /// Android（GLES）刻意不默认开：没有真正的 UBO，动态偏移的收益拿不到，甚至更慢。
     const bool uniformArenaRequested = qEnvironmentVariableIntValue("RHINE_VK_UNIFORM_ARENA") == 1;
     bool uniformArena = uniformArenaRequested;
     QString arenaFallback;
@@ -746,16 +740,9 @@ class Renderer {
                                 rhi->isTextureFormatSupported(QRhiTexture::BC7, surfaceFlags);
         bool atlasReady = false;
 #if defined(Q_OS_ANDROID)
-        // GLES 上没有 BC7，原先只能回退到 RGBA8：1024² 全 mip 链 5.6 MB、4 B/texel。
-        // ETC2 RGB8 本来是 0.5 B/texel（0.7 MB、采样带宽 1/8，GLES 3.0 强制支持），
-        // **但 scripts/bake-archive-lighting.py 里那套手写编码器是坏的，默认不启用**：
-        //   · 块用 `struct.pack("<Q")` 写出，而 ETC2 规定每块 64 bit 按大端存储；
-        //   · 修掉字节序后 PSNR 也只有 21 dB，且棕色材质被解成蓝灰——individual 模式的
-        //     基色位偏移（`base << 60/56/52/48/44/40`）与规范不符，R/B 通道错位。
-        // 实测（texture2ddecoder 按规范解）：现状 PSNR 5.71 dB，逐块翻转字节后 21.31 dB，
-        // 两者都是花屏，真机表现就是磁带盒边缘那圈彩色噪点。
-        // 保留产物与代码路径，等换用可靠编码器（或修好位布局并验证 PSNR > 30）再打开：
-        //   RHINE_BAKE_ETC2=1 烘焙 + RHINE_SURFACE_ETC2=1 运行。
+        // GLES 上没有 BC7。ETC2 本可省 8 倍带宽，但 bake-archive-lighting.py 的编码器是坏的
+        // （字节序与基色位偏移都不对，解出来是花屏），默认不启用。
+        // 换用可靠编码器并验证 PSNR 后再打开 RHINE_BAKE_ETC2 / RHINE_SURFACE_ETC2。
         static const bool wantEtc2 = qEnvironmentVariableIntValue("RHINE_SURFACE_ETC2") == 1;
         const QByteArray surfaceEtc2 =
             wantEtc2 ? readOptional(root, "archive-baked-surface-etc2.bin") : QByteArray();
@@ -799,12 +786,7 @@ class Renderer {
                                QRhiTexture::ThreeDimensional);
         upload3D(lightAtlas, lightBytes, 24);
         // 法线响应的位宽从文件字节数反推，不依赖编译期宏。
-        //
-        // 2026-11-06 21:28 的启动崩溃就是踩了这个坑：RHINE_NORMAL_RGBA8 原先只加在
-        // RhineCore 上，而 CMakeLists.txt 的 RHINE_CORE_SOURCES 用 FILTER EXCLUDE 把
-        // RhiScene.cpp 排除了（它链 fsr/fg，不进回归库），这个文件只编进
-        // RhineMusicDatabase。于是宏从未生效，C++ 按 RGBA16F 去校验 8 位数据，
-        // 烘焙出来的 131072 字节直接 qFatal——着色器和烘焙都是对的，只有 C++ 判断错了。
+        // 宏只加在 RhineCore 上时 RhiScene.cpp 拿不到它，8 位数据会被按 RGBA16F 校验并 qFatal。
         // 文件大小是唯一不会说谎的来源：131072 = RGBA8，262144 = RGBA16F。
         const QByteArray normalBytes = read(root, "archive-baked-normal.bin");
         const qint64 normalByteCount = normalBytes.size();
@@ -1111,10 +1093,8 @@ class Renderer {
     /**
      * E02：按本帧真正要用的材质键规划槽位。
      *
-     * 旧实现按 `used + draws.size()` 预留：同一个键会被重复计数，历史键又永不释放，
-     * 于是每滚一轮都把水位往上推，迟早撞到 256 槽上限并永久关掉 arena（优化静默消失）。
-     * 现在先回收本帧不再出现的键（槽位进 freeSlots、committed 失效），再只为真正新增的
-     * 键扩容量；`used` 只在空闲槽耗尽时前进。
+     * 先回收本帧不再出现的键，再只为新增键扩容；`used` 只在空闲槽耗尽时前进。
+     * 按 `used + draws.size()` 预留会把水位一路推高，最终撞上 256 槽上限并关掉 arena。
      */
     bool planMaterialArena(const QSet<RhineRender::MaterialSlotKey> &active) {
         if (!uniformArena) {
@@ -2823,15 +2803,9 @@ class Renderer {
             } else if (mesh == -7) {
                 label = letteringTextureSpine;
             } else if (d["label"].toBool()) {
-                // B02：只有当前曲目可以回落到 labelTexture；归位卡片缺标签就用白色占位，
-                // 不许借别人的文字——否则快速滚动时上一首的标题会跟着卡片飞。
-                //
-                // 空 key 是第三类，B02 当时漏掉了：场景里静态陈列的展示唱片
-                // （scene-fixture.json 的 mesh=-1 / cassette）没有曲目身份，既不是
-                // "当前曲目"也不是"别人的曲目"。原来它一并落到 white，整排陈列的
-                // 标签面就变成纯白卡纸，看起来就是贴图丢失。
-                // 与封面的处理对齐：封面空 key 回落 currentCover（见下面的
-                // coverFallback），标签空 key 同样回落当前曲目的 labelTexture。
+                // B02：只有当前曲目可以回落到 labelTexture；归位卡片缺标签用白色占位，
+                // 不许借别人的文字，否则滚动时上一首的标题会跟着卡片飞。
+                // 空 key（静态陈列唱片）没有曲目身份，与封面一致回落当前曲目的 labelTexture。
                 if (key.isEmpty()) {
                     label = labelTexture ? labelTexture : white;
                 } else if (key == selectedKey) {
@@ -2982,12 +2956,10 @@ class Renderer {
         return result;
     }
     /**
-     * E03：把本帧**两个**最终列表的实例字节一次性搬进池。
+     * E03：把本帧两个最终列表的实例字节一次性搬进池。
      *
-     * 旧实现按列表分别调用：第二次调用用"本次 total"而不是"cursor + total"规划容量，
-     * 可能写越界；两次还各自替换 mirror，另一个列表的上一帧镜像直接丢掉，于是交替重传。
-     * 现在先统一规划（含 4 字节对齐）、一次扩容，再一起分配与上传；只有整池失败才回落
-     * 逐 draw buffer（回落是整帧一致的决定，不会半池半单独）。
+     * 先统一规划（含 4 字节对齐）、一次扩容，再一起分配与上传；只有整池失败才回落
+     * 逐 draw buffer（整帧一致，不会半池半单独）。
      */
     void poolInstances(QList<Draw> &opaque, QList<Draw> &transparent) {
         if (!instancePoolEnabled) {
@@ -3537,24 +3509,13 @@ class Renderer {
         // 恢复图形设备时只还原"已准入且确实缺纹理"的旧唱片：路过的条目永远不补资源。
         admittedKeysThisFrame = gatedKeysThisFrame = 0;
 #if defined(Q_OS_ANDROID)
-        // 停稳判定：当前焦点已准入，说明手指停住超过 500 ms。只有这时才给视野内的
-        // 其它唱片补纹理；滚动中一个都不补，否则又回到"边滑边建封面"。
+        // 停稳判定：当前焦点已准入说明手指停住超过 500ms，这时才给视野内其它唱片补纹理。
+        // 快速翻页会把沿途十几条登记成「路过」，谁都没熬过准入，停手后一整排都是白纸板。
         //
-        // 为什么要补：一次快速翻页会把沿途十几条全部登记成"路过"，谁都没熬过 500 ms
-        // 准入。手指停下后只有最终焦点建了纹理，其余卡片的 label 回落 `white`、盘面回落
-        // placeholderCover——一整排磁带盒就是白纸板，也就是用户报的"非当前命中的唱片
-        // 模型贴图丢失"。准入只该决定"什么时候建"，不该决定"永远不建"。
+        // 标签优先（512×220，约封面成本的十分之一，缺它最刺眼），封面等有图再补。
+        // 各 2 张/帧而不是一次补完，避免抬手那一帧堆出十几毫秒的 GUI 尖峰。
         //
-        // 标签优先：512×220 纸面 + mip 约 600 KB，是封面成本的十分之一，而缺它的表现
-        // 恰恰最刺眼（纯白）。所以标签走 labelOnly 先补，封面等有图再补——空图会退到
-        // 同步占位合成，那比继续贴 placeholderCover 更贵也不好看。
-        //
-        // 各 2 张/帧而不是一次补完：可见的归位卡片通常个位数，两秒内补齐；同一帧全建
-        // 会在"手指抬起"那一帧堆出十几毫秒的 GUI 尖峰，正好落在观感最敏感的节点上。
-        //
-        // 名字带 TopUp 是为了避开成员 `coverBudget`（RhineRender::CoverPrepBudget，
-        // 封面预处理的在途并发闸）。同名局部变量会静默遮蔽它，本函数后段再碰就编译不过，
-        // 更糟的是看起来"预算没生效"却查不出原因。
+        // 名字带 TopUp 是为了避开成员 `coverBudget`（同名局部变量会静默遮蔽它）。
         const bool settled = musicTextures.value(currentMusicKey).admitted;
         int labelTopUp = settled ? 2 : 0;
         int coverTopUp = settled ? 2 : 0;
@@ -3568,12 +3529,11 @@ class Renderer {
             if (it.key() == currentMusicKey || it->item.isEmpty()) {
                 continue;
             }
-            // 绑定纹理的 revision 与条目想要的 revision 不一致才退：只判"有没有绑定"会自激——
-            // 退掉之后 updateMusic 立刻用空图绑回 revision 0（共享占位），下一帧条件又成立，
-            // 于是无封面的格每帧重画位图、重传 mip、退纹理并刷一行日志。
-            //   bound == 0：这一格本来就没有封面 -> 共享占位，保持不动，零开销。
-            //   bound != 0 且条目图已清空：URL 换了，旧图必须下屏（否则贴的是上一版封面）。
-            //   bound != cacheKey：新图已落地但绑的还是旧的 -> 退掉，由 updateMusic 登记新 revision。
+            // 只有纹理 revision 与条目想要的 revision 不一致才退：
+            // 只判「有没有绑定」会自激——退掉后立刻用空图绑回 0，下一帧条件又成立。
+            //   bound == 0：本来就没封面，保持共享占位。
+            //   bound != 0 且条目图已清空：URL 换了，旧图必须下屏。
+            //   bound != cacheKey：新图已落地，退掉等 updateMusic 登记新 revision。
             const auto boundRevision = coverRevisions.value(it.key(), qint64(0));
             const auto wantedRevision = it->cover.isNull() ? qint64(0) : it->cover.cacheKey();
             // 已经在为新 revision 等待（意图登记过）就不退：退掉会把在途预处理一起取消，

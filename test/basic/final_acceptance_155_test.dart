@@ -1,17 +1,7 @@
-// FINAL-ACCEPTANCE-155 · 封面迟到结果的收口回归（FSR 组已按 m03406 暂缓移出本阶段）。
+// FINAL-ACCEPTANCE-155 · 封面迟到结果的收口回归。
 //
-// 本文件守的是一条**真实链路**，不是注释：
-//
-//  通知封面的迟到结果：同一 (id, url) 的旧闭包回来时（成功**或异常**）都不能改写
-//     当前身份的封面；封面变空要立刻上报空；失败重试有界；缓存自己在文件系统上
-//     出错不能把"已经落盘"的结论改成"没有"。
-//
-// 说明：f669f56 里的 FSR 档位/锐化桥（BasicSceneSettings.fsrQuality/fsrSharpness →
-// 场景快照 → Qt qputenv）连同它的断言组一起暂缓（用户 m03406）。FSR 的持久化契约
-// （panel/fsr-quality|fsr-sharpness）仍在 basic_settings.dart 的 antiAliasing 细项里，
-// 属既有范围，本阶段既不新增 UI 也不做当场生效。
-//
-// 真机上的通知可见性仍由设备验收负责，不能拿这里的 pass 当 device PASS。
+// 同一 (id, url) 的旧闭包回来（成功或异常）都不能改写当前身份的封面；封面变空要立刻上报；
+// 失败重试有界；缓存的文件系统错误不能把「已落盘」改成「没有」。
 
 import 'dart:async';
 import 'dart:convert';

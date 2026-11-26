@@ -400,10 +400,7 @@ PortraitCommentsLayout paintPortraitCommentsPage(
       contentY += portraitCommentBodyLine;
     }
     double metaY = contentY + 5;
-    // Qt `"♥ " + item["likedLabel"]`，而 likedLabel 恒为 `compactCount(likedCount)`
-    // （CommentsController.cpp:668-712 的 state()），即最小值是 "0"，不会是空串。
-    // 心形走图标而不是字面 `♥`：MiSans 缺 U+2665，真机会渲染成向下的三角
-    // （2026-11-24 评论页截图里一排「▽ 0」）。
+    // 心形走图标而不是字面 `♥`：MiSans 缺 U+2665，会渲染成一排「▽ 0」。
     final String liked = item.likedLabel.isEmpty ? '0' : item.likedLabel;
     c.icon('heart', 58, metaY - 2, size: 12, color: c.muted);
     c.text(liked, 75, metaY, size: 12, width: 74, color: c.muted);

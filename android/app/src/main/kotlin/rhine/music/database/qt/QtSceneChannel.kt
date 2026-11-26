@@ -96,13 +96,8 @@ object QtSceneChannel {
         (arguments?.get("ctx") as? Number)?.toLong() ?: 0L
 
     /**
-     * 输入事件的 origin 校验（fail-closed）。返回 false 表示这条事件不属于当前登记的
-     * 视图/代次，或者这个视图还没有绑定过任何代次（unbound）。
-     *
-     * 旧实现在两处放行：`ctx == 0` 直接放行、`contexts[viewId]` 缺失也放行。那等于让
-     * "没带代次"或"从没推过快照"的来源穿透所有门禁——而排队中的旧视图事件恰好缺这些
-     * 字段。现在只有**已绑定**且代次精确相等才放行；未登记视图、未绑定视图、旧代次
-     * 一律丢弃并打日志（日志里的 reason 就是拒绝理由，设备上能直接分辨）。
+     * 输入事件的 origin 校验，fail-closed。未登记、未绑定、旧代次一律拒绝并记原因，
+     * 否则排队中的旧视图事件会穿透所有门禁。
      */
     private fun acceptsInput(viewId: Int?, context: Long): Boolean {
         if (viewId == null || viewId !in pushers) {
@@ -112,7 +107,7 @@ object QtSceneChannel {
         return known != 0L && known == context
     }
 
-    /** 拒绝理由（只用于日志：设备上要能分辨"旧视图"、"未绑定"与"旧代次"）。 */
+    /** 拒绝理由（只用于日志：要能分辨"旧视图"、"未绑定"与"旧代次"）。 */
     private fun rejectReason(viewId: Int, context: Long): String {
         if (viewId !in pushers) return "retired view=$viewId"
         val known = contexts[viewId] ?: return "unbound view=$viewId ctx=$context"

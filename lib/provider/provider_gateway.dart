@@ -382,11 +382,7 @@ abstract class ProviderGateway {
   }
 
   /// 取曲目播放地址（对应 `playback(value, quality, alternative)`）。
-  ///
-  /// 三个参数都是位置参数：`value` 是 `{id}`，`quality` 是平台音质 id
-  /// （缺省用 descriptor 的 `quality.default`，网易云是 `exhigh`），`alternative`
-  /// 是「用替代音源兜底」。只传 `value` 会让插件拼出 `level=undefined`，
-  /// 上游直接回「暂无可用音源」——真机上踩过。
+  /// 三个都是位置参数；只传 `value` 会让插件拼出 `level=undefined`，上游回「暂无可用音源」。
   Future<String> playback({
     required String trackId,
     String quality = '',
@@ -438,19 +434,13 @@ abstract class ProviderGateway {
     throw const ProviderUnavailableError('当前来源不支持集合详情');
   }
 
-  /// 歌曲百科（Qt `MusicLibrary.cpp:591-598` 的 `api.call("wiki", {id})`）。
-  ///
-  /// 插件返回一段纯文本（真机 netease：`曲风：…\n推荐标签：…\n来源：网易云音乐百科`），
-  /// 这里统一成 `{'text': <原文>}`；没有百科能力的平台默认抛 [ProviderUnavailableError]。
+  /// 歌曲百科（Qt `api.call("wiki", {id})`）：插件返回纯文本，统一成 `{'text': …}`。
   Future<Map<String, Object?>> wiki({required String trackId}) async {
     throw const ProviderUnavailableError('当前来源不支持歌曲百科');
   }
 
-  /// 专辑信息 + 同专辑曲目（Qt `MusicDirectory::enterDirectory` 的 album 分支）。
-  ///
-  /// 返回 `{'album': <item>, 'songs': <rows>, 'ids': <trackIds>}`。插件没有独立的
-  /// `album` operation（真机 netease 回「插件不支持该接口：album」），所以插件网关用
-  /// `detail({kind:"album", id})` 的 `[item, songs, ids]` 组装。
+  /// 专辑信息 + 同专辑曲目，返回 `{'album', 'songs', 'ids'}`。
+  /// 插件没有独立 `album` operation，用 `detail({kind:"album", id})` 组装。
   Future<Map<String, Object?>> albumInfo({required String albumId}) async {
     throw const ProviderUnavailableError('当前来源不支持专辑信息');
   }

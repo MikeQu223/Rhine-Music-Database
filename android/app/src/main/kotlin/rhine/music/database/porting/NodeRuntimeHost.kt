@@ -179,9 +179,7 @@ interface NodeRuntimeNativeStarter {
 /**
  * Node 运行时宿主端口 = lib/bridge/node_runtime.dart 的 `NodeRuntimeHost` 的 Kotlin 对应面。
  *
- * 三个方法与 Dart 一一对应；差别只在 async 表达：Dart 的 `Future` 来自平台通道往返
- * （旧实现 lib/bootstrap/node_host_bridge_channel.dart），进程内 Kotlin 直调没有跨通道握手，
- * 所以同步返回。若后续改由 MethodChannel 承载，由接线层负责包成 Future（这里不写接线）。
+ * 三个方法与 Dart 一一对应；进程内直调没有跨通道握手，所以同步返回。
  */
 interface NodeRuntimeHost {
     /**
@@ -385,16 +383,10 @@ class NodeRuntimeHostCandidate(
     }
 
     /**
-     * `node::Start` 返回后的唯一回调面（Qt:152-159）：由 native/宿主线程调用一次。
+     * `node::Start` 返回后的唯一回调面，由 native/宿主线程调用一次。
      *
-     * 这里**没有调用方**、也没有 JNI 注册；它存在的意义是把 Qt:153 的
-     * `runtime->exited = true` 与 Qt:157 的 `accept({type: runtime-error})` 落成可审查的契约：
-     * 置 [state] = exited、记录退出码与脚本路径（Qt:154 的 logcat 文案），并让**下一次**
-     * [prepare] 报 [NodeRuntimeHostReason.RUNTIME_EXITED] —— Dart 的 _exited 分支 据此把 `_exited` 置真。
-     *
-     * 幂等：重复调用只保留第一次（Qt 的 accept(runtime-error) 也只投一次）。
-     *
-     * @param exitCode `node::Start(4, values)` 的返回值（Qt:152）。
+     * 置 [state] = exited、记录退出码与脚本路径，并让下一次 [prepare] 报
+     * RUNTIME_EXITED。幂等：重复调用只保留第一次。
      */
     fun notifyRuntimeExited(exitCode: Int) {
         synchronized(lock) {

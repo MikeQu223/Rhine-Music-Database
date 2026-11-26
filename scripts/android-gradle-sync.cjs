@@ -92,7 +92,7 @@ android {
 // 刻意保留 Qt6QuickControls2 / QuickControls2Impl / QuickControls2Basic（约 2.5 MB）：
 // 那是 QQC2 的默认样式兜底。万一将来某条 import 链把它拉进来，少一个 .so 就是启动即崩，
 // 省 2.5 MB 换一个必崩风险不划算。真要连它们一起删，先确认所有 QML 与 C++ 都不碰
-// QtQuick.Controls，并真机冷启动验证一次。
+// QtQuick.Controls，并冷启动验证一次。
 android {
     packagingOptions {
         jniLibs {
@@ -101,7 +101,7 @@ android {
             // 注意 android-gradle-sync.cjs 里这段在 JS 模板字符串内，注释里不能出现反引号。
             // 只排除 QtLoader 启动清单之外的库。array/qt_libs 里的 35 个库会被
             // QtLoader 按顺序逐个 System.load，缺任何一个都会弹「致命错误」
-            // 并 System.exit(-1)（2026-11-07 连续两次启动失败的根因）。
+            // 并 System.exit(-1)（连续两次启动失败的根因）。
             // 清单包含全部五套 QQC2 样式及 StyleImpl、Qt6LabsFolderListModel
             // （QtQuick.Dialogs 隐式依赖），它们一个都不能排。
             // 核对方式：aapt2 dump resources <apk> 读 array/qt_libs；

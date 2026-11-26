@@ -18,45 +18,16 @@ import android.util.Log
 /**
  * 原生媒体会话后端的共享状态与静态入口（Qt Android → Flutter 的 1:1 移植）。
  *
- * 真值源：Qt/android/src/rhine/music/database/RhineMediaService.java
- *   35-41    常量（CHANNEL_ID / NOTIFICATION_ID / ACTION_PLAY|PAUSE|NEXT|PREV|SEEK）
- *   46-61    静态状态（instance / session / audioManager / focusRequest / noisyReceiver /
- *            playing / title / artist / album / positionMs / durationMs / coverPath /
- *            coverBitmap / notifiedKey）
- *   63-70    start(Context)：instance 非空早退，否则拉起前台服务
- *   72-99    update(...)：落状态 + 封面按路径变化重解码 + 播放时申请焦点 + publish
- *   101-114  stop()：清播放态 + 释放焦点 + publish（服务保活，不结束前台）
- *   226-254  acquireFocus / releaseFocus / onFocusChange
+ * 帧状态（playing / title / artist / position / duration / cover / notifiedKey）收在本 object
+ * 作为单一真源；Service 实例只保留必须靠 this 才能拿到的对象与方法。
  *
- * 与 Java 源的结构差异（三处，均为 Flutter 侧必要改动）：
- *   1. 静态 native mediaAction(String)（Java:44）与其 JNI 入口
- *      （Qt/src/AndroidMediaSession.cpp:74-90）→ 注入式 sink：install(context, dispatch)
- *      保存 app context 与回调，enqueue(action) 把动作串交给 sink。
- *      与 Qt 的差别只在"装 sink 之前"这段窗口：Qt 在 Host 构造时就 platformMediaCommands(...)
- *      装好回调（Host.cpp:68-72），cpp:86 的 "media action dropped" 分支实际不可达；Flutter 侧
- *      服务可能先于 Dart 装 sink 起来（START_STICKY 复活、通知按钮、耳机键与焦点回调都可能在
- *      引擎 attach 之前到达），照抄那行 return 会丢第一条媒体动作。因此这里改成进程内 handoff：
- *      sink 未安装时把动作按到达顺序留在 pendingActions，install 后原序补投；每条只尝试交付
- *      一次（不清队列、不设容量上限、不去重、不合并）。本文件不声明任何 native/external
- *      方法，也不调用 System.loadLibrary。
- *   2. 版本守卫：本工程 compileSdk=targetSdk=36、**minSdk 28**（Qt 侧同为 28）。startForegroundService
- *      （API 26）、AudioFocusRequest（API 26）、POST_NOTIFICATIONS（API 33）仍按 API 级分支实现：
- *      33 的分支是活路径，26 的分支在本工程已不可达但保留（与 Java 源一一对照，删了会丢掉
- *      对 org.qtproject 端口行为的可核对性），低版本一律走等价路径而不是静默跳过。
- *   3. 类名/FQCN 变更：rhine.music.database.RhineMediaService →
- *      rhine.music.database.porting.MediaSessionHost（共享状态与静态入口）
- *      + rhine.music.database.porting.MediaPlaybackService（Service 实例）。
- *      Java 把"静态帧状态"和"Service 实例"塞在同一个类里；这里把帧状态收进本 object
- *      作为单一真源，Service 侧只保留本来就靠 this 才能拿到的对象与方法。
+ * 与 Java 源的差异：
+ *  1. 静态 native 方法与 JNI 入口改成注入式 sink。服务可能先于 Dart 起（START_STICKY
+ *     复活、通知按钮、耳机键），所以 sink 未装时动作按到达顺序留在 pendingActions，
+ *     install 后补投。
+ *  2. 版本守卫按 API 分支保留（minSdk 28，26 的分支已不可达但留作对照）。
  *
- * ARCH_BLOCKED：Dart ↔ Kotlin 的通道接线不在本文件；本文件只暴露 install / ensureStarted /
- * update / stop 四个门面与内部 enqueue，不含任何 MethodChannel，也不改 MainActivity。
- *
- * 线程约定（Java:26-28）：所有入口、MediaSession 回调、通知按钮与音频焦点回调都在主线程，
- * 所以状态不加锁，也不引入协程/后台线程。pendingActions 与 draining 同样只允许主线程访问：
- * 这是调用契约，不是靠同步兑现的保证；跨线程调用仍是违约（与 Java 源同一约定）。
- * 交付是同步的：drainPending 直接在调用者（主线程）栈上调用 sink，不像 Qt 那样再经
- * QueuedConnection 跳一次事件循环；两者顺序一致（FIFO，重入追加到队尾）。
+ * 线程约定：所有入口与回调都在主线程，状态不加锁；交付是同步的（FIFO，重入追加队尾）。
  */
 object MediaSessionHost {
 
@@ -106,12 +77,8 @@ object MediaSessionHost {
     private var commandSink: ((String) -> Unit)? = null
 
     /**
-     * sink 安装前到达、尚未尝试交付的动作，严格按到达顺序保存（进程内、仅主线程访问）。
-     *
-     * 刻意不设容量上限、不去重、不合并：容量阈值必然在某个真实场景下丢弃合法动作，
-     * 而 play/pause/seek 之间没有能保持语义的合并方式（连按两次暂停与一次暂停不等价，
-     * seek 的目标位置也不同）。窗口只覆盖"服务已起、Dart 尚未 install"这一段，
-     * 动作来源与 Qt 相同（用户按键/通知按钮/系统回调），规模有限。
+     * sink 安装前到达、尚未尝试交付的动作，按到达顺序保存（仅主线程访问）。
+     * 不设容量上限、不去重、不合并：这些动作之间没有能保持语义的合并方式。
      */
     private val pendingActions = ArrayDeque<String>()
 
@@ -201,15 +168,10 @@ object MediaSessionHost {
     }
 
     /**
-     * Java:63-70 的 start(Context)，并合入 Qt 侧"先申请通知权限再启动"的流程
-     * （AndroidMediaSession.cpp:27-56）。幂等：服务已实例化时早退。
+     * 启动前台服务（幂等：已实例化时早退）。
      *
-     * 返回值就是这次请求的结局，供通道如实回给 Dart：true = 系统已受理启动请求，
-     * false = 被系统拒绝（API 31+ 的后台启动限制等），此时降级为"没有前台通知/无保活
-     * 保障"，播放与会话控制照常。不抛、不重试：拒绝只说明"当时那一刻不允许"。
-     *
-     * true 只代表"已经请求启动"：服务 onCreate 是稍后异步发生的，通知是否可见还取决于
-     * POST_NOTIFICATIONS 授权；调用方不得把 true 当成"通知已显示"。
+     * 返回值就是这次请求的结局：true = 系统已受理，false = 被拒绝（后台启动限制等），
+     * 此时降级为无通知、无保活，播放照常。true 不代表通知已显示（还要 POST_NOTIFICATIONS）。
      */
     fun ensureStarted(context: Context): Boolean {
         if (instance != null) {
@@ -227,30 +189,12 @@ object MediaSessionHost {
         private set
 
     /**
-     * 版本分支①（API 26；minSdk 28 下不可达，保留对照 Java 源）：API 26 起必须
-     * startForegroundService，否则随后 startForeground 会抛异常。
+     * API 26 起必须 startForegroundService，否则随后的 startForeground 会抛异常。
      *
-     * Android 12（API 31）起，从非前台上下文调用 startForegroundService 会抛
-     * ForegroundServiceStartNotAllowedException。它不是"通知没显示"级别的噪音：异常穿出
-     * ensureStarted 会一路冒到调用方（Activity 启动链或媒体状态上报链），把一次保活失败
-     * 放大成启动路径崩溃。所以必须就地拦住。
-     *
-     * 只按父类 IllegalStateException 捕获：ForegroundServiceStartNotAllowedException 是它的
-     * 子类，而 API < 31 的设备上根本没有这个类——显式写子类名会把类解析/验证风险带到旧设备，
-     * 用父类等价且安全（API 31+ 的 BackgroundServiceStartNotAllowedException 同样被覆盖）。
-     * 捕获后记 W 级日志、置 lastStartRejected、返回 false；不重新抛出。
-     * 其它异常类型不捕获（SecurityException 这类真错误照常上行，失败语义不变）。
-     *
-     * 合法调用点：只允许 Activity 处于 start/resume（应用在前台）时调用。
-     *   - AndroidWindow.cpp:79 是 Qt 的主调用点（窗口/Activity 启动期）；
-     *   - PlatformAndroid.cpp:69 的每次媒体状态上报被本文件的 instance 早退吸收：服务在跑时
-     *     根本摸不到系统这道闸，只有服务已死才算真正发起启动。
-     * 后台上下文（Service、BroadcastReceiver、Application，或 Activity 已 stop/被回收）不得调用；
-     * 即使异常已被本轮 catch 兜住，也不得据此重试——拒绝只说明"当时那一刻不允许"，立刻重试
-     * 必然再次被拒，只会刷日志。恢复保活只能等下一次真正的 Activity 前台回调（onStart/onResume）。
-     * catch 是兜底，不是后台启动的许可证。
-     *
-     * @return true = 已请求启动（含 API < 26 的 startService 路径）；false = 被系统拒绝，已降级。
+     * Android 12 起从非前台上下文调用会抛 ForegroundServiceStartNotAllowedException，
+     * 它会一路冒到调用方把保活失败放大成启动崩溃，所以就地拦住：只按父类
+     * IllegalStateException 捕获（子类在旧设备上不存在），记 W 级日志并返回 false，
+     * 不重试。只允许在 Activity 处于 start/resume 时调用。
      */
     private fun startForegroundServiceCompat(context: Context): Boolean {
         val intent = Intent(context, MediaPlaybackService::class.java)
@@ -297,11 +241,8 @@ object MediaSessionHost {
         if (nextCover != coverPath) {
             coverPath = nextCover
             val decoded = if (coverPath.isEmpty()) null else BitmapFactory.decodeFile(coverPath)
-            // CRASH-146：绝不 recycle 已经交给 MediaMetadata/通知的位图。
-            // 上一张封面还挂在会话元数据（METADATA_KEY_ALBUM_ART）和通知 largeIcon 上，
-            // SystemUI 会在别的线程/进程里继续读它；recycle() 之后那次读就是原生
-            // use-after-free（2026-11-19 00:12:51 的 SIGSEGV，status=11、无 tombstone，
-            // 正是「换曲改封面 + 开着歌词页」这种时序）。丢掉引用交给 GC 回收即可。
+            // 不要 recycle 已交给 MediaMetadata / 通知的位图：SystemUI 仍会读它，
+            // recycle 之后就是 use-after-free。丢掉引用交给 GC。
             coverBitmap = decoded
         }
         if (playing) {
@@ -311,14 +252,10 @@ object MediaSessionHost {
     }
 
     /**
-     * Java:101-114 的 stop：播放被清空（切页/停止）。服务与通知保持前台待机——这是应用保活的根：
-     * 前台服务 + mediaPlayback 类型让系统在无播放时也不回收进程，下次打开立即可续播。
-     * 只释放音频焦点（暂停/空闲时占着焦点会拦住其它应用出声）。
+     * 播放被清空（切页/停止）。服务与通知保持前台待机，只释放音频焦点。
      *
-     * MEDIA-CONTROLS-146：同时清掉元数据与封面。旧实现只把 playing 置 false 就 publish，
-     * 通知与锁屏会继续挂着上一首的标题、并且上一曲/播放/下一曲按钮看起来仍然可点——
-     * 内容已经没了，控件却还在，等于对用户谎称"这首还能操作"。清空后 isIdle() 为真，
-     * Service 侧据此上报 STATE_STOPPED 且不再提供任何动作。
+     * 同时清掉元数据与封面：只把 playing 置 false 会让通知继续挂着上一首的标题与可点按钮。
+     * 清空后 isIdle() 为真，Service 据此上报 STATE_STOPPED。
      */
     fun stop() {
         playing = false

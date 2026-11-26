@@ -1,31 +1,8 @@
-/// Rotation continuity — the "engine/session objects live outside the widget
-/// tree" half of  (plan 2026-11-09-qt-to-flutter-parity-plan.md:369, 373-376,
-/// 692-698).
+/// Rotation continuity — engine/session objects live outside the widget tree.
 ///
-/// Scope boundary: this library owns *runtime continuity only*. It never touches
-/// geometry, never reads MediaQuery, and never imports \`package:flutter\`. The
-/// stage re-derivation belongs to A1 (\`lib/app/orientation_state.dart\`); that file
-/// is pure Dart and is imported here for its single-source
-/// \`restorableModalNames\` constant (MF-5) and for the [StageMetrics] bridge that
-/// turns a [ViewportFrame] into stage units (F3) — it stays the only stage
-/// formula. Every numeric input (logical size, dpr,
-/// insets, IME inset) is injected as a plain \`double\`, so the whole file is
-/// statically testable with \`flutter_test\` (the repo has no \`package:test\`).
-///
-/// Why a tree-external object at all: rotation may only rebuild MediaQuery and
-/// recompute the stage . It must not \`runApp\`, dispose the player,
-/// clear the lists, log in again, restart Node, or rebuild the media source.
-/// Anything that has to survive rotation therefore has to live here, outside the
-/// widget tree, and be *handed in* to the rebuilt tree.
-///
-/// Evidence discipline: state fields mirror Qt and cite their Qt source line.
-/// Instrumentation counters (request/key/open counts), the resource ledger and
-/// the host are test harness constructs, not Qt fields. Fields added by the plan
-/// are labelled with their source; none impersonates a Qt field.
-///
-/// Fixture: \`test/fixtures/rotation_state.json\` is synthetic (\`"synthetic":
-/// true\`, \`"not_device_evidence": true\`). It is NOT a record of device rotation
-/// round trips.
+/// Rotation may only rebuild MediaQuery and recompute the stage; anything that must
+/// survive it (player, lists, Node, media source) is handed in to the rebuilt tree.
+/// Stage geometry stays in `orientation_state.dart`; this file takes plain doubles only.
 library;
 
 import 'dart:math' as math;

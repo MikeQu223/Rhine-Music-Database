@@ -181,19 +181,8 @@ class LyricsController {
     _positionMs = 0;
   }
 
-  /// Qt/src/LyricsController.cpp:243-254 `load` 的状态迁移（取词部分见文件头 KEEP OUT）。
-  ///
-  /// :247 算键、:248 判定是否同一首、:249 同曲保留播放位置（否则归 0）、
-  /// :250 同曲沿用每曲偏移（否则退回全局偏移）、:251 先 clear、:252-254 再落 offset/key/position。
-  /// sameTrack 的判定就是 `trackKey(track) == currentKey`：切歌（键不同）→ 偏移回到全局，
-  /// 所以「同一首再读一次」不会把用户调过的偏移丢掉，「换歌」不会把上一首的偏移带过去。
-  ///
-  /// 之后 Qt 进入发信号的分支（:255 起的本地分支、:274 的缓存命中 accept、:296-318 的网络与
-  /// loading），但**发射次数不恒定**：本地分支可能先在 :583 发一次 loading，再因缓存命中在
-  /// :588-589 走 accept 再发一次，同一次 load 因此可能是两次。
-  /// 取词属于数据层，本类在 :254 之后没有分支可走，所以这里只发这一次 changed()——比 Qt 少，不少多。
-  /// 另一处差异是状态字段：Qt 先改成 loading/empty 再发，这里是 clear() 之后的 idle。
-  /// 加载态文案由数据层接管，两处差异都写进了报告的残余风险。
+  /// Qt `load` 的状态迁移：同曲保留播放位置与偏移，换歌偏移回到全局，先 clear 再落 offset。
+  /// 取词属于数据层，这里只发一次 changed()（比 Qt 少），状态由数据层接管。
   void load(Map<String, Object?> track) {
     final key = trackKey(track);
     final sameTrack = key == _currentKey;
@@ -339,17 +328,8 @@ class LyricsController {
     };
   }
 
-  /// Qt/src/LyricsController.cpp:651-661 `applyPlaybackSnapshot`。
-  ///
-  /// 逐键恢复，默认值与 QJsonValue 的 defaultValue 一致：status "idle"（:653）、
-  /// message 空串（:654）、key 空串（:655）、index -1（:656）、三个 double 默认 0（:657-659）、
-  /// localSource "auto"（:660）。**不发信号**：Qt 这里也没有 emit。
-  ///
-  /// 已知差异（照抄 Qt，不做补强）：这里和 :652 一样只换 document，**不重建 starts**。
-  /// Qt 之所以安全，是因为 applyPlaybackSnapshot 只在 remoteCommand 之后被调用（:635），
-  /// 而远程模式下 MusicPlayer::tick 在 :472-474 整段 return，sync 永远碰不到陈旧 starts。
-  /// 单进程下若先 applyPlaybackSnapshot 再 tick，活动行会按旧 starts 计算——
-  /// 这是 Qt 的既有形态，修它需要新的时序约定，属于域外决定，故留作残余风险。
+  /// Qt `applyPlaybackSnapshot`：逐键恢复，默认值与 QJsonValue 一致，不发信号。
+  /// 只换 document、不重建 starts；Qt 靠调用时序保证安全，这里照抄。
   void applyPlaybackSnapshot(Map<String, Object?> snapshot) {
     _document = copyLyricsDocument(lyricsObjectValue(snapshot['document']));
     status = lyricsTextValue(snapshot['status'], fallback: 'idle');

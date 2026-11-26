@@ -1,14 +1,7 @@
 // HUD-SYNC-TEXT-142 · 列表 <-> 3D 双向连续跟随（HUD 侧接线回归）。
 //
-// 约定接口（与 FINAL-INTEGRATION-141 一致）：
-//   BasicHudSurface 新增 OPTIONAL `ValueChanged<double>? onLibraryScrollUpdate`，
-//   列表拖动期间每次 move 都发**连续条目位置**（可含小数）；抬手仍只走旧
-//   `onLibraryScroll`（commit-on-end）。141 负责 BasicApp/controller/native 接线，
-//   本文件只证明 HUD 这一侧真的在抬手前多次回调、且外部 state.listPosition 在
-//   非拖动状态不被 _dragPosition 遮住。
-//
-// 只写不跑：tests/analyze/build/ADB 的唯一执行者是 FINAL-INTEGRATION-141。
-// 141 仍须设备验证：真机列表拖动时 3D 层连续跟手、抬手不跳变，横竖屏各一次。
+// 列表拖动期间每次 move 都发连续条目位置；抬手仍只走 onLibraryScroll。
+// 本文件只证明 HUD 这一侧在抬手前多次回调。
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -274,9 +267,7 @@ void main() {
 
   testWidgets('D7：720 逻辑宽仍是 1080 舞台 + 唯一 scale，列表命中不被 720-789<0 误判',
       (WidgetTester tester) async {
-    // 真机 LOGICAL 宽 720，舞台恒 1080（portraitStageWidthConstant）。列表 x 在
-    // **舞台**坐标是 navigationLeft(1080)-4 = 287 ≥ 0；用 720 去减 789 得到负数
-    // 是混用坐标系，不是布局缺陷。这里用真实 PortraitStage 走一次 720 窗口。
+    // LOGICAL 宽 720，舞台恒 1080；用 720 去减舞台坐标是混用坐标系。这里走真实 PortraitStage。
     expect(portraitStageWidthConstant, 1080);
     expect(basicLibraryListStageRect(portrait: true, width: 1080).left, 287);
 

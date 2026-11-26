@@ -1,18 +1,7 @@
-// 列表拖动松手惯性（用户 m11762）：Flutter 自己拥有的 archive 列表行拖动在松手后
-// 必须按 Qt 的一维 archive 动量继续滑行、最后吸到整行，而不是抬手即停。
+// 列表拖动松手惯性：抬手后按 Qt 的一维 archive 动量继续滑行，最后吸到整行。
 //
-// 真机基线（.agents/parity-20261109/builds/LIST-INERTIA-PROFILE-20261118/）：安装包
-// c51a6c… 上列表行号 33 起手、抬手后 150ms 与 650ms 都还是 34 —— 完全没有惯性。
-//
-// 本文件只钉 HUD 这一侧（软件侧）的契约，不代替真机验收：
-//   * 抬手后 onLibraryScrollUpdate 继续多帧推进（滑行），方向与拖动同向；
-//   * 运动停稳后才提交，且只提交一次；提交的是吸附行（整数行）；
-//   * 提交值等于最后一次连续位置（列表与 3D 不跳变）；
-//   * 停稳后不再发连续位置（ticker 必须停）。
-//
-// 速度口径：move 的 timeStamp 必须显式给（Qt 用真实事件毫秒采样最近 120ms）；
-// 不给时全部采样落在同一时刻，等价于测不出速度 -> 不惯性（这也是既有
-// portrait_hud_142 用例保持"抬手即提交"的原因）。
+// 钉住：抬手后多帧推进且方向一致、停稳才提交且只提交一次、提交值等于最后连续位置、
+// 停稳后不再发值。move 的 timeStamp 必须显式给，否则采不到速度。
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -79,8 +68,7 @@ void main() {
     final Rect list = basicLibraryListStageRect(portrait: false, width: 1920);
     final Offset start = Offset(list.center.dx, list.top + 400);
 
-    // 每 32ms 上移 20 舞台像素 = 0.227 行 -> 约 7.1 行/秒（Qt 松手阈值 0.75 以上，
-    // 真机上就是一次普通快滑）；足够 120ms 窗口采到速度，又不会让用例跑很久。
+    // 每 32ms 上移 20 舞台像素 ≈ 7.1 行/秒，是一次普通快滑，足够采样速度。
     Duration stamp = const Duration(milliseconds: 32);
     final TestGesture gesture = await tester.startGesture(start);
     await tester.pump(const Duration(milliseconds: 32));
@@ -105,7 +93,7 @@ void main() {
     expect(commits, isEmpty,
         reason: '滑行/吸行途中不能提交：落行要等运动停稳');
     expect(updates.length, greaterThan(beforeFling + 3),
-        reason: '松手后必须继续多帧发连续位置（惯性）；抬手即停 = 真机 33→34 后不动');
+        reason: '松手后必须继续多帧发连续位置（惯性）；抬手即停 = 33→34 后不动');
     expect(updates.last, greaterThan(draggedTo),
         reason: '惯性方向与拖动同向（继续朝更大的条目号）');
 

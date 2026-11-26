@@ -1,13 +1,6 @@
 /// 竖屏设置页：滚到底之后中间那一屏的控件是否还点得动。
 ///
-/// 用户 2026-11-25 报告：「设置页滚到底后，除了最后一块『插件管理』，中间各行的
-/// 控件与链接全都点不动」。怀疑 `ClipRect > SizedBox > OverflowBox > Transform.scale`
-/// 这套「设计网格 + 整体缩放」在不同源处做命中：`Transform` 自身的 *未被缩放* 尺寸
-/// 只有 `gridWidth × pageBottom`（约 586×1600），而指针是舞台像素（1080×1920 逻辑），
-/// 于是屏幕下缘那一段落在 `RenderBox.hitTest` 的 `size.contains(position)` 之外。
-///
-/// 本文件钉住行为本身（不钉实现）：滚到底以后，把每一屏里第一个可点控件按真实
-/// 坐标点一次，必须发出对应动作。
+/// 钉住行为本身：滚到底后把每一屏里第一个可点控件按真实坐标点一次，必须发出对应动作。
 library;
 
 import 'package:flutter/material.dart';
@@ -23,8 +16,7 @@ BasicSettingsPanelModel _model() => basicSettingsPanelModel(
       version: const BasicSettingsVersion(version: '1.0.0'),
     );
 
-/// 本机竖屏的真实舞台：1080 × 1920（`wm size` 1800×2880、density 378 ⇒ 逻辑 762×1219，
-/// 归一化到 1080 宽后高 1727；取 1920 是为了复现「页面比屏幕高」的滚动）。
+/// 竖屏舞台 1080 × 1920（取 1920 是为了复现「页面比屏幕高」的滚动）。
 Future<List<String>> _pump(WidgetTester tester, {double height = 1727}) async {
   tester.view.physicalSize = Size(1080, height);
   tester.view.devicePixelRatio = 1;

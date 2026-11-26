@@ -1,15 +1,8 @@
-/// 初始化页面（req5）：Qt `NativeHudBoot::boot()` 的真实视觉层 + Flutter 门槛页。
+/// 初始化页面：Qt `NativeHudBoot::boot()` 的真实视觉层，同时给 boot_page 提供
+/// hudBuilder 的实现，把 glyph 命令（access / logo / auth / welcome / brand / powered）
+/// 逐条搬成 HUD 命令流。
 ///
-/// 为什么需要这个文件：lib/ui/pages/boot_page.dart 已经是 Qt 门槛页的 1:1 移植（
-/// 背景渐变 / 白闪 / scan 弧 / ENTER SYSTEM 按钮 / 35s 硬闸门 / track 时间轴），
-/// 但它的 doc 写明"真 HUD glyph 由 hudBuilder 注入"，而这个注入者在仓库里并不存在
-/// ——于是启动时用户只看到黑幕。本文件补的就是那个注入者：把
-/// Qt/src/NativeHudBoot.cpp:155-311 `boot()` 的 glyph 命令（access / logo 轮廓 /
-/// auth / welcome / brand / powered）逐条搬成 HUD 命令流，连同门槛层一起交给共享
-/// 的 [paintHudCommands] 执行。
-///
-/// 坐标：全部是 Qt 舞台坐标（1920×1080 设计区，横向居中 `offset = (width-1920)/2`），
-/// 与 boot_page.dart 同一套语义；logical → stage 的缩放由宿主负责。
+/// 坐标全部是 Qt 舞台坐标（1920×1080 设计区，横向居中），logical → stage 由宿主负责。
 library;
 
 import 'dart:math' as math;
@@ -212,11 +205,8 @@ double _artWidth(BasicGlyphPorts ports, String key, double size, {double trackin
   return width;
 }
 
-/// 生成 boot 页的 glyph 层命令（不含门槛层：背景/白闪/scan 由 boot_page.dart 产出）。
-///
-/// [tracks] 提供 Qt 侧 `logo.*` / `brandX` / `brandOpacity` 实测曲线；未接线时一律 0
-/// （Qt/src/BootTimeline.cpp:64-67 的语义），此时 logo 轮廓退化成参数 0 的短段——
-/// 与 Qt 对空曲线的行为一致，不伪造进度。
+/// 生成 boot 页的 glyph 层命令（背景/白闪/scan 由 boot_page.dart 产出）。
+/// [tracks] 提供 Qt 的 logo/brand 曲线；未接线时为 0，不伪造进度。
 List<Object?> buildBasicBootCommands({
   required BootFrame frame,
   required double width,
@@ -272,8 +262,7 @@ List<Object?> buildBasicBootCommands({
   if (frame.logoOpacity > 0) {
     save();
     alpha(frame.logoOpacity);
-    // :178-181 Qt: translate(518 + logo.offsetX, 463); scale(296/310) —— logo 的
-    // 位移来自 logo.leftEdge 实测曲线（BootTimeline.cpp:70-76）。
+    // Qt: translate(518 + logo.offsetX, 463); scale(296/310)，位移来自 logo.leftEdge。
     translate(518 + (tracks.value('logo.leftEdge', measured) - 520), 463);
     scale(296.0 / 310, 296.0 / 310);
     final double cut = tracks.value('logo.movingCut', measured);
@@ -387,7 +376,7 @@ List<Object?> buildBasicBootCommands({
   }
   restore();
 
-  // :290-300 brand：三行，各自的 x 与 opacity 来自实测曲线。
+  // brand：三行，各自的 x 与 opacity 来自曲线。
   for (int index = 0; index < 3; index++) {
     final double local = measured - 278 - index * 2;
     save();

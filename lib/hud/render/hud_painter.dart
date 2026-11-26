@@ -1,60 +1,14 @@
-//  · native HUD render entry — the CustomPainter that replays one decoded
-// snapshot onto the stage.
+// Native HUD render entry — the CustomPainter that replays one decoded snapshot.
 //
-// Ownership split (must not blur):
+// Ownership: wire shape and op names live in protocol/hud_command.dart, op semantics in
+// paint_stack.dart; this file only maps stage units to logical pixels and delegates.
 //
-//   * wire shape, op names, parameter indices ... lib/hud/protocol/hud_command.dart
-//   * op semantics (17 ops, state stack, alpha, clip, dash, arc,
-//     right-mask, gradient) ...................... lib/hud/render/paint_stack.dart
-//   * stage transform, item clip, delegation ..... this file
+// Qt paints the overlay with one command walk (Qt/src/Hud.cpp): save, clip, scale by
+// height/1080, walk commands, restore. The item clip is applied before the scale so the
+// stage transform keeps no rounding; content is antialiased, the scissor is not.
 //
-// Qt paints the overlay through a QQuickPaintedItem whose entire content is one
-// command walk:
-//
-//   void Hud::paint(QPainter *painter) {
-//       painter->save();
-//       painter->scale(height() / 1080, height() / 1080);
-//       m_engine->glyphs()->commands(*painter, m_engine->commands(), ...);
-//       painter->restore();
-//   }                                              Qt/src/Hud.cpp:118-174
-//
-// The item is declared as `Hud { anchors.fill: parent; engine: rhine }`
-// (Qt/qml/Overlay.qml:81-84), so its geometry is the whole overlay in logical
-// pixels, and a QQuickPaintedItem clips its content to that geometry (the item
-// also sets `setOpaquePainting(false)` / `setAntialiasing(true)` in
-// Qt/src/Hud.cpp:17-20). `painter->scale` keeps the painter's default origin,
-// which for a QQuickPaintedItem is the item's top-left corner — the same origin
-// QML names as `transformOrigin: Item.TopLeft` for the scaled hit layer
-// (Qt/qml/Overlay.qml:184).
-//
-// One stage unit therefore maps to `stageScale` logical pixels with the origin
-// pinned at the item's top-left, and no coordinate is rounded: a stage pixel can
-// be smaller than one device pixel and the plan forbids rounding it
-// (docs/superpowers/plans/2026-11-09-qt-to-flutter-parity-plan.md:123).
-//
-// The wire stays a flat JSON array — element 0 is the op name and there is no
-// envelope, id, sequence number or z index (Qt/src/Glyphs.cpp:637-640). This
-// file never re-reads that wire: [envelope] is already the decoded result, and
-// it never re-derives op semantics; it hands the decoded list to
-// [paintHudCommands] unchanged and in order (no sort, no dedupe, no merge).
-//
-// Local wrapper, not Qt wire: `generation` / `frame` / `hits` / `state` on the
-// envelope are assembled on the Flutter side
-// (lib/hud/protocol/hud_frame.dart:216-295). This painter consumes only
-// `commands`; the same envelope instance carries the hits for the hit layer and
-// the frame/state for the widgets, so one snapshot is published whole.
-//
-// LAYERING: the protocol package is pure Dart; only this render layer imports
-// Flutter, and only `package:flutter/rendering.dart` for the [CustomPainter]
-// base (which `dart:ui` alone does not provide). No Material, no Widget, no
-// theme lookup: the painter draws the wire, nothing else.
-//
-// CITATION NOTE: third_party/qt is an unpopulated submodule in this worktree
-// (qtbase/ is empty), so qpainter.cpp line numbers below are upstream Qt 6
-// references, not files verified in-tree. Flutter lines are cited as
-// `packages/flutter/lib/src/rendering/custom_paint.dart` relative to the SDK
-// root; the behaviour was read from the local SDK checkout, which is outside
-// this repository.
+// The wire is a flat JSON array with no envelope or ids; this file never re-reads it.
+// Only the render layer imports Flutter, and only package:flutter/rendering.dart.
 
 import 'dart:ui' as ui;
 
@@ -64,43 +18,13 @@ import '../protocol/hud_command.dart';
 import '../protocol/hud_frame.dart';
 import 'paint_stack.dart';
 
-/// Resource lookups for the four HUD ops that need something the renderer cannot
-/// synthesise on its own.
+/// Resource lookups for the four ops that need what the renderer cannot synthesise:
+/// `text` (em-box top-left, the baseline shift belongs to the text implementation),
+/// `art` (top of the art box), `path` (SVG data) and `image` (cache key).
 ///
-/// The op dispatch reads them as these exact call sites:
-///
-/// * `text` — `text(c, a[1].toString(), n2, n3, n4, a[5].toString(), n6,
-///   color(a[7]))` (Qt/src/Glyphs.cpp:715). The body is
-///   Qt/src/Glyphs.cpp:530-564: it translates to `(x, y + size * 1.044)` and
-///   scales by `size / 1000` with a flipped y axis, so **the port receives the
-///   em-box top-left corner** and the 1.044 baseline shift belongs to the text
-///   implementation, never to this port. Signature provenance (read-only,
-///   another 文件): `GlyphText.paintText(canvas, text, x, y, size, {weight,
-///   tracking, required ui.Paint ink})` in  `lib/hud/text/glyph_run.dart:494`.
-///   This port takes a resolved [ui.Color]; the binding layer turns it into
-///   that `ui.Paint` ( paints through an ink paint, not a colour).
-/// * `art` — `art(c, a[1].toString(), n2, n3, n4, letters, n6)` with
-///   `const int letters = a[5].toInt(-1)` (Qt/src/Glyphs.cpp:718,726-727) and a
-///   brush already set from `color(a[7])`. Its body (Qt/src/Glyphs.cpp:565-588)
-///   translates to `(x, y)` with **no** baseline factor, so `y` is the top of
-///   the art box. Signature provenance:  `lib/hud/text/art_run.dart:118`,
-///   `paintArt(canvas, fonts, key, x, y, size, {count, tracking, color})` - the
-///   font set is bound by the widget layer, so this port exposes the same
-///   arguments minus the fonts it cannot own.
-/// * `path` — `path(a[1].toString())` for `fill-path`
-///   (Qt/src/Glyphs.cpp:737) and for `path` (Qt/src/Glyphs.cpp:748). A null
-///   lookup is reported by [paintHudCommands] as
-///   [HudPaintIssueKind.missingPath]; it is never dropped silently.
-/// * `image` — `image(a[1].toString())` for `image`
-///   (Qt/src/Glyphs.cpp:821-824); null becomes
-///   [HudPaintIssueKind.missingImage].
-///
-/// All four are optional because Qt's own texture lookup is optional too: the Qt
-/// call site passes a `std::function` that may return a null `QImage`, and each
-/// op decides what "missing" means. What differs is that Qt's missing case is a
-/// silent no-op, while the paint stack records an issue — the iron rule is that a
-/// *known* op must never be swallowed without a trace
-/// (docs/superpowers/plans/2026-11-09-qt-to-flutter-parity-plan.md:584).
+/// All four are optional because Qt's lookups are optional too. The difference: Qt's
+/// missing case is a silent no-op, while the paint stack records an issue — a known op
+/// must never be swallowed without a trace.
 final class HudPainterPorts {
   const HudPainterPorts({this.text, this.art, this.path, this.image});
 
@@ -187,34 +111,9 @@ final class HudStagePainter extends CustomPainter {
 
   /// Maps stage units to logical pixels and replays the command list.
   ///
-  /// Three steps, mirroring Qt/src/Hud.cpp:151-166:
-  ///
-  /// 1. `painter->save()` → `canvas.save()`;
-  /// 2. the item clip, then `painter->scale(height() / 1080, height() / 1080)`
-  ///    → `canvas.clipRect(itemRect)` followed by `canvas.scale(scale, scale)`;
-  /// 3. the command walk, then `painter->restore()` → `canvas.restore()`.
-  ///
-  /// The clip is applied **before** the scale on purpose: in logical pixels the
-  /// item rect is `(0, 0, size.width, size.height)`, i.e. exactly the
-  /// QQuickPaintedItem geometry, so clipping needs no division by the scale and
-  /// cannot drift on a fractional scale. Applying it after the scale with
-  /// `size / scale` would compute the same rect through one extra rounding step.
-  ///
-  /// The item clip is drawn with `doAntiAlias: false`. Qt never antialiases it
-  /// either: an integer-aligned `QRectF` clip is routed to
-  /// `setClipRect(const QRect &, ...)`, which assigns a `QRegion`
-  /// (third_party/qt/qtbase/src/gui/painting/qpainter.cpp:2773-2781 and :2825),
-  /// and the item's raster bounds are `qCeil`-rounded whole pixels
-  /// (Qt/src/Hud.cpp:182). Antialiasing stays on for the *content*, which is what
-  /// `setAntialiasing(true)` buys (Qt/src/Hud.cpp:19) and what the plan demands
-  /// for a stage pixel smaller than a device pixel without rounding
-  /// (docs/superpowers/plans/2026-11-09-qt-to-flutter-parity-plan.md:123); it is
-  /// not extended to the boundary scissor.
-  ///
-  /// The base signature is `void paint(Canvas canvas, Size size)`
-  /// (Flutter SDK packages/flutter/lib/src/rendering/custom_paint.dart:206);
-  /// `ui.Canvas` / `ui.Size` are those same dart:ui types written with an
-  /// explicit import prefix, not substitutes.
+  /// Mirrors Qt/src/Hud.cpp: save, clip the item rect, scale by `scale`, walk, restore.
+  /// The clip comes before the scale so it needs no division and cannot drift on a
+  /// fractional scale. The scissor is not antialiased; content antialiasing is separate.
   @override
   void paint(ui.Canvas canvas, ui.Size size) {
     final HudStage resolvedStage =

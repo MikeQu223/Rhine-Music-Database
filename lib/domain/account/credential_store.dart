@@ -1,14 +1,7 @@
-///  账号凭据存储：对齐 Qt 的 cookie 会话文件与逐来源登出。
+/// 账号凭据存储：对齐 Qt 的 cookie 会话文件与逐来源登出。
 ///
-/// 契约来源（逐条带 Qt 行号）：
-/// - Qt/src/PlatformAndroid.cpp:10-46：account.credential 的路径、读、写（空串=成功）、
-///   ReadOwner|WriteOwner 权限、删除。
-/// - Qt/src/Host.cpp:541-553：hasCredential 逐来源判定（qq=qqmusic_session、
-///   netease=MUSIC_U、kugou=__kugou[edition].token 且 userid>0，其余来源恒 false）。
-/// - Qt/src/Host.cpp:599-605：saveCredential 返回空串表示成功，非空是给用户看的提示。
-/// - Qt/src/Host.cpp:609-662：logout 逐来源清理；清理后 cookies 为空才删文件，否则重写。
-/// - Qt/src/Host.cpp:517-530：cookie 更新后若任一来源仍已认证则立即持久化。
-///
+/// 路径与读写权限、hasCredential 的逐来源判定、saveCredential 的空串即成功、
+/// logout 的逐来源清理与「cookies 空了才删文件」都按 Host / PlatformAndroid 的语义。
 library;
 
 import 'dart:convert';

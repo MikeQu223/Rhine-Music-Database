@@ -1,15 +1,6 @@
-// 弹层页（竖屏评论/百科/发现/收藏/检索/专辑信息/歌手、横屏评论/发现/队列）的松手惯性
-// （用户 2026-11-26：「部分页面没有适配物理滑动，现在的效果是脱手即停」）。
+// 弹层页的松手惯性：这些页面的滚动量是各自的一维标量，不是资料库的条目窗口。
 //
-// 这些页面的滚动量不是资料库的条目窗口，而是各自的一维标量（画布网格 / 舞台像素 /
-// 队列行号）。修复前 `_dragEnded` 对它们直接 `return`，于是抬手当帧就停在原位；
-// 现在它们与资料库走同一套物理（摩擦 2.4、收尾 0.6 进吸行、弹簧率 10），
-// 只是目标不吸整行。
-//
-// 本文件只钉软件侧契约，真机手感仍需实机复验：
-//   * 抬手后滚动量继续朝同向推进多帧；
-//   * 前几帧的推进速度单调下降（衰减，而不是匀速漂移或反向）；
-//   * 最终停下且停在 [0, maximumScroll] 之内，停稳后不再发值。
+// 钉住：抬手后继续同向推进多帧、速度单调下降、最终停在 [0, maximumScroll] 内。
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -96,7 +87,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 16));
     }
     expect(scrolls.length, greaterThan(beforeFling + 3),
-        reason: '松手后要继续多帧发滚动量（惯性）；脱手即停 = 真机抬手当帧不动');
+        reason: '松手后要继续多帧发滚动量（惯性）；脱手即停 = 抬手当帧不动');
     expect(scrolls.last, greaterThan(draggedTo),
         reason: '惯性方向与拖动同向（继续向下滚动内容）');
 

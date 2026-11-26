@@ -1,22 +1,10 @@
 /**
- * 153：origin / 生命周期的离线回归（Qt6::Core，无 GUI、无 GPU、无 QtTest、无 Engine）。
+ * origin / 生命周期的离线回归（Qt6::Core，无 GUI/GPU/QtTest/Engine）。
  *
- * 这些用例对应的都是真机上"看一眼就知道错了"的后果，所以判据必须能证伪：
- *   - 排队：A 的输入在 B 的快照被 apply 之前产出，就必须按 A 判；B apply 之后同一份
- *     排队输入必须被拒（旧实现读"当前"全局，于是给 A 的手指动作贴了 B 的标签）；
- *   - 惯性：ticker 每一步带的是**起手时捕获**的 origin，不是这一帧的"当前"；
- *   - 拆场景：closed 之后一律 fail-closed（旧实现把"未登记"当放行，拆完即全开）；
- *   - 世代：旧 host 的 destroy 带的是旧号，必须被拒，不许拆掉新 host 的场景；
- *   - 149 契约：同一份窗口内容必须给同一个 contextGeneration（未登记时退化成稳定常量 1）；
- *   - 手势阶段（M1）：旧 fling 的 ticker 帧不许把**新按住**的拖动 idle-commit 掉；
- *   - 换人（M2）：只有视图换人/同一视图换交互代次才退休旧手势，普通滚动帧必须保住惯性。
- *
- * 运行（由 154 执行；153 不执行任何命令）：
- *   cmake --build <build-dir> --target RhineEmbeddedSceneOrigin153Test
- *   ctest -R qt_embedded_scene_origin_153 --output-on-failure
- *
- * 为什么这里能用纯 Core 跑：判定逻辑全在 Qt/src/EmbeddedSceneOrigin.h（header-only、
- * 无 Engine / QQuickView / JNI），宿主与测试共用同一份判据，不存在"测试版规则"。
+ * 覆盖：排队输入按产出时的 origin 判、惯性带起手 origin、拆场景后 fail-closed、
+ * 旧世代 destroy 被拒、手势阶段不被旧 ticker 收尾、只有换人才退休旧手势。
+ * 运行：cmake --build <build-dir> --target RhineEmbeddedSceneOrigin153Test
+ *       ctest -R qt_embedded_scene_origin_153 --output-on-failure
  */
 #include "EmbeddedSceneOrigin.h"
 
@@ -204,7 +192,7 @@ bool scrollGestureCapturesOrigin()
                 describeOrigin(step.origin));
     ok &= check(std::abs(step.delta - 4.0) < 1e-9, "move delta from base", "4", number(step.delta));
 
-    // B 的快照在这段手势中间被应用了（真机上就是"另一个宿主接管"）。
+    // B 的快照在这段手势中间被应用了（就是"另一个宿主接管"）。
     OriginLedger ledger;
     ledger.commit(b);
     // 松手：ticker 接管（tracking 关，ticker 开），origin 仍是 A。
@@ -261,11 +249,7 @@ bool scrollInertiaCommits()
     return ok;
 }
 
-/// M1：旧惯性还在滑时按下新手势 —— 旧 ticker 的帧不许把新手势 idle-commit 掉。
-///
-/// 真机表现（审查 M1 描述）：fling A → 手指按下 B → 按住 3 帧 → 之后 B 怎么拖都不跟手。
-/// 成因是 scrollTick 无条件推进（active() 含 tracking），3 帧"没动"就 Commit+end()，
-/// 新手势的 tracking 变成 false，之后所有 pointermove 都被 `g_gesture.tracking` 挡住。
+/// 旧惯性还在滑时按下新手势，旧 ticker 的帧不许把新手势 idle-commit 掉。
 bool oldInertiaDoesNotEndNewHeldDrag()
 {
     using namespace RhineEmbedded;

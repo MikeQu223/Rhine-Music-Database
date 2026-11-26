@@ -1,27 +1,9 @@
 /// 竖屏舞台几何与 Qt 舞台常量（只依赖 dart:math 与 Flutter foundation）。
 ///
-/// 这一份度量是绘制与命中的唯一来源：尺寸变化后必须整份重算，
-/// 禁止跨帧复用上一帧的命中矩形（Qt 每帧 NativeHud::draw 都清表重建，
-/// Qt/src/NativeHud.cpp:224-256）。
+/// 绘制与命中的唯一来源：尺寸变化后整份重算，禁止跨帧复用命中矩形。
 ///
-/// 证据约束（逐条可查 Qt 源码）：
-/// * 竖屏舞台宽恒 1080 舞台单位 —— 依据 
-///   docs/flutter-migration/contracts/layout.md §6（portraitStageWidth = 1080），
-///   不是 Qt 横屏常量：
-///   Qt 的不变量是舞台**高** 1080（Qt/qml/Main.qml:32 stageScale = height / 1080），
-///   舞台宽 = width / stageScale 随窗口变化（Qt/qml/Main.qml:33，真机横屏 1728）；
-///   绘制从左上方缩放（Qt/qml/Overlay.qml:179-184）。
-///   2026-11-19 的 DPI 适配不改这条不变量：只在竖屏画布单位里把「1 网格」压进
-///   clamp 后的 dp 带（lib/hud/scale/hud_scale.dart 的 portraitUnitFactor）。
-/// * 横屏 stageScale 只由逻辑视口高度决定（Qt/qml/Main.qml:32），Qt 不做任何 inset
-///   处理，所以竖屏也不允许用 MediaQuery.viewInsets 去手改 stageScale。
-/// * 底栏高 96 / 内容裁剪底 984 —— Qt/src/PlayerBar.h:42、Qt/src/NativeHud.cpp:310-327。
-/// * 触摸加宽只发生在触摸层：Android +16 四边（Qt/qml/Overlay.qml:38-43），
-///   进度条与音量只做垂直加宽（Qt/qml/Overlay.qml:485-508）。
-///
-/// 本阶段不裁决 W / Band / Hybrid 谁是样板，也不裁决 bottom sheet / 48dp / 52%：
-/// 三个候选都保留为参数，越界与退化情况写进 PortraitBands.degeneracies 显式暴露，
-/// 不做静默夹取，也不伪造 golden。
+/// 不变量：竖屏舞台宽恒 1080；舞台高由 Qt 的 `height / 1080` 决定；底栏 96、
+/// 内容裁剪底 984；触摸加宽只发生在触摸层（Android 四边 +16）。
 library;
 
 import 'dart:math' as math;
@@ -29,13 +11,7 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart' show FlutterError;
 
 
-/// 竖屏舞台宽恒定值（舞台单位）。
-///
-/// 依据  docs/flutter-migration/contracts/layout.md §6 portraitStageWidth = 1080。
-/// Qt 侧没有这个常量：Qt 的不变量是舞台高 1080（Qt/qml/Main.qml:32），
-/// 舞台宽 = width / stageScale 随窗口变化（Qt/qml/Main.qml:33，真机横屏 1728）。
-/// 竖屏舞台的**设计宽**（1080）。实际舞台宽见 `computePortraitBands` 里按
-/// `HudScale` 反算的 `stageWidth`——DPI 适配后它不再恒等于这个常量。
+/// 竖屏舞台的设计宽（1080）。实际舞台宽由 `computePortraitBands` 按 `HudScale` 反算。
 const double portraitStageWidthConstant = 1080;
 
 /// 横屏舞台高恒定值（舞台单位）。Qt/qml/Main.qml:32。

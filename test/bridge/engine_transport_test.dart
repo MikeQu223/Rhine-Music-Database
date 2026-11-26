@@ -1,7 +1,6 @@
 // test/bridge/engine_transport_test.dart
 // T21-C19-W1 单元测试（writer: T21-C19-W1 / atom T21-C19-A1）
 //
-// 计划卡：docs/superpowers/plans/2026-11-09-qt-to-flutter-parity-plan.md:524-531（T21）
 // 被测对象：lib/bridge/engine_transport.dart
 // 唯一权威源：Qt/src/BridgeProcessAndroid.cpp:171-281 + Qt/src/BridgeProcess.h:13-46
 // 冻结契约：reports/T21-C14-CONTRACT.json frozenApi.engine_transport

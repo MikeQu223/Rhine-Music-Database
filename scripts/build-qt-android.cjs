@@ -360,20 +360,9 @@ function buildQtBase() {
             'examples',
             '-nomake',
             'tests',
-            // LTO（PERF-APK-SLIM）：本分支前提是"大量时间换体积"。Qt 的 -ltcg 经
-            // QtProcessConfigureArgs.cmake:1396 落成 CMAKE_INTERPROCEDURAL_OPTIMIZATION_<CONFIG>=ON，
-            // Clang 上是 thin LTO（CMake IPO 的默认形态；Qt 没有暴露 full 的入口，
-            // 手工塞 -flto 脱离官方路径，不做）。shared 库的导出符号拦掉了跨库 DCE，
-            // 收益主要是各库内部的死代码消除与 ICF，预计 Qt modules 压缩后省 1-1.5 MB。
-            // 代价：每个模块的大链接显著变慢；Qt 官方 Android 包同样不开 ltcg，
-            // 属于冷门组合，kit 重建后需真机回归。其余 4 个模块见 buildModule()
-            // 里的同款 IPO 传参。
-            // 只能裸传 -ltcg：ltcg 在 qt_cmdline.cmake:88 注册为 boolean，而
-            // qt_commandline_boolean 完全忽略 nextok——val 为空时直接默认 "yes"，
-            // 从不读下一个 argv。写成 '-ltcg yes' 的 yes 会留在参数队列，下一轮
-            // 循环落进裸参数分支，报 "Invalid command line parameter 'yes'"
-            // （QtProcessConfigureArgs.cmake:1139）。裸传默认 yes，经
-            // INPUT_ltcg 触发 IPO（QtProcessConfigureArgs.cmake:1396）。
+            // LTO：用时间换体积。Qt 的 -ltcg 落成 CMAKE_INTERPROCEDURAL_OPTIMIZATION，
+            // Clang 上是 thin LTO；shared 库导出符号拦掉跨库 DCE，收益在各库内部。
+            // 只能裸传 -ltcg：qt_commandline_boolean 忽略 nextok，写成 '-ltcg yes' 会报错。
             '-ltcg',
             // '--' 之后的参数原样交给 CMake（QtProcessConfigureArgs.cmake:228）。
             // 不能用 '-D变量=值'：configure 会把它塞进 QT_EXTRA_DEFINES（编译器宏），

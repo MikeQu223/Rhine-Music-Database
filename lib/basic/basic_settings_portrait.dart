@@ -1,19 +1,10 @@
-// 竖屏设置整页（Qt compact `ResponsiveHudLayout::settings()`）
+// 竖屏设置整页（Qt compact `ResponsiveHudLayout::settings()`）。
 //
-// 为什么不再复用 BasicSettingsWindow：那套几何是给 1080 舞台 + 1260 面板设计的
-// 绝对坐标（SettingsPanelGeometry.viewport 写死 viewportTop=176/height=660，
-// placeSettingsRow 的控件宽 SettingsRowMetrics.controlWidth=300 固定），竖屏
-// 把 456 宽的稿子整体放大到 1080 舞台后，控件必然压住标题，字号也一起被放大
-// （实机「全部挤在一起、元素过大」）。
+// 不复用 BasicSettingsWindow：那套几何是给 1080 舞台 + 1260 面板设计的绝对坐标，
+// 竖屏放大后控件会压住标题。这里按 Qt compact 重排：393 网格 + Transform.scale(unit)。
 //
-// 因此这一层按 Qt compact 的真实规格重排：393 设计网格 + Transform.scale(unit)，
-// 行高 56、标题 (20, y+19) 12 号、控件 (201, y+9) 172×34、展开项 chip 353×40，
-// 页面只铺到 `h - portraitFooterHeight`（播放条与底栏仍由 HUD 画布负责）。
-//
-// 真值仍只有一份：行/选项/可见性/enable/展开态来自 BasicSettingsPanelModel，
-// 动作串沿用既有契约（'expand:<id>'、'setting-edit:<id>'、
-// `<actionPrefix><value>`、row.action、'disc-rotation'），全部回灌 BasicApp 的
-// _onSettingsAction → _settings.apply(...)，不新建状态、不做持久化。
+// 真值仍只有一份：行/选项/可见性/展开态来自 BasicSettingsPanelModel，动作串沿用既有契约，
+// 全部回灌 BasicApp 的 _onSettingsAction，不新建状态、不做持久化。
 library;
 
 import 'dart:math' as math;
@@ -192,12 +183,9 @@ class _BasicPortraitSettingsPageState extends State<BasicPortraitSettingsPage> {
     }
     _pageWidth = gridWidth;
     final _PortraitInk ink = _PortraitInk.of(widget.dark);
-    // 缩放层用 `FittedBox` 而不是 `OverflowBox + Transform.scale`：后者的命中
-    // 先过 `RenderBox.hitTest` 的「指针是否在本节点尺寸内」这一关，而本节点的
-    // 尺寸是**缩放前**的设计网格（约 586 × 1500），指针却是舞台像素（1080 宽、
-    // 高到 pageBottom × unit）；屏幕下缘那一段因此整片点不动（用户 2026-11-25
-    // 报「滚到底后中间各行控件与链接全点不到」）。`FittedBox` 把子项按
-    // `BoxFit.fill` 拉满父约束，并用逆矩阵做命中，屏幕坐标与设计坐标一一对应。
+    // 用 `FittedBox` 而不是 `OverflowBox + Transform.scale`：后者先过
+    // `size.contains(position)`，而节点尺寸是缩放前的设计网格，指针却是舞台像素，
+    // 屏幕下缘整片点不动。
     return ClipRect(
       key: basicPortraitSettingsPageKey,
       child: SizedBox(
@@ -469,11 +457,8 @@ class _BasicPortraitSettingsPageState extends State<BasicPortraitSettingsPage> {
               ),
             ),
           ],
-          // Slider / Stepper 的命中只有 ± 两个按钮（Qt `settings()` 的
-          // Slider|Stepper 分支只发 `row.decrementValue` / `row.incrementValue`）。
-          // 这里若再叠一层行级热区，它会画在 ± 之上、把点击吞掉；而这两行本来就没有
-          // `binding.action`（archive-mask / render-scale），于是整行点什么都没反应
-          // ——用户 2026-11-19「右侧遮罩和渲染分辨率无法调整」。
+          // Slider / Stepper 的命中只有 ± 两个按钮（Qt 同款）；再叠行级热区会盖在 ± 之上
+          // 把点击吞掉，而这两行本来就没有 `binding.action`。
           if (!stepper)
             _tapArea(
               left: _pageWidth - 198,

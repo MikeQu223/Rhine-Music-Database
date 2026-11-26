@@ -74,8 +74,7 @@ void paintPortraitAlbumInfoPage(
   c.section(sectionY, '同专辑曲目', 'INDEX / ${songs.length}');
   final double listTop = sectionY + 30;
 
-  // 同专辑曲目可以很长（20 首起），列表区必须能滚：窗口游标跟着 `scroll` 走，
-  // 行本身也整体上移同样的距离，否则长专辑只能看到前几首（真机缺陷）。
+  // 同专辑曲目可以很长，列表区必须能滚：窗口游标与行一起跟着 `scroll` 走。
   final double maximum = math.max(
     0,
     songs.length * portraitAlbumInfoRowStride - math.max(0, c.contentBottom - listTop),

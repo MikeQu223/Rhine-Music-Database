@@ -250,12 +250,8 @@ bool PresentationShell::initializeLayers() {
     m_host->setPixelRatio(m_dpr);
     // 键盘链路的第一环：焦点。
     //
-    // 默认路径靠 Main.qml 的 Component.onCompleted → overlay.focusInputLayer() 把焦点
-    // 交给 Overlay 里的 inputLayer；FG 路径不加载 Main.qml，没人做这件事。而
-    // QQuickRenderControl 的离屏窗口没有平台窗口、永远不会被激活，Qt 也不会像真实
-    // 窗口那样在激活时自动传播 activeFocus——实测此时 window.activeFocusItem() 为
-    // null，QQuickWindow 收到 KeyPress 后无处投递，按键被直接丢弃。
-    // 显式恢复当前面板的焦点；重建后可能仍在搜索框，不能统一交回快捷键层。
+    // FG 路径不加载 Main.qml，没人把焦点交给 inputLayer；离屏窗口又永远不会被激活，
+    // Qt 不会自动传播 activeFocus，按键到了窗口也无处投递。这里显式恢复当前面板的焦点。
     if (QQuickItem *overlayRoot = m_host->overlayRootItem()) {
 #ifdef Q_OS_WIN
         const bool focused =
@@ -461,12 +457,8 @@ void PresentationShell::syncSizes() {
     // 就是"UI 少了一整块"；同时 fit() 不再截断，文字也变长。
     // Engine::resize() 对相同尺寸会早退，所以这里每帧调用没有额外开销。
     m_backend->resize(m_size.width(), m_size.height());
-    // GPU 侧的尺寸确认（只确认、不重建）：m_needRecreate 为真时下一步会走
-    // recreateSwapchain()，只有那里才允许真正重建——它会作废跨尺寸的插值历史并强制
-    // 重画一帧，抢在这里重建就会拿到按旧尺寸插出来的帧（画面闪一下）。所以这里只在
-    // "没有待重建"且 presenter 的交换链尺寸已等于目标尺寸时把请求推下去；后端在这种
-    // 情况下只做尺寸比较（resizeSkips），一次 finish 都不会发生。
-    // 这一句同时是"去重生效"在 CSV 里的证据：跳过数应随帧数增长，设备等待数不增长。
+    // GPU 侧的尺寸确认（只确认、不重建）：有待重建时留给 recreateSwapchain()，
+    // 抢在这里重建会拿到按旧尺寸插出来的帧。后端只做尺寸比较，不会 finish。
     if (m_presenter && !m_needRecreate && m_presenter->extent() == pixelSize()) {
         m_presenter->resize(pixelSize(), false);
     }
@@ -1002,7 +994,7 @@ void PresentationShell::step() {
     m_host->setResourceRevision(m_backend->sceneRevision(), m_backend->hudRevision());
 #if defined(Q_OS_ANDROID)
     // 第六轮轮询兜底：hudUpdated → requestOverlayContent → 出帧 这条事件链在
-    // 「列表按需休眠后进详情」场景被真机证实存在断点（前五轮在链路各环节修过全部无效：
+    // 「列表按需休眠后进详情」场景确实存在断点（前五轮在链路各环节修过全部无效：
     // 数据侧判据、notifySceneRenderers、alpha 冻结、伪时钟、0/1ms 让出握手）。
     // 改成不变量轮询：只要 HUD 纹理还落后于命令流（m_hudFramePending 未被
     // Hud::updatePaintNode 清位），每个呈现步都强制 overlay 层置脏，逼本次
@@ -1284,15 +1276,9 @@ bool PresentationShell::eventFilter(QObject *watched, QEvent *event) {
             break;
         case QEvent::FocusOut:
         case QEvent::FocusIn:
-            // 故意不转发 FocusIn/FocusOut。
-            //
-            // 为什么：离屏窗口没有平台窗口，isActive() 恒为 false，靠 Qt 自己的
-            // 激活流程永远拿不回焦点。而 QQuickWindow::focusOutEvent 会立刻把
-            // activeFocusItem 清空——转发出去就等于亲手把 QML 焦点打掉，且再也
-            // 恢复不了（实测切走再切回后 activeFocusItem 恒为 null，于是 KeyPress
-            // 到了窗口却被 QQuickWindow 丢弃：ESC/方向键全部失效，而 F 键因为是
-            // Shortcut、不经过焦点项，所以照常好用）。
-            // 焦点由"可见窗口"这唯一真实来源决定：启动时建立一次，按键到达时兜底。
+            // 故意不转发 FocusIn/FocusOut：离屏窗口拿不回焦点，而 focusOutEvent 会立刻
+            // 清空 activeFocusItem，转发等于亲手把 QML 焦点打掉且再也恢复不了。
+            // 焦点由「可见窗口」这唯一真实来源决定：启动时建立一次，按键到达时兜底。
             break;
         case QEvent::ShortcutOverride:
             QCoreApplication::sendEvent(overlay, event);
@@ -1433,15 +1419,11 @@ bool PresentationShell::start() {
                 }
             });
 #endif
-    // 预检：有些设备能建出交换链，却撑不住持续上屏（典型是"没有直连显示输出"的独显
-    // ——surface 由跑在集显上的合成器管理）。实测独显上会先成功呈现 4 帧，随后
-    // OutOfDate 一路涨到几万次、再也没出过一帧（白窗 + 空转）。
-    // 判据要贴着"真坏了"写，不能贴"慢了"：首帧编译着色器本来就是慢的。
-    //   · OutOfDate 超过 200 次 → 交换链撑不住，判死；
+    // 预检：有些设备能建出交换链，却撑不住持续上屏（典型是没有直连显示输出的独显）。
+    // 判据贴着「真坏了」写：
+    //   · OutOfDate 超过 200 次 → 判死；
     //   · 3 秒过去一帧都没上屏 → 判死；
-    //   · 按适配器要求检查连续呈现；预检结束后恢复按需调度。
-    // 判死后由 main.cpp 干净回退到默认 QQuickWindow 路径。这比
-    // vkGetPhysicalDeviceSurfaceSupportKHR 靠谱：后者对这类设备仍返回支持。
+    // 判死后由 main.cpp 干净回退到默认 QQuickWindow 路径。
 #ifndef Q_OS_IOS
     {
         QElapsedTimer probeClock;

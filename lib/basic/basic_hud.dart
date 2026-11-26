@@ -76,14 +76,8 @@ const String basicLibraryName = '塞壬唱片';
 /// 舞台高的一半）；这个常量只留给拿不到可视高度时的旧调用点兜底。
 const double basicPortraitListOffset = 1080.0;
 
-/// 竖屏列表块的位移（stage unit）：让 ruler 裁剪窗口的上沿
-/// （[ruler.trackRulerWindowTop] = 219）正好落在 [basicPortraitListOffset] 那条带顶线上，
-/// 也就是「曲目列从 1080 开始」这句注释的字面含义。
-///
-/// 直接平移 [basicPortraitListOffset]（旧实现）会把整块 610 高的窗口从 219 挪到 1299：
-/// 选中行 titleY 509→1589，正好压到播放条上沿（stageHeight-96），窗口只露出选区一行。
-/// 真机 1800×2880 → 舞台 1080×1728：可见带只有 1080..1632，1299..1909 里有 4 行
-/// 藏在播放条下面、带顶还空出 219 高的空档。
+/// 竖屏列表块的位移（stage unit）：让 ruler 裁剪窗口上沿（219）落在 band 顶线上。
+/// 直接平移会把整块 610 高的窗口下移，选中行压到播放条上沿，窗口只露一行。
 const double basicPortraitListShift =
     basicPortraitListOffset - ruler.trackRulerWindowTop;
 
@@ -245,7 +239,6 @@ class BasicHudFrame {
     /// 「＋ 塞壬曲库」应变成「＋ 我的音乐」、页脚 session 不再是 SIREN RECORDS。
     bool isSirenProvider = true,
     /// 当前登录会话的用户 id（Qt `uid`）：页脚会话串来自它，空串才是 `GUEST SESSION`。
-    /// 2026-11-25 之前 HUD 侧写死 `uid: ''`，插件平台登录后页脚仍是 GUEST。
     String accountUid = '',
     /// 当前平台是否本地曲库（Qt `music.isLocal()`）：本地平台页脚与发现文案不同。
     bool localPlatform = false,
@@ -417,10 +410,8 @@ class BasicHudFrame {
       updaterAvailable: false,
     );
 
-    // 歌手页是**目录**，不是曲目详情：`openArtistDirectory` 会把 phase 置成
-    // detail 并把第一首放进 `state.song`，若照 `songPage` 判就会画成那首歌的
-    // 详情卡（真机表现：点「↗ 歌手作品」后右栏是某首歌的 TRACK RECORD，
-    // 而不是这位歌手的作品列表）。目录优先，横屏直接走资料库列表。
+    // 歌手页是目录，不是曲目详情：`openArtistDirectory` 会把第一首放进 `state.song`，
+    // 照 `songPage` 判会画成那首歌的详情卡。目录优先，横屏走资料库列表。
     final bool artistDirectory = state.directory?.kind == 'artist';
     final bool songPage = state.song != null &&
         (state.phase == BasicPhase.lyrics ||
@@ -536,20 +527,12 @@ class BasicHudFrame {
       _paintProviderModal(sink, ports, providers, providerId, providerAccounts, width, dark,
           localMusicEnabled);
     } else if (modal == 'discover') {
-      // 横屏发现页走 Qt 的桌面弹层：`discoverModalBounds` 的外框（宽 min(1260, stage-100)、
-      // top 122、高 836）里由 `DiscoverCard`（Qt `DiscoverMusicCard` 的 1:1 端口）自己画
-      // 面板底 + 页头 + tabs + 分类 + 两张特殊卡 + 五列档案网格 + 滚动条 + 页脚。
-      //
-      // 2026-11-25 之前这一支落到 `_paintPortraitPageInLandscape`：把 393 网格的竖屏稿按
-      // 舞台高整屏拉伸，页头与标题重叠、tabs 铺满 1728 宽（用户报第 7 条 / 审计 §1.4）。
+      // 横屏发现页走 Qt 的桌面弹层：`discoverModalBounds` 外框里由 `DiscoverCard`
+      // 自己画面板、tabs、档案网格与页脚；按竖屏稿整屏拉伸会让页头与标题重叠。
       _paintDiscoverPanel(sink, ports, width, height, dark, discover, discoverScroll);
     } else if (modal == 'playlist-picker' || modal == 'saved') {
-      // 我的音乐 / 发现页 / 加入歌单只有 393 网格的竖屏排版（Qt 桌面端用 library
-      // 模态承载，本仓库还没有横屏稿）。横屏下不能什么都不画：这里用同一套 painter
-      // 按舞台高度重采样（unit = 高度 / 852），保证内容与动作都可达。
-      //
-      // `saved` 必须走这一支：2026-11-25 之前它落到 `_paintLibrary`（普通资料库骨架），
-      // 横屏点「我的音乐」看不到任何弹层（用户报的第 7 条 / 审计 §1.3）。
+      // 我的音乐 / 发现页 / 加入歌单只有 393 网格的竖屏排版；横屏用同一套 painter
+      // 按舞台高重采样（unit = 高度 / 852），保证内容与动作都可达。
       _paintPortraitPageInLandscape(
         sink,
         ports: ports,
@@ -575,11 +558,7 @@ class BasicHudFrame {
       );
     }
 
-    // 输出音量块的平台判据：Qt 桌面端走 `PlatformFeatures::ApplicationVolume` 画滑轨
-    // （PlayerBar.cpp:238-246），Android/iOS 那枚特性恒假、只剩「系统音量 / SYSTEM」字样。
-    // 2026-11-22 曾经为了「横屏必须有可用输出模块」硬写成 `true`，结果手机横屏右下角
-    // 一直显示本来只属于桌面的音量滑轨（用户 2026-11-25 报的第 5 条）。
-    // 现在统一读 `PlatformCapabilities.forTarget`，以后接桌面端不用再逐个改调用点。
+    // 输出音量块读 `PlatformCapabilities.forTarget`：移动端该特性恒假，只剩「系统音量」。
     final player.PlayerBarDrawing bar = player.renderPlayerBar(
       _playerState(
         state,
@@ -771,7 +750,6 @@ class BasicHudFrame {
     String providerName = basicLibraryName,
     bool isSirenProvider = true,
     /// 当前登录会话的用户 id（Qt `uid`）：页脚会话串来自它，空串才是 `GUEST SESSION`。
-    /// 2026-11-25 之前 HUD 侧写死 `uid: ''`，插件平台登录后页脚仍是 GUEST（用户报第 7 条相关观感）。
     String accountUid = '',
     /// 当前平台是否本地曲库（Qt `music.isLocal()`）：本地平台页脚/发现文案不同。
     bool localPlatform = false,
@@ -819,8 +797,7 @@ class BasicHudFrame {
       unit: unit,
       gridWidth: gridWidth,
       height: portraitGridHeight(height, unit),
-      // 底部手势区只留真实内缩：画布高度已经扣过安全区，再按设计稿 34 留一遍
-      // 会把播放条与底栏顶高近 30 网格（用户 2026-11-24 报「底部组件抬太高」）。
+      // 底部手势区只留真实内缩：画布高度已扣过安全区，再按设计稿留 34 会把底栏顶高。
       gestureInset: portraitGestureInsetOf(
         unit: unit,
         stageScale: stageScale,
@@ -844,9 +821,8 @@ class BasicHudFrame {
               ));
     final SirenSong? song = state.song;
     final BasicDirectory? directory = state.directory;
-    // Qt `ResponsiveHudLayout.cpp:40-60`：`songPage = m_song && modal.isEmpty() && !lyric && !comments`。
-    // 这里必须同样要求 `modal.isEmpty()`——否则从详情页打开的评论/登录/平台/MV
-    // 弹层会被歌曲页整个盖住（真机表现：点了「查看评论」，面板收起了但页面没换）。
+    // `songPage = m_song && modal.isEmpty() && !lyric && !comments`：
+    // 必须同样要求 `modal.isEmpty()`，否则从详情页打开的弹层会被整页盖住。
     final bool songPage = song != null &&
         modal.isEmpty &&
         (state.phase == BasicPhase.detail || state.phase == BasicPhase.lyrics);
@@ -868,10 +844,8 @@ class BasicHudFrame {
         modal.isEmpty && state.phase == BasicPhase.detail && directory?.kind == 'artist'
             ? aux?.artist
             : null;
-    // Qt `ResponsiveHudLayout::arrange` 的收尾对**每一页**都画播放条与底栏
-    // （只有歌曲页改用 `playerBounds` 字段、歌词页换沉浸条）。百科/专辑信息/
-    // 歌手/登录/MV/选择器这几页是我们自己的页面，也照同一收尾画，否则进页后
-    // 底部整块空白、既看不到当前音轨也切不了 tab（真机缺陷）。
+    // Qt 的收尾对每一页都画播放条与底栏；百科/专辑信息/歌手等自有页面照此收尾，
+    // 否则底部整块空白、也切不了 tab。
     final double pageContentBottom = math.max(0, canvas.height - canvas.footerHeight);
     void finishWithFooter(PortraitNav? nav) {
       canvas.ensureScale();
@@ -1232,9 +1206,8 @@ class BasicHudFrame {
     // （`if (m_songOptionsExpanded && (m_song || m_lyricsPage)) optionsSheet(c, source)`），
     // 所以它在整页画完之后叠上来，且只画 sheet 本身（遮罩不动）。
     if (songOptionsExpanded && (song != null || state.phase == BasicPhase.lyrics)) {
-      // 页面 painter 以 `c.finish()`（restore）收尾，会弹掉画布构造时的
-      // `save` + `scale(unit, unit)`；这里不补回来，面板就会按逻辑像素画成半尺寸，
-      // 命中矩形也跟着错位（真机上表现为「面板画出来了，但按钮点不动」）。
+      // 页面 painter 以 `c.finish()` 收尾，会弹掉画布构造时的 `save + scale`；
+      // 不补回来面板就按逻辑像素画成半尺寸，命中也跟着错位。
       canvas.ensureScale();
       // 整屏遮罩：Qt `ResponsiveLyrics.cpp:238` 的 `hit({0,118,393,h-118},
       // "mobile:song-options", "收起操作")` 就是"点面板外的任何地方收起"。
@@ -1317,13 +1290,8 @@ class BasicHudFrame {
     String pickerNotice = '',
     bool canCreatePlaylist = false,
   }) {
-    // 横屏：这些竖屏稿一律放进 Qt 桌面的模态外框里
-    // （`discoverModalBounds`：宽 min(1260, stage-100)、top 122、高 836），
-    // 外面先铺全舞台遮罩，再把整页内容整体平移到外框左上角。
-    //
-    // 2026-11-25 之前这里是「按舞台高整屏拉伸」：页头贴在屏幕 y=0，被状态栏
-    // 压住，标题与返回箭头互相重叠（真机截图为证）。放进外框后页头落在 y=122，
-    // 尺寸按外框高度算（unit = 836/852），底部也不会再压播放条。
+    // 横屏：这些竖屏稿一律放进 Qt 桌面的模态外框（宽 min(1260, stage-100)、top 122、高 836），
+    // 铺全舞台遮罩后整体平移到外框左上角，尺寸按外框高度算。
     final Rect panel = discoverModalBounds(width);
     hudFill(sink, const <Object?>[0.0, 0.0, 0.0, 0.42], 0, 0, width, height);
     hudFill(
@@ -1470,8 +1438,7 @@ class BasicHudFrame {
     // 控制带必须服从详情页曲目，不能把在播那首的进度/播放态/传输键搬过来。
     final SirenSong? playingTrack = state.playingTrack;
     final bool current = playingTrack != null && playingTrack.id == song.id;
-    // 歌词预览：本页曲目没在播，但面板上挂的是**这首**的歌词（用户 2026-11-24
-    // 要求「歌词无需播放就能看」）。此时没有播放进度，位置/时长按 0 与曲库时长画。
+    // 歌词预览：本页曲目没在播，但面板挂的是这首的歌词；无进度，位置按 0 画。
     final bool previewing = !current && state.lyricsPreviewId == song.id;
     if (state.phase == BasicPhase.lyrics) {
       // 歌词页默认画**正在播放**的那首：标题/艺人/封面取 playingTrack。
@@ -1524,11 +1491,9 @@ class BasicHudFrame {
       lyricPreview: (current || state.lyricsPreviewId == song.id)
           ? _portraitLyricPreview(state)
           : '',
-      // 歌词入口常开（用户 2026-11-24：歌词无需播放就能看）：点了才去取文本，
-      // 取不到时歌词页自己画「暂无歌词 / NO LYRICS」，不靠把入口变灰来提前判断。
+      // 歌词入口常开：点了才取文本，取不到时歌词页自己画「暂无歌词」。
       lyricsAvailable: true,
-      // 评论入口同理：能不能取到由平台能力决定（`_commentsAvailable`），
-      // 页面只负责给入口。漏传会让底栏「评论」恒灰、点了没反应（真机缺陷）。
+      // 评论入口同理：可用性由平台能力决定，页面只负责给入口。
       commentsAvailable: commentsAvailable,
       mode: state.queueMode,
     );
@@ -1638,11 +1603,8 @@ class BasicHudFrame {
   ) {
     final double x = width * 0.56;
     final double usable = width - x - 59;
-    // Qt `NativeHudDetail.cpp:80-100`：评论态先把详情卡整块底色铺掉再画评论面板
-    // （`fill(bounds, 0.973,0.969,0.933,0.96)`），否则评论文字会与底下 TRACK RECORD
-    // 的标题/字段互相透叠（真机缺陷）。这里照做：先铺纸色，再交给 comments_modal。
-    // Qt 那里 alpha 是 0.96，但它的卡片根本没画（`commentsPanel` 直接 return）；
-    // 我们是叠画，留 4% 透光会让底下的标题/字段隐约透出来，所以这里用不透明纸色。
+    // 评论态先把详情卡整块底色铺掉再画评论面板，否则文字与底下 TRACK RECORD 互相透叠。
+    // Qt 的卡片本就 return，我们是叠画，所以用不透明纸色。
     final List<Object?> paper = dark
         ? <Object?>[0.08, 0.095, 0.09, 1]
         : <Object?>[0.973, 0.969, 0.933, 1];
@@ -2095,8 +2057,7 @@ class BasicHudFrame {
       dark: state.dark,
       lyricsMode: state.phase == BasicPhase.lyrics,
       isSiren: isSiren,
-      // 横屏详情页的主按钮行（Qt `primaryActions`，NativeHudDetail.cpp:118-133）：
-      // 少了这两项，「加入我喜欢的音乐」在横屏根本没有按钮（用户 2026-11-22 报的缺陷）。
+      // 横屏详情页的主按钮行：少了这两项，「加入我喜欢的音乐」没有按钮。
       canMutateLike: canMutateLike,
       likedInIds: songLiked,
       likedInList: songLiked,
@@ -2363,11 +2324,8 @@ bool basicHudOwnsStagePoint(
 
 /// HUD 手势层：只在 [regions] 给的矩形内参与命中，矩形外返回 false。
 ///
-/// 这是“不抢 Qt 触摸”的关键：Stack 命中链在返回 true 的子节点处停下，旧实现用
-/// `Positioned.fill` + translucent 的 GestureDetector 恒返回 true，于是 Qt 的
-/// PlatformView 永远收不到 touch（唱片区域左右拖动不到 Qt 的机制原因）。
-/// 现在只有 HUD 自己画出来的命中形状（含 android 的 16 stage 单位触控余量）和
-/// 曲目列矩形参与手势，其余位置的触摸原样下探给 PlatformView。
+/// 这是「不抢 Qt 触摸」的关键：Stack 命中链在返回 true 的子节点处停下，
+/// 只有 HUD 自己画出的命中形状（含 16 单位触控余量）与曲目列矩形参与手势。
 class _HudGestureRegion extends SingleChildRenderObjectWidget {
   const _HudGestureRegion({required this.regions, required Widget super.child});
 
@@ -2777,13 +2735,9 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
   bool _scrollCoasting = false;
   bool _scrollAnimating = false;
 
-  // ---- 弹层页（评论 / 百科 / 发现 / 收藏 / 检索 / 专辑信息 / 歌手 / 队列）的松手惯性 ----
-  //
-  // 这些页面的滚动量不是资料库的条目窗口，而是各自的一维标量（网格、舞台 px 或
-  // 队列行号），所以动量另存一套：数值单位 = 该页自己的单位，速度 = 单位/秒。
-  // 以前 `_dragEnded` 对这些页面直接 `return`，于是抬手即停（用户 2026-11-26 报
-  // 「部分页面没有适配物理滑动，脱手即停」）；现在与资料库同一套物理（摩擦 2.4、
-  // 收尾 0.6 进吸行、弹簧率 10），只是不再吸到整行、也没有 count 上界。
+  // ---- 弹层页的松手惯性 ----
+  // 这些页面的滚动量是各自的一维标量（网格 / 舞台 px / 队列行号），动量另存一套：
+  // 与资料库同一套物理，只是不吸整行、没有 count 上界。
   bool _modalDragActive = false;
   double _modalScrollValue = 0;
   double _modalScrollMax = 0;
@@ -2985,8 +2939,7 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       providerAccounts: widget.providerAccounts,
       providerUserName: widget.providerUserName,
       localMusicEnabled: widget.localMusicEnabled,
-      // 平台显示名与「是否内置塞壬」必须透到帧里：漏了这两项，横屏页头右上角
-      // 在网易云/QQ 渠道下会继续画默认值「＋ 塞壬曲库」（真机缺陷）。
+      // 平台显示名与「是否内置塞壬」必须透到帧里，否则页头仍画「＋ 塞壬曲库」。
       providerName: widget.providerName,
       isSirenProvider: widget.isSirenProvider,
       accountUid: widget.accountUid,
@@ -3109,14 +3062,8 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
         searchGeometry.listBottom - searchGeometry.listTop,
       ),
     );
-    // 弹层面板的可拖区：队列/评论面板自己不画在资料库列表里，但用户在上面
-    // 上下滑就是要滚它（缺陷：面板开着时滑不动、反而去滑下一层）。
-    // 弹层面板的可拖区：队列/评论面板自己不画在资料库列表里，但用户在上面
-    // 上下滑就是要滚它（缺陷：面板开着时滑不动、反而去滑下一层）。
-    //
-    // 注意坐标口径：竖屏手势层在**舞台单位**里工作（`listRect` 那条三目就是
-    // 这件事），所以竖屏的这些矩形必须保持 stage 单位，只有横屏才转逻辑像素。
-    // 之前这里无条件 `rectToLogical`，竖屏面板拖动永远判不中（真机缺陷）。
+    // 弹层面板的可拖区：队列/评论面板不在资料库列表里，但在上面上下滑就是要滚它。
+    // 竖屏手势层工作在舞台单位，这些矩形必须保持 stage 单位；横屏才转逻辑像素。
     Rect stageOrLogical(double left, double top, double width, double height) {
       final Rect rect = Rect.fromLTWH(left, top, width, height);
       return portrait ? rect : geometry.rectToLogical(rect);
@@ -3164,7 +3111,7 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
         stage.height * 0.58,
       );
     } else if (widget.modal == 'saved') {
-      // 收藏列（喜欢/歌单）也是长列表（真机 100 首），列表区从卡片下沿起。
+      // 收藏列（喜欢/歌单）也是长列表，列表区从卡片下沿起。
       modalListRect = stageOrLogical(
           0, stage.height * 0.42, stage.width, stage.height * 0.58);
     } else if (widget.modal == 'comments') {
@@ -3452,17 +3399,10 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
     return 130 + 190 + math.max(0.0, tileRows * tileStride) + 40;
   }
 
-  /// 竖直页面里「1 个内容单位」等于多少个**手势**像素。
+  /// 竖直页面里「1 个内容单位」等于多少个手势像素。
   ///
-  /// 两套坐标的差别全在手指位移拿到的是什么单位：
-  /// * 横屏：手势层在逻辑 dp 里，页面内容按舞台 px 排 ⇒ 除以 `stageScale`。
-  /// * 竖屏：手势层在 `PortraitStage` 的 `Transform.scale(stageScale)` 内，
-  ///   `details.delta` 已经是**舞台 px**；而页面内容单位是**画布网格**
-  ///   （发现页 196 一卡、收藏/检索/歌手 68 一行、专辑信息 68 一行）
-  ///   ⇒ 只要除以 `unit`（舞台 px / 网格），不能再除一次 `stageScale`。
-  ///
-  /// 这是用户报「竖屏列表滚动速度远大于手指」的根因出口：旧代码一律只除以
-  /// `stageScale`，竖屏下滚动量被放大 `unit` 倍（本机 1.84）。
+  /// 横屏：手势层在逻辑 dp 里，除以 `stageScale`。
+  /// 竖屏：手势层已在 `Transform.scale` 内，delta 就是舞台 px，只除以 `unit`。
   double _stageUnitsPerGrid(StageGeometry geometry, bool portrait) {
     if (!portrait) {
       return geometry.stageScale <= 0 ? 1 : geometry.stageScale;
@@ -3574,7 +3514,6 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       // 这些页面的滚动量以「画布网格」为单位（发现页 196 一卡、收藏/检索 68 一行、
       // 歌手页 68 一行），所以拖动像素要先折成网格：网格→舞台 px 走 unit，舞台 px→
       // 逻辑走 stageScale。原实现只除 stageScale，竖屏下滚动量被放大了 unit 倍
-      // （本机 unit 1.84 ⇒ 手指滑 100dp 列表跳 184 格，用户报「滚动速度远大于手指」）。
       final double perGrid = _stageUnitsPerGrid(geometry, portrait);
       _modalDragPixels += details.delta.dy;
       // 上界：内容总高 - 一屏（一屏按舞台高的 0.6/0.5 估，宁多给一点空白，
@@ -3582,9 +3521,7 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       final double viewport = _stageSize.height * (widget.modal == 'wiki' ? 0.60 : 0.50);
       final double content = switch (widget.modal) {
         'wiki' => BasicHudFrame._wikiContentHeight(widget.aux?.wiki),
-        // 发现页内容总高由快照自报（`paintPortraitDiscoverPage` 的返回值），
-        // 这里只是拖动上界的估法：一卡 196 高一排 + 页头 260。列数必须按当前页宽
-        // 现算（单卡限宽 120 之后本机是 4 列，写死两列会把上界高估一倍）。
+        // 拖动上界只是估法：一卡 196 高一排 + 页头 260，列数按当前页宽现算。
         'discover' => _discoverContentHeight(geometry, portrait),
         'search' => widget.state.searchTotal * 68.0 + 200.0,
         'saved' => widget.state.selectedLane == 2
@@ -4057,8 +3994,7 @@ class _BasicHudSurfaceState extends State<BasicHudSurface>
       geometry: geometry,
       android: defaultTargetPlatform == TargetPlatform.android,
     );
-    // 输入框优先：HUD 画出来的框和输入层自己的命中面不一定完全重合，点框里
-    // 却弹不出键盘时由宿主兜底请求焦点（用户 2026-11-22 报的缺陷）。
+    // 输入框优先：HUD 的框与输入层命中面不一定重合，点框里弹不出键盘时由宿主兜底。
     final Offset stagePoint = geometry.toStage(logical);
     // 只有文本输入框才由这条路径抢走命中：`fields` 里还登记着 `playerBounds`
     // （整条播放条的指针归属矩形）之类非文本框，一起吞会让底栏、播放条全部失灵。

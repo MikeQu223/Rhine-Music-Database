@@ -510,13 +510,10 @@ void _mv(_Painter paint, PlayerBarState state, double x, double y) {
   paint.hit(PlayerBarRect(x - 24, y - 24, 48, 48), 'player:mv', '打开 MV 播放窗口');
 }
 
-/// 输出区：音量与队列（PlayerBar.cpp:208-225）。
+/// 输出区：音量与队列（PlayerBar.cpp）。
 ///
-/// Qt 在桌面平台画「分隔线 + OUTPUT / 输出 + 音量滑轨」，移动端（`applicationVolume`
-/// 恒假）退化成「系统音量」字样。用户 2026-11-26 明确要求 Android 上**整块输出区
-/// 都不出现**（不是禁用滑轨、也不是换成「系统音量」）：判据就用现有的
-/// `applicationVolume`（桌面恒真、移动端恒假），为假时这里只留右侧的队列入口，
-/// 分隔线 / OUTPUT / 输出 / 音量文字一律不画，也不发音量命中。
+/// 移动端 `applicationVolume` 恒假，整块输出区都不画（不是禁用滑轨、也不是换成
+/// 「系统音量」），只留右侧队列入口，也不发音量命中。
 void _output(
   _Painter paint,
   PlayerBarState state,

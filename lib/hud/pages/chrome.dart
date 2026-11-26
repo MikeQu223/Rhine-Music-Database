@@ -123,9 +123,7 @@ class HudChrome {
   static const double maskClipHeight = 984.0;
   /// Qt NativeHud.cpp:343 return width - 789;
   static const double navigationRightInset = 789.0;
-  /// Qt NativeHud.h:145 `int archiveMaskStrength = 50`。
-  ///
-  /// 本项目出厂默认改成 0（关闭）：曲库页不压暗右侧 3D 画面（用户 2026-11-19 指定）。
+  /// Qt NativeHud.h `int archiveMaskStrength = 50`。本项目出厂默认改成 0（关闭）。
   static const int defaultArchiveMaskStrength = 0;
 
   /// Qt NativeHud::navigationLeft() (NativeHud.cpp:342-344)。
@@ -183,15 +181,8 @@ class HudChrome {
         session = 'KUGOU SESSION';                                                                     // :367
       }
     }
-    // Qt 原点就是 967（NativeHud.cpp:634/636）。10pt 字的墨迹落在 y+9.7 .. y+17.4
-    // （`lib/hud/text/glyph_run.dart` 的 `y + size*1.044` 口径与 Qt
-    // `Qt/src/Glyphs.cpp:530-564` 逐行一致），y=967 时墨迹底 ≈ 977.4，
-    // 恰好落在 y=984 的播放条顶线之上，与 `music-number`（`01`，基线 901.2、58 号，
-    // 墨迹底 ≈ 962.6）也留 14.1 的缝。
-    //
-    // 2026-11-25 曾把这一行抬到 952（提交 03d160fea），那是把「舞台被底部安全区
-    // 截短成 1069.2」的错位算到了文字头上；舞台高度恢复成 Qt 的 1080 之后
-    // （`lib/basic/basic_app.dart` 的横屏分支），纵坐标必须回到 Qt 真值。
+    // Qt 原点就是 967：10pt 字的墨迹底约 977.4，落在 984 的播放条顶线之上，
+    // 与 `music-number` 也留 14.1 的缝。抬到 952 是把被安全区截短的舞台高度错算到了文字头上。
     const double footerBaselineY = 967;
     hudText(sink, session, 75, footerBaselineY, 10, weight: 'regular', tracking: 0.9, dark: dark);          // :370
     const String credit = 'POWERED BY RHINE LAB';                                                                // :371

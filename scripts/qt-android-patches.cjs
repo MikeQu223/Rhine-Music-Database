@@ -6,7 +6,7 @@
 // 反复构建幂等；锚点消失直接构建失败并指出补丁名，绝不静默略过。
 //
 // 目前唯一一项：Qt 6.12 的 Android Vulkan 窗口在系统销毁/更换 Surface 时与
-// 渲染线程的 vkQueuePresentKHR 竞态。真机 tombstone 实证：
+// 渲染线程的 vkQueuePresentKHR 竞态。崩溃 tombstone 实证：
 //   FORTIFY "pthread_mutex_lock called on a destroyed mutex"
 //   （Surface::hook_queueBuffer ← vulkan::driver::QueuePresentKHR ← QRhi::endFrame）
 // 错开时序时表现为静默 SIGSEGV（exit-info 只有 SIGNALED/11，无 tombstone）。

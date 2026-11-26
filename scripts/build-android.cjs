@@ -182,7 +182,7 @@ function prepareResources() {
         // 后者必须与 CMakeLists 的 RHINE_ANDROID_NORMAL_RGBA8 保持一致，否则纹理尺寸对不上。
         //
         // ETC2 已停：那套手写编码器有字节序（ETC2 要求大端块）与 individual 模式位布局
-        // 两处缺陷，标准解码器实测 PSNR 5.7 dB、真机是花屏，运行时也默认关闭
+        // 两处缺陷，解码出来是花屏，运行时也默认关闭
         // （RHINE_SURFACE_ETC2=1 才读）。留着烘焙只是每次白花十几秒再打 700 KB 死重。
         // 换成可靠编码器（etcpak / etc2comp）后，把 RHINE_BAKE_ETC2 加回来即可。
         RHINE_BAKE_LIGHT_HALF: '1',

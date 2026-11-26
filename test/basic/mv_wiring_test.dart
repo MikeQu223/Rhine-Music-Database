@@ -55,7 +55,7 @@ void main() {
     expect(model.resolution, 720);
     expect(model.versionStatus, '1 个版本');
     expect(model.auto, isFalse);
-    // 有播放地址就是可解码（本仓库已接 video_player，真机播过 Ave Mujica）。
+    // 有播放地址就是可解码。
     expect(model.decodable, isTrue);
     // 拿不到地址时才诚实降级（插件对无 MV 曲目回 null）。
     expect(basicMvPanelModelOf(const MvState(trackId: '880380')).decodable, isFalse);

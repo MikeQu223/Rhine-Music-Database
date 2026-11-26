@@ -92,7 +92,7 @@ echo "before   : sha256=$(sha256sum "$jar" | cut -d' ' -f1) entries=$(unzip -l "
 
 # 三份被替换的类；其余 entry 原样保留。QtClipboardManager 换成用 application context
 # 取系统剪贴板，否则框架的 ClipboardManager.mContext 会永久钉住每进程第一个宿主 Activity
-# （真机根链：jni_global QtClipboardManager -> ClipboardManager.mContext -> cold-first MainActivity）。
+# （根链：jni_global QtClipboardManager -> ClipboardManager.mContext -> cold-first MainActivity）。
 "$javac_bin" -nowarn -Xlint:-options --release 17 \
       -cp "$android_jar:$jar" \
       -d "$work/classes" \

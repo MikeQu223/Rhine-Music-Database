@@ -77,8 +77,7 @@ void paintPortraitLikesPage(
 
   // Qt `y = (search ? 130 : 158) - scroll`；小视口按比例收。
   final double top = _contentTop(c);
-  // 收藏列可能有上百首（真机 100 首），必须能滚：卡片与按钮跟着滚动量整体上移，
-  // 列表行自己再让出同样的距离。
+  // 收藏列可能有上百首，卡片与行都跟着滚动量整体上移。
   final double headTop = top - scroll;
   final double bottom = _pageBottom(c, top);
 

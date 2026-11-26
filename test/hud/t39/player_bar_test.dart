@@ -918,7 +918,7 @@ void main() {
           ]);
     });
 
-    test('applicationVolume=false：整块输出区不画（用户 2026-11-26 要求）', () {
+    test('applicationVolume=false：整块输出区不画', () {
       final PlayerBarDrawing drawing = render(const PlayerBarState(applicationVolume: false));
       expect(drawing.volume, isNull);
       expect(hitsOf(drawing, 'player:volume-fraction:0'), isEmpty);

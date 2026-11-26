@@ -62,7 +62,7 @@ SceneLayerHost::SceneLayerHost() {
     }
     m_layerProbe = qEnvironmentVariableIsSet("RHINE_LAYER_PROBE");
     // 版本驱动的置脏默认是关的。理由：兜底间隔（20 帧）本来就是为"异步资源到达没有
-    // 信号"准备的，把置脏切到版本号之后，这条兜底就是唯一的可见性保障；没有实机比对之前
+    // 信号"准备的，把置脏切到版本号之后，这条兜底就是唯一的可见性保障；没有对比验证之前
     // 不能直接把默认路径换掉，所以做成"开关 + 可回退"，探针里能同时看到两种来源的计数。
     m_revisionMode = qEnvironmentVariableIntValue("RHINE_LAYER_REVISION") == 1;
 }
@@ -466,7 +466,7 @@ bool SceneLayerHost::renderFrame() {
     }
     // 非 Metal 后端过去是**每帧强制置脏**：模型/纹理异步加载完成后引擎不一定发出带
     // visualChanged 的 sceneUpdated，一旦完全按脏标记剔除，3D 房间几何就会永远不出现
-    // （实机验证过：去掉后背景模型缺失，改回立即恢复）。代价是静止画面也每帧重渲两层
+    // （验证过：去掉后背景模型缺失）。代价是静止画面也每帧重渲两层
     // （3D 约 6~9ms + UI 约 5~7ms），而主界面这类页面的内容每秒只变二三十次。
     //
     // 这里改成「周期性兜底」：每 m_safetyFrames 帧补脏一次，把异步资源的最坏可见延迟
@@ -633,13 +633,9 @@ void SceneLayerHost::requestOverlayContent() {
 /**
  * 按内容版本置脏。
  *
- * 与 requestSceneContent()/requestOverlayContent() 的区别只在于"要不要重复置脏"：
- * 版本没前进就说明这一轮没有新内容，直接返回；前进一次只置脏一次。注意它不会自己
- * 触发 requestRender()——调用方（PresentationShell）每帧本来就会来问一次脏标记，
- * 再从这里回调一次只会把同一帧的渲染请求叠成两份。
- *
- * 默认（RHINE_LAYER_REVISION 未开）只记录版本，不改变任何置脏行为，等价于优化前；
- * 非 Linux 后端沿用原有的"每帧强制置脏"，这里同样只记录。
+ * 与 requestSceneContent() 的区别只在「要不要重复置脏」：版本没前进就直接返回。
+ * 它不自己触发 requestRender()——调用方每帧本来就会来问一次脏标记。
+ * RHINE_LAYER_REVISION 未开时只记录版本，不改变置脏行为。
  */
 void SceneLayerHost::setResourceRevision(quint64 sceneRevision, quint64 hudRevision) {
 #ifdef Q_OS_LINUX

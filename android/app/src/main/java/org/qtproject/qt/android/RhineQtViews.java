@@ -15,67 +15,24 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Kotlin 侧的取用入口。
+ * Kotlin 侧的取用入口：创建动作收成返回 {@link View} 的静态方法，
+ * 避免 Kotlin 去解析包内可见的父类。
  *
- * Kotlin 拒绝把"父类是包内可见类"的 Java 类型放进自己的签名——它会尝试解析
- * org.qtproject.qt.android.QtView 并报无法访问。所以创建动作收成一个返回 {@link View}
- * 的静态方法：Kotlin 只看见 View，构造细节留在 Java 的同一个包里。
+ * 这个类解决嵌入式路径的三件事：
+ * 一、应用状态补报。QtEmbeddedDelegate 在第一个 QtView 构造时才注册生命周期回调，
+ *     宿主早已发完 onCreate/onResume，state 停在 0，Qt 主线程卡在 QGuiApplication
+ *     构造里，平台视图永远停在占位。
+ * 二、运行时归属。Qt 的嵌入式路径假设一个 Activity 对应一次 Qt 进程，销毁后再建
+ *     拿不到 JNI_OnLoad 建立的 jclass。所以运行时按进程存活，只把场景视图挂到新 Activity。
+ * 三、引用释放。只置 isStarted=false 会跳过 Qt 自己的注销分支，留下
+ *     Application → delegate → 已销毁 Activity 的强引用链；这里注销 app-state 监听，
+ *     并配合本地补丁版 delegate 摘掉 Application 回调。
  *
- * 本类在 org.qtproject.qt.android 包内，可以直接使用 Qt Android 的包内 API。它解决
- * "Qt 运行时嵌在 Flutter 平台视图里"带出来的三件事：
+ * 顺序要求：本类必须先于 Qt 自己的 delegate 注册回调，才能在其 onActivityDestroyed
+ * 之前 setStarted(false)，跳过 terminateQtNativeApplication()。
  *
- * 一、应用状态补报（Qt3D 区域全黑的直接原因）
- * Qt 的嵌入式路径（QtView / QtEmbeddedViewInterfaceFactory）把应用状态跟踪交给
- * QtEmbeddedDelegate，而它是在**第一个 QtView 构造时**才通过
- * Application.registerActivityLifecycleCallbacks 注册的。宿主 Activity 的
- * onCreate/onStart/onResume 早已发完，于是 QtNative.m_stateDetails.state 永远停在 0，
- * QtNative.runAction(action, true) 判定"UI 线程不可达"，把动作塞进
- * BackgroundActionsTracker 却没人 process；QAndroidPlatformClipboard 注册剪贴板管理器时
- * 在 Semaphore.acquire() 上永久等待，Qt 主线程卡在 QGuiApplication 构造函数内部，
- * qApp 一直是空，createRootWindow 的 invokeMethodImpl 全部返回 false 被丢弃，
- * 平台视图永远停在 placeholder（真机表现：Qt3D 区域全黑）。
- *
- * 二、跨 Activity 的运行时归属（退出后重开必然 SIGABRT 的根因）
- * Qt 6.12 的嵌入式路径假设"一个 Activity = 一个 Qt 进程"：
- * QtEmbeddedDelegate.onActivityDestroyed 会调 QtNative.terminateQtNativeApplication()，
- * 原生侧 clearJavaReferences() 把 m_qtActivityClass 等全局 jclass 全部 DeleteGlobalRef
- * 并置空；而它们只在 JNI_OnLoad 里建立。库已经加载过，Activity 重建时
- * QtView.loadQtLibraries → QtNative.startApplication → initAndroidQpaPlugin 不会重新
- * JNI_OnLoad，于是 QPA 插件重新构造时拿到 NULL jclass：
- *
- *   JNI DETECTED ERROR IN APPLICATION: GetMethodID received NULL jclass
- *   in call to GetMethodID
- *   from void org.qtproject.qt.android.QtNative.startQtNativeApplication(java.lang.String)
- *   → QPlatformIntegrationFactory::create → QAndroidPlatformIntegration ctor
- *
- * 真机已复现（devices 526f6b6d，tombstone logs/lifecycle-fix-reopen-full.txt）。同一个
- * 进程里"重启 Qt"在这套 Qt 里走不通，所以本类改成**不拆运行时**：Qt 运行时按进程存活，
- * 只把场景视图挂到新 Activity 上。
- *
- * 三、销毁后的引用释放（seq5：泄漏必须收口，不是"已知代价"）
- * 只把 isStarted 置 false 会连 Qt 自己的注销分支一起跳过：QtEmbeddedDelegate 在
- * 构造函数里注册的匿名 Application.ActivityLifecycleCallbacks 只有它自己的
- * onActivityDestroyed 拿得到（unregisterActivityLifecycleCallbacks(this)），于是每轮
- * 退出都会留下 Application→匿名回调→delegate→已销毁 Activity 的强引用链；QtView 也会
- * 在构造时 QtNative.registerAppStateListener(this) 而永不自注销。本类的处理：
- *   - 销毁前把该 Activity 里所有 QtView 从 Qt 的 app-state 监听列表里注销；
- *   - 依赖本地补丁版 QtEmbeddedDelegate（android/app/javapatch：注销自身
- *     Application 回调、注销 app-state 监听、从 factory 摘除，只在原判据成立时才
- *     terminate），使被销毁的宿主不再被 Application 引用；
- *   - 记录 WeakReference 并在下一轮用 System.gc() 后的可回收性做对象根证据
- *     （日志 "released ... activity=true delegate=true view=true"）。
- *
- * 顺序：本类必须在 Qt 自己的 delegate 之前注册回调（registerActivityLifecycleCallbacks
- * 的注册顺序即回调顺序），才能在 QtEmbeddedDelegate.onActivityDestroyed 之前把
- * QtNative.setStarted(false)，让它跳过 terminateQtNativeApplication()，保住
- * m_qtActivityClass 等 jclass 与活着的 Qt 运行时。
- *
- * 重开时走"复用运行时"分支：先为新的 Activity 建 delegate（它的 m_stateDetails 快照还是
- * isStarted=false），再把 QtNative.setStarted(true) 造出一次 false→true 迁移，让新 delegate
- * 在 onAppStateDetailsChanged 里注册 QtWindow/QtMenu/QtInput backend；然后
- * updateNativeActivity() 把新 Activity 交给原生侧；最后补报 ApplicationActive。此时
- * QtView 构造函数里的 QtNative.startApplication() 因为 isStarted=true 直接 return，
- * 不会重入 main()，也就不会再有那次 NULL jclass 崩溃。
+ * 重开走复用分支：建 delegate → setStarted(true) 触发 false→true 迁移 → 注册 backend →
+ * updateNativeActivity() → 补报 ApplicationActive。
  */
 public final class RhineQtViews {
     private RhineQtViews() {}
@@ -298,10 +255,8 @@ public final class RhineQtViews {
                 // 从而保住 m_qtActivityClass 等 jclass 与活着的 Qt 运行时。
                 QtNative.setStarted(false);
                 final QtEmbeddedViewInterface delegate = sDelegate;
-                // 同步执行，不 post：post 出去的 Runnable 在真机上一次都没跑过（日志里
-                // 缺 "kept Qt runtime alive"，导致 sRuntimeRetained 永远是 false，下一次
-                // Activity 起来时走 startApplication → 同进程第二次建 QGuiApplication →
-                // 挂死 → ANR）。这里只注册/清引用，不碰原生线程，同步是安全的。
+                // 同步执行，不 post：post 出去的 Runnable 不保证跑，会漏掉 keep-alive，
+                // 下一次 Activity 起来就会二次建 QGuiApplication 挂死。
                 android.util.Log.i(TAG, "host activity destroyed: releasing host refs");
                 onHostActivityDestroyed(activity, delegate, sceneView);
             }
@@ -447,16 +402,11 @@ public final class RhineQtViews {
     }
 
     /**
-     * 把 Flutter 侧的渲染状态快照交给 Qt 场景（原生 QQuickView 里的 NativeScene）。
+     * 把 Flutter 的渲染状态快照交给 Qt 场景。只做转交，解析/去重/生效都在 Qt 侧。
+     * 异常在这里吞掉并打日志：状态通道坏了不该拖垮原生视图树。
      *
-     * 只做转交：解析/去重/生效都在 Qt 侧（Qt/src/EmbeddedSceneHost.cpp 的
-     * RhineEmbedded::applySceneState）。异常在这里吞掉并打日志——状态通道坏了
-     * 不该拖垮原生视图树。
-     */
-    /**
-     * @return 原生侧是否受理。true 表示已排进 Qt 线程队列（或已缓存、等场景就绪后补应用），
-     *     此时 Dart 端保持"已发送"去重即可；false 表示这次没被受理，Dart 端应清掉去重记录
-     *     以便下一次重发。首帧可能早于 Qt 的 qApp，原生侧会把这份快照缓存到场景就绪。
+     * @return 原生侧是否受理。false 表示这次没进队列，调用方应清掉去重记录以便重发。
+     *     首帧可能早于 Qt 的 qApp，原生侧会缓存到场景就绪再应用。
      */
     public static boolean pushSceneState(String json) {
         return pushSceneState(-1, 0L, json);
@@ -482,15 +432,10 @@ public final class RhineQtViews {
     private static native boolean nativePushSceneState(int viewId, long context, String json);
 
     /**
-     * 把 Flutter 搬过来的**原始**指针事件交给 Qt 场景。
+     * 把 Flutter 搬过来的原始指针事件交给 Qt 场景。
      *
-     * 为什么需要：hybrid composition 下 Qt 视图挂在 FlutterView 的子级里，但引擎
-     * 为了在平台视图之上绘制 Flutter 内容会加一层 PlatformOverlayView；实测触摸
-     * 连原生子树的 dispatchTouchEvent 都进不去（dumpsys activity top 的层级与
-     * 探针都证明了这一点）。于是 Flutter 侧只做坐标搬运，语义判定仍然全部在
-     * Qt 的 NativeSceneInput 里——这里不解释手势、不改相机。
-     *
-     * 坐标是**舞台单位**（Qt 的 1080p 舞台）：调用方已经除以 stageScale。
+     * PlatformOverlayView 挡住原生派发，触摸进不了 Qt 子树，所以由 Flutter 只做坐标搬运；
+     * 手势语义与相机仍全在 Qt 的 NativeSceneInput 里。坐标是舞台单位。
      */
     public static void pushScenePointer(String type, double x, double y) {
         pushScenePointer(-1, 0L, type, x, y);
@@ -545,12 +490,10 @@ public final class RhineQtViews {
     }
 
     /**
-     * 没有 producer origin 的动作出口。
+     * 没有 producer origin 的动作出口：**不投递**。
      *
-     * **不投递**：viewId/ctx 是动作归属的一半，缺了它就只能用"此刻谁在前台"给迟到事件
-     * 补标签，而那正是 QUEUED-A-OVER-B 的错源。调用方必须改用
-     * {@link #emitSceneAction(int, long, String)} 并带上 Qt 在应用快照时记下的 origin。
-     * 保留这个签名只是为了不让任何旧调用点把构建打断——它自己会把动作丢掉并留证据。
+     * viewId/ctx 是动作归属的一半，缺了它只能按「此刻谁在前台」补标签，那正是
+     * QUEUED-A-OVER-B 的错源。调用方必须改用 {@link #emitSceneAction(int, long, String)}。
      */
     public static void emitSceneAction(String action) {
         android.util.Log.w(TAG, "scene action without origin dropped: " + action);

@@ -22,28 +22,17 @@
 #endif
 #ifdef Q_OS_ANDROID
 // 注意：当前默认禁用（RHINE_ANDROID_SIGNAL_DIAG=0），native 崩溃由 Bugly 接管；
-// 下面这套链只保留作离线排障的回退手段。include 保持不变，供文件后面的代码使用。
+// 下面这套链只保留作离线排障的回退手段，include 供文件后面的代码使用。
 //
-// 段错误诊断链 v2：真机后台死亡只留下 ApplicationExitInfo 的 SIGNALED/11，
-// "Fatal signal" 与 tombstone 全部缺席。v1 的教训是只写 stderr——Android 应用
-// 进程的 fd 2 通向 /dev/null（Qt 转发进 logcat 的是 qWarning 这类日志 API，
-// 不是原生 fd 2），输出全部丢失。v2 = 两条确定性通道 + 两个静默死亡形态的封堵：
-//   通道 1（logd）：__android_log_write 直接进 logcat；liblog 的写路径不做
-//     内存分配，崩溃处理器内可用。
-//   通道 2（文件）：QGuiApplication 构造后预打开 AppDataLocation/rhine-signal.log
-//     （O_APPEND），handler 只 write 已持有的句柄；下次启动回读转发后清空——
-//     logd 缓冲被无关刷屏覆盖时仍能拿回现场。
-//   封堵 A：启动时在主线程 SIG_UNBLOCK 六个致命信号，此后创建的线程继承未屏蔽
-//     掩码。同步 fault 撞上被屏蔽的信号时内核按默认处置直接强杀，任何 handler
-//     都不运行——正是"无 Fatal signal、无 tombstone"的静默形态。
-//   封堵 B：看门狗线程每 2 秒扫 /proc/self/task，点名任何屏蔽了致命信号的线程
-//     （Node/V8/驱动若长期屏蔽 SIGSEGV，这里会直接暴露）。
-// handler 本体 write-first：先落通道再收尾。收尾不再内联调用旧处理器（那会跳过
-// 正常的信号分发语义，链路一断就是静默死亡），而是恢复旧处置后 tgkill 重投递：
-// libc 的 debuggerd 照常打 "Fatal signal" 并产出 tombstone，没有旧处置就按默认
-// 方式自杀，绝不能返回出错指令。/proc/self/maps 现场扫描把 pc/lr/sp 所在映射
-// 连同文件内偏移一并写出，拿到输出即可用 llvm-symbolizer 对未 strip 的 .so
-// 定位到函数。
+// 段错误诊断链：Android 应用进程的 fd 2 通向 /dev/null，只写 stderr 会全部丢失。
+// v2 = 两条确定性通道 + 两个静默死亡形态的封堵：
+//   通道 1：__android_log_write 直接进 logcat（写路径不分配内存）。
+//   通道 2：预打开 AppDataLocation/rhine-signal.log，handler 只 write 已持有的句柄，
+//           下次启动回读转发后清空。
+//   封堵 A：启动时在主线程 SIG_UNBLOCK 六个致命信号，之后创建的线程继承未屏蔽掩码。
+//   封堵 B：看门狗每 2 秒扫 /proc/self/task，点名屏蔽了致命信号的线程。
+// handler 先落通道再收尾：恢复旧处置后 tgkill 重投递，让 libc 照常打 Fatal signal
+// 并产出 tombstone，绝不返回出错指令。
 #include <QDebug>
 #include <QStandardPaths>
 #include <QString>
@@ -512,15 +501,10 @@ void rhineOpenSignalDiagFile() {
 #include <cstdio>
 #include <cstring>
 #include <memory>
-/* Qt 的 Vulkan 类型只在「Qt 带 Vulkan 特性」且「应用侧能看到 vulkan.h」时声明：
- *   qvulkaninstance.h:  #if QT_CONFIG(vulkan) || defined(Q_QDOC)
- *                      #if __has_include(<vulkan/vulkan.h>) || defined(Q_QDOC)
- *   qrhi_platform.h:    #if (QT_CONFIG(vulkan) && __has_include(<vulkan/vulkan.h>)) || defined(Q_QDOC)
- * 只判 QT_CONFIG(vulkan) 会在装了 Qt 但没装 Vulkan SDK 的机器上
- * （如 Windows runner：Qt 自带 Vulkan 特性、系统无 vulkan.h）编译出使用未声明类型的代码，
- * 表现为 QVulkanInstance 不完整类型与 VK_SUCCESS 未定义。守卫必须同时覆盖两半。
- * Android 与桌面同路径：NDK 自带 vulkan.h，自编 Qt 的 QT_CONFIG(vulkan)=1，
- * .qsb 里本来就含 SPIR-V（GLSL 130,150,300es 只是附加的翻译产物），Vulkan 可直接消费。 */
+/* Qt 的 Vulkan 类型只在「Qt 带 Vulkan 特性」且「应用侧能看到 vulkan.h」时声明，
+ * 只判 QT_CONFIG(vulkan) 会在系统没有 vulkan.h 的机器上编译出使用未声明类型的代码。
+ * 守卫必须同时覆盖 QT_CONFIG 与 __has_include 两半。
+ * Android 与桌面同路径：NDK 自带 vulkan.h，.qsb 里的 SPIR-V 可直接消费。 */
 #if QT_CONFIG(vulkan) && __has_include(<vulkan/vulkan.h>) && !defined(Q_OS_DARWIN)
 #include <QVulkanFunctions>
 #include <QVulkanInstance>
@@ -1101,12 +1085,8 @@ int main(int argc, char **argv) {
     // 不创建 QQmlApplicationEngine，不加载 Main.qml，也就不存在第二个 Qt 窗口、
     // 不了锁横屏、不改 Activity 的窗口形态（沉浸式由 Flutter 宿主自己负责）。
     if (RhineEmbedded::requested()) {
-        // 内嵌路径的窗口由 Flutter 的 PlatformView 持有：Activity 销毁时我们会同步销毁
-        // 那个 QQuickView（Qt/src/EmbeddedSceneHost.cpp 的 destroySceneView），而它是本进程
-        // 唯一的 window。默认 quitOnLastWindowClosed=true 会让 Qt 在此时退出事件循环 →
-        // QtNative 收尾 → 整个进程随 Activity 一起死（真机表现：Back 后 pidof 为空、
-        // 日志没有 "kept Qt runtime alive"）。桌面路径一直显式关掉这个开关
-        // （Qt/src/DesktopTray.cpp:50、Qt/src/playback_main.cpp:41），内嵌路径同样必须关。
+        // 内嵌窗口由 Flutter 的 PlatformView 持有，Activity 销毁时会被同步销毁；
+        // quitOnLastWindowClosed 默认 true 会让 Qt 跟着退出，整个进程随 Activity 一起死。
         QGuiApplication::setQuitOnLastWindowClosed(false);
         qmlRegisterType<RhiScene>("Rhine.Native", 1, 0, "RhiScene");
         qmlRegisterType<Hud>("Rhine.Native", 1, 0, "Hud");
@@ -1210,13 +1190,9 @@ int main(int argc, char **argv) {
 #endif
 #ifdef Q_OS_LINUX
     // 插帧关闭时不接管呈现层（RHINE_FG_LAYER=on 可强制接管做对照）。
-    // 依据：全屏 2560x1440、主界面列表页长按 ↓ 的实测内容帧（引擎 render/s）——
-    //   接管呈现层 20.3/s（间隔均 51~74ms）vs Qt 默认路径 27.5/s（间隔均 33.8ms），
-    //   Qt 路径高 35%，已与 OpenGL 的 31.5/s 接近。
-    // 原因：呈现层在 fg=off 时唯一做的事就是"每帧重渲重上屏"，而它把两层离屏录制、
-    // 合成与 present 全压在 GUI 线程上（QQuickRenderControl 的 render() 在调用线程执行），
-    // 直接挤掉了引擎节拍。不开插帧时它没有收益，只有成本。
-    // 代价：切换插帧从此需要重启应用才生效（呈现层在启动时决定是否接管）。
+    // 依据：呈现层在 fg=off 时只是每帧重渲重上屏，把两层离屏录制、合成与 present
+    // 全压在 GUI 线程上，反而挤掉引擎节拍（实测内容帧低约 35%）。
+    // 代价：切换插帧从此需要重启才生效。
     const bool fgForced = qEnvironmentVariable("RHINE_FG_LAYER").compare("on", Qt::CaseInsensitive) == 0;
     // 即使启动时超采样暂时屏蔽插帧，仍按请求准备呈现层，降回原生倍率时才能热恢复。
     const bool interpolationWanted = fgForced || RhineFg::parseBool(qgetenv("RHINE_FG"), false);

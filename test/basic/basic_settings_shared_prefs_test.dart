@@ -1,15 +1,7 @@
-/// 设置持久化的真落地：shared_preferences（2026-11-16 用户直接指示）。
+/// 设置持久化的真落地：shared_preferences。
 ///
-/// 这里量的是 [SharedPreferencesBasicSettingsPort] 的真实行为，不量 UI：
-///   1) 键是完整 `panel/<裸键>`（与 Qt/src/Host.cpp:1075 的 `"panel/" + key` 同一字符串）；
-///   2) 值是字符串，读回逐字相同；
-///   3) 非 `panel/` 前缀的键不进 readAll（不把别人的偏好当成设置）；
-///   4) 写失败必须如实返回 false（绝不假装落盘），读失败给空集合而不是编默认值；
-///   5) packageInfo / openUrl 仍走原平台通道（不是持久化，不需要换实现）。
-///
-/// 背景（真机证据，不是推测）：2026-11-16 20:56 在 526f6b6d 上点「右侧画面遮罩」
-/// 的 80 刻度后，设置窗横幅显示「写入失败：archive-mask-strength 未能保存（仍是 55）」，
-/// 截图 .agents/parity-20261109/logs/159/install-and-run2/shot-09-after-stepper.png。
+/// 键是完整 `panel/<裸键>`，值逐字读回相同；非 `panel/` 前缀不进 readAll；
+/// 写失败如实返回 false，读失败给空集合而不是编默认值。
 library;
 
 import 'package:flutter/services.dart';

@@ -604,10 +604,8 @@ void _cardActions(
     p.hit(x, y, width, height, item.route, item.label);
     final List<Object?> color = primary ? inverse : foreground;
     final bool likeCell = item.route == 'music:like';
-    // Qt 的喜欢按钮文案自带 `♥ 已喜欢` / `♡ 喜欢` 前缀（NativeHudDetail.cpp:159），
-    // 但 MiSans 字形表里没有 U+2665/U+2661，真机回退字体把它们画成倒三角
-    // （2026-11-24 已从文案里摘掉）。这里改成画**矢量心形**，既补回符号又不依赖字形：
-    // 已喜欢 → `fill-path`（实心），未喜欢 → `path` 描边（空心）。
+    // Qt 文案自带 `♥ 已喜欢` / `♡ 喜欢`，但 MiSans 没有 U+2665/U+2661，回退字体画成倒三角。
+    // 这里改画矢量心形：已喜欢用 fill-path，未喜欢用 path 描边。
     if (likeCell) {
       final bool filled = item.label.startsWith('已喜欢');
       p.save();
@@ -889,8 +887,7 @@ SongDetailDrawing renderSongDetail(
   ];
   if (state.canMutateLike && (!state.isSiren || item.kind == 'song')) {
     bool liked = state.likedInIds || state.likedInList;
-    // 不再带 ♥/♡ 字面：MiSans 字形表里没有 U+2665/U+2661（`misans-glyphs.json`
-    // 查不到），真机回退字体把它画成向下的三角（2026-11-24 截图）。
+    // 不再带 ♥/♡ 字面：MiSans 缺这两个码点，回退字体画成向下的三角。
     String label = liked ? '已喜欢' : '喜欢';
     if (state.provider == 'qq') {
       final String subscription = state.likeSubscriptionState ?? 'unknown';

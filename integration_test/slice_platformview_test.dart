@@ -1,33 +1,10 @@
-// 候选 A（PlatformView 切片）的宿主契约 + 「没有假 Qt」不变量 + 真机切片门。
+// PlatformView 切片：宿主契约 + 「没有假 Qt」不变量 + 设备切片门。
 //
-// 前置依赖（未落地前无法按设备命令真机运行）：
-//   pubspec.yaml 的 dev_dependencies 需增加 integration_test: sdk: flutter，
-//   并把 flutter_test import 换成 integration_test、在 main 首行加
-//   IntegrationTestWidgetsFlutterBinding.ensureInitialized。pubspec.yaml 是共享
-//   文件、不属本文件改动范围，留给装配方；在那之前本文件用 flutter_test 即可运行。
+// 依赖：pubspec 需加 integration_test 才能按设备命令运行，在此之前用 flutter_test。
+// 本文件只锁契约（key 名、词表、verdict 语义、不发布像素），不复制实现。
 //
-// 契约 v2 依赖：本文件按冻结契约 v2 引用下列符号，实现位于
-// lib/platform/qt_platform_view.dart 与
-// android/app/src/main/kotlin/rhine/music/database/porting/QtPlatformViewHost.kt：
-//   QtPlatformCompositionMode / wireName / fromWire、
-//   qtPlatformCompositionTextureLayer / qtPlatformCompositionViewComposition、
-//   QtProbeKeys 的 8 个新 key、QtHostStatus 的 8 个新字段、
-//   QtPlatformView.compositionMode、QtPlatformViewController.compositionMode /
-//   applyCompositionMode。
-//   本文件只做契约锁定：断言 key 名、词表、verdict 语义与「不发布像素」的形状，
-//   不复制实现，也不替代实现侧的静态核对。行号随实现漂移，复核以函数名重查。
-//
-// MainActivity / 引擎注册 patch（候选隔离；本文件不落地）：
-//   1. MainActivity.configureFlutterEngine 里调用 QtPlatformViewHost.registerWith(engine)。
-//      MainActivity 是共享文件，不在本文件改动范围。
-//   2. Flutter 的 plugin 自动注册不会注册 PlatformViewFactory —— 必须显式注册，
-//      否则 AndroidView/PlatformViewLink 会以 MissingPluginException 结束。
-//   3. view composition 只改 Dart 侧的创建 API（PlatformViewLink +
-//      initExpensiveAndroidView，Flutter SDK platform_views.dart:193-194 注明
-//      "Always creates a Hybrid Composition (HC) view"），viewType 与注册方式不变。
-//   4. Context 必须能剥到 Activity：QtLoader.java:73-76 要求 baseContext 是
-//      Activity/Service，否则构造器抛 IllegalArgumentException、QtView 捕获后放弃
-//      启动（QtView.java:144-148）——视图会建出来但 Qt 起不来。不要传 Application context。
+// Android 侧接线（不在本文件范围）：configureFlutterEngine 里显式注册 PlatformViewFactory
+// （插件自动注册不处理它），Context 必须能剥到 Activity，否则 Qt 起不来。
 
 import 'dart:convert';
 
@@ -36,8 +13,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:rhine_music_database/platform/qt_platform_view.dart';
 
-/// 真机切片门。默认关闭：没有 Qt android jar / qt_libs 清单 / Qt 的 .so 时
-/// 切片只能证明 archBlocked，不能证明画面与性能（ 才能裁决）。
+/// 设备切片门，默认关闭：没有 Qt android jar / qt_libs / .so 时只能证明 archBlocked。
 const bool qtSliceDeviceGate =
     bool.fromEnvironment('QT_SLICE_DEVICE', defaultValue: false);
 
@@ -549,7 +525,7 @@ void main() {
       expect(parsed.missing, contains('org.qtproject.qt.android.QtQuickView'));
       expect(parsed.missing, contains('org.qtproject.qt.android.QtView'));
 
-      // 2) observed（宿主实测）字段。
+      // 2) observed（宿主观测）字段。
       expect(parsed.qtClassesPresent['QtQuickView'], isFalse);
       expect(parsed.qtClassesPresent['QtView'], isFalse);
       expect(parsed.qtLibsArrayPresent, isFalse);
@@ -716,70 +692,19 @@ void main() {
     });
   });
 
-  // ── 组 3：真机切片（需要 Android 设备 + Qt 产物；默认 skip）───────────────
+  // ── 组 3：设备切片（需要 Android 设备 + Qt 产物；默认 skip）───────────────
   group('On-device Qt slice', () {
     testWidgets(
       '宿主探针 + 输入回执 + 生命周期对账（DEVICE_BLOCKED 前不得宣称可用）',
       (WidgetTester tester) async {
-        // 补齐 integration_test 依赖与 Qt 产物后
-        // 按下列顺序跑；每一步都必须在报告里留下**观测值**，不许用截图或「编译通过」代替。
-        //
-        //   1. touch：tester.dragFrom 在平台视图区域内拖动。
-        //      链路证据：QtHostRootView.dispatchTouchEvent 只计数后 super 原样转发
-        //      （QtPlatformViewHost.QtHostRootView.dispatchTouchEvent，不消费、不改坐标、不 setOnTouchListener）
-        //      → QtWindow.onTouchEvent (QtWindow.java:246-266) 在首次触摸时才初始化 editText
-        //      焦点，然后 windowFocusChanged(true,getId()) →
-        //      QtInputDelegate.sendTouchEvent(event, getId())（QtWindow.java:262；
-        //      实现 QtInputDelegate.java:654-708，包内可见、宿主不可直接调）。
-        //      MotionEvent 坐标就是相对本视图的局部坐标（QtInputDelegate.java:683-684
-        //      直接 getX(i)/getY(i)），所以宿主**不得**自己再做一次坐标映射；
-        //      断言 touchEvents > 0 且 lastTouchAction 与实际手势一致，不做任何像素比对。
-        //
-        //   2. resize：拖动窗口/改变分屏 → 宿主 onSizeChanged 报真实尺寸
-        //      （QtPlatformViewHost.QtHostRootView.onSizeChanged），Qt 侧自己按
-        //      QtView.java:50-69 的 addOnLayoutChangeListener → resizeWindow( ... )（:42-43
-        //      native 声明，:63 调用）重排。宿主只提供真实尺寸，不自算、不补偿。
-        //      断言：surfaceSize 事件里的宽高 == 视图实际宽高。
-        //
-        //   3. IME：点 QML 输入框。证据 QtInputDelegate.java:214-240 showSoftwareKeyboard
-        //      （由 Qt C++ 侧经 QtInputInterface 调用）+ QtEditText.java:111-133
-        //      onCreateInputConnection；softInputMode 由 QtActivityDelegateBase.java:83-104
-        //      从 manifest 读出后交给 QtInputDelegate。
-        //      断言：宿主不出现任何 InputMethodManager.show/hide 调用 —— 宿主不驱动 IME。
-        //
-        //   4. texture：Qt 侧 createSurface（QtWindow.java:303-325）按 surfaceContainerType
-        //      选容器：==0 → QtSurface（SurfaceView，QtSurface.java:14-28），否则 →
-        //      QtTextureView（QtTextureView.java:14-29）。SurfaceView 在 Flutter 的
-        //      纹理合成路径下不会被合成（Flutter SDK platform_views.dart:131-133：
-        //      能用 TLHC 就用 TLHC，否则退回 Virtual Display），因此
-        //      surfaceContainerKind=='surface-view' 时 viewCompositionRequired 必须为 true，
-        //      Dart 侧必须走 compositionMode=viewComposition（initExpensiveAndroidView，
-        //      platform_views.dart:193-194）。
-        //
-        //   5. 旋转/前后台：manifest 两个 Activity 都是 sensorLandscape
-        //      （AndroidManifest.xml:89、:103），运行期 AndroidWindow.cpp:25-51 的
-        //      applyWindowShape() 在 runOnAndroidMainThread 里再请求一次方向/标志
-        //      （注释说明标志只能 UI 线程改，主线程直接 JNI 会 CalledFromWrongThreadException）；
-        //      前台/后台由 AndroidWindow.cpp:85-118 的 applicationStateChanged 处理
-        //      （setVisible / quick->setVisible / trimMemory）。
-        //      断言：activityIsQtActivityBase==false（Flutter 宿主不是 QtActivityBase）、
-        //      safeAreaOwner=='unavailable-no-qactivitybase'（QtWindow.java:92，方法体 :90-150；
-        //      inset listener 只在 QtActivityBase 下注册；QtWindow.java:338-345 的
-        //      setGeometry 同样只对 QtActivityBase 生效），并记录旋转前后 surfaceSize。
-        //
-        //   6. 媒体会话：AndroidMediaSession::ensureStarted()（AndroidWindow.cpp:79）由 Qt 侧
-        //      configureAndroidWindow 在首帧前拉起前台服务；Flutter 宿主不 drive 它。
-        //      断言：只记录「Qt 侧是否已启动」，不许把宿主自己的 Service 状态当成 Qt 的。
-        //
-        //   7. 组合模式警示：viewCompositionRequired==true 且 compositionMode==textureLayer
-        //      时，面板/警示文案必须出现（本条只能在真实 Android 宿主观察，见组 2 同名
-        //      测试的说明）。记录实际文案与 Qt 容器类型。
-        //
-        //   8. 收尾：verdict != ready 时把 missing/reason 原样写进切片报告，这就是本树的
-        //      真实结论；archBlocked/deviceBlocked 绝不改写成「通过」，也不许用静态截图
-        //      或「编译通过」冒充嵌入可用。
-        //
-        // 本占位断言只证明「门确实被打开过」，不是任何功能的证据。
+        // 补齐 integration_test 依赖与 Qt 产物后按下列顺序跑；每一步都要在报告里留下观测值，
+        // 不许用截图或「编译通过」代替。
+        //   1. touch：dragFrom 拖动，断言宿主 touchEvents > 0（宿主只计数后 super 原样转发）；
+        //   2. resize：改窗口/分屏，断言 surfaceSize == 视图实际宽高；
+        //   3. IME：点 QML 输入框，断言宿主没有 InputMethodManager.show/hide；
+        //   4. texture：surfaceContainerKind == 'surface-view' 时必须走 Hybrid Composition；
+        //   5. 旋转/前后台：记录 surfaceSize 与 safeAreaOwner（Flutter 宿主不是 QtActivityBase）；
+        //   6. 收尾：verdict != ready 时把 missing/reason 原样写进报告，不许改写成「通过」。
         expect(qtSliceDeviceGate, isTrue,
             reason: '组 3 需 -d <device> 且 --dart-define=QT_SLICE_DEVICE=true');
       },

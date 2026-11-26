@@ -1,17 +1,6 @@
-// EXECUTION STATUS: EXECUTED on ROOT (2026-11-16 23:5xAsia/Shanghai) —— 36/36 passed；
-// 同一命令在 FINAL-CLOSURE-161 分支与 ROOT `5a17764` 上均通过，含媒体通知的封面/紧凑三键护栏。
-//
-// This file is written to run on a machine with the Flutter SDK:
-//
-//   flutter test test/basic/basic_media_146_test.dart
-//
-// The last group reads the working-tree source text (File.readAsStringSync: what is on disk
-// now, not what is in git HEAD), so it needs no engine, platform channel, or device.
-//
-// 覆盖 MEDIA-CONTROLS-146 的 Dart 适配器契约：真实身份 + 真实 native 读数上报、
-// 空/错误清通知、动作回既有权威、SEEK 按真实时长夹取、dispose 断订阅与端口。
-// Kotlin 侧的 notification/media-key/服务生命周期只能由 141 在真机验收，这里只做
-// 静态文本守卫，绝不把静态断言当成设备 PASS。
+// 覆盖 MEDIA-CONTROLS-146 的 Dart 适配器契约：真实身份与 native 读数上报、
+// 空/错误清通知、动作回权威、SEEK 按真实时长夹取、dispose 断订阅。
+// 运行：flutter test test/basic/basic_media_146_test.dart（只读源码文本，不需设备）。
 
 import 'dart:async';
 import 'dart:io';
@@ -552,8 +541,7 @@ void main() {
     });
   });
 
-  // 静态文本守卫：只在磁盘源码上断言关键接口存在，防止实现回退。
-  // 这不是设备 PASS，真实的 HOME/锁屏/通知/按键验收由 141 在真机执行。
+  // 静态文本守卫：只在磁盘源码上断言关键接口存在，防止实现回退；不是设备 PASS。
   group('late platform results never overwrite a newer truth', () {
     test('an update that returns after stop() does not republish the old state',
         () async {

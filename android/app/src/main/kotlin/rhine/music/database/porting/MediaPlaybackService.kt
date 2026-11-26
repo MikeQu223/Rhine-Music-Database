@@ -103,8 +103,7 @@ class MediaPlaybackService : Service() {
 
         createNotificationChannelIfNeeded()
 
-        // startForeground 的权限缺失会让 onCreate 直接抛 SecurityException 并杀掉整个应用
-        // （真机已实测）。媒体控件是锦上添花的能力：失败只降级为无通知，播放与会话控制不受影响。
+        // startForeground 缺权限会直接杀掉应用；媒体控件失败只降级为无通知。
         try {
             startForegroundCompat(buildNotification())
         } catch (e: Exception) {

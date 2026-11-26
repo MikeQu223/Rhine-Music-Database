@@ -82,9 +82,8 @@ double paintPortraitSavedOverview(
   final double stride = PortraitRhythm.gap(68, h);
   final double contentTop = PortraitRhythm.below(110, portraitSavedOverviewContentTop, h);
   double y = contentTop - scroll;
-  // 裁剪区顶端跟内容起点一样是**不随滚动变化**的（Qt `ResponsiveHudLayout.cpp:227`
-  // 的 `c.beginContent(130)`）：写成 `y` 会把裁剪线一起上移，列表上滑后内容直接
-  // 穿透到页头区，页头看起来像「透明没有底色」（用户 2026-11-25 报的第 2 条）。
+  // 裁剪区顶端与内容起点一样不随滚动变化（Qt `beginContent(130)`）；
+  // 写成 `y` 会把裁剪线一起上移，内容穿透到页头。
   c.beginContent(contentTop);
 
   // 卡：surface + line 边框，102 高。

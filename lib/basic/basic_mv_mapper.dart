@@ -15,10 +15,7 @@ import '../provider/provider_gateway.dart' show ProviderMvVersion;
 
 /// 把 MV 领域态映射成面板模型。
 ///
-/// [decodable] 看**当前是否已经解析出可播放地址**：本仓库已接入 `video_player`
-/// （`lib/basic/basic_mv_player.dart`，真机可播 1080p），所以拿到 `url` 就是可解码；
-/// 拿不到（插件没给 MV、或仍在解析）才画「本机未接入视频解码」这条诚实降级。
-/// 注意 Qt 桌面端由 `PlatformFeatures.h:23-27` 恒关 MV，口径与本仓库不同。
+/// [decodable] 看当前是否已解析出可播放地址；拿不到才画「本机未接入视频解码」。
 MvPanelModel basicMvPanelModelOf(MvState state) {
   return MvPanelModel(
     status: state.status,
@@ -36,7 +33,7 @@ MvPanelModel basicMvPanelModelOf(MvState state) {
     ],
     selectedVersionId: state.selectedVersionId,
     auto: state.auto,
-    // 见上方文档：有播放地址才算可解码（真机已用 video_player 播过 Ave Mujica）。
+    // 有播放地址才算可解码。
     decodable: (state.track?.url ?? '').isNotEmpty,
   );
 }

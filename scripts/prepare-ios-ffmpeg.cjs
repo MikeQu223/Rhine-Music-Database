@@ -17,7 +17,7 @@ function run(command, args, cwd = directory) {
     }
 }
 
-/** 交叉编译全部解码能力，保持与真机相同的 FFmpeg ABI；禁用未使用的录制和命令行工具。 */
+/** 交叉编译全部解码能力，保持与设备相同的 FFmpeg ABI；禁用未使用的录制和命令行工具。 */
 function main() {
     fs.mkdirSync(directory, { recursive: true });
     if (!fs.existsSync(archive)) {

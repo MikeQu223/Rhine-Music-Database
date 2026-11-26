@@ -1,13 +1,6 @@
-/// A56：boot 实测曲线源（boot_track_source.dart）的静态单元测试。
+/// boot 曲线源的静态单元测试：只把 boot-tracks.json 的解析与 Qt 采样语义钉成契约。
 ///
-/// 状态：**authored only / 未执行**。本卡禁令禁止 flutter test / dart test / analyze / build，
-/// 因此下面的断言不声称任何 PASS；它们只把 boot-tracks.json 的解析与 Qt 采样语义钉成契约。
-///
-/// 证据：
-/// - Qt/src/BootTimeline.cpp:26-62  载入与特殊键映射（brandX/logo.draw/orbit.sides/orbit.orbit）。
-/// - Qt/src/BootTimeline.cpp:64-67  未命中 key → 0。
-/// - Qt/src/SceneMotion.cpp:52-95   track() 单调 Hermite（端点保留斜率、内部异号切线归零）。
-/// - pubspec.yaml:65-67             `Assets/animation/` 已声明。
+/// 证据：BootTimeline 的载入与特殊键映射、未命中 key → 0、track() 单调 Hermite。
 library;
 
 import 'dart:convert';

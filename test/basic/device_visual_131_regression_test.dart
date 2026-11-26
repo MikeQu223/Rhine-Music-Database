@@ -1,14 +1,7 @@
-// DEVICE-VISUAL-131 缺陷②③的回归测试（真机现象 → 源码机制）。
+// DEVICE-VISUAL-131 缺陷②③的回归（现象 → 源码机制）。
 //
-// 真机 m07919：右侧列表部分歌名只剩几像素竖条；底栏播放键/箭头只剩实心底板。
-// 机制（同一构建可复现）：
-//  ② lib/hud/widgets/track_ruler.dart:308-322 用 left = x - text.glyphInset(...)；
-//     旧实现在缺字（如 U+6708 月 不在 Assets/fonts/misans-glyphs.json 的 1007 码点内）
-//     时回退返回整段 advance，整行被左移一个文字宽，只剩 clip 窗口那几像素
-//     （clip 见 track_ruler.dart:283）。Qt 真值是 Qt3D/Glyphs::inset → 0（Glyphs.cpp:339-349）。
-//  ③ lib/basic/basic_hud_resources.dart 旧 pathFor 恒返回 null，
-//     paint_stack.dart:428-457 对 HudFillPath/HudStrokePath 记 missingPath 并跳过，
-//     线上传的是 SVG 路径数据（Qt Glyphs.cpp:728-760 现解析），必须解析而非视为路径名。
+// ② 缺字时 glyphInset 回退整段 advance，整行被左移一个文字宽，只剩裁剪窗口那几像素。
+// ③ pathFor 恒返回 null，paint_stack 记 missingPath 并跳过绘制；线上传的是 SVG 路径数据。
 
 import 'dart:io';
 import 'dart:ui' as ui;

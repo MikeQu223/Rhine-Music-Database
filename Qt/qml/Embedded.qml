@@ -2,20 +2,11 @@ import QtQuick
 import QtQuick.Window
 import Rhine.Native 1.0
 
-// Flutter 内嵌模式（RHINE_QT_EMBEDDED=1）的场景根。
+// Flutter 内嵌模式的场景根：把宿主给的像素尺寸交给 rhine.resize、承载 Qt 的 3D 层，
+// 并按 Overlay.qml 的同一套舞台换算把原始指针转给 rhine.pointer。
 //
-// 这一层只做三件事，别的都不做：
-//   1. 把宿主给的像素尺寸交给 Qt 的场景（rhine.resize）；
-//   2. 承载 Qt 自己的 3D 层（Scene3D → RhiScene，材质/模型/相机/归档全部由 Qt 持有）；
-//   3. 把**原始指针输入**按 Overlay.qml 的同一套舞台换算转给 rhine.pointer，
-//      让 NativeSceneInput 的归档拖拽、唱片左右拖旋转、拾取选中在嵌入路径下照样成立。
-//
-// 这里刻意没有右栏遮罩：Qt 自己的右栏遮罩是 NativeHud 的 frame op（只在
-// mode == archive 且 archive-mask-strength > 0 时画），而嵌入模式的 HUD 由 Flutter
-// 画、Qt 的 Hud 项不在这一棵树里。此前这里抄过一份 Rectangle 渐变，几何按"铺满整个
-// 舞台"算（maskRatio 789/984 of 1080 高），但宿主给的矩形只是左栏，于是遮罩压掉了
-// 视图右侧 ~84% 的画面——那不是全幅构图，是几何错位。宿主矩形改成全幅之前，这里
-// 不画任何遮罩；要遮罩就由宿主（Flutter HUD）自己画。
+// 这里不画右栏遮罩：Qt 的遮罩是 NativeHud 的 frame op，嵌入模式的 HUD 由 Flutter 画；
+// 宿主矩形目前只是左栏，按全舞台几何画会压掉右侧大半画面。要遮罩由宿主自己画。
 Item {
     id: root
     objectName: "embeddedRoot"

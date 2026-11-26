@@ -1,67 +1,13 @@
-/// 引擎传输 · Node 运行时宿主端口
-/// （Android 分支 1:1）。
+/// 引擎传输 · Node 运行时宿主端口（Android 分支 1:1）。
 ///
-/// 计划卡：docs/superpowers/plans/2026-11-09-qt-to-flutter-parity-plan.md:524-531（
-/// 「引擎传输与 Node 生命周期」）。
-/// 唯一权威源：Qt/src/BridgeProcessAndroid.cpp（281 行；Android 的 libnode.so 只导出
-/// node::Start(int, char**)，没有 iOS 的 C 包装 node_start —— 见该文件 :19-24）。
-/// 同协议对照：Qt/src/BridgeProcess.h:13-46（ProcessState/ProcessError 与四个信号）、
-/// Qt/src/BridgeProcessIOS.cpp:20-130（iOS 多一条 system-trust 通道；本文件不得把
-/// Security.framework 分支带进 Android 路径）。
-/// 协议对端：MusicBridge/ios-runtime.cjs（:7 argv[2]=port、:16 首帧 {token}、
-/// :21 setInterval(60000) 保活）。
+/// 权威源：Qt/src/BridgeProcessAndroid.cpp。协议对端是 MusicBridge/ios-runtime.cjs
+/// （首帧 {token} 握手，之后一行一个 JSON，60s 保活）。
 ///
-/// 复用源（只读；最小修复后内联，未整份搬运，只搬 0x0a 分帧 / 48 MiB / 握手排队 /
-/// 候选销毁 / 常量时间比较这几处机制）：
-/// sourceSha = 2cb83d1ac48c09286e911b691f6a31c39c0a1a4a
-/// lib/bootstrap/node_host_bridge_channel.dart（回环绑定 :400-403、候选销毁 :476-498、
-/// 握手排队与 flush :559-591/:938-953、常量时间令牌比较 :1198-1207）。
-/// 差异（逐条，便于独立审查）：
-///   1. 宿主端口由 MethodChannel（node_host_platform.dart / NodeHost.kt，未随本树携带）
-///      改为冻结契约的 NodeRuntimeHost：这里不裁决「JNI 内嵌 Node」还是「Qt 宿主」，
-///      所以本文件只描述 argv/栈/端口，绝不自己起 native 线程、绝不写 JNI/CMake/gradle/
-///      MainActivity。
-///   2. token 在实例构造时生成一次（BridgeProcessAndroid.cpp:47 是成员初值 QUuid::createUuid()，
-///      进程级而不是每会话；每会话 id 在 BridgeProcessAndroid.cpp:184）。
-///   3. 只允许一个控制连接：第二个候选直接销毁（Qt:55-60）；复用源是有界多候选。
-///   4. 越界判据回到 Qt:73 的「整个读缓冲」而不是复用源的「单帧」（engine_transport.dart
-///      侧仍按单帧，两者刻意不同）。
-///   5. 会话过滤、base64 还原、start/input/stop 组装不在本文件（属 engine_transport.dart）；
-///      本文件只做「字节 → 帧」与「帧 → 字节」以及握手。
-///   6. 读缓冲用 Uint8List 线性队列而不是 List<int>：48 MiB 的越界帧会在 List<int> 里
-///      膨胀成数亿字节的对象图，而 Qt 的 QByteArray 是连续字节。
+/// 只负责「字节 → 帧」「帧 → 字节」与握手：不裁决 JNI 内嵌 Node 还是 Qt 宿主，
+/// 不起 native 线程，不写 JNI/CMake/gradle。
 ///
-/// 已知限制（冻结接口决定）：NodeRuntimeHost 没有事件流，所以
-/// 「成功启动之后」宿主才发现的运行时退出，只能经控制连接断开（Qt:63-67 的等价路径）
-/// 或下一次 launch 的 prepare() 反馈被感知。
-///
-/// 契约文本 / 行为细节的其余差异（接上面 1-6 编号；供独立审查逐条核对，冲突处以 Qt 源为准）：
-///   7. import 基线之外多一个 dart:math：令牌是回环端口上唯一的认证凭据（Qt:47
-///      QUuid::createUuid 走 QRandomGenerator::system()，是 CSPRNG），所以这里必须用
-///      Random.secure() 而不是时钟/序号派生。契约的 imports 是基线集合，此处为唯一例外，
-///      已在  报告 deviations[0] 登记。
-///   8. 读缓冲与出站队列用「起始游标 + 结束游标」的 _ByteQueue，而不是原地 setRange
-///      位移：Qt 的 QByteArray::remove(0, n) 是 memmove 语义，Dart 的
-///      Uint8List.setRange 在源/目标同缓冲时未在语言规范里承诺重叠安全，48 MiB 级别的
-///      位移一旦实现成前向拷贝就会静默破坏数据。游标版 consume 是 O(1) 且无重叠假设。
-///   9. runtime-error 的去重只在**单次会话内**生效（会话 = 一次真实 launch 尝试，或一次被
-///      接受的控制连接，见 _failureSession/_failureEmittedSession）。Qt 没有一次性标志：
-///      BridgeProcessAndroid.cpp:63-67 每次 disconnected 都 accept(runtime-error)，:186-189
-///      每次 start() 失败都再合成一次。本实现只合并「同一个失败被通知两次」这种 Dart 侧特有形
-///      情形（_abortConnection 先显式走一遍失败路径，随后 socket 的 onDone 又回调一次），
-///      跨会话绝不抑制：启动失败之后重新 launch 成功的断链、以及每次独立的启动尝试，都各自
-///      上报。仍然保留的差异只有一条——launch 在 launched 之后只回报状态、不重复上报
-///      （等价 「旋转不重复启动」，避免 UI 收到重复崩溃通知）。
-///   10. send/flush 对已 abort 的 socket 做 try/catch：Qt 的 socket->write() 在已断开的
-///      QTcpSocket 上静默返回 -1，而 Dart 的 Socket.add 在销毁后会抛 StateError；
-///      为保持「认证后写失败不崩溃调用方」这一 Qt 行为，这里吞掉该异常。
-///   11. launch 失败收监听器只发生在「尚未置 launched」的路径上。Qt:102-105 的两种失败
-///      本来就没有监听，而 Qt:120-125 的 pthread_create 失败在 Qt:106 launched = true
-///      之后，Qt 并未 server.close()，QTcpServer 仍在监听；这里对齐后者。
-///
-/// 本文件的 Qt 证据行：:47 token、:52-69 构造/单连接/断链回传、:71-96 读取与握手、
-/// :98-128 launch 幂等 + 8 MiB 栈 + argv 生命周期、:130-138 出站与握手排队、
-/// :152-159 node::Start 返回 → exited → runtime-error。
+/// 已知限制：NodeRuntimeHost 没有事件流，启动后的运行时退出只能经连接断开或下次
+/// prepare() 感知。
 library;
 
 import 'dart:async';

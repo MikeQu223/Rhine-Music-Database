@@ -1,83 +1,15 @@
-/// 指针路由：Qt/qml/Overlay.qml 的事件层与 Qt/src/Engine.cpp:1042-1061（pointer）的 1:1 迁移。
+/// 指针路由：Qt/qml/Overlay.qml 事件层与 Engine 的 pointer() 的 1:1 迁移。
 ///
-/// 坐标契约：PointerEvent.position / delta 是**窗口局部逻辑坐标**（QML 的 mouse.x / mouse.y，
-/// 对应 Flutter 的 localPosition，不要用 globalPosition），内部一律经 hitLayer.geometry.toStage
-/// 换算成舞台坐标才对外转发。PointerForward.x / y 是舞台坐标
-/// （Overlay.qml:98/104/110 的 mouse.x / overlay.stageScale）。
+/// 坐标：PointerEvent.position / delta 是窗口局部逻辑坐标，内部经 toStage 换算成舞台坐标；
+/// PointerForward.x/y 是舞台坐标。
 ///
-/// 按键维度：本层只建模主键（Overlay.qml:90 acceptedButtons: Qt.LeftButton）；shield 是
-/// Qt.AllButtons（Overlay.qml:132），但它的判定不依赖按键，宿主可原样送入。
+/// 派发顺序同 QML 兄弟声明序：seek/volume → searchScrollArea → 命中 delegate →
+/// playerBarInputShield → inputLayer。Android 按下即发命中，iOS 抬起且仍在同一命中才发。
 ///
-/// 端口与返回值的分工：PointerPorts 是唯一副作用出口，PointerOutcome.forwards 是同一事实的
-/// 可断言记录。宿主二选一消费（推荐只实现 ports）；两边都消费会重复转发。
+/// move 走「记录 + 帧末 flush」模型，宿主必须每帧调用一次 flush()；非 move 相位转发前
+/// 先 flush。按下态的 leave 与 cancel 是两条路径：leave 保留按下态，cancel 才复位。
 ///
-/// 不可变约束（逐条有 Qt 出处）：
-/// - 派发顺序 = 兄弟声明顺序（Qt Quick 把输入交给最上层包含该点的兄弟）：seek/volume 播放控件
-///   （Overlay.qml:485-508）→ searchScrollArea（Overlay.qml:222-284）→ 命中 delegate
-///   （Overlay.qml:185-220）→ playerBarInputShield（Overlay.qml:123-142）→ inputLayer
-///   （Overlay.qml:86-121）。searchScrollArea 声明在 controls 内、Repeater 之后
-///   （Overlay.qml:179/185/222），所以在命中之上；这个顺序不能反。
-/// - Android 在按下即发命中动作，iOS 在抬起且释放点仍落在同一命中内才发
-///   （Overlay.qml:202-212 的 if (!overlay.ios) 与 onClicked）。
-/// - move 走 Engine.cpp:1042-1049 的「记录 + 帧末 flush」模型，不是立即转发：坐标与上次记录
-///   相同且没有待处理状态时丢弃，否则只记录进待处理态、由 flush() 取出
-///   （Engine.cpp:653-659 flushPointer）。非 move 相位在转发自身之前先 flushPointer
-///   （Engine.cpp:1050-1052）。宿主必须每帧调用一次 flush()（对应 Engine.cpp:567/750 的帧循环），
-///   否则 move 永久滞留在待处理态。记录位初值 (0,0) 且未待处理 => 指向舞台原点的首个 move
-///   会被丢弃，这是 Qt 的实际行为，保留。move 相位自身**从不** flush（Qt 的 pointermove 分支
-///   只记录），所以 handle(move) 的 forwards 恒为空，同一帧内的多次 move 只在帧末合并成一次。
-/// - playerBarInputShield 进入时发一次 pointercancel + pointerleave，坐标固定 0,0
-///   （Overlay.qml:134-137，cancel 在前）；一次手势结束后复位，使连续两次按入都能重新取消
-///   输入层手势。
-/// - 命中 delegate 的 onEntered 与 searchScrollArea 的 onEntered 都发 pointerleave(0,0)
-///   （Overlay.qml:201 / :235）。
-/// - 桌面 hover 移动：落在 hit / searchScrollArea / shield 上时停在它们的 onEntered（三者都
-///   hoverEnabled，却没有转发 onPositionChanged 的路径）；没有被上层消费时落在 inputLayer，
-///   它是 hoverEnabled（Overlay.qml:89）且 onPositionChanged 没有 pressed 守卫
-///   （Overlay.qml:100-105），因此 hover 移动与 move 同模型：只记录 _lastX/_lastY/_pending，
-///   由帧末 flush() 合成一次 pointermove（Engine.cpp:1043-1049、:653-659）。不发 leave/cancel
-///   的分支不 flush，纯 hover 不会把上一条待发的 move 提前顶出去。
-/// - viewer 捏合激活时 inputLayer 的三条通路一起短路（Overlay.qml:95 按下、:101 移动、:107 抬起），
-///   并在激活瞬间发一次 pointercancel(0,0)（Overlay.qml:319-323；注释 :94 说明理由是别让第一根
-///   手指的 MouseArea 继续驱动单指旋转）。命中的 delegate 没有这条判断，捏合真正抢走触点靠的是
-///   handler 的 grab。
-/// - pan 只在捏合激活时转发（Overlay.qml:304-307 的 if (!active) return）；dx==dy==0 跳过；
-///   abs(dx) > 0.4 * stageWidth 或 abs(dy) > 0.4 * 逻辑高度时跳过（Overlay.qml:313-314）。
-///   dx/dy 来自 scene 像素，而两个阈值分别是舞台单位与窗口单位，这是 Qt 自身的量纲不一致，
-///   原样保留、不修正；NaN/Inf 也不过滤，与 Qt 一致（Qt 这里同样没有 finite 检查，NaN 比较
-///   恒为 false 因而会被放行）。Qt 在阈值判定之前就把 lastPan 更新成当前质心
-///   （Overlay.qml:306-308），所以被拒绝的采样仍会推进锚点；本层只接收增量、不拥有锚点，
-///   宿主必须照此实现。
-/// - inputLayer 的 onExited / onCanceled（Overlay.qml:112-113）**无条件**转发 leave/cancel(0,0)，
-///   与是否持有按下态无关；但两者对**本层状态**的影响不同：onExited 只有一个转发，Qt 既不释放
-///   grab、也不把 mouse.pressed 置回 false，随后的 pointermove 仍会走到 onPositionChanged 继续
-///   转发；onCanceled 才是按下态的终点。故本层把 leave 与 cancel 拆成两条路径：leave 只 flush +
-///   转发并保留 _layer/_pressedHit 与 _dragRouter 的拖拽态，cancel 才复位按下态。
-/// - searchScrollArea（Overlay.qml:236-278）：按下即吞掉（state.closing 时更是什么都不记）；
-///   位移超过 6（局部单位，即舞台单位）记为拖拽；拖拽期间每次非零位移都转发 wheelInput，
-///   像素增量是 mapToItem(inputLayer) 换算出的**窗口像素**（Overlay.qml:252-257），直接当
-///   pixelDelta 转发、不再除 stageScale；而 TouchInput.qml:25 转发的是舞台像素。两处不一致，
-///   均按原文保留。抬起时若已拖拽或 state.closing 则什么都不做，否则按「含触摸外扩、不含
-///   modalOffset」的舞台矩形正向扫描，第一个命中 music:result:/music:expand: 前缀者触发动作
-///   （Overlay.qml:266-277 的 for + break）。
-/// - searchScrollArea 的拖拽状态机只有一份实现：wheel_router.dart 的 SearchListDragRouter。
-///   本层 press / drag / release / cancel 全部委托给它（同一个 QML 项不允许两套真相），
-///   阈值 6 与「lastDragY 只在真正发出时更新」都由它保证；本层只负责坐标空间换算与派发顺序。
-/// - consumed 只表达「本层吃掉了这次 Qt 事件」，不影响 Engine 的输入看门狗
-///   （Engine.cpp:711/768/796/831 由 onPositionChanged 直接喂）。
-///
-/// 已知偏差（本仓库无法取证，宿主可注入或需真机复核）：
-/// - iOS 抬起未建模 QQuickMouseArea 的 start-drag 阈值（位移超过平台 start-drag 距离后 Qt 不再发
-///   clicked）。dragThreshold <= 0 表示不建模；宿主可注入
-///   QGuiApplication::styleHints()->startDragDistance() 打开该判定。
-/// - iOS「是否仍在同一命中」用 HudHit 的**六字段**值相等（hud_hit.dart:21-29 只有
-///   x/y/width/height/action/label；fixed 不是字段，只是 PlayerBar 序列化键），Qt 比较的是
-///   活着的 delegate 对象（Overlay.qml:208-212）；命中在按下与抬起之间被重建、或两个命中的
-///   六字段完全相同（几何+动作+文案一致）时无法区分，会吞掉或误发动作。
-/// - 触摸按下是否让 Qt 合成 onEntered（决定 shield 与命中的 leave 是否会在触屏上发出）需真机取证；
-///   本层取「触屏按入 shield 区域也立刻取消一次」的假设，见 _down 的 shield 分支。
-///
-/// 依赖： 共享命中模型 lib/hud/protocol/hud_hit.dart，与同目录 hit_layer.dart（几何/坐标换算）。
+/// 已知偏差：iOS 的 start-drag 阈值与「仍在同一命中」只能按六字段比较，宿主可注入。
 library;
 
 import 'dart:ui' show Offset, Rect;

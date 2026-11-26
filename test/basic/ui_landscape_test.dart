@@ -335,13 +335,8 @@ void main() {
   });
 
   group('landscape output module', () {
-    /// 横屏播放条右下角的输出模块（Qt `PlayerBar.cpp:208-225` +
-    /// `Qt/src/PlatformFeatures.h:23-27`）：Android 上**没有**应用内音量，
-    /// 模块只写「系统音量」；桌面平台才有滑轨与 `player:volume-fraction:` 命中。
-    ///
-    /// 2026-11-25 用户第 5 条：横屏右下角输出音量块在 Android 上必须隐藏，
-    /// 且判断要走平台能力（`PlatformCapabilities.forTarget`）。本用例之前写反了
-    /// （断言 Android 必定有滑轨），是那条缺陷在测试里的镜像。
+    /// 横屏播放条右下角的输出模块：Android 上没有应用内音量，只写「系统音量」；
+    /// 桌面平台才有滑轨与 `player:volume-fraction:` 命中，判据走 `PlatformCapabilities`。
     List<String> textsOf(BasicHudFrame frame) => <String>[
           for (final List<Object?> command in frame.commands)
             if (command.isNotEmpty && command[0] == 'text') command[1]! as String,
@@ -358,7 +353,7 @@ void main() {
       );
     }
 
-    test('Android：输出音量块整块不画（用户 2026-11-26 要求，不是只换文案）', () {
+    test('Android：输出音量块整块不画（不是只换文案）', () {
       final BasicHudFrame frame = BasicHudFrame.build(
         state: playingState(),
         ports: _ports(),

@@ -535,8 +535,7 @@ void main() {
     const StageGeometry landscape =
         StageGeometry(logicalWidth: width, logicalHeight: height);
 
-    // 竖屏真机 stage 是 logical/scale：basic_app 传 `stage.width`（1080/1.5 = 720），
-    // 不是 1080 逻辑宽——用错宽度会让整张 ownership 图与生产图不同（假绿/假红）。
+    // 竖屏 stage 是 logical/scale（720 而非 1080），用错宽度整张图都会失真。
     const double portraitScale = 1.5;
     const double portraitWidth = 1080 / portraitScale;
     const double portraitHeight = 1920 / portraitScale;
@@ -593,7 +592,7 @@ void main() {
       await tester.pumpWidget(const SizedBox());
     });
 
-    testWidgets('竖屏：列表在 1080 之后，ownership 跟着真机 720 宽的 stage 坐标',
+    testWidgets('竖屏：列表在 1080 之后，ownership 跟着 720 宽的 stage 坐标',
         (WidgetTester tester) async {
       final List<Rect> owned = ownedOf(_libraryState(lane: 3), portrait: true);
       final Rect list = basicLibraryListStageRect(portrait: true, width: portraitWidth);

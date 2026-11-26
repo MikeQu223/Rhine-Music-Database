@@ -4,11 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:rhine_music_database/basic/qt_scene_view.dart';
 
-/// Qt 场景指针搬运的可证伪测试（FINAL-RECOVERY-138 / 指针归属与去重）。
-///
-/// 这里只证明 Dart 侧状态机：哪些事件真的下发给 Qt、下发成什么类型。
-/// 设备上"归档跟着手指动"是归属问题（HUD 命中 vs 场景），那部分要实机日志；
-/// 但"双指退单指后的幽灵 move"和"up 被去重吞掉"是纯状态机错误，能在这里锁死。
+/// Qt 场景指针搬运的可证伪测试：只证明 Dart 侧状态机（哪些事件下发、下发成什么）。
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 

@@ -745,9 +745,8 @@ void Engine::pumpEmbeddedCells(const QSet<QString> &retained, bool scrolling) {
         }
         visible.append(cell.key);
     }
-    // 宿主给的 scrolling 与原生轨道自己的拖动/惯性取并集：任何一边在动都不新建资源。
-    // 宿主那一侧带衰减：列表停下后不会再有快照来把标记改回 false，只靠它会让准入窗口
-    // 永远处于"滚动中"（真机现象：cellReal=0、全程只有 1 条 COVER_REQUEST）。
+    // 宿主的 scrolling 与原生拖动/惯性取并集。宿主侧带衰减（列表停下后没有快照回来），
+    // 单独靠它会让准入窗口永远处于滚动中。
     const bool hostScrolling = scrolling && clock.elapsed() < m_embeddedCellScrollingUntilMs;
     const bool moving = hostScrolling || scene.archiveScrolling();
     const auto report =
@@ -834,12 +833,9 @@ void Engine::pumpEmbeddedCells(const QSet<QString> &retained, bool scrolling) {
 }
 
 /**
- * 诊断：本帧**真的画出来**的格的真实/占位拆分（像素级真值在渲染侧 TEXDIAG 的 cellReal/cellPh）。
+ * 诊断：本帧真的画出来的格的真实/占位拆分。
  *
- * "visible" 只数这一帧进过画面的格（与准入上报同一集合）：早先按整份 40 格投影统计，
- * 被视锥剔掉的格会被算成占位，看起来像"20 格真实 20 格占位"，其实它们根本没画。
- * 整份投影的数量单独报 projected，两个数不能混着读。
- * labels 故意留空：标签纹理在 RhiScene 手里，硬编一个数只会跟 TEXDIAG 的 cellLab 打架。
+ * 只数这一帧进过画面的格；整份投影的数量单独报 projected。labels 故意留空。
  */
 void Engine::publishEmbeddedCells(const QSet<QString> &retained) {
     QStringList order;
@@ -1128,17 +1124,9 @@ void Engine::tick() {
         intervalMs = 33;
     }
 #if defined(Q_OS_ANDROID)
-    // 根因修复：HUD 命令流已发布、但渲染线程还没调过 Hud::updatePaintNode() 时，
-    // 绝不能连轴转。0/1ms 的 QTimer 会在 GUI 事件循环里抢在 Qt Quick 的 update
-    // request 之前反复投递，render sync 永远排不上队 —— QQuickPaintedItem 标了脏，
-    // 纹理却停在上一页：顶部/底部还在，新增的右侧详情卡片整块空白，按钮能点。
-    // 真机证据：休眠后进详情时 draw() 以 1~3ms/帧连轴转、40 帧截图逐字节相同；
-    // 开唱片旋转（rotationOnly → 33ms）或点一下（打断连轴转）就正常。
-    // 这里让出 4ms（≈240Hz 一帧）给事件循环，等渲染线程消费后自动恢复 0/1ms，
-    // 稳态零开销。2 秒兜底防止窗口长期不可见时永远不让步。
-    // 2026-11-18：原来写死 8ms（≈120Hz 一帧）等于把整条呈现链的节拍钉在 125Hz 以下；
-    // 想把上限交给呈现侧（240Hz/144Hz 面板），这个常量必须是「一帧预算」而不是
-    // 「一个面板帧」。4ms 仍显著大于 0/1ms 的连轴转，不会重新触发 render sync 饿死。
+    // 命令流已发布但渲染线程还没消费时不能连轴转：0/1ms 定时器会抢在 update request 之前，
+    // render sync 永远排不上队，纹理停在上一页。
+    // 这里让出 4ms（一帧预算）给事件循环，稳态恢复 0/1ms；2 秒兜底防止窗口不可见时永不让步。
     if (m_hudFramePending.load(std::memory_order_relaxed)) {
         if (now - m_hudFramePendingSinceMs > 2000) {
             m_hudFramePending.store(false, std::memory_order_relaxed);
@@ -1624,9 +1612,8 @@ void Engine::step(double time) {
     m_cover = object["cover"].toString();
     // 图片缓存只在 GUI 线程读取，渲染线程通过 cover() 拿这份副本。
     m_coverImage = coverImageOf(m_cover);
-    // Host::image() 只是**缓存查找**：缓存键是 loadCover 给 URL 补上 `param=NyN` 之后的
-    // 字符串，拿原始地址去查必然 miss（132R 真机上"详情页没有封面"就是这个）。所以 miss
-    // 时主动 loadCover，并用**回调返回的键**取图 —— 那才是缓存里真正的键。
+    // Host::image() 只按 loadCover 补过 param 的键命中，原始 URL 必然 miss；
+    // miss 时重新 loadCover，并用回调返回的键取图。
     if (!m_cover.isEmpty() && m_coverImage.isNull() && !m_coverRequests.contains(m_cover)) {
         m_coverRequests.insert(m_cover);
         const QString requested = m_cover;
@@ -1680,7 +1667,7 @@ void Engine::step(double time) {
 #if defined(Q_OS_ANDROID)
     // 归档页会同时画 7 张唱片，但每个条目的封面图只在"它成为当前曲目"的那一帧取一次
     // （上面的 `m_musicTextures[musicKey] = {current, m_coverImage}`），切歌瞬间
-    // host.image() 往往还没解码完，条目里就留下空 QImage，之后永不回填 —— 真机上表现
+    // host.image() 往往还没解码完，条目里就留下空 QImage，之后永不回填 —— 表现为
     // 就是非当前唱片的盘面全是 placeholderCover（TEXDIAG: mt=7 adm=2 gated=5 discO=6
     // covers=2，C++ 侧补建因为 `!it->cover.isNull()` 一个都过不去）。
     //
@@ -1790,9 +1777,8 @@ void Engine::step(double time) {
         if (hudChanged) {
             m_hudDirtyStage = dirty.rect;
             m_hudDirtyFull = dirty.full;
-            // 详情淡入是整页过渡（真机实证：过渡后段命令流里唯一逐帧变化的是 alpha，
-            // 任何局部归因都可能漏掉 alpha 作用域内的其它像素）。过渡窗口与宽限期内
-            // 一律整窗重绘——淡入总共约一秒，全屏成本可接受，漏画则是「HUD 停在上一页」。
+            // 淡入时唯一逐帧变化的是 alpha，没有包围盒可归因；
+            // 过渡期一律整窗重绘，漏画就是 HUD 停在上一页。
             if (transition) {
                 m_hudDirtyFull = true;
             }

@@ -79,8 +79,7 @@ void paintPortraitWikiPage(
     portraitWikiBodyTop,
     c.height,
   );
-  // 小节头不能压到封面：高屏上 `bodyTop` 恒为 236，减 34 会落到 202，
-  // 正好盖在 128..224 的封面上（真机「歌曲百科」四个字糊在专辑图上）。
+  // 小节头不能压到封面：`bodyTop - 34` 会正好盖在 128..224 的封面上。
   final double sectionY = math.max(
     bodyTop - PortraitRhythm.gap(34, c.height),
     artwork.bottom + PortraitRhythm.gap(14, c.height),

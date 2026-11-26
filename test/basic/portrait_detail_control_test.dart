@@ -1,10 +1,7 @@
-/// 竖屏详情页的控制带必须服从**详情页曲目**，不是正在播放的另一首。
+/// 竖屏详情页的控制带必须服从详情页曲目，不是正在播放的另一首。
 ///
-/// 用户 2026-11-19：「在竖屏播放音频的情况下，如果点进另一个音频的详情，那么底部的
-/// 控制条仍然是当前在播放的曲目的，并且也是控制当前在播放曲目的」。真值来源是 Qt
-/// compact `song()` 的 `selectedSongIsCurrent`（Qt/src/ResponsiveHudPages.cpp:165-241）：
-/// 非当前曲目 → 进度归零、右侧读本曲目时长、播放键发 `music:play`、seek 不给热区、
-/// 歌词入口不出现；当前曲目 → 全部走 `player:*` 与真实播放读数。
+/// 非当前曲目：进度归零、读本曲目时长、播放键发 `music:play`、seek 无热区、无歌词入口；
+/// 当前曲目：全部走 `player:*` 与真实播放读数。
 library;
 
 import 'package:flutter_test/flutter_test.dart';
@@ -107,8 +104,7 @@ void main() {
       expect(actions.contains('player:next'), isFalse);
       // seek 不产生字段：否则拖动会把在播那首的位置改掉。
       expect(c.fields.containsKey('seek'), isFalse);
-      // 歌词入口**仍然出现**：2026-11-24 用户要求「歌词无需播放就能看」，
-      // 选中未播放的曲目点歌词走控制器预览取词，不再把入口变灰。
+      // 歌词入口仍然出现：歌词无需播放就能看，走控制器预览取词。
       expect(actions, contains('player:lyrics'));
     });
 

@@ -1,30 +1,11 @@
 #ifndef RHINE_EMBEDDED_SCENE_ORIGIN_H
 #define RHINE_EMBEDDED_SCENE_ORIGIN_H
 
-// 嵌入式场景的**产出者身份**与生命周期判据。
+// 嵌入式场景的产出者身份与生命周期判据。header-only，无 Engine / QQuickView / JNI，
+// 宿主与离线测试共用同一份判据。
 //
-// 这个头文件刻意只有 QtCore 依赖、没有 Engine / QQuickView / JNI：场景宿主
-// (EmbeddedSceneHost.cpp) 与离线测试 (Qt/tests/EmbeddedSceneOrigin153Test.cpp) 用的是
-// 同一份判据，测试不需要起窗口、不需要设备、也不需要引擎。
-//
-// 缺陷背景（真机 07:17 那类"标签贴错人"）：
-//   1. origin 是在 JNI（Flutter platform）线程上写进全局的，而快照是排队到 Qt 线程才
-//      apply 的 —— 排队窗口里 A 的输入过门时读到的已经是 B 的全局 origin，于是 A 的
-//      手指动作被贴上 B 的 (viewId, ctx) 发给 Dart；Dart 按新标签收下，画面就"跳到"
-//      另一份快照的位置上。
-//   2. 惯性 ticker 每帧重新读全局 origin，A 起手的惯性在 B 应用后继续用 B 的身份发
-//      archive-scroll —— 这是同一个 bug 的第二条路径。
-//   3. 场景拆掉时把 origin 清成"未登记"，而旧的 originAccepts() 把未登记一律当放行，
-//      于是拆场景之后到达的迟到输入全部 fail-open。
-//
-// 这里的判据只有四条硬规则：
-//   - origin 随**值**走（ProducerOrigin 逐调用点拷贝），不读任何"当前"全局；
-//   - 只有 Qt 线程上**真的 apply 成功**之后才允许改写已应用 origin（OriginLedger::commit），
-//     未登记/已关闭/旧视图/旧代次一律 fail-closed 丢掉；
-//   - 手指按住（held）与惯性（inertia）是两个阶段：**按住永远不许被 idle-commit**，
-//     旧 ticker 也不许收尾新手势（M1，见 advanceScroll / ScrollGesture::epoch）；
-//   - 只有**真正的换人**（视图换人，或同一视图的交互代次变了 = 集合被替换）才退休旧的
-//     原生手势状态；普通滚动帧必须保住合法的拖动/惯性（M2，见 classifyApply / planApply）。
+// 硬规则：origin 随值走，不读全局；未登记、已关闭、旧视图、旧代次一律 fail-closed；
+// 按住期间不许被 idle-commit；只有真正换人才退休旧手势，普通滚动帧保住拖动与惯性。
 
 #include <QString>
 #include <QtGlobal>
@@ -62,8 +43,7 @@ inline QString describeOrigin(const ProducerOrigin &origin)
     return QStringLiteral("view=%1 ctx=%2").arg(origin.viewId).arg(origin.context);
 }
 
-/// 一次输入/动作能不能落到当前画面。用枚举而不是 bool：被拒的理由要能进日志，测试也要能
-/// 断言"是哪一类拒绝"，否则"什么都没发生"和"被正确拒绝"在设备上看不出区别。
+/// 一次输入能否落到当前画面。用枚举而不是 bool，被拒理由要能进日志与断言。
 enum class OriginVerdict
 {
     /// 精确命中当前应用点。
@@ -280,15 +260,9 @@ struct ScrollStep
     ProducerOrigin origin;
 };
 
-/// 推进一帧：纯函数（除 gesture 自身状态外无副作用），测试可以不带 Engine 驱动整段
-/// "拖动 → 松手 → 惯性 → 停下 commit" 的语义。
+/// 推进一帧：纯函数，测试可以不带 Engine 驱动整段拖动 → 松手 → 惯性 → commit。
 ///
-/// **两个阶段必须分开**（审查 M1 的成因就在这里）：
-///   - 手指按着（held）：只可能是 move，**永远不会** Commit —— 用户按住不动是"还在拖"，
-///     不是"惯性停了"。旧实现让 ticker 无条件推进（active() 含 tracking），一段旧 fling
-///     的 timeout 会在新手势按住的第 3 帧把它 end() 掉，之后所有 pointermove 都不再报位移
-///     （`tracking` 已是 false），用户看到的就是"按住拖一下没反应"。
-///   - 惯性（inertia）：连续 idleFrames 帧不动才 Commit 收尾。
+/// 两个阶段必须分开：按住时只可能是 move，永远不会 Commit；惯性要连续多帧不动才收尾。
 inline ScrollStep advanceScroll(ScrollGesture &gesture, double item, int idleFrames = 3)
 {
     ScrollStep step;
@@ -314,14 +288,10 @@ inline ScrollStep advanceScroll(ScrollGesture &gesture, double item, int idleFra
     return step;
 }
 
-/// 一次快照到达时的"换人"分类。
+/// 一次快照到达时的「换人」分类。
 ///
-/// 这个区分是审查 M2 的核心：**普通滚动帧**（同一个 origin 的新 pos/cells/画质/位置）
-/// 必须保留合法的拖动与惯性；而**真正的换人**（视图换了、或同一视图的交互代次变了 =
-/// 集合被替换）必须在应用之前把旧的原生手势状态整段退休，否则：
-///   - 旧的 g_gesture.active() 让新画面的权威 index/pos 被当成旧手势的回声压下去；
-///   - 旧 ticker 继续读当前场景，向 B 的选中与回声标记上写（origin 只带在事件上，
-///     挡不住这些**原生副作用**）。
+/// 普通滚动帧（同一 origin 的新 pos/cells）必须保留拖动与惯性；真正的换人（换视图、
+/// 或交互代次变了）必须在应用前退休旧手势，否则旧 ticker 会继续往新画面上写。
 enum class ApplyKind
 {
     /// 还没有任何应用点（进程刚起/场景刚建）。

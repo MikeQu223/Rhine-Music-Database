@@ -1,8 +1,5 @@
 /// 远端（插件平台）分类检索的映射与状态串。
-///
-/// 真机取证：`netease` 的 `search` 返回
-/// `{kind,id,title,artist,artists[],album,albumID,cover,duration,provider,key,trackCount}`，
-/// 没有 `durationMs`；页面右列读 `durationMs`，所以这一层必须补。
+/// 插件返回没有 `durationMs`，页面右列读它，所以这一层必须补。
 library;
 
 import 'package:flutter_test/flutter_test.dart';

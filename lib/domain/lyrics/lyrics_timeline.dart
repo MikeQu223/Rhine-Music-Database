@@ -75,16 +75,8 @@ double? parseLyricsOffsetPreference(String? text) {
   return clampLyricsOffsetMs(value);
 }
 
-/// 全局偏移写回偏好时的文本：`QString::number(double)`（Qt/src/LyricsController.cpp:542）。
-///
-/// QString::number(double) 等价于 `QString::number(value, 'g', 6)`：6 位有效数字、去尾零，
-/// 指数小于 -4 或大于等于 6 时改用 `e±NN` 形式。实际取值被 :63/:515 夹在 ±10000 内，
-/// 所以输出基本是定点形式（200.0 → "200"、-200.0 → "-200"、10000.0 → "10000"、
-/// 1234.5678 → "1234.57"）；指数分支只在 |value| < 1e-4 时出现（0.00001 → "1e-05"）。
-///
-/// 残差：'g' 分支是「先取 6 位有效数字的十进制串、再渲染定点形式」的等价实现，
-/// 极端舍入边界（|value| < 1e-4 且恰好落在第 6 位有效数字的半值上）可能与 printf
-/// 差 1 个末位；偏移的真实取值域是 ±10000 内的 200ms 累加与用户历史值，不触达该边界。
+/// 全局偏移写回偏好时的文本，格式等价于 `QString::number(value, 'g', 6)`：
+/// 6 位有效数字、去尾零，|value| < 1e-4 才用指数形式。取值域 ±10000，实际总是定点。
 String formatLyricsOffsetPreference(double value) {
   // printf("%g") 的非有限拼写（小写），Qt 的 QString::number 同形。
   if (value.isNaN) {

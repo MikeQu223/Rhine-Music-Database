@@ -764,9 +764,8 @@ class _QtPlatformViewState extends State<QtPlatformView>
       );
     }
 
-    // 只有 Android 真机/模拟器上才存在 QtQuickView 的宿主。其它平台一律面板：
-    // widget 测试里 defaultTargetPlatform 会被强制成 android（_platform_io.dart:29-34），
-    // 所以测试必须用 debugDefaultTargetPlatformOverride 明确指定宿主平台。
+    // 只有 Android 上存在 QtQuickView 宿主，其它平台一律面板。
+    // widget 测试里 defaultTargetPlatform 会被强制成 android，需显式 override。
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
       return const QtPlatformViewUnavailablePanel(
         title: 'Qt 平台视图仅在 Android 上成立',
@@ -949,19 +948,11 @@ bool qtCompositionMismatch(
       mode != QtPlatformCompositionMode.viewComposition;
 }
 
-/// 组合模式约束的唯一判据（冻结契约 v2 第 (2)(3)(9) 条）。
+/// 组合模式约束的唯一判据（冻结契约 v2）。
 ///
-/// 返回 null 表示当前组合自洽；否则返回一行给用户看的警示。
-///
-/// 依据是真实的 Qt 行为：surfaceContainerType == 0 时 Qt 用 QtSurface
-/// （QtWindow.java:303-325，:313；QtSurface.java:14 class QtSurface extends SurfaceView），
-/// 而 SurfaceView 无法被 Flutter 的 TLHC/纹理管线合成
-/// （flutter/lib/src/services/platform_views.dart:131-133 的 initAndroidView 说明），
-/// 只有 Hybrid/View Composition 能承载它（:190-194 initExpensiveAndroidView 恒为 HC，
-/// :1458-1488 _HybridAndroidViewControllerInternals 的 requiresViewComposition => true）。
-///
-/// 注意：这条函数只说「组合模式与观测到的容器不匹配」，**不**声称切换后画面就一定
-/// 正确——像素与性能只有真机才能裁决。
+/// 返回 null 表示自洽，否则返回一行给用户看的警示。
+/// 依据：surfaceContainerType == 0 时 Qt 用 QtSurface(SurfaceView)，Flutter 的纹理管线
+/// 无法合成 SurfaceView，只有 Hybrid/View Composition 能承载。
 String? qtCompositionWarning(
   QtPlatformCompositionMode mode,
   QtHostStatus status,
@@ -972,7 +963,7 @@ String? qtCompositionWarning(
   if (mode == QtPlatformCompositionMode.viewComposition) {
     return null;
   }
-  return '当前 compositionMode=${mode.wireName}，但 Qt 侧表面容器是 surfaceContainerKind=${status.surfaceContainerKind}：QtSurface 是 SurfaceView（QtWindow.java:303-325 / QtSurface.java:14），Flutter 的 initAndroidView 只走 TLHC/纹理（platform_views.dart:131-133），SurfaceView 无法被纹理化；必须切到 viewComposition（initExpensiveAndroidView 恒为 Hybrid Composition，platform_views.dart:193-194）。在切换并经过真机验证之前，这里保持「不可用」，不会把空白当作 Qt 画面。';
+  return '当前 compositionMode=${mode.wireName}，但 Qt 侧表面容器是 surfaceContainerKind=${status.surfaceContainerKind}：QtSurface 是 SurfaceView（QtWindow.java:303-325 / QtSurface.java:14），Flutter 的 initAndroidView 只走 TLHC/纹理（platform_views.dart:131-133），SurfaceView 无法被纹理化；必须切到 viewComposition（initExpensiveAndroidView 恒为 Hybrid Composition，platform_views.dart:193-194）。在切换并经过设备验证之前，这里保持「不可用」，不会把空白当作 Qt 画面。';
 }
 
 /// 明确的「不可用」面板。它就是反幌子的实现：文案里带裁决与缺失项，

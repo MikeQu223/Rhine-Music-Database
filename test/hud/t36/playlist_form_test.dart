@@ -405,8 +405,7 @@ void main() {
         port: port,
       ));
       expect(find.byKey(PlaylistFormKeys.layer), findsOneWidget);
-      // 弹层框架（遮罩 + 面板底 + RHINE LAB 行 / 标题 / 副标题 / 返回）由本层 `_shell`
-      // 绘制：chrome 从未接 `playlist-form`，真机上表单曾只剩标签和输入框浮在资料库上。
+      // 弹层框架由本层 `_shell` 绘制：chrome 从未接 `playlist-form`。
       expect(find.text(PlaylistFormSpec.panelHeader), findsOneWidget);
       expect(find.text(PlaylistFormSpec.panelTitle), findsOneWidget);
       expect(find.text(PlaylistFormSpec.panelSubtitle), findsOneWidget);

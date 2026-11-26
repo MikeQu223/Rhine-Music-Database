@@ -63,13 +63,8 @@ object MediaSessionChannel {
     /**
      * 插件根目录（PLUGIN-1）：`/sdcard/Android/data/<pkg>/file/plugin`。
      *
-     * 与 Qt 侧的 `<AppLocalDataLocation>/plugins` 不同——那个是 /data/user/0 下的私有目录，
-     * 用户看不到也拷不进去。插件要能被用户直接放进去、也能被文件管理器看到，所以走
-     * app-specific 外部目录：`getExternalFilesDir(null)` 的父目录（即 `<pkg>/`）再拼
-     * `file/plugin`。父目录拿不到（个别设备没有外部卷）才退回 `filesDir/plugins`，
-     * 保证"装不上"永远不会变成"崩溃"。
-     *
-     * 目录由本方法按需创建；创建失败同样回 null，让 Dart 侧如实显示"无插件目录"。
+     * 与 Qt 的私有目录不同，这个位置用户能直接放文件；父目录拿不到时退回 filesDir/plugins，
+     * 保证「装不上」不会变成「崩溃」。目录按需创建，失败回 null。
      */
     private const val METHOD_PLUGIN_DIR = "pluginDir"
 

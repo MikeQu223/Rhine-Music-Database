@@ -1,30 +1,11 @@
-// ===========================================================================
-// 插件管理页 / 插件详情页（竖屏整页 + 横屏 modal）
+// 插件管理页 / 插件详情页（竖屏整页 + 横屏 modal）。
 //
-// 竖屏：Qt compact `ResponsiveHudPages.cpp:683-852`。
-// 为什么是真实 widget 而不是命令流：插件列表要能被手指拖动滚动、按钮要有按压态，
-// 这些在命令流页面里都要自己造一套（列表拖动/_dragPosition/命中带走溢出裁剪），
-// 而设置整页已经证明「HUD 画 chrome + widget 画内容」这条路可行且可测。
-// 于是这里和 `basic_settings_portrait.dart` 同构：HUD 画纸色/页头/迷你播放条/底栏，
-// 内容区（自 y=158 起）是 Flutter 控件，单位仍是 393 设计网格 + Transform.scale(unit)。
+// 竖屏同 `basic_settings_portrait.dart`：HUD 画纸色/页头/迷你播放条/底栏，内容区是
+// Flutter 控件（393 设计网格 + Transform.scale），因为列表要能拖动、按钮要有按压态。
+// 横屏走 Qt 的 modal 面板（遮罩 + modalBounds + 市场/已安装两栏独立滚动）。
 //
-// 横屏：Qt `NativeHudModal.cpp:424-686` 的 modal 面板（遮罩 + modalBounds +
-// 市场/已安装两栏独立滚动），见文件后半段的 BasicLandscape* 系列。
-//
-// 几何真值取自 Qt（网格单位、y 为屏幕 y、内容自 158 起）：
-//  - 分区头 26 高：墨块 {20,y,23,18} + 编号 8pt + 标题 13pt + 右缘 7pt 英文；
-//  - 市场行 78 高：名称 (20,y+19) 14pt、元信息 (20,y+41) 9pt、
-//    按钮 {261,y+19,112,40}、分隔线 {20,y+76,353,.6}；
-//    （Qt 基线内容自 y+10 起，下留白 28 明显大于上留白 10，这里上下各留 19。）
-//  - 已安装行 106 高：名称 (20,y+10) 14pt、状态文字右对齐、状态方块 5×5、
-//    元信息 (20,y+31) 9pt、按钮行 y+50 高 44、分隔线 {20,y+104,353,.6}；
-//  - 三键分支（用户安装）详情/卸载/禁用-启用，0 间隙；内置插件两键（详情/禁用）。
-// 右缘常量按 `gridWidth - 20` 算（DPI 适配后页宽不再等于 393）。
-//
-// 动作串沿用 Qt 契约，不新造：`plugin:refresh`、`plugin:market:<id>`、
-// `plugin:detail:<id>`、`plugin:uninstall:<id>`、`plugin:toggle:<id>`、
-// `plugin:rollback:<id>`；详情页返回 `close-modal`（HUD 侧的 `back` 语义）。
-// ===========================================================================
+// 几何与动作串沿用 Qt 契约：`plugin:refresh` / `plugin:market:<id>` / `plugin:detail:<id>` /
+// `plugin:uninstall:<id>` / `plugin:toggle:<id>` / `plugin:rollback:<id>`。
 library;
 
 import 'dart:math' as math;
@@ -179,9 +160,8 @@ class _BasicPortraitPluginsPageState extends State<BasicPortraitPluginsPage> {
       child: SizedBox(
         width: widget.stage.width,
         height: pageBottom * unit,
-        // 与设置页同一套缩放：`FittedBox(BoxFit.fill)` 让命中走逆矩阵，屏幕坐标
-        // 与 393 设计网格一一对应（`OverflowBox + Transform.scale` 的命中先过
-        // 缩放前尺寸，屏幕下缘整片点不动——用户 2026-11-25 的缺陷）。
+        // 与设置页同一套缩放：`FittedBox(BoxFit.fill)` 让命中走逆矩阵，
+        // 屏幕坐标与 393 设计网格一一对应。
         child: FittedBox(
           fit: BoxFit.fill,
           alignment: Alignment.topLeft,
@@ -1997,8 +1977,7 @@ class _PluginInk {
     fontSize: 8,
     height: 1.1,
     fontWeight: FontWeight.w600,
-    // Qt `terminalSection` 的编号画在墨块上、取纸色：暗色主题是深底浅字反相，
-    // 原来写死浅色在白块上等于隐形（实机 device10/q2-plugins-wait.png）。
+    // Qt `terminalSection` 的编号画在墨块上、取纸色；写死浅色在暗色主题下等于隐形。
     color: paper,
   );
   TextStyle get fieldLabel => TextStyle(fontSize: 8, height: 1.2, color: muted);

@@ -1,35 +1,8 @@
-// USER-SCOPE-152 · 设置 / 系统媒体 / 通知封面的接线回归（只写不跑）。
+// USER-SCOPE-152 · 设置 / 系统媒体 / 通知封面的接线回归。
 //
-// EXECUTION STATUS: NOT EXECUTED.
-//
-// 本 worktree 禁止 flutter test / dart test / build / analyze / pub get / format / ADB。
-// 交付方（FINAL-VERIFY-154）在真机上执行：
-//
-//   flutter test test/basic/user_scope_152_test.dart
-//   flutter test test/basic/basic_settings_painter_math_145_test.dart
-//   flutter test test/basic/basic_media_146_test.dart
-//   flutter test test/basic/library_scroll_sync_141_test.dart
-//
-// RED/GREEN 在跑过之前一律未知。最后一个 group 只读工作树里的源码文本（静态护栏），
-// 它证明的是"代码里写着这条路径"，**不是**设备上通知真的显示了 —— 通知可见性、
-// POST_NOTIFICATIONS 授权、前台服务存活只能由 154 在实机验收。
-//
-// 本文件守住 152 补的三条真实接线（都在既有函数上，不重写）：
-//   1. 音质（ONLY14 之一）真的能落到宿主偏好键 "quality"：
-//      Qt/src/MusicPlayer.cpp:139 setPreference("quality", value)、:181 读回，
-//      白名单 Qt/src/Host.cpp:1063。没有这条映射时面板会如实拒绝写入，
-//      于是"能选不能存"。
-//   2. 详情页自动播放真的出声：Qt/src/NativeHudController.cpp:626-638 —— 只有
-//      动作 "open" 且 preference("detail-autoplay")=="on" 才 music.play(false)
-//      （不替换播放列表）。浏览/翻行永远不播。
-//   3. 通知封面真的走"远端 URL -> 应用私有目录里的真实文件"：
-//      MediaSessionHost 只认本地路径（BitmapFactory.decodeFile），所以
-//      SirenSong.cover（远端 URL）必须先过 BasicArtCache；A/B/A 迟到结果
-//      不能串台。
-//
-// 真值来源（只读）：Qt/src/NativeHudController.cpp:626-638、Qt/src/MusicPlayer.cpp:139/
-// :181、Qt/src/Host.cpp:1063、android/.../MediaSessionChannel.kt（cacheDir）、
-// android/.../MediaSessionHost.kt（decodeFile）、lib/platform/media_session.dart。
+// 守住三条接线：音质落到宿主偏好键、详情页自动播放只在 open + 偏好开启时触发、
+// 通知封面先把远端 URL 落成私有目录里的真实文件。
+// 通知可见性与前台服务存活只能设备验收，静态守卫不算 PASS。
 
 import 'dart:async';
 import 'dart:convert';

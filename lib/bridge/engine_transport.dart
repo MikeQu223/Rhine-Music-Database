@@ -1,27 +1,10 @@
-// 会话传输层：与原生侧的单条回环控制连接，对齐 Qt/src/BridgeProcessAndroid.cpp:171-281
-// 与 BridgeProcess.h:13-46 的状态机；协议对端是 MusicBridge/ios-runtime.cjs。
+// 会话传输层：与原生侧的单条回环控制连接，对齐 BridgeProcessAndroid 的状态机；
+// 协议对端是 MusicBridge/ios-runtime.cjs。
 //
-// 本层边界：不开 socket、不生成 token、不做 0x0a 分帧、不管 48MiB 上限与握手排队，
-// 这些由 node_runtime.dart 通过 EngineRuntimeLink（send / messages / isLive）承担。
-// 本文件定义 EngineRuntimeLink，node_runtime.dart 反向 import 本文件；本文件绝不
-// import node_runtime.dart（避免环）。
+// 边界：不开 socket、不生成 token、不做分帧与握手排队（由 node_runtime.dart 承担）。
+// 本文件定义 EngineRuntimeLink，node_runtime.dart 反向 import 本文件，不反向依赖。
 //
-// error 初值是 unknownError 而不是 null：与 Qt 的 m_error（BridgeProcess.h:43）一致。
-//
-// 与 Qt 的可观测差异：
-//   D1 环境路径只能近似：Flutter 侧没有 AppStorage 单例，冻结签名也没有 data/cache
-//      注入缝，故用 temporary 近似 TMPDIR、用 root 近似 dataDirectory；Qt:201 的
-//      QDir.mkpath 也不执行（本层无 dart:io，目录创建留给宿主）。
-//   D2 extraEnv 只追加、不覆盖 Qt 的四键（临时目录/设备态/版本），Qt 键优先。
-//   D3 kill/start 会取消上一次的 30s 定时器；Qt 靠 m_session/m_state 自守卫且不取消。
-//      守卫条件仍逐字保留作第二道防线，取消只为避免 flutter_test 的 pending timer。
-//   D4 launch 不在本层，且 isLive 不能代替它：launch 失败需由 NodeRuntime 合成
-//      runtime-error；装配顺序必须是先 launch 成功再 start，否则 start 帧会留在
-//      认证前队列直到 30s 超时。
-//   D5 stderr 日志只记正文，前缀由呈现层加。
-//   D6 stderr 的 base64 用严格解码，失败回退原文；两者都不向调用方抛异常。
-//   D7 入站帧没有 owner 语义：link.messages 是广播流，靠 session 过滤；stderr 与
-//      runtime-error 走旁路，多实例并存时会各处理一份（单实例下不可观测）。
+// error 初值是 unknownError 而不是 null，与 Qt 的 m_error 一致。
 
 import 'dart:async';
 import 'dart:convert';

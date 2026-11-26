@@ -85,17 +85,12 @@ class QtEmbeddedDelegate extends QtActivityDelegateBase
                 // 摘除 factory，被销毁的一轮才可能整体可回收（对象根证据见 cycle N released）。
                 m_views.clear();
                 m_topLevelWindows.clear();
-                // RHINE PATCH (FINAL-RECOVERY-138): break the framework-side GC root chain.
+                // RHINE PATCH: break the framework-side GC root chain.
                 //
-                // 137 的堆证据：framework 的 DisplayManagerGlobal 持有一份全局回调 JNI 引用，
-                // 它的 mDisplayListeners 里躺着 5 个 QtDisplayManager$1（每个都是被销毁那一轮
-                // 注册的），$1 -m_activity-> MainActivity。于是**被销毁的宿主 Activity 一个都
-                // 回收不了**（heap: 6x MainActivity/QtEmbeddedDelegate/QtDisplayManager/
-                // RhineQtView/QtWindow 全部 strongly reachable）。stock Qt 只在
-                // isStarted==true 的 teardown 分支里注销，而 RhineQtViews 为了让 Qt 运行时
-                // 跨宿主存活，提前把 isStarted 置 false —— 注册因此永远没有对应注销。
-                // 这里在宿主销毁时无条件注销本轮的 display listener：注销之后全局回调不再引用
-                // QtDisplayManager$1，activity/delegate/view 整簇才可能被回收。
+                // DisplayManagerGlobal 持有全局回调，它的 mDisplayListeners 里躺着每轮注册的
+                // QtDisplayManager$1（→ MainActivity）。stock Qt 只在 isStarted==true 时注销，
+                // 而 RhineQtViews 提前置了 false，注册因此永远没有对应注销，宿主 Activity
+                // 一个都回收不了。这里在宿主销毁时无条件注销本轮的 display listener。
                 try {
                     displayManager().unregisterDisplayListener();
                     Log.i(QtTAG, "released display listener for destroyed host");

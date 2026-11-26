@@ -64,9 +64,7 @@ class PortraitCanvas {
     amber = <Object?>[.780, .608, .224, 1];
     commands.add(<Object?>['save']);
     commands.add(<Object?>['scale', unit, unit]);
-    // 网格宽度可变（DPI 适配后 1 网格变小、横向网格数变多），所以命令流只做
-    // scale(unit, unit) 铺满舞台宽，不再做居中 translate（居中=整页缩小的错觉，
-    // 2026-11-19 已被用户否决）。
+    // 网格宽度可变，命令流只做 scale(unit, unit) 铺满舞台宽；居中会显得整页缩小。
   }
 
   final PortraitMetrics _metrics;
@@ -83,10 +81,7 @@ class PortraitCanvas {
 
   /// 画布底部还要留出的手势区（网格单位）。
   ///
-  /// Qt compact 写死 34，但本仓库的画布高度已经扣掉了真实安全区（见
-  /// `PortraitBands.stageHeight`），再留一遍 34 会把播放条与底栏整体抬高
-  /// 近 30 网格（用户 2026-11-24 报的「底部组件抬太高」）。宿主用
-  /// `portraitGestureInsetOf` 按真实内缩算好传进来。
+  /// 画布高度已扣过真实安全区，再按设计稿留 34 会把播放条与底栏抬高近 30 网格。
   final double gestureInset;
 
   /// 播放条 + 底栏 + 手势区占的高度（网格单位）。
@@ -369,9 +364,7 @@ class PortraitCanvas {
     }
     final double titleRight = gridWidth - (playAction.isEmpty && remove.isEmpty ? 60 : 93);
     final double titleWidth = titleRight - left - 8;
-    // 当前行标题用主色（与参考图「我的歌单 / 专辑内页」一致）。旧值写死成
-    // [.455,.333,.098] 那支亮色稿的深赭，压到暗色 raised 上几乎读不出字（实机
-    // device6/p1-big-album.png 的「Kernel Overflow」）。
+    // 当前行标题用主色；写死亮色稿的深赭，压到暗色 raised 上几乎读不出。
     text(title, left, y + 12,
         size: 14,
         width: titleWidth,

@@ -453,7 +453,7 @@ CommentPanelDrawing paintCommentsPanel(
       // Qt `"♥ " + compactCount(item["likedCount"])` —— likedLabel 恒非空，
       // 这里对空串仍兜成 "0"，避免页面画出孤零零的 "♥ "。
       final String likedLabel = item.likedLabel.isEmpty ? '0' : item.likedLabel;
-      // 同 song_detail：MiSans 缺 U+2665，字面 ♥ 真机会变成倒三角，改用「点赞 N」。
+      // 同 song_detail：MiSans 缺 U+2665，字面 ♥ 会变成倒三角，改用「点赞 N」。
       final String liked = '点赞 $likedLabel';
       p.text(liked, x + cmtContentX, metaY, cmtMetaSize, 'regular', secondary);
       if (item.replyCount > 0) {

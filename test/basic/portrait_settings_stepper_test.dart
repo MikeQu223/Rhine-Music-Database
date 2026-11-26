@@ -1,9 +1,5 @@
-/// 竖屏设置页的 stepper 行（右侧画面遮罩 / 渲染分辨率）必须真的能调。
-///
-/// 用户 2026-11-19：「部分设置（如右侧遮罩和渲染分辨率）无法调整」。根因是 stepper
-/// 分支之后又叠了一层行级点击区，它盖在 ± 之上把点击吞掉，而这两行本来就没有
-/// `binding.action`，于是点什么都没反应。Qt compact `settings()` 的 Slider|Stepper
-/// 分支只注册 ± 两个按钮（Qt/src/ResponsiveHudPages.cpp:600-606）。
+/// 竖屏设置页的 stepper 行必须真的能调：行级热区盖在 ± 之上会吞掉点击，
+/// 而这两行本来就没有 `binding.action`。
 library;
 
 import 'package:flutter/material.dart';

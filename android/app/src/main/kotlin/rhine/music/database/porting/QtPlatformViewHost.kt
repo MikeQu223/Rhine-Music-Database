@@ -98,67 +98,17 @@ internal fun shouldInstallChannels(
 }
 
 /**
- *  候选 A：真实的 Qt/Flutter 平台宿主端口（Android 侧）。
+ * 候选 A：真实的 Qt/Flutter 平台宿主端口（Android 侧）。
  *
- * 这份代码只做两件事，且都是真的：
- *   1. 用反射去问"本进程里到底有没有 Qt 的 Android 层"，把结果结构化报给 Dart；
- *   2. 只有在探针全绿时才用 QtQuickView 构造真 Qt 视图并挂进 Flutter 的
- *      PlatformView 容器；任何一条前置不满足都如实上报 archBlocked / deviceBlocked。
+ * 只做两件事：用反射问本进程有没有 Qt 的 Android 层并结构化报给 Dart；探针全绿时才用
+ * QtQuickView 构造真 Qt 视图挂进 PlatformView 容器，任何一条不满足都如实上报
+ * archBlocked / deviceBlocked。Qt 缺失时容器是空的，不会造一个「看起来像 Qt」的 View。
  *
- * 它**不会**在 Qt 缺失时创建一个"看起来像 Qt"的 View 去糊弄上层。未就绪时容器是空的
- * （透明、不绘制、contentDescription 明说不是 Qt 表面），由 Dart 侧渲染诊断面板。
+ * 不能用 QtActivity：它是窗口宿主而不是 View；官方给「塞进别人的 View 树」准备的是
+ * QtQuickView（继承包内可见的 QtView），所以形态是「QtQuickView 作为 PlatformView 的 child」。
  *
- * 为什么 QtActivity 不能直接塞进来（计划  第一条要求"证明"）：
- *   - android.app.Activity 是窗口宿主，不是 View；QtActivity 只在 Qt 自己的启动流程里成立。
- *   - Qt 官方给"把 Qt 塞进别人的 View 树"准备的是 QtQuickView（public，继承包内可见的
- *     QtView，两者都在 Qt 的 android jar 里）——见 QtView.java:19 / QtQuickView.java:27。
- *   - 也就是说这条路的可行形态是「QtQuickView 作为 PlatformView 的 child」，
- *     而不是「把 QtActivity 的窗口重父到 Flutter」。后者在 Android 上没有受支持的 API。
- *
- * Qt 侧证据（仓库内 third_party/qt 与 Qt 目录，行号为真实行号）：
- *   QtView.java:19          abstract class QtView extends ViewGroup implements QtNative.AppStateDetailsListener
- *   QtQuickView.java:27     public class QtQuickView extends QtView
- *   QtView.java:50-69       QtView(Context): registerAppStateListener + QtEmbeddedViewInterfaceFactory.create(context)
- *   QtView.java:54-66       addOnLayoutChangeListener → native resizeWindow(ref, left, top, w, h)
- *   QtView.java:77-84       appLibName 为空抛 InvalidParameterException
- *   QtView.java:140-161     getEmbeddedLoader() → loadQtLibraries() → startQtApplication()
- *   QtView.java:214-229     addQtWindow: MATCH_PARENT 插到 index 0，setWindowVisible(true)
- *   QtView.java:239-246     onAppStateDetailsChanged: !isStarted 时把视图从父容器摘掉
- *   QtEmbeddedDelegate.java:33-82   ActivityLifecycleCallbacks → setApplicationState(Active/Inactive/Suspended)
- *   QtLoader.java:73-76     baseContext 不是 Activity/Service 即抛 IllegalArgumentException
- *   QtLoader.java:93-102    initContextInfo: Activity 必须能在 PackageManager 里找到 ComponentInfo
- *   QtLoader.java:159       resolvePreferredAbi: 读 resources array "qt_libs"
- *   QtEmbeddedLoader.java:12-22  构造期就 extractContextMetaData(context)
- *   QtNative.java:224-229   ApplicationState { Suspended=0x0, Hidden=0x1, Inactive=0x2, Active=0x4 }
- *   Qt/src/AndroidWindow.cpp:16,18,22   kSensorLandscape=6 / kWindowFlags / kImmersiveSticky
- *   Qt/src/AndroidWindow.cpp:63-71      configureAndroidAccessibility：installUpdateHandler + setActive(false)
- *   Qt/src/AndroidWindow.cpp:73-119     configureAndroidWindow：media session + 窗口形状 + applicationStateChanged
- *
- * 冻结契约 v2 的观测面（宿主从 QtActivity 换成 FlutterActivity 后真正会变的那几条；行号同样是真实行号）：
- *   QtWindow.java:45-88    构造：setFocusableInTouchMode(true)、setImportantForAccessibility(NO)、
- *                          setVisible(false)（:61）；QtEditText 只在 context instanceof Activity 时创建（:63-71）
- *   QtWindow.java:90-150   registerSafeAreaMarginsListener：:92 的 instanceof QtActivityBase 闸门
- *   QtWindow.java:246-266  onTouchEvent：首次触摸才初始化 m_editText 焦点（:250-256）→ windowFocusChanged
- *                          → onEditTextChanged →
- *                          QtInputDelegate.sendTouchEvent(event, getId()) → m_gestureDetector.onTouchEvent
- *                          → return true。event 的坐标是 MotionEvent 相对本视图的**局部坐标**，
- *                          映射已由 Android 的 View 分发 + QtWindow 命中测试完成，宿主不得自算映射
- *   QtWindow.java:303-325  createSurface(surfaceContainerType==0 → QtSurface(SurfaceView)，否则 QtTextureView)，
- *                          MATCH_PARENT，addView(container, 0)
- *   QtWindow.java:338-345  setGeometry 仅当 getContext() instanceof QtActivityBase 才 setLayoutParams
- *                          → Flutter 宿主（MainActivity extends FlutterActivity）里这条被丢弃
- *   QtView.java:54-66      addOnLayoutChangeListener → native resizeWindow(ref, left, top, w, h)
- *                          → Flutter 宿主里 resize 的唯一真实通路
- *   QtInputDelegate.java:654-708  sendTouchEvent(MotionEvent, int id)（包内可见，宿主不可调）
- *   QtInputDelegate.java:214-240  showSoftwareKeyboard(...)：IME 入口，由 Qt C++ 经 QtInputInterface 调
- *   QtInputDelegate.java:104-133  initInputMethodManager
- *   QtEditText.java:24 / :111-133 QtEditText extends View / onCreateInputConnection（IME 的 Android 端）
- *   QtActivityDelegateBase.java:83-104  initMembers 读 ActivityInfo.softInputMode → setSoftInputMode
- *   QtSurface.java:14 / :18-28    QtSurface extends SurfaceView / setZOrderMediaOverlay + holder.setFormat
- *   QtTextureView.java:14 / :20-29 QtTextureView extends TextureView / setSurfaceTextureListener + setSurfaceTexture
- *   QtEmbeddedDelegate.java:33-82  registerActivityLifecycleCallbacks 自己驱动 Qt application state
- *   Flutter SDK platform_views.dart:131-133  initAndroidView 默认走 TLHC/纹理合成
- *   Flutter SDK platform_views.dart:193-194  initExpensiveAndroidView 强制 Hybrid Composition
+ * 观测面：surface 容器由 QtWindow 在 Qt 线程里创建，只有扫真实视图树才能证明这一次真的建了。
+ * QtSurface 是 SurfaceView，Flutter 的 TLHC/纹理合成拿不到，必须走 Hybrid Composition。
  */
 object QtPlatformViewHost {
 
@@ -280,11 +230,9 @@ object QtPlatformViewHost {
     internal fun hasActiveView(): Boolean = ownership.current() != null
 
     /**
-     * 通道（MethodChannel/EventChannel）是第二份共享资源，跟 Qt 单例所有权分开记：
-     *  - 合法 owner 构造成功后可以直接接管通道（把先前诊断实例的 handler 换掉）；
-     *  - 诊断实例只在没有任何通道 owner 时装 handler，避免互相顶掉；
-     *  - dispose 只允许**当前**通道 owner 清 handler，否则一个早已被接管的诊断实例
-     *    会在析构时把后来合法实例的通道拆掉（同一类泄漏）。
+     * 通道是第二份共享资源，与 Qt 单例所有权分开记：
+     * 合法 owner 构造后可直接接管通道；诊断实例只在没有 owner 时装 handler；
+     * dispose 只允许当前 owner 清 handler，否则会把后来者拆掉。
      */
     private var channelOwner: QtPlatformView? = null
 
@@ -527,25 +475,17 @@ object QtPlatformViewHost {
     )
 
     /**
-     * 真实子树观测（冻结契约 (6)）：把宿主 View 树按 Class.getName() 分类，得出 Qt 表面到底是什么。
+     * 真实子树观测（冻结契约 (6)）：按 Class.getName() 给宿主 View 树分类，
+     * 得出 Qt 表面到底是什么。
      *
-     * 为什么必须扫真实视图树而不是读探针常量：Qt 的 surface 容器是 QtWindow 在 Qt 线程里
-     * 通过 runAction 加进来的（QtWindow.java:303-325），只有在 QtQuickView 真的挂上、Qt 应用真的
-     * 起来之后才存在。常量只能证明"代码里可能会创建"，扫树才能证明"这一次真的创建了"。
+     * 为什么必须扫真实视图树：QtWindow 是在 Qt 线程里把 surface 容器加进来的，
+     * 常量只能证明「代码里可能会创建」，扫树才能证明「这一次真的创建了」。
      *
-     * 分类规则：
-     *   org.qtproject.qt.android.QtWindow      → qtWindowAttached = true
-     *   …QtSurface                             → surfaceContainerKind = "surface-view"
-     *   …QtTextureView                         → surfaceContainerKind = "texture-view"
-     *   两者都没扫到                            → "none"
-     *   扫描过程抛异常                          → "unknown"（Qt 侧容器类型不可判定，不许猜）
+     * 分类：QtWindow → qtWindowAttached；QtSurface → "surface-view"；
+     * QtTextureView → "texture-view"；都没扫到 → "none"；异常 → "unknown"（不许猜）。
+     * surface-view 派生 viewCompositionRequired = true（SurfaceView 无法被纹理合成）。
      *
-     * viewCompositionRequired 由 surfaceContainerKind 派生（契约 (3)）：
-     *   == "surface-view" → true。理由：QtSurface 是 SurfaceView（QtSurface.java:14），它有自己的
-     *   Surface，Flutter 默认的 AndroidView 走 TLHC/纹理合成（platform_views.dart:131-133）拿不到它；
-     *   必须走 initExpensiveAndroidView 的 Hybrid Composition（platform_views.dart:193-194）。
-     *
-     * 只做类名字符串比较，不做成员反射：Qt 的 android jar 不在本工程 classpath 上。
+     * 只比类名字符串，不做成员反射：Qt 的 android jar 不在本工程 classpath 上。
      */
     fun probeQtSubtree(root: View?): MutableMap<String, Any?> {
         // root == null：没有视图树可扫 → 报"未观测"（'unknown'），不是"扫过、没有"（'none'）。

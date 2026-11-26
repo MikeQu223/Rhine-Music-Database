@@ -1,12 +1,7 @@
 // DPI 适配（lib/hud/scale/hud_scale.dart）的数值契约。
 //
-// 用户 2026-11-19 的要求：「适配不同屏幕尺寸下的显示 DPI 大小。当前横屏可以作为
-// 基准，竖屏大小减小一半之后作为基准」，二选一时选了
-//   * 竖屏 1 网格 = clamp(逻辑宽/393, 0.9, 1.3) dp；
-//   * 横屏也跟随屏幕尺寸（基准 = 762dp 逻辑高 / 1080）。
-//
-// 这里只钉纯函数与「画布单位/居中偏移」，不渲染：渲染路径由
-// test/basic/ui_portrait_test.dart 的命中测试覆盖。
+// 竖屏 1 网格 = clamp(逻辑宽/393, 0.9, 1.3) dp；横屏跟随屏幕尺寸（基准 762dp / 1080）。
+// 只钉纯函数与画布单位，渲染路径由 ui_portrait_test 的命中测试覆盖。
 
 import 'dart:math' as math;
 import 'dart:ui' show Rect;

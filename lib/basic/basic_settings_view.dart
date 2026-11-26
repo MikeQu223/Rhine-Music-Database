@@ -154,12 +154,8 @@ class BasicSettingsOverlayState extends State<BasicSettingsOverlay> {
       dark: widget.dark,
       fit: surface.fit,
     );
-    // 命中分三段，裁剪只作用于中段：
-    //   1. chrome（返回按钮）—— 在视口之外，必须原样保留；
-    //   2. 卡片行 —— 是唯一会被视口滚出/滚入的部分，交给 clipHits；
-    //   3. 轨道 + 两个滚动按钮 —— 在视口右侧，同样必须原样保留。
-    // 早先实现把 1/3 也一起 clip 了，结果轨道按钮的命中被裁掉：点它没反应，
-    // 而画面照旧画出按钮（假按钮）。
+    // 命中分三段，裁剪只作用于中段：chrome 与轨道按钮在视口之外，必须原样保留；
+    // 卡片行是唯一会滚出/滚入的部分，交给 clipHits。
     final int chromeHits = recorder.hits.length;
     surface.paint(recorder);
     final int cardEnd = recorder.hits.length;

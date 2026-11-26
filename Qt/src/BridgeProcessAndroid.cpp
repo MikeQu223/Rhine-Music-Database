@@ -99,10 +99,8 @@ class NodeRuntime : public QObject {
         if (launched) {
             return !exited && (!socket || socket->state() == QAbstractSocket::ConnectedState);
         }
-        // 进程内已有 Node 运行时（Flutter 侧 PluginBridge 经 libnode 起的那个）时绝不再起：
-        // v8 的 trap handler 只允许初始化一次，第二次 node::Start 会 SIGTRAP 在
-        // v8::internal::trap_handler::EnableTrapHandler(bool)+40（真机 2026-11-21 07:53 / 08:03
-        // 两次崩溃都是这条栈）。Flutter 侧的 JNI 在 node::Start 之前设置该变量。
+        // 进程内已有 Node 运行时就不再起：v8 的 trap handler 只能初始化一次，
+        // 第二次 node::Start 会 SIGTRAP。
         if (qEnvironmentVariableIsSet("RHINE_NODE_IN_PROCESS")) {
             qInfo().noquote() << "embedded node runtime already owns the process; skipping second start";
             return false;

@@ -194,13 +194,10 @@ val qtAndroidDeployDir: File =
         ?: qtOverlayDefaultDeployDir
 
 // ---------------------------------------------------------------------------
-// 局部 jar 补丁必须挂在构建里（审查 MUST-3）：
-// androiddeployqt 每次 Qt 构建都会用 SDK 里的 stock Qt6Android.jar 覆盖
-// <deploy>/libs/Qt6Android.jar，如果补丁只靠人手跑一次，下一次 Qt 重建就静默回退成
-// stock——"设备上装的是补丁类"这件事就再也没有证据。这里让 preBuild 依赖
-// android/app/javapatch/apply.sh：它只改本卡 deploy（不碰全局 SDK / 冻结产物），
-// 幂等（已打成期望字节就跳过），并且**编译出的 class 内容 sha256 必须等于
-// android/app/javapatch/EXPECTED.sha256**，否则构建失败。
+// 局部 jar 补丁必须挂在构建里：androiddeployqt 每次 Qt 构建都会用 stock
+// Qt6Android.jar 覆盖 deploy 里的那份，只靠人手跑一次就会静默回退。
+// preBuild 依赖 javapatch/apply.sh：幂等，且编译出的 class sha256 必须等于
+// EXPECTED.sha256，否则构建失败。
 val javapatchDir = File(project.projectDir, "javapatch")
 // javac 版本必须与录制 EXPECTED.sha256 的一致，但它不必是跑 Gradle 的那套 JDK。
 // 通过 -PrhineJavacHome=<jdk> 显式传入；Gradle 的 Exec 会把它写进子进程环境，

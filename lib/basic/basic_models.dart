@@ -596,11 +596,10 @@ String basicLaneEmptyNotice(
   }
 }
 
-/// 插件平台的 `artist` 串常带尾随分隔符或孤立顿号（真机 `洛天依 / 阑阗 / 、薛钦`），
-/// 统一整理成「A / B / C」再显示与拼底注。
+/// 插件的 `artist` 串常带尾随分隔符或孤立顿号，统一整理成「A / B / C」再显示。
 String basicCleanArtist(String raw) {
-  // 插件回来的串里常混着零宽空格（U+200B）与不换行空格（U+00A0），`trim()` 不认它们，
-  // 于是段首的「、」被零宽字符挡住、剥不掉（真机仍显示「、薛钦」）。
+  // 插件回来的串里常混零宽空格（U+200B）与不换行空格（U+00A0），`trim()` 不认，
+  // 段首的「、」剥不掉。
   const String junk = '、,，·;；\u200B\uFEFF\u00A0\u3000';
   final List<String> parts = <String>[];
   for (final String chunk in raw.split('/')) {
@@ -813,11 +812,7 @@ class BasicViewState {
   final List<BasicLyricLine> lyrics;
 
   /// 歌词面板当前承载的是哪首曲目（空串 = 跟随正在播放的那首）。
-  ///
-  /// 用户要求「歌词无需播放就能看」：详情页停在未播放的曲目上时，歌词面板
-  /// 展示的是**选中曲目**的歌词，播放进度/高亮行不参与（没有在播就没有进度）。
-  /// 用 id 而不是 bool，是因为歌词文本与曲目必须同源——切换选中行后旧的
-  /// 歌词不许继续挂在新的标题下面。
+  /// 用 id 而不是 bool：歌词文本与曲目必须同源，切换选中行后旧歌词不许挂在新标题下。
   final String lyricsPreviewId;
 
   /// 活动行下标（-1 = 未到第一行或没有时间轴）。

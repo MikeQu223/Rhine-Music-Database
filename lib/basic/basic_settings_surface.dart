@@ -32,19 +32,11 @@ SettingsPalette basicSettingsPalette({required bool dark}) => SettingsPalette.fr
       dark: dark,
     );
 
-/// 唱片旋转行（Qt NativeHudSettings.cpp:324-328 的 row(102, ...)）。
+/// 唱片旋转行（Qt `row(102, ...)`）：英文小标题 DISC ROTATION / 中文标题 / 300×48 控件 /
+/// 分隔线 / 13pt 帮助文本。不画第一行（性能面板，未授权）。
 ///
-/// 只画这一行：英文小标题 DISC ROTATION / 中文标题 唱片旋转 / 右侧 300×48 控件 /
-/// 行下 1px 分隔线 / 13pt 帮助文本。**不画**第一行（性能面板 / 帧生成诊断，
-/// 用户未授权）。
-///
-/// 几何：Qt 把这一行放在 performance 区块的**第二行**（secondRowTop=102，帮助
-/// 文案在 secondHelpInsetTop=176，位于两行之下）。本面板不显示第一行，若仍按
-/// 102/176 落位会留下 102px 空洞且帮助文案溢出区块。因此这里把同一行放到区块
-/// 首行，并沿用 Qt 的同一套子偏移与同一组文案：titleInsetTop 10 / subtitleInsetTop
-/// 25 / controlInsetTop 8 / controlHeight 48 / ruleInsetTop 62 / firstHelpInsetTop 78，
-/// 区块高度 100（basicSettingsDiscRotationRenderer）。除“去掉未授权第一行”外，
-/// 行内偏移、文字、命中动作与 label 全部逐字保留 Qt 真值。
+/// Qt 把它放在 performance 区块第二行，本面板不显示第一行，所以整行上移到首行，
+/// 沿用 Qt 同一套子偏移、文案与命中动作。
 void paintBasicSettingsDiscRotation({
   required Rect body,
   required bool discRotation,

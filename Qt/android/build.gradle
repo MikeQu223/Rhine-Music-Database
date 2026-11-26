@@ -1,17 +1,7 @@
-// ===== RHINE pure-Qt Android packaging block (FLUTTER-ONLY-ANDROID-20261117) =====
-//
-// 纯 Qt 的 Android Gradle 打包已封堵（FLUTTER-ONLY-ANDROID-20261117）。
-//
-// 本文件是**纯 Qt 部署工程**的 Gradle 脚本：androiddeployqt 从 kit 的
-// src/android/templates/build.gradle 复制模板、再用包源目录（QT_ANDROID_PACKAGE_SOURCE_DIR =
-// Qt/android）里的这份整份覆盖。任何一次由它驱动的 assembleDebug/assembleRelease/bundle*
-// 产出的都是纯 Qt 包（Qt ConsentActivity，无 libflutter.so、无 flutter_assets）。
-//
-// Android 交付只走 Flutter：入口 lib/main.dart、Gradle 工程 android/app/build.gradle.kts、
-// `flutter build apk`。所以这里在 buildscript 之前直接失败——连 AGP classpath 都不解析。
-// 构建代码按用户要求保留（下面的模板与 RHINE 追加段一个字都没删），只是不再可执行。
-// scripts/android-gradle-sync.cjs 重新生成时会强制注入本段，重同步不能把它丢掉。
-// ============================================================================
+// 纯 Qt 的 Android 打包已封堵：本文件整份覆盖 androiddeployqt 的模板，
+// 一旦执行产出的都是纯 Qt 包。Android 交付只走 Flutter（android/app/build.gradle.kts），
+// 所以这里在 buildscript 之前直接失败。构建代码保留，只是不再可执行。
+// scripts/android-gradle-sync.cjs 重新生成时会强制注入本段。
 throw new GradleException(
     '''
 纯 Qt 的 Android Gradle 打包已停用（FLUTTER-ONLY-ANDROID-20261117）。
@@ -171,16 +161,10 @@ android {
 android {
     packagingOptions {
         jniLibs {
-            // 与上面 Bugly 那段一致用 addAll：excludes 是可变 Set，用 += 会走
-            // 属性读改写，AGP 版本一换就可能只在某些配置下生效。
-            // 注意 android-gradle-sync.cjs 里这段在 JS 模板字符串内，注释里不能出现反引号。
-            // 只排除 QtLoader 启动清单之外的库。array/qt_libs 里的 35 个库会被
-            // QtLoader 按顺序逐个 System.load，缺任何一个都会弹「致命错误」
-            // 并 System.exit(-1)（2026-11-07 连续两次启动失败的根因）。
-            // 清单包含全部五套 QQC2 样式及 StyleImpl、Qt6LabsFolderListModel
-            // （QtQuick.Dialogs 隐式依赖），它们一个都不能排。
-            // 核对方式：aapt2 dump resources <apk> 读 array/qt_libs；
-            // 别用「QML 有没有 import」来猜，Android 部署清单是整模块收集的。
+            // 只用 addAll：excludes 是可变 Set，+= 会走属性读改写。
+            // 只排除 QtLoader 启动清单之外的库——清单里的 35 个库缺一个就会 System.exit(-1)，
+            // 五套 QQC2 样式与 StyleImpl、Qt6LabsFolderListModel 都不能排。
+            // 本段在 android-gradle-sync.cjs 的模板字符串里，注释中不能用反引号。
             excludes.addAll([
                 '**/libplugins_qmltooling_*.so',
             ])

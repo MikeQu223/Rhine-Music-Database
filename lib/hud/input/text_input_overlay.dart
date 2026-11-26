@@ -1,72 +1,16 @@
-/// 文本输入层：Qt/qml/Overlay.qml:354-602（formFields / searchInput / settingEditInput）
-/// 1:1 迁移到 Flutter，并把「输入框几何来自 state」固化成可静态审查的契约。
+/// 文本输入层：Qt/qml/Overlay.qml 的 formFields / searchInput / settingEditInput 迁移。
 ///
-/// ## 位置契约（state → 逻辑矩形）
-/// 舞台坐标恒由 state 给出，逻辑坐标 = 舞台坐标 * stageScale。
-/// 这个 stageScale 由 PortraitStage 唯一注入（PortraitBands.stageScale），
-/// 本层只消费、绝不按 height / 1080 重新推导。
-/// 四类输入框的每一条边都有唯一来源，不得由 Widget 自算，也不得用 hit 反推：
-/// - search：x=(inputX||0)*s、y=((inputY||302)+(modalOffset||0))*s、w=(inputWidth||0)*s、
-///   h=54*s（Overlay.qml:528-531）。
-/// - account：容器 formFields 的 x=(inputX||0)*s、y=(modalOffset||0)*s、w=(inputWidth||0)*s
-///   （Overlay.qml:358-360）；字段自身 x=14*s、y=430*s、w=parent.w-(login?208:28)*s、h=55*s
-///   （Overlay.qml:387-390）。
-/// - captcha：同容器，x=14*s、y=541*s、w=parent.w-28*s、h=55*s（Overlay.qml:447-450）。
-/// - settingEdit：背景 (editingSettingX||0)*s、((editingSettingY||0)+(modalOffset||0))*s、
-///   (editingSettingWidth||0)*s、(editingSettingHeight||0)*s（Overlay.qml:567-570）；
-///   字段 x=bg.x+12*s、y=bg.y、w=max(0,bg.w-24*s)、h=bg.h（Overlay.qml:579-582）。
-/// 所有以 || 出现的回退都是 QML 原文里的默认值（inputY 缺省 302 等），不是本层发明的兜底。
+/// 位置契约：舞台坐标由 state 给出，逻辑坐标 = 舞台坐标 * stageScale（由 PortraitStage
+/// 唯一注入，本层不重新推导）。四类输入框（search / account / captcha / settingEdit）
+/// 的每条边都有唯一来源，不得由 Widget 自算或用 hit 反推。
 ///
-/// ## 真实文本输入栈（不可替换）
-/// 组合态与选区必须来自真实的 TextEditingController.value（TextEditingValue.composing /
-/// selection），即真实的 Flutter TextInputClient 通路：EditableText -> TextInputConnection ->
-/// 平台输入法。不得用自造 String 冒充组合态，也不得用 TextField/InputDecorator 顶替：
-/// InputDecorator 有 48 逻辑像素的最小高度，而手机横屏 stageScale 可低到约 0.38，
-/// 54*0.38 约 20.5 会被撑破，且 contentPadding 无法精确等于 18*s / 14*s
-/// （Overlay.qml:523-524、531）。
+/// 文本栈必须是真实的 TextInputClient：组合态与选区来自 TextEditingController.value，
+/// 不用自造 String，也不用 TextField/InputDecorator（最小高度会撑破 54 网格的框）。
 ///
-/// ## Qt 与 Flutter 文本语义差异（逐条核对，不臆造）
-/// - Qt 的 TextInput.text 不含预编辑，preeditText 单独暴露；Flutter 的 TextEditingValue.text
-///   含预编辑，组合区间在 composing。故必须剥离：committedText() / preeditText()。
-/// - Qt 的 onTextEdited 只在提交文本变化时发；Flutter 的 onChanged 连组合态变化也发。
-///   故按提交文本去重（TextCommitTracker），且程序化赋值 text 不得触发上报
-///   （QML 里赋值 text 不产生 textEdited，Overlay.qml:543、594）。
-/// - Qt 的 Keys.onReturnPressed 在单行 TextInput 上不迁移焦点；Flutter 的 EditableText 在
-///   onEditingComplete 为 null 时会 clearComposing + unfocus（editable_text.dart:3914-3985），
-///   故必须给一个空 onEditingComplete 阻止默认行为，保持 Qt 的焦点不迁移语义。
-/// - 硬件 Return：引擎在真机上把 enter 翻译成 done action 才回调 onSubmitted
-///   （editable_text.dart:1485-1496 原文），因此 Return 走 onSubmitted 是正确通路；不得在
-///   Focus.onKeyEvent 里再处理 Enter（会双发）。
-/// - Escape：Android 上框架不安装 disabling text shortcuts
-///   （default_text_editing_shortcuts.dart:981-996 对 android 返回 null），Escape 不被框架
-///   消费，故由祖先 Focus.onKeyEvent 承接并返回 handled。
+/// 语义差异：Qt 的 text 不含预编辑、onTextEdited 只在提交变化时发；Flutter 两者相反，
+/// 故需剥离组装区并按提交文本去重。Return 走 onSubmitted；Escape 由祖先 Focus 承接。
 ///
-/// ## 副作用边界
-/// 所有 rhine.* 调用走 TextInputPorts（与 pointer_router.dart 的 PointerPorts 同风格）；
-/// 文本赋值与焦点迁移属于 Widget 侧状态，以 TextInputEffect 列表返回给 Widget 执行。
-/// 判定与渲染分离，便于静态审查与后续单测。
-///
-/// ## 已知 TBD（不臆造，等设备/宿主证据）
-/// - QML 只写 text = ...（Overlay.qml:543、594），未声明赋值后光标落点；本层统一落尾
-///   （valueForText），标 TBD。
-/// - QML 未声明 cursor / selection 颜色；本层用文字色作光标色，标 TBD。
-/// - renderType: Text.NativeRendering（Overlay.qml:525）在 Flutter 无对应物（引擎恒定走自身
-///   栅格化），记录为不可映射项。
-/// - rhineFontFamily 由 C++ 注入根上下文（Qt/src/main.cpp:1074）；Flutter 侧只能由宿主传入
-///   同名字族，未注入时为 null（平台默认），标 TBD。
-/// - ImhSensitiveData（Overlay.qml:457）在 Qt 只是「别缓存、别学习」提示，不遮挡文本；
-///   Flutter 映射为关联想、关自动更正、关个性化学习，绝不用 obscureText。
-/// - ImhDigitsOnly（Overlay.qml:397、457）是输入法提示而非校验器，故只映射键盘类型，
-///   不加数字过滤 formatter（那会凭空收紧 Qt 允许的输入）。
-/// - Qt 的 enabled:false 只是失能，不隐藏也不改文案；本层映射为 readOnly + 不可交互。
-///   Qt 在失能时会顺带清掉 activeFocus；本层不主动 unfocus（不猜失能时序），只隐藏光标。
-/// - selectByMouse（Overlay.qml:538、588）默认 false，本层字面映射到
-///   enableInteractiveSelection；触屏长按选区在 Qt 上的实际行为需设备核对。
-/// - 无障碍节点形状（合并成单节点）需 a11y inspector 在设备上核对，本层按 MergeSemantics
-///   合并 RenderEditable 自己发布的 textField 节点（rendering/editable.dart:1380-1384）。
-/// - 本文件 import key_router.dart（仅 HudAction）→ wheel_router.dart → hit_layer.dart →
-///   ../protocol/hud_hit.dart；后者只存在于  树、本树未集成，故整条导入链在本树预期
-///   不可解析，属跨树 integration dependency，不是本层缺陷（禁止把 hud_hit.dart 复制进本层）。
+/// 副作用全部走 TextInputPorts，文本赋值与焦点迁移以 TextInputEffect 返回给 Widget。
 library;
 
 import 'dart:math' as math;
@@ -202,12 +146,7 @@ class TextInputStageState {
   final double? inputWidth;
 
   /// 输入框高度（舞台单位，绘制时乘 [stageScale]）。
-  ///
-  /// Qt 的 state() 一直带着 `inputHeight`（Qt/src/NativeHud.cpp:257-274、compact 由
-  /// Qt/src/ResponsiveHudLayout.cpp:397 从 `input` 字段矩形转出），QML 侧
-  /// `Overlay.qml:571` 直接读它；本类原先没接，检索框因此恒用 QML 缺省 54——竖屏
-  /// 输入框实际是 44 网格（≈121 舞台单位），54 会让文字贴在框顶（实机
-  /// device7/s1-search.png：「dx」小字顶在框上沿）。
+  /// 不接这个字段时检索框会用 QML 缺省的 54，而竖屏实际是 44 网格，文字会贴框顶。
   final double? inputHeight;
 
   /// 输入框字号（舞台单位，绘制时乘 [stageScale]）。null = 沿用 QML 的 22。
@@ -292,11 +231,8 @@ class TextInputStageState {
   bool get formVisible =>
       modal == 'playlist-form' || (loginMode && loginMethod == 'phone');
 
-  /// 检索框的可见条件。Qt 原文是 `modal === "search" || modal === "saved"`
-  /// （Overlay.qml:526），但 Qt compact 的 `saved` 总览页没有检索框（`library()`
-  /// 的 savedOverview 分支只画平台卡与收藏索引），照抄会让一个没有归属的输入条
-  /// 浮在「我的音乐」页顶、并把软键盘也一起拉起来（真机 2026-11-24）。这里只认
-  /// 真正画了检索框的 `search`。
+  /// 检索框的可见条件。Qt 是 `search || saved`，但 compact 的 saved 总览页没有检索框，
+  /// 照抄会让输入条浮在「我的音乐」页顶并拉起键盘，所以只认 `search`。
   bool get searchVisible => modal == 'search';
 
   /// Overlay.qml:566 / 578 —— 设置文本编辑框的可见条件。
@@ -1120,11 +1056,8 @@ class TextInputOverlay extends StatefulWidget {
 }
 
 class TextInputOverlayState extends State<TextInputOverlay> {
-  /// 宿主点中 HUD 画出来的输入框时把焦点交给对应文本域。
-  ///
-  /// 光靠输入层自己的命中面不够：HUD 的字段矩形和输入层的实际位置各有来源，
-  /// 点在画出来的框里可能落在输入层的空白上（用户 2026-11-22 报的「点搜索框
-  /// 弹不出键盘」）。所以由宿主按 HUD 的 `fields` 矩形兜底请求焦点。
+  /// 宿主点中 HUD 画出来的输入框时把焦点交给对应文本域：HUD 的矩形与输入层的命中面
+  /// 各有来源，点在框里可能落在空白上。
   void focusKind(TextFieldKind kind) {
     final FocusNode? node = _focusNodes[kind];
     if (node == null) {
@@ -1133,11 +1066,7 @@ class TextInputOverlayState extends State<TextInputOverlay> {
     node.requestFocus();
   }
 
-  /// 宿主离开需要输入法的页面（关检索弹层、切 tab）时收键盘。
-  ///
-  /// 不收的话输入层与软键盘会一直挂在新页面上：真机上「我的音乐」总览页打开时
-  /// 顶上还压着检索框的占位文字、下半屏被键盘吃掉（用户 2026-11-24 报的
-  /// 「界面被键盘挡住」现象之一）。
+  /// 宿主离开需要输入法的页面时收键盘，否则输入层会一直挂在新页面上。
   void unfocusAll() {
     for (final FocusNode node in _focusNodes.values) {
       node.unfocus();

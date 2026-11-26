@@ -32,7 +32,7 @@ NativeHud::NativeHud(Host *host, Glyphs *glyphs, MusicLibrary *music, HudSceneAc
     : QObject(parent), m_host(host), m_glyphs(glyphs), m_music(music), m_scene(std::move(scene)) {
     themeMode = host->preference("theme");
     if (themeMode.isEmpty()) {
-        // 出厂默认亮色：不再有「跟随系统」，缺键直接落到 light（用户 2026-11-19 指定）。
+        // 出厂默认亮色：不再有「跟随系统」，缺键直接落到 light。
         themeMode = "light";
     }
     dark = themeMode == "dark";

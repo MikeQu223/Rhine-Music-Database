@@ -576,15 +576,9 @@ void main() {
 
     testWidgets('self-owned controller is released on unmount, injected audio is not',
         (WidgetTester tester) async {
-      // 只注入 audio（替身），controller 由 widget 自己创建：真 boot 会起 100ms ticker，
-      // 若 unmount 没 dispose，flutter_test 会直接报 “A Timer is still pending”。
-      // 注入 audio 同时钉住所有权边界：注入的那份不许被 widget dispose。
-      //
-      // 这里刻意不让 widget 自建 MethodChannelBasicAudio：flutter_test 没有平台 handler，
-      // EventChannel 的 listen 会抛 MissingPluginException 并被测试框架记成异常，
-      // 那样测到的是测试环境缺插件，而不是本 widget 的释放语义。自持 audio 的释放由
-      // basic_app.dart dispose() 的 _ownsAudio 分支承担，真机路径由 94 构建/装机覆盖
-      // （本原子 NOT_RUN）。
+      // 只注入 audio，controller 由 widget 自建：真 boot 会起 100ms ticker，
+      // unmount 没 dispose 会报「A Timer is still pending」。
+      // 同时钉住所有权：注入的那份不许被 widget dispose。
       final _FakeAudio audio = _FakeAudio();
       await tester.pumpWidget(BasicApp(audio: audio, bundle: _BrokenBundle()));
       await tester.pump();
@@ -758,8 +752,7 @@ void main() {
         (WidgetTester tester) async {
       tester.view.physicalSize = const Size(600, 900);
       tester.view.devicePixelRatio = 1.0;
-      // 真机上 status bar 会给竖屏舞台一个下移原点（originY）；这里用 safe.top=48
-      // 让 originY > 0，检索框的 y 才会真的走到「302 + originY」这条折算上。
+      // 用 safe.top=48 让 originY > 0，检索框的 y 才会走「302 + originY」这条折算。
       tester.view.padding = const FakeViewPadding(top: 48.0);
       addTearDown(tester.view.reset);
 

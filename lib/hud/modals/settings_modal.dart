@@ -108,15 +108,10 @@ class PlatformCapabilities {
           desktopLyrics: false,
         );
 
-  /// **平台识别入口**（Qt `PlatformFeatures.h:23-27` 的 Dart 侧对应实现）。
+  /// 平台识别入口（Qt `PlatformFeatures` 的 Dart 对应）。
   ///
-  /// 以前各调用点各自写死 `const PlatformCapabilities.android()`，接桌面端时得逐个
-  /// 找出来改。这里按 `TargetPlatform` 一次判完：移动端（Android/iOS）四项全关
-  /// （没有官方音源、本地音乐、应用音量、桌面窗口控件/歌词），桌面端三项全开；
-  /// Linux 另把 DesktopLyrics 关掉。未知平台按移动端保守处理。
-  ///
-  /// 用户 2026-11-25 报的「横屏右下角输出音量块在 Android 上没隐藏」就是这里
-  /// `applicationVolume` 被硬写成 true 造成的：改成读本工厂即可。
+  /// 按 `TargetPlatform` 一次判完：移动端四项全关，桌面端三项全开，Linux 另关桌面歌词；
+  /// 未知平台按移动端保守处理。调用点不要再各自写死。
   factory PlatformCapabilities.forTarget(TargetPlatform platform) {
     switch (platform) {
       case TargetPlatform.android:

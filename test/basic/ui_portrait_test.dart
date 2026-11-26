@@ -65,9 +65,7 @@ void main() {
           portrait.hits.where((HudHit hit) => hit.action.startsWith('mobile:lane:'));
       expect(lanes.length, basicSirenColumns.length);
 
-      // 当前行：position = 0（列表顶端）时占「第一槽」，槽位随 position 连续长到第二槽。
-      // Qt 原始版式恒为 listTop + 48，顶端会把第一槽空着、一屏四行只剩三行
-      // （用户 2026-11-18「只显示三个」）；这里把两种位置都钉住。
+      // position = 0 时当前行占第一槽，随 position 连续长到第二槽；两种位置都钉住。
       final HudHit open = _hit(portrait, 'open');
       expect(open.y, closeTo(listTop * unit, 1.0));
       final BasicHudFrame scrolled = BasicHudFrame.build(

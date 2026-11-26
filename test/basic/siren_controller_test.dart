@@ -41,7 +41,7 @@ SirenHttpResult _text(String body, {int statusCode = 200}) {
   return SirenHttpResult(statusCode: statusCode, bytes: utf8.encode(body));
 }
 
-/// 假的 BasicAudioPort（lane B 的真实实现要真机 MediaPlayer，测试只验证 Dart 侧契约）。
+/// 假的 BasicAudioPort（lane B 的真实实现要 MediaPlayer，测试只验证 Dart 侧契约）。
 class _FakeAudio implements BasicAudioPort {
   BasicAudioState _state = const BasicAudioState();
   final List<String> calls = <String>[];
@@ -907,11 +907,7 @@ void main() {
     });
   });
 
-  // Qt/src/MusicLibrary.cpp:843-869 `selectResult(index, lane, open=true)`：
-  //   mode = open && kind == "song" ? "detail" : "archive";
-  //   if (open && current.kind != "song") enterDirectory(current);
-  // 即「点专辑行 = 换列（进该专辑目录）」，只有曲目行才进详情抽唱片。
-  // 用户 2026-11-19 报：进入专辑应换列而不是抽出唱片。
+  // 点专辑行 = 换列（进该专辑目录），只有曲目行才进详情抽唱片。
   group('进入专辑 = 换列（不抽唱片）', () {
     test('enterAlbumColumn：留在 library 相位，directory 就是这张专辑', () async {
       final _Server server = _Server();

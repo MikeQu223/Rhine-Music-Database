@@ -53,9 +53,8 @@ struct HudItemRegion {
 HudItemRegion hudItemRegion(QRectF stage, double scale, double itemWidth, double itemHeight) {
     HudItemRegion result;
     if (stage.isNull()) {
-        // 真机实证：详情淡入期间唯一逐帧变化的命令是 alpha，它没有包围盒，归因出空矩形。
-        // 绝不能让下面的 adjusted(-2,-2,2,2) 把空矩形变成 4x4 伪区域绕过 <1 兜底——
-        // 那正是「进详情后 HUD 只更新 6x6 像素、整层停在上一页」的成因。
+        // 淡入时只有 alpha 在变，它没有包围盒；别让 adjusted(-2,-2,2,2) 把空矩形
+        // 撑成 4x4 伪区域绕过 <1 兜底，否则 HUD 整层停在上一页。
         result.full = true;
         return result;
     }

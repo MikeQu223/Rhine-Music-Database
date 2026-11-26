@@ -1,24 +1,10 @@
 /// 旋转端到端测试。
 ///
-/// 为什么是 flutter_test 而不是 integration_test：
-///   pubspec.yaml 是共享文件，只声明 flutter_test（pubspec.yaml:38-40），没有
-///   integration_test 依赖，因此本文件不能用 IntegrationTestWidgetsFlutterBinding。
-///   这里用 flutter_test 的 tester.view.physicalSize + MediaQuery.fromView 模拟设备旋转：
-///   旋转在 Flutter 侧就是一次 MediaQuery 重建。
-///   真机上跑成 integration_test 需要宿主接线、真实传感器与真实 Node/媒体源；
-///   设备上的像素/性能需真机验证。
+/// pubspec 只声明 flutter_test，所以用 tester.view.physicalSize + MediaQuery.fromView
+/// 模拟旋转（Flutter 侧旋转就是一次 MediaQuery 重建）。真实传感器与像素需设备验证。
 ///
-/// 覆盖的 Qt 语义：
-///   * 白名单七项 modal：Qt/src/MusicSession.cpp:243；磁盘序列化时 closing 存空串：:222。
-///     旋转不是落盘，closing 中的 modal 必须保留名字与关闭进度。
-///   * 夹取：selected [0,39]（:260）/ musicCollection [1,4]（:257）/
-///     settingsScroll [0, settingsScrollMaximum]（:247 + NativeHud.h:132-135）/
-///     rowMemory [0,7]（:111）。
-///   * stage：Qt/qml/Main.qml:32-33、Qt/src/Engine.cpp:1353、
-///     竖屏阈值 Qt/src/NativeSceneCamera.cpp:55-56（aspect < 1.05）。
-///   * QR：MusicAccount.cpp:626/:631（300 x 1000ms 墙钟）、:352-379（generation + cancel 屏障）。
-///   * 3D：NativeScene.cpp:217-224（旋转只 resize）、:250-259（review 才是 reset）、
-///     NativeSceneInput.cpp:141-142（pointercancel -> resetPointer(false)）。
+/// 覆盖 Qt 语义：白名单 modal 保留、各字段夹取、stage 换算、QR 计时、
+/// 3D 旋转只 resize / review 才 reset / pointercancel 释放指针。
 library;
 
 import 'dart:convert';
@@ -32,10 +18,10 @@ import 'package:rhine_music_database/app/rotation_continuity.dart';
 /// 几何比较容差，与 A1 同值。
 const double _tol = stageGeometryTolerance;
 
-/// 横屏样机：2400x1080（Qt 舞台高 1080 在 dpr=1 时 stageScale=1）。
+/// 横屏参考：2400x1080（Qt 舞台高 1080 在 dpr=1 时 stageScale=1）。
 const Size _landscape = Size(2400, 1080);
 
-/// 竖屏样机：1080x2400（竖屏舞台宽 1080 -> stageScale=1）。
+/// 竖屏参考：1080x2400（竖屏舞台宽 1080 -> stageScale=1）。
 const Size _portrait = Size(1080, 2400);
 
 // 测试宿主：所有必须跨旋转存活的东西都活在这里，也就是 Widget 树之外
@@ -709,8 +695,7 @@ void main() {
   test('ARCH_BLOCKED 记录：pubspec 无 integration_test 依赖，本文件只能走 flutter_test 通道', () {
     final String pubspec = File('pubspec.yaml').readAsStringSync();
     expect(pubspec.contains('flutter_test:'), isTrue);
-    // 真机 integration_test 绑定需要新增依赖（pubspec 禁改），故此处不可能绑定；
-    // 真实旋转/Node 存活/媒体源复用的设备证据属于 ARCH_BLOCKED / DEVICE_BLOCKED。
+    // integration_test 绑定需要改 pubspec（禁改），本文件用 flutter_test 跑；设备证据另计。
     expect(pubspec.contains('integration_test:'), isFalse);
   });
 }

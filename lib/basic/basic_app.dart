@@ -233,30 +233,11 @@ const String basicSearchOpenPrefix = 'music:search-open:';
 
 /// 组合根：唯一 [BasicController] + 字形资源 → HUD 业务外壳。
 ///
-/// 责任边界（RUNTIME-STARTUP-96）：
-/// * 生产依赖只在这里装配（[MethodChannelBasicAudio] + [BasicController]），两者都可注入；
-///   注入方持有所有权，本 widget 只 dispose 自己创建的实例。
-/// * 启动只有一条路：`State.initState` → [BasicController.boot] 恰一次。
-///   boot 自身用内部 `_booted` 幂等；本 widget 也只在 initState 调一次，
-///   所以旋转（同一个 State 重建）既不会二次 boot，也不会重建 audio/controller。
-/// * 曲库与字形资源互不依赖，两路并行装载；谁先完成谁先 setState，
-///   谁也不等谁，也不为对方加第二份 controller。
-/// * 真实曲库错误不吞成空：controller 把 error/status 放进 [BasicViewState]，
-///   外壳只负责显示；这里不把失败改写成空列表，也不伪造曲目。
-/// * 命中动作只有两条出路：落到 [BasicController] 的真实方法，或给可见的
-///   “尚未接入”反馈（[basicUnimplementedPrefix]）。绝不静默 no-op，也不假装
-///   有设置/账号/歌单；需要新 controller API 的动作（如 music:open-all-siren）
-///   在反馈里点名缺的契约，由父/94 决定是否补。
-///
-/// 与 APK-92 的差别（用户直接要求）：
-/// * 92 的首屏先挂 ConsentPage，`onProceed` 只把 `_entered` 置 true，
-///   同时**从不调用** [BasicController.boot] —— 曲库永远是空的，列表没有条目，
-///   点击自然全部落空。现在 initState 里恰好一次 boot。
-/// * 92 的启动弹窗没有任何授权对象：本 build 未捆绑需授权的遥测 SDK
-///   （Clarity/Bugly 由 Qt 宿主 JNI 注入，不在 Dart 层），弹窗只会吞掉首屏。
-///   预览因此不再经过 ConsentPage/ConsentGate，也绝不 start 任何 SDK；
-///   公共隐私模块（lib/app/consent_gate.dart、lib/ui/pages/consent_page.dart）
-///   原样保留给需要授权的入口。
+/// 生产依赖只在这里装配，两者都可注入；注入方持有所有权，本 widget 只 dispose 自己创建的。
+/// 启动只有一条路：initState → boot 恰一次，所以旋转不会二次 boot。
+/// 曲库与字形资源并行装载，谁先完成谁先 setState。
+/// 真实错误不吞成空：controller 把 error/status 放进 [BasicViewState]，外壳只负责显示。
+/// 命中动作只有两条出路：落到 controller 的真实方法，或给可见的「尚未接入」反馈。
 class BasicApp extends StatefulWidget {
   const BasicApp({
     super.key,
@@ -290,8 +271,7 @@ class BasicApp extends StatefulWidget {
   final MediaSessionPort? mediaSessionPort;
 
   /// 面板偏好的真实端口（SharedPreferences）。生产留空 = 走平台通道
-  /// [SharedPreferencesBasicSettingsPort]（2026-11-16 用户指示：设置参数用
-  /// shared_preferences 保存）；widget 测试注入 [MemoryBasicSettingsPort]。
+  /// [SharedPreferencesBasicSettingsPort]；widget 测试注入 [MemoryBasicSettingsPort]。
   final BasicSettingsPort? settingsPort;
 
   @override
@@ -665,9 +645,7 @@ class _BasicShellState extends State<_BasicShell>
       const <String, ProviderAccount?>{};
 
   /// 已登录账号的展示面：把 [LoginController] 的账号折进平台 id 表。
-  ///
-  /// 不做这一步时平台页的 ACCOUNT 段一律「未登录」、设置页却说「已登录 Aibeto」，
-  /// 同一份状态两个说法（真机 2026-11-24 的截图对比）。
+  /// 不做这一步，平台页显示「未登录」而设置页显示已登录。
   Map<String, ProviderAccount?> get _providerAccountsView {
     final LoginState? login = _loginController?.state;
     if (login == null || login.accountId.isEmpty) {
@@ -686,12 +664,8 @@ class _BasicShellState extends State<_BasicShell>
   String get _providerUserName =>
       _providerAccountsView[_providerId]?.nickname ?? '';
 
-  /// `PlatformFeatures::LocalMusic`：关掉时 `local` 平台不进音乐平台页
-  /// （Qt `providerCardsState()` 跳过 `id == "local"`；过滤由调用方做，页面
-  /// 自己不再判断）。宿主当前恒为开，将来按平台特性裁定后从这里改一次。
-  // 本分支不做「本地音乐」（用户 2026-11-20 明确：没让做本地音乐）：
-  // Qt `PlatformFeatures::LocalMusic` 在移动端同样恒 false，这里对齐为 false，
-  // 平台页/平台弹层/切换器都不再列 local，`provider` 落盘也不会是 local。
+  /// `PlatformFeatures::LocalMusic` 关掉时 `local` 不进平台页（过滤由调用方做）。
+  /// 本分支对齐 Qt 移动端：恒 false，平台页/弹层/切换器都不列 local。
   final bool _localMusicEnabled = false;
 
   /// 平台服务（Qt `MusicAccount` 的数据面）：按 id 给网关，缺省退回
@@ -718,10 +692,7 @@ class _BasicShellState extends State<_BasicShell>
   LoginController? _loginController;
 
   /// 原生滚动手势的分流：弹层打开时归弹层，否则给资料库。
-  ///
-  /// 横屏的 3D 场景铺满整窗、Z 序在 HUD 弹层之下；不拦的话「在播放队列上滑动」
-  /// 会去滑资料库列表（用户实测缺陷 2，`_onSceneScroll` 原来无条件喂给 controller）。
-  /// Qt 的分界在 `NativeHudController.cpp` 的 modal 早退：`m_modal` 非空就不动资料库。
+  /// 3D 场景铺满整窗、Z 序在弹层之下，不拦会让「在队列上滑动」去滑资料库。
   void _onShellSceneScroll(QtSceneScrollEvent event) {
     if (!mounted) {
       return;
@@ -785,10 +756,7 @@ class _BasicShellState extends State<_BasicShell>
   final GlobalKey<TextInputOverlayState> _textInputKey =
       GlobalKey<TextInputOverlayState>();
 
-  /// HUD 画出来的输入框被点中（`field(name, rect)` 的 name）。
-  ///
-  /// 输入层自己也有命中面，但它的矩形和 HUD 画出来的框各有来源；两条路都通
-  /// 才能保证「点框里就弹键盘」（用户 2026-11-22 报的搜索框点不出键盘）。
+  /// HUD 画出来的输入框被点中（`field(name, rect)` 的 name），据此弹键盘。
   void _onFieldTap(String name) {
     final TextFieldKind? kind = switch (name) {
       'search' || 'input' => TextFieldKind.search,
@@ -879,12 +847,9 @@ class _BasicShellState extends State<_BasicShell>
   /// （scale 只允许一个来源）。接管发生在首帧后，所以竖屏首帧不铺输入层。
   StageGeometry? _portraitGeometry;
 
-  /// 场景层（Qt platform view）的身份键。
-  ///
-  /// 放在 App 状态里而不是 surface 里：横竖屏会换掉 surface 的父链
-  /// （PortraitStage 的 Transform.scale ↔ 直挂 Stack），key 在更上层才能在
-  /// 旋转时把同一个 PlatformView element 移动过去，而不是销毁重建 QQuickView
-  /// （重建 = 场景/Node/播放全断，用户报的"一转屏就重启"）。
+  /// 场景层（Qt platform view）的身份键。放在 App 状态里而不是 surface 里：
+  /// 横竖屏会换掉 surface 的父链，key 在更上层才能把同一个 PlatformView 移过去，
+  /// 而不是销毁重建 QQuickView（重建 = 场景 / Node / 播放全断）。
   final GlobalKey _sceneKey = GlobalKey(debugLabel: 'basic-qt-scene');
 
   /// HUD 输入层的焦点节点。
@@ -915,12 +880,7 @@ class _BasicShellState extends State<_BasicShell>
     ports: _BasicEngineKeyPorts(this),
   );
 
-  /// NativeHud::key（Qt/src/NativeHudController.cpp:887-943）的 1:1 路由。
-  ///
-  /// 之前这个外壳**没有**键盘入口：HUD 根节点只有 Force 焦点，没有 onKeyEvent，
-  /// 于是 Overlay.qml:118-120（`Keys.onPressed` → `rhine.keyEvent`）在 Flutter 侧
-  /// 整层缺失——用户看得到 HUD 底部「←→ 切换来源 / ↑↓ 选曲 / ENTER 查看 / 检索」的
-  /// 提示，按下去却没有动作。补的就是这一层：键 → [HudKeyRouter] → 既有 [_onAction]。
+  /// 键盘入口：键 → [HudKeyRouter] → 既有 [_onAction]，对应 Qt `NativeHud::key` 的路由。
   late final HudKeyRouter _keyRouter = HudKeyRouter(
     ports: _BasicHudKeyPorts(this),
   );
@@ -1115,12 +1075,8 @@ class _BasicShellState extends State<_BasicShell>
   }
 
   /// 装平台服务与两条会话控制器（评论 / 登录）。
-  ///
-  /// 网关按平台分派：**用户安装的插件**（`netease`/`qq`/`kugou`/…）走
-  /// [PluginGateway] → Kotlin `PluginBridge` → 内嵌 Node 运行时跑插件 worker，
-  /// 登录二维码、账号、检索都是插件的真实返回；内置平台（`siren`/`local`）与
-  /// 没有插件运行时的构建仍退回 [UnavailableProviderGateway]（`当前来源不支持该功能`），
-  /// 绝不伪造数据。
+  /// 插件平台走 [PluginGateway] → Kotlin PluginBridge → 内嵌 Node；内置平台与没有运行时的
+  /// 构建退回 [UnavailableProviderGateway]，绝不伪造数据。
   void _installProviderService(ProviderRegistry registry) {
     final ProviderService service = ProviderService(
       registry: registry,
@@ -1986,14 +1942,8 @@ class _BasicShellState extends State<_BasicShell>
     final String? actionNotice = _actionNotice;
     final String? resourceNotice = _resourceNotice;
     return Scaffold(
-      // 系统栏区域（状态栏 / 手势条）铺的是**应用自己的纸色**，不是黑色。
-      // 2026-11-24 用户要求「竖屏时不全屏，显示状态栏和系统手势/三键操作区域，
-      // 最好完全透明底、不要灰色遮罩」：原生侧已把两块系统栏调成透明
-      // （MainActivity.applyImmersiveSticky），Flutter 侧再把窗口底色从黑改成纸色，
-      // 于是系统栏看到的既不是黑边也不是灰 scrim，而是与页面连续的纸面，
-      // 图标由系统按浅色绘制。竖屏舞台自己从 safe.top 起画，内容不会压到状态栏下。
-      // 这里只是首帧底色（深色纸面，避免启动白闪）；真正的纸色由下面 Stack 里
-      // 第一个子层按 controller 的明暗实时铺满整窗（含系统栏区域）。
+      // 系统栏区域铺应用自己的纸色，不是黑边或灰 scrim。
+      // 这里只是首帧底色，真正的纸色由下面第一个子层按明暗实时铺满整窗。
       backgroundColor: const Color(0xFF131C18),
       // 输入法不避让（真人要求 m01988）：弹出键盘不许把舞台/3D 视图顶上去，
       // 也不许缩窗。Manifest 的 windowSoftInputMode 同步是 adjustNothing，
@@ -2080,15 +2030,9 @@ class _BasicShellState extends State<_BasicShell>
                       ),
                     );
                   } else {
-                    // 横屏沿用 Qt 全窗口高（Main.qml:32），几何与命中读同一份。
-                    //
-                    // 舞台高度**必须**是 Qt 的 1080（NativeHud.cpp 里所有 y 常量都按它写）。
-                    // 2026-11-24 为了不让系统手势条压住播放条，曾把高度收成
-                    // `(height - safe.bottom) / scale`（真机 1069.2），结果播放条顶线
-                    // 从 984 上移到 973.2：`chrome.footer()` 的 y=967（墨迹到 977.4）被切成
-                    // 半截，而页脚与 `01` 大号数字（墨迹底 962.6）之间只剩 10.6 的缝，
-                    // 抬页脚又变成压字。正确做法是保持 1080、把整棵 HUD 子树按底部安全区
-                    // 整体上移（见下面 Transform.translate），播放条底部因此留在手势条之上。
+                    // 横屏沿用 Qt 的全窗口高（Main.qml），舞台高必须是 1080。
+                    // 收成 `(height - safe.bottom) / scale` 会把播放条顶线从 984 上移到 973.2，
+                    // 页脚被切成半截；正确做法是保持 1080、整棵 HUD 按安全区上移。
                     final double stageScale = height / 1080.0;
                     surface = _popScope(
                       state,
@@ -2127,10 +2071,8 @@ class _BasicShellState extends State<_BasicShell>
                   if (portrait) {
                     return hudStack;
                   }
-                  // 横屏：系统栏是「显示但透明」（2026-11-24 用户要求不全屏），
-                  // 舞台保持 Qt 的 1080 高，整棵 HUD 连输入层一起上移底部安全区，
-                  // 底部留一条系统手势条的空白带。绘制与命中共用这一层 Transform
-                  // （Transform 的命中按逆矩阵换算，不需要另写一套坐标）。
+                  // 横屏舞台保持 1080 高，整棵 HUD 连输入层一起上移底部安全区；
+                  // 绘制与命中共用这一层 Transform（命中按逆矩阵换算）。
                   return Transform.translate(
                     offset: Offset(0, -systemSafe.bottom),
                     child: hudStack,
@@ -2180,7 +2122,6 @@ class _BasicShellState extends State<_BasicShell>
   }) {
     // 竖屏窗口底部安全区（状态栏/手势条/三键栏）。画布高度已经扣过它，HUD 的
     // 播放条与底栏不能再按设计稿 34 网格留一遍，否则整块被顶高一个导航栏
-    // （用户 2026-11-24：「底部组件离底部还有一段空间，抬太高了」）。
     final double safeBottomLogical = MediaQuery.paddingOf(context).bottom;
     // 封面查看器开着：Qt 侧只画 viewer 页（NativeHud.cpp:267-268），详情页的 HUD
     // 不能再画一份，所以整屏换成查看器那一支。3D 场景层仍是同一个 PlatformView
@@ -2606,8 +2547,7 @@ class _BasicShellState extends State<_BasicShell>
                         dark: state.dark,
                         pendingUninstall: _pendingPluginUninstall,
                         stageScale: stageScale,
-                        // 进度条与「安装中…」按钮都靠这两个字段（之前没传，
-                        // 真机上只看得到状态行、看不到进度）。
+                        // 进度条与「安装中…」按钮都靠这两个字段（不传只看得到状态行、看不到进度）。
                         installing: snapshot.progress.installing,
                         installLabel: snapshot.progress.id,
                         onAction: onAction,
@@ -2670,11 +2610,8 @@ class _BasicShellState extends State<_BasicShell>
                   writeLoading: false,
                   formPid: _playlistFormId,
                   dark: state.dark,
-                  // 舞台口径：横屏 stage = 逻辑尺寸 / (逻辑高 / 1080)，scale = 逻辑高 / 1080
-                  // （本机横屏 1219×762 逻辑 ⇒ stage 1728×1080、scale 0.7055）。
-                  // 2026-11-25 之前这里写成 `宽 / 1080 * stageUnit` ≈ 3.1，导致
-                  // `PlaylistFormLayout.stage` 的 panelWidth 变成负数、面板底根本不画
-                  // （真机上只剩标签和输入框浮在资料库上，见审计 §2.3）。
+                  // 舞台口径：stage = 逻辑尺寸 / (逻辑高 / 1080)。
+                  // 写成 `宽 / 1080 * stageUnit` 会让 panelWidth 变负数，面板底根本不画。
                   stageWidth: () {
                     final Size screen = MediaQuery.sizeOf(inner);
                     final double scale = landscape
@@ -2898,10 +2835,8 @@ class _BasicShellState extends State<_BasicShell>
     );
   }
 
-  /// 面板上下文：当前平台的真实能力（没有桌面歌词 / 官方音源 / 应用音量）。
-  ///
-  /// 能力与操作系统都走 `PlatformCapabilities.forTarget` 的平台识别，不再写死
-  /// Android：接桌面端时这一处自动跟着走（用户 2026-11-25 要求提前准备）。
+  /// 面板上下文：当前平台的真实能力（无桌面歌词 / 官方音源 / 应用音量），
+  /// 走 `PlatformCapabilities.forTarget` 的平台识别。
   SettingsPreferenceContext _settingsContext() {
     return SettingsPreferenceContext(
       capabilities: PlatformCapabilities.forTarget(defaultTargetPlatform),
@@ -3224,10 +3159,8 @@ class _BasicShellState extends State<_BasicShell>
   }
 
   void _onAction(String action) {
-    // Qt `ResponsiveHudLayout.cpp:457-462`：任何 `music:`/`tab:`/`mv:` 动作都收起
-    // 「歌曲操作」面板。这条放在最前面——后面各分支都有自己的 `return null`，
-    // 只在末尾统一收会漏掉提前 return 的那些（真机缺陷：点「歌手作品」后歌手页
-    // 被面板压住半屏）。
+    // 任何 `music:`/`tab:`/`mv:` 动作都先收起「歌曲操作」面板。
+    // 必须放在最前：后面各分支都有自己的 return，末尾统一收会漏掉提前返回的。
     if (_songOptionsExpanded &&
         (action.startsWith('music:') ||
             action.startsWith('tab:') ||
@@ -3321,11 +3254,8 @@ class _BasicShellState extends State<_BasicShell>
       _setModal('');
       return;
     }
-    // 横屏页头 / 设置页 / 平台弹层里的「发现音乐」按钮发的都是同一个 `discover`
-    // （`lib/hud/pages/chrome.dart:160/162`、`settings_modal.dart:769`、
-    // `provider_modal.dart:287`）。Qt 在 `NativeHudController.cpp:1003-1010` 里：
-    // 塞壬直接 return（内置平台没有发现页），其余 `openModal("discover")`。
-    // 此前这个动作没有分支，落到 `预览中尚未实现：discover`（用户 2026-11-25 报的第 7 条）。
+    // 页头 / 设置页 / 平台弹层的「发现音乐」都发 `discover`：
+    // 塞壬直接 return（内置平台没有发现页），其余打开 discover 弹层。
     if (action == 'discover') {
       if (_providerId == 'siren') {
         _notice('塞壬唱片不提供发现音乐');
@@ -3445,10 +3375,8 @@ class _BasicShellState extends State<_BasicShell>
         return;
       }
       final Map<String, Object?> row = _discoverItems[index];
-      // Qt `MusicDiscover::open`（`Qt/src/MusicDiscover.cpp:112-126`）：
-      // `kind == "song"` 才当曲目播；其余（`playlist` / `album` / `artist`）
-      // 都是 `enterDirectory(value)`。原先这里只认 `playlist`，专辑与歌手行会被
-      // 当成曲目播放（真机表现为播放条挂出艺人名、详情页空白）。
+      // `discover:item`：只有 `kind == "song"` 当曲目播，其余都是 `enterDirectory`。
+      // 只认 playlist 会让专辑与歌手行被当成曲目播放。
       final String kind = '${row['kind'] ?? 'song'}';
       if (kind == 'artist') {
         final String name = '${row['title'] ?? ''}'.trim();
@@ -3465,8 +3393,7 @@ class _BasicShellState extends State<_BasicShell>
         return;
       }
       if (kind == 'playlist' || kind == 'album') {
-        // Qt `NativeHudController.cpp:908-910`：`discover:item` 处理完一律 `closeModal()`，
-        // 否则弹层会盖住刚进去的歌单目录（2026-11-25 真机截图为证）。
+        // 处理完 `discover:item` 一律收起弹层，否则它会盖住刚进去的目录。
         _setModal('');
         unawaited(
           controller.enterRemotePlaylist(
@@ -3727,8 +3654,7 @@ class _BasicShellState extends State<_BasicShell>
         return;
       }
       final String name = names[index.clamp(0, names.length - 1)];
-      // 这条分支在通用收起逻辑之前提前 return，必须自己收操作面板，
-      // 否则歌手页会被「歌曲操作」压住半屏（真机缺陷）。
+      // 这条分支在通用收起逻辑之前提前 return，必须自己收操作面板。
       if (_songOptionsExpanded) {
         setState(() => _songOptionsExpanded = false);
       }
@@ -3771,9 +3697,8 @@ class _BasicShellState extends State<_BasicShell>
       if (_songOptionsExpanded) {
         setState(() => _songOptionsExpanded = false);
       }
-      // 专辑 id 只能从当前曲目拿：`openAlbumInfo()` 不传参时回落到
-      // `_album/_directory`，而详情页多半是从收藏列/检索结果进的，那两个都是空的，
-      // 会当场 early return（真机表现：点「专辑信息」直接掉回资料库首页）。
+      // 专辑 id 只能从当前曲目拿：`openAlbumInfo()` 不传参时回落到 `_album/_directory`，
+      // 而详情页多半从收藏列/检索结果进，那两个是空的。
       final SirenSong? song = controller.state.song;
       final String albumId = song?.albumId ?? '';
       if (albumId.isEmpty) {
@@ -4145,8 +4070,7 @@ class _BasicShellState extends State<_BasicShell>
     if (song == null) {
       return '';
     }
-    // 插件平台的 artist 串常带尾随分隔符（真机「洛天依 / 闇闇 / · 辞欢 · …」），
-    // 与列表行共用同一套清洗，避免底注出现孤零零的「/ ·」。
+    // 插件的 artist 串常带尾随分隔符，与列表行共用同一套清洗。
     final String artist = basicCleanArtist(song.artist);
     final List<String> parts = <String>[
       if (artist.isNotEmpty) artist,
@@ -4162,8 +4086,7 @@ class _BasicShellState extends State<_BasicShell>
     if (_modal == modal || !mounted) {
       return;
     }
-    // 离开检索页就收键盘：输入层是独立 overlay，不主动失焦会一直挂在新页面上
-    // （真机「我的音乐」总览页顶上压着检索框占位、下半屏被键盘盖住）。
+    // 离开检索页就收键盘，否则输入层会一直挂在新页面上。
     if (modal != 'search') {
       _textInputKey.currentState?.unfocusAll();
     }
@@ -4372,16 +4295,12 @@ class _BasicShellState extends State<_BasicShell>
     // 把 originY 折进舞台 y 才是 Qt 那个「y 从 HUD 原点量起」的坐标；横屏 originY
     // 恒为 0（StageGeometry 默认值），数字与 Qt 逐字相同。
     final double stageY = rect.top + geometry.originY;
-    // 竖屏检索框的框高与字号都按 393 网格量（lib/hud/portrait/portrait_pages_library.dart
-    // 的 `field('search', {58, y, 313, 44})`；字号取 Qt compact 的 14 网格，
-    // Qt/src/ResponsiveHudPages.cpp:330 与 Qt/qml/Overlay.qml:542-543）。不传的话输入层
-    // 会用 QML 的缺省 54 / 22，字小且贴在框上沿——用户 2026-11-19 报的「字小的小标题」。
+    // 检索框的框高与字号按 393 网格量；不传会用 QML 缺省的 54 / 22，字小且贴框上沿。
     final double compactUnit = HudScale.portraitUnit(
       geometry.stageWidth,
       geometry.stageScale,
     );
-    // 详情/歌词页是整页绘制，输入层必须退场：否则从检索结果点进详情后，
-    // 检索框会残留在详情页上（真机 `device21` 的 love 字样就压在封面上）。
+    // 详情/歌词页是整页绘制，输入层必须退场，否则检索框会残留在封面上。
     final bool songPage =
         state.song != null &&
         (state.phase == BasicPhase.detail || state.phase == BasicPhase.lyrics);
@@ -4597,9 +4516,7 @@ class _BasicShellState extends State<_BasicShell>
       unawaited(controller.next());
       return null;
     }
-    // 竖屏详情页的传输键（详情曲目 ≠ 正在播放曲目时）：按**详情页所在列表**换曲，
-    // 而不是推进播放队列。单曲详情页的控制带必须始终作用在页面上那首（用户
-    // 2026-11-19：「详情页的控制始终是控制详情页对应曲目的」）。
+    // 竖屏详情页的传输键按详情页所在列表换曲，不推进播放队列。
     if (action == 'music:detail-prev') {
       unawaited(controller.playDetailSibling(-1));
       return null;
@@ -4636,12 +4553,8 @@ class _BasicShellState extends State<_BasicShell>
       _openQueue();
       return null;
     }
-    // 竖屏底栏播放条的**文字区**：Qt 发 `player:detail`（`Qt/src/ResponsiveHudLayout.cpp:340`，
-    // 标签「打开当前歌曲播放页面」，Qt 侧一直没有 handler）。这里补上：进**正在播放**
-    // 那首的详情页，但绝不打断播放——`openSong(play: false)` 只切相位 + 选中 + 发布，
-    // 不碰播放器。旧实现发的是 `player:open`，于是点播放条打开的是播放队列（用户
-    // 2026-11-19 的投诉：点底栏播放条应该进歌曲详情页）。队列改由播放条上独立的
-    // 队列键（`player:open`）负责。
+    // 竖屏底栏播放条的文字区：进正在播放那首的详情页，不打断播放（`openSong(play: false)`）。
+    // 队列由播放条上独立的队列键负责。
     if (action == 'player:detail') {
       final SirenSong? track = state.playingTrack ?? state.song;
       if (track == null) {
@@ -4653,10 +4566,7 @@ class _BasicShellState extends State<_BasicShell>
       unawaited(controller.openSong(track, play: false));
       return null;
     }
-    // 竖屏详情页底栏「歌词 / 评论」在不可用时发这两枚提示动作（页面不发 toast，
-    // 只有宿主知道「为什么不可用」）。旧实现这两格塞空串 `''`，
-    // `PortraitCanvas.hit` 对空动作直接 return ⇒ 点了完全没反应，就是实机上
-    // 「歌词/评论点了没反应」的死键（用户 2026-11-19）。
+    // 歌词/评论不可用时发提示动作；塞空串会被 `PortraitCanvas.hit` 直接跳过，成了死键。
     if (action == portraitSongHintLyrics ||
         action == portraitSongHintComments) {
       final bool wantLyrics = action == portraitSongHintLyrics;
@@ -4814,15 +4724,8 @@ class _BasicShellState extends State<_BasicShell>
       );
       return null;
     }
-    // 'music:open-all-siren' 是 archive 页的「在资料库中打开 →」（archive_page.dart:255），
-    // 对应 Qt QML 的同一个动作名（Qt/src/NativeHud.cpp:426）→ NativeHudMusic.cpp:365-369 →
-    // MusicLibrary::openSirenAllSongs()（Qt/src/MusicSiren.cpp:193-246）：把**全部已加载曲目**
-    // 当成虚拟歌单 'siren-all'/'siren:playlist:all'（title「全部歌曲」）打开，仅选中第一首，
-    // 不替换播放队列、不开始播放。
-    // 早期实现没有目录 API，用 openSirenLibrary 做近似（只回完整曲库、不开目录）；
-    // 后来交付了逐字照抄 Qt 的 openAllSirenSongs（siren_controller.dart:360），二者在
-    // 「回曲库 + 不动播放队列」上一致，但只有后者真的开出目录，所以这里按 Qt 指向后者，
-    // 旧近似不再被调用（openSirenLibrary 仍留在 controller 里，由调用方处置，本次不改写）。
+    // 'music:open-all-siren'：把全部已加载曲目当成虚拟歌单 'siren-all' 打开，只选中
+    // 第一首，不替换播放队列、不开始播放（对应 Qt 的 openSirenAllSongs）。
     if (action == 'music:open-all-siren') {
       unawaited(controller.openAllSirenSongs());
       return null;
@@ -4837,13 +4740,8 @@ class _BasicShellState extends State<_BasicShell>
       unawaited(controller.setVolumeFraction(fraction));
       return null;
     }
-    // 账号入口（音乐平台页 ACCOUNT 段的「登录账号 ↗」与设置页 ACCESS 卡的
-    // 「登录 / 退出登录」）：本步只做**开关分发**——登录开登录弹层
-    //（`modal == 'login'`，面板本身另属后续步骤），退出登录因为没有会话实现
-    // 只给可见反馈。都不伪造登录态（`_providerAccounts` 恒为空）。
-    // 登录/退出（Qt/src/MusicAccount.cpp:549 startLogin / :676 logout）。
-    // 无账号可实测：入口、状态机、动作分发全部可走通，最后一步由
-    // `UnavailableProviderGateway` 报「当前来源不支持该功能」，绝不伪造登录态。
+    // 账号入口只做开关分发：登录开弹层，退出因没有会话实现只给可见反馈。
+    // 不伪造登录态（`_providerAccounts` 恒为空）。
     if (action == 'music:login') {
       unawaited(_openLogin());
       return null;
@@ -4943,9 +4841,8 @@ class _BasicShellState extends State<_BasicShell>
       if (mv == null) {
         return 'MV 尚未接入：播放服务未就绪';
       }
-      // 视频面会抢音频焦点，关掉之后系统不会把音乐还给我们（实测：关 MV 回来
-      // 音乐停在关掉那一刻的暂停态）。Qt 的 MV 是静音跟随音乐、音乐全程不停，
-      // 所以这里记住开 MV 前是否在播，关的时候补一次 resume。
+      // 视频面会抢音频焦点，关掉后系统不会把音乐还回来；
+      // 所以记住开 MV 前是否在播，关的时候补一次 resume。
       _mvResumeAfterClose = controller.state.playing;
       unawaited(_syncMv());
       _setModal('mv');
@@ -5058,14 +4955,9 @@ class _BasicShellState extends State<_BasicShell>
     return _openAt(state, basicSelectedItemIndex(state, items));
   }
 
-  /// 索引全部越界就原地给可见反馈：不打开错的行，也不假装打开成功。
-  ///
-  /// 曲目行的 `item.index` 是 [basicLibraryItems] 的**列表内**下标，它指回哪份
-  /// 列表随相位不同（真值只有一处：basic_models.dart 的 [basicLibraryItems]，
-  /// 由 basic_hud.dart:39-66 原样迁入，控制器与绘制/命中共用）：
-  /// * 专辑详情（phase == detail 且 album != null）→ album.songs；
-  /// * 资料库首屏 → state.songs（这里 state.album 恒为 null，早期版本只看 album，
-  ///   导致首屏每一行单曲都变成“尚未实现”，正是用户报的“点击没反应”）。
+  /// 索引全部越界就原地给可见反馈：不打开错的行，也不假装成功。
+  /// 曲目行的 `item.index` 是 [basicLibraryItems] 的列表内下标，指回哪份列表随相位不同：
+  /// 专辑详情 → album.songs；资料库首屏 → state.songs。
   String? _openAt(BasicViewState state, int index, {bool play = false}) {
     final List<BasicListItem> items = basicLibraryItems(state);
     if (index < 0 || index >= items.length) {
@@ -5115,23 +5007,16 @@ class _BasicShellState extends State<_BasicShell>
     if (item.index < 0 || item.index >= state.albums.length) {
       return '${basicUnimplementedPrefix}music:index:$index';
     }
-    // 点专辑行 = **换列**（进入该专辑目录），不是抽唱片。
-    // Qt/src/MusicLibrary.cpp:863-869：`mode = open && kind == "song" ? "detail" : "archive"`
-    // 且 `if (open && current.kind != "song") enterDirectory(current)`。旧实现在这里调
-    // openAlbum → 相位跳到 detail、3D 抽唱片（用户 2026-11-19 第 1 条）；顺带让单曲
-    // 专辑一进去就只有一个当前行、任何点击都命中 'open'（第 2 条「必然触发」）。
+    // 点专辑行 = 换列（进入该专辑目录），不抽唱片；只有曲目行才进详情。
+    // 调 openAlbum 会让相位跳到 detail，单曲专辑一进去就只剩一个当前行。
     unawaited(
       controller.enterAlbumColumn(state.albums[item.index], play: play),
     );
     return null;
   }
 
-  /// 列表行的**纯选中**（Qt/src/NativeHudMusic.cpp:79-91 的 selectResult/selectDirectory
-  /// 都是 open=false）：只写 current/index/highlight 与滚动窗口，不回放、不换队列、
-  /// 不进详情。下标越界给可见反馈，不选错行、不假装成功。
-  ///
-  /// 旧实现把 'music:index:<i>' 直接交给 [_openAt]，那会 `_player.play(...)`——
-  /// 于是"点一行"= 开始播放，正是用户报的"浏览就自动播放"。
+  /// 列表行的纯选中（Qt 的 selectResult/selectDirectory 都是 open=false）：只写
+  /// current/index/highlight 与滚动窗口，不回放、不换队列、不进详情。越界给可见反馈。
   String? _selectAt(BasicViewState state, int index) {
     final List<BasicListItem> items = basicLibraryItems(state);
     if (index < 0 || index >= items.length) {
@@ -5424,10 +5309,8 @@ class _BasicSettingsPreferencePort implements PreferencePort {
 
   @override
   Future<void> write(String key, String value) async {
-    // 收藏文档是**整份 JSON**，不是设置项：`PreferenceStore` 的白名单只认
-    // `Qt/src/Host.cpp:1107` 那批裸键，`collections/<provider>.json` 会被静默丢弃
-    // （真机实测：心形变实心、提示「已加入喜欢的歌曲」，但 shared_prefs 里没有该键）。
-    // 这里直接落到端口层（它只校验 `panel/` 前缀），与 Qt 把收藏存成独立文件同构。
+    // 收藏是整份 JSON，不在 `PreferenceStore` 的白名单里，会被静默丢弃；
+    // 这里直接落端口层，与 Qt 把收藏存成独立文件同构。
     final bool written = await _store.port.write('$_prefix$key', value);
     if (!written) {
       throw StateError('settings write rejected: $_prefix$key');

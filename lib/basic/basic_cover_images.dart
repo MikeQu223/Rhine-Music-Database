@@ -1,14 +1,7 @@
 /// 封面像素：把 Siren 的专辑封面 URL 变成可绘制的 `ui.Image`。
 ///
-/// 为什么需要这一层：HUD 命令流里的 image 只带**键**（`['image', key, x, y, w, h]`），
-/// 真正的像素由宿主提供（`HudImageLookupFn`，lib/hud/render/paint_stack.dart:83）。
-/// Qt 端有自己的封面纹理；Flutter 端此前 `BasicGlyphPorts.imageFor` 恒返回 null，
-/// 所以详情页/歌词页/播放条的封面槽一直是空的（用户 2026-11-18：「接一下接口，
-/// 从专辑封面那里拿」）。
-///
-/// 复用 [BasicArtCache] 做下载/落盘/去重/上限（它已经处理了超时、字节上限与
-/// 同 URL 并发合并），本层只多做三件事：读文件、解码成 `ui.Image`、按 URL 记内存
-/// LRU 并在解码完成时回调宿主重绘。失败一律留空，不编假图、不抛异常。
+/// HUD 命令流里的 image 只带键，像素由宿主提供；复用 [BasicArtCache] 做下载/落盘/去重，
+/// 本层只读文件、解码、按 URL 记内存 LRU 并在解码后回调重绘。失败留空。
 library;
 
 import 'dart:async';
@@ -56,7 +49,7 @@ class BasicCoverImages {
   final Set<String> _failed = <String>{};
   bool _disposed = false;
 
-  /// 退场图的安全期：远大于一帧（本机最坏单帧约 460ms，见 [_retire]）。
+  /// 退场图的安全期：远大于一帧（最坏单帧约 460ms，见 [_retire]）。
   static const Duration _retireDelay = Duration(seconds: 2);
 
   /// 缓存命中数/总量，只用于诊断与测试断言。
@@ -150,14 +143,8 @@ class BasicCoverImages {
     }
   }
 
-  /// 退场图延后释放。
-  ///
-  /// 正在栅格化/等在 GPU fence 上的那一帧仍然引用着这张图（本机实测
-  /// `eglSwapBuffersWithDamageKHR` 能挂 460ms），当场 `dispose()` 就是在
-  /// GPU 还在采样的时候把纹理收回去——那是原生 use-after-free，表现就是
-  /// 没有任何 Dart 异常、只有一条 SIGSEGV（2026-11-19 00:12:51 / 00:48:42
-  /// 两次 `reason=2 status=11`）。所以先摘出缓存、留够两秒再释放；
-  /// 引擎在跑就顺延到下一帧之后再计时。
+  /// 退场图延后释放：正在栅格化或等在 GPU fence 上的那帧仍引用这张图，
+  /// 当场 dispose 就是 use-after-free。摘出缓存后留两秒，引擎在跑就顺延一帧再计时。
   void _retire(ui.Image image) {
     _retired.add(image);
     Future<void>.delayed(_retireDelay, () {

@@ -1,17 +1,7 @@
-/// 插件根目录解析（PLUGIN-1）。
+/// 插件根目录解析（PLUGIN-1）。权威源是宿主 `pluginDir()`，Dart 侧不自造路径。
 ///
-/// 权威源：`android/app/src/main/kotlin/rhine/music/database/porting/MediaSessionChannel.kt`
-/// 的 `pluginDir()` —— `/sdcard/Android/data/<pkg>/file/plugin`，拿不到外部卷时退回
-/// `<filesDir>/plugins`。Dart 侧只负责把那个路径拿到手并按需建子目录，绝不自造路径。
-///
-/// 为什么不用 Qt 的 `<AppLocalDataLocation>/plugins`：那是 `/data/user/0/<pkg>/files`，
-/// 用户在文件管理器里既看不到也拷不进去；插件需要「放进目录即安装」这种可操作路径。
-///
-/// 三层回退（顺序固定，便于排障）：
-///  1. 平台通道 `pluginDir()`（真机唯一正确来源）；
-///  2. 环境变量 `RHINE_PLUGIN_DIR`（测试与桌面调试）；
-///  3. 常见候选路径逐个试写（`flutter test` 与没有通道的宿主）；
-/// 全失败时 [resolve] 返回 null，调用方必须如实显示「插件目录不可用」而不是抛异常。
+/// 三层回退：平台通道 → 环境变量 `RHINE_PLUGIN_DIR` → 常见候选路径试写。
+/// 全失败返回 null，调用方如实显示「插件目录不可用」。
 library;
 
 import 'dart:io';

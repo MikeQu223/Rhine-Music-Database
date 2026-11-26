@@ -161,9 +161,7 @@ void paintPortraitSearchKindsPage(
   y += 54;
 
   // --- 四个分类 tab（Qt `indexTab`：宽 83 / 格宽 90 / 高 44，指示条 y+39 高 2） ---
-  //
-  // 格宽按页宽摊开（设计稿 90 = (393-40)/4 + 约 1.75 的间隙折算）；
-  // 直接写死 90 会让宽页（真机 586）四格挤在左边 360 里。
+  // 格宽按页宽摊开，写死 90 会让宽页四格挤在左边。
   final int selectedIndex = portraitSearchKindIndex(searchKind);
   final double cell = _contentWidth(c) / portraitSearchKindLabels.length;
   for (int i = 0; i < portraitSearchKindLabels.length; i++) {

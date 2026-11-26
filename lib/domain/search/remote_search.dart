@@ -49,9 +49,7 @@ ProviderSearchKind remoteSearchKind(String kind) {
 
 /// 把插件条目规整成检索页的行。
 ///
-/// 插件字段（真机 `netease` 返回）：`kind/id/title/artist/artists[]/album/albumID/
-/// cover/duration/provider/key/trackCount/mvID`；本地检索用的是 `durationMs`，
-/// 这里补一份，页面右列（`_trackTime`）就不用分支。
+/// 插件给的是 `duration`，页面右列读 `durationMs`；这里补一份，避免页面分支。
 Map<String, Object?> remoteSearchRow(Map<String, Object?> item) {
   final Object? duration = item['durationMs'] ?? item['duration'];
   final int durationMs = duration is num ? duration.toInt() : 0;

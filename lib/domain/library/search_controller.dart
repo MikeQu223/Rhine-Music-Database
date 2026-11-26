@@ -64,18 +64,10 @@ void _librarySearchInvalidatePending(MusicLibrary lib) {
 
 // 冻结入口 1/3：Qt MusicLibrary::search(QString text, QString kind, bool more)
 
-/// 检索入口（根文件 MusicLibrary.search 的委托目标）。
+/// 检索入口（Qt MusicLibrary.search 的委托目标）。
 ///
-/// 排队策略（对齐 Qt 时序；状态与结果和 Qt 完全一致）：
-/// - more == true：Qt MusicLibrary::loadMoreSource 对 lane 0 直接调
-///   search(keyword, {}, true)，**不**递增 m_searchGeneration，因此续页不排队、立即发出；
-///   本地渠道在 Qt loadMoreSource 首行就 return，这里同样直接返回。
-/// - kind 非空：Qt NativeHudMusic 的 kind 点击先 ++m_searchGeneration 再直接
-///   search(text, kind)，因此这里先作废排队任务，再立即发出。
-/// - 其余（用户敲字／点历史词）：与 Qt NativeHud::setQuery 一样合并 700ms，只有最后一次生效。
-///
-/// 返回的 Future 在「已排队」时立即完成（尚未发请求）；只有 more / kind 两条立即路径
-/// 会等到应答写回状态后才完成。
+/// 排队策略对齐 Qt：续页与 kind 切换立即发出（并作废排队任务），
+/// 用户敲字与点历史词合并 700ms，只有最后一次生效。
 Future<void> librarySearch(MusicLibrary lib, String text, {String kind = '', bool more = false}) async {
   if (more && lib.isLocal) {
     // Qt MusicLibrary::loadMoreSource 首行：本地渠道没有在线续页。

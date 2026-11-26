@@ -259,14 +259,9 @@ run(
         `-DANDROID_SDK_ROOT=${sdk}`,
         `-DCMAKE_BUILD_TYPE=${buildType}`,
         `-DCMAKE_MAKE_PROGRAM=${ninja}`,
-        // 显式钉住 cache 默认值（docs/ANDROID.md §5.5 的教训：CMake 不会用源码里的
-        // 新默认覆盖已有 cache，本机 build 树曾停在旧档位上静默漂移；显式传值让
-        // 本机增量构建与 CI 干净构建永远同档）。
-        //   LTO：与 build-android.cjs 同款写法，可用 RHINE_ANDROID_LTO 覆盖；
-        //   SIZE_OPT：-Oz 体积档位（Qt/Android.cmake），同理钉死；
-        //   NORMAL_RGBA8：必须与烘焙硬编码 RHINE_BAKE_NORMAL_RGBA8=1 同步，两者
-        //   错位就是启动 qFatal（2026-11-06 的启动崩溃即此根因），option 默认 ON
-        //   但不依赖它，显式传死。
+        // 显式钉住 cache 默认值：CMake 不会用源码里的新默认覆盖已有 cache。
+        //   LTO / SIZE_OPT 与 build-android.cjs 同款，可用环境变量覆盖；
+        //   NORMAL_RGBA8 必须与烘焙硬编码 RHINE_BAKE_NORMAL_RGBA8 同步，否则启动 qFatal。
         `-DRHINE_ANDROID_LTO=${process.env.RHINE_ANDROID_LTO || 'full'}`,
         `-DRHINE_ANDROID_SIZE_OPT=${process.env.RHINE_ANDROID_SIZE_OPT || 'oz'}`,
         '-DRHINE_ANDROID_NORMAL_RGBA8=ON',

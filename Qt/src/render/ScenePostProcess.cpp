@@ -43,10 +43,8 @@ bool postProbe() {
     return enabled;
 }
 /**
- * 回滚开关，默认开启。本轮唯一的运行时行为变化是“RHINE_FSR_ENGINE 只在值变化时写”，
- * 设 RHINE_POST_REUSE=0 即恢复原来的每帧无条件 qputenv，便于 A/B 对比或出事时一键回到旧路径。
- * 两条全屏拷贝（taa→history→destination、m_output→destination）已证明在允许改动的文件内无法
- * 等价合并，所以这里没有对应的“新路径”需要开关。
+ * 回滚开关，默认开启。本轮唯一的运行时行为变化是「RHINE_FSR_ENGINE 只在值变化时写」，
+ * 设 RHINE_POST_REUSE=0 即恢复每帧无条件 qputenv，便于 A/B 对比。
  */
 bool postReuse() {
     static const bool enabled = qEnvironmentVariable("RHINE_POST_REUSE").trimmed() != "0";

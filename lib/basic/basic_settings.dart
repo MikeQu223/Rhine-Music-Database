@@ -1,30 +1,17 @@
-// 设置模型（typed，纯 Dart，无 UI / 无持久化 / 无副作用）
-// 源：Qt/src/SettingsSchema.cpp（descriptor 表）+ Qt/src/NativeHudSettings.cpp
-//     （performance / update 自定义区）+ Qt/src/NativeHudMusic.cpp:271-280（项目链接）
-//     + Qt/src/MusicPlayer.cpp:104-124（音质选项）
+// 设置模型（typed，纯 Dart，无 UI / 无持久化 / 无副作用），源为 Qt 的 SettingsSchema
+// 与 NativeHudSettings。
 //
-// 本文件只做四件事：
-//   1. ONLY14 allow-list：Qt 里真实存在但用户未请求的设置项一律不进模型；
-//   2. 面板模型：直接复用 lib/hud/modals/settings_modal.dart 的 descriptor 表与
-//      lib/hud/widgets/settings_row.dart 的行模型，不复制任何几何/文案常量；
-//   3. 命中动作串 -> typed 命令：面板只发命令，持久化 / 真实生效 / native / 路由
-//      全部归宿主（141）。命令里不含任何“已生效”的断言；
-//   4. 真值来源：版本必须由宿主用真实 source 构造；项目链接逐字取 Qt 表；
-//      音质只承认 provider 真实支持的选项（Siren 仅 lossless）。
-//
-// 不做：持久化、真实生效、native 调用、BasicApp 路由、
-// 模态壳、键盘/hit 归属、版本与平台链接的注入。
+// 只做四件事：ONLY14 allow-list、面板模型复用 descriptor 表、动作串转 typed 命令、
+// 真值（版本 / 项目链接 / 音质选项）逐字取 Qt。
+// 不做：持久化、真实生效、native 调用、模态壳、键盘与命中归属。
 library;
 
 import '../hud/modals/settings_modal.dart';
 import '../hud/widgets/settings_row.dart';
 
-/// ONLY14 的 14 个合同项。顺序 = 用户合同顺序 = Qt descriptor order 顺序
-/// （界面配色 120 / 初始化动画 140 / 手动显示初始化 150 / 音质 160 /
-///  详情页自动播放 190 / 点击播放单曲 200 / 右侧画面遮罩 210 /
-///  图形后端 220 / 垂直同步 240 / 渲染分辨率 250 / 抗锯齿与超分辨率 260-300 /
-///  唱片旋转（performance 自定义区 :324）/ 当前版本（update 自定义区 :346）/
-///  项目与开源参考（project 8 条链接））。
+/// ONLY14 的 14 个合同项，顺序 = Qt descriptor order 顺序
+/// （配色 / 初始化动画 / 手动显示 / 音质 / 详情页自动播放 / 点击播放单曲 / 右侧遮罩 /
+///  图形后端 / 垂直同步 / 渲染分辨率 / 抗锯齿与超分 / 唱片旋转 / 当前版本 / 项目与开源参考）。
 enum BasicSettingId {
   appearance,
   startupAnimation,

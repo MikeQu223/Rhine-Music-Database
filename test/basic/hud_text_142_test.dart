@@ -1,16 +1,7 @@
-// HUD-SYNC-TEXT-142 · COMMON 共享滚动文字/数字动画渲染链回归。
+// HUD-SYNC-TEXT-142 · 共享滚动文字/数字动画渲染链回归。
 //
-// 真机现象（用户 2026-11-16 反馈）：左上「当前档案库所属」空白，底部只剩
-// `/936`——`music-number` 前的动态序号没了，且**所有**共享滚动文字都不出现。
-// 机制：`BasicGlyphPorts.rolling` 旧实现只 `rollingRequests += 1` 就返回，
-// `music-brand` / `music-source` / `music-title` / `music-id` / `music-column` /
-// `music-number` 六类滚动词全部不发命令；静态 `hudText("/")` 与 total 照画，
-// 于是只剩 "/total"。
-//
-// 本文件只写不跑：tests/analyze/build/ADB 的唯一执行者是 FINAL-INTEGRATION-141。
-// 这里走真实端口（Assets/fonts/misans-glyphs.json）与真实命令流，三个时点
-// （初始 / 过渡中点 / 稳定）都要求当前所属与当前序号有 draw 输出，并守住静态
-// `/` 与 total；把 rolling 链改回"只计数不发射"会让第一条断言立刻为红。
+// 六类滚动词必须真的发命令；静态 `/` 与 total 照画。走真实端口与真实命令流，
+// 在初始 / 过渡中点 / 稳定三个时点断言有 draw 输出。
 
 import 'dart:io';
 import 'dart:math' as math;
@@ -500,10 +491,7 @@ void main() {
         isEmpty,
         reason: '滚动链只允许 17 命令契约内的 save/clip/alpha/text/restore',
       );
-      // Picture.getBounds() 在本机 dart:ui 里不存在（142 未能执行测试，编译错误随合并进来）；
-      // 而 picture.toImage() 在 flutter_test 的 fake async 下会一直挂住（实测 10 分钟超时）。
-      // 这里改用"真实 painter 确实把文本命令交给了端口"来做可见性证据：端口是本测试里
-      // 唯一的绘制出口，命令数为 0 就一定是空画面。
+      // 用「painter 确实把文本命令交给了端口」做可见性证据：端口是唯一绘制出口。
       expect(textRuns, greaterThan(0), reason: '真实 painter 必须发出可见的文本绘制命令');
     });
   });

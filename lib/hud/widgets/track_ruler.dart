@@ -1,32 +1,9 @@
-///  / W4 - archive track list and track ruler (曲目表 + 刻度标尺).
+/// Archive track list and track ruler（曲目表 + 刻度标尺），Qt 的 1:1 移植。
 ///
-/// 1:1 port of the Qt Android reference implementation:
-///   * Qt/src/NativeHud.h:168-173    - struct TrackRulerRow
-///   * Qt/src/NativeHud.cpp:516-533  - NativeHud::archiveTrackPosition
-///   * Qt/src/NativeHud.cpp:535-593  - NativeHud::archiveTrackList
-///   * Qt/src/NativeHud.cpp:595-624  - NativeHud::archiveTrackRuler
-///   * Qt/src/UiMotion.h:12-22 and Qt/src/UiMotion.cpp:58-84 - UiMotion::ReelCurve
-///   * Qt/src/Glyphs.cpp:312-338     - Glyphs::bounds (vertical metrics, see HudGlyphBoundsPort)
+/// 消费 chrome.dart 的 HudWireCommand / HudHit / HudSurfaceSink / HudTextPort；
+/// 不发 Widget、不用纹理。命中与绘制同一循环、同源顺序，不重排不去重。
 ///
-/// Contract: chrome.dart owns HudWireCommand (wire alias) / HudHit (re-exported from
-/// protocol/hud_hit.dart) / HudSurfaceSink / HudTextPort /
-/// hudInk / hudFill / hudPath. This library only consumes them; nothing here is re-declared
-/// and no Material widget, no Flutter widget and no texture is used.
-///
-/// Command shapes emitted here (parity plan 4.2, docs/superpowers/plans/2026-11-09-qt-to-flutter-parity-plan.md:189-205):
-///   ['save'] / ['restore'] / ['alpha', v] / ['clip', x, y, w, h]
-///   ['text', value, x, y, size, weight, tracking, color]
-///   ['path', d, penWidth, color] / ['fill-path', d, color]
-/// Hits are emitted in the same loop as the drawing, in source order, and are never
-/// reordered or deduplicated (parity plan 4.3).
-///
-/// Known integration requirements:
-///   N1. Vertical glyph metrics: HudTextPort carries only horizontal metrics, while Qt needs
-///       bounds(...).y/.height. Inject HudGlyphBoundsPort (constructor argument, else the text
-///       port itself if it implements the interface). Without it the ruler anchors on the
-///       baseline - see HudTrackRuler.glyphBoundsAvailable.
-///   N2. ReelCurve.samplePair mirrors Qt std::array<double,2> (value, velocity); the W4
-///       contract also requires the value-only form ReelCurve.sample(double) -> double.
+/// 接线要求：注入 HudGlyphBoundsPort，否则标尺只能按基线锚定。
 library;
 
 import 'dart:math' as math;

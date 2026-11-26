@@ -436,20 +436,11 @@ private class PlaybackAuthority {
     /**
      * 新客户端接管（engine 重装，或 EventChannel 重新订阅 / 重建 controller）。
      *
-     * 两件事一起复位，缺一不可：
-     *  - disposed：dispose() 只结束「这一次客户端会话」，不能在进程级单例上留下永久闩锁：
-     *    authority 跨 install 复用，而 BasicAudioPort.dispose() 是冻结契约的公开方法，上层销毁
-     *    controller 再建一个新的就会踩到。
-     *  - generation：代际是**客户端命名空间**。Qt 的 m_generation 属于 MusicPlayer 实例
-     *    （MusicPlayer.cpp:148 / :275 / :459），实例换了就从 0 重数；本类却是进程级单例，
-     *    Dart 侧每次新建 controller 也从 1 重数。这里不归零，onListen 紧接着补推的 snapshot()
-     *    （:109）就会带着上一次会话的旧代，Dart 的 _acceptedGeneration 被抬到旧值后，
-     *    新客户端的 prepare(1) 会被当成旧命令丢掉 → 重进 App 后第一首无声、第二首才恢复，
-     *    且 error 为空（现场表现与 generation 完全不搭边，排查成本极高）。
-     *    归零是安全的：prepare 永远当作「新的一次意图」接受（见 prepare 的注释），
-     *    play/pause/seekTo 的等值校验本来也只认当前代。
-     * 复位点只有这里，由 attach() 与 EventChannel.onListen 各调一次；除此之外没有任何地方
-     * 会把 disposed 改回 false。
+     * 两件事一起复位：
+     *  - disposed：dispose() 只结束这一次客户端会话，不能在本进程级单例上留下永久闩锁。
+     *  - generation：代际是客户端命名空间，不归零会让补推的 snapshot 带着上一次会话的旧代，
+     *    新客户端的 prepare(1) 被当成旧命令丢掉（重进 App 第一首无声、error 为空）。
+     * 复位点只有这里，由 attach() 与 onListen 各调一次。
      */
     fun onClientAttached() {
         disposed = false

@@ -109,13 +109,8 @@ class MainActivity : FlutterActivity() {
         //  两者都只在 engine 装配完成后各装一次：重复 install 会接管旧 channel
         //  （BasicAudioChannel.install 先 detach 再替换），不会叠出第二个实例。
         BasicAudioChannel.install(flutterEngine.dartExecutor.binaryMessenger) { this }
-        //  状态通道先装：视图创建后 Dart 会立刻推首个快照（主题/模式/选中行），
-        //  通道晚一步就会丢掉第一次 state 直到下一次状态变化。
-        //  设置通道：版本真值（PackageManager）与外链（ACTION_VIEW）走它。
-        //  真机实测：不装这条通道时，面板的版本行显示「未知版本」，设置写入也一律失败
-        //  （2026-11-16 21:0x，526f6b6d）。持久化本身按用户指示改走 Flutter 官方
-        //  shared_preferences（见 lib/basic/basic_settings_store.dart），这条通道只留
-        //  packageInfo / openUrl 两个不属于持久化的方法。
+        //  状态通道先装：视图创建后 Dart 会立刻推首个快照，通道晚一步就丢第一次 state。
+        //  设置通道承载版本真值与外链；持久化走 shared_preferences。
         val settingsMessenger = flutterEngine.dartExecutor.binaryMessenger
         installedSettingsMessenger = settingsMessenger
         //  显式传 applicationContext；BasicSettingsChannel 构造时再 eager unwrap。
@@ -163,18 +158,11 @@ class MainActivity : FlutterActivity() {
     /**
      * 返回键槽位归宿主所有，**故意不链到 super**。
      *
-     * FlutterActivity 唯一的注册入口就是这个回调（FlutterActivity.java:730-736），
-     * 而"先隐 IME、再交给 Qt 视图"必须排在任何 Flutter 返回动作之前。同优先级回调按
-     * 注册逆序派发（OnBackInvokedDispatcher.java:96-97），谁最后注册谁先收到——把这里
-     * 截断，Flutter 就永远注册不上，宿主的顺序不会被后来的注册挤到队尾。
-     * 没人消费时宿主回调调用 super.onBackPressed()，终点与 Flutter 自己注册的非动画回调
-     * 完全一致（FlutterActivity.java:701-726、:940-943 → delegate.onBackPressed → engine）。
+     * FlutterActivity 只在这个回调里注册返回处理，而「先隐 IME、再交给 Qt」必须排在
+     * 任何 Flutter 返回动作之前；同优先级回调按注册逆序派发，截断后 Flutter 就注册不上。
+     * 没人消费时调用 super.onBackPressed()，终点与 Flutter 自己注册一致。
      *
-     * 代价与取舍：API 34+ 的预测式返回动画不再由 Flutter 的 OnBackAnimationCallback 驱动
-     * （宿主注册的是普通 OnBackInvokedCallback）。Qt 侧本来就没有预测式返回
-     * （QtInputDelegate 只在 onKeyDown 里处理已成事实的返回），所以这不是与 Qt 的偏离，
-     * 而是为了保证返回顺序。frameworkHandlesBack 只表达"Dart 侧还能不能 pop"，
-     * 不影响宿主的注册状态：交回时仍走同一条 super.onBackPressed() 默认路径。
+     * 代价：API 34+ 的预测式返回动画不再由 Flutter 驱动（Qt 侧本来也没有）。
      */
     override fun setFrameworkHandlesBack(frameworkHandlesBack: Boolean) {
         // 注册/注销都由宿主的 hostBackDispatcher 负责（见 onCreate/onDestroy）；
@@ -258,25 +246,11 @@ class MainActivity : FlutterActivity() {
     }
 
     /**
-     * 边到边窗口形态：**显示**状态栏与系统手势/三键区，但两块都完全透明。
+     * 边到边：状态栏与系统手势区保持可见，但完全透明。
      *
-     * 历史与取舍（2026-11-24 用户明确要求「竖屏时不全屏，显示状态栏和系统手势/三键操作
-     * 区域，最好完全透明底、不要灰色遮罩」）：
-     *  - 2026-11-22 之前这里是 Qt 的 kImmersiveSticky 逐位照搬（HIDE_NAVIGATION |
-     *    FULLSCREEN | IMMERSIVE_STICKY），系统栏被彻底藏掉，内容铺到屏幕物理边缘。
-     *  - 现在改成「不隐藏、只透明」：`setDecorFitsSystemWindows(false)` 让内容继续
-     *    铺到物理边缘（HUD 自己按 portraitGestureInset 留出底部手势带），系统栏叠在
-     *    内容之上但背景全透明，于是既看得见状态栏/手势条，又不会有黑或灰的遮罩带。
-     *  - `isNavigationBarContrastEnforced = false` 是「不要灰色遮罩」的关键：
-     *    Android 10+ 默认给透明导航栏补一层半透明 scrim，关掉它才是真透明。
-     *  - 图标用浅色（清掉 APPEARANCE_LIGHT_*）：本应用是深色纸面，深色图标会看不见。
-     *
-     * 与 Qt 的其它两点差异也是刻意的：
-     *  1. 不搬 Qt/src/AndroidWindow.cpp:38 的 setRequestedOrientation(kSensorLandscape)：
-     *     竖屏响应式是产品要求，方向锁会把竖屏 UI 拧成横屏。这里只有窗口形态，没有
-     *     任何方向请求，Manifest 也不写 android:screenOrientation。
-     *  2. API 30+ 走 WindowInsetsController（Qt 注释里承认这是官方推荐，只是它选了不分叉）。
-     *     这里按 SDK 分支，两条分支都不引第三方依赖。
+     * 不隐藏、只透明：内容仍铺到物理边缘，系统栏叠在上面且无遮挡
+     * （关掉 isNavigationBarContrastEnforced，图标用浅色）。
+     * 不搬 Qt 的方向锁：竖屏响应式是产品要求。
      */
     private fun applyImmersiveSticky() {
         // Qt kWindowFlags 里的 KEEP_SCREEN_ON：播放页常亮属于窗口形态的一部分。

@@ -72,17 +72,10 @@ String qtSceneModeOf(BasicViewState state) {
   }
 }
 
-/// 选中条目在**当前可见列表**里的行号（-1 = 不在列表里/没有选中）。
+/// 选中条目在当前可见列表里的行号（-1 = 不在列表里/没有选中）。
 ///
-/// 只认选中身份 [BasicViewState.selection]，不看播放：播放状态是
-/// BasicViewState.playing/positionMs，与"用户此刻浏览到哪"是两件事。
-///
-/// 必须是"列表行号"，不能是"曲目在 state.songs 里的下标"：
-/// `EmbeddedSceneHost.cpp:455` 拿到这个值直接 `scene.select(index, cell)`
-/// （注释写明「index 是 Flutter 的列表行号」）。旧实现只查 state.songs，
-/// 于是「全部专辑」列（选中的是专辑行、state.song 被清空）永远返回 -1，
-/// Qt 侧一直不 select ⇒ 列表滚动只有镜头在动、高亮模型不换列（用户实测缺陷）。
-/// 这里改成先在 [basicLibraryItems] 里按 (kind,id) 找行号，专辑行/歌曲行同一套。
+/// 必须是列表行号而不是 state.songs 的下标：原生拿到它直接 select(index, cell)。
+/// 先在 [basicLibraryItems] 里按 (kind,id) 找行号，专辑行与歌曲行同一套。
 int qtSceneSelectedIndexOf(BasicViewState state) {
   final List<BasicListItem> items = basicLibraryItems(state);
   if (items.isEmpty) {
@@ -161,10 +154,7 @@ String qtSceneCellCoverOf(BasicViewState state, BasicListItem item) {
 
 /// 一列身份用的稳定散列（FNV-1a 32 位，逐条逐字符）。
 ///
-/// 为什么不用 Dart 的 `Object.hash` / `hashCode`：字符串的 hashCode 在 VM 上带随机种子
-/// （每次进程启动不同），指纹会跨进程漂移，设备日志里的"同一份集合"无法复现比较；而且
-/// `List.hashCode` 是同一性散列，对内容不做任何承诺。这里自己算，纯函数、无随机种子、
-/// 对**顺序**敏感（相邻两条对调一定变）。
+/// 不用 Dart 的 hashCode：字符串哈希带随机种子、跨进程漂移，List.hashCode 又是同一性散列。
 int _qtSceneLaneHash(List<BasicListItem> lane) {
   int hash = 0x811c9dc5;
   for (int i = 0; i < lane.length; i++) {
@@ -181,12 +171,10 @@ int _qtSceneLaneHash(List<BasicListItem> lane) {
   return hash;
 }
 
-/// 一列条目的**完整有序身份**：长度 + 全量顺序散列 + 首末 key。
+/// 一列条目的完整有序身份：长度 + 全量顺序散列 + 首末 key。
 ///
-/// 旧实现只写 `length:first:last`，于是"中间两条对调、条数不变、首末不变"这类集合变化
-/// 完全不可见 —— 交互代次不递增，Qt 侧仍把它当成同一份上下文的迟到输入，而画面已经被
-/// 换成了新顺序。首末 key 现在只是便于人工判读的冗余信息（设备日志里能看出是哪一列换了），
-/// 判等靠长度 + 全量散列。
+/// 只写 length:first:last 时「中间两条对调」不可见，代次不递增，
+/// 迟到输入会被当成同一份上下文。
 String qtSceneLaneIdentity(List<BasicListItem> lane) {
   if (lane.isEmpty) {
     return '-';
@@ -651,15 +639,8 @@ int? qtSceneRowOfCell(BasicViewState state, QtSceneCellRef cell) {
   return ((raw % items.length) + items.length) % items.length;
 }
 
-/// Qt 3D 滚动回执的默认接收面。
-///
-/// [QtSceneView] 的 `onScroll` 参数优先；HUD 里的场景视图没有传这个参数时（它的
-/// 构造点在 HUD 内部），回执落到这里。BasicApp 在 initState 里把 controller 的
-/// 连续窗口写入挂上来——这样"3D 拖动/滚轮 → 列表/ruler/换列"不依赖 HUD 接线。
-/// 详情页唱片转到阈值以外的回执：`archive-step:next` / `archive-step:prev`。
-///
-/// 原生只报"用户把唱片转到底了"这个手势，换到哪一张由这里的列表真值决定（原始 Qt
-/// 的"转到底换一张"行为）。+-1 表示方向，null 表示不是这类回执。
+/// Qt 3D 滚动回执的默认接收面：HUD 里的场景视图没传 `onScroll` 时回执落到这里。
+/// 原生只报「唱片转到底了」，换哪张由列表真值决定；+-1 表示方向，null 表示不是这类回执。
 const String qtSceneStepPrefix = 'archive-step:';
 
 int? qtSceneStepOf(String action) {
@@ -688,14 +669,8 @@ class QtSceneScrollRouter {
 
 /// 原生动作的分发表：platform view id → 回调。
 ///
-/// 通道是进程级的，视图是按页面出现的，所以分发必须按 viewId 走，不能假设只有一个
-/// 场景视图同时活着（横竖屏切换、退出重进都可能先后存在两个）。
-/// 原生 → Dart 的动作接收面（`action` 方法调用）。
-///
-/// 生产者是 `Qt/src/EmbeddedSceneHost.cpp` 的 pointerup 分支：**只有一次点选**
-/// （位移小于阈值）才会发 `archive-select:<lane>|<row>|<kind>|<id>`，拖动松手不发——
-/// 否则列表会先跳到手指处那首歌再被惯性落点拉回（用户实测"原地跳动一次"，也是
-/// P0#1 禁止的双消费）。滚动回执 `archive-scroll:<phase>:<delta>` 走另一条分流。
+/// 通道是进程级的，视图按页面出现，必须按 viewId 分发。
+/// 只有一次点选（位移小于阈值）才发 `archive-select:...`，拖动松手不发。
 class QtSceneActions {
   QtSceneActions._();
 
@@ -799,15 +774,10 @@ class QtSceneStateSender {
 
   final MethodChannel _channel;
 
-  /// 同一份快照不重复发（Qt 侧解析+重建也是成本）。返回是否真的发出去了。
+  /// 同一份快照不重复发。返回是否真的发出去了。
   ///
-  /// [contextGeneration] 与快照里的 `ctx` 是同一个值，单独传一份是给 Kotlin 侧做
-  /// 每视图登记/门禁用——原生不该为了拿 origin 去解析一遍业务 JSON。
-  ///
-  /// 去重键必须**含代次**：只用快照字符串做键时，"同一份快照、只换了代次"会被当成重复
-  /// 吞掉，Kotlin 的 `contexts[viewId]` 永远学不到新代次，该视图之后的 pointer/wheel/
-  /// action 全部按 fail-closed 丢掉——静默、无日志、也再无恢复路径（直到快照内容本身
-  /// 又变化一次）。快照里通常自带 `ctx`，但 sender 是公开 API，不能依赖调用点自觉。
+  /// 去重键必须含代次：只用快照字符串会让「同一份快照、只换了代次」被吞掉，
+  /// Kotlin 学不到新代次，该视图之后的 pointer/wheel/action 全部 fail-closed 丢掉。
   Future<bool> push(int viewId, String snapshot, {int contextGeneration = 0}) async {
     final String key = '$contextGeneration\u0000$snapshot';
     if (_sent[viewId] == key) {
@@ -854,22 +824,11 @@ class QtSceneStateSender {
   final Map<int, String> _sent = <int, String>{};
 }
 
-/// Dart → 原生的**原始指针**转发。
+/// Dart → 原生的原始指针转发。
 ///
-/// 为什么需要它：hybrid composition 下 Android 本来会把触摸直接派发给 QtView，
-/// 但当 Flutter 的 HUD 层叠在场景之上时，引擎会插入一层 PlatformOverlayView，
-/// 触摸到不了原生子树（实测 FrameLayout.dispatchTouchEvent 一次都不进）。于是
-/// 由 Flutter 把**原始** down/move/up/cancel 按同一套舞台换算转给 Qt 的
-/// Engine::pointer——谁被拖、拖多远仍然由 Qt 的 NativeSceneInput 决定。
-///
-/// 这不是"Flutter 另造相机"：这里不做任何手势语义判定，只搬运坐标；判定拖谁、拖多远、
-/// 是否旋转仍然全在 Qt 的 NativeSceneInput 里。
-///
-/// 关于双消费：Qt 的 Embedded.qml 里另有一层 inputLayer（原生触摸直达时用），与这里
-/// **没有**仲裁机制——目前之所以只有一条路在跑，是因为 hybrid composition 下原生派发
-/// 到不了 Qt 子树（实测 FrameLayout.dispatchTouchEvent 一次都不进）。若将来原生恢复可达，
-/// 必须加 owner 协商（例如快照里带 pointerOwner，QML 据此把 inputLayer 关掉），不能两条
-/// 同时转发。
+/// PlatformOverlayView 挡住原生派发，触摸进不了 Qt 子树，所以由 Flutter 只搬坐标；
+/// 拖谁、拖多远仍由 Qt 的 NativeSceneInput 决定。两条路不能同时转发，
+/// 将来原生可达需要加 owner 协商。
 class QtScenePointerSender {
   QtScenePointerSender({
     this._channel = const MethodChannel(qtSceneChannelName),
@@ -937,9 +896,8 @@ class QtScenePointerBridge {
   /// 停在下压状态。键 = '<type>|timeStamp'，值是位置。
   final Map<int, String> _lastKey = <int, String>{};
   final Map<int, Offset> _lastPosition = <int, Offset>{};
-  /// 真正给 Qt 发过 pointerdown 的指针。只有它们的 move/up 才会转发：
-  /// 双指落下时 Qt 收到的是 pointercancel，剩下的那根手指没有被 Qt 认领过，
-  /// 它的 move 就是"幽灵拖动"（设备实测：缩放后松一根手指，归档跟着手指跑）。
+  /// 真正给 Qt 发过 pointerdown 的指针。双指落下时 Qt 收到 pointercancel，
+  /// 没被认领的那根手指的 move 就是幽灵拖动。
   final Set<int> _forwarded = <int>{};
   int? _viewId;
 
@@ -1289,9 +1247,7 @@ class _QtSceneViewState extends State<QtSceneView> {
   /// 原始指针由 [QtScenePointerBridge] 承担：HUD 的点击层在 Stack 里压在场景之上，
   /// Flutter 命中测试到它就停，所以拖动只能从那一层取出（见 bridge 的说明）。
   Widget _withRawPointer(Widget child) {
-    // 场景自己不挂搬运层：它在 Stack 里位于 HUD 点击层之下，命中测试永远到不了这里
-    // （实测 dispatchTouchEvent 一次都不进）。搬运由 HUD 顶层那层负责 ——
-    // 见 [QtSceneRawPointerLayer] 与 [QtScenePointerBridge]。
+    // 场景自己不挂搬运层：它在 HUD 点击层之下，命中永远到不了这里。
     return child;
   }
 
@@ -1308,9 +1264,7 @@ class _QtSceneViewState extends State<QtSceneView> {
       }
       return;
     }
-    // 选中身份回执（archive-select:<lane>:<row>）：原生只报它真实拾取到的
-    // 物理格，映射成列表行由 Dart 侧当前窗口决定；这里留一行证据日志，
-    // 否则"3D 点选没反应"无法区分是没发出来还是被窗口判空丢掉。
+    // 选中身份回执：原生只报它拾取到的物理格，映射成列表行由 Dart 侧窗口决定。
     debugPrint('RHINE_DART scene_action $action');
     widget.onAction?.call(action);
   }
@@ -1380,12 +1334,8 @@ class _QtSceneViewState extends State<QtSceneView> {
                 // onFocus 在这里不注册：Qt 视图自己拿 focus（QtView/QtWindow 的舞台与
                 // 输入层由 Qt 的 Embedded.qml inputLayer 管理），Flutter 侧不参与焦点仲裁。
               );
-          // 必须把 Flutter 自己的创建回调挂上：PlatformViewLink 的
-          // _platformViewCreated 只有在 params.onPlatformViewCreated 被调用后才置 true，
-          // 而 controller.create() 完成后只会遍历 addOnPlatformViewCreatedListener 注册的回调
-          // （flutter/lib/src/services/platform_views.dart 的 create() 尾部）。
-          // 少了这一行，widget 永远停在 _PlatformViewPlaceHolder：AndroidViewSurface
-          // 从不构建，Qt 视图永远不进合成树（真机只剩 HUD 黑底）。
+          // 必须挂上 Flutter 自己的创建回调：PlatformViewLink 靠它把占位换成
+          // AndroidViewSurface，少了这一行 Qt 视图永远不进合成树。
           controller.addOnPlatformViewCreatedListener(
             params.onPlatformViewCreated,
           );
@@ -1468,13 +1418,10 @@ class QtSceneRawPointerLayer extends StatefulWidget {
 
   final Rect sceneRect;
 
-  /// 这条手势归谁：返回 true 才转给 Qt，返回 false 表示这一串事件由 HUD 自己处理。
+  /// 这条手势归谁：返回 true 才转给 Qt。
   ///
-  /// 这就是"指针归属协商"（pointerOwner）的最小实现：HUD 传入"该点没有 HUD 命中
-  /// 目标"，于是点在列表行、按钮、播放条上时不会顺带把 Qt 场景也拖一下
-  /// （设备实测问题：点上下按钮，3D 归档跟着动）。
-  /// 归属在 pointerdown 时定下来并保持整串手势，不做中途翻转。
-  /// null 表示不设判据（所有原始事件都转给 Qt）。
+  /// 指针归属的最小实现：HUD 报告"该点没有命中目标"，于是点按钮时不会顺带拖动 3D。
+  /// 归属在 pointerdown 定下并保持整串手势；null 表示不设判据。
   final bool Function(Offset localPosition)? forwardAt;
 
   final Widget child;

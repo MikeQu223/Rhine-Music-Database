@@ -1,17 +1,7 @@
-// 竖屏播放队列页的可滚动性（用户 2026-11-26：长队列拖不动）。
+// 竖屏播放队列页的可滚动性。
 //
-// 修复前 `BasicHudFrame.build(queueScroll: null)` 恒生效，页面只能按 Qt
-// `newScope` 规则「当前行置顶」被动跳；宿主的 `_dragUpdated` 对 `modal == 'queue'`
-// 只认横屏的行号（`queueOffset`），竖屏拖动整段被丢掉。
-//
-// 真值来源：`Qt/src/ResponsiveHudLayout.cpp` 的收尾夹取
-// `m_maximum = max(0., end - c.contentBottom)`，以及 `ResponsiveHudPages.cpp:468-533`
-// 的 `queue()`（`y = 158 - m_scroll`，返回值 `max(y + m_scroll + 20, 封底高)`）。
-//
-// 本文件钉三件事：
-// 1. 页面把「实际用上的滚动量」和「Qt 口径的上界」回存给宿主（`onLayout`）；
-// 2. 上界必须随内容长（40 首的上界远大于 3 首），不能是常数；
-// 3. 竖屏拖动按画布网格推进，且松手后走与其它弹层页同一套惯性。
+// 钉住三件事：页面把用上的滚动量与上界回存给宿主、上界随内容长、
+// 竖屏拖动按画布网格推进且松手后走同一套惯性。
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';

@@ -13,12 +13,8 @@ import '../hud/text/rolling_text.dart';
 import '../hud/widgets/track_ruler.dart' as ruler;
 import 'basic_cover_images.dart';
 
-/// 字形资源：misans-glyphs.json 是 Qt 真值的字形表，boot-lettering-art.json 是
-/// 启动字标资源（Resources/ 目录）。
-///
-/// 说明：pubspec.yaml 没有 `fonts:` 段，因此 OTF 不注册为 Flutter 字体族；
-/// 这里用 [FontLoader] 从 asset 字节注册，只服务 B 计划里的复杂文字回退
-/// （见 [BasicGlyphPorts.draw] 的 TextPainter 分支），主绘制仍然走 JSON 轮廓。
+/// 字形资源：misans-glyphs.json 是 Qt 真值的字形表，boot-lettering-art.json 是启动字标。
+/// pubspec 没有 `fonts:` 段，OTF 用 [FontLoader] 从 asset 注册，只服务复杂文字回退。
 const String basicGlyphTableAsset = 'Assets/fonts/misans-glyphs.json';
 const String basicLetteringAsset = 'Resources/boot-lettering-art.json';
 
@@ -262,10 +258,8 @@ class BasicGlyphPorts
     try {
       return text.inset(value, size, weight: weight);
     } on StateError {
-      // 与 Qt Glyphs::inset 对齐（Qt/src/Glyphs.cpp:339-349）：字形表里没有轮廓时
-      // Qt 回 0，而不是整段 advance。回 advance 会让调用方把整行左移一个文字宽度；
-      // 真机表现就是右侧歌名只剩列表裁剪窗口里那几个像素（ 缺陷②）。
-      // draw() 的 OTF 回退分支正是在 x 处起笔，所以 0 才是自洽值。
+      // 与 Qt `Glyphs::inset` 对齐：字形表里没有轮廓时回 0，而不是整段 advance，
+      // 否则调用方把整行左移一个文字宽度，右侧歌名只剩裁剪窗口那几像素。
       return 0;
     }
   }
@@ -289,12 +283,8 @@ class BasicGlyphPorts
 
   /// HudTextPort：把滚动标签落到当前帧命令流（Qt NativeHud::roll）。
   ///
-  /// 真机缺陷（左侧标题空白、底部只显示 "/936"）的源根因就在这里：旧实现只
-  /// `rollingRequests += 1` 就返回，页面按 Qt 顺序发出的 music-brand /
-  /// music-source / music-title / music-id / music-column / music-number 六类
-  /// 滚动文字全部没有命令落到 HUD；静态 hudText("/") 与 total 仍照常画，于是
-  /// 只剩 "/936"。现在走 [HudRollingText]：初始帧即发静态 text（可见），值变化
-  /// 时按 kReelDuration 发 save/alpha/clip/text/restore，由宿主 ticker 推进。
+  /// 走 [HudRollingText]：初始帧即发静态 text，值变化时按 kReelDuration 发
+  /// save/alpha/clip/text/restore，由宿主 ticker 推进。
   @override
   void rolling(
     String key,
@@ -452,11 +442,8 @@ class BasicGlyphPorts
     }
   }
 
-  /// HudPainterPorts.path：线上传输的就是 SVG 路径数据（不是路径名），
-  /// 与 Qt Glyphs.cpp:728-760 一致——Qt 对 'path' / 'fill-path' 都现解析这份
-  /// 字符串。解析器在 lib/hud/text/glyph_font.dart 里已是 Glyphs::path 的移植。
-  /// 返回 null 会让 paint_stack 记 missingPath 并跳过绘制：真机上底栏播放键
-  /// 因此只剩实心底板、没有三角与箭头（ 缺陷③）。
+  /// HudPainterPorts.path：线上传的是 SVG 路径数据（不是路径名），与 Qt 一致；
+  /// 返回 null 会让 paint_stack 记 missingPath 并跳过绘制。
   ui.Path? pathFor(String key) => key.isEmpty ? null : parseSvgPath(key);
 
   /// HUD image 命令的像素来源：真实专辑封面（[BasicCoverImages] 按 URL 缓存）。

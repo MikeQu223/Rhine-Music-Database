@@ -115,10 +115,8 @@ void main() {
   });
 
   testWidgets('空曲库、无选中 id 时横屏仍挂载场景（不是静态图）', (WidgetTester tester) async {
-    // widget 测试不创建真实 PlatformView：把 target platform 指到非 Android，走
-    // QtSceneView 自己的可见说明分支（Android 真机上这块矩形是 Qt 的 QQuickView）。
-    // 必须在测试体内 finally 复位：flutter_test 一离开 body 就检查 foundation debug
-    // 变量，addTearDown 已经在检查之后，太晚。
+    // widget 测试不创建真实 PlatformView：指到非 Android，走可见说明分支。
+    // 必须在测试体内 finally 复位，addTearDown 已经在框架检查之后。
     debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
     try {
       await tester.pumpWidget(

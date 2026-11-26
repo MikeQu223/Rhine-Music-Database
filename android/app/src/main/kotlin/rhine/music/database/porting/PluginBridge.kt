@@ -23,12 +23,10 @@ import java.util.concurrent.atomic.AtomicInteger
 /**
  * 插件平台的 Node 传输桥。
  *
- * 协议真值是 `MusicBridge/ios-runtime.cjs`：内嵌 Node 启动后主动连回本机的
- * `ServerSocket`，首帧发 `{token}` 做握手，之后双方都按「一行一个 JSON」收发。
- * 业务请求走 `{id, route, params:{args}}`，响应回来是 `{id, body, cookies}`；
- * `body.code` 缺省 200，非 200 视为失败（`body.errorKey` / `body.message`）。
- *
- * 这条通道只服务**用户安装的插件平台**（siren/local 是 Qt 内置，不需要它）。
+ * 协议真值是 `MusicBridge/ios-runtime.cjs`：Node 启动后连回本机 ServerSocket，
+ * 首帧 `{token}` 握手，之后一行一个 JSON。请求 `{id, route, params:{args}}`，
+ * 响应 `{id, body, cookies}`，`body.code` 非 200 视为失败。
+ * 这条通道只服务用户安装的插件平台。
  */
 object PluginBridge {
     private const val tag = "RhinePluginBridge"
@@ -75,11 +73,8 @@ object PluginBridge {
     }
 
     /**
-     * 首次调用才真正起 Node；之后只回报状态。
-     *
-     * 第一次调用会**阻塞到握手完成**（Node 在这台机器上要 ~90s）：否则并发的第二个
-     * 请求会看到 `running=false` 而被判成「插件运行时不可用」——真机上表现为登录页
-     * 一边显示二维码、一边把 `account()` 判成未登录。
+     * 首次调用才真正起 Node，之后只回报状态。
+     * 第一次调用阻塞到握手完成，否则并发请求会误判运行时不可用。
      */
     fun ensureStarted(context: Context): Map<String, Any?> {
         if (writer != null) {

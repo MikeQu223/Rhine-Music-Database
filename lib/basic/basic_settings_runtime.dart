@@ -41,7 +41,7 @@ class BasicSettingsApplyResult {
 /// 只在宿主外壳里持有一份（BasicApp）。面板模型每次按当前快照重建，
 /// 因此"写进去 -> 立刻读回 -> 行显示新值"是同一条真值链，不是两份状态。
 class BasicSettingsRuntime {
-  /// [dark] 只在**没有任何偏好**时兜底：本项目出厂默认亮色（用户 2026-11-19 指定），
+  /// [dark] 只在**没有任何偏好**时兜底：本项目出厂默认亮色，
   /// 读到 `theme=dark` 才会变暗；没有"跟随系统"这一档。
   BasicSettingsRuntime({required this._store, this._dark = false});
 
@@ -98,22 +98,13 @@ class BasicSettingsRuntime {
 
   bool get startupAnimation => _startupAnimation;
 
-  /// Qt 的 firstLaunch 判定（Qt/src/NativeApplication.cpp:62-71）：
-  /// `startup-animation` 这个键从来没被写过。
-  ///
-  /// Qt 首启时偏好是空的，于是它先补一条 "off"，但仍然播一次 boot
-  /// （`if (firstLaunch || hud.startupAnimation) hud.action("replay");`）。Flutter 沿用
-  /// 同一语义：键不存在 = 首启（给用户看一次初始化页面）；键存在且不是 "on" =
-  /// 用户明确关掉了它，此后每次开屏都不再强制显示。
+  /// Qt 的 firstLaunch 判定：`startup-animation` 从未被写过。
+  /// 键不存在 = 首启（给用户看一次初始化页面）；存在且不是 "on" = 用户明确关掉了它。
   bool get startupAnimationNeverConfigured =>
       !raw.containsKey('$basicSettingsPreferencePrefix' 'startup-animation');
 
-  /// 首启收尾：把从没写过的 `startup-animation` 补成 "off"。
-  ///
-  /// Qt 在 initialize() 里做同一件事（Qt/src/NativeApplication.cpp:69-71）：偏好为空就
-  /// 先写 "off"，但本次仍然播 boot（`if (firstLaunch || hud.startupAnimation)
-  /// hud.action("replay")`）。少了这一笔，"首启给用户看一次"会退化成"每次开屏都播"
-  /// ——因为 `startup-animation` 永远读成"没配过"。
+  /// 首启收尾：把从没写过的 `startup-animation` 补成 "off"，与 Qt 的 initialize() 一致。
+  /// 少了这一笔，「首启看一次」会退化成「每次开屏都播」。
   Future<void> settleFirstLaunchStartupPreference() async {
     if (startupAnimation || !startupAnimationNeverConfigured) {
       return;

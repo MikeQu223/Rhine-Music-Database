@@ -26,10 +26,8 @@ const String portraitDiscoverMoreAction = 'discover:more';
 const String portraitDiscoverTabPrefix = 'discover:tab:';
 const String portraitPlayDiscoverPrefix = 'mobile:play-discover:';
 
-/// 单卡最大宽度（网格）。用户 2026-11-26 指定竖屏上限 120（原 200 太宽）：
-/// 本机竖屏 586 网格 ⇒ 4 列，更窄的 393 稿仍是 2 列（下限夹取 2），
-/// 平板等更宽舞台按 120 一列地加，上限 6 列。
-/// **横屏不受此常量影响**：横屏走 Qt 桌面弹层的 `DiscoverCard`（固定五列）。
+/// 单卡最大宽度（网格），竖屏上限 120：586 网格 ⇒ 4 列，393 稿 2 列，上限 6 列。
+/// 横屏不受影响：走 Qt 桌面弹层的 `DiscoverCard`（固定五列）。
 const double portraitDiscoverTileMaxWidth = 120;
 
 /// 发现页瓦片列数：按页宽动态，2..6 列。
@@ -170,11 +168,8 @@ double paintPortraitDiscoverPage(
     c.section(y, '音乐档案', 'SELECTED / ${entries.length}');
     y += 25;
 
-    // 瓦片列数按页宽动态（见 [portraitDiscoverColumnsForWidth]）。Qt 的稿子是
-    // 「卡片 169×144 + 封面 144×144 + 编号落在右侧 25 宽的竖条里（x+150）」，
-    // 全部按 393 页宽算；这里保留同一比例、只把宽度换成格子宽，封面 = 格宽 - 25，
-    // 编号贴在封面右侧。写死 144 在 DPI 放大后（本机格宽 273）会让封面只占格子一半、
-    // 右边留一大条空白（真机「间距不对、重心偏移」）。
+    // 瓦片列数按页宽动态。Qt 的稿子按 393 页宽算（卡 169×144、封面 144、编号在右）；
+    // 这里保留同一比例，只把宽度换成格宽，写死 144 会让封面只占格子一半。
     final double contentBottom = c.contentBottom;
     final int columns = portraitDiscoverColumnsForWidth(w);
     final double tileStep = (w - 40) / columns;

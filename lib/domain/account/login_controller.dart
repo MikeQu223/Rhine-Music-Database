@@ -1,32 +1,12 @@
-/// 多平台登录状态机（第三项功能）：Qt `MusicAccount.cpp` 登录流程的 Dart 移植。
+/// 多平台登录状态机：Qt `MusicAccount.cpp` 登录流程的 Dart 移植。
 ///
-/// 与 Qt 的对应关系（逐条按行号抄，改之前先读 Dart 侧事实）：
-/// - 六阶段 + `sms`：Qt `loginPhase` 字段（MusicAccount.cpp:357 idle、:541 preparing、
-///   :588 waiting、:654 confirming、:515 complete、:311/:465 failed）；本文件额外把
-///   短信分支显式化成 [LoginPhase.sms]（Qt 里只靠 `loginMethod == "phone"` 推断）。
-/// - 开始/准备：`startLogin()` :549-575、`prepareQR()` :577-620。
-/// - 轮询：`pollQR()` :625-667（`qBound(100, pollIntervalMs, 60000)`、
-///   `qMax(interval, pollTimeoutMs)`、`attempts = qMax(1, (timeout+interval-1)/interval)`）。
-/// - 确认：`confirmLogin()` :505-547（`rememberIdentityName` 的偏好写入 :57-62）。
-/// - 短信：`sendLoginCode()` :421-453、`captchaLogin()` :455-491（`SMS_RESEND_INTERVAL_MS`）。
-/// - 冷却：`loginRetrySeconds()` :329-331、`canRegenerateLogin()` :334-337、
-///   `reportLoginFailure()` :338-352、`updateLoginCooldown()` :354-372。
-/// - 取消/退出：`cancelLogin()` :374-400、`logout()` :676-726。
-/// - 失败文案：`loginFailureMessage()` :10-43（候选键顺序逐字照抄）。
+/// 六阶段 + sms：startLogin / prepareQR / pollQR / confirmLogin / 取消与登出，
+/// 冷却与失败文案逐条对照 Qt。
 ///
-/// 依赖只有三个端口：[PreferencePort]（Qt `Host::preference/setPreference`）、可注入
-/// `clock`、可注入 `delay`（Qt `host->schedule(ms, ...)`）。**纯 Dart，不 import flutter。**
+/// 依赖只有三个端口：PreferencePort、可注入 clock 与 delay。纯 Dart，不 import flutter。
 ///
-/// 与 Qt 的**有意差异**（都已尽量收窄，写在这里免得后来人当成 bug）：
-/// 1. Qt 的 `open` 与 `startLogin` 是同一个动作（NativeHudMusic.cpp:405-437 打开弹层后
-///    立刻扫码）；[open] 只负责装载 descriptor/网关/当前账号，扫码由调用方紧接着调
-///    [start]（短信方式不自动开始，同 Qt 的 `login-method` 分支 :414-446）。
-/// 2. 短信登录成功时 Qt 不把 `loginPhase` 置成 complete（只有扫码路径 :543 才置），
-///    本文件两条路径都进 [LoginPhase.complete]，因为 UI 只需要"登录完成"这一个语义。
-/// 3. Qt 用 `schedule(1000)` 反复重写 `loginStatus`（:354-372）；本文件按需计算
-///    [smsRetrySeconds]/[cooldownSeconds]，把"（请等待 N 秒）"后缀交给 UI 的
-///    [cooldownLabel]/`smsRetrySeconds`，避免为了倒计时而持有定时器。
-/// 4. Qt 的 `qr` 是宿主渲染对象（文本或图片）；本文件只保存原始 `qrText`/`qrImage`。
+/// 有意差异：open 只负责装载 descriptor 与当前账号（Qt 打开即扫码）；短信成功也进
+/// complete；倒计时按需计算而不持有定时器。
 library;
 
 import 'dart:async';
@@ -580,12 +560,8 @@ class LoginController {
     }
   }
 
-  /// Qt `accountKey()`（MusicLibrary.cpp:169-171）：平台上再加变体后缀。
-  ///
-  /// Qt 的键是 `providerVariant.isEmpty ? provider : provider + "-" + variant`
-  /// （`MusicLibrary.cpp:363-365`）。同一个平台的「标准版 / 轻量版」各有独立账号，
-  /// 键里不带变体就会互相覆盖。当前仓库内 siren/local 都没有变体，调用方传空串时
-  /// 行为与旧实现完全一致。
+  /// Qt 的账号键：平台上再加变体后缀（`provider-variant`）。
+  /// 同一平台的标准版与轻量版各有独立账号，键里不带变体就会互相覆盖。
   String _accountKey(ProviderDescriptor descriptor) =>
       _variant.isEmpty ? descriptor.id : '${descriptor.id}-$_variant';
 

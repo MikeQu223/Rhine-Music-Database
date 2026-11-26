@@ -32,11 +32,8 @@ class PluginGateway implements ProviderGateway {
   /// 最近一次 `loginBegin` 的令牌，`cancelLogin` 要带它（Qt 的 `previousKey`）。
   String _lastToken = '';
 
-  /// 会话 cookie 罐（`name -> value`）：每次请求随行、每次响应回写。
-  ///
-  /// **必须是对象而不是 `Set-Cookie` 行数组**：`MusicBridge/core/host.cjs:8` 是
-  /// `{...message.cookies}`，数组会被摊成 `{"0": "MUSIC_U=…"}`，于是插件永远
-  /// 认为未登录（真机表现为扫码成功后 `account` 仍回「请登录网易云」）。
+  /// 会话 cookie 罐（`name -> value`）。必须是对象而不是 `Set-Cookie` 行数组：
+  /// 宿主是 `{...message.cookies}`，数组会被摊成 `{"0": ...}`，插件永远认为未登录。
   final Map<String, String> _cookies;
 
   /// cookie 变更回调（宿主把它写进偏好）。
@@ -84,8 +81,7 @@ class PluginGateway implements ProviderGateway {
     }
     if (!reply.ok) {
       onDiagnostic?.call(reply.error);
-      // 插件自己的错误串往往已经带平台名（`网易云音乐返回 405：…`），再拼一次
-      // 会变成「网易云音乐：网易云音乐返回 405：…」（真机出现过）。
+      // 插件的错误串往往已带平台名，再拼一次会重复。
       throw ProviderRequestError(
         reply.error.startsWith(descriptor.name)
             ? reply.error
@@ -314,8 +310,7 @@ class PluginGateway implements ProviderGateway {
 
   @override
   Future<List<String>> likedTrackIds({String uid = ''}) async {
-    // 插件签名 `likedIDs(uid)`：uid 空串时插件用会话里的账号（真机验证过，
-    // 传账号 id 或空串都能拿到同一份列表）。
+    // 插件签名 `likedIDs(uid)`：uid 空串时用会话里的账号。
     final List<Object?> raw = await _callList('likedIDs', <Object?>[uid]);
     return <String>[for (final Object? id in raw) _text(id)];
   }
@@ -371,8 +366,7 @@ class PluginGateway implements ProviderGateway {
 
   @override
   Future<List<Map<String, Object?>>> songsByIds(List<String> ids) async {
-    // 插件签名 `songs(ids, valid)`：`body.value` **直接是数组**（不是 `items` 包一层，
-    // 真机探针 `{"id":1,"body":{"code":200,"value":[{...}]}}` 确认）。
+    // 插件签名 `songs(ids, valid)`：`body.value` 直接是数组，不是 `items` 包一层。
     final List<Object?> raw = await _callList('songs', <Object?>[ids]);
     return <Map<String, Object?>>[
       for (final Object? item in raw)
@@ -380,8 +374,7 @@ class PluginGateway implements ProviderGateway {
     ];
   }
 
-  /// 歌曲百科：插件 `wiki(id, valid)` 的 `body.value` 是**纯文本**（真机确认），
-  /// 不是对象；这里包成 `{'text': …}`，空值也保留空串让页面显示诚实状态。
+  /// 歌曲百科：插件 `wiki(id, valid)` 的 `body.value` 是纯文本，包成 `{'text': …}`。
   @override
   Future<Map<String, Object?>> wiki({required String trackId}) async {
     final PluginBridgeReply reply =
@@ -393,8 +386,7 @@ class PluginGateway implements ProviderGateway {
     return <String, Object?>{'text': _text(value)};
   }
 
-  /// 专辑信息：插件没有独立 `album` operation（真机回「插件不支持该接口：album」），
-  /// 用 `detail({kind:'album', id})` 的 `[item, songs, ids]` 组装。
+  /// 专辑信息：插件没有独立 `album` operation，用 `detail({kind:'album', id})` 组装。
   @override
   Future<Map<String, Object?>> albumInfo({required String albumId}) async {
     final String id = albumId.trim();
@@ -483,8 +475,7 @@ class PluginGateway implements ProviderGateway {
       content: _text(item['content'] ?? item['text']),
       nickname: _text(item['nickname'] ?? item['user']),
       avatarUrl: _absoluteUrl(_text(item['avatar'] ?? item['avatarUrl'])),
-      // Qt `CommentsController.cpp:665` 把平台返回的毫秒时间戳换算成「刚刚/N 分钟前/
-      // N 小时前/N 天前/yyyy-MM-dd」，不是把数字原样上屏（真机上曾显示 1709572042026）。
+      // 平台返回的是毫秒时间戳，要换算成「刚刚 / N 分钟前 / yyyy-MM-dd」再上屏。
       timeLabel: _commentTimeLabel(item['time'] ?? item['timeLabel']),
       likedCount: item['liked'] is num ? (item['liked'] as num).toInt() : 0,
       replyCount: item['replyCount'] is num ? (item['replyCount'] as num).toInt() : 0,

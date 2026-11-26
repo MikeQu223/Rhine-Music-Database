@@ -42,17 +42,10 @@ double portraitGridHeight(double stageHeight, double unit) => stageHeight / unit
 const double portraitRowHeight = 48;
 const double portraitGestureInset = 34;
 
-/// 底部「迷你播放条 + 底栏 + 手势区」占的**设计**网格高度。
+/// 底部「播放条 + 底栏 + 手势区」占的设计网格高度。
 ///
-/// Qt 里播放条顶 = `c.contentBottom`，导航条 = 顶 + 67，导航条高
-/// `max(0, h - 34 - 导航条)`（`ResponsiveHudLayout.cpp:329-420`）；三者相加
-/// 恒为 144，与 `m_height` 无关。设置/检索这类整页只铺到 `h - 144`。
-///
-/// 但本仓库的竖屏画布高度**已经扣掉了真实安全区**（`PortraitBands.stageHeight`
-/// 按 `layoutHeight - safe.top - safe.bottom` 算），所以手势区只该留一次。真实
-/// 内缩比设计值 34 小的时候（本机 7.6dp ≈ 5.9 网格），继续按 144 收就会把播放条
-/// 与底栏整体抬高近 30 网格 —— 用户 2026-11-24 报的「底部组件抬太高」。
-/// 运行时一律用 [portraitFooterHeightOf] 取当帧的真实值。
+/// Qt 三者相加恒为 144；但本仓库画布高度已扣掉真实安全区，手势区只该留一次，
+/// 否则会把播放条与底栏整体抬高近 30 网格。运行时用 [portraitFooterHeightOf] 取值。
 const double portraitFooterHeight = 144;
 
 /// 当帧真实的页脚高度（网格单位）。
@@ -241,9 +234,8 @@ PortraitFrame paintPortraitHome(
   );
 }
 
-/// 画播放条 + 底栏（贴在 `h - portraitFooterHeight`），并把 `contentBottom` 收到
-/// 它们上方。目录内页（歌单/专辑）自己没有页脚，由这个入口补——否则进歌单后
-/// 底部整块是空的、也没法从内页直接播放或换 tab（真机缺陷）。
+/// 画播放条 + 底栏（贴在 `h - portraitFooterHeight`），并把 `contentBottom` 收到它们上方。
+/// 目录内页没有页脚，由这个入口补画。
 void paintPortraitFooter(
   PortraitCanvas canvas, {
   required PortraitPlayer player,
@@ -402,8 +394,7 @@ void _list(
     );
   }
   c.fill(Rect.fromLTWH(0, listTop, c.gridWidth, math.max(0, c.height - listTop)), wash(1));
-  // 索引行画在渐变之后：Qt 这两行压在场景下沿上（`listTop - 18`），我们若先画再铺
-  // 渐变，文字会被 0.6 的纸色洗成灰（真机「上下滑动浏览 / TRACK INDEX」读不清）。
+  // 索引行画在渐变之后：先画会被 0.6 的纸色洗成灰。
   c.text('上下滑动浏览 / TRACK INDEX', 23, listTop - 18, size: 8, width: 240, color: c.muted);
   final String counter = archive.total == 0
       ? '00 / 00'
@@ -417,18 +408,11 @@ void _list(
           size: 11, width: c.gridWidth - 46, color: c.muted);
     }
   } else {
-    // 当前行固定在「第二槽」是 Qt 的原始版式（上方留一行给「上一首」，滚动时顺手滑出）。
-    // 但列表在顶端时 position = 0，第二槽会把第一槽空着——一屏四行的带子只剩三行
-    // （用户 2026-11-18 就是在说这个「只显示三个」）。所以槽位偏移随 position 从 0
-    // 连续长到一整行：顶端四行铺满，往下滚之后恢复「上一行在上方」的原始外观。
+    // 当前行固定在第二槽是 Qt 的原始版式，但列表在顶端时第一槽会空着，一屏四行只剩三行。
+    // 所以槽位偏移随 position 从 0 长到一整行：顶端四行铺满，滚动后恢复原版式。
     final double slotY = listTop + portraitRowHeight * position.clamp(0.0, 1.0);
-    // 可见行区间必须跟着滚动位置走。
-    // 旧写法用 `c.visibleRows(slotY, …)`，first 恒被算成 0（slotY 比裁剪顶低一行），
-    // 于是永远只画 0..2 三行；位置一滚走，这三行被裁掉就剩一片空列表
-    // （用户 2026-11-18：「列表只显示三个，再往下滑动就黑了」）。
-    // 行窗口下界比当前行多留一行（上一首），上界按实际列表高度补齐。
-    // 可见行数由「分割线到播放条上沿」的实际高度决定：1:1 之后列表区高于四行，
-    // 仍写死 +4 会在最后一行与播放条之间留下一条空白纸带（用户 2026-11-19）。
+    // 可见行区间必须跟着滚动位置走：`c.visibleRows(slotY, …)` 的 first 恒被算成 0，
+    // 位置一滚就只剩空白列表。下界比当前行多留一行，上界按实际列表高度补齐。
     final int visibleRows = math.max(
       1,
       ((bottom - listTop) / portraitRowHeight).ceil(),
@@ -447,10 +431,8 @@ void _list(
         c.fill(Rect.fromLTWH(23, y, rowWidth, portraitRowHeight - 2), c.surface);
         c.fill(Rect.fromLTWH(23, y, 2, portraitRowHeight - 2), c.amber);
       }
-      // 行标题跟着主题走（原来钉死暗色 ink 的奶油色）：亮色主题下必须换成深墨，
-      // 否则浅底浅字同样读不出来。**不按距离淡出**：Qt 的档案列表每一行都是同样的
-      // 墨色，只有当前行有 surface 底与琥珀竖条；早先按 |row - position| 衰减会在
-      // 第 4 行之后把文字洗成浅灰（用户 2026-11-22 截图可见）。
+      // 行标题跟着主题走（原来钉死暗色 ink 的奶油色）。不按距离淡出：
+      // Qt 的每一行都是同样的墨色，只有当前行有 surface 底与琥珀竖条。
       final List<Object?> color = <Object?>[c.ink[0], c.ink[1], c.ink[2], .92];
       c.text(_pad(row + 1), 27, y + 19, size: 8, width: 24, color: c.muted);
       c.text(archive.rows[row].title, 56, y + 14,
@@ -497,10 +479,7 @@ void _playerAndNav(
       size: 13, width: textWidth, weight: 'demibold');
   c.text(player.hasTrack ? player.artist : '选择一首曲目开始', 65, top + 35,
       size: 10, width: textWidth, color: c.muted);
-  // 封面+标题区 = 「打开当前歌曲详情页」：Qt 发的就是 `player:detail`
-  // （`Qt/src/ResponsiveHudLayout.cpp:340`，标签「打开当前歌曲播放页面」）。
-  // 旧实现发 `player:open`，宿主把它映射成打开播放队列，所以点播放条弹出的是
-  // 队列而不是详情页（用户 2026-11-19）。队列改由下面独立的队列键负责。
+  // 封面+标题区发 `player:detail`（打开当前歌曲详情页）；队列由下面独立的队列键负责。
   c.hit(Rect.fromLTWH(60, top + 8, math.max(0, keysLeft - 60), 48), 'player:detail',
       '打开当前歌曲详情页');
 
@@ -512,8 +491,7 @@ void _playerAndNav(
   // 播放/暂停圆钮（Qt PlayerBar::appendPlayButton 的圆形按钮）。
   final double cx = w - 73;
   final double cy = top + 34;
-  // sweep 必须严格小于 2π：Flutter 的 Path.arcTo 在整圆（2π）时会退化成空路径，
-  // 环就画不出来（v101 实机里只剩播放三角形）。
+  // sweep 必须严格小于 2π：Path.arcTo 在整圆时退化成空路径，环就画不出来。
   c.commands.add(<Object?>['arc', cx, cy, 20, 0, math.pi * 2 - .02, 1.2, c.ink]);
   c.icon(player.playing ? 'pause' : 'play', cx - 7.5, cy - 7.5, size: 15, color: c.ink);
   // 播放钮命中刻意比「下一首」左一点：两者相邻，圆心必须只落在播放钮里。

@@ -36,13 +36,8 @@ const String portraitSongHintLyrics = 'mobile:song-hint:lyrics';
 /// 评论入口不可用时发的动作（同上）。
 const String portraitSongHintComments = 'mobile:song-hint:comments';
 
-/// 毫秒 → mm:ss（Qt `MusicData::pad`，PlayerBar.cpp:8-12 的同款）。
-/// 歌曲页两处时间标签的右缘内缩量（进度区 11 号 / 沉浸条 10 号）。
-///
-/// Qt compact 的沉浸条是 `c.text(time, 337, top + 32, 10, 40, ...)`：左锚 337、
-/// 宽 40，右缘落在 377 = 393 - 16。本仓库画布按 `gridWidth` 缩放（本机 586），
-/// 所以 16 设计单位 ≈ 24 网格单位。两处原本一个 -20 一个 -26，同页两个右缘
-/// 不齐（用户 2026-11-24 报「部分元素间距没有对齐」），这里统一成同一常量。
+/// 毫秒 → mm:ss（Qt `MusicData::pad`）。
+/// 两处时间标签的右缘内缩量：Qt 的沉浸条右缘落在 393-16，这里统一成同一常量。
 const double _songRightInset = 24;
 
 String _clock(double ms) {
@@ -77,26 +72,10 @@ String _metaLine(String artist, String album) {
 
 /// 唱片档案（详情）页。返回前必须调用 c.finish()。
 ///
-/// 几何对齐参考图（1206×2622 设备 = 393×854 网格）：顶部只有一枚居中的关闭 X，
-/// 没有标题栏；下面是方形唱片卡、档案行、两行大标题、艺人/专辑、状态行，
-/// 再往下依次是「进度条 → 传输三键 → 五入口」。
+/// 纵向排布自上而下累加（见 [_songLayout]）：卡片吃剩下的高度，三段间距按富余等比放大。
 ///
-/// 纵向排布**自上而下累加**（见 [_songLayout]）：卡片吃剩下的高度，三段间距按富余
-/// 等比放大。旧实现把控制带从底往上锚定再 `min` 回来，长标题或矮屏时会和上面流下来
-/// 的内容撞在一起（用户 2026-11-19：「详情页元素互相压住」）。
-///
-/// [current] 是本页最重要的一处身份判断：详情页曲目**是否就是**正在播放的曲目
-/// （Qt compact `song()` 的 `selectedSongIsCurrent`，`Qt/src/ResponsiveHudPages.cpp:165`）。
-/// 它为 false 时整条控制带只服务于**详情页曲目**：
-///  - 进度归零、右侧读数显示本曲目时长而不是「-剩余」；
-///  - seek 不产生热区（否则一拖就把另一首歌拖走了）；
-///  - 播放键发 `music:play`（切到本曲目并播放），不是 `player:toggle`；
-///  - 上一首/下一首发 `music:detail-prev/next`（按详情页所在列表换曲），
-///    不是播放队列的 `player:prev/next`；
-///  - 歌词入口不出现（歌词属于播放曲目，不是本页曲目）。
-///
-/// 为 true 时全部读真实播放态（[playing]/[buffering]/[positionMs]/[durationMs]），
-/// 与主页迷你播放条完全一致。控制带本身**始终绘制**，不因换曲目而消失。
+/// [current] 表示详情页曲目是否就是正在播放的那首：false 时整条控制带只服务本页曲目
+/// （进度归零、seek 无热区、播放键发 `music:play`、上下首发 `music:detail-*`、无歌词入口）。
 void paintPortraitSongPage(
   PortraitCanvas c, {
   required String title,
@@ -118,7 +97,7 @@ void paintPortraitSongPage(
 }) {
   final double h = c.height;
 
-  // 整页铺纸色：竖屏详情是沉浸页，绝不把身后的 3D 唱片透出来（v101 实机串页）。
+  // 整页铺纸色：竖屏详情是沉浸页，不透出身后的 3D 唱片。
   c.fill(Rect.fromLTWH(0, 0, c.gridWidth, math.max(0, h)), c.paper);
 
   // 关闭：参考图是顶部居中的一枚 X，没有「RHINE LAB / 标题」页头。
@@ -250,8 +229,7 @@ void paintPortraitSongPage(
   _songFooterRow(
     c,
     top: footerTop,
-    // 歌词/评论都不再要求「本页曲目正在播放」（用户 2026-11-24：无需播放就能看）；
-    // 能不能取到由控制器按平台能力决定，页面只负责给入口。
+    // 歌词/评论无需播放就能看，可用性由控制器按平台能力决定。
     lyricsAvailable: lyricsAvailable,
     commentsAvailable: commentsAvailable,
     mode: mode,
@@ -302,10 +280,7 @@ const double _stateRow = 18;
 /// [_songProgressRow] 从 `barY - 22` 起笔；歌词预览另外占 [_lyricPreviewBlock]。
 const double _progressBlock = 52;
 
-/// 歌词预览单独占的一条（预览行在时间标签**之上**）。
-///
-/// 之前预览和 `00:00 / 02:48` 都画在 `barY - 21` 一带，两者直接压在一起
-/// （用户 2026-11-24 截图可见「00:00」和歌词首句重叠）。
+/// 歌词预览单独占一条（预览行在时间标签之上），否则两者会压在一起。
 const double _lyricPreviewBlock = 22;
 
 /// 传输环直径（[_songTransportRow] 的 center ± 26）。
@@ -358,19 +333,11 @@ typedef _SongLayout = ({
   double footerTop,
 });
 
-/// 算一遍详情页的纵向排布：**控制带底锚、卡片吃余量**。
+/// 算详情页的纵向排布：控制带底锚、卡片吃余量。
 ///
-/// 规则：
-///  1. 底部五入口整块钉在 `c.height - _bottomInset - _footerBlock`，传输环与进度条
-///     按最小间距往上叠——Qt compact 的 `song()` 同样是拿 `m_height - 34` 往回排的。
-///  2. 档案行/标题/艺人/状态四块是固定高度，扣掉之后剩下的才是唱片卡，夹在
-///     [_songCardMin]..[页宽 × _songCardRatio]。
-///  3. 卡片封顶后仍有余量：七成放到卡片与档案行之间（参考图的留白在唱片下方），
-///     三成留在状态行与进度条之间，避免进度条贴住艺人行。
-///
-/// 旧实现把三块按内容流自上而下堆、余量四等分（其中一份落到 footer 之下），页高
-/// 有富余时底部就被顶高一大截（用户 2026-11-24：「底部组件离底部还有一段空间，
-/// 抬太高了」）。
+/// 五入口钉在 `c.height - _bottomInset - _footerBlock`，传输环与进度条按最小间距上叠；
+/// 四块固定内容扣掉后剩下的给唱片卡，夹在 [_songCardMin]..[页宽 × _songCardRatio]。
+/// 卡片封顶后的余量七成放到卡片与档案行之间，三成留在状态行与进度条之间。
 _SongLayout _songLayout(
   PortraitCanvas c, {
   required int titleLines,
@@ -690,16 +657,10 @@ void paintPortraitLyricsPage(
     '歌曲更多操作',
   );
 
-  // 阅读区：118 起，下沿让给沉浸条。
-  //
-  // Qt compact 给歌词页留的是固定 250（`contentBottom = m_height - 34 - 250`），
-  // 那是按 393×854 的参考机算的。本机网格高只有 ~630，固定 250 会把歌词压成
-  // 一条缝（用户 2026-11-19：「歌词部分空间高度不足」）。所以改成按可用高度取
-  // 比例：高屏逼近 Qt 的 250，矮屏最少让到 150，歌词永远拿到剩下的全部。
+  // 阅读区从 118 起，下沿让给沉浸条。Qt 固定留 250（按 393×854 算），
+  // 矮屏会把歌词压成一条缝；这里按可用高度取比例，最高 250、最少 150。
   const double viewTop = 118;
-  // 沉浸条自身内容只画到 `top + 117`（Qt `player(c, immersive=true)` 的五键底沿
-  // `top+65..117`），再留 8 网格呼吸。此前按 250 的固定带高铺，键位下面会空出
-  // 130 多网格（真机看起来就是「底部组件抬太高」），所以改成按内容高贴底。
+  // 沉浸条内容只画到 `top + 117`，再留 8 网格呼吸；按固定带高铺会空出一百多网格。
   const double barContentHeight = 125;
   final double bandTop = math.max(
     viewTop + 96,

@@ -2,20 +2,10 @@
 // 交互证据。真控件验收（点击/滚动/返回/落盘/旋转）在 test/basic/basic_settings_wiring_test.dart。
 // 文件保留是为了继续守住这些共享布局常量的数值，禁止把它算成 GUI PASS。
 
-// SETTINGS-148 · ONLY14 设置页真值链回归（真实持久化 + 真实命令 + 真实命中裁剪）。
+// SETTINGS-148 · 设置页真值链回归（真实持久化 + 真实命令 + 真实命中裁剪）。
 //
-// 用户 2026-11-16（m01988）确认"输入法不避让、只要 14 项设置"，并明确要求
-// "真实读取写入恢复 + 原生实际效果，不能假开关"。本文件守住其中**能纯 Dart 证明**
-// 的三段：
-//   1. [BasicSettingsStore]/[BasicSettingsRuntime]：写入真的落到端口（读回同值）、
-//      重启口径分开报（requested vs effective）、被拒动作一个键都不写、
-//      写入失败如实报告而不是假装成功。
-//   2. [basicSettingsPanelModel]：默认值与已持久化值都进面板真值（行文案/版本行）。
-//   3. [BasicSettingsOverlay]：模态框架/卡片/轨道同帧画出，命中按卡片视口裁剪，
-//      返回按钮与滚动按钮的命中各归各家，滚轮/按钮都是 66 步进（HudScroll.h:22-26）。
-//
-// 不写"能过就行"的替身：端口用 [MemoryBasicSettingsPort]（行为与 MethodChannel
-// 端口一致，含失败注入），字形走线上资源（Assets/fonts/misans-glyphs.json）。
+// 只证明能纯 Dart 证明的三段：写入真的落到端口（含失败注入）、面板模型同时吃默认值
+// 与已持久化值、模态与命中按卡片视口裁剪且步进一致。
 
 import 'dart:io';
 

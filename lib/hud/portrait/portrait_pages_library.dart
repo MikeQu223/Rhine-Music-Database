@@ -47,9 +47,7 @@ void paintPortraitCollectionPage(
   // 旧实现按 `i * _rowHeight` 从 listTop 硬排，超出裁剪区的行直接被裁掉且无法滚动，
   // 于是进一张 10 首的专辑只看得到头 4 首。
   double position = 0,
-  // Qt 的 `arrange` 对**每一页**都在末尾画播放条与底栏（ResponsiveHudLayout.cpp
-  // 的 playerBar/navigation 是无条件收尾）。目录内页（歌单/专辑）漏了这一步，
-  // 真机上进歌单后底部整块空白，也不能从内页直接播放或换 tab。
+  // Qt 的收尾对每一页都画播放条与底栏；目录内页漏了这一步，进歌单后底部整块空白。
   PortraitPlayer? player,
   PortraitNav? nav,
 }) {
@@ -60,9 +58,8 @@ void paintPortraitCollectionPage(
   }
   final int total = rows.length;
 
-  // 整页铺纸色。**不要**在这里画纵向渐变：Qt 的 arrange 对内页只有一句
-  // `c.fill({0, 0, 393, m_height}, c.paper)`（ResponsiveHudLayout.cpp:96-98），
-  // 逐行 alpha 渐变会让页面从正中裂成上下两块（用户实测缺陷 8）。
+  // 整页铺纸色，不要画纵向渐变：Qt 对内页只有一句 `fill(paper)`，
+  // 逐行 alpha 渐变会让页面从正中裂成上下两块。
   c.fill(Rect.fromLTWH(0, 0, c.gridWidth, h), c.paper);
   c.header(title, back: true);
 
@@ -188,12 +185,7 @@ void paintPortraitSearchPage(
   final double bottom = _pageBottom(c, top);
   double y = top;
 
-  // 检索框：raised 底 + 细边 + 放大镜；字段名固定 `search`，宿主据此贴原生输入条。
-  //
-  // 这里**只画框**，不画任何文字：键入的正文与空态占位都由 Qt 的输入层自绘
-  // （Qt/qml/Overlay.qml:532-612：TextInput 自己显示 text，紧跟的占位 Text
-  // `visible: text.length === 0 && !preeditText` 也画占位）。命令流再画一遍就是
-  // 双重显示——实机 device7/s1-search.png 里同一个「dx」上下两份、且随输入联动错位。
+  // 检索框只画框，不画文字：正文与占位都由输入层自绘，命令流再画一遍就是双重显示。
   final Rect box = Rect.fromLTWH(_left, y, _contentWidth(c), 44);
   c.fill(box, c.raised);
   c.border(box, c.line);

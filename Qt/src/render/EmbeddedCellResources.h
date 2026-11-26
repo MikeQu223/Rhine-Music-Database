@@ -14,19 +14,11 @@
 #include <optional>
 
 /**
- * 149：Flutter 归档格 → 原生可见格的业务资源投影。
+ * Flutter 归档格 → 原生可见格的业务资源投影。
  *
- * 归档页背景那批卡片是**一份**实例缓冲（NativeSceneUpdate 写 drawBuffers[10]），所有格共享
- * 同一份矩阵/主题/材质，所以它只能是"占位档案壳"：没有逐格身份，也就没有逐格封面与标签。
- * 这个头文件只做三件事，都不碰 GPU：
- *
- *   1. 把 Flutter 快照里的格 [{l,r,k,i,t[,c,a,b]}] 解析成带业务身份（siren:<kind>:<id>）
- *      的条目。r 是**绝对**逻辑窗口偏移，原生格行号 = 12 + r；位置永远不参与身份计算。
- *   2. 用"稳定窗准入"决定哪些格可以先建纹理（滚动中一个都不建，热资源照常显示）。
- *   3. 给每格两条覆盖绘制定出稳定的 draw id，让材质 arena 不因重排整体换槽。
- *
- * 之所以放在渲染层的 header 里、并且全是不带状态的纯函数或可注入时钟的状态机：
- * 它唯一的回归手段是离线用例（Qt6::Core），真机只能看到"封面贴错格"这种后果。
+ * 归档页背景那批卡片共享一份实例缓冲，只能当占位档案壳；这里给每格补业务身份
+ * （siren:<kind>:<id>，位置不参与）、决定稳定窗准入、并给覆盖绘制定稳定的 draw id。
+ * 全是无状态纯函数或可注入时钟的状态机，只靠离线用例回归。
  */
 namespace RhineRender {
 
@@ -187,15 +179,11 @@ inline bool embeddedCellCoverStillWanted(const EmbeddedCell *cell, const QString
 /**
  * 可见格的多 key 稳定窗准入。
  *
- * 与 MusicTextureAdmission（单焦点、由 Engine 的 AdmissionScheduler 计时）不同，可见格是
- * 一组 key，而且可见集合本来每帧都在算：这里不需要额外定时器，由 step() 每帧上报一次，
- * 调用方只按 nextAdmissionInMs() 安排下一次唤醒。
+ * 与单焦点的 MusicTextureAdmission 不同，可见格是一组 key，由 step() 每帧上报，
+ * 调用方只按 nextAdmissionInMs() 安排唤醒。
  *
- * 规则：
- *  - 同一个 key 连续出现不重计时；滚动中计时冻结，一个都不准入（热资源照常显示）。
- *  - contextGeneration 变化只丢弃待定项；已准入的 key 是全局业务身份，重新出现立即复用。
- *  - 窗口隐藏时待定项一起丢弃，恢复后重新计时；已准入项保留（回来时还是热的）。
- *  - 名额满时淘汰"最久没在可见集合里出现"的已准入项；全都在窗口里就保持待定，不抢可见格。
+ * 规则：同一 key 连续出现不重计时；滚动中计时冻结、一个都不准入；
+ * contextGeneration 变化只丢弃待定项；窗口隐藏丢弃待定；名额满时淘汰最久未出现的已准入项。
  */
 class EmbeddedCellAdmission {
   public:

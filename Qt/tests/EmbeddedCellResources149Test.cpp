@@ -1,16 +1,9 @@
 /**
- * 149：可见格业务资源投影的离线回归（Qt6::Core，无 GUI、无 GPU、无 QtTest）。
+ * 可见格业务资源投影的离线回归（Qt6::Core，无 GUI/GPU/QtTest）。
  *
- * 这些用例对应的都是真机上"看一眼就知道错了"的后果，所以判据必须能证伪：
- *   - 身份：位置（lane/row）绝不参与 key 计算，否则同一行换内容会沿用旧图。
- *   - 绝对行号：r 是窗口内偏移，原生 row=12+r，不许取模当成 0..7 的槽位。
- *   - 迟到完成：A→B→A 期间 B 的结果必须作废，否则旧封面贴到新身份上。
- *   - 准入：同一 key 重复上报不重置计时；滚动中一个都不开始；隐藏后待定作废、已准入保留。
- *   - 上界：待定数量、投影数量、淘汰规则都必须有界，且绝不淘汰还在窗口里的格。
- *
- * 运行（由 148 执行；149 不执行任何命令）：
- *   cmake --build <build-dir> --target RhineEmbeddedCellResources149Test
- *   ctest -R qt_embedded_cell_resources_149 --output-on-failure
+ * 判据必须能证伪：位置不参与身份、行号不取模、迟到结果作废、滚动中不建纹理、数量有界。
+ * 运行：cmake --build <build-dir> --target RhineEmbeddedCellResources149Test
+ *       ctest -R qt_embedded_cell_resources_149 --output-on-failure
  */
 #include "render/EmbeddedCellResources.h"
 

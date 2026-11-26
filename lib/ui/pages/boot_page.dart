@@ -1,38 +1,12 @@
-///  Boot 门槛页（Qt Android → Flutter 1:1 迁移，boot 阶段叠加层）。
+/// Boot 门槛页（Qt Android → Flutter 1:1 迁移，boot 阶段叠加层）。
 ///
-/// 证据（Qt/ 只读源，行号即证据）：
-/// - Qt/src/NativeScene.h:161            默认 `m_mode = "boot"`
-/// - Qt/src/NativeScene.cpp:176-179      进入 boot：`m_bootStart = m_clock - 1.76` ⇒ 进入即 elapsed = 1.76（不是 0）
-/// - Qt/src/NativeSceneFrame.cpp:18      `elapsed = m_freeze.value_or(time - m_bootStart)`
-/// - Qt/src/NativeSceneFrame.cpp:19-21   `if (m_mode == "boot" && elapsed >= 35) setMode("detail")`（35s 硬闸门）
-/// - Qt/src/NativeSceneFrame.cpp:117     boot 时间轴入参就是 elapsed
-/// - Qt/src/BootTimeline.cpp:126-214     `BootTimeline::sample(appTime)`：`time = appTime + 5`，25fps
-/// - Qt/src/NativeHudBoot.cpp:155-311    boot HUD 绘制；:161 `offset = (width - 1920) / 2`；:310 按钮屏幕坐标右锚
-/// - Qt/src/NativeHud.cpp:102-120        `hit()` / `button()` 几何与文本公式
-/// - Qt/src/NativeHudController.cpp:682-683  `value == "skip"` → `m_scene.mode("archive")`
-/// - Qt/src/NativeHudController.cpp:698      `m_scene.mode("boot")`（replay，等价 restart）
-/// - Qt/src/SceneMotion.cpp:46-49        `ease(value)` = smoothstep
-/// - Qt/src/Glyphs.cpp:806-812           `op == "gradient"`：径向渐变（中心 979.2,518.4；半径 1100）
-/// - Qt/src/Glyphs.cpp:761-774           `op == "arc"`：`{"arc", cx, cy, radius, start, sweep, penWidth, color}`
-/// - Qt/src/NativeHudBoot.cpp:164-171    门槛层：`gradient` 在 backgroundOpacity 的 alpha 内，白闪 `fill` 在其外
-/// - Qt/src/NativeHudBoot.cpp:330-350    `scan()` 的弧段（scan.* / orbit.* 曲线，度→radians）
+/// 阶段语义：time < 26.92 时背景不透明；之后背景淡出、底下 3D archive 透出，
+/// 直到 elapsed >= 35 才切 detail。它是叠加层，不是不透明整页；
+/// ENTER SYSTEM 按钮在所有 opacity 之外，淡出后仍可点。
 ///
-/// 阶段语义（务必保留，Qt 门槛行为一致）：
-/// - time < 26.92 时 backgroundOpacity = 1（不透明门槛背景）；26.92 起 backgroundOpacity = 0 且 exit 完成
-///   （welcomeOpacity = 0、exitBlur = 8），画面透明、底下 3D archive 场景透出；直到 elapsed >= 35 才切 detail。
-///   ⇒ 本页是**叠加层（overlay）**，不是不透明整页：背景层只在 backgroundOpacity > 0 时存在。
-/// - ENTER SYSTEM 按钮（NativeHudBoot.cpp:310）在所有 opacity 之外无条件绘制，所以淡出后按钮仍在、仍可点。
-///
-/// 不伪造声明（职责边界）：
-/// - 真实 HUD 绘制（glyph 真 advance/path、baseline 1.044、art 零偏移、Gamma1.8→sRGB）由共享 HUD 层负责，
-///   经 [BootPage.hudBuilder] 注入；本页绝不自绘 boot glyph 文本。
-/// - 门槛层（`gradient` / `fill` / `arc`）在 后由本页的**命令生产者**产出 [HudCommand]，
-///   再交给共享 [paintHudCommands] 执行：页面不再用 `DecoratedBox`/`RadialGradient`/`ColoredBox`
-///   自绘渐变或白闪，也不再自己算渐变几何（中心/半径/色标/填充矩形归 lib/hud/render/gradient_mask.dart）。
-/// - track 驱动量（logo 描边、scan 弧、orbit 卫星、brand 行、highlightKeys、ringOpacity、permissionOpacity 尾段）
-///   在 Qt 侧来自 Assets/animation/boot-tracks.json 实测曲线（BootTimeline.cpp:26-62 载入）；pubspec.yaml:65-67
-///   已声明 `Assets/animation/`，默认由 [AssetBootTrackSource] 载入该 JSON（解析/插值见 boot_track_source.dart），
-///   载入前或资源缺失时返回 0 并把错误留在 [AssetBootTrackSource.loadError]（不伪造实测值）。
+/// 职责边界：真实 HUD 绘制由注入的 [BootPage.hudBuilder] 负责；门槛层（gradient /
+/// fill / arc）由本页产出 [HudCommand] 再交给 paintHudCommands。track 驱动量来自
+/// Assets/animation/boot-tracks.json，缺失时返回 0 并保留 loadError。
 library;
 
 import 'dart:async';

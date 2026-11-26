@@ -406,20 +406,10 @@ class ScrollExtent {
       'ScrollExtent(itemExtent: $itemExtent, count: $itemCount, viewport: $viewportExtent)';
 }
 
-/// 滚动锚：锚定 item 的 key + 该项内部已越过的比例。
+/// 滚动锚：item key + 项内相对比例（不是绝对 offset）。
 ///
-/// 锚点是 item key + **相对**滚动偏移（不是绝对 offset）。Qt 侧持久化的是
-/// 行域整数（Qt/src/MusicSession.cpp:229-231 listOffset/trackOffset/bodyOffset，
-/// 恢复时 nonnegative 夹取 :254-256；行域证据 Qt/src/NativeHudController.cpp:301、
-/// Qt/src/NativeHudInput.cpp:57 都是「行号 + 行数」运算）。行内细粒度不在 Qt 状态里，
-/// 故这里补的是行内比例；方向换算完全落在行域，跨旋转只需换 itemExtent。
-///
-/// 夹取上界：Qt 恢复只做 nonnegative（:254-256）；本实现的 capture/[pixelOffsetFor] 额外
-/// 夹到 [0, extent.maximum]，与 HudScroll::clampOffset（Qt/src/HudScroll.h:17-19）同向，
-/// 但量纲不同：本实现是像素域，maximum = count*itemExtent - viewportExtent，等于最后
-/// 一页对齐；Qt queueOffset 是行域，运行时夹 [0, count-1]（Qt/src/PlaybackQueueCard.cpp:6-8
-/// 的 maximumOffset；Qt/src/NativeHudPlayer.cpp:47,74-76 按首可见行使用），允许过滚。
-/// 集成换算 row = pixel / rowHeight；Qt 的 count-1 过滚位在像素模型里折叠到最后一页上界。
+/// Qt 持久化的是行域整数，行内细粒度不在状态里；方向换算落在行域，跨旋转只换 itemExtent。
+/// 夹取上界取 [0, extent.maximum]；Qt 的 queueOffset 允许过滚，像素模型里折叠到末页。
 class ScrollAnchor {
   const ScrollAnchor({
     required this.itemKey,
@@ -991,21 +981,9 @@ OrientationSnapshot captureOrientationState(OrientationViewState state, StageMet
 
 /// 旋转后还原：返回方向无关状态；stage 尚不可度量的那一帧沿用此前有效状态。
 ///
-/// 退化尺寸的语义对齐 Qt/src/Engine.cpp:841-849：`Engine::resize` 在
-/// `height <= 0`（或尺寸未变）时直接 `return`，静默保留上一帧的
-/// `m_width`/`m_height`，从不抛错。Flutter 侧同理 —— 首帧、最小化、旋转交接都
-/// 可能出现 logicalWidth/logicalHeight 为 0 的一帧，抛错只会把「本帧没有几何」
-/// 变成崩溃/红屏，而不是让上一帧继续显示。
-///
-/// 因此 `metrics.stageScale <= 0` 不是错误，而是「本帧不应用新舞台」：返回值仍是
-/// [snapshot.state] 的净化副本，即此前已经生效的方向无关状态。调用方若需要区分
-/// 本帧是否真的应用了舞台，读 `metrics.stageScale > 0` 即可；公开签名保持
-/// [OrientationViewState]，现有调用点不需要改动，也不新增「抛错即期望」的分支。
-///
-/// 为什么这里不按 metrics 改任何数值：状态里的每个量都在行域/文本域/舞台单位，
-/// 舞台单位在横竖屏都由同一套 1080 基准定义（Qt/qml/Main.qml:32、
-/// lib/ui/layout/portrait_bands.dart:32），所以没有「旧像素 -> 新像素」这一步。
-/// 绝对偏移由 [resolveScrollOffsets] 在需要绘制时按新 extent 现算。
+/// `metrics.stageScale <= 0` 不是错误，而是「本帧不应用新舞台」：首帧、最小化、旋转交接
+/// 都可能出现 0 尺寸的一帧，抛错只会把「本帧没有几何」变成崩溃。
+/// 绝对偏移由 [resolveScrollOffsets] 在绘制时按新 extent 现算。
 OrientationViewState restoreOrientationState(OrientationSnapshot snapshot, StageMetrics metrics) {
   // 退化帧不抛错：Engine::resize 静默保留上一有效尺寸（Qt/src/Engine.cpp:841-843），
   // 这里对应地静默保留上一有效状态。StageMetrics.compute 对不可度量输入给出

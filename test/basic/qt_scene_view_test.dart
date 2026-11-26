@@ -7,10 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:rhine_music_database/basic/basic_models.dart';
 import 'package:rhine_music_database/basic/qt_scene_view.dart';
 
-/// Qt 场景视图的契约测试（NATIVE-RECOVERY-132R）。
-///
-/// 只测 Dart 侧能证明的东西：快照词表、身份键的"无选中即无键"、通道下发与去重、
-/// 原生动作按 viewId 分发。Qt 的旋转/归档几何不在这里假装验证——那要实机日志。
+/// Qt 场景视图的契约测试：快照词表、身份键、通道下发与去重、动作按 viewId 分发。
 SirenSong _song(String id, {String title = ''}) => SirenSong(
       id: id,
       title: title.isEmpty ? 'song-$id' : title,

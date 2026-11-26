@@ -36,15 +36,12 @@ Engine *g_engine = nullptr;
 FrameProfiler *g_profiler = nullptr;
 QString g_fontFamily = QStringLiteral("sans-serif");
 
-// 连续归档滚动（P0 #1 的 Qt → Flutter 方向）。
+// 连续归档滚动（Qt → Flutter 方向）。
 //
-// Qt 的 NativeScene 是原几何与惯性的唯一持有者；这里只把"轨道条目位置"的**增量**报给
-// Flutter，由 Flutter 的 listPosition 当窗口真值再投影回来。三类回执：start（记序列
-// 起点）、move（拖动/惯性中的连续增量）、commit（落行选中）。
+// Qt 的 NativeScene 持有几何与惯性，这里只把轨道条目位置的增量报给 Flutter，
+// 由 Flutter 的 listPosition 当窗口真值再投影回来。三类回执：start / move / commit。
 //
-// origin 在**起手时**捕获进这里，之后 ticker 每帧只读它。旧代码在 move/commit 时才读
-// 全局 origin，于是 A 起手的惯性在 B 的快照被应用之后会被贴成 B 的标签 —— 列表照收，
-// 画面就跳到 B 的位置上去。
+// origin 在起手时捕获，ticker 每帧只读它；到 move 再读全局 origin 会把 A 的惯性贴成 B。
 RhineEmbedded::ScrollGesture g_gesture;
 QTimer *g_scrollTicker = nullptr;
 // 反回声：刚由我们报出去的位置，Flutter 会原样投影回来。若把它当外部指令再落到轨道上，
@@ -223,10 +220,7 @@ void emitSceneAction(const QString &action, const ProducerOrigin &origin)
     QJniEnvironment env;
     if (!env.isValid())
         return;
-    // QJniEnvironment::findClass() 返回的是**全局**引用（Qt 自己缓存它，跨线程复用）。
-    // 对全局引用调 DeleteLocalRef() 会被 ART 判成 "expected reference of kind Local but
-    // found Global" 并直接 SIGABRT —— 07:17:25 真机在第一次 pointerdown 就走到了这里，
-    // 整进程崩溃。所以这里既不删除它，也不假设它的生命周期归调用方。
+    // findClass() 返回全局引用，对它 DeleteLocalRef 会让 ART 直接 abort。
     jclass viewClass = env.findClass("org/qtproject/qt/android/RhineQtViews");
     if (!viewClass)
         return;
@@ -272,12 +266,9 @@ void emitScroll(const char *phase, double delta, const ProducerOrigin &origin)
 
 void scrollTick();
 
-// 选中条目落在 8 个物理行里的哪一行：窗口基址是 (round(pos)/8)*8，所以槽位就是
-// round(pos) % 8（与 Dart 侧 qtSceneCellsOf/qtSceneRowOfCell 的基址完全一致）。
-// 绝对场景行：轨道条目 item 的卡片在 NativeScene 里是 cell.row = 12 + item
-// （cellPosition 的 z = (row-15.5)*0.62 与投影的 -2.17-(row-15.5)*0.62 同一个坐标系）。
-// 早期这里用 `12 + pos%8` 把 actor 钉在 item∈[0,7]，导致静止 0.5s 后轨道被回吸到
-// 8 行窗口（审查 '）。
+// 选中条目落在 8 个物理行里的哪一行：槽位 = round(pos) % 8，与 Dart 侧基址一致；
+// 绝对场景行 = 12 + item（cellPosition 与投影同一坐标系）。用 `12 + pos%8` 会把 actor
+// 钉在 8 行窗口里。
 int absoluteRowFor(double pos)
 {
     if (!std::isfinite(pos))
@@ -400,22 +391,10 @@ void applySceneState(const QString &json, const ProducerOrigin &origin)
         applied = true;
     }
 
-    // index 是 Flutter 列表行号；Qt 归档是 5 列 × 8 槽、索引域 0..39。
-    // 行号 >39 时**不取模映射**：那会把第 41 行的歌高亮到第 1 行卡片上，而 key 指向的
-    // 却是另一首歌（高亮与封面身份互相矛盾）。此时只换封面身份，不动选中。
-    // index 是 Flutter 列表行号，Qt 侧用 fileLocation(index) 落到本列的真实行
-    // （cell{ lane, 12+row }）。40 只是占位素材的槽位数，不是曲目域：塞壬有 936 首，
-    // 早先的 `index < 40` gate 会让第 41 行之后的选中整条丢掉。
-    // 手势进行中（手指按着、或 3D 惯性还在滑）时，Flutter 发来的 index/pos 是本轮拖动的
-    // **回声**：把它回灌给 scene.select() 会走 !m_navigating 分支 -> resetPointer() 直接把
-    // 捕获打断，用户表现为"按着拖一下就没反应了"（真机日志：RHINE_QT_RESET why=select
-    // captured=1 browsing=1 出现在拖动中途）。所以手势期间只记数值，动画由 NativeScene
-    // 自己驱动；松手 commit 之后再来的一帧才是权威位置。
-    // 真正的"换人"才退休旧手势（审查 M2）：视图换人、或同一视图的交互代次变了（= 集合
-    // 被替换：换目录/换所属/窗口集合真的变了）时，旧的原生手势状态与回声标记都属于上一份
-    // 画面，必须在应用 B 之前整段清掉——否则 B 的权威 index/pos 会被当成 A 的回声压下去，
-    // 旧 ticker 还会继续往 B 的选中与回声标记上写。**普通滚动帧不在此列**：同一 origin 的
-    // pos/cells/画质更新必须保住合法的拖动与惯性（不许每帧换代次杀掉惯性）。
+    // index 是 Flutter 列表行号，Qt 用 fileLocation(index) 落到本列真实行；>39 不取模映射。
+    // 手势进行中的 index/pos 是拖动回声，回灌会打断捕获；松手 commit 之后才是权威位置。
+    // 「换人」才退休旧手势：换视图，或同一视图的交互代次变了。
+    // 普通滚动帧不在此列，必须保住合法的拖动与惯性。
     const ApplyGesturePlan plan = planApply(g_gesture, g_originLedger, origin);
     if (plan.retireGesture) {
         if (g_scrollTicker)
@@ -476,12 +455,8 @@ void applySceneState(const QString &json, const ProducerOrigin &origin)
             scene.projectArchiveScroll(pos, lane);
             applied = true;
         }
-        // 有界诊断（只在 pos/lane 真的变化时打印）：这是"列表窗口真值 → 3D 轨道"的
-        // 可复现凭据，槽位与 Dart 侧 cells 用同一个基址。
-        // 有界诊断：打出轨道的**绝对行**与 archiveTrackItem（真值），不再打 pos%8。
-        // track 就是 m_rail 的线性读出（`NativeScene::archiveTrackItem()` =
-        // `(-rail - 2.17)/0.62 + 15.5 - 12`），所以 rail 不需要再单开一条日志：
-        // 反解 rail = -((track - 3.5) * 0.62 + 2.17)，"停手 1s 后是否回弹"看 track 是否守住即可。
+        // 有界诊断（只在 pos/lane 变化时打印）：打出轨道的绝对行与 archiveTrackItem 真值。
+        // rail 可由 track 反解，不必另开日志；停手后看 track 是否守住即可判断回弹。
         const int row = absoluteRowFor(pos);
         if (row != g_windowSlot) {
             g_windowSlot = row;
@@ -685,10 +660,7 @@ void applySceneState(const QString &json, const ProducerOrigin &origin)
         g_gesture.active() || (g_listMovedAtMs != 0 && nowMs - g_listMovedAtMs <= 450);
     engine->projectEmbeddedCells(cells, collectionContextFor(origin), rolling);
 
-    // 应用完必须自己唤醒一帧：引擎休眠（m_sceneSleeping）时 setMode("detail") 只是把
-    // 目标值改了，过渡一帧都不会跑。真机现场：09:03:43 收到 mode=detail 并返回 applied，
-    // 但之后没有任何一帧，屏幕还停在上一次 archive 画面（盘面/封面当然看不到）。
-    // 早先"能进详情"是碰巧：新封面异步下载回调里顺手把 m_sceneSleeping 清了。
+    // 引擎休眠时 setMode 只改目标值、不跑过渡，应用后必须自己唤醒一帧。
     if (applied) {
         engine->wake(Engine::WakeSource::Input);
     }
@@ -745,12 +717,8 @@ void destroySceneView(quint64 sceneEpochToken = 0)
     }
     view->hide();
     view->deleteLater();
-    // 同步把 DeferredDelete 排空：调用方（Java 的 onDetachedFromWindow）返回后 Android 就可能
-    // 释放 Surface，如果 QQuickWindow 还活着，渲染线程会在已销毁的 mutex 上 queueBuffer
-    // （真机 Abort: "FORTIFY: pthread_mutex_lock called on a destroyed mutex"，栈经
-    //  Surface::hook_queueBuffer ← QueuePresentKHR ← QRhi::endFrame）。这里就地析构，
-    // QQuickWindow 的析构会与渲染线程同步，返回值即代表窗口已不存在。
-    // 只排空这一个窗口的事件：进程级 flush 会把别人的 DeferredDelete 也提前执行。
+    // 同步排空这一个窗口的 DeferredDelete：调用方返回后 Surface 可能被释放，
+    // 窗口还活着会让渲染线程在已销毁的 mutex 上 present。
     QCoreApplication::sendPostedEvents(view, QEvent::DeferredDelete);
     qInfo("RHINE_QT_EMBEDDED_SCENE_DESTROYED");
 }
@@ -791,14 +759,8 @@ void createSceneView(const QJniObject &javaView, jlong parentWindowReference, ji
     if (Engine *engine = RhineEmbedded::engine()) {
         engine->setWindow(view);
         view->installEventFilter(engine);
-        // 拾取选中回传 Flutter 的通道已经接好（RhineQtViews.emitSceneAction →
-        // MethodChannel('rhine.music/qt_scene').action → QtSceneActions.onAction），
-        // 但**暂时不发**任何动作：场景里的槽位来自 Assets/android-3d/slots.json 的
-        // 40 条占位记录（columns = 搜索结果/喜欢的歌曲/我的歌单/收藏歌单/收藏专辑，
-        // records 全是 "音乐槽位"），没有 Siren 曲目身份，而曲库权威在 Flutter。
-        // 早先发 "music:index:<i>" 会被 HUD 当成列表下标（basic_app.dart 的
-        // music:index 分支），越界就弹“预览中尚未实现”，属于假映射。
-        // 真正的动作词表待后续确定（需要能表达“归档槽位”而不是曲目下标）。
+        // 拾取选中回传的通道已接好，但暂时不发动作：场景槽位是 slots.json 的 40 条占位
+        // 记录，没有曲目身份，而曲库权威在 Flutter。发 "music:index:<i>" 是假映射。
         Q_UNUSED(engine);
     }
     // 性能面板停用：不再把 profiler 挂到内嵌场景窗口。
@@ -860,24 +822,13 @@ extern "C" JNIEXPORT void JNICALL
 Java_org_qtproject_qt_android_RhineQtView_destroyEmbeddedScene(JNIEnv *, jobject,
                                                                jlong sceneGeneration)
 {
-    // 不能阻塞：这条 JNI 会被 Java 的 UI 线程调用（视图摘除 / 宿主销毁），而 Qt 的
-    // Android QPA 在执行 UI 线程动作时是"Qt 线程等 UI 线程"的方向。UI 线程在这里
-    // BlockingQueuedConnection 等 Qt 线程 = 双向等待死锁（真机表现：Activity 销毁后
-    // 一声不响地挂住，随后输入派发超时被系统按 ANR 杀掉）。
-    // 改成排队执行，但**先同步停掉渲染**：SIGABRT
-    // "FORTIFY: pthread_mutex_lock called on a destroyed mutex" 是 QQuickWindow 在
-    // Surface 已释放后还 present 造成的，所以禁止 presenting 必须在拆 Surface 之前发生。
+    // 不能阻塞：UI 线程等 Qt 线程会与 Android QPA 形成双向死锁。
+    // 改为排队执行，但必须先同步停掉渲染，再拆 Surface。
     if (!qApp)
         return;
     const quint64 generation = static_cast<quint64>(sceneGeneration);
-    // 这里**不能**先判一次世代：create 也是排队进 Qt 线程的（上面 createEmbeddedScene），
-    // "Java 已经发出 create(gen)、Qt 线程还没排到这个 lambda"的窗口里 sceneEpoch().current()
-    // 还小于 gen，提前判会把这次 destroy 整段丢掉；而 Java 侧 retireScene() 已经把
-    // sceneGeneration 归零、不会重发 —— 排队的 create 随后照样执行，场景就建在一个已经
-    // detach 的 javaView 上无主存活（真机面：Surface 拆了还 present 的 SIGABRT，或窗口
-    // 摘除后仍在收输入的 ANR）。判定只放在排队 lambda 里：那时 create 一定已经跑完，
-    // 同一条事件队列是 FIFO，[create][destroy] 的顺序天然成立；旧世代的 destroy 在那里
-    // 仍会被 owns() 拒掉。
+    // 世代判定只放在排队的 lambda 里：那时 create 必然已执行完，事件队列是 FIFO。
+    // 提前判会把「create 已发出、尚未执行」窗口里的 destroy 丢掉，场景会无主存活。
     if (QThread::currentThread() == qApp->thread()) {
         destroySceneView(generation);
         return;
@@ -970,9 +921,7 @@ Java_org_qtproject_qt_android_RhineQtViews_nativePushScenePointer(
                       static_cast<unsigned long long>(RhineEmbedded::originLedger().commits()));
                 return;
             }
-            // 只有归档页的"浏览拖动"才是共享窗口的输入；详情页拖动是旋转唱片，属于
-            // 场景内部姿态，绝不能把它当成滚动量发给 Flutter（真机实测：详情页里拖一下
-            // 会算出上百行的位移，列表直接被甩飞）。
+            // 只有归档页的拖动算滚动量；详情页拖动是转唱片，不能发给列表。
             const bool browsing = engine->scene.mode() == QLatin1String("archive");
             const double before = engine->scene.archiveTrackItem();
             const int previousSelection = engine->scene.selection();
@@ -1022,13 +971,8 @@ Java_org_qtproject_qt_android_RhineQtViews_nativePushScenePointer(
                         RhineEmbedded::flushPendingSelection(engine);
                     }
                 }
-                // 别的所属的卡：3D 不能替列表决定"所属"。用户 06:19 的规则是所属只由
-                // 列表决定（拖动 3D 只能滚动当前所属），所以点到别层的卡时把选中还回去，
-                // 让 3D 与列表保持同一个窗口；08:59 真机证据：点到 lane=2 的卡会让
-                // 原生光标停在 lane 2，而列表还在 lane 3，两边就此不一致。
-                // 本次手势是不是一次"点选"：位移小于阈值才算。拖动松手**绝不能**回传
-                // 选中——那会让列表先跳到手指处那首歌、再被惯性落点拉回，用户实测就是
-                // "一定会原地跳动一次"，也是 P0#1 明文禁止的双消费。
+                // 别的所属的卡：点它把选中还回去，3D 与列表必须停在同一个窗口。
+                // 只有位移小于阈值才算点选；拖动松手不回传选中，否则列表会原地跳动一次。
                 const bool tapOnly = !(std::abs(after - g_gesture.base) > 1e-3);
                 // lane 只可能在 0..4（wrap(lane,5) 对负数会产生界外值），先夹再打包，
                 // 避免 (lane<<16) 负左移 UB 与越界身份。
@@ -1038,15 +982,9 @@ Java_org_qtproject_qt_android_RhineQtViews_nativePushScenePointer(
                     && engine->scene.selection() != previousSelection) {
                     engine->scene.select(previousSelection);
                 }
-                // 只要真的拾取到格子就回传身份：不再用 selection 差值判定。NativeScene 的
-                // tap 走 select(fileAt(cell))，那个整数是 8 环绕的占位槽（0..39），同列相隔
-                // 8 行的两次点击会相等 → 第二次点选静默无响应（审查 S9）。
-                // 详情页把唱片转到阈值以外 → 请求切到相邻一张（不自动播放，切哪张由
-                // Dart 的列表真值决定）。角度随即复位，避免停在一个偏着的姿态上。
-                // 只在真正的 pointerup 上判定：pointercancel / lostpointercapture 是
-                // "手势被取消"（旋屏、重挂、PlatformView 重建），那时用户没有"转到底"的
-                // 意图，切歌就是越界。resetPointer 不清 m_targetRotation，所以被取消的手势
-                // 仍会读到超阈值的角度。
+                // 只要真的拾取到格子就回传身份：选中差值判定会被 8 环绕的占位槽骗过。
+                // 详情页唱片转过阈值就请求切相邻一张（不自动播放，切哪张由 Dart 决定）。
+                // 只在 pointerup 上判定；cancel 是手势被取消，用户没有切歌意图。
                 if (!browsing && engine->scene.mode() == QLatin1String("detail")
                     && eventType == QLatin1String("pointerup")) {
                     const double rotation = engine->scene.rotationTarget();

@@ -168,7 +168,7 @@ void main() {
       final int minSdk = _int(apk, 'minSdk', label: 'apk');
       final int targetSdk = _int(apk, 'targetSdk', label: 'apk');
       expect(targetSdk, greaterThanOrEqualTo(minSdk));
-      // 冻结实测值，防止"格式通过但产物被换掉"。
+      // 冻结期望值，防止"格式通过但产物被换掉"。
       expect(minSdk, 28);
       expect(targetSdk, 36);
     });

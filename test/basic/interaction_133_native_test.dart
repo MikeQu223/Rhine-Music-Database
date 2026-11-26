@@ -483,8 +483,7 @@ void main() {
         height: 1080,
         portrait: false,
       );
-      // 手势层按真机 android 的 16 单位触控余量算，测试用的矩形必须同宽，
-      // 否则会把"其实被 16px 余量盖住"的点当成自由区。
+      // 手势层按 android 的 16 单位触控余量算，测试矩形必须同宽。
       final HitLayer layer = HitLayer(
         geometry: const StageGeometry(logicalWidth: 1920.0, logicalHeight: 1080.0),
         android: true,

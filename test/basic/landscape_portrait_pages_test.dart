@@ -33,10 +33,8 @@ void main() {
   );
   final BasicGlyphPorts ports = _realPorts();
 
-  // 横屏的「我的音乐」是**收藏列的模态弹层**（Qt `NativeHudModal.cpp:163-218` 的
-  // 遮罩 + 836 面板），不是把竖屏窄栏塞进 1080 骨架。2026-11-25 起它和
-  // `discover` / `playlist-picker` 一样放进 `discoverModalBounds` 的外框：
-  // 遮罩铺满舞台、纸底 1260×836、整页内容用 `_HudSink.shifted` 平移进去。
+  // 横屏的「我的音乐」是收藏列的模态弹层（遮罩 + 836 面板），不是把竖屏窄栏塞进 1080 骨架：
+  // 与 discover / playlist-picker 一样放进 `discoverModalBounds` 的外框。
   bool hasMask(BasicHudFrame frame) => frame.commands.any((List<Object?> c) =>
       c.length >= 6 && c[0] == 'fill' && (c[1] as List<Object?>)[3] == 0.42);
 

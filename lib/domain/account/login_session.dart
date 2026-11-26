@@ -1,21 +1,7 @@
-/// Qt 账号登录域（MusicAccount.cpp / MusicLibrary.h / MusicApi.cpp）的 Dart 移植。
+/// Qt 账号登录域（MusicAccount / MusicLibrary / MusicApi）的 Dart 移植。
 ///
-/// 对应 Qt 行号（1:1 契约）：
-/// - 六阶段 loginPhase：MusicAccount.cpp:357 idle、:542 preparing、:588 waiting、
-///   :654 confirming、:515 complete、:311/:465 failed。
-/// - 六路径：:202 provider 白名单、:279/:414/:446 loginMethod、:201 kugouEdition、:562-564 QQ channel。
-/// - 轮询与超时：:625-667（:626 上限 300、:631 schedule(1000)、:642 缺省码 800、:665 允许码）。
-/// - 世代失效：:340-341、:352-354、:565、:630-634（MusicApi.cpp:90 的 valid 守卫）。
-/// - 取消屏障：:343-379。
-/// - 冷却读秒：:299-302、:308-341。
-/// - 失败文案与诊断白名单：MusicAccount.cpp:9-58、MusicApi.cpp:26-58。
-///
-/// `status` 字段对应 Qt 的 `MusicLibrary::loginStatus`（账号面板文案）；Qt 里图书馆级的
-/// `MusicLibrary::status`（例如"已登录，可读取我的音乐"）属于列表域，不在本文件承担。
-///
-/// 依赖只通过注入端口（transport/scheduler/qrRenderer/credentials/effects）引入，
-/// 不 import bridge 或平台实现，便于在无设备环境下静态审查与替换。
-///
+/// 六阶段 loginPhase、六条登录路径、轮询与超时、世代失效与取消屏障、冷却读秒都按 Qt 语义。
+/// `status` 对应 Qt 的 loginStatus；依赖只通过注入端口引入，便于静态审查。
 library;
 
 import 'dart:async';

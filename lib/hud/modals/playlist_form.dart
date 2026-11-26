@@ -1,50 +1,10 @@
-// lib/hud/modals/playlist_form.dart
+// 个人库「创建/重命名歌单」写操作浮层（playlist-form）。
 //
-//  / PAGE-LIBRARY —— 个人库「创建/重命名歌单」写操作浮层（playlist-form）。
-// 计划映射：docs/superpowers/plans/2026-11-09-qt-to-flutter-parity-plan.md:630-633（ 第 1 条
-// 「创建歌单」写操作 + 表格写路径）。
-// 本文件属于 public-only 提交 "feat(hud): port Qt library and playlist modals"；
-// login panel / login QR 不在本提交，也不被本文件 import。
+// 几何与文案逐值取自 Qt（Overlay.qml 的 formFields、NativeHudModal 的面板头、
+// NativeHud.cpp 的 modalBounds）；竖屏是新增的响应式排布，action 串与横屏一致。
 //
-// 基线 8ed3067b0812eb2612f7841ec127a6e8ca93231b 上的 Qt 源证据（逐字，只读引用）：
-//   Qt/qml/Overlay.qml:355-484        共用编辑浮层 formFields（字段/最大长度/键盘/返回/Escape/提交）
-//   Qt/src/NativeHudModal.cpp:26-51   modalTitle("playlist-form") = "PLAYLIST EDITOR"
-//   Qt/src/NativeHudModal.cpp:52-75   modalSubtitle("playlist-form") = "编辑我的歌单"
-//   Qt/src/NativeHudModal.cpp:198-202 弹层头/返回按钮/标题/副标题几何
-//   Qt/src/NativeHudModal.cpp:240-243 playlist-form 面板：标签/提示/状态行
-//   Qt/src/NativeHud.cpp:140-159      modalBounds：min(1260, width-100)、left 居中、y=122、高 836
-//   Qt/src/NativeHud.cpp:175-221      state()：inputX/inputWidth/modalOffset/modalOpacity/formKind/formPID
-//   Qt/src/NativeHud.cpp:48-79        fit()/limited()：状态行按宽度截断并追加省略号
-//   Qt/src/NativeHud.cpp:102-108      hit()：hits 六字段原序 x/y/width/height/action/label
-//   Qt/src/NativeHudLibrary.cpp:60-72 libraryToolbarActionWidth()：modal != "saved" 时为 0
-//   Qt/src/NativeHudLibrary.cpp:95-117 创建/刷新按钮几何与 action 串
-//   Qt/src/NativeHudLibrary.cpp:6-18  LibraryInset=53 / LibraryBarTop=172 / LibraryBarHeight=66
-//   Qt/src/NativeHudMusic.cpp:314-317 "music:create-playlist" 入口（formKind=create，formPID 清空）
-//   Qt/src/NativeHudMusic.cpp:346-351 "music:rename-playlist" 入口（canEditPlaylist 门）
-//   Qt/src/NativeHudController.cpp:64-69  isLocal() 时 playlist-form 不可打开
-//   Qt/src/NativeHudController.cpp:165-180 form()：playlist-form + fields["name"] → playlistForm()
-//   Qt/src/NativeHudController.cpp:913-922 全局 Escape → "close-modal"
-//   Qt/src/Engine.cpp:867-876          submitForm()：非 login 时 values = {"name": account}
-//   Qt/src/MusicMutation.cpp:410-420   校验：trimmed、maximum=qq?20:100、空/超长 → 状态文案
-//   Qt/src/MusicMutation.cpp:421-455   siren 本地歌单 create/rename 与状态文案
-//   Qt/src/MusicMutation.cpp:457-465   重命名所有权门「只能编辑自己创建的歌单」
-//   Qt/src/MusicMutation.cpp:466-493   写路由 /playlist/create 与 /playlist/name/update + 表格写回语义
-//   Qt/src/MusicMutation.cpp:186-200   远端 mutate 串行化门（!canMutate || writeLoading || uid.isEmpty()）；
-//                                      只在 :421-455 siren 分支与 :457-465 rename 所有权门之后执行，
-//                                      不是 playlist-form 的通用入口门。
-//
-// 本文件自包含 + 可注入：只依赖 flutter/material、flutter/services、dart:math；不 import 任何
-// 本树尚不存在的跨模块（lib/hud/protocol/**、hits/input 层、library_modal）。表格刷新只暴露
-// 端口契约（SavedPlaylistTablePort），不在本文件实现表格，也不提供任何假数据兜底。
-//
-// 竖屏：横屏几何逐值取自 Qt 源；竖屏是新增响应式全语义，源码无竖屏像素证据，相关段落已逐处标注。
-//
-// 弹层框架（遮罩 + 面板底 + RHINE LAB 行 / 标题 / 副标题 / "← 返回"）由本层的
-// `_shell` 绘制（Qt/src/NativeHudModal.cpp:163-202）。历史注释曾把这段推给
-// lib/hud/pages/chrome.dart，但 chrome 从未接 `playlist-form`（HUD 的 modal 分发
-// 里没有这一支），真机上表单只剩标签与输入框浮在资料库上；2026-11-25 收回本层。
-// 表单内容（标签/字段/提示/状态/提交）也归本层；字段的 Escape 仍按 Overlay.qml:406
-// 发 close-modal 动作（框架里的「← 返回」另有自己的命中，二者语义相同）。
+// 自包含 + 可注入：只依赖 flutter/material 与 services；表格刷新走 SavedPlaylistTablePort，
+// 不内置假数据。弹层框架（遮罩/面板底/标题/返回）由本层 `_shell` 绘制。
 
 import 'dart:math' as math;
 
@@ -429,11 +389,8 @@ class PlaylistFormLayout {
     );
   }
 
-  /// 竖屏响应式新增几何。
-  ///
-  /// 无 Qt 竖屏像素证据：Qt 只在横屏 1080 舞台归一化（Overlay.qml:22），不存在竖屏帧。
-  /// 这里仅新增响应式排布（全宽字段、全宽提交、纵向延伸），语义/命中/action 串与横屏完全一致；
-  /// 不得据此倒推为 Qt 像素，也不得被当作取证画面。scale 恒为 1（竖屏用逻辑像素直排）。
+  /// 竖屏响应式新增几何：Qt 只在横屏归一化，没有竖屏帧。
+  /// 这里只新增排布，语义/命中/action 串与横屏一致；scale 恒为 1。
   factory PlaylistFormLayout.portrait({required Size viewport}) {
     const double margin = 16;
     const double contentInset = 16;
@@ -811,11 +768,8 @@ class _PlaylistFormLayerState extends State<PlaylistFormLayer> {
         child: Stack(
           key: PlaylistFormKeys.layer,
           children: <Widget>[
-            // 弹层框架（遮罩 / 面板底 / RHINE LAB 行 / 标题 / 副标题 / 「← 返回」）。
-            // 文件头曾写「由 chrome 层统一绘制」，但 chrome 从未接 `playlist-form`
-            // （HUD 的 modal 分发里没有这一支），真机上只剩标签与输入框浮在资料库
-            // 上、没有 836 面板也没有返回键（审计 §2.3 / 用户报第 7 条）。这里按
-            // layout 自带的 Qt 几何（NativeHudModal.cpp:163-202）在本层画齐。
+            // 弹层框架（遮罩 / 面板底 / 标题 / 返回）：chrome 从未接 `playlist-form`，
+            // 这里按 layout 自带的 Qt 几何画齐，否则表单只剩标签与输入框浮在资料库上。
             ..._shell(layout, factor),
             // 本层只画表单内容。
             _text(layout.fieldLabel, view.nameLabel, factor),
