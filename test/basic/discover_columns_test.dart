@@ -8,6 +8,7 @@
 library;
 
 
+import 'dart:math' as math;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:rhine_music_database/hud/portrait/portrait_canvas.dart';
 import 'package:rhine_music_database/hud/portrait/portrait_discover_page.dart';
@@ -115,4 +116,65 @@ void main() {
       }
     }
   });
+
+/// 「▶ 全部」必须贴整张卡片的右缘（用户 2026-11-26：按钮不该只对齐封面的右侧，
+/// 否则标题可用宽只有 `coverSize - 40`，长标题一律被截成「二次元小…」）。
+test('播放全部按钮贴卡片右缘，标题可用宽变宽', () {
+  for (final double width in <double>[393, 586, 900]) {
+    final PortraitCanvas c = _canvas(gridWidth: width, height: 1400);
+    final List<PortraitDiscoverEntry> entries = <PortraitDiscoverEntry>[
+      PortraitDiscoverEntry(index: 0, title: '精选', artist: '艺人'),
+      for (int i = 1; i < 5; i += 1)
+        PortraitDiscoverEntry(
+          index: i,
+          title: '条目 $i',
+          artist: '艺人 $i',
+          kind: 'playlist',
+        ),
+    ];
+    paintPortraitDiscoverPage(
+      c,
+      tabs: const <PortraitDiscoverChip>[
+        PortraitDiscoverChip(
+          label: '推荐歌单',
+          action: '${portraitDiscoverTabPrefix}playlists',
+          selected: true,
+        ),
+      ],
+      tab: 'playlists',
+      entries: entries,
+    );
+
+    final int columns = portraitDiscoverColumnsForWidth(width);
+    final double tileStep = (width - 40) / columns;
+    final double cardWidth = tileStep - 15;
+    final double coverSize = math.max(72, cardWidth - 25);
+
+    // 第二个条目（index=1）落在第一列，取它的播放命中矩形。
+    final List<HudHit> plays = <HudHit>[
+      for (final HudHit hit in c.hits)
+        if (hit.action == '${portraitPlayDiscoverPrefix}1') hit,
+    ];
+    expect(plays, hasLength(1), reason: '$width 宽时列 1 的「▶ 全部」应恰好一个命中');
+    final HudHit play = plays.single;
+    final double tileLeft = 20;
+    expect(play.x + play.width, closeTo(tileLeft + cardWidth, 1.5),
+        reason: '$width 宽：命中右缘必须与卡片右缘对齐（cardWidth $cardWidth）');
+
+    // 标题的绘制宽度必须比「只按封面算」更宽，且不被封面右缘截住。
+    final List<List<Object?>> texts = <List<Object?>>[
+      for (final List<Object?> command in c.commands)
+        if (command[0] == 'text') command,
+    ];
+    final List<Object?> title = texts.firstWhere(
+      (List<Object?> command) => command[1] == '条目 1',
+      orElse: () => <Object?>[],
+    );
+    expect(title, isNotEmpty, reason: '$width 宽：标题必须画出来（不能被截成空）');
+    final double playTextLeft = play.x + 4;
+    final double titleUsed = math.max(48, playTextLeft - 6 - tileLeft);
+    expect(titleUsed, greaterThan(coverSize - 40 + 1),
+        reason: '$width 宽：标题可用宽应超过旧的 coverSize-40 口径');
+  }
+});
 }

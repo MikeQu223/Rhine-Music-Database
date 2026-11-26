@@ -192,17 +192,24 @@ double paintPortraitDiscoverPage(
         c.image(tile.image, Rect.fromLTWH(x, top, coverSize, coverSize));
       }
       c.text(_pad(i + 1), x + coverSize + 6, top + 8, size: 8, width: 19, color: c.muted);
+      // 「▶ 全部」贴**整张卡片的右缘**（不是封面右缘）：原先把按钮压在封面宽度以内，
+      // 标题可用宽只有 `coverSize - 40`，长标题一律截成「二次元小…」；卡片右侧那
+      // 25 宽的编号竖条本来就是空的，把按钮挪过去的同一行既对齐又给文字让位。
+      final double playWidth = c.measure('▶ 全部', 9);
+      final double playRight = x + cardWidth;
+      final double playLeft = playRight - playWidth;
+      final double titleLimit = math.max(48, playLeft - 6 - x);
       c.text(tile.title, x, top + coverSize + 9, size: 12,
-          width: math.max(60, coverSize - 40), weight: 'demibold');
-      c.text(tile.artist, x, top + coverSize + 29, size: 9, width: coverSize, color: c.muted);
+          width: titleLimit, weight: 'demibold');
+      c.text(tile.artist, x, top + coverSize + 29, size: 9, width: cardWidth, color: c.muted);
       final Rect tileRect = Rect.fromLTWH(x, top, cardWidth, coverSize + 42);
       final Rect? visible = _intersect(tileRect, Rect.fromLTWH(20, 130, w - 40, contentBottom - 130));
       if (visible != null && visible.height >= 8) {
         c.hit(visible, '$portraitDiscoverItemPrefix$i', tile.title);
         if (tile.isPlaylist) {
-          c.text('▶ 全部', x + coverSize - 30, top + coverSize + 10, size: 9, width: 55);
+          c.text('▶ 全部', playLeft, top + coverSize + 10, size: 9, width: playWidth + 2);
           c.hit(
-            Rect.fromLTWH(x + coverSize - 34, top + coverSize, 59, 42),
+            Rect.fromLTWH(playLeft - 4, top + coverSize, playWidth + 4, 42),
             '$portraitPlayDiscoverPrefix$i',
             '播放全部',
           );
