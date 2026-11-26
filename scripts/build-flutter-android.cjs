@@ -52,21 +52,108 @@ function qtVersion(prefix) {
     return match ? match[1] : '';
 }
 
-// 宿主侧的 qmlcachegen / moc / rcc 必须与 Android kit 同版本：qmlcachegen 在生成
-// AOT lookup 表时会把 kit 版本的 ABI 结构写死进 .cpp。发行版滚动更新到 6.12.1 后，
-// 它生成的 Type{...QTypeRevision()...} 与 6.12.0 头文件里的 Type{...IsComposite...}
-// 字段顺序不一致，编译期直接报 "no viable conversion from 'QTypeRevision' to
-// 'IsComposite'"。所以 kit 与宿主版本不同时，优先用 output/dependencies/qt-host-<kit 版本>
-// 里钉住的同版本工具（只放 cmake 工具包与 qmlcachegen 运行库，几十 MB）。
+// 宿主侧的 qmlcachegen 必须与 Android kit 同版本：它生成 AOT lookup 表时会把 kit
+// 版本的 ABI 结构写死进 .cpp。发行版滚动更新到 6.12.1 后，生成的
+// Type{...QTypeRevision()...} 与 6.12.0 头文件里的 Type{...IsComposite...} 字段顺序
+// 不一致，编译期直接报 "no viable conversion from 'QTypeRevision' to 'IsComposite'"。
+// 所以 kit 与宿主版本不同时，优先用 output/dependencies/qt-host-<kit 版本> 里钉住的
+// 同版本工具。那个前缀按发行包布局放，root 下有 usr/ 一层。
 const kitVersion = qtVersion(kit);
 const hostVersion = qtVersion(hostQt);
-const pinnedHostTools = kitVersion ? path.resolve(`output/dependencies/qt-host-${kitVersion}`) : '';
+const pinnedBase = kitVersion ? path.resolve(`output/dependencies/qt-host-${kitVersion}`) : '';
+const pinnedRoot = pinnedBase ? path.join(pinnedBase, 'usr') : '';
+
+// 钉住前缀按发行包布局放（root 下多一层 usr/）。它可能已经存在，也可能是新机器上
+// 第一次构建——这时从 pacman 缓存里的同版本包现解（qt6-base + qt6-declarative）。
+// 缓存里没有就明确报错并给出可复制的命令，绝不静默回退到版本不一致的宿主工具。
+function ensurePinnedHostTools(base, root, version) {
+    const marker = path.join(root, 'lib/cmake/Qt6QmlTools/Qt6QmlToolsConfig.cmake');
+    if (fs.existsSync(marker)) {
+        return true;
+    }
+    const cache = process.env.RHINE_PACMAN_CACHE || '/var/cache/pacman/pkg';
+    // 只解真正需要的东西：qt6-declarative 的整个 usr/lib/qt6（含 qmlcachegen、
+    // qmlaotstats 与 qml 模块）与工具 cmake 包；qt6-base 的三个 Tools 包。
+    // qmlcachegen 运行时依赖的 Qt6Core/Qml/Network 实体挑最常需的几条。
+    const packages = [
+        [
+            'qt6-declarative',
+            'usr/lib/qt6',
+            'usr/lib/cmake',
+            'usr/lib/libQt6Qml.so.6.12.0',
+            'usr/lib/libQt6QmlCompiler.so.6.12.0',
+            'usr/lib/libQt6QmlModels.so.6.12.0',
+            'usr/lib/libQt6QmlWorkerScript.so.6.12.0',
+            'usr/lib/libQt6QmlMeta.so.6.12.0',
+            'usr/lib/libQt6QmlLocalStorage.so.6.12.0',
+        ],
+        [
+            'qt6-base',
+            'usr/lib/cmake/Qt6CoreTools',
+            'usr/lib/cmake/Qt6GuiTools',
+            'usr/lib/cmake/Qt6WidgetsTools',
+            'usr/lib/libQt6Core.so.6.12.0',
+            'usr/lib/libQt6Gui.so.6.12.0',
+            'usr/lib/libQt6Network.so.6.12.0',
+        ],
+    ];
+    const archives = [];
+    for (const [name, ...members] of packages) {
+        const prefix = `${name}-${version}-`;
+        const found = fs.existsSync(cache)
+            ? fs
+                  .readdirSync(cache)
+                  .filter((file) => file.startsWith(prefix) && file.endsWith('.pkg.tar.zst'))
+                  .sort()
+                  .pop()
+            : undefined;
+        if (!found) {
+            return false;
+        }
+        archives.push({ archive: path.join(cache, found), members });
+    }
+    fs.mkdirSync(base, { recursive: true });
+    // 包内路径已经是 usr/lib/...，解到 base（= <pin> 根）才会落成 <pin>/usr/lib/...。
+    for (const { archive, members } of archives) {
+        const result = spawnSync('tar', ['-xf', archive, '-C', base, ...members], { stdio: 'inherit' });
+        if (result.status !== 0) {
+            return false;
+        }
+    }
+    // qmlcachegen 的 RUNPATH 是 $ORIGIN/../（即 <root>/lib），发行包只装
+    // libQt6X.so.6.12.0 这样的实体名，补上 .so.6 / .so 两条软链它才找得到。
+    const libs = path.join(root, 'lib');
+    for (const file of fs.readdirSync(libs)) {
+        const match = /^(libQt6[^.]+\.so)\.(\d+\.\d+\.\d+)$/.exec(file);
+        if (!match) {
+            continue;
+        }
+        const soBase = match[1];
+        const abi = `${soBase}.${match[2].split('.')[0]}`;
+        for (const link of [abi, soBase]) {
+            const target = path.join(libs, link);
+            if (!fs.existsSync(target)) {
+                fs.symlinkSync(file, target);
+            }
+        }
+    }
+    return fs.existsSync(marker);
+}
+
 const pinnedToolsUsable =
-    hostVersion !== kitVersion &&
-    pinnedHostTools !== '' &&
-    fs.existsSync(path.join(pinnedHostTools, 'lib/cmake/Qt6QmlTools/Qt6QmlToolsConfig.cmake'));
+    hostVersion !== kitVersion && pinnedRoot !== '' && ensurePinnedHostTools(pinnedBase, pinnedRoot, kitVersion);
+if (kitVersion !== '' && hostVersion !== kitVersion && !pinnedToolsUsable) {
+    throw new Error(
+        `宿主 Qt ${hostVersion} 与 Android kit ${kitVersion} 版本不一致，而钉住的同版本工具不可用。\n` +
+            `  qmlcachegen 换版本会让 Qt native 编译失败（no viable conversion from 'QTypeRevision'）。\n` +
+            `  修法：把 qt6-base / qt6-declarative 的 ${kitVersion} 发行包放进 pacman 缓存\n` +
+            `  （默认 /var/cache/pacman/pkg，可用 RHINE_PACMAN_CACHE 指定），脚本会自动解到\n` +
+            `  ${pinnedBase}；或用 QT_ROOT_DIR 指向一个 ${kitVersion} 的宿主 Qt。`,
+    );
+}
+const hostTools = pinnedToolsUsable ? pinnedRoot : hostQt;
 if (pinnedToolsUsable) {
-    console.log(`宿主 Qt ${hostVersion || '未知'} 与 kit ${kitVersion} 不同版本，改用钉住的宿主工具：${pinnedHostTools}`);
+    console.log(`宿主 Qt ${hostVersion} 与 kit ${kitVersion} 不同版本，改用钉住的宿主工具：${pinnedRoot}`);
 }
 const buildDirectory = path.resolve(
     process.env.RHINE_QT_ANDROID_FLUTTER_BUILD_DIR || 'output/qt-android-flutter',
@@ -267,8 +354,7 @@ const environment = {
 run('node', ['scripts/build-android.cjs', '--prepare-only'], { env: environment });
 
 // 2) Qt native：只编宿主库，不产出纯 Qt APK。
-//    hostTools 是真正用来跑 moc/rcc/qmlcachegen 的前缀；默认就是 hostQt。
-const hostTools = pinnedToolsUsable ? pinnedHostTools : hostQt;
+//    hostTools 见上方：钉住时是 <pin>/usr，否则就是 hostQt。
 run(
     'cmake',
     [
@@ -281,15 +367,12 @@ run(
         `-DCMAKE_TOOLCHAIN_FILE=${path.join(kit, 'lib/cmake/Qt6/qt.toolchain.cmake')}`,
         `-DQT_HOST_PATH=${hostQt}`,
         `-DQT_HOST_PATH_CMAKE_DIR=${path.join(hostQt, 'lib/cmake')}`,
-        // 钉住同版本工具时，覆盖 CMake 从宿主 Qt 里找到的那几个 Tools 包。
-        // 只换 Qt6QmlTools（qmlcachegen 在这里）与 Core/Gui/Widgets（moc/rcc/uic）。
+        // 钉住同版本工具时，只覆盖 Qt6QmlTools（qmlcachegen/qmlaotstats 在这里）。
+        // Core/Gui/Widgets 的宿主工具（moc/rcc/uic）在 6.12.0 与 6.12.1 之间没有
+        // ABI 变化，继续用发行版那套；换掉它们反而要求压缩包里的每个工具
+        // （syncqt 等）都被解出来，install-qt 布局下会缺文件。
         ...(pinnedToolsUsable
-            ? [
-                  `-DQt6QmlTools_DIR=${path.join(hostTools, 'lib/cmake/Qt6QmlTools')}`,
-                  `-DQt6CoreTools_DIR=${path.join(hostTools, 'lib/cmake/Qt6CoreTools')}`,
-                  `-DQt6GuiTools_DIR=${path.join(hostTools, 'lib/cmake/Qt6GuiTools')}`,
-                  `-DQt6WidgetsTools_DIR=${path.join(hostTools, 'lib/cmake/Qt6WidgetsTools')}`,
-              ]
+            ? [`-DQt6QmlTools_DIR=${path.join(hostTools, 'lib/cmake/Qt6QmlTools')}`]
             : []),
         '-DQT_QMAKE_TARGET_MKSPEC=android-clang',
         '-DANDROID_ABI=arm64-v8a',
