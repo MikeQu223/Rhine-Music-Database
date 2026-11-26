@@ -1,0 +1,247 @@
+{
+  "version": 1,
+  "facts": [
+    {
+      "id": "holo-e489134f-0b2f-4dd2-ab5c-b452230f0741",
+      "content": "已完成的三批工作（Rhine-Music-Database, 分支 perf/lts，均未 push）：① 全链路性能报告 A01–A11 落地，12 个提交：A01 ee03a11、A05 ddf1a1c、A06 fd2053d、A09 8d847a6、A10 8ab5d28、docs e9e2a9b、A04 62dbf3a、A07 610ffdf、A02+A11 94eb82b（合并提交，A01 顺带落了 A11/A10 的共享接线）、A08 d16d176、A03 2260838、docs 4b01031；A12 只写实验门槛；构建 0 error、ctest 12/12，六个新提交各自 worktree 独立编译；记录在 docs/vulkan-igpu/07-render-optimization.md。新增开关（默认不改行为）：RHINE_LAYER_REVISION、RHINE_TEXTURE_PROBE、RHINE_TEXTURE_UPLOAD_BUDGET_MB（默认 8 MiB）、RHINE_MOTION_PROBE、RHINE_POST_PROBE、RHINE_RESOURCE_BUDGET_MB（默认 0 只告警）、RHINE_LAYER_SAFETY_FRAMES。② 关闭 FSR 插帧（未提交）：Qt/src/NativeHudModal.cpp:652-672 设置页「帧生成」行整块 #if 0（frameGenerationUi :448-470、调用点 :580 停用）、main.cpp:284-290 启动恒下发 RHINE_FG=off、RenderConfiguration.h:66-72 对 fg 键强制 \"off\"、NativeHudController.cpp:738-752 的 value==\"fg\" 分支只留骨架；保留 RHINE_FG=on 作逃生口；16 步 0 error、ctest 12/12。③ 快速滚动纹理准入 B01–B04（5 个提交，均未 push）：e8c4fcd B01 准入状态机（Qt/src/render/MusicTextureAdmission.h + Engine 焦点计时）、bddf2db B03 在途账本（Qt/src/render/CoverPrepBudget.h）、b879f06 B02 RhiScene 未准入不建标签/封面且不借用他曲纹理、7216b9d B03 取消不销毁热缓存并守并发上限、8d2537c B04 回归测试（Qt/tests/MusicTextureAdmissionChecks.cpp 54 断言）+ RHINE_TEXTURE_PROBE 扩展；逐提交 worktree 构建 0 error、qt_music_texture_admission_regression 与 qt_render_policy_regression 2/2 通过；计划见 docs/superpowers/plans/2026-10-30-scroll-texture-admission-handout.md。",
+      "category": "context",
+      "tags": [],
+      "entities": [
+        "off",
+        "fg",
+        "Rhine-Music-Database",
+        "A01",
+        "A11",
+        "A05",
+        "A06",
+        "A09",
+        "A10",
+        "A04",
+        "A07",
+        "A02",
+        "A08",
+        "A03",
+        "A12",
+        "RHINE_LAYER_REVISION",
+        "RHINE_TEXTURE_PROBE",
+        "RHINE_TEXTURE_UPLOAD_BUDGET_MB",
+        "MiB",
+        "RHINE_MOTION_PROBE",
+        "RHINE_POST_PROBE",
+        "RHINE_RESOURCE_BUDGET_MB",
+        "RHINE_LAYER_SAFETY_FRAMES",
+        "FSR",
+        "Qt",
+        "NativeHudModal",
+        "RHINE_FG",
+        "RenderConfiguration",
+        "NativeHudController",
+        "B01",
+        "B04",
+        "MusicTextureAdmission",
+        "Engine",
+        "B03",
+        "CoverPrepBudget",
+        "B02 RhiScene",
+        "MusicTextureAdmissionChecks"
+      ],
+      "trustScore": 0.6,
+      "importance": 3,
+      "createdAt": "2026-11-26T12:45:57.940Z",
+      "updatedAt": "2026-11-26T12:45:57.940Z"
+    },
+    {
+      "id": "holo-95b7cc81-954c-4a9a-80ec-b81f51b93625",
+      "content": "本仓库行为要求：除用户明确要求外不自行 git commit/push；构建用 `cmake --build output/qt-build -j$(nproc)`，C++ 测试用 `ctest --test-dir output/qt-build --output-on-failure`；每次构建后 `git restore --source=HEAD -- generated/`（FFX 着色器生成器每次构建重写 14 个 *.h 的 include 顺序/IndirectionTable 索引）；`npm test` 首步 scripts/check-repository.cjs 必然失败（Unexpected public documentation，白名单只允许 README.md、tools/perf/README.md），绕过时逐条跑 check-qt-project.py、check-music-upstream.cjs、ctest、audit-qt.py、check-packaged-app.cjs；不要用 GUI 方式跑 RhineMusicDatabase 取性能数据（弹窗 + 自动恢复网络播放 + CSV 不落盘）；hindsight 401 不可用，记忆写入用 mnemon_runtime_memory。",
+      "category": "context",
+      "tags": [],
+      "entities": [
+        "HEAD",
+        "FFX",
+        "IndirectionTable",
+        "Unexpected",
+        "README",
+        "GUI",
+        "RhineMusicDatabase",
+        "CSV"
+      ],
+      "trustScore": 1,
+      "importance": 5,
+      "createdAt": "2026-11-26T12:45:57.944Z",
+      "updatedAt": "2026-11-26T12:45:57.944Z"
+    },
+    {
+      "id": "holo-1ae9dec7-09fb-4f35-b340-d2ed9099c1a7",
+      "content": "Rhine-Music-Database 的 Git 提交铁律：用户禁止显式指定 Author 信息，必须沿用本机已有默认身份 Aibeto；工具作者选项留空或选 no 回退默认，不另行填写作者身份。",
+      "category": "context",
+      "tags": [],
+      "entities": [
+        "Rhine-Music-Database",
+        "Git",
+        "Author",
+        "Aibeto"
+      ],
+      "trustScore": 1,
+      "importance": 5,
+      "createdAt": "2026-11-26T12:45:57.944Z",
+      "updatedAt": "2026-11-26T12:45:57.944Z"
+    },
+    {
+      "id": "holo-2b4e8899-4432-43ae-876c-68fc62153704",
+      "content": "Rhine-Music-Database 的 `.agents/`（66G 控制面：227 个 git worktree、控制面报告/日志）已于 2026-11-19 删除；知识沉淀在 docs/flutter-migration/archive/2026-11-19-control-plane.md 与同目录 qt-flutter-state-2026-11-19.md，未提交补丁与未跟踪源码在 worktree-salvage-2026-11-19.tar.gz；`.gitignore` 不再忽略 `/.agents/`；252 个本地分支保留。feat/flutter 历史当天被 filter-branch 反复重写，同一 subject 的 commit hash 会变（65af97b→061300a→4beb444），定位提交要按 subject 不要按 hash。",
+      "category": "context",
+      "tags": [],
+      "entities": [
+        "Rhine-Music-Database"
+      ],
+      "trustScore": 0.6,
+      "importance": 3,
+      "createdAt": "2026-11-26T12:45:57.945Z",
+      "updatedAt": "2026-11-26T12:45:57.945Z"
+    },
+    {
+      "id": "holo-dfe14f08-b560-41c3-9bd3-ffb30737d539",
+      "content": "Rhine-Music-Database 构建/门禁配方（2026-11-26）：Flutter 构建 `export PATH=/home/aibeto/flutter/bin:$PATH` + `RHINE_QT_ANDROID_DEPLOY_DIR=$PWD/output/qt-android-flutter/Qt/android-build JAVA_HOME=$PWD/output/android-work/jdk/jdk-21.0.13+9 ANDROID_HOME=/home/aibeto/Android/Sdk ANDROID_SDK_ROOT=/home/aibeto/Android/Sdk flutter build apk --debug --target-platform android-arm64 --no-pub`（20–30s），再 `adb -s 526f6b6d install -r -t build/app/outputs/flutter-apk/app-debug.apk`（脚本 `/tmp/b2p.sh`，必须在仓库根目录执行）。Qt 侧改动要 `ninja -C output/qt-android-flutter` 增量重编。门禁是 `flutter analyze lib/` 0 error（约 97 issues 全为既有 info/warning）；`flutter test test/basic` 基线 `+700 -9`，9 条既有失败（`app_entry_test` 1、`hud_text_142_test` 5、`interaction_133_native_test` 2、`interaction_134_native_test` 1），逐条比对不算回归。",
+      "category": "context",
+      "tags": [],
+      "entities": [
+        "Rhine-Music-Database",
+        "Flutter",
+        "PATH",
+        "RHINE_QT_ANDROID_DEPLOY_DIR",
+        "PWD",
+        "Qt",
+        "JAVA_HOME",
+        "ANDROID_HOME",
+        "Android",
+        "Sdk ANDROID_SDK_ROOT",
+        "Sdk"
+      ],
+      "trustScore": 1,
+      "importance": 5,
+      "createdAt": "2026-11-26T12:45:57.945Z",
+      "updatedAt": "2026-11-26T12:45:57.945Z"
+    },
+    {
+      "id": "holo-e86129f0-85d7-4466-90c2-922368788662",
+      "content": "Rhine-Music-Database 竖屏迁移遗留（2026-11-20 核实）：①检索页仍缺 Qt compact 的 `02 SEARCH / 档案检索` 终端页头与时长/编号列（`lib/hud/portrait/portrait_pages_library.dart:157-265` 现用 `c.header('音乐检索', back: true)` + tab 行 + 「检索结果」行）；②插件系统的竖屏页（`lib/basic/basic_plugins_portrait.dart`）是唯一实现，横屏只有设置页里的入口行（`lib/basic/basic_settings_window.dart:52,75,226-228` 的 `pluginsEntry`），横屏插件页未做；③`docs/flutter-migration/acceptance/portrait.md` 仍是 11-10 的计划态（WAIT-CANDIDATE/WAIT-GOLDEN/DEVICE_BLOCKED，未执行、未取证），不代表当前实现状态。",
+      "category": "context",
+      "tags": [],
+      "entities": [
+        "音乐检索",
+        "Rhine-Music-Database",
+        "Qt",
+        "SEARCH",
+        "WAIT-CANDIDATE",
+        "WAIT-GOLDEN",
+        "DEVICE_BLOCKED"
+      ],
+      "trustScore": 0.6,
+      "importance": 3,
+      "createdAt": "2026-11-26T12:45:57.946Z",
+      "updatedAt": "2026-11-26T12:45:57.946Z"
+    },
+    {
+      "id": "holo-643a6327-e659-4e00-a2bb-3e00415db047",
+      "content": "Rhine-Music-Database 竖屏/8 项功能（分支 flutter/feature-parity，2026-11-21 00:1x）：插件系统、平台切换、登录、评论、MV、喜欢/歌单、分类搜索、播放队列已全部接线（竖屏+横屏），真机验证喜欢可落盘（panel/collections/siren.json）、检索页终端页头、发现页/播放历史。已知边界：Flutter 侧无 Node 网关，插件平台的真实数据面仍由 Qt 承担，曲库恒为塞壬；登录/评论/MV 网关恒回「当前来源不支持该功能」。遗留：240Hz 卡顿本体、封面查看器 fault0x28、两次 git -c 违规待裁决。",
+      "category": "context",
+      "tags": [],
+      "entities": [
+        "Rhine-Music-Database",
+        "MV",
+        "Flutter",
+        "Node",
+        "Qt"
+      ],
+      "trustScore": 0.6,
+      "importance": 3,
+      "createdAt": "2026-11-26T12:45:57.947Z",
+      "updatedAt": "2026-11-26T12:45:57.947Z"
+    },
+    {
+      "id": "holo-333e7bfb-590b-46df-bbf1-f0c4ff4850b3",
+      "content": "Rhine-Music-Database feat/flutter：插件平台的真实数据面已由 Flutter 侧自建 Node 桥打通（`android/app/src/main/cpp/node_host.cpp` JNI dlopen libnode.so 调 `node::Start`；`porting/PluginBridge.kt` 起 ServerSocket 行协议，业务请求必须 base64 套 `{type:'input'}` 信封；`lib/provider/plugin_gateway.dart` 的插件方法参数必须是**位置参数数组**（worker 走 `method.apply(api, args)`），会话 cookie 必须以 `{name:value}` 对象随每次请求回传（host.cjs 是 `{...message.cookies}`）。首启 node 约 90s。",
+      "category": "context",
+      "tags": [],
+      "entities": [
+        "input",
+        "Rhine-Music-Database",
+        "Flutter",
+        "Node",
+        "JNI",
+        "Start",
+        "PluginBridge",
+        "ServerSocket"
+      ],
+      "trustScore": 0.6,
+      "importance": 3,
+      "createdAt": "2026-11-26T12:45:57.948Z",
+      "updatedAt": "2026-11-26T12:45:57.948Z"
+    },
+    {
+      "id": "holo-1ddeed5c-ee1c-4968-a4f0-cd8de32cbccb",
+      "content": "无人值守任务纪律（Rhine-Music-Database 本次 8 项功能）：用户要求全程不停手等指令、不提问；原话 m27968「我没有批准你中途停下来」、m28901「我没有让你停下来」、m20604 附近因用 ask_user_question 请示被明确斥责。只在真正被阻塞时才汇报，其余时间直接推进并边做边提交。",
+      "category": "context",
+      "tags": [],
+      "entities": [
+        "Rhine-Music-Database"
+      ],
+      "trustScore": 1,
+      "importance": 5,
+      "createdAt": "2026-11-26T12:45:57.949Z",
+      "updatedAt": "2026-11-26T12:45:57.949Z"
+    },
+    {
+      "id": "holo-24a4b289-c26c-4664-a7b3-9f317f514d75",
+      "content": "Rhine-Music-Database 8 项功能交付状态（2026-11-23 核对）：插件系统、多平台切换、登录（扫码）、评论、MV、喜欢/歌单、分类检索、播放队列均已接线且多数真机验证。仍缺：①插件卸载二次确认弹层未移植、移动端无「从文件导入」；②短信登录未实测（需退出当前网易云会话）；③插件平台检索的「歌手分组/专辑分组」只按本地曲库算（`searchGroups()` 读 `_catalogSongs`），分组为空；④专辑/歌单行封面在插件平台为空；⑤横屏发现页与「加入歌单」选择器仍用竖屏 393 稿按高度重采样（窄栏），Qt 桌面端是横屏库页骨架；⑥MV 多版本切换与逐帧同步未核；⑦插件平台「我的歌单」列与歌单封面未核。",
+      "category": "context",
+      "tags": [],
+      "entities": [
+        "Rhine-Music-Database",
+        "MV",
+        "Qt"
+      ],
+      "trustScore": 0.6,
+      "importance": 3,
+      "createdAt": "2026-11-26T12:45:57.950Z",
+      "updatedAt": "2026-11-26T12:45:57.950Z"
+    },
+    {
+      "id": "holo-ff2f96aa-777f-4692-a2a9-e011ef2eb0a9",
+      "content": "Rhine-Music-Database 竖屏/横屏 UI 硬性规则（用户 2026-11-26 明确）：① 发现页瓦片单卡最大宽竖屏 120 网格、横屏保持 Qt 五列不变；② 发现页瓦片的「▶ 全部」按钮必须贴**整张卡片右缘**（不是只对齐封面右缘），标题可用宽随之放宽到按钮左侧，长标题不再被截成「二次元小…」；③ Android 平台上横屏播放条右下角的「输出/系统音量」整块必须完全不画；④ 所有列表/页面的滑动手势必须有惯性衰减，脱手后逐渐减速停下；⑤ 插件「卸载」需要二级确认弹层。 竖屏弹层/设置页缩放的命中纪律（2026-11-26 修 `portrait-settings-hit` 得出）：不要用 `ClipRect > SizedBox > OverflowBox > Transform.scale` 做「设计网格整体缩放」——`Transform.scale` 的命中先过缩放前 `RenderBox` 尺寸，滚动后屏幕下缘那一段指针会整片落到节点尺寸之外，只有最后一小块还能点。改用 `SizedBox(父尺寸) > FittedBox(fit: BoxFit.fill, alignment: topLeft) > SizedBox(gridWidth × pageBottom)`，它按父约束拉满并用逆矩阵做命中，渲染结果不变。",
+      "category": "context",
+      "tags": [],
+      "entities": [
+        "Rhine-Music-Database",
+        "UI",
+        "Qt",
+        "Android",
+        "ClipRect",
+        "SizedBox",
+        "OverflowBox",
+        "Transform",
+        "RenderBox",
+        "FittedBox",
+        "BoxFit"
+      ],
+      "trustScore": 1,
+      "importance": 5,
+      "createdAt": "2026-11-26T12:45:57.951Z",
+      "updatedAt": "2026-11-26T12:45:57.951Z"
+    },
+    {
+      "id": "holo-bfcddc4a-1507-4e37-849e-d330b3259b8f",
+      "content": "Rhine-Music-Database 分支现状（2026-11-26 清理后）：唯一 Flutter 主线是 `feat/flutter`（= 原 `flutter/feature-parity` 快进合并后，tip b082888e3）。已删除所有我和子代理创建的一次性分支：`flutter/feature-parity`、`flutter/merge-all`、`flutter/merge-discard`、`flutter/merge-stage`、`flutter/{collections,comments,login,mv,provider,queue,searchkinds}-src`、`flutter/searchkinds-clean`、`flutter/{content,landscape,portrait,settings-hit,text}-fix`、`perf/flutter-temp`、`wt-*/flutter/*`；工作树 `/home/aibeto/code/rhine-wt/*` 已 `git worktree remove` 并删目录，13 个 `wt-*` 远端（指向旧 worktree 的本地路径远端）已 `git remote remove`。保留的都不是我创建的：`main`、`feat/{android-armv8a,linux-appimage,linux-x11}`、`build/{ffmpeg,linux-appimage-size}`、`fix/vulkan-startup`、`perf/{lts,render-precision}`、`video`。`feat/flutter` 比 `origin/feat/flutter` 领先 212 个提交，未 push（用户未要求 push）。",
+      "category": "context",
+      "tags": [],
+      "entities": [
+        "Rhine-Music-Database",
+        "Flutter"
+      ],
+      "trustScore": 0.6,
+      "importance": 3,
+      "createdAt": "2026-11-26T12:45:57.952Z",
+      "updatedAt": "2026-11-26T12:45:57.952Z"
+    }
+  ]
+}
