@@ -9,6 +9,9 @@
 // 用法：
 //   npm run build:flutter:android                 # release（与 CI 一致）
 //   npm run build:flutter:android -- --debug      # debug
+//   npm run build:flutter:android -- --verbose    # 附上 flutter build 的 --verbose 全量日志
+//                                                 # （可与 --debug 同用；也可用 RHINE_FLUTTER_VERBOSE=1）
+//   npm run build:flutter:android -- --silent     # 本地默认已开 verbose，用它关掉
 //
 // 环境前提（脚本会逐项检查并给出缺什么）：
 //   * Flutter SDK、Android SDK/NDK、CMake + Ninja；
@@ -30,6 +33,14 @@ process.chdir(root);
 const debug = process.argv.includes('--debug');
 const buildType = debug ? 'Debug' : 'Release';
 const modeFlag = debug ? '--debug' : '--release';
+// Flutter 自己的 --verbose：只在 flutter build apk 这步生效，CMake/androiddeployqt
+// 的日志量级由它们各自的开关控制。排查 APK 打包、Gradle 传参、资源合并时开它。
+// 本地默认开（--silent 可关），CI 默认关（GITHUB_ACTIONS 下日志会被截断且拖慢上传）。
+const flutterVerbose = process.argv.includes('--silent')
+    ? false
+    : process.argv.includes('--verbose') ||
+      process.env.RHINE_FLUTTER_VERBOSE === '1' ||
+      !process.env.GITHUB_ACTIONS;
 
 // javapatch/EXPECTED.sha256 是用 javac 27.0.1 编出来的 class 字节录的；换 javac 大版本
 // 一定对不上。这个数字和 EXPECTED.sha256 必须一起改。
@@ -457,6 +468,7 @@ run(
         `rhineJavacHome=${javacHome}`,
         '--android-project-arg',
         'force-version-code-ignoring-abi=true',
+        ...(flutterVerbose ? ['--verbose'] : []),
     ],
     { env: environment },
 );
