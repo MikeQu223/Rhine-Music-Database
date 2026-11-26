@@ -41,6 +41,33 @@ const sdk = toolchain.sdkRoot();
 const ndk = process.env.ANDROID_NDK_ROOT || toolchain.ndkRoot(sdk);
 const kit = process.env.RHINE_ANDROID_QT || path.resolve('output/dependencies/qt-android');
 const hostQt = process.env.QT_ROOT_DIR || process.env.RHINE_HOST_QT || '/usr';
+
+/** 读 Qt 前缀的版本（ConfigVersionImpl 里那一行 set(PACKAGE_VERSION "x.y.z")），读不到返回空串。 */
+function qtVersion(prefix) {
+    const file = path.join(prefix, 'lib/cmake/Qt6/Qt6ConfigVersionImpl.cmake');
+    if (!fs.existsSync(file)) {
+        return '';
+    }
+    const match = /set\(PACKAGE_VERSION\s+"([^"]+)"\)/.exec(fs.readFileSync(file, 'utf8'));
+    return match ? match[1] : '';
+}
+
+// 宿主侧的 qmlcachegen / moc / rcc 必须与 Android kit 同版本：qmlcachegen 在生成
+// AOT lookup 表时会把 kit 版本的 ABI 结构写死进 .cpp。发行版滚动更新到 6.12.1 后，
+// 它生成的 Type{...QTypeRevision()...} 与 6.12.0 头文件里的 Type{...IsComposite...}
+// 字段顺序不一致，编译期直接报 "no viable conversion from 'QTypeRevision' to
+// 'IsComposite'"。所以 kit 与宿主版本不同时，优先用 output/dependencies/qt-host-<kit 版本>
+// 里钉住的同版本工具（只放 cmake 工具包与 qmlcachegen 运行库，几十 MB）。
+const kitVersion = qtVersion(kit);
+const hostVersion = qtVersion(hostQt);
+const pinnedHostTools = kitVersion ? path.resolve(`output/dependencies/qt-host-${kitVersion}`) : '';
+const pinnedToolsUsable =
+    hostVersion !== kitVersion &&
+    pinnedHostTools !== '' &&
+    fs.existsSync(path.join(pinnedHostTools, 'lib/cmake/Qt6QmlTools/Qt6QmlToolsConfig.cmake'));
+if (pinnedToolsUsable) {
+    console.log(`宿主 Qt ${hostVersion || '未知'} 与 kit ${kitVersion} 不同版本，改用钉住的宿主工具：${pinnedHostTools}`);
+}
 const buildDirectory = path.resolve(
     process.env.RHINE_QT_ANDROID_FLUTTER_BUILD_DIR || 'output/qt-android-flutter',
 );
@@ -240,6 +267,8 @@ const environment = {
 run('node', ['scripts/build-android.cjs', '--prepare-only'], { env: environment });
 
 // 2) Qt native：只编宿主库，不产出纯 Qt APK。
+//    hostTools 是真正用来跑 moc/rcc/qmlcachegen 的前缀；默认就是 hostQt。
+const hostTools = pinnedToolsUsable ? pinnedHostTools : hostQt;
 run(
     'cmake',
     [
@@ -252,6 +281,16 @@ run(
         `-DCMAKE_TOOLCHAIN_FILE=${path.join(kit, 'lib/cmake/Qt6/qt.toolchain.cmake')}`,
         `-DQT_HOST_PATH=${hostQt}`,
         `-DQT_HOST_PATH_CMAKE_DIR=${path.join(hostQt, 'lib/cmake')}`,
+        // 钉住同版本工具时，覆盖 CMake 从宿主 Qt 里找到的那几个 Tools 包。
+        // 只换 Qt6QmlTools（qmlcachegen 在这里）与 Core/Gui/Widgets（moc/rcc/uic）。
+        ...(pinnedToolsUsable
+            ? [
+                  `-DQt6QmlTools_DIR=${path.join(hostTools, 'lib/cmake/Qt6QmlTools')}`,
+                  `-DQt6CoreTools_DIR=${path.join(hostTools, 'lib/cmake/Qt6CoreTools')}`,
+                  `-DQt6GuiTools_DIR=${path.join(hostTools, 'lib/cmake/Qt6GuiTools')}`,
+                  `-DQt6WidgetsTools_DIR=${path.join(hostTools, 'lib/cmake/Qt6WidgetsTools')}`,
+              ]
+            : []),
         '-DQT_QMAKE_TARGET_MKSPEC=android-clang',
         '-DANDROID_ABI=arm64-v8a',
         '-DANDROID_PLATFORM=android-28',
