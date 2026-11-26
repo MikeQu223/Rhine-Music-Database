@@ -192,44 +192,40 @@ class _BasicPortraitSettingsPageState extends State<BasicPortraitSettingsPage> {
     }
     _pageWidth = gridWidth;
     final _PortraitInk ink = _PortraitInk.of(widget.dark);
+    // 缩放层用 `FittedBox` 而不是 `OverflowBox + Transform.scale`：后者的命中
+    // 先过 `RenderBox.hitTest` 的「指针是否在本节点尺寸内」这一关，而本节点的
+    // 尺寸是**缩放前**的设计网格（约 586 × 1500），指针却是舞台像素（1080 宽、
+    // 高到 pageBottom × unit）；屏幕下缘那一段因此整片点不动（用户 2026-11-25
+    // 报「滚到底后中间各行控件与链接全点不到」）。`FittedBox` 把子项按
+    // `BoxFit.fill` 拉满父约束，并用逆矩阵做命中，屏幕坐标与设计坐标一一对应。
     return ClipRect(
       key: basicPortraitSettingsPageKey,
       child: SizedBox(
         width: widget.stage.width,
         height: pageBottom * unit,
-        child: OverflowBox(
+        child: FittedBox(
+          fit: BoxFit.fill,
           alignment: Alignment.topLeft,
-          minWidth: 0,
-          maxWidth: double.infinity,
-          minHeight: 0,
-          maxHeight: double.infinity,
-          child: Transform.scale(
-            scale: unit,
-            alignment: Alignment.topLeft,
-            child: Padding(
-              padding: EdgeInsets.zero,
-              child: SizedBox(
-                width: gridWidth,
-                height: pageBottom,
-                child: Stack(
-                  children: <Widget>[
-                    Positioned(
-                      left: 0,
-                      right: 0,
-                      top: basicPortraitSettingsContentTop,
-                      bottom: 0,
-                      child: SingleChildScrollView(
-                        controller: _scroll,
-                        padding: EdgeInsets.zero,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: _content(ink),
-                        ),
-                      ),
+          child: SizedBox(
+            width: gridWidth,
+            height: pageBottom,
+            child: Stack(
+              children: <Widget>[
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  top: basicPortraitSettingsContentTop,
+                  bottom: 0,
+                  child: SingleChildScrollView(
+                    controller: _scroll,
+                    padding: EdgeInsets.zero,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: _content(ink),
                     ),
-                  ],
+                  ),
                 ),
-              ),
+              ],
             ),
           ),
         ),

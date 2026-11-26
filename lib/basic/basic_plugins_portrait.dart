@@ -179,19 +179,16 @@ class _BasicPortraitPluginsPageState extends State<BasicPortraitPluginsPage> {
       child: SizedBox(
         width: widget.stage.width,
         height: pageBottom * unit,
-        child: OverflowBox(
+        // 与设置页同一套缩放：`FittedBox(BoxFit.fill)` 让命中走逆矩阵，屏幕坐标
+        // 与 393 设计网格一一对应（`OverflowBox + Transform.scale` 的命中先过
+        // 缩放前尺寸，屏幕下缘整片点不动——用户 2026-11-25 的缺陷）。
+        child: FittedBox(
+          fit: BoxFit.fill,
           alignment: Alignment.topLeft,
-          minWidth: 0,
-          maxWidth: double.infinity,
-          minHeight: 0,
-          maxHeight: double.infinity,
-          child: Transform.scale(
-            scale: unit,
-            alignment: Alignment.topLeft,
-            child: SizedBox(
-              width: gridWidth,
-              height: pageBottom,
-              child: Stack(
+          child: SizedBox(
+            width: gridWidth,
+            height: pageBottom,
+            child: Stack(
                 children: <Widget>[
                   Positioned(
                     left: 0,
@@ -229,7 +226,6 @@ class _BasicPortraitPluginsPageState extends State<BasicPortraitPluginsPage> {
               ),
             ),
           ),
-        ),
       ),
     );
   }
