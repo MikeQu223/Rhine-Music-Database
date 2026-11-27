@@ -1311,7 +1311,16 @@ int main(int argc, char **argv) {
         Engine direct(root, offline);
         return direct.selfTest();
     }
-    // 性能面板停用：--frame-profile 帧采样 CSV 参数不再接收。
+#ifndef Q_OS_ANDROID
+    QString profilePath;
+    if (args.contains("--frame-profile")) {
+        profilePath = args.value(args.indexOf("--frame-profile") + 1);
+        if (profilePath.isEmpty() || profilePath.startsWith("--")) {
+            qWarning() << "--frame-profile requires an output CSV path";
+            return 1;
+        }
+    }
+#endif
     // 桌面版：音频、账号与播放队列由独立后台服务持有，界面进程只负责渲染。
     // 服务随界面启动并与其生命周期绑定：界面退出或崩溃都会停止播放并结束服务。
     std::unique_ptr<PlaybackConnection> playback;
@@ -1395,11 +1404,10 @@ int main(int argc, char **argv) {
     };
 #endif
 #ifdef Q_OS_ANDROID
-    // 性能面板停用：不再创建 FrameProfiler、不连接 performanceRequested、不挂窗口采样。
-    // FrameProfiler.h/.cpp 本体（共用环境/指标显示内容）保留，但不执行性能面板逻辑。
+    // Flutter 内嵌场景不启动 Qt 性能面板或采样。
     std::unique_ptr<FrameProfiler> profiler;
 #else
-    auto profiler = std::make_unique<FrameProfiler>(backend.get());
+    auto profiler = std::make_unique<FrameProfiler>(backend.get(), profilePath);
     QObject::connect(backend.get(), &Engine::performanceRequested, profiler.get(),
                      &FrameProfiler::toggleVisible);
     QObject::connect(profiler.get(), &FrameProfiler::visibleChanged, backend.get(),
@@ -1483,7 +1491,7 @@ int main(int argc, char **argv) {
     engine.rootContext()->setContextProperty("rhineFontFamily",
                                              families.isEmpty() ? QString("sans-serif") : families.first());
     engine.rootContext()->setContextProperty("rhine", backend.get());
-    // 性能面板停用：不再向 QML 暴露 profiler。
+    engine.rootContext()->setContextProperty("profiler", profiler.get());
 #if !RHINE_MOBILE
     MvController mv(&backend->host, &backend->app->music.player);
     engine.rootContext()->setContextProperty("rhineMv", &mv);
@@ -1617,6 +1625,7 @@ int main(int argc, char **argv) {
                     backend->setWindow(fallbackWindow);
                     fallbackWindow->installEventFilter(backend.get());
                     configureIOSWindow(fallbackWindow, backend.get());
+                    profiler->attach(fallbackWindow);
                     QObject::connect(
                         fallbackWindow, &QQuickWindow::sceneGraphInvalidated, backend.get(),
                         [raw = backend.get()] { raw->recordResourceRelease(); }, Qt::DirectConnection);
@@ -1719,6 +1728,9 @@ int main(int argc, char **argv) {
     configureAndroidWindow(window, backend.get());
 #endif
     window->installEventFilter(backend.get());
+#ifndef Q_OS_ANDROID
+    profiler->attach(window);
+#endif
 #if !RHINE_MOBILE
     if (playbackGuiTest) {
         qInfo("PLAYBACK_GUI_READY");

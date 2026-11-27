@@ -310,7 +310,7 @@ class Engine : public QObject {
     void stateChanged();
     void hitsChanged();
     void clearCredentials();
-    // 性能面板停用：performanceRequested 信号不再声明。
+    void performanceRequested();
     void localImportRequested(bool folder);
     void pluginImportRequested();
     void pluginPackageRequested();

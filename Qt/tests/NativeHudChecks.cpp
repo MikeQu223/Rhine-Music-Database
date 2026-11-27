@@ -2623,13 +2623,13 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
                                                "single-play-mode",
                                                "quality",
                                                "disc-rotation",
-                                               // 用户 m10082：性能面板不是用户要求的功能 ——
-                                               // 该动作不再存在，断言随面板停用。
-                                               // "performance:toggle",
                                                "update:check",
                                                "replay",
                                                "settings:restore-defaults"};
             QStringList reachableSettings = requiredSettings;
+#ifndef Q_OS_ANDROID
+            reachableSettings.append("performance:toggle");
+#endif
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
             // 关闭行为只在持有托盘入口的桌面平台出现。
             reachableSettings.append("close-behavior");

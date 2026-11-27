@@ -369,15 +369,16 @@ void NativeHud::paintSettingsCustomSection(const QString &renderer, const QRectF
     }
 
     if (renderer == "performance") {
-        // 性能面板不是用户要求的功能 —— PERFORMANCE 行与其帮助文案注释掉
-        // （保留原文，不删）；DISC ROTATION 行是用户指定设置项，保留。
-        // sectionRow(4, "PERFORMANCE", QStringLiteral("性能面板"), QStringLiteral("显示 / 隐藏 · F10"),
-        //            "performance:toggle", QStringLiteral("性能面板"),
-        //            QStringLiteral("在性能面板内手动收集、导出诊断文件。"));
+#ifdef Q_OS_ANDROID
         sectionRow(102, "DISC ROTATION", QStringLiteral("唱片旋转"),
                    discRotation ? QStringLiteral("开启 / 点击关闭") : QStringLiteral("关闭 / 点击了解风险"),
                    "disc-rotation", QStringLiteral("唱片旋转"),
                    QStringLiteral("默认关闭；开启会增加持续渲染、耗电和发热。"));
+#else
+        sectionRow(4, "PERFORMANCE", QStringLiteral("性能面板"), QStringLiteral("显示 / 隐藏 · F10"),
+                   "performance:toggle", QStringLiteral("性能面板"),
+                   QStringLiteral("在性能面板内手动收集、导出诊断文件。"));
+#endif
         // main 新增：调试模式（原生崩溃诊断），仅桌面平台编译。
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
         const auto *debugSetting = SettingsSchema::find("debug-mode");

@@ -267,7 +267,12 @@ Item {
         enabled: overlay.hostShortcutsEnabled
         onActivated: rhine.toggleFullscreen()
     }
-    // 性能面板停用：F10 入口随之移除（profiler 上下文属性已不再注册）。
+    Shortcut {
+        sequence: "F10"
+        context: overlay.shortcutContext
+        enabled: !overlay.android && overlay.hostShortcutsEnabled
+        onActivated: rhine.action("performance:toggle")
+    }
     Item {
         id: controls
         width: overlay.stageWidth
@@ -774,5 +779,10 @@ Item {
             dark: rhine.state.dark === true
         }
     }
-    // 性能面板停用，不再实例化。
+    Loader {
+        anchors.fill: parent
+        z: 1000
+        active: !overlay.android
+        sourceComponent: PerformancePanel {}
+    }
 }
