@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { test } = require('node:test');
+const esbuild = require('esbuild');
 const plugin = require('./mobile-bridge-plugin.cjs')();
 
 function handlers() {
@@ -56,6 +57,39 @@ test('worker 与 transport 的临时目录调用被改写', () => {
             assert.match(contents, /__rhineTmpdir/);
             assert.doesNotMatch(contents, /require\((?:"|')node:os(?:"|')\)\.tmpdir\(\)/);
         }
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+test('Android 压缩后仍区分已改写和裸 os.tmpdir 调用', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'rhine-mobile-'));
+    try {
+        const bridge = path.join(directory, 'MusicBridge');
+        const worker = path.join(bridge, 'worker.cjs');
+        const outfile = path.join(directory, 'worker.cjs');
+        fs.mkdirSync(bridge);
+        fs.writeFileSync(path.join(bridge, 'android-web-apis.cjs'), '');
+        fs.writeFileSync(worker, "module.exports = require('node:os').tmpdir();\n");
+        const options = {
+            entryPoints: [worker],
+            outfile,
+            bundle: true,
+            platform: 'node',
+            minifyWhitespace: true,
+            minifySyntax: true,
+            logLevel: 'silent',
+            plugins: [require('./mobile-bridge-plugin.cjs')('android-web-apis.cjs')],
+        };
+        await esbuild.build(options);
+        assert.match(fs.readFileSync(outfile, 'utf8'), /__rhineTmpdir\|\|require\(/);
+
+        fs.writeFileSync(
+            path.join(bridge, 'unhandled.cjs'),
+            "module.exports = require('node:os').tmpdir();\n",
+        );
+        fs.appendFileSync(worker, "module.exports.unhandled = require('./unhandled.cjs');\n");
+        await assert.rejects(esbuild.build(options), /1 unrewritten os\.tmpdir\(\) call site/);
     } finally {
         fs.rmSync(directory, { recursive: true, force: true });
     }

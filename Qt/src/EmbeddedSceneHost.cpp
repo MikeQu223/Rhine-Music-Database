@@ -74,11 +74,6 @@ RhineEmbedded::SceneEpoch g_sceneEpoch;
 
 namespace RhineEmbedded {
 
-bool requested()
-{
-    return qEnvironmentVariableIntValue("RHINE_QT_EMBEDDED") == 1;
-}
-
 void publish(Engine *engine, FrameProfiler *profiler, const QString &fontFamily)
 {
     g_engine = engine;

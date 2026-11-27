@@ -90,8 +90,7 @@ NativeHud::NativeHud(Host *host, Glyphs *glyphs, MusicLibrary *music, HudSceneAc
         host->setPreference("graphics-backend", "metal");
     }
 #else
-    // 垂直同步出厂默认关闭：只有显式存过 "on" 才算开。
-    vsync = host->preference("vsync") == "on";
+    vsync = RhineFg::windowVSyncEnabled(host->preference("vsync"));
 #endif
     discRotation = PlatformFeatures::discRotationAvailable() && host->preference("disc-rotation") == "on";
     m_boxedPlayButton = host->preference("play-button-style") == "boxed";

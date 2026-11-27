@@ -14,8 +14,10 @@ void NativeScene::resetPointer(bool stopMomentum) {
     m_holding = false;
     m_browsing = false;
     m_hover.reset();
+#ifdef Q_OS_ANDROID
     // 手势接管：外部窗口立刻让位给真实的拖动/惯性速度。
     m_externalUntil = -1;
+#endif
     if (stopMomentum && m_momentum) {
         m_columnCamera.velocity = 0;
         m_rail.velocity = 0;
@@ -124,20 +126,18 @@ void NativeScene::moveArchive(double x, double y) {
     }
     if (pending) {
         m_startTrack = {m_columnCamera.value, m_rail.value};
-        {
-            const auto projection = dragProjection();
-        }
     }
     m_hover.reset();
     m_lastInteraction = m_clock;
     m_cursor = "grabbing";
-    // 档案页拖动的**所属锁**（真人 m01597：禁止通过滑动 3D 层切换档案库所属，只能滚动列表）。
-    // 原版把横向漂移也吃进来（m_startTrack.lane + m_drag.value.lane * 5.2），横滑/斜滑就会
-    // 把当前列换掉 —— 那是"所属"级别的操作，只能由 HUD 的显式分类控件发起。这里只保留
-    // 纵向轨道：lane 恒等于手势起点的 lane，navigatePlane 的 goal.lane 因此不动，物理格子
-    // 只会沿当前列滚动，Flutter 侧 _selectedLane 也就不会被 3D 手势改掉。
-    m_dragTrack = SceneMotion::DragPosition{m_startTrack.lane,
-                                            m_startTrack.row - m_drag.value.row * 0.62};
+    auto lane = m_startTrack.lane + m_drag.value.lane * 5.2;
+#ifdef Q_OS_ANDROID
+    if (m_embeddedMode) {
+        // 内嵌场景只滚动所属列，切换归档分类由 Flutter 的显式控件负责。
+        lane = m_startTrack.lane;
+    }
+#endif
+    m_dragTrack = SceneMotion::DragPosition{lane, m_startTrack.row - m_drag.value.row * 0.62};
     m_columnCamera = {m_dragTrack->lane, 0};
     m_rail = {m_dragTrack->row, 0};
     navigatePlane({m_columnCamera.value / 5.2 + 2, (-m_rail.value - 2.17) / 0.62 + 15.5});

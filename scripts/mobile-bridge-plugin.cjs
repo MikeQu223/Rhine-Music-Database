@@ -7,6 +7,7 @@ const path = require('node:path');
 // 所有 os.tmpdir() 调用点改写成它。改写保持 require 兜底：前奏万一没跑，行为退回现状。
 const tmpdirCall = /require\((['"])(?:node:)?os\1\)\.tmpdir\(\)/g;
 const tmpdirReplacement = '(globalThis.__rhineTmpdir || require("os").tmpdir())';
+const guardedTmpdirCall = /globalThis\.__rhineTmpdir\s*\|\|\s*require\("(?:node:)?os"\)\.tmpdir\(\)/g;
 
 // 平台插件的移动端构建差异由各插件自己的 build.cjs 提供；这里只保留所有插件共用的
 // 运行时适配：注入 web API 补丁、改写 worker 与 transport 的临时目录。
@@ -38,7 +39,7 @@ module.exports = (webApis = 'ios-web-apis.cjs') => ({
             }
             const bundle = fs.readFileSync(outfile, 'utf8');
             const bare = bundle.match(/require\("(?:node:)?os"\)\.tmpdir\(\)/g) || [];
-            const rewritten = bundle.match(/__rhineTmpdir \|\| require\("(?:node:)?os"\)\.tmpdir\(\)/g) || [];
+            const rewritten = bundle.match(guardedTmpdirCall) || [];
             if (bare.length !== rewritten.length) {
                 throw new Error(
                     `mobile bundle has ${bare.length - rewritten.length} unrewritten ` +

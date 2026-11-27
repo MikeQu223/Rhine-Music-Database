@@ -823,8 +823,7 @@ const QVector<SettingDescriptor> &descriptors() {
              .titleEn = "V-SYNC",
              .titleZh = "垂直同步",
              .restartHint = QStringLiteral("重启生效"),
-              // 出厂默认关闭。
-             .defaultValue = Off,
+             .defaultValue = RhineFg::DefaultVSyncEnabled ? On : Off,
              .choices = onOffChoices(),
              .visible = vsyncVisible});
         add({.id = "render-scale",

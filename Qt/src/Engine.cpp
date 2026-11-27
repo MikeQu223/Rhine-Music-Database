@@ -5,14 +5,13 @@
 #include "Engine.h"
 #include "PlatformFeatures.h"
 #include "DiscGeometry.h"
-// prefetchCover(): 内嵌模式的选中封面投影（RhineEmbedded::projectedCover）。
-#include "EmbeddedSceneHost.h"
 #include "RhiScene.h"
 #include "fg/FgCapability.h"
 #include "fg/FgStats.h"
 #include "render/MemoryProbe.h"
 #include "render/RenderModePolicy.h"
 #if defined(Q_OS_ANDROID)
+#include "EmbeddedSceneHost.h"
 #include "render/HudDirtyRect.h"
 #include "render/HudLayers.h"
 #endif
@@ -57,6 +56,9 @@ bool runNativeMusicChecks(const QString &root);
 Engine::Engine(QString path, bool offline, QObject *parent, PlaybackConnection *connection,
                RenderCacheStorage *renderCache)
     : QObject(parent), host(path, offline, nullptr, false, connection), scene(path), m_glyphs(path) {
+#ifdef Q_OS_ANDROID
+    scene.setEmbeddedMode(host.renderOnly);
+#endif
     // FSR3 抖动默认关闭；环境变量在进程启动时读取一次，运行期不再变化。
     m_jitterEnabled = qEnvironmentVariableIntValue("RHINE_JITTER") == 1;
     const auto content = QJsonDocument::fromJson(host.read("slots.json").toUtf8()).object();
@@ -546,6 +548,7 @@ void Engine::sceneConsumed() {
 void Engine::wake(bool input) {
     wake(input ? WakeSource::Input : WakeSource::Other);
 }
+#ifdef Q_OS_ANDROID
 QImage Engine::coverImageOf(const QString &url) const {
     if (url.isEmpty()) {
         return QImage();
@@ -604,6 +607,8 @@ void Engine::prefetchCover(const QString &url) {
         },
         1024);
 }
+#endif
+
 void Engine::wake(WakeSource source) {
     switch (source) {
     case WakeSource::Input:
@@ -718,8 +723,9 @@ void Engine::submitTextureAdmission(const QString &musicKey) {
     m_admissionArmed = status.generation;
     m_admissionScheduler.stop();
 }
+#ifdef Q_OS_ANDROID
 /**
- *  的主入口：把一份"真的 apply 过的" Flutter 快照投影成原生可见格的业务资源。
+ * 将宿主已应用的 Flutter 快照投影成原生可见格的业务资源。
  *
  * 三条边界写在这里，别在别处偷偷放宽：
  *   - 只有解析出真实身份（siren:<kind>:<id>）的格才会被投影；没身份的格继续是占位档案壳。
@@ -943,6 +949,7 @@ void Engine::publishEmbeddedCells(const QSet<QString> &retained) {
                                            {"context", double(m_embeddedCellContext)},
                                            {"scrolling", m_embeddedCellScrolling}};
 }
+#endif
 
 void Engine::setVisible(bool value) {
 #ifdef Q_OS_IOS
@@ -966,11 +973,19 @@ void Engine::setVisible(bool value) {
         // 隐藏期间不创建 GPU 资源：作废"等到一半"的等待，恢复后重新计时。
         m_admission.setVisible(false, clock.elapsed());
         m_admissionScheduler.stop();
+#ifdef Q_OS_ANDROID
         // 可见格也一样：待定项作废，但已准入的 key 保留（回来时还是热的）。
-        m_embeddedCellAdmission.setVisible(false, clock.elapsed());
+        if (host.renderOnly) {
+            m_embeddedCellAdmission.setVisible(false, clock.elapsed());
+        }
+#endif
     } else {
         m_admission.setVisible(true, clock.elapsed());
-        m_embeddedCellAdmission.setVisible(true, clock.elapsed());
+#ifdef Q_OS_ANDROID
+        if (host.renderOnly) {
+            m_embeddedCellAdmission.setVisible(true, clock.elapsed());
+        }
+#endif
         host.restoreMemoryBudget();
 #ifdef Q_OS_DARWIN
         if (renderConfiguration.snapshot().temporal()) {
@@ -981,10 +996,12 @@ void Engine::setVisible(bool value) {
         notifySceneRenderers(sceneLayerVisible());
         m_hudRevision.fetch_add(1, std::memory_order_relaxed);
         // 重新显示时纹理可能已经被丢弃，命令流没有差异也必须整块重画。
+        m_hudDirtyFull = true;
+#ifdef Q_OS_ANDROID
         m_hudStaticChanged = true;
         m_hudDynamicChanged = true;
-        m_hudDirtyFull = true;
         m_hudStaticDirtyFull = true;
+#endif
         publishHudFrame();
     }
     emit stateChanged();
@@ -1187,9 +1204,11 @@ void Engine::tick() {
     const bool workPending = inputPending || m_pressed || sceneWork || m_discRotating ||
                              app->hud.animating(m_animationTime) || hudTransition ||
                              m_temporalFramesRemaining > 0 ||
+#ifdef Q_OS_ANDROID
                              // 可见格还在等准入：这不是"动画"，但必须有一帧去把它接下来。
                              // 被名额卡住的那部分（starved）等的是窗口变化，不算这件事。
                              (host.renderOnly && m_embeddedCellPending > m_embeddedCellStarved) ||
+#endif
                              m_frame.value("mode") == "boot";
     if (!inputPending && !hudTransition && !scenePaused) {
         const auto decision = m_pacing.decide(workPending, false, now);
@@ -1290,12 +1309,12 @@ void Engine::tick() {
             intervalMs = qMax(intervalMs, 4);
         }
     }
-#endif
     // 可见格准入只差时间：按时到期醒一次就够，不必为了等它连续烧帧。
-    if (m_embeddedCellPending > m_embeddedCellStarved) {
+    if (host.renderOnly && m_embeddedCellPending > m_embeddedCellStarved) {
         const int remaining = m_embeddedCellAdmission.nextAdmissionInMs(clock.elapsed());
         intervalMs = qMax(intervalMs, qMax(16, remaining < 0 ? 0 : remaining));
     }
+#endif
     timer.setInterval(fixedMs > 0 ? fixedMs : intervalMs);
     // 排障专用：RHINE_DIAG_ANIMATE=1 时永不休眠。静止场景下引擎会主动休眠、
     // presented 不再增长，那时测出来的"帧率"是没有负载的数字，A/B 对比没有意义。
@@ -1311,10 +1330,14 @@ void Engine::tick() {
     const bool canStopTimer = compact || (now - m_lastInput >= 750 && !m_pacing.awaitingConsumption());
     // 用实时成员而非 tick 开头的局部快照：step() 里可能刚把 m_detailGrace 置真。
     const bool settled = nowPaused || (m_sceneSleeping && !scene.changed() && !m_detailGrace);
+#ifdef Q_OS_ANDROID
     // 有待定的可见格：睡着就没人再推进准入，封面会永远停在占位。
     // starved 的格等的是"窗口变化"而不是时间：拿它当唤醒理由会让静止的归档页永远醒着。
     const bool embeddedCellsNeedAdmission =
         host.renderOnly && m_embeddedCellPending > m_embeddedCellStarved;
+#else
+    constexpr bool embeddedCellsNeedAdmission = false;
+#endif
     if (!forceAnimate && canStopTimer && !m_pressed && settled &&
         !app->hud.animating(m_animationTime) && !m_discRotating && (!hudTransition || nowPaused) &&
         !hudStillPending && m_frame["mode"] != "boot" && m_temporalFramesRemaining == 0 &&
@@ -1748,12 +1771,16 @@ void Engine::step(double time) {
     const auto cover = object["cover"].toString();
     const auto coverRevision = host.image(cover).cacheKey();
     const auto &player = app->music.player;
+#ifdef Q_OS_ANDROID
     // render-only（Flutter 内嵌）：Qt 的 MusicLibrary/播放器是空壳——NativeApplication.cpp:166-177
     // 只把 Flutter 的选中身份投影进 frame["current"]，从不建播放器、也不写 playing。所以
     // 唱片旋转的 identity 与 playing 只能读投影真值（lib/basic/qt_scene_view.dart 的
     // current.playing 来自唯一播放器）。读 Qt 播放器会让唱片永远不转：identity 恒为空、
     // loading/playing 恒为 false——这正是"开启后封面不旋转"的根，且不需要第二个播放器。
     const bool projectedPlayback = host.renderOnly;
+#else
+    constexpr bool projectedPlayback = false;
+#endif
     const auto identity = projectedPlayback ? PlaybackQueue::identity(current)
                                             : PlaybackQueue::identity(player.current);
     if (identity != m_discIdentity) {
@@ -1804,8 +1831,11 @@ void Engine::step(double time) {
     // 会以为"什么都没变"，HUD 上那张图就永远不刷新。这里单独记一笔。
     [[maybe_unused]] const bool coverArrived = coverRevision != m_coverRevision;
     bool visualChanged = discChanged || !stable || current != m_current || cover != m_cover ||
-                         coverRevision != m_coverRevision || m_coverRefresh;
+                         coverRevision != m_coverRevision;
+#ifdef Q_OS_ANDROID
+    visualChanged = visualChanged || m_coverRefresh;
     m_coverRefresh = false;
+#endif
     if (!temporal) {
         m_temporalFramesRemaining = 0;
     }
@@ -1820,10 +1850,11 @@ void Engine::step(double time) {
     m_current = current;
     m_cover = object["cover"].toString();
     // 图片缓存只在 GUI 线程读取，渲染线程通过 cover() 拿这份副本。
-    m_coverImage = coverImageOf(m_cover);
+#ifdef Q_OS_ANDROID
+    m_coverImage = host.renderOnly ? coverImageOf(m_cover) : host.image(m_cover);
     // Host::image() 只按 loadCover 补过 param 的键命中，原始 URL 必然 miss；
     // miss 时重新 loadCover，并用回调返回的键取图。
-    if (!m_cover.isEmpty() && m_coverImage.isNull() && !m_coverRequests.contains(m_cover)) {
+    if (host.renderOnly && !m_cover.isEmpty() && m_coverImage.isNull() && !m_coverRequests.contains(m_cover)) {
         m_coverRequests.insert(m_cover);
         const QString requested = m_cover;
         qInfo("RHINE_QT_COVER_REQUEST len=%d url=%.96s", int(requested.size()),
@@ -1847,6 +1878,9 @@ void Engine::step(double time) {
             },
             1024);
     }
+#else
+    m_coverImage = host.image(m_cover);
+#endif
     // 图形设备在后台可销毁；仅保存当前与可见归位卡片的图片，供恢复时重建纹理。
     const auto musicKey = current["key"].toString("empty");
     submitTextureAdmission(musicKey);
@@ -1870,10 +1904,12 @@ void Engine::step(double time) {
             ++it;
         }
     }
-    // 可见格的准入上报与封面泵。放在 prune 之后：只给真正留下来的条目做事。
-    pumpEmbeddedCells(retainedKeys, m_embeddedCellScrolling);
-    publishEmbeddedCells(retainedKeys);
 #if defined(Q_OS_ANDROID)
+    if (host.renderOnly) {
+        // 裁掉旧条目后再推进可见格准入，只给仍保留的条目补封面。
+        pumpEmbeddedCells(retainedKeys, m_embeddedCellScrolling);
+        publishEmbeddedCells(retainedKeys);
+    }
     // 归档页会同时画 7 张唱片，但每个条目的封面图只在"它成为当前曲目"的那一帧取一次
     // （上面的 `m_musicTextures[musicKey] = {current, m_coverImage}`），切歌瞬间
     // host.image() 往往还没解码完，条目里就留下空 QImage，之后永不回填 —— 表现为
@@ -1926,8 +1962,11 @@ void Engine::step(double time) {
     m_musicTextureSnapshot.clear();
     for (auto it = m_musicTextures.cbegin(); it != m_musicTextures.cend(); ++it) {
         auto entry = it.value();
+        entry.admitted = m_admission.isAdmitted(it.key());
+#ifdef Q_OS_ANDROID
         // 选中焦点通道与可见格通道各管一半：任一准入就让渲染侧建这一格的标签/封面。
-        entry.admitted = m_admission.isAdmitted(it.key()) || m_embeddedCellAdmission.isAdmitted(it.key());
+        entry.admitted = entry.admitted || (host.renderOnly && m_embeddedCellAdmission.isAdmitted(it.key()));
+#endif
         m_musicTextureSnapshot.insert(it.key(), entry);
     }
     auto commands = object["commands"].toArray();
@@ -2013,12 +2052,14 @@ void Engine::step(double time) {
 #endif
     if (pageSwitch) {
         // 整页换内容：局部重绘会留下上一页的残影，强制整窗且必须发一次更新。
-        // 换页时静态前缀也变了（主题色、导航选中态、footer 文案），两层都整块重画。
         hudChanged = true;
+        m_hudDirtyFull = true;
+#ifdef Q_OS_ANDROID
+        // 换页时静态前缀也变了（主题色、导航选中态、footer 文案），两层都整块重画。
         m_hudStaticChanged = true;
         m_hudDynamicChanged = true;
-        m_hudDirtyFull = true;
         m_hudStaticDirtyFull = true;
+#endif
     }
     if (hudChanged) {
         m_commands = commands;

@@ -18,13 +18,13 @@
 #include <QScopeGuard>
 #endif
 #include "Engine.h"
+#ifdef Q_OS_ANDROID
 #include "EmbeddedSceneHost.h"
+#endif
 #include "MvController.h"
 #include <QQmlComponent>
 #include "fg/FgCapability.h"
-#if defined(Q_OS_LINUX) || defined(Q_OS_DARWIN)
 #include "fg/FgConfig.h"
-#endif
 #ifdef Q_OS_ANDROID
 // 注意：当前默认禁用（RHINE_ANDROID_SIGNAL_DIAG=0），native 崩溃由 Bugly 接管；
 // 下面这套链只保留作离线排障的回退手段，include 供文件后面的代码使用。
@@ -732,8 +732,7 @@ static void applyVSyncSetting() {
     if (!qEnvironmentVariableIsEmpty("RHINE_VSYNC")) {
         return;
     }
-    // 垂直同步出厂默认关闭：只有显式存过 panel/vsync=on 才保留默认交换间隔。
-    if (graphicsSettings().value("panel/vsync").toString() == "on") {
+    if (RhineFg::windowVSyncEnabled(graphicsSettings().value("panel/vsync").toString())) {
         return;
     }
     auto format = QSurfaceFormat::defaultFormat();
@@ -801,7 +800,8 @@ static void applyFrameGenerationSetting() {
     // 呈现层的垂直同步也来自设置页：只有关掉 vsync，呈现层才会去选 MAILBOX。
     // 实测这台机器上 FIFO 只给到约半个刷新率（47.4fps），MAILBOX 能到 125fps。
     if (qEnvironmentVariableIsEmpty("RHINE_FG_VSYNC")) {
-        const auto vsync = graphicsSettings().value("panel/vsync", "off").toString();
+        const auto defaultVSync = RhineFg::DefaultVSyncEnabled ? "on" : "off";
+        const auto vsync = graphicsSettings().value("panel/vsync", defaultVSync).toString();
         qputenv("RHINE_FG_VSYNC", vsync.compare("off", Qt::CaseInsensitive) == 0 ? "off" : "on");
     }
 #endif
@@ -1457,7 +1457,7 @@ int main(int argc, char **argv) {
     // QML 类型注册、场景字体、把 Engine/FrameProfiler 发布给后来的 QQuickView。
     // 不创建 QQmlApplicationEngine，不加载 Main.qml，也就不存在第二个 Qt 窗口、
     // 不了锁横屏、不改 Activity 的窗口形态（沉浸式由 Flutter 宿主自己负责）。
-    if (RhineEmbedded::requested()) {
+    if (backend->host.renderOnly) {
         // 内嵌窗口由 Flutter 的 PlatformView 持有，Activity 销毁时会被同步销毁；
         // quitOnLastWindowClosed 默认 true 会让 Qt 跟着退出，整个进程随 Activity 一起死。
         QGuiApplication::setQuitOnLastWindowClosed(false);

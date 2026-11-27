@@ -16,8 +16,6 @@ class FrameProfiler;
  * publish() 负责把 rhine / rhineFontFamily 交给后建的 QQuickView 引擎。
  */
 namespace RhineEmbedded {
-/** 环境变量 RHINE_QT_EMBEDDED=1 时为真。宿主在构造 QtView 之前设置。 */
-bool requested();
 /** main() 在返回 application.exec() 之前发布进程级指针与字体族。 */
 void publish(Engine *engine, FrameProfiler *profiler, const QString &fontFamily);
 

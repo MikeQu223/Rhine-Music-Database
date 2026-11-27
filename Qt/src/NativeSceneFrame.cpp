@@ -1,10 +1,11 @@
 #include "NativeScene.h"
 #include "NativeViewer.h"
+#ifdef Q_OS_ANDROID
 #include "render/EmbeddedCellResources.h"
+#endif
 #include <QJsonArray>
 #include <QElapsedTimer>
 #include <QSet>
-#include <QStringList>
 #include <algorithm>
 #include <cmath>
 
@@ -60,35 +61,12 @@ QJsonObject NativeScene::sample(double time, bool advance) {
     return frame;
 }
 
-/** 直接交付原生缓冲区；场景 JSON 只保存小型材质与相机参数，没有跨引擎数值转换。 */
-void NativeScene::emitFrame(double time) {
-    QSet<int> retained{1};
-    const auto theme = m_theme.background(m_clock);
-    QJsonArray draws;
-    auto floor = m_appearance.floor(theme);
-    // 地板矩阵与其他模型一样使用原生字节，诊断 JSON 不参与正式提交。
-    drawBuffers[1] = {Matrix::compose({0, -4.63, 0}, {-3.14159265358979323846 / 2, 0, 0}).bytes(), {}};
-    floor["matrices"] = QJsonArray{};
-    draws.append(floor);
-    const auto instanceBytes = drawBuffers.value(10);
-    for (const auto &entry : m_appearance.instances) {
-        auto draw = entry.toObject();
-        const auto id = draw["id"].toInt();
-        retained.insert(id);
-        draw["count"] = m_drawnCells.size();
-        draw["matrices"] = QJsonArray{};
-        draw["themes"] = QJsonArray{};
-        draw["matrixBuffer"] = -1;
-        draw["themeBuffer"] = -1;
-        draw["theme"] = theme;
-        drawBuffers[id] = instanceBytes;
-        draws.append(draw);
-    }
+#ifdef Q_OS_ANDROID
+int NativeScene::appendEmbeddedCellDraws(QSet<int> &retained, QJsonArray &draws, double time) {
     // 这一格有真实业务身份时，给它加两条「只属于这一格」的覆盖绘制——封面板与标签面。
     // 底下的档案壳仍然是上面那条共享实例缓冲：几何、材质、机位、惯性、数量一律不动，
     // 这里只往同一格的世界矩阵上加薄薄一层贴面，所以不会变成 40 个 detail actor。
     QSet<quint32> embeddedCells;
-    QStringList embeddedKeys;
     for (int index = 0; index < m_drawnCells.size() && index < m_drawnMatrices.size(); ++index) {
         const auto cell = m_drawnCells.at(index);
         const auto cellId = RhineRender::embeddedCellId(cell.lane, cell.row);
@@ -101,7 +79,6 @@ void NativeScene::emitFrame(double time) {
             continue;
         }
         embeddedCells.insert(cellId);
-        embeddedKeys.append(key);
         const auto root = m_drawnMatrices.at(index);
         const auto cellTheme = float(m_theme.sample(cell, time));
         QByteArray themeBytes;
@@ -152,6 +129,38 @@ void NativeScene::emitFrame(double time) {
         drawBuffers[labelId] = {(root * Matrix::compose({-1.36, 3.04, 0.255}, {})).bytes(), themeBytes, {cellId}};
         draws.append(label);
     }
+    return int(embeddedCells.size());
+}
+#endif
+
+/** 直接交付原生缓冲区；场景 JSON 只保存小型材质与相机参数，没有跨引擎数值转换。 */
+void NativeScene::emitFrame(double time) {
+    QSet<int> retained{1};
+    const auto theme = m_theme.background(m_clock);
+    QJsonArray draws;
+    auto floor = m_appearance.floor(theme);
+    // 地板矩阵与其他模型一样使用原生字节，诊断 JSON 不参与正式提交。
+    drawBuffers[1] = {Matrix::compose({0, -4.63, 0}, {-3.14159265358979323846 / 2, 0, 0}).bytes(), {}};
+    floor["matrices"] = QJsonArray{};
+    draws.append(floor);
+    const auto instanceBytes = drawBuffers.value(10);
+    for (const auto &entry : m_appearance.instances) {
+        auto draw = entry.toObject();
+        const auto id = draw["id"].toInt();
+        retained.insert(id);
+        draw["count"] = m_drawnCells.size();
+        draw["matrices"] = QJsonArray{};
+        draw["themes"] = QJsonArray{};
+        draw["matrixBuffer"] = -1;
+        draw["themeBuffer"] = -1;
+        draw["theme"] = theme;
+        drawBuffers[id] = instanceBytes;
+        draws.append(draw);
+    }
+#ifdef Q_OS_ANDROID
+    const int embeddedCellDraws = m_embeddedMode && !m_embeddedCellKeys.isEmpty()
+                                      ? appendEmbeddedCellDraws(retained, draws, time) : 0;
+#endif
     QJsonArray returningKeys;
     double returningAgeMax = 0;
     for (const auto &actor : m_returning) {
@@ -178,9 +187,10 @@ void NativeScene::emitFrame(double time) {
              {"globalSubdued", 0},
              {"returningMusicKeys", returningKeys},
              {"returningAgeMax", returningAgeMax},
-             // 名字与 Engine 发布的摘要帧字段（embeddedCells）区分开：一个是"这一帧画了几格"，
-             // 一个是"这一帧几格真实/几格占位"，同名字段会被后者覆盖，看起来像被清零。
-             {"embeddedCellDraws", embeddedKeys.size()},
+#ifdef Q_OS_ANDROID
+             // 这一帧绘制的格数，与 Engine 发布的可见格准入摘要分开。
+             {"embeddedCellDraws", embeddedCellDraws},
+#endif
              {"time", time},
              {"draws", draws},
              {"view", m_view.json()},

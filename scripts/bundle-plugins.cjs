@@ -2,7 +2,7 @@
 'use strict';
 
 /**
- * 把本地插件入口打成单文件 CJS。目录由参数决定，脚本本身不含平台语义。
+ * 把本地插件入口打成单文件 CJS，移动端构建时注入对应的运行时适配。
  * 用法：node scripts/bundle-plugins.cjs [pluginsRoot]
  */
 
@@ -15,8 +15,9 @@ const root = path.resolve(__dirname, '..');
 process.chdir(root);
 const pluginsRoot = path.resolve(process.argv[2] || 'MusicBridge/local-plugins');
 const selected = process.argv[3] ? new Set(process.argv[3].split(',').filter(Boolean)) : null;
-const mobileRuntime = process.env.RHINE_IOS_BUILD === '1' || process.env.RHINE_ANDROID_BUILD === '1';
-const webApisFile = process.env.RHINE_ANDROID_BUILD === '1' ? 'android-web-apis.cjs' : 'ios-web-apis.cjs';
+const androidRuntime = process.env.RHINE_ANDROID_BUILD === '1';
+const mobileRuntime = process.env.RHINE_IOS_BUILD === '1' || androidRuntime;
+const webApisFile = androidRuntime ? 'android-web-apis.cjs' : 'ios-web-apis.cjs';
 
 async function main() {
     if (!fs.existsSync(pluginsRoot)) {
@@ -77,10 +78,9 @@ async function main() {
                 target: 'node18',
                 logLevel: 'warning',
                 logOverride: { 'require-resolve-not-external': 'silent' },
-                // 与 bundle-bridge.cjs 同一档位：空白+语法压缩，不开
-                // minifyIdentifiers（jsdom 按函数名/类名查找，见其注释）。
-                minifyWhitespace: true,
-                minifySyntax: true,
+                // Android 的 jsdom worker 沿用空白和语法压缩选项。
+                minifyWhitespace: androidRuntime,
+                minifySyntax: androidRuntime,
             });
         }
         const unblockModules = path.join(directory, 'unblock-modules.cjs');

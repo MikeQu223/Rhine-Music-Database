@@ -125,13 +125,17 @@ class Host : public QObject {
     AppUpdater updater;
     QString root;
     bool offline;
-    /// 内嵌渲染层模式（Flutter PlatformView，RHINE_QT_EMBEDDED=1）。
+    /// Android 内嵌渲染层模式（Flutter PlatformView，RHINE_QT_EMBEDDED=1）。
     ///
     /// 内嵌时 Qt 只负责把场景画出来：Flutter 是 Siren 曲库、播放和账号的唯一权威。
     /// 因此这一层必须**在副作用发生之前**就隔离掉第二个播放器（AudioPlayer→
     /// QMediaPlayer→QtAndroidMediaPlayer.mContext 正是 137 堆里那条 JNI 根）、
     /// 会话/账号恢复和系统媒体会话注册。它不阻止远程封面：封面走 loadCover。
+#ifdef Q_OS_ANDROID
     bool renderOnly = false;
+#else
+    static constexpr bool renderOnly = false;
+#endif
     std::function<QJsonObject(QString, QJsonObject)> fixture;
     QJsonObject credentials;
     int epoch = 0;

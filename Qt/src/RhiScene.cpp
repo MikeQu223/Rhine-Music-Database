@@ -119,6 +119,16 @@ static constexpr qint64 MUSIC_TEXTURE_BUDGET_BYTES = 64 * 1024 * 1024;
 static constexpr int COVER_PREP_MAX_INFLIGHT = 4;
 static constexpr int COVER_UPLOAD_QUEUE_LIMIT = 16;
 static constexpr int COVER_LATENCY_SAMPLES = 8;
+
+static bool isCoverMesh(int mesh) {
+#if defined(Q_OS_ANDROID)
+    // 内嵌场景逐格绘制封面贴面，独立 Qt 场景只在唱片盘面采样封面。
+    return mesh == -2 || mesh == -8;
+#else
+    return mesh == -2;
+#endif
+}
+
 static QMatrix4x4 matrix(QJsonArray a, int offset = 0) {
     QMatrix4x4 m;
     for (int i = 0; i < 16; ++i) {
@@ -334,9 +344,11 @@ class Renderer {
     QRhiTexture *white = nullptr;
     QRhiTexture *depth = nullptr;
     QRhiBuffer *globalBuffer = nullptr, *floor = nullptr, *coverPlane = nullptr, *musicLabelPlane = nullptr,
-               *frontArtPlane = nullptr,
                *discBody = nullptr, *discHub = nullptr, *caseDecoration = nullptr,
                *caseLetteringFront = nullptr, *caseLetteringSpine = nullptr;
+#if defined(Q_OS_ANDROID)
+    QRhiBuffer *frontArtPlane = nullptr;
+#endif
     int discPrintCount = 0;
     int discBodyCount = 0;
     int discHubCount = 0;
@@ -837,11 +849,13 @@ class Renderer {
         discBodyCount = body.count();
         discHubCount = hub.count();
         musicLabelPlane = plane(-.83, .07, -.03, .29, 0, -.83, .07, .8, .22);
+#if defined(Q_OS_ANDROID)
         // 可见格的封面贴面。取档案正面纸张范围（Internal_Ceramic 的
         // x[-1.821,1.930] y[0.379,3.349]）里的正方形画心：正方形是为了让方形封面不被拉扁，
         // 高度只到 2.959 是为了给上方 y[3.04,3.26] 的印刷标签让位——标签不许压在封面上。
         // z=0.25 在纸张（0.2464）之前、磨砂壳（0.206）之前，封面纸贴在壳外侧。
         frontArtPlane = plane(-1.235, 0.379, 1.345, 2.959, 0.25, -1.235, 0.379, 2.58, 2.58);
+#endif
         caseDecoration = plane(-2.5, 0, 2.5, 3.7, .222, -2.5, 0, 5, 3.7);
         // 与主渲染路径一致：背景按需分两档（低档 1 倍 / 高档 2 倍），文字独立成片 16 倍。
         const QColor ink(65, 70, 62, 170), accent(119, 123, 96, 195);
@@ -1459,10 +1473,10 @@ class Renderer {
                 QJsonArray{(bits & 1) ? 1.0 : 0.15, (bits & 2) ? 1.0 : 0.15, (bits & 4) ? 1.0 : 0.15, 1.0};
         }
         bool optical = name.startsWith("Optical_Glass") || name == "Optical_Bridge_Glass";
-        float type = d["mesh"].toInt() == -2                               ? 6
-                     : d["mesh"].toInt() == -8                             ? 6
-                     : d["mesh"].toInt() == -3 || d["mesh"].toInt() == -4  ? 8
-                     : d["mesh"].toInt() == -6 || d["mesh"].toInt() == -7  ? 7
+        const int mesh = d["mesh"].toInt();
+        float type = isCoverMesh(mesh)                                     ? 6
+                     : mesh == -3 || mesh == -4                           ? 8
+                     : mesh == -6 || mesh == -7                           ? 7
                      : d["label"].toBool()                                 ? 1
                      : name == "Frosted_Polymer" || name == "Optical_Film" ? 3
                      : name == "Ivory_Edges"                               ? 4
@@ -1498,11 +1512,11 @@ class Renderer {
         // 以及焦点与归位卡由 Frosted_Polymer 派生出的封面盘面与标签都不进入本帧
         // draw 列表。detail/boot/查看封面页与非 Android 平台保持原样；卡壳、唱片
         // 实体（银盘/轴心）、frame/drawBuffers 与封面资源管线都不动。
-        const bool hideLibraryArtwork =
 #if defined(Q_OS_ANDROID)
+        const bool hideLibraryArtwork =
             f["mode"].toString() == QLatin1String("archive") && !f["viewer"].toBool();
 #else
-            false;
+        constexpr bool hideLibraryArtwork = false;
 #endif
         QList<QJsonObject> result;
         for (auto v : f["draws"].toArray()) {
@@ -1511,10 +1525,11 @@ class Renderer {
             if (removed.contains(name)) {
                 continue;
             }
-            if (hideLibraryArtwork &&
-                (d["label"].toBool() || name == QLatin1String("Embedded_Cell_Print"))) {
+#if defined(Q_OS_ANDROID)
+            if (hideLibraryArtwork && (d["label"].toBool() || name == QLatin1String("Embedded_Cell_Print"))) {
                 continue;
             }
+#endif
             const bool shell =
                 name == "Frosted_Polymer" || name == "Ivory_Edges" || name == "Optical_Diffuser";
             if (name == "Titanium_Fasteners") {
@@ -1670,8 +1685,10 @@ class Renderer {
         const auto next = coverTextures.value(revision);
         covers[key] = next;
         coverRevisions[key] = revision;
+#if defined(Q_OS_ANDROID)
         qInfo("RHINE_QT_COVER_BIND key=%.48s rev=%lld tex=%d", qPrintable(key),
               static_cast<long long>(revision), next ? 1 : 0);
+#endif
         coverWanted.remove(key);
         // B04：焦点稳定（准入）到封面真正换绑的帧差。样本窗口很小，只用于探针。
         if (const auto admittedAt = admittedFrame.constFind(key); admittedAt != admittedFrame.constEnd()) {
@@ -2785,9 +2802,11 @@ class Renderer {
                 count = discHubCount;
             } else if (mesh == -5) {
                 vertices = caseDecoration;
+#if defined(Q_OS_ANDROID)
             } else if (mesh == -8) {
                 // 可见格封面贴面：6 个顶点的单位矩形，UV 由顶点铺满整张封面。
                 vertices = frontArtPlane;
+#endif
             } else if (mesh == -6) {
                 vertices = caseLetteringFront;
             } else if (mesh == -7) {
@@ -2805,8 +2824,8 @@ class Renderer {
             } else if (!d["floor"].toBool()) {
                 continue;
             }
-            const auto embeddedLabel = d["name"].toString() == QLatin1String("Embedded_Cell_Label");
-            if (embeddedLabel) {
+#if defined(Q_OS_ANDROID)
+            if (d["name"].toString() == QLatin1String("Embedded_Cell_Label")) {
                 // 这一格的标签纹理还没生成时不能画：labels.value(key, white) 是一张纯白卡纸，
                 // 比不画更难解释。等准入把标签落下来，下一帧自然出现。
                 const auto cellKey = d["musicKey"].toString();
@@ -2814,6 +2833,7 @@ class Renderer {
                     continue;
                 }
             }
+#endif
             // C02：键用整数 id/mesh 加短名字，不再拼临时字符串。
             const RhineRender::MaterialSlotKey resourceKey{d["id"].toInt(), mesh, d["name"].toString()};
             auto &state = materials[resourceKey];
@@ -2849,9 +2869,7 @@ class Renderer {
             // 查看封面页的绘制来自装配体，key 不是曲目 key（空），仍回落当前曲目封面；
             // 归位卡片则不许借：不是当前曲目就绑定占位纹理。
             const auto coverFallback = key.isEmpty() || key == selectedKey ? currentCover : placeholderCover;
-            // 封面贴面（-8）与盘面（-2）是仅有的两条读封面纹理的通道。
-            const auto cover =
-                mesh == -2 || mesh == -8 ? covers.value(key, coverFallback) : placeholderCover;
+            const auto cover = isCoverMesh(mesh) ? covers.value(key, coverFallback) : placeholderCover;
             QRhiShaderResourceBindings *drawBindings = nullptr;
             quint32 materialOffset = 0;
             bool dynamicOffset = false;
@@ -3560,6 +3578,7 @@ class Renderer {
             if (it.key() == currentMusicKey || it->item.isEmpty()) {
                 continue;
             }
+#if defined(Q_OS_ANDROID)
             // 只有纹理 revision 与条目想要的 revision 不一致才退：
             // 只判「有没有绑定」会自激——退掉后立刻用空图绑回 0，下一帧条件又成立。
             //   bound == 0：本来就没封面，保持共享占位。
@@ -3577,10 +3596,15 @@ class Renderer {
                 // 没人引用的纹理，也不会把已经切走的封面又贴回来。
                 releaseCover(it.key());
             }
+#endif
             if (it->admitted) {
+#if defined(Q_OS_ANDROID)
                 // 两个通道都要判：曾经在"只补标签"的版本里补过标签的 key，labels 命中而
                 // covers 空缺，若只看 labels 就再也不会补封面。
                 if (!labels.contains(it.key()) || !covers.contains(it.key())) {
+#else
+                if (!labels.contains(it.key())) {
+#endif
                     updateMusic(it->item, it->cover, true);
                 }
             }

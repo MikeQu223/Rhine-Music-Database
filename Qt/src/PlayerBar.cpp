@@ -254,7 +254,12 @@ void output(Painter &paint, const State &state, double x, double y, double right
     if (state.applicationVolume) {
         paint.fill({x - 22, y + 23, 1, 50}, paint.line);
         paint.label("OUTPUT / 输出", x, y + 29, 11, 180, "regular", true);
-        paint.label("音量", x, y + 53, 14, 78);
+#ifdef Q_OS_ANDROID
+        constexpr double volumeLabelWidth = 78;
+#else
+        const double volumeLabelWidth = scale > 1 ? 54 : 78;
+#endif
+        paint.label("音量", x, y + 53, 14, volumeLabelWidth);
         const auto volumeX = x + 58;
         paint.drawing.volume = QRectF(volumeX, y + 47, 100, 28);
         paint.fill({volumeX, y + 60, 100, 3}, paint.line);

@@ -184,6 +184,20 @@ bool checkSettingsSchema() {
     }
     const auto *mask = SettingsSchema::find("archive-mask");
     const auto *debug = SettingsSchema::find("debug-mode");
+    const auto *vsync = SettingsSchema::find("vsync");
+#ifdef Q_OS_ANDROID
+    constexpr bool expectedVSync = false;
+#else
+    constexpr bool expectedVSync = true;
+#endif
+    if (!vsync || SettingsSchema::resolvedDefault(*vsync, context) != (expectedVSync ? "on" : "off") ||
+        SettingsSchema::read(*vsync, context).boolean != expectedVSync ||
+        RhineFg::windowVSyncEnabled({}) != expectedVSync ||
+        !RhineFg::windowVSyncEnabled(QStringLiteral("on")) ||
+        RhineFg::windowVSyncEnabled(QStringLiteral("off"))) {
+        qCritical() << "垂直同步默认值或已保存设置不符合平台约定";
+        return false;
+    }
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
     constexpr bool debugModeVisible = true;
 #else
@@ -994,6 +1008,33 @@ bool checkPlayerBar(Glyphs &glyphs) {
         return false;
     }
     return true;
+}
+
+/** 独立 Qt 在减少动效时也应在手势尚未释放的情况下跟随横拖切列。 */
+bool checkSceneArchiveDrag(const QString &root) {
+    NativeScene scene(root);
+    scene.resize(1920, 1080);
+    scene.diagnostics(true);
+    if (!scene.review("archive")) {
+        return false;
+    }
+    scene.setMode("archive");
+    scene.reduced(true);
+    const auto before = scene.sample(2.12).value("stats").toObject();
+    const auto left = before.value("topLeft").toArray();
+    const auto right = before.value("topRight").toArray();
+    if (left.size() != 2 || right.size() != 2 || !before.value("selectedCell").isObject()) {
+        return false;
+    }
+    // 按画面里卡片的横轴拖一张卡的宽度，隔离纵向轨道的位移。
+    const QPointF delta(right.at(0).toDouble() - left.at(0).toDouble(),
+                        right.at(1).toDouble() - left.at(1).toDouble());
+    scene.pointer("pointerdown", 960, 540);
+    scene.pointer("pointermove", 960 + delta.x() * 1.2, 540 + delta.y() * 1.2);
+    const auto during = scene.sample(2.14).value("stats").toObject();
+    return during.value("holdingArchive").toBool() &&
+           during.value("selectedCell").toObject().value("lane") !=
+               before.value("selectedCell").toObject().value("lane");
 }
 
 /** 留白输入不能触发详情返回、关闭弹窗或滚动后方队列。 */
@@ -2466,6 +2507,7 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
     ok &= record("album track selection", checkAlbumTrackSelection(root, glyphs, content));
     ok &= record("player bar", checkPlayerBar(glyphs));
     ok &= record("player input", checkPlayerInput(root, glyphs, content));
+    ok &= record("scene archive drag", checkSceneArchiveDrag(root));
     int testCount = 0;
 
     for (const auto &provider : providers) {

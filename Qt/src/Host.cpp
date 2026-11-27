@@ -502,19 +502,15 @@ QJsonObject Host::credentialCookies(const QJsonObject &credentials, const QStrin
     }
     return cookies;
 }
-// 内嵌开关必须在播放核心内本地求值：RhinePlaybackCore 同时被后台 RhinePlaybackService 链接，
-// 而 RhineEmbedded::requested() 的定义在 EmbeddedSceneHost.cpp，它依赖 Qt Quick/QML，只能
-// 属于应用目标（见 Qt/CMakeLists.txt 中对该目标的注释）。语义与那边的实现完全一致。
-static bool embeddedRequested() {
-    return qEnvironmentVariableIntValue("RHINE_QT_EMBEDDED") == 1;
-}
 
 Host::Host(QString path, bool test, QObject *parent, bool service, PlaybackConnection *connection,
            QString isolatedCachePath)
     : QObject(parent), updater(test), root(path), offline(test), remote(test ? nullptr : connection),
       playbackOnly(service) {
-    // 内嵌渲染层：Flutter 持有播放/账号/曲库，Qt 这里不能再造第二份（见 Host.h 注释）。
-    renderOnly = embeddedRequested();
+#ifdef Q_OS_ANDROID
+    // 只在 Android 解读宿主的内嵌开关。应用和业务层共用本次初始化的结果。
+    renderOnly = qEnvironmentVariableIntValue("RHINE_QT_EMBEDDED") == 1;
+#endif
     if (renderOnly) {
         ProviderRegistry::instance().load(root);
     } else {

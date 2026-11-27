@@ -960,26 +960,30 @@ if(MSVC)
 endif()
 add_test(NAME qt_vulkan_resource_regression COMMAND RhineVulkanResourceRegression)
 
-# 149：可见格业务资源投影（身份不含位置、绝对行号、A→B→A 作废、稳定窗准入、有界淘汰）。
-# 纯函数 + 可注入时钟的状态机，只依赖 Qt6::Core，离线可跑。
-qt_add_executable(RhineEmbeddedCellResources149Test Qt/tests/EmbeddedCellResources149Test.cpp)
-target_include_directories(RhineEmbeddedCellResources149Test PRIVATE Qt/src)
-target_link_libraries(RhineEmbeddedCellResources149Test PRIVATE Qt6::Core)
-if(MSVC)
-    target_compile_options(RhineEmbeddedCellResources149Test PRIVATE /utf-8)
-endif()
-add_test(NAME qt_embedded_cell_resources_149 COMMAND RhineEmbeddedCellResources149Test)
+# Android 的嵌入协议可以在桌面宿主上离线验证，默认桌面构建无需编译这些回归。
+option(RHINE_ENABLE_ANDROID_SCENE_TESTS "Build Android scene protocol tests for the desktop host" OFF)
+if(RHINE_ENABLE_ANDROID_SCENE_TESTS)
+    # 149：可见格业务资源投影（身份不含位置、绝对行号、A→B→A 作废、稳定窗准入、有界淘汰）。
+    # 纯函数 + 可注入时钟的状态机，只依赖 Qt6::Core，离线可跑。
+    qt_add_executable(RhineEmbeddedCellResources149Test Qt/tests/EmbeddedCellResources149Test.cpp)
+    target_include_directories(RhineEmbeddedCellResources149Test PRIVATE Qt/src)
+    target_link_libraries(RhineEmbeddedCellResources149Test PRIVATE Qt6::Core)
+    if(MSVC)
+        target_compile_options(RhineEmbeddedCellResources149Test PRIVATE /utf-8)
+    endif()
+    add_test(NAME qt_embedded_cell_resources_149 COMMAND RhineEmbeddedCellResources149Test)
 
-# 153：origin / 生命周期判据（排队输入按起手 origin、惯性 ticker 带起手 origin、拆场景
-# fail-closed、旧世代 destroy 被拒、149 contextGeneration 契约、M1 手势阶段、M2 换人）。
-# 判据全在 Qt/src/EmbeddedSceneOrigin.h（header-only），只依赖 Qt6::Core，离线可跑。
-qt_add_executable(RhineEmbeddedSceneOrigin153Test Qt/tests/EmbeddedSceneOrigin153Test.cpp)
-target_include_directories(RhineEmbeddedSceneOrigin153Test PRIVATE Qt/src)
-target_link_libraries(RhineEmbeddedSceneOrigin153Test PRIVATE Qt6::Core)
-if(MSVC)
-    target_compile_options(RhineEmbeddedSceneOrigin153Test PRIVATE /utf-8)
+    # 153：origin / 生命周期判据（排队输入按起手 origin、惯性 ticker 带起手 origin、拆场景
+    # fail-closed、旧世代 destroy 被拒、149 contextGeneration 契约、M1 手势阶段、M2 换人）。
+    # 判据全在 Qt/src/EmbeddedSceneOrigin.h（header-only），只依赖 Qt6::Core，离线可跑。
+    qt_add_executable(RhineEmbeddedSceneOrigin153Test Qt/tests/EmbeddedSceneOrigin153Test.cpp)
+    target_include_directories(RhineEmbeddedSceneOrigin153Test PRIVATE Qt/src)
+    target_link_libraries(RhineEmbeddedSceneOrigin153Test PRIVATE Qt6::Core)
+    if(MSVC)
+        target_compile_options(RhineEmbeddedSceneOrigin153Test PRIVATE /utf-8)
+    endif()
+    add_test(NAME qt_embedded_scene_origin_153 COMMAND RhineEmbeddedSceneOrigin153Test)
 endif()
-add_test(NAME qt_embedded_scene_origin_153 COMMAND RhineEmbeddedSceneOrigin153Test)
 
 qt_add_executable(RhineSceneLifetimeRegression Qt/tests/SceneLifetimeChecks.cpp)
 target_include_directories(RhineSceneLifetimeRegression PRIVATE Qt/src)

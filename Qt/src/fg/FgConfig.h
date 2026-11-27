@@ -59,6 +59,17 @@ struct FgConfig
 
 namespace RhineFg {
 
+#ifdef Q_OS_ANDROID
+inline constexpr bool DefaultVSyncEnabled = false;
+#else
+inline constexpr bool DefaultVSyncEnabled = true;
+#endif
+
+/** 普通非 Darwin 窗口沿用各平台对已保存同步偏好的约定。 */
+inline bool windowVSyncEnabled(const QString &preference) {
+    return DefaultVSyncEnabled ? preference != QLatin1String("off") : preference == QLatin1String("on");
+}
+
 /// 宽松解析布尔环境变量：认不出来的值退回 fallback，而不是猜。
 inline bool parseBool(const QByteArray &raw, bool fallback)
 {

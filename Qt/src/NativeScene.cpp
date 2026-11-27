@@ -60,6 +60,7 @@ bool NativeScene::ready() const {
 int NativeScene::selection() const {
     return m_selected;
 }
+#ifdef Q_OS_ANDROID
 double NativeScene::archiveTrackItem() const {
     // 与 moveArchive()/navigatePlane() 用的是同一组换算（NativeSceneInput.cpp）：
     //   row = (-railZ - 2.17) / 0.62 + 15.5，条目 = row - 12
@@ -84,6 +85,7 @@ void NativeScene::projectArchiveScroll(double item, int lane) {
     m_externalUntil = m_clock + 0.5;
     m_changed = true;
 }
+#endif
 
 NativeScene::Cell NativeScene::fileLocation(int index) const {
     for (int lane = 0; lane < 5; ++lane) {
@@ -111,11 +113,13 @@ void NativeScene::pulse(Cell cell) {
 /** 切换只复制活动卡片根状态；反向选中尚在归位的卡片时继续其真实速度与角度。 */
 void NativeScene::select(int index, QJsonObject navigation) {
     m_changed = true;
-    // 只挡负数：40 是 Assets/android-3d/slots.json 的**占位槽位数**，不是真实曲目域。
-    // 塞壬曲库有 936 首，真正的几何锚点是 fileLocation(index)（在本列 m_columns 里找
-    // 这一条，落到 cell{ lane, 12+row }），它对任意 index 都有定义（找不到退回 {2,12}）。
-    // 早先的 `index >= 40` 会把第 41 行以后的选中整条丢掉，表现为"选中了但 3D 不动"。
-    if (index < 0) {
+#ifdef Q_OS_ANDROID
+    // Flutter 传入真实曲库索引，允许超出独立 Qt 场景的占位槽位数。
+    const bool outsideSlots = !m_embeddedMode && index >= 40;
+#else
+    const bool outsideSlots = index >= 40;
+#endif
+    if (index < 0 || outsideSlots) {
         return;
     }
     if (!m_navigating) {
@@ -265,6 +269,7 @@ void NativeScene::musicClear() {
         actor.musicKey.clear();
     }
 }
+#ifdef Q_OS_ANDROID
 void NativeScene::projectEmbeddedCellKeys(const QHash<quint32, QString> &keys) {
     if (keys == m_embeddedCellKeys) {
         // 同一批可见格重复上报是常态（每帧一次）：内容没变就不动 m_changed，
@@ -274,6 +279,7 @@ void NativeScene::projectEmbeddedCellKeys(const QHash<quint32, QString> &keys) {
     m_embeddedCellKeys = keys;
     m_changed = true;
 }
+#endif
 void NativeScene::freeze(std::optional<double> time) {
     m_changed = true;
     m_freeze = time;

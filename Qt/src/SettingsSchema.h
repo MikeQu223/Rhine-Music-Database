@@ -1,4 +1,5 @@
 #pragma once
+#include "fg/FgConfig.h"
 #include <QString>
 #include <QStringList>
 #include <QVector>
@@ -63,7 +64,7 @@ struct SettingsContext {
     QString themeMode;
     bool reduced = false;
     bool startupAnimation = false;
-    bool vsync = true;
+    bool vsync = RhineFg::DefaultVSyncEnabled;
     int archiveMaskStrength = 0;
     QString expandedId;
     QString cacheMessage;
