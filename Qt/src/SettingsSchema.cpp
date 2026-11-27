@@ -28,9 +28,9 @@ QVector<SettingChoice> onOffChoices() {
 }
 
 QVector<SettingChoice> themeChoices() {
-    // 只有亮/暗两档：「跟随系统」已按用户要求移除，不再做系统亮度检测。
     return {{"light", QStringLiteral("亮色")},
-            {"dark", QStringLiteral("暗色")}};
+            {"dark", QStringLiteral("暗色")},
+            {"system", QStringLiteral("跟随系统")}};
 }
 
 QVector<SettingChoice> motionChoices() {
@@ -1020,9 +1020,8 @@ QString normalize(const SettingDescriptor &descriptor, const SettingsContext &co
     case StorageType::ReducedFull:
         return raw == "reduced" || raw == "full" ? raw : defaultFor(descriptor, context, "full");
     case StorageType::Theme: {
-        // 只有亮/暗两档；旧偏好里残留的 "system" 在这里归到亮色（默认配色）。
-        const bool valid = raw == "light" || raw == "dark";
-        return valid ? raw : defaultFor(descriptor, context, "light");
+        const bool valid = raw == "light" || raw == "dark" || raw == "system";
+        return valid ? raw : defaultFor(descriptor, context, "system");
     }
     case StorageType::TrayQuit:
         return raw == "tray" || raw == "quit" ? raw : defaultFor(descriptor, context, "quit");

@@ -11,8 +11,10 @@
 #include "MusicDiscover.h"
 #include "ProviderRegistry.h"
 #include "render/RenderModePolicy.h"
+#include <QGuiApplication>
 #include <QJsonDocument>
 #include <QPointer>
+#include <QStyleHints>
 #include <QUrl>
 #include <QTimer>
 #include <algorithm>
@@ -61,10 +63,23 @@ NativeHud::NativeHud(Host *host, Glyphs *glyphs, MusicLibrary *music, HudSceneAc
     });
     themeMode = host->preference("theme");
     if (themeMode.isEmpty()) {
-        // 出厂默认亮色：不再有「跟随系统」，缺键直接落到 light。
-        themeMode = "light";
+        themeMode = "system";
     }
-    dark = themeMode == "dark";
+    dark = themeMode == "dark" || (themeMode == "system" && host->systemDark());
+    if (!host->renderOnly) {
+        // Host 已在系统配色变化时唤醒引擎；在下一帧前更新 HUD 和场景，避免复用旧主题的冻结帧。
+        connect(QGuiApplication::styleHints(), &QStyleHints::colorSchemeChanged, this,
+                [this](Qt::ColorScheme scheme) {
+            const bool systemDark = scheme == Qt::ColorScheme::Dark;
+            if (themeMode != "system" || dark == systemDark) {
+                return;
+            }
+            dark = systemDark;
+            if (m_scene.theme) {
+                m_scene.theme(dark);
+            }
+        });
+    }
     reduced = host->preference("motion") == "reduced";
     startupAnimation = host->preference("startup-animation") == "on";
 #ifdef Q_OS_DARWIN
@@ -1551,8 +1566,8 @@ void NativeHud::action(QString value) {
     } else if (value == "disc-rotation:cancel") {
         openModal("settings", true);
     } else if (value == "theme") {
-        themeMode = cycle({"light", "dark"}, themeMode);
-        dark = themeMode == "dark";
+        themeMode = cycle({"light", "dark", "system"}, themeMode);
+        dark = themeMode == "dark" || (themeMode == "system" && m_host->systemDark());
         m_scene.theme(dark);
         m_host->setPreference("theme", themeMode);
     } else if (value.startsWith("archive-mask:")) {

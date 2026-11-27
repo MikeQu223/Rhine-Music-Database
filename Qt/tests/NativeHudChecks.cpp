@@ -166,8 +166,11 @@ bool checkSettingsSchema() {
     const auto *textScale = SettingsSchema::find("text-scale");
     const auto *transition = SettingsSchema::find("apple-smart-transition");
     if (!theme || SettingsSchema::resolvedDefault(*theme, context) != "system" ||
+        SettingsSchema::choices(*theme, context).size() != 3 ||
+        SettingsSchema::normalize(*theme, context, "system") != "system" ||
+        SettingsSchema::displayLabel(*theme, context) != QStringLiteral("跟随系统") ||
         (transition && SettingsSchema::resolvedDefault(*transition, context) != "on")) {
-        qCritical() << "Settings defaults did not adopt system theme and enabled transitions";
+        qCritical() << "界面配色未恢复系统选项或播放过渡未默认启用";
         return false;
     }
     if (!textScale || textScale->binding.preferenceKey != "text-scale" ||

@@ -527,8 +527,7 @@ void NativeHud::applySettingValue(const QString &id, const QString &value) {
     // 主题需要同时更新缓存、磁盘与场景波形，不能只写偏好。
     if (id == "theme") {
         themeMode = target;
-        // 只有亮/暗两档，不再跟随系统。
-        dark = target == "dark";
+        dark = target == "dark" || (target == "system" && m_host->systemDark());
         m_host->setPreference("theme", target);
         if (m_scene.theme) {
             m_scene.theme(dark);
