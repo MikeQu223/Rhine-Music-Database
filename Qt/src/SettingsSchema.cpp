@@ -28,9 +28,9 @@ QVector<SettingChoice> onOffChoices() {
 }
 
 QVector<SettingChoice> themeChoices() {
+    // 只有亮/暗两档：「跟随系统」已按用户要求移除，不再做系统亮度检测。
     return {{"light", QStringLiteral("亮色")},
-            {"dark", QStringLiteral("暗色")},
-            {"system", QStringLiteral("跟随系统")}};
+            {"dark", QStringLiteral("暗色")}};
 }
 
 QVector<SettingChoice> motionChoices() {
@@ -770,6 +770,7 @@ const QVector<SettingDescriptor> &descriptors() {
              .order = 110,
              .titleEn = "RIGHT MASK",
              .titleZh = "右侧画面遮罩",
+              // 出厂默认 0（关闭）：曲库页不压暗右侧画面。
              .defaultValue = "0",
              .minimum = 0,
              .maximum = 100,
@@ -822,7 +823,8 @@ const QVector<SettingDescriptor> &descriptors() {
              .titleEn = "V-SYNC",
              .titleZh = "垂直同步",
              .restartHint = QStringLiteral("重启生效"),
-             .defaultValue = On,
+              // 出厂默认关闭。
+             .defaultValue = Off,
              .choices = onOffChoices(),
              .visible = vsyncVisible});
         add({.id = "render-scale",
@@ -1018,7 +1020,8 @@ QString normalize(const SettingDescriptor &descriptor, const SettingsContext &co
     case StorageType::ReducedFull:
         return raw == "reduced" || raw == "full" ? raw : defaultFor(descriptor, context, "full");
     case StorageType::Theme: {
-        const bool valid = raw == "light" || raw == "dark" || raw == "system";
+        // 只有亮/暗两档；旧偏好里残留的 "system" 在这里归到亮色（默认配色）。
+        const bool valid = raw == "light" || raw == "dark";
         return valid ? raw : defaultFor(descriptor, context, "light");
     }
     case StorageType::TrayQuit:

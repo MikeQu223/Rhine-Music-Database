@@ -111,6 +111,12 @@ class NodeRuntime : public QObject {
         if (launched) {
             return !exited && (!socket || socket->state() == QAbstractSocket::ConnectedState);
         }
+        // 进程内已有 Node 运行时就不再起：v8 的 trap handler 只能初始化一次，
+        // 第二次 node::Start 会 SIGTRAP。
+        if (qEnvironmentVariableIsSet("RHINE_NODE_IN_PROCESS")) {
+            qInfo().noquote() << "embedded node runtime already owns the process; skipping second start";
+            return false;
+        }
         if (!QFileInfo::exists(root + "/MusicBridge/ios-runtime.cjs") ||
             !server.listen(QHostAddress::LocalHost, 0)) {
             return false;

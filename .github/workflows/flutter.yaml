@@ -1,0 +1,230 @@
+name: Flutter Build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: flutter-android-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FLUTTER_VERSION: '3.47.8'
+  # 固定 SDK / NDK 根，setup-android 与 Gradle 读同一份。
+  ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+  ANDROID_HOME: /usr/local/lib/android/sdk
+  ANDROID_NDK_ROOT: /usr/local/lib/android/sdk/ndk/30.0.16248370
+  RHINE_BUILD_JOBS: '4'
+
+jobs:
+  build:
+    name: Android arm64-v8a unsigned
+    runs-on: ubuntu-24.04
+    # 冷启动要交叉编译 Qt kit；缓存命中后出包只要几分钟。
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Check out Qt sources for the Android kit
+        shell: bash
+        # Qt 6.12 没有公开的 Android 预编译包，kit 只能从这五个子模块现场编。
+        run: |
+          git submodule update --init --depth 1 \
+            third_party/qt/qtbase \
+            third_party/qt/qtdeclarative \
+            third_party/qt/qtmultimedia \
+            third_party/qt/qtsvg \
+            third_party/qt/qtshadertools
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '26.11.1'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # AGP 只接受 JDK 17-21，Gradle 必须跑在 21 上。
+      # 但 javapatch 的 EXPECTED.sha256 是用 javac 27.0.1 记录的（不同 javac 编出的
+      # class 字节不同，patchQtAndroidJar 会按内容 sha 门禁失败），所以两套 JDK 都装
+      # 27 只用于把 javac 放到 PATH 前面，JAVA_HOME 保持 21
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '27'
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Free disk space
+        shell: bash
+        # Qt kit 构建树 + kit 本身约 6-8 GB；预装 NDK 随后按固定版本重装。
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          sudo rm -rf "${ANDROID_SDK_ROOT}"/ndk/* || true
+          df -h /
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
+
+      - name: Install Android platform, build-tools and NDK
+        shell: bash
+        # 两套 NDK 各有用处：
+        #   * 30.0.16248370 —— 编译 Qt native 库（与本地/output 真值一致）；
+        #   * 28.2.13676358 —— Flutter Gradle 的 flutter.ndkVersion（android/app/build.gradle.kts
+        #     的 ndkVersion = flutter.ndkVersion），缺了 AGP 会在 Gradle 阶段临时下载或失败。
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager --install \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "ndk;30.0.16248370" \
+            "ndk;28.2.13676358"
+
+      - name: Install Qt for Android build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            cmake ninja-build g++ perl file unzip
+
+      # 宿主 Qt 供交叉编译用（moc/rcc/qmlcachegen）；Android kit 要求
+      # $RHINE_HOST_QT/lib/cmake/Qt6HostInfo 存在，必须装一份 6.12.0 桌面 kit。
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.12.0'
+          arch: linux_gcc_64
+          aqtsource: git+https://github.com/miurahr/aqtinstall.git@076e1659807d0b362a3ed684d54c2e9c775eb9c7
+          modules: qtshadertools qtmultimedia
+          cache: true
+
+      - name: Install npm dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Compute Qt kit cache key
+        id: qt-kit-key
+        shell: bash
+        # 缓存签名覆盖一切会影响 kit 产物的输入：子模块提交、构建/补丁脚本、
+        # OpenSSL 锁定版本、NDK 与宿主 Qt 版本。
+        run: |
+          set -euo pipefail
+          {
+            for module in qtbase qtdeclarative qtmultimedia qtsvg qtshadertools; do
+              echo "$module $(git -C third_party/qt/$module rev-parse HEAD)"
+            done
+            sha256sum scripts/build-qt-android.cjs scripts/qt-android-patches.cjs \
+              scripts/android-toolchain.cjs vendor/openssl/source.json
+            echo "host-qt 6.12.0 linux_gcc_64"
+            echo "ndk 30.0.16248370"
+            echo "platform android-36 build-tools 36.0.0"
+          } > "$RUNNER_TEMP/qt-kit-signature.txt"
+          echo "signature=$(sha256sum "$RUNNER_TEMP/qt-kit-signature.txt" | cut -c1-24)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Qt for Android kit
+        id: qt-kit-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            output/dependencies/qt-android
+            output/dependencies/openssl-android
+          key: qt-android-kit-${{ steps.qt-kit-key.outputs.signature }}
+
+      - name: Build Qt for Android kit
+        if: steps.qt-kit-cache.outputs.cache-hit != 'true'
+        env:
+          RHINE_HOST_QT: ${{ env.QT_ROOT_DIR }}
+        run: npm run build:qt:android
+
+      - name: Save Qt for Android kit
+        # 显式保存：job 被 timeout 掐掉时 post 步骤不会执行，
+        # 会出现"编完了没存上、下次再编一遍"的死循环。
+        if: steps.qt-kit-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            output/dependencies/qt-android
+            output/dependencies/openssl-android
+          key: qt-android-kit-${{ steps.qt-kit-key.outputs.signature }}
+
+      - name: Register Gradle repositories for every build
+        shell: bash
+        run: |
+          mkdir -p "$HOME/.gradle/init.d"
+          cp .github/gradle/ci-repositories.gradle \
+             "$HOME/.gradle/init.d/rhine-repositories.gradle"
+
+      - name: Build Android APK (shared with local)
+        shell: bash
+        env:
+          # 只传给 Gradle 的 patchQtAndroidJar；JAVA_HOME 仍是 21，Gradle/AGP 不跑在 27 上。
+          JDK27_HOME: ${{ env.JAVA_HOME_27_X64 }}
+        # 与本地同一个入口：准备资源 → CMake 配置/编 native → androiddeployqt --aux-mode
+        # → flutter build apk --split-per-abi。CI 不再内联这些命令，避免两边参数走偏。
+        # 不提供签名材料：Gradle 会产出未签名 release，Flutter 工具再按 ABI 复制成
+        # build/app/outputs/flutter-apk/app-arm64-v8a-release.apk（只此一片）。
+        run: npm run build:flutter:android
+
+      # 只留一个 APK，并按 RMD-<versionCode>-android-arm64-v8a-unsigned 命名：
+      # 产物名既是 apk 文件名，也是 artifact 名，下载下来的 zip 因此同名
+      # （GitHub 的 artifact zip 一律是 <artifact-name>.zip）。
+      - name: Stage APK as RMD-<versionCode>-android-arm64-v8a-unsigned
+        id: apk
+        shell: bash
+        run: |
+          set -euo pipefail
+          # --split-per-abi 后产物按 ABI 命名：Flutter 工具把 Gradle 的
+          # app-arm64-v8a-release(-unsigned).apk 复制成这个固定名字。
+          # 不存在时退回 Gradle 的原始输出，只认 arm64-v8a 那一片。
+          apk=build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+          if [[ ! -f "$apk" ]]; then
+            apk="$(find android/app/build/outputs/apk/release -maxdepth 1 \
+              -name 'app-arm64-v8a-release*.apk' -print -quit)"
+          fi
+          [[ -n "$apk" && -f "$apk" ]] || { echo "找不到 arm64-v8a release APK"; exit 1; }
+
+          # versionCode 以 APK 自身为准：出包脚本已用
+          # --android-project-arg=force-version-code-ignoring-abi=true 关掉 ABI 偏移，
+          # 所以这里的号码就是 pubspec.yaml 的 `+N`（arm64-v8a 不会再多出 2000）。
+          # 只有 badging 拿到的是最终真值。
+          aapt2="$(find "$ANDROID_SDK_ROOT/build-tools" -mindepth 2 -maxdepth 2 -name aapt2 -type f | sort -V | tail -n1)"
+          [[ -n "$aapt2" ]] || aapt2="$(command -v aapt2 || true)"
+          [[ -n "$aapt2" ]] || { echo "找不到 aapt2（build-tools 未安装？）"; exit 1; }
+          version_code="$("$aapt2" dump badging "$apk" \
+            | sed -n "s/^package:.*versionCode='\([0-9]*\)'.*/\1/p" | head -n1)"
+          [[ -n "$version_code" ]] || { echo "从 APK 读不到 versionCode"; exit 1; }
+
+          name="RMD-${version_code}-android-arm64-v8a-unsigned"
+          # 放在已被 .gitignore 忽略的 build/ 下，不额外占一个新目录。
+          out="build/ci-artifacts/${name}.apk"
+          mkdir -p "$(dirname "$out")"
+          cp "$apk" "$out"
+          echo "name=${name}" >> "$GITHUB_OUTPUT"
+          ls -l "$out"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          # 单文件路径 → zip 根目录直接是 apk，不会再套一层 build/… 目录。
+          name: ${{ steps.apk.outputs.name }}
+          path: build/ci-artifacts/${{ steps.apk.outputs.name }}.apk
+          if-no-files-found: error
+          # APK 内部已经是压缩流，artifact 再压一遍几乎没有收益，只白烧 CPU。
+          compression-level: 0

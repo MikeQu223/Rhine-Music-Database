@@ -1,0 +1,191 @@
+{
+  "schema": "parity-case/1",
+  "orientation": "landscape",
+  "physical": [
+    2880,
+    1800
+  ],
+  "dpr": 1.96875,
+  "stage": {
+    "height": 1080,
+    "width": 1728,
+    "scale": 0.846560846561
+  },
+  "evidence": {
+    "screenshots": "UNAVAILABLE_RECAPTURE_REQUIRED",
+    "note": "No device frame exists in this repository. The case freezes protocol geometry only; plan section 9.4 forbids claiming visual alignment from it."
+  },
+  "manual_review": {
+    "required": true,
+    "status": "NOT_PERFORMED",
+    "verdict": "UNMEASURED_THRESHOLDS_NOT_FROZEN",
+    "note": "SSIM/deltaE thresholds are proposed, not frozen (plan section 9.2); no global score may release a page."
+  },
+  "id": "search_empty",
+  "page": "search",
+  "state": "search modal open, empty query and no results, nothing playing, playback mode=all",
+  "notes": "Search modal at its empty state: the panel is drawn and the PlayerBar follows it. The modal frame is modalBounds() at stageWidth 1728 -> {864, 122, 805, 836}; every ROI below is one absolute stage rectangle derived from that origin plus the panel-relative constants in NativeHudSearch.cpp:8-13, never a relative value pasted in as absolute. Search tab and row hits are not frozen because their widths come from runtime glyph metrics (Glyphs.cpp:286-311); the 540-wide tab band is a hand-picked comparison window, not a Qt output rect.",
+  "sources": [
+    "Qt/src/NativeHudModal.cpp:162-173",
+    "Qt/src/NativeHudModal.cpp:253",
+    "Qt/src/NativeHud.cpp:153-158",
+    "Qt/src/NativeHud.cpp:189-191",
+    "Qt/src/NativeHud.cpp:309-311",
+    "Qt/src/NativeHud.h:96-98",
+    "Qt/src/NativeHudSearch.cpp:8-13",
+    "Qt/src/NativeHudSearch.cpp:75",
+    "Qt/src/NativeHudSearch.cpp:104",
+    "Qt/src/NativeHudSearch.cpp:131-134",
+    "Qt/src/NativeHudSearch.cpp:206-210",
+    "Qt/src/PlayerBar.cpp:198",
+    "Qt/src/PlayerBar.cpp:229-252",
+    "Qt/src/PlatformFeatures.h:9-14"
+  ],
+  "rois": [
+    {
+      "name": "search-panel",
+      "rect": [
+        864,
+        122,
+        805,
+        836
+      ],
+      "source": "Qt/src/NativeHud.cpp:153-158 (modalBounds: search width = min(width - 100, max(760, min(1000, width * 0.5 - 59))) = min(1628, max(760, min(1000, 805))) = 805 at stage width 1728; left = width - modalWidth - 59 = 1728 - 805 - 59 = 864; top 122; height 836)",
+      "space": "stage",
+      "expect_visible": [],
+      "masks": []
+    },
+    {
+      "name": "search-tab-band",
+      "rect": [
+        917,
+        374,
+        540,
+        36
+      ],
+      "source": "Qt/src/NativeHudSearch.cpp:11-12,71-83 (y = panel origin 122 + SearchTabTop 252; x = 864 + SearchInset 53; height = SearchTabHeight 36; width 540 is a hand-picked band)",
+      "space": "stage",
+      "expect_visible": [],
+      "masks": []
+    },
+    {
+      "name": "search-result-area",
+      "rect": [
+        917,
+        450,
+        699,
+        430
+      ],
+      "source": "Qt/src/NativeHud.h:96-97, Qt/src/NativeHud.cpp:188-191, Qt/src/NativeHudSearch.cpp:131-134 (x = 864 + SearchInset 53; y = panel origin 122 + ResultListTop 328; width = 805 - 106; height = ResultListBottom - ResultListTop = 758 - 328)",
+      "space": "stage",
+      "expect_visible": [],
+      "masks": []
+    },
+    {
+      "name": "player-bar-row",
+      "rect": [
+        0,
+        984,
+        1728,
+        96
+      ],
+      "source": "Qt/src/NativeHud.cpp:310",
+      "space": "stage",
+      "expect_visible": [
+        {
+          "action": "player:prev",
+          "label": "上一首"
+        },
+        {
+          "action": "player:toggle",
+          "label": "播放"
+        },
+        {
+          "action": "player:next",
+          "label": "下一首"
+        },
+        {
+          "action": "player:mode",
+          "label": "列表循环，点击切换播放模式"
+        },
+        {
+          "action": "player:open",
+          "label": "播放队列"
+        }
+      ],
+      "masks": []
+    }
+  ],
+  "hits": [
+    {
+      "x": 775,
+      "y": 1008,
+      "width": 44,
+      "height": 48,
+      "action": "player:prev",
+      "label": "上一首",
+      "fixed": true
+    },
+    {
+      "x": 841,
+      "y": 1009,
+      "width": 46,
+      "height": 46,
+      "action": "player:toggle",
+      "label": "播放",
+      "fixed": true
+    },
+    {
+      "x": 909,
+      "y": 1008,
+      "width": 44,
+      "height": 48,
+      "action": "player:next",
+      "label": "下一首",
+      "fixed": true
+    },
+    {
+      "x": 1324,
+      "y": 1008,
+      "width": 48,
+      "height": 48,
+      "action": "player:mode",
+      "label": "列表循环，点击切换播放模式",
+      "fixed": true
+    },
+    {
+      "x": 1649,
+      "y": 1000,
+      "width": 54,
+      "height": 65,
+      "action": "player:open",
+      "label": "播放队列",
+      "fixed": true
+    }
+  ],
+  "hits_mode": "subset",
+  "hits_scope": "Every PlayerBar hit Qt emits for this state, in source order; the search modal contributes no constant-geometry hit at all.",
+  "hits_excluded": [
+    "archive/search tab hits — rect width is runtime glyph width + 8 (Qt/src/NativeHudLibrary.cpp:126, Qt/src/NativeHudSearch.cpp:75)",
+    "archive/search sort hits — rect width is runtime glyph width + 8 (Qt/src/NativeHudLibrary.cpp:156, Qt/src/NativeHudSearch.cpp:104)",
+    "music:group-back — rect width is runtime glyph width (Qt/src/NativeHudLibrary.cpp:177, Qt/src/NativeHudSearch.cpp:126)",
+    "saved/search table row hits — width is a constant usable = width - 106 but y follows scroll offset and row index (Qt/src/NativeHudLibrary.cpp:211, Qt/src/NativeHudSearch.cpp:210)",
+    "queue row hits — rect derives from runtime track data and offset (Qt/src/PlaybackQueueCard.cpp:90)",
+    "player:volume-fraction:0 — never emitted on Android because PlatformFeatures::ApplicationVolume is false (Qt/src/PlatformFeatures.h:11, Qt/src/NativeHudPlayer.cpp:27-31, Qt/src/PlayerBar.cpp:212-218)"
+  ],
+  "player_bar_hits": 5,
+  "anchors": [
+    {
+      "name": "stage_scale",
+      "value": 0.846560846561,
+      "unit": "stage/logical",
+      "source": "plan section 2.4 (lines 116-125) and appendix B.1 (lines 819-825)"
+    },
+    {
+      "name": "text_baseline_offset",
+      "value": 1.044,
+      "unit": "size",
+      "source": "Qt/src/Glyphs.cpp:316"
+    }
+  ]
+}

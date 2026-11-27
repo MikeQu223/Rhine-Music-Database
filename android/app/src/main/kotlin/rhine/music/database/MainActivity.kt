@@ -1,0 +1,366 @@
+package rhine.music.database
+
+import android.graphics.Rect
+import android.os.Build
+import android.os.Bundle
+import android.util.Log
+import android.view.View
+import android.view.WindowInsets
+import android.view.WindowInsetsController
+import android.view.WindowManager
+import android.view.inputmethod.InputMethodManager
+import android.window.OnBackInvokedCallback
+import android.window.OnBackInvokedDispatcher
+import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.BinaryMessenger
+
+import rhine.music.database.porting.BasicSettingsChannel
+import rhine.music.database.basic.BasicAudioChannel
+import rhine.music.database.porting.MediaSessionChannel
+import rhine.music.database.porting.PluginBridgeChannel
+import rhine.music.database.porting.QtPlatformViewHost
+import rhine.music.database.qt.QT_SCENE_VIEW_TYPE
+import rhine.music.database.qt.QtSceneChannel
+import rhine.music.database.qt.QtSceneViewFactory
+
+private const val TAG = "RhineMainActivity"
+
+/**
+ * Android 宿主 Activity：返回键路由。
+ *
+ * 为什么返回键必须由宿主自己排序：
+ *  - Qt 的返回处理在 QtInputDelegate.onKeyDown（QtInputDelegate.java:503、:524、:544），
+ *    由 QtActivityBase.dispatchKeyEvent/onKeyDown 送进去（QtActivityBase.java:271、:291-297）。
+ *    QtActivityBase 只存在于 Qt 自己的 Activity 层级；本 Activity 继承 FlutterActivity，
+ *    QtInputDelegate 又是包内可见类，宿主拿不到入口。
+ *  - QtWindow.java 完全不处理按键（没有 onKeyDown/onKeyUp/dispatchKeyEvent），
+ *    所以"合成一个 KEYCODE_BACK 派发进 Qt 视图树"也到不了 Qt 的输入层，
+ *    只能走宿主自己的控制通道 verb（QtPlatformViewHost.dispatchBackVerb）。
+ *
+ * 顺序是契约：IME 可见 → 先隐 IME 并消费；否则向已挂载的 Qt 宿主视图"询问"一次 back
+ * verb，只有对面明确认领（回复 Boolean true）才算消费；未挂载、未就绪、对面返回
+ * null/false/error、通道未实现或 250ms 内没有回复，一律视为未认领并立即落回 Flutter
+ * 默认返回（delegate → engine → Dart Navigator）。返回动作从不盲消费，也从不自行
+ * 结束 Activity：业务页只能由 Flutter 的 Navigator 关闭。
+ *
+ * 现状：Dart 侧还没有 METHOD_BACK 的 handler（lib/platform/qt_platform_view.dart 不在
+ * 本文件的改动范围）。平台通道对没有 handler 的方法回"成功 + null"，按认领协议等于
+ * 未认领，所以端到端行为是安全回落 Flutter 默认返回；Qt 认领分支在 Dart 落地前不可达。
+ */
+class MainActivity : FlutterActivity() {
+
+    /**
+     * API 33+ 的返回回调槽位。低版本为 null，系统仍调 [onBackPressed]。
+     */
+    private val hostBackDispatcher: HostBackDispatcher? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            HostBackDispatcher(this, ::dispatchHostBack)
+        } else {
+            null
+        }
+
+    /**
+     * 本 Activity 在 configureFlutterEngine 里真实装上的 settings 通道 messenger。
+     *
+     * onDestroy 只用这份保存的身份清理，不再现取 flutterEngine?.dartExecutor?.binaryMessenger：
+     * 销毁时引擎已被 detach 时 getter 为 null，旧代码的 uninstall(null) 曾会回退到
+     * 「拆当前 owner」；即使修成 null no-op，也只是把「清不掉自己的」变成静默泄漏。
+     * 保存身份后，新宿主先装、旧宿主后销毁的乱序也不会拆到新 owner
+     * （BasicSettingsChannel.uninstall 的 messenger 归属校验会拒绝非 owner）。
+     */
+    private var installedSettingsMessenger: BinaryMessenger? = null
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        // 注册放在 super.onCreate 之后，而不是之前：Activity 恢复时 Flutter 会在
+        // super.onCreate 内部先调一次 setFrameworkHandlesBack
+        // （FlutterActivity.java:637-642），被本类的空覆盖挡住；即使将来绕开覆盖，
+        // 同优先级只有"后注册者先派发"（OnBackInvokedDispatcher.java:96-97），
+        // 宿主晚一步注册才排在 Flutter 之前，先隐 IME、再问 Qt 视图这两步才轮得到。
+        // 注册本身是防御式的：失败只降级，不崩。
+        hostBackDispatcher?.install()
+        // 窗口形态放在 super.onCreate 之后：Flutter 在 super 内会按自己的状态栏策略改一次
+        // systemUiVisibility，宿主最后写才算数；与返回回调的注册顺序无关。
+        applyImmersiveSticky()
+    }
+
+    /**
+     * 媒体会话通道接线。
+     *
+     * 必须在 super 之后：FlutterActivity.configureFlutterEngine 会先让 engine 完成
+     * 默认插件装配，这里再挂自己的两个通道，避免被后续装配覆盖。传给 install 的是
+     * activityProvider = { this } 而不是 this：通道层只在 ensureStarted 时现取 Activity，
+     * 不把 Activity 存成长期字段（见 MediaSessionChannel.install 的注释）。
+     */
+    override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+        super.configureFlutterEngine(flutterEngine)
+        MediaSessionChannel.install(
+            flutterEngine.dartExecutor.binaryMessenger,
+            { this },
+            applicationContext,
+            this,
+        )
+        // 两条注册都不碰上面 MediaSession 的顺序与语义。
+        //  BasicAudioChannel 是真实音频的唯一权威（android.media.MediaPlayer）；MediaSession 只做
+        //  通知/会话/焦点，不产生声音。QtSceneViewFactory 是 3D 场景 PlatformView 的工厂
+        //  （view type "rhine/qt_scene"）：那个视图里跑的是本仓库 Qt 自己的 QQuickView，
+        //  与 Flutter 在同一个进程里，不是第二个播放器、也不是另一个 Activity。
+        //  两者都只在 engine 装配完成后各装一次：重复 install 会接管旧 channel
+        //  （BasicAudioChannel.install 先 detach 再替换），不会叠出第二个实例。
+        BasicAudioChannel.install(flutterEngine.dartExecutor.binaryMessenger) { this }
+        //  状态通道先装：视图创建后 Dart 会立刻推首个快照，通道晚一步就丢第一次 state。
+        //  设置通道承载版本真值与外链；持久化走 shared_preferences。
+        val settingsMessenger = flutterEngine.dartExecutor.binaryMessenger
+        installedSettingsMessenger = settingsMessenger
+        //  显式传 applicationContext；BasicSettingsChannel 构造时再 eager unwrap。
+        //  这里不再有捕获 MainActivity 的 lambda（旧写法 { applicationContext } 在字节码里
+        //  编译成 configureFlutterEngine$lambda$2(MainActivity) 并送进通道存储）。
+        BasicSettingsChannel.install(settingsMessenger, applicationContext)
+        //  插件平台通道：用户安装的插件（netease/qq/kugou/…）要通过内嵌 Node 运行时
+        //  取数据（登录二维码、账号、检索）。协议真值是 MusicBridge/ios-runtime.cjs，
+        //  Kotlin 侧见 porting/PluginBridge.kt，原生侧见 cpp/node_host.cpp。
+        PluginBridgeChannel.install(flutterEngine.dartExecutor.binaryMessenger, applicationContext)
+        QtSceneChannel.install(flutterEngine, this)
+        flutterEngine.platformViewsController.registry.registerViewFactory(
+            QT_SCENE_VIEW_TYPE,
+            QtSceneViewFactory(),
+        )
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // 上滑预览、通知栏下拉、锁屏或权限对话框都可能把系统栏还回来；沉浸式只在
+        // onCreate / onResume 两处重放（Qt/src/AndroidWindow.cpp:85-91 也是回到前台重放），
+        // 不额外注册监听器，避免为一个窗口形态引入生命周期噪声。
+        applyImmersiveSticky()
+    }
+
+    override fun onDestroy() {
+        hostBackDispatcher?.remove()
+        // 静态通道对象会经 MethodChannel 反向握住本引擎（→ 平台视图 → 本 Activity）。
+        // 引擎随 Activity 一起销毁，这里必须同步断开，否则旧 Activity 永远进不了回收。
+        QtSceneChannel.uninstall(this)
+        // 媒体通道同样是"每引擎一份"的静态对象：不在这里断，旧 engine 的 handler 与
+        // activityProvider（→ 本 Activity）会跨宿主存活，新宿主的 install 只能靠自身
+        // detach 自救。带 host 参数做归属校验，旧 onDestroy 不能拆新宿主的通道。
+        MediaSessionChannel.uninstall(this)
+        // 同一个理由：BasicAudioChannel 的静态 current + 注册在 Application 上的
+        // ActivityLifecycleCallbacks 都反向握着本 Activity。
+        BasicAudioChannel.uninstall()
+        // 设置通道同样是"每引擎一份"的静态 handler：不断开就会把 handler 留在旧 engine
+        // 的 messenger 上（重新装只能靠 install 的迁移分支自救）。
+        BasicSettingsChannel.uninstall(installedSettingsMessenger)
+        installedSettingsMessenger = null
+        super.onDestroy()
+    }
+
+    /**
+     * 返回键槽位归宿主所有，**故意不链到 super**。
+     *
+     * FlutterActivity 只在这个回调里注册返回处理，而「先隐 IME、再交给 Qt」必须排在
+     * 任何 Flutter 返回动作之前；同优先级回调按注册逆序派发，截断后 Flutter 就注册不上。
+     * 没人消费时调用 super.onBackPressed()，终点与 Flutter 自己注册一致。
+     *
+     * 代价：API 34+ 的预测式返回动画不再由 Flutter 驱动（Qt 侧本来也没有）。
+     */
+    override fun setFrameworkHandlesBack(frameworkHandlesBack: Boolean) {
+        // 注册/注销都由宿主的 hostBackDispatcher 负责（见 onCreate/onDestroy）；
+        // 这里不转调 super：这是 Flutter 唯一会注册 PRIORITY_DEFAULT 回调的地方，
+        // 放行一次就等于把宿主的 pre-hook 作废（同优先级后注册者先派发）。
+    }
+
+    /**
+     * 低版本（< API 33）与系统未走 dispatcher 时的返回入口。
+     *
+     * 两个入口都只是"发起一次路由"，不做同步判定：Qt 那边的认领是异步回复，
+     * 未认领时由 [dispatchHostBack] 里的回调补上 Flutter 默认返回。
+     */
+    @Suppress("DEPRECATION")
+    override fun onBackPressed() {
+        dispatchHostBack()
+    }
+
+    /**
+     * 统一返回路由，顺序即契约：
+     *  1. IME 可见 → 先隐 IME 并消费，不再往下问；
+     *  2. 否则向挂载中的 Qt 宿主视图发 back verb 询问。只有对面回 Boolean true 才算
+     *     认领/消费；null、false、error、通道未实现、engine 已 detach 或 250ms 超时都
+     *     算未认领，立刻落回 Flutter 默认返回；
+     *  3. 落回终点是 super.onBackPressed()（FlutterActivity.java:940-943 →
+     *     delegate.onBackPressed → engine → Dart），与本类不接管时的行为完全一致。
+     *
+     * 不盲消费的理由：平台通道对"对面没有 handler"回的是成功 + null，宿主无法把它和
+     * "处理了但没说话"区分开；把 null 当消费会让返回键静默失效。认领协议要求对面显式
+     * 回 true，才把这次返回算作已处理。
+     */
+    @Suppress("DEPRECATION")
+    private fun dispatchHostBack() {
+        if (hideImeIfVisible()) return
+        QtPlatformViewHost.dispatchBackVerb { claimed ->
+            if (claimed) return@dispatchBackVerb
+            fallBackToFlutter()
+        }
+    }
+
+    /**
+     * 交回 Flutter 默认返回。Activity 已经在收尾时不再补发，避免对已销毁的引擎投递。
+     */
+    @Suppress("DEPRECATION")
+    private fun fallBackToFlutter() {
+        if (isFinishing || isDestroyed) return
+        // 与 Flutter 非动画回调同一终点：delegate.onBackPressed → engine → Dart。
+        super.onBackPressed()
+    }
+
+    /**
+     * IME 可见就只收起键盘并消费这次返回。
+     *
+     * 可见性判据按 SDK 分两支：API 30+ 读 WindowInsets.Type.ime()，更低版本用
+     * 可见显示区与根视图高度差（>15%）的启发式——两处都不引第三方依赖。
+     */
+    private fun hideImeIfVisible(): Boolean {
+        // getDecorView() 的平台类型是 View!：Kotlin 允许按可空接收，这里的判空是纯防御。
+        val decor = window.decorView ?: return false
+        if (!isImeVisible(decor)) return false
+        val imm = getSystemService(InputMethodManager::class.java)
+        val hidden = imm?.hideSoftInputFromWindow(decor.windowToken, 0) == true
+        if (!hidden) {
+            Log.i(TAG, "IME reported visible but hideSoftInputFromWindow had nothing to hide; consuming back")
+        }
+        // 收起键盘的那一次返回必须被消费：否则同一次返回还会被当成"再退一层"，
+        // 键盘刚收起页面就跟着退掉。
+        return true
+    }
+
+    private fun isImeVisible(decor: View): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val insets = decor.rootWindowInsets ?: return false
+            return insets.isVisible(WindowInsets.Type.ime())
+        }
+        val visibleFrame = Rect()
+        decor.getWindowVisibleDisplayFrame(visibleFrame)
+        val hostHeight = decor.rootView.height
+        if (hostHeight <= 0) return false
+        return hostHeight - visibleFrame.bottom > hostHeight * IME_HEIGHT_FRACTION
+    }
+
+    /**
+     * 边到边：状态栏与系统手势区保持可见，但完全透明。
+     *
+     * 不隐藏、只透明：内容仍铺到物理边缘，系统栏叠在上面且无遮挡
+     * （关掉 isNavigationBarContrastEnforced，图标用浅色）。
+     * 不搬 Qt 的方向锁：竖屏响应式是产品要求。
+     */
+    private fun applyImmersiveSticky() {
+        // Qt kWindowFlags 里的 KEEP_SCREEN_ON：播放页常亮属于窗口形态的一部分。
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            applyEdgeToEdgeImmersive()
+        } else {
+            applyLegacyImmersiveSticky()
+        }
+    }
+
+    /**
+     * API 30+：WindowInsetsController 取代 systemUiVisibility（平台能力，无新依赖）。
+     *
+     * 三条都是「可见但透明」：show 让系统栏留在屏幕上，背景色置透明，
+     * 关掉对比度强制（Android 10+ 给透明导航栏补的半透明 scrim）。
+     */
+    @Suppress("NewApi")
+    private fun applyEdgeToEdgeImmersive() {
+        window.setDecorFitsSystemWindows(false)
+        window.statusBarColor = android.graphics.Color.TRANSPARENT
+        window.navigationBarColor = android.graphics.Color.TRANSPARENT
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            window.isStatusBarContrastEnforced = false
+            window.isNavigationBarContrastEnforced = false
+        }
+        val controller = window.insetsController ?: return
+        controller.systemBarsBehavior =
+            WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        // 清掉 LIGHT_* 就得到浅色图标（深色纸面上的状态栏/手势条文字与箭头要浅色）。
+        controller.setSystemBarsAppearance(
+            0,
+            WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or
+                WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS,
+        )
+        controller.show(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
+    }
+
+    /**
+     * API 28-29：legacy systemUiVisibility 的「边到边但可见」组合。
+     *
+     * 只保留三个 LAYOUT_* 位（内容铺到物理边缘），不再带 HIDE_NAVIGATION / FULLSCREEN
+     * ——那两个才是把系统栏藏掉的原因。颜色同样置透明。
+     */
+    @Suppress("DEPRECATION")
+    private fun applyLegacyImmersiveSticky() {
+        window.statusBarColor = android.graphics.Color.TRANSPARENT
+        window.navigationBarColor = android.graphics.Color.TRANSPARENT
+        window.decorView.systemUiVisibility = EDGE_TO_EDGE_FLAGS
+    }
+
+    private companion object {
+        /**
+         * API 29 及以下的 IME 高度启发式阈值。键盘高度在各类设备上都远大于 15%，
+         * 而状态栏/导航栏的差值只有几个百分点，用比例而不是像素是为了不写死设备尺寸。
+         */
+        const val IME_HEIGHT_FRACTION = 0.15f
+
+        /**
+         * API 28-29 的边到边标志：只留 LAYOUT_*（内容铺满），**不含**
+         * HIDE_NAVIGATION / FULLSCREEN —— 系统栏保持可见，颜色由窗口置透明。
+         */
+        const val EDGE_TO_EDGE_FLAGS: Int =
+            View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
+                View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or
+                View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+    }
+}
+
+/**
+ * API 33+ 的返回回调登记器。
+ *
+ * 单独立类是为了把 OnBackInvokedCallback / OnBackInvokedDispatcher 这两个 API 33 类型
+ * 收在一个 [Suppress] 作用域里：MainActivity 的字段只见得到本类，不给整个 Activity
+ * 打 NewApi 抑制；本模块的依赖里也没有任何 androidx 构件（只用框架 API，
+ * 同 MediaSessionHost.kt:320 的约定），所以不使用 androidx 的 @RequiresApi。
+ *
+ * 重复登记同一个实例是静默的"注销后重登"（OnBackInvokedDispatcher.java:100-102），
+ * IllegalArgumentException 只在 priority 为负时抛（:103-104），所以这里的 catch 纯属
+ * 防御。真失败时保持未注册：API 33+ 且 framework 开关打开时系统会走默认返回动作，
+ * API 32- 仍回到 Activity.onBackPressed()——两条路都不崩，只是丢掉 IME/Qt 的 pre-hook。
+ */
+@Suppress("NewApi")
+private class HostBackDispatcher(
+    private val activity: FlutterActivity,
+    private val onBack: () -> Unit,
+) {
+    private val callback = OnBackInvokedCallback { onBack() }
+    private var registered = false
+
+    fun install() {
+        if (registered) return
+        try {
+            activity.onBackInvokedDispatcher.registerOnBackInvokedCallback(
+                OnBackInvokedDispatcher.PRIORITY_DEFAULT,
+                callback,
+            )
+            registered = true
+        } catch (error: IllegalArgumentException) {
+            Log.w(TAG, "host back callback not registered; falling back to Activity.onBackPressed", error)
+        }
+    }
+
+    fun remove() {
+        if (!registered) return
+        registered = false
+        try {
+            activity.onBackInvokedDispatcher.unregisterOnBackInvokedCallback(callback)
+        } catch (error: IllegalArgumentException) {
+            Log.w(TAG, "host back callback unregister rejected by the dispatcher", error)
+        }
+    }
+}

@@ -1,0 +1,353 @@
+{
+  "schema": "rhine-hud-glyph-metrics/1",
+  "source": {
+    "baseline": "8ed3067b0812eb2612f7841ec127a6e8ca93231b",
+    "contract": "docs/flutter-migration/contracts/text-color.md",
+    "qtReferences": [
+      "Qt/src/Glyphs.cpp:35-49",
+      "Qt/src/Glyphs.cpp:51-63",
+      "Qt/src/Glyphs.cpp:65-90",
+      "Qt/src/Glyphs.cpp:108-139",
+      "Qt/src/Glyphs.cpp:142-188",
+      "Qt/src/Glyphs.cpp:266-285",
+      "Qt/src/Glyphs.cpp:286-311",
+      "Qt/src/Glyphs.cpp:312-338",
+      "Qt/src/Glyphs.cpp:339-349",
+      "Qt/src/Glyphs.cpp:403-412",
+      "Qt/src/Glyphs.cpp:530-564",
+      "Qt/src/Glyphs.cpp:565-588",
+      "Qt/src/Glyphs.cpp:860-888",
+      "Qt/src/Glyphs.h:21-24",
+      "Qt/src/NativeHud.cpp:10-15",
+      "Qt/src/NativeHud.cpp:48-76",
+      "Qt/src/NativeHud.cpp:80-85"
+    ],
+    "fontVersion": "full-misans-4.003-v1",
+    "provenanceNote": "Binary-derived font fields are inherited inventory provenance; T04 re-read the Qt source and the misans-glyphs.json table only."
+  },
+  "fontProgram": {
+    "unitsPerEm": 1000,
+    "ascent": 1044,
+    "descent": -282,
+    "baselineFactor": 1.044,
+    "baselineNote": "ascent 1044 / unitsPerEm 1000; the Noto symbols ascent 1069 (1.069) must never be substituted",
+    "symbolsAscentGuard": 1.069,
+    "glyphTable": {
+      "file": "misans-glyphs.json",
+      "bytes": 1683324,
+      "sha256": "864f702a40bf50b9c779613c2a5c0fb30dfada9a243fb11884550c46edaaa718",
+      "weights": [
+        "light",
+        "regular",
+        "demibold",
+        "bold"
+      ],
+      "glyphsPerWeight": 1007,
+      "units": 1000,
+      "ascent": 1044,
+      "descent": -282,
+      "keyForm": "weight + ':' + character",
+      "reReadInModule": true
+    },
+    "fonts": [
+      {
+        "key": "light",
+        "file": "RhineMiSans-light.otf",
+        "bytes": 6796588,
+        "sha256": "465f4050e0430232d87ab546b86077c744d40a0c605a00e9f4809c7ddf1a5390",
+        "unitsPerEm": 1000,
+        "ascender": 1044,
+        "descender": -282,
+        "usWinAscent": 1044,
+        "usWinDescent": 282,
+        "usWeightClass": 300,
+        "family": "Rhine MiSans",
+        "subfamily": "light"
+      },
+      {
+        "key": "regular",
+        "file": "RhineMiSans-regular.otf",
+        "bytes": 6725816,
+        "sha256": "0fd648712a13af8ede02892f57db2f375bb5681be4172ac6b7edb300302efee7",
+        "unitsPerEm": 1000,
+        "ascender": 1044,
+        "descender": -282,
+        "usWinAscent": 1044,
+        "usWinDescent": 282,
+        "usWeightClass": 400,
+        "family": "Rhine MiSans",
+        "subfamily": "regular"
+      },
+      {
+        "key": "demibold",
+        "file": "RhineMiSans-demibold.otf",
+        "bytes": 6682092,
+        "sha256": "9e6eac121a57a296af45989212a5f98f29969a6dd68fa620db9d3e696d62ec20",
+        "unitsPerEm": 1000,
+        "ascender": 1044,
+        "descender": -282,
+        "usWinAscent": 1044,
+        "usWinDescent": 282,
+        "usWeightClass": 600,
+        "family": "Rhine MiSans",
+        "subfamily": "demibold"
+      },
+      {
+        "key": "bold",
+        "file": "RhineMiSans-bold.otf",
+        "bytes": 6797880,
+        "sha256": "9f473f5fcf17c0163f4ce4fadfc83c9a7c489763ec24945bdc6879e112bb0c1c",
+        "unitsPerEm": 1000,
+        "ascender": 1044,
+        "descender": -282,
+        "usWinAscent": 1044,
+        "usWinDescent": 282,
+        "usWeightClass": 700,
+        "family": "Rhine MiSans",
+        "subfamily": "bold"
+      },
+      {
+        "key": "symbols",
+        "file": "NotoSansSymbols2-Regular.ttf",
+        "bytes": 1233128,
+        "sha256": "7d5fb73b7ca67a6798101741f5d280a3d016a56a197afcd4199dbb57b4b82a21",
+        "unitsPerEm": 1000,
+        "ascender": 1069,
+        "descender": -630,
+        "usWinAscent": 1069,
+        "usWinDescent": 630,
+        "usWeightClass": 400,
+        "family": "Noto Sans Symbols 2",
+        "subfamily": "Regular"
+      }
+    ],
+    "glyphLookupOrder": [
+      "json weight:char",
+      "weight otf",
+      "symbols",
+      "default Glyph { advance: 1, path: '' }"
+    ],
+    "defaultGlyphAdvance": 1
+  },
+  "baselineGroups": [
+    {
+      "id": "brand-roll-44",
+      "size": 44,
+      "expectedOffset": 45.936
+    },
+    {
+      "id": "fit-group-37",
+      "size": 37,
+      "expectedOffset": 38.628
+    },
+    {
+      "id": "boot-logo-letters-16",
+      "size": 16,
+      "expectedOffset": 16.704
+    },
+    {
+      "id": "boot-logo-letters-baseline-y",
+      "expression": "174 - 16 * 1.044",
+      "expectedValue": 157.296
+    }
+  ],
+  "advanceGroups": [
+    {
+      "id": "width-regular-24",
+      "text": "RHINE MUSIC / 2026",
+      "weight": "regular",
+      "size": 24,
+      "tracking": 0,
+      "advances": [
+        0.634,
+        0.719,
+        0.244,
+        0.734,
+        0.597,
+        0.29,
+        0.878,
+        0.703,
+        0.605,
+        0.244,
+        0.703,
+        0.29,
+        0.399,
+        0.29,
+        0.566,
+        0.634,
+        0.566,
+        0.606
+      ],
+      "expectedWidth": 232.848,
+      "note": "sum 9.702 em x 24"
+    },
+    {
+      "id": "width-bold-44",
+      "text": "全部歌曲",
+      "weight": "bold",
+      "size": 44,
+      "tracking": 0,
+      "advances": [
+        1,
+        1,
+        1,
+        1
+      ],
+      "expectedWidth": 176,
+      "note": "sum 4.0 em x 44"
+    },
+    {
+      "id": "width-regular-32-tracking",
+      "text": "MUSIC",
+      "weight": "regular",
+      "size": 32,
+      "tracking": 1.5,
+      "advances": [
+        0.878,
+        0.703,
+        0.605,
+        0.244,
+        0.703
+      ],
+      "expectedWidth": 106.256,
+      "note": "3.133 em x 32 + 1.5 x 4"
+    }
+  ],
+  "fitGroup": {
+    "text": "METAL BASELINE SCROLL",
+    "weight": "regular",
+    "size": 37,
+    "limit": 290,
+    "advances": [
+      0.878,
+      0.597,
+      0.604,
+      0.666,
+      0.565,
+      0.29,
+      0.668,
+      0.666,
+      0.605,
+      0.597,
+      0.565,
+      0.244,
+      0.734,
+      0.597,
+      0.29,
+      0.605,
+      0.703,
+      0.634,
+      0.786,
+      0.565,
+      0.565
+    ],
+    "ellipsisAdvance": 1,
+    "originalWidth": 459.688,
+    "searchLength": 13,
+    "prefixWidth": 284.123,
+    "fitted": "METAL BASELI…",
+    "fittedAdvances": [
+      0.878,
+      0.597,
+      0.604,
+      0.666,
+      0.565,
+      0.29,
+      0.668,
+      0.666,
+      0.605,
+      0.597,
+      0.565,
+      0.244,
+      1
+    ],
+    "fittedWidth": 293.965,
+    "note": "284.123 is the width of value.left(13) and is <= limit 290; value.left(14) is 306.212 > 290, so the search settles at length 13. The emitted string is value.left(length - 1) + U+2026, i.e. 6.945 em + 1.0 em = 7.945 em -> 293.965, and it is NOT re-measured, so the emitted string exceeds the limit by 3.965 while the searched prefix does not."
+  },
+  "colorGroups": [
+    {
+      "id": "calibrated-white",
+      "input": [
+        0.92,
+        0.92,
+        0.92,
+        1,
+        "calibratedWhite"
+      ],
+      "expected": [
+        0.9360448981490523,
+        0.9360448981490523,
+        0.9360448981490523,
+        1
+      ]
+    },
+    {
+      "id": "calibrated-rgb",
+      "input": [
+        0.08,
+        0.085,
+        0.075,
+        1,
+        "calibratedRGB"
+      ],
+      "expected": [
+        0.1036974505282458,
+        0.11107973909911709,
+        0.09619882186634102,
+        1
+      ]
+    },
+    {
+      "id": "plain-amber",
+      "input": [
+        0.835,
+        0.639,
+        0.282,
+        1
+      ],
+      "expected": [
+        0.835,
+        0.639,
+        0.282,
+        1
+      ]
+    }
+  ],
+  "alphaProbe": {
+    "id": "alpha-unchanged",
+    "input": [
+      0.92,
+      0.92,
+      0.92,
+      0.42,
+      "calibratedWhite"
+    ],
+    "expected": [
+      0.9360448981490523,
+      0.9360448981490523,
+      0.9360448981490523,
+      0.42
+    ],
+    "note": "alpha is copied and never gamma-converted; a 3-element array defaults alpha to 1.0"
+  },
+  "ordinaryTextUnusable": {
+    "section": "text-color.md#6",
+    "reasons": [
+      "baseline-1.044",
+      "per-code-unit-advances",
+      "json-path-precedence",
+      "calibrated-marker",
+      "flat-op-contract",
+      "unmeasured-ellipsis",
+      "layout-trigger"
+    ],
+    "note": "Ordinary Flutter Text cannot reproduce HUD stage text; the reason set is enumerated in docs/flutter-migration/contracts/text-color.md section 6."
+  },
+  "unexecuted": {
+    "flutterTest": false,
+    "dartTest": false,
+    "analyze": false,
+    "build": false,
+    "reason": "the T04 task forbids executing any build/test/analyze/run tooling; RED/GREEN is unknown and this fixture asserts no executed pass"
+  }
+}

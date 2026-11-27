@@ -29,8 +29,8 @@ zopfli 参数（--iterations，默认 15）：
   每块独立统计，对 .so 这种分段特征明显的数据有效）。
 
 用法：
-  VENV=/home/aibeto/.workbuddy/binaries/python/envs/default/bin/python3
-  $VENV scripts/optimize-apk.py output/RhineMusicDatabase-<hash>-android-arm64-v8a.apk
+  python3 -m venv .venv && .venv/bin/pip install zopfli
+  .venv/bin/python scripts/optimize-apk.py output/RhineMusicDatabase-<hash>-android-arm64-v8a.apk
 
 依赖：
   · pip install zopfli（0.4.x 的接口在 zopfli.zopfli.compress，输出 zlib 容器，

@@ -1,0 +1,211 @@
+{
+  "agent": "NATIVE-RECOVERY-132R",
+  "author": "NATIVE-RECOVERY-132R",
+  "old_132_session": {
+    "id": "471766df-ce3d-4fb0-aa3a-eb389af0fc11",
+    "state": "interrupted seq200 turn/end 2026-11-15T14:42:46.630Z, no descendants, no author ACK on seq4",
+    "resumed": false
+  },
+  "route": {
+    "provider": "ginka",
+    "model": "deepseek-v4.1-flash",
+    "reasoning_effort": "high"
+  },
+  "reviewer": {
+    "id": "9da61da3-c9d4-444c-ad69-169ca7cbe014",
+    "tier": 2,
+    "mode": "read-only exact-bytes",
+    "verdict": "PASS (round 4)",
+    "rounds": "baseline VOID -> r2 FAIL(4 MUST) -> r3 FAIL(2 MUST) -> r4 PASS"
+  },
+  "tree": {
+    "worktree": "/home/aibeto/code/Rhine-Music-Database/.agents/parity-20261109/worktrees/NATIVE-RECOVERY-132",
+    "branch": "flutter/basic/native-recovery-132r",
+    "head": "31f9a6fc2366ce2f43e7256a86e96471d81f29d8",
+    "base": "31f9a6fc2366ce2f43e7256a86e96471d81f29d8",
+    "base_tree": "7da053538fba80b4d04c0d784720c8bd1d534802",
+    "old_worktree_untouched": ".agents/parity-20261109/worktrees/QT-OVERLAY-128 (read-only kept)",
+    "dirty_files": [
+      "M Qt/qml/Embedded.qml",
+      " M Qt/src/EmbeddedSceneHost.cpp",
+      " M Qt/src/EmbeddedSceneHost.h",
+      " M Qt/src/NativeApplication.cpp",
+      " M Qt/src/main.cpp",
+      " M android/app/build.gradle.kts",
+      " M android/app/src/main/java/org/qtproject/qt/android/RhineQtView.java",
+      " M android/app/src/main/java/org/qtproject/qt/android/RhineQtViews.java",
+      " M android/app/src/main/kotlin/rhine/music/database/MainActivity.kt",
+      " M android/app/src/main/kotlin/rhine/music/database/basic/BasicAudioChannel.kt",
+      " M android/app/src/main/kotlin/rhine/music/database/qt/QtSceneView.kt",
+      " M lib/basic/basic_hud.dart",
+      " M lib/basic/qt_scene_view.dart",
+      " M test/basic/runtime_scene_test.dart",
+      "?? android/app/javapatch/",
+      "?? android/app/src/main/kotlin/rhine/music/database/qt/QtSceneChannel.kt",
+      "?? test/basic/qt_scene_view_test.dart"
+    ]
+  },
+  "migration": {
+    "files": [
+      {
+        "path": "Qt/qml/Embedded.qml",
+        "bytes": 2524,
+        "sha256": "dc9eaadac44fd056aefdf689bc9f0d4db8d3b987d511e6094722b4d4281ba9f7"
+      },
+      {
+        "path": "Qt/src/NativeApplication.cpp",
+        "bytes": 13972,
+        "sha256": "7f89511db0b6c81737bd7e8c371aaf44badb63fa371ca35cdb7b895838c7bc0b"
+      },
+      {
+        "path": "android/app/src/main/java/org/qtproject/qt/android/RhineQtViews.java",
+        "bytes": 19793,
+        "sha256": "9f26cb563abe409253f0e900f9b7c2cb64c49e8c6228a800edb84c6a2c54db73"
+      }
+    ],
+    "basic_hud_untouched_by_migration": "62e808c3...457d4 belongs to 133",
+    "preserved_patch": "/tmp/132r-mig/native-wip.patch sha256 e6f7c97d12ea1884b0802deff56cf0934d9528943ab0e81ef1ad716900714a0c (453 lines)"
+  },
+  "implemented": [
+    "ctx: Qt/qml/Embedded.qml now owns raw pointer input (MouseArea down/move/up/cancel/leave + wheelInput + Keys + PinchHandler pan/zoom), stage-scale units aligned with Overlay.qml",
+    "touch: Flutter HUD top tap layer forwards RAW pointers (QtSceneRawPointerLayer + QtScenePointerBridge) because hybrid composition native dispatch never reaches the Qt subtree (probe count 0); single consumer stays Qt NativeSceneInput",
+    "disc drag-rotate: verified on device (rotation 0 -> -0.800 clamped) via RHINE_INPUT probes (now removed)",
+    "full-frame: basicSceneStageRect landscape = whole window (matches Qt Engine::resize w/(h/1080) and acceptance doc 1728x1080); portrait keeps top 1080 stage; degenerate guard (>=320) restored",
+    "state bridge: Flutter -> Kotlin MethodChannel rhine.music/qt_scene -> Java RhineQtViews.pushSceneState -> JNI -> RhineEmbedded::applySceneState (mode/dark/index/key; no playback commands; index>=40 never wrapped)",
+    "M1(R3): pending snapshot cache + jboolean accepted flag + replay on scene ready (device log: 'RHINE_QT_SCENE_STATE replayed on scene ready')",
+    "M2(R3): destroy never touches Engine off the Qt thread (QueuedConnection; hide + destroySceneView on Qt thread)",
+    "javapatch reproducible: android/app/javapatch/{src/*.java,apply.sh,EXPECTED.sha256} + build.gradle.kts patchQtAndroidJar Exec hooked to preBuild",
+    "lifecycle: sync onActivityDestroyed host-release, keep Qt runtime alive, reattach; QtSceneChannel.uninstall + BasicAudioChannel.uninstall on MainActivity.onDestroy; quitOnLastWindowClosed(false) for embedded",
+    "no fake mapping: selection -> music:index action producer removed (slot json has no Siren identity); channel kept with explicit no-producer docs"
+  ],
+  "device_evidence": {
+    "interactions": [
+      "logs/accept-1-archive.png (full-window 5x8 archive)",
+      "logs/accept-2-dragged.png (archive drag moves the rail)",
+      "logs/accept-3-detail.png (HUD 'play all' -> mode=detail)",
+      "logs/accept-4-selected.png (real Siren song 306861 Kernel Overflow, disc pulled out, playback 00:01/02:38)",
+      "logs/accept-5-rotated.png (drag rotates the disc)",
+      "logs/accept-6-back-archive.png (Back returns to archive)"
+    ],
+    "lifecycle": {
+      "pid": 7438,
+      "rounds": "5 Back/reopen + one early HOME/return",
+      "scene_ready": 6,
+      "scene_destroyed": 5,
+      "kept": 5,
+      "reattached": 5,
+      "fatal_or_anr": 0
+    },
+    "state_bridge": [
+      "RHINE_QT_SCENE_STATE v=1 mode=archive dark=1 index=-1 count=936",
+      "RHINE_QT_SCENE_STATE replayed on scene ready (first-frame race closed)"
+    ],
+    "pointer_bridge": "Flutter forwards primitive down/move/up/cancel in stage units; HUD-hit arbitration keeps HUD taps out of Qt (logs/r18-*.png)"
+  },
+  "tests": {
+    "qt_scene_view_test": "19 passed",
+    "runtime_scene_test": "4 passed",
+    "test_basic_full": "281 passed / 10 failed (all 10 reproduce on base 31f9a6fc)"
+  },
+  "blockers": [
+    "Qt object release across activity destroy is unproven: GC canary always clears while activity/delegate/QtView weak refs stay alive (5 rounds x 3 attempts)",
+    "teardown control path (debug.rhine.qt.teardown) dies with 'GetMethodID received NULL jclass' -> unusable as a release control",
+    "cover transmission not implemented (blocked on the contract above and on 133's list/selection)",
+    "10 pre-existing test/basic failures reproduce on base 31f9a6fc"
+  ],
+  "next": [
+    "hand off the 133 items above",
+    "settle the cover transport contract, then implement cover identity/generation isolation",
+    "re-run acceptance after 133 lands the list/selection so real cover rendering can be verified"
+  ],
+  "updated_at": "2026-11-16T04:22:00+08:00",
+  "LEAD_RESPONSE_MUST_READ": {
+    "CURRENT_SEQ21_VERIFIED_RETENTION_ROOTS": {
+      "readFirst": "/home/aibeto/code/Rhine-Music-Database/.agents/parity-20261109/reports/RETENTION-EVIDENCE-137.json",
+      "reportSha256": "2b8acbd5985de9f8490e5b044b7a2d462747b0ffd60107406ba3de1252d55f4d",
+      "evidenceScope": "Lead read all235lines.137finished. Existingr8heap PID30498 at02:53, NOT r14/r18/currentAPK. All6MainActivity/delegate/RhineQtView/QtWindow stronglyreachable; application registries werealreadyempty/null/weak inSAMEheap. This establishes concrete historicalmechanisms, currentpersistence requires newheapverification.",
+      "roots": [
+        "JNIglobal frameworkDisplayManagerGlobal callback -> mDisplayListeners -> QtDisplayManager$1 -> QtDisplayManager.m_activity pins5oldhosts",
+        "JNIglobal QtAndroidMediaPlayer.mContext pins firsthost; eliminate embeddedsecondQtplayer businessstartup, do notdamage actualFlutteraudio",
+        "JNIglobal directlytargets newestMainActivity;hprof cannotidentify owningC++object",
+        "JNIglobal QtWindow/RhineQtView plus mContext/inputlistener graph; newestActivity frameworkDisplayManager reaches other5",
+        "ViewTreeObserver.OnGlobalLayoutListener -> QtInputDelegate.keyboardVisibilityListener -> delegate.m_activity"
+      ],
+      "decision": "Currentimplementation supports retention, NOT logicalimpossibility. Continueauthorized scopedcleanup: addlocalreproducibleQtDisplayManager release(unregisterDisplayListener,clearhost), safeperhostdelegate/inputlistener detach, release retiredQtWindow/view/activityJNIglobals. A finalfield alone isnotroot; nullingfield alone isnotcompletecleanup. PreserveprocessQtruntime ifpossible; safeNULLjclass teardown/restart remainsnarrowfallback ifrootedevidencerequires.",
+      "singleAuthority": "QtAndroidMediaPlayerroot strengthens startupMUST: NativeApplication.volume triggerssecondQtAudioPlayer. Embeddedrender-only mustskip business/catalog/account/session/player BEFORE constructors/initializeeffects. Do notmerelynullactiveplayercontext or globaloffline; allow onlyexplicitrenderassetloader.",
+      "requiredProof": "Only132R tests/build/ADB. FreshcurrentAPKheap afterfix + >=5Back/reopen + earlyHOME/return. Oldobjectsactualrelease and oldrootchainsgone; currenthostalone mayremain. Debugboundedprobe oncefinalGC; noRSS/PID/listenerlogs substitutes.137script /tmp/he137 isreadonlyevidencetool, notdevicePASS.",
+      "currentWork": "136FINISHED commit34227e4 currentpeer; fullfinalbasic/native/tests exclusive132R. No133wait. Readcontrol20coverURLdecision and currentcompactreport. Existingroota328native-onlymerge ispartial checkpoint; finalcoherentmerge/review/build/device stillpending.",
+      "ack": "ACKactualhighest21; publishedmetadata isnotdeliveredACK."
+    },
+    "CURRENT_SEQ20_COVER_DECIDED_AND_PARTIAL_MERGE": {
+      "coverDecision": "URL transport chosen. Read LEAD-COVER-CONTRACT-20261116.md now. Existing catalog supplies real coverUrl without account token; this is source-contract evidence, not an unperformed device GET. Host::image only cache lookup; must async Host::loadCover URL, use RETURNED key, identity/view/request generation check, then publish pixels/frame. Globaloffline cannot enforce render-only because it blocks assets but still allows secondAudioPlayer volume init. No additional approval or133 wait.",
+      "readFirst": "/home/aibeto/code/Rhine-Music-Database/.agents/parity-20261109/reports/LEAD-COVER-CONTRACT-20261116.md",
+      "currentPeer": "133/134/136 FINISHED; current committed interaction input flutter/basic/interaction-136 34227e471232a272066b678e2c04dcc13e6fbcaf/tree4fc3a6189d3114bf26e0d068c4719a21435743ec.132R owns all final basic/native/tests; no133 coordination needed.",
+      "verifiedNativeCheckpoint": {
+        "commit": "464796b1ea6be3bbd0753fbf14a1c22b0db4b9b7",
+        "tree": "cef3b7ac577dd9cc17b45bc44af6f5af53f9ee2b",
+        "parent": "31f9a6fc2366ce2f43e7256a86e96471d81f29d8",
+        "clean": true,
+        "paths": 20,
+        "qtSceneViewSha256": "bfae1f3647b8f519cd35e02cede61ee8eb34e6ff67b5ad603c65516c4413c261",
+        "peer136Ancestor": false
+      },
+      "rootObserved": "feat/flutter a32873a37662c406947db4ac7e84e5861c724d83; four originaluntracked plusreports preserved. This is a partial native integration checkpoint, not final accepted mergedtree.136 still not nativeancestor. Preserve history and continue coherent interaction+cover+singleauthority+lifecycle repair; no reset/revert/amend needed.",
+      "pointerCorrection": "r18 now HAS down-time forwardAt ownership. Earlier no-gate statement described previous bytes. Current703-line adapter still cancel->up at695-697, no event-type in dedup337-341 and double normalization399-410; HUD current forwardAt checks onlyframe.hits not134 full ownedregions/list/ruler map. Audit exact new bytes, not old blanket conclusions.",
+      "remaining": "Full136+native coherent tree, true five lanes/window/identity/scroll mapping, short-list row fix, playlist consumers, portrait hits, embeddedrender-only BEFORE secondAudioPlayer/account/catalog init, realcover, perview event isolation, ≥5oldhostsactualrelease withsafeSurface/quit/reopen, exactmergedtree independentreview then immediately finalAPK hash/install/device. Baseline failures do not replace coherent-peer tests."
+    },
+    "CURRENT_SEQ19_RESPONSE_TO_FOURTH_REPORT": {
+      "report": "/home/aibeto/code/Rhine-Music-Database/.agents/parity-20261109/reports/LEAD-ROTATION-EVIDENCE-20261116.json",
+      "rotationEvidence": "Read-only original PNG RGB comparison: r14-sel-a/b and r16-detail/rotated each have 0 changed pixels in scene ROI[0,350,1550,1450] (1,705,000 pixels) and record ROI[150,500,1460,1400]. Differences only bottom player HUD. These named pairs DO NOT visibly prove side rotation. Not a claim rotation never occurred; verify actual rendered actor at held drag positions on final APK with synchronized PID/time/view/revision. Angle logs alone insufficient.",
+      "directABAnswer": "A/B cross-file changes are authorized for sole132R;133/134/136 FINISHED. Keep source-justified full-stage/runtime_scene assertions, do not revert to crop. Integrate current136commit34227e4 chain plus exact native HUD hunks; no peer signature wait. Current adapter still cancel-to-up, lacks HUD down ownership, uses event-type-blind dedup and double normalization; gesture arena/coordinates are not fully solved.",
+      "mergeGate": "Preservation checkpoint allowed and must be labelled. Current native-only/disabled-actions/placeholder-cover/retained-host snapshot is not final accepted release. Close136+native mapping/render-only/player/cover/pointer/lifecycle MUSTs, independent exact-byte review, then actualfeatflutter ordinarymerge+mergedtree review+immediatefinalAPK tests.",
+      "next": "Read LEAD-CURRENT-NATIVE-DECISION-20261116.md, highest19 and canonical136. ACK19. Boundedretention waiver denied; narrow safe teardown/restart repair authorized if rooted evidence requires.137 onlyofflineheap."
+    }
+  },
+  "phase": "merged-and-device-verified",
+  "commits": {
+    "branch": "flutter/basic/native-recovery-132r",
+    "work_item": "464796b1ea6be3bbd0753fbf14a1c22b0db4b9b7",
+    "merge": "a32873ab (--no-ff into feat/flutter, parents a959ded 464796b, no conflicts)",
+    "merge_base": "50bbd8fbf0bded9238d69428358ef3aa454f149a",
+    "ancestry": {
+      "132r_only": 25,
+      "root_only": 33,
+      "overlapping_paths": 0
+    }
+  },
+  "build": {
+    "configured_from": "/home/aibeto/code/Rhine-Music-Database (merged feat/flutter tree)",
+    "cmake_home_directory_verified": "/home/aibeto/code/Rhine-Music-Database",
+    "qt_build_dir": ".agents/parity-20261109/builds/NATIVE-RECOVERY-132/qt-build-merged2",
+    "apk": "artifacts/Rhine-native-recovery-132r-merged-arm64-v8a-debug.apk",
+    "apk_sha256": "2b7cc2fe401defedc888492f6b89b5646ce4f133a6375076136aa59af1437a92",
+    "inner_so": {
+      "name": "lib/arm64-v8a/libRhineMusicDatabase_arm64-v8a.so",
+      "size": 48866752,
+      "sha256": "1fb6746a12d75a8c2b881479b03cc81e7b42456e8e686e28d2cada9686a3a17c"
+    },
+    "installed_path": "/data/app/~~ewLNjB2aJb5aswerWGmk2w==/rhine.music.database-PId_fJShKsGGi9bELCtUCA==/base.apk",
+    "installed_sha256": "2b7cc2fe401defedc888492f6b89b5646ce4f133a6375076136aa59af1437a92",
+    "jar_patch": {
+      "QtEmbeddedDelegate.class": "ec8a78e5d904a1aba7cb5652575f804c2a85488d43d3c6dfb3d8a5804f0a7c08",
+      "QtView.class": "09cdb14209840c40e2fcbc2fbe2437f7bb625a5d1a37a0700def54774c105939",
+      "gate": "apply.sh verifies against android/app/javapatch/EXPECTED.sha256, preBuild dependsOn"
+    }
+  },
+  "device": {
+    "serial": "526f6b6d",
+    "model": "OPD2511 / OP6546L1",
+    "resolution": "2880x1800",
+    "package": "rhine.music.database/.MainActivity"
+  },
+  "open_items_for_others": {
+    "133": [
+      "right-hand HUD list does not render at all (count=936 present, no rows drawn)",
+      "clicking the center up-arrow pushes mode=detail with count=5 / index=-1 (phase mapping bug, user-visible as 'entered detail without selecting')",
+      "library title missing at top-left after switching lists",
+      "right list cannot scroll (same root as missing list)"
+    ],
+    "lead_decision_needed": "cover transport contract: Qt's cover goes through Engine::step -> m_musicTextures[musicKey] (Qt/src/Engine.cpp:1266-1274) and is fed by NativeApplication::step's frame['current']/['cover']; in embedded mode nothing produces them. Needs either a 'cover' field (Siren URL) or bytes from the HUD side."
+  }
+}

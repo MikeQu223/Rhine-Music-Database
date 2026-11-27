@@ -190,7 +190,7 @@ npm run share
 - **macOS：** 使用 Xcode 工具链构建与打包。
 - **Linux x86_64：** AppImage，默认采用 DwarFS 压缩；另支持 NixOS 原生构建（`nix-build`）。
 - **iOS / iPadOS：** `npm run build:ios`，生成待签名的 IPA。
-- **Android arm64：** `npm run build:android`，生成可侧载的 APK，最低支持 Android 9。
+- **Android arm64：** `npm run build:flutter:android`（release，与 CI 同一入口；debug 加 `-- --debug`），生成可侧载的 APK，最低支持 Android 9。release 包启用体积档位（应用 so full LTO + `-Oz`/ICF，Qt kit 走 `-ltcg` thin LTO，详见 `docs/ANDROID.md` §5）。
 
 移动端需要对应的 Qt kit、SDK 及平台工具链。部分功能（如 FSR3）依赖完整子模块，缺失时可能被跳过或导致构建失败。
 

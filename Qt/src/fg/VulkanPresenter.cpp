@@ -586,7 +586,7 @@ bool VulkanPresenter::init(QRhi *rhi, VkSurfaceKHR surface, QSize extent, bool v
     d->vsync = vsync;
     // 排障通道：强制走 vkDeviceWaitIdle + 无等待信号量的 present。
     // 用环境变量而不是编译开关，是因为"Qt 到底有没有消费 setQueueSubmitParams"
-    // 只有真机跑起来才知道，需要能不改代码就切过去验证。
+    // 只有跑起来才知道，需要能不改代码就切过去验证。
     d->forceIdleSync = qEnvironmentVariable("RHINE_FG_PRESENT_SYNC").trimmed().toLower()
                        == QStringLiteral("idle");
 

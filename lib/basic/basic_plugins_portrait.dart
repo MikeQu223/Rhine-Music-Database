@@ -1,0 +1,2038 @@
+// 插件管理页 / 插件详情页（竖屏整页 + 横屏 modal）。
+//
+// 竖屏同 `basic_settings_portrait.dart`：HUD 画纸色/页头/迷你播放条/底栏，内容区是
+// Flutter 控件（393 设计网格 + Transform.scale），因为列表要能拖动、按钮要有按压态。
+// 横屏走 Qt 的 modal 面板（遮罩 + modalBounds + 市场/已安装两栏独立滚动）。
+//
+// 几何与动作串沿用 Qt 契约：`plugin:refresh` / `plugin:market:<id>` / `plugin:detail:<id>` /
+// `plugin:uninstall:<id>` / `plugin:toggle:<id>` / `plugin:rollback:<id>`。
+library;
+
+import 'dart:math' as math;
+
+import 'package:flutter/material.dart';
+
+import '../hud/modals/settings_modal.dart'
+    show SettingsModalMetrics, settingsModalBounds;
+import '../hud/portrait/portrait_layout.dart'
+    show
+        portraitDesignWidth,
+        portraitFooterHeightOf,
+        portraitGestureInsetOf,
+        portraitGridWidth,
+        portraitUnit;
+import '../hud/protocol/hud_frame.dart' show HudStage;
+import '../hud/widgets/settings_row.dart' show SettingsRgba;
+import '../plugin/plugin_models.dart';
+import '../plugin/plugin_manager.dart';
+
+/// 插件整页的 root key（测试用 finder）。
+const Key basicPortraitPluginsPageKey = ValueKey<String>(
+  'plugins-portrait-page',
+);
+
+/// 插件详情页的 root key。
+const Key basicPortraitPluginDetailPageKey = ValueKey<String>(
+  'plugin-detail-portrait-page',
+);
+
+/// 内容区起点：Qt `c.beginContent(158)`（158 之前是 HUD 画的通用页头）。
+const double basicPortraitPluginsContentTop = 158;
+
+/// 页末镜像信息块（当前域名 / 未响应域名）的 key，测试与截图定位用。
+const Key basicPortraitPluginsMirrorFooterKey = ValueKey<String>(
+  'plugins-mirror-footer',
+);
+
+/// 分区头高（Qt `terminalSection` 推进 `y += 26`）。
+const double _sectionHeight = 26;
+
+/// 市场行高 / 已安装行高（Qt 78 / 106）。
+const double _marketRowHeight = 78;
+const double _installedRowHeight = 106;
+
+/// 市场行内容起始 y：行高 78、内容 40，上下留白均分后为 19（Qt 基线是 10，下留白 28）。
+const double _marketRowTop = (_marketRowHeight - 40) / 2;
+
+/// 市场行名称与元信息的行距（沿用 Qt 的 22）。
+const double _marketRowLineGap = 22;
+
+// ---------------------------------------------------------------------------
+// 横屏插件页几何（Qt `NativeHud.h:129-133` + `NativeHudModal.cpp:424-625`）
+// ---------------------------------------------------------------------------
+
+/// 横屏插件列表页 / 详情页的 root key（测试用 finder）。
+const Key basicLandscapePluginsPageKey = ValueKey<String>(
+  'plugins-landscape-page',
+);
+const Key basicLandscapePluginDetailPageKey = ValueKey<String>(
+  'plugin-detail-landscape-page',
+);
+
+/// 面板左右内缩（Qt 各栏都从 `x + 53` 起）。
+const double _landscapeInset = 53;
+
+/// 市场栏与已安装栏之间的间距。
+const double _landscapeColumnGap = 34;
+
+/// 两栏列表视口的上下界（相对面板顶）。
+const double _landscapeListTop = 282;
+const double _landscapeListBottom = 786;
+
+/// 横屏行高（Qt 82 / 74，与竖屏 78 / 106 是两套几何）。
+const double _landscapeMarketRowHeight = 82;
+const double _landscapeInstalledRowHeight = 74;
+
+/// 市场行右侧主操作宽（Qt `actionWidth = 126`）。
+const double _landscapeMarketActionWidth = 126;
+
+/// 竖屏插件管理页：市场列表 + 已安装列表。
+class BasicPortraitPluginsPage extends StatefulWidget {
+  const BasicPortraitPluginsPage({
+    super.key,
+    required this.stage,
+    required this.snapshot,
+    required this.dark,
+    required this.onAction,
+    this.installing = false,
+    this.installLabel = '',
+    this.pendingUninstall = '',
+    this.stageScale = 0,
+  });
+
+  final HudStage stage;
+  final PluginSnapshot snapshot;
+  final bool dark;
+  final ValueChanged<String> onAction;
+
+  /// 安装中时把对应市场行的按钮换成「安装中…」且不可点（Qt 文案带 U+2026）。
+  final bool installing;
+  final String installLabel;
+
+  /// 非空 = 正在对该 id 做卸载二次确认（Qt 弹层，见 [_pluginUninstallConfirm]）。
+  final String pendingUninstall;
+  final double stageScale;
+
+  @override
+  State<BasicPortraitPluginsPage> createState() =>
+      _BasicPortraitPluginsPageState();
+}
+
+class _BasicPortraitPluginsPageState extends State<BasicPortraitPluginsPage> {
+  final ScrollController _scroll = ScrollController();
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final double unit = portraitUnit(
+      widget.stage.width,
+      stageScale: widget.stageScale,
+    );
+    final double gridWidth = portraitGridWidth(
+      widget.stage.width,
+      stageScale: widget.stageScale,
+    );
+    final double gridHeight = unit > 0
+        ? widget.stage.height / unit
+        : portraitDesignWidth;
+    // 只铺到播放条顶（与 HUD 的 _playerAndNav 同源），底栏留给命令流。
+    // 页脚高度按当帧真实安全区算：画布高度已经扣过它，不能再按设计稿留 144。
+    final double pageBottom = math.max(
+      0.0,
+      gridHeight -
+          portraitFooterHeightOf(portraitGestureInsetOf(
+            unit: unit,
+            stageScale: widget.stageScale,
+            safeBottomLogical: MediaQuery.paddingOf(context).bottom,
+          )),
+    );
+    if (unit <= 0 || pageBottom <= basicPortraitPluginsContentTop) {
+      return const SizedBox.shrink();
+    }
+    final _PluginInk ink = _PluginInk.of(widget.dark);
+    return ClipRect(
+      key: basicPortraitPluginsPageKey,
+      child: SizedBox(
+        width: widget.stage.width,
+        height: pageBottom * unit,
+        // 与设置页同一套缩放：`FittedBox(BoxFit.fill)` 让命中走逆矩阵，
+        // 屏幕坐标与 393 设计网格一一对应。
+        child: FittedBox(
+          fit: BoxFit.fill,
+          alignment: Alignment.topLeft,
+          child: SizedBox(
+            width: gridWidth,
+            height: pageBottom,
+            child: Stack(
+                children: <Widget>[
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    top: basicPortraitPluginsContentTop,
+                    bottom: 0,
+                    child: SingleChildScrollView(
+                      controller: _scroll,
+                      // Qt compact 的滚动是连续距离、无吸附无回弹
+                      // （ResponsiveHudLayout.cpp:420-445 的滚轮每档 60 舞台 px）。
+                      physics: const ClampingScrollPhysics(),
+                      child: Padding(
+                        padding: const EdgeInsets.only(left: 20, right: 20),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: _content(ink, gridWidth),
+                        ),
+                      ),
+                    ),
+                  ),
+                  if (widget.pendingUninstall.isNotEmpty)
+                    _pluginUninstallConfirm(
+                      ink: ink,
+                      gridWidth: gridWidth,
+                      id: widget.pendingUninstall,
+                      label:
+                          widget.snapshot
+                              .installedById(widget.pendingUninstall)
+                              ?.manifest
+                              .label ??
+                          widget.pendingUninstall,
+                      onAction: widget.onAction,
+                    ),
+                ],
+              ),
+            ),
+          ),
+      ),
+    );
+  }
+
+  List<Widget> _content(_PluginInk ink, double gridWidth) {
+    final PluginSnapshot snapshot = widget.snapshot;
+    final List<Widget> children = <Widget>[];
+    children.add(_section(ink, '01', '插件市场', 'MARKETPLACE'));
+    children.add(
+      Padding(
+        padding: const EdgeInsets.only(top: 4),
+        child: _PluginButton(
+          label: '刷新市场',
+          primary: false,
+          ink: ink,
+          onTap: () => widget.onAction('plugin:refresh'),
+          fullWidth: true,
+        ),
+      ),
+    );
+    // 状态行（Qt 基线 240 起、10pt muted，段落行距 1.5）。
+    children.add(
+      Padding(
+        padding: const EdgeInsets.only(top: 12, left: 0, right: 0),
+        child: Text(
+          snapshot.status.isEmpty ? '尚未读取插件市场' : snapshot.status,
+          style: ink.paragraph,
+        ),
+      ),
+    );
+    // 拉取过程中只显示状态行；「索引为空」是结束态文案（Qt `pluginMarketplaceState`
+    // 在 loading 时不写这条），否则会出现「正在读取…」+「索引为空」并列的自相矛盾画面。
+    final bool marketEmpty = !snapshot.loading && snapshot.market.isEmpty;
+    if (widget.installing) {
+      children.add(const SizedBox(height: 8));
+      children.add(_progressBar(ink, snapshot.progress));
+    }
+    if (marketEmpty) {
+      children.add(
+        _emptyCard(
+          ink,
+          '暂无可用插件',
+          snapshot.marketUrl.isEmpty
+              ? '设置 RHINE_PLUGIN_MARKETPLACE_URL 后刷新。'
+              : '市场索引为空，或当前网络不可用。',
+        ),
+      );
+    } else {
+      for (final MarketPluginEntry entry in snapshot.market) {
+        final InstalledPlugin? installed = snapshot.installedById(entry.id);
+        children.add(_marketRow(ink, entry, installed, gridWidth));
+      }
+    }
+    children.add(const SizedBox(height: 12));
+    children.add(
+      _section(
+        ink,
+        '02',
+        '已安装',
+        snapshot.installed.isEmpty
+            ? 'INSTALLED'
+            : 'INSTALLED / ${snapshot.installed.length}',
+      ),
+    );
+    if (snapshot.installed.isEmpty) {
+      children.add(
+        Padding(
+          padding: const EdgeInsets.only(top: 14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Text('尚未安装插件', style: ink.title),
+              const SizedBox(height: 10),
+              Text('从上面的市场里选一个插件安装。', style: ink.paragraph),
+            ],
+          ),
+        ),
+      );
+    } else {
+      for (final InstalledPlugin plugin in snapshot.installed) {
+        children.add(_installedRow(ink, plugin, gridWidth));
+      }
+    }
+    // 页面末尾：镜像链路的当前域名与未响应域名（用户要求能直接看到卡在哪一级）。
+    children.add(
+      Padding(
+        padding: const EdgeInsets.only(top: 18),
+        child: _mirrorFooter(ink, snapshot),
+      ),
+    );
+    children.add(
+      Padding(
+        padding: const EdgeInsets.only(top: 16, bottom: 24),
+        // child: Text(
+        // snapshot.message.isNotEmpty
+        // ? snapshot.message
+        // : '插件下载到应用数据目录；禁用后不会加载。',
+        // style: ink.paragraph,
+        // ),
+      ),
+    );
+    return children;
+  }
+
+  /// 页末镜像信息：当前使用的域名 + 本轮未响应（或直接失败）的域名。
+  ///
+  /// 顺序固定按镜像链（`pluginMarketMirrorPrefixes`），方便用户对照自己给的顺序。
+  Widget _mirrorFooter(_PluginInk ink, PluginSnapshot snapshot) {
+    final String active = snapshot.activeHost.isNotEmpty
+        ? snapshot.activeHost
+        : (snapshot.probingHost.isNotEmpty
+              ? '正在尝试 ${snapshot.probingHost}…'
+              : '尚未连接');
+    final String dead = snapshot.deadHosts.isEmpty
+        ? '无'
+        : snapshot.deadHosts.join('、');
+    return Container(
+      key: basicPortraitPluginsMirrorFooterKey,
+      padding: const EdgeInsets.fromLTRB(13, 12, 13, 12),
+      color: ink.surface,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text('网络', style: ink.sectionTrailing),
+          const SizedBox(height: 8),
+          Text('连接地址  $active', style: ink.paragraph),
+          const SizedBox(height: 6),
+          // Text('未响应域名  $dead', style: ink.paragraph),
+          // if (snapshot.mirrors.isNotEmpty) ...<Widget>[
+          // const SizedBox(height: 6),
+          // Text(
+          // '回退顺序  ${snapshot.mirrors.join(' → ')}',
+          // style: ink.paragraph,
+          // ),
+          // ],
+        ],
+      ),
+    );
+  }
+
+  /// 字节 → `12.3 MB` / `812 KB`（页脚与进度都按这个口径）。
+  static String _megabytes(double bytes) {
+    if (bytes >= 1024 * 1024) {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
+    if (bytes >= 1024) {
+      return '${(bytes / 1024).toStringAsFixed(0)} KB';
+    }
+    return '${bytes.toStringAsFixed(0)} B';
+  }
+
+  Widget _section(_PluginInk ink, String code, String title, String trailing) {
+    return SizedBox(
+      height: _sectionHeight,
+      child: Stack(
+        children: <Widget>[
+          Positioned(left: 0, top: 0, child: _inkBlock(ink, code)),
+          Positioned(
+            left: 31,
+            top: 2,
+            child: Text(title, style: ink.sectionTitle),
+          ),
+          Positioned(
+            right: 0,
+            top: 5,
+            child: Text(trailing, style: ink.sectionTrailing),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _inkBlock(_PluginInk ink, String code) {
+    return Container(
+      width: 23,
+      height: 18,
+      color: ink.block,
+      alignment: Alignment.center,
+      child: Text(code, style: ink.blockCode),
+    );
+  }
+
+  Widget _marketRow(
+    _PluginInk ink,
+    MarketPluginEntry entry,
+    InstalledPlugin? installed,
+    double gridWidth,
+  ) {
+    final bool installingThis =
+        widget.installing && widget.installLabel == entry.id;
+    final String label = installingThis
+        ? '安装中…'
+        : (installed != null ? '重新安装' : '安装');
+    final bool canUpdate = installed == null || installed.updateAvailable;
+    return SizedBox(
+      height: _marketRowHeight,
+      child: Stack(
+        children: <Widget>[
+          Positioned(
+            left: 0,
+            top: _marketRowTop,
+            width: math.max(80, gridWidth - 40 - 132),
+            child: Text(
+              entry.label,
+              style: ink.rowTitle,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          Positioned(
+            left: 0,
+            top: _marketRowTop + _marketRowLineGap,
+            width: math.max(80, gridWidth - 40 - 130),
+            child: Text(
+              _marketMeta(entry, installed),
+              style: canUpdate ? ink.rowMetaInk : ink.rowMeta,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          Positioned(
+            right: 0,
+            top: _marketRowTop,
+            child: _PluginButton(
+              label: label,
+              primary: installed == null,
+              ink: ink,
+              tapEnabled: !installingThis,
+              height: 40,
+              onTap: () => widget.onAction('plugin:market:${entry.id}'),
+            ),
+          ),
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: .6,
+            child: Container(height: .6, color: ink.line),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Qt：`<id> / 市场版本 <v> / 已安装 <cur>`。
+  String _marketMeta(MarketPluginEntry entry, InstalledPlugin? installed) {
+    final String version = entry.version.isEmpty ? '—' : entry.version;
+    if (installed == null) {
+      return '${entry.id} / 市场版本 $version';
+    }
+    return '${entry.id} / 市场版本 $version / 已安装 ${installed.version}';
+  }
+
+  Widget _installedRow(
+    _PluginInk ink,
+    InstalledPlugin plugin,
+    double gridWidth,
+  ) {
+    final List<Widget> buttons = <Widget>[];
+    if (plugin.userInstalled) {
+      buttons.add(
+        Expanded(
+          flex: 111,
+          child: _PluginButton(
+            label: '详情',
+            primary: false,
+            ink: ink,
+            onTap: () => widget.onAction('plugin:detail:${plugin.id}'),
+          ),
+        ),
+      );
+      buttons.add(
+        Expanded(
+          flex: 111,
+          child: _PluginButton(
+            label: '卸载',
+            primary: false,
+            ink: ink,
+            onTap: () => widget.onAction('plugin:uninstall:${plugin.id}'),
+          ),
+        ),
+      );
+      buttons.add(
+        Expanded(
+          flex: 131,
+          child: _PluginButton(
+            label: plugin.enabled ? '禁用' : '启用',
+            primary: false,
+            ink: ink,
+            onTap: () => widget.onAction('plugin:toggle:${plugin.id}'),
+          ),
+        ),
+      );
+    } else {
+      buttons.add(
+        Expanded(
+          flex: 172,
+          child: _PluginButton(
+            label: '详情',
+            primary: false,
+            ink: ink,
+            onTap: () => widget.onAction('plugin:detail:${plugin.id}'),
+          ),
+        ),
+      );
+      buttons.add(const SizedBox(width: 9));
+      buttons.add(
+        Expanded(
+          flex: 172,
+          child: _PluginButton(
+            label: plugin.enabled ? '禁用' : '启用',
+            primary: false,
+            ink: ink,
+            onTap: () => widget.onAction('plugin:toggle:${plugin.id}'),
+          ),
+        ),
+      );
+    }
+    final String state = plugin.enabled ? '已启用' : '已禁用';
+    return SizedBox(
+      height: _installedRowHeight,
+      child: Stack(
+        children: <Widget>[
+          Positioned(
+            left: 0,
+            top: 10,
+            width: math.max(60, gridWidth - 40 - 120),
+            child: Text(
+              plugin.name,
+              style: ink.rowTitle,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          Positioned(
+            right: 16,
+            top: 10,
+            child: Text(state, style: ink.rowMeta),
+          ),
+          Positioned(
+            right: 8,
+            top: 14,
+            child: Container(
+              width: 5,
+              height: 5,
+              color: plugin.enabled ? ink.amber : ink.muted,
+            ),
+          ),
+          Positioned(
+            left: 0,
+            top: 31,
+            width: math.max(80, gridWidth - 40),
+            child: Text(
+              '${plugin.id} / ${plugin.version} / ${plugin.manifest.publisher.isEmpty ? 'local' : plugin.manifest.publisher}',
+              style: ink.rowMeta,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          Positioned(
+            left: 0,
+            right: 0,
+            top: 50,
+            height: 44,
+            child: Row(children: buttons),
+          ),
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: .6,
+            child: Container(height: .6, color: ink.line),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _progressBar(_PluginInk ink, PluginInstallProgress progress) {
+    final String file = progress.file.isEmpty ? '准备中…' : progress.file;
+    final String meta = <String>[
+      '${progress.filesDone}/${progress.filesTotal} 文件',
+      _megabytes(progress.bytes.toDouble()),
+      if (progress.speed > 0) '${_megabytes(progress.speed)}/s',
+    ].join(' · ');
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        Text(file, style: ink.title),
+        const SizedBox(height: 4),
+        Text(meta, style: ink.paragraph),
+        const SizedBox(height: 8),
+        SizedBox(
+          height: 3,
+          child: Stack(
+            children: <Widget>[
+              Positioned.fill(child: Container(color: ink.line)),
+              FractionallySizedBox(
+                alignment: Alignment.centerLeft,
+                widthFactor: progress.progress.clamp(0.0, 1.0),
+                child: Container(color: ink.amber),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _emptyCard(_PluginInk ink, String title, String body) {
+    return Container(
+      margin: const EdgeInsets.only(top: 12),
+      padding: const EdgeInsets.fromLTRB(13, 16, 13, 16),
+      color: ink.surface,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text(title, style: ink.title),
+          const SizedBox(height: 12),
+          Text(body, style: ink.paragraph),
+        ],
+      ),
+    );
+  }
+}
+
+/// 卸载二次确认弹层（Qt `Host.cpp:797-826` 的 `卸载插件：<name>` 确认框）。
+///
+/// Qt 原文：标题 `卸载插件：<name>`、正文 `只删除应用数据目录中的插件文件，不删除账号数据。`
+/// 确认键 `确认卸载`。动作串 `plugin:uninstall-confirm:<id>` / `plugin:uninstall-cancel`。
+Widget _pluginUninstallConfirm({
+  required _PluginInk ink,
+  required double gridWidth,
+  required String id,
+  required String label,
+  required ValueChanged<String> onAction,
+}) {
+  return Positioned.fill(
+    child: ColoredBox(
+      // 半透明纸色压暗底层，保留页面上下文（Qt 弹层也是压暗而非全遮）。
+      color: ink.paper.withValues(alpha: 0.90),
+      child: Center(
+        child: Container(
+          width: math.min(353, math.max(200, gridWidth - 40)),
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
+          decoration: BoxDecoration(
+            color: ink.surface,
+            border: Border.all(color: ink.line),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Text('卸载插件：$label', style: ink.rowTitle),
+              const SizedBox(height: 10),
+              Text('只删除应用数据目录中的插件文件，不删除账号数据。', style: ink.paragraph),
+              const SizedBox(height: 18),
+              Row(
+                children: <Widget>[
+                  Expanded(
+                    child: _PluginButton(
+                      label: '取消',
+                      primary: false,
+                      ink: ink,
+                      onTap: () => onAction('plugin:uninstall-cancel'),
+                    ),
+                  ),
+                  const SizedBox(width: 9),
+                  Expanded(
+                    child: _PluginButton(
+                      label: '确认卸载',
+                      primary: true,
+                      ink: ink,
+                      onTap: () => onAction('plugin:uninstall-confirm:$id'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+/// 竖屏「插件详情」页（Qt `ResponsiveHudPages.cpp:793-852`）。
+class BasicPortraitPluginDetailPage extends StatelessWidget {
+  const BasicPortraitPluginDetailPage({
+    super.key,
+    required this.stage,
+    required this.plugin,
+    required this.enabled,
+    required this.userInstalled,
+    required this.dark,
+    required this.onAction,
+    this.message = '',
+    this.canRollback = false,
+    this.pendingUninstall = '',
+    this.stageScale = 0,
+  });
+
+  final HudStage stage;
+
+  /// 已安装插件的 manifest；未安装时用市场条目临时构造一个（见 [_detailFromMarket]）。
+  final PluginManifest plugin;
+  final bool enabled;
+  final bool userInstalled;
+  final bool dark;
+  final ValueChanged<String> onAction;
+  final String message;
+  final bool canRollback;
+
+  /// 非空 = 正在对该 id 做卸载二次确认。
+  final String pendingUninstall;
+  final double stageScale;
+
+  @override
+  Widget build(BuildContext context) {
+    final double unit = portraitUnit(stage.width, stageScale: stageScale);
+    final double gridWidth = portraitGridWidth(
+      stage.width,
+      stageScale: stageScale,
+    );
+    final double gridHeight = unit > 0
+        ? stage.height / unit
+        : portraitDesignWidth;
+    final double pageBottom = math.max(
+      0.0,
+      gridHeight -
+          portraitFooterHeightOf(portraitGestureInsetOf(
+            unit: unit,
+            stageScale: stageScale,
+            safeBottomLogical: MediaQuery.paddingOf(context).bottom,
+          )),
+    );
+    if (unit <= 0 || pageBottom <= basicPortraitPluginsContentTop) {
+      return const SizedBox.shrink();
+    }
+    final _PluginInk ink = _PluginInk.of(dark);
+    final double columnWidth = math.max(100.0, (gridWidth - 40 - 15) / 2);
+    return ClipRect(
+      key: basicPortraitPluginDetailPageKey,
+      child: SizedBox(
+        width: stage.width,
+        height: pageBottom * unit,
+        child: OverflowBox(
+          alignment: Alignment.topLeft,
+          minWidth: 0,
+          maxWidth: double.infinity,
+          minHeight: 0,
+          maxHeight: double.infinity,
+          child: Transform.scale(
+            scale: unit,
+            alignment: Alignment.topLeft,
+            child: SizedBox(
+              width: gridWidth,
+              height: pageBottom,
+              child: Stack(
+                children: <Widget>[
+                  Positioned(
+                    left: 20,
+                    right: 20,
+                    top: basicPortraitPluginsContentTop,
+                    bottom: 0,
+                    child: SingleChildScrollView(
+                      physics: const ClampingScrollPhysics(),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: <Widget>[
+                          Text(plugin.label, style: ink.detailTitle),
+                          const SizedBox(height: 8),
+                          Text(
+                            '${plugin.id} / ${plugin.version}',
+                            style: ink.rowMeta,
+                          ),
+                          const SizedBox(height: 24),
+                          Container(height: 1, color: ink.ink),
+                          const SizedBox(height: 16),
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: <Widget>[
+                              SizedBox(
+                                width: columnWidth,
+                                child: _field(
+                                  ink,
+                                  'PUBLISHER / 发布者',
+                                  plugin.publisher.isEmpty
+                                      ? '—'
+                                      : plugin.publisher,
+                                ),
+                              ),
+                              const SizedBox(width: 15),
+                              SizedBox(
+                                width: columnWidth,
+                                child: _field(
+                                  ink,
+                                  'LICENSE / 许可证',
+                                  plugin.license.isEmpty ? '—' : plugin.license,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 30),
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: <Widget>[
+                              SizedBox(
+                                width: columnWidth,
+                                child: _field(
+                                  ink,
+                                  'CAPABILITIES / 能力',
+                                  '${plugin.capabilities.length} 项',
+                                ),
+                              ),
+                              const SizedBox(width: 15),
+                              SizedBox(
+                                width: columnWidth,
+                                child: _field(
+                                  ink,
+                                  'SOURCE / 来源',
+                                  userInstalled ? '用户安装' : '内置',
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 30),
+                          _field(
+                            ink,
+                            'ENTRY / 入口',
+                            plugin.entryFile.isEmpty ? '—' : plugin.entryFile,
+                          ),
+                          const SizedBox(height: 30),
+                          _field(ink, 'STATE / 状态', _stateLabel()),
+                          const SizedBox(height: 30),
+                          if (userInstalled || true) ...<Widget>[
+                            Row(
+                              children: <Widget>[
+                                Expanded(
+                                  child: _PluginButton(
+                                    label: enabled ? '禁用插件' : '启用插件',
+                                    primary: false,
+                                    ink: ink,
+                                    onTap: () =>
+                                        onAction('plugin:toggle:${plugin.id}'),
+                                  ),
+                                ),
+                                const SizedBox(width: 9),
+                                Expanded(
+                                  child: _PluginButton(
+                                    label: '回滚上一版本',
+                                    primary: false,
+                                    ink: ink,
+                                    tapEnabled: canRollback,
+                                    onTap: () => onAction(
+                                      'plugin:rollback:${plugin.id}',
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+                          ],
+                          _PluginButton(
+                            label: userInstalled ? '卸载插件' : '安装插件',
+                            primary: !userInstalled,
+                            ink: ink,
+                            fullWidth: true,
+                            onTap: () => onAction(
+                              userInstalled
+                                  ? 'plugin:uninstall:${plugin.id}'
+                                  : 'plugin:market:${plugin.id}',
+                            ),
+                          ),
+                          if (message.isNotEmpty) ...<Widget>[
+                            const SizedBox(height: 12),
+                            Text(message, style: ink.paragraph),
+                          ],
+                          const SizedBox(height: 24),
+                        ],
+                      ),
+                    ),
+                  ),
+                  if (pendingUninstall.isNotEmpty)
+                    _pluginUninstallConfirm(
+                      ink: ink,
+                      gridWidth: gridWidth,
+                      id: pendingUninstall,
+                      label: plugin.label,
+                      onAction: onAction,
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _stateLabel() {
+    if (!userInstalled) {
+      return '未安装';
+    }
+    return enabled ? '已安装 / 已启用' : '已安装 / 已禁用';
+  }
+
+  Widget _field(_PluginInk ink, String label, String value) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text(label, style: ink.fieldLabel),
+        const SizedBox(height: 6),
+        Text(value, style: ink.fieldValue),
+      ],
+    );
+  }
+
+  /// 未安装插件时用市场条目临时拼一个 manifest，只为把详情页字段画全。
+  static PluginManifest fromMarket(MarketPluginEntry entry) {
+    return PluginManifest(
+      id: entry.id,
+      name: entry.label,
+      version: entry.version,
+      apiVersion: '',
+      entryFile: entry.entryFile,
+      publisher: entry.publisher,
+      license: entry.license,
+      capabilities: const <String>[],
+      raw: entry.raw,
+    );
+  }
+}
+
+// ===========================================================================
+// 横屏插件页
+//
+// Qt 横屏插件管理是 modal 弹层：遮罩 + modalBounds 面板（宽 min(1260, w-100)、
+// top 122、高 836），页头之后左右两栏各自滚动（NativeHudModal.cpp:424-625）。
+// 竖屏那套 393 网格整页排版铺到横屏会变成一根超宽单列，所以这里按舞台坐标
+// 重新排：面板内缩 53，两栏宽 (usable - 34) / 2，视口 y+282..y+786，
+// 市场行 82、已安装行 74；缩放与设置横屏窗口同式（stage.scale 缩一次）。
+// ===========================================================================
+
+/// 横屏「插件管理」：市场栏 + 已安装栏，两栏独立滚动。
+class BasicLandscapePluginsPage extends StatefulWidget {
+  const BasicLandscapePluginsPage({
+    super.key,
+    required this.stage,
+    required this.snapshot,
+    required this.dark,
+    required this.onAction,
+    this.installing = false,
+    this.installLabel = '',
+    this.pendingUninstall = '',
+  });
+
+  final HudStage stage;
+  final PluginSnapshot snapshot;
+  final bool dark;
+  final ValueChanged<String> onAction;
+
+  final bool installing;
+  final String installLabel;
+
+  /// 非空 = 正在对该 id 做卸载二次确认。
+  final String pendingUninstall;
+
+  @override
+  State<BasicLandscapePluginsPage> createState() =>
+      _BasicLandscapePluginsPageState();
+}
+
+class _BasicLandscapePluginsPageState extends State<BasicLandscapePluginsPage> {
+  final ScrollController _marketScroll = ScrollController();
+  final ScrollController _installedScroll = ScrollController();
+
+  @override
+  void dispose() {
+    _marketScroll.dispose();
+    _installedScroll.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final _PluginInk ink = _PluginInk.of(widget.dark);
+    return KeyedSubtree(
+      key: basicLandscapePluginsPageKey,
+      child: _landscapeShell(
+        stage: widget.stage,
+        dark: widget.dark,
+        ink: ink,
+        title: '插件管理',
+        subtitle: '插件市场 / 下载与启用',
+        // 横屏插件页的入口在设置面板末尾，返回键回设置而不是直接回主界面。
+        backAction: 'settings',
+        onAction: widget.onAction,
+        body: (Rect bounds) => _body(ink, bounds),
+        overlay: widget.pendingUninstall.isEmpty
+            ? null
+            : _landscapeUninstallConfirm(
+                ink: ink,
+                label:
+                    widget.snapshot
+                        .installedById(widget.pendingUninstall)
+                        ?.manifest
+                        .label ??
+                    widget.pendingUninstall,
+                id: widget.pendingUninstall,
+                onAction: widget.onAction,
+              ),
+      ),
+    );
+  }
+
+  List<Widget> _body(_PluginInk ink, Rect bounds) {
+    final PluginSnapshot snapshot = widget.snapshot;
+    final double usable = bounds.width - _landscapeInset * 2;
+    final double columnWidth = (usable - _landscapeColumnGap) / 2;
+    final double left = bounds.left + _landscapeInset;
+    final double marketRight = left + columnWidth;
+    final double installedLeft = marketRight + _landscapeColumnGap;
+    final double listWidth = columnWidth - 18;
+    final double listHeight = _landscapeListBottom - _landscapeListTop;
+    final double listTop = bounds.top + _landscapeListTop;
+    final Rect marketViewport = Rect.fromLTWH(
+      left,
+      listTop,
+      listWidth,
+      listHeight,
+    );
+    final Rect installedViewport = Rect.fromLTWH(
+      installedLeft,
+      listTop,
+      listWidth,
+      listHeight,
+    );
+    final String status = snapshot.status.isEmpty
+        ? '尚未读取插件市场'
+        : snapshot.status;
+    final String footer = snapshot.message.isNotEmpty
+        ? snapshot.message
+        : '左右列表独立滚动；插件下载到应用数据目录，禁用后不会加载。';
+    return <Widget>[
+      // 市场栏表头 + 刷新按钮 + 状态 / 进度（Qt y+196 / y+188 / y+234 / y+254）。
+      Positioned(
+        left: left,
+        top: bounds.top + 196,
+        child: Text('插件市场 / MARKETPLACE', style: ink.landscapeSection),
+      ),
+      Positioned(
+        left: marketRight - 84,
+        top: bounds.top + 188,
+        width: 84,
+        height: 38,
+        child: _PluginButton(
+          label: '刷新',
+          primary: false,
+          ink: ink,
+          fullWidth: true,
+          height: 38,
+          textSize: 13,
+          onTap: () => widget.onAction('plugin:refresh'),
+        ),
+      ),
+      Positioned(
+        left: left,
+        top: bounds.top + 234,
+        width: listWidth,
+        child: Text(
+          status,
+          style: ink.landscapeMeta,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ),
+      if (widget.installing) ...<Widget>[
+        Positioned(
+          left: left,
+          top: bounds.top + 254,
+          width: listWidth,
+          height: 4,
+          child: ColoredBox(color: ink.line.withValues(alpha: .30)),
+        ),
+        Positioned(
+          left: left,
+          top: bounds.top + 254,
+          width: listWidth * snapshot.progress.progress.clamp(0.0, 1.0),
+          height: 4,
+          child: ColoredBox(color: ink.amber),
+        ),
+      ],
+      Positioned(
+        left: left,
+        top: bounds.top + 266,
+        width: listWidth,
+        height: 2,
+        child: ColoredBox(color: ink.ink.withValues(alpha: .42)),
+      ),
+      // 已安装栏表头（标题 + 右缘数量）。
+      Positioned(
+        left: installedLeft,
+        top: bounds.top + 196,
+        width: listWidth,
+        child: Row(
+          children: <Widget>[
+            Text('已安装 / INSTALLED', style: ink.landscapeSection),
+            const Spacer(),
+            Text(
+              '${snapshot.installed.length} 个',
+              style: ink.landscapeSectionTrailing,
+            ),
+          ],
+        ),
+      ),
+      Positioned(
+        left: installedLeft,
+        top: bounds.top + 266,
+        width: listWidth,
+        height: 2,
+        child: ColoredBox(color: ink.ink.withValues(alpha: .42)),
+      ),
+      _landscapeColumn(
+        rect: marketViewport,
+        controller: _marketScroll,
+        ink: ink,
+        scrollable:
+            snapshot.market.length * _landscapeMarketRowHeight > listHeight,
+        children: snapshot.market.isEmpty
+            ? <Widget>[
+                Text('暂无可用插件', style: ink.landscapeInstalledTitle),
+                const SizedBox(height: 8),
+                Text(
+                  snapshot.marketUrl.isEmpty
+                      ? '设置 RHINE_PLUGIN_MARKETPLACE_URL 后刷新。'
+                      : '市场索引为空，或当前网络不可用。',
+                  style: ink.landscapeMeta,
+                ),
+              ]
+            : <Widget>[
+                for (final MarketPluginEntry entry in snapshot.market)
+                  _marketRow(
+                    ink,
+                    entry,
+                    snapshot.installedById(entry.id),
+                    marketViewport.width,
+                  ),
+              ],
+      ),
+      _landscapeColumn(
+        rect: installedViewport,
+        controller: _installedScroll,
+        ink: ink,
+        scrollable:
+            snapshot.installed.length * _landscapeInstalledRowHeight >
+            listHeight,
+        children: snapshot.installed.isEmpty
+            ? <Widget>[
+                Text('尚未安装插件', style: ink.landscapeInstalledTitle),
+                const SizedBox(height: 8),
+                Text('从左侧市场安装，或使用“导入文件夹”添加本地插件。', style: ink.landscapeMeta),
+              ]
+            : <Widget>[
+                for (final InstalledPlugin plugin in snapshot.installed)
+                  _installedRow(ink, plugin, installedViewport.width),
+              ],
+      ),
+      Positioned(
+        left: left,
+        top: bounds.top + 802,
+        width: usable,
+        child: Text(
+          footer,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: snapshot.message.isEmpty
+              ? ink.landscapeFooter
+              : ink.landscapeFooter.copyWith(color: ink.ink),
+        ),
+      ),
+    ];
+  }
+
+  Widget _marketRow(
+    _PluginInk ink,
+    MarketPluginEntry entry,
+    InstalledPlugin? installed,
+    double width,
+  ) {
+    final bool installingThis =
+        widget.installing && widget.installLabel == entry.id;
+    final String label = installingThis
+        ? '安装中…'
+        : (installed == null
+              ? '安装'
+              : (installed.updateAvailable ? '更新' : '重新安装'));
+    final bool canUpdate = installed == null || installed.updateAvailable;
+    final double textWidth = math.max(
+      60.0,
+      width - _landscapeMarketActionWidth - 16,
+    );
+    return SizedBox(
+      height: _landscapeMarketRowHeight,
+      child: Stack(
+        children: <Widget>[
+          Positioned(
+            left: 0,
+            top: 0,
+            width: textWidth,
+            child: Text(
+              entry.label,
+              style: ink.landscapeRowTitle,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          Positioned(
+            left: 0,
+            top: 30,
+            width: textWidth,
+            child: Text(
+              _marketMeta(entry, installed),
+              style: canUpdate ? ink.landscapeMetaInk : ink.landscapeMeta,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          Positioned(
+            left: width - _landscapeMarketActionWidth,
+            top: 8,
+            width: _landscapeMarketActionWidth,
+            height: 44,
+            child: _PluginButton(
+              label: label,
+              primary: installed == null,
+              ink: ink,
+              fullWidth: true,
+              height: 44,
+              textSize: 14,
+              tapEnabled: !installingThis,
+              onTap: () => widget.onAction('plugin:market:${entry.id}'),
+            ),
+          ),
+          Positioned(
+            left: 0,
+            right: 0,
+            top: 74,
+            height: .6,
+            child: ColoredBox(color: ink.line),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _installedRow(_PluginInk ink, InstalledPlugin plugin, double width) {
+    final double textWidth = math.max(60.0, width - 292);
+    final bool enabled = plugin.enabled;
+    return SizedBox(
+      height: _landscapeInstalledRowHeight,
+      child: Stack(
+        children: <Widget>[
+          Positioned(
+            left: 0,
+            top: 0,
+            width: textWidth,
+            child: Text(
+              plugin.name,
+              style: ink.landscapeInstalledTitle,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          Positioned(
+            left: 0,
+            top: 27,
+            width: textWidth,
+            child: Text(
+              '${plugin.id} / ${plugin.version} / ${plugin.manifest.publisher.isEmpty ? 'local' : plugin.manifest.publisher}',
+              style: ink.landscapeMeta,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          Positioned(
+            left: 0,
+            top: 51,
+            width: 7,
+            height: 7,
+            child: ColoredBox(color: enabled ? ink.amber : ink.muted),
+          ),
+          Positioned(
+            left: 15,
+            top: 44,
+            child: Text(
+              enabled ? '已启用' : '已禁用',
+              style: enabled ? ink.landscapeState : ink.landscapeMeta,
+            ),
+          ),
+          if (plugin.userInstalled) ...<Widget>[
+            _rowButton(
+              ink,
+              width - 276,
+              '详情',
+              84,
+              () => widget.onAction('plugin:detail:${plugin.id}'),
+            ),
+            _rowButton(
+              ink,
+              width - 184,
+              '卸载',
+              84,
+              () => widget.onAction('plugin:uninstall:${plugin.id}'),
+            ),
+            _rowButton(
+              ink,
+              width - 92,
+              enabled ? '禁用' : '启用',
+              92,
+              () => widget.onAction('plugin:toggle:${plugin.id}'),
+            ),
+          ] else ...<Widget>[
+            _rowButton(
+              ink,
+              width - 184,
+              '详情',
+              84,
+              () => widget.onAction('plugin:detail:${plugin.id}'),
+            ),
+            _rowButton(
+              ink,
+              width - 92,
+              enabled ? '禁用' : '启用',
+              92,
+              () => widget.onAction('plugin:toggle:${plugin.id}'),
+            ),
+          ],
+          Positioned(
+            left: 0,
+            right: 0,
+            top: 70,
+            height: .6,
+            child: ColoredBox(color: ink.line),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _rowButton(
+    _PluginInk ink,
+    double left,
+    String label,
+    double width,
+    VoidCallback onTap,
+  ) {
+    return Positioned(
+      left: left,
+      top: 18,
+      width: width,
+      height: 38,
+      child: _PluginButton(
+        label: label,
+        primary: false,
+        ink: ink,
+        fullWidth: true,
+        height: 38,
+        textSize: 13,
+        onTap: onTap,
+      ),
+    );
+  }
+
+  /// Qt：`<id> / 市场版本 <v> / 已安装 <cur>`（与竖屏同一口径）。
+  String _marketMeta(MarketPluginEntry entry, InstalledPlugin? installed) {
+    final String version = entry.version.isEmpty ? '—' : entry.version;
+    if (installed == null) {
+      return '${entry.id} / 市场版本 $version';
+    }
+    return '${entry.id} / 市场版本 $version / 已安装 ${installed.version}';
+  }
+}
+
+/// 横屏「插件详情」（Qt `NativeHudModal.cpp:627-686`）。
+class BasicLandscapePluginDetailPage extends StatelessWidget {
+  const BasicLandscapePluginDetailPage({
+    super.key,
+    required this.stage,
+    required this.plugin,
+    required this.enabled,
+    required this.userInstalled,
+    required this.dark,
+    required this.onAction,
+    this.message = '',
+    this.canRollback = false,
+    this.pendingUninstall = '',
+  });
+
+  final HudStage stage;
+  final PluginManifest plugin;
+  final bool enabled;
+  final bool userInstalled;
+  final bool dark;
+  final ValueChanged<String> onAction;
+  final String message;
+  final bool canRollback;
+  final String pendingUninstall;
+
+  @override
+  Widget build(BuildContext context) {
+    final _PluginInk ink = _PluginInk.of(dark);
+    return KeyedSubtree(
+      key: basicLandscapePluginDetailPageKey,
+      child: _landscapeShell(
+        stage: stage,
+        dark: dark,
+        ink: ink,
+        title: '插件详情',
+        subtitle: '插件详情 / 版本与能力',
+        backAction: 'plugin:close-detail',
+        onAction: onAction,
+        body: (Rect bounds) => _body(ink, bounds),
+        overlay: pendingUninstall.isEmpty
+            ? null
+            : _landscapeUninstallConfirm(
+                ink: ink,
+                label: plugin.label,
+                id: pendingUninstall,
+                onAction: onAction,
+              ),
+      ),
+    );
+  }
+
+  List<Widget> _body(_PluginInk ink, Rect bounds) {
+    final double usable = bounds.width - _landscapeInset * 2;
+    final double left = bounds.left + _landscapeInset;
+    final double colWidth = (usable - 32) / 2;
+    final double secondLeft = left + colWidth + 32;
+    Widget field(String label, String value, double x, double y) {
+      return Positioned(
+        left: x,
+        top: y,
+        width: colWidth,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text(label, style: ink.landscapeFieldLabel),
+            const SizedBox(height: 6),
+            Text(
+              value.isEmpty ? '—' : value,
+              style: ink.landscapeFieldValue,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ),
+      );
+    }
+
+    return <Widget>[
+      Positioned(
+        left: left,
+        top: bounds.top + 196,
+        width: usable,
+        child: Text(
+          plugin.label,
+          style: ink.landscapeDetailTitle,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ),
+      Positioned(
+        left: left,
+        top: bounds.top + 242,
+        width: usable,
+        child: Text(
+          '${plugin.id} / ${plugin.version}',
+          style: ink.landscapeDetailMeta,
+        ),
+      ),
+      Positioned(
+        left: left,
+        top: bounds.top + 274,
+        width: usable,
+        height: 2,
+        child: ColoredBox(color: ink.ink.withValues(alpha: .42)),
+      ),
+      field('PUBLISHER / 发布者', plugin.publisher, left, bounds.top + 304),
+      field('LICENSE / 许可证', plugin.license, secondLeft, bounds.top + 304),
+      field('ENTRY / 入口', plugin.entryFile, left, bounds.top + 382),
+      field(
+        'CAPABILITIES / 能力',
+        '${plugin.capabilities.length} 项',
+        secondLeft,
+        bounds.top + 382,
+      ),
+      field('STATE / 状态', _stateLabel(), left, bounds.top + 460),
+      field(
+        'SOURCE / 来源',
+        userInstalled ? '用户安装' : '内置',
+        secondLeft,
+        bounds.top + 460,
+      ),
+      if (userInstalled) ...<Widget>[
+        _actionButton(
+          ink,
+          left,
+          566,
+          190,
+          48,
+          enabled ? '禁用插件' : '启用插件',
+          () => onAction('plugin:toggle:${plugin.id}'),
+        ),
+        _actionButton(
+          ink,
+          left + 206,
+          566,
+          190,
+          48,
+          '回滚上一版本',
+          canRollback ? () => onAction('plugin:rollback:${plugin.id}') : null,
+        ),
+        _actionButton(
+          ink,
+          left,
+          630,
+          190,
+          44,
+          '卸载插件',
+          () => onAction('plugin:uninstall:${plugin.id}'),
+        ),
+      ] else
+        _actionButton(
+          ink,
+          left,
+          566,
+          190,
+          48,
+          '安装插件',
+          () => onAction('plugin:market:${plugin.id}'),
+          primary: true,
+        ),
+      if (message.isNotEmpty)
+        Positioned(
+          left: left,
+          top: bounds.top + 730,
+          width: usable,
+          child: Text(
+            message,
+            style: ink.landscapeFooter.copyWith(color: ink.ink),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+    ];
+  }
+
+  Widget _actionButton(
+    _PluginInk ink,
+    double left,
+    double top,
+    double width,
+    double height,
+    String label,
+    VoidCallback? onTap, {
+    bool primary = false,
+  }) {
+    return Positioned(
+      left: left,
+      top: top,
+      width: width,
+      height: height,
+      child: _PluginButton(
+        label: label,
+        primary: primary,
+        ink: ink,
+        fullWidth: true,
+        height: height,
+        textSize: height >= 48 ? 15 : 14,
+        tapEnabled: onTap != null,
+        onTap: onTap ?? () {},
+      ),
+    );
+  }
+
+  String _stateLabel() {
+    if (!userInstalled) {
+      return '未安装';
+    }
+    return enabled ? '已安装 / 已启用' : '已安装 / 已禁用';
+  }
+}
+
+/// 横屏弹层外壳：遮罩 + 面板 + 页头；[body] 返回面板内的 Positioned 子项。
+Widget _landscapeShell({
+  required HudStage stage,
+  required bool dark,
+  required _PluginInk ink,
+  required String title,
+  required String subtitle,
+  required String backAction,
+  required ValueChanged<String> onAction,
+  required List<Widget> Function(Rect bounds) body,
+  Widget? overlay,
+}) {
+  final Rect bounds = settingsModalBounds(stage.width);
+  final double usable = bounds.width - _landscapeInset * 2;
+  final Widget content = Material(
+    type: MaterialType.transparency,
+    child: Stack(
+      fit: StackFit.expand,
+      children: <Widget>[
+        // 遮罩：吃掉面板外的指针（Qt 点击空白只拦截，不关闭）。
+        Positioned.fill(
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            excludeFromSemantics: true,
+            onTap: () {},
+            child: ColoredBox(
+              color: _pluginRgba(SettingsModalMetrics.mask(dark)),
+            ),
+          ),
+        ),
+        // 面板底：同样是拦截层，点面板空白不穿透到 HUD。
+        Positioned.fromRect(
+          rect: bounds,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            excludeFromSemantics: true,
+            onTap: () {},
+            child: ColoredBox(
+              color: _pluginRgba(SettingsModalMetrics.panel(dark)),
+            ),
+          ),
+        ),
+        _landscapeFrame(
+          ink: ink,
+          bounds: bounds,
+          usable: usable,
+          title: title,
+          subtitle: subtitle,
+          backAction: backAction,
+          onAction: onAction,
+        ),
+        ...body(bounds),
+        ?overlay,
+      ],
+    ),
+  );
+  return _landscapeStage(stage, content);
+}
+
+/// 横屏 modal 的通用页头（Qt `NativeHudModal.cpp:188-213`，插件页 44/17pt）。
+Widget _landscapeFrame({
+  required _PluginInk ink,
+  required Rect bounds,
+  required double usable,
+  required String title,
+  required String subtitle,
+  required String backAction,
+  required ValueChanged<String> onAction,
+}) {
+  final Rect back = Rect.fromLTWH(
+    bounds.left + usable - 220,
+    bounds.top + 18,
+    167,
+    54,
+  );
+  return Stack(
+    children: <Widget>[
+      Positioned(
+        left: bounds.left + _landscapeInset,
+        top: bounds.top + 37,
+        child: Text(
+          'RHINE LAB / MUSIC DATABASE / PLUGIN MANAGEMENT',
+          style: ink.landscapeCategory,
+        ),
+      ),
+      Positioned(
+        left: bounds.left + _landscapeInset,
+        top: bounds.top + 91,
+        child: Text(title, style: ink.landscapeHeroTitle),
+      ),
+      Positioned(
+        left: bounds.left + _landscapeInset,
+        top: bounds.top + 147,
+        child: Text(subtitle, style: ink.landscapeHeroSubtitle),
+      ),
+      Positioned.fromRect(
+        rect: back,
+        child: _PluginButton(
+          label: '← 返回',
+          primary: false,
+          ink: ink,
+          fullWidth: true,
+          height: 54,
+          textSize: 20,
+          onTap: () => onAction(backAction),
+        ),
+      ),
+    ],
+  );
+}
+
+/// 两栏列表的外框：真实滚动视图 + 常显细轨（Qt 每栏一条 rail）。
+Widget _landscapeColumn({
+  required Rect rect,
+  required ScrollController controller,
+  required _PluginInk ink,
+  required bool scrollable,
+  required List<Widget> children,
+}) {
+  return Positioned.fromRect(
+    rect: rect,
+    child: ClipRect(
+      child: ScrollbarTheme(
+        data: ScrollbarThemeData(
+          thickness: const WidgetStatePropertyAll<double>(3),
+          thumbColor: WidgetStatePropertyAll<Color>(
+            ink.muted.withValues(alpha: .55),
+          ),
+          trackColor: WidgetStatePropertyAll<Color>(
+            ink.line.withValues(alpha: .35),
+          ),
+          crossAxisMargin: 6,
+          radius: Radius.zero,
+        ),
+        child: Scrollbar(
+          controller: controller,
+          thumbVisibility: scrollable,
+          // Flutter 不允许「只画轨道不画滑块」；内容不满一屏时两者一起隐藏。
+          trackVisibility: scrollable,
+          child: SingleChildScrollView(
+            controller: controller,
+            physics: const ClampingScrollPhysics(),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: children,
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+/// 横屏卸载二次确认（竖屏弹层是 393 网格宽度，横屏按舞台坐标放大到 520）。
+Widget _landscapeUninstallConfirm({
+  required _PluginInk ink,
+  required String id,
+  required String label,
+  required ValueChanged<String> onAction,
+}) {
+  return Positioned.fill(
+    child: ColoredBox(
+      color: ink.paper.withValues(alpha: .90),
+      child: Center(
+        child: Container(
+          width: 520,
+          padding: const EdgeInsets.fromLTRB(24, 24, 24, 20),
+          decoration: BoxDecoration(
+            color: ink.surface,
+            border: Border.all(color: ink.line),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Text('卸载插件：$label', style: ink.landscapeRowTitle),
+              const SizedBox(height: 12),
+              Text('只删除应用数据目录中的插件文件，不删除账号数据。', style: ink.landscapeMeta),
+              const SizedBox(height: 20),
+              Row(
+                children: <Widget>[
+                  Expanded(
+                    child: _PluginButton(
+                      label: '取消',
+                      primary: false,
+                      ink: ink,
+                      fullWidth: true,
+                      height: 48,
+                      textSize: 15,
+                      onTap: () => onAction('plugin:uninstall-cancel'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _PluginButton(
+                      label: '确认卸载',
+                      primary: true,
+                      ink: ink,
+                      fullWidth: true,
+                      height: 48,
+                      textSize: 15,
+                      onTap: () => onAction('plugin:uninstall-confirm:$id'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+/// 横屏舞台缩放：本层在逻辑像素里，按 stage.scale 一次性缩到屏幕。
+Widget _landscapeStage(HudStage stage, Widget child) {
+  final double scale = stage.scale > 0 ? stage.scale : 1.0;
+  return ClipRect(
+    child: OverflowBox(
+      alignment: Alignment.topLeft,
+      minWidth: stage.width,
+      maxWidth: stage.width,
+      minHeight: stage.height,
+      maxHeight: stage.height,
+      child: Transform.scale(
+        scale: scale,
+        alignment: Alignment.topLeft,
+        child: SizedBox(width: stage.width, height: stage.height, child: child),
+      ),
+    ),
+  );
+}
+
+Color _pluginRgba(SettingsRgba rgba) => Color.fromRGBO(
+  (rgba.r * 255).round().clamp(0, 255).toInt(),
+  (rgba.g * 255).round().clamp(0, 255).toInt(),
+  (rgba.b * 255).round().clamp(0, 255).toInt(),
+  rgba.a.clamp(0.0, 1.0),
+);
+
+/// Qt compact 的按钮：次要 = surface 填充 + line 描边 + 13pt ink；
+/// primary = amber 填充 + 深字；左内边距 12、高 44（市场行里高 40）。
+class _PluginButton extends StatelessWidget {
+  const _PluginButton({
+    required this.label,
+    required this.primary,
+    required this.ink,
+    required this.onTap,
+    this.fullWidth = false,
+    this.tapEnabled = true,
+    this.height = 44,
+    this.textSize = 13,
+  });
+
+  final String label;
+  final bool primary;
+  final _PluginInk ink;
+  final VoidCallback onTap;
+  final bool fullWidth;
+  final bool tapEnabled;
+  final double height;
+
+  /// 按钮字号（竖屏 13；横屏 13–20）。
+  final double textSize;
+
+  @override
+  Widget build(BuildContext context) {
+    final Widget body = Container(
+      height: height,
+      width: fullWidth ? null : 112,
+      alignment: Alignment.centerLeft,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(
+        color: primary ? ink.amber : ink.surface,
+        border: primary ? null : Border.all(color: ink.line, width: .7),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: textSize,
+          height: 1.1,
+          color: primary ? ink.amberInk : ink.ink,
+          fontWeight: primary ? FontWeight.w600 : FontWeight.w400,
+        ),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+    );
+    if (!tapEnabled) {
+      return Opacity(opacity: .55, child: body);
+    }
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: body,
+    );
+  }
+}
+
+/// 插件页用到的颜色/字号（与设置整页同一套暗/亮取值）。
+class _PluginInk {
+  const _PluginInk({
+    required this.ink,
+    required this.muted,
+    required this.line,
+    required this.surface,
+    required this.block,
+    required this.paper,
+    required this.amber,
+    required this.amberInk,
+  });
+
+  factory _PluginInk.of(bool dark) {
+    return dark
+        ? const _PluginInk(
+            ink: Color(0xFFECEEE2),
+            muted: Color(0xFFA1AD99),
+            line: Color(0xFF3B473D),
+            surface: Color(0xFF202A23),
+            block: Color(0xFFECEEE2),
+            paper: Color(0xFF141C18),
+            amber: Color(0xFFC79B39),
+            amberInk: Color(0xFF17201A),
+          )
+        : const _PluginInk(
+            ink: Color(0xFF151C17),
+            muted: Color(0xFF676E63),
+            line: Color(0xFFBDC0B3),
+            surface: Color(0xFFE8E6DC),
+            block: Color(0xFF151C17),
+            paper: Color(0xFFEFEDE4),
+            amber: Color(0xFFC79B39),
+            amberInk: Color(0xFF17201A),
+          );
+  }
+
+  final Color ink;
+  final Color muted;
+  final Color line;
+  final Color surface;
+  final Color block;
+  final Color paper;
+  final Color amber;
+  final Color amberInk;
+
+  TextStyle get rowTitle => TextStyle(
+    fontSize: 14,
+    height: 1.15,
+    fontWeight: FontWeight.w600,
+    color: ink,
+  );
+  TextStyle get rowMeta => TextStyle(fontSize: 9, height: 1.3, color: muted);
+  TextStyle get rowMetaInk => TextStyle(fontSize: 9, height: 1.3, color: ink);
+  TextStyle get paragraph => TextStyle(fontSize: 10, height: 1.5, color: muted);
+  TextStyle get title => TextStyle(
+    fontSize: 14,
+    height: 1.2,
+    fontWeight: FontWeight.w600,
+    color: ink,
+  );
+  TextStyle get detailTitle => TextStyle(
+    fontSize: 22,
+    height: 1.2,
+    fontWeight: FontWeight.w600,
+    color: ink,
+  );
+  TextStyle get sectionTitle => TextStyle(
+    fontSize: 13,
+    height: 1.1,
+    fontWeight: FontWeight.w600,
+    color: ink,
+  );
+  TextStyle get sectionTrailing =>
+      TextStyle(fontSize: 7, height: 1.1, color: muted);
+  TextStyle get blockCode => TextStyle(
+    fontSize: 8,
+    height: 1.1,
+    fontWeight: FontWeight.w600,
+    // Qt `terminalSection` 的编号画在墨块上、取纸色；写死浅色在暗色主题下等于隐形。
+    color: paper,
+  );
+  TextStyle get fieldLabel => TextStyle(fontSize: 8, height: 1.2, color: muted);
+  TextStyle get fieldValue => TextStyle(fontSize: 12, height: 1.2, color: ink);
+
+  // 横屏（Qt NativeHudModal.cpp 的插件面板字号：44/17 页头、20/19 行标题、
+  // 13 元信息与页脚、32 详情标题、12/16 字段）。
+  TextStyle get landscapeCategory =>
+      TextStyle(fontSize: 12, height: 1.1, color: ink);
+  TextStyle get landscapeHeroTitle => TextStyle(
+    fontSize: 44,
+    height: 1.05,
+    fontWeight: FontWeight.w600,
+    color: ink,
+  );
+  TextStyle get landscapeHeroSubtitle =>
+      TextStyle(fontSize: 17, height: 1.2, color: ink);
+  TextStyle get landscapeSection => TextStyle(
+    fontSize: 15,
+    height: 1.1,
+    fontWeight: FontWeight.w600,
+    color: ink.withValues(alpha: .6),
+  );
+  TextStyle get landscapeSectionTrailing =>
+      TextStyle(fontSize: 13, height: 1.2, color: ink);
+  TextStyle get landscapeRowTitle => TextStyle(
+    fontSize: 20,
+    height: 1.15,
+    fontWeight: FontWeight.w600,
+    color: ink,
+  );
+  TextStyle get landscapeInstalledTitle => TextStyle(
+    fontSize: 19,
+    height: 1.15,
+    fontWeight: FontWeight.w600,
+    color: ink,
+  );
+  TextStyle get landscapeMeta =>
+      TextStyle(fontSize: 13, height: 1.25, color: muted);
+  TextStyle get landscapeMetaInk =>
+      TextStyle(fontSize: 13, height: 1.25, color: ink);
+  TextStyle get landscapeState =>
+      TextStyle(fontSize: 13, height: 1.2, color: ink);
+  TextStyle get landscapeFooter =>
+      TextStyle(fontSize: 13, height: 1.3, color: muted);
+  TextStyle get landscapeDetailTitle => TextStyle(
+    fontSize: 32,
+    height: 1.1,
+    fontWeight: FontWeight.w600,
+    color: ink,
+  );
+  TextStyle get landscapeDetailMeta =>
+      TextStyle(fontSize: 14, height: 1.25, color: muted);
+  TextStyle get landscapeFieldLabel =>
+      TextStyle(fontSize: 12, height: 1.2, color: muted);
+  TextStyle get landscapeFieldValue =>
+      TextStyle(fontSize: 16, height: 1.2, color: ink);
+}

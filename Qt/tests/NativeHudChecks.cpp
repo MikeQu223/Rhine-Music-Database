@@ -2620,7 +2620,9 @@ bool runNativeHudChecks(const QString &root, Glyphs &glyphs) {
                                                "single-play-mode",
                                                "quality",
                                                "disc-rotation",
-                                               "performance:toggle",
+                                               // 用户 m10082：性能面板不是用户要求的功能 ——
+                                               // 该动作不再存在，断言随面板停用。
+                                               // "performance:toggle",
                                                "update:check",
                                                "replay",
                                                "settings:restore-defaults"};

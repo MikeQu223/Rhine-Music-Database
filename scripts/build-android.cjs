@@ -2,6 +2,49 @@
 // 项目根存在 Rhine-Music-Database.key 与同名 .password.key 时改用发布密钥，产物加
 // -signed 后缀；否则沿用工作区内的调试密钥。全程不写工作区以外的路径（Gradle/Android
 // 的用户目录都改指到 output/android-work 下）。
+//
+// ============================================================================
+// 纯 Qt 的 Android 打包入口已封堵（FLUTTER-ONLY-ANDROID-20261117）。
+//
+// Android 交付只走 Flutter 宿主：入口 lib/main.dart，Gradle 工程 android/app/build.gradle.kts，
+// 出包入口 `npm run build:flutter:android`（scripts/build-flutter-android.cjs，CI 与本地共用）。
+// Qt 侧只负责 native：libRhineMusicDatabase_arm64-v8a.so，以及 androiddeployqt --aux-mode
+// 生成的 libs/jar/assets/libs.xml。
+//
+// 为什么在这里硬失败而不是删代码：这个脚本整条链（qt-cmake 配置 → `cmake --build --target apk`
+// → androiddeployqt → Gradle assembleDebug）产出的都是纯 Qt 包——没有 libflutter.so、没有
+// flutter_assets，装到设备上跑的是 Qt ConsentActivity。构建代码按用户要求保留，但绝不能再被跑通。
+// 失败点放在**任何**动作之前：不读签名凭据、不准备 Node/资源、不配置 CMake、不动 Gradle。
+// 例外只有 `--prepare-only`：它只准备 Flutter 构建要用的 Node 运行时与资源，然后退出，
+// 不会走到 CMake/Gradle 打包链，因此不违反「Android 包只能由 Flutter 产出」。
+// 同一条封堵还在 Qt/android/build.gradle（Gradle 层）与 Qt/Android.cmake（RHINE_FLUTTER_HOST_ONLY，
+// 默认 fail-closed）里各有一道，任何一道单独被绕过都不会出包。
+// ============================================================================
+if (!process.argv.includes('--prepare-only')) {
+    console.error(
+        [
+            '纯 Qt 的 Android 打包已停用（FLUTTER-ONLY-ANDROID-20261117）。',
+            '',
+            'Android 包必须由 Flutter 工程构建，CI 与本地共用同一个入口：',
+            '    npm run build:flutter:android            # release（与 CI 一致）',
+            '    npm run build:flutter:android -- --debug # debug',
+            '  入口 lib/main.dart，Gradle 工程 android/app/build.gradle.kts。',
+            '',
+            'Qt 侧只提供 native 产物（不走本脚本）：',
+            '    qt-cmake -DRHINE_FLUTTER_HOST_ONLY=ON 配置 → 编 libRhineMusicDatabase_arm64-v8a.so',
+            '    androiddeployqt --input <build>/Qt/android-RhineMusicDatabase-deployment-settings.json \\',
+            '                    --output <staging> --aux-mode（只生成 libs/jar/assets/libs.xml）',
+            '',
+            '本脚本的打包链（cmake --build --target apk / aab + Gradle assembleDebug）已封堵：',
+            '代码保留，不执行，未读取签名凭据，未准备任何资源或构建目录。',
+            '',
+            '只准备 Flutter 构建所需的 Node 运行时与资源（不打包）：',
+            '    node scripts/build-android.cjs --prepare-only',
+        ].join('\n'),
+    );
+    process.exit(1);
+}
+
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -139,7 +182,7 @@ function prepareResources() {
         // 后者必须与 CMakeLists 的 RHINE_ANDROID_NORMAL_RGBA8 保持一致，否则纹理尺寸对不上。
         //
         // ETC2 已停：那套手写编码器有字节序（ETC2 要求大端块）与 individual 模式位布局
-        // 两处缺陷，标准解码器实测 PSNR 5.7 dB、真机是花屏，运行时也默认关闭
+        // 两处缺陷，解码出来是花屏，运行时也默认关闭
         // （RHINE_SURFACE_ETC2=1 才读）。留着烘焙只是每次白花十几秒再打 700 KB 死重。
         // 换成可靠编码器（etcpak / etc2comp）后，把 RHINE_BAKE_ETC2 加回来即可。
         RHINE_BAKE_LIGHT_HALF: '1',
@@ -194,20 +237,23 @@ function prepareResources() {
 
 /**
  * 包源目录的 build.gradle 是「Qt 模板副本 + 末尾追加段」：Qt 升级换了模板就必须重新生成，
- * 否则新模板里的字段再也进不了包，而构建会安静地沿用旧配置。这里只比对前缀，
- * 追加段（第三方依赖）随仓库自由演进。
+ * 否则新模板里的字段再也进不了包，而构建会安静地沿用旧配置。
+ *
+ * 注意：纯 Qt 打包封堵段（FLUTTER-ONLY-ANDROID-20261117）被 android-gradle-sync.cjs
+ * 放在模板**之前**，所以不能再比「文件是否以模板开头」——那样只要 kit 自带模板就恒为 false。
+ * 这里改为「文件里逐字节包含当前模板」，追加段与封堵段都不影响判定。
  */
 function gradleTemplateInSync() {
-    const template = path.join(kit, 'src/android/templates/build.gradle');
+    const templatePath = path.join(kit, 'src/android/templates/build.gradle');
     const ours = path.resolve('Qt/android/build.gradle');
-    if (!fs.existsSync(template)) {
+    if (!fs.existsSync(templatePath)) {
         // 少数发行套件不带模板源码，没法比对，放行即可（构建时 androiddeployqt 仍会用它自己的）。
         return true;
     }
     if (!fs.existsSync(ours)) {
         return false;
     }
-    return fs.readFileSync(ours, 'utf8').startsWith(fs.readFileSync(template, 'utf8'));
+    return fs.readFileSync(ours, 'utf8').includes(fs.readFileSync(templatePath, 'utf8'));
 }
 
 /** 调试签名用的密钥只生成一次，落在工作区里：与 AGP 自动生成到 ~/.android 的那份等价，
@@ -350,6 +396,7 @@ if (!gradleTemplateInSync()) {
 prepareNodeMobile();
 prepareResources();
 if (prepareOnly) {
+    console.log('Android Node 运行时与资源已准备好（Flutter 构建用）。');
     process.exit(0);
 }
 

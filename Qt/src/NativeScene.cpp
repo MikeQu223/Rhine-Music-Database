@@ -60,6 +60,31 @@ bool NativeScene::ready() const {
 int NativeScene::selection() const {
     return m_selected;
 }
+double NativeScene::archiveTrackItem() const {
+    // 与 moveArchive()/navigatePlane() 用的是同一组换算（NativeSceneInput.cpp）：
+    //   row = (-railZ - 2.17) / 0.62 + 15.5，条目 = row - 12
+    const double row = (-m_rail.value - 2.17) / 0.62 + 15.5;
+    return row - 12.0;
+}
+
+void NativeScene::projectArchiveScroll(double item, int lane) {
+    const int clampedLane = qBound(0, lane, 4);
+    const double row = 12.0 + item;
+    const double railZ = -(row - 15.5) * 0.62 - 2.17;
+    // 只摆位置、速度归零：这是"外部窗口真值"的一次投影，不是用户手势的第二份惯性。
+    m_rail = SceneMotion::Spring{railZ, 0};
+    m_columnCamera = SceneMotion::Spring{(clampedLane - 2) * 5.2, 0};
+    // 注意：这里**不能**碰 m_targetDetail / m_detail。档案页的窗口投影与"是否进入详情"
+    // 是两条独立的真值：detail 由 Flutter 的 mode 决定（setMode），投影只负责归档轨道
+    // 的位置。早期实现顺手把 m_targetDetail 清零，结果每次 state 推送都把刚打开的详情
+    // 拉回档案页 —— 详情盘面永远不出现，封面自然也就"一直不加载"。
+    m_lastInteraction = m_clock;
+    // 外部窗口在接下来半秒内是权威：NativeSceneUpdate 里的重定心会让位。
+    // 0.5s 只覆盖"列表每帧都在推"的间隙；手指/惯性开始后由 pointerdown 立刻清掉。
+    m_externalUntil = m_clock + 0.5;
+    m_changed = true;
+}
+
 NativeScene::Cell NativeScene::fileLocation(int index) const {
     for (int lane = 0; lane < 5; ++lane) {
         const auto row = m_columns[lane].indexOf(index);
@@ -86,7 +111,11 @@ void NativeScene::pulse(Cell cell) {
 /** 切换只复制活动卡片根状态；反向选中尚在归位的卡片时继续其真实速度与角度。 */
 void NativeScene::select(int index, QJsonObject navigation) {
     m_changed = true;
-    if (index < 0 || index >= 40) {
+    // 只挡负数：40 是 Assets/android-3d/slots.json 的**占位槽位数**，不是真实曲目域。
+    // 塞壬曲库有 936 首，真正的几何锚点是 fileLocation(index)（在本列 m_columns 里找
+    // 这一条，落到 cell{ lane, 12+row }），它对任意 index 都有定义（找不到退回 {2,12}）。
+    // 早先的 `index >= 40` 会把第 41 行以后的选中整条丢掉，表现为"选中了但 3D 不动"。
+    if (index < 0) {
         return;
     }
     if (!m_navigating) {
@@ -235,6 +264,15 @@ void NativeScene::musicClear() {
     for (auto &actor : m_returning) {
         actor.musicKey.clear();
     }
+}
+void NativeScene::projectEmbeddedCellKeys(const QHash<quint32, QString> &keys) {
+    if (keys == m_embeddedCellKeys) {
+        // 同一批可见格重复上报是常态（每帧一次）：内容没变就不动 m_changed，
+        // 否则引擎会一直以为自己有活要干，永远睡不着。
+        return;
+    }
+    m_embeddedCellKeys = keys;
+    m_changed = true;
 }
 void NativeScene::freeze(std::optional<double> time) {
     m_changed = true;

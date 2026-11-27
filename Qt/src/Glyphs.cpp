@@ -487,7 +487,7 @@ double Glyphs::artWidth(QString key, double size, double tracking, int count) {
 }
 #if defined(Q_OS_ANDROID)
 bool Glyphs::runCacheEnabled() {
-    // **默认关闭**（2026-11-06 晚实测翻案）：RHINE_HUD_RUN_CACHE=1 才启用，用于 A/B。
+    // **默认关闭**（实测翻案）：RHINE_HUD_RUN_CACHE=1 才启用，用于 A/B。
     //
     // 10:35 的采样 sync 均值 41.8ms / 17.2fps；把「整段文本合成一条路径」与
     // 「right-mask 烘图」一起默认打开后重编，11:21 的采样变成 63.0ms / 12.1fps
@@ -554,7 +554,7 @@ QPainterPath Glyphs::artRunPath(const QString &key, int count, double trackingEm
  * 拉伸绘制：纵向所有行完全相同，所以纵向插值没有误差，横向只是把原本就平滑的斜坡放大。
  */
 bool Glyphs::drawCachedMask(QPainter &c, const QJsonArray &a) {
-    // **默认关闭**（2026-11-06 晚实测翻案）：RHINE_HUD_MASK_CACHE=1 才启用。
+    // **默认关闭**（实测翻案）：RHINE_HUD_MASK_CACHE=1 才启用。
     // 789x984 = 776k 像素上，双线性拉伸一张 W×1 图（4 次采样 + 2 次插值）比
     // QLinearGradient 的水平色表查找更贵，与「渐变求值很慢」的假设相反。
     static const bool enabled = [] {

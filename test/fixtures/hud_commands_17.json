@@ -1,0 +1,249 @@
+{
+  "contract": "qt-hud-commands",
+  "version": 1,
+  "baseline": "8ed3067b0812eb2612f7841ec127a6e8ca93231b",
+  "stage": [
+    1728,
+    1080
+  ],
+  "expectedOpOrder": [
+    "save",
+    "alpha",
+    "translate",
+    "scale",
+    "rotate",
+    "clip",
+    "fill",
+    "ellipse",
+    "text",
+    "art",
+    "fill-path",
+    "path",
+    "arc",
+    "right-mask",
+    "gradient",
+    "image",
+    "restore"
+  ],
+  "commands": [
+    [
+      "save"
+    ],
+    [
+      "alpha",
+      0.5
+    ],
+    [
+      "translate",
+      10,
+      20
+    ],
+    [
+      "scale",
+      2,
+      3
+    ],
+    [
+      "rotate",
+      1.5707963267948966
+    ],
+    [
+      "clip",
+      0,
+      0,
+      1728,
+      1080
+    ],
+    [
+      "fill",
+      [
+        0.945,
+        0.941,
+        0.906,
+        1,
+        "calibratedRGB"
+      ],
+      0,
+      0,
+      1728,
+      1080
+    ],
+    [
+      "ellipse",
+      [
+        0.835,
+        0.639,
+        0.282,
+        1
+      ],
+      100,
+      200,
+      40,
+      24
+    ],
+    [
+      "text",
+      "全部歌曲",
+      59,
+      115.425,
+      44,
+      "bold",
+      0,
+      [
+        0.08,
+        0.085,
+        0.075,
+        1,
+        "calibratedRGB"
+      ]
+    ],
+    [
+      "art",
+      "player-prev",
+      12,
+      34,
+      36,
+      -1,
+      0,
+      [
+        0.13,
+        0.16,
+        0.14,
+        1
+      ]
+    ],
+    [
+      "fill-path",
+      "icon-play",
+      [
+        0.13,
+        0.16,
+        0.14,
+        1
+      ]
+    ],
+    [
+      "path",
+      "icon-arrow",
+      4,
+      [
+        0.13,
+        0.16,
+        0.14,
+        1
+      ],
+      [
+        2,
+        1
+      ],
+      2
+    ],
+    [
+      "arc",
+      120,
+      240,
+      36,
+      0,
+      1.5708,
+      2,
+      [
+        0.13,
+        0.16,
+        0.14,
+        1
+      ]
+    ],
+    [
+      "right-mask",
+      [
+        0.08,
+        0.085,
+        0.075,
+        1
+      ],
+      1450,
+      120,
+      1728,
+      48
+    ],
+    [
+      "gradient",
+      true
+    ],
+    [
+      "image",
+      "cover-17",
+      20,
+      30,
+      400,
+      400
+    ],
+    [
+      "restore"
+    ]
+  ],
+  "duplicates": [
+    [
+      "fill",
+      [
+        0.13,
+        0.16,
+        0.14,
+        1
+      ],
+      40,
+      50,
+      8,
+      8
+    ],
+    [
+      "fill",
+      [
+        0.13,
+        0.16,
+        0.14,
+        1
+      ],
+      40,
+      50,
+      8,
+      8
+    ]
+  ],
+  "shortPath": [
+    "path",
+    "icon-short",
+    2,
+    [
+      0.13,
+      0.16,
+      0.14,
+      1
+    ]
+  ],
+  "semantics": {
+    "alphaMode": "multiply",
+    "textBaselineFactor": 1.044,
+    "pathDashDivisor": "max(penWidth,0.0001)",
+    "arcUnit": "radians",
+    "rightMaskSegments": 16,
+    "gradientCenter": [
+      979.2,
+      518.4
+    ],
+    "gradientRadius": 1100
+  },
+  "envelope": {
+    "kind": "snapshot",
+    "required": [
+      "generation",
+      "frame",
+      "commands",
+      "hits",
+      "state"
+    ],
+    "generationUsage": "consistency-only",
+    "deduplicateCommands": false,
+    "reorderHits": false
+  }
+}

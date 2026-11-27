@@ -369,9 +369,16 @@ void NativeHud::paintSettingsCustomSection(const QString &renderer, const QRectF
     }
 
     if (renderer == "performance") {
-        sectionRow(4, "PERFORMANCE", QStringLiteral("性能面板"), QStringLiteral("显示 / 隐藏 · F10"),
-                   "performance:toggle", QStringLiteral("性能面板"),
-                   QStringLiteral("在性能面板内手动收集、导出诊断文件。"));
+        // 性能面板不是用户要求的功能 —— PERFORMANCE 行与其帮助文案注释掉
+        // （保留原文，不删）；DISC ROTATION 行是用户指定设置项，保留。
+        // sectionRow(4, "PERFORMANCE", QStringLiteral("性能面板"), QStringLiteral("显示 / 隐藏 · F10"),
+        //            "performance:toggle", QStringLiteral("性能面板"),
+        //            QStringLiteral("在性能面板内手动收集、导出诊断文件。"));
+        sectionRow(102, "DISC ROTATION", QStringLiteral("唱片旋转"),
+                   discRotation ? QStringLiteral("开启 / 点击关闭") : QStringLiteral("关闭 / 点击了解风险"),
+                   "disc-rotation", QStringLiteral("唱片旋转"),
+                   QStringLiteral("默认关闭；开启会增加持续渲染、耗电和发热。"));
+        // main 新增：调试模式（原生崩溃诊断），仅桌面平台编译。
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
         const auto *debugSetting = SettingsSchema::find("debug-mode");
         const bool debugModeEnabled =
@@ -520,7 +527,8 @@ void NativeHud::applySettingValue(const QString &id, const QString &value) {
     // 主题需要同时更新缓存、磁盘与场景波形，不能只写偏好。
     if (id == "theme") {
         themeMode = target;
-        dark = target == "dark" || (target == "system" && m_host->systemDark());
+        // 只有亮/暗两档，不再跟随系统。
+        dark = target == "dark";
         m_host->setPreference("theme", target);
         if (m_scene.theme) {
             m_scene.theme(dark);

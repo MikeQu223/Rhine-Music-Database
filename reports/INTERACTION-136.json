@@ -1,0 +1,23 @@
+{
+  "id": "INTERACTION-136",
+  "kind": "LEAD coordination compatibility pointer, NOT an author/test/device report",
+  "canonicalAuthorReport": "/home/aibeto/code/Rhine-Music-Database/.agents/parity-20261109/reports/INTERACTION-136.json",
+  "canonicalControl": "/home/aibeto/code/Rhine-Music-Database/.agents/parity-20261109/control/NATIVE-RECOVERY-132R.json",
+  "highestNativeControl": 17,
+  "authorSession": "18d2e174-58fc-44ea-ab7d-55c204d4de0a",
+  "authorState": "SDK explicitly FINISHED; no more product writing by136",
+  "branch": "flutter/basic/interaction-136",
+  "commit": "34227e471232a272066b678e2c04dcc13e6fbcaf",
+  "tree": "4fc3a6189d3114bf26e0d068c4719a21435743ec",
+  "parent": "f7bfe958afcc72a5a83a59dd0f538699805b5935",
+  "ancestor134": "e8efda084e40adcc2fe6b7e4d8dfbf64fac24b7f",
+  "leadProof": "Read full458-line canonicalreport; independent git proof5changedpaths/final5SHA256+blobs+disk/clean/ordinarycommitparents and own4/native16actualhashACK. Static reviewed input only; NO test/analyze/build/ADB execution by136/reviewer/lead and NO devicePASS.",
+  "handoff": "132R solely owns necessary final data/HUD/app/qt_scene_view/native/test integration and all tests/analyze/build/ADB; temporary136two-file reservation is over. Integrate136 ordinary --no-ff, it includes134/133; surgical sharedhunks, preservehistory and old artifacts.",
+  "integrationMusts": [
+    "Actual playlist kind/id must not fall through to album-open or song-ID consumer; honest unsupported-open feedback is allowed without account/UI expansion.",
+    "HUD fallback passes BOTH localCollectionsAvailable and localUnresolvedLikedIds.",
+    "Controller private rootwindow must be exposed minimally for true render-only physical mapping, never reconstructed fromlogical%8/%40; D3 drag-realignment/generation and D7 remain.",
+    "NEW sourceedge in committed controller516-518: count3 next sequence0,1,2,0,0 wrongly clamps8-slotwindowrowbycount.132R smallestfix+actualcontroller shortlist positive/negative regression+finalsameleaf review; see updated LEAD-SELECTION-WINDOW-20261116.md and highestnative17.",
+    "All render-only/realcover/ownership/cancel/lifecycle/release/SIGABRT/finalrealfeatflutter reviewedtree APK build+hash+install+device acceptance remain. A diagnostic sidetree APK is not delivery. No further approval waits."
+  ]
+}

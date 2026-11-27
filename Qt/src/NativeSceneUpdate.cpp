@@ -108,7 +108,9 @@ void NativeScene::update(double time, std::optional<Cinema> cinema) {
     const auto selectedLane = m_actor.cell.lane;
     m_shoulder.damp(selectedRow, m_reduced ? 35 : 5, seconds);
     m_laneFocus.damp(selectedLane, m_reduced ? 35 : 4, seconds);
-    if (!m_holding && !m_momentum) {
+    // 列表正在推窗口时不做重定心：位置真值来自 Flutter，再 damp 就是原生覆盖。
+    const bool externalWindow = m_clock <= m_externalUntil;
+    if (!m_holding && !m_momentum && !externalWindow) {
         m_columnCamera.damp(chosen.x, m_reduced ? 35 : 3.7, seconds);
         m_rail.damp(cinema ? 0 : -2.17 - chosen.z, m_reduced ? 35 : 3.7, seconds);
     }

@@ -1,0 +1,712 @@
+{
+  "id": "T44-C18-W2-rotation-state",
+  "schema": 1,
+  "synthetic": true,
+  "not_device_evidence": true,
+  "redGreen": "NOT EXECUTED",
+  "generatedBy": "T44-C18-W2 (atomic A2 writer, plan:373-375 / plan:696)",
+  "provider": "netease",
+  "notes": [
+    "Synthetic landscape -> portrait -> landscape scenario composed from Qt sources. The values were not sampled from a device.",
+    "RED/GREEN NOT EXECUTED: the writer is forbidden from running flutter test / dart test / dart analyze.",
+    "Every ledger expectation is a STATIC bookkeeping expectation. A passing ledger test is NOT a device pass and must never be reported as one.",
+    "Frames only vary the injected viewport. Sections 1-5 carry the values that must be identical in all three frames."
+  ],
+  "evidence": [
+    "Qt/src/MusicAccount.cpp:32",
+    "Qt/src/MusicAccount.cpp:210",
+    "Qt/src/MusicAccount.cpp:343-349",
+    "Qt/src/MusicAccount.cpp:351-379",
+    "Qt/src/MusicAccount.cpp:540-547",
+    "Qt/src/MusicAccount.cpp:560-623",
+    "Qt/src/MusicAccount.cpp:625-667",
+    "Qt/src/MusicLibrary.h:171-177",
+    "Qt/src/MusicLibrary.h:243",
+    "Qt/src/MusicSession.cpp:215-235",
+    "Qt/src/MusicSession.cpp:243",
+    "Qt/src/MusicSession.cpp:263-265",
+    "Qt/src/MusicPlayer.cpp:643-651",
+    "Qt/src/MusicPlayer.cpp:686-702",
+    "Qt/src/MusicPlayer.cpp:705-746",
+    "Qt/src/MusicPlayer.cpp:749-758",
+    "Qt/src/MusicPlayer.cpp:760-780",
+    "Qt/src/PlaybackQueue.cpp:398-418",
+    "Qt/src/PlaybackQueue.cpp:420-422",
+    "Qt/src/LyricsController.cpp:117-131",
+    "Qt/src/LyricsController.cpp:511-518",
+    "Qt/src/LyricsController.cpp:521-531",
+    "Qt/src/LyricsController.cpp:639-649",
+    "Qt/src/LyricsController.cpp:651-661",
+    "Qt/src/NativeHudDetail.cpp:57-58",
+    "Qt/src/NativeScene.cpp:165-198",
+    "Qt/src/NativeScene.cpp:217-224",
+    "Qt/src/NativeSceneCamera.cpp:55-63",
+    "Qt/src/NativeSceneFrame.cpp:19",
+    "Qt/src/NativeSceneInput.cpp:9-23",
+    "Qt/src/NativeSceneInput.cpp:141-142",
+    "Qt/src/NativeViewer.cpp:39-64",
+    "Qt/src/NativeViewer.cpp:77-84",
+    "Qt/src/NativeViewer.cpp:231-236",
+    "Qt/src/BridgeProcessAndroid.cpp:164-169",
+    "Qt/src/AudioPlayer.cpp:67",
+    "Qt/src/AudioPlayer.cpp:161-179"
+  ],
+  "frames": [
+    {
+      "name": "landscape",
+      "orientation": "landscape",
+      "viewport": {
+        "logicalWidth": 2400.0,
+        "logicalHeight": 1080.0,
+        "devicePixelRatio": 1.0,
+        "insets": {
+          "top": 0.0,
+          "right": 0.0,
+          "bottom": 0.0,
+          "left": 0.0
+        },
+        "imeInset": 0.0
+      },
+      "expect": {
+        "viewportRevision": 1,
+        "stage": {
+          "width": 2400,
+          "height": 1080,
+          "portrait": false,
+          "compact": false
+        },
+        "login": {
+          "generation": 1,
+          "qrKey": "unikey-synthetic-0001",
+          "hasCode": true,
+          "loginPhase": "waiting",
+          "remainingMs": 300000
+        },
+        "scene": {
+          "clock": 42.5,
+          "bootStart": -1.76,
+          "detail": 0.12,
+          "mode": "detail",
+          "selected": 12,
+          "eye": [
+            -62.26,
+            35.98,
+            43.28
+          ],
+          "aim": [
+            -0.5,
+            1.1,
+            0.4
+          ],
+          "viewerTransition": "opening",
+          "viewerOpenCount": 1,
+          "viewerResetCount": 0,
+          "viewerResizeCount": 1,
+          "canBrowse": false
+        },
+        "playback": {
+          "index": 0,
+          "mode": "shuffle",
+          "history": 0
+        },
+        "lyrics": {
+          "offsetMs": 1500,
+          "source": "cache",
+          "lyricsMode": true
+        }
+      }
+    },
+    {
+      "name": "portrait",
+      "orientation": "portrait",
+      "viewport": {
+        "logicalWidth": 1080.0,
+        "logicalHeight": 2400.0,
+        "devicePixelRatio": 1.0,
+        "insets": {
+          "top": 24.0,
+          "right": 0.0,
+          "bottom": 0.0,
+          "left": 0.0
+        },
+        "imeInset": 0.0
+      },
+      "expect": {
+        "viewportRevision": 2,
+        "stage": {
+          "width": 1080,
+          "height": 2400,
+          "portrait": true,
+          "compact": false
+        },
+        "login": {
+          "generation": 1,
+          "qrKey": "unikey-synthetic-0001",
+          "hasCode": true,
+          "loginPhase": "waiting",
+          "remainingMs": 300000
+        },
+        "scene": {
+          "clock": 42.5,
+          "bootStart": -1.76,
+          "detail": 0.12,
+          "mode": "detail",
+          "selected": 12,
+          "eye": [
+            -62.26,
+            35.98,
+            43.28
+          ],
+          "aim": [
+            -0.5,
+            1.1,
+            0.4
+          ],
+          "viewerTransition": "opening",
+          "viewerOpenCount": 1,
+          "viewerResetCount": 0,
+          "viewerResizeCount": 2,
+          "canBrowse": false
+        },
+        "playback": {
+          "index": 0,
+          "mode": "shuffle",
+          "history": 0
+        },
+        "lyrics": {
+          "offsetMs": 1500,
+          "source": "cache",
+          "lyricsMode": true
+        }
+      }
+    },
+    {
+      "name": "landscape-restored",
+      "orientation": "landscape",
+      "viewport": {
+        "logicalWidth": 1200.0,
+        "logicalHeight": 540.0,
+        "devicePixelRatio": 2.0,
+        "insets": {
+          "top": 24.0,
+          "right": 0.0,
+          "bottom": 48.0,
+          "left": 0.0
+        },
+        "imeInset": 320.0
+      },
+      "expect": {
+        "viewportRevision": 3,
+        "stage": {
+          "width": 2400,
+          "height": 1080,
+          "portrait": false,
+          "compact": false
+        },
+        "login": {
+          "generation": 1,
+          "qrKey": "unikey-synthetic-0001",
+          "hasCode": true,
+          "loginPhase": "waiting",
+          "remainingMs": 300000
+        },
+        "scene": {
+          "clock": 42.5,
+          "bootStart": -1.76,
+          "detail": 0.12,
+          "mode": "detail",
+          "selected": 12,
+          "eye": [
+            -62.26,
+            35.98,
+            43.28
+          ],
+          "aim": [
+            -0.5,
+            1.1,
+            0.4
+          ],
+          "viewerTransition": "opening",
+          "viewerOpenCount": 1,
+          "viewerResetCount": 0,
+          "viewerResizeCount": 3,
+          "canBrowse": false
+        },
+        "playback": {
+          "index": 0,
+          "mode": "shuffle",
+          "history": 0
+        },
+        "lyrics": {
+          "offsetMs": 1500,
+          "source": "cache",
+          "lyricsMode": true
+        }
+      }
+    }
+  ],
+  "qr": {
+    "seed": {
+      "nowMs": 120000,
+      "lifetimeMs": 300000,
+      "key": "unikey-synthetic-0001",
+      "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==",
+      "scannerName": "手机",
+      "loginMethod": "qr"
+    },
+    "expectations": {
+      "generation": 1,
+      "loginPhase": "waiting",
+      "loginStatus": "请用手机扫描并确认登录",
+      "remainingAtSeed": 300000,
+      "clockAdvancedTo": 240000,
+      "remainingAfterClockAdvance": 180000,
+      "liveAtNowMs": 419999,
+      "expiredAtNowMs": 420000,
+      "failureReason": "qr-timeout",
+      "statusAfterWallClockExpiry": "二维码超时，请重新生成",
+      "statusAfterProviderExpiry": "二维码已过期，请重新生成",
+      "cancelCases": [
+        {
+          "name": "qq-issues-request",
+          "observedGeneration": 1,
+          "providerIsQq": true,
+          "expect": "requested",
+          "generationAfter": 2,
+          "cancelRequestCount": 1
+        },
+        {
+          "name": "qq-second-call-joins",
+          "observedGeneration": 2,
+          "providerIsQq": true,
+          "expect": "joined",
+          "cancelRequestCount": 1
+        },
+        {
+          "name": "stale-generation-rejected",
+          "observedGeneration": 1,
+          "providerIsQq": true,
+          "expect": "rejectedStale",
+          "cancelRequestCount": 1
+        },
+        {
+          "name": "netease-short-circuits",
+          "observedGeneration": 1,
+          "providerIsQq": false,
+          "expect": "shortCircuited",
+          "cancelRequestCount": 0
+        }
+      ]
+    }
+  },
+  "playback": {
+    "sessionState": {
+      "current": {
+        "kind": "song",
+        "id": "song-alpha",
+        "provider": "netease",
+        "title": "Alpha",
+        "artist": "Synthetic Artist",
+        "durationMs": 240000
+      },
+      "queue": [
+        {
+          "kind": "song",
+          "id": "song-alpha",
+          "provider": "netease",
+          "title": "Alpha",
+          "artist": "Synthetic Artist",
+          "durationMs": 240000
+        },
+        {
+          "kind": "song",
+          "id": "song-beta",
+          "provider": "netease",
+          "title": "Beta",
+          "artist": "Synthetic Artist",
+          "durationMs": 198000
+        },
+        {
+          "kind": "song",
+          "id": "song-gamma",
+          "provider": "netease",
+          "deferred": true
+        },
+        {
+          "kind": "album",
+          "id": "album-1",
+          "provider": "netease",
+          "title": "Not a song"
+        }
+      ],
+      "index": 0,
+      "mode": "shuffle",
+      "position": 41250.5,
+      "requested": true,
+      "preview": false
+    },
+    "expect": {
+      "outcome": "restored",
+      "queueLength": 2,
+      "queueIds": [
+        "song-alpha",
+        "song-beta"
+      ],
+      "index": 0,
+      "currentId": "song-alpha",
+      "mode": "shuffle",
+      "position": 41250.5,
+      "resumePositionMs": 41250.5,
+      "requested": true,
+      "preview": false,
+      "historyLength": 0
+    },
+    "cases": [
+      {
+        "name": "live-connection-skips",
+        "playbackConnection": true,
+        "mutate": {},
+        "expect": "skippedForConnection",
+        "expectQueueLength": 0
+      },
+      {
+        "name": "position-null",
+        "playbackConnection": false,
+        "mutate": {
+          "position": null
+        },
+        "expect": "rejectedPosition"
+      },
+      {
+        "name": "position-negative",
+        "playbackConnection": false,
+        "mutate": {
+          "position": -1.0
+        },
+        "expect": "rejectedPosition"
+      },
+      {
+        "name": "position-above-limit",
+        "playbackConnection": false,
+        "mutate": {
+          "position": 1000000000001.0
+        },
+        "expect": "rejectedPosition"
+      },
+      {
+        "name": "empty-current",
+        "playbackConnection": false,
+        "mutate": {
+          "current": {}
+        },
+        "expect": "queueOnly",
+        "expectQueueLength": 2,
+        "expectIndex": 0
+      },
+      {
+        "name": "album-current",
+        "playbackConnection": false,
+        "mutate": {
+          "current": {
+            "kind": "album",
+            "id": "album-1"
+          },
+          "mode": "one"
+        },
+        "expect": "rejectedTrack",
+        "expectMode": "one",
+        "expectQueueLength": 0
+      },
+      {
+        "name": "foreign-provider",
+        "playbackConnection": false,
+        "mutate": {
+          "current": {
+            "kind": "song",
+            "id": "song-x",
+            "provider": "qq"
+          }
+        },
+        "expect": "rejectedTrack"
+      },
+      {
+        "name": "illegal-mode-falls-back",
+        "playbackConnection": false,
+        "mutate": {
+          "mode": "repeat-all"
+        },
+        "expect": "restored",
+        "expectMode": "all"
+      }
+    ],
+    "modeCases": [
+      {
+        "value": "off",
+        "accepted": true
+      },
+      {
+        "value": "all",
+        "accepted": true
+      },
+      {
+        "value": "one",
+        "accepted": true
+      },
+      {
+        "value": "shuffle",
+        "accepted": true
+      },
+      {
+        "value": "repeat-all",
+        "accepted": false
+      }
+    ],
+    "historyLimit": 200,
+    "historyProbeCount": 205
+  },
+  "lyrics": {
+    "seed": {
+      "document": {
+        "offsetMs": 500,
+        "lines": [
+          {
+            "startMs": 0,
+            "text": "line 0"
+          },
+          {
+            "startMs": 20000,
+            "text": "line 1"
+          },
+          {
+            "startMs": 40000,
+            "text": "line 2"
+          },
+          {
+            "startMs": 60000,
+            "text": "line 3"
+          }
+        ]
+      },
+      "status": "ready",
+      "message": "",
+      "key": "netease:song-alpha",
+      "index": 1,
+      "offsetMs": 1500,
+      "positionMs": 39000,
+      "globalOffsetMs": -200,
+      "localSource": "cache",
+      "lyricsMode": true,
+      "playingTrack": {
+        "kind": "song",
+        "id": "song-alpha",
+        "provider": "netease",
+        "title": "Alpha",
+        "artist": "Synthetic Artist",
+        "durationMs": 240000
+      }
+    },
+    "expect": {
+      "activeLineIndex": 2,
+      "offsetMs": 1500,
+      "source": "cache",
+      "lyricsMode": true,
+      "key": "netease:song-alpha",
+      "status": "ready",
+      "globalOffsetMs": -200
+    },
+    "clamp": {
+      "limitMs": 10000,
+      "from": 9000.0,
+      "delta": 5000.0,
+      "expectAfter": 10000.0,
+      "downFrom": -9000.0,
+      "downDelta": -5000.0,
+      "expectDown": -10000.0,
+      "resetExpect": 0.0
+    },
+    "trackChange": {
+      "sameIdentity": "netease:song-alpha",
+      "otherIdentity": "netease:song-beta",
+      "expectLyricsModeAfterOther": false
+    }
+  },
+  "scene": {
+    "seed": {
+      "clock": 42.5,
+      "bootStart": -1.76,
+      "detail": 0.12,
+      "targetDetail": 1.0,
+      "rotation": 0.21,
+      "targetRotation": 0.34,
+      "scanTime": 29.1,
+      "scanBlend": 0.6,
+      "selected": 12,
+      "mode": "detail",
+      "reveal": 1.0,
+      "targetReveal": 1.0,
+      "looping": true,
+      "navigating": true,
+      "lastInteraction": 41.9,
+      "eye": [
+        -62.26,
+        35.98,
+        43.28
+      ],
+      "aim": [
+        -0.5,
+        1.1,
+        0.4
+      ],
+      "fov": 6.15
+    },
+    "expect": {
+      "clock": 42.5,
+      "bootStart": -1.76,
+      "detail": 0.12,
+      "targetDetail": 1.0,
+      "rotation": 0.21,
+      "targetRotation": 0.34,
+      "selected": 12,
+      "mode": "detail",
+      "eye": [
+        -62.26,
+        35.98,
+        43.28
+      ],
+      "aim": [
+        -0.5,
+        1.1,
+        0.4
+      ],
+      "fov": 6.15,
+      "elapsed": 44.26,
+      "canBrowse": false,
+      "targetReveal": 1.0,
+      "looping": true
+    },
+    "viewerSeed": {
+      "openAt": 41.0,
+      "reducedMotion": false,
+      "surface": "frosted",
+      "claritySteps": [
+        0.1,
+        0.1
+      ]
+    },
+    "viewerExpect": {
+      "transition": "opening",
+      "openCount": 1,
+      "resetCount": 0,
+      "reopenReturnsFalse": true,
+      "resizePerViewport": 1
+    },
+    "cameraCases": [
+      {
+        "width": 1920,
+        "height": 1080,
+        "portrait": false,
+        "compact": false,
+        "aspect": 1.7777777777777777
+      },
+      {
+        "width": 1080,
+        "height": 2400,
+        "portrait": true,
+        "compact": false,
+        "aspect": 0.45
+      },
+      {
+        "width": 1000,
+        "height": 900,
+        "portrait": false,
+        "compact": true,
+        "aspect": 1.1111111111111112
+      },
+      {
+        "width": 1049,
+        "height": 1000,
+        "portrait": true,
+        "compact": false,
+        "aspect": 1.049
+      }
+    ],
+    "bootHandover": {
+      "clock": 40.0,
+      "bootStartAfterSetMode": 38.24,
+      "handoverAtClock": 73.24,
+      "justBeforeClock": 73.23,
+      "bootOffsetSeconds": 1.76,
+      "handoverElapsedSeconds": 35.0
+    }
+  },
+  "drag": {
+    "seed": {
+      "captured": true,
+      "dragging": true,
+      "browsing": false,
+      "holding": false,
+      "navigating": true,
+      "hasMomentum": true,
+      "velocityX": 0.8,
+      "velocityY": -0.3,
+      "cursor": "grabbing",
+      "targetRotation": 0.34,
+      "dragTrack": {
+        "lane": 2,
+        "row": 7
+      },
+      "hoveredCard": {
+        "kind": "song",
+        "id": "song-beta",
+        "provider": "netease",
+        "title": "Beta",
+        "artist": "Synthetic Artist",
+        "durationMs": 198000
+      }
+    },
+    "expectCancel": {
+      "cancelled": true,
+      "captured": false,
+      "dragging": false,
+      "browsing": false,
+      "holding": false,
+      "hasMomentum": true,
+      "velocityX": 0.8,
+      "velocityY": -0.3,
+      "cursor": "default",
+      "dragTrack": null,
+      "hoveredCard": null,
+      "cancelCount": 1,
+      "targetRotation": 0.34
+    },
+    "expectCancelWhenBrowsable": {
+      "cancelled": true,
+      "cursor": "grab"
+    },
+    "expectIdleNoCancel": {
+      "cancelled": false,
+      "cancelCount": 0
+    }
+  },
+  "ledger": {
+    "roundTrips": 10,
+    "appliesPerRoundTrip": 2,
+    "ephemeralKind": "rotationTimer",
+    "ephemeralPerRoundTrip": 1,
+    "expect": {
+      "loginCount": 1,
+      "loginAttempts": 1,
+      "nodeStartCount": 1,
+      "nodeStartAttempts": 1,
+      "mediaSourceBuildCount": 1,
+      "mediaSourceReuseCount": 20,
+      "stageRebindCount": 20,
+      "stageListenerCreated": 1,
+      "stageListenerLiveAfterDispose": 0,
+      "ephemeralCreated": 10,
+      "ephemeralDisposed": 10,
+      "balancedAfterDispose": true,
+      "reportNotDeviceEvidence": true
+    }
+  }
+}

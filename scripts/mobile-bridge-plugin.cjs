@@ -2,7 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 // nodejs-mobile 的 worker 里 process.env 的 JS 层写入对 os.tmpdir() 不可见（它读 C 层
-// 环境，而 env 选项/workerData 又被整个丢弃），所以「写 env 修临时目录」在真机上无效。
+// 环境，而 env 选项/workerData 又被整个丢弃），所以「写 env 修临时目录」在 Android 上无效。
 // web-apis 前奏会把探测确认可写的目录挂到 globalThis.__rhineTmpdir，这里把 bundle 内
 // 所有 os.tmpdir() 调用点改写成它。改写保持 require 兜底：前奏万一没跑，行为退回现状。
 const tmpdirCall = /require\((['"])(?:node:)?os\1\)\.tmpdir\(\)/g;
@@ -26,7 +26,7 @@ module.exports = (webApis = 'ios-web-apis.cjs') => ({
             loader: 'js',
         }));
         // 移动 bundle 里每个 os.tmpdir() 调用点都必须是改写后的形式：少改一处就会
-        // 在真机读 /tmp（Android 没有这个目录）。插件自己的上游模块改写也由各插件
+        // 在 Android 上读 /tmp（没有这个目录）。插件自己的上游模块改写也由各插件
         // 的 build.cjs 保证；这里只断言最终 bundle 没有裸调用。
         build.onEnd((result) => {
             if (result.errors.length > 0) {

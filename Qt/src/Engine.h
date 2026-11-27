@@ -3,9 +3,10 @@
 #include "Glyphs.h"
 #include "Host.h"
 #include "NativeApplication.h"
-#include "render/RenderConfiguration.h"
+#include "render/EmbeddedCellResources.h"
 #include "render/FramePacingPolicy.h"
 #include "render/MusicTextureAdmission.h"
+#include "render/RenderConfiguration.h"
 #include "render/RenderPolicy.h"
 #ifdef Q_OS_DARWIN
 #include "fg/FgFrameTap.h"
@@ -70,6 +71,33 @@ class Engine : public QObject {
     /// 命令流结构性变化（换页、换模式、出现变换命令）时为真，调用方必须整块重画。
     bool hudDirtyFull() const {
         return m_hudDirtyFull;
+    }
+    /// 分层（见 render/HudLayers.h）：为真时 Hud 用「静态纹理 + 动态纹理」两张节点合成，
+    /// 静态层只在它自己的命令段变化时重画。为假表示退回单层（启动动画 / 全屏播放页 /
+    /// 前缀不自成作用域 / RHINE_HUD_LAYERED=0）。
+    bool hudLayered() const {
+        return m_hudLayered;
+    }
+    /// 分层生效时两段的命令流；`commands()` 仍是拼完整的整条流（单层路径用它）。
+    const QJsonArray &hudStaticCommands() const {
+        return m_hudStaticCommands;
+    }
+    const QJsonArray &hudDynamicCommands() const {
+        return m_hudDynamicCommands;
+    }
+    /// 静态前缀的脏区（舞台坐标）与「必须整块重画」标志，语义同 hudDirtyStage()/hudDirtyFull()。
+    QRectF hudStaticDirtyStage() const {
+        return m_hudStaticDirtyStage;
+    }
+    bool hudStaticDirtyFull() const {
+        return m_hudStaticDirtyFull;
+    }
+    /// 本帧静态前缀 / 动态条带是否真的变了（Hud 按这个决定调度哪一层）。
+    bool hudStaticChanged() const {
+        return m_hudStaticChanged;
+    }
+    bool hudDynamicChanged() const {
+        return m_hudDynamicChanged;
     }
 #if defined(Q_OS_ANDROID)
     /// 渲染线程在 Hud::updatePaintNode() 里确认「这一份 HUD 命令流已经画进纹理」。
@@ -149,7 +177,8 @@ class Engine : public QObject {
         return m_admission.delayMs();
     }
     void trimMemory();
-    // 场景后端在所有平台都会发布遥测，诊断面板也需要跨平台读取。
+    // 渲染遥测在桌面/Android 也会被 RhiScene 发布（非 Darwin 分支），
+    // 只有 RenderConfiguration 与 MetalFX 输入是 Darwin 专属。
     RhineRender::RenderTelemetry renderTelemetry;
 #ifdef Q_OS_DARWIN
     RhineRender::RenderConfiguration renderConfiguration;
@@ -198,7 +227,27 @@ class Engine : public QObject {
     void wake(bool input = true);
     void wake(WakeSource source);
     void start();
-    /// A03：内容版本。呈现层用它代替"按信号重复置脏"——版本前进一次只重渲一层，
+    /// 内嵌模式的封面预取：快照落地就按 URL 异步取图，不依赖帧循环。
+    /// 只写在 step() 里会在 pacing skip / 引擎休眠时被跳过，盘面永远停在占位图。
+    void prefetchCover(const QString &url);
+    /**
+     * 归档可见格的业务资源。由宿主在**真正 apply 完**一份 Flutter 快照之后调用
+     * （不是每帧）：cells 就是快照里的 [{l,r,k,i,t[,c,a,b]}]；contextGeneration 是交互/
+     * 所属/目录/窗口的稳定代次（同一份窗口内容重复 apply 必须给同一个值）；scrolling 是
+     * 调用方看到的"列表正在快速移动"，会与原生轨道自身的拖动/惯性取并集。
+     *
+     * 这里只决定这些格显示什么封面与标签：不切资料库、不播放、不改队列；没有封面的格
+     * 诚实显示占位。同一份签名重复调用是空操作，不会重置任何准入计时。
+     */
+    void projectEmbeddedCells(const QJsonArray &cells, quint64 contextGeneration, bool scrolling);
+    /// 诊断/回归用：当前投影里的格数与已准入格数。
+    int embeddedCellCount() const {
+        return int(m_embeddedCells.size());
+    }
+    int embeddedCellAdmittedCount() const {
+        return m_embeddedCellAdmitted;
+    }
+    /// 内容版本。呈现层用它代替"按信号重复置脏"——版本前进一次只重渲一层，
     /// 重复推同一个值只在两个整数上比较一次。主线程写、渲染线程读，用 relaxed 原子
     /// 即可：这里要的是"值变了/没变"，不是用它同步任何内存。
     quint64 sceneRevision() const {
@@ -207,7 +256,7 @@ class Engine : public QObject {
     quint64 hudRevision() const {
         return m_hudRevision.load(std::memory_order_relaxed);
     }
-    /// A03：渲染线程发现"新 GPU 资源已就位"（异步封面/模型上传完成）时，经队列连接
+    /// 渲染线程发现"新 GPU 资源已就位"（异步封面/模型上传完成）时，经队列连接
     /// 回到主线程调用这里。这类变化在场景帧字段里看不出来，notifySceneRenderers 的
     /// 自然触发点（帧签名比较）捕捉不到，只能由发现者自己上报一次。
     Q_INVOKABLE void requestSceneContent();
@@ -234,7 +283,7 @@ class Engine : public QObject {
         m_coverUploads.fetch_add(coverUploads, std::memory_order_relaxed);
         m_lastDrawCalls.store(drawCalls, std::memory_order_relaxed);
         // 状态与数值必须分开传：同一个 0 ms 可能是"没请求""没样本"或"真的很快"，
-        // 只靠数值无法区分，而面板与 CSV 的诊断结论完全取决于这个区分（A01）。
+        // 只靠数值无法区分，而面板与 CSV 的诊断结论完全取决于这个区分。
         m_gpuTiming.store(int(gpuTiming), std::memory_order_relaxed);
         // 数值保留原有语义：0 不当作一次测量，避免用 0 覆盖掉上一个可信样本。
         if (gpuTimeMs > 0) {
@@ -242,7 +291,7 @@ class Engine : public QObject {
             // C01：数值与样本数分开记——0 不是一次测量，窗口均值要用样本数做分母。
             ++m_gpuSamples;
         }
-        // A11：整帧资源账本必须在这里聚合。performance() 只看得到"最近一次快照"，
+        // 整帧资源账本必须在这里聚合。performance() 只看得到"最近一次快照"，
         // 既无法判断峰值出现在哪一帧，也无法把"本帧新增绑定/上传"与累计值分开；
         // 而 recordRender 是唯一同时拿到本帧全部资源入参的地方（渲染线程调用）。
         noteFrameLedger(resources, bindings, textureBytes, coverUploads);
@@ -261,7 +310,7 @@ class Engine : public QObject {
     void stateChanged();
     void hitsChanged();
     void clearCredentials();
-    void performanceRequested();
+    // 性能面板停用：performanceRequested 信号不再声明。
     void localImportRequested(bool folder);
     void pluginImportRequested();
     void pluginPackageRequested();
@@ -302,6 +351,30 @@ class Engine : public QObject {
     bool m_inputPending = false;
     /// C03：准入状态随 musicTextures 一起在 GUI 线程生成，渲染线程只读这份快照。
     MusicTextures m_musicTextureSnapshot;
+    // 可见格的身份投影与准入。与选中焦点通道（m_admission）完全分开：
+    // 焦点只有一个，可见格是一组，且滚动中一律不新建资源。
+    QVector<RhineRender::EmbeddedCell> m_embeddedCells;
+    QHash<QString, RhineRender::EmbeddedCell> m_embeddedCellByKey;
+    QString m_embeddedCellSignature;
+    quint64 m_embeddedCellContext = 0;
+    bool m_embeddedCellScrolling = false;
+    // 宿主给的 scrolling 只描述"快照到达那一刻"：列表停下后 Flutter 不再推新位置，
+    // 也就不会再有下一份快照来把它改回 false。所以这里记一个到期时刻，让标记自己衰减，
+    // 否则准入窗口永远处于"滚动中"，可见格一个都进不来（封面停在占位）。
+    qint64 m_embeddedCellScrollingUntilMs = 0;
+    int m_embeddedCellAdmitted = 0;
+    int m_embeddedCellPending = 0;
+    // 其中到期却因为名额被可见格占满而进不来的那些：它们只能等窗口变化，
+    // 不该让引擎为它们一直醒着（否则归档页永远睡不着）。
+    int m_embeddedCellStarved = 0;
+    RhineRender::EmbeddedCellAdmission m_embeddedCellAdmission =
+        RhineRender::EmbeddedCellAdmission::fromEnvironment();
+    // 同一个封面 URL 只允许有限次失败重试；成功一次之后图在 Host 缓存里，走热路径。
+    QHash<QString, int> m_embeddedCoverAttempts;
+    void pumpEmbeddedCells(const QSet<QString> &retained, bool scrolling);
+    const RhineRender::EmbeddedCell *embeddedCellFor(const QString &key) const;
+    QJsonObject embeddedCellItem(const RhineRender::EmbeddedCell &cell) const;
+    void publishEmbeddedCells(const QSet<QString> &retained);
     /// C01：按来源分开计数，避免把"输入唤醒"和"Host 失效唤醒"混成一个数字。
     quint64 m_wakesInput = 0, m_wakesHost = 0, m_wakesMedia = 0, m_wakesOther = 0;
     /// C01：requestSceneContent 与 stableFrames 复位的次数／原因。
@@ -318,7 +391,7 @@ class Engine : public QObject {
     /// 探针：唤醒次数与"场景真的变了"的拍数。空闲仍空转时，这两条决定往哪查。
     quint64 m_wakes = 0;
     quint64 m_changedSteps = 0;
-    /// A03：内容版本，只在内容真的变了时自增（见 notifySceneRenderers/requestSceneContent）。
+    /// 内容版本，只在内容真的变了时自增（见 notifySceneRenderers/requestSceneContent）。
     std::atomic<quint64> m_sceneRevision{0};
     std::atomic<quint64> m_hudRevision{0};
     std::atomic<quint64> m_renderFrames{0}, m_gpuResources{0};
@@ -336,7 +409,7 @@ class Engine : public QObject {
     std::atomic<quint64> m_syncMicros{0};
     std::atomic<quint64> m_syncSamples{0};
 
-    // ---- A11 整帧资源账本 ----
+    // 整帧资源账本
     // 口径（不要混用）：
     //   resources   = 本帧驻留资源**个数**（RhiScene 把 resources/sized/transient 相加）；
     //   textureBytes= 本帧驻留音乐纹理**字节**快照（不是本帧增量，见 RhiScene.cpp:1865）；
@@ -378,6 +451,9 @@ class Engine : public QObject {
     // 的那一帧取过一次图，切歌瞬间往往还没解码完）。这里记已经发起过的 key，避免每帧
     // 重复 loadCover 把同一张图反复排队；失败也留在集合里，不重试。
     QSet<QString> m_coverRequests;
+    // URL → loadCover 返回的缓存键（带 param=NyN）。Host::image() 只按该键命中，
+    // 用原始 URL 查永远 miss，纹理停在占位图。
+    QHash<QString, QString> m_coverKeys;
     // B01：冷纹理准入。判定在纯逻辑类里（可离线测），定时器只负责到点喊一声。
     // 计时基准是构造时启动的单调时钟，与帧号无关——引擎休眠不出帧时定时器照样到期。
     RhineRender::MusicTextureAdmission m_admission = RhineRender::MusicTextureAdmission::fromEnvironment();
@@ -437,6 +513,16 @@ class Engine : public QObject {
     /// 见 render/HudDirtyRect.h：Hud 只重画这块，纹理也只上传这块。
     QRectF m_hudDirtyStage;
     bool m_hudDirtyFull = true;
+    /// 分层：静态前缀的命令流与它自己的脏区（语义同上，独立维护）。
+    QJsonArray m_hudStaticCommands;
+    QJsonArray m_hudDynamicCommands;
+    QRectF m_hudStaticDirtyStage;
+    bool m_hudStaticDirtyFull = true;
+    bool m_hudLayered = false;
+    /// 本帧哪一层真的变了：Hud 只调度变了的那层（未变层的旧脏区不能拿来重画，
+    /// 否则静态前缀会跟着动态条带一起重画，分层的收益就没了）。
+    bool m_hudStaticChanged = false;
+    bool m_hudDynamicChanged = false;
 #if defined(Q_OS_ANDROID)
     /// HUD 命令流已发布、但渲染线程还没调过 Hud::updatePaintNode()。这段时间内
     /// 引擎节拍必须让出 GUI 事件循环：0/1ms 的 QTimer 连轴转会把 Qt Quick 的
@@ -465,5 +551,9 @@ class Engine : public QObject {
     QString m_loginMethod;
     QString m_cover;
     QImage m_coverImage;
+    // 按"原始 URL"解释封面像素：先直接查（本地键），再查 loadCover 解析出的键。
+    QImage coverImageOf(const QString &url) const;
     qint64 m_coverRevision = 0;
+    /// 异步封面到达：下一帧必须重画（命令流逐字相同，靠命令比对会永远不刷新）。
+    bool m_coverRefresh = false;
 };

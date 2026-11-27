@@ -11,14 +11,13 @@ account.dpapi
 *.dSYM/
 node-*
 */__pycache__/
+/.gradle/
 
 # 本地 Filament 研究克隆，不参与构建
 /third_party/filament-src/
 
 # 本地会话和临时工作文件
 /.codex/
-/.agents/
-# /.mnemon/
 /.dsh-progress/
 
 # 本地凭据和机器配置
@@ -61,7 +60,6 @@ Thumbs.db
 # /memories/
 /.claude/
 /.workbuddy/
-# /.mnemon/
 
 # FSR 着色器预编译产物：只保留 .h 头文件（供无 dxc/glslang 的环境直接构建），
 # 依赖文件 .d 与临时编译脚本 .cmake 每次构建都会重写，不入库。
@@ -72,3 +70,18 @@ Thumbs.db
 # 本地临时补丁快照
 .uncommitted.diff
 
+# Flutter / Dart（工程在仓库根，python 与 Qt 的忽略规则见上）
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+*.iml
+/android/.gradle/
+/android/local.properties
+/android/.kotlin/
+/android/app/debug/
+/android/app/profile/
+/android/app/release/
+
+
+# 本地设备截图与临时控制面（不入库）
+/.agents/

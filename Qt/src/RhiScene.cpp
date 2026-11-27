@@ -111,7 +111,7 @@ static_assert(sizeof(Instance) == 80);
 #endif
 // 与主渲染路径一致：封面最高 1024²，带 mip 后单张约 5.3 MiB，预算需按此放宽。
 static constexpr qint64 MUSIC_TEXTURE_BUDGET_BYTES = 64 * 1024 * 1024;
-// A08：封面合成与 mip 链生成搬到工作线程后的三个上限。
+// 封面合成与 mip 链生成搬到工作线程后的三个上限。
 //  · COVER_PREP_MAX_INFLIGHT：同时在算的封面数。切歌很快时若无上限，会瞬间堆出十几份
 //    5 MiB 的中间图；超过上限就让这一帧先不算，下一帧再发（不降级成同步）。
 //  · COVER_UPLOAD_QUEUE_LIMIT：已经算完、等上传预算的成品条数上限，超出丢最旧的。
@@ -122,13 +122,17 @@ static constexpr int COVER_LATENCY_SAMPLES = 8;
 static QMatrix4x4 matrix(QJsonArray a, int offset = 0) {
     QMatrix4x4 m;
     for (int i = 0; i < 16; ++i) {
-        m.data()[i] = float(a[offset + i].toDouble());
+        // 越界必须当 0：QJsonValueConstRef 指向缺失槽位时内部指针为空，
+        // toDouble() 直接解引用空指针，SIGSEGV。
+        const int k = offset + i;
+        m.data()[i] = k >= 0 && k < a.size() ? float(a.at(k).toDouble()) : float(i % 5 == 0 ? 1 : 0);
     }
     return m;
 }
 static QVector3D vector(QJsonValue a) {
-    auto v = a.toArray();
-    return {float(v[0].toDouble()), float(v[1].toDouble()), float(v[2].toDouble())};
+    const auto v = a.toArray();
+    auto at = [&v](int i) { return i < v.size() ? float(v.at(i).toDouble()) : 0.f; };
+    return {at(0), at(1), at(2)};
 }
 static float n(QJsonObject o, const char *k) {
     return float(o[k].toDouble());
@@ -312,7 +316,7 @@ class Renderer {
     bool memoryProbe = qEnvironmentVariableIntValue("RHINE_MEMORY_PROBE") == 1;
     int memoryFrames = 0;
     quint64 vkCreatesMark = 0;
-    // A05：运动矢量附件当前是否真的分配了。它是目标形状的一部分，必须和尺寸/采样数/
+    // 运动矢量附件当前是否真的分配了。它是目标形状的一部分，必须和尺寸/采样数/
     // AA 模式一起参与 resize() 的早退比较，否则切换 AA 模式后会沿用旧目标。
     bool motionTarget = false;
 #if defined(Q_OS_ANDROID)
@@ -330,6 +334,7 @@ class Renderer {
     QRhiTexture *white = nullptr;
     QRhiTexture *depth = nullptr;
     QRhiBuffer *globalBuffer = nullptr, *floor = nullptr, *coverPlane = nullptr, *musicLabelPlane = nullptr,
+               *frontArtPlane = nullptr,
                *discBody = nullptr, *discHub = nullptr, *caseDecoration = nullptr,
                *caseLetteringFront = nullptr, *caseLetteringSpine = nullptr;
     int discPrintCount = 0;
@@ -449,14 +454,10 @@ class Renderer {
     /// E02：本帧回收出来的槽位。优先复用它们，`used` 只在没有空闲槽时才前进，
     /// 历史键因此不会把 256 个槽位永久吃光。
     QList<quint32> freeSlots;
-    /// D02 开关：RHINE_VK_UNIFORM_ARENA=1 才走 arena；任何一步不满足就永久退回逐材质 buffer。
-    /// E01：请求值与生效值分开存——回退是永久的，日志只写"开了"会把回退读成还在走 arena。
+    /// D02 开关：RHINE_VK_UNIFORM_ARENA=1 才走 arena，任何一步不满足就永久退回逐材质 buffer。
+    /// 请求值与生效值分开存，否则回退读不出来。
     ///
-    /// Android（GLES）刻意不默认开：Qt 的 GLES2 后端把 QRhi::NonDynamicUniformBuffers
-    /// 报为 true，没有真正的 UBO，uniform 靠 glUniform 逐次下发；SRB 一旦带动态偏移，
-    /// 后端就跳过「相同 SRB 不重绑」的优化、每个 draw 都重设一遍 uniform。arena 的
-    /// 「一次绑定 + 动态偏移」收益在 GLES 上拿不到，甚至可能更慢。想实机 A/B 仍可显式
-    /// RHINE_VK_UNIFORM_ARENA=1（ensureMaterialArena 有能力探测，不满足会自动回退）。
+    /// Android（GLES）刻意不默认开：没有真正的 UBO，动态偏移的收益拿不到，甚至更慢。
     const bool uniformArenaRequested = qEnvironmentVariableIntValue("RHINE_VK_UNIFORM_ARENA") == 1;
     bool uniformArena = uniformArenaRequested;
     QString arenaFallback;
@@ -524,7 +525,7 @@ class Renderer {
     QRhiTexture *labelTexture = nullptr, *coverTexture = nullptr;
     QStringList textureOrder;
     QSet<QString> activeTextureKeys;
-    // ── A08 封面预处理：线程模型见 CoverPrepareTask；这里只有渲染线程可见的状态 ──────
+    // 封面预处理：线程模型见 CoverPrepareTask；这里只有渲染线程可见的状态
     /** 发起预处理的结果。Busy 只是"这一帧不排队"，绝不能因此退回同步路径。 */
     enum class PrepStart { Started, Busy, Unavailable };
     struct CoverPrepRequest {
@@ -760,16 +761,9 @@ class Renderer {
                                 rhi->isTextureFormatSupported(QRhiTexture::BC7, surfaceFlags);
         bool atlasReady = false;
 #if defined(Q_OS_ANDROID)
-        // GLES 上没有 BC7，原先只能回退到 RGBA8：1024² 全 mip 链 5.6 MB、4 B/texel。
-        // ETC2 RGB8 本来是 0.5 B/texel（0.7 MB、采样带宽 1/8，GLES 3.0 强制支持），
-        // **但 scripts/bake-archive-lighting.py 里那套手写编码器是坏的，默认不启用**：
-        //   · 块用 `struct.pack("<Q")` 写出，而 ETC2 规定每块 64 bit 按大端存储；
-        //   · 修掉字节序后 PSNR 也只有 21 dB，且棕色材质被解成蓝灰——individual 模式的
-        //     基色位偏移（`base << 60/56/52/48/44/40`）与规范不符，R/B 通道错位。
-        // 实测（texture2ddecoder 按规范解）：现状 PSNR 5.71 dB，逐块翻转字节后 21.31 dB，
-        // 两者都是花屏，真机表现就是磁带盒边缘那圈彩色噪点。
-        // 保留产物与代码路径，等换用可靠编码器（或修好位布局并验证 PSNR > 30）再打开：
-        //   RHINE_BAKE_ETC2=1 烘焙 + RHINE_SURFACE_ETC2=1 运行。
+        // GLES 上没有 BC7。ETC2 本可省 8 倍带宽，但 bake-archive-lighting.py 的编码器是坏的
+        // （字节序与基色位偏移都不对，解出来是花屏），默认不启用。
+        // 换用可靠编码器并验证 PSNR 后再打开 RHINE_BAKE_ETC2 / RHINE_SURFACE_ETC2。
         static const bool wantEtc2 = qEnvironmentVariableIntValue("RHINE_SURFACE_ETC2") == 1;
         const QByteArray surfaceEtc2 =
             wantEtc2 ? readOptional(root, "archive-baked-surface-etc2.bin") : QByteArray();
@@ -813,12 +807,7 @@ class Renderer {
                                QRhiTexture::ThreeDimensional);
         upload3D(lightAtlas, lightBytes, 24);
         // 法线响应的位宽从文件字节数反推，不依赖编译期宏。
-        //
-        // 2026-11-06 21:28 的启动崩溃就是踩了这个坑：RHINE_NORMAL_RGBA8 原先只加在
-        // RhineCore 上，而 CMakeLists.txt 的 RHINE_CORE_SOURCES 用 FILTER EXCLUDE 把
-        // RhiScene.cpp 排除了（它链 fsr/fg，不进回归库），这个文件只编进
-        // RhineMusicDatabase。于是宏从未生效，C++ 按 RGBA16F 去校验 8 位数据，
-        // 烘焙出来的 131072 字节直接 qFatal——着色器和烘焙都是对的，只有 C++ 判断错了。
+        // 宏只加在 RhineCore 上时 RhiScene.cpp 拿不到它，8 位数据会被按 RGBA16F 校验并 qFatal。
         // 文件大小是唯一不会说谎的来源：131072 = RGBA8，262144 = RGBA16F。
         const QByteArray normalBytes = read(root, "archive-baked-normal.bin");
         const qint64 normalByteCount = normalBytes.size();
@@ -848,6 +837,11 @@ class Renderer {
         discBodyCount = body.count();
         discHubCount = hub.count();
         musicLabelPlane = plane(-.83, .07, -.03, .29, 0, -.83, .07, .8, .22);
+        // 可见格的封面贴面。取档案正面纸张范围（Internal_Ceramic 的
+        // x[-1.821,1.930] y[0.379,3.349]）里的正方形画心：正方形是为了让方形封面不被拉扁，
+        // 高度只到 2.959 是为了给上方 y[3.04,3.26] 的印刷标签让位——标签不许压在封面上。
+        // z=0.25 在纸张（0.2464）之前、磨砂壳（0.206）之前，封面纸贴在壳外侧。
+        frontArtPlane = plane(-1.235, 0.379, 1.345, 2.959, 0.25, -1.235, 0.379, 2.58, 2.58);
         caseDecoration = plane(-2.5, 0, 2.5, 3.7, .222, -2.5, 0, 5, 3.7);
         // 与主渲染路径一致：背景按需分两档（低档 1 倍 / 高档 2 倍），文字独立成片 16 倍。
         const QColor ink(65, 70, 62, 170), accent(119, 123, 96, 195);
@@ -1121,10 +1115,8 @@ class Renderer {
     /**
      * E02：按本帧真正要用的材质键规划槽位。
      *
-     * 旧实现按 `used + draws.size()` 预留：同一个键会被重复计数，历史键又永不释放，
-     * 于是每滚一轮都把水位往上推，迟早撞到 256 槽上限并永久关掉 arena（优化静默消失）。
-     * 现在先回收本帧不再出现的键（槽位进 freeSlots、committed 失效），再只为真正新增的
-     * 键扩容量；`used` 只在空闲槽耗尽时前进。
+     * 先回收本帧不再出现的键，再只为新增键扩容；`used` 只在空闲槽耗尽时前进。
+     * 按 `used + draws.size()` 预留会把水位一路推高，最终撞上 256 槽上限并关掉 arena。
      */
     bool planMaterialArena(const QSet<RhineRender::MaterialSlotKey> &active) {
         if (!uniformArena) {
@@ -1311,7 +1303,7 @@ class Renderer {
         const int nextSamples = postProcess->samples();
         const auto nextMode =
             RhineRender::currentRenderMode(qEnvironmentVariable("RHINE_AA_MODE"), false).aaMode;
-        // A05：只有确实有人读时才挂运动矢量附件。
+        // 只有确实有人读时才挂运动矢量附件。
         //   · 多采样目标本来就没有第二个 draw buffer 可写，维持原来的让路策略；
         //   · 单采样时看配置（AA 模式 + FG 开关）而不是 FSR 运行期可用性，否则能力
         //     探测翻一次就重建整帧目标；重投影探针也要读矢量图，不能一并裁掉。
@@ -1404,7 +1396,8 @@ class Renderer {
         if (temporal && jitter.size() == 2) {
             RhineRender::applyJitter(projection, {jitter[0].toDouble(), jitter[1].toDouble()}, size);
         }
-        auto theme = n(f["draws"].toArray().first().toObject(), "theme");
+        const auto drawsForTheme = f["draws"].toArray();
+        auto theme = drawsForTheme.isEmpty() ? 0.f : n(drawsForTheme.first().toObject(), "theme");
         QMatrix4x4 emitter;
         bool hasEmitter = false;
         for (const auto &entry : f["draws"].toArray()) {
@@ -1467,6 +1460,7 @@ class Renderer {
         }
         bool optical = name.startsWith("Optical_Glass") || name == "Optical_Bridge_Glass";
         float type = d["mesh"].toInt() == -2                               ? 6
+                     : d["mesh"].toInt() == -8                             ? 6
                      : d["mesh"].toInt() == -3 || d["mesh"].toInt() == -4  ? 8
                      : d["mesh"].toInt() == -6 || d["mesh"].toInt() == -7  ? 7
                      : d["label"].toBool()                                 ? 1
@@ -1500,11 +1494,25 @@ class Renderer {
         // 是最外那层透明光学包裹，丢掉它们外壳会少一层，必须保留。
         static const QStringList removed = {"Internal_Ceramic", "Amber_Optical_Inlay", "Champagne_Index",
                                             "Printed_Label"};
+        // Android 资料库（archive）阶段不显示封面与左上角印刷标签：逐格印刷面/标签，
+        // 以及焦点与归位卡由 Frosted_Polymer 派生出的封面盘面与标签都不进入本帧
+        // draw 列表。detail/boot/查看封面页与非 Android 平台保持原样；卡壳、唱片
+        // 实体（银盘/轴心）、frame/drawBuffers 与封面资源管线都不动。
+        const bool hideLibraryArtwork =
+#if defined(Q_OS_ANDROID)
+            f["mode"].toString() == QLatin1String("archive") && !f["viewer"].toBool();
+#else
+            false;
+#endif
         QList<QJsonObject> result;
         for (auto v : f["draws"].toArray()) {
             auto d = v.toObject();
             const auto name = d["name"].toString();
             if (removed.contains(name)) {
+                continue;
+            }
+            if (hideLibraryArtwork &&
+                (d["label"].toBool() || name == QLatin1String("Embedded_Cell_Print"))) {
                 continue;
             }
             const bool shell =
@@ -1567,7 +1575,9 @@ class Renderer {
             part["discAngle"] = d["musicSelected"].toBool() ? f["discAngle"].toDouble() : 0;
             part["name"] = "Music_Disc_Print";
             part["mesh"] = -2;
-            result << part;
+            if (!hideLibraryArtwork) {
+                result << part;
+            }
             part["name"] = "Music_Disc_Silver";
             part["mesh"] = -3;
             part["color"] = QJsonArray{.68, .72, .74};
@@ -1589,7 +1599,9 @@ class Renderer {
             part["transparent"] = true;
             part["label"] = true;
             part["order"] = 50;
-            result << part;
+            if (!hideLibraryArtwork) {
+                result << part;
+            }
         }
         return result;
     }
@@ -1658,6 +1670,8 @@ class Renderer {
         const auto next = coverTextures.value(revision);
         covers[key] = next;
         coverRevisions[key] = revision;
+        qInfo("RHINE_QT_COVER_BIND key=%.48s rev=%lld tex=%d", qPrintable(key),
+              static_cast<long long>(revision), next ? 1 : 0);
         coverWanted.remove(key);
         // B04：焦点稳定（准入）到封面真正换绑的帧差。样本窗口很小，只用于探针。
         if (const auto admittedAt = admittedFrame.constFind(key); admittedAt != admittedFrame.constEnd()) {
@@ -1687,7 +1701,7 @@ class Renderer {
         }
         retire(texture);
     }
-    /** 同步路径（A08 之前的原样实现）：合成、逐层生成 mip、上传、换绑，一帧内完成。 */
+    /** 同步路径（工作线程化之前的原样实现）：合成、逐层生成 mip、上传、换绑，一帧内完成。 */
     void uploadCoverSync(const QString &key, const QImage &image) {
         const qint64 coverRevision = image.cacheKey();
         // 高分辨率封面直接进入贴图
@@ -2689,10 +2703,15 @@ class Renderer {
                 // empty→回落 currentCover、selected→查 covers[selectedKey]、other→placeholderCover。
                 // 只数总数分不清是"没建封面"还是"key 对不上"，所以三类分开记。
                 int discEmptyKey = 0, discSelectedKey = 0, discOtherKey = 0;
+                // 可见格的真实/占位拆分。cellReal 才有"这一格贴了自己的封面"的像素证据。
+                int cellPlates = 0, cellReal = 0, cellPlaceholder = 0, cellLabels = 0;
                 QString firstDiscKey = QStringLiteral("-");
                 for (const auto &d : draws) {
                     const int mesh = d["mesh"].toInt();
-                    if (d["label"].toBool()) {
+                    // 可见格的标签面不计入 labelDraws：那是历史 A/B 用的"卡片标签数"，
+                    // 掺进最多 28 个逐格标签会把老数字全部作废。它们有自己的 cellLab。
+                    if (d["label"].toBool() &&
+                        d["name"].toString() != QLatin1String("Embedded_Cell_Label")) {
                         ++labelDraws;
                     }
                     if (mesh == -2) {
@@ -2709,10 +2728,22 @@ class Renderer {
                         if (firstDiscKey == QLatin1String("-")) {
                             firstDiscKey = drawKey.isEmpty() ? QStringLiteral("<empty>") : drawKey.left(10);
                         }
+                    } else if (mesh == -8) {
+                        ++cellPlates;
+                        if (covers.contains(d["musicKey"].toString())) {
+                            ++cellReal;
+                        } else {
+                            ++cellPlaceholder;
+                        }
                     } else if (mesh == -5) {
                         ++decoDraws;
                     } else if (mesh == -6 || mesh == -7) {
                         ++letterDraws;
+                    } else if (d["label"].toBool() &&
+                               d["name"].toString() == QLatin1String("Embedded_Cell_Label")) {
+                        if (labels.contains(d["musicKey"].toString())) {
+                            ++cellLabels;
+                        }
                     } else if (mesh >= 0) {
                         ++modelDraws;
                     }
@@ -2722,14 +2753,16 @@ class Renderer {
                 // "use of undeclared identifier"。admitted+gated 就是本帧快照的总条数。
                 qInfo("TEXDIAG draws=%d label=%d disc=%d deco=%d letter=%d model=%d "
                       "labels=%d covers=%d labelTex=%d placeholder=%d atlas=%s "
-                      "mt=%d adm=%d gated=%d curC=%d curL=%d discE=%d discS=%d discO=%d discKey=%s",
+                      "mt=%d adm=%d gated=%d curC=%d curL=%d discE=%d discS=%d discO=%d discKey=%s "
+                      "cellP=%d cellReal=%d cellPh=%d cellLab=%d",
                       int(draws.size()), labelDraws, discDraws, decoDraws, letterDraws, modelDraws,
                       int(labels.size()), int(covers.size()), labelTexture ? 1 : 0,
                       placeholderCover ? 1 : 0, qPrintable(surfaceAtlasFormat),
                       admittedKeysThisFrame + gatedKeysThisFrame, admittedKeysThisFrame,
                       gatedKeysThisFrame,
                       covers.contains(selectedKey) ? 1 : 0, labels.contains(selectedKey) ? 1 : 0,
-                      discEmptyKey, discSelectedKey, discOtherKey, qPrintable(firstDiscKey));
+                      discEmptyKey, discSelectedKey, discOtherKey, qPrintable(firstDiscKey),
+                      cellPlates, cellReal, cellPlaceholder, cellLabels);
             }
         }
 #endif
@@ -2752,6 +2785,9 @@ class Renderer {
                 count = discHubCount;
             } else if (mesh == -5) {
                 vertices = caseDecoration;
+            } else if (mesh == -8) {
+                // 可见格封面贴面：6 个顶点的单位矩形，UV 由顶点铺满整张封面。
+                vertices = frontArtPlane;
             } else if (mesh == -6) {
                 vertices = caseLetteringFront;
             } else if (mesh == -7) {
@@ -2768,6 +2804,15 @@ class Renderer {
                 vertices = musicLabelPlane;
             } else if (!d["floor"].toBool()) {
                 continue;
+            }
+            const auto embeddedLabel = d["name"].toString() == QLatin1String("Embedded_Cell_Label");
+            if (embeddedLabel) {
+                // 这一格的标签纹理还没生成时不能画：labels.value(key, white) 是一张纯白卡纸，
+                // 比不画更难解释。等准入把标签落下来，下一帧自然出现。
+                const auto cellKey = d["musicKey"].toString();
+                if (cellKey.isEmpty() || !labels.contains(cellKey)) {
+                    continue;
+                }
             }
             // C02：键用整数 id/mesh 加短名字，不再拼临时字符串。
             const RhineRender::MaterialSlotKey resourceKey{d["id"].toInt(), mesh, d["name"].toString()};
@@ -2789,15 +2834,9 @@ class Renderer {
             } else if (mesh == -7) {
                 label = letteringTextureSpine;
             } else if (d["label"].toBool()) {
-                // B02：只有当前曲目可以回落到 labelTexture；归位卡片缺标签就用白色占位，
-                // 不许借别人的文字——否则快速滚动时上一首的标题会跟着卡片飞。
-                //
-                // 空 key 是第三类，B02 当时漏掉了：场景里静态陈列的展示唱片
-                // （scene-fixture.json 的 mesh=-1 / cassette）没有曲目身份，既不是
-                // "当前曲目"也不是"别人的曲目"。原来它一并落到 white，整排陈列的
-                // 标签面就变成纯白卡纸，看起来就是贴图丢失。
-                // 与封面的处理对齐：封面空 key 回落 currentCover（见下面的
-                // coverFallback），标签空 key 同样回落当前曲目的 labelTexture。
+                // B02：只有当前曲目可以回落到 labelTexture；归位卡片缺标签用白色占位，
+                // 不许借别人的文字，否则滚动时上一首的标题会跟着卡片飞。
+                // 空 key（静态陈列唱片）没有曲目身份，与封面一致回落当前曲目的 labelTexture。
                 if (key.isEmpty()) {
                     label = labelTexture ? labelTexture : white;
                 } else if (key == selectedKey) {
@@ -2810,7 +2849,9 @@ class Renderer {
             // 查看封面页的绘制来自装配体，key 不是曲目 key（空），仍回落当前曲目封面；
             // 归位卡片则不许借：不是当前曲目就绑定占位纹理。
             const auto coverFallback = key.isEmpty() || key == selectedKey ? currentCover : placeholderCover;
-            const auto cover = mesh == -2 ? covers.value(key, coverFallback) : placeholderCover;
+            // 封面贴面（-8）与盘面（-2）是仅有的两条读封面纹理的通道。
+            const auto cover =
+                mesh == -2 || mesh == -8 ? covers.value(key, coverFallback) : placeholderCover;
             QRhiShaderResourceBindings *drawBindings = nullptr;
             quint32 materialOffset = 0;
             bool dynamicOffset = false;
@@ -2946,12 +2987,10 @@ class Renderer {
         return result;
     }
     /**
-     * E03：把本帧**两个**最终列表的实例字节一次性搬进池。
+     * E03：把本帧两个最终列表的实例字节一次性搬进池。
      *
-     * 旧实现按列表分别调用：第二次调用用"本次 total"而不是"cursor + total"规划容量，
-     * 可能写越界；两次还各自替换 mirror，另一个列表的上一帧镜像直接丢掉，于是交替重传。
-     * 现在先统一规划（含 4 字节对齐）、一次扩容，再一起分配与上传；只有整池失败才回落
-     * 逐 draw buffer（回落是整帧一致的决定，不会半池半单独）。
+     * 先统一规划（含 4 字节对齐）、一次扩容，再一起分配与上传；只有整池失败才回落
+     * 逐 draw buffer（整帧一致，不会半池半单独）。
      */
     void poolInstances(QList<Draw> &opaque, QList<Draw> &transparent) {
         if (!instancePoolEnabled) {
@@ -3501,24 +3540,13 @@ class Renderer {
         // 恢复图形设备时只还原"已准入且确实缺纹理"的旧唱片：路过的条目永远不补资源。
         admittedKeysThisFrame = gatedKeysThisFrame = 0;
 #if defined(Q_OS_ANDROID)
-        // 停稳判定：当前焦点已准入，说明手指停住超过 500 ms。只有这时才给视野内的
-        // 其它唱片补纹理；滚动中一个都不补，否则又回到"边滑边建封面"。
+        // 停稳判定：当前焦点已准入说明手指停住超过 500ms，这时才给视野内其它唱片补纹理。
+        // 快速翻页会把沿途十几条登记成「路过」，谁都没熬过准入，停手后一整排都是白纸板。
         //
-        // 为什么要补：一次快速翻页会把沿途十几条全部登记成"路过"，谁都没熬过 500 ms
-        // 准入。手指停下后只有最终焦点建了纹理，其余卡片的 label 回落 `white`、盘面回落
-        // placeholderCover——一整排磁带盒就是白纸板，也就是用户报的"非当前命中的唱片
-        // 模型贴图丢失"。准入只该决定"什么时候建"，不该决定"永远不建"。
+        // 标签优先（512×220，约封面成本的十分之一，缺它最刺眼），封面等有图再补。
+        // 各 2 张/帧而不是一次补完，避免抬手那一帧堆出十几毫秒的 GUI 尖峰。
         //
-        // 标签优先：512×220 纸面 + mip 约 600 KB，是封面成本的十分之一，而缺它的表现
-        // 恰恰最刺眼（纯白）。所以标签走 labelOnly 先补，封面等有图再补——空图会退到
-        // 同步占位合成，那比继续贴 placeholderCover 更贵也不好看。
-        //
-        // 各 2 张/帧而不是一次补完：可见的归位卡片通常个位数，两秒内补齐；同一帧全建
-        // 会在"手指抬起"那一帧堆出十几毫秒的 GUI 尖峰，正好落在观感最敏感的节点上。
-        //
-        // 名字带 TopUp 是为了避开成员 `coverBudget`（RhineRender::CoverPrepBudget，
-        // 封面预处理的在途并发闸）。同名局部变量会静默遮蔽它，本函数后段再碰就编译不过，
-        // 更糟的是看起来"预算没生效"却查不出原因。
+        // 名字带 TopUp 是为了避开成员 `coverBudget`（同名局部变量会静默遮蔽它）。
         const bool settled = musicTextures.value(currentMusicKey).admitted;
         int labelTopUp = settled ? 2 : 0;
         int coverTopUp = settled ? 2 : 0;
@@ -3532,14 +3560,27 @@ class Renderer {
             if (it.key() == currentMusicKey || it->item.isEmpty()) {
                 continue;
             }
+            // 只有纹理 revision 与条目想要的 revision 不一致才退：
+            // 只判「有没有绑定」会自激——退掉后立刻用空图绑回 0，下一帧条件又成立。
+            //   bound == 0：本来就没封面，保持共享占位。
+            //   bound != 0 且条目图已清空：URL 换了，旧图必须下屏。
+            //   bound != cacheKey：新图已落地，退掉等 updateMusic 登记新 revision。
+            const auto boundRevision = coverRevisions.value(it.key(), qint64(0));
+            const auto wantedRevision = it->cover.isNull() ? qint64(0) : it->cover.cacheKey();
+            // 已经在为新 revision 等待（意图登记过）就不退：退掉会把在途预处理一起取消，
+            // 于是每帧重开一次，永远等不到结果。等它绑上以后 bound 自然等于 wanted。
+            const bool waiting = wantedRevision != 0 &&
+                                 coverWanted.value(it.key(), qint64(-1)) == wantedRevision;
+            const bool staleCover = boundRevision != wantedRevision && !waiting;
+            if (staleCover) {
+                // releaseCover 同时撤掉 coverWanted 与在途预处理：迟到的结果不会重建一张
+                // 没人引用的纹理，也不会把已经切走的封面又贴回来。
+                releaseCover(it.key());
+            }
             if (it->admitted) {
-#if defined(Q_OS_ANDROID)
                 // 两个通道都要判：曾经在"只补标签"的版本里补过标签的 key，labels 命中而
                 // covers 空缺，若只看 labels 就再也不会补封面。
                 if (!labels.contains(it.key()) || !covers.contains(it.key())) {
-#else
-                if (!labels.contains(it.key())) {
-#endif
                     updateMusic(it->item, it->cover, true);
                 }
             }
@@ -4180,7 +4221,7 @@ class ItemRenderer : public QQuickRhiItemRenderer {
 #endif
             // GPU 耗时和"这个耗时可不可信"必须一起上报：只报数值时，0 既可能是设备
             // 不支持、也可能是创建 QRhi 时没请求时间戳、还可能是这一帧查询结果没回来，
-            // 三种情况的排查方向完全不同（A01）。
+            // 三种情况的排查方向完全不同。
             const bool gpuTimingSupported = rhi()->isFeatureSupported(QRhi::Timestamps);
             const double gpuTimeMs =
                 gpuTimingSupported ? cb->lastCompletedGpuTime() * 1000.0 : 0.0;
@@ -4195,7 +4236,7 @@ class ItemRenderer : public QQuickRhiItemRenderer {
 #ifdef Q_OS_MACOS
             }
 #endif
-            // A03：本帧新建过 SRB，说明有新资源真的落地了（异步封面/模型上传完成，或
+            // 本帧新建过 SRB，说明有新资源真的落地了（异步封面/模型上传完成，或
             // 渲染目标重建后重新绑定）。这类变化在引擎的帧字段里看不出来，主线程的
             // 帧签名比较永远判不到，只能由发现它的渲染线程回报一次；否则 3D 层要等
             // 兜底间隔（20 帧）才重画，表现就是"封面比歌名慢半拍"。

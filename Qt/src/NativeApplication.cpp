@@ -6,6 +6,7 @@
 #include "render/HudPaintStats.h"
 #endif
 #include "AppStorage.h"
+#include "EmbeddedSceneHost.h"
 #include <QFile>
 #include <QGuiApplication>
 #include <QJsonDocument>
@@ -89,6 +90,21 @@ NativeApplication::NativeApplication(Host *host, Glyphs *glyphs, NativeScene *sc
     connect(&music, &MusicLibrary::musicClearRequested, this, [scene]() { scene->musicClear(); });
 }
 void NativeApplication::initialize() {
+    // 内嵌路径（Flutter PlatformView + Flutter HUD）必须与上层 HUD 同一个主题：
+    // Flutter 的 HUD 只画浅色文字（暗色调色板），而 Qt 场景默认跟随 "theme" 偏好（缺省 light），
+    // light 主题会把雾底渲成亮色；场景一旦铺满舞台，浅色文字叠在亮底上就看不见列表。
+    // 所以内嵌时强制暗色场景，让 3D 与 HUD 是同一套明暗，而不是亮底 + 浅字混搭。
+    if (RhineEmbedded::requested()) {
+        // 内嵌渲染层：到这里为止只做"让 3D 场景与 Flutter HUD 同一套明暗"这一件事。
+        // 后面全部是业务副作用——音量会经 Host::mediaControl 建出第二个 AudioPlayer，
+        // 会话/账号恢复会写回 Flutter 的权威状态，周期落盘会与 Flutter 抢同一个文件。
+        // 所以在这一行之前就返回，standalone 路径完全不受影响（那时 requested() 为假）。
+        hud.dark = true;
+        m_scene->theme(hud.dark);
+        m_scene->reduced(hud.reduced);
+        m_scene->setMode("archive");
+        return;
+    }
     m_scene->theme(hud.dark);
     m_scene->reduced(hud.reduced);
     const auto startupPreference = m_host->preference("startup-animation");
@@ -200,6 +216,17 @@ QJsonObject NativeApplication::step(double time, double width, bool reuseScene) 
                           {"state", hud.state()},
                           {"current", music.current},
                           {"cover", music.coverImage}};
+    if (m_host->renderOnly) {
+        // 内嵌 render-only：Qt 侧不持有曲库/播放器，`music.current` 与 `music.coverImage`
+        // 永远是空的。渲染需要的「当前选中」由 Flutter 投影过来（读的是 Flutter 选中的
+        // 那一首，不是 playingTrack）；没有选中时投影为空 → Engine 拿到空 cover 会清旧图。
+        // 这条赋值只影响渲染取图：它不写曲库、不建播放器、不进 mediaControl。
+        const QJsonObject projected = RhineEmbedded::projectedCurrent();
+        if (!projected.isEmpty()) {
+            nacResult["current"] = projected;
+        }
+        nacResult["cover"] = RhineEmbedded::projectedCover();
+    }
     if (nacProbe) {
         const double nacTotal = double(nacTimer.nsecsElapsed()) / 1e6;
         const double nacObserveMs = nacObserveEnd - nacSampleMs;

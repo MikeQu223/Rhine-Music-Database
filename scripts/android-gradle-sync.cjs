@@ -17,6 +17,24 @@ const target = path.join(root, 'Qt/android/build.gradle');
 // 标记行：它之前是 Qt 模板，之后是我们自己的内容。
 const marker = '// ===== RHINE additions below';
 
+// 纯 Qt Android 打包封堵（FLUTTER-ONLY-ANDROID-20261117）：Qt 模板**之前**必须先有这一段，
+// 让任何由纯 Qt 部署工程驱动的 Gradle 打包在解析 AGP classpath 之前就失败。重同步（升级 Qt
+// 后跑本脚本）不得把它丢掉，否则一次 node scripts/android-gradle-sync.cjs 就把封堵绕过了。
+const guardMarker = '// ===== RHINE pure-Qt Android packaging block';
+// 文件里缺这段时的兜底内容（正常情况下以仓库里文件的原文为准，逐字节保留）。
+const bootstrapGuard = `${guardMarker} (FLUTTER-ONLY-ANDROID-20261117) =====
+//
+// 纯 Qt 的 Android Gradle 打包已封堵：Android 包只能由 Flutter 工程产出
+// （入口 lib/main.dart，Gradle 工程 android/app/build.gradle.kts，flutter build apk）。
+// 本文件保留完整构建代码，但在这里直接失败；Qt 侧只提供 native 产物
+// （libRhineMusicDatabase_arm64-v8a.so + androiddeployqt --aux-mode 的 libs/jar/assets）。
+// CMake 侧同一道封堵见 Qt/Android.cmake 的 RHINE_FLUTTER_HOST_ONLY。
+throw new GradleException(
+    '纯 Qt 的 Android Gradle 打包已停用（FLUTTER-ONLY-ANDROID-20261117）：'
+        + 'Android 包必须由 Flutter 工程产出（lib/main.dart + android/app/build.gradle.kts）。')
+`;
+
+
 // 首次生成（文件被删掉）时用的追加段；正常情况下以仓库里的文件为准。
 const bootstrapAdditions = `${marker}: everything above is Qt's template, verbatim =====
 //
@@ -74,7 +92,7 @@ android {
 // 刻意保留 Qt6QuickControls2 / QuickControls2Impl / QuickControls2Basic（约 2.5 MB）：
 // 那是 QQC2 的默认样式兜底。万一将来某条 import 链把它拉进来，少一个 .so 就是启动即崩，
 // 省 2.5 MB 换一个必崩风险不划算。真要连它们一起删，先确认所有 QML 与 C++ 都不碰
-// QtQuick.Controls，并真机冷启动验证一次。
+// QtQuick.Controls，并冷启动验证一次。
 android {
     packagingOptions {
         jniLibs {
@@ -83,7 +101,7 @@ android {
             // 注意 android-gradle-sync.cjs 里这段在 JS 模板字符串内，注释里不能出现反引号。
             // 只排除 QtLoader 启动清单之外的库。array/qt_libs 里的 35 个库会被
             // QtLoader 按顺序逐个 System.load，缺任何一个都会弹「致命错误」
-            // 并 System.exit(-1)（2026-11-07 连续两次启动失败的根因）。
+            // 并 System.exit(-1)（连续两次启动失败的根因）。
             // 清单包含全部五套 QQC2 样式及 StyleImpl、Qt6LabsFolderListModel
             // （QtQuick.Dialogs 隐式依赖），它们一个都不能排。
             // 核对方式：aapt2 dump resources <apk> 读 array/qt_libs；
@@ -189,7 +207,18 @@ if (current.includes(marker)) {
     console.log('追加段缺失，使用脚本内置的默认内容。');
 }
 
-const next = `${templateText}\n${additions}`;
+// 封堵段：优先原样保留仓库文件里的那段（逐字节），缺了才用兜底内容补上。
+let guard = bootstrapGuard;
+if (current.startsWith(guardMarker)) {
+    const cut = current.indexOf('\nbuildscript {');
+    if (cut > 0) {
+        guard = current.slice(0, cut + 1);
+    }
+} else if (current) {
+    console.log('封堵段缺失，已重新注入纯 Qt Android 打包封堵。');
+}
+
+const next = `${guard}${templateText}\n${additions}`;
 if (next === current) {
     console.log(`${path.relative(root, target)} 已与 ${path.relative(root, template)} 同步。`);
     process.exit(0);

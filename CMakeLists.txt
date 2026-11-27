@@ -822,7 +822,30 @@ if(APPLE
         COMMENT "Packaging standalone music panel resources and Qt runtime"
         VERBATIM)
 endif()
+if(ANDROID AND RHINE_FLUTTER_HOST_ONLY)
+    # Qt 6.12 的 finalizer 在根目录执行，但 _qt_internal_expose_android_package_source_dir_to_ide
+    # 会把包源目录相对 target SOURCE_DIR（Qt/）求成 `android/...`；这个相对路径从根目录
+    # 解析不到（根下 android/ 是 Flutter 工程），generate 阶段直接报
+    # "Cannot find source file: android/AndroidManifest.xml"。
+    # 该函数只把 Android 包源文件挂到 IDE target，不参与 androiddeployqt；这里用绝对路径重写。
+    function(_qt_internal_expose_android_package_source_dir_to_ide target)
+        get_target_property(android_package_source_dir ${target} QT_ANDROID_PACKAGE_SOURCE_DIR)
+        if(NOT android_package_source_dir OR NOT EXISTS "${android_package_source_dir}")
+            return()
+        endif()
+        file(GLOB_RECURSE android_package_sources ABSOLUTE "${android_package_source_dir}/*")
+        foreach(android_package_source IN LISTS android_package_sources)
+            _qt_internal_expose_source_file_to_ide(${target} "${android_package_source}")
+        endforeach()
+    endfunction()
+endif()
 qt_finalize_executable(RhineMusicDatabase)
+# Android（FLUTTER-ONLY-ANDROID-20261117）：Android 包只由 Flutter 工程产出，Qt 侧只编 native。
+# RHINE_FLUTTER_HOST_ONLY=ON 时终结器仍会建出 ${target}_make_apk / _make_aab 等打包 target，
+# 这里给它们挂必定失败的依赖——native 目标照常构建，纯 Qt 打包 target 直接停（见 Qt/Android.cmake）。
+if(ANDROID AND RHINE_FLUTTER_HOST_ONLY)
+    rhine_android_forbid_pure_qt_package_targets()
+endif()
 # 桌面回归包含子进程和桌面路径，移动端只构建正式应用。
 if(RHINE_MOBILE_PLATFORM)
     return()
@@ -936,6 +959,27 @@ if(MSVC)
     target_compile_options(RhineVulkanResourceRegression PRIVATE /utf-8)
 endif()
 add_test(NAME qt_vulkan_resource_regression COMMAND RhineVulkanResourceRegression)
+
+# 149：可见格业务资源投影（身份不含位置、绝对行号、A→B→A 作废、稳定窗准入、有界淘汰）。
+# 纯函数 + 可注入时钟的状态机，只依赖 Qt6::Core，离线可跑。
+qt_add_executable(RhineEmbeddedCellResources149Test Qt/tests/EmbeddedCellResources149Test.cpp)
+target_include_directories(RhineEmbeddedCellResources149Test PRIVATE Qt/src)
+target_link_libraries(RhineEmbeddedCellResources149Test PRIVATE Qt6::Core)
+if(MSVC)
+    target_compile_options(RhineEmbeddedCellResources149Test PRIVATE /utf-8)
+endif()
+add_test(NAME qt_embedded_cell_resources_149 COMMAND RhineEmbeddedCellResources149Test)
+
+# 153：origin / 生命周期判据（排队输入按起手 origin、惯性 ticker 带起手 origin、拆场景
+# fail-closed、旧世代 destroy 被拒、149 contextGeneration 契约、M1 手势阶段、M2 换人）。
+# 判据全在 Qt/src/EmbeddedSceneOrigin.h（header-only），只依赖 Qt6::Core，离线可跑。
+qt_add_executable(RhineEmbeddedSceneOrigin153Test Qt/tests/EmbeddedSceneOrigin153Test.cpp)
+target_include_directories(RhineEmbeddedSceneOrigin153Test PRIVATE Qt/src)
+target_link_libraries(RhineEmbeddedSceneOrigin153Test PRIVATE Qt6::Core)
+if(MSVC)
+    target_compile_options(RhineEmbeddedSceneOrigin153Test PRIVATE /utf-8)
+endif()
+add_test(NAME qt_embedded_scene_origin_153 COMMAND RhineEmbeddedSceneOrigin153Test)
 
 qt_add_executable(RhineSceneLifetimeRegression Qt/tests/SceneLifetimeChecks.cpp)
 target_include_directories(RhineSceneLifetimeRegression PRIVATE Qt/src)

@@ -1,4 +1,28 @@
 {
   "version": 1,
-  "documents": []
+  "documents": [
+    {
+      "id": "1be61c52-ccb0-4c43-a9ec-6bc51799eca5",
+      "title": "Rhine 仓库 .agents 控制面归档（2026-11-19 删除）",
+      "description": "Qt→Flutter 迁移期本机控制面目录的归档去向、残留材料重放方法与关键技术结论索引；需要找回实验分支、未提交补丁或设备实测数字时读这份。",
+      "status": "active",
+      "filename": "rhine-agents-2026-11-19-1be61c52.md",
+      "relativePath": "documents/active/rhine-agents-2026-11-19-1be61c52.md",
+      "sourcePaths": [
+        "docs/flutter-migration/archive/2026-11-19-control-plane.md",
+        "docs/flutter-migration/archive/qt-flutter-state-2026-11-19.md",
+        "docs/flutter-migration/archive/worktree-salvage-2026-11-19.tar.gz"
+      ],
+      "sessionIds": [
+        "session-2472cab8-1e5b-4461-a75d-ddd9c2c315d0"
+      ],
+      "createdAt": "2026-11-19T02:44:56.268Z",
+      "updatedAt": "2026-11-19T03:05:45.859Z",
+      "lastAccessedAt": "2026-11-19T03:05:45.859Z",
+      "revision": 2,
+      "contentHash": "2f7d93de6b341745088dc5abf92b0fe851600b35b6abe5a4ff63f89512c3504b",
+      "sizeBytes": 3778,
+      "memoryBodyIds": []
+    }
+  ]
 }

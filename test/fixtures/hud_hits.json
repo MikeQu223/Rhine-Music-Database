@@ -1,0 +1,96 @@
+{
+  "contract": "qt-hud-hits",
+  "version": 1,
+  "baseline": "8ed3067b0812eb2612f7841ec127a6e8ca93231b",
+  "requiredFields": [
+    "x",
+    "y",
+    "width",
+    "height",
+    "action",
+    "label"
+  ],
+  "playerBarIndices": [
+    3,
+    4,
+    5
+  ],
+  "expectedOrder": [
+    "settings",
+    "music:result:0:17",
+    "music:expand:%E5%85%A8%E9%83%A8%E6%AD%8C%E6%9B%B2",
+    "player:prev",
+    "player:seek-fraction:0",
+    "music:like-current"
+  ],
+  "hits": [
+    {
+      "x": 939,
+      "y": 118,
+      "width": 140,
+      "height": 54,
+      "action": "settings",
+      "label": "设置"
+    },
+    {
+      "x": 100,
+      "y": 200,
+      "width": 300,
+      "height": 72,
+      "action": "music:result:0:17",
+      "label": "曲名"
+    },
+    {
+      "x": 110,
+      "y": 210,
+      "width": 300,
+      "height": 72,
+      "action": "music:expand:%E5%85%A8%E9%83%A8%E6%AD%8C%E6%9B%B2",
+      "label": "展开"
+    },
+    {
+      "x": 0,
+      "y": 0,
+      "width": 44,
+      "height": 48,
+      "action": "player:prev",
+      "label": "上一首",
+      "fixed": true
+    },
+    {
+      "x": 0,
+      "y": 978,
+      "width": 1728,
+      "height": 18,
+      "action": "player:seek-fraction:0",
+      "label": "播放进度",
+      "fixed": true
+    },
+    {
+      "x": 1600,
+      "y": 1000,
+      "width": 48,
+      "height": 48,
+      "action": "music:like-current",
+      "label": "喜欢当前歌曲",
+      "fixed": true
+    }
+  ],
+  "frameHudReadKeys": [
+    "mode",
+    "viewer",
+    "detail"
+  ],
+  "frameEngineOnlyKeys": [
+    "jitter",
+    "temporalReset",
+    "discAngle"
+  ],
+  "orderPolicy": "source-order",
+  "zSort": false,
+  "fixedPolicy": "PlayerBar-only",
+  "touchPadding": {
+    "android": 16,
+    "other": 0
+  }
+}

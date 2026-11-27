@@ -1,3 +1,7 @@
+// 以下两行记录 Android Flutter 路径停用 Qt 性能面板的决定。其他平台沿用下方 QML。
+// 性能面板已停用（不属于产品需求）。
+// 原有 QML 实现保留在 Git 历史中；本文件不再编入 qt_add_qml_module，也不会被加载。
+
 import QtQuick
 
 Item {

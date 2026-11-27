@@ -216,7 +216,7 @@ FrameProfiler::FrameProfiler(Engine *engine, const QString &path, QObject *paren
     if (!path.isEmpty()) {
         if (file.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
             // 新列一律追加在末尾：旧分析脚本按列号读前 14 列，插在中间会让历史数据整体错位。
-            // 新增列口径（A02/A11）：fg_* 取呈现层最近一次 publish 的值，ledger_* 来自
+            // 新增列口径：fg_* 取呈现层最近一次 publish 的值，ledger_* 来自
             // Engine::performance() 的异步快照——两者都不保证与同一行的 render_frames 属于
             // 同一帧；ledger_*_peak 是最近 240 个渲染帧的**滚动**峰值（不是 lifetime 峰值）。
             stream << "timestamp_ms,step_cpu_ms,scene_native_ms,scene_metadata_ms,scene_buffers_ms,"
@@ -239,7 +239,14 @@ FrameProfiler::FrameProfiler(Engine *engine, const QString &path, QObject *paren
 
 /** 渲染线程只写原子计数与有界帧间隔队列，文件和业务状态始终由 GUI 线程访问。 */
 void FrameProfiler::attach(QQuickWindow *window) {
-    Q_ASSERT(!m_window);
+    if (m_window) {
+        if (m_window == window) {
+            return; // 同一个窗口重复 attach：不建第二组连接
+        }
+        // 宿主销毁窗口后又重建（Flutter 侧 PlatformView 重建/旋转即如此）会带着新窗口回来。
+        // 旧窗口的 QPointer 可能还没被清空（deleteLater 尚未执行），这里先断开旧连接再挂新窗口。
+        disconnect(m_window, nullptr, this, nullptr);
+    }
     m_window = window;
     connect(
         window, &QQuickWindow::beforeSynchronizing, this,
@@ -347,16 +354,16 @@ void FrameProfiler::collectStep() {
            << frame["shadowCards"].toInt() << ',' << performance.value("gpuDrawCalls").toULongLong()
            << ','
            // "没测到"和"没请求"必须能分开：只写一个空的 gpu 时间，事后没法判断
-           // 是驱动不给样本还是我们没开时间戳（A01 的验收就靠这一列）。
+           // 是驱动不给样本还是我们没开时间戳（"没测到"是否成立就靠这一列）。
            << performance.value("gpuTimingStatus").toString() << ','
            << performance.value("renderFrames").toULongLong() << ',' << fg.frameId << ',' << fg.frameMs << ','
            << fg.swapchainRecreates << ',' << fg.deviceIdleWaits << ',' << fg.resizeSkips
            << ','
-           // A02：提交次数与两个离屏边界的等待（begin=帧槽等待，end=离屏收尾）。
+           // 提交次数与两个离屏边界的等待（begin=帧槽等待，end=离屏收尾）。
            << fg.submitsPerFrame << ',' << fg.slotWaitMs << ',' << fg.beginP95Ms << ',' << fg.beginP99Ms
            << ',' << fg.endP95Ms << ',' << fg.endP99Ms
            << ','
-           // A11：整帧资源账本（峰值是滚动 240 帧，帧号对得上 render_frames）。
+           // 整帧资源账本（峰值是滚动 240 帧，帧号对得上 render_frames）。
            << performance.value("gpuResourcesPeak").toULongLong() << ','
            << performance.value("gpuResourcesPeakFrame").toULongLong() << ','
            << performance.value("gpuTextureBytesPeak").toULongLong() << ','
@@ -539,7 +546,7 @@ void FrameProfiler::sample() {
     for (const auto *key : {"idle", "sceneSleeping", "visible", "steps", "sceneUpdates", "hudUpdates",
                             "renderFrames", "gpuResources", "bindingCreations", "gpuMusicTextureBytes",
                             "coverUploads", "gpuDrawCalls", "timerActive",
-                            // A11 整帧资源账本：峰值是最近 240 个渲染帧的滚动峰值，
+                            // 整帧资源账本：峰值是最近 240 个渲染帧的滚动峰值，
                             // *_peak_frame 是持有该峰值的渲染帧号（与 renderFrames 同口径）。
                             "gpuResourcesPeak", "gpuResourcesPeakFrame", "gpuTextureBytesPeak",
                             "gpuTextureBytesPeakFrame", "frameBindings", "frameCoverUploads",
@@ -680,7 +687,7 @@ void FrameProfiler::sample() {
     m_metrics.insert("fgSwapchainRecreates", fg.swapchainRecreates);
     m_metrics.insert("fgDeviceIdleWaits", fg.deviceIdleWaits);
     m_metrics.insert("fgResizeSkips", fg.resizeSkips);
-    // A02：帧槽等待 / 离屏收尾的 EMA 与原始分位分开暴露。面板要能回答"每帧提交几次、
+    // 帧槽等待 / 离屏收尾的 EMA 与原始分位分开暴露。面板要能回答"每帧提交几次、
     // begin 等槽多久、end 收尾多久"，而不是只有一个含混的"起始/收尾"。
     m_metrics.insert("fgSubmitsPerFrame", fg.submitsPerFrame);
     m_metrics.insert("fgSlotWaitMs", fg.slotWaitMs);
@@ -940,7 +947,7 @@ void FrameProfiler::formatMetrics(bool withDetails) {
                          sizeText("fgDisplayWidth", "fgDisplayHeight"),
                          m_metrics.value("fgPresentMode").toString())
                 // 重建/等待/去重三个数要一起看才算证据：跳过数随帧数增长、等待数不增长，
-                // 才说明同尺寸的尺寸同步没有再去等 GPU 空闲（A10）。
+                // 才说明同尺寸的尺寸同步没有再去等 GPU 空闲。
                 + QStringLiteral("重建 / 设备等待 / 尺寸去重  %1 / %2 / %3 次\n")
                       .arg(number("fgSwapchainRecreates", 0), number("fgDeviceIdleWaits", 0),
                            number("fgResizeSkips", 0)) +
@@ -962,14 +969,14 @@ void FrameProfiler::formatMetrics(bool withDetails) {
             .arg(cpu < 0 ? QStringLiteral("不可用") : number("mainProcessCpuOneCorePercent"), memory,
                  number("gpuDrawCalls", 0), number("gpuResources", 0))
             .arg(QString::number(m_metrics.value("gpuMusicTextureBytes").toDouble() / 1048576., 'f', 1));
-    // A02：提交/等待放在始终显示的详情区，而不是只在 FG 接管时才出现的 fgDetails——
+    // 提交/等待放在始终显示的详情区，而不是只在 FG 接管时才出现的 fgDetails——
     // 默认呈现路径同样有 begin 等槽与 end 收尾，少一次提交也要能看见。
     m_details += QStringLiteral("\n提交 / 等待    每帧提交 %1 次 · 帧槽等待 %2 ms（P95/P99 %3/%4）\n"
                                 "              离屏收尾 %5 ms（P95/P99 %6/%7）")
                      .arg(number("fgSubmitsPerFrame", 0), number("fgSlotWaitMs", 2),
                           number("fgBeginP95Ms", 2), number("fgBeginP99Ms", 2))
                      .arg(number("fgEndMs", 2), number("fgEndP95Ms", 2), number("fgEndP99Ms", 2));
-    // A11：整帧资源账本（本帧 + 滚动峰值 + 重传率 + 预算）。峰值带帧号，便于回查 CSV 的
+    // 整帧资源账本（本帧 + 滚动峰值 + 重传率 + 预算）。峰值带帧号，便于回查 CSV 的
     // render_frames；预算开关只告警不降级，所以这里显示"上限"而不是"是否已降级"。
     const quint64 budgetMb = m_metrics.value("resourceBudgetMb").toULongLong();
     m_details +=
@@ -989,7 +996,7 @@ void FrameProfiler::formatMetrics(bool withDetails) {
                  budgetMb ? QStringLiteral("%1 MiB").arg(budgetMb)
                           : QStringLiteral("关（RHINE_RESOURCE_BUDGET_MB）"));
     // GPU 计时状态必须显式写出来：状态不是 ok 时数值列是空的（或上一个可信样本），
-    // 只显示数字会让读者把"没测到"当成"GPU 不花时间"——A01 要修的就是这个坑。
+    // 只显示数字会让读者把"没测到"当成"GPU 不花时间"——这就是要修的坑。
     const QString gpuTiming = m_metrics.value("gpuTimingStatus").toString();
     QString gpuTimingText;
     if (gpuTiming == QLatin1String("ok")) {

@@ -61,9 +61,10 @@ NativeHud::NativeHud(Host *host, Glyphs *glyphs, MusicLibrary *music, HudSceneAc
     });
     themeMode = host->preference("theme");
     if (themeMode.isEmpty()) {
-        themeMode = "system";
+        // 出厂默认亮色：不再有「跟随系统」，缺键直接落到 light。
+        themeMode = "light";
     }
-    dark = themeMode == "system" ? host->systemDark() : themeMode == "dark";
+    dark = themeMode == "dark";
     reduced = host->preference("motion") == "reduced";
     startupAnimation = host->preference("startup-animation") == "on";
 #ifdef Q_OS_DARWIN
@@ -74,7 +75,8 @@ NativeHud::NativeHud(Host *host, Glyphs *glyphs, MusicLibrary *music, HudSceneAc
         host->setPreference("graphics-backend", "metal");
     }
 #else
-    vsync = host->preference("vsync") != "off";
+    // 垂直同步出厂默认关闭：只有显式存过 "on" 才算开。
+    vsync = host->preference("vsync") == "on";
 #endif
     discRotation = PlatformFeatures::discRotationAvailable() && host->preference("disc-rotation") == "on";
     m_boxedPlayButton = host->preference("play-button-style") == "boxed";
@@ -1549,8 +1551,8 @@ void NativeHud::action(QString value) {
     } else if (value == "disc-rotation:cancel") {
         openModal("settings", true);
     } else if (value == "theme") {
-        themeMode = cycle({"light", "dark", "system"}, themeMode);
-        dark = themeMode == "system" ? m_host->systemDark() : themeMode == "dark";
+        themeMode = cycle({"light", "dark"}, themeMode);
+        dark = themeMode == "dark";
         m_scene.theme(dark);
         m_host->setPreference("theme", themeMode);
     } else if (value.startsWith("archive-mask:")) {

@@ -166,7 +166,7 @@ public class RhineMediaService extends Service {
                 NotificationManager.IMPORTANCE_LOW));
 
         // startForeground 的权限缺失会让 onCreate 直接抛 SecurityException 并杀掉整个
-        // 应用（真机已实测）。媒体控件是锦上添花的能力：失败只降级为无通知，播放与会话
+        // 应用。媒体控件是锦上添花的能力：失败只降级为无通知，播放与会话
         // 控制不受影响。
         try {
             startForeground(NOTIFICATION_ID, buildNotification());

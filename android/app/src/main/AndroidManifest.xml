@@ -1,0 +1,87 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 面板内容全部来自远端接口：release 变体不继承 debug/profile 的 INTERNET（X20-F06），
+         必须在主 manifest 声明，否则 release APK 在 socket 层就失败。
+         ACCESS_NETWORK_STATE 与 INTERNET 在 Qt 原文成对声明（Qt/android/AndroidManifest.xml:19-21）。 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- 系统媒体会话 / 前台播放服务所需权限。
+         逐条对应 Qt/android/AndroidManifest.xml:28-32：
+         - FOREGROUND_SERVICE、FOREGROUND_SERVICE_MEDIA_PLAYBACK 是 normal 级，安装即授予；
+           targetSdk 34 起前台服务必须按类型配套声明（Qt 注释 :22-27）。
+         - POST_NOTIFICATIONS 是 API 33+ 的运行时权限，被拒不阻塞：通知不显示，
+           但 MediaSession 与耳机按键仍然可用（Qt/src/AndroidMediaSession.cpp:32-33）。 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <application
+        android:allowBackup="false"
+        android:label="RHINE MUSIC DATABASE"
+        android:name="${applicationName}"
+        android:icon="@mipmap/ic_launcher"
+        android:usesCleartextTraffic="true">
+        <!-- usesCleartextTraffic：插件平台的 MV 直链是 http（网易云 CDN
+             vodkgeyttp8.vod.126.net/…mp4?wsSecret=…），Android 9+ 默认拒绝明文，
+             video_player(ExoPlayer) 会直接报「Cleartext HTTP traffic not permitted」。
+             Qt 侧用 QNetworkAccessManager 自己走 http，不受这条限制，故此处补齐。 -->
+        <!-- CRASH-163：Impeller（Vulkan）在 Adreno 730 上会丢设备：
+             khr_swapchain: ErrorDeviceLost / No surface available，随后 SIGSEGV
+             死在 libflutter.so。与 GPU fence 饥饿同根——消费端太慢，ImageReader
+             缓冲被击穿。先退回 Skia GL 后端，等 Impeller 的 Android 交换链修好再评估。 -->
+        <meta-data
+            android:name="io.flutter.embedding.android.EnableImpeller"
+            android:value="false" />
+        <!-- DEDUP-37：返回键交给 MainActivity 的 OnBackInvokedCallback（API 33+）与
+             onBackPressed（旧版）处理，顺序是 IME → Qt 宿主视图 → Flutter 默认返回。
+             Qt 在 <application> 上声明同一开关（Qt/android/AndroidManifest.xml:64）；
+             这里只声明在本 activity 上，不动 application 级与其它属性。 -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:taskAffinity=""
+            android:theme="@style/LaunchTheme"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|navigation|mcc|mnc|density|uiMode"
+            android:enableOnBackInvokedCallback="true"
+            android:hardwareAccelerated="true"
+            android:windowSoftInputMode="adjustNothing">
+            <!-- Specifies an Android theme to apply to this Activity as soon as
+                 the Android process has started. This theme is visible to the user
+                 while the Flutter UI initializes. After that, this theme continues
+                 to determine the Window background behind the Flutter UI. -->
+            <meta-data
+              android:name="io.flutter.embedding.android.NormalTheme"
+              android:resource="@style/NormalTheme"
+              />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+        <!-- 常驻前台播放服务：锁屏 / 通知 / 耳机键的宿主。
+             对应 Qt/android/AndroidManifest.xml:143-147（RhineMediaService 条目）：
+             exported=false 只允许本应用启动；foregroundServiceType="mediaPlayback"
+             与 FOREGROUND_SERVICE_MEDIA_PLAYBACK 权限配对，满足 targetSdk 36 的类型要求。
+             stopWithTask 保持默认 false（Qt 注释 :136-142）：从最近任务滑掉界面不销毁服务，
+             媒体控件与后台播放继续存活。 -->
+        <service
+            android:name="rhine.music.database.porting.MediaPlaybackService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+        <!-- Don't delete the meta-data below.
+             This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
+        <meta-data
+            android:name="flutterEmbedding"
+            android:value="2" />
+    </application>
+    <!-- Required to query activities that can process text, see:
+         https://developer.android.com/training/package-visibility and
+         https://developer.android.com/reference/android/content/Intent#ACTION_PROCESS_TEXT.
+
+         In particular, this is used by the Flutter engine in io.flutter.plugin.text.ProcessTextPlugin. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.PROCESS_TEXT"/>
+            <data android:mimeType="text/plain"/>
+        </intent>
+    </queries>
+</manifest>

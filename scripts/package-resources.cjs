@@ -13,7 +13,7 @@ const android3dSource = path.resolve('Assets/android-3d');
 const android3dFiles = new Set([
     'archive-baked-surface.bin',
     // 不再要求 archive-baked-surface-etc2.bin：那套手写编码器有字节序与位布局缺陷
-    // （标准解码器 PSNR 5.7 dB，真机花屏），运行时已默认关闭，产物也不再烘焙。
+    // （解码出来是花屏），运行时已默认关闭，产物也不再烘焙。
     'archive-baked-light.bin',
     'archive-baked-normal.bin',
     'archive-cassette.bin',

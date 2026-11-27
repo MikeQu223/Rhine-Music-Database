@@ -502,14 +502,27 @@ QJsonObject Host::credentialCookies(const QJsonObject &credentials, const QStrin
     }
     return cookies;
 }
+// 内嵌开关必须在播放核心内本地求值：RhinePlaybackCore 同时被后台 RhinePlaybackService 链接，
+// 而 RhineEmbedded::requested() 的定义在 EmbeddedSceneHost.cpp，它依赖 Qt Quick/QML，只能
+// 属于应用目标（见 Qt/CMakeLists.txt 中对该目标的注释）。语义与那边的实现完全一致。
+static bool embeddedRequested() {
+    return qEnvironmentVariableIntValue("RHINE_QT_EMBEDDED") == 1;
+}
+
 Host::Host(QString path, bool test, QObject *parent, bool service, PlaybackConnection *connection,
            QString isolatedCachePath)
     : QObject(parent), updater(test), root(path), offline(test), remote(test ? nullptr : connection),
       playbackOnly(service) {
-    const auto recovery = remote ? QString() : PluginInstaller::recover(pluginRoot());
-    refreshPluginCatalog();
-    if (!recovery.isEmpty()) {
-        marketplaceStatus = recovery;
+    // 内嵌渲染层：Flutter 持有播放/账号/曲库，Qt 这里不能再造第二份（见 Host.h 注释）。
+    renderOnly = embeddedRequested();
+    if (renderOnly) {
+        ProviderRegistry::instance().load(root);
+    } else {
+        const auto recovery = remote ? QString() : PluginInstaller::recover(pluginRoot());
+        refreshPluginCatalog();
+        if (!recovery.isEmpty()) {
+            marketplaceStatus = recovery;
+        }
     }
     provider = ProviderRegistry::instance().defaultId();
     if (provider.isEmpty()) {
@@ -575,12 +588,13 @@ Host::Host(QString path, bool test, QObject *parent, bool service, PlaybackConne
             }
         }
     }
-    if (!offline && !remote) {
+    // 内嵌模式下 Flutter 侧持有账号，Qt 不再自取凭据（main 的 credentials 迁移逻辑保留）。
+    if (!offline && !remote && !renderOnly) {
         credentials = migrateCredential(QJsonDocument::fromJson(platformCredential()).object());
     } else {
         interval = 0;
     }
-    if (!offline && !remote) {
+    if (!offline && !remote && !renderOnly) {
         platformMediaCommands([this](QString action) {
             QMetaObject::invokeMethod(
                 this, [this, action] { emit mediaAction(action); }, Qt::QueuedConnection);
@@ -1696,6 +1710,11 @@ void Host::playOfficial(QString id, TextReply callback) {
     });
 }
 bool Host::mediaLoad(QString url, bool alternative, double position, bool paused) {
+    if (renderOnly) {
+        // 内嵌：Flutter 的 BasicAudioChannel 是唯一播放通道，这里连 AudioPlayer 都不建，
+        // 否则会在内嵌进程里多出一个 QMediaPlayer（及其 Android MediaPlayer 的 mContext 根）。
+        return false;
+    }
     if (remote) {
         return remote
             ->call("host.mediaLoad", {{"url", url},
@@ -1757,6 +1776,9 @@ void Host::cancelAppleTransition() {
 #endif
 
 void Host::mediaControl(QString action, double value) {
+    if (renderOnly) {
+        return;
+    }
     if (remote) {
         remote->call("host.mediaControl", {{"action", action}, {"value", value}});
         return;
@@ -1804,6 +1826,9 @@ void Host::mediaMetadata(QString title, QString artist, QString album, const QSt
 /** 把当前曲目的封面取到本地（系统媒体控件的 artwork 需要真实文件/位图，不能是远端地址）。
  *  复用 loadCover 的下载与去重，把回调拿到的键反查回 QImage 缓存再落盘。 */
 void Host::refreshMediaCover() {
+    if (renderOnly) {
+        return;
+    }
     mediaCoverPath.clear();
     if (mediaCoverUrl.isEmpty()) {
         lastMediaUpdate = 0;
