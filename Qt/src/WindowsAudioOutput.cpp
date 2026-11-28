@@ -12,6 +12,7 @@
 #include <QList>
 #include <QtEndian>
 #include <algorithm>
+#include <bit>
 #include <condition_variable>
 #include <chrono>
 #include <cstring>
@@ -57,6 +58,46 @@ WAVEFORMATEXTENSIBLE describe(const QAudioFormat &format, PcmEncoding encoding) 
     description.SubFormat =
         encoding.type == QAudioFormat::Float ? KSDATAFORMAT_SUBTYPE_IEEE_FLOAT : KSDATAFORMAT_SUBTYPE_PCM;
     return description;
+}
+
+QAudioFormat mixPcmFormat(const WAVEFORMATEX &wave, PcmEncoding &encoding) {
+    WORD validBits = wave.wBitsPerSample;
+    DWORD mask = 0;
+    bool floating = wave.wFormatTag == WAVE_FORMAT_IEEE_FLOAT;
+    bool integer = wave.wFormatTag == WAVE_FORMAT_PCM;
+    if (wave.wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
+        wave.cbSize >= sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX)) {
+        const auto &extended = reinterpret_cast<const WAVEFORMATEXTENSIBLE &>(wave);
+        validBits = extended.Samples.wValidBitsPerSample;
+        mask = extended.dwChannelMask;
+        floating = IsEqualGUID(extended.SubFormat, KSDATAFORMAT_SUBTYPE_IEEE_FLOAT);
+        integer = IsEqualGUID(extended.SubFormat, KSDATAFORMAT_SUBTYPE_PCM);
+    }
+    const WORD bits = wave.wBitsPerSample;
+    QAudioFormat::SampleFormat type = QAudioFormat::Unknown;
+    if (floating && bits == 32 && validBits == 32) {
+        type = QAudioFormat::Float;
+    } else if (integer && bits == 8 && validBits == 8) {
+        type = QAudioFormat::UInt8;
+    } else if (integer && bits == 16 && validBits == 16) {
+        type = QAudioFormat::Int16;
+    } else if (integer &&
+               ((bits == 24 && validBits == 24) || (bits == 32 && (validBits == 24 || validBits == 32)))) {
+        type = QAudioFormat::Int32;
+    }
+    if (type == QAudioFormat::Unknown || wave.nBlockAlign != wave.nChannels * (bits / 8)) {
+        return {};
+    }
+
+    QAudioFormat format;
+    format.setSampleRate(int(wave.nSamplesPerSec));
+    format.setChannelCount(wave.nChannels);
+    if (mask <= 0x3ffff && std::popcount(quint32(mask)) == wave.nChannels) {
+        format.setChannelConfig(QAudioFormat::ChannelConfig(mask << 1));
+    }
+    format.setSampleFormat(type);
+    encoding = {type, bits, validBits};
+    return format;
 }
 
 bool rejectedFormat(HRESULT hr) {
@@ -157,7 +198,7 @@ struct WindowsAudioOutput::State {
         }
 
         bool attemptedInitialize = false;
-        auto initialize = [&](const WAVEFORMATEX &wave) -> HRESULT {
+        auto initialize = [&](const WAVEFORMATEX &wave, bool exactSharedMix = false) -> HRESULT {
             // A failed Initialize may leave the audio client unusable for the next attempt.
             HRESULT result = S_OK;
             if (attemptedInitialize && FAILED(result = activate())) {
@@ -171,8 +212,9 @@ struct WindowsAudioOutput::State {
                 }
             }
             attemptedInitialize = true;
-            auto period = devicePeriod;
-            result = client->Initialize(mode, flags, period, exclusive ? period : 0, &wave, nullptr);
+            auto period = exactSharedMix ? 0 : devicePeriod;
+            result = client->Initialize(mode, exactSharedMix ? AUDCLNT_STREAMFLAGS_EVENTCALLBACK : flags,
+                                        period, exclusive ? period : 0, &wave, nullptr);
             if (result == AUDCLNT_E_BUFFER_SIZE_NOT_ALIGNED && exclusive) {
                 UINT32 aligned = 0;
                 if (FAILED(result = client->GetBufferSize(&aligned)) || FAILED(result = activate())) {
@@ -188,8 +230,32 @@ struct WindowsAudioOutput::State {
         const WORD requestedBits = WORD(requested.bytesPerSample() * 8);
         PcmEncoding encoding{requested.sampleFormat(), requestedBits, requestedBits};
         auto description = describe(selected, encoding);
+        std::unique_ptr<WAVEFORMATEX, decltype(&CoTaskMemFree)> mix(nullptr, &CoTaskMemFree);
+        const WAVEFORMATEX *wireFormat = &description.Format;
         if (!exclusive) {
-            hr = initialize(description.Format);
+            if (!preferSource) {
+                // Some Qt device profiles omit the current high-rate mix format. Use the
+                // live WASAPI format directly and resample PCM before it reaches Windows.
+                WAVEFORMATEX *wave = nullptr;
+                const auto mixResult = client->GetMixFormat(&wave);
+                mix.reset(wave);
+                PcmEncoding mixEncoding{};
+                const auto mixFormat =
+                    SUCCEEDED(mixResult) && mix ? mixPcmFormat(*mix, mixEncoding) : QAudioFormat{};
+                if (mixFormat.isValid()) {
+                    hr = initialize(*mix, true);
+                    if (hr == S_OK) {
+                        selected = mixFormat;
+                        encoding = mixEncoding;
+                        wireFormat = mix.get();
+                    } else if (!rejectedFormat(hr)) {
+                        return hr;
+                    }
+                }
+            }
+            if (wireFormat == &description.Format) {
+                hr = initialize(description.Format);
+            }
         } else {
             QList<QAudioFormat> targets{requested};
             auto addTarget = [&](QAudioFormat target) {
@@ -262,7 +328,7 @@ struct WindowsAudioOutput::State {
         if (FAILED(hr)) {
             return hr;
         }
-        const auto &wave = description.Format;
+        const auto &wave = *wireFormat;
         const auto event = eventGuard.value = CreateEventW(nullptr, FALSE, FALSE, nullptr);
         if (!event) {
             return HRESULT_FROM_WIN32(GetLastError());

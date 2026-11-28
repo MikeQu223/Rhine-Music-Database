@@ -20,6 +20,7 @@
 #include <cstdio>
 #include <cstring>
 #include <numbers>
+#include <utility>
 
 namespace {
 bool check(bool condition, const char *message) {
@@ -117,21 +118,25 @@ bool signalChecks() {
     if (!ok) {
         return false;
     }
-    for (int rate : {44100, 48000, 96000, 192000}) {
-        const auto bytes = tone(rate, 1000, rate / 4);
+    constexpr std::pair<int, int> rates[]{{44100, 48000},  {48000, 48000},  {96000, 48000},
+                                          {192000, 48000}, {44100, 352800}, {44100, 384000}};
+    for (const auto [inputRate, outputRate] : rates) {
+        const auto bytes = tone(inputRate, 1000, inputRate / 4);
         QByteArray whole, fragmented;
-        ok &= check(converted(bytes, rate, 48000, rate, whole) &&
-                        converted(bytes, rate, 48000, 257, fragmented),
+        ok &= check(converted(bytes, inputRate, outputRate, inputRate, whole) &&
+                        converted(bytes, inputRate, outputRate, 257, fragmented),
                     "SWR converts complete and fragmented PCM");
         ok &= check(whole == fragmented, "Fragment boundaries must not change samples or lose FIR tails");
-        ok &= check(std::abs(whole.size() / 8 - 12000) <= 1, "Drain retains the expected converted duration");
+        ok &= check(std::abs(whole.size() / 8 - outputRate / 4) <= 1,
+                    "Drain retains the expected converted duration");
         if (whole.size() < 1000) {
             continue;
         }
         const auto *samples = reinterpret_cast<const float *>(whole.constData());
         double error = 0;
-        for (int frame = 128; frame < whole.size() / 8 - 128; ++frame) {
-            const double expected = .25 * std::sin(2 * std::numbers::pi * 1000 * frame / 48000);
+        const int edgeFrames = std::max(128, 128 * outputRate / inputRate);
+        for (int frame = edgeFrames; frame < whole.size() / 8 - edgeFrames; ++frame) {
+            const double expected = .25 * std::sin(2 * std::numbers::pi * 1000 * frame / outputRate);
             error = std::max(error, std::abs(double(samples[frame * 2]) - expected));
             ok &= check(samples[frame * 2] == -samples[frame * 2 + 1],
                         "Stereo phase and ordering survive conversion");
